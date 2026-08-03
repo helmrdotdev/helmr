@@ -15,7 +15,7 @@ func taskRetryDelay(
 	sample func(int64) (int64, error),
 ) (time.Duration, bool, error) {
 	if failedAttempt <= 0 {
-		return 0, false, errors.New("failed Task Attempt number must be positive")
+		return 0, false, errors.New("failed task attempt number must be positive")
 	}
 	if !policy.Enabled {
 		return 0, false, nil

@@ -155,10 +155,10 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		ObservationTtlSeconds:           120,
 		AllowsRun:                       true,
 		AllowsBuild:                     true,
-		RequiredCpuMillis:               1,
+		RequiredCPUMillis:               1,
 		RequiredMemoryBytes:             1,
 		RequiredGuestEphemeralDiskBytes: 1,
-		RequiredVmSlots:                 1,
+		RequiredVMSlots:                 1,
 		RequiredBuildExecutors:          1,
 		ProtocolVersion:                 workerapi.CurrentProtocolVersion,
 	}); err != nil {

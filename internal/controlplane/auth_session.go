@@ -30,7 +30,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	response := api.MeResponse{
 		UserID:          actor.UserID.String(),
 		DisplayName:     state.DisplayName,
-		ProfileImageURL: state.ProfileImageUrl.String,
+		ProfileImageURL: state.ProfileImageURL.String,
 		PublicURL:       s.publicURL.String(),
 		Permissions:     []string{},
 		ProjectRequired: state.OrgID.Valid && !state.HasProjects,

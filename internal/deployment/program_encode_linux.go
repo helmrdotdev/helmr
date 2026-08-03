@@ -23,18 +23,18 @@ func encodeProgramTree(
 	if directory == "" ||
 		!filepath.IsAbs(directory) ||
 		filepath.Clean(directory) != directory {
-		return nil, errors.New("Program encoding directory must be an absolute clean path")
+		return nil, errors.New("program encoding directory must be an absolute clean path")
 	}
 	if err := validateProgramEncoder(encoder); err != nil {
 		return nil, err
 	}
 	leaseDirectory, err := os.MkdirTemp(directory, ".helmr-program-")
 	if err != nil {
-		return nil, fmt.Errorf("create Program encoding lease: %w", err)
+		return nil, fmt.Errorf("create program encoding lease: %w", err)
 	}
 	if err := os.Chmod(leaseDirectory, 0700); err != nil {
 		return nil, errors.Join(
-			fmt.Errorf("set Program encoding lease mode: %w", err),
+			fmt.Errorf("set program encoding lease mode: %w", err),
 			os.Remove(leaseDirectory),
 		)
 	}

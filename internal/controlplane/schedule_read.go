@@ -256,13 +256,13 @@ func scheduleResponse(row db.Schedule) (api.ScheduleResponse, error) {
 	case row.WorkspaceRefID.Valid:
 		workspaceID := pgvalue.UUIDString(row.WorkspaceRefID)
 		if ids.Validate(workspaceID) != nil {
-			return api.ScheduleResponse{}, errors.New("schedule Workspace identity is invalid")
+			return api.ScheduleResponse{}, errors.New("schedule workspace identity is invalid")
 		}
 		response.Workspace.ID = workspaceID
 	case row.WorkspaceRefKey.Valid:
 		response.Workspace.Key = row.WorkspaceRefKey.String
 	default:
-		return api.ScheduleResponse{}, errors.New("schedule Workspace address is absent")
+		return api.ScheduleResponse{}, errors.New("schedule workspace address is absent")
 	}
 	if row.LastErrorCode.Valid || row.LastErrorMessage.Valid {
 		if !row.LastErrorCode.Valid || !row.LastErrorMessage.Valid {

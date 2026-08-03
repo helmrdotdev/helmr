@@ -67,17 +67,17 @@ func ObserveDemand(ctx context.Context, store DemandStore) ([]DemandObservation,
 		if row.AllowsRun {
 			queued, err := queuedRunResources(row)
 			if err != nil {
-				return nil, fmt.Errorf("aggregate Run demand for Worker group %q: %w", row.WorkerGroupID, err)
+				return nil, fmt.Errorf("aggregate run demand for worker group %q: %w", row.WorkerGroupID, err)
 			}
 			observation.Run = &RoleDemand{
 				QueuedItems:     row.QueuedRuns,
 				QueuedResources: queued,
 				ReadyWorkers:    row.ReadyRunWorkers,
 				AvailableCapacity: ResourceVector{
-					CPUMillis:               row.RunAvailableCpuMillis,
+					CPUMillis:               row.RunAvailableCPUMillis,
 					MemoryBytes:             row.RunAvailableMemoryBytes,
 					GuestEphemeralDiskBytes: row.RunAvailableGuestEphemeralDiskBytes,
-					VMSlots:                 row.RunAvailableVmSlots,
+					VMSlots:                 row.RunAvailableVMSlots,
 					RunConsumers:            row.RunAvailableConsumers,
 				},
 			}
@@ -86,18 +86,18 @@ func ObserveDemand(ctx context.Context, store DemandStore) ([]DemandObservation,
 			build := compute.BuildEnvelopeResources()
 			queued, err := queuedResources(row.QueuedBuilds, build.MilliCPU, build.MemoryMiB*mebibyte, build.DiskMiB*mebibyte)
 			if err != nil {
-				return nil, fmt.Errorf("aggregate Build demand for Worker group %q: %w", row.WorkerGroupID, err)
+				return nil, fmt.Errorf("aggregate build demand for worker group %q: %w", row.WorkerGroupID, err)
 			}
 			queued.BuildExecutors, err = checkedProduct(row.QueuedBuilds, int64(build.Slots))
 			if err != nil {
-				return nil, fmt.Errorf("aggregate Build executors for Worker group %q: %w", row.WorkerGroupID, err)
+				return nil, fmt.Errorf("aggregate build executors for worker group %q: %w", row.WorkerGroupID, err)
 			}
 			observation.Build = &RoleDemand{
 				QueuedItems:     row.QueuedBuilds,
 				QueuedResources: queued,
 				ReadyWorkers:    row.ReadyBuildWorkers,
 				AvailableCapacity: ResourceVector{
-					CPUMillis:               row.BuildAvailableCpuMillis,
+					CPUMillis:               row.BuildAvailableCPUMillis,
 					MemoryBytes:             row.BuildAvailableMemoryBytes,
 					GuestEphemeralDiskBytes: row.BuildAvailableGuestEphemeralDiskBytes,
 					BuildExecutors:          row.BuildAvailableExecutors,
@@ -110,10 +110,10 @@ func ObserveDemand(ctx context.Context, store DemandStore) ([]DemandObservation,
 }
 
 func queuedRunResources(row db.ListWorkerDemandObservationsRow) (ResourceVector, error) {
-	if row.QueuedRuns < 0 || row.QueuedRunCpuMillis < 0 || row.QueuedRunMemoryMib < 0 {
+	if row.QueuedRuns < 0 || row.QueuedRunCPUMillis < 0 || row.QueuedRunMemoryMiB < 0 {
 		return ResourceVector{}, errors.New("resource values must be non-negative")
 	}
-	memory, err := checkedProduct(row.QueuedRunMemoryMib, mebibyte)
+	memory, err := checkedProduct(row.QueuedRunMemoryMiB, mebibyte)
 	if err != nil {
 		return ResourceVector{}, err
 	}
@@ -122,7 +122,7 @@ func queuedRunResources(row db.ListWorkerDemandObservationsRow) (ResourceVector,
 		return ResourceVector{}, err
 	}
 	return ResourceVector{
-		CPUMillis: row.QueuedRunCpuMillis, MemoryBytes: memory,
+		CPUMillis: row.QueuedRunCPUMillis, MemoryBytes: memory,
 		GuestEphemeralDiskBytes: disk, VMSlots: row.QueuedRuns, RunConsumers: row.QueuedRuns,
 	}, nil
 }

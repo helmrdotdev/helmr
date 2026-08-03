@@ -70,7 +70,7 @@ func proveBuildStorage(config BuildStorageConfig, probe storageProbe) (BuildStor
 		return BuildStorageProof{}, errors.New("worker work directory must be a strict descendant of build scratch")
 	}
 	if !strictDescendant(config.ScratchRoot, config.JailerRoot) {
-		return BuildStorageProof{}, errors.New("firecracker jailer root must be a strict descendant of build scratch")
+		return BuildStorageProof{}, errors.New("the Firecracker jailer root must be a strict descendant of build scratch")
 	}
 
 	substrateCache := filepath.Join(config.CacheRoot, "substrate-cache")
@@ -122,7 +122,7 @@ func proveBuildStorage(config BuildStorageConfig, probe storageProbe) (BuildStor
 		return BuildStorageProof{}, fmt.Errorf("prove Firecracker jailer root mount: %w", err)
 	}
 	if jailerMount.ID != scratch.MountID {
-		return BuildStorageProof{}, errors.New("firecracker jailer root is not on the build scratch mount")
+		return BuildStorageProof{}, errors.New("the Firecracker jailer root is not on the build scratch mount")
 	}
 	workMount, err := mountContaining(config.WorkDir, mounts)
 	if err != nil {
@@ -139,7 +139,7 @@ func proveBuildStorage(config BuildStorageConfig, probe storageProbe) (BuildStor
 	}
 	if nested, ok := nestedMount(config.JailerRoot, mounts); ok {
 		return BuildStorageProof{}, fmt.Errorf(
-			"firecracker jailer root contains nested mount %q",
+			"the Firecracker jailer root contains nested mount %q",
 			nested.MountPoint,
 		)
 	}

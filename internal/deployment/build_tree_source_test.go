@@ -128,8 +128,8 @@ func TestBuildTreeImageSourceRejectsReservedMissingAndWrongKindRoots(t *testing.
 		dir  *imagebuild.CopySourceDir
 		want string
 	}{
-		{name: "reserved file", file: &imagebuild.CopySourceFile{Path: "helmr/config.json", Dst: "/x"}, want: "clean Deployment-relative POSIX path"},
-		{name: "reserved directory", dir: &imagebuild.CopySourceDir{Path: "helmr", Dst: "/x"}, want: "clean Deployment-relative POSIX path"},
+		{name: "reserved file", file: &imagebuild.CopySourceFile{Path: "helmr/config.json", Dst: "/x"}, want: "clean deployment-relative POSIX path"},
+		{name: "reserved directory", dir: &imagebuild.CopySourceDir{Path: "helmr", Dst: "/x"}, want: "clean deployment-relative POSIX path"},
 		{name: "missing file", file: &imagebuild.CopySourceFile{Path: "missing", Dst: "/x"}, want: "missing"},
 		{name: "file is directory", file: &imagebuild.CopySourceFile{Path: "directory", Dst: "/x"}, want: "want \"regular\""},
 		{name: "directory is file", dir: &imagebuild.CopySourceDir{Path: "file.txt", Dst: "/x"}, want: "want \"directory\""},

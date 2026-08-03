@@ -24,7 +24,7 @@ func (s *Server) workerCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request workerapi.CreateWorkspaceRequest
-	if err := decodeWorkerActorRequest(r, &request, "Workspace create"); err != nil {
+	if err := decodeWorkerActorRequest(r, &request, "workspace create"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -74,7 +74,7 @@ func (s *Server) workerCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.log.Error("create run-sourced Workspace", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("create run-sourced Workspace"))
+		writeError(w, errors.New("create run-sourced workspace"))
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.CreateWorkspaceResponse{
@@ -89,7 +89,7 @@ func (s *Server) workerRetrieveWorkspace(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var request workerapi.RetrieveWorkspaceRequest
-	if err := decodeWorkerActorRequest(r, &request, "Workspace retrieve"); err != nil {
+	if err := decodeWorkerActorRequest(r, &request, "workspace retrieve"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -121,7 +121,7 @@ func (s *Server) workerRetrieveWorkspace(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) workerReadWorkspaceFile(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ReadWorkspaceFileRequest
-	if !s.decodeWorkerWorkspaceFileRequest(w, r, &request, "Workspace file read") {
+	if !s.decodeWorkerWorkspaceFileRequest(w, r, &request, "workspace file read") {
 		return
 	}
 	worker := workerFromContext(r.Context())
@@ -157,7 +157,7 @@ func (s *Server) workerReadWorkspaceFile(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) workerStatWorkspaceFile(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ReadWorkspaceFileRequest
-	if !s.decodeWorkerWorkspaceFileRequest(w, r, &request, "Workspace file stat") {
+	if !s.decodeWorkerWorkspaceFileRequest(w, r, &request, "workspace file stat") {
 		return
 	}
 	worker := workerFromContext(r.Context())
@@ -197,7 +197,7 @@ func (s *Server) workerListWorkspaceFiles(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var request workerapi.ListWorkspaceFilesRequest
-	if err := decodeWorkerActorRequest(r, &request, "Workspace file list"); err != nil {
+	if err := decodeWorkerActorRequest(r, &request, "workspace file list"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -207,7 +207,7 @@ func (s *Server) workerListWorkspaceFiles(w http.ResponseWriter, r *http.Request
 	}
 	target, err := validateWorkspaceFilePath(request.Path)
 	if err != nil || request.Limit < 1 || request.Limit > workspaceFileListMaxLimit {
-		writeError(w, badRequest(errors.New("Workspace file list request is invalid")))
+		writeError(w, badRequest(errors.New("workspace file list request is invalid")))
 		return
 	}
 	request.Path = target
@@ -256,7 +256,7 @@ func (s *Server) workerExecuteWorkspace(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var request workerapi.ExecuteWorkspaceRequest
-	if err := decodeWorkerActorRequest(r, &request, "Workspace exec"); err != nil {
+	if err := decodeWorkerActorRequest(r, &request, "workspace exec"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -266,7 +266,7 @@ func (s *Server) workerExecuteWorkspace(w http.ResponseWriter, r *http.Request) 
 	}
 	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
 	if err != nil || idempotencyKey == "" {
-		writeError(w, badRequest(errors.New("Workspace exec idempotency_key is invalid")))
+		writeError(w, badRequest(errors.New("workspace exec idempotency_key is invalid")))
 		return
 	}
 	timeout := time.Duration(0)
@@ -309,7 +309,7 @@ func (s *Server) workerExecuteWorkspace(w http.ResponseWriter, r *http.Request) 
 			})
 			return
 		}
-		writeError(w, errors.New("admit run-sourced Workspace exec"))
+		writeError(w, errors.New("admit run-sourced workspace exec"))
 		return
 	}
 	if workspaceExecTerminal(admission.Process.State) {
@@ -322,7 +322,7 @@ func (s *Server) workerExecuteWorkspace(w http.ResponseWriter, r *http.Request) 
 				return
 			}
 			s.log.Error("project replayed run-sourced Workspace exec", "run_lease_id", request.Lease.ID, "error", resultErr)
-			writeError(w, errors.New("project run-sourced Workspace exec"))
+			writeError(w, errors.New("project run-sourced workspace exec"))
 			return
 		}
 		writeJSON(w, http.StatusOK, workerapi.ExecuteWorkspaceResponse{
@@ -342,7 +342,7 @@ func (s *Server) workerPollWorkspaceExec(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var request workerapi.PollWorkspaceExecRequest
-	if err := decodeWorkerActorRequest(r, &request, "Workspace exec poll"); err != nil {
+	if err := decodeWorkerActorRequest(r, &request, "workspace exec poll"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -352,7 +352,7 @@ func (s *Server) workerPollWorkspaceExec(w http.ResponseWriter, r *http.Request)
 	}
 	processID, err := parseCanonicalUUID("process_id", request.ProcessID)
 	if err != nil || processID == uuid.Nil {
-		writeError(w, badRequest(errors.New("Workspace exec process_id is invalid")))
+		writeError(w, badRequest(errors.New("workspace exec process_id is invalid")))
 		return
 	}
 	worker := workerFromContext(r.Context())
@@ -405,7 +405,7 @@ func (s *Server) workerPollWorkspaceExec(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		s.log.Error("project run-sourced Workspace exec", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("project run-sourced Workspace exec"))
+		writeError(w, errors.New("project run-sourced workspace exec"))
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.ExecuteWorkspaceResponse{
@@ -419,7 +419,7 @@ func (s *Server) workerDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request workerapi.DeleteWorkspaceRequest
-	if err := decodeWorkerActorRequest(r, &request, "Workspace delete"); err != nil {
+	if err := decodeWorkerActorRequest(r, &request, "workspace delete"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -464,7 +464,7 @@ func (s *Server) workerDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		writeError(w, errors.New("delete run-sourced Workspace"))
+		writeError(w, errors.New("delete run-sourced workspace"))
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.DeleteWorkspaceResponse{
@@ -528,11 +528,11 @@ func validateWorkerWorkspaceRequest(request workerapi.RetrieveWorkspaceRequest) 
 	hasID := request.Workspace.WorkspaceID != ""
 	hasKey := request.Workspace.WorkspaceKey != ""
 	if hasID == hasKey {
-		return errors.New("Workspace address requires exactly one of workspace_id or workspace_key")
+		return errors.New("workspace address requires exactly one of workspace_id or workspace_key")
 	}
 	if hasID {
 		if err := ids.Validate(request.Workspace.WorkspaceID); err != nil {
-			return errors.New("Workspace ID is invalid")
+			return errors.New("workspace ID is invalid")
 		}
 	} else if err := validateWorkspaceKey(&request.Workspace.WorkspaceKey); err != nil {
 		return err
@@ -542,7 +542,7 @@ func validateWorkerWorkspaceRequest(request workerapi.RetrieveWorkspaceRequest) 
 
 func validateWorkerWorkspaceCorrelation(value string) error {
 	if err := ids.Validate(value); err != nil {
-		return errors.New("Workspace runtime correlation ID is invalid")
+		return errors.New("workspace runtime correlation ID is invalid")
 	}
 	return nil
 }
@@ -619,7 +619,7 @@ func (s *Server) workerWorkspaceFileFailure(
 		return &workerapi.RuntimeOperationFailure{Code: "invalid_workspace_file_cursor", Message: "Workspace file cursor is invalid"}, true
 	default:
 		s.log.Error("read run-sourced Workspace file", "operation", operation, "run_id", runID, "error", err)
-		writeError(w, errors.New("read run-sourced Workspace file"))
+		writeError(w, errors.New("read run-sourced workspace file"))
 		return nil, true
 	}
 }
@@ -711,5 +711,5 @@ func (s *Server) writeWorkerWorkspaceSourceError(
 	}
 	s.log.Error("authorize worker Workspace operation source",
 		"operation", operation, "run_id", runID, "error", err)
-	writeError(w, errors.New("authorize worker Workspace operation source"))
+	writeError(w, errors.New("authorize worker workspace operation source"))
 }

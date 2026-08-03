@@ -23,12 +23,12 @@ func (s *Server) workerRenewRunLease(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, io.EOF) {
 			err = errors.New("request body is required")
 		}
-		writeError(w, badRequest(fmt.Errorf("invalid worker Run Lease renewal JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid worker run lease renewal JSON: %w", err)))
 		return
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		writeError(w, badRequest(errors.New("invalid worker Run Lease renewal JSON: trailing value")))
+		writeError(w, badRequest(errors.New("invalid worker run lease renewal JSON: trailing value")))
 		return
 	}
 	parsed, err := parseRunLeaseFence(request.Lease)
@@ -45,12 +45,12 @@ func (s *Server) workerRenewRunLease(w http.ResponseWriter, r *http.Request) {
 		r.Context(), worker, pgvalue.UUID(parsed.leaseID), request.Lease, request.ExpectedExpiresAt,
 	)
 	if errors.Is(err, errStaleRunLeaseClaim) {
-		writeError(w, conflict(errors.New("worker Run Lease fence is stale")))
+		writeError(w, conflict(errors.New("worker run lease fence is stale")))
 		return
 	}
 	if err != nil {
 		s.log.Error("renew worker Run Lease failed", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("renew worker Run Lease"))
+		writeError(w, errors.New("renew worker run lease"))
 		return
 	}
 	writeJSON(w, http.StatusOK, renewed)

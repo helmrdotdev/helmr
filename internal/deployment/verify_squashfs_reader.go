@@ -70,7 +70,7 @@ func (reader *squashFSArtifactReader) Entries(
 ) ([]artifactEntry, error) {
 	if reader == nil {
 		return nil, &artifactInfrastructureError{
-			cause: fmt.Errorf("SquashFS Artifact reader is nil"),
+			cause: fmt.Errorf("SquashFS artifact reader is nil"),
 		}
 	}
 	reader.once.Do(func() {
@@ -93,7 +93,7 @@ func (reader *squashFSArtifactReader) Open(
 ) (io.ReadCloser, error) {
 	if reader == nil {
 		return nil, &artifactInfrastructureError{
-			cause: fmt.Errorf("SquashFS Artifact reader is nil"),
+			cause: fmt.Errorf("SquashFS artifact reader is nil"),
 		}
 	}
 	reader.mu.RLock()
@@ -105,7 +105,7 @@ func (reader *squashFSArtifactReader) Open(
 	}
 	if data == nil {
 		return nil, &artifactInfrastructureError{
-			cause: fmt.Errorf("SquashFS Artifact entries have not been read"),
+			cause: fmt.Errorf("SquashFS artifact entries have not been read"),
 		}
 	}
 	return data.Open(ctx, path)

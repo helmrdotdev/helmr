@@ -34,7 +34,7 @@ func (d *Authority) RecoverWorkspaceExec(
 ) error {
 	tx, err := d.begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin Workspace exec recovery: %w", err)
+		return fmt.Errorf("begin workspace exec recovery: %w", err)
 	}
 	defer rollback(ctx, tx)
 
@@ -101,9 +101,9 @@ func (d *Authority) RecoverWorkspaceExec(
 			WorkspaceID:       authority.WorkspaceProcess.WorkspaceID,
 		},
 	); err != nil {
-		return fmt.Errorf("close recovered Workspace exec runtime: %w", err)
+		return fmt.Errorf("close recovered workspace exec runtime: %w", err)
 	} else if affected > 1 {
-		return errors.New("Workspace exec recovery closed multiple runtimes")
+		return errors.New("workspace exec recovery closed multiple runtimes")
 	}
 
 	switch classifyWorkspaceExecRecovery(authority, secretsValid) {
@@ -154,7 +154,7 @@ func (d *Authority) RecoverWorkspaceExec(
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit Workspace exec recovery: %w", err)
+		return fmt.Errorf("commit workspace exec recovery: %w", err)
 	}
 	return nil
 }
@@ -202,7 +202,7 @@ func lockWorkspaceExecRecoverySecrets(
 		return false, err
 	}
 	if len(rows) > 64 {
-		return false, errors.New("Workspace Secret placements exceed their bound")
+		return false, errors.New("workspace secret placements exceed their bound")
 	}
 	for _, row := range rows {
 		if row.Secret.State != "active" ||
@@ -307,10 +307,10 @@ func failRevokedRecoveredWorkspaceExec(
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("discard revoked Workspace exec version: %w", err)
+		return fmt.Errorf("discard revoked workspace exec version: %w", err)
 	}
 	if affected != 1 {
-		return errors.New("revoked Workspace exec version is not discardable")
+		return errors.New("revoked workspace exec version is not discardable")
 	}
 	errorJSON, err := json.Marshal(map[string]string{
 		"code": "workspace_exec_secret_revoked",
@@ -346,10 +346,10 @@ func failUncertainWorkspaceExec(
 			},
 		)
 		if err != nil {
-			return fmt.Errorf("discard recovered Workspace exec version: %w", err)
+			return fmt.Errorf("discard recovered workspace exec version: %w", err)
 		}
 		if affected != 1 {
-			return errors.New("recovered Workspace exec version is not discardable")
+			return errors.New("recovered workspace exec version is not discardable")
 		}
 	}
 	if _, err := q.MarkWorkspaceExecRecoveryRequired(

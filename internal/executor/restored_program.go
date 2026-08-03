@@ -41,7 +41,7 @@ func (r ProgramRunner) startResumedProgram(
 	}()
 	waitClient, ok := controlPlane.(RunWaitClient)
 	if !ok {
-		return freshProgram{}, errors.New("restored Program wait Control Plane is required")
+		return freshProgram{}, errors.New("restored program wait control plane is required")
 	}
 	admissionCtx, cancelAdmission := context.WithDeadline(ctx, claim.Lease.ExpiresAt)
 	defer cancelAdmission()
@@ -56,7 +56,7 @@ func (r ProgramRunner) startResumedProgram(
 		}
 	}()
 	if opened.ControlSession == nil || opened.Session.Stream() == nil {
-		return freshProgram{}, errors.New("restored Workspace mount control and resume streams are required")
+		return freshProgram{}, errors.New("restored workspace mount control and resume streams are required")
 	}
 	if err := validateResumedProgramMount(
 		claim.Lease,
@@ -72,7 +72,7 @@ func (r ProgramRunner) startResumedProgram(
 		CorrelationId: resume.correlationID,
 	}
 	if err := grantProgramResumeOnSession(admissionCtx, opened.ControlSession, grant); err != nil {
-		return freshProgram{}, fmt.Errorf("install resumed Program authority: %w", err)
+		return freshProgram{}, fmt.Errorf("install resumed program authority: %w", err)
 	}
 	var startResponse workerapi.RunStartResponse
 	if err := retryRunLeaseRequest(admissionCtx, func(requestCtx context.Context) error {
@@ -84,10 +84,10 @@ func (r ProgramRunner) startResumedProgram(
 		)
 		return requestErr
 	}); err != nil {
-		return freshProgram{}, fmt.Errorf("acknowledge resumed Run start: %w", err)
+		return freshProgram{}, fmt.Errorf("acknowledge resumed run start: %w", err)
 	}
 	if startResponse.Lease != claim.Lease.Fence() {
-		return freshProgram{}, errors.New("resumed Run start acknowledgement changed the Run Lease fence")
+		return freshProgram{}, errors.New("resumed run start acknowledgement changed the run lease fence")
 	}
 	attach := &runv0.ResumeAttach{
 		RunId: claim.Lease.RunID, AttemptNumber: uint32(claim.Lease.AttemptNumber),
@@ -96,7 +96,7 @@ func (r ProgramRunner) startResumedProgram(
 		CorrelationId: resume.correlationID,
 	}
 	if err := frameio.WriteProtoFrame(opened.Session.Stream(), attach); err != nil {
-		return freshProgram{}, fmt.Errorf("attach resumed Program: %w", err)
+		return freshProgram{}, fmt.Errorf("attach resumed program: %w", err)
 	}
 	kind, data, noResult, err := restoredProgramDecision(resume.decision)
 	if err != nil {
@@ -109,19 +109,19 @@ func (r ProgramRunner) startResumedProgram(
 		CorrelationId: resume.correlationID, NoResult: noResult,
 	}
 	if err := frameio.WriteProtoFrame(opened.Session.Stream(), decision); err != nil {
-		return freshProgram{}, fmt.Errorf("apply resumed Program decision: %w", err)
+		return freshProgram{}, fmt.Errorf("apply resumed program decision: %w", err)
 	}
 	ackCtx, cancelAck := context.WithTimeout(admissionCtx, restoreAttachTimeout)
 	ack, err := readResumeAck(ackCtx, opened.Session)
 	cancelAck()
 	if err != nil {
-		return freshProgram{}, fmt.Errorf("read resumed Program proof: %w", err)
+		return freshProgram{}, fmt.Errorf("read resumed program proof: %w", err)
 	}
 	if ack.GetRunWaitId() != resume.runWaitID || ack.GetCheckpointId() != resume.checkpointID ||
 		ack.GetResumeAttachId() != resume.resumeAttachID ||
 		ack.GetResumeRequestVersion() != resume.resumeRequestVersion ||
 		ack.GetRunLeaseId() != claim.Lease.ID || ack.GetCorrelationId() != resume.correlationID {
-		return freshProgram{}, errors.New("resumed Program proof did not match exact authority")
+		return freshProgram{}, errors.New("resumed program proof did not match exact authority")
 	}
 	release := RestoreAcknowledgement{
 		Lease: claim.Lease, RunWaitID: resume.runWaitID, CheckpointID: resume.checkpointID,
@@ -131,7 +131,7 @@ func (r ProgramRunner) startResumedProgram(
 	if err := retryRunLeaseRequest(admissionCtx, func(requestCtx context.Context) error {
 		return (ControlPlaneRunWaits{Client: waitClient}).AcknowledgeRestore(requestCtx, release)
 	}); err != nil {
-		return freshProgram{}, fmt.Errorf("release resumed Run Wait: %w", err)
+		return freshProgram{}, fmt.Errorf("release resumed run wait: %w", err)
 	}
 	entrypoint, err := resumedEntrypoint(
 		resume.entrypointKind,
@@ -151,7 +151,7 @@ func validateResumedProgramClaim(
 	claim *workerapi.RunLeaseClaimResponse,
 ) (resumedProgramAdmission, error) {
 	if claim == nil {
-		return resumedProgramAdmission{}, errors.New("Run Lease claim is required")
+		return resumedProgramAdmission{}, errors.New("run lease claim is required")
 	}
 	lease := claim.Lease
 	if strings.TrimSpace(lease.ID) == "" || strings.TrimSpace(lease.RunID) == "" || lease.AttemptNumber <= 0 ||
@@ -163,10 +163,10 @@ func validateResumedProgramClaim(
 		!lease.StartDeadlineAt.After(time.Now()) ||
 		lease.ExpiresAt.IsZero() || !lease.ExpiresAt.After(time.Now()) ||
 		strings.TrimSpace(claim.Workspace.WriteCapability) == "" {
-		return resumedProgramAdmission{}, errors.New("resumed Program Run Lease assignment is incomplete")
+		return resumedProgramAdmission{}, errors.New("resumed program run lease assignment is incomplete")
 	}
 	if len(claim.Secrets) != 0 {
-		return resumedProgramAdmission{}, errors.New("resumed Program cannot receive new Secrets")
+		return resumedProgramAdmission{}, errors.New("resumed program cannot receive new secrets")
 	}
 	execution := claim.Execution
 	switch {
@@ -199,20 +199,20 @@ func validateResumedProgramClaim(
 			admission.entrypointDeclaredID == "" ||
 			((restore.Recreated == nil) == (restore.Retained == nil)) {
 			return resumedProgramAdmission{}, errors.New(
-				"Program restore authority is incomplete",
+				"program restore authority is incomplete",
 			)
 		}
 		if restore.Retained != nil &&
 			strings.TrimSpace(restore.Retained.EnclosingRunWaitID) == "" {
 			return resumedProgramAdmission{}, errors.New(
-				"retained Program restore authority is incomplete",
+				"retained program restore authority is incomplete",
 			)
 		}
 		if restore.Recreated != nil {
 			var checkpoint workerapi.CheckpointManifest
 			if err := json.Unmarshal(restore.Recreated.Manifest, &checkpoint); err != nil {
 				return resumedProgramAdmission{}, fmt.Errorf(
-					"decode restored Program Checkpoint: %w",
+					"decode restored program checkpoint: %w",
 					err,
 				)
 			}
@@ -222,7 +222,7 @@ func validateResumedProgramClaim(
 				checkpoint.RecoveryPoint.RunWaitID != admission.runWaitID ||
 				checkpoint.RecoveryPoint.CorrelationID != admission.correlationID {
 				return resumedProgramAdmission{}, errors.New(
-					"restored Program Checkpoint identity is inconsistent",
+					"restored program checkpoint identity is inconsistent",
 				)
 			}
 		}
@@ -258,13 +258,13 @@ func validateResumedProgramClaim(
 			admission.correlationID == "" ||
 			admission.entrypointDeclaredID == "" {
 			return resumedProgramAdmission{}, errors.New(
-				"parent-attached Program authority is incomplete",
+				"parent-attached program authority is incomplete",
 			)
 		}
 		return admission, nil
 	default:
 		return resumedProgramAdmission{}, errors.New(
-			"Run Lease execution must contain exactly one restored or parent-attached Program",
+			"run lease execution must contain exactly one restored or parent-attached program",
 		)
 	}
 }
@@ -281,7 +281,7 @@ func validateResumedProgramMount(
 		mount.FencingGeneration != lease.MountFencingGeneration ||
 		(resume.recreated && mount.RestoreCheckpointID != resume.checkpointID) {
 		return errors.New(
-			"resumed Workspace mount does not match the claimed physical authority",
+			"resumed workspace mount does not match the claimed physical authority",
 		)
 	}
 	return nil
@@ -307,7 +307,7 @@ func resumedEntrypoint(
 			},
 		}, nil
 	default:
-		return nil, errors.New("resumed Program entrypoint kind is unsupported")
+		return nil, errors.New("resumed program entrypoint kind is unsupported")
 	}
 }
 
@@ -323,18 +323,18 @@ func restoredProgramDecision(decision workerapi.RunLeaseDecision) (string, json.
 		count++
 	}
 	if count != 1 {
-		return "", nil, false, errors.New("restored Program decision must contain exactly one terminal condition")
+		return "", nil, false, errors.New("restored program decision must contain exactly one terminal condition")
 	}
 	if completed := decision.Completed; completed != nil {
 		if (completed.NoResult == nil) == (completed.ResultJSON == nil) {
-			return "", nil, false, errors.New("completed restored Program decision must contain exactly one result variant")
+			return "", nil, false, errors.New("completed restored program decision must contain exactly one result variant")
 		}
 		if completed.NoResult != nil {
 			return "completed", nil, true, nil
 		}
 		if completed.ResultJSON != nil {
 			if !json.Valid(completed.ResultJSON) {
-				return "", nil, false, errors.New("restored Program result is not valid JSON")
+				return "", nil, false, errors.New("restored program result is not valid JSON")
 			}
 			return "completed", append(json.RawMessage(nil), completed.ResultJSON...), false, nil
 		}
@@ -349,10 +349,10 @@ func restoredProgramDecision(decision workerapi.RunLeaseDecision) (string, json.
 func restoredProgramFailureDecision(kind, reason string, detail json.RawMessage) (string, json.RawMessage, bool, error) {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
-		return "", nil, false, errors.New("restored Program failure reason is required")
+		return "", nil, false, errors.New("restored program failure reason is required")
 	}
 	if detail != nil && !json.Valid(detail) {
-		return "", nil, false, errors.New("restored Program failure detail is not valid JSON")
+		return "", nil, false, errors.New("restored program failure detail is not valid JSON")
 	}
 	payload := struct {
 		ReasonCode string          `json:"reason_code"`
@@ -360,7 +360,7 @@ func restoredProgramFailureDecision(kind, reason string, detail json.RawMessage)
 	}{ReasonCode: reason, Error: detail}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return "", nil, false, fmt.Errorf("encode restored Program failure: %w", err)
+		return "", nil, false, fmt.Errorf("encode restored program failure: %w", err)
 	}
 	return kind, encoded, false, nil
 }

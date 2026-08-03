@@ -21,12 +21,12 @@ import (
 
 func (s *Server) workerNextPlatformAcquisition(w http.ResponseWriter, r *http.Request) {
 	if s.buildPolicy == nil || s.platformStore == nil {
-		writeError(w, unavailable(errors.New("Platform Artifact authority is not configured")))
+		writeError(w, unavailable(errors.New("platform artifact authority is not configured")))
 		return
 	}
 	var request workerapi.PlatformAcquisitionRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Platform acquisition JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid platform acquisition JSON: %w", err)))
 		return
 	}
 	worker := workerFromContext(r.Context())
@@ -44,7 +44,7 @@ func (s *Server) workerNextPlatformAcquisition(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("read next Platform acquisition"))
+		writeError(w, errors.New("read next platform acquisition"))
 		return
 	}
 	policyDigest, err := s.buildPolicy.Digest()
@@ -59,12 +59,12 @@ func (s *Server) workerNextPlatformAcquisition(w http.ResponseWriter, r *http.Re
 
 func (s *Server) workerCompletePlatformAcquisition(w http.ResponseWriter, r *http.Request) {
 	if s.buildPolicy == nil || s.platformStore == nil || s.platformArtifactLocks == nil {
-		writeError(w, unavailable(errors.New("Platform Artifact authority is not configured")))
+		writeError(w, unavailable(errors.New("platform artifact authority is not configured")))
 		return
 	}
 	var request workerapi.PlatformAcquisitionCompleteRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Platform acquisition completion JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid platform acquisition completion JSON: %w", err)))
 		return
 	}
 	row, err := s.platformAcquisitionRow(r.Context(), request.Acquisition)
@@ -102,10 +102,10 @@ func (s *Server) workerCompletePlatformAcquisition(w http.ResponseWriter, r *htt
 			},
 		)
 		if isNoRows(err) {
-			return conflict(errors.New("Deployment Platform Artifact pins changed"))
+			return conflict(errors.New("deployment platform artifact pins changed"))
 		}
 		if err != nil {
-			return fmt.Errorf("pin Deployment Platform Artifacts: %w", err)
+			return fmt.Errorf("pin deployment platform artifacts: %w", err)
 		}
 		return nil
 	})
@@ -121,21 +121,21 @@ func (s *Server) workerCompletePlatformAcquisition(w http.ResponseWriter, r *htt
 
 func (s *Server) workerFailPlatformAcquisition(w http.ResponseWriter, r *http.Request) {
 	if s.buildPolicy == nil {
-		writeError(w, unavailable(errors.New("Platform Artifact authority is not configured")))
+		writeError(w, unavailable(errors.New("platform artifact authority is not configured")))
 		return
 	}
 	var request workerapi.PlatformAcquisitionFailRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Platform acquisition failure JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid platform acquisition failure JSON: %w", err)))
 		return
 	}
 	if !validPlatformAcquisitionFailureReason(request.Reason) {
-		writeError(w, badRequest(errors.New("Platform acquisition failure reason is invalid")))
+		writeError(w, badRequest(errors.New("platform acquisition failure reason is invalid")))
 		return
 	}
 	var detail map[string]any
 	if len(request.Error) == 0 || json.Unmarshal(request.Error, &detail) != nil || detail == nil {
-		writeError(w, badRequest(errors.New("Platform acquisition failure error must be an object")))
+		writeError(w, badRequest(errors.New("platform acquisition failure error must be an object")))
 		return
 	}
 	row, err := s.platformAcquisitionRow(r.Context(), request.Acquisition)
@@ -151,7 +151,7 @@ func (s *Server) workerFailPlatformAcquisition(w http.ResponseWriter, r *http.Re
 		Error:  request.Error,
 	})
 	if err != nil {
-		writeError(w, errors.New("encode Platform acquisition failure"))
+		writeError(w, errors.New("encode platform acquisition failure"))
 		return
 	}
 	if _, err := s.db.FailDeploymentPlatformAcquisition(
@@ -164,10 +164,10 @@ func (s *Server) workerFailPlatformAcquisition(w http.ResponseWriter, r *http.Re
 			EnvironmentID: row.EnvironmentID,
 		},
 	); isNoRows(err) {
-		writeError(w, conflict(errors.New("Deployment Platform acquisition changed")))
+		writeError(w, conflict(errors.New("deployment platform acquisition changed")))
 		return
 	} else if err != nil {
-		writeError(w, errors.New("fail Deployment Platform acquisition"))
+		writeError(w, errors.New("fail deployment platform acquisition"))
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.PlatformAcquisitionResult{
@@ -183,7 +183,7 @@ func (s *Server) platformAcquisitionRow(
 	worker := workerFromContext(ctx)
 	deploymentID, err := ids.Parse(input.DeploymentID)
 	if err != nil {
-		return db.GetDeploymentPlatformAcquisitionRow{}, badRequest(errors.New("Platform acquisition Deployment ID is invalid"))
+		return db.GetDeploymentPlatformAcquisitionRow{}, badRequest(errors.New("platform acquisition deployment ID is invalid"))
 	}
 	row, err := s.db.GetDeploymentPlatformAcquisition(
 		ctx,
@@ -196,10 +196,10 @@ func (s *Server) platformAcquisitionRow(
 		},
 	)
 	if isNoRows(err) {
-		return db.GetDeploymentPlatformAcquisitionRow{}, conflict(errors.New("Platform acquisition is stale"))
+		return db.GetDeploymentPlatformAcquisitionRow{}, conflict(errors.New("platform acquisition is stale"))
 	}
 	if err != nil {
-		return db.GetDeploymentPlatformAcquisitionRow{}, errors.New("read Platform acquisition")
+		return db.GetDeploymentPlatformAcquisitionRow{}, errors.New("read platform acquisition")
 	}
 	policyDigest, err := s.buildPolicy.Digest()
 	if err != nil {
@@ -207,7 +207,7 @@ func (s *Server) platformAcquisitionRow(
 	}
 	expected := platformAcquisitionFromRow(row, policyDigest)
 	if input != *expected {
-		return db.GetDeploymentPlatformAcquisitionRow{}, conflict(errors.New("Platform acquisition does not exact-match Control Plane authority"))
+		return db.GetDeploymentPlatformAcquisitionRow{}, conflict(errors.New("platform acquisition does not exact-match control plane authority"))
 	}
 	return row, nil
 }
@@ -285,8 +285,8 @@ func validatePlatformCandidateEnvelope(candidates workerapi.PlatformAcquisitionC
 		mediaType string
 		maxBytes  int64
 	}{
-		{"Runtime", candidates.Runtime, deployment.RuntimeArtifactMediaType, 3 << 30},
-		{"Manager", candidates.Manager, deployment.ManagerTreeMediaType, 512 << 20},
+		{"runtime", candidates.Runtime, deployment.RuntimeArtifactMediaType, 3 << 30},
+		{"manager", candidates.Manager, deployment.ManagerTreeMediaType, 512 << 20},
 		{"toolchain", candidates.Toolchain, deployment.ToolchainMediaType, 4 << 30},
 	}
 	for _, value := range values {
@@ -338,30 +338,30 @@ func (s *Server) validatePlatformCandidateObjects(
 		request.Candidates.Toolchain,
 	} {
 		if s.buildPolicy.DeniesDigest(candidate.Digest) {
-			return conflict(errors.New("Platform Artifact digest is denied"))
+			return conflict(errors.New("platform artifact digest is denied"))
 		}
 		object, err := s.platformStore.Stat(ctx, candidate.Digest)
 		if err != nil {
-			return fmt.Errorf("stat Platform Artifact %s: %w", candidate.Digest, err)
+			return fmt.Errorf("stat platform artifact %s: %w", candidate.Digest, err)
 		}
 		if object.Digest != candidate.Digest ||
 			object.SizeBytes != candidate.SizeBytes ||
 			object.MediaType != candidate.MediaType {
-			return conflict(errors.New("Platform Artifact metadata does not exact-match the candidate"))
+			return conflict(errors.New("platform artifact metadata does not exact-match the candidate"))
 		}
 		body, err := s.platformStore.Get(ctx, candidate.Digest)
 		if err != nil {
-			return fmt.Errorf("open Platform Artifact %s: %w", candidate.Digest, err)
+			return fmt.Errorf("open platform artifact %s: %w", candidate.Digest, err)
 		}
 		file, err := os.CreateTemp("", ".helmr-platform-artifact-*")
 		if err != nil {
 			_ = body.Close()
-			return fmt.Errorf("create Platform Artifact snapshot: %w", err)
+			return fmt.Errorf("create platform artifact snapshot: %w", err)
 		}
 		if err := os.Remove(file.Name()); err != nil {
 			_ = body.Close()
 			_ = file.Close()
-			return fmt.Errorf("unlink Platform Artifact snapshot: %w", err)
+			return fmt.Errorf("unlink platform artifact snapshot: %w", err)
 		}
 		hash := sha256.New()
 		size, copyErr := io.Copy(
@@ -376,7 +376,7 @@ func (s *Server) validatePlatformCandidateObjects(
 		actual := "sha256:" + hex.EncodeToString(hash.Sum(nil))
 		if size != candidate.SizeBytes || actual != candidate.Digest {
 			_ = file.Close()
-			return conflict(errors.New("Platform Artifact bytes do not exact-match the candidate"))
+			return conflict(errors.New("platform artifact bytes do not exact-match the candidate"))
 		}
 		files = append(files, candidateFile{object: candidate, file: file})
 	}
@@ -387,7 +387,7 @@ func (s *Server) validatePlatformCandidateObjects(
 		expectations.Runtime,
 	)
 	if err != nil {
-		return conflict(fmt.Errorf("validate Runtime candidate: %w", err))
+		return conflict(fmt.Errorf("validate runtime candidate: %w", err))
 	}
 	if _, err := deployment.InspectPlatformArtifact(
 		ctx,
@@ -395,7 +395,7 @@ func (s *Server) validatePlatformCandidateObjects(
 		platformDescriptor(files[1].object),
 		expectations.Manager,
 	); err != nil {
-		return conflict(fmt.Errorf("validate Manager candidate: %w", err))
+		return conflict(fmt.Errorf("validate manager candidate: %w", err))
 	}
 	toolchain, err := deployment.InspectPlatformArtifact(
 		ctx,
@@ -428,7 +428,7 @@ func validatePlatformCandidateBinding(
 		toolchain.Toolchain.NodeModuleABI != runtime.Runtime.NodeModuleABI ||
 		toolchain.Toolchain.NodeSource != runtime.Runtime.Source {
 		return errors.New(
-			"Runtime and toolchain candidates do not share one Node authority",
+			"runtime and toolchain candidates do not share one Node.js authority",
 		)
 	}
 	return nil

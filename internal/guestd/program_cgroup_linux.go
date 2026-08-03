@@ -30,7 +30,7 @@ func enterProgramCgroupNamespace(leaf string) error {
 	}
 	raw, err := os.ReadFile("/proc/self/cgroup")
 	if err != nil {
-		return fmt.Errorf("read Program cgroup identity: %w", err)
+		return fmt.Errorf("read program cgroup identity: %w", err)
 	}
 	expected := "0::" + strings.TrimPrefix(
 		filepath.Join(buildCgroupRoot, leaf),
@@ -38,12 +38,12 @@ func enterProgramCgroupNamespace(leaf string) error {
 	)
 	if strings.TrimSpace(string(raw)) != expected {
 		return fmt.Errorf(
-			"Program cgroup identity %q does not match assigned subtree",
+			"program cgroup identity %q does not match assigned subtree",
 			strings.TrimSpace(string(raw)),
 		)
 	}
 	if err := unix.Unshare(unix.CLONE_NEWCGROUP); err != nil {
-		return fmt.Errorf("create Program cgroup namespace: %w", err)
+		return fmt.Errorf("create program cgroup namespace: %w", err)
 	}
 	return nil
 }
@@ -58,26 +58,26 @@ func createProgramCgroup(leaf string) (programCgroup, error) {
 		0,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("open Program cgroup root: %w", err)
+		return nil, fmt.Errorf("open program cgroup root: %w", err)
 	}
 	defer unix.Close(rootFD)
 	processes, err := os.ReadFile(filepath.Join(buildCgroupRoot, "cgroup.procs"))
 	if err != nil {
-		return nil, fmt.Errorf("read Program cgroup root processes: %w", err)
+		return nil, fmt.Errorf("read program cgroup root processes: %w", err)
 	}
 	if len(bytes.TrimSpace(processes)) != 0 {
-		return nil, errors.New("Program cgroup root is not process-free")
+		return nil, errors.New("program cgroup root is not process-free")
 	}
 	path := filepath.Join(buildCgroupRoot, leaf)
 	if err := unix.Mkdirat(rootFD, leaf, 0o755); err != nil {
 		if !errors.Is(err, unix.EEXIST) {
-			return nil, fmt.Errorf("create Program cgroup: %w", err)
+			return nil, fmt.Errorf("create program cgroup: %w", err)
 		}
 		if cleanupErr := cleanupStaleProgramCgroup(path); cleanupErr != nil {
 			return nil, cleanupErr
 		}
 		if err := unix.Mkdirat(rootFD, leaf, 0o755); err != nil {
-			return nil, fmt.Errorf("recreate Program cgroup: %w", err)
+			return nil, fmt.Errorf("recreate program cgroup: %w", err)
 		}
 	}
 	cgroupFD, err := unix.Openat(
@@ -88,7 +88,7 @@ func createProgramCgroup(leaf string) (programCgroup, error) {
 	)
 	if err != nil {
 		_ = unix.Unlinkat(rootFD, leaf, unix.AT_REMOVEDIR)
-		return nil, fmt.Errorf("open Program cgroup: %w", err)
+		return nil, fmt.Errorf("open program cgroup: %w", err)
 	}
 	return &linuxProgramCgroup{
 		path: path,
@@ -98,23 +98,23 @@ func createProgramCgroup(leaf string) (programCgroup, error) {
 
 func cleanupStaleProgramCgroup(path string) error {
 	if err := killCgroup(path); err != nil {
-		return fmt.Errorf("kill stale Program cgroup: %w", err)
+		return fmt.Errorf("kill stale program cgroup: %w", err)
 	}
 	if err := waitCgroupEmpty(path); err != nil {
-		return fmt.Errorf("empty stale Program cgroup: %w", err)
+		return fmt.Errorf("empty stale program cgroup: %w", err)
 	}
 	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("remove stale Program cgroup: %w", err)
+		return fmt.Errorf("remove stale program cgroup: %w", err)
 	}
 	return nil
 }
 
 func (c *linuxProgramCgroup) attach(command *exec.Cmd) error {
 	if command == nil || command.SysProcAttr == nil {
-		return errors.New("Program command process attributes are required")
+		return errors.New("program command process attributes are required")
 	}
 	if c == nil || c.file == nil {
-		return errors.New("Program cgroup is required")
+		return errors.New("program cgroup is required")
 	}
 	command.SysProcAttr.UseCgroupFD = true
 	command.SysProcAttr.CgroupFD = int(c.file.Fd())
@@ -131,7 +131,7 @@ func (c *linuxProgramCgroup) thaw(ctx context.Context) error {
 
 func (c *linuxProgramCgroup) setFrozen(ctx context.Context, frozen bool) error {
 	if c == nil || c.file == nil {
-		return errors.New("Program cgroup is required")
+		return errors.New("program cgroup is required")
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -150,7 +150,7 @@ func (c *linuxProgramCgroup) setFrozen(ctx context.Context, frozen bool) error {
 		unix.O_WRONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0,
 	)
 	if err != nil {
-		return fmt.Errorf("open Program cgroup freeze control: %w", err)
+		return fmt.Errorf("open program cgroup freeze control: %w", err)
 	}
 	written, writeErr := unix.Write(fd, value)
 	closeErr := unix.Close(fd)
@@ -159,7 +159,7 @@ func (c *linuxProgramCgroup) setFrozen(ctx context.Context, frozen bool) error {
 			writeErr = io.ErrShortWrite
 		}
 		return fmt.Errorf(
-			"request Program cgroup %s: %w",
+			"request program cgroup %s: %w",
 			state, errors.Join(writeErr, closeErr),
 		)
 	}
@@ -179,7 +179,7 @@ func (c *linuxProgramCgroup) setFrozen(ctx context.Context, frozen bool) error {
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return fmt.Errorf("verify Program cgroup %s: %w", state, ctx.Err())
+			return fmt.Errorf("verify program cgroup %s: %w", state, ctx.Err())
 		case <-timer.C:
 		}
 	}
@@ -187,34 +187,34 @@ func (c *linuxProgramCgroup) setFrozen(ctx context.Context, frozen bool) error {
 
 func programCgroupTransitionComplete(observed, populated, wantFrozen bool) (bool, error) {
 	if wantFrozen && observed && !populated {
-		return false, errors.New("verify Program cgroup frozen: cgroup is empty")
+		return false, errors.New("verify program cgroup frozen: cgroup is empty")
 	}
 	return observed == wantFrozen, nil
 }
 
 func (c *linuxProgramCgroup) state() (frozen bool, populated bool, err error) {
 	if c == nil || c.file == nil {
-		return false, false, errors.New("Program cgroup is required")
+		return false, false, errors.New("program cgroup is required")
 	}
 	fd, err := unix.Openat(
 		int(c.file.Fd()), "cgroup.events",
 		unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0,
 	)
 	if err != nil {
-		return false, false, fmt.Errorf("open Program cgroup events: %w", err)
+		return false, false, fmt.Errorf("open program cgroup events: %w", err)
 	}
 	file := os.NewFile(uintptr(fd), "cgroup.events")
 	if file == nil {
 		_ = unix.Close(fd)
-		return false, false, errors.New("open Program cgroup events file")
+		return false, false, errors.New("open program cgroup events file")
 	}
 	body, readErr := io.ReadAll(io.LimitReader(file, 64*1024+1))
 	closeErr := file.Close()
 	if readErr != nil || closeErr != nil {
-		return false, false, fmt.Errorf("read Program cgroup events: %w", errors.Join(readErr, closeErr))
+		return false, false, fmt.Errorf("read program cgroup events: %w", errors.Join(readErr, closeErr))
 	}
 	if len(body) > 64*1024 {
-		return false, false, errors.New("Program cgroup events exceeded its bound")
+		return false, false, errors.New("program cgroup events exceeded its bound")
 	}
 	return parseProgramCgroupState(body)
 }
@@ -228,39 +228,39 @@ func parseProgramCgroupState(body []byte) (frozen bool, populated bool, err erro
 			continue
 		}
 		if len(fields) != 2 || (fields[1] != "0" && fields[1] != "1") {
-			return false, false, errors.New("Program cgroup state event is invalid")
+			return false, false, errors.New("program cgroup state event is invalid")
 		}
 		switch fields[0] {
 		case "frozen":
 			if foundFrozen {
-				return false, false, errors.New("Program cgroup frozen event is invalid")
+				return false, false, errors.New("program cgroup frozen event is invalid")
 			}
 			foundFrozen = true
 			frozen = fields[1] == "1"
 		case "populated":
 			if foundPopulated {
-				return false, false, errors.New("Program cgroup populated event is invalid")
+				return false, false, errors.New("program cgroup populated event is invalid")
 			}
 			foundPopulated = true
 			populated = fields[1] == "1"
 		}
 	}
 	if !foundFrozen || !foundPopulated {
-		return false, false, errors.New("Program cgroup state event is missing")
+		return false, false, errors.New("program cgroup state event is missing")
 	}
 	return frozen, populated, nil
 }
 
 func (c *linuxProgramCgroup) kill() error {
 	if c == nil || c.path == "" {
-		return errors.New("Program cgroup is required")
+		return errors.New("program cgroup is required")
 	}
 	return killCgroup(c.path)
 }
 
 func (c *linuxProgramCgroup) waitEmpty() error {
 	if c == nil || c.path == "" {
-		return errors.New("Program cgroup is required")
+		return errors.New("program cgroup is required")
 	}
 	return waitCgroupEmpty(c.path)
 }

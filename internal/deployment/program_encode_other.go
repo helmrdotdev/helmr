@@ -16,5 +16,5 @@ func encodeProgramTree(
 	iter.Seq2[treeEntry, error],
 	bool,
 ) (*artifactSnapshot, error) {
-	return nil, errors.New("Program encoding requires Linux")
+	return nil, errors.New("program encoding requires Linux")
 }

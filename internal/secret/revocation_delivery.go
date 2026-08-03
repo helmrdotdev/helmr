@@ -71,10 +71,10 @@ func NewRevocationDeliveryWorker(
 	reconcile RevocationReconcileBatch,
 ) (*RevocationDeliveryWorker, error) {
 	if store == nil {
-		return nil, errors.New("Secret revocation delivery store is required")
+		return nil, errors.New("secret revocation delivery store is required")
 	}
 	if reconcile == nil {
-		return nil, errors.New("Secret revocation reconciler is required")
+		return nil, errors.New("secret revocation reconciler is required")
 	}
 	if log == nil {
 		log = slog.Default()
@@ -183,8 +183,8 @@ func (w *RevocationDeliveryWorker) continueBatch(
 			ClaimAttempt: message.Attempts,
 			AvailableAt:  pgvalue.TimestamptzUTCZeroInvalid(w.now().UTC()),
 			LastError: outbox.Error(
-				errors.New("Secret revocation batch continuation"),
-				"Secret revocation delivery failed",
+				errors.New("secret revocation batch continuation"),
+				"secret revocation delivery failed",
 			),
 		},
 	)
@@ -209,7 +209,7 @@ func (w *RevocationDeliveryWorker) retry(
 			AvailableAt: pgvalue.TimestamptzUTCZeroInvalid(
 				w.now().UTC().Add(after),
 			),
-			LastError: outbox.Error(cause, "Secret revocation delivery failed"),
+			LastError: outbox.Error(cause, "secret revocation delivery failed"),
 		},
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -229,7 +229,7 @@ func (w *RevocationDeliveryWorker) deadLetter(
 			ID:           message.ID,
 			ClaimedBy:    message.ClaimedBy,
 			ClaimAttempt: message.Attempts,
-			LastError:    outbox.Error(cause, "Secret revocation delivery failed"),
+			LastError:    outbox.Error(cause, "secret revocation delivery failed"),
 		},
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -254,7 +254,7 @@ func decodeSecretRevocationPayload(
 	var value secretRevocationPayload
 	if err := decoder.Decode(&value); err != nil {
 		return secretRevocationPayload{},
-			fmt.Errorf("decode Secret revocation payload: %w", err)
+			fmt.Errorf("decode secret revocation payload: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
@@ -262,21 +262,21 @@ func decodeSecretRevocationPayload(
 			return secretRevocationPayload{}, err
 		}
 		return secretRevocationPayload{},
-			errors.New("Secret revocation payload contains a trailing JSON value")
+			errors.New("secret revocation payload contains a trailing JSON value")
 	}
 	environmentID, err := ids.Parse(value.EnvironmentID)
 	if err != nil {
 		return secretRevocationPayload{},
-			errors.New("Secret revocation environmentId is invalid")
+			errors.New("secret revocation environmentId is invalid")
 	}
 	secretID, err := ids.Parse(value.SecretID)
 	if err != nil {
 		return secretRevocationPayload{},
-			errors.New("Secret revocation secretId is invalid")
+			errors.New("secret revocation secretId is invalid")
 	}
 	if value.RevocationGeneration <= 0 {
 		return secretRevocationPayload{},
-			errors.New("Secret revocation generation must be positive")
+			errors.New("secret revocation generation must be positive")
 	}
 	value.environmentID = environmentID
 	value.secretID = secretID

@@ -561,7 +561,7 @@ func validateWorkspaceTarget(target WorkspaceTarget) error {
 		len(key) > maxWorkspaceKeyBytes ||
 		strings.ContainsRune(key, '\x00') ||
 		strings.TrimSpace(key) != key {
-		return errors.New("workspace target key is outside the exact Workspace key domain")
+		return errors.New("workspace target key is outside the exact workspace key domain")
 	}
 	return nil
 }

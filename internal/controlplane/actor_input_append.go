@@ -112,7 +112,7 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 		}
 		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, locator.WorkspaceID)
 		if err != nil {
-			return fmt.Errorf("lock Actor input continuation Secret authority: %w", err)
+			return fmt.Errorf("lock actor input continuation secret authority: %w", err)
 		}
 		sourceRunID := pgtype.UUID{}
 		if request.SourceRunID != uuid.Nil {
@@ -161,7 +161,7 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 					return errActorInputAppendConflict
 				}
 			} else if claimErr != nil {
-				return fmt.Errorf("complete Actor input idempotency claim: %w", claimErr)
+				return fmt.Errorf("complete actor input idempotency claim: %w", claimErr)
 			}
 		}
 
@@ -173,10 +173,10 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 		}
 		var currentRun db.Run
 		if lockedActor.CurrentRunID.Valid {
-			// The Actor row remains locked for the transaction, so its current
-			// Run cannot be replaced by completion while this read is used.
-			// Avoiding a second Run lock also keeps A→B/B→A sends from acquiring
-			// source and target Runs in opposite orders.
+			// The actor row remains locked for the transaction, so its current
+			// run cannot be replaced by completion while this read is used.
+			// Avoiding a second run lock also keeps A→B/B→A sends from acquiring
+			// source and target runs in opposite orders.
 			currentRun, err = work.q.GetActorInputCurrentRun(ctx, db.GetActorInputCurrentRunParams{
 				EnvironmentID: result.EnvironmentID, RunID: lockedActor.CurrentRunID, ActorID: result.ActorID,
 			})

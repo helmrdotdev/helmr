@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var errStaleRunFinalization = errors.New("Run finalization authority is stale")
+var errStaleRunFinalization = errors.New("run finalization authority is stale")
 
 type parsedRunFinalization struct {
 	lease       parsedRunLeaseFence
@@ -47,7 +47,7 @@ func parseRunFinalization(request workerapi.BeginRunFinalizationRequest) (parsed
 	}
 	if quiescedLeaseID != lease.leaseID ||
 		request.ProgramQuiesced.AttemptNumber <= 0 {
-		return parsedRunFinalization{}, errors.New("program_quiesced does not match the Run Lease")
+		return parsedRunFinalization{}, errors.New("program_quiesced does not match the run lease")
 	}
 	normalized := request
 	normalized.OperationID = operationID.String()
@@ -55,7 +55,7 @@ func parseRunFinalization(request workerapi.BeginRunFinalizationRequest) (parsed
 	normalized.ProgramQuiesced.RunLeaseID = quiescedLeaseID.String()
 	fingerprint, err := terminalRequestFingerprint("run.finalization.begin.v0", normalized)
 	if err != nil {
-		return parsedRunFinalization{}, fmt.Errorf("fingerprint Run finalization: %w", err)
+		return parsedRunFinalization{}, fmt.Errorf("fingerprint run finalization: %w", err)
 	}
 	return parsedRunFinalization{
 		lease: lease, runID: quiescedRunID, attempt: request.ProgramQuiesced.AttemptNumber,
@@ -90,7 +90,7 @@ func (s *Server) beginRunFinalization(
 			locators.AttemptNumber,
 			locators.WorkspaceID,
 		); err != nil {
-			return fmt.Errorf("lock Run finalization Secret authority: %w", err)
+			return fmt.Errorf("lock run finalization secret authority: %w", err)
 		}
 		authority, err := lockLiveRunFinalizationAuthority(
 			ctx,
@@ -159,7 +159,7 @@ func (s *Server) beginRunFinalization(
 		now, err := work.q.GetRunFinalizationTime(ctx)
 		if err != nil || !now.Valid {
 			if err == nil {
-				err = errors.New("database Run finalization time is unavailable")
+				err = errors.New("database run finalization time is unavailable")
 			}
 			return err
 		}

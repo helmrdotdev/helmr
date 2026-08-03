@@ -44,7 +44,7 @@ func TestBuildGuestUsesOneNetworkedVM(t *testing.T) {
 				return err
 			}
 			if actual.Manager.Artifact.Digest != request.Manager.Artifact.Digest {
-				return errors.New("Manager changed")
+				return errors.New("manager changed")
 			}
 			actualSource, err := io.ReadAll(body)
 			if err != nil {

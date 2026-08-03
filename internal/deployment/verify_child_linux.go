@@ -157,7 +157,7 @@ func verifyProgramDescriptor(ctx context.Context, fd int) ([]byte, error) {
 		ProgramArtifactMediaType,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("program Artifact: %w", err)
+		return nil, fmt.Errorf("program artifact: %w", err)
 	}
 
 	verified, err := verifyProgramArtifact(ctx, artifact)
@@ -170,7 +170,7 @@ func verifyProgramDescriptor(ctx context.Context, fd int) ([]byte, error) {
 	})
 	if err != nil {
 		return nil, &artifactInfrastructureError{
-			cause: fmt.Errorf("canonicalize verified Program: %w", err),
+			cause: fmt.Errorf("canonicalize verified program: %w", err),
 		}
 	}
 	return canonical, nil
@@ -184,7 +184,7 @@ func verifyRuntimeDescriptor(ctx context.Context, fd int) ([]byte, error) {
 		RuntimeArtifactMediaType,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("runtime Artifact: %w", err)
+		return nil, fmt.Errorf("runtime artifact: %w", err)
 	}
 	index, err := verifyRuntimeArtifact(ctx, artifact)
 	if err != nil {
@@ -193,7 +193,7 @@ func verifyRuntimeDescriptor(ctx context.Context, fd int) ([]byte, error) {
 	canonical, err := CanonicalRuntimeIndex(index)
 	if err != nil {
 		return nil, &artifactInfrastructureError{
-			cause: fmt.Errorf("canonicalize verified Runtime index: %w", err),
+			cause: fmt.Errorf("canonicalize verified runtime index: %w", err),
 		}
 	}
 	return canonical, nil
@@ -271,11 +271,11 @@ func digestVerifierDescriptor(
 			length = remaining
 		}
 		if err := readSquashFSAt(source, buffer[:int(length)], offset); err != nil {
-			return "", fmt.Errorf("digest Artifact: %w", err)
+			return "", fmt.Errorf("digest artifact: %w", err)
 		}
 		if _, err := hash.Write(buffer[:int(length)]); err != nil {
 			return "", &artifactInfrastructureError{
-				cause: fmt.Errorf("digest Artifact: %w", err),
+				cause: fmt.Errorf("digest artifact: %w", err),
 			}
 		}
 		offset += length
@@ -402,7 +402,7 @@ func validateVerifierDescriptors(job verifierJob, forbiddenOwner *uint32) error 
 			verifierArtifactBaseFD+index,
 			forbiddenOwner,
 		); err != nil {
-			return fmt.Errorf("%s Artifact descriptor %d: %w", job, index, err)
+			return fmt.Errorf("%s artifact descriptor %d: %w", job, index, err)
 		}
 	}
 	flags, err := unix.FcntlInt(uintptr(verifierResultFD), unix.F_GETFL, 0)

@@ -27,7 +27,7 @@ func (controlPlane workerImageControlPlane) AdmitWorkspaceImage(
 	request programbuild.AdmissionRequest,
 ) (programbuild.Assignment, error) {
 	if controlPlane.client == nil {
-		return programbuild.Assignment{}, errors.New("Workspace image Control Plane client is required")
+		return programbuild.Assignment{}, errors.New("workspace image control plane client is required")
 	}
 	response, err := controlPlane.client.AdmitWorkspaceImage(ctx, workerapi.WorkspaceImageAdmissionRequest{
 		Lease:                  workerImageAPILease(request.Lease),
@@ -104,7 +104,7 @@ func (controlPlane workerImageControlPlane) FetchRegistryCredentials(
 	request programbuild.RegistryCredentialRequest,
 ) ([]imagebuild.RegistryCredentialValue, error) {
 	if controlPlane.client == nil {
-		return nil, errors.New("Workspace image Control Plane client is required")
+		return nil, errors.New("workspace image control plane client is required")
 	}
 	response, err := controlPlane.client.FetchWorkspaceImageCredentials(ctx, workerapi.WorkspaceImageCredentialRequest{
 		Lease: workerImageAPILease(request.Lease), OperationID: request.OperationID,
@@ -120,7 +120,7 @@ func (controlPlane workerImageControlPlane) FetchRegistryCredentials(
 		response.Envelope.ResolutionSetDigest != request.ResolutionSetDigest ||
 		imagebuild.ResolutionSetDigest(request.RegistryBindings) != request.ResolutionSetDigest {
 		clearWorkerImageCredentials(credentials)
-		return nil, errors.New("Workspace image credential response does not exact-match the request")
+		return nil, errors.New("workspace image credential response does not exact-match the request")
 	}
 	expected := make(map[string]string, len(request.RegistryBindings))
 	for _, binding := range request.RegistryBindings {
@@ -128,18 +128,18 @@ func (controlPlane workerImageControlPlane) FetchRegistryCredentials(
 	}
 	if len(credentials) != len(expected) {
 		clearWorkerImageCredentials(credentials)
-		return nil, errors.New("Workspace image credential response is incomplete")
+		return nil, errors.New("workspace image credential response is incomplete")
 	}
 	for _, credential := range credentials {
 		if expected[credential.Authority] != credential.Username || len(credential.Password) == 0 {
 			clearWorkerImageCredentials(credentials)
-			return nil, errors.New("Workspace image credential authority does not exact-match the request")
+			return nil, errors.New("workspace image credential authority does not exact-match the request")
 		}
 		delete(expected, credential.Authority)
 	}
 	if len(expected) != 0 {
 		clearWorkerImageCredentials(credentials)
-		return nil, errors.New("Workspace image credential response is incomplete")
+		return nil, errors.New("workspace image credential response is incomplete")
 	}
 	return credentials, nil
 }
@@ -149,15 +149,15 @@ func (controlPlane workerImageControlPlane) CompleteWorkspaceImage(
 	request programbuild.CompletionRequest,
 ) error {
 	if controlPlane.client == nil {
-		return errors.New("Workspace image Control Plane client is required")
+		return errors.New("workspace image control plane client is required")
 	}
 	if request.Evidence.GuestResult.Outcome == imagebuild.GuestSucceeded {
 		if request.Artifact == nil || request.Artifact.Digest != request.Evidence.GuestResult.OCIDigest ||
 			request.Artifact.SizeBytes != request.Evidence.GuestResult.OCISizeBytes {
-			return errors.New("successful Workspace image completion is missing its published Artifact")
+			return errors.New("successful workspace image completion is missing its published artifact")
 		}
 	} else if request.Artifact != nil {
-		return errors.New("failed Workspace image completion must not contain an Artifact")
+		return errors.New("failed workspace image completion must not contain an artifact")
 	}
 	response, err := controlPlane.client.CompleteWorkspaceImage(ctx, workerapi.WorkspaceImageOperationResultRequest{
 		Lease:           workerImageAPILease(request.Evidence.Lease),
@@ -176,7 +176,7 @@ func (controlPlane workerImageControlPlane) CompleteWorkspaceImage(
 	}
 	if response.OperationID != request.Evidence.OperationID || response.AttemptID != request.Evidence.AttemptID ||
 		response.State != wantState || response.Result != request.Evidence.GuestResult {
-		return errors.New("Workspace image completion response does not exact-match the terminal receipt")
+		return errors.New("workspace image completion response does not exact-match the terminal receipt")
 	}
 	return nil
 }

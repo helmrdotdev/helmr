@@ -42,7 +42,7 @@ func encodePlatformTree(
 
 func (tree *platformTree) descriptor() (ArtifactDescriptor, error) {
 	if tree == nil || tree.artifact == nil {
-		return ArtifactDescriptor{}, errors.New("Platform tree is closed")
+		return ArtifactDescriptor{}, errors.New("platform tree is closed")
 	}
 	return platformSnapshotDescriptor(tree.artifact.descriptor), nil
 }
@@ -52,7 +52,7 @@ func (tree *platformTree) validate(
 	expectation PlatformArtifactExpectation,
 ) error {
 	if tree == nil || tree.artifact == nil {
-		return errors.New("Platform tree is closed")
+		return errors.New("platform tree is closed")
 	}
 	file, err := tree.artifact.verifierFile()
 	if err != nil {
@@ -76,10 +76,10 @@ func (tree *platformTree) publish(
 	store cas.ImmutableStore,
 ) (cas.Object, error) {
 	if tree == nil || tree.artifact == nil {
-		return cas.Object{}, errors.New("Platform tree is closed")
+		return cas.Object{}, errors.New("platform tree is closed")
 	}
 	if store == nil {
-		return cas.Object{}, errors.New("Platform Artifact store is required")
+		return cas.Object{}, errors.New("platform artifact store is required")
 	}
 	expected := cas.Descriptor{
 		Digest:    tree.artifact.descriptor.Digest,
@@ -105,7 +105,7 @@ func filesystemTreeEntries(
 	return func(yield func(treeEntry, error) bool) {
 		root = filepath.Clean(root)
 		if !filepath.IsAbs(root) {
-			yield(treeEntry{}, errors.New("Platform tree root is not absolute"))
+			yield(treeEntry{}, errors.New("platform tree root is not absolute"))
 			return
 		}
 		err := filepath.WalkDir(root, func(name string, entry os.DirEntry, walkErr error) error {
@@ -162,7 +162,7 @@ func filesystemTreeEntries(
 				value.Mode = 0777
 				value.LinkTarget = filepath.ToSlash(target)
 			default:
-				return fmt.Errorf("Platform tree path %q has unsupported file type", relative)
+				return fmt.Errorf("platform tree path %q has unsupported file type", relative)
 			}
 			if !yield(value, nil) {
 				return filepath.SkipAll
@@ -186,19 +186,19 @@ func writePlatformDocuments(
 	helmr := filepath.Join(root, "helmr")
 	upstream := filepath.Join(helmr, "upstream")
 	if err := os.MkdirAll(upstream, 0755); err != nil {
-		return fmt.Errorf("create Platform metadata tree: %w", err)
+		return fmt.Errorf("create platform metadata tree: %w", err)
 	}
 	for name, raw := range evidence.documents {
 		if strings.Contains(name, "/") || filepath.Base(name) != name || name == "" {
-			return fmt.Errorf("Platform evidence name %q is invalid", name)
+			return fmt.Errorf("platform evidence name %q is invalid", name)
 		}
 		if err := os.WriteFile(filepath.Join(upstream, name), raw, 0644); err != nil {
-			return fmt.Errorf("write Platform evidence %q: %w", name, err)
+			return fmt.Errorf("write platform evidence %q: %w", name, err)
 		}
 	}
 	if evidence.source != nil {
 		if _, err := evidence.source.file.Seek(0, io.SeekStart); err != nil {
-			return fmt.Errorf("rewind Platform source evidence: %w", err)
+			return fmt.Errorf("rewind platform source evidence: %w", err)
 		}
 		output, err := os.OpenFile(
 			filepath.Join(upstream, "source"),
@@ -206,7 +206,7 @@ func writePlatformDocuments(
 			0644,
 		)
 		if err != nil {
-			return fmt.Errorf("create Platform source evidence: %w", err)
+			return fmt.Errorf("create platform source evidence: %w", err)
 		}
 		written, copyErr := copyExact(
 			ctx,
@@ -220,7 +220,7 @@ func writePlatformDocuments(
 			return errors.Join(
 				copyErr,
 				closeErr,
-				errors.New("Platform source evidence size changed"),
+				errors.New("platform source evidence size changed"),
 			)
 		}
 	}
@@ -265,7 +265,7 @@ func normalizePlatformTree(root string) error {
 		case info.Mode()&os.ModeSymlink != 0:
 			return nil
 		default:
-			return fmt.Errorf("Platform tree contains unsupported path %q", name)
+			return fmt.Errorf("platform tree contains unsupported path %q", name)
 		}
 	})
 }

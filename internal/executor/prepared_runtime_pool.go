@@ -324,7 +324,7 @@ func (p *PreparedRuntimePool) ReconcileDesiredRuntimes(ctx context.Context, clie
 
 func (p *PreparedRuntimePool) ReclaimFailedRuntimeTarget(ctx context.Context, client PreparedRuntimeInstanceClient, target workerapi.RuntimeReconcileTarget) error {
 	if p == nil || client == nil {
-		return errors.New("failed runtime reclaim requires pool and Control Plane client")
+		return errors.New("failed runtime reclaim requires pool and control plane client")
 	}
 	runtimeInstanceID := strings.TrimSpace(target.ID)
 	if runtimeInstanceID == "" || target.WorkerEpoch <= 0 {
@@ -805,10 +805,10 @@ func (p *PreparedRuntimePool) verifyReservedWorkspaceVersion(
 	mount workerapi.WorkspaceMount,
 ) error {
 	if strings.TrimSpace(mount.BaseVersionID) == "" {
-		return errors.New("runtime reservation base Workspace version is required")
+		return errors.New("runtime reservation base workspace version is required")
 	}
 	if err := validateWorkspaceArtifactShape(mount.WorkspaceArtifact); err != nil {
-		return fmt.Errorf("runtime reservation Workspace Artifact: %w", err)
+		return fmt.Errorf("runtime reservation workspace artifact: %w", err)
 	}
 	if workspaceArtifactIsEmpty(mount.WorkspaceArtifact) {
 		return nil
@@ -835,7 +835,7 @@ func (p *PreparedRuntimePool) prepareProgram(
 	program := target.Source.Program
 	if string(p.RuntimeArchitecture) != target.Source.WorkspaceArchitecture {
 		return nil, func() error { return nil }, fmt.Errorf(
-			"worker architecture %q does not match Workspace architecture %q",
+			"worker architecture %q does not match workspace architecture %q",
 			p.RuntimeArchitecture,
 			target.Source.WorkspaceArchitecture,
 		)
@@ -844,14 +844,14 @@ func (p *PreparedRuntimePool) prepareProgram(
 		return nil, func() error { return nil }, nil
 	}
 	if strings.TrimSpace(program.DeploymentID) == "" {
-		return nil, func() error { return nil }, errors.New("Program deployment id is required")
+		return nil, func() error { return nil }, errors.New("program deployment id is required")
 	}
 	if p.PlatformStore == nil {
-		return nil, func() error { return nil }, errors.New("Managed Runtime delivery is not configured")
+		return nil, func() error { return nil }, errors.New("managed runtime delivery is not configured")
 	}
 	if string(p.RuntimeArchitecture) != target.Source.WorkspaceArchitecture {
 		return nil, func() error { return nil }, fmt.Errorf(
-			"Managed Runtime architecture %q does not match Workspace architecture %q",
+			"managed runtime architecture %q does not match workspace architecture %q",
 			p.RuntimeArchitecture,
 			target.Source.WorkspaceArchitecture,
 		)
@@ -882,7 +882,7 @@ func (p *PreparedRuntimePool) prepareProgram(
 	)
 	if err != nil {
 		return nil, func() error { return nil }, errors.Join(
-			fmt.Errorf("verify Managed Runtime: %w", err),
+			fmt.Errorf("verify managed runtime: %w", err),
 			closeSnapshots(),
 		)
 	}
@@ -893,7 +893,7 @@ func (p *PreparedRuntimePool) prepareProgram(
 	}
 	if runtimeIndex != expectedRuntimeIndex {
 		return nil, func() error { return nil }, errors.Join(
-			errors.New("Managed Runtime index does not match its descriptor"),
+			errors.New("managed runtime index does not match its descriptor"),
 			closeSnapshots(),
 		)
 	}
@@ -919,7 +919,7 @@ func (p *PreparedRuntimePool) prepareProgram(
 	)
 	if err != nil {
 		return nil, func() error { return nil }, errors.Join(
-			fmt.Errorf("verify Program: %w", err),
+			fmt.Errorf("verify program: %w", err),
 			closeSnapshots(),
 		)
 	}
@@ -927,7 +927,7 @@ func (p *PreparedRuntimePool) prepareProgram(
 		programIndex.Architecture != runtimeDescriptor.Architecture ||
 		program.BuildContractVersion != deployment.ProgramBuildContractVersion {
 		return nil, func() error { return nil }, errors.Join(
-			errors.New("Program index does not match runtime reservation authority"),
+			errors.New("program index does not match runtime reservation authority"),
 			closeSnapshots(),
 		)
 	}
@@ -957,10 +957,10 @@ func verifyProgramIndexDigest(
 ) error {
 	indexBytes, err := deployment.CanonicalProgramIndex(index)
 	if err != nil {
-		return fmt.Errorf("canonicalize verified Program index: %w", err)
+		return fmt.Errorf("canonicalize verified program index: %w", err)
 	}
 	if sha256sum.DigestBytes(indexBytes) != expectedDigest {
-		return errors.New("Program index does not match Deployment authority")
+		return errors.New("program index does not match deployment authority")
 	}
 	return nil
 }
@@ -1202,7 +1202,7 @@ func preparedRuntimeWorkspaceMountFromSource(source workerapi.RuntimeSource) wor
 		WorkspaceArtifact:       source.WorkspaceArtifact,
 		RootfsDigest:            strings.TrimSpace(source.RootfsDigest),
 		WorkspaceMountPath:      "/workspace",
-		RequestedMilliCPU:       int64(source.ReservedCpuMillis),
+		RequestedMilliCPU:       int64(source.ReservedCPUMillis),
 		RequestedMemoryMiB:      int64(source.ReservedMemoryMiB),
 		RequestedDiskMiB:        source.ReservedDiskMiB,
 		RequestedExecutionSlots: source.ReservedExecutionSlots,
@@ -1322,7 +1322,7 @@ func (p *PreparedRuntimePool) reserveRuntimeCapacity(target workerapi.RuntimeRec
 		return errors.New("prepared runtime capacity ledger is required")
 	}
 	request, err := runtimeCapacityVector(
-		int64(target.Source.ReservedCpuMillis),
+		int64(target.Source.ReservedCPUMillis),
 		int64(target.Source.ReservedMemoryMiB),
 		target.Source.ReservedDiskMiB,
 	)

@@ -48,14 +48,14 @@ func (s *Server) workerCreateTimerRunWait(
 	normalized := request
 	normalized.Params, err = json.Marshal(params)
 	if err != nil {
-		writeError(w, badRequest(fmt.Errorf("normalize timer Wait params: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("normalize timer wait params: %w", err)))
 		return
 	}
 	normalized.Metadata = metadata
 	normalized.Tags = tags
 	fingerprint, err := terminalRequestFingerprint("worker.run-wait.create.v1", normalized)
 	if err != nil {
-		writeError(w, badRequest(fmt.Errorf("fingerprint timer Wait registration: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("fingerprint timer wait registration: %w", err)))
 		return
 	}
 	waitID := identity.waitID
@@ -81,7 +81,7 @@ func (s *Server) workerCreateTimerRunWait(
 			r.Context(), work.q, locators.RunID, locators.AttemptNumber,
 			locators.WorkspaceID,
 		); err != nil {
-			return fmt.Errorf("lock timer Wait Secret authority: %w", err)
+			return fmt.Errorf("lock timer wait secret authority: %w", err)
 		}
 		owner, err := lockRunFinalizationOwner(r.Context(), work.q, locators)
 		if err != nil {
@@ -149,12 +149,12 @@ func (s *Server) workerCreateTimerRunWait(
 		return nil
 	})
 	if errors.Is(err, errStaleRunLeaseClaim) {
-		writeError(w, conflict(errors.New("worker timer Wait receipt is stale")))
+		writeError(w, conflict(errors.New("worker timer wait receipt is stale")))
 		return
 	}
 	if err != nil {
 		s.log.Error("register worker timer Wait failed", "run_id", pgvalue.UUIDString(registrationLocators.RunID), "error", err)
-		writeError(w, errors.New("register worker timer Wait"))
+		writeError(w, errors.New("register worker timer wait"))
 		return
 	}
 	response := workerapi.CreateRunWaitResponse{
@@ -180,11 +180,11 @@ func timerWaitDeadlines(
 	var params workerTimerWaitParams
 	if err := decodeClosedJSON(request.Params, &params); err != nil {
 		return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{}, 0,
-			fmt.Errorf("invalid timer Wait params: %w", err)
+			fmt.Errorf("invalid timer wait params: %w", err)
 	}
 	if (params.Duration == nil) == (params.Date == nil) {
 		return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{}, 0,
-			errors.New("timer Wait params must contain exactly one of duration or date")
+			errors.New("timer wait params must contain exactly one of duration or date")
 	}
 	if request.TimeoutMS == nil || *request.TimeoutMS <= 0 ||
 		*request.TimeoutMS > maxRunWaitDuration.Milliseconds() {
@@ -266,7 +266,7 @@ func parseTimerDuration(value string) (time.Duration, error) {
 
 func timerWaitDecision(wait db.RunWait) (string, json.RawMessage, error) {
 	if wait.Kind != db.WaitKindTimer || wait.ConditionState != db.WaitStateCompleted {
-		return "", nil, errors.New("timer Wait decision is not completed")
+		return "", nil, errors.New("timer wait decision is not completed")
 	}
 	return "completed", json.RawMessage(`null`), nil
 }

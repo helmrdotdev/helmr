@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var errStaleWorkerRunSource = errors.New("worker Run source authority is stale")
+var errStaleWorkerRunSource = errors.New("worker run source authority is stale")
 
 type workerRunSourceAuthority struct {
 	OrgID         pgtype.UUID

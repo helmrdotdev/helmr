@@ -259,11 +259,11 @@ func (m WorkspaceMaterializer) serveWorkspaceMount(
 			}
 			update, err := m.completeWorkspaceBasicExec(renewal.ctx, client, completion)
 			if err != nil {
-				return failAndReturn(fmt.Errorf("complete Workspace exec: %w", err))
+				return failAndReturn(fmt.Errorf("complete workspace exec: %w", err))
 			}
 			if strings.TrimSpace(update.State) != "unmounting" {
 				return failAndReturn(fmt.Errorf(
-					"complete Workspace exec returned mount state %q",
+					"complete workspace exec returned mount state %q",
 					update.State,
 				))
 			}
@@ -313,7 +313,7 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 	channelToken := m.channelToken(mount)
 	if channelToken == "" {
 		return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
-			errors.New("Workspace mount guest channel token is required"),
+			errors.New("workspace mount guest channel token is required"),
 		)
 	}
 	if strings.TrimSpace(exec.ProcessID) == "" ||
@@ -321,13 +321,13 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 		strings.TrimSpace(exec.WorkspaceLeaseID) == "" ||
 		strings.TrimSpace(exec.WriteCapability) == "" {
 		return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
-			errors.New("Workspace exec claim is incomplete"),
+			errors.New("workspace exec claim is incomplete"),
 		)
 	}
 	if strings.TrimSpace(exec.WorkspaceMountID) != strings.TrimSpace(mount.ID) ||
 		strings.TrimSpace(exec.WorkspaceID) != strings.TrimSpace(mount.WorkspaceID) {
 		return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
-			errors.New("Workspace exec claim does not match the live mount"),
+			errors.New("workspace exec claim does not match the live mount"),
 		)
 	}
 	if exec.FencingGeneration <= 0 ||
@@ -336,7 +336,7 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 		exec.ExpiresAt.IsZero() ||
 		!exec.ExpiresAt.After(time.Now()) {
 		return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
-			errors.New("Workspace exec claim fence is invalid or expired"),
+			errors.New("workspace exec claim fence is invalid or expired"),
 		)
 	}
 	request := &workspacev0.WorkspaceBasicExecRequest{
@@ -366,19 +366,19 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 			secret.PlacementTarget = strings.TrimSpace(delivery.File.Path)
 		default:
 			return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
-				errors.New("Workspace exec Secret placement is invalid"),
+				errors.New("workspace exec secret placement is invalid"),
 			)
 		}
 		if secret.PlacementTarget == "" {
 			return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
-				errors.New("Workspace exec Secret placement target is required"),
+				errors.New("workspace exec secret placement target is required"),
 			)
 		}
 		request.Secrets = append(request.Secrets, secret)
 	}
 	stream, err := session.OpenStream(ctx)
 	if err != nil {
-		return workerapi.WorkspaceExecCompleteRequest{}, fmt.Errorf("open Workspace exec stream: %w", err)
+		return workerapi.WorkspaceExecCompleteRequest{}, fmt.Errorf("open workspace exec stream: %w", err)
 	}
 	defer stream.Close()
 	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
@@ -386,19 +386,19 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 		WorkspaceID: mount.WorkspaceID,
 		OperationID: exec.ProcessID,
 	}, 0); err != nil {
-		return workerapi.WorkspaceExecCompleteRequest{}, fmt.Errorf("write Workspace exec header: %w", err)
+		return workerapi.WorkspaceExecCompleteRequest{}, fmt.Errorf("write workspace exec header: %w", err)
 	}
 	if err := frameio.WriteProtoFrame(stream, request); err != nil {
-		return workerapi.WorkspaceExecCompleteRequest{}, fmt.Errorf("write Workspace exec request: %w", err)
+		return workerapi.WorkspaceExecCompleteRequest{}, fmt.Errorf("write workspace exec request: %w", err)
 	}
 	var result workspacev0.WorkspaceBasicExecResult
 	if err := readProtoFrameFromReaderContext(ctx, session, stream, &result); err != nil {
-		return workerapi.WorkspaceExecCompleteRequest{}, fmt.Errorf("read Workspace exec result: %w", err)
+		return workerapi.WorkspaceExecCompleteRequest{}, fmt.Errorf("read workspace exec result: %w", err)
 	}
 	if strings.TrimSpace(result.GetRequestFingerprint()) !=
 		strings.TrimSpace(exec.RequestFingerprint) {
 		return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
-			errors.New("Workspace exec result fingerprint does not match its claim"),
+			errors.New("workspace exec result fingerprint does not match its claim"),
 		)
 	}
 	outcome := strings.TrimSpace(result.GetOutcome())
@@ -423,7 +423,7 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 		completion.ExitCode = &exitCode
 		if strings.TrimSpace(result.GetErrorJson()) != "" {
 			return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
-				errors.New("exited Workspace exec returned an error"),
+				errors.New("exited workspace exec returned an error"),
 			)
 		}
 		return completion, nil
@@ -431,7 +431,7 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 	if strings.TrimSpace(result.GetErrorJson()) == "" ||
 		!json.Valid([]byte(result.GetErrorJson())) {
 		return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
-			errors.New("failed Workspace exec returned invalid error JSON"),
+			errors.New("failed workspace exec returned invalid error JSON"),
 		)
 	}
 	completion.Error = json.RawMessage(result.GetErrorJson())
@@ -455,11 +455,11 @@ func validateWorkspaceBasicExecOutcome(outcome string) error {
 		"workspace_exec_fingerprint_conflict",
 		"workspace_exec_unavailable":
 		return workspaceBasicExecProtocol(
-			fmt.Errorf("Workspace exec guest rejected authority: %s", outcome),
+			fmt.Errorf("workspace exec guest rejected authority: %s", outcome),
 		)
 	default:
 		return workspaceBasicExecProtocol(
-			fmt.Errorf("Workspace exec result outcome %q is unsupported", outcome),
+			fmt.Errorf("workspace exec result outcome %q is unsupported", outcome),
 		)
 	}
 }
@@ -1256,7 +1256,7 @@ func (m WorkspaceMaterializer) registerWorkspaceMountContext(ctx context.Context
 
 func (m WorkspaceMaterializer) stopControlledWorkspaceMount(ctx context.Context, session vm.Session, mount workerapi.WorkspaceMount, update workerapi.WorkspaceMountResponse, client workerapi.WorkspaceMaterializerControlPlaneClient) error {
 	if strings.TrimSpace(update.State) != "unmounting" {
-		return fmt.Errorf("Workspace mount stop requires unmounting state, got %q", update.State)
+		return fmt.Errorf("workspace mount stop requires unmounting state, got %q", update.State)
 	}
 	var capture bool
 	switch strings.TrimSpace(update.FinalizationKind) {
@@ -1265,12 +1265,12 @@ func (m WorkspaceMaterializer) stopControlledWorkspaceMount(ctx context.Context,
 	case "discard":
 		capture = false
 	case "":
-		// Run-owned mounts still carry their capture decision through the Run
+		// Run-owned mounts still carry their capture decision through the run
 		// finalization contract. Process-owned BasicExec mounts always use the
 		// explicit capture/discard marker.
 		capture = update.DirtyGeneration > 0
 	default:
-		return fmt.Errorf("Workspace mount finalization kind %q is unsupported", update.FinalizationKind)
+		return fmt.Errorf("workspace mount finalization kind %q is unsupported", update.FinalizationKind)
 	}
 	fencingGeneration := max(update.FencingGeneration, mount.FencingGeneration)
 	artifact, err := m.stopWorkspaceGuest(ctx, session, mount, fencingGeneration, capture, !capture)

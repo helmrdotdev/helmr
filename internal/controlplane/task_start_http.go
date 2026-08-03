@@ -25,7 +25,7 @@ func (s *Server) startTaskHTTP(w http.ResponseWriter, r *http.Request) {
 		var maxBytesError *http.MaxBytesError
 		if errors.As(err, &maxBytesError) {
 			writeError(w, tooLarge(codedError{
-				code: "task_start_request_too_large", message: "Task start request is too large",
+				code: "task_start_request_too_large", message: "task start request is too large",
 			}))
 			return
 		}
@@ -66,7 +66,7 @@ func (s *Server) startTaskHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, unavailable(codedError{
 			code:    "task_start_authority_unavailable",
-			message: "Task start Environment scope is unavailable", retryable: true,
+			message: "task start environment scope is unavailable", retryable: true,
 		}))
 		return
 	}
@@ -75,7 +75,7 @@ func (s *Server) startTaskHTTP(w http.ResponseWriter, r *http.Request) {
 	if projectErr != nil || environmentErr != nil {
 		writeError(w, unavailable(codedError{
 			code:    "task_start_authority_unavailable",
-			message: "Task start authority is unavailable", retryable: true,
+			message: "task start authority is unavailable", retryable: true,
 		}))
 		return
 	}
@@ -110,7 +110,7 @@ func decodeStartTaskRequest(r *http.Request) (api.StartTaskRequest, bool, error)
 	}
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(canonical, &root); err != nil || root == nil {
-		return api.StartTaskRequest{}, false, errors.New("Task start request must be a JSON object")
+		return api.StartTaskRequest{}, false, errors.New("task start request must be a JSON object")
 	}
 	if err := rejectActorStartNullFields(
 		root,
@@ -188,7 +188,7 @@ func decodeStartTaskRequest(r *http.Request) (api.StartTaskRequest, bool, error)
 		return api.StartTaskRequest{}, false, err
 	}
 	if decoder.Decode(&struct{}{}) != io.EOF {
-		return api.StartTaskRequest{}, false, errors.New("Task start request contains a trailing value")
+		return api.StartTaskRequest{}, false, errors.New("task start request contains a trailing value")
 	}
 	_, payloadPresent := root["payload"]
 	return request, payloadPresent, nil
@@ -238,7 +238,7 @@ func (s *Server) writeTaskStartError(w http.ResponseWriter, err error) {
 	case errors.As(err, &idempotencyConflict):
 		writeError(w, conflict(codedError{
 			code:    "idempotency_conflict",
-			message: "idempotency key conflicts with an earlier Task start",
+			message: "idempotency key conflicts with an earlier task start",
 		}))
 	case errors.Is(err, errTaskNotDeployed):
 		writeError(w, notFound(codedError{code: "task_not_deployed", message: err.Error()}))
@@ -255,7 +255,7 @@ func (s *Server) writeTaskStartError(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, unavailable(codedError{
 			code:    "task_start_authority_unavailable",
-			message: "Task start authority is unavailable", retryable: true,
+			message: "task start authority is unavailable", retryable: true,
 		}))
 	}
 }

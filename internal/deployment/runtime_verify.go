@@ -39,7 +39,7 @@ func VerifyRuntimeArtifact(
 	}
 	if descriptor.SizeBytes > maxRuntimePhysicalBytes {
 		return RuntimeIndex{}, fmt.Errorf(
-			"runtime Artifact size exceeds %d bytes",
+			"runtime artifact size exceeds %d bytes",
 			maxRuntimePhysicalBytes,
 		)
 	}
@@ -73,7 +73,7 @@ func verifiedRuntimeResult(
 ) (RuntimeIndex, error) {
 	index, err := ParseRuntimeIndex(payload)
 	if err != nil {
-		return RuntimeIndex{}, fmt.Errorf("parse verified Runtime index: %w", err)
+		return RuntimeIndex{}, fmt.Errorf("parse verified runtime index: %w", err)
 	}
 	if index.Architecture != descriptor.Architecture {
 		return RuntimeIndex{}, fmt.Errorf(
@@ -151,7 +151,7 @@ func verifyRuntimeTopology(
 	var descriptor RuntimeArtifactDescriptor
 	if err := parsePlatformDocument(
 		descriptorRaw,
-		"Runtime descriptor",
+		"runtime descriptor",
 		&descriptor,
 	); err != nil {
 		return RuntimeIndex{}, err
@@ -168,7 +168,7 @@ func verifyRuntimeTopology(
 	for _, raw := range append([]string{integrity.Source.Origin}, integrity.Redirects...) {
 		parsed, err := url.Parse(raw)
 		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
-			return RuntimeIndex{}, errors.New("Runtime integrity URL is invalid")
+			return RuntimeIndex{}, errors.New("runtime integrity URL is invalid")
 		}
 		if !slices.Contains(allowedRedirectHosts, parsed.Hostname()) {
 			allowedRedirectHosts = append(allowedRedirectHosts, parsed.Hostname())
@@ -217,7 +217,7 @@ func validateRuntimePath(entry artifactEntry, required map[string]uint32) error 
 			entry.Kind == artifactEntryRegular {
 			return nil
 		}
-		return fmt.Errorf("runtime contains unlisted helmr path %q", entry.Path)
+		return fmt.Errorf("runtime contains unlisted Helmr path %q", entry.Path)
 	}
 	if entry.Path == "lib" || strings.HasPrefix(entry.Path, "lib/") {
 		return nil
@@ -243,7 +243,7 @@ func verifyRuntimeExecutables(
 		loader,
 		true,
 	); err != nil {
-		return fmt.Errorf("runtime Node: %w", err)
+		return fmt.Errorf("runtime Node.js: %w", err)
 	}
 	loaderPath := strings.TrimPrefix(loader, runtimeMountPath+"/")
 	loaderEntry, err := artifact.require(loaderPath, artifactEntryRegular)

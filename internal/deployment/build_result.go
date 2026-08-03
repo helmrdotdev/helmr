@@ -236,7 +236,7 @@ func ValidateBuildResultTarget(
 		}
 		if succeeded.Program.Index.ConfigResultDigest !=
 			succeeded.Provenance.Config.ResultDigest {
-			return errors.New("build result Program config digest does not match target")
+			return errors.New("build result program config digest does not match target")
 		}
 	}
 	return nil
@@ -418,7 +418,7 @@ func validateBuildSucceeded(succeeded BuildSucceeded) error {
 			succeeded.WorkspaceImages,
 			succeeded.Provenance.Config.ResultDigest,
 		); err != nil {
-			return fmt.Errorf("build result Program index: %w", err)
+			return fmt.Errorf("build result program index: %w", err)
 		}
 	}
 	return nil
@@ -435,10 +435,10 @@ func validateWorkspaceImageOperationEvidence(
 		return errors.New("IDs must be canonical UUIDv7 values")
 	}
 	if evidence.BuildLeaseGeneration < 1 {
-		return errors.New("Build Lease generation must be positive")
+		return errors.New("build lease generation must be positive")
 	}
 	if evidence.DeclarationSlot != workspace.DeclaredID {
-		return errors.New("declaration slot does not match the Workspace")
+		return errors.New("declaration slot does not match the workspace")
 	}
 	for label, digest := range map[string]string{
 		"request fingerprint": evidence.RequestFingerprint,
@@ -461,7 +461,7 @@ func validateWorkspaceImageOperationEvidence(
 		return fmt.Errorf("derive image plan digest: %w", err)
 	}
 	if evidence.PlanDigest != planDigest {
-		return errors.New("plan digest does not match the Workspace image plan")
+		return errors.New("plan digest does not match the workspace image plan")
 	}
 	return nil
 }

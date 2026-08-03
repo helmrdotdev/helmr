@@ -28,7 +28,7 @@ func (s *Server) sendActorInput(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var maxBytesError *http.MaxBytesError
 		if errors.As(err, &maxBytesError) {
-			writeError(w, tooLarge(codedError{code: "actor_input_too_large", message: "Actor input request is too large"}))
+			writeError(w, tooLarge(codedError{code: "actor_input_too_large", message: "actor input request is too large"}))
 			return
 		}
 		writeError(w, badRequest(codedError{code: "invalid_actor_input", message: err.Error()}))
@@ -49,7 +49,7 @@ func (s *Server) sendActorInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(canonicalInput) > maxActorInputBytes {
-		writeError(w, tooLarge(codedError{code: "actor_input_too_large", message: "Actor input exceeds the size limit"}))
+		writeError(w, tooLarge(codedError{code: "actor_input_too_large", message: "actor input exceeds the size limit"}))
 		return
 	}
 	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
@@ -70,21 +70,21 @@ func (s *Server) sendActorInput(w http.ResponseWriter, r *http.Request) {
 	}
 	actor, err := s.resolveActorInputAddress(r, environmentID, actorDeclaredID, request)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(codedError{code: "actor_not_found", message: "Actor not found"}))
+		writeError(w, notFound(codedError{code: "actor_not_found", message: "actor not found"}))
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("resolve Actor input address"))
+		writeError(w, errors.New("resolve actor input address"))
 		return
 	}
 	actorID, err := pgvalue.UUIDValue(actor.ID)
 	if err != nil {
-		writeError(w, errors.New("resolve Actor identity"))
+		writeError(w, errors.New("resolve actor identity"))
 		return
 	}
 	environmentUUID, err := pgvalue.UUIDValue(environmentID)
 	if err != nil {
-		writeError(w, errors.New("resolve Actor environment"))
+		writeError(w, errors.New("resolve actor environment"))
 		return
 	}
 	record, err := s.appendActorInput(r.Context(), appendActorInputRequest{
@@ -147,7 +147,7 @@ func (s *Server) writeActorInputAppendError(w http.ResponseWriter, r *http.Reque
 	var conflictError idempotency.ConflictError
 	switch {
 	case errors.As(err, &conflictError):
-		writeError(w, conflict(codedError{code: "idempotency_conflict", message: "idempotency key conflicts with an earlier Actor input"}))
+		writeError(w, conflict(codedError{code: "idempotency_conflict", message: "idempotency key conflicts with an earlier actor input"}))
 	case errors.Is(err, errActorInputTooLarge):
 		writeError(w, tooLarge(codedError{code: "actor_input_too_large", message: err.Error()}))
 	case errors.Is(err, errActorSequenceExhausted):
@@ -161,10 +161,10 @@ func (s *Server) writeActorInputAppendError(w http.ResponseWriter, r *http.Reque
 			writeError(w, conflict(codedError{code: "actor_sequence_exhausted", message: errActorSequenceExhausted.Error()}))
 			return
 		}
-		writeError(w, conflict(codedError{code: "actor_not_open", message: "Actor does not accept new input"}))
+		writeError(w, conflict(codedError{code: "actor_not_open", message: "actor does not accept new input"}))
 	case errors.Is(err, errActorInputAppendConflict):
 		writeError(w, conflict(codedError{code: "actor_input_conflict", message: err.Error()}))
 	default:
-		writeError(w, fmt.Errorf("append Actor input: %w", err))
+		writeError(w, fmt.Errorf("append actor input: %w", err))
 	}
 }

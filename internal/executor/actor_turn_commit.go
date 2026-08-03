@@ -21,15 +21,15 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 	requested *runv0.ActorTurnCommitRequested,
 ) error {
 	if requested == nil || strings.TrimSpace(requested.GetCorrelationId()) == "" || requested.GetTargetInputSequence() <= 0 {
-		return errors.New("Actor turn commit request is invalid")
+		return errors.New("actor turn commit request is invalid")
 	}
 	task.mu.Lock()
 	defer task.mu.Unlock()
 	if task.finished || task.finalizingKind != "" {
-		return errors.New("Run Lease Task cannot commit an Actor turn")
+		return errors.New("run lease task cannot commit an actor turn")
 	}
 	if task.store == nil {
-		return errors.New("Actor turn commit CAS is required")
+		return errors.New("actor turn commit CAS is required")
 	}
 	stream := task.program.session.Stream()
 	turnCtx, cancelTurn := context.WithDeadline(ctx, task.lease.ExpiresAt)
@@ -47,7 +47,7 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 		ExpectedBaseWorkspaceVersionId: task.resetTarget.BaseVersionID,
 	}
 	if err := wire.WriteActorTurnCommitPauseRequest(stream, pause); err != nil {
-		return fmt.Errorf("write Actor turn commit pause request: %w", err)
+		return fmt.Errorf("write actor turn commit pause request: %w", err)
 	}
 	ready, artifact, err := task.readActorTurnCommitReady(turnCtx, bufio.NewReader(stream), pause)
 	if err != nil {
@@ -58,10 +58,10 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 		EntryCount: int(ready.GetTreeEntryCount()),
 	}
 	if err := workspace.ValidateTreeIdentity(tree); err != nil {
-		return fmt.Errorf("validate Actor turn commit tree: %w", err)
+		return fmt.Errorf("validate actor turn commit tree: %w", err)
 	}
 	if ready.GetWorkspaceChanged() != (tree != expected) || ready.GetWorkspaceChanged() != (artifact != nil) {
-		return errors.New("Actor turn commit capture did not match its tree proof")
+		return errors.New("actor turn commit capture did not match its tree proof")
 	}
 	request := workerapi.CommitActorTurnRequest{
 		Lease: task.lease.Fence(), CorrelationID: requested.GetCorrelationId(),
@@ -83,22 +83,22 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 		response, requestErr = task.controlPlane.CommitActorTurn(requestCtx, request)
 		return requestErr
 	}); err != nil {
-		return fmt.Errorf("commit Actor turn: %w", err)
+		return fmt.Errorf("commit actor turn: %w", err)
 	}
 	if response.Lease != task.lease.Fence() ||
 		response.CorrelationID != requested.GetCorrelationId() ||
 		response.CommittedInputSequence != requested.GetTargetInputSequence() ||
 		strings.TrimSpace(response.WorkspaceVersionID) == "" ||
 		response.Tree != request.Tree {
-		return errors.New("Actor turn commit response did not match the request")
+		return errors.New("actor turn commit response did not match the request")
 	}
 	if task.authority == nil || task.authority.GetFence() == nil ||
 		task.authority.GetFence().GetBaseWorkspaceVersionId() != request.BaseWorkspaceVersionID {
-		return errors.New("Actor turn commit Workspace authority frontier is stale")
+		return errors.New("actor turn commit workspace authority frontier is stale")
 	}
 	if artifact == nil {
 		if response.WorkspaceVersionID != task.resetTarget.BaseVersionID {
-			return errors.New("unchanged Actor turn commit replaced the Workspace version")
+			return errors.New("unchanged actor turn commit replaced the workspace version")
 		}
 		task.resetTarget.BaseVersionID = response.WorkspaceVersionID
 	} else {
@@ -111,7 +111,7 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 			},
 		)
 		if err != nil {
-			return fmt.Errorf("advance Actor turn reset target: %w", err)
+			return fmt.Errorf("advance actor turn reset target: %w", err)
 		}
 		committedArtifact := &workerapi.WorkspaceArtifact{
 			Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
@@ -132,12 +132,12 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 		WorkspaceVersionID string `json:"workspace_version_id"`
 	}{WorkspaceVersionID: response.WorkspaceVersionID})
 	if err != nil {
-		return fmt.Errorf("encode Actor turn commit decision: %w", err)
+		return fmt.Errorf("encode actor turn commit decision: %w", err)
 	}
 	if err := wire.WriteResumeDecision(stream, &runv0.ResumeDecision{
 		CorrelationId: requested.GetCorrelationId(), Kind: "committed", DataJson: string(decisionData),
 	}); err != nil {
-		return fmt.Errorf("write Actor turn commit decision: %w", err)
+		return fmt.Errorf("write actor turn commit decision: %w", err)
 	}
 	return nil
 }
@@ -161,7 +161,7 @@ func (task *guestRunLeaseTask) readActorTurnCommitReady(
 			switch header.Type {
 			case wire.StreamTypeWorkspaceArtifact:
 				if artifact != nil {
-					return nil, nil, errors.New("Actor turn commit returned multiple Workspace captures")
+					return nil, nil, errors.New("actor turn commit returned multiple workspace captures")
 				}
 				captured, err := storeWorkspaceArtifactFrame(ctx, task.store, reader, header, bodyLen, request.GetRunId())
 				if err != nil {
@@ -177,11 +177,11 @@ func (task *guestRunLeaseTask) readActorTurnCommitReady(
 					ready.GetTargetInputSequence() != request.GetTargetInputSequence() ||
 					ready.GetRunId() != request.GetRunId() || ready.GetAttemptNumber() != request.GetAttemptNumber() ||
 					ready.GetRunLeaseId() != request.GetRunLeaseId() {
-					return nil, nil, errors.New("Actor turn commit pause proof did not match its request")
+					return nil, nil, errors.New("actor turn commit pause proof did not match its request")
 				}
 				return ready, artifact, nil
 			default:
-				return nil, nil, fmt.Errorf("unsupported Actor turn commit stream type %q", header.Type)
+				return nil, nil, fmt.Errorf("unsupported actor turn commit stream type %q", header.Type)
 			}
 			continue
 		}
@@ -191,7 +191,7 @@ func (task *guestRunLeaseTask) readActorTurnCommitReady(
 		}
 		var event runv0.RunEvent
 		if err := proto.Unmarshal(body, &event); err != nil {
-			return nil, nil, fmt.Errorf("unmarshal Actor turn commit interleaved event: %w", err)
+			return nil, nil, fmt.Errorf("unmarshal actor turn commit interleaved event: %w", err)
 		}
 		task.program.observedEventSeq++
 		switch value := event.Event.(type) {
@@ -236,7 +236,7 @@ func (task *guestRunLeaseTask) readActorTurnCommitReady(
 				)
 			}
 		default:
-			err = errors.New("unsupported Program event while Actor turn commit is pending")
+			err = errors.New("unsupported program event while actor turn commit is pending")
 		}
 		if err != nil {
 			return nil, nil, err

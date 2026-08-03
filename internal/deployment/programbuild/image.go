@@ -203,7 +203,7 @@ type ResultEvidence struct {
 
 func (artifact *artifact) open() (*os.File, error) {
 	if artifact == nil || artifact.closed || artifact.path == "" {
-		return nil, errors.New("Workspace image artifact is closed")
+		return nil, errors.New("workspace image artifact is closed")
 	}
 	return os.Open(artifact.path)
 }
@@ -239,16 +239,16 @@ func (engine imageEngine) BuildWorkspaceImage(
 	revocations deployment.ImageOperationRevocations,
 ) (_ *artifact, returnErr error) {
 	if ctx == nil {
-		return nil, errors.New("Workspace image build context is nil")
+		return nil, errors.New("workspace image build context is nil")
 	}
 	if engine.Connector == nil || engine.Admission == nil || engine.Credentials == nil || engine.Completion == nil {
-		return nil, errors.New("Workspace image VM engine dependencies are incomplete")
+		return nil, errors.New("workspace image VM engine dependencies are incomplete")
 	}
 	if engine.WorkDir == "" || !filepath.IsAbs(engine.WorkDir) || filepath.Clean(engine.WorkDir) != engine.WorkDir {
-		return nil, errors.New("Workspace image VM work directory must be absolute and clean")
+		return nil, errors.New("workspace image VM work directory must be absolute and clean")
 	}
 	if revocations == nil {
-		return nil, errors.New("Workspace image operation revocations are required")
+		return nil, errors.New("workspace image operation revocations are required")
 	}
 
 	admissionRequest, err := prepareAdmissionRequest(request)
@@ -257,7 +257,7 @@ func (engine imageEngine) BuildWorkspaceImage(
 	}
 	assignment, err := engine.Admission.AdmitWorkspaceImage(ctx, admissionRequest)
 	if err != nil {
-		return nil, fmt.Errorf("admit Workspace image: %w", err)
+		return nil, fmt.Errorf("admit workspace image: %w", err)
 	}
 	if err := validateAssignment(admissionRequest, assignment); err != nil {
 		return nil, err
@@ -340,19 +340,19 @@ func (engine imageEngine) BuildWorkspaceImage(
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("fetch Workspace image registry credentials: %w", err)
+		return nil, fmt.Errorf("fetch workspace image registry credentials: %w", err)
 	}
 	defer clearCredentialValues(userCredentials)
 	credentials := make([]imagebuild.RegistryCredentialValue, len(userCredentials), len(userCredentials)+1)
 	copy(credentials, userCredentials)
 	if assignment.CacheBinding != nil {
 		if engine.Cache == nil {
-			return nil, errors.New("Workspace image cache credential fetcher is required by assignment")
+			return nil, errors.New("workspace image cache credential fetcher is required by assignment")
 		}
 		cacheCredential, err := engine.Cache.FetchImageCacheCredential(attemptCtx, assignment)
 		if err != nil {
 			if !imagecache.IsUnavailable(err) {
-				return nil, fmt.Errorf("fetch Workspace image cache credential: %w", err)
+				return nil, fmt.Errorf("fetch workspace image cache credential: %w", err)
 			}
 			// Cache availability is not execution authority. A typed provider
 			// outage before request delivery removes the attempt-local binding
@@ -366,7 +366,7 @@ func (engine imageEngine) BuildWorkspaceImage(
 	guestRequest := assignmentGuestRequest(assignment, attemptID)
 	requestRaw, err := imagebuild.CanonicalGuestRequest(guestRequest)
 	if err != nil {
-		return nil, fmt.Errorf("encode Workspace image guest request: %w", err)
+		return nil, fmt.Errorf("encode workspace image guest request: %w", err)
 	}
 	slices.SortFunc(credentials, func(left, right imagebuild.RegistryCredentialValue) int {
 		return strings.Compare(left.Authority, right.Authority)
@@ -379,7 +379,7 @@ func (engine imageEngine) BuildWorkspaceImage(
 	}
 	envelopeRaw, err := imagebuild.CanonicalCredentialEnvelope(envelope)
 	if err != nil {
-		return nil, fmt.Errorf("encode Workspace image credential envelope: %w", err)
+		return nil, fmt.Errorf("encode workspace image credential envelope: %w", err)
 	}
 	defer clear(envelopeRaw)
 	if err := imagebuild.MatchCredentialEnvelope(guestRequest, envelope); err != nil {
@@ -434,7 +434,7 @@ func (engine imageEngine) BuildWorkspaceImage(
 		if err := engine.Completion.CompleteWorkspaceImage(attemptCtx, CompletionRequest{
 			Evidence: resultEvidence(assignment, attemptID, result),
 		}); err != nil {
-			return nil, fmt.Errorf("complete failed Workspace image operation: %w", err)
+			return nil, fmt.Errorf("complete failed workspace image operation: %w", err)
 		}
 		return nil, &guestFailure{Reason: result.FailureReason, Message: result.Error}
 	}
@@ -454,7 +454,7 @@ func (engine imageEngine) BuildWorkspaceImage(
 		if err := engine.Completion.CompleteWorkspaceImage(attemptCtx, CompletionRequest{
 			Evidence: resultEvidence(assignment, attemptID, result),
 		}); err != nil {
-			return nil, fmt.Errorf("complete network-limited Workspace image operation: %w", err)
+			return nil, fmt.Errorf("complete network-limited workspace image operation: %w", err)
 		}
 		return nil, &guestFailure{Reason: result.FailureReason, Message: result.Error}
 	}
@@ -498,23 +498,23 @@ func (engine imageEngine) CompleteWorkspaceImage(
 	published PublishedArtifact,
 ) error {
 	if artifact == nil {
-		return errors.New("Workspace image completion artifact is required")
+		return errors.New("workspace image completion artifact is required")
 	}
 	if artifact.closed {
-		return errors.New("Workspace image completion artifact is closed")
+		return errors.New("workspace image completion artifact is closed")
 	}
 	if artifact.Replayed {
 		return nil
 	}
 	if engine.Completion == nil {
-		return errors.New("Workspace image completion client is required")
+		return errors.New("workspace image completion client is required")
 	}
 	if artifact.Digest != published.Digest || artifact.SizeBytes != published.SizeBytes ||
 		published.MediaType == "" || published.MediaType != artifact.Evidence.Output.MediaType ||
 		artifact.Evidence.GuestResult.Outcome != imagebuild.GuestSucceeded ||
 		artifact.Evidence.GuestResult.OCIDigest != published.Digest ||
 		artifact.Evidence.GuestResult.OCISizeBytes != published.SizeBytes {
-		return errors.New("Workspace image completion does not match the verified artifact")
+		return errors.New("workspace image completion does not match the verified artifact")
 	}
 	return engine.Completion.CompleteWorkspaceImage(ctx, CompletionRequest{
 		Evidence: artifact.Evidence,
@@ -529,14 +529,14 @@ type guestFailure struct {
 
 func (failure *guestFailure) Error() string {
 	if failure == nil {
-		return "Workspace image guest failed"
+		return "workspace image guest failed"
 	}
 	return failure.Message
 }
 
 func prepareAdmissionRequest(request buildRequest) (AdmissionRequest, error) {
 	if request.Source == nil {
-		return AdmissionRequest{}, errors.New("Workspace image source is required")
+		return AdmissionRequest{}, errors.New("workspace image source is required")
 	}
 	descriptor, err := request.Source.Descriptor()
 	if err != nil {
@@ -581,24 +581,24 @@ func validateAdmissionRequest(request AdmissionRequest) error {
 		return err
 	}
 	if !sha256sum.ValidDigest(request.RuntimeIdentityID) {
-		return errors.New("Workspace image admission digest is invalid")
+		return errors.New("workspace image admission digest is invalid")
 	}
 	if request.DeclarationSlot == "" || len(request.DeclarationSlot) > 128 ||
 		strings.TrimSpace(request.DeclarationSlot) != request.DeclarationSlot {
-		return errors.New("Workspace image declaration slot is invalid")
+		return errors.New("workspace image declaration slot is invalid")
 	}
 	if request.BuildTreeSizeBytes < 1 ||
 		request.BuildTreeSizeBytes > imagebuild.MaxSourceArchiveBytes ||
 		request.SourceArchiveSizeBytes < 1 || request.SourceArchiveSizeBytes > imagebuild.MaxSourceArchiveBytes ||
 		request.SourceArchiveEntries != len(request.AdmittedPaths) ||
 		request.SourceArchiveEntries > imagebuild.MaxSourceArchiveEntries {
-		return errors.New("Workspace image admission size is invalid")
+		return errors.New("workspace image admission size is invalid")
 	}
 	if request.ExecutionABI != imagebuild.ExecutionABI || request.LLBABI != imagebuild.LLBABI || request.CacheABI != imagebuild.CacheABI {
-		return errors.New("Workspace image admission ABI is invalid")
+		return errors.New("workspace image admission ABI is invalid")
 	}
 	if request.RequestedCacheMode != imagebuild.CachePrefer && request.RequestedCacheMode != imagebuild.CacheBypass {
-		return errors.New("Workspace image requested cache mode is invalid")
+		return errors.New("workspace image requested cache mode is invalid")
 	}
 	return imagebuild.ValidateSourceAdmission(imagebuild.SourceAdmission{
 		Architecture: request.Architecture, Plan: request.Plan, PlanDigest: request.PlanDigest,
@@ -619,7 +619,7 @@ func validateLeaseAuthority(lease LeaseAuthority) error {
 		lease.WorkerInstanceID,
 	} {
 		if ids.Validate(value) != nil {
-			return errors.New("Workspace image Build Lease contains an invalid ID")
+			return errors.New("workspace image build lease contains an invalid ID")
 		}
 	}
 	if lease.WorkerGroupID == "" || strings.TrimSpace(lease.WorkerGroupID) != lease.WorkerGroupID ||
@@ -627,7 +627,7 @@ func validateLeaseAuthority(lease LeaseAuthority) error {
 		lease.WorkerEpoch < 1 || lease.Generation < 1 ||
 		lease.RequestedGuestEphemeralDiskBytes < 1 || lease.RequestedCPUMillis < 1 ||
 		lease.RequestedMemoryBytes < 1 || lease.RequestedBuildExecutors < 1 {
-		return errors.New("Workspace image Build Lease fence is invalid")
+		return errors.New("workspace image build lease fence is invalid")
 	}
 	return nil
 }
@@ -635,11 +635,11 @@ func validateLeaseAuthority(lease LeaseAuthority) error {
 func validateAssignment(request AdmissionRequest, assignment Assignment) error {
 	if assignment.OperationID == "" || !sha256sum.ValidDigest(assignment.RequestFingerprint) ||
 		!reflect.DeepEqual(request, assignment.Request) {
-		return errors.New("Workspace image assignment does not exact-match admission")
+		return errors.New("workspace image assignment does not exact-match admission")
 	}
 	guest := assignmentGuestRequest(assignment, uuid.Must(uuid.NewV7()).String())
 	if err := imagebuild.ValidateGuestRequest(guest); err != nil {
-		return fmt.Errorf("validate Workspace image assignment: %w", err)
+		return fmt.Errorf("validate workspace image assignment: %w", err)
 	}
 	resources := compute.ImageBuildGuestResources()
 	expectedQuotas := AssignmentQuotas{
@@ -652,18 +652,18 @@ func validateAssignment(request AdmissionRequest, assignment Assignment) error {
 	if !sha256sum.ValidDigest(assignment.CacheScope) || assignment.Quotas != expectedQuotas ||
 		assignment.Output.Architecture != request.Architecture ||
 		assignment.Output.MediaType == "" || assignment.Output.MaxSizeBytes != imagebuild.MaxOCIArchiveBytes {
-		return errors.New("Workspace image assignment cache, quota, or output contract is invalid")
+		return errors.New("workspace image assignment cache, quota, or output contract is invalid")
 	}
 	if assignment.TerminalResult != nil {
 		terminal := assignment.TerminalResult.Evidence
 		if err := ids.Validate(terminal.AttemptID); err != nil {
-			return errors.New("Workspace image terminal attempt ID is invalid")
+			return errors.New("workspace image terminal attempt ID is invalid")
 		}
 		if err := imagebuild.ValidateGuestResult(terminal.GuestResult); err != nil {
-			return fmt.Errorf("validate Workspace image terminal result: %w", err)
+			return fmt.Errorf("validate workspace image terminal result: %w", err)
 		}
 		if expected := resultEvidence(assignment, terminal.AttemptID, terminal.GuestResult); !reflect.DeepEqual(expected, terminal) {
-			return errors.New("Workspace image terminal receipt does not exact-match assignment")
+			return errors.New("workspace image terminal receipt does not exact-match assignment")
 		}
 	}
 	return nil

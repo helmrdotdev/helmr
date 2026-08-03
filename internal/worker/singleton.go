@@ -33,7 +33,7 @@ func Acquire(workDir string, identity ProcessIdentity) (*Singleton, error) {
 	}
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = file.Close()
-		return nil, errors.New("another helmr worker supervisor owns this work directory")
+		return nil, errors.New("another Helmr worker supervisor owns this work directory")
 	}
 	payload, err := json.Marshal(identity)
 	if err != nil {

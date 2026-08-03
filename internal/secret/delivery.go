@@ -13,7 +13,7 @@ import (
 
 const maxWorkspaceSecretPlacements = 64
 
-var ErrDeliveryUnavailable = errors.New("Secret delivery authority is unavailable")
+var ErrDeliveryUnavailable = errors.New("secret delivery authority is unavailable")
 
 type DeliveryEnvelope struct {
 	PlacementKind   string
@@ -54,7 +54,7 @@ func LockAttemptDelivery(
 		WorkspaceID:   workspaceID,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("lock Attempt Secret delivery: %w", err)
+		return nil, fmt.Errorf("lock attempt secret delivery: %w", err)
 	}
 	if len(rows) > maxWorkspaceSecretPlacements {
 		return nil, ErrDeliveryUnavailable
@@ -78,7 +78,7 @@ func LockAttemptDelivery(
 				VersionID:     row.ResolutionSecretVersionID,
 			})
 			if err != nil {
-				return nil, fmt.Errorf("get resolved Secret version: %w", err)
+				return nil, fmt.Errorf("get resolved secret version: %w", err)
 			}
 			if version.ID != row.ResolutionSecretVersionID || version.SecretID != row.Secret.ID {
 				return nil, ErrDeliveryUnavailable
@@ -109,7 +109,7 @@ func LockProcessDelivery(
 		WorkspaceID: workspaceID,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("lock Process Secret delivery: %w", err)
+		return nil, fmt.Errorf("lock process secret delivery: %w", err)
 	}
 	if len(rows) > maxWorkspaceSecretPlacements {
 		return nil, ErrDeliveryUnavailable
@@ -142,7 +142,7 @@ func LockProcessDelivery(
 				VersionID:     row.ResolutionSecretVersionID,
 			})
 			if err != nil {
-				return nil, fmt.Errorf("get resolved Process Secret version: %w", err)
+				return nil, fmt.Errorf("get resolved process secret version: %w", err)
 			}
 			if version.ID != row.ResolutionSecretVersionID || version.SecretID != row.Secret.ID {
 				return nil, ErrDeliveryUnavailable
@@ -199,7 +199,7 @@ func (s *Store) OpenDeliveries(environmentID uuid.UUID, envelopes []DeliveryEnve
 		}
 		value, err := s.decrypt(environmentID, envelope.Secret, envelope.Version)
 		if err != nil {
-			return nil, UnavailableError{Err: fmt.Errorf("open resolved Secret version: %w", err)}
+			return nil, UnavailableError{Err: fmt.Errorf("open resolved secret version: %w", err)}
 		}
 		materials = append(materials, DeliveryMaterial{
 			PlacementKind:   envelope.PlacementKind,

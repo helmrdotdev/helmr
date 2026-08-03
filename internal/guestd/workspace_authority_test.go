@@ -437,7 +437,7 @@ func beginTestWorkspaceFinalizationRequest(
 		uint64(fence.GetMountFencingGeneration()),
 	)
 	if !ok {
-		return nil, errors.New("test authority does not match mounted Workspace")
+		return nil, errors.New("test authority does not match mounted workspace")
 	}
 	defer release()
 	return registry.beginCurrentWorkspaceFinalization(entry, request, func() time.Time { return now })

@@ -29,11 +29,11 @@ const maxWorkspaceSecrets = 64
 var workspaceSecretEnvPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 var (
-	errWorkspaceCreateInvalid        = errors.New("Workspace create request is invalid")
-	errWorkspaceNotDeployed          = errors.New("Workspace declaration is not deployed")
-	errWorkspaceSecretUnavailable    = errors.New("Workspace Secret is unavailable")
-	errWorkspaceCreateReceipt        = errors.New("Workspace create idempotency receipt is invalid")
-	errWorkspaceAuthorityUnavailable = errors.New("Workspace authority is unavailable")
+	errWorkspaceCreateInvalid        = errors.New("workspace create request is invalid")
+	errWorkspaceNotDeployed          = errors.New("workspace declaration is not deployed")
+	errWorkspaceSecretUnavailable    = errors.New("workspace secret is unavailable")
+	errWorkspaceCreateReceipt        = errors.New("workspace create idempotency receipt is invalid")
+	errWorkspaceAuthorityUnavailable = errors.New("workspace authority is unavailable")
 )
 
 type WorkspaceKeyConflictError struct {
@@ -41,7 +41,7 @@ type WorkspaceKeyConflictError struct {
 }
 
 func (e WorkspaceKeyConflictError) Error() string {
-	return fmt.Sprintf("Workspace key %q is already in use", e.Key)
+	return fmt.Sprintf("workspace key %q is already in use", e.Key)
 }
 
 type workspaceCreateRequest struct {
@@ -105,7 +105,7 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 	}
 	placementJSON, err := json.Marshal(placements)
 	if err != nil {
-		return workspaceCreateResult{}, fmt.Errorf("encode Workspace Secret placements: %w", err)
+		return workspaceCreateResult{}, fmt.Errorf("encode workspace secret placements: %w", err)
 	}
 	var claimRequest idempotency.Request
 	if request.IdempotencyKey != "" {
@@ -176,7 +176,7 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 			return errWorkspaceNotDeployed
 		}
 		if err != nil {
-			return fmt.Errorf("%w: resolve promoted Workspace declaration: %v", errWorkspaceAuthorityUnavailable, err)
+			return fmt.Errorf("%w: resolve promoted workspace declaration: %v", errWorkspaceAuthorityUnavailable, err)
 		}
 
 		secretIDs := make(map[string]pgtype.UUID, len(placements))
@@ -200,7 +200,7 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 				return fmt.Errorf("%w: %s", errWorkspaceSecretUnavailable, name)
 			}
 			if err != nil {
-				return fmt.Errorf("lock Workspace Secret %q: %w", name, err)
+				return fmt.Errorf("lock workspace secret %q: %w", name, err)
 			}
 			secretIDs[name] = record.ID
 		}
@@ -254,7 +254,7 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errWorkspaceNotDeployed
 			}
-			return fmt.Errorf("create Workspace: %w", err)
+			return fmt.Errorf("create workspace: %w", err)
 		}
 		for _, placement := range placements {
 			if _, err := work.q.CreateWorkspaceSecret(ctx, db.CreateWorkspaceSecretParams{
@@ -264,7 +264,7 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 				PlacementTarget: placement.Target,
 				SecretID:        secretIDs[placement.Name],
 			}); err != nil {
-				return fmt.Errorf("create Workspace Secret placement: %w", err)
+				return fmt.Errorf("create workspace secret placement: %w", err)
 			}
 		}
 		result = workspaceCreateResult{WorkspaceID: workspaceID}
@@ -290,7 +290,7 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 
 func normalizeWorkspaceSecretPlacements(input []api.WorkspaceSecret) ([]workspaceSecretPlacement, error) {
 	if len(input) > maxWorkspaceSecrets {
-		return nil, fmt.Errorf("at most %d Workspace Secret placements are allowed", maxWorkspaceSecrets)
+		return nil, fmt.Errorf("at most %d workspace secret placements are allowed", maxWorkspaceSecrets)
 	}
 	placements := make([]workspaceSecretPlacement, 0, len(input))
 	envTargets := make(map[string]struct{}, len(input))
@@ -306,10 +306,10 @@ func normalizeWorkspaceSecretPlacements(input []api.WorkspaceSecret) ([]workspac
 		switch {
 		case value.Env != "":
 			if !workspaceSecretEnvPattern.MatchString(value.Env) || strings.HasPrefix(value.Env, "HELMR_") {
-				return nil, fmt.Errorf("invalid or reserved Workspace Secret environment target %q", value.Env)
+				return nil, fmt.Errorf("invalid or reserved workspace secret environment target %q", value.Env)
 			}
 			if _, exists := envTargets[value.Env]; exists {
-				return nil, fmt.Errorf("duplicate Workspace Secret environment target %q", value.Env)
+				return nil, fmt.Errorf("duplicate workspace secret environment target %q", value.Env)
 			}
 			envTargets[value.Env] = struct{}{}
 			placement.Kind = "env"
@@ -329,7 +329,7 @@ func normalizeWorkspaceSecretPlacements(input []api.WorkspaceSecret) ([]workspac
 		if index > 0 {
 			previous := fileTargets[index-1]
 			if target == previous || strings.HasPrefix(target, previous+"/") {
-				return nil, fmt.Errorf("conflicting Workspace Secret file targets %q and %q", previous, target)
+				return nil, fmt.Errorf("conflicting workspace secret file targets %q and %q", previous, target)
 			}
 		}
 	}
@@ -347,13 +347,13 @@ func normalizeWorkspaceSecretPlacements(input []api.WorkspaceSecret) ([]workspac
 
 func validateWorkspaceSecretFile(value string) error {
 	if !utf8.ValidString(value) || len(value) > 4096 || strings.IndexByte(value, 0) >= 0 {
-		return fmt.Errorf("invalid Workspace Secret file target %q", value)
+		return fmt.Errorf("invalid workspace secret file target %q", value)
 	}
 	if !strings.HasPrefix(value, "/") || path.Clean(value) != value || value == "/" {
-		return fmt.Errorf("Workspace Secret file target %q must be a canonical absolute path", value)
+		return fmt.Errorf("workspace secret file target %q must be a canonical absolute path", value)
 	}
 	if value == "/workspace" || strings.HasPrefix(value, "/workspace/") {
-		return fmt.Errorf("Workspace Secret file target %q overlaps the durable Workspace root", value)
+		return fmt.Errorf("workspace secret file target %q overlaps the durable workspace root", value)
 	}
 	return nil
 }
@@ -363,10 +363,10 @@ func validateWorkspaceKey(value *string) error {
 		return nil
 	}
 	if !utf8.ValidString(*value) || len(*value) < 1 || len(*value) > 512 {
-		return errors.New("Workspace key must contain 1 to 512 UTF-8 bytes")
+		return errors.New("workspace key must contain 1 to 512 UTF-8 bytes")
 	}
 	if strings.TrimSpace(*value) != *value {
-		return errors.New("Workspace key cannot begin or end with whitespace")
+		return errors.New("workspace key cannot begin or end with whitespace")
 	}
 	return nil
 }

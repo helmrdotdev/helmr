@@ -48,7 +48,7 @@ func ResolveTaskRunAdmission(
 		})
 	}
 	if err := validate(manifest); err != nil {
-		return TaskRunAdmission{}, fmt.Errorf("validate Task admission authority: %w", err)
+		return TaskRunAdmission{}, fmt.Errorf("validate task admission authority: %w", err)
 	}
 	if queueOverride != "" {
 		manifest.Run.Queue = queueOverride
@@ -60,12 +60,12 @@ func ResolveTaskRunAdmission(
 	if len(retryOverride) > 0 {
 		retry, err := ParseRetryManifest(retryOverride)
 		if err != nil {
-			return TaskRunAdmission{}, fmt.Errorf("parse Task retry override: %w", err)
+			return TaskRunAdmission{}, fmt.Errorf("parse task retry override: %w", err)
 		}
 		manifest.Run.Retry = retry
 	}
 	if err := validate(manifest); err != nil {
-		return TaskRunAdmission{}, fmt.Errorf("validate Task admission selection: %w", err)
+		return TaskRunAdmission{}, fmt.Errorf("validate task admission selection: %w", err)
 	}
 	var queueLimit *int64
 	for _, queue := range queueConfig.Queues {
@@ -79,11 +79,11 @@ func ResolveTaskRunAdmission(
 	}
 	retryPolicy, err := json.Marshal(manifest.Run.Retry)
 	if err != nil {
-		return TaskRunAdmission{}, fmt.Errorf("encode Task retry authority: %w", err)
+		return TaskRunAdmission{}, fmt.Errorf("encode task retry authority: %w", err)
 	}
 	retryPolicy, err = jsoncanon.Transform(retryPolicy)
 	if err != nil {
-		return TaskRunAdmission{}, fmt.Errorf("canonicalize Task retry authority: %w", err)
+		return TaskRunAdmission{}, fmt.Errorf("canonicalize task retry authority: %w", err)
 	}
 	var queuedTTL *int64
 	if manifest.Run.TTLMs != nil {

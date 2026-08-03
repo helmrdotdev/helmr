@@ -624,7 +624,7 @@ func serveFreshProgramProtocol(
 		return err
 	}
 	if len(controlPlane.snapshot()) != 0 {
-		return errors.New("Control Plane ACK preceded process-started proof")
+		return errors.New("control plane ACK preceded process-started proof")
 	}
 	if err := frameio.WriteProtoFrame(conn, &runv0.RunEvent{
 		Event: &runv0.RunEvent_ProgramProcessStarted{
@@ -647,7 +647,7 @@ func serveFreshProgramProtocol(
 		release.GetAttemptNumber() != uint32(lease.AttemptNumber) ||
 		release.GetRunLeaseId() != lease.ID ||
 		!onlyControlCalls(controlPlane.snapshot(), "start") {
-		return errors.New("Program-start release preceded start ACK")
+		return errors.New("program-start release preceded start ACK")
 	}
 	if err := frameio.WriteProtoFrame(conn, &runv0.RunEvent{
 		Event: &runv0.RunEvent_StdoutChunk{StdoutChunk: []byte("loading")},
@@ -754,7 +754,7 @@ func readFreshProgramAdmission(
 		header.WorkspaceID != lease.WorkspaceID ||
 		header.WorkspaceMountID != lease.WorkspaceMountID ||
 		bodyLength != 0 {
-		return fmt.Errorf("Program header = %+v body=%d", header, bodyLength)
+		return fmt.Errorf("program header = %+v body=%d", header, bodyLength)
 	}
 	var authority workspacev0.WorkspaceRunAuthority
 	if err := frameio.ReadProtoFrame(conn, &authority); err != nil {
@@ -779,7 +779,7 @@ func readFreshProgramAdmission(
 		fence.GetMountFencingGeneration() != lease.MountFencingGeneration ||
 		fence.GetExpiresAtUnixNano() != lease.ExpiresAt.UnixNano() ||
 		fence.GetBaseWorkspaceVersionId() != lease.BaseWorkspaceVersionID {
-		return fmt.Errorf("Program authority = %+v", &authority)
+		return fmt.Errorf("program authority = %+v", &authority)
 	}
 	var request runv0.ProgramRunRequest
 	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
@@ -791,7 +791,7 @@ func readFreshProgramAdmission(
 		request.GetSecretCount() != 2 ||
 		len(request.GetProgramStartFrame()) == 0 ||
 		request.GetStartDeadlineUnixMs() != lease.StartDeadlineAt.UnixMilli() {
-		return fmt.Errorf("Program request = %+v", &request)
+		return fmt.Errorf("program request = %+v", &request)
 	}
 	var command runv0.ProgramSupervisorCommand
 	if err := frameio.ReadProtoFrame(conn, &command); err != nil {
@@ -801,7 +801,7 @@ func readFreshProgramAdmission(
 	if first == nil ||
 		first.GetEnv() != "API_TOKEN" ||
 		string(first.GetValue()) != "secret-one" {
-		return fmt.Errorf("first Program Secret = %+v", first)
+		return fmt.Errorf("first program secret = %+v", first)
 	}
 	command.Reset()
 	if err := frameio.ReadProtoFrame(conn, &command); err != nil {
@@ -811,7 +811,7 @@ func readFreshProgramAdmission(
 	if second == nil ||
 		second.GetFile() != "/run/helmr-secrets/config.json" ||
 		string(second.GetValue()) != "secret-two" {
-		return fmt.Errorf("second Program Secret = %+v", second)
+		return fmt.Errorf("second program secret = %+v", second)
 	}
 	command.Reset()
 	if err := frameio.ReadProtoFrame(conn, &command); err != nil {
@@ -823,7 +823,7 @@ func readFreshProgramAdmission(
 		complete.GetAttemptNumber() != uint32(lease.AttemptNumber) ||
 		complete.GetRunLeaseId() != lease.ID ||
 		complete.GetSecretCount() != 2 {
-		return fmt.Errorf("Program Secret completion = %+v", complete)
+		return fmt.Errorf("program secret completion = %+v", complete)
 	}
 	return nil
 }

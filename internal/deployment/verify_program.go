@@ -65,11 +65,11 @@ func (verifier *programVerifier) readDocuments() error {
 		maxProgramFileSizeBytes,
 	)
 	if err != nil {
-		return fmt.Errorf("Program build manifest: %w", err)
+		return fmt.Errorf("program build manifest: %w", err)
 	}
 	verifier.manifest, err = ParseProgramBuildManifest(manifestRaw)
 	if err != nil {
-		return fmt.Errorf("Program build manifest: %w", err)
+		return fmt.Errorf("program build manifest: %w", err)
 	}
 	verifier.index, err = ParseProgramIndex(indexRaw)
 	if err != nil {
@@ -77,14 +77,14 @@ func (verifier *programVerifier) readDocuments() error {
 	}
 	if verifier.manifest.Config.Digest != verifier.index.ConfigResultDigest {
 		return fmt.Errorf(
-			"Program build manifest config digest does not match Program index",
+			"program build manifest config digest does not match program index",
 		)
 	}
 	indexHash := sha256.Sum256(indexRaw)
 	if verifier.manifest.ProgramIndexDigest !=
 		"sha256:"+hex.EncodeToString(indexHash[:]) {
 		return fmt.Errorf(
-			"Program build manifest index digest does not match Program index",
+			"program build manifest index digest does not match program index",
 		)
 	}
 	entryRaw, err := verifier.artifact.read(
@@ -96,7 +96,7 @@ func (verifier *programVerifier) readDocuments() error {
 		return err
 	}
 	if string(entryRaw) != ProgramEntry {
-		return fmt.Errorf("helmr/entry.mjs does not match the fixed Program entry")
+		return fmt.Errorf("helmr/entry.mjs does not match the fixed program entry")
 	}
 	return nil
 }
@@ -113,7 +113,7 @@ func (verifier *programVerifier) verifyLayout() error {
 	}
 	for _, required := range []string{".", "helmr", "node_modules"} {
 		if _, err := verifier.artifact.require(required, artifactEntryDirectory); err != nil {
-			return fmt.Errorf("Program layout: %w", err)
+			return fmt.Errorf("program layout: %w", err)
 		}
 	}
 	for _, required := range []string{
@@ -123,7 +123,7 @@ func (verifier *programVerifier) verifyLayout() error {
 		"helmr/entry.mjs",
 	} {
 		if _, err := verifier.artifact.require(required, artifactEntryRegular); err != nil {
-			return fmt.Errorf("Program layout: %w", err)
+			return fmt.Errorf("program layout: %w", err)
 		}
 	}
 	for _, entry := range verifier.artifact.ordered {
@@ -133,7 +133,7 @@ func (verifier *programVerifier) verifyLayout() error {
 				"helmr/declarations.json", "helmr/entry.mjs":
 			default:
 				return fmt.Errorf(
-					"Program Artifact contains unknown Platform-owned path %q",
+					"program artifact contains unknown platform-owned path %q",
 					entry.Path,
 				)
 			}
@@ -151,7 +151,7 @@ func (verifier *programVerifier) verifyLayout() error {
 			continue
 		}
 		return fmt.Errorf(
-			"Program Artifact contains orphan generated path %q",
+			"program artifact contains orphan generated path %q",
 			entry.Path,
 		)
 	}
@@ -195,7 +195,7 @@ func (verifier *programVerifier) verifyLinks() error {
 	for _, entry := range verifier.artifact.ordered {
 		if entry.Kind == artifactEntrySymlink {
 			if err := verifier.verifyLink(entry.Path, entry.LinkTarget); err != nil {
-				return fmt.Errorf("Program link %q: %w", entry.Path, err)
+				return fmt.Errorf("program link %q: %w", entry.Path, err)
 			}
 		}
 	}
@@ -217,7 +217,7 @@ func (verifier *programVerifier) verifyLink(link, target string) error {
 			continue
 		case "..":
 			if len(resolved) == 0 {
-				return fmt.Errorf("target escapes the Program namespace")
+				return fmt.Errorf("target escapes the program namespace")
 			}
 			resolved = resolved[:len(resolved)-1]
 			continue

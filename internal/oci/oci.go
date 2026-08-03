@@ -176,7 +176,7 @@ func Inspect(r io.Reader) (Metadata, error) {
 func DecodeConfig(body []byte) (RuntimeConfig, error) {
 	var blob configBlob
 	if err := json.Unmarshal(body, &blob); err != nil {
-		return RuntimeConfig{}, fmt.Errorf("decode oci Config: %w", err)
+		return RuntimeConfig{}, fmt.Errorf("decode oci config: %w", err)
 	}
 	return RuntimeConfig{
 		Env:        blob.Config.Env,

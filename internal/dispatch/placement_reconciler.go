@@ -85,8 +85,8 @@ type WorkerWakePublisher interface {
 	PublishWorkerWake(context.Context, WorkerWake) error
 }
 
-// Valkey is notified only after commit; a lost notification is repaired by the
-// next DB replay.
+// PlacementReconciler notifies Valkey only after commit; the next DB replay
+// repairs a lost notification.
 type PlacementReconciler struct {
 	runDiscovery           RunPlacementDiscovery
 	runAuthority           RunPlacementAuthority
@@ -118,7 +118,7 @@ func NewPlacementReconciler(runDiscovery RunPlacementDiscovery, runAuthority Run
 ) (*PlacementReconciler, error) {
 	if runDiscovery == nil || runAuthority == nil || buildDiscovery == nil || buildAuthority == nil ||
 		workspaceExecDiscovery == nil || workspaceExecAuthority == nil || ready == nil || wakes == nil {
-		return nil, errors.New("run, build, and Workspace exec placement dependencies are required")
+		return nil, errors.New("run, build, and workspace exec placement dependencies are required")
 	}
 	if log == nil {
 		log = slog.Default()
@@ -182,7 +182,7 @@ func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error
 		r.workspaceExecPolicy.limit,
 	)
 	if err != nil {
-		return fmt.Errorf("list recoverable Workspace execs: %w", err)
+		return fmt.Errorf("list recoverable workspace execs: %w", err)
 	}
 	var problems []error
 	for _, row := range recoverable {
@@ -207,7 +207,7 @@ func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error
 		r.workspaceExecPolicy.limit,
 	)
 	if err != nil {
-		return fmt.Errorf("list pending Workspace execs: %w", err)
+		return fmt.Errorf("list pending workspace execs: %w", err)
 	}
 	expiredBefore := time.Now().UTC().Add(-defaultWorkspaceExecPendingTimeout)
 	for _, row := range rows {
@@ -251,7 +251,7 @@ func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error
 				RuntimeID:   placement.RuntimeInstanceID,
 				AuthorityID: placement.WorkspaceMountID,
 			}); err != nil {
-				problems = append(problems, fmt.Errorf("publish Workspace exec mount wake: %w", err))
+				problems = append(problems, fmt.Errorf("publish workspace exec mount wake: %w", err))
 			}
 		}
 	}

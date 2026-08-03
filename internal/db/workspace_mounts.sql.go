@@ -120,7 +120,7 @@ type ClaimWorkspaceMountRow struct {
 	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
 	RootfsDigest                    string             `json:"rootfs_digest"`
 	RuntimeABI                      string             `json:"runtime_abi"`
-	ReservedCpuMillis               int64              `json:"reserved_cpu_millis"`
+	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
 	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
 	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
 	ReservedExecutionSlots          int32              `json:"reserved_execution_slots"`
@@ -181,7 +181,7 @@ func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMou
 		&i.DeploymentDefinitionID,
 		&i.RootfsDigest,
 		&i.RuntimeABI,
-		&i.ReservedCpuMillis,
+		&i.ReservedCPUMillis,
 		&i.ReservedMemoryBytes,
 		&i.ReservedGuestEphemeralDiskBytes,
 		&i.ReservedExecutionSlots,

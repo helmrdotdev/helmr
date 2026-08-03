@@ -24,7 +24,7 @@ type runObservabilityControlPlane interface {
 func requireRunObservabilityControlPlane(value any) (runObservabilityControlPlane, error) {
 	controlPlane, ok := value.(runObservabilityControlPlane)
 	if !ok {
-		return nil, errors.New("Run observability Control Plane is required")
+		return nil, errors.New("run observability control plane is required")
 	}
 	return controlPlane, nil
 }
@@ -56,7 +56,7 @@ func sendRunMetadataRequest(
 	request workerapi.UpdateRunMetadataRequest,
 ) error {
 	if err := controlPlane.UpdateRunMetadata(ctx, request); err != nil {
-		return fmt.Errorf("update Run metadata: %w", err)
+		return fmt.Errorf("update run metadata: %w", err)
 	}
 	return nil
 }
@@ -89,7 +89,7 @@ func sendStructuredRunLogRequest(
 	request workerapi.StructuredLogRequest,
 ) error {
 	if err := controlPlane.AppendStructuredRunLog(ctx, request); err != nil {
-		return fmt.Errorf("append structured Run log: %w", err)
+		return fmt.Errorf("append structured run log: %w", err)
 	}
 	return nil
 }
@@ -98,7 +98,7 @@ func workerRunMetadataRequest(
 	requested *runv0.MetadataUpdated,
 ) (workerapi.UpdateRunMetadataRequest, error) {
 	if requested == nil {
-		return workerapi.UpdateRunMetadataRequest{}, errors.New("Run metadata request is required")
+		return workerapi.UpdateRunMetadataRequest{}, errors.New("run metadata request is required")
 	}
 	if err := validateRuntimeCorrelationID(requested.GetCorrelationId()); err != nil {
 		return workerapi.UpdateRunMetadataRequest{}, err
@@ -157,7 +157,7 @@ func processRunMetadataEvent(
 	requested *runv0.MetadataUpdated,
 ) error {
 	if requested == nil {
-		return errors.New("Run metadata request is required")
+		return errors.New("run metadata request is required")
 	}
 	err := events.ApplyRunMetadata(ctx, lease, requested)
 	return writeRuntimeOperationDecision(

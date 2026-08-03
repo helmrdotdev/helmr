@@ -14,8 +14,8 @@ import (
 )
 
 var (
-	ErrWorkspaceReservationConflict = errors.New("Workspace reservation changed")
-	ErrSecretUnavailable            = errors.New("Workspace Secret is unavailable")
+	ErrWorkspaceReservationConflict = errors.New("workspace reservation changed")
+	ErrSecretUnavailable            = errors.New("workspace secret is unavailable")
 )
 
 type TaskRequest struct {
@@ -33,11 +33,11 @@ type Store interface {
 
 func CreateTask(ctx context.Context, store Store, request TaskRequest) (db.CreateAdmittedRootTaskRunRow, error) {
 	if store == nil {
-		return db.CreateAdmittedRootTaskRunRow{}, errors.New("Run admission store is required")
+		return db.CreateAdmittedRootTaskRunRow{}, errors.New("run admission store is required")
 	}
 	bindings, err := store.LockWorkspaceSecretsForAdmission(ctx, request.Run.WorkspaceID)
 	if err != nil {
-		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("lock Workspace Secrets: %w", err)
+		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("lock workspace secrets: %w", err)
 	}
 	for _, binding := range bindings {
 		if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
@@ -47,7 +47,7 @@ func CreateTask(ctx context.Context, store Store, request TaskRequest) (db.Creat
 
 	run, err := store.CreateAdmittedRootTaskRun(ctx, request.Run)
 	if err != nil {
-		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("create admitted Task Run: %w", err)
+		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("create admitted task run: %w", err)
 	}
 	if _, err := store.ReserveWorkspaceForRun(ctx, db.ReserveWorkspaceForRunParams{
 		RunID:                 run.ID,
@@ -59,7 +59,7 @@ func CreateTask(ctx context.Context, store Store, request TaskRequest) (db.Creat
 		if errors.Is(err, pgx.ErrNoRows) {
 			return db.CreateAdmittedRootTaskRunRow{}, ErrWorkspaceReservationConflict
 		}
-		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("reserve Workspace for Run: %w", err)
+		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("reserve workspace for run: %w", err)
 	}
 
 	resolutions := make([]secret.Resolution, len(bindings))
@@ -71,7 +71,7 @@ func CreateTask(ctx context.Context, store Store, request TaskRequest) (db.Creat
 		}
 	}
 	if err := secret.CreateAttemptResolutions(ctx, store, request.Run.WorkspaceID, run.ID, 1, resolutions); err != nil {
-		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("record Run Secret resolutions: %w", err)
+		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("record run secret resolutions: %w", err)
 	}
 	if _, err := store.CreateRunAdmissionOutbox(ctx, db.CreateRunAdmissionOutboxParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -79,7 +79,7 @@ func CreateTask(ctx context.Context, store Store, request TaskRequest) (db.Creat
 		EnvironmentID: request.Run.EnvironmentID,
 		RunID:         run.ID,
 	}); err != nil {
-		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("create Run admission outbox: %w", err)
+		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("create run admission outbox: %w", err)
 	}
 	return run, nil
 }

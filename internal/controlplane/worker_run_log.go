@@ -164,7 +164,7 @@ func runMetadataClaimScopeParams(
 func runLeaseFenceFingerprint(lease workerapi.RunLeaseFence) (string, error) {
 	canonical, err := jsoncanon.Transform(mustJSON(lease))
 	if err != nil {
-		return "", fmt.Errorf("canonicalize Run Lease fence: %w", err)
+		return "", fmt.Errorf("canonicalize run lease fence: %w", err)
 	}
 	digest := sha256.Sum256(canonical)
 	return hex.EncodeToString(digest[:]), nil
@@ -173,11 +173,11 @@ func runLeaseFenceFingerprint(lease workerapi.RunLeaseFence) (string, error) {
 func equalJSON(left, right []byte) (bool, error) {
 	leftCanonical, err := jsoncanon.Transform(left)
 	if err != nil {
-		return false, fmt.Errorf("canonicalize stored Run log payload: %w", err)
+		return false, fmt.Errorf("canonicalize stored run log payload: %w", err)
 	}
 	rightCanonical, err := jsoncanon.Transform(right)
 	if err != nil {
-		return false, fmt.Errorf("canonicalize Run log payload: %w", err)
+		return false, fmt.Errorf("canonicalize run log payload: %w", err)
 	}
 	return bytes.Equal(leftCanonical, rightCanonical), nil
 }

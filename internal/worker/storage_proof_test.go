@@ -166,7 +166,7 @@ func TestProveBuildStorageRejectsInvalidBoundary(t *testing.T) {
 			change: func(config *BuildStorageConfig, _ *fakeStorageProbe) {
 				config.JailerRoot = "/scratch"
 			},
-			want: "firecracker jailer root must be a strict descendant of build scratch",
+			want: "Firecracker jailer root must be a strict descendant of build scratch",
 		},
 		{
 			name: "jailer nested mount",
@@ -177,7 +177,7 @@ func TestProveBuildStorageRejectsInvalidBoundary(t *testing.T) {
 					"33 32 8:3 / /scratch/jailer rw - ext4 /dev/other rw,nodiscard",
 				}, "\n"))
 			},
-			want: "firecracker jailer root is not on the build scratch mount",
+			want: "Firecracker jailer root is not on the build scratch mount",
 		},
 		{
 			name: "work nested mount",
@@ -199,7 +199,7 @@ func TestProveBuildStorageRejectsInvalidBoundary(t *testing.T) {
 					"33 32 8:3 / /scratch/jailer/firecracker rw - ext4 /dev/other rw,nodiscard",
 				}, "\n"))
 			},
-			want: `firecracker jailer root contains nested mount "/scratch/jailer/firecracker"`,
+			want: `Firecracker jailer root contains nested mount "/scratch/jailer/firecracker"`,
 		},
 		{
 			name: "root is not mountpoint",

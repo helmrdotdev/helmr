@@ -76,7 +76,7 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusOK, response)
 			return
 		}
-		writeError(w, badRequest(fmt.Errorf("verify checkpoint Workspace capture: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("verify checkpoint workspace capture: %w", err)))
 		return
 	}
 	parsed.capture = verified
@@ -135,7 +135,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 		}
 		secrets, err := secret.LockAttemptDelivery(r.Context(), work.q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID)
 		if err != nil {
-			return fmt.Errorf("lock checkpoint-failed Secret authority: %w", err)
+			return fmt.Errorf("lock checkpoint-failed secret authority: %w", err)
 		}
 		tx, ok := work.tx.(pgx.Tx)
 		if !ok {
@@ -283,7 +283,7 @@ func failCheckpointTaskAttempt(
 	if !retry {
 		if _, err := ownedGraph.CancelDescendants(ctx); err != nil {
 			return fmt.Errorf(
-				"cancel child Tasks after exhausted parent checkpoint failure: %w",
+				"cancel child tasks after exhausted parent checkpoint failure: %w",
 				err,
 			)
 		}
@@ -361,7 +361,7 @@ func failCheckpointActorAttempt(
 	failedAt, err := store.GetTaskCompletionTime(ctx)
 	if err != nil || !failedAt.Valid {
 		if err == nil {
-			err = errors.New("database Actor checkpoint failure time is unavailable")
+			err = errors.New("database actor checkpoint failure time is unavailable")
 		}
 		return err
 	}
@@ -382,7 +382,7 @@ func failCheckpointActorAttempt(
 	if !decision.retry {
 		if _, err := ownedGraph.CancelDescendants(ctx); err != nil {
 			return fmt.Errorf(
-				"cancel child Tasks after exhausted Actor checkpoint failure: %w",
+				"cancel child tasks after exhausted actor checkpoint failure: %w",
 				err,
 			)
 		}
@@ -469,7 +469,7 @@ func decideActorCheckpointFailure(
 	}
 	policy, err := deployment.ParseRetryManifest(authority.run.RetryPolicy)
 	if err != nil {
-		return actorCheckpointFailureDecision{}, fmt.Errorf("parse pinned Actor checkpoint retry policy: %w", err)
+		return actorCheckpointFailureDecision{}, fmt.Errorf("parse pinned actor checkpoint retry policy: %w", err)
 	}
 	delay, allowed, err := taskRetryDelay(policy, authority.attempt.Number, nil)
 	if err != nil {
@@ -566,7 +566,7 @@ func finishCheckpointFailedActor(
 	if _, err := store.AppendRunEvent(ctx, db.AppendRunEventParams{
 		OrgID: authority.run.OrgID, RunID: authority.run.ID, Kind: eventKind, Payload: payload,
 	}); err != nil {
-		return fmt.Errorf("append checkpoint-failed Actor terminal event: %w", err)
+		return fmt.Errorf("append checkpoint-failed actor terminal event: %w", err)
 	}
 	return nil
 }
@@ -593,7 +593,7 @@ func scheduleCheckpointFailureRetry(
 	if err := secret.CreateAttemptResolutions(
 		ctx, store, authority.workspace.ID, authority.run.ID, nextAttempt, resolutions,
 	); err != nil {
-		return fmt.Errorf("record checkpoint retry Secret resolutions: %w", err)
+		return fmt.Errorf("record checkpoint retry secret resolutions: %w", err)
 	}
 	if _, err := store.DelayCheckpointFailureRetry(ctx, db.DelayCheckpointFailureRetryParams{
 		NextAttemptNumber: nextAttempt, RetryAt: pgvalue.Timestamptz(retryAtTime),
@@ -644,7 +644,7 @@ func finishCheckpointFailedTask(
 	if _, err := store.AppendRunEvent(ctx, db.AppendRunEventParams{
 		OrgID: authority.run.OrgID, RunID: authority.run.ID, Kind: eventKind, Payload: payload,
 	}); err != nil {
-		return fmt.Errorf("append checkpoint-failed Task terminal event: %w", err)
+		return fmt.Errorf("append checkpoint-failed task terminal event: %w", err)
 	}
 	if authority.run.ParentRunID.Valid && authority.run.ParentOwnsLifecycle.Valid &&
 		authority.run.ParentOwnsLifecycle.Bool && authority.enclosingWait.ID.Valid {
@@ -775,7 +775,7 @@ func validateCheckpointManifest(
 	}
 	proofs := []checkpointArtifactProof{
 		{role: db.RunCheckpointArtifactRoleRuntimeConfig, kind: db.ArtifactKindRunCheckpointConfig, artifact: manifest.RuntimeState.ConfigArtifact},
-		{role: db.RunCheckpointArtifactRoleVmState, kind: db.ArtifactKindRunCheckpointVmState, artifact: manifest.RuntimeState.VMStateArtifact},
+		{role: db.RunCheckpointArtifactRoleVMState, kind: db.ArtifactKindRunCheckpointVMState, artifact: manifest.RuntimeState.VMStateArtifact},
 		{role: db.RunCheckpointArtifactRoleScratchDisk, kind: db.ArtifactKindRunCheckpointScratchDisk, artifact: manifest.RuntimeState.ScratchDiskArtifact},
 	}
 	for index, artifact := range manifest.RuntimeState.MemoryArtifacts {
@@ -789,7 +789,7 @@ func validateCheckpointManifest(
 	}
 	expectedMedia := map[db.RunCheckpointArtifactRole]string{
 		db.RunCheckpointArtifactRoleRuntimeConfig: cas.CheckpointRuntimeConfigMediaType,
-		db.RunCheckpointArtifactRoleVmState:       cas.CheckpointVMStateMediaType,
+		db.RunCheckpointArtifactRoleVMState:       cas.CheckpointVMStateMediaType,
 		db.RunCheckpointArtifactRoleScratchDisk:   cas.CheckpointScratchDiskMediaType,
 		db.RunCheckpointArtifactRoleMemory:        cas.CheckpointMemoryMediaType,
 	}
@@ -896,11 +896,11 @@ func (s *Server) commitCheckpointReady(
 			return staleRunLeaseClaim(err)
 		}
 		if _, err := secret.LockAttemptDelivery(ctx, work.q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID); err != nil {
-			return fmt.Errorf("lock checkpoint-ready Secret authority: %w", err)
+			return fmt.Errorf("lock checkpoint-ready secret authority: %w", err)
 		}
 		handoffBindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, locators.WorkspaceID)
 		if err != nil {
-			return fmt.Errorf("lock checkpoint-ready Workspace Secrets: %w", err)
+			return fmt.Errorf("lock checkpoint-ready workspace secrets: %w", err)
 		}
 		owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
 		if err != nil {
@@ -1190,7 +1190,7 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 		ctx, store, authority.workspace.ID, child.ID, 1, workspaceSecretResolutions(bindings),
 	); err != nil {
 		return fmt.Errorf(
-			"record same-Workspace child Task Secret resolutions: %w",
+			"record same-workspace child task secret resolutions: %w",
 			err,
 		)
 	}
@@ -1257,7 +1257,7 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 		},
 	); err != nil {
 		return fmt.Errorf(
-			"create same-Workspace child Task admission outbox: %w",
+			"create same-workspace child task admission outbox: %w",
 			err,
 		)
 	}
@@ -1314,7 +1314,7 @@ func recordCheckpointWorkspaceVersion(
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		OrgID: authority.run.OrgID, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType,
 	}); err != nil {
-		return pgtype.UUID{}, fmt.Errorf("record checkpoint Workspace CAS object: %w", err)
+		return pgtype.UUID{}, fmt.Errorf("record checkpoint workspace CAS object: %w", err)
 	}
 	artifactRow, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), OrgID: authority.run.OrgID,
@@ -1323,7 +1323,7 @@ func recordCheckpointWorkspaceVersion(
 		MediaType: artifact.MediaType, CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 	})
 	if err != nil {
-		return pgtype.UUID{}, fmt.Errorf("record checkpoint Workspace Artifact: %w", err)
+		return pgtype.UUID{}, fmt.Errorf("record checkpoint workspace artifact: %w", err)
 	}
 	version, err := store.CreatePrivateCheckpointWorkspaceVersion(ctx, db.CreatePrivateCheckpointWorkspaceVersionParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -1335,7 +1335,7 @@ func recordCheckpointWorkspaceVersion(
 		OwnershipGeneration:    authority.workspace.OwnershipGeneration, WriterGeneration: authority.workspace.WriterGeneration,
 	})
 	if err != nil {
-		return pgtype.UUID{}, fmt.Errorf("record private checkpoint Workspace version: %w", err)
+		return pgtype.UUID{}, fmt.Errorf("record private checkpoint workspace version: %w", err)
 	}
 	return version.ID, nil
 }
@@ -1362,12 +1362,12 @@ func recordCheckpointRuntimeArtifacts(
 			MediaType: proof.artifact.MediaType, CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		})
 		if err != nil {
-			return fmt.Errorf("record checkpoint Artifact %s/%d: %w", proof.role, proof.ordinal, err)
+			return fmt.Errorf("record checkpoint artifact %s/%d: %w", proof.role, proof.ordinal, err)
 		}
 		if _, err := store.AddRunCheckpointArtifact(ctx, db.AddRunCheckpointArtifactParams{
 			RunCheckpointID: pgvalue.UUID(checkpointID), Role: proof.role, Ordinal: proof.ordinal, ArtifactID: artifact.ID,
 		}); err != nil {
-			return fmt.Errorf("record checkpoint Artifact membership %s/%d: %w", proof.role, proof.ordinal, err)
+			return fmt.Errorf("record checkpoint artifact membership %s/%d: %w", proof.role, proof.ordinal, err)
 		}
 	}
 	return nil

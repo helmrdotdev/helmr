@@ -181,7 +181,7 @@ func (w *Worker) bindPending(ctx context.Context, now time.Time) error {
 	for _, candidate := range pending {
 		next, err := NextCronTime(candidate.CronPattern, candidate.Timezone, now)
 		if err != nil {
-			return fmt.Errorf("calculate pending Schedule %s cursor: %w", pgvalue.UUIDString(candidate.ID), err)
+			return fmt.Errorf("calculate pending schedule %s cursor: %w", pgvalue.UUIDString(candidate.ID), err)
 		}
 		_, err = w.store.ActivatePendingSchedule(ctx, db.ActivatePendingScheduleParams{
 			WorkspaceID:        candidate.ResolvedWorkspaceID,
@@ -218,7 +218,7 @@ func (w *Worker) process(ctx context.Context, value db.Schedule) error {
 
 func (w *Worker) markErrored(ctx context.Context, value db.Schedule, admissionErr *AdmissionError) error {
 	if !validErrorCode(admissionErr.Code) {
-		return fmt.Errorf("invalid Schedule error code %q", admissionErr.Code)
+		return fmt.Errorf("invalid schedule error code %q", admissionErr.Code)
 	}
 	_, err := w.store.MarkScheduleAdmissionErrored(ctx, db.MarkScheduleAdmissionErroredParams{
 		LastErrorCode:       pgvalue.Text(string(admissionErr.Code)),

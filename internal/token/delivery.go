@@ -51,10 +51,10 @@ type DeliveryWorker struct {
 
 func NewDeliveryWorker(log *slog.Logger, store DeliveryStore, reconcile ReconcileBatch) (*DeliveryWorker, error) {
 	if store == nil {
-		return nil, errors.New("Token reconciliation delivery store is required")
+		return nil, errors.New("token reconciliation delivery store is required")
 	}
 	if reconcile == nil {
-		return nil, errors.New("Token Wait reconciler is required")
+		return nil, errors.New("token wait reconciler is required")
 	}
 	if log == nil {
 		log = slog.Default()
@@ -92,10 +92,10 @@ func (w *DeliveryWorker) tick(ctx context.Context) error {
 		OutboxMessageIds: pgvalue.NewUUIDv7Batch(w.batchSize),
 		LimitCount:       w.batchSize,
 	}); err != nil {
-		return fmt.Errorf("expire due Tokens: %w", err)
+		return fmt.Errorf("expire due tokens: %w", err)
 	}
 	if _, err := w.store.ExpireDuePublicAccessTokens(ctx, w.batchSize); err != nil {
-		return fmt.Errorf("expire due Token public access credentials: %w", err)
+		return fmt.Errorf("expire due token public access credentials: %w", err)
 	}
 	now := w.now().UTC()
 	messages, err := w.store.ClaimOutboxMessages(ctx, db.ClaimOutboxMessagesParams{
@@ -149,7 +149,7 @@ func (w *DeliveryWorker) deferBatch(ctx context.Context, message db.OutboxMessag
 		ClaimedBy:    message.ClaimedBy,
 		ClaimAttempt: message.Attempts,
 		AvailableAt:  pgvalue.TimestamptzUTCZeroInvalid(w.now().UTC().Add(after)),
-		LastError:    outbox.Error(errors.New("Token reconciliation is waiting for checkpoint readiness"), "Token reconciliation delivery failed"),
+		LastError:    outbox.Error(errors.New("token reconciliation is waiting for checkpoint readiness"), "token reconciliation delivery failed"),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -163,7 +163,7 @@ func (w *DeliveryWorker) continueBatch(ctx context.Context, message db.OutboxMes
 		ClaimedBy:    message.ClaimedBy,
 		ClaimAttempt: message.Attempts,
 		AvailableAt:  pgvalue.TimestamptzUTCZeroInvalid(w.now().UTC()),
-		LastError:    outbox.Error(errors.New("Token reconciliation batch continuation"), "Token reconciliation delivery failed"),
+		LastError:    outbox.Error(errors.New("token reconciliation batch continuation"), "token reconciliation delivery failed"),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -177,7 +177,7 @@ func (w *DeliveryWorker) retry(ctx context.Context, message db.OutboxMessage, ca
 		ClaimedBy:    message.ClaimedBy,
 		ClaimAttempt: message.Attempts,
 		AvailableAt:  pgvalue.TimestamptzUTCZeroInvalid(w.now().UTC().Add(after)),
-		LastError:    outbox.Error(cause, "Token reconciliation delivery failed"),
+		LastError:    outbox.Error(cause, "token reconciliation delivery failed"),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -190,7 +190,7 @@ func (w *DeliveryWorker) deadLetter(ctx context.Context, message db.OutboxMessag
 		ID:           message.ID,
 		ClaimedBy:    message.ClaimedBy,
 		ClaimAttempt: message.Attempts,
-		LastError:    outbox.Error(cause, "Token reconciliation delivery failed"),
+		LastError:    outbox.Error(cause, "token reconciliation delivery failed"),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -210,22 +210,22 @@ func decodeTokenReconcilePayload(raw []byte) (tokenReconcilePayload, error) {
 	decoder.DisallowUnknownFields()
 	var value tokenReconcilePayload
 	if err := decoder.Decode(&value); err != nil {
-		return tokenReconcilePayload{}, fmt.Errorf("decode Token reconciliation payload: %w", err)
+		return tokenReconcilePayload{}, fmt.Errorf("decode token reconciliation payload: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		if err != nil {
 			return tokenReconcilePayload{}, err
 		}
-		return tokenReconcilePayload{}, errors.New("Token reconciliation payload contains a trailing JSON value")
+		return tokenReconcilePayload{}, errors.New("token reconciliation payload contains a trailing JSON value")
 	}
 	environmentID, err := ids.Parse(value.EnvironmentID)
 	if err != nil {
-		return tokenReconcilePayload{}, errors.New("Token reconciliation environmentId is invalid")
+		return tokenReconcilePayload{}, errors.New("token reconciliation environmentId is invalid")
 	}
 	tokenID, err := ids.Parse(value.TokenID)
 	if err != nil {
-		return tokenReconcilePayload{}, errors.New("Token reconciliation tokenId is invalid")
+		return tokenReconcilePayload{}, errors.New("token reconciliation tokenId is invalid")
 	}
 	value.environmentID = environmentID
 	value.tokenID = tokenID

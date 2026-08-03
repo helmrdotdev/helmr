@@ -10,12 +10,12 @@ import (
 
 func (declaration ProgramIndexDeclaration) MarshalJSON() ([]byte, error) {
 	if declaration.manifestCount() != 1 {
-		return nil, errors.New("Program index declaration must contain exactly one manifest")
+		return nil, errors.New("program index declaration must contain exactly one manifest")
 	}
 	switch declaration.Kind {
 	case DefinitionKindTask:
 		if declaration.Task == nil || declaration.Locator == nil {
-			return nil, errors.New("Task Program index declaration requires manifest and locator")
+			return nil, errors.New("task program index declaration requires manifest and locator")
 		}
 		return json.Marshal(struct {
 			DeclaredID string          `json:"declaredId"`
@@ -25,7 +25,7 @@ func (declaration ProgramIndexDeclaration) MarshalJSON() ([]byte, error) {
 		}{declaration.DeclaredID, declaration.Kind, declaration.Locator, declaration.Task})
 	case DefinitionKindActor:
 		if declaration.Actor == nil || declaration.Locator == nil {
-			return nil, errors.New("Actor Program index declaration requires manifest and locator")
+			return nil, errors.New("actor program index declaration requires manifest and locator")
 		}
 		return json.Marshal(struct {
 			DeclaredID string          `json:"declaredId"`
@@ -35,7 +35,7 @@ func (declaration ProgramIndexDeclaration) MarshalJSON() ([]byte, error) {
 		}{declaration.DeclaredID, declaration.Kind, declaration.Locator, declaration.Actor})
 	case DefinitionKindWorkspace:
 		if declaration.Workspace == nil || declaration.Locator != nil {
-			return nil, errors.New("Workspace Program index declaration requires manifest and forbids locator")
+			return nil, errors.New("workspace program index declaration requires manifest and forbids locator")
 		}
 		return json.Marshal(struct {
 			DeclaredID string             `json:"declaredId"`
@@ -43,7 +43,7 @@ func (declaration ProgramIndexDeclaration) MarshalJSON() ([]byte, error) {
 			Manifest   *WorkspaceManifest `json:"manifest"`
 		}{declaration.DeclaredID, declaration.Kind, declaration.Workspace})
 	default:
-		return nil, fmt.Errorf("Program index declaration kind %q is unsupported", declaration.Kind)
+		return nil, fmt.Errorf("program index declaration kind %q is unsupported", declaration.Kind)
 	}
 }
 
@@ -94,7 +94,7 @@ func (declaration *ProgramIndexDeclaration) UnmarshalJSON(raw []byte) error {
 		declaration.DeclaredID = wire.DeclaredID
 		declaration.Workspace = wire.Manifest
 	default:
-		return fmt.Errorf("Program index declaration kind %q is unsupported", header.Kind)
+		return fmt.Errorf("program index declaration kind %q is unsupported", header.Kind)
 	}
 	return nil
 }
@@ -129,54 +129,54 @@ func validateProgramIndexDeclaration(
 	switch declaration.Kind {
 	case DefinitionKindTask:
 		if declaration.Task == nil || declaration.Locator == nil {
-			return errors.New("Task requires manifest and locator")
+			return errors.New("task requires manifest and locator")
 		}
 		if declaration.Task.Payload.Kind != SchemaKindNone &&
 			declaration.Task.Payload.Kind != SchemaKindStandard {
-			return fmt.Errorf("Task payload kind %q is unsupported", declaration.Task.Payload.Kind)
+			return fmt.Errorf("task payload kind %q is unsupported", declaration.Task.Payload.Kind)
 		}
 		if err := validateRunManifest(declaration.Task.Run, queues); err != nil {
-			return fmt.Errorf("Task run: %w", err)
+			return fmt.Errorf("task run: %w", err)
 		}
 		if declaration.Task.Schedule != nil {
 			if declaration.Task.Payload.Kind != SchemaKindStandard {
-				return errors.New("scheduled Task payload kind must be standard_schema")
+				return errors.New("scheduled task payload kind must be standard_schema")
 			}
 			if err := validateScheduleManifest(*declaration.Task.Schedule); err != nil {
-				return fmt.Errorf("Task schedule: %w", err)
+				return fmt.Errorf("task schedule: %w", err)
 			}
 		}
 		return validateProgramLocator(*declaration.Locator)
 	case DefinitionKindActor:
 		if declaration.Actor == nil || declaration.Locator == nil {
-			return errors.New("Actor requires manifest and locator")
+			return errors.New("actor requires manifest and locator")
 		}
 		if err := validateRunManifest(declaration.Actor.Run, queues); err != nil {
-			return fmt.Errorf("Actor run: %w", err)
+			return fmt.Errorf("actor run: %w", err)
 		}
 		if declaration.Actor.IdleTimeoutMs < 1 ||
 			declaration.Actor.IdleTimeoutMs > maxActorIdleMs {
-			return fmt.Errorf("Actor idleTimeoutMs must be in [1,%d]", maxActorIdleMs)
+			return fmt.Errorf("actor idleTimeoutMs must be in [1,%d]", maxActorIdleMs)
 		}
 		return validateProgramLocator(*declaration.Locator)
 	case DefinitionKindWorkspace:
 		if declaration.Workspace == nil || declaration.Locator != nil {
-			return errors.New("Workspace requires manifest and forbids locator")
+			return errors.New("workspace requires manifest and forbids locator")
 		}
 		if !sha256DigestPattern.MatchString(
 			declaration.Workspace.Image.ArtifactDigest,
 		) {
-			return errors.New("Workspace image artifactDigest is not a lowercase SHA-256 digest")
+			return errors.New("workspace image artifactDigest is not a lowercase SHA-256 digest")
 		}
 		if declaration.Workspace.Image.MediaType != WorkspaceImageArtifactMediaType {
 			return fmt.Errorf(
-				"Workspace image mediaType = %q, want %q",
+				"workspace image mediaType = %q, want %q",
 				declaration.Workspace.Image.MediaType,
 				WorkspaceImageArtifactMediaType,
 			)
 		}
 		if err := validateResourcesManifest(declaration.Workspace.Resources); err != nil {
-			return fmt.Errorf("Workspace resources: %w", err)
+			return fmt.Errorf("workspace resources: %w", err)
 		}
 		return nil
 	default:
@@ -271,7 +271,7 @@ func buildProgramIndex(
 			located, exists := locators[string(DeclarationKindTask)+"\x00"+definition.DeclaredID]
 			if !exists {
 				return ProgramIndex{}, fmt.Errorf(
-					"Task %q has no generated locator",
+					"task %q has no generated locator",
 					definition.DeclaredID,
 				)
 			}
@@ -285,7 +285,7 @@ func buildProgramIndex(
 			located, exists := locators[string(DeclarationKindActor)+"\x00"+definition.DeclaredID]
 			if !exists {
 				return ProgramIndex{}, fmt.Errorf(
-					"Actor %q has no generated locator",
+					"actor %q has no generated locator",
 					definition.DeclaredID,
 				)
 			}
@@ -299,7 +299,7 @@ func buildProgramIndex(
 			image, exists := workspaceImages[definition.DeclaredID]
 			if !exists || definition.Workspace == nil {
 				return ProgramIndex{}, fmt.Errorf(
-					"Workspace %q has no image result",
+					"workspace %q has no image result",
 					definition.DeclaredID,
 				)
 			}
@@ -376,7 +376,7 @@ func validateProgramIndexBuild(
 		return err
 	}
 	if !bytes.Equal(actualRaw, expectedRaw) {
-		return errors.New("Program index does not match build plan and Workspace images")
+		return errors.New("program index does not match build plan and workspace images")
 	}
 	return nil
 }

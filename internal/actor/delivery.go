@@ -54,13 +54,13 @@ func NewDeliveryWorker(
 	close CloseReconciler,
 ) (*DeliveryWorker, error) {
 	if store == nil {
-		return nil, errors.New("Actor input delivery store is required")
+		return nil, errors.New("actor input delivery store is required")
 	}
 	if reconcile == nil {
-		return nil, errors.New("Actor input reconciler is required")
+		return nil, errors.New("actor input reconciler is required")
 	}
 	if close == nil {
-		return nil, errors.New("Actor close reconciler is required")
+		return nil, errors.New("actor close reconciler is required")
 	}
 	if log == nil {
 		log = slog.Default()
@@ -115,7 +115,7 @@ func (w *DeliveryWorker) process(ctx context.Context, message db.OutboxMessage) 
 		return w.processClose(ctx, message)
 	}
 	if message.Topic != "actor.input.reconcile" {
-		return w.deadLetter(ctx, message, errors.New("unsupported Actor reconciliation topic"))
+		return w.deadLetter(ctx, message, errors.New("unsupported actor reconciliation topic"))
 	}
 	payload, err := decodeActorInputReconcilePayload(message.Payload)
 	if err != nil {
@@ -126,7 +126,7 @@ func (w *DeliveryWorker) process(ctx context.Context, message db.OutboxMessage) 
 		return w.retry(ctx, message, err, outbox.RetryAfter(message.Attempts))
 	}
 	if deferred {
-		return w.retry(ctx, message, errors.New("Actor input continuation is waiting for Workspace authority"), outbox.RetryAfter(message.Attempts))
+		return w.retry(ctx, message, errors.New("actor input continuation is waiting for workspace authority"), outbox.RetryAfter(message.Attempts))
 	}
 	_, err = w.store.DeliverOutboxMessage(ctx, db.DeliverOutboxMessageParams{
 		ID: message.ID, ClaimedBy: message.ClaimedBy, ClaimAttempt: message.Attempts,
@@ -153,7 +153,7 @@ func (w *DeliveryWorker) processClose(
 		return w.retry(
 			ctx,
 			message,
-			errors.New("Actor close is waiting for close authority"),
+			errors.New("actor close is waiting for close authority"),
 			outbox.RetryAfter(message.Attempts),
 		)
 	}
@@ -170,7 +170,7 @@ func (w *DeliveryWorker) retry(ctx context.Context, message db.OutboxMessage, ca
 	_, err := w.store.RetryOutboxMessage(ctx, db.RetryOutboxMessageParams{
 		ID: message.ID, ClaimedBy: message.ClaimedBy, ClaimAttempt: message.Attempts,
 		AvailableAt: pgvalue.TimestamptzUTCZeroInvalid(w.now().UTC().Add(after)),
-		LastError:   outbox.Error(cause, "Actor reconciliation delivery failed"),
+		LastError:   outbox.Error(cause, "actor reconciliation delivery failed"),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -181,7 +181,7 @@ func (w *DeliveryWorker) retry(ctx context.Context, message db.OutboxMessage, ca
 func (w *DeliveryWorker) deadLetter(ctx context.Context, message db.OutboxMessage, cause error) error {
 	_, err := w.store.DeadLetterOutboxMessage(ctx, db.DeadLetterOutboxMessageParams{
 		ID: message.ID, ClaimedBy: message.ClaimedBy, ClaimAttempt: message.Attempts,
-		LastError: outbox.Error(cause, "Actor reconciliation delivery failed"),
+		LastError: outbox.Error(cause, "actor reconciliation delivery failed"),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -210,24 +210,24 @@ func decodeActorInputReconcilePayload(raw []byte) (actorInputReconcilePayload, e
 	decoder.DisallowUnknownFields()
 	var value actorInputReconcilePayload
 	if err := decoder.Decode(&value); err != nil {
-		return actorInputReconcilePayload{}, fmt.Errorf("decode Actor input reconciliation payload: %w", err)
+		return actorInputReconcilePayload{}, fmt.Errorf("decode actor input reconciliation payload: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		if err != nil {
 			return actorInputReconcilePayload{}, err
 		}
-		return actorInputReconcilePayload{}, errors.New("Actor input reconciliation payload contains a trailing JSON value")
+		return actorInputReconcilePayload{}, errors.New("actor input reconciliation payload contains a trailing JSON value")
 	}
 	var err error
 	if value.environmentID, err = ids.Parse(value.EnvironmentID); err != nil {
-		return actorInputReconcilePayload{}, errors.New("Actor input reconciliation environmentId is invalid")
+		return actorInputReconcilePayload{}, errors.New("actor input reconciliation environmentId is invalid")
 	}
 	if value.actorID, err = ids.Parse(value.ActorID); err != nil {
-		return actorInputReconcilePayload{}, errors.New("Actor input reconciliation actorId is invalid")
+		return actorInputReconcilePayload{}, errors.New("actor input reconciliation actorId is invalid")
 	}
 	if value.recordID, err = ids.Parse(value.RecordID); err != nil {
-		return actorInputReconcilePayload{}, errors.New("Actor input reconciliation recordId is invalid")
+		return actorInputReconcilePayload{}, errors.New("actor input reconciliation recordId is invalid")
 	}
 	return value, nil
 }
@@ -240,7 +240,7 @@ func decodeActorCloseReconcilePayload(
 	var value actorCloseReconcilePayload
 	if err := decoder.Decode(&value); err != nil {
 		return actorCloseReconcilePayload{}, fmt.Errorf(
-			"decode Actor close reconciliation payload: %w",
+			"decode actor close reconciliation payload: %w",
 			err,
 		)
 	}
@@ -250,18 +250,18 @@ func decodeActorCloseReconcilePayload(
 			return actorCloseReconcilePayload{}, err
 		}
 		return actorCloseReconcilePayload{}, errors.New(
-			"Actor close reconciliation payload contains a trailing JSON value",
+			"actor close reconciliation payload contains a trailing JSON value",
 		)
 	}
 	var err error
 	if value.environmentID, err = ids.Parse(value.EnvironmentID); err != nil {
 		return actorCloseReconcilePayload{}, errors.New(
-			"Actor close reconciliation environmentId is invalid",
+			"actor close reconciliation environmentId is invalid",
 		)
 	}
 	if value.actorID, err = ids.Parse(value.ActorID); err != nil {
 		return actorCloseReconcilePayload{}, errors.New(
-			"Actor close reconciliation actorId is invalid",
+			"actor close reconciliation actorId is invalid",
 		)
 	}
 	return value, nil

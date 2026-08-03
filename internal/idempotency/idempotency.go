@@ -202,15 +202,15 @@ func NewDeploymentCreateRequest(
 		return nil, errors.New("project ID is required")
 	}
 	if fingerprint.ImageCacheMode != "prefer" && fingerprint.ImageCacheMode != "bypass" {
-		return nil, errors.New("Deployment image cache mode is invalid")
+		return nil, errors.New("deployment image cache mode is invalid")
 	}
 	encoded, err := json.Marshal(fingerprint)
 	if err != nil {
-		return nil, fmt.Errorf("encode Deployment creation fingerprint: %w", err)
+		return nil, fmt.Errorf("encode deployment creation fingerprint: %w", err)
 	}
 	canonical, err := jsoncanon.Transform(encoded)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Deployment creation fingerprint: %w", err)
+		return nil, fmt.Errorf("canonicalize deployment creation fingerprint: %w", err)
 	}
 	return sealedRequest{value: request{
 		environmentID: environmentID,
@@ -244,11 +244,11 @@ func NewWorkspaceImageBuildRequest(
 	}
 	encoded, err := json.Marshal(fingerprint)
 	if err != nil {
-		return nil, fmt.Errorf("encode Workspace image build fingerprint: %w", err)
+		return nil, fmt.Errorf("encode workspace image build fingerprint: %w", err)
 	}
 	canonical, err := jsoncanon.Transform(encoded)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Workspace image build fingerprint: %w", err)
+		return nil, fmt.Errorf("canonicalize workspace image build fingerprint: %w", err)
 	}
 	authority.fingerprint = func() ([sha256.Size]byte, error) {
 		return operationFingerprint(operationWorkspaceImageBuild, canonical), nil
@@ -288,13 +288,13 @@ func workspaceImageBuildAuthority(
 		return request{}, errors.New("idempotency environment is required")
 	}
 	if buildLeaseID == uuid.Nil {
-		return request{}, errors.New("Build Lease ID is required")
+		return request{}, errors.New("build lease ID is required")
 	}
 	if buildLeaseGeneration <= 0 {
-		return request{}, errors.New("Build Lease generation must be positive")
+		return request{}, errors.New("build lease generation must be positive")
 	}
 	if declarationSlot == "" {
-		return request{}, errors.New("Workspace declaration slot is required")
+		return request{}, errors.New("workspace declaration slot is required")
 	}
 	scope := make([]byte, 0, len(buildLeaseID)+8)
 	scope = append(scope, buildLeaseID[:]...)
@@ -314,7 +314,7 @@ func validateWorkspaceImageBuildFingerprint(
 		"architecture":             fingerprint.Architecture,
 		"plan digest":              fingerprint.PlanDigest,
 		"submitted source digest":  fingerprint.SubmittedSourceDigest,
-		"Build tree digest":        fingerprint.BuildTreeDigest,
+		"build tree digest":        fingerprint.BuildTreeDigest,
 		"admitted path-set digest": fingerprint.AdmittedPathSetDigest,
 		"source archive digest":    fingerprint.SourceArchiveDigest,
 		"cache scope":              fingerprint.CacheScope,
@@ -325,14 +325,14 @@ func validateWorkspaceImageBuildFingerprint(
 		"output media type":        fingerprint.Output.MediaType,
 	} {
 		if value == "" {
-			return fmt.Errorf("Workspace image build %s is required", label)
+			return fmt.Errorf("workspace image build %s is required", label)
 		}
 	}
 	if fingerprint.Architecture != fingerprint.Output.Architecture {
-		return errors.New("Workspace image build output architecture does not match the request")
+		return errors.New("workspace image build output architecture does not match the request")
 	}
 	if fingerprint.ImageCacheMode != "prefer" && fingerprint.ImageCacheMode != "bypass" {
-		return errors.New("Workspace image build cache mode is invalid")
+		return errors.New("workspace image build cache mode is invalid")
 	}
 	if fingerprint.BuildTreeSizeBytes < 1 ||
 		fingerprint.SourceArchiveSizeBytes < 1 ||
@@ -345,7 +345,7 @@ func validateWorkspaceImageBuildFingerprint(
 		fingerprint.Quotas.MaxSourceArchiveEntries < 1 ||
 		fingerprint.Quotas.MaxOCIArchiveBytes < 1 ||
 		fingerprint.Output.MaxSizeBytes < 1 {
-		return errors.New("Workspace image build fingerprint contains an invalid bound")
+		return errors.New("workspace image build fingerprint contains an invalid bound")
 	}
 	return nil
 }
@@ -394,17 +394,17 @@ func NewRunMetadataRequest(
 		return nil, errors.New("idempotency environment is required")
 	}
 	if runID == uuid.Nil {
-		return nil, errors.New("Run ID is required")
+		return nil, errors.New("run ID is required")
 	}
 	if attemptNumber <= 0 {
-		return nil, errors.New("Run Attempt number must be positive")
+		return nil, errors.New("run attempt number must be positive")
 	}
 	if leaseFenceFingerprint == "" {
-		return nil, errors.New("Run Lease fence fingerprint is required")
+		return nil, errors.New("run lease fence fingerprint is required")
 	}
 	mutation, err := jsoncanon.Transform(mutationJSON)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Run metadata mutation: %w", err)
+		return nil, fmt.Errorf("canonicalize run metadata mutation: %w", err)
 	}
 	fingerprintInput, err := json.Marshal(struct {
 		Mutation              json.RawMessage `json:"mutation"`
@@ -413,11 +413,11 @@ func NewRunMetadataRequest(
 		Mutation: mutation, LeaseFenceFingerprint: leaseFenceFingerprint,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("encode Run metadata mutation fingerprint: %w", err)
+		return nil, fmt.Errorf("encode run metadata mutation fingerprint: %w", err)
 	}
 	canonical, err := jsoncanon.Transform(fingerprintInput)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Run metadata mutation fingerprint: %w", err)
+		return nil, fmt.Errorf("canonicalize run metadata mutation fingerprint: %w", err)
 	}
 	scope := make([]byte, 0, len("attempt\x00")+len(runID)+4)
 	scope = append(scope, "attempt\x00"...)
@@ -445,7 +445,7 @@ func NewActorInputSendRequest(environmentID uuid.UUID, actorID uuid.UUID, key st
 	}
 	canonicalInput, err := jsoncanon.Transform(inputJSON)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Actor input: %w", err)
+		return nil, fmt.Errorf("canonicalize actor input: %w", err)
 	}
 	input := bytes.Clone(canonicalInput)
 	return sealedRequest{value: request{
@@ -474,7 +474,7 @@ func NewActorOutputAppendRequest(
 	}
 	canonicalData, err := jsoncanon.Transform(dataJSON)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Actor output: %w", err)
+		return nil, fmt.Errorf("canonicalize actor output: %w", err)
 	}
 	fields, err := json.Marshal(struct {
 		Data        json.RawMessage `json:"data"`
@@ -484,11 +484,11 @@ func NewActorOutputAppendRequest(
 		ContentType: contentType,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("encode Actor output fingerprint: %w", err)
+		return nil, fmt.Errorf("encode actor output fingerprint: %w", err)
 	}
 	canonical, err := jsoncanon.Transform(fields)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Actor output fingerprint: %w", err)
+		return nil, fmt.Errorf("canonicalize actor output fingerprint: %w", err)
 	}
 	return sealedRequest{value: request{
 		environmentID: environmentID,
@@ -526,7 +526,7 @@ func NewRuntimeTokenCreateRequest(
 	input TokenCreateFingerprint,
 ) (Request, error) {
 	if runID == uuid.Nil {
-		return nil, errors.New("Token creating Run ID is required")
+		return nil, errors.New("token creating run ID is required")
 	}
 	scope := append([]byte("runtime\x00"), runID[:]...)
 	return newTokenCreateRequest(environmentID, scope, key, input)
@@ -551,7 +551,7 @@ func newTokenCreateRequest(
 	}
 	metadata, err := canonicalJSONOr(input.Metadata, `{}`)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Token metadata: %w", err)
+		return nil, fmt.Errorf("canonicalize token metadata: %w", err)
 	}
 	fields, err := json.Marshal(struct {
 		TimeoutMS *int64          `json:"timeoutMs"`
@@ -563,11 +563,11 @@ func newTokenCreateRequest(
 		Tags:      append([]string{}, input.Tags...),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("encode Token create fingerprint: %w", err)
+		return nil, fmt.Errorf("encode token create fingerprint: %w", err)
 	}
 	canonical, err := jsoncanon.Transform(fields)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Token create fingerprint: %w", err)
+		return nil, fmt.Errorf("canonicalize token create fingerprint: %w", err)
 	}
 	return sealedRequest{value: request{
 		environmentID: environmentID,
@@ -590,11 +590,11 @@ func NewTokenCompleteRequest(
 		return nil, errors.New("idempotency environment is required")
 	}
 	if tokenID == uuid.Nil {
-		return nil, errors.New("Token ID is required")
+		return nil, errors.New("token ID is required")
 	}
 	canonical, err := jsoncanon.Transform(resultJSON)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Token result: %w", err)
+		return nil, fmt.Errorf("canonicalize token result: %w", err)
 	}
 	return sealedRequest{value: request{
 		environmentID: environmentID,
@@ -612,7 +612,7 @@ func NewTokenCancelRequest(environmentID uuid.UUID, tokenID uuid.UUID, key strin
 		return nil, errors.New("idempotency environment is required")
 	}
 	if tokenID == uuid.Nil {
-		return nil, errors.New("Token ID is required")
+		return nil, errors.New("token ID is required")
 	}
 	return sealedRequest{value: request{
 		environmentID: environmentID,
@@ -639,24 +639,24 @@ func NewActorStartRequest(
 	}
 	workspace, err := jsoncanon.Transform(input.WorkspaceAddress)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Actor start Workspace address: %w", err)
+		return nil, fmt.Errorf("canonicalize actor start workspace address: %w", err)
 	}
 	runMetadata, err := canonicalJSONOr(input.ManagedRunMetadata, `{}`)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize managed Run metadata: %w", err)
+		return nil, fmt.Errorf("canonicalize managed run metadata: %w", err)
 	}
 	var retryPolicy json.RawMessage
 	if len(input.ManagedRetryPolicy) > 0 {
 		retryPolicy, err = jsoncanon.Transform(input.ManagedRetryPolicy)
 		if err != nil {
-			return nil, fmt.Errorf("canonicalize managed Run retry policy: %w", err)
+			return nil, fmt.Errorf("canonicalize managed run retry policy: %w", err)
 		}
 	}
 	var initialInput json.RawMessage
 	if input.InputPresent {
 		initialInput, err = jsoncanon.Transform(input.Input)
 		if err != nil {
-			return nil, fmt.Errorf("canonicalize initial Actor input: %w", err)
+			return nil, fmt.Errorf("canonicalize initial actor input: %w", err)
 		}
 	}
 	fields, err := json.Marshal(struct {
@@ -682,11 +682,11 @@ func NewActorStartRequest(
 		ManagedRunTags: append([]string{}, input.ManagedRunTags...),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("encode Actor start fingerprint: %w", err)
+		return nil, fmt.Errorf("encode actor start fingerprint: %w", err)
 	}
 	canonicalFields, err := jsoncanon.Transform(fields)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Actor start fingerprint: %w", err)
+		return nil, fmt.Errorf("canonicalize actor start fingerprint: %w", err)
 	}
 	return sealedRequest{value: request{
 		environmentID: environmentID,
@@ -709,11 +709,11 @@ func NewWorkspaceCreateRequest(
 		return nil, errors.New("idempotency environment is required")
 	}
 	if workspaceDeclaredID == "" {
-		return nil, errors.New("Workspace declared ID is required")
+		return nil, errors.New("workspace declared ID is required")
 	}
 	secrets, err := canonicalJSONOr(input.Secrets, `[]`)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Workspace Secret placements: %w", err)
+		return nil, fmt.Errorf("canonicalize workspace secret placements: %w", err)
 	}
 	fields, err := json.Marshal(struct {
 		DeclaredID string          `json:"declaredId"`
@@ -725,11 +725,11 @@ func NewWorkspaceCreateRequest(
 		Secrets:    secrets,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("encode Workspace create fingerprint: %w", err)
+		return nil, fmt.Errorf("encode workspace create fingerprint: %w", err)
 	}
 	canonicalFields, err := jsoncanon.Transform(fields)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Workspace create fingerprint: %w", err)
+		return nil, fmt.Errorf("canonicalize workspace create fingerprint: %w", err)
 	}
 	return sealedRequest{value: request{
 		environmentID: environmentID,
@@ -747,7 +747,7 @@ func NewWorkspaceDeleteRequest(environmentID uuid.UUID, workspaceID uuid.UUID, k
 		return nil, errors.New("idempotency environment is required")
 	}
 	if workspaceID == uuid.Nil {
-		return nil, errors.New("Workspace ID is required")
+		return nil, errors.New("workspace ID is required")
 	}
 	return sealedRequest{value: request{
 		environmentID: environmentID,
@@ -770,11 +770,11 @@ func NewWorkspaceExecRequest(
 		return nil, errors.New("idempotency environment is required")
 	}
 	if workspaceID == uuid.Nil {
-		return nil, errors.New("Workspace ID is required")
+		return nil, errors.New("workspace ID is required")
 	}
 	env, err := canonicalJSONOr(input.Env, `{}`)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Workspace exec environment: %w", err)
+		return nil, fmt.Errorf("canonicalize workspace exec environment: %w", err)
 	}
 	fields, err := json.Marshal(struct {
 		Command   []string        `json:"command"`
@@ -790,11 +790,11 @@ func NewWorkspaceExecRequest(
 		TimeoutMS: input.TimeoutMS,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("encode Workspace exec fingerprint: %w", err)
+		return nil, fmt.Errorf("encode workspace exec fingerprint: %w", err)
 	}
 	canonical, err := jsoncanon.Transform(fields)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Workspace exec fingerprint: %w", err)
+		return nil, fmt.Errorf("canonicalize workspace exec fingerprint: %w", err)
 	}
 	return sealedRequest{value: request{
 		environmentID: environmentID,
@@ -817,28 +817,28 @@ func NewTaskStartRequest(
 		return nil, errors.New("idempotency environment is required")
 	}
 	if taskDeclaredID == "" {
-		return nil, errors.New("Task declared ID is required")
+		return nil, errors.New("task declared ID is required")
 	}
 	workspace, err := jsoncanon.Transform(input.Workspace)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Task start Workspace: %w", err)
+		return nil, fmt.Errorf("canonicalize task start workspace: %w", err)
 	}
 	metadata, err := canonicalJSONOr(input.Metadata, `{}`)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Task metadata: %w", err)
+		return nil, fmt.Errorf("canonicalize task metadata: %w", err)
 	}
 	var payload json.RawMessage
 	if input.PayloadPresent {
 		payload, err = jsoncanon.Transform(input.Payload)
 		if err != nil {
-			return nil, fmt.Errorf("canonicalize Task payload: %w", err)
+			return nil, fmt.Errorf("canonicalize task payload: %w", err)
 		}
 	}
 	var retry json.RawMessage
 	if len(input.RetryPolicy) > 0 {
 		retry, err = jsoncanon.Transform(input.RetryPolicy)
 		if err != nil {
-			return nil, fmt.Errorf("canonicalize Task retry policy: %w", err)
+			return nil, fmt.Errorf("canonicalize task retry policy: %w", err)
 		}
 	}
 	fields, err := json.Marshal(struct {
@@ -863,11 +863,11 @@ func NewTaskStartRequest(
 		Tags: append([]string{}, input.Tags...),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("encode Task start fingerprint: %w", err)
+		return nil, fmt.Errorf("encode task start fingerprint: %w", err)
 	}
 	canonical, err := jsoncanon.Transform(fields)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize Task start fingerprint: %w", err)
+		return nil, fmt.Errorf("canonicalize task start fingerprint: %w", err)
 	}
 	return sealedRequest{value: request{
 		environmentID: environmentID,
@@ -888,13 +888,13 @@ func NewTaskChildInvokeRequest(
 	input TaskChildInvokeFingerprint,
 ) (Request, error) {
 	if parentRunID == uuid.Nil {
-		return nil, errors.New("parent Run ID is required")
+		return nil, errors.New("parent run ID is required")
 	}
 	if taskDeclaredID == "" {
-		return nil, errors.New("Task declared ID is required")
+		return nil, errors.New("task declared ID is required")
 	}
 	if input.Method != "start" && input.Method != "call" {
-		return nil, errors.New("child Task invocation method is invalid")
+		return nil, errors.New("child task invocation method is invalid")
 	}
 	taskFingerprint := TaskStartFingerprint{
 		PayloadPresent: input.PayloadPresent,
@@ -930,7 +930,7 @@ func NewTaskChildInvokeRequest(
 		TaskFingerprint: fmt.Sprintf("%x", fingerprint),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("encode child Task invocation fingerprint: %w", err)
+		return nil, fmt.Errorf("encode child task invocation fingerprint: %w", err)
 	}
 	scope := make([]byte, 0, len(parentRunID)+1+len(taskDeclaredID))
 	scope = append(scope, parentRunID[:]...)

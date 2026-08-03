@@ -84,7 +84,7 @@ func TestConfigValidateRequiresBootInputs(t *testing.T) {
 		t.Fatal("expected validation errors")
 	}
 	text := err.Error()
-	for _, want := range []string{"firecracker jailer uid", "firecracker jailer gid", "guest kernel path", "guest initramfs path", "guest rootfs path", "worker network link pool", "worker network translation pool", "worker network resolver IPv4", "worker network capacity"} {
+	for _, want := range []string{"Firecracker jailer uid", "Firecracker jailer gid", "guest kernel path", "guest initramfs path", "guest rootfs path", "worker network link pool", "worker network translation pool", "worker network resolver IPv4", "worker network capacity"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("error %q does not contain %q", text, want)
 		}

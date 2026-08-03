@@ -38,29 +38,29 @@ func (task *guestRunLeaseTask) handleTokenCreate(
 		if failure, ok := tokenCreateFailure(err); ok {
 			data, marshalErr := json.Marshal(failure)
 			if marshalErr != nil {
-				return fmt.Errorf("encode Token create failure: %w", marshalErr)
+				return fmt.Errorf("encode token create failure: %w", marshalErr)
 			}
 			if writeErr := wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
 				CorrelationId: request.CorrelationID,
 				Kind:          "failed",
 				DataJson:      string(data),
 			}); writeErr != nil {
-				return fmt.Errorf("write Token create failure: %w", writeErr)
+				return fmt.Errorf("write token create failure: %w", writeErr)
 			}
 			return nil
 		}
-		return fmt.Errorf("create Token: %w", err)
+		return fmt.Errorf("create token: %w", err)
 	}
 	data, err := json.Marshal(response)
 	if err != nil {
-		return fmt.Errorf("encode Token create decision: %w", err)
+		return fmt.Errorf("encode token create decision: %w", err)
 	}
 	if err := wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
 		CorrelationId: request.CorrelationID,
 		Kind:          "completed",
 		DataJson:      string(data),
 	}); err != nil {
-		return fmt.Errorf("write Token create decision: %w", err)
+		return fmt.Errorf("write token create decision: %w", err)
 	}
 	return nil
 }
@@ -94,10 +94,10 @@ func workerTokenCreateRequest(
 	requested *runv0.TokenCreateRequested,
 ) (workerapi.CreateTokenRequest, error) {
 	if requested == nil {
-		return workerapi.CreateTokenRequest{}, errors.New("Token create request is required")
+		return workerapi.CreateTokenRequest{}, errors.New("token create request is required")
 	}
 	if err := ids.Validate(requested.GetCorrelationId()); err != nil {
-		return workerapi.CreateTokenRequest{}, errors.New("Token create correlation ID is invalid")
+		return workerapi.CreateTokenRequest{}, errors.New("token create correlation ID is invalid")
 	}
 	request := workerapi.CreateTokenRequest{
 		CorrelationID: requested.GetCorrelationId(),
@@ -106,7 +106,7 @@ func workerTokenCreateRequest(
 	}
 	if requested.TimeoutMs != nil {
 		if requested.GetTimeoutMs() > math.MaxInt64 {
-			return workerapi.CreateTokenRequest{}, errors.New("Token timeout exceeds int64 milliseconds")
+			return workerapi.CreateTokenRequest{}, errors.New("token timeout exceeds int64 milliseconds")
 		}
 		timeoutMS := int64(requested.GetTimeoutMs())
 		request.TimeoutMS = &timeoutMS

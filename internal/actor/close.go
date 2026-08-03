@@ -53,7 +53,7 @@ func ReconcileClose(
 			if errors.Is(err, pgx.ErrNoRows) {
 				return actor, true, nil
 			}
-			return db.Actor{}, false, fmt.Errorf("create Actor close continuation: %w", err)
+			return db.Actor{}, false, fmt.Errorf("create actor close continuation: %w", err)
 		}
 		updated, err := store.GetActor(ctx, db.GetActorParams{
 			EnvironmentID: actor.EnvironmentID,
@@ -69,7 +69,7 @@ func ReconcileClose(
 		if err == nil {
 			err = ErrAuthority
 		}
-		return db.Actor{}, false, fmt.Errorf("load Actor close time: %w", err)
+		return db.Actor{}, false, fmt.Errorf("load actor close time: %w", err)
 	}
 	if _, err := store.ReleaseActorWorkspaceOwner(ctx, db.ReleaseActorWorkspaceOwnerParams{
 		CompletedAt:         now,
@@ -82,7 +82,7 @@ func ReconcileClose(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return actor, true, nil
 		}
-		return db.Actor{}, false, fmt.Errorf("release Actor close Workspace owner: %w", err)
+		return db.Actor{}, false, fmt.Errorf("release actor close workspace owner: %w", err)
 	}
 	closed, err := store.CompleteIdleActorClose(ctx, db.CompleteIdleActorCloseParams{
 		ClosedAt:      now,
@@ -91,7 +91,7 @@ func ReconcileClose(
 		WorkspaceID:   actor.WorkspaceID,
 	})
 	if err != nil {
-		return db.Actor{}, false, fmt.Errorf("complete idle Actor close: %w", err)
+		return db.Actor{}, false, fmt.Errorf("complete idle actor close: %w", err)
 	}
 	return closed, false, nil
 }
@@ -151,7 +151,7 @@ func reconcileCurrentRunClose(
 		return db.Actor{}, false, err
 	}
 	if _, err := FailWait(ctx, store, wait, "actor_closed"); err != nil {
-		return db.Actor{}, false, fmt.Errorf("complete Actor close input Wait: %w", err)
+		return db.Actor{}, false, fmt.Errorf("complete actor close input wait: %w", err)
 	}
 	return actor, false, nil
 }

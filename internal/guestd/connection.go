@@ -98,13 +98,13 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 	case wire.StreamTypeProgramResumeGrant:
 		programConn, ok := conn.(programConnection)
 		if !ok {
-			return false, errors.New("Program resume grant connection does not support deadlines")
+			return false, errors.New("program resume grant connection does not support deadlines")
 		}
 		return false, handleProgramResumeGrantConnection(programConn, start.bodyLen, workspaceRegistry, registry, time.Now)
 	case wire.StreamTypeProgramRestoreVerify:
 		programConn, ok := conn.(programConnection)
 		if !ok {
-			return false, errors.New("Program restore verification connection does not support deadlines")
+			return false, errors.New("program restore verification connection does not support deadlines")
 		}
 		return false, handleProgramRestoreVerifyConnection(programConn, start.bodyLen, workspaceRegistry, registry)
 	case wire.StreamTypeWorkspaceFinalizationBegin:

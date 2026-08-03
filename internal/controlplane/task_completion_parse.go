@@ -133,14 +133,14 @@ func parseTaskCompletionRequest(request workerapi.CompleteTaskRequest) (parsedTa
 		return parsedTaskCompletion{}, errors.New("workspace must contain exactly one proof")
 	}
 	if parsed.kind == taskCompletionSucceeded && parsed.capture == nil {
-		return parsedTaskCompletion{}, errors.New("a successful Task requires a captured Workspace")
+		return parsedTaskCompletion{}, errors.New("a successful task requires a captured workspace")
 	}
 	if parsed.kind != taskCompletionSucceeded && parsed.rollback == nil {
-		return parsedTaskCompletion{}, errors.New("a failed Task requires a Workspace rollback")
+		return parsedTaskCompletion{}, errors.New("a failed task requires a workspace rollback")
 	}
 	if request.Handoff != nil {
 		if parsed.kind != taskCompletionSucceeded || parsed.capture == nil {
-			return parsedTaskCompletion{}, errors.New("a handoff checkpoint requires successful Workspace capture")
+			return parsedTaskCompletion{}, errors.New("a handoff checkpoint requires successful workspace capture")
 		}
 		checkpointID, err := parseCanonicalUUID("handoff.checkpoint_id", request.Handoff.CheckpointID)
 		if err != nil {
@@ -174,7 +174,7 @@ func parseTaskCompletionRequest(request workerapi.CompleteTaskRequest) (parsedTa
 			base.ArtifactMediaType != parsed.capture.artifact.MediaType ||
 			base.ArtifactEncoding != parsed.capture.artifact.Encoding ||
 			strings.TrimSpace(base.MountPath) == "" {
-			return parsedTaskCompletion{}, errors.New("handoff checkpoint Workspace base does not match captured Workspace")
+			return parsedTaskCompletion{}, errors.New("handoff checkpoint workspace base does not match captured workspace")
 		}
 		parsed.handoff = &parsedTaskHandoffCheckpoint{
 			checkpointID:  checkpointID,
@@ -188,7 +188,7 @@ func parseTaskCompletionRequest(request workerapi.CompleteTaskRequest) (parsedTa
 
 	parsed.fingerprint, err = terminalRequestFingerprint("task.complete.v0", normalized)
 	if err != nil {
-		return parsedTaskCompletion{}, fmt.Errorf("fingerprint Task completion: %w", err)
+		return parsedTaskCompletion{}, fmt.Errorf("fingerprint task completion: %w", err)
 	}
 	return parsed, nil
 }
@@ -241,7 +241,7 @@ func parseTaskWorkspaceRollback(
 		if err = validateTaskWorkspaceArtifact("workspace.rolled_back.target.artifact", *rollback.Target.Artifact); err == nil {
 			artifact := rollback.Target.Artifact
 			if int64(artifact.EntryCount) != int64(tree.EntryCount) {
-				err = errors.New("workspace.rolled_back target Artifact and tree entry counts differ")
+				err = errors.New("workspace.rolled_back target artifact and tree entry counts differ")
 			} else {
 				target, err = workspace.ArtifactResetTarget(baseID.String(), tree, workspace.ArtifactIdentity{
 					Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,

@@ -100,7 +100,7 @@ func validateBuildGuestRequest(request BuildGuestRequest) error {
 		return err
 	}
 	if request.Toolchain.RuntimeDigest != request.Runtime.Artifact.Digest {
-		return errors.New("build toolchain does not match Runtime")
+		return errors.New("build toolchain does not match runtime")
 	}
 	switch request.Manager.PackageManager.Name {
 	case PackageManagerNPM:
@@ -114,7 +114,7 @@ func validateBuildGuestRequest(request BuildGuestRequest) error {
 		}
 	case PackageManagerBun:
 		if request.LockfileName != "bun.lock" {
-			return errors.New("Bun build lockfile name is invalid")
+			return errors.New("the Bun build lockfile name is invalid")
 		}
 	}
 	if !sha256DigestPattern.MatchString(request.SourceDigest) {
@@ -192,7 +192,7 @@ func validateBuildManager(manager BuildManager) error {
 	}
 	if manager.Entrypoint.Kind != expectedKind ||
 		manager.Entrypoint.Path != expectedPath {
-		return errors.New("build Manager entrypoint does not match its family")
+		return errors.New("build manager entrypoint does not match its family")
 	}
 	return validateInputArtifact(
 		manager.Artifact,
@@ -204,7 +204,7 @@ func validateBuildManager(manager BuildManager) error {
 
 func validateBuildRuntime(runtime BuildRuntime) error {
 	if _, _, _, ok := parseReleaseVersion(runtime.NodeVersion); !ok {
-		return errors.New("build Runtime Node version is invalid")
+		return errors.New("build runtime Node.js version is invalid")
 	}
 	return validateInputArtifact(
 		runtime.Artifact,
@@ -216,7 +216,7 @@ func validateBuildRuntime(runtime BuildRuntime) error {
 
 func validateBuildToolchain(toolchain BuildToolchain) error {
 	if !sha256DigestPattern.MatchString(toolchain.RuntimeDigest) {
-		return errors.New("build toolchain Runtime digest is invalid")
+		return errors.New("build toolchain runtime digest is invalid")
 	}
 	return validateInputArtifact(
 		toolchain.Artifact,

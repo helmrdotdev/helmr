@@ -49,7 +49,7 @@ func projectRunLeaseExecution(
 			authority.childRun.ID.Valid ||
 			authority.runtime.RestoreCheckpointID.Valid ||
 			len(authority.checkpointArtifacts) != 0 {
-			return workerapi.RunLeaseExecution{}, errors.New("fresh Run Lease contains resume authority")
+			return workerapi.RunLeaseExecution{}, errors.New("fresh run lease contains resume authority")
 		}
 		start, err := encodeProgramStart(
 			authority.run,
@@ -69,9 +69,9 @@ func projectRunLeaseExecution(
 			!authority.checkpoint.ID.Valid ||
 			!authority.attempt.EntrypointEnteredAt.Valid ||
 			authority.runWait.ResumeRequestVersion <= 0 {
-			return workerapi.RunLeaseExecution{}, errors.New("restore Run Lease authority is incomplete")
+			return workerapi.RunLeaseExecution{}, errors.New("restore run lease authority is incomplete")
 		}
-		waitID, err := requiredClaimUUIDString("Run Wait ID", authority.runWait.ID)
+		waitID, err := requiredClaimUUIDString("run wait ID", authority.runWait.ID)
 		if err != nil {
 			return workerapi.RunLeaseExecution{}, err
 		}
@@ -83,7 +83,7 @@ func projectRunLeaseExecution(
 		if err != nil {
 			return workerapi.RunLeaseExecution{}, err
 		}
-		checkpointID, err := requiredClaimUUIDString("Run Checkpoint ID", authority.checkpoint.ID)
+		checkpointID, err := requiredClaimUUIDString("run checkpoint ID", authority.checkpoint.ID)
 		if err != nil {
 			return workerapi.RunLeaseExecution{}, err
 		}
@@ -112,7 +112,7 @@ func projectRunLeaseExecution(
 				!authority.enclosingWait.HandoffMountGeneration.Valid {
 				return workerapi.RunLeaseExecution{}, errors.New("retained restore authority is incomplete")
 			}
-			enclosingWaitID, err := requiredClaimUUIDString("enclosing Run Wait ID", authority.enclosingWait.ID)
+			enclosingWaitID, err := requiredClaimUUIDString("enclosing run wait ID", authority.enclosingWait.ID)
 			if err != nil {
 				return workerapi.RunLeaseExecution{}, err
 			}
@@ -145,11 +145,11 @@ func projectRunLeaseExecution(
 			len(authority.checkpointArtifacts) != 0 {
 			return workerapi.RunLeaseExecution{}, errors.New("child attach authority is incomplete")
 		}
-		waitID, err := requiredClaimUUIDString("Run Wait ID", authority.runWait.ID)
+		waitID, err := requiredClaimUUIDString("run wait ID", authority.runWait.ID)
 		if err != nil {
 			return workerapi.RunLeaseExecution{}, err
 		}
-		checkpointID, err := requiredClaimUUIDString("Run Checkpoint ID", authority.checkpoint.ID)
+		checkpointID, err := requiredClaimUUIDString("run checkpoint ID", authority.checkpoint.ID)
 		if err != nil {
 			return workerapi.RunLeaseExecution{}, err
 		}
@@ -196,11 +196,11 @@ func projectRunLeaseExecution(
 			len(authority.checkpointArtifacts) != 0 {
 			return workerapi.RunLeaseExecution{}, errors.New("parent attach authority is incomplete")
 		}
-		waitID, err := requiredClaimUUIDString("Run Wait ID", authority.runWait.ID)
+		waitID, err := requiredClaimUUIDString("run wait ID", authority.runWait.ID)
 		if err != nil {
 			return workerapi.RunLeaseExecution{}, err
 		}
-		checkpointID, err := requiredClaimUUIDString("Run Checkpoint ID", authority.checkpoint.ID)
+		checkpointID, err := requiredClaimUUIDString("run checkpoint ID", authority.checkpoint.ID)
 		if err != nil {
 			return workerapi.RunLeaseExecution{}, err
 		}
@@ -235,7 +235,7 @@ func projectRunLeaseExecution(
 		}, nil
 	default:
 		return workerapi.RunLeaseExecution{}, fmt.Errorf(
-			"Run Lease claim mode %q is unsupported",
+			"run lease claim mode %q is unsupported",
 			authority.mode,
 		)
 	}
@@ -247,7 +247,7 @@ func checkpointCorrelationID(
 ) (string, error) {
 	var manifest workerapi.CheckpointManifest
 	if err := json.Unmarshal(checkpoint.RestoreManifest, &manifest); err != nil {
-		return "", fmt.Errorf("decode Run Checkpoint correlation authority: %w", err)
+		return "", fmt.Errorf("decode run checkpoint correlation authority: %w", err)
 	}
 	correlationID := strings.TrimSpace(manifest.RecoveryPoint.CorrelationID)
 	if correlationID == "" ||
@@ -255,7 +255,7 @@ func checkpointCorrelationID(
 		manifest.RecoveryPoint.RunID != pgvalue.UUIDString(checkpoint.RunID) ||
 		manifest.RecoveryPoint.AttemptNumber != checkpoint.AttemptNumber ||
 		manifest.RecoveryPoint.RunWaitID != pgvalue.UUIDString(wait.ID) {
-		return "", errors.New("Run Checkpoint correlation authority is inconsistent")
+		return "", errors.New("run checkpoint correlation authority is inconsistent")
 	}
 	return correlationID, nil
 }
@@ -271,12 +271,12 @@ func projectSecretDeliveries(materials []secret.DeliveryMaterial) ([]workerapi.S
 	deliveries := make([]workerapi.SecretDelivery, 0, len(ordered))
 	for index, material := range ordered {
 		if strings.TrimSpace(material.PlacementTarget) == "" {
-			return nil, errors.New("Secret placement target is required")
+			return nil, errors.New("secret placement target is required")
 		}
 		if index > 0 &&
 			ordered[index-1].PlacementKind == material.PlacementKind &&
 			ordered[index-1].PlacementTarget == material.PlacementTarget {
-			return nil, errors.New("Secret placement is duplicated")
+			return nil, errors.New("secret placement is duplicated")
 		}
 		delivery := workerapi.SecretDelivery{Value: append([]byte(nil), material.Value...)}
 		switch material.PlacementKind {
@@ -285,7 +285,7 @@ func projectSecretDeliveries(materials []secret.DeliveryMaterial) ([]workerapi.S
 		case "file":
 			delivery.File = &workerapi.SecretFile{Path: material.PlacementTarget}
 		default:
-			return nil, fmt.Errorf("Secret placement kind %q is unsupported", material.PlacementKind)
+			return nil, fmt.Errorf("secret placement kind %q is unsupported", material.PlacementKind)
 		}
 		deliveries = append(deliveries, delivery)
 	}
@@ -304,11 +304,11 @@ type runLeaseProjectionAuthority struct {
 
 func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi.RunLeaseAssignment, error) {
 	lease := authority.runLease
-	id, err := requiredClaimUUIDString("Run Lease ID", lease.ID)
+	id, err := requiredClaimUUIDString("run lease ID", lease.ID)
 	if err != nil {
 		return workerapi.RunLeaseAssignment{}, err
 	}
-	runID, err := requiredClaimUUIDString("Run ID", lease.RunID)
+	runID, err := requiredClaimUUIDString("run ID", lease.RunID)
 	if err != nil {
 		return workerapi.RunLeaseAssignment{}, err
 	}
@@ -320,20 +320,20 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 	if err != nil {
 		return workerapi.RunLeaseAssignment{}, err
 	}
-	workspaceID, err := requiredClaimUUIDString("Workspace ID", authority.workspace.ID)
+	workspaceID, err := requiredClaimUUIDString("workspace ID", authority.workspace.ID)
 	if err != nil {
 		return workerapi.RunLeaseAssignment{}, err
 	}
-	mountID, err := requiredClaimUUIDString("Workspace Mount ID", authority.workspaceMount.ID)
+	mountID, err := requiredClaimUUIDString("workspace mount ID", authority.workspaceMount.ID)
 	if err != nil {
 		return workerapi.RunLeaseAssignment{}, err
 	}
-	workspaceLeaseID, err := requiredClaimUUIDString("Workspace Lease ID", authority.workspaceLease.ID)
+	workspaceLeaseID, err := requiredClaimUUIDString("workspace lease ID", authority.workspaceLease.ID)
 	if err != nil {
 		return workerapi.RunLeaseAssignment{}, err
 	}
 	baseWorkspaceVersionID, err := requiredClaimUUIDString(
-		"base Workspace version ID",
+		"base workspace version ID",
 		authority.workspaceLease.BaseVersionID,
 	)
 	if err != nil {
@@ -349,7 +349,7 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 		authority.workspaceLease.WorkspaceMountID != authority.workspaceMount.ID ||
 		authority.workspaceLease.WorkspaceID != lease.WorkspaceID ||
 		authority.workspaceLease.BaseVersionID != authority.workspaceMount.MaterializedVersionID {
-		return workerapi.RunLeaseAssignment{}, errors.New("Run Lease assignment authority is inconsistent")
+		return workerapi.RunLeaseAssignment{}, errors.New("run lease assignment authority is inconsistent")
 	}
 	if lease.AttemptNumber <= 0 ||
 		lease.LeaseSequence <= 0 ||
@@ -357,7 +357,7 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 		authority.workspaceLease.OwnershipGeneration <= 0 ||
 		authority.workspaceLease.WriterGeneration <= 0 ||
 		authority.workspaceLease.MountFencingGeneration <= 0 ||
-		lease.RequestedCpuMillis <= 0 ||
+		lease.RequestedCPUMillis <= 0 ||
 		lease.RequestedMemoryBytes <= 0 ||
 		lease.RequestedGuestEphemeralDiskBytes <= 0 ||
 		lease.RequestedExecutionSlots <= 0 ||
@@ -366,7 +366,7 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 		!lease.StartDeadlineAt.Valid ||
 		!lease.ExpiresAt.Valid ||
 		lease.StartDeadlineAt.Time.After(lease.ExpiresAt.Time) {
-		return workerapi.RunLeaseAssignment{}, errors.New("Run Lease assignment fields are invalid")
+		return workerapi.RunLeaseAssignment{}, errors.New("run lease assignment fields are invalid")
 	}
 	for name, value := range map[string]string{
 		"worker group ID":         lease.WorkerGroupID,
@@ -395,7 +395,7 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 		OwnershipGeneration:              authority.workspaceLease.OwnershipGeneration,
 		WriterGeneration:                 authority.workspaceLease.WriterGeneration,
 		MountFencingGeneration:           authority.workspaceLease.MountFencingGeneration,
-		RequestedCPUMillis:               lease.RequestedCpuMillis,
+		RequestedCPUMillis:               lease.RequestedCPUMillis,
 		RequestedMemoryBytes:             lease.RequestedMemoryBytes,
 		RequestedGuestEphemeralDiskBytes: lease.RequestedGuestEphemeralDiskBytes,
 		RequestedExecutionSlots:          lease.RequestedExecutionSlots,
@@ -429,7 +429,7 @@ func projectWorkspaceAttachment(
 		lease.WriterGeneration <= 0 ||
 		lease.MountFencingGeneration <= 0 ||
 		strings.TrimSpace(writeCapability) == "" {
-		return workerapi.WorkspaceAttachment{}, errors.New("Workspace attachment authority is inconsistent")
+		return workerapi.WorkspaceAttachment{}, errors.New("workspace attachment authority is inconsistent")
 	}
 	resetTarget, err := projectWorkspaceResetTarget(lease, resetAuthority)
 	if err != nil {
@@ -443,9 +443,9 @@ func projectWorkspaceResetTarget(
 	authority db.GetWorkspaceResetTargetAuthorityRow,
 ) (workerapi.WorkspaceResetTarget, error) {
 	if authority.VersionID != lease.BaseVersionID {
-		return workerapi.WorkspaceResetTarget{}, errors.New("Workspace Reset target does not match the Workspace Lease base")
+		return workerapi.WorkspaceResetTarget{}, errors.New("workspace reset target does not match the workspace lease base")
 	}
-	baseVersionID, err := requiredClaimUUIDString("Workspace Reset base version ID", authority.VersionID)
+	baseVersionID, err := requiredClaimUUIDString("workspace reset base version ID", authority.VersionID)
 	if err != nil {
 		return workerapi.WorkspaceResetTarget{}, err
 	}
@@ -464,7 +464,7 @@ func projectWorkspaceResetTarget(
 		!authority.ArtifactMediaType.Valid
 	if emptyShape {
 		if _, err := workspace.EmptyResetTarget(baseVersionID, tree); err != nil {
-			return workerapi.WorkspaceResetTarget{}, fmt.Errorf("invalid empty Workspace Reset target authority: %w", err)
+			return workerapi.WorkspaceResetTarget{}, fmt.Errorf("invalid empty workspace reset target authority: %w", err)
 		}
 		return workerapi.WorkspaceResetTarget{
 			BaseWorkspaceVersionID: baseVersionID, Tree: projectedTree,
@@ -478,7 +478,7 @@ func projectWorkspaceResetTarget(
 		authority.ArtifactRowKind.Valid && authority.ArtifactRowKind.ArtifactKind == db.ArtifactKindWorkspaceVersion &&
 		authority.ArtifactDigest.Valid && authority.ArtifactSizeBytes.Valid && authority.ArtifactMediaType.Valid
 	if !artifactShape {
-		return workerapi.WorkspaceResetTarget{}, errors.New("Workspace Reset target authority has an invalid version/Artifact relation")
+		return workerapi.WorkspaceResetTarget{}, errors.New("workspace reset target authority has an invalid version/artifact relation")
 	}
 	artifact := workspace.ArtifactIdentity{
 		Digest: authority.ArtifactDigest.String, MediaType: authority.ArtifactMediaType.String,
@@ -486,7 +486,7 @@ func projectWorkspaceResetTarget(
 		EntryCount: int(authority.EntryCount),
 	}
 	if _, err := workspace.ArtifactResetTarget(baseVersionID, tree, artifact); err != nil {
-		return workerapi.WorkspaceResetTarget{}, fmt.Errorf("invalid Artifact Workspace Reset target authority: %w", err)
+		return workerapi.WorkspaceResetTarget{}, fmt.Errorf("invalid artifact workspace reset target authority: %w", err)
 	}
 	return workerapi.WorkspaceResetTarget{
 		BaseWorkspaceVersionID: baseVersionID,
@@ -500,19 +500,19 @@ func projectWorkspaceResetTarget(
 
 func projectRunWaitDecision(wait db.RunWait) (workerapi.RunLeaseDecision, error) {
 	if !wait.ConditionTerminalAt.Valid {
-		return workerapi.RunLeaseDecision{}, errors.New("terminal Wait decision has no terminal timestamp")
+		return workerapi.RunLeaseDecision{}, errors.New("terminal wait decision has no terminal timestamp")
 	}
 	switch wait.ConditionState {
 	case db.WaitStateCompleted:
 		if wait.ConditionReasonCode.Valid || wait.ConditionError != nil {
-			return workerapi.RunLeaseDecision{}, errors.New("completed Wait contains failure authority")
+			return workerapi.RunLeaseDecision{}, errors.New("completed wait contains failure authority")
 		}
 		completed := &workerapi.RunLeaseCompleted{}
 		if wait.ConditionResult == nil {
 			completed.NoResult = &struct{}{}
 		} else {
 			if !json.Valid(wait.ConditionResult) {
-				return workerapi.RunLeaseDecision{}, errors.New("completed Wait result is not valid JSON")
+				return workerapi.RunLeaseDecision{}, errors.New("completed wait result is not valid JSON")
 			}
 			completed.ResultJSON = append(json.RawMessage(nil), wait.ConditionResult...)
 		}
@@ -537,7 +537,7 @@ func projectRunWaitDecision(wait db.RunWait) (workerapi.RunLeaseDecision, error)
 		}}, nil
 	default:
 		return workerapi.RunLeaseDecision{}, fmt.Errorf(
-			"Wait condition state %q is not terminal",
+			"wait condition state %q is not terminal",
 			wait.ConditionState,
 		)
 	}
@@ -550,17 +550,17 @@ type runLeaseFailure struct {
 
 func projectRunLeaseFailure(wait db.RunWait) (runLeaseFailure, error) {
 	if !wait.ConditionReasonCode.Valid || strings.TrimSpace(wait.ConditionReasonCode.String) == "" {
-		return runLeaseFailure{}, errors.New("terminal Wait reason is required")
+		return runLeaseFailure{}, errors.New("terminal wait reason is required")
 	}
 	var detail json.RawMessage
 	if wait.ConditionError != nil {
 		if !json.Valid(wait.ConditionError) {
-			return runLeaseFailure{}, errors.New("terminal Wait error is not valid JSON")
+			return runLeaseFailure{}, errors.New("terminal wait error is not valid JSON")
 		}
 		detail = append(json.RawMessage(nil), wait.ConditionError...)
 	}
 	if wait.ConditionResult != nil {
-		return runLeaseFailure{}, errors.New("failed or cancelled Wait contains a result")
+		return runLeaseFailure{}, errors.New("failed or cancelled wait contains a result")
 	}
 	return runLeaseFailure{reason: wait.ConditionReasonCode.String, detail: detail}, nil
 }
@@ -573,7 +573,7 @@ func projectRunLeaseCheckpoint(
 		(checkpoint.Kind != db.RunCheckpointKindSuspend &&
 			checkpoint.Kind != db.RunCheckpointKindHandoffResume) ||
 		!json.Valid(checkpoint.RestoreManifest) {
-		return workerapi.RunLeaseRecreatedRestore{}, errors.New("Run Checkpoint authority is invalid")
+		return workerapi.RunLeaseRecreatedRestore{}, errors.New("run checkpoint authority is invalid")
 	}
 	artifacts := make([]workerapi.RunLeaseCheckpointArtifact, 0, len(rows))
 	priorRank := -1
@@ -583,17 +583,17 @@ func projectRunLeaseCheckpoint(
 		role := string(row.Role)
 		rank, ok := checkpointArtifactRoleRank(row.Role)
 		if !ok || row.Ordinal < 0 {
-			return workerapi.RunLeaseRecreatedRestore{}, errors.New("Run Checkpoint Artifact membership is invalid")
+			return workerapi.RunLeaseRecreatedRestore{}, errors.New("run checkpoint artifact membership is invalid")
 		}
 		if index > 0 &&
 			(rank < priorRank || (rank == priorRank && row.Ordinal <= priorOrdinal)) {
-			return workerapi.RunLeaseRecreatedRestore{}, errors.New("Run Checkpoint Artifact membership is not canonically ordered")
+			return workerapi.RunLeaseRecreatedRestore{}, errors.New("run checkpoint artifact membership is not canonically ordered")
 		}
 		object, err := projectCASObject(
 			row.Digest,
 			row.SizeBytes,
 			row.MediaType,
-			"Run Checkpoint Artifact",
+			"run checkpoint artifact",
 		)
 		if err != nil {
 			return workerapi.RunLeaseRecreatedRestore{}, err
@@ -604,15 +604,15 @@ func projectRunLeaseCheckpoint(
 		priorRank = rank
 		priorOrdinal = row.Ordinal
 		if row.Ordinal != int32(counts[row.Role]) {
-			return workerapi.RunLeaseRecreatedRestore{}, errors.New("Run Checkpoint Artifact ordinals are not contiguous")
+			return workerapi.RunLeaseRecreatedRestore{}, errors.New("run checkpoint artifact ordinals are not contiguous")
 		}
 		counts[row.Role]++
 	}
 	if counts[db.RunCheckpointArtifactRoleRuntimeConfig] != 1 ||
-		counts[db.RunCheckpointArtifactRoleVmState] != 1 ||
+		counts[db.RunCheckpointArtifactRoleVMState] != 1 ||
 		counts[db.RunCheckpointArtifactRoleMemory] != 1 ||
 		counts[db.RunCheckpointArtifactRoleScratchDisk] != 1 {
-		return workerapi.RunLeaseRecreatedRestore{}, errors.New("Run Checkpoint Artifact membership is incomplete")
+		return workerapi.RunLeaseRecreatedRestore{}, errors.New("run checkpoint artifact membership is incomplete")
 	}
 	return workerapi.RunLeaseRecreatedRestore{
 		Kind:      string(checkpoint.Kind),
@@ -625,7 +625,7 @@ func checkpointArtifactRoleRank(role db.RunCheckpointArtifactRole) (int, bool) {
 	switch role {
 	case db.RunCheckpointArtifactRoleRuntimeConfig:
 		return 0, true
-	case db.RunCheckpointArtifactRoleVmState:
+	case db.RunCheckpointArtifactRoleVMState:
 		return 1, true
 	case db.RunCheckpointArtifactRoleMemory:
 		return 2, true

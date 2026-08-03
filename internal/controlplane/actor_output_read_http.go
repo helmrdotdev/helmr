@@ -21,7 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var errActorOutputCursorExpired = errors.New("Actor output cursor is older than the retained output")
+var errActorOutputCursorExpired = errors.New("actor output cursor is older than the retained output")
 
 const (
 	actorOutputReadDefaultLimit = int32(50)
@@ -92,7 +92,7 @@ func (s *Server) readActorOutputHTTP(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, notFound(codedError{code: "actor_not_found", message: "Actor not found"}))
+			writeError(w, notFound(codedError{code: "actor_not_found", message: "actor not found"}))
 			return
 		}
 		if errors.Is(err, errActorOutputCursorExpired) {
@@ -141,7 +141,7 @@ func readActorOutputPage(
 		first.NextOutputSequence > maxActorOutputFrontier ||
 		first.EffectiveAfter < 0 ||
 		first.EffectiveAfter > maxActorOutputSequence {
-		return api.ActorOutputPage{}, errors.New("Actor output projection is invalid")
+		return api.ActorOutputPage{}, errors.New("actor output projection is invalid")
 	}
 	if afterPresent && afterSequence+1 < first.OutputRetentionFloor {
 		return api.ActorOutputPage{}, errActorOutputCursorExpired
@@ -156,11 +156,11 @@ func readActorOutputPage(
 			row.OutputRetentionFloor != first.OutputRetentionFloor ||
 			row.NextOutputSequence != first.NextOutputSequence ||
 			row.EffectiveAfter != first.EffectiveAfter {
-			return api.ActorOutputPage{}, errors.New("Actor output projection is inconsistent")
+			return api.ActorOutputPage{}, errors.New("actor output projection is inconsistent")
 		}
 		if !row.RecordID.Valid {
 			if len(rows) != 1 {
-				return api.ActorOutputPage{}, errors.New("Actor output empty projection is inconsistent")
+				return api.ActorOutputPage{}, errors.New("actor output empty projection is inconsistent")
 			}
 			break
 		}
@@ -272,11 +272,11 @@ func projectActorOutputRecord(row db.ReadPublicActorOutputPageRow) (api.ActorOut
 	}
 	runID := pgvalue.UUIDString(row.RunID)
 	if err := ids.Validate(runID); err != nil {
-		return api.ActorOutputRecord{}, errors.New("actor output producer Run ID is invalid")
+		return api.ActorOutputRecord{}, errors.New("actor output producer run ID is invalid")
 	}
 	deploymentID := pgvalue.UUIDString(row.DeploymentID)
 	if err := ids.Validate(deploymentID); err != nil {
-		return api.ActorOutputRecord{}, errors.New("actor output Deployment ID is invalid")
+		return api.ActorOutputRecord{}, errors.New("actor output deployment ID is invalid")
 	}
 	return api.ActorOutputRecord{
 		ID:          recordID,
@@ -325,7 +325,7 @@ func (s *Server) writeActorOutputReadScopeError(w http.ResponseWriter, err error
 func (s *Server) writeActorOutputReadAuthorityError(w http.ResponseWriter) {
 	writeError(w, unavailable(codedError{
 		code:      "actor_output_read_authority_unavailable",
-		message:   "Actor output read authority is unavailable",
+		message:   "actor output read authority is unavailable",
 		retryable: true,
 	}))
 }
@@ -335,7 +335,7 @@ func writeActorOutputReadAuthError(w http.ResponseWriter, log *slog.Logger, err 
 		log.Error("Actor output read authentication failed", "error", err)
 		writeError(w, unavailable(codedError{
 			code:      "actor_output_read_authority_unavailable",
-			message:   "Actor output read authentication is unavailable",
+			message:   "actor output read authentication is unavailable",
 			retryable: true,
 		}))
 		return

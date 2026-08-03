@@ -23,8 +23,8 @@ func TestWorkerGroupObservationTTLIsPositiveClaimAuthority(t *testing.T) {
 		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
 		ObservationTtlSeconds: 120,
 		AllowsRun:             true, AllowsBuild: true, ProtocolVersion: workerapi.CurrentProtocolVersion,
-		RequiredCpuMillis: 1, RequiredMemoryBytes: 1,
-		RequiredGuestEphemeralDiskBytes: 1, RequiredVmSlots: 1, RequiredBuildExecutors: 1,
+		RequiredCPUMillis: 1, RequiredMemoryBytes: 1,
+		RequiredGuestEphemeralDiskBytes: 1, RequiredVMSlots: 1, RequiredBuildExecutors: 1,
 	}
 	first, err := q.ReconcileWorkerGroup(ctx, params)
 	if err != nil {
@@ -60,8 +60,8 @@ func TestWorkerGroupReconcileDoesNotReactivateDrainingGroup(t *testing.T) {
 		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
 		ObservationTtlSeconds: 120,
 		AllowsRun:             true, AllowsBuild: true, ProtocolVersion: workerapi.CurrentProtocolVersion,
-		RequiredCpuMillis: 1, RequiredMemoryBytes: 1,
-		RequiredGuestEphemeralDiskBytes: 1, RequiredVmSlots: 1, RequiredBuildExecutors: 1,
+		RequiredCPUMillis: 1, RequiredMemoryBytes: 1,
+		RequiredGuestEphemeralDiskBytes: 1, RequiredVMSlots: 1, RequiredBuildExecutors: 1,
 	}
 	if _, err := q.ReconcileWorkerGroup(ctx, params); err != nil {
 		t.Fatal(err)
@@ -100,8 +100,8 @@ func TestWorkerGroupHasOneActiveGroupPerRoleAndRegion(t *testing.T) {
 			_, err := db.New(pool).ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
 				ID: "second-" + tc.name, RegionID: dbtest.DefaultRegionID, Name: "second-" + tc.name,
 				ObservationTtlSeconds: 120, AllowsRun: tc.allowsRun, AllowsBuild: tc.allowsBuild,
-				RequiredCpuMillis: 1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1,
-				RequiredVmSlots: tc.vmSlots, RequiredBuildExecutors: tc.buildSlots,
+				RequiredCPUMillis: 1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1,
+				RequiredVMSlots: tc.vmSlots, RequiredBuildExecutors: tc.buildSlots,
 				ProtocolVersion: workerapi.CurrentProtocolVersion,
 			})
 			if err == nil {

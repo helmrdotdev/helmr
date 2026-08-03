@@ -14,5 +14,5 @@ func runPlatformAcquisitionProcess(
 	PlatformAcquisitionProcess,
 	workerapi.PlatformAcquisition,
 ) (PlatformAcquisitionProcessResult, error) {
-	return PlatformAcquisitionProcessResult{}, errors.New("Platform acquisition requires Linux")
+	return PlatformAcquisitionProcessResult{}, errors.New("platform acquisition requires Linux")
 }

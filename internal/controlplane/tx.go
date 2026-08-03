@@ -61,7 +61,7 @@ func inTxWith(ctx context.Context, store db.Querier, txb TxBeginner, fn func(*tx
 		return runTransaction(ctx, q, tx, fn)
 	}
 	if txb == nil {
-		return errors.New("transactional Control Plane database is required")
+		return errors.New("transactional control plane database is required")
 	}
 	tx, err := txb.Begin(ctx)
 	if err != nil {

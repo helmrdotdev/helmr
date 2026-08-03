@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var ErrWaitAuthority = errors.New("Token Wait reconciliation authority is inconsistent")
+var ErrWaitAuthority = errors.New("token wait reconciliation authority is inconsistent")
 
 const maxWaitBatch = int32(1000)
 
@@ -63,7 +63,7 @@ type WaitReconciler struct {
 
 func NewWaitReconciler(database WaitDB) (*WaitReconciler, error) {
 	if database == nil {
-		return nil, errors.New("Token Wait reconciliation database is required")
+		return nil, errors.New("token wait reconciliation database is required")
 	}
 	return &WaitReconciler{db: database, queries: db.New(database)}, nil
 }
@@ -78,22 +78,22 @@ func (r *WaitReconciler) RegisterWait(
 	if request.TokenID == uuid.Nil || request.WaitID == uuid.Nil ||
 		request.ResumeAttachID == uuid.Nil || request.RunLeaseID == uuid.Nil ||
 		request.WorkerInstanceID == uuid.Nil {
-		return WaitRegistrationResult{}, errors.New("Token Wait registration IDs are required")
+		return WaitRegistrationResult{}, errors.New("token wait registration IDs are required")
 	}
 	if request.LeaseSequence <= 0 || request.WorkerEpoch <= 0 || request.WorkerGroupID == "" ||
 		request.WorkerProtocolVersion == "" ||
 		len(request.RequestFingerprint) != 71 || request.RequestFingerprint[:7] != "sha256:" {
-		return WaitRegistrationResult{}, errors.New("Token Wait registration fences are invalid")
+		return WaitRegistrationResult{}, errors.New("token wait registration fences are invalid")
 	}
 	if request.ActorSpeculativeInputSequence.Valid && request.ActorSpeculativeInputSequence.Int64 < 0 {
-		return WaitRegistrationResult{}, errors.New("Token Wait Actor speculative cursor is invalid")
+		return WaitRegistrationResult{}, errors.New("token wait actor speculative cursor is invalid")
 	}
 	metadata := request.Metadata
 	if len(metadata) == 0 {
 		metadata = json.RawMessage(`{}`)
 	}
 	if !json.Valid(metadata) {
-		return WaitRegistrationResult{}, errors.New("Token Wait registration metadata is invalid")
+		return WaitRegistrationResult{}, errors.New("token wait registration metadata is invalid")
 	}
 	tags := request.Tags
 	if tags == nil {
@@ -102,18 +102,18 @@ func (r *WaitReconciler) RegisterWait(
 
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return WaitRegistrationResult{}, fmt.Errorf("begin Token Wait registration: %w", err)
+		return WaitRegistrationResult{}, fmt.Errorf("begin token wait registration: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	q := db.New(tx)
-	// An exact existing registration is immutable and may outlive its Run
-	// Lease. This read-only replay does not linearize creation; the mutable
-	// path repeats it after locking the Run lineage.
+	// An exact existing registration is immutable and may outlive its run
+	// lease. This read-only replay does not linearize creation; the mutable
+	// path repeats it after locking the run lineage.
 	if replay, found, err := replayTokenWaitRegistration(ctx, q, request, metadata, tags); err != nil {
 		return WaitRegistrationResult{}, err
 	} else if found {
 		if err := tx.Commit(ctx); err != nil {
-			return WaitRegistrationResult{}, fmt.Errorf("commit Token Wait registration replay: %w", err)
+			return WaitRegistrationResult{}, fmt.Errorf("commit token wait registration replay: %w", err)
 		}
 		return replay, nil
 	}
@@ -123,7 +123,7 @@ func (r *WaitReconciler) RegisterWait(
 		WorkerEpoch: request.WorkerEpoch, WorkerProtocolVersion: request.WorkerProtocolVersion,
 	})
 	if err != nil {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("load Token Wait lease authority", err)
+		return WaitRegistrationResult{}, tokenWaitAuthorityError("load token wait lease authority", err)
 	}
 	environmentID := pgvalue.MustUUIDValue(locators.EnvironmentID)
 	runID := pgvalue.MustUUIDValue(locators.RunID)
@@ -136,17 +136,17 @@ func (r *WaitReconciler) RegisterWait(
 		},
 	)
 	if err != nil {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("load Token Wait registration locator", err)
+		return WaitRegistrationResult{}, tokenWaitAuthorityError("load token wait registration locator", err)
 	}
 	var lockedActorCurrentRunID pgtype.UUID
 	var lockedActorCommittedInputSequence, lockedActorNextInputSequence int64
 	if locator.OwnerActorID.Valid {
 		actor, err := q.LockTokenWaitActor(ctx, locator.OwnerActorID)
 		if err != nil {
-			return WaitRegistrationResult{}, tokenWaitAuthorityError("lock owning Actor", err)
+			return WaitRegistrationResult{}, tokenWaitAuthorityError("lock owning actor", err)
 		}
 		if actor.State != "open" && actor.State != "closing" {
-			return WaitRegistrationResult{}, tokenWaitAuthorityError("owning Actor is not active", nil)
+			return WaitRegistrationResult{}, tokenWaitAuthorityError("owning actor is not active", nil)
 		}
 		lockedActorCurrentRunID = actor.CurrentRunID
 		lockedActorCommittedInputSequence = actor.CommittedInputSequence
@@ -161,7 +161,7 @@ func (r *WaitReconciler) RegisterWait(
 		return WaitRegistrationResult{}, err
 	} else if found {
 		if err := tx.Commit(ctx); err != nil {
-			return WaitRegistrationResult{}, fmt.Errorf("commit Token Wait registration replay: %w", err)
+			return WaitRegistrationResult{}, fmt.Errorf("commit token wait registration replay: %w", err)
 		}
 		return replay, nil
 	}
@@ -169,7 +169,7 @@ func (r *WaitReconciler) RegisterWait(
 		run.currentAttempt != attemptNumber ||
 		!run.currentRunLeaseID.Valid || uuid.UUID(run.currentRunLeaseID.Bytes) != request.RunLeaseID ||
 		!run.activeStartedAt.Valid {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("Run registration fence does not match", nil)
+		return WaitRegistrationResult{}, tokenWaitAuthorityError("run registration fence does not match", nil)
 	}
 	workspace, err := validateAndLockTokenWaitWorkspace(
 		ctx,
@@ -188,7 +188,7 @@ func (r *WaitReconciler) RegisterWait(
 		WorkspaceID:   locator.WorkspaceID,
 	})
 	if err != nil || attempt.TerminalAt.Valid {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current Run Attempt", err)
+		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current run attempt", err)
 	}
 	if err := validateTokenWaitActorCursor(
 		request.ActorSpeculativeInputSequence, locator.OwnerActorID, lockedActorCurrentRunID,
@@ -244,7 +244,7 @@ func (r *WaitReconciler) RegisterWait(
 		RegionID:              locators.RegionID,
 	})
 	if err != nil || db.RunLeaseState(leaseState) != db.RunLeaseStateRunning {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current unexpired Run Lease", err)
+		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current unexpired run lease", err)
 	}
 	mount, err := q.LockRunLeaseClaimMount(ctx, db.LockRunLeaseClaimMountParams{
 		ID: locators.WorkspaceMountID, OrgID: locator.OrgID,
@@ -255,7 +255,7 @@ func (r *WaitReconciler) RegisterWait(
 		WorkspaceID:       locator.WorkspaceID,
 	})
 	if err != nil || mount.State != db.WorkspaceMountStateMounted {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock mounted Workspace", err)
+		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock mounted workspace", err)
 	}
 	workspaceLease, err := q.LockRunLeaseClaimWorkspaceLease(ctx, db.LockRunLeaseClaimWorkspaceLeaseParams{
 		ID: locators.WorkspaceLeaseID, OrgID: locator.OrgID,
@@ -271,7 +271,7 @@ func (r *WaitReconciler) RegisterWait(
 		workspaceLease.OwnershipGeneration != workspace.OwnershipGeneration ||
 		workspaceLease.WriterGeneration != workspace.WriterGeneration ||
 		workspaceLease.MountFencingGeneration != mount.FencingGeneration {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current unexpired Workspace Lease", err)
+		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current unexpired workspace lease", err)
 	}
 	if err := lockOuterTokenWait(ctx, q, runID); err != nil {
 		return WaitRegistrationResult{}, err
@@ -295,7 +295,7 @@ func (r *WaitReconciler) RegisterWait(
 		RunID:                         locators.RunID,
 	})
 	if err != nil {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("insert Token Wait", err)
+		return WaitRegistrationResult{}, tokenWaitAuthorityError("insert token wait", err)
 	}
 	waitingVersion := registered.ExpectedRunStateVersion
 
@@ -304,7 +304,7 @@ func (r *WaitReconciler) RegisterWait(
 		TokenID:       pgvalue.UUID(request.TokenID),
 	})
 	if err != nil {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock Token registration condition", err)
+		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock token registration condition", err)
 	}
 	tokenState := db.TokenState(condition.State)
 
@@ -338,7 +338,7 @@ func (r *WaitReconciler) RegisterWait(
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return WaitRegistrationResult{}, fmt.Errorf("commit Token Wait registration: %w", err)
+		return WaitRegistrationResult{}, fmt.Errorf("commit token wait registration: %w", err)
 	}
 	return result, nil
 }
@@ -382,14 +382,14 @@ func replayTokenWaitRegistration(
 		return result, true, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return WaitRegistrationResult{}, false, tokenWaitAuthorityError("load Token Wait registration replay", err)
+		return WaitRegistrationResult{}, false, tokenWaitAuthorityError("load token wait registration replay", err)
 	}
 	conflicting, err := q.TokenWaitExists(ctx, pgvalue.UUID(request.WaitID))
 	if err != nil {
-		return WaitRegistrationResult{}, false, tokenWaitAuthorityError("check Token Wait registration replay conflict", err)
+		return WaitRegistrationResult{}, false, tokenWaitAuthorityError("check token wait registration replay conflict", err)
 	}
 	if conflicting {
-		return WaitRegistrationResult{}, false, tokenWaitAuthorityError("Token Wait registration replay does not match", nil)
+		return WaitRegistrationResult{}, false, tokenWaitAuthorityError("token wait registration replay does not match", nil)
 	}
 	return WaitRegistrationResult{}, false, nil
 }
@@ -401,14 +401,14 @@ func (r *WaitReconciler) ReconcileBatch(
 	limit int32,
 ) (WaitBatch, error) {
 	if environmentID == uuid.Nil || tokenID == uuid.Nil {
-		return WaitBatch{}, errors.New("Token Wait reconciliation IDs are required")
+		return WaitBatch{}, errors.New("token wait reconciliation IDs are required")
 	}
 	if limit <= 0 {
-		return WaitBatch{}, errors.New("Token Wait reconciliation limit must be positive")
+		return WaitBatch{}, errors.New("token wait reconciliation limit must be positive")
 	}
 	if limit > maxWaitBatch {
 		return WaitBatch{}, fmt.Errorf(
-			"Token Wait reconciliation limit must not exceed %d",
+			"token wait reconciliation limit must not exceed %d",
 			maxWaitBatch,
 		)
 	}
@@ -422,7 +422,7 @@ func (r *WaitReconciler) ReconcileBatch(
 		},
 	)
 	if err != nil {
-		return WaitBatch{}, fmt.Errorf("discover pending Token Waits: %w", err)
+		return WaitBatch{}, fmt.Errorf("discover pending token waits: %w", err)
 	}
 
 	batch := WaitBatch{Examined: len(candidates)}
@@ -457,13 +457,13 @@ func (r *WaitReconciler) ReconcileTimeouts(
 	}
 	if limit > maxWaitBatch {
 		return 0, fmt.Errorf(
-			"Token Wait timeout reconciliation limit must not exceed %d",
+			"token wait timeout reconciliation limit must not exceed %d",
 			maxWaitBatch,
 		)
 	}
 	candidates, err := r.queries.ListTimedOutTokenWaitCandidates(ctx, limit)
 	if err != nil {
-		return 0, fmt.Errorf("discover timed out Token Waits: %w", err)
+		return 0, fmt.Errorf("discover timed out token waits: %w", err)
 	}
 	resolved := 0
 	for _, candidate := range candidates {
@@ -498,20 +498,20 @@ func validateAndLockTokenWaitWorkspace(
 		EnvironmentID: pgvalue.UUID(environmentID),
 	})
 	if err != nil {
-		return db.LockTokenWaitWorkspaceRow{}, tokenWaitAuthorityError("lock Run Workspace", err)
+		return db.LockTokenWaitWorkspaceRow{}, tokenWaitAuthorityError("lock run workspace", err)
 	}
 	if db.WorkspaceState(workspace.State) != db.WorkspaceStateActive ||
 		db.WorkspaceDesiredState(workspace.DesiredState) != db.WorkspaceDesiredStateActive ||
 		workspace.OwnerActorID != locator.OwnerActorID {
-		return db.LockTokenWaitWorkspaceRow{}, tokenWaitAuthorityError("Workspace ownership changed", nil)
+		return db.LockTokenWaitWorkspaceRow{}, tokenWaitAuthorityError("workspace ownership changed", nil)
 	}
 	if workspace.OwnerActorID.Valid {
 		if !lockedActorCurrentRunID.Valid || !tokenWaitLineageContains(lineage, lockedActorCurrentRunID) {
-			return db.LockTokenWaitWorkspaceRow{}, tokenWaitAuthorityError("Actor current Run is outside the locked lineage", nil)
+			return db.LockTokenWaitWorkspaceRow{}, tokenWaitAuthorityError("actor current run is outside the locked lineage", nil)
 		}
 	} else if !workspace.OwnerRunID.Valid ||
 		!tokenWaitLineageContains(lineage, workspace.OwnerRunID) {
-		return db.LockTokenWaitWorkspaceRow{}, tokenWaitAuthorityError("Workspace owner Run is outside the locked lineage", nil)
+		return db.LockTokenWaitWorkspaceRow{}, tokenWaitAuthorityError("workspace owner run is outside the locked lineage", nil)
 	}
 	return workspace, nil
 }
@@ -530,7 +530,7 @@ func validateTokenWaitActorCursor(
 	case "task":
 		if run.actorID.Valid || ownerActorID.Valid || cursor.Valid || attemptEntrypointKind != "task" ||
 			attemptActorStartInputSequence.Valid {
-			return tokenWaitAuthorityError("Task Token Wait carries Actor authority", nil)
+			return tokenWaitAuthorityError("task token wait carries actor authority", nil)
 		}
 	case "actor":
 		if !run.actorID.Valid || run.actorID != ownerActorID || !actorCurrentRunID.Valid ||
@@ -540,10 +540,10 @@ func validateTokenWaitActorCursor(
 			cursor.Int64 < actorCommittedInputSequence ||
 			cursor.Int64 > actorCommittedInputSequence+1 ||
 			cursor.Int64 >= actorNextInputSequence {
-			return tokenWaitAuthorityError("Actor Token Wait cursor authority does not match", nil)
+			return tokenWaitAuthorityError("actor token wait cursor authority does not match", nil)
 		}
 	default:
-		return tokenWaitAuthorityError("Token Wait entrypoint kind is invalid", nil)
+		return tokenWaitAuthorityError("token wait entrypoint kind is invalid", nil)
 	}
 	return nil
 }
@@ -596,7 +596,7 @@ func (r *WaitReconciler) reconcileOne(
 ) (resolved bool, deferred bool, returnErr error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return false, false, fmt.Errorf("begin Token Wait reconciliation: %w", err)
+		return false, false, fmt.Errorf("begin token wait reconciliation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	q := db.New(tx)
@@ -612,7 +612,7 @@ func (r *WaitReconciler) reconcileOne(
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.Commit(ctx); err != nil {
-			return false, false, fmt.Errorf("commit stale Token Wait reconciliation: %w", err)
+			return false, false, fmt.Errorf("commit stale token wait reconciliation: %w", err)
 		}
 		return false, false, nil
 	}
@@ -624,10 +624,10 @@ func (r *WaitReconciler) reconcileOne(
 	if locator.OwnerActorID.Valid {
 		actor, err := q.LockTokenWaitActor(ctx, locator.OwnerActorID)
 		if err != nil {
-			return false, false, tokenWaitAuthorityError("lock owning Actor", err)
+			return false, false, tokenWaitAuthorityError("lock owning actor", err)
 		}
 		if actor.State != "open" && actor.State != "closing" {
-			return false, false, tokenWaitAuthorityError("owning Actor is not active", nil)
+			return false, false, tokenWaitAuthorityError("owning actor is not active", nil)
 		}
 		lockedActorCurrentRunID = actor.CurrentRunID
 	}
@@ -639,27 +639,27 @@ func (r *WaitReconciler) reconcileOne(
 	workspaceID := pgvalue.MustUUIDValue(locator.WorkspaceID)
 	if addressedRun.workspaceID != workspaceID ||
 		addressedRun.currentAttempt != locator.AttemptNumber {
-		return false, false, tokenWaitAuthorityError("Run locator changed", nil)
+		return false, false, tokenWaitAuthorityError("run locator changed", nil)
 	}
 	workspace, err := q.LockTokenWaitWorkspace(ctx, db.LockTokenWaitWorkspaceParams{
 		WorkspaceID:   locator.WorkspaceID,
 		EnvironmentID: pgvalue.UUID(environmentID),
 	})
 	if err != nil {
-		return false, false, tokenWaitAuthorityError("lock Run Workspace", err)
+		return false, false, tokenWaitAuthorityError("lock run workspace", err)
 	}
 	if db.WorkspaceState(workspace.State) != db.WorkspaceStateActive ||
 		db.WorkspaceDesiredState(workspace.DesiredState) != db.WorkspaceDesiredStateActive ||
 		workspace.OwnerActorID != locator.OwnerActorID {
-		return false, false, tokenWaitAuthorityError("Workspace ownership changed", nil)
+		return false, false, tokenWaitAuthorityError("workspace ownership changed", nil)
 	}
 	if workspace.OwnerActorID.Valid {
 		if !lockedActorCurrentRunID.Valid || !tokenWaitLineageContains(lineage, lockedActorCurrentRunID) {
-			return false, false, tokenWaitAuthorityError("Actor current Run is outside the locked lineage", nil)
+			return false, false, tokenWaitAuthorityError("actor current run is outside the locked lineage", nil)
 		}
 	} else if !workspace.OwnerRunID.Valid ||
 		!tokenWaitLineageContains(lineage, workspace.OwnerRunID) {
-		return false, false, tokenWaitAuthorityError("Workspace owner Run is outside the locked lineage", nil)
+		return false, false, tokenWaitAuthorityError("workspace owner run is outside the locked lineage", nil)
 	}
 
 	attempt, err := q.LockTokenWaitAttempt(ctx, db.LockTokenWaitAttemptParams{
@@ -668,7 +668,7 @@ func (r *WaitReconciler) reconcileOne(
 		WorkspaceID:   locator.WorkspaceID,
 	})
 	if err != nil || attempt.TerminalAt.Valid {
-		return false, false, tokenWaitAuthorityError("lock current Run Attempt", err)
+		return false, false, tokenWaitAuthorityError("lock current run attempt", err)
 	}
 
 	if err := lockOuterTokenWait(ctx, q, runID); err != nil {
@@ -677,7 +677,7 @@ func (r *WaitReconciler) reconcileOne(
 	wait, err := lockCurrentTokenWait(ctx, q, environmentID, tokenID, locator)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.Commit(ctx); err != nil {
-			return false, false, fmt.Errorf("commit converged Token Wait reconciliation: %w", err)
+			return false, false, fmt.Errorf("commit converged token wait reconciliation: %w", err)
 		}
 		return false, false, nil
 	}
@@ -689,7 +689,7 @@ func (r *WaitReconciler) reconcileOne(
 	}
 	if wait.conditionState != db.WaitStatePending {
 		if err := tx.Commit(ctx); err != nil {
-			return false, false, fmt.Errorf("commit deferred Token Wait reconciliation: %w", err)
+			return false, false, fmt.Errorf("commit deferred token wait reconciliation: %w", err)
 		}
 		return false, true, nil
 	}
@@ -698,7 +698,7 @@ func (r *WaitReconciler) reconcileOne(
 	if timeout {
 		if !wait.timeoutAt.Valid || !wait.timedOut {
 			if err := tx.Commit(ctx); err != nil {
-				return false, false, fmt.Errorf("commit early Token Wait timeout reconciliation: %w", err)
+				return false, false, fmt.Errorf("commit early token wait timeout reconciliation: %w", err)
 			}
 			return false, false, nil
 		}
@@ -714,7 +714,7 @@ func (r *WaitReconciler) reconcileOne(
 			TokenID:       pgvalue.UUID(tokenID),
 		})
 		if err != nil {
-			return false, false, tokenWaitAuthorityError("lock terminal Token", err)
+			return false, false, tokenWaitAuthorityError("lock terminal token", err)
 		}
 		resolution, err = tokenWaitTerminalResolution(
 			db.TokenState(condition.State),
@@ -733,13 +733,13 @@ func (r *WaitReconciler) reconcileOne(
 	case db.RunWaitStateParked:
 		err = reconcileParkedTokenWait(ctx, q, addressedRun, wait, resolution)
 	default:
-		err = tokenWaitAuthorityError("pending Token Wait has an ineligible suspension state", nil)
+		err = tokenWaitAuthorityError("pending token wait has an ineligible suspension state", nil)
 	}
 	if err != nil {
 		return false, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return false, false, fmt.Errorf("commit Token Wait reconciliation: %w", err)
+		return false, false, fmt.Errorf("commit token wait reconciliation: %w", err)
 	}
 	return true, wait.suspensionState == db.RunWaitStateCheckpointing, nil
 }
@@ -758,7 +758,7 @@ func lockTokenWaitLineage(
 		},
 	)
 	if err != nil {
-		return nil, tokenWaitLockedRun{}, tokenWaitAuthorityError("lock Run lineage", err)
+		return nil, tokenWaitLockedRun{}, tokenWaitAuthorityError("lock run lineage", err)
 	}
 	lineage := make([]tokenWaitLockedRun, 0, len(rows))
 	var addressed tokenWaitLockedRun
@@ -779,7 +779,7 @@ func lockTokenWaitLineage(
 			cycle:             locked.Cycle,
 		}
 		if row.cycle {
-			return nil, tokenWaitLockedRun{}, tokenWaitAuthorityError("Run lineage contains a cycle", nil)
+			return nil, tokenWaitLockedRun{}, tokenWaitAuthorityError("run lineage contains a cycle", nil)
 		}
 		lineage = append(lineage, row)
 		if row.depth == 0 && row.id == runID {
@@ -788,7 +788,7 @@ func lockTokenWaitLineage(
 		}
 	}
 	if !foundAddressed {
-		return nil, tokenWaitLockedRun{}, tokenWaitAuthorityError("addressed Run does not exist", nil)
+		return nil, tokenWaitLockedRun{}, tokenWaitAuthorityError("addressed run does not exist", nil)
 	}
 	return lineage, addressed, nil
 }
@@ -808,7 +808,7 @@ func tokenWaitLineageContains(lineage []tokenWaitLockedRun, id pgtype.UUID) bool
 func lockOuterTokenWait(ctx context.Context, q *db.Queries, runID uuid.UUID) error {
 	_, err := q.LockEnclosingRunWaits(ctx, pgvalue.UUID(runID))
 	if err != nil {
-		return tokenWaitAuthorityError("lock enclosing Run Wait", err)
+		return tokenWaitAuthorityError("lock enclosing run wait", err)
 	}
 	return nil
 }
@@ -853,29 +853,29 @@ func validateLockedTokenWait(run tokenWaitLockedRun, wait tokenWaitLockedWait) e
 		wait.runID != run.id || wait.workspaceID != run.workspaceID ||
 		wait.attemptNumber != run.currentAttempt || wait.expectedRunStateVersion != run.stateVersion ||
 		run.status != db.RunStatusWaiting {
-		return tokenWaitAuthorityError("Run and Token Wait fences do not match", nil)
+		return tokenWaitAuthorityError("run and token wait fences do not match", nil)
 	}
 	switch wait.suspensionState {
 	case db.RunWaitStateHot, db.RunWaitStateCheckpointing:
 		if wait.conditionState != db.WaitStatePending && wait.suspensionState != db.RunWaitStateCheckpointing {
-			return tokenWaitAuthorityError("terminal Token Wait is not awaiting checkpoint readiness", nil)
+			return tokenWaitAuthorityError("terminal token wait is not awaiting checkpoint readiness", nil)
 		}
 		if !run.currentRunLeaseID.Valid || !wait.currentRunLeaseID.Valid ||
 			run.currentRunLeaseID != wait.currentRunLeaseID || wait.priorRunLeaseID.Valid ||
 			!run.activeStartedAt.Valid {
-			return tokenWaitAuthorityError("hot Token Wait Lease fence does not match", nil)
+			return tokenWaitAuthorityError("hot token wait lease fence does not match", nil)
 		}
 	case db.RunWaitStateParked:
 		if wait.conditionState != db.WaitStatePending {
-			return tokenWaitAuthorityError("parked Token Wait is already terminal", nil)
+			return tokenWaitAuthorityError("parked token wait is already terminal", nil)
 		}
 		if run.currentRunLeaseID.Valid || wait.currentRunLeaseID.Valid ||
 			!wait.priorRunLeaseID.Valid || !wait.suspendCheckpointID.Valid ||
 			run.activeStartedAt.Valid {
-			return tokenWaitAuthorityError("parked Token Wait provenance does not match", nil)
+			return tokenWaitAuthorityError("parked token wait provenance does not match", nil)
 		}
 	default:
-		return tokenWaitAuthorityError("pending Token Wait suspension is not completable", nil)
+		return tokenWaitAuthorityError("pending token wait suspension is not completable", nil)
 	}
 	return nil
 }
@@ -903,7 +903,7 @@ func tokenWaitTerminalResolution(state db.TokenState, completionData []byte) (to
 			conditionError: json.RawMessage(`{"code":"token_expired","retryable":false}`),
 		}, nil
 	default:
-		return tokenWaitResolution{}, tokenWaitAuthorityError("Token is not terminal", nil)
+		return tokenWaitResolution{}, tokenWaitAuthorityError("token is not terminal", nil)
 	}
 }
 
@@ -926,7 +926,7 @@ func reconcileHotTokenWait(
 		AttemptNumber:           run.currentAttempt,
 	})
 	if err != nil {
-		return tokenWaitAuthorityError("resolve hot Token Wait", err)
+		return tokenWaitAuthorityError("resolve hot token wait", err)
 	}
 	return nil
 }
@@ -951,7 +951,7 @@ func reconcileCheckpointingTokenWait(
 		},
 	)
 	if err != nil {
-		return tokenWaitAuthorityError("complete checkpointing Token Wait", err)
+		return tokenWaitAuthorityError("complete checkpointing token wait", err)
 	}
 	return nil
 }
@@ -977,7 +977,7 @@ func reconcileParkedTokenWait(
 		SuspendCheckpointID:     wait.suspendCheckpointID,
 	})
 	if err != nil {
-		return tokenWaitAuthorityError("resolve parked Token Wait", err)
+		return tokenWaitAuthorityError("resolve parked token wait", err)
 	}
 	return nil
 }

@@ -21,7 +21,7 @@ type TimerWaitReconciler struct {
 
 func NewTimerWaitReconciler(database timerWaitReconcileDB) (*TimerWaitReconciler, error) {
 	if database == nil {
-		return nil, errors.New("timer Wait reconciliation database is required")
+		return nil, errors.New("timer wait reconciliation database is required")
 	}
 	return &TimerWaitReconciler{db: database}, nil
 }
@@ -76,7 +76,7 @@ func (r *TimerWaitReconciler) reconcileOne(
 	}
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return false, fmt.Errorf("begin timer Wait reconciliation: %w", err)
+		return false, fmt.Errorf("begin timer wait reconciliation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	q := db.New(tx)
@@ -153,7 +153,7 @@ func (r *TimerWaitReconciler) reconcileOne(
 	}
 	now, err := q.GetRunLeaseRenewalTime(ctx)
 	if err != nil || !now.Valid {
-		return false, fmt.Errorf("load timer Wait reconciliation time: %w", err)
+		return false, fmt.Errorf("load timer wait reconciliation time: %w", err)
 	}
 	if !wait.DueAt.Valid || now.Time.Before(wait.DueAt.Time) {
 		return false, tx.Commit(ctx)

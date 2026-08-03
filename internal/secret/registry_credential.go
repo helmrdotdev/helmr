@@ -30,7 +30,7 @@ func (s *Store) OpenRegistryCredential(
 	value, err := s.decrypt(environmentID, secretValue, version)
 	if err != nil {
 		return nil, UnavailableError{
-			Err: fmt.Errorf("open registry credential Secret version: %w", err),
+			Err: fmt.Errorf("open registry credential secret version: %w", err),
 		}
 	}
 	return value, nil

@@ -19,7 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var errStaleTaskCompletion = errors.New("Task completion receipt is stale")
+var errStaleTaskCompletion = errors.New("task completion receipt is stale")
 
 type taskCompletionReplayStore interface {
 	GetTaskCompletionReplay(context.Context, db.GetTaskCompletionReplayParams) (pgtype.Text, error)
@@ -75,7 +75,7 @@ func (s *Server) completeTask(
 			locators.WorkspaceID,
 		)
 		if err != nil {
-			return fmt.Errorf("lock Task completion Secret authority: %w", err)
+			return fmt.Errorf("lock task completion secret authority: %w", err)
 		}
 		authority, err := lockLiveRunFinalizationAuthority(
 			ctx,
@@ -145,7 +145,7 @@ func (s *Server) completeTask(
 		completedAt, err := work.q.GetTaskCompletionTime(ctx)
 		if err != nil || !completedAt.Valid {
 			if err == nil {
-				err = errors.New("database Task completion time is unavailable")
+				err = errors.New("database task completion time is unavailable")
 			}
 			return err
 		}
@@ -282,7 +282,7 @@ func taskCompletionReplayAfterError(
 		return errStaleTaskCompletion
 	}
 	if replayErr != nil {
-		return errors.Join(operationErr, fmt.Errorf("check Task completion replay: %w", replayErr))
+		return errors.Join(operationErr, fmt.Errorf("check task completion replay: %w", replayErr))
 	}
 	return operationErr
 }
@@ -483,7 +483,7 @@ func taskCompletionRetryAt(
 	}
 	policy, err := deployment.ParseRetryManifest(run.RetryPolicy)
 	if err != nil {
-		return time.Time{}, false, fmt.Errorf("parse pinned Task retry policy: %w", err)
+		return time.Time{}, false, fmt.Errorf("parse pinned task retry policy: %w", err)
 	}
 	delay, retry, err := taskRetryDelay(policy, attempt.Number, nil)
 	if err != nil || !retry {
@@ -505,7 +505,7 @@ func recordTaskWorkspaceVersion(
 		OrgID: authority.run.OrgID, Digest: artifact.Digest,
 		SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType,
 	}); err != nil {
-		return pgtype.UUID{}, fmt.Errorf("record Task Workspace CAS object: %w", err)
+		return pgtype.UUID{}, fmt.Errorf("record task workspace CAS object: %w", err)
 	}
 	artifactRow, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), OrgID: authority.run.OrgID,
@@ -515,7 +515,7 @@ func recordTaskWorkspaceVersion(
 		CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 	})
 	if err != nil {
-		return pgtype.UUID{}, fmt.Errorf("record Task Workspace Artifact: %w", err)
+		return pgtype.UUID{}, fmt.Errorf("record task workspace artifact: %w", err)
 	}
 	version, err := store.PublishTaskWorkspaceVersion(ctx, db.PublishTaskWorkspaceVersionParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -527,7 +527,7 @@ func recordTaskWorkspaceVersion(
 		WriterGeneration:       authority.workspace.WriterGeneration, PublishedAt: completedAt,
 	})
 	if err != nil {
-		return pgtype.UUID{}, fmt.Errorf("publish Task Workspace version: %w", err)
+		return pgtype.UUID{}, fmt.Errorf("publish task workspace version: %w", err)
 	}
 	if err := updateTaskWorkspaceMountFrontier(ctx, store, authority, version.ID, completedAt); err != nil {
 		return pgtype.UUID{}, err
@@ -588,7 +588,7 @@ func terminalizeTaskAttempt(
 		reason = "task_payload_invalid"
 		terminalError = completion.errorObject
 	default:
-		return errors.New("Task completion outcome is unsupported")
+		return errors.New("task completion outcome is unsupported")
 	}
 	if _, err := store.CompleteTaskRunLease(ctx, db.CompleteTaskRunLeaseParams{
 		State: leaseState, CompletedAt: completedAt, ReasonCode: pgvalue.Text(reason), Error: terminalError,
@@ -630,7 +630,7 @@ func scheduleTaskRetry(
 	if err := secret.CreateAttemptResolutions(
 		ctx, store, authority.workspace.ID, authority.run.ID, nextAttempt, resolutions,
 	); err != nil {
-		return fmt.Errorf("record retry Secret resolutions: %w", err)
+		return fmt.Errorf("record retry secret resolutions: %w", err)
 	}
 	if _, err := store.DelayTaskRunRetry(ctx, db.DelayTaskRunRetryParams{
 		NextAttemptNumber: nextAttempt, CompletedAt: completedAt, RetryAt: pgvalue.Timestamptz(retryAt),
@@ -666,7 +666,7 @@ func finishTask(
 		reason = pgvalue.Text("task_payload_invalid")
 		terminalError = completion.errorObject
 	default:
-		return errors.New("Task completion outcome is unsupported")
+		return errors.New("task completion outcome is unsupported")
 	}
 	if _, err := store.ReleaseTaskWorkspaceOwner(ctx, db.ReleaseTaskWorkspaceOwnerParams{
 		NewHeadVersionID: versionID, CompletedAt: completedAt,
@@ -694,7 +694,7 @@ func finishTask(
 	if _, err := store.AppendRunEvent(ctx, db.AppendRunEventParams{
 		OrgID: authority.run.OrgID, RunID: authority.run.ID, Kind: eventKind, Payload: payload,
 	}); err != nil {
-		return fmt.Errorf("append Task terminal event: %w", err)
+		return fmt.Errorf("append task terminal event: %w", err)
 	}
 	if authority.run.ParentRunID.Valid && authority.run.ParentOwnsLifecycle.Valid &&
 		authority.run.ParentOwnsLifecycle.Bool && authority.enclosingWait.ID.Valid {
@@ -742,7 +742,7 @@ func finishSameWorkspaceChild(
 		reason = pgvalue.Text("task_payload_invalid")
 		terminalError = completion.errorObject
 	default:
-		return errors.New("same-Workspace child outcome is unsupported")
+		return errors.New("same-workspace child outcome is unsupported")
 	}
 
 	if completion.handoff != nil {
@@ -792,7 +792,7 @@ func finishSameWorkspaceChild(
 	if _, err := store.AppendRunEvent(ctx, db.AppendRunEventParams{
 		OrgID: authority.run.OrgID, RunID: authority.run.ID, Kind: eventKind, Payload: payload,
 	}); err != nil {
-		return fmt.Errorf("append same-Workspace child terminal event: %w", err)
+		return fmt.Errorf("append same-workspace child terminal event: %w", err)
 	}
 	if completion.kind == taskCompletionSucceeded &&
 		authority.parentEnclosingWait.ID.Valid {
@@ -1004,7 +1004,7 @@ func enqueueRunResume(
 		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Lane: "control", Topic: "run.resume",
 		PartitionKey: pgvalue.UUIDString(workspaceID), Payload: payload, AvailableAt: availableAt,
 	}); err != nil {
-		return fmt.Errorf("enqueue Run resume: %w", err)
+		return fmt.Errorf("enqueue run resume: %w", err)
 	}
 	return nil
 }
@@ -1099,27 +1099,27 @@ func resolveParentOwnedChildWait(
 
 func (s *Server) verifyTaskWorkspaceCapture(ctx context.Context, capture parsedTaskWorkspaceCapture) (parsedTaskWorkspaceCapture, error) {
 	if s.cas == nil {
-		return parsedTaskWorkspaceCapture{}, errors.New("Workspace CAS is not configured")
+		return parsedTaskWorkspaceCapture{}, errors.New("workspace CAS is not configured")
 	}
 	artifact := capture.artifact
 	object, err := s.cas.Stat(ctx, artifact.Digest)
 	if err != nil {
-		return parsedTaskWorkspaceCapture{}, fmt.Errorf("Task Workspace Artifact is missing from CAS: %w", err)
+		return parsedTaskWorkspaceCapture{}, fmt.Errorf("task workspace artifact is missing from CAS: %w", err)
 	}
 	if object.Digest != artifact.Digest || object.SizeBytes != artifact.SizeBytes ||
 		object.MediaType != artifact.MediaType {
-		return parsedTaskWorkspaceCapture{}, errors.New("Task Workspace Artifact does not match CAS authority")
+		return parsedTaskWorkspaceCapture{}, errors.New("task workspace artifact does not match CAS authority")
 	}
 	body, err := s.cas.Get(ctx, artifact.Digest)
 	if err != nil {
-		return parsedTaskWorkspaceCapture{}, fmt.Errorf("open Task Workspace Artifact: %w", err)
+		return parsedTaskWorkspaceCapture{}, fmt.Errorf("open task workspace artifact: %w", err)
 	}
 	defer body.Close()
 	if err := workspace.VerifyArtifact(body, workspace.WorkspaceArtifact{
 		Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
 		SizeBytes: artifact.SizeBytes, EntryCount: int(artifact.EntryCount),
 	}, capture.tree); err != nil {
-		return parsedTaskWorkspaceCapture{}, fmt.Errorf("verify Task Workspace Artifact: %w", err)
+		return parsedTaskWorkspaceCapture{}, fmt.Errorf("verify task workspace artifact: %w", err)
 	}
 	return capture, nil
 }

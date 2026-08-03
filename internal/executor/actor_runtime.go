@@ -36,7 +36,7 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 ) error {
 	controlPlane, ok := task.controlPlane.(ActorRuntimeControlPlane)
 	if !ok {
-		return errors.New("Run Lease Task Actor runtime Control Plane is required")
+		return errors.New("run lease task actor runtime control plane is required")
 	}
 
 	var correlationID string
@@ -60,14 +60,14 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 			return callErr
 		})
 		if err != nil {
-			return fmt.Errorf("start Actor: %w", err)
+			return fmt.Errorf("start actor: %w", err)
 		}
 		if response.Completed != nil {
 			completed = response.Completed
 		}
 		failed = response.Failed
 		if response.CorrelationID != correlationID {
-			return errors.New("Actor start response correlation mismatch")
+			return errors.New("actor start response correlation mismatch")
 		}
 	case *runv0.RunEvent_ActorStatusRequested:
 		request, err := workerActorReferenceRequest(value.ActorStatusRequested)
@@ -86,14 +86,14 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 			return callErr
 		})
 		if err != nil {
-			return fmt.Errorf("read Actor status: %w", err)
+			return fmt.Errorf("read actor status: %w", err)
 		}
 		if response.Completed != nil {
 			completed = response.Completed
 		}
 		failed = response.Failed
 		if response.CorrelationID != correlationID {
-			return errors.New("Actor status response correlation mismatch")
+			return errors.New("actor status response correlation mismatch")
 		}
 	case *runv0.RunEvent_ActorCloseRequested:
 		base, err := workerActorReferenceRequestFromClose(value.ActorCloseRequested)
@@ -116,14 +116,14 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 			return callErr
 		})
 		if err != nil {
-			return fmt.Errorf("close Actor: %w", err)
+			return fmt.Errorf("close actor: %w", err)
 		}
 		if response.Completed != nil {
 			completed = response.Completed
 		}
 		failed = response.Failed
 		if response.CorrelationID != correlationID {
-			return errors.New("Actor close response correlation mismatch")
+			return errors.New("actor close response correlation mismatch")
 		}
 	case *runv0.RunEvent_ActorOutputPageRequested:
 		base, err := workerActorReferenceRequestFromOutput(value.ActorOutputPageRequested)
@@ -150,32 +150,32 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 			return callErr
 		})
 		if err != nil {
-			return fmt.Errorf("read Actor output page: %w", err)
+			return fmt.Errorf("read actor output page: %w", err)
 		}
 		if response.Completed != nil {
 			completed = response.Completed
 		}
 		failed = response.Failed
 		if response.CorrelationID != correlationID {
-			return errors.New("Actor output page response correlation mismatch")
+			return errors.New("actor output page response correlation mismatch")
 		}
 	default:
-		return errors.New("unsupported Actor runtime event")
+		return errors.New("unsupported actor runtime event")
 	}
 	if (completed == nil) == (failed == nil) {
-		return errors.New("Actor runtime response must contain exactly one result")
+		return errors.New("actor runtime response must contain exactly one result")
 	}
 	kind := "completed"
 	payload := completed
 	if failed != nil {
 		if strings.TrimSpace(failed.Code) == "" || strings.TrimSpace(failed.Message) == "" {
-			return errors.New("Actor runtime failure is invalid")
+			return errors.New("actor runtime failure is invalid")
 		}
 		kind, payload = "failed", failed
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("encode Actor runtime decision: %w", err)
+		return fmt.Errorf("encode actor runtime decision: %w", err)
 	}
 	return wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
 		CorrelationId: correlationID,
@@ -188,7 +188,7 @@ func workerActorStartRequest(
 	requested *runv0.ActorStartRequested,
 ) (workerapi.StartActorRequest, error) {
 	if requested == nil {
-		return workerapi.StartActorRequest{}, errors.New("Actor start request is required")
+		return workerapi.StartActorRequest{}, errors.New("actor start request is required")
 	}
 	if err := validateRuntimeActorCorrelation(requested.GetCorrelationId()); err != nil {
 		return workerapi.StartActorRequest{}, err
@@ -199,11 +199,11 @@ func workerActorStartRequest(
 		decoder := json.NewDecoder(strings.NewReader(requested.GetRunOptionsJson()))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&parsed); err != nil {
-			return workerapi.StartActorRequest{}, errors.New("Actor start run options are invalid")
+			return workerapi.StartActorRequest{}, errors.New("actor start run options are invalid")
 		}
 		var trailing any
 		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-			return workerapi.StartActorRequest{}, errors.New("Actor start run options contain a trailing value")
+			return workerapi.StartActorRequest{}, errors.New("actor start run options contain a trailing value")
 		}
 		run = &parsed
 	}
@@ -221,7 +221,7 @@ func workerActorStartRequest(
 	case *runv0.ActorStartRequested_WorkspaceKey:
 		request.Workspace.Key = &address.WorkspaceKey
 	default:
-		return workerapi.StartActorRequest{}, errors.New("Actor start Workspace address is required")
+		return workerapi.StartActorRequest{}, errors.New("actor start workspace address is required")
 	}
 	if err := api.ValidateActorDeclaredID(request.ActorDeclaredID); err != nil {
 		return workerapi.StartActorRequest{}, err
@@ -239,7 +239,7 @@ func workerActorReferenceRequest(
 	requested *runv0.ActorStatusRequested,
 ) (workerapi.ActorReferenceRequest, error) {
 	if requested == nil {
-		return workerapi.ActorReferenceRequest{}, errors.New("Actor status request is required")
+		return workerapi.ActorReferenceRequest{}, errors.New("actor status request is required")
 	}
 	request := workerapi.ActorReferenceRequest{
 		CorrelationID: requested.GetCorrelationId(), ActorDeclaredID: requested.GetDeclaredId(),
@@ -250,7 +250,7 @@ func workerActorReferenceRequest(
 	case *runv0.ActorStatusRequested_ActorKey:
 		request.ActorKey = address.ActorKey
 	default:
-		return workerapi.ActorReferenceRequest{}, errors.New("Actor address is required")
+		return workerapi.ActorReferenceRequest{}, errors.New("actor address is required")
 	}
 	return validateWorkerActorReference(request)
 }
@@ -259,7 +259,7 @@ func workerActorReferenceRequestFromClose(
 	requested *runv0.ActorCloseRequested,
 ) (workerapi.ActorReferenceRequest, error) {
 	if requested == nil {
-		return workerapi.ActorReferenceRequest{}, errors.New("Actor close request is required")
+		return workerapi.ActorReferenceRequest{}, errors.New("actor close request is required")
 	}
 	request := workerapi.ActorReferenceRequest{
 		CorrelationID: requested.GetCorrelationId(), ActorDeclaredID: requested.GetDeclaredId(),
@@ -270,7 +270,7 @@ func workerActorReferenceRequestFromClose(
 	case *runv0.ActorCloseRequested_ActorKey:
 		request.ActorKey = address.ActorKey
 	default:
-		return workerapi.ActorReferenceRequest{}, errors.New("Actor address is required")
+		return workerapi.ActorReferenceRequest{}, errors.New("actor address is required")
 	}
 	return validateWorkerActorReference(request)
 }
@@ -279,12 +279,12 @@ func workerActorReferenceRequestFromOutput(
 	requested *runv0.ActorOutputPageRequested,
 ) (workerapi.ActorReferenceRequest, error) {
 	if requested == nil {
-		return workerapi.ActorReferenceRequest{}, errors.New("Actor output page request is required")
+		return workerapi.ActorReferenceRequest{}, errors.New("actor output page request is required")
 	}
 	if requested.GetLimit() < 1 || requested.GetLimit() > 100 ||
 		(requested.After != nil &&
 			(requested.GetAfter() < 0 || requested.GetAfter() > maxJavaScriptSafeInteger)) {
-		return workerapi.ActorReferenceRequest{}, errors.New("Actor output page bounds are invalid")
+		return workerapi.ActorReferenceRequest{}, errors.New("actor output page bounds are invalid")
 	}
 	request := workerapi.ActorReferenceRequest{
 		CorrelationID: requested.GetCorrelationId(), ActorDeclaredID: requested.GetDeclaredId(),
@@ -295,7 +295,7 @@ func workerActorReferenceRequestFromOutput(
 	case *runv0.ActorOutputPageRequested_ActorKey:
 		request.ActorKey = address.ActorKey
 	default:
-		return workerapi.ActorReferenceRequest{}, errors.New("Actor address is required")
+		return workerapi.ActorReferenceRequest{}, errors.New("actor address is required")
 	}
 	return validateWorkerActorReference(request)
 }
@@ -319,7 +319,7 @@ func validateWorkerActorReference(
 
 func validateRuntimeActorCorrelation(value string) error {
 	if err := ids.Validate(value); err != nil {
-		return errors.New("Actor runtime correlation ID is invalid")
+		return errors.New("actor runtime correlation ID is invalid")
 	}
 	return nil
 }

@@ -37,7 +37,7 @@ type runMetadataMutation struct {
 func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.UpdateRunMetadataRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker Run metadata request JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid worker run metadata request JSON: %w", err)))
 		return
 	}
 	operationID, err := parseCanonicalUUID("operation_id", request.OperationID)
@@ -92,7 +92,7 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		if !acquired.New {
 			if acquired.Claim.State != "completed" {
 				return fmt.Errorf(
-					"Run metadata mutation claim is %s",
+					"run metadata mutation claim is %s",
 					acquired.Claim.State,
 				)
 			}
@@ -117,7 +117,7 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			return err
 		}
-		next, err = normalizeMetadata(next, maxRunMetadataBytes, "Run")
+		next, err = normalizeMetadata(next, maxRunMetadataBytes, "run")
 		if err != nil {
 			return err
 		}
@@ -171,7 +171,7 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		case errors.As(err, &conflictErr):
 			writeError(w, conflict(conflictErr))
 		case errors.Is(err, errStaleRunLeaseClaim), errors.Is(err, pgx.ErrNoRows):
-			writeError(w, conflict(errors.New("worker Run Lease fence is stale")))
+			writeError(w, conflict(errors.New("worker run lease fence is stale")))
 		default:
 			s.log.Error("update Run metadata failed", "run_lease_id", request.Lease.ID, "error", err)
 			writeError(w, apiError{kind: errUnprocessable, err: codedError{
@@ -251,13 +251,13 @@ func (s *Server) workerAppendStructuredLog(w http.ResponseWriter, r *http.Reques
 	)
 	if isNoRows(err) || errors.Is(err, errStaleRunLeaseClaim) {
 		writeError(w, conflict(errors.New(
-			"worker Run Lease is stale or the structured log sequence contains different content",
+			"worker run lease is stale or the structured log sequence contains different content",
 		)))
 		return
 	}
 	if err != nil {
 		s.log.Error("append structured Run log failed", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("append structured Run log"))
+		writeError(w, errors.New("append structured run log"))
 		return
 	}
 	if !row.ReplayMatches {
@@ -336,7 +336,7 @@ func normalizeRunMetadataMutation(
 		if request.Key != "" || len(request.Value) != 0 || request.Amount != nil {
 			return runMetadataMutation{}, errors.New("patch requires only patch")
 		}
-		patch, err := normalizeMetadata(request.Patch, maxRunMetadataBytes, "Run metadata patch")
+		patch, err := normalizeMetadata(request.Patch, maxRunMetadataBytes, "run metadata patch")
 		if err != nil {
 			return runMetadataMutation{}, err
 		}
@@ -381,7 +381,7 @@ func applyRunMetadataMutation(
 	values := make(map[string]json.RawMessage)
 	if len(current) != 0 {
 		if err := json.Unmarshal(current, &values); err != nil {
-			return nil, fmt.Errorf("stored Run metadata is invalid: %w", err)
+			return nil, fmt.Errorf("stored run metadata is invalid: %w", err)
 		}
 	}
 	switch mutation.operation {
@@ -395,7 +395,7 @@ func applyRunMetadataMutation(
 			if err := json.Unmarshal(raw, &currentValue); err != nil ||
 				math.IsNaN(currentValue) || math.IsInf(currentValue, 0) {
 				return nil, fmt.Errorf(
-					"Run metadata key %q is not a finite number",
+					"run metadata key %q is not a finite number",
 					mutation.key,
 				)
 			}
@@ -403,7 +403,7 @@ func applyRunMetadataMutation(
 		next := currentValue + *mutation.amount
 		if math.IsNaN(next) || math.IsInf(next, 0) {
 			return nil, fmt.Errorf(
-				"Run metadata increment for key %q is not finite",
+				"run metadata increment for key %q is not finite",
 				mutation.key,
 			)
 		}
@@ -413,7 +413,7 @@ func applyRunMetadataMutation(
 		}
 		values[mutation.key] = raw
 	default:
-		return nil, errors.New("Run metadata mutation is invalid")
+		return nil, errors.New("run metadata mutation is invalid")
 	}
 	return json.Marshal(values)
 }

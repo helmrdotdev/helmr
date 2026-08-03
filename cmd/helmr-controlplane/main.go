@@ -186,26 +186,26 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	}
 	workspaceFencingKey, err := workspace.NewFencingKey(cfg.WorkspaceFencingKey)
 	if err != nil {
-		return fmt.Errorf("configure Workspace fencing key: %w", err)
+		return fmt.Errorf("configure workspace fencing key: %w", err)
 	}
 	tokenCredentialKey, err := auth.NewCredentialKey(cfg.TokenCredentialKey)
 	if err != nil {
-		return fmt.Errorf("configure Token credential key: %w", err)
+		return fmt.Errorf("configure token credential key: %w", err)
 	}
 	casStore, err := cass3.New(ctx, cfg.CASURI)
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
 	if err := cass3.ValidateDistinctS3Stores(cfg.CASURI, cfg.PlatformStoreURI); err != nil {
-		return fmt.Errorf("validate Platform Artifact store: %w", err)
+		return fmt.Errorf("validate platform artifact store: %w", err)
 	}
 	platformStore, err := cass3.NewImmutable(ctx, cfg.PlatformStoreURI)
 	if err != nil {
-		return fmt.Errorf("configure Platform Artifact store: %w", err)
+		return fmt.Errorf("configure platform artifact store: %w", err)
 	}
 	platformArtifactLocks, err := newPlatformArtifactLocker(pool)
 	if err != nil {
-		return fmt.Errorf("configure Platform Artifact locks: %w", err)
+		return fmt.Errorf("configure platform artifact locks: %w", err)
 	}
 	var authProvider controlplane.AuthProvider
 	if cfg.GitHubOAuthClientID != "" && cfg.GitHubOAuthClientSecret != "" {
@@ -216,7 +216,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if cfg.ImageCache != nil {
 		awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
 		if err != nil {
-			return fmt.Errorf("load Workspace image cache AWS configuration: %w", err)
+			return fmt.Errorf("load workspace image cache AWS configuration: %w", err)
 		}
 		provisioner, err := imagecacheecr.NewProvisioner(
 			imagecacheecr.Config{
@@ -228,21 +228,21 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 			awsecr.NewFromConfig(awsCfg),
 		)
 		if err != nil {
-			return fmt.Errorf("configure Workspace image cache repositories: %w", err)
+			return fmt.Errorf("configure workspace image cache repositories: %w", err)
 		}
 		cacheRepositories = provisioner
 		cacheRetirement, err = retirement.NewWorker(log, queries, provisioner)
 		if err != nil {
-			return fmt.Errorf("configure Workspace image cache retirement: %w", err)
+			return fmt.Errorf("configure workspace image cache retirement: %w", err)
 		}
 	}
 	runRetryReady, err := run.NewRetryReadyWorker(log, queries)
 	if err != nil {
-		return fmt.Errorf("configure Run retry readiness: %w", err)
+		return fmt.Errorf("configure run retry readiness: %w", err)
 	}
 	queuedChildExpiry, err := run.NewQueuedChildExpiryWorker(log, pool)
 	if err != nil {
-		return fmt.Errorf("configure queued child Run expiry: %w", err)
+		return fmt.Errorf("configure queued child run expiry: %w", err)
 	}
 	handler, err := controlplane.NewServer(controlplane.ServerConfig{
 		Log:                   log,
@@ -276,7 +276,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		MagicLinkDebugURLs:    cfg.MagicLinkDebugURLs,
 	})
 	if err != nil {
-		return fmt.Errorf("configure Control Plane server: %w", err)
+		return fmt.Errorf("configure control plane server: %w", err)
 	}
 	server := &http.Server{
 		Addr:              cfg.Addr,

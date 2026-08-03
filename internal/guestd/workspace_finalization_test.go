@@ -559,7 +559,7 @@ func beginTestWorkspaceFinalization(
 		uint64(fence.GetMountFencingGeneration()),
 	)
 	if !ok {
-		return nil, func() {}, errors.New("test authority does not match mounted Workspace")
+		return nil, func() {}, errors.New("test authority does not match mounted workspace")
 	}
 	entry.processesMu.Lock()
 	state := entry.authorityState

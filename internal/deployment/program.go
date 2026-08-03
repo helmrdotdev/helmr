@@ -129,20 +129,20 @@ func validateProgramDescriptor(
 ) error {
 	if !sha256DigestPattern.MatchString(descriptor.Digest) {
 		return fmt.Errorf(
-			"%s Artifact digest is not a lowercase SHA-256 digest",
+			"%s artifact digest is not a lowercase SHA-256 digest",
 			name,
 		)
 	}
 	if descriptor.SizeBytes < 1 || descriptor.SizeBytes > maxSize {
 		return fmt.Errorf(
-			"%s Artifact sizeBytes is outside [1,%d]",
+			"%s artifact sizeBytes is outside [1,%d]",
 			name,
 			maxSize,
 		)
 	}
 	if descriptor.MediaType != mediaType {
 		return fmt.Errorf(
-			"%s Artifact mediaType = %q, want %q",
+			"%s artifact mediaType = %q, want %q",
 			name,
 			descriptor.MediaType,
 			mediaType,

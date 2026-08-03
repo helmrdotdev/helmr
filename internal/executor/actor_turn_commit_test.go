@@ -80,7 +80,7 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 			return
 		}
 		if pause.GetExpectedBaseWorkspaceVersionId() != "version-1" {
-			guestResult <- errors.New("pause request carried the wrong Workspace frontier")
+			guestResult <- errors.New("pause request carried the wrong workspace frontier")
 			return
 		}
 		entryCount := 1
@@ -122,7 +122,7 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 			return
 		}
 		if decision.GetKind() != "committed" || payload.WorkspaceVersionID != "version-2" {
-			guestResult <- errors.New("commit decision did not carry the new Workspace frontier")
+			guestResult <- errors.New("commit decision did not carry the new workspace frontier")
 			return
 		}
 		guestResult <- nil

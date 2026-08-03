@@ -514,7 +514,7 @@ func (q *Queries) CompleteTaskRunLease(ctx context.Context, arg CompleteTaskRunL
 		&i.RuntimeInstanceID,
 		&i.RuntimeIdentityID,
 		&i.WorkerProtocolVersion,
-		&i.RequestedCpuMillis,
+		&i.RequestedCPUMillis,
 		&i.RequestedMemoryBytes,
 		&i.RequestedGuestEphemeralDiskBytes,
 		&i.RequestedExecutionSlots,

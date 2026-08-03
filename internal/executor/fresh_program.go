@@ -177,14 +177,14 @@ func (program *freshProgram) awaitTaskCompletion(
 	resourceRuntime ...func(context.Context, *runv0.RunEvent) error,
 ) (*runv0.TaskOutcome, *runv0.ProgramQuiesced, error) {
 	if program == nil || program.session == nil {
-		return nil, nil, errors.New("fresh Program session is required")
+		return nil, nil, errors.New("fresh program session is required")
 	}
 	defer program.session.Close(context.Background())
 	if events == nil {
-		return nil, nil, errors.New("fresh Program event sink is required")
+		return nil, nil, errors.New("fresh program event sink is required")
 	}
 	if program.entrypoint == nil || program.entrypoint.GetTask() == nil {
-		return nil, nil, errors.New("fresh Program entrypoint is not a Task")
+		return nil, nil, errors.New("fresh program entrypoint is not a task")
 	}
 	var outcome *runv0.TaskOutcome
 	for {
@@ -196,7 +196,7 @@ func (program *freshProgram) awaitTaskCompletion(
 			&event,
 		)
 		if err != nil {
-			return nil, nil, fmt.Errorf("read Task completion event: %w", err)
+			return nil, nil, fmt.Errorf("read task completion event: %w", err)
 		}
 		program.observedEventSeq++
 		switch value := event.Event.(type) {
@@ -208,7 +208,7 @@ func (program *freshProgram) awaitTaskCompletion(
 				program.observedEventSeq,
 				value.StdoutChunk,
 			); err != nil {
-				return nil, nil, fmt.Errorf("append Task stdout: %w", err)
+				return nil, nil, fmt.Errorf("append task stdout: %w", err)
 			}
 		case *runv0.RunEvent_StderrChunk:
 			if err := events.AppendRunLog(
@@ -218,11 +218,11 @@ func (program *freshProgram) awaitTaskCompletion(
 				program.observedEventSeq,
 				value.StderrChunk,
 			); err != nil {
-				return nil, nil, fmt.Errorf("append Task stderr: %w", err)
+				return nil, nil, fmt.Errorf("append task stderr: %w", err)
 			}
 		case *runv0.RunEvent_MetadataUpdated:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted a metadata update after Task outcome")
+				return nil, nil, errors.New("program emitted a metadata update after task outcome")
 			}
 			if err := processRunMetadataEvent(
 				ctx,
@@ -231,11 +231,11 @@ func (program *freshProgram) awaitTaskCompletion(
 				program.session.Stream(),
 				value.MetadataUpdated,
 			); err != nil {
-				return nil, nil, fmt.Errorf("update Task Run metadata: %w", err)
+				return nil, nil, fmt.Errorf("update task run metadata: %w", err)
 			}
 		case *runv0.RunEvent_StructuredLogRequested:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted a structured log after Task outcome")
+				return nil, nil, errors.New("program emitted a structured log after task outcome")
 			}
 			if err := processStructuredLogEvent(
 				ctx,
@@ -245,11 +245,11 @@ func (program *freshProgram) awaitTaskCompletion(
 				program.observedEventSeq,
 				value.StructuredLogRequested,
 			); err != nil {
-				return nil, nil, fmt.Errorf("append Task structured log: %w", err)
+				return nil, nil, fmt.Errorf("append task structured log: %w", err)
 			}
 		case *runv0.RunEvent_TaskOutcome:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted more than one Task outcome")
+				return nil, nil, errors.New("program emitted more than one task outcome")
 			}
 			if err := validateFreshTaskOutcome(value.TaskOutcome); err != nil {
 				return nil, nil, err
@@ -257,40 +257,40 @@ func (program *freshProgram) awaitTaskCompletion(
 			outcome = value.TaskOutcome
 		case *runv0.RunEvent_RunWaitRequested:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted a Wait after Task outcome")
+				return nil, nil, errors.New("program emitted a wait after task outcome")
 			}
 			if wait == nil {
-				return nil, nil, errors.New("fresh Program Wait support is required")
+				return nil, nil, errors.New("fresh program wait support is required")
 			}
 			if err := wait(ctx, value.RunWaitRequested); err != nil {
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_ActorInputSendRequested:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted an Actor input send after Task outcome")
+				return nil, nil, errors.New("program emitted an actor input send after task outcome")
 			}
 			if sendActorInput == nil {
-				return nil, nil, errors.New("fresh Program Actor input send support is required")
+				return nil, nil, errors.New("fresh program actor input send support is required")
 			}
 			if err := sendActorInput(ctx, value.ActorInputSendRequested); err != nil {
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_TokenCreateRequested:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted a Token create after Task outcome")
+				return nil, nil, errors.New("program emitted a token create after task outcome")
 			}
 			if createToken == nil {
-				return nil, nil, errors.New("fresh Program Token create support is required")
+				return nil, nil, errors.New("fresh program token create support is required")
 			}
 			if err := createToken(ctx, value.TokenCreateRequested); err != nil {
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_TaskChildInvokeRequested:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted a child Task invocation after Task outcome")
+				return nil, nil, errors.New("program emitted a child task invocation after task outcome")
 			}
 			if invokeChildTask == nil {
-				return nil, nil, errors.New("fresh Program child Task invocation support is required")
+				return nil, nil, errors.New("fresh program child task invocation support is required")
 			}
 			if err := invokeChildTask(ctx, value.TaskChildInvokeRequested); err != nil {
 				return nil, nil, err
@@ -307,28 +307,28 @@ func (program *freshProgram) awaitTaskCompletion(
 			*runv0.RunEvent_WorkspaceExecRequested,
 			*runv0.RunEvent_WorkspaceDeleteRequested:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted an Actor operation after Task outcome")
+				return nil, nil, errors.New("program emitted an actor operation after task outcome")
 			}
 			if len(resourceRuntime) != 1 || resourceRuntime[0] == nil {
-				return nil, nil, errors.New("fresh Program resource runtime support is required")
+				return nil, nil, errors.New("fresh program resource runtime support is required")
 			}
 			if err := resourceRuntime[0](ctx, &event); err != nil {
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_ProgramQuiesced:
 			if outcome == nil {
-				return nil, nil, errors.New("Program quiesced before emitting a Task outcome")
+				return nil, nil, errors.New("program quiesced before emitting a task outcome")
 			}
 			proof := value.ProgramQuiesced
 			if proof == nil ||
 				proof.GetRunId() != program.lease.RunID ||
 				proof.GetAttemptNumber() != uint32(program.lease.AttemptNumber) ||
 				proof.GetRunLeaseId() != program.lease.ID {
-				return nil, nil, errors.New("Program quiescence proof does not match Run Lease")
+				return nil, nil, errors.New("program quiescence proof does not match run lease")
 			}
 			return outcome, proof, nil
 		default:
-			return nil, nil, errors.New("Program emitted an unsupported Task completion event")
+			return nil, nil, errors.New("program emitted an unsupported task completion event")
 		}
 	}
 }
@@ -345,34 +345,34 @@ func (program *freshProgram) awaitActorCompletion(
 	resourceRuntime ...func(context.Context, *runv0.RunEvent) error,
 ) (*runv0.ActorOutcome, *runv0.ProgramQuiesced, error) {
 	if program == nil || program.session == nil {
-		return nil, nil, errors.New("fresh Program session is required")
+		return nil, nil, errors.New("fresh program session is required")
 	}
 	defer program.session.Close(context.Background())
 	if events == nil {
-		return nil, nil, errors.New("fresh Program event sink is required")
+		return nil, nil, errors.New("fresh program event sink is required")
 	}
 	if program.entrypoint == nil || program.entrypoint.GetActor() == nil {
-		return nil, nil, errors.New("fresh Program entrypoint is not an Actor")
+		return nil, nil, errors.New("fresh program entrypoint is not an actor")
 	}
 	var outcome *runv0.ActorOutcome
 	for {
 		var event runv0.RunEvent
 		if err := readProtoFrameBoundedContext(ctx, program.session, maxFreshOutcomeFrameBytes, &event); err != nil {
-			return nil, nil, fmt.Errorf("read Actor completion event: %w", err)
+			return nil, nil, fmt.Errorf("read actor completion event: %w", err)
 		}
 		program.observedEventSeq++
 		switch value := event.Event.(type) {
 		case *runv0.RunEvent_StdoutChunk:
 			if err := events.AppendRunLog(ctx, program.lease, workerapi.LogStreamStdout, program.observedEventSeq, value.StdoutChunk); err != nil {
-				return nil, nil, fmt.Errorf("append Actor stdout: %w", err)
+				return nil, nil, fmt.Errorf("append actor stdout: %w", err)
 			}
 		case *runv0.RunEvent_StderrChunk:
 			if err := events.AppendRunLog(ctx, program.lease, workerapi.LogStreamStderr, program.observedEventSeq, value.StderrChunk); err != nil {
-				return nil, nil, fmt.Errorf("append Actor stderr: %w", err)
+				return nil, nil, fmt.Errorf("append actor stderr: %w", err)
 			}
 		case *runv0.RunEvent_MetadataUpdated:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted a metadata update after Actor outcome")
+				return nil, nil, errors.New("program emitted a metadata update after actor outcome")
 			}
 			if err := processRunMetadataEvent(
 				ctx,
@@ -381,11 +381,11 @@ func (program *freshProgram) awaitActorCompletion(
 				program.session.Stream(),
 				value.MetadataUpdated,
 			); err != nil {
-				return nil, nil, fmt.Errorf("update Actor Run metadata: %w", err)
+				return nil, nil, fmt.Errorf("update actor run metadata: %w", err)
 			}
 		case *runv0.RunEvent_StructuredLogRequested:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted a structured log after Actor outcome")
+				return nil, nil, errors.New("program emitted a structured log after actor outcome")
 			}
 			if err := processStructuredLogEvent(
 				ctx,
@@ -395,11 +395,11 @@ func (program *freshProgram) awaitActorCompletion(
 				program.observedEventSeq,
 				value.StructuredLogRequested,
 			); err != nil {
-				return nil, nil, fmt.Errorf("append Actor structured log: %w", err)
+				return nil, nil, fmt.Errorf("append actor structured log: %w", err)
 			}
 		case *runv0.RunEvent_ActorOutcome:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted more than one Actor outcome")
+				return nil, nil, errors.New("program emitted more than one actor outcome")
 			}
 			if err := validateFreshActorOutcome(value.ActorOutcome); err != nil {
 				return nil, nil, err
@@ -407,60 +407,60 @@ func (program *freshProgram) awaitActorCompletion(
 			outcome = value.ActorOutcome
 		case *runv0.RunEvent_RunWaitRequested:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted a Wait after Actor outcome")
+				return nil, nil, errors.New("program emitted a wait after actor outcome")
 			}
 			if wait == nil {
-				return nil, nil, errors.New("fresh Program Wait support is required")
+				return nil, nil, errors.New("fresh program wait support is required")
 			}
 			if err := wait(ctx, value.RunWaitRequested); err != nil {
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_ActorTurnCommitRequested:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted a turn commit after Actor outcome")
+				return nil, nil, errors.New("program emitted a turn commit after actor outcome")
 			}
 			if turnCommit == nil {
-				return nil, nil, errors.New("fresh Actor turn commit support is required")
+				return nil, nil, errors.New("fresh actor turn commit support is required")
 			}
 			if err := turnCommit(ctx, value.ActorTurnCommitRequested); err != nil {
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_ActorInputSendRequested:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted an Actor input send after Actor outcome")
+				return nil, nil, errors.New("program emitted an actor input send after actor outcome")
 			}
 			if sendActorInput == nil {
-				return nil, nil, errors.New("fresh Program Actor input send support is required")
+				return nil, nil, errors.New("fresh program actor input send support is required")
 			}
 			if err := sendActorInput(ctx, value.ActorInputSendRequested); err != nil {
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_ActorOutputAppendRequested:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted an Actor output append after Actor outcome")
+				return nil, nil, errors.New("program emitted an actor output append after actor outcome")
 			}
 			if appendActorOutput == nil {
-				return nil, nil, errors.New("fresh Program Actor output append support is required")
+				return nil, nil, errors.New("fresh program actor output append support is required")
 			}
 			if err := appendActorOutput(ctx, value.ActorOutputAppendRequested); err != nil {
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_TokenCreateRequested:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted a Token create after Actor outcome")
+				return nil, nil, errors.New("program emitted a token create after actor outcome")
 			}
 			if createToken == nil {
-				return nil, nil, errors.New("fresh Program Token create support is required")
+				return nil, nil, errors.New("fresh program token create support is required")
 			}
 			if err := createToken(ctx, value.TokenCreateRequested); err != nil {
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_TaskChildInvokeRequested:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted a child Task invocation after Actor outcome")
+				return nil, nil, errors.New("program emitted a child task invocation after actor outcome")
 			}
 			if invokeChildTask == nil {
-				return nil, nil, errors.New("fresh Program child Task invocation support is required")
+				return nil, nil, errors.New("fresh program child task invocation support is required")
 			}
 			if err := invokeChildTask(ctx, value.TaskChildInvokeRequested); err != nil {
 				return nil, nil, err
@@ -477,92 +477,92 @@ func (program *freshProgram) awaitActorCompletion(
 			*runv0.RunEvent_WorkspaceExecRequested,
 			*runv0.RunEvent_WorkspaceDeleteRequested:
 			if outcome != nil {
-				return nil, nil, errors.New("Program emitted an Actor operation after Actor outcome")
+				return nil, nil, errors.New("program emitted an actor operation after actor outcome")
 			}
 			if len(resourceRuntime) != 1 || resourceRuntime[0] == nil {
-				return nil, nil, errors.New("fresh Program resource runtime support is required")
+				return nil, nil, errors.New("fresh program resource runtime support is required")
 			}
 			if err := resourceRuntime[0](ctx, &event); err != nil {
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_ProgramQuiesced:
 			if outcome == nil {
-				return nil, nil, errors.New("Program quiesced before emitting an Actor outcome")
+				return nil, nil, errors.New("program quiesced before emitting an actor outcome")
 			}
 			proof := value.ProgramQuiesced
 			if proof == nil || proof.GetRunId() != program.lease.RunID || proof.GetAttemptNumber() != uint32(program.lease.AttemptNumber) || proof.GetRunLeaseId() != program.lease.ID {
-				return nil, nil, errors.New("Program quiescence proof does not match Run Lease")
+				return nil, nil, errors.New("program quiescence proof does not match run lease")
 			}
 			return outcome, proof, nil
 		default:
-			return nil, nil, errors.New("Program emitted an unsupported Actor completion event")
+			return nil, nil, errors.New("program emitted an unsupported actor completion event")
 		}
 	}
 }
 
 func validateFreshActorOutcome(outcome *runv0.ActorOutcome) error {
 	if outcome == nil {
-		return errors.New("Actor outcome is required")
+		return errors.New("actor outcome is required")
 	}
 	if outcome.TerminalInputSequence == nil || outcome.GetTerminalInputSequence() < 0 {
-		return errors.New("Actor terminal input sequence is negative")
+		return errors.New("actor terminal input sequence is negative")
 	}
 	switch value := outcome.GetOutcome().(type) {
 	case *runv0.ActorOutcome_Succeeded:
 		if value.Succeeded == nil {
-			return errors.New("Actor succeeded outcome is empty")
+			return errors.New("actor succeeded outcome is empty")
 		}
 	case *runv0.ActorOutcome_Failed:
 		if value.Failed == nil {
-			return errors.New("Actor failed outcome is empty")
+			return errors.New("actor failed outcome is empty")
 		}
 		if err := validateFreshTaskFailure(value.Failed.GetMessage(), value.Failed.DetailsJson); err != nil {
-			return fmt.Errorf("invalid Actor failure: %w", err)
+			return fmt.Errorf("invalid actor failure: %w", err)
 		}
 	default:
-		return errors.New("Actor outcome variant is required")
+		return errors.New("actor outcome variant is required")
 	}
 	return nil
 }
 
 func validateFreshTaskOutcome(outcome *runv0.TaskOutcome) error {
 	if outcome == nil {
-		return errors.New("Task outcome is required")
+		return errors.New("task outcome is required")
 	}
 	switch value := outcome.GetOutcome().(type) {
 	case *runv0.TaskOutcome_Succeeded:
 		if value.Succeeded == nil {
-			return errors.New("Task succeeded outcome is empty")
+			return errors.New("task succeeded outcome is empty")
 		}
 		raw := []byte(value.Succeeded.GetOutputJson())
 		if len(raw) == 0 || len(raw) > maxFreshTaskOutputBytes || !utf8.Valid(raw) {
-			return errors.New("Task succeeded output is not bounded UTF-8 JSON")
+			return errors.New("task succeeded output is not bounded UTF-8 JSON")
 		}
 		if _, err := jsoncanon.Transform(raw); err != nil {
-			return errors.New("Task succeeded output is not unambiguous JSON")
+			return errors.New("task succeeded output is not unambiguous JSON")
 		}
 	case *runv0.TaskOutcome_Failed:
 		if value.Failed == nil {
-			return errors.New("Task failed outcome is empty")
+			return errors.New("task failed outcome is empty")
 		}
 		if err := validateFreshTaskFailure(
 			value.Failed.GetMessage(),
 			value.Failed.DetailsJson,
 		); err != nil {
-			return fmt.Errorf("invalid Task failure: %w", err)
+			return fmt.Errorf("invalid task failure: %w", err)
 		}
 	case *runv0.TaskOutcome_PayloadInvalid:
 		if value.PayloadInvalid == nil {
-			return errors.New("Task payload-invalid outcome is empty")
+			return errors.New("task payload-invalid outcome is empty")
 		}
 		if err := validateFreshTaskFailure(
 			value.PayloadInvalid.GetMessage(),
 			value.PayloadInvalid.DetailsJson,
 		); err != nil {
-			return fmt.Errorf("invalid Task payload failure: %w", err)
+			return fmt.Errorf("invalid task payload failure: %w", err)
 		}
 	default:
-		return errors.New("Task outcome variant is required")
+		return errors.New("task outcome variant is required")
 	}
 	return nil
 }
@@ -590,11 +590,11 @@ func validateFreshTaskFailure(message string, details *string) error {
 	}
 	normalizedJSON, err := json.Marshal(value)
 	if err != nil {
-		return fmt.Errorf("marshal normalized Task error: %w", err)
+		return fmt.Errorf("marshal normalized task error: %w", err)
 	}
 	normalized, err := jsoncanon.Transform(normalizedJSON)
 	if err != nil {
-		return fmt.Errorf("canonicalize normalized Task error: %w", err)
+		return fmt.Errorf("canonicalize normalized task error: %w", err)
 	}
 	if len(normalized) > maxFreshTaskErrorBytes {
 		return errors.New("normalized error exceeds its bound")
@@ -609,14 +609,14 @@ func (r ProgramRunner) startNewProgram(
 	events freshProgramEventSink,
 ) (freshProgram, error) {
 	if claim == nil {
-		return freshProgram{}, errors.New("Run Lease claim is required")
+		return freshProgram{}, errors.New("run lease claim is required")
 	}
 	defer clearFreshProgramDelivery(claim)
 	if controlPlane == nil {
-		return freshProgram{}, errors.New("fresh Program Control Plane is required")
+		return freshProgram{}, errors.New("fresh program control plane is required")
 	}
 	if events == nil {
-		return freshProgram{}, errors.New("fresh Program event sink is required")
+		return freshProgram{}, errors.New("fresh program event sink is required")
 	}
 	if r.WorkspaceMounts == nil {
 		return freshProgram{}, errors.New(
@@ -646,7 +646,7 @@ func (r ProgramRunner) startNewProgram(
 		}
 	}()
 	if opened.Session.Stream() == nil {
-		return freshProgram{}, errors.New("Workspace mount stream is required")
+		return freshProgram{}, errors.New("workspace mount stream is required")
 	}
 	if err := validateNewProgramMount(claim.Lease, opened.Mount); err != nil {
 		return freshProgram{}, err
@@ -654,7 +654,7 @@ func (r ProgramRunner) startNewProgram(
 	if admission.parent != nil {
 		if opened.ControlSession == nil {
 			return freshProgram{}, errors.New(
-				"child-attached Program mount control session is required",
+				"child-attached program mount control session is required",
 			)
 		}
 		if err := verifyRestoredProgramOnSession(
@@ -663,7 +663,7 @@ func (r ProgramRunner) startNewProgram(
 			admission.parent,
 		); err != nil {
 			return freshProgram{}, fmt.Errorf(
-				"verify frozen parent Program: %w",
+				"verify frozen parent program: %w",
 				err,
 			)
 		}
@@ -690,7 +690,7 @@ func (r ProgramRunner) startNewProgram(
 		&event,
 	); err != nil {
 		return freshProgram{}, fmt.Errorf(
-			"read Program process-started proof: %w",
+			"read program process-started proof: %w",
 			err,
 		)
 	}
@@ -700,7 +700,7 @@ func (r ProgramRunner) startNewProgram(
 		started.GetAttemptNumber() != uint32(claim.Lease.AttemptNumber) ||
 		started.GetRunLeaseId() != claim.Lease.ID {
 		return freshProgram{}, errors.New(
-			"Program process-started proof does not match Run Lease",
+			"program process-started proof does not match run lease",
 		)
 	}
 	observedEventSeq := uint64(1)
@@ -716,11 +716,11 @@ func (r ProgramRunner) startNewProgram(
 		)
 		return requestErr
 	}); err != nil {
-		return freshProgram{}, fmt.Errorf("acknowledge new Program Run start: %w", err)
+		return freshProgram{}, fmt.Errorf("acknowledge new program run start: %w", err)
 	}
 	if startResponse.Lease != claim.Lease.Fence() {
 		return freshProgram{}, errors.New(
-			"Run start acknowledgement changed the Run Lease fence",
+			"run start acknowledgement changed the run lease fence",
 		)
 	}
 	state := &freshAdmissionState{
@@ -739,13 +739,13 @@ func (r ProgramRunner) startNewProgram(
 	}()
 	if err := state.renew(ctx); err != nil {
 		return freshProgram{}, fmt.Errorf(
-			"renew Run Lease before Program-start release: %w",
+			"renew run lease before program-start release: %w",
 			err,
 		)
 	}
 	if !state.expiresAt().After(time.Now()) {
 		return freshProgram{}, errors.New(
-			"Run Lease expired before Program-start release",
+			"run lease expired before program-start release",
 		)
 	}
 	startReleaseCtx, cancelStartRelease := context.WithDeadline(
@@ -764,7 +764,7 @@ func (r ProgramRunner) startNewProgram(
 		},
 	); err != nil {
 		return freshProgram{}, fmt.Errorf(
-			"write Program-start release: %w",
+			"write program-start release: %w",
 			err,
 		)
 	}
@@ -799,7 +799,7 @@ func (r ProgramRunner) startNewProgram(
 			if err := state.renew(ctx); err != nil {
 				cancelEntrypoint()
 				<-entrypointDone
-				return freshProgram{}, fmt.Errorf("renew pre-entrypoint Run Lease: %w", err)
+				return freshProgram{}, fmt.Errorf("renew pre-entrypoint run lease: %w", err)
 			}
 			renewTimer.Reset(runLeaseRenewDelay(state.expiresAt()))
 		case <-ctx.Done():
@@ -824,7 +824,7 @@ func (r ProgramRunner) startNewProgram(
 	if err := retryRunLeaseRequest(entrypointAckCtx, func(requestCtx context.Context) error {
 		return controlPlane.AcknowledgeRunEntrypoint(requestCtx, entrypointRequest)
 	}); err != nil {
-		return freshProgram{}, fmt.Errorf("acknowledge Run entrypoint: %w", err)
+		return freshProgram{}, fmt.Errorf("acknowledge run entrypoint: %w", err)
 	}
 	if err := writeFreshProgramContext(
 		entrypointAckCtx,
@@ -926,7 +926,7 @@ func readFreshEntrypointReady(
 			return value.EntrypointReady, nil
 		default:
 			return nil, errors.New(
-				"Program emitted an unsupported event before entrypoint-ready",
+				"program emitted an unsupported event before entrypoint-ready",
 			)
 		}
 	}
@@ -955,11 +955,11 @@ func validateNewProgramClaim(
 		!lease.StartDeadlineAt.After(time.Now()) ||
 		lease.ExpiresAt.IsZero() ||
 		!lease.ExpiresAt.After(time.Now()) {
-		return newProgramAdmission{}, errors.New("new Program Run Lease assignment is incomplete")
+		return newProgramAdmission{}, errors.New("new program run lease assignment is incomplete")
 	}
 	if strings.TrimSpace(claim.Workspace.WriteCapability) == "" {
 		return newProgramAdmission{}, errors.New(
-			"new Program Workspace write capability is required",
+			"new program workspace write capability is required",
 		)
 	}
 	execution := claim.Execution
@@ -989,7 +989,7 @@ func validateNewProgramClaim(
 			strings.TrimSpace(child.CorrelationID) == "" ||
 			len(child.ProgramStart) == 0 {
 			return newProgramAdmission{}, errors.New(
-				"child-attached Program authority is incomplete",
+				"child-attached program authority is incomplete",
 			)
 		}
 		admission = newProgramAdmission{
@@ -1013,12 +1013,12 @@ func validateNewProgramClaim(
 		}
 	default:
 		return newProgramAdmission{}, errors.New(
-			"Run Lease execution must contain exactly one fresh or child-attached Program",
+			"run lease execution must contain exactly one fresh or child-attached program",
 		)
 	}
 	if len(claim.Secrets) > maxFreshProgramSecrets {
 		return newProgramAdmission{}, fmt.Errorf(
-			"new Program has %d Secrets, exceeds max %d",
+			"new program has %d secrets, exceeds max %d",
 			len(claim.Secrets),
 			maxFreshProgramSecrets,
 		)
@@ -1027,7 +1027,7 @@ func validateNewProgramClaim(
 	for _, secret := range claim.Secrets {
 		if len(secret.Value) > maxFreshProgramSecretBytes-totalSecretBytes {
 			return newProgramAdmission{}, fmt.Errorf(
-				"new Program Secret plaintext exceeds max %d bytes",
+				"new program secret plaintext exceeds max %d bytes",
 				maxFreshProgramSecretBytes,
 			)
 		}
@@ -1046,7 +1046,7 @@ func validateNewProgramMount(
 		mount.BaseVersionID != lease.BaseWorkspaceVersionID ||
 		mount.FencingGeneration != lease.MountFencingGeneration {
 		return errors.New(
-			"new Program Workspace mount does not match the claimed physical authority",
+			"new program workspace mount does not match the claimed physical authority",
 		)
 	}
 	return nil
@@ -1061,7 +1061,7 @@ func writeFreshProgramAdmission(
 	lease := claim.Lease
 	channelToken = strings.TrimSpace(channelToken)
 	if channelToken == "" {
-		return errors.New("Workspace mount guest channel token is required")
+		return errors.New("workspace mount guest channel token is required")
 	}
 	if err := wire.WriteStreamFrameHeader(
 		stream,
@@ -1073,13 +1073,13 @@ func writeFreshProgramAdmission(
 		},
 		0,
 	); err != nil {
-		return fmt.Errorf("write Program run header: %w", err)
+		return fmt.Errorf("write program run header: %w", err)
 	}
 	if err := frameio.WriteProtoFrame(
 		stream,
 		freshWorkspaceAuthority(claim, channelToken),
 	); err != nil {
-		return fmt.Errorf("write Program Workspace authority: %w", err)
+		return fmt.Errorf("write program workspace authority: %w", err)
 	}
 	if err := frameio.WriteProtoFrame(
 		stream,
@@ -1092,7 +1092,7 @@ func writeFreshProgramAdmission(
 			StartDeadlineUnixMs: lease.StartDeadlineAt.UnixMilli(),
 		},
 	); err != nil {
-		return fmt.Errorf("write Program run request: %w", err)
+		return fmt.Errorf("write program run request: %w", err)
 	}
 	for index := range claim.Secrets {
 		secret, err := freshProgramSecret(claim.Secrets[index])
@@ -1110,7 +1110,7 @@ func writeFreshProgramAdmission(
 		clearBytes(secret.Value)
 		secret.Value = nil
 		if writeErr != nil {
-			return fmt.Errorf("write Program Secret delivery: %w", writeErr)
+			return fmt.Errorf("write program secret delivery: %w", writeErr)
 		}
 		clearBytes(claim.Secrets[index].Value)
 		claim.Secrets[index].Value = nil
@@ -1128,7 +1128,7 @@ func writeFreshProgramAdmission(
 			},
 		},
 	); err != nil {
-		return fmt.Errorf("write Program Secret completion: %w", err)
+		return fmt.Errorf("write program secret completion: %w", err)
 	}
 	return nil
 }
@@ -1180,7 +1180,7 @@ func freshProgramSecret(
 	default:
 		clearBytes(secret.Value)
 		return nil, errors.New(
-			"Program Secret must contain exactly one placement",
+			"program secret must contain exactly one placement",
 		)
 	}
 	return secret, nil
@@ -1210,7 +1210,7 @@ func validateFreshEntrypoint(
 		ready.GetEntrypoint() == nil ||
 		strings.TrimSpace(ready.GetEntrypoint().GetDeclaredId()) == "" {
 		return "", errors.New(
-			"entrypoint-ready event does not match Run Lease",
+			"entrypoint-ready event does not match run lease",
 		)
 	}
 	switch ready.GetEntrypoint().GetKind().(type) {

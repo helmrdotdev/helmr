@@ -63,7 +63,7 @@ func ValidatePackageManager(manager PackageManager) error {
 		}
 	case PackageManagerBun:
 		if major != 1 || minor < 3 || minor == 3 && patch < 10 {
-			return fmt.Errorf("bun version %q is outside >=1.3.10 <2", manager.Version)
+			return fmt.Errorf("the Bun version %q is outside >=1.3.10 <2", manager.Version)
 		}
 	}
 	return nil

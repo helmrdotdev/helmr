@@ -10,7 +10,7 @@ import (
 
 func ResetTargetFromProto(target *workspacev0.WorkspaceResetTarget) (ResetTarget, error) {
 	if target == nil || target.GetTree() == nil {
-		return ResetTarget{}, errors.New("Workspace Reset target is required")
+		return ResetTarget{}, errors.New("workspace reset target is required")
 	}
 	tree := TreeIdentity{
 		Digest:     strings.TrimSpace(target.GetTree().GetDigest()),
@@ -20,12 +20,12 @@ func ResetTargetFromProto(target *workspacev0.WorkspaceResetTarget) (ResetTarget
 	switch source := target.GetSource().(type) {
 	case *workspacev0.WorkspaceResetTarget_Empty:
 		if source.Empty == nil {
-			return ResetTarget{}, errors.New("Workspace Reset empty target is required")
+			return ResetTarget{}, errors.New("workspace reset empty target is required")
 		}
 		return EmptyResetTarget(target.GetBaseVersionId(), tree)
 	case *workspacev0.WorkspaceResetTarget_Artifact:
 		if source.Artifact == nil || source.Artifact.GetSizeBytes() > math.MaxInt64 {
-			return ResetTarget{}, errors.New("Workspace Reset Artifact target is required")
+			return ResetTarget{}, errors.New("workspace reset artifact target is required")
 		}
 		return ArtifactResetTarget(target.GetBaseVersionId(), tree, ArtifactIdentity{
 			Digest:     strings.TrimSpace(source.Artifact.GetDigest()),
@@ -35,7 +35,7 @@ func ResetTargetFromProto(target *workspacev0.WorkspaceResetTarget) (ResetTarget
 			EntryCount: int(source.Artifact.GetEntryCount()),
 		})
 	default:
-		return ResetTarget{}, errors.New("Workspace Reset target source is required")
+		return ResetTarget{}, errors.New("workspace reset target source is required")
 	}
 }
 

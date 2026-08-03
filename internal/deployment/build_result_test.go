@@ -158,7 +158,7 @@ func TestValidateBuildSucceeded(t *testing.T) {
 			change: func(result *BuildResult) {
 				result.Succeeded.Program.Index.Declarations[0].DeclaredID = "other"
 			},
-			errMsg: "Program index",
+			errMsg: "program index",
 		},
 		{
 			name: "unsupported program architecture",
@@ -174,7 +174,7 @@ func TestValidateBuildSucceeded(t *testing.T) {
 				result.Succeeded.Program.Index.ConfigResultDigest =
 					"sha256:" + strings.Repeat("9", 64)
 			},
-			errMsg: "Program index",
+			errMsg: "program index",
 		},
 		{
 			name: "workspace image array",

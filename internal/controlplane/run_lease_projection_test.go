@@ -109,7 +109,7 @@ func TestProjectRunLeaseExecutionSeparatesRecreatedAndRetainedRestore(t *testing
 	}
 	artifacts := []db.ListRunCheckpointArtifactAuthorityRow{
 		{Role: db.RunCheckpointArtifactRoleRuntimeConfig, Ordinal: 0, Digest: validDigest('a'), SizeBytes: 8, MediaType: "application/example"},
-		{Role: db.RunCheckpointArtifactRoleVmState, Ordinal: 0, Digest: validDigest('b'), SizeBytes: 4, MediaType: "application/example"},
+		{Role: db.RunCheckpointArtifactRoleVMState, Ordinal: 0, Digest: validDigest('b'), SizeBytes: 4, MediaType: "application/example"},
 		{Role: db.RunCheckpointArtifactRoleMemory, Ordinal: 0, Digest: validDigest('c'), SizeBytes: 16, MediaType: "application/example"},
 		{Role: db.RunCheckpointArtifactRoleScratchDisk, Ordinal: 0, Digest: validDigest('d'), SizeBytes: 12, MediaType: "application/example"},
 	}
@@ -265,7 +265,7 @@ func TestProjectRunLeaseCheckpointRequiresCanonicalArtifactAuthority(t *testing.
 			Digest: validDigest('a'), SizeBytes: 8, MediaType: "application/example",
 		},
 		{
-			Role: db.RunCheckpointArtifactRoleVmState, Ordinal: 0,
+			Role: db.RunCheckpointArtifactRoleVMState, Ordinal: 0,
 			Digest: validDigest('b'), SizeBytes: 4, MediaType: "application/example",
 		},
 		{
@@ -397,7 +397,7 @@ func validRunLeaseProjectionAuthority() runLeaseProjectionAuthority {
 			WorkerGroupID: "workers", WorkerInstanceID: pgvalue.UUID(uuid.New()),
 			WorkerEpoch: 3, WorkerProtocolVersion: "helmr.worker.v0",
 			RuntimeInstanceID: runtimeID, RuntimeIdentityID: "runtime",
-			RequestedCpuMillis: 1000, RequestedMemoryBytes: 1024,
+			RequestedCPUMillis: 1000, RequestedMemoryBytes: 1024,
 			RequestedGuestEphemeralDiskBytes: 2048,
 			RequestedExecutionSlots:          1,
 			StartDeadlineAt:                  pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true},

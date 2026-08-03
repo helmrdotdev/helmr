@@ -248,7 +248,7 @@ func validateVerifierProcessConfig(
 	}
 	for _, artifact := range config.artifacts {
 		if artifact == nil {
-			return fmt.Errorf("%s verifier Artifact descriptors are required", config.job)
+			return fmt.Errorf("%s verifier artifact descriptors are required", config.job)
 		}
 	}
 	if !filepath.IsAbs(config.unitCgroupRoot) {
@@ -415,11 +415,11 @@ func openVerifierSnapshot(source *os.File) (*os.File, error) {
 	var reopenedStat unix.Stat_t
 	if err := unix.Fstat(fd, &reopenedStat); err != nil {
 		unix.Close(fd)
-		return nil, fmt.Errorf("stat reopened Artifact descriptor: %w", err)
+		return nil, fmt.Errorf("stat reopened artifact descriptor: %w", err)
 	}
 	if sourceStat.Dev != reopenedStat.Dev || sourceStat.Ino != reopenedStat.Ino {
 		unix.Close(fd)
-		return nil, errors.New("reopened Artifact descriptor changed inode identity")
+		return nil, errors.New("reopened artifact descriptor changed inode identity")
 	}
 	return os.NewFile(uintptr(fd), source.Name()), nil
 }

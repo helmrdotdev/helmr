@@ -30,7 +30,7 @@ type HTTPError struct {
 }
 
 func (e *HTTPError) Error() string {
-	return fmt.Sprintf("operator Control Plane returned %s: %s", e.Status, e.Body)
+	return fmt.Sprintf("operator control plane returned %s: %s", e.Status, e.Body)
 }
 
 type Client struct {
@@ -52,11 +52,11 @@ func WithHTTPClient(client *http.Client) Option {
 func NewClient(rawBaseURL, token string, options ...Option) (*Client, error) {
 	baseURL, err := url.Parse(strings.TrimSpace(rawBaseURL))
 	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" {
-		return nil, errors.New("operator Control Plane URL must be an absolute URL")
+		return nil, errors.New("operator control plane URL must be an absolute URL")
 	}
 	localHTTP := baseURL.Scheme == "http" && (baseURL.Hostname() == "127.0.0.1" || baseURL.Hostname() == "localhost")
 	if baseURL.Scheme != "https" && !localHTTP {
-		return nil, errors.New("operator Control Plane URL must use HTTPS outside localhost")
+		return nil, errors.New("operator control plane URL must use HTTPS outside localhost")
 	}
 	token = strings.TrimSpace(token)
 	decodedToken, decodeErr := base64.RawURLEncoding.DecodeString(token)
@@ -147,10 +147,10 @@ func (c *Client) do(ctx context.Context, method, path string, requestBody, respo
 	defer response.Body.Close()
 	payload, readErr := io.ReadAll(io.LimitReader(response.Body, maximumResponseBytes+1))
 	if readErr != nil {
-		return fmt.Errorf("read operator Control Plane response: %w", readErr)
+		return fmt.Errorf("read operator control plane response: %w", readErr)
 	}
 	if int64(len(payload)) > maximumResponseBytes {
-		return errors.New("operator Control Plane response exceeds the maximum size")
+		return errors.New("operator control plane response exceeds the maximum size")
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return &HTTPError{StatusCode: response.StatusCode, Status: response.Status, Body: strings.TrimSpace(string(payload))}
@@ -159,7 +159,7 @@ func (c *Client) do(ctx context.Context, method, path string, requestBody, respo
 		return nil
 	}
 	if err := json.Unmarshal(payload, responseBody); err != nil {
-		return fmt.Errorf("decode operator Control Plane response: %w", err)
+		return fmt.Errorf("decode operator control plane response: %w", err)
 	}
 	return nil
 }

@@ -179,7 +179,7 @@ func workspaceFilesReadCommand() *cobra.Command {
 			}
 			data, err := base64.StdEncoding.DecodeString(content.DataBase64)
 			if err != nil {
-				return fmt.Errorf("decode Workspace file: %w", err)
+				return fmt.Errorf("decode workspace file: %w", err)
 			}
 			_, err = command.OutOrStdout().Write(data)
 			return err
@@ -468,5 +468,5 @@ type exitCodeError struct {
 }
 
 func (e exitCodeError) Error() string {
-	return fmt.Sprintf("Workspace command exited with status %d", e.code)
+	return fmt.Sprintf("workspace command exited with status %d", e.code)
 }

@@ -147,7 +147,7 @@ func ValidateActorPublicStatus(status string) error {
 		ActorPublicStatusFailed:
 		return nil
 	default:
-		return fmt.Errorf("invalid Actor status %q", status)
+		return fmt.Errorf("invalid actor status %q", status)
 	}
 }
 
@@ -191,7 +191,7 @@ func ValidateActorID(id string) error {
 
 func ValidateWorkspaceID(id string) error {
 	if err := ids.Validate(id); err != nil {
-		return fmt.Errorf("invalid Workspace ID: %w", err)
+		return fmt.Errorf("invalid workspace ID: %w", err)
 	}
 	return nil
 }
@@ -202,7 +202,7 @@ func ValidateWorkspaceKey(key string) error {
 		len(key) > 512 ||
 		strings.ContainsRune(key, '\x00') ||
 		strings.TrimSpace(key) != key {
-		return errors.New("Workspace key is outside the exact Workspace key domain")
+		return errors.New("workspace key is outside the exact workspace key domain")
 	}
 	return nil
 }

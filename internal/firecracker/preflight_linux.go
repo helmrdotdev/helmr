@@ -18,23 +18,23 @@ import (
 func (c *Connector) Preflight(ctx context.Context) error {
 	var problems []error
 	problems = append(problems,
-		checkCommand("firecracker", c.cfg.FirecrackerPath),
-		checkCommand("firecracker jailer", c.cfg.JailerPath),
+		checkCommand("the Firecracker", c.cfg.FirecrackerPath),
+		checkCommand("the Firecracker jailer", c.cfg.JailerPath),
 		checkCommand("ip", c.cfg.IPPath),
 		checkCommand("nft", c.cfg.NFTPath),
 		checkCommand("mkfs.ext4", c.cfg.MkfsExt4Path),
 		checkReadableFile("guest kernel", c.cfg.KernelPath),
 		checkReadableFile("guest initramfs", c.cfg.InitramfsPath),
 		checkReadableFile("guest rootfs", c.cfg.RootfsPath),
-		checkReadWriteFile("KVM device", c.cfg.KVMPath),
-		checkReadWriteFile("TUN device", "/dev/net/tun"),
+		checkReadWriteFile("the KVM device", c.cfg.KVMPath),
+		checkReadWriteFile("the TUN device", "/dev/net/tun"),
 		checkCgroup(c.cfg.CgroupVersion),
 	)
 	_, _, poolErr := validateNetworkPools(c.cfg)
 	problems = append(problems, poolErr)
-	problems = append(problems, ensureSecureDirectory("firecracker coordination directory", stateCoordinationDir(c.cfg.StateDir)))
-	problems = append(problems, ensureSecureDirectory("firecracker state directory", c.cfg.StateDir))
-	problems = append(problems, ensureSecureDirectory("firecracker jailer chroot directory", c.cfg.JailerChrootBaseDir))
+	problems = append(problems, ensureSecureDirectory("the Firecracker coordination directory", stateCoordinationDir(c.cfg.StateDir)))
+	problems = append(problems, ensureSecureDirectory("the Firecracker state directory", c.cfg.StateDir))
+	problems = append(problems, ensureSecureDirectory("the Firecracker jailer chroot directory", c.cfg.JailerChrootBaseDir))
 	problems = append(problems, checkResolvedStateLayout(c.cfg))
 	problems = append(problems, checkHardLinkLayout(c.cfg))
 	problems = append(problems, c.datapath.VerifyKernel())
@@ -89,8 +89,8 @@ func checkHardLinkLayout(cfg Config) error {
 		{name: "guest kernel", path: cfg.KernelPath},
 		{name: "guest initramfs", path: cfg.InitramfsPath},
 		{name: "guest rootfs", path: cfg.RootfsPath},
-		{name: "firecracker state directory", path: cfg.StateDir},
-		{name: "firecracker jailer chroot directory", path: cfg.JailerChrootBaseDir},
+		{name: "the Firecracker state directory", path: cfg.StateDir},
+		{name: "the Firecracker jailer chroot directory", path: cfg.JailerChrootBaseDir},
 	}
 	var device uint64
 	for index, item := range paths {
@@ -118,15 +118,15 @@ func checkHardLinkLayout(cfg Config) error {
 	}
 	probe, err := os.CreateTemp(stateCoordinationDir(cfg.StateDir), ".hardlink-")
 	if err != nil {
-		return fmt.Errorf("create firecracker hard-link probe: %w", err)
+		return fmt.Errorf("create Firecracker hard-link probe: %w", err)
 	}
 	source := probe.Name()
 	if err := probe.Close(); err != nil {
 		_ = os.Remove(source)
-		return fmt.Errorf("close firecracker hard-link probe: %w", err)
+		return fmt.Errorf("close Firecracker hard-link probe: %w", err)
 	}
 	defer os.Remove(source)
-	return proveHardLink("firecracker state", source, cfg.JailerChrootBaseDir)
+	return proveHardLink("the Firecracker state", source, cfg.JailerChrootBaseDir)
 }
 
 func proveHardLink(label, source, directory string) error {
@@ -230,7 +230,7 @@ func checkCgroup(version string) error {
 			return err
 		}
 	default:
-		return fmt.Errorf("unsupported firecracker cgroup version %q", version)
+		return fmt.Errorf("unsupported Firecracker cgroup version %q", version)
 	}
 	return nil
 }

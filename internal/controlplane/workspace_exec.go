@@ -39,10 +39,10 @@ const (
 var workspaceExecEnvNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 var (
-	errWorkspaceExecInvalid        = errors.New("Workspace exec request is invalid")
-	errWorkspaceExecTooLarge       = errors.New("Workspace exec request is too large")
-	errWorkspaceExecStdinTooLarge  = errors.New("Workspace exec stdin is too large")
-	errWorkspaceExecReceiptInvalid = errors.New("Workspace exec idempotency receipt is invalid")
+	errWorkspaceExecInvalid        = errors.New("workspace exec request is invalid")
+	errWorkspaceExecTooLarge       = errors.New("workspace exec request is too large")
+	errWorkspaceExecStdinTooLarge  = errors.New("workspace exec stdin is too large")
+	errWorkspaceExecReceiptInvalid = errors.New("workspace exec idempotency receipt is invalid")
 )
 
 type workspaceExecRequest struct {
@@ -248,7 +248,7 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 
 		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, request.Workspace.ID)
 		if err != nil {
-			return fmt.Errorf("lock Workspace exec Secrets: %w", err)
+			return fmt.Errorf("lock workspace exec secrets: %w", err)
 		}
 		for _, binding := range bindings {
 			if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
@@ -256,7 +256,7 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 			}
 			if binding.PlacementKind == "env" {
 				if _, exists := normalized.env[binding.PlacementTarget]; exists {
-					return fmt.Errorf("%w: env cannot override Workspace Secret %q", errWorkspaceExecInvalid, binding.PlacementTarget)
+					return fmt.Errorf("%w: env cannot override workspace secret %q", errWorkspaceExecInvalid, binding.PlacementTarget)
 				}
 			}
 		}
@@ -268,7 +268,7 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 			return errWorkspaceNotFound
 		}
 		if err != nil {
-			return fmt.Errorf("lock Workspace exec authority: %w", err)
+			return fmt.Errorf("lock workspace exec authority: %w", err)
 		}
 		if authority.OrgID != pgvalue.UUID(request.OrgID) ||
 			authority.ProjectID != pgvalue.UUID(request.ProjectID) ||
@@ -279,9 +279,9 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 			!authority.HeadVersionID.Valid {
 			switch authority.State {
 			case db.WorkspaceStateDeleting:
-				return conflict(codedError{code: "workspace_deleting", message: "Workspace is deleting"})
+				return conflict(codedError{code: "workspace_deleting", message: "workspace is deleting"})
 			case db.WorkspaceStateRecoveryRequired:
-				return conflict(codedError{code: "workspace_recovery_required", message: "Workspace requires recovery"})
+				return conflict(codedError{code: "workspace_recovery_required", message: "workspace requires recovery"})
 			default:
 				return errWorkspaceBusy
 			}
@@ -307,12 +307,12 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 			CreatedBySubjectID:   request.Creator.SubjectID,
 		})
 		if err != nil {
-			return fmt.Errorf("create Workspace exec: %w", err)
+			return fmt.Errorf("create workspace exec: %w", err)
 		}
 		if err := secret.CreateProcessResolutions(
 			ctx, work.q, authority.ID, process.ID, workspaceSecretResolutions(bindings),
 		); err != nil {
-			return fmt.Errorf("record Workspace exec Secret resolutions: %w", err)
+			return fmt.Errorf("record workspace exec secret resolutions: %w", err)
 		}
 		admission = workspaceExecAdmission{Process: process}
 		return nil
@@ -374,25 +374,25 @@ func (s *Server) waitWorkspaceExec(ctx context.Context, admitted workspaceExecAd
 
 func workspaceExecResult(process db.WorkspaceProcess) (api.ExecuteWorkspaceResult, error) {
 	if !workspaceExecTerminal(process.State) {
-		return api.ExecuteWorkspaceResult{}, errors.New("Workspace exec is not terminal")
+		return api.ExecuteWorkspaceResult{}, errors.New("workspace exec is not terminal")
 	}
 	if process.State != db.WorkspaceProcessStateExited || !process.ExitCode.Valid {
 		code := process.TerminalReasonCode.String
 		switch code {
 		case "workspace_exec_timed_out":
-			return api.ExecuteWorkspaceResult{}, apiError{kind: errUnprocessable, err: codedError{code: code, message: "Workspace exec timed out"}}
+			return api.ExecuteWorkspaceResult{}, apiError{kind: errUnprocessable, err: codedError{code: code, message: "workspace exec timed out"}}
 		case "workspace_exec_output_limit_exceeded":
-			return api.ExecuteWorkspaceResult{}, apiError{kind: errUnprocessable, err: codedError{code: code, message: "Workspace exec output limit was exceeded"}}
+			return api.ExecuteWorkspaceResult{}, apiError{kind: errUnprocessable, err: codedError{code: code, message: "workspace exec output limit was exceeded"}}
 		default:
-			return api.ExecuteWorkspaceResult{}, apiError{kind: errUnprocessable, err: codedError{code: "workspace_exec_failed", message: "Workspace exec failed"}}
+			return api.ExecuteWorkspaceResult{}, apiError{kind: errUnprocessable, err: codedError{code: "workspace_exec_failed", message: "workspace exec failed"}}
 		}
 	}
 	if process.Stdout == nil || process.Stderr == nil {
-		return api.ExecuteWorkspaceResult{}, errors.New("Workspace exec terminal output is unavailable")
+		return api.ExecuteWorkspaceResult{}, errors.New("workspace exec terminal output is unavailable")
 	}
 	if len(process.Stdout) > workspaceExecOutputMaxBytes ||
 		len(process.Stderr) > workspaceExecOutputMaxBytes {
-		return api.ExecuteWorkspaceResult{}, errors.New("Workspace exec terminal output exceeds its persisted limit")
+		return api.ExecuteWorkspaceResult{}, errors.New("workspace exec terminal output exceeds its persisted limit")
 	}
 	return api.ExecuteWorkspaceResult{
 		ExitCode:     process.ExitCode.Int32,

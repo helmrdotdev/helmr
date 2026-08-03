@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var errStaleActorTurnCommit = errors.New("Actor turn commit is stale")
+var errStaleActorTurnCommit = errors.New("actor turn commit is stale")
 
 type parsedActorTurnCommit struct {
 	lease               parsedRunLeaseFence
@@ -87,7 +87,7 @@ func (s *Server) commitActorTurn(
 			ctx, work.q, locators.RunID, locators.AttemptNumber,
 			locators.WorkspaceID,
 		); err != nil {
-			return fmt.Errorf("lock Actor turn Secret authority: %w", err)
+			return fmt.Errorf("lock actor turn secret authority: %w", err)
 		}
 		owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
 		if err != nil || !owner.actor.ID.Valid {
@@ -139,7 +139,7 @@ func (s *Server) commitActorTurn(
 		committedAt, err := work.q.GetTaskCompletionTime(ctx)
 		if err != nil || !committedAt.Valid {
 			if err == nil {
-				err = errors.New("database Actor turn commit time is unavailable")
+				err = errors.New("database actor turn commit time is unavailable")
 			}
 			return err
 		}
@@ -315,7 +315,7 @@ func projectActorTurnResponse(
 	commit parsedActorTurnCommit,
 	versionID pgtype.UUID,
 ) (workerapi.CommitActorTurnResponse, error) {
-	workspaceVersionID, err := requiredClaimUUIDString("Actor turn Workspace version ID", versionID)
+	workspaceVersionID, err := requiredClaimUUIDString("actor turn workspace version ID", versionID)
 	if err != nil {
 		return workerapi.CommitActorTurnResponse{}, err
 	}

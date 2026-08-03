@@ -112,17 +112,17 @@ func resolveUserSpec(imageRoot string, raw string) (*resolvedRuntimeUser, error)
 
 func splitUserSpec(raw string) (string, string, error) {
 	if raw == "" {
-		return "", "", errors.New("OCI User is empty")
+		return "", "", errors.New("OCI user is empty")
 	}
 	parts := strings.Split(raw, ":")
 	if len(parts) > 2 {
-		return "", "", fmt.Errorf("OCI User %q contains more than one ':'", raw)
+		return "", "", fmt.Errorf("OCI user %q contains more than one ':'", raw)
 	}
 	if strings.TrimSpace(parts[0]) == "" {
-		return "", "", fmt.Errorf("OCI User %q has an empty user field", raw)
+		return "", "", fmt.Errorf("OCI user %q has an empty user field", raw)
 	}
 	if len(parts) == 2 && strings.TrimSpace(parts[1]) == "" {
-		return "", "", fmt.Errorf("OCI User %q has an empty group field", raw)
+		return "", "", fmt.Errorf("OCI user %q has an empty group field", raw)
 	}
 	group := ""
 	if len(parts) == 2 {

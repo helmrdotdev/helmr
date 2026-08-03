@@ -18,7 +18,7 @@ const (
 	ArtifactKindDeploymentProgram        ArtifactKind = "deployment_program"
 	ArtifactKindWorkspaceImage           ArtifactKind = "workspace_image"
 	ArtifactKindRunCheckpointConfig      ArtifactKind = "run_checkpoint_config"
-	ArtifactKindRunCheckpointVmState     ArtifactKind = "run_checkpoint_vm_state"
+	ArtifactKindRunCheckpointVMState     ArtifactKind = "run_checkpoint_vm_state"
 	ArtifactKindRunCheckpointMemory      ArtifactKind = "run_checkpoint_memory"
 	ArtifactKindRunCheckpointScratchDisk ArtifactKind = "run_checkpoint_scratch_disk"
 	ArtifactKindWorkspaceVersion         ArtifactKind = "workspace_version"
@@ -234,7 +234,7 @@ type RunCheckpointArtifactRole string
 
 const (
 	RunCheckpointArtifactRoleRuntimeConfig RunCheckpointArtifactRole = "runtime_config"
-	RunCheckpointArtifactRoleVmState       RunCheckpointArtifactRole = "vm_state"
+	RunCheckpointArtifactRoleVMState       RunCheckpointArtifactRole = "vm_state"
 	RunCheckpointArtifactRoleMemory        RunCheckpointArtifactRole = "memory"
 	RunCheckpointArtifactRoleScratchDisk   RunCheckpointArtifactRole = "scratch_disk"
 )
@@ -462,6 +462,15 @@ type APIKey struct {
 	RevokedAt       pgtype.Timestamptz `json:"revoked_at"`
 }
 
+type APIKeyGrant struct {
+	ID              pgtype.UUID        `json:"id"`
+	OrgID           pgtype.UUID        `json:"org_id"`
+	APIKeyID        pgtype.UUID        `json:"api_key_id"`
+	Permission      string             `json:"permission"`
+	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
 type Actor struct {
 	ID                       pgtype.UUID        `json:"id"`
 	EnvironmentID            pgtype.UUID        `json:"environment_id"`
@@ -512,15 +521,6 @@ type ActorRecord struct {
 	ProducerAttemptNumber pgtype.Int4        `json:"producer_attempt_number"`
 	ClaimID               pgtype.UUID        `json:"claim_id"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-}
-
-type ApiKeyGrant struct {
-	ID              pgtype.UUID        `json:"id"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	ApiKeyID        pgtype.UUID        `json:"api_key_id"`
-	Permission      string             `json:"permission"`
-	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 type Artifact struct {
@@ -602,7 +602,7 @@ type Deployment struct {
 	ImageCacheMode             string             `json:"image_cache_mode"`
 	Version                    string             `json:"version"`
 	ContentHash                string             `json:"content_hash"`
-	ApiVersion                 string             `json:"api_version"`
+	APIVersion                 string             `json:"api_version"`
 	WorkerProtocolVersion      string             `json:"worker_protocol_version"`
 	DeploymentSourceArtifactID pgtype.UUID        `json:"deployment_source_artifact_id"`
 	ProgramArtifactID          pgtype.UUID        `json:"program_artifact_id"`
@@ -632,7 +632,7 @@ type DeploymentBuildLease struct {
 	WorkerInstanceID                 pgtype.UUID        `json:"worker_instance_id"`
 	WorkerEpoch                      int64              `json:"worker_epoch"`
 	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
-	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
+	RequestedCPUMillis               int64              `json:"requested_cpu_millis"`
 	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
 	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
 	RequestedBuildExecutors          int32              `json:"requested_build_executors"`
@@ -982,7 +982,7 @@ type RunLease struct {
 	RuntimeInstanceID                pgtype.UUID        `json:"runtime_instance_id"`
 	RuntimeIdentityID                string             `json:"runtime_identity_id"`
 	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
-	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
+	RequestedCPUMillis               int64              `json:"requested_cpu_millis"`
 	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
 	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
 	RequestedExecutionSlots          int32              `json:"requested_execution_slots"`
@@ -1095,7 +1095,7 @@ type RuntimeInstance struct {
 	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
 	RuntimeSubstrateID              pgtype.UUID        `json:"runtime_substrate_id"`
 	WorkerEpoch                     int64              `json:"worker_epoch"`
-	ReservedCpuMillis               int64              `json:"reserved_cpu_millis"`
+	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
 	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
 	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
 	ReservedExecutionSlots          int32              `json:"reserved_execution_slots"`
@@ -1283,7 +1283,7 @@ type Token struct {
 type User struct {
 	ID              pgtype.UUID        `json:"id"`
 	DisplayName     string             `json:"display_name"`
-	ProfileImageUrl pgtype.Text        `json:"profile_image_url"`
+	ProfileImageURL pgtype.Text        `json:"profile_image_url"`
 	PrimaryEmail    pgtype.Text        `json:"primary_email"`
 	DisabledAt      pgtype.Timestamptz `json:"disabled_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
@@ -1309,12 +1309,12 @@ type WorkerGroup struct {
 	ClaimVersion                    int64              `json:"claim_version"`
 	AllowsRun                       bool               `json:"allows_run"`
 	AllowsBuild                     bool               `json:"allows_build"`
-	RequiredCpuMillis               int64              `json:"required_cpu_millis"`
+	RequiredCPUMillis               int64              `json:"required_cpu_millis"`
 	RequiredMemoryBytes             int64              `json:"required_memory_bytes"`
 	RequiredGuestEphemeralDiskBytes int64              `json:"required_guest_ephemeral_disk_bytes"`
 	RequiredBuildCacheBytes         int64              `json:"required_build_cache_bytes"`
 	RequiredArtifactCacheBytes      int64              `json:"required_artifact_cache_bytes"`
-	RequiredVmSlots                 int32              `json:"required_vm_slots"`
+	RequiredVMSlots                 int32              `json:"required_vm_slots"`
 	RequiredBuildExecutors          int32              `json:"required_build_executors"`
 	ObservationTtlSeconds           int32              `json:"observation_ttl_seconds"`
 	ProtocolVersion                 string             `json:"protocol_version"`
@@ -1338,17 +1338,17 @@ type WorkerInstance struct {
 	SubstrateFormat              string             `json:"substrate_format"`
 	SubstrateBuilderAbi          string             `json:"substrate_builder_abi"`
 	SubstrateLayoutAbi           string             `json:"substrate_layout_abi"`
-	EpochCpuMillis               int64              `json:"epoch_cpu_millis"`
+	EpochCPUMillis               int64              `json:"epoch_cpu_millis"`
 	EpochMemoryBytes             int64              `json:"epoch_memory_bytes"`
 	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
 	EpochBuildCacheBytes         int64              `json:"epoch_build_cache_bytes"`
 	EpochArtifactCacheBytes      int64              `json:"epoch_artifact_cache_bytes"`
 	EpochHugepagesBytes          int64              `json:"epoch_hugepages_bytes"`
 	EpochCheckpointBytes         int64              `json:"epoch_checkpoint_bytes"`
-	PerVmCpuMillis               int64              `json:"per_vm_cpu_millis"`
-	PerVmMemoryBytes             int64              `json:"per_vm_memory_bytes"`
-	PerVmGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
-	MaxVmSlots                   int32              `json:"max_vm_slots"`
+	PerVMCPUMillis               int64              `json:"per_vm_cpu_millis"`
+	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
+	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
+	MaxVMSlots                   int32              `json:"max_vm_slots"`
 	MaxRunConsumers              int32              `json:"max_run_consumers"`
 	MaxBuildExecutors            int32              `json:"max_build_executors"`
 	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
@@ -1380,12 +1380,12 @@ type WorkerInstanceCredential struct {
 type WorkerObservation struct {
 	WorkerInstanceID              pgtype.UUID        `json:"worker_instance_id"`
 	WorkerEpoch                   int64              `json:"worker_epoch"`
-	CpuPressureBps                int32              `json:"cpu_pressure_bps"`
-	MemoryPressureBps             int32              `json:"memory_pressure_bps"`
-	GuestEphemeralDiskPressureBps int32              `json:"guest_ephemeral_disk_pressure_bps"`
-	BuildCachePressureBps         int32              `json:"build_cache_pressure_bps"`
-	ArtifactCachePressureBps      int32              `json:"artifact_cache_pressure_bps"`
-	CheckpointPressureBps         int32              `json:"checkpoint_pressure_bps"`
+	CPUPressureBPS                int32              `json:"cpu_pressure_bps"`
+	MemoryPressureBPS             int32              `json:"memory_pressure_bps"`
+	GuestEphemeralDiskPressureBPS int32              `json:"guest_ephemeral_disk_pressure_bps"`
+	BuildCachePressureBPS         int32              `json:"build_cache_pressure_bps"`
+	ArtifactCachePressureBPS      int32              `json:"artifact_cache_pressure_bps"`
+	CheckpointPressureBPS         int32              `json:"checkpoint_pressure_bps"`
 	QuarantinedResourceCount      int32              `json:"quarantined_resource_count"`
 	RunQueueDepth                 int32              `json:"run_queue_depth"`
 	BuildQueueDepth               int32              `json:"build_queue_depth"`

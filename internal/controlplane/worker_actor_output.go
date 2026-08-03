@@ -194,7 +194,7 @@ func (s *Server) appendActorOutput(
 		if _, err := secret.LockAttemptDelivery(
 			ctx, work.q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID,
 		); err != nil {
-			return fmt.Errorf("lock Actor output Secret authority: %w", err)
+			return fmt.Errorf("lock actor output secret authority: %w", err)
 		}
 		owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
 		if err != nil || !owner.actor.ID.Valid {
@@ -266,7 +266,7 @@ func (s *Server) appendActorOutput(
 				ActorID:            record.ActorID,
 				RecordID:           record.ID,
 			}); err != nil {
-				return fmt.Errorf("complete Actor output idempotency claim: %w", err)
+				return fmt.Errorf("complete actor output idempotency claim: %w", err)
 			}
 		}
 		response, err = projectAppendedActorOutput(ctx, work.q, record)

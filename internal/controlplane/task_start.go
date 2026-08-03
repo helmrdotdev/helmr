@@ -25,14 +25,14 @@ import (
 const maxTaskPayloadBytes = 16 << 20
 
 var (
-	errTaskStartInvalid           = errors.New("Task start request is invalid")
-	errTaskNotDeployed            = errors.New("Task declaration is not deployed")
-	errTaskWorkspaceNotFound      = errors.New("Task start Workspace was not found")
-	errTaskWorkspaceUnavailable   = errors.New("Task start Workspace cannot accept execution")
-	errTaskSecretUnavailable      = errors.New("Task start Workspace Secret is unavailable")
-	errTaskStartAuthority         = errors.New("Task start authority is unavailable")
-	errTaskStartReceiptInvalid    = errors.New("Task start idempotency receipt is invalid")
-	errTaskPayloadPresenceInvalid = errors.New("Task payload presence does not match its declaration")
+	errTaskStartInvalid           = errors.New("task start request is invalid")
+	errTaskNotDeployed            = errors.New("task declaration is not deployed")
+	errTaskWorkspaceNotFound      = errors.New("task start workspace was not found")
+	errTaskWorkspaceUnavailable   = errors.New("task start workspace cannot accept execution")
+	errTaskSecretUnavailable      = errors.New("task start workspace secret is unavailable")
+	errTaskStartAuthority         = errors.New("task start authority is unavailable")
+	errTaskStartReceiptInvalid    = errors.New("task start idempotency receipt is invalid")
+	errTaskPayloadPresenceInvalid = errors.New("task payload presence does not match its declaration")
 )
 
 type taskStartRequest struct {
@@ -125,7 +125,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			return errTaskNotDeployed
 		}
 		if err != nil {
-			return fmt.Errorf("lock Task start deployment authority: %w", err)
+			return fmt.Errorf("lock task start deployment authority: %w", err)
 		}
 		admission, err := deployment.ResolveTaskRunAdmission(
 			program.TaskManifestVersion,
@@ -163,11 +163,11 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			return errTaskWorkspaceNotFound
 		}
 		if err != nil {
-			return fmt.Errorf("resolve Task start Workspace: %w", err)
+			return fmt.Errorf("resolve task start workspace: %w", err)
 		}
 		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, workspaceID)
 		if err != nil {
-			return fmt.Errorf("lock Task start Workspace Secrets: %w", err)
+			return fmt.Errorf("lock task start workspace secrets: %w", err)
 		}
 		for _, binding := range bindings {
 			if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
@@ -185,7 +185,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			return errTaskWorkspaceUnavailable
 		}
 		if err != nil {
-			return fmt.Errorf("lock Task start Workspace authority: %w", err)
+			return fmt.Errorf("lock task start workspace authority: %w", err)
 		}
 		if workspace.OrgID != pgvalue.UUID(normalized.OrgID) ||
 			workspace.ProjectID != pgvalue.UUID(normalized.ProjectID) ||
@@ -209,7 +209,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 		}
 		admissionTime, err := work.q.GetRunAdmissionTime(ctx)
 		if err != nil {
-			return fmt.Errorf("get Task Run admission time: %w", err)
+			return fmt.Errorf("get task run admission time: %w", err)
 		}
 		now := admissionTime.Time.UTC()
 		queuedExpiresAt := pgtype.Timestamptz{}
@@ -242,7 +242,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			return errTaskStartAuthority
 		}
 		if err != nil {
-			return fmt.Errorf("create Task Run: %w", err)
+			return fmt.Errorf("create task run: %w", err)
 		}
 		if _, err := work.q.ReserveWorkspaceForRun(ctx, db.ReserveWorkspaceForRunParams{
 			RunID: run.ID, EnvironmentID: run.EnvironmentID, ID: workspace.ID,
@@ -252,18 +252,18 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errTaskWorkspaceUnavailable
 			}
-			return fmt.Errorf("reserve Task Workspace: %w", err)
+			return fmt.Errorf("reserve task workspace: %w", err)
 		}
 		if err := secret.CreateAttemptResolutions(
 			ctx, work.q, workspace.ID, run.ID, 1, workspaceSecretResolutions(bindings),
 		); err != nil {
-			return fmt.Errorf("record Task Run Secret resolutions: %w", err)
+			return fmt.Errorf("record task run secret resolutions: %w", err)
 		}
 		if _, err := work.q.CreateRunAdmissionOutbox(ctx, db.CreateRunAdmissionOutboxParams{
 			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: workspace.ID,
 			EnvironmentID: run.EnvironmentID, RunID: run.ID,
 		}); err != nil {
-			return fmt.Errorf("create Task Run admission outbox: %w", err)
+			return fmt.Errorf("create task run admission outbox: %w", err)
 		}
 		result = taskStartResult{RunID: runID}
 		if claim != nil {
@@ -299,11 +299,11 @@ func normalizeTaskStart(request taskStartRequest) (normalizedTaskStart, error) {
 	}
 	workspaceRaw, err := json.Marshal(request.Workspace)
 	if err != nil {
-		return normalizedTaskStart{}, fmt.Errorf("%w: encode Workspace", errTaskStartInvalid)
+		return normalizedTaskStart{}, fmt.Errorf("%w: encode workspace", errTaskStartInvalid)
 	}
 	workspace, err := canonicalJSON(workspaceRaw)
 	if err != nil {
-		return normalizedTaskStart{}, fmt.Errorf("%w: canonicalize Workspace", errTaskStartInvalid)
+		return normalizedTaskStart{}, fmt.Errorf("%w: canonicalize workspace", errTaskStartInvalid)
 	}
 	if request.PayloadPresent {
 		payload, err := canonicalJSON(request.Payload)
@@ -318,11 +318,11 @@ func normalizeTaskStart(request taskStartRequest) (normalizedTaskStart, error) {
 	} else {
 		request.Payload = nil
 	}
-	request.Metadata, err = normalizeMetadata(request.Metadata, maxRunMetadataBytes, "Run")
+	request.Metadata, err = normalizeMetadata(request.Metadata, maxRunMetadataBytes, "run")
 	if err != nil {
 		return normalizedTaskStart{}, fmt.Errorf("%w: %v", errTaskStartInvalid, err)
 	}
-	request.Tags, err = normalizeTags(request.Tags, maxTags, "Run")
+	request.Tags, err = normalizeTags(request.Tags, maxTags, "run")
 	if err != nil {
 		return normalizedTaskStart{}, fmt.Errorf("%w: %v", errTaskStartInvalid, err)
 	}

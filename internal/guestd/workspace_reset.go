@@ -22,14 +22,14 @@ type workspaceRootExchange func(string, string) error
 func handleWorkspaceResetConnection(ctx context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
 	var request workspacev0.ResetWorkspaceRequest
 	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
-		return fmt.Errorf("read Workspace Reset request: %w", err)
+		return fmt.Errorf("read workspace reset request: %w", err)
 	}
 	target, err := workspace.ResetTargetFromProto(request.GetTarget())
 	if err != nil {
 		return writeWorkspaceResetFailure(conn, err)
 	}
 	if request.GetEnvelope() == nil || request.GetEnvelope().GetAuthority() == nil || request.GetEnvelope().GetAuthority().GetFence() == nil || target.BaseVersionID != request.GetEnvelope().GetAuthority().GetFence().GetBaseWorkspaceVersionId() {
-		return writeWorkspaceResetFailure(conn, errors.New("Workspace Reset target does not match the admitted base version"))
+		return writeWorkspaceResetFailure(conn, errors.New("workspace reset target does not match the admitted base version"))
 	}
 	entry, release, err := acquireWorkspaceFinalization(ctx, registry, request.GetEnvelope(), workspace.FinalizationResetKind, target)
 	if err != nil {
@@ -41,14 +41,14 @@ func handleWorkspaceResetConnection(ctx context.Context, conn io.ReadWriter, reg
 		return writeWorkspaceResetFailure(conn, err)
 	}
 	if err := frameio.WriteProtoFrame(conn, response); err != nil {
-		return fmt.Errorf("write Workspace Reset response: %w", err)
+		return fmt.Errorf("write workspace reset response: %w", err)
 	}
 	return nil
 }
 
 func writeWorkspaceResetFailure(conn io.Writer, err error) error {
 	if writeErr := frameio.WriteProtoFrame(conn, &workspacev0.ResetWorkspaceResponse{Error: err.Error()}); writeErr != nil {
-		return errors.Join(err, fmt.Errorf("write Workspace Reset failure: %w", writeErr))
+		return errors.Join(err, fmt.Errorf("write workspace reset failure: %w", writeErr))
 	}
 	return nil
 }
@@ -59,7 +59,7 @@ func (entry *workspaceMountEntry) resetWorkspace(conn io.Reader, envelope *works
 		return nil, err
 	}
 	if !found {
-		return nil, errors.New("Workspace Reset requires a retained Begin receipt")
+		return nil, errors.New("workspace reset requires a retained begin receipt")
 	}
 	if journal.Phase != "begun" {
 		if err := validateWorkspaceResetJournal(journal, envelope, target); err != nil {
@@ -75,17 +75,17 @@ func (entry *workspaceMountEntry) resetWorkspace(conn io.Reader, envelope *works
 
 	priorTree, err := workspace.InspectTree(entry.workspaceRoot)
 	if err != nil {
-		return nil, fmt.Errorf("inspect Workspace Reset prior tree: %w", err)
+		return nil, fmt.Errorf("inspect workspace reset prior tree: %w", err)
 	}
 	staging := entry.workspaceResetStagingPath(envelope.GetOperationId())
 	if err := os.RemoveAll(staging); err != nil {
-		return nil, fmt.Errorf("remove incomplete Workspace Reset staging root: %w", err)
+		return nil, fmt.Errorf("remove incomplete workspace reset staging root: %w", err)
 	}
 	if err := syncDirectory(filepath.Dir(entry.workspaceRoot)); err != nil {
-		return nil, fmt.Errorf("sync removed Workspace Reset staging root: %w", err)
+		return nil, fmt.Errorf("sync removed workspace reset staging root: %w", err)
 	}
 	if err := os.Mkdir(staging, 0o700); err != nil {
-		return nil, fmt.Errorf("create Workspace Reset staging root: %w", err)
+		return nil, fmt.Errorf("create workspace reset staging root: %w", err)
 	}
 	removeStaging := true
 	defer func() {
@@ -100,13 +100,13 @@ func (entry *workspaceMountEntry) resetWorkspace(conn io.Reader, envelope *works
 	}
 	stagedTree, err := workspace.InspectTree(staging)
 	if err != nil {
-		return nil, fmt.Errorf("inspect Workspace Reset target tree: %w", err)
+		return nil, fmt.Errorf("inspect workspace reset target tree: %w", err)
 	}
 	if stagedTree != target.Tree {
-		return nil, errors.New("Workspace Reset staged tree does not match the target identity")
+		return nil, errors.New("workspace reset staged tree does not match the target identity")
 	}
 	if err := syncWorkspaceTree(staging); err != nil {
-		return nil, fmt.Errorf("sync Workspace Reset target tree: %w", err)
+		return nil, fmt.Errorf("sync workspace reset target tree: %w", err)
 	}
 	journal = workspaceFinalizationJournal{
 		Version:            workspaceFinalizationJournalVersion,
@@ -132,13 +132,13 @@ func validateWorkspaceResetJournal(journal workspaceFinalizationJournal, envelop
 		journal.RequestFingerprint != envelope.GetRequestFingerprint() ||
 		journal.Fence != workspaceFinalizationFence(envelope.GetAuthority().GetFence()) ||
 		journal.PriorTree == nil || journal.ResetTarget == nil || !workspace.ResetTargetsEqual(*journal.ResetTarget, target) {
-		return errors.New("Workspace Reset conflicts with the retained finalization receipt")
+		return errors.New("workspace reset conflicts with the retained finalization receipt")
 	}
 	switch journal.Phase {
 	case "prepared", "exchanged", "committed":
 		return nil
 	default:
-		return errors.New("Workspace Reset journal phase is invalid")
+		return errors.New("workspace reset journal phase is invalid")
 	}
 }
 
@@ -149,18 +149,18 @@ func (entry *workspaceMountEntry) advanceWorkspaceReset(journal workspaceFinaliz
 	case "prepared":
 		liveTree, err := workspace.InspectTree(entry.workspaceRoot)
 		if err != nil {
-			return nil, entry.requireWorkspaceRecovery(fmt.Errorf("inspect live Workspace Reset tree: %w", err))
+			return nil, entry.requireWorkspaceRecovery(fmt.Errorf("inspect live workspace reset tree: %w", err))
 		}
 		if liveTree != target.Tree {
 			stagedTree, err := workspace.InspectTree(staging)
 			if err != nil || liveTree != *journal.PriorTree || stagedTree != target.Tree {
-				return nil, entry.requireWorkspaceRecovery(errors.New("Workspace Reset prepared state does not match its journal"))
+				return nil, entry.requireWorkspaceRecovery(errors.New("workspace reset prepared state does not match its journal"))
 			}
 			if err := exchange(entry.workspaceRoot, staging); err != nil {
-				return nil, fmt.Errorf("exchange Workspace Reset roots: %w", err)
+				return nil, fmt.Errorf("exchange workspace reset roots: %w", err)
 			}
 			if err := syncDirectory(filepath.Dir(entry.workspaceRoot)); err != nil {
-				return nil, entry.requireWorkspaceRecovery(fmt.Errorf("sync exchanged Workspace Reset roots: %w", err))
+				return nil, entry.requireWorkspaceRecovery(fmt.Errorf("sync exchanged workspace reset roots: %w", err))
 			}
 		}
 		journal.Phase = "exchanged"
@@ -171,7 +171,7 @@ func (entry *workspaceMountEntry) advanceWorkspaceReset(journal workspaceFinaliz
 	case "exchanged":
 		liveTree, err := workspace.InspectTree(entry.workspaceRoot)
 		if err != nil || liveTree != target.Tree {
-			return nil, entry.requireWorkspaceRecovery(errors.New("Workspace Reset exchanged tree does not match its target"))
+			return nil, entry.requireWorkspaceRecovery(errors.New("workspace reset exchanged tree does not match its target"))
 		}
 		journal.Phase = "committed"
 		if err := entry.writeWorkspaceFinalizationJournal(journal); err != nil {
@@ -181,14 +181,14 @@ func (entry *workspaceMountEntry) advanceWorkspaceReset(journal workspaceFinaliz
 	case "committed":
 		liveTree, err := workspace.InspectTree(entry.workspaceRoot)
 		if err != nil || liveTree != target.Tree {
-			return nil, entry.requireWorkspaceRecovery(errors.New("committed Workspace Reset tree does not match its target"))
+			return nil, entry.requireWorkspaceRecovery(errors.New("committed workspace reset tree does not match its target"))
 		}
 		if err := os.RemoveAll(staging); err == nil {
 			_ = syncDirectory(filepath.Dir(entry.workspaceRoot))
 		}
 		return workspaceResetResponse(journal), nil
 	default:
-		return nil, errors.New("Workspace Reset journal phase is invalid")
+		return nil, errors.New("workspace reset journal phase is invalid")
 	}
 }
 
@@ -206,7 +206,7 @@ func (entry *workspaceMountEntry) workspaceResetStagingPath(operationID string) 
 func receiveWorkspaceResetArtifact(conn io.Reader, envelope *workspacev0.WorkspaceFinalizationEnvelope, target workspace.ResetTarget, destination string) error {
 	header, bodyLength, err := wire.ReadStreamFrameHeader(conn)
 	if err != nil {
-		return fmt.Errorf("read Workspace Reset Artifact header: %w", err)
+		return fmt.Errorf("read workspace reset artifact header: %w", err)
 	}
 	artifact := target.Artifact
 	if artifact == nil || header.Type != wire.StreamTypeWorkspaceArtifact ||
@@ -216,13 +216,13 @@ func receiveWorkspaceResetArtifact(conn io.Reader, envelope *workspacev0.Workspa
 		header.BodyDigest == nil || strings.TrimSpace(*header.BodyDigest) != artifact.Digest ||
 		header.EntryCount == nil || *header.EntryCount != artifact.EntryCount ||
 		bodyLength != uint64(artifact.SizeBytes) {
-		return errors.New("Workspace Reset Artifact frame does not match its target")
+		return errors.New("workspace reset artifact frame does not match its target")
 	}
 	body := &io.LimitedReader{R: conn, N: int64(bodyLength)}
 	hashed := newDigestingReader(body)
 	if destination == "" {
 		if _, err := io.Copy(io.Discard, hashed); err != nil {
-			return fmt.Errorf("read replayed Workspace Reset Artifact: %w", err)
+			return fmt.Errorf("read replayed workspace reset artifact: %w", err)
 		}
 	} else {
 		stats, err := archive.ExtractTarWithStats(hashed, destination, archive.ExtractOptions{
@@ -231,17 +231,17 @@ func receiveWorkspaceResetArtifact(conn io.Reader, envelope *workspacev0.Workspa
 		})
 		if err != nil {
 			_, drainErr := io.Copy(io.Discard, hashed)
-			return errors.Join(fmt.Errorf("extract Workspace Reset Artifact: %w", err), drainErr)
+			return errors.Join(fmt.Errorf("extract workspace reset artifact: %w", err), drainErr)
 		}
 		if stats.EntryCount != artifact.EntryCount {
-			return errors.New("Workspace Reset Artifact entry count does not match its target")
+			return errors.New("workspace reset artifact entry count does not match its target")
 		}
 	}
 	if body.N != 0 {
-		return errors.New("Workspace Reset Artifact stream ended early")
+		return errors.New("workspace reset artifact stream ended early")
 	}
 	if hashed.Digest() != artifact.Digest {
-		return errors.New("Workspace Reset Artifact digest does not match its target")
+		return errors.New("workspace reset artifact digest does not match its target")
 	}
 	return nil
 }
@@ -264,7 +264,7 @@ func syncWorkspaceTree(root string) error {
 		case info.Mode()&os.ModeSymlink != 0:
 			return nil
 		default:
-			return fmt.Errorf("unsupported Workspace Reset entry %q", path)
+			return fmt.Errorf("unsupported workspace reset entry %q", path)
 		}
 		return nil
 	})

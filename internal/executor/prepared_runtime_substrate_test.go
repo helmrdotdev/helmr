@@ -114,7 +114,7 @@ func (r *restoreSubstrateResolver) Resolve(
 		return substrate.Result{}, err
 	}
 	if string(image) != "oci image" {
-		return substrate.Result{}, errors.New("unexpected Workspace image")
+		return substrate.Result{}, errors.New("unexpected workspace image")
 	}
 	r.calls++
 	r.source = source

@@ -22,12 +22,12 @@ func (s *Server) workerCompleteTask(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, io.EOF) {
 			err = errors.New("request body is required")
 		}
-		writeError(w, badRequest(fmt.Errorf("invalid Task completion JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid task completion JSON: %w", err)))
 		return
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		writeError(w, badRequest(errors.New("invalid Task completion JSON: trailing value")))
+		writeError(w, badRequest(errors.New("invalid task completion JSON: trailing value")))
 		return
 	}
 	completion, err := parseTaskCompletionRequest(request)
@@ -42,7 +42,7 @@ func (s *Server) workerCompleteTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.log.Error("complete Task failed", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("complete Task"))
+		writeError(w, errors.New("complete task"))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

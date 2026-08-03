@@ -61,7 +61,7 @@ func NewProvisioner(config Config, client RepositoryAPI) (*Provisioner, error) {
 
 func (provisioner *Provisioner) Target(environmentID uuid.UUID, cacheScope string) (imagecache.Target, error) {
 	if ids.Validate(environmentID.String()) != nil {
-		return imagecache.Target{}, contract("Environment ID must be canonical")
+		return imagecache.Target{}, contract("environment ID must be canonical")
 	}
 	if !sha256sum.ValidDigest(cacheScope) {
 		return imagecache.Target{}, contract("cache scope must be a canonical sha256 digest")
@@ -139,7 +139,7 @@ func (provisioner *Provisioner) Ensure(ctx context.Context, target imagecache.Ta
 
 func (provisioner *Provisioner) Retire(ctx context.Context, environmentID uuid.UUID) error {
 	if ids.Validate(environmentID.String()) != nil {
-		return contract("Environment ID must be canonical")
+		return contract("environment ID must be canonical")
 	}
 	repositoryName := provisioner.repositoryName(environmentID)
 	repository, err := provisioner.describe(ctx, repositoryName)
@@ -169,7 +169,7 @@ func (provisioner *Provisioner) Retire(ctx context.Context, environmentID uuid.U
 	}
 	if tags[ResourceKindTagKey] != ResourceKindTagValue ||
 		tags[EnvironmentIDTagKey] != environmentID.String() {
-		return contract("retirement repository owner tags do not match the Environment")
+		return contract("retirement repository owner tags do not match the environment")
 	}
 	if _, err := provisioner.client.DeleteRepository(ctx, &awsecr.DeleteRepositoryInput{
 		RepositoryName: &repositoryName,
@@ -269,12 +269,12 @@ func (provisioner *Provisioner) validateTarget(target imagecache.Target) (string
 	repositoryName := nameAndTag[:separator]
 	environmentText := strings.TrimPrefix(repositoryName, provisioner.config.RepositoryPrefix+"/environments/")
 	if environmentText == repositoryName || strings.Contains(environmentText, "/") {
-		return "", uuid.Nil, contract("target repository is outside the configured Environment namespace")
+		return "", uuid.Nil, contract("target repository is outside the configured environment namespace")
 	}
 	environmentID, err := ids.Parse(environmentText)
 	if err != nil ||
 		provisioner.repositoryName(environmentID) != repositoryName {
-		return "", uuid.Nil, contract("target Environment repository is invalid")
+		return "", uuid.Nil, contract("target environment repository is invalid")
 	}
 	return repositoryName, environmentID, nil
 }

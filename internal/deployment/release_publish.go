@@ -29,13 +29,13 @@ func PublishPlatformRelease(
 	directory string,
 ) error {
 	if ctx == nil {
-		return errors.New("Platform release publish context is nil")
+		return errors.New("platform release publish context is nil")
 	}
 	if store == nil {
-		return errors.New("Platform Artifact store is required")
+		return errors.New("platform artifact store is required")
 	}
 	if directory == "" || !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
-		return errors.New("Platform release directory must be canonical and absolute")
+		return errors.New("platform release directory must be canonical and absolute")
 	}
 	raw, err := os.ReadFile(filepath.Join(directory, platformReleaseManifestFile))
 	if err != nil {
@@ -43,7 +43,7 @@ func PublishPlatformRelease(
 	}
 	canonical, err := jsoncanon.Transform(raw)
 	if err != nil || !bytes.Equal(raw, canonical) {
-		return errors.New("Platform release manifest is not canonical JSON")
+		return errors.New("platform release manifest is not canonical JSON")
 	}
 	var manifest platformReleaseManifest
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -55,9 +55,9 @@ func PublishPlatformRelease(
 		return err
 	}
 	if manifest.FormatVersion != 0 {
-		return errors.New("Platform release manifest format is unsupported")
+		return errors.New("platform release manifest format is unsupported")
 	}
-	if err := validatePlatformTreeInput(manifest.RuntimeHarness, "Runtime harness"); err != nil {
+	if err := validatePlatformTreeInput(manifest.RuntimeHarness, "runtime harness"); err != nil {
 		return err
 	}
 	if err := validatePlatformTreeInput(manifest.ToolchainBase, "toolchain base"); err != nil {
@@ -67,7 +67,7 @@ func PublishPlatformRelease(
 		!sha256DigestPattern.MatchString(manifest.Policy.Digest) ||
 		manifest.Policy.SizeBytes < 1 ||
 		manifest.Policy.SizeBytes > maxBuildPolicyBytes {
-		return errors.New("Platform release build policy descriptor is invalid")
+		return errors.New("platform release build policy descriptor is invalid")
 	}
 	policyRaw, err := readReleaseObject(directory, manifest.Policy)
 	if err != nil {
@@ -82,7 +82,7 @@ func PublishPlatformRelease(
 		return err
 	}
 	if runtime.Harness != manifest.RuntimeHarness || toolchain.Base != manifest.ToolchainBase {
-		return errors.New("Platform release inputs do not match its build policy")
+		return errors.New("platform release inputs do not match its build policy")
 	}
 	for _, descriptor := range []ArtifactDescriptor{
 		manifest.RuntimeHarness,
@@ -116,7 +116,7 @@ func readReleaseObject(directory string, descriptor ArtifactDescriptor) ([]byte,
 	defer file.Close()
 	raw, err := io.ReadAll(io.LimitReader(file, descriptor.SizeBytes+1))
 	if err != nil || int64(len(raw)) != descriptor.SizeBytes {
-		return nil, errors.New("Platform release object size changed")
+		return nil, errors.New("platform release object size changed")
 	}
 	return raw, nil
 }
@@ -124,7 +124,7 @@ func readReleaseObject(directory string, descriptor ArtifactDescriptor) ([]byte,
 func openReleaseObject(directory string, descriptor ArtifactDescriptor) (*os.File, error) {
 	name := strings.TrimPrefix(descriptor.Digest, "sha256:")
 	if len(name) != 64 || "sha256:"+name != descriptor.Digest {
-		return nil, errors.New("Platform release object digest is invalid")
+		return nil, errors.New("platform release object digest is invalid")
 	}
 	path := filepath.Join(directory, "objects", "sha256", name)
 	linkInfo, err := os.Lstat(path)
@@ -133,7 +133,7 @@ func openReleaseObject(directory string, descriptor ArtifactDescriptor) (*os.Fil
 	}
 	if !linkInfo.Mode().IsRegular() ||
 		linkInfo.Size() != descriptor.SizeBytes {
-		return nil, errors.New("Platform release object does not match its descriptor")
+		return nil, errors.New("platform release object does not match its descriptor")
 	}
 	file, err := os.Open(path)
 	if err != nil {
@@ -144,7 +144,7 @@ func openReleaseObject(directory string, descriptor ArtifactDescriptor) (*os.Fil
 		!info.Mode().IsRegular() ||
 		info.Size() != descriptor.SizeBytes {
 		_ = file.Close()
-		return nil, errors.New("Platform release object does not match its descriptor")
+		return nil, errors.New("platform release object does not match its descriptor")
 	}
 	return file, nil
 }

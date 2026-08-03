@@ -173,7 +173,7 @@ func NewRunner(client ControlPlaneClient, executor RunLeaseExecutor, capabilitie
 		return nil, errors.New("build worker policy is required")
 	}
 	if capabilities.SupportsBuild && runner.platformAcquirer == nil {
-		return nil, errors.New("build worker Platform acquirer is required")
+		return nil, errors.New("build worker platform acquirer is required")
 	}
 	if runner.log == nil {
 		runner.log = slog.Default()

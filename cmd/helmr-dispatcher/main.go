@@ -76,7 +76,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	buildDispatchQueries := db.New(buildDispatchPool)
 	workspaceFencingKey, err := workspace.NewFencingKey(cfg.WorkspaceFencingKey)
 	if err != nil {
-		return fmt.Errorf("configure Workspace fencing key: %w", err)
+		return fmt.Errorf("configure workspace fencing key: %w", err)
 	}
 	runDispatchAuthority, err := dispatch.NewRunAuthority(
 		runDispatchPool,
@@ -225,11 +225,11 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("configure Run admission delivery: %w", err)
+		return fmt.Errorf("configure run admission delivery: %w", err)
 	}
 	tokenWaitReconciler, err := token.NewWaitReconciler(pool)
 	if err != nil {
-		return fmt.Errorf("configure Token Wait reconciler: %w", err)
+		return fmt.Errorf("configure token wait reconciler: %w", err)
 	}
 	tokenReconcileDelivery, err := token.NewDeliveryWorker(
 		log,
@@ -237,7 +237,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		tokenWaitReconciler.ReconcileBatch,
 	)
 	if err != nil {
-		return fmt.Errorf("configure Token reconciliation delivery: %w", err)
+		return fmt.Errorf("configure token reconciliation delivery: %w", err)
 	}
 	secretRevocationReconciler, err := secret.NewRevocationReconciler(
 		runDispatchPool,
@@ -282,7 +282,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		}),
 	)
 	if err != nil {
-		return fmt.Errorf("configure Secret revocation reconciler: %w", err)
+		return fmt.Errorf("configure secret revocation reconciler: %w", err)
 	}
 	secretRevocationDelivery, err :=
 		secret.NewRevocationDeliveryWorker(
@@ -291,15 +291,15 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 			secretRevocationReconciler.ReconcileBatch,
 		)
 	if err != nil {
-		return fmt.Errorf("configure Secret revocation delivery: %w", err)
+		return fmt.Errorf("configure secret revocation delivery: %w", err)
 	}
 	timerWaitReconciler, err := run.NewTimerWaitReconciler(pool)
 	if err != nil {
-		return fmt.Errorf("configure timer Wait reconciler: %w", err)
+		return fmt.Errorf("configure timer wait reconciler: %w", err)
 	}
 	actorReconciler, err := actor.NewReconciler(pool)
 	if err != nil {
-		return fmt.Errorf("configure Actor input reconciler: %w", err)
+		return fmt.Errorf("configure actor input reconciler: %w", err)
 	}
 	actorInputDelivery, err := actor.NewDeliveryWorker(
 		log,
@@ -308,7 +308,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		actorReconciler.ReconcileClose,
 	)
 	if err != nil {
-		return fmt.Errorf("configure Actor input reconciliation delivery: %w", err)
+		return fmt.Errorf("configure actor input reconciliation delivery: %w", err)
 	}
 	runWaitDeadlineDelivery, err := run.NewDeadlineWorker(
 		log,
@@ -317,7 +317,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		actorReconciler.ReconcileTimeouts,
 	)
 	if err != nil {
-		return fmt.Errorf("configure Run Wait deadline reconciliation delivery: %w", err)
+		return fmt.Errorf("configure run wait deadline reconciliation delivery: %w", err)
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -350,7 +350,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		close(done)
 	}()
 
-	log.Info("helmr dispatcher running")
+	log.Info("Helmr dispatcher running")
 	var firstErr error
 	select {
 	case <-ctx.Done():

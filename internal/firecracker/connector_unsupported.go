@@ -9,7 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
-var ErrUnsupported = errors.New("firecracker connector is only supported on Linux")
+var ErrUnsupported = errors.New("the Firecracker connector is only supported on Linux")
 
 type Connector struct{}
 

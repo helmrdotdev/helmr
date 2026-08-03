@@ -62,7 +62,7 @@ func publishRelease(ctx context.Context, args []string) error {
 	}
 	store, err := cass3.NewImmutable(ctx, storeURI)
 	if err != nil {
-		return fmt.Errorf("configure Platform Artifact store: %w", err)
+		return fmt.Errorf("configure platform artifact store: %w", err)
 	}
 	return deployment.PublishPlatformRelease(ctx, store, input)
 }

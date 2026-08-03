@@ -5,5 +5,5 @@ package guestd
 import "errors"
 
 func exchangeWorkspaceRoots(_, _ string) error {
-	return errors.New("atomic Workspace root exchange is unsupported on this platform")
+	return errors.New("atomic workspace root exchange is unsupported on this platform")
 }

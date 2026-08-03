@@ -12,7 +12,7 @@ import (
 
 const maxRevokedImageOperationIDs = 10_000
 
-var errImageOperationRevoked = errors.New("Workspace image operation is revoked")
+var errImageOperationRevoked = errors.New("workspace image operation is revoked")
 
 type imageOperationRegistration struct {
 	cancel context.CancelFunc
@@ -36,10 +36,10 @@ func (r *imageOperationRevocations) RegisterImageOperation(
 	cancel context.CancelFunc,
 ) (func(), error) {
 	if _, err := ids.Parse(operationID); err != nil {
-		return nil, errors.New("Workspace image operation ID must be a canonical UUIDv7")
+		return nil, errors.New("workspace image operation ID must be a canonical UUIDv7")
 	}
 	if cancel == nil {
-		return nil, errors.New("Workspace image operation cancellation is required")
+		return nil, errors.New("workspace image operation cancellation is required")
 	}
 	registration := &imageOperationRegistration{cancel: cancel}
 	r.mu.Lock()
@@ -48,7 +48,7 @@ func (r *imageOperationRevocations) RegisterImageOperation(
 		return nil, errImageOperationRevoked
 	}
 	if _, exists := r.active[operationID]; exists {
-		return nil, errors.New("Workspace image operation already has a live attempt")
+		return nil, errors.New("workspace image operation already has a live attempt")
 	}
 	r.active[operationID] = registration
 	return func() {
@@ -63,20 +63,20 @@ func (r *imageOperationRevocations) RegisterImageOperation(
 func (r *imageOperationRevocations) apply(operationIDs []string) error {
 	if len(operationIDs) > maxRevokedImageOperationIDs {
 		return fmt.Errorf(
-			"revoked Workspace image operation count %d exceeds %d",
+			"revoked workspace image operation count %d exceeds %d",
 			len(operationIDs),
 			maxRevokedImageOperationIDs,
 		)
 	}
 	if !slices.IsSorted(operationIDs) {
-		return errors.New("revoked Workspace image operation IDs are not sorted")
+		return errors.New("revoked workspace image operation IDs are not sorted")
 	}
 	for index, operationID := range operationIDs {
 		if index != 0 && operationIDs[index-1] == operationID {
-			return errors.New("revoked Workspace image operation IDs are not unique")
+			return errors.New("revoked workspace image operation IDs are not unique")
 		}
 		if _, err := ids.Parse(operationID); err != nil {
-			return errors.New("revoked Workspace image operation ID must be a canonical UUIDv7")
+			return errors.New("revoked workspace image operation ID must be a canonical UUIDv7")
 		}
 	}
 	callbacks := make([]context.CancelFunc, 0, len(operationIDs))

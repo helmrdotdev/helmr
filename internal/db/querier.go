@@ -95,7 +95,7 @@ type Querier interface {
 	ConsumeWorkspaceExecRuntimeReservation(ctx context.Context, arg ConsumeWorkspaceExecRuntimeReservationParams) (int64, error)
 	CountOrganizations(ctx context.Context) (int64, error)
 	CountRecentMagicLinks(ctx context.Context, arg CountRecentMagicLinksParams) (int64, error)
-	CreateAPIKeyGrant(ctx context.Context, arg CreateAPIKeyGrantParams) (ApiKeyGrant, error)
+	CreateAPIKeyGrant(ctx context.Context, arg CreateAPIKeyGrantParams) (APIKeyGrant, error)
 	CreateActor(ctx context.Context, arg CreateActorParams) (Actor, error)
 	CreateActorCheckpointFailureRetryAttempt(ctx context.Context, arg CreateActorCheckpointFailureRetryAttemptParams) (RunAttempt, error)
 	CreateActorCloseReconcileOutbox(ctx context.Context, arg CreateActorCloseReconcileOutboxParams) error
@@ -335,7 +335,7 @@ type Querier interface {
 	InvalidateRunCheckpoints(ctx context.Context, arg InvalidateRunCheckpointsParams) error
 	IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKey, error)
 	LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueuedDeploymentBuildParams) (LeaseQueuedDeploymentBuildRow, error)
-	ListAPIKeyGrants(ctx context.Context, arg ListAPIKeyGrantsParams) ([]ApiKeyGrant, error)
+	ListAPIKeyGrants(ctx context.Context, arg ListAPIKeyGrantsParams) ([]APIKeyGrant, error)
 	ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]ListAPIKeysRow, error)
 	ListActorInputRecords(ctx context.Context, arg ListActorInputRecordsParams) ([]ActorRecord, error)
 	ListActorOutputRecords(ctx context.Context, arg ListActorOutputRecordsParams) ([]ActorRecord, error)

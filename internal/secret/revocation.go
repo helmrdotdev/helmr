@@ -48,13 +48,13 @@ func NewRevocationReconciler(
 	runFinalizer RunFinalizer,
 ) (*RevocationReconciler, error) {
 	if database == nil {
-		return nil, errors.New("Secret revocation database is required")
+		return nil, errors.New("secret revocation database is required")
 	}
 	if execRecoverer == nil {
-		return nil, errors.New("Workspace exec recoverer is required")
+		return nil, errors.New("workspace exec recoverer is required")
 	}
 	if runFinalizer == nil {
-		return nil, errors.New("Run finalizer is required")
+		return nil, errors.New("run finalizer is required")
 	}
 	return &RevocationReconciler{
 		db:            database,
@@ -75,10 +75,10 @@ func (r *RevocationReconciler) ReconcileBatch(
 ) (int, error) {
 	if environmentID == uuid.Nil || secretID == uuid.Nil ||
 		revocationGeneration <= 0 {
-		return 0, errors.New("Secret revocation authority is required")
+		return 0, errors.New("secret revocation authority is required")
 	}
 	if limit <= 0 {
-		return 0, errors.New("Secret revocation batch limit must be positive")
+		return 0, errors.New("secret revocation batch limit must be positive")
 	}
 	runs, err := r.queries.ListSecretRevocationRuns(
 		ctx,
@@ -90,7 +90,7 @@ func (r *RevocationReconciler) ReconcileBatch(
 		},
 	)
 	if err != nil {
-		return 0, fmt.Errorf("list Secret-revoked Run candidates: %w", err)
+		return 0, fmt.Errorf("list secret-revoked run candidates: %w", err)
 	}
 	examined := 0
 	for _, candidate := range runs {
@@ -118,7 +118,7 @@ func (r *RevocationReconciler) ReconcileBatch(
 	)
 	if err != nil {
 		return examined, fmt.Errorf(
-			"list Secret-revoked process candidates: %w",
+			"list secret-revoked process candidates: %w",
 			err,
 		)
 	}
@@ -144,7 +144,7 @@ func (r *RevocationReconciler) failRun(
 ) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin Secret-revoked Run reconciliation: %w", err)
+		return fmt.Errorf("begin secret-revoked run reconciliation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	q := db.New(tx)
@@ -172,10 +172,10 @@ func (r *RevocationReconciler) failRun(
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("fail Secret-revoked Run graph: %w", err)
+		return fmt.Errorf("fail secret-revoked run graph: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit Secret-revoked Run reconciliation: %w", err)
+		return fmt.Errorf("commit secret-revoked run reconciliation: %w", err)
 	}
 	return nil
 }
@@ -188,7 +188,7 @@ func (r *RevocationReconciler) fenceProcess(
 ) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin Secret-revoked process fence: %w", err)
+		return fmt.Errorf("begin secret-revoked process fence: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	q := db.New(tx)
@@ -214,7 +214,7 @@ func (r *RevocationReconciler) fenceProcess(
 	); errors.Is(err, pgx.ErrNoRows) {
 		return tx.Commit(ctx)
 	} else if err != nil {
-		return fmt.Errorf("lock Secret-revoked process Workspace: %w", err)
+		return fmt.Errorf("lock secret-revoked process workspace: %w", err)
 	}
 	authority, err := q.LockWorkspaceExecSecretRevocationAuthority(
 		ctx,
@@ -227,11 +227,11 @@ func (r *RevocationReconciler) fenceProcess(
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit existing Secret-revoked process fence: %w", err)
+			return fmt.Errorf("commit existing secret-revoked process fence: %w", err)
 		}
 		return r.recoverProcess(ctx, candidate)
 	} else if err != nil {
-		return fmt.Errorf("lock Secret-revoked process authority: %w", err)
+		return fmt.Errorf("lock secret-revoked process authority: %w", err)
 	}
 	if _, err := q.FenceWorkspaceExecLeaseForSecretRevocation(
 		ctx,
@@ -240,10 +240,10 @@ func (r *RevocationReconciler) fenceProcess(
 			ProcessID: authority.WorkspaceProcess.ID,
 		},
 	); err != nil {
-		return fmt.Errorf("fence Secret-revoked Workspace exec Lease: %w", err)
+		return fmt.Errorf("fence secret-revoked workspace exec lease: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit Secret-revoked process fence: %w", err)
+		return fmt.Errorf("commit secret-revoked process fence: %w", err)
 	}
 	return r.recoverProcess(ctx, candidate)
 }
@@ -262,7 +262,7 @@ func (r *RevocationReconciler) recoverProcess(
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("recover Secret-revoked Workspace exec: %w", err)
+		return fmt.Errorf("recover secret-revoked workspace exec: %w", err)
 	}
 	return nil
 }
@@ -279,10 +279,10 @@ func lockAndValidateRevocation(
 		pgvalue.UUID(workspaceID),
 	)
 	if err != nil {
-		return false, fmt.Errorf("lock Workspace Secret set for revocation: %w", err)
+		return false, fmt.Errorf("lock workspace secret set for revocation: %w", err)
 	}
 	if len(rows) > maxWorkspaceSecretPlacements {
-		return false, errors.New("Workspace Secret placements exceed their bound")
+		return false, errors.New("workspace secret placements exceed their bound")
 	}
 	for _, row := range rows {
 		if row.SecretID == pgvalue.UUID(secretID) {

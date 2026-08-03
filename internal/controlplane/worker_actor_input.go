@@ -19,7 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var errStaleActorInputSend = errors.New("Actor input send source authority is stale")
+var errStaleActorInputSend = errors.New("actor input send source authority is stale")
 
 type parsedWorkerActorInputSend struct {
 	lease          parsedRunLeaseFence
@@ -39,12 +39,12 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, io.EOF) {
 			err = errors.New("request body is required")
 		}
-		writeError(w, badRequest(fmt.Errorf("invalid Actor input send JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid actor input send JSON: %w", err)))
 		return
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		writeError(w, badRequest(errors.New("invalid Actor input send JSON: trailing value")))
+		writeError(w, badRequest(errors.New("invalid actor input send JSON: trailing value")))
 		return
 	}
 	parsed, err := parseWorkerActorInputSend(request)
@@ -61,7 +61,7 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.log.Error("load Actor input send source", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("load Actor input send source"))
+		writeError(w, errors.New("load actor input send source"))
 		return
 	}
 	targetRequest := api.SendActorInputRequest{
@@ -80,7 +80,7 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			s.log.Error("authorize unresolved Actor input send", "run_lease_id", request.Lease.ID, "error", err)
-			writeError(w, errors.New("authorize Actor input send"))
+			writeError(w, errors.New("authorize actor input send"))
 			return
 		}
 		writeJSON(w, http.StatusOK, failedActorInputSend(
@@ -90,7 +90,7 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.log.Error("resolve Actor input send target", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("resolve Actor input send target"))
+		writeError(w, errors.New("resolve actor input send target"))
 		return
 	}
 	record, err := s.appendActorInput(r.Context(), appendActorInputRequest{
@@ -117,7 +117,7 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.log.Error("append run-sourced Actor input", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("append run-sourced Actor input"))
+		writeError(w, errors.New("append run-sourced actor input"))
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.SendActorInputResponse{

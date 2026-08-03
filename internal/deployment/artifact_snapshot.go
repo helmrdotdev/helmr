@@ -32,7 +32,7 @@ type ArtifactSnapshot struct {
 
 func (snapshot *ArtifactSnapshot) verifier() (*os.File, error) {
 	if snapshot == nil || snapshot.content == nil {
-		return nil, errors.New("Artifact snapshot is closed")
+		return nil, errors.New("artifact snapshot is closed")
 	}
 	return snapshot.content.verifierFile()
 }
@@ -44,7 +44,7 @@ func (snapshot *ArtifactSnapshot) LinkInto(
 	gid int,
 ) error {
 	if snapshot == nil || snapshot.content == nil {
-		return errors.New("Artifact snapshot is closed")
+		return errors.New("artifact snapshot is closed")
 	}
 	return snapshot.content.LinkInto(directory, name, uid, gid)
 }

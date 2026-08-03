@@ -399,7 +399,7 @@ type RuntimeInstance struct {
 	RuntimeID              string     `json:"runtime_id"`
 	DeploymentDefinitionID string     `json:"deployment_definition_id"`
 	State                  string     `json:"state"`
-	ReservedCpuMillis      int32      `json:"reserved_cpu_millis"`
+	ReservedCPUMillis      int32      `json:"reserved_cpu_millis"`
 	ReservedMemoryMiB      int32      `json:"reserved_memory_mib"`
 	ReservedDiskMiB        int64      `json:"reserved_disk_mib"`
 	ReservedExecutionSlots int32      `json:"reserved_execution_slots"`
@@ -416,7 +416,7 @@ type RuntimeSource struct {
 	BaseVersionID          string            `json:"base_version_id"`
 	WorkspaceArtifact      WorkspaceArtifact `json:"workspace_artifact"`
 	RootfsDigest           string            `json:"rootfs_digest"`
-	ReservedCpuMillis      int32             `json:"reserved_cpu_millis"`
+	ReservedCPUMillis      int32             `json:"reserved_cpu_millis"`
 	ReservedMemoryMiB      int32             `json:"reserved_memory_mib"`
 	ReservedDiskMiB        int64             `json:"reserved_disk_mib"`
 	ReservedExecutionSlots int32             `json:"reserved_execution_slots"`

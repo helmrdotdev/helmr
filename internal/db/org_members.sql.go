@@ -222,7 +222,7 @@ type GetOrgMemberRow struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 	UserDisplayName string             `json:"user_display_name"`
-	ProfileImageUrl pgtype.Text        `json:"profile_image_url"`
+	ProfileImageURL pgtype.Text        `json:"profile_image_url"`
 }
 
 func (q *Queries) GetOrgMember(ctx context.Context, arg GetOrgMemberParams) (GetOrgMemberRow, error) {
@@ -237,7 +237,7 @@ func (q *Queries) GetOrgMember(ctx context.Context, arg GetOrgMemberParams) (Get
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UserDisplayName,
-		&i.ProfileImageUrl,
+		&i.ProfileImageURL,
 	)
 	return i, err
 }

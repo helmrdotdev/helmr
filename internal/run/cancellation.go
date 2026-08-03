@@ -158,7 +158,7 @@ func LockOwnedFinalization(
 ) (OwnedFinalization, error) {
 	if tx == nil || request.OrgID == uuid.Nil || request.ProjectID == uuid.Nil ||
 		request.EnvironmentID == uuid.Nil || request.RunID == uuid.Nil {
-		return OwnedFinalization{}, errors.New("owned Run finalization graph authority is required")
+		return OwnedFinalization{}, errors.New("owned run finalization graph authority is required")
 	}
 	scope := CancellationRequest{
 		OrgID: request.OrgID, ProjectID: request.ProjectID,
@@ -177,7 +177,7 @@ func LockOwnedFinalization(
 	lockOrder := append(slices.Clone(lineage), descendantIDs[1:]...)
 	if len(lockOrder) > maxCancellationGraphSize {
 		return OwnedFinalization{}, cancellationAuthority(
-			"owned Run finalization graph exceeds the transaction bound",
+			"owned run finalization graph exceeds the transaction bound",
 			nil,
 		)
 	}
@@ -189,7 +189,7 @@ func LockOwnedFinalization(
 		run, err := lockCancellationRun(ctx, tx, scope, id)
 		if err != nil {
 			return OwnedFinalization{}, cancellationAuthority(
-				"lock owned Run finalization graph",
+				"lock owned run finalization graph",
 				err,
 			)
 		}
@@ -203,7 +203,7 @@ func LockOwnedFinalization(
 	}
 	if !slices.Equal(descendantIDs, reloaded) {
 		return OwnedFinalization{}, cancellationAuthority(
-			"owned Run finalization graph changed during lock acquisition",
+			"owned run finalization graph changed during lock acquisition",
 			nil,
 		)
 	}
@@ -212,7 +212,7 @@ func LockOwnedFinalization(
 		run, found := locked[id]
 		if !found {
 			return OwnedFinalization{}, cancellationAuthority(
-				"owned Run finalization descendant was not locked",
+				"owned run finalization descendant was not locked",
 				nil,
 			)
 		}
@@ -237,7 +237,7 @@ func LockOwnedFinalization(
 func (g OwnedFinalization) CancelDescendants(ctx context.Context) (int, error) {
 	if g.tx == nil || g.currentRun == uuid.Nil || len(g.descendants) == 0 ||
 		g.descendants[0].id != g.currentRun {
-		return 0, errors.New("owned Run finalization graph is invalid")
+		return 0, errors.New("owned run finalization graph is invalid")
 	}
 	runs := slices.Clone(g.descendants[1:])
 	slices.SortFunc(runs, func(left, right cancellationRun) int {
@@ -293,7 +293,7 @@ func (g OwnedFinalization) FailCurrentForSecretRevocation(
 		if found && !runStatusTerminal(parent.status) {
 			if parent.workspaceID == target.workspaceID {
 				return 0, cancellationAuthority(
-					"Secret-revoked Run retained an active same-Workspace parent",
+					"secret-revoked run retained an active same-workspace parent",
 					nil,
 				)
 			}
@@ -301,7 +301,7 @@ func (g OwnedFinalization) FailCurrentForSecretRevocation(
 			if !found || wait.handoffRuntimeInstanceID.Valid ||
 				wait.handoffWorkspaceMountID.Valid {
 				return 0, cancellationAuthority(
-					"Secret-revoked child Wait boundary is inconsistent",
+					"secret-revoked child wait boundary is inconsistent",
 					nil,
 				)
 			}
@@ -342,7 +342,7 @@ func (c *Canceler) Cancel(
 	}
 	tx, err := c.db.Begin(ctx)
 	if err != nil {
-		return CancellationResult{}, fmt.Errorf("begin Run cancellation: %w", err)
+		return CancellationResult{}, fmt.Errorf("begin run cancellation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
@@ -351,7 +351,7 @@ func (c *Canceler) Cancel(
 		return CancellationResult{}, ErrCancellationNotFound
 	}
 	if err != nil {
-		return CancellationResult{}, cancellationAuthority("resolve target Run", err)
+		return CancellationResult{}, cancellationAuthority("resolve target run", err)
 	}
 	lineage, err := cancellationLineage(ctx, tx, targetID)
 	if err != nil {
@@ -375,13 +375,13 @@ func (c *Canceler) Cancel(
 	for _, id := range lockOrder {
 		run, err := lockCancellationRun(ctx, tx, request, id)
 		if err != nil {
-			return CancellationResult{}, cancellationAuthority("lock Run graph", err)
+			return CancellationResult{}, cancellationAuthority("lock run graph", err)
 		}
 		locked[id] = run
 	}
 	target, ok := locked[targetID]
 	if !ok {
-		return CancellationResult{}, cancellationAuthority("target Run was not locked", nil)
+		return CancellationResult{}, cancellationAuthority("target run was not locked", nil)
 	}
 	result := CancellationResult{RunID: target.id}
 	if runStatusTerminal(target.status) {
@@ -389,7 +389,7 @@ func (c *Canceler) Cancel(
 			return CancellationResult{}, ErrCancellationConflict
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return CancellationResult{}, fmt.Errorf("commit Run cancellation replay: %w", err)
+			return CancellationResult{}, fmt.Errorf("commit run cancellation replay: %w", err)
 		}
 		return result, nil
 	}
@@ -410,7 +410,7 @@ func (c *Canceler) Cancel(
 		run, found := locked[id]
 		if !found {
 			return CancellationResult{}, cancellationAuthority(
-				"parent-owned Run was not locked",
+				"parent-owned run was not locked",
 				nil,
 			)
 		}
@@ -434,14 +434,14 @@ func (c *Canceler) Cancel(
 			boundaryParent, found = locked[parentID]
 			if !found {
 				return CancellationResult{}, cancellationAuthority(
-					"parent-owned Run parent was not locked",
+					"parent-owned run parent was not locked",
 					nil,
 				)
 			}
 			boundaryWait, found = waitsByChild[target.id]
 			if !found {
 				return CancellationResult{}, cancellationAuthority(
-					"parent-owned Run Wait was not locked",
+					"parent-owned run wait was not locked",
 					nil,
 				)
 			}
@@ -485,7 +485,7 @@ func (c *Canceler) Cancel(
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return CancellationResult{}, fmt.Errorf("commit Run cancellation: %w", err)
+		return CancellationResult{}, fmt.Errorf("commit run cancellation: %w", err)
 	}
 	result.Changed = true
 	result.CancelledRuns = len(runs)
@@ -516,7 +516,7 @@ func cancellationLineage(
 		MaxDepth: maxCancellationGraphSize,
 	})
 	if err != nil {
-		return nil, cancellationAuthority("load Run lineage", err)
+		return nil, cancellationAuthority("load run lineage", err)
 	}
 	var ids []uuid.UUID
 	for _, row := range rows {
@@ -547,7 +547,7 @@ func lockCancellationActors(
 		EnvironmentID: pgvalue.UUID(request.EnvironmentID),
 	})
 	if err != nil {
-		return cancellationAuthority("lock Run lineage Actors", err)
+		return cancellationAuthority("lock run lineage actors", err)
 	}
 	return nil
 }
@@ -601,12 +601,12 @@ func discoverOwnedCancellationRuns(
 	var ids []uuid.UUID
 	for _, row := range rows {
 		if row.Cycle {
-			return nil, cancellationAuthority("parent-owned Run graph contains a cycle", nil)
+			return nil, cancellationAuthority("parent-owned run graph contains a cycle", nil)
 		}
 		ids = append(ids, uuid.UUID(row.ID.Bytes))
 	}
 	if len(ids) == 0 || ids[0] != targetID {
-		return nil, cancellationAuthority("parent-owned Run graph is incomplete", nil)
+		return nil, cancellationAuthority("parent-owned run graph is incomplete", nil)
 	}
 	if len(ids) > maxCancellationGraphSize {
 		return nil, cancellationAuthority("run cancellation graph exceeds the transaction bound", nil)
@@ -661,7 +661,7 @@ func lockCancellationWorkspaces(
 ) error {
 	_, err := db.New(tx).LockCancellationWorkspaces(ctx, pgUUIDs(runIDs))
 	if err != nil {
-		return cancellationAuthority("lock cancellation Workspaces", err)
+		return cancellationAuthority("lock cancellation workspaces", err)
 	}
 	return nil
 }
@@ -673,7 +673,7 @@ func lockCancellationAttempts(
 ) error {
 	_, err := db.New(tx).LockCancellationAttempts(ctx, pgUUIDs(runIDs))
 	if err != nil {
-		return cancellationAuthority("lock cancellation Attempts", err)
+		return cancellationAuthority("lock cancellation attempts", err)
 	}
 	return nil
 }
@@ -701,7 +701,7 @@ func lockCancellationRunLeases(
 ) ([]uuid.UUID, error) {
 	rows, err := db.New(tx).LockCancellationRunLeases(ctx, pgUUIDs(runIDs))
 	if err != nil {
-		return nil, cancellationAuthority("lock cancellation Run Leases", err)
+		return nil, cancellationAuthority("lock cancellation run leases", err)
 	}
 	return cancellationIDs(rows), nil
 }
@@ -731,7 +731,7 @@ func lockCancellationWorkspaceLeases(
 	}
 	_, err := db.New(tx).LockCancellationWorkspaceLeases(ctx, pgUUIDs(runLeaseIDs))
 	if err != nil {
-		return cancellationAuthority("lock cancellation Workspace Leases", err)
+		return cancellationAuthority("lock cancellation workspace leases", err)
 	}
 	return nil
 }
@@ -747,7 +747,7 @@ func lockCancellationWaits(
 		CancelIDs: pgUUIDs(cancelIDs),
 	})
 	if err != nil {
-		return nil, cancellationAuthority("lock cancellation Waits", err)
+		return nil, cancellationAuthority("lock cancellation waits", err)
 	}
 	waitsByChild := make(map[uuid.UUID]cancellationWait)
 	for _, row := range rows {
@@ -771,7 +771,7 @@ func lockCancellationWaits(
 			childID := uuid.UUID(wait.childRunID.Bytes)
 			if _, duplicate := waitsByChild[childID]; duplicate {
 				return nil, cancellationAuthority(
-					"multiple active parent Waits name one child Run",
+					"multiple active parent waits name one child run",
 					nil,
 				)
 			}
@@ -818,13 +818,13 @@ func retainedCancellationHandoff(
 		!wait.childRunID.Valid ||
 		uuid.UUID(wait.childRunID.Bytes) != child.id {
 		return pgtype.UUID{}, pgtype.UUID{}, cancellationAuthority(
-			"cancelled child Wait relation does not match",
+			"cancelled child wait relation does not match",
 			nil,
 		)
 	}
 	if wait.workspaceID != parent.workspaceID {
 		return pgtype.UUID{}, pgtype.UUID{}, cancellationAuthority(
-			"cancelled child Wait Workspace does not match parent",
+			"cancelled child wait workspace does not match parent",
 			nil,
 		)
 	}
@@ -902,7 +902,7 @@ func terminateLockedRun(
 			)
 		}
 		if err != nil || affected != 1 {
-			return cancellationAuthority("terminalize owning Actor", err)
+			return cancellationAuthority("terminalize owning actor", err)
 		}
 	}
 	if err := queries.TerminalizeRunSuspensions(
@@ -915,7 +915,7 @@ func terminateLockedRun(
 			RunID:           pgvalue.UUID(run.id),
 		},
 	); err != nil {
-		return cancellationAuthority("terminalize Run suspension", err)
+		return cancellationAuthority("terminalize run suspension", err)
 	}
 	if err := queries.InvalidateRunCheckpoints(
 		ctx,
@@ -924,7 +924,7 @@ func terminateLockedRun(
 			RunID:      pgvalue.UUID(run.id),
 		},
 	); err != nil {
-		return cancellationAuthority("invalidate Run checkpoints", err)
+		return cancellationAuthority("invalidate run checkpoints", err)
 	}
 	if run.currentRunLeaseID.Valid {
 		affected, err := queries.FenceRunWorkspaceLease(
@@ -936,10 +936,10 @@ func terminateLockedRun(
 			},
 		)
 		if err != nil {
-			return cancellationAuthority("fence Run Workspace Lease", err)
+			return cancellationAuthority("fence run workspace lease", err)
 		}
 		if affected > 1 {
-			return cancellationAuthority("multiple Run Workspace Leases were active", nil)
+			return cancellationAuthority("multiple run workspace leases were active", nil)
 		}
 		affected, err = queries.TerminalizeRunLease(
 			ctx,
@@ -952,7 +952,7 @@ func terminateLockedRun(
 			},
 		)
 		if err != nil || affected != 1 {
-			return cancellationAuthority("terminalize current Run Lease", err)
+			return cancellationAuthority("terminalize current run lease", err)
 		}
 	}
 	if err := queries.CloseRunRuntimes(
@@ -965,7 +965,7 @@ func terminateLockedRun(
 			ReasonCode:        termination.reasonCode,
 		},
 	); err != nil {
-		return cancellationAuthority("request terminal Run runtime cleanup", err)
+		return cancellationAuthority("request terminal run runtime cleanup", err)
 	}
 	affected, err := queries.TerminalizeRunAttempt(
 		ctx,
@@ -978,7 +978,7 @@ func terminateLockedRun(
 		},
 	)
 	if err != nil || affected != 1 {
-		return cancellationAuthority("terminalize current Run Attempt", err)
+		return cancellationAuthority("terminalize current run attempt", err)
 	}
 	affected, err = queries.TerminalizeRun(
 		ctx,
@@ -991,7 +991,7 @@ func terminateLockedRun(
 		},
 	)
 	if err != nil || affected != 1 {
-		return cancellationAuthority("terminalize Run", err)
+		return cancellationAuthority("terminalize run", err)
 	}
 	if !run.actorID.Valid {
 		if err := queries.ReleaseTaskWorkspace(
@@ -1001,7 +1001,7 @@ func terminateLockedRun(
 				RunID:       pgvalue.UUID(run.id),
 			},
 		); err != nil {
-			return cancellationAuthority("release terminal Task Workspace", err)
+			return cancellationAuthority("release terminal task workspace", err)
 		}
 	} else if !termination.actorCancellation {
 		if err := queries.ReleaseActorWorkspace(
@@ -1011,7 +1011,7 @@ func terminateLockedRun(
 				ActorID:     run.actorID,
 			},
 		); err != nil {
-			return cancellationAuthority("release terminal Actor Workspace", err)
+			return cancellationAuthority("release terminal actor workspace", err)
 		}
 	}
 	if err := queries.RecordRunTerminalEvent(
@@ -1024,7 +1024,7 @@ func terminateLockedRun(
 			RunID:      pgvalue.UUID(run.id),
 		},
 	); err != nil {
-		return cancellationAuthority("record Run terminal event", err)
+		return cancellationAuthority("record run terminal event", err)
 	}
 	return nil
 }
@@ -1040,13 +1040,13 @@ func resolveCancelledChildWait(
 		parent.status != db.RunStatusWaiting ||
 		parent.currentAttemptNumber != wait.attemptNumber ||
 		parent.stateVersion != wait.expectedRunStateVersion {
-		return cancellationAuthority("cancelled child Wait fence does not match", nil)
+		return cancellationAuthority("cancelled child wait fence does not match", nil)
 	}
 	if !wait.handoffRuntimeInstanceID.Valid {
 		return resolveCancelledDifferentWorkspaceChildWait(ctx, tx, parent, child, wait)
 	}
 	if !wait.baseWorkspaceVersionID.Valid {
-		return cancellationAuthority("cancelled handoff child has no base Workspace version", nil)
+		return cancellationAuthority("cancelled handoff child has no base workspace version", nil)
 	}
 	reasonCode := "child_run_cancelled"
 	return resolveTerminalChildWait(
@@ -1112,7 +1112,7 @@ func resolveTerminalChildWait(
 ) error {
 	if resolution.resumeWorkspaceVersionID.Valid &&
 		wait.suspensionState != db.RunWaitStateParked {
-		return cancellationAuthority("terminal child Workspace handoff is not parked", nil)
+		return cancellationAuthority("terminal child workspace handoff is not parked", nil)
 	}
 	queries := db.New(tx)
 	switch wait.suspensionState {
@@ -1120,7 +1120,7 @@ func resolveTerminalChildWait(
 		if !wait.currentRunLeaseID.Valid ||
 			!parent.currentRunLeaseID.Valid ||
 			wait.currentRunLeaseID != parent.currentRunLeaseID {
-			return cancellationAuthority("hot terminal child Wait Lease does not match", nil)
+			return cancellationAuthority("hot terminal child wait lease does not match", nil)
 		}
 		if _, err := queries.ResolveHotTerminalChildWait(
 			ctx,
@@ -1136,7 +1136,7 @@ func resolveTerminalChildWait(
 				CurrentRunLeaseID:       parent.currentRunLeaseID,
 			},
 		); err != nil {
-			return cancellationAuthority("resolve hot terminal child Wait", err)
+			return cancellationAuthority("resolve hot terminal child wait", err)
 		}
 	case db.RunWaitStateCheckpointing:
 		if _, err := queries.ResolveCheckpointingTerminalChildWait(
@@ -1150,12 +1150,12 @@ func resolveTerminalChildWait(
 				RunID:           pgvalue.UUID(parent.id),
 			},
 		); err != nil {
-			return cancellationAuthority("resolve checkpointing terminal child Wait", err)
+			return cancellationAuthority("resolve checkpointing terminal child wait", err)
 		}
 	case db.RunWaitStateParked:
 		if !wait.priorRunLeaseID.Valid || !wait.suspendCheckpointID.Valid ||
 			parent.currentRunLeaseID.Valid {
-			return cancellationAuthority("parked terminal child Wait fence does not match", nil)
+			return cancellationAuthority("parked terminal child wait fence does not match", nil)
 		}
 		resolved, err := queries.ResolveParkedTerminalChildWait(
 			ctx,
@@ -1172,7 +1172,7 @@ func resolveTerminalChildWait(
 			},
 		)
 		if err != nil {
-			return cancellationAuthority("resolve parked terminal child Wait", err)
+			return cancellationAuthority("resolve parked terminal child wait", err)
 		}
 		affected, err := queries.PublishTerminalChildResume(
 			ctx,
@@ -1189,7 +1189,7 @@ func resolveTerminalChildWait(
 			return cancellationAuthority("publish terminal child resume", err)
 		}
 	default:
-		return cancellationAuthority("terminal child Wait suspension is ineligible", nil)
+		return cancellationAuthority("terminal child wait suspension is ineligible", nil)
 	}
 	return nil
 }

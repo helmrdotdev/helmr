@@ -78,14 +78,14 @@ func parseActorCompletionRequest(request workerapi.CompleteActorRequest) (parsed
 		return parsedActorCompletion{}, errors.New("workspace must contain exactly one proof")
 	}
 	if parsed.kind == actorCompletionSucceeded && parsed.capture == nil {
-		return parsedActorCompletion{}, errors.New("a successful Actor requires a captured Workspace")
+		return parsedActorCompletion{}, errors.New("a successful actor requires a captured workspace")
 	}
 	if parsed.kind == actorCompletionFailed && parsed.rollback == nil {
-		return parsedActorCompletion{}, errors.New("a failed Actor requires a Workspace rollback")
+		return parsedActorCompletion{}, errors.New("a failed actor requires a workspace rollback")
 	}
 	parsed.fingerprint, err = terminalRequestFingerprint("actor.complete.v0", normalized)
 	if err != nil {
-		return parsedActorCompletion{}, fmt.Errorf("fingerprint Actor completion: %w", err)
+		return parsedActorCompletion{}, fmt.Errorf("fingerprint actor completion: %w", err)
 	}
 	return parsed, nil
 }

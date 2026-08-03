@@ -198,7 +198,7 @@ func (s *Store) Create(
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("begin Secret creation: %w", err)
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("begin secret creation: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
@@ -227,7 +227,7 @@ func (s *Store) Create(
 				return db.GetSecretSnapshotRow{}, err
 			}
 			if err := tx.Commit(ctx); err != nil {
-				return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret creation replay: %w", err)
+				return db.GetSecretSnapshotRow{}, fmt.Errorf("commit secret creation replay: %w", err)
 			}
 			return snapshot, nil
 		}
@@ -257,7 +257,7 @@ func (s *Store) Create(
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret creation: %w", err)
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("commit secret creation: %w", err)
 	}
 	return snapshot, nil
 }
@@ -274,7 +274,7 @@ func (s *Store) Rotate(
 	}
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("begin Secret rotation: %w", err)
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("begin secret rotation: %w", err)
 	}
 	defer tx.Rollback(ctx)
 	claims, err := idempotency.TransactionFor(tx)
@@ -300,7 +300,7 @@ func (s *Store) Rotate(
 			return db.GetSecretSnapshotRow{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret rotation replay: %w", err)
+			return db.GetSecretSnapshotRow{}, fmt.Errorf("commit secret rotation replay: %w", err)
 		}
 		return snapshot, nil
 	}
@@ -321,7 +321,7 @@ func (s *Store) Rotate(
 		return db.GetSecretSnapshotRow{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret rotation: %w", err)
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("commit secret rotation: %w", err)
 	}
 	return snapshot, nil
 }
@@ -338,7 +338,7 @@ func completeMutation(
 		SecretVersionID: pgvalue.MustUUIDValue(secretVersionID).String(),
 	})
 	if err != nil {
-		return fmt.Errorf("marshal Secret mutation receipt: %w", err)
+		return fmt.Errorf("marshal secret mutation receipt: %w", err)
 	}
 	_, err = claims.Complete(ctx, claim, receipt)
 	return err
@@ -374,7 +374,7 @@ func (s *Store) replayMutation(
 		VersionID:     pgvalue.UUID(secretVersionID),
 	})
 	if err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("lock replayed Secret version: %w", err)
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("lock replayed secret version: %w", err)
 	}
 	plaintext, err := s.decryptVersion(
 		pgvalue.MustUUIDValue(claim.EnvironmentID),
@@ -383,7 +383,7 @@ func (s *Store) replayMutation(
 		version,
 	)
 	if err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("decrypt replayed Secret version: %w", err)
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("decrypt replayed secret version: %w", err)
 	}
 	if subtle.ConstantTimeCompare(plaintext, value) != 1 {
 		return db.GetSecretSnapshotRow{}, idempotency.ConflictError{
@@ -410,7 +410,7 @@ func (s *Store) Revoke(ctx context.Context, environmentID uuid.UUID, secretID uu
 	}
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("begin Secret revocation: %w", err)
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("begin secret revocation: %w", err)
 	}
 	defer tx.Rollback(ctx)
 	claims, err := idempotency.TransactionFor(tx)
@@ -437,7 +437,7 @@ func (s *Store) Revoke(ctx context.Context, environmentID uuid.UUID, secretID uu
 			return db.GetSecretSnapshotRow{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret revoke replay: %w", err)
+			return db.GetSecretSnapshotRow{}, fmt.Errorf("commit secret revoke replay: %w", err)
 		}
 		return snapshot, nil
 	}
@@ -454,7 +454,7 @@ func (s *Store) Revoke(ctx context.Context, environmentID uuid.UUID, secretID uu
 			"secretId":             secretID.String(),
 		})
 		if err != nil {
-			return db.GetSecretSnapshotRow{}, fmt.Errorf("marshal Secret revocation intent: %w", err)
+			return db.GetSecretSnapshotRow{}, fmt.Errorf("marshal secret revocation intent: %w", err)
 		}
 		if _, err := queries.CreateOutboxMessage(ctx, db.CreateOutboxMessageParams{
 			ID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -464,7 +464,7 @@ func (s *Store) Revoke(ctx context.Context, environmentID uuid.UUID, secretID uu
 			Payload:      payload,
 			AvailableAt:  pgvalue.TimestamptzUTCZeroInvalid(time.Now()),
 		}); err != nil {
-			return db.GetSecretSnapshotRow{}, fmt.Errorf("create Secret revocation intent: %w", err)
+			return db.GetSecretSnapshotRow{}, fmt.Errorf("create secret revocation intent: %w", err)
 		}
 	}
 	snapshot, err := queries.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{
@@ -480,13 +480,13 @@ func (s *Store) Revoke(ctx context.Context, environmentID uuid.UUID, secretID uu
 		"stateVersion":         record.StateVersion,
 	})
 	if err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("marshal Secret revoke receipt: %w", err)
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("marshal secret revoke receipt: %w", err)
 	}
 	if _, err := claims.Complete(ctx, acquired.Claim, receipt); err != nil {
 		return db.GetSecretSnapshotRow{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret revocation: %w", err)
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("commit secret revocation: %w", err)
 	}
 	return snapshot, nil
 }
@@ -538,7 +538,7 @@ func (s *Store) PutScoped(ctx context.Context, _ uuid.UUID, _ uuid.UUID, environ
 	}
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
-		return db.Secret{}, fmt.Errorf("begin Secret mutation: %w", err)
+		return db.Secret{}, fmt.Errorf("begin secret mutation: %w", err)
 	}
 	defer tx.Rollback(ctx)
 	queries := db.New(tx)
@@ -549,7 +549,7 @@ func (s *Store) PutScoped(ctx context.Context, _ uuid.UUID, _ uuid.UUID, environ
 		return db.Secret{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return db.Secret{}, fmt.Errorf("commit Secret mutation: %w", err)
+		return db.Secret{}, fmt.Errorf("commit secret mutation: %w", err)
 	}
 	return record, nil
 }

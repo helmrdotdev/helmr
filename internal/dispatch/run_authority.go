@@ -711,10 +711,10 @@ SELECT deployments.id
 	decoder := json.NewDecoder(bytes.NewReader(manifest))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&workspaceManifest); err != nil {
-		return runPlacementAuthority{}, fmt.Errorf("decode Workspace manifest: %w", err)
+		return runPlacementAuthority{}, fmt.Errorf("decode workspace manifest: %w", err)
 	}
 	if err := requireJSONEOF(decoder); err != nil {
-		return runPlacementAuthority{}, fmt.Errorf("decode Workspace manifest: %w", err)
+		return runPlacementAuthority{}, fmt.Errorf("decode workspace manifest: %w", err)
 	}
 	resources, err := normalizeRunResources(workspaceManifest.Resources)
 	if err != nil {
@@ -1036,8 +1036,8 @@ func lockSameWorkspaceHandoffChain(
 		return err
 	}
 
-	// The source Run Lease and Workspace Lease rows are locked before any Wait,
-	// preserving the canonical physical-authority-before-Wait order.
+	// The source run lease and workspace lease rows are locked before any wait,
+	// preserving the canonical physical-authority-before-wait order.
 	for _, edge := range edges {
 		var state string
 		var runtimeID, workspaceID pgtype.UUID
@@ -1284,7 +1284,7 @@ SELECT secrets.state = 'active'
 		}
 		if !valid {
 			secretRows.Close()
-			return errors.New("Run Secret resolution is revoked or incomplete")
+			return errors.New("run secret resolution is revoked or incomplete")
 		}
 	}
 	if err := secretRows.Err(); err != nil {
@@ -1301,7 +1301,7 @@ func normalizeRunResources(
 	if resources.MilliCPU <= 0 ||
 		resources.MemoryMiB <= 0 ||
 		resources.MemoryMiB > math.MaxInt64/mebibyte {
-		return runResources{}, errors.New("Workspace resources are outside the Run placement domain")
+		return runResources{}, errors.New("workspace resources are outside the run placement domain")
 	}
 	return runResources{
 		cpuMillis:               resources.MilliCPU,
@@ -1329,7 +1329,7 @@ func lockRunQueueScope(
 		return err
 	}
 	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", key); err != nil {
-		return fmt.Errorf("lock Run queue scope: %w", err)
+		return fmt.Errorf("lock run queue scope: %w", err)
 	}
 	return nil
 }

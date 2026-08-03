@@ -192,17 +192,17 @@ type ListWorkerDemandObservationsRow struct {
 	AllowsRun                             bool               `json:"allows_run"`
 	AllowsBuild                           bool               `json:"allows_build"`
 	QueuedRuns                            int64              `json:"queued_runs"`
-	QueuedRunCpuMillis                    int64              `json:"queued_run_cpu_millis"`
-	QueuedRunMemoryMib                    int64              `json:"queued_run_memory_mib"`
+	QueuedRunCPUMillis                    int64              `json:"queued_run_cpu_millis"`
+	QueuedRunMemoryMiB                    int64              `json:"queued_run_memory_mib"`
 	QueuedBuilds                          int64              `json:"queued_builds"`
 	ReadyRunWorkers                       int64              `json:"ready_run_workers"`
-	RunAvailableCpuMillis                 int64              `json:"run_available_cpu_millis"`
+	RunAvailableCPUMillis                 int64              `json:"run_available_cpu_millis"`
 	RunAvailableMemoryBytes               int64              `json:"run_available_memory_bytes"`
 	RunAvailableGuestEphemeralDiskBytes   int64              `json:"run_available_guest_ephemeral_disk_bytes"`
-	RunAvailableVmSlots                   int64              `json:"run_available_vm_slots"`
+	RunAvailableVMSlots                   int64              `json:"run_available_vm_slots"`
 	RunAvailableConsumers                 int64              `json:"run_available_consumers"`
 	ReadyBuildWorkers                     int64              `json:"ready_build_workers"`
-	BuildAvailableCpuMillis               int64              `json:"build_available_cpu_millis"`
+	BuildAvailableCPUMillis               int64              `json:"build_available_cpu_millis"`
 	BuildAvailableMemoryBytes             int64              `json:"build_available_memory_bytes"`
 	BuildAvailableGuestEphemeralDiskBytes int64              `json:"build_available_guest_ephemeral_disk_bytes"`
 	BuildAvailableExecutors               int64              `json:"build_available_executors"`
@@ -227,17 +227,17 @@ func (q *Queries) ListWorkerDemandObservations(ctx context.Context) ([]ListWorke
 			&i.AllowsRun,
 			&i.AllowsBuild,
 			&i.QueuedRuns,
-			&i.QueuedRunCpuMillis,
-			&i.QueuedRunMemoryMib,
+			&i.QueuedRunCPUMillis,
+			&i.QueuedRunMemoryMiB,
 			&i.QueuedBuilds,
 			&i.ReadyRunWorkers,
-			&i.RunAvailableCpuMillis,
+			&i.RunAvailableCPUMillis,
 			&i.RunAvailableMemoryBytes,
 			&i.RunAvailableGuestEphemeralDiskBytes,
-			&i.RunAvailableVmSlots,
+			&i.RunAvailableVMSlots,
 			&i.RunAvailableConsumers,
 			&i.ReadyBuildWorkers,
-			&i.BuildAvailableCpuMillis,
+			&i.BuildAvailableCPUMillis,
 			&i.BuildAvailableMemoryBytes,
 			&i.BuildAvailableGuestEphemeralDiskBytes,
 			&i.BuildAvailableExecutors,

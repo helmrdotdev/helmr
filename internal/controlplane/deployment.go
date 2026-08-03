@@ -292,10 +292,10 @@ func completeDeploymentCreation(
 ) error {
 	receipt, err := json.Marshal(deploymentCreationReceipt{DeploymentID: deploymentID})
 	if err != nil {
-		return fmt.Errorf("encode Deployment creation receipt: %w", err)
+		return fmt.Errorf("encode deployment creation receipt: %w", err)
 	}
 	if _, err := claims.Complete(ctx, claim, receipt); err != nil {
-		return fmt.Errorf("complete Deployment creation claim: %w", err)
+		return fmt.Errorf("complete deployment creation claim: %w", err)
 	}
 	return nil
 }
@@ -331,7 +331,7 @@ func replayDeploymentCreation(
 		ID:            pgvalue.UUID(deploymentID),
 	})
 	if err != nil {
-		return api.DeploymentResponse{}, fmt.Errorf("resolve replayed Deployment: %w", err)
+		return api.DeploymentResponse{}, fmt.Errorf("resolve replayed deployment: %w", err)
 	}
 	return deploymentResponseWithArtifacts(ctx, store, record)
 }
@@ -378,7 +378,7 @@ func createQueuedDeployment(
 		ProjectID:                  projectID,
 		EnvironmentID:              environmentID,
 		Version:                    deploymentVersion(deploymentID),
-		ApiVersion:                 metadata.APIVersion,
+		APIVersion:                 metadata.APIVersion,
 		WorkerProtocolVersion:      metadata.WorkerProtocolVersion,
 		ContentHash:                contentHash,
 		DeploymentSourceArtifactID: sourceArtifact.ID,
@@ -420,7 +420,7 @@ func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceA
 	return api.DeploymentResponse{
 		ID:                    pgvalue.MustUUIDValue(deployment.ID).String(),
 		Version:               deployment.Version,
-		APIVersion:            deployment.ApiVersion,
+		APIVersion:            deployment.APIVersion,
 		WorkerProtocolVersion: deployment.WorkerProtocolVersion,
 		ProjectID:             pgvalue.MustUUIDValue(deployment.ProjectID).String(),
 		EnvironmentID:         pgvalue.MustUUIDValue(deployment.EnvironmentID).String(),

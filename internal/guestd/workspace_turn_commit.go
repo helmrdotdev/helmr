@@ -13,12 +13,12 @@ func (entry *workspaceMountEntry) acquireActorTurnCommit(
 	request *runv0.ActorTurnCommitPauseRequest,
 ) (func(), time.Time, error) {
 	if entry == nil || run == nil || request == nil {
-		return func() {}, time.Time{}, errors.New("Actor turn commit authority is required")
+		return func() {}, time.Time{}, errors.New("actor turn commit authority is required")
 	}
 	if request.GetRunId() != run.GetRunId() ||
 		request.GetAttemptNumber() != run.GetAttemptNumber() ||
 		request.GetRunLeaseId() != run.GetRunLeaseId() {
-		return func() {}, time.Time{}, errors.New("Actor turn commit does not match the Program Run")
+		return func() {}, time.Time{}, errors.New("actor turn commit does not match the program run")
 	}
 	entry.finalizationMu.Lock()
 	releaseFinalization := true
@@ -47,19 +47,19 @@ func (entry *workspaceMountEntry) acquireActorTurnCommit(
 	entry.authorityMu.Unlock()
 	if !current {
 		release()
-		return func() {}, time.Time{}, errors.New("Actor turn commit Workspace authority is not current")
+		return func() {}, time.Time{}, errors.New("actor turn commit workspace authority is not current")
 	}
 
 	entry.processesMu.Lock()
 	if entry.authorityState != workspaceAuthorityLive || entry.recoveryRequired || entry.turnCommitBlocked {
 		entry.processesMu.Unlock()
 		release()
-		return func() {}, time.Time{}, errors.New("Workspace is unavailable for Actor turn commit")
+		return func() {}, time.Time{}, errors.New("workspace is unavailable for actor turn commit")
 	}
 	if entry.processAdmissions != 0 {
 		entry.processesMu.Unlock()
 		release()
-		return func() {}, time.Time{}, errors.New("Actor turn commit requires no active exec")
+		return func() {}, time.Time{}, errors.New("actor turn commit requires no active exec")
 	}
 	entry.turnCommitBlocked = true
 	entry.processesMu.Unlock()
@@ -69,13 +69,13 @@ func (entry *workspaceMountEntry) acquireActorTurnCommit(
 // finalizationMu must be held by the turn-commit barrier.
 func (entry *workspaceMountEntry) advanceActorTurnWorkspaceFrontierLocked(expected, next string) error {
 	if strings.TrimSpace(expected) == "" || strings.TrimSpace(next) == "" {
-		return errors.New("Actor turn commit Workspace frontier is incomplete")
+		return errors.New("actor turn commit workspace frontier is incomplete")
 	}
 	entry.authorityMu.Lock()
 	defer entry.authorityMu.Unlock()
 	if entry.authority == nil || entry.authority.GetFence() == nil ||
 		entry.baseVersionID != expected || entry.authority.GetFence().GetBaseWorkspaceVersionId() != expected {
-		return errors.New("Actor turn commit Workspace frontier is stale")
+		return errors.New("actor turn commit workspace frontier is stale")
 	}
 	entry.baseVersionID = next
 	entry.authority.Fence.BaseWorkspaceVersionId = next

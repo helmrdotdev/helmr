@@ -401,7 +401,7 @@ func ValidateVerifiedProgram(
 		return err
 	}
 	if result.Outcome != VerificationOutcomeSucceeded {
-		return errors.New("Program verification did not succeed")
+		return errors.New("program verification did not succeed")
 	}
 	if err := ValidateProgramIndex(index); err != nil {
 		return err

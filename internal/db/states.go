@@ -1,8 +1,8 @@
 package db
 
-// Lifecycle state/status values are stored as constrained TEXT in Postgres.
-// These aliases keep the Go API descriptive without coupling transitions to
-// database enum types.
+// RegionState and the other lifecycle aliases in this file are stored as
+// constrained TEXT in Postgres, keeping transitions independent of database
+// enum types.
 type RegionState = string
 
 const (

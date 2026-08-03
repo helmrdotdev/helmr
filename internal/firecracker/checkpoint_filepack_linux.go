@@ -110,10 +110,10 @@ func unpackRuntimeFile(ctx context.Context, sourcePath string, targetPath string
 		return vm.FilepackStats{}, err
 	}
 	if expectedLogicalSize < 0 {
-		return vm.FilepackStats{}, errors.New("expected firecracker filepack logical size must be non-negative")
+		return vm.FilepackStats{}, errors.New("expected Firecracker filepack logical size must be non-negative")
 	}
 	if header.LogicalSize != expectedLogicalSize {
-		return vm.FilepackStats{}, fmt.Errorf("firecracker filepack logical size %d does not match expected %d", header.LogicalSize, expectedLogicalSize)
+		return vm.FilepackStats{}, fmt.Errorf("the Firecracker filepack logical size %d does not match expected %d", header.LogicalSize, expectedLogicalSize)
 	}
 	stats := vm.FilepackStats{LogicalBytes: header.LogicalSize}
 	target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
@@ -160,7 +160,7 @@ func unpackRuntimeFile(ctx context.Context, sourcePath string, targetPath string
 				return stats, err
 			}
 		default:
-			return stats, fmt.Errorf("unsupported firecracker filepack record type %d", recordType[0])
+			return stats, fmt.Errorf("unsupported Firecracker filepack record type %d", recordType[0])
 		}
 	}
 }
@@ -171,7 +171,7 @@ func writeFilepackHeader(w io.Writer, header filepackHeader) error {
 		return err
 	}
 	if len(payload) > maxFilepackHeader {
-		return errors.New("firecracker filepack header is too large")
+		return errors.New("the Firecracker filepack header is too large")
 	}
 	if _, err := io.WriteString(w, filepackMagic); err != nil {
 		return err
@@ -191,7 +191,7 @@ func readFilepackHeader(r io.Reader) (filepackHeader, error) {
 		return filepackHeader{}, err
 	}
 	if string(prefix) != filepackMagic {
-		return filepackHeader{}, errors.New("unsupported firecracker filepack format")
+		return filepackHeader{}, errors.New("unsupported Firecracker filepack format")
 	}
 	var encoded [4]byte
 	if _, err := io.ReadFull(r, encoded[:]); err != nil {
@@ -199,7 +199,7 @@ func readFilepackHeader(r io.Reader) (filepackHeader, error) {
 	}
 	size := binary.BigEndian.Uint32(encoded[:])
 	if size == 0 || size > maxFilepackHeader {
-		return filepackHeader{}, errors.New("invalid firecracker filepack header size")
+		return filepackHeader{}, errors.New("invalid Firecracker filepack header size")
 	}
 	payload := make([]byte, size)
 	if _, err := io.ReadFull(r, payload); err != nil {
@@ -214,19 +214,19 @@ func readFilepackHeader(r io.Reader) (filepackHeader, error) {
 
 func validateFilepackHeader(header filepackHeader, expectedRole string) error {
 	if header.Version != filepackVersion {
-		return fmt.Errorf("unsupported firecracker filepack version %d", header.Version)
+		return fmt.Errorf("unsupported Firecracker filepack version %d", header.Version)
 	}
 	if header.Role != expectedRole {
-		return fmt.Errorf("firecracker filepack role %q does not match %q", header.Role, expectedRole)
+		return fmt.Errorf("the Firecracker filepack role %q does not match %q", header.Role, expectedRole)
 	}
 	if header.LogicalSize < 0 {
-		return errors.New("firecracker filepack logical size must be non-negative")
+		return errors.New("the Firecracker filepack logical size must be non-negative")
 	}
 	if header.ChunkSize <= 0 || header.ChunkSize > maxFilepackChunk {
-		return errors.New("firecracker filepack chunk size is invalid")
+		return errors.New("the Firecracker filepack chunk size is invalid")
 	}
 	if header.Codec != filepackCodecZstd {
-		return fmt.Errorf("unsupported firecracker filepack codec %q", header.Codec)
+		return fmt.Errorf("unsupported Firecracker filepack codec %q", header.Codec)
 	}
 	return nil
 }
@@ -340,10 +340,10 @@ func allZero(data []byte) bool {
 
 func writeFilepackDataRecord(w io.Writer, offset int64, rawSize int, compressed []byte) error {
 	if rawSize <= 0 || rawSize > maxFilepackChunk {
-		return errors.New("invalid firecracker filepack raw chunk size")
+		return errors.New("invalid Firecracker filepack raw chunk size")
 	}
 	if len(compressed) == 0 || len(compressed) > maxFilepackChunk {
-		return errors.New("invalid firecracker filepack compressed chunk size")
+		return errors.New("invalid Firecracker filepack compressed chunk size")
 	}
 	var header [21]byte
 	header[0] = filepackRecordData
@@ -364,13 +364,13 @@ func readFilepackDataRecord(r io.Reader, target *os.File, decoder *zstd.Decoder,
 	}
 	rawOffset := binary.BigEndian.Uint64(header[:8])
 	if rawOffset > uint64(maxInt64) {
-		return errors.New("invalid firecracker filepack data offset")
+		return errors.New("invalid Firecracker filepack data offset")
 	}
 	offset := int64(rawOffset)
 	rawSize := int64(binary.BigEndian.Uint32(header[8:12]))
 	compressedSize := int64(binary.BigEndian.Uint64(header[12:20]))
 	if logicalSize < 0 || offset < 0 || offset > logicalSize || rawSize <= 0 || rawSize > maxFilepackChunk || rawSize > logicalSize-offset || compressedSize <= 0 || compressedSize > maxFilepackChunk {
-		return errors.New("invalid firecracker filepack data record")
+		return errors.New("invalid Firecracker filepack data record")
 	}
 	compressed := make([]byte, compressedSize)
 	if _, err := io.ReadFull(r, compressed); err != nil {
@@ -381,7 +381,7 @@ func readFilepackDataRecord(r io.Reader, target *os.File, decoder *zstd.Decoder,
 		return err
 	}
 	if int64(len(decoded)) != rawSize {
-		return errors.New("firecracker filepack decoded chunk size mismatch")
+		return errors.New("the Firecracker filepack decoded chunk size mismatch")
 	}
 	if _, err = target.WriteAt(decoded, offset); err != nil {
 		return err

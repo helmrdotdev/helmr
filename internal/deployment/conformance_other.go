@@ -17,7 +17,7 @@ func (ConformanceValidator) Runtime(
 	*platformTree,
 	RuntimeArtifactDescriptor,
 ) (PlatformConformance, error) {
-	return PlatformConformance{}, errors.New("Platform conformance requires Linux")
+	return PlatformConformance{}, errors.New("platform conformance requires Linux")
 }
 
 func (ConformanceValidator) Manager(
@@ -27,7 +27,7 @@ func (ConformanceValidator) Manager(
 	*platformTree,
 	ManagerArtifactDescriptor,
 ) (PlatformConformance, error) {
-	return PlatformConformance{}, errors.New("Platform conformance requires Linux")
+	return PlatformConformance{}, errors.New("platform conformance requires Linux")
 }
 
 func (ConformanceValidator) Toolchain(
@@ -37,5 +37,5 @@ func (ConformanceValidator) Toolchain(
 	*platformTree,
 	ToolchainArtifactDescriptor,
 ) (PlatformConformance, error) {
-	return PlatformConformance{}, errors.New("Platform conformance requires Linux")
+	return PlatformConformance{}, errors.New("platform conformance requires Linux")
 }

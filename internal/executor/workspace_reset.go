@@ -25,22 +25,22 @@ type WorkspaceReset struct {
 
 func resetWorkspaceOnSession(ctx context.Context, session vm.Session, store cas.Reader, request *workspacev0.ResetWorkspaceRequest) (WorkspaceReset, error) {
 	if session == nil {
-		return WorkspaceReset{}, errors.New("Workspace Reset session is required")
+		return WorkspaceReset{}, errors.New("workspace reset session is required")
 	}
 	if request == nil || request.GetEnvelope() == nil || request.GetEnvelope().GetAuthority() == nil || request.GetEnvelope().GetAuthority().GetFence() == nil {
-		return WorkspaceReset{}, errors.New("Workspace Reset envelope is required")
+		return WorkspaceReset{}, errors.New("workspace reset envelope is required")
 	}
 	target, err := workspace.ResetTargetFromProto(request.GetTarget())
 	if err != nil {
 		return WorkspaceReset{}, err
 	}
 	if target.Kind == workspace.ResetTargetArtifact && store == nil {
-		return WorkspaceReset{}, errors.New("Workspace Reset CAS is required for an Artifact target")
+		return WorkspaceReset{}, errors.New("workspace reset CAS is required for an artifact target")
 	}
 	envelope := request.GetEnvelope()
 	fence := envelope.GetAuthority().GetFence()
 	if target.BaseVersionID != fence.GetBaseWorkspaceVersionId() {
-		return WorkspaceReset{}, errors.New("Workspace Reset target does not match the admitted base version")
+		return WorkspaceReset{}, errors.New("workspace reset target does not match the admitted base version")
 	}
 	expectedFingerprint, err := workspace.FinalizationFingerprint(workspace.FinalizationResetKind, workspace.FinalizationRequest{
 		OperationID: envelope.GetOperationId(),
@@ -48,11 +48,11 @@ func resetWorkspaceOnSession(ctx context.Context, session vm.Session, store cas.
 		Target:      target,
 	})
 	if err != nil || expectedFingerprint != envelope.GetRequestFingerprint() {
-		return WorkspaceReset{}, errors.New("Workspace Reset request fingerprint is invalid")
+		return WorkspaceReset{}, errors.New("workspace reset request fingerprint is invalid")
 	}
 	stream, err := session.OpenStream(ctx)
 	if err != nil {
-		return WorkspaceReset{}, fmt.Errorf("open Workspace Reset stream: %w", err)
+		return WorkspaceReset{}, fmt.Errorf("open workspace reset stream: %w", err)
 	}
 	defer stream.Close()
 	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
@@ -62,10 +62,10 @@ func resetWorkspaceOnSession(ctx context.Context, session vm.Session, store cas.
 		WorkspaceMountID: fence.GetWorkspaceMountId(),
 		OperationID:      envelope.GetOperationId(),
 	}, 0); err != nil {
-		return WorkspaceReset{}, fmt.Errorf("write Workspace Reset header: %w", err)
+		return WorkspaceReset{}, fmt.Errorf("write workspace reset header: %w", err)
 	}
 	if err := frameio.WriteProtoFrame(stream, request); err != nil {
-		return WorkspaceReset{}, fmt.Errorf("write Workspace Reset request: %w", err)
+		return WorkspaceReset{}, fmt.Errorf("write workspace reset request: %w", err)
 	}
 	var artifactResult chan error
 	if target.Kind == workspace.ResetTargetArtifact {
@@ -89,17 +89,17 @@ func resetWorkspaceOnSession(ctx context.Context, session vm.Session, store cas.
 		}
 	}
 	if readErr != nil {
-		return WorkspaceReset{}, fmt.Errorf("read Workspace Reset response: %w", readErr)
+		return WorkspaceReset{}, fmt.Errorf("read workspace reset response: %w", readErr)
 	}
 	if strings.TrimSpace(response.GetError()) != "" {
-		return WorkspaceReset{}, fmt.Errorf("Workspace Reset failed: %s", response.GetError())
+		return WorkspaceReset{}, fmt.Errorf("workspace reset failed: %s", response.GetError())
 	}
 	if response.GetReceipt() == nil ||
 		response.GetReceipt().GetOperationId() != envelope.GetOperationId() ||
 		response.GetReceipt().GetRequestFingerprint() != envelope.GetRequestFingerprint() ||
 		!proto.Equal(response.GetReceipt().GetFence(), fence) ||
 		!proto.Equal(response.GetTarget(), request.GetTarget()) {
-		return WorkspaceReset{}, errors.New("Workspace Reset receipt does not match the request")
+		return WorkspaceReset{}, errors.New("workspace reset receipt does not match the request")
 	}
 	return WorkspaceReset{Receipt: response.GetReceipt(), Target: target}, nil
 }
@@ -108,14 +108,14 @@ func writeWorkspaceResetArtifact(ctx context.Context, stream io.Writer, store ca
 	artifact := target.Artifact
 	object, err := store.Stat(ctx, artifact.Digest)
 	if err != nil {
-		return fmt.Errorf("stat Workspace Reset Artifact: %w", err)
+		return fmt.Errorf("stat workspace reset artifact: %w", err)
 	}
 	if object.Digest != artifact.Digest || object.SizeBytes != artifact.SizeBytes || object.MediaType != artifact.MediaType {
-		return errors.New("Workspace Reset CAS object does not match its target")
+		return errors.New("workspace reset CAS object does not match its target")
 	}
 	body, err := store.Get(ctx, artifact.Digest)
 	if err != nil {
-		return fmt.Errorf("open Workspace Reset Artifact: %w", err)
+		return fmt.Errorf("open workspace reset artifact: %w", err)
 	}
 	defer body.Close()
 	digest := artifact.Digest
@@ -128,25 +128,25 @@ func writeWorkspaceResetArtifact(ctx context.Context, stream io.Writer, store ca
 		BodyDigest:       &digest,
 		EntryCount:       &entryCount,
 	}, uint64(artifact.SizeBytes)); err != nil {
-		return fmt.Errorf("write Workspace Reset Artifact header: %w", err)
+		return fmt.Errorf("write workspace reset artifact header: %w", err)
 	}
 	hash := sha256.New()
 	written, err := io.CopyN(io.MultiWriter(stream, hash), body, artifact.SizeBytes)
 	if err != nil {
-		return fmt.Errorf("write Workspace Reset Artifact: %w", err)
+		return fmt.Errorf("write workspace reset artifact: %w", err)
 	}
 	if written != artifact.SizeBytes {
-		return errors.New("Workspace Reset Artifact stream ended early")
+		return errors.New("workspace reset artifact stream ended early")
 	}
 	var extra [1]byte
 	if count, err := body.Read(extra[:]); err != io.EOF || count != 0 {
 		if err == nil {
-			return errors.New("Workspace Reset CAS object exceeds its declared size")
+			return errors.New("workspace reset CAS object exceeds its declared size")
 		}
-		return fmt.Errorf("finish Workspace Reset Artifact: %w", err)
+		return fmt.Errorf("finish workspace reset artifact: %w", err)
 	}
 	if "sha256:"+hex.EncodeToString(hash.Sum(nil)) != artifact.Digest {
-		return errors.New("Workspace Reset CAS object digest does not match its target")
+		return errors.New("workspace reset CAS object digest does not match its target")
 	}
 	return nil
 }

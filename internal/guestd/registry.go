@@ -51,7 +51,7 @@ func (r *waitingRunRegistry) registerProgram(request *runv0.CheckpointPauseReque
 	if request == nil || request.GetRunWaitId() == "" || request.GetCheckpointId() == "" ||
 		request.GetResumeAttachId() == "" || request.GetCheckpointRequestVersion() <= 0 ||
 		request.GetCorrelationId() == "" {
-		return waitingRunRegistration{}, fmt.Errorf("exact Program checkpoint registration is required")
+		return waitingRunRegistration{}, fmt.Errorf("exact program checkpoint registration is required")
 	}
 	slot := &waitingRunSlot{
 		runID:                    request.GetRunId(),
@@ -146,7 +146,7 @@ func (r *waitingRunRegistry) attachResume(attach *runv0.ResumeAttach, stream io.
 		grant.lock()
 		defer grant.unlock()
 		if !grant.valid(time.Now()) {
-			return errors.New("Program resume grant authority is no longer current")
+			return errors.New("program resume grant authority is no longer current")
 		}
 	}
 	r.mu.Lock()
@@ -164,14 +164,14 @@ func (r *waitingRunRegistry) attachResume(attach *runv0.ResumeAttach, stream io.
 		attach.GetResumeAttachId() != slot.resumeAttachID ||
 		attach.GetCorrelationId() != slot.correlationID ||
 		attach.GetResumeRequestVersion() <= 0) {
-		return fmt.Errorf("resume attach did not match exact Program Wait authority")
+		return fmt.Errorf("resume attach did not match exact program wait authority")
 	}
 	if slot.resumeAttachID != "" && (slot.granted == nil || slot.granted != grant ||
 		!proto.Equal(slot.granted.attach, attach)) {
-		return fmt.Errorf("resume attach was not granted by current Program authority")
+		return fmt.Errorf("resume attach was not granted by current program authority")
 	}
 	if slot.accepted != nil && !proto.Equal(slot.accepted, attach) {
-		return fmt.Errorf("resume attach changed an already accepted Program Wait tuple")
+		return fmt.Errorf("resume attach changed an already accepted program wait tuple")
 	}
 	select {
 	case slot.attached <- waitingRunAttachment{
@@ -189,7 +189,7 @@ func (r *waitingRunRegistry) attachResume(attach *runv0.ResumeAttach, stream io.
 
 func (r *waitingRunRegistry) grantProgramResume(grant *programResumeGrant) error {
 	if grant == nil || grant.attach == nil || grant.lock == nil || grant.unlock == nil || grant.valid == nil {
-		return errors.New("Program resume grant is required")
+		return errors.New("program resume grant is required")
 	}
 	attach := grant.attach
 	r.mu.Lock()
@@ -201,13 +201,13 @@ func (r *waitingRunRegistry) grantProgramResume(grant *programResumeGrant) error
 		attach.GetResumeAttachId() != slot.resumeAttachID ||
 		attach.GetCorrelationId() != slot.correlationID ||
 		strings.TrimSpace(attach.GetRunLeaseId()) == "" || attach.GetResumeRequestVersion() <= 0 {
-		return errors.New("Program resume grant did not match the frozen Wait")
+		return errors.New("program resume grant did not match the frozen wait")
 	}
 	if slot.granted != nil && !proto.Equal(slot.granted.attach, attach) {
-		return errors.New("Program resume grant changed an installed authority")
+		return errors.New("program resume grant changed an installed authority")
 	}
 	if slot.accepted != nil && !proto.Equal(slot.accepted, attach) {
-		return errors.New("Program resume grant changed an accepted authority")
+		return errors.New("program resume grant changed an accepted authority")
 	}
 	grant.attach = proto.Clone(attach).(*runv0.ResumeAttach)
 	slot.granted = grant
@@ -232,7 +232,7 @@ func (r waitingRunRegistration) waitStream(ctx context.Context, stopped <-chan s
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
 	case <-stopped:
-		return nil, nil, errors.New("Program stream stopped")
+		return nil, nil, errors.New("program stream stopped")
 	}
 }
 

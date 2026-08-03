@@ -69,14 +69,14 @@ func imageCommand(ctx context.Context, runtimePath string, args []string, launch
 		return nil, errors.New("image runtime user is required")
 	}
 	if opts.CgroupNamespace && !opts.ManagedProgram {
-		return nil, errors.New("Program cgroup namespace requires managed Program mounts")
+		return nil, errors.New("program cgroup namespace requires managed program mounts")
 	}
 	if opts.CgroupNamespace {
 		if err := validateProgramCgroupLeaf(opts.CgroupLeaf); err != nil {
 			return nil, err
 		}
 	} else if opts.CgroupLeaf != "" {
-		return nil, errors.New("Program cgroup leaf requires a cgroup namespace")
+		return nil, errors.New("program cgroup leaf requires a cgroup namespace")
 	}
 	initArgs := []string{
 		imageRuntimeInitArg,
@@ -121,7 +121,7 @@ func runImageRuntimeInit(args []string, env []string) error {
 		managedProgram = true
 	case "false":
 	default:
-		return fmt.Errorf("invalid managed Program flag %q", args[4])
+		return fmt.Errorf("invalid managed program flag %q", args[4])
 	}
 	var startProof bool
 	var cgroupNamespace bool
@@ -133,7 +133,7 @@ func runImageRuntimeInit(args []string, env []string) error {
 		return fmt.Errorf("invalid cgroup namespace flag %q", args[5])
 	}
 	if cgroupNamespace && !managedProgram {
-		return errors.New("Program cgroup namespace requires managed Program mounts")
+		return errors.New("program cgroup namespace requires managed program mounts")
 	}
 	cgroupLeaf := args[6]
 	if cgroupNamespace {
@@ -141,7 +141,7 @@ func runImageRuntimeInit(args []string, env []string) error {
 			return err
 		}
 	} else if cgroupLeaf != "" {
-		return errors.New("Program cgroup leaf requires a cgroup namespace")
+		return errors.New("program cgroup leaf requires a cgroup namespace")
 	}
 	switch args[7] {
 	case "true":
@@ -289,10 +289,10 @@ func mountManagedSecretFiles(imageRoot string) error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("inspect managed Secret root: %w", err)
+		return fmt.Errorf("inspect managed secret root: %w", err)
 	}
 	if !info.IsDir() {
-		return errors.New("managed Secret root is not a directory")
+		return errors.New("managed secret root is not a directory")
 	}
 	return filepath.WalkDir(managedProgramSecretRoot, func(source string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -306,11 +306,11 @@ func mountManagedSecretFiles(imageRoot string) error {
 			return err
 		}
 		if !info.Mode().IsRegular() {
-			return fmt.Errorf("managed Secret source is not a regular file: %s", source)
+			return fmt.Errorf("managed secret source is not a regular file: %s", source)
 		}
 		relative, err := filepath.Rel(managedProgramSecretRoot, source)
 		if err != nil || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			return errors.New("managed Secret source escapes staging root")
+			return errors.New("managed secret source escapes staging root")
 		}
 		guestPath := "/" + filepath.ToSlash(relative)
 		if err := validateProgramSecretFilePath(guestPath); err != nil {
@@ -331,10 +331,10 @@ func mountManagedSecretFiles(imageRoot string) error {
 			return err
 		}
 		if !targetInfo.Mode().IsRegular() {
-			return fmt.Errorf("managed Secret target is not a regular file: %s", guestPath)
+			return fmt.Errorf("managed secret target is not a regular file: %s", guestPath)
 		}
 		if err := syscall.Mount(source, target, "", syscall.MS_BIND, ""); err != nil {
-			return fmt.Errorf("bind managed Secret %s: %w", guestPath, err)
+			return fmt.Errorf("bind managed secret %s: %w", guestPath, err)
 		}
 		if err := syscall.Mount(
 			"",
@@ -343,7 +343,7 @@ func mountManagedSecretFiles(imageRoot string) error {
 			syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY|syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC,
 			"",
 		); err != nil {
-			return fmt.Errorf("seal managed Secret %s: %w", guestPath, err)
+			return fmt.Errorf("seal managed secret %s: %w", guestPath, err)
 		}
 		return nil
 	})
@@ -360,15 +360,15 @@ func mountManagedProgram(imageRoot string) error {
 	for _, mount := range mounts {
 		info, err := os.Stat(mount.source)
 		if err != nil {
-			return fmt.Errorf("inspect managed Program mount: %w", err)
+			return fmt.Errorf("inspect managed program mount: %w", err)
 		}
 		if !info.IsDir() {
-			return fmt.Errorf("managed Program source is not a directory: %s", mount.source)
+			return fmt.Errorf("managed program source is not a directory: %s", mount.source)
 		}
 	}
 	for _, mount := range mounts {
 		if _, err := os.Stat(mount.source); err != nil {
-			return fmt.Errorf("managed Program drive set is incomplete: %w", err)
+			return fmt.Errorf("managed program drive set is incomplete: %w", err)
 		}
 		target, err := imageRuntimeMountTarget(imageRoot, mount.target)
 		if err != nil {
@@ -381,7 +381,7 @@ func mountManagedProgram(imageRoot string) error {
 			syscall.MS_BIND|syscall.MS_REC,
 			"",
 		); err != nil {
-			return fmt.Errorf("bind managed Program %s: %w", mount.target, err)
+			return fmt.Errorf("bind managed program %s: %w", mount.target, err)
 		}
 		if err := syscall.Mount(
 			"",
@@ -390,7 +390,7 @@ func mountManagedProgram(imageRoot string) error {
 			syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY|syscall.MS_NOSUID|syscall.MS_NODEV,
 			"",
 		); err != nil {
-			return fmt.Errorf("seal managed Program %s: %w", mount.target, err)
+			return fmt.Errorf("seal managed program %s: %w", mount.target, err)
 		}
 	}
 	return nil

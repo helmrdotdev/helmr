@@ -201,7 +201,7 @@ func ValidateGuestRequest(request GuestRequest) error {
 	}{
 		{label: "operation ID", value: request.OperationID},
 		{label: "attempt ID", value: request.AttemptID},
-		{label: "Build Lease ID", value: request.BuildLeaseID},
+		{label: "build lease ID", value: request.BuildLeaseID},
 	} {
 		if err := ids.Validate(identity.value); err != nil {
 			return fmt.Errorf("image-build %s is invalid", identity.label)
@@ -211,7 +211,7 @@ func ValidateGuestRequest(request GuestRequest) error {
 		return errors.New("image-build runtime identity ID is invalid")
 	}
 	if request.BuildLeaseGeneration < 1 || request.WorkerEpoch < 1 {
-		return errors.New("image-build Lease generation or Worker epoch is invalid")
+		return errors.New("image-build lease generation or worker epoch is invalid")
 	}
 	if err := ValidateSourceAdmission(SourceAdmission{
 		Architecture: request.Architecture, Plan: request.Plan, PlanDigest: request.PlanDigest,
@@ -257,7 +257,7 @@ func ValidateSourceAdmission(admission SourceAdmission) error {
 		digest string
 	}{
 		{label: "submitted source", digest: admission.SubmittedSourceDigest},
-		{label: "Build tree", digest: admission.BuildTreeDigest},
+		{label: "build tree", digest: admission.BuildTreeDigest},
 		{label: "admitted path set", digest: admission.AdmittedPathSetDigest},
 		{label: "source archive", digest: admission.SourceArchiveDigest},
 	} {
@@ -414,10 +414,10 @@ func validateRegistryBindings(bindings []RegistryBinding) error {
 			return fmt.Errorf("image-build registry binding %d resolution ID is invalid", index)
 		}
 		if err := ids.Validate(binding.SecretID); err != nil {
-			return fmt.Errorf("image-build registry binding %d Secret ID is invalid", index)
+			return fmt.Errorf("image-build registry binding %d secret ID is invalid", index)
 		}
 		if err := ids.Validate(binding.SecretVersionID); err != nil {
-			return fmt.Errorf("image-build registry binding %d Secret version ID is invalid", index)
+			return fmt.Errorf("image-build registry binding %d secret version ID is invalid", index)
 		}
 		if binding.RevocationGeneration < 0 {
 			return fmt.Errorf("image-build registry binding %d revocation generation is invalid", index)
@@ -516,7 +516,7 @@ func validateAdmittedPaths(plan Build, admitted []SourcePath) error {
 	seen := make(map[string]SourcePathKind, len(admitted))
 	for _, entry := range admitted {
 		if entry.Path == "helmr" || strings.HasPrefix(entry.Path, "helmr/") {
-			return errors.New("image-build admitted paths contain Platform compiler output")
+			return errors.New("image-build admitted paths contain platform compiler output")
 		}
 		seen[entry.Path] = entry.Kind
 		allowed := false

@@ -369,7 +369,7 @@ func TestValidateRejectsInvalidOperations(t *testing.T) {
 			change: func(build *Build) {
 				build.Images[0].Steps[2].CopySourceFile.Path = "../package.json"
 			},
-			errMsg: "Deployment-relative",
+			errMsg: "deployment-relative",
 		},
 		{
 			name: "directory dot path",
@@ -382,14 +382,14 @@ func TestValidateRejectsInvalidOperations(t *testing.T) {
 			change: func(build *Build) {
 				build.Images[0].Steps[2].CopySourceFile.Path = "."
 			},
-			errMsg: "Deployment-relative",
+			errMsg: "deployment-relative",
 		},
 		{
 			name: "Platform compiler output",
 			change: func(build *Build) {
 				build.Images[0].Steps[3].CopySourceDir.Path = "helmr/generated"
 			},
-			errMsg: "Deployment-relative",
+			errMsg: "deployment-relative",
 		},
 		{
 			name: "workdir parent",

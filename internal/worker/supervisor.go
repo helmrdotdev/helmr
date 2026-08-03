@@ -135,7 +135,7 @@ type Supervisor struct {
 
 func New(cfg Config) (*Supervisor, error) {
 	if cfg.ControlPlane == nil {
-		return nil, errors.New("supervisor Control Plane client is required")
+		return nil, errors.New("supervisor control plane client is required")
 	}
 	if cfg.ObservationEvery <= 0 {
 		cfg.ObservationEvery = 30 * time.Second
@@ -267,7 +267,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	signalDrain := func(returned workerapi.StatusResponse) {
 		if returned.Status == workerapi.StatusDraining {
 			drainOnce.Do(func() {
-				// Publish draining before waking Run so every claim loop closes
+				// Publish draining before waking a run so every claim loop closes
 				// admission at the same instant the server response is observed.
 				s.state.Store(StateDraining)
 				drainRequested <- struct{}{}
@@ -382,7 +382,7 @@ func (s *Supervisor) completeServerDirectedDrain(
 	s.state.Store(StateDraining)
 	cancelActiveClaims()
 	cancelActiveBackground()
-	// Once the Control Plane has durably requested draining, process signals can stop
+	// Once the control plane has durably requested draining, process signals can stop
 	// admission but cannot turn the operation back into a non-durable restart.
 	// The supervisor owns this bounded completion context.
 	drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cfg.DrainTimeout)

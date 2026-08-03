@@ -334,12 +334,12 @@ func helmrOwnedVMProcess(cmdline []byte, processRoot string, jailerDir string) (
 		}
 		rel, err := filepath.Rel(filepath.Join(jailerDir, "firecracker"), cleanRoot)
 		if err != nil {
-			return "", true, "cannot correlate owned firecracker root"
+			return "", true, "cannot correlate owned Firecracker root"
 		}
 		parts := strings.Split(rel, string(os.PathSeparator))
 		id := parts[0]
 		if len(parts) < 2 || parts[1] != "root" || !canonicalVMID(id) {
-			return id, true, fmt.Sprintf("owned firecracker root has non-canonical VM identity %q", rel)
+			return id, true, fmt.Sprintf("owned Firecracker root has non-canonical VM identity %q", rel)
 		}
 		return id, true, ""
 	default:

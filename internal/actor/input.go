@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var ErrAuthority = errors.New("Actor input durable authority is inconsistent")
+var ErrAuthority = errors.New("actor input durable authority is inconsistent")
 
 // CanStartContinuation is the common precondition for an idle Actor to consume
 // durable input. Closing Actors must continue until their close sequence is
@@ -50,7 +50,7 @@ func FailWait(ctx context.Context, store db.Querier, wait db.RunWait, reason str
 func RecordResolution(record db.ActorRecord) (json.RawMessage, error) {
 	var value any
 	if err := json.Unmarshal(record.Data, &value); err != nil {
-		return nil, fmt.Errorf("Actor input record data is invalid: %w", err)
+		return nil, fmt.Errorf("actor input record data is invalid: %w", err)
 	}
 	source := map[string]any{"type": record.SourceKind.String}
 	if record.SourceKind.String == "run" {
@@ -83,7 +83,7 @@ func CreateContinuation(
 	}
 	now, err := store.GetRunLeaseRenewalTime(ctx)
 	if err != nil || !now.Valid {
-		return pgtype.UUID{}, fmt.Errorf("load Actor input continuation time: %w", err)
+		return pgtype.UUID{}, fmt.Errorf("load actor input continuation time: %w", err)
 	}
 	run, err := store.CreateActorContinuationRun(ctx, db.CreateActorContinuationRunParams{
 		RunID: runID, QueueOriginAt: now,

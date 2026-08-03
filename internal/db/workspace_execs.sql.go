@@ -624,7 +624,7 @@ type CreateWorkspaceExecRuntimeReservationParams struct {
 	RuntimeIdentityID               string             `json:"runtime_identity_id"`
 	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
 	WorkerEpoch                     int64              `json:"worker_epoch"`
-	ReservedCpuMillis               int64              `json:"reserved_cpu_millis"`
+	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
 	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
 	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
 	ReservedExecutionSlots          int32              `json:"reserved_execution_slots"`
@@ -646,7 +646,7 @@ type CreateWorkspaceExecRuntimeReservationRow struct {
 	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
 	RuntimeSubstrateID              pgtype.UUID        `json:"runtime_substrate_id"`
 	WorkerEpoch                     int64              `json:"worker_epoch"`
-	ReservedCpuMillis               int64              `json:"reserved_cpu_millis"`
+	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
 	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
 	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
 	ReservedExecutionSlots          int32              `json:"reserved_execution_slots"`
@@ -694,7 +694,7 @@ func (q *Queries) CreateWorkspaceExecRuntimeReservation(ctx context.Context, arg
 		arg.RuntimeIdentityID,
 		arg.DeploymentDefinitionID,
 		arg.WorkerEpoch,
-		arg.ReservedCpuMillis,
+		arg.ReservedCPUMillis,
 		arg.ReservedMemoryBytes,
 		arg.ReservedGuestEphemeralDiskBytes,
 		arg.ReservedExecutionSlots,
@@ -716,7 +716,7 @@ func (q *Queries) CreateWorkspaceExecRuntimeReservation(ctx context.Context, arg
 		&i.DeploymentDefinitionID,
 		&i.RuntimeSubstrateID,
 		&i.WorkerEpoch,
-		&i.ReservedCpuMillis,
+		&i.ReservedCPUMillis,
 		&i.ReservedMemoryBytes,
 		&i.ReservedGuestEphemeralDiskBytes,
 		&i.ReservedExecutionSlots,
@@ -2634,7 +2634,7 @@ func (q *Queries) ReserveReadyRuntimeForWorkspaceExec(ctx context.Context, arg R
 		&i.DeploymentDefinitionID,
 		&i.RuntimeSubstrateID,
 		&i.WorkerEpoch,
-		&i.ReservedCpuMillis,
+		&i.ReservedCPUMillis,
 		&i.ReservedMemoryBytes,
 		&i.ReservedGuestEphemeralDiskBytes,
 		&i.ReservedExecutionSlots,

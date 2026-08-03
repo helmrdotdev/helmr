@@ -124,7 +124,7 @@ func verifyProgramArtifact(ctx context.Context, artifact artifactInput) (*verifi
 		artifact.SizeBytes,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("program Artifact: %w", err)
+		return nil, fmt.Errorf("program artifact: %w", err)
 	}
 
 	verifier := programVerifier{
@@ -164,7 +164,7 @@ func validateArtifactDescriptor(
 	var maxPhysicalBytes int64
 	switch role {
 	case programArtifact:
-		label = "Program"
+		label = "program"
 		mediaType = ProgramArtifactMediaType
 		maxPhysicalBytes = maxProgramPhysicalBytes
 	case runtimeArtifact:
@@ -172,7 +172,7 @@ func validateArtifactDescriptor(
 		mediaType = RuntimeArtifactMediaType
 		maxPhysicalBytes = maxRuntimePhysicalBytes
 	case managerArtifact:
-		label = "Manager"
+		label = "manager"
 		mediaType = ManagerTreeMediaType
 		maxPhysicalBytes = maxManagerTreeBytes
 	case toolchainArtifact:
@@ -187,16 +187,16 @@ func validateArtifactDescriptor(
 	}
 	if artifact.SizeBytes < 1 || artifact.SizeBytes > maxPhysicalBytes {
 		return fmt.Errorf(
-			"%s Artifact size is outside [1,%d]",
+			"%s artifact size is outside [1,%d]",
 			label,
 			maxPhysicalBytes,
 		)
 	}
 	if artifact.MediaType != mediaType {
-		return fmt.Errorf("%s Artifact media type = %q, want %q", label, artifact.MediaType, mediaType)
+		return fmt.Errorf("%s artifact media type = %q, want %q", label, artifact.MediaType, mediaType)
 	}
 	if artifact.Reader == nil {
-		return fmt.Errorf("%s Artifact reader is nil", label)
+		return fmt.Errorf("%s artifact reader is nil", label)
 	}
 	return nil
 }

@@ -33,7 +33,7 @@ func (s *Server) workerCreateActorInputRunWait(
 ) {
 	var params workerActorInputWaitParams
 	if err := decodeClosedJSON(request.Params, &params); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Actor input Wait params: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid actor input wait params: %w", err)))
 		return
 	}
 	actorID, err := parseCanonicalUUID("params.actor_id", params.ActorID)
@@ -43,7 +43,7 @@ func (s *Server) workerCreateActorInputRunWait(
 	}
 	if params.AfterInputSequence < 0 || request.ActorSpeculativeInputSequence == nil ||
 		params.AfterInputSequence != *request.ActorSpeculativeInputSequence {
-		writeError(w, badRequest(errors.New("Actor input Wait cursors must be present, non-negative, and equal")))
+		writeError(w, badRequest(errors.New("actor input wait cursors must be present, non-negative, and equal")))
 		return
 	}
 	metadata, tags, err := normalizeWaitAnnotations(request.Metadata, request.Tags)
@@ -57,7 +57,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		return
 	}
 	if run.EntrypointKind != "actor" || !run.ActorID.Valid || run.ActorID != pgvalue.UUID(actorID) {
-		writeError(w, conflict(errors.New("Actor input Wait must target the owning Actor")))
+		writeError(w, conflict(errors.New("actor input wait must target the owning actor")))
 		return
 	}
 	definition, err := s.db.GetDeploymentDefinition(r.Context(), db.GetDeploymentDefinitionParams{
@@ -65,12 +65,12 @@ func (s *Server) workerCreateActorInputRunWait(
 		Kind: run.EntrypointKind, DeclaredID: run.EntrypointDeclaredID,
 	})
 	if err != nil {
-		writeError(w, errors.New("load Actor input Wait declaration"))
+		writeError(w, errors.New("load actor input wait declaration"))
 		return
 	}
 	idleTimeoutDefault, err := actorInputWaitIdleTimeout(definition.Manifest)
 	if err != nil {
-		writeError(w, errors.New("Actor input Wait declaration is invalid"))
+		writeError(w, errors.New("actor input wait declaration is invalid"))
 		return
 	}
 	timeoutAt, idleTimeout, checkpointDueAt, checkpointDelay, err := runWaitDeadlines(
@@ -85,14 +85,14 @@ func (s *Server) workerCreateActorInputRunWait(
 		ActorID: actorID.String(), AfterInputSequence: params.AfterInputSequence,
 	})
 	if err != nil {
-		writeError(w, badRequest(fmt.Errorf("normalize Actor input Wait params: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("normalize actor input wait params: %w", err)))
 		return
 	}
 	normalized.Metadata = metadata
 	normalized.Tags = tags
 	fingerprint, err := terminalRequestFingerprint("worker.run-wait.create.v1", normalized)
 	if err != nil {
-		writeError(w, badRequest(fmt.Errorf("fingerprint Actor input Wait registration: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("fingerprint actor input wait registration: %w", err)))
 		return
 	}
 	waitID := identity.waitID
@@ -111,7 +111,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		if _, err := secret.LockAttemptDelivery(
 			r.Context(), work.q, lockedLocators.RunID, lockedLocators.AttemptNumber, lockedLocators.WorkspaceID,
 		); err != nil {
-			return fmt.Errorf("lock Actor input Wait Secret authority: %w", err)
+			return fmt.Errorf("lock actor input wait secret authority: %w", err)
 		}
 		owner, err := lockRunFinalizationOwner(r.Context(), work.q, lockedLocators)
 		if err != nil {
@@ -186,12 +186,12 @@ func (s *Server) workerCreateActorInputRunWait(
 		return err
 	})
 	if errors.Is(err, errStaleRunLeaseClaim) {
-		writeError(w, conflict(errors.New("worker Actor input Wait receipt is stale")))
+		writeError(w, conflict(errors.New("worker actor input wait receipt is stale")))
 		return
 	}
 	if err != nil {
 		s.log.Error("register worker Actor input Wait failed", "run_id", pgvalue.UUIDString(registrationLocators.RunID), "error", err)
-		writeError(w, errors.New("register worker Actor input Wait"))
+		writeError(w, errors.New("register worker actor input wait"))
 		return
 	}
 	response := workerapi.CreateRunWaitResponse{
@@ -215,7 +215,7 @@ func actorInputWaitIdleTimeout(raw json.RawMessage) (time.Duration, error) {
 		return 0, err
 	}
 	if manifest.IdleTimeoutMS <= 0 || manifest.IdleTimeoutMS > maxRunWaitIdleTimeout.Milliseconds() {
-		return 0, errors.New("Actor idle timeout is outside the supported range")
+		return 0, errors.New("actor idle timeout is outside the supported range")
 	}
 	return time.Duration(manifest.IdleTimeoutMS) * time.Millisecond, nil
 }
@@ -224,13 +224,13 @@ func actorInputWaitDecision(wait db.RunWait) (string, json.RawMessage, error) {
 	switch wait.ConditionState {
 	case db.WaitStateCompleted:
 		if !wait.CompletedActorRecordID.Valid || len(wait.ConditionResult) == 0 {
-			return "", nil, errors.New("completed Actor input Wait is missing its record")
+			return "", nil, errors.New("completed actor input wait is missing its record")
 		}
 		return "completed", wait.ConditionResult, nil
 	case db.WaitStateFailed:
 		reason := pgvalue.TextValue(wait.ConditionReasonCode)
 		if reason != "wait_timeout" && reason != "actor_closed" {
-			return "", nil, errors.New("Actor input Wait failure reason is invalid")
+			return "", nil, errors.New("actor input wait failure reason is invalid")
 		}
 		payload, _ := json.Marshal(map[string]string{"reason_code": reason})
 		return "failed", payload, nil
@@ -238,6 +238,6 @@ func actorInputWaitDecision(wait db.RunWait) (string, json.RawMessage, error) {
 		payload, _ := json.Marshal(map[string]string{"reason_code": pgvalue.TextValue(wait.ConditionReasonCode)})
 		return "cancelled", payload, nil
 	default:
-		return "", nil, errors.New("Actor input Wait is not terminal")
+		return "", nil, errors.New("actor input wait is not terminal")
 	}
 }

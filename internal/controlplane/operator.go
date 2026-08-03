@@ -97,7 +97,7 @@ func (s *Server) operatorListWorkerInstances(w http.ResponseWriter, r *http.Requ
 	rows, err := s.db.ListOperatorWorkerInstances(r.Context(), params)
 	if err != nil {
 		s.log.Error("list operator Worker instances", "error", err)
-		writeError(w, errors.New("list operator Worker instances"))
+		writeError(w, errors.New("list operator worker instances"))
 		return
 	}
 	response := operatorapi.WorkerInstancesResponse{
@@ -121,12 +121,12 @@ func (s *Server) operatorGetWorkerInstance(w http.ResponseWriter, r *http.Reques
 	}
 	row, err := s.db.GetOperatorWorkerInstance(r.Context(), pgvalue.UUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(errors.New("Worker instance was not found")))
+		writeError(w, notFound(errors.New("worker instance was not found")))
 		return
 	}
 	if err != nil {
 		s.log.Error("get operator Worker instance", "worker_instance_id", id.String(), "error", err)
-		writeError(w, errors.New("get operator Worker instance"))
+		writeError(w, errors.New("get operator worker instance"))
 		return
 	}
 	writeJSON(w, http.StatusOK, operatorWorkerInstance(
@@ -144,7 +144,7 @@ func (s *Server) operatorDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 	}
 	var request operatorapi.DrainWorkerInstanceRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Worker drain JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid worker drain JSON: %w", err)))
 		return
 	}
 	if request.ExpectedEpoch <= 0 || request.ExpectedClaimVersion <= 0 {
@@ -153,12 +153,12 @@ func (s *Server) operatorDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 	}
 	instance, err := s.db.GetOperatorWorkerInstance(r.Context(), pgvalue.UUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(errors.New("Worker instance was not found")))
+		writeError(w, notFound(errors.New("worker instance was not found")))
 		return
 	}
 	if err != nil {
 		s.log.Error("get Worker instance for operator drain", "worker_instance_id", id.String(), "error", err)
-		writeError(w, errors.New("get Worker instance for drain"))
+		writeError(w, errors.New("get worker instance for drain"))
 		return
 	}
 	draining, err := s.db.DrainWorkerInstance(r.Context(), db.DrainWorkerInstanceParams{
@@ -168,12 +168,12 @@ func (s *Server) operatorDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 		ExpectedClaimVersion: request.ExpectedClaimVersion,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(errors.New("Worker drain fence is stale or the instance is not active")))
+		writeError(w, conflict(errors.New("worker drain fence is stale or the instance is not active")))
 		return
 	}
 	if err != nil {
 		s.log.Error("operator drain Worker instance", "worker_instance_id", id.String(), "error", err)
-		writeError(w, errors.New("drain Worker instance"))
+		writeError(w, errors.New("drain worker instance"))
 		return
 	}
 	writeJSON(w, http.StatusOK, operatorWorkerInstance(
@@ -203,7 +203,7 @@ func operatorWorkerInstanceListParams(r *http.Request) (db.ListOperatorWorkerIns
 	for _, state := range r.URL.Query()["state"] {
 		state = strings.TrimSpace(state)
 		if _, ok := operatorInstanceStates[state]; !ok {
-			return params, fmt.Errorf("unsupported Worker instance state %q", state)
+			return params, fmt.Errorf("unsupported worker instance state %q", state)
 		}
 		params.States = append(params.States, state)
 	}
