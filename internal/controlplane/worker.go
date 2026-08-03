@@ -18,7 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -715,7 +715,7 @@ func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabi
 	if capabilities.NetworkABI != workerapi.NetworkABIV0 {
 		return workerapi.Capabilities{}, fmt.Errorf("worker network_abi must be %s", workerapi.NetworkABIV0)
 	}
-	expectedRuntimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{
+	expectedRuntimeID, err := runtimeid.Digest(runtimeid.Selector{
 		Arch:            capabilities.RuntimeArch,
 		ABI:             capabilities.RuntimeABI,
 		KernelDigest:    capabilities.KernelDigest,

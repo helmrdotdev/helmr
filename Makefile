@@ -18,7 +18,7 @@ tools:
 generate: datapath-bpf proto sqlc
 
 datapath-bpf:
-	$(GO) generate ./internal/worker/datapath
+	$(GO) generate ./internal/firecracker/datapath
 
 proto: tools
 	$(BUF) generate proto --template proto/buf.gen.yaml --path proto/run.proto --path proto/workspace.proto

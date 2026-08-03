@@ -1,4 +1,4 @@
-package identity
+package runtimeid
 
 import (
 	"encoding/json"

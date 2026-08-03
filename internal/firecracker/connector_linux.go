@@ -32,10 +32,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
-	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
+	"github.com/helmrdotdev/helmr/internal/firecracker/datapath"
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
-	"github.com/helmrdotdev/helmr/internal/worker/datapath"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"
 )
@@ -99,7 +99,7 @@ func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 	kernelDigest := c.artifacts.Kernel.Digest
 	initramfsDigest := c.artifacts.Initramfs.Digest
 	rootfsDigest := c.artifacts.Rootfs.Digest
-	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{
+	runtimeID, err := runtimeid.Digest(runtimeid.Selector{
 		Arch:            runtime.GOARCH,
 		ABI:             runtimeABI,
 		KernelDigest:    kernelDigest,
@@ -666,7 +666,7 @@ func (c *Connector) validateRestoreIdentity(
 	if identity.RuntimeBackend != "firecracker" {
 		return manifest, Config{}, fmt.Errorf("checkpoint runtime backend %q is not supported", identity.RuntimeBackend)
 	}
-	workerArchitecture, err := runtimeidentity.ArchitectureFromGo(runtime.GOARCH)
+	workerArchitecture, err := runtimeid.ArchitectureFromGo(runtime.GOARCH)
 	if err != nil {
 		return manifest, Config{}, err
 	}
@@ -700,7 +700,7 @@ func (c *Connector) validateRestoreIdentity(
 	if identity.RuntimeConfigDigest != sha256sum.DigestBytes(manifestBytes) {
 		return manifest, Config{}, fmt.Errorf("checkpoint runtime config digest %s does not match checkpoint manifest digest %s", identity.RuntimeConfigDigest, sha256sum.DigestBytes(manifestBytes))
 	}
-	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{
+	runtimeID, err := runtimeid.Digest(runtimeid.Selector{
 		Arch:            workerArchitecture,
 		ABI:             runtimeABI,
 		KernelDigest:    kernelDigest,
@@ -1860,12 +1860,12 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	kernelDigest := s.artifacts.Kernel.Digest
 	initramfsDigest := s.artifacts.Initramfs.Digest
 	rootfsDigest := s.artifacts.Rootfs.Digest
-	workerArchitecture, err := runtimeidentity.ArchitectureFromGo(runtime.GOARCH)
+	workerArchitecture, err := runtimeid.ArchitectureFromGo(runtime.GOARCH)
 	if err != nil {
 		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, err
 	}
-	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{
+	runtimeID, err := runtimeid.Digest(runtimeid.Selector{
 		Arch:            workerArchitecture,
 		ABI:             runtimeABI,
 		KernelDigest:    kernelDigest,
@@ -2263,7 +2263,7 @@ func validateRuntimeSubstrateTopology(substrate *vm.RuntimeSubstrate) error {
 }
 
 func snapshotRuntimeConfig(cfg Config, checkpointID string, runtimeID string, kernelDigest string, initramfsDigest string, rootfsDigest string, kernelArgs string, topology vm.RuntimeTopology, readOnlyDrives ...[]vm.ReadOnlyDrive) (string, []byte, error) {
-	workerArchitecture, err := runtimeidentity.ArchitectureFromGo(runtime.GOARCH)
+	workerArchitecture, err := runtimeid.ArchitectureFromGo(runtime.GOARCH)
 	if err != nil {
 		return "", nil, err
 	}
@@ -2415,7 +2415,7 @@ func validateRuntimeManifest(
 	if runtimeManifest.Backend != "firecracker" {
 		return fmt.Errorf("checkpoint manifest runtime backend %q is not supported", runtimeManifest.Backend)
 	}
-	workerArchitecture, err := runtimeidentity.ArchitectureFromGo(runtime.GOARCH)
+	workerArchitecture, err := runtimeid.ArchitectureFromGo(runtime.GOARCH)
 	if err != nil {
 		return err
 	}

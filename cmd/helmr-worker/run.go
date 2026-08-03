@@ -26,7 +26,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/firecracker"
 	imageworker "github.com/helmrdotdev/helmr/internal/imagebuild/worker"
 	imagecacheecr "github.com/helmrdotdev/helmr/internal/imagecache/ecr"
-	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -205,7 +205,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("normalize firecracker runtime architecture: %w", err)
 	}
-	runtimeIdentity := runtimeidentity.Selector{
+	runtimeIdentity := runtimeid.Selector{
 		Arch:            string(runtimeArchitecture),
 		ABI:             runtimeCapabilities.ABI,
 		KernelDigest:    runtimeCapabilities.KernelDigest,
@@ -213,7 +213,7 @@ func run(log *slog.Logger) error {
 		RootfsDigest:    runtimeCapabilities.RootfsDigest,
 		NetworkABI:      runtimeCapabilities.NetworkABI,
 	}
-	runtimeIdentity.ID, err = runtimeidentity.Digest(runtimeIdentity)
+	runtimeIdentity.ID, err = runtimeid.Digest(runtimeIdentity)
 	if err != nil {
 		return fmt.Errorf("derive normalized firecracker runtime identity: %w", err)
 	}

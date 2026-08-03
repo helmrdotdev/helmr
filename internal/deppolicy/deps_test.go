@@ -1,10 +1,11 @@
-package helmr
+package deppolicy
 
 import (
 	"fmt"
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -17,7 +18,7 @@ const internalImportPrefix = "github.com/helmrdotdev/helmr/internal/"
 const moduleImportPrefix = "github.com/helmrdotdev/helmr/"
 
 func TestOperatorAPIDependencyBudget(t *testing.T) {
-	imports, err := packageImports("operatorapi")
+	imports, err := packageImports(filepath.Join(repositoryRoot(t), "operatorapi"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +31,7 @@ func TestOperatorAPIDependencyBudget(t *testing.T) {
 }
 
 func TestPrivatePlatformPolicyDependencies(t *testing.T) {
-	imports, err := packageImports("cmd/internal/platform-policy")
+	imports, err := packageImports(filepath.Join(repositoryRoot(t), "cmd/internal/platform-policy"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +48,7 @@ func TestPrivatePlatformPolicyDependencies(t *testing.T) {
 }
 
 func TestInternalPackageForbiddenDependencies(t *testing.T) {
-	actual, err := internalPackageDependencyGraph("internal")
+	actual, err := internalPackageDependencyGraph(filepath.Join(repositoryRoot(t), "internal"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,6 +79,19 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 			}
 		}
 	}
+}
+
+func repositoryRoot(t *testing.T) string {
+	t.Helper()
+	workDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Clean(filepath.Join(workDir, "..", ".."))
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		t.Fatalf("resolve repository root: %v", err)
+	}
+	return root
 }
 
 func internalPackageDependencyGraph(root string) (map[string][]string, error) {

@@ -31,7 +31,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
-	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/sirupsen/logrus"
@@ -40,7 +40,7 @@ import (
 
 func TestSnapshotRuntimeConfigIncludesNetworkABI(t *testing.T) {
 	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
-	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", NetworkABI: NetworkABIV0})
+	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", NetworkABI: NetworkABIV0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestScratchUsableFloorMatchesBuildProfiles(t *testing.T) {
 
 func TestSnapshotRuntimeConfigBindsManagedProgramTopology(t *testing.T) {
 	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
-	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{
+	runtimeID, err := runtimeid.Digest(runtimeid.Selector{
 		Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel",
 		InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs",
 		NetworkABI: NetworkABIV0,
@@ -212,7 +212,7 @@ func TestSnapshotRuntimeConfigIncludesSubstrateIdentity(t *testing.T) {
 		BuilderABI: "builder-v1",
 		LayoutABI:  "layout-v1",
 	}}
-	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", NetworkABI: NetworkABIV0})
+	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", NetworkABI: NetworkABIV0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func (e testWrappedErrors) WrappedErrors() []error {
 
 func TestSnapshotRuntimeConfigRequiresResolver(t *testing.T) {
 	cfg := (Config{}).WithDefaults()
-	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", NetworkABI: NetworkABIV0})
+	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", NetworkABI: NetworkABIV0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +460,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 	kernelDigest := testDigest([]byte("kernel"))
 	initramfsDigest := testDigest([]byte("initramfs"))
 	rootfsDigest := testDigest([]byte("rootfs"))
-	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, NetworkABI: NetworkABIV0})
+	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, NetworkABI: NetworkABIV0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1886,7 +1886,7 @@ func testConnector(t *testing.T, cfg Config) *Connector {
 
 func testCheckpointArchitecture(t *testing.T) string {
 	t.Helper()
-	architecture, err := runtimeidentity.ArchitectureFromGo(runtime.GOARCH)
+	architecture, err := runtimeid.ArchitectureFromGo(runtime.GOARCH)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1898,7 +1898,7 @@ func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID strin
 	kernelDigest := testDigest([]byte("kernel"))
 	initramfsDigest := testDigest([]byte("initramfs"))
 	rootfsDigest := testDigest([]byte("rootfs"))
-	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, NetworkABI: NetworkABIV0})
+	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, NetworkABI: NetworkABIV0})
 	if err != nil {
 		t.Fatal(err)
 	}
