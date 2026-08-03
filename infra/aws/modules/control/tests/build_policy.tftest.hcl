@@ -138,7 +138,6 @@ variables {
   public_subnet_ids   = ["subnet-2123456789abcdef0", "subnet-3123456789abcdef0"]
   public_url          = "http://control.example.test"
   allow_insecure_http = true
-  worker_group_id     = "run-workers"
   worker_groups = [{
     id                      = "run-workers"
     name                    = "Run workers"
@@ -252,6 +251,14 @@ run "control_installs_exact_policy_before_start" {
       !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "HELMR_PLATFORM_STORE_URI")
     )
     error_message = "Dispatcher and migration must not receive build policy configuration."
+  }
+
+  assert {
+    condition = (
+      toset([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name]) == toset(["HELMR_CLICKHOUSE_URL"]) &&
+      toset([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].secrets : item.name]) == toset(["HELMR_DATABASE_URL"])
+    )
+    error_message = "Migration must receive only PostgreSQL and ClickHouse migration configuration, without Control region or Worker configuration."
   }
 
   assert {

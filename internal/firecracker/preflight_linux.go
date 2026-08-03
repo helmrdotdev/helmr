@@ -219,13 +219,6 @@ func checkDirectory(label string, path string) error {
 	return nil
 }
 
-func ensureDirectory(label string, path string) error {
-	if err := os.MkdirAll(path, 0o700); err != nil {
-		return fmt.Errorf("%s %q could not be created: %w", label, path, err)
-	}
-	return checkDirectory(label, path)
-}
-
 func checkCgroup(version string) error {
 	switch version {
 	case "2":

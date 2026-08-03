@@ -28,6 +28,6 @@ helmr-worker status
 
 The command exits non-zero unless the worker can authenticate to the control plane and is active.
 
-Checkpoint restore verifies runtime compatibility before resuming a run. Worker backend, architecture, ABI, kernel digest, rootfs digest, runtime config digest, vCPU count, memory, and CNI profile must match the checkpoint metadata.
+Checkpoint restore verifies runtime compatibility before resuming a run. Worker backend, architecture, ABI, kernel digest, rootfs digest, runtime config digest, vCPU count, memory, and network ABI must match the checkpoint metadata.
 
 Checkpoint objects are encrypted by the worker before upload to object storage.

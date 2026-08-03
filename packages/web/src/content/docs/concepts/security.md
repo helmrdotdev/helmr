@@ -15,8 +15,8 @@ Helmr is designed around explicit runtime boundaries: your control plane, your w
 Workers execute task code and direct workspace operations in
 Firecracker-backed Linux guests. A run receives an attached writable workspace,
 deployment task source, task-declared secrets, and a bounded duration. Worker
-capabilities include runtime architecture, kernel and rootfs digests, CNI
-profile, vCPU, memory, and execution slots.
+capabilities include runtime architecture, kernel and rootfs digests, network
+ABI, vCPU, memory, and execution slots.
 
 ## Credentials
 

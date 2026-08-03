@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"os"
 	"path/filepath"
@@ -99,15 +98,11 @@ func fileDigest(path string) (string, int64, error) {
 	}
 	defer file.Close()
 	digest := sha256.New()
-	size, err := copyHash(digest, file)
+	size, err := io.Copy(digest, file)
 	if err != nil {
 		return "", 0, err
 	}
 	return sha256sum.DigestHash(digest), size, nil
-}
-
-func copyHash(digest hash.Hash, reader io.Reader) (int64, error) {
-	return io.Copy(digest, reader)
 }
 
 func validateDigestFile(path string, digest string) error {

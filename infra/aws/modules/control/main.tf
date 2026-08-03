@@ -12,7 +12,6 @@ locals {
   region_id           = trimspace(coalesce(var.region_id, data.aws_region.current.region))
   default_region_id   = trimspace(coalesce(var.default_region_id, local.region_id))
   region_display_name = trimspace(coalesce(var.region_display_name, local.region_id))
-  worker_group_id     = trimspace(var.worker_group_id)
   worker_groups_by_id = {
     for group in var.worker_groups : group.id => group
   }
@@ -56,14 +55,13 @@ locals {
     }, local.clickhouse_user == "" ? {} : {
     HELMR_CLICKHOUSE_USER = local.clickhouse_user
   })
-  telemetry_environment = merge({
-    HELMR_WORKER_GROUP_ID     = local.worker_group_id
+  region_environment = {
     HELMR_REGION_ID           = local.region_id
     HELMR_DEFAULT_REGION_ID   = local.default_region_id
     HELMR_PROVIDER            = "aws"
     HELMR_PROVIDER_REGION     = data.aws_region.current.region
     HELMR_REGION_DISPLAY_NAME = local.region_display_name
-  }, local.clickhouse_environment)
+  }
 
   telemetry_secrets = var.clickhouse_password_secret_arn == null ? {} : {
     HELMR_CLICKHOUSE_PASSWORD = var.clickhouse_password_secret_arn
@@ -72,7 +70,7 @@ locals {
     HELMR_DATABASE_URL = aws_secretsmanager_secret.database_url.arn
   }, local.telemetry_secrets)
 
-  migration_environment = local.telemetry_environment
+  migration_environment = local.clickhouse_environment
 
   email_environment = merge(
     var.email_provider == "none" ? {} : {
@@ -114,7 +112,7 @@ locals {
     HELMR_IMAGE_CACHE_REPOSITORY_PREFIX     = local.image_cache_repository_prefix
     HELMR_IMAGE_CACHE_ROLE_ARN              = aws_iam_role.image_cache.arn
     HELMR_IMAGE_CACHE_REPOSITORY_ARN_PREFIX = local.image_cache_repository_arn_prefix
-  }, local.telemetry_environment, local.email_environment)
+  }, local.region_environment, local.clickhouse_environment, local.email_environment)
 
   control_secret_defaults = merge({
     HELMR_DATABASE_URL               = aws_secretsmanager_secret.database_url.arn
@@ -134,14 +132,13 @@ locals {
     local.email_secrets
   )
 
-  reserved_email_keys = toset([
+  reserved_optional_control_keys = toset([
     "HELMR_EMAIL_PROVIDER",
     "HELMR_EMAIL_FROM",
     "HELMR_RESEND_API_KEY",
     "HELMR_SMTP_ADDR",
     "HELMR_SMTP_USERNAME",
     "HELMR_SMTP_PASSWORD",
-    "HELMR_WORKER_GROUP_ID",
     "HELMR_REGION_ID",
     "HELMR_DEFAULT_REGION_ID",
     "HELMR_PROVIDER",
@@ -153,7 +150,7 @@ locals {
   ])
   reserved_control_environment_keys = toset(keys(local.control_environment_defaults))
   reserved_control_secret_keys      = setunion(toset(keys(local.control_secret_defaults)), toset(["HELMR_OPERATOR_TOKEN"]))
-  reserved_control_keys             = setunion(local.reserved_control_environment_keys, local.reserved_control_secret_keys, local.reserved_email_keys)
+  reserved_control_keys             = setunion(local.reserved_control_environment_keys, local.reserved_control_secret_keys, local.reserved_optional_control_keys)
   reserved_dispatcher_keys = setunion(toset(keys(local.dispatcher_environment_defaults)), toset(keys(local.dispatcher_secrets)), toset([
     "HELMR_CLICKHOUSE_PASSWORD",
   ]))

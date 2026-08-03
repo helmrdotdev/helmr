@@ -19,7 +19,12 @@ Helmr is split between authoring tools, a control plane, and workers.
 | Worker | Leases queued Runs, materializes Workspaces, starts isolated guests, runs Task code, serves bounded Workspace exec requests, records logs, and releases results. |
 | Guest runtime | Loads the immutable Program inside the guest and bridges Task results, Actor input/output, logs, metadata updates, waits, and internal Process I/O. |
 
-Workers enroll into explicitly configured worker groups. Run and build groups use the same identity and lifecycle model but scale independently. Enrollment proves AWS instance identity and binds the issued credential to the group's account, region, Auto Scaling group, instance profile, AMI policy, and permitted role.
+Workers enroll into explicitly configured logical worker groups. Run and build
+groups use the same provider-neutral identity and lifecycle model. Enrollment
+proves possession of the group's deployment-supplied secret over a one-time
+nonce, requested roles, and opaque operator resource locator. Control creates
+the worker-instance identity and issues its distinct renewable credential;
+provider inventory and physical capacity remain deployment responsibilities.
 
 ## Deployment Model
 

@@ -51,9 +51,6 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		AuthKey:               make([]byte, auth.RootKeySize),
 		WorkerTokenSigningKey: make([]byte, auth.WorkerTokenSigningKeySize),
 		PublicURL:             publicURL,
-		WorkerGroupID:         "us-east-1-worker-group-1",
-		RegionID:              "us-east-1",
-		DefaultRegionID:       "us-east-1",
 		TelemetryReader:       controltestTelemetryReader{store: store},
 		PlatformArtifactLocks: controltestPlatformArtifactLocker{},
 		MagicLinkDebugURLs:    true,
@@ -147,7 +144,6 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 		return deployment.ParseBuildPolicy([]byte(buildPolicy))
 	}
 	t.Cleanup(func() { loadControlBuildPolicy = originalBuildPolicyLoader })
-	t.Setenv("HELMR_WORKER_GROUP_ID", "us-east-1-worker-group-1")
 	t.Setenv("HELMR_REGION_ID", "us-east-1")
 	t.Setenv("HELMR_DEFAULT_REGION_ID", "us-east-1")
 	t.Setenv("HELMR_PROVIDER", "aws")

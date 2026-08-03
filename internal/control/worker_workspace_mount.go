@@ -299,7 +299,7 @@ func (s *Server) workerStopWorkspaceMount(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			return err
 		}
-		stopped = workspaceMountFromStop(row)
+		stopped = db.WorkspaceMount(row)
 		return nil
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -749,8 +749,4 @@ func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) *api.WorkerWorks
 		FencingGeneration:       row.FencingGeneration,
 		ExpiresAt:               row.GuestChannelTokenExpiresAt.Time,
 	}
-}
-
-func workspaceMountFromStop(row db.StopWorkspaceMountRow) db.WorkspaceMount {
-	return db.WorkspaceMount(row)
 }

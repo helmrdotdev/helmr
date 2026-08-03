@@ -121,7 +121,6 @@ module "control" {
   private_subnet_ids                     = module.control_network.private_subnet_ids
   public_url                             = var.public_url
   deployment_mode                        = var.deployment_mode
-  worker_group_id                        = var.worker_group_id
   worker_groups                          = local.worker_groups
   image_cache_worker_role_arns           = [for pool in values(local.worker_pools) : "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${pool.name}-worker" if pool.allows_build]
   region_id                              = var.region_id

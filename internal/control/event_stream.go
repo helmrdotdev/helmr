@@ -412,7 +412,7 @@ func apiEventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, _ 
 		attributes = json.RawMessage(`{"redacted":true}`)
 	}
 	return api.RunEvent{
-		ID:             telemetryCursor(seq),
+		ID:             telemetry.Cursor(seq),
 		RunID:          runIDValue,
 		DeploymentID:   deploymentIDValue,
 		AttemptNumber:  attemptNumber,

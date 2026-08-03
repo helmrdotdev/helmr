@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 )
 
 const (
@@ -21,7 +23,11 @@ func eventCursor(r *http.Request) (int64, error) {
 	if value == "" {
 		return 0, nil
 	}
-	return parseTelemetryCursor(value)
+	seq, err := telemetry.ParseCursor(value)
+	if err != nil {
+		return 0, errTelemetryInvalidCursor
+	}
+	return seq, nil
 }
 
 func eventLimit(r *http.Request) (int32, error) {

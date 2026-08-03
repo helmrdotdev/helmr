@@ -17,11 +17,15 @@ order: 960
 
 ## Control plane
 
-Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CAS_URI`, `HELMR_CLICKHOUSE_URL`, `WORKER_TOKEN_SIGNING_KEY`, `HELMR_WORKER_GROUPS`, `HELMR_WORKER_GROUP_ID`, `HELMR_REGION_ID`, `HELMR_DEFAULT_REGION_ID`, `HELMR_PROVIDER`, `HELMR_PROVIDER_REGION`, `AUTH_KEY`, `ENCRYPTION_KEY`, `WORKSPACE_FENCING_KEY`, `TOKEN_CREDENTIAL_KEY`, `HELMR_GITHUB_OAUTH_CLIENT_ID`, and `HELMR_GITHUB_OAUTH_CLIENT_SECRET`.
+Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CAS_URI`, `HELMR_CLICKHOUSE_URL`, `WORKER_TOKEN_SIGNING_KEY`, `HELMR_WORKER_GROUPS`, `HELMR_REGION_ID`, `HELMR_DEFAULT_REGION_ID`, `HELMR_PROVIDER`, `HELMR_PROVIDER_REGION`, `AUTH_KEY`, `ENCRYPTION_KEY`, `WORKSPACE_FENCING_KEY`, `TOKEN_CREDENTIAL_KEY`, `HELMR_GITHUB_OAUTH_CLIENT_ID`, and `HELMR_GITHUB_OAUTH_CLIENT_SECRET`.
 
 Deployment mode: `HELMR_DEPLOYMENT_MODE` defaults to `self-hosted`. In `self-hosted` mode, `HELMR_SETUP_TOKEN` is required to create the first and only organization. In `managed-cloud` mode, authenticated users can create organizations without a setup token.
 
-`HELMR_WORKER_GROUPS` is the authoritative JSON list of AWS worker-group enrollment policies. Each group identifies its AWS account, region, Auto Scaling group, instance profile, allowed AMIs, and run/build role. The same group and enrollment model is used in both deployment modes.
+`HELMR_WORKER_GROUPS` is the authoritative JSON list of logical worker groups.
+Each group declares its ID, presentation fields, allowed run/build roles,
+observation TTL, instance-capacity vector, and the name of its distinct
+`HELMR_WORKER_ENROLLMENT_SECRET_*` environment variable. It contains no AWS
+account, Auto Scaling group, instance profile, AMI, or topology authority.
 
 `HELMR_REGION_ID` and `HELMR_DEFAULT_REGION_ID` are opaque Helmr identifiers, not provider-region or DNS names. Their normalized UTF-8 values must be 1–255 bytes and contain no surrounding whitespace or control characters.
 
@@ -78,8 +82,17 @@ Optional Schedule worker tuning:
 
 ## Worker
 
-Required: `HELMR_CONTROL_URL`, `HELMR_CAS_URI`, `HELMR_WORKER_GROUP_ID`, `CHECKPOINT_ENCRYPTION_KEY`, `HELMR_WORKER_FIRECRACKER_JAILER_UID`, and `HELMR_WORKER_FIRECRACKER_JAILER_GID`.
+Required: `HELMR_CONTROL_URL`, `HELMR_CAS_URI`, `HELMR_WORKER_GROUP_ID`,
+`HELMR_WORKER_RESOURCE_ID`, `HELMR_WORKER_ENROLLMENT_SECRET_FILE`,
+`CHECKPOINT_ENCRYPTION_KEY`, `HELMR_WORKER_FIRECRACKER_JAILER_UID`, and
+`HELMR_WORKER_FIRECRACKER_JAILER_GID`.
 
-The worker requests a one-time enrollment challenge and proves its AWS EC2 identity with the instance identity document and a nonce-bound signed STS request. Control verifies the instance against the configured worker-group policy, then issues a renewable worker credential stored at `HELMR_WORKER_INSTANCE_CREDENTIAL_PATH`. No deployment-mode or shared bootstrap credential is accepted by the worker.
+The worker requests a one-time enrollment challenge and proves possession of
+its worker-group enrollment secret over the nonce, requested roles, and opaque
+operator resource locator. Control verifies the proof and group roles, creates
+the authoritative worker-instance identity, and issues a renewable per-instance
+credential stored at `HELMR_WORKER_INSTANCE_CREDENTIAL_PATH`. Provider identity
+and infrastructure inventory are deployment responsibilities rather than
+Control authentication inputs.
 
 Runtime inputs include `HELMR_WORKER_WORK_DIR`, `HELMR_WORKER_IMAGES_DIR`, `HELMR_GIT_PATH`, Firecracker paths and jailer settings, routed-network link and translation pools, resolver and blocked CIDRs, `HELMR_VM_VCPUS`, `HELMR_VM_MEMORY_MIB`, `HELMR_WORKER_DISK_MIB`, and `HELMR_VM_HEALTH_TIMEOUT`. `HELMR_WORKER_DISK_MIB` overrides the filesystem capacity advertised by filesystem-first worker instances. Workspace-image builds start the pinned BuildKit daemon inside a fresh image-build guest; there is no host BuildKit address or service setting.

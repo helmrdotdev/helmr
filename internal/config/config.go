@@ -29,9 +29,6 @@ const (
 type Control struct {
 	Addr                    string
 	DeploymentMode          string
-	WorkerGroupID           string
-	RegionID                string
-	DefaultRegionID         string
 	DatabaseURL             string
 	RedisURL                string
 	ClickHouseURL           string
@@ -91,7 +88,7 @@ type ClickHouse struct {
 	Password string
 }
 
-type WorkerGroupBootstrap struct {
+type RegionBootstrap struct {
 	RegionID          string
 	DefaultRegionID   string
 	Provider          string
@@ -211,10 +208,10 @@ func loadImageCache() (*ImageCache, error) {
 	return &config, nil
 }
 
-func LoadWorkerGroupBootstrap() (WorkerGroupBootstrap, error) {
+func LoadRegionBootstrap() (RegionBootstrap, error) {
 	regionID := envString("HELMR_REGION_ID")
 	defaultRegionID := envString("HELMR_DEFAULT_REGION_ID")
-	cfg := WorkerGroupBootstrap{
+	cfg := RegionBootstrap{
 		RegionID:          regionID,
 		DefaultRegionID:   defaultRegionID,
 		Provider:          envString("HELMR_PROVIDER"),

@@ -119,13 +119,14 @@ virtualization remains available for supported instance families when explicitly
 are filesystem-first: size the root EBS volume for build/cache/runtime data, and set
 `worker_disk_mib` only when the advertised filesystem capacity should differ from auto-detection.
 
-For an AMI rollout, first add the new AMI to `worker_allowed_ami_ids` and apply that control-plane
-change. Then change `worker_ami_id`, apply the launch template, and explicitly start the Auto
-Scaling instance refresh. Retain the old AMI in the allowlist until every old instance terminates.
-This prevents the control plane from fencing healthy old hosts before their replacements activate.
+For an AMI rollout, change `worker_ami_id`, apply the launch template, and
+coordinate the Auto Scaling instance refresh through the deployment's exact
+drain-to-`termination_ready` path. Control does not authenticate or allowlist
+the AMI.
 
-`helmr-dispatcher` owns desired capacity independently for run and build groups in both deployment
-modes. Terraform continues enforcing ASG min/max; `max_size` is the hard spend guardrail and equal
-min/max values provide fixed capacity. Explicit certified CPU, memory, disk, cache, VM-slot, and
-build-executor capacities are required when workers are created. CloudWatch metrics and alarms are
-observational only; cost reporting is kept separate from scaling correctness.
+Deployment infrastructure owns desired capacity independently for run and
+build groups. Terraform continues enforcing ASG min/max; `max_size` is the hard
+spend guardrail and equal min/max values provide fixed capacity. Explicit CPU,
+memory, disk, cache, VM-slot, and build-executor capacities are required when
+workers are created. Demand observations may guide scale-out, but scale-in must
+use the exact claim-fenced drain contract.

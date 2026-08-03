@@ -129,22 +129,22 @@ inside the VPC.
 
 The official worker AMI is resolved from `helmr_version` and `aws_region`. Set `worker_ami_id` only
 for custom builds; custom AMIs must satisfy the `modules/worker` contract: Firecracker, jailer,
-CNI plugins, certified guest boot artifacts containing the pinned BuildKit daemon, AWS CLI, and
+`ip`, `nft`, certified guest boot artifacts containing the pinned BuildKit daemon, AWS CLI, and
 `helmr-worker` installed. Keep NAT enabled
 while a worker is running or draining because workers run in private subnets. Workers are
 filesystem-first: the root EBS volume carries build/cache/runtime data, and `worker_disk_mib` can
 override the disk capacity advertised to the control plane.
 
-For an AMI rollout, first add the new AMI to `worker_allowed_ami_ids` and apply that control-plane
-change. Then change `worker_ami_id`, apply the launch template, and explicitly start the Auto
-Scaling instance refresh. Retain the old AMI in the allowlist until every old instance terminates.
-This preserves enrollment for old and new hosts without weakening the worker-group boundary.
+For an AMI rollout, change `worker_ami_id`, apply the launch template, and
+coordinate the Auto Scaling instance refresh through the deployment's exact
+drain-to-`termination_ready` path. Control does not authenticate or allowlist
+the AMI.
 
-`helmr-dispatcher` owns desired capacity for run and build groups in both deployment modes.
-Terraform retains the ASG min/max guardrails, and equal min/max values provide fixed capacity.
-Worker capacity and disk/cache partitions must be explicit when workers are created. CloudWatch
-metrics and alarms are observational only; cost reporting does not participate in scaling
-correctness.
+Deployment infrastructure owns desired capacity for run and build groups.
+Terraform retains the ASG min/max guardrails, and equal min/max values provide
+fixed capacity. Worker capacity and disk/cache partitions must be explicit when
+workers are created. Demand observations may guide scale-out, but scale-in must
+use the exact claim-fenced drain contract.
 
 ## Destroy
 

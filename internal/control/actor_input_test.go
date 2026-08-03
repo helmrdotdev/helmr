@@ -49,8 +49,8 @@ func TestValidateActorInputAddressRequiresExclusiveAddress(t *testing.T) {
 		{},
 		{ActorID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33", ActorKey: "thread:1"},
 	} {
-		if err := validateActorInputAddress(request); err == nil {
-			t.Fatalf("validateActorInputAddress(%+v) succeeded, want error", request)
+		if err := api.ValidateSendActorInputRequest(request); err == nil {
+			t.Fatalf("ValidateSendActorInputRequest(%+v) succeeded, want error", request)
 		}
 	}
 }

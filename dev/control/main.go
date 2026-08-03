@@ -230,9 +230,6 @@ func main() {
 		SetupToken:            cfg.setupToken,
 		AuthKey:               cfg.authKey,
 		PublicURL:             publicURL,
-		WorkerGroupID:         cfg.workerGroupID,
-		RegionID:              cfg.regionID,
-		DefaultRegionID:       cfg.defaultRegionID,
 		EventStream:           eventStream,
 		TelemetryReader:       telemetryReader,
 	})
@@ -277,7 +274,6 @@ type devConfig struct {
 	provider            string
 	providerRegion      string
 	regionDisplayName   string
-	workerGroupID       string
 	workerGroups        []workergroup.Config
 	clickHouseURL       string
 	clickHouseUser      string
@@ -306,7 +302,6 @@ func loadConfig() (devConfig, error) {
 		provider:           strings.TrimSpace(os.Getenv("HELMR_PROVIDER")),
 		providerRegion:     strings.TrimSpace(os.Getenv("HELMR_PROVIDER_REGION")),
 		regionDisplayName:  strings.TrimSpace(os.Getenv("HELMR_REGION_DISPLAY_NAME")),
-		workerGroupID:      strings.TrimSpace(os.Getenv("HELMR_WORKER_GROUP_ID")),
 		clickHouseURL:      strings.TrimSpace(os.Getenv("HELMR_CLICKHOUSE_URL")),
 		clickHouseUser:     strings.TrimSpace(os.Getenv("HELMR_CLICKHOUSE_USER")),
 		clickHousePassword: os.Getenv("HELMR_CLICKHOUSE_PASSWORD"),
@@ -356,19 +351,9 @@ func loadConfig() (devConfig, error) {
 	if cfg.regionDisplayName == "" {
 		cfg.regionDisplayName = cfg.regionID
 	}
-	if cfg.workerGroupID == "" {
-		return cfg, errors.New("HELMR_WORKER_GROUP_ID is required")
-	}
 	cfg.workerGroups, err = workergroup.DecodeConfig(strings.TrimSpace(os.Getenv("HELMR_WORKER_GROUPS")))
 	if err != nil {
 		return cfg, fmt.Errorf("HELMR_WORKER_GROUPS: %w", err)
-	}
-	foundDefaultGroup := false
-	for _, group := range cfg.workerGroups {
-		foundDefaultGroup = foundDefaultGroup || group.ID == cfg.workerGroupID
-	}
-	if !foundDefaultGroup {
-		return cfg, errors.New("HELMR_WORKER_GROUP_ID must identify a group in HELMR_WORKER_GROUPS")
 	}
 	if cfg.clickHouseURL == "" {
 		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")

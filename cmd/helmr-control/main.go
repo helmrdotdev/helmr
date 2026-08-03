@@ -107,9 +107,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	defer pool.Close()
 	queries := db.New(pool)
-	bootstrapCfg, err := config.LoadWorkerGroupBootstrap()
+	bootstrapCfg, err := config.LoadRegionBootstrap()
 	if err != nil {
-		return fmt.Errorf("load worker group bootstrap config: %w", err)
+		return fmt.Errorf("load region bootstrap config: %w", err)
 	}
 	groups, err := workergroup.DecodeConfig(cfg.WorkerGroupsJSON)
 	if err != nil {
@@ -144,7 +144,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}); err != nil {
 		return fmt.Errorf("bootstrap region: %w", err)
 	}
-	if err := workergroup.Reconcile(ctx, txQueries, cfg.RegionID, desiredGroups); err != nil {
+	if err := workergroup.Reconcile(ctx, txQueries, bootstrapCfg.RegionID, desiredGroups); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -240,9 +240,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	handler, err := control.NewServer(control.ServerConfig{
 		Log:                   log,
 		DeploymentMode:        cfg.DeploymentMode,
-		WorkerGroupID:         cfg.WorkerGroupID,
-		RegionID:              cfg.RegionID,
-		DefaultRegionID:       cfg.DefaultRegionID,
 		DB:                    queries,
 		TX:                    pool,
 		ReadinessDB:           pool,

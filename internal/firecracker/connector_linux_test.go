@@ -1957,17 +1957,3 @@ func testDigest(body []byte) string {
 	sum := sha256.Sum256(body)
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
-
-type readWriteNopCloser struct{}
-
-func (readWriteNopCloser) Read([]byte) (int, error) {
-	return 0, io.EOF
-}
-
-func (readWriteNopCloser) Write(p []byte) (int, error) {
-	return len(p), nil
-}
-
-func (readWriteNopCloser) Close() error {
-	return nil
-}

@@ -24,7 +24,7 @@ Prepare these before creating the AWS stack.
 Workers have additional requirements because they run Firecracker guests:
 
 - EC2 instance type with KVM support.
-- Worker AMI that includes `helmr-worker`, Firecracker, jailer, CNI plugins, `tc-redirect-tap`, AWS CLI v2, curl, kernel, initramfs, and a certified guest rootfs containing the pinned BuildKit daemon.
+- Worker AMI that includes `helmr-worker`, Firecracker, jailer, `ip`, `nft`, AWS CLI v2, curl, kernel, initramfs, and a certified guest rootfs containing the pinned BuildKit daemon.
 - Root EBS volume sized for filesystem-first build/cache/runtime data; `worker_disk_mib` can cap advertised capacity when needed.
 - Outbound access to the control plane, S3, ECR, AWS APIs, and any external services your tasks call.
 - SSM access for maintenance. Do not expose SSH by default.

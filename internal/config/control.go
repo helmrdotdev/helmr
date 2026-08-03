@@ -17,9 +17,6 @@ func LoadControl() (Control, error) {
 	cfg := Control{
 		Addr:                    env("HELMR_CONTROL_ADDR", ":8080"),
 		DeploymentMode:          env("HELMR_DEPLOYMENT_MODE", DeploymentModeSelfHosted),
-		WorkerGroupID:           envString("HELMR_WORKER_GROUP_ID"),
-		RegionID:                envString("HELMR_REGION_ID"),
-		DefaultRegionID:         envString("HELMR_DEFAULT_REGION_ID"),
 		DatabaseURL:             envString("HELMR_DATABASE_URL"),
 		RedisURL:                env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
 		ClickHouseURL:           envString("HELMR_CLICKHOUSE_URL"),
@@ -76,17 +73,8 @@ func LoadControl() (Control, error) {
 	if cfg.DeploymentMode != DeploymentModeSelfHosted && cfg.DeploymentMode != DeploymentModeManagedCloud {
 		return cfg, errors.New("HELMR_DEPLOYMENT_MODE must be self-hosted or managed-cloud")
 	}
-	if cfg.WorkerGroupID == "" {
-		return cfg, errors.New("HELMR_WORKER_GROUP_ID is required")
-	}
 	if cfg.WorkerGroupsJSON == "" {
 		return cfg, errors.New("HELMR_WORKER_GROUPS is required")
-	}
-	if cfg.RegionID == "" {
-		return cfg, errors.New("HELMR_REGION_ID is required")
-	}
-	if cfg.DefaultRegionID == "" {
-		return cfg, errors.New("HELMR_DEFAULT_REGION_ID is required")
 	}
 	if cfg.ClickHouseURL == "" {
 		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")

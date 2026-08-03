@@ -82,10 +82,10 @@ Inside the sandbox image, Helmr provides:
 - `/etc/hostname` containing `helmr-sandbox`.
 - `/etc/hosts` with localhost and `helmr-sandbox` entries.
 
-Do not depend on `/run/resolv.conf`, tap devices, CNI names, nftables rules, or
-other implementation details. If Helmr exposes user-facing egress controls, they
-should be configured through documented product policy rather than by mutating
-resolver files or host networking state from task code.
+Do not depend on `/run/resolv.conf`, tap devices, network namespace or link
+names, nftables rules, or other implementation details. Helmr v0 exposes no
+user-configurable egress policy, and task code cannot mutate host networking
+state.
 
 Self-hosted workers still need outbound access to the services your tasks use,
 as well as GitHub, S3, ECR, AWS APIs, and the Helmr control URL.

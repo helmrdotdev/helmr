@@ -43,16 +43,6 @@ variable "deployment_mode" {
   }
 }
 
-variable "worker_group_id" {
-  description = "Default worker group ID used by this control-plane stack."
-  type        = string
-
-  validation {
-    condition     = trimspace(var.worker_group_id) != ""
-    error_message = "worker_group_id must be non-empty."
-  }
-}
-
 variable "worker_groups" {
   description = "Logical enrollment, role, and scheduling boundaries for worker groups."
   type = list(object({

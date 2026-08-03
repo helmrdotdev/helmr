@@ -28,7 +28,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/imagecache"
-	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -68,9 +67,6 @@ type RegistryCredentialOpener interface {
 type Server struct {
 	log                   *slog.Logger
 	deploymentMode        string
-	workerGroupID         string
-	regionID              string
-	defaultRegionID       string
 	db                    db.Querier
 	tx                    TxBeginner
 	readinessDB           db.DBTX
@@ -116,11 +112,8 @@ type TxBeginner interface {
 }
 
 type ServerConfig struct {
-	Log             *slog.Logger
-	DeploymentMode  string
-	WorkerGroupID   string
-	RegionID        string
-	DefaultRegionID string
+	Log            *slog.Logger
+	DeploymentMode string
 
 	DB          db.Querier
 	TX          TxBeginner
@@ -182,7 +175,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if deploymentMode == "" {
 		deploymentMode = deploymentModeSelfHosted
 	}
-	workerGroupID := strings.TrimSpace(cfg.WorkerGroupID)
 	if deploymentMode != deploymentModeSelfHosted && deploymentMode != deploymentModeManagedCloud {
 		return nil, errors.New("deployment mode must be self-hosted or managed-cloud")
 	}
@@ -211,14 +203,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	if err := auth.ValidateWorkerTokenSigningKey(cfg.WorkerTokenSigningKey); err != nil {
 		return nil, err
-	}
-	regionID := cfg.RegionID
-	if err := region.ValidateID(regionID); err != nil {
-		return nil, fmt.Errorf("control region ID: %w", err)
-	}
-	defaultRegionID := cfg.DefaultRegionID
-	if err := region.ValidateID(defaultRegionID); err != nil {
-		return nil, fmt.Errorf("control default region ID: %w", err)
 	}
 	telemetryReader := cfg.TelemetryReader
 	if telemetryReader == nil {
@@ -261,9 +245,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	server := &Server{
 		log:                   log,
 		deploymentMode:        deploymentMode,
-		workerGroupID:         workerGroupID,
-		regionID:              regionID,
-		defaultRegionID:       defaultRegionID,
 		db:                    cfg.DB,
 		tx:                    cfg.TX,
 		readinessDB:           cfg.ReadinessDB,

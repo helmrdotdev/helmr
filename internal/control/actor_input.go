@@ -39,7 +39,7 @@ func (s *Server) sendActorInput(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_actor_reference", message: err.Error()}))
 		return
 	}
-	if err := validateActorInputAddress(request); err != nil {
+	if err := api.ValidateSendActorInputRequest(request); err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_actor_reference", message: err.Error()}))
 		return
 	}
@@ -121,10 +121,6 @@ func decodeActorInputRequest(r *http.Request) (api.SendActorInputRequest, error)
 		return api.SendActorInputRequest{}, errors.New("input is required")
 	}
 	return request, nil
-}
-
-func validateActorInputAddress(request api.SendActorInputRequest) error {
-	return api.ValidateSendActorInputRequest(request)
 }
 
 func (s *Server) resolveActorInputAddress(

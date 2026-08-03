@@ -97,7 +97,6 @@ run "worker_group_requires_a_role" {
     vpc_id                       = "vpc-0123456789abcdef0"
     private_subnet_ids           = ["subnet-0123456789abcdef0", "subnet-1123456789abcdef0"]
     public_subnet_ids            = ["subnet-2123456789abcdef0", "subnet-3123456789abcdef0"]
-    worker_group_id              = "run-workers"
     control_image                = "example.invalid/helmr@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     clickhouse_url               = "https://clickhouse.example.invalid"
     github_oauth_client_id       = "test-client"
@@ -126,7 +125,6 @@ run "inactive_role_capacity_cannot_be_negative" {
     vpc_id                       = "vpc-0123456789abcdef0"
     private_subnet_ids           = ["subnet-0123456789abcdef0", "subnet-1123456789abcdef0"]
     public_subnet_ids            = ["subnet-2123456789abcdef0", "subnet-3123456789abcdef0"]
-    worker_group_id              = "run-workers"
     control_image                = "example.invalid/helmr@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     clickhouse_url               = "https://clickhouse.example.invalid"
     github_oauth_client_id       = "test-client"

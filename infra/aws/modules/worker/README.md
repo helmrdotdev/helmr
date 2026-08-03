@@ -13,7 +13,7 @@ The AMI must provide:
 - AWS CLI v2 and `curl`
 - Firecracker and jailer binaries
 - `/dev/kvm` capable instance support
-- CNI config and plugins, including `tc-redirect-tap`
+- `ip` and `nft` for the Worker-owned routed-TAP datapath
 - guest boot artifacts under `HELMR_WORKER_IMAGES_DIR`
 
 For cost-controlled smoke environments, set `enable_nested_virtualization = true` and use an AWS
@@ -39,10 +39,12 @@ SSM Session Manager access is enabled by default through `AmazonSSMManagedInstan
 inbound SSH rules for bootstrap and smoke debugging. Set `enable_ssm = false` only if the AMI role is
 managed elsewhere.
 
-`worker_group_id` and `worker_roles` select the enrollment and scheduling boundary in every
-deployment. Every AWS worker proves its EC2 identity with temporary instance-profile credentials;
-control verifies its account, region, Auto Scaling group, instance profile, and AMI before issuing
-the same scoped worker credential used by the runtime path.
+`worker_group_id` and `worker_roles` select the logical enrollment and
+scheduling boundary in every deployment. During boot, the module fetches the
+group-specific enrollment secret into a root-only volatile file and binds the
+nonce proof to the requested roles and EC2 instance ID as an opaque operator
+locator. Control authenticates the logical group proof; AWS identity and fleet
+configuration remain operator and infrastructure responsibilities.
 
 ## Lifecycle
 
@@ -55,6 +57,7 @@ worker systemd unit is active. During scale-in or instance refresh, the terminat
 lifecycle hook gives `helmr-worker drain` time to stop accepting leases and wait for active
 executions before the instance terminates.
 
-Launch-template changes do not start an automatic instance refresh. Apply the new worker-group AMI
-allowlist and launch policy first, then explicitly start the Auto Scaling instance refresh. Remove
-the old AMI from the allowlist only after replacement completes.
+Launch-template changes do not start an automatic instance refresh. Drain the
+exact logical worker instance to `termination_ready` before provider deletion,
+then explicitly start or coordinate the Auto Scaling instance refresh. Control
+does not maintain an AMI allowlist.
