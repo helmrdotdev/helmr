@@ -12,10 +12,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/config"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 const testWorkerEnrollmentSecret = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
@@ -24,7 +23,7 @@ func TestResolveWorkerInstanceCredentialUsesEnrollment(t *testing.T) {
 	tempDir := t.TempDir()
 	enrollmentSecretFile := writeTestWorkerEnrollmentSecret(t, testWorkerEnrollmentSecret)
 	originalBuilder := buildWorkerEnrollmentRequest
-	buildWorkerEnrollmentRequest = func(groupID string, nonce string, supportsRun bool, supportsBuild bool, resourceID string, secret string) (api.WorkerEnrollmentRequest, error) {
+	buildWorkerEnrollmentRequest = func(groupID string, nonce string, supportsRun bool, supportsBuild bool, resourceID string, secret string) (workerapi.EnrollmentRequest, error) {
 		if groupID != "run-workers" || nonce != "fresh-nonce" || !supportsRun || supportsBuild || resourceID != "host-1" || secret != testWorkerEnrollmentSecret {
 			t.Fatalf("builder group=%q nonce=%q run=%t build=%t resource=%q secret=%q", groupID, nonce, supportsRun, supportsBuild, resourceID, secret)
 		}
@@ -35,23 +34,23 @@ func TestResolveWorkerInstanceCredentialUsesEnrollment(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/worker/enrollment/challenge":
-			var request api.WorkerEnrollmentChallengeRequest
+			var request workerapi.EnrollmentChallengeRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
 			if request.WorkerGroupID != "run-workers" {
 				t.Fatalf("challenge = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerEnrollmentChallengeResponse{Nonce: "fresh-nonce", WorkerGroupID: "run-workers"})
+			_ = json.NewEncoder(w).Encode(workerapi.EnrollmentChallengeResponse{Nonce: "fresh-nonce", WorkerGroupID: "run-workers"})
 		case "/api/worker/enrollment":
-			var request api.WorkerEnrollmentIntent
+			var request workerapi.EnrollmentIntent
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.WorkerGroupID != "run-workers" || request.Nonce != "fresh-nonce" || !request.SupportsRun || request.SupportsBuild || request.ProtocolVersion != auth.WorkerProtocolVersion {
+			if request.WorkerGroupID != "run-workers" || request.Nonce != "fresh-nonce" || !request.SupportsRun || request.SupportsBuild || request.ProtocolVersion != workerapi.CurrentProtocolVersion {
 				t.Fatalf("enrollment = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerEnrollmentResponse{
+			_ = json.NewEncoder(w).Encode(workerapi.EnrollmentResponse{
 				WorkerInstanceID: "00000000-0000-0000-0000-000000000402",
 				WorkerGroupID:    "run-workers", WorkerInstanceSecret: "managed-secret",
 			})
@@ -62,7 +61,7 @@ func TestResolveWorkerInstanceCredentialUsesEnrollment(t *testing.T) {
 	defer server.Close()
 
 	credential, err := resolveWorkerInstanceCredential(context.Background(), config.Worker{
-		ControlURL: server.URL, WorkerGroupID: "run-workers", WorkerRoles: []string{"run"},
+		ControlPlaneURL: server.URL, WorkerGroupID: "run-workers", WorkerRoles: []string{"run"},
 		WorkerResourceID: "host-1", WorkerEnrollmentSecretFile: enrollmentSecretFile,
 	}, tempDir)
 	if err != nil {
@@ -77,7 +76,7 @@ func TestResolveWorkerInstanceCredentialSerializesEnrollment(t *testing.T) {
 	tempDir := t.TempDir()
 	enrollmentSecretFile := writeTestWorkerEnrollmentSecret(t, testWorkerEnrollmentSecret)
 	originalBuilder := buildWorkerEnrollmentRequest
-	buildWorkerEnrollmentRequest = func(groupID string, nonce string, supportsRun bool, supportsBuild bool, _ string, _ string) (api.WorkerEnrollmentRequest, error) {
+	buildWorkerEnrollmentRequest = func(groupID string, nonce string, supportsRun bool, supportsBuild bool, _ string, _ string) (workerapi.EnrollmentRequest, error) {
 		return testWorkerEnrollmentRequest(groupID, nonce, supportsRun, supportsBuild), nil
 	}
 	t.Cleanup(func() { buildWorkerEnrollmentRequest = originalBuilder })
@@ -85,10 +84,10 @@ func TestResolveWorkerInstanceCredentialSerializesEnrollment(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/worker/enrollment/challenge":
-			_ = json.NewEncoder(w).Encode(api.WorkerEnrollmentChallengeResponse{Nonce: "nonce", WorkerGroupID: "run-workers"})
+			_ = json.NewEncoder(w).Encode(workerapi.EnrollmentChallengeResponse{Nonce: "nonce", WorkerGroupID: "run-workers"})
 		case "/api/worker/enrollment":
 			requests.Add(1)
-			_ = json.NewEncoder(w).Encode(api.WorkerEnrollmentResponse{
+			_ = json.NewEncoder(w).Encode(workerapi.EnrollmentResponse{
 				WorkerInstanceID: "00000000-0000-0000-0000-000000000401",
 				WorkerGroupID:    "run-workers", WorkerInstanceSecret: "worker-secret",
 			})
@@ -98,7 +97,7 @@ func TestResolveWorkerInstanceCredentialSerializesEnrollment(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := config.Worker{
-		ControlURL: server.URL, WorkerGroupID: "run-workers", WorkerRoles: []string{"run"},
+		ControlPlaneURL: server.URL, WorkerGroupID: "run-workers", WorkerRoles: []string{"run"},
 		WorkerEnrollmentSecretFile: enrollmentSecretFile,
 	}
 
@@ -134,7 +133,7 @@ func TestResolveWorkerInstanceCredentialSerializesEnrollment(t *testing.T) {
 	}
 }
 
-func TestResolveWorkerControlCredentialReadsStoredWorkerInstanceID(t *testing.T) {
+func TestResolveWorkerControlPlaneCredentialReadsStoredWorkerInstanceID(t *testing.T) {
 	tempDir := t.TempDir()
 	if err := writeWorkerInstanceSecret(workerCredentialPath(tempDir, ""), workerCredentialFile{
 		WorkerInstanceID:     "00000000-0000-0000-0000-000000000401",
@@ -143,7 +142,7 @@ func TestResolveWorkerControlCredentialReadsStoredWorkerInstanceID(t *testing.T)
 		t.Fatal(err)
 	}
 
-	credential, err := resolveWorkerControlCredential(config.WorkerControl{}, tempDir)
+	credential, err := resolveWorkerControlPlaneCredential(config.WorkerControlPlane{}, tempDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,16 +182,16 @@ func TestResolveAuthenticatedWorkerCredentialReenrollsAfterUnauthorized(t *testi
 		t.Fatal(err)
 	}
 	originalBuilder := buildWorkerEnrollmentRequest
-	buildWorkerEnrollmentRequest = func(groupID string, nonce string, supportsRun bool, supportsBuild bool, _ string, _ string) (api.WorkerEnrollmentRequest, error) {
+	buildWorkerEnrollmentRequest = func(groupID string, nonce string, supportsRun bool, supportsBuild bool, _ string, _ string) (workerapi.EnrollmentRequest, error) {
 		return testWorkerEnrollmentRequest(groupID, nonce, supportsRun, supportsBuild), nil
 	}
 	t.Cleanup(func() { buildWorkerEnrollmentRequest = originalBuilder })
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/worker/enrollment/challenge":
-			_ = json.NewEncoder(w).Encode(api.WorkerEnrollmentChallengeResponse{Nonce: "replacement-nonce", WorkerGroupID: "build-workers"})
+			_ = json.NewEncoder(w).Encode(workerapi.EnrollmentChallengeResponse{Nonce: "replacement-nonce", WorkerGroupID: "build-workers"})
 		case "/api/worker/enrollment":
-			_ = json.NewEncoder(w).Encode(api.WorkerEnrollmentResponse{
+			_ = json.NewEncoder(w).Encode(workerapi.EnrollmentResponse{
 				WorkerInstanceID: "00000000-0000-0000-0000-000000000401",
 				WorkerGroupID:    "build-workers", WorkerInstanceSecret: "replacement-secret",
 			})
@@ -204,12 +203,12 @@ func TestResolveAuthenticatedWorkerCredentialReenrollsAfterUnauthorized(t *testi
 
 	var attempts int
 	credential, err := resolveAuthenticatedWorkerCredential(context.Background(), config.Worker{
-		ControlURL: server.URL, WorkerGroupID: "build-workers", WorkerRoles: []string{"build"},
+		ControlPlaneURL: server.URL, WorkerGroupID: "build-workers", WorkerRoles: []string{"build"},
 		WorkerEnrollmentSecretFile: enrollmentSecretFile,
 	}, tempDir, func(candidate workerCredentialFile) error {
 		attempts++
 		if candidate.WorkerInstanceSecret == "rejected-secret" {
-			return &client.HTTPError{StatusCode: http.StatusUnauthorized, Status: "401 Unauthorized"}
+			return &httpclient.Error{StatusCode: http.StatusUnauthorized, Status: "401 Unauthorized"}
 		}
 		if candidate.WorkerInstanceSecret != "replacement-secret" {
 			t.Fatalf("unexpected candidate secret %q", candidate.WorkerInstanceSecret)
@@ -284,11 +283,11 @@ func writeTestWorkerEnrollmentSecret(t *testing.T, secret string) string {
 	return path
 }
 
-func testWorkerEnrollmentRequest(groupID string, nonce string, supportsRun bool, supportsBuild bool) api.WorkerEnrollmentRequest {
-	return api.WorkerEnrollmentRequest{
-		WorkerEnrollmentIntent: api.WorkerEnrollmentIntent{
+func testWorkerEnrollmentRequest(groupID string, nonce string, supportsRun bool, supportsBuild bool) workerapi.EnrollmentRequest {
+	return workerapi.EnrollmentRequest{
+		EnrollmentIntent: workerapi.EnrollmentIntent{
 			WorkerGroupID: groupID, Nonce: nonce, SupportsRun: supportsRun, SupportsBuild: supportsBuild,
-			ProtocolVersion: auth.WorkerProtocolVersion,
+			ProtocolVersion: workerapi.CurrentProtocolVersion,
 		},
 		ResourceID: "host-1",
 		Proof:      "proof",
@@ -305,7 +304,7 @@ func TestResolveAuthenticatedWorkerCredentialPreservesNonUnauthorizedCredential(
 		t.Fatal(err)
 	}
 	_, err := resolveAuthenticatedWorkerCredential(context.Background(), config.Worker{}, tempDir, func(workerCredentialFile) error {
-		return &client.HTTPError{StatusCode: http.StatusServiceUnavailable, Status: "503 Service Unavailable"}
+		return &httpclient.Error{StatusCode: http.StatusServiceUnavailable, Status: "503 Service Unavailable"}
 	})
 	if err == nil {
 		t.Fatal("expected authentication error")

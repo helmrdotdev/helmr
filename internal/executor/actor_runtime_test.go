@@ -10,70 +10,71 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type actorRuntimeContractControl struct {
-	*testRunLeaseControl
-	startRequest  api.WorkerStartActorRequest
-	startRequests []api.WorkerStartActorRequest
-	startResponse api.WorkerStartActorResponse
+type actorRuntimeContractControlPlane struct {
+	*testRunLeaseControlPlane
+	startRequest  workerapi.StartActorRequest
+	startRequests []workerapi.StartActorRequest
+	startResponse workerapi.StartActorResponse
 	startErr      error
 	startErrors   []error
 	firstAttempt  chan struct{}
-	statusRequest api.WorkerActorReferenceRequest
-	closeRequest  api.WorkerCloseActorRequest
-	outputRequest api.WorkerReadActorOutputPageRequest
+	statusRequest workerapi.ActorReferenceRequest
+	closeRequest  workerapi.CloseActorRequest
+	outputRequest workerapi.ReadActorOutputPageRequest
 }
 
-func (control *actorRuntimeContractControl) StartRunActor(
+func (controlPlane *actorRuntimeContractControlPlane) StartRunActor(
 	_ context.Context,
-	request api.WorkerStartActorRequest,
-) (api.WorkerStartActorResponse, error) {
-	control.startRequest = request
-	control.startRequests = append(control.startRequests, request)
-	if len(control.startErrors) != 0 {
-		err := control.startErrors[0]
-		control.startErrors = control.startErrors[1:]
-		if control.firstAttempt != nil {
-			close(control.firstAttempt)
-			control.firstAttempt = nil
+	request workerapi.StartActorRequest,
+) (workerapi.StartActorResponse, error) {
+	controlPlane.startRequest = request
+	controlPlane.startRequests = append(controlPlane.startRequests, request)
+	if len(controlPlane.startErrors) != 0 {
+		err := controlPlane.startErrors[0]
+		controlPlane.startErrors = controlPlane.startErrors[1:]
+		if controlPlane.firstAttempt != nil {
+			close(controlPlane.firstAttempt)
+			controlPlane.firstAttempt = nil
 		}
-		return api.WorkerStartActorResponse{}, err
+		return workerapi.StartActorResponse{}, err
 	}
-	return control.startResponse, control.startErr
+	return controlPlane.startResponse, controlPlane.startErr
 }
 
-func (control *actorRuntimeContractControl) GetRunActorStatus(
+func (controlPlane *actorRuntimeContractControlPlane) GetRunActorStatus(
 	_ context.Context,
-	request api.WorkerActorReferenceRequest,
-) (api.WorkerActorStatusResponse, error) {
-	control.statusRequest = request
-	return api.WorkerActorStatusResponse{
+	request workerapi.ActorReferenceRequest,
+) (workerapi.ActorStatusResponse, error) {
+	controlPlane.statusRequest = request
+	return workerapi.ActorStatusResponse{
 		CorrelationID: request.CorrelationID,
 		Completed:     &api.ActorStatus{},
 	}, nil
 }
 
-func (control *actorRuntimeContractControl) CloseRunActor(
+func (controlPlane *actorRuntimeContractControlPlane) CloseRunActor(
 	_ context.Context,
-	request api.WorkerCloseActorRequest,
-) (api.WorkerCloseActorResponse, error) {
-	control.closeRequest = request
-	return api.WorkerCloseActorResponse{
+	request workerapi.CloseActorRequest,
+) (workerapi.CloseActorResponse, error) {
+	controlPlane.closeRequest = request
+	return workerapi.CloseActorResponse{
 		CorrelationID: request.CorrelationID,
 		Completed:     &api.ActorOperationReceipt{},
 	}, nil
 }
 
-func (control *actorRuntimeContractControl) ReadRunActorOutputPage(
+func (controlPlane *actorRuntimeContractControlPlane) ReadRunActorOutputPage(
 	_ context.Context,
-	request api.WorkerReadActorOutputPageRequest,
-) (api.WorkerReadActorOutputPageResponse, error) {
-	control.outputRequest = request
-	return api.WorkerReadActorOutputPageResponse{
+	request workerapi.ReadActorOutputPageRequest,
+) (workerapi.ReadActorOutputPageResponse, error) {
+	controlPlane.outputRequest = request
+	return workerapi.ReadActorOutputPageResponse{
 		CorrelationID: request.CorrelationID,
 		Completed:     &api.ActorOutputPage{},
 	}, nil
@@ -144,9 +145,9 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 		},
 	}}
 	t.Run("happy path", func(t *testing.T) {
-		control := &actorRuntimeContractControl{
-			testRunLeaseControl: &testRunLeaseControl{},
-			startResponse: api.WorkerStartActorResponse{
+		controlPlane := &actorRuntimeContractControlPlane{
+			testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+			startResponse: workerapi.StartActorResponse{
 				CorrelationID: correlationID,
 				Completed: &api.StartActorResponse{
 					ActorID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
@@ -154,33 +155,33 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 				},
 			},
 		}
-		decision, err := runActorRuntimeContract(t, event, control)
+		decision, err := runActorRuntimeContract(t, event, controlPlane)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if decision.GetKind() != "completed" ||
-			control.startRequest.Lease.ID == "" ||
-			control.startRequest.ActorDeclaredID != "mailbox" ||
-			control.startRequest.Workspace.Key == nil ||
-			*control.startRequest.Workspace.Key != "mailbox-data" {
-			t.Fatalf("decision = %+v request = %+v", decision, control.startRequest)
+			controlPlane.startRequest.Lease.ID == "" ||
+			controlPlane.startRequest.ActorDeclaredID != "mailbox" ||
+			controlPlane.startRequest.Workspace.Key == nil ||
+			*controlPlane.startRequest.Workspace.Key != "mailbox-data" {
+			t.Fatalf("decision = %+v request = %+v", decision, controlPlane.startRequest)
 		}
 	})
 	t.Run("domain failure", func(t *testing.T) {
-		control := &actorRuntimeContractControl{
-			testRunLeaseControl: &testRunLeaseControl{},
-			startResponse: api.WorkerStartActorResponse{
+		controlPlane := &actorRuntimeContractControlPlane{
+			testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+			startResponse: workerapi.StartActorResponse{
 				CorrelationID: correlationID,
-				Failed: &api.WorkerRuntimeOperationFailure{
+				Failed: &workerapi.RuntimeOperationFailure{
 					Code: "actor_key_conflict", Message: "Actor key is in use",
 				},
 			},
 		}
-		decision, err := runActorRuntimeContract(t, event, control)
+		decision, err := runActorRuntimeContract(t, event, controlPlane)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var failure api.WorkerRuntimeOperationFailure
+		var failure workerapi.RuntimeOperationFailure
 		if err := json.Unmarshal([]byte(decision.GetDataJson()), &failure); err != nil {
 			t.Fatal(err)
 		}
@@ -189,21 +190,21 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 		}
 	})
 	t.Run("stale source fence", func(t *testing.T) {
-		control := &actorRuntimeContractControl{
-			testRunLeaseControl: &testRunLeaseControl{},
-			startErr: &client.HTTPError{
+		controlPlane := &actorRuntimeContractControlPlane{
+			testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+			startErr: &httpclient.Error{
 				StatusCode: 409, Status: "409 Conflict",
 				Message: "worker Run source authority is stale",
 			},
 		}
-		_, err := runActorRuntimeContract(t, event, control)
+		_, err := runActorRuntimeContract(t, event, controlPlane)
 		if err == nil {
 			t.Fatal("stale source was accepted")
 		}
 	})
 	t.Run("status close and output branches", func(t *testing.T) {
-		control := &actorRuntimeContractControl{
-			testRunLeaseControl: &testRunLeaseControl{},
+		controlPlane := &actorRuntimeContractControlPlane{
+			testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 		}
 		events := []*runv0.RunEvent{
 			{Event: &runv0.RunEvent_ActorStatusRequested{
@@ -227,7 +228,7 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 			}},
 		}
 		for _, branch := range events {
-			decision, err := runActorRuntimeContract(t, branch, control)
+			decision, err := runActorRuntimeContract(t, branch, controlPlane)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -235,12 +236,12 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 				t.Fatalf("decision = %+v", decision)
 			}
 		}
-		if control.statusRequest.ActorKey != "primary" ||
-			control.closeRequest.ActorKey != "primary" ||
-			control.outputRequest.ActorKey != "primary" ||
-			control.outputRequest.Limit != 25 {
+		if controlPlane.statusRequest.ActorKey != "primary" ||
+			controlPlane.closeRequest.ActorKey != "primary" ||
+			controlPlane.outputRequest.ActorKey != "primary" ||
+			controlPlane.outputRequest.Limit != 25 {
 			t.Fatalf("status=%+v close=%+v output=%+v",
-				control.statusRequest, control.closeRequest, control.outputRequest)
+				controlPlane.statusRequest, controlPlane.closeRequest, controlPlane.outputRequest)
 		}
 	})
 }
@@ -250,14 +251,14 @@ func TestActorRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	firstAttempt := make(chan struct{})
-	control := &actorRuntimeContractControl{
-		testRunLeaseControl: &testRunLeaseControl{},
-		firstAttempt:        firstAttempt,
-		startErrors: []error{&client.HTTPError{
+	controlPlane := &actorRuntimeContractControlPlane{
+		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+		firstAttempt:             firstAttempt,
+		startErrors: []error{&httpclient.Error{
 			StatusCode: 503, Status: "503 Service Unavailable",
-			Message: "temporary control failure",
+			Message: "temporary Control Plane failure",
 		}},
-		startResponse: api.WorkerStartActorResponse{
+		startResponse: workerapi.StartActorResponse{
 			CorrelationID: correlationID,
 			Completed: &api.StartActorResponse{
 				ActorID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
@@ -269,9 +270,9 @@ func TestActorRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: guest}},
-		control: control,
-		lease:   lease,
+		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		controlPlane: controlPlane,
+		lease:        lease,
 	}
 	go func() {
 		<-firstAttempt
@@ -306,9 +307,9 @@ func TestActorRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 		t.Fatal(err)
 	}
 	if decision.GetKind() != "completed" ||
-		len(control.startRequests) != 2 ||
-		control.startRequests[1].Lease != control.startRequests[0].Lease {
-		t.Fatalf("decision=%+v requests=%+v", decision, control.startRequests)
+		len(controlPlane.startRequests) != 2 ||
+		controlPlane.startRequests[1].Lease != controlPlane.startRequests[0].Lease {
+		t.Fatalf("decision=%+v requests=%+v", decision, controlPlane.startRequests)
 	}
 }
 
@@ -320,7 +321,7 @@ func TestRunSourceRuntimeRejectsTerminalLocalStateWithoutRetry(t *testing.T) {
 		defer cancel()
 		err := task.callRunSourceRuntime(ctx, func(
 			context.Context,
-			api.WorkerRunLeaseAssignment,
+			workerapi.RunLeaseAssignment,
 		) error {
 			calls++
 			return nil
@@ -332,14 +333,14 @@ func TestRunSourceRuntimeRejectsTerminalLocalStateWithoutRetry(t *testing.T) {
 	t.Run("finalizing task", func(t *testing.T) {
 		task := &guestRunLeaseTask{
 			lease:          testRunLeaseAssignment(time.Now().Add(time.Minute)),
-			finalizingKind: api.WorkerRunFinalizationCapture,
+			finalizingKind: workerapi.RunFinalizationCapture,
 		}
 		calls := 0
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
 		err := task.callRunSourceRuntime(ctx, func(
 			context.Context,
-			api.WorkerRunLeaseAssignment,
+			workerapi.RunLeaseAssignment,
 		) error {
 			calls++
 			return nil
@@ -356,7 +357,7 @@ func TestRunSourceRuntimeCapsAttemptBeforeAssignmentExpiry(t *testing.T) {
 	}
 	firstAttempt := make(chan struct{})
 	renewed := make(chan struct{})
-	var leases []api.WorkerRunLeaseAssignment
+	var leases []workerapi.RunLeaseAssignment
 	go func() {
 		<-firstAttempt
 		task.mu.Lock()
@@ -368,7 +369,7 @@ func TestRunSourceRuntimeCapsAttemptBeforeAssignmentExpiry(t *testing.T) {
 	defer cancel()
 	err := task.callRunSourceRuntime(ctx, func(
 		callCtx context.Context,
-		lease api.WorkerRunLeaseAssignment,
+		lease workerapi.RunLeaseAssignment,
 	) error {
 		leases = append(leases, lease)
 		if len(leases) == 1 {
@@ -398,7 +399,7 @@ func TestRunSourceRuntimeCapsAttemptBeforeAssignmentExpiry(t *testing.T) {
 func runActorRuntimeContract(
 	t *testing.T,
 	event *runv0.RunEvent,
-	control *actorRuntimeContractControl,
+	controlPlane *actorRuntimeContractControlPlane,
 ) (*runv0.ResumeDecision, error) {
 	t.Helper()
 	lease := testFreshProgramClaim(t).Lease
@@ -407,13 +408,13 @@ func runActorRuntimeContract(
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: guest}},
-		control: control,
-		lease:   lease,
+		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		controlPlane: controlPlane,
+		lease:        lease,
 	}
 	result := make(chan error, 1)
 	go func() { result <- task.handleActorRuntime(t.Context(), event) }()
-	if control.startErr != nil {
+	if controlPlane.startErr != nil {
 		return nil, <-result
 	}
 	reader := bufio.NewReader(host)

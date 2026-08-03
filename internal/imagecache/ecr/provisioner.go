@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/imagecache"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 const cacheRefDomain = "helmr.image-cache-ref.v0\x00"
@@ -62,7 +63,7 @@ func (provisioner *Provisioner) Target(environmentID uuid.UUID, cacheScope strin
 	if ids.Validate(environmentID.String()) != nil {
 		return imagecache.Target{}, contract("Environment ID must be canonical")
 	}
-	if !validDigest(cacheScope) {
+	if !sha256sum.ValidDigest(cacheScope) {
 		return imagecache.Target{}, contract("cache scope must be a canonical sha256 digest")
 	}
 	repository := provisioner.repositoryName(environmentID)
@@ -350,17 +351,9 @@ func lifecyclePolicy() (string, error) {
 	return string(raw), err
 }
 
-func validDigest(value string) bool {
-	if len(value) != len("sha256:")+sha256.Size*2 || !strings.HasPrefix(value, "sha256:") {
-		return false
-	}
-	_, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
-	return err == nil && value == strings.ToLower(value)
-}
-
 func validCacheTag(value string) bool {
 	return len(value) == len("cache-")+sha256.Size*2 && strings.HasPrefix(value, "cache-") &&
-		validDigest("sha256:"+strings.TrimPrefix(value, "cache-"))
+		sha256sum.ValidDigest("sha256:"+strings.TrimPrefix(value, "cache-"))
 }
 
 func unavailable(operation string, err error) error {

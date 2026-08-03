@@ -41,23 +41,23 @@ func TestAPIURLFlagOverridesEnvironmentURL(t *testing.T) {
 	}
 }
 
-func TestControlClientRejectsPlainHTTPNonLoopback(t *testing.T) {
+func TestControlPlaneClientRejectsPlainHTTPNonLoopback(t *testing.T) {
 	t.Setenv(helmrAPIURLEnv, "http://helmr.example")
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 
-	_, err := controlClient(nil)
+	_, err := controlPlaneClient(nil)
 	if err == nil || !strings.Contains(err.Error(), "plaintext non-loopback") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestControlClientRejectsURLQueryAndFragment(t *testing.T) {
+func TestControlPlaneClientRejectsURLQueryAndFragment(t *testing.T) {
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 	for _, raw := range []string{"https://helmr.example?x=1", "https://helmr.example/#fragment"} {
 		t.Setenv(helmrAPIURLEnv, raw)
-		_, err := controlClient(nil)
+		_, err := controlPlaneClient(nil)
 		if err == nil || !strings.Contains(err.Error(), "must not include query or fragment") {
-			t.Fatalf("controlClient(%q) err = %v", raw, err)
+			t.Fatalf("controlPlaneClient(%q) err = %v", raw, err)
 		}
 	}
 }

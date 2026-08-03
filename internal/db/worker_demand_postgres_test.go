@@ -4,11 +4,12 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
 func TestWorkerDemandRemainsVisibleWithoutEligibleWorkers(t *testing.T) {
 	f, _ := newDeploymentBuildFixture(t)
-	mustExec(t, f.ctx, f.pool, `DELETE FROM worker_instances WHERE id = $1`, f.workerID)
+	dbtest.MustExec(t, f.ctx, f.pool, `DELETE FROM worker_instances WHERE id = $1`, f.workerID)
 
 	rows, err := f.queries.ListWorkerDemandObservations(f.ctx)
 	if err != nil {
@@ -25,7 +26,7 @@ func TestWorkerDemandRemainsVisibleWithoutEligibleWorkers(t *testing.T) {
 		t.Fatal("observation timestamp is missing")
 	}
 
-	mustExec(t, f.ctx, f.pool, `UPDATE worker_groups SET state = 'paused' WHERE id = $1`, f.groupID)
+	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE worker_groups SET state = 'paused' WHERE id = $1`, f.groupID)
 	rows, err = f.queries.ListWorkerDemandObservations(f.ctx)
 	if err != nil {
 		t.Fatal(err)

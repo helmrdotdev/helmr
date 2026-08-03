@@ -7,7 +7,7 @@ stop before any deployment repository creates provider resources:
    consumer validation;
 2. `check-pre-aws.sh`, which reports missing required product contracts as
    machine-readable blockers;
-3. authenticated public-client and workflow smoke against a deployed control
+3. authenticated public-client and workflow smoke against a deployed controlplane
    plane.
 
 Run the product readiness check from the repository root:

@@ -161,7 +161,7 @@ func validateCompilerBuildTree(
 }
 
 func hasReservedOutputSegment(name string) bool {
-	for _, component := range strings.Split(name, "/") {
+	for component := range strings.SplitSeq(name, "/") {
 		if component == ".helmr" {
 			return true
 		}

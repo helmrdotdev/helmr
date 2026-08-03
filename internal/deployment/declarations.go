@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -162,12 +163,10 @@ func validateDeclarationModulePath(value string) error {
 			"must identify <source-directory>/.helmr/modules/<64 lowercase hex>.mjs",
 		)
 	}
-	for _, component := range components[:len(components)-3] {
-		if component == ".helmr" {
-			return errors.New(
-				"must identify <source-directory>/.helmr/modules/<64 lowercase hex>.mjs",
-			)
-		}
+	if slices.Contains(components[:len(components)-3], ".helmr") {
+		return errors.New(
+			"must identify <source-directory>/.helmr/modules/<64 lowercase hex>.mjs",
+		)
 	}
 	name := strings.TrimSuffix(path.Base(value), suffix)
 	if len(name) != 64 {

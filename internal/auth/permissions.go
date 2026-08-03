@@ -99,3 +99,30 @@ func RoleAllows(role Role, permission Permission) bool {
 		return false
 	}
 }
+
+func ParseAPIKeyGrant(value string) (Permission, bool) {
+	permission := Permission(strings.TrimSpace(value))
+	switch permission {
+	case PermissionRunsCreate,
+		PermissionRunsRead,
+		PermissionRunsManage,
+		PermissionActorsRead,
+		PermissionActorsStart,
+		PermissionActorsInputSend,
+		PermissionActorsCloseManage,
+		PermissionTokensCreate,
+		PermissionTokensRead,
+		PermissionTokensComplete,
+		PermissionTokensCancel,
+		PermissionWorkspacesCreate,
+		PermissionWorkspacesRead,
+		PermissionWorkspacesDelete,
+		PermissionWorkspaceFilesRead,
+		PermissionWorkspaceExecCreate,
+		PermissionSecretsWrite,
+		PermissionTasksDeploy:
+		return permission, true
+	default:
+		return "", false
+	}
+}

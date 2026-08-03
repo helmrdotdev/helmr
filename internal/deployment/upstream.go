@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 const (
@@ -68,7 +68,7 @@ func fetchUpstream(
 	initial, err := parseUpstreamURL(rawURL, allowedHosts, false)
 	if err != nil {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionOriginRejected,
+			workerapi.PlatformAcquisitionOriginRejected,
 			err,
 		)
 	}
@@ -98,7 +98,7 @@ func fetchUpstream(
 		var origin *upstreamOriginError
 		if errors.As(err, &origin) {
 			return nil, deterministicAcquisitionFailure(
-				api.WorkerPlatformAcquisitionOriginRejected,
+				workerapi.PlatformAcquisitionOriginRejected,
 				origin,
 			)
 		}
@@ -116,7 +116,7 @@ func fetchUpstream(
 		case response.StatusCode == http.StatusNotFound ||
 			response.StatusCode == http.StatusGone:
 			return nil, deterministicAcquisitionFailure(
-				api.WorkerPlatformAcquisitionUnsupportedSelector,
+				workerapi.PlatformAcquisitionUnsupportedSelector,
 				cause,
 			)
 		case upstreamRateLimited(response, diagnostic):
@@ -125,7 +125,7 @@ func fetchUpstream(
 			response.StatusCode != http.StatusRequestTimeout &&
 			response.StatusCode != http.StatusTooManyRequests:
 			return nil, deterministicAcquisitionFailure(
-				api.WorkerPlatformAcquisitionOriginRejected,
+				workerapi.PlatformAcquisitionOriginRejected,
 				cause,
 			)
 		default:
@@ -134,7 +134,7 @@ func fetchUpstream(
 	}
 	if response.ContentLength > maxBytes {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionTopologyFailed,
+			workerapi.PlatformAcquisitionTopologyFailed,
 			errors.New("upstream object exceeds its byte limit"),
 		)
 	}
@@ -160,7 +160,7 @@ func fetchUpstream(
 	if err != nil {
 		if errors.Is(err, errCopyExceedsLimit) {
 			return nil, deterministicAcquisitionFailure(
-				api.WorkerPlatformAcquisitionTopologyFailed,
+				workerapi.PlatformAcquisitionTopologyFailed,
 				err,
 			)
 		}
@@ -168,7 +168,7 @@ func fetchUpstream(
 	}
 	if size < 1 {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionTopologyFailed,
+			workerapi.PlatformAcquisitionTopologyFailed,
 			errors.New("upstream object is empty"),
 		)
 	}

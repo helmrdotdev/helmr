@@ -8,38 +8,38 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type childTaskControl struct {
-	*testRunLeaseControl
-	request      api.WorkerInvokeChildTaskRequest
-	requests     []api.WorkerInvokeChildTaskRequest
-	response     api.WorkerInvokeChildTaskResponse
+type childTaskControlPlane struct {
+	*testRunLeaseControlPlane
+	request      workerapi.InvokeChildTaskRequest
+	requests     []workerapi.InvokeChildTaskRequest
+	response     workerapi.InvokeChildTaskResponse
 	err          error
 	errors       []error
 	firstAttempt chan struct{}
 }
 
-func (control *childTaskControl) InvokeChildTask(
+func (controlPlane *childTaskControlPlane) InvokeChildTask(
 	_ context.Context,
-	request api.WorkerInvokeChildTaskRequest,
-) (api.WorkerInvokeChildTaskResponse, error) {
-	control.request = request
-	control.requests = append(control.requests, request)
-	if len(control.errors) != 0 {
-		err := control.errors[0]
-		control.errors = control.errors[1:]
-		if control.firstAttempt != nil {
-			close(control.firstAttempt)
-			control.firstAttempt = nil
+	request workerapi.InvokeChildTaskRequest,
+) (workerapi.InvokeChildTaskResponse, error) {
+	controlPlane.request = request
+	controlPlane.requests = append(controlPlane.requests, request)
+	if len(controlPlane.errors) != 0 {
+		err := controlPlane.errors[0]
+		controlPlane.errors = controlPlane.errors[1:]
+		if controlPlane.firstAttempt != nil {
+			close(controlPlane.firstAttempt)
+			controlPlane.firstAttempt = nil
 		}
-		return api.WorkerInvokeChildTaskResponse{}, err
+		return workerapi.InvokeChildTaskResponse{}, err
 	}
-	return control.response, control.err
+	return controlPlane.response, controlPlane.err
 }
 
 func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
@@ -48,11 +48,11 @@ func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
 	correlationID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc21"
 	payload := `{"imageId":"image-1"}`
 	idempotencyKey := "resize:image-1"
-	control := &childTaskControl{
-		testRunLeaseControl: &testRunLeaseControl{},
-		response: api.WorkerInvokeChildTaskResponse{
+	controlPlane := &childTaskControlPlane{
+		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+		response: workerapi.InvokeChildTaskResponse{
 			CorrelationID: correlationID,
-			Completed: &api.WorkerChildTaskStartResult{
+			Completed: &workerapi.ChildTaskStartResult{
 				RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 			},
 		},
@@ -61,9 +61,9 @@ func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: guest}},
-		control: control,
-		lease:   lease,
+		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		controlPlane: controlPlane,
+		lease:        lease,
 	}
 	result := make(chan error, 1)
 	go func() {
@@ -95,15 +95,15 @@ func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
 		decision.GetDataJson() != `{"run_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"}` {
 		t.Fatalf("decision = %+v", decision)
 	}
-	if control.request.Lease != lease.Fence() ||
-		control.request.TaskDeclaredID != "resize-image" ||
-		control.request.Method != "start" ||
-		!control.request.PayloadPresent ||
-		string(control.request.Payload) != payload ||
-		string(control.request.Workspace) != `{"key":"image-workspace"}` ||
-		string(control.request.Options) != `{"queue":"priority"}` ||
-		control.request.IdempotencyKey != idempotencyKey {
-		t.Fatalf("request = %+v", control.request)
+	if controlPlane.request.Lease != lease.Fence() ||
+		controlPlane.request.TaskDeclaredID != "resize-image" ||
+		controlPlane.request.Method != "start" ||
+		!controlPlane.request.PayloadPresent ||
+		string(controlPlane.request.Payload) != payload ||
+		string(controlPlane.request.Workspace) != `{"key":"image-workspace"}` ||
+		string(controlPlane.request.Options) != `{"queue":"priority"}` ||
+		controlPlane.request.IdempotencyKey != idempotencyKey {
+		t.Fatalf("request = %+v", controlPlane.request)
 	}
 }
 
@@ -112,18 +112,18 @@ func TestHandleChildTaskInvokeRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	correlationID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc24"
 	firstAttempt := make(chan struct{})
-	control := &childTaskControl{
-		testRunLeaseControl: &testRunLeaseControl{},
-		response: api.WorkerInvokeChildTaskResponse{
+	controlPlane := &childTaskControlPlane{
+		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+		response: workerapi.InvokeChildTaskResponse{
 			CorrelationID: correlationID,
-			Completed: &api.WorkerChildTaskStartResult{
+			Completed: &workerapi.ChildTaskStartResult{
 				RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3a",
 			},
 		},
-		errors: []error{&client.HTTPError{
+		errors: []error{&httpclient.Error{
 			StatusCode: 503,
 			Status:     "503 Service Unavailable",
-			Message:    "temporary control failure",
+			Message:    "temporary Control Plane failure",
 		}},
 		firstAttempt: firstAttempt,
 	}
@@ -131,9 +131,9 @@ func TestHandleChildTaskInvokeRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: guest}},
-		control: control,
-		lease:   lease,
+		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		controlPlane: controlPlane,
+		lease:        lease,
 	}
 	go renewRunSourceReceiptAfterAttempt(task, firstAttempt)
 	result := make(chan error, 1)
@@ -157,10 +157,10 @@ func TestHandleChildTaskInvokeRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	if err := <-result; err != nil {
 		t.Fatal(err)
 	}
-	if len(control.requests) != 2 {
-		t.Fatalf("requests = %+v", control.requests)
+	if len(controlPlane.requests) != 2 {
+		t.Fatalf("requests = %+v", controlPlane.requests)
 	}
-	assertRetriedWithStableFence(t, control.requests[0].Lease, control.requests[1].Lease, len(control.requests))
+	assertRetriedWithStableFence(t, controlPlane.requests[0].Lease, controlPlane.requests[1].Lease, len(controlPlane.requests))
 }
 
 func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {
@@ -171,9 +171,9 @@ func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {
 	resumeAttachID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc26"
 	actorSequence := int64(9)
 	waitClient := &fakeRunWaitClient{
-		polls: []api.WorkerRunWaitPollResponse{{
+		polls: []workerapi.RunWaitPollResponse{{
 			RunID: lease.RunID, RunWaitID: runWaitID,
-			Status:     api.WorkerRunWaitPollStatusResumeRequested,
+			Status:     workerapi.RunWaitPollStatusResumeRequested,
 			ResumeKind: "completed",
 			ResumePayload: json.RawMessage(
 				`{"ok":true,"output":{"resized":true},"run":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"}}`,
@@ -184,11 +184,11 @@ func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {
 	openedWait.RunID = lease.RunID
 	openedWait.RunWaitID = runWaitID
 	openedWait.ResumeAttachID = resumeAttachID
-	control := &childTaskControl{
-		testRunLeaseControl: &testRunLeaseControl{},
-		response: api.WorkerInvokeChildTaskResponse{
+	controlPlane := &childTaskControlPlane{
+		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+		response: workerapi.InvokeChildTaskResponse{
 			CorrelationID: correlationID,
-			Completed: &api.WorkerChildTaskStartResult{
+			Completed: &workerapi.ChildTaskStartResult{
 				RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 			},
 			OpenedWait: &openedWait,
@@ -198,10 +198,10 @@ func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: guest}},
-		control: control,
-		lease:   lease,
-		waits:   &ControlRunWaits{Client: waitClient},
+		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		controlPlane: controlPlane,
+		lease:        lease,
+		waits:        &ControlPlaneRunWaits{Client: waitClient},
 	}
 	result := make(chan error, 1)
 	go func() {
@@ -235,11 +235,11 @@ func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {
 		decision.GetDataJson() != `{"ok":true,"output":{"resized":true},"run":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"}}` {
 		t.Fatalf("decision = %+v", decision)
 	}
-	if control.request.ActorSpeculativeInputSequence == nil ||
-		*control.request.ActorSpeculativeInputSequence != actorSequence ||
-		control.request.RunWaitID != runWaitID ||
-		control.request.ResumeAttachID != resumeAttachID {
-		t.Fatalf("request = %+v", control.request)
+	if controlPlane.request.ActorSpeculativeInputSequence == nil ||
+		*controlPlane.request.ActorSpeculativeInputSequence != actorSequence ||
+		controlPlane.request.RunWaitID != runWaitID ||
+		controlPlane.request.ResumeAttachID != resumeAttachID {
+		t.Fatalf("request = %+v", controlPlane.request)
 	}
 	if waitClient.createdRequest.CorrelationID != "" {
 		t.Fatalf("unexpected duplicate Wait registration = %+v", waitClient.createdRequest)
@@ -250,9 +250,9 @@ func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	correlationID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc22"
-	control := &childTaskControl{
-		testRunLeaseControl: &testRunLeaseControl{},
-		err: &client.HTTPError{
+	controlPlane := &childTaskControlPlane{
+		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+		err: &httpclient.Error{
 			StatusCode: 409,
 			Status:     "409 Conflict",
 			Message:    "idempotency key conflicts with an earlier child Task invocation",
@@ -263,9 +263,9 @@ func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: guest}},
-		control: control,
-		lease:   lease,
+		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		controlPlane: controlPlane,
+		lease:        lease,
 	}
 	result := make(chan error, 1)
 	go func() {
@@ -289,7 +289,7 @@ func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 	if err := <-result; err != nil {
 		t.Fatal(err)
 	}
-	var failure api.WorkerRuntimeOperationFailure
+	var failure workerapi.RuntimeOperationFailure
 	if err := json.Unmarshal([]byte(decision.GetDataJson()), &failure); err != nil {
 		t.Fatal(err)
 	}
@@ -302,12 +302,12 @@ func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 }
 
 func TestChildTaskInvokeFailureDoesNotClassifyUncodedConflict(t *testing.T) {
-	failure, ok := childTaskInvokeFailure(&client.HTTPError{
+	failure, ok := childTaskInvokeFailure(&httpclient.Error{
 		StatusCode: 409,
 		Status:     "409 Conflict",
 		Message:    "child Task invocation authority is stale",
 	})
-	if ok || failure != (api.WorkerRuntimeOperationFailure{}) {
+	if ok || failure != (workerapi.RuntimeOperationFailure{}) {
 		t.Fatalf("failure = %+v classified = %t", failure, ok)
 	}
 }

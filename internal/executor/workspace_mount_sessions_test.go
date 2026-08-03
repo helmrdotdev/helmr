@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -127,7 +127,7 @@ func TestOpenWorkspaceMountSessionMarksForegroundRun(t *testing.T) {
 	gate := NewBackgroundWorkGate()
 	registry := NewWorkspaceMountSessions()
 	registry.BackgroundGate = gate
-	unregister := registry.RegisterWorkspaceMountSession(api.WorkerWorkspaceMount{ID: "mat-1"}, &borrowedParentSession{stream: discardReadWriteCloser{}}, "channel-token")
+	unregister := registry.RegisterWorkspaceMountSession(workerapi.WorkspaceMount{ID: "mat-1"}, &borrowedParentSession{stream: discardReadWriteCloser{}}, "channel-token")
 	defer unregister()
 
 	backgroundCtx, finishBackground, ok := gate.BeginBackground(context.Background())
@@ -168,7 +168,7 @@ func TestRenewWorkspaceAuthorityUsesMountedSession(t *testing.T) {
 	defer guest.Close()
 	parent := &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}
 	registry := NewWorkspaceMountSessions()
-	registry.RegisterWorkspaceMountSession(api.WorkerWorkspaceMount{
+	registry.RegisterWorkspaceMountSession(workerapi.WorkspaceMount{
 		ID:                "mount-1",
 		WorkspaceID:       "workspace-1",
 		RuntimeInstanceID: "runtime-1",
@@ -235,7 +235,7 @@ func TestBeginWorkspaceFinalizationUsesMountedSession(t *testing.T) {
 	defer guest.Close()
 	parent := &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}
 	registry := NewWorkspaceMountSessions()
-	registry.RegisterWorkspaceMountSession(api.WorkerWorkspaceMount{
+	registry.RegisterWorkspaceMountSession(workerapi.WorkspaceMount{
 		ID: "mount-1", WorkspaceID: "workspace-1", RuntimeInstanceID: "runtime-1",
 		FencingGeneration: 4, BaseVersionID: "version-1",
 	}, parent, "channel-1")
@@ -294,7 +294,7 @@ func TestRenewWorkspaceAuthorityCancellationPreservesMountedSession(t *testing.T
 	defer guest.Close()
 	parent := &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}
 	registry := NewWorkspaceMountSessions()
-	registry.RegisterWorkspaceMountSession(api.WorkerWorkspaceMount{
+	registry.RegisterWorkspaceMountSession(workerapi.WorkspaceMount{
 		ID:                "mount-1",
 		WorkspaceID:       "workspace-1",
 		RuntimeInstanceID: "runtime-1",

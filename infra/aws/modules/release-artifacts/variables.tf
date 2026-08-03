@@ -42,15 +42,15 @@ variable "manifest_url" {
   }
 }
 
-variable "control_image_override" {
-  description = "Explicit digest-pinned control image URI for custom builds. When null, the release manifest control_image is used."
+variable "controlplane_image_override" {
+  description = "Explicit digest-pinned controlplane image URI for custom builds. When null, the release manifest controlplane_image is used."
   type        = string
   default     = null
   nullable    = true
 
   validation {
-    condition     = var.control_image_override == null || can(regex("@sha256:[0-9a-f]{64}$", var.control_image_override))
-    error_message = "control_image_override must be null or pinned by digest using @sha256:<64 lowercase hex characters>."
+    condition     = var.controlplane_image_override == null || can(regex("@sha256:[0-9a-f]{64}$", var.controlplane_image_override))
+    error_message = "controlplane_image_override must be null or pinned by digest using @sha256:<64 lowercase hex characters>."
   }
 }
 

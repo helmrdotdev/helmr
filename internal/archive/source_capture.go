@@ -417,7 +417,7 @@ func validateSourcePath(name string) error {
 	if !utf8.ValidString(name) || name == "" || path.IsAbs(name) || path.Clean(name) != name {
 		return fmt.Errorf("canonical source contains invalid path %q", name)
 	}
-	for _, component := range strings.Split(name, "/") {
+	for component := range strings.SplitSeq(name, "/") {
 		if component == "" || component == "." || component == ".." || strings.ContainsRune(component, '\x00') {
 			return fmt.Errorf("canonical source contains invalid path %q", name)
 		}

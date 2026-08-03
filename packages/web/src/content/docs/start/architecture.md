@@ -8,13 +8,13 @@ order: 30
 
 # Architecture
 
-Helmr is split between authoring tools, a control plane, and workers.
+Helmr is split between authoring tools, a Control Plane, and workers.
 
 | Component | Role |
 | --- | --- |
 | TypeScript SDK | Declares Tasks, Actors, Workspaces, source Schedules, Secrets, waits, Tokens, metadata, and logs. |
 | CLI | Logs in, deploys source, starts Tasks, inspects Runs, and operates supported Workspace and Secret surfaces. |
-| Control plane | Stores Deployments, Schedules, Actors, Runs, Workspaces, records, events, logs, metadata, Secrets, API keys, workers, and waits. |
+| Control Plane | Stores Deployments, Schedules, Actors, Runs, Workspaces, records, events, logs, metadata, Secrets, API keys, workers, and waits. |
 | Dispatcher | Admits queued Runs, binds pending Schedule Workspaces, fires Schedule cursors, and sweeps expired execution authority. |
 | Worker | Leases queued Runs, materializes Workspaces, starts isolated guests, runs Task code, serves bounded Workspace exec requests, records logs, and releases results. |
 | Guest runtime | Loads the immutable Program inside the guest and bridges Task results, Actor input/output, logs, metadata updates, waits, and internal Process I/O. |
@@ -22,7 +22,7 @@ Helmr is split between authoring tools, a control plane, and workers.
 Workers enroll into explicitly configured logical worker groups. Run and build
 groups use the same provider-neutral identity and lifecycle model. Enrollment
 proves possession of the group's deployment-supplied secret over a one-time
-nonce, requested roles, and opaque operator resource locator. Control creates
+nonce, requested roles, and opaque operator resource locator. Control Plane creates
 the worker-instance identity and issues its distinct renewable credential;
 provider inventory and physical capacity remain deployment responsibilities.
 
@@ -41,12 +41,12 @@ as billing; it does not branch worker enrollment, scheduling, runtime, or storag
 ## Run Flow
 
 1. A task project is deployed from a directory containing `helmr.config.ts`.
-2. The control plane stores the deployment-source artifact and marks the deployment active for a project environment.
+2. The Control Plane stores the deployment-source artifact and marks the deployment active for a project environment.
 3. A Task start, Actor continuation, or Schedule fire creates a Run and attaches an explicit Workspace.
 4. Helmr validates the explicitly supplied Workspace and its deployed declaration.
 5. A worker in the matching worker group leases the run and receives the resolved task source, workspace mount metadata, secrets, and duration limit.
 6. The worker starts an isolated Linux guest, materializes the immutable JavaScript Program and workspace, injects task-declared secrets, and runs the Task with its pinned Managed Node.
-7. Logs, events, Task result or Actor records, metadata updates, failures, and waits return to the control plane.
+7. Logs, events, Task result or Actor records, metadata updates, failures, and waits return to the Control Plane.
 8. Terminal runs finish as `succeeded`, `failed`, or `cancelled`. The attached workspace can outlive the run.
 
 ## Workspace Flow

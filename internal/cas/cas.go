@@ -85,7 +85,7 @@ func ShardedObjectKey(prefix, digest string) (string, error) {
 	return prefix + "/" + key, nil
 }
 
-func putStage(ctx context.Context, stage Stage, body io.Reader) (Object, error) {
+func WriteStage(ctx context.Context, stage Stage, body io.Reader) (Object, error) {
 	if _, err := io.Copy(stage, body); err != nil {
 		_ = stage.Abort(context.Background())
 		return Object{}, err

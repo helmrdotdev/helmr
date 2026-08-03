@@ -9,6 +9,18 @@ import (
 
 const Prefix = "sha256:"
 
+func ValidDigest(value string) bool {
+	if len(value) != len(Prefix)+sha256.Size*2 || value[:len(Prefix)] != Prefix {
+		return false
+	}
+	for _, character := range value[len(Prefix):] {
+		if character < '0' || character > '9' && character < 'a' || character > 'f' {
+			return false
+		}
+	}
+	return true
+}
+
 func HexBytes(bytes []byte) string {
 	sum := sha256.Sum256(bytes)
 	return hex.EncodeToString(sum[:])

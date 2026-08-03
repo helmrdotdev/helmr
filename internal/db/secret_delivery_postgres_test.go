@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -30,14 +30,14 @@ func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	runtest.MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO secrets (
 			id, environment_id, name, current_version_id, revocation_generation
 		)
 		VALUES ($1, $2, 'delivery-secret', $3, 4)
 	`, secretID, fixture.environmentID, currentVersionID)
 	for version, versionID := range []uuid.UUID{oldVersionID, currentVersionID} {
-		runtest.MustExec(t, ctx, tx, `
+		dbtest.MustExec(t, ctx, tx, `
 			INSERT INTO secret_versions (
 				id, secret_id, version, nonce, ciphertext
 			)
@@ -48,7 +48,7 @@ func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
 			)
 		`, versionID, secretID, version+1)
 	}
-	runtest.MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_secrets (
 			workspace_id, environment_id, placement_kind, placement_target, secret_id
 		)
@@ -56,7 +56,7 @@ func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
 			($1, $2, 'env', 'TOKEN', $3),
 			($1, $2, 'file', '/run/helmr/token', $3)
 	`, workspaceID, fixture.environmentID, secretID)
-	runtest.MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO secret_resolutions (
 			id, workspace_id, run_id, attempt_number, placement_kind, placement_target,
 			secret_id, secret_version_id, revocation_generation
@@ -87,7 +87,7 @@ func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
 		t.Fatalf("missing-resolution row = %+v", rows[1])
 	}
 
-	runtest.MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_secrets (
 			workspace_id, environment_id, placement_kind, placement_target, secret_id
 		)

@@ -3,8 +3,6 @@ package auth
 import (
 	"fmt"
 	"strings"
-
-	"github.com/helmrdotdev/helmr/internal/token"
 )
 
 const (
@@ -19,7 +17,7 @@ type GeneratedAPIKey struct {
 }
 
 func GenerateAPIKey() (GeneratedAPIKey, error) {
-	raw, err := token.GenerateOpaque(apiKeyBytes)
+	raw, err := GenerateOpaque(apiKeyBytes)
 	if err != nil {
 		return GeneratedAPIKey{}, fmt.Errorf("generate API key: %w", err)
 	}

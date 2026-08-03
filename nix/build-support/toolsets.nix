@@ -32,6 +32,7 @@ rec {
     bpfClang
     goPackage
     pkgsUnstable.gopls
+    helmrPackages.deadcode
     pkgs.gotools
     helmrPackages.staticcheck
     helmrPackages.unparam

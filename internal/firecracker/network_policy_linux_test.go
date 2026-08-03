@@ -15,8 +15,8 @@ import (
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/firecracker/datapath"
 	"github.com/helmrdotdev/helmr/internal/vm"
-	"github.com/helmrdotdev/helmr/internal/worker/datapath"
 	"github.com/vishvananda/netlink"
 )
 

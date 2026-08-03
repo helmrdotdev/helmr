@@ -9,52 +9,53 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type actorInputSendControl struct {
-	*testRunLeaseControl
-	request      api.WorkerSendActorInputRequest
-	requests     []api.WorkerSendActorInputRequest
-	response     api.WorkerSendActorInputResponse
+type actorInputSendControlPlane struct {
+	*testRunLeaseControlPlane
+	request      workerapi.SendActorInputRequest
+	requests     []workerapi.SendActorInputRequest
+	response     workerapi.SendActorInputResponse
 	errors       []error
 	firstAttempt chan struct{}
 }
 
-func (control *actorInputSendControl) SendRunActorInput(
+func (controlPlane *actorInputSendControlPlane) SendRunActorInput(
 	_ context.Context,
-	request api.WorkerSendActorInputRequest,
-) (api.WorkerSendActorInputResponse, error) {
-	control.request = request
-	control.requests = append(control.requests, request)
-	if len(control.errors) != 0 {
-		err := control.errors[0]
-		control.errors = control.errors[1:]
-		if control.firstAttempt != nil {
-			close(control.firstAttempt)
-			control.firstAttempt = nil
+	request workerapi.SendActorInputRequest,
+) (workerapi.SendActorInputResponse, error) {
+	controlPlane.request = request
+	controlPlane.requests = append(controlPlane.requests, request)
+	if len(controlPlane.errors) != 0 {
+		err := controlPlane.errors[0]
+		controlPlane.errors = controlPlane.errors[1:]
+		if controlPlane.firstAttempt != nil {
+			close(controlPlane.firstAttempt)
+			controlPlane.firstAttempt = nil
 		}
-		return api.WorkerSendActorInputResponse{}, err
+		return workerapi.SendActorInputResponse{}, err
 	}
-	return control.response, nil
+	return controlPlane.response, nil
 }
 
-func (control *actorInputSendControl) AppendActorOutput(
+func (controlPlane *actorInputSendControlPlane) AppendActorOutput(
 	context.Context,
-	api.WorkerAppendActorOutputRequest,
-) (api.WorkerAppendActorOutputResponse, error) {
-	return api.WorkerAppendActorOutputResponse{}, errors.New("unexpected Actor output append")
+	workerapi.AppendActorOutputRequest,
+) (workerapi.AppendActorOutputResponse, error) {
+	return workerapi.AppendActorOutputResponse{}, errors.New("unexpected Actor output append")
 }
 
 func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000111"
-	control := &actorInputSendControl{
-		testRunLeaseControl: &testRunLeaseControl{},
-		response: api.WorkerSendActorInputResponse{
+	controlPlane := &actorInputSendControlPlane{
+		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+		response: workerapi.SendActorInputResponse{
 			CorrelationID: correlationID,
 			Completed:     &api.SendActorInputResponse{Sequence: 7},
 		},
@@ -63,9 +64,9 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: guest}},
-		control: control,
-		lease:   lease,
+		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		controlPlane: controlPlane,
+		lease:        lease,
 	}
 	result := make(chan error, 1)
 	go func() {
@@ -76,7 +77,7 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 				ActorKey: "primary",
 			},
 			DataJson:       `{"hello":"world"}`,
-			IdempotencyKey: stringPointer("send-1"),
+			IdempotencyKey: new("send-1"),
 		})
 	}()
 	reader := bufio.NewReader(host)
@@ -96,11 +97,11 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 		decision.GetDataJson() != `{"sequence":7}` {
 		t.Fatalf("decision = %+v", decision)
 	}
-	if control.request.Lease != lease.Fence() ||
-		control.request.ActorDeclaredID != "mailbox" ||
-		control.request.ActorKey != "primary" ||
-		control.request.IdempotencyKey != "send-1" {
-		t.Fatalf("request = %+v", control.request)
+	if controlPlane.request.Lease != lease.Fence() ||
+		controlPlane.request.ActorDeclaredID != "mailbox" ||
+		controlPlane.request.ActorKey != "primary" ||
+		controlPlane.request.IdempotencyKey != "send-1" {
+		t.Fatalf("request = %+v", controlPlane.request)
 	}
 }
 
@@ -109,16 +110,16 @@ func TestHandleActorInputSendRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000113"
 	firstAttempt := make(chan struct{})
-	control := &actorInputSendControl{
-		testRunLeaseControl: &testRunLeaseControl{},
-		response: api.WorkerSendActorInputResponse{
+	controlPlane := &actorInputSendControlPlane{
+		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+		response: workerapi.SendActorInputResponse{
 			CorrelationID: correlationID,
 			Completed:     &api.SendActorInputResponse{Sequence: 8},
 		},
-		errors: []error{&client.HTTPError{
+		errors: []error{&httpclient.Error{
 			StatusCode: 503,
 			Status:     "503 Service Unavailable",
-			Message:    "temporary control failure",
+			Message:    "temporary Control Plane failure",
 		}},
 		firstAttempt: firstAttempt,
 	}
@@ -126,9 +127,9 @@ func TestHandleActorInputSendRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: guest}},
-		control: control,
-		lease:   lease,
+		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		controlPlane: controlPlane,
+		lease:        lease,
 	}
 	go renewRunSourceReceiptAfterAttempt(task, firstAttempt)
 	result := make(chan error, 1)
@@ -153,10 +154,10 @@ func TestHandleActorInputSendRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	if err := <-result; err != nil {
 		t.Fatal(err)
 	}
-	if len(control.requests) != 2 {
-		t.Fatalf("requests = %+v", control.requests)
+	if len(controlPlane.requests) != 2 {
+		t.Fatalf("requests = %+v", controlPlane.requests)
 	}
-	assertRetriedWithStableFence(t, control.requests[0].Lease, control.requests[1].Lease, len(control.requests))
+	assertRetriedWithStableFence(t, controlPlane.requests[0].Lease, controlPlane.requests[1].Lease, len(controlPlane.requests))
 }
 
 func renewRunSourceReceiptAfterAttempt(task *guestRunLeaseTask, attempted <-chan struct{}) {
@@ -168,16 +169,12 @@ func renewRunSourceReceiptAfterAttempt(task *guestRunLeaseTask, attempted <-chan
 
 func assertRetriedWithStableFence(
 	t *testing.T,
-	first api.WorkerRunLeaseFence,
-	second api.WorkerRunLeaseFence,
+	first workerapi.RunLeaseFence,
+	second workerapi.RunLeaseFence,
 	count int,
 ) {
 	t.Helper()
 	if count != 2 || second != first {
 		t.Fatalf("request count = %d first lease = %+v second lease = %+v", count, first, second)
 	}
-}
-
-func stringPointer(value string) *string {
-	return &value
 }

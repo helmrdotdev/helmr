@@ -11,10 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/cli/session"
+	"github.com/helmrdotdev/helmr/internal/clistate"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/spf13/cobra"
-	"github.com/zalando/go-keyring"
 )
 
 func TestRootCommandPrintsVersion(t *testing.T) {
@@ -99,43 +98,47 @@ func readTarEntries(t *testing.T, archive []byte) map[string]bool {
 	}
 }
 
-func installTestCLIConfig(t *testing.T) (*session.Store, *testKeyring) {
+func installTestCLIConfig(t *testing.T) *testCLIState {
 	t.Helper()
-	keyring := &testKeyring{values: map[string]string{}}
-	state := session.NewStore(filepath.Join(t.TempDir(), "helmr"), keyring)
-	previous := newSessionStore
-	newSessionStore = func() (*session.Store, error) {
+	state := &testCLIState{tokens: map[string]string{}}
+	previous := newCLIStateStore
+	newCLIStateStore = func() (cliState, error) {
 		return state, nil
 	}
 	t.Cleanup(func() {
-		newSessionStore = previous
+		newCLIStateStore = previous
 	})
-	return state, keyring
+	return state
 }
 
-type testKeyring struct {
-	values map[string]string
+type testCLIState struct {
+	config clistate.Config
+	tokens map[string]string
 }
 
-func (k *testKeyring) Set(service, user, password string) error {
-	k.values[service+"\x00"+user] = password
+func (s *testCLIState) Load() (clistate.Config, error) {
+	if s.config.DefaultHost == "" {
+		return clistate.Config{}, clistate.ErrNotFound
+	}
+	return s.config, nil
+}
+
+func (s *testCLIState) Token(baseURL string) (string, error) {
+	token, ok := s.tokens[baseURL]
+	if !ok {
+		return "", clistate.ErrNotFound
+	}
+	return token, nil
+}
+
+func (s *testCLIState) SaveLogin(baseURL, token string) error {
+	s.config.DefaultHost = baseURL
+	s.tokens[baseURL] = token
 	return nil
 }
 
-func (k *testKeyring) Get(service, user string) (string, error) {
-	value, ok := k.values[service+"\x00"+user]
-	if !ok {
-		return "", keyring.ErrNotFound
-	}
-	return value, nil
-}
-
-func (k *testKeyring) Delete(service, user string) error {
-	key := service + "\x00" + user
-	if _, ok := k.values[key]; !ok {
-		return keyring.ErrNotFound
-	}
-	delete(k.values, key)
+func (s *testCLIState) DeleteToken(baseURL string) error {
+	delete(s.tokens, baseURL)
 	return nil
 }
 

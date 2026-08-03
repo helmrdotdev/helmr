@@ -1,7 +1,7 @@
 package executor
 
-import "github.com/helmrdotdev/helmr/internal/api"
+import "github.com/helmrdotdev/helmr/internal/workerapi"
 
-func runtimeInstanceIDFromWorkspaceMount(mount api.WorkerWorkspaceMount) string {
+func runtimeInstanceIDFromWorkspaceMount(mount workerapi.WorkspaceMount) string {
 	return mount.RuntimeInstanceID
 }

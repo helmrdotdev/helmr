@@ -28,3 +28,10 @@ type Artifact struct {
 	ConfigPath   string
 	ManifestPath string
 }
+
+type SourceArchiveDescriptor struct {
+	ArchiveDigest    string
+	ArchiveSizeBytes int64
+	ArchiveEntries   int
+	PathSetDigest    string
+}

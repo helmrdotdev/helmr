@@ -60,9 +60,7 @@ func TestSquashFSArtifactReaderInspectsAndOpensExactImage(t *testing.T) {
 	errors := make(chan error, parallel)
 	var group sync.WaitGroup
 	for range parallel {
-		group.Add(1)
-		go func() {
-			defer group.Done()
+		group.Go(func() {
 			opened, err := reader.Open(context.Background(), "file")
 			if err != nil {
 				errors <- err
@@ -79,7 +77,7 @@ func TestSquashFSArtifactReaderInspectsAndOpensExactImage(t *testing.T) {
 					cause: io.ErrUnexpectedEOF,
 				}
 			}
-		}()
+		})
 	}
 	group.Wait()
 	close(errors)
@@ -286,7 +284,6 @@ func TestVerifySquashFSPhysical(t *testing.T) {
 		}(),
 	}
 	for name, image := range tests {
-		image := image
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 

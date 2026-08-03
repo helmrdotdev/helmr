@@ -13,13 +13,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -62,13 +62,13 @@ func (c *runtimePhaseCollector) Record(phase vm.RuntimePhase) {
 	c.phases = append(c.phases, phase)
 }
 
-func (c *runtimePhaseCollector) Snapshot() []api.WorkerCheckpointPhase {
+func (c *runtimePhaseCollector) Snapshot() []workerapi.CheckpointPhase {
 	if c == nil {
 		return nil
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	result := make([]api.WorkerCheckpointPhase, 0, len(c.phases))
+	result := make([]workerapi.CheckpointPhase, 0, len(c.phases))
 	for _, phase := range c.phases {
 		result = append(result, workerCheckpointPhase(phase))
 	}
@@ -138,7 +138,7 @@ func readProtoFrameFromReaderContext(
 }
 
 func parseWaitRequest(
-	leases api.WorkerRunLeaseProvider,
+	leases workerapi.RunLeaseProvider,
 	wait *runv0.RunWaitRequested,
 ) (WaitRequest, error) {
 	if leases == nil {
@@ -159,7 +159,7 @@ func parseWaitRequest(
 	if err := ids.Validate(resumeAttachID); err != nil {
 		return WaitRequest{}, errors.New("guest wait request resume_attach_id must be a canonical UUIDv7")
 	}
-	kind := api.WorkerRunWaitKind(strings.TrimSpace(wait.GetKind()))
+	kind := workerapi.RunWaitKind(strings.TrimSpace(wait.GetKind()))
 	if kind == "" {
 		return WaitRequest{}, errors.New("guest wait request kind is required")
 	}

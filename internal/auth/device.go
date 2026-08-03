@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	"github.com/helmrdotdev/helmr/internal/token"
 )
 
 type DeviceCodes struct {
@@ -20,7 +18,7 @@ const (
 )
 
 func GenerateDeviceCodes() (DeviceCodes, error) {
-	deviceCode, err := token.GenerateOpaque(deviceCodeBytes)
+	deviceCode, err := GenerateOpaque(deviceCodeBytes)
 	if err != nil {
 		return DeviceCodes{}, err
 	}

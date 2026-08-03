@@ -12,11 +12,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/executor"
-	workerdaemon "github.com/helmrdotdev/helmr/internal/worker"
+	"github.com/helmrdotdev/helmr/internal/worker"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
 
 const defaultDrainTimeout = 30 * time.Minute
@@ -37,7 +37,7 @@ func runDrain(log *slog.Logger, args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	cfg, err := config.LoadWorkerControl()
+	cfg, err := config.LoadWorkerControlPlane()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -45,20 +45,20 @@ func runDrain(log *slog.Logger, args []string) error {
 	if workDir == "" {
 		workDir = executor.DefaultWorkDir()
 	}
-	workerCredential, err := resolveWorkerControlCredential(cfg, workDir)
+	workerCredential, err := resolveWorkerControlPlaneCredential(cfg, workDir)
 	if err != nil {
 		return err
 	}
-	identity, err := workerdaemon.ReadProcessIdentity(workDir)
+	identity, err := worker.ReadProcessIdentity(workDir)
 	if err != nil {
 		return err
 	}
 	supportsRun, supportsBuild := identityRoles(identity.Roles)
-	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), client.WithWorkerService(identity.ServiceID, api.CurrentWorkerProtocolVersion, supportsRun, supportsBuild))
+	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
-	status, err := controlClient.DrainWorker(ctx)
+	status, err := controlPlaneClient.DrainWorker(ctx)
 	if err != nil {
 		return fmt.Errorf("mark worker draining: %w", err)
 	}
@@ -66,7 +66,7 @@ func runDrain(log *slog.Logger, args []string) error {
 	if !*wait {
 		return nil
 	}
-	if status.Status == api.WorkerStatusTerminationReady {
+	if status.Status == workerapi.StatusTerminationReady {
 		return writeDrainCompleteMarker(workDir, status.WorkerInstanceID)
 	}
 	deadline := time.NewTimer(*timeout)
@@ -80,12 +80,12 @@ func runDrain(log *slog.Logger, args []string) error {
 		case <-deadline.C:
 			return fmt.Errorf("worker drain timed out with %d active executions", status.ActiveExecutions)
 		case <-ticker.C:
-			status, err = controlClient.GetWorkerStatus(ctx)
+			status, err = controlPlaneClient.GetWorkerStatus(ctx)
 			if err != nil {
 				return fmt.Errorf("get worker drain status: %w", err)
 			}
 			log.Info("worker drain status", "worker_instance_id", status.WorkerInstanceID, "status", status.Status, "active_executions", status.ActiveExecutions)
-			if status.Status == api.WorkerStatusTerminationReady {
+			if status.Status == workerapi.StatusTerminationReady {
 				log.Info("worker drain completed", "worker_instance_id", status.WorkerInstanceID)
 				return writeDrainCompleteMarker(workDir, status.WorkerInstanceID)
 			}
@@ -128,18 +128,18 @@ func writeDrainCompleteMarker(workDir, workerInstanceID string) error {
 func runFence() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	controlClient, err := workerControlClient()
+	controlPlaneClient, err := workerControlPlaneClient()
 	if err != nil {
 		return err
 	}
-	if err := controlClient.FenceWorker(ctx, terminationDrainFailedReason); err != nil {
+	if err := controlPlaneClient.FenceWorker(ctx, terminationDrainFailedReason); err != nil {
 		return fmt.Errorf("persist worker fence: %w", err)
 	}
 	return nil
 }
 
-func workerControlClient() (*client.Client, error) {
-	cfg, err := config.LoadWorkerControl()
+func workerControlPlaneClient() (*workerclient.Client, error) {
+	cfg, err := config.LoadWorkerControlPlane()
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -147,18 +147,18 @@ func workerControlClient() (*client.Client, error) {
 	if workDir == "" {
 		workDir = executor.DefaultWorkDir()
 	}
-	workerCredential, err := resolveWorkerControlCredential(cfg, workDir)
+	workerCredential, err := resolveWorkerControlPlaneCredential(cfg, workDir)
 	if err != nil {
 		return nil, err
 	}
-	identity, err := workerdaemon.ReadProcessIdentity(workDir)
+	identity, err := worker.ReadProcessIdentity(workDir)
 	if err != nil {
 		return nil, err
 	}
 	supportsRun, supportsBuild := identityRoles(identity.Roles)
-	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), client.WithWorkerService(identity.ServiceID, api.CurrentWorkerProtocolVersion, supportsRun, supportsBuild))
+	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild))
 	if err != nil {
 		return nil, fmt.Errorf("configure control client: %w", err)
 	}
-	return controlClient, nil
+	return controlPlaneClient, nil
 }

@@ -66,7 +66,7 @@ type GuestRequest struct {
 }
 
 // SourceAdmission is the exact non-secret Worker measurement submitted to
-// Control before registry Secret resolution and physical-attempt allocation.
+// Control Plane before registry Secret resolution and physical-attempt allocation.
 type SourceAdmission struct {
 	Architecture           string
 	Plan                   Build
@@ -207,7 +207,7 @@ func ValidateGuestRequest(request GuestRequest) error {
 			return fmt.Errorf("image-build %s is invalid", identity.label)
 		}
 	}
-	if !validDigest(request.RuntimeIdentityID) {
+	if !sha256sum.ValidDigest(request.RuntimeIdentityID) {
 		return errors.New("image-build runtime identity ID is invalid")
 	}
 	if request.BuildLeaseGeneration < 1 || request.WorkerEpoch < 1 {
@@ -261,7 +261,7 @@ func ValidateSourceAdmission(admission SourceAdmission) error {
 		{label: "admitted path set", digest: admission.AdmittedPathSetDigest},
 		{label: "source archive", digest: admission.SourceArchiveDigest},
 	} {
-		if !validDigest(descriptor.digest) {
+		if !sha256sum.ValidDigest(descriptor.digest) {
 			return fmt.Errorf("image-build %s digest is invalid", descriptor.label)
 		}
 	}
@@ -299,7 +299,7 @@ func ValidateCredentialEnvelope(envelope CredentialEnvelope) error {
 	if err := ids.Validate(envelope.AttemptID); err != nil {
 		return errors.New("image-build credential attempt ID is invalid")
 	}
-	if !validDigest(envelope.ResolutionSetDigest) {
+	if !sha256sum.ValidDigest(envelope.ResolutionSetDigest) {
 		return errors.New("image-build credential resolution-set digest is invalid")
 	}
 	if envelope.RegistryCredentials == nil || len(envelope.RegistryCredentials) > maxRegistryAuthorities+1 {
@@ -372,7 +372,7 @@ func ValidateGuestResult(result GuestResult) error {
 	}
 	switch result.Outcome {
 	case GuestSucceeded:
-		if result.FailureReason != "" || result.Error != "" || !validDigest(result.OCIDigest) || result.OCISizeBytes < 1 || result.OCISizeBytes > MaxOCIArchiveBytes {
+		if result.FailureReason != "" || result.Error != "" || !sha256sum.ValidDigest(result.OCIDigest) || result.OCISizeBytes < 1 || result.OCISizeBytes > MaxOCIArchiveBytes {
 			return errors.New("successful image-build result is incomplete")
 		}
 	case GuestFailed:
@@ -613,18 +613,6 @@ func parseDocument[T any](raw []byte, value *T, validate func(T) error, maxBytes
 		return errors.New("image-build protocol document does not match its complete v0 shape")
 	}
 	return nil
-}
-
-func validDigest(value string) bool {
-	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
-		return false
-	}
-	for _, character := range value[len("sha256:"):] {
-		if character < '0' || character > '9' && character < 'a' || character > 'f' {
-			return false
-		}
-	}
-	return true
 }
 
 func PathSetDigest(paths []SourcePath) string {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestWorkerTokenRoundTrip(t *testing.T) {
@@ -46,11 +47,11 @@ func TestWorkerTokenUsesCanonicalClaims(t *testing.T) {
 	}
 	claims := decodeJWTPart(t, parts[1])
 	wants := map[string]any{
-		"iss": WorkerTokenIssuer, "sub": "worker-1", "aud": []any{WorkerTokenAudience},
+		"iss": "helmr-controlplane", "sub": "worker-1", "aud": []any{WorkerTokenAudience},
 		"worker_group_id": "group-1", "worker_instance_id": "worker-1",
 		"credential_id": "credential-1", "worker_epoch": float64(7),
 		"claim_version": float64(2), "group_claim_version": float64(4),
-		"roles": []any{"build", "run"}, "protocol_version": WorkerProtocolVersion,
+		"roles": []any{"build", "run"}, "protocol_version": workerapi.CurrentProtocolVersion,
 	}
 	for key, want := range wants {
 		if !reflect.DeepEqual(claims[key], want) {
@@ -130,6 +131,9 @@ func TestVerifyWorkerTokenRejectsInvalidTokens(t *testing.T) {
 		{"wrong subject", func() string {
 			return signWorkerClaims(t, workerSigningKey(), now, func(c *workerJWTClaims) { c.Subject = "worker-2" })
 		}, now.Add(time.Minute), ErrInvalidWorkerToken},
+		{"deleted issuer", func() string {
+			return signWorkerClaims(t, workerSigningKey(), now, func(c *workerJWTClaims) { c.Issuer = "helmr-" + "control-plane" })
+		}, now.Add(time.Minute), ErrInvalidWorkerToken},
 		{"extra audience", func() string {
 			return signWorkerClaims(t, workerSigningKey(), now, func(c *workerJWTClaims) { c.Audience = append(c.Audience, "other") })
 		}, now.Add(time.Minute), ErrInvalidWorkerToken},
@@ -156,7 +160,7 @@ func validWorkerClaims(now time.Time) WorkerClaims {
 	return WorkerClaims{
 		WorkerGroupID: "group-1", WorkerInstanceID: "worker-1", CredentialID: "credential-1", WorkerEpoch: 7,
 		ClaimVersion: 2, GroupClaimVersion: 4,
-		Roles: []string{WorkerRoleBuild, WorkerRoleRun}, ProtocolVersion: WorkerProtocolVersion,
+		Roles: []string{WorkerRoleBuild, WorkerRoleRun}, ProtocolVersion: workerapi.CurrentProtocolVersion,
 		IssuedAt: now, ExpiresAt: now.Add(time.Hour),
 	}
 }

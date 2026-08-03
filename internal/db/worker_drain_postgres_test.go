@@ -20,7 +20,7 @@ func TestWorkerDrainPublishesExactTerminalReceiptAndReplays(t *testing.T) {
 	q := db.New(pool)
 	workerID := insertActiveWorkerWithObservation(t, ctx, pool, time.Now().UTC())
 	credentialID := uuid.Must(uuid.NewV7())
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instance_credentials (
 			id, worker_group_id, worker_instance_id, key_prefix, claim_version,
 			allows_run, allows_build, protocol_version, secret_hash
@@ -85,7 +85,7 @@ func TestWorkerFencePublishesExactLostReceiptAndReplays(t *testing.T) {
 	q := db.New(pool)
 	workerID := insertActiveWorkerWithObservation(t, ctx, pool, time.Now().UTC())
 	credentialID := uuid.Must(uuid.NewV7())
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instance_credentials (
 			id, worker_group_id, worker_instance_id, key_prefix, claim_version,
 			allows_run, allows_build, protocol_version, secret_hash

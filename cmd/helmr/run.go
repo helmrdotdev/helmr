@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cli/format"
-	"github.com/helmrdotdev/helmr/internal/cli/ui"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/spf13/cobra"
 )
 
@@ -29,20 +29,20 @@ func runCancelCommand() *cobra.Command {
 		Short: "Cancel a run.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := runScopeForClient(control, projectID, environmentID)
+			scope, err := runScopeForClient(controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			response, err := control.CancelRun(cmd.Context(), args[0], scope)
+			response, err := controlPlane.CancelRun(cmd.Context(), args[0], scope)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", response.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "run_status: %s\n", response.Status)
@@ -66,11 +66,11 @@ func runListCommand() *cobra.Command {
 		Use:   "list",
 		Short: "List runs.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			response, err := control.ListRuns(cmd.Context(), client.ListRunsOptions{
+			response, err := controlPlane.ListRuns(cmd.Context(), client.ListRunsOptions{
 				Statuses:      statuses,
 				Cursor:        cursor,
 				Limit:         limit,
@@ -81,12 +81,12 @@ func runListCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			if jsonLines {
-				return format.JSONLines(cmd.OutOrStdout(), response.Runs)
+				return writeJSONLines(cmd.OutOrStdout(), response.Runs)
 			}
-			ui.RunTable(cmd.OutOrStdout(), response.Runs)
+			writeRunTable(cmd.OutOrStdout(), response.Runs)
 			if response.NextCursor != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "\nNext cursor: %s\n", response.NextCursor)
 			}
@@ -111,22 +111,22 @@ func runGetCommand() *cobra.Command {
 		Short: "Show run details.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := runScopeForClient(control, projectID, environmentID)
+			scope, err := runScopeForClient(controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			run, err := control.GetRun(cmd.Context(), args[0], scope)
+			run, err := controlPlane.GetRun(cmd.Context(), args[0], scope)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), run)
+				return writeJSON(cmd.OutOrStdout(), run)
 			}
-			ui.RunDetails(cmd.OutOrStdout(), run)
+			writeRunDetails(cmd.OutOrStdout(), run)
 			return nil
 		},
 	}
@@ -153,15 +153,15 @@ func runLogsCommand() *cobra.Command {
 		Short: "Print the latest run logs.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := runScopeForClient(control, projectID, environmentID)
+			scope, err := runScopeForClient(controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			logs, err := control.ListRunLogs(
+			logs, err := controlPlane.ListRunLogs(
 				cmd.Context(),
 				args[0],
 				client.ListRunLogsOptions{RunScopeOptions: scope},
@@ -176,7 +176,7 @@ func runLogsCommand() *cobra.Command {
 				return followRunLogs(
 					cmd.Context(),
 					cmd,
-					control,
+					controlPlane,
 					args[0],
 					strings.TrimSpace(logs.NextCursor),
 					scope,
@@ -193,12 +193,12 @@ func runLogsCommand() *cobra.Command {
 func writeRunLogPage(cmd *cobra.Command, page api.RunLogPage) error {
 	for _, record := range page.Logs {
 		switch record.Kind {
-		case string(api.WorkerLogStreamStdout), string(api.WorkerLogStreamStderr):
+		case string(workerapi.LogStreamStdout), string(workerapi.LogStreamStderr):
 			content, err := base64.StdEncoding.DecodeString(record.ContentBase64)
 			if err != nil {
 				return fmt.Errorf("decode %s log: %w", record.Kind, err)
 			}
-			if record.Kind == string(api.WorkerLogStreamStdout) {
+			if record.Kind == string(workerapi.LogStreamStdout) {
 				_, err = cmd.OutOrStdout().Write(content)
 			} else {
 				_, err = cmd.ErrOrStderr().Write(content)
@@ -206,8 +206,8 @@ func writeRunLogPage(cmd *cobra.Command, page api.RunLogPage) error {
 			if err != nil {
 				return err
 			}
-		case string(api.WorkerLogStreamStructured):
-			if err := format.JSONLines(cmd.OutOrStdout(), []api.RunLogRecord{record}); err != nil {
+		case string(workerapi.LogStreamStructured):
+			if err := writeJSONLines(cmd.OutOrStdout(), []api.RunLogRecord{record}); err != nil {
 				return err
 			}
 		default:
@@ -228,22 +228,22 @@ func runEventsCommand() *cobra.Command {
 		Short: "List run events.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := runScopeForClient(control, projectID, environmentID)
+			scope, err := runScopeForClient(controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
 			if !follow {
-				page, err := control.ListRunEvents(cmd.Context(), args[0], client.ListRunEventsOptions{Cursor: cursor, Limit: limit, RunScopeOptions: scope})
+				page, err := controlPlane.ListRunEvents(cmd.Context(), args[0], client.ListRunEventsOptions{Cursor: cursor, Limit: limit, RunScopeOptions: scope})
 				if err != nil {
 					return err
 				}
-				return format.JSONLines(cmd.OutOrStdout(), page.Events)
+				return writeJSONLines(cmd.OutOrStdout(), page.Events)
 			}
-			return followRunEvents(cmd, control, args[0], cursor, scope)
+			return followRunEvents(cmd, controlPlane, args[0], cursor, scope)
 		},
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
@@ -263,7 +263,7 @@ func runWaitCommand() *cobra.Command {
 		Short: "Wait for a run to finish.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -277,16 +277,16 @@ func runWaitCommand() *cobra.Command {
 				ctx, cancel = context.WithTimeout(ctx, waitTimeout)
 				defer cancel()
 			}
-			scope, err := runScopeForClient(control, projectID, environmentID)
+			scope, err := runScopeForClient(controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			run, err := waitForRun(ctx, control, args[0], scope)
+			run, err := waitForRun(ctx, controlPlane, args[0], scope)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), run)
+				return writeJSON(cmd.OutOrStdout(), run)
 			}
 			writeRunLifecycleResult(cmd, run)
 			return nil
@@ -298,12 +298,12 @@ func runWaitCommand() *cobra.Command {
 	return cmd
 }
 
-func runScopeForClient(control *client.Client, projectID string, environmentID string) (client.RunScopeOptions, error) {
+func runScopeForClient(controlPlane *client.Client, projectID string, environmentID string) (client.RunScopeOptions, error) {
 	scope := client.RunScopeOptions{
 		ProjectID:     strings.TrimSpace(projectID),
 		EnvironmentID: strings.TrimSpace(environmentID),
 	}
-	if !control.UsesSessionScopedRoutes() {
+	if !controlPlane.UsesSessionScopedRoutes() {
 		if scope.ProjectID != "" || scope.EnvironmentID != "" {
 			return client.RunScopeOptions{}, errors.New("--project and --env require helmr login; API keys are already environment scoped")
 		}
@@ -315,12 +315,12 @@ func runScopeForClient(control *client.Client, projectID string, environmentID s
 	return scope, nil
 }
 
-func environmentScopeForClient(control *client.Client, projectID string, environmentID string) (client.EnvironmentScopeOptions, error) {
+func environmentScopeForClient(controlPlane *client.Client, projectID string, environmentID string) (client.EnvironmentScopeOptions, error) {
 	scope := client.EnvironmentScopeOptions{
 		ProjectID:     strings.TrimSpace(projectID),
 		EnvironmentID: strings.TrimSpace(environmentID),
 	}
-	if !control.UsesSessionScopedRoutes() {
+	if !controlPlane.UsesSessionScopedRoutes() {
 		if scope.ProjectID != "" || scope.EnvironmentID != "" {
 			return client.EnvironmentScopeOptions{}, errors.New("--project and --env require helmr login; API keys are already environment scoped")
 		}
@@ -332,8 +332,8 @@ func environmentScopeForClient(control *client.Client, projectID string, environ
 	return scope, nil
 }
 
-func workspaceScopeForClient(control *client.Client, projectID string, environmentID string) (client.WorkspaceScopeOptions, error) {
-	environmentScope, err := environmentScopeForClient(control, projectID, environmentID)
+func workspaceScopeForClient(controlPlane *client.Client, projectID string, environmentID string) (client.WorkspaceScopeOptions, error) {
+	environmentScope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
 	return client.WorkspaceScopeOptions(environmentScope), err
 }
 
@@ -446,10 +446,10 @@ func cleanTags(tags []string) []string {
 	return cleaned
 }
 
-func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, cursor string, scope client.RunScopeOptions) error {
+func followRunEvents(cmd *cobra.Command, controlPlane *client.Client, runID string, cursor string, scope client.RunScopeOptions) error {
 	for {
 		terminal := false
-		page, err := control.ListRunEvents(
+		page, err := controlPlane.ListRunEvents(
 			cmd.Context(),
 			runID,
 			client.ListRunEventsOptions{
@@ -461,7 +461,7 @@ func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, c
 				if api.RunEventKindIsTerminal(event.Kind) {
 					terminal = true
 				}
-				if writeErr := format.JSONLines(
+				if writeErr := writeJSONLines(
 					cmd.OutOrStdout(),
 					[]api.RunEvent{event},
 				); writeErr != nil {
@@ -494,9 +494,9 @@ func followRunEvents(cmd *cobra.Command, control *client.Client, runID string, c
 	}
 }
 
-func followRunLogs(ctx context.Context, cmd *cobra.Command, control *client.Client, runID string, cursor string, scope client.RunScopeOptions) error {
+func followRunLogs(ctx context.Context, cmd *cobra.Command, controlPlane *client.Client, runID string, cursor string, scope client.RunScopeOptions) error {
 	for {
-		page, err := control.ListRunLogs(
+		page, err := controlPlane.ListRunLogs(
 			ctx,
 			runID,
 			client.ListRunLogsOptions{
@@ -517,9 +517,9 @@ func followRunLogs(ctx context.Context, cmd *cobra.Command, control *client.Clie
 		if err != nil && runReadErrorIsFatal(err) {
 			return err
 		}
-		run, snapshotErr := control.GetRun(ctx, runID, scope)
+		run, snapshotErr := controlPlane.GetRun(ctx, runID, scope)
 		if snapshotErr == nil && api.RunStatusIsTerminal(run.Status) {
-			drain, drainErr := control.ListRunLogs(
+			drain, drainErr := controlPlane.ListRunLogs(
 				ctx,
 				runID,
 				client.ListRunLogsOptions{
@@ -550,8 +550,8 @@ func followRunLogs(ctx context.Context, cmd *cobra.Command, control *client.Clie
 	}
 }
 
-func waitForRun(ctx context.Context, control *client.Client, runID string, scope client.RunScopeOptions) (api.RunSnapshotResponse, error) {
-	run, err := control.GetRun(ctx, runID, scope)
+func waitForRun(ctx context.Context, controlPlane *client.Client, runID string, scope client.RunScopeOptions) (api.RunSnapshotResponse, error) {
+	run, err := controlPlane.GetRun(ctx, runID, scope)
 	if err != nil {
 		return api.RunSnapshotResponse{}, err
 	}
@@ -559,7 +559,7 @@ func waitForRun(ctx context.Context, control *client.Client, runID string, scope
 		return run, nil
 	}
 	for {
-		run, err = control.GetRun(ctx, runID, scope)
+		run, err = controlPlane.GetRun(ctx, runID, scope)
 		if err != nil {
 			return api.RunSnapshotResponse{}, err
 		}
@@ -577,7 +577,7 @@ func waitForRun(ctx context.Context, control *client.Client, runID string, scope
 }
 
 func runReadErrorIsFatal(err error) bool {
-	var httpErr *client.HTTPError
+	var httpErr *httpclient.Error
 	if errors.As(err, &httpErr) {
 		return httpErr.StatusCode >= 400 && httpErr.StatusCode < 500
 	}

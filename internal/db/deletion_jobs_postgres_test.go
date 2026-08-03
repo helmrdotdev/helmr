@@ -15,7 +15,7 @@ func TestEnvironmentImageCacheRetirementLifecyclePostgres(t *testing.T) {
 	ctx := t.Context()
 	pool := newPostgresDB(t, ctx)
 	queries := db.New(pool)
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO organizations (id, name, slug)
 		VALUES ($1, 'Default', 'default')
 	`, dbtest.DefaultOrgID)
@@ -45,7 +45,7 @@ func TestEnvironmentImageCacheRetirementLifecyclePostgres(t *testing.T) {
 	if rows, err := queries.ListDueEnvironmentImageCacheRetirements(ctx, 10); err != nil || len(rows) != 0 {
 		t.Fatalf("fresh candidates = %+v, %v", rows, err)
 	}
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		UPDATE deletion_jobs
 		   SET completed_at = $2,
 		       deleted_counts = deleted_counts || '{"image_cache_repositories":0}'::jsonb

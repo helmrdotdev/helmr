@@ -4,26 +4,28 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/deployment/programbuild"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/imagecache"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func TestWorkerImageControlMapsTerminalAdmissionWithoutHiddenState(t *testing.T) {
+func TestWorkerImageControlPlaneMapsTerminalAdmissionWithoutHiddenState(t *testing.T) {
 	request := testWorkerImageAdmission()
 	attemptID := uuid.Must(uuid.NewV7()).String()
 	result := imagebuild.GuestResult{
 		ExecutionABI: imagebuild.ExecutionABI, Outcome: imagebuild.GuestSucceeded,
 		OCIDigest: testWorkerImageDigest("a"), OCISizeBytes: 42,
 	}
-	fake := &workerImageControlFake{admit: func(input api.WorkerWorkspaceImageAdmissionRequest) api.WorkerWorkspaceImageAssignment {
+	fake := &workerImageControlPlaneFake{admit: func(input workerapi.WorkspaceImageAdmissionRequest) workerapi.WorkspaceImageAssignment {
 		if input.Lease != workerImageAPILease(request.Lease) || input.DeclarationSlot != request.DeclarationSlot {
 			t.Fatalf("admission input = %#v", input)
 		}
-		return api.WorkerWorkspaceImageAssignment{
+		return workerapi.WorkspaceImageAssignment{
 			Lease: input.Lease, DeclarationSlot: input.DeclarationSlot,
 			OperationID: uuid.Must(uuid.NewV7()).String(), RequestFingerprint: testWorkerImageDigest("b"),
 			RuntimeIdentityID: input.RuntimeIdentityID, Architecture: input.Architecture,
@@ -37,22 +39,22 @@ func TestWorkerImageControlMapsTerminalAdmissionWithoutHiddenState(t *testing.T)
 			RequestedCacheMode:     request.RequestedCacheMode,
 			CacheScope:             testWorkerImageDigest("c"), ExecutionABI: request.ExecutionABI,
 			LLBABI: request.LLBABI, CacheABI: request.CacheABI,
-			Quotas: api.WorkerWorkspaceImageQuotas{
+			Quotas: workerapi.WorkspaceImageQuotas{
 				CPUMillis: 3000, MemoryBytes: 4 << 30, ScratchBytes: 32 << 30, PIDs: 1024,
 				MaxSourceArchiveBytes:   imagebuild.MaxSourceArchiveBytes,
 				MaxSourceArchiveEntries: imagebuild.MaxSourceArchiveEntries,
 				MaxOCIArchiveBytes:      imagebuild.MaxOCIArchiveBytes,
 			},
-			Output: api.WorkerWorkspaceImageOutputContract{
+			Output: workerapi.WorkspaceImageOutputContract{
 				Architecture: request.Architecture, MediaType: "application/vnd.helmr.workspace-image.v0.oci-tar",
 				MaxSizeBytes: imagebuild.MaxOCIArchiveBytes,
 			},
 			RegistryBindings:    []imagebuild.RegistryBinding{},
 			ResolutionSetDigest: imagebuild.ResolutionSetDigest([]imagebuild.RegistryBinding{}),
-			TerminalResult:      &api.WorkerWorkspaceImageTerminalResult{AttemptID: attemptID, Result: result},
+			TerminalResult:      &workerapi.WorkspaceImageTerminalResult{AttemptID: attemptID, Result: result},
 		}
 	}}
-	assignment, err := (workerImageControl{client: fake}).AdmitWorkspaceImage(t.Context(), request)
+	assignment, err := (workerImageControlPlane{client: fake}).AdmitWorkspaceImage(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,10 +66,10 @@ func TestWorkerImageControlMapsTerminalAdmissionWithoutHiddenState(t *testing.T)
 	}
 }
 
-func TestWorkerImageControlClearsMismatchedCredentialResponse(t *testing.T) {
+func TestWorkerImageControlPlaneClearsMismatchedCredentialResponse(t *testing.T) {
 	password := []byte("plaintext")
 	lease := testWorkerImageLease()
-	fake := &workerImageControlFake{credentials: api.WorkerWorkspaceImageCredentialResponse{
+	fake := &workerImageControlPlaneFake{credentials: workerapi.WorkspaceImageCredentialResponse{
 		Envelope: imagebuild.CredentialEnvelope{
 			OperationID: "wrong", AttemptID: uuid.Must(uuid.NewV7()).String(),
 			ResolutionSetDigest: testWorkerImageDigest("d"),
@@ -76,7 +78,7 @@ func TestWorkerImageControlClearsMismatchedCredentialResponse(t *testing.T) {
 			}},
 		},
 	}}
-	_, err := (workerImageControl{client: fake}).FetchRegistryCredentials(t.Context(), imagebuild.RegistryCredentialRequest{
+	_, err := (workerImageControlPlane{client: fake}).FetchRegistryCredentials(t.Context(), programbuild.RegistryCredentialRequest{
 		OperationID: uuid.Must(uuid.NewV7()).String(), AttemptID: uuid.Must(uuid.NewV7()).String(),
 		Lease: lease, RegistryBindings: []imagebuild.RegistryBinding{},
 		PlanDigest:          testWorkerImageDigest("e"),
@@ -92,9 +94,9 @@ func TestWorkerImageControlClearsMismatchedCredentialResponse(t *testing.T) {
 	}
 }
 
-func TestWorkerImageControlCompletesExactReceipt(t *testing.T) {
+func TestWorkerImageControlPlaneCompletesExactReceipt(t *testing.T) {
 	lease := testWorkerImageLease()
-	evidence := imagebuild.WorkerResultEvidence{
+	evidence := programbuild.ResultEvidence{
 		OperationID: uuid.Must(uuid.NewV7()).String(), RequestFingerprint: testWorkerImageDigest("1"),
 		AttemptID: uuid.Must(uuid.NewV7()).String(), Lease: lease, DeclarationSlot: "workspace",
 		PlanDigest: testWorkerImageDigest("2"), ResolutionSetDigest: testWorkerImageDigest("3"),
@@ -104,19 +106,19 @@ func TestWorkerImageControlCompletesExactReceipt(t *testing.T) {
 			OCIDigest: testWorkerImageDigest("4"), OCISizeBytes: 42,
 		},
 	}
-	fake := &workerImageControlFake{complete: func(request api.WorkerWorkspaceImageOperationResultRequest) api.WorkerWorkspaceImageOperationResultResponse {
+	fake := &workerImageControlPlaneFake{complete: func(request workerapi.WorkspaceImageOperationResultRequest) workerapi.WorkspaceImageOperationResultResponse {
 		if request.Lease != workerImageAPILease(lease) || request.DeclarationSlot != evidence.DeclarationSlot ||
 			request.AttemptID != evidence.AttemptID || request.Result != evidence.GuestResult {
 			t.Fatalf("completion input = %#v", request)
 		}
-		return api.WorkerWorkspaceImageOperationResultResponse{
+		return workerapi.WorkspaceImageOperationResultResponse{
 			OperationID: request.OperationID, AttemptID: request.AttemptID,
 			State: "completed", Result: request.Result,
 		}
 	}}
-	err := (workerImageControl{client: fake}).CompleteWorkspaceImage(t.Context(), imagebuild.CompletionRequest{
+	err := (workerImageControlPlane{client: fake}).CompleteWorkspaceImage(t.Context(), programbuild.CompletionRequest{
 		Evidence: evidence,
-		Artifact: &imagebuild.PublishedArtifact{
+		Artifact: &programbuild.PublishedArtifact{
 			Digest: evidence.GuestResult.OCIDigest, SizeBytes: evidence.GuestResult.OCISizeBytes,
 			MediaType: "application/vnd.helmr.workspace-image.v0.oci-tar",
 		},
@@ -133,7 +135,7 @@ func TestWorkerImageCacheCredentialTransfersPlaintextOwnership(t *testing.T) {
 	}}
 	value, err := (workerImageCacheCredentials{provider: provider}).FetchImageCacheCredential(
 		t.Context(),
-		imagebuild.Assignment{CacheBinding: &imagebuild.CacheBinding{
+		programbuild.Assignment{CacheBinding: &imagebuild.CacheBinding{
 			Authority: "registry.example", Username: "AWS", Ref: "registry.example/cache:ref",
 		}},
 	)
@@ -145,21 +147,21 @@ func TestWorkerImageCacheCredentialTransfersPlaintextOwnership(t *testing.T) {
 	}
 }
 
-type workerImageControlFake struct {
-	admit       func(api.WorkerWorkspaceImageAdmissionRequest) api.WorkerWorkspaceImageAssignment
-	credentials api.WorkerWorkspaceImageCredentialResponse
-	complete    func(api.WorkerWorkspaceImageOperationResultRequest) api.WorkerWorkspaceImageOperationResultResponse
+type workerImageControlPlaneFake struct {
+	admit       func(workerapi.WorkspaceImageAdmissionRequest) workerapi.WorkspaceImageAssignment
+	credentials workerapi.WorkspaceImageCredentialResponse
+	complete    func(workerapi.WorkspaceImageOperationResultRequest) workerapi.WorkspaceImageOperationResultResponse
 }
 
-func (fake *workerImageControlFake) AdmitWorkspaceImage(_ context.Context, request api.WorkerWorkspaceImageAdmissionRequest) (api.WorkerWorkspaceImageAssignment, error) {
+func (fake *workerImageControlPlaneFake) AdmitWorkspaceImage(_ context.Context, request workerapi.WorkspaceImageAdmissionRequest) (workerapi.WorkspaceImageAssignment, error) {
 	return fake.admit(request), nil
 }
 
-func (fake *workerImageControlFake) FetchWorkspaceImageCredentials(context.Context, api.WorkerWorkspaceImageCredentialRequest) (api.WorkerWorkspaceImageCredentialResponse, error) {
+func (fake *workerImageControlPlaneFake) FetchWorkspaceImageCredentials(context.Context, workerapi.WorkspaceImageCredentialRequest) (workerapi.WorkspaceImageCredentialResponse, error) {
 	return fake.credentials, nil
 }
 
-func (fake *workerImageControlFake) CompleteWorkspaceImage(_ context.Context, request api.WorkerWorkspaceImageOperationResultRequest) (api.WorkerWorkspaceImageOperationResultResponse, error) {
+func (fake *workerImageControlPlaneFake) CompleteWorkspaceImage(_ context.Context, request workerapi.WorkspaceImageOperationResultRequest) (workerapi.WorkspaceImageOperationResultResponse, error) {
 	return fake.complete(request), nil
 }
 
@@ -176,8 +178,8 @@ func (fake *workerImageCacheFake) Fetch(_ context.Context, target imagecache.Tar
 	return fake.credential, nil
 }
 
-func testWorkerImageAdmission() imagebuild.AdmissionRequest {
-	return imagebuild.AdmissionRequest{
+func testWorkerImageAdmission() programbuild.AdmissionRequest {
+	return programbuild.AdmissionRequest{
 		Lease: testWorkerImageLease(), RuntimeIdentityID: testWorkerImageDigest("5"),
 		DeclarationSlot: "workspace", Architecture: "x86_64",
 		Plan: imagebuild.Build{}, PlanDigest: testWorkerImageDigest("6"),
@@ -190,8 +192,8 @@ func testWorkerImageAdmission() imagebuild.AdmissionRequest {
 	}
 }
 
-func testWorkerImageLease() imagebuild.BuildLeaseAuthority {
-	return imagebuild.BuildLeaseAuthority{
+func testWorkerImageLease() programbuild.LeaseAuthority {
+	return programbuild.LeaseAuthority{
 		ID: uuid.Must(uuid.NewV7()).String(), OrgID: uuid.Must(uuid.NewV7()).String(),
 		ProjectID: uuid.Must(uuid.NewV7()).String(), EnvironmentID: uuid.Must(uuid.NewV7()).String(),
 		DeploymentID: uuid.Must(uuid.NewV7()).String(), WorkerGroupID: "build",
@@ -202,9 +204,9 @@ func testWorkerImageLease() imagebuild.BuildLeaseAuthority {
 }
 
 func testWorkerImageDigest(character string) string {
-	value := ""
+	var value strings.Builder
 	for range 64 {
-		value += character
+		value.WriteString(character)
 	}
-	return "sha256:" + value
+	return "sha256:" + value.String()
 }

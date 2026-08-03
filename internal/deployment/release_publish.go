@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -25,26 +23,7 @@ type platformReleaseManifest struct {
 	ToolchainBase  ArtifactDescriptor `json:"toolchainBase"`
 }
 
-func RunReleasePublish(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("release publish", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	var storeURI, input string
-	flags.StringVar(&storeURI, "store", "", "Platform Artifact store URI")
-	flags.StringVar(&input, "input", "", "Platform release directory")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() != 0 || storeURI == "" || input == "" {
-		return errors.New("release publish requires --store and --input")
-	}
-	store, err := cas.NewImmutableS3(ctx, storeURI)
-	if err != nil {
-		return fmt.Errorf("configure Platform Artifact store: %w", err)
-	}
-	return publishPlatformRelease(ctx, store, input)
-}
-
-func publishPlatformRelease(
+func PublishPlatformRelease(
 	ctx context.Context,
 	store cas.ImmutableStore,
 	directory string,

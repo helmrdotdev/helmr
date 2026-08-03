@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func (task *guestRunLeaseTask) handleResourceRuntime(
@@ -33,14 +34,14 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 	ctx context.Context,
 	event *runv0.RunEvent,
 ) error {
-	control, ok := task.control.(ActorRuntimeControl)
+	controlPlane, ok := task.controlPlane.(ActorRuntimeControlPlane)
 	if !ok {
-		return errors.New("Run Lease Task Actor runtime control is required")
+		return errors.New("Run Lease Task Actor runtime Control Plane is required")
 	}
 
 	var correlationID string
 	var completed any
-	var failed *api.WorkerRuntimeOperationFailure
+	var failed *workerapi.RuntimeOperationFailure
 	switch value := event.Event.(type) {
 	case *runv0.RunEvent_ActorStartRequested:
 		request, err := workerActorStartRequest(value.ActorStartRequested)
@@ -48,14 +49,14 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 			return err
 		}
 		correlationID = request.CorrelationID
-		var response api.WorkerStartActorResponse
+		var response workerapi.StartActorResponse
 		err = task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
-			lease api.WorkerRunLeaseAssignment,
+			lease workerapi.RunLeaseAssignment,
 		) error {
 			request.Lease = lease.Fence()
 			var callErr error
-			response, callErr = control.StartRunActor(callCtx, request)
+			response, callErr = controlPlane.StartRunActor(callCtx, request)
 			return callErr
 		})
 		if err != nil {
@@ -74,14 +75,14 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 			return err
 		}
 		correlationID = request.CorrelationID
-		var response api.WorkerActorStatusResponse
+		var response workerapi.ActorStatusResponse
 		err = task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
-			lease api.WorkerRunLeaseAssignment,
+			lease workerapi.RunLeaseAssignment,
 		) error {
 			request.Lease = lease.Fence()
 			var callErr error
-			response, callErr = control.GetRunActorStatus(callCtx, request)
+			response, callErr = controlPlane.GetRunActorStatus(callCtx, request)
 			return callErr
 		})
 		if err != nil {
@@ -99,19 +100,19 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 		if err != nil {
 			return err
 		}
-		request := api.WorkerCloseActorRequest{
-			WorkerActorReferenceRequest: base,
-			IdempotencyKey:              value.ActorCloseRequested.GetIdempotencyKey(),
+		request := workerapi.CloseActorRequest{
+			ActorReferenceRequest: base,
+			IdempotencyKey:        value.ActorCloseRequested.GetIdempotencyKey(),
 		}
 		correlationID = request.CorrelationID
-		var response api.WorkerCloseActorResponse
+		var response workerapi.CloseActorResponse
 		err = task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
-			lease api.WorkerRunLeaseAssignment,
+			lease workerapi.RunLeaseAssignment,
 		) error {
 			request.Lease = lease.Fence()
 			var callErr error
-			response, callErr = control.CloseRunActor(callCtx, request)
+			response, callErr = controlPlane.CloseRunActor(callCtx, request)
 			return callErr
 		})
 		if err != nil {
@@ -129,23 +130,23 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 		if err != nil {
 			return err
 		}
-		request := api.WorkerReadActorOutputPageRequest{
-			WorkerActorReferenceRequest: base,
-			Limit:                       int32(value.ActorOutputPageRequested.GetLimit()),
+		request := workerapi.ReadActorOutputPageRequest{
+			ActorReferenceRequest: base,
+			Limit:                 int32(value.ActorOutputPageRequested.GetLimit()),
 		}
 		if value.ActorOutputPageRequested.After != nil {
 			after := value.ActorOutputPageRequested.GetAfter()
 			request.After = &after
 		}
 		correlationID = request.CorrelationID
-		var response api.WorkerReadActorOutputPageResponse
+		var response workerapi.ReadActorOutputPageResponse
 		err = task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
-			lease api.WorkerRunLeaseAssignment,
+			lease workerapi.RunLeaseAssignment,
 		) error {
 			request.Lease = lease.Fence()
 			var callErr error
-			response, callErr = control.ReadRunActorOutputPage(callCtx, request)
+			response, callErr = controlPlane.ReadRunActorOutputPage(callCtx, request)
 			return callErr
 		})
 		if err != nil {
@@ -185,12 +186,12 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 
 func workerActorStartRequest(
 	requested *runv0.ActorStartRequested,
-) (api.WorkerStartActorRequest, error) {
+) (workerapi.StartActorRequest, error) {
 	if requested == nil {
-		return api.WorkerStartActorRequest{}, errors.New("Actor start request is required")
+		return workerapi.StartActorRequest{}, errors.New("Actor start request is required")
 	}
 	if err := validateRuntimeActorCorrelation(requested.GetCorrelationId()); err != nil {
-		return api.WorkerStartActorRequest{}, err
+		return workerapi.StartActorRequest{}, err
 	}
 	var run *api.StartActorRunOptions
 	if requested.GetRunOptionsJson() != "" {
@@ -198,15 +199,15 @@ func workerActorStartRequest(
 		decoder := json.NewDecoder(strings.NewReader(requested.GetRunOptionsJson()))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&parsed); err != nil {
-			return api.WorkerStartActorRequest{}, errors.New("Actor start run options are invalid")
+			return workerapi.StartActorRequest{}, errors.New("Actor start run options are invalid")
 		}
 		var trailing any
 		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-			return api.WorkerStartActorRequest{}, errors.New("Actor start run options contain a trailing value")
+			return workerapi.StartActorRequest{}, errors.New("Actor start run options contain a trailing value")
 		}
 		run = &parsed
 	}
-	request := api.WorkerStartActorRequest{
+	request := workerapi.StartActorRequest{
 		CorrelationID: requested.GetCorrelationId(), ActorDeclaredID: requested.GetDeclaredId(),
 		Key: requested.Key, InputPresent: requested.InputJson != nil,
 		IdempotencyKey: requested.GetIdempotencyKey(), Run: run,
@@ -220,27 +221,27 @@ func workerActorStartRequest(
 	case *runv0.ActorStartRequested_WorkspaceKey:
 		request.Workspace.Key = &address.WorkspaceKey
 	default:
-		return api.WorkerStartActorRequest{}, errors.New("Actor start Workspace address is required")
+		return workerapi.StartActorRequest{}, errors.New("Actor start Workspace address is required")
 	}
 	if err := api.ValidateActorDeclaredID(request.ActorDeclaredID); err != nil {
-		return api.WorkerStartActorRequest{}, err
+		return workerapi.StartActorRequest{}, err
 	}
 	if err := api.ValidateStartActorRequest(api.StartActorRequest{
 		Key: request.Key, Input: request.Input, IdempotencyKey: request.IdempotencyKey,
 		Workspace: request.Workspace, Run: request.Run,
 	}); err != nil {
-		return api.WorkerStartActorRequest{}, err
+		return workerapi.StartActorRequest{}, err
 	}
 	return request, nil
 }
 
 func workerActorReferenceRequest(
 	requested *runv0.ActorStatusRequested,
-) (api.WorkerActorReferenceRequest, error) {
+) (workerapi.ActorReferenceRequest, error) {
 	if requested == nil {
-		return api.WorkerActorReferenceRequest{}, errors.New("Actor status request is required")
+		return workerapi.ActorReferenceRequest{}, errors.New("Actor status request is required")
 	}
-	request := api.WorkerActorReferenceRequest{
+	request := workerapi.ActorReferenceRequest{
 		CorrelationID: requested.GetCorrelationId(), ActorDeclaredID: requested.GetDeclaredId(),
 	}
 	switch address := requested.GetAddress().(type) {
@@ -249,18 +250,18 @@ func workerActorReferenceRequest(
 	case *runv0.ActorStatusRequested_ActorKey:
 		request.ActorKey = address.ActorKey
 	default:
-		return api.WorkerActorReferenceRequest{}, errors.New("Actor address is required")
+		return workerapi.ActorReferenceRequest{}, errors.New("Actor address is required")
 	}
 	return validateWorkerActorReference(request)
 }
 
 func workerActorReferenceRequestFromClose(
 	requested *runv0.ActorCloseRequested,
-) (api.WorkerActorReferenceRequest, error) {
+) (workerapi.ActorReferenceRequest, error) {
 	if requested == nil {
-		return api.WorkerActorReferenceRequest{}, errors.New("Actor close request is required")
+		return workerapi.ActorReferenceRequest{}, errors.New("Actor close request is required")
 	}
-	request := api.WorkerActorReferenceRequest{
+	request := workerapi.ActorReferenceRequest{
 		CorrelationID: requested.GetCorrelationId(), ActorDeclaredID: requested.GetDeclaredId(),
 	}
 	switch address := requested.GetAddress().(type) {
@@ -269,23 +270,23 @@ func workerActorReferenceRequestFromClose(
 	case *runv0.ActorCloseRequested_ActorKey:
 		request.ActorKey = address.ActorKey
 	default:
-		return api.WorkerActorReferenceRequest{}, errors.New("Actor address is required")
+		return workerapi.ActorReferenceRequest{}, errors.New("Actor address is required")
 	}
 	return validateWorkerActorReference(request)
 }
 
 func workerActorReferenceRequestFromOutput(
 	requested *runv0.ActorOutputPageRequested,
-) (api.WorkerActorReferenceRequest, error) {
+) (workerapi.ActorReferenceRequest, error) {
 	if requested == nil {
-		return api.WorkerActorReferenceRequest{}, errors.New("Actor output page request is required")
+		return workerapi.ActorReferenceRequest{}, errors.New("Actor output page request is required")
 	}
 	if requested.GetLimit() < 1 || requested.GetLimit() > 100 ||
 		(requested.After != nil &&
 			(requested.GetAfter() < 0 || requested.GetAfter() > maxJavaScriptSafeInteger)) {
-		return api.WorkerActorReferenceRequest{}, errors.New("Actor output page bounds are invalid")
+		return workerapi.ActorReferenceRequest{}, errors.New("Actor output page bounds are invalid")
 	}
-	request := api.WorkerActorReferenceRequest{
+	request := workerapi.ActorReferenceRequest{
 		CorrelationID: requested.GetCorrelationId(), ActorDeclaredID: requested.GetDeclaredId(),
 	}
 	switch address := requested.GetAddress().(type) {
@@ -294,24 +295,24 @@ func workerActorReferenceRequestFromOutput(
 	case *runv0.ActorOutputPageRequested_ActorKey:
 		request.ActorKey = address.ActorKey
 	default:
-		return api.WorkerActorReferenceRequest{}, errors.New("Actor address is required")
+		return workerapi.ActorReferenceRequest{}, errors.New("Actor address is required")
 	}
 	return validateWorkerActorReference(request)
 }
 
 func validateWorkerActorReference(
-	request api.WorkerActorReferenceRequest,
-) (api.WorkerActorReferenceRequest, error) {
+	request workerapi.ActorReferenceRequest,
+) (workerapi.ActorReferenceRequest, error) {
 	if err := validateRuntimeActorCorrelation(request.CorrelationID); err != nil {
-		return api.WorkerActorReferenceRequest{}, err
+		return workerapi.ActorReferenceRequest{}, err
 	}
 	if err := api.ValidateActorDeclaredID(request.ActorDeclaredID); err != nil {
-		return api.WorkerActorReferenceRequest{}, err
+		return workerapi.ActorReferenceRequest{}, err
 	}
 	if err := api.ValidateActorReference(api.ActorReference{
 		ActorID: request.ActorID, ActorKey: request.ActorKey,
 	}); err != nil {
-		return api.WorkerActorReferenceRequest{}, err
+		return workerapi.ActorReferenceRequest{}, err
 	}
 	return request, nil
 }

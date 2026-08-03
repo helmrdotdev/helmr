@@ -269,7 +269,7 @@ func Digest(build Build, architecture string) (string, error) {
 	return fmt.Sprintf("sha256:%x", digest), nil
 }
 
-// CacheScope derives the one opaque logical cache identity shared by Control
+// CacheScope derives the one opaque logical cache identity shared by Control Plane
 // and provider adapters. Provider repository names and refs are projections of
 // this digest and never become operation authority themselves.
 func CacheScope(

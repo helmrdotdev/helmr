@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -26,10 +25,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
-func testWorkspaceMountArtifacts(t *testing.T) (*fakeCAS, api.WorkerWorkspaceMount) {
+func testWorkspaceMountArtifacts(t *testing.T) (*fakeCAS, workerapi.WorkspaceMount) {
 	t.Helper()
 	store := &fakeCAS{objects: map[string][]byte{}}
 	imageObject, err := store.Put(context.Background(), deployment.WorkspaceImageArtifactMediaType, strings.NewReader("oci image"))
@@ -53,16 +53,16 @@ func testWorkspaceMountArtifacts(t *testing.T) (*fakeCAS, api.WorkerWorkspaceMou
 	if closeErr != nil {
 		t.Fatal(closeErr)
 	}
-	return store, api.WorkerWorkspaceMount{
+	return store, workerapi.WorkspaceMount{
 		BaseVersionID:     "version-1",
 		RuntimeInstanceID: "runtime-instance-1",
 		RuntimeEpoch:      1,
 		RuntimeIdentityID: "runtime-1",
-		WorkspaceImage: api.CASObject{
+		WorkspaceImage: workerapi.CASObject{
 			Digest: imageObject.Digest, SizeBytes: imageObject.SizeBytes, MediaType: imageObject.MediaType,
 		},
 		RootfsDigest: "sha256:runtime-rootfs",
-		WorkspaceArtifact: api.WorkerWorkspaceArtifact{
+		WorkspaceArtifact: workerapi.WorkspaceArtifact{
 			Digest:     workspaceObject.Digest,
 			MediaType:  workspaceObject.MediaType,
 			Encoding:   workspace.ArtifactEncoding,
@@ -247,7 +247,7 @@ func TestWorkspaceMaterializerColdStartsWhenPreparedRuntimeEntryMissing(t *testi
 
 func TestWorkspaceMaterializerCanonicalEmptyRootSkipsWorkspaceCAS(t *testing.T) {
 	store, mount := testWorkspaceMountArtifacts(t)
-	mount.WorkspaceArtifact = api.WorkerWorkspaceArtifact{
+	mount.WorkspaceArtifact = workerapi.WorkspaceArtifact{
 		MediaType: workspace.ArtifactMediaType,
 		Encoding:  workspace.ArtifactEncoding,
 	}
@@ -351,14 +351,14 @@ func TestWorkspaceMaterializerDispatchesBasicExec(t *testing.T) {
 	defer guestStream.Close()
 	session := &workspaceMaterializerTestSession{operation: clientStream}
 	secretValue := []byte("secret-value")
-	exec := api.WorkerWorkspaceExec{
+	exec := workerapi.WorkspaceExec{
 		ProcessID:           "process-1",
 		WorkspaceID:         "workspace-1",
 		WorkspaceMountID:    "mount-1",
 		RequestFingerprint:  strings.Repeat("a", 64),
 		Request:             json.RawMessage(`{"command":["sh","-c","printf ok"],"cwd":"/workspace","env":{},"timeout_ms":1000}`),
 		Stdin:               []byte("input"),
-		Secrets:             []api.WorkerSecretDelivery{{Env: &api.WorkerSecretEnv{Name: "TOKEN"}, Value: secretValue}},
+		Secrets:             []workerapi.SecretDelivery{{Env: &workerapi.SecretEnv{Name: "TOKEN"}, Value: secretValue}},
 		WorkspaceLeaseID:    "lease-1",
 		WriteCapability:     "capability-1",
 		FencingGeneration:   2,
@@ -404,7 +404,7 @@ func TestWorkspaceMaterializerDispatchesBasicExec(t *testing.T) {
 	completion, err := (WorkspaceMaterializer{}).dispatchWorkspaceBasicExec(
 		context.Background(),
 		session,
-		api.WorkerWorkspaceMount{
+		workerapi.WorkspaceMount{
 			ID: "mount-1", OrgID: "org-1", WorkspaceID: "workspace-1",
 			GuestdChannelToken: "channel-token",
 		},
@@ -436,11 +436,11 @@ func TestWorkspaceMaterializerRejectsMismatchedBasicExecClaim(t *testing.T) {
 	_, err := (WorkspaceMaterializer{}).dispatchWorkspaceBasicExec(
 		context.Background(),
 		&workspaceMaterializerTestSession{},
-		api.WorkerWorkspaceMount{
+		workerapi.WorkspaceMount{
 			ID: "mount-1", WorkspaceID: "workspace-1",
 			GuestdChannelToken: "channel-token",
 		},
-		api.WorkerWorkspaceExec{
+		workerapi.WorkspaceExec{
 			ProcessID: "process-1", WorkspaceMountID: "mount-2",
 			WorkspaceID: "workspace-1", RequestFingerprint: strings.Repeat("a", 64),
 			WorkspaceLeaseID: "lease-1", WriteCapability: "capability-1",
@@ -482,7 +482,7 @@ func TestWorkspaceMaterializerCompletionStopsOnNonRetryableError(t *testing.T) {
 	}).completeWorkspaceBasicExec(
 		context.Background(),
 		client,
-		api.WorkerWorkspaceExecCompleteRequest{},
+		workerapi.WorkspaceExecCompleteRequest{},
 	)
 	if err == nil {
 		t.Fatal("non-retryable completion error was ignored")
@@ -503,7 +503,7 @@ func TestWorkspaceMaterializerCompletionRetriesServerError(t *testing.T) {
 	}).completeWorkspaceBasicExec(
 		context.Background(),
 		client,
-		api.WorkerWorkspaceExecCompleteRequest{},
+		workerapi.WorkspaceExecCompleteRequest{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -520,7 +520,7 @@ func TestWorkspaceMaterializerStopWorkspaceGuestStoresCapturedArtifact(t *testin
 	body := []byte("captured workspace")
 	object := store.put(workspace.ArtifactMediaType, body)
 	session := &workspaceMaterializerTestSession{streams: []io.ReadWriteCloser{client}}
-	workspaceMount := api.WorkerWorkspaceMount{
+	workspaceMount := workerapi.WorkspaceMount{
 		ID:                     "mat-1",
 		WorkspaceID:            "workspace-1",
 		GuestdChannelToken:     "channel-token",
@@ -624,7 +624,7 @@ func TestWorkspaceMaterializerControlledStopUsesRenewedFencingGeneration(t *test
 	session := &workspaceMaterializerTestSession{
 		streams: []io.ReadWriteCloser{clientConn},
 	}
-	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), session, workspaceMount, api.WorkspaceMountResponse{State: "unmounting", FencingGeneration: 9}, client)
+	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), session, workspaceMount, workerapi.WorkspaceMountResponse{State: "unmounting", FencingGeneration: 9}, client)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -665,7 +665,7 @@ func TestWorkspaceMaterializerDoesNotReportStoppedWhenRuntimeCloseFails(t *testi
 		streams:  []io.ReadWriteCloser{clientConn},
 		closeErr: errors.New("runtime cleanup failed"),
 	}
-	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), session, workspaceMount, api.WorkspaceMountResponse{State: "unmounting"}, client)
+	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), session, workspaceMount, workerapi.WorkspaceMountResponse{State: "unmounting"}, client)
 	if err == nil {
 		t.Fatal("expected runtime close failure")
 	}
@@ -691,7 +691,7 @@ func TestWorkspaceMaterializerControlledCleanStopFailureFailsWorkspaceMount(t *t
 	client := &workspaceMaterializerTestClient{}
 	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), &workspaceMaterializerTestSession{
 		streams: []io.ReadWriteCloser{clientConn},
-	}, workspaceMount, api.WorkspaceMountResponse{State: "unmounting", FencingGeneration: 9}, client)
+	}, workspaceMount, workerapi.WorkspaceMountResponse{State: "unmounting", FencingGeneration: 9}, client)
 	if err == nil {
 		t.Fatal("expected stop failure")
 	}
@@ -714,7 +714,7 @@ func TestWorkspaceMaterializerControlledDirtyStopPromotesBeforeFinalize(t *testi
 	store := &fakeCAS{objects: map[string][]byte{}}
 	body := []byte("dirty workspace")
 	object := store.put(workspace.ArtifactMediaType, body)
-	workspaceMount := api.WorkerWorkspaceMount{
+	workspaceMount := workerapi.WorkspaceMount{
 		ID:                     "mat-1",
 		OrgID:                  "org-1",
 		ProjectID:              "project-1",
@@ -784,7 +784,7 @@ func TestWorkspaceMaterializerControlledDirtyStopPromotesBeforeFinalize(t *testi
 	client := &workspaceMaterializerTestClient{}
 	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), &workspaceMaterializerTestSession{
 		streams: []io.ReadWriteCloser{captureClient, finalClient},
-	}, workspaceMount, api.WorkspaceMountResponse{State: "unmounting", FencingGeneration: 9, DirtyGeneration: 3}, client)
+	}, workspaceMount, workerapi.WorkspaceMountResponse{State: "unmounting", FencingGeneration: 9, DirtyGeneration: 3}, client)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -812,7 +812,7 @@ func TestWorkspaceMaterializerControlledDirtyStopFinalizeFailureFailsWorkspaceMo
 	store := &fakeCAS{objects: map[string][]byte{}}
 	body := []byte("dirty workspace")
 	object := store.put(workspace.ArtifactMediaType, body)
-	workspaceMount := api.WorkerWorkspaceMount{
+	workspaceMount := workerapi.WorkspaceMount{
 		ID:                     "mat-1",
 		OrgID:                  "org-1",
 		ProjectID:              "project-1",
@@ -866,7 +866,7 @@ func TestWorkspaceMaterializerControlledDirtyStopFinalizeFailureFailsWorkspaceMo
 	client := &workspaceMaterializerTestClient{}
 	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), &workspaceMaterializerTestSession{
 		streams: []io.ReadWriteCloser{captureClient, finalClient},
-	}, workspaceMount, api.WorkspaceMountResponse{State: "unmounting", FencingGeneration: 9, DirtyGeneration: 3}, client)
+	}, workspaceMount, workerapi.WorkspaceMountResponse{State: "unmounting", FencingGeneration: 9, DirtyGeneration: 3}, client)
 	if err == nil {
 		t.Fatal("expected finalize failure")
 	}
@@ -1193,7 +1193,7 @@ func TestWorkspaceMaterializerRegistersPreparedRuntimeOverOpenedStream(t *testin
 	}
 }
 
-func acknowledgeWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, workspaceMount api.WorkerWorkspaceMount) {
+func acknowledgeWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, workspaceMount workerapi.WorkspaceMount) {
 	t.Helper()
 	_, _, err := wire.ReadStreamFrameHeader(stream)
 	if err != nil {
@@ -1237,7 +1237,7 @@ func acknowledgeWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, workspac
 	})
 }
 
-func acknowledgePreparedWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, workspaceMount api.WorkerWorkspaceMount, runtimeKey string) {
+func acknowledgePreparedWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, workspaceMount workerapi.WorkspaceMount, runtimeKey string) {
 	t.Helper()
 	header, _, err := wire.ReadStreamFrameHeader(stream)
 	if err != nil {
@@ -1328,7 +1328,7 @@ func (g *parallelStartGate) wait(ctx context.Context, label string) error {
 type parallelStartCAS struct {
 	cas.Store
 	gate           *parallelStartGate
-	workspaceMount api.WorkerWorkspaceMount
+	workspaceMount workerapi.WorkspaceMount
 }
 
 func (c parallelStartCAS) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
@@ -1423,68 +1423,68 @@ func (s *workspaceMaterializerTestSession) Wait(ctx context.Context) error {
 
 type workspaceMaterializerTestClient struct {
 	cancel          context.CancelFunc
-	workspaceExec   *api.WorkerWorkspaceExec
-	execClaims      []api.WorkerWorkspaceExecClaimRequest
-	execCompletions []api.WorkerWorkspaceExecCompleteRequest
+	workspaceExec   *workerapi.WorkspaceExec
+	execClaims      []workerapi.WorkspaceExecClaimRequest
+	execCompletions []workerapi.WorkspaceExecCompleteRequest
 	completeErrors  []error
 	renewErrors     []error
-	renews          []api.WorkerWorkspaceMountRenewRequest
-	mounted         []api.WorkerWorkspaceMountMountedRequest
+	renews          []workerapi.WorkspaceMountRenewRequest
+	mounted         []workerapi.WorkspaceMountMountedRequest
 	onMounted       func()
 	stops           int
-	captures        []api.WorkerWorkspaceMountCaptureRequest
-	failures        []api.WorkerWorkspaceMountFailRequest
+	captures        []workerapi.WorkspaceMountCaptureRequest
+	failures        []workerapi.WorkspaceMountFailRequest
 }
 
-func (c *workspaceMaterializerTestClient) RenewWorkspaceMount(_ context.Context, request api.WorkerWorkspaceMountRenewRequest) (api.WorkspaceMountResponse, error) {
+func (c *workspaceMaterializerTestClient) RenewWorkspaceMount(_ context.Context, request workerapi.WorkspaceMountRenewRequest) (workerapi.WorkspaceMountResponse, error) {
 	c.renews = append(c.renews, request)
 	if len(c.renewErrors) > 0 {
 		err := c.renewErrors[0]
 		c.renewErrors = c.renewErrors[1:]
-		return api.WorkspaceMountResponse{}, err
+		return workerapi.WorkspaceMountResponse{}, err
 	}
-	return api.WorkspaceMountResponse{State: "mounting"}, nil
+	return workerapi.WorkspaceMountResponse{State: "mounting"}, nil
 }
 
-func (c *workspaceMaterializerTestClient) MarkWorkspaceMountMounted(_ context.Context, request api.WorkerWorkspaceMountMountedRequest) (api.WorkspaceMountResponse, error) {
+func (c *workspaceMaterializerTestClient) MarkWorkspaceMountMounted(_ context.Context, request workerapi.WorkspaceMountMountedRequest) (workerapi.WorkspaceMountResponse, error) {
 	c.mounted = append(c.mounted, request)
 	if c.onMounted != nil {
 		c.onMounted()
 	}
-	return api.WorkspaceMountResponse{State: "mounted"}, nil
+	return workerapi.WorkspaceMountResponse{State: "mounted"}, nil
 }
 
-func (c *workspaceMaterializerTestClient) CaptureWorkspaceMount(_ context.Context, request api.WorkerWorkspaceMountCaptureRequest) (api.WorkerWorkspaceMountCaptureResponse, error) {
+func (c *workspaceMaterializerTestClient) CaptureWorkspaceMount(_ context.Context, request workerapi.WorkspaceMountCaptureRequest) (workerapi.WorkspaceMountCaptureResponse, error) {
 	c.captures = append(c.captures, request)
-	return api.WorkerWorkspaceMountCaptureResponse{VersionID: "version-1"}, nil
+	return workerapi.WorkspaceMountCaptureResponse{VersionID: "version-1"}, nil
 }
 
-func (c *workspaceMaterializerTestClient) StopWorkspaceMount(context.Context, api.WorkerWorkspaceMountStopRequest) (api.WorkspaceMountResponse, error) {
+func (c *workspaceMaterializerTestClient) StopWorkspaceMount(context.Context, workerapi.WorkspaceMountStopRequest) (workerapi.WorkspaceMountResponse, error) {
 	c.stops++
-	return api.WorkspaceMountResponse{State: "unmounted"}, nil
+	return workerapi.WorkspaceMountResponse{State: "unmounted"}, nil
 }
 
-func (c *workspaceMaterializerTestClient) FailWorkspaceMount(_ context.Context, request api.WorkerWorkspaceMountFailRequest) (api.WorkspaceMountResponse, error) {
+func (c *workspaceMaterializerTestClient) FailWorkspaceMount(_ context.Context, request workerapi.WorkspaceMountFailRequest) (workerapi.WorkspaceMountResponse, error) {
 	c.failures = append(c.failures, request)
-	return api.WorkspaceMountResponse{State: "failed"}, nil
+	return workerapi.WorkspaceMountResponse{State: "failed"}, nil
 }
 
-func (c *workspaceMaterializerTestClient) ClaimWorkspaceExec(_ context.Context, request api.WorkerWorkspaceExecClaimRequest) (api.WorkerWorkspaceExecClaimResponse, error) {
+func (c *workspaceMaterializerTestClient) ClaimWorkspaceExec(_ context.Context, request workerapi.WorkspaceExecClaimRequest) (workerapi.WorkspaceExecClaimResponse, error) {
 	c.execClaims = append(c.execClaims, request)
-	return api.WorkerWorkspaceExecClaimResponse{Exec: c.workspaceExec}, nil
+	return workerapi.WorkspaceExecClaimResponse{Exec: c.workspaceExec}, nil
 }
 
-func (c *workspaceMaterializerTestClient) CompleteWorkspaceExec(_ context.Context, request api.WorkerWorkspaceExecCompleteRequest) (api.WorkspaceMountResponse, error) {
+func (c *workspaceMaterializerTestClient) CompleteWorkspaceExec(_ context.Context, request workerapi.WorkspaceExecCompleteRequest) (workerapi.WorkspaceMountResponse, error) {
 	c.execCompletions = append(c.execCompletions, request)
 	if len(c.completeErrors) > 0 {
 		err := c.completeErrors[0]
 		c.completeErrors = c.completeErrors[1:]
-		return api.WorkspaceMountResponse{}, err
+		return workerapi.WorkspaceMountResponse{}, err
 	}
 	if c.cancel != nil {
 		c.cancel()
 	}
-	return api.WorkspaceMountResponse{
+	return workerapi.WorkspaceMountResponse{
 		State:             "unmounting",
 		FinalizationKind:  "capture",
 		FencingGeneration: request.FencingGeneration,

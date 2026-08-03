@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -120,11 +119,11 @@ func actorStartCommand() *cobra.Command {
 					run.ConcurrencyKey = &concurrencyKey
 				}
 			}
-			control, scope, err := scopedActorClient(cmd, projectID, environmentID)
+			controlPlane, scope, err := scopedActorClient(cmd, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			response, err := control.StartActor(cmd.Context(), args[0], api.StartActorRequest{
+			response, err := controlPlane.StartActor(cmd.Context(), args[0], api.StartActorRequest{
 				Key: actorKey, Input: input,
 				IdempotencyKey: strings.TrimSpace(idempotencyKey),
 				Workspace:      api.WorkspaceTarget{ID: &workspaceID},
@@ -134,7 +133,7 @@ func actorStartCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "actor_id: %s\n", response.ActorID)
 			fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", response.RunID)
@@ -177,16 +176,16 @@ func actorGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			control, scope, err := scopedActorClient(cmd, projectID, environmentID)
+			controlPlane, scope, err := scopedActorClient(cmd, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			status, err := control.GetActorStatus(cmd.Context(), args[0], reference, scope)
+			status, err := controlPlane.GetActorStatus(cmd.Context(), args[0], reference, scope)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), status)
+				return writeJSON(cmd.OutOrStdout(), status)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "actor_id: %s\n", status.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "actor_status: %s\n", status.Status)
@@ -232,11 +231,11 @@ func actorInputSendCommand() *cobra.Command {
 			if len(input) == 0 {
 				return errors.New("--input-file or --input-json is required")
 			}
-			control, scope, err := scopedActorClient(cmd, projectID, environmentID)
+			controlPlane, scope, err := scopedActorClient(cmd, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			response, err := control.SendActorInput(cmd.Context(), args[0], api.SendActorInputRequest{
+			response, err := controlPlane.SendActorInput(cmd.Context(), args[0], api.SendActorInputRequest{
 				ActorID: reference.ActorID, ActorKey: reference.ActorKey,
 				Input: input, IdempotencyKey: strings.TrimSpace(idempotencyKey),
 			}, scope)
@@ -244,7 +243,7 @@ func actorInputSendCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "sequence: %d\n", response.Sequence)
 			return nil
@@ -290,21 +289,21 @@ func actorOutputReadCommand() *cobra.Command {
 			if cmd.Flags().Changed("after") {
 				afterPointer = &after
 			}
-			control, scope, err := scopedActorClient(cmd, projectID, environmentID)
+			controlPlane, scope, err := scopedActorClient(cmd, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			page, err := control.ReadActorOutput(cmd.Context(), args[0], reference, client.ActorOutputReadOptions{
+			page, err := controlPlane.ReadActorOutput(cmd.Context(), args[0], reference, client.ActorOutputReadOptions{
 				After: afterPointer, Limit: limit, EnvironmentScopeOptions: scope,
 			})
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), page)
+				return writeJSON(cmd.OutOrStdout(), page)
 			}
 			if jsonLines {
-				return format.JSONLines(cmd.OutOrStdout(), page.Records)
+				return writeJSONLines(cmd.OutOrStdout(), page.Records)
 			}
 			for _, record := range page.Records {
 				fmt.Fprintf(cmd.OutOrStdout(), "%d\t%s\n", record.Sequence, record.Data)
@@ -340,11 +339,11 @@ func actorCloseCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			control, scope, err := scopedActorClient(cmd, projectID, environmentID)
+			controlPlane, scope, err := scopedActorClient(cmd, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			receipt, err := control.CloseActor(cmd.Context(), args[0], api.ActorOperationRequest{
+			receipt, err := controlPlane.CloseActor(cmd.Context(), args[0], api.ActorOperationRequest{
 				ActorID: reference.ActorID, ActorKey: reference.ActorKey,
 				IdempotencyKey: strings.TrimSpace(idempotencyKey),
 			}, scope)
@@ -352,7 +351,7 @@ func actorCloseCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), receipt)
+				return writeJSON(cmd.OutOrStdout(), receipt)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "actor_id: %s\n", receipt.ActorID)
 			fmt.Fprintf(cmd.OutOrStdout(), "accepted_at: %s\n", receipt.AcceptedAt.UTC().Format("2006-01-02T15:04:05.999999999Z"))
@@ -371,10 +370,10 @@ func scopedActorClient(
 	projectID string,
 	environmentID string,
 ) (*client.Client, client.EnvironmentScopeOptions, error) {
-	control, err := controlClient(cmd)
+	controlPlane, err := controlPlaneClient(cmd)
 	if err != nil {
 		return nil, client.EnvironmentScopeOptions{}, err
 	}
-	scope, err := environmentScopeForClient(control, projectID, environmentID)
-	return control, scope, err
+	scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
+	return controlPlane, scope, err
 }

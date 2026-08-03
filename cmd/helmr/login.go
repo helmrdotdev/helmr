@@ -6,13 +6,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/cli/browser"
-	"github.com/helmrdotdev/helmr/internal/cli/session"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/clistate"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/spf13/cobra"
 )
 
-const defaultControlURL = "https://helmr.dev"
+const defaultControlPlaneURL = "https://helmr.dev"
 
 func loginCommand() *cobra.Command {
 	var noBrowser bool
@@ -24,21 +24,21 @@ func loginCommand() *cobra.Command {
 			rawURL := explicitAPIURL(cmd)
 			if len(args) > 0 {
 				if rawURL != "" {
-					return errors.New("pass the control URL either as an argument or --api-url, not both")
+					return errors.New("pass the Control Plane URL either as an argument or --api-url, not both")
 				}
 				rawURL = args[0]
 			} else {
-				rawURL = cliControlURL(cmd)
+				rawURL = cliControlPlaneURL(cmd)
 			}
 			baseURL, err := loginURL(rawURL)
 			if err != nil {
 				return err
 			}
-			control, err := client.New(baseURL)
+			controlPlane, err := client.New(baseURL)
 			if err != nil {
 				return err
 			}
-			start, err := control.StartDeviceCode(cmd.Context())
+			start, err := controlPlane.StartDeviceCode(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -53,11 +53,11 @@ func loginCommand() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "Could not open browser: %v\n", err)
 				}
 			}
-			token, err := waitForDeviceToken(cmd, control, start.DeviceCode, start.IntervalSeconds, start.ExpiresInSeconds)
+			token, err := waitForDeviceToken(cmd, controlPlane, start.DeviceCode, start.IntervalSeconds, start.ExpiresInSeconds)
 			if err != nil {
 				return err
 			}
-			state, err := newSessionStore()
+			state, err := newCLIStateStore()
 			if err != nil {
 				return err
 			}
@@ -81,13 +81,13 @@ func logoutCommand() *cobra.Command {
 			rawURL := explicitAPIURL(cmd)
 			if len(args) > 0 {
 				if rawURL != "" {
-					return errors.New("pass the control URL either as an argument or --api-url, not both")
+					return errors.New("pass the Control Plane URL either as an argument or --api-url, not both")
 				}
 				rawURL = args[0]
 			} else {
-				rawURL = cliControlURL(cmd)
+				rawURL = cliControlPlaneURL(cmd)
 			}
-			state, err := newSessionStore()
+			state, err := newCLIStateStore()
 			if err != nil {
 				return err
 			}
@@ -97,16 +97,16 @@ func logoutCommand() *cobra.Command {
 			}
 			token, err := state.Token(baseURL)
 			if err != nil {
-				if errors.Is(err, session.ErrNotFound) {
+				if errors.Is(err, clistate.ErrNotFound) {
 					return fmt.Errorf("not logged in to %s", baseURL)
 				}
 				return err
 			}
-			control, err := client.New(baseURL, client.WithBearerToken(token))
+			controlPlane, err := client.New(baseURL, client.WithBearerToken(token))
 			if err != nil {
 				return err
 			}
-			if err := control.Logout(cmd.Context()); err != nil {
+			if err := controlPlane.Logout(cmd.Context()); err != nil {
 				return err
 			}
 			if err := state.DeleteToken(baseURL); err != nil {
@@ -122,46 +122,46 @@ func logoutCommand() *cobra.Command {
 func loginURL(rawURL string) (string, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
-		state, err := newSessionStore()
+		state, err := newCLIStateStore()
 		if err == nil {
 			cfg, err := state.Load()
 			if err == nil {
 				rawURL = cfg.DefaultHost
-			} else if !errors.Is(err, session.ErrNotFound) {
+			} else if !errors.Is(err, clistate.ErrNotFound) {
 				return "", err
 			}
 		}
 	}
 	if rawURL == "" {
-		rawURL = defaultControlURL
+		rawURL = defaultControlPlaneURL
 	}
-	parsed, err := parseControlURL(rawURL)
+	parsed, err := parseControlPlaneURL(rawURL)
 	if err != nil {
 		return "", err
 	}
 	return parsed.String(), nil
 }
 
-func savedLoginURL(state *session.Store, rawURL string) (string, error) {
+func savedLoginURL(state cliState, rawURL string) (string, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
 		cfg, err := state.Load()
 		if err != nil {
-			if errors.Is(err, session.ErrNotFound) {
+			if errors.Is(err, clistate.ErrNotFound) {
 				return "", errors.New("no saved login")
 			}
 			return "", err
 		}
 		rawURL = cfg.DefaultHost
 	}
-	parsed, err := parseControlURL(rawURL)
+	parsed, err := parseControlPlaneURL(rawURL)
 	if err != nil {
 		return "", err
 	}
 	return parsed.String(), nil
 }
 
-func waitForDeviceToken(cmd *cobra.Command, control *client.Client, deviceCode string, intervalSeconds int64, expiresInSeconds int64) (string, error) {
+func waitForDeviceToken(cmd *cobra.Command, controlPlane *client.Client, deviceCode string, intervalSeconds int64, expiresInSeconds int64) (string, error) {
 	if intervalSeconds <= 0 {
 		intervalSeconds = 5
 	}
@@ -171,7 +171,7 @@ func waitForDeviceToken(cmd *cobra.Command, control *client.Client, deviceCode s
 	deadline := time.Now().Add(time.Duration(expiresInSeconds) * time.Second)
 	fmt.Fprintln(cmd.OutOrStdout(), "Waiting for authorization...")
 	for {
-		response, err := control.ExchangeDeviceCode(cmd.Context(), deviceCode)
+		response, err := controlPlane.ExchangeDeviceCode(cmd.Context(), deviceCode)
 		if err != nil {
 			if kind := deviceTokenError(err); kind != "" {
 				return "", fmt.Errorf("device authorization failed: %s", kind)
@@ -202,11 +202,11 @@ func waitForDeviceToken(cmd *cobra.Command, control *client.Client, deviceCode s
 }
 
 func deviceTokenError(err error) string {
-	var httpErr *client.HTTPError
+	var httpErr *httpclient.Error
 	if errors.As(err, &httpErr) {
 		return httpErr.Message
 	}
 	return ""
 }
 
-var openURL = browser.Open
+var openURL = openBrowser

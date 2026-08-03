@@ -24,8 +24,8 @@ import (
 	"time"
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
+	"github.com/helmrdotdev/helmr/internal/firecracker/datapath"
 	"github.com/helmrdotdev/helmr/internal/vm"
-	"github.com/helmrdotdev/helmr/internal/worker/datapath"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"

@@ -2,19 +2,12 @@ package deployment
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"time"
 
 	"github.com/helmrdotdev/helmr/internal/archive"
-	"github.com/helmrdotdev/helmr/internal/compute"
-	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/vm"
-	"github.com/helmrdotdev/helmr/internal/wire"
 )
 
 const (
@@ -23,8 +16,7 @@ const (
 	BuildGuestSucceeded = BuildGuestOutcome("succeeded")
 	BuildGuestFailed    = BuildGuestOutcome("failed")
 
-	maxBuildGuestResultBytes = 80 << 20
-	buildGuestCloseTimeout   = 30 * time.Second
+	MaxBuildGuestResultBytes = 80 << 20
 )
 
 type BuildGuestOutcome string
@@ -66,171 +58,6 @@ type BuildToolchain struct {
 	RuntimeDigest string             `json:"runtimeDigest"`
 }
 
-type BuildGuest struct {
-	Connector vm.Connector
-	WorkDir   string
-	Encoder   string
-}
-
-type BuildExecution struct {
-	Tree           *BuildTree
-	TreeDescriptor BuildTreeDescriptor
-	Config         BuildConfig
-	Verification   VerificationResult
-	Logs           BuildLogs
-}
-
-func (guest BuildGuest) Execute(
-	ctx context.Context,
-	binding vm.WorkloadBinding,
-	request BuildGuestRequest,
-	source io.Reader,
-	manager *ArtifactSnapshot,
-	runtime *ArtifactSnapshot,
-	toolchain *ArtifactSnapshot,
-) (_ *BuildExecution, returnErr error) {
-	if guest.Connector == nil {
-		return nil, errors.New("build guest connector is required")
-	}
-	if source == nil {
-		return nil, errors.New("submitted source is nil")
-	}
-	if manager == nil || runtime == nil || toolchain == nil {
-		return nil, errors.New("build snapshots are incomplete")
-	}
-	raw, err := canonicalBuildGuestDocument(request, validateBuildGuestRequest)
-	if err != nil {
-		return nil, err
-	}
-	session, err := guest.Connector.Connect(ctx, vm.ConnectRequest{
-		ID:        binding.OwnerID,
-		OwnerKind: vm.OwnerBuild,
-		Binding:   binding,
-		Resources: compute.BuildGuestResources(),
-		PIDsMax:   compute.BuildGuestPIDsMax,
-		ReadOnlyDrives: []vm.ReadOnlyDrive{
-			{ID: vm.ManagerDrive, Source: manager},
-			{ID: vm.ManagedRuntimeDrive, Source: runtime},
-			{ID: vm.ToolchainDrive, Source: toolchain},
-		},
-	})
-	if err != nil {
-		return nil, vm.NewGuestError(fmt.Errorf("connect staged build guest: %w", err))
-	}
-	defer func() {
-		returnErr = errors.Join(returnErr, closeBuildGuest(session))
-	}()
-	network, ok := session.(vm.BuildNetworkSession)
-	if !ok {
-		return nil, errors.New(
-			"build session does not expose network status",
-		)
-	}
-	stream := session.Stream()
-	bodySize := uint64(4+len(raw)) + uint64(request.SourceSizeBytes)
-	if err := wire.WriteStreamFrameHeader(
-		stream,
-		wire.StreamHeader{Type: wire.StreamTypeBuild, RunID: binding.OwnerID},
-		bodySize,
-	); err != nil {
-		return nil, vm.NewGuestError(fmt.Errorf("write build header: %w", err))
-	}
-	if err := frameio.WriteMessageFrame(stream, raw); err != nil {
-		return nil, vm.NewGuestError(fmt.Errorf("write build request: %w", err))
-	}
-	written, err := io.CopyN(stream, source, request.SourceSizeBytes)
-	if err != nil || written != request.SourceSizeBytes {
-		return nil, vm.NewGuestError(fmt.Errorf("write submitted source: %w", err))
-	}
-	resultRaw, err := frameio.ReadMessageFrameBounded(
-		stream,
-		maxBuildGuestResultBytes,
-	)
-	if err != nil {
-		return nil, vm.NewGuestError(fmt.Errorf("read build result: %w", err))
-	}
-	result, err := ParseBuildGuestResult(resultRaw)
-	if err != nil {
-		return nil, vm.NewGuestError(err)
-	}
-	var tree *BuildTree
-	if result.Outcome == BuildGuestSucceeded {
-		tree, err = IngestBuildTreeArchive(
-			ctx,
-			guest.WorkDir,
-			guest.Encoder,
-			result.TreeDigest,
-			result.TreeSizeBytes,
-			stream,
-		)
-		if err != nil {
-			return nil, err
-		}
-	}
-	var trailing [1]byte
-	if _, err := io.ReadFull(stream, trailing[:]); !errors.Is(err, io.EOF) {
-		if tree != nil {
-			_ = tree.Close()
-		}
-		if err == nil {
-			return nil, vm.NewGuestError(
-				errors.New("build response contains trailing data"),
-			)
-		}
-		return nil, vm.NewGuestError(
-			fmt.Errorf("read build response tail: %w", err),
-		)
-	}
-	status, err := network.BuildNetworkStatus(ctx)
-	if err != nil {
-		if tree != nil {
-			_ = tree.Close()
-		}
-		return nil, fmt.Errorf("read build network status: %w", err)
-	}
-	if failure := buildNetworkFailure(status, result.Logs); failure != nil {
-		if tree != nil {
-			_ = tree.Close()
-		}
-		return nil, *failure
-	}
-	if result.Outcome == BuildGuestFailed {
-		return nil, BuildFailure{
-			Reason:  result.Error.ReasonCode,
-			Message: result.Error.Message,
-			Logs:    result.Logs,
-		}
-	}
-	treeDescriptor, err := tree.Descriptor()
-	if err != nil {
-		_ = tree.Close()
-		return nil, err
-	}
-	return &BuildExecution{
-		Tree:           tree,
-		TreeDescriptor: treeDescriptor,
-		Config:         cloneBuildConfig(*result.Config),
-		Verification:   *result.Verification,
-		Logs:           *result.Logs,
-	}, nil
-}
-
-func buildNetworkFailure(
-	status vm.BuildNetworkStatus,
-	logs *BuildLogs,
-) *BuildFailure {
-	switch {
-	case status.LimitPackets != 0:
-		return &BuildFailure{
-			Reason:  BuildFailureNetworkLimit,
-			Message: "build public-egress limit was exceeded",
-			Logs:    logs,
-		}
-	default:
-		return nil
-	}
-}
-
 func ParseBuildGuestRequest(raw []byte) (BuildGuestRequest, error) {
 	var request BuildGuestRequest
 	if err := parseBuildGuestDocument(raw, &request, validateBuildGuestRequest); err != nil {
@@ -245,6 +72,10 @@ func ParseBuildGuestResult(raw []byte) (BuildGuestResult, error) {
 		return BuildGuestResult{}, err
 	}
 	return result, nil
+}
+
+func CanonicalBuildGuestRequest(request BuildGuestRequest) ([]byte, error) {
+	return canonicalBuildGuestDocument(request, validateBuildGuestRequest)
 }
 
 func CanonicalBuildGuestResult(result BuildGuestResult) ([]byte, error) {
@@ -410,7 +241,7 @@ func canonicalBuildGuestDocument[T any](
 	if err != nil {
 		return nil, err
 	}
-	if len(canonical) == 0 || len(canonical) > maxBuildGuestResultBytes {
+	if len(canonical) == 0 || len(canonical) > MaxBuildGuestResultBytes {
 		return nil, errors.New("build guest document size is invalid")
 	}
 	return canonical, nil
@@ -421,7 +252,7 @@ func parseBuildGuestDocument[T any](
 	value *T,
 	validate func(T) error,
 ) error {
-	if len(raw) == 0 || len(raw) > maxBuildGuestResultBytes {
+	if len(raw) == 0 || len(raw) > MaxBuildGuestResultBytes {
 		return errors.New("build guest document size is invalid")
 	}
 	canonical, err := jsoncanon.Transform(raw)
@@ -450,26 +281,4 @@ func parseBuildGuestDocument[T any](
 		return errors.New("build guest document does not match its complete v0 shape")
 	}
 	return nil
-}
-
-func closeBuildGuest(session vm.Session) error {
-	ctx, cancel := context.WithTimeout(
-		context.Background(),
-		buildGuestCloseTimeout,
-	)
-	defer cancel()
-	if err := session.Close(ctx); err != nil {
-		return vm.NewGuestError(fmt.Errorf("close build guest: %w", err))
-	}
-	return nil
-}
-
-type BuildFailure struct {
-	Reason  BuildFailureReason
-	Message string
-	Logs    *BuildLogs
-}
-
-func (failure BuildFailure) Error() string {
-	return failure.Message
 }

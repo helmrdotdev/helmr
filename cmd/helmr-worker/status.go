@@ -6,15 +6,15 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/executor"
-	workerdaemon "github.com/helmrdotdev/helmr/internal/worker"
+	"github.com/helmrdotdev/helmr/internal/worker"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
 
 func runStatus(log *slog.Logger) error {
-	cfg, err := config.LoadWorkerControl()
+	cfg, err := config.LoadWorkerControlPlane()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -22,26 +22,26 @@ func runStatus(log *slog.Logger) error {
 	if workDir == "" {
 		workDir = executor.DefaultWorkDir()
 	}
-	workerCredential, err := resolveWorkerControlCredential(cfg, workDir)
+	workerCredential, err := resolveWorkerControlPlaneCredential(cfg, workDir)
 	if err != nil {
 		return err
 	}
-	identity, err := workerdaemon.ReadProcessIdentity(workDir)
+	identity, err := worker.ReadProcessIdentity(workDir)
 	if err != nil {
 		return err
 	}
 	supportsRun, supportsBuild := identityRoles(identity.Roles)
-	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), client.WithWorkerService(identity.ServiceID, api.CurrentWorkerProtocolVersion, supportsRun, supportsBuild))
+	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	status, err := controlClient.GetWorkerStatus(ctx)
+	status, err := controlPlaneClient.GetWorkerStatus(ctx)
 	if err != nil {
 		return fmt.Errorf("get worker status: %w", err)
 	}
-	if status.Status != api.WorkerStatusActive {
+	if status.Status != workerapi.StatusActive {
 		return fmt.Errorf("worker status is %s", status.Status)
 	}
 	if supportsRun {
@@ -59,7 +59,7 @@ func runStatus(log *slog.Logger) error {
 	return nil
 }
 
-func workerPauseReason(readiness *api.WorkerRoleReadiness) string {
+func workerPauseReason(readiness *workerapi.RoleReadiness) string {
 	if readiness == nil || readiness.PausedReason == "" {
 		return "unavailable"
 	}

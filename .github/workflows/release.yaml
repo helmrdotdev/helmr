@@ -217,8 +217,8 @@ jobs:
             dist/helmr-darwin-arm64.tar.gz
             dist/checksums.txt
 
-  control-image:
-    name: control image
+  controlplane-image:
+    name: controlplane image
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
       (github.event_name == 'workflow_dispatch' &&
@@ -227,7 +227,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-      CONTROL_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-control
+      CONTROLPLANE_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-controlplane
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -236,21 +236,21 @@ jobs:
 
       - uses: ./.github/actions/setup-nix
 
-      - name: Build control image
+      - name: Build controlplane image
         env:
-          IMAGE_URI: ${{ env.CONTROL_IMAGE_REPOSITORY }}:${{ env.RELEASE_TAG }}
+          IMAGE_URI: ${{ env.CONTROLPLANE_IMAGE_REPOSITORY }}:${{ env.RELEASE_TAG }}
           HELMR_BUILD_VERSION: ${{ env.RELEASE_TAG }}
         run: |
-          nix develop .#images --command ./scripts/build-control-image.sh "$IMAGE_URI"
+          nix develop .#images --command ./scripts/build-controlplane-image.sh "$IMAGE_URI"
           mkdir -p dist
-          docker save "$IMAGE_URI" -o dist/control-image.tar
+          docker save "$IMAGE_URI" -o dist/controlplane-image.tar
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: control-image
+          name: controlplane-image
           if-no-files-found: error
           retention-days: 7
-          path: dist/control-image.tar
+          path: dist/controlplane-image.tar
 
   worker-ami:
     name: worker AMI
@@ -380,7 +380,7 @@ jobs:
         inputs.mode == 'repair' &&
         github.ref == 'refs/heads/main')) &&
       needs.cli.result == 'success' &&
-      needs.control-image.result == 'success' &&
+      needs.controlplane-image.result == 'success' &&
       needs.worker-ami.result == 'success' &&
       (needs.platform-release.result == 'success' ||
        needs.platform-release-repair.result == 'success')
@@ -388,18 +388,18 @@ jobs:
       - platform-release
       - platform-release-repair
       - cli
-      - control-image
+      - controlplane-image
       - worker-ami
     runs-on: ubuntu-24.04
     environment: release-production
     permissions:
       contents: write # Needed to create or update GitHub Release assets.
       id-token: write # Needed to verify Worker AMIs through the AWS release role. security-check: allow-id-token
-      packages: write # Needed to publish the official Control image.
+      packages: write # Needed to publish the official Control Plane image.
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-      CONTROL_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-control
-      IMAGE_URI: ghcr.io/${{ github.repository_owner }}/helmr-control:${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      CONTROLPLANE_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-controlplane
+      IMAGE_URI: ghcr.io/${{ github.repository_owner }}/helmr-controlplane:${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
       WORKER_AMI_REGIONS: ${{ vars.RELEASE_WORKER_AMI_REGIONS || 'us-east-1,us-west-2,ap-northeast-1' }}
       AWS_REGION: ${{ vars.RELEASE_AWS_REGION || 'us-east-1' }}
     steps:
@@ -423,28 +423,28 @@ jobs:
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: control-image
-          path: dist/control-image
+          name: controlplane-image
+          path: dist/controlplane-image
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: worker-release-artifact
           path: dist/worker
 
-      - name: Push control image
+      - name: Push controlplane image
         id: push
         env:
           GHCR_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ github.token }}
         run: |
-          docker load -i dist/control-image/control-image.tar
+          docker load -i dist/controlplane-image/controlplane-image.tar
           printf '%s' "$GHCR_TOKEN" |
             docker login ghcr.io --username "$GHCR_ACTOR" --password-stdin
           push_output="$(docker push "$IMAGE_URI")"
           printf '%s\n' "$push_output"
           digest="$(printf '%s\n' "$push_output" | awk '/digest:/ { print $3 }' | tail -n 1)"
           [ -n "$digest" ]
-          printf 'control_image=%s@%s\n' "$CONTROL_IMAGE_REPOSITORY" "$digest" >>"$GITHUB_OUTPUT"
+          printf 'controlplane_image=%s@%s\n' "$CONTROLPLANE_IMAGE_REPOSITORY" "$digest" >>"$GITHUB_OUTPUT"
 
       - uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885
         with:
@@ -454,12 +454,12 @@ jobs:
 
       - name: Write AWS release manifest
         env:
-          CONTROL_IMAGE: ${{ steps.push.outputs.control_image }}
+          CONTROLPLANE_IMAGE: ${{ steps.push.outputs.controlplane_image }}
           REQUIRED_WORKER_AMI_REGIONS: ${{ env.WORKER_AMI_REGIONS }}
           VERIFY_RELEASE_ARTIFACTS: "1"
         run: |
           scripts/write-aws-release-manifest.sh \
-            "$CONTROL_IMAGE" \
+            "$CONTROLPLANE_IMAGE" \
             "$(jq -c '.workerAMIs' dist/worker/worker-artifacts.json)" \
             "$(cat dist/platform-release/platform-release-provenance.json)" \
             dist/aws-artifacts.json

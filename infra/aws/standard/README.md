@@ -6,16 +6,16 @@ secret values out of state.
 
 ## Baseline
 
-- Two availability zone VPC with public subnets for the ALB and private subnets for control,
+- Two availability zone VPC with public subnets for the ALB and private subnets for Control Plane,
   migration, Postgres, and worker resources
-- Single NAT Gateway enabled for private subnet egress. This reduces cost, but private control,
+- Single NAT Gateway enabled for private subnet egress. This reduces cost, but private Control Plane,
   migration, and worker egress depend on one NAT Gateway and may incur cross-AZ data processing.
-- Control-plane ECS/Fargate tasks run in private subnets with no public IPs
+- Control Plane ECS/Fargate tasks run in private subnets with no public IPs
 - Internet-facing ALB terminates HTTPS with a customer-managed ACM certificate
 - CloudFront disabled by default; `enable_cloudfront` is exposed for deployments that explicitly
   want the module-provided distribution. When enabled, CloudFront connects to the ALB over HTTPS
   using a separate origin DNS name and ACM certificate.
-- `helmr-control` desired count defaults to 2; `helmr-dispatcher` desired count defaults to 1
+- `helmr-controlplane` desired count defaults to 2; `helmr-dispatcher` desired count defaults to 1
 - Cluster-mode disabled ElastiCache Valkey/Redis provides `HELMR_REDIS_URL` for dispatch; two
   nodes are used by default for automatic failover
 - Worker Auto Scaling resources are optional and private-subnet ready, with zero default capacity
@@ -39,16 +39,16 @@ generated lock file in your deployment repository.
 
 ## Deployment Flow
 
-The first apply should normally keep `create_control_service=false`. That creates the VPC, ALB,
+The first apply should normally keep `create_controlplane_service=false`. That creates the VPC, ALB,
 RDS, CAS bucket, KMS key, empty Secrets Manager containers, and release-backed task definitions
 without starting tasks that need populated secrets.
 
 Populate the emitted Secrets Manager secrets out-of-band, run the database migration task, then set
-`create_control_service=true` and apply again. The stack creates empty secret containers; it does
+`create_controlplane_service=true` and apply again. The stack creates empty secret containers; it does
 not generate or store Helmr internal secret values in Terraform state. This starts separate
-`helmr-control` and `helmr-dispatcher` ECS services using `control_desired_count` and
-`dispatcher_desired_count`. The official control image is resolved from `helmr_version`; set
-`control_image` only for digest-pinned custom builds.
+`helmr-controlplane` and `helmr-dispatcher` ECS services using `controlplane_desired_count` and
+`dispatcher_desired_count`. The official Control Plane image is resolved from `helmr_version`; set
+`controlplane_image` only for digest-pinned custom builds.
 
 Required secret value formats:
 
@@ -74,12 +74,12 @@ Run migrations after secrets are populated:
 
 ```sh
 aws ecs run-task \
-  --cluster "$(tofu output -raw control_cluster_name)" \
+  --cluster "$(tofu output -raw controlplane_cluster_name)" \
   --task-definition "$(tofu output -raw migration_task_definition_arn)" \
   --launch-type FARGATE \
   --network-configuration "$(jq -cn \
-    --argjson subnets "$(tofu output -json control_task_subnet_ids)" \
-    --argjson securityGroups "$(tofu output -json control_task_security_group_ids)" \
+    --argjson subnets "$(tofu output -json controlplane_task_subnet_ids)" \
+    --argjson securityGroups "$(tofu output -json controlplane_task_security_group_ids)" \
     '{awsvpcConfiguration:{subnets:$subnets,securityGroups:$securityGroups,assignPublicIp:"DISABLED"}}')"
 ```
 
@@ -93,16 +93,16 @@ email_from     = "Helmr <noreply@example.com>"
 ```
 
 After applying, populate the emitted `secret_arns.resend_api_key` Secrets Manager secret with the
-Resend API key before starting the control service.
+Resend API key before starting the Control Plane service.
 
 ## DNS and HTTPS
 
 Create or validate an ACM certificate for `public_url` in the same region as the ALB. Point the
-customer DNS name at `control_load_balancer_dns_name`, then enable the control and dispatcher
+customer DNS name at `controlplane_load_balancer_dns_name`, then enable the Control Plane and dispatcher
 services after
 secrets and migrations are ready.
 
-If `enable_cloudfront=true`, use the `control_url` output for browser and CLI traffic, set
+If `enable_cloudfront=true`, use the `controlplane_url` output for browser and CLI traffic, set
 `cloudfront_origin_domain_name` to a separate DNS name that resolves to the public ALB, and keep
 that name covered by `certificate_arn`. Workers use that same origin hostname privately inside the
 VPC, so do not reuse the CloudFront viewer hostname as the origin.
@@ -121,7 +121,7 @@ are filesystem-first: size the root EBS volume for build/cache/runtime data, and
 
 For an AMI rollout, change `worker_ami_id`, apply the launch template, and
 coordinate the Auto Scaling instance refresh through the deployment's exact
-drain-to-`termination_ready` path. Control does not authenticate or allowlist
+drain-to-`termination_ready` path. Control Plane does not authenticate or allowlist
 the AMI.
 
 Deployment infrastructure owns desired capacity independently for run and

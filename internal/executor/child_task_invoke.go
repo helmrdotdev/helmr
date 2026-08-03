@@ -8,15 +8,15 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type childTaskInvokeControl interface {
-	InvokeChildTask(context.Context, api.WorkerInvokeChildTaskRequest) (api.WorkerInvokeChildTaskResponse, error)
+type childTaskInvokeControlPlane interface {
+	InvokeChildTask(context.Context, workerapi.InvokeChildTaskRequest) (workerapi.InvokeChildTaskResponse, error)
 }
 
 func (task *guestRunLeaseTask) handleChildTaskInvoke(
@@ -27,22 +27,22 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 	if err != nil {
 		return err
 	}
-	control, ok := task.control.(childTaskInvokeControl)
+	controlPlane, ok := task.controlPlane.(childTaskInvokeControlPlane)
 	if !ok {
-		return errors.New("Run Lease Task child Task invocation control is required")
+		return errors.New("Run Lease Task child Task invocation Control Plane is required")
 	}
-	var response api.WorkerInvokeChildTaskResponse
+	var response workerapi.InvokeChildTaskResponse
 	if err := task.callRunSourceRuntime(ctx, func(
 		callCtx context.Context,
-		lease api.WorkerRunLeaseAssignment,
+		lease workerapi.RunLeaseAssignment,
 	) error {
 		request.Lease = lease.Fence()
 		var callErr error
-		response, callErr = control.InvokeChildTask(callCtx, request)
+		response, callErr = controlPlane.InvokeChildTask(callCtx, request)
 		return callErr
 	}); err != nil {
 		if failure, ok := childTaskInvokeFailure(err); ok {
-			response = api.WorkerInvokeChildTaskResponse{
+			response = workerapi.InvokeChildTaskResponse{
 				CorrelationID: request.CorrelationID,
 				Failed:        &failure,
 			}
@@ -62,14 +62,14 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 			return errors.New("child Task invocation response Wait IDs did not match")
 		}
 		if task.waits == nil {
-			return errors.New("Run Lease Task wait control is required")
+			return errors.New("Run Lease Task wait Control Plane is required")
 		}
 		runtimeWait := WaitRequest{
 			Leases:                        task,
 			CorrelationID:                 request.CorrelationID,
 			RunWaitID:                     request.RunWaitID,
 			ResumeAttachID:                request.ResumeAttachID,
-			Kind:                          api.WorkerRunWaitKindChild,
+			Kind:                          workerapi.RunWaitKindChild,
 			ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,
 			Workspace:                     task.waitWorkspace,
 			Checkpointer:                  task.checkpointer,
@@ -116,25 +116,25 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 
 func workerChildTaskInvokeRequest(
 	requested *runv0.TaskChildInvokeRequested,
-) (api.WorkerInvokeChildTaskRequest, error) {
+) (workerapi.InvokeChildTaskRequest, error) {
 	if requested == nil {
-		return api.WorkerInvokeChildTaskRequest{}, errors.New("child Task invocation request is required")
+		return workerapi.InvokeChildTaskRequest{}, errors.New("child Task invocation request is required")
 	}
 	if err := ids.Validate(requested.GetCorrelationId()); err != nil {
-		return api.WorkerInvokeChildTaskRequest{}, errors.New("child Task invocation correlation ID is invalid")
+		return workerapi.InvokeChildTaskRequest{}, errors.New("child Task invocation correlation ID is invalid")
 	}
 	switch requested.GetMethod() {
 	case "call":
 		if ids.Validate(requested.GetRunWaitId()) != nil ||
 			ids.Validate(requested.GetResumeAttachId()) != nil {
-			return api.WorkerInvokeChildTaskRequest{}, errors.New("child Task call Wait IDs are invalid")
+			return workerapi.InvokeChildTaskRequest{}, errors.New("child Task call Wait IDs are invalid")
 		}
 	case "start":
 		if requested.GetRunWaitId() != "" || requested.GetResumeAttachId() != "" {
-			return api.WorkerInvokeChildTaskRequest{}, errors.New("child Task start must not contain Wait IDs")
+			return workerapi.InvokeChildTaskRequest{}, errors.New("child Task start must not contain Wait IDs")
 		}
 	}
-	request := api.WorkerInvokeChildTaskRequest{
+	request := workerapi.InvokeChildTaskRequest{
 		CorrelationID:  requested.GetCorrelationId(),
 		RunWaitID:      requested.GetRunWaitId(),
 		ResumeAttachID: requested.GetResumeAttachId(),
@@ -154,16 +154,16 @@ func workerChildTaskInvokeRequest(
 	return request, nil
 }
 
-func childTaskInvokeFailure(err error) (api.WorkerRuntimeOperationFailure, bool) {
-	var httpErr *client.HTTPError
+func childTaskInvokeFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
+	var httpErr *httpclient.Error
 	if !errors.As(err, &httpErr) {
-		return api.WorkerRuntimeOperationFailure{}, false
+		return workerapi.RuntimeOperationFailure{}, false
 	}
 	if httpErr.StatusCode != http.StatusBadRequest &&
 		httpErr.StatusCode != http.StatusUnprocessableEntity &&
 		httpErr.StatusCode != http.StatusRequestEntityTooLarge &&
 		(httpErr.StatusCode != http.StatusConflict || strings.TrimSpace(httpErr.Code) == "") {
-		return api.WorkerRuntimeOperationFailure{}, false
+		return workerapi.RuntimeOperationFailure{}, false
 	}
 	code := strings.TrimSpace(httpErr.Code)
 	if code == "" {
@@ -173,7 +173,7 @@ func childTaskInvokeFailure(err error) (api.WorkerRuntimeOperationFailure, bool)
 	if message == "" {
 		message = "child Task start request was rejected"
 	}
-	return api.WorkerRuntimeOperationFailure{
+	return workerapi.RuntimeOperationFailure{
 		Code: code, Message: message, Retryable: httpErr.Retryable,
 	}, true
 }

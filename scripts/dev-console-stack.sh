@@ -62,13 +62,13 @@ if [ -z "${HELMR_DATABASE_URL:-}" ]; then
 fi
 
 cleanup() {
-  if [ -n "${control_pid:-}" ]; then kill "${control_pid}" >/dev/null 2>&1 || true; fi
+  if [ -n "${controlplane_pid:-}" ]; then kill "${controlplane_pid}" >/dev/null 2>&1 || true; fi
   if [ -n "${console_pid:-}" ]; then kill "${console_pid}" >/dev/null 2>&1 || true; fi
   if [ "${started_pg}" = "1" ]; then pg_ctl -D "${PGDATA}" -m fast -w stop >/dev/null 2>&1 || true; fi
 }
 trap cleanup EXIT INT TERM
 
-export HELMR_CONTROL_ADDR="${HELMR_CONTROL_ADDR:-":8080"}"
+export HELMR_CONTROLPLANE_ADDR="${HELMR_CONTROLPLANE_ADDR:-":8080"}"
 export HELMR_PUBLIC_URL="${HELMR_PUBLIC_URL:-"http://${CONSOLE_HOST}:${CONSOLE_PORT}"}"
 export HELMR_REGION_ID="${HELMR_REGION_ID:-"local"}"
 export HELMR_DEFAULT_REGION_ID="${HELMR_DEFAULT_REGION_ID:-"${HELMR_REGION_ID}"}"
@@ -85,18 +85,18 @@ if ! bun -e 'const groups = JSON.parse(process.env.HELMR_WORKER_GROUPS); if (!Ar
   echo "HELMR_WORKER_GROUPS must be a non-empty JSON array" >&2
   exit 1
 fi
-case "${HELMR_CONTROL_ADDR}" in
-  http://*|https://*) export HELMR_DEV_BACKEND_URL="${HELMR_DEV_BACKEND_URL:-"${HELMR_CONTROL_ADDR}"}" ;;
-  :*) export HELMR_DEV_BACKEND_URL="${HELMR_DEV_BACKEND_URL:-"http://127.0.0.1${HELMR_CONTROL_ADDR}"}" ;;
-  *) export HELMR_DEV_BACKEND_URL="${HELMR_DEV_BACKEND_URL:-"http://${HELMR_CONTROL_ADDR}"}" ;;
+case "${HELMR_CONTROLPLANE_ADDR}" in
+  http://*|https://*) export HELMR_DEV_BACKEND_URL="${HELMR_DEV_BACKEND_URL:-"${HELMR_CONTROLPLANE_ADDR}"}" ;;
+  :*) export HELMR_DEV_BACKEND_URL="${HELMR_DEV_BACKEND_URL:-"http://127.0.0.1${HELMR_CONTROLPLANE_ADDR}"}" ;;
+  *) export HELMR_DEV_BACKEND_URL="${HELMR_DEV_BACKEND_URL:-"http://${HELMR_CONTROLPLANE_ADDR}"}" ;;
 esac
 export HELMR_DEV_CONSOLE_PORT="${CONSOLE_PORT}"
 
 (
   cd "${ROOT}"
-  go run ./dev/control
+  go run ./cmd/internal/dev-controlplane
 ) &
-control_pid=$!
+controlplane_pid=$!
 
 (
   cd "${ROOT}"
@@ -117,11 +117,11 @@ Press Ctrl-C to stop the stack.
 
 EOF
 
-while kill -0 "${control_pid}" >/dev/null 2>&1 && kill -0 "${console_pid}" >/dev/null 2>&1; do
+while kill -0 "${controlplane_pid}" >/dev/null 2>&1 && kill -0 "${console_pid}" >/dev/null 2>&1; do
   sleep 1
 done
 
 cleanup
-wait "${control_pid}" >/dev/null 2>&1 || true
+wait "${controlplane_pid}" >/dev/null 2>&1 || true
 wait "${console_pid}" >/dev/null 2>&1 || true
 exit 1

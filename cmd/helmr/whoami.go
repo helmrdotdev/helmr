@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/spf13/cobra"
 )
 
@@ -26,7 +25,7 @@ func whoamiCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", response.AuthSource, response.APIURL)
 			return nil
@@ -37,18 +36,18 @@ func whoamiCommand() *cobra.Command {
 }
 
 func currentAuthSource(cmd *cobra.Command) (whoamiResponse, error) {
-	control, err := controlClient(cmd)
+	controlPlane, err := controlPlaneClient(cmd)
 	if err != nil {
 		return whoamiResponse{}, err
 	}
 	authSource := "api_key"
-	if control.UsesSessionScopedRoutes() {
+	if controlPlane.UsesSessionScopedRoutes() {
 		authSource = "login"
-		me, err := control.GetMe(cmd.Context())
+		me, err := controlPlane.GetMe(cmd.Context())
 		if err != nil {
 			return whoamiResponse{}, err
 		}
-		return whoamiResponse{MeResponse: me, AuthSource: authSource, APIURL: control.BaseURL()}, nil
+		return whoamiResponse{MeResponse: me, AuthSource: authSource, APIURL: controlPlane.BaseURL()}, nil
 	}
-	return whoamiResponse{AuthSource: authSource, APIURL: strings.TrimRight(control.BaseURL(), "/")}, nil
+	return whoamiResponse{AuthSource: authSource, APIURL: strings.TrimRight(controlPlane.BaseURL(), "/")}, nil
 }

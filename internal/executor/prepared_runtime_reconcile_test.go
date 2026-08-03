@@ -8,18 +8,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type typedRuntimeClient struct {
-	targets      []api.WorkerRuntimeReconcileResponse
-	closed       []api.WorkerRuntimeInstanceStateRequest
-	failed       []api.WorkerRuntimeInstanceStateRequest
+	targets      []workerapi.RuntimeReconcileResponse
+	closed       []workerapi.RuntimeInstanceStateRequest
+	failed       []workerapi.RuntimeInstanceStateRequest
 	failedErrors []error
 }
 
@@ -90,7 +90,7 @@ func TestPreparedRuntimePoolCloseHonorsDeadlineWhileMonitorIsStuck(t *testing.T)
 	pool.RuntimeInstances = &typedRuntimeClient{}
 	entry := preparedRuntimeEntry{
 		session: session, poolKey: "runtime-key", runtimeInstanceID: "runtime-1", runtimeEpoch: 7,
-		target: api.WorkerRuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 1, ObservedVersion: 0},
+		target: workerapi.RuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 1, ObservedVersion: 0},
 		exit:   newPreparedRuntimeSignal(), ready: newPreparedRuntimeSignal(),
 	}
 	pool.mu.Lock()
@@ -113,30 +113,30 @@ func TestPreparedRuntimePoolCloseHonorsDeadlineWhileMonitorIsStuck(t *testing.T)
 	}
 }
 
-func (c *typedRuntimeClient) NextRuntimeReconcileTarget(ctx context.Context) (api.WorkerRuntimeReconcileResponse, error) {
+func (c *typedRuntimeClient) NextRuntimeReconcileTarget(ctx context.Context) (workerapi.RuntimeReconcileResponse, error) {
 	if len(c.targets) == 0 {
 		<-ctx.Done()
-		return api.WorkerRuntimeReconcileResponse{}, ctx.Err()
+		return workerapi.RuntimeReconcileResponse{}, ctx.Err()
 	}
 	target := c.targets[0]
 	c.targets = c.targets[1:]
 	return target, nil
 }
-func (c *typedRuntimeClient) MarkRuntimeInstanceReady(context.Context, api.WorkerRuntimeInstanceStateRequest) (api.WorkerRuntimeInstance, error) {
-	return api.WorkerRuntimeInstance{}, nil
+func (c *typedRuntimeClient) MarkRuntimeInstanceReady(context.Context, workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
+	return workerapi.RuntimeInstance{}, nil
 }
-func (c *typedRuntimeClient) MarkRuntimeInstanceClosed(_ context.Context, request api.WorkerRuntimeInstanceStateRequest) (api.WorkerRuntimeInstance, error) {
+func (c *typedRuntimeClient) MarkRuntimeInstanceClosed(_ context.Context, request workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
 	c.closed = append(c.closed, request)
-	return api.WorkerRuntimeInstance{ID: request.ID}, nil
+	return workerapi.RuntimeInstance{ID: request.ID}, nil
 }
-func (c *typedRuntimeClient) MarkRuntimeInstanceFailed(_ context.Context, request api.WorkerRuntimeInstanceStateRequest) (api.WorkerRuntimeInstance, error) {
+func (c *typedRuntimeClient) MarkRuntimeInstanceFailed(_ context.Context, request workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
 	c.failed = append(c.failed, request)
 	if len(c.failedErrors) > 0 {
 		err := c.failedErrors[0]
 		c.failedErrors = c.failedErrors[1:]
-		return api.WorkerRuntimeInstance{}, err
+		return workerapi.RuntimeInstance{}, err
 	}
-	return api.WorkerRuntimeInstance{ID: request.ID}, nil
+	return workerapi.RuntimeInstance{ID: request.ID}, nil
 }
 
 func TestStopRuntimeTargetRequiresExclusiveMatchingLocalEpoch(t *testing.T) {
@@ -144,14 +144,14 @@ func TestStopRuntimeTargetRequiresExclusiveMatchingLocalEpoch(t *testing.T) {
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
 	pool.entries["runtime-key"] = []preparedRuntimeEntry{{session: session, runtimeInstanceID: "runtime-1", runtimeEpoch: 7}}
 	client := &typedRuntimeClient{}
-	target := api.WorkerRuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
+	target := workerapi.RuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
 	if err := pool.StopRuntimeTarget(context.Background(), client, target); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.closed) != 1 || client.closed[0].ID != "runtime-1" || client.closed[0].WorkerEpoch != 7 {
 		t.Fatalf("closed = %+v", client.closed)
 	}
-	if proof := client.closed[0].CleanupProof; proof == nil || proof.Method != api.WorkerRuntimeCleanupSessionClosed || proof.CompletedAt.IsZero() {
+	if proof := client.closed[0].CleanupProof; proof == nil || proof.Method != workerapi.RuntimeCleanupSessionClosed || proof.CompletedAt.IsZero() {
 		t.Fatalf("cleanup proof = %+v, want closed session", proof)
 	}
 	if session.closed != 1 {
@@ -168,7 +168,7 @@ func TestStopRuntimeTargetDefersToCheckedOutWorkspaceRuntime(t *testing.T) {
 	pool.markRuntimeCheckedOutLocked("runtime-1", 7)
 	pool.mu.Unlock()
 	client := &typedRuntimeClient{}
-	target := api.WorkerRuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
+	target := workerapi.RuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
 	if err := pool.StopRuntimeTarget(context.Background(), client, target); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestStopRuntimeTargetReconcilesMissingLocalRuntimeExactly(t *testing.T) {
 	cleaner := &cleanupRuntimeConnector{}
 	pool := NewPreparedRuntimePool(cleaner, nil, 1, nil)
 	client := &typedRuntimeClient{}
-	target := api.WorkerRuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
+	target := workerapi.RuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
 
 	if err := pool.StopRuntimeTarget(context.Background(), client, target); err != nil {
 		t.Fatal(err)
@@ -199,7 +199,7 @@ func TestStopRuntimeTargetReconcilesMissingLocalRuntimeExactly(t *testing.T) {
 		t.Fatalf("closed = %+v, want one transition", client.closed)
 	}
 	proof := client.closed[0].CleanupProof
-	if proof == nil || proof.Method != api.WorkerRuntimeCleanupHostReconciled || proof.CompletedAt.IsZero() {
+	if proof == nil || proof.Method != workerapi.RuntimeCleanupHostReconciled || proof.CompletedAt.IsZero() {
 		t.Fatalf("cleanup proof = %+v, want host reconciliation", proof)
 	}
 }
@@ -208,7 +208,7 @@ func TestStopRuntimeTargetDoesNotCloseWhenExactCleanupFails(t *testing.T) {
 	cleaner := &cleanupRuntimeConnector{err: errors.New("cleanup failed")}
 	pool := NewPreparedRuntimePool(cleaner, nil, 1, nil)
 	client := &typedRuntimeClient{}
-	target := api.WorkerRuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
+	target := workerapi.RuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
 
 	if err := pool.StopRuntimeTarget(context.Background(), client, target); err == nil {
 		t.Fatal("cleanup failure unexpectedly closed runtime")
@@ -239,7 +239,7 @@ func TestWarmRuntimeTargetHonorsHardAdmissionBeforeMaterialization(t *testing.T)
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
 	admissionErr := errors.New("disk_floor")
 	pool.AdmitRuntimeStart = func(context.Context) error { return admissionErr }
-	err := pool.WarmRuntimeTarget(context.Background(), &typedRuntimeClient{}, api.WorkerRuntimeReconcileTarget{})
+	err := pool.WarmRuntimeTarget(context.Background(), &typedRuntimeClient{}, workerapi.RuntimeReconcileTarget{})
 	if !errors.Is(err, admissionErr) {
 		t.Fatalf("error = %v, want hard admission error", err)
 	}
@@ -330,11 +330,11 @@ func TestPreparedRuntimeCapacityReservationLivesThroughCheckout(t *testing.T) {
 }
 
 func TestPreparedRuntimeSourcePreservesWorkspaceReservationAuthority(t *testing.T) {
-	source := api.WorkerRuntimeSource{
+	source := workerapi.RuntimeSource{
 		WorkspaceID:            "019c10d5-a6f7-7af1-8f5f-000000000701",
 		DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000702",
 		BaseVersionID:          "019c10d5-a6f7-7af1-8f5f-000000000703",
-		WorkspaceArtifact: api.WorkerWorkspaceArtifact{
+		WorkspaceArtifact: workerapi.WorkspaceArtifact{
 			Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			SizeBytes: 512, MediaType: "application/vnd.helmr.workspace.v0+tar",
 			Encoding: "tar", EntryCount: 3,
@@ -354,7 +354,7 @@ func TestPreparedRuntimeRejectsWorkspaceArchitectureOutsideWorkerCertification(t
 	_, closeProgram, err := pool.prepareProgram(
 		context.Background(),
 		t.TempDir(),
-		api.WorkerRuntimeReconcileTarget{Source: api.WorkerRuntimeSource{
+		workerapi.RuntimeReconcileTarget{Source: workerapi.RuntimeSource{
 			WorkspaceArchitecture: "aarch64",
 		}},
 	)
@@ -425,7 +425,7 @@ func TestPreparedRuntimeVerifiesReservedWorkspaceArtifactBeforeReady(t *testing.
 		t.Fatalf("Workspace Artifact reads = %d, want 1", got)
 	}
 
-	mount.WorkspaceArtifact = api.WorkerWorkspaceArtifact{}
+	mount.WorkspaceArtifact = workerapi.WorkspaceArtifact{}
 	if err := pool.verifyReservedWorkspaceVersion(
 		context.Background(),
 		materializer,
@@ -506,10 +506,10 @@ func newPreparedRuntimeCapacity(t *testing.T, vmSlots int64) *capacity.Ledger {
 	return ledger
 }
 
-func runtimeCapacityTarget(id string, epoch int64) api.WorkerRuntimeReconcileTarget {
-	return api.WorkerRuntimeReconcileTarget{
+func runtimeCapacityTarget(id string, epoch int64) workerapi.RuntimeReconcileTarget {
+	return workerapi.RuntimeReconcileTarget{
 		ID: id, WorkerEpoch: epoch,
-		Source: api.WorkerRuntimeSource{
+		Source: workerapi.RuntimeSource{
 			DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000703",
 			ReservedCpuMillis:      1000, ReservedMemoryMiB: 512, ReservedDiskMiB: 1024,
 			ReservedExecutionSlots: 5,
@@ -517,10 +517,10 @@ func runtimeCapacityTarget(id string, epoch int64) api.WorkerRuntimeReconcileTar
 	}
 }
 
-func retryableWarmTarget() api.WorkerRuntimeReconcileTarget {
-	return api.WorkerRuntimeReconcileTarget{
+func retryableWarmTarget() workerapi.RuntimeReconcileTarget {
+	return workerapi.RuntimeReconcileTarget{
 		ID: "019c10d5-a6f7-7af1-8f5f-000000000503", WorkerEpoch: 7,
-		Source: api.WorkerRuntimeSource{DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000703"},
+		Source: workerapi.RuntimeSource{DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000703"},
 	}
 }
 
@@ -536,9 +536,9 @@ func TestReclaimFailedRuntimeTargetPersistsProofOnlyAfterExactHostCleanup(t *tes
 	connector := &cleanupRuntimeConnector{}
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	client := &typedRuntimeClient{}
-	target := api.WorkerRuntimeReconcileTarget{
+	target := workerapi.RuntimeReconcileTarget{
 		ID: "019c10d5-a6f7-7af1-8f5f-000000000501", WorkerEpoch: 7,
-		DesiredVersion: 2, ObservedVersion: 4, Action: api.WorkerRuntimeReconcileReclaim,
+		DesiredVersion: 2, ObservedVersion: 4, Action: workerapi.RuntimeReconcileReclaim,
 	}
 	if err := pool.ReclaimFailedRuntimeTarget(context.Background(), client, target); err != nil {
 		t.Fatal(err)
@@ -546,7 +546,7 @@ func TestReclaimFailedRuntimeTargetPersistsProofOnlyAfterExactHostCleanup(t *tes
 	if len(connector.cleaned) != 1 || connector.cleaned[0] != target.ID {
 		t.Fatalf("cleaned = %v", connector.cleaned)
 	}
-	if len(client.failed) != 1 || client.failed[0].CleanupProof == nil || client.failed[0].CleanupProof.Method != api.WorkerRuntimeCleanupHostReconciled {
+	if len(client.failed) != 1 || client.failed[0].CleanupProof == nil || client.failed[0].CleanupProof.Method != workerapi.RuntimeCleanupHostReconciled {
 		t.Fatalf("failed transition = %+v", client.failed)
 	}
 }
@@ -555,7 +555,7 @@ func TestReclaimFailedRuntimeTargetKeepsQuarantineWhenCleanupIsAmbiguous(t *test
 	connector := &cleanupRuntimeConnector{err: errors.New("process still alive")}
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	client := &typedRuntimeClient{}
-	target := api.WorkerRuntimeReconcileTarget{ID: "019c10d5-a6f7-7af1-8f5f-000000000502", WorkerEpoch: 7}
+	target := workerapi.RuntimeReconcileTarget{ID: "019c10d5-a6f7-7af1-8f5f-000000000502", WorkerEpoch: 7}
 	if err := pool.ReclaimFailedRuntimeTarget(context.Background(), client, target); err == nil {
 		t.Fatal("ambiguous cleanup unexpectedly succeeded")
 	}
@@ -596,7 +596,7 @@ func TestReclaimFailedCheckedOutRuntimeClearsExactCheckoutAfterPhysicalCleanup(t
 		t.Fatalf("cleaned = %v, want exact runtime", connector.cleaned)
 	}
 	if len(client.failed) != 1 || client.failed[0].CleanupProof == nil ||
-		client.failed[0].CleanupProof.Method != api.WorkerRuntimeCleanupHostReconciled {
+		client.failed[0].CleanupProof.Method != workerapi.RuntimeCleanupHostReconciled {
 		t.Fatalf("cleanup proof = %+v, want host reconciliation", client.failed)
 	}
 }
@@ -662,7 +662,7 @@ func TestReclaimFailedCheckedOutRuntimeRetriesProofAfterLocalRelease(t *testing.
 		t.Fatalf("proof attempts = %d, want 2", len(client.failed))
 	}
 	for _, request := range client.failed {
-		if request.CleanupProof == nil || request.CleanupProof.Method != api.WorkerRuntimeCleanupHostReconciled {
+		if request.CleanupProof == nil || request.CleanupProof.Method != workerapi.RuntimeCleanupHostReconciled {
 			t.Fatalf("proof attempt = %+v, want host reconciliation", request)
 		}
 	}

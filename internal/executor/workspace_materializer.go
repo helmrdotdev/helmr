@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
@@ -25,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"golang.org/x/sync/errgroup"
 )
@@ -49,7 +49,7 @@ type WorkspaceMaterializer struct {
 	Capacity              *capacity.Ledger
 }
 
-func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount api.WorkerWorkspaceMount, client api.WorkerWorkspaceMaterializerControlClient) (runErr error) {
+func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount workerapi.WorkspaceMount, client workerapi.WorkspaceMaterializerControlPlaneClient) (runErr error) {
 	if m.Connector == nil {
 		return errors.New("workspace materializer connector is required")
 	}
@@ -81,7 +81,7 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount api.
 			mount.RuntimeInstanceID, mount.RuntimeEpoch,
 		)
 	}
-	renewal := m.startRenewalLoop(ctx, api.WorkerWorkspaceMountRenewRequest{
+	renewal := m.startRenewalLoop(ctx, workerapi.WorkspaceMountRenewRequest{
 		OrgID: mount.OrgID, WorkspaceMountID: mount.ID,
 	}, client, renewEvery)
 	defer renewal.stopAndWait()
@@ -127,7 +127,7 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount api.
 	}
 	defer func() { unregisterSession() }()
 	phaseStarted = time.Now()
-	mounted, err := client.MarkWorkspaceMountMounted(renewal.ctx, api.WorkerWorkspaceMountMountedRequest{
+	mounted, err := client.MarkWorkspaceMountMounted(renewal.ctx, workerapi.WorkspaceMountMountedRequest{
 		OrgID: mount.OrgID, WorkspaceMountID: mount.ID,
 	})
 	m.logWorkspaceMountPhase(mount, "workspace mount marked mounted", "duration_ms", time.Since(phaseStarted).Milliseconds(), "state", strings.TrimSpace(mounted.State), "error", errorString(err))
@@ -158,8 +158,8 @@ func (m WorkspaceMaterializer) serveWorkspaceMount(
 	ctx context.Context,
 	renewal *workspaceMountRenewal,
 	session *managedWorkspaceMountSession,
-	mount api.WorkerWorkspaceMount,
-	client api.WorkerWorkspaceMaterializerControlClient,
+	mount workerapi.WorkspaceMount,
+	client workerapi.WorkspaceMaterializerControlPlaneClient,
 ) error {
 	sessionExited := make(chan error, 1)
 	go func() {
@@ -232,7 +232,7 @@ func (m WorkspaceMaterializer) serveWorkspaceMount(
 				err:  fmt.Errorf("workspace mount VM exited: %w", err),
 			})
 		case <-poll.C:
-			claimed, err := client.ClaimWorkspaceExec(renewal.ctx, api.WorkerWorkspaceExecClaimRequest{
+			claimed, err := client.ClaimWorkspaceExec(renewal.ctx, workerapi.WorkspaceExecClaimRequest{
 				OrgID: mount.OrgID, WorkspaceMountID: mount.ID,
 			})
 			if err != nil {
@@ -301,9 +301,9 @@ func workspaceBasicExecProtocol(err error) error {
 func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 	ctx context.Context,
 	session vm.Session,
-	mount api.WorkerWorkspaceMount,
-	exec api.WorkerWorkspaceExec,
-) (api.WorkerWorkspaceExecCompleteRequest, error) {
+	mount workerapi.WorkspaceMount,
+	exec workerapi.WorkspaceExec,
+) (workerapi.WorkspaceExecCompleteRequest, error) {
 	defer func() {
 		clear(exec.Stdin)
 		for index := range exec.Secrets {
@@ -312,7 +312,7 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 	}()
 	channelToken := m.channelToken(mount)
 	if channelToken == "" {
-		return api.WorkerWorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
+		return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
 			errors.New("Workspace mount guest channel token is required"),
 		)
 	}
@@ -320,13 +320,13 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 		strings.TrimSpace(exec.RequestFingerprint) == "" ||
 		strings.TrimSpace(exec.WorkspaceLeaseID) == "" ||
 		strings.TrimSpace(exec.WriteCapability) == "" {
-		return api.WorkerWorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
+		return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
 			errors.New("Workspace exec claim is incomplete"),
 		)
 	}
 	if strings.TrimSpace(exec.WorkspaceMountID) != strings.TrimSpace(mount.ID) ||
 		strings.TrimSpace(exec.WorkspaceID) != strings.TrimSpace(mount.WorkspaceID) {
-		return api.WorkerWorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
+		return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
 			errors.New("Workspace exec claim does not match the live mount"),
 		)
 	}
@@ -335,7 +335,7 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 		exec.WriterGeneration <= 0 ||
 		exec.ExpiresAt.IsZero() ||
 		!exec.ExpiresAt.After(time.Now()) {
-		return api.WorkerWorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
+		return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
 			errors.New("Workspace exec claim fence is invalid or expired"),
 		)
 	}
@@ -365,12 +365,12 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 			secret.PlacementKind = "file"
 			secret.PlacementTarget = strings.TrimSpace(delivery.File.Path)
 		default:
-			return api.WorkerWorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
+			return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
 				errors.New("Workspace exec Secret placement is invalid"),
 			)
 		}
 		if secret.PlacementTarget == "" {
-			return api.WorkerWorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
+			return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
 				errors.New("Workspace exec Secret placement target is required"),
 			)
 		}
@@ -378,7 +378,7 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 	}
 	stream, err := session.OpenStream(ctx)
 	if err != nil {
-		return api.WorkerWorkspaceExecCompleteRequest{}, fmt.Errorf("open Workspace exec stream: %w", err)
+		return workerapi.WorkspaceExecCompleteRequest{}, fmt.Errorf("open Workspace exec stream: %w", err)
 	}
 	defer stream.Close()
 	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
@@ -386,26 +386,26 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 		WorkspaceID: mount.WorkspaceID,
 		OperationID: exec.ProcessID,
 	}, 0); err != nil {
-		return api.WorkerWorkspaceExecCompleteRequest{}, fmt.Errorf("write Workspace exec header: %w", err)
+		return workerapi.WorkspaceExecCompleteRequest{}, fmt.Errorf("write Workspace exec header: %w", err)
 	}
 	if err := frameio.WriteProtoFrame(stream, request); err != nil {
-		return api.WorkerWorkspaceExecCompleteRequest{}, fmt.Errorf("write Workspace exec request: %w", err)
+		return workerapi.WorkspaceExecCompleteRequest{}, fmt.Errorf("write Workspace exec request: %w", err)
 	}
 	var result workspacev0.WorkspaceBasicExecResult
 	if err := readProtoFrameFromReaderContext(ctx, session, stream, &result); err != nil {
-		return api.WorkerWorkspaceExecCompleteRequest{}, fmt.Errorf("read Workspace exec result: %w", err)
+		return workerapi.WorkspaceExecCompleteRequest{}, fmt.Errorf("read Workspace exec result: %w", err)
 	}
 	if strings.TrimSpace(result.GetRequestFingerprint()) !=
 		strings.TrimSpace(exec.RequestFingerprint) {
-		return api.WorkerWorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
+		return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
 			errors.New("Workspace exec result fingerprint does not match its claim"),
 		)
 	}
 	outcome := strings.TrimSpace(result.GetOutcome())
 	if err := validateWorkspaceBasicExecOutcome(outcome); err != nil {
-		return api.WorkerWorkspaceExecCompleteRequest{}, err
+		return workerapi.WorkspaceExecCompleteRequest{}, err
 	}
-	completion := api.WorkerWorkspaceExecCompleteRequest{
+	completion := workerapi.WorkspaceExecCompleteRequest{
 		OrgID:               mount.OrgID,
 		ProcessID:           exec.ProcessID,
 		WorkspaceLeaseID:    exec.WorkspaceLeaseID,
@@ -422,7 +422,7 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 		exitCode := result.GetExitCode()
 		completion.ExitCode = &exitCode
 		if strings.TrimSpace(result.GetErrorJson()) != "" {
-			return api.WorkerWorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
+			return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
 				errors.New("exited Workspace exec returned an error"),
 			)
 		}
@@ -430,7 +430,7 @@ func (m WorkspaceMaterializer) dispatchWorkspaceBasicExec(
 	}
 	if strings.TrimSpace(result.GetErrorJson()) == "" ||
 		!json.Valid([]byte(result.GetErrorJson())) {
-		return api.WorkerWorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
+		return workerapi.WorkspaceExecCompleteRequest{}, workspaceBasicExecProtocol(
 			errors.New("failed Workspace exec returned invalid error JSON"),
 		)
 	}
@@ -466,9 +466,9 @@ func validateWorkspaceBasicExecOutcome(outcome string) error {
 
 func (m WorkspaceMaterializer) completeWorkspaceBasicExec(
 	ctx context.Context,
-	client api.WorkerWorkspaceMaterializerControlClient,
-	request api.WorkerWorkspaceExecCompleteRequest,
-) (api.WorkspaceMountResponse, error) {
+	client workerapi.WorkspaceMaterializerControlPlaneClient,
+	request workerapi.WorkspaceExecCompleteRequest,
+) (workerapi.WorkspaceMountResponse, error) {
 	backoff := m.CompleteErrorBackoff
 	if backoff <= 0 {
 		backoff = 250 * time.Millisecond
@@ -479,13 +479,13 @@ func (m WorkspaceMaterializer) completeWorkspaceBasicExec(
 			return response, nil
 		}
 		if !workspaceExecCompletionRetryable(err) {
-			return api.WorkspaceMountResponse{}, err
+			return workerapi.WorkspaceMountResponse{}, err
 		}
 		timer := time.NewTimer(backoff)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return api.WorkspaceMountResponse{}, errors.Join(err, ctx.Err())
+			return workerapi.WorkspaceMountResponse{}, errors.Join(err, ctx.Err())
 		case <-timer.C:
 		}
 	}
@@ -503,7 +503,7 @@ func workspaceExecCompletionRetryable(err error) bool {
 		status >= http.StatusInternalServerError
 }
 
-func (m WorkspaceMaterializer) logWorkspaceMountPhase(mount api.WorkerWorkspaceMount, message string, attrs ...any) {
+func (m WorkspaceMaterializer) logWorkspaceMountPhase(mount workerapi.WorkspaceMount, message string, attrs ...any) {
 	log := m.Log
 	if log == nil {
 		log = slog.Default()
@@ -537,7 +537,7 @@ type workspaceMountRenewal struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	done    chan error
-	updates chan api.WorkspaceMountResponse
+	updates chan workerapi.WorkspaceMountResponse
 	once    sync.Once
 	err     error
 }
@@ -550,10 +550,10 @@ func (r *workspaceMountRenewal) stopAndWait() error {
 	return r.err
 }
 
-func (m WorkspaceMaterializer) startRenewalLoop(ctx context.Context, request api.WorkerWorkspaceMountRenewRequest, client api.WorkerWorkspaceMaterializerControlClient, every time.Duration) *workspaceMountRenewal {
+func (m WorkspaceMaterializer) startRenewalLoop(ctx context.Context, request workerapi.WorkspaceMountRenewRequest, client workerapi.WorkspaceMaterializerControlPlaneClient, every time.Duration) *workspaceMountRenewal {
 	renewCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
-	updates := make(chan api.WorkspaceMountResponse, 1)
+	updates := make(chan workerapi.WorkspaceMountResponse, 1)
 	go func() {
 		var err error
 		defer func() { done <- err }()
@@ -596,7 +596,7 @@ func (e workspaceMountFailure) Unwrap() error {
 	return e.err
 }
 
-func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *api.WorkerWorkspaceMount) (vm.Session, string, string, func(), string, bool, capacity.Key, error) {
+func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *workerapi.WorkspaceMount) (vm.Session, string, string, func(), string, bool, capacity.Key, error) {
 	if mount == nil {
 		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "workspace_mount_missing", err: errors.New("workspace mount is required")}
 	}
@@ -616,7 +616,7 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 	}
 	if m.RuntimePool != nil {
 		if session, key, ok := m.RuntimePool.Checkout(ctx, *mount); ok {
-			workspaceArtifact := api.CASObject{
+			workspaceArtifact := workerapi.CASObject{
 				Digest:    strings.TrimSpace(mount.WorkspaceArtifact.Digest),
 				SizeBytes: mount.WorkspaceArtifact.SizeBytes,
 				MediaType: strings.TrimSpace(mount.WorkspaceArtifact.MediaType),
@@ -653,7 +653,7 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 	}
 	runtimeInstanceID := runtimeInstanceIDFromWorkspaceMount(*mount)
 	m.logWorkspaceMountPhase(*mount, "workspace mount runtime instance claimed", "runtime_instance_id", runtimeInstanceID)
-	workspaceArtifact := api.CASObject{
+	workspaceArtifact := workerapi.CASObject{
 		Digest:    strings.TrimSpace(mount.WorkspaceArtifact.Digest),
 		SizeBytes: mount.WorkspaceArtifact.SizeBytes,
 		MediaType: strings.TrimSpace(mount.WorkspaceArtifact.MediaType),
@@ -825,7 +825,7 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 	return session, workspaceImagePath, workspacePath, cleanup, runtimeInstanceID, false, resourceKey, nil
 }
 
-func workspaceMountWorkloadBinding(mount api.WorkerWorkspaceMount) vm.WorkloadBinding {
+func workspaceMountWorkloadBinding(mount workerapi.WorkspaceMount) vm.WorkloadBinding {
 	return vm.WorkloadBinding{
 		WorkerEpoch:       mount.RuntimeEpoch,
 		OwnerID:           mount.RuntimeInstanceID,
@@ -835,7 +835,7 @@ func workspaceMountWorkloadBinding(mount api.WorkerWorkspaceMount) vm.WorkloadBi
 	}
 }
 
-func (m WorkspaceMaterializer) restoreCASObject(ctx context.Context, tempDir string, label string, artifact api.CASObject) (string, func(), error) {
+func (m WorkspaceMaterializer) restoreCASObject(ctx context.Context, tempDir string, label string, artifact workerapi.CASObject) (string, func(), error) {
 	cleanup := func() {}
 	codeLabel := strings.ReplaceAll(label, "-", "_")
 	digest := strings.TrimSpace(artifact.Digest)
@@ -862,7 +862,7 @@ func (m WorkspaceMaterializer) restoreCASObject(ctx context.Context, tempDir str
 	return m.restoreCASObjectUncached(ctx, tempDir, label, codeLabel, artifact)
 }
 
-func (m WorkspaceMaterializer) restoreCASObjectUncached(ctx context.Context, tempDir string, label string, codeLabel string, artifact api.CASObject) (string, func(), error) {
+func (m WorkspaceMaterializer) restoreCASObjectUncached(ctx context.Context, tempDir string, label string, codeLabel string, artifact workerapi.CASObject) (string, func(), error) {
 	cleanup := func() {}
 	digest := strings.TrimSpace(artifact.Digest)
 	reader, err := m.CAS.Get(ctx, digest)
@@ -898,11 +898,11 @@ func (m WorkspaceMaterializer) restoreCASObjectUncached(ctx context.Context, tem
 	return path, cleanup, nil
 }
 
-func workspaceArtifactIsEmpty(artifact api.WorkerWorkspaceArtifact) bool {
+func workspaceArtifactIsEmpty(artifact workerapi.WorkspaceArtifact) bool {
 	return strings.TrimSpace(artifact.Digest) == "" && artifact.SizeBytes == 0 && artifact.EntryCount == 0
 }
 
-func validateWorkspaceArtifactShape(artifact api.WorkerWorkspaceArtifact) error {
+func validateWorkspaceArtifactShape(artifact workerapi.WorkspaceArtifact) error {
 	if workspaceArtifactIsEmpty(artifact) {
 		return nil
 	}
@@ -912,7 +912,7 @@ func validateWorkspaceArtifactShape(artifact api.WorkerWorkspaceArtifact) error 
 	return nil
 }
 
-func (m WorkspaceMaterializer) restoreCASObjectWithCache(ctx context.Context, tempDir string, cacheDir string, label string, codeLabel string, artifact api.CASObject) (string, func(), error) {
+func (m WorkspaceMaterializer) restoreCASObjectWithCache(ctx context.Context, tempDir string, cacheDir string, label string, codeLabel string, artifact workerapi.CASObject) (string, func(), error) {
 	cachePath, err := artifactCachePath(cacheDir, artifact.Digest)
 	if err != nil {
 		return "", func() {}, workspaceMountFailure{code: codeLabel + "_artifact_missing", err: err}
@@ -1040,7 +1040,7 @@ func cleanArtifactCachePreserveSet(paths map[string]bool) map[string]bool {
 	return cleaned
 }
 
-func validateCachedArtifact(path string, artifact api.CASObject) error {
+func validateCachedArtifact(path string, artifact workerapi.CASObject) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
@@ -1103,7 +1103,7 @@ func linkCachedArtifact(tempDir string, label string, cachePath string) (string,
 	return path, func() { _ = os.Remove(path) }, nil
 }
 
-func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, session vm.Session, mount api.WorkerWorkspaceMount, workspaceImagePath string, workspaceArtifactPath string, runtimeInstanceID string, usePreparedRuntime bool) error {
+func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, session vm.Session, mount workerapi.WorkspaceMount, workspaceImagePath string, workspaceArtifactPath string, runtimeInstanceID string, usePreparedRuntime bool) error {
 	channelToken := m.channelToken(mount)
 	if channelToken == "" {
 		return errors.New("workspace mount guest channel token is required")
@@ -1240,7 +1240,7 @@ func workspaceMountPhaseError(phases []*workspacev0.WorkspaceMountPhase) string 
 	return ""
 }
 
-func (m WorkspaceMaterializer) registerWorkspaceMountContext(ctx context.Context, session vm.Session, mount api.WorkerWorkspaceMount, workspaceImagePath string, workspaceArtifactPath string, runtimeInstanceID string, usePreparedRuntime bool) error {
+func (m WorkspaceMaterializer) registerWorkspaceMountContext(ctx context.Context, session vm.Session, mount workerapi.WorkspaceMount, workspaceImagePath string, workspaceArtifactPath string, runtimeInstanceID string, usePreparedRuntime bool) error {
 	result := make(chan error, 1)
 	go func() {
 		result <- m.registerWorkspaceMount(ctx, session, mount, workspaceImagePath, workspaceArtifactPath, runtimeInstanceID, usePreparedRuntime)
@@ -1254,7 +1254,7 @@ func (m WorkspaceMaterializer) registerWorkspaceMountContext(ctx context.Context
 	}
 }
 
-func (m WorkspaceMaterializer) stopControlledWorkspaceMount(ctx context.Context, session vm.Session, mount api.WorkerWorkspaceMount, update api.WorkspaceMountResponse, client api.WorkerWorkspaceMaterializerControlClient) error {
+func (m WorkspaceMaterializer) stopControlledWorkspaceMount(ctx context.Context, session vm.Session, mount workerapi.WorkspaceMount, update workerapi.WorkspaceMountResponse, client workerapi.WorkspaceMaterializerControlPlaneClient) error {
 	if strings.TrimSpace(update.State) != "unmounting" {
 		return fmt.Errorf("Workspace mount stop requires unmounting state, got %q", update.State)
 	}
@@ -1289,7 +1289,7 @@ func (m WorkspaceMaterializer) stopControlledWorkspaceMount(ctx context.Context,
 		return err
 	}
 	if capture {
-		if _, err := client.CaptureWorkspaceMount(ctx, api.WorkerWorkspaceMountCaptureRequest{
+		if _, err := client.CaptureWorkspaceMount(ctx, workerapi.WorkspaceMountCaptureRequest{
 			OrgID:              mount.OrgID,
 			ProjectID:          mount.ProjectID,
 			EnvironmentID:      mount.EnvironmentID,
@@ -1324,10 +1324,10 @@ func (m WorkspaceMaterializer) stopControlledWorkspaceMount(ctx context.Context,
 		})
 		return fmt.Errorf("close workspace runtime: %w", err)
 	}
-	if _, err := client.StopWorkspaceMount(context.Background(), api.WorkerWorkspaceMountStopRequest{
+	if _, err := client.StopWorkspaceMount(context.Background(), workerapi.WorkspaceMountStopRequest{
 		OrgID: mount.OrgID, WorkspaceMountID: mount.ID,
-		CleanupProof: api.WorkerRuntimeCleanupProof{
-			Method: api.WorkerRuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC(),
+		CleanupProof: workerapi.RuntimeCleanupProof{
+			Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC(),
 		},
 	}); err != nil {
 		return fmt.Errorf("stop workspace mount: %w", err)
@@ -1335,7 +1335,7 @@ func (m WorkspaceMaterializer) stopControlledWorkspaceMount(ctx context.Context,
 	return nil
 }
 
-func (m WorkspaceMaterializer) stopWorkspaceGuest(ctx context.Context, session vm.Session, mount api.WorkerWorkspaceMount, fencingGeneration int64, capture bool, finalize bool) (workspace.WorkspaceArtifact, error) {
+func (m WorkspaceMaterializer) stopWorkspaceGuest(ctx context.Context, session vm.Session, mount workerapi.WorkspaceMount, fencingGeneration int64, capture bool, finalize bool) (workspace.WorkspaceArtifact, error) {
 	channelToken := m.channelToken(mount)
 	if channelToken == "" {
 		return workspace.WorkspaceArtifact{}, errors.New("workspace mount guest channel token is required")
@@ -1452,7 +1452,7 @@ func (m WorkspaceMaterializer) closeSession(session vm.Session) error {
 	return session.Close(ctx)
 }
 
-func (m WorkspaceMaterializer) channelToken(mount api.WorkerWorkspaceMount) string {
+func (m WorkspaceMaterializer) channelToken(mount workerapi.WorkspaceMount) string {
 	token := strings.TrimSpace(mount.GuestdChannelToken)
 	if token == "" {
 		return ""
@@ -1460,11 +1460,11 @@ func (m WorkspaceMaterializer) channelToken(mount api.WorkerWorkspaceMount) stri
 	return token
 }
 
-func (m WorkspaceMaterializer) failWorkspaceMount(client api.WorkerWorkspaceMaterializerControlClient, mount api.WorkerWorkspaceMount, cause error) error {
+func (m WorkspaceMaterializer) failWorkspaceMount(client workerapi.WorkspaceMaterializerControlPlaneClient, mount workerapi.WorkspaceMount, cause error) error {
 	body := workspaceMountError(cause)
 	ctx, cancel := context.WithTimeout(context.Background(), m.failureTimeout())
 	defer cancel()
-	_, err := client.FailWorkspaceMount(ctx, api.WorkerWorkspaceMountFailRequest{
+	_, err := client.FailWorkspaceMount(ctx, workerapi.WorkspaceMountFailRequest{
 		OrgID: mount.OrgID, WorkspaceMountID: mount.ID, Error: body,
 	})
 	return err

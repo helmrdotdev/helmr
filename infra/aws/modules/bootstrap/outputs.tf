@@ -23,24 +23,24 @@ output "source_artifact_kms_key_arn" {
   value       = aws_kms_key.source_artifacts.arn
 }
 
-output "control_release_repository_url" {
-  description = "Durable ECR repository URL for trusted Control release images."
-  value       = aws_ecr_repository.control_releases.repository_url
+output "controlplane_release_repository_url" {
+  description = "Durable ECR repository URL for trusted Control Plane release images."
+  value       = aws_ecr_repository.controlplane_releases.repository_url
 }
 
-output "control_release_repository_name" {
-  description = "Durable ECR repository name for trusted Control release images."
-  value       = aws_ecr_repository.control_releases.name
+output "controlplane_release_repository_name" {
+  description = "Durable ECR repository name for trusted Control Plane release images."
+  value       = aws_ecr_repository.controlplane_releases.name
 }
 
-output "control_release_repository_arn" {
-  description = "Durable ECR repository ARN for trusted Control release images."
-  value       = aws_ecr_repository.control_releases.arn
+output "controlplane_release_repository_arn" {
+  description = "Durable ECR repository ARN for trusted Control Plane release images."
+  value       = aws_ecr_repository.controlplane_releases.arn
 }
 
-output "control_release_kms_key_arn" {
-  description = "KMS key ARN for trusted Control release images."
-  value       = aws_kms_key.control_releases.arn
+output "controlplane_release_kms_key_arn" {
+  description = "KMS key ARN for trusted Control Plane release images."
+  value       = aws_kms_key.controlplane_releases.arn
 }
 
 output "platform_store_uri" {

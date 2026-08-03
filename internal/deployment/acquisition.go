@@ -27,10 +27,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 const (
@@ -75,7 +75,7 @@ type PlatformAcquirer struct {
 
 type platformAcquisitionError struct {
 	cause  error
-	reason api.WorkerPlatformAcquisitionFailureReason
+	reason workerapi.PlatformAcquisitionFailureReason
 }
 
 func (err *platformAcquisitionError) Error() string {
@@ -85,12 +85,12 @@ func (err *platformAcquisitionError) Error() string {
 	return err.cause.Error()
 }
 func (err *platformAcquisitionError) Unwrap() error { return err.cause }
-func (err *platformAcquisitionError) PlatformAcquisitionFailureReason() api.WorkerPlatformAcquisitionFailureReason {
+func (err *platformAcquisitionError) PlatformAcquisitionFailureReason() workerapi.PlatformAcquisitionFailureReason {
 	return err.reason
 }
 
 func deterministicAcquisitionFailure(
-	reason api.WorkerPlatformAcquisitionFailureReason,
+	reason workerapi.PlatformAcquisitionFailureReason,
 	cause error,
 ) error {
 	return &platformAcquisitionError{cause: cause, reason: reason}
@@ -103,7 +103,7 @@ func conformanceFailure(validationErr error, closeErr error) error {
 	var invalid *verifierInvalidError
 	if errors.As(validationErr, &invalid) {
 		return deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionConformanceFailed,
+			workerapi.PlatformAcquisitionConformanceFailed,
 			validationErr,
 		)
 	}
@@ -112,10 +112,10 @@ func conformanceFailure(validationErr error, closeErr error) error {
 
 func (acquirer PlatformAcquirer) Acquire(
 	ctx context.Context,
-	request api.WorkerPlatformAcquisition,
-) (_ api.WorkerPlatformAcquisitionCandidates, returnErr error) {
+	request workerapi.PlatformAcquisition,
+) (_ workerapi.PlatformAcquisitionCandidates, returnErr error) {
 	if err := acquirer.validate(); err != nil {
-		return api.WorkerPlatformAcquisitionCandidates{}, err
+		return workerapi.PlatformAcquisitionCandidates{}, err
 	}
 	manager := PackageManager{
 		Integrity: request.ManagerIntegrity,
@@ -124,25 +124,25 @@ func (acquirer PlatformAcquirer) Acquire(
 	}
 	policyDigest, err := acquirer.Policy.Digest()
 	if err != nil {
-		return api.WorkerPlatformAcquisitionCandidates{}, err
+		return workerapi.PlatformAcquisitionCandidates{}, err
 	}
 	if request.BuildPolicyDigest != policyDigest ||
 		request.BuildContract != ProgramBuildContractVersion {
-		return api.WorkerPlatformAcquisitionCandidates{}, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionUnsupportedSelector,
+		return workerapi.PlatformAcquisitionCandidates{}, deterministicAcquisitionFailure(
+			workerapi.PlatformAcquisitionUnsupportedSelector,
 			errors.New("Platform acquisition request does not match Worker authority"),
 		)
 	}
 	policy, err := acquirer.Policy.Acquisition(request.NodeVersion, manager)
 	if err != nil {
-		return api.WorkerPlatformAcquisitionCandidates{}, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionUnsupportedSelector,
+		return workerapi.PlatformAcquisitionCandidates{}, deterministicAcquisitionFailure(
+			workerapi.PlatformAcquisitionUnsupportedSelector,
 			err,
 		)
 	}
 	leaseRoot, err := os.MkdirTemp(acquirer.WorkDir, ".platform-acquisition-")
 	if err != nil {
-		return api.WorkerPlatformAcquisitionCandidates{}, fmt.Errorf("create Platform acquisition lease: %w", err)
+		return workerapi.PlatformAcquisitionCandidates{}, fmt.Errorf("create Platform acquisition lease: %w", err)
 	}
 	defer func() {
 		returnErr = errors.Join(returnErr, os.RemoveAll(leaseRoot))
@@ -150,7 +150,7 @@ func (acquirer PlatformAcquirer) Acquire(
 
 	node, err := acquirer.acquireNode(ctx, leaseRoot, request.NodeVersion, policy)
 	if err != nil {
-		return api.WorkerPlatformAcquisitionCandidates{}, err
+		return workerapi.PlatformAcquisitionCandidates{}, err
 	}
 	defer node.Close()
 	runtimeTree, err := acquirer.runtimeTree(
@@ -163,23 +163,23 @@ func (acquirer PlatformAcquirer) Acquire(
 		node,
 	)
 	if err != nil {
-		return api.WorkerPlatformAcquisitionCandidates{}, err
+		return workerapi.PlatformAcquisitionCandidates{}, err
 	}
 	defer runtimeTree.Close()
 	runtimeObject, err := runtimeTree.publish(ctx, acquirer.Store)
 	if err != nil {
-		return api.WorkerPlatformAcquisitionCandidates{}, fmt.Errorf("publish Runtime candidate: %w", err)
+		return workerapi.PlatformAcquisitionCandidates{}, fmt.Errorf("publish Runtime candidate: %w", err)
 	}
 	if acquirer.Policy.DeniesDigest(runtimeObject.Digest) {
-		return api.WorkerPlatformAcquisitionCandidates{}, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionDenied,
+		return workerapi.PlatformAcquisitionCandidates{}, deterministicAcquisitionFailure(
+			workerapi.PlatformAcquisitionDenied,
 			errors.New("Runtime candidate digest is denied"),
 		)
 	}
 
 	managerSource, err := acquirer.acquireManager(ctx, leaseRoot, manager, policy.Manager)
 	if err != nil {
-		return api.WorkerPlatformAcquisitionCandidates{}, err
+		return workerapi.PlatformAcquisitionCandidates{}, err
 	}
 	defer managerSource.Close()
 	managerTree, err := acquirer.managerTree(
@@ -193,16 +193,16 @@ func (acquirer PlatformAcquirer) Acquire(
 		runtimeTree,
 	)
 	if err != nil {
-		return api.WorkerPlatformAcquisitionCandidates{}, err
+		return workerapi.PlatformAcquisitionCandidates{}, err
 	}
 	defer managerTree.Close()
 	managerObject, err := managerTree.publish(ctx, acquirer.Store)
 	if err != nil {
-		return api.WorkerPlatformAcquisitionCandidates{}, fmt.Errorf("publish Manager candidate: %w", err)
+		return workerapi.PlatformAcquisitionCandidates{}, fmt.Errorf("publish Manager candidate: %w", err)
 	}
 	if acquirer.Policy.DeniesDigest(managerObject.Digest) {
-		return api.WorkerPlatformAcquisitionCandidates{}, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionDenied,
+		return workerapi.PlatformAcquisitionCandidates{}, deterministicAcquisitionFailure(
+			workerapi.PlatformAcquisitionDenied,
 			errors.New("Manager candidate digest is denied"),
 		)
 	}
@@ -219,28 +219,28 @@ func (acquirer PlatformAcquirer) Acquire(
 		runtimeObject.Digest,
 	)
 	if err != nil {
-		return api.WorkerPlatformAcquisitionCandidates{}, err
+		return workerapi.PlatformAcquisitionCandidates{}, err
 	}
 	defer toolchainTree.Close()
 	toolchainObject, err := toolchainTree.publish(ctx, acquirer.Store)
 	if err != nil {
-		return api.WorkerPlatformAcquisitionCandidates{}, fmt.Errorf("publish toolchain candidate: %w", err)
+		return workerapi.PlatformAcquisitionCandidates{}, fmt.Errorf("publish toolchain candidate: %w", err)
 	}
 	if acquirer.Policy.DeniesDigest(toolchainObject.Digest) {
-		return api.WorkerPlatformAcquisitionCandidates{}, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionDenied,
+		return workerapi.PlatformAcquisitionCandidates{}, deterministicAcquisitionFailure(
+			workerapi.PlatformAcquisitionDenied,
 			errors.New("toolchain candidate digest is denied"),
 		)
 	}
-	return api.WorkerPlatformAcquisitionCandidates{
+	return workerapi.PlatformAcquisitionCandidates{
 		Runtime:   acquiredCASObject(runtimeObject),
 		Manager:   acquiredCASObject(managerObject),
 		Toolchain: acquiredCASObject(toolchainObject),
 	}, nil
 }
 
-func acquiredCASObject(object cas.Object) api.CASObject {
-	return api.CASObject{
+func acquiredCASObject(object cas.Object) workerapi.CASObject {
+	return workerapi.CASObject{
 		Digest:    object.Digest,
 		MediaType: object.MediaType,
 		SizeBytes: object.SizeBytes,
@@ -326,7 +326,7 @@ func (acquirer PlatformAcquirer) acquireNode(
 	)
 	if err != nil {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionIntegrityFailed,
+			workerapi.PlatformAcquisitionIntegrityFailed,
 			err,
 		)
 	}
@@ -334,7 +334,7 @@ func (acquirer PlatformAcquirer) acquireNode(
 	want, err := nodeChecksum(plain, filename)
 	if err != nil {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionIntegrityFailed,
+			workerapi.PlatformAcquisitionIntegrityFailed,
 			err,
 		)
 	}
@@ -356,28 +356,28 @@ func (acquirer PlatformAcquirer) acquireNode(
 	}()
 	if distribution.source.Digest != "sha256:"+want {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionIntegrityFailed,
+			workerapi.PlatformAcquisitionIntegrityFailed,
 			errors.New("Node distribution does not match the signed checksum"),
 		)
 	}
 	extracted := filepath.Join(leaseRoot, "node-source")
 	if err := acquirer.extractXZTar(ctx, distribution.file, extracted); err != nil {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionTopologyFailed,
+			workerapi.PlatformAcquisitionTopologyFailed,
 			fmt.Errorf("extract Node distribution: %w", err),
 		)
 	}
 	root := filepath.Join(extracted, "node-v"+version+"-linux-x64")
 	if err := validateNodeDistribution(root); err != nil {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionTopologyFailed,
+			workerapi.PlatformAcquisitionTopologyFailed,
 			err,
 		)
 	}
 	moduleABI, err := nodeModuleABI(filepath.Join(root, "include", "node", "node_version.h"))
 	if err != nil {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionTopologyFailed,
+			workerapi.PlatformAcquisitionTopologyFailed,
 			err,
 		)
 	}
@@ -427,7 +427,7 @@ func (acquirer PlatformAcquirer) verifyNodeChecksums(
 		return nil, "", fmt.Errorf("verify Node release signature: %w: %s", err, diagnostic.String())
 	}
 	signer := ""
-	for _, line := range strings.Split(status.String(), "\n") {
+	for line := range strings.SplitSeq(status.String(), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) >= 3 && fields[0] == "[GNUPG:]" && fields[1] == "VALIDSIG" &&
 			slices.Contains(policy.ReleaseKeyFingerprints, fields[2]) {
@@ -614,7 +614,7 @@ func (acquirer PlatformAcquirer) acquireManager(
 	var version registryVersion
 	if err := decodeUpstreamJSON(metadataRaw, &version); err != nil {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionIntegrityFailed,
+			workerapi.PlatformAcquisitionIntegrityFailed,
 			fmt.Errorf("decode registry version metadata: %w", err),
 		)
 	}
@@ -624,7 +624,7 @@ func (acquirer PlatformAcquirer) acquireManager(
 		version.Dist.Tarball != origin ||
 		!strings.HasPrefix(version.Dist.Integrity, "sha512-") {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionIntegrityFailed,
+			workerapi.PlatformAcquisitionIntegrityFailed,
 			errors.New("registry version metadata does not match the exact Manager selector"),
 		)
 	}
@@ -646,13 +646,13 @@ func (acquirer PlatformAcquirer) acquireManager(
 	}()
 	if err := verifySSRI(distribution.file, version.Dist.Integrity); err != nil {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionIntegrityFailed,
+			workerapi.PlatformAcquisitionIntegrityFailed,
 			err,
 		)
 	}
 	if err := verifyPackageManagerIntegrity(distribution.file, manager.Integrity); err != nil {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionIntegrityFailed,
+			workerapi.PlatformAcquisitionIntegrityFailed,
 			err,
 		)
 	}
@@ -676,7 +676,7 @@ func (acquirer PlatformAcquirer) acquireManager(
 		}
 		if err := verifyRegistrySignatures(manager, version, keysRaw); err != nil {
 			return nil, deterministicAcquisitionFailure(
-				api.WorkerPlatformAcquisitionIntegrityFailed,
+				workerapi.PlatformAcquisitionIntegrityFailed,
 				err,
 			)
 		}
@@ -691,7 +691,7 @@ func (acquirer PlatformAcquirer) acquireManager(
 	}
 	compressed, err := gzip.NewReader(distribution.file)
 	if err != nil {
-		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionTopologyFailed, err)
+		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionTopologyFailed, err)
 	}
 	_, extractErr := archive.ExtractTarWithStats(compressed, extracted, archive.ExtractOptions{
 		MaxBytes:   maxManagerTreeBytes,
@@ -700,13 +700,13 @@ func (acquirer PlatformAcquirer) acquireManager(
 	closeErr := compressed.Close()
 	if extractErr != nil || closeErr != nil {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionTopologyFailed,
+			workerapi.PlatformAcquisitionTopologyFailed,
 			errors.Join(extractErr, closeErr),
 		)
 	}
 	root := filepath.Join(extracted, "package")
 	if err := validateRegistryManagerTree(root, manager); err != nil {
-		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionTopologyFailed, err)
+		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionTopologyFailed, err)
 	}
 	result := &managerAcquisition{
 		distribution: distribution,
@@ -876,7 +876,7 @@ func (acquirer PlatformAcquirer) acquireBun(
 	if err := decodeUpstreamJSON(metadataRaw, &release); err != nil ||
 		release.TagName != "bun-v"+manager.Version {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionIntegrityFailed,
+			workerapi.PlatformAcquisitionIntegrityFailed,
 			errors.New("Bun release metadata does not match exact selector"),
 		)
 	}
@@ -890,7 +890,7 @@ func (acquirer PlatformAcquirer) acquireBun(
 		if digest != "" || asset.BrowserDownloadURL != origin ||
 			!strings.HasPrefix(asset.Digest, "sha256:") {
 			return nil, deterministicAcquisitionFailure(
-				api.WorkerPlatformAcquisitionIntegrityFailed,
+				workerapi.PlatformAcquisitionIntegrityFailed,
 				errors.New("Bun release asset metadata is ambiguous or invalid"),
 			)
 		}
@@ -898,7 +898,7 @@ func (acquirer PlatformAcquirer) acquireBun(
 	}
 	if digest == "" {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionIntegrityFailed,
+			workerapi.PlatformAcquisitionIntegrityFailed,
 			errors.New("Bun release asset has no official digest"),
 		)
 	}
@@ -920,19 +920,19 @@ func (acquirer PlatformAcquirer) acquireBun(
 	}()
 	if distribution.source.Digest != digest {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionIntegrityFailed,
+			workerapi.PlatformAcquisitionIntegrityFailed,
 			errors.New("Bun distribution does not match official release digest"),
 		)
 	}
 	extracted := filepath.Join(leaseRoot, "manager-source")
 	if err := extractZip(distribution.file, extracted); err != nil {
-		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionTopologyFailed, err)
+		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionTopologyFailed, err)
 	}
 	root := filepath.Join(extracted, "bun-linux-x64-baseline")
 	info, err := os.Lstat(filepath.Join(root, "bun"))
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionTopologyFailed,
+			workerapi.PlatformAcquisitionTopologyFailed,
 			errors.New("Bun distribution entrypoint is invalid"),
 		)
 	}

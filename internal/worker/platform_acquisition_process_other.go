@@ -6,13 +6,13 @@ import (
 	"context"
 	"errors"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func runPlatformAcquisitionProcess(
 	context.Context,
 	PlatformAcquisitionProcess,
-	api.WorkerPlatformAcquisition,
+	workerapi.PlatformAcquisition,
 ) (PlatformAcquisitionProcessResult, error) {
 	return PlatformAcquisitionProcessResult{}, errors.New("Platform acquisition requires Linux")
 }

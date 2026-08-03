@@ -375,10 +375,7 @@ func copyTreeContent(
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		want := int64(len(buffer))
-		if remaining < want {
-			want = remaining
-		}
+		want := min(remaining, int64(len(buffer)))
 		count, readErr := source.Read(buffer[:want])
 		if count > 0 {
 			if _, err := destination.Write(buffer[:count]); err != nil {

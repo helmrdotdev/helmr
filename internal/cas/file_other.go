@@ -7,10 +7,10 @@ import (
 	"os"
 )
 
-type fileIdentity struct {
+type FileIdentity struct {
 	size int64
 }
 
-func inspectPublishedFile(*os.File) (fileIdentity, error) {
-	return fileIdentity{}, errors.New("descriptor-bound publication requires Linux")
+func InspectPublishedFile(*os.File) (FileIdentity, error) {
+	return FileIdentity{}, errors.New("descriptor-bound publication requires Linux")
 }

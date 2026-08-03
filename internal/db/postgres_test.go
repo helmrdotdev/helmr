@@ -2,9 +2,6 @@ package db_test
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -14,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/region"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -25,11 +23,6 @@ type postgresIDs struct {
 	workspaceImageArtifactID uuid.UUID
 }
 
-func shortUUID(id uuid.UUID) string {
-	compact := strings.ReplaceAll(id.String(), "-", "")
-	return compact[len(compact)-12:]
-}
-
 func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgresIDs {
 	t.Helper()
 	ids := postgresIDs{
@@ -38,22 +31,22 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 		environmentID: uuid.Must(uuid.NewV7()),
 		deploymentID:  uuid.Must(uuid.NewV7()),
 	}
-	projectSlug := "project-" + shortUUID(ids.projectID)
-	environmentSlug := "env-" + shortUUID(ids.environmentID)
-	mustExec(t, ctx, pool, `
+	projectSlug := "project-" + dbtest.ShortID(ids.projectID)
+	environmentSlug := "env-" + dbtest.ShortID(ids.environmentID)
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO organizations (id, name, slug)
 		VALUES ($1, 'Default', 'default')
 		ON CONFLICT (id) DO NOTHING
 	`, ids.orgID)
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO projects (id, org_id, default_region_id, slug, name)
 		VALUES ($1, $2, $3, $4, 'Project')
 	`, ids.projectID, ids.orgID, dbtest.DefaultRegionID, projectSlug)
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
 		VALUES ($1, $2, $3, $4, 'Environment', '#3366ff')
 	`, ids.environmentID, ids.orgID, ids.projectID, environmentSlug)
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO runtime_identities (
 			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
 			rootfs_digest, network_abi
@@ -91,7 +84,7 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 		deployment.WorkspaceImageArtifactMediaType,
 		"workspace-image",
 	)
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO deployments (
 			id, org_id, build_region_id, project_id, environment_id,
 			build_node_version, build_runtime_digest, build_toolchain_digest,
@@ -109,7 +102,7 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 			'{"formatVersion":0,"queues":[]}'::jsonb, 'deployed', now()
 		)
 	`, ids.deploymentID, ids.orgID, dbtest.DefaultRegionID, ids.projectID, ids.environmentID,
-		testDigest("deployment-"+ids.deploymentID.String()), sourceArtifactID,
+		dbtest.Digest("deployment-"+ids.deploymentID.String()), sourceArtifactID,
 		programArtifactID)
 	return ids
 }
@@ -125,35 +118,17 @@ func seedPostgresArtifact(
 ) uuid.UUID {
 	t.Helper()
 	id := uuid.Must(uuid.NewV7())
-	digest := testDigest(label + "-" + ids.deploymentID.String())
-	mustExec(t, ctx, pool, `
+	digest := dbtest.Digest(label + "-" + ids.deploymentID.String())
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, $3)
 	`, ids.orgID, digest, mediaType)
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO artifacts (
 			id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type
 		) VALUES ($1, $2, $3, $4, $5, $6::artifact_kind, 1, $7)
 	`, id, ids.orgID, ids.projectID, ids.environmentID, digest, kind, mediaType)
 	return id
-}
-
-func mustExec(
-	t *testing.T,
-	ctx context.Context,
-	pool *pgxpool.Pool,
-	query string,
-	args ...any,
-) {
-	t.Helper()
-	if _, err := pool.Exec(ctx, query, args...); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func testDigest(seed string) string {
-	sum := sha256.Sum256([]byte(seed))
-	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
@@ -185,7 +160,7 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		RequiredGuestEphemeralDiskBytes: 1,
 		RequiredVmSlots:                 1,
 		RequiredBuildExecutors:          1,
-		ProtocolVersion:                 api.CurrentWorkerProtocolVersion,
+		ProtocolVersion:                 workerapi.CurrentProtocolVersion,
 	}); err != nil {
 		t.Fatal(err)
 	}

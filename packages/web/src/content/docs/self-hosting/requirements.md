@@ -12,13 +12,13 @@ Prepare these before creating the AWS stack.
 
 | Requirement | Notes |
 | --- | --- |
-| AWS account and region | Use one primary region for the control plane, database, object store, and workers. |
+| AWS account and region | Use one primary region for the Control Plane, database, object store, and workers. |
 | AWS credentials | The deploying principal needs permission to create VPC, ECS, RDS, ElastiCache, S3, Secrets Manager, IAM, ALB, CloudFront, Auto Scaling, and EC2 resources. |
 | OpenTofu or Terraform | The AWS profiles are OpenTofu-compatible. Use the infra shell if you want the repo-pinned toolchain. |
 | AWS CLI and `jq` | Needed for reading outputs, writing secret values, and running the migration task. |
 | GitHub OAuth app | Required for browser login. |
 | ClickHouse Cloud service | Required for production historical telemetry. Use a customer-owned ClickHouse Cloud organization. |
-| Helmr release version | AWS examples read control image and worker AMI metadata from the release artifact manifest. |
+| Helmr release version | AWS examples read Control Plane image and worker AMI metadata from the release artifact manifest. |
 | Public URL | Use HTTPS for customer environments. Quickstart can use the generated CloudFront URL; production usually uses your own domain and ACM certificate. |
 
 Workers have additional requirements because they run Firecracker guests:
@@ -26,9 +26,9 @@ Workers have additional requirements because they run Firecracker guests:
 - EC2 instance type with KVM support.
 - Worker AMI that includes `helmr-worker`, Firecracker, jailer, `ip`, `nft`, AWS CLI v2, curl, kernel, initramfs, and a certified guest rootfs containing the pinned BuildKit daemon.
 - Root EBS volume sized for filesystem-first build/cache/runtime data; `worker_disk_mib` can cap advertised capacity when needed.
-- Outbound access to the control plane, S3, ECR, AWS APIs, and any external services your tasks call.
+- Outbound access to the Control Plane, S3, ECR, AWS APIs, and any external services your tasks call.
 - SSM access for maintenance. Do not expose SSH by default.
 
-You can deploy the control plane first and add workers later.
+You can deploy the Control Plane first and add workers later.
 
 Schedules require both database and Redis/Valkey availability. The database stores schedule definitions, instances, and exact next fire times; Redis/Valkey stores replaceable next-fire entries and leases used by the dispatcher.

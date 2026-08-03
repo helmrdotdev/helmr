@@ -14,9 +14,10 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
+	"github.com/helmrdotdev/helmr/internal/workerclient"
 	"golang.org/x/sys/unix"
 )
 
@@ -49,13 +50,13 @@ func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, wor
 		if err != nil {
 			return err
 		}
-		controlClient, err := client.New(cfg.ControlURL)
+		controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL)
 		if err != nil {
 			return fmt.Errorf("configure worker enrollment client: %w", err)
 		}
 		supportsRun := slices.Contains(cfg.WorkerRoles, auth.WorkerRoleRun)
 		supportsBuild := slices.Contains(cfg.WorkerRoles, auth.WorkerRoleBuild)
-		challenge, err := controlClient.CreateWorkerEnrollmentChallenge(ctx, cfg.WorkerGroupID)
+		challenge, err := controlPlaneClient.CreateWorkerEnrollmentChallenge(ctx, cfg.WorkerGroupID)
 		if err != nil {
 			return fmt.Errorf("create worker enrollment challenge: %w", err)
 		}
@@ -73,7 +74,7 @@ func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, wor
 		if err != nil {
 			return err
 		}
-		registered, err := controlClient.EnrollWorker(ctx, evidence)
+		registered, err := controlPlaneClient.EnrollWorker(ctx, evidence)
 		if err != nil {
 			return fmt.Errorf("enroll worker: %w", err)
 		}
@@ -112,7 +113,7 @@ func resolveAuthenticatedWorkerCredential(
 	}
 	if err := authenticate(credential); err == nil {
 		return credential, nil
-	} else if !client.IsStatus(err, http.StatusUnauthorized) {
+	} else if !httpclient.IsStatus(err, http.StatusUnauthorized) {
 		return workerCredentialFile{}, fmt.Errorf("authenticate worker credential: %w", err)
 	}
 	path := workerCredentialPath(workDir, cfg.WorkerInstanceCredentialPath)
@@ -151,7 +152,7 @@ func removeWorkerCredentialIfMatch(path string, rejected workerCredentialFile) e
 	})
 }
 
-func resolveWorkerControlCredential(cfg config.WorkerControl, workDir string) (workerCredentialFile, error) {
+func resolveWorkerControlPlaneCredential(cfg config.WorkerControlPlane, workDir string) (workerCredentialFile, error) {
 	path := workerCredentialPath(workDir, cfg.WorkerInstanceCredentialPath)
 	return readWorkerInstanceCredential(path)
 }

@@ -52,7 +52,7 @@ func newDeploymentBuildFixture(t *testing.T) (*deploymentBuildFixture, *pgxpool.
 	}
 
 	deploymentID := uuid.Must(uuid.NewV7())
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO deployments (
 			id, org_id, project_id, environment_id, build_region_id,
 			build_node_version, build_runtime_digest, build_toolchain_digest,
@@ -67,13 +67,13 @@ func newDeploymentBuildFixture(t *testing.T) (*deploymentBuildFixture, *pgxpool.
 			$6, $7, $8, 'queued'
 		)
 	`, deploymentID, ids.orgID, ids.projectID,
-		ids.environmentID, dbtest.DefaultRegionID, "build-"+shortUUID(deploymentID),
-		testDigest("deployment-build-"+deploymentID.String()), sourceArtifactID)
+		ids.environmentID, dbtest.DefaultRegionID, "build-"+dbtest.ShortID(deploymentID),
+		dbtest.Digest("deployment-build-"+deploymentID.String()), sourceArtifactID)
 
 	groupID := dbtest.DefaultWorkerGroupID
 	workerID := uuid.Must(uuid.NewV7())
 	serviceID := uuid.Must(uuid.NewV7())
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, state,
 			current_epoch, current_service_id, epoch_started_at
@@ -143,7 +143,7 @@ func TestAppendDeploymentEventsPreservesInputOrder(t *testing.T) {
 
 func TestPinDeploymentPlatformArtifactsReplaysExactTuple(t *testing.T) {
 	f, _ := newDeploymentBuildFixture(t)
-	mustExec(t, f.ctx, f.pool, `
+	dbtest.MustExec(t, f.ctx, f.pool, `
 		UPDATE deployments
 		   SET build_runtime_digest = NULL,
 		       build_toolchain_digest = NULL,
@@ -203,7 +203,7 @@ func TestPinDeploymentPlatformArtifactsReplaysExactTuple(t *testing.T) {
 
 func TestPlatformAcquisitionRequiresActiveBuildAuthority(t *testing.T) {
 	f, _ := newDeploymentBuildFixture(t)
-	mustExec(t, f.ctx, f.pool, `
+	dbtest.MustExec(t, f.ctx, f.pool, `
 		UPDATE deployments
 		   SET build_runtime_digest = NULL,
 		       build_toolchain_digest = NULL,
@@ -222,7 +222,7 @@ func TestPlatformAcquisitionRequiresActiveBuildAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mustExec(t, f.ctx, f.pool, `
+	dbtest.MustExec(t, f.ctx, f.pool, `
 		UPDATE worker_groups
 		   SET state = 'disabled'
 		 WHERE id = $1
@@ -238,7 +238,7 @@ func TestPlatformAcquisitionRequiresActiveBuildAuthority(t *testing.T) {
 
 func TestDeploymentLeaseRejectsUntilPinCommits(t *testing.T) {
 	f, _ := newDeploymentBuildFixture(t)
-	mustExec(t, f.ctx, f.pool, `
+	dbtest.MustExec(t, f.ctx, f.pool, `
 		UPDATE deployments
 		   SET build_runtime_digest = NULL,
 		       build_toolchain_digest = NULL,
@@ -343,8 +343,8 @@ func (f *deploymentBuildFixture) leaseParams(sequence int64) db.LeaseQueuedDeplo
 
 func (f *deploymentBuildFixture) activateBuildWorker(t *testing.T) {
 	t.Helper()
-	runtimeIdentityID := "build-runtime-" + shortUUID(f.workerID)
-	mustExec(t, f.ctx, f.pool, `
+	runtimeIdentityID := "build-runtime-" + dbtest.ShortID(f.workerID)
+	dbtest.MustExec(t, f.ctx, f.pool, `
 		INSERT INTO runtime_identities (
 			id, runtime_arch, runtime_abi, kernel_digest,
 			initramfs_digest, rootfs_digest, network_abi
@@ -353,7 +353,7 @@ func (f *deploymentBuildFixture) activateBuildWorker(t *testing.T) {
 			'sha256:test-initramfs', 'sha256:test-rootfs', 'helmr/v0'
 		)
 	`, runtimeIdentityID)
-	mustExec(t, f.ctx, f.pool, `
+	dbtest.MustExec(t, f.ctx, f.pool, `
 		UPDATE worker_instances
 		   SET state = 'active',
 		       supports_build = true,
@@ -369,7 +369,7 @@ func (f *deploymentBuildFixture) activateBuildWorker(t *testing.T) {
 		       activated_at = now()
 		 WHERE id = $1
 	`, f.workerID, runtimeIdentityID, buildCPU, buildMemory, buildGuestDisk)
-	mustExec(t, f.ctx, f.pool, `
+	dbtest.MustExec(t, f.ctx, f.pool, `
 		INSERT INTO worker_observations (
 			worker_instance_id, worker_epoch,
 			cpu_pressure_bps, memory_pressure_bps,
@@ -397,7 +397,7 @@ func TestClaimNextDeploymentBuildLeaseRechecksGroupAdmission(t *testing.T) {
 			f.activateBuildWorker(t)
 			lease := f.lease(t, 1)
 			leaseID := pgvalue.MustUUIDValue(lease.ID)
-			mustExec(t, f.ctx, f.pool, `
+			dbtest.MustExec(t, f.ctx, f.pool, `
 				UPDATE worker_groups
 				   SET state = $2
 				 WHERE id = $1
@@ -445,7 +445,7 @@ func TestClaimNextDeploymentBuildLeaseRechecksGroupAdmission(t *testing.T) {
 
 func (f *deploymentBuildFixture) start(t *testing.T, leaseID uuid.UUID, sequence int64) db.DeploymentBuildLease {
 	t.Helper()
-	mustExec(t, f.ctx, f.pool, `
+	dbtest.MustExec(t, f.ctx, f.pool, `
 		UPDATE deployment_build_leases
 		   SET state = 'starting', claimed_at = now(), renewed_at = now()
 		 WHERE id = $1
@@ -653,13 +653,13 @@ func TestDeploymentBuildCompletionPublishesSingleProgramAuthority(t *testing.T) 
 	f.start(t, leaseID, 1)
 
 	artifactID := uuid.Must(uuid.NewV7())
-	digest := testDigest("deployment-program-" + artifactID.String())
+	digest := dbtest.Digest("deployment-program-" + artifactID.String())
 	const mediaType = "application/vnd.helmr.deployment-program.v0+squashfs"
-	mustExec(t, f.ctx, pool, `
+	dbtest.MustExec(t, f.ctx, pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 123, $3)
 	`, f.orgID, digest, mediaType)
-	mustExec(t, f.ctx, pool, `
+	dbtest.MustExec(t, f.ctx, pool, `
 		INSERT INTO artifacts (
 			id, org_id, project_id, environment_id, digest, kind,
 			size_bytes, media_type, created_by_worker_instance_id
@@ -716,7 +716,7 @@ func TestExpiredDeploymentBuildDeliveryUsesTheSameBoundedPolicy(t *testing.T) {
 	first := f.lease(t, 1)
 	firstID := pgvalue.MustUUIDValue(first.ID)
 	f.start(t, firstID, 1)
-	mustExec(t, f.ctx, pool, `
+	dbtest.MustExec(t, f.ctx, pool, `
 		UPDATE deployment_build_leases
 		   SET assigned_at = now() - interval '3 minutes',
 		       start_deadline_at = now() - interval '2 minutes',
@@ -760,7 +760,7 @@ func TestExpiredDeploymentBuildDeliveryUsesTheSameBoundedPolicy(t *testing.T) {
 	f.reject(t, pgvalue.MustUUIDValue(second.ID), 2)
 	third := f.lease(t, 3)
 	thirdID := pgvalue.MustUUIDValue(third.ID)
-	mustExec(t, f.ctx, pool, `
+	dbtest.MustExec(t, f.ctx, pool, `
 		UPDATE deployment_build_leases
 		   SET assigned_at = now() - interval '3 minutes',
 		       start_deadline_at = now() - interval '2 minutes',
@@ -856,7 +856,7 @@ func TestDeploymentBuildCannotFailBeforeRunning(t *testing.T) {
 	f, pool := newDeploymentBuildFixture(t)
 	leased := f.lease(t, 1)
 	leaseID := pgvalue.MustUUIDValue(leased.ID)
-	mustExec(t, f.ctx, pool, `
+	dbtest.MustExec(t, f.ctx, pool, `
 		UPDATE deployment_build_leases
 		   SET state = 'starting', claimed_at = now(), renewed_at = now()
 		 WHERE id = $1

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -33,25 +32,25 @@ func scheduleListCommand() *cobra.Command {
 			if cmd.Flags().Changed("limit") && limit < 1 {
 				return errors.New("--limit must be in [1,100]")
 			}
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := environmentScopeForClient(control, projectID, environmentID)
+			scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			response, err := control.ListSchedules(cmd.Context(), client.ListSchedulesOptions{
+			response, err := controlPlane.ListSchedules(cmd.Context(), client.ListSchedulesOptions{
 				Cursor: cursor, Limit: limit, EnvironmentScopeOptions: scope,
 			})
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			if jsonLines {
-				return format.JSONLines(cmd.OutOrStdout(), response.Schedules)
+				return writeJSONLines(cmd.OutOrStdout(), response.Schedules)
 			}
 			for _, schedule := range response.Schedules {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", schedule.ID, schedule.Task, schedule.Status)
@@ -80,20 +79,20 @@ func scheduleGetCommand() *cobra.Command {
 		Short: "Show Schedule status.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := environmentScopeForClient(control, projectID, environmentID)
+			scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			schedule, err := control.GetSchedule(cmd.Context(), args[0], scope)
+			schedule, err := controlPlane.GetSchedule(cmd.Context(), args[0], scope)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), schedule)
+				return writeJSON(cmd.OutOrStdout(), schedule)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "schedule_id: %s\n", schedule.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "task: %s\n", schedule.Task)

@@ -9,8 +9,8 @@ variable "name" {
   default     = "helmr-quickstart"
 
   validation {
-    condition     = can(regex("^[a-z][a-z0-9-]{1,22}[a-z0-9]$", var.name))
-    error_message = "name must be 3-24 characters, start with a lowercase letter, end with a lowercase letter or number, and contain only lowercase letters, numbers, and hyphens."
+    condition     = can(regex("^[a-z][a-z0-9-]{1,17}[a-z0-9]$", var.name))
+    error_message = "name must be 3-19 characters, start with a lowercase letter, end with a lowercase letter or number, and contain only lowercase letters, numbers, and hyphens."
   }
 }
 
@@ -26,8 +26,8 @@ variable "tags" {
   default     = {}
 }
 
-variable "control_vpc_cidr" {
-  description = "CIDR block for the unrouted Control VPC."
+variable "controlplane_vpc_cidr" {
+  description = "CIDR block for the unrouted Control Plane VPC."
   type        = string
   default     = "10.80.0.0/16"
 }
@@ -58,13 +58,13 @@ variable "availability_zone_count" {
 }
 
 variable "enable_nat_gateway" {
-  description = "Create a NAT Gateway for private subnet egress. The default no-NAT mode uses public IPs for control and migration Fargate tasks."
+  description = "Create a NAT Gateway for private subnet egress. The default no-NAT mode uses public IPs for controlplane and migration Fargate tasks."
   type        = bool
   default     = false
 }
 
 variable "bucket_name_prefix" {
-  description = "Globally unique S3 bucket name prefix. Defaults to name-account-region inside the control module."
+  description = "Globally unique S3 bucket name prefix. Defaults to name-account-region inside the controlplane module."
   type        = string
   default     = null
   nullable    = true
@@ -176,8 +176,8 @@ variable "clickhouse_password_kms_key_arns" {
   default     = []
 }
 
-variable "additional_control_security_group_ids" {
-  description = "Additional security groups attached to control, dispatcher, and migration tasks."
+variable "additional_controlplane_security_group_ids" {
+  description = "Additional security groups attached to controlplane, dispatcher, and migration tasks."
   type        = list(string)
   default     = []
 }
@@ -203,7 +203,7 @@ variable "allow_insecure_http" {
 }
 
 variable "helmr_version" {
-  description = "Helmr release version to deploy, for example vX.Y.Z. Used to resolve official control and worker artifacts."
+  description = "Helmr release version to deploy, for example vX.Y.Z. Used to resolve official controlplane and worker artifacts."
   type        = string
 
   validation {
@@ -226,14 +226,14 @@ variable "release_artifacts_manifest_url" {
   nullable    = true
 }
 
-variable "control_image" {
-  description = "Optional digest-pinned control image URI override for custom builds. When null, the release artifact manifest is used."
+variable "controlplane_image" {
+  description = "Optional digest-pinned controlplane image URI override for custom builds. When null, the release artifact manifest is used."
   type        = string
   default     = null
   nullable    = true
 }
 
-variable "control_image_repository_arn" {
+variable "controlplane_image_repository_arn" {
   description = "Exact private ECR repository ARN needed by the ECS execution roles. Leave null for public or non-ECR images."
   type        = string
   default     = null
@@ -241,21 +241,21 @@ variable "control_image_repository_arn" {
 
   validation {
     condition = (
-      var.control_image_repository_arn == null ||
-      can(regex("^arn:[^:]+:ecr:[a-z0-9-]+:[0-9]{12}:repository/[a-z0-9._/-]+$", var.control_image_repository_arn))
+      var.controlplane_image_repository_arn == null ||
+      can(regex("^arn:[^:]+:ecr:[a-z0-9-]+:[0-9]{12}:repository/[a-z0-9._/-]+$", var.controlplane_image_repository_arn))
     )
-    error_message = "control_image_repository_arn must be null or an ECR repository ARN."
+    error_message = "controlplane_image_repository_arn must be null or an ECR repository ARN."
   }
 }
 
-variable "create_control_service" {
+variable "create_controlplane_service" {
   description = "Create the ECS service. Keep false for the first apply until image and secret values are ready."
   type        = bool
   default     = false
 }
 
-variable "control_desired_count" {
-  description = "Desired ECS task count for the control service."
+variable "controlplane_desired_count" {
+  description = "Desired ECS task count for the controlplane service."
   type        = number
   default     = 1
 }
@@ -266,25 +266,25 @@ variable "dispatcher_desired_count" {
   default     = 1
 }
 
-variable "control_assign_public_ip" {
-  description = "Run control and migration Fargate tasks in public subnets with public IPs so the quickstart can avoid NAT Gateway."
+variable "controlplane_assign_public_ip" {
+  description = "Run controlplane and migration Fargate tasks in public subnets with public IPs so the quickstart can avoid NAT Gateway."
   type        = bool
   default     = true
 }
 
-variable "control_health_check_path" {
+variable "controlplane_health_check_path" {
   description = "HTTP path used by the control-plane target group health check."
   type        = string
   default     = "/healthz"
 
   validation {
-    condition     = startswith(var.control_health_check_path, "/")
-    error_message = "control_health_check_path must start with /."
+    condition     = startswith(var.controlplane_health_check_path, "/")
+    error_message = "controlplane_health_check_path must start with /."
   }
 }
 
-variable "control_environment" {
-  description = "Additional non-secret environment variables for helmr-control."
+variable "controlplane_environment" {
+  description = "Additional non-secret environment variables for helmr-controlplane."
   type        = map(string)
   default     = {}
 }
@@ -382,8 +382,8 @@ variable "database_skip_final_snapshot" {
   default     = true
 }
 
-variable "control_log_retention_days" {
-  description = "CloudWatch Logs retention in days for control and migration tasks."
+variable "controlplane_log_retention_days" {
+  description = "CloudWatch Logs retention in days for controlplane and migration tasks."
   type        = number
   default     = 7
 }
@@ -432,7 +432,7 @@ variable "worker_observation_ttl_seconds" {
 }
 
 variable "worker_launch_timeout_seconds" {
-  description = "Deployment-owned ASG launch-hook timeout while a Worker reaches Control readiness."
+  description = "Deployment-owned ASG launch-hook timeout while a Worker reaches Control Plane readiness."
   type        = number
   default     = 900
 

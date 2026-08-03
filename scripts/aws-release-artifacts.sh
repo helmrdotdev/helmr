@@ -27,8 +27,8 @@ SOURCE_BUNDLE_URI_FILE="${STATE_DIR}/source-bundle-s3-uri"
 SOURCE_BUNDLE_REF_FILE="${STATE_DIR}/source-bundle-ref"
 BUILD_POLICY_DIGEST_FILE="${STATE_DIR}/build-policy-digest"
 WORKER_IMAGE_PROVENANCE_FILE="${STATE_DIR}/worker-image-provenance.json"
-CONTROL_IMAGE_PROVENANCE_FILE="${STATE_DIR}/control-image-provenance.json"
-CONTROL_IMAGE_URI_FILE="${STATE_DIR}/control-image-uri"
+CONTROLPLANE_IMAGE_PROVENANCE_FILE="${STATE_DIR}/controlplane-image-provenance.json"
+CONTROLPLANE_IMAGE_URI_FILE="${STATE_DIR}/controlplane-image-uri"
 IMAGE_WAIT_INTERVAL_SECONDS="${IMAGE_WAIT_INTERVAL_SECONDS:-60}"
 IMAGE_WAIT_TIMEOUT_SECONDS="${IMAGE_WAIT_TIMEOUT_SECONDS:-7200}"
 
@@ -49,8 +49,8 @@ Commands:
   worker-image-start
   worker-image-wait
   worker-image-amis
-  control-image-build
-  control-image-push
+  controlplane-image-build
+  controlplane-image-push
 
 This Product-owned tool builds and publishes release artifacts. Managed Cloud
 environment composition and validation live in the private cloud repository.
@@ -163,8 +163,8 @@ bootstrap_output() {
   printf 'export STATE_REGION=%q\n' "${STATE_REGION}"
   printf 'export SOURCE_BUNDLE_BUCKET=%q\n' "${artifact_bucket}"
   for output_name in \
-    control_release_repository_url \
-    control_release_repository_arn \
+    controlplane_release_repository_url \
+    controlplane_release_repository_arn \
     platform_publisher_role_arn \
     platform_store_uri \
     platform_store_bucket_arn \
@@ -337,7 +337,7 @@ platform_release_publish() (
   while IFS= read -r -d '' object; do
     install -m0400 "${object}" "${publish_input}/objects/sha256/$(basename "${object}")"
   done < <(find "${release}/objects/sha256" -maxdepth 1 -type f -print0)
-  with_platform_publisher nix develop "${ROOT}" -c go run ./cmd/helmr-control release publish \
+  with_platform_publisher nix develop "${ROOT}" -c go run ./cmd/helmr-controlplane release publish \
     --store "${platform_store_uri}" \
     --input "${publish_input}"
   build_policy_digest="$(cat "${release}/build-policy.digest")"
@@ -526,25 +526,25 @@ worker_image_amis() {
   jq -c . "${AMI_IDS_FILE}"
 }
 
-control_image_repository() {
-  bootstrap_contract_value CONTROL_RELEASE_REPOSITORY_URL control_release_repository_url
+controlplane_image_repository() {
+  bootstrap_contract_value CONTROLPLANE_RELEASE_REPOSITORY_URL controlplane_release_repository_url
 }
 
-control_image_uri() {
-  repository="$(control_image_repository)"
-  tag="${CONTROL_IMAGE_TAG:-$(git -C "${ROOT}" rev-parse --short=12 HEAD)-$(date -u +%Y%m%d%H%M%S)-$$}"
+controlplane_image_uri() {
+  repository="$(controlplane_image_repository)"
+  tag="${CONTROLPLANE_IMAGE_TAG:-$(git -C "${ROOT}" rev-parse --short=12 HEAD)-$(date -u +%Y%m%d%H%M%S)-$$}"
   printf '%s:%s\n' "${repository}" "${tag}"
 }
 
-control_image_digest_uri() {
+controlplane_image_digest_uri() {
   image_uri=$1
-  [ "${image_uri#*@}" = "${image_uri}" ] || die "control-image-push requires a tag image URI, got digest-pinned image: ${image_uri}"
+  [ "${image_uri#*@}" = "${image_uri}" ] || die "controlplane-image-push requires a tag image URI, got digest-pinned image: ${image_uri}"
 
   repository="${image_uri%:*}"
   tag="${image_uri##*:}"
   repository_name="${repository#*/}"
-  [ -n "${repository_name}" ] && [ "${repository_name}" != "${repository}" ] || die "control image URI must include an ECR registry: ${image_uri}"
-  [ -n "${tag}" ] && [ "${tag}" != "${image_uri}" ] || die "control image URI must include a tag: ${image_uri}"
+  [ -n "${repository_name}" ] && [ "${repository_name}" != "${repository}" ] || die "controlplane image URI must include an ECR registry: ${image_uri}"
+  [ -n "${tag}" ] && [ "${tag}" != "${image_uri}" ] || die "controlplane image URI must include a tag: ${image_uri}"
 
   digest="$(with_platform_publisher aws ecr describe-images \
     --region "${AWS_REGION}" \
@@ -558,44 +558,44 @@ control_image_digest_uri() {
   esac
 }
 
-control_image_context() {
-  printf '%s\n' "${STATE_DIR}/control-image"
+controlplane_image_context() {
+  printf '%s\n' "${STATE_DIR}/controlplane-image"
 }
 
-control_image_build() {
+controlplane_image_build() {
   need_command docker
   require_clean_product_checkout
-  image_uri="$(control_image_uri)"
-  context="$(control_image_context)"
+  image_uri="$(controlplane_image_uri)"
+  context="$(controlplane_image_context)"
 
   # shellcheck disable=SC2016
   nix develop "${ROOT}#images" -c env \
-    CONTROL_IMAGE_CONTEXT="${context}" \
+    CONTROLPLANE_IMAGE_CONTEXT="${context}" \
     IMAGE_URI="${image_uri}" \
     bash -ceu '
       cd "$1"
-      ./scripts/build-control-image.sh "$IMAGE_URI"
+      ./scripts/build-controlplane-image.sh "$IMAGE_URI"
     ' bash "${ROOT}"
 
-  printf '%s\n' "${image_uri}" >"${CONTROL_IMAGE_URI_FILE}"
-  info "control image built: ${image_uri}"
+  printf '%s\n' "${image_uri}" >"${CONTROLPLANE_IMAGE_URI_FILE}"
+  info "controlplane image built: ${image_uri}"
   printf '%s\n' "${image_uri}"
 }
 
-control_image_push() {
+controlplane_image_push() {
   need_command aws
   need_command docker
   require_clean_product_checkout
-  image_uri="${CONTROL_IMAGE_URI:-}"
-  if [ -z "${image_uri}" ] && [ -f "${CONTROL_IMAGE_URI_FILE}" ]; then
-    image_uri="$(cat "${CONTROL_IMAGE_URI_FILE}")"
+  image_uri="${CONTROLPLANE_IMAGE_URI:-}"
+  if [ -z "${image_uri}" ] && [ -f "${CONTROLPLANE_IMAGE_URI_FILE}" ]; then
+    image_uri="$(cat "${CONTROLPLANE_IMAGE_URI_FILE}")"
   fi
-  [ -n "${image_uri}" ] || die "CONTROL_IMAGE_URI is required, or run control-image-build first"
-  build_inputs_file="$(control_image_context)/build-inputs.json"
-  [ -f "${build_inputs_file}" ] || die "Control image build-input receipt is missing; run control-image-build first"
+  [ -n "${image_uri}" ] || die "CONTROLPLANE_IMAGE_URI is required, or run controlplane-image-build first"
+  build_inputs_file="$(controlplane_image_context)/build-inputs.json"
+  [ -f "${build_inputs_file}" ] || die "Control Plane image build-input receipt is missing; run controlplane-image-build first"
   expected_source_commit="$(git -C "${ROOT}" rev-parse HEAD)"
-  "${ROOT}/scripts/verify-control-image-build.sh" "${build_inputs_file}" "${image_uri}" ||
-    die "Control image build-input verification failed"
+  "${ROOT}/scripts/verify-controlplane-image-build.sh" "${build_inputs_file}" "${image_uri}" ||
+    die "Control Plane image build-input verification failed"
   registry="${image_uri%%/*}"
   (
     docker_config="$(mktemp -d "${STATE_DIR}/docker-config.XXXXXX")"
@@ -604,7 +604,7 @@ control_image_push() {
       docker --config "${docker_config}" login --username AWS --password-stdin "${registry}"
     docker --config "${docker_config}" push "${image_uri}"
   )
-  digest_image_uri="$(control_image_digest_uri "${image_uri}")"
+  digest_image_uri="$(controlplane_image_digest_uri "${image_uri}")"
   repository="${digest_image_uri%@*}"
   repository_name="${repository#*/}"
   digest="${digest_image_uri#*@}"
@@ -618,10 +618,10 @@ control_image_push() {
       formatVersion: 1,
       image: {digest: $digest, repository: $repository},
       sourceCommit: $source_commit
-    }' >"${CONTROL_IMAGE_PROVENANCE_FILE}"
-  chmod 0600 "${CONTROL_IMAGE_PROVENANCE_FILE}"
-  printf '%s\n' "${digest_image_uri}" >"${CONTROL_IMAGE_URI_FILE}"
-  info "control image pushed: ${digest_image_uri}"
+    }' >"${CONTROLPLANE_IMAGE_PROVENANCE_FILE}"
+  chmod 0600 "${CONTROLPLANE_IMAGE_PROVENANCE_FILE}"
+  printf '%s\n' "${digest_image_uri}" >"${CONTROLPLANE_IMAGE_URI_FILE}"
+  info "controlplane image pushed: ${digest_image_uri}"
   printf '%s\n' "${digest_image_uri}"
 }
 
@@ -639,8 +639,8 @@ case "${command}" in
   worker-image-start) worker_image_start ;;
   worker-image-wait) shift; worker_image_wait "$@" ;;
   worker-image-amis) worker_image_amis ;;
-  control-image-build) control_image_build ;;
-  control-image-push) control_image_push ;;
+  controlplane-image-build) controlplane_image_build ;;
+  controlplane-image-push) controlplane_image_push ;;
   -h|--help|help|"") usage ;;
   *) usage >&2; die "unknown command: ${command}" ;;
 esac

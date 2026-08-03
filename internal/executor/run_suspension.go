@@ -6,43 +6,43 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type RunWaitClient interface {
-	CreateRunWait(context.Context, api.WorkerCreateRunWaitRequest) (api.WorkerCreateRunWaitResponse, error)
-	PollRunWait(context.Context, api.WorkerRunWaitPollRequest) (api.WorkerRunWaitPollResponse, error)
-	AcknowledgeRunWaitResume(context.Context, api.WorkerRunWaitResumeAckRequest) (api.WorkerRunWaitResumeAckResponse, error)
-	MarkCheckpointReady(context.Context, api.WorkerCheckpointReadyRequest) (api.WorkerCheckpointResponse, error)
-	MarkCheckpointFailed(context.Context, api.WorkerCheckpointFailedRequest) (api.WorkerCheckpointResponse, error)
+	CreateRunWait(context.Context, workerapi.CreateRunWaitRequest) (workerapi.CreateRunWaitResponse, error)
+	PollRunWait(context.Context, workerapi.RunWaitPollRequest) (workerapi.RunWaitPollResponse, error)
+	AcknowledgeRunWaitResume(context.Context, workerapi.RunWaitResumeAckRequest) (workerapi.RunWaitResumeAckResponse, error)
+	MarkCheckpointReady(context.Context, workerapi.CheckpointReadyRequest) (workerapi.CheckpointResponse, error)
+	MarkCheckpointFailed(context.Context, workerapi.CheckpointFailedRequest) (workerapi.CheckpointResponse, error)
 }
 
-type ControlRunWaits struct {
+type ControlPlaneRunWaits struct {
 	Client RunWaitClient
 }
 
 type RestoreAcknowledgement struct {
-	Lease                api.WorkerRunLeaseAssignment
+	Lease                workerapi.RunLeaseAssignment
 	RunWaitID            string
 	CheckpointID         string
 	ResumeAttachID       string
 	CorrelationID        string
 	ResumeRequestVersion int64
-	Phases               []api.WorkerCheckpointPhase
+	Phases               []workerapi.CheckpointPhase
 }
 
 type RestoreAcknowledger interface {
 	AcknowledgeRestore(context.Context, RestoreAcknowledgement) error
 }
 
-func (w ControlRunWaits) AcknowledgeRestore(ctx context.Context, request RestoreAcknowledgement) error {
+func (w ControlPlaneRunWaits) AcknowledgeRestore(ctx context.Context, request RestoreAcknowledgement) error {
 	client, ok := w.Client.(interface {
-		AcknowledgeRunResumeRelease(context.Context, api.WorkerRunResumeReleaseRequest) (api.WorkerRunResumeReleaseResponse, error)
+		AcknowledgeRunResumeRelease(context.Context, workerapi.RunResumeReleaseRequest) (workerapi.RunResumeReleaseResponse, error)
 	})
 	if !ok {
 		return errors.New("exact Run resume release client is required")
 	}
-	response, err := client.AcknowledgeRunResumeRelease(ctx, api.WorkerRunResumeReleaseRequest{
+	response, err := client.AcknowledgeRunResumeRelease(ctx, workerapi.RunResumeReleaseRequest{
 		Lease:                request.Lease.Fence(),
 		RunWaitID:            request.RunWaitID,
 		CheckpointID:         request.CheckpointID,
@@ -61,9 +61,9 @@ func (w ControlRunWaits) AcknowledgeRestore(ctx context.Context, request Restore
 	return nil
 }
 
-func (w ControlRunWaits) Wait(ctx context.Context, request WaitRequest) error {
+func (w ControlPlaneRunWaits) Wait(ctx context.Context, request WaitRequest) error {
 	if w.Client == nil {
-		return errors.New("run wait control client is required")
+		return errors.New("run wait Control Plane client is required")
 	}
 	opened, err := w.AddRunWait(ctx, request)
 	if err != nil {
@@ -74,13 +74,13 @@ func (w ControlRunWaits) Wait(ctx context.Context, request WaitRequest) error {
 
 // ContinueRunWait drives an already-created durable Wait. It is used when
 // creating a resource and registering the Wait must be one atomic operation.
-func (w ControlRunWaits) ContinueRunWait(
+func (w ControlPlaneRunWaits) ContinueRunWait(
 	ctx context.Context,
 	request WaitRequest,
-	opened api.WorkerCreateRunWaitResponse,
+	opened workerapi.CreateRunWaitResponse,
 ) error {
 	if w.Client == nil {
-		return errors.New("run wait control client is required")
+		return errors.New("run wait Control Plane client is required")
 	}
 	lease, err := request.currentLeaseAssignment()
 	if err != nil {
@@ -106,7 +106,7 @@ func (w ControlRunWaits) ContinueRunWait(
 		if err != nil {
 			return err
 		}
-		intent, pollErr := w.Client.PollRunWait(ctx, api.WorkerRunWaitPollRequest{
+		intent, pollErr := w.Client.PollRunWait(ctx, workerapi.RunWaitPollRequest{
 			Lease:     lease.Fence(),
 			RunWaitID: opened.RunWaitID,
 		})
@@ -120,8 +120,8 @@ func (w ControlRunWaits) ContinueRunWait(
 			return errors.New("run wait poll returned a mismatched fence")
 		}
 		switch intent.Status {
-		case api.WorkerRunWaitPollStatusWaiting:
-		case api.WorkerRunWaitPollStatusResumeRequested:
+		case workerapi.RunWaitPollStatusWaiting:
+		case workerapi.RunWaitPollStatusResumeRequested:
 			if intent.ResumeKind == "" || (intent.RequireAck && intent.RequestVersion <= 0) {
 				return errors.New("run wait resume request fence and kind are invalid")
 			}
@@ -140,16 +140,16 @@ func (w ControlRunWaits) ContinueRunWait(
 				if err != nil {
 					return err
 				}
-				if _, err := w.Client.AcknowledgeRunWaitResume(ctx, api.WorkerRunWaitResumeAckRequest{
+				if _, err := w.Client.AcknowledgeRunWaitResume(ctx, workerapi.RunWaitResumeAckRequest{
 					Lease: lease.Fence(), RunWaitID: opened.RunWaitID, ResumeRequestVersion: intent.RequestVersion,
 				}); err != nil {
 					return fmt.Errorf("acknowledge run wait resume: %w", err)
 				}
 			}
 			return nil
-		case api.WorkerRunWaitPollStatusCheckpointRequested:
+		case workerapi.RunWaitPollStatusCheckpointRequested:
 			return w.handleCheckpointDecision(ctx, request, intent)
-		case api.WorkerRunWaitPollStatusTerminal:
+		case workerapi.RunWaitPollStatusTerminal:
 			return errors.New("run wait became terminal before resume")
 		default:
 			return fmt.Errorf("unsupported run wait poll status %q", intent.Status)
@@ -163,7 +163,7 @@ func (w ControlRunWaits) ContinueRunWait(
 	}
 }
 
-func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request WaitRequest, intent api.WorkerRunWaitPollResponse) error {
+func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, request WaitRequest, intent workerapi.RunWaitPollResponse) error {
 	if intent.CheckpointID == "" || intent.RequestVersion <= 0 {
 		return errors.New("checkpoint request id and version are required")
 	}
@@ -172,7 +172,7 @@ func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request W
 		if leaseErr != nil {
 			return leaseErr
 		}
-		failedRequest := api.WorkerCheckpointFailedRequest{
+		failedRequest := workerapi.CheckpointFailedRequest{
 			Lease: lease.Fence(), RequestVersion: intent.RequestVersion,
 			RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID, Error: err.Error(),
 		}
@@ -218,7 +218,7 @@ func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request W
 	if err != nil {
 		return err
 	}
-	readyRequest := api.WorkerCheckpointReadyRequest{
+	readyRequest := workerapi.CheckpointReadyRequest{
 		Lease: lease.Fence(), RequestVersion: intent.RequestVersion,
 		RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID,
 		WorkspaceCapture: *workerCheckpointWorkspaceCapture(checkpoint.WorkspaceCapture),
@@ -235,15 +235,15 @@ func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request W
 	}
 }
 
-func workerCheckpointWorkspaceCapture(capture *CheckpointWorkspaceCapture) *api.WorkerCheckpointWorkspaceCapture {
+func workerCheckpointWorkspaceCapture(capture *CheckpointWorkspaceCapture) *workerapi.CheckpointWorkspaceCapture {
 	if capture == nil {
 		return nil
 	}
-	return &api.WorkerCheckpointWorkspaceCapture{
-		Tree: api.WorkerWorkspaceTreeIdentity{
+	return &workerapi.CheckpointWorkspaceCapture{
+		Tree: workerapi.WorkspaceTreeIdentity{
 			Digest: capture.Tree.Digest, SizeBytes: capture.Tree.SizeBytes, EntryCount: int32(capture.Tree.EntryCount),
 		},
-		Artifact: api.WorkerWorkspaceArtifact{
+		Artifact: workerapi.WorkspaceArtifact{
 			Digest: capture.Artifact.Digest, MediaType: capture.Artifact.MediaType,
 			Encoding: capture.Artifact.Encoding, SizeBytes: capture.Artifact.SizeBytes,
 			EntryCount: int32(capture.Artifact.EntryCount),
@@ -251,15 +251,15 @@ func workerCheckpointWorkspaceCapture(capture *CheckpointWorkspaceCapture) *api.
 	}
 }
 
-func (w ControlRunWaits) AddRunWait(ctx context.Context, request WaitRequest) (api.WorkerCreateRunWaitResponse, error) {
+func (w ControlPlaneRunWaits) AddRunWait(ctx context.Context, request WaitRequest) (workerapi.CreateRunWaitResponse, error) {
 	if w.Client == nil {
-		return api.WorkerCreateRunWaitResponse{}, errors.New("run wait control client is required")
+		return workerapi.CreateRunWaitResponse{}, errors.New("run wait Control Plane client is required")
 	}
 	lease, err := request.currentLeaseAssignment()
 	if err != nil {
-		return api.WorkerCreateRunWaitResponse{}, err
+		return workerapi.CreateRunWaitResponse{}, err
 	}
-	return w.Client.CreateRunWait(ctx, api.WorkerCreateRunWaitRequest{
+	return w.Client.CreateRunWait(ctx, workerapi.CreateRunWaitRequest{
 		Lease:                         lease.Fence(),
 		CorrelationID:                 request.CorrelationID,
 		RunWaitID:                     request.RunWaitID,
@@ -274,16 +274,16 @@ func (w ControlRunWaits) AddRunWait(ctx context.Context, request WaitRequest) (a
 	})
 }
 
-func (request WaitRequest) currentLeaseAssignment() (api.WorkerRunLeaseAssignment, error) {
+func (request WaitRequest) currentLeaseAssignment() (workerapi.RunLeaseAssignment, error) {
 	if request.Leases != nil {
-		provider, ok := request.Leases.(api.WorkerRunLeaseAssignmentProvider)
+		provider, ok := request.Leases.(workerapi.RunLeaseAssignmentProvider)
 		if !ok {
-			return api.WorkerRunLeaseAssignment{}, errors.New("Run Lease assignment provider is required for durable waits")
+			return workerapi.RunLeaseAssignment{}, errors.New("Run Lease assignment provider is required for durable waits")
 		}
 		return provider.CurrentWorkerRunLeaseAssignment(), nil
 	}
 	if request.LeaseAssignment.ID == "" {
-		return api.WorkerRunLeaseAssignment{}, errors.New("Run Lease assignment is required for durable waits")
+		return workerapi.RunLeaseAssignment{}, errors.New("Run Lease assignment is required for durable waits")
 	}
 	return request.LeaseAssignment, nil
 }
@@ -315,4 +315,4 @@ func durationMilliseconds(value time.Duration) int64 {
 	return value.Milliseconds()
 }
 
-var _ WaitHandler = ControlRunWaits{}
+var _ WaitHandler = ControlPlaneRunWaits{}

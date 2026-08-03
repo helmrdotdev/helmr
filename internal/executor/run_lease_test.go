@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -27,25 +28,25 @@ func TestExecutorCompletesSuccessfulRunLeaseTask(t *testing.T) {
 		trace:   trace,
 		renewed: renewed,
 		result: RunLeaseTaskResult{
-			Outcome: api.WorkerTaskOutcome{Succeeded: &api.WorkerTaskSucceeded{
+			Outcome: workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{
 				Output: json.RawMessage(`{"ok":true}`),
 			}},
-			ProgramQuiesced: api.WorkerRunQuiescenceProof{
+			ProgramQuiesced: workerapi.RunQuiescenceProof{
 				RunID: lease.RunID, AttemptNumber: lease.AttemptNumber,
 				RunLeaseID: lease.ID,
 			},
 		},
 	}
-	control := &testRunLeaseControl{
+	controlPlane := &testRunLeaseControlPlane{
 		trace:   trace,
-		claim:   api.WorkerRunLeaseClaimResponse{Lease: lease},
+		claim:   workerapi.RunLeaseClaimResponse{Lease: lease},
 		renewed: testRunLeaseRenewResponse(renewed),
-		begin:   testRunFinalizationResponse(frozen, api.WorkerRunFinalizationCapture),
+		begin:   testRunFinalizationResponse(frozen, workerapi.RunFinalizationCapture),
 	}
 	runner := &testRunLeaseTaskRunner{trace: trace, task: task}
-	executor := Executor{RunLeases: control, RunLeaseTasks: runner}
+	executor := Executor{RunLeases: controlPlane, RunLeaseTasks: runner}
 
-	err := executor.ExecuteRunLease(context.Background(), api.WorkerRunLeaseWork{
+	err := executor.ExecuteRunLease(context.Background(), workerapi.RunLeaseWork{
 		LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence,
 	})
 	if err != nil {
@@ -57,10 +58,10 @@ func TestExecutorCompletesSuccessfulRunLeaseTask(t *testing.T) {
 	}) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
-	if control.completed.Workspace.Captured == nil ||
-		control.completed.Workspace.RolledBack != nil ||
-		control.completed.Outcome.Succeeded == nil {
-		t.Fatalf("completion = %+v", control.completed)
+	if controlPlane.completed.Workspace.Captured == nil ||
+		controlPlane.completed.Workspace.RolledBack != nil ||
+		controlPlane.completed.Outcome.Succeeded == nil {
+		t.Fatalf("completion = %+v", controlPlane.completed)
 	}
 }
 
@@ -73,24 +74,24 @@ func TestExecutorCompletesSuccessfulTaskHandoff(t *testing.T) {
 		trace:   trace,
 		renewed: lease,
 		result: RunLeaseTaskResult{
-			Outcome: api.WorkerTaskOutcome{Succeeded: &api.WorkerTaskSucceeded{
+			Outcome: workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{
 				Output: json.RawMessage(`{"ok":true}`),
 			}},
-			ProgramQuiesced: api.WorkerRunQuiescenceProof{
+			ProgramQuiesced: workerapi.RunQuiescenceProof{
 				RunID: lease.RunID, AttemptNumber: lease.AttemptNumber,
 				RunLeaseID: lease.ID,
 			},
 		},
 	}
-	control := &testRunLeaseControl{
+	controlPlane := &testRunLeaseControlPlane{
 		trace:   trace,
-		claim:   api.WorkerRunLeaseClaimResponse{Lease: lease},
+		claim:   workerapi.RunLeaseClaimResponse{Lease: lease},
 		renewed: testRunLeaseRenewResponse(lease),
-		begin: api.WorkerBeginRunFinalizationResponse{
+		begin: workerapi.BeginRunFinalizationResponse{
 			Lease: frozen.Fence(), ExpiresAt: frozen.ExpiresAt,
 			BaseWorkspaceVersionID: frozen.BaseWorkspaceVersionID,
-			Kind:                   api.WorkerRunFinalizationCapture,
-			Handoff: &api.WorkerRunFinalizationHandoff{
+			Kind:                   workerapi.RunFinalizationCapture,
+			Handoff: &workerapi.RunFinalizationHandoff{
 				ParentRunID: "parent-run", ParentAttemptNumber: 1,
 				RunWaitID: "wait", SuspendCheckpointID: "suspend",
 				ResumeAttachID: "attach", CorrelationID: "correlation",
@@ -98,11 +99,11 @@ func TestExecutorCompletesSuccessfulTaskHandoff(t *testing.T) {
 		},
 	}
 	executor := Executor{
-		RunLeases:     control,
+		RunLeases:     controlPlane,
 		RunLeaseTasks: &testRunLeaseTaskRunner{trace: trace, task: task},
 	}
 
-	if err := executor.ExecuteRunLease(context.Background(), api.WorkerRunLeaseWork{
+	if err := executor.ExecuteRunLease(context.Background(), workerapi.RunLeaseWork{
 		LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence,
 	}); err != nil {
 		t.Fatal(err)
@@ -113,11 +114,11 @@ func TestExecutorCompletesSuccessfulTaskHandoff(t *testing.T) {
 	}) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
-	if control.completed.Handoff == nil ||
-		control.completed.Handoff.CheckpointID == "" ||
-		control.completed.Workspace.Captured == nil ||
-		control.completed.Outcome.Succeeded == nil {
-		t.Fatalf("completion = %+v", control.completed)
+	if controlPlane.completed.Handoff == nil ||
+		controlPlane.completed.Handoff.CheckpointID == "" ||
+		controlPlane.completed.Workspace.Captured == nil ||
+		controlPlane.completed.Outcome.Succeeded == nil {
+		t.Fatalf("completion = %+v", controlPlane.completed)
 	}
 }
 
@@ -130,25 +131,25 @@ func TestExecutorRollsBackFailedRunLeaseTask(t *testing.T) {
 		trace:   trace,
 		renewed: lease,
 		result: RunLeaseTaskResult{
-			Outcome: api.WorkerTaskOutcome{Failed: &api.WorkerTaskFailure{Message: "failed"}},
-			ProgramQuiesced: api.WorkerRunQuiescenceProof{
+			Outcome: workerapi.TaskOutcome{Failed: &workerapi.TaskFailure{Message: "failed"}},
+			ProgramQuiesced: workerapi.RunQuiescenceProof{
 				RunID: lease.RunID, AttemptNumber: lease.AttemptNumber,
 				RunLeaseID: lease.ID,
 			},
 		},
 	}
-	control := &testRunLeaseControl{
+	controlPlane := &testRunLeaseControlPlane{
 		trace:   trace,
-		claim:   api.WorkerRunLeaseClaimResponse{Lease: lease},
+		claim:   workerapi.RunLeaseClaimResponse{Lease: lease},
 		renewed: testRunLeaseRenewResponse(lease),
-		begin:   testRunFinalizationResponse(frozen, api.WorkerRunFinalizationReset),
+		begin:   testRunFinalizationResponse(frozen, workerapi.RunFinalizationReset),
 	}
 	executor := Executor{
-		RunLeases:     control,
+		RunLeases:     controlPlane,
 		RunLeaseTasks: &testRunLeaseTaskRunner{trace: trace, task: task},
 	}
 
-	err := executor.ExecuteRunLease(context.Background(), api.WorkerRunLeaseWork{
+	err := executor.ExecuteRunLease(context.Background(), workerapi.RunLeaseWork{
 		LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence,
 	})
 	if err != nil {
@@ -159,10 +160,10 @@ func TestExecutorRollsBackFailedRunLeaseTask(t *testing.T) {
 	}) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
-	if control.completed.Workspace.Captured != nil ||
-		control.completed.Workspace.RolledBack == nil ||
-		control.completed.Outcome.Failed == nil {
-		t.Fatalf("completion = %+v", control.completed)
+	if controlPlane.completed.Workspace.Captured != nil ||
+		controlPlane.completed.Workspace.RolledBack == nil ||
+		controlPlane.completed.Outcome.Failed == nil {
+		t.Fatalf("completion = %+v", controlPlane.completed)
 	}
 }
 
@@ -175,28 +176,28 @@ func TestExecutorCompletesSuccessfulActorRunLease(t *testing.T) {
 		trace:   trace,
 		renewed: lease,
 		result: RunLeaseTaskResult{
-			ActorOutcome: &api.WorkerActorOutcome{
+			ActorOutcome: &workerapi.ActorOutcome{
 				TerminalInputSequence: 4,
-				Succeeded:             &api.WorkerActorSucceeded{},
+				Succeeded:             &workerapi.ActorSucceeded{},
 			},
-			ProgramQuiesced: api.WorkerRunQuiescenceProof{RunID: lease.RunID, AttemptNumber: lease.AttemptNumber, RunLeaseID: lease.ID},
+			ProgramQuiesced: workerapi.RunQuiescenceProof{RunID: lease.RunID, AttemptNumber: lease.AttemptNumber, RunLeaseID: lease.ID},
 		},
 	}
-	control := &testRunLeaseControl{
+	controlPlane := &testRunLeaseControlPlane{
 		trace:   trace,
-		claim:   api.WorkerRunLeaseClaimResponse{Lease: lease},
+		claim:   workerapi.RunLeaseClaimResponse{Lease: lease},
 		renewed: testRunLeaseRenewResponse(lease),
-		begin:   testRunFinalizationResponse(frozen, api.WorkerRunFinalizationCapture),
+		begin:   testRunFinalizationResponse(frozen, workerapi.RunFinalizationCapture),
 	}
-	executor := Executor{RunLeases: control, RunLeaseTasks: &testRunLeaseTaskRunner{trace: trace, task: task}}
-	if err := executor.ExecuteRunLease(context.Background(), api.WorkerRunLeaseWork{LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence}); err != nil {
+	executor := Executor{RunLeases: controlPlane, RunLeaseTasks: &testRunLeaseTaskRunner{trace: trace, task: task}}
+	if err := executor.ExecuteRunLease(context.Background(), workerapi.RunLeaseWork{LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence}); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(trace.calls, []string{"claim", "start", "wait", "renew", "begin", "guest-begin", "capture", "complete-actor"}) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
-	if control.completedActor.Outcome.Succeeded == nil || control.completedActor.Outcome.TerminalInputSequence != 4 || control.completedActor.Workspace.Captured == nil {
-		t.Fatalf("Actor completion = %+v", control.completedActor)
+	if controlPlane.completedActor.Outcome.Succeeded == nil || controlPlane.completedActor.Outcome.TerminalInputSequence != 4 || controlPlane.completedActor.Workspace.Captured == nil {
+		t.Fatalf("Actor completion = %+v", controlPlane.completedActor)
 	}
 }
 
@@ -209,10 +210,10 @@ func TestExecutorReplaysFinalizationWithStableAuthority(t *testing.T) {
 		trace:   trace,
 		renewed: lease,
 		result: RunLeaseTaskResult{
-			Outcome: api.WorkerTaskOutcome{Succeeded: &api.WorkerTaskSucceeded{
+			Outcome: workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{
 				Output: json.RawMessage(`null`),
 			}},
-			ProgramQuiesced: api.WorkerRunQuiescenceProof{
+			ProgramQuiesced: workerapi.RunQuiescenceProof{
 				RunID: lease.RunID, AttemptNumber: lease.AttemptNumber,
 				RunLeaseID: lease.ID,
 			},
@@ -220,25 +221,25 @@ func TestExecutorReplaysFinalizationWithStableAuthority(t *testing.T) {
 		beginFailures:   1,
 		captureFailures: 1,
 	}
-	control := &testRunLeaseControl{
+	controlPlane := &testRunLeaseControlPlane{
 		trace:            trace,
-		claim:            api.WorkerRunLeaseClaimResponse{Lease: lease},
-		begin:            testRunFinalizationResponse(frozen, api.WorkerRunFinalizationCapture),
+		claim:            workerapi.RunLeaseClaimResponse{Lease: lease},
+		begin:            testRunFinalizationResponse(frozen, workerapi.RunFinalizationCapture),
 		beginFailures:    1,
 		completeFailures: 1,
 	}
 	executor := Executor{
-		RunLeases:     control,
+		RunLeases:     controlPlane,
 		RunLeaseTasks: &testRunLeaseTaskRunner{trace: trace, task: task},
 	}
-	if err := executor.ExecuteRunLease(context.Background(), api.WorkerRunLeaseWork{
+	if err := executor.ExecuteRunLease(context.Background(), workerapi.RunLeaseWork{
 		LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(control.beginOperationIDs) != 2 ||
-		control.beginOperationIDs[0] != control.beginOperationIDs[1] {
-		t.Fatalf("begin operation IDs = %v", control.beginOperationIDs)
+	if len(controlPlane.beginOperationIDs) != 2 ||
+		controlPlane.beginOperationIDs[0] != controlPlane.beginOperationIDs[1] {
+		t.Fatalf("begin operation IDs = %v", controlPlane.beginOperationIDs)
 	}
 	if !slices.Equal(trace.calls, []string{
 		"claim", "start", "wait", "renew", "begin", "begin", "guest-begin",
@@ -273,7 +274,7 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 	renewed := previous
 	renewed.ExpiresAt = previous.ExpiresAt.Add(time.Minute)
 	ctx, cancel := context.WithCancel(context.Background())
-	control := cancelingRenewalControl{
+	controlPlane := cancelingRenewalControlPlane{
 		cancel:   cancel,
 		response: testRunLeaseRenewResponse(renewed),
 	}
@@ -281,7 +282,7 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 	defer host.Close()
 	defer guest.Close()
 	registry := NewWorkspaceMountSessions()
-	registry.RegisterWorkspaceMountSession(api.WorkerWorkspaceMount{
+	registry.RegisterWorkspaceMountSession(workerapi.WorkspaceMount{
 		ID: "mount-1", WorkspaceID: "workspace-1", RuntimeInstanceID: "runtime-1",
 		FencingGeneration: 4, BaseVersionID: "version-1",
 	}, &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}, "channel-1")
@@ -317,7 +318,7 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 			&workspacev0.RenewWorkspaceAuthorityResponse{Fence: fence},
 		)
 	}()
-	got, fence, err := renewRunLeaseAuthority(ctx, control, registry, previous, authority)
+	got, fence, err := renewRunLeaseAuthority(ctx, controlPlane, registry, previous, authority)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,11 +333,11 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 
 func TestRenewRunLeaseAuthorityStopsAtGuestAcknowledgedExpiry(t *testing.T) {
 	previous := testRunLeaseAssignment(time.Now().Add(250 * time.Millisecond))
-	control := &failingRenewalControl{}
+	controlPlane := &failingRenewalControlPlane{}
 	started := time.Now()
 	_, _, err := renewRunLeaseAuthority(
 		context.Background(),
-		control,
+		controlPlane,
 		nil,
 		previous,
 		&workspacev0.WorkspaceRunAuthority{},
@@ -347,8 +348,8 @@ func TestRenewRunLeaseAuthorityStopsAtGuestAcknowledgedExpiry(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("renewal exceeded authority window: %s", elapsed)
 	}
-	if control.calls < 1 {
-		t.Fatal("Control renewal was not attempted")
+	if controlPlane.calls < 1 {
+		t.Fatal("Control Plane renewal was not attempted")
 	}
 }
 
@@ -359,7 +360,7 @@ func TestRenewRunLeaseAuthorityDoesNotRetryGuestRejection(t *testing.T) {
 	mounts := &rejectingRenewalMounts{}
 	_, _, err := renewRunLeaseAuthority(
 		context.Background(),
-		staticRenewalControl{response: testRunLeaseRenewResponse(renewed)},
+		staticRenewalControlPlane{response: testRunLeaseRenewResponse(renewed)},
 		mounts,
 		previous,
 		&workspacev0.WorkspaceRunAuthority{},
@@ -372,32 +373,32 @@ func TestRenewRunLeaseAuthorityDoesNotRetryGuestRejection(t *testing.T) {
 	}
 }
 
-type cancelingRenewalControl struct {
+type cancelingRenewalControlPlane struct {
 	cancel   context.CancelFunc
-	response api.WorkerRunLeaseRenewResponse
+	response workerapi.RunLeaseRenewResponse
 }
 
-type failingRenewalControl struct {
+type failingRenewalControlPlane struct {
 	calls int
 }
 
-func (control *failingRenewalControl) RenewRunLease(
+func (controlPlane *failingRenewalControlPlane) RenewRunLease(
 	context.Context,
-	api.WorkerRunLeaseAssignment,
-) (api.WorkerRunLeaseRenewResponse, error) {
-	control.calls++
-	return api.WorkerRunLeaseRenewResponse{}, errors.New("Control unavailable")
+	workerapi.RunLeaseAssignment,
+) (workerapi.RunLeaseRenewResponse, error) {
+	controlPlane.calls++
+	return workerapi.RunLeaseRenewResponse{}, errors.New("Control Plane unavailable")
 }
 
-type staticRenewalControl struct {
-	response api.WorkerRunLeaseRenewResponse
+type staticRenewalControlPlane struct {
+	response workerapi.RunLeaseRenewResponse
 }
 
-func (control staticRenewalControl) RenewRunLease(
+func (controlPlane staticRenewalControlPlane) RenewRunLease(
 	context.Context,
-	api.WorkerRunLeaseAssignment,
-) (api.WorkerRunLeaseRenewResponse, error) {
-	return control.response, nil
+	workerapi.RunLeaseAssignment,
+) (workerapi.RunLeaseRenewResponse, error) {
+	return controlPlane.response, nil
 }
 
 type rejectingRenewalMounts struct {
@@ -413,12 +414,12 @@ func (mounts *rejectingRenewalMounts) RenewWorkspaceAuthority(
 	return nil, errors.New("guest rejected renewal")
 }
 
-func (control cancelingRenewalControl) RenewRunLease(
+func (controlPlane cancelingRenewalControlPlane) RenewRunLease(
 	context.Context,
-	api.WorkerRunLeaseAssignment,
-) (api.WorkerRunLeaseRenewResponse, error) {
-	control.cancel()
-	return control.response, nil
+	workerapi.RunLeaseAssignment,
+) (workerapi.RunLeaseRenewResponse, error) {
+	controlPlane.cancel()
+	return controlPlane.response, nil
 }
 
 type runLeaseTrace struct {
@@ -436,8 +437,8 @@ type testRunLeaseTaskRunner struct {
 
 func (runner *testRunLeaseTaskRunner) StartRunLeaseTask(
 	_ context.Context,
-	claim *api.WorkerRunLeaseClaimResponse,
-	_ RunLeaseControl,
+	claim *workerapi.RunLeaseClaimResponse,
+	_ RunLeaseControlPlane,
 ) (RunLeaseTask, error) {
 	runner.trace.add("start")
 	if task, ok := runner.task.(*testRunLeaseTask); ok && claim != nil {
@@ -449,8 +450,8 @@ func (runner *testRunLeaseTaskRunner) StartRunLeaseTask(
 type testRunLeaseTask struct {
 	trace           *runLeaseTrace
 	result          RunLeaseTaskResult
-	previous        api.WorkerRunLeaseAssignment
-	renewed         api.WorkerRunLeaseAssignment
+	previous        workerapi.RunLeaseAssignment
+	renewed         workerapi.RunLeaseAssignment
 	beginFailures   int
 	captureFailures int
 }
@@ -471,10 +472,10 @@ func (task *testRunLeaseTask) RenewRunLease(
 
 func (task *testRunLeaseTask) BeginWorkspaceFinalization(
 	_ context.Context,
-	_ api.WorkerRunLeaseAssignment,
-	_ api.WorkerRunLeaseAssignment,
+	_ workerapi.RunLeaseAssignment,
+	_ workerapi.RunLeaseAssignment,
 	_ string,
-	_ api.WorkerRunFinalizationKind,
+	_ workerapi.RunFinalizationKind,
 ) error {
 	task.trace.add("guest-begin")
 	if task.beginFailures > 0 {
@@ -484,153 +485,153 @@ func (task *testRunLeaseTask) BeginWorkspaceFinalization(
 	return nil
 }
 
-func (task *testRunLeaseTask) CaptureWorkspace(context.Context) (api.WorkerTaskWorkspaceCapture, error) {
+func (task *testRunLeaseTask) CaptureWorkspace(context.Context) (workerapi.TaskWorkspaceCapture, error) {
 	task.trace.add("capture")
 	if task.captureFailures > 0 {
 		task.captureFailures--
-		return api.WorkerTaskWorkspaceCapture{}, errors.New("transient capture failure")
+		return workerapi.TaskWorkspaceCapture{}, errors.New("transient capture failure")
 	}
-	return api.WorkerTaskWorkspaceCapture{}, nil
+	return workerapi.TaskWorkspaceCapture{}, nil
 }
 
 func (task *testRunLeaseTask) CreateHandoffCheckpoint(
 	context.Context,
-	api.WorkerRunFinalizationHandoff,
+	workerapi.RunFinalizationHandoff,
 	string,
-	api.WorkerTaskWorkspaceCapture,
-) (api.WorkerCheckpointManifest, error) {
+	workerapi.TaskWorkspaceCapture,
+) (workerapi.CheckpointManifest, error) {
 	task.trace.add("handoff-checkpoint")
-	return api.WorkerCheckpointManifest{}, nil
+	return workerapi.CheckpointManifest{}, nil
 }
 
-func (task *testRunLeaseTask) ResetWorkspace(context.Context) (api.WorkerTaskWorkspaceRollback, error) {
+func (task *testRunLeaseTask) ResetWorkspace(context.Context) (workerapi.TaskWorkspaceRollback, error) {
 	task.trace.add("reset")
-	return api.WorkerTaskWorkspaceRollback{}, nil
+	return workerapi.TaskWorkspaceRollback{}, nil
 }
 
-type testRunLeaseControl struct {
+type testRunLeaseControlPlane struct {
 	trace          *runLeaseTrace
-	claim          api.WorkerRunLeaseClaimResponse
-	renewed        api.WorkerRunLeaseRenewResponse
-	begin          api.WorkerBeginRunFinalizationResponse
-	completed      api.WorkerCompleteTaskRequest
-	completedActor api.WorkerCompleteActorRequest
+	claim          workerapi.RunLeaseClaimResponse
+	renewed        workerapi.RunLeaseRenewResponse
+	begin          workerapi.BeginRunFinalizationResponse
+	completed      workerapi.CompleteTaskRequest
+	completedActor workerapi.CompleteActorRequest
 
 	beginFailures     int
 	completeFailures  int
 	beginOperationIDs []string
 }
 
-func (control *testRunLeaseControl) ClaimRunLease(
+func (controlPlane *testRunLeaseControlPlane) ClaimRunLease(
 	context.Context,
-	api.WorkerRunLeaseWork,
-) (api.WorkerRunLeaseClaimResponse, error) {
-	control.trace.add("claim")
-	return control.claim, nil
+	workerapi.RunLeaseWork,
+) (workerapi.RunLeaseClaimResponse, error) {
+	controlPlane.trace.add("claim")
+	return controlPlane.claim, nil
 }
 
-func (control *testRunLeaseControl) AcknowledgeRunStart(
+func (controlPlane *testRunLeaseControlPlane) AcknowledgeRunStart(
 	context.Context,
-	api.WorkerRunStartRequest,
-) (api.WorkerRunStartResponse, error) {
-	return api.WorkerRunStartResponse{}, nil
+	workerapi.RunStartRequest,
+) (workerapi.RunStartResponse, error) {
+	return workerapi.RunStartResponse{}, nil
 }
 
-func (control *testRunLeaseControl) AcknowledgeRunEntrypoint(
+func (controlPlane *testRunLeaseControlPlane) AcknowledgeRunEntrypoint(
 	context.Context,
-	api.WorkerRunEntrypointRequest,
+	workerapi.RunEntrypointRequest,
 ) error {
 	return nil
 }
 
-func (control *testRunLeaseControl) RenewRunLease(
+func (controlPlane *testRunLeaseControlPlane) RenewRunLease(
 	context.Context,
-	api.WorkerRunLeaseAssignment,
-) (api.WorkerRunLeaseRenewResponse, error) {
-	control.trace.add("renew")
-	return control.renewed, nil
+	workerapi.RunLeaseAssignment,
+) (workerapi.RunLeaseRenewResponse, error) {
+	controlPlane.trace.add("renew")
+	return controlPlane.renewed, nil
 }
 
-func (control *testRunLeaseControl) BeginRunFinalization(
+func (controlPlane *testRunLeaseControlPlane) BeginRunFinalization(
 	_ context.Context,
-	request api.WorkerBeginRunFinalizationRequest,
-) (api.WorkerBeginRunFinalizationResponse, error) {
-	control.trace.add("begin")
-	control.beginOperationIDs = append(control.beginOperationIDs, request.OperationID)
-	if control.beginFailures > 0 {
-		control.beginFailures--
-		return api.WorkerBeginRunFinalizationResponse{}, errors.New("transient begin failure")
+	request workerapi.BeginRunFinalizationRequest,
+) (workerapi.BeginRunFinalizationResponse, error) {
+	controlPlane.trace.add("begin")
+	controlPlane.beginOperationIDs = append(controlPlane.beginOperationIDs, request.OperationID)
+	if controlPlane.beginFailures > 0 {
+		controlPlane.beginFailures--
+		return workerapi.BeginRunFinalizationResponse{}, errors.New("transient begin failure")
 	}
-	control.begin.OperationID = request.OperationID
-	return control.begin, nil
+	controlPlane.begin.OperationID = request.OperationID
+	return controlPlane.begin, nil
 }
 
-func (control *testRunLeaseControl) CompleteTask(
+func (controlPlane *testRunLeaseControlPlane) CompleteTask(
 	_ context.Context,
-	request api.WorkerCompleteTaskRequest,
+	request workerapi.CompleteTaskRequest,
 ) error {
-	control.trace.add("complete")
-	if control.completeFailures > 0 {
-		control.completeFailures--
+	controlPlane.trace.add("complete")
+	if controlPlane.completeFailures > 0 {
+		controlPlane.completeFailures--
 		return errors.New("transient completion failure")
 	}
-	control.completed = request
+	controlPlane.completed = request
 	return nil
 }
 
-func (control *testRunLeaseControl) CompleteActor(
+func (controlPlane *testRunLeaseControlPlane) CompleteActor(
 	_ context.Context,
-	request api.WorkerCompleteActorRequest,
+	request workerapi.CompleteActorRequest,
 ) error {
-	control.trace.add("complete-actor")
-	if control.completeFailures > 0 {
-		control.completeFailures--
+	controlPlane.trace.add("complete-actor")
+	if controlPlane.completeFailures > 0 {
+		controlPlane.completeFailures--
 		return errors.New("transient Actor completion failure")
 	}
-	control.completedActor = request
+	controlPlane.completedActor = request
 	return nil
 }
 
-func (control *testRunLeaseControl) CommitActorTurn(
+func (controlPlane *testRunLeaseControlPlane) CommitActorTurn(
 	context.Context,
-	api.WorkerCommitActorTurnRequest,
-) (api.WorkerCommitActorTurnResponse, error) {
-	return api.WorkerCommitActorTurnResponse{}, errors.New("unexpected Actor turn commit")
+	workerapi.CommitActorTurnRequest,
+) (workerapi.CommitActorTurnResponse, error) {
+	return workerapi.CommitActorTurnResponse{}, errors.New("unexpected Actor turn commit")
 }
 
-func (control *testRunLeaseControl) SendRunActorInput(
+func (controlPlane *testRunLeaseControlPlane) SendRunActorInput(
 	context.Context,
-	api.WorkerSendActorInputRequest,
-) (api.WorkerSendActorInputResponse, error) {
-	return api.WorkerSendActorInputResponse{}, errors.New("unexpected Actor input send")
+	workerapi.SendActorInputRequest,
+) (workerapi.SendActorInputResponse, error) {
+	return workerapi.SendActorInputResponse{}, errors.New("unexpected Actor input send")
 }
 
-func (control *testRunLeaseControl) AppendActorOutput(
+func (controlPlane *testRunLeaseControlPlane) AppendActorOutput(
 	context.Context,
-	api.WorkerAppendActorOutputRequest,
-) (api.WorkerAppendActorOutputResponse, error) {
-	return api.WorkerAppendActorOutputResponse{}, errors.New("unexpected Actor output append")
+	workerapi.AppendActorOutputRequest,
+) (workerapi.AppendActorOutputResponse, error) {
+	return workerapi.AppendActorOutputResponse{}, errors.New("unexpected Actor output append")
 }
 
-func (control *testRunLeaseControl) CreateRuntimeToken(
+func (controlPlane *testRunLeaseControlPlane) CreateRuntimeToken(
 	context.Context,
-	api.WorkerCreateTokenRequest,
+	workerapi.CreateTokenRequest,
 ) (api.TokenResponse, error) {
 	return api.TokenResponse{}, errors.New("unexpected Token create")
 }
 
-func (control *testRunLeaseControl) AppendRunLog(
+func (controlPlane *testRunLeaseControlPlane) AppendRunLog(
 	context.Context,
-	api.WorkerRunLeaseAssignment,
-	api.WorkerLogStream,
+	workerapi.RunLeaseAssignment,
+	workerapi.LogStream,
 	uint64,
 	[]byte,
 ) error {
 	return nil
 }
 
-func testRunLeaseAssignment(expiresAt time.Time) api.WorkerRunLeaseAssignment {
-	return api.WorkerRunLeaseAssignment{
+func testRunLeaseAssignment(expiresAt time.Time) workerapi.RunLeaseAssignment {
+	return workerapi.RunLeaseAssignment{
 		ID:            "019c10d5-a6f7-7af1-8f5f-000000000001",
 		RunID:         "019c10d5-a6f7-7af1-8f5f-000000000002",
 		AttemptNumber: 1, LeaseSequence: 1,
@@ -639,19 +640,19 @@ func testRunLeaseAssignment(expiresAt time.Time) api.WorkerRunLeaseAssignment {
 }
 
 func testRunLeaseRenewResponse(
-	lease api.WorkerRunLeaseAssignment,
-) api.WorkerRunLeaseRenewResponse {
-	return api.WorkerRunLeaseRenewResponse{
+	lease workerapi.RunLeaseAssignment,
+) workerapi.RunLeaseRenewResponse {
+	return workerapi.RunLeaseRenewResponse{
 		Lease: lease.Fence(), ExpiresAt: lease.ExpiresAt,
 		BaseWorkspaceVersionID: lease.BaseWorkspaceVersionID,
 	}
 }
 
 func testRunFinalizationResponse(
-	lease api.WorkerRunLeaseAssignment,
-	kind api.WorkerRunFinalizationKind,
-) api.WorkerBeginRunFinalizationResponse {
-	return api.WorkerBeginRunFinalizationResponse{
+	lease workerapi.RunLeaseAssignment,
+	kind workerapi.RunFinalizationKind,
+) workerapi.BeginRunFinalizationResponse {
+	return workerapi.BeginRunFinalizationResponse{
 		Lease: lease.Fence(), ExpiresAt: lease.ExpiresAt,
 		BaseWorkspaceVersionID: lease.BaseWorkspaceVersionID,
 		Kind:                   kind,

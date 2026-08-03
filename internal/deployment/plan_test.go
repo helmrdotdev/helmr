@@ -271,21 +271,21 @@ func TestValidateBuildPlanRunPolicy(t *testing.T) {
 		{
 			name: "ttl",
 			change: func(run *RunManifest) {
-				run.TTLMs = pointer(int64(0))
+				run.TTLMs = new(int64(0))
 			},
 			errMsg: "ttlMs",
 		},
 		{
 			name: "ttl maximum",
 			change: func(run *RunManifest) {
-				run.TTLMs = pointer(maxQueuedRunTTLMs + 1)
+				run.TTLMs = new(maxQueuedRunTTLMs + 1)
 			},
 			errMsg: "ttlMs",
 		},
 		{
 			name: "disabled retry fields",
 			change: func(run *RunManifest) {
-				run.Retry.MaxAttempts = pointer(int64(1))
+				run.Retry.MaxAttempts = new(int64(1))
 			},
 			errMsg: "disabled retry",
 		},
@@ -293,7 +293,7 @@ func TestValidateBuildPlanRunPolicy(t *testing.T) {
 			name: "enabled retry attempts",
 			change: func(run *RunManifest) {
 				run.Retry = validRetryManifest()
-				run.Retry.MaxAttempts = pointer(int64(11))
+				run.Retry.MaxAttempts = new(int64(11))
 			},
 			errMsg: "maxAttempts",
 		},
@@ -398,21 +398,21 @@ func TestValidateBuildPlanSchedule(t *testing.T) {
 		{
 			name: "workspace target ambiguous",
 			change: func(manifest *ScheduleManifest) {
-				manifest.Workspace.ID = pointer("wsp_" + strings.Repeat("a", 26))
+				manifest.Workspace.ID = new("wsp_" + strings.Repeat("a", 26))
 			},
 			errMsg: "exactly one",
 		},
 		{
 			name: "workspace id",
 			change: func(manifest *ScheduleManifest) {
-				manifest.Workspace = WorkspaceTarget{ID: pointer("workspace")}
+				manifest.Workspace = WorkspaceTarget{ID: new("workspace")}
 			},
 			errMsg: "workspace target id",
 		},
 		{
 			name: "workspace key",
 			change: func(manifest *ScheduleManifest) {
-				manifest.Workspace = WorkspaceTarget{Key: pointer(" key ")}
+				manifest.Workspace = WorkspaceTarget{Key: new(" key ")}
 			},
 			errMsg: "Workspace key domain",
 		},
@@ -428,7 +428,7 @@ func TestValidateBuildPlanSchedule(t *testing.T) {
 
 	plan := testBuildPlan()
 	plan.Definitions[0].Task.Schedule.Workspace = WorkspaceTarget{
-		ID: pointer("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
+		ID: new("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
 	}
 	if err := ValidateBuildPlan(plan); err != nil {
 		t.Fatalf("workspace ID schedule: %v", err)
@@ -465,7 +465,7 @@ func TestValidateBuildPlanQueues(t *testing.T) {
 		{
 			name: "limit",
 			change: func(plan *BuildPlan) {
-				plan.Queues[0].ConcurrencyLimit = pointer(int64(0))
+				plan.Queues[0].ConcurrencyLimit = new(int64(0))
 			},
 			errMsg: "concurrencyLimit",
 		},
@@ -497,7 +497,7 @@ func testBuildPlan() BuildPlan {
 						Cron:     "0 9 * * *",
 						Timezone: "UTC",
 						Workspace: WorkspaceTarget{
-							Key: pointer("nightly-builder"),
+							Key: new("nightly-builder"),
 						},
 					},
 				},
@@ -544,7 +544,7 @@ func testBuildPlan() BuildPlan {
 			},
 		},
 		Queues: []QueueInput{
-			{Name: "actor/chat", ConcurrencyLimit: pointer(int64(1))},
+			{Name: "actor/chat", ConcurrencyLimit: new(int64(1))},
 			{Name: "task/build"},
 		},
 	}
@@ -553,7 +553,7 @@ func testBuildPlan() BuildPlan {
 func validRetryManifest() RetryManifest {
 	return RetryManifest{
 		Enabled:     true,
-		MaxAttempts: pointer(int64(3)),
+		MaxAttempts: new(int64(3)),
 		Backoff: &RetryBackoff{
 			MinMs:  1000,
 			MaxMs:  30000,
@@ -596,8 +596,4 @@ func assertBuildPlanError(t *testing.T, plan BuildPlan, want string) {
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("error = %v, want containing %q", err, want)
 	}
-}
-
-func pointer[T any](value T) *T {
-	return &value
 }

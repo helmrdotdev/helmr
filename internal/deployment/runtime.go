@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 )
 
 const (
@@ -36,7 +36,7 @@ type RuntimeDescriptor struct {
 }
 
 func RuntimeArchitectureFromGo(value string) (RuntimeArchitecture, error) {
-	architecture, err := runtimeidentity.ArchitectureFromGo(value)
+	architecture, err := runtimeid.ArchitectureFromGo(value)
 	return RuntimeArchitecture(architecture), err
 }
 

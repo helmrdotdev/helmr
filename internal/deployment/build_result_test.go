@@ -42,19 +42,6 @@ func TestBuildResultCanonicalRoundTrip(t *testing.T) {
 	}
 }
 
-func TestWorkspaceImageNetworkQuotaUsesBuildResourceLimitReason(t *testing.T) {
-	err := fmt.Errorf("build workspace image: %w", &imagebuild.WorkerGuestFailure{
-		Reason:  imagebuild.GuestFailureNetworkQuota,
-		Message: "image-build public-egress limit was exceeded",
-	})
-	if got := workspaceImageFailureReason(err); got != BuildFailureNetworkLimit {
-		t.Fatalf("failure reason = %q, want %q", got, BuildFailureNetworkLimit)
-	}
-	if got := workspaceImageFailureReason(fmt.Errorf("ordinary image failure")); got != BuildFailureWorkspaceImageFailed {
-		t.Fatalf("ordinary failure reason = %q, want %q", got, BuildFailureWorkspaceImageFailed)
-	}
-}
-
 func TestParseBuildResultRequiresClosedCanonicalShape(t *testing.T) {
 	raw, err := CanonicalBuildResult(testSucceededBuildResult(t))
 	if err != nil {

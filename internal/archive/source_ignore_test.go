@@ -38,7 +38,6 @@ func TestGitIgnoreV0WildmatchVectors(t *testing.T) {
 		{pattern: "ab[", name: "ab[", match: false},
 	}
 	for _, test := range tests {
-		test := test
 		t.Run(test.pattern+"/"+test.name, func(t *testing.T) {
 			t.Parallel()
 			if got := wildMatch(test.pattern, test.name); got != test.match {

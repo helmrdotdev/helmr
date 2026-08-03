@@ -9,46 +9,47 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type tokenCreateControl struct {
-	*testRunLeaseControl
-	request      api.WorkerCreateTokenRequest
-	requests     []api.WorkerCreateTokenRequest
+type tokenCreateControlPlane struct {
+	*testRunLeaseControlPlane
+	request      workerapi.CreateTokenRequest
+	requests     []workerapi.CreateTokenRequest
 	response     api.TokenResponse
 	err          error
 	errors       []error
 	firstAttempt chan struct{}
 }
 
-func (control *tokenCreateControl) CreateRuntimeToken(
+func (controlPlane *tokenCreateControlPlane) CreateRuntimeToken(
 	_ context.Context,
-	request api.WorkerCreateTokenRequest,
+	request workerapi.CreateTokenRequest,
 ) (api.TokenResponse, error) {
-	control.request = request
-	control.requests = append(control.requests, request)
-	if len(control.errors) != 0 {
-		err := control.errors[0]
-		control.errors = control.errors[1:]
-		if control.firstAttempt != nil {
-			close(control.firstAttempt)
-			control.firstAttempt = nil
+	controlPlane.request = request
+	controlPlane.requests = append(controlPlane.requests, request)
+	if len(controlPlane.errors) != 0 {
+		err := controlPlane.errors[0]
+		controlPlane.errors = controlPlane.errors[1:]
+		if controlPlane.firstAttempt != nil {
+			close(controlPlane.firstAttempt)
+			controlPlane.firstAttempt = nil
 		}
 		return api.TokenResponse{}, err
 	}
-	return control.response, control.err
+	return controlPlane.response, controlPlane.err
 }
 
 func TestHandleTokenCreateReturnsSemanticFailureToRuntime(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000112"
-	control := &tokenCreateControl{
-		testRunLeaseControl: &testRunLeaseControl{},
-		err: &client.HTTPError{
+	controlPlane := &tokenCreateControlPlane{
+		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+		err: &httpclient.Error{
 			StatusCode: 400,
 			Status:     "400 Bad Request",
 			Message:    "Token timeout is invalid",
@@ -59,9 +60,9 @@ func TestHandleTokenCreateReturnsSemanticFailureToRuntime(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: guest}},
-		control: control,
-		lease:   lease,
+		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		controlPlane: controlPlane,
+		lease:        lease,
 	}
 	result := make(chan error, 1)
 	go func() {
@@ -93,8 +94,8 @@ func TestHandleTokenCreateRetryUsesRenewedAssignment(t *testing.T) {
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000115"
 	firstAttempt := make(chan struct{})
-	control := &tokenCreateControl{
-		testRunLeaseControl: &testRunLeaseControl{},
+	controlPlane := &tokenCreateControlPlane{
+		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 		response: api.TokenResponse{
 			ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39", Status: "pending",
 			CallbackURL:       "https://api.example.test/api/token-callbacks/tok/callback",
@@ -103,10 +104,10 @@ func TestHandleTokenCreateRetryUsesRenewedAssignment(t *testing.T) {
 			CreatedAt:         time.Now().UTC(),
 			UpdatedAt:         time.Now().UTC(),
 		},
-		errors: []error{&client.HTTPError{
+		errors: []error{&httpclient.Error{
 			StatusCode: 503,
 			Status:     "503 Service Unavailable",
-			Message:    "temporary control failure",
+			Message:    "temporary Control Plane failure",
 		}},
 		firstAttempt: firstAttempt,
 	}
@@ -114,9 +115,9 @@ func TestHandleTokenCreateRetryUsesRenewedAssignment(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: guest}},
-		control: control,
-		lease:   lease,
+		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		controlPlane: controlPlane,
+		lease:        lease,
 	}
 	go renewRunSourceReceiptAfterAttempt(task, firstAttempt)
 	result := make(chan error, 1)
@@ -136,10 +137,10 @@ func TestHandleTokenCreateRetryUsesRenewedAssignment(t *testing.T) {
 	if err := <-result; err != nil {
 		t.Fatal(err)
 	}
-	if len(control.requests) != 2 {
-		t.Fatalf("requests = %+v", control.requests)
+	if len(controlPlane.requests) != 2 {
+		t.Fatalf("requests = %+v", controlPlane.requests)
 	}
-	assertRetriedWithStableFence(t, control.requests[0].Lease, control.requests[1].Lease, len(control.requests))
+	assertRetriedWithStableFence(t, controlPlane.requests[0].Lease, controlPlane.requests[1].Lease, len(controlPlane.requests))
 }
 
 func TestHandleTokenCreateWritesCorrelatedDecision(t *testing.T) {
@@ -148,8 +149,8 @@ func TestHandleTokenCreateWritesCorrelatedDecision(t *testing.T) {
 	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000111"
 	timeoutMS := uint64(600_000)
 	timeoutAt := time.Now().Add(10 * time.Minute).UTC()
-	control := &tokenCreateControl{
-		testRunLeaseControl: &testRunLeaseControl{},
+	controlPlane := &tokenCreateControlPlane{
+		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 		response: api.TokenResponse{
 			ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", Status: "pending",
 			CallbackURL:       "https://api.example.test/api/token-callbacks/tok/callback",
@@ -162,9 +163,9 @@ func TestHandleTokenCreateWritesCorrelatedDecision(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: guest}},
-		control: control,
-		lease:   lease,
+		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		controlPlane: controlPlane,
+		lease:        lease,
 	}
 	result := make(chan error, 1)
 	go func() {
@@ -172,8 +173,8 @@ func TestHandleTokenCreateWritesCorrelatedDecision(t *testing.T) {
 			CorrelationId: correlationID,
 			TimeoutMs:     &timeoutMS,
 			Tags:          []string{"review"},
-			MetadataJson:  stringPointer(`{"approval":true}`),
-			IdempotencyKey: stringPointer(
+			MetadataJson:  new(`{"approval":true}`),
+			IdempotencyKey: new(
 				"approval-1",
 			),
 		})
@@ -195,11 +196,11 @@ func TestHandleTokenCreateWritesCorrelatedDecision(t *testing.T) {
 		!json.Valid([]byte(decision.GetDataJson())) {
 		t.Fatalf("decision = %+v", decision)
 	}
-	if control.request.Lease != lease.Fence() ||
-		control.request.TimeoutMS == nil ||
-		*control.request.TimeoutMS != int64(timeoutMS) ||
-		control.request.IdempotencyKey != "approval-1" ||
-		string(control.request.Metadata) != `{"approval":true}` {
-		t.Fatalf("request = %+v", control.request)
+	if controlPlane.request.Lease != lease.Fence() ||
+		controlPlane.request.TimeoutMS == nil ||
+		*controlPlane.request.TimeoutMS != int64(timeoutMS) ||
+		controlPlane.request.IdempotencyKey != "approval-1" ||
+		string(controlPlane.request.Metadata) != `{"approval":true}` {
+		t.Fatalf("request = %+v", controlPlane.request)
 	}
 }

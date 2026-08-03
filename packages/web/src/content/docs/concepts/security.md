@@ -8,7 +8,7 @@ order: 190
 
 # Security
 
-Helmr is designed around explicit runtime boundaries: your control plane, your workers, declared secrets, scoped permissions, and isolated Linux guests.
+Helmr is designed around explicit runtime boundaries: your Control Plane, your workers, declared secrets, scoped permissions, and isolated Linux guests.
 
 ## Isolation
 

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestConformanceFailureClassifiesOnlyVerifiedInvalidResultAsDeterministic(t *testing.T) {
@@ -13,11 +13,11 @@ func TestConformanceFailureClassifiesOnlyVerifiedInvalidResultAsDeterministic(t 
 		nil,
 	)
 	var deterministic interface {
-		PlatformAcquisitionFailureReason() api.WorkerPlatformAcquisitionFailureReason
+		PlatformAcquisitionFailureReason() workerapi.PlatformAcquisitionFailureReason
 	}
 	if !errors.As(invalid, &deterministic) ||
 		deterministic.PlatformAcquisitionFailureReason() !=
-			api.WorkerPlatformAcquisitionConformanceFailed {
+			workerapi.PlatformAcquisitionConformanceFailed {
 		t.Fatalf("invalid result classification = %v", invalid)
 	}
 

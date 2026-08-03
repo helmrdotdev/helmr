@@ -11,7 +11,7 @@ import (
 
 func LoadWorker() (Worker, error) {
 	cfg := Worker{
-		ControlURL:                   envString("HELMR_CONTROL_URL"),
+		ControlPlaneURL:              envString("HELMR_CONTROLPLANE_URL"),
 		WorkerGroupID:                envString("HELMR_WORKER_GROUP_ID"),
 		WorkerResourceID:             envString("HELMR_WORKER_RESOURCE_ID"),
 		WorkerEnrollmentSecretFile:   envString("HELMR_WORKER_ENROLLMENT_SECRET_FILE"),
@@ -219,8 +219,8 @@ func LoadWorker() (Worker, error) {
 	if cfg.JailerNumaNode, err = envInt("HELMR_WORKER_FIRECRACKER_NUMA_NODE", cfg.JailerNumaNode); err != nil {
 		return cfg, err
 	}
-	if cfg.ControlURL == "" {
-		return cfg, errors.New("HELMR_CONTROL_URL is required")
+	if cfg.ControlPlaneURL == "" {
+		return cfg, errors.New("HELMR_CONTROLPLANE_URL is required")
 	}
 	if cfg.CASURI == "" {
 		return cfg, errors.New("HELMR_CAS_URI is required")
@@ -293,15 +293,15 @@ func parseWorkerRoles(value string) ([]string, error) {
 	return roles, nil
 }
 
-func LoadWorkerControl() (WorkerControl, error) {
-	cfg := WorkerControl{
-		ControlURL:                   envString("HELMR_CONTROL_URL"),
+func LoadWorkerControlPlane() (WorkerControlPlane, error) {
+	cfg := WorkerControlPlane{
+		ControlPlaneURL:              envString("HELMR_CONTROLPLANE_URL"),
 		WorkerInstanceCredentialPath: envString("HELMR_WORKER_INSTANCE_CREDENTIAL_PATH"),
 		WorkDir:                      envString("HELMR_WORKER_WORK_DIR"),
 		PollEvery:                    2 * time.Second,
 	}
-	if cfg.ControlURL == "" {
-		return cfg, errors.New("HELMR_CONTROL_URL is required")
+	if cfg.ControlPlaneURL == "" {
+		return cfg, errors.New("HELMR_CONTROLPLANE_URL is required")
 	}
 	return cfg, nil
 }

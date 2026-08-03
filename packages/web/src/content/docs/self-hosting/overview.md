@@ -8,13 +8,13 @@ order: 700
 
 # Overview
 
-Self-hosted Helmr runs in your AWS account with your own database, dispatch queue, object storage, secrets, OAuth login, control plane, dispatcher, and workers.
+Self-hosted Helmr runs in your AWS account with your own database, dispatch queue, object storage, secrets, OAuth login, Control Plane, dispatcher, and workers.
 
 Self-hosted deployments use the same organization, project, environment,
 deployment, worker, runtime, and run model as managed cloud. The self-hosted
 path is operated as a single organization: initial setup requires a setup token
-and creates the only organization for that environment. After setup, the control
-plane, dispatcher, workers, API, and database model follow the same architecture.
+and creates the only organization for that environment. After setup, the Control Plane,
+dispatcher, Workers, API, and database model follow the same architecture.
 Run and build workers are separate groups in both deployment modes and each group
 can be scaled independently with minimum, desired, and maximum instance counts.
 
@@ -22,9 +22,9 @@ The deployment has these runtime components:
 
 | Component | Responsibility |
 | --- | --- |
-| Control plane | Serves the web UI and API, stores run state in PostgreSQL, authenticates users, coordinates workers, and writes historical telemetry to ClickHouse Cloud. |
+| Control Plane | Serves the web UI and API, stores run state in PostgreSQL, authenticates users, coordinates workers, and writes historical telemetry to ClickHouse Cloud. |
 | Dispatcher | Reconciles runnable work into the Redis/Valkey dispatch path and sweeps expired executions. |
-| Workers | Poll the control plane, materialize writable workspaces, build task images, run tasks in Firecracker guests, stream events, and create or restore checkpoints. |
+| Workers | Poll the Control Plane, materialize writable workspaces, build task images, run tasks in Firecracker guests, stream events, and create or restore checkpoints. |
 
 AWS infrastructure provides the shared dependencies:
 
@@ -36,7 +36,7 @@ AWS infrastructure provides the shared dependencies:
   `HELMR_REDIS_URL`.
 - S3 stores source bundles, runtime artifacts, and encrypted checkpoint objects.
 - AWS Secrets Manager stores database, auth, OAuth, worker, and encryption secrets.
-- ECS Fargate runs the control, dispatcher, and migration tasks.
+- ECS Fargate runs the Control Plane, dispatcher, and migration tasks.
 - EC2 Auto Scaling runs worker instances when task execution is enabled.
 
 Use this sequence for a new environment:
@@ -46,8 +46,8 @@ Use this sequence for a new environment:
 3. Configure non-secret values and create the base infrastructure.
 4. Populate Secrets Manager.
 5. Run database migrations.
-6. Start the control and dispatcher services.
+6. Start the Control Plane and dispatcher services.
 7. Add workers when you need actual run execution.
 8. Verify a run from the CLI or UI.
 
-The control plane can run without workers for login, deployments, API keys, and run inspection. Workers are required once runs need to execute code.
+The Control Plane can run without workers for login, deployments, API keys, and run inspection. Workers are required once runs need to execute code.

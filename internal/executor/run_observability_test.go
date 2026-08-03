@@ -7,51 +7,51 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type runObservabilityRetryControl struct {
-	*testRunLeaseControl
-	metadataRequests  []api.WorkerUpdateRunMetadataRequest
+type runObservabilityRetryControlPlane struct {
+	*testRunLeaseControlPlane
+	metadataRequests  []workerapi.UpdateRunMetadataRequest
 	metadataErrors    []error
 	metadataAttempted chan struct{}
-	logRequests       []api.WorkerStructuredLogRequest
+	logRequests       []workerapi.StructuredLogRequest
 	logErrors         []error
 	logAttempted      chan struct{}
 }
 
-func (control *runObservabilityRetryControl) UpdateRunMetadata(
+func (controlPlane *runObservabilityRetryControlPlane) UpdateRunMetadata(
 	_ context.Context,
-	request api.WorkerUpdateRunMetadataRequest,
+	request workerapi.UpdateRunMetadataRequest,
 ) error {
-	control.metadataRequests = append(control.metadataRequests, request)
-	if len(control.metadataErrors) == 0 {
+	controlPlane.metadataRequests = append(controlPlane.metadataRequests, request)
+	if len(controlPlane.metadataErrors) == 0 {
 		return nil
 	}
-	err := control.metadataErrors[0]
-	control.metadataErrors = control.metadataErrors[1:]
-	if control.metadataAttempted != nil {
-		close(control.metadataAttempted)
-		control.metadataAttempted = nil
+	err := controlPlane.metadataErrors[0]
+	controlPlane.metadataErrors = controlPlane.metadataErrors[1:]
+	if controlPlane.metadataAttempted != nil {
+		close(controlPlane.metadataAttempted)
+		controlPlane.metadataAttempted = nil
 	}
 	return err
 }
 
-func (control *runObservabilityRetryControl) AppendStructuredRunLog(
+func (controlPlane *runObservabilityRetryControlPlane) AppendStructuredRunLog(
 	_ context.Context,
-	request api.WorkerStructuredLogRequest,
+	request workerapi.StructuredLogRequest,
 ) error {
-	control.logRequests = append(control.logRequests, request)
-	if len(control.logErrors) == 0 {
+	controlPlane.logRequests = append(controlPlane.logRequests, request)
+	if len(controlPlane.logErrors) == 0 {
 		return nil
 	}
-	err := control.logErrors[0]
-	control.logErrors = control.logErrors[1:]
-	if control.logAttempted != nil {
-		close(control.logAttempted)
-		control.logAttempted = nil
+	err := controlPlane.logErrors[0]
+	controlPlane.logErrors = controlPlane.logErrors[1:]
+	if controlPlane.logAttempted != nil {
+		close(controlPlane.logAttempted)
+		controlPlane.logAttempted = nil
 	}
 	return err
 }
@@ -61,7 +61,7 @@ func TestWorkerRunMetadataRequestPreservesClosedMutation(t *testing.T) {
 	request, err := workerRunMetadataRequest(&runv0.MetadataUpdated{
 		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000001",
 		Operation:     "increment",
-		Key:           stringPointer("steps"),
+		Key:           new("steps"),
 		Amount:        &amount,
 	})
 	if err != nil {
@@ -99,7 +99,7 @@ func TestWorkerStructuredLogRequestUsesObservedSequence(t *testing.T) {
 
 func TestRuntimeOperationFailureKeepsSemanticControlError(t *testing.T) {
 	failure, ok := runtimeOperationFailure(
-		&client.HTTPError{
+		&httpclient.Error{
 			StatusCode: http.StatusUnprocessableEntity,
 			Code:       "run_metadata_rejected",
 			Message:    "metadata is too large",
@@ -121,62 +121,62 @@ func TestRuntimeOperationFailureKeepsSemanticControlError(t *testing.T) {
 
 func TestTaskControlObservabilityRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	transient := func() error {
-		return &client.HTTPError{
+		return &httpclient.Error{
 			StatusCode: http.StatusServiceUnavailable,
 			Status:     "503 Service Unavailable",
-			Message:    "temporary control failure",
+			Message:    "temporary Control Plane failure",
 		}
 	}
 	t.Run("metadata", func(t *testing.T) {
 		attempted := make(chan struct{})
-		control := &runObservabilityRetryControl{
-			testRunLeaseControl: &testRunLeaseControl{},
-			metadataErrors:      []error{transient()},
-			metadataAttempted:   attempted,
+		controlPlane := &runObservabilityRetryControlPlane{
+			testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+			metadataErrors:           []error{transient()},
+			metadataAttempted:        attempted,
 		}
 		task := &guestRunLeaseTask{
-			control: control,
-			lease:   testRunLeaseAssignment(time.Now().Add(time.Minute)),
+			controlPlane: controlPlane,
+			lease:        testRunLeaseAssignment(time.Now().Add(time.Minute)),
 		}
 		go renewRunSourceReceiptAfterAttempt(task, attempted)
 		err := (taskControlEvents{task: task}).ApplyRunMetadata(
 			t.Context(),
-			api.WorkerRunLeaseAssignment{},
+			workerapi.RunLeaseAssignment{},
 			&runv0.MetadataUpdated{
 				CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000131",
 				Operation:     "set",
-				Key:           stringPointer("state"),
-				ValueJson:     stringPointer(`"ready"`),
+				Key:           new("state"),
+				ValueJson:     new(`"ready"`),
 			},
 		)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(control.metadataRequests) != 2 {
-			t.Fatalf("requests = %+v", control.metadataRequests)
+		if len(controlPlane.metadataRequests) != 2 {
+			t.Fatalf("requests = %+v", controlPlane.metadataRequests)
 		}
 		assertRetriedWithStableFence(
 			t,
-			control.metadataRequests[0].Lease,
-			control.metadataRequests[1].Lease,
-			len(control.metadataRequests),
+			controlPlane.metadataRequests[0].Lease,
+			controlPlane.metadataRequests[1].Lease,
+			len(controlPlane.metadataRequests),
 		)
 	})
 	t.Run("structured log", func(t *testing.T) {
 		attempted := make(chan struct{})
-		control := &runObservabilityRetryControl{
-			testRunLeaseControl: &testRunLeaseControl{},
-			logErrors:           []error{transient()},
-			logAttempted:        attempted,
+		controlPlane := &runObservabilityRetryControlPlane{
+			testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+			logErrors:                []error{transient()},
+			logAttempted:             attempted,
 		}
 		task := &guestRunLeaseTask{
-			control: control,
-			lease:   testRunLeaseAssignment(time.Now().Add(time.Minute)),
+			controlPlane: controlPlane,
+			lease:        testRunLeaseAssignment(time.Now().Add(time.Minute)),
 		}
 		go renewRunSourceReceiptAfterAttempt(task, attempted)
 		err := (taskControlEvents{task: task}).RecordStructuredRunLog(
 			t.Context(),
-			api.WorkerRunLeaseAssignment{},
+			workerapi.RunLeaseAssignment{},
 			17,
 			&runv0.StructuredLogRequested{
 				CorrelationId:  "019c10d5-a6f7-7af1-8f5f-000000000132",
@@ -188,30 +188,30 @@ func TestTaskControlObservabilityRetryKeepsStableFenceAcrossRenewal(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(control.logRequests) != 2 {
-			t.Fatalf("requests = %+v", control.logRequests)
+		if len(controlPlane.logRequests) != 2 {
+			t.Fatalf("requests = %+v", controlPlane.logRequests)
 		}
 		assertRetriedWithStableFence(
 			t,
-			control.logRequests[0].Lease,
-			control.logRequests[1].Lease,
-			len(control.logRequests),
+			controlPlane.logRequests[0].Lease,
+			controlPlane.logRequests[1].Lease,
+			len(controlPlane.logRequests),
 		)
 	})
 }
 
-func TestTaskControlObservabilityRejectsInvalidRequestBeforeControl(t *testing.T) {
-	control := &runObservabilityRetryControl{
-		testRunLeaseControl: &testRunLeaseControl{},
+func TestTaskControlObservabilityRejectsInvalidRequestBeforeControlPlane(t *testing.T) {
+	controlPlane := &runObservabilityRetryControlPlane{
+		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 	}
 	task := &guestRunLeaseTask{
-		control: control,
-		lease:   testRunLeaseAssignment(time.Now().Add(time.Minute)),
+		controlPlane: controlPlane,
+		lease:        testRunLeaseAssignment(time.Now().Add(time.Minute)),
 	}
 	events := taskControlEvents{task: task}
 	if err := events.ApplyRunMetadata(
 		t.Context(),
-		api.WorkerRunLeaseAssignment{},
+		workerapi.RunLeaseAssignment{},
 		&runv0.MetadataUpdated{
 			CorrelationId: "not-a-correlation-id",
 			Operation:     "set",
@@ -219,12 +219,12 @@ func TestTaskControlObservabilityRejectsInvalidRequestBeforeControl(t *testing.T
 	); err == nil {
 		t.Fatal("invalid metadata request was accepted")
 	}
-	if len(control.metadataRequests) != 0 {
-		t.Fatalf("metadata requests = %+v", control.metadataRequests)
+	if len(controlPlane.metadataRequests) != 0 {
+		t.Fatalf("metadata requests = %+v", controlPlane.metadataRequests)
 	}
 	if err := events.RecordStructuredRunLog(
 		t.Context(),
-		api.WorkerRunLeaseAssignment{},
+		workerapi.RunLeaseAssignment{},
 		1,
 		&runv0.StructuredLogRequested{
 			CorrelationId: "not-a-correlation-id",
@@ -234,41 +234,41 @@ func TestTaskControlObservabilityRejectsInvalidRequestBeforeControl(t *testing.T
 	); err == nil {
 		t.Fatal("invalid structured log request was accepted")
 	}
-	if len(control.logRequests) != 0 {
-		t.Fatalf("structured log requests = %+v", control.logRequests)
+	if len(controlPlane.logRequests) != 0 {
+		t.Fatalf("structured log requests = %+v", controlPlane.logRequests)
 	}
 }
 
 func TestFreshAdmissionObservabilityRetriesTransientControlFailure(t *testing.T) {
-	control := &runObservabilityRetryControl{
-		testRunLeaseControl: &testRunLeaseControl{},
-		metadataErrors: []error{&client.HTTPError{
+	controlPlane := &runObservabilityRetryControlPlane{
+		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+		metadataErrors: []error{&httpclient.Error{
 			StatusCode: http.StatusServiceUnavailable,
 			Status:     "503 Service Unavailable",
-			Message:    "temporary control failure",
+			Message:    "temporary Control Plane failure",
 		}},
 	}
 	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
 	state := &freshAdmissionState{
-		control: control,
-		lease:   lease,
+		controlPlane: controlPlane,
+		lease:        lease,
 	}
 	err := state.ApplyRunMetadata(
 		t.Context(),
-		api.WorkerRunLeaseAssignment{},
+		workerapi.RunLeaseAssignment{},
 		&runv0.MetadataUpdated{
 			CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000133",
 			Operation:     "set",
-			Key:           stringPointer("state"),
-			ValueJson:     stringPointer(`"admitted"`),
+			Key:           new("state"),
+			ValueJson:     new(`"admitted"`),
 		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(control.metadataRequests) != 2 ||
-		control.metadataRequests[0].Lease != lease.Fence() ||
-		control.metadataRequests[1].Lease != lease.Fence() {
-		t.Fatalf("metadata requests = %+v", control.metadataRequests)
+	if len(controlPlane.metadataRequests) != 2 ||
+		controlPlane.metadataRequests[0].Lease != lease.Fence() ||
+		controlPlane.metadataRequests[1].Lease != lease.Fence() {
+		t.Fatalf("metadata requests = %+v", controlPlane.metadataRequests)
 	}
 }

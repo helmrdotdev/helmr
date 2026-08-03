@@ -113,27 +113,27 @@ resource "aws_s3_bucket_public_access_block" "source_artifacts" {
   restrict_public_buckets = true
 }
 
-resource "aws_kms_key" "control_releases" {
-  description             = "KMS key for trusted Helmr Control release images"
+resource "aws_kms_key" "controlplane_releases" {
+  description             = "KMS key for trusted Helmr Control Plane release images"
   deletion_window_in_days = 30
   enable_key_rotation     = true
   tags                    = var.tags
 }
 
-resource "aws_kms_alias" "control_releases" {
-  name          = "alias/${local.name}-control-releases"
-  target_key_id = aws_kms_key.control_releases.key_id
+resource "aws_kms_alias" "controlplane_releases" {
+  name          = "alias/${local.name}-controlplane-releases"
+  target_key_id = aws_kms_key.controlplane_releases.key_id
 }
 
-resource "aws_ecr_repository" "control_releases" {
-  name                 = "${local.name}/control-releases"
+resource "aws_ecr_repository" "controlplane_releases" {
+  name                 = "${local.name}/controlplane-releases"
   image_tag_mutability = "IMMUTABLE"
   force_delete         = false
   tags                 = var.tags
 
   encryption_configuration {
     encryption_type = "KMS"
-    kms_key         = aws_kms_key.control_releases.arn
+    kms_key         = aws_kms_key.controlplane_releases.arn
   }
 
   image_scanning_configuration {
@@ -261,13 +261,13 @@ resource "aws_iam_role_policy" "platform_publisher" {
         }
       },
       {
-        Sid      = "AuthenticateControlReleaseRegistry"
+        Sid      = "AuthenticateControlPlaneReleaseRegistry"
         Effect   = "Allow"
         Action   = ["ecr:GetAuthorizationToken"]
         Resource = "*"
       },
       {
-        Sid    = "PublishAndVerifyControlReleaseImages"
+        Sid    = "PublishAndVerifyControlPlaneReleaseImages"
         Effect = "Allow"
         Action = [
           "ecr:BatchCheckLayerAvailability",
@@ -279,7 +279,7 @@ resource "aws_iam_role_policy" "platform_publisher" {
           "ecr:PutImage",
           "ecr:UploadLayerPart"
         ]
-        Resource = aws_ecr_repository.control_releases.arn
+        Resource = aws_ecr_repository.controlplane_releases.arn
       }
     ]
   })

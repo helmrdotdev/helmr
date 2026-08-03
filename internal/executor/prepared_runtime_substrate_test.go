@@ -7,19 +7,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/runtime"
+	"github.com/helmrdotdev/helmr/internal/substrate"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestPreparedRuntimeRestoreRebuildsAndRegistersSubstrateWithoutSubstrateCAS(t *testing.T) {
 	store, fixture := testWorkspaceMountArtifacts(t)
-	target := api.WorkerRuntimeReconcileTarget{
-		Source: api.WorkerRuntimeSource{
+	target := workerapi.RuntimeReconcileTarget{
+		Source: workerapi.RuntimeSource{
 			WorkspaceID:            "019c10d5-a6f7-7af1-8f5f-000000000801",
 			DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000802",
 			BaseVersionID:          "019c10d5-a6f7-7af1-8f5f-000000000803",
 			WorkspaceImage:         fixture.WorkspaceImage,
-			Restore:                &api.WorkerRuntimeRestore{CheckpointID: "checkpoint-1"},
+			Restore:                &workerapi.RuntimeRestore{CheckpointID: "checkpoint-1"},
 		},
 	}
 	substratePath := t.TempDir() + "/substrate.ext4"
@@ -27,12 +27,12 @@ func TestPreparedRuntimeRestoreRebuildsAndRegistersSubstrateWithoutSubstrateCAS(
 		t.Fatal(err)
 	}
 	resolver := &restoreSubstrateResolver{
-		result: runtime.Result{
+		result: substrate.Result{
 			Path:       substratePath,
 			Digest:     "sha256:" + strings.Repeat("a", 64),
-			Format:     runtime.Format,
-			BuilderABI: runtime.BuilderABI,
-			LayoutABI:  runtime.LayoutABI,
+			Format:     substrate.Format,
+			BuilderABI: substrate.BuilderABI,
+			LayoutABI:  substrate.LayoutABI,
 			SizeBytes:  int64(len("rebuilt substrate")),
 		},
 	}
@@ -73,9 +73,9 @@ func TestPreparedRuntimeRestoreRebuildsAndRegistersSubstrateWithoutSubstrateCAS(
 	}
 	if registered.ID != registrar.id ||
 		registrar.request.SubstrateDigest != resolver.result.Digest ||
-		registrar.request.Format != runtime.Format ||
-		registrar.request.BuilderABI != runtime.BuilderABI ||
-		registrar.request.LayoutABI != runtime.LayoutABI ||
+		registrar.request.Format != substrate.Format ||
+		registrar.request.BuilderABI != substrate.BuilderABI ||
+		registrar.request.LayoutABI != substrate.LayoutABI ||
 		registrar.request.SizeBytes != resolver.result.SizeBytes {
 		t.Fatalf("registration = %+v, request = %+v", registered, registrar.request)
 	}
@@ -100,21 +100,21 @@ func TestPreparedRuntimeRestoreRebuildsAndRegistersSubstrateWithoutSubstrateCAS(
 
 type restoreSubstrateResolver struct {
 	calls  int
-	source runtime.Source
-	result runtime.Result
+	source substrate.Source
+	result substrate.Result
 }
 
 func (r *restoreSubstrateResolver) Resolve(
 	_ context.Context,
 	imagePath string,
-	source runtime.Source,
-) (runtime.Result, error) {
+	source substrate.Source,
+) (substrate.Result, error) {
 	image, err := os.ReadFile(imagePath)
 	if err != nil {
-		return runtime.Result{}, err
+		return substrate.Result{}, err
 	}
 	if string(image) != "oci image" {
-		return runtime.Result{}, errors.New("unexpected Workspace image")
+		return substrate.Result{}, errors.New("unexpected Workspace image")
 	}
 	r.calls++
 	r.source = source
@@ -125,13 +125,13 @@ var errRuntimeSubstrateConflict = errors.New("runtime substrate conflict")
 
 type immutableSubstrateRegistrar struct {
 	id      string
-	request api.WorkerRuntimeSubstrateRegisterRequest
+	request workerapi.RuntimeSubstrateRegisterRequest
 }
 
 func (r *immutableSubstrateRegistrar) RegisterRuntimeSubstrate(
 	_ context.Context,
-	request api.WorkerRuntimeSubstrateRegisterRequest,
-) (api.WorkerRuntimeSubstrateRegisterResponse, error) {
+	request workerapi.RuntimeSubstrateRegisterRequest,
+) (workerapi.RuntimeSubstrateRegisterResponse, error) {
 	if r.id == "" {
 		r.id = "019c10d5-a6f7-7af1-8f5f-000000000804"
 		r.request = request
@@ -141,10 +141,10 @@ func (r *immutableSubstrateRegistrar) RegisterRuntimeSubstrate(
 		request.LayoutABI != r.request.LayoutABI ||
 		request.SubstrateDigest != r.request.SubstrateDigest ||
 		request.SizeBytes != r.request.SizeBytes {
-		return api.WorkerRuntimeSubstrateRegisterResponse{}, errRuntimeSubstrateConflict
+		return workerapi.RuntimeSubstrateRegisterResponse{}, errRuntimeSubstrateConflict
 	}
-	return api.WorkerRuntimeSubstrateRegisterResponse{
-		RuntimeSubstrate: api.WorkerRuntimeSubstrate{
+	return workerapi.RuntimeSubstrateRegisterResponse{
+		RuntimeSubstrate: workerapi.RuntimeSubstrate{
 			ID:                     r.id,
 			DeploymentDefinitionID: request.DeploymentDefinitionID,
 			SubstrateDigest:        request.SubstrateDigest,

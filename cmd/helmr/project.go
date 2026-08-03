@@ -9,7 +9,6 @@ import (
 	"unicode"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -59,16 +58,16 @@ func projectListCommand() *cobra.Command {
 		Short: "List projects.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			control, err := sessionControlClient(cmd)
+			controlPlane, err := sessionControlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			response, err := control.ListProjects(cmd.Context())
+			response, err := controlPlane.ListProjects(cmd.Context())
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			for _, project := range response.Projects {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", project.ID, project.Slug, project.Name)
@@ -87,20 +86,20 @@ func projectGetCommand() *cobra.Command {
 		Short: "Show a project.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := sessionControlClient(cmd)
+			controlPlane, err := sessionControlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			project, err := resolveProject(cmd.Context(), control, args[0])
+			project, err := resolveProject(cmd.Context(), controlPlane, args[0])
 			if err != nil {
 				return err
 			}
-			project, err = control.GetProject(cmd.Context(), project.ID)
+			project, err = controlPlane.GetProject(cmd.Context(), project.ID)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), project)
+				return writeJSON(cmd.OutOrStdout(), project)
 			}
 			return writeProject(cmd.OutOrStdout(), project)
 		},
@@ -125,16 +124,16 @@ func projectCreateCommand() *cobra.Command {
 			if slug == "" {
 				return errors.New("project slug is required; pass --slug")
 			}
-			control, err := sessionControlClient(cmd)
+			controlPlane, err := sessionControlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			project, err := control.CreateProject(cmd.Context(), api.CreateProjectRequest{Slug: slug, Name: name})
+			project, err := controlPlane.CreateProject(cmd.Context(), api.CreateProjectRequest{Slug: slug, Name: name})
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), project)
+				return writeJSON(cmd.OutOrStdout(), project)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", project.ID, project.Slug, project.Name)
 			return nil
@@ -157,15 +156,15 @@ func projectUpdateCommand() *cobra.Command {
 			if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("slug") {
 				return errors.New("project update requires --name or --slug")
 			}
-			control, err := sessionControlClient(cmd)
+			controlPlane, err := sessionControlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			project, err := resolveProject(cmd.Context(), control, args[0])
+			project, err := resolveProject(cmd.Context(), controlPlane, args[0])
 			if err != nil {
 				return err
 			}
-			project, err = control.GetProject(cmd.Context(), project.ID)
+			project, err = controlPlane.GetProject(cmd.Context(), project.ID)
 			if err != nil {
 				return err
 			}
@@ -180,12 +179,12 @@ func projectUpdateCommand() *cobra.Command {
 			if slug == "" {
 				return errors.New("--slug cannot be empty")
 			}
-			updated, err := control.UpdateProject(cmd.Context(), project.ID, api.UpdateProjectRequest{Slug: slug, Name: name})
+			updated, err := controlPlane.UpdateProject(cmd.Context(), project.ID, api.UpdateProjectRequest{Slug: slug, Name: name})
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), updated)
+				return writeJSON(cmd.OutOrStdout(), updated)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", updated.ID, updated.Slug, updated.Name)
 			return nil
@@ -207,15 +206,15 @@ func projectDeleteCommand() *cobra.Command {
 			if !yes {
 				return errors.New("project delete requires --yes")
 			}
-			control, err := sessionControlClient(cmd)
+			controlPlane, err := sessionControlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			project, err := resolveProject(cmd.Context(), control, args[0])
+			project, err := resolveProject(cmd.Context(), controlPlane, args[0])
 			if err != nil {
 				return err
 			}
-			if err := control.DeleteProject(cmd.Context(), project.ID); err != nil {
+			if err := controlPlane.DeleteProject(cmd.Context(), project.ID); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", project.ID)
@@ -238,20 +237,20 @@ func envListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			control, err := sessionControlClient(cmd)
+			controlPlane, err := sessionControlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			project, err := resolveProject(cmd.Context(), control, projectRef)
+			project, err := resolveProject(cmd.Context(), controlPlane, projectRef)
 			if err != nil {
 				return err
 			}
-			project, err = control.GetProject(cmd.Context(), project.ID)
+			project, err = controlPlane.GetProject(cmd.Context(), project.ID)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), project.Environments)
+				return writeJSON(cmd.OutOrStdout(), project.Environments)
 			}
 			for _, environment := range project.Environments {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", environment.ID, environment.Slug, environment.Name)
@@ -276,20 +275,20 @@ func envGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			control, err := sessionControlClient(cmd)
+			controlPlane, err := sessionControlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			project, environment, err := resolveProjectEnvironment(cmd.Context(), control, projectRef, args[0])
+			project, environment, err := resolveProjectEnvironment(cmd.Context(), controlPlane, projectRef, args[0])
 			if err != nil {
 				return err
 			}
-			environment, err = control.GetEnvironment(cmd.Context(), project.ID, environment.ID)
+			environment, err = controlPlane.GetEnvironment(cmd.Context(), project.ID, environment.ID)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), environment)
+				return writeJSON(cmd.OutOrStdout(), environment)
 			}
 			return writeEnvironment(cmd.OutOrStdout(), environment)
 		},
@@ -328,20 +327,20 @@ func envCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			control, err := sessionControlClient(cmd)
+			controlPlane, err := sessionControlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			project, err := resolveProject(cmd.Context(), control, projectRef)
+			project, err := resolveProject(cmd.Context(), controlPlane, projectRef)
 			if err != nil {
 				return err
 			}
-			environment, err := control.CreateEnvironment(cmd.Context(), project.ID, api.CreateEnvironmentRequest{Slug: slug, Name: name, ColorHex: colorHex})
+			environment, err := controlPlane.CreateEnvironment(cmd.Context(), project.ID, api.CreateEnvironmentRequest{Slug: slug, Name: name, ColorHex: colorHex})
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), environment)
+				return writeJSON(cmd.OutOrStdout(), environment)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", environment.ID, environment.Slug, environment.Name, environment.ColorHex)
 			return nil
@@ -372,15 +371,15 @@ func envUpdateCommand() *cobra.Command {
 			if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("slug") && !cmd.Flags().Changed("color") {
 				return errors.New("environment update requires --name, --slug, or --color")
 			}
-			control, err := sessionControlClient(cmd)
+			controlPlane, err := sessionControlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			project, environment, err := resolveProjectEnvironment(cmd.Context(), control, projectRef, args[0])
+			project, environment, err := resolveProjectEnvironment(cmd.Context(), controlPlane, projectRef, args[0])
 			if err != nil {
 				return err
 			}
-			environment, err = control.GetEnvironment(cmd.Context(), project.ID, environment.ID)
+			environment, err = controlPlane.GetEnvironment(cmd.Context(), project.ID, environment.ID)
 			if err != nil {
 				return err
 			}
@@ -402,12 +401,12 @@ func envUpdateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			updated, err := control.UpdateEnvironment(cmd.Context(), project.ID, environment.ID, api.UpdateEnvironmentRequest{Slug: slug, Name: name, ColorHex: colorHex})
+			updated, err := controlPlane.UpdateEnvironment(cmd.Context(), project.ID, environment.ID, api.UpdateEnvironmentRequest{Slug: slug, Name: name, ColorHex: colorHex})
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), updated)
+				return writeJSON(cmd.OutOrStdout(), updated)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", updated.ID, updated.Slug, updated.Name, updated.ColorHex)
 			return nil
@@ -436,15 +435,15 @@ func envDeleteCommand() *cobra.Command {
 			if !yes {
 				return errors.New("environment delete requires --yes")
 			}
-			control, err := sessionControlClient(cmd)
+			controlPlane, err := sessionControlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			project, environment, err := resolveProjectEnvironment(cmd.Context(), control, projectRef, args[0])
+			project, environment, err := resolveProjectEnvironment(cmd.Context(), controlPlane, projectRef, args[0])
 			if err != nil {
 				return err
 			}
-			if err := control.DeleteEnvironment(cmd.Context(), project.ID, environment.ID); err != nil {
+			if err := controlPlane.DeleteEnvironment(cmd.Context(), project.ID, environment.ID); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", environment.ID)
@@ -468,8 +467,8 @@ func requireProjectFlag(cmd *cobra.Command) (string, error) {
 	return projectRef, nil
 }
 
-func resolveProject(ctx context.Context, control *client.Client, ref string) (api.ProjectSummary, error) {
-	response, err := control.ListProjects(ctx)
+func resolveProject(ctx context.Context, controlPlane *client.Client, ref string) (api.ProjectSummary, error) {
+	response, err := controlPlane.ListProjects(ctx)
 	if err != nil {
 		return api.ProjectSummary{}, err
 	}
@@ -482,8 +481,8 @@ func resolveProject(ctx context.Context, control *client.Client, ref string) (ap
 	return api.ProjectSummary{}, fmt.Errorf("project %q not found", ref)
 }
 
-func resolveProjectEnvironment(ctx context.Context, control *client.Client, projectRef string, environmentRef string) (api.ProjectSummary, api.EnvironmentSummary, error) {
-	project, err := resolveProject(ctx, control, projectRef)
+func resolveProjectEnvironment(ctx context.Context, controlPlane *client.Client, projectRef string, environmentRef string) (api.ProjectSummary, api.EnvironmentSummary, error) {
+	project, err := resolveProject(ctx, controlPlane, projectRef)
 	if err != nil {
 		return api.ProjectSummary{}, api.EnvironmentSummary{}, err
 	}

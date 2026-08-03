@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
 )
@@ -63,24 +63,24 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 	if ready.GetWorkspaceChanged() != (tree != expected) || ready.GetWorkspaceChanged() != (artifact != nil) {
 		return errors.New("Actor turn commit capture did not match its tree proof")
 	}
-	request := api.WorkerCommitActorTurnRequest{
+	request := workerapi.CommitActorTurnRequest{
 		Lease: task.lease.Fence(), CorrelationID: requested.GetCorrelationId(),
 		TargetInputSequence:    requested.GetTargetInputSequence(),
 		BaseWorkspaceVersionID: task.resetTarget.BaseVersionID,
-		Tree: api.WorkerWorkspaceTreeIdentity{
+		Tree: workerapi.WorkspaceTreeIdentity{
 			Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: int32(tree.EntryCount),
 		},
 	}
 	if artifact != nil {
-		request.Artifact = &api.WorkerWorkspaceArtifact{
+		request.Artifact = &workerapi.WorkspaceArtifact{
 			Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
 			SizeBytes: artifact.SizeBytes, EntryCount: int32(artifact.EntryCount),
 		}
 	}
-	var response api.WorkerCommitActorTurnResponse
+	var response workerapi.CommitActorTurnResponse
 	if err := retryRunLeaseRequest(turnCtx, func(requestCtx context.Context) error {
 		var requestErr error
-		response, requestErr = task.control.CommitActorTurn(requestCtx, request)
+		response, requestErr = task.controlPlane.CommitActorTurn(requestCtx, request)
 		return requestErr
 	}); err != nil {
 		return fmt.Errorf("commit Actor turn: %w", err)
@@ -113,7 +113,7 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 		if err != nil {
 			return fmt.Errorf("advance Actor turn reset target: %w", err)
 		}
-		committedArtifact := &api.WorkerWorkspaceArtifact{
+		committedArtifact := &workerapi.WorkspaceArtifact{
 			Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
 			SizeBytes: artifact.SizeBytes, EntryCount: int32(artifact.EntryCount),
 		}
@@ -196,12 +196,12 @@ func (task *guestRunLeaseTask) readActorTurnCommitReady(
 		task.program.observedEventSeq++
 		switch value := event.Event.(type) {
 		case *runv0.RunEvent_StdoutChunk:
-			err = task.control.AppendRunLog(ctx, task.lease, api.WorkerLogStreamStdout, task.program.observedEventSeq, value.StdoutChunk)
+			err = task.controlPlane.AppendRunLog(ctx, task.lease, workerapi.LogStreamStdout, task.program.observedEventSeq, value.StdoutChunk)
 		case *runv0.RunEvent_StderrChunk:
-			err = task.control.AppendRunLog(ctx, task.lease, api.WorkerLogStreamStderr, task.program.observedEventSeq, value.StderrChunk)
+			err = task.controlPlane.AppendRunLog(ctx, task.lease, workerapi.LogStreamStderr, task.program.observedEventSeq, value.StderrChunk)
 		case *runv0.RunEvent_MetadataUpdated:
-			var observability runObservabilityControl
-			observability, err = requireRunObservabilityControl(task.control)
+			var observability runObservabilityControlPlane
+			observability, err = requireRunObservabilityControlPlane(task.controlPlane)
 			if err == nil {
 				err = updateRunMetadata(ctx, observability, task.lease, value.MetadataUpdated)
 			}
@@ -215,8 +215,8 @@ func (task *guestRunLeaseTask) readActorTurnCommitReady(
 				)
 			}
 		case *runv0.RunEvent_StructuredLogRequested:
-			var observability runObservabilityControl
-			observability, err = requireRunObservabilityControl(task.control)
+			var observability runObservabilityControlPlane
+			observability, err = requireRunObservabilityControlPlane(task.controlPlane)
 			if err == nil {
 				err = appendStructuredRunLog(
 					ctx,

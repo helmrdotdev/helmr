@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/spf13/cobra"
 )
 
@@ -25,20 +24,20 @@ func deploymentListCommand() *cobra.Command {
 		Use:   "list",
 		Short: "List deployments.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := environmentScopeForClient(control, projectID, environmentID)
+			scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			response, err := control.ListDeployments(cmd.Context(), scope)
+			response, err := controlPlane.ListDeployments(cmd.Context(), scope)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			for _, deployment := range response.Deployments {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", deployment.ID, deployment.Version, deployment.Status)
@@ -60,15 +59,15 @@ func deploymentGetCommand() *cobra.Command {
 		Short: "Show deployment details.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := environmentScopeForClient(control, projectID, environmentID)
+			scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			deployment, err := control.GetDeployment(cmd.Context(), args[0], api.GetDeploymentRequest{
+			deployment, err := controlPlane.GetDeployment(cmd.Context(), args[0], api.GetDeploymentRequest{
 				ProjectID:     scope.ProjectID,
 				EnvironmentID: scope.EnvironmentID,
 			})
@@ -76,7 +75,7 @@ func deploymentGetCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), deployment)
+				return writeJSON(cmd.OutOrStdout(), deployment)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Deployment: %s\n", deployment.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "Version:    %s\n", deployment.Version)

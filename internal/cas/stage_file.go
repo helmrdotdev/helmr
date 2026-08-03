@@ -9,7 +9,7 @@ import (
 	"os"
 )
 
-type stageFile struct {
+type FileStage struct {
 	mediaType string
 	file      *os.File
 	path      string
@@ -20,8 +20,8 @@ type stageFile struct {
 	aborted   bool
 }
 
-func newStageFile(mediaType string, file *os.File) *stageFile {
-	return &stageFile{
+func NewFileStage(mediaType string, file *os.File) *FileStage {
+	return &FileStage{
 		mediaType: mediaType,
 		file:      file,
 		path:      file.Name(),
@@ -29,7 +29,7 @@ func newStageFile(mediaType string, file *os.File) *stageFile {
 	}
 }
 
-func (s *stageFile) Write(p []byte) (int, error) {
+func (s *FileStage) Write(p []byte) (int, error) {
 	if s.finished {
 		if s.aborted {
 			return 0, errStageAborted
@@ -47,7 +47,7 @@ func (s *stageFile) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func (s *stageFile) Close() error {
+func (s *FileStage) Close() error {
 	if s.closed {
 		return nil
 	}
@@ -55,7 +55,7 @@ func (s *stageFile) Close() error {
 	return s.file.Close()
 }
 
-func (s *stageFile) beginCommit(ctx context.Context, syncBeforeClose bool) (string, error) {
+func (s *FileStage) BeginCommit(ctx context.Context, syncBeforeClose bool) (string, error) {
 	if s.finished {
 		if s.aborted {
 			return "", errStageAborted
@@ -77,7 +77,7 @@ func (s *stageFile) beginCommit(ctx context.Context, syncBeforeClose bool) (stri
 	return "sha256:" + hex.EncodeToString(s.hash.Sum(nil)), nil
 }
 
-func (s *stageFile) Abort(context.Context) error {
+func (s *FileStage) Abort(context.Context) error {
 	if s.finished {
 		return nil
 	}
@@ -92,4 +92,16 @@ func (s *stageFile) Abort(context.Context) error {
 		return closeErr
 	}
 	return removeErr
+}
+
+func (s *FileStage) MediaType() string {
+	return s.mediaType
+}
+
+func (s *FileStage) Path() string {
+	return s.path
+}
+
+func (s *FileStage) Size() int64 {
+	return s.size
 }

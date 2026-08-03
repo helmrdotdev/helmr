@@ -5,24 +5,24 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/runtime"
+	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type RuntimeSubstrateResolver interface {
-	Resolve(context.Context, string, runtime.Source) (runtime.Result, error)
+	Resolve(context.Context, string, substrate.Source) (substrate.Result, error)
 }
 
 type RuntimeSubstrateRegistrar interface {
-	RegisterRuntimeSubstrate(context.Context, api.WorkerRuntimeSubstrateRegisterRequest) (api.WorkerRuntimeSubstrateRegisterResponse, error)
+	RegisterRuntimeSubstrate(context.Context, workerapi.RuntimeSubstrateRegisterRequest) (workerapi.RuntimeSubstrateRegisterResponse, error)
 }
 
-func runtimeSubstrateTopology(ctx context.Context, resolver RuntimeSubstrateResolver, imagePath string, mount api.WorkerWorkspaceMount) (vm.RuntimeTopology, error) {
+func runtimeSubstrateTopology(ctx context.Context, resolver RuntimeSubstrateResolver, imagePath string, mount workerapi.WorkspaceMount) (vm.RuntimeTopology, error) {
 	if resolver == nil {
 		return vm.RuntimeTopology{}, nil
 	}
-	result, err := resolver.Resolve(ctx, imagePath, runtime.Source{
+	result, err := resolver.Resolve(ctx, imagePath, substrate.Source{
 		WorkspaceImageDigest:    mount.WorkspaceImage.Digest,
 		WorkspaceImageMediaType: mount.WorkspaceImage.MediaType,
 	})
@@ -46,7 +46,7 @@ func runtimeSubstrateDigest(topology vm.RuntimeTopology) string {
 	return topology.Substrate.Digest
 }
 
-func runtimeSubstrateID(artifact *api.WorkerRuntimeSubstrate) string {
+func runtimeSubstrateID(artifact *workerapi.RuntimeSubstrate) string {
 	if artifact == nil {
 		return ""
 	}
@@ -58,7 +58,7 @@ func registerRuntimeSubstrate(
 	registrar RuntimeSubstrateRegistrar,
 	deploymentDefinitionID string,
 	substrate *vm.RuntimeSubstrate,
-) (*api.WorkerRuntimeSubstrate, error) {
+) (*workerapi.RuntimeSubstrate, error) {
 	if substrate == nil {
 		return nil, nil
 	}
@@ -70,7 +70,7 @@ func registerRuntimeSubstrate(
 	}
 	response, err := registrar.RegisterRuntimeSubstrate(
 		ctx,
-		api.WorkerRuntimeSubstrateRegisterRequest{
+		workerapi.RuntimeSubstrateRegisterRequest{
 			DeploymentDefinitionID: strings.TrimSpace(deploymentDefinitionID),
 			SubstrateDigest:        strings.TrimSpace(substrate.Digest),
 			Format:                 strings.TrimSpace(substrate.Format),

@@ -8,7 +8,7 @@ order: 940
 
 # REST API
 
-The control plane serves JSON APIs under `/api`. Authenticated user/API-key requests use `Authorization: Bearer TOKEN`. Worker requests use worker bearer tokens minted by `/api/worker/auth/token`.
+The Control Plane serves JSON APIs under `/api`. Authenticated user/API-key requests use `Authorization: Bearer TOKEN`. Worker requests use worker bearer tokens minted by `/api/worker/auth/token`.
 
 ## API version header
 
@@ -18,7 +18,7 @@ User, API-key, console, CLI, SDK, and worker API requests use a date-pinned API 
 Helmr-API-Version: 2026-06-06
 ```
 
-The date is a fixed build constant, not the request date. The control plane echoes the effective version in `Helmr-API-Version`. Requests with an unsupported non-empty version return `400 Bad Request`; omitted versions currently default to the current version during pre-release development. Header values are exact and are not trimmed.
+The date is a fixed build constant, not the request date. The Control Plane echoes the effective version in `Helmr-API-Version`. Requests with an unsupported non-empty version return `400 Bad Request`; omitted versions currently default to the current version during pre-release development. Header values are exact and are not trimmed.
 
 Common user/API-key routes:
 

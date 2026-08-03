@@ -32,12 +32,12 @@ const (
 	BuildFailureWorkspaceImageFailed = BuildFailureReason("workspace_image_failed")
 	BuildFailureOutputInvalid        = BuildFailureReason("output_invalid")
 
-	WorkspaceImageArtifactMediaType = "application/vnd.helmr.workspace-image.v0.oci-tar"
+	WorkspaceImageArtifactMediaType       = "application/vnd.helmr.workspace-image.v0.oci-tar"
+	MaxWorkspaceImageBytes          int64 = 17179869184
 
-	maxBuildResultBytes               = 40 << 20
-	maxBuildFailureMessageBytes       = 16 << 10
-	maxBuildLogBytes                  = 16 << 20
-	maxWorkspaceImageBytes      int64 = 17179869184
+	maxBuildResultBytes         = 40 << 20
+	maxBuildFailureMessageBytes = 16 << 10
+	maxBuildLogBytes            = 16 << 20
 )
 
 type BuildOutcome string
@@ -72,6 +72,29 @@ type BuildLogs struct {
 	StderrBase64 string `json:"stderrBase64"`
 	StdoutBase64 string `json:"stdoutBase64"`
 	Truncated    bool   `json:"truncated"`
+}
+
+func NewFailedBuildResult(
+	reason BuildFailureReason,
+	cause error,
+	logs *BuildLogs,
+) BuildResult {
+	message := "build failed"
+	if cause != nil && strings.TrimSpace(cause.Error()) != "" {
+		message = cause.Error()
+	}
+	if len(message) > maxBuildFailureMessageBytes {
+		message = truncateBuildFailureMessage(message, maxBuildFailureMessageBytes)
+	}
+	return BuildResult{
+		FormatVersion: BuildResultFormatVersion,
+		Outcome:       BuildOutcomeFailed,
+		Failed: &BuildFailed{Error: BuildError{
+			ReasonCode: reason,
+			Message:    message,
+		}},
+		Logs: logs,
+	}
 }
 
 type WorkspaceImage struct {
@@ -363,11 +386,11 @@ func validateBuildSucceeded(succeeded BuildSucceeded) error {
 		if !sha256DigestPattern.MatchString(image.Artifact.Digest) {
 			return fmt.Errorf("build result workspaceImages[%d] digest is not a lowercase SHA-256 digest", index)
 		}
-		if image.Artifact.SizeBytes < 1 || image.Artifact.SizeBytes > maxWorkspaceImageBytes {
+		if image.Artifact.SizeBytes < 1 || image.Artifact.SizeBytes > MaxWorkspaceImageBytes {
 			return fmt.Errorf(
 				"build result workspaceImages[%d] sizeBytes is outside [1,%d]",
 				index,
-				maxWorkspaceImageBytes,
+				MaxWorkspaceImageBytes,
 			)
 		}
 		if image.Artifact.MediaType != WorkspaceImageArtifactMediaType {
@@ -530,4 +553,19 @@ func buildPlanProgramDeclarations(plan BuildPlan) []ProgramDeclaration {
 		}
 	}
 	return declarations
+}
+
+func BuildPlanHasProgram(plan BuildPlan) bool {
+	return len(buildPlanProgramDeclarations(plan)) != 0
+}
+
+func truncateBuildFailureMessage(value string, maxBytes int) string {
+	if len(value) <= maxBytes {
+		return value
+	}
+	value = value[:maxBytes]
+	for !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return value
 }

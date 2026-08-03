@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -87,7 +86,7 @@ func taskStartCommand() *cobra.Command {
 			if timeoutSeconds > 0 && !wait && !follow {
 				return errors.New("--timeout requires --wait or --follow")
 			}
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -96,7 +95,7 @@ func taskStartCommand() *cobra.Command {
 					return err
 				}
 			}
-			scope, err := environmentScopeForClient(control, projectID, environmentID)
+			scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -110,7 +109,7 @@ func taskStartCommand() *cobra.Command {
 			if concurrencyKey = strings.TrimSpace(concurrencyKey); concurrencyKey != "" {
 				request.ConcurrencyKey = &concurrencyKey
 			}
-			started, err := control.StartTask(cmd.Context(), args[0], request, scope)
+			started, err := controlPlane.StartTask(cmd.Context(), args[0], request, scope)
 			if err != nil {
 				return err
 			}
@@ -128,16 +127,16 @@ func taskStartCommand() *cobra.Command {
 					}
 					run, err := waitForRun(
 						waitCtx,
-						control,
+						controlPlane,
 						started.RunID,
 						client.RunScopeOptions(scope),
 					)
 					if err != nil {
 						return err
 					}
-					return format.JSON(cmd.OutOrStdout(), run)
+					return writeJSON(cmd.OutOrStdout(), run)
 				}
-				return format.JSON(cmd.OutOrStdout(), started)
+				return writeJSON(cmd.OutOrStdout(), started)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", started.RunID)
 			if follow {
@@ -153,7 +152,7 @@ func taskStartCommand() *cobra.Command {
 				if err := followRunLogs(
 					followCtx,
 					cmd,
-					control,
+					controlPlane,
 					started.RunID,
 					"",
 					client.RunScopeOptions(scope),
@@ -171,7 +170,7 @@ func taskStartCommand() *cobra.Command {
 				}
 				run, err := waitForRun(
 					waitCtx,
-					control,
+					controlPlane,
 					started.RunID,
 					client.RunScopeOptions(scope),
 				)
@@ -216,20 +215,20 @@ func taskListCommand() *cobra.Command {
 		Use:   "list",
 		Short: "List Tasks in the current Deployment.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := environmentScopeForClient(control, projectID, environmentID)
+			scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			response, err := control.ListTasks(cmd.Context(), scope)
+			response, err := controlPlane.ListTasks(cmd.Context(), scope)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			for _, task := range response.Tasks {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", task.TaskID, task.FilePath, task.ExportName)
@@ -251,20 +250,20 @@ func taskGetCommand() *cobra.Command {
 		Short: "Show Task details.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := environmentScopeForClient(control, projectID, environmentID)
+			scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			task, err := control.GetTask(cmd.Context(), args[0], scope)
+			task, err := controlPlane.GetTask(cmd.Context(), args[0], scope)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), task)
+				return writeJSON(cmd.OutOrStdout(), task)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Task:       %s\n", task.TaskID)
 			fmt.Fprintf(cmd.OutOrStdout(), "File:       %s\n", task.FilePath)

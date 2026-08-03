@@ -33,7 +33,7 @@ locals {
   )
 
   worker_environment = merge({
-    HELMR_CONTROL_URL                       = var.worker_control_url
+    HELMR_CONTROLPLANE_URL                  = var.worker_controlplane_url
     HELMR_CAS_URI                           = var.cas_uri
     HELMR_PLATFORM_STORE_URI                = var.platform_store_uri
     HELMR_WORKER_GROUP_ID                   = var.worker_group_id

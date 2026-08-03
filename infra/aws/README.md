@@ -8,9 +8,9 @@ capacity policy, provider credentials, or Cloud validation campaign.
 
 - `modules/bootstrap` creates durable release/state foundations.
 - `modules/network` creates a reusable VPC and subnet topology.
-- `modules/control` creates the Product Control data plane and accepts external
+- `modules/controlplane` creates the Product Control Plane data plane and accepts external
   deployment-owned secret ARNs.
-- `modules/release-artifacts` resolves public Control images and Worker AMIs.
+- `modules/release-artifacts` resolves public Control Plane images and Worker AMIs.
 - `modules/worker` creates a generic Firecracker Worker host group.
 - `modules/worker-image` defines the public Worker AMI build.
 - `quickstart` and `standard` are self-hosted compositions.
@@ -24,11 +24,11 @@ Product contract.
 ## Release artifacts
 
 Run Product artifact operations through `scripts/aws-release-artifacts.sh`.
-The release workflow publishes a digest-pinned Control image, regional Worker
-AMIs, and the signed Platform release. The Control image contains only
-`helmr-control` and `helmr-dispatcher`; deployment capacity automation is not a
+The release workflow publishes a digest-pinned Control Plane image, regional Worker
+AMIs, and the signed Platform release. The Control Plane image contains only
+`helmr-controlplane` and `helmr-dispatcher`; deployment capacity automation is not a
 Product release artifact.
 
-Before enabling or updating Control services, run the database migration task
+Before enabling or updating Control Plane services, run the database migration task
 for the exact image. Keep `/healthz` for process health and use `/readyz` for
 traffic readiness after the schema is current.

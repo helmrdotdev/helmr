@@ -15,10 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 )
 
-// BuildTreeSourceDescriptor binds the exact canonical archive emitted for one
-// admitted Workspace-image source selection.
-type BuildTreeSourceDescriptor = imagebuild.SourceArchiveDescriptor
-
 // BuildTreeSource is a sealed selection over one verified BuildTree. Its
 // exported facts are copies; archive bytes can only be emitted again from the
 // same read-only tree and exact selected entries.
@@ -26,7 +22,7 @@ type BuildTreeSource struct {
 	tree       *BuildTree
 	entries    []artifactEntry
 	paths      []imagebuild.SourcePath
-	descriptor BuildTreeSourceDescriptor
+	descriptor imagebuild.SourceArchiveDescriptor
 }
 
 // SelectImageSource expands every source-copy root in plan against the exact
@@ -74,7 +70,7 @@ func (tree *BuildTree) SelectImageSource(
 	if err := writeSelectedBuildTreeArchive(ctx, counter, tree.inspected, selected); err != nil {
 		return nil, err
 	}
-	descriptor := BuildTreeSourceDescriptor{
+	descriptor := imagebuild.SourceArchiveDescriptor{
 		ArchiveDigest:    "sha256:" + hex.EncodeToString(digest.Sum(nil)),
 		ArchiveSizeBytes: counter.written,
 		ArchiveEntries:   len(selected),
@@ -96,9 +92,9 @@ func (tree *BuildTree) SelectImageSource(
 	}, nil
 }
 
-func (source *BuildTreeSource) Descriptor() (BuildTreeSourceDescriptor, error) {
+func (source *BuildTreeSource) Descriptor() (imagebuild.SourceArchiveDescriptor, error) {
 	if source == nil || source.tree == nil || len(source.entries) != len(source.paths) {
-		return BuildTreeSourceDescriptor{}, errors.New("image source selection is invalid")
+		return imagebuild.SourceArchiveDescriptor{}, errors.New("image source selection is invalid")
 	}
 	return source.descriptor, nil
 }

@@ -2,7 +2,7 @@
 
 This module resolves immutable Helmr release artifacts for AWS deployments.
 Terraform/OpenTofu does not build images; it reads a release manifest and passes the resulting
-control image and worker AMI into the infrastructure modules.
+Control Plane image and worker AMI into the infrastructure modules.
 
 Default manifest URL:
 
@@ -14,7 +14,7 @@ Expected manifest shape:
 
 ```json
 {
-  "control_image": "ghcr.io/helmrdotdev/helmr-control@sha256:...",
+  "controlplane_image": "ghcr.io/helmrdotdev/helmr-controlplane@sha256:...",
   "worker_amis": {
     "us-east-1": "ami-0123456789abcdef0"
   }
@@ -32,10 +32,10 @@ module "release_artifacts" {
   resolve_worker_ami = true
 }
 
-module "control" {
-  source = "../../modules/control"
+module "controlplane" {
+  source = "../../modules/controlplane"
 
-  control_image = module.release_artifacts.control_image
+  controlplane_image = module.release_artifacts.controlplane_image
 }
 
 module "worker" {
@@ -45,7 +45,7 @@ module "worker" {
 }
 ```
 
-Use `control_image_override` and `worker_ami_id_override` for custom builds or forks.
-`control_image_override` must be digest-pinned with `@sha256:<digest>`, and release manifests are
-rejected unless `control_image` is digest-pinned. Resolved worker AMIs from the manifest or override
+Use `controlplane_image_override` and `worker_ami_id_override` for custom builds or forks.
+`controlplane_image_override` must be digest-pinned with `@sha256:<digest>`, and release manifests are
+rejected unless `controlplane_image` is digest-pinned. Resolved worker AMIs from the manifest or override
 must match `^ami-[0-9a-f]{8,}$`. When `resolve_worker_ami` is false, the worker AMI may be null.

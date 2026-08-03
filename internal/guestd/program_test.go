@@ -673,8 +673,7 @@ func TestPauseAndResumeProgramUsesExactFrozenAuthority(t *testing.T) {
 		CaptureWorkspace: true,
 	}
 	registry := newWaitingRunRegistry()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	guest, host := net.Pipe()
 	defer guest.Close()
 	defer host.Close()
@@ -865,8 +864,7 @@ func TestProgramResumeReplayReturnsRecordedProofForExactReconnect(t *testing.T) 
 		RunLeaseId: "lease-2",
 	}
 	registration.markApplied(decision, ack)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	oldGuest, oldHost := net.Pipe()
 	defer oldHost.Close()
 	stream := &programEventStream{

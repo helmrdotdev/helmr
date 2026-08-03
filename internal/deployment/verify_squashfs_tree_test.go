@@ -146,7 +146,7 @@ func TestReadSquashFSTreeReadsDirectoryAcrossMetadataBlocks(t *testing.T) {
 	const inodeStart = uint64(256)
 	const fileCount = 420
 	inodes := make([]byte, 32+fileCount*32)
-	for index := 0; index < fileCount; index++ {
+	for index := range fileCount {
 		record := squashFSTestBasicRegularBody(
 			squashFSTestInodeBase(squashFSBasicRegularForm, uint32(index+2)),
 		)

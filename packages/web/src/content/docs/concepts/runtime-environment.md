@@ -88,7 +88,7 @@ user-configurable egress policy, and task code cannot mutate host networking
 state.
 
 Self-hosted workers still need outbound access to the services your tasks use,
-as well as GitHub, S3, ECR, AWS APIs, and the Helmr control URL.
+as well as GitHub, S3, ECR, AWS APIs, and the Helmr Control Plane URL.
 
 ## Secrets
 

@@ -3,7 +3,6 @@ package guestd
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -19,15 +18,6 @@ type Config struct {
 	Profile    string
 	VsockPort  uint
 	HealthPort uint
-}
-
-func ParseFlags() Config {
-	var cfg Config
-	flag.StringVar(&cfg.Profile, "profile", "", "guest execution profile")
-	flag.UintVar(&cfg.VsockPort, "vsock-port", 5000, "guest task vsock port")
-	flag.UintVar(&cfg.HealthPort, "health-port", 5001, "health check vsock port")
-	flag.Parse()
-	return cfg
 }
 
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {

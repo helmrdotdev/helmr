@@ -486,7 +486,7 @@ func (reader *squashFSTreeReader) readDirectory(
 		}
 		reader.entryCount += count
 		headerInode := order.Uint32(header[8:12])
-		for position := uint64(0); position < count; position++ {
+		for range count {
 			var encoded [8]byte
 			if err := limited.readFull(encoded[:]); err != nil {
 				return nil, err

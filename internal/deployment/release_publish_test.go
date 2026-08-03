@@ -17,7 +17,7 @@ func TestPublishPlatformReleasePublishesPolicyLast(t *testing.T) {
 	directory, manifest := platformReleaseFixture(t)
 	store := &releasePublishStore{}
 
-	if err := publishPlatformRelease(context.Background(), store, directory); err != nil {
+	if err := PublishPlatformRelease(context.Background(), store, directory); err != nil {
 		t.Fatal(err)
 	}
 	want := []cas.Descriptor{
@@ -41,7 +41,7 @@ func TestPublishPlatformReleaseRejectsPolicyInputMismatch(t *testing.T) {
 	writePlatformReleaseManifest(t, directory, manifest)
 
 	store := &releasePublishStore{}
-	if err := publishPlatformRelease(context.Background(), store, directory); err == nil {
+	if err := PublishPlatformRelease(context.Background(), store, directory); err == nil {
 		t.Fatal("mismatched Platform release was published")
 	}
 	if len(store.published) != 0 {
@@ -60,7 +60,7 @@ func TestPublishPlatformReleaseRejectsSymlinkObject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := publishPlatformRelease(
+	if err := PublishPlatformRelease(
 		context.Background(),
 		&releasePublishStore{},
 		directory,

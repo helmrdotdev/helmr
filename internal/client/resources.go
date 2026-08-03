@@ -18,7 +18,7 @@ const (
 )
 
 func (c *Client) BaseURL() string {
-	return c.baseURL.String()
+	return c.transport.BaseURL()
 }
 
 func (c *Client) GetMe(ctx context.Context) (api.MeResponse, error) {

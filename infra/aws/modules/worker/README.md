@@ -31,7 +31,7 @@ settings; use the module inputs for those values.
 
 Size `root_volume_size_gb`, `root_volume_iops`, and `root_volume_throughput` for expected
 build/cache/runtime load. Leave `worker_disk_mib` null to let `helmr-worker` detect local
-filesystem capacity, or set it when the capacity advertised to the control plane should be capped.
+filesystem capacity, or set it when the capacity advertised to the Control Plane should be capped.
 `worker_disk_reserve_mib` is always passed explicitly (default `1024`) and is withheld before
 workload, scratch, and cache partitions are certified.
 
@@ -43,7 +43,7 @@ managed elsewhere.
 scheduling boundary in every deployment. During boot, the module fetches the
 group-specific enrollment secret into a root-only volatile file and binds the
 nonce proof to the requested roles and EC2 instance ID as an opaque operator
-locator. Control authenticates the logical group proof; AWS identity and fleet
+locator. Control Plane authenticates the logical group proof; AWS identity and fleet
 configuration remain operator and infrastructure responsibilities.
 
 ## Lifecycle
@@ -59,5 +59,5 @@ executions before the instance terminates.
 
 Launch-template changes do not start an automatic instance refresh. Drain the
 exact logical worker instance to `termination_ready` before provider deletion,
-then explicitly start or coordinate the Auto Scaling instance refresh. Control
+then explicitly start or coordinate the Auto Scaling instance refresh. Control Plane
 does not maintain an AMI allowlist.

@@ -542,7 +542,7 @@ func (decoder *squashFSInodeDecoder) read(
 			0,
 			int(indexCount),
 		)
-		for position := uint64(0); position < indexCount; position++ {
+		for range indexCount {
 			if err := checkSquashFSContext(decoder.inodes.ctx); err != nil {
 				return squashFSInodeFacts{}, err
 			}

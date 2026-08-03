@@ -31,7 +31,7 @@ func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
 	runCtx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
 	go func() {
-		errc <- run(runCtx, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		errc <- runDispatcher(runCtx, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	}()
 	select {
 	case err := <-errc:

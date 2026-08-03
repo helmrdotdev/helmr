@@ -28,7 +28,7 @@ func newRootCommand() *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
-	root.PersistentFlags().StringP("api-url", "a", "", "Helmr control API URL. Defaults to HELMR_API_URL or saved login.")
+	root.PersistentFlags().StringP("api-url", "a", "", "Helmr Control Plane API URL. Defaults to HELMR_API_URL or saved login.")
 	root.AddCommand(
 		initCommand(),
 		loginCommand(),

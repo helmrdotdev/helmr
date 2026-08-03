@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -45,7 +44,7 @@ func workspaceCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			control, scope, err := scopedWorkspaceClient(command, projectID, environmentID)
+			controlPlane, scope, err := scopedWorkspaceClient(command, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -53,7 +52,7 @@ func workspaceCreateCommand() *cobra.Command {
 			if command.Flags().Changed("key") {
 				keyPointer = &key
 			}
-			response, err := control.CreateWorkspace(command.Context(), args[0], api.CreateWorkspaceRequest{
+			response, err := controlPlane.CreateWorkspace(command.Context(), args[0], api.CreateWorkspaceRequest{
 				Key:            keyPointer,
 				Secrets:        secrets,
 				IdempotencyKey: idempotencyKey,
@@ -62,7 +61,7 @@ func workspaceCreateCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(command.OutOrStdout(), response)
+				return writeJSON(command.OutOrStdout(), response)
 			}
 			_, err = fmt.Fprintln(command.OutOrStdout(), response.WorkspaceID)
 			return err
@@ -87,16 +86,16 @@ func workspaceGetCommand() *cobra.Command {
 		Short: "Retrieve a Workspace.",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			control, scope, err := scopedWorkspaceClient(command, projectID, environmentID)
+			controlPlane, scope, err := scopedWorkspaceClient(command, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			snapshot, err := address.retrieve(command, control, scope)
+			snapshot, err := address.retrieve(command, controlPlane, scope)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(command.OutOrStdout(), snapshot)
+				return writeJSON(command.OutOrStdout(), snapshot)
 			}
 			_, err = fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%s\n", snapshot.ID, snapshot.DeclaredID, snapshot.Status)
 			return err
@@ -119,22 +118,22 @@ func workspaceDeleteCommand() *cobra.Command {
 		Short: "Delete a Workspace.",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			control, scope, err := scopedWorkspaceClient(command, projectID, environmentID)
+			controlPlane, scope, err := scopedWorkspaceClient(command, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			workspaceID, err := address.resolveID(command, control, scope)
+			workspaceID, err := address.resolveID(command, controlPlane, scope)
 			if err != nil {
 				return err
 			}
-			receipt, err := control.DeleteWorkspace(command.Context(), workspaceID, api.DeleteWorkspaceRequest{
+			receipt, err := controlPlane.DeleteWorkspace(command.Context(), workspaceID, api.DeleteWorkspaceRequest{
 				IdempotencyKey: idempotencyKey,
 			}, scope)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(command.OutOrStdout(), receipt)
+				return writeJSON(command.OutOrStdout(), receipt)
 			}
 			_, err = fmt.Fprintln(command.OutOrStdout(), receipt.WorkspaceID)
 			return err
@@ -163,20 +162,20 @@ func workspaceFilesReadCommand() *cobra.Command {
 		Short: "Read a regular file.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			control, scope, err := scopedWorkspaceClient(command, projectID, environmentID)
+			controlPlane, scope, err := scopedWorkspaceClient(command, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			workspaceID, err := address.resolveID(command, control, scope)
+			workspaceID, err := address.resolveID(command, controlPlane, scope)
 			if err != nil {
 				return err
 			}
-			content, err := control.ReadWorkspaceFile(command.Context(), workspaceID, args[0], scope)
+			content, err := controlPlane.ReadWorkspaceFile(command.Context(), workspaceID, args[0], scope)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(command.OutOrStdout(), content)
+				return writeJSON(command.OutOrStdout(), content)
 			}
 			data, err := base64.StdEncoding.DecodeString(content.DataBase64)
 			if err != nil {
@@ -204,22 +203,22 @@ func workspaceFilesListCommand() *cobra.Command {
 		Short: "List a directory.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			control, scope, err := scopedWorkspaceClient(command, projectID, environmentID)
+			controlPlane, scope, err := scopedWorkspaceClient(command, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			workspaceID, err := address.resolveID(command, control, scope)
+			workspaceID, err := address.resolveID(command, controlPlane, scope)
 			if err != nil {
 				return err
 			}
-			page, err := control.ListWorkspaceFiles(command.Context(), workspaceID, client.WorkspaceFileListOptions{
+			page, err := controlPlane.ListWorkspaceFiles(command.Context(), workspaceID, client.WorkspaceFileListOptions{
 				Path: args[0], Cursor: cursor, Limit: limit,
 			}, scope)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(command.OutOrStdout(), page)
+				return writeJSON(command.OutOrStdout(), page)
 			}
 			for _, item := range page.Items {
 				if _, err := fmt.Fprintf(command.OutOrStdout(), "%s\t%s\n", item.Kind, item.Path); err != nil {
@@ -250,20 +249,20 @@ func workspaceFilesStatCommand() *cobra.Command {
 		Short: "Stat a committed filesystem path.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			control, scope, err := scopedWorkspaceClient(command, projectID, environmentID)
+			controlPlane, scope, err := scopedWorkspaceClient(command, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			workspaceID, err := address.resolveID(command, control, scope)
+			workspaceID, err := address.resolveID(command, controlPlane, scope)
 			if err != nil {
 				return err
 			}
-			entry, err := control.StatWorkspaceFile(command.Context(), workspaceID, args[0], scope)
+			entry, err := controlPlane.StatWorkspaceFile(command.Context(), workspaceID, args[0], scope)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(command.OutOrStdout(), entry)
+				return writeJSON(command.OutOrStdout(), entry)
 			}
 			_, err = fmt.Fprintf(command.OutOrStdout(), "%s\t%s\n", entry.Kind, entry.Path)
 			return err
@@ -302,15 +301,15 @@ func workspaceExecCommand() *cobra.Command {
 				}
 				stdinBase64 = base64.StdEncoding.EncodeToString(data)
 			}
-			control, scope, err := scopedWorkspaceClient(command, projectID, environmentID)
+			controlPlane, scope, err := scopedWorkspaceClient(command, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			workspaceID, err := address.resolveID(command, control, scope)
+			workspaceID, err := address.resolveID(command, controlPlane, scope)
 			if err != nil {
 				return err
 			}
-			result, err := control.ExecuteWorkspace(command.Context(), workspaceID, api.ExecuteWorkspaceRequest{
+			result, err := controlPlane.ExecuteWorkspace(command.Context(), workspaceID, api.ExecuteWorkspaceRequest{
 				Command: args, Cwd: cwd, Env: env, StdinBase64: stdinBase64,
 				Timeout: timeout, IdempotencyKey: idempotencyKey,
 			}, scope)
@@ -318,7 +317,7 @@ func workspaceExecCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(command.OutOrStdout(), result)
+				return writeJSON(command.OutOrStdout(), result)
 			}
 			stdout, err := base64.StdEncoding.DecodeString(result.StdoutBase64)
 			if err != nil {
@@ -366,24 +365,24 @@ func (flags *workspaceAddressFlags) add(command *cobra.Command) {
 
 func (flags workspaceAddressFlags) retrieve(
 	command *cobra.Command,
-	control *client.Client,
+	controlPlane *client.Client,
 	scope client.WorkspaceScopeOptions,
 ) (api.WorkspaceSnapshot, error) {
 	if err := flags.validate(); err != nil {
 		return api.WorkspaceSnapshot{}, err
 	}
 	if flags.id != "" {
-		return control.GetWorkspace(command.Context(), flags.id, scope)
+		return controlPlane.GetWorkspace(command.Context(), flags.id, scope)
 	}
-	return control.GetWorkspaceByKey(command.Context(), flags.declaredID, flags.key, scope)
+	return controlPlane.GetWorkspaceByKey(command.Context(), flags.declaredID, flags.key, scope)
 }
 
 func (flags workspaceAddressFlags) resolveID(
 	command *cobra.Command,
-	control *client.Client,
+	controlPlane *client.Client,
 	scope client.WorkspaceScopeOptions,
 ) (string, error) {
-	snapshot, err := flags.retrieve(command, control, scope)
+	snapshot, err := flags.retrieve(command, controlPlane, scope)
 	if err != nil {
 		return "", err
 	}
@@ -408,15 +407,15 @@ func scopedWorkspaceClient(
 	projectID string,
 	environmentID string,
 ) (*client.Client, client.WorkspaceScopeOptions, error) {
-	control, err := controlClient(command)
+	controlPlane, err := controlPlaneClient(command)
 	if err != nil {
 		return nil, client.WorkspaceScopeOptions{}, err
 	}
-	scope, err := workspaceScopeForClient(control, projectID, environmentID)
+	scope, err := workspaceScopeForClient(controlPlane, projectID, environmentID)
 	if err != nil {
 		return nil, client.WorkspaceScopeOptions{}, err
 	}
-	return control, scope, nil
+	return controlPlane, scope, nil
 }
 
 func workspaceSecrets(envValues []string, fileValues []string) ([]api.WorkspaceSecret, error) {

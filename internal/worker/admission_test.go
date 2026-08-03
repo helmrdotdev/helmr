@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type staticHealthProbe struct {
@@ -201,11 +201,11 @@ func TestHardAdmissionPressureObservation(t *testing.T) {
 }
 
 func TestBuildLeaseValidatesFixedGuestIndependentlyFromHostEnvelope(t *testing.T) {
-	capabilities := api.WorkerCapabilities{
+	capabilities := workerapi.Capabilities{
 		VMMilliCPU: 2000, VMMemoryMiB: 2048,
 		GuestEphemeralDiskBytes: 32 << 30, VMGuestEphemeralDiskBytes: 32 << 30, MaxBuildExecutors: 1,
 	}
-	lease := api.WorkerDeploymentBuildLease{
+	lease := workerapi.DeploymentBuildLease{
 		RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
 		RequestedGuestEphemeralDiskBytes: 32 << 30,
 	}
@@ -214,12 +214,16 @@ func TestBuildLeaseValidatesFixedGuestIndependentlyFromHostEnvelope(t *testing.T
 	}
 	tests := []struct {
 		name   string
-		mutate func(*api.WorkerCapabilities, *api.WorkerDeploymentBuildLease)
+		mutate func(*workerapi.Capabilities, *workerapi.DeploymentBuildLease)
 	}{
-		{name: "cpu", mutate: func(c *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease) { c.VMMilliCPU-- }},
-		{name: "memory", mutate: func(c *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease) { c.VMMemoryMiB-- }},
-		{name: "guest disk", mutate: func(c *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease) { c.VMGuestEphemeralDiskBytes-- }},
-		{name: "executors", mutate: func(_ *api.WorkerCapabilities, l *api.WorkerDeploymentBuildLease) { l.RequestedBuildExecutors = 2 }},
+		{name: "cpu", mutate: func(c *workerapi.Capabilities, _ *workerapi.DeploymentBuildLease) { c.VMMilliCPU-- }},
+		{name: "memory", mutate: func(c *workerapi.Capabilities, _ *workerapi.DeploymentBuildLease) { c.VMMemoryMiB-- }},
+		{name: "guest disk", mutate: func(c *workerapi.Capabilities, _ *workerapi.DeploymentBuildLease) {
+			c.VMGuestEphemeralDiskBytes--
+		}},
+		{name: "executors", mutate: func(_ *workerapi.Capabilities, l *workerapi.DeploymentBuildLease) {
+			l.RequestedBuildExecutors = 2
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

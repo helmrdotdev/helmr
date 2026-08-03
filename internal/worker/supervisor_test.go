@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type testControl struct {
+type testControlPlane struct {
 	authenticated  atomic.Bool
 	recovered      atomic.Bool
 	activated      atomic.Bool
@@ -26,28 +26,28 @@ type testControl struct {
 	completeErr    error
 }
 
-func (c *testControl) AuthenticateWorker(context.Context) error {
+func (c *testControlPlane) AuthenticateWorker(context.Context) error {
 	c.authenticated.Store(true)
 	return nil
 }
-func (c *testControl) ActivateWorker(_ context.Context, capabilities api.WorkerCapabilities) (api.WorkerStatusResponse, error) {
+func (c *testControlPlane) ActivateWorker(_ context.Context, capabilities workerapi.Capabilities) (workerapi.StatusResponse, error) {
 	if !c.authenticated.Load() {
-		return api.WorkerStatusResponse{}, errors.New("activation before authentication")
+		return workerapi.StatusResponse{}, errors.New("activation before authentication")
 	}
 	if !c.recovered.Load() {
-		return api.WorkerStatusResponse{}, errors.New("activation before startup recovery proof")
+		return workerapi.StatusResponse{}, errors.New("activation before startup recovery proof")
 	}
 	if len(capabilities.Observation.HealthDetails) == 0 {
-		return api.WorkerStatusResponse{}, errors.New("recovery evidence missing")
+		return workerapi.StatusResponse{}, errors.New("recovery evidence missing")
 	}
 	c.activated.Store(true)
-	if status, ok := c.activateStatus.Load().(api.WorkerStatusResponse); ok {
+	if status, ok := c.activateStatus.Load().(workerapi.StatusResponse); ok {
 		return status, nil
 	}
-	return api.WorkerStatusResponse{Status: api.WorkerStatusActive}, nil
+	return workerapi.StatusResponse{Status: workerapi.StatusActive}, nil
 }
 
-func (c *testControl) ReportWorkerStartupRecovery(_ context.Context, request api.WorkerStartupRecoveryRequest) error {
+func (c *testControlPlane) ReportWorkerStartupRecovery(_ context.Context, request workerapi.StartupRecoveryRequest) error {
 	c.recoveryCalls.Add(1)
 	if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() {
 		return errors.New("incomplete startup recovery proof")
@@ -63,27 +63,27 @@ type testHTTPStatusError struct{ status int }
 
 func (e testHTTPStatusError) Error() string       { return "test HTTP status" }
 func (e testHTTPStatusError) HTTPStatusCode() int { return e.status }
-func (c *testControl) CompleteWorkerDrain(_ context.Context, request api.WorkerDrainCompletionRequest) (api.WorkerStatusResponse, error) {
+func (c *testControlPlane) CompleteWorkerDrain(_ context.Context, request workerapi.DrainCompletionRequest) (workerapi.StatusResponse, error) {
 	if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() || len(request.Inventory) != 0 || len(request.Quarantined) != 0 || len(request.Errors) != 0 {
-		return api.WorkerStatusResponse{}, errors.New("incomplete worker drain proof")
+		return workerapi.StatusResponse{}, errors.New("incomplete worker drain proof")
 	}
 	c.completed.Add(1)
 	if c.completeErr != nil {
-		return api.WorkerStatusResponse{}, c.completeErr
+		return workerapi.StatusResponse{}, c.completeErr
 	}
-	return api.WorkerStatusResponse{Status: api.WorkerStatusTerminationReady}, nil
+	return workerapi.StatusResponse{Status: workerapi.StatusTerminationReady}, nil
 }
-func (c *testControl) returnedStatus() api.WorkerStatusResponse {
-	if status, ok := c.status.Load().(api.WorkerStatusResponse); ok {
+func (c *testControlPlane) returnedStatus() workerapi.StatusResponse {
+	if status, ok := c.status.Load().(workerapi.StatusResponse); ok {
 		return status
 	}
-	return api.WorkerStatusResponse{Status: api.WorkerStatusActive}
+	return workerapi.StatusResponse{Status: workerapi.StatusActive}
 }
-func (c *testControl) ObserveWorker(_ context.Context, observation api.WorkerObservation) (api.WorkerStatusResponse, error) {
+func (c *testControlPlane) ObserveWorker(_ context.Context, observation workerapi.Observation) (workerapi.StatusResponse, error) {
 	if observation.RunPausedReason == string(StateDraining) {
 		return c.returnedStatus(), nil
 	}
-	if status, ok := c.observeStatus.Load().(api.WorkerStatusResponse); ok {
+	if status, ok := c.observeStatus.Load().(workerapi.StatusResponse); ok {
 		return status, nil
 	}
 	return c.returnedStatus(), nil
@@ -123,9 +123,9 @@ func (c *successfulRejectionConsumer) Claim(context.Context) (Work, bool, error)
 }
 
 func TestSupervisorRetriesStartupRecoveryConflictWithExactProof(t *testing.T) {
-	control := &testControl{}
-	control.recovery409s.Store(2)
-	s, err := New(Config{Control: control, PollEvery: time.Millisecond})
+	controlPlane := &testControlPlane{}
+	controlPlane.recovery409s.Store(2)
+	s, err := New(Config{ControlPlane: controlPlane, PollEvery: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,14 +133,14 @@ func TestSupervisorRetriesStartupRecoveryConflictWithExactProof(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
 	deadline := time.Now().Add(time.Second)
-	for !control.activated.Load() {
+	for !controlPlane.activated.Load() {
 		if time.Now().After(deadline) {
 			cancel()
 			t.Fatal("worker did not activate after startup recovery conflicts cleared")
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if calls := control.recoveryCalls.Load(); calls != 3 {
+	if calls := controlPlane.recoveryCalls.Load(); calls != 3 {
 		cancel()
 		t.Fatalf("startup recovery calls = %d, want 3", calls)
 	}
@@ -193,10 +193,10 @@ func (c *queuedConsumer) Claim(context.Context) (Work, bool, error) {
 }
 
 func TestSupervisorAcceptsSuccessfulClaimWithoutWork(t *testing.T) {
-	control := &testControl{}
+	controlPlane := &testControlPlane{}
 	consumer := &successfulRejectionConsumer{claimed: make(chan struct{})}
 	s, err := New(Config{
-		Control: control, PollEvery: time.Millisecond,
+		ControlPlane: controlPlane, PollEvery: time.Millisecond,
 		Consumers: []ConsumerSpec{{Name: "build", Concurrency: 1, Consumer: consumer}},
 	})
 	if err != nil {
@@ -222,7 +222,7 @@ func TestSupervisorAcceptsSuccessfulClaimWithoutWork(t *testing.T) {
 }
 
 func TestSupervisorRunsConcurrentWorkAndDrainsLocally(t *testing.T) {
-	control := &testControl{}
+	controlPlane := &testControlPlane{}
 	started := make(chan struct{}, 2)
 	release := make(chan struct{})
 	consumer := &queuedConsumer{work: []Work{
@@ -230,7 +230,7 @@ func TestSupervisorRunsConcurrentWorkAndDrainsLocally(t *testing.T) {
 		func(context.Context) error { started <- struct{}{}; <-release; return nil },
 	}}
 	s, err := New(Config{
-		Control: control, Capabilities: api.WorkerCapabilities{}, PollEvery: time.Millisecond,
+		ControlPlane: controlPlane, Capabilities: workerapi.Capabilities{}, PollEvery: time.Millisecond,
 		DrainTimeout: time.Second, Consumers: []ConsumerSpec{{Name: "run", Concurrency: 2, Consumer: consumer}},
 	})
 	if err != nil {
@@ -268,13 +268,13 @@ func TestSupervisorRunsConcurrentWorkAndDrainsLocally(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("supervisor did not stop")
 	}
-	if got := control.completed.Load(); got != 0 {
+	if got := controlPlane.completed.Load(); got != 0 {
 		t.Fatalf("ordinary process shutdown completed durable drain %d times", got)
 	}
 }
 
 func TestSupervisorDelaysRetryAfterNonfatalWorkFailure(t *testing.T) {
-	control := &testControl{}
+	controlPlane := &testControlPlane{}
 	started := make(chan time.Time, 2)
 	consumer := &queuedConsumer{work: []Work{
 		func(context.Context) error {
@@ -288,7 +288,7 @@ func TestSupervisorDelaysRetryAfterNonfatalWorkFailure(t *testing.T) {
 	}}
 	pollEvery := 50 * time.Millisecond
 	s, err := New(Config{
-		Control: control, PollEvery: pollEvery,
+		ControlPlane: controlPlane, PollEvery: pollEvery,
 		Consumers: []ConsumerSpec{{Name: "platform-acquisition", Concurrency: 1, Consumer: consumer}},
 	})
 	if err != nil {
@@ -325,11 +325,11 @@ func TestSupervisorDelaysRetryAfterNonfatalWorkFailure(t *testing.T) {
 }
 
 func TestSupervisorDrainTimeoutBoundsHungWork(t *testing.T) {
-	control := &testControl{}
+	controlPlane := &testControlPlane{}
 	started := make(chan struct{})
 	release := make(chan struct{})
 	consumer := &queuedConsumer{work: []Work{func(context.Context) error { close(started); <-release; return nil }}}
-	s, err := New(Config{Control: control, PollEvery: time.Millisecond, DrainTimeout: 30 * time.Millisecond, Consumers: []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: consumer}}})
+	s, err := New(Config{ControlPlane: controlPlane, PollEvery: time.Millisecond, DrainTimeout: 30 * time.Millisecond, Consumers: []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: consumer}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,10 +350,10 @@ func TestSupervisorDrainTimeoutBoundsHungWork(t *testing.T) {
 }
 
 func TestSupervisorShutdownCancelsOutstandingClaims(t *testing.T) {
-	control := &testControl{}
+	controlPlane := &testControlPlane{}
 	consumer := &blockingClaimConsumer{entered: make(chan struct{}), canceled: make(chan struct{})}
 	s, err := New(Config{
-		Control: control, PollEvery: time.Millisecond,
+		ControlPlane: controlPlane, PollEvery: time.Millisecond,
 		Consumers: []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: consumer}},
 	})
 	if err != nil {
@@ -384,16 +384,16 @@ func TestSupervisorShutdownCancelsOutstandingClaims(t *testing.T) {
 }
 
 func TestSupervisorTerminatesEpochOnFatalWorkError(t *testing.T) {
-	control := &testControl{}
+	controlPlane := &testControlPlane{}
 	consumer := &queuedConsumer{work: []Work{
 		func(context.Context) error {
 			return &fatalWorkerError{err: errors.New("cleanup unproven")}
 		},
 	}}
 	s, err := New(Config{
-		Control:   control,
-		PollEvery: time.Millisecond,
-		Consumers: []ConsumerSpec{{Name: "build", Concurrency: 1, Consumer: consumer}},
+		ControlPlane: controlPlane,
+		PollEvery:    time.Millisecond,
+		Consumers:    []ConsumerSpec{{Name: "build", Concurrency: 1, Consumer: consumer}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -410,11 +410,11 @@ func TestSupervisorTerminatesEpochOnFatalWorkError(t *testing.T) {
 }
 
 func TestSupervisorRefusesActivationWithBuildResidue(t *testing.T) {
-	control := &testControl{}
+	controlPlane := &testControlPlane{}
 	owner := vm.Owner{Kind: vm.OwnerBuild, ID: "019c10d5-a6f7-7af1-8f5f-000000000701"}
 	s, err := New(Config{
-		Control: control,
-		Capabilities: api.WorkerCapabilities{
+		ControlPlane: controlPlane,
+		Capabilities: workerapi.Capabilities{
 			SupportsBuild:     true,
 			MaxBuildExecutors: 1,
 		},
@@ -433,16 +433,16 @@ func TestSupervisorRefusesActivationWithBuildResidue(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "quarantined build residue") {
 		t.Fatalf("error = %v, want build residue rejection", err)
 	}
-	if control.activated.Load() {
+	if controlPlane.activated.Load() {
 		t.Fatal("worker activated with build residue")
 	}
 }
 
 func TestSupervisorRefusesActivationWithUnownedResidue(t *testing.T) {
-	control := &testControl{}
+	controlPlane := &testControlPlane{}
 	s, err := New(Config{
-		Control: control,
-		Capabilities: api.WorkerCapabilities{
+		ControlPlane: controlPlane,
+		Capabilities: workerapi.Capabilities{
 			SupportsRun:             true,
 			ExecutionSlotsAvailable: 1,
 		},
@@ -460,19 +460,19 @@ func TestSupervisorRefusesActivationWithUnownedResidue(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "without exact VM ownership") {
 		t.Fatalf("error = %v, want unowned residue rejection", err)
 	}
-	if control.activated.Load() {
+	if controlPlane.activated.Load() {
 		t.Fatal("worker activated with unowned residue")
 	}
 }
 
 func TestSupervisorShutdownWaitsForClaimThatReturnsCommittedWork(t *testing.T) {
-	control := &testControl{}
+	controlPlane := &testControlPlane{}
 	consumer := &shutdownClaimConsumer{
 		entered: make(chan struct{}), allowReturn: make(chan struct{}),
 		workStarted: make(chan struct{}), releaseWork: make(chan struct{}),
 	}
 	s, err := New(Config{
-		Control: control, PollEvery: time.Millisecond, DrainTimeout: time.Second,
+		ControlPlane: controlPlane, PollEvery: time.Millisecond, DrainTimeout: time.Second,
 		Consumers: []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: consumer}},
 	})
 	if err != nil {
@@ -522,7 +522,7 @@ func TestSupervisorShutdownWaitsForClaimThatReturnsCommittedWork(t *testing.T) {
 }
 
 func TestSupervisorHardAdmissionPausesClaimsButNotShutdown(t *testing.T) {
-	control := &testControl{}
+	controlPlane := &testControlPlane{}
 	now := time.Now()
 	probe := &staticHealthProbe{health: healthyHost(now)}
 	probe.health.AvailableDiskBytes = 1
@@ -534,7 +534,7 @@ func TestSupervisorHardAdmissionPausesClaimsButNotShutdown(t *testing.T) {
 	}
 	consumer := &queuedConsumer{work: []Work{func(context.Context) error { return nil }}}
 	s, err := New(Config{
-		Control: control, PollEvery: time.Millisecond,
+		ControlPlane: controlPlane, PollEvery: time.Millisecond,
 		AdmissionEvaluator: evaluator,
 		Consumers:          []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: consumer}},
 	})
@@ -578,7 +578,7 @@ func TestSupervisorObservationKeepsBuildOnlyAdmissionPause(t *testing.T) {
 		Consumer: "build", State: StateActive,
 	})
 	supervisor, err := New(Config{
-		Control: &testControl{}, AdmissionEvaluator: evaluator,
+		ControlPlane: &testControlPlane{}, AdmissionEvaluator: evaluator,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -597,8 +597,8 @@ func TestSupervisorObservationKeepsBuildOnlyAdmissionPause(t *testing.T) {
 }
 
 func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T) {
-	control := &testControl{}
-	control.status.Store(api.WorkerStatusResponse{Status: api.WorkerStatusActive})
+	controlPlane := &testControlPlane{}
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusActive})
 	runStarted := make(chan struct{})
 	runRelease := make(chan struct{})
 	unexpectedRun := make(chan struct{}, 1)
@@ -615,7 +615,7 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 	}}}}
 	finalized := make(chan struct{})
 	s, err := New(Config{
-		Control: control, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, DrainTimeout: time.Second,
+		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, DrainTimeout: time.Second,
 		Consumers: []ConsumerSpec{
 			{Name: "run", Concurrency: 1, Consumer: runs},
 			{Name: "workspace-cleanup", Concurrency: 1, DrainEligible: true, Consumer: cleanup},
@@ -636,7 +636,7 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 	case <-time.After(time.Second):
 		t.Fatal("run did not start")
 	}
-	control.status.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining, ActiveExecutions: 1})
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1})
 	deadline := time.Now().Add(time.Second)
 	for s.state.Load().(State) != StateDraining {
 		if time.Now().After(deadline) {
@@ -657,7 +657,7 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 		t.Fatal("execution consumer claimed new work after server-directed drain")
 	case <-time.After(20 * time.Millisecond):
 	}
-	control.status.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining, ActiveExecutions: 0})
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 0})
 	select {
 	case <-finalized:
 	case <-time.After(time.Second):
@@ -671,17 +671,17 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 	case <-time.After(time.Second):
 		t.Fatal("server-directed drain did not stop supervisor")
 	}
-	if got := control.completed.Load(); got != 1 {
+	if got := controlPlane.completed.Load(); got != 1 {
 		t.Fatalf("drain completion calls = %d, want 1", got)
 	}
 }
 
 func TestActivationCanResumePreviouslyRequestedDrain(t *testing.T) {
-	control := &testControl{}
-	control.activateStatus.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
-	control.status.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
+	controlPlane := &testControlPlane{}
+	controlPlane.activateStatus.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 	s, err := New(Config{
-		Control: control, PollEvery: time.Millisecond, DrainTimeout: time.Second,
+		ControlPlane: controlPlane, PollEvery: time.Millisecond, DrainTimeout: time.Second,
 		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
 			return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
 		},
@@ -692,17 +692,17 @@ func TestActivationCanResumePreviouslyRequestedDrain(t *testing.T) {
 	if err := s.Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := control.completed.Load(); got != 1 {
+	if got := controlPlane.completed.Load(); got != 1 {
 		t.Fatalf("drain completion calls = %d, want 1", got)
 	}
 }
 
 func TestDurableDrainLatchWinsWhenShutdownIsAlsoReady(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	control := &testControl{}
-	control.status.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
+	controlPlane := &testControlPlane{}
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 	s, err := New(Config{
-		Control: control, PollEvery: time.Millisecond, ObservationEvery: time.Hour, DrainTimeout: time.Second,
+		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Hour, DrainTimeout: time.Second,
 		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
 			return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
 		},
@@ -713,7 +713,7 @@ func TestDurableDrainLatchWinsWhenShutdownIsAlsoReady(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx) }()
 	deadline := time.Now().Add(time.Second)
-	for !control.activated.Load() || s.state.Load().(State) != StateActive {
+	for !controlPlane.activated.Load() || s.state.Load().(State) != StateActive {
 		if time.Now().After(deadline) {
 			t.Fatal("supervisor did not reach active select")
 		}
@@ -727,7 +727,7 @@ func TestDurableDrainLatchWinsWhenShutdownIsAlsoReady(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatalf("latched durable drain = %v", err)
 	}
-	if got := control.completed.Load(); got != 1 {
+	if got := controlPlane.completed.Load(); got != 1 {
 		t.Fatalf("drain completion calls = %d, want 1", got)
 	}
 }
@@ -735,13 +735,13 @@ func TestDurableDrainLatchWinsWhenShutdownIsAlsoReady(t *testing.T) {
 func TestSignalDuringDurableDrainDoesNotCancelCompletion(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	control := &testControl{}
-	control.activateStatus.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
-	control.status.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
+	controlPlane := &testControlPlane{}
+	controlPlane.activateStatus.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 	finalizeStarted := make(chan struct{})
 	releaseFinalize := make(chan struct{})
 	s, err := New(Config{
-		Control: control, PollEvery: time.Millisecond, DrainTimeout: time.Second,
+		ControlPlane: controlPlane, PollEvery: time.Millisecond, DrainTimeout: time.Second,
 		FinalizeDrain: func(finalizeCtx context.Context) (RecoveryEvidence, error) {
 			close(finalizeStarted)
 			select {
@@ -773,7 +773,7 @@ func TestSignalDuringDurableDrainDoesNotCancelCompletion(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("latched drain did not complete")
 	}
-	if got := control.completed.Load(); got != 1 {
+	if got := controlPlane.completed.Load(); got != 1 {
 		t.Fatalf("drain completion calls = %d, want 1", got)
 	}
 }
@@ -781,22 +781,22 @@ func TestSignalDuringDurableDrainDoesNotCancelCompletion(t *testing.T) {
 func TestObservationResponseTriggersDurableDrain(t *testing.T) {
 	tests := []struct {
 		name  string
-		setup func(*testControl)
+		setup func(*testControlPlane)
 	}{
 		{
 			name: "observation",
-			setup: func(control *testControl) {
-				control.observeStatus.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
+			setup: func(controlPlane *testControlPlane) {
+				controlPlane.observeStatus.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			control := &testControl{}
-			control.status.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
-			tt.setup(control)
+			controlPlane := &testControlPlane{}
+			controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
+			tt.setup(controlPlane)
 			s, err := New(Config{
-				Control: control, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, DrainTimeout: time.Second,
+				ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, DrainTimeout: time.Second,
 				FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
 					return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
 				},
@@ -807,7 +807,7 @@ func TestObservationResponseTriggersDurableDrain(t *testing.T) {
 			if err := s.Run(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			if got := control.completed.Load(); got != 1 {
+			if got := controlPlane.completed.Load(); got != 1 {
 				t.Fatalf("drain completion calls = %d, want 1", got)
 			}
 		})
@@ -817,34 +817,34 @@ func TestObservationResponseTriggersDurableDrain(t *testing.T) {
 func TestServerDirectedDrainDoesNotCompleteOnTimeoutOrDirtyInventory(t *testing.T) {
 	tests := []struct {
 		name        string
-		status      api.WorkerStatusResponse
+		status      workerapi.StatusResponse
 		finalize    func(context.Context) (RecoveryEvidence, error)
 		completeErr error
 		wantError   string
 	}{
 		{
-			name: "server authority timeout", status: api.WorkerStatusResponse{Status: api.WorkerStatusDraining, ActiveExecutions: 1},
+			name: "server authority timeout", status: workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1},
 			finalize: func(context.Context) (RecoveryEvidence, error) {
 				return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
 			},
 			wantError: "timed out",
 		},
 		{
-			name: "quarantined local inventory", status: api.WorkerStatusResponse{Status: api.WorkerStatusDraining},
+			name: "quarantined local inventory", status: workerapi.StatusResponse{Status: workerapi.StatusDraining},
 			finalize: func(context.Context) (RecoveryEvidence, error) {
 				return RecoveryEvidence{ObservedAt: time.Now().UTC(), Quarantined: []string{"runtime"}, QuarantineErrors: []string{"busy"}}, nil
 			},
 			wantError: "inventory is not clean",
 		},
 		{
-			name: "cleanup failure", status: api.WorkerStatusResponse{Status: api.WorkerStatusDraining},
+			name: "cleanup failure", status: workerapi.StatusResponse{Status: workerapi.StatusDraining},
 			finalize: func(context.Context) (RecoveryEvidence, error) {
 				return RecoveryEvidence{}, errors.New("cleanup failed")
 			},
 			wantError: "cleanup failed",
 		},
 		{
-			name: "completion response loss", status: api.WorkerStatusResponse{Status: api.WorkerStatusDraining},
+			name: "completion response loss", status: workerapi.StatusResponse{Status: workerapi.StatusDraining},
 			finalize: func(context.Context) (RecoveryEvidence, error) {
 				return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
 			},
@@ -854,11 +854,11 @@ func TestServerDirectedDrainDoesNotCompleteOnTimeoutOrDirtyInventory(t *testing.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			control := &testControl{}
-			control.completeErr = tt.completeErr
-			control.activateStatus.Store(tt.status)
-			control.status.Store(tt.status)
-			s, err := New(Config{Control: control, PollEvery: time.Millisecond, DrainTimeout: 20 * time.Millisecond, FinalizeDrain: tt.finalize})
+			controlPlane := &testControlPlane{}
+			controlPlane.completeErr = tt.completeErr
+			controlPlane.activateStatus.Store(tt.status)
+			controlPlane.status.Store(tt.status)
+			s, err := New(Config{ControlPlane: controlPlane, PollEvery: time.Millisecond, DrainTimeout: 20 * time.Millisecond, FinalizeDrain: tt.finalize})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -870,7 +870,7 @@ func TestServerDirectedDrainDoesNotCompleteOnTimeoutOrDirtyInventory(t *testing.
 			if tt.completeErr != nil {
 				wantCompleted = 1
 			}
-			if got := control.completed.Load(); got != wantCompleted {
+			if got := controlPlane.completed.Load(); got != wantCompleted {
 				t.Fatalf("drain completion calls = %d, want %d", got, wantCompleted)
 			}
 		})

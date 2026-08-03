@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -41,16 +40,16 @@ func secretListCommand() *cobra.Command {
 		Short: "List remote secrets.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			response, err := control.ListSecrets(cmd.Context(), secretOptions(projectID, environmentID))
+			response, err := controlPlane.ListSecrets(cmd.Context(), secretOptions(projectID, environmentID))
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			for _, secret := range response.Secrets {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", secret.Name, secret.State, secret.CreatedAt.Format(apiTimeFormat))
@@ -72,16 +71,16 @@ func secretGetCommand() *cobra.Command {
 		Short: "Show remote secret metadata.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			secret, err := control.GetSecret(cmd.Context(), args[0], secretOptions(projectID, environmentID))
+			secret, err := controlPlane.GetSecret(cmd.Context(), args[0], secretOptions(projectID, environmentID))
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), secret)
+				return writeJSON(cmd.OutOrStdout(), secret)
 			}
 			return writeSecret(cmd.OutOrStdout(), secret)
 		},
@@ -106,11 +105,11 @@ func secretCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			secret, err := control.CreateSecret(
+			secret, err := controlPlane.CreateSecret(
 				cmd.Context(),
 				args[0],
 				value,
@@ -121,7 +120,7 @@ func secretCreateCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), secret)
+				return writeJSON(cmd.OutOrStdout(), secret)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", secret.Name)
 			return nil
@@ -149,14 +148,14 @@ func secretRotateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
 			if strings.TrimSpace(idempotencyKey) == "" {
 				idempotencyKey = uuid.Must(uuid.NewV7()).String()
 			}
-			record, err := control.RotateSecret(
+			record, err := controlPlane.RotateSecret(
 				cmd.Context(),
 				args[0],
 				value,
@@ -167,7 +166,7 @@ func secretRotateCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), record)
+				return writeJSON(cmd.OutOrStdout(), record)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", record.Name)
 			return nil
@@ -210,14 +209,14 @@ func secretRevokeCommand() *cobra.Command {
 			if !yes {
 				return errors.New("secret revoke requires --yes")
 			}
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
 			if strings.TrimSpace(idempotencyKey) == "" {
 				idempotencyKey = uuid.Must(uuid.NewV7()).String()
 			}
-			secret, err := control.RevokeSecret(
+			secret, err := controlPlane.RevokeSecret(
 				cmd.Context(),
 				args[0],
 				idempotencyKey,

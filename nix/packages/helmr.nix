@@ -10,7 +10,7 @@
 let
   moduleFiles = lib.fileset.unions [
     ../../cmd/helmr
-    ../../deployment/operatorapi
+    ../../operatorapi
     ../../go.mod
     ../../go.sum
     ../../internal

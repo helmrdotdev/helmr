@@ -10,29 +10,29 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type runObservabilityControl interface {
-	UpdateRunMetadata(context.Context, api.WorkerUpdateRunMetadataRequest) error
-	AppendStructuredRunLog(context.Context, api.WorkerStructuredLogRequest) error
+type runObservabilityControlPlane interface {
+	UpdateRunMetadata(context.Context, workerapi.UpdateRunMetadataRequest) error
+	AppendStructuredRunLog(context.Context, workerapi.StructuredLogRequest) error
 }
 
-func requireRunObservabilityControl(value any) (runObservabilityControl, error) {
-	control, ok := value.(runObservabilityControl)
+func requireRunObservabilityControlPlane(value any) (runObservabilityControlPlane, error) {
+	controlPlane, ok := value.(runObservabilityControlPlane)
 	if !ok {
-		return nil, errors.New("Run observability control is required")
+		return nil, errors.New("Run observability Control Plane is required")
 	}
-	return control, nil
+	return controlPlane, nil
 }
 
 func updateRunMetadata(
 	ctx context.Context,
-	control runObservabilityControl,
-	lease api.WorkerRunLeaseAssignment,
+	controlPlane runObservabilityControlPlane,
+	lease workerapi.RunLeaseAssignment,
 	requested *runv0.MetadataUpdated,
 ) error {
 	request, err := workerRunMetadataRequest(requested)
@@ -46,16 +46,16 @@ func updateRunMetadata(
 	}
 	defer cancel()
 	return retryRunLeaseRequest(requestCtx, func(retryCtx context.Context) error {
-		return sendRunMetadataRequest(retryCtx, control, request)
+		return sendRunMetadataRequest(retryCtx, controlPlane, request)
 	})
 }
 
 func sendRunMetadataRequest(
 	ctx context.Context,
-	control runObservabilityControl,
-	request api.WorkerUpdateRunMetadataRequest,
+	controlPlane runObservabilityControlPlane,
+	request workerapi.UpdateRunMetadataRequest,
 ) error {
-	if err := control.UpdateRunMetadata(ctx, request); err != nil {
+	if err := controlPlane.UpdateRunMetadata(ctx, request); err != nil {
 		return fmt.Errorf("update Run metadata: %w", err)
 	}
 	return nil
@@ -63,8 +63,8 @@ func sendRunMetadataRequest(
 
 func appendStructuredRunLog(
 	ctx context.Context,
-	control runObservabilityControl,
-	lease api.WorkerRunLeaseAssignment,
+	controlPlane runObservabilityControlPlane,
+	lease workerapi.RunLeaseAssignment,
 	sequence uint64,
 	requested *runv0.StructuredLogRequested,
 ) error {
@@ -79,16 +79,16 @@ func appendStructuredRunLog(
 	}
 	defer cancel()
 	return retryRunLeaseRequest(requestCtx, func(retryCtx context.Context) error {
-		return sendStructuredRunLogRequest(retryCtx, control, request)
+		return sendStructuredRunLogRequest(retryCtx, controlPlane, request)
 	})
 }
 
 func sendStructuredRunLogRequest(
 	ctx context.Context,
-	control runObservabilityControl,
-	request api.WorkerStructuredLogRequest,
+	controlPlane runObservabilityControlPlane,
+	request workerapi.StructuredLogRequest,
 ) error {
-	if err := control.AppendStructuredRunLog(ctx, request); err != nil {
+	if err := controlPlane.AppendStructuredRunLog(ctx, request); err != nil {
 		return fmt.Errorf("append structured Run log: %w", err)
 	}
 	return nil
@@ -96,14 +96,14 @@ func sendStructuredRunLogRequest(
 
 func workerRunMetadataRequest(
 	requested *runv0.MetadataUpdated,
-) (api.WorkerUpdateRunMetadataRequest, error) {
+) (workerapi.UpdateRunMetadataRequest, error) {
 	if requested == nil {
-		return api.WorkerUpdateRunMetadataRequest{}, errors.New("Run metadata request is required")
+		return workerapi.UpdateRunMetadataRequest{}, errors.New("Run metadata request is required")
 	}
 	if err := validateRuntimeCorrelationID(requested.GetCorrelationId()); err != nil {
-		return api.WorkerUpdateRunMetadataRequest{}, err
+		return workerapi.UpdateRunMetadataRequest{}, err
 	}
-	request := api.WorkerUpdateRunMetadataRequest{
+	request := workerapi.UpdateRunMetadataRequest{
 		OperationID: requested.GetCorrelationId(),
 		Operation:   requested.GetOperation(),
 	}
@@ -126,14 +126,14 @@ func workerRunMetadataRequest(
 func workerStructuredLogRequest(
 	requested *runv0.StructuredLogRequested,
 	sequence uint64,
-) (api.WorkerStructuredLogRequest, error) {
+) (workerapi.StructuredLogRequest, error) {
 	if requested == nil {
-		return api.WorkerStructuredLogRequest{}, errors.New("structured log request is required")
+		return workerapi.StructuredLogRequest{}, errors.New("structured log request is required")
 	}
 	if err := validateRuntimeCorrelationID(requested.GetCorrelationId()); err != nil {
-		return api.WorkerStructuredLogRequest{}, err
+		return workerapi.StructuredLogRequest{}, err
 	}
-	return api.WorkerStructuredLogRequest{
+	return workerapi.StructuredLogRequest{
 		ObservedSeq: sequence,
 		Level:       requested.GetLevel(),
 		Message:     requested.GetMessage(),
@@ -152,7 +152,7 @@ func validateRuntimeCorrelationID(raw string) error {
 func processRunMetadataEvent(
 	ctx context.Context,
 	events freshProgramEventSink,
-	lease api.WorkerRunLeaseAssignment,
+	lease workerapi.RunLeaseAssignment,
 	stream io.Writer,
 	requested *runv0.MetadataUpdated,
 ) error {
@@ -172,7 +172,7 @@ func processRunMetadataEvent(
 func processStructuredLogEvent(
 	ctx context.Context,
 	events freshProgramEventSink,
-	lease api.WorkerRunLeaseAssignment,
+	lease workerapi.RunLeaseAssignment,
 	stream io.Writer,
 	sequence uint64,
 	requested *runv0.StructuredLogRequested,
@@ -228,10 +228,10 @@ func runtimeOperationFailure(
 	err error,
 	fallbackCode string,
 	fallbackMessage string,
-) (api.WorkerRuntimeOperationFailure, bool) {
-	var httpErr *client.HTTPError
+) (workerapi.RuntimeOperationFailure, bool) {
+	var httpErr *httpclient.Error
 	if !errors.As(err, &httpErr) {
-		return api.WorkerRuntimeOperationFailure{}, false
+		return workerapi.RuntimeOperationFailure{}, false
 	}
 	semantic := httpErr.StatusCode == http.StatusBadRequest ||
 		httpErr.StatusCode == http.StatusRequestEntityTooLarge ||
@@ -239,7 +239,7 @@ func runtimeOperationFailure(
 		(httpErr.StatusCode == http.StatusConflict &&
 			strings.TrimSpace(httpErr.Code) != "")
 	if !semantic {
-		return api.WorkerRuntimeOperationFailure{}, false
+		return workerapi.RuntimeOperationFailure{}, false
 	}
 	code := strings.TrimSpace(httpErr.Code)
 	if code == "" {
@@ -249,7 +249,7 @@ func runtimeOperationFailure(
 	if message == "" {
 		message = fallbackMessage
 	}
-	return api.WorkerRuntimeOperationFailure{
+	return workerapi.RuntimeOperationFailure{
 		Code: code, Message: message, Retryable: httpErr.Retryable,
 	}, true
 }

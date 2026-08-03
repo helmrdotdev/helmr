@@ -4,7 +4,7 @@ data "aws_partition" "current" {}
 
 locals {
   name                    = lower(var.name)
-  worker_control_url      = module.control.control_url
+  worker_controlplane_url = module.controlplane.controlplane_url
   worker_ami_id           = coalesce(module.release_artifacts.worker_ami_id, "ami-unconfigured")
   boot_corpus_reserve_mib = 2048
   build_scratch_min_mib   = max(32768, coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib)) + local.boot_corpus_reserve_mib
@@ -79,11 +79,11 @@ locals {
   }, var.tags)
 }
 
-module "control_network" {
+module "controlplane_network" {
   source = "../modules/network"
 
-  name                    = "${local.name}-control"
-  vpc_cidr                = var.control_vpc_cidr
+  name                    = "${local.name}-controlplane"
+  vpc_cidr                = var.controlplane_vpc_cidr
   availability_zone_count = var.availability_zone_count
   enable_nat_gateway      = var.enable_nat_gateway
   tags                    = local.tags
@@ -102,71 +102,71 @@ module "execution_network" {
 module "release_artifacts" {
   source = "../modules/release-artifacts"
 
-  helmr_version          = var.helmr_version
-  aws_region             = var.aws_region
-  manifest_base_url      = var.release_artifacts_manifest_base_url
-  manifest_url           = var.release_artifacts_manifest_url
-  control_image_override = var.control_image
-  worker_ami_id_override = var.worker_ami_id
-  resolve_worker_ami     = var.create_worker
+  helmr_version               = var.helmr_version
+  aws_region                  = var.aws_region
+  manifest_base_url           = var.release_artifacts_manifest_base_url
+  manifest_url                = var.release_artifacts_manifest_url
+  controlplane_image_override = var.controlplane_image
+  worker_ami_id_override      = var.worker_ami_id
+  resolve_worker_ami          = var.create_worker
 }
 
-module "control" {
-  source = "../modules/control"
+module "controlplane" {
+  source = "../modules/controlplane"
 
-  name                                   = local.name
-  bucket_name_prefix                     = var.bucket_name_prefix
-  vpc_id                                 = module.control_network.vpc_id
-  public_subnet_ids                      = module.control_network.public_subnet_ids
-  private_subnet_ids                     = module.control_network.private_subnet_ids
-  public_url                             = var.public_url
-  deployment_mode                        = var.deployment_mode
-  worker_groups                          = local.worker_groups
-  image_cache_worker_role_arns           = [for pool in values(local.worker_pools) : "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${pool.name}-worker" if pool.allows_build]
-  region_id                              = var.region_id
-  default_region_id                      = var.default_region_id
-  clickhouse_url                         = var.clickhouse_url
-  clickhouse_user                        = var.clickhouse_user
-  clickhouse_password_secret_arn         = var.clickhouse_password_secret_arn
-  clickhouse_password_kms_key_arns       = var.clickhouse_password_kms_key_arns
-  additional_control_security_group_ids  = var.additional_control_security_group_ids
-  cloudfront_origin_domain_name          = var.cloudfront_origin_domain_name
-  control_image                          = module.release_artifacts.control_image
-  control_image_repository_arn           = var.control_image_repository_arn
-  platform_store_uri                     = var.platform_store_uri
-  platform_store_bucket_arn              = var.platform_store_bucket_arn
-  platform_store_kms_key_arn             = var.platform_store_kms_key_arn
-  build_policy_digest                    = var.build_policy_digest
-  control_desired_count                  = var.control_desired_count
-  dispatcher_desired_count               = var.dispatcher_desired_count
-  control_assign_public_ip               = var.control_assign_public_ip
-  control_health_check_path              = var.control_health_check_path
-  create_control_service                 = var.create_control_service
-  control_environment                    = var.control_environment
-  email_provider                         = var.email_provider
-  email_from                             = var.email_from
-  smtp_addr                              = var.smtp_addr
-  smtp_username                          = var.smtp_username
-  smtp_password_enabled                  = var.smtp_password_enabled
-  redis_node_type                        = var.redis_node_type
-  redis_node_count                       = var.redis_node_count
-  certificate_arn                        = var.certificate_arn
-  allow_insecure_http                    = var.allow_insecure_http
-  enable_cloudfront                      = var.enable_cloudfront
-  github_oauth_client_id                 = var.github_oauth_client_id
-  database_instance_class                = var.database_instance_class
-  database_engine_version                = var.database_engine_version
-  database_allocated_storage_gb          = var.database_allocated_storage_gb
-  database_backup_retention_days         = var.database_backup_retention_days
-  database_performance_insights_enabled  = var.database_performance_insights_enabled
-  database_deletion_protection           = var.database_deletion_protection
-  database_skip_final_snapshot           = var.database_skip_final_snapshot
-  control_log_retention_days             = var.control_log_retention_days
-  kms_deletion_window_in_days            = var.kms_deletion_window_in_days
-  secret_recovery_window_in_days         = var.secret_recovery_window_in_days
-  cas_object_expiration_days             = var.cas_object_expiration_days
-  cas_noncurrent_version_expiration_days = var.cas_noncurrent_version_expiration_days
-  tags                                   = local.tags
+  name                                       = local.name
+  bucket_name_prefix                         = var.bucket_name_prefix
+  vpc_id                                     = module.controlplane_network.vpc_id
+  public_subnet_ids                          = module.controlplane_network.public_subnet_ids
+  private_subnet_ids                         = module.controlplane_network.private_subnet_ids
+  public_url                                 = var.public_url
+  deployment_mode                            = var.deployment_mode
+  worker_groups                              = local.worker_groups
+  image_cache_worker_role_arns               = [for pool in values(local.worker_pools) : "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${pool.name}-worker" if pool.allows_build]
+  region_id                                  = var.region_id
+  default_region_id                          = var.default_region_id
+  clickhouse_url                             = var.clickhouse_url
+  clickhouse_user                            = var.clickhouse_user
+  clickhouse_password_secret_arn             = var.clickhouse_password_secret_arn
+  clickhouse_password_kms_key_arns           = var.clickhouse_password_kms_key_arns
+  additional_controlplane_security_group_ids = var.additional_controlplane_security_group_ids
+  cloudfront_origin_domain_name              = var.cloudfront_origin_domain_name
+  controlplane_image                         = module.release_artifacts.controlplane_image
+  controlplane_image_repository_arn          = var.controlplane_image_repository_arn
+  platform_store_uri                         = var.platform_store_uri
+  platform_store_bucket_arn                  = var.platform_store_bucket_arn
+  platform_store_kms_key_arn                 = var.platform_store_kms_key_arn
+  build_policy_digest                        = var.build_policy_digest
+  controlplane_desired_count                 = var.controlplane_desired_count
+  dispatcher_desired_count                   = var.dispatcher_desired_count
+  controlplane_assign_public_ip              = var.controlplane_assign_public_ip
+  controlplane_health_check_path             = var.controlplane_health_check_path
+  create_controlplane_service                = var.create_controlplane_service
+  controlplane_environment                   = var.controlplane_environment
+  email_provider                             = var.email_provider
+  email_from                                 = var.email_from
+  smtp_addr                                  = var.smtp_addr
+  smtp_username                              = var.smtp_username
+  smtp_password_enabled                      = var.smtp_password_enabled
+  redis_node_type                            = var.redis_node_type
+  redis_node_count                           = var.redis_node_count
+  certificate_arn                            = var.certificate_arn
+  allow_insecure_http                        = var.allow_insecure_http
+  enable_cloudfront                          = var.enable_cloudfront
+  github_oauth_client_id                     = var.github_oauth_client_id
+  database_instance_class                    = var.database_instance_class
+  database_engine_version                    = var.database_engine_version
+  database_allocated_storage_gb              = var.database_allocated_storage_gb
+  database_backup_retention_days             = var.database_backup_retention_days
+  database_performance_insights_enabled      = var.database_performance_insights_enabled
+  database_deletion_protection               = var.database_deletion_protection
+  database_skip_final_snapshot               = var.database_skip_final_snapshot
+  controlplane_log_retention_days            = var.controlplane_log_retention_days
+  kms_deletion_window_in_days                = var.kms_deletion_window_in_days
+  secret_recovery_window_in_days             = var.secret_recovery_window_in_days
+  cas_object_expiration_days                 = var.cas_object_expiration_days
+  cas_noncurrent_version_expiration_days     = var.cas_noncurrent_version_expiration_days
+  tags                                       = local.tags
 }
 
 module "worker_group" {
@@ -205,22 +205,22 @@ module "worker_group" {
   artifact_cache_max_mib                     = each.key == "build" && var.build_worker_artifact_cache_max_mib != null ? var.build_worker_artifact_cache_max_mib : var.worker_artifact_cache_max_mib
   build_cache_mib                            = each.key == "build" ? local.build_worker_build_cache_mib + local.build_worker_artifact_cache_mib : null
   build_scratch_mib                          = each.key == "build" ? local.build_worker_scratch_mib : null
-  worker_control_url                         = local.worker_control_url
-  cas_uri                                    = module.control.cas_uri
-  cas_bucket_arn                             = module.control.cas_bucket_arn
-  kms_key_arn                                = module.control.kms_key_arn
+  worker_controlplane_url                    = local.worker_controlplane_url
+  cas_uri                                    = module.controlplane.cas_uri
+  cas_bucket_arn                             = module.controlplane.cas_bucket_arn
+  kms_key_arn                                = module.controlplane.kms_key_arn
   platform_store_uri                         = var.platform_store_uri
   platform_store_bucket_arn                  = var.platform_store_bucket_arn
   platform_store_kms_key_arn                 = var.platform_store_kms_key_arn
   build_policy_digest                        = each.key == "build" ? var.build_policy_digest : null
-  image_cache_registry_authority             = module.control.image_cache_registry_authority
-  image_cache_repository_prefix              = module.control.image_cache_repository_prefix
-  image_cache_role_arn                       = module.control.image_cache_role_arn
-  image_cache_repository_arn_prefix          = module.control.image_cache_repository_arn_prefix
+  image_cache_registry_authority             = module.controlplane.image_cache_registry_authority
+  image_cache_repository_prefix              = module.controlplane.image_cache_repository_prefix
+  image_cache_role_arn                       = module.controlplane.image_cache_role_arn
+  image_cache_repository_arn_prefix          = module.controlplane.image_cache_repository_arn_prefix
 
   secret_arns = {
-    checkpoint_encryption_key = module.control.secret_arns.checkpoint_encryption_key
-    worker_enrollment         = module.control.worker_enrollment_secret_arns[each.value.group_id]
+    checkpoint_encryption_key = module.controlplane.secret_arns.checkpoint_encryption_key
+    worker_enrollment         = module.controlplane.worker_enrollment_secret_arns[each.value.group_id]
   }
 
   tags = local.tags
@@ -228,15 +228,15 @@ module "worker_group" {
 
 resource "terraform_data" "quickstart_preconditions" {
   input = {
-    control_assign_public_ip = var.control_assign_public_ip
-    create_worker            = var.create_worker
-    cloudfront_origin        = var.cloudfront_origin_domain_name
-    enable_cloudfront        = var.enable_cloudfront
-    enable_nat_gateway       = var.enable_nat_gateway
-    public_url               = var.public_url
-    worker_ami_id            = module.release_artifacts.worker_ami_id
-    worker_max_size          = var.worker_max_size
-    worker_min_size          = var.worker_min_size
+    controlplane_assign_public_ip = var.controlplane_assign_public_ip
+    create_worker                 = var.create_worker
+    cloudfront_origin             = var.cloudfront_origin_domain_name
+    enable_cloudfront             = var.enable_cloudfront
+    enable_nat_gateway            = var.enable_nat_gateway
+    public_url                    = var.public_url
+    worker_ami_id                 = module.release_artifacts.worker_ami_id
+    worker_max_size               = var.worker_max_size
+    worker_min_size               = var.worker_min_size
   }
 
   lifecycle {
@@ -251,8 +251,8 @@ resource "terraform_data" "quickstart_preconditions" {
     }
 
     precondition {
-      condition     = var.control_assign_public_ip || var.enable_nat_gateway
-      error_message = "enable_nat_gateway must be true when control_assign_public_ip is false because control and migration tasks need outbound access."
+      condition     = var.controlplane_assign_public_ip || var.enable_nat_gateway
+      error_message = "enable_nat_gateway must be true when controlplane_assign_public_ip is false because controlplane and migration tasks need outbound access."
     }
 
     precondition {

@@ -11,10 +11,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -81,7 +81,7 @@ func TestPlaceReadyRunPreparesMountAndGrantsFencedLeases(t *testing.T) {
 		t.Fatalf("reservation placement = %+v", reserved)
 	}
 
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runtime_instances
    SET observed_state = 'ready',
        observed_version = 1,
@@ -104,7 +104,7 @@ UPDATE runtime_instances
 		mounting.RuntimeInstanceID != reserved.RuntimeInstanceID {
 		t.Fatalf("mounting placement = %+v", mounting)
 	}
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspace_mounts
    SET state = 'mounted',
        mounted_at = transaction_timestamp()
@@ -263,7 +263,7 @@ SELECT workspace_leases.id,
 	); err != nil {
 		t.Fatal(err)
 	}
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO idempotency_claims (
     id, environment_id, operation, slot_hash,
     request_fingerprint, accepted_at
@@ -274,14 +274,14 @@ INSERT INTO idempotency_claims (
 		claimID,
 		fixture.environmentID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES ($1, $2, 1, $3)`,
 		fixture.orgID,
 		privateDigest,
 		workspace.ArtifactMediaType,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO artifacts (
     id, org_id, project_id, environment_id, digest, kind,
     size_bytes, media_type
@@ -295,7 +295,7 @@ INSERT INTO artifacts (
 		privateDigest,
 		workspace.ArtifactMediaType,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id,
     parent_version_id, artifact_id, artifact_kind, kind, content_digest,
@@ -313,7 +313,7 @@ INSERT INTO workspace_versions (
 		privateDigest,
 		parentWorkspaceLeaseID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO runs (
     id, org_id, project_id, environment_id, deployment_id,
     deployment_definition_id, entrypoint_kind, entrypoint_declared_id,
@@ -338,7 +338,7 @@ INSERT INTO runs (
 		privateVersionID,
 		claimID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_attempts (
     run_id, number, entrypoint_kind, workspace_id,
     base_workspace_version_id
@@ -347,7 +347,7 @@ INSERT INTO run_attempts (
 		fixture.workspaceID,
 		privateVersionID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, child_run_id,
     child_parent_owned, child_target_declared_id, child_claim_id,
@@ -366,7 +366,7 @@ INSERT INTO run_waits (
 		parent.Lease.ID,
 		resumeAttachID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_checkpoints (
     id, kind, run_id, attempt_number, run_wait_id,
     source_run_lease_id, source_workspace_lease_id, workspace_id,
@@ -385,7 +385,7 @@ INSERT INTO run_checkpoints (
 		originalVersionID,
 		privateVersionID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_waits
    SET suspend_checkpoint_id = $2,
        base_workspace_version_id = $3,
@@ -403,14 +403,14 @@ UPDATE run_waits
 		reserved.RuntimeInstanceID,
 		mounting.WorkspaceMountID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE runs
    SET status = 'waiting', state_version = 3,
        current_run_lease_id = NULL, active_started_at = NULL
  WHERE id = $1`,
 		fixture.runID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_leases
    SET state = 'checkpointed', claimed_at = assigned_at,
        started_at = assigned_at, checkpointed_at = now(),
@@ -418,13 +418,13 @@ UPDATE run_leases
  WHERE id = $1`,
 		parent.Lease.ID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspace_leases
    SET state = 'released', released_at = now(), terminal_at = now()
  WHERE id = $1`,
 		parentWorkspaceLeaseID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspace_mounts
    SET materialized_version_id = $2, dirty_generation = 1
  WHERE id = $1`,
@@ -580,12 +580,12 @@ SELECT id
 	if _, err := tx.Exec(fixture.ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
 		t.Fatal(err)
 	}
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES ($1, $2, 2, $3)`,
 		fixture.orgID, resultDigest, workspace.ArtifactMediaType,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO artifacts (
     id, org_id, project_id, environment_id, digest, kind,
     size_bytes, media_type
@@ -593,7 +593,7 @@ INSERT INTO artifacts (
 		resultArtifactID, fixture.orgID, fixture.projectID, fixture.environmentID,
 		resultDigest, workspace.ArtifactMediaType,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id,
     parent_version_id, artifact_id, artifact_kind, kind, content_digest,
@@ -607,7 +607,7 @@ INSERT INTO workspace_versions (
 		fixture.workspaceID, privateVersionID, resultArtifactID, resultDigest,
 		childWorkspaceLeaseID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_checkpoints (
     id, kind, run_id, attempt_number, run_wait_id,
     source_run_lease_id, source_workspace_lease_id, workspace_id,
@@ -621,35 +621,35 @@ INSERT INTO run_checkpoints (
 		parentWorkspaceLeaseID, fixture.workspaceID, originalVersionID,
 		resultVersionID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_attempts
    SET entrypoint_entered_at = now(), terminal_outcome = 'succeeded',
        terminal_reason_code = 'completed', terminal_at = now()
  WHERE run_id = $1 AND number = 1`, childID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE runs
    SET status = 'succeeded', output = '{}'::jsonb,
        current_run_lease_id = NULL, terminal_at = now(),
        state_version = state_version + 1
  WHERE id = $1 AND current_run_lease_id = $2`, childID, granted.Lease.ID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_leases
    SET state = 'completed', claimed_at = assigned_at, started_at = assigned_at,
        terminal_at = now(), terminal_reason_code = 'completed'
  WHERE id = $1`, granted.Lease.ID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspace_leases
    SET state = 'released', released_at = now(), terminal_at = now()
  WHERE id = $1`, childWorkspaceLeaseID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspace_mounts
    SET materialized_version_id = $2, dirty_generation = dirty_generation + 1
  WHERE id = $1`, mounting.WorkspaceMountID, resultVersionID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE runs
    SET status = 'queued', state_version = 4, updated_at = now()
  WHERE id = $1 AND status = 'waiting'`, fixture.runID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_waits
    SET condition_state = 'completed', condition_result = '{}'::jsonb,
        condition_terminal_at = now(), suspension_state = 'resume_pending',
@@ -691,7 +691,7 @@ SELECT suspension_state, resume_writer_generation
 	// A retained parent attach that loses its Lease before Run start is safe to
 	// regrant on the still-frozen runtime. Recovery clears the old writer
 	// generation so the next ordinary admission can bind a fresh one.
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 WITH expired AS (
     UPDATE run_leases
        SET assigned_at = transaction_timestamp() - interval '3 seconds',
@@ -800,17 +800,17 @@ SELECT runs.state_version, run_waits.resume_writer_generation,
 	// Once Run start commits, guest release may have been applied. The same
 	// retained VM is no longer replay-safe; recovery closes it and requeues from
 	// the authoritative handoff-resume checkpoint.
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
    SET state = 'running', claimed_at = transaction_timestamp(),
        started_at = transaction_timestamp()
  WHERE id = $1 AND state = 'assigned'`, regranted.Lease.ID)
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runs
    SET status = 'running', started_at = COALESCE(started_at, transaction_timestamp()),
        active_started_at = transaction_timestamp(), state_version = state_version + 1
  WHERE id = $1 AND status = 'queued'`, fixture.runID)
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 WITH expired AS (
     UPDATE run_leases
        SET assigned_at = transaction_timestamp() - interval '3 seconds',
@@ -844,12 +844,12 @@ SELECT run_waits.resume_writer_generation, runtime_instances.desired_state
 	}
 
 	reclaimRuntime := func(runtimeID, mountID pgtype.UUID) {
-		mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+		dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspace_mounts
    SET state = 'unmounted', unmounted_at = transaction_timestamp(),
        terminal_at = transaction_timestamp(), terminal_reason_code = 'test_reclaimed'
  WHERE id = $1 AND state = 'unmounting'`, mountID)
-		mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+		dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runtime_instances
    SET observed_state = 'closed', observed_version = observed_version + 1,
        observed_desired_version = desired_version, observed_at = transaction_timestamp(),
@@ -862,7 +862,7 @@ UPDATE runtime_instances
  WHERE id = $1 AND desired_state = 'closed'`, runtimeID)
 	}
 	expireResumeLease := func(leaseID pgtype.UUID) {
-		mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+		dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 WITH expired AS (
     UPDATE run_leases
        SET assigned_at = transaction_timestamp() - interval '3 seconds',
@@ -945,7 +945,7 @@ SELECT restore_checkpoint_id
 	// checkpoint. This models the terminal child decision after its dirty VM
 	// has been fenced.
 	reclaimRuntime(successRestore.RuntimeInstanceID, successRestore.WorkspaceMountID)
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_waits
    SET condition_state = 'failed', condition_result = NULL,
        condition_error = '{"code":"task_failed"}'::jsonb,
@@ -996,13 +996,13 @@ func TestRecoverExpiredNestedRunResume(t *testing.T) {
 				convertNestedResumeRootToActor(t, fixture, state.parentRunID)
 			}
 			if tc.physicalLoss {
-				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runtime_instances
    SET observed_state = 'failed', failed_at = transaction_timestamp(),
        terminal_at = transaction_timestamp(),
        terminal_reason_code = 'test_runtime_failed'
  WHERE id = $1`, state.runtimeID)
-				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspace_mounts
    SET state = 'failed', failed_at = transaction_timestamp(),
        terminal_at = transaction_timestamp(),
@@ -1117,7 +1117,7 @@ func TestRecoverExpiredNestedRunResumeRejectsCheckpointProvenanceDrift(t *testin
 		{
 			name: "handoff resume kind",
 			tamper: func(t *testing.T, fixture runPlacementFixture, state nestedResumeRecoveryState) {
-				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_checkpoints
    SET kind = 'suspend'
  WHERE id = $1`, state.resumeCheckpointID)
@@ -1126,7 +1126,7 @@ UPDATE run_checkpoints
 		{
 			name: "current source Workspace Lease writer",
 			tamper: func(t *testing.T, fixture runPlacementFixture, state nestedResumeRecoveryState) {
-				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspace_leases
    SET writer_generation = 4
  WHERE id = $1`, state.resumeSourceWorkspaceLeaseID)
@@ -1135,7 +1135,7 @@ UPDATE workspace_leases
 		{
 			name: "current resume Workspace Lease ownership",
 			tamper: func(t *testing.T, fixture runPlacementFixture, state nestedResumeRecoveryState) {
-				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspace_leases
    SET ownership_generation = ownership_generation + 1
  WHERE id = $1`, state.currentWorkspaceLeaseID)
@@ -1147,14 +1147,14 @@ UPDATE workspace_leases
 				versionID := uuid.Must(uuid.NewV7())
 				artifactID := uuid.Must(uuid.NewV7())
 				digest := "sha256:" + strings.Repeat("7", 64)
-				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES ($1, $2, 1, $3)`,
 					fixture.orgID,
 					digest,
 					workspace.ArtifactMediaType,
 				)
-				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO artifacts (
     id, org_id, project_id, environment_id, digest, kind,
     size_bytes, media_type
@@ -1166,7 +1166,7 @@ INSERT INTO artifacts (
 					digest,
 					workspace.ArtifactMediaType,
 				)
-				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id,
     parent_version_id, artifact_id, artifact_kind, kind,
@@ -1184,7 +1184,7 @@ SELECT $1, source.environment_id, source.workspace_id,
 					digest,
 					state.currentWorkspaceLeaseID,
 				)
-				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspace_leases
    SET base_version_id = $2
  WHERE id = $1`, state.currentWorkspaceLeaseID, versionID)
@@ -1193,7 +1193,7 @@ UPDATE workspace_leases
 		{
 			name: "outer source Workspace Lease writer",
 			tamper: func(t *testing.T, fixture runPlacementFixture, state nestedResumeRecoveryState) {
-				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspace_leases
    SET writer_generation = 4
  WHERE id = $1`, state.parentSourceWorkspaceLeaseID)
@@ -1245,7 +1245,7 @@ func convertNestedResumeRootToActor(
 	t.Helper()
 	actorID := uuid.Must(uuid.NewV7())
 	definitionID := uuid.Must(uuid.NewV7())
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 ALTER TABLE run_attempts
 ALTER CONSTRAINT run_attempts_run_id_entrypoint_kind_workspace_id_fkey
 DEFERRABLE INITIALLY DEFERRED`)
@@ -1254,8 +1254,8 @@ DEFERRABLE INITIALLY DEFERRED`)
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	mustRunPlacementExec(t, fixture.ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO deployment_definitions (
     id, environment_id, deployment_id, kind, declared_id,
     manifest_version, manifest, manifest_digest
@@ -1267,7 +1267,7 @@ INSERT INTO deployment_definitions (
 		fixture.environmentID,
 		fixture.deploymentID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO actors (
     id, environment_id,
     actor_declared_id, deployment_definition_id, workspace_id,
@@ -1282,7 +1282,7 @@ INSERT INTO actors (
 		fixture.workspaceID,
 		runID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE runs
    SET deployment_definition_id = $2,
        entrypoint_kind = 'actor',
@@ -1297,13 +1297,13 @@ UPDATE runs
 		definitionID,
 		actorID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_attempts
    SET entrypoint_kind = 'actor', actor_start_input_sequence = 1
  WHERE run_id = $1 AND number = 1`,
 		runID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspaces
    SET owner_run_id = NULL, owner_actor_id = $2
  WHERE id = $1`,
@@ -1410,7 +1410,7 @@ SELECT workspace_leases.id, workspace_leases.base_version_id,
 		t.Fatal(err)
 	}
 	for index, claimID := range []uuid.UUID{currentClaimID, childClaimID} {
-		mustRunPlacementExec(t, fixture.ctx, tx, `
+		dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO idempotency_claims (
     id, environment_id, operation, slot_hash,
     request_fingerprint, accepted_at
@@ -1437,7 +1437,7 @@ INSERT INTO idempotency_claims (
 			claimID: childClaimID, status: "succeeded",
 		},
 	} {
-		mustRunPlacementExec(t, fixture.ctx, tx, `
+		dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO runs (
     id, org_id, project_id, environment_id, deployment_id,
     deployment_definition_id, entrypoint_kind, entrypoint_declared_id,
@@ -1468,7 +1468,7 @@ INSERT INTO runs (
 			run.claimID,
 			run.status,
 		)
-		mustRunPlacementExec(t, fixture.ctx, tx, `
+		dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_attempts (
     run_id, number, entrypoint_kind, workspace_id,
     base_workspace_version_id, terminal_outcome, terminal_reason_code,
@@ -1485,19 +1485,19 @@ INSERT INTO run_attempts (
 			run.status,
 		)
 	}
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspaces
    SET writer_generation = 3
  WHERE id = $1 AND writer_generation = 1`, fixture.workspaceID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspace_leases
    SET writer_generation = 3
  WHERE id = $1 AND writer_generation = 1`, workspaceLeaseID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_leases
    SET lease_sequence = 2
  WHERE id = $1 AND lease_sequence = 1`, granted.Lease.ID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_leases (
     id, org_id, project_id, environment_id, run_id, workspace_id,
     region_id, lease_sequence, attempt_number, worker_group_id,
@@ -1523,7 +1523,7 @@ SELECT $1, org_id, project_id, environment_id, $2, workspace_id,
 		parentRunID,
 		granted.Lease.ID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_leases (
     id, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
@@ -1545,7 +1545,7 @@ SELECT $1, org_id, worker_group_id, project_id, environment_id, region_id,
 		workspaceLeaseID,
 		mountGeneration-1,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_leases (
     id, org_id, project_id, environment_id, run_id, workspace_id,
     region_id, lease_sequence, attempt_number, worker_group_id,
@@ -1570,7 +1570,7 @@ SELECT $1, org_id, project_id, environment_id, $2, workspace_id,
 		fixture.runID,
 		granted.Lease.ID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_leases (
     id, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
@@ -1592,17 +1592,17 @@ SELECT $1, org_id, worker_group_id, project_id, environment_id, region_id,
 		workspaceLeaseID,
 		mountGeneration-1,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE runs
    SET cause_kind = 'child', parent_run_id = $2,
        parent_owns_lifecycle = true, claim_id = $3,
        state_version = 2
  WHERE id = $1`, fixture.runID, parentRunID, currentClaimID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspaces
    SET owner_run_id = $2
  WHERE id = $1`, fixture.workspaceID, parentRunID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, child_run_id,
     child_parent_owned, child_target_declared_id, child_claim_id, child_request,
@@ -1621,7 +1621,7 @@ INSERT INTO run_waits (
 		parentLeaseID,
 		enclosingAttachID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, child_run_id,
     child_parent_owned, child_target_declared_id, child_claim_id, child_request,
@@ -1664,7 +1664,7 @@ INSERT INTO run_waits (
 			sourceLeaseID: resumeSourceLeaseID, sourceWorkspaceID: resumeSourceWorkspaceLeaseID,
 		},
 	} {
-		mustRunPlacementExec(t, fixture.ctx, tx, `
+		dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_checkpoints (
     id, kind, run_id, attempt_number, run_wait_id,
     source_run_lease_id, source_workspace_lease_id, workspace_id,
@@ -1684,7 +1684,7 @@ INSERT INTO run_checkpoints (
 			baseVersionID,
 		)
 	}
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_waits
    SET suspend_checkpoint_id = $2,
        base_workspace_version_id = $3,
@@ -1704,7 +1704,7 @@ UPDATE run_waits
 		granted.WorkspaceMountID,
 		mountGeneration-1,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_waits
    SET condition_state = 'completed',
        condition_result = '{}'::jsonb,
@@ -1736,7 +1736,7 @@ UPDATE run_waits
 		granted.WorkspaceMountID,
 		mountGeneration-1,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 WITH expired AS (
     UPDATE run_leases
        SET assigned_at = transaction_timestamp() - interval '3 seconds',
@@ -1809,17 +1809,17 @@ SELECT workspace_leases.id, workspace_leases.base_version_id
 	if _, err := tx.Exec(fixture.ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
 		t.Fatal(err)
 	}
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES ($1, $2, 1, $3)`, fixture.orgID, privateDigest, workspace.ArtifactMediaType)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO artifacts (
     id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type
 ) VALUES ($1, $2, $3, $4, $5, 'workspace_version', 1, $6)`,
 		privateArtifactID, fixture.orgID, fixture.projectID, fixture.environmentID,
 		privateDigest, workspace.ArtifactMediaType,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id,
     parent_version_id, kind, content_digest, state, source_workspace_lease_id,
@@ -1832,7 +1832,7 @@ INSERT INTO workspace_versions (
 		privateVersionID, fixture.environmentID, fixture.workspaceID, baseVersionID,
 		privateDigest, sourceWorkspaceLeaseID, privateArtifactID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, due_at, condition_state,
     condition_result, condition_terminal_at, suspension_state,
@@ -1845,7 +1845,7 @@ INSERT INTO run_waits (
 		runWaitID, fixture.environmentID, fixture.runID, fixture.workspaceID,
 		granted.Lease.ID, resumeAttachID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_checkpoints (
     id, kind, run_id, attempt_number, run_wait_id, source_run_lease_id,
     source_workspace_lease_id, workspace_id, base_workspace_version_id,
@@ -1858,30 +1858,30 @@ INSERT INTO run_checkpoints (
 		checkpointID, fixture.runID, runWaitID, granted.Lease.ID,
 		sourceWorkspaceLeaseID, fixture.workspaceID, baseVersionID, privateVersionID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_waits
    SET suspension_state = 'resume_pending', suspend_checkpoint_id = $2,
        resume_request_version = 1
  WHERE id = $1`, runWaitID, checkpointID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE runs
    SET current_run_lease_id = NULL, state_version = 3, updated_at = now()
  WHERE id = $1 AND current_run_lease_id = $2`, fixture.runID, granted.Lease.ID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_leases
    SET state = 'checkpointed', claimed_at = assigned_at, started_at = assigned_at,
        checkpointed_at = now(), terminal_at = now(), terminal_reason_code = 'checkpointed'
  WHERE id = $1`, granted.Lease.ID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspace_leases
    SET state = 'released', released_at = now(), terminal_at = now()
  WHERE id = $1`, sourceWorkspaceLeaseID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspace_mounts
    SET state = 'unmounted', unmounted_at = now(), terminal_at = now(),
        terminal_reason_code = 'checkpointed'
  WHERE id = $1`, mounting.WorkspaceMountID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE runtime_instances
    SET desired_state = 'closed', desired_version = desired_version + 1,
        observed_state = 'closed', observed_desired_version = desired_version + 1,
@@ -1900,12 +1900,12 @@ UPDATE runtime_instances
 		OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(fixture.runID),
 		ExpectedRunStateVersion: 3,
 	}
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances SET substrate_layout_abi = 'incompatible-layout' WHERE id = $1`, fixture.workerID)
 	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate); !errors.Is(err, ErrCapacityUnavailable) {
 		t.Fatalf("restore placement with incompatible substrate contract error = %v, want ErrCapacityUnavailable", err)
 	}
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances SET substrate_layout_abi = 'layout-v0' WHERE id = $1`, fixture.workerID)
 	restored, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate)
 	if err != nil {
@@ -1922,7 +1922,7 @@ SELECT restore_checkpoint_id, reserved_workspace_version_id
 	if restoreCheckpointID != pgvalue.UUID(checkpointID) || reservedVersionID != pgvalue.UUID(privateVersionID) {
 		t.Fatalf("restore reservation checkpoint=%s version=%s", pgvalue.UUIDString(restoreCheckpointID), pgvalue.UUIDString(reservedVersionID))
 	}
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_checkpoints
    SET state = 'invalid', ready_at = NULL, invalidated_at = now(),
        invalidation_reason_code = 'test_invalidated'
@@ -1930,7 +1930,7 @@ UPDATE run_checkpoints
 	if err := markRunPlacementRuntimeReadyQuery(t, fixture, restored.RuntimeInstanceID); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("mark ready with invalidated Checkpoint error = %v, want pgx.ErrNoRows", err)
 	}
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_checkpoints
    SET state = 'ready', ready_at = now(), invalidated_at = NULL,
        invalidation_reason_code = NULL
@@ -1978,7 +1978,7 @@ SELECT run_waits.suspension_state,
 			waitState, pgvalue.UUIDString(waitLeaseID), pgvalue.UUIDString(leaseBaseVersionID),
 			pgvalue.UUIDString(retainedCheckpointID), pgvalue.UUIDString(clearedReservation))
 	}
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
    SET state = 'running',
        assigned_at = transaction_timestamp() - interval '20 seconds',
@@ -1986,7 +1986,7 @@ UPDATE run_leases
        claimed_at = transaction_timestamp() - interval '18 seconds',
        started_at = transaction_timestamp() - interval '18 seconds'
  WHERE id = $1 AND state = 'assigned'`, restoreGrant.Lease.ID)
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runs
    SET status = 'running', started_at = transaction_timestamp(),
        max_active_duration_ms = 5000,
@@ -1998,7 +1998,7 @@ UPDATE runs
 	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT queue_score_at FROM runs WHERE id = $1`, fixture.runID).Scan(&originalQueueScore); err != nil {
 		t.Fatal(err)
 	}
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 WITH expired AS (
     UPDATE run_leases
        SET expires_at = transaction_timestamp() - interval '8 seconds'
@@ -2072,12 +2072,12 @@ SELECT count(*)
 	// proves that physical loss discovered after the Lease deadline still
 	// closes the retained runtime; cleanup remains blocked until recovery fences
 	// the Lease.
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspace_mounts
    SET state = 'unmounted', unmounted_at = transaction_timestamp(),
        terminal_at = transaction_timestamp(), terminal_reason_code = 'test_reclaimed'
  WHERE id = $1 AND state = 'unmounting'`, restoreMount.WorkspaceMountID)
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runtime_instances
    SET observed_state = 'closed', observed_version = observed_version + 1,
        observed_desired_version = desired_version, observed_at = transaction_timestamp(),
@@ -2104,7 +2104,7 @@ UPDATE runtime_instances
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
    SET start_deadline_at = transaction_timestamp() - interval '1 millisecond'
  WHERE id = $1`, secondRestoreGrant.Lease.ID)
@@ -2155,7 +2155,7 @@ UPDATE workspace_leases
 	if renewedLeaseState != "assigned" {
 		t.Fatalf("renewed Run Lease state = %s, want assigned", renewedLeaseState)
 	}
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
    SET state = 'running',
        assigned_at = transaction_timestamp() - interval '20 seconds',
@@ -2163,7 +2163,7 @@ UPDATE run_leases
        claimed_at = transaction_timestamp() - interval '18 seconds',
        started_at = transaction_timestamp() - interval '18 seconds'
  WHERE id = $1`, secondRestoreGrant.Lease.ID)
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runs
    SET status = 'running', max_active_duration_ms = 300000,
        started_at = COALESCE(started_at, transaction_timestamp() - interval '10 seconds'),
@@ -2228,7 +2228,7 @@ SELECT runtime_instances.reclaimed_at
 	if err := startupTx.Rollback(fixture.ctx); err != nil {
 		t.Fatal(err)
 	}
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 WITH expired AS (
     UPDATE run_leases
        SET expires_at = transaction_timestamp() - interval '1 second'
@@ -2241,12 +2241,12 @@ UPDATE workspace_leases
  WHERE workspace_leases.owner_run_lease_id = expired.id`,
 		secondRestoreGrant.Lease.ID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspace_mounts
    SET state = 'failed', failed_at = transaction_timestamp(),
        terminal_at = transaction_timestamp(), terminal_reason_code = 'test_mount_failed'
  WHERE id = $1`, secondRestoreMount.WorkspaceMountID)
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runtime_instances
    SET observed_state = 'failed', observed_version = observed_version + 1,
        observed_at = transaction_timestamp(), failed_at = transaction_timestamp(),
@@ -2272,7 +2272,7 @@ SELECT desired_version, observed_version
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("reclaim failed restore runtime with active Lease error = %v, want pgx.ErrNoRows", err)
 	}
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances
    SET state = 'lost', lost_at = transaction_timestamp()
  WHERE id = $1`, fixture.workerID)
@@ -2412,7 +2412,7 @@ func TestActorCurrentRunRecreatedRestoreAndRecovery(t *testing.T) {
 				t.Fatalf("Actor restore candidate scopes = %+v, error = %v", scopes, err)
 			}
 			if tc.invalidCursor {
-				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_checkpoints SET actor_speculative_input_sequence = 2 WHERE id = $1`, checkpointID)
 				if _, err := db.New(fixture.pool).GetQueuedRunReadyHint(fixture.ctx, db.GetQueuedRunReadyHintParams{
 					OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(fixture.runID),
@@ -2457,18 +2457,18 @@ UPDATE run_attempts
 				t.Fatal(err)
 			}
 			if tc.invalidate {
-				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_checkpoints
    SET state = 'invalid', ready_at = NULL, invalidated_at = transaction_timestamp(),
        invalidation_reason_code = 'test_unavailable'
  WHERE id = $1`, checkpointID)
 			}
 			if tc.maxDuration {
-				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
    SET state = 'running', claimed_at = assigned_at, started_at = assigned_at
  WHERE id = $1`, grant.Lease.ID)
-				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runs
    SET status = 'running', max_active_duration_ms = 5000,
        active_started_at = transaction_timestamp() - interval '10 seconds',
@@ -2476,7 +2476,7 @@ UPDATE runs
        state_version = state_version + 1
  WHERE id = $1`, fixture.runID)
 			}
-			mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 WITH expired AS (
     UPDATE run_leases
        SET start_deadline_at = assigned_at + interval '1 millisecond',
@@ -2569,7 +2569,7 @@ SELECT id, base_version_id FROM workspace_leases WHERE owner_run_lease_id = $1`,
 	// This fixture converts the already-granted Task source into an Actor source.
 	// Production Actor creation does not perform that conversion, but deferring
 	// this FK lets the fixture establish the same valid final graph atomically.
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 ALTER TABLE run_attempts
 ALTER CONSTRAINT run_attempts_run_id_entrypoint_kind_workspace_id_fkey
 DEFERRABLE INITIALLY DEFERRED`)
@@ -2578,13 +2578,13 @@ DEFERRABLE INITIALLY DEFERRED`)
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	mustRunPlacementExec(t, fixture.ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO deployment_definitions (
     id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest
 ) VALUES ($1, $2, $3, 'actor', 'test-actor', 0, '{}'::jsonb, decode(repeat('06', 32), 'hex'))`,
 		actorDefinitionID, fixture.environmentID, fixture.deploymentID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO actors (
     id, environment_id, actor_declared_id,
     deployment_definition_id, workspace_id, current_run_id,
@@ -2592,27 +2592,27 @@ INSERT INTO actors (
     run_max_active_duration_ms
 ) VALUES ($1, $2, 'test-actor', $3, $4, $5, 2, 1, 'default', 300000)`,
 		actorID, fixture.environmentID, actorDefinitionID, fixture.workspaceID, fixture.runID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE runs
    SET deployment_definition_id = $2, entrypoint_kind = 'actor',
        entrypoint_declared_id = 'test-actor', actor_id = $3,
        cause_kind = 'actor_start', actor_start_input_sequence = 1,
        actor_start_input_high_watermark = 1, payload = NULL
  WHERE id = $1`, fixture.runID, actorDefinitionID, actorID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_attempts
    SET entrypoint_kind = 'actor', actor_start_input_sequence = 1,
        entrypoint_entered_at = transaction_timestamp()
  WHERE run_id = $1 AND number = 1`, fixture.runID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspaces SET owner_run_id = NULL, owner_actor_id = $2 WHERE id = $1`, fixture.workspaceID, actorID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES ($1, $2, 1, $3)`,
+	dbtest.MustExec(t, fixture.ctx, tx, `INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES ($1, $2, 1, $3)`,
 		fixture.orgID, privateDigest, workspace.ArtifactMediaType)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
 VALUES ($1, $2, $3, $4, $5, 'workspace_version', 1, $6)`, privateArtifactID, fixture.orgID,
 		fixture.projectID, fixture.environmentID, privateDigest, workspace.ArtifactMediaType)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id, parent_version_id,
     kind, content_digest, state, source_workspace_lease_id, ownership_generation,
@@ -2620,7 +2620,7 @@ INSERT INTO workspace_versions (
 ) VALUES ($1, $2, $3, $4, 'user', $5, 'private', $6, 1, 1, $7, 'workspace_version', 1, 1)`,
 		privateVersionID, fixture.environmentID, fixture.workspaceID, baseVersionID, privateDigest,
 		sourceWorkspaceLeaseID, privateArtifactID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, due_at, condition_state,
     condition_result, condition_terminal_at, suspension_state, expected_run_state_version,
@@ -2628,7 +2628,7 @@ INSERT INTO run_waits (
 ) VALUES ($1, $2, $3, $4, 'timer', now() - interval '1 second', 'completed', '{}'::jsonb,
           now(), 'resume_pending', 3, 1, $5, $6)`, waitID, fixture.environmentID, fixture.runID,
 		fixture.workspaceID, grant.Lease.ID, uuid.Must(uuid.NewV7()))
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_checkpoints (
     id, kind, run_id, attempt_number, run_wait_id, source_run_lease_id,
     source_workspace_lease_id, workspace_id, base_workspace_version_id,
@@ -2638,14 +2638,14 @@ INSERT INTO run_checkpoints (
           'ready', '{"kind":"suspend"}'::jsonb, 'test-ready', now())`,
 		checkpointID, fixture.runID, waitID, grant.Lease.ID, sourceWorkspaceLeaseID,
 		fixture.workspaceID, baseVersionID, privateVersionID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `UPDATE run_waits SET suspend_checkpoint_id = $2, resume_request_version = 1 WHERE id = $1`, waitID, checkpointID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `UPDATE runs SET current_run_lease_id = NULL, state_version = 3 WHERE id = $1`, fixture.runID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE run_waits SET suspend_checkpoint_id = $2, resume_request_version = 1 WHERE id = $1`, waitID, checkpointID)
+	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE runs SET current_run_lease_id = NULL, state_version = 3 WHERE id = $1`, fixture.runID)
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_leases SET state = 'checkpointed', claimed_at = assigned_at, started_at = assigned_at,
        checkpointed_at = now(), terminal_at = now(), terminal_reason_code = 'checkpointed' WHERE id = $1`, grant.Lease.ID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `UPDATE workspace_leases SET state = 'released', released_at = now(), terminal_at = now() WHERE id = $1`, sourceWorkspaceLeaseID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `UPDATE workspace_mounts SET state = 'unmounted', unmounted_at = now(), terminal_at = now(), terminal_reason_code = 'checkpointed' WHERE id = $1`, mount.WorkspaceMountID)
-	mustRunPlacementExec(t, fixture.ctx, tx, `
+	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE workspace_leases SET state = 'released', released_at = now(), terminal_at = now() WHERE id = $1`, sourceWorkspaceLeaseID)
+	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE workspace_mounts SET state = 'unmounted', unmounted_at = now(), terminal_at = now(), terminal_reason_code = 'checkpointed' WHERE id = $1`, mount.WorkspaceMountID)
+	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE runtime_instances SET desired_state = 'closed', desired_version = desired_version + 1,
        observed_state = 'closed', observed_desired_version = desired_version + 1,
        observed_version = observed_version + 1, closing_at = now(), closed_at = now(),
@@ -2718,13 +2718,13 @@ SELECT runtime_instances.desired_version,
 
 func markRunPlacementMountReady(t *testing.T, fixture runPlacementFixture, mountID pgtype.UUID) {
 	t.Helper()
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspace_mounts SET state = 'mounted', mounted_at = transaction_timestamp() WHERE id = $1`, mountID)
 }
 
 func TestPlaceReadyRunRejectsPerVMIncompatibleWorkspace(t *testing.T) {
 	fixture := newRunPlacementFixture(t)
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances
    SET per_vm_memory_bytes = 536870912
  WHERE id = $1`,
@@ -2753,7 +2753,7 @@ UPDATE worker_instances
 
 func TestPlaceReadyRunAccountsForActiveBuildResources(t *testing.T) {
 	fixture := newRunPlacementFixture(t)
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances
    SET epoch_memory_bytes = 4294967296,
        epoch_guest_ephemeral_disk_bytes = 68719476736,
@@ -2761,7 +2761,7 @@ UPDATE worker_instances
  WHERE id = $1`,
 		fixture.workerID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO deployment_build_leases (
     id, org_id, project_id, environment_id, deployment_id, build_region_id,
     lease_sequence, worker_group_id, worker_instance_id, worker_epoch,
@@ -2846,23 +2846,23 @@ func newRunPlacementFixture(t *testing.T) runPlacementFixture {
 	programDigest := "sha256:" + strings.Repeat("2", 64)
 	imageDigest := "sha256:" + strings.Repeat("4", 64)
 
-	mustRunPlacementExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO regions (id, provider, provider_region, display_name)
 VALUES ('us-east-1', 'aws', 'us-east-1', 'US East')`)
-	mustRunPlacementExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO organizations (id, name, slug)
 VALUES ($1, 'Org', $2)`,
 		fixture.orgID,
 		"org-"+fixture.orgID.String(),
 	)
-	mustRunPlacementExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO projects (id, org_id, default_region_id, slug, name)
 VALUES ($1, $2, 'us-east-1', $3, 'Project')`,
 		fixture.projectID,
 		fixture.orgID,
 		"project-"+fixture.projectID.String(),
 	)
-	mustRunPlacementExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
 VALUES ($1, $2, $3, $4, 'Environment', '#3366ff')`,
 		fixture.environmentID,
@@ -2870,7 +2870,7 @@ VALUES ($1, $2, $3, $4, 'Environment', '#3366ff')`,
 		fixture.projectID,
 		"environment-"+fixture.environmentID.String(),
 	)
-	mustRunPlacementExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES
     ($1, $2, 1, 'application/vnd.helmr.deployment-source.v0+tar'),
@@ -2881,7 +2881,7 @@ VALUES
 		programDigest,
 		imageDigest,
 	)
-	mustRunPlacementExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO artifacts (
     id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type
 ) VALUES
@@ -2898,7 +2898,7 @@ INSERT INTO artifacts (
 		programDigest,
 		imageDigest,
 	)
-	mustRunPlacementExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO deployments (
     id, org_id, project_id, environment_id, build_region_id,
     build_node_version, build_runtime_digest, build_toolchain_digest,
@@ -2924,7 +2924,7 @@ INSERT INTO deployments (
 		`{"image":{"artifactDigest":%q,"mediaType":"application/octet-stream"},"resources":{"milliCpu":1000,"memoryMiB":1024}}`,
 		imageDigest,
 	)
-	mustRunPlacementExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO deployment_definitions (
     id, environment_id, deployment_id, kind, declared_id, manifest_version,
     manifest, manifest_digest, artifact_id
@@ -2940,20 +2940,20 @@ INSERT INTO deployment_definitions (
 		workspaceManifest,
 		imageID,
 	)
-	mustRunPlacementExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO worker_groups (
     id, region_id, name, allows_run, allows_build, observation_ttl_seconds
 ) VALUES ($1, 'us-east-1', $1, true, false, 120)`,
 		fixture.groupID,
 	)
-	mustRunPlacementExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO runtime_identities (
     id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
     rootfs_digest, network_abi
 ) VALUES ($1, 'x86_64', 'helmr.runtime.v0', 'kernel', 'initramfs', 'rootfs', 'helmr/v0')`,
 		runtimeIdentityID,
 	)
-	mustRunPlacementExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO worker_instances (
     id, resource_id, worker_group_id, state,
     current_epoch, current_service_id, protocol_version, supervisor_version,
@@ -2976,7 +2976,7 @@ INSERT INTO worker_instances (
 		uuid.Must(uuid.NewV7()),
 		runtimeIdentityID,
 	)
-	mustRunPlacementExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO worker_observations (
     worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bps,
     guest_ephemeral_disk_pressure_bps, build_cache_pressure_bps,
@@ -2993,7 +2993,7 @@ INSERT INTO worker_observations (
 	if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
 		t.Fatal(err)
 	}
-	mustRunPlacementExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO workspaces (
     id, environment_id, region_id,
     workspace_declared_id, deployment_definition_id,
@@ -3008,7 +3008,7 @@ INSERT INTO workspaces (
 		fixture.runID,
 		versionID,
 	)
-	mustRunPlacementExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO workspace_versions (
     id, environment_id, workspace_id,
     kind, content_digest, state, ownership_generation, writer_generation, published_at
@@ -3021,7 +3021,7 @@ INSERT INTO workspace_versions (
 		fixture.environmentID,
 		fixture.workspaceID,
 	)
-	mustRunPlacementExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO runs (
     id, org_id, project_id, environment_id, deployment_id,
     deployment_definition_id, entrypoint_kind, entrypoint_declared_id,
@@ -3042,7 +3042,7 @@ INSERT INTO runs (
 		fixture.workspaceID,
 		versionID,
 	)
-	mustRunPlacementExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO run_attempts (
     run_id, number, entrypoint_kind, workspace_id, base_workspace_version_id
 ) VALUES ($1, 1, 'task', $2, $3)`,
@@ -3054,19 +3054,4 @@ INSERT INTO run_attempts (
 		t.Fatal(err)
 	}
 	return fixture
-}
-
-func mustRunPlacementExec(
-	t *testing.T,
-	ctx context.Context,
-	execer interface {
-		Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-	},
-	sql string,
-	args ...any,
-) {
-	t.Helper()
-	if _, err := execer.Exec(ctx, sql, args...); err != nil {
-		t.Fatal(err)
-	}
 }

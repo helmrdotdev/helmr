@@ -41,31 +41,31 @@ func newBuildPlacementFixture(t *testing.T) *buildPlacementFixture {
 	}
 	sourceArtifactID := uuid.Must(uuid.NewV7())
 	sourceDigest := "sha256:" + strings.Repeat("1", 64)
-	mustDispatchExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO regions (id, provider, provider_region, display_name)
 VALUES ('us-east-1', 'aws', 'us-east-1', 'US East')`)
-	mustDispatchExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO organizations (id, name, slug) VALUES ($1, 'Org', $2)`,
 		fixture.orgID, "org-"+fixture.orgID.String())
-	mustDispatchExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO projects (id, org_id, default_region_id, slug, name)
 VALUES ($1, $2, 'us-east-1', $3, 'Project')`,
 		fixture.projectID, fixture.orgID,
 		"project-"+fixture.projectID.String())
-	mustDispatchExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
 VALUES ($1, $2, $3, $4, 'Environment', '#3366ff')`,
 		fixture.environmentID, fixture.orgID,
 		fixture.projectID, "environment-"+fixture.environmentID.String())
-	mustDispatchExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-source.v0+tar')`,
 		fixture.orgID, sourceDigest)
-	mustDispatchExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
 VALUES ($1, $2, $3, $4, $5, 'deployment_source', 1, 'application/vnd.helmr.deployment-source.v0+tar')`,
 		sourceArtifactID, fixture.orgID, fixture.projectID, fixture.environmentID, sourceDigest)
-	mustDispatchExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO deployments (
     id, org_id, project_id, environment_id, build_region_id,
     build_node_version, build_runtime_digest, build_toolchain_digest,
@@ -82,7 +82,7 @@ INSERT INTO deployments (
 		fixture.deploymentID, fixture.orgID, fixture.projectID,
 		fixture.environmentID, bytes.Repeat([]byte{1}, 32),
 		"sha256:"+strings.Repeat("2", 64), sourceArtifactID)
-	mustDispatchExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO worker_groups (
     id, region_id, name, observation_ttl_seconds
 ) VALUES ($1, 'us-east-1', $1, 120)`,
@@ -95,13 +95,13 @@ func (f *buildPlacementFixture) addWorker(t *testing.T, ready bool) uuid.UUID {
 	workerID := uuid.Must(uuid.NewV7())
 	serviceID := uuid.Must(uuid.NewV7())
 	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	mustDispatchExec(t, f.ctx, f.pool, `
+	dbtest.MustExec(t, f.ctx, f.pool, `
 INSERT INTO runtime_identities (
     id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, network_abi
 ) VALUES ($1, $2, 'helmr.runtime.v0', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0')`,
 		runtimeID, platformArchitecture)
 	if ready {
-		mustDispatchExec(t, f.ctx, f.pool, `
+		dbtest.MustExec(t, f.ctx, f.pool, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, state,
 			current_epoch, current_service_id, protocol_version, supervisor_version, supports_build,
@@ -116,7 +116,7 @@ INSERT INTO runtime_identities (
 			2000, 2147483648, 34359738368, 1, now(), now()
 )`, workerID, workerID.String(), f.groupID, serviceID, runtimeID)
 	} else {
-		mustDispatchExec(t, f.ctx, f.pool, `
+		dbtest.MustExec(t, f.ctx, f.pool, `
 INSERT INTO worker_instances (
     id, resource_id, worker_group_id, state,
     current_epoch, current_service_id, protocol_version, supports_build,
@@ -126,7 +126,7 @@ INSERT INTO worker_instances (
     1, $4, 'helmr.worker.v0', true, $5, now()
 )`, workerID, workerID.String(), f.groupID, serviceID, runtimeID)
 	}
-	mustDispatchExec(t, f.ctx, f.pool, `
+	dbtest.MustExec(t, f.ctx, f.pool, `
 INSERT INTO worker_observations (
     worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bps,
     guest_ephemeral_disk_pressure_bps, build_cache_pressure_bps,
@@ -156,7 +156,7 @@ func TestPlaceReadyBuildExcludesIneligibleWorkers(t *testing.T) {
 			fixture := newBuildPlacementFixture(t)
 			workerID := fixture.addWorker(t, test.ready)
 			if test.insufficientEpochCPU {
-				mustDispatchExec(t, fixture.ctx, fixture.pool, `
+				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances
    SET epoch_cpu_millis = 2999
  WHERE id = $1`, workerID)
@@ -213,11 +213,4 @@ func newDispatchIntegrationDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	return database.Pool
-}
-
-func mustDispatchExec(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sql string, args ...any) {
-	t.Helper()
-	if _, err := pool.Exec(ctx, sql, args...); err != nil {
-		t.Fatal(err)
-	}
 }

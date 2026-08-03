@@ -1,0 +1,1524 @@
+package workerapi
+
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/imagebuild"
+)
+
+type TokenRequest struct {
+	WorkerInstanceID     string `json:"worker_instance_id"`
+	WorkerInstanceSecret string `json:"worker_instance_secret"`
+	ServiceID            string `json:"service_id"`
+	ProtocolVersion      string `json:"protocol_version"`
+	SupportsRun          bool   `json:"supports_run"`
+	SupportsBuild        bool   `json:"supports_build"`
+}
+
+type TokenResponse struct {
+	Token            string   `json:"token"`
+	ExpiresInSeconds int64    `json:"expires_in_seconds"`
+	WorkerEpoch      int64    `json:"worker_epoch"`
+	Roles            []string `json:"roles"`
+	ProtocolVersion  string   `json:"protocol_version"`
+}
+
+type EnrollmentResponse struct {
+	WorkerInstanceID     string `json:"worker_instance_id"`
+	WorkerGroupID        string `json:"worker_group_id"`
+	WorkerInstanceSecret string `json:"worker_instance_secret"`
+}
+
+type EnrollmentChallengeRequest struct {
+	WorkerGroupID string `json:"worker_group_id"`
+}
+
+type EnrollmentChallengeResponse struct {
+	Nonce           string    `json:"nonce"`
+	WorkerGroupID   string    `json:"worker_group_id"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	ProtocolVersion string    `json:"protocol_version"`
+}
+
+type EnrollmentIntent struct {
+	WorkerGroupID   string `json:"worker_group_id"`
+	Nonce           string `json:"nonce,omitempty"`
+	SupportsRun     bool   `json:"supports_run"`
+	SupportsBuild   bool   `json:"supports_build"`
+	ProtocolVersion string `json:"protocol_version"`
+}
+
+type EnrollmentRequest struct {
+	EnrollmentIntent
+	ResourceID string `json:"resource_id"`
+	Proof      string `json:"proof"`
+}
+
+type RunLeaseDiscoveryRequest struct{}
+
+const (
+	RunLeaseMinTTL              = 30 * time.Second
+	RunFinalizationMinTTL       = 20 * time.Minute
+	RunFinalizationTerminalTail = 10 * time.Minute
+	RunFinalizationReplayTail   = 30 * time.Second
+)
+
+type RunLeaseWork struct {
+	LeaseID       string `json:"lease_id"`
+	LeaseSequence int64  `json:"lease_sequence"`
+}
+
+type RunLeaseDiscoveryResponse struct {
+	Items []RunLeaseWork `json:"items"`
+}
+
+type ActivateRequest struct {
+	Capabilities Capabilities `json:"capabilities"`
+}
+
+type ObserveRequest struct {
+	Observation Observation `json:"observation"`
+}
+
+type StartupRecoveryRequest struct {
+	InventoryComplete bool      `json:"inventory_complete"`
+	InventoryScope    string    `json:"inventory_scope"`
+	ObservedAt        time.Time `json:"observed_at"`
+	Inventory         []string  `json:"inventory"`
+	Reclaimed         []string  `json:"reclaimed,omitempty"`
+	Quarantined       []string  `json:"quarantined,omitempty"`
+	Errors            []string  `json:"errors,omitempty"`
+}
+
+// DrainCompletionRequest is the worker's proof that a server-directed
+// drain has removed both durable execution authority and local runtime state.
+// The control plane must treat an identical proof as idempotent.
+type DrainCompletionRequest struct {
+	InventoryComplete bool      `json:"inventory_complete"`
+	InventoryScope    string    `json:"inventory_scope"`
+	ObservedAt        time.Time `json:"observed_at"`
+	Inventory         []string  `json:"inventory"`
+	Reclaimed         []string  `json:"reclaimed,omitempty"`
+	Quarantined       []string  `json:"quarantined,omitempty"`
+	Errors            []string  `json:"errors,omitempty"`
+}
+
+type Observation struct {
+	CPUPressureBPS                int32           `json:"cpu_pressure_bps"`
+	MemoryPressureBPS             int32           `json:"memory_pressure_bps"`
+	GuestEphemeralDiskPressureBPS int32           `json:"guest_ephemeral_disk_pressure_bps"`
+	BuildCachePressureBPS         int32           `json:"build_cache_pressure_bps"`
+	ArtifactCachePressureBPS      int32           `json:"artifact_cache_pressure_bps"`
+	CheckpointPressureBPS         int32           `json:"checkpoint_pressure_bps"`
+	QuarantinedResourceCount      int32           `json:"quarantined_resource_count"`
+	RunQueueDepth                 int32           `json:"run_queue_depth"`
+	BuildQueueDepth               int32           `json:"build_queue_depth"`
+	RuntimeStartQueueDepth        int32           `json:"runtime_start_queue_depth"`
+	RunPausedReason               string          `json:"run_paused_reason,omitempty"`
+	BuildPausedReason             string          `json:"build_paused_reason,omitempty"`
+	RuntimePausedReason           string          `json:"runtime_paused_reason,omitempty"`
+	HealthDetails                 json.RawMessage `json:"health_details,omitempty"`
+}
+
+type Capabilities struct {
+	ProtocolVersion           string      `json:"protocol_version"`
+	WorkerVersion             string      `json:"worker_version,omitempty"`
+	RuntimeID                 string      `json:"runtime_id"`
+	RuntimeArch               string      `json:"runtime_arch"`
+	RuntimeABI                string      `json:"runtime_abi"`
+	KernelDigest              string      `json:"kernel_digest"`
+	InitramfsDigest           string      `json:"initramfs_digest"`
+	RootfsDigest              string      `json:"rootfs_digest"`
+	NetworkABI                string      `json:"network_abi"`
+	SubstrateFormat           string      `json:"substrate_format,omitempty"`
+	SubstrateBuilderABI       string      `json:"substrate_builder_abi,omitempty"`
+	SubstrateLayoutABI        string      `json:"substrate_layout_abi,omitempty"`
+	MaxVCPUs                  int64       `json:"max_vcpus"`
+	MaxMemoryMiB              int64       `json:"max_memory_mib"`
+	VMMilliCPU                int64       `json:"vm_milli_cpu"`
+	VMMemoryMiB               int64       `json:"vm_memory_mib"`
+	GuestEphemeralDiskBytes   int64       `json:"guest_ephemeral_disk_bytes"`
+	VMGuestEphemeralDiskBytes int64       `json:"vm_guest_ephemeral_disk_bytes"`
+	ExecutionSlotsAvailable   int32       `json:"execution_slots_available"`
+	SupportsRun               bool        `json:"supports_run"`
+	SupportsBuild             bool        `json:"supports_build"`
+	MaxBuildExecutors         int32       `json:"max_build_executors"`
+	MaxRuntimeStarts          int32       `json:"max_runtime_starts"`
+	BuildCacheBytes           int64       `json:"build_cache_bytes"`
+	ArtifactCacheBytes        int64       `json:"artifact_cache_bytes"`
+	HugepagesBytes            int64       `json:"hugepages_bytes"`
+	CheckpointBytes           int64       `json:"checkpoint_bytes"`
+	Observation               Observation `json:"observation"`
+}
+
+const NetworkABIV0 = "helmr/v0"
+
+type DeploymentBuildLeaseRequest struct{}
+
+type PlatformAcquisitionRequest struct{}
+
+type PlatformAcquisitionResponse struct {
+	Acquisition *PlatformAcquisition `json:"acquisition,omitempty"`
+}
+
+type PlatformAcquisition struct {
+	DeploymentID      string `json:"deployment_id"`
+	OrgID             string `json:"org_id"`
+	ProjectID         string `json:"project_id"`
+	EnvironmentID     string `json:"environment_id"`
+	NodeVersion       string `json:"node_version"`
+	ManagerName       string `json:"manager_name"`
+	ManagerVersion    string `json:"manager_version"`
+	ManagerIntegrity  string `json:"manager_integrity,omitempty"`
+	BuildContract     string `json:"build_contract"`
+	BuildPolicyDigest string `json:"build_policy_digest"`
+}
+
+type PlatformAcquisitionCandidates struct {
+	Runtime   CASObject `json:"runtime"`
+	Manager   CASObject `json:"manager"`
+	Toolchain CASObject `json:"toolchain"`
+}
+
+type PlatformAcquisitionCompleteRequest struct {
+	Acquisition PlatformAcquisition           `json:"acquisition"`
+	Candidates  PlatformAcquisitionCandidates `json:"candidates"`
+}
+
+type PlatformAcquisitionFailureReason string
+
+const (
+	PlatformAcquisitionUnsupportedSelector PlatformAcquisitionFailureReason = "unsupported_selector"
+	PlatformAcquisitionOriginRejected      PlatformAcquisitionFailureReason = "origin_rejected"
+	PlatformAcquisitionIntegrityFailed     PlatformAcquisitionFailureReason = "integrity_failed"
+	PlatformAcquisitionTopologyFailed      PlatformAcquisitionFailureReason = "topology_failed"
+	PlatformAcquisitionConformanceFailed   PlatformAcquisitionFailureReason = "conformance_failed"
+	PlatformAcquisitionDenied              PlatformAcquisitionFailureReason = "denied"
+)
+
+type PlatformAcquisitionFailRequest struct {
+	Acquisition PlatformAcquisition              `json:"acquisition"`
+	Reason      PlatformAcquisitionFailureReason `json:"reason"`
+	Error       json.RawMessage                  `json:"error"`
+}
+
+type PlatformAcquisitionResult struct {
+	DeploymentID string `json:"deployment_id"`
+	Status       string `json:"status"`
+}
+
+type DeploymentBuildLeaseResponse struct {
+	Lease      *DeploymentBuildLease `json:"lease,omitempty"`
+	Deployment *DeploymentBuild      `json:"deployment,omitempty"`
+}
+
+type DeploymentBuildStartRequest struct {
+	Lease DeploymentBuildLease `json:"lease"`
+}
+
+type DeploymentBuildStartResponse struct {
+	Lease DeploymentBuildLease `json:"lease"`
+}
+
+type DeploymentBuildRenewRequest struct {
+	Lease DeploymentBuildLease `json:"lease"`
+}
+
+type DeploymentBuildRenewResponse struct {
+	Lease                    DeploymentBuildLease `json:"lease"`
+	RevokedImageOperationIDs []string             `json:"revoked_image_operation_ids"`
+}
+
+type WorkspaceImageAdmissionRequest struct {
+	Lease                  DeploymentBuildLease    `json:"lease"`
+	DeclarationSlot        string                  `json:"declaration_slot"`
+	RuntimeIdentityID      string                  `json:"runtime_identity_id"`
+	Architecture           string                  `json:"architecture"`
+	Plan                   imagebuild.Build        `json:"plan"`
+	SubmittedSourceDigest  string                  `json:"submitted_source_digest"`
+	BuildTreeDigest        string                  `json:"build_tree_digest"`
+	BuildTreeSizeBytes     int64                   `json:"build_tree_size_bytes"`
+	AdmittedPaths          []imagebuild.SourcePath `json:"admitted_paths"`
+	SourceArchiveDigest    string                  `json:"source_archive_digest"`
+	SourceArchiveSizeBytes int64                   `json:"source_archive_size_bytes"`
+	SourceArchiveEntries   int                     `json:"source_archive_entries"`
+}
+
+type WorkspaceImageQuotas struct {
+	CPUMillis               int64 `json:"cpu_millis"`
+	MemoryBytes             int64 `json:"memory_bytes"`
+	ScratchBytes            int64 `json:"scratch_bytes"`
+	PIDs                    int64 `json:"pids"`
+	MaxSourceArchiveBytes   int64 `json:"max_source_archive_bytes"`
+	MaxSourceArchiveEntries int   `json:"max_source_archive_entries"`
+	MaxOCIArchiveBytes      int64 `json:"max_oci_archive_bytes"`
+}
+
+type WorkspaceImageOutputContract struct {
+	Architecture string `json:"architecture"`
+	MediaType    string `json:"media_type"`
+	MaxSizeBytes int64  `json:"max_size_bytes"`
+}
+
+type WorkspaceImageCacheColdReason string
+
+const (
+	WorkspaceImageCacheRegistryAuthorityCollision WorkspaceImageCacheColdReason = "registry_authority_collision"
+	WorkspaceImageCacheUnavailable                WorkspaceImageCacheColdReason = "cache_unavailable"
+)
+
+type WorkspaceImageCacheTarget struct {
+	Binding imagebuild.CacheBinding `json:"binding"`
+}
+
+type WorkspaceImageAssignment struct {
+	Lease                    DeploymentBuildLease          `json:"lease"`
+	DeclarationSlot          string                        `json:"declaration_slot"`
+	OperationID              string                        `json:"operation_id"`
+	RequestFingerprint       string                        `json:"request_fingerprint"`
+	RuntimeIdentityID        string                        `json:"runtime_identity_id"`
+	Architecture             string                        `json:"architecture"`
+	Plan                     imagebuild.Build              `json:"plan"`
+	PlanDigest               string                        `json:"plan_digest"`
+	SubmittedSourceDigest    string                        `json:"submitted_source_digest"`
+	BuildTreeDigest          string                        `json:"build_tree_digest"`
+	BuildTreeSizeBytes       int64                         `json:"build_tree_size_bytes"`
+	AdmittedPaths            []imagebuild.SourcePath       `json:"admitted_paths"`
+	AdmittedPathSetDigest    string                        `json:"admitted_path_set_digest"`
+	SourceArchiveDigest      string                        `json:"source_archive_digest"`
+	SourceArchiveSizeBytes   int64                         `json:"source_archive_size_bytes"`
+	SourceArchiveEntries     int                           `json:"source_archive_entries"`
+	RequestedCacheMode       imagebuild.CacheMode          `json:"requested_cache_mode"`
+	CacheScope               string                        `json:"cache_scope"`
+	ExecutionABI             string                        `json:"execution_abi"`
+	LLBABI                   string                        `json:"llb_abi"`
+	CacheABI                 string                        `json:"cache_abi"`
+	Quotas                   WorkspaceImageQuotas          `json:"quotas"`
+	Output                   WorkspaceImageOutputContract  `json:"output"`
+	RegistryBindings         []imagebuild.RegistryBinding  `json:"registry_bindings"`
+	ResolutionSetDigest      string                        `json:"resolution_set_digest"`
+	CacheTarget              *WorkspaceImageCacheTarget    `json:"cache_target,omitempty"`
+	EffectiveCacheColdReason WorkspaceImageCacheColdReason `json:"effective_cache_cold_reason,omitempty"`
+	TerminalResult           *WorkspaceImageTerminalResult `json:"terminal_result,omitempty"`
+}
+
+type WorkspaceImageTerminalResult struct {
+	AttemptID string                 `json:"attempt_id"`
+	Result    imagebuild.GuestResult `json:"result"`
+}
+
+type WorkspaceImageCredentialRequest struct {
+	Lease               DeploymentBuildLease `json:"lease"`
+	OperationID         string               `json:"operation_id"`
+	AttemptID           string               `json:"attempt_id"`
+	PlanDigest          string               `json:"plan_digest"`
+	ResolutionSetDigest string               `json:"resolution_set_digest"`
+}
+
+type WorkspaceImageCredentialResponse struct {
+	Envelope imagebuild.CredentialEnvelope `json:"envelope"`
+}
+
+type WorkspaceImageOperationResultRequest struct {
+	Lease               DeploymentBuildLease   `json:"lease"`
+	DeclarationSlot     string                 `json:"declaration_slot"`
+	OperationID         string                 `json:"operation_id"`
+	AttemptID           string                 `json:"attempt_id"`
+	RequestFingerprint  string                 `json:"request_fingerprint"`
+	PlanDigest          string                 `json:"plan_digest"`
+	ResolutionSetDigest string                 `json:"resolution_set_digest"`
+	RequestedCacheMode  imagebuild.CacheMode   `json:"requested_cache_mode"`
+	Result              imagebuild.GuestResult `json:"result"`
+}
+
+type WorkspaceImageOperationResultResponse struct {
+	OperationID string                 `json:"operation_id"`
+	AttemptID   string                 `json:"attempt_id"`
+	State       string                 `json:"state"`
+	Result      imagebuild.GuestResult `json:"result"`
+}
+
+type DeploymentBuildRejectRequest struct {
+	Lease      DeploymentBuildLease `json:"lease"`
+	ReasonCode string               `json:"reason_code"`
+	Error      json.RawMessage      `json:"error,omitempty"`
+}
+
+type DeploymentBuildDeliveryFailureReason string
+
+const (
+	DeploymentBuildDeliveryBuildGuestFailed      DeploymentBuildDeliveryFailureReason = "build_guest_failed"
+	DeploymentBuildDeliveryProgramVerifierFailed DeploymentBuildDeliveryFailureReason = "program_verifier_failed"
+)
+
+type DeploymentBuildDeliveryFailureRequest struct {
+	Lease      DeploymentBuildLease                 `json:"lease"`
+	ReasonCode DeploymentBuildDeliveryFailureReason `json:"reasonCode"`
+}
+
+type Status string
+
+const (
+	StatusActive           Status = "active"
+	StatusDraining         Status = "draining"
+	StatusTerminationReady Status = "termination_ready"
+)
+
+type StatusResponse struct {
+	WorkerInstanceID string    `json:"worker_instance_id"`
+	WorkerGroupID    string    `json:"worker_group_id"`
+	Status           Status    `json:"status"`
+	ActiveExecutions int32     `json:"active_executions"`
+	Readiness        Readiness `json:"readiness"`
+}
+
+type Readiness struct {
+	Run     *RoleReadiness `json:"run,omitempty"`
+	Build   *RoleReadiness `json:"build,omitempty"`
+	Runtime *RoleReadiness `json:"runtime,omitempty"`
+}
+
+type RoleReadiness struct {
+	Ready        bool   `json:"ready"`
+	PausedReason string `json:"paused_reason,omitempty"`
+}
+
+type FenceRequest struct {
+	ReasonCode string `json:"reason_code"`
+}
+
+type RuntimeInstance struct {
+	ID                     string     `json:"id"`
+	OrgID                  string     `json:"org_id"`
+	ProjectID              string     `json:"project_id"`
+	EnvironmentID          string     `json:"environment_id"`
+	WorkerInstanceID       string     `json:"worker_instance_id"`
+	RuntimeEpoch           int64      `json:"runtime_epoch"`
+	RuntimeID              string     `json:"runtime_id"`
+	DeploymentDefinitionID string     `json:"deployment_definition_id"`
+	State                  string     `json:"state"`
+	ReservedCpuMillis      int32      `json:"reserved_cpu_millis"`
+	ReservedMemoryMiB      int32      `json:"reserved_memory_mib"`
+	ReservedDiskMiB        int64      `json:"reserved_disk_mib"`
+	ReservedExecutionSlots int32      `json:"reserved_execution_slots"`
+	WorkspaceMountID       string     `json:"workspace_mount_id,omitempty"`
+	ExpiresAt              *time.Time `json:"expires_at,omitempty"`
+}
+
+type RuntimeSource struct {
+	DeploymentDefinitionID string            `json:"deployment_definition_id"`
+	WorkspaceID            string            `json:"workspace_id"`
+	RuntimeIdentityID      string            `json:"runtime_identity_id"`
+	WorkspaceImage         CASObject         `json:"workspace_image"`
+	WorkspaceArchitecture  string            `json:"workspace_architecture"`
+	BaseVersionID          string            `json:"base_version_id"`
+	WorkspaceArtifact      WorkspaceArtifact `json:"workspace_artifact"`
+	RootfsDigest           string            `json:"rootfs_digest"`
+	ReservedCpuMillis      int32             `json:"reserved_cpu_millis"`
+	ReservedMemoryMiB      int32             `json:"reserved_memory_mib"`
+	ReservedDiskMiB        int64             `json:"reserved_disk_mib"`
+	ReservedExecutionSlots int32             `json:"reserved_execution_slots"`
+	RuntimeABI             string            `json:"runtime_abi"`
+	Program                *RuntimeProgram   `json:"program,omitempty"`
+	Restore                *RuntimeRestore   `json:"restore,omitempty"`
+}
+
+type RuntimeRestore struct {
+	CheckpointID  string                       `json:"checkpoint_id"`
+	RunID         string                       `json:"run_id"`
+	AttemptNumber int32                        `json:"attempt_number"`
+	RunWaitID     string                       `json:"run_wait_id"`
+	Kind          string                       `json:"kind"`
+	Manifest      json.RawMessage              `json:"manifest"`
+	Artifacts     []RunLeaseCheckpointArtifact `json:"artifacts"`
+}
+
+type RuntimeProgram struct {
+	DeploymentID         string    `json:"deployment_id"`
+	Runtime              CASObject `json:"runtime"`
+	Artifact             CASObject `json:"artifact"`
+	BuildContractVersion string    `json:"build_contract_version"`
+	IndexDigest          string    `json:"index_digest"`
+}
+
+type RuntimeInstanceStateRequest struct {
+	ID                      string               `json:"id"`
+	WorkerEpoch             int64                `json:"worker_epoch"`
+	DesiredVersion          int64                `json:"desired_version"`
+	ExpectedObservedVersion int64                `json:"expected_observed_version"`
+	RuntimeSubstrateID      string               `json:"runtime_substrate_id,omitempty"`
+	ReasonCode              string               `json:"reason_code,omitempty"`
+	Error                   json.RawMessage      `json:"error,omitempty"`
+	CleanupProof            *RuntimeCleanupProof `json:"cleanup_proof,omitempty"`
+}
+
+type RuntimeCleanupProof struct {
+	Method      string    `json:"method"`
+	CompletedAt time.Time `json:"completed_at"`
+}
+
+const (
+	RuntimeCleanupSessionClosed   = "session_closed"
+	RuntimeCleanupHostReconciled  = "host_reconciled"
+	RuntimeCleanupNotMaterialized = "not_materialized"
+)
+
+type RuntimeReconcileRequest struct{}
+
+type RuntimeReconcileResponse struct {
+	Target *RuntimeReconcileTarget `json:"target,omitempty"`
+}
+
+type RuntimeReconcileTarget struct {
+	ID                     string        `json:"id"`
+	WorkerEpoch            int64         `json:"worker_epoch"`
+	DesiredState           string        `json:"desired_state"`
+	DesiredVersion         int64         `json:"desired_version"`
+	ObservedState          string        `json:"observed_state"`
+	ObservedVersion        int64         `json:"observed_version"`
+	ObservedDesiredVersion int64         `json:"observed_desired_version"`
+	Action                 string        `json:"action"`
+	Source                 RuntimeSource `json:"source"`
+}
+
+const (
+	RuntimeReconcilePrepare = "prepare"
+	RuntimeReconcileClose   = "close"
+	RuntimeReconcileReclaim = "reclaim"
+)
+
+type RunLeaseClaimRequest struct {
+	LeaseID       string `json:"lease_id"`
+	LeaseSequence int64  `json:"lease_sequence"`
+}
+
+type RunLeaseClaimResponse struct {
+	Lease     RunLeaseAssignment  `json:"lease"`
+	Program   RuntimeProgram      `json:"program"`
+	Workspace WorkspaceAttachment `json:"workspace"`
+	Secrets   []SecretDelivery    `json:"secrets"`
+	Execution RunLeaseExecution   `json:"execution"`
+}
+
+type RunStartRequest struct {
+	Lease   RunLeaseFence    `json:"lease"`
+	Fresh   *RunStartFresh   `json:"fresh,omitempty"`
+	Restore *RunStartRestore `json:"restore,omitempty"`
+	Attach  *RunStartAttach  `json:"attach,omitempty"`
+}
+
+type RunStartFresh struct{}
+
+type RunStartRestore struct {
+	RunWaitID            string `json:"run_wait_id"`
+	CheckpointID         string `json:"checkpoint_id"`
+	ResumeAttachID       string `json:"resume_attach_id"`
+	ResumeRequestVersion int64  `json:"resume_request_version"`
+}
+
+type RunStartAttach struct {
+	Child  *RunStartChildAttach  `json:"child,omitempty"`
+	Parent *RunStartParentAttach `json:"parent,omitempty"`
+}
+
+type RunStartChildAttach struct {
+	RunWaitID      string `json:"run_wait_id"`
+	CheckpointID   string `json:"checkpoint_id"`
+	ResumeAttachID string `json:"resume_attach_id"`
+}
+
+type RunStartParentAttach struct {
+	RunWaitID            string `json:"run_wait_id"`
+	CheckpointID         string `json:"checkpoint_id"`
+	ResumeAttachID       string `json:"resume_attach_id"`
+	ResumeRequestVersion int64  `json:"resume_request_version"`
+}
+
+type RunStartResponse struct {
+	Lease RunLeaseFence `json:"lease"`
+}
+
+type RunResumeReleaseRequest struct {
+	Lease                RunLeaseFence `json:"lease"`
+	RunWaitID            string        `json:"run_wait_id"`
+	CheckpointID         string        `json:"checkpoint_id"`
+	ResumeAttachID       string        `json:"resume_attach_id"`
+	ResumeRequestVersion int64         `json:"resume_request_version"`
+}
+
+type RunResumeReleaseResponse struct {
+	Lease                RunLeaseFence `json:"lease"`
+	RunWaitID            string        `json:"run_wait_id"`
+	CheckpointID         string        `json:"checkpoint_id"`
+	ResumeAttachID       string        `json:"resume_attach_id"`
+	ResumeRequestVersion int64         `json:"resume_request_version"`
+}
+
+type RunLeaseRenewRequest struct {
+	Lease             RunLeaseFence `json:"lease"`
+	ExpectedExpiresAt time.Time     `json:"expected_expires_at"`
+}
+
+type RunLeaseRenewResponse struct {
+	Lease                  RunLeaseFence `json:"lease"`
+	ExpiresAt              time.Time     `json:"expires_at"`
+	BaseWorkspaceVersionID string        `json:"base_workspace_version_id"`
+}
+
+type RunFinalizationKind string
+
+const (
+	RunFinalizationCapture RunFinalizationKind = "capture"
+	RunFinalizationReset   RunFinalizationKind = "reset"
+)
+
+type RunQuiescenceProof struct {
+	RunID         string `json:"run_id"`
+	AttemptNumber int32  `json:"attempt_number"`
+	RunLeaseID    string `json:"run_lease_id"`
+}
+
+type BeginRunFinalizationRequest struct {
+	Lease           RunLeaseFence       `json:"lease"`
+	ProgramQuiesced RunQuiescenceProof  `json:"program_quiesced"`
+	OperationID     string              `json:"operation_id"`
+	Kind            RunFinalizationKind `json:"kind"`
+}
+
+type BeginRunFinalizationResponse struct {
+	Lease                  RunLeaseFence           `json:"lease"`
+	BaseWorkspaceVersionID string                  `json:"base_workspace_version_id"`
+	ExpiresAt              time.Time               `json:"expires_at"`
+	OperationID            string                  `json:"operation_id"`
+	Kind                   RunFinalizationKind     `json:"kind"`
+	StartedAt              time.Time               `json:"started_at"`
+	Handoff                *RunFinalizationHandoff `json:"handoff,omitempty"`
+}
+
+type RunFinalizationHandoff struct {
+	ParentRunID         string `json:"parent_run_id"`
+	ParentAttemptNumber int32  `json:"parent_attempt_number"`
+	RunWaitID           string `json:"run_wait_id"`
+	SuspendCheckpointID string `json:"suspend_checkpoint_id"`
+	ResumeAttachID      string `json:"resume_attach_id"`
+	CorrelationID       string `json:"correlation_id"`
+}
+
+type RunEntrypointRequest struct {
+	Lease                RunLeaseFence `json:"lease"`
+	EntrypointKind       string        `json:"entrypoint_kind"`
+	EntrypointDeclaredID string        `json:"entrypoint_declared_id"`
+}
+
+type CompleteTaskRequest struct {
+	Lease     RunLeaseFence          `json:"lease"`
+	Outcome   TaskOutcome            `json:"outcome"`
+	Workspace TaskWorkspaceProof     `json:"workspace"`
+	Handoff   *TaskHandoffCheckpoint `json:"handoff,omitempty"`
+}
+
+type TaskHandoffCheckpoint struct {
+	CheckpointID string             `json:"checkpoint_id"`
+	Manifest     CheckpointManifest `json:"manifest"`
+}
+
+type CompleteActorRequest struct {
+	Lease     RunLeaseFence      `json:"lease"`
+	Outcome   ActorOutcome       `json:"outcome"`
+	Workspace TaskWorkspaceProof `json:"workspace"`
+}
+
+type CommitActorTurnRequest struct {
+	Lease                  RunLeaseFence         `json:"lease"`
+	CorrelationID          string                `json:"correlation_id"`
+	TargetInputSequence    int64                 `json:"target_input_sequence"`
+	BaseWorkspaceVersionID string                `json:"base_workspace_version_id"`
+	Tree                   WorkspaceTreeIdentity `json:"tree"`
+	Artifact               *WorkspaceArtifact    `json:"artifact,omitempty"`
+}
+
+type CommitActorTurnResponse struct {
+	Lease                  RunLeaseFence         `json:"lease"`
+	CorrelationID          string                `json:"correlation_id"`
+	CommittedInputSequence int64                 `json:"committed_input_sequence"`
+	WorkspaceVersionID     string                `json:"workspace_version_id"`
+	Tree                   WorkspaceTreeIdentity `json:"tree"`
+}
+
+type SendActorInputRequest struct {
+	Lease           RunLeaseFence   `json:"lease"`
+	CorrelationID   string          `json:"correlation_id"`
+	ActorDeclaredID string          `json:"actor_declared_id"`
+	ActorID         string          `json:"actor_id,omitempty"`
+	ActorKey        string          `json:"actor_key,omitempty"`
+	Input           json.RawMessage `json:"input"`
+	IdempotencyKey  string          `json:"idempotency_key,omitempty"`
+}
+
+type SendActorInputResponse struct {
+	CorrelationID string                      `json:"correlation_id"`
+	Completed     *api.SendActorInputResponse `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure    `json:"failed,omitempty"`
+}
+
+type StartActorRequest struct {
+	Lease           RunLeaseFence             `json:"lease"`
+	CorrelationID   string                    `json:"correlation_id"`
+	ActorDeclaredID string                    `json:"actor_declared_id"`
+	Key             *string                   `json:"key,omitempty"`
+	InputPresent    bool                      `json:"input_present"`
+	Input           json.RawMessage           `json:"input,omitempty"`
+	IdempotencyKey  string                    `json:"idempotency_key,omitempty"`
+	Workspace       api.WorkspaceTarget       `json:"workspace"`
+	Run             *api.StartActorRunOptions `json:"run,omitempty"`
+}
+
+type StartActorResponse struct {
+	CorrelationID string                   `json:"correlation_id"`
+	Completed     *api.StartActorResponse  `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type ActorReferenceRequest struct {
+	Lease           RunLeaseFence `json:"lease"`
+	CorrelationID   string        `json:"correlation_id"`
+	ActorDeclaredID string        `json:"actor_declared_id"`
+	ActorID         string        `json:"actor_id,omitempty"`
+	ActorKey        string        `json:"actor_key,omitempty"`
+}
+
+type ActorStatusResponse struct {
+	CorrelationID string                   `json:"correlation_id"`
+	Completed     *api.ActorStatus         `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type CloseActorRequest struct {
+	ActorReferenceRequest
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type CloseActorResponse struct {
+	CorrelationID string                     `json:"correlation_id"`
+	Completed     *api.ActorOperationReceipt `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure   `json:"failed,omitempty"`
+}
+
+type ReadActorOutputPageRequest struct {
+	ActorReferenceRequest
+	After *int64 `json:"after,omitempty"`
+	Limit int32  `json:"limit"`
+}
+
+type ReadActorOutputPageResponse struct {
+	CorrelationID string                   `json:"correlation_id"`
+	Completed     *api.ActorOutputPage     `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type WorkspaceAddress struct {
+	WorkspaceID  string `json:"workspace_id,omitempty"`
+	WorkspaceKey string `json:"workspace_key,omitempty"`
+}
+
+type CreateWorkspaceRequest struct {
+	Lease               RunLeaseFence         `json:"lease"`
+	CorrelationID       string                `json:"correlation_id"`
+	WorkspaceDeclaredID string                `json:"workspace_declared_id"`
+	Key                 *string               `json:"key,omitempty"`
+	Secrets             []api.WorkspaceSecret `json:"secrets,omitempty"`
+	IdempotencyKey      string                `json:"idempotency_key,omitempty"`
+}
+
+type CreateWorkspaceResponse struct {
+	CorrelationID string                       `json:"correlation_id"`
+	Completed     *api.CreateWorkspaceResponse `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure     `json:"failed,omitempty"`
+}
+
+type RetrieveWorkspaceRequest struct {
+	Lease         RunLeaseFence    `json:"lease"`
+	CorrelationID string           `json:"correlation_id"`
+	Workspace     WorkspaceAddress `json:"workspace"`
+}
+
+type RetrieveWorkspaceResponse struct {
+	CorrelationID string                   `json:"correlation_id"`
+	Completed     *api.WorkspaceSnapshot   `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type ReadWorkspaceFileRequest struct {
+	RetrieveWorkspaceRequest
+	Path string `json:"path"`
+}
+
+type ReadWorkspaceFileResponse struct {
+	CorrelationID string                    `json:"correlation_id"`
+	Completed     *api.WorkspaceFileContent `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure  `json:"failed,omitempty"`
+}
+
+type StatWorkspaceFileResponse struct {
+	CorrelationID string                   `json:"correlation_id"`
+	Completed     *api.WorkspaceFileEntry  `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type ListWorkspaceFilesRequest struct {
+	ReadWorkspaceFileRequest
+	Cursor string `json:"cursor,omitempty"`
+	Limit  int32  `json:"limit"`
+}
+
+type ListWorkspaceFilesResponse struct {
+	CorrelationID string                   `json:"correlation_id"`
+	Completed     *api.WorkspaceFilePage   `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type ExecuteWorkspaceRequest struct {
+	RetrieveWorkspaceRequest
+	Command        []string          `json:"command"`
+	Cwd            string            `json:"cwd,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	Stdin          []byte            `json:"stdin,omitempty"`
+	TimeoutMS      *int64            `json:"timeout_ms,omitempty"`
+	IdempotencyKey string            `json:"idempotency_key"`
+}
+
+type WorkspaceExecPending struct {
+	ProcessID string `json:"process_id"`
+}
+
+type ExecuteWorkspaceResponse struct {
+	CorrelationID string                      `json:"correlation_id"`
+	Completed     *api.ExecuteWorkspaceResult `json:"completed,omitempty"`
+	Pending       *WorkspaceExecPending       `json:"pending,omitempty"`
+	Failed        *RuntimeOperationFailure    `json:"failed,omitempty"`
+}
+
+type PollWorkspaceExecRequest struct {
+	RetrieveWorkspaceRequest
+	ProcessID string `json:"process_id"`
+}
+
+type DeleteWorkspaceRequest struct {
+	RetrieveWorkspaceRequest
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type DeleteWorkspaceResponse struct {
+	CorrelationID string                      `json:"correlation_id"`
+	Completed     *api.DeleteWorkspaceReceipt `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure    `json:"failed,omitempty"`
+}
+
+type InvokeChildTaskRequest struct {
+	Lease                         RunLeaseFence   `json:"lease"`
+	CorrelationID                 string          `json:"correlation_id"`
+	RunWaitID                     string          `json:"run_wait_id,omitempty"`
+	ResumeAttachID                string          `json:"resume_attach_id,omitempty"`
+	TaskDeclaredID                string          `json:"task_declared_id"`
+	Method                        string          `json:"method"`
+	PayloadPresent                bool            `json:"payload_present"`
+	Payload                       json.RawMessage `json:"payload,omitempty"`
+	Workspace                     json.RawMessage `json:"workspace"`
+	Options                       json.RawMessage `json:"options"`
+	IdempotencyKey                string          `json:"idempotency_key,omitempty"`
+	ActorSpeculativeInputSequence *int64          `json:"actor_speculative_input_sequence,omitempty"`
+}
+
+type ChildTaskStartResult struct {
+	RunID string `json:"run_id"`
+}
+
+type InvokeChildTaskResponse struct {
+	CorrelationID string                   `json:"correlation_id"`
+	Completed     *ChildTaskStartResult    `json:"completed,omitempty"`
+	OpenedWait    *CreateRunWaitResponse   `json:"opened_wait,omitempty"`
+	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type AppendActorOutputRequest struct {
+	Lease          RunLeaseFence   `json:"lease"`
+	CorrelationID  string          `json:"correlation_id"`
+	Data           json.RawMessage `json:"data"`
+	ContentType    string          `json:"content_type"`
+	IdempotencyKey string          `json:"idempotency_key,omitempty"`
+}
+
+type AppendActorOutputResponse struct {
+	CorrelationID string                   `json:"correlation_id"`
+	Completed     *api.ActorOutputRecord   `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type RuntimeOperationFailure struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	Retryable bool   `json:"retryable"`
+}
+
+type ActorOutcome struct {
+	TerminalInputSequence int64           `json:"terminal_input_sequence"`
+	Succeeded             *ActorSucceeded `json:"succeeded,omitempty"`
+	Failed                *TaskFailure    `json:"failed,omitempty"`
+}
+
+type ActorSucceeded struct{}
+
+type TaskOutcome struct {
+	Succeeded      *TaskSucceeded `json:"succeeded,omitempty"`
+	Failed         *TaskFailure   `json:"failed,omitempty"`
+	PayloadInvalid *TaskFailure   `json:"payload_invalid,omitempty"`
+}
+
+type TaskSucceeded struct {
+	Output json.RawMessage `json:"output"`
+}
+
+type TaskFailure struct {
+	Message string          `json:"message"`
+	Details json.RawMessage `json:"details,omitempty"`
+}
+
+type TaskWorkspaceProof struct {
+	Captured   *TaskWorkspaceCapture  `json:"captured,omitempty"`
+	RolledBack *TaskWorkspaceRollback `json:"rolled_back,omitempty"`
+}
+
+type TaskWorkspaceCapture struct {
+	Receipt  WorkspaceFinalizationReceipt `json:"receipt"`
+	Tree     WorkspaceTreeIdentity        `json:"tree"`
+	Artifact WorkspaceArtifact            `json:"artifact"`
+}
+
+type TaskWorkspaceRollback struct {
+	Receipt WorkspaceFinalizationReceipt `json:"receipt"`
+	Target  WorkspaceResetTarget         `json:"target"`
+}
+
+type WorkspaceFinalizationReceipt struct {
+	OperationID        string                     `json:"operation_id"`
+	RequestFingerprint string                     `json:"request_fingerprint"`
+	Fence              WorkspaceFinalizationFence `json:"fence"`
+}
+
+type WorkspaceFinalizationFence struct {
+	WorkerInstanceID       string    `json:"worker_instance_id"`
+	WorkerEpoch            int64     `json:"worker_epoch"`
+	RuntimeInstanceID      string    `json:"runtime_instance_id"`
+	RuntimeIdentityID      string    `json:"runtime_identity_id"`
+	WorkspaceID            string    `json:"workspace_id"`
+	WorkspaceMountID       string    `json:"workspace_mount_id"`
+	RunID                  string    `json:"run_id"`
+	AttemptNumber          int32     `json:"attempt_number"`
+	RunLeaseID             string    `json:"run_lease_id"`
+	LeaseSequence          int64     `json:"lease_sequence"`
+	WorkspaceLeaseID       string    `json:"workspace_lease_id"`
+	OwnershipGeneration    int64     `json:"ownership_generation"`
+	WriterGeneration       int64     `json:"writer_generation"`
+	MountFencingGeneration int64     `json:"mount_fencing_generation"`
+	ExpiresAt              time.Time `json:"expires_at"`
+	BaseWorkspaceVersionID string    `json:"base_workspace_version_id"`
+}
+
+type WorkspaceTreeIdentity struct {
+	Digest     string `json:"digest"`
+	SizeBytes  int64  `json:"size_bytes"`
+	EntryCount int32  `json:"entry_count"`
+}
+
+type WorkspaceResetTarget struct {
+	BaseWorkspaceVersionID string                `json:"base_workspace_version_id"`
+	Tree                   WorkspaceTreeIdentity `json:"tree"`
+	Empty                  *EmptyWorkspace       `json:"empty,omitempty"`
+	Artifact               *WorkspaceArtifact    `json:"artifact,omitempty"`
+}
+
+type EmptyWorkspace struct {
+}
+
+type RunLeaseFence struct {
+	ID            string `json:"id"`
+	LeaseSequence int64  `json:"lease_sequence"`
+}
+
+type RunLeaseAssignment struct {
+	ID                               string           `json:"id"`
+	RunID                            string           `json:"run_id"`
+	AttemptNumber                    int32            `json:"attempt_number"`
+	LeaseSequence                    int64            `json:"lease_sequence"`
+	WorkerGroupID                    string           `json:"worker_group_id"`
+	WorkerInstanceID                 string           `json:"worker_instance_id"`
+	WorkerEpoch                      int64            `json:"worker_epoch"`
+	WorkerProtocolVersion            string           `json:"worker_protocol_version"`
+	RuntimeInstanceID                string           `json:"runtime_instance_id"`
+	RuntimeIdentityID                string           `json:"runtime_identity_id"`
+	WorkspaceID                      string           `json:"workspace_id"`
+	WorkspaceMountID                 string           `json:"workspace_mount_id"`
+	WorkspaceLeaseID                 string           `json:"workspace_lease_id"`
+	BaseWorkspaceVersionID           string           `json:"base_workspace_version_id"`
+	OwnershipGeneration              int64            `json:"ownership_generation"`
+	WriterGeneration                 int64            `json:"writer_generation"`
+	MountFencingGeneration           int64            `json:"mount_fencing_generation"`
+	RequestedCPUMillis               int64            `json:"requested_cpu_millis"`
+	RequestedMemoryBytes             int64            `json:"requested_memory_bytes"`
+	RequestedGuestEphemeralDiskBytes int64            `json:"requested_guest_ephemeral_disk_bytes"`
+	RequestedExecutionSlots          int32            `json:"requested_execution_slots"`
+	MaxActiveDurationMs              int64            `json:"max_active_duration_ms"`
+	ActiveElapsedMs                  int64            `json:"active_elapsed_ms"`
+	Trace                            api.TraceContext `json:"trace"`
+	StartDeadlineAt                  time.Time        `json:"start_deadline_at"`
+	ExpiresAt                        time.Time        `json:"expires_at"`
+}
+
+func (assignment RunLeaseAssignment) Fence() RunLeaseFence {
+	return RunLeaseFence{
+		ID:            assignment.ID,
+		LeaseSequence: assignment.LeaseSequence,
+	}
+}
+
+type WorkspaceAttachment struct {
+	WriteCapability string               `json:"write_capability"`
+	ResetTarget     WorkspaceResetTarget `json:"reset_target"`
+}
+
+type SecretDelivery struct {
+	Env   *SecretEnv  `json:"env,omitempty"`
+	File  *SecretFile `json:"file,omitempty"`
+	Value []byte      `json:"value"`
+}
+
+type SecretEnv struct {
+	Name string `json:"name"`
+}
+
+type SecretFile struct {
+	Path string `json:"path"`
+}
+
+type RunLeaseExecution struct {
+	Fresh   *RunLeaseFresh   `json:"fresh,omitempty"`
+	Restore *RunLeaseRestore `json:"restore,omitempty"`
+	Attach  *RunLeaseAttach  `json:"attach,omitempty"`
+}
+
+type RunLeaseFresh struct {
+	ProgramStart []byte `json:"program_start"`
+}
+
+type RunLeaseRestore struct {
+	RunWaitID            string                    `json:"run_wait_id"`
+	CheckpointID         string                    `json:"checkpoint_id"`
+	ResumeAttachID       string                    `json:"resume_attach_id"`
+	ResumeRequestVersion int64                     `json:"resume_request_version"`
+	CorrelationID        string                    `json:"correlation_id"`
+	EntrypointKind       string                    `json:"entrypoint_kind"`
+	EntrypointDeclaredID string                    `json:"entrypoint_declared_id"`
+	Recreated            *RunLeaseRecreatedRestore `json:"recreated,omitempty"`
+	Retained             *RunLeaseRetainedRestore  `json:"retained,omitempty"`
+	Decision             RunLeaseDecision          `json:"decision"`
+}
+
+type RunLeaseRecreatedRestore struct {
+	Kind      string                       `json:"kind"`
+	Manifest  json.RawMessage              `json:"manifest"`
+	Artifacts []RunLeaseCheckpointArtifact `json:"artifacts"`
+}
+
+type RunLeaseRetainedRestore struct {
+	EnclosingRunWaitID string `json:"enclosing_run_wait_id"`
+}
+
+type RunLeaseAttach struct {
+	Child  *RunLeaseChildAttach  `json:"child,omitempty"`
+	Parent *RunLeaseParentAttach `json:"parent,omitempty"`
+}
+
+type RunLeaseChildAttach struct {
+	ParentRunID         string `json:"parent_run_id"`
+	ParentAttemptNumber int32  `json:"parent_attempt_number"`
+	RunWaitID           string `json:"run_wait_id"`
+	CheckpointID        string `json:"checkpoint_id"`
+	ResumeAttachID      string `json:"resume_attach_id"`
+	CorrelationID       string `json:"correlation_id"`
+	ProgramStart        []byte `json:"program_start"`
+}
+
+type RunLeaseParentAttach struct {
+	RunWaitID            string           `json:"run_wait_id"`
+	CheckpointID         string           `json:"checkpoint_id"`
+	ResumeAttachID       string           `json:"resume_attach_id"`
+	ResumeRequestVersion int64            `json:"resume_request_version"`
+	CorrelationID        string           `json:"correlation_id"`
+	EntrypointKind       string           `json:"entrypoint_kind"`
+	EntrypointDeclaredID string           `json:"entrypoint_declared_id"`
+	Decision             RunLeaseDecision `json:"decision"`
+}
+
+type RunLeaseCheckpointArtifact struct {
+	Role    string    `json:"role"`
+	Ordinal int32     `json:"ordinal"`
+	Object  CASObject `json:"object"`
+}
+
+type RunLeaseDecision struct {
+	Completed *RunLeaseCompleted `json:"completed,omitempty"`
+	Failed    *RunLeaseFailed    `json:"failed,omitempty"`
+	Cancelled *RunLeaseCancelled `json:"cancelled,omitempty"`
+}
+
+type RunLeaseCompleted struct {
+	NoResult   *struct{}       `json:"no_result,omitempty"`
+	ResultJSON json.RawMessage `json:"result_json,omitempty"`
+}
+
+type RunLeaseFailed struct {
+	ReasonCode string          `json:"reason_code"`
+	Error      json.RawMessage `json:"error,omitempty"`
+}
+
+type RunLeaseCancelled struct {
+	ReasonCode string          `json:"reason_code"`
+	Error      json.RawMessage `json:"error,omitempty"`
+}
+
+type RunLease struct {
+	ID                string           `json:"id"`
+	OrgID             string           `json:"org_id"`
+	RunID             string           `json:"run_id"`
+	WorkerGroupID     string           `json:"worker_group_id"`
+	WorkerInstanceID  string           `json:"worker_instance_id"`
+	WorkerEpoch       int64            `json:"worker_epoch"`
+	LeaseSequence     int64            `json:"lease_sequence"`
+	SnapshotVersion   int64            `json:"snapshot_version"`
+	RuntimeInstanceID string           `json:"runtime_instance_id"`
+	ProtocolVersion   string           `json:"protocol_version"`
+	AttemptNumber     int32            `json:"attempt_number"`
+	Trace             api.TraceContext `json:"trace"`
+	ExpiresAt         time.Time        `json:"expires_at"`
+}
+
+type RunLeaseProvider interface {
+	CurrentWorkerRunLease() RunLease
+}
+
+type RunLeaseAssignmentProvider interface {
+	CurrentWorkerRunLeaseAssignment() RunLeaseAssignment
+}
+
+type DeploymentBuildLease struct {
+	ID                               string    `json:"id"`
+	OrgID                            string    `json:"org_id"`
+	ProjectID                        string    `json:"project_id"`
+	EnvironmentID                    string    `json:"environment_id"`
+	DeploymentID                     string    `json:"deployment_id"`
+	WorkerGroupID                    string    `json:"worker_group_id"`
+	WorkerInstanceID                 string    `json:"worker_instance_id"`
+	WorkerEpoch                      int64     `json:"worker_epoch"`
+	LeaseSequence                    int64     `json:"lease_sequence"`
+	WorkerProtocolVersion            string    `json:"worker_protocol_version"`
+	ExpiresAt                        time.Time `json:"expires_at"`
+	RequestedGuestEphemeralDiskBytes int64     `json:"requested_guest_ephemeral_disk_bytes"`
+	RequestedCPUMillis               int64     `json:"requested_cpu_millis"`
+	RequestedMemoryBytes             int64     `json:"requested_memory_bytes"`
+	RequestedBuildExecutors          int32     `json:"requested_build_executors"`
+}
+
+type DeploymentBuild struct {
+	ID                    string                       `json:"id"`
+	Version               string                       `json:"version"`
+	APIVersion            string                       `json:"api_version"`
+	WorkerProtocolVersion string                       `json:"worker_protocol_version"`
+	ProjectID             string                       `json:"project_id"`
+	EnvironmentID         string                       `json:"environment_id"`
+	DeploymentSource      api.DeploymentSourceArtifact `json:"deployment_source"`
+	Runtime               CASObject                    `json:"runtime"`
+	NodeVersion           string                       `json:"node_version"`
+	Manager               ManagerPin                   `json:"manager"`
+	Toolchain             CASObject                    `json:"toolchain"`
+	BuildContractVersion  string                       `json:"build_contract_version"`
+	ImageCacheMode        string                       `json:"image_cache_mode"`
+}
+
+type ManagerPin struct {
+	Artifact  CASObject `json:"artifact"`
+	Integrity string    `json:"integrity,omitempty"`
+	Name      string    `json:"name"`
+	Version   string    `json:"version"`
+}
+
+type Workspace struct {
+	ID                string             `json:"id,omitempty"`
+	WorkspaceMountID  string             `json:"workspace_mount_id,omitempty"`
+	FencingGeneration int64              `json:"fencing_generation,omitempty"`
+	WriteLeaseID      string             `json:"write_lease_id,omitempty"`
+	WriteFencingToken string             `json:"write_fencing_token,omitempty"`
+	BaseVersionID     string             `json:"base_version_id,omitempty"`
+	MountPath         string             `json:"mount_path,omitempty"`
+	Artifact          *WorkspaceArtifact `json:"artifact,omitempty"`
+}
+
+type RuntimeSubstrate struct {
+	ID                     string `json:"id,omitempty"`
+	DeploymentDefinitionID string `json:"deployment_definition_id"`
+	SubstrateDigest        string `json:"substrate_digest"`
+	Format                 string `json:"format"`
+	BuilderABI             string `json:"builder_abi"`
+	LayoutABI              string `json:"layout_abi"`
+	SizeBytes              int64  `json:"size_bytes"`
+}
+
+type RuntimeSubstrateRegisterRequest struct {
+	DeploymentDefinitionID string `json:"deployment_definition_id"`
+	SubstrateDigest        string `json:"substrate_digest"`
+	Format                 string `json:"format"`
+	BuilderABI             string `json:"builder_abi"`
+	LayoutABI              string `json:"layout_abi"`
+	SizeBytes              int64  `json:"size_bytes"`
+}
+
+type RuntimeSubstrateRegisterResponse struct {
+	RuntimeSubstrate RuntimeSubstrate `json:"runtime_substrate"`
+}
+
+type WorkspaceArtifact struct {
+	Digest     string `json:"digest"`
+	MediaType  string `json:"media_type"`
+	Encoding   string `json:"encoding"`
+	SizeBytes  int64  `json:"size_bytes"`
+	EntryCount int32  `json:"entry_count"`
+}
+
+type Restore struct {
+	CheckpointID string             `json:"checkpoint_id"`
+	Checkpoint   CheckpointManifest `json:"checkpoint"`
+	RunWait      RestoreRunWait     `json:"run_wait"`
+}
+
+type RestoreRunWait struct {
+	ID                   string          `json:"id"`
+	CorrelationID        string          `json:"correlation_id"`
+	ResumeAttachID       string          `json:"resume_attach_id"`
+	ResumeRequestVersion int64           `json:"resume_request_version"`
+	Kind                 string          `json:"kind"`
+	ResumeKind           string          `json:"resume_kind"`
+	ResumePayloadJSON    json.RawMessage `json:"resume_payload_json"`
+}
+
+type StartRequest struct {
+	Lease RunLease `json:"lease"`
+}
+
+type RejectRunRequest struct {
+	Lease      RunLease        `json:"lease"`
+	ReasonCode string          `json:"reason_code"`
+	Error      json.RawMessage `json:"error,omitempty"`
+}
+
+type StartResponse struct {
+	RunID  string   `json:"run_id"`
+	Status string   `json:"status"`
+	Lease  RunLease `json:"lease"`
+}
+
+type AcknowledgeRestoreRequest struct {
+	Lease                RunLease          `json:"lease"`
+	RunWaitID            string            `json:"run_wait_id"`
+	CheckpointID         string            `json:"checkpoint_id"`
+	ResumeRequestVersion int64             `json:"resume_request_version"`
+	Phases               []CheckpointPhase `json:"phases,omitempty"`
+}
+
+type AcknowledgeRestoreResponse struct {
+	RunID        string `json:"run_id"`
+	RunWaitID    string `json:"run_wait_id"`
+	CheckpointID string `json:"checkpoint_id"`
+}
+
+type RenewRequest struct {
+	Lease RunLease `json:"lease"`
+}
+
+type RenewResponse struct {
+	Lease RunLease `json:"lease"`
+}
+
+type ReleaseRequest struct {
+	Lease  RunLease      `json:"lease"`
+	Result ReleaseResult `json:"result"`
+}
+
+type ReleaseResult struct {
+	Kind             string          `json:"kind"`
+	ActiveDurationMs int64           `json:"active_duration_ms,omitempty"`
+	ExitCode         *int32          `json:"exit_code,omitempty"`
+	Output           json.RawMessage `json:"output,omitempty"`
+	Error            *string         `json:"error,omitempty"`
+	FailureKind      *string         `json:"failure_kind,omitempty"`
+	LimitSeconds     *int32          `json:"limit_seconds,omitempty"`
+	Workspace        *Workspace      `json:"workspace,omitempty"`
+}
+
+type ReleaseResponse struct {
+	RunID  string `json:"run_id"`
+	Status string `json:"status"`
+}
+
+type SecretDeclaration struct {
+	Name  string `json:"name"`
+	Env   string `json:"env,omitempty"`
+	File  string `json:"file,omitempty"`
+	Dir   string `json:"dir,omitempty"`
+	Mode  string `json:"mode,omitempty"`
+	Owner string `json:"owner,omitempty"`
+}
+
+type CompleteDeploymentBuildRequest struct {
+	Lease  DeploymentBuildLease `json:"lease"`
+	Result json.RawMessage      `json:"result"`
+}
+
+type DeploymentBuildResponse struct {
+	DeploymentID string `json:"deployment_id"`
+	Status       string `json:"status"`
+}
+
+type LogStream string
+
+const (
+	LogStreamStdout     LogStream = "stdout"
+	LogStreamStderr     LogStream = "stderr"
+	LogStreamStructured LogStream = "structured"
+)
+
+type RunLogAppendRequest struct {
+	Lease         RunLeaseFence `json:"lease"`
+	Stream        LogStream     `json:"stream"`
+	ObservedSeq   uint64        `json:"observed_seq"`
+	ContentBase64 string        `json:"content_base64"`
+}
+
+type UpdateRunMetadataRequest struct {
+	Lease       RunLeaseFence   `json:"lease"`
+	OperationID string          `json:"operation_id"`
+	Operation   string          `json:"operation"`
+	Key         string          `json:"key,omitempty"`
+	Value       json.RawMessage `json:"value,omitempty"`
+	Patch       json.RawMessage `json:"patch,omitempty"`
+	Amount      *float64        `json:"amount,omitempty"`
+}
+
+type StructuredLogRequest struct {
+	Lease       RunLeaseFence   `json:"lease"`
+	ObservedSeq uint64          `json:"observed_seq"`
+	Level       string          `json:"level"`
+	Message     string          `json:"message"`
+	Attributes  json.RawMessage `json:"attributes"`
+}
+
+type CreateTokenRequest struct {
+	Lease          RunLeaseFence   `json:"lease"`
+	CorrelationID  string          `json:"correlation_id"`
+	TimeoutMS      *int64          `json:"timeout_ms,omitempty"`
+	Tags           []string        `json:"tags,omitempty"`
+	Metadata       json.RawMessage `json:"metadata,omitempty"`
+	IdempotencyKey string          `json:"idempotency_key,omitempty"`
+}
+
+type RunWaitKind string
+
+const (
+	RunWaitKindToken      RunWaitKind = "token"
+	RunWaitKindTimer      RunWaitKind = "timer"
+	RunWaitKindActorInput RunWaitKind = "actor_input"
+	RunWaitKindChild      RunWaitKind = "child"
+)
+
+type CreateRunWaitRequest struct {
+	Lease                         RunLeaseFence   `json:"lease"`
+	CorrelationID                 string          `json:"correlation_id"`
+	RunWaitID                     string          `json:"run_wait_id"`
+	ResumeAttachID                string          `json:"resume_attach_id"`
+	Kind                          RunWaitKind     `json:"kind"`
+	Params                        json.RawMessage `json:"params,omitempty"`
+	Metadata                      json.RawMessage `json:"metadata,omitempty"`
+	Tags                          []string        `json:"tags,omitempty"`
+	TimeoutMS                     *int64          `json:"timeout_ms,omitempty"`
+	IdleTimeoutMS                 *int64          `json:"idle_timeout_ms,omitempty"`
+	ActorSpeculativeInputSequence *int64          `json:"actor_speculative_input_sequence,omitempty"`
+}
+
+type CreateRunWaitResponse struct {
+	RunID              string          `json:"run_id"`
+	RunWaitID          string          `json:"run_wait_id"`
+	ResumeAttachID     string          `json:"resume_attach_id,omitempty"`
+	RuntimeInstanceID  string          `json:"runtime_instance_id,omitempty"`
+	RuntimeEpoch       int64           `json:"runtime_epoch,omitempty"`
+	CheckpointDelayMs  int64           `json:"checkpoint_delay_ms,omitempty"`
+	WorkspaceVersionID string          `json:"workspace_version_id,omitempty"`
+	ResolutionKind     string          `json:"resolution_kind,omitempty"`
+	Resolution         json.RawMessage `json:"resolution,omitempty"`
+}
+
+type RunWaitPollRequest struct {
+	Lease     RunLeaseFence `json:"lease"`
+	RunWaitID string        `json:"run_wait_id"`
+}
+
+type RunWaitPollStatus string
+
+const (
+	RunWaitPollStatusWaiting             RunWaitPollStatus = "waiting"
+	RunWaitPollStatusCheckpointRequested RunWaitPollStatus = "checkpoint_requested"
+	RunWaitPollStatusResumeRequested     RunWaitPollStatus = "resume_requested"
+	RunWaitPollStatusTerminal            RunWaitPollStatus = "terminal"
+)
+
+type RunWaitPollResponse struct {
+	RunID            string            `json:"run_id"`
+	RunWaitID        string            `json:"run_wait_id"`
+	Status           RunWaitPollStatus `json:"status"`
+	RequestVersion   int64             `json:"request_version,omitempty"`
+	CheckpointID     string            `json:"checkpoint_id,omitempty"`
+	CaptureWorkspace bool              `json:"capture_workspace,omitempty"`
+	ResumeKind       string            `json:"resume_kind,omitempty"`
+	ResumePayload    json.RawMessage   `json:"resume_payload,omitempty"`
+	RequireAck       bool              `json:"require_ack,omitempty"`
+}
+
+type RunWaitResumeAckRequest struct {
+	Lease                RunLeaseFence `json:"lease"`
+	RunWaitID            string        `json:"run_wait_id"`
+	ResumeRequestVersion int64         `json:"resume_request_version"`
+}
+
+type RunWaitResumeAckResponse struct {
+	RunID                string `json:"run_id"`
+	RunWaitID            string `json:"run_wait_id"`
+	ResumeRequestVersion int64  `json:"resume_request_version"`
+}
+
+type CheckpointResponse struct {
+	RunID              string `json:"run_id"`
+	RunWaitID          string `json:"run_wait_id"`
+	CheckpointID       string `json:"checkpoint_id"`
+	WorkspaceVersionID string `json:"workspace_version_id,omitempty"`
+}
+
+type CheckpointManifest struct {
+	RecoveryPoint  CheckpointRecoveryPoint  `json:"recovery_point"`
+	RuntimeState   CheckpointRuntimeState   `json:"runtime_state"`
+	WorkspaceState CheckpointWorkspaceState `json:"workspace_state"`
+	Phases         []CheckpointPhase        `json:"phases,omitempty"`
+}
+
+type CheckpointRecoveryPoint struct {
+	ID            string            `json:"id,omitempty"`
+	RunID         string            `json:"run_id,omitempty"`
+	AttemptNumber int32             `json:"attempt_number,omitempty"`
+	RunWaitID     string            `json:"run_wait_id,omitempty"`
+	CorrelationID string            `json:"correlation_id,omitempty"`
+	Runtime       CheckpointRuntime `json:"runtime"`
+}
+
+type CheckpointRuntime struct {
+	Backend         string                      `json:"backend"`
+	ID              string                      `json:"id"`
+	Arch            string                      `json:"arch"`
+	ABI             string                      `json:"abi"`
+	KernelDigest    string                      `json:"kernel_digest"`
+	InitramfsDigest string                      `json:"initramfs_digest"`
+	RootfsDigest    string                      `json:"rootfs_digest"`
+	ConfigDigest    string                      `json:"config_digest"`
+	Substrate       *CheckpointRuntimeSubstrate `json:"substrate,omitempty"`
+}
+
+type CheckpointRuntimeSubstrate struct {
+	Digest     string `json:"digest"`
+	Format     string `json:"format"`
+	BuilderABI string `json:"builder_abi"`
+	LayoutABI  string `json:"layout_abi"`
+}
+
+type CheckpointRuntimeState struct {
+	ConfigArtifact      CheckpointArtifact   `json:"config_artifact"`
+	VMStateArtifact     CheckpointArtifact   `json:"vm_state_artifact"`
+	ScratchDiskArtifact CheckpointArtifact   `json:"scratch_disk_artifact"`
+	MemoryArtifacts     []CheckpointArtifact `json:"memory_artifacts,omitempty"`
+	Config              json.RawMessage      `json:"config,omitempty"`
+}
+
+type CheckpointWorkspaceState struct {
+	Base CheckpointWorkspaceBase `json:"base"`
+}
+
+type CheckpointWorkspaceBase struct {
+	ArtifactDigest    string `json:"artifact_digest"`
+	ArtifactSizeBytes int64  `json:"artifact_size_bytes"`
+	ArtifactMediaType string `json:"artifact_media_type"`
+	ArtifactEncoding  string `json:"artifact_encoding"`
+	MountPath         string `json:"mount_path"`
+}
+
+type CheckpointArtifact struct {
+	Digest            string `json:"digest"`
+	SizeBytes         int64  `json:"size_bytes"`
+	MediaType         string `json:"media_type"`
+	EncryptDurationMs int64  `json:"encrypt_duration_ms,omitempty"`
+	StoreDurationMs   int64  `json:"store_duration_ms,omitempty"`
+}
+
+type CheckpointPhase struct {
+	Name       string                   `json:"name"`
+	DurationMs int64                    `json:"duration_ms"`
+	Role       string                   `json:"role,omitempty"`
+	MediaType  string                   `json:"media_type,omitempty"`
+	ErrorClass string                   `json:"error_class,omitempty"`
+	Filepack   *CheckpointFilepackStats `json:"filepack,omitempty"`
+}
+
+type CheckpointFilepackStats struct {
+	LogicalBytes       int64 `json:"logical_bytes,omitempty"`
+	AllocatedBytes     int64 `json:"allocated_bytes,omitempty"`
+	SparseSupported    *bool `json:"sparse_supported,omitempty"`
+	SparseDataRanges   int64 `json:"sparse_data_ranges,omitempty"`
+	SparseDataBytes    int64 `json:"sparse_data_bytes,omitempty"`
+	ZeroChunksSkipped  int64 `json:"zero_chunks_skipped,omitempty"`
+	EncodedChunks      int64 `json:"encoded_chunks,omitempty"`
+	CompressedBytes    int64 `json:"compressed_bytes,omitempty"`
+	UnpackWrittenBytes int64 `json:"unpack_written_bytes,omitempty"`
+}
+
+type CASObject struct {
+	Digest    string `json:"digest"`
+	SizeBytes int64  `json:"size_bytes"`
+	MediaType string `json:"media_type"`
+}
+
+type CheckpointReadyRequest struct {
+	Lease            RunLeaseFence              `json:"lease"`
+	RequestVersion   int64                      `json:"request_version"`
+	RunWaitID        string                     `json:"run_wait_id"`
+	CheckpointID     string                     `json:"checkpoint_id"`
+	WorkspaceCapture CheckpointWorkspaceCapture `json:"workspace_capture"`
+	Manifest         CheckpointManifest         `json:"manifest"`
+}
+
+type CheckpointWorkspaceCapture struct {
+	Tree     WorkspaceTreeIdentity `json:"tree"`
+	Artifact WorkspaceArtifact     `json:"artifact"`
+}
+
+type CheckpointFailedRequest struct {
+	Lease          RunLeaseFence `json:"lease"`
+	RequestVersion int64         `json:"request_version"`
+	RunWaitID      string        `json:"run_wait_id"`
+	CheckpointID   string        `json:"checkpoint_id"`
+	Error          string        `json:"error"`
+}

@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"golang.org/x/sys/unix"
 )
 
@@ -41,7 +41,7 @@ var platformAcquisitionCgroupLimits = map[string]string{
 func runPlatformAcquisitionProcess(
 	ctx context.Context,
 	process PlatformAcquisitionProcess,
-	request api.WorkerPlatformAcquisition,
+	request workerapi.PlatformAcquisition,
 ) (_ PlatformAcquisitionProcessResult, returnErr error) {
 	if err := validatePlatformAcquisitionProcess(process, request); err != nil {
 		return PlatformAcquisitionProcessResult{}, err
@@ -111,7 +111,7 @@ func runPlatformAcquisitionProcess(
 
 func validatePlatformAcquisitionProcess(
 	process PlatformAcquisitionProcess,
-	request api.WorkerPlatformAcquisition,
+	request workerapi.PlatformAcquisition,
 ) error {
 	if _, err := ids.Parse(request.DeploymentID); err != nil {
 		return errors.New("Platform acquisition Deployment ID is invalid")

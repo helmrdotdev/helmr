@@ -32,7 +32,7 @@ func (c *File) Put(ctx context.Context, mediaType string, body io.Reader) (Objec
 	if err != nil {
 		return Object{}, err
 	}
-	return putStage(ctx, stage, body)
+	return WriteStage(ctx, stage, body)
 }
 
 func (c *File) Stage(ctx context.Context, mediaType string) (Stage, error) {
@@ -47,7 +47,7 @@ func (c *File) Stage(ctx context.Context, mediaType string) (Stage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &fileStage{store: c, stageFile: newStageFile(mediaType, file)}, nil
+	return &fileStage{store: c, FileStage: NewFileStage(mediaType, file)}, nil
 }
 
 func (c *File) Stat(_ context.Context, digest string) (Object, error) {
@@ -71,7 +71,7 @@ func (c *File) Get(_ context.Context, digest string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newVerifyingReadCloser(file, digest), nil
+	return NewVerifyingReadCloser(file, digest), nil
 }
 
 func (c *File) Delete(_ context.Context, digest string) error {
@@ -118,7 +118,7 @@ func (c *File) readMediaType(path string) string {
 
 type fileStage struct {
 	store *File
-	*stageFile
+	*FileStage
 }
 
 func (s *fileStage) Commit(ctx context.Context) (Object, error) {
@@ -130,8 +130,8 @@ func (s *fileStage) Commit(ctx context.Context) (Object, error) {
 	cleanupFinalMetadata := false
 	defer func() {
 		if cleanup {
-			_ = os.Remove(s.path)
-			_ = os.Remove(s.path + ".json")
+			_ = os.Remove(s.Path())
+			_ = os.Remove(s.Path() + ".json")
 			if cleanupFinalData && finalPath != "" {
 				_ = os.Remove(finalPath)
 			}
@@ -143,7 +143,7 @@ func (s *fileStage) Commit(ctx context.Context) (Object, error) {
 			}
 		}
 	}()
-	digest, err := s.beginCommit(ctx, true)
+	digest, err := s.BeginCommit(ctx, true)
 	if err != nil {
 		return Object{}, err
 	}
@@ -153,22 +153,22 @@ func (s *fileStage) Commit(ctx context.Context) (Object, error) {
 	}
 	finalPath = filepath.Join(s.store.root, filepath.FromSlash(key))
 	finalMetadataPath = finalPath + ".json"
-	if err := s.store.writeMetadata(s.path, s.mediaType); err != nil {
+	if err := s.store.writeMetadata(s.Path(), s.MediaType()); err != nil {
 		return Object{}, err
 	}
 	if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil {
 		return Object{}, err
 	}
-	if err := os.Chmod(s.path, 0o644); err != nil {
+	if err := os.Chmod(s.Path(), 0o644); err != nil {
 		return Object{}, err
 	}
 	if _, err := os.Stat(finalPath); err == nil {
-		if err := os.Rename(s.path+".json", finalMetadataPath); err != nil {
+		if err := os.Rename(s.Path()+".json", finalMetadataPath); err != nil {
 			return Object{}, err
 		}
 		cleanup = false
-		_ = os.Remove(s.path)
-		return Object{Digest: digest, SizeBytes: s.size, Key: key, MediaType: s.mediaType}, nil
+		_ = os.Remove(s.Path())
+		return Object{Digest: digest, SizeBytes: s.Size(), Key: key, MediaType: s.MediaType()}, nil
 	} else if !os.IsNotExist(err) {
 		return Object{}, err
 	}
@@ -183,10 +183,10 @@ func (s *fileStage) Commit(ctx context.Context) (Object, error) {
 	if err := os.Remove(finalDataStagePath); err != nil {
 		return Object{}, err
 	}
-	if err := os.Rename(s.path, finalDataStagePath); err != nil {
+	if err := os.Rename(s.Path(), finalDataStagePath); err != nil {
 		return Object{}, err
 	}
-	if err := os.Rename(s.path+".json", finalMetadataPath); err != nil {
+	if err := os.Rename(s.Path()+".json", finalMetadataPath); err != nil {
 		return Object{}, err
 	}
 	cleanupFinalMetadata = true
@@ -196,7 +196,7 @@ func (s *fileStage) Commit(ctx context.Context) (Object, error) {
 	finalDataStagePath = ""
 	cleanupFinalData = true
 	cleanup = false
-	return Object{Digest: digest, SizeBytes: s.size, Key: key, MediaType: s.mediaType}, nil
+	return Object{Digest: digest, SizeBytes: s.Size(), Key: key, MediaType: s.MediaType()}, nil
 }
 
 var _ Store = (*File)(nil)

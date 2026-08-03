@@ -7,17 +7,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/http"
 	"net/mail"
 	"net/smtp"
 	"strings"
 	"time"
-
-	"github.com/resend/resend-go/v3"
 )
 
 const emailSMTPTimeout = 10 * time.Second
-const emailHTTPTimeout = 10 * time.Second
 
 type Message struct {
 	To             string
@@ -96,11 +92,11 @@ func (m SMTPSender) SendEmail(ctx context.Context, message Message) error {
 		host = parsedHost
 	}
 	headers := []string{
-		"Subject: " + normalizeEmailHeader(message.Subject),
+		"Subject: " + NormalizeHeader(message.Subject),
 		"From: " + from.String(),
 		"To: " + to.String(),
 	}
-	if messageID := normalizeEmailHeader(message.MessageID); messageID != "" {
+	if messageID := NormalizeHeader(message.MessageID); messageID != "" {
 		headers = append(headers, "Message-ID: "+messageID)
 	}
 	headers = append(headers, "Content-Type: text/plain; charset=utf-8")
@@ -156,64 +152,14 @@ func (m SMTPSender) SendEmail(ctx context.Context, message Message) error {
 	return client.Quit()
 }
 
-type resendEmailService interface {
-	SendWithOptions(ctx context.Context, params *resend.SendEmailRequest, options *resend.SendEmailOptions) (*resend.SendEmailResponse, error)
-}
-
-type ResendSender struct {
-	from   string
-	emails resendEmailService
-}
-
-func NewResendSender(apiKey string, from string) ResendSender {
-	client := resend.NewCustomClient(&http.Client{Timeout: emailHTTPTimeout}, apiKey)
-	return ResendSender{from: from, emails: client.Emails}
-}
-
-func (m ResendSender) SendEmail(ctx context.Context, message Message) error {
-	if strings.TrimSpace(m.from) == "" || m.emails == nil {
-		return errors.New("resend email sender is not configured")
-	}
-	from, err := mail.ParseAddress(m.from)
-	if err != nil {
-		return fmt.Errorf("invalid email sender: %w", err)
-	}
-	to, err := mail.ParseAddress(message.To)
-	if err != nil {
-		return fmt.Errorf("invalid email recipient: %w", err)
-	}
-	ctx, cancel := context.WithTimeout(ctx, emailHTTPTimeout)
-	defer cancel()
-	params := &resend.SendEmailRequest{
-		From:    formatEmailAddress(*from),
-		To:      []string{formatEmailAddress(*to)},
-		Subject: normalizeEmailHeader(message.Subject),
-		Text:    normalizeResendEmailBody(message.PlainText),
-		Headers: map[string]string{
-			"Message-ID": normalizeEmailHeader(message.MessageID),
-		},
-	}
-	if params.Headers["Message-ID"] == "" {
-		params.Headers = nil
-	}
-	options := &resend.SendEmailOptions{IdempotencyKey: normalizeEmailHeader(message.IdempotencyKey)}
-	if options.IdempotencyKey == "" {
-		options = nil
-	}
-	if _, err := m.emails.SendWithOptions(ctx, params, options); err != nil {
-		return err
-	}
-	return nil
-}
-
-func formatEmailAddress(address mail.Address) string {
+func FormatAddress(address mail.Address) string {
 	if strings.TrimSpace(address.Name) == "" {
 		return strings.TrimSpace(address.Address)
 	}
 	return address.String()
 }
 
-func normalizeEmailHeader(value string) string {
+func NormalizeHeader(value string) string {
 	value = strings.ReplaceAll(value, "\r", " ")
 	value = strings.ReplaceAll(value, "\n", " ")
 	return strings.TrimSpace(value)
@@ -225,15 +171,6 @@ func normalizeEmailBody(body string) string {
 	body = strings.ReplaceAll(body, "\n", "\r\n")
 	if !strings.HasSuffix(body, "\r\n") {
 		body += "\r\n"
-	}
-	return body
-}
-
-func normalizeResendEmailBody(body string) string {
-	body = strings.ReplaceAll(body, "\r\n", "\n")
-	body = strings.ReplaceAll(body, "\r", "\n")
-	if !strings.HasSuffix(body, "\n") {
-		body += "\n"
 	}
 	return body
 }

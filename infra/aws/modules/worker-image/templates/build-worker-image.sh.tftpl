@@ -77,7 +77,7 @@ make console-build
 retry 4 go mod download
 GOFLAGS='' CGO_ENABLED=0 go build -tags embed_console -o /usr/local/bin/helmr-worker ./cmd/helmr-worker
 GOFLAGS='' go build -tags embed_console -o /usr/local/bin/helmr ./cmd/helmr
-GOFLAGS='' go build -tags embed_console -o /usr/local/bin/helmr-control ./cmd/helmr-control
+GOFLAGS='' go build -tags embed_console -o /usr/local/bin/helmr-controlplane ./cmd/helmr-controlplane
 GOFLAGS='' go build -tags embed_console -o /usr/local/bin/helmr-dispatcher ./cmd/helmr-dispatcher
 make images
 

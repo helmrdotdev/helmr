@@ -40,7 +40,7 @@ variables {
   vpc_id                            = "vpc-00000000000000000"
   subnet_ids                        = ["subnet-00000000000000000"]
   ami_id                            = "ami-00000000000000000"
-  worker_control_url                = "https://control.example.test"
+  worker_controlplane_url           = "https://controlplane.example.test"
   cas_uri                           = "s3://helmr-test-cas"
   cas_bucket_arn                    = "arn:aws:s3:::helmr-test-cas"
   kms_key_arn                       = "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000000"
@@ -286,7 +286,7 @@ run "build_worker_installs_exact_policy_before_service" {
       strcontains(aws_iam_role_policy.worker.policy, "${var.platform_store_bucket_arn}/objects/sha256/*") &&
       strcontains(aws_iam_role_policy.worker.policy, "CreatePlatformObjects") &&
       strcontains(aws_iam_role_policy.worker.policy, "EncryptPlatformObjects") &&
-      !strcontains(aws_iam_role_policy.worker.policy, "${var.platform_store_bucket_arn}/control/runtime")
+      !strcontains(aws_iam_role_policy.worker.policy, "${var.platform_store_bucket_arn}/controlplane/runtime")
     )
     error_message = "build worker IAM must publish immutable Platform candidates without rollout lineage authority"
   }
