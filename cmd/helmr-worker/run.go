@@ -24,7 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
-	"github.com/helmrdotdev/helmr/internal/imagebuild"
+	imageworker "github.com/helmrdotdev/helmr/internal/imagebuild/worker"
 	imagecacheecr "github.com/helmrdotdev/helmr/internal/imagecache/ecr"
 	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
 	"github.com/helmrdotdev/helmr/internal/substrate"
@@ -291,14 +291,14 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure host runtime start limit: %w", err)
 	}
-	var imageBuilder imagebuild.WorkerImageBuilder
+	var imageBuilder imageworker.Builder
 	if supportsBuild {
 		imageBuildWorkDir := filepath.Join(workDir, "image-builds")
 		if err := ensurePrivateDirectory(imageBuildWorkDir); err != nil {
 			return fmt.Errorf("prepare Workspace image build directory: %w", err)
 		}
 		imageControl := workerImageControl{client: controlClient}
-		var cacheCredentials imagebuild.CacheCredentialFetcher
+		var cacheCredentials imageworker.CacheCredentialFetcher
 		if cfg.ImageCache != nil {
 			awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
 			if err != nil {
@@ -320,7 +320,7 @@ func run(log *slog.Logger) error {
 			}
 			cacheCredentials = workerImageCacheCredentials{provider: provider}
 		}
-		imageBuilder = imagebuild.VMEngine{
+		imageBuilder = imageworker.VMEngine{
 			Connector: runtimeConnector, Admission: imageControl, Credentials: imageControl,
 			Cache: cacheCredentials, Completion: imageControl, WorkDir: imageBuildWorkDir,
 		}

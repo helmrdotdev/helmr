@@ -1,4 +1,4 @@
-package imagebuild
+package worker
 
 import (
 	"context"
@@ -18,8 +18,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/imagecache"
 	"github.com/helmrdotdev/helmr/internal/oci"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
@@ -31,7 +33,7 @@ const imageBuildCloseTimeout = 30 * time.Second
 // by Descriptor and Paths or fail without selecting another source.
 type SourceArchive interface {
 	Descriptor() (SourceArchiveDescriptor, error)
-	Paths() ([]SourcePath, error)
+	Paths() ([]imagebuild.SourcePath, error)
 	WriteTo(context.Context, io.Writer) error
 }
 
@@ -42,11 +44,11 @@ type SourceArchiveDescriptor struct {
 	PathSetDigest    string
 }
 
-// BuildLeaseAuthority is the provider-neutral Control authority required by
+// LeaseAuthority is the provider-neutral Control authority required by
 // every Workspace-image admission, credential delivery, and completion call.
 // It deliberately mirrors the complete fenced assignment rather than keeping
 // an operation-to-Lease lookup in the Worker.
-type BuildLeaseAuthority struct {
+type LeaseAuthority struct {
 	ID                               string
 	OrgID                            string
 	ProjectID                        string
@@ -63,37 +65,37 @@ type BuildLeaseAuthority struct {
 	RequestedBuildExecutors          int32
 }
 
-// WorkerBuildRequest contains the exact Worker facts submitted to Control for
+// BuildRequest contains the exact Worker facts submitted to Control for
 // Workspace-image admission. It contains no credential plaintext.
-type WorkerBuildRequest struct {
-	Lease                 BuildLeaseAuthority
+type BuildRequest struct {
+	Lease                 LeaseAuthority
 	RuntimeIdentityID     string
 	DeclarationSlot       string
 	Architecture          string
-	Plan                  Build
+	Plan                  imagebuild.Build
 	SubmittedSourceDigest string
 	BuildTreeDigest       string
 	BuildTreeSizeBytes    int64
-	RequestedCacheMode    CacheMode
+	RequestedCacheMode    imagebuild.CacheMode
 	Source                SourceArchive
 }
 
 type AdmissionRequest struct {
-	Lease                  BuildLeaseAuthority
+	Lease                  LeaseAuthority
 	RuntimeIdentityID      string
 	DeclarationSlot        string
 	Architecture           string
-	Plan                   Build
+	Plan                   imagebuild.Build
 	PlanDigest             string
 	SubmittedSourceDigest  string
 	BuildTreeDigest        string
 	BuildTreeSizeBytes     int64
-	AdmittedPaths          []SourcePath
+	AdmittedPaths          []imagebuild.SourcePath
 	AdmittedPathSetDigest  string
 	SourceArchiveDigest    string
 	SourceArchiveSizeBytes int64
 	SourceArchiveEntries   int
-	RequestedCacheMode     CacheMode
+	RequestedCacheMode     imagebuild.CacheMode
 	ExecutionABI           string
 	LLBABI                 string
 	CacheABI               string
@@ -105,17 +107,17 @@ type Assignment struct {
 	OperationID         string
 	RequestFingerprint  string
 	Request             AdmissionRequest
-	RegistryBindings    []RegistryBinding
+	RegistryBindings    []imagebuild.RegistryBinding
 	ResolutionSetDigest string
 	CacheScope          string
 	Quotas              AssignmentQuotas
 	Output              AssignmentOutputContract
-	CacheBinding        *CacheBinding
+	CacheBinding        *imagebuild.CacheBinding
 	TerminalResult      *TerminalResult
 }
 
 type TerminalResult struct {
-	Evidence WorkerResultEvidence
+	Evidence ResultEvidence
 }
 
 type AssignmentQuotas struct {
@@ -141,14 +143,14 @@ type AdmissionClient interface {
 type RegistryCredentialRequest struct {
 	OperationID         string
 	AttemptID           string
-	Lease               BuildLeaseAuthority
-	RegistryBindings    []RegistryBinding
+	Lease               LeaseAuthority
+	RegistryBindings    []imagebuild.RegistryBinding
 	PlanDigest          string
 	ResolutionSetDigest string
 }
 
 type RegistryCredentialFetcher interface {
-	FetchRegistryCredentials(context.Context, RegistryCredentialRequest) ([]RegistryCredentialValue, error)
+	FetchRegistryCredentials(context.Context, RegistryCredentialRequest) ([]imagebuild.RegistryCredentialValue, error)
 }
 
 type PublishedArtifact struct {
@@ -158,7 +160,7 @@ type PublishedArtifact struct {
 }
 
 type CompletionRequest struct {
-	Evidence WorkerResultEvidence
+	Evidence ResultEvidence
 	Artifact *PublishedArtifact
 }
 
@@ -169,36 +171,36 @@ type CompletionClient interface {
 // CacheCredentialFetcher is called only after a guest is connected and only
 // when Control supplied a non-secret attempt-local cache binding.
 type CacheCredentialFetcher interface {
-	FetchImageCacheCredential(context.Context, Assignment) (RegistryCredentialValue, error)
+	FetchImageCacheCredential(context.Context, Assignment) (imagebuild.RegistryCredentialValue, error)
 }
 
 type OperationRevocations interface {
 	RegisterImageOperation(string, context.CancelFunc) (func(), error)
 }
 
-type WorkerImageBuilder interface {
-	BuildWorkspaceImage(context.Context, WorkerBuildRequest, OperationRevocations) (*WorkerArtifact, error)
-	CompleteWorkspaceImage(context.Context, *WorkerArtifact, PublishedArtifact) error
+type Builder interface {
+	BuildWorkspaceImage(context.Context, BuildRequest, OperationRevocations) (*Artifact, error)
+	CompleteWorkspaceImage(context.Context, *Artifact, PublishedArtifact) error
 }
 
-// WorkerArtifact owns one verified temporary OCI archive. Callers may open it
+// Artifact owns one verified temporary OCI archive. Callers may open it
 // repeatedly for CAS publication and must Close it to remove the local copy.
-type WorkerArtifact struct {
+type Artifact struct {
 	Digest    string
 	SizeBytes int64
-	Evidence  WorkerResultEvidence
+	Evidence  ResultEvidence
 	Replayed  bool
 	path      string
 	closed    bool
 }
 
-// WorkerResultEvidence is returned with the verified temporary OCI archive so
+// ResultEvidence is returned with the verified temporary OCI archive so
 // the caller can publish to CAS before completing the logical Control claim.
-type WorkerResultEvidence struct {
+type ResultEvidence struct {
 	OperationID            string
 	RequestFingerprint     string
 	AttemptID              string
-	Lease                  BuildLeaseAuthority
+	Lease                  LeaseAuthority
 	DeclarationSlot        string
 	RuntimeIdentityID      string
 	PlanDigest             string
@@ -209,19 +211,19 @@ type WorkerResultEvidence struct {
 	SourceArchiveSizeBytes int64
 	ResolutionSetDigest    string
 	CacheScope             string
-	RequestedCacheMode     CacheMode
+	RequestedCacheMode     imagebuild.CacheMode
 	Output                 AssignmentOutputContract
-	GuestResult            GuestResult
+	GuestResult            imagebuild.GuestResult
 }
 
-func (artifact *WorkerArtifact) Open() (*os.File, error) {
+func (artifact *Artifact) Open() (*os.File, error) {
 	if artifact == nil || artifact.closed || artifact.path == "" {
 		return nil, errors.New("Workspace image artifact is closed")
 	}
 	return os.Open(artifact.path)
 }
 
-func (artifact *WorkerArtifact) Close() error {
+func (artifact *Artifact) Close() error {
 	if artifact == nil || artifact.closed {
 		return nil
 	}
@@ -248,9 +250,9 @@ type VMEngine struct {
 
 func (engine VMEngine) BuildWorkspaceImage(
 	ctx context.Context,
-	request WorkerBuildRequest,
+	request BuildRequest,
 	revocations OperationRevocations,
-) (_ *WorkerArtifact, returnErr error) {
+) (_ *Artifact, returnErr error) {
 	if ctx == nil {
 		return nil, errors.New("Workspace image build context is nil")
 	}
@@ -277,13 +279,13 @@ func (engine VMEngine) BuildWorkspaceImage(
 	}
 	if assignment.TerminalResult != nil {
 		evidence := assignment.TerminalResult.Evidence
-		if evidence.GuestResult.Outcome == GuestFailed {
-			return nil, &WorkerGuestFailure{
+		if evidence.GuestResult.Outcome == imagebuild.GuestFailed {
+			return nil, &GuestFailure{
 				Reason:  evidence.GuestResult.FailureReason,
 				Message: evidence.GuestResult.Error,
 			}
 		}
-		return &WorkerArtifact{
+		return &Artifact{
 			Digest: evidence.GuestResult.OCIDigest, SizeBytes: evidence.GuestResult.OCISizeBytes,
 			Evidence: evidence, Replayed: true,
 		}, nil
@@ -318,7 +320,7 @@ func (engine VMEngine) BuildWorkspaceImage(
 	stopCancellationClose := context.AfterFunc(attemptCtx, func() {
 		closeDone <- closeImageBuildSession(session, owner)
 	})
-	var produced *WorkerArtifact
+	var produced *Artifact
 	defer func() {
 		unregister()
 		var closeErr error
@@ -356,7 +358,7 @@ func (engine VMEngine) BuildWorkspaceImage(
 		return nil, fmt.Errorf("fetch Workspace image registry credentials: %w", err)
 	}
 	defer clearCredentialValues(userCredentials)
-	credentials := make([]RegistryCredentialValue, len(userCredentials), len(userCredentials)+1)
+	credentials := make([]imagebuild.RegistryCredentialValue, len(userCredentials), len(userCredentials)+1)
 	copy(credentials, userCredentials)
 	if assignment.CacheBinding != nil {
 		if engine.Cache == nil {
@@ -377,25 +379,25 @@ func (engine VMEngine) BuildWorkspaceImage(
 		}
 	}
 	guestRequest := assignmentGuestRequest(assignment, attemptID)
-	requestRaw, err := CanonicalGuestRequest(guestRequest)
+	requestRaw, err := imagebuild.CanonicalGuestRequest(guestRequest)
 	if err != nil {
 		return nil, fmt.Errorf("encode Workspace image guest request: %w", err)
 	}
-	slices.SortFunc(credentials, func(left, right RegistryCredentialValue) int {
+	slices.SortFunc(credentials, func(left, right imagebuild.RegistryCredentialValue) int {
 		return strings.Compare(left.Authority, right.Authority)
 	})
-	envelope := CredentialEnvelope{
+	envelope := imagebuild.CredentialEnvelope{
 		OperationID:         assignment.OperationID,
 		AttemptID:           attemptID,
 		ResolutionSetDigest: assignment.ResolutionSetDigest,
 		RegistryCredentials: credentials,
 	}
-	envelopeRaw, err := CanonicalCredentialEnvelope(envelope)
+	envelopeRaw, err := imagebuild.CanonicalCredentialEnvelope(envelope)
 	if err != nil {
 		return nil, fmt.Errorf("encode Workspace image credential envelope: %w", err)
 	}
 	defer clear(envelopeRaw)
-	if err := MatchCredentialEnvelope(guestRequest, envelope); err != nil {
+	if err := imagebuild.MatchCredentialEnvelope(guestRequest, envelope); err != nil {
 		return nil, err
 	}
 
@@ -425,15 +427,15 @@ func (engine VMEngine) BuildWorkspaceImage(
 	clear(envelopeRaw)
 	clearCredentialValues(credentials)
 
-	resultRaw, err := frameio.ReadMessageFrameBounded(stream, RequestDocumentMaxBytes)
+	resultRaw, err := frameio.ReadMessageFrameBounded(stream, imagebuild.RequestDocumentMaxBytes)
 	if err != nil {
 		return nil, vm.NewGuestError(fmt.Errorf("read image-build result: %w", err))
 	}
-	result, err := ParseGuestResult(resultRaw)
+	result, err := imagebuild.ParseGuestResult(resultRaw)
 	if err != nil {
 		return nil, vm.NewGuestError(err)
 	}
-	if result.Outcome == GuestFailed {
+	if result.Outcome == imagebuild.GuestFailed {
 		if err := requireResponseEOF(stream); err != nil {
 			return nil, vm.NewGuestError(err)
 		}
@@ -449,10 +451,10 @@ func (engine VMEngine) BuildWorkspaceImage(
 		}); err != nil {
 			return nil, fmt.Errorf("complete failed Workspace image operation: %w", err)
 		}
-		return nil, &WorkerGuestFailure{Reason: result.FailureReason, Message: result.Error}
+		return nil, &GuestFailure{Reason: result.FailureReason, Message: result.Error}
 	}
 
-	artifact, err := receiveWorkerArtifact(attemptCtx, engine.WorkDir, stream, result, admissionRequest.Architecture)
+	artifact, err := receiveArtifact(attemptCtx, engine.WorkDir, stream, result, admissionRequest.Architecture)
 	if err != nil {
 		return nil, vm.NewGuestError(err)
 	}
@@ -469,22 +471,22 @@ func (engine VMEngine) BuildWorkspaceImage(
 		}); err != nil {
 			return nil, fmt.Errorf("complete network-limited Workspace image operation: %w", err)
 		}
-		return nil, &WorkerGuestFailure{Reason: result.FailureReason, Message: result.Error}
+		return nil, &GuestFailure{Reason: result.FailureReason, Message: result.Error}
 	}
 	return artifact, nil
 }
 
-func imageBuildNetworkQuotaResult() GuestResult {
-	return GuestResult{
-		ExecutionABI:  ExecutionABI,
-		Outcome:       GuestFailed,
-		FailureReason: GuestFailureNetworkQuota,
+func imageBuildNetworkQuotaResult() imagebuild.GuestResult {
+	return imagebuild.GuestResult{
+		ExecutionABI:  imagebuild.ExecutionABI,
+		Outcome:       imagebuild.GuestFailed,
+		FailureReason: imagebuild.GuestFailureNetworkQuota,
 		Error:         "image-build public-egress limit was exceeded",
 	}
 }
 
-func resultEvidence(assignment Assignment, attemptID string, result GuestResult) WorkerResultEvidence {
-	return WorkerResultEvidence{
+func resultEvidence(assignment Assignment, attemptID string, result imagebuild.GuestResult) ResultEvidence {
+	return ResultEvidence{
 		OperationID:            assignment.OperationID,
 		RequestFingerprint:     assignment.RequestFingerprint,
 		AttemptID:              attemptID,
@@ -507,7 +509,7 @@ func resultEvidence(assignment Assignment, attemptID string, result GuestResult)
 
 func (engine VMEngine) CompleteWorkspaceImage(
 	ctx context.Context,
-	artifact *WorkerArtifact,
+	artifact *Artifact,
 	published PublishedArtifact,
 ) error {
 	if artifact == nil {
@@ -524,7 +526,7 @@ func (engine VMEngine) CompleteWorkspaceImage(
 	}
 	if artifact.Digest != published.Digest || artifact.SizeBytes != published.SizeBytes ||
 		published.MediaType == "" || published.MediaType != artifact.Evidence.Output.MediaType ||
-		artifact.Evidence.GuestResult.Outcome != GuestSucceeded ||
+		artifact.Evidence.GuestResult.Outcome != imagebuild.GuestSucceeded ||
 		artifact.Evidence.GuestResult.OCIDigest != published.Digest ||
 		artifact.Evidence.GuestResult.OCISizeBytes != published.SizeBytes {
 		return errors.New("Workspace image completion does not match the verified artifact")
@@ -535,19 +537,19 @@ func (engine VMEngine) CompleteWorkspaceImage(
 	})
 }
 
-type WorkerGuestFailure struct {
-	Reason  GuestFailureReason
+type GuestFailure struct {
+	Reason  imagebuild.GuestFailureReason
 	Message string
 }
 
-func (failure *WorkerGuestFailure) Error() string {
+func (failure *GuestFailure) Error() string {
 	if failure == nil {
 		return "Workspace image guest failed"
 	}
 	return failure.Message
 }
 
-func prepareAdmissionRequest(request WorkerBuildRequest) (AdmissionRequest, error) {
+func prepareAdmissionRequest(request BuildRequest) (AdmissionRequest, error) {
 	if request.Source == nil {
 		return AdmissionRequest{}, errors.New("Workspace image source is required")
 	}
@@ -559,7 +561,7 @@ func prepareAdmissionRequest(request WorkerBuildRequest) (AdmissionRequest, erro
 	if err != nil {
 		return AdmissionRequest{}, err
 	}
-	planDigest, err := Digest(request.Plan, request.Architecture)
+	planDigest, err := imagebuild.Digest(request.Plan, request.Architecture)
 	if err != nil {
 		return AdmissionRequest{}, err
 	}
@@ -579,9 +581,9 @@ func prepareAdmissionRequest(request WorkerBuildRequest) (AdmissionRequest, erro
 		SourceArchiveSizeBytes: descriptor.ArchiveSizeBytes,
 		SourceArchiveEntries:   descriptor.ArchiveEntries,
 		RequestedCacheMode:     request.RequestedCacheMode,
-		ExecutionABI:           ExecutionABI,
-		LLBABI:                 LLBABI,
-		CacheABI:               CacheABI,
+		ExecutionABI:           imagebuild.ExecutionABI,
+		LLBABI:                 imagebuild.LLBABI,
+		CacheABI:               imagebuild.CacheABI,
 	}
 	if err := validateAdmissionRequest(admission); err != nil {
 		return AdmissionRequest{}, err
@@ -590,14 +592,10 @@ func prepareAdmissionRequest(request WorkerBuildRequest) (AdmissionRequest, erro
 }
 
 func validateAdmissionRequest(request AdmissionRequest) error {
-	if err := validateBuildLeaseAuthority(request.Lease); err != nil {
+	if err := validateLeaseAuthority(request.Lease); err != nil {
 		return err
 	}
-	if !validDigest(request.RuntimeIdentityID) ||
-		!validDigest(request.SubmittedSourceDigest) ||
-		!validDigest(request.BuildTreeDigest) ||
-		!validDigest(request.AdmittedPathSetDigest) ||
-		!validDigest(request.SourceArchiveDigest) {
+	if !sha256sum.ValidDigest(request.RuntimeIdentityID) {
 		return errors.New("Workspace image admission digest is invalid")
 	}
 	if request.DeclarationSlot == "" || len(request.DeclarationSlot) > 128 ||
@@ -605,42 +603,28 @@ func validateAdmissionRequest(request AdmissionRequest) error {
 		return errors.New("Workspace image declaration slot is invalid")
 	}
 	if request.BuildTreeSizeBytes < 1 ||
-		request.BuildTreeSizeBytes > MaxSourceArchiveBytes ||
-		request.SourceArchiveSizeBytes < 1 || request.SourceArchiveSizeBytes > MaxSourceArchiveBytes ||
+		request.BuildTreeSizeBytes > imagebuild.MaxSourceArchiveBytes ||
+		request.SourceArchiveSizeBytes < 1 || request.SourceArchiveSizeBytes > imagebuild.MaxSourceArchiveBytes ||
 		request.SourceArchiveEntries != len(request.AdmittedPaths) ||
-		request.SourceArchiveEntries > MaxSourceArchiveEntries {
+		request.SourceArchiveEntries > imagebuild.MaxSourceArchiveEntries {
 		return errors.New("Workspace image admission size is invalid")
 	}
-	if request.ExecutionABI != ExecutionABI || request.LLBABI != LLBABI || request.CacheABI != CacheABI {
+	if request.ExecutionABI != imagebuild.ExecutionABI || request.LLBABI != imagebuild.LLBABI || request.CacheABI != imagebuild.CacheABI {
 		return errors.New("Workspace image admission ABI is invalid")
 	}
-	if request.RequestedCacheMode != CachePrefer && request.RequestedCacheMode != CacheBypass {
+	if request.RequestedCacheMode != imagebuild.CachePrefer && request.RequestedCacheMode != imagebuild.CacheBypass {
 		return errors.New("Workspace image requested cache mode is invalid")
 	}
-	if err := Validate(request.Plan, request.Architecture); err != nil {
-		return err
-	}
-	digest, err := Digest(request.Plan, request.Architecture)
-	if err != nil || digest != request.PlanDigest {
-		return errors.New("Workspace image admission plan digest is invalid")
-	}
-	if request.AdmittedPaths == nil || !slices.IsSortedFunc(request.AdmittedPaths, func(left, right SourcePath) int {
-		return strings.Compare(left.Path, right.Path)
-	}) {
-		return errors.New("Workspace image admitted paths are not sorted")
-	}
-	for index, admitted := range request.AdmittedPaths {
-		if !validSourcePath(admitted) || index > 0 && request.AdmittedPaths[index-1].Path == admitted.Path {
-			return errors.New("Workspace image admitted path is invalid")
-		}
-	}
-	if PathSetDigest(request.AdmittedPaths) != request.AdmittedPathSetDigest {
-		return errors.New("Workspace image admitted path-set digest is invalid")
-	}
-	return validateAdmittedPaths(request.Plan, request.AdmittedPaths)
+	return imagebuild.ValidateSourceAdmission(imagebuild.SourceAdmission{
+		Architecture: request.Architecture, Plan: request.Plan, PlanDigest: request.PlanDigest,
+		SubmittedSourceDigest: request.SubmittedSourceDigest, BuildTreeDigest: request.BuildTreeDigest,
+		AdmittedPaths: request.AdmittedPaths, AdmittedPathSetDigest: request.AdmittedPathSetDigest,
+		SourceArchiveDigest: request.SourceArchiveDigest, SourceArchiveSizeBytes: request.SourceArchiveSizeBytes,
+		SourceArchiveEntries: request.SourceArchiveEntries,
+	})
 }
 
-func validateBuildLeaseAuthority(lease BuildLeaseAuthority) error {
+func validateLeaseAuthority(lease LeaseAuthority) error {
 	for _, value := range []string{
 		lease.ID,
 		lease.OrgID,
@@ -664,25 +648,25 @@ func validateBuildLeaseAuthority(lease BuildLeaseAuthority) error {
 }
 
 func validateAssignment(request AdmissionRequest, assignment Assignment) error {
-	if assignment.OperationID == "" || !validDigest(assignment.RequestFingerprint) ||
+	if assignment.OperationID == "" || !sha256sum.ValidDigest(assignment.RequestFingerprint) ||
 		!reflect.DeepEqual(request, assignment.Request) {
 		return errors.New("Workspace image assignment does not exact-match admission")
 	}
 	guest := assignmentGuestRequest(assignment, uuid.Must(uuid.NewV7()).String())
-	if err := ValidateGuestRequest(guest); err != nil {
+	if err := imagebuild.ValidateGuestRequest(guest); err != nil {
 		return fmt.Errorf("validate Workspace image assignment: %w", err)
 	}
 	resources := compute.ImageBuildGuestResources()
 	expectedQuotas := AssignmentQuotas{
 		CPUMillis: resources.MilliCPU, MemoryBytes: resources.MemoryMiB << 20,
 		ScratchBytes: resources.DiskMiB << 20, PIDs: compute.ImageBuildGuestPIDsMax,
-		MaxSourceArchiveBytes:   MaxSourceArchiveBytes,
-		MaxSourceArchiveEntries: MaxSourceArchiveEntries,
-		MaxOCIArchiveBytes:      MaxOCIArchiveBytes,
+		MaxSourceArchiveBytes:   imagebuild.MaxSourceArchiveBytes,
+		MaxSourceArchiveEntries: imagebuild.MaxSourceArchiveEntries,
+		MaxOCIArchiveBytes:      imagebuild.MaxOCIArchiveBytes,
 	}
-	if !validDigest(assignment.CacheScope) || assignment.Quotas != expectedQuotas ||
+	if !sha256sum.ValidDigest(assignment.CacheScope) || assignment.Quotas != expectedQuotas ||
 		assignment.Output.Architecture != request.Architecture ||
-		assignment.Output.MediaType == "" || assignment.Output.MaxSizeBytes != MaxOCIArchiveBytes {
+		assignment.Output.MediaType == "" || assignment.Output.MaxSizeBytes != imagebuild.MaxOCIArchiveBytes {
 		return errors.New("Workspace image assignment cache, quota, or output contract is invalid")
 	}
 	if assignment.TerminalResult != nil {
@@ -690,7 +674,7 @@ func validateAssignment(request AdmissionRequest, assignment Assignment) error {
 		if err := ids.Validate(terminal.AttemptID); err != nil {
 			return errors.New("Workspace image terminal attempt ID is invalid")
 		}
-		if err := ValidateGuestResult(terminal.GuestResult); err != nil {
+		if err := imagebuild.ValidateGuestResult(terminal.GuestResult); err != nil {
 			return fmt.Errorf("validate Workspace image terminal result: %w", err)
 		}
 		if expected := resultEvidence(assignment, terminal.AttemptID, terminal.GuestResult); !reflect.DeepEqual(expected, terminal) {
@@ -700,9 +684,9 @@ func validateAssignment(request AdmissionRequest, assignment Assignment) error {
 	return nil
 }
 
-func assignmentGuestRequest(assignment Assignment, attemptID string) GuestRequest {
+func assignmentGuestRequest(assignment Assignment, attemptID string) imagebuild.GuestRequest {
 	request := assignment.Request
-	guest := GuestRequest{
+	guest := imagebuild.GuestRequest{
 		ExecutionABI: request.ExecutionABI, LLBABI: request.LLBABI, CacheABI: request.CacheABI,
 		OperationID: assignment.OperationID, AttemptID: attemptID,
 		BuildLeaseID: request.Lease.ID, BuildLeaseGeneration: request.Lease.Generation,
@@ -721,13 +705,13 @@ func assignmentGuestRequest(assignment Assignment, attemptID string) GuestReques
 	return guest
 }
 
-func receiveWorkerArtifact(
+func receiveArtifact(
 	ctx context.Context,
 	workDir string,
 	stream io.Reader,
-	result GuestResult,
+	result imagebuild.GuestResult,
 	architecture string,
-) (_ *WorkerArtifact, returnErr error) {
+) (_ *Artifact, returnErr error) {
 	file, err := os.CreateTemp(workDir, ".helmr-image-build-")
 	if err != nil {
 		return nil, err
@@ -769,7 +753,7 @@ func receiveWorkerArtifact(
 		architecture != "x86_64" || metadata.Platform.Architecture != "amd64" {
 		return nil, errors.New("image-build OCI platform does not match linux/amd64")
 	}
-	return &WorkerArtifact{Digest: digest, SizeBytes: written, path: path}, nil
+	return &Artifact{Digest: digest, SizeBytes: written, path: path}, nil
 }
 
 func closeImageBuildSession(session vm.Session, owner vm.Owner) error {
@@ -781,7 +765,7 @@ func closeImageBuildSession(session vm.Session, owner vm.Owner) error {
 	return nil
 }
 
-func clearCredentialValues(credentials []RegistryCredentialValue) {
+func clearCredentialValues(credentials []imagebuild.RegistryCredentialValue) {
 	for index := range credentials {
 		clear(credentials[index].Password)
 	}
@@ -822,4 +806,4 @@ func (reader *contextReader) Read(body []byte) (int, error) {
 	return reader.reader.Read(body)
 }
 
-var _ WorkerImageBuilder = VMEngine{}
+var _ Builder = VMEngine{}

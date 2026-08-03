@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
+	imageworker "github.com/helmrdotdev/helmr/internal/imagebuild/worker"
 	"github.com/helmrdotdev/helmr/internal/imagecache"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -77,7 +78,7 @@ func TestWorkerImageControlClearsMismatchedCredentialResponse(t *testing.T) {
 			}},
 		},
 	}}
-	_, err := (workerImageControl{client: fake}).FetchRegistryCredentials(t.Context(), imagebuild.RegistryCredentialRequest{
+	_, err := (workerImageControl{client: fake}).FetchRegistryCredentials(t.Context(), imageworker.RegistryCredentialRequest{
 		OperationID: uuid.Must(uuid.NewV7()).String(), AttemptID: uuid.Must(uuid.NewV7()).String(),
 		Lease: lease, RegistryBindings: []imagebuild.RegistryBinding{},
 		PlanDigest:          testWorkerImageDigest("e"),
@@ -95,7 +96,7 @@ func TestWorkerImageControlClearsMismatchedCredentialResponse(t *testing.T) {
 
 func TestWorkerImageControlCompletesExactReceipt(t *testing.T) {
 	lease := testWorkerImageLease()
-	evidence := imagebuild.WorkerResultEvidence{
+	evidence := imageworker.ResultEvidence{
 		OperationID: uuid.Must(uuid.NewV7()).String(), RequestFingerprint: testWorkerImageDigest("1"),
 		AttemptID: uuid.Must(uuid.NewV7()).String(), Lease: lease, DeclarationSlot: "workspace",
 		PlanDigest: testWorkerImageDigest("2"), ResolutionSetDigest: testWorkerImageDigest("3"),
@@ -115,9 +116,9 @@ func TestWorkerImageControlCompletesExactReceipt(t *testing.T) {
 			State: "completed", Result: request.Result,
 		}
 	}}
-	err := (workerImageControl{client: fake}).CompleteWorkspaceImage(t.Context(), imagebuild.CompletionRequest{
+	err := (workerImageControl{client: fake}).CompleteWorkspaceImage(t.Context(), imageworker.CompletionRequest{
 		Evidence: evidence,
-		Artifact: &imagebuild.PublishedArtifact{
+		Artifact: &imageworker.PublishedArtifact{
 			Digest: evidence.GuestResult.OCIDigest, SizeBytes: evidence.GuestResult.OCISizeBytes,
 			MediaType: "application/vnd.helmr.workspace-image.v0.oci-tar",
 		},
@@ -134,7 +135,7 @@ func TestWorkerImageCacheCredentialTransfersPlaintextOwnership(t *testing.T) {
 	}}
 	value, err := (workerImageCacheCredentials{provider: provider}).FetchImageCacheCredential(
 		t.Context(),
-		imagebuild.Assignment{CacheBinding: &imagebuild.CacheBinding{
+		imageworker.Assignment{CacheBinding: &imagebuild.CacheBinding{
 			Authority: "registry.example", Username: "AWS", Ref: "registry.example/cache:ref",
 		}},
 	)
@@ -177,8 +178,8 @@ func (fake *workerImageCacheFake) Fetch(_ context.Context, target imagecache.Tar
 	return fake.credential, nil
 }
 
-func testWorkerImageAdmission() imagebuild.AdmissionRequest {
-	return imagebuild.AdmissionRequest{
+func testWorkerImageAdmission() imageworker.AdmissionRequest {
+	return imageworker.AdmissionRequest{
 		Lease: testWorkerImageLease(), RuntimeIdentityID: testWorkerImageDigest("5"),
 		DeclarationSlot: "workspace", Architecture: "x86_64",
 		Plan: imagebuild.Build{}, PlanDigest: testWorkerImageDigest("6"),
@@ -191,8 +192,8 @@ func testWorkerImageAdmission() imagebuild.AdmissionRequest {
 	}
 }
 
-func testWorkerImageLease() imagebuild.BuildLeaseAuthority {
-	return imagebuild.BuildLeaseAuthority{
+func testWorkerImageLease() imageworker.LeaseAuthority {
+	return imageworker.LeaseAuthority{
 		ID: uuid.Must(uuid.NewV7()).String(), OrgID: uuid.Must(uuid.NewV7()).String(),
 		ProjectID: uuid.Must(uuid.NewV7()).String(), EnvironmentID: uuid.Must(uuid.NewV7()).String(),
 		DeploymentID: uuid.Must(uuid.NewV7()).String(), WorkerGroupID: "build",

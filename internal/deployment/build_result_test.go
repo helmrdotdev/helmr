@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
+	imageworker "github.com/helmrdotdev/helmr/internal/imagebuild/worker"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -43,7 +44,7 @@ func TestBuildResultCanonicalRoundTrip(t *testing.T) {
 }
 
 func TestWorkspaceImageNetworkQuotaUsesBuildResourceLimitReason(t *testing.T) {
-	err := fmt.Errorf("build workspace image: %w", &imagebuild.WorkerGuestFailure{
+	err := fmt.Errorf("build workspace image: %w", &imageworker.GuestFailure{
 		Reason:  imagebuild.GuestFailureNetworkQuota,
 		Message: "image-build public-egress limit was exceeded",
 	})

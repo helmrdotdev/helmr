@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	buildmodel "github.com/helmrdotdev/helmr/internal/imagebuild"
+	imageworker "github.com/helmrdotdev/helmr/internal/imagebuild/worker"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -29,7 +30,7 @@ type Builder struct {
 	Connector         vm.Connector
 	RuntimeIdentityID string
 	Encoder           string
-	Images            buildmodel.WorkerImageBuilder
+	Images            imageworker.Builder
 }
 
 func (builder Builder) Build(
@@ -329,7 +330,7 @@ func (builder Builder) build(
 }
 
 func workspaceImageFailureReason(err error) BuildFailureReason {
-	var imageFailure *buildmodel.WorkerGuestFailure
+	var imageFailure *imageworker.GuestFailure
 	if errors.As(err, &imageFailure) && imageFailure.Reason == buildmodel.GuestFailureNetworkQuota {
 		return BuildFailureNetworkLimit
 	}
@@ -584,8 +585,8 @@ func (builder Builder) buildWorkspaceImages(
 		if err != nil {
 			return nil, fmt.Errorf("select Workspace %q image source: %w", definition.DeclaredID, err)
 		}
-		artifact, err := builder.Images.BuildWorkspaceImage(ctx, buildmodel.WorkerBuildRequest{
-			Lease: buildmodel.BuildLeaseAuthority{
+		artifact, err := builder.Images.BuildWorkspaceImage(ctx, imageworker.BuildRequest{
+			Lease: imageworker.LeaseAuthority{
 				ID: lease.ID, OrgID: lease.OrgID, ProjectID: lease.ProjectID,
 				EnvironmentID: lease.EnvironmentID, DeploymentID: lease.DeploymentID,
 				WorkerGroupID: lease.WorkerGroupID, WorkerInstanceID: lease.WorkerInstanceID,
@@ -614,7 +615,7 @@ func (builder Builder) buildWorkspaceImages(
 			artifact,
 		)
 		if verifyErr == nil {
-			verifyErr = builder.Images.CompleteWorkspaceImage(ctx, artifact, buildmodel.PublishedArtifact{
+			verifyErr = builder.Images.CompleteWorkspaceImage(ctx, artifact, imageworker.PublishedArtifact{
 				Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType,
 			})
 		}
@@ -648,7 +649,7 @@ func (builder Builder) buildWorkspaceImages(
 
 func (builder Builder) storeWorkspaceImage(
 	ctx context.Context,
-	artifact *buildmodel.WorkerArtifact,
+	artifact *imageworker.Artifact,
 ) (cas.Object, error) {
 	if artifact == nil || artifact.SizeBytes < 1 || artifact.SizeBytes > maxWorkspaceImageBytes {
 		return cas.Object{}, errors.New(

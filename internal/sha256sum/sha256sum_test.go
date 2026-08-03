@@ -18,3 +18,21 @@ func TestHexHash(t *testing.T) {
 		t.Fatalf("HexHash() = %q, want %q", got, want)
 	}
 }
+
+func TestValidDigest(t *testing.T) {
+	valid := "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+	for _, test := range []struct {
+		value string
+		want  bool
+	}{
+		{value: valid, want: true},
+		{value: ""},
+		{value: valid[:len(valid)-1]},
+		{value: "sha256:2CF24DBA5FB0A30E26E83B2AC5B9E29E1B161E5C1FA7425E73043362938B9824"},
+		{value: "sha256:" + valid[len("sha256:")+1:] + "g"},
+	} {
+		if got := ValidDigest(test.value); got != test.want {
+			t.Fatalf("ValidDigest(%q) = %t, want %t", test.value, got, test.want)
+		}
+	}
+}

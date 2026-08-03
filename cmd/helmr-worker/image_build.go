@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
+	imageworker "github.com/helmrdotdev/helmr/internal/imagebuild/worker"
 	"github.com/helmrdotdev/helmr/internal/imagecache"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
@@ -23,10 +24,10 @@ type workerImageControl struct {
 
 func (control workerImageControl) AdmitWorkspaceImage(
 	ctx context.Context,
-	request imagebuild.AdmissionRequest,
-) (imagebuild.Assignment, error) {
+	request imageworker.AdmissionRequest,
+) (imageworker.Assignment, error) {
 	if control.client == nil {
-		return imagebuild.Assignment{}, errors.New("Workspace image Control client is required")
+		return imageworker.Assignment{}, errors.New("Workspace image Control client is required")
 	}
 	response, err := control.client.AdmitWorkspaceImage(ctx, workerapi.WorkspaceImageAdmissionRequest{
 		Lease:                  workerImageAPILease(request.Lease),
@@ -43,12 +44,12 @@ func (control workerImageControl) AdmitWorkspaceImage(
 		SourceArchiveEntries:   request.SourceArchiveEntries,
 	})
 	if err != nil {
-		return imagebuild.Assignment{}, err
+		return imageworker.Assignment{}, err
 	}
-	assignment := imagebuild.Assignment{
+	assignment := imageworker.Assignment{
 		OperationID:        response.OperationID,
 		RequestFingerprint: response.RequestFingerprint,
-		Request: imagebuild.AdmissionRequest{
+		Request: imageworker.AdmissionRequest{
 			Lease:                  workerImageLeaseAuthority(response.Lease),
 			RuntimeIdentityID:      response.RuntimeIdentityID,
 			DeclarationSlot:        response.DeclarationSlot,
@@ -71,14 +72,14 @@ func (control workerImageControl) AdmitWorkspaceImage(
 		RegistryBindings:    slices.Clone(response.RegistryBindings),
 		ResolutionSetDigest: response.ResolutionSetDigest,
 		CacheScope:          response.CacheScope,
-		Quotas: imagebuild.AssignmentQuotas{
+		Quotas: imageworker.AssignmentQuotas{
 			CPUMillis: response.Quotas.CPUMillis, MemoryBytes: response.Quotas.MemoryBytes,
 			ScratchBytes: response.Quotas.ScratchBytes, PIDs: response.Quotas.PIDs,
 			MaxSourceArchiveBytes:   response.Quotas.MaxSourceArchiveBytes,
 			MaxSourceArchiveEntries: response.Quotas.MaxSourceArchiveEntries,
 			MaxOCIArchiveBytes:      response.Quotas.MaxOCIArchiveBytes,
 		},
-		Output: imagebuild.AssignmentOutputContract{
+		Output: imageworker.AssignmentOutputContract{
 			Architecture: response.Output.Architecture,
 			MediaType:    response.Output.MediaType,
 			MaxSizeBytes: response.Output.MaxSizeBytes,
@@ -89,7 +90,7 @@ func (control workerImageControl) AdmitWorkspaceImage(
 		assignment.CacheBinding = &binding
 	}
 	if response.TerminalResult != nil {
-		assignment.TerminalResult = &imagebuild.TerminalResult{Evidence: workerImageResultEvidence(
+		assignment.TerminalResult = &imageworker.TerminalResult{Evidence: workerImageResultEvidence(
 			assignment,
 			response.TerminalResult.AttemptID,
 			response.TerminalResult.Result,
@@ -100,7 +101,7 @@ func (control workerImageControl) AdmitWorkspaceImage(
 
 func (control workerImageControl) FetchRegistryCredentials(
 	ctx context.Context,
-	request imagebuild.RegistryCredentialRequest,
+	request imageworker.RegistryCredentialRequest,
 ) ([]imagebuild.RegistryCredentialValue, error) {
 	if control.client == nil {
 		return nil, errors.New("Workspace image Control client is required")
@@ -145,7 +146,7 @@ func (control workerImageControl) FetchRegistryCredentials(
 
 func (control workerImageControl) CompleteWorkspaceImage(
 	ctx context.Context,
-	request imagebuild.CompletionRequest,
+	request imageworker.CompletionRequest,
 ) error {
 	if control.client == nil {
 		return errors.New("Workspace image Control client is required")
@@ -186,7 +187,7 @@ type workerImageCacheCredentials struct {
 
 func (provider workerImageCacheCredentials) FetchImageCacheCredential(
 	ctx context.Context,
-	assignment imagebuild.Assignment,
+	assignment imageworker.Assignment,
 ) (imagebuild.RegistryCredentialValue, error) {
 	if provider.provider == nil || assignment.CacheBinding == nil {
 		return imagebuild.RegistryCredentialValue{}, &imagecache.ContractError{Message: "cache credential provider or binding is absent"}
@@ -205,7 +206,7 @@ func (provider workerImageCacheCredentials) FetchImageCacheCredential(
 	return value, nil
 }
 
-func workerImageAPILease(lease imagebuild.BuildLeaseAuthority) workerapi.DeploymentBuildLease {
+func workerImageAPILease(lease imageworker.LeaseAuthority) workerapi.DeploymentBuildLease {
 	return workerapi.DeploymentBuildLease{
 		ID: lease.ID, OrgID: lease.OrgID, ProjectID: lease.ProjectID,
 		EnvironmentID: lease.EnvironmentID, DeploymentID: lease.DeploymentID,
@@ -218,8 +219,8 @@ func workerImageAPILease(lease imagebuild.BuildLeaseAuthority) workerapi.Deploym
 	}
 }
 
-func workerImageLeaseAuthority(lease workerapi.DeploymentBuildLease) imagebuild.BuildLeaseAuthority {
-	return imagebuild.BuildLeaseAuthority{
+func workerImageLeaseAuthority(lease workerapi.DeploymentBuildLease) imageworker.LeaseAuthority {
+	return imageworker.LeaseAuthority{
 		ID: lease.ID, OrgID: lease.OrgID, ProjectID: lease.ProjectID,
 		EnvironmentID: lease.EnvironmentID, DeploymentID: lease.DeploymentID,
 		WorkerGroupID: lease.WorkerGroupID, WorkerInstanceID: lease.WorkerInstanceID,
@@ -232,11 +233,11 @@ func workerImageLeaseAuthority(lease workerapi.DeploymentBuildLease) imagebuild.
 }
 
 func workerImageResultEvidence(
-	assignment imagebuild.Assignment,
+	assignment imageworker.Assignment,
 	attemptID string,
 	result imagebuild.GuestResult,
-) imagebuild.WorkerResultEvidence {
-	return imagebuild.WorkerResultEvidence{
+) imageworker.ResultEvidence {
+	return imageworker.ResultEvidence{
 		OperationID: assignment.OperationID, RequestFingerprint: assignment.RequestFingerprint,
 		AttemptID: attemptID, Lease: assignment.Request.Lease,
 		DeclarationSlot:   assignment.Request.DeclarationSlot,
@@ -262,9 +263,9 @@ func clearWorkerImageCredentials(credentials []imagebuild.RegistryCredentialValu
 }
 
 var (
-	_ imagebuild.AdmissionClient           = workerImageControl{}
-	_ imagebuild.RegistryCredentialFetcher = workerImageControl{}
-	_ imagebuild.CompletionClient          = workerImageControl{}
-	_ imagebuild.CacheCredentialFetcher    = workerImageCacheCredentials{}
-	_ workerImageControlClient             = (*workerclient.Client)(nil)
+	_ imageworker.AdmissionClient           = workerImageControl{}
+	_ imageworker.RegistryCredentialFetcher = workerImageControl{}
+	_ imageworker.CompletionClient          = workerImageControl{}
+	_ imageworker.CacheCredentialFetcher    = workerImageCacheCredentials{}
+	_ workerImageControlClient              = (*workerclient.Client)(nil)
 )
