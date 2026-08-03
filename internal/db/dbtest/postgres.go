@@ -16,7 +16,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const databaseURLEnvironment = "HELMR_TEST_DATABASE_URL"
+const (
+	databaseURLEnvironment = "HELMR_TEST_DATABASE_URL"
+	skipEnvironment        = "HELMR_SKIP_POSTGRES_TESTS"
+)
 
 type Database struct {
 	DSN  string
@@ -27,6 +30,9 @@ func Open(t *testing.T) Database {
 	t.Helper()
 	if dsn := strings.TrimSpace(os.Getenv(databaseURLEnvironment)); dsn != "" {
 		return openIsolatedDatabase(t, dsn)
+	}
+	if os.Getenv(skipEnvironment) == "1" {
+		t.Skip("PostgreSQL tests run in the dedicated CI lane")
 	}
 	return openLocalCluster(t)
 }

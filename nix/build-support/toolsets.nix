@@ -83,13 +83,7 @@ rec {
     pkgs.xz
   ];
 
-  ciChecks =
-    repoChecks
-    ++ [
-      pkgs.gnutar
-      pkgs.postgresql_18
-    ]
-    ++ image;
+  ciChecks = repoChecks ++ [ pkgs.gnutar ] ++ image;
 
   appRuntime = base ++ image ++ smokeLinux ++ lib.optionals stdenv.isLinux [ pkgs.kmod ];
 

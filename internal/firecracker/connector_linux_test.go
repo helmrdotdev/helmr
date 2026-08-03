@@ -152,7 +152,7 @@ func TestSnapshotRuntimeConfigBindsManagedProgramTopology(t *testing.T) {
 func TestCleanupRequiresCanonicalExactOwnership(t *testing.T) {
 	stateDir := t.TempDir()
 	jailerDir := t.TempDir()
-	id := "00000000-0000-0000-0000-000000000701"
+	id := "019fc619-8443-77f6-9498-8c348c25f701"
 	statePath := filepath.Join(stateDir, id)
 	if err := os.MkdirAll(statePath, 0o700); err != nil {
 		t.Fatal(err)
@@ -177,7 +177,7 @@ func TestCleanupRequiresCanonicalExactOwnership(t *testing.T) {
 func TestCleanupRemovesExactBuildOwnerAndMarkerLast(t *testing.T) {
 	stateDir := t.TempDir()
 	jailerDir := t.TempDir()
-	id := "00000000-0000-0000-0000-000000000702"
+	id := "019fc619-8443-77f6-9498-8c348c25f702"
 	statePath := filepath.Join(stateDir, id)
 	jailerPath := filepath.Join(jailerDir, "firecracker", id)
 	if err := os.MkdirAll(statePath, 0o700); err != nil {
@@ -1350,9 +1350,17 @@ func TestRuntimeKernelArgsDescribeExactDriveTopology(t *testing.T) {
 
 func TestMaterializeAcceptsOnlyCompleteProgramDriveSet(t *testing.T) {
 	source := &recordingReadOnlyDriveSource{}
-	connector := &Connector{}
+	runtimeInstanceID := uuid.Must(uuid.NewV7()).String()
+	rootfsDigest := "sha256:" + strings.Repeat("0", 64)
+	connector := &Connector{artifacts: runtimeArtifacts{Rootfs: runtimeArtifact{Digest: rootfsDigest}}}
 	request := vm.MaterializeRequest{
-		OwnerKind:          vm.OwnerRuntime,
+		ID:        runtimeInstanceID,
+		OwnerKind: vm.OwnerRuntime,
+		Binding: vm.WorkloadBinding{
+			WorkerEpoch: 1, OwnerID: runtimeInstanceID, Generation: 1,
+			RuntimeInstanceID: runtimeInstanceID, RuntimeIdentityID: NetworkABIV0,
+		},
+		RootfsDigest:       rootfsDigest,
 		WorkspaceMountPath: "/workspace",
 		ReadOnlyDrives:     testProgramDrives(source),
 	}
@@ -1747,6 +1755,7 @@ func TestConfigForMaterializeRequestUsesRequestedRuntimeResources(t *testing.T) 
 			MilliCPU:  1500,
 			MemoryMiB: 1024,
 			DiskMiB:   4096,
+			Slots:     1,
 		},
 	})
 	if err != nil {
@@ -1765,14 +1774,16 @@ func TestConfigForMaterializeRequestUsesRequestedRuntimeResources(t *testing.T) 
 
 func TestConfigForMaterializeRequestRejectsOversizedRuntimeResources(t *testing.T) {
 	connector := &Connector{cfg: Config{VCPUCount: 2, MemoryMiB: 2048, ScratchDiskMiB: 8192}}
-	if _, err := connector.configForMaterializeRequest(vm.MaterializeRequest{Resources: compute.ResourceVector{MemoryMiB: 4096}}); err == nil {
-		t.Fatal("expected oversized memory request to fail")
-	}
-	if _, err := connector.configForMaterializeRequest(vm.MaterializeRequest{Resources: compute.ResourceVector{MilliCPU: 3000}}); err == nil {
-		t.Fatal("expected oversized cpu request to fail")
-	}
-	if _, err := connector.configForMaterializeRequest(vm.MaterializeRequest{Resources: compute.ResourceVector{DiskMiB: 16384}}); err == nil {
-		t.Fatal("expected oversized disk request to fail")
+	for name, resources := range map[string]compute.ResourceVector{
+		"memory": {MilliCPU: 1000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 1},
+		"cpu":    {MilliCPU: 3000, MemoryMiB: 1024, DiskMiB: 4096, Slots: 1},
+		"disk":   {MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 16384, Slots: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := connector.configForMaterializeRequest(vm.MaterializeRequest{Resources: resources}); err == nil {
+				t.Fatalf("expected oversized %s request to fail", name)
+			}
+		})
 	}
 }
 

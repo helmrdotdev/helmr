@@ -26,7 +26,7 @@ func TestBuildOutputRetainsOneCombinedBound(t *testing.T) {
 func TestBuildOutputDrainsAndMarksTruncation(t *testing.T) {
 	limit := len(buildOutputMarker) + 4
 	output := &buildOutput{limit: limit}
-	output.append([]byte("stdout"), true)
+	output.append(bytes.Repeat([]byte("s"), limit), true)
 	output.append([]byte("stderr"), false)
 	result := output.result(nil)
 	if !result.overflow {

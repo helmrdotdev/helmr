@@ -2,49 +2,18 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"net"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/region"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestDevSeedWithFreshPostgres(t *testing.T) {
-	for _, name := range []string{"initdb", "pg_ctl", "postgres"} {
-		if _, err := exec.LookPath(name); err != nil {
-			t.Skipf("%s not found; skipping dev seed integration test", name)
-		}
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	tmp := t.TempDir()
-	dataDir := filepath.Join(tmp, "data")
-	if output, err := exec.CommandContext(ctx, "initdb", "-D", dataDir, "-A", "trust").CombinedOutput(); err != nil {
-		t.Fatalf("initdb: %v\n%s", err, output)
-	}
-	port := freeDevPostgresPort(t)
-	logPath := filepath.Join(tmp, "postgres.log")
-	start := exec.CommandContext(ctx, "pg_ctl", "-D", dataDir, "-l", logPath, "-o", fmt.Sprintf("-p %d -c listen_addresses=127.0.0.1", port), "-w", "start")
-	if output, err := start.CombinedOutput(); err != nil {
-		t.Fatalf("pg_ctl start: %v\n%s", err, output)
-	}
-	t.Cleanup(func() {
-		_ = exec.Command("pg_ctl", "-D", dataDir, "-m", "fast", "-w", "stop").Run()
-	})
-
-	dsn := fmt.Sprintf("postgres://%s@127.0.0.1:%d/postgres?sslmode=disable", os.Getenv("USER"), port)
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
+	pool := dbtest.Open(t).Pool
 	var serverVersion int
 	if err := pool.QueryRow(ctx, `SELECT current_setting('server_version_num')::int`).Scan(&serverVersion); err != nil {
 		t.Fatal(err)
@@ -89,14 +58,4 @@ func TestDevSeedWithFreshPostgres(t *testing.T) {
 			deployments,
 		)
 	}
-}
-
-func freeDevPostgresPort(t *testing.T) int {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	return listener.Addr().(*net.TCPAddr).Port
 }

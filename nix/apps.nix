@@ -70,6 +70,9 @@ in
   ci-typescript =
     app "ci-typescript" "run TypeScript type checks and tests for CI" toolsets.ciChecks
       ''
+        ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+          export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]}
+        ''}
         bun install --frozen-lockfile --ignore-scripts
         scripts/check-dev-samples.sh
         bun run typecheck
@@ -78,6 +81,7 @@ in
   ci-go-test =
     app "ci-go-test" "run Go tests with embedded console assets for CI" toolsets.ciChecks
       ''
+        export HELMR_SKIP_POSTGRES_TESTS=1
         bun install --frozen-lockfile --ignore-scripts
         make test
       '';
@@ -96,6 +100,7 @@ in
   ci-go-race =
     app "ci-go-race" "run Go race tests with embedded console assets for CI" toolsets.ciChecks
       ''
+        export HELMR_SKIP_POSTGRES_TESTS=1
         bun install --frozen-lockfile --ignore-scripts
         make test-race
       '';
@@ -114,7 +119,7 @@ in
   ci-infra-test =
     app "ci-infra-test" "run AWS module tests with pinned OpenTofu" toolsets.infraTest
       ''
-        for module in bootstrap capacity control network worker worker-image; do
+        for module in bootstrap control network worker worker-image; do
           (
             cd "infra/aws/modules/$module"
             tofu init -backend=false -input=false

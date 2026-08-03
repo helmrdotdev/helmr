@@ -498,7 +498,7 @@ func applyVerifierIdentity(uid, gid uint32) error {
 	if uid == 0 || gid == 0 {
 		return errors.New("artifact verifier identity must be unprivileged")
 	}
-	if err := verifierAllThreadsPrctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
+	if err := verifierAllThreadsPrctl(unix.PR_SET_NO_NEW_PRIVS, 1); err != nil {
 		return fmt.Errorf("set verifier no_new_privs: %w", err)
 	}
 	secureBits := verifierSecureNoRoot |
@@ -508,18 +508,12 @@ func applyVerifierIdentity(uid, gid uint32) error {
 	if err := verifierAllThreadsPrctl(
 		unix.PR_SET_SECUREBITS,
 		uintptr(secureBits),
-		0,
-		0,
-		0,
 	); err != nil {
 		return fmt.Errorf("lock verifier securebits: %w", err)
 	}
 	if err := verifierAllThreadsPrctl(
 		unix.PR_CAP_AMBIENT,
 		unix.PR_CAP_AMBIENT_CLEAR_ALL,
-		0,
-		0,
-		0,
 	); err != nil {
 		return fmt.Errorf("clear verifier ambient capabilities: %w", err)
 	}
@@ -544,20 +538,14 @@ func applyVerifierIdentity(uid, gid uint32) error {
 	return validateVerifierIdentity(uid, gid, lastCapability)
 }
 
-func verifierAllThreadsPrctl(
-	option int,
-	argument2 uintptr,
-	argument3 uintptr,
-	argument4 uintptr,
-	argument5 uintptr,
-) error {
+func verifierAllThreadsPrctl(option int, argument2 uintptr) error {
 	_, _, errno := syscall.AllThreadsSyscall6(
 		syscall.SYS_PRCTL,
 		uintptr(option),
 		argument2,
-		argument3,
-		argument4,
-		argument5,
+		0,
+		0,
+		0,
 		0,
 	)
 	if errno != 0 {
@@ -572,9 +560,6 @@ func dropVerifierBoundingCapabilities() (uintptr, error) {
 		err := verifierAllThreadsPrctl(
 			unix.PR_CAPBSET_DROP,
 			capability,
-			0,
-			0,
-			0,
 		)
 		if errors.Is(err, syscall.EINVAL) {
 			if capability == 0 {

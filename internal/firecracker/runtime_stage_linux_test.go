@@ -16,6 +16,12 @@ func TestPrepareRuntimePublishesVerifiedCorpus(t *testing.T) {
 	cfg, manifest := writeRuntimeArtifactFixture(t)
 	workDir := t.TempDir()
 	epoch := uuid.Must(uuid.NewV7()).String()
+	t.Cleanup(func() {
+		stage := filepath.Join(workDir, runtimeStagePrefix+epoch)
+		if err := os.Chmod(stage, 0o700); err != nil && !os.IsNotExist(err) {
+			t.Errorf("make runtime stage removable: %v", err)
+		}
+	})
 
 	stage, err := PrepareRuntime(filepath.Dir(cfg.RootfsPath), workDir, epoch)
 	if err != nil {
