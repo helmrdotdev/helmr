@@ -19,7 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	rundomain "github.com/helmrdotdev/helmr/internal/run"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -117,20 +117,20 @@ func (s *Server) cancelRunHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeRunCancellationAuthorityError(w)
 		return
 	}
-	canceler, err := rundomain.NewCanceler(s.tx)
+	canceler, err := run.NewCanceler(s.tx)
 	if err != nil {
 		s.writeRunCancellationAuthorityError(w)
 		return
 	}
-	_, err = canceler.Cancel(r.Context(), rundomain.CancellationRequest{
+	_, err = canceler.Cancel(r.Context(), run.CancellationRequest{
 		OrgID: scope.OrgID, ProjectID: projectUUID, EnvironmentID: environmentUUID,
 		RunID: runID,
 	})
-	if errors.Is(err, rundomain.ErrCancellationNotFound) {
+	if errors.Is(err, run.ErrCancellationNotFound) {
 		writeError(w, notFound(codedError{code: "run_not_found", message: "Run not found"}))
 		return
 	}
-	if errors.Is(err, rundomain.ErrCancellationConflict) {
+	if errors.Is(err, run.ErrCancellationConflict) {
 		writeError(w, conflict(codedError{
 			code: "run_lifecycle_conflict", message: "Run already has another terminal outcome",
 		}))

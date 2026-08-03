@@ -415,7 +415,7 @@ func TestFailingBuildFixtureReachesDeploymentCreation(t *testing.T) {
 }
 
 func TestDeployCommandJSONUsesProjectAndEnv(t *testing.T) {
-	state, _ := installTestCLIConfig(t)
+	state := installTestCLIConfig(t)
 	root, _ := deployCommandFixture(t)
 	var metadata api.CreateDeploymentRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -564,7 +564,7 @@ func TestDeployCommandReturnsFailedDeploymentError(t *testing.T) {
 }
 
 func TestDeployCommandRequiresResolvedDeploymentScopeWithSession(t *testing.T) {
-	state, _ := installTestCLIConfig(t)
+	state := installTestCLIConfig(t)
 	root, _ := deployCommandFixture(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/agents/environments/prod/deployments" {
@@ -589,7 +589,7 @@ func TestDeployCommandRequiresResolvedDeploymentScopeWithSession(t *testing.T) {
 }
 
 func TestDeployCommandRequiresExplicitSessionScope(t *testing.T) {
-	state, _ := installTestCLIConfig(t)
+	state := installTestCLIConfig(t)
 	root, _ := deployCommandFixture(t)
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("deployment request must not be sent without explicit scope")

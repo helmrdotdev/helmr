@@ -1,4 +1,4 @@
-package session
+package clistate
 
 import (
 	"errors"
@@ -13,7 +13,7 @@ import (
 func TestSaveLoginPersistsConfigAndKeyring(t *testing.T) {
 	temp := t.TempDir()
 	keyring := newMemoryKeyring()
-	store := NewStore(filepath.Join(temp, "helmr"), keyring)
+	store := newStore(filepath.Join(temp, "helmr"), keyring)
 
 	if err := store.SaveLogin(" https://helmr.example.test ", " session_token_test "); err != nil {
 		t.Fatalf("SaveLogin() error = %v", err)
@@ -35,12 +35,12 @@ func TestSaveLoginPersistsConfigAndKeyring(t *testing.T) {
 		t.Fatalf("Token() = %q", token)
 	}
 
-	data, err := os.ReadFile(store.ConfigPath())
+	data, err := os.ReadFile(store.configPath())
 	if err != nil {
 		t.Fatalf("ReadFile(config) error = %v", err)
 	}
-	if filepath.Base(store.ConfigPath()) != "config.toml" {
-		t.Fatalf("config path = %s", store.ConfigPath())
+	if filepath.Base(store.configPath()) != "config.toml" {
+		t.Fatalf("config path = %s", store.configPath())
 	}
 	if !strings.Contains(string(data), `default_host = 'https://helmr.example.test'`) && !strings.Contains(string(data), `default_host = "https://helmr.example.test"`) {
 		t.Fatalf("config TOML = %q", data)
@@ -52,13 +52,13 @@ func TestSaveLoginPersistsConfigAndKeyring(t *testing.T) {
 
 func TestSaveConfigPermissions(t *testing.T) {
 	temp := t.TempDir()
-	store := NewStore(filepath.Join(temp, "helmr"), newMemoryKeyring())
+	store := newStore(filepath.Join(temp, "helmr"), newMemoryKeyring())
 
 	if err := store.Save(Config{DefaultHost: "https://helmr.example.test"}); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
-	dirInfo, err := os.Stat(filepath.Dir(store.ConfigPath()))
+	dirInfo, err := os.Stat(filepath.Dir(store.configPath()))
 	if err != nil {
 		t.Fatalf("Stat(config dir) error = %v", err)
 	}
@@ -66,7 +66,7 @@ func TestSaveConfigPermissions(t *testing.T) {
 		t.Fatalf("config dir permissions = %o, want 700", got)
 	}
 
-	fileInfo, err := os.Stat(store.ConfigPath())
+	fileInfo, err := os.Stat(store.configPath())
 	if err != nil {
 		t.Fatalf("Stat(config file) error = %v", err)
 	}
@@ -76,7 +76,7 @@ func TestSaveConfigPermissions(t *testing.T) {
 }
 
 func TestLoadMissingConfig(t *testing.T) {
-	store := NewStore(filepath.Join(t.TempDir(), "helmr"), newMemoryKeyring())
+	store := newStore(filepath.Join(t.TempDir(), "helmr"), newMemoryKeyring())
 
 	_, err := store.Load()
 	if !errors.Is(err, ErrNotFound) {
@@ -88,7 +88,7 @@ func TestDefaultConfigDirUsesOverride(t *testing.T) {
 	t.Setenv(configDirEnv, filepath.Join(t.TempDir(), "custom"))
 	t.Setenv(xdgConfigEnv, filepath.Join(t.TempDir(), "xdg"))
 
-	dir, err := DefaultConfigDir()
+	dir, err := defaultConfigDir()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestDefaultConfigDirUsesXDG(t *testing.T) {
 	t.Setenv(configDirEnv, "")
 	t.Setenv(xdgConfigEnv, xdg)
 
-	dir, err := DefaultConfigDir()
+	dir, err := defaultConfigDir()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestDefaultConfigDirUsesXDG(t *testing.T) {
 }
 
 func TestTokenMissing(t *testing.T) {
-	store := NewStore(filepath.Join(t.TempDir(), "helmr"), newMemoryKeyring())
+	store := newStore(filepath.Join(t.TempDir(), "helmr"), newMemoryKeyring())
 
 	_, err := store.Token("https://helmr.example.test")
 	if !errors.Is(err, ErrNotFound) {
@@ -121,7 +121,7 @@ func TestTokenMissing(t *testing.T) {
 }
 
 func TestDeleteToken(t *testing.T) {
-	store := NewStore(filepath.Join(t.TempDir(), "helmr"), newMemoryKeyring())
+	store := newStore(filepath.Join(t.TempDir(), "helmr"), newMemoryKeyring())
 	if err := store.SaveToken("https://helmr.example.test", "session-token"); err != nil {
 		t.Fatal(err)
 	}

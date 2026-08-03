@@ -1,4 +1,4 @@
-package session
+package clistate
 
 import (
 	"errors"
@@ -20,22 +20,21 @@ const (
 	keyringService = "helmr-cli"
 )
 
-// ErrNotFound reports that the requested CLI session state is missing.
-var ErrNotFound = errors.New("helmr CLI session not found")
+// ErrNotFound reports that the requested persistent CLI state is missing.
+var ErrNotFound = errors.New("helmr CLI state not found")
 
 // Config is the non-secret CLI config stored on disk.
 type Config struct {
 	DefaultHost string `toml:"default_host,omitempty"`
 }
 
-// Store reads and writes CLI session config and credentials.
+// Store reads and writes persistent CLI config and credentials.
 type Store struct {
 	configDir string
-	keyring   Keyring
+	keyring   keyringStore
 }
 
-// Keyring is the subset of OS keyring behavior used by Store.
-type Keyring interface {
+type keyringStore interface {
 	Set(service, user, password string) error
 	Get(service, user string) (string, error)
 	Delete(service, user string) error
@@ -56,14 +55,14 @@ func (osKeyring) Delete(service, user string) error {
 }
 
 func New() (*Store, error) {
-	configDir, err := DefaultConfigDir()
+	configDir, err := defaultConfigDir()
 	if err != nil {
 		return nil, err
 	}
-	return NewStore(configDir, osKeyring{}), nil
+	return newStore(configDir, osKeyring{}), nil
 }
 
-func DefaultConfigDir() (string, error) {
+func defaultConfigDir() (string, error) {
 	if dir := strings.TrimSpace(os.Getenv(configDirEnv)); dir != "" {
 		return dir, nil
 	}
@@ -82,19 +81,19 @@ func DefaultConfigDir() (string, error) {
 	return filepath.Join(home, ".config", appName), nil
 }
 
-func NewStore(configDir string, keyring Keyring) *Store {
+func newStore(configDir string, keyring keyringStore) *Store {
 	if keyring == nil {
 		keyring = osKeyring{}
 	}
 	return &Store{configDir: configDir, keyring: keyring}
 }
 
-func (s *Store) ConfigPath() string {
+func (s *Store) configPath() string {
 	return filepath.Join(s.configDir, configFileName)
 }
 
 func (s *Store) Load() (Config, error) {
-	data, err := os.ReadFile(s.ConfigPath())
+	data, err := os.ReadFile(s.configPath())
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return Config{}, ErrNotFound
@@ -122,7 +121,7 @@ func (s *Store) Save(cfg Config) error {
 		return fmt.Errorf("encode CLI config: %w", err)
 	}
 	data = append(data, '\n')
-	return writeFileAtomic(s.ConfigPath(), data)
+	return writeFileAtomic(s.configPath(), data)
 }
 
 func (s *Store) Token(baseURL string) (string, error) {

@@ -17,8 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
-
-	rundomain "github.com/helmrdotdev/helmr/internal/run"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -38,13 +37,13 @@ const (
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	if err := run(context.Background(), log); err != nil {
+	if err := runDispatcher(context.Background(), log); err != nil {
 		log.Error("dispatcher stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, log *slog.Logger) error {
+func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	cfg, err := config.LoadDispatcher()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -207,7 +206,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure schedule worker: %w", err)
 	}
-	runAdmissionDelivery, err := rundomain.NewDeliveryWorker(
+	runAdmissionDelivery, err := run.NewDeliveryWorker(
 		log,
 		queries,
 		func(ctx context.Context, orgID, runID pgtype.UUID) error {
@@ -265,10 +264,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 			tx pgx.Tx,
 			finalization secret.RunFinalization,
 		) error {
-			graph, err := rundomain.LockOwnedFinalization(
+			graph, err := run.LockOwnedFinalization(
 				ctx,
 				tx,
-				rundomain.OwnedFinalizationRequest{
+				run.OwnedFinalizationRequest{
 					OrgID:         finalization.OrgID,
 					ProjectID:     finalization.ProjectID,
 					EnvironmentID: finalization.EnvironmentID,
@@ -294,7 +293,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Secret revocation delivery: %w", err)
 	}
-	timerWaitReconciler, err := rundomain.NewTimerWaitReconciler(pool)
+	timerWaitReconciler, err := run.NewTimerWaitReconciler(pool)
 	if err != nil {
 		return fmt.Errorf("configure timer Wait reconciler: %w", err)
 	}
@@ -311,7 +310,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Actor input reconciliation delivery: %w", err)
 	}
-	runWaitDeadlineDelivery, err := rundomain.NewDeadlineWorker(
+	runWaitDeadlineDelivery, err := run.NewDeadlineWorker(
 		log,
 		timerWaitReconciler.ReconcileDue,
 		tokenWaitReconciler.ReconcileTimeouts,

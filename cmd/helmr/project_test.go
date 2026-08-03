@@ -13,7 +13,7 @@ import (
 
 func TestProjectCreateCommandGeneratesSlug(t *testing.T) {
 	const projectID = "00000000-0000-0000-0000-000000000101"
-	state, _ := installTestCLIConfig(t)
+	state := installTestCLIConfig(t)
 	var request api.CreateProjectRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/projects" {
@@ -50,7 +50,7 @@ func TestProjectCreateCommandGeneratesSlug(t *testing.T) {
 
 func TestProjectGetCommandResolvesSlug(t *testing.T) {
 	const projectID = "00000000-0000-0000-0000-000000000101"
-	state, _ := installTestCLIConfig(t)
+	state := installTestCLIConfig(t)
 	methods := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		methods = append(methods, r.Method+" "+r.URL.Path)
@@ -101,7 +101,7 @@ func TestProjectGetCommandResolvesSlug(t *testing.T) {
 
 func TestProjectUpdateCommandPreservesOmittedName(t *testing.T) {
 	const projectID = "00000000-0000-0000-0000-000000000101"
-	state, _ := installTestCLIConfig(t)
+	state := installTestCLIConfig(t)
 	var request api.UpdateProjectRequest
 	methods := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -154,7 +154,7 @@ func TestProjectUpdateCommandPreservesOmittedName(t *testing.T) {
 func TestEnvCreateCommandResolvesProjectAndGeneratesSlug(t *testing.T) {
 	const projectID = "00000000-0000-0000-0000-000000000101"
 	const environmentID = "00000000-0000-0000-0000-000000000202"
-	state, _ := installTestCLIConfig(t)
+	state := installTestCLIConfig(t)
 	var request api.CreateEnvironmentRequest
 	methods := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -233,7 +233,7 @@ func TestProjectEnvNestedCommandIsNotRegistered(t *testing.T) {
 func TestEnvUpdateCommandResolvesSlugsAndPreservesOmittedName(t *testing.T) {
 	const projectID = "00000000-0000-0000-0000-000000000101"
 	const environmentID = "00000000-0000-0000-0000-000000000202"
-	state, _ := installTestCLIConfig(t)
+	state := installTestCLIConfig(t)
 	var request api.UpdateEnvironmentRequest
 	methods := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -302,7 +302,7 @@ func TestEnvUpdateCommandResolvesSlugsAndPreservesOmittedName(t *testing.T) {
 func TestEnvUpdateCommandAllowsColorOnlyUpdate(t *testing.T) {
 	const projectID = "00000000-0000-0000-0000-000000000101"
 	const environmentID = "00000000-0000-0000-0000-000000000202"
-	state, _ := installTestCLIConfig(t)
+	state := installTestCLIConfig(t)
 	var request api.UpdateEnvironmentRequest
 	methods := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -405,7 +405,7 @@ func TestDefaultEnvironmentColorHexUsesSemanticAndCustomPalette(t *testing.T) {
 func TestEnvDeleteCommandResolvesSlugs(t *testing.T) {
 	const projectID = "00000000-0000-0000-0000-000000000101"
 	const environmentID = "00000000-0000-0000-0000-000000000202"
-	state, _ := installTestCLIConfig(t)
+	state := installTestCLIConfig(t)
 	methods := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		methods = append(methods, r.Method+" "+r.URL.Path)

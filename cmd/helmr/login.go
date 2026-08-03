@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/cli/session"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/clistate"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/spf13/cobra"
 )
@@ -57,7 +57,7 @@ func loginCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			state, err := newSessionStore()
+			state, err := newCLIStateStore()
 			if err != nil {
 				return err
 			}
@@ -87,7 +87,7 @@ func logoutCommand() *cobra.Command {
 			} else {
 				rawURL = cliControlPlaneURL(cmd)
 			}
-			state, err := newSessionStore()
+			state, err := newCLIStateStore()
 			if err != nil {
 				return err
 			}
@@ -97,7 +97,7 @@ func logoutCommand() *cobra.Command {
 			}
 			token, err := state.Token(baseURL)
 			if err != nil {
-				if errors.Is(err, session.ErrNotFound) {
+				if errors.Is(err, clistate.ErrNotFound) {
 					return fmt.Errorf("not logged in to %s", baseURL)
 				}
 				return err
@@ -122,12 +122,12 @@ func logoutCommand() *cobra.Command {
 func loginURL(rawURL string) (string, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
-		state, err := newSessionStore()
+		state, err := newCLIStateStore()
 		if err == nil {
 			cfg, err := state.Load()
 			if err == nil {
 				rawURL = cfg.DefaultHost
-			} else if !errors.Is(err, session.ErrNotFound) {
+			} else if !errors.Is(err, clistate.ErrNotFound) {
 				return "", err
 			}
 		}
@@ -142,12 +142,12 @@ func loginURL(rawURL string) (string, error) {
 	return parsed.String(), nil
 }
 
-func savedLoginURL(state *session.Store, rawURL string) (string, error) {
+func savedLoginURL(state cliState, rawURL string) (string, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
 		cfg, err := state.Load()
 		if err != nil {
-			if errors.Is(err, session.ErrNotFound) {
+			if errors.Is(err, clistate.ErrNotFound) {
 				return "", errors.New("no saved login")
 			}
 			return "", err

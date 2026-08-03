@@ -11,11 +11,11 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cli/session"
+	"github.com/helmrdotdev/helmr/internal/clistate"
 )
 
 func TestLoginCommandStoresDeviceToken(t *testing.T) {
-	state, _ := installTestCLIConfig(t)
+	state := installTestCLIConfig(t)
 	var sawStart bool
 	var sawToken bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +84,7 @@ func TestLoginCommandStoresDeviceToken(t *testing.T) {
 }
 
 func TestLogoutCommandRevokesAndDeletesStoredToken(t *testing.T) {
-	state, _ := installTestCLIConfig(t)
+	state := installTestCLIConfig(t)
 	var sawLogout bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/auth/logout" {
@@ -113,7 +113,7 @@ func TestLogoutCommandRevokesAndDeletesStoredToken(t *testing.T) {
 	if !sawLogout {
 		t.Fatal("logout endpoint was not called")
 	}
-	if _, err := state.Token(server.URL); !errors.Is(err, session.ErrNotFound) {
+	if _, err := state.Token(server.URL); !errors.Is(err, clistate.ErrNotFound) {
 		t.Fatalf("token after logout error = %v, want ErrNotFound", err)
 	}
 	if !strings.Contains(out.String(), "Logged out from "+server.URL) {
@@ -122,7 +122,7 @@ func TestLogoutCommandRevokesAndDeletesStoredToken(t *testing.T) {
 }
 
 func TestCommandUsesSavedLoginWhenEnvIsUnset(t *testing.T) {
-	state, _ := installTestCLIConfig(t)
+	state := installTestCLIConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("authorization"); got != "Bearer stored-key" {
 			t.Fatalf("auth = %s", got)
@@ -155,7 +155,7 @@ func TestCommandUsesSavedLoginWhenEnvIsUnset(t *testing.T) {
 }
 
 func TestRunCommandWithSavedLoginRequiresExplicitScope(t *testing.T) {
-	state, _ := installTestCLIConfig(t)
+	state := installTestCLIConfig(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 	}))

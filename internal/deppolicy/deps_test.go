@@ -100,6 +100,45 @@ func TestProgramBuildHostPackageIsWorkerOnly(t *testing.T) {
 	}
 }
 
+func TestCLIStateIsCLIOnly(t *testing.T) {
+	root := repositoryRoot(t)
+	target := moduleImportPrefix + "internal/clistate"
+	for _, sourceRoot := range []string{"cmd", "internal", "operatorapi"} {
+		err := filepath.WalkDir(filepath.Join(root, sourceRoot), func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".go") {
+				return nil
+			}
+			file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
+			if err != nil {
+				return err
+			}
+			for _, imp := range file.Imports {
+				importPath, err := strconv.Unquote(imp.Path.Value)
+				if err != nil {
+					return err
+				}
+				if importPath != target {
+					continue
+				}
+				source, err := filepath.Rel(root, filepath.Dir(path))
+				if err != nil {
+					return err
+				}
+				if source != filepath.Join("cmd", "helmr") {
+					return fmt.Errorf("CLI state import is forbidden outside cmd/helmr: %s", source)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestProviderNeutralPackagesExcludeProviderSDKs(t *testing.T) {
 	root := filepath.Join(repositoryRoot(t), "internal")
 	for source, forbiddenPrefixes := range map[string][]string{
