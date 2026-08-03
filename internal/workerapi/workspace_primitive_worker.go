@@ -47,7 +47,7 @@ type WorkspaceExecCompleteRequest struct {
 	Error               json.RawMessage `json:"error,omitempty"`
 }
 
-type WorkspaceMaterializerControlClient interface {
+type WorkspaceMaterializerControlPlaneClient interface {
 	RenewWorkspaceMount(context.Context, WorkspaceMountRenewRequest) (WorkspaceMountResponse, error)
 	MarkWorkspaceMountMounted(context.Context, WorkspaceMountMountedRequest) (WorkspaceMountResponse, error)
 	CaptureWorkspaceMount(context.Context, WorkspaceMountCaptureRequest) (WorkspaceMountCaptureResponse, error)

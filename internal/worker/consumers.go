@@ -120,7 +120,7 @@ func (c platformAcquisitionConsumer) Claim(ctx context.Context) (Work, bool, err
 		return nil, true, &fatalWorkerError{err: fmt.Errorf("read build policy digest: %w", err)}
 	}
 	if acquisition.BuildPolicyDigest != policyDigest {
-		return nil, true, &fatalWorkerError{err: errors.New("Control and Worker build policies differ")}
+		return nil, true, &fatalWorkerError{err: errors.New("Control Plane and Worker build policies differ")}
 	}
 	if r.platformAcquirer == nil {
 		return nil, true, &fatalWorkerError{err: errors.New("Platform acquirer is not configured")}

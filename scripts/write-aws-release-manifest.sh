@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-control_image="${1:-}"
+controlplane_image="${1:-}"
 worker_amis_json="${2:-}"
 platform_release_json="${3:-}"
 output="${4:-aws-artifacts.json}"
 required_worker_ami_regions="${REQUIRED_WORKER_AMI_REGIONS:-us-east-1,us-west-2,ap-northeast-1}"
 verify_release_artifacts="${VERIFY_RELEASE_ARTIFACTS:-0}"
 
-if [ -z "$control_image" ] || [ -z "$worker_amis_json" ] || [ -z "$platform_release_json" ]; then
-  echo "usage: scripts/write-aws-release-manifest.sh <control-image> <worker-amis-json> <platform-release-json> [output]" >&2
+if [ -z "$controlplane_image" ] || [ -z "$worker_amis_json" ] || [ -z "$platform_release_json" ]; then
+  echo "usage: scripts/write-aws-release-manifest.sh <controlplane-image> <worker-amis-json> <platform-release-json> [output]" >&2
   echo "set VERIFY_RELEASE_ARTIFACTS=1 to verify image and AMI visibility before writing" >&2
   exit 1
 fi
@@ -30,8 +30,8 @@ is_truthy() {
   esac
 }
 
-if [[ ! "$control_image" =~ @sha256:[0-9a-f]{64}$ ]]; then
-  echo "control image must be pinned by digest as @sha256:<64 lowercase hex characters>" >&2
+if [[ ! "$controlplane_image" =~ @sha256:[0-9a-f]{64}$ ]]; then
+  echo "controlplane image must be pinned by digest as @sha256:<64 lowercase hex characters>" >&2
   exit 1
 fi
 
@@ -57,21 +57,21 @@ jq -e '
   and (.sourceRef | test("^refs/(tags|heads)/[^[:space:]]+$"))
 ' >/dev/null <<<"$platform_release_json"
 
-verify_control_image() {
+verify_controlplane_image() {
   if command -v docker >/dev/null 2>&1; then
-    if docker buildx imagetools inspect "$control_image" >/dev/null 2>&1; then
+    if docker buildx imagetools inspect "$controlplane_image" >/dev/null 2>&1; then
       return 0
     fi
-    if docker manifest inspect "$control_image" >/dev/null 2>&1; then
+    if docker manifest inspect "$controlplane_image" >/dev/null 2>&1; then
       return 0
     fi
   fi
 
-  if command -v skopeo >/dev/null 2>&1 && skopeo inspect "docker://${control_image}" >/dev/null 2>&1; then
+  if command -v skopeo >/dev/null 2>&1 && skopeo inspect "docker://${controlplane_image}" >/dev/null 2>&1; then
     return 0
   fi
 
-  die "control image is not inspectable: ${control_image}"
+  die "controlplane image is not inspectable: ${controlplane_image}"
 }
 
 verify_worker_amis() {
@@ -91,16 +91,16 @@ verify_worker_amis() {
 }
 
 if is_truthy "$verify_release_artifacts"; then
-  verify_control_image
+  verify_controlplane_image
   verify_worker_amis
 fi
 
 jq -n \
-  --arg control_image "$control_image" \
+  --arg controlplane_image "$controlplane_image" \
   --argjson worker_amis "$worker_amis_json" \
   --argjson platform_release "$platform_release_json" \
   '{
-    control_image: $control_image,
+    controlplane_image: $controlplane_image,
     platform_release: $platform_release,
     worker_amis: $worker_amis
   }' >"$output"

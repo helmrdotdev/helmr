@@ -34,11 +34,11 @@ func tokenGetCommand() *cobra.Command {
 		Short: "Show an external completion token.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			token, err := control.GetToken(cmd.Context(), args[0], client.TokenScopeOptions{ProjectID: projectID, EnvironmentID: environmentID})
+			token, err := controlPlane.GetToken(cmd.Context(), args[0], client.TokenScopeOptions{ProjectID: projectID, EnvironmentID: environmentID})
 			if err != nil {
 				return err
 			}
@@ -69,11 +69,11 @@ func tokenCompleteCommand() *cobra.Command {
 			if len(data) == 0 || !json.Valid(data) {
 				return fmt.Errorf("--data-json must be valid JSON")
 			}
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			response, err := control.CompleteToken(cmd.Context(), args[0], api.CompleteTokenRequest{
+			response, err := controlPlane.CompleteToken(cmd.Context(), args[0], api.CompleteTokenRequest{
 				Result: data, IdempotencyKey: strings.TrimSpace(idempotencyKey),
 			}, client.TokenScopeOptions{ProjectID: projectID, EnvironmentID: environmentID})
 			if err != nil {
@@ -106,11 +106,11 @@ func tokenCancelCommand() *cobra.Command {
 		Short: "Cancel a pending external completion token.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			token, err := control.CancelToken(cmd.Context(), args[0], api.CancelTokenRequest{
+			token, err := controlPlane.CancelToken(cmd.Context(), args[0], api.CancelTokenRequest{
 				IdempotencyKey: strings.TrimSpace(idempotencyKey),
 			}, client.TokenScopeOptions{ProjectID: projectID, EnvironmentID: environmentID})
 			if err != nil {

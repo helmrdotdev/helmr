@@ -30,7 +30,7 @@ func (e Executor) ExecuteRunLease(
 	work workerapi.RunLeaseWork,
 ) error {
 	if e.RunLeases == nil {
-		return errors.New("Run Lease control is required")
+		return errors.New("Run Lease Control Plane is required")
 	}
 	if e.RunLeaseTasks == nil {
 		return errors.New("Run Lease Task runner is required")

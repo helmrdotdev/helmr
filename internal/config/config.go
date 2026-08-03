@@ -26,7 +26,7 @@ const (
 	EmailProviderResend = "resend"
 )
 
-type Control struct {
+type ControlPlane struct {
 	Addr                    string
 	DeploymentMode          string
 	DatabaseURL             string
@@ -97,7 +97,7 @@ type RegionBootstrap struct {
 }
 
 type Worker struct {
-	ControlURL                   string
+	ControlPlaneURL              string
 	WorkerGroupID                string
 	WorkerResourceID             string
 	WorkerEnrollmentSecretFile   string
@@ -146,7 +146,7 @@ type Worker struct {
 	ImageCache                   *ImageCache
 }
 
-// ImageCache is shared entry configuration for the Control provisioner and
+// ImageCache is shared entry configuration for the Control Plane provisioner and
 // Worker credential adapter. It is either completely configured or absent.
 type ImageCache struct {
 	RegistryAuthority   string
@@ -155,8 +155,8 @@ type ImageCache struct {
 	RepositoryARNPrefix string
 }
 
-type WorkerControl struct {
-	ControlURL                   string
+type WorkerControlPlane struct {
+	ControlPlaneURL              string
 	WorkerInstanceCredentialPath string
 	WorkDir                      string
 	PollEvery                    time.Duration

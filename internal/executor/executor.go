@@ -19,7 +19,7 @@ func DefaultWorkDir() string {
 }
 
 type Executor struct {
-	RunLeases     RunLeaseControl
+	RunLeases     RunLeaseControlPlane
 	RunLeaseTasks RunLeaseTaskRunner
 }
 

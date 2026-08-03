@@ -221,7 +221,7 @@ type Querier interface {
 	GetCheckpointFailedReplay(ctx context.Context, id pgtype.UUID) (GetCheckpointFailedReplayRow, error)
 	GetCheckpointReadyReplay(ctx context.Context, id pgtype.UUID) (GetCheckpointReadyReplayRow, error)
 	GetChildCallRunWaitReplay(ctx context.Context, arg GetChildCallRunWaitReplayParams) (RunWait, error)
-	GetControlWorkerGroupReadiness(ctx context.Context, workerGroupID string) (GetControlWorkerGroupReadinessRow, error)
+	GetControlPlaneWorkerGroupReadiness(ctx context.Context, workerGroupID string) (GetControlPlaneWorkerGroupReadinessRow, error)
 	GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploymentParams) (Deployment, error)
 	GetCurrentDeploymentDefinition(ctx context.Context, arg GetCurrentDeploymentDefinitionParams) (DeploymentDefinition, error)
 	GetCurrentDeploymentForRoute(ctx context.Context, arg GetCurrentDeploymentForRouteParams) (Deployment, error)

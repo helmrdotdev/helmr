@@ -34,9 +34,9 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 	ctx context.Context,
 	event *runv0.RunEvent,
 ) error {
-	control, ok := task.control.(ActorRuntimeControl)
+	controlPlane, ok := task.controlPlane.(ActorRuntimeControlPlane)
 	if !ok {
-		return errors.New("Run Lease Task Actor runtime control is required")
+		return errors.New("Run Lease Task Actor runtime Control Plane is required")
 	}
 
 	var correlationID string
@@ -56,7 +56,7 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 		) error {
 			request.Lease = lease.Fence()
 			var callErr error
-			response, callErr = control.StartRunActor(callCtx, request)
+			response, callErr = controlPlane.StartRunActor(callCtx, request)
 			return callErr
 		})
 		if err != nil {
@@ -82,7 +82,7 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 		) error {
 			request.Lease = lease.Fence()
 			var callErr error
-			response, callErr = control.GetRunActorStatus(callCtx, request)
+			response, callErr = controlPlane.GetRunActorStatus(callCtx, request)
 			return callErr
 		})
 		if err != nil {
@@ -112,7 +112,7 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 		) error {
 			request.Lease = lease.Fence()
 			var callErr error
-			response, callErr = control.CloseRunActor(callCtx, request)
+			response, callErr = controlPlane.CloseRunActor(callCtx, request)
 			return callErr
 		})
 		if err != nil {
@@ -146,7 +146,7 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 		) error {
 			request.Lease = lease.Fence()
 			var callErr error
-			response, callErr = control.ReadRunActorOutputPage(callCtx, request)
+			response, callErr = controlPlane.ReadRunActorOutputPage(callCtx, request)
 			return callErr
 		})
 		if err != nil {

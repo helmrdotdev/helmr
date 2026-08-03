@@ -3,8 +3,8 @@ set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 script="${repo_root}/scripts/aws-release-artifacts.sh"
-control_build_script="${repo_root}/scripts/build-control-image.sh"
-control_build_contract="${repo_root}/images/control-image-build.json"
+controlplane_build_script="${repo_root}/scripts/build-controlplane-image.sh"
+controlplane_build_contract="${repo_root}/images/controlplane-image-build.json"
 
 fail() {
   printf 'not ok - %s\n' "$1" >&2
@@ -92,13 +92,13 @@ fi
 [ -s "${platform_input_marker}" ] || fail "publisher must receive the sealed release tree"
 [ ! -e "$(cat "${platform_input_marker}")" ] || fail "failed publisher must remove its sealed release tree"
 
-control_bin="${tmp}/control-bin"
-control_context="${tmp}/control-context"
-mkdir -p "${control_bin}"
+controlplane_bin="${tmp}/controlplane-bin"
+controlplane_context="${tmp}/controlplane-context"
+mkdir -p "${controlplane_bin}"
 for command in bun make go; do
-  printf '#!/usr/bin/env bash\nexit 0\n' >"${control_bin}/${command}"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"${controlplane_bin}/${command}"
 done
-cat >"${control_bin}/docker" <<'EOF'
+cat >"${controlplane_bin}/docker" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${1:-}" in
@@ -110,20 +110,20 @@ case "${1:-}" in
   *) exit 1 ;;
 esac
 EOF
-chmod 0755 "${control_bin}"/*
-PATH="${control_bin}:${PATH}" CONTROL_IMAGE_CONTEXT="${control_context}" CONTROL_IMAGE_PLATFORM=linux/amd64 \
-  "${control_build_script}" example.invalid/helmr-control:test
-base_image="$(jq -r '.baseImage' "${control_build_contract}")"
-assert_contains "${control_context}/Dockerfile" "FROM ${base_image}" "digest-pinned Control base"
-PATH="${control_bin}:${PATH}" "${repo_root}/scripts/verify-control-image-build.sh" \
-  "${control_context}/build-inputs.json" example.invalid/helmr-control:test
+chmod 0755 "${controlplane_bin}"/*
+PATH="${controlplane_bin}:${PATH}" CONTROLPLANE_IMAGE_CONTEXT="${controlplane_context}" CONTROLPLANE_IMAGE_PLATFORM=linux/amd64 \
+  "${controlplane_build_script}" example.invalid/helmr-controlplane:test
+base_image="$(jq -r '.baseImage' "${controlplane_build_contract}")"
+assert_contains "${controlplane_context}/Dockerfile" "FROM ${base_image}" "digest-pinned Control Plane base"
+PATH="${controlplane_bin}:${PATH}" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
+  "${controlplane_context}/build-inputs.json" example.invalid/helmr-controlplane:test
 
 drifted="${tmp}/drifted-build-inputs.json"
 jq '.sourceCommit = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
-  "${control_context}/build-inputs.json" >"${drifted}"
-if PATH="${control_bin}:${PATH}" "${repo_root}/scripts/verify-control-image-build.sh" \
-  "${drifted}" example.invalid/helmr-control:test >/dev/null 2>&1; then
-  fail "Control image verification must reject source-commit drift"
+  "${controlplane_context}/build-inputs.json" >"${drifted}"
+if PATH="${controlplane_bin}:${PATH}" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
+  "${drifted}" example.invalid/helmr-controlplane:test >/dev/null 2>&1; then
+  fail "Control Plane image verification must reject source-commit drift"
 fi
 
 worker_bin="${tmp}/worker-bin"

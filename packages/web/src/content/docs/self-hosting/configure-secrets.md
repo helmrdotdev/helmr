@@ -1,6 +1,6 @@
 ---
 title: Configure secrets
-description: Populate AWS Secrets Manager values required by the control plane and workers.
+description: Populate AWS Secrets Manager values required by the Control Plane and workers.
 section: Self-hosting
 sidebarLabel: Configure secrets
 order: 740
@@ -14,7 +14,7 @@ The AWS stack creates Secrets Manager entries and returns their ARNs:
 tofu output -json secret_arns
 ```
 
-Do not place Helmr application secret values in `terraform.tfvars` or Terraform state. Provision the ClickHouse password in your deployment secret manager and pass only its ARN to the Control module.
+Do not place Helmr application secret values in `terraform.tfvars` or Terraform state. Provision the ClickHouse password in your deployment secret manager and pass only its ARN to the Control Plane module.
 
 Populate these secrets after the first apply:
 
@@ -78,9 +78,9 @@ aws secretsmanager put-secret-value \
 ```
 
 When `email_provider = "resend"` is set, the stack creates a `secret_arns.resend_api_key`
-Secrets Manager secret. Populate it with the raw Resend API key before starting the control
+Secrets Manager secret. Populate it with the raw Resend API key before starting the Control Plane
 service.
 
 When `email_provider = "smtp"` and `smtp_password_enabled = true` are set, the stack creates a
 `secret_arns.smtp_password` Secrets Manager secret. Populate it with the raw SMTP password before
-starting the control service.
+starting the Control Plane service.

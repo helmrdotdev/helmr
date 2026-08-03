@@ -13,7 +13,7 @@ import (
 const (
 	WorkerRoleRun             = "run"
 	WorkerRoleBuild           = "build"
-	WorkerTokenIssuer         = "helmr-control-plane"
+	WorkerTokenIssuer         = "helmr-controlplane"
 	WorkerTokenAudience       = "helmr-worker"
 	WorkerTokenSigningKeySize = 32
 )

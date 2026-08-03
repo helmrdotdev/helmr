@@ -8,18 +8,18 @@ order: 750
 
 # Run migrations
 
-Run database migrations after secrets are populated and before enabling the control and dispatcher services.
+Run database migrations after secrets are populated and before enabling the Control Plane and dispatcher services.
 
 For the `standard` profile, the migration task runs in private subnets:
 
 ```sh
 aws ecs run-task \
-  --cluster "$(tofu output -raw control_cluster_name)" \
+  --cluster "$(tofu output -raw controlplane_cluster_name)" \
   --task-definition "$(tofu output -raw migration_task_definition_arn)" \
   --launch-type FARGATE \
   --network-configuration "$(jq -cn \
-    --argjson subnets "$(tofu output -json control_task_subnet_ids)" \
-    --argjson securityGroups "$(tofu output -json control_task_security_group_ids)" \
+    --argjson subnets "$(tofu output -json controlplane_task_subnet_ids)" \
+    --argjson securityGroups "$(tofu output -json controlplane_task_security_group_ids)" \
     '{awsvpcConfiguration:{subnets:$subnets,securityGroups:$securityGroups,assignPublicIp:"DISABLED"}}')"
 ```
 
@@ -27,14 +27,14 @@ For the `quickstart` profile, use the profile output to decide whether the task 
 
 ```sh
 aws ecs run-task \
-  --cluster "$(tofu output -raw control_cluster_name)" \
+  --cluster "$(tofu output -raw controlplane_cluster_name)" \
   --task-definition "$(tofu output -raw migration_task_definition_arn)" \
   --launch-type FARGATE \
   --network-configuration "$(jq -cn \
-    --argjson subnets "$(tofu output -json control_task_subnet_ids)" \
-    --argjson securityGroups "$(tofu output -json control_task_security_group_ids)" \
-    --arg assignPublicIp "$([ "$(tofu output -raw control_assign_public_ip)" = "true" ] && printf ENABLED || printf DISABLED)" \
+    --argjson subnets "$(tofu output -json controlplane_task_subnet_ids)" \
+    --argjson securityGroups "$(tofu output -json controlplane_task_security_group_ids)" \
+    --arg assignPublicIp "$([ "$(tofu output -raw controlplane_assign_public_ip)" = "true" ] && printf ENABLED || printf DISABLED)" \
     '{awsvpcConfiguration:{subnets:$subnets,securityGroups:$securityGroups,assignPublicIp:$assignPublicIp}}')"
 ```
 
-Wait for the task to finish and inspect the logs if it exits non-zero. Do not start the control or dispatcher services until migrations have completed.
+Wait for the task to finish and inspect the logs if it exits non-zero. Do not start the Control Plane or dispatcher services until migrations have completed.

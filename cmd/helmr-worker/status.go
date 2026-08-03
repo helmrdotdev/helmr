@@ -14,7 +14,7 @@ import (
 )
 
 func runStatus(log *slog.Logger) error {
-	cfg, err := config.LoadWorkerControl()
+	cfg, err := config.LoadWorkerControlPlane()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -22,7 +22,7 @@ func runStatus(log *slog.Logger) error {
 	if workDir == "" {
 		workDir = executor.DefaultWorkDir()
 	}
-	workerCredential, err := resolveWorkerControlCredential(cfg, workDir)
+	workerCredential, err := resolveWorkerControlPlaneCredential(cfg, workDir)
 	if err != nil {
 		return err
 	}
@@ -31,13 +31,13 @@ func runStatus(log *slog.Logger) error {
 		return err
 	}
 	supportsRun, supportsBuild := identityRoles(identity.Roles)
-	controlClient, err := workerclient.New(cfg.ControlURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild))
+	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	status, err := controlClient.GetWorkerStatus(ctx)
+	status, err := controlPlaneClient.GetWorkerStatus(ctx)
 	if err != nil {
 		return fmt.Errorf("get worker status: %w", err)
 	}

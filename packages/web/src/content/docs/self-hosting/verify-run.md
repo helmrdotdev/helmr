@@ -8,12 +8,12 @@ order: 780
 
 # Verify a run
 
-After the control and dispatcher services are ready and at least one worker is active, verify the environment with a small run. A default `quickstart` stack must enable NAT and worker capacity before this step.
+After the Control Plane and dispatcher services are ready and at least one Worker is active, verify the environment with a small run. A default `quickstart` stack must enable NAT and Worker capacity before this step.
 
-Log in to the control URL:
+Log in to the Control Plane URL:
 
 ```sh
-helmr login "$CONTROL_URL"
+helmr login "$CONTROLPLANE_URL"
 ```
 
 Deploy the task project from a local checkout:
@@ -37,9 +37,9 @@ helmr run logs RUN_ID
 A complete smoke test proves that:
 
 - GitHub OAuth is configured.
-- The control plane can read project metadata.
+- The Control Plane can read project metadata.
 - A worker is active and can lease work.
-- The worker can reach S3, ECR, AWS APIs, the control plane, and any external services used by the task.
+- The worker can reach S3, ECR, AWS APIs, the Control Plane, and any external services used by the task.
 - Firecracker and the Worker-owned routed-TAP datapath are available, and the certified guest rootfs contains the pinned BuildKit daemon used by image-build guests.
 
 If a run stays queued, check worker capacity first. If a task cannot reach an external repository or API, check the task secret and worker egress path.

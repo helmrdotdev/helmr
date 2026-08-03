@@ -324,7 +324,7 @@ func (p *PreparedRuntimePool) ReconcileDesiredRuntimes(ctx context.Context, clie
 
 func (p *PreparedRuntimePool) ReclaimFailedRuntimeTarget(ctx context.Context, client PreparedRuntimeInstanceClient, target workerapi.RuntimeReconcileTarget) error {
 	if p == nil || client == nil {
-		return errors.New("failed runtime reclaim requires pool and control client")
+		return errors.New("failed runtime reclaim requires pool and Control Plane client")
 	}
 	runtimeInstanceID := strings.TrimSpace(target.ID)
 	if runtimeInstanceID == "" || target.WorkerEpoch <= 0 {

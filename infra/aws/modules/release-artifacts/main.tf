@@ -1,5 +1,5 @@
 locals {
-  needs_manifest = var.control_image_override == null || (var.resolve_worker_ami && var.worker_ami_id_override == null)
+  needs_manifest = var.controlplane_image_override == null || (var.resolve_worker_ami && var.worker_ami_id_override == null)
   manifest_url = var.manifest_url != null ? var.manifest_url : (
     var.manifest_base_url != null ? "${trimsuffix(var.manifest_base_url, "/")}/${var.helmr_version}/aws-artifacts.json" : null
   )
@@ -20,10 +20,10 @@ locals {
   manifest_status_code = local.can_fetch_manifest ? data.http.manifest[0].status_code : null
   manifest_json        = local.can_fetch_manifest ? try(jsondecode(data.http.manifest[0].response_body), null) : null
 
-  manifest_control_image = local.manifest_json != null ? try(tostring(local.manifest_json.control_image), null) : null
-  manifest_worker_ami_id = local.manifest_json != null ? try(tostring(local.manifest_json.worker_amis[var.aws_region]), null) : null
+  manifest_controlplane_image = local.manifest_json != null ? try(tostring(local.manifest_json.controlplane_image), null) : null
+  manifest_worker_ami_id      = local.manifest_json != null ? try(tostring(local.manifest_json.worker_amis[var.aws_region]), null) : null
 
-  control_image = var.control_image_override != null ? var.control_image_override : local.manifest_control_image
+  controlplane_image = var.controlplane_image_override != null ? var.controlplane_image_override : local.manifest_controlplane_image
   worker_ami_id = var.worker_ami_id_override != null ? var.worker_ami_id_override : (
     var.resolve_worker_ami ? local.manifest_worker_ami_id : null
   )
@@ -31,9 +31,9 @@ locals {
 
 resource "terraform_data" "resolved" {
   input = {
-    control_image = local.control_image
-    worker_ami_id = local.worker_ami_id
-    manifest_url  = local.needs_manifest ? local.manifest_url : null
+    controlplane_image = local.controlplane_image
+    worker_ami_id      = local.worker_ami_id
+    manifest_url       = local.needs_manifest ? local.manifest_url : null
   }
 
   lifecycle {
@@ -53,13 +53,13 @@ resource "terraform_data" "resolved" {
     }
 
     precondition {
-      condition     = try(trimspace(local.control_image) != "", false)
-      error_message = "Unable to resolve control_image. Provide a manifest with control_image or set control_image_override."
+      condition     = try(trimspace(local.controlplane_image) != "", false)
+      error_message = "Unable to resolve controlplane_image. Provide a manifest with controlplane_image or set controlplane_image_override."
     }
 
     precondition {
-      condition     = can(regex("@sha256:[0-9a-f]{64}$", local.control_image))
-      error_message = "control_image must be pinned by digest using @sha256:<64 lowercase hex characters>."
+      condition     = can(regex("@sha256:[0-9a-f]{64}$", local.controlplane_image))
+      error_message = "controlplane_image must be pinned by digest using @sha256:<64 lowercase hex characters>."
     }
 
     precondition {

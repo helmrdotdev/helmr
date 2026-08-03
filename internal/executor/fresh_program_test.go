@@ -25,7 +25,7 @@ import (
 func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	claim := testFreshProgramClaim(t)
 	claim.Lease.ExpiresAt = time.Now().Add(5 * time.Second).UTC()
-	control := &testFreshProgramControl{
+	controlPlane := &testFreshProgramControlPlane{
 		lease:              claim.Lease,
 		startFailures:      1,
 		entrypointFailures: 1,
@@ -45,7 +45,7 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 		guestResult <- serveFreshProgramProtocol(
 			guest,
 			claim.Lease,
-			control,
+			controlPlane,
 		)
 	}()
 	program, err := (ProgramRunner{
@@ -53,13 +53,13 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	}).startNewProgram(
 		context.Background(),
 		&claim,
-		control,
+		controlPlane,
 		events,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if program.lease != control.lease ||
+	if program.lease != controlPlane.lease ||
 		program.entrypoint.GetDeclaredId() != "deploy" ||
 		program.entrypoint.GetTask() == nil ||
 		program.observedEventSeq != 4 {
@@ -81,13 +81,13 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	if err := <-guestResult; err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(control.snapshot(), []string{
+	if !slices.Equal(controlPlane.snapshot(), []string{
 		"start", "start", "entrypoint", "entrypoint",
 	}) {
-		t.Fatalf("control calls = %v", control.snapshot())
+		t.Fatalf("Control Plane calls = %v", controlPlane.snapshot())
 	}
-	if control.renewalCount() != 1 {
-		t.Fatalf("Run Lease renewals = %d", control.renewalCount())
+	if controlPlane.renewalCount() != 1 {
+		t.Fatalf("Run Lease renewals = %d", controlPlane.renewalCount())
 	}
 	if !slices.Equal(events.snapshot(), []testFreshProgramLog{
 		{stream: workerapi.LogStreamStdout, observedSeq: 2, content: "loading"},
@@ -109,7 +109,7 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 
 func TestChildAttachStartsNewProgramOnRetainedMount(t *testing.T) {
 	claim := testChildAttachProgramClaim(t)
-	control := &testFreshProgramControl{
+	controlPlane := &testFreshProgramControlPlane{
 		lease:     claim.Lease,
 		wantChild: true,
 	}
@@ -135,7 +135,7 @@ func TestChildAttachStartsNewProgramOnRetainedMount(t *testing.T) {
 		guestResult <- serveFreshProgramProtocol(
 			guest,
 			claim.Lease,
-			control,
+			controlPlane,
 		)
 	}()
 	verifyResult := make(chan error, 1)
@@ -147,7 +147,7 @@ func TestChildAttachStartsNewProgramOnRetainedMount(t *testing.T) {
 	}).startNewProgram(
 		context.Background(),
 		&claim,
-		control,
+		controlPlane,
 		&testFreshProgramEventSink{},
 	)
 	if err != nil {
@@ -218,7 +218,7 @@ func TestChildAttachRejectsMismatchedFrozenParentProof(t *testing.T) {
 			},
 		)
 	}()
-	control := &testFreshProgramControl{
+	controlPlane := &testFreshProgramControlPlane{
 		lease:     claim.Lease,
 		wantChild: true,
 	}
@@ -227,7 +227,7 @@ func TestChildAttachRejectsMismatchedFrozenParentProof(t *testing.T) {
 	}).startNewProgram(
 		context.Background(),
 		&claim,
-		control,
+		controlPlane,
 		&testFreshProgramEventSink{},
 	)
 	if err == nil || !strings.Contains(err.Error(), "verification response changed") {
@@ -236,8 +236,8 @@ func TestChildAttachRejectsMismatchedFrozenParentProof(t *testing.T) {
 	if err := <-verifyResult; err != nil {
 		t.Fatal(err)
 	}
-	if len(control.snapshot()) != 0 {
-		t.Fatalf("control calls = %v", control.snapshot())
+	if len(controlPlane.snapshot()) != 0 {
+		t.Fatalf("Control Plane calls = %v", controlPlane.snapshot())
 	}
 }
 
@@ -279,7 +279,7 @@ func serveFrozenParentVerification(conn net.Conn) error {
 
 func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 	claim := testFreshProgramClaim(t)
-	control := &testFreshProgramControl{
+	controlPlane := &testFreshProgramControlPlane{
 		lease: claim.Lease,
 		startErr: &httpclient.Error{
 			StatusCode: http.StatusConflict,
@@ -317,7 +317,7 @@ func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 	}).startNewProgram(
 		context.Background(),
 		&claim,
-		control,
+		controlPlane,
 		&testFreshProgramEventSink{},
 	)
 	if err == nil || !strings.Contains(err.Error(), "stale start") {
@@ -326,8 +326,8 @@ func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 	if err := <-proofSent; err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(control.snapshot(), []string{"start"}) {
-		t.Fatalf("control calls = %v", control.snapshot())
+	if !slices.Equal(controlPlane.snapshot(), []string{"start"}) {
+		t.Fatalf("Control Plane calls = %v", controlPlane.snapshot())
 	}
 	if claim.Execution.Fresh.ProgramStart != nil ||
 		claim.Workspace.WriteCapability != "" {
@@ -353,7 +353,7 @@ func TestStartFreshProgramStopsBlockedAdmissionAtStartDeadline(t *testing.T) {
 	}).startNewProgram(
 		context.Background(),
 		&claim,
-		&testFreshProgramControl{lease: claim.Lease},
+		&testFreshProgramControlPlane{lease: claim.Lease},
 		&testFreshProgramEventSink{},
 	)
 	if !errors.Is(err, context.DeadlineExceeded) {
@@ -617,14 +617,14 @@ func TestFreshProgramDispatchesActorOutputAppend(t *testing.T) {
 func serveFreshProgramProtocol(
 	conn net.Conn,
 	lease workerapi.RunLeaseAssignment,
-	control *testFreshProgramControl,
+	controlPlane *testFreshProgramControlPlane,
 ) error {
 	defer conn.Close()
 	if err := readFreshProgramAdmission(conn, lease); err != nil {
 		return err
 	}
-	if len(control.snapshot()) != 0 {
-		return errors.New("Control ACK preceded process-started proof")
+	if len(controlPlane.snapshot()) != 0 {
+		return errors.New("Control Plane ACK preceded process-started proof")
 	}
 	if err := frameio.WriteProtoFrame(conn, &runv0.RunEvent{
 		Event: &runv0.RunEvent_ProgramProcessStarted{
@@ -646,7 +646,7 @@ func serveFreshProgramProtocol(
 		release.GetRunId() != lease.RunID ||
 		release.GetAttemptNumber() != uint32(lease.AttemptNumber) ||
 		release.GetRunLeaseId() != lease.ID ||
-		!onlyControlCalls(control.snapshot(), "start") {
+		!onlyControlCalls(controlPlane.snapshot(), "start") {
 		return errors.New("Program-start release preceded start ACK")
 	}
 	if err := frameio.WriteProtoFrame(conn, &runv0.RunEvent{
@@ -686,7 +686,7 @@ func serveFreshProgramProtocol(
 		entrypointRelease.GetAttemptNumber() != uint32(lease.AttemptNumber) ||
 		entrypointRelease.GetEntrypoint().GetDeclaredId() != "deploy" ||
 		entrypointRelease.GetEntrypoint().GetTask() == nil ||
-		!onlyControlCalls(control.snapshot(), "start", "entrypoint") {
+		!onlyControlCalls(controlPlane.snapshot(), "start", "entrypoint") {
 		return errors.New("entrypoint release preceded entrypoint ACK")
 	}
 	if err := frameio.WriteProtoFrame(conn, testTaskSucceededEvent(`{"ok":true}`)); err != nil {
@@ -924,7 +924,7 @@ func testWorkspaceMount(
 	}
 }
 
-type testFreshProgramControl struct {
+type testFreshProgramControlPlane struct {
 	mu                 sync.Mutex
 	lease              workerapi.RunLeaseAssignment
 	calls              []string
@@ -987,7 +987,7 @@ func (s *testFreshProgramEventSink) snapshot() []testFreshProgramLog {
 	return append([]testFreshProgramLog(nil), s.logs...)
 }
 
-func (c *testFreshProgramControl) AcknowledgeRunStart(
+func (c *testFreshProgramControlPlane) AcknowledgeRunStart(
 	_ context.Context,
 	request workerapi.RunStartRequest,
 ) (workerapi.RunStartResponse, error) {
@@ -1022,7 +1022,7 @@ func (c *testFreshProgramControl) AcknowledgeRunStart(
 	return workerapi.RunStartResponse{Lease: c.lease.Fence()}, nil
 }
 
-func (c *testFreshProgramControl) AcknowledgeRunEntrypoint(
+func (c *testFreshProgramControlPlane) AcknowledgeRunEntrypoint(
 	_ context.Context,
 	request workerapi.RunEntrypointRequest,
 ) error {
@@ -1044,7 +1044,7 @@ func (c *testFreshProgramControl) AcknowledgeRunEntrypoint(
 	return nil
 }
 
-func (c *testFreshProgramControl) RenewRunLease(
+func (c *testFreshProgramControlPlane) RenewRunLease(
 	_ context.Context,
 	lease workerapi.RunLeaseAssignment,
 ) (workerapi.RunLeaseRenewResponse, error) {
@@ -1060,13 +1060,13 @@ func (c *testFreshProgramControl) RenewRunLease(
 	}, nil
 }
 
-func (c *testFreshProgramControl) renewalCount() int {
+func (c *testFreshProgramControlPlane) renewalCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.renewals
 }
 
-func (c *testFreshProgramControl) snapshot() []string {
+func (c *testFreshProgramControlPlane) snapshot() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.calls...)

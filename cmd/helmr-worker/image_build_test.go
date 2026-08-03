@@ -14,14 +14,14 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func TestWorkerImageControlMapsTerminalAdmissionWithoutHiddenState(t *testing.T) {
+func TestWorkerImageControlPlaneMapsTerminalAdmissionWithoutHiddenState(t *testing.T) {
 	request := testWorkerImageAdmission()
 	attemptID := uuid.Must(uuid.NewV7()).String()
 	result := imagebuild.GuestResult{
 		ExecutionABI: imagebuild.ExecutionABI, Outcome: imagebuild.GuestSucceeded,
 		OCIDigest: testWorkerImageDigest("a"), OCISizeBytes: 42,
 	}
-	fake := &workerImageControlFake{admit: func(input workerapi.WorkspaceImageAdmissionRequest) workerapi.WorkspaceImageAssignment {
+	fake := &workerImageControlPlaneFake{admit: func(input workerapi.WorkspaceImageAdmissionRequest) workerapi.WorkspaceImageAssignment {
 		if input.Lease != workerImageAPILease(request.Lease) || input.DeclarationSlot != request.DeclarationSlot {
 			t.Fatalf("admission input = %#v", input)
 		}
@@ -54,7 +54,7 @@ func TestWorkerImageControlMapsTerminalAdmissionWithoutHiddenState(t *testing.T)
 			TerminalResult:      &workerapi.WorkspaceImageTerminalResult{AttemptID: attemptID, Result: result},
 		}
 	}}
-	assignment, err := (workerImageControl{client: fake}).AdmitWorkspaceImage(t.Context(), request)
+	assignment, err := (workerImageControlPlane{client: fake}).AdmitWorkspaceImage(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,10 +66,10 @@ func TestWorkerImageControlMapsTerminalAdmissionWithoutHiddenState(t *testing.T)
 	}
 }
 
-func TestWorkerImageControlClearsMismatchedCredentialResponse(t *testing.T) {
+func TestWorkerImageControlPlaneClearsMismatchedCredentialResponse(t *testing.T) {
 	password := []byte("plaintext")
 	lease := testWorkerImageLease()
-	fake := &workerImageControlFake{credentials: workerapi.WorkspaceImageCredentialResponse{
+	fake := &workerImageControlPlaneFake{credentials: workerapi.WorkspaceImageCredentialResponse{
 		Envelope: imagebuild.CredentialEnvelope{
 			OperationID: "wrong", AttemptID: uuid.Must(uuid.NewV7()).String(),
 			ResolutionSetDigest: testWorkerImageDigest("d"),
@@ -78,7 +78,7 @@ func TestWorkerImageControlClearsMismatchedCredentialResponse(t *testing.T) {
 			}},
 		},
 	}}
-	_, err := (workerImageControl{client: fake}).FetchRegistryCredentials(t.Context(), imageworker.RegistryCredentialRequest{
+	_, err := (workerImageControlPlane{client: fake}).FetchRegistryCredentials(t.Context(), imageworker.RegistryCredentialRequest{
 		OperationID: uuid.Must(uuid.NewV7()).String(), AttemptID: uuid.Must(uuid.NewV7()).String(),
 		Lease: lease, RegistryBindings: []imagebuild.RegistryBinding{},
 		PlanDigest:          testWorkerImageDigest("e"),
@@ -94,7 +94,7 @@ func TestWorkerImageControlClearsMismatchedCredentialResponse(t *testing.T) {
 	}
 }
 
-func TestWorkerImageControlCompletesExactReceipt(t *testing.T) {
+func TestWorkerImageControlPlaneCompletesExactReceipt(t *testing.T) {
 	lease := testWorkerImageLease()
 	evidence := imageworker.ResultEvidence{
 		OperationID: uuid.Must(uuid.NewV7()).String(), RequestFingerprint: testWorkerImageDigest("1"),
@@ -106,7 +106,7 @@ func TestWorkerImageControlCompletesExactReceipt(t *testing.T) {
 			OCIDigest: testWorkerImageDigest("4"), OCISizeBytes: 42,
 		},
 	}
-	fake := &workerImageControlFake{complete: func(request workerapi.WorkspaceImageOperationResultRequest) workerapi.WorkspaceImageOperationResultResponse {
+	fake := &workerImageControlPlaneFake{complete: func(request workerapi.WorkspaceImageOperationResultRequest) workerapi.WorkspaceImageOperationResultResponse {
 		if request.Lease != workerImageAPILease(lease) || request.DeclarationSlot != evidence.DeclarationSlot ||
 			request.AttemptID != evidence.AttemptID || request.Result != evidence.GuestResult {
 			t.Fatalf("completion input = %#v", request)
@@ -116,7 +116,7 @@ func TestWorkerImageControlCompletesExactReceipt(t *testing.T) {
 			State: "completed", Result: request.Result,
 		}
 	}}
-	err := (workerImageControl{client: fake}).CompleteWorkspaceImage(t.Context(), imageworker.CompletionRequest{
+	err := (workerImageControlPlane{client: fake}).CompleteWorkspaceImage(t.Context(), imageworker.CompletionRequest{
 		Evidence: evidence,
 		Artifact: &imageworker.PublishedArtifact{
 			Digest: evidence.GuestResult.OCIDigest, SizeBytes: evidence.GuestResult.OCISizeBytes,
@@ -147,21 +147,21 @@ func TestWorkerImageCacheCredentialTransfersPlaintextOwnership(t *testing.T) {
 	}
 }
 
-type workerImageControlFake struct {
+type workerImageControlPlaneFake struct {
 	admit       func(workerapi.WorkspaceImageAdmissionRequest) workerapi.WorkspaceImageAssignment
 	credentials workerapi.WorkspaceImageCredentialResponse
 	complete    func(workerapi.WorkspaceImageOperationResultRequest) workerapi.WorkspaceImageOperationResultResponse
 }
 
-func (fake *workerImageControlFake) AdmitWorkspaceImage(_ context.Context, request workerapi.WorkspaceImageAdmissionRequest) (workerapi.WorkspaceImageAssignment, error) {
+func (fake *workerImageControlPlaneFake) AdmitWorkspaceImage(_ context.Context, request workerapi.WorkspaceImageAdmissionRequest) (workerapi.WorkspaceImageAssignment, error) {
 	return fake.admit(request), nil
 }
 
-func (fake *workerImageControlFake) FetchWorkspaceImageCredentials(context.Context, workerapi.WorkspaceImageCredentialRequest) (workerapi.WorkspaceImageCredentialResponse, error) {
+func (fake *workerImageControlPlaneFake) FetchWorkspaceImageCredentials(context.Context, workerapi.WorkspaceImageCredentialRequest) (workerapi.WorkspaceImageCredentialResponse, error) {
 	return fake.credentials, nil
 }
 
-func (fake *workerImageControlFake) CompleteWorkspaceImage(_ context.Context, request workerapi.WorkspaceImageOperationResultRequest) (workerapi.WorkspaceImageOperationResultResponse, error) {
+func (fake *workerImageControlPlaneFake) CompleteWorkspaceImage(_ context.Context, request workerapi.WorkspaceImageOperationResultRequest) (workerapi.WorkspaceImageOperationResultResponse, error) {
 	return fake.complete(request), nil
 }
 

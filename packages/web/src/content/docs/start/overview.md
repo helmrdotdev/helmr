@@ -24,7 +24,7 @@ execution, secret injection, logs, events, and operator approval points.
   Runs.
 - A CLI for login, Deployments, Task starts, Run inspection,
   bounded Workspace exec and remote Secrets.
-- A control plane that stores Projects, Environments, Deployments, Workspaces,
+- A Control Plane that stores Projects, Environments, Deployments, Workspaces,
   Actors, Runs, waits, Actor records, metadata, logs, events, Secrets,
   and API keys.
 - Workers that materialize workspaces, lease runs, and execute them inside
@@ -32,5 +32,5 @@ execution, secret injection, logs, events, and operator approval points.
 
 ## First Path
 
-Use the quickstart to run the local control plane. Then define a task project,
+Use the quickstart to run the local Control Plane. Then define a task project,
 deploy it, and start a task that creates or attaches to a durable workspace.

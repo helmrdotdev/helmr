@@ -1,6 +1,6 @@
-output "control_image" {
-  description = "Resolved helmr-control image URI."
-  value       = terraform_data.resolved.output.control_image
+output "controlplane_image" {
+  description = "Resolved helmr-controlplane image URI."
+  value       = terraform_data.resolved.output.controlplane_image
 }
 
 output "worker_ami_id" {

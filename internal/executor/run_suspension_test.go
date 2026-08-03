@@ -13,7 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
-func TestControlRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
+func TestControlPlaneRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
 	client := &fakeRunWaitClient{
 		created: liveRunWaitResponse(),
 		polls: []workerapi.RunWaitPollResponse{{
@@ -27,7 +27,7 @@ func TestControlRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
 	request := testWaitRequest(workerapi.RunWaitKindToken)
 	request.ActiveDuration = 1500 * time.Millisecond
 	request.Checkpointer = checkpointer
-	err := ControlRunWaits{Client: client}.Wait(context.Background(), request)
+	err := ControlPlaneRunWaits{Client: client}.Wait(context.Background(), request)
 	if !errors.Is(err, ErrDetached) {
 		t.Fatalf("err = %v, want ErrDetached", err)
 	}
@@ -47,7 +47,7 @@ func TestControlRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
 	}
 }
 
-func TestControlRunWaitsContinuesAlreadyOpenedWaitWithoutCreatingAnother(t *testing.T) {
+func TestControlPlaneRunWaitsContinuesAlreadyOpenedWaitWithoutCreatingAnother(t *testing.T) {
 	client := &fakeRunWaitClient{
 		polls: []workerapi.RunWaitPollResponse{{
 			RunID: "run-1", RunWaitID: "run-wait-id-1", Status: "resume_requested",
@@ -60,7 +60,7 @@ func TestControlRunWaitsContinuesAlreadyOpenedWaitWithoutCreatingAnother(t *test
 		resumed = decision
 		return nil
 	}
-	err := (ControlRunWaits{Client: client}).ContinueRunWait(
+	err := (ControlPlaneRunWaits{Client: client}).ContinueRunWait(
 		context.Background(),
 		request,
 		liveRunWaitResponse(),
@@ -76,7 +76,7 @@ func TestControlRunWaitsContinuesAlreadyOpenedWaitWithoutCreatingAnother(t *test
 	}
 }
 
-func TestControlRunWaitsCapturesWorkspaceForTypedCheckpointIntent(t *testing.T) {
+func TestControlPlaneRunWaitsCapturesWorkspaceForTypedCheckpointIntent(t *testing.T) {
 	client := &fakeRunWaitClient{
 		created: liveRunWaitResponse(),
 		polls: []workerapi.RunWaitPollResponse{{
@@ -91,7 +91,7 @@ func TestControlRunWaitsCapturesWorkspaceForTypedCheckpointIntent(t *testing.T) 
 
 	request := testWaitRequest(workerapi.RunWaitKindTimer)
 	request.Checkpointer = checkpointer
-	err := ControlRunWaits{Client: client}.Wait(context.Background(), request)
+	err := ControlPlaneRunWaits{Client: client}.Wait(context.Background(), request)
 	if !errors.Is(err, ErrDetached) {
 		t.Fatalf("err = %v, want ErrDetached", err)
 	}
@@ -101,7 +101,7 @@ func TestControlRunWaitsCapturesWorkspaceForTypedCheckpointIntent(t *testing.T) 
 	}
 }
 
-func TestControlRunWaitsResumesAndAcknowledgesTypedVersion(t *testing.T) {
+func TestControlPlaneRunWaitsResumesAndAcknowledgesTypedVersion(t *testing.T) {
 	client := &fakeRunWaitClient{
 		created: liveRunWaitResponse(),
 		polls: []workerapi.RunWaitPollResponse{{
@@ -115,7 +115,7 @@ func TestControlRunWaitsResumesAndAcknowledgesTypedVersion(t *testing.T) {
 		got = decision
 		return nil
 	}
-	err := ControlRunWaits{Client: client}.Wait(context.Background(), request)
+	err := ControlPlaneRunWaits{Client: client}.Wait(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestControlRunWaitsResumesAndAcknowledgesTypedVersion(t *testing.T) {
 	}
 }
 
-func TestControlRunWaitsReturnsImmediateResumeDecision(t *testing.T) {
+func TestControlPlaneRunWaitsReturnsImmediateResumeDecision(t *testing.T) {
 	immediate := liveRunWaitResponse()
 	immediate.ResolutionKind = "completed"
 	immediate.Resolution = json.RawMessage(`{"approved":true}`)
@@ -141,7 +141,7 @@ func TestControlRunWaitsReturnsImmediateResumeDecision(t *testing.T) {
 		got = decision
 		return nil
 	}
-	err := ControlRunWaits{Client: client}.Wait(context.Background(), request)
+	err := ControlPlaneRunWaits{Client: client}.Wait(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,14 +153,14 @@ func TestControlRunWaitsReturnsImmediateResumeDecision(t *testing.T) {
 	}
 }
 
-func TestControlRunWaitsRejectsMismatchedTypedIntent(t *testing.T) {
+func TestControlPlaneRunWaitsRejectsMismatchedTypedIntent(t *testing.T) {
 	client := &fakeRunWaitClient{
 		created: liveRunWaitResponse(),
 		polls: []workerapi.RunWaitPollResponse{{
 			RunID: "another-run", RunWaitID: "run-wait-id-1", Status: "waiting",
 		}},
 	}
-	err := ControlRunWaits{Client: client}.Wait(
+	err := ControlPlaneRunWaits{Client: client}.Wait(
 		context.Background(), testWaitRequest(workerapi.RunWaitKindTimer),
 	)
 	if err == nil || !strings.Contains(err.Error(), "mismatched fence") {
@@ -168,7 +168,7 @@ func TestControlRunWaitsRejectsMismatchedTypedIntent(t *testing.T) {
 	}
 }
 
-func TestControlRunWaitsRejectsMismatchedCreationIdentity(t *testing.T) {
+func TestControlPlaneRunWaitsRejectsMismatchedCreationIdentity(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		change func(*workerapi.CreateRunWaitResponse)
@@ -187,7 +187,7 @@ func TestControlRunWaitsRejectsMismatchedCreationIdentity(t *testing.T) {
 			response := liveRunWaitResponse()
 			response.ResolutionKind = "completed"
 			test.change(&response)
-			err := ControlRunWaits{Client: &fakeRunWaitClient{created: response}}.Wait(
+			err := ControlPlaneRunWaits{Client: &fakeRunWaitClient{created: response}}.Wait(
 				context.Background(), testWaitRequest(workerapi.RunWaitKindTimer),
 			)
 			if err == nil || !strings.Contains(err.Error(), "exact request identity") {
@@ -197,7 +197,7 @@ func TestControlRunWaitsRejectsMismatchedCreationIdentity(t *testing.T) {
 	}
 }
 
-func TestControlRunWaitsRecordsTypedCheckpointFailure(t *testing.T) {
+func TestControlPlaneRunWaitsRecordsTypedCheckpointFailure(t *testing.T) {
 	client := &fakeRunWaitClient{
 		created: liveRunWaitResponse(),
 		polls: []workerapi.RunWaitPollResponse{{
@@ -207,7 +207,7 @@ func TestControlRunWaitsRecordsTypedCheckpointFailure(t *testing.T) {
 	}
 	request := testWaitRequest(workerapi.RunWaitKindToken)
 	request.Checkpointer = &fakeCheckpointer{err: errors.New("snapshot failed")}
-	err := ControlRunWaits{Client: client}.Wait(context.Background(), request)
+	err := ControlPlaneRunWaits{Client: client}.Wait(context.Background(), request)
 	if !errors.Is(err, ErrDetached) {
 		t.Fatalf("err = %v, want ErrDetached after attempt-fatal checkpoint failure", err)
 	}
@@ -216,7 +216,7 @@ func TestControlRunWaitsRecordsTypedCheckpointFailure(t *testing.T) {
 	}
 }
 
-func TestControlRunWaitsRetriesExactCheckpointFailureRequest(t *testing.T) {
+func TestControlPlaneRunWaitsRetriesExactCheckpointFailureRequest(t *testing.T) {
 	client := &fakeRunWaitClient{
 		created: liveRunWaitResponse(),
 		polls: []workerapi.RunWaitPollResponse{{
@@ -227,7 +227,7 @@ func TestControlRunWaitsRetriesExactCheckpointFailureRequest(t *testing.T) {
 	}
 	request := testWaitRequest(workerapi.RunWaitKindToken)
 	request.Checkpointer = &fakeCheckpointer{err: errors.New("snapshot failed")}
-	err := ControlRunWaits{Client: client}.Wait(context.Background(), request)
+	err := ControlPlaneRunWaits{Client: client}.Wait(context.Background(), request)
 	if !errors.Is(err, ErrDetached) {
 		t.Fatalf("err = %v, want ErrDetached", err)
 	}
@@ -237,7 +237,7 @@ func TestControlRunWaitsRetriesExactCheckpointFailureRequest(t *testing.T) {
 	}
 }
 
-func TestControlRunWaitsUsesCurrentLeaseForCheckpointCompletion(t *testing.T) {
+func TestControlPlaneRunWaitsUsesCurrentLeaseForCheckpointCompletion(t *testing.T) {
 	client := &fakeRunWaitClient{
 		created: liveRunWaitResponse(),
 		polls: []workerapi.RunWaitPollResponse{{
@@ -253,7 +253,7 @@ func TestControlRunWaitsUsesCurrentLeaseForCheckpointCompletion(t *testing.T) {
 	request.LeaseAssignment = workerapi.RunLeaseAssignment{}
 	request.Leases = leases
 	request.Checkpointer = checkpointer
-	err := ControlRunWaits{Client: client}.Wait(context.Background(), request)
+	err := ControlPlaneRunWaits{Client: client}.Wait(context.Background(), request)
 	if !errors.Is(err, ErrDetached) {
 		t.Fatalf("err = %v, want ErrDetached", err)
 	}
@@ -262,10 +262,10 @@ func TestControlRunWaitsUsesCurrentLeaseForCheckpointCompletion(t *testing.T) {
 	}
 }
 
-func TestControlRunWaitsReleasesOnlyExactGuestResumeProof(t *testing.T) {
+func TestControlPlaneRunWaitsReleasesOnlyExactGuestResumeProof(t *testing.T) {
 	client := &fakeRunWaitClient{}
 	assignment := workerapi.RunLeaseAssignment{ID: "lease-2", RunID: "run-1", AttemptNumber: 2}
-	err := (ControlRunWaits{Client: client}).AcknowledgeRestore(context.Background(), RestoreAcknowledgement{
+	err := (ControlPlaneRunWaits{Client: client}).AcknowledgeRestore(context.Background(), RestoreAcknowledgement{
 		Lease: assignment, RunWaitID: "wait-1", CheckpointID: "checkpoint-1",
 		ResumeAttachID: "attach-1", ResumeRequestVersion: 4,
 	})

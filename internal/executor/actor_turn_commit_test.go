@@ -17,16 +17,16 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
-type actorTurnCommitControl struct {
-	*testRunLeaseControl
+type actorTurnCommitControlPlane struct {
+	*testRunLeaseControlPlane
 	request workerapi.CommitActorTurnRequest
 }
 
-func (control *actorTurnCommitControl) CommitActorTurn(
+func (controlPlane *actorTurnCommitControlPlane) CommitActorTurn(
 	_ context.Context,
 	request workerapi.CommitActorTurnRequest,
 ) (workerapi.CommitActorTurnResponse, error) {
-	control.request = request
+	controlPlane.request = request
 	return workerapi.CommitActorTurnResponse{
 		Lease: request.Lease, CorrelationID: request.CorrelationID,
 		CommittedInputSequence: request.TargetInputSequence, WorkspaceVersionID: "version-2",
@@ -51,14 +51,14 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	control := &actorTurnCommitControl{testRunLeaseControl: &testRunLeaseControl{}}
+	controlPlane := &actorTurnCommitControlPlane{testRunLeaseControlPlane: &testRunLeaseControlPlane{}}
 	host, guest := net.Pipe()
 	defer host.Close()
 	defer guest.Close()
 	authority := freshWorkspaceAuthority(&claim, "channel-1")
 	task := &guestRunLeaseTask{
 		program: freshProgram{session: fakeGuestSession{stream: host}},
-		store:   store, control: control, resetTarget: target, lease: claim.Lease,
+		store:   store, controlPlane: controlPlane, resetTarget: target, lease: claim.Lease,
 		authority: authority, waitWorkspace: workerapi.Workspace{BaseVersionID: "version-1"},
 		checkpointer: &runtimeCheckpointer{},
 	}
@@ -148,8 +148,8 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 		task.checkpointer.(*runtimeCheckpointer).workspace.ArtifactDigest != artifactDigest {
 		t.Fatal("Actor turn commit did not advance Wait and checkpoint Workspace artifacts")
 	}
-	if control.request.Artifact == nil || control.request.Artifact.Digest != artifactDigest ||
-		control.request.BaseWorkspaceVersionID != "version-1" || control.request.Tree.Digest != tree.Digest {
-		t.Fatalf("Actor turn Control request = %+v", control.request)
+	if controlPlane.request.Artifact == nil || controlPlane.request.Artifact.Digest != artifactDigest ||
+		controlPlane.request.BaseWorkspaceVersionID != "version-1" || controlPlane.request.Tree.Digest != tree.Digest {
+		t.Fatalf("Actor turn Control Plane request = %+v", controlPlane.request)
 	}
 }

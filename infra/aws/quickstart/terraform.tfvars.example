@@ -16,7 +16,7 @@ public_url        = "https://helmr.example.com"
 certificate_arn   = "arn:aws:acm:us-east-1:123456789012:certificate/replace-me"
 
 enable_nat_gateway       = false
-control_assign_public_ip = true
+controlplane_assign_public_ip = true
 
 github_oauth_client_id = "replace-with-github-oauth-client-id"
 
@@ -28,10 +28,10 @@ clickhouse_password_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:
 # clickhouse_password_kms_key_arns = ["<clickhouse-password-kms-key-arn>"]
 # When using the ClickHouse Cloud PrivateLink module, attach its client security
 # group to control, dispatcher, and migration tasks.
-# additional_control_security_group_ids = ["<clickhouse-client-security-group-id>"]
+# additional_controlplane_security_group_ids = ["<clickhouse-client-security-group-id>"]
 
-create_control_service = false
-control_desired_count    = 1
+create_controlplane_service = false
+controlplane_desired_count    = 1
 dispatcher_desired_count = 1
 
 # Email delivery is disabled by default. For Resend, uncomment these values,
@@ -44,7 +44,7 @@ redis_node_type  = "cache.t4g.micro"
 redis_node_count = 1
 
 # Optional custom builds. Leave null to use the official release artifacts.
-control_image = null
+controlplane_image = null
 worker_ami_id = null
 worker_network_blocked_ipv4_cidrs = [
   "10.0.0.0/8",

@@ -41,11 +41,11 @@ func secretListCommand() *cobra.Command {
 		Short: "List remote secrets.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			response, err := control.ListSecrets(cmd.Context(), secretOptions(projectID, environmentID))
+			response, err := controlPlane.ListSecrets(cmd.Context(), secretOptions(projectID, environmentID))
 			if err != nil {
 				return err
 			}
@@ -72,11 +72,11 @@ func secretGetCommand() *cobra.Command {
 		Short: "Show remote secret metadata.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			secret, err := control.GetSecret(cmd.Context(), args[0], secretOptions(projectID, environmentID))
+			secret, err := controlPlane.GetSecret(cmd.Context(), args[0], secretOptions(projectID, environmentID))
 			if err != nil {
 				return err
 			}
@@ -106,11 +106,11 @@ func secretCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			secret, err := control.CreateSecret(
+			secret, err := controlPlane.CreateSecret(
 				cmd.Context(),
 				args[0],
 				value,
@@ -149,14 +149,14 @@ func secretRotateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
 			if strings.TrimSpace(idempotencyKey) == "" {
 				idempotencyKey = uuid.Must(uuid.NewV7()).String()
 			}
-			record, err := control.RotateSecret(
+			record, err := controlPlane.RotateSecret(
 				cmd.Context(),
 				args[0],
 				value,
@@ -210,14 +210,14 @@ func secretRevokeCommand() *cobra.Command {
 			if !yes {
 				return errors.New("secret revoke requires --yes")
 			}
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
 			if strings.TrimSpace(idempotencyKey) == "" {
 				idempotencyKey = uuid.Must(uuid.NewV7()).String()
 			}
-			secret, err := control.RevokeSecret(
+			secret, err := controlPlane.RevokeSecret(
 				cmd.Context(),
 				args[0],
 				idempotencyKey,

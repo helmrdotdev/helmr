@@ -30,7 +30,7 @@ type resumedProgramAdmission struct {
 func (r ProgramRunner) startResumedProgram(
 	ctx context.Context,
 	claim *workerapi.RunLeaseClaimResponse,
-	control RunLeaseControl,
+	controlPlane RunLeaseControlPlane,
 ) (freshProgram, error) {
 	resume, err := validateResumedProgramClaim(claim)
 	if err != nil {
@@ -39,9 +39,9 @@ func (r ProgramRunner) startResumedProgram(
 	defer func() {
 		claim.Workspace.WriteCapability = ""
 	}()
-	waitClient, ok := control.(RunWaitClient)
+	waitClient, ok := controlPlane.(RunWaitClient)
 	if !ok {
-		return freshProgram{}, errors.New("restored Program wait control is required")
+		return freshProgram{}, errors.New("restored Program wait Control Plane is required")
 	}
 	admissionCtx, cancelAdmission := context.WithDeadline(ctx, claim.Lease.ExpiresAt)
 	defer cancelAdmission()
@@ -78,7 +78,7 @@ func (r ProgramRunner) startResumedProgram(
 	if err := retryRunLeaseRequest(admissionCtx, func(requestCtx context.Context) error {
 		var requestErr error
 		resume.start.Lease = claim.Lease.Fence()
-		startResponse, requestErr = control.AcknowledgeRunStart(
+		startResponse, requestErr = controlPlane.AcknowledgeRunStart(
 			requestCtx,
 			resume.start,
 		)
@@ -129,7 +129,7 @@ func (r ProgramRunner) startResumedProgram(
 		CorrelationID: resume.correlationID,
 	}
 	if err := retryRunLeaseRequest(admissionCtx, func(requestCtx context.Context) error {
-		return (ControlRunWaits{Client: waitClient}).AcknowledgeRestore(requestCtx, release)
+		return (ControlPlaneRunWaits{Client: waitClient}).AcknowledgeRestore(requestCtx, release)
 	}); err != nil {
 		return freshProgram{}, fmt.Errorf("release resumed Run Wait: %w", err)
 	}

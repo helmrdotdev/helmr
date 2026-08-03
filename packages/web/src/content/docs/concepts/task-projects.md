@@ -47,7 +47,7 @@ lifecycle scripts, evaluates config once for that build attempt, compiles and
 discovers declarations, and publishes the complete installed project tree with
 generated modules as one immutable Program. These steps run in one fresh,
 resource-bounded Build VM with bounded public egress. The VM receives no
-Platform, Control, or runtime secrets and is destroyed after the result is
+Platform, Control Plane, or runtime secrets and is destroyed after the result is
 ingested.
 
 `.helmrignore` alone selects submitted source. Discovery-specific

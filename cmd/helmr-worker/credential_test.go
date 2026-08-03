@@ -61,7 +61,7 @@ func TestResolveWorkerInstanceCredentialUsesEnrollment(t *testing.T) {
 	defer server.Close()
 
 	credential, err := resolveWorkerInstanceCredential(context.Background(), config.Worker{
-		ControlURL: server.URL, WorkerGroupID: "run-workers", WorkerRoles: []string{"run"},
+		ControlPlaneURL: server.URL, WorkerGroupID: "run-workers", WorkerRoles: []string{"run"},
 		WorkerResourceID: "host-1", WorkerEnrollmentSecretFile: enrollmentSecretFile,
 	}, tempDir)
 	if err != nil {
@@ -97,7 +97,7 @@ func TestResolveWorkerInstanceCredentialSerializesEnrollment(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := config.Worker{
-		ControlURL: server.URL, WorkerGroupID: "run-workers", WorkerRoles: []string{"run"},
+		ControlPlaneURL: server.URL, WorkerGroupID: "run-workers", WorkerRoles: []string{"run"},
 		WorkerEnrollmentSecretFile: enrollmentSecretFile,
 	}
 
@@ -133,7 +133,7 @@ func TestResolveWorkerInstanceCredentialSerializesEnrollment(t *testing.T) {
 	}
 }
 
-func TestResolveWorkerControlCredentialReadsStoredWorkerInstanceID(t *testing.T) {
+func TestResolveWorkerControlPlaneCredentialReadsStoredWorkerInstanceID(t *testing.T) {
 	tempDir := t.TempDir()
 	if err := writeWorkerInstanceSecret(workerCredentialPath(tempDir, ""), workerCredentialFile{
 		WorkerInstanceID:     "00000000-0000-0000-0000-000000000401",
@@ -142,7 +142,7 @@ func TestResolveWorkerControlCredentialReadsStoredWorkerInstanceID(t *testing.T)
 		t.Fatal(err)
 	}
 
-	credential, err := resolveWorkerControlCredential(config.WorkerControl{}, tempDir)
+	credential, err := resolveWorkerControlPlaneCredential(config.WorkerControlPlane{}, tempDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestResolveAuthenticatedWorkerCredentialReenrollsAfterUnauthorized(t *testi
 
 	var attempts int
 	credential, err := resolveAuthenticatedWorkerCredential(context.Background(), config.Worker{
-		ControlURL: server.URL, WorkerGroupID: "build-workers", WorkerRoles: []string{"build"},
+		ControlPlaneURL: server.URL, WorkerGroupID: "build-workers", WorkerRoles: []string{"build"},
 		WorkerEnrollmentSecretFile: enrollmentSecretFile,
 	}, tempDir, func(candidate workerCredentialFile) error {
 		attempts++

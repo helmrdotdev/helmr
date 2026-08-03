@@ -44,7 +44,7 @@ type SourceArchiveDescriptor struct {
 	PathSetDigest    string
 }
 
-// LeaseAuthority is the provider-neutral Control authority required by
+// LeaseAuthority is the provider-neutral Control Plane authority required by
 // every Workspace-image admission, credential delivery, and completion call.
 // It deliberately mirrors the complete fenced assignment rather than keeping
 // an operation-to-Lease lookup in the Worker.
@@ -65,7 +65,7 @@ type LeaseAuthority struct {
 	RequestedBuildExecutors          int32
 }
 
-// BuildRequest contains the exact Worker facts submitted to Control for
+// BuildRequest contains the exact Worker facts submitted to Control Plane for
 // Workspace-image admission. It contains no credential plaintext.
 type BuildRequest struct {
 	Lease                 LeaseAuthority
@@ -101,7 +101,7 @@ type AdmissionRequest struct {
 	CacheABI               string
 }
 
-// Assignment is Control's non-secret, current-Build-Lease dispatch result.
+// Assignment is Control Plane's non-secret, current-Build-Lease dispatch result.
 // Request must exactly echo the admitted Worker facts.
 type Assignment struct {
 	OperationID         string
@@ -169,7 +169,7 @@ type CompletionClient interface {
 }
 
 // CacheCredentialFetcher is called only after a guest is connected and only
-// when Control supplied a non-secret attempt-local cache binding.
+// when Control Plane supplied a non-secret attempt-local cache binding.
 type CacheCredentialFetcher interface {
 	FetchImageCacheCredential(context.Context, Assignment) (imagebuild.RegistryCredentialValue, error)
 }
@@ -195,7 +195,7 @@ type Artifact struct {
 }
 
 // ResultEvidence is returned with the verified temporary OCI archive so
-// the caller can publish to CAS before completing the logical Control claim.
+// the caller can publish to CAS before completing the logical Control Plane claim.
 type ResultEvidence struct {
 	OperationID            string
 	RequestFingerprint     string

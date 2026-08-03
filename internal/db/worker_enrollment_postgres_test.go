@@ -172,7 +172,7 @@ func TestConcurrentRegisteringEnrollmentSerializesCredentialReplacement(t *testi
 	}
 }
 
-func TestTerminalEnrollmentCreatesFreshControlIdentity(t *testing.T) {
+func TestTerminalEnrollmentCreatesFreshControlPlaneIdentity(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)

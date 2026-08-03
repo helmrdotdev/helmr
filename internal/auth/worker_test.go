@@ -47,7 +47,7 @@ func TestWorkerTokenUsesCanonicalClaims(t *testing.T) {
 	}
 	claims := decodeJWTPart(t, parts[1])
 	wants := map[string]any{
-		"iss": WorkerTokenIssuer, "sub": "worker-1", "aud": []any{WorkerTokenAudience},
+		"iss": "helmr-controlplane", "sub": "worker-1", "aud": []any{WorkerTokenAudience},
 		"worker_group_id": "group-1", "worker_instance_id": "worker-1",
 		"credential_id": "credential-1", "worker_epoch": float64(7),
 		"claim_version": float64(2), "group_claim_version": float64(4),
@@ -130,6 +130,9 @@ func TestVerifyWorkerTokenRejectsInvalidTokens(t *testing.T) {
 		}, now.Add(time.Minute), ErrInvalidWorkerToken},
 		{"wrong subject", func() string {
 			return signWorkerClaims(t, workerSigningKey(), now, func(c *workerJWTClaims) { c.Subject = "worker-2" })
+		}, now.Add(time.Minute), ErrInvalidWorkerToken},
+		{"deleted issuer", func() string {
+			return signWorkerClaims(t, workerSigningKey(), now, func(c *workerJWTClaims) { c.Issuer = "helmr-" + "control-plane" })
 		}, now.Add(time.Minute), ErrInvalidWorkerToken},
 		{"extra audience", func() string {
 			return signWorkerClaims(t, workerSigningKey(), now, func(c *workerJWTClaims) { c.Audience = append(c.Audience, "other") })

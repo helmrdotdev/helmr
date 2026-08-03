@@ -22,12 +22,12 @@ clickhouse_password_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:
 # clickhouse_password_kms_key_arns = ["<clickhouse-password-kms-key-arn>"]
 # When using the ClickHouse Cloud PrivateLink module, attach its client security
 # group to control, dispatcher, and migration tasks.
-# additional_control_security_group_ids = ["<clickhouse-client-security-group-id>"]
+# additional_controlplane_security_group_ids = ["<clickhouse-client-security-group-id>"]
 
-# Keep create_control_service=false for the first apply. Populate the emitted
+# Keep create_controlplane_service=false for the first apply. Populate the emitted
 # Secrets Manager secrets, run migrations, then set it true.
-create_control_service = false
-control_desired_count    = 2
+create_controlplane_service = false
+controlplane_desired_count    = 2
 dispatcher_desired_count = 1
 
 # Email delivery is disabled by default. For Resend, uncomment these values,
@@ -47,7 +47,7 @@ database_backup_retention_days = 14
 database_skip_final_snapshot   = false
 
 # Optional custom builds. Leave null to use the official release artifacts.
-control_image = null
+controlplane_image = null
 worker_ami_id = null
 worker_network_blocked_ipv4_cidrs = [
   "10.0.0.0/8",

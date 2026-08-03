@@ -57,17 +57,17 @@ func TestClientReturnsTypedHTTPError(t *testing.T) {
 	}
 }
 
-func TestClientRejectsPlaintextNonLocalControl(t *testing.T) {
-	for _, rawURL := range []string{"http://control.example.com", "file://localhost/tmp/control", "ftp://127.0.0.1/control"} {
+func TestClientRejectsPlaintextNonLocalControlPlane(t *testing.T) {
+	for _, rawURL := range []string{"http://controlplane.example.com", "file://localhost/tmp/controlplane", "ftp://127.0.0.1/controlplane"} {
 		if _, err := NewClient(rawURL, testOperatorToken); err == nil {
-			t.Fatalf("unsupported Control URL %q was accepted", rawURL)
+			t.Fatalf("unsupported Control Plane URL %q was accepted", rawURL)
 		}
 	}
 }
 
 func TestClientRejectsNonCanonicalOperatorToken(t *testing.T) {
 	for _, token := range []string{"", "operator-token", testOperatorToken + "="} {
-		if _, err := NewClient("https://control.example.com", token); err == nil {
+		if _, err := NewClient("https://controlplane.example.com", token); err == nil {
 			t.Fatalf("operator token %q was accepted", token)
 		}
 	}

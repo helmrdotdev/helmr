@@ -66,11 +66,11 @@ func testScheduleReads(
 	if session {
 		options = append(options, WithSessionScopedRoutes())
 	}
-	control, err := New(server.URL, options...)
+	controlPlane, err := New(server.URL, options...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, err := control.ListSchedules(context.Background(), ListSchedulesOptions{
+	page, err := controlPlane.ListSchedules(context.Background(), ListSchedulesOptions{
 		Cursor: "sc1.cursor", Limit: 25, EnvironmentScopeOptions: scope,
 	})
 	if err != nil {
@@ -79,7 +79,7 @@ func testScheduleReads(
 	if len(page.Schedules) != 1 || page.NextCursor != "sc1.next" {
 		t.Fatalf("page = %+v", page)
 	}
-	schedule, err := control.GetSchedule(context.Background(), testScheduleID, scope)
+	schedule, err := controlPlane.GetSchedule(context.Background(), testScheduleID, scope)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,17 +89,17 @@ func testScheduleReads(
 }
 
 func TestScheduleReadsValidateInput(t *testing.T) {
-	control, err := New("http://127.0.0.1")
+	controlPlane, err := New("http://127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := control.ListSchedules(
+	if _, err := controlPlane.ListSchedules(
 		context.Background(),
 		ListSchedulesOptions{Limit: 101},
 	); err == nil {
 		t.Fatal("ListSchedules() accepted an oversized limit")
 	}
-	if _, err := control.GetSchedule(
+	if _, err := controlPlane.GetSchedule(
 		context.Background(),
 		"schedule",
 		EnvironmentScopeOptions{},

@@ -37,7 +37,7 @@ func runDrain(log *slog.Logger, args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	cfg, err := config.LoadWorkerControl()
+	cfg, err := config.LoadWorkerControlPlane()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -45,7 +45,7 @@ func runDrain(log *slog.Logger, args []string) error {
 	if workDir == "" {
 		workDir = executor.DefaultWorkDir()
 	}
-	workerCredential, err := resolveWorkerControlCredential(cfg, workDir)
+	workerCredential, err := resolveWorkerControlPlaneCredential(cfg, workDir)
 	if err != nil {
 		return err
 	}
@@ -54,11 +54,11 @@ func runDrain(log *slog.Logger, args []string) error {
 		return err
 	}
 	supportsRun, supportsBuild := identityRoles(identity.Roles)
-	controlClient, err := workerclient.New(cfg.ControlURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild))
+	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
-	status, err := controlClient.DrainWorker(ctx)
+	status, err := controlPlaneClient.DrainWorker(ctx)
 	if err != nil {
 		return fmt.Errorf("mark worker draining: %w", err)
 	}
@@ -80,7 +80,7 @@ func runDrain(log *slog.Logger, args []string) error {
 		case <-deadline.C:
 			return fmt.Errorf("worker drain timed out with %d active executions", status.ActiveExecutions)
 		case <-ticker.C:
-			status, err = controlClient.GetWorkerStatus(ctx)
+			status, err = controlPlaneClient.GetWorkerStatus(ctx)
 			if err != nil {
 				return fmt.Errorf("get worker drain status: %w", err)
 			}
@@ -128,18 +128,18 @@ func writeDrainCompleteMarker(workDir, workerInstanceID string) error {
 func runFence() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	controlClient, err := workerControlClient()
+	controlPlaneClient, err := workerControlPlaneClient()
 	if err != nil {
 		return err
 	}
-	if err := controlClient.FenceWorker(ctx, terminationDrainFailedReason); err != nil {
+	if err := controlPlaneClient.FenceWorker(ctx, terminationDrainFailedReason); err != nil {
 		return fmt.Errorf("persist worker fence: %w", err)
 	}
 	return nil
 }
 
-func workerControlClient() (*workerclient.Client, error) {
-	cfg, err := config.LoadWorkerControl()
+func workerControlPlaneClient() (*workerclient.Client, error) {
+	cfg, err := config.LoadWorkerControlPlane()
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -147,7 +147,7 @@ func workerControlClient() (*workerclient.Client, error) {
 	if workDir == "" {
 		workDir = executor.DefaultWorkDir()
 	}
-	workerCredential, err := resolveWorkerControlCredential(cfg, workDir)
+	workerCredential, err := resolveWorkerControlPlaneCredential(cfg, workDir)
 	if err != nil {
 		return nil, err
 	}
@@ -156,9 +156,9 @@ func workerControlClient() (*workerclient.Client, error) {
 		return nil, err
 	}
 	supportsRun, supportsBuild := identityRoles(identity.Roles)
-	controlClient, err := workerclient.New(cfg.ControlURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild))
+	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild))
 	if err != nil {
 		return nil, fmt.Errorf("configure control client: %w", err)
 	}
-	return controlClient, nil
+	return controlPlaneClient, nil
 }

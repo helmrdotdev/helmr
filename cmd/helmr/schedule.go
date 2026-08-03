@@ -33,15 +33,15 @@ func scheduleListCommand() *cobra.Command {
 			if cmd.Flags().Changed("limit") && limit < 1 {
 				return errors.New("--limit must be in [1,100]")
 			}
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := environmentScopeForClient(control, projectID, environmentID)
+			scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			response, err := control.ListSchedules(cmd.Context(), client.ListSchedulesOptions{
+			response, err := controlPlane.ListSchedules(cmd.Context(), client.ListSchedulesOptions{
 				Cursor: cursor, Limit: limit, EnvironmentScopeOptions: scope,
 			})
 			if err != nil {
@@ -80,15 +80,15 @@ func scheduleGetCommand() *cobra.Command {
 		Short: "Show Schedule status.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := environmentScopeForClient(control, projectID, environmentID)
+			scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			schedule, err := control.GetSchedule(cmd.Context(), args[0], scope)
+			schedule, err := controlPlane.GetSchedule(cmd.Context(), args[0], scope)
 			if err != nil {
 				return err
 			}

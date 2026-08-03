@@ -42,7 +42,7 @@ During deploy, the CLI:
 
 - Applies `.helmrignore`, validates retained source and exact selectors, and
   archives the source directory.
-- Sends the archive content hash with the upload metadata so the control plane can reject mismatched uploads.
+- Sends the archive content hash with the upload metadata so the Control Plane can reject mismatched uploads.
 - Creates a deployment, streams deployment events while the remote build runs, promotes the completed deployment by default, and prints the deployment version or ID.
 
 `.helmrignore` is the only source-selection input; `.gitignore` is not merged.
@@ -57,8 +57,8 @@ evaluates `helmr.config.ts` once for that build attempt and compiles project and
 workspace-local declaration source with the pinned Platform esbuild. Non-local
 packages stay external in the complete installed project tree and use standard
 Node resolution. Install, lifecycle, config, and compilation have bounded
-public egress; private, link-local, metadata, and Control-plane destinations are
-blocked. The Build VM receives no Platform, Control, or runtime secrets and is
+public egress; private, link-local, metadata, and control-plane destinations are
+blocked. The Build VM receives no Platform, Control Plane, or runtime secrets and is
 destroyed after artifact ingestion. The CLI never executes config or
 declaration modules.
 

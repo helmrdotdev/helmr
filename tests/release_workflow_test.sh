@@ -5,7 +5,7 @@ repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 workflow="$repo_root/.github/workflows/release.yaml"
 platform_builder="$repo_root/scripts/build-platform-release.sh"
 canonical_json_check="$repo_root/scripts/check-canonical-json.sh"
-control_builder="$repo_root/scripts/build-control-image.sh"
+controlplane_builder="$repo_root/scripts/build-controlplane-image.sh"
 worker_module="$repo_root/infra/aws/modules/worker-image"
 worker_module_main="$worker_module/main.tf"
 worker_image_builder="$worker_module/templates/build-worker-image.sh.tftpl"
@@ -91,12 +91,12 @@ if "$canonical_json_check" "$tmp/multiple.json" >/dev/null 2>&1; then
   exit 1
 fi
 
-require_text "./scripts/build-control-image.sh \"\$IMAGE_URI\"" "$workflow" \
-  "Control image is not built from its source-only builder"
-require_text "COPY helmr-control /usr/local/bin/helmr-control" "$control_builder" \
-  "Control image omits the Control binary"
-require_text "COPY helmr-dispatcher /usr/local/bin/helmr-dispatcher" "$control_builder" \
-  "Control image omits the Dispatcher binary"
+require_text "./scripts/build-controlplane-image.sh \"\$IMAGE_URI\"" "$workflow" \
+  "Control Plane image is not built from its source-only builder"
+require_text "COPY helmr-controlplane /usr/local/bin/helmr-controlplane" "$controlplane_builder" \
+  "Control Plane image omits the Control Plane binary"
+require_text "COPY helmr-dispatcher /usr/local/bin/helmr-dispatcher" "$controlplane_builder" \
+  "Control Plane image omits the Dispatcher binary"
 
 require_text "scripts/aws-release-artifacts.sh worker-image-start" "$workflow" \
   "Worker release does not build a fresh AMI"
@@ -109,19 +109,19 @@ require_text "gpgv" "$worker_image_builder" \
 require_text "mksquashfs" "$worker_image_builder" \
   "Worker AMI omits the Platform tree composer"
 
-reject_text "runtime-release" "$workflow" "$control_builder" "$worker_module_main" "$worker_image_builder" \
+reject_text "runtime-release" "$workflow" "$controlplane_builder" "$worker_module_main" "$worker_image_builder" \
   "release flow still contains the retired Runtime release catalog"
-reject_text "manager-release" "$workflow" "$control_builder" "$worker_module_main" "$worker_image_builder" \
+reject_text "manager-release" "$workflow" "$controlplane_builder" "$worker_module_main" "$worker_image_builder" \
   "release flow still contains the retired Manager release catalog"
-reject_text "standardToolchain" "$workflow" "$control_builder" "$worker_module_main" "$worker_image_builder" \
+reject_text "standardToolchain" "$workflow" "$controlplane_builder" "$worker_module_main" "$worker_image_builder" \
   "release flow still contains the retired standard-toolchain catalog"
-reject_text "managerRelease" "$workflow" "$control_builder" "$worker_module_main" "$worker_image_builder" \
+reject_text "managerRelease" "$workflow" "$controlplane_builder" "$worker_module_main" "$worker_image_builder" \
   "release flow still builds the retired Manager release"
 reject_text "release_package_" "$worker_module_main" "$worker_image_builder" \
   "Worker AMI still accepts a baked release package"
-reject_text "CONTROL_IMAGE_RUNTIME_RELEASE_DIR" "$control_builder" \
-  "Control image still accepts a Runtime catalog input"
-reject_text "CONTROL_IMAGE_MANAGER_RELEASE_DIR" "$control_builder" \
-  "Control image still accepts a Manager catalog input"
+reject_text "CONTROLPLANE_IMAGE_RUNTIME_RELEASE_DIR" "$controlplane_builder" \
+  "Control Plane image still accepts a Runtime catalog input"
+reject_text "CONTROLPLANE_IMAGE_MANAGER_RELEASE_DIR" "$controlplane_builder" \
+  "Control Plane image still accepts a Manager catalog input"
 
 printf 'ok - release workflow tests\n'

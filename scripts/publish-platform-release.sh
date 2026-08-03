@@ -35,7 +35,7 @@ docker run --rm \
       --option sandbox false \
       --option filter-syscalls false \
       develop /work \
-      -c go -C /work run ./cmd/helmr-control release publish \
+      -c go -C /work run ./cmd/helmr-controlplane release publish \
         --store "${PLATFORM_STORE_URI}" \
         --input /input
   '

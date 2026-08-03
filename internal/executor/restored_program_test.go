@@ -34,12 +34,12 @@ func TestStartRestoredProgramOrdersGrantStartProofAndRelease(t *testing.T) {
 		}, parent, "restored-channel",
 	)
 	defer unregister()
-	control := &restoredProgramControl{lease: claim.Lease, wantStart: "restore"}
+	controlPlane := &restoredProgramControlPlane{lease: claim.Lease, wantStart: "restore"}
 	guestErr := make(chan error, 2)
 	go func() { guestErr <- serveRestoredGrant(grantGuest) }()
 	go func() { guestErr <- serveRestoredResume(resumeGuest) }()
 	program, err := (ProgramRunner{WorkspaceMounts: mounts}).startResumedProgram(
-		context.Background(), &claim, control,
+		context.Background(), &claim, controlPlane,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -53,10 +53,10 @@ func TestStartRestoredProgramOrdersGrantStartProofAndRelease(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	control.mu.Lock()
-	defer control.mu.Unlock()
-	if !control.started || !control.released || control.releaseCalls != 2 {
-		t.Fatalf("start=%v release=%v release calls=%d", control.started, control.released, control.releaseCalls)
+	controlPlane.mu.Lock()
+	defer controlPlane.mu.Unlock()
+	if !controlPlane.started || !controlPlane.released || controlPlane.releaseCalls != 2 {
+		t.Fatalf("start=%v release=%v release calls=%d", controlPlane.started, controlPlane.released, controlPlane.releaseCalls)
 	}
 }
 
@@ -122,7 +122,7 @@ func TestRetainedRestoreAndParentAttachResumeOnExistingMount(t *testing.T) {
 				"restored-channel",
 			)
 			defer unregister()
-			control := &restoredProgramControl{
+			controlPlane := &restoredProgramControlPlane{
 				lease:     claim.Lease,
 				wantStart: test.wantStart,
 			}
@@ -134,7 +134,7 @@ func TestRetainedRestoreAndParentAttachResumeOnExistingMount(t *testing.T) {
 			}).startResumedProgram(
 				context.Background(),
 				&claim,
-				control,
+				controlPlane,
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -319,7 +319,7 @@ func (s *queuedStreamSession) OpenStream(context.Context) (vm.Stream, error) {
 func (*queuedStreamSession) Close(context.Context) error    { return nil }
 func (*queuedStreamSession) Wait(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
 
-type restoredProgramControl struct {
+type restoredProgramControlPlane struct {
 	mu           sync.Mutex
 	lease        workerapi.RunLeaseAssignment
 	started      bool
@@ -328,10 +328,10 @@ type restoredProgramControl struct {
 	wantStart    string
 }
 
-func (c *restoredProgramControl) ClaimRunLease(context.Context, workerapi.RunLeaseWork) (workerapi.RunLeaseClaimResponse, error) {
+func (c *restoredProgramControlPlane) ClaimRunLease(context.Context, workerapi.RunLeaseWork) (workerapi.RunLeaseClaimResponse, error) {
 	return workerapi.RunLeaseClaimResponse{}, errors.New("unexpected claim")
 }
-func (c *restoredProgramControl) AcknowledgeRunStart(_ context.Context, request workerapi.RunStartRequest) (workerapi.RunStartResponse, error) {
+func (c *restoredProgramControlPlane) AcknowledgeRunStart(_ context.Context, request workerapi.RunStartRequest) (workerapi.RunStartResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	validArm := request.Restore != nil &&
@@ -350,56 +350,56 @@ func (c *restoredProgramControl) AcknowledgeRunStart(_ context.Context, request 
 	c.started = true
 	return workerapi.RunStartResponse{Lease: c.lease.Fence()}, nil
 }
-func (*restoredProgramControl) AcknowledgeRunEntrypoint(context.Context, workerapi.RunEntrypointRequest) error {
+func (*restoredProgramControlPlane) AcknowledgeRunEntrypoint(context.Context, workerapi.RunEntrypointRequest) error {
 	return errors.New("unexpected entrypoint")
 }
-func (c *restoredProgramControl) RenewRunLease(context.Context, workerapi.RunLeaseAssignment) (workerapi.RunLeaseRenewResponse, error) {
+func (c *restoredProgramControlPlane) RenewRunLease(context.Context, workerapi.RunLeaseAssignment) (workerapi.RunLeaseRenewResponse, error) {
 	return workerapi.RunLeaseRenewResponse{
 		Lease: c.lease.Fence(), ExpiresAt: c.lease.ExpiresAt,
 		BaseWorkspaceVersionID: c.lease.BaseWorkspaceVersionID,
 	}, nil
 }
-func (*restoredProgramControl) BeginRunFinalization(context.Context, workerapi.BeginRunFinalizationRequest) (workerapi.BeginRunFinalizationResponse, error) {
+func (*restoredProgramControlPlane) BeginRunFinalization(context.Context, workerapi.BeginRunFinalizationRequest) (workerapi.BeginRunFinalizationResponse, error) {
 	return workerapi.BeginRunFinalizationResponse{}, errors.New("unexpected finalization")
 }
-func (*restoredProgramControl) CompleteTask(context.Context, workerapi.CompleteTaskRequest) error {
+func (*restoredProgramControlPlane) CompleteTask(context.Context, workerapi.CompleteTaskRequest) error {
 	return errors.New("unexpected completion")
 }
-func (*restoredProgramControl) CompleteActor(context.Context, workerapi.CompleteActorRequest) error {
+func (*restoredProgramControlPlane) CompleteActor(context.Context, workerapi.CompleteActorRequest) error {
 	return errors.New("unexpected Actor completion")
 }
-func (*restoredProgramControl) CommitActorTurn(context.Context, workerapi.CommitActorTurnRequest) (workerapi.CommitActorTurnResponse, error) {
+func (*restoredProgramControlPlane) CommitActorTurn(context.Context, workerapi.CommitActorTurnRequest) (workerapi.CommitActorTurnResponse, error) {
 	return workerapi.CommitActorTurnResponse{}, errors.New("unexpected Actor turn commit")
 }
-func (*restoredProgramControl) SendRunActorInput(context.Context, workerapi.SendActorInputRequest) (workerapi.SendActorInputResponse, error) {
+func (*restoredProgramControlPlane) SendRunActorInput(context.Context, workerapi.SendActorInputRequest) (workerapi.SendActorInputResponse, error) {
 	return workerapi.SendActorInputResponse{}, errors.New("unexpected Actor input send")
 }
 
-func (*restoredProgramControl) AppendActorOutput(context.Context, workerapi.AppendActorOutputRequest) (workerapi.AppendActorOutputResponse, error) {
+func (*restoredProgramControlPlane) AppendActorOutput(context.Context, workerapi.AppendActorOutputRequest) (workerapi.AppendActorOutputResponse, error) {
 	return workerapi.AppendActorOutputResponse{}, errors.New("unexpected Actor output append")
 }
-func (*restoredProgramControl) CreateRuntimeToken(context.Context, workerapi.CreateTokenRequest) (api.TokenResponse, error) {
+func (*restoredProgramControlPlane) CreateRuntimeToken(context.Context, workerapi.CreateTokenRequest) (api.TokenResponse, error) {
 	return api.TokenResponse{}, errors.New("unexpected Token create")
 }
-func (*restoredProgramControl) AppendRunLog(context.Context, workerapi.RunLeaseAssignment, workerapi.LogStream, uint64, []byte) error {
+func (*restoredProgramControlPlane) AppendRunLog(context.Context, workerapi.RunLeaseAssignment, workerapi.LogStream, uint64, []byte) error {
 	return nil
 }
-func (*restoredProgramControl) CreateRunWait(context.Context, workerapi.CreateRunWaitRequest) (workerapi.CreateRunWaitResponse, error) {
+func (*restoredProgramControlPlane) CreateRunWait(context.Context, workerapi.CreateRunWaitRequest) (workerapi.CreateRunWaitResponse, error) {
 	return workerapi.CreateRunWaitResponse{}, errors.New("unexpected wait")
 }
-func (*restoredProgramControl) PollRunWait(context.Context, workerapi.RunWaitPollRequest) (workerapi.RunWaitPollResponse, error) {
+func (*restoredProgramControlPlane) PollRunWait(context.Context, workerapi.RunWaitPollRequest) (workerapi.RunWaitPollResponse, error) {
 	return workerapi.RunWaitPollResponse{}, errors.New("unexpected poll")
 }
-func (*restoredProgramControl) AcknowledgeRunWaitResume(context.Context, workerapi.RunWaitResumeAckRequest) (workerapi.RunWaitResumeAckResponse, error) {
+func (*restoredProgramControlPlane) AcknowledgeRunWaitResume(context.Context, workerapi.RunWaitResumeAckRequest) (workerapi.RunWaitResumeAckResponse, error) {
 	return workerapi.RunWaitResumeAckResponse{}, errors.New("unexpected old resume")
 }
-func (*restoredProgramControl) MarkCheckpointReady(context.Context, workerapi.CheckpointReadyRequest) (workerapi.CheckpointResponse, error) {
+func (*restoredProgramControlPlane) MarkCheckpointReady(context.Context, workerapi.CheckpointReadyRequest) (workerapi.CheckpointResponse, error) {
 	return workerapi.CheckpointResponse{}, errors.New("unexpected checkpoint")
 }
-func (*restoredProgramControl) MarkCheckpointFailed(context.Context, workerapi.CheckpointFailedRequest) (workerapi.CheckpointResponse, error) {
+func (*restoredProgramControlPlane) MarkCheckpointFailed(context.Context, workerapi.CheckpointFailedRequest) (workerapi.CheckpointResponse, error) {
 	return workerapi.CheckpointResponse{}, errors.New("unexpected checkpoint failure")
 }
-func (c *restoredProgramControl) AcknowledgeRunResumeRelease(_ context.Context, request workerapi.RunResumeReleaseRequest) (workerapi.RunResumeReleaseResponse, error) {
+func (c *restoredProgramControlPlane) AcknowledgeRunResumeRelease(_ context.Context, request workerapi.RunResumeReleaseRequest) (workerapi.RunResumeReleaseResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.releaseCalls++

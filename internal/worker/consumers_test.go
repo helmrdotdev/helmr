@@ -73,7 +73,7 @@ func (consumerPlatformAcquirer) Acquire(
 }
 
 type consumerTestClient struct {
-	ControlClient
+	ControlPlaneClient
 	runWork         []workerapi.RunLeaseWork
 	buildLease      workerapi.DeploymentBuildLease
 	deployment      workerapi.DeploymentBuild

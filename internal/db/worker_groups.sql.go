@@ -484,7 +484,7 @@ func (q *Queries) DrainAbsentWorkerGroups(ctx context.Context, arg DrainAbsentWo
 	return items, nil
 }
 
-const getControlWorkerGroupReadiness = `-- name: GetControlWorkerGroupReadiness :one
+const getControlPlaneWorkerGroupReadiness = `-- name: GetControlPlaneWorkerGroupReadiness :one
 SELECT id AS worker_group_id,
        state,
        state = 'active' AS routable
@@ -492,15 +492,15 @@ SELECT id AS worker_group_id,
  WHERE id = $1
 `
 
-type GetControlWorkerGroupReadinessRow struct {
+type GetControlPlaneWorkerGroupReadinessRow struct {
 	WorkerGroupID string `json:"worker_group_id"`
 	State         string `json:"state"`
 	Routable      bool   `json:"routable"`
 }
 
-func (q *Queries) GetControlWorkerGroupReadiness(ctx context.Context, workerGroupID string) (GetControlWorkerGroupReadinessRow, error) {
-	row := q.db.QueryRow(ctx, getControlWorkerGroupReadiness, workerGroupID)
-	var i GetControlWorkerGroupReadinessRow
+func (q *Queries) GetControlPlaneWorkerGroupReadiness(ctx context.Context, workerGroupID string) (GetControlPlaneWorkerGroupReadinessRow, error) {
+	row := q.db.QueryRow(ctx, getControlPlaneWorkerGroupReadiness, workerGroupID)
+	var i GetControlPlaneWorkerGroupReadinessRow
 	err := row.Scan(&i.WorkerGroupID, &i.State, &i.Routable)
 	return i, err
 }

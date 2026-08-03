@@ -31,7 +31,7 @@ func (task *guestRunLeaseTask) handleActorInputSend(
 	) error {
 		request.Lease = lease.Fence()
 		var requestErr error
-		response, requestErr = task.control.SendRunActorInput(callCtx, request)
+		response, requestErr = task.controlPlane.SendRunActorInput(callCtx, request)
 		return requestErr
 	}); err != nil {
 		return fmt.Errorf("send Actor input: %w", err)

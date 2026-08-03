@@ -50,13 +50,13 @@ func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, wor
 		if err != nil {
 			return err
 		}
-		controlClient, err := workerclient.New(cfg.ControlURL)
+		controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL)
 		if err != nil {
 			return fmt.Errorf("configure worker enrollment client: %w", err)
 		}
 		supportsRun := slices.Contains(cfg.WorkerRoles, auth.WorkerRoleRun)
 		supportsBuild := slices.Contains(cfg.WorkerRoles, auth.WorkerRoleBuild)
-		challenge, err := controlClient.CreateWorkerEnrollmentChallenge(ctx, cfg.WorkerGroupID)
+		challenge, err := controlPlaneClient.CreateWorkerEnrollmentChallenge(ctx, cfg.WorkerGroupID)
 		if err != nil {
 			return fmt.Errorf("create worker enrollment challenge: %w", err)
 		}
@@ -74,7 +74,7 @@ func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, wor
 		if err != nil {
 			return err
 		}
-		registered, err := controlClient.EnrollWorker(ctx, evidence)
+		registered, err := controlPlaneClient.EnrollWorker(ctx, evidence)
 		if err != nil {
 			return fmt.Errorf("enroll worker: %w", err)
 		}
@@ -152,7 +152,7 @@ func removeWorkerCredentialIfMatch(path string, rejected workerCredentialFile) e
 	})
 }
 
-func resolveWorkerControlCredential(cfg config.WorkerControl, workDir string) (workerCredentialFile, error) {
+func resolveWorkerControlPlaneCredential(cfg config.WorkerControlPlane, workDir string) (workerCredentialFile, error) {
 	path := workerCredentialPath(workDir, cfg.WorkerInstanceCredentialPath)
 	return readWorkerInstanceCredential(path)
 }

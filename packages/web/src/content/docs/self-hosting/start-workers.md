@@ -8,7 +8,7 @@ order: 770
 
 # Start workers
 
-You can operate the control plane without workers, but runs require at least one active worker.
+You can operate the Control Plane without workers, but runs require at least one active worker.
 
 The `quickstart` profile does not run code by default. For a quick end-to-end smoke test from that profile, enable NAT and one worker:
 
@@ -54,7 +54,7 @@ responsibilities.
 Every worker enrolls with a fresh one-time nonce and a proof derived from its
 group-specific deployment secret. The AWS module fetches that secret during
 boot into a root-only volatile file and reports the EC2 instance ID only as an
-opaque resource locator for operator correlation. Control verifies the logical
+opaque resource locator for operator correlation. Control Plane verifies the logical
 group proof and requested role; it does not verify AWS account, Region, AMI,
 instance profile, or Auto Scaling group membership.
 

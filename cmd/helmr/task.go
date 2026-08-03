@@ -87,7 +87,7 @@ func taskStartCommand() *cobra.Command {
 			if timeoutSeconds > 0 && !wait && !follow {
 				return errors.New("--timeout requires --wait or --follow")
 			}
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -96,7 +96,7 @@ func taskStartCommand() *cobra.Command {
 					return err
 				}
 			}
-			scope, err := environmentScopeForClient(control, projectID, environmentID)
+			scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -110,7 +110,7 @@ func taskStartCommand() *cobra.Command {
 			if concurrencyKey = strings.TrimSpace(concurrencyKey); concurrencyKey != "" {
 				request.ConcurrencyKey = &concurrencyKey
 			}
-			started, err := control.StartTask(cmd.Context(), args[0], request, scope)
+			started, err := controlPlane.StartTask(cmd.Context(), args[0], request, scope)
 			if err != nil {
 				return err
 			}
@@ -128,7 +128,7 @@ func taskStartCommand() *cobra.Command {
 					}
 					run, err := waitForRun(
 						waitCtx,
-						control,
+						controlPlane,
 						started.RunID,
 						client.RunScopeOptions(scope),
 					)
@@ -153,7 +153,7 @@ func taskStartCommand() *cobra.Command {
 				if err := followRunLogs(
 					followCtx,
 					cmd,
-					control,
+					controlPlane,
 					started.RunID,
 					"",
 					client.RunScopeOptions(scope),
@@ -171,7 +171,7 @@ func taskStartCommand() *cobra.Command {
 				}
 				run, err := waitForRun(
 					waitCtx,
-					control,
+					controlPlane,
 					started.RunID,
 					client.RunScopeOptions(scope),
 				)
@@ -216,15 +216,15 @@ func taskListCommand() *cobra.Command {
 		Use:   "list",
 		Short: "List Tasks in the current Deployment.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := environmentScopeForClient(control, projectID, environmentID)
+			scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			response, err := control.ListTasks(cmd.Context(), scope)
+			response, err := controlPlane.ListTasks(cmd.Context(), scope)
 			if err != nil {
 				return err
 			}
@@ -251,15 +251,15 @@ func taskGetCommand() *cobra.Command {
 		Short: "Show Task details.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			scope, err := environmentScopeForClient(control, projectID, environmentID)
+			scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			task, err := control.GetTask(cmd.Context(), args[0], scope)
+			task, err := controlPlane.GetTask(cmd.Context(), args[0], scope)
 			if err != nil {
 				return err
 			}

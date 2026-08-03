@@ -76,14 +76,14 @@ func deployCommand() *cobra.Command {
 			if closeErr != nil {
 				return closeErr
 			}
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			if !control.UsesSessionScopedRoutes() && (cmd.Flags().Changed("project") || cmd.Flags().Changed("env")) {
+			if !controlPlane.UsesSessionScopedRoutes() && (cmd.Flags().Changed("project") || cmd.Flags().Changed("env")) {
 				return errors.New("--project and --env require helmr login; API keys are already environment scoped")
 			}
-			if control.UsesSessionScopedRoutes() {
+			if controlPlane.UsesSessionScopedRoutes() {
 				projectRef = strings.TrimSpace(projectRef)
 				envRef = strings.TrimSpace(envRef)
 				if !cmd.Flags().Changed("project") || projectRef == "" {
@@ -112,11 +112,11 @@ func deployCommand() *cobra.Command {
 			if deployRequest.IdempotencyKey == "" {
 				deployRequest.IdempotencyKey = uuid.Must(uuid.NewV7()).String()
 			}
-			if control.UsesSessionScopedRoutes() {
+			if controlPlane.UsesSessionScopedRoutes() {
 				deployRequest.ProjectID = projectRef
 				deployRequest.EnvironmentID = envRef
 			}
-			response, err := control.CreateDeployment(cmd.Context(), deployRequest, tarArchive.Path)
+			response, err := controlPlane.CreateDeployment(cmd.Context(), deployRequest, tarArchive.Path)
 			if err != nil {
 				return err
 			}
@@ -126,11 +126,11 @@ func deployCommand() *cobra.Command {
 			if detach {
 				return reporter.DeploymentResult(response, "queued")
 			}
-			scope, err := deploymentWaitScope(response, control.UsesSessionScopedRoutes())
+			scope, err := deploymentWaitScope(response, controlPlane.UsesSessionScopedRoutes())
 			if err != nil {
 				return err
 			}
-			deployed, err := waitForDeployment(cmd.Context(), control, response, scope, timeout, reporter)
+			deployed, err := waitForDeployment(cmd.Context(), controlPlane, response, scope, timeout, reporter)
 			if err != nil {
 				return err
 			}
@@ -141,11 +141,11 @@ func deployCommand() *cobra.Command {
 				return err
 			}
 			promoteRequest := api.PromoteDeploymentRequest{Reason: "deploy"}
-			if control.UsesSessionScopedRoutes() {
+			if controlPlane.UsesSessionScopedRoutes() {
 				promoteRequest.ProjectID = scope.ProjectID
 				promoteRequest.EnvironmentID = scope.EnvironmentID
 			}
-			promoted, err := control.PromoteDeployment(cmd.Context(), deployed.ID, promoteRequest)
+			promoted, err := controlPlane.PromoteDeployment(cmd.Context(), deployed.ID, promoteRequest)
 			if err != nil {
 				return err
 			}
@@ -241,19 +241,19 @@ func promoteCommand() *cobra.Command {
 		Short: "Promote a deployed version to current.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			control, err := controlClient(cmd)
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
-			if !control.UsesSessionScopedRoutes() && (cmd.Flags().Changed("project") || cmd.Flags().Changed("env")) {
+			if !controlPlane.UsesSessionScopedRoutes() && (cmd.Flags().Changed("project") || cmd.Flags().Changed("env")) {
 				return errors.New("--project and --env require helmr login; API keys are already environment scoped")
 			}
 			request := api.PromoteDeploymentRequest{Reason: strings.TrimSpace(reason)}
-			if control.UsesSessionScopedRoutes() {
+			if controlPlane.UsesSessionScopedRoutes() {
 				request.ProjectID = strings.TrimSpace(projectID)
 				request.EnvironmentID = strings.TrimSpace(environmentID)
 			}
-			deployment, err := control.PromoteDeployment(cmd.Context(), args[0], request)
+			deployment, err := controlPlane.PromoteDeployment(cmd.Context(), args[0], request)
 			if err != nil {
 				return err
 			}
@@ -286,7 +286,7 @@ func deploymentWaitScope(response api.DeploymentResponse, sessionScopedRoutes bo
 	return api.GetDeploymentRequest{ProjectID: projectID, EnvironmentID: environmentID}, nil
 }
 
-func waitForDeployment(ctx context.Context, control deploymentStatusClient, initial api.DeploymentResponse, scope api.GetDeploymentRequest, timeout time.Duration, reporter deployReporter) (api.DeploymentResponse, error) {
+func waitForDeployment(ctx context.Context, controlPlane deploymentStatusClient, initial api.DeploymentResponse, scope api.GetDeploymentRequest, timeout time.Duration, reporter deployReporter) (api.DeploymentResponse, error) {
 	if strings.TrimSpace(initial.ID) == "" {
 		return api.DeploymentResponse{}, errors.New("deployment response id is empty")
 	}
@@ -302,7 +302,7 @@ func waitForDeployment(ctx context.Context, control deploymentStatusClient, init
 	for {
 		streamCtx, cancel := context.WithCancel(ctx)
 		terminal := false
-		err := control.FollowDeploymentEvents(streamCtx, initial.ID, scope, cursor, func(event api.RunEvent) error {
+		err := controlPlane.FollowDeploymentEvents(streamCtx, initial.ID, scope, cursor, func(event api.RunEvent) error {
 			if event.ID != "" {
 				cursor = event.ID
 			}
@@ -323,7 +323,7 @@ func waitForDeployment(ctx context.Context, control deploymentStatusClient, init
 		if ctx.Err() != nil {
 			return api.DeploymentResponse{}, fmt.Errorf("wait for deployment %s: %w", initial.ID, ctx.Err())
 		}
-		deployment, err := control.GetDeployment(ctx, initial.ID, scope)
+		deployment, err := controlPlane.GetDeployment(ctx, initial.ID, scope)
 		if err != nil {
 			return api.DeploymentResponse{}, fmt.Errorf("get deployment %s: %w", initial.ID, err)
 		}

@@ -66,7 +66,7 @@ type GuestRequest struct {
 }
 
 // SourceAdmission is the exact non-secret Worker measurement submitted to
-// Control before registry Secret resolution and physical-attempt allocation.
+// Control Plane before registry Secret resolution and physical-attempt allocation.
 type SourceAdmission struct {
 	Architecture           string
 	Plan                   Build

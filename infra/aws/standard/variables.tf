@@ -9,8 +9,8 @@ variable "name" {
   default     = "helmr-standard"
 
   validation {
-    condition     = can(regex("^[a-z][a-z0-9-]{1,22}[a-z0-9]$", var.name))
-    error_message = "name must be 3-24 characters, start with a lowercase letter, end with a lowercase letter or number, and contain only lowercase letters, numbers, and hyphens."
+    condition     = can(regex("^[a-z][a-z0-9-]{1,17}[a-z0-9]$", var.name))
+    error_message = "name must be 3-19 characters, start with a lowercase letter, end with a lowercase letter or number, and contain only lowercase letters, numbers, and hyphens."
   }
 }
 
@@ -26,8 +26,8 @@ variable "tags" {
   default     = {}
 }
 
-variable "control_vpc_cidr" {
-  description = "CIDR block for the unrouted Control VPC."
+variable "controlplane_vpc_cidr" {
+  description = "CIDR block for the unrouted Control Plane VPC."
   type        = string
   default     = "10.90.0.0/16"
 }
@@ -58,7 +58,7 @@ variable "availability_zone_count" {
 }
 
 variable "public_url" {
-  description = "External URL for the control plane when enable_cloudfront is false."
+  description = "External URL for the Control Plane when enable_cloudfront is false."
   type        = string
   default     = null
   nullable    = true
@@ -157,8 +157,8 @@ variable "clickhouse_password_kms_key_arns" {
   default     = []
 }
 
-variable "additional_control_security_group_ids" {
-  description = "Additional security groups attached to control, dispatcher, and migration tasks."
+variable "additional_controlplane_security_group_ids" {
+  description = "Additional security groups attached to controlplane, dispatcher, and migration tasks."
   type        = list(string)
   default     = []
 }
@@ -171,7 +171,7 @@ variable "cloudfront_origin_domain_name" {
 }
 
 variable "helmr_version" {
-  description = "Helmr release version to deploy, for example vX.Y.Z. Used to resolve official control and worker artifacts."
+  description = "Helmr release version to deploy, for example vX.Y.Z. Used to resolve official controlplane and worker artifacts."
   type        = string
 
   validation {
@@ -194,14 +194,14 @@ variable "release_artifacts_manifest_url" {
   nullable    = true
 }
 
-variable "control_image" {
-  description = "Optional digest-pinned control image URI override for custom builds. When null, the release artifact manifest is used."
+variable "controlplane_image" {
+  description = "Optional digest-pinned controlplane image URI override for custom builds. When null, the release artifact manifest is used."
   type        = string
   default     = null
   nullable    = true
 }
 
-variable "control_image_repository_arn" {
+variable "controlplane_image_repository_arn" {
   description = "Exact private ECR repository ARN needed by the ECS execution roles. Leave null for public or non-ECR images."
   type        = string
   default     = null
@@ -209,21 +209,21 @@ variable "control_image_repository_arn" {
 
   validation {
     condition = (
-      var.control_image_repository_arn == null ||
-      can(regex("^arn:[^:]+:ecr:[a-z0-9-]+:[0-9]{12}:repository/[a-z0-9._/-]+$", var.control_image_repository_arn))
+      var.controlplane_image_repository_arn == null ||
+      can(regex("^arn:[^:]+:ecr:[a-z0-9-]+:[0-9]{12}:repository/[a-z0-9._/-]+$", var.controlplane_image_repository_arn))
     )
-    error_message = "control_image_repository_arn must be null or an ECR repository ARN."
+    error_message = "controlplane_image_repository_arn must be null or an ECR repository ARN."
   }
 }
 
-variable "create_control_service" {
+variable "create_controlplane_service" {
   description = "Create the ECS service after image, secrets, and migrations are ready."
   type        = bool
   default     = false
 }
 
-variable "control_desired_count" {
-  description = "Desired ECS task count for the control service."
+variable "controlplane_desired_count" {
+  description = "Desired ECS task count for the controlplane service."
   type        = number
   default     = 2
 }
@@ -234,7 +234,7 @@ variable "dispatcher_desired_count" {
   default     = 1
 }
 
-variable "control_health_check_path" {
+variable "controlplane_health_check_path" {
   description = "HTTP path used by the control-plane target group health check."
   type        = string
   default     = "/readyz"
@@ -345,8 +345,8 @@ variable "database_performance_insights_enabled" {
   default     = true
 }
 
-variable "control_log_retention_days" {
-  description = "CloudWatch Logs retention in days for control and migration tasks."
+variable "controlplane_log_retention_days" {
+  description = "CloudWatch Logs retention in days for controlplane and migration tasks."
   type        = number
   default     = 30
 }
@@ -388,7 +388,7 @@ variable "worker_observation_ttl_seconds" {
 }
 
 variable "worker_launch_timeout_seconds" {
-  description = "Deployment-owned ASG launch-hook timeout while a Worker reaches Control readiness."
+  description = "Deployment-owned ASG launch-hook timeout while a Worker reaches Control Plane readiness."
   type        = number
   default     = 900
 

@@ -12,24 +12,24 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
 
-type workerImageControlClient interface {
+type workerImageControlPlaneClient interface {
 	AdmitWorkspaceImage(context.Context, workerapi.WorkspaceImageAdmissionRequest) (workerapi.WorkspaceImageAssignment, error)
 	FetchWorkspaceImageCredentials(context.Context, workerapi.WorkspaceImageCredentialRequest) (workerapi.WorkspaceImageCredentialResponse, error)
 	CompleteWorkspaceImage(context.Context, workerapi.WorkspaceImageOperationResultRequest) (workerapi.WorkspaceImageOperationResultResponse, error)
 }
 
-type workerImageControl struct {
-	client workerImageControlClient
+type workerImageControlPlane struct {
+	client workerImageControlPlaneClient
 }
 
-func (control workerImageControl) AdmitWorkspaceImage(
+func (controlPlane workerImageControlPlane) AdmitWorkspaceImage(
 	ctx context.Context,
 	request imageworker.AdmissionRequest,
 ) (imageworker.Assignment, error) {
-	if control.client == nil {
-		return imageworker.Assignment{}, errors.New("Workspace image Control client is required")
+	if controlPlane.client == nil {
+		return imageworker.Assignment{}, errors.New("Workspace image Control Plane client is required")
 	}
-	response, err := control.client.AdmitWorkspaceImage(ctx, workerapi.WorkspaceImageAdmissionRequest{
+	response, err := controlPlane.client.AdmitWorkspaceImage(ctx, workerapi.WorkspaceImageAdmissionRequest{
 		Lease:                  workerImageAPILease(request.Lease),
 		DeclarationSlot:        request.DeclarationSlot,
 		RuntimeIdentityID:      request.RuntimeIdentityID,
@@ -99,14 +99,14 @@ func (control workerImageControl) AdmitWorkspaceImage(
 	return assignment, nil
 }
 
-func (control workerImageControl) FetchRegistryCredentials(
+func (controlPlane workerImageControlPlane) FetchRegistryCredentials(
 	ctx context.Context,
 	request imageworker.RegistryCredentialRequest,
 ) ([]imagebuild.RegistryCredentialValue, error) {
-	if control.client == nil {
-		return nil, errors.New("Workspace image Control client is required")
+	if controlPlane.client == nil {
+		return nil, errors.New("Workspace image Control Plane client is required")
 	}
-	response, err := control.client.FetchWorkspaceImageCredentials(ctx, workerapi.WorkspaceImageCredentialRequest{
+	response, err := controlPlane.client.FetchWorkspaceImageCredentials(ctx, workerapi.WorkspaceImageCredentialRequest{
 		Lease: workerImageAPILease(request.Lease), OperationID: request.OperationID,
 		AttemptID: request.AttemptID, PlanDigest: request.PlanDigest,
 		ResolutionSetDigest: request.ResolutionSetDigest,
@@ -144,12 +144,12 @@ func (control workerImageControl) FetchRegistryCredentials(
 	return credentials, nil
 }
 
-func (control workerImageControl) CompleteWorkspaceImage(
+func (controlPlane workerImageControlPlane) CompleteWorkspaceImage(
 	ctx context.Context,
 	request imageworker.CompletionRequest,
 ) error {
-	if control.client == nil {
-		return errors.New("Workspace image Control client is required")
+	if controlPlane.client == nil {
+		return errors.New("Workspace image Control Plane client is required")
 	}
 	if request.Evidence.GuestResult.Outcome == imagebuild.GuestSucceeded {
 		if request.Artifact == nil || request.Artifact.Digest != request.Evidence.GuestResult.OCIDigest ||
@@ -159,7 +159,7 @@ func (control workerImageControl) CompleteWorkspaceImage(
 	} else if request.Artifact != nil {
 		return errors.New("failed Workspace image completion must not contain an Artifact")
 	}
-	response, err := control.client.CompleteWorkspaceImage(ctx, workerapi.WorkspaceImageOperationResultRequest{
+	response, err := controlPlane.client.CompleteWorkspaceImage(ctx, workerapi.WorkspaceImageOperationResultRequest{
 		Lease:           workerImageAPILease(request.Evidence.Lease),
 		DeclarationSlot: request.Evidence.DeclarationSlot,
 		OperationID:     request.Evidence.OperationID, AttemptID: request.Evidence.AttemptID,
@@ -263,9 +263,9 @@ func clearWorkerImageCredentials(credentials []imagebuild.RegistryCredentialValu
 }
 
 var (
-	_ imageworker.AdmissionClient           = workerImageControl{}
-	_ imageworker.RegistryCredentialFetcher = workerImageControl{}
-	_ imageworker.CompletionClient          = workerImageControl{}
+	_ imageworker.AdmissionClient           = workerImageControlPlane{}
+	_ imageworker.RegistryCredentialFetcher = workerImageControlPlane{}
+	_ imageworker.CompletionClient          = workerImageControlPlane{}
 	_ imageworker.CacheCredentialFetcher    = workerImageCacheCredentials{}
-	_ workerImageControlClient              = (*workerclient.Client)(nil)
+	_ workerImageControlPlaneClient         = (*workerclient.Client)(nil)
 )

@@ -17,7 +17,7 @@ type RunWaitClient interface {
 	MarkCheckpointFailed(context.Context, workerapi.CheckpointFailedRequest) (workerapi.CheckpointResponse, error)
 }
 
-type ControlRunWaits struct {
+type ControlPlaneRunWaits struct {
 	Client RunWaitClient
 }
 
@@ -35,7 +35,7 @@ type RestoreAcknowledger interface {
 	AcknowledgeRestore(context.Context, RestoreAcknowledgement) error
 }
 
-func (w ControlRunWaits) AcknowledgeRestore(ctx context.Context, request RestoreAcknowledgement) error {
+func (w ControlPlaneRunWaits) AcknowledgeRestore(ctx context.Context, request RestoreAcknowledgement) error {
 	client, ok := w.Client.(interface {
 		AcknowledgeRunResumeRelease(context.Context, workerapi.RunResumeReleaseRequest) (workerapi.RunResumeReleaseResponse, error)
 	})
@@ -61,9 +61,9 @@ func (w ControlRunWaits) AcknowledgeRestore(ctx context.Context, request Restore
 	return nil
 }
 
-func (w ControlRunWaits) Wait(ctx context.Context, request WaitRequest) error {
+func (w ControlPlaneRunWaits) Wait(ctx context.Context, request WaitRequest) error {
 	if w.Client == nil {
-		return errors.New("run wait control client is required")
+		return errors.New("run wait Control Plane client is required")
 	}
 	opened, err := w.AddRunWait(ctx, request)
 	if err != nil {
@@ -74,13 +74,13 @@ func (w ControlRunWaits) Wait(ctx context.Context, request WaitRequest) error {
 
 // ContinueRunWait drives an already-created durable Wait. It is used when
 // creating a resource and registering the Wait must be one atomic operation.
-func (w ControlRunWaits) ContinueRunWait(
+func (w ControlPlaneRunWaits) ContinueRunWait(
 	ctx context.Context,
 	request WaitRequest,
 	opened workerapi.CreateRunWaitResponse,
 ) error {
 	if w.Client == nil {
-		return errors.New("run wait control client is required")
+		return errors.New("run wait Control Plane client is required")
 	}
 	lease, err := request.currentLeaseAssignment()
 	if err != nil {
@@ -163,7 +163,7 @@ func (w ControlRunWaits) ContinueRunWait(
 	}
 }
 
-func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request WaitRequest, intent workerapi.RunWaitPollResponse) error {
+func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, request WaitRequest, intent workerapi.RunWaitPollResponse) error {
 	if intent.CheckpointID == "" || intent.RequestVersion <= 0 {
 		return errors.New("checkpoint request id and version are required")
 	}
@@ -251,9 +251,9 @@ func workerCheckpointWorkspaceCapture(capture *CheckpointWorkspaceCapture) *work
 	}
 }
 
-func (w ControlRunWaits) AddRunWait(ctx context.Context, request WaitRequest) (workerapi.CreateRunWaitResponse, error) {
+func (w ControlPlaneRunWaits) AddRunWait(ctx context.Context, request WaitRequest) (workerapi.CreateRunWaitResponse, error) {
 	if w.Client == nil {
-		return workerapi.CreateRunWaitResponse{}, errors.New("run wait control client is required")
+		return workerapi.CreateRunWaitResponse{}, errors.New("run wait Control Plane client is required")
 	}
 	lease, err := request.currentLeaseAssignment()
 	if err != nil {
@@ -315,4 +315,4 @@ func durationMilliseconds(value time.Duration) int64 {
 	return value.Milliseconds()
 }
 
-var _ WaitHandler = ControlRunWaits{}
+var _ WaitHandler = ControlPlaneRunWaits{}

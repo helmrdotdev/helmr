@@ -5,7 +5,7 @@ Helmr is a self-hosted runtime for coding agents.
 It provides the infrastructure around an agent SDK: durable writable
 workspaces, controlled credentials, logs, run history, and approval points
 before a task writes back. Task code is written in TypeScript and runs inside
-Firecracker-backed Linux guests managed by your own control plane and workers.
+Firecracker-backed Linux guests managed by your own Control Plane and workers.
 
 ## Status
 
@@ -20,14 +20,14 @@ for contributors, early adopters, and self-hosted evaluation.
 - Durable writable workspaces mounted inside isolated Linux guests
 - Durable Actor input/output, external completion Tokens, and long timers
   before reviews, patches, or other side effects
-- Run status, logs, events, payloads, and history in the control plane
+- Run status, logs, events, payloads, and history in the Control Plane
 - Task-declared secrets injected only at run time
 - A runtime boundary you own: your AWS account, your integrations, your workers
-- A Go control plane, worker, `helmr` CLI, TypeScript SDK, and console UI
+- A Go Control Plane, worker, `helmr` CLI, TypeScript SDK, and console UI
 
 ## Repository layout
 
-- `cmd/` - Go binaries for the CLI, control plane, worker, and guest agent
+- `cmd/` - Go binaries for the CLI, Control Plane, worker, and guest agent
 - `internal/` - Go control-plane, worker, executor, database, and server code
 - `sdk/typescript/` - public task authoring and runtime client APIs
 - `runtime/typescript/` - guest-side TypeScript adapter
@@ -56,7 +56,7 @@ Linux microVM smoke path locally.
 
 ## Quick start
 
-Start the local control plane and console:
+Start the local Control Plane and console:
 
 ```sh
 nix develop
@@ -64,7 +64,7 @@ make dev
 ```
 
 The dev stack starts a disposable PostgreSQL database when `HELMR_DATABASE_URL`
-is not set, runs the control plane, and serves the console at:
+is not set, runs the Control Plane, and serves the console at:
 
 ```text
 http://127.0.0.1:3000/dev/login

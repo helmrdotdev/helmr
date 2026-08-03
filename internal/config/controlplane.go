@@ -1,0 +1,174 @@
+package config
+
+import (
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/helmrdotdev/helmr/internal/workerapi"
+)
+
+func LoadControlPlane() (ControlPlane, error) {
+	publicURL := env("HELMR_PUBLIC_URL", DefaultPublicURL)
+	magicLinkDebugURLs, err := envBool("HELMR_MAGIC_LINK_DEBUG_URLS", false)
+	if err != nil {
+		return ControlPlane{}, err
+	}
+	cfg := ControlPlane{
+		Addr:                    env("HELMR_CONTROLPLANE_ADDR", ":8080"),
+		DeploymentMode:          env("HELMR_DEPLOYMENT_MODE", DeploymentModeSelfHosted),
+		DatabaseURL:             envString("HELMR_DATABASE_URL"),
+		RedisURL:                env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
+		ClickHouseURL:           envString("HELMR_CLICKHOUSE_URL"),
+		ClickHouseUser:          envString("HELMR_CLICKHOUSE_USER"),
+		ClickHousePassword:      envString("HELMR_CLICKHOUSE_PASSWORD"),
+		CASURI:                  envString("HELMR_CAS_URI"),
+		BuildPolicyPath:         envString("HELMR_BUILD_POLICY_PATH"),
+		PlatformStoreURI:        envString("HELMR_PLATFORM_STORE_URI"),
+		WorkerGroupsJSON:        envString("HELMR_WORKER_GROUPS"),
+		OperatorToken:           envString("HELMR_OPERATOR_TOKEN"),
+		SetupToken:              envString("HELMR_SETUP_TOKEN"),
+		PublicURL:               publicURL,
+		MagicLinkDebugURLs:      magicLinkDebugURLs,
+		EmailProvider:           envLower("HELMR_EMAIL_PROVIDER"),
+		ResendAPIKey:            envString("HELMR_RESEND_API_KEY"),
+		SMTPAddr:                envString("HELMR_SMTP_ADDR"),
+		SMTPUsername:            envString("HELMR_SMTP_USERNAME"),
+		SMTPPassword:            envString("HELMR_SMTP_PASSWORD"),
+		EmailFrom:               envString("HELMR_EMAIL_FROM"),
+		GitHubOAuthClientID:     envString("HELMR_GITHUB_OAUTH_CLIENT_ID"),
+		GitHubOAuthClientSecret: envString("HELMR_GITHUB_OAUTH_CLIENT_SECRET"),
+		ScheduleJitter:          30 * time.Second,
+		RunLeaseTTL:             5 * time.Minute,
+		RunFinalizationTTL:      30 * time.Minute,
+	}
+	if cfg.ScheduleJitter, err = envDuration("HELMR_SCHEDULE_JITTER", cfg.ScheduleJitter); err != nil {
+		return cfg, err
+	}
+	if cfg.RunLeaseTTL, err = envDuration("HELMR_RUN_LEASE_TTL", cfg.RunLeaseTTL); err != nil {
+		return cfg, err
+	}
+	if cfg.RunFinalizationTTL, err = envDuration("HELMR_RUN_FINALIZATION_TTL", cfg.RunFinalizationTTL); err != nil {
+		return cfg, err
+	}
+	if cfg.ImageCache, err = loadImageCache(); err != nil {
+		return cfg, err
+	}
+	if cfg.RunLeaseTTL < workerapi.RunLeaseMinTTL {
+		return cfg, fmt.Errorf(
+			"HELMR_RUN_LEASE_TTL must be at least %s",
+			workerapi.RunLeaseMinTTL,
+		)
+	}
+	if cfg.RunFinalizationTTL < workerapi.RunFinalizationMinTTL ||
+		cfg.RunFinalizationTTL > 24*time.Hour {
+		return cfg, fmt.Errorf(
+			"HELMR_RUN_FINALIZATION_TTL must be between %s and 24h",
+			workerapi.RunFinalizationMinTTL,
+		)
+	}
+	if cfg.DatabaseURL == "" {
+		return cfg, errors.New("HELMR_DATABASE_URL is required")
+	}
+	if cfg.DeploymentMode != DeploymentModeSelfHosted && cfg.DeploymentMode != DeploymentModeManagedCloud {
+		return cfg, errors.New("HELMR_DEPLOYMENT_MODE must be self-hosted or managed-cloud")
+	}
+	if cfg.WorkerGroupsJSON == "" {
+		return cfg, errors.New("HELMR_WORKER_GROUPS is required")
+	}
+	if cfg.ClickHouseURL == "" {
+		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")
+	}
+	if cfg.CASURI == "" {
+		return cfg, errors.New("HELMR_CAS_URI is required")
+	}
+	if cfg.BuildPolicyPath == "" {
+		return cfg, errors.New("HELMR_BUILD_POLICY_PATH is required")
+	}
+	if cfg.PlatformStoreURI == "" {
+		return cfg, errors.New("HELMR_PLATFORM_STORE_URI is required")
+	}
+	for _, root := range []struct {
+		name   string
+		target *[]byte
+	}{
+		{"AUTH_KEY", &cfg.AuthKey},
+		{"TOKEN_CREDENTIAL_KEY", &cfg.TokenCredentialKey},
+		{"WORKSPACE_FENCING_KEY", &cfg.WorkspaceFencingKey},
+		{"ENCRYPTION_KEY", &cfg.EncryptionKey},
+		{"WORKER_TOKEN_SIGNING_KEY", &cfg.WorkerTokenSigningKey},
+	} {
+		*root.target, err = rootKey(root.name)
+		if err != nil {
+			return cfg, err
+		}
+	}
+	if err := validatePublicURL(cfg.PublicURL); err != nil {
+		return cfg, err
+	}
+	if err := validateControlPlaneEmailConfig(&cfg); err != nil {
+		return cfg, err
+	}
+	if cfg.GitHubOAuthClientID == "" {
+		return cfg, errors.New("HELMR_GITHUB_OAUTH_CLIENT_ID is required")
+	}
+	if cfg.GitHubOAuthClientSecret == "" {
+		return cfg, errors.New("HELMR_GITHUB_OAUTH_CLIENT_SECRET is required")
+	}
+	if cfg.DeploymentMode == DeploymentModeSelfHosted && cfg.SetupToken == "" {
+		return cfg, errors.New("HELMR_SETUP_TOKEN is required when HELMR_DEPLOYMENT_MODE is self-hosted")
+	}
+	return cfg, nil
+}
+
+func validateControlPlaneEmailConfig(cfg *ControlPlane) error {
+	if cfg.EmailProvider == "" {
+		switch {
+		case cfg.ResendAPIKey != "":
+			cfg.EmailProvider = EmailProviderResend
+		case cfg.SMTPAddr != "":
+			cfg.EmailProvider = EmailProviderSMTP
+		default:
+			cfg.EmailProvider = EmailProviderNone
+		}
+	}
+	switch cfg.EmailProvider {
+	case EmailProviderNone:
+		if cfg.EmailFrom != "" {
+			return errors.New("HELMR_EMAIL_PROVIDER is required when HELMR_EMAIL_FROM is set")
+		}
+		if cfg.ResendAPIKey != "" {
+			return errors.New("HELMR_EMAIL_PROVIDER=resend is required when HELMR_RESEND_API_KEY is set")
+		}
+		if cfg.SMTPAddr != "" || cfg.SMTPUsername != "" || cfg.SMTPPassword != "" {
+			return errors.New("HELMR_EMAIL_PROVIDER=smtp is required when SMTP config is set")
+		}
+	case EmailProviderLog:
+		if cfg.ResendAPIKey != "" || cfg.SMTPAddr != "" || cfg.SMTPUsername != "" || cfg.SMTPPassword != "" {
+			return errors.New("HELMR_EMAIL_PROVIDER=log cannot be combined with SMTP or Resend config")
+		}
+	case EmailProviderSMTP:
+		if cfg.SMTPAddr == "" {
+			return errors.New("HELMR_SMTP_ADDR is required when HELMR_EMAIL_PROVIDER=smtp")
+		}
+		if cfg.EmailFrom == "" {
+			return errors.New("HELMR_EMAIL_FROM is required when HELMR_EMAIL_PROVIDER=smtp")
+		}
+		if cfg.ResendAPIKey != "" {
+			return errors.New("HELMR_RESEND_API_KEY cannot be combined with HELMR_EMAIL_PROVIDER=smtp")
+		}
+	case EmailProviderResend:
+		if cfg.ResendAPIKey == "" {
+			return errors.New("HELMR_RESEND_API_KEY is required when HELMR_EMAIL_PROVIDER=resend")
+		}
+		if cfg.EmailFrom == "" {
+			return errors.New("HELMR_EMAIL_FROM is required when HELMR_EMAIL_PROVIDER=resend")
+		}
+		if cfg.SMTPAddr != "" || cfg.SMTPUsername != "" || cfg.SMTPPassword != "" {
+			return errors.New("SMTP config cannot be combined with HELMR_EMAIL_PROVIDER=resend")
+		}
+	default:
+		return errors.New("HELMR_EMAIL_PROVIDER must be none, log, smtp, or resend")
+	}
+	return nil
+}

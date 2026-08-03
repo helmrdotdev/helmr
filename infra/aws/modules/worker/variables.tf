@@ -291,8 +291,8 @@ variable "build_scratch_mib" {
   }
 }
 
-variable "worker_control_url" {
-  description = "Worker-facing control-plane API URL for HELMR_CONTROL_URL. Prefer a private DNS name that matches the HTTPS certificate."
+variable "worker_controlplane_url" {
+  description = "Worker-facing control-plane API URL for HELMR_CONTROLPLANE_URL. Prefer a private DNS name that matches the HTTPS certificate."
   type        = string
 }
 

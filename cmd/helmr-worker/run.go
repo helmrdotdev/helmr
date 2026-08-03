@@ -106,9 +106,9 @@ func run(log *slog.Logger) error {
 		}
 		buildStorageConfig = &storage
 	}
-	var controlClient *workerclient.Client
+	var controlPlaneClient *workerclient.Client
 	workerCredential, err := resolveAuthenticatedWorkerCredential(ctx, cfg, workDir, func(credential workerCredentialFile) error {
-		candidate, candidateErr := workerclient.New(cfg.ControlURL,
+		candidate, candidateErr := workerclient.New(cfg.ControlPlaneURL,
 			workerclient.WithAuth(credential.WorkerInstanceID, credential.WorkerInstanceSecret),
 			workerclient.WithService(serviceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild),
 		)
@@ -118,7 +118,7 @@ func run(log *slog.Logger) error {
 		if candidateErr = candidate.AuthenticateWorker(ctx); candidateErr != nil {
 			return candidateErr
 		}
-		controlClient = candidate
+		controlPlaneClient = candidate
 		return nil
 	})
 	if err != nil {
@@ -297,7 +297,7 @@ func run(log *slog.Logger) error {
 		if err := ensurePrivateDirectory(imageBuildWorkDir); err != nil {
 			return fmt.Errorf("prepare Workspace image build directory: %w", err)
 		}
-		imageControl := workerImageControl{client: controlClient}
+		imageControlPlane := workerImageControlPlane{client: controlPlaneClient}
 		var cacheCredentials imageworker.CacheCredentialFetcher
 		if cfg.ImageCache != nil {
 			awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
@@ -321,8 +321,8 @@ func run(log *slog.Logger) error {
 			cacheCredentials = workerImageCacheCredentials{provider: provider}
 		}
 		imageBuilder = imageworker.VMEngine{
-			Connector: runtimeConnector, Admission: imageControl, Credentials: imageControl,
-			Cache: cacheCredentials, Completion: imageControl, WorkDir: imageBuildWorkDir,
+			Connector: runtimeConnector, Admission: imageControlPlane, Credentials: imageControlPlane,
+			Cache: cacheCredentials, Completion: imageControlPlane, WorkDir: imageBuildWorkDir,
 		}
 	}
 	hostDiskMiB, err := advertisedWorkerDiskMiB(workDir, cfg.WorkerDiskMiB, cfg.WorkerDiskReserveMiB)
@@ -420,9 +420,9 @@ func run(log *slog.Logger) error {
 		preparedRuntimePool.ArtifactCacheDir = artifactCacheDir
 		preparedRuntimePool.ArtifactCacheMaxBytes = artifactCacheMaxBytes
 		preparedRuntimePool.Substrates = substrateResolver
-		preparedRuntimePool.RuntimeSubstrates = controlClient
+		preparedRuntimePool.RuntimeSubstrates = controlPlaneClient
 		preparedRuntimePool.CheckpointEncryptor = checkpointEncryptor
-		preparedRuntimePool.RuntimeInstances = controlClient
+		preparedRuntimePool.RuntimeInstances = controlPlaneClient
 		preparedRuntimePool.BackgroundGate = backgroundGate
 		preparedRuntimePool.Capacity = hostCapacity
 		preparedRuntimePool.PlatformStore = platformStore
@@ -437,9 +437,9 @@ func run(log *slog.Logger) error {
 		TempDir:             filepath.Join(workDir, "tmp"),
 	}
 	runner, err := workerdaemon.NewRunner(
-		controlClient,
+		controlPlaneClient,
 		executor.Executor{
-			RunLeases:     controlClient,
+			RunLeases:     controlPlaneClient,
 			RunLeaseTasks: runLeaseTasks,
 		},
 		workerCapabilities,
@@ -496,7 +496,7 @@ func run(log *slog.Logger) error {
 	background := make([]workerdaemon.BackgroundSpec, 0, 1)
 	if supportsRun && preparedRuntimePool != nil {
 		background = append(background, workerdaemon.BackgroundSpec{Name: "runtime-controller", DrainEligible: true, Run: func(runCtx context.Context) error {
-			return preparedRuntimePool.ReconcileDesiredRuntimes(runCtx, controlClient)
+			return preparedRuntimePool.ReconcileDesiredRuntimes(runCtx, controlPlaneClient)
 		}})
 	}
 	hardAdmission, err := workerdaemon.NewHardAdmission(workerdaemon.HardAdmissionConfig{
@@ -512,7 +512,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("configure worker hard admission: %w", err)
 	}
 	supervisor, err := workerdaemon.New(workerdaemon.Config{
-		Control: controlClient, Capabilities: workerCapabilities, Consumers: consumerSpecs, Admission: admission,
+		ControlPlane: controlPlaneClient, Capabilities: workerCapabilities, Consumers: consumerSpecs, Admission: admission,
 		Background: background, PollEvery: cfg.PollEvery,
 		AdmissionEvaluator: hardAdmission, Log: log,
 		Recover: func(recoveryCtx context.Context) (workerdaemon.RecoveryEvidence, error) {
@@ -576,7 +576,7 @@ func run(log *slog.Logger) error {
 	if preparedRuntimePool != nil {
 		preparedRuntimePool.AdmitRuntimeStart = supervisor.AdmitRuntimeStart
 	}
-	log.Info("helmr worker listening", "control_url", cfg.ControlURL, "worker_instance_id", workerCredential.WorkerInstanceID)
+	log.Info("helmr worker listening", "controlplane_url", cfg.ControlPlaneURL, "worker_instance_id", workerCredential.WorkerInstanceID)
 	if err := supervisor.Run(ctx); err != nil && err != context.Canceled {
 		return err
 	}

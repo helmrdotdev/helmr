@@ -16,7 +16,7 @@ import (
 
 const defaultDeploymentBuildCompletionGrace = 30 * time.Second
 
-type ControlClient interface {
+type ControlPlaneClient interface {
 	DiscoverRunLeases(ctx context.Context) (workerapi.RunLeaseDiscoveryResponse, error)
 	NextPlatformAcquisition(ctx context.Context) (workerapi.PlatformAcquisitionResponse, error)
 	CompletePlatformAcquisition(ctx context.Context, request workerapi.PlatformAcquisitionCompleteRequest) (workerapi.PlatformAcquisitionResult, error)
@@ -63,11 +63,11 @@ type BuildPolicy interface {
 }
 
 type Materializer interface {
-	RunWorkspaceMount(ctx context.Context, mount workerapi.WorkspaceMount, client workerapi.WorkspaceMaterializerControlClient) error
+	RunWorkspaceMount(ctx context.Context, mount workerapi.WorkspaceMount, client workerapi.WorkspaceMaterializerControlPlaneClient) error
 }
 
 type Runner struct {
-	client                         ControlClient
+	client                         ControlPlaneClient
 	runLeaseExecutor               RunLeaseExecutor
 	platformAcquirer               PlatformAcquirer
 	buildExecutor                  BuildExecutor
@@ -127,7 +127,7 @@ func WithCapacity(resources *capacity.Ledger) Option {
 	}
 }
 
-func NewRunner(client ControlClient, executor RunLeaseExecutor, capabilities workerapi.Capabilities, opts ...Option) (*Runner, error) {
+func NewRunner(client ControlPlaneClient, executor RunLeaseExecutor, capabilities workerapi.Capabilities, opts ...Option) (*Runner, error) {
 	if client == nil {
 		return nil, errors.New("worker client is required")
 	}

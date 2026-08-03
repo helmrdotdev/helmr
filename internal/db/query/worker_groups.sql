@@ -142,7 +142,7 @@ SELECT *
  ORDER BY name ASC
  LIMIT sqlc.arg(row_limit);
 
--- name: GetControlWorkerGroupReadiness :one
+-- name: GetControlPlaneWorkerGroupReadiness :one
 SELECT id AS worker_group_id,
        state,
        state = 'active' AS routable

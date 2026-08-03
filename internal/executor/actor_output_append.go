@@ -28,7 +28,7 @@ func (task *guestRunLeaseTask) handleActorOutputAppend(
 	) error {
 		request.Lease = lease.Fence()
 		var requestErr error
-		response, requestErr = task.control.AppendActorOutput(callCtx, request)
+		response, requestErr = task.controlPlane.AppendActorOutput(callCtx, request)
 		return requestErr
 	}); err != nil {
 		return fmt.Errorf("append Actor output: %w", err)

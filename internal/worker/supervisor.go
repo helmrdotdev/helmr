@@ -16,7 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type Control interface {
+type ControlPlane interface {
 	AuthenticateWorker(context.Context) error
 	ReportWorkerStartupRecovery(context.Context, workerapi.StartupRecoveryRequest) error
 	CompleteWorkerDrain(context.Context, workerapi.DrainCompletionRequest) (workerapi.StatusResponse, error)
@@ -53,7 +53,7 @@ type BackgroundSpec struct {
 }
 
 type Config struct {
-	Control            Control
+	ControlPlane       ControlPlane
 	Capabilities       workerapi.Capabilities
 	Recover            func(context.Context) (RecoveryEvidence, error)
 	FinalizeDrain      func(context.Context) (RecoveryEvidence, error)
@@ -134,8 +134,8 @@ type Supervisor struct {
 }
 
 func New(cfg Config) (*Supervisor, error) {
-	if cfg.Control == nil {
-		return nil, errors.New("supervisor control client is required")
+	if cfg.ControlPlane == nil {
+		return nil, errors.New("supervisor Control Plane client is required")
 	}
 	if cfg.ObservationEvery <= 0 {
 		cfg.ObservationEvery = 30 * time.Second
@@ -172,7 +172,7 @@ func New(cfg Config) (*Supervisor, error) {
 }
 
 func (s *Supervisor) Run(ctx context.Context) error {
-	if err := s.cfg.Control.AuthenticateWorker(ctx); err != nil {
+	if err := s.cfg.ControlPlane.AuthenticateWorker(ctx); err != nil {
 		return fmt.Errorf("establish worker epoch: %w", err)
 	}
 	evidence := RecoveryEvidence{ObservedAt: time.Now().UTC()}
@@ -213,7 +213,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		}
 	}
 	capabilities.Observation = s.observation(StateStarting, evidence)
-	status, err := s.cfg.Control.ActivateWorker(ctx, capabilities)
+	status, err := s.cfg.ControlPlane.ActivateWorker(ctx, capabilities)
 	if err != nil {
 		return fmt.Errorf("activate worker: %w", err)
 	}
@@ -314,7 +314,7 @@ func (s *Supervisor) reportStartupRecovery(
 	const maxAttempts = 10
 	delay := s.cfg.PollEvery
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		err := s.cfg.Control.ReportWorkerStartupRecovery(ctx, request)
+		err := s.cfg.ControlPlane.ReportWorkerStartupRecovery(ctx, request)
 		if err == nil {
 			return nil
 		}
@@ -382,7 +382,7 @@ func (s *Supervisor) completeServerDirectedDrain(
 	s.state.Store(StateDraining)
 	cancelActiveClaims()
 	cancelActiveBackground()
-	// Once control has durably requested draining, process signals can stop
+	// Once the Control Plane has durably requested draining, process signals can stop
 	// admission but cannot turn the operation back into a non-durable restart.
 	// The supervisor owns this bounded completion context.
 	drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.cfg.DrainTimeout)
@@ -452,7 +452,7 @@ func (s *Supervisor) completeServerDirectedDrain(
 		Quarantined:       finalEvidence.Quarantined,
 		Errors:            finalEvidence.QuarantineErrors,
 	}
-	status, err := s.cfg.Control.CompleteWorkerDrain(drainCtx, request)
+	status, err := s.cfg.ControlPlane.CompleteWorkerDrain(drainCtx, request)
 	if err != nil {
 		return fail(fmt.Errorf("complete worker drain with clean local inventory: %w", err))
 	}
@@ -492,7 +492,7 @@ func (s *Supervisor) waitForDrainReady(ctx context.Context, evidence RecoveryEvi
 	defer ticker.Stop()
 	for {
 		if s.registry.empty() {
-			status, err := s.cfg.Control.ObserveWorker(ctx, s.observation(StateDraining, evidence))
+			status, err := s.cfg.ControlPlane.ObserveWorker(ctx, s.observation(StateDraining, evidence))
 			if err == nil && status.Status == workerapi.StatusDraining && status.ActiveExecutions == 0 {
 				return nil
 			}
@@ -630,7 +630,7 @@ func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, sta
 		case <-ticker.C:
 		}
 		state := s.state.Load().(State)
-		if status, err := s.cfg.Control.ObserveWorker(ctx, s.observation(state, evidence)); err != nil && ctx.Err() == nil {
+		if status, err := s.cfg.ControlPlane.ObserveWorker(ctx, s.observation(state, evidence)); err != nil && ctx.Err() == nil {
 			s.cfg.Log.Warn("worker observation failed", "error", err)
 		} else if err == nil {
 			statusReturned(status)

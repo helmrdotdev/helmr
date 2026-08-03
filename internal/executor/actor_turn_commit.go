@@ -80,7 +80,7 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 	var response workerapi.CommitActorTurnResponse
 	if err := retryRunLeaseRequest(turnCtx, func(requestCtx context.Context) error {
 		var requestErr error
-		response, requestErr = task.control.CommitActorTurn(requestCtx, request)
+		response, requestErr = task.controlPlane.CommitActorTurn(requestCtx, request)
 		return requestErr
 	}); err != nil {
 		return fmt.Errorf("commit Actor turn: %w", err)
@@ -196,12 +196,12 @@ func (task *guestRunLeaseTask) readActorTurnCommitReady(
 		task.program.observedEventSeq++
 		switch value := event.Event.(type) {
 		case *runv0.RunEvent_StdoutChunk:
-			err = task.control.AppendRunLog(ctx, task.lease, workerapi.LogStreamStdout, task.program.observedEventSeq, value.StdoutChunk)
+			err = task.controlPlane.AppendRunLog(ctx, task.lease, workerapi.LogStreamStdout, task.program.observedEventSeq, value.StdoutChunk)
 		case *runv0.RunEvent_StderrChunk:
-			err = task.control.AppendRunLog(ctx, task.lease, workerapi.LogStreamStderr, task.program.observedEventSeq, value.StderrChunk)
+			err = task.controlPlane.AppendRunLog(ctx, task.lease, workerapi.LogStreamStderr, task.program.observedEventSeq, value.StderrChunk)
 		case *runv0.RunEvent_MetadataUpdated:
-			var observability runObservabilityControl
-			observability, err = requireRunObservabilityControl(task.control)
+			var observability runObservabilityControlPlane
+			observability, err = requireRunObservabilityControlPlane(task.controlPlane)
 			if err == nil {
 				err = updateRunMetadata(ctx, observability, task.lease, value.MetadataUpdated)
 			}
@@ -215,8 +215,8 @@ func (task *guestRunLeaseTask) readActorTurnCommitReady(
 				)
 			}
 		case *runv0.RunEvent_StructuredLogRequested:
-			var observability runObservabilityControl
-			observability, err = requireRunObservabilityControl(task.control)
+			var observability runObservabilityControlPlane
+			observability, err = requireRunObservabilityControlPlane(task.controlPlane)
 			if err == nil {
 				err = appendStructuredRunLog(
 					ctx,

@@ -16,22 +16,22 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type runObservabilityControl interface {
+type runObservabilityControlPlane interface {
 	UpdateRunMetadata(context.Context, workerapi.UpdateRunMetadataRequest) error
 	AppendStructuredRunLog(context.Context, workerapi.StructuredLogRequest) error
 }
 
-func requireRunObservabilityControl(value any) (runObservabilityControl, error) {
-	control, ok := value.(runObservabilityControl)
+func requireRunObservabilityControlPlane(value any) (runObservabilityControlPlane, error) {
+	controlPlane, ok := value.(runObservabilityControlPlane)
 	if !ok {
-		return nil, errors.New("Run observability control is required")
+		return nil, errors.New("Run observability Control Plane is required")
 	}
-	return control, nil
+	return controlPlane, nil
 }
 
 func updateRunMetadata(
 	ctx context.Context,
-	control runObservabilityControl,
+	controlPlane runObservabilityControlPlane,
 	lease workerapi.RunLeaseAssignment,
 	requested *runv0.MetadataUpdated,
 ) error {
@@ -46,16 +46,16 @@ func updateRunMetadata(
 	}
 	defer cancel()
 	return retryRunLeaseRequest(requestCtx, func(retryCtx context.Context) error {
-		return sendRunMetadataRequest(retryCtx, control, request)
+		return sendRunMetadataRequest(retryCtx, controlPlane, request)
 	})
 }
 
 func sendRunMetadataRequest(
 	ctx context.Context,
-	control runObservabilityControl,
+	controlPlane runObservabilityControlPlane,
 	request workerapi.UpdateRunMetadataRequest,
 ) error {
-	if err := control.UpdateRunMetadata(ctx, request); err != nil {
+	if err := controlPlane.UpdateRunMetadata(ctx, request); err != nil {
 		return fmt.Errorf("update Run metadata: %w", err)
 	}
 	return nil
@@ -63,7 +63,7 @@ func sendRunMetadataRequest(
 
 func appendStructuredRunLog(
 	ctx context.Context,
-	control runObservabilityControl,
+	controlPlane runObservabilityControlPlane,
 	lease workerapi.RunLeaseAssignment,
 	sequence uint64,
 	requested *runv0.StructuredLogRequested,
@@ -79,16 +79,16 @@ func appendStructuredRunLog(
 	}
 	defer cancel()
 	return retryRunLeaseRequest(requestCtx, func(retryCtx context.Context) error {
-		return sendStructuredRunLogRequest(retryCtx, control, request)
+		return sendStructuredRunLogRequest(retryCtx, controlPlane, request)
 	})
 }
 
 func sendStructuredRunLogRequest(
 	ctx context.Context,
-	control runObservabilityControl,
+	controlPlane runObservabilityControlPlane,
 	request workerapi.StructuredLogRequest,
 ) error {
-	if err := control.AppendStructuredRunLog(ctx, request); err != nil {
+	if err := controlPlane.AppendStructuredRunLog(ctx, request); err != nil {
 		return fmt.Errorf("append structured Run log: %w", err)
 	}
 	return nil

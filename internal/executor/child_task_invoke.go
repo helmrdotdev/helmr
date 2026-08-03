@@ -15,7 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type childTaskInvokeControl interface {
+type childTaskInvokeControlPlane interface {
 	InvokeChildTask(context.Context, workerapi.InvokeChildTaskRequest) (workerapi.InvokeChildTaskResponse, error)
 }
 
@@ -27,9 +27,9 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 	if err != nil {
 		return err
 	}
-	control, ok := task.control.(childTaskInvokeControl)
+	controlPlane, ok := task.controlPlane.(childTaskInvokeControlPlane)
 	if !ok {
-		return errors.New("Run Lease Task child Task invocation control is required")
+		return errors.New("Run Lease Task child Task invocation Control Plane is required")
 	}
 	var response workerapi.InvokeChildTaskResponse
 	if err := task.callRunSourceRuntime(ctx, func(
@@ -38,7 +38,7 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 	) error {
 		request.Lease = lease.Fence()
 		var callErr error
-		response, callErr = control.InvokeChildTask(callCtx, request)
+		response, callErr = controlPlane.InvokeChildTask(callCtx, request)
 		return callErr
 	}); err != nil {
 		if failure, ok := childTaskInvokeFailure(err); ok {
@@ -62,7 +62,7 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 			return errors.New("child Task invocation response Wait IDs did not match")
 		}
 		if task.waits == nil {
-			return errors.New("Run Lease Task wait control is required")
+			return errors.New("Run Lease Task wait Control Plane is required")
 		}
 		runtimeWait := WaitRequest{
 			Leases:                        task,

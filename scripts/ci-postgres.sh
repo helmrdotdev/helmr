@@ -37,8 +37,8 @@ fi
 export HELMR_TEST_DATABASE_URL="postgres://postgres@127.0.0.1:${port}/postgres?sslmode=disable"
 cd "$repo_root"
 CGO_ENABLED=1 go test -race \
-	./dev/control \
-	./internal/control \
+	./cmd/internal/dev-controlplane \
+	./internal/controlplane \
 	./internal/db \
 	./internal/db/schema \
 	./internal/dispatch \
@@ -49,5 +49,5 @@ CGO_ENABLED=1 go test -race \
 	./internal/secret \
 	./internal/sessionlock \
 	./internal/token \
-	./cmd/helmr-control \
+	./cmd/helmr-controlplane \
 	./cmd/helmr-dispatcher

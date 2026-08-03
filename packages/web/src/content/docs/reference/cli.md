@@ -8,7 +8,7 @@ order: 900
 
 # CLI reference
 
-The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint with `--api-url`, `HELMR_API_URL`, or a saved login from `helmr login`. Authenticate with `HELMR_API_KEY` or a saved login session.
+The `helmr` CLI talks to the Control Plane over HTTP(S). Choose the endpoint with `--api-url`, `HELMR_API_URL`, or a saved login from `helmr login`. Authenticate with `HELMR_API_KEY` or a saved login session.
 
 | Command | Purpose |
 | --- | --- |
@@ -52,7 +52,7 @@ Common options:
 
 | Option | Purpose |
 | --- | --- |
-| `-a, --api-url URL` | Override the Helmr control API URL. |
+| `-a, --api-url URL` | Override the Helmr Control Plane API URL. |
 | `--help` | Show command help. |
 | `--version` | Print the CLI version. |
 

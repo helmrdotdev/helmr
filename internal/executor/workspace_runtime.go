@@ -21,9 +21,9 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 	ctx context.Context,
 	event *runv0.RunEvent,
 ) error {
-	control, ok := task.control.(WorkspaceRuntimeControl)
+	controlPlane, ok := task.controlPlane.(WorkspaceRuntimeControlPlane)
 	if !ok {
-		return errors.New("Run Lease Task Workspace runtime control is required")
+		return errors.New("Run Lease Task Workspace runtime Control Plane is required")
 	}
 	var correlationID string
 	var completed any
@@ -42,7 +42,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 		) error {
 			request.Lease = lease.Fence()
 			var callErr error
-			response, callErr = control.CreateRunWorkspace(callCtx, request)
+			response, callErr = controlPlane.CreateRunWorkspace(callCtx, request)
 			return callErr
 		}); err != nil {
 			return fmt.Errorf("create Workspace: %w", err)
@@ -70,7 +70,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 		) error {
 			request.Lease = lease.Fence()
 			var callErr error
-			response, callErr = control.RetrieveRunWorkspace(callCtx, request)
+			response, callErr = controlPlane.RetrieveRunWorkspace(callCtx, request)
 			return callErr
 		}); err != nil {
 			return fmt.Errorf("retrieve Workspace: %w", err)
@@ -102,7 +102,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 		) error {
 			request.Lease = lease.Fence()
 			var callErr error
-			response, callErr = control.ReadRunWorkspaceFile(callCtx, request)
+			response, callErr = controlPlane.ReadRunWorkspaceFile(callCtx, request)
 			return callErr
 		}); err != nil {
 			return fmt.Errorf("read Workspace file: %w", err)
@@ -134,7 +134,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 		) error {
 			request.Lease = lease.Fence()
 			var callErr error
-			response, callErr = control.StatRunWorkspaceFile(callCtx, request)
+			response, callErr = controlPlane.StatRunWorkspaceFile(callCtx, request)
 			return callErr
 		}); err != nil {
 			return fmt.Errorf("stat Workspace file: %w", err)
@@ -173,7 +173,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 		) error {
 			request.Lease = lease.Fence()
 			var callErr error
-			response, callErr = control.ListRunWorkspaceFiles(callCtx, request)
+			response, callErr = controlPlane.ListRunWorkspaceFiles(callCtx, request)
 			return callErr
 		}); err != nil {
 			return fmt.Errorf("list Workspace files: %w", err)
@@ -191,7 +191,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 			return err
 		}
 		correlationID = request.CorrelationID
-		response, err := task.executeWorkspaceRuntime(ctx, control, request)
+		response, err := task.executeWorkspaceRuntime(ctx, controlPlane, request)
 		if err != nil {
 			return err
 		}
@@ -219,7 +219,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 		) error {
 			request.Lease = lease.Fence()
 			var callErr error
-			response, callErr = control.DeleteRunWorkspace(callCtx, request)
+			response, callErr = controlPlane.DeleteRunWorkspace(callCtx, request)
 			return callErr
 		}); err != nil {
 			return fmt.Errorf("delete Workspace: %w", err)
@@ -258,7 +258,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 
 func (task *guestRunLeaseTask) executeWorkspaceRuntime(
 	ctx context.Context,
-	control WorkspaceRuntimeControl,
+	controlPlane WorkspaceRuntimeControlPlane,
 	request workerapi.ExecuteWorkspaceRequest,
 ) (workerapi.ExecuteWorkspaceResponse, error) {
 	var response workerapi.ExecuteWorkspaceResponse
@@ -268,7 +268,7 @@ func (task *guestRunLeaseTask) executeWorkspaceRuntime(
 	) error {
 		request.Lease = lease.Fence()
 		var callErr error
-		response, callErr = control.ExecuteRunWorkspace(callCtx, request)
+		response, callErr = controlPlane.ExecuteRunWorkspace(callCtx, request)
 		return callErr
 	}); err != nil {
 		return workerapi.ExecuteWorkspaceResponse{}, fmt.Errorf("execute Workspace: %w", err)
@@ -299,7 +299,7 @@ func (task *guestRunLeaseTask) executeWorkspaceRuntime(
 		) error {
 			poll.Lease = lease.Fence()
 			var callErr error
-			response, callErr = control.PollRunWorkspaceExec(callCtx, poll)
+			response, callErr = controlPlane.PollRunWorkspaceExec(callCtx, poll)
 			return callErr
 		}); err != nil {
 			return workerapi.ExecuteWorkspaceResponse{}, fmt.Errorf("poll Workspace exec: %w", err)

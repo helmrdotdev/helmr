@@ -49,7 +49,7 @@ type WorkspaceMaterializer struct {
 	Capacity              *capacity.Ledger
 }
 
-func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount workerapi.WorkspaceMount, client workerapi.WorkspaceMaterializerControlClient) (runErr error) {
+func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount workerapi.WorkspaceMount, client workerapi.WorkspaceMaterializerControlPlaneClient) (runErr error) {
 	if m.Connector == nil {
 		return errors.New("workspace materializer connector is required")
 	}
@@ -159,7 +159,7 @@ func (m WorkspaceMaterializer) serveWorkspaceMount(
 	renewal *workspaceMountRenewal,
 	session *managedWorkspaceMountSession,
 	mount workerapi.WorkspaceMount,
-	client workerapi.WorkspaceMaterializerControlClient,
+	client workerapi.WorkspaceMaterializerControlPlaneClient,
 ) error {
 	sessionExited := make(chan error, 1)
 	go func() {
@@ -466,7 +466,7 @@ func validateWorkspaceBasicExecOutcome(outcome string) error {
 
 func (m WorkspaceMaterializer) completeWorkspaceBasicExec(
 	ctx context.Context,
-	client workerapi.WorkspaceMaterializerControlClient,
+	client workerapi.WorkspaceMaterializerControlPlaneClient,
 	request workerapi.WorkspaceExecCompleteRequest,
 ) (workerapi.WorkspaceMountResponse, error) {
 	backoff := m.CompleteErrorBackoff
@@ -550,7 +550,7 @@ func (r *workspaceMountRenewal) stopAndWait() error {
 	return r.err
 }
 
-func (m WorkspaceMaterializer) startRenewalLoop(ctx context.Context, request workerapi.WorkspaceMountRenewRequest, client workerapi.WorkspaceMaterializerControlClient, every time.Duration) *workspaceMountRenewal {
+func (m WorkspaceMaterializer) startRenewalLoop(ctx context.Context, request workerapi.WorkspaceMountRenewRequest, client workerapi.WorkspaceMaterializerControlPlaneClient, every time.Duration) *workspaceMountRenewal {
 	renewCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	updates := make(chan workerapi.WorkspaceMountResponse, 1)
@@ -1254,7 +1254,7 @@ func (m WorkspaceMaterializer) registerWorkspaceMountContext(ctx context.Context
 	}
 }
 
-func (m WorkspaceMaterializer) stopControlledWorkspaceMount(ctx context.Context, session vm.Session, mount workerapi.WorkspaceMount, update workerapi.WorkspaceMountResponse, client workerapi.WorkspaceMaterializerControlClient) error {
+func (m WorkspaceMaterializer) stopControlledWorkspaceMount(ctx context.Context, session vm.Session, mount workerapi.WorkspaceMount, update workerapi.WorkspaceMountResponse, client workerapi.WorkspaceMaterializerControlPlaneClient) error {
 	if strings.TrimSpace(update.State) != "unmounting" {
 		return fmt.Errorf("Workspace mount stop requires unmounting state, got %q", update.State)
 	}
@@ -1460,7 +1460,7 @@ func (m WorkspaceMaterializer) channelToken(mount workerapi.WorkspaceMount) stri
 	return token
 }
 
-func (m WorkspaceMaterializer) failWorkspaceMount(client workerapi.WorkspaceMaterializerControlClient, mount workerapi.WorkspaceMount, cause error) error {
+func (m WorkspaceMaterializer) failWorkspaceMount(client workerapi.WorkspaceMaterializerControlPlaneClient, mount workerapi.WorkspaceMount, cause error) error {
 	body := workspaceMountError(cause)
 	ctx, cancel := context.WithTimeout(context.Background(), m.failureTimeout())
 	defer cancel()

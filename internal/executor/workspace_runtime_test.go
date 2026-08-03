@@ -15,8 +15,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type workspaceRuntimeContractControl struct {
-	*testRunLeaseControl
+type workspaceRuntimeContractControlPlane struct {
+	*testRunLeaseControlPlane
 	createRequest  workerapi.CreateWorkspaceRequest
 	createResponse workerapi.CreateWorkspaceResponse
 	execRequest    workerapi.ExecuteWorkspaceRequest
@@ -25,57 +25,57 @@ type workspaceRuntimeContractControl struct {
 	pollResponses  []workerapi.ExecuteWorkspaceResponse
 }
 
-func (control *workspaceRuntimeContractControl) CreateRunWorkspace(
+func (controlPlane *workspaceRuntimeContractControlPlane) CreateRunWorkspace(
 	_ context.Context,
 	request workerapi.CreateWorkspaceRequest,
 ) (workerapi.CreateWorkspaceResponse, error) {
-	control.createRequest = request
-	return control.createResponse, nil
+	controlPlane.createRequest = request
+	return controlPlane.createResponse, nil
 }
 
-func (*workspaceRuntimeContractControl) RetrieveRunWorkspace(
+func (*workspaceRuntimeContractControlPlane) RetrieveRunWorkspace(
 	context.Context, workerapi.RetrieveWorkspaceRequest,
 ) (workerapi.RetrieveWorkspaceResponse, error) {
 	panic("unexpected Workspace retrieve")
 }
 
-func (*workspaceRuntimeContractControl) ReadRunWorkspaceFile(
+func (*workspaceRuntimeContractControlPlane) ReadRunWorkspaceFile(
 	context.Context, workerapi.ReadWorkspaceFileRequest,
 ) (workerapi.ReadWorkspaceFileResponse, error) {
 	panic("unexpected Workspace file read")
 }
 
-func (*workspaceRuntimeContractControl) StatRunWorkspaceFile(
+func (*workspaceRuntimeContractControlPlane) StatRunWorkspaceFile(
 	context.Context, workerapi.ReadWorkspaceFileRequest,
 ) (workerapi.StatWorkspaceFileResponse, error) {
 	panic("unexpected Workspace file stat")
 }
 
-func (*workspaceRuntimeContractControl) ListRunWorkspaceFiles(
+func (*workspaceRuntimeContractControlPlane) ListRunWorkspaceFiles(
 	context.Context, workerapi.ListWorkspaceFilesRequest,
 ) (workerapi.ListWorkspaceFilesResponse, error) {
 	panic("unexpected Workspace file list")
 }
 
-func (control *workspaceRuntimeContractControl) ExecuteRunWorkspace(
+func (controlPlane *workspaceRuntimeContractControlPlane) ExecuteRunWorkspace(
 	_ context.Context,
 	request workerapi.ExecuteWorkspaceRequest,
 ) (workerapi.ExecuteWorkspaceResponse, error) {
-	control.execRequest = request
-	return control.execResponse, nil
+	controlPlane.execRequest = request
+	return controlPlane.execResponse, nil
 }
 
-func (control *workspaceRuntimeContractControl) PollRunWorkspaceExec(
+func (controlPlane *workspaceRuntimeContractControlPlane) PollRunWorkspaceExec(
 	_ context.Context,
 	request workerapi.PollWorkspaceExecRequest,
 ) (workerapi.ExecuteWorkspaceResponse, error) {
-	control.pollRequests = append(control.pollRequests, request)
-	response := control.pollResponses[0]
-	control.pollResponses = control.pollResponses[1:]
+	controlPlane.pollRequests = append(controlPlane.pollRequests, request)
+	response := controlPlane.pollResponses[0]
+	controlPlane.pollResponses = controlPlane.pollResponses[1:]
 	return response, nil
 }
 
-func (*workspaceRuntimeContractControl) DeleteRunWorkspace(
+func (*workspaceRuntimeContractControlPlane) DeleteRunWorkspace(
 	context.Context, workerapi.DeleteWorkspaceRequest,
 ) (workerapi.DeleteWorkspaceResponse, error) {
 	panic("unexpected Workspace delete")
@@ -84,8 +84,8 @@ func (*workspaceRuntimeContractControl) DeleteRunWorkspace(
 func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 	const correlationID = "019c0225-f0c9-7f66-8a23-7782ca0a8461"
 	t.Run("create happy path", func(t *testing.T) {
-		control := &workspaceRuntimeContractControl{
-			testRunLeaseControl: &testRunLeaseControl{},
+		controlPlane := &workspaceRuntimeContractControlPlane{
+			testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 			createResponse: workerapi.CreateWorkspaceResponse{
 				CorrelationID: correlationID,
 				Completed: &api.CreateWorkspaceResponse{
@@ -108,21 +108,21 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 					}},
 				},
 			},
-		}, control)
+		}, controlPlane)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if decision.GetKind() != "completed" ||
-			control.createRequest.Lease.ID == "" ||
-			control.createRequest.WorkspaceDeclaredID != "cache" ||
-			control.createRequest.Key == nil || *control.createRequest.Key != key ||
-			len(control.createRequest.Secrets) != 1 {
-			t.Fatalf("decision = %+v request = %+v", decision, control.createRequest)
+			controlPlane.createRequest.Lease.ID == "" ||
+			controlPlane.createRequest.WorkspaceDeclaredID != "cache" ||
+			controlPlane.createRequest.Key == nil || *controlPlane.createRequest.Key != key ||
+			len(controlPlane.createRequest.Secrets) != 1 {
+			t.Fatalf("decision = %+v request = %+v", decision, controlPlane.createRequest)
 		}
 	})
 	t.Run("domain failure", func(t *testing.T) {
-		control := &workspaceRuntimeContractControl{
-			testRunLeaseControl: &testRunLeaseControl{},
+		controlPlane := &workspaceRuntimeContractControlPlane{
+			testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 			createResponse: workerapi.CreateWorkspaceResponse{
 				CorrelationID: correlationID,
 				Failed: &workerapi.RuntimeOperationFailure{
@@ -136,7 +136,7 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 					CorrelationId: correlationID, DeclaredId: "cache",
 				},
 			},
-		}, control)
+		}, controlPlane)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -149,8 +149,8 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 		}
 	})
 	t.Run("exec admission survives through poll", func(t *testing.T) {
-		control := &workspaceRuntimeContractControl{
-			testRunLeaseControl: &testRunLeaseControl{},
+		controlPlane := &workspaceRuntimeContractControlPlane{
+			testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 			execResponse: workerapi.ExecuteWorkspaceResponse{
 				CorrelationID: correlationID,
 				Pending:       &workerapi.WorkspaceExecPending{ProcessID: "019c0225-f0c9-7f66-8a23-7782ca0a8462"},
@@ -174,16 +174,16 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 					TimeoutMs: &timeout, IdempotencyKey: "exec:ok",
 				},
 			},
-		}, control)
+		}, controlPlane)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if decision.GetKind() != "completed" ||
-			len(control.pollRequests) != 1 ||
-			control.execRequest.Lease.ID == "" ||
-			control.pollRequests[0].Lease.ID == "" ||
-			control.pollRequests[0].ProcessID != "019c0225-f0c9-7f66-8a23-7782ca0a8462" {
-			t.Fatalf("decision = %+v exec = %+v polls = %+v", decision, control.execRequest, control.pollRequests)
+			len(controlPlane.pollRequests) != 1 ||
+			controlPlane.execRequest.Lease.ID == "" ||
+			controlPlane.pollRequests[0].Lease.ID == "" ||
+			controlPlane.pollRequests[0].ProcessID != "019c0225-f0c9-7f66-8a23-7782ca0a8462" {
+			t.Fatalf("decision = %+v exec = %+v polls = %+v", decision, controlPlane.execRequest, controlPlane.pollRequests)
 		}
 	})
 }
@@ -227,7 +227,7 @@ func TestWorkspaceRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 			close(firstAttempt)
 			return &httpclient.Error{
 				StatusCode: 503, Status: "503 Service Unavailable",
-				Message: "temporary control failure",
+				Message: "temporary Control Plane failure",
 			}
 		}
 		return nil
@@ -245,7 +245,7 @@ func TestWorkspaceRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 func runWorkspaceRuntimeContract(
 	t *testing.T,
 	event *runv0.RunEvent,
-	control *workspaceRuntimeContractControl,
+	controlPlane *workspaceRuntimeContractControlPlane,
 ) (*runv0.ResumeDecision, error) {
 	t.Helper()
 	lease := testFreshProgramClaim(t).Lease
@@ -254,9 +254,9 @@ func runWorkspaceRuntimeContract(
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: guest}},
-		control: control,
-		lease:   lease,
+		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		controlPlane: controlPlane,
+		lease:        lease,
 	}
 	result := make(chan error, 1)
 	go func() { result <- task.handleWorkspaceRuntime(t.Context(), event) }()

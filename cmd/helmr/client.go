@@ -20,8 +20,8 @@ const (
 
 var newSessionStore = session.New
 
-func controlClient(cmd *cobra.Command) (*client.Client, error) {
-	rawURL := cliControlURL(cmd)
+func controlPlaneClient(cmd *cobra.Command) (*client.Client, error) {
+	rawURL := cliControlPlaneURL(cmd)
 	bearer := strings.TrimSpace(os.Getenv(helmrAPIKeyEnv))
 	sessionScopedRoutes := false
 	var state *session.Store
@@ -40,7 +40,7 @@ func controlClient(cmd *cobra.Command) (*client.Client, error) {
 			return nil, err
 		}
 	}
-	parsed, err := parseControlURL(rawURL)
+	parsed, err := parseControlPlaneURL(rawURL)
 	if err != nil {
 		if rawURL == "" {
 			return nil, fmt.Errorf("helmr API access requires %s=http(s)://... or helmr login", helmrAPIURLEnv)
@@ -67,8 +67,8 @@ func controlClient(cmd *cobra.Command) (*client.Client, error) {
 	return client.New(baseURL, opts...)
 }
 
-func sessionControlClient(cmd *cobra.Command) (*client.Client, error) {
-	rawURL := cliControlURL(cmd)
+func sessionControlPlaneClient(cmd *cobra.Command) (*client.Client, error) {
+	rawURL := cliControlPlaneURL(cmd)
 	state, err := newSessionStore()
 	if err != nil {
 		return nil, err
@@ -83,7 +83,7 @@ func sessionControlClient(cmd *cobra.Command) (*client.Client, error) {
 			return nil, err
 		}
 	}
-	parsed, err := parseControlURL(rawURL)
+	parsed, err := parseControlPlaneURL(rawURL)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +98,7 @@ func sessionControlClient(cmd *cobra.Command) (*client.Client, error) {
 	return client.New(baseURL, client.WithBearerToken(bearer), client.WithSessionScopedRoutes())
 }
 
-func cliControlURL(cmd *cobra.Command) string {
+func cliControlPlaneURL(cmd *cobra.Command) string {
 	if rawURL := explicitAPIURL(cmd); rawURL != "" {
 		return rawURL
 	}
@@ -124,10 +124,10 @@ func explicitAPIURL(cmd *cobra.Command) string {
 	return strings.TrimSpace(rawURL)
 }
 
-func parseControlURL(rawURL string) (*url.URL, error) {
+func parseControlPlaneURL(rawURL string) (*url.URL, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
-		return nil, fmt.Errorf("control URL is required")
+		return nil, fmt.Errorf("Control Plane URL is required")
 	}
 	parsed, err := url.Parse(rawURL)
 	if err != nil {

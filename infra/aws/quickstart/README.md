@@ -1,16 +1,16 @@
 # Helmr AWS Quickstart
 
 This example deploys a low-cost Helmr self-hosting baseline for evaluation, PoC, or a startup
-environment. It uses the shared AWS modules for network, control plane, and optional workers.
+environment. It uses the shared AWS modules for network, Control Plane, and optional workers.
 
 Defaults:
 
 - CloudFront is disabled by default. When enabled, it uses the AWS-managed `*.cloudfront.net`
   viewer domain and a separate HTTPS ALB origin DNS name.
 - NAT Gateway is disabled.
-- Control and migration Fargate tasks run with public IPs, while inbound task traffic still comes
+- Control Plane and migration Fargate tasks run with public IPs, while inbound task traffic still comes
   only from the load balancer security group.
-- The `helmr-control` service desired count is `1`.
+- The `helmr-controlplane` service desired count is `1`.
 - The `helmr-dispatcher` service desired count is `1`.
 - A single-node, cluster-mode disabled ElastiCache Valkey/Redis queue is provisioned for
   `HELMR_REDIS_URL`.
@@ -39,7 +39,7 @@ tofu init
 tofu apply
 ```
 
-The first apply should usually keep `create_control_service=false`. It creates infrastructure,
+The first apply should usually keep `create_controlplane_service=false`. It creates infrastructure,
 resolves the official release artifacts, creates empty Secrets Manager containers, and creates the
 migration task definition without trying to start a service that cannot yet read populated secrets.
 
@@ -84,27 +84,27 @@ email_from     = "Helmr <noreply@example.com>"
 ```
 
 After applying, populate the emitted `secret_arns.resend_api_key` Secrets Manager secret with the
-Resend API key before starting the control service.
+Resend API key before starting the Control Plane service.
 
 ## Run Migrations
 
-Run the migration task after secrets are populated and before enabling the control and dispatcher
+Run the migration task after secrets are populated and before enabling the Control Plane and dispatcher
 services:
 
 ```sh
 aws ecs run-task \
-  --cluster "$(tofu output -raw control_cluster_name)" \
+  --cluster "$(tofu output -raw controlplane_cluster_name)" \
   --task-definition "$(tofu output -raw migration_task_definition_arn)" \
   --launch-type FARGATE \
   --network-configuration "$(jq -cn \
-    --argjson subnets "$(tofu output -json control_task_subnet_ids)" \
-    --argjson securityGroups "$(tofu output -json control_task_security_group_ids)" \
-    --arg assignPublicIp "$([ "$(tofu output -raw control_assign_public_ip)" = "true" ] && printf ENABLED || printf DISABLED)" \
+    --argjson subnets "$(tofu output -json controlplane_task_subnet_ids)" \
+    --argjson securityGroups "$(tofu output -json controlplane_task_security_group_ids)" \
+    --arg assignPublicIp "$([ "$(tofu output -raw controlplane_assign_public_ip)" = "true" ] && printf ENABLED || printf DISABLED)" \
     '{awsvpcConfiguration:{subnets:$subnets,securityGroups:$securityGroups,assignPublicIp:$assignPublicIp}}')"
 ```
 
-Then set `create_control_service=true` and apply again. This starts separate `helmr-control` and
-`helmr-dispatcher` ECS services using `control_desired_count` and `dispatcher_desired_count`.
+Then set `create_controlplane_service=true` and apply again. This starts separate `helmr-controlplane` and
+`helmr-dispatcher` ECS services using `controlplane_desired_count` and `dispatcher_desired_count`.
 
 ## Optional Worker Smoke
 
@@ -122,8 +122,8 @@ worker_root_volume_size_gb          = 120
 worker_disk_mib                     = null
 ```
 
-When workers are enabled, `certificate_arn` and a worker control DNS name are required. The stack
-derives the worker control URL from `public_url` for direct ALB mode or from
+When workers are enabled, `certificate_arn` and a Worker Control Plane DNS name are required. The stack
+derives the worker Control Plane URL from `public_url` for direct ALB mode or from
 `cloudfront_origin_domain_name` for CloudFront mode, then resolves that hostname to an internal ALB
 inside the VPC.
 
@@ -133,11 +133,11 @@ for custom builds; custom AMIs must satisfy the `modules/worker` contract: Firec
 `helmr-worker` installed. Keep NAT enabled
 while a worker is running or draining because workers run in private subnets. Workers are
 filesystem-first: the root EBS volume carries build/cache/runtime data, and `worker_disk_mib` can
-override the disk capacity advertised to the control plane.
+override the disk capacity advertised to the Control Plane.
 
 For an AMI rollout, change `worker_ami_id`, apply the launch template, and
 coordinate the Auto Scaling instance refresh through the deployment's exact
-drain-to-`termination_ready` path. Control does not authenticate or allowlist
+drain-to-`termination_ready` path. Control Plane does not authenticate or allowlist
 the AMI.
 
 Deployment infrastructure owns desired capacity for run and build groups.

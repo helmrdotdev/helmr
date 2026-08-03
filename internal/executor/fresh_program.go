@@ -29,7 +29,7 @@ const (
 	maxFreshOutcomeFrameBytes  = maxFreshTaskOutputBytes + 64<<10
 )
 
-type FreshProgramControl interface {
+type FreshProgramControlPlane interface {
 	AcknowledgeRunStart(
 		context.Context,
 		workerapi.RunStartRequest,
@@ -81,12 +81,12 @@ type newProgramAdmission struct {
 }
 
 type freshAdmissionState struct {
-	mu        sync.Mutex
-	lease     workerapi.RunLeaseAssignment
-	authority *workspacev0.WorkspaceRunAuthority
-	mounts    WorkspaceMountSessionRegistry
-	control   FreshProgramControl
-	events    freshProgramEventSink
+	mu           sync.Mutex
+	lease        workerapi.RunLeaseAssignment
+	authority    *workspacev0.WorkspaceRunAuthority
+	mounts       WorkspaceMountSessionRegistry
+	controlPlane FreshProgramControlPlane
+	events       freshProgramEventSink
 }
 
 func (state *freshAdmissionState) AppendRunLog(
@@ -119,11 +119,11 @@ func (state *freshAdmissionState) ApplyRunMetadata(
 ) error {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	control, err := requireRunObservabilityControl(state.control)
+	controlPlane, err := requireRunObservabilityControlPlane(state.controlPlane)
 	if err != nil {
 		return err
 	}
-	return updateRunMetadata(ctx, control, state.lease, request)
+	return updateRunMetadata(ctx, controlPlane, state.lease, request)
 }
 
 func (state *freshAdmissionState) RecordStructuredRunLog(
@@ -134,11 +134,11 @@ func (state *freshAdmissionState) RecordStructuredRunLog(
 ) error {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	control, err := requireRunObservabilityControl(state.control)
+	controlPlane, err := requireRunObservabilityControlPlane(state.controlPlane)
 	if err != nil {
 		return err
 	}
-	return appendStructuredRunLog(ctx, control, state.lease, sequence, request)
+	return appendStructuredRunLog(ctx, controlPlane, state.lease, sequence, request)
 }
 
 func (state *freshAdmissionState) expiresAt() time.Time {
@@ -152,7 +152,7 @@ func (state *freshAdmissionState) renew(ctx context.Context) error {
 	defer state.mu.Unlock()
 	renewed, fence, err := renewRunLeaseAuthority(
 		ctx,
-		state.control,
+		state.controlPlane,
 		state.mounts,
 		state.lease,
 		state.authority,
@@ -605,15 +605,15 @@ func validateFreshTaskFailure(message string, details *string) error {
 func (r ProgramRunner) startNewProgram(
 	ctx context.Context,
 	claim *workerapi.RunLeaseClaimResponse,
-	control FreshProgramControl,
+	controlPlane FreshProgramControlPlane,
 	events freshProgramEventSink,
 ) (freshProgram, error) {
 	if claim == nil {
 		return freshProgram{}, errors.New("Run Lease claim is required")
 	}
 	defer clearFreshProgramDelivery(claim)
-	if control == nil {
-		return freshProgram{}, errors.New("fresh Program control is required")
+	if controlPlane == nil {
+		return freshProgram{}, errors.New("fresh Program Control Plane is required")
 	}
 	if events == nil {
 		return freshProgram{}, errors.New("fresh Program event sink is required")
@@ -710,7 +710,7 @@ func (r ProgramRunner) startNewProgram(
 	if err := retryRunLeaseRequest(ackCtx, func(requestCtx context.Context) error {
 		var requestErr error
 		admission.start.Lease = claim.Lease.Fence()
-		startResponse, requestErr = control.AcknowledgeRunStart(
+		startResponse, requestErr = controlPlane.AcknowledgeRunStart(
 			requestCtx,
 			admission.start,
 		)
@@ -724,11 +724,11 @@ func (r ProgramRunner) startNewProgram(
 		)
 	}
 	state := &freshAdmissionState{
-		lease:     claim.Lease,
-		authority: freshWorkspaceAuthority(claim, opened.ChannelToken),
-		mounts:    r.WorkspaceMounts,
-		control:   control,
-		events:    events,
+		lease:        claim.Lease,
+		authority:    freshWorkspaceAuthority(claim, opened.ChannelToken),
+		mounts:       r.WorkspaceMounts,
+		controlPlane: controlPlane,
+		events:       events,
 	}
 	retainAuthority := false
 	defer func() {
@@ -822,7 +822,7 @@ func (r ProgramRunner) startNewProgram(
 		EntrypointDeclaredID: ready.GetEntrypoint().GetDeclaredId(),
 	}
 	if err := retryRunLeaseRequest(entrypointAckCtx, func(requestCtx context.Context) error {
-		return control.AcknowledgeRunEntrypoint(requestCtx, entrypointRequest)
+		return controlPlane.AcknowledgeRunEntrypoint(requestCtx, entrypointRequest)
 	}); err != nil {
 		return freshProgram{}, fmt.Errorf("acknowledge Run entrypoint: %w", err)
 	}
