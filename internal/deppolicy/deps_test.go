@@ -68,6 +68,7 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"deployment/programbuild": {"controlplane", "db", "firecracker", "guestd", "workerclient"},
 		"guestd":                  {"controlplane", "db", "deployment/programbuild", "executor", "vm"},
 		"imagebuild":              {"compute", "deployment/programbuild", "frameio", "imagecache", "oci", "vm", "wire"},
+		"imagecache":              {"db"},
 		"imagecache/ecr":          {"deployment/programbuild"},
 		"workspace":               {"api", "controlplane", "db", "executor", "guestd", "pgvalue", "wire"},
 		"controlplane":            {"eventstream", "executor", "firecracker", "guestd"},

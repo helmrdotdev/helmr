@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -68,6 +69,161 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "magic link mailer is not configured") {
 		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestServeControlPlaneBindsBeforeStartingWorkflows(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+	started := make(chan struct{}, 1)
+	server := &http.Server{Addr: occupied.Addr().String(), Handler: http.NotFoundHandler()}
+	err = serveControlPlane(
+		t.Context(),
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		server,
+		[]backgroundWorkflow{{name: "test", run: func(context.Context) error {
+			started <- struct{}{}
+			return nil
+		}}},
+		time.Second,
+	)
+	if err == nil {
+		t.Fatal("occupied address was accepted")
+	}
+	select {
+	case <-started:
+		t.Fatal("workflow started before listener bind succeeded")
+	default:
+	}
+}
+
+func TestServeControlPlaneStopsAndWaitsAfterWorkflowFailure(t *testing.T) {
+	want := errors.New("publisher failed")
+	stopped := make(chan struct{})
+	server := &http.Server{Addr: "127.0.0.1:0", Handler: http.NotFoundHandler()}
+	err := serveControlPlane(
+		t.Context(),
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		server,
+		[]backgroundWorkflow{
+			{name: "failed", run: func(context.Context) error { return want }},
+			{name: "waiting", run: func(ctx context.Context) error {
+				<-ctx.Done()
+				close(stopped)
+				return ctx.Err()
+			}},
+		},
+		time.Second,
+	)
+	if !errors.Is(err, want) {
+		t.Fatalf("error = %v, want %v", err, want)
+	}
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("Control Plane returned before every workflow stopped")
+	}
+}
+
+func TestServeControlPlaneDrainsActiveRequests(t *testing.T) {
+	addr := freeSmokeAddr(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := &http.Server{
+		Addr: addr,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			close(started)
+			<-release
+			w.WriteHeader(http.StatusNoContent)
+		}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- serveControlPlane(
+			ctx,
+			slog.New(slog.NewTextHandler(io.Discard, nil)),
+			server,
+			nil,
+			time.Second,
+		)
+	}()
+	requestErr := make(chan error, 1)
+	go func() {
+		response, err := getControlPlane(addr)
+		if err == nil {
+			response.Body.Close()
+		}
+		requestErr <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("request did not reach Control Plane")
+	}
+	cancel()
+	select {
+	case err := <-serveErr:
+		t.Fatalf("Control Plane stopped before request drained: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-requestErr; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serveErr; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServeControlPlaneForceClosesAfterDrainTimeout(t *testing.T) {
+	addr := freeSmokeAddr(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := &http.Server{
+		Addr: addr,
+		Handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			close(started)
+			<-release
+		}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- serveControlPlane(
+			ctx,
+			slog.New(slog.NewTextHandler(io.Discard, nil)),
+			server,
+			nil,
+			20*time.Millisecond,
+		)
+	}()
+	requestDone := make(chan struct{})
+	go func() {
+		response, err := getControlPlane(addr)
+		if err == nil {
+			response.Body.Close()
+		}
+		close(requestDone)
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("request did not reach Control Plane")
+	}
+	cancel()
+	err := <-serveErr
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want shutdown deadline", err)
+	}
+	close(release)
+	select {
+	case <-requestDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("forced close did not release client")
 	}
 }
 
@@ -167,7 +323,7 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	defer cancel()
 	errc := make(chan error, 1)
 	go func() {
-		errc <- run(runCtx, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		errc <- runControlPlane(runCtx, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -187,6 +343,17 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	if rec.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(rec.Body)
 		t.Fatalf("device start status = %d body=%s", rec.StatusCode, string(body))
+	}
+}
+
+func getControlPlane(addr string) (*http.Response, error) {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		response, err := http.Get("http://" + addr)
+		if err == nil || time.Now().After(deadline) {
+			return response, err
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

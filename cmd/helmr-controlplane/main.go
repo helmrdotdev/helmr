@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -30,8 +31,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/eventstream"
 	"github.com/helmrdotdev/helmr/internal/imagecache"
 	imagecacheecr "github.com/helmrdotdev/helmr/internal/imagecache/ecr"
+	"github.com/helmrdotdev/helmr/internal/imagecache/retirement"
 	"github.com/helmrdotdev/helmr/internal/platformlock"
 	"github.com/helmrdotdev/helmr/internal/region"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -45,6 +48,11 @@ var loadControlPlaneBuildPolicy = func(path string) (*deployment.BuildPolicy, er
 		return nil, fmt.Errorf("load build policy: %w", err)
 	}
 	return policy, nil
+}
+
+type backgroundWorkflow struct {
+	name string
+	run  func(context.Context) error
 }
 
 func main() {
@@ -80,13 +88,13 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	if err := run(context.Background(), log); err != nil {
+	if err := runControlPlane(context.Background(), log); err != nil {
 		log.Error("Control Plane stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, log *slog.Logger) error {
+func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	cfg, err := config.LoadControlPlane()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -97,10 +105,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	backgroundCtx, cancelBackground := context.WithCancel(context.Background())
-	defer cancelBackground()
-	serverCtx, cancelServer := context.WithCancel(context.Background())
-	defer cancelServer()
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("connect database: %w", err)
@@ -177,12 +181,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure event stream: %w", err)
 	}
-	go func() {
-		if err := eventStream.RunPublisher(backgroundCtx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("live telemetry publisher stopped", "error", err)
-			cancelServer()
-		}
-	}()
 	secretStore, err := secret.New(queries, pool, cfg.EncryptionKey)
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
@@ -215,7 +213,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		authProvider = controlplane.NewGitHubOAuthProvider(cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, publicURL)
 	}
 	var cacheRepositories imagecache.RepositoryProvisioner
-	var cacheRetirer imagecache.RepositoryRetirer
+	var cacheRetirement *retirement.Worker
 	if cfg.ImageCache != nil {
 		awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
 		if err != nil {
@@ -234,8 +232,18 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("configure Workspace image cache repositories: %w", err)
 		}
 		cacheRepositories = provisioner
-		cacheRetirer = provisioner
-		go controlplane.RunImageCacheRetirement(backgroundCtx, log, queries, cacheRetirer)
+		cacheRetirement, err = retirement.NewWorker(log, queries, provisioner)
+		if err != nil {
+			return fmt.Errorf("configure Workspace image cache retirement: %w", err)
+		}
+	}
+	runRetryReady, err := run.NewRetryReadyWorker(log, queries)
+	if err != nil {
+		return fmt.Errorf("configure Run retry readiness: %w", err)
+	}
+	queuedChildExpiry, err := run.NewQueuedChildExpiryWorker(log, pool)
+	if err != nil {
+		return fmt.Errorf("configure queued child Run expiry: %w", err)
 	}
 	handler, err := controlplane.NewServer(controlplane.ServerConfig{
 		Log:                   log,
@@ -267,7 +275,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 		AuthKey:               cfg.AuthKey,
 		PublicURL:             publicURL,
 		MagicLinkDebugURLs:    cfg.MagicLinkDebugURLs,
-		BackgroundContext:     backgroundCtx,
 	})
 	if err != nil {
 		return fmt.Errorf("configure Control Plane server: %w", err)
@@ -278,31 +285,94 @@ func run(ctx context.Context, log *slog.Logger) error {
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		IdleTimeout:       120 * time.Second,
-		BaseContext: func(_ net.Listener) context.Context {
-			return serverCtx
-		},
 	}
-	shutdownErr := make(chan error, 1)
+	workflows := []backgroundWorkflow{
+		{name: "live telemetry publisher", run: eventStream.RunPublisher},
+		{name: "Run retry readiness", run: runRetryReady.Run},
+		{name: "queued child Run expiry", run: queuedChildExpiry.Run},
+	}
+	if cacheRetirement != nil {
+		workflows = append(workflows, backgroundWorkflow{
+			name: "Workspace image cache retirement", run: cacheRetirement.Run,
+		})
+	}
+	return serveControlPlane(ctx, log, server, workflows, 10*time.Second)
+}
+
+func serveControlPlane(
+	ctx context.Context,
+	log *slog.Logger,
+	server *http.Server,
+	workflows []backgroundWorkflow,
+	shutdownTimeout time.Duration,
+) error {
+	serverCtx, cancelServer := context.WithCancel(context.Background())
+	defer cancelServer()
+	server.BaseContext = func(_ net.Listener) context.Context {
+		return serverCtx
+	}
+	listener, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", server.Addr, err)
+	}
+	backgroundCtx, cancelBackground := context.WithCancel(context.Background())
+	defer cancelBackground()
+	workflowErr := make(chan error, len(workflows))
+	var workflowWG sync.WaitGroup
+	for _, workflow := range workflows {
+		workflowWG.Go(func() {
+			err := workflow.run(backgroundCtx)
+			if err == nil {
+				err = errors.New("stopped unexpectedly")
+			}
+			workflowErr <- fmt.Errorf("%s: %w", workflow.name, err)
+		})
+	}
+	serverErr := make(chan error, 1)
 	go func() {
-		<-ctx.Done()
-		cancelServer()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		shutdownErr <- server.Shutdown(shutdownCtx)
-		cancelBackground()
+		serverErr <- server.Serve(listener)
 	}()
-	log.Info("Helmr Control Plane listening", "addr", cfg.Addr)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("serve: %w", err)
-	}
-	if ctx.Err() != nil {
-		if err := <-shutdownErr; err != nil {
-			return fmt.Errorf("shutdown server: %w", err)
+	log.Info("Helmr Control Plane listening", "addr", listener.Addr().String())
+	var runErr error
+	serverStopped := false
+	select {
+	case <-ctx.Done():
+	case err := <-serverErr:
+		serverStopped = true
+		if err == nil || errors.Is(err, http.ErrServerClosed) {
+			runErr = errors.New("HTTP server stopped unexpectedly")
+		} else {
+			runErr = fmt.Errorf("serve: %w", err)
 		}
+	case err := <-workflowErr:
+		runErr = err
 	}
 	cancelBackground()
-	cancelServer()
-	return nil
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), shutdownTimeout)
+	shutdownErr := server.Shutdown(shutdownCtx)
+	cancelShutdown()
+	if shutdownErr != nil {
+		cancelServer()
+		runErr = errors.Join(runErr, fmt.Errorf("shutdown server: %w", shutdownErr))
+		if closeErr := server.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			runErr = errors.Join(runErr, fmt.Errorf("close server: %w", closeErr))
+		}
+	} else {
+		cancelServer()
+	}
+	if !serverStopped {
+		if err := <-serverErr; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			runErr = errors.Join(runErr, fmt.Errorf("serve: %w", err))
+		}
+	}
+	workflowWG.Wait()
+	close(workflowErr)
+	for err := range workflowErr {
+		if !errors.Is(err, context.Canceled) {
+			runErr = errors.Join(runErr, err)
+		}
+	}
+	return runErr
 }
 
 func configuredEmailSender(log *slog.Logger, cfg config.ControlPlane) email.Sender {

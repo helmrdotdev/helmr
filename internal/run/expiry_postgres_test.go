@@ -93,27 +93,11 @@ UPDATE run_waits
 				t.Fatal(err)
 			}
 
-			tx, err = fixture.pool.Begin(ctx)
+			worker, err := NewQueuedChildExpiryWorker(nil, fixture.pool)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer func() { _ = tx.Rollback(context.Background()) }()
-			changed, err := ExpireParentOwnedChild(
-				ctx,
-				tx,
-				ChildExpiryRequest{
-					OrgID: fixture.orgID, ProjectID: fixture.projectID,
-					EnvironmentID: fixture.environmentID,
-					ParentRunID:   parent.runID, ChildRunID: child.runID,
-				},
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !changed {
-				t.Fatal("expired queued child was not reconciled")
-			}
-			if err := tx.Commit(ctx); err != nil {
+			if err := worker.expire(ctx, 1); err != nil {
 				t.Fatal(err)
 			}
 

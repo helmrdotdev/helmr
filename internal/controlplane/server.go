@@ -155,8 +155,6 @@ type ServerConfig struct {
 	MagicLinkTTL       time.Duration
 	DeviceCodeTTL      time.Duration
 	DevicePollEvery    time.Duration
-
-	BackgroundContext context.Context
 }
 
 func NewServer(cfg ServerConfig) (http.Handler, error) {
@@ -278,10 +276,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		magicLinkTTL:          cfg.MagicLinkTTL,
 		deviceCodeTTL:         cfg.DeviceCodeTTL,
 		devicePollEvery:       cfg.DevicePollEvery,
-	}
-	if cfg.BackgroundContext != nil {
-		go (runRetryReadyWorkflow{log: server.log, store: server.db}).run(cfg.BackgroundContext)
-		go (queuedChildExpiryWorkflow{server: server}).run(cfg.BackgroundContext)
 	}
 	router := chi.NewRouter()
 	router.Use(server.recoverPanics)
