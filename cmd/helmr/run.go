@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/cli/ui"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/spf13/cobra"
 )
@@ -578,7 +579,7 @@ func waitForRun(ctx context.Context, control *client.Client, runID string, scope
 }
 
 func runReadErrorIsFatal(err error) bool {
-	var httpErr *client.HTTPError
+	var httpErr *httpclient.Error
 	if errors.As(err, &httpErr) {
 		return httpErr.StatusCode >= 400 && httpErr.StatusCode < 500
 	}

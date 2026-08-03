@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -192,7 +192,7 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 	t.Run("stale source fence", func(t *testing.T) {
 		control := &actorRuntimeContractControl{
 			testRunLeaseControl: &testRunLeaseControl{},
-			startErr: &client.HTTPError{
+			startErr: &httpclient.Error{
 				StatusCode: 409, Status: "409 Conflict",
 				Message: "worker Run source authority is stale",
 			},
@@ -254,7 +254,7 @@ func TestActorRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 	control := &actorRuntimeContractControl{
 		testRunLeaseControl: &testRunLeaseControl{},
 		firstAttempt:        firstAttempt,
-		startErrors: []error{&client.HTTPError{
+		startErrors: []error{&httpclient.Error{
 			StatusCode: 503, Status: "503 Service Unavailable",
 			Message: "temporary control failure",
 		}},

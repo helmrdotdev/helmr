@@ -19,7 +19,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
-	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -33,6 +32,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vm"
 	workerdaemon "github.com/helmrdotdev/helmr/internal/worker"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
 
 func run(log *slog.Logger) error {
@@ -106,11 +106,11 @@ func run(log *slog.Logger) error {
 		}
 		buildStorageConfig = &storage
 	}
-	var controlClient *client.Client
+	var controlClient *workerclient.Client
 	workerCredential, err := resolveAuthenticatedWorkerCredential(ctx, cfg, workDir, func(credential workerCredentialFile) error {
-		candidate, candidateErr := client.New(cfg.ControlURL,
-			client.WithWorkerAuth(credential.WorkerInstanceID, credential.WorkerInstanceSecret),
-			client.WithWorkerService(serviceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild),
+		candidate, candidateErr := workerclient.New(cfg.ControlURL,
+			workerclient.WithAuth(credential.WorkerInstanceID, credential.WorkerInstanceSecret),
+			workerclient.WithService(serviceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild),
 		)
 		if candidateErr != nil {
 			return candidateErr

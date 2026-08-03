@@ -1,4 +1,4 @@
-package client
+package workerclient
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -359,7 +360,7 @@ func ambiguousWorkerTerminalMutation(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	var httpErr *HTTPError
+	var httpErr *httpclient.Error
 	if !errors.As(err, &httpErr) {
 		return true
 	}

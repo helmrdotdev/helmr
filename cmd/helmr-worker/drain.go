@@ -12,11 +12,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/executor"
 	workerdaemon "github.com/helmrdotdev/helmr/internal/worker"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
 
 const defaultDrainTimeout = 30 * time.Minute
@@ -54,7 +54,7 @@ func runDrain(log *slog.Logger, args []string) error {
 		return err
 	}
 	supportsRun, supportsBuild := identityRoles(identity.Roles)
-	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), client.WithWorkerService(identity.ServiceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild))
+	controlClient, err := workerclient.New(cfg.ControlURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
@@ -138,7 +138,7 @@ func runFence() error {
 	return nil
 }
 
-func workerControlClient() (*client.Client, error) {
+func workerControlClient() (*workerclient.Client, error) {
 	cfg, err := config.LoadWorkerControl()
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
@@ -156,7 +156,7 @@ func workerControlClient() (*client.Client, error) {
 		return nil, err
 	}
 	supportsRun, supportsBuild := identityRoles(identity.Roles)
-	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), client.WithWorkerService(identity.ServiceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild))
+	controlClient, err := workerclient.New(cfg.ControlURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild))
 	if err != nil {
 		return nil, fmt.Errorf("configure control client: %w", err)
 	}

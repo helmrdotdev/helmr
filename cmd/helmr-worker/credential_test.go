@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/config"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -208,7 +208,7 @@ func TestResolveAuthenticatedWorkerCredentialReenrollsAfterUnauthorized(t *testi
 	}, tempDir, func(candidate workerCredentialFile) error {
 		attempts++
 		if candidate.WorkerInstanceSecret == "rejected-secret" {
-			return &client.HTTPError{StatusCode: http.StatusUnauthorized, Status: "401 Unauthorized"}
+			return &httpclient.Error{StatusCode: http.StatusUnauthorized, Status: "401 Unauthorized"}
 		}
 		if candidate.WorkerInstanceSecret != "replacement-secret" {
 			t.Fatalf("unexpected candidate secret %q", candidate.WorkerInstanceSecret)
@@ -304,7 +304,7 @@ func TestResolveAuthenticatedWorkerCredentialPreservesNonUnauthorizedCredential(
 		t.Fatal(err)
 	}
 	_, err := resolveAuthenticatedWorkerCredential(context.Background(), config.Worker{}, tempDir, func(workerCredentialFile) error {
-		return &client.HTTPError{StatusCode: http.StatusServiceUnavailable, Status: "503 Service Unavailable"}
+		return &httpclient.Error{StatusCode: http.StatusServiceUnavailable, Status: "503 Service Unavailable"}
 	})
 	if err == nil {
 		t.Fatal("expected authentication error")

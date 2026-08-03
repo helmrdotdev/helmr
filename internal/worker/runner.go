@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/capacity"
-	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -182,5 +182,5 @@ func NewRunner(client ControlClient, executor RunLeaseExecutor, capabilities wor
 }
 
 func isStaleLease(err error) bool {
-	return client.IsStatus(err, http.StatusConflict)
+	return httpclient.IsStatus(err, http.StatusConflict)
 }

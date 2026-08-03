@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -229,7 +229,7 @@ func runtimeOperationFailure(
 	fallbackCode string,
 	fallbackMessage string,
 ) (workerapi.RuntimeOperationFailure, bool) {
-	var httpErr *client.HTTPError
+	var httpErr *httpclient.Error
 	if !errors.As(err, &httpErr) {
 		return workerapi.RuntimeOperationFailure{}, false
 	}

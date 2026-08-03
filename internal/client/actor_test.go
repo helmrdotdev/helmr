@@ -406,16 +406,3 @@ func TestActorReadsRejectInvalidOptionsBeforeTransport(t *testing.T) {
 		t.Fatalf("transport requests = %d, want 0", requests)
 	}
 }
-
-func TestHTTPErrorPreservesMachineCode(t *testing.T) {
-	err := decodeErrorBody(
-		http.StatusConflict,
-		"409 Conflict",
-		[]byte(`{"error":"conflict","code":"idempotency_conflict","retryable":true,"requestId":"req_1"}`),
-	)
-	httpError, ok := err.(*HTTPError)
-	if !ok || httpError.Code != "idempotency_conflict" ||
-		!httpError.Retryable || httpError.RequestID != "req_1" {
-		t.Fatalf("error = %#v", err)
-	}
-}

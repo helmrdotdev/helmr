@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/frameio"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -281,7 +281,7 @@ func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 	claim := testFreshProgramClaim(t)
 	control := &testFreshProgramControl{
 		lease: claim.Lease,
-		startErr: &client.HTTPError{
+		startErr: &httpclient.Error{
 			StatusCode: http.StatusConflict,
 			Status:     "Conflict",
 			Message:    "stale start",

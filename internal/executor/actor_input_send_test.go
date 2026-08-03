@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -116,7 +116,7 @@ func TestHandleActorInputSendRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 			CorrelationID: correlationID,
 			Completed:     &api.SendActorInputResponse{Sequence: 8},
 		},
-		errors: []error{&client.HTTPError{
+		errors: []error{&httpclient.Error{
 			StatusCode: 503,
 			Status:     "503 Service Unavailable",
 			Message:    "temporary control failure",

@@ -5,10 +5,10 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/imagecache"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
 
 type workerImageControlClient interface {
@@ -266,5 +266,5 @@ var (
 	_ imagebuild.RegistryCredentialFetcher = workerImageControl{}
 	_ imagebuild.CompletionClient          = workerImageControl{}
 	_ imagebuild.CacheCredentialFetcher    = workerImageCacheCredentials{}
-	_ workerImageControlClient             = (*client.Client)(nil)
+	_ workerImageControlClient             = (*workerclient.Client)(nil)
 )

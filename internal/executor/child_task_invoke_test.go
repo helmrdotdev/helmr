@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -120,7 +120,7 @@ func TestHandleChildTaskInvokeRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 				RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3a",
 			},
 		},
-		errors: []error{&client.HTTPError{
+		errors: []error{&httpclient.Error{
 			StatusCode: 503,
 			Status:     "503 Service Unavailable",
 			Message:    "temporary control failure",
@@ -252,7 +252,7 @@ func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 	correlationID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc22"
 	control := &childTaskControl{
 		testRunLeaseControl: &testRunLeaseControl{},
-		err: &client.HTTPError{
+		err: &httpclient.Error{
 			StatusCode: 409,
 			Status:     "409 Conflict",
 			Message:    "idempotency key conflicts with an earlier child Task invocation",
@@ -302,7 +302,7 @@ func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 }
 
 func TestChildTaskInvokeFailureDoesNotClassifyUncodedConflict(t *testing.T) {
-	failure, ok := childTaskInvokeFailure(&client.HTTPError{
+	failure, ok := childTaskInvokeFailure(&httpclient.Error{
 		StatusCode: 409,
 		Status:     "409 Conflict",
 		Message:    "child Task invocation authority is stale",

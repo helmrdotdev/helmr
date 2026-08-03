@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
@@ -165,7 +166,7 @@ func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymen
 			return response, nil
 		}
 		lastErr = err
-		var httpErr *HTTPError
+		var httpErr *httpclient.Error
 		if errors.As(err, &httpErr) || ctx.Err() != nil {
 			return api.DeploymentResponse{}, err
 		}
@@ -187,7 +188,7 @@ func (c *Client) createDeploymentAttempt(
 		_ = pipeWriter.CloseWithError(writeErr)
 		writeDone <- writeErr
 	}()
-	req, err := c.newRequestWithBearer(ctx, http.MethodPost, path, reader, c.bearer)
+	req, err := c.newRequest(ctx, http.MethodPost, path, reader)
 	if err != nil {
 		_ = reader.Close()
 		<-writeDone
@@ -246,14 +247,11 @@ func (c *Client) FollowDeploymentEvents(ctx context.Context, deploymentID string
 	if cursor != "" {
 		req.Header.Set("Last-Event-ID", cursor)
 	}
-	res, err := c.httpClient.Do(req)
+	res, err := c.transport.Do(req)
 	if err != nil {
 		return err
 	}
 	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return decodeError(res)
-	}
 	scanner := bufio.NewScanner(res.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {

@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cli/browser"
 	"github.com/helmrdotdev/helmr/internal/cli/session"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/spf13/cobra"
 )
 
@@ -202,7 +203,7 @@ func waitForDeviceToken(cmd *cobra.Command, control *client.Client, deviceCode s
 }
 
 func deviceTokenError(err error) string {
-	var httpErr *client.HTTPError
+	var httpErr *httpclient.Error
 	if errors.As(err, &httpErr) {
 		return httpErr.Message
 	}

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -99,7 +99,7 @@ func TestWorkerStructuredLogRequestUsesObservedSequence(t *testing.T) {
 
 func TestRuntimeOperationFailureKeepsSemanticControlError(t *testing.T) {
 	failure, ok := runtimeOperationFailure(
-		&client.HTTPError{
+		&httpclient.Error{
 			StatusCode: http.StatusUnprocessableEntity,
 			Code:       "run_metadata_rejected",
 			Message:    "metadata is too large",
@@ -121,7 +121,7 @@ func TestRuntimeOperationFailureKeepsSemanticControlError(t *testing.T) {
 
 func TestTaskControlObservabilityRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	transient := func() error {
-		return &client.HTTPError{
+		return &httpclient.Error{
 			StatusCode: http.StatusServiceUnavailable,
 			Status:     "503 Service Unavailable",
 			Message:    "temporary control failure",
@@ -242,7 +242,7 @@ func TestTaskControlObservabilityRejectsInvalidRequestBeforeControl(t *testing.T
 func TestFreshAdmissionObservabilityRetriesTransientControlFailure(t *testing.T) {
 	control := &runObservabilityRetryControl{
 		testRunLeaseControl: &testRunLeaseControl{},
-		metadataErrors: []error{&client.HTTPError{
+		metadataErrors: []error{&httpclient.Error{
 			StatusCode: http.StatusServiceUnavailable,
 			Status:     "503 Service Unavailable",
 			Message:    "temporary control failure",

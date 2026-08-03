@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -66,7 +66,7 @@ func (task *guestRunLeaseTask) handleTokenCreate(
 }
 
 func tokenCreateFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
-	var httpErr *client.HTTPError
+	var httpErr *httpclient.Error
 	if !errors.As(err, &httpErr) {
 		return workerapi.RuntimeOperationFailure{}, false
 	}

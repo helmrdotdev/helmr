@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -384,7 +384,7 @@ func permanentRunLeaseRequestError(err error) bool {
 		http.StatusRequestEntityTooLarge,
 		http.StatusUnprocessableEntity,
 	} {
-		if client.IsStatus(err, status) {
+		if httpclient.IsStatus(err, status) {
 			return true
 		}
 	}

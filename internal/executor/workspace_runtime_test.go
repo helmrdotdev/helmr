@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -225,7 +225,7 @@ func TestWorkspaceRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 		assignments = append(assignments, current)
 		if len(assignments) == 1 {
 			close(firstAttempt)
-			return &client.HTTPError{
+			return &httpclient.Error{
 				StatusCode: 503, Status: "503 Service Unavailable",
 				Message: "temporary control failure",
 			}
