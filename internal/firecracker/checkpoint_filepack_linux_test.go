@@ -132,8 +132,8 @@ func TestRuntimeFilepackRejectsOverflowingDataRecord(t *testing.T) {
 	record.Write(compressed)
 
 	err = readFilepackDataRecord(&record, file, decoder, nil, maxInt64)
-	if err == nil || !strings.Contains(err.Error(), "invalid firecracker filepack data record") {
-		t.Fatalf("err = %v, want invalid data record", err)
+	if err == nil || !strings.Contains(err.Error(), "invalid Firecracker filepack data record") {
+		t.Fatalf("err = %v, want invalid Firecracker filepack data record", err)
 	}
 }
 

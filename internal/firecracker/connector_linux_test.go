@@ -927,8 +927,8 @@ func TestWaitForHealthReportsMachineExit(t *testing.T) {
 	if err == nil {
 		t.Fatal("waitForHealth error = nil, want machine exit error")
 	}
-	if !strings.Contains(err.Error(), "firecracker machine exited during guest health wait") {
-		t.Fatalf("waitForHealth error = %v, want machine exit context", err)
+	if !strings.Contains(err.Error(), "the Firecracker machine exited during guest health wait") {
+		t.Fatalf("waitForHealth error = %v, want Firecracker machine exit context", err)
 	}
 	if !strings.Contains(err.Error(), "machine_exited=true") {
 		t.Fatalf("waitForHealth error = %v, want machine_exited summary", err)
@@ -963,8 +963,8 @@ func TestConnectGuestPortReturnsMachineExitWithoutHealthTimeout(t *testing.T) {
 
 	select {
 	case err := <-result:
-		if err == nil || !strings.Contains(err.Error(), "firecracker machine exited before guest port") {
-			t.Fatalf("connectGuestPort error = %v, want machine exit", err)
+		if err == nil || !strings.Contains(err.Error(), "the Firecracker machine exited before guest port") {
+			t.Fatalf("connectGuestPort error = %v, want Firecracker machine exit", err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("connectGuestPort waited after machine exit")
