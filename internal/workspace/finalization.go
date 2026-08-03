@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 const FinalizationFingerprintDomain = "helmr.workspace-finalization.v0\x00"
@@ -79,7 +80,7 @@ func ValidateResetTarget(target ResetTarget) error {
 	if strings.TrimSpace(target.BaseVersionID) == "" {
 		return errors.New("Workspace Reset base version ID is required")
 	}
-	if !validDigest(target.Tree.Digest) || target.Tree.SizeBytes < 0 || target.Tree.SizeBytes > MaxArtifactExtractedBytes || target.Tree.EntryCount < 0 || target.Tree.EntryCount > MaxArtifactEntries {
+	if !sha256sum.ValidDigest(target.Tree.Digest) || target.Tree.SizeBytes < 0 || target.Tree.SizeBytes > MaxArtifactExtractedBytes || target.Tree.EntryCount < 0 || target.Tree.EntryCount > MaxArtifactEntries {
 		return errors.New("Workspace Reset tree identity is invalid")
 	}
 	switch target.Kind {
@@ -88,7 +89,7 @@ func ValidateResetTarget(target ResetTarget) error {
 			return errors.New("empty Workspace Reset target must be the canonical empty tree")
 		}
 	case ResetTargetArtifact:
-		if target.Artifact == nil || !validDigest(target.Artifact.Digest) || target.Artifact.MediaType != ArtifactMediaType || target.Artifact.Encoding != ArtifactEncoding || target.Artifact.SizeBytes <= 0 || target.Artifact.SizeBytes > MaxArtifactArchiveBytes || target.Artifact.EntryCount < 0 || target.Artifact.EntryCount > MaxArtifactEntries {
+		if target.Artifact == nil || !sha256sum.ValidDigest(target.Artifact.Digest) || target.Artifact.MediaType != ArtifactMediaType || target.Artifact.Encoding != ArtifactEncoding || target.Artifact.SizeBytes <= 0 || target.Artifact.SizeBytes > MaxArtifactArchiveBytes || target.Artifact.EntryCount < 0 || target.Artifact.EntryCount > MaxArtifactEntries {
 			return errors.New("Workspace Reset Artifact descriptor is invalid")
 		}
 	default:
@@ -98,7 +99,7 @@ func ValidateResetTarget(target ResetTarget) error {
 }
 
 func ValidateTreeIdentity(tree TreeIdentity) error {
-	if !validDigest(tree.Digest) || tree.SizeBytes < 0 || tree.SizeBytes > MaxArtifactExtractedBytes ||
+	if !sha256sum.ValidDigest(tree.Digest) || tree.SizeBytes < 0 || tree.SizeBytes > MaxArtifactExtractedBytes ||
 		tree.EntryCount < 0 || tree.EntryCount > MaxArtifactEntries {
 		return errors.New("Workspace tree identity is invalid")
 	}
@@ -113,18 +114,6 @@ func ResetTargetsEqual(left, right ResetTarget) bool {
 		return left.Artifact == nil && right.Artifact == nil
 	}
 	return *left.Artifact == *right.Artifact
-}
-
-func validDigest(value string) bool {
-	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
-		return false
-	}
-	for _, char := range value[len("sha256:"):] {
-		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 func FinalizationFingerprint(kind string, request FinalizationRequest) (string, error) {

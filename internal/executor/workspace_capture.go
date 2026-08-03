@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -69,11 +70,11 @@ func captureWorkspaceOnSession(ctx context.Context, session vm.Session, store ca
 		return WorkspaceCapture{}, errors.New("Workspace Capture receipt does not match the request")
 	}
 	tree := response.GetTree()
-	if tree == nil || !validSHA256Digest(tree.GetDigest()) || tree.GetSizeBytes() < 0 || tree.GetSizeBytes() > workspace.MaxArtifactExtractedBytes || tree.GetEntryCount() > uint32(workspace.MaxArtifactEntries) {
+	if tree == nil || !sha256sum.ValidDigest(tree.GetDigest()) || tree.GetSizeBytes() < 0 || tree.GetSizeBytes() > workspace.MaxArtifactExtractedBytes || tree.GetEntryCount() > uint32(workspace.MaxArtifactEntries) {
 		return WorkspaceCapture{}, errors.New("Workspace Capture tree identity is invalid")
 	}
 	artifact := response.GetArtifact()
-	if artifact == nil || !validSHA256Digest(artifact.GetDigest()) ||
+	if artifact == nil || !sha256sum.ValidDigest(artifact.GetDigest()) ||
 		artifact.GetMediaType() != workspace.ArtifactMediaType ||
 		artifact.GetEncoding() != workspace.ArtifactEncoding ||
 		artifact.GetSizeBytes() == 0 || artifact.GetSizeBytes() > uint64(workspace.MaxArtifactArchiveBytes) ||
@@ -154,16 +155,4 @@ func executorFinalizationFence(fence *workspacev0.WorkspaceAuthorityFence) works
 		ExpiresAtUnixNano:      fence.GetExpiresAtUnixNano(),
 		BaseWorkspaceVersionID: fence.GetBaseWorkspaceVersionId(),
 	}
-}
-
-func validSHA256Digest(value string) bool {
-	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
-		return false
-	}
-	for _, char := range value[len("sha256:"):] {
-		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
-			return false
-		}
-	}
-	return true
 }

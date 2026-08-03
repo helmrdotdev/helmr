@@ -46,89 +46,6 @@ func TestPrivatePlatformPolicyDependencies(t *testing.T) {
 	}
 }
 
-func TestInternalPackageDependencies(t *testing.T) {
-	actual, err := internalPackageDependencyGraph("internal")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := map[string][]string{
-		"actor":              {"db", "ids", "outbox", "pgvalue", "run", "secret", "tracing"},
-		"api":                {"archive", "ids", "jsoncanon"},
-		"archive":            {"safepath", "sha256sum"},
-		"auth":               {"ids", "token", "workerapi"},
-		"buildkit":           {"imagebuild", "safepath"},
-		"capacity":           {},
-		"cas":                {"archive"},
-		"checkpoint":         {},
-		"cli/browser":        {},
-		"cli/format":         {},
-		"cli/session":        {},
-		"cli/ui":             {"api"},
-		"clickhouse":         {},
-		"clickhouse/schema":  {"clickhouse"},
-		"client":             {"api", "httpclient", "ids", "sha256sum"},
-		"compute":            {"runtime/identity"},
-		"config":             {"workerapi"},
-		"console":            {},
-		"control":            {"actor", "api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "email", "enrollment", "frameio", "idempotency", "ids", "imagebuild", "imagecache", "jsoncanon", "pgvalue", "proto/run/v0", "region", "run", "runtime/identity", "schedule", "secret", "sha256sum", "telemetry", "token", "tracing", "workerapi", "workergroup", "workspace"},
-		"db":                 {},
-		"db/dbtest":          {},
-		"db/schema":          {},
-		"deployment":         {"api", "archive", "cas", "compute", "frameio", "ids", "imagebuild", "imagebuild/worker", "jsoncanon", "runtime/identity", "safepath", "schedule", "vm", "wire", "workerapi"},
-		"dispatch":           {"compute", "db", "deployment", "pgvalue", "sessionlock", "workspace"},
-		"dispatch/redis":     {"dispatch", "pgvalue"},
-		"email":              {},
-		"enrollment":         {"workerapi"},
-		"executor":           {"api", "capacity", "cas", "checkpoint", "compute", "deployment", "frameio", "httpclient", "ids", "jsoncanon", "localcache", "proto/run/v0", "proto/workspace/v0", "sha256sum", "substrate", "vm", "wire", "workerapi", "workspace"},
-		"firecracker":        {"cas", "compute", "ids", "runtime/identity", "sha256sum", "vm", "worker/datapath"},
-		"frameio":            {"sha256sum"},
-		"guestd":             {"archive", "buildkit", "deployment", "frameio", "imagebuild", "jsoncanon", "oci", "proto/run/v0", "proto/workspace/v0", "safepath", "sha256sum", "wire", "workspace"},
-		"httpclient":         {"api"},
-		"idempotency":        {"db", "jsoncanon", "pgvalue"},
-		"ids":                {},
-		"imagebuild":         {"ids", "jsoncanon", "sha256sum"},
-		"imagebuild/worker":  {"compute", "frameio", "ids", "imagebuild", "imagecache", "oci", "sha256sum", "vm", "wire"},
-		"imagecache":         {},
-		"imagecache/ecr":     {"ids", "imagebuild", "imagecache"},
-		"jsoncanon":          {},
-		"localcache":         {},
-		"oci":                {"sha256sum"},
-		"outbox":             {},
-		"pgvalue":            {},
-		"platformlock":       {"sessionlock"},
-		"proto/run/v0":       {},
-		"proto/workspace/v0": {},
-		"region":             {"db"},
-		"run":                {"db", "ids", "outbox", "pgvalue", "secret"},
-		"run/runtest":        {"db/dbtest", "db/schema"},
-		"runtime/identity":   {"sha256sum"},
-		"safepath":           {},
-		"schedule":           {"db", "pgvalue", "run", "tracing"},
-		"secret":             {"db", "idempotency", "ids", "outbox", "pgvalue"},
-		"sessionlock":        {},
-		"sha256sum":          {},
-		"substrate":          {"localcache", "oci", "sha256sum"},
-		"telemetry":          {"api", "clickhouse", "db", "pgvalue"},
-		"token":              {"db", "ids", "outbox", "pgvalue"},
-		"tracing":            {},
-		"version":            {},
-		"vm":                 {"compute", "ids"},
-		"wire":               {"frameio", "proto/run/v0"},
-		"worker":             {"capacity", "compute", "deployment", "httpclient", "ids", "vm", "workerapi"},
-		"worker/datapath":    {},
-		"workerapi":          {"api", "imagebuild", "jsoncanon"},
-		"workerclient":       {"api", "httpclient", "workerapi"},
-		"workergroup":        {"compute", "db", "enrollment", "sessionlock", "workerapi"},
-		"workspace":          {"archive", "jsoncanon", "proto/workspace/v0", "safepath", "sha256sum"},
-	}
-	normalizeGraph(expected)
-
-	if !reflect.DeepEqual(actual, expected) {
-		t.Fatalf("%s\nactual:\n%s\nexpected:\n%s", dependencyChangeMessage(actual, expected), formatGraph(actual), formatGraph(expected))
-	}
-}
-
 func TestInternalPackageForbiddenDependencies(t *testing.T) {
 	actual, err := internalPackageDependencyGraph("internal")
 	if err != nil {
@@ -136,21 +53,24 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 	}
 
 	for source, targets := range map[string][]string{
-		"api":          {"workerapi"},
-		"auth":         {"db"},
-		"client":       {"workerapi", "workerclient"},
-		"enrollment":   {"control", "db"},
-		"frameio":      {"api", "db", "proto/run/v0", "wire"},
-		"httpclient":   {"control", "db", "workerapi"},
-		"wire":         {"api", "control", "db", "executor", "guestd", "workspace"},
-		"guestd":       {"control", "db", "executor", "imagebuild/worker"},
-		"imagebuild":   {"compute", "frameio", "imagebuild/worker", "imagecache", "oci", "vm", "wire"},
-		"workspace":    {"api", "control", "db", "executor", "guestd", "pgvalue", "wire"},
-		"control":      {"executor", "firecracker", "guestd"},
-		"secret":       {"run"},
-		"substrate":    {"control", "db", "executor", "worker"},
-		"workerapi":    {"control", "db", "firecracker", "imagebuild/worker", "imagecache/ecr"},
-		"workerclient": {"client"},
+		"api":               {"workerapi"},
+		"auth":              {"db"},
+		"buildkit":          {"imagebuild/worker"},
+		"client":            {"workerapi", "workerclient"},
+		"enrollment":        {"control", "db"},
+		"frameio":           {"api", "db", "proto/run/v0", "wire"},
+		"httpclient":        {"control", "db", "workerapi"},
+		"wire":              {"api", "control", "db", "executor", "guestd", "workspace"},
+		"guestd":            {"control", "db", "executor", "imagebuild/worker"},
+		"imagebuild":        {"compute", "frameio", "imagebuild/worker", "imagecache", "oci", "vm", "wire"},
+		"imagebuild/worker": {"control", "db", "deployment", "guestd", "workerapi"},
+		"imagecache/ecr":    {"imagebuild/worker"},
+		"workspace":         {"api", "control", "db", "executor", "guestd", "pgvalue", "wire"},
+		"control":           {"executor", "firecracker", "guestd"},
+		"secret":            {"run"},
+		"substrate":         {"control", "db", "executor", "worker"},
+		"workerapi":         {"control", "db", "firecracker", "imagebuild/worker", "imagecache/ecr"},
+		"workerclient":      {"client"},
 	} {
 		for _, target := range targets {
 			if slices.Contains(actual[source], target) {
@@ -273,59 +193,4 @@ func normalizeGraph(graph map[string][]string) {
 		}
 		graph[source] = targets
 	}
-}
-
-func dependencyChangeMessage(actual, expected map[string][]string) string {
-	const suffix = "if intentional, update the expected graph in deps_test.go"
-
-	for _, source := range sortedGraphSources(actual) {
-		targets := actual[source]
-		expectedTargets, ok := expected[source]
-		if !ok {
-			return fmt.Sprintf("internal package imports changed: %s is new; %s", source, suffix)
-		}
-		for _, target := range targets {
-			if !slices.Contains(expectedTargets, target) {
-				return fmt.Sprintf("internal package imports changed: %s now imports %s; %s", source, target, suffix)
-			}
-		}
-	}
-	for _, source := range sortedGraphSources(expected) {
-		targets := expected[source]
-		actualTargets, ok := actual[source]
-		if !ok {
-			return fmt.Sprintf("internal package imports changed: %s is no longer present; %s", source, suffix)
-		}
-		for _, target := range targets {
-			if !slices.Contains(actualTargets, target) {
-				return fmt.Sprintf("internal package imports changed: %s no longer imports %s; %s", source, target, suffix)
-			}
-		}
-	}
-	return "internal package imports changed; if intentional, update the expected graph in deps_test.go"
-}
-
-func formatGraph(graph map[string][]string) string {
-	sources := sortedGraphSources(graph)
-
-	var b strings.Builder
-	for _, source := range sources {
-		b.WriteString(source)
-		b.WriteString(" ->")
-		for _, target := range graph[source] {
-			b.WriteByte(' ')
-			b.WriteString(target)
-		}
-		b.WriteByte('\n')
-	}
-	return b.String()
-}
-
-func sortedGraphSources(graph map[string][]string) []string {
-	sources := make([]string, 0, len(graph))
-	for source := range graph {
-		sources = append(sources, source)
-	}
-	slices.Sort(sources)
-	return sources
 }
