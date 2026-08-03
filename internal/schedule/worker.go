@@ -160,7 +160,6 @@ func (w *Worker) tick(ctx context.Context) error {
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(int(w.concurrency))
 	for _, value := range claimed {
-		value := value
 		group.Go(func() error {
 			if err := w.process(groupCtx, value); err != nil {
 				if errors.Is(err, context.Canceled) {

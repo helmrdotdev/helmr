@@ -277,16 +277,14 @@ func TestReadyRunRetriesAdmitsOnceUnderConcurrency(t *testing.T) {
 	results := make(chan result, 2)
 	var wait sync.WaitGroup
 	for range 2 {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
+		wait.Go(func() {
 			<-start
 			rows, err := fixture.queries.ReadyRunRetries(ctx, ReadyRunRetriesParams{
 				OutboxMessageIds: pgvalue.NewUUIDv7Batch(1),
 				RowLimit:         1,
 			})
 			results <- result{rows: rows, err: err}
-		}()
+		})
 	}
 	close(start)
 	wait.Wait()

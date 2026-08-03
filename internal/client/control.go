@@ -156,7 +156,7 @@ func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymen
 		input.EnvironmentID = ""
 	}
 	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
+	for range 2 {
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
 			return api.DeploymentResponse{}, fmt.Errorf("rewind deployment source archive: %w", err)
 		}

@@ -3,7 +3,7 @@ package db_test
 import (
 	"context"
 	"errors"
-	"sort"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -148,7 +148,7 @@ func TestConcurrentRegisteringEnrollmentSerializesCredentialReplacement(t *testi
 		t.Fatalf("concurrent retry created two Worker identities: first=%v second=%v", first.row.WorkerInstanceID, second.row.WorkerInstanceID)
 	}
 	claimVersions := []int64{first.row.ClaimVersion, second.row.ClaimVersion}
-	sort.Slice(claimVersions, func(i, j int) bool { return claimVersions[i] < claimVersions[j] })
+	slices.Sort(claimVersions)
 	if claimVersions[0] != 1 || claimVersions[1] != 2 {
 		t.Fatalf("claim versions = %v", claimVersions)
 	}

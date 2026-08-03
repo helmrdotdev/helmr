@@ -584,7 +584,7 @@ func (c *ImmutableS3) Publish(
 	}
 
 	var uploadErr error
-	for attempt := 0; attempt < immutablePublishAttempts; attempt++ {
+	for range immutablePublishAttempts {
 		uploadErr = c.store.uploadDescriptor(ctx, key, expected, file)
 		if !errors.Is(uploadErr, errImmutableObjectConflict) {
 			break

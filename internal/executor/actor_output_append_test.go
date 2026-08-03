@@ -69,7 +69,7 @@ func TestHandleActorOutputAppendWritesCorrelatedDecision(t *testing.T) {
 			CorrelationId:  correlationID,
 			DataJson:       `{"status":"working"}`,
 			ContentType:    "application/json",
-			IdempotencyKey: stringPointer("output-1"),
+			IdempotencyKey: new("output-1"),
 		})
 	}()
 	reader := bufio.NewReader(host)

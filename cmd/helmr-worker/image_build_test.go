@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -202,9 +203,9 @@ func testWorkerImageLease() imagebuild.BuildLeaseAuthority {
 }
 
 func testWorkerImageDigest(character string) string {
-	value := ""
+	var value strings.Builder
 	for range 64 {
-		value += character
+		value.WriteString(character)
 	}
-	return "sha256:" + value
+	return "sha256:" + value.String()
 }

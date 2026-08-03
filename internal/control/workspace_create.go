@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -323,7 +324,7 @@ func normalizeWorkspaceSecretPlacements(input []api.WorkspaceSecret) ([]workspac
 		}
 		placements = append(placements, placement)
 	}
-	sort.Slice(fileTargets, func(i, j int) bool { return fileTargets[i] < fileTargets[j] })
+	slices.Sort(fileTargets)
 	for index, target := range fileTargets {
 		if index > 0 {
 			previous := fileTargets[index-1]

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"strings"
 	"time"
@@ -389,9 +390,7 @@ func workerWorkspaceExecRequest(
 		Stdin:                          append([]byte{}, requested.GetStdin()...),
 		IdempotencyKey:                 requested.GetIdempotencyKey(),
 	}
-	for key, value := range requested.GetEnv() {
-		request.Env[key] = value
-	}
+	maps.Copy(request.Env, requested.GetEnv())
 	if requested.TimeoutMs != nil {
 		if requested.GetTimeoutMs() > math.MaxInt64 {
 			return api.WorkerExecuteWorkspaceRequest{}, errors.New("Workspace exec timeout is invalid")

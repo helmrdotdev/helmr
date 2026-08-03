@@ -290,14 +290,12 @@ func runConcurrently(t *testing.T, count int, run func(int) error) {
 	t.Helper()
 	var wait sync.WaitGroup
 	errorsChannel := make(chan error, count)
-	for index := 0; index < count; index++ {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
+	for index := range count {
+		wait.Go(func() {
 			if err := run(index); err != nil {
 				errorsChannel <- err
 			}
-		}()
+		})
 	}
 	wait.Wait()
 	close(errorsChannel)

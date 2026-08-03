@@ -836,13 +836,11 @@ func TestTokenWaitRegistrationConcurrentReplayConverges(t *testing.T) {
 	outcomes := make(chan registrationOutcome, 2)
 	var workers sync.WaitGroup
 	for range 2 {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			<-start
 			result, err := reconciler.RegisterWait(ctx, request)
 			outcomes <- registrationOutcome{result: result, err: err}
-		}()
+		})
 	}
 	close(start)
 	workers.Wait()

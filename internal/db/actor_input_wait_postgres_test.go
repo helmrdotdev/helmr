@@ -116,8 +116,7 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 	errs := make(chan error, 2)
 	var start sync.WaitGroup
 	start.Add(1)
-	for index := 0; index < 2; index++ {
-		index := index
+	for index := range 2 {
 		go func() {
 			start.Wait()
 			row, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{

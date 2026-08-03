@@ -61,7 +61,7 @@ func TestWorkerRunMetadataRequestPreservesClosedMutation(t *testing.T) {
 	request, err := workerRunMetadataRequest(&runv0.MetadataUpdated{
 		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000001",
 		Operation:     "increment",
-		Key:           stringPointer("steps"),
+		Key:           new("steps"),
 		Amount:        &amount,
 	})
 	if err != nil {
@@ -145,8 +145,8 @@ func TestTaskControlObservabilityRetryKeepsStableFenceAcrossRenewal(t *testing.T
 			&runv0.MetadataUpdated{
 				CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000131",
 				Operation:     "set",
-				Key:           stringPointer("state"),
-				ValueJson:     stringPointer(`"ready"`),
+				Key:           new("state"),
+				ValueJson:     new(`"ready"`),
 			},
 		)
 		if err != nil {
@@ -259,8 +259,8 @@ func TestFreshAdmissionObservabilityRetriesTransientControlFailure(t *testing.T)
 		&runv0.MetadataUpdated{
 			CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000133",
 			Operation:     "set",
-			Key:           stringPointer("state"),
-			ValueJson:     stringPointer(`"admitted"`),
+			Key:           new("state"),
+			ValueJson:     new(`"admitted"`),
 		},
 	)
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net/http"
 	"unicode/utf8"
@@ -387,9 +388,7 @@ func applyRunMetadataMutation(
 	case "set":
 		values[mutation.key] = mutation.value
 	case "patch":
-		for key, value := range mutation.patch {
-			values[key] = value
-		}
+		maps.Copy(values, mutation.patch)
 	case "increment":
 		currentValue := float64(0)
 		if raw, ok := values[mutation.key]; ok {

@@ -246,10 +246,7 @@ func runLeaseLogContext(
 	if remaining <= 0 {
 		return nil, nil, errors.New("Run Lease expired before log append")
 	}
-	timeout := remaining / 4
-	if timeout > runLeaseRequestTimeout {
-		timeout = runLeaseRequestTimeout
-	}
+	timeout := min(remaining/4, runLeaseRequestTimeout)
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	return ctx, cancel, nil
 }

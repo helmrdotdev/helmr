@@ -353,7 +353,6 @@ func TestActorStartPostgresConcurrentKeyCollisionCreatesOneIdentity(t *testing.T
 	start := make(chan struct{})
 	outcomes := make(chan outcome, 2)
 	for index := range 2 {
-		index := index
 		go func() {
 			<-start
 			result, err := fixture.server.startActor(

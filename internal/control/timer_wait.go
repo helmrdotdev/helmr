@@ -228,10 +228,7 @@ func timerWaitDeadlines(
 	checkpointDelay := rootRunWaitHotWindow
 	untilDue := dueAt.Sub(now)
 	if untilDue <= checkpointDelay {
-		checkpointDelay = untilDue + shortWaitGrace
-		if checkpointDelay < shortWaitGrace {
-			checkpointDelay = shortWaitGrace
-		}
+		checkpointDelay = max(untilDue+shortWaitGrace, shortWaitGrace)
 	}
 	if idleDuration < checkpointDelay {
 		checkpointDelay = idleDuration

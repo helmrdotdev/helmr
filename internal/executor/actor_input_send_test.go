@@ -76,7 +76,7 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 				ActorKey: "primary",
 			},
 			DataJson:       `{"hello":"world"}`,
-			IdempotencyKey: stringPointer("send-1"),
+			IdempotencyKey: new("send-1"),
 		})
 	}()
 	reader := bufio.NewReader(host)
@@ -176,8 +176,4 @@ func assertRetriedWithStableFence(
 	if count != 2 || second != first {
 		t.Fatalf("request count = %d first lease = %+v second lease = %+v", count, first, second)
 	}
-}
-
-func stringPointer(value string) *string {
-	return &value
 }

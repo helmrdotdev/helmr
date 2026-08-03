@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -498,12 +499,7 @@ func (r *workspaceOperationRegistry) hasProgramClaimLocked(entry *workspaceMount
 }
 
 func (r *workspaceOperationRegistry) containsProgramClaimLocked(target *managedProgramClaim) bool {
-	for _, claim := range r.programClaims {
-		if claim == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(r.programClaims, target)
 }
 
 func validateManagedProgramChildAuthority(

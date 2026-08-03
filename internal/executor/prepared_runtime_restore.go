@@ -52,7 +52,6 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 		{3, runtimeState.ScratchDiskArtifact, "scratch-disk"},
 	}
 	for _, artifact := range artifacts {
-		artifact := artifact
 		group.Go(func() error {
 			path, err := runner.materializeCheckpointObject(groupCtx, artifact.value.Digest, artifact.suffix)
 			if err != nil {

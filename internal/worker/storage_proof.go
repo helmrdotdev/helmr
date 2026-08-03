@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"math/bits"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -198,8 +199,8 @@ func validateStoragePath(name, path string, probe storageProbe) error {
 		return fmt.Errorf("%s must be canonical", name)
 	}
 	current := string(filepath.Separator)
-	parts := strings.Split(strings.TrimPrefix(path, current), current)
-	for _, part := range parts {
+	parts := strings.SplitSeq(strings.TrimPrefix(path, current), current)
+	for part := range parts {
 		if part == "" {
 			continue
 		}
@@ -437,7 +438,7 @@ func proveMountSource(mount storageMountInfo, probe storageProbe) (string, error
 
 func validateSourcePath(path string, probe storageProbe) error {
 	current := string(filepath.Separator)
-	for _, part := range strings.Split(strings.TrimPrefix(path, current), current) {
+	for part := range strings.SplitSeq(strings.TrimPrefix(path, current), current) {
 		if part == "" {
 			continue
 		}
@@ -470,12 +471,7 @@ func parseDevice(value string) (string, error) {
 }
 
 func hasMountOption(options []string, expected string) bool {
-	for _, option := range options {
-		if option == expected {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(options, expected)
 }
 
 func hasMountOptionPrefix(options []string, expected string) bool {

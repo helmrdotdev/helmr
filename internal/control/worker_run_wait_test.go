@@ -216,8 +216,8 @@ func TestRunWaitDeadlinesEnforceTokenBounds(t *testing.T) {
 	}{
 		{name: "timeout", request: api.WorkerCreateRunWaitRequest{TimeoutMS: &timeoutTooLong}},
 		{name: "idle timeout", request: api.WorkerCreateRunWaitRequest{IdleTimeoutMS: &idleTooLong}},
-		{name: "timeout overflow", request: api.WorkerCreateRunWaitRequest{TimeoutMS: int64Pointer(math.MaxInt64)}},
-		{name: "idle timeout overflow", request: api.WorkerCreateRunWaitRequest{IdleTimeoutMS: int64Pointer(math.MaxInt64)}},
+		{name: "timeout overflow", request: api.WorkerCreateRunWaitRequest{TimeoutMS: new(int64(math.MaxInt64))}},
+		{name: "idle timeout overflow", request: api.WorkerCreateRunWaitRequest{IdleTimeoutMS: new(int64(math.MaxInt64))}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, _, _, _, err := runWaitDeadlines(test.request, defaultRunWaitIdleTimeout); err == nil {
@@ -226,5 +226,3 @@ func TestRunWaitDeadlinesEnforceTokenBounds(t *testing.T) {
 		})
 	}
 }
-
-func int64Pointer(value int64) *int64 { return &value }

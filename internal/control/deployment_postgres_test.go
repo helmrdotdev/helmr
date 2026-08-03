@@ -80,9 +80,7 @@ func TestDeploymentCreateConvergesAcrossTransactions(t *testing.T) {
 	errs := make(chan error, 2)
 	var wait sync.WaitGroup
 	for range 2 {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
+		wait.Go(func() {
 			var response api.DeploymentResponse
 			err := server.inTx(context.Background(), func(work *txWork) error {
 				store, ok := work.q.(deploymentStore)
@@ -139,7 +137,7 @@ func TestDeploymentCreateConvergesAcrossTransactions(t *testing.T) {
 				return
 			}
 			results <- response
-		}()
+		})
 	}
 	wait.Wait()
 	close(errs)

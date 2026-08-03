@@ -502,7 +502,7 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 			outcome: &runv0.RunEvent{
 				Event: &runv0.RunEvent_ActorOutcome{
 					ActorOutcome: &runv0.ActorOutcome{
-						TerminalInputSequence: int64Pointer(0),
+						TerminalInputSequence: new(int64(0)),
 						Outcome: &runv0.ActorOutcome_Succeeded{
 							Succeeded: &runv0.ActorSucceeded{},
 						},
@@ -574,7 +574,7 @@ func TestFreshProgramDispatchesActorOutputAppend(t *testing.T) {
 		_ = frameio.WriteProtoFrame(guest, &runv0.RunEvent{
 			Event: &runv0.RunEvent_ActorOutcome{
 				ActorOutcome: &runv0.ActorOutcome{
-					TerminalInputSequence: int64Pointer(0),
+					TerminalInputSequence: new(int64(0)),
 					Outcome: &runv0.ActorOutcome_Succeeded{
 						Succeeded: &runv0.ActorSucceeded{},
 					},
@@ -739,10 +739,6 @@ func testProgramQuiescedEvent(lease api.WorkerRunLeaseAssignment) *runv0.RunEven
 			},
 		},
 	}
-}
-
-func int64Pointer(value int64) *int64 {
-	return &value
 }
 
 func readFreshProgramAdmission(

@@ -172,8 +172,8 @@ func TestHandleTokenCreateWritesCorrelatedDecision(t *testing.T) {
 			CorrelationId: correlationID,
 			TimeoutMs:     &timeoutMS,
 			Tags:          []string{"review"},
-			MetadataJson:  stringPointer(`{"approval":true}`),
-			IdempotencyKey: stringPointer(
+			MetadataJson:  new(`{"approval":true}`),
+			IdempotencyKey: new(
 				"approval-1",
 			),
 		})

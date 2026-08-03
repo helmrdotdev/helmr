@@ -3,6 +3,7 @@ package capacity
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"strings"
 	"sync"
@@ -111,9 +112,7 @@ func (l *Ledger) Snapshot() Snapshot {
 	defer l.mu.Unlock()
 
 	reservations := make(map[Key]Vector, len(l.reservations))
-	for key, vector := range l.reservations {
-		reservations[key] = vector
-	}
+	maps.Copy(reservations, l.reservations)
 	return Snapshot{
 		Capacity:     l.capacity,
 		Used:         l.used,

@@ -30,9 +30,7 @@ func TestPostgresClaimUniqueSlotAndStaleCompletionFence(t *testing.T) {
 	errs := make(chan error, 2)
 	var wait sync.WaitGroup
 	for range 2 {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
+		wait.Go(func() {
 			tx, err := database.Pool.Begin(context.Background())
 			if err != nil {
 				errs <- err
@@ -54,7 +52,7 @@ func TestPostgresClaimUniqueSlotAndStaleCompletionFence(t *testing.T) {
 				return
 			}
 			results <- result
-		}()
+		})
 	}
 	wait.Wait()
 	close(errs)
