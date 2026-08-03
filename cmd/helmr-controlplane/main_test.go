@@ -25,7 +25,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
-	tokencredential "github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -109,12 +108,12 @@ func controlplanetestWorkspaceFencingKey() workspace.FencingKey {
 	return key
 }
 
-func controlplanetestTokenCredentialKey() tokencredential.CredentialKey {
-	key := make([]byte, tokencredential.CredentialKeySize)
+func controlplanetestTokenCredentialKey() auth.CredentialKey {
+	key := make([]byte, auth.CredentialKeySize)
 	for index := range key {
 		key[index] = 3
 	}
-	credentialKey, err := tokencredential.NewCredentialKey(key)
+	credentialKey, err := auth.NewCredentialKey(key)
 	if err != nil {
 		panic(err)
 	}

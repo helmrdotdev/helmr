@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -74,12 +73,12 @@ func (s *Server) writeGitHubAuthStart(w http.ResponseWriter, r *http.Request, ki
 		writeError(w, unavailable(errors.New("auth provider is not configured")))
 		return
 	}
-	state, err := token.GenerateOpaque(32)
+	state, err := auth.GenerateOpaque(32)
 	if err != nil {
 		writeError(w, errors.New("generate auth state"))
 		return
 	}
-	verifier, err := token.GenerateOpaque(64)
+	verifier, err := auth.GenerateOpaque(64)
 	if err != nil {
 		writeError(w, errors.New("generate pkce verifier"))
 		return
@@ -270,7 +269,7 @@ func (s *Server) issueSession(r *http.Request, queries db.Querier, userID pgtype
 }
 
 func (s *Server) issueSessionForOrg(r *http.Request, queries db.Querier, userID pgtype.UUID, orgID pgtype.UUID) (string, error) {
-	raw, err := token.GenerateOpaque(32)
+	raw, err := auth.GenerateOpaque(32)
 	if err != nil {
 		return "", err
 	}

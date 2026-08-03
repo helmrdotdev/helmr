@@ -30,7 +30,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/imagecache"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
-	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
@@ -86,7 +85,7 @@ type Server struct {
 	registryCredentials   RegistryCredentialOpener
 	cacheRepositories     imagecache.RepositoryProvisioner
 	workspaceFencingKey   workspace.FencingKey
-	tokenCredentialKey    token.CredentialKey
+	tokenCredentialKey    auth.CredentialKey
 	eventStream           SubjectEventReader
 	telemetryReader       telemetry.Reader
 	workerTokenSigningKey []byte
@@ -135,7 +134,7 @@ type ServerConfig struct {
 	RegistryCredentials   RegistryCredentialOpener
 	CacheRepositories     imagecache.RepositoryProvisioner
 	WorkspaceFencingKey   workspace.FencingKey
-	TokenCredentialKey    token.CredentialKey
+	TokenCredentialKey    auth.CredentialKey
 	EventStream           SubjectEventReader
 	TelemetryReader       telemetry.Reader
 	Mailer                email.Sender

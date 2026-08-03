@@ -9,15 +9,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	tokencredential "github.com/helmrdotdev/helmr/internal/token"
 )
 
 func TestTokenCreateResponseRemainsOriginalPendingProjection(t *testing.T) {
 	createdAt := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
 	server := &Server{publicURL: &url.URL{Scheme: "https", Host: "api.example.test"}}
-	credentials := tokencredential.Credentials{
+	credentials := auth.Credentials{
 		CallbackSecret:    "callback-secret",
 		PublicAccessToken: "hlmr_pat_secret",
 	}

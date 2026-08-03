@@ -20,7 +20,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	tokencredential "github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -591,7 +590,7 @@ func (s *Server) completeTokenWithCallback(w http.ResponseWriter, r *http.Reques
 		ctx context.Context,
 		q db.Querier,
 	) (db.Token, *db.PublicAccessToken, error) {
-		fingerprint := tokencredential.HashCredential(callbackSecret)
+		fingerprint := auth.HashCredential(callbackSecret)
 		tokenRow, err := q.GetTokenForCallbackCompletion(ctx, db.GetTokenForCallbackCompletionParams{
 			ID: pgvalue.UUID(tokenID), CallbackSecretFingerprint: fingerprint,
 		})
@@ -637,7 +636,7 @@ func (s *Server) completeTokenWithBearer(w http.ResponseWriter, r *http.Request)
 		q db.Querier,
 	) (db.Token, *db.PublicAccessToken, error) {
 		publicAccess, err := q.LockPublicAccessTokenByHash(
-			ctx, tokencredential.HashCredential(rawBearer),
+			ctx, auth.HashCredential(rawBearer),
 		)
 		if err != nil {
 			return db.Token{}, nil, errTokenScopeDenied
@@ -651,7 +650,7 @@ func (s *Server) completeTokenWithBearer(w http.ResponseWriter, r *http.Request)
 		}
 		credentials, err := s.tokenCredentialKey.Derive(pgvalue.MustUUIDValue(tokenRow.ID))
 		if err != nil || !hmac.Equal(credentials.PublicAccessHash, publicAccess.TokenHash) ||
-			!hmac.Equal(credentials.PublicAccessHash, tokencredential.HashCredential(rawBearer)) {
+			!hmac.Equal(credentials.PublicAccessHash, auth.HashCredential(rawBearer)) {
 			return db.Token{}, nil, errTokenScopeDenied
 		}
 		return tokenRow, &publicAccess, nil
@@ -970,7 +969,7 @@ func tokenResponse(row db.Token) api.TokenResponse {
 
 func (s *Server) tokenCreateResponse(
 	row db.Token,
-	credentials tokencredential.Credentials,
+	credentials auth.Credentials,
 ) api.TokenResponse {
 	creation := row
 	creation.State = db.TokenStatePending

@@ -17,7 +17,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -198,7 +197,7 @@ func (s *Server) createPendingMagicLink(r *http.Request, purpose db.MagicLinkPur
 		if count >= magicLinkRateLimitCount {
 			return nil
 		}
-		rawToken, err := token.GenerateOpaque(32)
+		rawToken, err := auth.GenerateOpaque(32)
 		if err != nil {
 			return err
 		}

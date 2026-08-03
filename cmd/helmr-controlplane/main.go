@@ -15,6 +15,7 @@ import (
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awsecr "github.com/aws/aws-sdk-go-v2/service/ecr"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
@@ -32,7 +33,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/platformlock"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -191,7 +191,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Workspace fencing key: %w", err)
 	}
-	tokenCredentialKey, err := token.NewCredentialKey(cfg.TokenCredentialKey)
+	tokenCredentialKey, err := auth.NewCredentialKey(cfg.TokenCredentialKey)
 	if err != nil {
 		return fmt.Errorf("configure Token credential key: %w", err)
 	}

@@ -11,10 +11,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/helmrdotdev/helmr/operatorapi"
 	"github.com/jackc/pgx/v5"
@@ -46,7 +46,7 @@ func hashOperatorToken(raw string) ([]byte, error) {
 	if err != nil || len(decoded) != operatorTokenDecodedByteCount || base64.RawURLEncoding.EncodeToString(decoded) != raw {
 		return nil, errors.New("operator token must be a canonical base64url-no-pad encoding of exactly 32 bytes")
 	}
-	return token.HashCredential(raw), nil
+	return auth.HashCredential(raw), nil
 }
 
 func (s *Server) mountOperatorRoutes(r chi.Router) {
@@ -63,7 +63,7 @@ func (s *Server) mountOperatorRoutes(r chi.Router) {
 func (s *Server) requireOperator(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, ok := bearerToken(r.Header.Get("Authorization"))
-		if !ok || len(s.operatorTokenHash) == 0 || !hmac.Equal(token.HashCredential(raw), s.operatorTokenHash) {
+		if !ok || len(s.operatorTokenHash) == 0 || !hmac.Equal(auth.HashCredential(raw), s.operatorTokenHash) {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			writeError(w, unauthorized(errors.New("deployment operator authentication is required")))
 			return

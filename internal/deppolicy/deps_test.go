@@ -55,7 +55,7 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 
 	for source, targets := range map[string][]string{
 		"api":               {"workerapi"},
-		"auth":              {"db"},
+		"auth":              {"db", "token"},
 		"buildkit":          {"imagebuild/worker"},
 		"cas":               {"cas/s3"},
 		"client":            {"workerapi", "workerclient"},
@@ -87,6 +87,7 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 func TestProviderNeutralPackagesExcludeProviderSDKs(t *testing.T) {
 	root := filepath.Join(repositoryRoot(t), "internal")
 	for source, forbiddenPrefixes := range map[string][]string{
+		"auth":         {"github.com/jackc/pgx/"},
 		"cas":          {"github.com/aws/aws-sdk-go-v2/", "github.com/aws/smithy-go"},
 		"controlplane": {"github.com/redis/go-redis/"},
 		"email":        {"github.com/resend/resend-go/"},

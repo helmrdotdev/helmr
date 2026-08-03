@@ -31,7 +31,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
-	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -202,7 +201,7 @@ func main() {
 		log.Error("configure Workspace fencing key", "error", err)
 		os.Exit(1)
 	}
-	tokenCredentialKey, err := token.NewCredentialKey(cfg.tokenCredentialKey)
+	tokenCredentialKey, err := auth.NewCredentialKey(cfg.tokenCredentialKey)
 	if err != nil {
 		log.Error("configure Token credential key", "error", err)
 		os.Exit(1)
@@ -472,7 +471,7 @@ ON CONFLICT (id) DO UPDATE
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	raw, err := token.GenerateOpaque(32)
+	raw, err := auth.GenerateOpaque(32)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

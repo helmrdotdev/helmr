@@ -2,8 +2,6 @@ package auth
 
 import (
 	"strings"
-
-	"github.com/helmrdotdev/helmr/internal/token"
 )
 
 const (
@@ -18,7 +16,7 @@ type GeneratedWorkerToken struct {
 }
 
 func GenerateWorkerInstanceSecret(hashSecret []byte) (GeneratedWorkerToken, error) {
-	raw, err := token.GenerateOpaque(workerSecretBytes)
+	raw, err := GenerateOpaque(workerSecretBytes)
 	if err != nil {
 		return GeneratedWorkerToken{}, err
 	}
