@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/run/runtest"
 )
 
 func TestCancelerTerminalizesAuthorityAndLeavesDetachedChildren(t *testing.T) {
@@ -18,7 +18,7 @@ func TestCancelerTerminalizesAuthorityAndLeavesDetachedChildren(t *testing.T) {
 	fixture := newPostgresFixture(t)
 	parent := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
 	detached := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
-	mustExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 UPDATE runs
    SET cause_kind = 'child',
        parent_run_id = $1,
@@ -222,14 +222,14 @@ func TestCancelerRejectsAnotherTerminalOutcome(t *testing.T) {
 	ctx := context.Background()
 	fixture := newPostgresFixture(t)
 	work := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
-	mustExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 UPDATE run_attempts
    SET terminal_outcome = 'succeeded',
        terminal_reason_code = 'task_succeeded',
        terminal_at = now()
  WHERE run_id = $1
    AND number = 1`, work.runID)
-	mustExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 UPDATE runs
    SET status = 'succeeded',
        output = '{}'::jsonb,
@@ -332,7 +332,7 @@ func TestCancelerResolvesDifferentWorkspaceChildWait(t *testing.T) {
 			child := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
 			claimID := uuid.Must(uuid.NewV7())
 			waitID := uuid.Must(uuid.NewV7())
-			mustExec(t, ctx, fixture.pool, `
+			dbtest.MustExec(t, ctx, fixture.pool, `
 INSERT INTO idempotency_claims (
     id, environment_id, operation, slot_hash,
     request_fingerprint, accepted_at
@@ -341,10 +341,10 @@ INSERT INTO idempotency_claims (
 )`,
 				claimID,
 				fixture.environmentID,
-				runtest.Hash("cancel-child-slot"),
-				runtest.Hash("cancel-child-request"),
+				dbtest.Hash("cancel-child-slot"),
+				dbtest.Hash("cancel-child-request"),
 			)
-			mustExec(t, ctx, fixture.pool, `
+			dbtest.MustExec(t, ctx, fixture.pool, `
 UPDATE runs
    SET cause_kind = 'child',
        parent_run_id = $1,
@@ -355,13 +355,13 @@ UPDATE runs
 				claimID,
 				child.runID,
 			)
-			mustExec(t, ctx, fixture.pool, `
+			dbtest.MustExec(t, ctx, fixture.pool, `
 UPDATE runs
    SET status = 'waiting'
  WHERE id = $1`,
 				parent.runID,
 			)
-			mustExec(t, ctx, fixture.pool, `
+			dbtest.MustExec(t, ctx, fixture.pool, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind,
     child_run_id, child_parent_owned, child_target_declared_id,
@@ -835,7 +835,7 @@ func grantCancelledChildParentResume(
 	if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
 		t.Fatal(err)
 	}
-	mustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO run_leases (
     id, org_id, project_id, environment_id, run_id, workspace_id, region_id,
     lease_sequence, attempt_number, worker_group_id, worker_instance_id,
@@ -857,7 +857,7 @@ SELECT $1, org_id, project_id, environment_id, $2, workspace_id, region_id,
 		parentRunID,
 		templateLeaseID,
 	)
-	mustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 UPDATE workspaces
    SET writer_generation = 4,
        updated_at = transaction_timestamp()
@@ -865,7 +865,7 @@ UPDATE workspaces
    AND writer_generation = 3`,
 		parentRunID,
 	)
-	mustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO workspace_leases (
     id, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
@@ -886,7 +886,7 @@ SELECT $1, org_id, worker_group_id, project_id, environment_id, region_id,
 		"resume-"+runLeaseID.String(),
 		templateLeaseID,
 	)
-	mustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 UPDATE runs
    SET current_run_lease_id = $1,
        state_version = state_version + 1,
@@ -897,7 +897,7 @@ UPDATE runs
 		runLeaseID,
 		parentRunID,
 	)
-	mustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 UPDATE run_waits
    SET suspension_state = 'resuming',
        current_run_lease_id = $1,

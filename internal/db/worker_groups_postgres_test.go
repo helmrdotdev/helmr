@@ -115,12 +115,12 @@ func TestWorkerGroupReplacementAllowsDrainingPredecessor(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	workerID := uuid.Must(uuid.NewV7())
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (id, resource_id, worker_group_id, state)
 		VALUES ($1, $2, $3, 'registering')
 	`, workerID, "predecessor-"+workerID.String(), dbtest.DefaultWorkerGroupID)
-	mustExec(t, ctx, pool, `UPDATE worker_groups SET state = 'draining' WHERE id = $1`, dbtest.DefaultWorkerGroupID)
-	replacementID := "replacement-" + shortUUID(uuid.Must(uuid.NewV7()))
+	dbtest.MustExec(t, ctx, pool, `UPDATE worker_groups SET state = 'draining' WHERE id = $1`, dbtest.DefaultWorkerGroupID)
+	replacementID := "replacement-" + dbtest.ShortID(uuid.Must(uuid.NewV7()))
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)

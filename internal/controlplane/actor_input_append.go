@@ -8,7 +8,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	actordomain "github.com/helmrdotdev/helmr/internal/actor"
+	"github.com/helmrdotdev/helmr/internal/actor"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -165,20 +165,20 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 			}
 		}
 
-		actor, err := work.q.LockActorForInputReconcile(ctx, db.LockActorForInputReconcileParams{
+		lockedActor, err := work.q.LockActorForInputReconcile(ctx, db.LockActorForInputReconcileParams{
 			EnvironmentID: result.EnvironmentID, ActorID: result.ActorID,
 		})
-		if err != nil || actor.WorkspaceID != locator.WorkspaceID {
+		if err != nil || lockedActor.WorkspaceID != locator.WorkspaceID {
 			return errActorInputAppendConflict
 		}
 		var currentRun db.Run
-		if actor.CurrentRunID.Valid {
+		if lockedActor.CurrentRunID.Valid {
 			// The Actor row remains locked for the transaction, so its current
 			// Run cannot be replaced by completion while this read is used.
 			// Avoiding a second Run lock also keeps A→B/B→A sends from acquiring
 			// source and target Runs in opposite orders.
 			currentRun, err = work.q.GetActorInputCurrentRun(ctx, db.GetActorInputCurrentRunParams{
-				EnvironmentID: result.EnvironmentID, RunID: actor.CurrentRunID, ActorID: result.ActorID,
+				EnvironmentID: result.EnvironmentID, RunID: lockedActor.CurrentRunID, ActorID: result.ActorID,
 			})
 			if err != nil {
 				return errActorInputAppendConflict
@@ -191,21 +191,21 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 			AfterInputSequence: pgtype.Int8{Int64: result.Sequence - 1, Valid: true},
 		})
 		if waitErr == nil {
-			if _, err := actordomain.CompleteWait(ctx, work.q, wait, result); err != nil {
+			if _, err := actor.CompleteWait(ctx, work.q, wait, result); err != nil {
 				return err
 			}
 		} else if !errors.Is(waitErr, pgx.ErrNoRows) {
 			return waitErr
 		}
 
-		if actordomain.CanStartContinuation(actor) {
+		if actor.CanStartContinuation(lockedActor) {
 			workspace, err := work.q.LockActorInputWorkspace(ctx, db.LockActorInputWorkspaceParams{
-				EnvironmentID: result.EnvironmentID, ID: actor.WorkspaceID, ActorID: result.ActorID,
+				EnvironmentID: result.EnvironmentID, ID: lockedActor.WorkspaceID, ActorID: result.ActorID,
 			})
 			if err != nil {
 				return errActorInputAppendConflict
 			}
-			if _, err := actordomain.CreateContinuation(ctx, work.q, actor, workspace, bindings); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			if _, err := actor.CreateContinuation(ctx, work.q, lockedActor, workspace, bindings); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return err
 			}
 		}

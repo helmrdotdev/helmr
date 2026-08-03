@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -36,30 +36,30 @@ func TestParentOwnedQueuedChildExpiryResolvesEveryWaitState(t *testing.T) {
 			if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
 				t.Fatal(err)
 			}
-			mustExec(t, ctx, tx, `
+			dbtest.MustExec(t, ctx, tx, `
 INSERT INTO idempotency_claims (
     id, environment_id, operation, slot_hash,
     request_fingerprint, accepted_at
 ) VALUES ($1, $2, 'task.child.invoke', $3, $4, now())`,
 				claimID,
 				fixture.environmentID,
-				runtest.Hash("queued-child-expiry-slot"),
-				runtest.Hash("queued-child-expiry-request"),
+				dbtest.Hash("queued-child-expiry-slot"),
+				dbtest.Hash("queued-child-expiry-request"),
 			)
-			mustExec(t, ctx, tx, `
+			dbtest.MustExec(t, ctx, tx, `
 UPDATE workspace_leases
    SET state = 'released', released_at = now(), terminal_at = now()
  WHERE owner_run_lease_id = $1`,
 				child.leaseID,
 			)
-			mustExec(t, ctx, tx, `
+			dbtest.MustExec(t, ctx, tx, `
 UPDATE run_leases
    SET state = 'cancelled', terminal_at = now(),
        terminal_reason_code = 'test_reset'
  WHERE id = $1`,
 				child.leaseID,
 			)
-			mustExec(t, ctx, tx, `
+			dbtest.MustExec(t, ctx, tx, `
 UPDATE runs
    SET cause_kind = 'child',
        parent_run_id = $1,
@@ -73,7 +73,7 @@ UPDATE runs
 				claimID,
 				child.runID,
 			)
-			mustExec(t, ctx, tx, `
+			dbtest.MustExec(t, ctx, tx, `
 UPDATE run_waits
    SET kind = 'child',
        token_id = NULL,
@@ -192,13 +192,13 @@ func newQueuedChildParent(
 	).Scan(&parent.workspaceID); err != nil {
 		t.Fatal(err)
 	}
-	mustExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
 		   SET state = 'running',
 		       started_at = claimed_at
 		 WHERE id = $1
 	`, parent.leaseID)
-	mustExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE runs
 		   SET status = 'waiting',
 		       state_version = 2,
@@ -206,7 +206,7 @@ func newQueuedChildParent(
 		       active_started_at = transaction_timestamp()
 		 WHERE id = $1
 	`, parent.runID)
-	mustExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO run_waits (
 			id, environment_id, run_id, workspace_id, kind, due_at,
 			expected_run_state_version, attempt_number, current_run_lease_id,
@@ -218,7 +218,7 @@ func newQueuedChildParent(
 	switch suspension {
 	case db.RunWaitStateHot:
 	case db.RunWaitStateCheckpointing:
-		mustExec(t, ctx, fixture.pool, `
+		dbtest.MustExec(t, ctx, fixture.pool, `
 			UPDATE run_waits
 			   SET suspension_state = 'checkpointing',
 			       checkpoint_request_version = 1
@@ -236,7 +236,7 @@ func newQueuedChildParent(
 		}
 		checkpointID := uuid.Must(uuid.NewV7())
 		parent.checkpointID = pgvalue.UUID(checkpointID)
-		mustExec(t, ctx, fixture.pool, `
+		dbtest.MustExec(t, ctx, fixture.pool, `
 			INSERT INTO run_checkpoints (
 			    id, kind, run_id, attempt_number, run_wait_id,
 			    source_run_lease_id, source_workspace_lease_id, workspace_id,
@@ -248,7 +248,7 @@ func newQueuedChildParent(
 			)
 		`, checkpointID, parent.runID, parent.waitID, parent.leaseID,
 			workspaceLeaseID, parent.workspaceID, baseVersionID)
-		mustExec(t, ctx, fixture.pool, `
+		dbtest.MustExec(t, ctx, fixture.pool, `
 			UPDATE run_leases
 			   SET state = 'checkpointed',
 			       checkpointed_at = transaction_timestamp(),
@@ -256,20 +256,20 @@ func newQueuedChildParent(
 			       terminal_reason_code = 'checkpointed'
 			 WHERE id = $1
 		`, parent.leaseID)
-		mustExec(t, ctx, fixture.pool, `
+		dbtest.MustExec(t, ctx, fixture.pool, `
 			UPDATE workspace_leases
 			   SET state = 'released',
 			       released_at = transaction_timestamp(),
 			       terminal_at = transaction_timestamp()
 			 WHERE id = $1
 		`, workspaceLeaseID)
-		mustExec(t, ctx, fixture.pool, `
+		dbtest.MustExec(t, ctx, fixture.pool, `
 			UPDATE runs
 			   SET current_run_lease_id = NULL,
 			       active_started_at = NULL
 			 WHERE id = $1
 		`, parent.runID)
-		mustExec(t, ctx, fixture.pool, `
+		dbtest.MustExec(t, ctx, fixture.pool, `
 			UPDATE run_waits
 			   SET suspension_state = 'parked',
 			       current_run_lease_id = NULL,

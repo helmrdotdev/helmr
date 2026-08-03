@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -109,11 +108,4 @@ func (fixture postgresFixture) addHandoffChain(
 		mountID:             chain.MountID,
 		versionID:           chain.VersionID,
 	}
-}
-
-func mustExec(t *testing.T, ctx context.Context, executor interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}, query string, args ...any) {
-	t.Helper()
-	runtest.MustExec(t, ctx, executor, query, args...)
 }

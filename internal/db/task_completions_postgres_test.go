@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -145,18 +145,18 @@ func TestRestoredTaskFailureRollsBackPhysicalFrontier(t *testing.T) {
 	authority := startTaskCompletionWork(t, ctx, fixture, work)
 	restoredVersionID := uuid.Must(uuid.NewV7())
 	artifactID := uuid.Must(uuid.NewV7())
-	digest := runtest.Digest("restored-task-frontier")
-	runtest.MustExec(t, ctx, fixture.pool, `
+	digest := dbtest.Digest("restored-task-frontier")
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, 'application/octet-stream')
 	`, fixture.orgID, digest)
-	runtest.MustExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO artifacts (
 			id, org_id, project_id, environment_id, digest, kind,
 			size_bytes, media_type, created_by_worker_instance_id
 		) VALUES ($1, $2, $3, $4, $5, 'workspace_version', 1, 'application/octet-stream', $6)
 	`, artifactID, fixture.orgID, fixture.projectID, fixture.environmentID, digest, fixture.workerID)
-	runtest.MustExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO workspace_versions (
 			id, environment_id, workspace_id,
 			parent_version_id, artifact_id, artifact_kind, kind, content_digest,
@@ -168,10 +168,10 @@ func TestRestoredTaskFailureRollsBackPhysicalFrontier(t *testing.T) {
 		)
 	`, restoredVersionID, fixture.environmentID, authority.workspaceID, authority.baseVersionID,
 		artifactID, digest, authority.workspaceLeaseID)
-	runtest.MustExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE workspace_mounts SET materialized_version_id = $1 WHERE id = $2
 	`, restoredVersionID, authority.mountID)
-	runtest.MustExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE workspace_leases SET base_version_id = $1 WHERE id = $2
 	`, restoredVersionID, authority.workspaceLeaseID)
 	authority.physicalVersionID = restoredVersionID
@@ -332,19 +332,19 @@ func startTaskCompletionWork(
 	work runLeaseWork,
 ) taskCompletionWork {
 	t.Helper()
-	runtest.MustExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
 		   SET state = 'running', started_at = claimed_at
 		 WHERE id = $1 AND state = 'starting'
 	`, work.leaseID)
-	runtest.MustExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE runs
 		   SET status = 'running', state_version = state_version + 1,
 		       started_at = (SELECT started_at FROM run_leases WHERE id = $1),
 		       active_started_at = (SELECT started_at FROM run_leases WHERE id = $1)
 		 WHERE id = $2 AND status = 'queued' AND current_run_lease_id = $1
 	`, work.leaseID, work.runID)
-	runtest.MustExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_attempts
 		   SET entrypoint_entered_at = (SELECT started_at FROM run_leases WHERE id = $1)
 		 WHERE run_id = $2 AND number = 1 AND entrypoint_entered_at IS NULL
@@ -374,7 +374,7 @@ func beginTaskCompletionFinalization(
 	work runLeaseWork,
 ) {
 	t.Helper()
-	runtest.MustExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE runs
 		   SET active_elapsed_ms = active_elapsed_ms
 		           + floor(extract(epoch FROM (now() - active_started_at)) * 1000)::bigint,
@@ -386,7 +386,7 @@ func beginTaskCompletionFinalization(
 		   AND status = 'running'
 		   AND active_started_at IS NOT NULL
 	`, work.runID, work.leaseID)
-	runtest.MustExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
 		   SET state = 'finalizing',
 		       finalization_operation_id = $2,

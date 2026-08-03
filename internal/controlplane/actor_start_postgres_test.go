@@ -20,7 +20,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -547,19 +546,19 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	workspaceDefinitionID := uuid.Must(uuid.NewV7())
 	sourceID, programID, imageID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()),
 		uuid.Must(uuid.NewV7())
-	mustActorStartExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO regions (id, provider, provider_region, display_name)
 		VALUES ('us-east-1', 'aws', 'us-east-1', 'Actor Start Test')
 	`)
-	mustActorStartExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO organizations (id, name, slug)
 		VALUES ($1, 'Actor Start Test', $2)
 	`, fixture.orgID, "actor-start-"+fixture.orgID.String())
-	mustActorStartExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO projects (id, org_id, default_region_id, slug, name)
 		VALUES ($1, $2, 'us-east-1', $3, 'Actor Start Test')
 	`, fixture.projectID, fixture.orgID, "actor-start-"+fixture.projectID.String())
-	mustActorStartExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
 		VALUES ($1, $2, $3, $4, 'Actor Start Test', '#3366ff')
 	`, fixture.environmentID, fixture.orgID, fixture.projectID,
@@ -587,20 +586,20 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	queueConfig := []byte(
 		`{"formatVersion":0,"queues":[{"concurrencyLimit":2,"name":"default"},{"name":"priority"}]}`,
 	)
-	mustActorStartExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-source.v0+tar'),
 		       ($1, $3, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
 		       ($1, $4, 1, 'application/octet-stream')
 	`, fixture.orgID, digests[0], digests[1], digests[2])
-	mustActorStartExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
 		VALUES ($1, $4, $5, $6, $7, 'deployment_source', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
 		       ($2, $4, $5, $6, $8, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
 		       ($3, $4, $5, $6, $9, 'workspace_image', 1, 'application/octet-stream')
 	`, sourceID, programID, imageID, fixture.orgID, fixture.projectID,
 		fixture.environmentID, digests[0], digests[1], digests[2])
-	mustActorStartExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO deployments (
 		    id, org_id, project_id, environment_id, build_region_id,
 		    build_node_version, build_runtime_digest, build_toolchain_digest,
@@ -616,7 +615,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		)
 	`, deploymentID, fixture.orgID, fixture.projectID,
 		fixture.environmentID, digests[0], sourceID, programID, queueConfig)
-	mustActorStartExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO deployment_definitions (
 		    id, environment_id, deployment_id, kind, declared_id,
 		    manifest_version, manifest, manifest_digest, artifact_id
@@ -627,7 +626,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	`, actorDefinitionID, taskDefinitionID, workspaceDefinitionID,
 		fixture.environmentID, deploymentID, imageID,
 		actorManifest, actorManifestDigest[:], taskManifest, taskManifestDigest[:])
-	mustActorStartExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		UPDATE environments SET current_deployment_id = $1 WHERE id = $2
 	`, deploymentID, fixture.environmentID)
 
@@ -637,12 +636,12 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	mustActorStartExec(t, tx, `SET CONSTRAINTS ALL DEFERRED`)
-	mustActorStartExec(t, tx, `
+	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
+	dbtest.MustExec(t, t.Context(), tx, `
 		INSERT INTO secrets (id, environment_id, name, current_version_id)
 		VALUES ($1, $2, 'API_TOKEN', $3)
 	`, secretID, fixture.environmentID, secretVersionID)
-	mustActorStartExec(t, tx, `
+	dbtest.MustExec(t, t.Context(), tx, `
 		INSERT INTO secret_versions (
 		    id, secret_id, version, nonce, ciphertext
 		) VALUES ($1, $2, 1, decode(repeat('01', 12), 'hex'),
@@ -653,14 +652,14 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		fixture.workspaceIDs[index] = workspaceID
 		fixture.workspaceRefs[index] = workspaceID.String()
 		fixture.workspaceKeys[index] = fmt.Sprintf("workspace:%d", index)
-		mustActorStartExec(t, tx, `
+		dbtest.MustExec(t, t.Context(), tx, `
 			INSERT INTO workspaces (
 			    id, environment_id, region_id,
 			    workspace_declared_id, deployment_definition_id, head_version_id, key
 			) VALUES ($1, $2, 'us-east-1', 'workspace.v1', $3, $4, $5)
 		`, workspaceID, fixture.environmentID, workspaceDefinitionID, versionID,
 			fixture.workspaceKeys[index])
-		mustActorStartExec(t, tx, `
+		dbtest.MustExec(t, t.Context(), tx, `
 			INSERT INTO workspace_versions (
 			    id, environment_id, workspace_id,
 			    kind, state, content_digest, size_bytes, entry_count,
@@ -669,7 +668,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 			          'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
 			          0, 0, 0, 0, now())
 		`, versionID, fixture.environmentID, workspaceID)
-		mustActorStartExec(t, tx, `
+		dbtest.MustExec(t, t.Context(), tx, `
 			INSERT INTO workspace_secrets (
 			    workspace_id, environment_id, placement_kind, placement_target, secret_id
 			) VALUES ($1, $2, 'env', 'API_TOKEN', $3)
@@ -689,13 +688,4 @@ func openActorStartPostgres(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	return database.Pool
-}
-
-func mustActorStartExec(t *testing.T, executor interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}, query string, args ...any) {
-	t.Helper()
-	if _, err := executor.Exec(t.Context(), query, args...); err != nil {
-		t.Fatal(err)
-	}
 }

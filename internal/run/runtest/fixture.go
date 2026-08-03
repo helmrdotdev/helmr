@@ -2,9 +2,6 @@ package runtest
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"strings"
 	"testing"
 	"time"
 
@@ -12,7 +9,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -59,39 +55,39 @@ func New(t *testing.T) Fixture {
 	sourceID := uuid.Must(uuid.NewV7())
 	programID := uuid.Must(uuid.NewV7())
 	imageID := uuid.Must(uuid.NewV7())
-	sourceDigest := Digest("source")
-	programDigest := Digest("program")
-	imageDigest := Digest("image")
-	MustExec(t, t.Context(), fixture.Pool, `
+	sourceDigest := dbtest.Digest("source")
+	programDigest := dbtest.Digest("program")
+	imageDigest := dbtest.Digest("image")
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO regions (id, provider, provider_region, display_name)
 		VALUES ($1, 'aws', $1, 'Run Lease Test')
 	`, Region)
-	MustExec(t, t.Context(), fixture.Pool, `
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO worker_groups (
 			id, region_id, name, protocol_version, observation_ttl_seconds
 		) VALUES ($1, $2, $1, $3, 120)
 	`, WorkerGroup, Region, WorkerProtocol)
-	MustExec(t, t.Context(), fixture.Pool, `
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO organizations (id, name, slug)
 		VALUES ($1, 'Run Lease Test', $2)
-	`, fixture.OrgID, "run-lease-"+ShortID(fixture.OrgID))
-	MustExec(t, t.Context(), fixture.Pool, `
+	`, fixture.OrgID, "run-lease-"+dbtest.ShortID(fixture.OrgID))
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO projects (id, org_id, default_region_id, slug, name)
 		VALUES ($1, $2, $3, $4, 'Run Lease Test')
-	`, fixture.ProjectID, fixture.OrgID, Region, "run-lease-"+ShortID(fixture.ProjectID))
-	MustExec(t, t.Context(), fixture.Pool, `
+	`, fixture.ProjectID, fixture.OrgID, Region, "run-lease-"+dbtest.ShortID(fixture.ProjectID))
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
 		VALUES ($1, $2, $3, $4, 'Run Lease Test', '#3366ff')
 	`, fixture.EnvironmentID, fixture.OrgID, fixture.ProjectID,
-		"run-lease-"+ShortID(fixture.EnvironmentID))
-	MustExec(t, t.Context(), fixture.Pool, `
+		"run-lease-"+dbtest.ShortID(fixture.EnvironmentID))
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES
 			($1, $2, 1, 'application/vnd.helmr.deployment-source.v0+tar'),
 			($1, $3, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
 			($1, $4, 1, 'application/octet-stream')
 	`, fixture.OrgID, sourceDigest, programDigest, imageDigest)
-	MustExec(t, t.Context(), fixture.Pool, `
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO artifacts (
 			id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type
 		) VALUES
@@ -100,7 +96,7 @@ func New(t *testing.T) Fixture {
 			($3, $4, $5, $6, $9, 'workspace_image', 1, 'application/octet-stream')
 	`, sourceID, programID, imageID, fixture.OrgID, fixture.ProjectID,
 		fixture.EnvironmentID, sourceDigest, programDigest, imageDigest)
-	MustExec(t, t.Context(), fixture.Pool, `
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO deployments (
 			id, org_id, project_id, environment_id, build_region_id,
 			build_node_version, build_runtime_digest, build_toolchain_digest,
@@ -117,7 +113,7 @@ func New(t *testing.T) Fixture {
 	`, fixture.DeploymentID, fixture.OrgID, fixture.ProjectID,
 		fixture.EnvironmentID, Region, sourceDigest,
 		sourceID, programID)
-	MustExec(t, t.Context(), fixture.Pool, `
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO deployment_definitions (
 			id, environment_id, deployment_id, kind, declared_id,
 			manifest_version, manifest, manifest_digest, artifact_id
@@ -130,13 +126,13 @@ func New(t *testing.T) Fixture {
 		)
 	`, fixture.TaskDefinitionID, fixture.WorkspaceDefinitionID,
 		fixture.EnvironmentID, fixture.DeploymentID, imageID)
-	MustExec(t, t.Context(), fixture.Pool, `
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO runtime_identities (
 			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
 			rootfs_digest, network_abi
 		) VALUES ($1, 'x86_64', 'test', 'kernel', 'initramfs', 'rootfs', 'helmr/v0')
 	`, fixture.RuntimeIdentityID)
-	MustExec(t, t.Context(), fixture.Pool, `
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, state,
 			current_epoch, current_service_id, protocol_version, supervisor_version,
@@ -177,7 +173,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 	if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
 		t.Fatal(err)
 	}
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspaces (
 			id, environment_id, region_id,
 			workspace_declared_id, deployment_definition_id,
@@ -188,7 +184,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 		)
 	`, workspaceID, fixture.EnvironmentID, Region,
 		fixture.WorkspaceDefinitionID, runID, versionID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_versions (
 			id, environment_id, workspace_id,
 			kind, content_digest, state, ownership_generation, writer_generation, published_at
@@ -198,7 +194,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 			'committed', 0, 0, now()
 		)
 	`, versionID, fixture.EnvironmentID, workspaceID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO runs (
 			id, org_id, project_id, environment_id, deployment_id,
 			deployment_definition_id, entrypoint_kind, entrypoint_declared_id,
@@ -214,12 +210,12 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 	`, runID, fixture.OrgID, fixture.ProjectID,
 		fixture.EnvironmentID, fixture.DeploymentID, fixture.TaskDefinitionID,
 		workspaceID, versionID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO run_attempts (
 			run_id, number, entrypoint_kind, workspace_id, base_workspace_version_id
 		) VALUES ($1, 1, 'task', $2, $3)
 	`, runID, workspaceID, versionID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO runtime_instances (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, runtime_identity_id, deployment_definition_id,
@@ -236,7 +232,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 		fixture.EnvironmentID, Region, fixture.WorkerID,
 		fixture.RuntimeIdentityID, fixture.WorkspaceDefinitionID, workspaceID,
 		fixture.DeploymentID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_mounts (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, worker_epoch, workspace_id, materialized_version_id,
@@ -251,7 +247,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 	if state == "starting" {
 		claimedAt = assignedAt.Add(time.Second)
 	}
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO run_leases (
 			id, org_id, project_id, environment_id, run_id, workspace_id, region_id,
 			lease_sequence, attempt_number, worker_group_id, worker_instance_id,
@@ -270,7 +266,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 		workspaceID, Region, WorkerGroup, fixture.WorkerID,
 		runtimeID, fixture.RuntimeIdentityID, WorkerProtocol,
 		state, assignedAt, claimedAt)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_leases (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
@@ -284,7 +280,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 	`, workspaceLeaseID, fixture.OrgID, WorkerGroup, fixture.ProjectID,
 		fixture.EnvironmentID, Region, fixture.WorkerID, runtimeID,
 		workspaceID, mountID, leaseID, versionID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		UPDATE runs
 		   SET current_run_lease_id = $1, first_lease_at = $2
 		 WHERE id = $3
@@ -304,7 +300,7 @@ func (fixture Fixture) ConvertToActor(
 	t.Helper()
 	actorDefinitionID := uuid.Must(uuid.NewV7())
 	actorID := uuid.Must(uuid.NewV7())
-	MustExec(t, ctx, fixture.Pool, `
+	dbtest.MustExec(t, ctx, fixture.Pool, `
 ALTER TABLE run_attempts
 ALTER CONSTRAINT run_attempts_run_id_entrypoint_kind_workspace_id_fkey
 DEFERRABLE INITIALLY DEFERRED`)
@@ -320,7 +316,7 @@ DEFERRABLE INITIALLY DEFERRED`)
 	if err := tx.QueryRow(ctx, `SELECT workspace_id FROM runs WHERE id = $1`, work.RunID).Scan(&workspaceID); err != nil {
 		t.Fatal(err)
 	}
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO deployment_definitions (
     id, environment_id, deployment_id, kind, declared_id,
     manifest_version, manifest, manifest_digest
@@ -328,7 +324,7 @@ INSERT INTO deployment_definitions (
     $1, $2, $3, 'actor', 'test-actor', 0, '{}'::jsonb,
     decode(repeat('05', 32), 'hex')
 )`, actorDefinitionID, fixture.EnvironmentID, fixture.DeploymentID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO actors (
     id, environment_id,
     actor_declared_id, deployment_definition_id, workspace_id, current_run_id,
@@ -339,11 +335,11 @@ INSERT INTO actors (
     'test-actor', $3, $4, $5,
     3, 1, 'default', 300000, $6::jsonb
 )`, actorID, fixture.EnvironmentID, actorDefinitionID, workspaceID, work.RunID, retryPolicy)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 UPDATE workspaces
    SET owner_actor_id = $1, owner_run_id = NULL
  WHERE id = $2`, actorID, workspaceID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 UPDATE runs
    SET deployment_definition_id = $1,
        entrypoint_kind = 'actor', entrypoint_declared_id = 'test-actor',
@@ -351,7 +347,7 @@ UPDATE runs
        actor_start_input_sequence = 1, actor_start_input_high_watermark = 2,
        payload = NULL, retry_policy = $3::jsonb
  WHERE id = $4`, actorDefinitionID, actorID, retryPolicy, work.RunID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 UPDATE run_attempts
    SET entrypoint_kind = 'actor',
        actor_start_input_sequence = 1
@@ -416,7 +412,7 @@ func (fixture Fixture) AddHandoffChain(
 	`, work.LeaseID).Scan(&chain.RuntimeID, &chain.MountID, &chain.VersionID); err != nil {
 		t.Fatal(err)
 	}
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		UPDATE workspace_leases
 		   SET state = 'released',
 		       writer_generation = 3,
@@ -424,7 +420,7 @@ func (fixture Fixture) AddHandoffChain(
 		       terminal_at = now()
 		 WHERE owner_run_lease_id = $1
 	`, work.LeaseID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		UPDATE run_leases
 		   SET state = 'checkpointed',
 		       claimed_at = assigned_at,
@@ -434,7 +430,7 @@ func (fixture Fixture) AddHandoffChain(
 		       terminal_reason_code = 'test_handoff'
 		 WHERE id = $1
 	`, work.LeaseID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO idempotency_claims (
 			id, environment_id, operation, slot_hash,
 			request_fingerprint, accepted_at
@@ -442,9 +438,9 @@ func (fixture Fixture) AddHandoffChain(
 			($1, $3, 'task.child.invoke', $4, $5, now()),
 			($2, $3, 'task.child.invoke', $6, $7, now())
 	`, outerClaimID, enclosingClaimID, fixture.EnvironmentID,
-		Hash("outer-slot"), Hash("outer-request"),
-		Hash("inner-slot"), Hash("inner-request"))
-	MustExec(t, ctx, tx, `
+		dbtest.Hash("outer-slot"), dbtest.Hash("outer-request"),
+		dbtest.Hash("inner-slot"), dbtest.Hash("inner-request"))
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO runs (
 			id, org_id, project_id, environment_id, deployment_id,
 			deployment_definition_id, entrypoint_kind, entrypoint_declared_id,
@@ -467,7 +463,7 @@ func (fixture Fixture) AddHandoffChain(
 		fixture.OrgID, fixture.ProjectID, fixture.EnvironmentID,
 		fixture.DeploymentID, fixture.TaskDefinitionID, fixture.workspaceID(t, ctx, tx, work.RunID),
 		chain.VersionID, outerClaimID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		UPDATE runs
 		   SET cause_kind = 'child',
 		       parent_run_id = $1,
@@ -475,7 +471,7 @@ func (fixture Fixture) AddHandoffChain(
 		       claim_id = $2
 		 WHERE id = $3
 	`, chain.ParentRunID, enclosingClaimID, work.RunID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO run_attempts (
 			run_id, number, entrypoint_kind, workspace_id,
 			entrypoint_entered_at, base_workspace_version_id
@@ -483,7 +479,7 @@ func (fixture Fixture) AddHandoffChain(
 			($1, 1, 'task', $3, now(), $4),
 			($2, 1, 'task', $3, now(), $4)
 	`, chain.OuterRunID, chain.ParentRunID, fixture.workspaceID(t, ctx, tx, work.RunID), chain.VersionID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		UPDATE workspaces
 		   SET owner_run_id = $1,
 		       writer_generation = 3
@@ -508,7 +504,7 @@ func (fixture Fixture) AddHandoffChain(
 		MountID: chain.MountID, VersionID: chain.VersionID,
 		resumeAttachID: chain.EnclosingResumeID,
 	})
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO run_waits (
 			id, environment_id, run_id, workspace_id, kind, condition_state,
 			child_run_id, child_parent_owned, child_target_declared_id,
@@ -525,7 +521,7 @@ func (fixture Fixture) AddHandoffChain(
 	`, historicalWaitID, fixture.EnvironmentID, chain.OuterRunID,
 		fixture.workspaceID(t, ctx, tx, work.RunID), chain.ParentRunID,
 		outerClaimID, uuid.Must(uuid.NewV7()))
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		UPDATE run_leases
 		   SET state = 'assigned',
 		       claimed_at = NULL,
@@ -535,7 +531,7 @@ func (fixture Fixture) AddHandoffChain(
 		       terminal_reason_code = NULL
 		 WHERE id = $1
 	`, work.LeaseID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		UPDATE workspace_leases
 		   SET state = 'active',
 		       released_at = NULL,
@@ -572,7 +568,7 @@ func (fixture Fixture) parkHandoff(
 ) {
 	t.Helper()
 	workspaceID := fixture.workspaceID(t, ctx, tx, park.runID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO run_leases (
 			id, org_id, project_id, environment_id, run_id, workspace_id, region_id,
 			lease_sequence, attempt_number, worker_group_id, worker_instance_id,
@@ -596,7 +592,7 @@ func (fixture Fixture) parkHandoff(
 		 ORDER BY created_at
 		 LIMIT 1
 	`, park.leaseID, park.runID, park.RuntimeID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_leases (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
@@ -614,7 +610,7 @@ func (fixture Fixture) parkHandoff(
 		 ORDER BY acquired_at
 		 LIMIT 1
 	`, park.workspaceLeaseID, park.leaseID, park.writerGeneration, workspaceID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		UPDATE runs
 		   SET current_run_lease_id = $1,
 		       status = 'running',
@@ -622,7 +618,7 @@ func (fixture Fixture) parkHandoff(
 		       started_at = now() - interval '1 minute'
 		 WHERE id = $2
 	`, park.leaseID, park.runID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO run_waits (
 			id, environment_id, run_id, workspace_id, kind, condition_state,
 			child_run_id, child_parent_owned, child_target_declared_id,
@@ -636,7 +632,7 @@ func (fixture Fixture) parkHandoff(
 		)
 	`, park.waitID, fixture.EnvironmentID, park.runID, workspaceID,
 		park.childRunID, park.claimID, park.leaseID, park.resumeAttachID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		UPDATE run_leases
 		   SET state = 'checkpointed',
 		       checkpointed_at = now(),
@@ -644,14 +640,14 @@ func (fixture Fixture) parkHandoff(
 		       terminal_reason_code = 'test_handoff'
 		 WHERE id = $1
 	`, park.leaseID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		UPDATE workspace_leases
 		   SET state = 'released',
 		       released_at = now(),
 		       terminal_at = now()
 		 WHERE id = $1
 	`, park.workspaceLeaseID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO run_checkpoints (
 			id, kind, run_id, attempt_number, run_wait_id,
 			source_run_lease_id, source_workspace_lease_id, workspace_id,
@@ -663,7 +659,7 @@ func (fixture Fixture) parkHandoff(
 		)
 	`, park.checkpointID, park.runID, park.waitID, park.leaseID,
 		park.workspaceLeaseID, workspaceID, park.VersionID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		UPDATE run_waits
 		   SET suspension_state = 'parked',
 		       current_run_lease_id = NULL,
@@ -685,7 +681,7 @@ func (fixture Fixture) parkHandoff(
 		 WHERE id = $8
 	`, park.leaseID, park.checkpointID, park.VersionID, park.RuntimeID,
 		park.MountID, park.writerGeneration, park.childWriterGeneration, park.waitID)
-	MustExec(t, ctx, tx, `
+	dbtest.MustExec(t, ctx, tx, `
 		UPDATE runs
 		   SET status = 'waiting',
 		       current_run_lease_id = NULL
@@ -705,27 +701,4 @@ func (fixture Fixture) workspaceID(
 		t.Fatal(err)
 	}
 	return workspaceID
-}
-
-func MustExec(t *testing.T, ctx context.Context, db interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}, query string, args ...any) {
-	t.Helper()
-	if _, err := db.Exec(ctx, query, args...); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func Digest(seed string) string {
-	sum := sha256.Sum256([]byte(seed))
-	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func Hash(seed string) []byte {
-	sum := sha256.Sum256([]byte(seed))
-	return sum[:]
-}
-
-func ShortID(id uuid.UUID) string {
-	return strings.ReplaceAll(id.String(), "-", "")[20:]
 }

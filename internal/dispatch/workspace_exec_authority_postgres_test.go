@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -42,7 +43,7 @@ func TestWorkspaceExecClaimRechecksStartingAdmissionButPreservesContinuation(t *
 					t.Fatal(err)
 				}
 			}
-			mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_groups
    SET state = 'draining'
  WHERE id = $1`,
@@ -86,13 +87,13 @@ func placeWorkspaceExecForClaim(
 	t.Helper()
 	claimID := uuid.Must(uuid.NewV7())
 	processID := uuid.Must(uuid.NewV7())
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspaces
    SET owner_run_id = NULL
  WHERE id = $1`,
 		fixture.workspaceID,
 	)
-	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO idempotency_claims (
     id, environment_id, operation, slot_hash,
     request_fingerprint, accepted_at

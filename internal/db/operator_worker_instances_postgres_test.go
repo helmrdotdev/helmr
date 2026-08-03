@@ -19,7 +19,7 @@ func TestOperatorWorkerListingProjectsCurrentRowPerOpaqueLocator(t *testing.T) {
 	currentID := uuid.Must(uuid.NewV7())
 	oldServiceID := uuid.Must(uuid.NewV7())
 
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, state,
 			current_epoch, current_service_id, epoch_started_at,

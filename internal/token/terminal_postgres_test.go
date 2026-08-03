@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
@@ -85,7 +86,7 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 		expiredAt := time.Now().Add(-time.Minute)
 		tokenID := createTokenTerminalTestToken(t, ctx, fixture, expiredAt)
 		publicAccessTokenID := uuid.Must(uuid.NewV7())
-		mustRunLeaseExec(t, ctx, fixture.pool, `
+		dbtest.MustExec(t, ctx, fixture.pool, `
 			INSERT INTO public_access_tokens (
 			    id, token_id, token_hash, created_at, updated_at, expires_at
 			) VALUES (
@@ -139,7 +140,7 @@ func TestTokenCompletionRollsBackWhenReconciliationIntentFails(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		CREATE FUNCTION reject_token_reconciliation_intent() RETURNS trigger
 		LANGUAGE plpgsql AS $$
 		BEGIN
@@ -150,7 +151,7 @@ func TestTokenCompletionRollsBackWhenReconciliationIntentFails(t *testing.T) {
 		END
 		$$
 	`)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		CREATE TRIGGER reject_token_reconciliation_intent
 		BEFORE INSERT ON outbox_messages
 		FOR EACH ROW EXECUTE FUNCTION reject_token_reconciliation_intent()
@@ -193,7 +194,7 @@ func createTokenTerminalTestToken(t *testing.T, ctx context.Context, fixture run
 		t.Fatalf("created Token ID = %s, want %s", pgvalue.MustUUIDValue(row.ID), id)
 	}
 	if insertExpiry != timeoutAt {
-		mustRunLeaseExec(t, ctx, fixture.pool, `
+		dbtest.MustExec(t, ctx, fixture.pool, `
 			UPDATE tokens
 			   SET created_at = $2::timestamptz - interval '1 hour',
 			       updated_at = $2::timestamptz - interval '1 hour',

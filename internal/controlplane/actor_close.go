@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	actordomain "github.com/helmrdotdev/helmr/internal/actor"
+	"github.com/helmrdotdev/helmr/internal/actor"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -89,7 +89,7 @@ func (s *Server) closeActor(
 		if err != nil {
 			return fmt.Errorf("lock Actor close Workspace Secrets: %w", err)
 		}
-		actor, err := work.q.LockActorClose(ctx, db.LockActorCloseParams{
+		lockedActor, err := work.q.LockActorClose(ctx, db.LockActorCloseParams{
 			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
 			ActorID:       pgvalue.UUID(request.ActorID),
 		})
@@ -99,15 +99,15 @@ func (s *Server) closeActor(
 		if err != nil {
 			return fmt.Errorf("lock Actor close authority: %w", err)
 		}
-		if actor.WorkspaceID != pgvalue.UUID(request.WorkspaceID) {
+		if lockedActor.WorkspaceID != pgvalue.UUID(request.WorkspaceID) {
 			return errActorCloseAuthority
 		}
 
-		switch actor.State {
+		switch lockedActor.State {
 		case "open", "closing":
-			actor, err = work.q.BeginActorClose(ctx, db.BeginActorCloseParams{
-				EnvironmentID: actor.EnvironmentID,
-				ActorID:       actor.ID,
+			lockedActor, err = work.q.BeginActorClose(ctx, db.BeginActorCloseParams{
+				EnvironmentID: lockedActor.EnvironmentID,
+				ActorID:       lockedActor.ID,
 			})
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errActorCloseConflict
@@ -116,12 +116,12 @@ func (s *Server) closeActor(
 				return fmt.Errorf("begin Actor close: %w", err)
 			}
 			var deferred bool
-			actor, deferred, err = actordomain.ReconcileClose(ctx, work.q, actor, bindings)
+			lockedActor, deferred, err = actor.ReconcileClose(ctx, work.q, lockedActor, bindings)
 			if err != nil {
 				return err
 			}
-			if deferred || actor.State == "closing" {
-				if err := createActorCloseReconcileIntent(ctx, work.q, actor); err != nil {
+			if deferred || lockedActor.State == "closing" {
+				if err := createActorCloseReconcileIntent(ctx, work.q, lockedActor); err != nil {
 					return err
 				}
 			}
@@ -137,7 +137,7 @@ func (s *Server) closeActor(
 			return err
 		}
 		receipt = api.ActorOperationReceipt{
-			ActorID:    pgvalue.UUIDString(actor.ID),
+			ActorID:    pgvalue.UUIDString(lockedActor.ID),
 			AcceptedAt: acceptedAt,
 		}
 		if claim != nil {

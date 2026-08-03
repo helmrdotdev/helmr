@@ -22,7 +22,7 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 	queries := db.New(pool)
 
 	definitionID := uuid.Must(uuid.NewV7())
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO deployment_definitions (
 			id, environment_id, deployment_id, kind, declared_id,
 			manifest_version, manifest, manifest_digest, artifact_id
@@ -36,7 +36,7 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		DeploymentDefinitionID: pgvalue.UUID(definitionID),
-		SubstrateDigest:        testDigest("substrate-first"),
+		SubstrateDigest:        dbtest.Digest("substrate-first"),
 		SubstrateFormat:        substrate.Format,
 		BuilderAbi:             substrate.BuilderABI,
 		LayoutAbi:              substrate.LayoutABI,
@@ -60,7 +60,7 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 	}
 
 	conflicting := replay
-	conflicting.SubstrateDigest = testDigest("substrate-conflict")
+	conflicting.SubstrateDigest = dbtest.Digest("substrate-conflict")
 	rows, err = queries.InsertRuntimeSubstrate(ctx, conflicting)
 	if err != nil || rows != 0 {
 		t.Fatalf("conflicting insert rows=%d error=%v", rows, err)
@@ -181,7 +181,7 @@ func TestLockRuntimeSubstrateAuthorityFencesWorkerAndContract(t *testing.T) {
 		})
 	}
 
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		UPDATE worker_instances
 		   SET state = 'draining', draining_at = now()
 		 WHERE id = $1
@@ -189,7 +189,7 @@ func TestLockRuntimeSubstrateAuthorityFencesWorkerAndContract(t *testing.T) {
 	if _, err := queries.LockRuntimeSubstrateAuthority(ctx, params); err != nil {
 		t.Fatalf("draining authority: %v", err)
 	}
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		UPDATE worker_instances
 		   SET supervisor_version = '',
 		       supports_run = false,
@@ -236,32 +236,32 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	deploymentID := uuid.Must(uuid.NewV7())
 	sourceArtifactID := uuid.Must(uuid.NewV7())
 	imageArtifactID := uuid.Must(uuid.NewV7())
-	sourceDigest := testDigest("authority-source-" + deploymentID.String())
-	imageDigest := testDigest("authority-image-" + deploymentID.String())
-	mustAuthorityExec(t, ctx, pool, `
+	sourceDigest := dbtest.Digest("authority-source-" + deploymentID.String())
+	imageDigest := dbtest.Digest("authority-image-" + deploymentID.String())
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO organizations (id, name, slug)
 		VALUES ($1, 'Default', 'default')
 		ON CONFLICT (id) DO NOTHING
 	`, orgID)
-	mustAuthorityExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO projects (id, org_id, default_region_id, slug, name)
 		VALUES ($1, $2, $3, $4, 'Authority')
-	`, projectID, orgID, dbtest.DefaultRegionID, "authority-"+shortUUID(projectID))
-	mustAuthorityExec(t, ctx, pool, `
+	`, projectID, orgID, dbtest.DefaultRegionID, "authority-"+dbtest.ShortID(projectID))
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
 		VALUES ($1, $2, $3, $4, 'Authority', '#3366ff')
-	`, environmentID, orgID, projectID, "authority-"+shortUUID(environmentID))
-	mustAuthorityExec(t, ctx, pool, `
+	`, environmentID, orgID, projectID, "authority-"+dbtest.ShortID(environmentID))
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, 'application/octet-stream'), ($1, $3, 1, 'application/octet-stream')
 	`, orgID, sourceDigest, imageDigest)
-	mustAuthorityExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
 		VALUES
 			($1, $3, $4, $5, $6, 'deployment_source', 1, 'application/octet-stream'),
 			($2, $3, $4, $5, $7, 'workspace_image', 1, 'application/octet-stream')
 	`, sourceArtifactID, imageArtifactID, orgID, projectID, environmentID, sourceDigest, imageDigest)
-	mustAuthorityExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO deployments (
 			id, org_id, build_region_id, project_id, environment_id,
 			build_node_version, build_runtime_digest, build_toolchain_digest,
@@ -277,7 +277,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	`, deploymentID, orgID, dbtest.DefaultRegionID,
 		projectID, environmentID, sourceDigest, sourceArtifactID)
 	definitionID := uuid.Must(uuid.NewV7())
-	mustAuthorityExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO deployment_definitions (
 			id, environment_id, deployment_id, kind, declared_id,
 			manifest_version, manifest, manifest_digest, artifact_id
@@ -321,14 +321,14 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 		t.Fatal(err)
 	}
 
-	runtimeIdentityID := "authority-" + shortUUID(uuid.Must(uuid.NewV7()))
-	mustAuthorityExec(t, ctx, pool, `
+	runtimeIdentityID := "authority-" + dbtest.ShortID(uuid.Must(uuid.NewV7()))
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO runtime_identities (
 			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, network_abi
 		) VALUES ($1, 'x86_64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
 	`, runtimeIdentityID)
 	workerID := uuid.Must(uuid.NewV7())
-	mustAuthorityExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, state,
 			current_epoch, current_service_id, protocol_version, supervisor_version,
@@ -350,7 +350,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	`, workerID, "authority-"+workerID.String(), dbtest.DefaultWorkerGroupID,
 		uuid.Must(uuid.NewV7()), runtimeIdentityID, substrate.Format, substrate.BuilderABI, substrate.LayoutABI)
 	runtimeID := uuid.Must(uuid.NewV7())
-	mustAuthorityExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO runtime_instances (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, runtime_identity_id, deployment_definition_id, worker_epoch,
@@ -366,15 +366,6 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 		dbtest.DefaultRegionID, workerID, runtimeIdentityID, definitionID,
 		workspaceID)
 	return runtimeSubstrateAuthorityFixture{definitionID: definitionID, workerID: workerID}
-}
-
-func mustAuthorityExec(t *testing.T, ctx context.Context, pool interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}, query string, args ...any) {
-	t.Helper()
-	if _, err := pool.Exec(ctx, query, args...); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func getRuntimeSubstrateRegistration(t *testing.T, ctx context.Context, queries *db.Queries, params db.InsertRuntimeSubstrateParams) db.RuntimeSubstrate {

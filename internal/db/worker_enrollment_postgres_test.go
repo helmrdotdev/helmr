@@ -21,7 +21,7 @@ import (
 
 func activateWorkspaceWorker(t *testing.T, ctx context.Context, pool *pgxpool.Pool, workerID uuid.UUID) {
 	t.Helper()
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		UPDATE worker_instances
 		   SET state = 'active', supervisor_version = 'test-worker',
 		       supports_run = true, runtime_identity_id = 'test-runtime',
@@ -83,7 +83,7 @@ func TestRegisteringEnrollmentRetryUsesFreshNonceAndRotatesCredential(t *testing
 		t.Fatal(err)
 	}
 
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO runtime_identities (
 			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, network_abi
 		) VALUES ('test-runtime', 'x86_64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0')
@@ -187,7 +187,7 @@ func TestTerminalEnrollmentCreatesFreshControlPlaneIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustExec(t, ctx, pool, `UPDATE worker_instances SET state = 'lost', lost_at = now() WHERE id = $1`, workerID)
+	dbtest.MustExec(t, ctx, pool, `UPDATE worker_instances SET state = 'lost', lost_at = now() WHERE id = $1`, workerID)
 	secondWorkerID := uuid.Must(uuid.NewV7())
 	second := enrollTestWorker(t, ctx, q, secondWorkerID, resourceID, true, false, []byte("second-secret"))
 	if second.WorkerInstanceID != pgvalue.UUID(secondWorkerID) || second.ClaimVersion != 1 {
@@ -209,7 +209,7 @@ func TestEnrollmentRetryRejectsLiveIdentityStates(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
-	mustExec(t, ctx, pool, `
+	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO runtime_identities (
 			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, network_abi
 		) VALUES ('test-runtime', 'x86_64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0')
@@ -225,7 +225,7 @@ func TestEnrollmentRetryRejectsLiveIdentityStates(t *testing.T) {
 				authenticateTestWorker(t, ctx, q, credential, initialSecretHash)
 				activateWorkspaceWorker(t, ctx, pool, workerID)
 				if state == "draining" {
-					mustExec(t, ctx, pool, `UPDATE worker_instances SET state = 'draining', draining_at = now() WHERE id = $1`, workerID)
+					dbtest.MustExec(t, ctx, pool, `UPDATE worker_instances SET state = 'draining', draining_at = now() WHERE id = $1`, workerID)
 				}
 			}
 			nonce := createTestEnrollmentNonce(t, ctx, q, dbtest.DefaultWorkerGroupID)

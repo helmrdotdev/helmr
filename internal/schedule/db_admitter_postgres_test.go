@@ -2,7 +2,6 @@ package schedule
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -78,7 +77,7 @@ func TestDBAdmitterCommitsOneScheduleAdmissionTuple(t *testing.T) {
 func TestDBAdmitterRejectsTaskWithoutScheduledPayloadAuthority(t *testing.T) {
 	pool := openSchedulePostgres(t)
 	value, runtimeDigest := seedScheduleAdmission(t, pool)
-	mustScheduleExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		UPDATE deployment_definitions
 		   SET manifest = '{"payload":{"kind":"none"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}',
 		       manifest_digest = decode(repeat('0a', 32), 'hex')
@@ -104,7 +103,7 @@ func TestDBAdmitterRejectsTaskWithoutScheduledPayloadAuthority(t *testing.T) {
 func TestPendingScheduleBindsMatchingWorkspaceWithGenerationFence(t *testing.T) {
 	pool := openSchedulePostgres(t)
 	value, _ := seedScheduleAdmission(t, pool)
-	mustScheduleExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		UPDATE schedules
 		   SET state = 'pending_workspace',
 		       workspace_id = NULL,
@@ -149,7 +148,7 @@ func TestPendingScheduleBindsMatchingWorkspaceWithGenerationFence(t *testing.T) 
 func TestReconcileScheduleDoesNotReviveErroredAuthority(t *testing.T) {
 	pool := openSchedulePostgres(t)
 	value, _ := seedScheduleAdmission(t, pool)
-	mustScheduleExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		UPDATE schedules
 		   SET state = 'errored',
 		       state_version = state_version + 1,
@@ -230,19 +229,19 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	secretVersionID := uuid.Must(uuid.NewV7())
 	regionID := "schedule-" + environmentID.String()
 
-	mustScheduleExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO organizations (id, name, slug)
 		VALUES ($1, 'Schedules', $2)
 	`, orgID, "schedules-"+orgID.String())
-	mustScheduleExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO regions (id, provider, provider_region, display_name)
 		VALUES ($1, 'test', $1, 'Schedules')
 	`, regionID)
-	mustScheduleExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO projects (id, org_id, default_region_id, slug, name)
 		VALUES ($1, $2, $3, $4, 'Schedules')
 	`, projectID, orgID, regionID, "schedules-"+projectID.String())
-	mustScheduleExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
 		VALUES ($1, $2, $3, 'production', 'Production', '#000000')
 	`, environmentID, orgID, projectID)
@@ -253,7 +252,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	runtimeBytes := strings.Repeat("01", 32)
 	runtimeDigest := "sha256:" + runtimeBytes
 	queueConfig := `{"formatVersion":0,"queues":[{"name":"default"}]}`
-	mustScheduleExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO deployments (
 			id, org_id, project_id, environment_id, build_region_id,
 			build_node_version, build_runtime_digest, build_toolchain_digest,
@@ -277,14 +276,14 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	taskManifestHash := sha256.New()
 	_, _ = taskManifestHash.Write([]byte("helmr.deployment-definition-manifest.v0\x00"))
 	_, _ = taskManifestHash.Write(taskManifest)
-	mustScheduleExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO deployment_definitions (
 			id, environment_id, deployment_id, kind, declared_id,
 			manifest_version, manifest, manifest_digest
 		)
 		VALUES ($1, $2, $3, 'task', 'daily-report', 0, $4, $5)
 	`, taskDefinitionID, environmentID, deploymentID, taskManifest, taskManifestHash.Sum(nil))
-	mustScheduleExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO deployment_definitions (
 			id, environment_id, deployment_id, kind, declared_id,
 			manifest_version, manifest, manifest_digest, artifact_id
@@ -292,7 +291,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 		VALUES ($1, $2, $3, 'workspace', 'scheduler', 0, '{}',
 		        decode(repeat('05', 32), 'hex'), $4)
 	`, workspaceDefinitionID, environmentID, deploymentID, imageArtifactID)
-	mustScheduleExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		UPDATE environments SET current_deployment_id = $1 WHERE id = $2
 	`, deploymentID, environmentID)
 
@@ -356,7 +355,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	mustScheduleExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO workspace_secrets (
 			workspace_id, environment_id, placement_kind, placement_target, secret_id
 		)
@@ -365,7 +364,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 
 	scheduledAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
 	claimExpiresAt := time.Now().UTC().Add(5 * time.Minute)
-	mustScheduleExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO schedules (
 			id, environment_id,
 			task_declared_id, deployment_definition_id, deployment_id,
@@ -403,8 +402,7 @@ func seedScheduleArtifact(
 ) uuid.UUID {
 	t.Helper()
 	id := uuid.Must(uuid.NewV7())
-	sum := sha256.Sum256([]byte(seed))
-	digest := "sha256:" + hex.EncodeToString(sum[:])
+	digest := dbtest.Digest(seed)
 	mediaType := "application/octet-stream"
 	switch kind {
 	case "deployment_source":
@@ -412,11 +410,11 @@ func seedScheduleArtifact(
 	case "deployment_program":
 		mediaType = "application/vnd.helmr.deployment-program.v0+squashfs"
 	}
-	mustScheduleExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, $3)
 	`, orgID, digest, mediaType)
-	mustScheduleExec(t, pool, `
+	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO artifacts (
 			id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type
 		)
@@ -524,13 +522,6 @@ func assertScheduleCursor(
 		}
 	} else if lastFireAt == nil || !lastFireAt.Equal(last) {
 		t.Fatalf("last_fire_at = %v, want %s", lastFireAt, last)
-	}
-}
-
-func mustScheduleExec(t *testing.T, pool *pgxpool.Pool, query string, arguments ...any) {
-	t.Helper()
-	if _, err := pool.Exec(t.Context(), query, arguments...); err != nil {
-		t.Fatal(err)
 	}
 }
 

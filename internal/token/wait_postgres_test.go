@@ -2,8 +2,6 @@ package token
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"sync"
 	"testing"
@@ -11,9 +9,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -200,12 +198,12 @@ func TestTokenWaitSchemaRejectsCrossEnvironmentReference(t *testing.T) {
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	otherEnvironmentID := uuid.Must(uuid.NewV7())
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO environments (
 		    id, org_id, project_id, slug, name, color_hex
 		) VALUES ($1, $2, $3, $4, 'Other Environment', '#3366ff')
 	`, otherEnvironmentID, fixture.orgID, fixture.projectID,
-		"other-"+shortRunLeaseID(otherEnvironmentID))
+		"other-"+dbtest.ShortID(otherEnvironmentID))
 	otherTokenID := uuid.Must(uuid.NewV7())
 	if _, err := fixture.queries.CreateToken(ctx, db.CreateTokenParams{
 		ID:    pgvalue.UUID(otherTokenID),
@@ -328,7 +326,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	if err != nil {
 		t.Fatal(err)
 	}
-	failureFingerprint := tokenWaitTestDigest("checkpoint-failed-" + checkpointID.String())
+	failureFingerprint := dbtest.Digest("checkpoint-failed-" + checkpointID.String())
 	failureError := []byte(`{"code":"checkpoint_failed"}`)
 	failedAt, err := fixture.queries.GetTaskCompletionTime(ctx)
 	if err != nil {
@@ -643,8 +641,8 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	checkpointID := uuid.Must(uuid.NewV7())
 	privateVersionID := uuid.Must(uuid.NewV7())
 	workspaceArtifactID := uuid.Must(uuid.NewV7())
-	workspaceDigest := tokenWaitTestDigest("checkpoint-workspace-artifact-" + checkpointID.String())
-	workspaceTreeDigest := tokenWaitTestDigest("checkpoint-workspace-tree-" + checkpointID.String())
+	workspaceDigest := dbtest.Digest("checkpoint-workspace-artifact-" + checkpointID.String())
+	workspaceTreeDigest := dbtest.Digest("checkpoint-workspace-tree-" + checkpointID.String())
 	tx, err := fixture.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -702,7 +700,7 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 	if _, err := queries.MarkRunCheckpointReady(ctx, db.MarkRunCheckpointReadyParams{
 		PrivateWorkspaceVersionID: pgvalue.UUID(privateVersionID),
 		RestoreManifest:           []byte(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
-		ReadyRequestFingerprint:   pgvalue.Text(tokenWaitTestDigest("checkpoint-ready-" + checkpointID.String())),
+		ReadyRequestFingerprint:   pgvalue.Text(dbtest.Digest("checkpoint-ready-" + checkpointID.String())),
 		RunID:                     pgvalue.UUID(work.runID), AttemptNumber: int32(1), ID: pgvalue.UUID(checkpointID),
 	}); err != nil {
 		t.Fatal(err)
@@ -886,7 +884,7 @@ func TestTokenWaitRegistrationReplaySurvivesParkedCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkpointID := uuid.Must(uuid.NewV7())
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO run_checkpoints (
 		    id, kind, run_id, attempt_number, run_wait_id,
 		    source_run_lease_id, source_workspace_lease_id, workspace_id,
@@ -897,21 +895,21 @@ func TestTokenWaitRegistrationReplaySurvivesParkedCompletion(t *testing.T) {
 		    'ready', '{"test":true}'::jsonb, 'sha256:test-ready', transaction_timestamp()
 		)
 	`, checkpointID, work.runID, request.WaitID, work.leaseID, workspaceLeaseID, workspaceID, baseVersionID)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
 		   SET state = 'checkpointed', checkpointed_at = transaction_timestamp(),
 		       terminal_at = transaction_timestamp(), terminal_reason_code = 'checkpointed'
 		 WHERE id = $1
 	`, work.leaseID)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE workspace_leases
 		   SET state = 'released', released_at = transaction_timestamp(), terminal_at = transaction_timestamp()
 		 WHERE id = $1
 	`, workspaceLeaseID)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE runs SET current_run_lease_id = NULL, active_started_at = NULL WHERE id = $1
 	`, work.runID)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_waits
 		   SET suspension_state = 'parked', current_run_lease_id = NULL,
 		       prior_run_lease_id = $1, suspend_checkpoint_id = $2
@@ -950,8 +948,8 @@ func TestTokenWaitRegistrationAllowsDrainingInFlightWorker(t *testing.T) {
 	startTaskCompletionWork(t, ctx, fixture, work)
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
 	request := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.Must(uuid.NewV7()))
-	mustRunLeaseExec(t, ctx, fixture.pool, `UPDATE worker_groups SET state = 'draining' WHERE id = $1`, request.WorkerGroupID)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `UPDATE worker_groups SET state = 'draining' WHERE id = $1`, request.WorkerGroupID)
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE worker_instances SET state = 'draining', draining_at = transaction_timestamp() WHERE id = $1
 	`, request.WorkerInstanceID)
 	reconciler, err := NewWaitReconciler(fixture.pool)
@@ -972,7 +970,7 @@ func TestTokenWaitRegistrationRejectsExpiredPhysicalAuthority(t *testing.T) {
 	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
 	waitID := uuid.Must(uuid.NewV7())
 	request := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, waitID)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
 		   SET start_deadline_at = transaction_timestamp() - interval '2 seconds',
 		       expires_at = transaction_timestamp() - interval '1 second'
@@ -1004,7 +1002,7 @@ func TestTokenWaitRegistrationAcceptsChildRun(t *testing.T) {
 	parent := fixture.addWork(t, ctx, "starting", time.Now().Add(-2*time.Minute))
 	child := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	startTaskCompletionWork(t, ctx, fixture, child)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE runs
 		   SET cause_kind = 'child', parent_run_id = $1, parent_owns_lifecycle = false
 		 WHERE id = $2
@@ -1195,7 +1193,7 @@ func TestTokenWaitReconcilerAppliesWaitTimeoutAcrossSuspensionStates(t *testing.
 			setup := newTokenWaitReconcileSetup(
 				t, ctx, fixture, test.suspension, time.Now().Add(time.Hour),
 			)
-			mustRunLeaseExec(t, ctx, fixture.pool, `
+			dbtest.MustExec(t, ctx, fixture.pool, `
 				UPDATE run_waits
 				   SET timeout_at = transaction_timestamp() - interval '1 millisecond'
 				 WHERE id = $1
@@ -1239,7 +1237,7 @@ func TestTokenWaitReconcilerRollsBackParkedTransitionWhenResumeIntentFails(t *te
 	)); err != nil {
 		t.Fatal(err)
 	}
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		CREATE FUNCTION reject_run_resume_intent() RETURNS trigger
 		LANGUAGE plpgsql AS $$
 		BEGIN
@@ -1250,7 +1248,7 @@ func TestTokenWaitReconcilerRollsBackParkedTransitionWhenResumeIntentFails(t *te
 		END
 		$$
 	`)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		CREATE TRIGGER reject_run_resume_intent
 		BEFORE INSERT ON outbox_messages
 		FOR EACH ROW EXECUTE FUNCTION reject_run_resume_intent()
@@ -1297,13 +1295,13 @@ func newTokenWaitReconcileSetup(
 	if err := fixture.pool.QueryRow(ctx, `SELECT workspace_id FROM runs WHERE id = $1`, work.runID).Scan(&setup.workspaceID); err != nil {
 		t.Fatal(err)
 	}
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
 		   SET state = 'running',
 		       started_at = claimed_at
 		 WHERE id = $1
 	`, setup.leaseID)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE runs
 		   SET status = 'waiting',
 		       state_version = 2,
@@ -1316,7 +1314,7 @@ func newTokenWaitReconcileSetup(
 	switch suspension {
 	case db.RunWaitStateHot:
 	case db.RunWaitStateCheckpointing:
-		mustRunLeaseExec(t, ctx, fixture.pool, `
+		dbtest.MustExec(t, ctx, fixture.pool, `
 			UPDATE run_waits
 			   SET suspension_state = 'checkpointing',
 			       checkpoint_request_version = 1
@@ -1334,7 +1332,7 @@ func newTokenWaitReconcileSetup(
 		}
 		checkpointID := uuid.Must(uuid.NewV7())
 		setup.checkpointID = pgvalue.UUID(checkpointID)
-		mustRunLeaseExec(t, ctx, fixture.pool, `
+		dbtest.MustExec(t, ctx, fixture.pool, `
 			INSERT INTO run_checkpoints (
 			    id, kind, run_id, attempt_number, run_wait_id,
 			    source_run_lease_id, source_workspace_lease_id, workspace_id,
@@ -1345,7 +1343,7 @@ func newTokenWaitReconcileSetup(
 			    'ready', '{"test":true}'::jsonb, 'sha256:test-ready', transaction_timestamp()
 			)
 		`, checkpointID, setup.runID, setup.waitID, setup.leaseID, workspaceLeaseID, setup.workspaceID, baseVersionID)
-		mustRunLeaseExec(t, ctx, fixture.pool, `
+		dbtest.MustExec(t, ctx, fixture.pool, `
 			UPDATE run_leases
 			   SET state = 'checkpointed',
 			       checkpointed_at = transaction_timestamp(),
@@ -1353,20 +1351,20 @@ func newTokenWaitReconcileSetup(
 			       terminal_reason_code = 'checkpointed'
 			 WHERE id = $1
 		`, setup.leaseID)
-		mustRunLeaseExec(t, ctx, fixture.pool, `
+		dbtest.MustExec(t, ctx, fixture.pool, `
 			UPDATE workspace_leases
 			   SET state = 'released',
 			       released_at = transaction_timestamp(),
 			       terminal_at = transaction_timestamp()
 			 WHERE id = $1
 		`, workspaceLeaseID)
-		mustRunLeaseExec(t, ctx, fixture.pool, `
+		dbtest.MustExec(t, ctx, fixture.pool, `
 			UPDATE runs
 			   SET current_run_lease_id = NULL,
 			       active_started_at = NULL
 			 WHERE id = $1
 		`, setup.runID)
-		mustRunLeaseExec(t, ctx, fixture.pool, `
+		dbtest.MustExec(t, ctx, fixture.pool, `
 			UPDATE run_waits
 			   SET suspension_state = 'parked',
 			       current_run_lease_id = NULL,
@@ -1392,7 +1390,7 @@ func insertTokenWaitFixture(
 	expectedRunStateVersion int64,
 ) {
 	t.Helper()
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO run_waits (
 			id, environment_id, run_id, workspace_id, kind, token_id,
 			token_registration_run_state_version, expected_run_state_version,
@@ -1537,11 +1535,6 @@ func TestTokenWaitReconcilerRejectsPendingTokenAuthority(t *testing.T) {
 	}
 }
 
-func tokenWaitTestDigest(seed string) string {
-	sum := sha256.Sum256([]byte(seed))
-	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
 type runLeaseClaimFixture struct {
 	pool          *pgxpool.Pool
 	queries       *db.Queries
@@ -1600,19 +1593,19 @@ func startTaskCompletionWork(
 	work runLeaseWork,
 ) taskCompletionWork {
 	t.Helper()
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_leases
 		   SET state = 'running', started_at = claimed_at
 		 WHERE id = $1 AND state = 'starting'
 	`, work.leaseID)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE runs
 		   SET status = 'running', state_version = state_version + 1,
 		       started_at = (SELECT started_at FROM run_leases WHERE id = $1),
 		       active_started_at = (SELECT started_at FROM run_leases WHERE id = $1)
 		 WHERE id = $2 AND status = 'queued' AND current_run_lease_id = $1
 	`, work.leaseID, work.runID)
-	mustRunLeaseExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE run_attempts
 		   SET entrypoint_entered_at = (SELECT started_at FROM run_leases WHERE id = $1)
 		 WHERE run_id = $2 AND number = 1 AND entrypoint_entered_at IS NULL
@@ -1637,15 +1630,4 @@ func startTaskCompletionWork(
 		t.Fatal(err)
 	}
 	return authority
-}
-
-func mustRunLeaseExec(t *testing.T, ctx context.Context, executor interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}, query string, args ...any) {
-	t.Helper()
-	runtest.MustExec(t, ctx, executor, query, args...)
-}
-
-func shortRunLeaseID(id uuid.UUID) string {
-	return runtest.ShortID(id)
 }
