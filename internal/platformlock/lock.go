@@ -11,7 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/sessionlock"
+	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -39,7 +39,7 @@ func (l *Locker) With(ctx context.Context, digests []string, fn func() error) er
 	if err != nil {
 		return err
 	}
-	guard, err := sessionlock.Acquire(ctx, l.pool, keys)
+	guard, err := pglock.Acquire(ctx, l.pool, keys)
 	if err != nil {
 		return fmt.Errorf("acquire platform artifact lock: %w", err)
 	}

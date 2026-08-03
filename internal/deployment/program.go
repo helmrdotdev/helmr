@@ -446,7 +446,7 @@ func validArchitecture(architecture RuntimeArchitecture) bool {
 }
 
 func hasNodeModulesComponent(value string) bool {
-	for _, item := range strings.Split(value, "/") {
+	for item := range strings.SplitSeq(value, "/") {
 		if item == "node_modules" {
 			return true
 		}

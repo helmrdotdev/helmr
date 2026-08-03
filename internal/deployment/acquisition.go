@@ -427,7 +427,7 @@ func (acquirer PlatformAcquirer) verifyNodeChecksums(
 		return nil, "", fmt.Errorf("verify Node release signature: %w: %s", err, diagnostic.String())
 	}
 	signer := ""
-	for _, line := range strings.Split(status.String(), "\n") {
+	for line := range strings.SplitSeq(status.String(), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) >= 3 && fields[0] == "[GNUPG:]" && fields[1] == "VALIDSIG" &&
 			slices.Contains(policy.ReleaseKeyFingerprints, fields[2]) {

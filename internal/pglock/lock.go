@@ -1,4 +1,4 @@
-package sessionlock
+package pglock
 
 import (
 	"context"
@@ -25,20 +25,20 @@ type Guard struct {
 
 func Acquire(ctx context.Context, pool *pgxpool.Pool, keys []int64) (*Guard, error) {
 	if pool == nil {
-		return nil, errors.New("session lock pool is required")
+		return nil, errors.New("PostgreSQL advisory lock pool is required")
 	}
 	if len(keys) == 0 {
-		return nil, errors.New("session lock key is required")
+		return nil, errors.New("PostgreSQL advisory lock key is required")
 	}
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("acquire session lock connection: %w", err)
+		return nil, fmt.Errorf("acquire PostgreSQL advisory lock connection: %w", err)
 	}
 	guard := &Guard{conn: conn}
 	for _, key := range keys {
 		if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", key); err != nil {
 			guard.discard()
-			return nil, fmt.Errorf("acquire session lock: %w", err)
+			return nil, fmt.Errorf("acquire PostgreSQL advisory lock: %w", err)
 		}
 		guard.keys = append(guard.keys, key)
 	}
@@ -47,17 +47,17 @@ func Acquire(ctx context.Context, pool *pgxpool.Pool, keys []int64) (*Guard, err
 
 func TryAcquire(ctx context.Context, pool *pgxpool.Pool, key int64) (*Guard, bool, error) {
 	if pool == nil {
-		return nil, false, errors.New("session lock pool is required")
+		return nil, false, errors.New("PostgreSQL advisory lock pool is required")
 	}
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
-		return nil, false, fmt.Errorf("acquire session lock connection: %w", err)
+		return nil, false, fmt.Errorf("acquire PostgreSQL advisory lock connection: %w", err)
 	}
 	var acquired bool
 	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", key).Scan(&acquired); err != nil {
 		guard := &Guard{conn: conn}
 		guard.discard()
-		return nil, false, fmt.Errorf("acquire session lock: %w", err)
+		return nil, false, fmt.Errorf("acquire PostgreSQL advisory lock: %w", err)
 	}
 	if !acquired {
 		conn.Release()
@@ -75,7 +75,7 @@ func (g *Guard) Conn() *pgxpool.Conn {
 
 func (g *Guard) Unlock() error {
 	if g == nil || g.conn == nil {
-		return errors.New("session lock guard is already released")
+		return errors.New("PostgreSQL advisory lock guard is already released")
 	}
 	conn := g.conn
 	ctx, cancel := context.WithTimeout(context.Background(), unlockTimeout)
@@ -84,10 +84,10 @@ func (g *Guard) Unlock() error {
 		var unlocked bool
 		if err := conn.QueryRow(ctx, "SELECT pg_advisory_unlock($1)", g.keys[index]).Scan(&unlocked); err != nil || !unlocked {
 			if err == nil {
-				err = errors.New("session lock was not held")
+				err = errors.New("PostgreSQL advisory lock was not held")
 			}
 			g.discard()
-			return fmt.Errorf("release session lock: %w", err)
+			return fmt.Errorf("release PostgreSQL advisory lock: %w", err)
 		}
 	}
 	g.conn = nil

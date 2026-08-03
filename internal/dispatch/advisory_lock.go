@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/sessionlock"
+	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -66,7 +66,7 @@ func (l *QueueReconcileAdvisoryLock) TryLock(ctx context.Context) (QueueReconcil
 }
 
 func (l *advisoryLock) tryLock(ctx context.Context) (*advisoryLockGuard, bool, error) {
-	guard, locked, err := sessionlock.TryAcquire(ctx, l.pool, l.key)
+	guard, locked, err := pglock.TryAcquire(ctx, l.pool, l.key)
 	if err != nil || !locked {
 		return nil, locked, err
 	}
@@ -74,7 +74,7 @@ func (l *advisoryLock) tryLock(ctx context.Context) (*advisoryLockGuard, bool, e
 }
 
 type advisoryLockGuard struct {
-	guard *sessionlock.Guard
+	guard *pglock.Guard
 }
 
 type queueReconcileAdvisoryLockGuard struct {
@@ -99,7 +99,7 @@ func (g *advisoryLockGuard) Unlock(context.Context) error {
 }
 
 func advisoryLockKey(name string) int64 {
-	return sessionlock.Key(name)
+	return pglock.Key(name)
 }
 
 func queueScopeLockKey(environmentID pgtype.UUID, queueName string, concurrencyKey pgtype.Text) (int64, error) {

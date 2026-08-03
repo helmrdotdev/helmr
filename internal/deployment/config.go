@@ -165,7 +165,7 @@ func validateConfigDirectory(value string) error {
 		strings.Contains(value, "\\") {
 		return errors.New("entry must be a normalized root-relative POSIX path")
 	}
-	for _, segment := range strings.Split(value, "/") {
+	for segment := range strings.SplitSeq(value, "/") {
 		if segment == "" || segment == "." || segment == ".." {
 			return errors.New("entry must be a normalized root-relative POSIX path")
 		}
@@ -186,7 +186,7 @@ func validateConfigIgnorePattern(value string) error {
 		configExtglob.MatchString(value) {
 		return errors.New("entry is outside the supported discovery glob grammar")
 	}
-	for _, segment := range strings.Split(value, "/") {
+	for segment := range strings.SplitSeq(value, "/") {
 		if segment == ".." ||
 			strings.Contains(segment, "**") && segment != "**" {
 			return errors.New("entry is outside the supported discovery glob grammar")

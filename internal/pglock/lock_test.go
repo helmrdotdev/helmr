@@ -1,4 +1,4 @@
-package sessionlock
+package pglock
 
 import (
 	"context"
@@ -67,7 +67,7 @@ func TestGuardDiscardsConnectionWhenReleaseCannotBeConfirmed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !released {
-		t.Fatal("test setup did not release the session lock")
+		t.Fatal("test setup did not release the PostgreSQL advisory lock")
 	}
 	if err := guard.Unlock(); err == nil {
 		t.Fatal("Unlock accepted an unconfirmed release")

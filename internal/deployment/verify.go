@@ -462,7 +462,7 @@ func validateSymlinkTarget(target string) error {
 			return fmt.Errorf("symbolic-link target contains a control character")
 		}
 	}
-	for _, component := range strings.Split(target, "/") {
+	for component := range strings.SplitSeq(target, "/") {
 		if component == "" || len(component) > maxArtifactPathComponentBytes {
 			return fmt.Errorf("symbolic-link target has an empty or oversized component")
 		}

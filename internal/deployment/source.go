@@ -351,13 +351,7 @@ func readSourcePayload(
 		if err := readSourceBytes(body, block, artifactBytes); err != nil {
 			return err
 		}
-		contentEnd := size - offset
-		if contentEnd < 0 {
-			contentEnd = 0
-		}
-		if contentEnd > chunk {
-			contentEnd = chunk
-		}
+		contentEnd := min(max(size-offset, 0), chunk)
 		if contentEnd > 0 && len(captured) > 0 {
 			copy(captured[offset:offset+contentEnd], block[:contentEnd])
 		}
@@ -479,7 +473,7 @@ func sourceRootReserved(name string) bool {
 		name == "node_modules" || strings.HasPrefix(name, "node_modules/") {
 		return true
 	}
-	for _, component := range strings.Split(name, "/") {
+	for component := range strings.SplitSeq(name, "/") {
 		if component == ".helmr" {
 			return true
 		}

@@ -2,6 +2,7 @@ package deppolicy
 
 import (
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -136,6 +137,73 @@ func TestCLIStateIsCLIOnly(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestDomainPackagesUseNaturalImportNames(t *testing.T) {
+	root := repositoryRoot(t)
+	for _, sourceRoot := range []string{"cmd", "internal", "operatorapi"} {
+		err := filepath.WalkDir(filepath.Join(root, sourceRoot), func(filename string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(filename, ".go") {
+				return nil
+			}
+			file, err := parser.ParseFile(token.NewFileSet(), filename, nil, parser.ImportsOnly)
+			if err != nil {
+				return err
+			}
+			for _, imp := range file.Imports {
+				if imp.Name == nil || !strings.HasSuffix(imp.Name.Name, "domain") {
+					continue
+				}
+				importPath, err := strconv.Unquote(imp.Path.Value)
+				if err != nil {
+					return err
+				}
+				naturalName := strings.TrimSuffix(imp.Name.Name, "domain")
+				if strings.HasPrefix(importPath, moduleImportPrefix) && strings.HasSuffix(importPath, "/"+naturalName) {
+					return fmt.Errorf("domain package %s must use its natural import name in %s", importPath, filename)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestRunTestExcludesGenericDatabaseHelpers(t *testing.T) {
+	root := filepath.Join(repositoryRoot(t), "internal", "run", "runtest")
+	forbidden := map[string]bool{
+		"MustExec": true,
+		"Digest":   true,
+		"Hash":     true,
+		"ShortID":  true,
+	}
+	err := filepath.WalkDir(root, func(filename string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(filename, ".go") || strings.HasSuffix(filename, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), filename, nil, 0)
+		if err != nil {
+			return err
+		}
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if ok && forbidden[function.Name.Name] {
+				return fmt.Errorf("run/runtest must not own generic database helper %s", function.Name.Name)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

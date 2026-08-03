@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -426,9 +427,7 @@ func sourceTar(t *testing.T, files map[string]string, extra []tar.Header) *bytes
 	t.Helper()
 	if _, exists := files["helmr.config.ts"]; !exists {
 		copied := make(map[string]string, len(files)+1)
-		for name, body := range files {
-			copied[name] = body
-		}
+		maps.Copy(copied, files)
 		copied["helmr.config.ts"] = `export default { dirs: ["tasks"] }`
 		files = copied
 	}

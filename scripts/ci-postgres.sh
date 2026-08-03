@@ -47,7 +47,7 @@ CGO_ENABLED=1 go test -race \
 	./internal/run \
 	./internal/schedule \
 	./internal/secret \
-	./internal/sessionlock \
+	./internal/pglock \
 	./internal/token \
 	./cmd/helmr-controlplane \
 	./cmd/helmr-dispatcher

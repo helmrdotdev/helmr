@@ -10,7 +10,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/sessionlock"
+	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -128,7 +128,7 @@ func withWorkerStore(ctx context.Context, run func(*pgxpool.Pool, *db.Queries) e
 }
 
 func withWorkerGroupStateLease(ctx context.Context, pool *pgxpool.Pool, groupID string, run func() error) (runErr error) {
-	guard, err := sessionlock.Acquire(ctx, pool, []int64{workergroup.StateMutationLockKey(groupID)})
+	guard, err := pglock.Acquire(ctx, pool, []int64{workergroup.StateMutationLockKey(groupID)})
 	if err != nil {
 		return fmt.Errorf("acquire Worker group lifecycle lease: %w", err)
 	}

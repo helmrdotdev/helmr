@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/sessionlock"
+	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -18,7 +18,7 @@ var ErrStateConflict = errors.New("worker lifecycle fence conflict")
 // with deployment provider mutations. The lock-key input is intentionally
 // stable and provider-neutral.
 func StateMutationLockKey(groupID string) int64 {
-	return sessionlock.Key("helmr:worker-group-lifecycle:" + strings.TrimSpace(groupID))
+	return pglock.Key("helmr:worker-group-lifecycle:" + strings.TrimSpace(groupID))
 }
 
 type StateStore interface {
