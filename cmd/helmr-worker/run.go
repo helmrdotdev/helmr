@@ -23,15 +23,15 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/deployment/programbuild"
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
-	imageworker "github.com/helmrdotdev/helmr/internal/imagebuild/worker"
 	imagecacheecr "github.com/helmrdotdev/helmr/internal/imagecache/ecr"
 	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/vm"
-	workerdaemon "github.com/helmrdotdev/helmr/internal/worker"
+	"github.com/helmrdotdev/helmr/internal/worker"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
@@ -72,12 +72,12 @@ func run(log *slog.Logger) error {
 	var buildPolicy *deployment.BuildPolicy
 	var platformStore cas.ImmutableStore
 	var squashfsEncoder string
-	verifierCgroupRoot, err := workerdaemon.PrepareVerifierHost()
+	verifierCgroupRoot, err := worker.PrepareVerifierHost()
 	if err != nil {
 		return fmt.Errorf("prepare verifier host: %w", err)
 	}
 	serviceID := uuid.Must(uuid.NewV7()).String()
-	process, err := workerdaemon.Acquire(workDir, workerdaemon.ProcessIdentity{ServiceID: serviceID, Roles: cfg.WorkerRoles})
+	process, err := worker.Acquire(workDir, worker.ProcessIdentity{ServiceID: serviceID, Roles: cfg.WorkerRoles})
 	if err != nil {
 		return fmt.Errorf("acquire worker supervisor singleton: %w", err)
 	}
@@ -85,15 +85,15 @@ func run(log *slog.Logger) error {
 	if err := os.Remove(filepath.Join(workDir, drainCompleteMarkerName)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("clear stale drain marker: %w", err)
 	}
-	var startupRecovery *workerdaemon.RecoveryEvidence
+	var startupRecovery *worker.RecoveryEvidence
 	substrateCacheDir := filepath.Join(workDir, "substrate-cache")
 	artifactCacheDir := filepath.Join(workDir, "artifact-cache")
-	var buildStorageConfig *workerdaemon.BuildStorageConfig
+	var buildStorageConfig *worker.BuildStorageConfig
 	var buildScratchLeaseBytes uint64
 	if supportsBuild {
 		const mib = uint64(1024 * 1024)
 		scratchFloorMiB := admissionDiskFloorMiB(true, cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB)
-		storage := workerdaemon.BuildStorageConfig{
+		storage := worker.BuildStorageConfig{
 			CacheRoot:                     cfg.BuildCacheDir,
 			ScratchRoot:                   cfg.BuildScratchDir,
 			WorkDir:                       workDir,
@@ -102,7 +102,7 @@ func run(log *slog.Logger) error {
 			RequiredScratchBytes:          uint64(scratchFloorMiB+firecracker.BootCorpusMaxMiB) * mib,
 			RequiredScratchAvailableBytes: 1,
 		}
-		if _, err := workerdaemon.ProveBuildStorage(storage); err != nil {
+		if _, err := worker.ProveBuildStorage(storage); err != nil {
 			return fmt.Errorf("prove build storage: %w", err)
 		}
 		buildStorageConfig = &storage
@@ -127,7 +127,7 @@ func run(log *slog.Logger) error {
 	}
 	if supportsBuild {
 		storage := *buildStorageConfig
-		evidence, err := workerdaemon.RecoverLocalVMState(ctx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
+		evidence, err := worker.RecoverLocalVMState(ctx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
 		if err != nil {
 			return fmt.Errorf("recover local worker state before build activation: %w", err)
 		}
@@ -139,7 +139,7 @@ func run(log *slog.Logger) error {
 			return fmt.Errorf("clean stale firecracker runtimes: %w", err)
 		}
 		storage.RequiredScratchAvailableBytes = uint64(firecracker.BootCorpusMaxMiB) * 1024 * 1024
-		storageProof, err := workerdaemon.ProveBuildStorage(storage)
+		storageProof, err := worker.ProveBuildStorage(storage)
 		if err != nil {
 			return fmt.Errorf("prove build storage after recovery: %w", err)
 		}
@@ -164,7 +164,7 @@ func run(log *slog.Logger) error {
 		}
 		storage := *buildStorageConfig
 		storage.RequiredScratchAvailableBytes = uint64(admissionDiskFloorMiB(true, cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB)) * 1024 * 1024
-		storageProof, err := workerdaemon.ProveBuildStorage(storage)
+		storageProof, err := worker.ProveBuildStorage(storage)
 		if err != nil {
 			return fmt.Errorf("prove build lease storage after runtime activation: %w", err)
 		}
@@ -236,7 +236,7 @@ func run(log *slog.Logger) error {
 		if err := validateWorkerStores(cfg); err != nil {
 			return err
 		}
-		squashfsEncoder, err = deployment.FindEncoder()
+		squashfsEncoder, err = programbuild.FindEncoder()
 		if err != nil {
 			return fmt.Errorf("resolve SquashFS encoder: %w", err)
 		}
@@ -245,7 +245,7 @@ func run(log *slog.Logger) error {
 			return fmt.Errorf("load build policy: %w", err)
 		}
 	}
-	var platformAcquirer workerdaemon.PlatformAcquirer
+	var platformAcquirer worker.PlatformAcquirer
 	if supportsBuild {
 		acquisitionWorkDir := filepath.Join(workDir, "platform-acquisition")
 		if err := ensurePrivateDirectory(acquisitionWorkDir); err != nil {
@@ -267,7 +267,7 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("resolve Worker executable: %w", err)
 		}
-		platformAcquirer = workerdaemon.PlatformAcquisitionProcess{
+		platformAcquirer = worker.PlatformAcquisitionProcess{
 			BuildPolicyPath:  cfg.BuildPolicyPath,
 			Encoder:          squashfsEncoder,
 			Executable:       workerExecutable,
@@ -292,14 +292,15 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure host runtime start limit: %w", err)
 	}
-	var imageBuilder imageworker.Builder
+	var imageBuildWorkDir string
+	var imageControlPlane workerImageControlPlane
+	var cacheCredentials programbuild.CacheCredentialFetcher
 	if supportsBuild {
-		imageBuildWorkDir := filepath.Join(workDir, "image-builds")
+		imageBuildWorkDir = filepath.Join(workDir, "image-builds")
 		if err := ensurePrivateDirectory(imageBuildWorkDir); err != nil {
 			return fmt.Errorf("prepare Workspace image build directory: %w", err)
 		}
-		imageControlPlane := workerImageControlPlane{client: controlPlaneClient}
-		var cacheCredentials imageworker.CacheCredentialFetcher
+		imageControlPlane = workerImageControlPlane{client: controlPlaneClient}
 		if cfg.ImageCache != nil {
 			awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
 			if err != nil {
@@ -320,10 +321,6 @@ func run(log *slog.Logger) error {
 				return fmt.Errorf("configure Workspace image cache credentials: %w", err)
 			}
 			cacheCredentials = workerImageCacheCredentials{provider: provider}
-		}
-		imageBuilder = imageworker.VMEngine{
-			Connector: runtimeConnector, Admission: imageControlPlane, Credentials: imageControlPlane,
-			Cache: cacheCredentials, Completion: imageControlPlane, WorkDir: imageBuildWorkDir,
 		}
 	}
 	hostDiskMiB, err := advertisedWorkerDiskMiB(workDir, cfg.WorkerDiskMiB, cfg.WorkerDiskReserveMiB)
@@ -437,28 +434,32 @@ func run(log *slog.Logger) error {
 		WorkspaceMounts:     workspaceMountSessions,
 		TempDir:             filepath.Join(workDir, "tmp"),
 	}
-	runner, err := workerdaemon.NewRunner(
+	runner, err := worker.NewRunner(
 		controlPlaneClient,
 		executor.Executor{
 			RunLeases:     controlPlaneClient,
 			RunLeaseTasks: runLeaseTasks,
 		},
 		workerCapabilities,
-		workerdaemon.WithCapacity(hostCapacity),
-		workerdaemon.WithPollEvery(cfg.PollEvery),
-		workerdaemon.WithLogger(log),
-		workerdaemon.WithBuildPolicy(buildPolicy),
-		workerdaemon.WithPlatformAcquirer(platformAcquirer),
-		workerdaemon.WithBuildExecutor(deployment.Builder{
+		worker.WithCapacity(hostCapacity),
+		worker.WithPollEvery(cfg.PollEvery),
+		worker.WithLogger(log),
+		worker.WithBuildPolicy(buildPolicy),
+		worker.WithPlatformAcquirer(platformAcquirer),
+		worker.WithBuildExecutor(programbuild.Executor{
 			WorkDir:           workDir,
 			CAS:               store,
 			PlatformStore:     platformStore,
 			Connector:         runtimeConnector,
 			RuntimeIdentityID: runtimeIdentity.ID,
 			Encoder:           squashfsEncoder,
-			Images:            imageBuilder,
+			ImageWorkDir:      imageBuildWorkDir,
+			ImageAdmission:    imageControlPlane,
+			ImageCredentials:  imageControlPlane,
+			ImageCache:        cacheCredentials,
+			ImageCompletion:   imageControlPlane,
 		}),
-		workerdaemon.WithMaterializer(executor.WorkspaceMaterializer{
+		worker.WithMaterializer(executor.WorkspaceMaterializer{
 			Connector:             workspaceMountConnector,
 			CAS:                   store,
 			Sessions:              workspaceMountSessions,
@@ -476,32 +477,32 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker: %w", err)
 	}
-	consumerSpecs := make([]workerdaemon.ConsumerSpec, 0, 4)
+	consumerSpecs := make([]worker.ConsumerSpec, 0, 4)
 	admission := map[string]int{}
 	if supportsRun {
 		admission["run"] = int(cfg.WorkerExecutionSlots)
 		admission["workspace"] = int(cfg.WorkerExecutionSlots)
 		consumerSpecs = append(consumerSpecs,
-			workerdaemon.ConsumerSpec{Name: "run", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "run", Consumer: workerdaemon.NewRunConsumer(runner)},
-			workerdaemon.ConsumerSpec{Name: "workspace", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "workspace", DrainEligible: true, Consumer: workerdaemon.NewWorkspaceConsumer(runner)},
+			worker.ConsumerSpec{Name: "run", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "run", Consumer: worker.NewRunConsumer(runner)},
+			worker.ConsumerSpec{Name: "workspace", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "workspace", DrainEligible: true, Consumer: worker.NewWorkspaceConsumer(runner)},
 		)
 	}
 	if supportsBuild {
 		admission["build"] = int(cfg.WorkerBuildExecutors)
 		consumerSpecs = append(
 			consumerSpecs,
-			workerdaemon.ConsumerSpec{Name: "platform-acquisition", Concurrency: int(cfg.WorkerBuildExecutors), Admission: "build", Consumer: workerdaemon.NewPlatformAcquisitionConsumer(runner)},
-			workerdaemon.ConsumerSpec{Name: "build", Concurrency: int(cfg.WorkerBuildExecutors), Admission: "build", Consumer: workerdaemon.NewBuildConsumer(runner)},
+			worker.ConsumerSpec{Name: "platform-acquisition", Concurrency: int(cfg.WorkerBuildExecutors), Admission: "build", Consumer: worker.NewPlatformAcquisitionConsumer(runner)},
+			worker.ConsumerSpec{Name: "build", Concurrency: int(cfg.WorkerBuildExecutors), Admission: "build", Consumer: worker.NewBuildConsumer(runner)},
 		)
 	}
-	background := make([]workerdaemon.BackgroundSpec, 0, 1)
+	background := make([]worker.BackgroundSpec, 0, 1)
 	if supportsRun && preparedRuntimePool != nil {
-		background = append(background, workerdaemon.BackgroundSpec{Name: "runtime-controller", DrainEligible: true, Run: func(runCtx context.Context) error {
+		background = append(background, worker.BackgroundSpec{Name: "runtime-controller", DrainEligible: true, Run: func(runCtx context.Context) error {
 			return preparedRuntimePool.ReconcileDesiredRuntimes(runCtx, controlPlaneClient)
 		}})
 	}
-	hardAdmission, err := workerdaemon.NewHardAdmission(workerdaemon.HardAdmissionConfig{
-		Probe: workerdaemon.SystemHostHealthProbe{
+	hardAdmission, err := worker.NewHardAdmission(worker.HardAdmissionConfig{
+		Probe: worker.SystemHostHealthProbe{
 			WorkDir: workDir, CgroupVersion: cfg.CgroupVersion, FirecrackerPath: cfg.FirecrackerPath,
 		},
 		DiskFloorBytes:   admissionDiskFloorMiB(supportsBuild, cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB) * 1024 * 1024,
@@ -512,17 +513,17 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker hard admission: %w", err)
 	}
-	supervisor, err := workerdaemon.New(workerdaemon.Config{
+	supervisor, err := worker.New(worker.Config{
 		ControlPlane: controlPlaneClient, Capabilities: workerCapabilities, Consumers: consumerSpecs, Admission: admission,
 		Background: background, PollEvery: cfg.PollEvery,
 		AdmissionEvaluator: hardAdmission, Log: log,
-		Recover: func(recoveryCtx context.Context) (workerdaemon.RecoveryEvidence, error) {
-			var evidence workerdaemon.RecoveryEvidence
+		Recover: func(recoveryCtx context.Context) (worker.RecoveryEvidence, error) {
+			var evidence worker.RecoveryEvidence
 			if startupRecovery != nil {
 				evidence = *startupRecovery
 			} else {
 				var err error
-				evidence, err = workerdaemon.RecoverLocalVMState(recoveryCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
+				evidence, err = worker.RecoverLocalVMState(recoveryCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
 				if err != nil {
 					return evidence, err
 				}
@@ -552,20 +553,20 @@ func run(log *slog.Logger) error {
 			}
 			return evidence, nil
 		},
-		FinalizeDrain: func(finalizeCtx context.Context) (workerdaemon.RecoveryEvidence, error) {
+		FinalizeDrain: func(finalizeCtx context.Context) (worker.RecoveryEvidence, error) {
 			if err := closePreparedRuntime.Close(finalizeCtx); err != nil {
-				return workerdaemon.RecoveryEvidence{}, fmt.Errorf("close prepared runtime pool: %w", err)
+				return worker.RecoveryEvidence{}, fmt.Errorf("close prepared runtime pool: %w", err)
 			}
-			first, err := workerdaemon.RecoverLocalVMState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
+			first, err := worker.RecoverLocalVMState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
 			if err != nil {
-				return workerdaemon.RecoveryEvidence{}, err
+				return worker.RecoveryEvidence{}, err
 			}
 			if len(first.Quarantined) != 0 || len(first.QuarantineErrors) != 0 {
 				return first, nil
 			}
 			// The first pass reclaims any residue. A second complete inventory is
 			// the proof submitted to control and therefore must be empty.
-			return workerdaemon.RecoverLocalVMState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
+			return worker.RecoverLocalVMState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
 		},
 		DrainCompleted: func(status workerapi.StatusResponse) error {
 			return writeDrainCompleteMarker(workDir, status.WorkerInstanceID)

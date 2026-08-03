@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
-	imageworker "github.com/helmrdotdev/helmr/internal/imagebuild/worker"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -40,19 +39,6 @@ func TestBuildResultCanonicalRoundTrip(t *testing.T) {
 				t.Fatalf("reencoded result differs:\n%s\n%s", reencoded, raw)
 			}
 		})
-	}
-}
-
-func TestWorkspaceImageNetworkQuotaUsesBuildResourceLimitReason(t *testing.T) {
-	err := fmt.Errorf("build workspace image: %w", &imageworker.GuestFailure{
-		Reason:  imagebuild.GuestFailureNetworkQuota,
-		Message: "image-build public-egress limit was exceeded",
-	})
-	if got := workspaceImageFailureReason(err); got != BuildFailureNetworkLimit {
-		t.Fatalf("failure reason = %q, want %q", got, BuildFailureNetworkLimit)
-	}
-	if got := workspaceImageFailureReason(fmt.Errorf("ordinary image failure")); got != BuildFailureWorkspaceImageFailed {
-		t.Fatalf("ordinary failure reason = %q, want %q", got, BuildFailureWorkspaceImageFailed)
 	}
 }
 

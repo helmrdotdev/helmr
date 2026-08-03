@@ -1,4 +1,4 @@
-package worker
+package programbuild
 
 import (
 	"archive/tar"
@@ -25,7 +25,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
 
-func TestVMEngineExecutesExactOneShotImageBuild(t *testing.T) {
+func TestImageEngineExecutesExactOneShotImageBuild(t *testing.T) {
 	plan := validWorkerBuild()
 	plan.Images[0].Steps[0].From.Auth = &imagebuild.RegistryAuth{
 		Username: "registry-user", PasswordSecret: "REGISTRY_TOKEN",
@@ -38,7 +38,7 @@ func TestVMEngineExecutesExactOneShotImageBuild(t *testing.T) {
 	source := &workerTestSource{
 		body:  sourceBytes,
 		paths: paths,
-		descriptor: SourceArchiveDescriptor{
+		descriptor: imagebuild.SourceArchiveDescriptor{
 			ArchiveDigest:    digestBytes(sourceBytes),
 			ArchiveSizeBytes: int64(len(sourceBytes)),
 			ArchiveEntries:   len(paths),
@@ -115,7 +115,7 @@ func TestVMEngineExecutesExactOneShotImageBuild(t *testing.T) {
 	}}
 	revocations := &workerTestRevocations{}
 	completion := &workerTestCompletion{}
-	engine := VMEngine{
+	engine := imageEngine{
 		Connector: connector, Admission: admission, Credentials: credentials,
 		Cache: cache, Completion: completion, WorkDir: t.TempDir(),
 	}
@@ -150,7 +150,7 @@ func TestVMEngineExecutesExactOneShotImageBuild(t *testing.T) {
 	if len(completion.requests) != 1 || completion.requests[0].Evidence.OperationID != operationID {
 		t.Fatalf("completion requests = %#v", completion.requests)
 	}
-	file, err := artifact.Open()
+	file, err := artifact.open()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestVMEngineExecutesExactOneShotImageBuild(t *testing.T) {
 		t.Fatalf("artifact bytes mismatch read=%v close=%v", readErr, closeErr)
 	}
 	path := artifact.path
-	if err := artifact.Close(); err != nil {
+	if err := artifact.close(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
@@ -168,18 +168,18 @@ func TestVMEngineExecutesExactOneShotImageBuild(t *testing.T) {
 	}
 }
 
-func TestVMEngineRejectsAssignmentThatChangesAdmittedFactsBeforeVM(t *testing.T) {
+func TestImageEngineRejectsAssignmentThatChangesAdmittedFactsBeforeVM(t *testing.T) {
 	plan := validWorkerBuild()
 	paths := []imagebuild.SourcePath{{Path: "package.json", Kind: imagebuild.SourcePathFile}, {Path: "src", Kind: imagebuild.SourcePathDirectory}}
 	source := &workerTestSource{
 		body: []byte("source"), paths: paths,
-		descriptor: SourceArchiveDescriptor{
+		descriptor: imagebuild.SourceArchiveDescriptor{
 			ArchiveDigest: digestBytes([]byte("source")), ArchiveSizeBytes: 6,
 			ArchiveEntries: len(paths), PathSetDigest: imagebuild.PathSetDigest(paths),
 		},
 	}
 	connected := false
-	engine := VMEngine{
+	engine := imageEngine{
 		Connector: &workerTestConnector{connect: func(vm.ConnectRequest) vm.Session {
 			connected = true
 			return nil
@@ -199,13 +199,13 @@ func TestVMEngineRejectsAssignmentThatChangesAdmittedFactsBeforeVM(t *testing.T)
 	}
 }
 
-func TestVMEngineReplaysTerminalSuccessWithoutVMOrCredentials(t *testing.T) {
+func TestImageEngineReplaysTerminalSuccessWithoutVMOrCredentials(t *testing.T) {
 	plan := validWorkerBuild()
 	paths := []imagebuild.SourcePath{{Path: "package.json", Kind: imagebuild.SourcePathFile}, {Path: "src", Kind: imagebuild.SourcePathDirectory}}
 	sourceBody := []byte("source")
 	source := &workerTestSource{
 		body: sourceBody, paths: paths,
-		descriptor: SourceArchiveDescriptor{
+		descriptor: imagebuild.SourceArchiveDescriptor{
 			ArchiveDigest: digestBytes(sourceBody), ArchiveSizeBytes: int64(len(sourceBody)),
 			ArchiveEntries: len(paths), PathSetDigest: imagebuild.PathSetDigest(paths),
 		},
@@ -213,7 +213,7 @@ func TestVMEngineReplaysTerminalSuccessWithoutVMOrCredentials(t *testing.T) {
 	image := workerTestOCI(t)
 	operationID := uuid.Must(uuid.NewV7()).String()
 	completion := &workerTestCompletion{}
-	engine := VMEngine{
+	engine := imageEngine{
 		Connector: &workerTestConnector{connect: func(vm.ConnectRequest) vm.Session {
 			t.Fatal("terminal replay connected a VM")
 			return nil
@@ -248,7 +248,7 @@ func TestVMEngineReplaysTerminalSuccessWithoutVMOrCredentials(t *testing.T) {
 	if revocations.operationID != "" {
 		t.Fatal("terminal replay registered a physical attempt")
 	}
-	if _, err := artifact.Open(); err == nil {
+	if _, err := artifact.open(); err == nil {
 		t.Fatal("terminal replay exposed a local artifact")
 	}
 	if err := engine.CompleteWorkspaceImage(t.Context(), artifact, PublishedArtifact{
@@ -259,25 +259,25 @@ func TestVMEngineReplaysTerminalSuccessWithoutVMOrCredentials(t *testing.T) {
 	if len(completion.requests) != 0 {
 		t.Fatalf("terminal replay completed an already-terminal claim: %#v", completion.requests)
 	}
-	if err := artifact.Close(); err != nil {
+	if err := artifact.close(); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestVMEngineRevocationCancelsAndDestroysOnlyLiveAttempt(t *testing.T) {
+func TestImageEngineRevocationCancelsAndDestroysOnlyLiveAttempt(t *testing.T) {
 	plan := validWorkerBuild()
 	paths := []imagebuild.SourcePath{{Path: "package.json", Kind: imagebuild.SourcePathFile}, {Path: "src", Kind: imagebuild.SourcePathDirectory}}
 	sourceBody := []byte("source")
 	source := &workerTestSource{
 		body: sourceBody, paths: paths,
-		descriptor: SourceArchiveDescriptor{
+		descriptor: imagebuild.SourceArchiveDescriptor{
 			ArchiveDigest: digestBytes(sourceBody), ArchiveSizeBytes: int64(len(sourceBody)),
 			ArchiveEntries: len(paths), PathSetDigest: imagebuild.PathSetDigest(paths),
 		},
 	}
 	operationID := uuid.Must(uuid.NewV7()).String()
 	stream := &workerTestStream{response: bytes.NewReader(nil)}
-	engine := VMEngine{
+	engine := imageEngine{
 		Connector: &workerTestConnector{connect: func(vm.ConnectRequest) vm.Session {
 			return &workerTestSession{stream: stream}
 		}},
@@ -314,13 +314,13 @@ func TestVMEngineRevocationCancelsAndDestroysOnlyLiveAttempt(t *testing.T) {
 	}
 }
 
-func TestVMEngineCompletesGuestFailureBeforeReturningIt(t *testing.T) {
+func TestImageEngineCompletesGuestFailureBeforeReturningIt(t *testing.T) {
 	plan := validWorkerBuild()
 	paths := []imagebuild.SourcePath{{Path: "package.json", Kind: imagebuild.SourcePathFile}, {Path: "src", Kind: imagebuild.SourcePathDirectory}}
 	sourceBody := []byte("source")
 	source := &workerTestSource{
 		body: sourceBody, paths: paths,
-		descriptor: SourceArchiveDescriptor{
+		descriptor: imagebuild.SourceArchiveDescriptor{
 			ArchiveDigest: digestBytes(sourceBody), ArchiveSizeBytes: int64(len(sourceBody)),
 			ArchiveEntries: len(paths), PathSetDigest: imagebuild.PathSetDigest(paths),
 		},
@@ -339,7 +339,7 @@ func TestVMEngineCompletesGuestFailureBeforeReturningIt(t *testing.T) {
 	}
 	completion := &workerTestCompletion{}
 	session := &workerTestSession{stream: &workerTestStream{response: bytes.NewReader(response.Bytes())}}
-	engine := VMEngine{
+	engine := imageEngine{
 		Connector: &workerTestConnector{connect: func(vm.ConnectRequest) vm.Session {
 			return session
 		}},
@@ -349,7 +349,7 @@ func TestVMEngineCompletesGuestFailureBeforeReturningIt(t *testing.T) {
 		Credentials: workerTestCredentials{}, Completion: completion, WorkDir: t.TempDir(),
 	}
 	_, err = engine.BuildWorkspaceImage(t.Context(), validBuildRequest(t, plan, source), &workerTestRevocations{})
-	var guestFailure *GuestFailure
+	var guestFailure *guestFailure
 	if !errors.As(err, &guestFailure) || guestFailure.Message != "build failed" {
 		t.Fatalf("guest failure = %v", err)
 	}
@@ -364,13 +364,13 @@ func TestVMEngineCompletesGuestFailureBeforeReturningIt(t *testing.T) {
 	}
 }
 
-func TestVMEngineNetworkQuotaOverridesGuestFailure(t *testing.T) {
+func TestImageEngineNetworkQuotaOverridesGuestFailure(t *testing.T) {
 	plan := validWorkerBuild()
 	sourceBody := []byte("source")
 	paths := []imagebuild.SourcePath{{Path: "package.json", Kind: imagebuild.SourcePathFile}, {Path: "src", Kind: imagebuild.SourcePathDirectory}}
 	source := &workerTestSource{
 		body: sourceBody, paths: paths,
-		descriptor: SourceArchiveDescriptor{
+		descriptor: imagebuild.SourceArchiveDescriptor{
 			ArchiveDigest: digestBytes(sourceBody), ArchiveSizeBytes: int64(len(sourceBody)),
 			ArchiveEntries: len(paths), PathSetDigest: imagebuild.PathSetDigest(paths),
 		},
@@ -391,7 +391,7 @@ func TestVMEngineNetworkQuotaOverridesGuestFailure(t *testing.T) {
 		networkStatus: vm.BuildNetworkStatus{LimitPackets: 1},
 	}
 	completion := &workerTestCompletion{}
-	engine := VMEngine{
+	engine := imageEngine{
 		Connector: &workerTestConnector{connect: func(vm.ConnectRequest) vm.Session { return session }},
 		Admission: workerTestAdmission{admit: func(request AdmissionRequest) (Assignment, error) {
 			return validWorkerAssignment(request, uuid.Must(uuid.NewV7()).String()), nil
@@ -399,7 +399,7 @@ func TestVMEngineNetworkQuotaOverridesGuestFailure(t *testing.T) {
 		Credentials: workerTestCredentials{}, Completion: completion, WorkDir: t.TempDir(),
 	}
 	_, err = engine.BuildWorkspaceImage(t.Context(), validBuildRequest(t, plan, source), &workerTestRevocations{})
-	var guestFailure *GuestFailure
+	var guestFailure *guestFailure
 	if !errors.As(err, &guestFailure) || guestFailure.Reason != imagebuild.GuestFailureNetworkQuota {
 		t.Fatalf("network quota failure = %v", err)
 	}
@@ -409,13 +409,13 @@ func TestVMEngineNetworkQuotaOverridesGuestFailure(t *testing.T) {
 	}
 }
 
-func TestVMEngineNetworkQuotaOverridesSuccessfulArtifact(t *testing.T) {
+func TestImageEngineNetworkQuotaOverridesSuccessfulArtifact(t *testing.T) {
 	plan := validWorkerBuild()
 	sourceBody := []byte("source")
 	paths := []imagebuild.SourcePath{{Path: "package.json", Kind: imagebuild.SourcePathFile}, {Path: "src", Kind: imagebuild.SourcePathDirectory}}
 	source := &workerTestSource{
 		body: sourceBody, paths: paths,
-		descriptor: SourceArchiveDescriptor{
+		descriptor: imagebuild.SourceArchiveDescriptor{
 			ArchiveDigest: digestBytes(sourceBody), ArchiveSizeBytes: int64(len(sourceBody)),
 			ArchiveEntries: len(paths), PathSetDigest: imagebuild.PathSetDigest(paths),
 		},
@@ -426,7 +426,7 @@ func TestVMEngineNetworkQuotaOverridesSuccessfulArtifact(t *testing.T) {
 		networkStatus: vm.BuildNetworkStatus{LimitPackets: 1},
 	}
 	completion := &workerTestCompletion{}
-	engine := VMEngine{
+	engine := imageEngine{
 		Connector: &workerTestConnector{connect: func(vm.ConnectRequest) vm.Session { return session }},
 		Admission: workerTestAdmission{admit: func(request AdmissionRequest) (Assignment, error) {
 			return validWorkerAssignment(request, uuid.Must(uuid.NewV7()).String()), nil
@@ -434,7 +434,7 @@ func TestVMEngineNetworkQuotaOverridesSuccessfulArtifact(t *testing.T) {
 		Credentials: workerTestCredentials{}, Completion: completion, WorkDir: t.TempDir(),
 	}
 	artifact, err := engine.BuildWorkspaceImage(t.Context(), validBuildRequest(t, plan, source), &workerTestRevocations{})
-	var guestFailure *GuestFailure
+	var guestFailure *guestFailure
 	if artifact != nil || !errors.As(err, &guestFailure) || guestFailure.Reason != imagebuild.GuestFailureNetworkQuota {
 		t.Fatalf("network quota result artifact=%#v err=%v", artifact, err)
 	}
@@ -451,13 +451,13 @@ func TestVMEngineNetworkQuotaOverridesSuccessfulArtifact(t *testing.T) {
 	}
 }
 
-func TestVMEngineRunsColdWhenCacheCredentialIsUnavailableBeforeDelivery(t *testing.T) {
+func TestImageEngineRunsColdWhenCacheCredentialIsUnavailableBeforeDelivery(t *testing.T) {
 	plan := validWorkerBuild()
 	paths := []imagebuild.SourcePath{{Path: "package.json", Kind: imagebuild.SourcePathFile}, {Path: "src", Kind: imagebuild.SourcePathDirectory}}
 	sourceBody := []byte("source")
 	source := &workerTestSource{
 		body: sourceBody, paths: paths,
-		descriptor: SourceArchiveDescriptor{
+		descriptor: imagebuild.SourceArchiveDescriptor{
 			ArchiveDigest: digestBytes(sourceBody), ArchiveSizeBytes: int64(len(sourceBody)),
 			ArchiveEntries: len(paths), PathSetDigest: imagebuild.PathSetDigest(paths),
 		},
@@ -474,7 +474,7 @@ func TestVMEngineRunsColdWhenCacheCredentialIsUnavailableBeforeDelivery(t *testi
 			t.Fatalf("cold credential envelope = %#v", envelope)
 		}
 	}
-	engine := VMEngine{
+	engine := imageEngine{
 		Connector: &workerTestConnector{connect: func(vm.ConnectRequest) vm.Session {
 			return &workerTestSession{stream: stream}
 		}},
@@ -500,25 +500,25 @@ func TestVMEngineRunsColdWhenCacheCredentialIsUnavailableBeforeDelivery(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer artifact.Close()
+	defer artifact.close()
 	if artifact.Evidence.RequestedCacheMode != imagebuild.CachePrefer {
 		t.Fatalf("requested cache mode = %q", artifact.Evidence.RequestedCacheMode)
 	}
 }
 
-func TestVMEngineRejectsCacheCredentialContractFailureBeforeDelivery(t *testing.T) {
+func TestImageEngineRejectsCacheCredentialContractFailureBeforeDelivery(t *testing.T) {
 	plan := validWorkerBuild()
 	paths := []imagebuild.SourcePath{{Path: "package.json", Kind: imagebuild.SourcePathFile}, {Path: "src", Kind: imagebuild.SourcePathDirectory}}
 	sourceBody := []byte("source")
 	source := &workerTestSource{
 		body: sourceBody, paths: paths,
-		descriptor: SourceArchiveDescriptor{
+		descriptor: imagebuild.SourceArchiveDescriptor{
 			ArchiveDigest: digestBytes(sourceBody), ArchiveSizeBytes: int64(len(sourceBody)),
 			ArchiveEntries: len(paths), PathSetDigest: imagebuild.PathSetDigest(paths),
 		},
 	}
 	stream := &workerTestStream{response: bytes.NewReader(nil)}
-	engine := VMEngine{
+	engine := imageEngine{
 		Connector: &workerTestConnector{connect: func(vm.ConnectRequest) vm.Session {
 			return &workerTestSession{stream: stream}
 		}},
@@ -549,10 +549,10 @@ func TestVMEngineRejectsCacheCredentialContractFailureBeforeDelivery(t *testing.
 type workerTestSource struct {
 	body       []byte
 	paths      []imagebuild.SourcePath
-	descriptor SourceArchiveDescriptor
+	descriptor imagebuild.SourceArchiveDescriptor
 }
 
-func (source *workerTestSource) Descriptor() (SourceArchiveDescriptor, error) {
+func (source *workerTestSource) Descriptor() (imagebuild.SourceArchiveDescriptor, error) {
 	return source.descriptor, nil
 }
 
@@ -678,9 +678,9 @@ func (stream *workerTestStream) Read(body []byte) (int, error) {
 func (stream *workerTestStream) Write(body []byte) (int, error) { return stream.request.Write(body) }
 func (stream *workerTestStream) Close() error                   { stream.closed = true; return nil }
 
-func validBuildRequest(t *testing.T, plan imagebuild.Build, source SourceArchive) BuildRequest {
+func validBuildRequest(t *testing.T, plan imagebuild.Build, source SourceArchive) buildRequest {
 	t.Helper()
-	return BuildRequest{
+	return buildRequest{
 		Lease: LeaseAuthority{
 			ID: uuid.Must(uuid.NewV7()).String(), OrgID: uuid.Must(uuid.NewV7()).String(),
 			ProjectID: uuid.Must(uuid.NewV7()).String(), EnvironmentID: uuid.Must(uuid.NewV7()).String(),

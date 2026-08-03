@@ -1,10 +1,6 @@
 package deployment
 
-import (
-	"fmt"
-
-	"github.com/helmrdotdev/helmr/internal/workerapi"
-)
+import "fmt"
 
 type verifierJob string
 
@@ -46,25 +42,4 @@ type verifierInvalidError struct {
 
 func (err *verifierInvalidError) Error() string {
 	return err.diagnostic
-}
-
-type buildDeliveryError struct {
-	reason workerapi.DeploymentBuildDeliveryFailureReason
-	err    error
-}
-
-func (err *buildDeliveryError) Error() string {
-	return err.err.Error()
-}
-
-func (err *buildDeliveryError) Unwrap() error {
-	return err.err
-}
-
-func (err *buildDeliveryError) DeploymentBuildDeliveryFailureReason() workerapi.DeploymentBuildDeliveryFailureReason {
-	return err.reason
-}
-
-func buildGuestDeliveryFailure(err error) error {
-	return &buildDeliveryError{reason: workerapi.DeploymentBuildDeliveryBuildGuestFailed, err: err}
 }

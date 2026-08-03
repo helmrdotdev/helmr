@@ -10,7 +10,7 @@ import (
 
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	workerdaemon "github.com/helmrdotdev/helmr/internal/worker"
+	"github.com/helmrdotdev/helmr/internal/worker"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -64,7 +64,7 @@ func runPlatformAcquisitionChild(
 		XZ:      os.Getenv("HELMR_PLATFORM_ACQUISITION_XZ"),
 	}
 	candidates, acquisitionErr := acquirer.Acquire(ctx, request)
-	result := workerdaemon.PlatformAcquisitionProcessResult{}
+	result := worker.PlatformAcquisitionProcessResult{}
 	if acquisitionErr == nil {
 		result.Candidates = &candidates
 	} else {

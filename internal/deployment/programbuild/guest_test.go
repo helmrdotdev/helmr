@@ -1,4 +1,4 @@
-package deployment
+package programbuild
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -29,7 +30,7 @@ func buildWorkloadBindingForTest() vm.WorkloadBinding {
 
 func TestBuildGuestUsesOneNetworkedVM(t *testing.T) {
 	request, source := buildGuestRequestForTest(t)
-	failed := buildGuestFailureForTest(t, BuildFailureDeclarationAnalysis)
+	failed := buildGuestFailureForTest(t, deployment.BuildFailureDeclarationAnalysis)
 	connector := &buildGuestTestConnector{
 		requireEOFBeforeStatus: true,
 		handle: func(stream io.ReadWriter, bodyLen uint64) error {
@@ -38,7 +39,7 @@ func TestBuildGuestUsesOneNetworkedVM(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			actual, err := ParseBuildGuestRequest(requestRaw)
+			actual, err := deployment.ParseBuildGuestRequest(requestRaw)
 			if err != nil {
 				return err
 			}
@@ -55,26 +56,26 @@ func TestBuildGuestUsesOneNetworkedVM(t *testing.T) {
 			return frameio.WriteMessageFrame(stream, failed)
 		},
 	}
-	_, err := (BuildGuest{Connector: connector}).Execute(
+	_, err := (buildGuest{connector: connector}).execute(
 		context.Background(),
 		buildWorkloadBindingForTest(),
 		request,
 		strings.NewReader(string(source)),
-		&ArtifactSnapshot{content: &artifactSnapshot{}},
-		&ArtifactSnapshot{content: &artifactSnapshot{}},
-		&ArtifactSnapshot{content: &artifactSnapshot{}},
+		&deployment.ArtifactSnapshot{},
+		&deployment.ArtifactSnapshot{},
+		&deployment.ArtifactSnapshot{},
 	)
-	var failure BuildFailure
+	var failure buildFailure
 	if !errors.As(err, &failure) ||
-		failure.Reason != BuildFailureDeclarationAnalysis {
+		failure.reason != deployment.BuildFailureDeclarationAnalysis {
 		t.Fatalf("build error = %v", err)
 	}
-	if failure.Logs == nil ||
-		failure.Logs.ExitStatus != 23 ||
-		failure.Logs.StderrBase64 != base64.StdEncoding.EncodeToString(
+	if failure.logs == nil ||
+		failure.logs.ExitStatus != 23 ||
+		failure.logs.StderrBase64 != base64.StdEncoding.EncodeToString(
 			[]byte("build stderr"),
 		) {
-		t.Fatalf("build failure logs = %+v", failure.Logs)
+		t.Fatalf("build failure logs = %+v", failure.logs)
 	}
 	if connector.statusCount != 1 {
 		t.Fatalf("network status count = %d", connector.statusCount)
@@ -107,21 +108,21 @@ func TestBuildGuestNetworkLimitOverridesGuestResult(t *testing.T) {
 			LimitPackets:  1,
 		},
 		handle: writeBuildGuestResultForTest(
-			buildGuestFailureForTest(t, BuildFailureInstallLifecycle),
+			buildGuestFailureForTest(t, deployment.BuildFailureInstallLifecycle),
 		),
 	}
-	_, err := (BuildGuest{Connector: connector}).Execute(
+	_, err := (buildGuest{connector: connector}).execute(
 		context.Background(),
 		buildWorkloadBindingForTest(),
 		request,
 		strings.NewReader(string(source)),
-		&ArtifactSnapshot{content: &artifactSnapshot{}},
-		&ArtifactSnapshot{content: &artifactSnapshot{}},
-		&ArtifactSnapshot{content: &artifactSnapshot{}},
+		&deployment.ArtifactSnapshot{},
+		&deployment.ArtifactSnapshot{},
+		&deployment.ArtifactSnapshot{},
 	)
-	var failure BuildFailure
+	var failure buildFailure
 	if !errors.As(err, &failure) ||
-		failure.Reason != BuildFailureNetworkLimit {
+		failure.reason != deployment.BuildFailureNetworkLimit {
 		t.Fatalf("build error = %v", err)
 	}
 }
@@ -131,21 +132,21 @@ func TestBuildGuestDeniedPacketsDoNotOverrideGuestResult(t *testing.T) {
 	connector := &buildGuestTestConnector{
 		network: vm.BuildNetworkStatus{DeniedPackets: 1},
 		handle: writeBuildGuestResultForTest(
-			buildGuestFailureForTest(t, BuildFailureDeclarationAnalysis),
+			buildGuestFailureForTest(t, deployment.BuildFailureDeclarationAnalysis),
 		),
 	}
-	_, err := (BuildGuest{Connector: connector}).Execute(
+	_, err := (buildGuest{connector: connector}).execute(
 		context.Background(),
 		buildWorkloadBindingForTest(),
 		request,
 		strings.NewReader(string(source)),
-		&ArtifactSnapshot{content: &artifactSnapshot{}},
-		&ArtifactSnapshot{content: &artifactSnapshot{}},
-		&ArtifactSnapshot{content: &artifactSnapshot{}},
+		&deployment.ArtifactSnapshot{},
+		&deployment.ArtifactSnapshot{},
+		&deployment.ArtifactSnapshot{},
 	)
-	var failure BuildFailure
+	var failure buildFailure
 	if !errors.As(err, &failure) ||
-		failure.Reason != BuildFailureDeclarationAnalysis {
+		failure.reason != deployment.BuildFailureDeclarationAnalysis {
 		t.Fatalf("build error = %v", err)
 	}
 }
@@ -156,17 +157,17 @@ func TestBuildGuestNetworkStatusFailureIsInfrastructureError(t *testing.T) {
 	connector := &buildGuestTestConnector{
 		statusErr: statusErr,
 		handle: writeBuildGuestResultForTest(
-			buildGuestFailureForTest(t, BuildFailureDeclarationAnalysis),
+			buildGuestFailureForTest(t, deployment.BuildFailureDeclarationAnalysis),
 		),
 	}
-	_, err := (BuildGuest{Connector: connector}).Execute(
+	_, err := (buildGuest{connector: connector}).execute(
 		context.Background(),
 		buildWorkloadBindingForTest(),
 		request,
 		strings.NewReader(string(source)),
-		&ArtifactSnapshot{content: &artifactSnapshot{}},
-		&ArtifactSnapshot{content: &artifactSnapshot{}},
-		&ArtifactSnapshot{content: &artifactSnapshot{}},
+		&deployment.ArtifactSnapshot{},
+		&deployment.ArtifactSnapshot{},
+		&deployment.ArtifactSnapshot{},
 	)
 	var fatal interface{ FatalWorker() bool }
 	if !errors.Is(err, statusErr) || errors.As(err, &fatal) {
@@ -178,7 +179,7 @@ func TestBuildNetworkFailure(t *testing.T) {
 	tests := []struct {
 		name   string
 		status vm.BuildNetworkStatus
-		reason BuildFailureReason
+		reason deployment.BuildFailureReason
 	}{
 		{name: "clean"},
 		{name: "denied packets are observational", status: vm.BuildNetworkStatus{
@@ -190,14 +191,14 @@ func TestBuildNetworkFailure(t *testing.T) {
 				DeniedPackets: 4,
 				LimitPackets:  1,
 			},
-			reason: BuildFailureNetworkLimit,
+			reason: deployment.BuildFailureNetworkLimit,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			failure := buildNetworkFailure(
 				test.status,
-				&BuildLogs{ExitStatus: 7},
+				&deployment.BuildLogs{ExitStatus: 7},
 			)
 			if test.reason == "" {
 				if failure != nil {
@@ -205,14 +206,14 @@ func TestBuildNetworkFailure(t *testing.T) {
 				}
 				return
 			}
-			if failure == nil || failure.Reason != test.reason {
+			if failure == nil || failure.reason != test.reason {
 				t.Fatalf(
 					"network failure = %+v, want reason %q",
 					failure,
 					test.reason,
 				)
 			}
-			if failure.Logs == nil || failure.Logs.ExitStatus != 7 {
+			if failure.logs == nil || failure.logs.ExitStatus != 7 {
 				t.Fatalf("network failure lost build logs: %+v", failure)
 			}
 		})
@@ -221,19 +222,19 @@ func TestBuildNetworkFailure(t *testing.T) {
 
 func buildGuestFailureForTest(
 	t *testing.T,
-	reason BuildFailureReason,
+	reason deployment.BuildFailureReason,
 ) []byte {
 	t.Helper()
-	raw, err := CanonicalBuildGuestResult(BuildGuestResult{
-		FormatVersion: BuildGuestFormatVersion,
-		Outcome:       BuildGuestFailed,
-		Logs: &BuildLogs{
+	raw, err := deployment.CanonicalBuildGuestResult(deployment.BuildGuestResult{
+		FormatVersion: deployment.BuildGuestFormatVersion,
+		Outcome:       deployment.BuildGuestFailed,
+		Logs: &deployment.BuildLogs{
 			ExitStatus: 23,
 			StderrBase64: base64.StdEncoding.EncodeToString(
 				[]byte("build stderr"),
 			),
 		},
-		Error: &BuildError{
+		Error: &deployment.BuildError{
 			ReasonCode: reason,
 			Message:    "build failed",
 		},
@@ -356,104 +357,46 @@ func (stream buildGuestTestStream) Read(buffer []byte) (int, error) {
 
 func buildGuestRequestForTest(
 	t *testing.T,
-) (BuildGuestRequest, []byte) {
+) (deployment.BuildGuestRequest, []byte) {
 	t.Helper()
-	runtime := testRuntimeDescriptor()
-	toolchain, _ := testToolchainForRuntime(t, runtime)
-	manager := testManager(PackageManagerNPM, runtime.Architecture)
 	source := []byte("x")
 	sourceHash := sha256.Sum256(source)
-	return BuildGuestRequest{
-		FormatVersion:   BuildGuestFormatVersion,
-		Manager:         buildManagerForTest(manager),
-		Runtime:         buildRuntimeForTest(runtime),
-		Toolchain:       buildToolchainForTest(toolchain),
+	runtimeDigest := "sha256:" + strings.Repeat("1", 64)
+	return deployment.BuildGuestRequest{
+		FormatVersion: deployment.BuildGuestFormatVersion,
+		Manager: deployment.BuildManager{
+			Artifact: deployment.ArtifactDescriptor{
+				Digest:    "sha256:" + strings.Repeat("2", 64),
+				MediaType: deployment.ManagerTreeMediaType,
+				SizeBytes: 1,
+			},
+			Entrypoint: deployment.ManagerEntrypoint{
+				Kind: deployment.ManagerEntrypointNode,
+				Path: "/opt/helmr/manager/lib/npm/bin/npm-cli.js",
+			},
+			PackageManager: deployment.PackageManager{
+				Name:    deployment.PackageManagerNPM,
+				Version: "11.4.2",
+			},
+		},
+		Runtime: deployment.BuildRuntime{
+			Artifact: deployment.ArtifactDescriptor{
+				Digest:    runtimeDigest,
+				MediaType: deployment.RuntimeArtifactMediaType,
+				SizeBytes: 1,
+			},
+			NodeVersion: "24.16.0",
+		},
+		Toolchain: deployment.BuildToolchain{
+			Artifact: deployment.ArtifactDescriptor{
+				Digest:    "sha256:" + strings.Repeat("3", 64),
+				MediaType: deployment.ToolchainMediaType,
+				SizeBytes: 1,
+			},
+			RuntimeDigest: runtimeDigest,
+		},
 		LockfileName:    "package-lock.json",
 		SourceDigest:    "sha256:" + hex.EncodeToString(sourceHash[:]),
 		SourceSizeBytes: int64(len(source)),
 	}, source
-}
-
-func testManager(
-	name PackageManagerName,
-	architecture RuntimeArchitecture,
-) Manager {
-	manager := PackageManager{Name: name, Version: "11.4.2"}
-	if name == PackageManagerPNPM {
-		manager.Version = "11.1.0"
-	}
-	if name == PackageManagerBun {
-		manager.Version = "1.3.10"
-	}
-	kind, entrypoint, origin, err := managerDistribution(manager)
-	if err != nil {
-		panic(err)
-	}
-	return Manager{
-		AdapterVersion: ManagerAdapterVersion,
-		Architecture:   architecture,
-		Entrypoint: ManagerEntrypoint{
-			Kind: kind,
-			Path: entrypoint,
-		},
-		PackageManager: manager,
-		Source: ManagerSource{
-			Digest:    "sha256:" + strings.Repeat("1", 64),
-			Origin:    origin,
-			SizeBytes: 1,
-		},
-		Tree: ArtifactDescriptor{
-			Digest:    "sha256:" + strings.Repeat("2", 64),
-			MediaType: ManagerTreeMediaType,
-			SizeBytes: 1,
-		},
-	}
-}
-
-func buildManagerForTest(manager Manager) BuildManager {
-	return BuildManager{
-		Artifact:       manager.Tree,
-		Entrypoint:     manager.Entrypoint,
-		PackageManager: manager.PackageManager,
-	}
-}
-
-func buildRuntimeForTest(runtime RuntimeDescriptor) BuildRuntime {
-	return BuildRuntime{
-		Artifact: ArtifactDescriptor{
-			Digest:    runtime.Digest,
-			MediaType: runtime.MediaType,
-			SizeBytes: runtime.SizeBytes,
-		},
-		NodeVersion: "24.16.0",
-	}
-}
-
-func buildToolchainForTest(toolchain Toolchain) BuildToolchain {
-	return BuildToolchain{
-		Artifact:      toolchain.ToolchainClosure,
-		RuntimeDigest: toolchain.ManagedRuntimeDigest,
-	}
-}
-
-func testToolchainForRuntime(
-	t *testing.T,
-	runtime RuntimeDescriptor,
-) (Toolchain, string) {
-	t.Helper()
-	toolchain := Toolchain{
-		Architecture:         runtime.Architecture,
-		FormatVersion:        ToolchainFormatVersion,
-		ManagedRuntimeDigest: runtime.Digest,
-		ToolchainClosure: ArtifactDescriptor{
-			Digest:    "sha256:" + strings.Repeat("3", 64),
-			MediaType: ToolchainMediaType,
-			SizeBytes: squashFSPhysicalAlign,
-		},
-	}
-	digest, err := ToolchainDigest(toolchain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return toolchain, digest
 }

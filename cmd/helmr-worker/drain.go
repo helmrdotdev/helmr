@@ -14,7 +14,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/executor"
-	workerdaemon "github.com/helmrdotdev/helmr/internal/worker"
+	"github.com/helmrdotdev/helmr/internal/worker"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
@@ -49,7 +49,7 @@ func runDrain(log *slog.Logger, args []string) error {
 	if err != nil {
 		return err
 	}
-	identity, err := workerdaemon.ReadProcessIdentity(workDir)
+	identity, err := worker.ReadProcessIdentity(workDir)
 	if err != nil {
 		return err
 	}
@@ -151,7 +151,7 @@ func workerControlPlaneClient() (*workerclient.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	identity, err := workerdaemon.ReadProcessIdentity(workDir)
+	identity, err := worker.ReadProcessIdentity(workDir)
 	if err != nil {
 		return nil, err
 	}

@@ -1,4 +1,4 @@
-package worker
+package programbuild
 
 import (
 	"context"
@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
@@ -32,16 +33,9 @@ const imageBuildCloseTimeout = 30 * time.Second
 // Workspace image. WriteTo must reproduce the descriptor and path set returned
 // by Descriptor and Paths or fail without selecting another source.
 type SourceArchive interface {
-	Descriptor() (SourceArchiveDescriptor, error)
+	Descriptor() (imagebuild.SourceArchiveDescriptor, error)
 	Paths() ([]imagebuild.SourcePath, error)
 	WriteTo(context.Context, io.Writer) error
-}
-
-type SourceArchiveDescriptor struct {
-	ArchiveDigest    string
-	ArchiveSizeBytes int64
-	ArchiveEntries   int
-	PathSetDigest    string
 }
 
 // LeaseAuthority is the provider-neutral Control Plane authority required by
@@ -65,9 +59,9 @@ type LeaseAuthority struct {
 	RequestedBuildExecutors          int32
 }
 
-// BuildRequest contains the exact Worker facts submitted to Control Plane for
+// buildRequest contains the exact Worker facts submitted to Control Plane for
 // Workspace-image admission. It contains no credential plaintext.
-type BuildRequest struct {
+type buildRequest struct {
 	Lease                 LeaseAuthority
 	RuntimeIdentityID     string
 	DeclarationSlot       string
@@ -174,18 +168,9 @@ type CacheCredentialFetcher interface {
 	FetchImageCacheCredential(context.Context, Assignment) (imagebuild.RegistryCredentialValue, error)
 }
 
-type OperationRevocations interface {
-	RegisterImageOperation(string, context.CancelFunc) (func(), error)
-}
-
-type Builder interface {
-	BuildWorkspaceImage(context.Context, BuildRequest, OperationRevocations) (*Artifact, error)
-	CompleteWorkspaceImage(context.Context, *Artifact, PublishedArtifact) error
-}
-
-// Artifact owns one verified temporary OCI archive. Callers may open it
+// artifact owns one verified temporary OCI archive. Callers may open it
 // repeatedly for CAS publication and must Close it to remove the local copy.
-type Artifact struct {
+type artifact struct {
 	Digest    string
 	SizeBytes int64
 	Evidence  ResultEvidence
@@ -216,14 +201,14 @@ type ResultEvidence struct {
 	GuestResult            imagebuild.GuestResult
 }
 
-func (artifact *Artifact) Open() (*os.File, error) {
+func (artifact *artifact) open() (*os.File, error) {
 	if artifact == nil || artifact.closed || artifact.path == "" {
 		return nil, errors.New("Workspace image artifact is closed")
 	}
 	return os.Open(artifact.path)
 }
 
-func (artifact *Artifact) Close() error {
+func (artifact *artifact) close() error {
 	if artifact == nil || artifact.closed {
 		return nil
 	}
@@ -239,7 +224,7 @@ func (artifact *Artifact) Close() error {
 	return nil
 }
 
-type VMEngine struct {
+type imageEngine struct {
 	Connector   vm.Connector
 	Admission   AdmissionClient
 	Credentials RegistryCredentialFetcher
@@ -248,11 +233,11 @@ type VMEngine struct {
 	WorkDir     string
 }
 
-func (engine VMEngine) BuildWorkspaceImage(
+func (engine imageEngine) BuildWorkspaceImage(
 	ctx context.Context,
-	request BuildRequest,
-	revocations OperationRevocations,
-) (_ *Artifact, returnErr error) {
+	request buildRequest,
+	revocations deployment.ImageOperationRevocations,
+) (_ *artifact, returnErr error) {
 	if ctx == nil {
 		return nil, errors.New("Workspace image build context is nil")
 	}
@@ -280,12 +265,12 @@ func (engine VMEngine) BuildWorkspaceImage(
 	if assignment.TerminalResult != nil {
 		evidence := assignment.TerminalResult.Evidence
 		if evidence.GuestResult.Outcome == imagebuild.GuestFailed {
-			return nil, &GuestFailure{
+			return nil, &guestFailure{
 				Reason:  evidence.GuestResult.FailureReason,
 				Message: evidence.GuestResult.Error,
 			}
 		}
-		return &Artifact{
+		return &artifact{
 			Digest: evidence.GuestResult.OCIDigest, SizeBytes: evidence.GuestResult.OCISizeBytes,
 			Evidence: evidence, Replayed: true,
 		}, nil
@@ -320,7 +305,7 @@ func (engine VMEngine) BuildWorkspaceImage(
 	stopCancellationClose := context.AfterFunc(attemptCtx, func() {
 		closeDone <- closeImageBuildSession(session, owner)
 	})
-	var produced *Artifact
+	var produced *artifact
 	defer func() {
 		unregister()
 		var closeErr error
@@ -331,7 +316,7 @@ func (engine VMEngine) BuildWorkspaceImage(
 		}
 		returnErr = errors.Join(returnErr, closeErr)
 		if returnErr != nil && produced != nil {
-			returnErr = errors.Join(returnErr, produced.Close())
+			returnErr = errors.Join(returnErr, produced.close())
 		}
 	}()
 	network, ok := session.(vm.BuildNetworkSession)
@@ -451,7 +436,7 @@ func (engine VMEngine) BuildWorkspaceImage(
 		}); err != nil {
 			return nil, fmt.Errorf("complete failed Workspace image operation: %w", err)
 		}
-		return nil, &GuestFailure{Reason: result.FailureReason, Message: result.Error}
+		return nil, &guestFailure{Reason: result.FailureReason, Message: result.Error}
 	}
 
 	artifact, err := receiveArtifact(attemptCtx, engine.WorkDir, stream, result, admissionRequest.Architecture)
@@ -471,7 +456,7 @@ func (engine VMEngine) BuildWorkspaceImage(
 		}); err != nil {
 			return nil, fmt.Errorf("complete network-limited Workspace image operation: %w", err)
 		}
-		return nil, &GuestFailure{Reason: result.FailureReason, Message: result.Error}
+		return nil, &guestFailure{Reason: result.FailureReason, Message: result.Error}
 	}
 	return artifact, nil
 }
@@ -507,9 +492,9 @@ func resultEvidence(assignment Assignment, attemptID string, result imagebuild.G
 	}
 }
 
-func (engine VMEngine) CompleteWorkspaceImage(
+func (engine imageEngine) CompleteWorkspaceImage(
 	ctx context.Context,
-	artifact *Artifact,
+	artifact *artifact,
 	published PublishedArtifact,
 ) error {
 	if artifact == nil {
@@ -537,19 +522,19 @@ func (engine VMEngine) CompleteWorkspaceImage(
 	})
 }
 
-type GuestFailure struct {
+type guestFailure struct {
 	Reason  imagebuild.GuestFailureReason
 	Message string
 }
 
-func (failure *GuestFailure) Error() string {
+func (failure *guestFailure) Error() string {
 	if failure == nil {
 		return "Workspace image guest failed"
 	}
 	return failure.Message
 }
 
-func prepareAdmissionRequest(request BuildRequest) (AdmissionRequest, error) {
+func prepareAdmissionRequest(request buildRequest) (AdmissionRequest, error) {
 	if request.Source == nil {
 		return AdmissionRequest{}, errors.New("Workspace image source is required")
 	}
@@ -711,7 +696,7 @@ func receiveArtifact(
 	stream io.Reader,
 	result imagebuild.GuestResult,
 	architecture string,
-) (_ *Artifact, returnErr error) {
+) (_ *artifact, returnErr error) {
 	file, err := os.CreateTemp(workDir, ".helmr-image-build-")
 	if err != nil {
 		return nil, err
@@ -753,7 +738,7 @@ func receiveArtifact(
 		architecture != "x86_64" || metadata.Platform.Architecture != "amd64" {
 		return nil, errors.New("image-build OCI platform does not match linux/amd64")
 	}
-	return &Artifact{Digest: digest, SizeBytes: written, path: path}, nil
+	return &artifact{Digest: digest, SizeBytes: written, path: path}, nil
 }
 
 func closeImageBuildSession(session vm.Session, owner vm.Owner) error {
@@ -805,5 +790,3 @@ func (reader *contextReader) Read(body []byte) (int, error) {
 	}
 	return reader.reader.Read(body)
 }
-
-var _ Builder = VMEngine{}

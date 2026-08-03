@@ -54,32 +54,47 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 	}
 
 	for source, targets := range map[string][]string{
-		"api":               {"workerapi"},
-		"auth":              {"db", "token"},
-		"buildkit":          {"imagebuild/worker"},
-		"cas":               {"cas/s3"},
-		"client":            {"workerapi", "workerclient"},
-		"email":             {"email/resend"},
-		"enrollment":        {"controlplane", "db"},
-		"frameio":           {"api", "db", "proto/run/v0", "wire"},
-		"httpclient":        {"controlplane", "db", "workerapi"},
-		"wire":              {"api", "controlplane", "db", "executor", "guestd", "workspace"},
-		"guestd":            {"controlplane", "db", "executor", "imagebuild/worker"},
-		"imagebuild":        {"compute", "frameio", "imagebuild/worker", "imagecache", "oci", "vm", "wire"},
-		"imagebuild/worker": {"controlplane", "db", "deployment", "guestd", "workerapi"},
-		"imagecache/ecr":    {"imagebuild/worker"},
-		"workspace":         {"api", "controlplane", "db", "executor", "guestd", "pgvalue", "wire"},
-		"controlplane":      {"eventstream", "executor", "firecracker", "guestd"},
-		"secret":            {"run"},
-		"substrate":         {"controlplane", "db", "executor", "worker"},
-		"telemetry":         {"clickhouse"},
-		"workerapi":         {"controlplane", "db", "firecracker", "imagebuild/worker", "imagecache/ecr"},
-		"workerclient":      {"client"},
+		"api":                     {"workerapi"},
+		"auth":                    {"db", "token"},
+		"buildkit":                {"deployment/programbuild"},
+		"cas":                     {"cas/s3"},
+		"client":                  {"workerapi", "workerclient"},
+		"email":                   {"email/resend"},
+		"enrollment":              {"controlplane", "db"},
+		"frameio":                 {"api", "db", "proto/run/v0", "wire"},
+		"httpclient":              {"controlplane", "db", "workerapi"},
+		"wire":                    {"api", "controlplane", "db", "executor", "guestd", "workspace"},
+		"deployment":              {"compute", "deployment/programbuild", "vm", "wire"},
+		"deployment/programbuild": {"controlplane", "db", "firecracker", "guestd", "workerclient"},
+		"guestd":                  {"controlplane", "db", "deployment/programbuild", "executor", "vm"},
+		"imagebuild":              {"compute", "deployment/programbuild", "frameio", "imagecache", "oci", "vm", "wire"},
+		"imagecache/ecr":          {"deployment/programbuild"},
+		"workspace":               {"api", "controlplane", "db", "executor", "guestd", "pgvalue", "wire"},
+		"controlplane":            {"eventstream", "executor", "firecracker", "guestd"},
+		"secret":                  {"run"},
+		"substrate":               {"controlplane", "db", "executor", "worker"},
+		"telemetry":               {"clickhouse"},
+		"worker":                  {"deployment/programbuild"},
+		"workerapi":               {"controlplane", "db", "deployment/programbuild", "firecracker", "imagecache/ecr"},
+		"workerclient":            {"client"},
 	} {
 		for _, target := range targets {
 			if slices.Contains(actual[source], target) {
 				t.Fatalf("internal package import is forbidden: %s must not import %s", source, target)
 			}
+		}
+	}
+}
+
+func TestProgramBuildHostPackageIsWorkerOnly(t *testing.T) {
+	root := repositoryRoot(t)
+	for _, command := range []string{"helmr", "helmr-controlplane", "helmr-dispatcher"} {
+		imports, err := packageImports(filepath.Join(root, "cmd", command))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if slices.Contains(imports, moduleImportPrefix+"internal/deployment/programbuild") {
+			t.Fatalf("cmd/%s must not import the Worker-host Program build package", command)
 		}
 	}
 }
