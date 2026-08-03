@@ -44,7 +44,7 @@ func (process PlatformAcquisitionProcess) Acquire(
 	request workerapi.PlatformAcquisition,
 ) (workerapi.PlatformAcquisitionCandidates, error) {
 	if ctx == nil {
-		return workerapi.PlatformAcquisitionCandidates{}, errors.New("Platform acquisition context is nil")
+		return workerapi.PlatformAcquisitionCandidates{}, errors.New("platform acquisition context is nil")
 	}
 	bounded, cancel := context.WithTimeout(ctx, platformAcquisitionDeadline)
 	defer cancel()
@@ -56,7 +56,7 @@ func (process PlatformAcquisitionProcess) Acquire(
 		return *result.Candidates, nil
 	}
 	if result.Candidates != nil || result.Error == "" {
-		return workerapi.PlatformAcquisitionCandidates{}, errors.New("Platform acquisition child returned an invalid result")
+		return workerapi.PlatformAcquisitionCandidates{}, errors.New("platform acquisition child returned an invalid result")
 	}
 	cause := errors.New(result.Error)
 	if result.Reason == "" {

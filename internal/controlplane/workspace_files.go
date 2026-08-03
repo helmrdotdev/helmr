@@ -107,7 +107,7 @@ func (s *Server) listWorkspaceFilesHTTP(w http.ResponseWriter, r *http.Request) 
 		if errors.Is(err, errWorkspaceFileCursorExpired) {
 			writeError(w, gone(codedError{
 				code:    "workspace_file_cursor_expired",
-				message: "Workspace file cursor expired",
+				message: "workspace file cursor expired",
 			}))
 		} else if errors.Is(err, errWorkspaceFileCursorInvalid) {
 			s.writeWorkspaceFileRequestError(w, err)
@@ -153,10 +153,10 @@ func (s *Server) readWorkspaceFileSource(
 	}
 	content, err := io.ReadAll(entry.Reader)
 	if err != nil {
-		return api.WorkspaceFileContent{}, fmt.Errorf("read Workspace file: %w", err)
+		return api.WorkspaceFileContent{}, fmt.Errorf("read workspace file: %w", err)
 	}
 	if int64(len(content)) != entry.Entry.Size {
-		return api.WorkspaceFileContent{}, errors.New("Workspace file content is truncated")
+		return api.WorkspaceFileContent{}, errors.New("workspace file content is truncated")
 	}
 	return api.WorkspaceFileContent{
 		DataBase64: base64.StdEncoding.EncodeToString(content),
@@ -338,28 +338,28 @@ func (s *Server) loadPublicWorkspace(w http.ResponseWriter, r *http.Request, per
 		ID:            workspaceID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(codedError{code: "workspace_not_found", message: "Workspace was not found"}))
+		writeError(w, notFound(codedError{code: "workspace_not_found", message: "workspace was not found"}))
 		return db.Workspace{}, false
 	}
 	if err != nil {
 		writeError(w, unavailable(codedError{
-			code: "workspace_authority_unavailable", message: "Workspace authority is unavailable", retryable: true,
+			code: "workspace_authority_unavailable", message: "workspace authority is unavailable", retryable: true,
 		}))
 		return db.Workspace{}, false
 	}
 	switch record.State {
 	case db.WorkspaceStateDeleting:
-		writeError(w, conflict(codedError{code: "workspace_deleting", message: "Workspace is deleting"}))
+		writeError(w, conflict(codedError{code: "workspace_deleting", message: "workspace is deleting"}))
 		return db.Workspace{}, false
 	case db.WorkspaceStateRecoveryRequired:
 		writeError(w, conflict(codedError{
 			code:    "workspace_recovery_required",
-			message: "Workspace requires recovery",
+			message: "workspace requires recovery",
 		}))
 		return db.Workspace{}, false
 	case db.WorkspaceStateActive:
 	default:
-		writeError(w, notFound(codedError{code: "workspace_not_found", message: "Workspace was not found"}))
+		writeError(w, notFound(codedError{code: "workspace_not_found", message: "workspace was not found"}))
 		return db.Workspace{}, false
 	}
 	return record, true
@@ -371,7 +371,7 @@ func (s *Server) currentWorkspaceVersion(
 	record db.Workspace,
 ) (db.WorkspaceVersion, error) {
 	if !record.HeadVersionID.Valid {
-		return db.WorkspaceVersion{}, errors.New("Workspace committed head is missing")
+		return db.WorkspaceVersion{}, errors.New("workspace committed head is missing")
 	}
 	return q.GetWorkspaceVersion(ctx, db.GetWorkspaceVersionParams{
 		EnvironmentID: record.EnvironmentID,
@@ -399,7 +399,7 @@ func resolveWorkspaceFileSource(
 ) (workspaceFileSource, error) {
 	if !version.ArtifactID.Valid {
 		if version.ParentVersionID.Valid || version.SizeBytes != 0 || version.EntryCount != 0 {
-			return workspaceFileSource{}, errors.New("Workspace version Artifact is missing")
+			return workspaceFileSource{}, errors.New("workspace version artifact is missing")
 		}
 		return workspaceFileSource{version: version, empty: true}, nil
 	}
@@ -411,7 +411,7 @@ func resolveWorkspaceFileSource(
 		return workspaceFileSource{}, err
 	}
 	if artifact.Kind != db.ArtifactKindWorkspaceVersion || artifact.MediaType != workspace.ArtifactMediaType {
-		return workspaceFileSource{}, errors.New("Workspace version Artifact is unsupported")
+		return workspaceFileSource{}, errors.New("workspace version artifact is unsupported")
 	}
 	return workspaceFileSource{version: version, digest: artifact.Digest}, nil
 }
@@ -424,7 +424,7 @@ func (s *Server) openWorkspaceFileSource(
 		return nil, true, nil
 	}
 	if s.cas == nil {
-		return nil, false, errors.New("Workspace Artifact store is unavailable")
+		return nil, false, errors.New("workspace artifact store is unavailable")
 	}
 	body, err := s.cas.Get(ctx, source.digest)
 	return body, false, err
@@ -432,22 +432,22 @@ func (s *Server) openWorkspaceFileSource(
 
 func validateWorkspaceFilePath(raw string) (string, error) {
 	if !utf8.ValidString(raw) || len(raw) > 4096 || strings.IndexByte(raw, 0) >= 0 {
-		return "", errors.New("Workspace file path must contain at most 4096 UTF-8 bytes")
+		return "", errors.New("workspace file path must contain at most 4096 UTF-8 bytes")
 	}
 	if raw == "." {
 		return ".", nil
 	}
 	if raw == "" || path.IsAbs(raw) {
-		return "", fmt.Errorf("Workspace file path %q must be canonical and root-relative", raw)
+		return "", fmt.Errorf("workspace file path %q must be canonical and root-relative", raw)
 	}
 	for component := range strings.SplitSeq(raw, "/") {
 		if component == ".." {
-			return "", fmt.Errorf("Workspace file path %q must be canonical and root-relative", raw)
+			return "", fmt.Errorf("workspace file path %q must be canonical and root-relative", raw)
 		}
 	}
 	clean := path.Clean(raw)
 	if clean == "." || clean != raw {
-		return "", fmt.Errorf("Workspace file path %q must be canonical and root-relative", raw)
+		return "", fmt.Errorf("workspace file path %q must be canonical and root-relative", raw)
 	}
 	return clean, nil
 }
@@ -458,7 +458,7 @@ func workspaceFileLimit(raw string) (int32, error) {
 	}
 	parsed, err := strconv.ParseInt(raw, 10, 32)
 	if err != nil || parsed < 1 || parsed > int64(workspaceFileListMaxLimit) {
-		return 0, fmt.Errorf("Workspace file list limit must be between 1 and %d", workspaceFileListMaxLimit)
+		return 0, fmt.Errorf("workspace file list limit must be between 1 and %d", workspaceFileListMaxLimit)
 	}
 	return int32(parsed), nil
 }
@@ -478,13 +478,13 @@ func workspaceFileEntry(entry archive.TarEntry) api.WorkspaceFileEntry {
 }
 
 var (
-	errWorkspaceFileCursorExpired = errors.New("Workspace file cursor expired")
-	errWorkspaceFileCursorInvalid = errors.New("Workspace file cursor is invalid")
+	errWorkspaceFileCursorExpired = errors.New("workspace file cursor expired")
+	errWorkspaceFileCursorInvalid = errors.New("workspace file cursor is invalid")
 )
 
 func (s *Server) signWorkspaceFileCursor(cursor workspaceFileCursor) (string, error) {
 	if len(s.authKeys.WorkspaceFileCursor) == 0 {
-		return "", errors.New("Workspace file cursor authority is unavailable")
+		return "", errors.New("workspace file cursor authority is unavailable")
 	}
 	payload, err := json.Marshal(cursor)
 	if err != nil {
@@ -497,7 +497,7 @@ func (s *Server) signWorkspaceFileCursor(cursor workspaceFileCursor) (string, er
 	token := base64.RawURLEncoding.EncodeToString(payload) + "." +
 		base64.RawURLEncoding.EncodeToString(mac)
 	if len(token) > workspaceFileCursorMaxBytes {
-		return "", errors.New("Workspace file cursor exceeds its size limit")
+		return "", errors.New("workspace file cursor exceeds its size limit")
 	}
 	return token, nil
 }
@@ -542,17 +542,17 @@ func (s *Server) writeWorkspaceFileRequestError(w http.ResponseWriter, err error
 func (s *Server) writeWorkspaceFileError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, archive.ErrTarEntryNotFound), errors.Is(err, pgx.ErrNoRows):
-		writeError(w, notFound(codedError{code: "workspace_file_not_found", message: "Workspace file was not found"}))
+		writeError(w, notFound(codedError{code: "workspace_file_not_found", message: "workspace file was not found"}))
 	case errors.Is(err, archive.ErrTarEntryNotFile), errors.Is(err, archive.ErrTarEntryNotDir):
 		writeError(w, apiError{kind: errUnprocessable, err: codedError{
-			code: "workspace_file_not_regular", message: "Workspace file is not a regular file",
+			code: "workspace_file_not_regular", message: "workspace file is not a regular file",
 		}})
 	case errors.Is(err, archive.ErrTarEntryTooLarge):
-		writeError(w, tooLarge(codedError{code: "workspace_file_too_large", message: "Workspace file is too large"}))
+		writeError(w, tooLarge(codedError{code: "workspace_file_too_large", message: "workspace file is too large"}))
 	default:
 		s.log.Error("Workspace file operation failed", "error", err)
 		writeError(w, unavailable(codedError{
-			code: "workspace_authority_unavailable", message: "Workspace authority is unavailable", retryable: true,
+			code: "workspace_authority_unavailable", message: "workspace authority is unavailable", retryable: true,
 		}))
 	}
 }

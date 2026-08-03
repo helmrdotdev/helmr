@@ -25,12 +25,12 @@ func (s *Server) workerEnterRunEntrypoint(w http.ResponseWriter, r *http.Request
 		if errors.Is(err, io.EOF) {
 			err = errors.New("request body is required")
 		}
-		writeError(w, badRequest(fmt.Errorf("invalid worker Run entrypoint request JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid worker run entrypoint request JSON: %w", err)))
 		return
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		writeError(w, badRequest(errors.New("invalid worker Run entrypoint request JSON: trailing value")))
+		writeError(w, badRequest(errors.New("invalid worker run entrypoint request JSON: trailing value")))
 		return
 	}
 	leaseID, err := ids.Parse(request.Lease.ID)
@@ -52,11 +52,11 @@ func (s *Server) workerEnterRunEntrypoint(w http.ResponseWriter, r *http.Request
 		request,
 	); err != nil {
 		if errors.Is(err, errStaleRunLeaseClaim) {
-			writeError(w, conflict(errors.New("Run entrypoint acknowledgement is stale")))
+			writeError(w, conflict(errors.New("run entrypoint acknowledgement is stale")))
 			return
 		}
 		s.log.Error("enter Run entrypoint failed", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("enter Run entrypoint"))
+		writeError(w, errors.New("enter run entrypoint"))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

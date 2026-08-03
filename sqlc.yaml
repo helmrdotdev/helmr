@@ -13,9 +13,36 @@ sql:
         emit_interface: true
         rename:
           api_key: APIKey
-          checkpoint_artifact_role_vm_state: CheckpointArtifactRoleVMState
+          api_key_grant: APIKeyGrant
+          api_key_id: APIKeyID
+          api_version: APIVersion
+          artifact_kind_run_checkpoint_vm_state: ArtifactKindRunCheckpointVMState
+          artifact_cache_pressure_bps: ArtifactCachePressureBPS
+          available_cpu_millis: AvailableCPUMillis
+          available_vm_slots: AvailableVMSlots
+          build_available_cpu_millis: BuildAvailableCPUMillis
+          build_cache_pressure_bps: BuildCachePressureBPS
+          checkpoint_pressure_bps: CheckpointPressureBPS
+          cpu_pressure_bps: CPUPressureBPS
           cancel_ids: CancelIDs
+          epoch_cpu_millis: EpochCPUMillis
+          guest_ephemeral_disk_pressure_bps: GuestEphemeralDiskPressureBPS
+          max_vm_slots: MaxVMSlots
+          memory_pressure_bps: MemoryPressureBPS
+          per_vm_cpu_millis: PerVMCPUMillis
+          per_vm_guest_ephemeral_disk_bytes: PerVMGuestEphemeralDiskBytes
+          per_vm_memory_bytes: PerVMMemoryBytes
+          profile_image_url: ProfileImageURL
+          queued_run_cpu_millis: QueuedRunCPUMillis
+          queued_run_memory_mib: QueuedRunMemoryMiB
+          requested_cpu_millis: RequestedCPUMillis
+          required_cpu_millis: RequiredCPUMillis
+          required_vm_slots: RequiredVMSlots
+          reserved_cpu_millis: ReservedCPUMillis
           run_ids: RunIDs
+          run_checkpoint_artifact_role_vm_state: RunCheckpointArtifactRoleVMState
+          run_available_cpu_millis: RunAvailableCPUMillis
+          run_available_vm_slots: RunAvailableVMSlots
           run_lease_ids: RunLeaseIDs
           runtime_ids: RuntimeIDs
           runtime_abi: RuntimeABI

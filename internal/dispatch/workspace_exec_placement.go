@@ -85,7 +85,7 @@ func (d *Authority) PlaceWorkspaceExec(
 ) (WorkspaceExecPlacement, error) {
 	tx, err := d.begin(ctx)
 	if err != nil {
-		return WorkspaceExecPlacement{}, fmt.Errorf("begin Workspace exec placement: %w", err)
+		return WorkspaceExecPlacement{}, fmt.Errorf("begin workspace exec placement: %w", err)
 	}
 	defer rollback(ctx, tx)
 
@@ -97,7 +97,7 @@ func (d *Authority) PlaceWorkspaceExec(
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = workspaceExecPermanentError{
 				code: "workspace_exec_authority_changed",
-				err:  errors.New("Workspace exec authority changed after admission"),
+				err:  errors.New("workspace exec authority changed after admission"),
 			}
 		}
 		return WorkspaceExecPlacement{}, d.finishRejectedWorkspaceExec(ctx, tx, candidate, err)
@@ -109,12 +109,12 @@ func (d *Authority) PlaceWorkspaceExec(
 			return WorkspaceExecPlacement{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return WorkspaceExecPlacement{}, fmt.Errorf("commit Workspace exec runtime reservation: %w", err)
+			return WorkspaceExecPlacement{}, fmt.Errorf("commit workspace exec runtime reservation: %w", err)
 		}
 		return placement, nil
 	}
 	if err != nil {
-		return WorkspaceExecPlacement{}, fmt.Errorf("discover Workspace exec runtime: %w", err)
+		return WorkspaceExecPlacement{}, fmt.Errorf("discover workspace exec runtime: %w", err)
 	}
 	if err := lockWorkerFence(ctx, tx, workerFence{
 		GroupID:               runtime.groupID,
@@ -141,13 +141,13 @@ func (d *Authority) PlaceWorkspaceExec(
 			},
 		)
 		if err != nil {
-			return WorkspaceExecPlacement{}, fmt.Errorf("close expired Workspace exec reservation: %w", err)
+			return WorkspaceExecPlacement{}, fmt.Errorf("close expired workspace exec reservation: %w", err)
 		}
 		if closed != 1 {
 			return WorkspaceExecPlacement{}, ErrCapacityUnavailable
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return WorkspaceExecPlacement{}, fmt.Errorf("commit expired Workspace exec reservation close: %w", err)
+			return WorkspaceExecPlacement{}, fmt.Errorf("commit expired workspace exec reservation close: %w", err)
 		}
 		return WorkspaceExecPlacement{
 			WorkerInstanceID:  runtime.workerID,
@@ -181,7 +181,7 @@ func (d *Authority) PlaceWorkspaceExec(
 			if isConstraintConflict(err) || errors.Is(err, pgx.ErrNoRows) {
 				return WorkspaceExecPlacement{}, ErrCapacityUnavailable
 			}
-			return WorkspaceExecPlacement{}, fmt.Errorf("reserve ready Workspace exec runtime: %w", err)
+			return WorkspaceExecPlacement{}, fmt.Errorf("reserve ready workspace exec runtime: %w", err)
 		}
 		runtime.reservedProcessID = reservation.ReservedProcessID
 		runtime.reservedVersionID = reservation.ReservedWorkspaceVersionID
@@ -211,10 +211,10 @@ func (d *Authority) PlaceWorkspaceExec(
 			},
 		)
 		if err != nil {
-			return WorkspaceExecPlacement{}, fmt.Errorf("request Workspace exec mount: %w", err)
+			return WorkspaceExecPlacement{}, fmt.Errorf("request workspace exec mount: %w", err)
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return WorkspaceExecPlacement{}, fmt.Errorf("commit Workspace exec mount request: %w", err)
+			return WorkspaceExecPlacement{}, fmt.Errorf("commit workspace exec mount request: %w", err)
 		}
 		return WorkspaceExecPlacement{
 			WorkspaceMountID:  requested.ID,
@@ -224,7 +224,7 @@ func (d *Authority) PlaceWorkspaceExec(
 		}, nil
 	}
 	if err != nil {
-		return WorkspaceExecPlacement{}, fmt.Errorf("read Workspace exec mount: %w", err)
+		return WorkspaceExecPlacement{}, fmt.Errorf("read workspace exec mount: %w", err)
 	}
 	placement := WorkspaceExecPlacement{
 		WorkspaceMountID:  mount.id,
@@ -234,7 +234,7 @@ func (d *Authority) PlaceWorkspaceExec(
 	}
 	if mount.state != db.WorkspaceMountStateMounted {
 		if err := tx.Commit(ctx); err != nil {
-			return WorkspaceExecPlacement{}, fmt.Errorf("commit Workspace exec placement observation: %w", err)
+			return WorkspaceExecPlacement{}, fmt.Errorf("commit workspace exec placement observation: %w", err)
 		}
 		return placement, nil
 	}
@@ -242,7 +242,7 @@ func (d *Authority) PlaceWorkspaceExec(
 		return WorkspaceExecPlacement{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return WorkspaceExecPlacement{}, fmt.Errorf("commit Workspace exec grant: %w", err)
+		return WorkspaceExecPlacement{}, fmt.Errorf("commit workspace exec grant: %w", err)
 	}
 	placement.ProcessBound = true
 	return placement, nil
@@ -290,7 +290,7 @@ SELECT secrets.state = 'active'
 		if !valid {
 			return workspaceExecPermanentError{
 				code: "workspace_exec_secret_unavailable",
-				err:  errors.New("Workspace exec Secret resolution is revoked or incomplete"),
+				err:  errors.New("workspace exec secret resolution is revoked or incomplete"),
 			}
 		}
 	}
@@ -377,13 +377,13 @@ SELECT workspace_processes.id,
 	if err := decoder.Decode(&workspaceManifest); err != nil {
 		return workspaceExecAuthority{}, workspaceExecPermanentError{
 			code: "workspace_exec_manifest_invalid",
-			err:  fmt.Errorf("decode Workspace exec manifest: %w", err),
+			err:  fmt.Errorf("decode workspace exec manifest: %w", err),
 		}
 	}
 	if err := requireJSONEOF(decoder); err != nil {
 		return workspaceExecAuthority{}, workspaceExecPermanentError{
 			code: "workspace_exec_manifest_invalid",
-			err:  fmt.Errorf("decode Workspace exec manifest: %w", err),
+			err:  fmt.Errorf("decode workspace exec manifest: %w", err),
 		}
 	}
 	resources, err := normalizeRunResources(workspaceManifest.Resources)
@@ -409,7 +409,7 @@ func (d *Authority) createWorkspaceExecRuntime(
 		return WorkspaceExecPlacement{}, ErrCapacityUnavailable
 	}
 	if err != nil {
-		return WorkspaceExecPlacement{}, fmt.Errorf("select Workspace exec worker: %w", err)
+		return WorkspaceExecPlacement{}, fmt.Errorf("select workspace exec worker: %w", err)
 	}
 	if err := lockWorkerFence(ctx, tx, workerFence{
 		GroupID:               worker.groupID,
@@ -439,7 +439,7 @@ func (d *Authority) createWorkspaceExecRuntime(
 			RuntimeIdentityID:               worker.runtimeIdentityID,
 			DeploymentDefinitionID:          authority.workspaceDefinitionID,
 			WorkerEpoch:                     worker.workerEpoch,
-			ReservedCpuMillis:               authority.resources.cpuMillis,
+			ReservedCPUMillis:               authority.resources.cpuMillis,
 			ReservedMemoryBytes:             authority.resources.memoryBytes,
 			ReservedGuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes,
 			ReservedExecutionSlots:          authority.resources.executionSlots,
@@ -453,7 +453,7 @@ func (d *Authority) createWorkspaceExecRuntime(
 		if isConstraintConflict(err) {
 			return WorkspaceExecPlacement{}, ErrCapacityUnavailable
 		}
-		return WorkspaceExecPlacement{}, fmt.Errorf("create Workspace exec runtime reservation: %w", err)
+		return WorkspaceExecPlacement{}, fmt.Errorf("create workspace exec runtime reservation: %w", err)
 	}
 	return WorkspaceExecPlacement{
 		WorkerInstanceID:  runtime.WorkerInstanceID,
@@ -476,7 +476,7 @@ SELECT count(*)
    AND reclaimed_at IS NULL`,
 		authority.environmentID,
 	).Scan(&active); err != nil {
-		return fmt.Errorf("read Workspace exec preparation budget: %w", err)
+		return fmt.Errorf("read workspace exec preparation budget: %w", err)
 	}
 	if active >= d.runPolicy.PreparationLimit {
 		return ErrCapacityUnavailable
@@ -491,16 +491,16 @@ func validateWorkspaceExecRuntime(authority workspaceExecAuthority, runtime runR
 		runtime.memoryBytes != authority.resources.memoryBytes ||
 		runtime.guestEphemeralDiskBytes != authority.resources.guestEphemeralDiskBytes ||
 		runtime.executionSlots != authority.resources.executionSlots {
-		return errors.New("Workspace runtime does not match exec authority")
+		return errors.New("workspace runtime does not match exec authority")
 	}
 	if runtime.reservedRunID.Valid {
-		return errors.New("Workspace runtime is reserved by a Run")
+		return errors.New("workspace runtime is reserved by a run")
 	}
 	if runtime.reservedProcessID.Valid &&
 		(runtime.reservedProcessID != authority.processID ||
 			runtime.reservedVersionID != authority.baseVersionID ||
 			!runtime.reservationActive) {
-		return errors.New("Workspace runtime reservation does not match exec authority")
+		return errors.New("workspace runtime reservation does not match exec authority")
 	}
 	return nil
 }
@@ -573,7 +573,7 @@ func (d *Authority) grantWorkspaceExec(
 		MountFencingGeneration: mountGeneration,
 	})
 	if err != nil {
-		return fmt.Errorf("derive Workspace exec fence: %w", err)
+		return fmt.Errorf("derive workspace exec fence: %w", err)
 	}
 	q := db.New(tx)
 	if _, err := q.AdvanceWorkspaceExecWriter(ctx, db.AdvanceWorkspaceExecWriterParams{
@@ -587,7 +587,7 @@ func (d *Authority) grantWorkspaceExec(
 		ExpectedOwnershipGeneration: authority.ownershipGeneration,
 		ExpectedWriterGeneration:    authority.writerGeneration,
 	}); err != nil {
-		return fmt.Errorf("advance Workspace exec writer: %w", err)
+		return fmt.Errorf("advance workspace exec writer: %w", err)
 	}
 	if _, err := q.AdvanceWorkspaceExecMountFence(ctx, db.AdvanceWorkspaceExecMountFenceParams{
 		FencingGeneration:         mountGeneration,
@@ -604,7 +604,7 @@ func (d *Authority) grantWorkspaceExec(
 		BaseWorkspaceVersionID:    authority.baseVersionID,
 		ExpectedFencingGeneration: mount.fencingGeneration,
 	}); err != nil {
-		return fmt.Errorf("advance Workspace exec mount fence: %w", err)
+		return fmt.Errorf("advance workspace exec mount fence: %w", err)
 	}
 	if _, err := q.BindWorkspaceExecRuntime(ctx, db.BindWorkspaceExecRuntimeParams{
 		RegionID:               pgvalue.Text(authority.regionID),
@@ -621,7 +621,7 @@ func (d *Authority) grantWorkspaceExec(
 		BaseWorkspaceVersionID: authority.baseVersionID,
 		ExpectedStateVersion:   authority.processStateVersion,
 	}); err != nil {
-		return fmt.Errorf("bind Workspace exec runtime: %w", err)
+		return fmt.Errorf("bind workspace exec runtime: %w", err)
 	}
 	if _, err := q.InsertWorkspaceExecLease(ctx, db.InsertWorkspaceExecLeaseParams{
 		ID:                     leaseID,
@@ -643,7 +643,7 @@ func (d *Authority) grantWorkspaceExec(
 		FencingTokenHash:       capability.Hash,
 		ExpiresAt:              pgvalue.Timestamptz(time.Now().Add(workspaceExecLeaseTTL)),
 	}); err != nil {
-		return fmt.Errorf("insert Workspace exec lease: %w", err)
+		return fmt.Errorf("insert workspace exec lease: %w", err)
 	}
 	consumed, err := q.ConsumeWorkspaceExecRuntimeReservation(ctx, db.ConsumeWorkspaceExecRuntimeReservationParams{
 		ID:                     runtime.id,
@@ -652,7 +652,7 @@ func (d *Authority) grantWorkspaceExec(
 		BaseWorkspaceVersionID: authority.baseVersionID,
 	})
 	if err != nil {
-		return fmt.Errorf("consume Workspace exec reservation: %w", err)
+		return fmt.Errorf("consume workspace exec reservation: %w", err)
 	}
 	if consumed != 1 {
 		return ErrCapacityUnavailable
@@ -682,7 +682,7 @@ func (d *Authority) finishRejectedWorkspaceExec(
 		"message": permanent.Error(),
 	})
 	if err != nil {
-		return fmt.Errorf("encode Workspace exec rejection: %w", err)
+		return fmt.Errorf("encode workspace exec rejection: %w", err)
 	}
 	if err := failPendingWorkspaceExec(
 		ctx,
@@ -694,7 +694,7 @@ func (d *Authority) finishRejectedWorkspaceExec(
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit rejected Workspace exec: %w", err)
+		return fmt.Errorf("commit rejected workspace exec: %w", err)
 	}
 	return nil
 }
@@ -706,7 +706,7 @@ func (d *Authority) FailPendingWorkspaceExec(
 ) error {
 	tx, err := d.begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin pending Workspace exec failure: %w", err)
+		return fmt.Errorf("begin pending workspace exec failure: %w", err)
 	}
 	defer rollback(ctx, tx)
 	errorJSON, err := json.Marshal(map[string]string{"code": reasonCode})
@@ -723,7 +723,7 @@ func (d *Authority) FailPendingWorkspaceExec(
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit pending Workspace exec failure: %w", err)
+		return fmt.Errorf("commit pending workspace exec failure: %w", err)
 	}
 	return nil
 }
@@ -750,7 +750,7 @@ func failPendingWorkspaceExec(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrCandidateChanged
 		}
-		return fmt.Errorf("fail pending Workspace exec: %w", err)
+		return fmt.Errorf("fail pending workspace exec: %w", err)
 	}
 	claim, err := q.GetIdempotencyClaim(
 		ctx,
@@ -760,7 +760,7 @@ func failPendingWorkspaceExec(
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("read pending Workspace exec claim: %w", err)
+		return fmt.Errorf("read pending workspace exec claim: %w", err)
 	}
 	if claim.RetiredAt.Valid {
 		return nil
@@ -784,7 +784,7 @@ func failPendingWorkspaceExec(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrCandidateChanged
 		}
-		return fmt.Errorf("fail pending Workspace exec claim: %w", err)
+		return fmt.Errorf("fail pending workspace exec claim: %w", err)
 	}
 	return nil
 }

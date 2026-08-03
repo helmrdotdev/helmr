@@ -167,7 +167,7 @@ func (c *Connector) allocateNetworkOwner(owner vm.Owner, logical vm.WorkloadBind
 	if _, _, err := configuredNetworkPools(c.cfg); err != nil {
 		return networkOwnerManifest{}, err
 	}
-	if err := checkSecureDirectory("firecracker coordination directory", stateCoordinationDir(c.cfg.StateDir)); err != nil {
+	if err := checkSecureDirectory("the Firecracker coordination directory", stateCoordinationDir(c.cfg.StateDir)); err != nil {
 		return networkOwnerManifest{}, err
 	}
 	lockPath := networkAllocationLockPath(c.cfg.StateDir)
@@ -1327,7 +1327,7 @@ func (c *Connector) readNetworkCounters(ctx context.Context, netnsName string, l
 }
 
 func (c *Connector) readRunNetworkStatus(ctx context.Context, netnsName string) (vm.RunNetworkStatus, error) {
-	raw, err := c.readNetworkCounters(ctx, netnsName, "Run")
+	raw, err := c.readNetworkCounters(ctx, netnsName, "run")
 	if err != nil {
 		return vm.RunNetworkStatus{}, err
 	}

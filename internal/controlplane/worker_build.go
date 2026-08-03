@@ -139,7 +139,7 @@ func (s *Server) deploymentBuildLeaseResponse(
 	}
 	managerDigest, err := deployment.SHA256DigestString(row.BuildManagerDigest)
 	if err != nil {
-		return workerapi.DeploymentBuildLeaseResponse{}, fmt.Errorf("read deployment build Manager digest: %w", err)
+		return workerapi.DeploymentBuildLeaseResponse{}, fmt.Errorf("read deployment build manager digest: %w", err)
 	}
 	runtimeObject, err := s.platformObject(ctx, runtimeDigest, deployment.RuntimeArtifactMediaType)
 	if err != nil {
@@ -167,14 +167,14 @@ func (s *Server) deploymentBuildLeaseResponse(
 		WorkerProtocolVersion:            row.WorkerProtocolVersion,
 		ExpiresAt:                        expiresAt,
 		RequestedGuestEphemeralDiskBytes: row.RequestedGuestEphemeralDiskBytes,
-		RequestedCPUMillis:               row.RequestedCpuMillis,
+		RequestedCPUMillis:               row.RequestedCPUMillis,
 		RequestedMemoryBytes:             row.RequestedMemoryBytes,
 		RequestedBuildExecutors:          row.RequestedBuildExecutors,
 	}
 	build := workerapi.DeploymentBuild{
 		ID:                    deploymentID,
 		Version:               row.Version,
-		APIVersion:            row.ApiVersion,
+		APIVersion:            row.APIVersion,
 		WorkerProtocolVersion: row.WorkerProtocolVersion,
 		ProjectID:             pgvalue.MustUUIDValue(row.ProjectID).String(),
 		EnvironmentID:         pgvalue.MustUUIDValue(row.EnvironmentID).String(),
@@ -205,10 +205,10 @@ func (s *Server) platformObject(
 ) (workerapi.CASObject, error) {
 	object, err := s.platformStore.Stat(ctx, digest)
 	if err != nil {
-		return workerapi.CASObject{}, fmt.Errorf("stat Platform Artifact %s: %w", digest, err)
+		return workerapi.CASObject{}, fmt.Errorf("stat platform artifact %s: %w", digest, err)
 	}
 	if object.Digest != digest || object.MediaType != mediaType || object.SizeBytes < 1 {
-		return workerapi.CASObject{}, errors.New("Platform Artifact metadata does not match its Deployment pin")
+		return workerapi.CASObject{}, errors.New("platform artifact metadata does not match its deployment pin")
 	}
 	return workerapi.CASObject{
 		Digest:    object.Digest,
@@ -245,7 +245,7 @@ func (s *Server) workerStartDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
 		WorkerProtocolVersion:            worker.ProtocolVersion,
 		RequestedGuestEphemeralDiskBytes: lease.RequestedGuestEphemeralDiskBytes,
-		RequestedCpuMillis:               lease.RequestedCPUMillis, RequestedMemoryBytes: lease.RequestedMemoryBytes,
+		RequestedCPUMillis:               lease.RequestedCPUMillis, RequestedMemoryBytes: lease.RequestedMemoryBytes,
 		RequestedBuildExecutors: lease.RequestedBuildExecutors,
 	})
 	if err == nil {
@@ -264,7 +264,7 @@ func (s *Server) workerStartDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		WorkerGroupID:    worker.WorkerGroupID,
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
 		RequestedGuestEphemeralDiskBytes: lease.RequestedGuestEphemeralDiskBytes,
-		RequestedCpuMillis:               lease.RequestedCPUMillis,
+		RequestedCPUMillis:               lease.RequestedCPUMillis,
 		RequestedMemoryBytes:             lease.RequestedMemoryBytes,
 		RequestedBuildExecutors:          lease.RequestedBuildExecutors,
 	})
@@ -323,12 +323,12 @@ func (s *Server) workerRenewDeploymentBuild(w http.ResponseWriter, r *http.Reque
 			pgvalue.UUID(leaseID),
 		)
 		if err != nil {
-			return errors.New("list revoked Workspace image operations")
+			return errors.New("list revoked workspace image operations")
 		}
 		for _, operationID := range rows {
 			value, err := pgvalue.UUIDValue(operationID)
 			if err != nil {
-				return errors.New("revoked Workspace image operation ID is invalid")
+				return errors.New("revoked workspace image operation ID is invalid")
 			}
 			revokedOperationIDs = append(revokedOperationIDs, value.String())
 		}
@@ -655,7 +655,7 @@ func (s *Server) prepareDeploymentBuild(
 	managerDigest, err := deployment.SHA256DigestString(authority.buildManagerDigest)
 	if err != nil {
 		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{
-			err: errors.New("deployment build Manager digest is invalid"),
+			err: errors.New("deployment build manager digest is invalid"),
 		}
 	}
 	if succeeded.Provenance.Architecture != deployment.ArchitectureX8664 ||
@@ -677,7 +677,7 @@ func (s *Server) prepareDeploymentBuild(
 	}
 	if selection.NodeVersion != authority.buildNodeVersion {
 		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{
-			err: errors.New("deployment build Node selector does not match submitted source"),
+			err: errors.New("deployment build Node.js selector does not match submitted source"),
 		}
 	}
 	objects, err := deploymentBuildObjects(succeeded)
@@ -711,7 +711,7 @@ func (s *Server) prepareDeploymentBuild(
 			if !ok {
 				return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{
 					err: fmt.Errorf(
-						"Workspace %q has no image Artifact",
+						"workspace %q has no image artifact",
 						definition.DeclaredID,
 					),
 				}
@@ -1068,7 +1068,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 				deploymentBuildObjectFromProgram(succeeded.Program.Artifact),
 			)
 			if err != nil {
-				return fmt.Errorf("record deployment Program: %w", err)
+				return fmt.Errorf("record deployment program: %w", err)
 			}
 			programArtifactID = artifact.ID
 			index, err := deployment.CanonicalProgramIndex(succeeded.Program.Index)
@@ -1087,7 +1087,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			)
 			if err != nil {
 				return fmt.Errorf(
-					"record deployment Workspace %q image: %w",
+					"record deployment workspace %q image: %w",
 					image.DeclaredID,
 					err,
 				)
@@ -1101,7 +1101,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 				artifact, ok := workspaceArtifacts[definition.input.DeclaredID]
 				if !ok {
 					return fmt.Errorf(
-						"record deployment Workspace %q: image Artifact is missing",
+						"record deployment workspace %q: image artifact is missing",
 						definition.input.DeclaredID,
 					)
 				}
@@ -1316,7 +1316,7 @@ func deploymentDefinitionManifest(
 	case deployment.DefinitionKindWorkspace:
 		if definition.Workspace == nil || workspaceImage == nil {
 			return nil, [sha256.Size]byte{}, fmt.Errorf(
-				"deployment Workspace %q requires its image result",
+				"deployment workspace %q requires its image result",
 				definition.DeclaredID,
 			)
 		}

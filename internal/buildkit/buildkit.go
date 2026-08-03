@@ -59,7 +59,7 @@ func (b *Builder) BuildImage(
 	request imagebuild.Request,
 ) (imagebuild.Artifact, error) {
 	if b.client == nil {
-		return imagebuild.Artifact{}, errors.New("buildkit client is required")
+		return imagebuild.Artifact{}, errors.New("BuildKit client is required")
 	}
 	if strings.TrimSpace(request.Source.ProjectRoot) == "" {
 		return imagebuild.Artifact{}, errors.New("source project root is required")

@@ -158,7 +158,7 @@ func reconcileSchedules(
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("list scheduled Task declarations: %w", err)
+		return fmt.Errorf("list scheduled task declarations: %w", err)
 	}
 	scheduledIDs := make([]string, 0, len(definitions))
 	for _, definition := range definitions {
@@ -168,7 +168,7 @@ func reconcileSchedules(
 			definition.ManifestDigest,
 		)
 		if err != nil {
-			return fmt.Errorf("parse Task %q for Schedule reconciliation: %w", definition.DeclaredID, err)
+			return fmt.Errorf("parse task %q for schedule reconciliation: %w", definition.DeclaredID, err)
 		}
 		if manifest.Schedule == nil {
 			continue
@@ -193,7 +193,7 @@ func reconcileSchedules(
 			TaskDeclaredIds: scheduledIDs,
 		},
 	); err != nil {
-		return fmt.Errorf("archive omitted Schedules: %w", err)
+		return fmt.Errorf("archive omitted schedules: %w", err)
 	}
 	return nil
 }
@@ -219,7 +219,7 @@ func reconcileSchedule(
 		manifest.Workspace,
 	)
 	if err != nil {
-		return fmt.Errorf("resolve Schedule %q Workspace: %w", definition.DeclaredID, err)
+		return fmt.Errorf("resolve schedule %q workspace: %w", definition.DeclaredID, err)
 	}
 	var nextFireAt pgtype.Timestamptz
 	if state == "active" {
@@ -249,7 +249,7 @@ func reconcileSchedule(
 		EffectiveFrom:          pgvalue.Timestamptz(effectiveFrom),
 		NextFireAt:             nextFireAt,
 	}); err != nil {
-		return fmt.Errorf("reconcile Schedule %q: %w", definition.DeclaredID, err)
+		return fmt.Errorf("reconcile schedule %q: %w", definition.DeclaredID, err)
 	}
 	return nil
 }
@@ -274,7 +274,7 @@ func resolveScheduleWorkspace(
 		workspaceID, err := store.ResolveWorkspaceTarget(ctx, params)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return pgtype.UUID{}, pgtype.Text{}, pgtype.UUID{}, "", badRequest(
-				fmt.Errorf("ID-addressed Workspace %q does not exist", *address.ID),
+				fmt.Errorf("ID-addressed workspace %q does not exist", *address.ID),
 			)
 		}
 		return workspaceID, pgtype.Text{}, workspaceID, "active", err

@@ -549,7 +549,7 @@ func (fixedAuthority) ResolveScheduledTask(
 		value.Payload.Kind != "standard_schema" ||
 		len(manifestDigest) != sha256.Size ||
 		len(queueConfig) == 0 {
-		return TaskRun{}, errors.New("scheduled Task authority is invalid")
+		return TaskRun{}, errors.New("scheduled task authority is invalid")
 	}
 	return TaskRun{
 		QueueName:           "default",

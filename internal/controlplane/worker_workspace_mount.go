@@ -30,13 +30,13 @@ const (
 func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.WorkspaceMountClaimRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Workspace mount claim JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid workspace mount claim JSON: %w", err)))
 		return
 	}
 	worker := workerFromContext(r.Context())
 	channelToken, err := auth.GenerateOpaque(32)
 	if err != nil {
-		writeError(w, errors.New("generate Workspace mount channel token"))
+		writeError(w, errors.New("generate workspace mount channel token"))
 		return
 	}
 	row, err := s.db.ClaimWorkspaceMount(r.Context(), db.ClaimWorkspaceMountParams{
@@ -50,7 +50,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("claim Workspace mount"))
+		writeError(w, errors.New("claim workspace mount"))
 		return
 	}
 	mount := projectWorkerWorkspaceMount(row)
@@ -61,7 +61,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 func (s *Server) workerRenewWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.WorkspaceMountRenewRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Workspace mount renewal JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid workspace mount renewal JSON: %w", err)))
 		return
 	}
 	params, err := s.workspaceMountTransition(r.Context(), request.OrgID, request.WorkspaceMountID)
@@ -91,11 +91,11 @@ func (s *Server) workerRenewWorkspaceMount(w http.ResponseWriter, r *http.Reques
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(errors.New("Workspace mount is stale")))
+		writeError(w, conflict(errors.New("workspace mount is stale")))
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("renew Workspace mount"))
+		writeError(w, errors.New("renew workspace mount"))
 		return
 	}
 	writeJSON(w, http.StatusOK, workspaceMountResponse(mount))
@@ -104,7 +104,7 @@ func (s *Server) workerRenewWorkspaceMount(w http.ResponseWriter, r *http.Reques
 func (s *Server) workerMarkWorkspaceMountMounted(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.WorkspaceMountMountedRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid mounted Workspace JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid mounted workspace JSON: %w", err)))
 		return
 	}
 	params, err := s.workspaceMountTransition(r.Context(), request.OrgID, request.WorkspaceMountID)
@@ -119,11 +119,11 @@ func (s *Server) workerMarkWorkspaceMountMounted(w http.ResponseWriter, r *http.
 		FencingGeneration: params.mount.FencingGeneration,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(errors.New("Workspace mount is stale")))
+		writeError(w, conflict(errors.New("workspace mount is stale")))
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("mark Workspace mount mounted"))
+		writeError(w, errors.New("mark workspace mount mounted"))
 		return
 	}
 	writeJSON(w, http.StatusOK, workspaceMountResponse(mount))
@@ -132,7 +132,7 @@ func (s *Server) workerMarkWorkspaceMountMounted(w http.ResponseWriter, r *http.
 func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.WorkspaceMountCaptureRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Workspace capture JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid workspace capture JSON: %w", err)))
 		return
 	}
 	params, err := s.workspaceMountTransition(r.Context(), request.OrgID, request.WorkspaceMountID)
@@ -144,7 +144,7 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 		strings.TrimSpace(request.ArtifactEncoding) != workspace.ArtifactEncoding ||
 		request.ArtifactSizeBytes <= 0 || request.ArtifactEntryCount < 0 ||
 		strings.TrimSpace(request.ArtifactDigest) == "" {
-		writeError(w, badRequest(errors.New("Workspace capture artifact is invalid")))
+		writeError(w, badRequest(errors.New("workspace capture artifact is invalid")))
 		return
 	}
 	var versionID pgtype.UUID
@@ -161,7 +161,7 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 			if existing.ContentDigest != strings.TrimSpace(request.ArtifactDigest) ||
 				existing.SizeBytes != request.ArtifactSizeBytes ||
 				existing.EntryCount != request.ArtifactEntryCount {
-				return conflict(errors.New("Workspace capture replay differs"))
+				return conflict(errors.New("workspace capture replay differs"))
 			}
 			versionID = existing.ID
 			return nil
@@ -207,11 +207,11 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 		return nil
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(errors.New("Workspace capture is stale")))
+		writeError(w, conflict(errors.New("workspace capture is stale")))
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("stage Workspace capture"))
+		writeError(w, errors.New("stage workspace capture"))
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.WorkspaceMountCaptureResponse{
@@ -222,7 +222,7 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 func (s *Server) workerStopWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.WorkspaceMountStopRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Workspace stop JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid workspace stop JSON: %w", err)))
 		return
 	}
 	if err := validateRuntimeClosedCleanupProof(request.CleanupProof, time.Now()); err != nil {
@@ -303,11 +303,11 @@ func (s *Server) workerStopWorkspaceMount(w http.ResponseWriter, r *http.Request
 		return nil
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(errors.New("Workspace stop is stale")))
+		writeError(w, conflict(errors.New("workspace stop is stale")))
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("stop Workspace mount"))
+		writeError(w, errors.New("stop workspace mount"))
 		return
 	}
 	writeJSON(w, http.StatusOK, workspaceMountResponse(stopped))
@@ -328,7 +328,7 @@ func (s *Server) finalizeWorkspaceExec(
 	errorJSON := mount.FinalizationError
 	if mount.FinalizationKind.String == "capture" {
 		if !mount.StagedVersionID.Valid {
-			return errors.New("Workspace exec capture is not staged")
+			return errors.New("workspace exec capture is not staged")
 		}
 		if secretsValid {
 			if _, err := work.q.CommitStagedWorkspaceExecVersion(
@@ -354,7 +354,7 @@ func (s *Server) finalizeWorkspaceExec(
 				return err
 			}
 			if affected != 1 {
-				return errors.New("revoked Workspace exec version is not discardable")
+				return errors.New("revoked workspace exec version is not discardable")
 			}
 			reasonCode = pgvalue.Text("workspace_exec_secret_revoked")
 			errorJSON, err = json.Marshal(map[string]string{
@@ -451,7 +451,7 @@ func lockWorkspaceExecPublicationSecrets(
 		return false, err
 	}
 	if len(rows) > maxWorkspaceSecrets {
-		return false, errors.New("Workspace Secret placements exceed their bound")
+		return false, errors.New("workspace secret placements exceed their bound")
 	}
 	return workspaceExecPublicationSecretsValid(rows, processID), nil
 }
@@ -478,7 +478,7 @@ func workspaceExecPublicationSecretsValid(
 func (s *Server) workerFailWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.WorkspaceMountFailRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Workspace mount failure JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid workspace mount failure JSON: %w", err)))
 		return
 	}
 	errorJSON, err := normalizedJSONObject(request.Error, "error")
@@ -547,11 +547,11 @@ func (s *Server) workerFailWorkspaceMount(w http.ResponseWriter, r *http.Request
 		return nil
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(errors.New("Workspace mount is stale")))
+		writeError(w, conflict(errors.New("workspace mount is stale")))
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("fail Workspace mount"))
+		writeError(w, errors.New("fail workspace mount"))
 		return
 	}
 	writeJSON(w, http.StatusOK, workspaceMountResponse(failed))
@@ -579,7 +579,7 @@ func (s *Server) failWorkspaceExec(
 			return err
 		}
 		if affected != 1 {
-			return errors.New("staged Workspace exec version is not discardable")
+			return errors.New("staged workspace exec version is not discardable")
 		}
 	}
 	if _, err := work.q.MarkWorkspaceExecRecoveryRequired(
@@ -741,7 +741,7 @@ func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) *workerapi.Works
 			EntryCount: row.WorkspaceEntryCount,
 		},
 		WorkspaceMountPath:      "/workspace",
-		RequestedMilliCPU:       row.ReservedCpuMillis,
+		RequestedMilliCPU:       row.ReservedCPUMillis,
 		RequestedMemoryMiB:      row.ReservedMemoryBytes / (1024 * 1024),
 		RequestedDiskMiB:        row.ReservedGuestEphemeralDiskBytes / (1024 * 1024),
 		RequestedExecutionSlots: row.ReservedExecutionSlots,

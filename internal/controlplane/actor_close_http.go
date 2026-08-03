@@ -29,7 +29,7 @@ func (s *Server) closeActorHTTP(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &maxBytesError) {
 			writeError(w, tooLarge(codedError{
 				code:    "actor_close_request_too_large",
-				message: "Actor close request exceeds the 8 KiB limit",
+				message: "actor close request exceeds the 8 KiB limit",
 			}))
 			return
 		}
@@ -83,13 +83,13 @@ func (s *Server) closeActorHTTP(w http.ResponseWriter, r *http.Request) {
 		request,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(codedError{code: "actor_not_found", message: "Actor not found"}))
+		writeError(w, notFound(codedError{code: "actor_not_found", message: "actor not found"}))
 		return
 	}
 	if err != nil {
 		writeError(w, unavailable(codedError{
 			code:      "actor_close_authority_unavailable",
-			message:   "Actor close address authority is unavailable",
+			message:   "actor close address authority is unavailable",
 			retryable: true,
 		}))
 		return
@@ -98,7 +98,7 @@ func (s *Server) closeActorHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, unavailable(codedError{
 			code:      "actor_close_authority_unavailable",
-			message:   "Actor close Environment authority is unavailable",
+			message:   "actor close environment authority is unavailable",
 			retryable: true,
 		}))
 		return
@@ -107,7 +107,7 @@ func (s *Server) closeActorHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, unavailable(codedError{
 			code:      "actor_close_authority_unavailable",
-			message:   "Actor close identity authority is unavailable",
+			message:   "actor close identity authority is unavailable",
 			retryable: true,
 		}))
 		return
@@ -116,7 +116,7 @@ func (s *Server) closeActorHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, unavailable(codedError{
 			code:      "actor_close_authority_unavailable",
-			message:   "Actor close Workspace authority is unavailable",
+			message:   "actor close workspace authority is unavailable",
 			retryable: true,
 		}))
 		return
@@ -144,7 +144,7 @@ func decodeActorCloseRequest(r *http.Request) (api.ActorOperationRequest, error)
 	}
 	var members map[string]json.RawMessage
 	if err := json.Unmarshal(canonical, &members); err != nil || members == nil {
-		return api.ActorOperationRequest{}, errors.New("Actor close request must be a JSON object")
+		return api.ActorOperationRequest{}, errors.New("actor close request must be a JSON object")
 	}
 	for _, name := range []string{"actor_id", "actor_key"} {
 		if value, present := members[name]; present {
@@ -174,7 +174,7 @@ func decodeActorCloseRequest(r *http.Request) (api.ActorOperationRequest, error)
 		return api.ActorOperationRequest{}, err
 	}
 	if decoder.Decode(&struct{}{}) != io.EOF {
-		return api.ActorOperationRequest{}, errors.New("Actor close request contains a trailing value")
+		return api.ActorOperationRequest{}, errors.New("actor close request contains a trailing value")
 	}
 	return request, nil
 }
@@ -250,7 +250,7 @@ func (s *Server) writeActorCloseScopeError(w http.ResponseWriter, err error) {
 	}
 	writeError(w, unavailable(codedError{
 		code:      "actor_close_authority_unavailable",
-		message:   "Actor close Environment scope is unavailable",
+		message:   "actor close environment scope is unavailable",
 		retryable: true,
 	}))
 }
@@ -260,7 +260,7 @@ func writeActorCloseAuthError(w http.ResponseWriter, log *slog.Logger, err error
 		log.Error("Actor close authentication failed", "error", err)
 		writeError(w, unavailable(codedError{
 			code:      "actor_close_authority_unavailable",
-			message:   "Actor close authentication is unavailable",
+			message:   "actor close authentication is unavailable",
 			retryable: true,
 		}))
 		return

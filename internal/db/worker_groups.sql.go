@@ -141,12 +141,12 @@ type ActivateWorkerInstanceParams struct {
 	SupervisorVersion            string      `json:"supervisor_version"`
 	SupportsRun                  bool        `json:"supports_run"`
 	SupportsBuild                bool        `json:"supports_build"`
-	EpochCpuMillis               int64       `json:"epoch_cpu_millis"`
+	EpochCPUMillis               int64       `json:"epoch_cpu_millis"`
 	EpochMemoryBytes             int64       `json:"epoch_memory_bytes"`
 	EpochGuestEphemeralDiskBytes int64       `json:"epoch_guest_ephemeral_disk_bytes"`
 	EpochBuildCacheBytes         int64       `json:"epoch_build_cache_bytes"`
 	EpochArtifactCacheBytes      int64       `json:"epoch_artifact_cache_bytes"`
-	MaxVmSlots                   int32       `json:"max_vm_slots"`
+	MaxVMSlots                   int32       `json:"max_vm_slots"`
 	MaxBuildExecutors            int32       `json:"max_build_executors"`
 	RuntimeIdentityID            string      `json:"runtime_identity_id"`
 	ProtocolVersion              string      `json:"protocol_version"`
@@ -155,9 +155,9 @@ type ActivateWorkerInstanceParams struct {
 	SubstrateLayoutAbi           string      `json:"substrate_layout_abi"`
 	EpochHugepagesBytes          int64       `json:"epoch_hugepages_bytes"`
 	EpochCheckpointBytes         int64       `json:"epoch_checkpoint_bytes"`
-	PerVmCpuMillis               int64       `json:"per_vm_cpu_millis"`
-	PerVmMemoryBytes             int64       `json:"per_vm_memory_bytes"`
-	PerVmGuestEphemeralDiskBytes int64       `json:"per_vm_guest_ephemeral_disk_bytes"`
+	PerVMCPUMillis               int64       `json:"per_vm_cpu_millis"`
+	PerVMMemoryBytes             int64       `json:"per_vm_memory_bytes"`
+	PerVMGuestEphemeralDiskBytes int64       `json:"per_vm_guest_ephemeral_disk_bytes"`
 	MaxRunConsumers              int32       `json:"max_run_consumers"`
 	MaxRuntimeStarts             int32       `json:"max_runtime_starts"`
 	RuntimeArch                  string      `json:"runtime_arch"`
@@ -184,17 +184,17 @@ type ActivateWorkerInstanceRow struct {
 	SubstrateFormat              string             `json:"substrate_format"`
 	SubstrateBuilderAbi          string             `json:"substrate_builder_abi"`
 	SubstrateLayoutAbi           string             `json:"substrate_layout_abi"`
-	EpochCpuMillis               int64              `json:"epoch_cpu_millis"`
+	EpochCPUMillis               int64              `json:"epoch_cpu_millis"`
 	EpochMemoryBytes             int64              `json:"epoch_memory_bytes"`
 	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
 	EpochBuildCacheBytes         int64              `json:"epoch_build_cache_bytes"`
 	EpochArtifactCacheBytes      int64              `json:"epoch_artifact_cache_bytes"`
 	EpochHugepagesBytes          int64              `json:"epoch_hugepages_bytes"`
 	EpochCheckpointBytes         int64              `json:"epoch_checkpoint_bytes"`
-	PerVmCpuMillis               int64              `json:"per_vm_cpu_millis"`
-	PerVmMemoryBytes             int64              `json:"per_vm_memory_bytes"`
-	PerVmGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
-	MaxVmSlots                   int32              `json:"max_vm_slots"`
+	PerVMCPUMillis               int64              `json:"per_vm_cpu_millis"`
+	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
+	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
+	MaxVMSlots                   int32              `json:"max_vm_slots"`
 	MaxRunConsumers              int32              `json:"max_run_consumers"`
 	MaxBuildExecutors            int32              `json:"max_build_executors"`
 	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
@@ -215,12 +215,12 @@ func (q *Queries) ActivateWorkerInstance(ctx context.Context, arg ActivateWorker
 		arg.SupervisorVersion,
 		arg.SupportsRun,
 		arg.SupportsBuild,
-		arg.EpochCpuMillis,
+		arg.EpochCPUMillis,
 		arg.EpochMemoryBytes,
 		arg.EpochGuestEphemeralDiskBytes,
 		arg.EpochBuildCacheBytes,
 		arg.EpochArtifactCacheBytes,
-		arg.MaxVmSlots,
+		arg.MaxVMSlots,
 		arg.MaxBuildExecutors,
 		arg.RuntimeIdentityID,
 		arg.ProtocolVersion,
@@ -229,9 +229,9 @@ func (q *Queries) ActivateWorkerInstance(ctx context.Context, arg ActivateWorker
 		arg.SubstrateLayoutAbi,
 		arg.EpochHugepagesBytes,
 		arg.EpochCheckpointBytes,
-		arg.PerVmCpuMillis,
-		arg.PerVmMemoryBytes,
-		arg.PerVmGuestEphemeralDiskBytes,
+		arg.PerVMCPUMillis,
+		arg.PerVMMemoryBytes,
+		arg.PerVMGuestEphemeralDiskBytes,
 		arg.MaxRunConsumers,
 		arg.MaxRuntimeStarts,
 		arg.RuntimeArch,
@@ -258,17 +258,17 @@ func (q *Queries) ActivateWorkerInstance(ctx context.Context, arg ActivateWorker
 		&i.SubstrateFormat,
 		&i.SubstrateBuilderAbi,
 		&i.SubstrateLayoutAbi,
-		&i.EpochCpuMillis,
+		&i.EpochCPUMillis,
 		&i.EpochMemoryBytes,
 		&i.EpochGuestEphemeralDiskBytes,
 		&i.EpochBuildCacheBytes,
 		&i.EpochArtifactCacheBytes,
 		&i.EpochHugepagesBytes,
 		&i.EpochCheckpointBytes,
-		&i.PerVmCpuMillis,
-		&i.PerVmMemoryBytes,
-		&i.PerVmGuestEphemeralDiskBytes,
-		&i.MaxVmSlots,
+		&i.PerVMCPUMillis,
+		&i.PerVMMemoryBytes,
+		&i.PerVMGuestEphemeralDiskBytes,
+		&i.MaxVMSlots,
 		&i.MaxRunConsumers,
 		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
@@ -379,17 +379,17 @@ func (q *Queries) CompleteWorkerStartupRecovery(ctx context.Context, arg Complet
 		&i.SubstrateFormat,
 		&i.SubstrateBuilderAbi,
 		&i.SubstrateLayoutAbi,
-		&i.EpochCpuMillis,
+		&i.EpochCPUMillis,
 		&i.EpochMemoryBytes,
 		&i.EpochGuestEphemeralDiskBytes,
 		&i.EpochBuildCacheBytes,
 		&i.EpochArtifactCacheBytes,
 		&i.EpochHugepagesBytes,
 		&i.EpochCheckpointBytes,
-		&i.PerVmCpuMillis,
-		&i.PerVmMemoryBytes,
-		&i.PerVmGuestEphemeralDiskBytes,
-		&i.MaxVmSlots,
+		&i.PerVMCPUMillis,
+		&i.PerVMMemoryBytes,
+		&i.PerVMGuestEphemeralDiskBytes,
+		&i.MaxVMSlots,
 		&i.MaxRunConsumers,
 		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
@@ -431,12 +431,12 @@ type DrainAbsentWorkerGroupsRow struct {
 	ClaimVersion                    int64              `json:"claim_version"`
 	AllowsRun                       bool               `json:"allows_run"`
 	AllowsBuild                     bool               `json:"allows_build"`
-	RequiredCpuMillis               int64              `json:"required_cpu_millis"`
+	RequiredCPUMillis               int64              `json:"required_cpu_millis"`
 	RequiredMemoryBytes             int64              `json:"required_memory_bytes"`
 	RequiredGuestEphemeralDiskBytes int64              `json:"required_guest_ephemeral_disk_bytes"`
 	RequiredBuildCacheBytes         int64              `json:"required_build_cache_bytes"`
 	RequiredArtifactCacheBytes      int64              `json:"required_artifact_cache_bytes"`
-	RequiredVmSlots                 int32              `json:"required_vm_slots"`
+	RequiredVMSlots                 int32              `json:"required_vm_slots"`
 	RequiredBuildExecutors          int32              `json:"required_build_executors"`
 	ObservationTtlSeconds           int32              `json:"observation_ttl_seconds"`
 	ProtocolVersion                 string             `json:"protocol_version"`
@@ -462,12 +462,12 @@ func (q *Queries) DrainAbsentWorkerGroups(ctx context.Context, arg DrainAbsentWo
 			&i.ClaimVersion,
 			&i.AllowsRun,
 			&i.AllowsBuild,
-			&i.RequiredCpuMillis,
+			&i.RequiredCPUMillis,
 			&i.RequiredMemoryBytes,
 			&i.RequiredGuestEphemeralDiskBytes,
 			&i.RequiredBuildCacheBytes,
 			&i.RequiredArtifactCacheBytes,
-			&i.RequiredVmSlots,
+			&i.RequiredVMSlots,
 			&i.RequiredBuildExecutors,
 			&i.ObservationTtlSeconds,
 			&i.ProtocolVersion,
@@ -725,12 +725,12 @@ func (q *Queries) ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsPara
 			&i.ClaimVersion,
 			&i.AllowsRun,
 			&i.AllowsBuild,
-			&i.RequiredCpuMillis,
+			&i.RequiredCPUMillis,
 			&i.RequiredMemoryBytes,
 			&i.RequiredGuestEphemeralDiskBytes,
 			&i.RequiredBuildCacheBytes,
 			&i.RequiredArtifactCacheBytes,
-			&i.RequiredVmSlots,
+			&i.RequiredVMSlots,
 			&i.RequiredBuildExecutors,
 			&i.ObservationTtlSeconds,
 			&i.ProtocolVersion,
@@ -1036,12 +1036,12 @@ type ReconcileWorkerGroupParams struct {
 	AllowsRun                       bool   `json:"allows_run"`
 	AllowsBuild                     bool   `json:"allows_build"`
 	ProtocolVersion                 string `json:"protocol_version"`
-	RequiredCpuMillis               int64  `json:"required_cpu_millis"`
+	RequiredCPUMillis               int64  `json:"required_cpu_millis"`
 	RequiredMemoryBytes             int64  `json:"required_memory_bytes"`
 	RequiredGuestEphemeralDiskBytes int64  `json:"required_guest_ephemeral_disk_bytes"`
 	RequiredBuildCacheBytes         int64  `json:"required_build_cache_bytes"`
 	RequiredArtifactCacheBytes      int64  `json:"required_artifact_cache_bytes"`
-	RequiredVmSlots                 int32  `json:"required_vm_slots"`
+	RequiredVMSlots                 int32  `json:"required_vm_slots"`
 	RequiredBuildExecutors          int32  `json:"required_build_executors"`
 	ObservationTtlSeconds           int32  `json:"observation_ttl_seconds"`
 }
@@ -1055,12 +1055,12 @@ type ReconcileWorkerGroupRow struct {
 	ClaimVersion                    int64              `json:"claim_version"`
 	AllowsRun                       bool               `json:"allows_run"`
 	AllowsBuild                     bool               `json:"allows_build"`
-	RequiredCpuMillis               int64              `json:"required_cpu_millis"`
+	RequiredCPUMillis               int64              `json:"required_cpu_millis"`
 	RequiredMemoryBytes             int64              `json:"required_memory_bytes"`
 	RequiredGuestEphemeralDiskBytes int64              `json:"required_guest_ephemeral_disk_bytes"`
 	RequiredBuildCacheBytes         int64              `json:"required_build_cache_bytes"`
 	RequiredArtifactCacheBytes      int64              `json:"required_artifact_cache_bytes"`
-	RequiredVmSlots                 int32              `json:"required_vm_slots"`
+	RequiredVMSlots                 int32              `json:"required_vm_slots"`
 	RequiredBuildExecutors          int32              `json:"required_build_executors"`
 	ObservationTtlSeconds           int32              `json:"observation_ttl_seconds"`
 	ProtocolVersion                 string             `json:"protocol_version"`
@@ -1077,12 +1077,12 @@ func (q *Queries) ReconcileWorkerGroup(ctx context.Context, arg ReconcileWorkerG
 		arg.AllowsRun,
 		arg.AllowsBuild,
 		arg.ProtocolVersion,
-		arg.RequiredCpuMillis,
+		arg.RequiredCPUMillis,
 		arg.RequiredMemoryBytes,
 		arg.RequiredGuestEphemeralDiskBytes,
 		arg.RequiredBuildCacheBytes,
 		arg.RequiredArtifactCacheBytes,
-		arg.RequiredVmSlots,
+		arg.RequiredVMSlots,
 		arg.RequiredBuildExecutors,
 		arg.ObservationTtlSeconds,
 	)
@@ -1096,12 +1096,12 @@ func (q *Queries) ReconcileWorkerGroup(ctx context.Context, arg ReconcileWorkerG
 		&i.ClaimVersion,
 		&i.AllowsRun,
 		&i.AllowsBuild,
-		&i.RequiredCpuMillis,
+		&i.RequiredCPUMillis,
 		&i.RequiredMemoryBytes,
 		&i.RequiredGuestEphemeralDiskBytes,
 		&i.RequiredBuildCacheBytes,
 		&i.RequiredArtifactCacheBytes,
-		&i.RequiredVmSlots,
+		&i.RequiredVMSlots,
 		&i.RequiredBuildExecutors,
 		&i.ObservationTtlSeconds,
 		&i.ProtocolVersion,
@@ -1160,12 +1160,12 @@ RETURNING worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bp
 `
 
 type RecordWorkerObservationParams struct {
-	CpuPressureBps                int32              `json:"cpu_pressure_bps"`
-	MemoryPressureBps             int32              `json:"memory_pressure_bps"`
-	GuestEphemeralDiskPressureBps int32              `json:"guest_ephemeral_disk_pressure_bps"`
-	BuildCachePressureBps         int32              `json:"build_cache_pressure_bps"`
-	ArtifactCachePressureBps      int32              `json:"artifact_cache_pressure_bps"`
-	CheckpointPressureBps         int32              `json:"checkpoint_pressure_bps"`
+	CPUPressureBPS                int32              `json:"cpu_pressure_bps"`
+	MemoryPressureBPS             int32              `json:"memory_pressure_bps"`
+	GuestEphemeralDiskPressureBPS int32              `json:"guest_ephemeral_disk_pressure_bps"`
+	BuildCachePressureBPS         int32              `json:"build_cache_pressure_bps"`
+	ArtifactCachePressureBPS      int32              `json:"artifact_cache_pressure_bps"`
+	CheckpointPressureBPS         int32              `json:"checkpoint_pressure_bps"`
 	QuarantinedResourceCount      int32              `json:"quarantined_resource_count"`
 	RunQueueDepth                 int32              `json:"run_queue_depth"`
 	BuildQueueDepth               int32              `json:"build_queue_depth"`
@@ -1182,12 +1182,12 @@ type RecordWorkerObservationParams struct {
 
 func (q *Queries) RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (WorkerObservation, error) {
 	row := q.db.QueryRow(ctx, recordWorkerObservation,
-		arg.CpuPressureBps,
-		arg.MemoryPressureBps,
-		arg.GuestEphemeralDiskPressureBps,
-		arg.BuildCachePressureBps,
-		arg.ArtifactCachePressureBps,
-		arg.CheckpointPressureBps,
+		arg.CPUPressureBPS,
+		arg.MemoryPressureBPS,
+		arg.GuestEphemeralDiskPressureBPS,
+		arg.BuildCachePressureBPS,
+		arg.ArtifactCachePressureBPS,
+		arg.CheckpointPressureBPS,
 		arg.QuarantinedResourceCount,
 		arg.RunQueueDepth,
 		arg.BuildQueueDepth,
@@ -1205,12 +1205,12 @@ func (q *Queries) RecordWorkerObservation(ctx context.Context, arg RecordWorkerO
 	err := row.Scan(
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
-		&i.CpuPressureBps,
-		&i.MemoryPressureBps,
-		&i.GuestEphemeralDiskPressureBps,
-		&i.BuildCachePressureBps,
-		&i.ArtifactCachePressureBps,
-		&i.CheckpointPressureBps,
+		&i.CPUPressureBPS,
+		&i.MemoryPressureBPS,
+		&i.GuestEphemeralDiskPressureBPS,
+		&i.BuildCachePressureBPS,
+		&i.ArtifactCachePressureBPS,
+		&i.CheckpointPressureBPS,
 		&i.QuarantinedResourceCount,
 		&i.RunQueueDepth,
 		&i.BuildQueueDepth,

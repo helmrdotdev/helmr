@@ -56,7 +56,7 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 		}
 		grants, err := s.db.ListAPIKeyGrants(r.Context(), db.ListAPIKeyGrantsParams{
 			OrgID:    row.OrgID,
-			ApiKeyID: row.ID,
+			APIKeyID: row.ID,
 		})
 		if err != nil {
 			writeError(w, errors.New("list api key permissions"))
@@ -129,7 +129,7 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 			if _, err := s.db.CreateAPIKeyGrant(r.Context(), db.CreateAPIKeyGrantParams{
 				ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:           pgvalue.UUID(actor.OrgID),
-				ApiKeyID:        record.ID,
+				APIKeyID:        record.ID,
 				Permission:      string(permission),
 				CreatedByUserID: pgvalue.UUID(actor.UserID),
 			}); err != nil {
@@ -359,7 +359,7 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 	}
 }
 
-func apiKeyPermissionGrantsFromRows(rows []db.ApiKeyGrant) []api.APIKeyPermissionGrant {
+func apiKeyPermissionGrantsFromRows(rows []db.APIKeyGrant) []api.APIKeyPermissionGrant {
 	scopes := make([]api.APIKeyScope, 0, len(rows))
 	for _, row := range rows {
 		scope, ok := apiKeyPermissionScope(row.Permission)

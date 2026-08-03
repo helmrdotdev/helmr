@@ -102,7 +102,7 @@ func (s *WorkspaceMountSessions) OpenWorkspaceMountSession(ctx context.Context, 
 
 func (s *WorkspaceMountSessions) RenewWorkspaceAuthority(ctx context.Context, request *workspacev0.RenewWorkspaceAuthorityRequest) (*workspacev0.WorkspaceAuthorityFence, error) {
 	if request == nil || request.GetPrevious() == nil || request.GetPrevious().GetFence() == nil {
-		return nil, errors.New("previous Workspace authority is required")
+		return nil, errors.New("previous workspace authority is required")
 	}
 	fence := request.GetPrevious().GetFence()
 	id := strings.TrimSpace(fence.GetWorkspaceMountId())
@@ -113,14 +113,14 @@ func (s *WorkspaceMountSessions) RenewWorkspaceAuthority(ctx context.Context, re
 		return nil, fmt.Errorf("%w: %s", ErrWorkspaceMountSessionNotFound, id)
 	}
 	if entry.channelToken == "" || request.GetPrevious().GetChannelToken() != entry.channelToken {
-		return nil, errors.New("Workspace authority channel token does not match the mount session")
+		return nil, errors.New("workspace authority channel token does not match the mount session")
 	}
 	if fence.GetWorkspaceMountId() != entry.mount.ID ||
 		fence.GetWorkspaceId() != entry.mount.WorkspaceID ||
 		fence.GetRuntimeInstanceId() != entry.mount.RuntimeInstanceID ||
 		fence.GetMountFencingGeneration() != entry.mount.FencingGeneration ||
 		fence.GetBaseWorkspaceVersionId() != entry.mount.BaseVersionID {
-		return nil, errors.New("Workspace authority fence does not match the mount session")
+		return nil, errors.New("workspace authority fence does not match the mount session")
 	}
 	return renewWorkspaceAuthorityOnSession(ctx, entry.session, request)
 }
@@ -130,7 +130,7 @@ func (s *WorkspaceMountSessions) BeginWorkspaceFinalization(
 	request *workspacev0.BeginWorkspaceFinalizationRequest,
 ) (*workspacev0.BeginWorkspaceFinalizationResponse, error) {
 	if request == nil || request.GetPrevious() == nil || request.GetPrevious().GetFence() == nil {
-		return nil, errors.New("previous Workspace authority is required")
+		return nil, errors.New("previous workspace authority is required")
 	}
 	fence := request.GetPrevious().GetFence()
 	id := strings.TrimSpace(fence.GetWorkspaceMountId())
@@ -141,14 +141,14 @@ func (s *WorkspaceMountSessions) BeginWorkspaceFinalization(
 		return nil, fmt.Errorf("%w: %s", ErrWorkspaceMountSessionNotFound, id)
 	}
 	if entry.channelToken == "" || request.GetPrevious().GetChannelToken() != entry.channelToken {
-		return nil, errors.New("Workspace authority channel token does not match the mount session")
+		return nil, errors.New("workspace authority channel token does not match the mount session")
 	}
 	if fence.GetWorkspaceMountId() != entry.mount.ID ||
 		fence.GetWorkspaceId() != entry.mount.WorkspaceID ||
 		fence.GetRuntimeInstanceId() != entry.mount.RuntimeInstanceID ||
 		fence.GetMountFencingGeneration() != entry.mount.FencingGeneration ||
 		fence.GetBaseWorkspaceVersionId() != entry.mount.BaseVersionID {
-		return nil, errors.New("Workspace authority fence does not match the mount session")
+		return nil, errors.New("workspace authority fence does not match the mount session")
 	}
 	return beginWorkspaceFinalizationOnSession(ctx, entry.session, request)
 }
@@ -181,7 +181,7 @@ func (s *WorkspaceMountSessions) finalizationSession(
 	envelope *workspacev0.WorkspaceFinalizationEnvelope,
 ) (workspaceMountSessionEntry, error) {
 	if envelope == nil || envelope.GetAuthority() == nil || envelope.GetAuthority().GetFence() == nil {
-		return workspaceMountSessionEntry{}, errors.New("Workspace finalization envelope is required")
+		return workspaceMountSessionEntry{}, errors.New("workspace finalization envelope is required")
 	}
 	authority := envelope.GetAuthority()
 	fence := authority.GetFence()
@@ -193,14 +193,14 @@ func (s *WorkspaceMountSessions) finalizationSession(
 		return workspaceMountSessionEntry{}, fmt.Errorf("%w: %s", ErrWorkspaceMountSessionNotFound, id)
 	}
 	if entry.channelToken == "" || authority.GetChannelToken() != entry.channelToken {
-		return workspaceMountSessionEntry{}, errors.New("Workspace authority channel token does not match the mount session")
+		return workspaceMountSessionEntry{}, errors.New("workspace authority channel token does not match the mount session")
 	}
 	if fence.GetWorkspaceMountId() != entry.mount.ID ||
 		fence.GetWorkspaceId() != entry.mount.WorkspaceID ||
 		fence.GetRuntimeInstanceId() != entry.mount.RuntimeInstanceID ||
 		fence.GetMountFencingGeneration() != entry.mount.FencingGeneration ||
 		fence.GetBaseWorkspaceVersionId() != entry.mount.BaseVersionID {
-		return workspaceMountSessionEntry{}, errors.New("Workspace authority fence does not match the mount session")
+		return workspaceMountSessionEntry{}, errors.New("workspace authority fence does not match the mount session")
 	}
 	return entry, nil
 }

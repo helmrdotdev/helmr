@@ -65,14 +65,14 @@ func (w *Worker) Run(ctx context.Context) error {
 func (w *Worker) reconcile(ctx context.Context, limit int32) error {
 	candidates, err := w.store.ListDueEnvironmentImageCacheRetirements(ctx, limit)
 	if err != nil {
-		return fmt.Errorf("list due Environment cache retirements: %w", err)
+		return fmt.Errorf("list due environment cache retirements: %w", err)
 	}
 	var failures []error
 	for _, candidate := range candidates {
 		jobID, jobErr := pgvalue.UUIDValue(candidate.ID)
 		environmentID, environmentErr := pgvalue.UUIDValue(candidate.TargetID)
 		if jobErr != nil || environmentErr != nil {
-			failures = append(failures, fmt.Errorf("invalid Environment cache retirement identity: %w", errors.Join(jobErr, environmentErr)))
+			failures = append(failures, fmt.Errorf("invalid environment cache retirement identity: %w", errors.Join(jobErr, environmentErr)))
 			continue
 		}
 		if err := w.retire(ctx, jobID, environmentID); err != nil {
@@ -84,13 +84,13 @@ func (w *Worker) reconcile(ctx context.Context, limit int32) error {
 
 func (w *Worker) retire(ctx context.Context, jobID, environmentID uuid.UUID) error {
 	if err := w.retirer.Retire(ctx, environmentID); err != nil {
-		return fmt.Errorf("retire Environment %s image cache repository: %w", environmentID, err)
+		return fmt.Errorf("retire environment %s image cache repository: %w", environmentID, err)
 	}
 	if _, err := w.store.MarkEnvironmentImageCacheRetired(ctx, db.MarkEnvironmentImageCacheRetiredParams{
 		ID:            pgvalue.UUID(jobID),
 		EnvironmentID: pgvalue.UUID(environmentID),
 	}); err != nil {
-		return fmt.Errorf("mark Environment %s image cache repository retired: %w", environmentID, err)
+		return fmt.Errorf("mark environment %s image cache repository retired: %w", environmentID, err)
 	}
 	return nil
 }

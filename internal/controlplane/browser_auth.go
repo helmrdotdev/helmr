@@ -257,7 +257,7 @@ func (s *Server) upsertAuthIdentity(r *http.Request, queries db.Querier, identit
 		IdentityProvider: identity.Provider,
 		IdentitySubject:  identity.Subject,
 		DisplayName:      identity.DisplayName,
-		ProfileImageUrl:  pgtype.Text{String: identity.ProfileImageURL, Valid: identity.ProfileImageURL != ""},
+		ProfileImageURL:  pgtype.Text{String: identity.ProfileImageURL, Valid: identity.ProfileImageURL != ""},
 		Email:            email,
 		EmailVerified:    identity.EmailVerified,
 		Claims:           claims,

@@ -24,19 +24,19 @@ func encodeProgramStart(
 	definition db.DeploymentDefinition,
 	deploymentVersion string,
 ) ([]byte, error) {
-	runID, err := requiredClaimUUIDString("Run ID", run.ID)
+	runID, err := requiredClaimUUIDString("run ID", run.ID)
 	if err != nil {
 		return nil, err
 	}
-	deploymentID, err := requiredClaimUUIDString("Deployment ID", run.DeploymentID)
+	deploymentID, err := requiredClaimUUIDString("deployment ID", run.DeploymentID)
 	if err != nil {
 		return nil, err
 	}
-	workspaceID, err := requiredClaimUUIDString("Workspace ID", run.WorkspaceID)
+	workspaceID, err := requiredClaimUUIDString("workspace ID", run.WorkspaceID)
 	if err != nil {
 		return nil, err
 	}
-	baseVersionID, err := requiredClaimUUIDString("base Workspace version ID", attempt.BaseWorkspaceVersionID)
+	baseVersionID, err := requiredClaimUUIDString("base workspace version ID", attempt.BaseWorkspaceVersionID)
 	if err != nil {
 		return nil, err
 	}
@@ -50,13 +50,13 @@ func encodeProgramStart(
 		definition.DeploymentID != run.DeploymentID ||
 		definition.Kind != run.EntrypointKind ||
 		definition.DeclaredID != run.EntrypointDeclaredID {
-		return nil, errors.New("Program-start authority is inconsistent")
+		return nil, errors.New("program-start authority is inconsistent")
 	}
 	if strings.TrimSpace(run.EntrypointDeclaredID) == "" {
-		return nil, errors.New("Program-start entrypoint declared ID is required")
+		return nil, errors.New("program-start entrypoint declared ID is required")
 	}
 	if strings.TrimSpace(deploymentVersion) == "" {
-		return nil, errors.New("Program-start Deployment version is required")
+		return nil, errors.New("program-start deployment version is required")
 	}
 
 	cause, err := programStartCause(run)
@@ -88,23 +88,23 @@ func encodeProgramStart(
 		}
 		message.Entrypoint = &runv0.ProgramStart_Actor{Actor: actorStart}
 	default:
-		return nil, fmt.Errorf("Program-start entrypoint kind %q is unsupported", run.EntrypointKind)
+		return nil, fmt.Errorf("program-start entrypoint kind %q is unsupported", run.EntrypointKind)
 	}
 
 	body, err := (proto.MarshalOptions{Deterministic: true}).Marshal(message)
 	if err != nil {
-		return nil, fmt.Errorf("encode Program-start frame: %w", err)
+		return nil, fmt.Errorf("encode program-start frame: %w", err)
 	}
 	if len(body) == 0 || len(body) > frameio.MaxFrameBytes {
 		return nil, fmt.Errorf(
-			"Program-start frame length %d is outside [1,%d]",
+			"program-start frame length %d is outside [1,%d]",
 			len(body),
 			frameio.MaxFrameBytes,
 		)
 	}
 	var frame bytes.Buffer
 	if err := frameio.WriteMessageFrame(&frame, body); err != nil {
-		return nil, fmt.Errorf("frame Program-start message: %w", err)
+		return nil, fmt.Errorf("frame program-start message: %w", err)
 	}
 	return frame.Bytes(), nil
 }
@@ -118,7 +118,7 @@ func programStartTask(
 		run.ActorID.Valid ||
 		run.ActorStartInputSequence.Valid ||
 		run.ActorStartInputHighWatermark.Valid {
-		return nil, errors.New("Task Program-start contains Actor authority")
+		return nil, errors.New("task program-start contains actor authority")
 	}
 	manifest, err := deployment.ParseTaskManifest(
 		definition.ManifestVersion,
@@ -126,22 +126,22 @@ func programStartTask(
 		definition.ManifestDigest,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("decode Task manifest authority: %w", err)
+		return nil, fmt.Errorf("decode task manifest authority: %w", err)
 	}
 	switch manifest.Payload.Kind {
 	case deployment.SchemaKindNone:
 		if run.Payload != nil {
-			return nil, errors.New("payload-free Task Run contains a payload")
+			return nil, errors.New("payload-free task run contains a payload")
 		}
 		return &runv0.TaskStart{
 			Payload: &runv0.TaskStart_NoPayload{NoPayload: &runv0.NoPayload{}},
 		}, nil
 	case deployment.SchemaKindStandard:
 		if run.Payload == nil {
-			return nil, errors.New("payload Task Run has no payload")
+			return nil, errors.New("payload task run has no payload")
 		}
 		if !json.Valid(run.Payload) {
-			return nil, errors.New("Task Run payload is not valid JSON")
+			return nil, errors.New("task run payload is not valid JSON")
 		}
 		return &runv0.TaskStart{
 			Payload: &runv0.TaskStart_PayloadJson{
@@ -149,7 +149,7 @@ func programStartTask(
 			},
 		}, nil
 	default:
-		return nil, fmt.Errorf("Task payload kind %q is unsupported", manifest.Payload.Kind)
+		return nil, fmt.Errorf("task payload kind %q is unsupported", manifest.Payload.Kind)
 	}
 }
 
@@ -172,9 +172,9 @@ func programStartActor(
 		run.ActorStartInputSequence.Int64 < 0 ||
 		attempt.ActorStartInputSequence.Int64 < run.ActorStartInputSequence.Int64 ||
 		attempt.ActorStartInputSequence.Int64 > run.ActorStartInputHighWatermark.Int64 {
-		return nil, errors.New("Actor Program-start authority is inconsistent")
+		return nil, errors.New("actor program-start authority is inconsistent")
 	}
-	actorID, err := requiredClaimUUIDString("Actor ID", actor.ID)
+	actorID, err := requiredClaimUUIDString("actor ID", actor.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -200,12 +200,12 @@ func programStartCause(run db.Run) (*runv0.RunCause, error) {
 	switch run.CauseKind {
 	case "api":
 		if run.EntrypointKind != "task" || hasSchedule || hasParent {
-			return nil, errors.New("API Run cause contains unrelated authority")
+			return nil, errors.New("API run cause contains unrelated authority")
 		}
 		return &runv0.RunCause{Kind: &runv0.RunCause_Api{Api: &runv0.ApiCause{}}}, nil
 	case "manual":
 		if run.EntrypointKind != "task" || hasSchedule || hasParent {
-			return nil, errors.New("manual Run cause contains unrelated authority")
+			return nil, errors.New("manual run cause contains unrelated authority")
 		}
 		return &runv0.RunCause{Kind: &runv0.RunCause_Manual{Manual: &runv0.ManualCause{}}}, nil
 	case "child":
@@ -213,9 +213,9 @@ func programStartCause(run db.Run) (*runv0.RunCause, error) {
 			hasSchedule ||
 			!run.ParentRunID.Valid ||
 			!run.ParentOwnsLifecycle.Valid {
-			return nil, errors.New("child Run cause authority is incomplete")
+			return nil, errors.New("child run cause authority is incomplete")
 		}
-		parentID, err := requiredClaimUUIDString("parent Run ID", run.ParentRunID)
+		parentID, err := requiredClaimUUIDString("parent run ID", run.ParentRunID)
 		if err != nil {
 			return nil, err
 		}
@@ -230,9 +230,9 @@ func programStartCause(run db.Run) (*runv0.RunCause, error) {
 			!run.ScheduledAt.Valid ||
 			!run.ScheduleTimezone.Valid ||
 			strings.TrimSpace(run.ScheduleTimezone.String) == "" {
-			return nil, errors.New("schedule Run cause authority is incomplete")
+			return nil, errors.New("schedule run cause authority is incomplete")
 		}
-		scheduleID, err := requiredClaimUUIDString("Schedule ID", run.ScheduleID)
+		scheduleID, err := requiredClaimUUIDString("schedule ID", run.ScheduleID)
 		if err != nil {
 			return nil, err
 		}
@@ -250,20 +250,20 @@ func programStartCause(run db.Run) (*runv0.RunCause, error) {
 		}, nil
 	case "actor_start":
 		if run.EntrypointKind != "actor" || hasSchedule || hasParent {
-			return nil, errors.New("Actor-start Run cause authority is inconsistent")
+			return nil, errors.New("actor-start run cause authority is inconsistent")
 		}
 		return &runv0.RunCause{
 			Kind: &runv0.RunCause_ActorStart{ActorStart: &runv0.ActorStartCause{}},
 		}, nil
 	case "continuation":
 		if run.EntrypointKind != "actor" || hasSchedule || hasParent {
-			return nil, errors.New("continuation Run cause authority is inconsistent")
+			return nil, errors.New("continuation run cause authority is inconsistent")
 		}
 		return &runv0.RunCause{
 			Kind: &runv0.RunCause_Continuation{Continuation: &runv0.ContinuationCause{}},
 		}, nil
 	default:
-		return nil, fmt.Errorf("Run cause kind %q is unsupported", run.CauseKind)
+		return nil, fmt.Errorf("run cause kind %q is unsupported", run.CauseKind)
 	}
 }
 

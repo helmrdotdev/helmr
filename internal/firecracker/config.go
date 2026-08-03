@@ -145,25 +145,25 @@ func (cfg Config) WithDefaults() Config {
 func (cfg Config) Validate() error {
 	var problems []error
 	if strings.TrimSpace(cfg.FirecrackerPath) == "" {
-		problems = append(problems, errors.New("firecracker path is required"))
+		problems = append(problems, errors.New("the Firecracker path is required"))
 	}
 	if strings.TrimSpace(cfg.JailerPath) == "" {
-		problems = append(problems, errors.New("firecracker jailer path is required"))
+		problems = append(problems, errors.New("the Firecracker jailer path is required"))
 	}
 	if cfg.JailerUID <= 0 {
-		problems = append(problems, fmt.Errorf("firecracker jailer uid must be positive, got %d", cfg.JailerUID))
+		problems = append(problems, fmt.Errorf("the Firecracker jailer uid must be positive, got %d", cfg.JailerUID))
 	}
 	if cfg.JailerGID <= 0 {
-		problems = append(problems, fmt.Errorf("firecracker jailer gid must be positive, got %d", cfg.JailerGID))
+		problems = append(problems, fmt.Errorf("the Firecracker jailer gid must be positive, got %d", cfg.JailerGID))
 	}
 	if cfg.JailerNumaNode < 0 {
-		problems = append(problems, fmt.Errorf("firecracker jailer numa node must be non-negative, got %d", cfg.JailerNumaNode))
+		problems = append(problems, fmt.Errorf("the Firecracker jailer NUMA node must be non-negative, got %d", cfg.JailerNumaNode))
 	}
 	if strings.TrimSpace(cfg.JailerChrootBaseDir) == "" {
-		problems = append(problems, errors.New("firecracker jailer chroot base directory is required"))
+		problems = append(problems, errors.New("the Firecracker jailer chroot base directory is required"))
 	}
 	if strings.TrimSpace(cfg.CgroupVersion) == "" {
-		problems = append(problems, errors.New("firecracker cgroup version is required"))
+		problems = append(problems, errors.New("the Firecracker cgroup version is required"))
 	}
 	if strings.TrimSpace(cfg.KernelPath) == "" {
 		problems = append(problems, errors.New("guest kernel path is required"))
@@ -178,10 +178,10 @@ func (cfg Config) Validate() error {
 		problems = append(problems, errors.New("guest runtime artifacts manifest path is required"))
 	}
 	if strings.TrimSpace(cfg.StateDir) == "" {
-		problems = append(problems, errors.New("firecracker state dir is required"))
+		problems = append(problems, errors.New("the Firecracker state dir is required"))
 	}
 	if pathsOverlap(cfg.StateDir, cfg.JailerChrootBaseDir) {
-		problems = append(problems, errors.New("firecracker state dir and jailer chroot base directory must be disjoint"))
+		problems = append(problems, errors.New("the Firecracker state dir and jailer chroot base directory must be disjoint"))
 	}
 	if strings.TrimSpace(cfg.NetworkLinkPool) == "" {
 		problems = append(problems, errors.New("worker network link pool is required"))
@@ -208,7 +208,7 @@ func (cfg Config) Validate() error {
 		problems = append(problems, errors.New("mkfs.ext4 path is required"))
 	}
 	if strings.TrimSpace(cfg.KVMPath) == "" {
-		problems = append(problems, errors.New("firecracker KVM path is required"))
+		problems = append(problems, errors.New("the Firecracker KVM path is required"))
 	}
 	if cfg.InitTimeout <= 0 {
 		problems = append(problems, fmt.Errorf("VMM API initialization timeout must be positive, got %s", cfg.InitTimeout))

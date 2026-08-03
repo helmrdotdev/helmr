@@ -66,7 +66,7 @@ func (entry *workspaceMountEntry) runWorkspaceBasicExec(
 	processID := strings.TrimSpace(envelope.GetOperationId())
 	fingerprint := strings.TrimSpace(envelope.GetRequestFingerprint())
 	if processID == "" || fingerprint == "" {
-		return workspaceBasicExecFailure(fingerprint, "workspace_exec_invalid", errors.New("Workspace exec identity is required"))
+		return workspaceBasicExecFailure(fingerprint, "workspace_exec_invalid", errors.New("workspace exec identity is required"))
 	}
 
 	entry.basicExecMu.Lock()
@@ -77,7 +77,7 @@ func (entry *workspaceMountEntry) runWorkspaceBasicExec(
 	if execution != nil {
 		if execution.fingerprint != fingerprint {
 			entry.basicExecMu.Unlock()
-			return workspaceBasicExecFailure(fingerprint, "workspace_exec_fingerprint_conflict", errors.New("Workspace exec fingerprint changed"))
+			return workspaceBasicExecFailure(fingerprint, "workspace_exec_fingerprint_conflict", errors.New("workspace exec fingerprint changed"))
 		}
 		entry.basicExecMu.Unlock()
 		select {
@@ -147,7 +147,7 @@ func (entry *workspaceMountEntry) executeWorkspaceBasicExec(
 	}
 	if len(spec.Command) == 0 || spec.Command[0] == "" ||
 		spec.TimeoutMS <= 0 || spec.TimeoutMS > int64((15*time.Minute)/time.Millisecond) {
-		return workspaceBasicExecFailure(fingerprint, "workspace_exec_invalid", errors.New("Workspace exec request is invalid"))
+		return workspaceBasicExecFailure(fingerprint, "workspace_exec_invalid", errors.New("workspace exec request is invalid"))
 	}
 	launchCwd, err := entry.workspaceLaunchCwd(spec.Cwd)
 	if err != nil {
@@ -213,7 +213,7 @@ func (entry *workspaceMountEntry) executeWorkspaceBasicExec(
 		return workspaceBasicExecFailureWithOutput(
 			fingerprint,
 			"workspace_exec_output_limit_exceeded",
-			errors.New("Workspace exec output limit exceeded"),
+			errors.New("workspace exec output limit exceeded"),
 			stdout.Bytes(),
 			stderr.Bytes(),
 		)
@@ -244,7 +244,7 @@ func (entry *workspaceMountEntry) executeWorkspaceBasicExec(
 			return workspaceBasicExecFailureWithOutput(
 				fingerprint,
 				"workspace_exec_signaled",
-				fmt.Errorf("Workspace exec terminated by %s", status.Signal()),
+				fmt.Errorf("workspace exec terminated by %s", status.Signal()),
 				stdout.Bytes(),
 				stderr.Bytes(),
 			)
@@ -260,8 +260,8 @@ func (entry *workspaceMountEntry) executeWorkspaceBasicExec(
 }
 
 func workspaceBasicExecImageCommandOptions() imageCommandOptions {
-	// Direct Workspace exec is Workspace-tool authority. It must not mount the
-	// Program Artifact or Managed Runtime drives into the image namespace.
+	// Direct workspace exec is workspace-tool authority. It must not mount the
+	// program artifact or managed runtime drives into the image namespace.
 	return imageCommandOptions{}
 }
 
@@ -279,7 +279,7 @@ func workspaceBasicExecSecrets(
 		default:
 			clear(secret.Value)
 			clearProgramSecretValues(secrets)
-			return nil, fmt.Errorf("unsupported Workspace Secret placement %q", delivery.GetPlacementKind())
+			return nil, fmt.Errorf("unsupported workspace secret placement %q", delivery.GetPlacementKind())
 		}
 		secrets = append(secrets, secret)
 	}
@@ -334,7 +334,7 @@ func (entry *workspaceMountEntry) beginWorkspaceExecAdmission() (func(), error) 
 		entry.recoveryRequired ||
 		entry.turnCommitBlocked {
 		entry.processesMu.Unlock()
-		return func() {}, errors.New("Workspace is unavailable for exec admission")
+		return func() {}, errors.New("workspace is unavailable for exec admission")
 	}
 	entry.processAdmissions++
 	entry.processesMu.Unlock()

@@ -441,7 +441,7 @@ SELECT id
 			rootActorID,
 			edges[0].parentRunID,
 		).Scan(&actorID); err != nil {
-			return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock nested resume Actor: %w", err)
+			return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock nested resume actor: %w", err)
 		}
 	} else if rootKind != "task" || rootActorID.Valid {
 		return db.RecoverExpiredRunResumesRow{}, false, nil
@@ -450,7 +450,7 @@ SELECT id
 	for index, edge := range edges {
 		run, err := lockNestedResumeRun(ctx, tx, edge.parentRunID)
 		if err != nil {
-			return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock nested resume lineage Run: %w", err)
+			return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock nested resume lineage run: %w", err)
 		}
 		if index == 0 {
 			if run.entrypointKind != rootKind || run.actorID != rootActorID {
@@ -463,7 +463,7 @@ SELECT id
 	}
 	current, err := lockNestedResumeRun(ctx, tx, candidate.runID)
 	if err != nil {
-		return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock current nested resume Run: %w", err)
+		return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock current nested resume run: %w", err)
 	}
 	if current.entrypointKind != "task" || current.actorID.Valid {
 		return db.RecoverExpiredRunResumesRow{}, false, nil
@@ -503,7 +503,7 @@ SELECT workspaces.ownership_generation, workspaces.writer_generation,
 		&ownerActorID,
 	)
 	if err != nil {
-		return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock nested resume Workspace: %w", err)
+		return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock nested resume workspace: %w", err)
 	}
 	if workspaceDirty != db.WorkspaceDirtyStateClean {
 		return db.RecoverExpiredRunResumesRow{}, false, nil
@@ -531,7 +531,7 @@ SELECT number
 			candidate.workspaceID,
 			run.entrypointKind,
 		).Scan(&attempt); err != nil {
-			return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock nested resume Attempt: %w", err)
+			return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock nested resume attempt: %w", err)
 		}
 	}
 
@@ -541,7 +541,7 @@ SELECT number
 	}
 	// Preserve one lock phase for each lease class: outer-to-inner checkpoint
 	// sources, the current checkpoint source, and finally the current resume.
-	// No Workspace Lease is locked until every Run Lease is held.
+	// No workspace lease is locked until every run lease is held.
 	for _, edge := range edges {
 		if err := lockNestedResumeCheckpointRunLease(
 			ctx,
@@ -552,7 +552,7 @@ SELECT number
 			candidate.workspaceID,
 			edge.runtimeID,
 		); err != nil {
-			return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock outer nested resume source Run Lease: %w", err)
+			return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock outer nested resume source run lease: %w", err)
 		}
 	}
 	if err := lockNestedResumeCheckpointRunLease(
@@ -564,10 +564,10 @@ SELECT number
 		candidate.workspaceID,
 		candidate.runtimeID,
 	); err != nil {
-		return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock current nested resume source Run Lease: %w", err)
+		return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock current nested resume source run lease: %w", err)
 	}
 	if err := lockNestedResumeCurrentRunLease(ctx, tx, current, physical); err != nil {
-		return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock current nested resume Run Lease: %w", err)
+		return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock current nested resume run lease: %w", err)
 	}
 	for _, edge := range edges {
 		if err := lockNestedResumeCheckpointWorkspaceLease(
@@ -583,7 +583,7 @@ SELECT number
 			edge.parentWriterGeneration,
 			edge.mountGeneration,
 		); err != nil {
-			return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock outer nested resume source Workspace Lease: %w", err)
+			return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock outer nested resume source workspace lease: %w", err)
 		}
 	}
 	if err := lockNestedResumeCheckpointWorkspaceLease(
@@ -599,7 +599,7 @@ SELECT number
 		candidate.parentWriterGeneration,
 		candidate.mountGeneration,
 	); err != nil {
-		return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock current nested resume source Workspace Lease: %w", err)
+		return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock current nested resume source workspace lease: %w", err)
 	}
 	if err := lockNestedResumeCurrentWorkspaceLease(
 		ctx,
@@ -609,16 +609,16 @@ SELECT number
 		candidate.checkpointPrivateID,
 		candidate.ownershipGeneration,
 	); err != nil {
-		return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock current nested resume Workspace Lease: %w", err)
+		return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock current nested resume workspace lease: %w", err)
 	}
 	for _, edge := range edges {
 		if err := lockNestedResumeEdge(ctx, tx, edge, candidate.workspaceID); err != nil {
-			return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock outer nested resume Wait: %w", err)
+			return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock outer nested resume wait: %w", err)
 		}
 	}
 	wait, err := lockNestedResumeWait(ctx, tx, candidate, current, physical)
 	if err != nil {
-		return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock current nested resume Wait: %w", err)
+		return db.RecoverExpiredRunResumesRow{}, false, fmt.Errorf("lock current nested resume wait: %w", err)
 	}
 	for _, edge := range edges {
 		var sourceRunLeaseID, sourceWorkspaceLeaseID, baseID, privateID pgtype.UUID
@@ -1053,7 +1053,7 @@ SELECT id
 		runtimeID,
 	).Scan(&lockedRunLeaseID)
 	if err != nil {
-		return fmt.Errorf("lock source Run Lease: %w", err)
+		return fmt.Errorf("lock source run lease: %w", err)
 	}
 	return nil
 }
@@ -1129,7 +1129,7 @@ SELECT id, state, owner_run_lease_id, runtime_instance_id,
 		&lockedMountGeneration,
 	)
 	if err != nil {
-		return fmt.Errorf("lock source Workspace Lease: %w", err)
+		return fmt.Errorf("lock source workspace lease: %w", err)
 	}
 	if (lockedState != db.WorkspaceLeaseStateReleased &&
 		lockedState != db.WorkspaceLeaseStateFenced) ||
@@ -1141,7 +1141,7 @@ SELECT id, state, owner_run_lease_id, runtime_instance_id,
 		lockedWriter != writerGeneration ||
 		lockedMountGeneration != mountGeneration {
 		return fmt.Errorf(
-			"source Workspace Lease provenance mismatch: state=%s runtime=%s mount=%s base=%s ownership=%d writer=%d mount_generation=%d: %w",
+			"source workspace lease provenance mismatch: state=%s runtime=%s mount=%s base=%s ownership=%d writer=%d mount_generation=%d: %w",
 			lockedState,
 			pgvalue.UUIDString(lockedRuntimeID),
 			pgvalue.UUIDString(lockedMountID),

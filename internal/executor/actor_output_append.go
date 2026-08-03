@@ -31,7 +31,7 @@ func (task *guestRunLeaseTask) handleActorOutputAppend(
 		response, requestErr = task.controlPlane.AppendActorOutput(callCtx, request)
 		return requestErr
 	}); err != nil {
-		return fmt.Errorf("append Actor output: %w", err)
+		return fmt.Errorf("append actor output: %w", err)
 	}
 	if response.CorrelationID != request.CorrelationID ||
 		(response.Completed == nil) == (response.Failed == nil) {
@@ -58,14 +58,14 @@ func (task *guestRunLeaseTask) handleActorOutputAppend(
 		data, err = json.Marshal(response.Failed)
 	}
 	if err != nil {
-		return fmt.Errorf("encode Actor output append decision: %w", err)
+		return fmt.Errorf("encode actor output append decision: %w", err)
 	}
 	if err := wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
 		CorrelationId: request.CorrelationID,
 		Kind:          kind,
 		DataJson:      string(data),
 	}); err != nil {
-		return fmt.Errorf("write Actor output append decision: %w", err)
+		return fmt.Errorf("write actor output append decision: %w", err)
 	}
 	return nil
 }

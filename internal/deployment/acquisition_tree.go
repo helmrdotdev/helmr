@@ -28,7 +28,7 @@ func (acquirer PlatformAcquirer) runtimeTree(
 ) (_ *platformTree, returnErr error) {
 	root := filepath.Join(leaseRoot, "runtime-tree")
 	if err := acquirer.extractPlatformInput(ctx, policy.Runtime.Harness, root); err != nil {
-		return nil, fmt.Errorf("extract Runtime harness: %w", err)
+		return nil, fmt.Errorf("extract runtime harness: %w", err)
 	}
 	if err := copyRegularFile(
 		filepath.Join(node.root, "bin", "node"),
@@ -48,7 +48,7 @@ func (acquirer PlatformAcquirer) runtimeTree(
 	if info, err := os.Lstat(loader); err != nil || !info.Mode().IsRegular() {
 		return nil, deterministicAcquisitionFailure(
 			workerapi.PlatformAcquisitionTopologyFailed,
-			errors.New("Runtime harness loader is missing"),
+			errors.New("runtime harness loader is missing"),
 		)
 	}
 	if err := runBoundedCommand(
@@ -60,7 +60,7 @@ func (acquirer PlatformAcquirer) runtimeTree(
 	); err != nil {
 		return nil, deterministicAcquisitionFailure(
 			workerapi.PlatformAcquisitionTopologyFailed,
-			fmt.Errorf("patch Runtime Node: %w", err),
+			fmt.Errorf("patch runtime Node.js: %w", err),
 		)
 	}
 	evidence := platformEvidenceSet{
@@ -183,7 +183,7 @@ func (acquirer PlatformAcquirer) managerTree(
 			return nil, err
 		}
 	default:
-		return nil, errors.New("Manager family is unsupported")
+		return nil, errors.New("manager family is unsupported")
 	}
 	evidence := platformEvidenceSet{
 		documents: cloneEvidence(source.evidence),
@@ -408,7 +408,7 @@ func (acquirer PlatformAcquirer) extractPlatformInput(
 	if object.Digest != descriptor.Digest ||
 		object.MediaType != descriptor.MediaType ||
 		object.SizeBytes != descriptor.SizeBytes {
-		return errors.New("Platform input metadata does not match policy")
+		return errors.New("platform input metadata does not match policy")
 	}
 	body, err := acquirer.Store.Get(ctx, descriptor.Digest)
 	if err != nil {
@@ -428,7 +428,7 @@ func (acquirer PlatformAcquirer) extractPlatformInput(
 	}
 	if counting.read != descriptor.SizeBytes ||
 		"sha256:"+hex.EncodeToString(hash.Sum(nil)) != descriptor.Digest {
-		return errors.New("Platform input bytes do not match policy")
+		return errors.New("platform input bytes do not match policy")
 	}
 	return nil
 }
@@ -444,7 +444,7 @@ func (reader *limitedReader) Read(buffer []byte) (int, error) {
 		var extra [1]byte
 		count, err := reader.reader.Read(extra[:])
 		if count != 0 {
-			return 0, errors.New("Platform input exceeds its declared size")
+			return 0, errors.New("platform input exceeds its declared size")
 		}
 		return 0, err
 	}
@@ -494,7 +494,7 @@ func normalizeConformance(
 	inputs []PlatformEvidenceFile,
 ) error {
 	if value == nil {
-		return errors.New("Platform conformance result is missing")
+		return errors.New("platform conformance result is missing")
 	}
 	value.FormatVersion = PlatformArtifactDocumentFormatVersion
 	value.ConformanceSet = conformanceSet
@@ -511,7 +511,7 @@ func normalizeConformance(
 		return err
 	}
 	if len(parsed.Results) == 0 {
-		return errors.New("Platform conformance result is empty")
+		return errors.New("platform conformance result is empty")
 	}
 	return nil
 }

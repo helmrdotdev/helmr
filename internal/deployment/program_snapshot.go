@@ -26,7 +26,7 @@ func SnapshotProgram(
 		programArtifact,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("snapshot Program: %w", err)
+		return nil, fmt.Errorf("snapshot program: %w", err)
 	}
 	return snapshot, nil
 }
@@ -50,16 +50,16 @@ func snapshotProgramObject(
 	}
 	object, err := store.Stat(ctx, descriptor.Digest)
 	if err != nil {
-		return nil, fmt.Errorf("stat Program object: %w", err)
+		return nil, fmt.Errorf("stat program object: %w", err)
 	}
 	if object.Digest != descriptor.Digest ||
 		object.SizeBytes != descriptor.SizeBytes ||
 		object.MediaType != descriptor.MediaType {
-		return nil, errors.New("Program object does not match its descriptor")
+		return nil, errors.New("program object does not match its descriptor")
 	}
 	body, err := store.Get(ctx, descriptor.Digest)
 	if err != nil {
-		return nil, fmt.Errorf("open Program object: %w", err)
+		return nil, fmt.Errorf("open program object: %w", err)
 	}
 	content, snapshotErr := snapshotArtifact(
 		ctx,
@@ -74,7 +74,7 @@ func snapshotProgramObject(
 	}
 	if closeErr != nil {
 		_ = content.Close()
-		return nil, fmt.Errorf("close Program object: %w", closeErr)
+		return nil, fmt.Errorf("close program object: %w", closeErr)
 	}
 	return &ArtifactSnapshot{content: content}, nil
 }
@@ -86,10 +86,10 @@ func VerifyProgram(
 	snapshot *ArtifactSnapshot,
 ) (ProgramIndex, error) {
 	if ctx == nil {
-		return ProgramIndex{}, errors.New("Program verification context is nil")
+		return ProgramIndex{}, errors.New("program verification context is nil")
 	}
 	if snapshot == nil {
-		return ProgramIndex{}, errors.New("program Artifact snapshot is closed")
+		return ProgramIndex{}, errors.New("program artifact snapshot is closed")
 	}
 	artifact, err := snapshot.verifier()
 	if err != nil {
@@ -108,16 +108,16 @@ func VerifyProgram(
 	case verifierVerified:
 		verified, err := parseProgramVerification(result.payload)
 		if err != nil {
-			return ProgramIndex{}, fmt.Errorf("parse verified Program index: %w", err)
+			return ProgramIndex{}, fmt.Errorf("parse verified program index: %w", err)
 		}
 		return verified.Index, nil
 	case verifierInvalid:
 		return ProgramIndex{}, &verifierInvalidError{diagnostic: result.diagnostic}
 	case verifierFailed:
-		return ProgramIndex{}, errors.New("Program verifier failed")
+		return ProgramIndex{}, errors.New("program verifier failed")
 	default:
 		return ProgramIndex{}, fmt.Errorf(
-			"Program verifier returned unknown outcome %d",
+			"program verifier returned unknown outcome %d",
 			result.kind,
 		)
 	}

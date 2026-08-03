@@ -44,7 +44,7 @@ func NewRunAuthority(
 		return nil, err
 	}
 	if !fencingKey.Valid() {
-		return nil, errors.New("run authority Workspace fencing key is required")
+		return nil, errors.New("run authority workspace fencing key is required")
 	}
 	if policy.PreparationLimit <= 0 ||
 		policy.ReservationTTL <= 0 ||

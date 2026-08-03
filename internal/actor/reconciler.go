@@ -23,7 +23,7 @@ type Reconciler struct {
 
 func NewReconciler(database actorInputReconcileDB) (*Reconciler, error) {
 	if database == nil {
-		return nil, errors.New("Actor reconciliation database is required")
+		return nil, errors.New("actor reconciliation database is required")
 	}
 	return &Reconciler{db: database}, nil
 }
@@ -48,7 +48,7 @@ func (r *Reconciler) ReconcileClose(
 	}
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return false, fmt.Errorf("begin Actor close reconciliation: %w", err)
+		return false, fmt.Errorf("begin actor close reconciliation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	q := db.New(tx)
@@ -99,7 +99,7 @@ func (r *Reconciler) ReconcileInput(
 	}
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return false, fmt.Errorf("begin Actor input reconciliation: %w", err)
+		return false, fmt.Errorf("begin actor input reconciliation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	q := db.New(tx)

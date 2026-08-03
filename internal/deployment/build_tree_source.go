@@ -168,7 +168,7 @@ func selectBuildTreeEntries(
 	selected := make(map[string]artifactEntry)
 	for root := range fileRoots {
 		if buildTreeImageSourceReserved(root) {
-			return nil, fmt.Errorf("image source root %q is Platform compiler output", root)
+			return nil, fmt.Errorf("image source root %q is platform compiler output", root)
 		}
 		entry, err := tree.require(root, artifactEntryRegular)
 		if err != nil {
@@ -181,7 +181,7 @@ func selectBuildTreeEntries(
 	}
 	for root := range directoryRoots {
 		if buildTreeImageSourceReserved(root) {
-			return nil, fmt.Errorf("image source root %q is Platform compiler output", root)
+			return nil, fmt.Errorf("image source root %q is platform compiler output", root)
 		}
 		if root != "." {
 			entry, err := tree.require(root, artifactEntryDirectory)
@@ -220,7 +220,7 @@ func selectBuildTreeAncestors(
 ) error {
 	for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
 		if buildTreeImageSourceReserved(parent) {
-			return fmt.Errorf("image source path %q descends from Platform compiler output", name)
+			return fmt.Errorf("image source path %q descends from platform compiler output", name)
 		}
 		entry, err := tree.require(parent, artifactEntryDirectory)
 		if err != nil {

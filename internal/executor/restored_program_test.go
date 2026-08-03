@@ -366,20 +366,20 @@ func (*restoredProgramControlPlane) CompleteTask(context.Context, workerapi.Comp
 	return errors.New("unexpected completion")
 }
 func (*restoredProgramControlPlane) CompleteActor(context.Context, workerapi.CompleteActorRequest) error {
-	return errors.New("unexpected Actor completion")
+	return errors.New("unexpected actor completion")
 }
 func (*restoredProgramControlPlane) CommitActorTurn(context.Context, workerapi.CommitActorTurnRequest) (workerapi.CommitActorTurnResponse, error) {
-	return workerapi.CommitActorTurnResponse{}, errors.New("unexpected Actor turn commit")
+	return workerapi.CommitActorTurnResponse{}, errors.New("unexpected actor turn commit")
 }
 func (*restoredProgramControlPlane) SendRunActorInput(context.Context, workerapi.SendActorInputRequest) (workerapi.SendActorInputResponse, error) {
-	return workerapi.SendActorInputResponse{}, errors.New("unexpected Actor input send")
+	return workerapi.SendActorInputResponse{}, errors.New("unexpected actor input send")
 }
 
 func (*restoredProgramControlPlane) AppendActorOutput(context.Context, workerapi.AppendActorOutputRequest) (workerapi.AppendActorOutputResponse, error) {
-	return workerapi.AppendActorOutputResponse{}, errors.New("unexpected Actor output append")
+	return workerapi.AppendActorOutputResponse{}, errors.New("unexpected actor output append")
 }
 func (*restoredProgramControlPlane) CreateRuntimeToken(context.Context, workerapi.CreateTokenRequest) (api.TokenResponse, error) {
-	return api.TokenResponse{}, errors.New("unexpected Token create")
+	return api.TokenResponse{}, errors.New("unexpected token create")
 }
 func (*restoredProgramControlPlane) AppendRunLog(context.Context, workerapi.RunLeaseAssignment, workerapi.LogStream, uint64, []byte) error {
 	return nil

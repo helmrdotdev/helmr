@@ -84,24 +84,24 @@ func runPlatformAcquisitionProcess(
 	if err := command.Run(); err != nil {
 		if ctx.Err() != nil {
 			return PlatformAcquisitionProcessResult{}, fmt.Errorf(
-				"Platform acquisition deadline: %w",
+				"platform acquisition deadline: %w",
 				ctx.Err(),
 			)
 		}
 		return PlatformAcquisitionProcessResult{}, fmt.Errorf(
-			"Platform acquisition child: %w: %s",
+			"platform acquisition child: %w: %s",
 			err,
 			strings.TrimSpace(stderr.String()),
 		)
 	}
 	if stdout.exceeded || stderr.exceeded {
-		return PlatformAcquisitionProcessResult{}, errors.New("Platform acquisition child output is excessive")
+		return PlatformAcquisitionProcessResult{}, errors.New("platform acquisition child output is excessive")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(stdout.Bytes()))
 	decoder.DisallowUnknownFields()
 	var result PlatformAcquisitionProcessResult
 	if err := decoder.Decode(&result); err != nil {
-		return PlatformAcquisitionProcessResult{}, fmt.Errorf("decode Platform acquisition child result: %w", err)
+		return PlatformAcquisitionProcessResult{}, fmt.Errorf("decode platform acquisition child result: %w", err)
 	}
 	if err := requireJSONEOF(decoder); err != nil {
 		return PlatformAcquisitionProcessResult{}, err
@@ -114,10 +114,10 @@ func validatePlatformAcquisitionProcess(
 	request workerapi.PlatformAcquisition,
 ) error {
 	if _, err := ids.Parse(request.DeploymentID); err != nil {
-		return errors.New("Platform acquisition Deployment ID is invalid")
+		return errors.New("platform acquisition deployment ID is invalid")
 	}
 	for name, value := range map[string]string{
-		"Build Policy":     process.BuildPolicyPath,
+		"build policy":     process.BuildPolicyPath,
 		"encoder":          process.Encoder,
 		"executable":       process.Executable,
 		"GPG verifier":     process.GPGV,
@@ -127,11 +127,11 @@ func validatePlatformAcquisitionProcess(
 		"XZ decoder":       process.XZ,
 	} {
 		if !filepath.IsAbs(value) || filepath.Clean(value) != value {
-			return fmt.Errorf("Platform acquisition %s path is invalid", name)
+			return fmt.Errorf("platform acquisition %s path is invalid", name)
 		}
 	}
 	if process.PlatformStoreURI == "" {
-		return errors.New("Platform acquisition store URI is missing")
+		return errors.New("platform acquisition store URI is missing")
 	}
 	return nil
 }
@@ -203,11 +203,11 @@ func createPlatformAcquisitionCgroup(
 ) (string, *os.File, error) {
 	root := filepath.Clean(unitRoot)
 	if !filepath.IsAbs(root) {
-		return "", nil, errors.New("Platform acquisition unit cgroup root is invalid")
+		return "", nil, errors.New("platform acquisition unit cgroup root is invalid")
 	}
 	identity, err := ids.Parse(deploymentID)
 	if err != nil {
-		return "", nil, errors.New("Platform acquisition Deployment ID is invalid")
+		return "", nil, errors.New("platform acquisition deployment ID is invalid")
 	}
 	leaf := "platform-acquisition-" + identity.String() + "-" + uuid.Must(uuid.NewV7()).String()
 	rootFD, err := unix.Open(
@@ -216,12 +216,12 @@ func createPlatformAcquisitionCgroup(
 		0,
 	)
 	if err != nil {
-		return "", nil, fmt.Errorf("open Platform acquisition cgroup root: %w", err)
+		return "", nil, fmt.Errorf("open platform acquisition cgroup root: %w", err)
 	}
 	defer unix.Close(rootFD)
 	if err := unix.Mkdirat(rootFD, platformAcquisitionAggregate, 0o755); err != nil &&
 		!errors.Is(err, unix.EEXIST) {
-		return "", nil, fmt.Errorf("create Platform acquisition aggregate cgroup: %w", err)
+		return "", nil, fmt.Errorf("create platform acquisition aggregate cgroup: %w", err)
 	}
 	aggregateFD, err := unix.Openat(
 		rootFD,
@@ -230,7 +230,7 @@ func createPlatformAcquisitionCgroup(
 		0,
 	)
 	if err != nil {
-		return "", nil, fmt.Errorf("open Platform acquisition aggregate cgroup: %w", err)
+		return "", nil, fmt.Errorf("open platform acquisition aggregate cgroup: %w", err)
 	}
 	defer unix.Close(aggregateFD)
 	for name, value := range platformAcquisitionCgroupLimits {
@@ -247,7 +247,7 @@ func createPlatformAcquisitionCgroup(
 	}
 
 	if err := unix.Mkdirat(aggregateFD, leaf, 0o755); err != nil {
-		return "", nil, fmt.Errorf("create Platform acquisition cgroup: %w", err)
+		return "", nil, fmt.Errorf("create platform acquisition cgroup: %w", err)
 	}
 	cgroupFD, err := unix.Openat(
 		aggregateFD,
@@ -257,7 +257,7 @@ func createPlatformAcquisitionCgroup(
 	)
 	if err != nil {
 		_ = unix.Unlinkat(aggregateFD, leaf, unix.AT_REMOVEDIR)
-		return "", nil, fmt.Errorf("open Platform acquisition cgroup: %w", err)
+		return "", nil, fmt.Errorf("open platform acquisition cgroup: %w", err)
 	}
 	cgroupPath := filepath.Join(root, platformAcquisitionAggregate, leaf)
 	cleanup := func() {
@@ -275,7 +275,7 @@ func createPlatformAcquisitionCgroup(
 	}
 	if err := unix.Mkdirat(cgroupFD, platformAcquisitionProcessLeaf, 0o755); err != nil {
 		cleanup()
-		return "", nil, fmt.Errorf("create Platform acquisition process cgroup: %w", err)
+		return "", nil, fmt.Errorf("create platform acquisition process cgroup: %w", err)
 	}
 	processFD, err := unix.Openat(
 		cgroupFD,
@@ -285,7 +285,7 @@ func createPlatformAcquisitionCgroup(
 	)
 	if err != nil {
 		cleanup()
-		return "", nil, fmt.Errorf("open Platform acquisition process cgroup: %w", err)
+		return "", nil, fmt.Errorf("open platform acquisition process cgroup: %w", err)
 	}
 	if err := unix.Close(cgroupFD); err != nil {
 		unix.Close(processFD)
@@ -308,7 +308,7 @@ func writePlatformAcquisitionCgroupControl(
 		0,
 	)
 	if err != nil {
-		return fmt.Errorf("open Platform acquisition %s: %w", name, err)
+		return fmt.Errorf("open platform acquisition %s: %w", name, err)
 	}
 	control := os.NewFile(uintptr(controlFD), name)
 	count, writeErr := io.WriteString(control, value)
@@ -363,9 +363,9 @@ func requireJSONEOF(decoder *json.Decoder) error {
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return errors.New("Platform acquisition child result has trailing JSON")
+			return errors.New("platform acquisition child result has trailing JSON")
 		}
-		return fmt.Errorf("decode Platform acquisition child trailing data: %w", err)
+		return fmt.Errorf("decode platform acquisition child trailing data: %w", err)
 	}
 	return nil
 }

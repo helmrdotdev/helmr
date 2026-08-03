@@ -272,7 +272,7 @@ func (p *BuildPolicy) Node(version string) (VersionDomain, []string, error) {
 	}
 	major, minor, patch, ok := parseReleaseVersion(version)
 	if !ok {
-		return VersionDomain{}, nil, fmt.Errorf("Node version %q is not an exact release", version)
+		return VersionDomain{}, nil, fmt.Errorf("the Node.js version %q is not an exact release", version)
 	}
 	for _, domain := range p.document.Node.Domains {
 		if major != domain.Major {
@@ -287,13 +287,13 @@ func (p *BuildPolicy) Node(version string) (VersionDomain, []string, error) {
 		}
 		return domain, flags, nil
 	}
-	return VersionDomain{}, nil, fmt.Errorf("Node version %q is outside the build policy domains", version)
+	return VersionDomain{}, nil, fmt.Errorf("the Node.js version %q is outside the build policy domains", version)
 }
 
 func NodeProgramFlags(version string) ([]string, error) {
 	major, minor, patch, ok := parseReleaseVersion(version)
 	if !ok {
-		return nil, fmt.Errorf("Node version %q is not an exact release", version)
+		return nil, fmt.Errorf("the Node.js version %q is not an exact release", version)
 	}
 	if major == 24 &&
 		compareReleaseVersion(major, minor, patch, "24.12.0") >= 0 {
@@ -305,7 +305,7 @@ func NodeProgramFlags(version string) ([]string, error) {
 			"--enable-source-maps",
 		}, nil
 	}
-	return nil, fmt.Errorf("Node version %q has no Program launch contract", version)
+	return nil, fmt.Errorf("the Node.js version %q has no program launch contract", version)
 }
 
 func (p *BuildPolicy) Manager(manager PackageManager) (ManagerPolicy, error) {
@@ -340,7 +340,7 @@ func (p *BuildPolicy) Acquisition(
 	}
 	if p.DeniesSelector("node@"+nodeVersion) ||
 		p.DeniesSelector(string(manager.Name)+"@"+manager.Version) {
-		return PlatformAcquisitionPolicy{}, errors.New("Platform selector is denied")
+		return PlatformAcquisitionPolicy{}, errors.New("platform selector is denied")
 	}
 	_, flags, err := p.Node(nodeVersion)
 	if err != nil {
@@ -400,7 +400,7 @@ func validateBuildPolicyDocument(document buildPolicyDocument) error {
 	if err := validateManagerPolicies(document.Managers); err != nil {
 		return err
 	}
-	if err := validatePlatformTreeInput(document.Runtime.Harness, "Runtime harness"); err != nil {
+	if err := validatePlatformTreeInput(document.Runtime.Harness, "runtime harness"); err != nil {
 		return err
 	}
 	if err := validatePlatformTreeInput(document.Toolchain.Base, "toolchain base"); err != nil {
@@ -435,14 +435,14 @@ func validateCompilerInputs(input CompilerInputs) error {
 			input.Source.DeclarationExtensions,
 			[]string{".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"},
 		) {
-		return errors.New("Compiler inputs do not match the v0 contract")
+		return errors.New("compiler inputs do not match the v0 contract")
 	}
 	for label, digest := range map[string]string{
 		"Config Evaluator":          input.ConfigEvaluator.Digest,
 		"esbuild API package":       input.Esbuild.APIPackageDigest,
 		"esbuild binary":            input.Esbuild.BinaryDigest,
 		"Compiler options contract": input.OptionsContractDigest,
-		"Program Compiler":          input.ProgramCompiler.Digest,
+		"program compiler":          input.ProgramCompiler.Digest,
 	} {
 		if !sha256DigestPattern.MatchString(digest) {
 			return fmt.Errorf("%s digest is invalid", label)
@@ -453,44 +453,44 @@ func validateCompilerInputs(input CompilerInputs) error {
 
 func validateNodePolicy(policy NodePolicy) error {
 	if policy.AdapterVersion != NodeRuntimeAdapterVersion {
-		return fmt.Errorf("Node adapterVersion = %q, want %q", policy.AdapterVersion, NodeRuntimeAdapterVersion)
+		return fmt.Errorf("node.adapterVersion = %q, want %q", policy.AdapterVersion, NodeRuntimeAdapterVersion)
 	}
 	if policy.AllowedOrigin != NodeReleaseOrigin {
-		return fmt.Errorf("Node allowedOrigin = %q, want %q", policy.AllowedOrigin, NodeReleaseOrigin)
+		return fmt.Errorf("node.allowedOrigin = %q, want %q", policy.AllowedOrigin, NodeReleaseOrigin)
 	}
-	if err := validateSortedStrings(policy.AllowedRedirectHosts, "Node allowedRedirectHosts", false); err != nil {
+	if err := validateSortedStrings(policy.AllowedRedirectHosts, "node.allowedRedirectHosts", false); err != nil {
 		return err
 	}
 	if len(policy.Domains) == 0 || len(policy.Domains) > maxBuildPolicyCollectionLength {
-		return errors.New("Node domains are empty or excessive")
+		return errors.New("the Node.js domains are empty or excessive")
 	}
 	expectedDomains := []VersionDomain{
 		{Major: 22, Minimum: "22.18.0"},
 		{Major: 24, Minimum: "24.3.0"},
 	}
 	if !slices.Equal(policy.Domains, expectedDomains) {
-		return errors.New("Node domains do not match the v0 adapter contract")
+		return errors.New("the Node.js domains do not match the v0 adapter contract")
 	}
 	previousMajor := 0
 	for _, domain := range policy.Domains {
 		if domain.Major <= previousMajor {
-			return errors.New("Node domains are not in ascending unique major order")
+			return errors.New("the Node.js domains are not in ascending unique major order")
 		}
 		major, _, _, ok := parseReleaseVersion(domain.Minimum)
 		if !ok || major != domain.Major {
-			return fmt.Errorf("Node domain minimum %q does not match major %d", domain.Minimum, domain.Major)
+			return fmt.Errorf("the Node.js domain minimum %q does not match major %d", domain.Minimum, domain.Major)
 		}
 		previousMajor = domain.Major
 	}
-	if err := validateSortedStrings(policy.ReleaseKeyFingerprints, "Node releaseKeyFingerprints", false); err != nil {
+	if err := validateSortedStrings(policy.ReleaseKeyFingerprints, "node.releaseKeyFingerprints", false); err != nil {
 		return err
 	}
 	keyring, err := base64.StdEncoding.Strict().DecodeString(policy.ReleaseKeyring)
 	if err != nil || len(keyring) == 0 || len(keyring) > maxNodeReleaseKeyringBytes {
-		return errors.New("Node releaseKeyring is not bounded canonical base64")
+		return errors.New("node.releaseKeyring is not bounded canonical base64")
 	}
 	if base64.StdEncoding.EncodeToString(keyring) != policy.ReleaseKeyring {
-		return errors.New("Node releaseKeyring is not canonical base64")
+		return errors.New("node.releaseKeyring is not canonical base64")
 	}
 	return nil
 }

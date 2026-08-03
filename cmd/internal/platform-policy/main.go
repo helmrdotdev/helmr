@@ -26,8 +26,8 @@ func run(args []string) error {
 	flags.SetOutput(os.Stderr)
 	runtimePath := flags.String("runtime", "", "Runtime harness descriptor")
 	toolchainPath := flags.String("toolchain", "", "toolchain base descriptor")
-	keyringPath := flags.String("node-keyring", "", "Node release keyring")
-	fingerprintsPath := flags.String("node-fingerprints", "", "Node release key fingerprints")
+	keyringPath := flags.String("node-keyring", "", "Node.js release keyring")
+	fingerprintsPath := flags.String("node-fingerprints", "", "Node.js release key fingerprints")
 	outputPath := flags.String("output", "", "canonical build policy output")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -38,11 +38,11 @@ func run(args []string) error {
 		*keyringPath == "" ||
 		*fingerprintsPath == "" ||
 		*outputPath == "" {
-		return errors.New("all Platform policy inputs and --output are required")
+		return errors.New("all platform policy inputs and --output are required")
 	}
 	var runtimeHarness deployment.ArtifactDescriptor
 	if err := decodeFile(*runtimePath, &runtimeHarness); err != nil {
-		return fmt.Errorf("Runtime harness descriptor: %w", err)
+		return fmt.Errorf("runtime harness descriptor: %w", err)
 	}
 	var toolchain deployment.ToolchainInputs
 	if err := decodeFile(*toolchainPath, &toolchain); err != nil {

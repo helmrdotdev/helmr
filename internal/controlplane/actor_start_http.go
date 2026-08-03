@@ -32,7 +32,7 @@ func (s *Server) startActorHTTP(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &maxBytesError) {
 			writeError(w, tooLarge(codedError{
 				code:    "actor_start_request_too_large",
-				message: "Actor start request is too large",
+				message: "actor start request is too large",
 			}))
 			return
 		}
@@ -63,7 +63,7 @@ func (s *Server) startActorHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(request.Input) > maxActorInputBytes {
 		writeError(w, tooLarge(codedError{
 			code:    "actor_input_too_large",
-			message: "Actor initial input exceeds the size limit",
+			message: "actor initial input exceeds the size limit",
 		}))
 		return
 	}
@@ -100,7 +100,7 @@ func (s *Server) startActorHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, unavailable(codedError{
 			code:      "actor_start_authority_unavailable",
-			message:   "Actor start project authority is unavailable",
+			message:   "actor start project authority is unavailable",
 			retryable: true,
 		}))
 		return
@@ -109,7 +109,7 @@ func (s *Server) startActorHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, unavailable(codedError{
 			code:      "actor_start_authority_unavailable",
-			message:   "Actor start environment authority is unavailable",
+			message:   "actor start environment authority is unavailable",
 			retryable: true,
 		}))
 		return
@@ -157,7 +157,7 @@ func decodeStartActorRequest(r *http.Request) (api.StartActorRequest, error) {
 		return api.StartActorRequest{}, err
 	}
 	if decoder.Decode(&struct{}{}) != io.EOF {
-		return api.StartActorRequest{}, errors.New("Actor start request contains a trailing value")
+		return api.StartActorRequest{}, errors.New("actor start request contains a trailing value")
 	}
 	return request, nil
 }
@@ -197,13 +197,13 @@ func (s *Server) writeActorStartScopeError(w http.ResponseWriter, err error) {
 	}
 	writeError(w, unavailable(codedError{
 		code:      "actor_start_authority_unavailable",
-		message:   "Actor start Environment scope is unavailable",
+		message:   "actor start environment scope is unavailable",
 		retryable: true,
 	}))
 }
 
 func rejectActorStartNulls(canonical []byte) error {
-	root, err := decodeActorStartObject(canonical, "Actor start request")
+	root, err := decodeActorStartObject(canonical, "actor start request")
 	if err != nil {
 		return err
 	}
@@ -461,7 +461,7 @@ func (s *Server) writeActorStartError(w http.ResponseWriter, err error) {
 	case errors.As(err, &idempotencyConflict):
 		writeError(w, conflict(codedError{
 			code:    "idempotency_conflict",
-			message: "idempotency key conflicts with an earlier Actor start",
+			message: "idempotency key conflicts with an earlier actor start",
 		}))
 	case errors.As(err, &keyConflict):
 		writeError(w, conflict(codedError{code: "actor_key_conflict", message: keyConflict.Error()}))
@@ -499,7 +499,7 @@ func (s *Server) writeActorStartError(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, unavailable(codedError{
 			code:      "actor_start_authority_unavailable",
-			message:   "Actor start authority is unavailable",
+			message:   "actor start authority is unavailable",
 			retryable: true,
 		}))
 	}

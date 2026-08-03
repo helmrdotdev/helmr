@@ -95,7 +95,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 		CheckpointId: restore.CheckpointID, CorrelationId: checkpoint.RecoveryPoint.CorrelationID,
 	}
 	if err := verifyRestoredProgramOnSession(ctx, session, verify); err != nil {
-		return nil, errors.Join(fmt.Errorf("verify restored frozen Program: %w", err), session.Close(context.Background()))
+		return nil, errors.Join(fmt.Errorf("verify restored frozen program: %w", err), session.Close(context.Background()))
 	}
 	return session, nil
 }
@@ -137,14 +137,14 @@ func validatePreparedRuntimeRestore(
 		{"scratch_disk", 0, checkpoint.RuntimeState.ScratchDiskArtifact},
 	}
 	if len(restore.Artifacts) != len(expected) {
-		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore Artifact membership is incomplete")
+		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore artifact membership is incomplete")
 	}
 	for index, want := range expected {
 		got := restore.Artifacts[index]
 		if got.Role != want.role || got.Ordinal != want.ordinal ||
 			got.Object.Digest != want.value.Digest || got.Object.SizeBytes != want.value.SizeBytes ||
 			got.Object.MediaType != want.value.MediaType {
-			return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore Artifact membership does not match its manifest")
+			return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore artifact membership does not match its manifest")
 		}
 	}
 	base := checkpoint.WorkspaceState.Base
@@ -152,7 +152,7 @@ func validatePreparedRuntimeRestore(
 	if base.ArtifactDigest != workspace.Digest || base.ArtifactSizeBytes != workspace.SizeBytes ||
 		base.ArtifactMediaType != workspace.MediaType || base.ArtifactEncoding != workspace.Encoding ||
 		strings.TrimSpace(base.MountPath) != "/workspace" {
-		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore Workspace frontier does not match its reservation")
+		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore workspace frontier does not match its reservation")
 	}
 	return checkpoint, nil
 }

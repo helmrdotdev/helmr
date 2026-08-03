@@ -20,7 +20,7 @@ func verifyRuntimeArtifact(
 		artifact.SizeBytes,
 	)
 	if err != nil {
-		return RuntimeIndex{}, fmt.Errorf("runtime Artifact: %w", err)
+		return RuntimeIndex{}, fmt.Errorf("runtime artifact: %w", err)
 	}
 	return verifyRuntimeLayout(ctx, inspected, ArtifactDescriptor{
 		Digest:    artifact.Digest,

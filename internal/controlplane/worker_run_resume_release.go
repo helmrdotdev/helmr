@@ -27,7 +27,7 @@ func (s *Server) workerAcknowledgeRunResumeRelease(w http.ResponseWriter, r *htt
 	}
 	var request workerapi.RunResumeReleaseRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker Run resume release request JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid worker run resume release request JSON: %w", err)))
 		return
 	}
 	parsedLease, err := parseRunLeaseFence(request.Lease)
@@ -46,11 +46,11 @@ func (s *Server) workerAcknowledgeRunResumeRelease(w http.ResponseWriter, r *htt
 	)
 	if err != nil {
 		if errors.Is(err, errStaleRunLeaseClaim) {
-			writeError(w, conflict(errors.New("Run resume release acknowledgement is stale")))
+			writeError(w, conflict(errors.New("run resume release acknowledgement is stale")))
 			return
 		}
 		s.log.Error("acknowledge Run resume release failed", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("acknowledge Run resume release"))
+		writeError(w, errors.New("acknowledge run resume release"))
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.RunResumeReleaseResponse{

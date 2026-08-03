@@ -22,12 +22,12 @@ func (s *Server) workerCommitActorTurn(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, io.EOF) {
 			err = errors.New("request body is required")
 		}
-		writeError(w, badRequest(fmt.Errorf("invalid Actor turn commit JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid actor turn commit JSON: %w", err)))
 		return
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		writeError(w, badRequest(errors.New("invalid Actor turn commit JSON: trailing value")))
+		writeError(w, badRequest(errors.New("invalid actor turn commit JSON: trailing value")))
 		return
 	}
 	commit, err := parseActorTurnCommitRequest(request)
@@ -43,7 +43,7 @@ func (s *Server) workerCommitActorTurn(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.log.Error("commit Actor turn failed", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("commit Actor turn"))
+		writeError(w, errors.New("commit actor turn"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)

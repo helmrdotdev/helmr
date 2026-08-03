@@ -1,5 +1,0 @@
-# GitHub added concurrency.queue in May 2026; remove this exception when the pinned actionlint parses it.
-paths:
-  .github/workflows/release.yaml:
-    ignore:
-      - 'unexpected key "queue" for "concurrency" section'

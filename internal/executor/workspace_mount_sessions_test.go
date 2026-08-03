@@ -201,7 +201,7 @@ func TestRenewWorkspaceAuthorityUsesMountedSession(t *testing.T) {
 			header.RunID != "run-1" ||
 			header.WorkspaceID != "workspace-1" ||
 			header.WorkspaceMountID != "mount-1" || bodyLength != 0 {
-			serverResult <- errors.New("unexpected Workspace authority renewal header")
+			serverResult <- errors.New("unexpected workspace authority renewal header")
 			return
 		}
 		var received workspacev0.RenewWorkspaceAuthorityRequest
@@ -262,7 +262,7 @@ func TestBeginWorkspaceFinalizationUsesMountedSession(t *testing.T) {
 		if header.Type != wire.StreamTypeWorkspaceFinalizationBegin ||
 			header.RunID != "run-1" || header.WorkspaceID != "workspace-1" ||
 			header.WorkspaceMountID != "mount-1" || header.OperationID != request.GetOperationId() || bodyLength != 0 {
-			serverResult <- errors.New("unexpected Workspace finalization header")
+			serverResult <- errors.New("unexpected workspace finalization header")
 			return
 		}
 		var received workspacev0.BeginWorkspaceFinalizationRequest

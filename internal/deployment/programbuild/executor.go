@@ -38,7 +38,7 @@ func (executor Executor) Build(
 	revocations deployment.ImageOperationRevocations,
 ) (json.RawMessage, error) {
 	if revocations == nil {
-		return nil, errors.New("Workspace image operation revocations are required")
+		return nil, errors.New("workspace image operation revocations are required")
 	}
 	result, err := executor.build(ctx, lease, work, revocations)
 	if err != nil {
@@ -246,17 +246,17 @@ func (executor Executor) validate() error {
 	case executor.CAS == nil:
 		return errors.New("deployment build CAS is required")
 	case executor.PlatformStore == nil:
-		return errors.New("Platform Artifact store is required")
+		return errors.New("platform artifact store is required")
 	case executor.Connector == nil:
 		return errors.New("build guest connector is required")
 	case strings.TrimSpace(executor.RuntimeIdentityID) == "":
 		return errors.New("build worker runtime identity is required")
 	case executor.ImageWorkDir == "" || !filepath.IsAbs(executor.ImageWorkDir) ||
 		filepath.Clean(executor.ImageWorkDir) != executor.ImageWorkDir:
-		return errors.New("Workspace image VM work directory must be absolute and clean")
+		return errors.New("workspace image VM work directory must be absolute and clean")
 	case executor.ImageAdmission == nil || executor.ImageCredentials == nil ||
 		executor.ImageCompletion == nil:
-		return errors.New("Workspace image VM engine dependencies are incomplete")
+		return errors.New("workspace image VM engine dependencies are incomplete")
 	}
 	return nil
 }
@@ -304,7 +304,7 @@ func (executor Executor) buildWorkspaceImages(
 	for _, definition := range workspaces {
 		source, err := tree.SelectImageSource(ctx, definition.Workspace.ImageBuild)
 		if err != nil {
-			return nil, fmt.Errorf("select Workspace %q image source: %w", definition.DeclaredID, err)
+			return nil, fmt.Errorf("select workspace %q image source: %w", definition.DeclaredID, err)
 		}
 		artifact, err := engine.BuildWorkspaceImage(ctx, buildRequest{
 			Lease: LeaseAuthority{
@@ -329,7 +329,7 @@ func (executor Executor) buildWorkspaceImages(
 			Source:                source,
 		}, revocations)
 		if err != nil {
-			return nil, fmt.Errorf("build Workspace %q image: %w", definition.DeclaredID, err)
+			return nil, fmt.Errorf("build workspace %q image: %w", definition.DeclaredID, err)
 		}
 		object, verifyErr := executor.storeWorkspaceImage(ctx, artifact)
 		if verifyErr == nil {
@@ -371,16 +371,16 @@ func (executor Executor) storeWorkspaceImage(
 ) (cas.Object, error) {
 	if artifact == nil || artifact.SizeBytes < 1 ||
 		artifact.SizeBytes > deployment.MaxWorkspaceImageBytes {
-		return cas.Object{}, errors.New("Workspace image size is outside the build contract")
+		return cas.Object{}, errors.New("workspace image size is outside the build contract")
 	}
 	if artifact.Replayed {
 		object, err := executor.CAS.Stat(ctx, artifact.Digest)
 		if err != nil {
-			return cas.Object{}, fmt.Errorf("stat replayed Workspace image: %w", err)
+			return cas.Object{}, fmt.Errorf("stat replayed workspace image: %w", err)
 		}
 		if object.Digest != artifact.Digest || object.SizeBytes != artifact.SizeBytes ||
 			object.MediaType != deployment.WorkspaceImageArtifactMediaType {
-			return cas.Object{}, errors.New("replayed Workspace image does not exact-match CAS")
+			return cas.Object{}, errors.New("replayed workspace image does not exact-match CAS")
 		}
 		return object, nil
 	}
@@ -398,10 +398,10 @@ func (executor Executor) storeWorkspaceImage(
 		return cas.Object{}, errors.Join(putErr, closeErr)
 	}
 	if object.SizeBytes < 1 || object.SizeBytes > deployment.MaxWorkspaceImageBytes {
-		return cas.Object{}, errors.New("Workspace image size is outside the build contract")
+		return cas.Object{}, errors.New("workspace image size is outside the build contract")
 	}
 	if object.Digest != artifact.Digest || object.SizeBytes != artifact.SizeBytes {
-		return cas.Object{}, errors.New("Workspace image CAS result does not match the guest result")
+		return cas.Object{}, errors.New("workspace image CAS result does not match the guest result")
 	}
 	return object, nil
 }

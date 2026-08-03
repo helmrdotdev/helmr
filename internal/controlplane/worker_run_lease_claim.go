@@ -24,12 +24,12 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, io.EOF) {
 			err = errors.New("request body is required")
 		}
-		writeError(w, badRequest(fmt.Errorf("invalid worker Run Lease claim request JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid worker run lease claim request JSON: %w", err)))
 		return
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		writeError(w, badRequest(errors.New("invalid worker Run Lease claim request JSON: trailing value")))
+		writeError(w, badRequest(errors.New("invalid worker run lease claim request JSON: trailing value")))
 		return
 	}
 	leaseIDValue, err := ids.Parse(request.LeaseID)
@@ -47,7 +47,7 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		if errors.Is(err, errStaleRunLeaseClaim) {
-			writeError(w, conflict(errors.New("Run Lease claim is stale")))
+			writeError(w, conflict(errors.New("run lease claim is stale")))
 			return
 		}
 		s.writeRunLeaseClaimFailure(w, authority, err)
@@ -101,5 +101,5 @@ func (s *Server) writeRunLeaseClaimFailure(
 		"run_lease_id", pgvalue.UUIDString(authority.runLease.ID),
 		"error", err,
 	)
-	writeError(w, errors.New("serve worker Run Lease claim"))
+	writeError(w, errors.New("serve worker run lease claim"))
 }

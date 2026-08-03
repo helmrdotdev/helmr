@@ -161,7 +161,7 @@ func writeActorStartAuthError(w http.ResponseWriter, log *slog.Logger, err error
 		log.Error("Actor start authentication failed", "error", err)
 		writeError(w, unavailable(codedError{
 			code:      "actor_start_authority_unavailable",
-			message:   "Actor start authentication is unavailable",
+			message:   "actor start authentication is unavailable",
 			retryable: true,
 		}))
 		return

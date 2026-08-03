@@ -325,7 +325,7 @@ func (f *deploymentBuildFixture) leaseParams(sequence int64) db.LeaseQueuedDeplo
 		OrgID:                            pgvalue.UUID(f.orgID),
 		DeploymentID:                     pgvalue.UUID(f.deploymentID),
 		BuildRegionID:                    dbtest.DefaultRegionID,
-		RequestedCpuMillis:               buildCPU,
+		RequestedCPUMillis:               buildCPU,
 		RequestedMemoryBytes:             buildMemory,
 		RequestedGuestEphemeralDiskBytes: buildGuestDisk,
 		RequestedBuildExecutors:          1,
@@ -456,7 +456,7 @@ func (f *deploymentBuildFixture) start(t *testing.T, leaseID uuid.UUID, sequence
 		BuildLeaseID: pgvalue.UUID(leaseID), LeaseSequence: sequence,
 		WorkerGroupID: f.groupID, WorkerInstanceID: pgvalue.UUID(f.workerID),
 		WorkerEpoch: 1, RequestedGuestEphemeralDiskBytes: buildGuestDisk,
-		RequestedCpuMillis:   buildCPU,
+		RequestedCPUMillis:   buildCPU,
 		RequestedMemoryBytes: buildMemory, RequestedBuildExecutors: 1,
 	})
 	if err != nil {
@@ -802,7 +802,7 @@ func TestDeploymentBuildLogicalFailureIsTerminal(t *testing.T) {
 		WorkerGroupID: f.groupID, WorkerInstanceID: pgvalue.UUID(f.workerID),
 		WorkerEpoch: 1, WorkerProtocolVersion: "helmr.worker.v0",
 		RequestedGuestEphemeralDiskBytes: buildGuestDisk,
-		RequestedCpuMillis:               buildCPU, RequestedMemoryBytes: buildMemory,
+		RequestedCPUMillis:               buildCPU, RequestedMemoryBytes: buildMemory,
 		RequestedBuildExecutors: 1,
 	})
 	if err != nil || recovered.State != db.DeploymentBuildLeaseStateRunning ||

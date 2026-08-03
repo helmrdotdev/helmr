@@ -25,10 +25,10 @@ type WorkspaceCapture struct {
 
 func captureWorkspaceOnSession(ctx context.Context, session vm.Session, store cas.Store, request *workspacev0.CaptureWorkspaceRequest) (WorkspaceCapture, error) {
 	if session == nil || store == nil {
-		return WorkspaceCapture{}, errors.New("Workspace Capture session and CAS are required")
+		return WorkspaceCapture{}, errors.New("workspace capture session and CAS are required")
 	}
 	if request == nil || request.GetEnvelope() == nil || request.GetEnvelope().GetAuthority() == nil || request.GetEnvelope().GetAuthority().GetFence() == nil {
-		return WorkspaceCapture{}, errors.New("Workspace Capture envelope is required")
+		return WorkspaceCapture{}, errors.New("workspace capture envelope is required")
 	}
 	envelope := request.GetEnvelope()
 	fence := envelope.GetAuthority().GetFence()
@@ -37,11 +37,11 @@ func captureWorkspaceOnSession(ctx context.Context, session vm.Session, store ca
 		Fence:       executorFinalizationFence(fence),
 	})
 	if err != nil || expectedFingerprint != envelope.GetRequestFingerprint() {
-		return WorkspaceCapture{}, errors.New("Workspace Capture request fingerprint is invalid")
+		return WorkspaceCapture{}, errors.New("workspace capture request fingerprint is invalid")
 	}
 	stream, err := session.OpenStream(ctx)
 	if err != nil {
-		return WorkspaceCapture{}, fmt.Errorf("open Workspace Capture stream: %w", err)
+		return WorkspaceCapture{}, fmt.Errorf("open workspace capture stream: %w", err)
 	}
 	defer stream.Close()
 	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
@@ -51,27 +51,27 @@ func captureWorkspaceOnSession(ctx context.Context, session vm.Session, store ca
 		WorkspaceMountID: fence.GetWorkspaceMountId(),
 		OperationID:      envelope.GetOperationId(),
 	}, 0); err != nil {
-		return WorkspaceCapture{}, fmt.Errorf("write Workspace Capture header: %w", err)
+		return WorkspaceCapture{}, fmt.Errorf("write workspace capture header: %w", err)
 	}
 	if err := frameio.WriteProtoFrame(stream, request); err != nil {
-		return WorkspaceCapture{}, fmt.Errorf("write Workspace Capture request: %w", err)
+		return WorkspaceCapture{}, fmt.Errorf("write workspace capture request: %w", err)
 	}
 	var response workspacev0.CaptureWorkspaceResponse
 	if err := readWorkspaceControlResponse(ctx, stream, &response); err != nil {
-		return WorkspaceCapture{}, fmt.Errorf("read Workspace Capture response: %w", err)
+		return WorkspaceCapture{}, fmt.Errorf("read workspace capture response: %w", err)
 	}
 	if strings.TrimSpace(response.GetError()) != "" {
-		return WorkspaceCapture{}, fmt.Errorf("Workspace Capture failed: %s", response.GetError())
+		return WorkspaceCapture{}, fmt.Errorf("workspace capture failed: %s", response.GetError())
 	}
 	if response.GetReceipt() == nil ||
 		response.GetReceipt().GetOperationId() != envelope.GetOperationId() ||
 		response.GetReceipt().GetRequestFingerprint() != envelope.GetRequestFingerprint() ||
 		!proto.Equal(response.GetReceipt().GetFence(), fence) {
-		return WorkspaceCapture{}, errors.New("Workspace Capture receipt does not match the request")
+		return WorkspaceCapture{}, errors.New("workspace capture receipt does not match the request")
 	}
 	tree := response.GetTree()
 	if tree == nil || !sha256sum.ValidDigest(tree.GetDigest()) || tree.GetSizeBytes() < 0 || tree.GetSizeBytes() > workspace.MaxArtifactExtractedBytes || tree.GetEntryCount() > uint32(workspace.MaxArtifactEntries) {
-		return WorkspaceCapture{}, errors.New("Workspace Capture tree identity is invalid")
+		return WorkspaceCapture{}, errors.New("workspace capture tree identity is invalid")
 	}
 	artifact := response.GetArtifact()
 	if artifact == nil || !sha256sum.ValidDigest(artifact.GetDigest()) ||
@@ -79,11 +79,11 @@ func captureWorkspaceOnSession(ctx context.Context, session vm.Session, store ca
 		artifact.GetEncoding() != workspace.ArtifactEncoding ||
 		artifact.GetSizeBytes() == 0 || artifact.GetSizeBytes() > uint64(workspace.MaxArtifactArchiveBytes) ||
 		artifact.GetEntryCount() > uint32(workspace.MaxArtifactEntries) {
-		return WorkspaceCapture{}, errors.New("Workspace Capture Artifact descriptor is invalid")
+		return WorkspaceCapture{}, errors.New("workspace capture artifact descriptor is invalid")
 	}
 	header, bodyLength, err := wire.ReadStreamFrameHeader(stream)
 	if err != nil {
-		return WorkspaceCapture{}, fmt.Errorf("read Workspace Capture Artifact header: %w", err)
+		return WorkspaceCapture{}, fmt.Errorf("read workspace capture artifact header: %w", err)
 	}
 	if header.Type != wire.StreamTypeWorkspaceArtifact ||
 		header.WorkspaceID != fence.GetWorkspaceId() ||
@@ -91,18 +91,18 @@ func captureWorkspaceOnSession(ctx context.Context, session vm.Session, store ca
 		header.BodyDigest == nil || strings.TrimSpace(*header.BodyDigest) != artifact.GetDigest() ||
 		bodyLength != artifact.GetSizeBytes() ||
 		header.EntryCount == nil || *header.EntryCount != int(artifact.GetEntryCount()) {
-		return WorkspaceCapture{}, errors.New("Workspace Capture Artifact frame does not match its receipt")
+		return WorkspaceCapture{}, errors.New("workspace capture artifact frame does not match its receipt")
 	}
 	body := &io.LimitedReader{R: stream, N: int64(bodyLength)}
 	object, err := store.Put(ctx, workspace.ArtifactMediaType, body)
 	if err != nil {
-		return WorkspaceCapture{}, fmt.Errorf("store Workspace Capture Artifact: %w", err)
+		return WorkspaceCapture{}, fmt.Errorf("store workspace capture artifact: %w", err)
 	}
 	if body.N != 0 {
-		return WorkspaceCapture{}, errors.New("Workspace Capture Artifact stream ended early")
+		return WorkspaceCapture{}, errors.New("workspace capture artifact stream ended early")
 	}
 	if object.Digest != artifact.GetDigest() || object.SizeBytes != int64(artifact.GetSizeBytes()) || object.MediaType != workspace.ArtifactMediaType {
-		return WorkspaceCapture{}, errors.New("Workspace Capture CAS object does not match its receipt")
+		return WorkspaceCapture{}, errors.New("workspace capture CAS object does not match its receipt")
 	}
 	return WorkspaceCapture{
 		Receipt: response.GetReceipt(),

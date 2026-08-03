@@ -605,7 +605,7 @@ func parseSourceNode(manifest map[string]any) (string, error) {
 		major == 22 && (minor < 18 || minor == 18 && patch < 0) ||
 		major == 24 && minor < 3 {
 		return "", fmt.Errorf(
-			"submitted source Node version %q is outside >=22.18.0 <23 or >=24.3.0 <25",
+			"submitted source Node.js version %q is outside >=22.18.0 <23 or >=24.3.0 <25",
 			version,
 		)
 	}
@@ -637,7 +637,7 @@ func parseSourceNode(manifest map[string]any) (string, error) {
 			selected, err := semver.NewVersion(version)
 			if err != nil || !constraint.Check(selected) {
 				return "", fmt.Errorf(
-					"submitted source Node version %s does not satisfy engines.node %q",
+					"submitted source Node.js version %s does not satisfy engines.node %q",
 					version,
 					constraintText,
 				)

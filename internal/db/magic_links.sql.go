@@ -179,7 +179,7 @@ func (q *Queries) GetMagicLinkLoginUser(ctx context.Context, email pgtype.Text) 
 	err := row.Scan(
 		&i.ID,
 		&i.DisplayName,
-		&i.ProfileImageUrl,
+		&i.ProfileImageURL,
 		&i.PrimaryEmail,
 		&i.DisabledAt,
 		&i.CreatedAt,
@@ -359,7 +359,7 @@ SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_
 type UpsertMagicLinkAuthIdentityParams struct {
 	UserID           pgtype.UUID `json:"user_id"`
 	DisplayName      string      `json:"display_name"`
-	ProfileImageUrl  pgtype.Text `json:"profile_image_url"`
+	ProfileImageURL  pgtype.Text `json:"profile_image_url"`
 	Email            pgtype.Text `json:"email"`
 	IdentityProvider string      `json:"identity_provider"`
 	IdentitySubject  string      `json:"identity_subject"`
@@ -370,7 +370,7 @@ type UpsertMagicLinkAuthIdentityParams struct {
 type UpsertMagicLinkAuthIdentityRow struct {
 	ID              pgtype.UUID        `json:"id"`
 	DisplayName     string             `json:"display_name"`
-	ProfileImageUrl pgtype.Text        `json:"profile_image_url"`
+	ProfileImageURL pgtype.Text        `json:"profile_image_url"`
 	PrimaryEmail    pgtype.Text        `json:"primary_email"`
 	DisabledAt      pgtype.Timestamptz `json:"disabled_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
@@ -381,7 +381,7 @@ func (q *Queries) UpsertMagicLinkAuthIdentity(ctx context.Context, arg UpsertMag
 	row := q.db.QueryRow(ctx, upsertMagicLinkAuthIdentity,
 		arg.UserID,
 		arg.DisplayName,
-		arg.ProfileImageUrl,
+		arg.ProfileImageURL,
 		arg.Email,
 		arg.IdentityProvider,
 		arg.IdentitySubject,
@@ -392,7 +392,7 @@ func (q *Queries) UpsertMagicLinkAuthIdentity(ctx context.Context, arg UpsertMag
 	err := row.Scan(
 		&i.ID,
 		&i.DisplayName,
-		&i.ProfileImageUrl,
+		&i.ProfileImageURL,
 		&i.PrimaryEmail,
 		&i.DisabledAt,
 		&i.CreatedAt,

@@ -300,7 +300,7 @@ func inspectPlatformArtifact(
 			kind = artifactEntryDirectory
 		}
 		if _, err := artifact.require(required, kind); err != nil {
-			return InspectedPlatformArtifact{}, fmt.Errorf("Platform Artifact layout: %w", err)
+			return InspectedPlatformArtifact{}, fmt.Errorf("platform artifact layout: %w", err)
 		}
 	}
 	for _, entry := range artifact.ordered {
@@ -311,15 +311,15 @@ func inspectPlatformArtifact(
 		case PlatformDescriptorPath, PlatformIntegrityPath, PlatformConformancePath, "helmr/upstream":
 		case runtimeEntryPath:
 			if object.MediaType != RuntimeArtifactMediaType {
-				return InspectedPlatformArtifact{}, fmt.Errorf("unknown Platform-owned path %q", entry.Path)
+				return InspectedPlatformArtifact{}, fmt.Errorf("unknown platform-owned path %q", entry.Path)
 			}
 		case "helmr/config-evaluator.mjs", "helmr/esbuild", "helmr/program-compiler.mjs":
 			if object.MediaType != ToolchainMediaType {
-				return InspectedPlatformArtifact{}, fmt.Errorf("unknown Platform-owned path %q", entry.Path)
+				return InspectedPlatformArtifact{}, fmt.Errorf("unknown platform-owned path %q", entry.Path)
 			}
 		default:
 			if !strings.HasPrefix(entry.Path, "helmr/upstream/") {
-				return InspectedPlatformArtifact{}, fmt.Errorf("unknown Platform-owned path %q", entry.Path)
+				return InspectedPlatformArtifact{}, fmt.Errorf("unknown platform-owned path %q", entry.Path)
 			}
 		}
 	}
@@ -333,18 +333,18 @@ func inspectPlatformArtifact(
 	}
 	if conformance.ConformanceSet != expectation.ConformanceSet {
 		return InspectedPlatformArtifact{}, errors.New(
-			"Platform conformance check set does not match policy",
+			"platform conformance check set does not match policy",
 		)
 	}
 	if len(conformance.Results) != len(expectation.RequiredConformance) {
-		return InspectedPlatformArtifact{}, errors.New("Platform conformance result set does not match policy")
+		return InspectedPlatformArtifact{}, errors.New("platform conformance result set does not match policy")
 	}
 	if !slices.Equal(conformance.Inputs, integrity.Evidence) {
-		return InspectedPlatformArtifact{}, errors.New("Platform conformance inputs differ from integrity evidence")
+		return InspectedPlatformArtifact{}, errors.New("platform conformance inputs differ from integrity evidence")
 	}
 	for index, result := range conformance.Results {
 		if result.Name != expectation.RequiredConformance[index] {
-			return InspectedPlatformArtifact{}, errors.New("Platform conformance result set does not match policy")
+			return InspectedPlatformArtifact{}, errors.New("platform conformance result set does not match policy")
 		}
 	}
 	if err := verifyPlatformEvidence(ctx, artifact, integrity.Evidence); err != nil {
@@ -369,26 +369,26 @@ func inspectPlatformArtifact(
 	switch object.MediaType {
 	case RuntimeArtifactMediaType:
 		var value RuntimeArtifactDescriptor
-		if err := parsePlatformDocument(descriptorRaw, "Runtime descriptor", &value); err != nil {
+		if err := parsePlatformDocument(descriptorRaw, "runtime descriptor", &value); err != nil {
 			return InspectedPlatformArtifact{}, err
 		}
 		if err := validateRuntimeArtifactDescriptor(value, expectation, integrityDigest, conformanceDigest); err != nil {
 			return InspectedPlatformArtifact{}, err
 		}
 		if value.Source != integrity.Source {
-			return InspectedPlatformArtifact{}, errors.New("Runtime descriptor and integrity source differ")
+			return InspectedPlatformArtifact{}, errors.New("runtime descriptor and integrity source differ")
 		}
 		inspected.Runtime = &value
 	case ManagerTreeMediaType:
 		var value ManagerArtifactDescriptor
-		if err := parsePlatformDocument(descriptorRaw, "Manager descriptor", &value); err != nil {
+		if err := parsePlatformDocument(descriptorRaw, "manager descriptor", &value); err != nil {
 			return InspectedPlatformArtifact{}, err
 		}
 		if err := validateManagerArtifactDescriptor(value, expectation, integrityDigest, conformanceDigest); err != nil {
 			return InspectedPlatformArtifact{}, err
 		}
 		if value.Source != integrity.Source {
-			return InspectedPlatformArtifact{}, errors.New("Manager descriptor and integrity source differ")
+			return InspectedPlatformArtifact{}, errors.New("manager descriptor and integrity source differ")
 		}
 		inspected.Manager = &value
 	case ToolchainMediaType:
@@ -417,7 +417,7 @@ func CanonicalPlatformDocument(value any) ([]byte, error) {
 		return nil, err
 	}
 	if len(canonical) == 0 || len(canonical) > maxPlatformArtifactDocumentBytes {
-		return nil, errors.New("Platform Artifact document is empty or excessive")
+		return nil, errors.New("platform artifact document is empty or excessive")
 	}
 	return canonical, nil
 }
@@ -442,7 +442,7 @@ func readPlatformIntegrity(
 		value.Identity == "" ||
 		len(value.Evidence) == 0 ||
 		len(value.Evidence) > maxPlatformEvidenceFiles {
-		return PlatformIntegrity{}, nil, errors.New("Platform integrity document is invalid")
+		return PlatformIntegrity{}, nil, errors.New("platform integrity document is invalid")
 	}
 	return value, raw, nil
 }
@@ -463,12 +463,12 @@ func readPlatformConformance(
 		value.ConformanceSet == "" ||
 		len(value.Results) == 0 ||
 		len(value.Results) > maxPlatformConformanceResults {
-		return PlatformConformance{}, nil, errors.New("Platform conformance document is invalid")
+		return PlatformConformance{}, nil, errors.New("platform conformance document is invalid")
 	}
 	previous := ""
 	for _, result := range value.Results {
 		if result.Name <= previous || result.Outcome != "passed" {
-			return PlatformConformance{}, nil, errors.New("Platform conformance results are not sorted passed results")
+			return PlatformConformance{}, nil, errors.New("platform conformance results are not sorted passed results")
 		}
 		previous = result.Name
 	}
@@ -481,7 +481,7 @@ func verifyPlatformEvidence(
 	files []PlatformEvidenceFile,
 ) error {
 	if len(files) > maxPlatformEvidenceFiles {
-		return errors.New("Platform evidence file count is excessive")
+		return errors.New("platform evidence file count is excessive")
 	}
 	previous := ""
 	for _, file := range files {
@@ -491,7 +491,7 @@ func verifyPlatformEvidence(
 			!sha256DigestPattern.MatchString(file.Digest) ||
 			file.SizeBytes < 1 ||
 			file.SizeBytes > maxArtifactFileSize {
-			return errors.New("Platform evidence file descriptor is invalid")
+			return errors.New("platform evidence file descriptor is invalid")
 		}
 		reader, err := artifact.reader.Open(ctx, file.Path)
 		if err != nil {
@@ -505,7 +505,7 @@ func verifyPlatformEvidence(
 		}
 		if size != file.SizeBytes ||
 			"sha256:"+hex.EncodeToString(hash.Sum(nil)) != file.Digest {
-			return fmt.Errorf("Platform evidence file %q does not match its descriptor", file.Path)
+			return fmt.Errorf("platform evidence file %q does not match its descriptor", file.Path)
 		}
 		previous = file.Path
 	}
@@ -545,7 +545,7 @@ func verifyUpstreamAuthority(
 	case ManagerTreeMediaType:
 		return verifyRetainedManagerSource(ctx, artifact, source, integrity, expectation)
 	default:
-		return errors.New("Platform Artifact media type has no upstream authority verifier")
+		return errors.New("platform artifact media type has no upstream authority verifier")
 	}
 }
 
@@ -586,17 +586,17 @@ func verifyRetainedNodeSource(
 	}
 	keyringRaw, err := base64.StdEncoding.Strict().DecodeString(expectation.NodeReleaseKeyring)
 	if err != nil || len(keyringRaw) == 0 || len(keyringRaw) > maxNodeReleaseKeyringBytes {
-		return errors.New("Node release keyring is invalid")
+		return errors.New("the Node.js release keyring is invalid")
 	}
 	keyring, err := openpgp.ReadKeyRing(bytes.NewReader(keyringRaw))
 	if err != nil {
-		return fmt.Errorf("read Node release keyring: %w", err)
+		return fmt.Errorf("read Node.js release keyring: %w", err)
 	}
 	block, rest := clearsign.Decode(signed)
 	if block == nil || len(bytes.TrimSpace(rest)) != 0 ||
 		block.ArmoredSignature == nil ||
 		!bytes.Equal(block.Plaintext, plain) {
-		return errors.New("retained Node checksum signature is invalid")
+		return errors.New("retained Node.js checksum signature is invalid")
 	}
 	signature, signer, err := openpgp.VerifyDetachedSignature(
 		keyring,
@@ -606,12 +606,12 @@ func verifyRetainedNodeSource(
 	)
 	if err != nil || signature == nil || signer == nil ||
 		len(signature.IssuerFingerprint) == 0 {
-		return errors.New("retained Node checksum signature is not valid")
+		return errors.New("retained Node.js checksum signature is not valid")
 	}
 	fingerprint := strings.ToUpper(hex.EncodeToString(signature.IssuerFingerprint))
 	if fingerprint != integrity.Identity ||
 		!slices.Contains(expectation.IntegrityIdentities, fingerprint) {
-		return errors.New("retained Node checksum signer is not allowed")
+		return errors.New("retained Node.js checksum signer is not allowed")
 	}
 	filename := path.Base(expectation.SourceOrigin)
 	want, err := nodeChecksum(plain, filename)
@@ -625,7 +625,7 @@ func verifyRetainedNodeSource(
 	}
 	if size != integrity.Source.SizeBytes ||
 		hex.EncodeToString(hash.Sum(nil)) != want {
-		return errors.New("retained Node distribution does not match its signed checksum")
+		return errors.New("retained Node.js distribution does not match its signed checksum")
 	}
 	return nil
 }
@@ -638,7 +638,7 @@ func verifyRetainedManagerSource(
 	expectation PlatformArtifactExpectation,
 ) error {
 	if expectation.Manager == nil {
-		return errors.New("Manager expectation is missing")
+		return errors.New("manager expectation is missing")
 	}
 	manager := *expectation.Manager
 	if manager.Name == PackageManagerBun {
@@ -655,7 +655,7 @@ func verifyRetainedManagerSource(
 	if version.Name != string(manager.Name) ||
 		version.Version != manager.Version ||
 		version.Dist.Tarball != expectation.SourceOrigin {
-		return errors.New("retained registry metadata does not match Manager selector")
+		return errors.New("retained registry metadata does not match manager selector")
 	}
 	if len(version.Dist.Signatures) != 0 {
 		keysRaw, err := artifact.read(ctx, "helmr/upstream/registry-keys.json", maxUpstreamMetadataBytes)
@@ -727,11 +727,11 @@ func verifyRetainedRegistryDistribution(
 		return err
 	}
 	if written != size || !bytes.Equal(ssriHash.Sum(nil), wantSSRI) {
-		return errors.New("retained Manager distribution does not match dist.integrity")
+		return errors.New("retained manager distribution does not match dist.integrity")
 	}
 	if managerHash != nil &&
 		hex.EncodeToString(managerHash.Sum(nil)) != wantManager {
-		return errors.New("retained Manager distribution does not match packageManager integrity")
+		return errors.New("retained manager distribution does not match packageManager integrity")
 	}
 	return nil
 }
@@ -746,7 +746,7 @@ func requirePlatformEvidencePaths(
 	}
 	slices.Sort(expected)
 	if !slices.Equal(actual, expected) {
-		return errors.New("Platform evidence path set does not match artifact kind")
+		return errors.New("platform evidence path set does not match artifact kind")
 	}
 	return nil
 }
@@ -772,7 +772,7 @@ func verifyRetainedBunSource(
 	var release githubRelease
 	if err := decodeUpstreamJSON(metadataRaw, &release); err != nil ||
 		release.TagName != "bun-v"+manager.Version {
-		return errors.New("retained Bun release metadata does not match Manager selector")
+		return errors.New("retained Bun release metadata does not match manager selector")
 	}
 	const assetName = "bun-linux-x64-baseline.zip"
 	digest := ""
@@ -808,7 +808,7 @@ func validatePlatformIntegrity(
 	if integrity.Source.Origin != expectation.SourceOrigin ||
 		integrity.IntegrityKind != expectation.IntegrityKind ||
 		!slices.Contains(expectation.IntegrityIdentities, integrity.Identity) {
-		return errors.New("Platform integrity authority does not match policy")
+		return errors.New("platform integrity authority does not match policy")
 	}
 	allowedHosts := make(map[string]struct{}, len(expectation.AllowedRedirectHosts))
 	for _, host := range expectation.AllowedRedirectHosts {
@@ -817,14 +817,14 @@ func validatePlatformIntegrity(
 	seenRedirects := make(map[string]struct{}, len(integrity.Redirects))
 	for _, redirect := range integrity.Redirects {
 		if _, exists := seenRedirects[redirect]; exists {
-			return errors.New("Platform redirect chain contains a duplicate")
+			return errors.New("platform redirect chain contains a duplicate")
 		}
 		host, ok := httpsURLHost(redirect)
 		if !ok {
-			return errors.New("Platform redirect is not an absolute HTTPS URL")
+			return errors.New("platform redirect is not an absolute HTTPS URL")
 		}
 		if _, ok := allowedHosts[host]; !ok {
-			return errors.New("Platform redirect escaped its policy hosts")
+			return errors.New("platform redirect escaped its policy hosts")
 		}
 		seenRedirects[redirect] = struct{}{}
 	}
@@ -838,11 +838,11 @@ func validatePlatformIntegrity(
 			continue
 		}
 		if _, ok := described[entry.Path]; !ok {
-			return fmt.Errorf("Platform evidence file %q is not described", entry.Path)
+			return fmt.Errorf("platform evidence file %q is not described", entry.Path)
 		}
 	}
 	if len(described) != countPlatformEvidenceFiles(artifact) {
-		return errors.New("Platform evidence document contains a duplicate or missing file")
+		return errors.New("platform evidence document contains a duplicate or missing file")
 	}
 	return nil
 }
@@ -881,7 +881,7 @@ func validateRuntimeArtifactDescriptor(
 ) error {
 	programNodeFlags, err := NodeProgramFlags(value.NodeVersion)
 	if err != nil {
-		return errors.New("Runtime descriptor Node version has no Program launch contract")
+		return errors.New("runtime descriptor Node.js version has no program launch contract")
 	}
 	if value.Kind != "runtime" ||
 		value.DescriptorSchemaVersion != expectation.DescriptorSchemaVersion ||
@@ -899,7 +899,7 @@ func validateRuntimeArtifactDescriptor(
 		!sha256DigestPattern.MatchString(value.ConformanceDigest) ||
 		value.NodeModuleABI == "" ||
 		!slices.Equal(value.ProgramNodeFlags, programNodeFlags) {
-		return errors.New("Runtime descriptor does not match acquisition authority")
+		return errors.New("runtime descriptor does not match acquisition authority")
 	}
 	return validatePlatformSource(value.Source)
 }
@@ -907,20 +907,20 @@ func validateRuntimeArtifactDescriptor(
 func ParseRuntimeArtifactDescriptor(raw []byte) (RuntimeArtifactDescriptor, error) {
 	if len(raw) == 0 || len(raw) > maxPlatformArtifactDocumentBytes {
 		return RuntimeArtifactDescriptor{}, fmt.Errorf(
-			"Runtime descriptor size is outside [1,%d]",
+			"runtime descriptor size is outside [1,%d]",
 			maxPlatformArtifactDocumentBytes,
 		)
 	}
 	canonical, err := jsoncanon.Transform(raw)
 	if err != nil {
 		return RuntimeArtifactDescriptor{}, fmt.Errorf(
-			"canonicalize Runtime descriptor: %w",
+			"canonicalize runtime descriptor: %w",
 			err,
 		)
 	}
 	if !bytes.Equal(raw, canonical) {
 		return RuntimeArtifactDescriptor{}, errors.New(
-			"Runtime descriptor is not RFC 8785 canonical JSON",
+			"runtime descriptor is not RFC 8785 canonical JSON",
 		)
 	}
 	var descriptor RuntimeArtifactDescriptor
@@ -928,11 +928,11 @@ func ParseRuntimeArtifactDescriptor(raw []byte) (RuntimeArtifactDescriptor, erro
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&descriptor); err != nil {
 		return RuntimeArtifactDescriptor{}, fmt.Errorf(
-			"decode Runtime descriptor: %w",
+			"decode runtime descriptor: %w",
 			err,
 		)
 	}
-	if err := ensureEOF(decoder, "Runtime descriptor"); err != nil {
+	if err := ensureEOF(decoder, "runtime descriptor"); err != nil {
 		return RuntimeArtifactDescriptor{}, err
 	}
 	if err := validateRuntimeArtifactDescriptor(
@@ -953,7 +953,7 @@ func ParseRuntimeArtifactDescriptor(raw []byte) (RuntimeArtifactDescriptor, erro
 	}
 	if !bytes.Equal(raw, complete) {
 		return RuntimeArtifactDescriptor{}, errors.New(
-			"Runtime descriptor does not match the complete canonical v0 shape",
+			"runtime descriptor does not match the complete canonical v0 shape",
 		)
 	}
 	return descriptor, nil
@@ -974,11 +974,11 @@ func validateManagerArtifactDescriptor(
 		value.PackageManager != *expectation.Manager ||
 		value.IntegrityDigest != integrityDigest ||
 		value.ConformanceDigest != conformanceDigest {
-		return errors.New("Manager descriptor does not match acquisition authority")
+		return errors.New("manager descriptor does not match acquisition authority")
 	}
 	kind, entrypoint, _, err := managerDistribution(value.PackageManager)
 	if err != nil || value.Entrypoint.Kind != kind || value.Entrypoint.Path != entrypoint {
-		return errors.New("Manager descriptor entrypoint does not match its family")
+		return errors.New("manager descriptor entrypoint does not match its family")
 	}
 	return validatePlatformSource(value.Source)
 }
@@ -1005,7 +1005,7 @@ func validateToolchainArtifactDescriptor(
 		return errors.New("toolchain descriptor does not match acquisition authority")
 	}
 	if err := validatePlatformSource(value.NodeSource); err != nil {
-		return fmt.Errorf("toolchain Node source: %w", err)
+		return fmt.Errorf("toolchain Node.js source: %w", err)
 	}
 	return nil
 }
@@ -1015,20 +1015,20 @@ func ParseToolchainArtifactDescriptor(
 ) (ToolchainArtifactDescriptor, error) {
 	if len(raw) == 0 || len(raw) > maxPlatformArtifactDocumentBytes {
 		return ToolchainArtifactDescriptor{}, fmt.Errorf(
-			"Toolchain descriptor size is outside [1,%d]",
+			"toolchain descriptor size is outside [1,%d]",
 			maxPlatformArtifactDocumentBytes,
 		)
 	}
 	canonical, err := jsoncanon.Transform(raw)
 	if err != nil {
 		return ToolchainArtifactDescriptor{}, fmt.Errorf(
-			"canonicalize Toolchain descriptor: %w",
+			"canonicalize toolchain descriptor: %w",
 			err,
 		)
 	}
 	if !bytes.Equal(raw, canonical) {
 		return ToolchainArtifactDescriptor{}, errors.New(
-			"Toolchain descriptor is not RFC 8785 canonical JSON",
+			"toolchain descriptor is not RFC 8785 canonical JSON",
 		)
 	}
 	var descriptor ToolchainArtifactDescriptor
@@ -1036,7 +1036,7 @@ func ParseToolchainArtifactDescriptor(
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&descriptor); err != nil {
 		return ToolchainArtifactDescriptor{}, fmt.Errorf(
-			"decode Toolchain descriptor: %w",
+			"decode toolchain descriptor: %w",
 			err,
 		)
 	}
@@ -1045,7 +1045,7 @@ func ParseToolchainArtifactDescriptor(
 	}
 	if err := validateCompilerInputs(descriptor.Compiler); err != nil {
 		return ToolchainArtifactDescriptor{}, fmt.Errorf(
-			"Toolchain compiler: %w",
+			"toolchain compiler: %w",
 			err,
 		)
 	}
@@ -1069,7 +1069,7 @@ func ParseToolchainArtifactDescriptor(
 	}
 	if !bytes.Equal(raw, complete) {
 		return ToolchainArtifactDescriptor{}, errors.New(
-			"Toolchain descriptor does not match the complete canonical v0 shape",
+			"toolchain descriptor does not match the complete canonical v0 shape",
 		)
 	}
 	return descriptor, nil
@@ -1082,10 +1082,10 @@ func verifyToolchainCompiler(
 ) error {
 	binaryLink, err := artifact.require("helmr/esbuild", artifactEntrySymlink)
 	if err != nil {
-		return fmt.Errorf("Compiler layout: %w", err)
+		return fmt.Errorf("compiler layout: %w", err)
 	}
 	if binaryLink.LinkTarget != "../node_modules/@esbuild/linux-x64/bin/esbuild" {
-		return errors.New("Compiler esbuild binary link does not match policy")
+		return errors.New("compiler esbuild binary link does not match policy")
 	}
 	for path, expectation := range map[string]struct {
 		digest string
@@ -1106,11 +1106,11 @@ func verifyToolchainCompiler(
 	} {
 		entry, err := artifact.require(path, artifactEntryRegular)
 		if err != nil {
-			return fmt.Errorf("Compiler layout: %w", err)
+			return fmt.Errorf("compiler layout: %w", err)
 		}
 		if entry.Mode != expectation.mode {
 			return fmt.Errorf(
-				"Compiler path %q mode = %#o, want %#o",
+				"compiler path %q mode = %#o, want %#o",
 				path,
 				entry.Mode,
 				expectation.mode,
@@ -1121,7 +1121,7 @@ func verifyToolchainCompiler(
 			return err
 		}
 		if digestBytes(raw) != expectation.digest {
-			return fmt.Errorf("Compiler path %q digest does not match policy", path)
+			return fmt.Errorf("compiler path %q digest does not match policy", path)
 		}
 	}
 	apiDigest, err := compilerPackageDigest(
@@ -1156,7 +1156,7 @@ func verifyToolchainCompiler(
 		return err
 	}
 	if headersDigest != descriptor.NodeHeadersDigest {
-		return errors.New("toolchain Node headers digest does not match bytes")
+		return errors.New("toolchain Node.js headers digest does not match bytes")
 	}
 	return nil
 }
@@ -1174,7 +1174,7 @@ func compilerPackageDigest(
 	root string,
 ) (string, error) {
 	if _, err := artifact.require(root, artifactEntryDirectory); err != nil {
-		return "", fmt.Errorf("Compiler layout: %w", err)
+		return "", fmt.Errorf("compiler layout: %w", err)
 	}
 	prefix := root + "/"
 	files := make([]compilerPackageFile, 0)
@@ -1273,7 +1273,7 @@ func validatePlatformSource(source PlatformSource) error {
 	if source.Origin == "" ||
 		!sha256DigestPattern.MatchString(source.Digest) ||
 		source.SizeBytes < 1 {
-		return errors.New("Platform source descriptor is invalid")
+		return errors.New("platform source descriptor is invalid")
 	}
 	return nil
 }
@@ -1308,7 +1308,7 @@ func platformArtifactRole(mediaType string) (artifactRole, int64, error) {
 	case ToolchainMediaType:
 		return toolchainArtifact, maxToolArtifactBytes, nil
 	default:
-		return 0, 0, fmt.Errorf("Platform Artifact media type %q is unsupported", mediaType)
+		return 0, 0, fmt.Errorf("platform artifact media type %q is unsupported", mediaType)
 	}
 }
 

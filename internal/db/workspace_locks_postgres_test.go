@@ -51,7 +51,7 @@ func TestChildWorkspacePairLocksConvergeForOppositeDirections(t *testing.T) {
 			},
 		})
 		if err == nil && len(rows) != 2 {
-			err = fmt.Errorf("locked %d Workspaces, want 2", len(rows))
+			err = fmt.Errorf("locked %d workspaces, want 2", len(rows))
 		}
 		if err == nil {
 			err = tx.Commit(ctx)

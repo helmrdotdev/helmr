@@ -21,7 +21,7 @@ const (
 )
 
 // ErrNotFound reports that the requested persistent CLI state is missing.
-var ErrNotFound = errors.New("helmr CLI state not found")
+var ErrNotFound = errors.New("no Helmr CLI state found")
 
 // Config is the non-secret CLI config stored on disk.
 type Config struct {

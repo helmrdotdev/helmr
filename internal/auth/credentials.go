@@ -31,7 +31,7 @@ type Credentials struct {
 func NewCredentialKey(raw []byte) (CredentialKey, error) {
 	if len(raw) != CredentialKeySize {
 		return CredentialKey{}, fmt.Errorf(
-			"Token credential key must be %d bytes, got %d",
+			"token credential key must be %d bytes, got %d",
 			CredentialKeySize,
 			len(raw),
 		)
@@ -45,18 +45,18 @@ func (k CredentialKey) Valid() bool {
 
 func (k CredentialKey) Derive(tokenID uuid.UUID) (Credentials, error) {
 	if tokenID == uuid.Nil {
-		return Credentials{}, errors.New("Token ID is required")
+		return Credentials{}, errors.New("token ID is required")
 	}
 	if !k.Valid() {
-		return Credentials{}, errors.New("Token credential key is invalid")
+		return Credentials{}, errors.New("token credential key is invalid")
 	}
 	callback, err := deriveCredential(k.value, callbackDomain, tokenID)
 	if err != nil {
-		return Credentials{}, fmt.Errorf("derive Token callback credential: %w", err)
+		return Credentials{}, fmt.Errorf("derive token callback credential: %w", err)
 	}
 	bearer, err := deriveCredential(k.value, bearerDomain, tokenID)
 	if err != nil {
-		return Credentials{}, fmt.Errorf("derive Token bearer credential: %w", err)
+		return Credentials{}, fmt.Errorf("derive token bearer credential: %w", err)
 	}
 	callbackSecret := base64.RawURLEncoding.EncodeToString(callback)
 	publicAccessToken := "hlmr_pat_" + base64.RawURLEncoding.EncodeToString(bearer)

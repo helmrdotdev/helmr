@@ -312,15 +312,15 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	}
 	body, err := c.cas.Get(ctx, workspaceArtifact.Digest)
 	if err != nil {
-		return nil, fmt.Errorf("reopen checkpoint Workspace Artifact: %w", err)
+		return nil, fmt.Errorf("reopen checkpoint workspace artifact: %w", err)
 	}
 	tree, inspectErr := workspace.InspectArtifact(body, *workspaceArtifact)
 	closeErr := body.Close()
 	if inspectErr != nil {
-		return nil, fmt.Errorf("inspect checkpoint Workspace Artifact: %w", inspectErr)
+		return nil, fmt.Errorf("inspect checkpoint workspace artifact: %w", inspectErr)
 	}
 	if closeErr != nil {
-		return nil, fmt.Errorf("close checkpoint Workspace Artifact: %w", closeErr)
+		return nil, fmt.Errorf("close checkpoint workspace artifact: %w", closeErr)
 	}
 	return &CheckpointWorkspaceCapture{Tree: tree, Artifact: *workspaceArtifact}, nil
 }

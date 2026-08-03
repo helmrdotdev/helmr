@@ -1359,13 +1359,13 @@ func validateClaimPhysicalAuthority(worker workerActor, authority runLeaseClaimA
 	}
 	if !authority.worker.RuntimeIdentityID.Valid ||
 		authority.worker.RuntimeIdentityID.String != runtime.RuntimeIdentityID ||
-		runtime.ReservedCpuMillis != lease.RequestedCpuMillis ||
+		runtime.ReservedCPUMillis != lease.RequestedCPUMillis ||
 		runtime.ReservedMemoryBytes != lease.RequestedMemoryBytes ||
 		runtime.ReservedGuestEphemeralDiskBytes != lease.RequestedGuestEphemeralDiskBytes ||
 		runtime.ReservedExecutionSlots != lease.RequestedExecutionSlots ||
-		authority.worker.PerVmCpuMillis != lease.RequestedCpuMillis ||
-		authority.worker.PerVmMemoryBytes != lease.RequestedMemoryBytes ||
-		authority.worker.PerVmGuestEphemeralDiskBytes != lease.RequestedGuestEphemeralDiskBytes {
+		authority.worker.PerVMCPUMillis != lease.RequestedCPUMillis ||
+		authority.worker.PerVMMemoryBytes != lease.RequestedMemoryBytes ||
+		authority.worker.PerVMGuestEphemeralDiskBytes != lease.RequestedGuestEphemeralDiskBytes {
 		return errStaleRunLeaseClaim
 	}
 	return nil
@@ -1476,7 +1476,7 @@ func validateCheckpointSource(authority runLeaseClaimAuthority) error {
 		sourceLease.RuntimeInstanceID != sourceRuntime.ID ||
 		sourceLease.RuntimeIdentityID != sourceRuntime.RuntimeIdentityID ||
 		sourceLease.RuntimeIdentityID != currentLease.RuntimeIdentityID ||
-		sourceLease.RequestedCpuMillis != currentLease.RequestedCpuMillis ||
+		sourceLease.RequestedCPUMillis != currentLease.RequestedCPUMillis ||
 		sourceLease.RequestedMemoryBytes != currentLease.RequestedMemoryBytes ||
 		sourceLease.RequestedGuestEphemeralDiskBytes != currentLease.RequestedGuestEphemeralDiskBytes ||
 		sourceLease.RequestedExecutionSlots != currentLease.RequestedExecutionSlots ||
@@ -1485,7 +1485,7 @@ func validateCheckpointSource(authority runLeaseClaimAuthority) error {
 		sourceRuntime.DeploymentDefinitionID != currentRuntime.DeploymentDefinitionID ||
 		sourceRuntime.WorkspaceID != currentRuntime.WorkspaceID ||
 		sourceRuntime.ProgramDeploymentID != currentRuntime.ProgramDeploymentID ||
-		sourceRuntime.ReservedCpuMillis != currentRuntime.ReservedCpuMillis ||
+		sourceRuntime.ReservedCPUMillis != currentRuntime.ReservedCPUMillis ||
 		sourceRuntime.ReservedMemoryBytes != currentRuntime.ReservedMemoryBytes ||
 		sourceRuntime.ReservedGuestEphemeralDiskBytes != currentRuntime.ReservedGuestEphemeralDiskBytes ||
 		sourceRuntime.ReservedExecutionSlots != currentRuntime.ReservedExecutionSlots {

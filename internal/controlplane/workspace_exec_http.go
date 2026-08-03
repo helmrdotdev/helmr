@@ -20,7 +20,7 @@ import (
 func (s *Server) executeWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
 	workspaceID, err := ids.Parse(chi.URLParam(r, "workspaceID"))
 	if err != nil {
-		writeError(w, badRequest(codedError{code: "invalid_workspace_reference", message: "Workspace ID is invalid"}))
+		writeError(w, badRequest(codedError{code: "invalid_workspace_reference", message: "workspace ID is invalid"}))
 		return
 	}
 	var body api.ExecuteWorkspaceRequest

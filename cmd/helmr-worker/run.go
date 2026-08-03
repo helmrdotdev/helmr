@@ -136,7 +136,7 @@ func run(log *slog.Logger) error {
 		}
 		startupRecovery = &evidence
 		if err := firecracker.CleanRuntimes(workDir, ""); err != nil {
-			return fmt.Errorf("clean stale firecracker runtimes: %w", err)
+			return fmt.Errorf("clean stale Firecracker runtimes: %w", err)
 		}
 		storage.RequiredScratchAvailableBytes = uint64(firecracker.BootCorpusMaxMiB) * 1024 * 1024
 		storageProof, err := worker.ProveBuildStorage(storage)
@@ -147,7 +147,7 @@ func run(log *slog.Logger) error {
 			return fmt.Errorf("prepare substrate cache: %w", err)
 		}
 		if err := ensureBuildCacheDirectory(storageProof.ArtifactCacheDir); err != nil {
-			return fmt.Errorf("prepare Artifact cache: %w", err)
+			return fmt.Errorf("prepare artifact cache: %w", err)
 		}
 		substrateCacheDir = storageProof.SubstrateCacheDir
 		artifactCacheDir = storageProof.ArtifactCacheDir
@@ -160,7 +160,7 @@ func run(log *slog.Logger) error {
 	if supportsBuild {
 		guestImageDir, err = firecracker.PrepareRuntime(guestImageDir, workDir, serviceID)
 		if err != nil {
-			return fmt.Errorf("prepare firecracker runtime: %w", err)
+			return fmt.Errorf("prepare Firecracker runtime: %w", err)
 		}
 		storage := *buildStorageConfig
 		storage.RequiredScratchAvailableBytes = uint64(admissionDiskFloorMiB(true, cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB)) * 1024 * 1024
@@ -193,18 +193,18 @@ func run(log *slog.Logger) error {
 	connectorConfig.HealthAttemptTimeout = cfg.VMHealthAttemptTimeout
 	connector, err := firecracker.NewConnector(connectorConfig)
 	if err != nil {
-		return fmt.Errorf("configure firecracker connector: %w", err)
+		return fmt.Errorf("configure Firecracker connector: %w", err)
 	}
 	if err := connector.Preflight(ctx); err != nil {
-		return fmt.Errorf("firecracker worker preflight: %w", err)
+		return fmt.Errorf("the Firecracker worker preflight: %w", err)
 	}
 	runtimeCapabilities, err := connector.RuntimeCapabilities()
 	if err != nil {
-		return fmt.Errorf("inspect firecracker runtime: %w", err)
+		return fmt.Errorf("inspect Firecracker runtime: %w", err)
 	}
 	runtimeArchitecture, err := deployment.RuntimeArchitectureFromGo(runtimeCapabilities.Arch)
 	if err != nil {
-		return fmt.Errorf("normalize firecracker runtime architecture: %w", err)
+		return fmt.Errorf("normalize Firecracker runtime architecture: %w", err)
 	}
 	runtimeIdentity := runtimeid.Selector{
 		Arch:            string(runtimeArchitecture),
@@ -216,11 +216,11 @@ func run(log *slog.Logger) error {
 	}
 	runtimeIdentity.ID, err = runtimeid.Digest(runtimeIdentity)
 	if err != nil {
-		return fmt.Errorf("derive normalized firecracker runtime identity: %w", err)
+		return fmt.Errorf("derive normalized Firecracker runtime identity: %w", err)
 	}
 	runtimeScratch := filepath.Join(workDir, "tmp", "runtime")
 	if err := os.MkdirAll(runtimeScratch, 0o700); err != nil {
-		return fmt.Errorf("create Runtime scratch: %w", err)
+		return fmt.Errorf("create runtime scratch: %w", err)
 	}
 	if supportsRun || supportsBuild {
 		platformStore, err = cass3.NewImmutable(
@@ -229,7 +229,7 @@ func run(log *slog.Logger) error {
 			cass3.WithTempDir(runtimeScratch),
 		)
 		if err != nil {
-			return fmt.Errorf("configure Platform Artifact store: %w", err)
+			return fmt.Errorf("configure platform artifact store: %w", err)
 		}
 	}
 	if supportsBuild {
@@ -249,7 +249,7 @@ func run(log *slog.Logger) error {
 	if supportsBuild {
 		acquisitionWorkDir := filepath.Join(workDir, "platform-acquisition")
 		if err := ensurePrivateDirectory(acquisitionWorkDir); err != nil {
-			return fmt.Errorf("prepare Platform acquisition work directory: %w", err)
+			return fmt.Errorf("prepare platform acquisition work directory: %w", err)
 		}
 		gpgv, err := requireExecutable("gpgv")
 		if err != nil {
@@ -265,7 +265,7 @@ func run(log *slog.Logger) error {
 		}
 		workerExecutable, err := os.Executable()
 		if err != nil {
-			return fmt.Errorf("resolve Worker executable: %w", err)
+			return fmt.Errorf("resolve worker executable: %w", err)
 		}
 		platformAcquirer = worker.PlatformAcquisitionProcess{
 			BuildPolicyPath:  cfg.BuildPolicyPath,
@@ -298,13 +298,13 @@ func run(log *slog.Logger) error {
 	if supportsBuild {
 		imageBuildWorkDir = filepath.Join(workDir, "image-builds")
 		if err := ensurePrivateDirectory(imageBuildWorkDir); err != nil {
-			return fmt.Errorf("prepare Workspace image build directory: %w", err)
+			return fmt.Errorf("prepare workspace image build directory: %w", err)
 		}
 		imageControlPlane = workerImageControlPlane{client: controlPlaneClient}
 		if cfg.ImageCache != nil {
 			awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
 			if err != nil {
-				return fmt.Errorf("load Workspace image cache AWS configuration: %w", err)
+				return fmt.Errorf("load workspace image cache AWS configuration: %w", err)
 			}
 			cacheConfig := imagecacheecr.Config{
 				RegistryAuthority:   cfg.ImageCache.RegistryAuthority,
@@ -318,7 +318,7 @@ func run(log *slog.Logger) error {
 				imagecacheecr.NewTokenClientFactory(awsCfg),
 			)
 			if err != nil {
-				return fmt.Errorf("configure Workspace image cache credentials: %w", err)
+				return fmt.Errorf("configure workspace image cache credentials: %w", err)
 			}
 			cacheCredentials = workerImageCacheCredentials{provider: provider}
 		}
@@ -578,7 +578,7 @@ func run(log *slog.Logger) error {
 	if preparedRuntimePool != nil {
 		preparedRuntimePool.AdmitRuntimeStart = supervisor.AdmitRuntimeStart
 	}
-	log.Info("helmr worker listening", "controlplane_url", cfg.ControlPlaneURL, "worker_instance_id", workerCredential.WorkerInstanceID)
+	log.Info("Helmr worker listening", "controlplane_url", cfg.ControlPlaneURL, "worker_instance_id", workerCredential.WorkerInstanceID)
 	if err := supervisor.Run(ctx); err != nil && err != context.Canceled {
 		return err
 	}
@@ -632,7 +632,7 @@ func validateWorkerStores(cfg config.Worker) error {
 		cfg.PlatformStoreURI,
 	); err != nil {
 		return fmt.Errorf(
-			"validate ordinary CAS and Platform Artifact store: %w",
+			"validate ordinary CAS and platform artifact store: %w",
 			err,
 		)
 	}

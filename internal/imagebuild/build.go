@@ -278,7 +278,7 @@ func CacheScope(
 	architecture string,
 ) (string, error) {
 	if environmentID == uuid.Nil {
-		return "", errors.New("image cache Environment ID is required")
+		return "", errors.New("image cache environment ID is required")
 	}
 	if !secretNamePattern.MatchString(declarationSlot) {
 		return "", errors.New("image cache declaration slot is invalid")
@@ -608,7 +608,7 @@ func validateImageSourcePath(value string, allowDot bool, label string) error {
 		hasParentPathComponent(value) ||
 		value == "helmr" || strings.HasPrefix(value, "helmr/") ||
 		(value == "." && !allowDot) {
-		return fmt.Errorf("%s must be a clean Deployment-relative POSIX path", label)
+		return fmt.Errorf("%s must be a clean deployment-relative POSIX path", label)
 	}
 	return nil
 }

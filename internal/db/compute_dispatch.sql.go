@@ -107,17 +107,17 @@ type DrainWorkerInstanceRow struct {
 	SubstrateFormat              string             `json:"substrate_format"`
 	SubstrateBuilderAbi          string             `json:"substrate_builder_abi"`
 	SubstrateLayoutAbi           string             `json:"substrate_layout_abi"`
-	EpochCpuMillis               int64              `json:"epoch_cpu_millis"`
+	EpochCPUMillis               int64              `json:"epoch_cpu_millis"`
 	EpochMemoryBytes             int64              `json:"epoch_memory_bytes"`
 	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
 	EpochBuildCacheBytes         int64              `json:"epoch_build_cache_bytes"`
 	EpochArtifactCacheBytes      int64              `json:"epoch_artifact_cache_bytes"`
 	EpochHugepagesBytes          int64              `json:"epoch_hugepages_bytes"`
 	EpochCheckpointBytes         int64              `json:"epoch_checkpoint_bytes"`
-	PerVmCpuMillis               int64              `json:"per_vm_cpu_millis"`
-	PerVmMemoryBytes             int64              `json:"per_vm_memory_bytes"`
-	PerVmGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
-	MaxVmSlots                   int32              `json:"max_vm_slots"`
+	PerVMCPUMillis               int64              `json:"per_vm_cpu_millis"`
+	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
+	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
+	MaxVMSlots                   int32              `json:"max_vm_slots"`
 	MaxRunConsumers              int32              `json:"max_run_consumers"`
 	MaxBuildExecutors            int32              `json:"max_build_executors"`
 	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
@@ -154,17 +154,17 @@ func (q *Queries) DrainWorkerInstance(ctx context.Context, arg DrainWorkerInstan
 		&i.SubstrateFormat,
 		&i.SubstrateBuilderAbi,
 		&i.SubstrateLayoutAbi,
-		&i.EpochCpuMillis,
+		&i.EpochCPUMillis,
 		&i.EpochMemoryBytes,
 		&i.EpochGuestEphemeralDiskBytes,
 		&i.EpochBuildCacheBytes,
 		&i.EpochArtifactCacheBytes,
 		&i.EpochHugepagesBytes,
 		&i.EpochCheckpointBytes,
-		&i.PerVmCpuMillis,
-		&i.PerVmMemoryBytes,
-		&i.PerVmGuestEphemeralDiskBytes,
-		&i.MaxVmSlots,
+		&i.PerVMCPUMillis,
+		&i.PerVMMemoryBytes,
+		&i.PerVMGuestEphemeralDiskBytes,
+		&i.MaxVMSlots,
 		&i.MaxRunConsumers,
 		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
@@ -262,17 +262,17 @@ type FenceWorkerInstanceRow struct {
 	SubstrateFormat              string             `json:"substrate_format"`
 	SubstrateBuilderAbi          string             `json:"substrate_builder_abi"`
 	SubstrateLayoutAbi           string             `json:"substrate_layout_abi"`
-	EpochCpuMillis               int64              `json:"epoch_cpu_millis"`
+	EpochCPUMillis               int64              `json:"epoch_cpu_millis"`
 	EpochMemoryBytes             int64              `json:"epoch_memory_bytes"`
 	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
 	EpochBuildCacheBytes         int64              `json:"epoch_build_cache_bytes"`
 	EpochArtifactCacheBytes      int64              `json:"epoch_artifact_cache_bytes"`
 	EpochHugepagesBytes          int64              `json:"epoch_hugepages_bytes"`
 	EpochCheckpointBytes         int64              `json:"epoch_checkpoint_bytes"`
-	PerVmCpuMillis               int64              `json:"per_vm_cpu_millis"`
-	PerVmMemoryBytes             int64              `json:"per_vm_memory_bytes"`
-	PerVmGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
-	MaxVmSlots                   int32              `json:"max_vm_slots"`
+	PerVMCPUMillis               int64              `json:"per_vm_cpu_millis"`
+	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
+	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
+	MaxVMSlots                   int32              `json:"max_vm_slots"`
 	MaxRunConsumers              int32              `json:"max_run_consumers"`
 	MaxBuildExecutors            int32              `json:"max_build_executors"`
 	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
@@ -310,17 +310,17 @@ func (q *Queries) FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstan
 		&i.SubstrateFormat,
 		&i.SubstrateBuilderAbi,
 		&i.SubstrateLayoutAbi,
-		&i.EpochCpuMillis,
+		&i.EpochCPUMillis,
 		&i.EpochMemoryBytes,
 		&i.EpochGuestEphemeralDiskBytes,
 		&i.EpochBuildCacheBytes,
 		&i.EpochArtifactCacheBytes,
 		&i.EpochHugepagesBytes,
 		&i.EpochCheckpointBytes,
-		&i.PerVmCpuMillis,
-		&i.PerVmMemoryBytes,
-		&i.PerVmGuestEphemeralDiskBytes,
-		&i.MaxVmSlots,
+		&i.PerVMCPUMillis,
+		&i.PerVMMemoryBytes,
+		&i.PerVMGuestEphemeralDiskBytes,
+		&i.MaxVMSlots,
 		&i.MaxRunConsumers,
 		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
@@ -715,7 +715,7 @@ type GetWorkerInstanceQueueCapacityParams struct {
 }
 
 type GetWorkerInstanceQueueCapacityRow struct {
-	AvailableCpuMillis               int64 `json:"available_cpu_millis"`
+	AvailableCPUMillis               int64 `json:"available_cpu_millis"`
 	AvailableMemoryBytes             int64 `json:"available_memory_bytes"`
 	AvailableGuestEphemeralDiskBytes int64 `json:"available_guest_ephemeral_disk_bytes"`
 	AvailableRunConsumers            int32 `json:"available_run_consumers"`
@@ -726,7 +726,7 @@ func (q *Queries) GetWorkerInstanceQueueCapacity(ctx context.Context, arg GetWor
 	row := q.db.QueryRow(ctx, getWorkerInstanceQueueCapacity, arg.ID, arg.WorkerGroupID, arg.WorkerEpoch)
 	var i GetWorkerInstanceQueueCapacityRow
 	err := row.Scan(
-		&i.AvailableCpuMillis,
+		&i.AvailableCPUMillis,
 		&i.AvailableMemoryBytes,
 		&i.AvailableGuestEphemeralDiskBytes,
 		&i.AvailableRunConsumers,
@@ -799,10 +799,10 @@ type GetWorkerInstanceRunDispatchCapacityParams struct {
 }
 
 type GetWorkerInstanceRunDispatchCapacityRow struct {
-	AvailableCpuMillis               int64 `json:"available_cpu_millis"`
+	AvailableCPUMillis               int64 `json:"available_cpu_millis"`
 	AvailableMemoryBytes             int64 `json:"available_memory_bytes"`
 	AvailableGuestEphemeralDiskBytes int64 `json:"available_guest_ephemeral_disk_bytes"`
-	AvailableVmSlots                 int32 `json:"available_vm_slots"`
+	AvailableVMSlots                 int32 `json:"available_vm_slots"`
 	AvailableRunConsumers            int32 `json:"available_run_consumers"`
 	AvailableBuildExecutors          int32 `json:"available_build_executors"`
 }
@@ -811,10 +811,10 @@ func (q *Queries) GetWorkerInstanceRunDispatchCapacity(ctx context.Context, arg 
 	row := q.db.QueryRow(ctx, getWorkerInstanceRunDispatchCapacity, arg.ID, arg.WorkerGroupID, arg.WorkerEpoch)
 	var i GetWorkerInstanceRunDispatchCapacityRow
 	err := row.Scan(
-		&i.AvailableCpuMillis,
+		&i.AvailableCPUMillis,
 		&i.AvailableMemoryBytes,
 		&i.AvailableGuestEphemeralDiskBytes,
-		&i.AvailableVmSlots,
+		&i.AvailableVMSlots,
 		&i.AvailableRunConsumers,
 		&i.AvailableBuildExecutors,
 	)
@@ -912,17 +912,17 @@ type GetWorkerInstanceStateRow struct {
 	SubstrateFormat              string             `json:"substrate_format"`
 	SubstrateBuilderAbi          string             `json:"substrate_builder_abi"`
 	SubstrateLayoutAbi           string             `json:"substrate_layout_abi"`
-	EpochCpuMillis               int64              `json:"epoch_cpu_millis"`
+	EpochCPUMillis               int64              `json:"epoch_cpu_millis"`
 	EpochMemoryBytes             int64              `json:"epoch_memory_bytes"`
 	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
 	EpochBuildCacheBytes         int64              `json:"epoch_build_cache_bytes"`
 	EpochArtifactCacheBytes      int64              `json:"epoch_artifact_cache_bytes"`
 	EpochHugepagesBytes          int64              `json:"epoch_hugepages_bytes"`
 	EpochCheckpointBytes         int64              `json:"epoch_checkpoint_bytes"`
-	PerVmCpuMillis               int64              `json:"per_vm_cpu_millis"`
-	PerVmMemoryBytes             int64              `json:"per_vm_memory_bytes"`
-	PerVmGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
-	MaxVmSlots                   int32              `json:"max_vm_slots"`
+	PerVMCPUMillis               int64              `json:"per_vm_cpu_millis"`
+	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
+	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
+	MaxVMSlots                   int32              `json:"max_vm_slots"`
 	MaxRunConsumers              int32              `json:"max_run_consumers"`
 	MaxBuildExecutors            int32              `json:"max_build_executors"`
 	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
@@ -966,17 +966,17 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, arg GetWorkerInsta
 		&i.SubstrateFormat,
 		&i.SubstrateBuilderAbi,
 		&i.SubstrateLayoutAbi,
-		&i.EpochCpuMillis,
+		&i.EpochCPUMillis,
 		&i.EpochMemoryBytes,
 		&i.EpochGuestEphemeralDiskBytes,
 		&i.EpochBuildCacheBytes,
 		&i.EpochArtifactCacheBytes,
 		&i.EpochHugepagesBytes,
 		&i.EpochCheckpointBytes,
-		&i.PerVmCpuMillis,
-		&i.PerVmMemoryBytes,
-		&i.PerVmGuestEphemeralDiskBytes,
-		&i.MaxVmSlots,
+		&i.PerVMCPUMillis,
+		&i.PerVMMemoryBytes,
+		&i.PerVMGuestEphemeralDiskBytes,
+		&i.MaxVMSlots,
 		&i.MaxRunConsumers,
 		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
@@ -1446,17 +1446,17 @@ func (q *Queries) ListWorkerInstances(ctx context.Context, arg ListWorkerInstanc
 			&i.SubstrateFormat,
 			&i.SubstrateBuilderAbi,
 			&i.SubstrateLayoutAbi,
-			&i.EpochCpuMillis,
+			&i.EpochCPUMillis,
 			&i.EpochMemoryBytes,
 			&i.EpochGuestEphemeralDiskBytes,
 			&i.EpochBuildCacheBytes,
 			&i.EpochArtifactCacheBytes,
 			&i.EpochHugepagesBytes,
 			&i.EpochCheckpointBytes,
-			&i.PerVmCpuMillis,
-			&i.PerVmMemoryBytes,
-			&i.PerVmGuestEphemeralDiskBytes,
-			&i.MaxVmSlots,
+			&i.PerVMCPUMillis,
+			&i.PerVMMemoryBytes,
+			&i.PerVMGuestEphemeralDiskBytes,
+			&i.MaxVMSlots,
 			&i.MaxRunConsumers,
 			&i.MaxBuildExecutors,
 			&i.MaxRuntimeStarts,

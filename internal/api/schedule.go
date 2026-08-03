@@ -44,7 +44,7 @@ type ListSchedulesResponse struct {
 
 func ValidateScheduleID(id string) error {
 	if err := ids.Validate(id); err != nil {
-		return fmt.Errorf("invalid Schedule ID: %w", err)
+		return fmt.Errorf("invalid schedule ID: %w", err)
 	}
 	return nil
 }

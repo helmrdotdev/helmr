@@ -128,7 +128,7 @@ SELECT
 type GetUserOnboardingStateRow struct {
 	UserID          pgtype.UUID `json:"user_id"`
 	DisplayName     string      `json:"display_name"`
-	ProfileImageUrl pgtype.Text `json:"profile_image_url"`
+	ProfileImageURL pgtype.Text `json:"profile_image_url"`
 	OrgID           pgtype.UUID `json:"org_id"`
 	OrgName         pgtype.Text `json:"org_name"`
 	OrgSlug         pgtype.Text `json:"org_slug"`
@@ -142,7 +142,7 @@ func (q *Queries) GetUserOnboardingState(ctx context.Context, userID pgtype.UUID
 	err := row.Scan(
 		&i.UserID,
 		&i.DisplayName,
-		&i.ProfileImageUrl,
+		&i.ProfileImageURL,
 		&i.OrgID,
 		&i.OrgName,
 		&i.OrgSlug,

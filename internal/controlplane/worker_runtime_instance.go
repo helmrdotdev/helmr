@@ -51,7 +51,7 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		WorkspaceImage:         workerapi.CASObject{Digest: row.WorkspaceImageDigest, SizeBytes: row.WorkspaceImageSizeBytes, MediaType: row.WorkspaceImageMediaType},
 		WorkspaceArchitecture:  row.WorkspaceArchitecture,
 		RootfsDigest:           row.RootfsDigest,
-		ReservedCpuMillis:      int32(row.ReservedCpuMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
+		ReservedCPUMillis:      int32(row.ReservedCPUMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
 		ReservedDiskMiB: row.ReservedGuestEphemeralDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
 		RuntimeABI: row.RuntimeABI,
 	}
@@ -78,10 +78,10 @@ func populateRuntimePrepareSource(
 	row db.GetNextRuntimeReconcileTargetRow,
 ) error {
 	if !row.BaseWorkspaceVersionID.Valid || !row.WorkspaceEntryCount.Valid {
-		return errors.New("runtime reservation has no exact Workspace version")
+		return errors.New("runtime reservation has no exact workspace version")
 	}
 	if row.WorkspaceArchitecture == "" {
-		return errors.New("runtime reservation has no Workspace architecture")
+		return errors.New("runtime reservation has no workspace architecture")
 	}
 	source.BaseVersionID = pgvalue.UUIDString(row.BaseWorkspaceVersionID)
 	source.WorkspaceArtifact = workerapi.WorkspaceArtifact{
@@ -94,26 +94,26 @@ func populateRuntimePrepareSource(
 		if source.WorkspaceArtifact.SizeBytes != 0 ||
 			source.WorkspaceArtifact.MediaType != "" ||
 			source.WorkspaceArtifact.EntryCount != 0 {
-			return errors.New("runtime reservation has an invalid empty Workspace root")
+			return errors.New("runtime reservation has an invalid empty workspace root")
 		}
 	} else {
 		if source.WorkspaceArtifact.SizeBytes <= 0 ||
 			source.WorkspaceArtifact.MediaType != workspace.ArtifactMediaType ||
 			source.WorkspaceArtifact.EntryCount < 0 {
-			return errors.New("runtime reservation has an invalid Workspace Artifact")
+			return errors.New("runtime reservation has an invalid workspace artifact")
 		}
 		source.WorkspaceArtifact.Encoding = workspace.ArtifactEncoding
 	}
 	if !row.ProgramDeploymentID.Valid {
 		if row.ReservedRunID.Valid {
-			return errors.New("run runtime reservation has no Program deployment")
+			return errors.New("run runtime reservation has no program deployment")
 		}
 		return nil
 	}
 	if !row.ProgramDeploymentAuthorityID.Valid ||
 		row.ProgramDeploymentAuthorityID != row.ProgramDeploymentID ||
 		!row.ProgramBuildContractVersion.Valid {
-		return errors.New("runtime reservation Program authority is incomplete")
+		return errors.New("runtime reservation program authority is incomplete")
 	}
 	program, err := projectRuntimeProgram(
 		ctx,
@@ -130,7 +130,7 @@ func populateRuntimePrepareSource(
 		platformStore,
 	)
 	if err != nil {
-		return fmt.Errorf("project runtime reservation Program: %w", err)
+		return fmt.Errorf("project runtime reservation program: %w", err)
 	}
 	source.Program = &program
 	if row.RestoreCheckpointID.Valid {
@@ -142,15 +142,15 @@ func populateRuntimePrepareSource(
 			ID: row.RestoreCheckpointID,
 		})
 		if err != nil {
-			return fmt.Errorf("load restored runtime Checkpoint authority: %w", err)
+			return fmt.Errorf("load restored runtime checkpoint authority: %w", err)
 		}
 		artifacts, err := store.ListRunCheckpointArtifactAuthority(ctx, row.RestoreCheckpointID)
 		if err != nil {
-			return fmt.Errorf("load restored runtime Checkpoint Artifacts: %w", err)
+			return fmt.Errorf("load restored runtime checkpoint artifacts: %w", err)
 		}
 		projected, err := projectRunLeaseCheckpoint(checkpoint, artifacts)
 		if err != nil {
-			return fmt.Errorf("project restored runtime Checkpoint: %w", err)
+			return fmt.Errorf("project restored runtime checkpoint: %w", err)
 		}
 		source.Restore = &workerapi.RuntimeRestore{
 			CheckpointID: pgvalue.UUIDString(row.RestoreCheckpointID),
@@ -324,7 +324,7 @@ func runtimeInstanceResponse(row db.RuntimeInstance) workerapi.RuntimeInstance {
 		RuntimeID:              row.RuntimeIdentityID,
 		DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID),
 		State:                  string(row.ObservedState),
-		ReservedCpuMillis:      int32(row.ReservedCpuMillis),
+		ReservedCPUMillis:      int32(row.ReservedCPUMillis),
 		ReservedMemoryMiB:      int32(row.ReservedMemoryBytes / 1048576),
 		ReservedDiskMiB:        row.ReservedGuestEphemeralDiskBytes / 1048576,
 		ReservedExecutionSlots: row.ReservedExecutionSlots,

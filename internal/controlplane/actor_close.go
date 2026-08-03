@@ -18,9 +18,9 @@ import (
 )
 
 var (
-	errActorCloseConflict  = errors.New("Actor cannot be closed in its current state")
-	errActorCloseAuthority = errors.New("Actor close authority is unavailable")
-	errActorCloseReceipt   = errors.New("Actor close receipt is invalid")
+	errActorCloseConflict  = errors.New("actor cannot be closed in its current state")
+	errActorCloseAuthority = errors.New("actor close authority is unavailable")
+	errActorCloseReceipt   = errors.New("actor close receipt is invalid")
 )
 
 type actorCloseRequest struct {
@@ -87,7 +87,7 @@ func (s *Server) closeActor(
 			pgvalue.UUID(request.WorkspaceID),
 		)
 		if err != nil {
-			return fmt.Errorf("lock Actor close Workspace Secrets: %w", err)
+			return fmt.Errorf("lock actor close workspace secrets: %w", err)
 		}
 		lockedActor, err := work.q.LockActorClose(ctx, db.LockActorCloseParams{
 			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
@@ -97,7 +97,7 @@ func (s *Server) closeActor(
 			return errActorCloseAuthority
 		}
 		if err != nil {
-			return fmt.Errorf("lock Actor close authority: %w", err)
+			return fmt.Errorf("lock actor close authority: %w", err)
 		}
 		if lockedActor.WorkspaceID != pgvalue.UUID(request.WorkspaceID) {
 			return errActorCloseAuthority
@@ -113,7 +113,7 @@ func (s *Server) closeActor(
 				return errActorCloseConflict
 			}
 			if err != nil {
-				return fmt.Errorf("begin Actor close: %w", err)
+				return fmt.Errorf("begin actor close: %w", err)
 			}
 			var deferred bool
 			lockedActor, deferred, err = actor.ReconcileClose(ctx, work.q, lockedActor, bindings)
@@ -205,7 +205,7 @@ func createActorCloseReconcileIntent(
 			EnvironmentID: actor.EnvironmentID,
 		},
 	); err != nil {
-		return fmt.Errorf("enqueue Actor close reconciliation: %w", err)
+		return fmt.Errorf("enqueue actor close reconciliation: %w", err)
 	}
 	return nil
 }

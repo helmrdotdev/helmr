@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var ErrWaitAuthority = errors.New("durable Wait authority is inconsistent")
+var ErrWaitAuthority = errors.New("durable wait authority is inconsistent")
 
 func Complete(
 	ctx context.Context,
@@ -114,7 +114,7 @@ func publishResumeIfParked(
 	}
 	now, err := store.GetRunLeaseRenewalTime(ctx)
 	if err != nil || !now.Valid {
-		return db.RunWait{}, fmt.Errorf("load durable Wait resume time: %w", err)
+		return db.RunWait{}, fmt.Errorf("load durable wait resume time: %w", err)
 	}
 	payload, err := json.Marshal(map[string]any{
 		"environmentId":        pgvalue.UUIDString(wait.EnvironmentID),

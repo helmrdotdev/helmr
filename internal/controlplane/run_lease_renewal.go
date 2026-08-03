@@ -128,7 +128,7 @@ func projectRunLeaseRenewal(
 	authority runLeaseClaimAuthority,
 ) (workerapi.RunLeaseRenewResponse, error) {
 	baseWorkspaceVersionID, err := requiredClaimUUIDString(
-		"base Workspace version ID",
+		"base workspace version ID",
 		authority.workspaceLease.BaseVersionID,
 	)
 	if err != nil {
@@ -137,7 +137,7 @@ func projectRunLeaseRenewal(
 	if !authority.runLease.ExpiresAt.Valid ||
 		!authority.workspaceLease.ExpiresAt.Valid ||
 		!authority.runLease.ExpiresAt.Time.Equal(authority.workspaceLease.ExpiresAt.Time) {
-		return workerapi.RunLeaseRenewResponse{}, errors.New("Run Lease renewal authority is inconsistent")
+		return workerapi.RunLeaseRenewResponse{}, errors.New("run lease renewal authority is inconsistent")
 	}
 	return workerapi.RunLeaseRenewResponse{
 		Lease:                  fence,

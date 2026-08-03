@@ -90,7 +90,7 @@ func NewConnector(cfg Config) (*Connector, error) {
 
 func (c *Connector) DatapathHealth() error {
 	if c == nil {
-		return errors.New("firecracker connector is nil")
+		return errors.New("the Firecracker connector is nil")
 	}
 	return c.datapath.Health()
 }
@@ -126,7 +126,7 @@ func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 func (c *Connector) Connect(ctx context.Context, request vm.ConnectRequest) (vm.Session, error) {
 	owner := vm.Owner{Kind: request.OwnerKind, ID: request.ID}
 	if err := request.Binding.Validate(owner); err != nil {
-		return nil, fmt.Errorf("firecracker workload binding: %w", err)
+		return nil, fmt.Errorf("the Firecracker workload binding: %w", err)
 	}
 	child, err := c.connectorForRequest(request)
 	if err != nil {
@@ -179,7 +179,7 @@ func (c *Connector) connectorForRequest(
 		}
 		kernelArgs = runtimeKernelArgs(request.Topology, nil)
 	default:
-		return nil, errors.New("firecracker owner kind is invalid")
+		return nil, errors.New("the Firecracker owner kind is invalid")
 	}
 	child := *c
 	child.cfg = cfg
@@ -286,7 +286,7 @@ func (c *Connector) Cleanup(ctx context.Context, owner vm.Owner) error {
 	jailerPath := filepath.Join(c.cfg.JailerChrootBaseDir, "firecracker", owner.ID)
 	pids, err := exactRuntimePIDs(owner.ID)
 	if err != nil {
-		return cleanupUnproven(owner, fmt.Errorf("inventory firecracker processes: %w", err))
+		return cleanupUnproven(owner, fmt.Errorf("inventory Firecracker processes: %w", err))
 	}
 	netns, err := c.runtimeNetNSExists(ctx, owner.ID)
 	if err != nil {
@@ -294,56 +294,56 @@ func (c *Connector) Cleanup(ctx context.Context, owner vm.Owner) error {
 	}
 	stateExists, err := pathExists(statePath)
 	if err != nil {
-		return cleanupUnproven(owner, fmt.Errorf("inspect firecracker state: %w", err))
+		return cleanupUnproven(owner, fmt.Errorf("inspect Firecracker state: %w", err))
 	}
 	jailerExists, err := pathExists(jailerPath)
 	if err != nil {
-		return cleanupUnproven(owner, fmt.Errorf("inspect firecracker jailer state: %w", err))
+		return cleanupUnproven(owner, fmt.Errorf("inspect Firecracker jailer state: %w", err))
 	}
 	if !stateExists && !jailerExists && !netns && len(pids) == 0 {
 		return nil
 	}
 	if !stateExists {
-		return cleanupUnproven(owner, errors.New("firecracker ownership marker is missing"))
+		return cleanupUnproven(owner, errors.New("the Firecracker ownership marker is missing"))
 	}
 	if err := validateOwnerMarker(statePath, owner); err != nil {
 		return cleanupUnproven(owner, err)
 	}
 	for _, pid := range pids {
 		if err := stopExactRuntimePID(ctx, pid); err != nil {
-			return cleanupUnproven(owner, fmt.Errorf("stop firecracker process %d: %w", pid, err))
+			return cleanupUnproven(owner, fmt.Errorf("stop Firecracker process %d: %w", pid, err))
 		}
 	}
 	if err := c.cleanupNetworkAttachment(ctx, owner); err != nil {
 		return cleanupUnproven(owner, err)
 	}
 	if err := os.RemoveAll(jailerPath); err != nil {
-		return cleanupUnproven(owner, fmt.Errorf("remove firecracker jailer state: %w", err))
+		return cleanupUnproven(owner, fmt.Errorf("remove Firecracker jailer state: %w", err))
 	}
 	remaining, err := exactRuntimePIDs(owner.ID)
 	if err != nil {
-		return cleanupUnproven(owner, fmt.Errorf("verify firecracker processes absent: %w", err))
+		return cleanupUnproven(owner, fmt.Errorf("verify Firecracker processes absent: %w", err))
 	}
 	if len(remaining) != 0 {
-		return cleanupUnproven(owner, fmt.Errorf("verify firecracker processes absent: pids=%v", remaining))
+		return cleanupUnproven(owner, fmt.Errorf("verify Firecracker processes absent: pids=%v", remaining))
 	}
 	if exists, verifyErr := c.runtimeNetNSExists(ctx, owner.ID); verifyErr != nil {
-		return cleanupUnproven(owner, fmt.Errorf("verify firecracker netns absent: %w", verifyErr))
+		return cleanupUnproven(owner, fmt.Errorf("verify Firecracker netns absent: %w", verifyErr))
 	} else if exists {
-		return cleanupUnproven(owner, errors.New("verify firecracker netns absent: namespace remains"))
+		return cleanupUnproven(owner, errors.New("verify Firecracker netns absent: namespace remains"))
 	}
 	if exists, verifyErr := pathExists(jailerPath); verifyErr != nil {
-		return cleanupUnproven(owner, fmt.Errorf("verify firecracker jailer state absent: %w", verifyErr))
+		return cleanupUnproven(owner, fmt.Errorf("verify Firecracker jailer state absent: %w", verifyErr))
 	} else if exists {
-		return cleanupUnproven(owner, errors.New("verify firecracker jailer state absent: path remains"))
+		return cleanupUnproven(owner, errors.New("verify Firecracker jailer state absent: path remains"))
 	}
 	if err := removeStateRootLast(statePath, owner); err != nil {
 		return cleanupUnproven(owner, err)
 	}
 	if exists, verifyErr := pathExists(statePath); verifyErr != nil {
-		return cleanupUnproven(owner, fmt.Errorf("verify firecracker state absent: %w", verifyErr))
+		return cleanupUnproven(owner, fmt.Errorf("verify Firecracker state absent: %w", verifyErr))
 	} else if exists {
-		return cleanupUnproven(owner, errors.New("verify firecracker state absent: path remains"))
+		return cleanupUnproven(owner, errors.New("verify Firecracker state absent: path remains"))
 	}
 	return nil
 }
@@ -367,17 +367,17 @@ func pathExists(path string) (bool, error) {
 func validateOwnerMarker(statePath string, owner vm.Owner) error {
 	info, err := os.Stat(statePath)
 	if err != nil {
-		return fmt.Errorf("inspect firecracker ownership root: %w", err)
+		return fmt.Errorf("inspect Firecracker ownership root: %w", err)
 	}
 	if !info.IsDir() {
-		return errors.New("firecracker ownership root is not a directory")
+		return errors.New("the Firecracker ownership root is not a directory")
 	}
 	marker, err := os.ReadFile(filepath.Join(statePath, "owner"))
 	if err != nil {
-		return fmt.Errorf("read firecracker ownership marker: %w", err)
+		return fmt.Errorf("read Firecracker ownership marker: %w", err)
 	}
 	if string(marker) != string(owner.Kind)+"\n"+owner.ID+"\n" {
-		return errors.New("firecracker ownership marker does not match exact owner")
+		return errors.New("the Firecracker ownership marker does not match exact owner")
 	}
 	return nil
 }
@@ -385,23 +385,23 @@ func validateOwnerMarker(statePath string, owner vm.Owner) error {
 func removeStateRootLast(statePath string, owner vm.Owner) error {
 	entries, err := os.ReadDir(statePath)
 	if err != nil {
-		return fmt.Errorf("inventory firecracker state: %w", err)
+		return fmt.Errorf("inventory Firecracker state: %w", err)
 	}
 	for _, entry := range entries {
 		if entry.Name() == "owner" {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(statePath, entry.Name())); err != nil {
-			return fmt.Errorf("remove firecracker state entry %q: %w", entry.Name(), err)
+			return fmt.Errorf("remove Firecracker state entry %q: %w", entry.Name(), err)
 		}
 	}
 	markerPath := filepath.Join(statePath, "owner")
 	if err := os.Remove(markerPath); err != nil {
-		return fmt.Errorf("remove firecracker ownership marker: %w", err)
+		return fmt.Errorf("remove Firecracker ownership marker: %w", err)
 	}
 	if err := os.Remove(statePath); err != nil {
 		restoreErr := os.WriteFile(markerPath, []byte(string(owner.Kind)+"\n"+owner.ID+"\n"), 0o600)
-		return errors.Join(fmt.Errorf("remove firecracker state root: %w", err), restoreErr)
+		return errors.Join(fmt.Errorf("remove Firecracker state root: %w", err), restoreErr)
 	}
 	return nil
 }
@@ -409,7 +409,7 @@ func removeStateRootLast(statePath string, owner vm.Owner) error {
 func (c *Connector) runtimeNetNSExists(ctx context.Context, runtimeID string) (bool, error) {
 	output, err := exec.CommandContext(ctx, c.cfg.IPPath, "netns", "list").Output()
 	if err != nil {
-		return false, fmt.Errorf("inventory firecracker cleanup netns: %w", err)
+		return false, fmt.Errorf("inventory Firecracker cleanup netns: %w", err)
 	}
 	for line := range strings.SplitSeq(string(output), "\n") {
 		fields := strings.Fields(line)
@@ -480,16 +480,16 @@ func stopExactRuntimePID(ctx context.Context, pid int) error {
 
 func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) error {
 	if request.OwnerKind != vm.OwnerRuntime {
-		return errors.New("firecracker materialize owner must be runtime")
+		return errors.New("the Firecracker materialize owner must be runtime")
 	}
 	if err := request.Binding.Validate(vm.Owner{Kind: request.OwnerKind, ID: request.ID}); err != nil {
-		return fmt.Errorf("firecracker workload binding: %w", err)
+		return fmt.Errorf("the Firecracker workload binding: %w", err)
 	}
 	if err := validateReadOnlyDrives(request.ReadOnlyDrives); err != nil {
 		return err
 	}
 	if len(request.ReadOnlyDrives) != 0 && !isProgramDriveSet(request.ReadOnlyDrives) {
-		return errors.New("runtime read-only drives must be the complete Program drive set")
+		return errors.New("runtime read-only drives must be the complete program drive set")
 	}
 	if isProgramDriveSet(request.ReadOnlyDrives) {
 		if err := validateProgramDriveIdentities(request.ReadOnlyDrives); err != nil {
@@ -501,7 +501,7 @@ func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) er
 		return fmt.Errorf("workspaceMount rootfs digest %s does not match declared digest %s", rootfsDigest, request.RootfsDigest)
 	}
 	if strings.TrimSpace(request.WorkspaceMountPath) != "/workspace" {
-		return fmt.Errorf("firecracker materialize workspace mount path %q is not supported", request.WorkspaceMountPath)
+		return fmt.Errorf("the Firecracker materialize workspace mount path %q is not supported", request.WorkspaceMountPath)
 	}
 	return nil
 }
@@ -563,19 +563,19 @@ func (c *Connector) kernelArgsValue() string {
 
 func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.Session, error) {
 	if err := request.Binding.Validate(vm.Owner{Kind: request.OwnerKind, ID: request.RuntimeInstanceID}); err != nil {
-		return nil, fmt.Errorf("firecracker workload binding: %w", err)
+		return nil, fmt.Errorf("the Firecracker workload binding: %w", err)
 	}
 	if len(request.Memory) != 1 {
-		return nil, fmt.Errorf("firecracker restore requires exactly one memory file, got %d", len(request.Memory))
+		return nil, fmt.Errorf("the Firecracker restore requires exactly one memory file, got %d", len(request.Memory))
 	}
 	if len(request.MemoryMediaTypes) != 1 {
-		return nil, fmt.Errorf("firecracker restore requires exactly one memory media type, got %d", len(request.MemoryMediaTypes))
+		return nil, fmt.Errorf("the Firecracker restore requires exactly one memory media type, got %d", len(request.MemoryMediaTypes))
 	}
 	if strings.TrimSpace(request.VMState) == "" {
-		return nil, errors.New("firecracker restore vm state path is required")
+		return nil, errors.New("the Firecracker restore vm state path is required")
 	}
 	if request.VMStateMediaType != cas.CheckpointVMStateMediaType {
-		return nil, fmt.Errorf("firecracker restore vm state media type %q is not supported", request.VMStateMediaType)
+		return nil, fmt.Errorf("the Firecracker restore vm state media type %q is not supported", request.VMStateMediaType)
 	}
 	recordPhase := request.RecordPhase
 	started := time.Now()
@@ -583,7 +583,7 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 		return nil, err
 	}
 	if len(request.ReadOnlyDrives) != 0 && !isProgramDriveSet(request.ReadOnlyDrives) {
-		return nil, errors.New("firecracker restore read-only drives must be the complete Program drive set")
+		return nil, errors.New("the Firecracker restore read-only drives must be the complete program drive set")
 	}
 	if isProgramDriveSet(request.ReadOnlyDrives) {
 		if err := validateProgramDriveIdentities(request.ReadOnlyDrives); err != nil {
@@ -604,13 +604,13 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 		return nil, err
 	}
 	if strings.TrimSpace(request.ScratchDisk) == "" {
-		return nil, errors.New("firecracker restore scratch disk path is required")
+		return nil, errors.New("the Firecracker restore scratch disk path is required")
 	}
 	if request.ScratchDiskMediaType != cas.CheckpointScratchDiskMediaType {
-		return nil, fmt.Errorf("firecracker restore scratch disk media type %q is not supported", request.ScratchDiskMediaType)
+		return nil, fmt.Errorf("the Firecracker restore scratch disk media type %q is not supported", request.ScratchDiskMediaType)
 	}
 	if request.MemoryMediaTypes[0] != cas.CheckpointMemoryMediaType {
-		return nil, fmt.Errorf("firecracker restore memory media type %q is not supported", request.MemoryMediaTypes[0])
+		return nil, fmt.Errorf("the Firecracker restore memory media type %q is not supported", request.MemoryMediaTypes[0])
 	}
 	owner := vm.Owner{Kind: request.OwnerKind, ID: request.RuntimeInstanceID}
 	ownerDir, err := createOwnerStateRoot(c.cfg.StateDir, owner)
@@ -819,15 +819,15 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 	instanceID = strings.TrimSpace(instanceID)
 	owner := vm.Owner{Kind: ownerKind, ID: instanceID}
 	if err := owner.Validate(); err != nil {
-		return nil, fmt.Errorf("firecracker owner: %w", err)
+		return nil, fmt.Errorf("the Firecracker owner: %w", err)
 	}
 	if err := binding.Validate(owner); err != nil {
-		return nil, fmt.Errorf("firecracker workload binding: %w", err)
+		return nil, fmt.Errorf("the Firecracker workload binding: %w", err)
 	}
 	instanceDir := filepath.Join(c.cfg.StateDir, instanceID)
 	if ownerPrepared {
 		if err := validateOwnerMarker(instanceDir, owner); err != nil {
-			return nil, fmt.Errorf("validate prepared firecracker ownership evidence: %w", err)
+			return nil, fmt.Errorf("validate prepared Firecracker ownership evidence: %w", err)
 		}
 	} else {
 		var err error
@@ -940,18 +940,18 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 	recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_create_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 	if err != nil {
 		machineCancel()
-		return nil, fmt.Errorf("create firecracker machine: %w", err)
+		return nil, fmt.Errorf("create Firecracker machine: %w", err)
 	}
-	machine.Logger().Printf("starting firecracker machine")
+	machine.Logger().Printf("starting Firecracker machine")
 	phaseStarted = time.Now()
 	if err := startMachineContext(ctx, machine, machineCtx, machineCancel); err != nil {
 		recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_start_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 		_ = stopMachine(context.Background(), machine)
-		return nil, fmt.Errorf("start firecracker machine: %w", err)
+		return nil, fmt.Errorf("start Firecracker machine: %w", err)
 	}
 	recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_start_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
 	machineExit := watchMachineExit(machine)
-	machine.Logger().Printf("firecracker machine start returned")
+	machine.Logger().Printf("Firecracker machine start returned")
 	started := true
 	defer func() {
 		if !started {
@@ -972,7 +972,7 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 		if err := machine.ResumeVM(ctx); err != nil {
 			recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_resume_firecracker_snapshot", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 			started = false
-			return nil, fmt.Errorf("resume restored firecracker machine: %w", err)
+			return nil, fmt.Errorf("resume restored Firecracker machine: %w", err)
 		}
 		recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_resume_firecracker_snapshot", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
 	}
@@ -1182,17 +1182,17 @@ func validateReadOnlyDrives(drives []vm.ReadOnlyDrive) error {
 
 func validateProgramDriveIdentities(drives []vm.ReadOnlyDrive) error {
 	if !isProgramDriveSet(drives) {
-		return errors.New("managed Program requires the complete read-only drive set")
+		return errors.New("managed program requires the complete read-only drive set")
 	}
 	for _, drive := range drives {
 		if _, err := cas.ObjectKey("", drive.Digest); err != nil {
-			return fmt.Errorf("managed Program drive %q digest: %w", drive.ID, err)
+			return fmt.Errorf("managed program drive %q digest: %w", drive.ID, err)
 		}
 		if drive.SizeBytes <= 0 {
-			return fmt.Errorf("managed Program drive %q size must be positive", drive.ID)
+			return fmt.Errorf("managed program drive %q size must be positive", drive.ID)
 		}
 		if strings.TrimSpace(drive.MediaType) == "" || drive.MediaType != strings.TrimSpace(drive.MediaType) {
-			return fmt.Errorf("managed Program drive %q media type must be canonical", drive.ID)
+			return fmt.Errorf("managed program drive %q media type must be canonical", drive.ID)
 		}
 	}
 	return nil
@@ -1287,7 +1287,7 @@ func (c *Connector) waitForHealth(ctx context.Context, vsockPath string, machine
 		if err, ok := machineExit.Err(); ok {
 			stats.machineExited = true
 			stats.lastErr = err
-			result := stats.failureError("firecracker machine exited during guest health wait", err)
+			result := stats.failureError("the Firecracker machine exited during guest health wait", err)
 			stats.log(logf, "failed")
 			return result
 		}
@@ -1385,7 +1385,7 @@ func (c *Connector) connectGuestPortAt(ctx context.Context, vsockPath string, po
 	var lastErr error
 	for {
 		if err, ok := machineExit.Err(); ok {
-			return nil, fmt.Errorf("firecracker machine exited before guest port %d connection: %w", port, err)
+			return nil, fmt.Errorf("the Firecracker machine exited before guest port %d connection: %w", port, err)
 		}
 		conn, err := dialVsock(connectCtx, vsockPath, port)
 		if err == nil {
@@ -1394,13 +1394,13 @@ func (c *Connector) connectGuestPortAt(ctx context.Context, vsockPath string, po
 		lastErr = err
 		if connectCtx.Err() != nil {
 			if exitErr, ok := machineExit.Err(); ok {
-				return nil, fmt.Errorf("firecracker machine exited before guest port %d connection: %w", port, exitErr)
+				return nil, fmt.Errorf("the Firecracker machine exited before guest port %d connection: %w", port, exitErr)
 			}
 			return nil, fmt.Errorf("guest port %d connection timed out after %s: %w", port, c.cfg.HealthTimeout, errors.Join(connectCtx.Err(), lastErr))
 		}
 		if err := sleepHealthRetry(connectCtx); err != nil {
 			if exitErr, ok := machineExit.Err(); ok {
-				return nil, fmt.Errorf("firecracker machine exited before guest port %d connection: %w", port, exitErr)
+				return nil, fmt.Errorf("the Firecracker machine exited before guest port %d connection: %w", port, exitErr)
 			}
 			return nil, fmt.Errorf("guest port %d connection timed out after %s: %w", port, c.cfg.HealthTimeout, errors.Join(err, lastErr))
 		}
@@ -1533,7 +1533,7 @@ func (s *healthProbeStats) timeoutError(timeout time.Duration, err error, lastEr
 	}
 	if exitErr, ok := machineExit.Err(); ok {
 		s.machineExited = true
-		lastErr = errors.Join(lastErr, fmt.Errorf("firecracker machine exited: %w", exitErr))
+		lastErr = errors.Join(lastErr, fmt.Errorf("the Firecracker machine exited: %w", exitErr))
 	}
 	return fmt.Errorf("guest health probe timed out after %s (%s): %w", timeout, s.summary(), errors.Join(err, lastErr))
 }
@@ -1661,11 +1661,11 @@ func (s *guestSession) Open(ctx context.Context) (vm.Session, error) {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return nil, errors.New("firecracker prepared session is closed")
+		return nil, errors.New("the Firecracker prepared session is closed")
 	}
 	if s.opened {
 		s.mu.Unlock()
-		return nil, errors.New("firecracker prepared session is already opened")
+		return nil, errors.New("the Firecracker prepared session is already opened")
 	}
 	s.opened = true
 	s.mu.Unlock()
@@ -1682,7 +1682,7 @@ func (s *guestSession) Open(ctx context.Context) (vm.Session, error) {
 	if s.closed {
 		s.mu.Unlock()
 		return nil, errors.Join(
-			errors.New("firecracker prepared session closed while opening"),
+			errors.New("the Firecracker prepared session closed while opening"),
 			stream.Close(),
 		)
 	}
@@ -1700,7 +1700,7 @@ func (s *guestSession) BuildNetworkStatus(
 ) (vm.BuildNetworkStatus, error) {
 	if !s.buildNetwork {
 		return vm.BuildNetworkStatus{}, errors.New(
-			"firecracker session is not a build guest",
+			"the Firecracker session is not a build guest",
 		)
 	}
 	return (&Connector{cfg: s.cfg}).readBuildNetworkStatus(
@@ -1714,7 +1714,7 @@ func (s *guestSession) RunNetworkStatus(
 ) (vm.RunNetworkStatus, error) {
 	if s.buildNetwork {
 		return vm.RunNetworkStatus{}, errors.New(
-			"firecracker session is a build guest",
+			"the Firecracker session is a build guest",
 		)
 	}
 	return (&Connector{cfg: s.cfg}).readRunNetworkStatus(
@@ -1725,7 +1725,7 @@ func (s *guestSession) RunNetworkStatus(
 
 func (s *guestSession) Wait(ctx context.Context) error {
 	if s.machineExit == nil {
-		return errors.New("firecracker session exit watcher is not configured")
+		return errors.New("the Firecracker session exit watcher is not configured")
 	}
 	waitErr := s.machineExit.Wait(ctx)
 	s.mu.Lock()
@@ -1745,7 +1745,7 @@ func (s *guestSession) watchNetworkFailure() {
 				failure = errors.New("network binding failed without a cause")
 			}
 			s.mu.Lock()
-			s.networkErr = fmt.Errorf("firecracker datapath binding failed: %w", failure)
+			s.networkErr = fmt.Errorf("the Firecracker datapath binding failed: %w", failure)
 			s.mu.Unlock()
 			stopCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
 			defer cancel()
@@ -1792,7 +1792,7 @@ func (s *guestSession) Close(ctx context.Context) error {
 			if s.cleaner != nil {
 				cleanupErr = s.cleaner.Cleanup(ctx, s.owner)
 			} else {
-				cleanupErr = cleanupUnproven(s.owner, errors.New("firecracker session cleaner is not configured"))
+				cleanupErr = cleanupUnproven(s.owner, errors.New("the Firecracker session cleaner is not configured"))
 			}
 		}
 		s.err = errors.Join(
@@ -1840,14 +1840,14 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	}
 	started := time.Now()
 	if err := s.machine.PauseVM(ctx); err != nil {
-		return vm.SnapshotArtifact{}, fmt.Errorf("pause firecracker vm: %w", err)
+		return vm.SnapshotArtifact{}, fmt.Errorf("pause Firecracker vm: %w", err)
 	}
 	recordPhase("firecracker_pause_vm", started)
 	s.paused.Store(true)
 	started = time.Now()
 	if err := s.machine.CreateSnapshot(ctx, path.Join("/", memName), path.Join("/", stateName)); err != nil {
 		_ = s.Resume(context.Background())
-		return vm.SnapshotArtifact{}, fmt.Errorf("create firecracker snapshot: %w", err)
+		return vm.SnapshotArtifact{}, fmt.Errorf("create Firecracker snapshot: %w", err)
 	}
 	recordPhase("firecracker_create_snapshot", started)
 	cleanupRawSnapshot := true
@@ -1958,7 +1958,7 @@ func (s *guestSession) Resume(ctx context.Context) error {
 		return nil
 	}
 	if err := s.machine.ResumeVM(ctx); err != nil {
-		return fmt.Errorf("resume firecracker vm: %w", err)
+		return fmt.Errorf("resume Firecracker vm: %w", err)
 	}
 	s.paused.Store(false)
 	return nil
@@ -1979,9 +1979,9 @@ func stopMachine(ctx context.Context, machine *firecracker.Machine) error {
 	waitErr := machine.Wait(waitCtx)
 	if errors.Is(waitErr, context.DeadlineExceeded) && pidErr == nil {
 		if process, err := os.FindProcess(pid); err != nil {
-			waitErr = errors.Join(waitErr, fmt.Errorf("find firecracker process %d: %w", pid, err))
+			waitErr = errors.Join(waitErr, fmt.Errorf("find Firecracker process %d: %w", pid, err))
 		} else if err := process.Signal(syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			waitErr = errors.Join(waitErr, fmt.Errorf("kill firecracker process %d: %w", pid, err))
+			waitErr = errors.Join(waitErr, fmt.Errorf("kill Firecracker process %d: %w", pid, err))
 		} else {
 			killWaitCtx, killCancel := context.WithTimeout(context.Background(), stopTimeout)
 			waitErr = machine.Wait(killWaitCtx)
@@ -2008,7 +2008,7 @@ func watchMachineExit(machine *firecracker.Machine) *machineExit {
 
 func (e *machineExit) Wait(ctx context.Context) error {
 	if e == nil {
-		return errors.New("firecracker machine exit watcher is not configured")
+		return errors.New("the Firecracker machine exit watcher is not configured")
 	}
 	select {
 	case <-e.done:
@@ -2038,9 +2038,9 @@ func stopSessionMachine(ctx context.Context, machine *firecracker.Machine, exit 
 	waitErr := exit.Wait(waitCtx)
 	if errors.Is(waitErr, context.DeadlineExceeded) && pidErr == nil {
 		if process, err := os.FindProcess(pid); err != nil {
-			waitErr = errors.Join(waitErr, fmt.Errorf("find firecracker process %d: %w", pid, err))
+			waitErr = errors.Join(waitErr, fmt.Errorf("find Firecracker process %d: %w", pid, err))
 		} else if err := process.Signal(syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			waitErr = errors.Join(waitErr, fmt.Errorf("kill firecracker process %d: %w", pid, err))
+			waitErr = errors.Join(waitErr, fmt.Errorf("kill Firecracker process %d: %w", pid, err))
 		} else {
 			killWaitCtx, killCancel := context.WithTimeout(context.Background(), stopTimeout)
 			waitErr = exit.Wait(killWaitCtx)
@@ -2183,10 +2183,10 @@ func validateSnapshotProgram(manifest *snapshotProgramManifest, drives []vm.Read
 		return nil
 	}
 	if manifest == nil || expected == nil {
-		return errors.New("checkpoint managed Program drive identity does not match restore")
+		return errors.New("checkpoint managed program drive identity does not match restore")
 	}
 	if *manifest != *expected {
-		return errors.New("checkpoint managed Program artifacts do not match restore")
+		return errors.New("checkpoint managed program artifacts do not match restore")
 	}
 	return nil
 }
@@ -2316,7 +2316,7 @@ func snapshotRuntimeConfig(cfg Config, checkpointID string, runtimeID string, ke
 		},
 	})
 	if err != nil {
-		return "", nil, fmt.Errorf("encode firecracker snapshot manifest: %w", err)
+		return "", nil, fmt.Errorf("encode Firecracker snapshot manifest: %w", err)
 	}
 	return sha256sum.DigestBytes(manifest), manifest, nil
 }

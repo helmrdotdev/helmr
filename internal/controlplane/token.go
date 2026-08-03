@@ -33,15 +33,15 @@ const (
 )
 
 var (
-	errTokenNotFound           = codedError{code: "token_not_found", message: "Token was not found"}
-	errTokenExpired            = codedError{code: "token_expired", message: "Token has expired"}
-	errTokenCancelled          = codedError{code: "token_cancelled", message: "Token was cancelled"}
-	errTokenCompleted          = codedError{code: "token_completed", message: "Token is already completed"}
-	errTokenScopeDenied        = codedError{code: "token_scope_denied", message: "Token credential is invalid"}
-	errTokenCompletionConflict = codedError{code: "token_completion_conflict", message: "Token completion conflicts with the existing result"}
-	errTokenCreateReceipt      = errors.New("Token create receipt is invalid")
-	errTokenOperationReceipt   = errors.New("Token operation receipt is invalid")
-	errTokenCreateAuthority    = errors.New("Token create source authority is stale")
+	errTokenNotFound           = codedError{code: "token_not_found", message: "token was not found"}
+	errTokenExpired            = codedError{code: "token_expired", message: "token has expired"}
+	errTokenCancelled          = codedError{code: "token_cancelled", message: "token was cancelled"}
+	errTokenCompleted          = codedError{code: "token_completed", message: "token is already completed"}
+	errTokenScopeDenied        = codedError{code: "token_scope_denied", message: "token credential is invalid"}
+	errTokenCompletionConflict = codedError{code: "token_completion_conflict", message: "token completion conflicts with the existing result"}
+	errTokenCreateReceipt      = errors.New("token create receipt is invalid")
+	errTokenOperationReceipt   = errors.New("token operation receipt is invalid")
+	errTokenCreateAuthority    = errors.New("token create source authority is stale")
 )
 
 type tokenCreateReceipt struct {
@@ -77,7 +77,7 @@ type tokenCreateInput struct {
 func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 	var request api.CreateTokenRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Token create JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid token create JSON: %w", err)))
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -110,7 +110,7 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 	}
 	metadata, tags, err := normalizeTokenAnnotations(request.Metadata, request.Tags)
 	if err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Token annotations: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid token annotations: %w", err)))
 		return
 	}
 	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
@@ -197,7 +197,7 @@ func (s *Server) createExternalToken(
 func (s *Server) workerCreateToken(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.CreateTokenRequest
 	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker Token create JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid worker token create JSON: %w", err)))
 		return
 	}
 	parsed, err := parseRunLeaseFence(request.Lease)
@@ -217,7 +217,7 @@ func (s *Server) workerCreateToken(w http.ResponseWriter, r *http.Request) {
 	}
 	metadata, tags, err := normalizeTokenAnnotations(request.Metadata, request.Tags)
 	if err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Token annotations: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid token annotations: %w", err)))
 		return
 	}
 	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
@@ -320,7 +320,7 @@ func (s *Server) createTokenInTransaction(
 ) (api.TokenResponse, json.RawMessage, error) {
 	now, err := q.GetTokenCreateTime(ctx)
 	if err != nil || !now.Valid {
-		return api.TokenResponse{}, nil, errors.New("load Token create time")
+		return api.TokenResponse{}, nil, errors.New("load token create time")
 	}
 	expiresAt := pgvalue.Timestamptz(
 		now.Time.Add(time.Duration(input.TimeoutMS) * time.Millisecond),
@@ -338,7 +338,7 @@ func (s *Server) createTokenInTransaction(
 		Metadata:                  input.Metadata, Tags: input.Tags,
 	})
 	if err != nil {
-		return api.TokenResponse{}, nil, fmt.Errorf("create Token: %w", err)
+		return api.TokenResponse{}, nil, fmt.Errorf("create token: %w", err)
 	}
 	publicAccessID := uuid.Must(uuid.NewV7())
 	_, err = q.CreatePublicAccessToken(ctx, db.CreatePublicAccessTokenParams{
@@ -349,7 +349,7 @@ func (s *Server) createTokenInTransaction(
 		CreatedBy: input.CreatedBy,
 	})
 	if err != nil {
-		return api.TokenResponse{}, nil, fmt.Errorf("create Token public access credential: %w", err)
+		return api.TokenResponse{}, nil, fmt.Errorf("create token public access credential: %w", err)
 	}
 	receipt, err := json.Marshal(tokenCreateReceipt{TokenID: tokenID.String()})
 	if err != nil {
@@ -472,7 +472,7 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 	if raw := strings.TrimSpace(firstNonEmptyString(r.URL.Query().Get("after"), r.URL.Query().Get("cursor"))); raw != "" {
 		cursor, err := ids.Parse(raw)
 		if err != nil {
-			writeError(w, badRequest(errors.New("cursor must be a Token UUID")))
+			writeError(w, badRequest(errors.New("cursor must be a token UUID")))
 			return
 		}
 		afterID = pgvalue.UUID(cursor)
@@ -492,7 +492,7 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 		State: state, AfterID: afterID, LimitCount: limit + 1,
 	})
 	if err != nil {
-		writeError(w, errors.New("list Tokens"))
+		writeError(w, errors.New("list tokens"))
 		return
 	}
 	var nextCursor *string
@@ -519,7 +519,7 @@ func (s *Server) getToken(w http.ResponseWriter, r *http.Request) {
 func (s *Server) completeToken(w http.ResponseWriter, r *http.Request) {
 	var request api.CompleteTokenRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Token completion JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid token completion JSON: %w", err)))
 		return
 	}
 	if len(request.Result) == 0 {
@@ -550,7 +550,7 @@ func (s *Server) completeToken(w http.ResponseWriter, r *http.Request) {
 func (s *Server) cancelToken(w http.ResponseWriter, r *http.Request) {
 	var request api.CancelTokenRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Token cancellation JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid token cancellation JSON: %w", err)))
 		return
 	}
 	tokenRow, ok := s.authorizeToken(w, r, auth.PermissionTokensCancel)
@@ -573,7 +573,7 @@ func (s *Server) cancelToken(w http.ResponseWriter, r *http.Request) {
 func (s *Server) completeTokenWithCallback(w http.ResponseWriter, r *http.Request) {
 	var request api.CompleteTokenRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Token callback JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid token callback JSON: %w", err)))
 		return
 	}
 	if len(request.Result) == 0 {
@@ -618,7 +618,7 @@ func (s *Server) completeTokenWithBearer(w http.ResponseWriter, r *http.Request)
 	s.writeTokenCORS(w)
 	var request api.CompleteTokenRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Token completion JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid token completion JSON: %w", err)))
 		return
 	}
 	if len(request.Result) == 0 {
@@ -938,7 +938,7 @@ func (s *Server) authorizeToken(
 		return db.Token{}, false
 	}
 	if err != nil {
-		writeError(w, errors.New("load Token"))
+		writeError(w, errors.New("load token"))
 		return db.Token{}, false
 	}
 	return tokenRow, true
@@ -1016,7 +1016,7 @@ func (s *Server) writeTokenError(w http.ResponseWriter, err error) {
 	var conflictError idempotency.ConflictError
 	switch {
 	case errors.As(err, &conflictError):
-		writeError(w, conflict(codedError{code: "idempotency_conflict", message: "idempotency key conflicts with an earlier Token operation"}))
+		writeError(w, conflict(codedError{code: "idempotency_conflict", message: "idempotency key conflicts with an earlier token operation"}))
 	case errors.Is(err, errTokenCreateAuthority):
 		writeError(w, conflict(errTokenCreateAuthority))
 	case errors.Is(err, pgx.ErrNoRows), errors.Is(err, errTokenNotFound):

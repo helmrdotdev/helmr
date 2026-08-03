@@ -23,10 +23,10 @@ import (
 )
 
 var (
-	errChildTaskInvokeStale       = errors.New("child Task invocation authority is stale")
-	errChildTaskInvokeUnsupported = errors.New("child Task invocation method is unsupported")
-	errChildTaskSameWorkspace     = errors.New("same-Workspace child Task start is unsupported")
-	errWorkspaceHandoffConflict   = errors.New("same-Workspace call reached a different Workspace frontier")
+	errChildTaskInvokeStale       = errors.New("child task invocation authority is stale")
+	errChildTaskInvokeUnsupported = errors.New("child task invocation method is unsupported")
+	errChildTaskSameWorkspace     = errors.New("same-workspace child task start is unsupported")
+	errWorkspaceHandoffConflict   = errors.New("same-workspace call reached a different workspace frontier")
 )
 
 type childTaskOptions struct {
@@ -163,7 +163,7 @@ func normalizeWorkerChildTaskRequest(
 	}
 	var workspace api.WorkspaceTarget
 	if err := decodeClosedJSON(request.Workspace, &workspace); err != nil {
-		return normalizedTaskStart{}, fmt.Errorf("invalid Workspace: %w", err)
+		return normalizedTaskStart{}, fmt.Errorf("invalid workspace: %w", err)
 	}
 	var options childTaskOptions
 	if err := decodeClosedJSON(request.Options, &options); err != nil {
@@ -266,7 +266,7 @@ func (s *Server) invokeChildTask(
 				return errTaskWorkspaceNotFound
 			}
 			if err != nil {
-				return fmt.Errorf("resolve child Task Workspace: %w", err)
+				return fmt.Errorf("resolve child task workspace: %w", err)
 			}
 			targetWorkspaceID = pgvalue.MustUUIDValue(resolved)
 		}
@@ -285,7 +285,7 @@ func (s *Server) invokeChildTask(
 				return errChildTaskInvokeStale
 			}
 			if edgeClaim == nil {
-				return errors.New("same-Workspace child Task call claim is unavailable")
+				return errors.New("same-workspace child task call claim is unavailable")
 			}
 			if _, err := loadChildTaskAdmission(
 				ctx,
@@ -357,13 +357,13 @@ func (s *Server) invokeChildTask(
 			return errTaskNotDeployed
 		}
 		if err != nil {
-			return fmt.Errorf("load child Task definition: %w", err)
+			return fmt.Errorf("load child task definition: %w", err)
 		}
 		program, err := work.q.GetDeploymentProgramAuthority(ctx, db.GetDeploymentProgramAuthorityParams{
 			EnvironmentID: authority.run.EnvironmentID, DeploymentID: authority.run.DeploymentID,
 		})
 		if err != nil {
-			return fmt.Errorf("load child Task deployment authority: %w", err)
+			return fmt.Errorf("load child task deployment authority: %w", err)
 		}
 		admission, err := deployment.ResolveTaskRunAdmission(
 			definition.ManifestVersion, definition.DeclaredID, definition.Manifest,
@@ -378,7 +378,7 @@ func (s *Server) invokeChildTask(
 		}
 		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, pgvalue.UUID(targetWorkspaceID))
 		if err != nil {
-			return fmt.Errorf("lock child Task Workspace Secrets: %w", err)
+			return fmt.Errorf("lock child task workspace secrets: %w", err)
 		}
 		for _, binding := range bindings {
 			if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
@@ -396,7 +396,7 @@ func (s *Server) invokeChildTask(
 			},
 		)
 		if err != nil {
-			return fmt.Errorf("lock child Task Workspace pair: %w", err)
+			return fmt.Errorf("lock child task workspace pair: %w", err)
 		}
 		sourceWorkspace, err := sourceChildWorkspace(
 			lockedWorkspaces,
@@ -420,7 +420,7 @@ func (s *Server) invokeChildTask(
 			return errTaskWorkspaceUnavailable
 		}
 		if err != nil {
-			return fmt.Errorf("lock child Task Workspace authority: %w", err)
+			return fmt.Errorf("lock child task workspace authority: %w", err)
 		}
 		if workspace.OrgID != authority.run.OrgID || workspace.ProjectID != authority.run.ProjectID ||
 			workspace.State != db.WorkspaceStateActive ||
@@ -433,7 +433,7 @@ func (s *Server) invokeChildTask(
 		}
 		nowValue, err := work.q.GetRunAdmissionTime(ctx)
 		if err != nil || !nowValue.Valid {
-			return fmt.Errorf("load child Task admission time: %w", err)
+			return fmt.Errorf("load child task admission time: %w", err)
 		}
 		now := nowValue.Time.UTC()
 		queuedExpiresAt := pgtype.Timestamptz{}
@@ -475,7 +475,7 @@ func (s *Server) invokeChildTask(
 			return errChildTaskInvokeStale
 		}
 		if err != nil {
-			return fmt.Errorf("create child Task Run: %w", err)
+			return fmt.Errorf("create child task run: %w", err)
 		}
 		if _, err := work.q.ReserveWorkspaceForRun(ctx, db.ReserveWorkspaceForRunParams{
 			RunID: run.ID, EnvironmentID: run.EnvironmentID, ID: workspace.ID,
@@ -484,23 +484,23 @@ func (s *Server) invokeChildTask(
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errTaskWorkspaceUnavailable
 			}
-			return fmt.Errorf("reserve child Task Workspace: %w", err)
+			return fmt.Errorf("reserve child task workspace: %w", err)
 		}
 		if err := secret.CreateAttemptResolutions(
 			ctx, work.q, workspace.ID, run.ID, 1, workspaceSecretResolutions(bindings),
 		); err != nil {
-			return fmt.Errorf("record child Task Secret resolutions: %w", err)
+			return fmt.Errorf("record child task secret resolutions: %w", err)
 		}
 		if _, err := work.q.CreateRunAdmissionOutbox(ctx, db.CreateRunAdmissionOutboxParams{
 			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: workspace.ID,
 			EnvironmentID: run.EnvironmentID, RunID: run.ID,
 		}); err != nil {
-			return fmt.Errorf("create child Task admission outbox: %w", err)
+			return fmt.Errorf("create child task admission outbox: %w", err)
 		}
 		result.taskStartResult = taskStartResult{RunID: runID}
 		if input.Request.Method == "call" {
 			if edgeClaim == nil {
-				return errors.New("child Task call claim is unavailable")
+				return errors.New("child task call claim is unavailable")
 			}
 			opened, err := registerDifferentWorkspaceChildCall(
 				ctx, work.q, input, authority, *edgeClaim, invocationFingerprint,
@@ -553,7 +553,7 @@ func loadChildTaskAdmission(
 	}
 	if err != nil {
 		return deployment.TaskRunAdmission{}, fmt.Errorf(
-			"load child Task definition: %w",
+			"load child task definition: %w",
 			err,
 		)
 	}
@@ -566,7 +566,7 @@ func loadChildTaskAdmission(
 	)
 	if err != nil {
 		return deployment.TaskRunAdmission{}, fmt.Errorf(
-			"load child Task deployment authority: %w",
+			"load child task deployment authority: %w",
 			err,
 		)
 	}
@@ -619,7 +619,7 @@ func registerSameWorkspaceChildCall(
 	childRequest, err := json.Marshal(fingerprint)
 	if err != nil {
 		return workerapi.CreateRunWaitResponse{}, fmt.Errorf(
-			"encode same-Workspace child Task call request: %w",
+			"encode same-workspace child task call request: %w",
 			err,
 		)
 	}
@@ -665,7 +665,7 @@ func registerSameWorkspaceChildCall(
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return workerapi.CreateRunWaitResponse{}, fmt.Errorf(
-			"load same-Workspace child Task call replay: %w",
+			"load same-workspace child task call replay: %w",
 			err,
 		)
 	}
@@ -745,7 +745,7 @@ func replayBoundSameWorkspaceChildCall(
 	}
 	if err != nil {
 		return workerapi.CreateRunWaitResponse{}, fmt.Errorf(
-			"load bound same-Workspace child Task call: %w",
+			"load bound same-workspace child task call: %w",
 			err,
 		)
 	}
@@ -802,7 +802,7 @@ func registerDifferentWorkspaceChildCall(
 	requestFingerprint := fmt.Sprintf("sha256:%x", claim.RequestFingerprint)
 	childRequest, err := json.Marshal(fingerprint)
 	if err != nil {
-		return workerapi.CreateRunWaitResponse{}, fmt.Errorf("encode child Task call request: %w", err)
+		return workerapi.CreateRunWaitResponse{}, fmt.Errorf("encode child task call request: %w", err)
 	}
 	response := workerapi.CreateRunWaitResponse{
 		RunID: pgvalue.UUIDString(authority.run.ID), RunWaitID: waitID.String(),
@@ -832,7 +832,7 @@ func registerDifferentWorkspaceChildCall(
 		return response, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return workerapi.CreateRunWaitResponse{}, fmt.Errorf("load child Task call replay: %w", err)
+		return workerapi.CreateRunWaitResponse{}, fmt.Errorf("load child task call replay: %w", err)
 	}
 	childRun, err := store.GetRun(ctx, db.GetRunParams{
 		EnvironmentID: authority.run.EnvironmentID, ID: pgvalue.UUID(child.RunID),
@@ -914,7 +914,7 @@ func childTaskResult(run db.Run) (json.RawMessage, error) {
 	}
 	if run.Status == db.RunStatusSucceeded {
 		if run.Output == nil || !json.Valid(run.Output) {
-			return nil, errors.New("succeeded child Task has invalid output")
+			return nil, errors.New("succeeded child task has invalid output")
 		}
 		return json.Marshal(struct {
 			OK     bool            `json:"ok"`
@@ -927,7 +927,7 @@ func childTaskResult(run db.Run) (json.RawMessage, error) {
 		}{ID: runID}})
 	}
 	if !run.TerminalReasonCode.Valid {
-		return nil, errors.New("failed child Task has no terminal reason")
+		return nil, errors.New("failed child task has no terminal reason")
 	}
 	runError, err := projectRunError(run.TerminalReasonCode.String, run.Error)
 	if err != nil {
@@ -1137,7 +1137,7 @@ func (s *Server) writeChildTaskInvokeError(
 		s.log.Error("invoke child Task", "error", err)
 		writeError(w, unavailable(codedError{
 			code:    "child_task_invoke_authority_unavailable",
-			message: "child Task invocation authority is unavailable", retryable: true,
+			message: "child task invocation authority is unavailable", retryable: true,
 		}))
 		return
 	}

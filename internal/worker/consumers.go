@@ -64,14 +64,14 @@ func NewWorkspaceConsumer(runner *Runner) Consumer {
 func (c *runConsumer) Claim(ctx context.Context) (Work, bool, error) {
 	discovered, err := c.runner.client.DiscoverRunLeases(ctx)
 	if err != nil {
-		return nil, false, fmt.Errorf("discover Run Leases: %w", err)
+		return nil, false, fmt.Errorf("discover run leases: %w", err)
 	}
 	c.mu.Lock()
 	var selected workerapi.RunLeaseWork
 	for _, work := range discovered.Items {
 		if work.LeaseID == "" || work.LeaseSequence <= 0 {
 			c.mu.Unlock()
-			return nil, false, errors.New("discovered Run Lease identity is invalid")
+			return nil, false, errors.New("discovered run lease identity is invalid")
 		}
 		if _, running := c.active[work]; running {
 			continue
@@ -95,7 +95,7 @@ func (c *runConsumer) Claim(ctx context.Context) (Work, bool, error) {
 				return nil
 			}
 			return fmt.Errorf(
-				"execute Run Lease %s/%d: %w",
+				"execute run lease %s/%d: %w",
 				selected.LeaseID,
 				selected.LeaseSequence,
 				err,
@@ -109,7 +109,7 @@ func (c platformAcquisitionConsumer) Claim(ctx context.Context) (Work, bool, err
 	r := c.runner
 	next, err := r.client.NextPlatformAcquisition(ctx)
 	if err != nil {
-		return nil, false, fmt.Errorf("read Platform acquisition: %w", err)
+		return nil, false, fmt.Errorf("read platform acquisition: %w", err)
 	}
 	if next.Acquisition == nil {
 		return nil, false, nil
@@ -120,10 +120,10 @@ func (c platformAcquisitionConsumer) Claim(ctx context.Context) (Work, bool, err
 		return nil, true, &fatalWorkerError{err: fmt.Errorf("read build policy digest: %w", err)}
 	}
 	if acquisition.BuildPolicyDigest != policyDigest {
-		return nil, true, &fatalWorkerError{err: errors.New("Control Plane and Worker build policies differ")}
+		return nil, true, &fatalWorkerError{err: errors.New("control plane and worker build policies differ")}
 	}
 	if r.platformAcquirer == nil {
-		return nil, true, &fatalWorkerError{err: errors.New("Platform acquirer is not configured")}
+		return nil, true, &fatalWorkerError{err: errors.New("platform acquirer is not configured")}
 	}
 	return func(workCtx context.Context) error {
 		candidates, err := r.platformAcquirer.Acquire(workCtx, acquisition)
@@ -132,7 +132,7 @@ func (c platformAcquisitionConsumer) Claim(ctx context.Context) (Work, bool, err
 				PlatformAcquisitionFailureReason() workerapi.PlatformAcquisitionFailureReason
 			}
 			if !errors.As(err, &deterministic) {
-				return fmt.Errorf("acquire Platform Artifacts for Deployment %s: %w", acquisition.DeploymentID, err)
+				return fmt.Errorf("acquire platform artifacts for deployment %s: %w", acquisition.DeploymentID, err)
 			}
 			raw, _ := json.Marshal(map[string]string{"message": err.Error()})
 			_, reportErr := r.client.FailPlatformAcquisition(
@@ -255,11 +255,11 @@ func validateBuildEnvelope(
 		Version:   build.Manager.Version,
 	}
 	if err := deployment.ValidatePackageManager(manager); err != nil {
-		return fmt.Errorf("deployment Manager selector: %w", err)
+		return fmt.Errorf("deployment manager selector: %w", err)
 	}
 	for name, object := range map[string]workerapi.CASObject{
 		"runtime":   build.Runtime,
-		"Manager":   build.Manager.Artifact,
+		"manager":   build.Manager.Artifact,
 		"toolchain": build.Toolchain,
 	} {
 		if _, err := deployment.SHA256DigestBytes(object.Digest); err != nil {
@@ -272,7 +272,7 @@ func validateBuildEnvelope(
 	if build.Runtime.MediaType != deployment.RuntimeArtifactMediaType ||
 		build.Manager.Artifact.MediaType != deployment.ManagerTreeMediaType ||
 		build.Toolchain.MediaType != deployment.ToolchainMediaType {
-		return errors.New("deployment Platform Artifact media type is invalid")
+		return errors.New("deployment platform artifact media type is invalid")
 	}
 	return nil
 }
@@ -415,7 +415,7 @@ func (r *Runner) renewBuildUntilDone(
 			return errors.New("renew deployment build response did not include a lease")
 		}
 		if err := revocations.apply(response.RevokedImageOperationIDs); err != nil {
-			return fmt.Errorf("apply revoked Workspace image operations: %w", err)
+			return fmt.Errorf("apply revoked workspace image operations: %w", err)
 		}
 		state.set(response.Lease)
 	}

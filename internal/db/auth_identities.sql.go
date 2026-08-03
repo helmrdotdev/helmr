@@ -86,7 +86,7 @@ SELECT id, display_name, profile_image_url, primary_email, disabled_at, created_
 type UpsertAuthIdentityParams struct {
 	UserID           pgtype.UUID `json:"user_id"`
 	DisplayName      string      `json:"display_name"`
-	ProfileImageUrl  pgtype.Text `json:"profile_image_url"`
+	ProfileImageURL  pgtype.Text `json:"profile_image_url"`
 	EmailVerified    bool        `json:"email_verified"`
 	Email            pgtype.Text `json:"email"`
 	IdentityProvider string      `json:"identity_provider"`
@@ -98,7 +98,7 @@ type UpsertAuthIdentityParams struct {
 type UpsertAuthIdentityRow struct {
 	ID              pgtype.UUID        `json:"id"`
 	DisplayName     string             `json:"display_name"`
-	ProfileImageUrl pgtype.Text        `json:"profile_image_url"`
+	ProfileImageURL pgtype.Text        `json:"profile_image_url"`
 	PrimaryEmail    pgtype.Text        `json:"primary_email"`
 	DisabledAt      pgtype.Timestamptz `json:"disabled_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
@@ -109,7 +109,7 @@ func (q *Queries) UpsertAuthIdentity(ctx context.Context, arg UpsertAuthIdentity
 	row := q.db.QueryRow(ctx, upsertAuthIdentity,
 		arg.UserID,
 		arg.DisplayName,
-		arg.ProfileImageUrl,
+		arg.ProfileImageURL,
 		arg.EmailVerified,
 		arg.Email,
 		arg.IdentityProvider,
@@ -121,7 +121,7 @@ func (q *Queries) UpsertAuthIdentity(ctx context.Context, arg UpsertAuthIdentity
 	err := row.Scan(
 		&i.ID,
 		&i.DisplayName,
-		&i.ProfileImageUrl,
+		&i.ProfileImageURL,
 		&i.PrimaryEmail,
 		&i.DisabledAt,
 		&i.CreatedAt,

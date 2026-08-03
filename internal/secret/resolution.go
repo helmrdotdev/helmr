@@ -41,7 +41,7 @@ func CreateAttemptResolutions(
 		return nil
 	}
 	if len(resolutions) > maxResolutions {
-		return fmt.Errorf("Secret resolution count %d exceeds %d", len(resolutions), maxResolutions)
+		return fmt.Errorf("secret resolution count %d exceeds %d", len(resolutions), maxResolutions)
 	}
 	ids, kinds, targets, secretIDs, versionIDs, generations := resolutionColumns(resolutions)
 	count, err := store.CreateAttemptSecretResolutions(ctx, db.CreateAttemptSecretResolutionsParams{
@@ -65,7 +65,7 @@ func CreateProcessResolutions(
 		return nil
 	}
 	if len(resolutions) > maxResolutions {
-		return fmt.Errorf("Secret resolution count %d exceeds %d", len(resolutions), maxResolutions)
+		return fmt.Errorf("secret resolution count %d exceeds %d", len(resolutions), maxResolutions)
 	}
 	ids, kinds, targets, secretIDs, versionIDs, generations := resolutionColumns(resolutions)
 	count, err := store.CreateProcessSecretResolutions(ctx, db.CreateProcessSecretResolutionsParams{
@@ -107,7 +107,7 @@ func checkResolutionInsert(count int64, expected int, err error) error {
 		return err
 	}
 	if count != int64(expected) {
-		return errors.New("Secret resolution batch was rejected")
+		return errors.New("secret resolution batch was rejected")
 	}
 	return nil
 }

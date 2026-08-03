@@ -27,12 +27,12 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, io.EOF) {
 			err = errors.New("request body is required")
 		}
-		writeError(w, badRequest(fmt.Errorf("invalid worker Run start request JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid worker run start request JSON: %w", err)))
 		return
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		writeError(w, badRequest(errors.New("invalid worker Run start request JSON: trailing value")))
+		writeError(w, badRequest(errors.New("invalid worker run start request JSON: trailing value")))
 		return
 	}
 	leaseID, err := ids.Parse(request.Lease.ID)
@@ -50,11 +50,11 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		if errors.Is(err, errStaleRunLeaseClaim) {
-			writeError(w, conflict(errors.New("Run start acknowledgement is stale")))
+			writeError(w, conflict(errors.New("run start acknowledgement is stale")))
 			return
 		}
 		s.log.Error("start Run failed", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("start Run"))
+		writeError(w, errors.New("start run"))
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.RunStartResponse{Lease: receipt})

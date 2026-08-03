@@ -35,7 +35,7 @@ func parseRunStartArm(request workerapi.RunStartRequest) (runStartArm, error) {
 		for index, raw := range values {
 			value, err := ids.Parse(raw)
 			if err != nil {
-				return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("Run start arm IDs must be canonical UUIDv7 values")
+				return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("run start arm IDs must be canonical UUIDv7 values")
 			}
 			parsed[index] = pgvalue.UUID(value)
 		}
@@ -72,7 +72,7 @@ func parseRunStartArm(request workerapi.RunStartRequest) (runStartArm, error) {
 		return runStartArm{mode: runLeaseClaimAttachParent, runWaitID: waitID, checkpointID: checkpointID,
 			resumeAttachID: attachID, resumeRequestVersion: request.Attach.Parent.ResumeRequestVersion}, nil
 	default:
-		return runStartArm{}, errors.New("Run start arm is required")
+		return runStartArm{}, errors.New("run start arm is required")
 	}
 }
 

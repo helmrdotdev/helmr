@@ -23,7 +23,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 ) error {
 	controlPlane, ok := task.controlPlane.(WorkspaceRuntimeControlPlane)
 	if !ok {
-		return errors.New("Run Lease Task Workspace runtime Control Plane is required")
+		return errors.New("run lease task workspace runtime control plane is required")
 	}
 	var correlationID string
 	var completed any
@@ -45,10 +45,10 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 			response, callErr = controlPlane.CreateRunWorkspace(callCtx, request)
 			return callErr
 		}); err != nil {
-			return fmt.Errorf("create Workspace: %w", err)
+			return fmt.Errorf("create workspace: %w", err)
 		}
 		if response.CorrelationID != correlationID {
-			return errors.New("Workspace create response correlation mismatch")
+			return errors.New("workspace create response correlation mismatch")
 		}
 		if response.Completed != nil {
 			completed = response.Completed
@@ -73,10 +73,10 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 			response, callErr = controlPlane.RetrieveRunWorkspace(callCtx, request)
 			return callErr
 		}); err != nil {
-			return fmt.Errorf("retrieve Workspace: %w", err)
+			return fmt.Errorf("retrieve workspace: %w", err)
 		}
 		if response.CorrelationID != correlationID {
-			return errors.New("Workspace retrieve response correlation mismatch")
+			return errors.New("workspace retrieve response correlation mismatch")
 		}
 		if response.Completed != nil {
 			completed = response.Completed
@@ -105,10 +105,10 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 			response, callErr = controlPlane.ReadRunWorkspaceFile(callCtx, request)
 			return callErr
 		}); err != nil {
-			return fmt.Errorf("read Workspace file: %w", err)
+			return fmt.Errorf("read workspace file: %w", err)
 		}
 		if response.CorrelationID != correlationID {
-			return errors.New("Workspace file read response correlation mismatch")
+			return errors.New("workspace file read response correlation mismatch")
 		}
 		if response.Completed != nil {
 			completed = response.Completed
@@ -137,10 +137,10 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 			response, callErr = controlPlane.StatRunWorkspaceFile(callCtx, request)
 			return callErr
 		}); err != nil {
-			return fmt.Errorf("stat Workspace file: %w", err)
+			return fmt.Errorf("stat workspace file: %w", err)
 		}
 		if response.CorrelationID != correlationID {
-			return errors.New("Workspace file stat response correlation mismatch")
+			return errors.New("workspace file stat response correlation mismatch")
 		}
 		if response.Completed != nil {
 			completed = response.Completed
@@ -155,7 +155,7 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 			return err
 		}
 		if value.WorkspaceFileListRequested.GetLimit() > math.MaxInt32 {
-			return errors.New("Workspace file list limit is invalid")
+			return errors.New("workspace file list limit is invalid")
 		}
 		request := workerapi.ListWorkspaceFilesRequest{
 			ReadWorkspaceFileRequest: workerapi.ReadWorkspaceFileRequest{
@@ -176,10 +176,10 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 			response, callErr = controlPlane.ListRunWorkspaceFiles(callCtx, request)
 			return callErr
 		}); err != nil {
-			return fmt.Errorf("list Workspace files: %w", err)
+			return fmt.Errorf("list workspace files: %w", err)
 		}
 		if response.CorrelationID != correlationID {
-			return errors.New("Workspace file list response correlation mismatch")
+			return errors.New("workspace file list response correlation mismatch")
 		}
 		if response.Completed != nil {
 			completed = response.Completed
@@ -222,32 +222,32 @@ func (task *guestRunLeaseTask) handleWorkspaceRuntime(
 			response, callErr = controlPlane.DeleteRunWorkspace(callCtx, request)
 			return callErr
 		}); err != nil {
-			return fmt.Errorf("delete Workspace: %w", err)
+			return fmt.Errorf("delete workspace: %w", err)
 		}
 		if response.CorrelationID != correlationID {
-			return errors.New("Workspace delete response correlation mismatch")
+			return errors.New("workspace delete response correlation mismatch")
 		}
 		if response.Completed != nil {
 			completed = response.Completed
 		}
 		failed = response.Failed
 	default:
-		return errors.New("unsupported Workspace runtime event")
+		return errors.New("unsupported workspace runtime event")
 	}
 	if (completed == nil) == (failed == nil) {
-		return errors.New("Workspace runtime response must contain exactly one result")
+		return errors.New("workspace runtime response must contain exactly one result")
 	}
 	kind := "completed"
 	payload := completed
 	if failed != nil {
 		if strings.TrimSpace(failed.Code) == "" || strings.TrimSpace(failed.Message) == "" {
-			return errors.New("Workspace runtime failure is invalid")
+			return errors.New("workspace runtime failure is invalid")
 		}
 		kind, payload = "failed", failed
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("encode Workspace runtime decision: %w", err)
+		return fmt.Errorf("encode workspace runtime decision: %w", err)
 	}
 	return wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
 		CorrelationId: correlationID,
@@ -271,15 +271,15 @@ func (task *guestRunLeaseTask) executeWorkspaceRuntime(
 		response, callErr = controlPlane.ExecuteRunWorkspace(callCtx, request)
 		return callErr
 	}); err != nil {
-		return workerapi.ExecuteWorkspaceResponse{}, fmt.Errorf("execute Workspace: %w", err)
+		return workerapi.ExecuteWorkspaceResponse{}, fmt.Errorf("execute workspace: %w", err)
 	}
 	if response.CorrelationID != request.CorrelationID {
-		return workerapi.ExecuteWorkspaceResponse{}, errors.New("Workspace exec response correlation mismatch")
+		return workerapi.ExecuteWorkspaceResponse{}, errors.New("workspace exec response correlation mismatch")
 	}
 	for response.Pending != nil {
 		if response.Completed != nil || response.Failed != nil ||
 			validateRuntimeWorkspaceProcessID(response.Pending.ProcessID) != nil {
-			return workerapi.ExecuteWorkspaceResponse{}, errors.New("Workspace exec pending response is invalid")
+			return workerapi.ExecuteWorkspaceResponse{}, errors.New("workspace exec pending response is invalid")
 		}
 		timer := time.NewTimer(250 * time.Millisecond)
 		select {
@@ -302,14 +302,14 @@ func (task *guestRunLeaseTask) executeWorkspaceRuntime(
 			response, callErr = controlPlane.PollRunWorkspaceExec(callCtx, poll)
 			return callErr
 		}); err != nil {
-			return workerapi.ExecuteWorkspaceResponse{}, fmt.Errorf("poll Workspace exec: %w", err)
+			return workerapi.ExecuteWorkspaceResponse{}, fmt.Errorf("poll workspace exec: %w", err)
 		}
 		if response.CorrelationID != request.CorrelationID {
-			return workerapi.ExecuteWorkspaceResponse{}, errors.New("Workspace exec poll response correlation mismatch")
+			return workerapi.ExecuteWorkspaceResponse{}, errors.New("workspace exec poll response correlation mismatch")
 		}
 	}
 	if (response.Completed == nil) == (response.Failed == nil) {
-		return workerapi.ExecuteWorkspaceResponse{}, errors.New("Workspace exec response must contain exactly one terminal result")
+		return workerapi.ExecuteWorkspaceResponse{}, errors.New("workspace exec response must contain exactly one terminal result")
 	}
 	return response, nil
 }
@@ -318,7 +318,7 @@ func workerWorkspaceCreateRequest(
 	requested *runv0.WorkspaceCreateRequested,
 ) (workerapi.CreateWorkspaceRequest, error) {
 	if requested == nil {
-		return workerapi.CreateWorkspaceRequest{}, errors.New("Workspace create request is required")
+		return workerapi.CreateWorkspaceRequest{}, errors.New("workspace create request is required")
 	}
 	if err := validateRuntimeWorkspaceCorrelation(requested.GetCorrelationId()); err != nil {
 		return workerapi.CreateWorkspaceRequest{}, err
@@ -329,7 +329,7 @@ func workerWorkspaceCreateRequest(
 	secrets := make([]api.WorkspaceSecret, 0, len(requested.GetSecrets()))
 	for _, placement := range requested.GetSecrets() {
 		if placement == nil {
-			return workerapi.CreateWorkspaceRequest{}, errors.New("Workspace Secret placement is required")
+			return workerapi.CreateWorkspaceRequest{}, errors.New("workspace secret placement is required")
 		}
 		secret := api.WorkspaceSecret{Name: placement.GetName()}
 		switch value := placement.GetPlacement().(type) {
@@ -338,7 +338,7 @@ func workerWorkspaceCreateRequest(
 		case *runv0.WorkspaceSecretPlacement_File:
 			secret.File = value.File
 		default:
-			return workerapi.CreateWorkspaceRequest{}, errors.New("Workspace Secret target is required")
+			return workerapi.CreateWorkspaceRequest{}, errors.New("workspace secret target is required")
 		}
 		if err := api.ValidateWorkspaceSecret(secret); err != nil {
 			return workerapi.CreateWorkspaceRequest{}, err
@@ -359,7 +359,7 @@ func workerWorkspaceRetrieveRequest(
 		return workerapi.RetrieveWorkspaceRequest{}, err
 	}
 	if address == nil {
-		return workerapi.RetrieveWorkspaceRequest{}, errors.New("Workspace address is required")
+		return workerapi.RetrieveWorkspaceRequest{}, errors.New("workspace address is required")
 	}
 	request := workerapi.RetrieveWorkspaceRequest{CorrelationID: correlationID}
 	switch value := address.GetAddress().(type) {
@@ -368,7 +368,7 @@ func workerWorkspaceRetrieveRequest(
 	case *runv0.WorkspaceAddress_WorkspaceKey:
 		request.Workspace.WorkspaceKey = value.WorkspaceKey
 	default:
-		return workerapi.RetrieveWorkspaceRequest{}, errors.New("Workspace address is required")
+		return workerapi.RetrieveWorkspaceRequest{}, errors.New("workspace address is required")
 	}
 	return request, nil
 }
@@ -377,7 +377,7 @@ func workerWorkspaceExecRequest(
 	requested *runv0.WorkspaceExecRequested,
 ) (workerapi.ExecuteWorkspaceRequest, error) {
 	if requested == nil {
-		return workerapi.ExecuteWorkspaceRequest{}, errors.New("Workspace exec request is required")
+		return workerapi.ExecuteWorkspaceRequest{}, errors.New("workspace exec request is required")
 	}
 	base, err := workerWorkspaceRetrieveRequest(requested.GetCorrelationId(), requested.GetWorkspace())
 	if err != nil {
@@ -394,7 +394,7 @@ func workerWorkspaceExecRequest(
 	maps.Copy(request.Env, requested.GetEnv())
 	if requested.TimeoutMs != nil {
 		if requested.GetTimeoutMs() > math.MaxInt64 {
-			return workerapi.ExecuteWorkspaceRequest{}, errors.New("Workspace exec timeout is invalid")
+			return workerapi.ExecuteWorkspaceRequest{}, errors.New("workspace exec timeout is invalid")
 		}
 		timeout := int64(requested.GetTimeoutMs())
 		request.TimeoutMS = &timeout
@@ -404,14 +404,14 @@ func workerWorkspaceExecRequest(
 
 func validateRuntimeWorkspaceCorrelation(value string) error {
 	if err := ids.Validate(value); err != nil {
-		return errors.New("Workspace runtime correlation ID is invalid")
+		return errors.New("workspace runtime correlation ID is invalid")
 	}
 	return nil
 }
 
 func validateRuntimeWorkspaceProcessID(value string) error {
 	if err := ids.Validate(value); err != nil {
-		return errors.New("Workspace exec process ID is invalid")
+		return errors.New("workspace exec process ID is invalid")
 	}
 	return nil
 }

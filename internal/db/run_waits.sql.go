@@ -58,7 +58,7 @@ func (q *Queries) BeginRunLeaseCheckpoint(ctx context.Context, arg BeginRunLease
 		&i.RuntimeInstanceID,
 		&i.RuntimeIdentityID,
 		&i.WorkerProtocolVersion,
-		&i.RequestedCpuMillis,
+		&i.RequestedCPUMillis,
 		&i.RequestedMemoryBytes,
 		&i.RequestedGuestEphemeralDiskBytes,
 		&i.RequestedExecutionSlots,

@@ -229,7 +229,7 @@ func (s *Server) resolveRunTelemetryTarget(
 	}
 	runID, err := ids.Parse(chi.URLParam(r, "runID"))
 	if err != nil {
-		writeError(w, notFound(codedError{code: "run_not_found", message: "Run not found"}))
+		writeError(w, notFound(codedError{code: "run_not_found", message: "run not found"}))
 		return runTelemetryTarget{}, false
 	}
 	row, err := s.db.GetRunSnapshot(r.Context(), db.GetRunSnapshotParams{
@@ -237,7 +237,7 @@ func (s *Server) resolveRunTelemetryTarget(
 		EnvironmentID: environmentID, ID: pgvalue.UUID(runID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(codedError{code: "run_not_found", message: "Run not found"}))
+		writeError(w, notFound(codedError{code: "run_not_found", message: "run not found"}))
 		return runTelemetryTarget{}, false
 	}
 	if err != nil {
@@ -294,7 +294,7 @@ func (s *Server) requireProjectedRunTelemetry(
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("read Run telemetry frontier: %w", err)
+		return fmt.Errorf("read run telemetry frontier: %w", err)
 	}
 	if frontier.DeadLetteredAfter {
 		return telemetry.ErrHistoricalUnavailable
@@ -317,7 +317,7 @@ func projectRunLogRecord(chunk api.RunLogChunk, runID string) (api.RunLogRecord,
 	if chunk.Stream != string(workerapi.LogStreamStructured) {
 		if chunk.Stream != string(workerapi.LogStreamStdout) &&
 			chunk.Stream != string(workerapi.LogStreamStderr) {
-			return api.RunLogRecord{}, errors.New("Run log stream is invalid")
+			return api.RunLogRecord{}, errors.New("run log stream is invalid")
 		}
 		observed := chunk.ObservedSeq
 		size := chunk.Bytes
@@ -342,7 +342,7 @@ func projectRunLogRecord(chunk api.RunLogChunk, runID string) (api.RunLogRecord,
 	if err := decoder.Decode(&value); err != nil ||
 		!validRunTelemetryLevel(value.Level) ||
 		len(value.Attributes) == 0 {
-		return api.RunLogRecord{}, errors.New("structured Run log is invalid")
+		return api.RunLogRecord{}, errors.New("structured run log is invalid")
 	}
 	return api.RunLogRecord{
 		ID: chunk.ID, Kind: "structured", RunID: runID,
@@ -396,7 +396,7 @@ func parseRunTelemetryLimit(r *http.Request) (int32, error) {
 
 func (s *Server) signRunTelemetryCursor(cursor runTelemetryCursor) (string, error) {
 	if len(s.authKeys.TelemetryCursor) == 0 || cursor.Sequence < 0 {
-		return "", errors.New("Run telemetry cursor signer is unavailable")
+		return "", errors.New("run telemetry cursor signer is unavailable")
 	}
 	payload, err := json.Marshal(cursor)
 	if err != nil {

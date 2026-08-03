@@ -47,7 +47,7 @@ func (d *Authority) prepareRunWorkspace(
 ) (runWorkspaceMount, error) {
 	tx, err := d.begin(ctx)
 	if err != nil {
-		return runWorkspaceMount{}, fmt.Errorf("begin Run preparation: %w", err)
+		return runWorkspaceMount{}, fmt.Errorf("begin run preparation: %w", err)
 	}
 	defer rollback(ctx, tx)
 
@@ -89,12 +89,12 @@ func (d *Authority) prepareRunWorkspace(
 			return runWorkspaceMount{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return runWorkspaceMount{}, fmt.Errorf("commit Run preparation: %w", err)
+			return runWorkspaceMount{}, fmt.Errorf("commit run preparation: %w", err)
 		}
 		return mount, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return runWorkspaceMount{}, fmt.Errorf("discover Workspace runtime: %w", err)
+		return runWorkspaceMount{}, fmt.Errorf("discover workspace runtime: %w", err)
 	}
 	if authority.handoffChildWaitID.Valid {
 		return runWorkspaceMount{}, ErrCapacityUnavailable
@@ -111,7 +111,7 @@ func (d *Authority) prepareRunWorkspace(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return runWorkspaceMount{}, ErrCapacityUnavailable
 		}
-		return runWorkspaceMount{}, fmt.Errorf("select Run worker: %w", err)
+		return runWorkspaceMount{}, fmt.Errorf("select run worker: %w", err)
 	}
 	if err := lockWorkerFence(ctx, tx, workerFence{
 		GroupID:               worker.groupID,
@@ -130,7 +130,7 @@ func (d *Authority) prepareRunWorkspace(
 	runtimeID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	var reservedAt time.Time
 	if err := tx.QueryRow(ctx, `SELECT transaction_timestamp()`).Scan(&reservedAt); err != nil {
-		return runWorkspaceMount{}, fmt.Errorf("sample Run reservation time: %w", err)
+		return runWorkspaceMount{}, fmt.Errorf("sample run reservation time: %w", err)
 	}
 	row, err := db.New(tx).CreateRunRuntimeReservation(
 		ctx,
@@ -145,7 +145,7 @@ func (d *Authority) prepareRunWorkspace(
 			RuntimeIdentityID:               worker.runtimeIdentityID,
 			DeploymentDefinitionID:          authority.workspaceDefinitionID,
 			WorkerEpoch:                     worker.workerEpoch,
-			ReservedCpuMillis:               authority.resources.cpuMillis,
+			ReservedCPUMillis:               authority.resources.cpuMillis,
 			ReservedMemoryBytes:             authority.resources.memoryBytes,
 			ReservedGuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes,
 			ReservedExecutionSlots:          authority.resources.executionSlots,
@@ -168,10 +168,10 @@ func (d *Authority) prepareRunWorkspace(
 		if isConstraintConflict(err) {
 			return runWorkspaceMount{}, ErrCapacityUnavailable
 		}
-		return runWorkspaceMount{}, fmt.Errorf("create Run runtime reservation: %w", err)
+		return runWorkspaceMount{}, fmt.Errorf("create run runtime reservation: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return runWorkspaceMount{}, fmt.Errorf("commit Run runtime reservation: %w", err)
+		return runWorkspaceMount{}, fmt.Errorf("commit run runtime reservation: %w", err)
 	}
 	return runWorkspaceMount{
 		workerID:  row.WorkerInstanceID,
@@ -202,7 +202,7 @@ func (d *Authority) useRunRuntime(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return runWorkspaceMount{}, ErrCapacityUnavailable
 		}
-		return runWorkspaceMount{}, fmt.Errorf("lock Workspace runtime: %w", err)
+		return runWorkspaceMount{}, fmt.Errorf("lock workspace runtime: %w", err)
 	}
 	if err := validateRunRuntime(authority, locked); err != nil {
 		return runWorkspaceMount{}, ErrCapacityUnavailable
@@ -221,7 +221,7 @@ func (d *Authority) useRunRuntime(
 		return mount, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return runWorkspaceMount{}, fmt.Errorf("read active Workspace Mount: %w", err)
+		return runWorkspaceMount{}, fmt.Errorf("read active workspace mount: %w", err)
 	}
 	if authority.handoffChildWaitID.Valid ||
 		authority.usesRetainedHandoff(locked.id) {
@@ -250,7 +250,7 @@ func (d *Authority) useRunRuntime(
 		},
 	)
 	if err != nil {
-		return runWorkspaceMount{}, fmt.Errorf("request Workspace Mount: %w", err)
+		return runWorkspaceMount{}, fmt.Errorf("request workspace mount: %w", err)
 	}
 	return runWorkspaceMount{
 		id:        requested.ID,
@@ -428,15 +428,15 @@ func validateRunRuntime(
 		runtime.memoryBytes != authority.resources.memoryBytes ||
 		runtime.guestEphemeralDiskBytes != authority.resources.guestEphemeralDiskBytes ||
 		runtime.executionSlots != authority.resources.executionSlots {
-		return errors.New("Workspace runtime does not match Run authority")
+		return errors.New("workspace runtime does not match run authority")
 	}
 	if authority.restoreCheckpointID.Valid && !retainedHandoff &&
 		(runtime.runtimeIdentityID != authority.restoreRuntimeIdentityID ||
 			runtime.runtimeSubstrateID != authority.restoreSubstrateID) {
-		return errors.New("Workspace runtime does not match Checkpoint source")
+		return errors.New("workspace runtime does not match checkpoint source")
 	}
 	if runtime.reservedProcessID.Valid {
-		return errors.New("Workspace runtime is reserved by a process")
+		return errors.New("workspace runtime is reserved by a process")
 	}
 	if runtime.reservedRunID.Valid {
 		if runtime.reservedRunID != authority.runID ||
@@ -445,7 +445,7 @@ func validateRunRuntime(
 			runtime.reservedVersionID != authority.baseVersionID ||
 			!runtime.reservationExpiresAt.Valid ||
 			!runtime.reservationActive {
-			return errors.New("Workspace runtime reservation does not match Run")
+			return errors.New("workspace runtime reservation does not match run")
 		}
 	}
 	return nil
@@ -719,7 +719,7 @@ SELECT worker_instances.per_vm_cpu_millis >= $4
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrCapacityUnavailable
 		}
-		return fmt.Errorf("lock Run worker capacity: %w", err)
+		return fmt.Errorf("lock run worker capacity: %w", err)
 	}
 	if !available {
 		return ErrCapacityUnavailable
@@ -751,7 +751,7 @@ SELECT count(*),
 		authority.concurrencyKey,
 	).Scan(&active, &pinnedLimit)
 	if err != nil {
-		return fmt.Errorf("read Run preparation budget: %w", err)
+		return fmt.Errorf("read run preparation budget: %w", err)
 	}
 	limit := d.runPolicy.PreparationLimit
 	if authority.queueLimit.Valid && authority.queueLimit.Int64 < limit {

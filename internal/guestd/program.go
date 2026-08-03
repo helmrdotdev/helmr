@@ -121,7 +121,7 @@ func handleProgramRunConnection(
 ) error {
 	programConn, ok := conn.(programConnection)
 	if !ok {
-		return errors.New("Program connection does not support deadlines")
+		return errors.New("program connection does not support deadlines")
 	}
 	stopClose := context.AfterFunc(ctx, func() {
 		_ = programConn.Close()
@@ -134,33 +134,33 @@ func handleProgramRunConnection(
 	defer programConn.SetReadDeadline(time.Time{})
 	if bodyLen != 0 {
 		drainStreamBody(programConn, bodyLen)
-		return fmt.Errorf("Program run header body length %d is invalid", bodyLen)
+		return fmt.Errorf("program run header body length %d is invalid", bodyLen)
 	}
 	runID := strings.TrimSpace(header.RunID)
 	if runID == "" {
-		return errors.New("Program run run_id is required")
+		return errors.New("program run run_id is required")
 	}
 	workspaceMountID := strings.TrimSpace(header.WorkspaceMountID)
 	if workspaceMountID == "" {
-		return errors.New("Program run workspace_mount_id is required")
+		return errors.New("program run workspace_mount_id is required")
 	}
 	workspaceID := strings.TrimSpace(header.WorkspaceID)
 	if workspaceID == "" {
-		return errors.New("Program run workspace_id is required")
+		return errors.New("program run workspace_id is required")
 	}
 	var authority workspacev0.WorkspaceRunAuthority
 	if err := frameio.ReadProtoFrame(programConn, &authority); err != nil {
-		return fmt.Errorf("read Program run authority: %w", err)
+		return fmt.Errorf("read program run authority: %w", err)
 	}
 	fence := authority.GetFence()
 	if fence == nil {
-		return errors.New("Program run authority fence is required")
+		return errors.New("program run authority fence is required")
 	}
 	if strings.TrimSpace(fence.GetWorkspaceMountId()) != workspaceMountID {
-		return errors.New("Program run authority workspace_mount_id does not match header")
+		return errors.New("program run authority workspace_mount_id does not match header")
 	}
 	if strings.TrimSpace(fence.GetWorkspaceId()) != workspaceID {
-		return errors.New("Program run authority workspace_id does not match header")
+		return errors.New("program run authority workspace_id does not match header")
 	}
 	entry, releaseMount, ok := registry.acquireAuthorityMount(
 		workspaceMountID,
@@ -168,15 +168,15 @@ func handleProgramRunConnection(
 		authority.GetChannelToken(),
 	)
 	if !ok {
-		return errors.New("Program run authority is not valid for the Workspace Mount")
+		return errors.New("program run authority is not valid for the workspace mount")
 	}
 	defer releaseMount()
 	var request runv0.ProgramRunRequest
 	if err := frameio.ReadProtoFrame(programConn, &request); err != nil {
-		return fmt.Errorf("read Program run request: %w", err)
+		return fmt.Errorf("read program run request: %w", err)
 	}
 	if request.GetRunId() != runID {
-		return errors.New("Program run request run_id does not match header")
+		return errors.New("program run request run_id does not match header")
 	}
 	if err := validateProgramRunRequest(&request); err != nil {
 		return err
@@ -184,7 +184,7 @@ func handleProgramRunConnection(
 	if fence.GetRunId() != request.GetRunId() ||
 		fence.GetAttemptNumber() != request.GetAttemptNumber() ||
 		fence.GetRunLeaseId() != request.GetRunLeaseId() {
-		return errors.New("Program run authority does not match the Program request")
+		return errors.New("program run authority does not match the program request")
 	}
 	deadline := time.UnixMilli(request.GetStartDeadlineUnixMs())
 	deliveryDeadline := admissionDeadline
@@ -229,7 +229,7 @@ func readProgramSecrets(
 ) ([]*runv0.ProgramSecret, error) {
 	if request.GetSecretCount() > maxProgramSecretPlacements {
 		return nil, fmt.Errorf(
-			"Program secret_count %d exceeds max %d",
+			"program secret_count %d exceeds max %d",
 			request.GetSecretCount(),
 			maxProgramSecretPlacements,
 		)
@@ -253,18 +253,18 @@ func readProgramSecrets(
 			maxProgramSecretFrameBytes,
 			&command,
 		); err != nil {
-			return nil, fmt.Errorf("read Program Secret delivery: %w", err)
+			return nil, fmt.Errorf("read program secret delivery: %w", err)
 		}
 		secret := command.GetSecretDelivery()
 		if secret == nil {
 			return nil, errors.New(
-				"Program Secret delivery command is required",
+				"program secret delivery command is required",
 			)
 		}
 		plaintextBytes += uint64(len(secret.GetValue()))
 		if plaintextBytes > maxProgramSecretPlaintextBytes {
 			return nil, errors.New(
-				"Program Secret plaintext exceeds aggregate limit",
+				"program secret plaintext exceeds aggregate limit",
 			)
 		}
 		secrets = append(secrets, secret)
@@ -275,12 +275,12 @@ func readProgramSecrets(
 		maxProgramControlFrameBytes,
 		&command,
 	); err != nil {
-		return nil, fmt.Errorf("read Program Secret completion: %w", err)
+		return nil, fmt.Errorf("read program secret completion: %w", err)
 	}
 	complete := command.GetSecretsComplete()
 	if complete == nil {
 		return nil, errors.New(
-			"Program Secret delivery requires a completion command",
+			"program secret delivery requires a completion command",
 		)
 	}
 	if complete.GetRunId() != request.GetRunId() ||
@@ -288,7 +288,7 @@ func readProgramSecrets(
 		complete.GetRunLeaseId() != request.GetRunLeaseId() ||
 		complete.GetSecretCount() != request.GetSecretCount() {
 		return nil, errors.New(
-			"Program Secret completion does not match execution fence",
+			"program secret completion does not match execution fence",
 		)
 	}
 	if err := validateProgramSecrets(secrets); err != nil {
@@ -308,48 +308,48 @@ func readProgramCommand(
 		return err
 	}
 	if err := proto.Unmarshal(body, command); err != nil {
-		return fmt.Errorf("unmarshal Program supervisor command: %w", err)
+		return fmt.Errorf("unmarshal program supervisor command: %w", err)
 	}
 	return nil
 }
 
 func validateProgramRunRequest(request *runv0.ProgramRunRequest) error {
 	if strings.TrimSpace(request.GetRunId()) == "" {
-		return errors.New("Program run_id is required")
+		return errors.New("program run_id is required")
 	}
 	if request.GetAttemptNumber() == 0 {
-		return errors.New("Program attempt_number is required")
+		return errors.New("program attempt_number is required")
 	}
 	if strings.TrimSpace(request.GetRunLeaseId()) == "" {
-		return errors.New("Program run_lease_id is required")
+		return errors.New("program run_lease_id is required")
 	}
 	if request.GetSecretCount() > maxProgramSecretPlacements {
 		return fmt.Errorf(
-			"Program secret_count %d exceeds max %d",
+			"program secret_count %d exceeds max %d",
 			request.GetSecretCount(),
 			maxProgramSecretPlacements,
 		)
 	}
 	if request.GetStartDeadlineUnixMs() <= time.Now().UnixMilli() {
-		return errors.New("Program start deadline has expired")
+		return errors.New("program start deadline has expired")
 	}
 	frame := request.GetProgramStartFrame()
 	if len(frame) < 4 {
-		return errors.New("Program-start frame is truncated")
+		return errors.New("program-start frame is truncated")
 	}
 	bodyLength := binary.BigEndian.Uint32(frame[:4])
 	if bodyLength == 0 {
-		return errors.New("Program-start frame is empty")
+		return errors.New("program-start frame is empty")
 	}
 	if bodyLength > frameio.MaxFrameBytes {
 		return fmt.Errorf(
-			"Program-start frame length %d exceeds max %d",
+			"program-start frame length %d exceeds max %d",
 			bodyLength,
 			frameio.MaxFrameBytes,
 		)
 	}
 	if uint64(bodyLength)+4 != uint64(len(frame)) {
-		return errors.New("Program-start bytes must contain exactly one frame")
+		return errors.New("program-start bytes must contain exactly one frame")
 	}
 	return nil
 }
@@ -360,36 +360,36 @@ func validateProgramSecrets(secrets []*runv0.ProgramSecret) error {
 	previousFile := ""
 	for _, secret := range secrets {
 		if secret == nil {
-			return errors.New("Program Secret is required")
+			return errors.New("program secret is required")
 		}
 		switch placement := secret.GetPlacement().(type) {
 		case *runv0.ProgramSecret_Env:
 			name := strings.TrimSpace(placement.Env)
 			if placement.Env != name || !validEnvironmentName(name) {
-				return errors.New("Program Secret environment placement is invalid")
+				return errors.New("program secret environment placement is invalid")
 			}
 			if isManagedRuntimeEnvKey(name) {
 				return fmt.Errorf(
-					"Program Secret environment placement %q is reserved",
+					"program secret environment placement %q is reserved",
 					name,
 				)
 			}
 			if _, exists := envNames[name]; exists {
 				return fmt.Errorf(
-					"Program Secret environment placement %q is duplicated",
+					"program secret environment placement %q is duplicated",
 					name,
 				)
 			}
 			if strings.IndexByte(string(secret.GetValue()), 0) >= 0 {
 				return fmt.Errorf(
-					"Program Secret environment placement %q contains NUL",
+					"program secret environment placement %q contains NUL",
 					name,
 				)
 			}
 			envNames[name] = struct{}{}
 			key := "env\x00" + name
 			if previousPlacement >= key {
-				return errors.New("Program Secret deliveries are not in canonical order")
+				return errors.New("program secret deliveries are not in canonical order")
 			}
 			previousPlacement = key
 		case *runv0.ProgramSecret_File:
@@ -398,16 +398,16 @@ func validateProgramSecrets(secrets []*runv0.ProgramSecret) error {
 			}
 			key := "file\x00" + placement.File
 			if previousPlacement >= key {
-				return errors.New("Program Secret deliveries are not in canonical order")
+				return errors.New("program secret deliveries are not in canonical order")
 			}
 			if previousFile != "" &&
 				strings.HasPrefix(placement.File, previousFile+"/") {
-				return errors.New("Program Secret file placements conflict")
+				return errors.New("program secret file placements conflict")
 			}
 			previousPlacement = key
 			previousFile = placement.File
 		default:
-			return errors.New("Program Secret placement is required")
+			return errors.New("program secret placement is required")
 		}
 	}
 	return nil
@@ -436,7 +436,7 @@ func validateProgramSecretFilePath(value string) error {
 		strings.ContainsRune(value, 0) ||
 		path.Clean(value) != value ||
 		value == "/" {
-		return errors.New("Program Secret file placement is invalid")
+		return errors.New("program secret file placement is invalid")
 	}
 	if value == "/workspace" ||
 		strings.HasPrefix(value, "/workspace/") ||
@@ -444,7 +444,7 @@ func validateProgramSecretFilePath(value string) error {
 		strings.HasPrefix(value, "/var/lib/helmr/") ||
 		isReservedRuntimePath(value) {
 		return fmt.Errorf(
-			"Program Secret file placement %q conflicts with reserved runtime paths",
+			"program secret file placement %q conflicts with reserved runtime paths",
 			value,
 		)
 	}
@@ -458,7 +458,7 @@ func newProgramProcess(
 	secrets []*runv0.ProgramSecret,
 ) (*programProcess, func(), error) {
 	if request == nil {
-		return nil, func() {}, errors.New("Program run request is required")
+		return nil, func() {}, errors.New("program run request is required")
 	}
 	cgroupLeaf, err := programCgroupLeafName(
 		request.GetRunId(),
@@ -469,17 +469,17 @@ func newProgramProcess(
 		return nil, func() {}, err
 	}
 	if entry.runtimeUser == nil {
-		return nil, func() {}, errors.New("Workspace runtime user is not resolved")
+		return nil, func() {}, errors.New("workspace runtime user is not resolved")
 	}
 	if filepath.Clean(entry.workspaceMount) != defaultRuntimeWorkdir {
-		return nil, func() {}, errors.New("Workspace durable root must be /workspace")
+		return nil, func() {}, errors.New("workspace durable root must be /workspace")
 	}
 	if err := prepareLaunchPath(
 		entry.imageRoot,
 		defaultRuntimeWorkdir,
 		entry.runtimeUser,
 	); err != nil {
-		return nil, func() {}, fmt.Errorf("prepare Program cwd: %w", err)
+		return nil, func() {}, fmt.Errorf("prepare program cwd: %w", err)
 	}
 	if err := entry.prepareWorkspaceOwner(); err != nil {
 		return nil, func() {}, err
@@ -614,7 +614,7 @@ func newProgramProcess(
 func managedProgramNodeFlags() ([]string, error) {
 	file, err := os.Open(managedRuntimeDescriptor)
 	if err != nil {
-		return nil, fmt.Errorf("open Managed Runtime descriptor: %w", err)
+		return nil, fmt.Errorf("open managed runtime descriptor: %w", err)
 	}
 	raw, readErr := io.ReadAll(io.LimitReader(
 		file,
@@ -626,7 +626,7 @@ func managedProgramNodeFlags() ([]string, error) {
 	}
 	descriptor, err := deployment.ParseRuntimeArtifactDescriptor(raw)
 	if err != nil {
-		return nil, fmt.Errorf("parse Managed Runtime descriptor: %w", err)
+		return nil, fmt.Errorf("parse managed runtime descriptor: %w", err)
 	}
 	return append([]string(nil), descriptor.ProgramNodeFlags...), nil
 }
@@ -776,7 +776,7 @@ func prepareProgramSecretTarget(
 		if !info.Mode().IsRegular() {
 			cleanupDirectories()
 			return func() {}, fmt.Errorf(
-				"Program Secret target is not a regular file: %s",
+				"program secret target is not a regular file: %s",
 				guestPath,
 			)
 		}
@@ -876,19 +876,19 @@ func superviseProgram(
 		maxProgramControlFrameBytes,
 		&command,
 	); err != nil {
-		return fmt.Errorf("read Program-start release: %w", err)
+		return fmt.Errorf("read program-start release: %w", err)
 	}
 	startRelease := command.GetStartRelease()
 	if startRelease == nil {
-		return errors.New("Program-start release command is required")
+		return errors.New("program-start release command is required")
 	}
 	if startRelease.GetRunId() != request.GetRunId() ||
 		startRelease.GetAttemptNumber() != request.GetAttemptNumber() ||
 		startRelease.GetRunLeaseId() != request.GetRunLeaseId() {
-		return errors.New("Program-start release does not match execution fence")
+		return errors.New("program-start release does not match execution fence")
 	}
 	if _, err := process.stdin.Write(request.GetProgramStartFrame()); err != nil {
-		return fmt.Errorf("write Program-start frame: %w", err)
+		return fmt.Errorf("write program-start frame: %w", err)
 	}
 	request.ProgramStartFrame = nil
 	var readyEvent runv0.RunEvent
@@ -1002,19 +1002,19 @@ func relayProgram(
 				err := <-controlErrors
 				events = nil
 				if !errors.Is(err, io.EOF) {
-					return fmt.Errorf("read Program control event: %w", err)
+					return fmt.Errorf("read program control event: %w", err)
 				}
 				continue
 			}
 			if waitRequested := event.GetRunWaitRequested(); waitRequested != nil {
 				if outcomeSeen {
-					return errors.New("Program emitted a control event after Task outcome")
+					return errors.New("program emitted a control event after task outcome")
 				}
 				if pendingWait != nil || pendingTurnCommit != nil {
-					return errors.New("Program emitted a concurrent consuming Wait")
+					return errors.New("program emitted a concurrent consuming wait")
 				}
 				if strings.TrimSpace(waitRequested.GetCorrelationId()) == "" || strings.TrimSpace(waitRequested.GetKind()) == "" {
-					return errors.New("Program Wait identity is incomplete")
+					return errors.New("program wait identity is incomplete")
 				}
 				if err := stream.write(event); err != nil {
 					return err
@@ -1024,13 +1024,13 @@ func relayProgram(
 			}
 			if turnCommit := event.GetActorTurnCommitRequested(); turnCommit != nil {
 				if outcomeSeen || entrypoint.GetActor() == nil {
-					return errors.New("Program emitted an Actor turn commit outside live Actor execution")
+					return errors.New("program emitted an actor turn commit outside live actor execution")
 				}
 				if pendingWait != nil || pendingTurnCommit != nil {
-					return errors.New("Program emitted a concurrent Actor turn commit")
+					return errors.New("program emitted a concurrent actor turn commit")
 				}
 				if strings.TrimSpace(turnCommit.GetCorrelationId()) == "" || turnCommit.GetTargetInputSequence() <= 0 {
-					return errors.New("Actor turn commit identity is incomplete")
+					return errors.New("actor turn commit identity is incomplete")
 				}
 				if err := stream.write(event); err != nil {
 					return err
@@ -1040,16 +1040,16 @@ func relayProgram(
 			}
 			if correlationID, label, ok := runtimeResourceOperationIdentity(event); ok {
 				if outcomeSeen {
-					return fmt.Errorf("Program emitted an %s after outcome", label)
+					return fmt.Errorf("program emitted an %s after outcome", label)
 				}
 				if correlationID == "" {
 					return fmt.Errorf("%s identity is incomplete", label)
 				}
 				if _, exists := pendingRuntimeOperations[correlationID]; exists {
-					return fmt.Errorf("Program emitted a duplicate %s correlation", label)
+					return fmt.Errorf("program emitted a duplicate %s correlation", label)
 				}
 				if len(pendingRuntimeOperations) >= 128 {
-					return errors.New("Program exceeded the pending runtime operation limit")
+					return errors.New("program exceeded the pending runtime operation limit")
 				}
 				if err := stream.write(event); err != nil {
 					return err
@@ -1059,58 +1059,58 @@ func relayProgram(
 			}
 			if send := event.GetActorInputSendRequested(); send != nil {
 				if outcomeSeen {
-					return errors.New("Program emitted an Actor input send after outcome")
+					return errors.New("program emitted an actor input send after outcome")
 				}
 				correlationID := strings.TrimSpace(send.GetCorrelationId())
 				if correlationID == "" || strings.TrimSpace(send.GetDeclaredId()) == "" ||
 					strings.TrimSpace(send.GetDataJson()) == "" {
-					return errors.New("Actor input send identity is incomplete")
+					return errors.New("actor input send identity is incomplete")
 				}
 				if _, exists := pendingRuntimeOperations[correlationID]; exists {
-					return errors.New("Program emitted a duplicate Actor input send correlation")
+					return errors.New("program emitted a duplicate actor input send correlation")
 				}
 				if len(pendingRuntimeOperations) >= 128 {
-					return errors.New("Program exceeded the pending runtime operation limit")
+					return errors.New("program exceeded the pending runtime operation limit")
 				}
 				if err := stream.write(event); err != nil {
 					return err
 				}
-				pendingRuntimeOperations[correlationID] = "Actor input send"
+				pendingRuntimeOperations[correlationID] = "actor input send"
 				continue
 			}
 			if create := event.GetTokenCreateRequested(); create != nil {
 				if outcomeSeen {
-					return errors.New("Program emitted a Token create after outcome")
+					return errors.New("program emitted a token create after outcome")
 				}
 				correlationID := strings.TrimSpace(create.GetCorrelationId())
 				if correlationID == "" {
-					return errors.New("Token create identity is incomplete")
+					return errors.New("token create identity is incomplete")
 				}
 				if _, exists := pendingRuntimeOperations[correlationID]; exists {
-					return errors.New("Program emitted a duplicate Token create correlation")
+					return errors.New("program emitted a duplicate token create correlation")
 				}
 				if len(pendingRuntimeOperations) >= 128 {
-					return errors.New("Program exceeded the pending runtime operation limit")
+					return errors.New("program exceeded the pending runtime operation limit")
 				}
 				if err := stream.write(event); err != nil {
 					return err
 				}
-				pendingRuntimeOperations[correlationID] = "Token create"
+				pendingRuntimeOperations[correlationID] = "token create"
 				continue
 			}
 			if metadata := event.GetMetadataUpdated(); metadata != nil {
 				if outcomeSeen {
-					return errors.New("Program emitted a metadata mutation after outcome")
+					return errors.New("program emitted a metadata mutation after outcome")
 				}
 				correlationID := strings.TrimSpace(metadata.GetCorrelationId())
 				if correlationID == "" || strings.TrimSpace(metadata.GetOperation()) == "" {
-					return errors.New("Metadata mutation identity is incomplete")
+					return errors.New("metadata mutation identity is incomplete")
 				}
 				if _, exists := pendingRuntimeOperations[correlationID]; exists {
-					return errors.New("Program emitted a duplicate metadata mutation correlation")
+					return errors.New("program emitted a duplicate metadata mutation correlation")
 				}
 				if len(pendingRuntimeOperations) >= 128 {
-					return errors.New("Program exceeded the pending runtime operation limit")
+					return errors.New("program exceeded the pending runtime operation limit")
 				}
 				if err := stream.write(event); err != nil {
 					return err
@@ -1120,18 +1120,18 @@ func relayProgram(
 			}
 			if log := event.GetStructuredLogRequested(); log != nil {
 				if outcomeSeen {
-					return errors.New("Program emitted a structured log after outcome")
+					return errors.New("program emitted a structured log after outcome")
 				}
 				correlationID := strings.TrimSpace(log.GetCorrelationId())
 				if correlationID == "" || strings.TrimSpace(log.GetLevel()) == "" ||
 					strings.TrimSpace(log.GetAttributesJson()) == "" {
-					return errors.New("Structured log identity is incomplete")
+					return errors.New("structured log identity is incomplete")
 				}
 				if _, exists := pendingRuntimeOperations[correlationID]; exists {
-					return errors.New("Program emitted a duplicate structured log correlation")
+					return errors.New("program emitted a duplicate structured log correlation")
 				}
 				if len(pendingRuntimeOperations) >= 128 {
-					return errors.New("Program exceeded the pending runtime operation limit")
+					return errors.New("program exceeded the pending runtime operation limit")
 				}
 				if err := stream.write(event); err != nil {
 					return err
@@ -1144,21 +1144,21 @@ func relayProgram(
 			case *runv0.EntrypointIdentity_Task:
 				outcomeErr = validateTaskOutcome(event.GetTaskOutcome())
 				if event.GetActorOutcome() != nil {
-					outcomeErr = errors.New("Task Program emitted an Actor outcome")
+					outcomeErr = errors.New("task program emitted an actor outcome")
 				}
 			case *runv0.EntrypointIdentity_Actor:
 				outcomeErr = validateActorOutcome(event.GetActorOutcome())
 				if event.GetTaskOutcome() != nil {
-					outcomeErr = errors.New("Actor Program emitted a Task outcome")
+					outcomeErr = errors.New("actor program emitted a task outcome")
 				}
 			default:
-				outcomeErr = errors.New("Program entrypoint kind is unsupported")
+				outcomeErr = errors.New("program entrypoint kind is unsupported")
 			}
 			if outcomeSeen {
-				return errors.New("Program emitted more than one outcome")
+				return errors.New("program emitted more than one outcome")
 			}
 			if len(pendingRuntimeOperations) != 0 {
-				return errors.New("Program emitted an outcome with runtime operations pending")
+				return errors.New("program emitted an outcome with runtime operations pending")
 			}
 			if outcomeErr != nil {
 				return outcomeErr
@@ -1180,7 +1180,7 @@ func relayProgram(
 					hostControls = nil
 					continue
 				}
-				return fmt.Errorf("read Program host control: %w", control.err)
+				return fmt.Errorf("read program host control: %w", control.err)
 			}
 			if control.decision != nil {
 				correlationID := control.decision.GetCorrelationId()
@@ -1211,11 +1211,11 @@ func relayProgram(
 				}
 			}
 			if pendingPause != nil {
-				return errors.New("Program host sent non-runtime control while checkpoint pause was deferred")
+				return errors.New("program host sent non-runtime control while checkpoint pause was deferred")
 			}
 			if pendingTurnCommit != nil {
 				if control.turnCommit == nil {
-					return errors.New("Program host sent non-commit control during Actor turn commit")
+					return errors.New("program host sent non-commit control during actor turn commit")
 				}
 				if err := pauseActorTurnCommit(ctx, conn, request, pendingTurnCommit, control.turnCommit, process, stream, outputs, workspaceEntry); err != nil {
 					return err
@@ -1225,21 +1225,21 @@ func relayProgram(
 				continue
 			}
 			if pendingWait == nil {
-				return errors.New("Program host sent Wait control without a pending Wait")
+				return errors.New("program host sent wait control without a pending wait")
 			}
 			switch {
 			case control.decision != nil:
 				if control.decision.GetRunWaitId() != pendingWait.GetCorrelationId() {
-					return errors.New("immediate resume decision did not match Program Wait")
+					return errors.New("immediate resume decision did not match program wait")
 				}
 				if err := frameio.WriteProtoFrame(process.stdin, control.decision); err != nil {
-					return fmt.Errorf("write immediate Program resume decision: %w", err)
+					return fmt.Errorf("write immediate program resume decision: %w", err)
 				}
 				pendingWait = nil
 				hostControls = readProgramHostControl(conn)
 			case control.pause != nil:
 				if pendingPause != nil {
-					return errors.New("Program host sent more than one checkpoint pause request")
+					return errors.New("program host sent more than one checkpoint pause request")
 				}
 				if len(pendingRuntimeOperations) != 0 {
 					pendingPause = control.pause
@@ -1254,7 +1254,7 @@ func relayProgram(
 				pendingWait = nil
 				hostControls = readProgramHostControl(resumed)
 			default:
-				return errors.New("Program host control is empty")
+				return errors.New("program host control is empty")
 			}
 		case rebound := <-stream.rebind:
 			conn = rebound
@@ -1270,10 +1270,10 @@ func relayProgram(
 		}
 	}
 	if !outcomeSeen {
-		return errors.New("Program exited without an outcome")
+		return errors.New("program exited without an outcome")
 	}
 	if !quiesced {
-		return errors.New("Program process tree did not quiesce")
+		return errors.New("program process tree did not quiesce")
 	}
 	if err := conn.SetWriteDeadline(
 		time.Now().Add(programOutputDrainTimeout),
@@ -1290,19 +1290,19 @@ func relayProgram(
 	select {
 	case <-drained:
 	case <-timer.C:
-		return errors.New("Program output drain deadline exceeded")
+		return errors.New("program output drain deadline exceeded")
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 	select {
 	case err := <-outputErrors:
 		if err != nil {
-			return fmt.Errorf("forward Program output: %w", err)
+			return fmt.Errorf("forward program output: %w", err)
 		}
 	default:
 	}
 	if processErr != nil {
-		return fmt.Errorf("Program process exited: %w", processErr)
+		return fmt.Errorf("program process exited: %w", processErr)
 	}
 	return stream.write(&runv0.RunEvent{
 		Event: &runv0.RunEvent_ProgramQuiesced{
@@ -1318,27 +1318,27 @@ func relayProgram(
 func runtimeResourceOperationIdentity(event *runv0.RunEvent) (string, string, bool) {
 	switch value := event.GetEvent().(type) {
 	case *runv0.RunEvent_ActorStartRequested:
-		return strings.TrimSpace(value.ActorStartRequested.GetCorrelationId()), "Actor start", true
+		return strings.TrimSpace(value.ActorStartRequested.GetCorrelationId()), "actor start", true
 	case *runv0.RunEvent_ActorStatusRequested:
-		return strings.TrimSpace(value.ActorStatusRequested.GetCorrelationId()), "Actor status read", true
+		return strings.TrimSpace(value.ActorStatusRequested.GetCorrelationId()), "actor status read", true
 	case *runv0.RunEvent_ActorCloseRequested:
-		return strings.TrimSpace(value.ActorCloseRequested.GetCorrelationId()), "Actor close", true
+		return strings.TrimSpace(value.ActorCloseRequested.GetCorrelationId()), "actor close", true
 	case *runv0.RunEvent_ActorOutputPageRequested:
-		return strings.TrimSpace(value.ActorOutputPageRequested.GetCorrelationId()), "Actor output page read", true
+		return strings.TrimSpace(value.ActorOutputPageRequested.GetCorrelationId()), "actor output page read", true
 	case *runv0.RunEvent_WorkspaceCreateRequested:
-		return strings.TrimSpace(value.WorkspaceCreateRequested.GetCorrelationId()), "Workspace create", true
+		return strings.TrimSpace(value.WorkspaceCreateRequested.GetCorrelationId()), "workspace create", true
 	case *runv0.RunEvent_WorkspaceRetrieveRequested:
-		return strings.TrimSpace(value.WorkspaceRetrieveRequested.GetCorrelationId()), "Workspace retrieve", true
+		return strings.TrimSpace(value.WorkspaceRetrieveRequested.GetCorrelationId()), "workspace retrieve", true
 	case *runv0.RunEvent_WorkspaceFileReadRequested:
-		return strings.TrimSpace(value.WorkspaceFileReadRequested.GetCorrelationId()), "Workspace file read", true
+		return strings.TrimSpace(value.WorkspaceFileReadRequested.GetCorrelationId()), "workspace file read", true
 	case *runv0.RunEvent_WorkspaceFileStatRequested:
-		return strings.TrimSpace(value.WorkspaceFileStatRequested.GetCorrelationId()), "Workspace file stat", true
+		return strings.TrimSpace(value.WorkspaceFileStatRequested.GetCorrelationId()), "workspace file stat", true
 	case *runv0.RunEvent_WorkspaceFileListRequested:
-		return strings.TrimSpace(value.WorkspaceFileListRequested.GetCorrelationId()), "Workspace file list", true
+		return strings.TrimSpace(value.WorkspaceFileListRequested.GetCorrelationId()), "workspace file list", true
 	case *runv0.RunEvent_WorkspaceExecRequested:
-		return strings.TrimSpace(value.WorkspaceExecRequested.GetCorrelationId()), "Workspace exec", true
+		return strings.TrimSpace(value.WorkspaceExecRequested.GetCorrelationId()), "workspace exec", true
 	case *runv0.RunEvent_WorkspaceDeleteRequested:
-		return strings.TrimSpace(value.WorkspaceDeleteRequested.GetCorrelationId()), "Workspace delete", true
+		return strings.TrimSpace(value.WorkspaceDeleteRequested.GetCorrelationId()), "workspace delete", true
 	default:
 		return "", "", false
 	}
@@ -1356,7 +1356,7 @@ func readProgramHostControl(conn programConnection) <-chan programHostControl {
 		if !frameio.IsStreamFramePrefix(prefix) {
 			_, err := frameio.ReadMessageFrame(reader)
 			if err == nil {
-				err = errors.New("unexpected Program protobuf control frame")
+				err = errors.New("unexpected program protobuf control frame")
 			}
 			result <- programHostControl{err: err}
 			return
@@ -1377,7 +1377,7 @@ func readProgramHostControl(conn programConnection) <-chan programHostControl {
 			request, err := wire.ReadActorTurnCommitPauseRequest(header, reader, bodyLen)
 			result <- programHostControl{turnCommit: request, err: err}
 		default:
-			result <- programHostControl{err: fmt.Errorf("unsupported Program host control %q", header.Type)}
+			result <- programHostControl{err: fmt.Errorf("unsupported program host control %q", header.Type)}
 		}
 	}()
 	return result
@@ -1396,7 +1396,7 @@ func pauseAndResumeProgram(
 	controlErrors <-chan error,
 ) (programConnection, error) {
 	if registry == nil {
-		return nil, errors.New("waiting Run registry is required")
+		return nil, errors.New("waiting run registry is required")
 	}
 	if err := validateProgramCheckpointPause(run, wait, pause); err != nil {
 		return nil, err
@@ -1412,14 +1412,14 @@ func pauseAndResumeProgram(
 		}
 	}()
 	if err := process.cgroup.freeze(ctx); err != nil {
-		return nil, fmt.Errorf("freeze Program cgroup: %w", err)
+		return nil, fmt.Errorf("freeze program cgroup: %w", err)
 	}
 	if outputs == nil {
-		return nil, errors.New("Program output checkpoint coordinator is required")
+		return nil, errors.New("program output checkpoint coordinator is required")
 	}
 	resumeOutputs, err := outputs.pause(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("pause Program output streams: %w", err)
+		return nil, fmt.Errorf("pause program output streams: %w", err)
 	}
 	outputsResumed := false
 	defer func() {
@@ -1430,7 +1430,7 @@ func pauseAndResumeProgram(
 	syscall.Sync()
 	if pause.GetCaptureWorkspace() {
 		if err := stream.writeWorkspaceArtifact(run.GetRunId(), process.workspaceRoot, process.secretPaths); err != nil {
-			return nil, fmt.Errorf("capture checkpoint Workspace: %w", err)
+			return nil, fmt.Errorf("capture checkpoint workspace: %w", err)
 		}
 	}
 	ready := &runv0.CheckpointPauseReady{
@@ -1444,7 +1444,7 @@ func pauseAndResumeProgram(
 		CorrelationId:            pause.GetCorrelationId(),
 	}
 	if err := stream.writeCheckpointPauseReady(ready); err != nil {
-		return nil, fmt.Errorf("write Program checkpoint pause proof: %w", err)
+		return nil, fmt.Errorf("write program checkpoint pause proof: %w", err)
 	}
 	var resumed programConnection
 	var attach *runv0.ResumeAttach
@@ -1452,7 +1452,7 @@ func pauseAndResumeProgram(
 	for decision == nil {
 		attached, candidateAttach, err := registration.wait(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("wait for Program resume attach: %w", err)
+			return nil, fmt.Errorf("wait for program resume attach: %w", err)
 		}
 		candidate, ok := attached.(programConnection)
 		if !ok {
@@ -1492,18 +1492,18 @@ func pauseAndResumeProgram(
 		}
 	}()
 	if err := frameio.WriteProtoFrame(process.stdin, decision); err != nil {
-		return nil, fmt.Errorf("stage Program resume decision: %w", err)
+		return nil, fmt.Errorf("stage program resume decision: %w", err)
 	}
 	previous, didAdopt := stream.replaceConn(resumed)
 	if !didAdopt {
-		return nil, errors.New("Program event stream closed before resume")
+		return nil, errors.New("program event stream closed before resume")
 	}
 	adopted = true
 	if previous != nil && previous != resumed {
 		_ = previous.Close()
 	}
 	if err := process.cgroup.thaw(ctx); err != nil {
-		return nil, fmt.Errorf("thaw Program cgroup: %w", err)
+		return nil, fmt.Errorf("thaw program cgroup: %w", err)
 	}
 	consumed, err := awaitProgramResumeConsumed(ctx, events, controlErrors)
 	if err != nil {
@@ -1515,7 +1515,7 @@ func pauseAndResumeProgram(
 		consumed.GetResumeRequestVersion() != attach.GetResumeRequestVersion() ||
 		consumed.GetRunLeaseId() != attach.GetRunLeaseId() ||
 		consumed.GetCorrelationId() != pause.GetCorrelationId() {
-		return nil, errors.New("Program resume-consumed proof did not match exact restore authority")
+		return nil, errors.New("program resume-consumed proof did not match exact restore authority")
 	}
 	ack := &runv0.ResumeAck{
 		RunWaitId: pause.GetRunWaitId(), CheckpointId: pause.GetCheckpointId(),
@@ -1552,17 +1552,17 @@ func pauseActorTurnCommit(
 	if requested == nil || pause == nil ||
 		pause.GetCorrelationId() != requested.GetCorrelationId() ||
 		pause.GetTargetInputSequence() != requested.GetTargetInputSequence() {
-		return errors.New("Actor turn commit pause does not match the Program request")
+		return errors.New("actor turn commit pause does not match the program request")
 	}
 	expectedTree := workspace.TreeIdentity{
 		Digest: pause.GetExpectedTreeDigest(), SizeBytes: pause.GetExpectedTreeSizeBytes(),
 		EntryCount: int(pause.GetExpectedTreeEntryCount()),
 	}
 	if err := workspace.ValidateTreeIdentity(expectedTree); err != nil {
-		return fmt.Errorf("validate Actor turn commit expected tree: %w", err)
+		return fmt.Errorf("validate actor turn commit expected tree: %w", err)
 	}
 	if strings.TrimSpace(pause.GetExpectedBaseWorkspaceVersionId()) == "" {
-		return errors.New("Actor turn commit expected Workspace version is required")
+		return errors.New("actor turn commit expected workspace version is required")
 	}
 	releaseBarrier, authorityExpiresAt, err := entry.acquireActorTurnCommit(run, pause)
 	if err != nil {
@@ -1572,7 +1572,7 @@ func pauseActorTurnCommit(
 	turnCtx, cancelTurn := context.WithDeadline(ctx, authorityExpiresAt)
 	defer cancelTurn()
 	if err := process.cgroup.freeze(turnCtx); err != nil {
-		return fmt.Errorf("freeze Actor Program cgroup: %w", err)
+		return fmt.Errorf("freeze actor program cgroup: %w", err)
 	}
 	frozen := true
 	defer func() {
@@ -1582,7 +1582,7 @@ func pauseActorTurnCommit(
 	}()
 	resumeOutputs, err := outputs.pause(turnCtx)
 	if err != nil {
-		return fmt.Errorf("pause Actor Program output streams: %w", err)
+		return fmt.Errorf("pause actor program output streams: %w", err)
 	}
 	outputsPaused := true
 	defer func() {
@@ -1598,17 +1598,17 @@ func pauseActorTurnCommit(
 		workspaceSecretExcludes(process.workspaceRoot, process.secretPaths),
 	)
 	if err != nil {
-		return fmt.Errorf("capture Actor turn Workspace: %w", err)
+		return fmt.Errorf("capture actor turn workspace: %w", err)
 	}
 	defer cleanup()
 	tree, err := workspace.InspectArtifactTreeContext(turnCtx, artifact.Path, artifact.SizeBytes)
 	if err != nil {
-		return fmt.Errorf("inspect Actor turn Workspace capture: %w", err)
+		return fmt.Errorf("inspect actor turn workspace capture: %w", err)
 	}
 	changed := tree != expectedTree
 	if changed {
 		if err := stream.writeWorkspaceArtifactFile(run.GetRunId(), artifact); err != nil {
-			return fmt.Errorf("write Actor turn Workspace capture: %w", err)
+			return fmt.Errorf("write actor turn workspace capture: %w", err)
 		}
 	}
 	ready := &runv0.ActorTurnCommitPauseReady{
@@ -1618,15 +1618,15 @@ func pauseActorTurnCommit(
 		TreeEntryCount: uint32(tree.EntryCount), WorkspaceChanged: changed,
 	}
 	if err := stream.writeActorTurnCommitPauseReady(ready); err != nil {
-		return fmt.Errorf("write Actor turn commit pause proof: %w", err)
+		return fmt.Errorf("write actor turn commit pause proof: %w", err)
 	}
 	decision, err := readResumeDecision(turnCtx, conn)
 	if err != nil {
-		return fmt.Errorf("read Actor turn commit decision: %w", err)
+		return fmt.Errorf("read actor turn commit decision: %w", err)
 	}
 	if (decision.GetCorrelationId() != pause.GetCorrelationId() && decision.GetRunWaitId() != pause.GetCorrelationId()) ||
 		decision.GetKind() != "committed" {
-		return errors.New("Actor turn commit decision did not match the paused Program")
+		return errors.New("actor turn commit decision did not match the paused program")
 	}
 	var committed struct {
 		WorkspaceVersionID string `json:"workspace_version_id"`
@@ -1634,13 +1634,13 @@ func pauseActorTurnCommit(
 	decoder := json.NewDecoder(strings.NewReader(decision.GetDataJson()))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&committed); err != nil {
-		return fmt.Errorf("decode Actor turn commit decision: %w", err)
+		return fmt.Errorf("decode actor turn commit decision: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("Actor turn commit decision has trailing JSON")
+		return errors.New("actor turn commit decision has trailing JSON")
 	}
 	if strings.TrimSpace(committed.WorkspaceVersionID) == "" {
-		return errors.New("Actor turn commit decision Workspace version is required")
+		return errors.New("actor turn commit decision workspace version is required")
 	}
 	if err := entry.advanceActorTurnWorkspaceFrontierLocked(
 		pause.GetExpectedBaseWorkspaceVersionId(), committed.WorkspaceVersionID,
@@ -1648,34 +1648,34 @@ func pauseActorTurnCommit(
 		return err
 	}
 	if err := process.cgroup.thaw(turnCtx); err != nil {
-		return fmt.Errorf("thaw Actor Program cgroup: %w", err)
+		return fmt.Errorf("thaw actor program cgroup: %w", err)
 	}
 	frozen = false
 	resumeOutputs()
 	outputsPaused = false
 	if err := frameio.WriteProtoFrame(process.stdin, decision); err != nil {
-		return fmt.Errorf("write Actor turn commit decision: %w", err)
+		return fmt.Errorf("write actor turn commit decision: %w", err)
 	}
 	return nil
 }
 
 func validateResumeDecisionAuthority(decision *runv0.ResumeDecision) error {
 	if decision == nil {
-		return errors.New("Program resume decision is required")
+		return errors.New("program resume decision is required")
 	}
 	switch decision.GetKind() {
 	case "completed":
 		hasResult := decision.GetDataJson() != ""
 		if decision.GetNoResult() == hasResult {
-			return errors.New("completed Program resume decision must contain exactly one result variant")
+			return errors.New("completed program resume decision must contain exactly one result variant")
 		}
 		if hasResult && !json.Valid([]byte(decision.GetDataJson())) {
-			return errors.New("completed Program resume result is not valid JSON")
+			return errors.New("completed program resume result is not valid JSON")
 		}
 		return nil
 	case "failed", "cancelled":
 		if decision.GetNoResult() || decision.GetDataJson() == "" {
-			return errors.New("terminal Program resume failure payload is required")
+			return errors.New("terminal program resume failure payload is required")
 		}
 		var payload struct {
 			ReasonCode string          `json:"reason_code"`
@@ -1684,17 +1684,17 @@ func validateResumeDecisionAuthority(decision *runv0.ResumeDecision) error {
 		decoder := json.NewDecoder(strings.NewReader(decision.GetDataJson()))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&payload); err != nil {
-			return fmt.Errorf("decode terminal Program resume failure: %w", err)
+			return fmt.Errorf("decode terminal program resume failure: %w", err)
 		}
 		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-			return errors.New("terminal Program resume failure has trailing JSON")
+			return errors.New("terminal program resume failure has trailing JSON")
 		}
 		if strings.TrimSpace(payload.ReasonCode) == "" {
-			return errors.New("terminal Program resume failure reason is required")
+			return errors.New("terminal program resume failure reason is required")
 		}
 		return nil
 	default:
-		return fmt.Errorf("unsupported Program resume decision kind %q", decision.GetKind())
+		return fmt.Errorf("unsupported program resume decision kind %q", decision.GetKind())
 	}
 }
 
@@ -1725,14 +1725,14 @@ func awaitProgramResumeConsumed(
 		if !ok {
 			select {
 			case err := <-controlErrors:
-				return nil, fmt.Errorf("read Program resume-consumed proof: %w", err)
+				return nil, fmt.Errorf("read program resume-consumed proof: %w", err)
 			default:
-				return nil, errors.New("Program control closed before resume-consumed proof")
+				return nil, errors.New("program control closed before resume-consumed proof")
 			}
 		}
 		consumed := event.GetResumeConsumed()
 		if consumed == nil {
-			return nil, errors.New("Program emitted an event before resume-consumed proof")
+			return nil, errors.New("program emitted an event before resume-consumed proof")
 		}
 		return consumed, nil
 	case <-ctx.Done():
@@ -1758,74 +1758,74 @@ func validateProgramCheckpointPause(run *runv0.ProgramRunRequest, wait *runv0.Ru
 		strings.TrimSpace(pause.GetCheckpointId()) == "" ||
 		strings.TrimSpace(pause.GetResumeAttachId()) == "" ||
 		pause.GetCheckpointRequestVersion() <= 0 {
-		return errors.New("Program checkpoint pause did not match exact execution and Wait authority")
+		return errors.New("program checkpoint pause did not match exact execution and wait authority")
 	}
 	return nil
 }
 
 func validateTaskOutcome(outcome *runv0.TaskOutcome) error {
 	if outcome == nil {
-		return errors.New("Task outcome is required")
+		return errors.New("task outcome is required")
 	}
 	switch value := outcome.GetOutcome().(type) {
 	case *runv0.TaskOutcome_Succeeded:
 		if value.Succeeded == nil {
-			return errors.New("Task succeeded outcome is empty")
+			return errors.New("task succeeded outcome is empty")
 		}
 		raw := []byte(value.Succeeded.GetOutputJson())
 		if len(raw) == 0 || len(raw) > maxTaskOutputBytes || !utf8.Valid(raw) {
-			return errors.New("Task succeeded output is not bounded UTF-8 JSON")
+			return errors.New("task succeeded output is not bounded UTF-8 JSON")
 		}
 		if _, err := jsoncanon.Transform(raw); err != nil {
-			return errors.New("Task succeeded output is not unambiguous JSON")
+			return errors.New("task succeeded output is not unambiguous JSON")
 		}
 	case *runv0.TaskOutcome_Failed:
 		if value.Failed == nil {
-			return errors.New("Task failed outcome is empty")
+			return errors.New("task failed outcome is empty")
 		}
 		if err := validateTaskFailure(
 			value.Failed.GetMessage(),
 			value.Failed.DetailsJson,
 		); err != nil {
-			return fmt.Errorf("invalid Task failure: %w", err)
+			return fmt.Errorf("invalid task failure: %w", err)
 		}
 	case *runv0.TaskOutcome_PayloadInvalid:
 		if value.PayloadInvalid == nil {
-			return errors.New("Task payload-invalid outcome is empty")
+			return errors.New("task payload-invalid outcome is empty")
 		}
 		if err := validateTaskFailure(
 			value.PayloadInvalid.GetMessage(),
 			value.PayloadInvalid.DetailsJson,
 		); err != nil {
-			return fmt.Errorf("invalid Task payload failure: %w", err)
+			return fmt.Errorf("invalid task payload failure: %w", err)
 		}
 	default:
-		return errors.New("Task outcome variant is required")
+		return errors.New("task outcome variant is required")
 	}
 	return nil
 }
 
 func validateActorOutcome(outcome *runv0.ActorOutcome) error {
 	if outcome == nil {
-		return errors.New("Actor outcome is required")
+		return errors.New("actor outcome is required")
 	}
 	if outcome.TerminalInputSequence == nil || outcome.GetTerminalInputSequence() < 0 {
-		return errors.New("Actor terminal input sequence is negative")
+		return errors.New("actor terminal input sequence is negative")
 	}
 	switch value := outcome.GetOutcome().(type) {
 	case *runv0.ActorOutcome_Succeeded:
 		if value.Succeeded == nil {
-			return errors.New("Actor succeeded outcome is empty")
+			return errors.New("actor succeeded outcome is empty")
 		}
 	case *runv0.ActorOutcome_Failed:
 		if value.Failed == nil {
-			return errors.New("Actor failed outcome is empty")
+			return errors.New("actor failed outcome is empty")
 		}
 		if err := validateTaskFailure(value.Failed.GetMessage(), value.Failed.DetailsJson); err != nil {
-			return fmt.Errorf("invalid Actor failure: %w", err)
+			return fmt.Errorf("invalid actor failure: %w", err)
 		}
 	default:
-		return errors.New("Actor outcome variant is required")
+		return errors.New("actor outcome variant is required")
 	}
 	return nil
 }
@@ -1869,7 +1869,7 @@ func (process *programProcess) start(
 	deadline time.Time,
 ) error {
 	if err := process.cmd.Start(); err != nil {
-		return fmt.Errorf("start Program process: %w", err)
+		return fmt.Errorf("start program process: %w", err)
 	}
 	process.cmd.Env = nil
 	if process.controlWriter != nil {
@@ -1905,18 +1905,18 @@ func (process *programProcess) start(
 		proof = read.body
 		err = read.err
 	case <-timer.C:
-		return errors.New("Program process proof deadline exceeded")
+		return errors.New("program process proof deadline exceeded")
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 	if err != nil {
-		return fmt.Errorf("read Program process proof: %w", err)
+		return fmt.Errorf("read program process proof: %w", err)
 	}
 	if len(proof) > 64*1024 {
-		return errors.New("Program process proof exceeded its bound")
+		return errors.New("program process proof exceeded its bound")
 	}
 	if len(proof) != 0 {
-		return fmt.Errorf("Program process setup failed: %s", proof)
+		return fmt.Errorf("program process setup failed: %s", proof)
 	}
 	return nil
 }
@@ -1979,13 +1979,13 @@ func (process *programProcess) terminate() {
 
 func (process *programProcess) quiesce() error {
 	if process.cgroup == nil {
-		return errors.New("Program cgroup is required")
+		return errors.New("program cgroup is required")
 	}
 	if err := process.cgroup.kill(); err != nil {
-		return fmt.Errorf("kill Program cgroup: %w", err)
+		return fmt.Errorf("kill program cgroup: %w", err)
 	}
 	if err := process.cgroup.waitEmpty(); err != nil {
-		return fmt.Errorf("wait for Program cgroup: %w", err)
+		return fmt.Errorf("wait for program cgroup: %w", err)
 	}
 	return nil
 }
@@ -2036,7 +2036,7 @@ func (stream *programEventStream) write(event *runv0.RunEvent) error {
 		stream.mu.Lock()
 		if stream.closed || stream.conn == nil {
 			stream.mu.Unlock()
-			return errors.New("Program event stream is closed")
+			return errors.New("program event stream is closed")
 		}
 		conn := stream.conn
 		changed := stream.changed
@@ -2087,7 +2087,7 @@ func (stream *programEventStream) replaceConnWithResumeAck(conn programConnectio
 	if stream.closed || stream.conn == nil {
 		stream.mu.Unlock()
 		_ = conn.Close()
-		return nil, errors.New("Program event stream is closed")
+		return nil, errors.New("program event stream is closed")
 	}
 	previous := stream.conn
 	stream.conn = conn
@@ -2110,7 +2110,7 @@ func (stream *programEventStream) replaceConnWithResumeAck(conn programConnectio
 
 func (stream *programEventStream) writeLocked(write func(programConnection) error) error {
 	if stream.closed || stream.conn == nil {
-		return errors.New("Program event stream is closed")
+		return errors.New("program event stream is closed")
 	}
 	if err := stream.conn.SetWriteDeadline(time.Now().Add(programAdmissionTimeout)); err != nil {
 		return err
@@ -2211,7 +2211,7 @@ func readResumeDecisionUntilDone(conn programConnection, done <-chan struct{}) (
 		return result.decision, result.err
 	case <-done:
 		_ = conn.Close()
-		return nil, errors.New("Program event stream closed during resume replay")
+		return nil, errors.New("program event stream closed during resume replay")
 	}
 }
 
@@ -2278,7 +2278,7 @@ func (stream *programEventStream) writeActorTurnCommitPauseReady(ready *runv0.Ac
 
 func (stream *programEventStream) writeWorkspaceArtifact(runID, workspaceRoot string, secretPaths []string) error {
 	if strings.TrimSpace(workspaceRoot) == "" {
-		return errors.New("Program Workspace root is required")
+		return errors.New("program workspace root is required")
 	}
 	artifact, cleanup, err := workspace.CreateWorkspaceArtifactFromRootWithExcludes(
 		workspaceRoot,
@@ -2326,14 +2326,14 @@ func newProgramOutputCoordinator(
 	for _, output := range readers {
 		file, ok := output.reader.(*os.File)
 		if !ok || file == nil {
-			return nil, fmt.Errorf("Program %s pipe is not an OS file", output.name)
+			return nil, fmt.Errorf("program %s pipe is not an OS file", output.name)
 		}
 		fd, err := unix.Dup(int(file.Fd()))
 		if err != nil {
 			for _, pump := range coordinator.pumps {
 				_ = pump.file.Close()
 			}
-			return nil, fmt.Errorf("duplicate Program %s pipe: %w", output.name, err)
+			return nil, fmt.Errorf("duplicate program %s pipe: %w", output.name, err)
 		}
 		pumpFile := os.NewFile(uintptr(fd), "helmr-program-"+output.name)
 		if err := unix.SetNonblock(fd, true); err != nil {
@@ -2341,7 +2341,7 @@ func newProgramOutputCoordinator(
 			for _, pump := range coordinator.pumps {
 				_ = pump.file.Close()
 			}
-			return nil, fmt.Errorf("make Program %s nonblocking: %w", output.name, err)
+			return nil, fmt.Errorf("make program %s nonblocking: %w", output.name, err)
 		}
 		coordinator.pumps = append(coordinator.pumps, &programOutputPump{
 			file: pumpFile, event: output.event, stream: stream,
@@ -2353,7 +2353,7 @@ func newProgramOutputCoordinator(
 
 func (coordinator *programOutputCoordinator) pause(ctx context.Context) (func(), error) {
 	if coordinator == nil {
-		return func() {}, errors.New("Program output coordinator is required")
+		return func() {}, errors.New("program output coordinator is required")
 	}
 	resumeChannels := make([]chan struct{}, 0, len(coordinator.pumps))
 	paused := make(chan error, len(coordinator.pumps))

@@ -177,8 +177,8 @@ func TestTaskStartRequiresExistingWorkspace(t *testing.T) {
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", " " + testWorkspaceID})
-	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "invalid Workspace ID") {
-		t.Fatalf("whitespace Workspace ID error = %v", err)
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "invalid workspace ID") {
+		t.Fatalf("whitespace workspace ID error = %v", err)
 	}
 }
 

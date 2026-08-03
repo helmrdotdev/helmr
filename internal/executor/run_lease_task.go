@@ -21,9 +21,9 @@ import (
 )
 
 var (
-	errRunLeaseAuthorityLapsed       = errors.New("Run Lease authority lapsed")
+	errRunLeaseAuthorityLapsed       = errors.New("run lease authority lapsed")
 	errRunSourceOperationUnavailable = errors.New(
-		"Run Lease Task cannot perform run-sourced operation",
+		"run lease task cannot perform run-sourced operation",
 	)
 )
 
@@ -141,7 +141,7 @@ func (r ProgramRunner) StartRunLeaseTask(
 	controlPlane RunLeaseControlPlane,
 ) (RunLeaseTask, error) {
 	if r.CAS == nil {
-		return nil, errors.New("Run Lease Task CAS is required")
+		return nil, errors.New("run lease task CAS is required")
 	}
 	target, err := runLeaseResetTarget(claim)
 	if err != nil {
@@ -274,7 +274,7 @@ func workerRunLeaseFromAssignment(orgID string, assignment workerapi.RunLeaseAss
 
 func (task *guestRunLeaseTask) handleWait(ctx context.Context, wait *runv0.RunWaitRequested) error {
 	if task.waits == nil {
-		return errors.New("Run Lease Task wait Control Plane is required")
+		return errors.New("run lease task wait control plane is required")
 	}
 	runtimeWait, err := parseWaitRequest(task, wait)
 	if err != nil {
@@ -285,7 +285,7 @@ func (task *guestRunLeaseTask) handleWait(ctx context.Context, wait *runv0.RunWa
 	runtimeWait.Checkpointer = task.checkpointer
 	runtimeWait.Resume = func(resumeCtx context.Context, decision WaitResumeDecision) error {
 		if strings.TrimSpace(decision.Kind) == "" {
-			return errors.New("Program resume kind is required")
+			return errors.New("program resume kind is required")
 		}
 		if len(decision.Data) == 0 {
 			decision.Data = json.RawMessage(`null`)
@@ -306,7 +306,7 @@ func (task *guestRunLeaseTask) handleWait(ctx context.Context, wait *runv0.RunWa
 
 func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, event *runv0.RunEvent) error {
 	if event == nil {
-		return errors.New("checkpoint Program event is required")
+		return errors.New("checkpoint program event is required")
 	}
 	task.program.observedEventSeq++
 	switch value := event.Event.(type) {
@@ -347,7 +347,7 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 		*runv0.RunEvent_WorkspaceDeleteRequested:
 		return task.handleWorkspaceRuntime(ctx, event)
 	default:
-		return errors.New("unsupported Program event while checkpoint pause is pending")
+		return errors.New("unsupported program event while checkpoint pause is pending")
 	}
 }
 
@@ -414,7 +414,7 @@ func workerActorOutcome(outcome *runv0.ActorOutcome) (workerapi.ActorOutcome, er
 		failure := canonicalTaskFailure(value.Failed.GetMessage(), value.Failed.DetailsJson)
 		converted.Failed = &failure
 	default:
-		return workerapi.ActorOutcome{}, errors.New("Actor outcome variant is required")
+		return workerapi.ActorOutcome{}, errors.New("actor outcome variant is required")
 	}
 	return converted, nil
 }
@@ -492,7 +492,7 @@ func (task *guestRunLeaseTask) RenewRunLease(
 	task.mu.Lock()
 	defer task.mu.Unlock()
 	if task.finished || task.finalizingKind != "" {
-		return RunLeaseTaskRenewal{}, errors.New("Run Lease Task is not renewable")
+		return RunLeaseTaskRenewal{}, errors.New("run lease task is not renewable")
 	}
 	previous := task.lease
 	renewed, fence, err := renewRunLeaseAuthority(
@@ -537,7 +537,7 @@ func renewRunLeaseAuthority(
 	if response.Lease != previous.Fence() ||
 		response.BaseWorkspaceVersionID != previous.BaseWorkspaceVersionID {
 		return workerapi.RunLeaseAssignment{}, nil, errors.New(
-			"Run Lease renewal response changed its fence or Workspace frontier",
+			"run lease renewal response changed its fence or workspace frontier",
 		)
 	}
 	renewed := previous
@@ -614,20 +614,20 @@ func (task *guestRunLeaseTask) BeginWorkspaceFinalization(
 	task.mu.Lock()
 	defer task.mu.Unlock()
 	if task.finished {
-		return errors.New("Run Lease Task is already finalized")
+		return errors.New("run lease task is already finalized")
 	}
 	if !equalRunLeaseAssignment(task.lease, previous) {
-		return errors.New("Workspace finalization previous receipt is not current")
+		return errors.New("workspace finalization previous receipt is not current")
 	}
 	if err := validateRunLeaseExpiryAdvance(previous, frozen); err != nil {
 		return err
 	}
 	if !frozen.ExpiresAt.After(previous.ExpiresAt) {
-		return errors.New("Workspace finalization expiry did not advance")
+		return errors.New("workspace finalization expiry did not advance")
 	}
 	if strings.TrimSpace(operationID) == "" ||
 		(kind != workerapi.RunFinalizationCapture && kind != workerapi.RunFinalizationReset) {
-		return errors.New("Workspace finalization identity is invalid")
+		return errors.New("workspace finalization identity is invalid")
 	}
 	response, err := task.mounts.BeginWorkspaceFinalization(
 		ctx,
@@ -654,7 +654,7 @@ func (task *guestRunLeaseTask) CaptureWorkspace(
 	task.mu.Lock()
 	defer task.mu.Unlock()
 	if task.finished || task.finalizingKind != workerapi.RunFinalizationCapture {
-		return workerapi.TaskWorkspaceCapture{}, errors.New("Run Lease Task is not capturing")
+		return workerapi.TaskWorkspaceCapture{}, errors.New("run lease task is not capturing")
 	}
 	envelope, err := task.finalizationEnvelope(workspace.FinalizationCaptureKind, nil)
 	if err != nil {
@@ -693,11 +693,11 @@ func (task *guestRunLeaseTask) CreateHandoffCheckpoint(
 	task.mu.Lock()
 	defer task.mu.Unlock()
 	if !task.finished || task.finalizingKind != workerapi.RunFinalizationCapture {
-		return workerapi.CheckpointManifest{}, errors.New("Run Lease Task has not captured its Workspace")
+		return workerapi.CheckpointManifest{}, errors.New("run lease task has not captured its workspace")
 	}
 	checkpointer, ok := task.checkpointer.(HandoffCheckpointer)
 	if !ok {
-		return workerapi.CheckpointManifest{}, errors.New("Run Lease Task does not support handoff checkpoints")
+		return workerapi.CheckpointManifest{}, errors.New("run lease task does not support handoff checkpoints")
 	}
 	return checkpointer.CreateHandoffCheckpoint(
 		ctx,
@@ -726,7 +726,7 @@ func (task *guestRunLeaseTask) ResetWorkspace(
 	task.mu.Lock()
 	defer task.mu.Unlock()
 	if task.finished || task.finalizingKind != workerapi.RunFinalizationReset {
-		return workerapi.TaskWorkspaceRollback{}, errors.New("Run Lease Task is not resetting")
+		return workerapi.TaskWorkspaceRollback{}, errors.New("run lease task is not resetting")
 	}
 	envelope, err := task.finalizationEnvelope(workspace.FinalizationResetKind, task.resetTarget)
 	if err != nil {
@@ -787,10 +787,10 @@ func validateRunLeaseExpiryAdvance(
 	previous.ExpiresAt = time.Time{}
 	next.ExpiresAt = time.Time{}
 	if !equalRunLeaseAssignment(previous, next) {
-		return errors.New("Run Lease renewal changed immutable authority")
+		return errors.New("run lease renewal changed immutable authority")
 	}
 	if nextExpiry.Before(previousExpiry) {
-		return errors.New("Run Lease expiry moved backwards")
+		return errors.New("run lease expiry moved backwards")
 	}
 	return nil
 }
@@ -799,11 +799,11 @@ func runLeaseResetTarget(
 	claim *workerapi.RunLeaseClaimResponse,
 ) (workspace.ResetTarget, error) {
 	if claim == nil {
-		return workspace.ResetTarget{}, errors.New("Run Lease claim is required")
+		return workspace.ResetTarget{}, errors.New("run lease claim is required")
 	}
 	target := claim.Workspace.ResetTarget
 	if target.BaseWorkspaceVersionID != claim.Lease.BaseWorkspaceVersionID {
-		return workspace.ResetTarget{}, errors.New("Run Lease Workspace Reset target does not match its base version")
+		return workspace.ResetTarget{}, errors.New("run lease workspace reset target does not match its base version")
 	}
 	tree := workspace.TreeIdentity{
 		Digest: target.Tree.Digest, SizeBytes: target.Tree.SizeBytes,
@@ -823,7 +823,7 @@ func runLeaseResetTarget(
 			},
 		)
 	default:
-		return workspace.ResetTarget{}, errors.New("Run Lease Workspace Reset target is invalid")
+		return workspace.ResetTarget{}, errors.New("run lease workspace reset target is invalid")
 	}
 }
 
@@ -846,7 +846,7 @@ func workerTaskOutcome(outcome *runv0.TaskOutcome) (workerapi.TaskOutcome, error
 		)
 		return workerapi.TaskOutcome{PayloadInvalid: &failure}, nil
 	default:
-		return workerapi.TaskOutcome{}, errors.New("Task outcome variant is required")
+		return workerapi.TaskOutcome{}, errors.New("task outcome variant is required")
 	}
 }
 

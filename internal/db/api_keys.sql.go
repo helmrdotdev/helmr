@@ -31,24 +31,24 @@ RETURNING id, org_id, api_key_id, permission, created_by_user_id, created_at
 type CreateAPIKeyGrantParams struct {
 	ID              pgtype.UUID `json:"id"`
 	OrgID           pgtype.UUID `json:"org_id"`
-	ApiKeyID        pgtype.UUID `json:"api_key_id"`
+	APIKeyID        pgtype.UUID `json:"api_key_id"`
 	Permission      string      `json:"permission"`
 	CreatedByUserID pgtype.UUID `json:"created_by_user_id"`
 }
 
-func (q *Queries) CreateAPIKeyGrant(ctx context.Context, arg CreateAPIKeyGrantParams) (ApiKeyGrant, error) {
+func (q *Queries) CreateAPIKeyGrant(ctx context.Context, arg CreateAPIKeyGrantParams) (APIKeyGrant, error) {
 	row := q.db.QueryRow(ctx, createAPIKeyGrant,
 		arg.ID,
 		arg.OrgID,
-		arg.ApiKeyID,
+		arg.APIKeyID,
 		arg.Permission,
 		arg.CreatedByUserID,
 	)
-	var i ApiKeyGrant
+	var i APIKeyGrant
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.ApiKeyID,
+		&i.APIKeyID,
 		&i.Permission,
 		&i.CreatedByUserID,
 		&i.CreatedAt,
@@ -65,12 +65,12 @@ DELETE FROM api_key_grants
 
 type DeleteAPIKeyGrantParams struct {
 	OrgID    pgtype.UUID `json:"org_id"`
-	ApiKeyID pgtype.UUID `json:"api_key_id"`
+	APIKeyID pgtype.UUID `json:"api_key_id"`
 	ID       pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) DeleteAPIKeyGrant(ctx context.Context, arg DeleteAPIKeyGrantParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteAPIKeyGrant, arg.OrgID, arg.ApiKeyID, arg.ID)
+	result, err := q.db.Exec(ctx, deleteAPIKeyGrant, arg.OrgID, arg.APIKeyID, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -85,11 +85,11 @@ DELETE FROM api_key_grants
 
 type DeleteAPIKeyGrantsForKeyParams struct {
 	OrgID    pgtype.UUID `json:"org_id"`
-	ApiKeyID pgtype.UUID `json:"api_key_id"`
+	APIKeyID pgtype.UUID `json:"api_key_id"`
 }
 
 func (q *Queries) DeleteAPIKeyGrantsForKey(ctx context.Context, arg DeleteAPIKeyGrantsForKeyParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteAPIKeyGrantsForKey, arg.OrgID, arg.ApiKeyID)
+	result, err := q.db.Exec(ctx, deleteAPIKeyGrantsForKey, arg.OrgID, arg.APIKeyID)
 	if err != nil {
 		return 0, err
 	}
@@ -201,22 +201,22 @@ SELECT id, org_id, api_key_id, permission, created_by_user_id, created_at
 
 type ListAPIKeyGrantsParams struct {
 	OrgID    pgtype.UUID `json:"org_id"`
-	ApiKeyID pgtype.UUID `json:"api_key_id"`
+	APIKeyID pgtype.UUID `json:"api_key_id"`
 }
 
-func (q *Queries) ListAPIKeyGrants(ctx context.Context, arg ListAPIKeyGrantsParams) ([]ApiKeyGrant, error) {
-	rows, err := q.db.Query(ctx, listAPIKeyGrants, arg.OrgID, arg.ApiKeyID)
+func (q *Queries) ListAPIKeyGrants(ctx context.Context, arg ListAPIKeyGrantsParams) ([]APIKeyGrant, error) {
+	rows, err := q.db.Query(ctx, listAPIKeyGrants, arg.OrgID, arg.APIKeyID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ApiKeyGrant
+	var items []APIKeyGrant
 	for rows.Next() {
-		var i ApiKeyGrant
+		var i APIKeyGrant
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
-			&i.ApiKeyID,
+			&i.APIKeyID,
 			&i.Permission,
 			&i.CreatedByUserID,
 			&i.CreatedAt,

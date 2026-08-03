@@ -163,13 +163,13 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		log = slog.Default()
 	}
 	if cfg.DB == nil {
-		return nil, errors.New("Control Plane database is required")
+		return nil, errors.New("control plane database is required")
 	}
 	if cfg.TX == nil {
-		return nil, errors.New("Control Plane transaction database is required")
+		return nil, errors.New("control plane transaction database is required")
 	}
 	if cfg.Auth == nil {
-		return nil, errors.New("Control Plane authenticator is required")
+		return nil, errors.New("control plane authenticator is required")
 	}
 	if cfg.PlatformArtifactLocks == nil {
 		return nil, errors.New("platform artifact locks are required")
@@ -189,16 +189,16 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		return nil, err
 	}
 	if cfg.SecretDelivery == nil {
-		return nil, errors.New("Secret delivery opener is required")
+		return nil, errors.New("secret delivery opener is required")
 	}
 	if cfg.RegistryCredentials == nil {
 		return nil, errors.New("registry credential opener is required")
 	}
 	if !cfg.WorkspaceFencingKey.Valid() {
-		return nil, errors.New("Workspace fencing key is required")
+		return nil, errors.New("workspace fencing key is required")
 	}
 	if !cfg.TokenCredentialKey.Valid() {
-		return nil, errors.New("Token credential key is required")
+		return nil, errors.New("token credential key is required")
 	}
 	authKeys, err := auth.NewKeys(cfg.AuthKey)
 	if err != nil {
@@ -209,7 +209,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	telemetryReader := cfg.TelemetryReader
 	if telemetryReader == nil {
-		return nil, errors.New("Control Plane telemetry reader is required")
+		return nil, errors.New("control plane telemetry reader is required")
 	}
 	mailer := cfg.Mailer
 	if mailer == nil {
@@ -228,7 +228,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		runLeaseTTL = defaultRunLeaseTTL
 	}
 	if runLeaseTTL < workerapi.RunLeaseMinTTL {
-		return nil, fmt.Errorf("Run Lease TTL must be at least %s", workerapi.RunLeaseMinTTL)
+		return nil, fmt.Errorf("run lease TTL must be at least %s", workerapi.RunLeaseMinTTL)
 	}
 	runFinalizationTTL := cfg.RunFinalizationTTL
 	if runFinalizationTTL <= 0 {
@@ -236,7 +236,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	if runFinalizationTTL < workerapi.RunFinalizationMinTTL {
 		return nil, fmt.Errorf(
-			"Run finalization TTL must be at least %s",
+			"run finalization TTL must be at least %s",
 			workerapi.RunFinalizationMinTTL,
 		)
 	}
@@ -699,11 +699,11 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	}
 	var databaseReady int
 	if err := s.readinessDB.QueryRow(ctx, `SELECT 1`).Scan(&databaseReady); err != nil {
-		s.writeReadinessUnavailable(w, fmt.Errorf("regional Control Plane database is not ready: %w", err))
+		s.writeReadinessUnavailable(w, fmt.Errorf("regional control plane database is not ready: %w", err))
 		return
 	}
 	if databaseReady != 1 {
-		s.writeReadinessUnavailable(w, errors.New("regional Control Plane database is not ready"))
+		s.writeReadinessUnavailable(w, errors.New("regional control plane database is not ready"))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})

@@ -142,7 +142,7 @@ func parseWaitRequest(
 	wait *runv0.RunWaitRequested,
 ) (WaitRequest, error) {
 	if leases == nil {
-		return WaitRequest{}, errors.New("Run Lease provider is required")
+		return WaitRequest{}, errors.New("run lease provider is required")
 	}
 	if wait == nil {
 		return WaitRequest{}, errors.New("guest wait request is empty")

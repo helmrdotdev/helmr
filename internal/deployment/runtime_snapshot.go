@@ -24,7 +24,7 @@ func SnapshotRuntimeArtifact(
 	}
 	if descriptor.SizeBytes > maxRuntimePhysicalBytes {
 		return nil, fmt.Errorf(
-			"runtime Artifact size exceeds %d bytes",
+			"runtime artifact size exceeds %d bytes",
 			maxRuntimePhysicalBytes,
 		)
 	}
@@ -40,7 +40,7 @@ func SnapshotRuntimeArtifact(
 		source,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("snapshot runtime Artifact: %w", err)
+		return nil, fmt.Errorf("snapshot runtime artifact: %w", err)
 	}
 	return &RuntimeArtifactSnapshot{
 		descriptor: descriptor,
@@ -50,7 +50,7 @@ func SnapshotRuntimeArtifact(
 
 func (snapshot *RuntimeArtifactSnapshot) verifier() (*os.File, RuntimeDescriptor, error) {
 	if snapshot == nil || snapshot.content == nil {
-		return nil, RuntimeDescriptor{}, errors.New("runtime Artifact snapshot is closed")
+		return nil, RuntimeDescriptor{}, errors.New("runtime artifact snapshot is closed")
 	}
 	// snapshotArtifact binds the descriptor to a sealed inode; the isolated
 	// child re-reads all bytes while the parent retains this outer identity.
@@ -68,7 +68,7 @@ func (snapshot *RuntimeArtifactSnapshot) LinkInto(
 	gid int,
 ) error {
 	if snapshot == nil || snapshot.content == nil {
-		return errors.New("runtime Artifact snapshot is closed")
+		return errors.New("runtime artifact snapshot is closed")
 	}
 	return snapshot.content.LinkInto(directory, name, uid, gid)
 }

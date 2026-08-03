@@ -51,7 +51,7 @@ func TestReconcileProjectsDesiredGroupAfterLock(t *testing.T) {
 		t.Fatalf("reconciled = %#v", store.reconciled)
 	}
 	group := store.reconciled[0]
-	if group.ID != "run-workers" || group.RegionID != "us-east-1" || group.ProtocolVersion != workerapi.CurrentProtocolVersion || group.RequiredCpuMillis != 1000 || group.RequiredVmSlots != 1 {
+	if group.ID != "run-workers" || group.RegionID != "us-east-1" || group.ProtocolVersion != workerapi.CurrentProtocolVersion || group.RequiredCPUMillis != 1000 || group.RequiredVMSlots != 1 {
 		t.Fatalf("reconciled group = %#v", group)
 	}
 }

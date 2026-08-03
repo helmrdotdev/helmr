@@ -24,7 +24,7 @@ func loginCommand() *cobra.Command {
 			rawURL := explicitAPIURL(cmd)
 			if len(args) > 0 {
 				if rawURL != "" {
-					return errors.New("pass the Control Plane URL either as an argument or --api-url, not both")
+					return errors.New("pass the control plane URL either as an argument or --api-url, not both")
 				}
 				rawURL = args[0]
 			} else {
@@ -81,7 +81,7 @@ func logoutCommand() *cobra.Command {
 			rawURL := explicitAPIURL(cmd)
 			if len(args) > 0 {
 				if rawURL != "" {
-					return errors.New("pass the Control Plane URL either as an argument or --api-url, not both")
+					return errors.New("pass the control plane URL either as an argument or --api-url, not both")
 				}
 				rawURL = args[0]
 			} else {

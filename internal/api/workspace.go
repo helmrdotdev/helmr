@@ -55,7 +55,7 @@ type DeleteWorkspaceReceipt struct {
 func ValidateWorkspaceDeclaredID(id string) error {
 	if !workspaceDeclaredIDPattern.MatchString(id) {
 		return fmt.Errorf(
-			"Workspace declared ID %q must match %s",
+			"workspace declared ID %q must match %s",
 			id,
 			workspaceDeclaredIDPattern.String(),
 		)
@@ -65,12 +65,12 @@ func ValidateWorkspaceDeclaredID(id string) error {
 
 func ValidateWorkspaceSecret(secret WorkspaceSecret) error {
 	if secret.Name == "" {
-		return errors.New("Workspace Secret name is required")
+		return errors.New("workspace secret name is required")
 	}
 	hasEnv := secret.Env != ""
 	hasFile := secret.File != ""
 	if hasEnv == hasFile {
-		return errors.New("Workspace Secret must contain exactly one of env or file")
+		return errors.New("workspace secret must contain exactly one of env or file")
 	}
 	return nil
 }

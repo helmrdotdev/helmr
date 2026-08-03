@@ -62,7 +62,7 @@ type workspaceImageOperationReceipt struct {
 func (s *Server) workerAdmitWorkspaceImage(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.WorkspaceImageAdmissionRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Workspace image admission JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid workspace image admission JSON: %w", err)))
 		return
 	}
 	normalized, err := normalizeWorkspaceImageAdmission(request, workerFromContext(r.Context()))
@@ -73,11 +73,11 @@ func (s *Server) workerAdmitWorkspaceImage(w http.ResponseWriter, r *http.Reques
 	assignment, err := s.admitWorkspaceImage(r.Context(), normalized, workerFromContext(r.Context()))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			err = conflict(errors.New("Workspace image Build Lease or Secret authority is stale"))
+			err = conflict(errors.New("workspace image build lease or secret authority is stale"))
 		}
 		var claimConflict idempotency.ConflictError
 		if errors.As(err, &claimConflict) {
-			err = conflict(errors.New("Workspace image operation conflicts with its admitted request"))
+			err = conflict(errors.New("workspace image operation conflicts with its admitted request"))
 		}
 		writeError(w, err)
 		return
@@ -94,11 +94,11 @@ func normalizeWorkspaceImageAdmission(
 		return workspaceImageAdmission{}, err
 	}
 	if !workspaceImageDeclarationPattern.MatchString(request.DeclarationSlot) {
-		return workspaceImageAdmission{}, errors.New("Workspace image declaration_slot is invalid")
+		return workspaceImageAdmission{}, errors.New("workspace image declaration_slot is invalid")
 	}
 	planDigest, err := imagebuild.Digest(request.Plan, request.Architecture)
 	if err != nil {
-		return workspaceImageAdmission{}, fmt.Errorf("validate Workspace image plan: %w", err)
+		return workspaceImageAdmission{}, fmt.Errorf("validate workspace image plan: %w", err)
 	}
 	planDigestBytes, err := deployment.SHA256DigestBytes(planDigest)
 	if err != nil {
@@ -107,19 +107,19 @@ func normalizeWorkspaceImageAdmission(
 	for label, digest := range map[string]string{
 		"runtime identity": request.RuntimeIdentityID,
 		"submitted source": request.SubmittedSourceDigest,
-		"Build tree":       request.BuildTreeDigest,
+		"build tree":       request.BuildTreeDigest,
 		"source archive":   request.SourceArchiveDigest,
 	} {
 		if _, err := deployment.SHA256DigestBytes(digest); err != nil {
-			return workspaceImageAdmission{}, fmt.Errorf("Workspace image %s digest is invalid", label)
+			return workspaceImageAdmission{}, fmt.Errorf("workspace image %s digest is invalid", label)
 		}
 	}
 	if request.BuildTreeSizeBytes < 1 || request.BuildTreeSizeBytes > maxImageBuildTreeBytes {
-		return workspaceImageAdmission{}, errors.New("Workspace image Build tree size is outside the v0 contract")
+		return workspaceImageAdmission{}, errors.New("workspace image build tree size is outside the v0 contract")
 	}
 	if request.AdmittedPaths == nil ||
 		request.SourceArchiveEntries != len(request.AdmittedPaths) {
-		return workspaceImageAdmission{}, errors.New("Workspace image admitted path set is incomplete")
+		return workspaceImageAdmission{}, errors.New("workspace image admitted path set is incomplete")
 	}
 	credentials, err := imagebuild.RegistryCredentials(request.Plan, request.Architecture)
 	if err != nil {
@@ -168,15 +168,15 @@ func (s *Server) admitWorkspaceImage(
 			return err
 		}
 		if authority.SubmittedSourceDigest != normalized.request.SubmittedSourceDigest {
-			return conflict(errors.New("Workspace image submitted source does not match the Deployment"))
+			return conflict(errors.New("workspace image submitted source does not match the deployment"))
 		}
 		if !authority.RuntimeIdentityID.Valid ||
 			authority.RuntimeIdentityID.String != normalized.request.RuntimeIdentityID {
-			return conflict(errors.New("Workspace image runtime identity does not match the current Worker authority"))
+			return conflict(errors.New("workspace image runtime identity does not match the current worker authority"))
 		}
 		cacheMode := imagebuild.CacheMode(authority.Deployment.ImageCacheMode)
 		if cacheMode != imagebuild.CachePrefer && cacheMode != imagebuild.CacheBypass {
-			return errors.New("Deployment image cache mode is invalid")
+			return errors.New("deployment image cache mode is invalid")
 		}
 		cacheScope, err := imagebuild.CacheScope(
 			normalized.environmentID,
@@ -232,7 +232,7 @@ func (s *Server) admitWorkspaceImage(
 				return err
 			}
 		} else if acquired.Claim.State != "completed" && acquired.Claim.State != "failed" {
-			return conflict(errors.New("Workspace image operation has an invalid state"))
+			return conflict(errors.New("workspace image operation has an invalid state"))
 		}
 		bindings, err := resolveWorkspaceImageRegistryBindings(
 			ctx, work.q, normalized, operationID, acquired.New, pending,
@@ -319,12 +319,12 @@ func resolveWorkspaceImageRegistryBindings(
 		return nil, err
 	}
 	if len(secrets) != len(names) {
-		return nil, conflict(errors.New("Workspace image registry Secret is unavailable"))
+		return nil, conflict(errors.New("workspace image registry secret is unavailable"))
 	}
 	byName := make(map[string]db.Secret, len(secrets))
 	for _, secretValue := range secrets {
 		if secretValue.State != "active" || !secretValue.CurrentVersionID.Valid {
-			return nil, conflict(errors.New("Workspace image registry Secret is unavailable"))
+			return nil, conflict(errors.New("workspace image registry secret is unavailable"))
 		}
 		byName[secretValue.Name] = secretValue
 	}
@@ -332,7 +332,7 @@ func resolveWorkspaceImageRegistryBindings(
 	for _, credential := range normalized.credentials {
 		secretValue, ok := byName[credential.PasswordSecret]
 		if !ok {
-			return nil, conflict(errors.New("Workspace image registry Secret is unavailable"))
+			return nil, conflict(errors.New("workspace image registry secret is unavailable"))
 		}
 		resolution, err := q.CreateRegistryCredentialResolution(ctx, db.CreateRegistryCredentialResolutionParams{
 			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), EnvironmentID: pgvalue.UUID(normalized.environmentID),
@@ -358,14 +358,14 @@ func replayWorkspaceImageRegistryBindings(
 	requireDelivery bool,
 ) ([]imagebuild.RegistryBinding, error) {
 	if len(rows) != len(normalized.credentials) {
-		return nil, conflict(errors.New("Workspace image credential audit is incomplete"))
+		return nil, conflict(errors.New("workspace image credential audit is incomplete"))
 	}
 	bindings := make([]imagebuild.RegistryBinding, 0, len(rows))
 	for index, row := range rows {
 		expected := normalized.credentials[index]
 		if row.RegistryAuthority != expected.Authority || row.Username != expected.Username ||
 			!bytes.Equal(row.PlanDigest, normalized.planDigestBytes) {
-			return nil, conflict(errors.New("Workspace image credential audit conflicts with the plan"))
+			return nil, conflict(errors.New("workspace image credential audit conflicts with the plan"))
 		}
 		if requireDelivery {
 			locked, err := q.LockRegistryCredentialResolutionForDelivery(
@@ -381,7 +381,7 @@ func replayWorkspaceImageRegistryBindings(
 				return nil, err
 			}
 			if locked.Secret.Name != expected.PasswordSecret {
-				return nil, conflict(errors.New("Workspace image credential audit conflicts with the Secret"))
+				return nil, conflict(errors.New("workspace image credential audit conflicts with the secret"))
 			}
 		}
 		bindings = append(bindings, registryBindingFromResolution(row))
@@ -413,10 +413,10 @@ func workspaceImageTerminalResult(
 	decoder := json.NewDecoder(bytes.NewReader(claim.Receipt))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&receipt); err != nil {
-		return workerapi.WorkspaceImageTerminalResult{}, errors.New("Workspace image terminal receipt is invalid")
+		return workerapi.WorkspaceImageTerminalResult{}, errors.New("workspace image terminal receipt is invalid")
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return workerapi.WorkspaceImageTerminalResult{}, errors.New("Workspace image terminal receipt has trailing data")
+		return workerapi.WorkspaceImageTerminalResult{}, errors.New("workspace image terminal receipt has trailing data")
 	}
 	if receipt.BuildLeaseID != buildLeaseID.String() ||
 		receipt.BuildLeaseGeneration != buildLeaseGeneration ||
@@ -426,17 +426,17 @@ func workspaceImageTerminalResult(
 		receipt.PlanDigest != planDigest ||
 		receipt.ResolutionSetDigest != resolutionSetDigest ||
 		receipt.RequestedCacheMode != requestedCacheMode {
-		return workerapi.WorkspaceImageTerminalResult{}, conflict(errors.New("Workspace image terminal receipt conflicts with admission"))
+		return workerapi.WorkspaceImageTerminalResult{}, conflict(errors.New("workspace image terminal receipt conflicts with admission"))
 	}
 	if err := ids.Validate(receipt.AttemptID); err != nil {
-		return workerapi.WorkspaceImageTerminalResult{}, errors.New("Workspace image terminal attempt ID is invalid")
+		return workerapi.WorkspaceImageTerminalResult{}, errors.New("workspace image terminal attempt ID is invalid")
 	}
 	if err := imagebuild.ValidateGuestResult(receipt.Result); err != nil {
-		return workerapi.WorkspaceImageTerminalResult{}, errors.New("Workspace image terminal result is invalid")
+		return workerapi.WorkspaceImageTerminalResult{}, errors.New("workspace image terminal result is invalid")
 	}
 	if claim.State == "completed" && receipt.Result.Outcome != imagebuild.GuestSucceeded ||
 		claim.State == "failed" && receipt.Result.Outcome != imagebuild.GuestFailed {
-		return workerapi.WorkspaceImageTerminalResult{}, errors.New("Workspace image terminal state does not match its result")
+		return workerapi.WorkspaceImageTerminalResult{}, errors.New("workspace image terminal state does not match its result")
 	}
 	return workerapi.WorkspaceImageTerminalResult{
 		AttemptID: receipt.AttemptID, Result: receipt.Result,
@@ -453,26 +453,26 @@ func validateCompletedWorkspaceImageOperations(
 	images []deployment.WorkspaceImage,
 ) error {
 	if requestedCacheMode != imagebuild.CachePrefer && requestedCacheMode != imagebuild.CacheBypass {
-		return errors.New("Deployment image cache mode is invalid")
+		return errors.New("deployment image cache mode is invalid")
 	}
 	for _, image := range images {
 		if image.Operation.BuildLeaseID != buildLeaseID.String() ||
 			image.Operation.BuildLeaseGeneration != buildLeaseGeneration ||
 			image.Operation.RequestedCacheMode != requestedCacheMode {
-			return invalidDeploymentBuildOutput{err: errors.New("Workspace image operation does not belong to the current Build Lease")}
+			return invalidDeploymentBuildOutput{err: errors.New("workspace image operation does not belong to the current build lease")}
 		}
 		operationID, err := ids.Parse(image.Operation.OperationID)
 		if err != nil {
-			return invalidDeploymentBuildOutput{err: errors.New("Workspace image operation ID is invalid")}
+			return invalidDeploymentBuildOutput{err: errors.New("workspace image operation ID is invalid")}
 		}
 		claim, err := q.LockCompletedWorkspaceImageOperation(ctx, db.LockCompletedWorkspaceImageOperationParams{
 			EnvironmentID: pgvalue.UUID(environmentID), ImageOperationID: pgvalue.UUID(operationID),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
-			return invalidDeploymentBuildOutput{err: errors.New("Workspace image operation is not completed")}
+			return invalidDeploymentBuildOutput{err: errors.New("workspace image operation is not completed")}
 		}
 		if err != nil {
-			return fmt.Errorf("lock completed Workspace image operation: %w", err)
+			return fmt.Errorf("lock completed workspace image operation: %w", err)
 		}
 		expectedSlot, err := idempotency.WorkspaceImageBuildSlotHash(
 			environmentID,
@@ -481,12 +481,12 @@ func validateCompletedWorkspaceImageOperations(
 			image.Operation.DeclarationSlot,
 		)
 		if err != nil {
-			return invalidDeploymentBuildOutput{err: fmt.Errorf("Workspace image operation authority: %w", err)}
+			return invalidDeploymentBuildOutput{err: fmt.Errorf("workspace image operation authority: %w", err)}
 		}
 		requestFingerprint, err := deployment.SHA256DigestBytes(image.Operation.RequestFingerprint)
 		if err != nil || !bytes.Equal(claim.SlotHash, expectedSlot[:]) ||
 			!bytes.Equal(claim.RequestFingerprint, requestFingerprint) {
-			return invalidDeploymentBuildOutput{err: errors.New("Workspace image operation claim does not exact-match the current Build Lease authority")}
+			return invalidDeploymentBuildOutput{err: errors.New("workspace image operation claim does not exact-match the current build lease authority")}
 		}
 		terminal, err := workspaceImageTerminalResult(
 			claim,
@@ -500,13 +500,13 @@ func validateCompletedWorkspaceImageOperations(
 			image.Operation.RequestedCacheMode,
 		)
 		if err != nil {
-			return invalidDeploymentBuildOutput{err: fmt.Errorf("Workspace image operation receipt: %w", err)}
+			return invalidDeploymentBuildOutput{err: fmt.Errorf("workspace image operation receipt: %w", err)}
 		}
 		if terminal.AttemptID != image.Operation.AttemptID ||
 			terminal.Result.Outcome != imagebuild.GuestSucceeded ||
 			terminal.Result.OCIDigest != image.Artifact.Digest ||
 			terminal.Result.OCISizeBytes != image.Artifact.SizeBytes {
-			return invalidDeploymentBuildOutput{err: errors.New("Workspace image Artifact does not exact-match its completed operation")}
+			return invalidDeploymentBuildOutput{err: errors.New("workspace image artifact does not exact-match its completed operation")}
 		}
 	}
 	return nil
@@ -588,14 +588,14 @@ func validateWorkspaceImageCacheTarget(target imagecache.Target) error {
 func (s *Server) workerFetchWorkspaceImageCredentials(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.WorkspaceImageCredentialRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Workspace image credential JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid workspace image credential JSON: %w", err)))
 		return
 	}
 	worker := workerFromContext(r.Context())
 	response, err := s.fetchWorkspaceImageCredentials(r.Context(), request, worker)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			err = conflict(errors.New("Workspace image credential authority is stale"))
+			err = conflict(errors.New("workspace image credential authority is stale"))
 		}
 		writeError(w, err)
 		return
@@ -615,17 +615,17 @@ func (s *Server) fetchWorkspaceImageCredentials(
 	}
 	operationID, err := ids.Parse(request.OperationID)
 	if err != nil {
-		return workerapi.WorkspaceImageCredentialResponse{}, badRequest(errors.New("Workspace image operation_id is invalid"))
+		return workerapi.WorkspaceImageCredentialResponse{}, badRequest(errors.New("workspace image operation_id is invalid"))
 	}
 	if err := ids.Validate(request.AttemptID); err != nil {
-		return workerapi.WorkspaceImageCredentialResponse{}, badRequest(errors.New("Workspace image attempt_id is invalid"))
+		return workerapi.WorkspaceImageCredentialResponse{}, badRequest(errors.New("workspace image attempt_id is invalid"))
 	}
 	planDigest, err := deployment.SHA256DigestBytes(request.PlanDigest)
 	if err != nil {
-		return workerapi.WorkspaceImageCredentialResponse{}, badRequest(errors.New("Workspace image plan_digest is invalid"))
+		return workerapi.WorkspaceImageCredentialResponse{}, badRequest(errors.New("workspace image plan_digest is invalid"))
 	}
 	if _, err := deployment.SHA256DigestBytes(request.ResolutionSetDigest); err != nil {
-		return workerapi.WorkspaceImageCredentialResponse{}, badRequest(errors.New("Workspace image resolution_set_digest is invalid"))
+		return workerapi.WorkspaceImageCredentialResponse{}, badRequest(errors.New("workspace image resolution_set_digest is invalid"))
 	}
 	if s.registryCredentials == nil {
 		return workerapi.WorkspaceImageCredentialResponse{}, unavailable(errors.New("registry credential opener is not configured"))
@@ -654,12 +654,12 @@ func (s *Server) fetchWorkspaceImageCredentials(
 		bindings := make([]imagebuild.RegistryBinding, 0, len(rows))
 		for _, row := range rows {
 			if !bytes.Equal(row.PlanDigest, planDigest) {
-				return conflict(errors.New("Workspace image credential plan does not match admission"))
+				return conflict(errors.New("workspace image credential plan does not match admission"))
 			}
 			bindings = append(bindings, registryBindingFromResolution(row))
 		}
 		if imagebuild.ResolutionSetDigest(bindings) != request.ResolutionSetDigest {
-			return conflict(errors.New("Workspace image credential resolution set does not match admission"))
+			return conflict(errors.New("workspace image credential resolution set does not match admission"))
 		}
 		for _, row := range rows {
 			locked, err := work.q.LockRegistryCredentialResolutionForDelivery(
@@ -678,11 +678,11 @@ func (s *Server) fetchWorkspaceImageCredentials(
 				environmentID, locked.Secret, locked.SecretVersion,
 			)
 			if err != nil {
-				return conflict(errors.New("Workspace image registry credential is unavailable"))
+				return conflict(errors.New("workspace image registry credential is unavailable"))
 			}
 			if len(password) < 1 || len(password) > imagebuild.MaxRegistryPasswordBytes {
 				clear(password)
-				return conflict(errors.New("Workspace image registry credential size is invalid"))
+				return conflict(errors.New("workspace image registry credential size is invalid"))
 			}
 			response.Envelope.RegistryCredentials = append(response.Envelope.RegistryCredentials,
 				imagebuild.RegistryCredentialValue{
@@ -716,13 +716,13 @@ func clearWorkspaceImageCredentials(credentials []imagebuild.RegistryCredentialV
 func (s *Server) workerCompleteWorkspaceImage(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.WorkspaceImageOperationResultRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Workspace image result JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid workspace image result JSON: %w", err)))
 		return
 	}
 	response, err := s.completeWorkspaceImage(r.Context(), request, workerFromContext(r.Context()))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			err = conflict(errors.New("Workspace image result authority is stale"))
+			err = conflict(errors.New("workspace image result authority is stale"))
 		}
 		writeError(w, err)
 		return
@@ -741,27 +741,27 @@ func (s *Server) completeWorkspaceImage(
 	}
 	operationID, err := ids.Parse(request.OperationID)
 	if err != nil {
-		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image operation_id is invalid"))
+		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("workspace image operation_id is invalid"))
 	}
 	if err := ids.Validate(request.AttemptID); err != nil {
-		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image attempt_id is invalid"))
+		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("workspace image attempt_id is invalid"))
 	}
 	if !workspaceImageDeclarationPattern.MatchString(request.DeclarationSlot) {
-		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image declaration_slot is invalid"))
+		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("workspace image declaration_slot is invalid"))
 	}
 	if request.RequestedCacheMode != imagebuild.CachePrefer && request.RequestedCacheMode != imagebuild.CacheBypass {
-		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image requested_cache_mode is invalid"))
+		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("workspace image requested_cache_mode is invalid"))
 	}
 	requestFingerprint, err := deployment.SHA256DigestBytes(request.RequestFingerprint)
 	if err != nil {
-		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image request_fingerprint is invalid"))
+		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("workspace image request_fingerprint is invalid"))
 	}
 	planDigest, err := deployment.SHA256DigestBytes(request.PlanDigest)
 	if err != nil {
-		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image plan_digest is invalid"))
+		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("workspace image plan_digest is invalid"))
 	}
 	if _, err := deployment.SHA256DigestBytes(request.ResolutionSetDigest); err != nil {
-		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image resolution_set_digest is invalid"))
+		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("workspace image resolution_set_digest is invalid"))
 	}
 	if err := imagebuild.ValidateGuestResult(request.Result); err != nil {
 		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(err)
@@ -776,10 +776,10 @@ func (s *Server) completeWorkspaceImage(
 		}
 		requestedCacheMode := imagebuild.CacheMode(authority.Deployment.ImageCacheMode)
 		if requestedCacheMode != imagebuild.CachePrefer && requestedCacheMode != imagebuild.CacheBypass {
-			return errors.New("Deployment image cache mode is invalid")
+			return errors.New("deployment image cache mode is invalid")
 		}
 		if requestedCacheMode != request.RequestedCacheMode {
-			return conflict(errors.New("Workspace image result cache mode does not match admission"))
+			return conflict(errors.New("workspace image result cache mode does not match admission"))
 		}
 		receiptRaw, err := json.Marshal(workspaceImageOperationReceipt{
 			BuildLeaseID: request.Lease.ID, BuildLeaseGeneration: request.Lease.LeaseSequence,
@@ -809,7 +809,7 @@ func (s *Server) completeWorkspaceImage(
 		}
 		if !bytes.Equal(claim.SlotHash, expectedSlot[:]) ||
 			!bytes.Equal(claim.RequestFingerprint, requestFingerprint) {
-			return conflict(errors.New("Workspace image result request fingerprint does not match admission"))
+			return conflict(errors.New("workspace image result request fingerprint does not match admission"))
 		}
 		rows, err := work.q.ListRegistryCredentialResolutions(ctx, db.ListRegistryCredentialResolutionsParams{
 			EnvironmentID: pgvalue.UUID(environmentID), DeploymentID: pgvalue.UUID(deploymentID),
@@ -821,17 +821,17 @@ func (s *Server) completeWorkspaceImage(
 		bindings := make([]imagebuild.RegistryBinding, 0, len(rows))
 		for _, row := range rows {
 			if !bytes.Equal(row.PlanDigest, planDigest) {
-				return conflict(errors.New("Workspace image result plan does not match admission"))
+				return conflict(errors.New("workspace image result plan does not match admission"))
 			}
 			bindings = append(bindings, registryBindingFromResolution(row))
 		}
 		if imagebuild.ResolutionSetDigest(bindings) != request.ResolutionSetDigest {
-			return conflict(errors.New("Workspace image result resolution set does not match admission"))
+			return conflict(errors.New("workspace image result resolution set does not match admission"))
 		}
 		if claim.State != "pending" {
 			same, err := sameCanonicalJSON(claim.Receipt, receiptRaw)
 			if err != nil || !same {
-				return conflict(errors.New("Workspace image terminal result conflicts with replay"))
+				return conflict(errors.New("workspace image terminal result conflicts with replay"))
 			}
 			response.State = claim.State
 			return nil
@@ -884,7 +884,7 @@ func validateWorkspaceImageLease(
 	workerInstanceID, err := ids.Parse(lease.WorkerInstanceID)
 	if err != nil || workerInstanceID != worker.WorkerInstanceID || lease.WorkerEpoch != worker.WorkerEpoch ||
 		lease.WorkerGroupID != worker.WorkerGroupID || lease.LeaseSequence < 1 {
-		return uuid.Nil, uuid.Nil, uuid.Nil, errors.New("deployment build lease does not match the authenticated Worker")
+		return uuid.Nil, uuid.Nil, uuid.Nil, errors.New("deployment build lease does not match the authenticated worker")
 	}
 	return leaseID, pgvalue.MustUUIDValue(environmentID), pgvalue.MustUUIDValue(deploymentID), nil
 }
@@ -912,7 +912,7 @@ func lockWorkspaceImageBuildLease(
 	if row.Deployment.OrgID != pgvalue.UUID(orgID) || row.Deployment.ProjectID != pgvalue.UUID(projectID) ||
 		row.DeploymentBuildLease.WorkerGroupID != lease.WorkerGroupID ||
 		row.DeploymentBuildLease.WorkerProtocolVersion != lease.WorkerProtocolVersion ||
-		row.DeploymentBuildLease.RequestedCpuMillis != lease.RequestedCPUMillis ||
+		row.DeploymentBuildLease.RequestedCPUMillis != lease.RequestedCPUMillis ||
 		row.DeploymentBuildLease.RequestedMemoryBytes != lease.RequestedMemoryBytes ||
 		row.DeploymentBuildLease.RequestedGuestEphemeralDiskBytes != lease.RequestedGuestEphemeralDiskBytes ||
 		row.DeploymentBuildLease.RequestedBuildExecutors != lease.RequestedBuildExecutors {
@@ -923,7 +923,7 @@ func lockWorkspaceImageBuildLease(
 
 func workspaceImageDigest(value []byte) (string, error) {
 	if len(value) != sha256.Size {
-		return "", errors.New("Workspace image fingerprint digest is invalid")
+		return "", errors.New("workspace image fingerprint digest is invalid")
 	}
 	return sha256sum.Prefix + hex.EncodeToString(value), nil
 }

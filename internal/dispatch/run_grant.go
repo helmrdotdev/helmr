@@ -21,7 +21,7 @@ func (d *Authority) grantFreshRun(
 ) (db.RunLease, error) {
 	tx, err := d.begin(ctx)
 	if err != nil {
-		return db.RunLease{}, fmt.Errorf("begin Run Lease grant: %w", err)
+		return db.RunLease{}, fmt.Errorf("begin run lease grant: %w", err)
 	}
 	defer rollback(ctx, tx)
 
@@ -126,14 +126,14 @@ SELECT transaction_timestamp(),
 		authority.runID,
 	).Scan(&grantedAt, &leaseSequence)
 	if err != nil {
-		return db.RunLease{}, fmt.Errorf("allocate Run Lease sequence: %w", err)
+		return db.RunLease{}, fmt.Errorf("allocate run lease sequence: %w", err)
 	}
 	runLeaseID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	workspaceLeaseUUID := uuid.Must(uuid.NewV7())
 	workspaceLeaseID := pgvalue.UUID(workspaceLeaseUUID)
 	workspaceUUID, err := pgvalue.UUIDValue(authority.workspaceID)
 	if err != nil {
-		return db.RunLease{}, fmt.Errorf("decode Workspace ID: %w", err)
+		return db.RunLease{}, fmt.Errorf("decode workspace ID: %w", err)
 	}
 	writerGeneration := authority.writerGeneration + 1
 	mountGeneration := mount.fencingGeneration + 1
@@ -145,7 +145,7 @@ SELECT transaction_timestamp(),
 		MountFencingGeneration: mountGeneration,
 	})
 	if err != nil {
-		return db.RunLease{}, fmt.Errorf("derive Workspace Lease fence: %w", err)
+		return db.RunLease{}, fmt.Errorf("derive workspace lease fence: %w", err)
 	}
 	q := db.New(tx)
 	leaseExpiresAt := pgtype.Timestamptz{
@@ -170,7 +170,7 @@ SELECT transaction_timestamp(),
 			RuntimeInstanceID:                runtime.id,
 			RuntimeIdentityID:                runtime.runtimeIdentityID,
 			WorkerProtocolVersion:            runtime.protocolVersion,
-			RequestedCpuMillis:               authority.resources.cpuMillis,
+			RequestedCPUMillis:               authority.resources.cpuMillis,
 			RequestedMemoryBytes:             authority.resources.memoryBytes,
 			RequestedGuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes,
 			RequestedExecutionSlots:          authority.resources.executionSlots,
@@ -190,7 +190,7 @@ SELECT transaction_timestamp(),
 		if isConstraintConflict(err) {
 			return db.RunLease{}, ErrCapacityUnavailable
 		}
-		return db.RunLease{}, fmt.Errorf("insert Run Lease: %w", err)
+		return db.RunLease{}, fmt.Errorf("insert run lease: %w", err)
 	}
 	if _, err := q.AdvanceRunWorkspaceWriter(
 		ctx,
@@ -204,7 +204,7 @@ SELECT transaction_timestamp(),
 			ExpectedWriterGeneration: authority.writerGeneration,
 		},
 	); err != nil {
-		return db.RunLease{}, fmt.Errorf("advance Workspace writer: %w", err)
+		return db.RunLease{}, fmt.Errorf("advance workspace writer: %w", err)
 	}
 	if _, err := q.AdvanceRunWorkspaceMountFence(
 		ctx,
@@ -224,7 +224,7 @@ SELECT transaction_timestamp(),
 			ExpectedFencingGeneration: mount.fencingGeneration,
 		},
 	); err != nil {
-		return db.RunLease{}, fmt.Errorf("advance Workspace Mount fence: %w", err)
+		return db.RunLease{}, fmt.Errorf("advance workspace mount fence: %w", err)
 	}
 	if _, err := q.InsertRunWorkspaceLease(
 		ctx,
@@ -252,7 +252,7 @@ SELECT transaction_timestamp(),
 		if isConstraintConflict(err) {
 			return db.RunLease{}, ErrCapacityUnavailable
 		}
-		return db.RunLease{}, fmt.Errorf("insert Workspace Lease: %w", err)
+		return db.RunLease{}, fmt.Errorf("insert workspace lease: %w", err)
 	}
 	if runtime.reservedRunID.Valid {
 		consumed, err := q.ConsumeRunRuntimeReservation(
@@ -270,7 +270,7 @@ SELECT transaction_timestamp(),
 			},
 		)
 		if err != nil {
-			return db.RunLease{}, fmt.Errorf("consume Run runtime reservation: %w", err)
+			return db.RunLease{}, fmt.Errorf("consume run runtime reservation: %w", err)
 		}
 		if consumed != 1 {
 			return db.RunLease{}, ErrCapacityUnavailable
@@ -287,7 +287,7 @@ SELECT transaction_timestamp(),
 		},
 	)
 	if err != nil {
-		return db.RunLease{}, fmt.Errorf("set current Run Lease: %w", err)
+		return db.RunLease{}, fmt.Errorf("set current run lease: %w", err)
 	}
 	if authority.handoffChildWaitID.Valid {
 		var boundWaitID pgtype.UUID
@@ -322,7 +322,7 @@ RETURNING id`,
 		).Scan(&boundWaitID)
 		if err != nil {
 			return db.RunLease{}, fmt.Errorf(
-				"bind same-Workspace child Run Lease: %w",
+				"bind same-workspace child run lease: %w",
 				err,
 			)
 		}
@@ -408,11 +408,11 @@ RETURNING id`,
 			).Scan(&boundWaitID)
 		}
 		if err != nil {
-			return db.RunLease{}, fmt.Errorf("bind resuming Run Wait: %w", err)
+			return db.RunLease{}, fmt.Errorf("bind resuming run wait: %w", err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return db.RunLease{}, fmt.Errorf("commit Run Lease grant: %w", err)
+		return db.RunLease{}, fmt.Errorf("commit run lease grant: %w", err)
 	}
 	return lease, nil
 }
@@ -440,7 +440,7 @@ SELECT count(*),
 		authority.concurrencyKey,
 	).Scan(&active, &activeLimit)
 	if err != nil {
-		return fmt.Errorf("read Run Lease concurrency: %w", err)
+		return fmt.Errorf("read run lease concurrency: %w", err)
 	}
 	limit := authority.queueLimit
 	if activeLimit.Valid && (!limit.Valid || activeLimit.Int64 < limit.Int64) {
@@ -477,7 +477,7 @@ SELECT coalesce(sum(run_leases.requested_execution_slots), 0) + $3
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrCapacityUnavailable
 		}
-		return fmt.Errorf("check Run consumer capacity: %w", err)
+		return fmt.Errorf("check run consumer capacity: %w", err)
 	}
 	if !available {
 		return ErrCapacityUnavailable

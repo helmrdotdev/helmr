@@ -28,7 +28,7 @@ type RetryReadyWorker struct {
 
 func NewRetryReadyWorker(log *slog.Logger, store RetryReadyStore) (*RetryReadyWorker, error) {
 	if store == nil {
-		return nil, errors.New("Run retry readiness store is required")
+		return nil, errors.New("run retry readiness store is required")
 	}
 	if log == nil {
 		log = slog.Default()

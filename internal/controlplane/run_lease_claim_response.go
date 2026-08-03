@@ -53,7 +53,7 @@ func loadRunLeaseClaimProjection(
 		DeploymentID:  authority.run.DeploymentID,
 	})
 	if err != nil {
-		return runLeaseClaimProjection{}, fmt.Errorf("load Run Lease Program authority: %w", err)
+		return runLeaseClaimProjection{}, fmt.Errorf("load run lease program authority: %w", err)
 	}
 	definition, err := store.GetDeploymentDefinition(ctx, db.GetDeploymentDefinitionParams{
 		EnvironmentID: authority.run.EnvironmentID,
@@ -62,7 +62,7 @@ func loadRunLeaseClaimProjection(
 		DeclaredID:    authority.run.EntrypointDeclaredID,
 	})
 	if err != nil {
-		return runLeaseClaimProjection{}, fmt.Errorf("load Run Lease declaration authority: %w", err)
+		return runLeaseClaimProjection{}, fmt.Errorf("load run lease declaration authority: %w", err)
 	}
 	projection := runLeaseClaimProjection{
 		program:    program,
@@ -77,7 +77,7 @@ func loadRunLeaseClaimProjection(
 		},
 	)
 	if err != nil {
-		return runLeaseClaimProjection{}, fmt.Errorf("load Run Lease Workspace Reset target authority: %w", err)
+		return runLeaseClaimProjection{}, fmt.Errorf("load run lease workspace reset target authority: %w", err)
 	}
 	if authority.restoreSource == runLeaseRestoreRecreated {
 		projection.checkpointArtifacts, err = store.ListRunCheckpointArtifactAuthority(
@@ -85,7 +85,7 @@ func loadRunLeaseClaimProjection(
 			authority.checkpoint.ID,
 		)
 		if err != nil {
-			return runLeaseClaimProjection{}, fmt.Errorf("load Run Lease checkpoint Artifact authority: %w", err)
+			return runLeaseClaimProjection{}, fmt.Errorf("load run lease checkpoint artifact authority: %w", err)
 		}
 	}
 	return projection, nil
@@ -119,7 +119,7 @@ func projectRunLeaseClaimResponse(
 	}
 	if projection.program.DeploymentID != authority.run.DeploymentID ||
 		projection.program.EnvironmentID != authority.run.EnvironmentID {
-		return workerapi.RunLeaseClaimResponse{}, errors.New("Run Lease Program authority is inconsistent")
+		return workerapi.RunLeaseClaimResponse{}, errors.New("run lease program authority is inconsistent")
 	}
 	var actor *db.Actor
 	if authority.actor.ID.Valid {
@@ -155,15 +155,15 @@ func projectRunLeaseClaimResponse(
 	secrets := make([]workerapi.SecretDelivery, 0)
 	if authority.mode == runLeaseClaimFresh || authority.mode == runLeaseClaimAttachChild {
 		if secretDelivery == nil {
-			return workerapi.RunLeaseClaimResponse{}, errors.New("Secret delivery opener is not configured")
+			return workerapi.RunLeaseClaimResponse{}, errors.New("secret delivery opener is not configured")
 		}
 		environmentID, err := pgvalue.UUIDValue(authority.run.EnvironmentID)
 		if err != nil {
-			return workerapi.RunLeaseClaimResponse{}, errors.New("Run Lease Environment ID is invalid")
+			return workerapi.RunLeaseClaimResponse{}, errors.New("run lease environment ID is invalid")
 		}
 		materials, err := secretDelivery.OpenDeliveries(environmentID, envelopes)
 		if err != nil {
-			return workerapi.RunLeaseClaimResponse{}, fmt.Errorf("open Run Lease Secret delivery: %w", err)
+			return workerapi.RunLeaseClaimResponse{}, fmt.Errorf("open run lease secret delivery: %w", err)
 		}
 		secrets, err = projectSecretDeliveries(materials)
 		if err != nil {
@@ -185,11 +185,11 @@ func deriveWorkspaceCapability(
 ) (workspace.FencingCapability, error) {
 	leaseID, err := pgvalue.UUIDValue(lease.ID)
 	if err != nil {
-		return workspace.FencingCapability{}, errors.New("Workspace Lease ID is invalid")
+		return workspace.FencingCapability{}, errors.New("workspace lease ID is invalid")
 	}
 	workspaceID, err := pgvalue.UUIDValue(lease.WorkspaceID)
 	if err != nil {
-		return workspace.FencingCapability{}, errors.New("Workspace ID is invalid")
+		return workspace.FencingCapability{}, errors.New("workspace ID is invalid")
 	}
 	capability, err := key.Derive(workspace.FenceInput{
 		LeaseID:                leaseID,
@@ -205,7 +205,7 @@ func deriveWorkspaceCapability(
 		[]byte(capability.Hash),
 		[]byte(lease.FencingTokenHash),
 	) != 1 {
-		return workspace.FencingCapability{}, errors.New("Workspace write capability does not match its Lease")
+		return workspace.FencingCapability{}, errors.New("workspace write capability does not match its lease")
 	}
 	return capability, nil
 }

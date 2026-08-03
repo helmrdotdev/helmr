@@ -30,19 +30,19 @@ func EncodeProgram(
 	nodeVersion string,
 ) (_ *EncodedProgram, returnErr error) {
 	if ctx == nil {
-		return nil, errors.New("Program encoding context is nil")
+		return nil, errors.New("program encoding context is nil")
 	}
 	if tree == nil || tree.content == nil || tree.inspected == nil {
 		return nil, errors.New("build tree is closed")
 	}
-	if err := validateBuildProvenance("Program encoding provenance", provenance); err != nil {
+	if err := validateBuildProvenance("program encoding provenance", provenance); err != nil {
 		return nil, err
 	}
 	if err := ValidateVerificationResult(verification); err != nil {
 		return nil, err
 	}
 	if verification.Outcome != VerificationOutcomeSucceeded {
-		return nil, errors.New("Program encoding requires successful verification")
+		return nil, errors.New("program encoding requires successful verification")
 	}
 	plan, err := ParseBuildPlan(
 		[]byte(verification.Succeeded.Files[0].Content),
@@ -51,7 +51,7 @@ func EncodeProgram(
 		return nil, err
 	}
 	if len(buildPlanProgramDeclarations(plan)) == 0 {
-		return nil, errors.New("Program encoding requires a Program-backed verification")
+		return nil, errors.New("program encoding requires a program-backed verification")
 	}
 	compilerResultRaw, err := tree.inspected.read(
 		ctx,
@@ -77,7 +77,7 @@ func EncodeProgram(
 	}
 	if compilerResult.Config.Digest != provenance.Config.ResultDigest {
 		return nil, errors.New(
-			"Program build manifest config digest does not match build provenance",
+			"program build manifest config digest does not match build provenance",
 		)
 	}
 	if err := verifyProgramBuildFiles(ctx, tree.inspected, compilerResult); err != nil {
@@ -146,7 +146,7 @@ func EncodeProgram(
 		false,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("encode Program: %w", err)
+		return nil, fmt.Errorf("encode program: %w", err)
 	}
 	defer func() {
 		if artifact != nil {
@@ -189,7 +189,7 @@ func verifyEncodedProgram(
 		programArtifact,
 	)
 	if err != nil {
-		return fmt.Errorf("open encoded Program: %w", err)
+		return fmt.Errorf("open encoded program: %w", err)
 	}
 	verified, err := verifyProgramArtifact(ctx, artifactInput{
 		Digest:    output.Artifact.Digest,
@@ -198,7 +198,7 @@ func verifyEncodedProgram(
 		Reader:    reader,
 	})
 	if err != nil {
-		return fmt.Errorf("verify encoded Program: %w", err)
+		return fmt.Errorf("verify encoded program: %w", err)
 	}
 	verifiedIndex, err := CanonicalProgramIndex(verified.Index())
 	if err != nil {
@@ -209,7 +209,7 @@ func verifyEncodedProgram(
 		return err
 	}
 	if !bytes.Equal(verifiedIndex, expectedIndex) {
-		return errors.New("encoded Program index changed during verification")
+		return errors.New("encoded program index changed during verification")
 	}
 	return nil
 }
@@ -299,7 +299,7 @@ func programTreeEntries(
 			reader, err := tree.reader.Open(ctx, source.sourcePath)
 			if err != nil {
 				yield(treeEntry{}, fmt.Errorf(
-					"open frozen Program path %q: %w",
+					"open frozen program path %q: %w",
 					source.sourcePath,
 					err,
 				))
@@ -310,7 +310,7 @@ func programTreeEntries(
 			closeErr := reader.Close()
 			if closeErr != nil {
 				yield(treeEntry{}, fmt.Errorf(
-					"close frozen Program path %q: %w",
+					"close frozen program path %q: %w",
 					source.sourcePath,
 					closeErr,
 				))
@@ -328,7 +328,7 @@ func (program *EncodedProgram) Publish(
 	store cas.Store,
 ) (ProgramOutput, error) {
 	if program == nil || program.artifact == nil {
-		return ProgramOutput{}, errors.New("encoded Program is closed")
+		return ProgramOutput{}, errors.New("encoded program is closed")
 	}
 	if store == nil {
 		return ProgramOutput{}, errors.New("program store is required")
@@ -339,7 +339,7 @@ func (program *EncodedProgram) Publish(
 		program.artifact,
 		program.Output.Artifact,
 	); err != nil {
-		return ProgramOutput{}, fmt.Errorf("publish Program: %w", err)
+		return ProgramOutput{}, fmt.Errorf("publish program: %w", err)
 	}
 	output := program.Output
 	output.Index = cloneProgramIndex(output.Index)
@@ -363,7 +363,7 @@ func publishProgramArtifact(
 	if object.Digest != expected.Digest ||
 		object.SizeBytes != expected.SizeBytes ||
 		object.MediaType != expected.MediaType {
-		return errors.New("published Program object does not match its descriptor")
+		return errors.New("published program object does not match its descriptor")
 	}
 	return nil
 }

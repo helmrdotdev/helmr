@@ -273,7 +273,7 @@ type CreateRunRuntimeReservationParams struct {
 	RuntimeIdentityID               string             `json:"runtime_identity_id"`
 	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
 	WorkerEpoch                     int64              `json:"worker_epoch"`
-	ReservedCpuMillis               int64              `json:"reserved_cpu_millis"`
+	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
 	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
 	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
 	ReservedExecutionSlots          int32              `json:"reserved_execution_slots"`
@@ -298,7 +298,7 @@ type CreateRunRuntimeReservationRow struct {
 	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
 	RuntimeSubstrateID              pgtype.UUID        `json:"runtime_substrate_id"`
 	WorkerEpoch                     int64              `json:"worker_epoch"`
-	ReservedCpuMillis               int64              `json:"reserved_cpu_millis"`
+	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
 	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
 	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
 	ReservedExecutionSlots          int32              `json:"reserved_execution_slots"`
@@ -346,7 +346,7 @@ func (q *Queries) CreateRunRuntimeReservation(ctx context.Context, arg CreateRun
 		arg.RuntimeIdentityID,
 		arg.DeploymentDefinitionID,
 		arg.WorkerEpoch,
-		arg.ReservedCpuMillis,
+		arg.ReservedCPUMillis,
 		arg.ReservedMemoryBytes,
 		arg.ReservedGuestEphemeralDiskBytes,
 		arg.ReservedExecutionSlots,
@@ -371,7 +371,7 @@ func (q *Queries) CreateRunRuntimeReservation(ctx context.Context, arg CreateRun
 		&i.DeploymentDefinitionID,
 		&i.RuntimeSubstrateID,
 		&i.WorkerEpoch,
-		&i.ReservedCpuMillis,
+		&i.ReservedCPUMillis,
 		&i.ReservedMemoryBytes,
 		&i.ReservedGuestEphemeralDiskBytes,
 		&i.ReservedExecutionSlots,
@@ -482,7 +482,7 @@ type InsertAssignedRunLeaseParams struct {
 	RuntimeInstanceID                pgtype.UUID        `json:"runtime_instance_id"`
 	RuntimeIdentityID                string             `json:"runtime_identity_id"`
 	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
-	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
+	RequestedCPUMillis               int64              `json:"requested_cpu_millis"`
 	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
 	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
 	RequestedExecutionSlots          int32              `json:"requested_execution_slots"`
@@ -511,7 +511,7 @@ func (q *Queries) InsertAssignedRunLease(ctx context.Context, arg InsertAssigned
 		arg.RuntimeInstanceID,
 		arg.RuntimeIdentityID,
 		arg.WorkerProtocolVersion,
-		arg.RequestedCpuMillis,
+		arg.RequestedCPUMillis,
 		arg.RequestedMemoryBytes,
 		arg.RequestedGuestEphemeralDiskBytes,
 		arg.RequestedExecutionSlots,
@@ -539,7 +539,7 @@ func (q *Queries) InsertAssignedRunLease(ctx context.Context, arg InsertAssigned
 		&i.RuntimeInstanceID,
 		&i.RuntimeIdentityID,
 		&i.WorkerProtocolVersion,
-		&i.RequestedCpuMillis,
+		&i.RequestedCPUMillis,
 		&i.RequestedMemoryBytes,
 		&i.RequestedGuestEphemeralDiskBytes,
 		&i.RequestedExecutionSlots,

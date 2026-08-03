@@ -69,7 +69,7 @@ func (consumerPlatformAcquirer) Acquire(
 	context.Context,
 	workerapi.PlatformAcquisition,
 ) (workerapi.PlatformAcquisitionCandidates, error) {
-	return workerapi.PlatformAcquisitionCandidates{}, errors.New("unexpected Platform acquisition")
+	return workerapi.PlatformAcquisitionCandidates{}, errors.New("unexpected platform acquisition")
 }
 
 type consumerTestClient struct {

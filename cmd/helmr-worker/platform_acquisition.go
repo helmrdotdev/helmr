@@ -24,24 +24,24 @@ func runPlatformAcquisitionChild(
 		return false, nil
 	}
 	if len(arguments) != 2 {
-		return true, errors.New("Platform acquisition child arguments are invalid")
+		return true, errors.New("platform acquisition child arguments are invalid")
 	}
 	var request workerapi.PlatformAcquisition
 	decoder := json.NewDecoder(io.LimitReader(os.Stdin, platformAcquisitionInputBytes+1))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
-		return true, fmt.Errorf("decode Platform acquisition request: %w", err)
+		return true, fmt.Errorf("decode platform acquisition request: %w", err)
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return true, errors.New("Platform acquisition request has trailing JSON")
+		return true, errors.New("platform acquisition request has trailing JSON")
 	}
 	workDir := os.Getenv("HELMR_PLATFORM_ACQUISITION_WORK_DIR")
 	policy, err := deployment.LoadBuildPolicy(
 		os.Getenv("HELMR_PLATFORM_ACQUISITION_BUILD_POLICY"),
 	)
 	if err != nil {
-		return true, fmt.Errorf("load Platform acquisition policy: %w", err)
+		return true, fmt.Errorf("load platform acquisition policy: %w", err)
 	}
 	store, err := cass3.NewImmutable(
 		ctx,
@@ -49,7 +49,7 @@ func runPlatformAcquisitionChild(
 		cass3.WithTempDir(workDir),
 	)
 	if err != nil {
-		return true, fmt.Errorf("open Platform acquisition store: %w", err)
+		return true, fmt.Errorf("open platform acquisition store: %w", err)
 	}
 	acquirer := deployment.PlatformAcquirer{
 		Encoder:  os.Getenv("HELMR_PLATFORM_ACQUISITION_ENCODER"),
@@ -77,7 +77,7 @@ func runPlatformAcquisitionChild(
 		}
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
-		return true, fmt.Errorf("encode Platform acquisition result: %w", err)
+		return true, fmt.Errorf("encode platform acquisition result: %w", err)
 	}
 	return true, nil
 }

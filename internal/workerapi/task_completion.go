@@ -14,7 +14,7 @@ func (value *CompleteTaskRequest) UnmarshalJSON(raw []byte) error {
 	type request CompleteTaskRequest
 	var decoded request
 	if err := decodeClosedTaskCompletionJSON(raw, &decoded); err != nil {
-		return fmt.Errorf("decode Task completion request: %w", err)
+		return fmt.Errorf("decode task completion request: %w", err)
 	}
 	*value = CompleteTaskRequest(decoded)
 	return nil
@@ -28,44 +28,44 @@ func (value *TaskOutcome) UnmarshalJSON(raw []byte) error {
 		PayloadInvalid json.RawMessage `json:"payload_invalid"`
 	}
 	if err := decodeClosedTaskCompletionJSON(raw, &envelope); err != nil {
-		return fmt.Errorf("decode Task outcome: %w", err)
+		return fmt.Errorf("decode task outcome: %w", err)
 	}
 	variants := 0
 	if len(envelope.Succeeded) != 0 {
 		variants++
 		if isJSONNull(envelope.Succeeded) {
-			return errors.New("Task outcome succeeded variant must not be null")
+			return errors.New("task outcome succeeded variant must not be null")
 		}
 		var succeeded TaskSucceeded
 		if err := decodeClosedTaskCompletionJSON(envelope.Succeeded, &succeeded); err != nil {
-			return fmt.Errorf("decode Task succeeded outcome: %w", err)
+			return fmt.Errorf("decode task succeeded outcome: %w", err)
 		}
 		value.Succeeded = &succeeded
 	}
 	if len(envelope.Failed) != 0 {
 		variants++
 		if isJSONNull(envelope.Failed) {
-			return errors.New("Task outcome failed variant must not be null")
+			return errors.New("task outcome failed variant must not be null")
 		}
 		var failed TaskFailure
 		if err := decodeClosedTaskCompletionJSON(envelope.Failed, &failed); err != nil {
-			return fmt.Errorf("decode Task failed outcome: %w", err)
+			return fmt.Errorf("decode task failed outcome: %w", err)
 		}
 		value.Failed = &failed
 	}
 	if len(envelope.PayloadInvalid) != 0 {
 		variants++
 		if isJSONNull(envelope.PayloadInvalid) {
-			return errors.New("Task outcome payload_invalid variant must not be null")
+			return errors.New("task outcome payload_invalid variant must not be null")
 		}
 		var invalid TaskFailure
 		if err := decodeClosedTaskCompletionJSON(envelope.PayloadInvalid, &invalid); err != nil {
-			return fmt.Errorf("decode Task payload_invalid outcome: %w", err)
+			return fmt.Errorf("decode task payload_invalid outcome: %w", err)
 		}
 		value.PayloadInvalid = &invalid
 	}
 	if variants != 1 {
-		return errors.New("Task outcome must contain exactly one variant")
+		return errors.New("task outcome must contain exactly one variant")
 	}
 	return nil
 }
@@ -77,33 +77,33 @@ func (value *TaskWorkspaceProof) UnmarshalJSON(raw []byte) error {
 		RolledBack json.RawMessage `json:"rolled_back"`
 	}
 	if err := decodeClosedTaskCompletionJSON(raw, &envelope); err != nil {
-		return fmt.Errorf("decode Task Workspace proof: %w", err)
+		return fmt.Errorf("decode task workspace proof: %w", err)
 	}
 	variants := 0
 	if len(envelope.Captured) != 0 {
 		variants++
 		if isJSONNull(envelope.Captured) {
-			return errors.New("Task Workspace captured proof must not be null")
+			return errors.New("task workspace captured proof must not be null")
 		}
 		var captured TaskWorkspaceCapture
 		if err := decodeClosedTaskCompletionJSON(envelope.Captured, &captured); err != nil {
-			return fmt.Errorf("decode Task Workspace captured proof: %w", err)
+			return fmt.Errorf("decode task workspace captured proof: %w", err)
 		}
 		value.Captured = &captured
 	}
 	if len(envelope.RolledBack) != 0 {
 		variants++
 		if isJSONNull(envelope.RolledBack) {
-			return errors.New("Task Workspace rolled_back proof must not be null")
+			return errors.New("task workspace rolled_back proof must not be null")
 		}
 		var rolledBack TaskWorkspaceRollback
 		if err := decodeClosedTaskCompletionJSON(envelope.RolledBack, &rolledBack); err != nil {
-			return fmt.Errorf("decode Task Workspace rolled_back proof: %w", err)
+			return fmt.Errorf("decode task workspace rolled_back proof: %w", err)
 		}
 		value.RolledBack = &rolledBack
 	}
 	if variants != 1 {
-		return errors.New("Task Workspace proof must contain exactly one variant")
+		return errors.New("task workspace proof must contain exactly one variant")
 	}
 	return nil
 }
@@ -112,7 +112,7 @@ func (value *WorkspaceResetTarget) UnmarshalJSON(raw []byte) error {
 	type target WorkspaceResetTarget
 	var decoded target
 	if err := decodeClosedTaskCompletionJSON(raw, &decoded); err != nil {
-		return fmt.Errorf("decode Workspace Reset target: %w", err)
+		return fmt.Errorf("decode workspace reset target: %w", err)
 	}
 	variants := 0
 	if decoded.Empty != nil {
@@ -122,7 +122,7 @@ func (value *WorkspaceResetTarget) UnmarshalJSON(raw []byte) error {
 		variants++
 	}
 	if variants != 1 {
-		return errors.New("Workspace Reset target must contain exactly one source")
+		return errors.New("workspace reset target must contain exactly one source")
 	}
 	*value = WorkspaceResetTarget(decoded)
 	return nil
@@ -134,14 +134,14 @@ func (value *TaskFailure) UnmarshalJSON(raw []byte) error {
 		Details json.RawMessage `json:"details"`
 	}
 	if err := decodeClosedTaskCompletionJSON(raw, &envelope); err != nil {
-		return fmt.Errorf("decode Task failure: %w", err)
+		return fmt.Errorf("decode task failure: %w", err)
 	}
 	if len(envelope.Message) == 0 || isJSONNull(envelope.Message) {
-		return errors.New("Task failure message is required")
+		return errors.New("task failure message is required")
 	}
 	var message string
 	if err := json.Unmarshal(envelope.Message, &message); err != nil {
-		return errors.New("Task failure message must be a string")
+		return errors.New("task failure message must be a string")
 	}
 	value.Message = message
 	value.Details = append(value.Details[:0], envelope.Details...)

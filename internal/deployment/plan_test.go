@@ -414,7 +414,7 @@ func TestValidateBuildPlanSchedule(t *testing.T) {
 			change: func(manifest *ScheduleManifest) {
 				manifest.Workspace = WorkspaceTarget{Key: new(" key ")}
 			},
-			errMsg: "Workspace key domain",
+			errMsg: "workspace key domain",
 		},
 	}
 

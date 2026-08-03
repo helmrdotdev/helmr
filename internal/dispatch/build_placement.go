@@ -143,7 +143,7 @@ LIMIT 1`, candidate.BuildRegionID, requestedBuildExecutors,
 			BuildLeaseID:  pgvalue.UUID(uuid.Must(uuid.NewV7())), LeaseSequence: candidate.LeaseSequence,
 			WorkerGroupID: groupID, BuildWorkerInstanceID: workerID,
 			WorkerEpoch: workerEpoch, WorkerProtocolVersion: protocolVersion,
-			RequestedCpuMillis:               requestedCPUMillis,
+			RequestedCPUMillis:               requestedCPUMillis,
 			RequestedMemoryBytes:             requestedMemoryBytes,
 			RequestedGuestEphemeralDiskBytes: requestedGuestEphemeralDiskBytes,
 			RequestedBuildExecutors:          requestedBuildExecutors, BuildSnapshot: snapshot,
@@ -295,7 +295,7 @@ SELECT worker_instances.max_build_executors >=
 	          worker_instances.per_vm_memory_bytes,
 	          worker_instances.per_vm_guest_ephemeral_disk_bytes`,
 		params.Lease.BuildWorkerInstanceID, params.Lease.WorkerEpoch,
-		params.Lease.RequestedBuildExecutors, params.Lease.RequestedCpuMillis,
+		params.Lease.RequestedBuildExecutors, params.Lease.RequestedCPUMillis,
 		params.Lease.RequestedMemoryBytes, params.Lease.RequestedGuestEphemeralDiskBytes,
 		fixedBuildGuestCPUMillis, fixedBuildGuestMemoryBytes).Scan(&hasCapacity)
 	if err != nil {

@@ -19,14 +19,14 @@ func (request *RunResumeReleaseRequest) UnmarshalJSON(raw []byte) error {
 		ResumeRequestVersion int64           `json:"resume_request_version"`
 	}
 	if err := decodeClosedWorkerRunResumeReleaseJSON(raw, &envelope); err != nil {
-		return fmt.Errorf("decode Run resume release request: %w", err)
+		return fmt.Errorf("decode run resume release request: %w", err)
 	}
 	if len(envelope.Lease) == 0 || bytes.Equal(bytes.TrimSpace(envelope.Lease), []byte("null")) {
-		return errors.New("Run resume release lease is required")
+		return errors.New("run resume release lease is required")
 	}
 	var lease RunLeaseFence
 	if err := decodeClosedWorkerRunResumeReleaseJSON(envelope.Lease, &lease); err != nil {
-		return fmt.Errorf("decode Run resume release lease: %w", err)
+		return fmt.Errorf("decode run resume release lease: %w", err)
 	}
 	*request = RunResumeReleaseRequest{
 		Lease:                lease,

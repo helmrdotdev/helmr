@@ -55,13 +55,13 @@ func NewDeliveryWorker(
 	resume RunResumeEnqueue,
 ) (*DeliveryWorker, error) {
 	if store == nil {
-		return nil, errors.New("Run admission delivery store is required")
+		return nil, errors.New("run admission delivery store is required")
 	}
 	if enqueue == nil {
-		return nil, errors.New("Run admission enqueuer is required")
+		return nil, errors.New("run admission enqueuer is required")
 	}
 	if resume == nil {
-		return nil, errors.New("Run resume enqueuer is required")
+		return nil, errors.New("run resume enqueuer is required")
 	}
 	if log == nil {
 		log = slog.Default()
@@ -122,7 +122,7 @@ func (w *DeliveryWorker) process(ctx context.Context, message db.OutboxMessage) 
 	case "run.resume":
 		return w.processResume(ctx, message)
 	default:
-		return w.deadLetter(ctx, message, errors.New("Run delivery topic is unsupported"))
+		return w.deadLetter(ctx, message, errors.New("run delivery topic is unsupported"))
 	}
 }
 
@@ -136,7 +136,7 @@ func (w *DeliveryWorker) processAdmission(ctx context.Context, message db.Outbox
 		ID:            pgvalue.UUID(payload.runID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return w.deadLetter(ctx, message, errors.New("Run admission authority does not exist"))
+		return w.deadLetter(ctx, message, errors.New("run admission authority does not exist"))
 	}
 	if err != nil {
 		return w.retry(ctx, message, err)
@@ -186,7 +186,7 @@ func (w *DeliveryWorker) retry(ctx context.Context, message db.OutboxMessage, ca
 		ClaimedBy:    message.ClaimedBy,
 		ClaimAttempt: message.Attempts,
 		AvailableAt:  pgvalue.TimestamptzUTCZeroInvalid(w.now().UTC().Add(outbox.RetryAfter(message.Attempts))),
-		LastError:    outbox.Error(cause, "Run admission delivery failed"),
+		LastError:    outbox.Error(cause, "run admission delivery failed"),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -199,7 +199,7 @@ func (w *DeliveryWorker) deadLetter(ctx context.Context, message db.OutboxMessag
 		ID:           message.ID,
 		ClaimedBy:    message.ClaimedBy,
 		ClaimAttempt: message.Attempts,
-		LastError:    outbox.Error(cause, "Run admission delivery failed"),
+		LastError:    outbox.Error(cause, "run admission delivery failed"),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -229,18 +229,18 @@ func decodeRunAdmissionPayload(raw []byte) (runAdmissionPayload, error) {
 	decoder.DisallowUnknownFields()
 	var payload runAdmissionPayload
 	if err := decoder.Decode(&payload); err != nil {
-		return runAdmissionPayload{}, fmt.Errorf("decode Run admission payload: %w", err)
+		return runAdmissionPayload{}, fmt.Errorf("decode run admission payload: %w", err)
 	}
 	if err := ensureDeliveryEOF(decoder); err != nil {
 		return runAdmissionPayload{}, err
 	}
 	environmentID, err := ids.Parse(payload.EnvironmentID)
 	if err != nil {
-		return runAdmissionPayload{}, errors.New("Run admission environmentId is invalid")
+		return runAdmissionPayload{}, errors.New("run admission environmentId is invalid")
 	}
 	runID, err := ids.Parse(payload.RunID)
 	if err != nil {
-		return runAdmissionPayload{}, errors.New("Run admission runId is invalid")
+		return runAdmissionPayload{}, errors.New("run admission runId is invalid")
 	}
 	payload.environmentID = environmentID
 	payload.runID = runID
@@ -252,25 +252,25 @@ func decodeRunResumePayload(raw []byte) (runResumePayload, error) {
 	decoder.DisallowUnknownFields()
 	var payload runResumePayload
 	if err := decoder.Decode(&payload); err != nil {
-		return runResumePayload{}, fmt.Errorf("decode Run resume payload: %w", err)
+		return runResumePayload{}, fmt.Errorf("decode run resume payload: %w", err)
 	}
 	if err := ensureDeliveryEOF(decoder); err != nil {
 		return runResumePayload{}, err
 	}
 	environmentID, err := ids.Parse(payload.EnvironmentID)
 	if err != nil {
-		return runResumePayload{}, errors.New("Run resume environmentId is invalid")
+		return runResumePayload{}, errors.New("run resume environmentId is invalid")
 	}
 	runID, err := ids.Parse(payload.RunID)
 	if err != nil {
-		return runResumePayload{}, errors.New("Run resume runId is invalid")
+		return runResumePayload{}, errors.New("run resume runId is invalid")
 	}
 	runWaitID, err := ids.Parse(payload.RunWaitID)
 	if err != nil {
-		return runResumePayload{}, errors.New("Run resume runWaitId is invalid")
+		return runResumePayload{}, errors.New("run resume runWaitId is invalid")
 	}
 	if payload.ResumeRequestVersion <= 0 {
-		return runResumePayload{}, errors.New("Run resume resumeRequestVersion must be positive")
+		return runResumePayload{}, errors.New("run resume resumeRequestVersion must be positive")
 	}
 	payload.environmentID = environmentID
 	payload.runID = runID
@@ -285,5 +285,5 @@ func ensureDeliveryEOF(decoder *json.Decoder) error {
 	} else if err != nil {
 		return err
 	}
-	return errors.New("Run admission payload contains a trailing JSON value")
+	return errors.New("run admission payload contains a trailing JSON value")
 }

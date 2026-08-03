@@ -30,7 +30,7 @@ func TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim(t *tes
 		t.Fatal(err)
 	}
 
-	stale := errors.New("stale source Run")
+	stale := errors.New("stale source run")
 	var claimsBefore int
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT count(*) FROM idempotency_claims

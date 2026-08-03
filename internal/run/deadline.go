@@ -30,13 +30,13 @@ func NewDeadlineWorker(
 	actorTimeouts RunWaitDeadlineReconcile,
 ) (*DeadlineWorker, error) {
 	if timerDue == nil {
-		return nil, errors.New("timer Wait reconciler is required")
+		return nil, errors.New("timer wait reconciler is required")
 	}
 	if tokenTimeouts == nil {
-		return nil, errors.New("Token Wait timeout reconciler is required")
+		return nil, errors.New("token wait timeout reconciler is required")
 	}
 	if actorTimeouts == nil {
-		return nil, errors.New("Actor input Wait timeout reconciler is required")
+		return nil, errors.New("actor input wait timeout reconciler is required")
 	}
 	if log == nil {
 		log = slog.Default()

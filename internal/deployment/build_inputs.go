@@ -32,7 +32,7 @@ type ProgramBuildInputFailure struct {
 
 func (failure *ProgramBuildInputFailure) Error() string {
 	if failure == nil || failure.err == nil {
-		return "Program build input is invalid"
+		return "program build input is invalid"
 	}
 	return failure.err.Error()
 }
@@ -61,17 +61,17 @@ func OpenProgramBuildInputs(
 	request ProgramBuildInputRequest,
 ) (_ *ProgramBuildInputs, returnErr error) {
 	if ctx == nil {
-		return nil, errors.New("Program build input context is nil")
+		return nil, errors.New("program build input context is nil")
 	}
 	if request.WorkDir == "" || !filepath.IsAbs(request.WorkDir) ||
 		filepath.Clean(request.WorkDir) != request.WorkDir {
-		return nil, errors.New("Program build input work directory must be an absolute clean path")
+		return nil, errors.New("program build input work directory must be an absolute clean path")
 	}
 	if request.SourceStore == nil {
-		return nil, errors.New("Program build source store is required")
+		return nil, errors.New("program build source store is required")
 	}
 	if request.PlatformStore == nil {
-		return nil, errors.New("Program build Platform Artifact store is required")
+		return nil, errors.New("program build platform artifact store is required")
 	}
 	if err := validateProgramEncoder(request.Encoder); err != nil {
 		return nil, err
@@ -81,14 +81,14 @@ func OpenProgramBuildInputs(
 	if work.BuildContractVersion != ProgramBuildContractVersion {
 		return nil, &ProgramBuildInputFailure{
 			Reason: BuildFailureUnsupportedToolchain,
-			err:    errors.New("Deployment build contract is unsupported"),
+			err:    errors.New("deployment build contract is unsupported"),
 		}
 	}
 	if work.ImageCacheMode != string(imagebuild.CachePrefer) &&
 		work.ImageCacheMode != string(imagebuild.CacheBypass) {
 		return nil, &ProgramBuildInputFailure{
 			Reason: BuildFailureInvalidPlan,
-			err:    fmt.Errorf("Deployment image cache mode %q is unsupported", work.ImageCacheMode),
+			err:    fmt.Errorf("deployment image cache mode %q is unsupported", work.ImageCacheMode),
 		}
 	}
 	managerPin := PackageManager{
@@ -167,7 +167,7 @@ func OpenProgramBuildInputs(
 	if managerPin != inputs.selection.Manager {
 		return nil, &ProgramBuildInputFailure{
 			Reason: BuildFailureInvalidSource,
-			err:    errors.New("Deployment Manager pin does not match submitted source"),
+			err:    errors.New("deployment manager pin does not match submitted source"),
 		}
 	}
 
@@ -211,7 +211,7 @@ func OpenProgramBuildInputs(
 	}
 	if inputs.toolchainDescriptor.NodeVersion != runtime.NodeVersion ||
 		inputs.toolchainDescriptor.RuntimeDigest != runtime.Artifact.Digest {
-		return nil, errors.New("Toolchain descriptor does not match the Deployment Runtime pin")
+		return nil, errors.New("toolchain descriptor does not match the deployment runtime pin")
 	}
 	if _, err := inputs.source.Seek(0, io.SeekStart); err != nil {
 		return nil, fmt.Errorf("rewind submitted source: %w", err)
@@ -317,7 +317,7 @@ func closeProgramBuildInputsAfterError(inputs *ProgramBuildInputs, cause error) 
 	}
 	var inputFailure *ProgramBuildInputFailure
 	if errors.As(cause, &inputFailure) {
-		return fmt.Errorf("close Program build inputs after %v: %w", cause, closeErr)
+		return fmt.Errorf("close program build inputs after %v: %w", cause, closeErr)
 	}
 	return errors.Join(cause, closeErr)
 }
@@ -391,16 +391,16 @@ func snapshotPlatformObject(
 	}
 	object, err := store.Stat(ctx, descriptor.Digest)
 	if err != nil {
-		return nil, fmt.Errorf("stat %s Platform Artifact: %w", spec.label, err)
+		return nil, fmt.Errorf("stat %s platform artifact: %w", spec.label, err)
 	}
 	if object.Digest != descriptor.Digest ||
 		object.SizeBytes != descriptor.SizeBytes ||
 		object.MediaType != descriptor.MediaType {
-		return nil, fmt.Errorf("%s Platform Artifact metadata does not match its pin", spec.label)
+		return nil, fmt.Errorf("%s platform artifact metadata does not match its pin", spec.label)
 	}
 	body, err := store.Get(ctx, descriptor.Digest)
 	if err != nil {
-		return nil, fmt.Errorf("open %s Platform Artifact: %w", spec.label, err)
+		return nil, fmt.Errorf("open %s platform artifact: %w", spec.label, err)
 	}
 	content, snapshotErr := snapshotArtifact(
 		ctx,

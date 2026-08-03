@@ -40,7 +40,7 @@ func (w ControlPlaneRunWaits) AcknowledgeRestore(ctx context.Context, request Re
 		AcknowledgeRunResumeRelease(context.Context, workerapi.RunResumeReleaseRequest) (workerapi.RunResumeReleaseResponse, error)
 	})
 	if !ok {
-		return errors.New("exact Run resume release client is required")
+		return errors.New("exact run resume release client is required")
 	}
 	response, err := client.AcknowledgeRunResumeRelease(ctx, workerapi.RunResumeReleaseRequest{
 		Lease:                request.Lease.Fence(),
@@ -56,14 +56,14 @@ func (w ControlPlaneRunWaits) AcknowledgeRestore(ctx context.Context, request Re
 		response.RunWaitID != request.RunWaitID || response.CheckpointID != request.CheckpointID ||
 		response.ResumeAttachID != request.ResumeAttachID ||
 		response.ResumeRequestVersion != request.ResumeRequestVersion {
-		return errors.New("Run resume release response did not match exact guest proof")
+		return errors.New("run resume release response did not match exact guest proof")
 	}
 	return nil
 }
 
 func (w ControlPlaneRunWaits) Wait(ctx context.Context, request WaitRequest) error {
 	if w.Client == nil {
-		return errors.New("run wait Control Plane client is required")
+		return errors.New("run wait control plane client is required")
 	}
 	opened, err := w.AddRunWait(ctx, request)
 	if err != nil {
@@ -80,7 +80,7 @@ func (w ControlPlaneRunWaits) ContinueRunWait(
 	opened workerapi.CreateRunWaitResponse,
 ) error {
 	if w.Client == nil {
-		return errors.New("run wait Control Plane client is required")
+		return errors.New("run wait control plane client is required")
 	}
 	lease, err := request.currentLeaseAssignment()
 	if err != nil {
@@ -253,7 +253,7 @@ func workerCheckpointWorkspaceCapture(capture *CheckpointWorkspaceCapture) *work
 
 func (w ControlPlaneRunWaits) AddRunWait(ctx context.Context, request WaitRequest) (workerapi.CreateRunWaitResponse, error) {
 	if w.Client == nil {
-		return workerapi.CreateRunWaitResponse{}, errors.New("run wait Control Plane client is required")
+		return workerapi.CreateRunWaitResponse{}, errors.New("run wait control plane client is required")
 	}
 	lease, err := request.currentLeaseAssignment()
 	if err != nil {
@@ -278,12 +278,12 @@ func (request WaitRequest) currentLeaseAssignment() (workerapi.RunLeaseAssignmen
 	if request.Leases != nil {
 		provider, ok := request.Leases.(workerapi.RunLeaseAssignmentProvider)
 		if !ok {
-			return workerapi.RunLeaseAssignment{}, errors.New("Run Lease assignment provider is required for durable waits")
+			return workerapi.RunLeaseAssignment{}, errors.New("run lease assignment provider is required for durable waits")
 		}
 		return provider.CurrentWorkerRunLeaseAssignment(), nil
 	}
 	if request.LeaseAssignment.ID == "" {
-		return workerapi.RunLeaseAssignment{}, errors.New("Run Lease assignment is required for durable waits")
+		return workerapi.RunLeaseAssignment{}, errors.New("run lease assignment is required for durable waits")
 	}
 	return request.LeaseAssignment, nil
 }

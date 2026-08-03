@@ -130,11 +130,11 @@ func withWorkerStore(ctx context.Context, run func(*pgxpool.Pool, *db.Queries) e
 func withWorkerGroupStateLease(ctx context.Context, pool *pgxpool.Pool, groupID string, run func() error) (runErr error) {
 	guard, err := pglock.Acquire(ctx, pool, []int64{workergroup.StateMutationLockKey(groupID)})
 	if err != nil {
-		return fmt.Errorf("acquire Worker group lifecycle lease: %w", err)
+		return fmt.Errorf("acquire worker group lifecycle lease: %w", err)
 	}
 	defer func() {
 		if err := guard.Unlock(); err != nil && runErr == nil {
-			runErr = fmt.Errorf("release Worker group lifecycle lease: %w", err)
+			runErr = fmt.Errorf("release worker group lifecycle lease: %w", err)
 		}
 	}()
 	return run()

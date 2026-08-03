@@ -109,7 +109,7 @@ type ClaimNextDeploymentBuildLeaseRow struct {
 	WorkerInstanceID                 pgtype.UUID        `json:"worker_instance_id"`
 	WorkerEpoch                      int64              `json:"worker_epoch"`
 	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
-	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
+	RequestedCPUMillis               int64              `json:"requested_cpu_millis"`
 	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
 	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
 	RequestedBuildExecutors          int32              `json:"requested_build_executors"`
@@ -132,7 +132,7 @@ type ClaimNextDeploymentBuildLeaseRow struct {
 	CreatedAt                        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                        pgtype.Timestamptz `json:"updated_at"`
 	Version                          string             `json:"version"`
-	ApiVersion                       string             `json:"api_version"`
+	APIVersion                       string             `json:"api_version"`
 	ContentHash                      string             `json:"content_hash"`
 	BuildNodeVersion                 string             `json:"build_node_version"`
 	BuildRuntimeDigest               []byte             `json:"build_runtime_digest"`
@@ -170,7 +170,7 @@ func (q *Queries) ClaimNextDeploymentBuildLease(ctx context.Context, arg ClaimNe
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.WorkerProtocolVersion,
-		&i.RequestedCpuMillis,
+		&i.RequestedCPUMillis,
 		&i.RequestedMemoryBytes,
 		&i.RequestedGuestEphemeralDiskBytes,
 		&i.RequestedBuildExecutors,
@@ -193,7 +193,7 @@ func (q *Queries) ClaimNextDeploymentBuildLease(ctx context.Context, arg ClaimNe
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Version,
-		&i.ApiVersion,
+		&i.APIVersion,
 		&i.ContentHash,
 		&i.BuildNodeVersion,
 		&i.BuildRuntimeDigest,
@@ -329,7 +329,7 @@ type CompleteDeploymentBuildRow struct {
 	ImageCacheMode             string             `json:"image_cache_mode"`
 	Version                    string             `json:"version"`
 	ContentHash                string             `json:"content_hash"`
-	ApiVersion                 string             `json:"api_version"`
+	APIVersion                 string             `json:"api_version"`
 	WorkerProtocolVersion      string             `json:"worker_protocol_version"`
 	DeploymentSourceArtifactID pgtype.UUID        `json:"deployment_source_artifact_id"`
 	ProgramArtifactID          pgtype.UUID        `json:"program_artifact_id"`
@@ -378,7 +378,7 @@ func (q *Queries) CompleteDeploymentBuild(ctx context.Context, arg CompleteDeplo
 		&i.ImageCacheMode,
 		&i.Version,
 		&i.ContentHash,
-		&i.ApiVersion,
+		&i.APIVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
@@ -462,7 +462,7 @@ type CreateDeploymentParams struct {
 	BuildContractVersion       string      `json:"build_contract_version"`
 	ImageCacheMode             string      `json:"image_cache_mode"`
 	Version                    string      `json:"version"`
-	ApiVersion                 string      `json:"api_version"`
+	APIVersion                 string      `json:"api_version"`
 	WorkerProtocolVersion      string      `json:"worker_protocol_version"`
 	ContentHash                string      `json:"content_hash"`
 	DeploymentSourceArtifactID pgtype.UUID `json:"deployment_source_artifact_id"`
@@ -483,7 +483,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		arg.BuildContractVersion,
 		arg.ImageCacheMode,
 		arg.Version,
-		arg.ApiVersion,
+		arg.APIVersion,
 		arg.WorkerProtocolVersion,
 		arg.ContentHash,
 		arg.DeploymentSourceArtifactID,
@@ -507,7 +507,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.ImageCacheMode,
 		&i.Version,
 		&i.ContentHash,
-		&i.ApiVersion,
+		&i.APIVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
@@ -631,7 +631,7 @@ type FailDeploymentBuildRow struct {
 	ImageCacheMode             string             `json:"image_cache_mode"`
 	Version                    string             `json:"version"`
 	ContentHash                string             `json:"content_hash"`
-	ApiVersion                 string             `json:"api_version"`
+	APIVersion                 string             `json:"api_version"`
 	WorkerProtocolVersion      string             `json:"worker_protocol_version"`
 	DeploymentSourceArtifactID pgtype.UUID        `json:"deployment_source_artifact_id"`
 	ProgramArtifactID          pgtype.UUID        `json:"program_artifact_id"`
@@ -679,7 +679,7 @@ func (q *Queries) FailDeploymentBuild(ctx context.Context, arg FailDeploymentBui
 		&i.ImageCacheMode,
 		&i.Version,
 		&i.ContentHash,
-		&i.ApiVersion,
+		&i.APIVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
@@ -970,7 +970,7 @@ func (q *Queries) FailDeploymentPlatformAcquisition(ctx context.Context, arg Fai
 		&i.ImageCacheMode,
 		&i.Version,
 		&i.ContentHash,
-		&i.ApiVersion,
+		&i.APIVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
@@ -1030,7 +1030,7 @@ func (q *Queries) GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploy
 		&i.ImageCacheMode,
 		&i.Version,
 		&i.ContentHash,
-		&i.ApiVersion,
+		&i.APIVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
@@ -1090,7 +1090,7 @@ func (q *Queries) GetCurrentDeploymentForRoute(ctx context.Context, arg GetCurre
 		&i.ImageCacheMode,
 		&i.Version,
 		&i.ContentHash,
-		&i.ApiVersion,
+		&i.APIVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
@@ -1151,7 +1151,7 @@ func (q *Queries) GetDeployment(ctx context.Context, arg GetDeploymentParams) (D
 		&i.ImageCacheMode,
 		&i.Version,
 		&i.ContentHash,
-		&i.ApiVersion,
+		&i.APIVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
@@ -1368,7 +1368,7 @@ func (q *Queries) GetDeploymentByVersion(ctx context.Context, arg GetDeploymentB
 		&i.ImageCacheMode,
 		&i.Version,
 		&i.ContentHash,
-		&i.ApiVersion,
+		&i.APIVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
@@ -1420,7 +1420,7 @@ func (q *Queries) GetDeploymentForOrg(ctx context.Context, arg GetDeploymentForO
 		&i.ImageCacheMode,
 		&i.Version,
 		&i.ContentHash,
-		&i.ApiVersion,
+		&i.APIVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
@@ -1620,7 +1620,7 @@ type GetStartedDeploymentBuildLeaseParams struct {
 	WorkerEpoch                      int64       `json:"worker_epoch"`
 	WorkerProtocolVersion            string      `json:"worker_protocol_version"`
 	RequestedGuestEphemeralDiskBytes int64       `json:"requested_guest_ephemeral_disk_bytes"`
-	RequestedCpuMillis               int64       `json:"requested_cpu_millis"`
+	RequestedCPUMillis               int64       `json:"requested_cpu_millis"`
 	RequestedMemoryBytes             int64       `json:"requested_memory_bytes"`
 	RequestedBuildExecutors          int32       `json:"requested_build_executors"`
 }
@@ -1636,7 +1636,7 @@ func (q *Queries) GetStartedDeploymentBuildLease(ctx context.Context, arg GetSta
 		arg.WorkerEpoch,
 		arg.WorkerProtocolVersion,
 		arg.RequestedGuestEphemeralDiskBytes,
-		arg.RequestedCpuMillis,
+		arg.RequestedCPUMillis,
 		arg.RequestedMemoryBytes,
 		arg.RequestedBuildExecutors,
 	)
@@ -1653,7 +1653,7 @@ func (q *Queries) GetStartedDeploymentBuildLease(ctx context.Context, arg GetSta
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.WorkerProtocolVersion,
-		&i.RequestedCpuMillis,
+		&i.RequestedCPUMillis,
 		&i.RequestedMemoryBytes,
 		&i.RequestedGuestEphemeralDiskBytes,
 		&i.RequestedBuildExecutors,
@@ -1768,7 +1768,7 @@ type LeaseQueuedDeploymentBuildParams struct {
 	BuildWorkerInstanceID            pgtype.UUID        `json:"build_worker_instance_id"`
 	WorkerEpoch                      int64              `json:"worker_epoch"`
 	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
-	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
+	RequestedCPUMillis               int64              `json:"requested_cpu_millis"`
 	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
 	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
 	RequestedBuildExecutors          int32              `json:"requested_build_executors"`
@@ -1793,7 +1793,7 @@ type LeaseQueuedDeploymentBuildRow struct {
 	WorkerInstanceID                 pgtype.UUID        `json:"worker_instance_id"`
 	WorkerEpoch                      int64              `json:"worker_epoch"`
 	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
-	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
+	RequestedCPUMillis               int64              `json:"requested_cpu_millis"`
 	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
 	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
 	RequestedBuildExecutors          int32              `json:"requested_build_executors"`
@@ -1816,7 +1816,7 @@ type LeaseQueuedDeploymentBuildRow struct {
 	CreatedAt                        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                        pgtype.Timestamptz `json:"updated_at"`
 	Version                          string             `json:"version"`
-	ApiVersion                       string             `json:"api_version"`
+	APIVersion                       string             `json:"api_version"`
 	ContentHash                      string             `json:"content_hash"`
 	BuildNodeVersion                 string             `json:"build_node_version"`
 	BuildRuntimeDigest               []byte             `json:"build_runtime_digest"`
@@ -1840,7 +1840,7 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 		arg.BuildWorkerInstanceID,
 		arg.WorkerEpoch,
 		arg.WorkerProtocolVersion,
-		arg.RequestedCpuMillis,
+		arg.RequestedCPUMillis,
 		arg.RequestedMemoryBytes,
 		arg.RequestedGuestEphemeralDiskBytes,
 		arg.RequestedBuildExecutors,
@@ -1865,7 +1865,7 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.WorkerProtocolVersion,
-		&i.RequestedCpuMillis,
+		&i.RequestedCPUMillis,
 		&i.RequestedMemoryBytes,
 		&i.RequestedGuestEphemeralDiskBytes,
 		&i.RequestedBuildExecutors,
@@ -1888,7 +1888,7 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Version,
-		&i.ApiVersion,
+		&i.APIVersion,
 		&i.ContentHash,
 		&i.BuildNodeVersion,
 		&i.BuildRuntimeDigest,
@@ -1942,7 +1942,7 @@ func (q *Queries) ListDeploymentsByVersionForOrg(ctx context.Context, arg ListDe
 			&i.ImageCacheMode,
 			&i.Version,
 			&i.ContentHash,
-			&i.ApiVersion,
+			&i.APIVersion,
 			&i.WorkerProtocolVersion,
 			&i.DeploymentSourceArtifactID,
 			&i.ProgramArtifactID,
@@ -2139,7 +2139,7 @@ func (q *Queries) ListScopedDeployments(ctx context.Context, arg ListScopedDeplo
 			&i.ImageCacheMode,
 			&i.Version,
 			&i.ContentHash,
-			&i.ApiVersion,
+			&i.APIVersion,
 			&i.WorkerProtocolVersion,
 			&i.DeploymentSourceArtifactID,
 			&i.ProgramArtifactID,
@@ -2244,7 +2244,7 @@ type LockDeploymentBuildTerminalFenceRow struct {
 	WorkerInstanceID                 pgtype.UUID        `json:"worker_instance_id"`
 	WorkerEpoch                      int64              `json:"worker_epoch"`
 	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
-	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
+	RequestedCPUMillis               int64              `json:"requested_cpu_millis"`
 	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
 	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
 	RequestedBuildExecutors          int32              `json:"requested_build_executors"`
@@ -2309,7 +2309,7 @@ func (q *Queries) LockDeploymentBuildTerminalFence(ctx context.Context, arg Lock
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.WorkerProtocolVersion,
-		&i.RequestedCpuMillis,
+		&i.RequestedCPUMillis,
 		&i.RequestedMemoryBytes,
 		&i.RequestedGuestEphemeralDiskBytes,
 		&i.RequestedBuildExecutors,
@@ -2399,17 +2399,17 @@ type LockDeploymentBuildWorkerAuthorityRow struct {
 	SubstrateFormat              string             `json:"substrate_format"`
 	SubstrateBuilderAbi          string             `json:"substrate_builder_abi"`
 	SubstrateLayoutAbi           string             `json:"substrate_layout_abi"`
-	EpochCpuMillis               int64              `json:"epoch_cpu_millis"`
+	EpochCPUMillis               int64              `json:"epoch_cpu_millis"`
 	EpochMemoryBytes             int64              `json:"epoch_memory_bytes"`
 	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
 	EpochBuildCacheBytes         int64              `json:"epoch_build_cache_bytes"`
 	EpochArtifactCacheBytes      int64              `json:"epoch_artifact_cache_bytes"`
 	EpochHugepagesBytes          int64              `json:"epoch_hugepages_bytes"`
 	EpochCheckpointBytes         int64              `json:"epoch_checkpoint_bytes"`
-	PerVmCpuMillis               int64              `json:"per_vm_cpu_millis"`
-	PerVmMemoryBytes             int64              `json:"per_vm_memory_bytes"`
-	PerVmGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
-	MaxVmSlots                   int32              `json:"max_vm_slots"`
+	PerVMCPUMillis               int64              `json:"per_vm_cpu_millis"`
+	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
+	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
+	MaxVMSlots                   int32              `json:"max_vm_slots"`
 	MaxRunConsumers              int32              `json:"max_run_consumers"`
 	MaxBuildExecutors            int32              `json:"max_build_executors"`
 	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
@@ -2449,17 +2449,17 @@ func (q *Queries) LockDeploymentBuildWorkerAuthority(ctx context.Context, arg Lo
 		&i.SubstrateFormat,
 		&i.SubstrateBuilderAbi,
 		&i.SubstrateLayoutAbi,
-		&i.EpochCpuMillis,
+		&i.EpochCPUMillis,
 		&i.EpochMemoryBytes,
 		&i.EpochGuestEphemeralDiskBytes,
 		&i.EpochBuildCacheBytes,
 		&i.EpochArtifactCacheBytes,
 		&i.EpochHugepagesBytes,
 		&i.EpochCheckpointBytes,
-		&i.PerVmCpuMillis,
-		&i.PerVmMemoryBytes,
-		&i.PerVmGuestEphemeralDiskBytes,
-		&i.MaxVmSlots,
+		&i.PerVMCPUMillis,
+		&i.PerVMMemoryBytes,
+		&i.PerVMGuestEphemeralDiskBytes,
+		&i.MaxVMSlots,
 		&i.MaxRunConsumers,
 		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
@@ -2524,7 +2524,7 @@ func (q *Queries) LockDeploymentPromotionTarget(ctx context.Context, arg LockDep
 		&i.ImageCacheMode,
 		&i.Version,
 		&i.ContentHash,
-		&i.ApiVersion,
+		&i.APIVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
@@ -2592,7 +2592,7 @@ func (q *Queries) MarkDeploymentFailed(ctx context.Context, arg MarkDeploymentFa
 		&i.ImageCacheMode,
 		&i.Version,
 		&i.ContentHash,
-		&i.ApiVersion,
+		&i.APIVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
@@ -2676,7 +2676,7 @@ type PinDeploymentPlatformArtifactsRow struct {
 	ImageCacheMode             string             `json:"image_cache_mode"`
 	Version                    string             `json:"version"`
 	ContentHash                string             `json:"content_hash"`
-	ApiVersion                 string             `json:"api_version"`
+	APIVersion                 string             `json:"api_version"`
 	WorkerProtocolVersion      string             `json:"worker_protocol_version"`
 	DeploymentSourceArtifactID pgtype.UUID        `json:"deployment_source_artifact_id"`
 	ProgramArtifactID          pgtype.UUID        `json:"program_artifact_id"`
@@ -2722,7 +2722,7 @@ func (q *Queries) PinDeploymentPlatformArtifacts(ctx context.Context, arg PinDep
 		&i.ImageCacheMode,
 		&i.Version,
 		&i.ContentHash,
-		&i.ApiVersion,
+		&i.APIVersion,
 		&i.WorkerProtocolVersion,
 		&i.DeploymentSourceArtifactID,
 		&i.ProgramArtifactID,
@@ -2920,7 +2920,7 @@ type RejectDeploymentBuildLeaseRow struct {
 	WorkerInstanceID                 pgtype.UUID        `json:"worker_instance_id"`
 	WorkerEpoch                      int64              `json:"worker_epoch"`
 	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
-	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
+	RequestedCPUMillis               int64              `json:"requested_cpu_millis"`
 	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
 	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
 	RequestedBuildExecutors          int32              `json:"requested_build_executors"`
@@ -2970,7 +2970,7 @@ func (q *Queries) RejectDeploymentBuildLease(ctx context.Context, arg RejectDepl
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.WorkerProtocolVersion,
-		&i.RequestedCpuMillis,
+		&i.RequestedCPUMillis,
 		&i.RequestedMemoryBytes,
 		&i.RequestedGuestEphemeralDiskBytes,
 		&i.RequestedBuildExecutors,
@@ -3044,7 +3044,7 @@ func (q *Queries) RenewDeploymentBuildLease(ctx context.Context, arg RenewDeploy
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.WorkerProtocolVersion,
-		&i.RequestedCpuMillis,
+		&i.RequestedCPUMillis,
 		&i.RequestedMemoryBytes,
 		&i.RequestedGuestEphemeralDiskBytes,
 		&i.RequestedBuildExecutors,
@@ -3205,7 +3205,7 @@ type StartDeploymentBuildLeaseParams struct {
 	WorkerInstanceID                 pgtype.UUID        `json:"worker_instance_id"`
 	WorkerEpoch                      int64              `json:"worker_epoch"`
 	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
-	RequestedCpuMillis               int64              `json:"requested_cpu_millis"`
+	RequestedCPUMillis               int64              `json:"requested_cpu_millis"`
 	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
 	RequestedBuildExecutors          int32              `json:"requested_build_executors"`
 }
@@ -3221,7 +3221,7 @@ func (q *Queries) StartDeploymentBuildLease(ctx context.Context, arg StartDeploy
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
 		arg.RequestedGuestEphemeralDiskBytes,
-		arg.RequestedCpuMillis,
+		arg.RequestedCPUMillis,
 		arg.RequestedMemoryBytes,
 		arg.RequestedBuildExecutors,
 	)
@@ -3238,7 +3238,7 @@ func (q *Queries) StartDeploymentBuildLease(ctx context.Context, arg StartDeploy
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.WorkerProtocolVersion,
-		&i.RequestedCpuMillis,
+		&i.RequestedCPUMillis,
 		&i.RequestedMemoryBytes,
 		&i.RequestedGuestEphemeralDiskBytes,
 		&i.RequestedBuildExecutors,

@@ -80,7 +80,7 @@ type GetAuthSessionByTokenHashRow struct {
 	ID                pgtype.UUID        `json:"id"`
 	UserID            pgtype.UUID        `json:"user_id"`
 	DisplayName       string             `json:"display_name"`
-	ProfileImageUrl   pgtype.Text        `json:"profile_image_url"`
+	ProfileImageURL   pgtype.Text        `json:"profile_image_url"`
 	OrgID             pgtype.UUID        `json:"org_id"`
 	Role              string             `json:"role"`
 	MemberDisplayName string             `json:"member_display_name"`
@@ -94,7 +94,7 @@ func (q *Queries) GetAuthSessionByTokenHash(ctx context.Context, tokenHash []byt
 		&i.ID,
 		&i.UserID,
 		&i.DisplayName,
-		&i.ProfileImageUrl,
+		&i.ProfileImageURL,
 		&i.OrgID,
 		&i.Role,
 		&i.MemberDisplayName,

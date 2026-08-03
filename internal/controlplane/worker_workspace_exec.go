@@ -22,7 +22,7 @@ import (
 func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.WorkspaceExecClaimRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Workspace exec claim JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid workspace exec claim JSON: %w", err)))
 		return
 	}
 	orgID, mountID, err := parseWorkspaceWorkerIDs(request.OrgID, request.WorkspaceMountID)
@@ -49,7 +49,7 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("locate Workspace exec: %w", err)
+			return fmt.Errorf("locate workspace exec: %w", err)
 		}
 		envelopes, err = secret.LockProcessDelivery(
 			r.Context(),
@@ -96,16 +96,16 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 		capability = derived.Token
 		stdin = bytes.Clone(authority.WorkspaceProcess.Stdin)
 		if len(stdin) > workspaceExecStdinMaxBytes {
-			return errors.New("Workspace exec stdin exceeds its persisted limit")
+			return errors.New("workspace exec stdin exceeds its persisted limit")
 		}
 		return nil
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(errors.New("Workspace exec claim is stale")))
+		writeError(w, conflict(errors.New("workspace exec claim is stale")))
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("claim Workspace exec"))
+		writeError(w, errors.New("claim workspace exec"))
 		return
 	}
 	defer clearWorkspaceExecBytes(stdin)
@@ -116,18 +116,18 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 	}
 	environmentID, err := pgvalue.UUIDValue(authority.WorkspaceProcess.EnvironmentID)
 	if err != nil {
-		writeError(w, errors.New("Workspace exec environment is invalid"))
+		writeError(w, errors.New("workspace exec environment is invalid"))
 		return
 	}
 	materials, err := s.secretDelivery.OpenDeliveries(environmentID, envelopes)
 	if err != nil {
-		writeError(w, errors.New("open Workspace exec Secrets"))
+		writeError(w, errors.New("open workspace exec secrets"))
 		return
 	}
 	defer clearWorkspaceExecMaterials(materials)
 	deliveries, err := projectSecretDeliveries(materials)
 	if err != nil {
-		writeError(w, errors.New("project Workspace exec Secrets"))
+		writeError(w, errors.New("project workspace exec secrets"))
 		return
 	}
 	defer clearWorkspaceSecretDeliveries(deliveries)
@@ -171,7 +171,7 @@ func clearWorkspaceExecBytes(value []byte) {
 func (s *Server) workerCompleteWorkspaceExec(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.WorkspaceExecCompleteRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid Workspace exec completion JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid workspace exec completion JSON: %w", err)))
 		return
 	}
 	orgID, err := ids.Parse(request.OrgID)
@@ -191,7 +191,7 @@ func (s *Server) workerCompleteWorkspaceExec(w http.ResponseWriter, r *http.Requ
 	}
 	if len(request.Stdout) > workspaceExecOutputMaxBytes ||
 		len(request.Stderr) > workspaceExecOutputMaxBytes {
-		writeError(w, badRequest(errors.New("Workspace exec output exceeds its limit")))
+		writeError(w, badRequest(errors.New("workspace exec output exceeds its limit")))
 		return
 	}
 	finalizationKind, reasonCode, resultError, err := normalizeWorkspaceExecOutcome(request)
@@ -230,7 +230,7 @@ func (s *Server) workerCompleteWorkspaceExec(w http.ResponseWriter, r *http.Requ
 			authority.WorkspaceLease.OwnershipGeneration != request.OwnershipGeneration ||
 			authority.WorkspaceLease.WriterGeneration != request.WriterGeneration ||
 			hex.EncodeToString(authority.RequestFingerprint) != strings.TrimSpace(request.RequestFingerprint) {
-			return errors.New("Workspace exec completion fence is stale")
+			return errors.New("workspace exec completion fence is stale")
 		}
 		capability, err := deriveWorkspaceCapability(s.workspaceFencingKey, authority.WorkspaceLease)
 		if err != nil {
@@ -240,7 +240,7 @@ func (s *Server) workerCompleteWorkspaceExec(w http.ResponseWriter, r *http.Requ
 			[]byte(capability.Token),
 			[]byte(strings.TrimSpace(request.WriteCapability)),
 		) != 1 {
-			return errors.New("Workspace exec write capability is invalid")
+			return errors.New("workspace exec write capability is invalid")
 		}
 		var exitCode pgtype.Int4
 		if request.ExitCode != nil {
@@ -276,11 +276,11 @@ func (s *Server) workerCompleteWorkspaceExec(w http.ResponseWriter, r *http.Requ
 		return nil
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(errors.New("Workspace exec completion is stale")))
+		writeError(w, conflict(errors.New("workspace exec completion is stale")))
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("complete Workspace exec"))
+		writeError(w, errors.New("complete workspace exec"))
 		return
 	}
 	writeJSON(w, http.StatusOK, workspaceMountResponse(mount))
@@ -292,7 +292,7 @@ func normalizeWorkspaceExecOutcome(
 	outcome := strings.TrimSpace(request.Outcome)
 	if outcome == "exited" {
 		if request.ExitCode == nil || len(request.Error) != 0 {
-			return "", "", nil, errors.New("exited Workspace exec requires exit_code and no error")
+			return "", "", nil, errors.New("exited workspace exec requires exit_code and no error")
 		}
 		return "capture", "workspace_exec_completed", nil, nil
 	}
@@ -305,7 +305,7 @@ func normalizeWorkspaceExecOutcome(
 		"workspace_exec_output_limit_exceeded",
 		"workspace_exec_result_uncertain":
 	default:
-		return "", "", nil, fmt.Errorf("Workspace exec outcome %q is unsupported", outcome)
+		return "", "", nil, fmt.Errorf("workspace exec outcome %q is unsupported", outcome)
 	}
 	errorJSON, err := normalizedJSONObject(request.Error, "error")
 	if err != nil {

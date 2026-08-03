@@ -41,7 +41,7 @@ func (s *Server) createWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &maxBytesError) {
 			writeError(w, tooLarge(codedError{
 				code:    "workspace_create_request_too_large",
-				message: "Workspace create request is too large",
+				message: "workspace create request is too large",
 			}))
 			return
 		}
@@ -93,7 +93,7 @@ func (s *Server) deleteWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, badRequest(codedError{
 			code:    "invalid_workspace_reference",
-			message: "Workspace ID is invalid",
+			message: "workspace ID is invalid",
 		}))
 		return
 	}
@@ -179,13 +179,13 @@ func (s *Server) getWorkspaceByReferenceHTTP(w http.ResponseWriter, r *http.Requ
 	}
 	record, err := s.resolveWorkspaceReference(r.Context(), reference)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(codedError{code: "workspace_not_found", message: "Workspace was not found"}))
+		writeError(w, notFound(codedError{code: "workspace_not_found", message: "workspace was not found"}))
 		return
 	}
 	if err != nil {
 		writeError(w, unavailable(codedError{
 			code:      "workspace_authority_unavailable",
-			message:   "Workspace authority is unavailable",
+			message:   "workspace authority is unavailable",
 			retryable: true,
 		}))
 		return
@@ -194,7 +194,7 @@ func (s *Server) getWorkspaceByReferenceHTTP(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		writeError(w, unavailable(codedError{
 			code:      "workspace_authority_unavailable",
-			message:   "Workspace authority is unavailable",
+			message:   "workspace authority is unavailable",
 			retryable: true,
 		}))
 		return
@@ -209,12 +209,12 @@ func (s *Server) resolveWorkspaceReference(
 	hasID := reference.ID != ""
 	hasKey := reference.Key != nil
 	if hasID == hasKey {
-		return db.Workspace{}, errors.New("Workspace reference requires exactly one of ID or key")
+		return db.Workspace{}, errors.New("workspace reference requires exactly one of ID or key")
 	}
 	if hasID {
 		id, err := ids.Parse(reference.ID)
 		if err != nil {
-			return db.Workspace{}, errors.New("Workspace ID is invalid")
+			return db.Workspace{}, errors.New("workspace ID is invalid")
 		}
 		return s.db.GetWorkspace(ctx, db.GetWorkspaceParams{
 			OrgID:         pgvalue.UUID(reference.OrgID),
@@ -256,7 +256,7 @@ func (s *Server) workspaceSnapshot(
 		case "file":
 			item.File = binding.PlacementTarget
 		default:
-			return api.WorkspaceSnapshot{}, fmt.Errorf("unsupported Workspace Secret placement %q", binding.PlacementKind)
+			return api.WorkspaceSnapshot{}, fmt.Errorf("unsupported workspace secret placement %q", binding.PlacementKind)
 		}
 		secrets = append(secrets, item)
 	}
@@ -269,7 +269,7 @@ func (s *Server) workspaceSnapshot(
 	case db.WorkspaceStateDeleting:
 		status = api.WorkspaceStatusDeleting
 	default:
-		return api.WorkspaceSnapshot{}, fmt.Errorf("Workspace state %q has no public projection", record.State)
+		return api.WorkspaceSnapshot{}, fmt.Errorf("workspace state %q has no public projection", record.State)
 	}
 	var key *string
 	if record.Key.Valid {

@@ -90,7 +90,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		return err
 	}
 	if !lockedSchedule.DeploymentID.Valid || !lockedSchedule.DeploymentDefinitionID.Valid {
-		return taskAuthorityError("Schedule has no pinned Task authority")
+		return taskAuthorityError("schedule has no pinned task authority")
 	}
 	task, err := queries.GetDeploymentDefinition(ctx, db.GetDeploymentDefinitionParams{
 		EnvironmentID: lockedSchedule.EnvironmentID,
@@ -99,20 +99,20 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		DeclaredID:    lockedSchedule.TaskDeclaredID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return taskAuthorityError("scheduled Task is absent from the accepted Deployment")
+		return taskAuthorityError("scheduled task is absent from the accepted deployment")
 	}
 	if err != nil {
 		return err
 	}
 	if task.ID != lockedSchedule.DeploymentDefinitionID {
-		return taskAuthorityError("Schedule Task authority does not match its generation")
+		return taskAuthorityError("schedule task authority does not match its generation")
 	}
 	program, err := queries.GetDeploymentProgramAuthority(ctx, db.GetDeploymentProgramAuthorityParams{
 		EnvironmentID: lockedSchedule.EnvironmentID,
 		DeploymentID:  lockedSchedule.DeploymentID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return taskAuthorityError("scheduled Task Program authority is unavailable")
+		return taskAuthorityError("scheduled task program authority is unavailable")
 	}
 	if err != nil {
 		return err
@@ -125,7 +125,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		program.QueueConfig,
 	)
 	if err != nil {
-		return taskAuthorityError("scheduled Task manifest authority is invalid")
+		return taskAuthorityError("scheduled task manifest authority is invalid")
 	}
 
 	workspace, err := queries.LockWorkspaceAdmissionAuthority(ctx, db.LockWorkspaceAdmissionAuthorityParams{
@@ -133,7 +133,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		ID:            lockedSchedule.WorkspaceID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return workspaceError("Schedule Workspace is unavailable")
+		return workspaceError("schedule workspace is unavailable")
 	}
 	if err != nil {
 		return err
@@ -142,7 +142,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		(workspace.DesiredState != db.WorkspaceDesiredStateActive &&
 			workspace.DesiredState != db.WorkspaceDesiredStateStopped) ||
 		!workspace.HeadVersionID.Valid {
-		return workspaceError("Schedule Workspace cannot accept execution")
+		return workspaceError("schedule workspace cannot accept execution")
 	}
 	if workspace.DirtyState != db.WorkspaceDirtyStateClean {
 		return run.ErrWorkspaceReservationConflict
@@ -187,7 +187,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		WorkspaceStateVersion: workspace.StateVersion,
 	}); err != nil {
 		if errors.Is(err, run.ErrSecretUnavailable) {
-			return workspaceError("Schedule Workspace Secret is unavailable")
+			return workspaceError("schedule workspace secret is unavailable")
 		}
 		return err
 	}
@@ -205,7 +205,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit Schedule Run admission: %w", err)
+		return fmt.Errorf("commit schedule run admission: %w", err)
 	}
 	return nil
 }

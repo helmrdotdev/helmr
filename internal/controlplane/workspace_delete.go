@@ -15,9 +15,9 @@ import (
 )
 
 var (
-	errWorkspaceNotFound      = errors.New("Workspace was not found")
-	errWorkspaceBusy          = errors.New("Workspace is busy")
-	errWorkspaceDeleteReceipt = errors.New("Workspace delete idempotency receipt is invalid")
+	errWorkspaceNotFound      = errors.New("workspace was not found")
+	errWorkspaceBusy          = errors.New("workspace is busy")
+	errWorkspaceDeleteReceipt = errors.New("workspace delete idempotency receipt is invalid")
 )
 
 type workspaceDeleteRequest struct {
@@ -56,7 +56,7 @@ func (s *Server) deleteWorkspace(ctx context.Context, request workspaceDeleteReq
 			return errWorkspaceNotFound
 		}
 		if err != nil {
-			return fmt.Errorf("lock Workspace for delete: %w", err)
+			return fmt.Errorf("lock workspace for delete: %w", err)
 		}
 		workspaceID := pgvalue.MustUUIDValue(authority.ID)
 		if authority.State != db.WorkspaceStateDeleting &&
@@ -106,7 +106,7 @@ func (s *Server) deleteWorkspace(ctx context.Context, request workspaceDeleteReq
 			}); errors.Is(err, pgx.ErrNoRows) {
 				return errWorkspaceBusy
 			} else if err != nil {
-				return fmt.Errorf("mark Workspace deleting: %w", err)
+				return fmt.Errorf("mark workspace deleting: %w", err)
 			}
 		}
 		result = workspaceDeleteResult{WorkspaceID: workspaceID}

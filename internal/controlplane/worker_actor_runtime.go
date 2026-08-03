@@ -42,21 +42,21 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request workerapi.StartActorRequest
-	if err := decodeWorkerActorRequest(r, &request, "Actor start"); err != nil {
+	if err := decodeWorkerActorRequest(r, &request, "actor start"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
 	correlationID, err := parseCanonicalUUID("correlation_id", request.CorrelationID)
 	if err != nil || correlationID == uuid.Nil {
-		writeError(w, badRequest(errors.New("Actor start correlation_id is invalid")))
+		writeError(w, badRequest(errors.New("actor start correlation_id is invalid")))
 		return
 	}
 	if !request.InputPresent && len(request.Input) != 0 {
-		writeError(w, badRequest(errors.New("Actor start input is present without input_present")))
+		writeError(w, badRequest(errors.New("actor start input is present without input_present")))
 		return
 	}
 	if request.InputPresent && len(request.Input) == 0 {
-		writeError(w, badRequest(errors.New("Actor start input_present requires input")))
+		writeError(w, badRequest(errors.New("actor start input_present requires input")))
 		return
 	}
 	start := api.StartActorRequest{
@@ -87,7 +87,7 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 	environmentID, environmentErr := pgvalue.UUIDValue(source.EnvironmentID)
 	sourceWorkspaceID, workspaceErr := pgvalue.UUIDValue(source.WorkspaceID)
 	if orgErr != nil || projectErr != nil || environmentErr != nil || workspaceErr != nil {
-		writeError(w, errors.New("Actor start source locators are invalid"))
+		writeError(w, errors.New("actor start source locators are invalid"))
 		return
 	}
 	normalized, err := actorStartRequestFromScope(
@@ -118,7 +118,7 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.log.Error("start run-sourced Actor", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("start run-sourced Actor"))
+		writeError(w, errors.New("start run-sourced actor"))
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.StartActorResponse{
@@ -135,7 +135,7 @@ func (s *Server) workerGetActorStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request workerapi.ActorReferenceRequest
-	if err := decodeWorkerActorRequest(r, &request, "Actor status"); err != nil {
+	if err := decodeWorkerActorRequest(r, &request, "actor status"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -168,7 +168,7 @@ func (s *Server) workerGetActorStatus(w http.ResponseWriter, r *http.Request) {
 			))
 			return
 		}
-		writeError(w, errors.New("read run-sourced Actor status"))
+		writeError(w, errors.New("read run-sourced actor status"))
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.ActorStatusResponse{
@@ -182,7 +182,7 @@ func (s *Server) workerCloseActor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request workerapi.CloseActorRequest
-	if err := decodeWorkerActorRequest(r, &request, "Actor close"); err != nil {
+	if err := decodeWorkerActorRequest(r, &request, "actor close"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -224,7 +224,7 @@ func (s *Server) workerCloseActor(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		writeError(w, errors.New("resolve run-sourced Actor close"))
+		writeError(w, errors.New("resolve run-sourced actor close"))
 		return
 	}
 	environmentID, _ := pgvalue.UUIDValue(source.EnvironmentID)
@@ -250,7 +250,7 @@ func (s *Server) workerCloseActor(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		writeError(w, errors.New("close run-sourced Actor"))
+		writeError(w, errors.New("close run-sourced actor"))
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.CloseActorResponse{
@@ -264,14 +264,14 @@ func (s *Server) workerReadActorOutputPage(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var request workerapi.ReadActorOutputPageRequest
-	if err := decodeWorkerActorRequest(r, &request, "Actor output page"); err != nil {
+	if err := decodeWorkerActorRequest(r, &request, "actor output page"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
 	address, err := parseWorkerActorReference(request.ActorReferenceRequest)
 	if err != nil || request.Limit < 1 || request.Limit > actorOutputReadMaxLimit ||
 		(request.After != nil && (*request.After < 0 || *request.After > maxActorOutputSequence)) {
-		writeError(w, badRequest(errors.New("Actor output page request is invalid")))
+		writeError(w, badRequest(errors.New("actor output page request is invalid")))
 		return
 	}
 	worker := workerFromContext(r.Context())
@@ -298,7 +298,7 @@ func (s *Server) workerReadActorOutputPage(w http.ResponseWriter, r *http.Reques
 		} else if errors.Is(err, errActorOutputCursorExpired) {
 			code, message = "actor_output_cursor_expired", err.Error()
 		} else {
-			writeError(w, errors.New("read run-sourced Actor output"))
+			writeError(w, errors.New("read run-sourced actor output"))
 			return
 		}
 		writeJSON(w, http.StatusOK, workerapi.ReadActorOutputPageResponse{
@@ -445,5 +445,5 @@ func (s *Server) writeWorkerActorSourceError(
 	}
 	s.log.Error("authorize worker Actor operation source",
 		"operation", operation, "run_id", runID, "error", err)
-	writeError(w, errors.New("authorize worker Actor operation source"))
+	writeError(w, errors.New("authorize worker actor operation source"))
 }

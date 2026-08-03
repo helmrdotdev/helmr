@@ -22,12 +22,12 @@ func (s *Server) workerBeginRunFinalization(w http.ResponseWriter, r *http.Reque
 		if errors.Is(err, io.EOF) {
 			err = errors.New("request body is required")
 		}
-		writeError(w, badRequest(fmt.Errorf("invalid Run finalization JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid run finalization JSON: %w", err)))
 		return
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		writeError(w, badRequest(errors.New("invalid Run finalization JSON: trailing value")))
+		writeError(w, badRequest(errors.New("invalid run finalization JSON: trailing value")))
 		return
 	}
 	parsed, err := parseRunFinalization(request)
@@ -43,7 +43,7 @@ func (s *Server) workerBeginRunFinalization(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		s.log.Error("begin Run finalization failed", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("begin Run finalization"))
+		writeError(w, errors.New("begin run finalization"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)

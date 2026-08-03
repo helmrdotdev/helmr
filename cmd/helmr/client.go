@@ -52,7 +52,7 @@ func controlPlaneClient(cmd *cobra.Command) (*client.Client, error) {
 	parsed, err := parseControlPlaneURL(rawURL)
 	if err != nil {
 		if rawURL == "" {
-			return nil, fmt.Errorf("helmr API access requires %s=http(s)://... or helmr login", helmrAPIURLEnv)
+			return nil, fmt.Errorf("access to the Helmr API requires %s=http(s)://... or helmr login", helmrAPIURLEnv)
 		}
 		return nil, err
 	}
@@ -67,7 +67,7 @@ func controlPlaneClient(cmd *cobra.Command) (*client.Client, error) {
 		}
 	}
 	if bearer == "" {
-		return nil, fmt.Errorf("helmr API access requires %s or helmr login", helmrAPIKeyEnv)
+		return nil, fmt.Errorf("access to the Helmr API requires %s or helmr login", helmrAPIKeyEnv)
 	}
 	opts := []client.Option{client.WithBearerToken(bearer)}
 	if sessionScopedRoutes {
@@ -136,7 +136,7 @@ func explicitAPIURL(cmd *cobra.Command) string {
 func parseControlPlaneURL(rawURL string) (*url.URL, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
-		return nil, fmt.Errorf("Control Plane URL is required")
+		return nil, fmt.Errorf("control plane URL is required")
 	}
 	parsed, err := url.Parse(rawURL)
 	if err != nil {

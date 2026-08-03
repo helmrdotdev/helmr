@@ -361,7 +361,7 @@ func TestPreparedRuntimeRejectsWorkspaceArchitectureOutsideWorkerCertification(t
 	if closeErr := closeProgram(); closeErr != nil {
 		t.Fatal(closeErr)
 	}
-	if err == nil || !strings.Contains(err.Error(), "does not match Workspace architecture") {
+	if err == nil || !strings.Contains(err.Error(), "does not match workspace architecture") {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -511,7 +511,7 @@ func runtimeCapacityTarget(id string, epoch int64) workerapi.RuntimeReconcileTar
 		ID: id, WorkerEpoch: epoch,
 		Source: workerapi.RuntimeSource{
 			DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000703",
-			ReservedCpuMillis:      1000, ReservedMemoryMiB: 512, ReservedDiskMiB: 1024,
+			ReservedCPUMillis:      1000, ReservedMemoryMiB: 512, ReservedDiskMiB: 1024,
 			ReservedExecutionSlots: 5,
 		},
 	}

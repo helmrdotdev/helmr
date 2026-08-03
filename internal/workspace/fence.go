@@ -37,7 +37,7 @@ type FencingKey struct {
 func NewFencingKey(raw []byte) (FencingKey, error) {
 	if len(raw) != FencingKeySize {
 		return FencingKey{}, fmt.Errorf(
-			"Workspace fencing key must be %d bytes, got %d",
+			"workspace fencing key must be %d bytes, got %d",
 			FencingKeySize,
 			len(raw),
 		)
@@ -51,13 +51,13 @@ func (k FencingKey) Valid() bool {
 
 func (k FencingKey) Derive(input FenceInput) (FencingCapability, error) {
 	if input.LeaseID == uuid.Nil {
-		return FencingCapability{}, errors.New("Workspace Lease ID is required")
+		return FencingCapability{}, errors.New("workspace lease ID is required")
 	}
 	if input.WorkspaceID == uuid.Nil {
-		return FencingCapability{}, errors.New("Workspace ID is required")
+		return FencingCapability{}, errors.New("workspace ID is required")
 	}
 	if input.OwnershipGeneration <= 0 || input.WriterGeneration <= 0 || input.MountFencingGeneration <= 0 {
-		return FencingCapability{}, errors.New("Workspace fencing generations must be positive")
+		return FencingCapability{}, errors.New("workspace fencing generations must be positive")
 	}
 
 	message := make([]byte, 0, len(fencingDomain)+32+24)
@@ -68,7 +68,7 @@ func (k FencingKey) Derive(input FenceInput) (FencingCapability, error) {
 	message = binary.BigEndian.AppendUint64(message, uint64(input.WriterGeneration))
 	message = binary.BigEndian.AppendUint64(message, uint64(input.MountFencingGeneration))
 	if !k.Valid() {
-		return FencingCapability{}, errors.New("Workspace fencing key is invalid")
+		return FencingCapability{}, errors.New("workspace fencing key is invalid")
 	}
 	mac := hmac.New(sha256.New, k.value)
 	_, _ = mac.Write(message)

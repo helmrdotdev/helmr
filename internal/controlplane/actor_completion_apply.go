@@ -20,7 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var errStaleActorCompletion = errors.New("Actor completion receipt is stale")
+var errStaleActorCompletion = errors.New("actor completion receipt is stale")
 
 type actorCompletionReplayStore interface {
 	GetActorCompletionReplay(context.Context, db.GetActorCompletionReplayParams) (pgtype.Text, error)
@@ -53,7 +53,7 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 		}
 		secrets, err := secret.LockAttemptDelivery(ctx, work.q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID)
 		if err != nil {
-			return fmt.Errorf("lock Actor completion Secret authority: %w", err)
+			return fmt.Errorf("lock actor completion secret authority: %w", err)
 		}
 		owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
 		if err != nil || !owner.actor.ID.Valid {
@@ -77,7 +77,7 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 		completedAt, err := work.q.GetTaskCompletionTime(ctx)
 		if err != nil || !completedAt.Valid {
 			if err == nil {
-				err = errors.New("database Actor completion time is unavailable")
+				err = errors.New("database actor completion time is unavailable")
 			}
 			return err
 		}
@@ -157,7 +157,7 @@ func actorCompletionReplayAfterError(ctx context.Context, store actorCompletionR
 		return errStaleActorCompletion
 	}
 	if replayErr != nil {
-		return errors.Join(operationErr, fmt.Errorf("check Actor completion replay: %w", replayErr))
+		return errors.Join(operationErr, fmt.Errorf("check actor completion replay: %w", replayErr))
 	}
 	return operationErr
 }
@@ -222,7 +222,7 @@ func actorCompletionRetryAt(run db.Run, attempt db.RunAttempt, completion parsed
 	}
 	policy, err := deployment.ParseRetryManifest(run.RetryPolicy)
 	if err != nil {
-		return time.Time{}, false, fmt.Errorf("parse pinned Actor retry policy: %w", err)
+		return time.Time{}, false, fmt.Errorf("parse pinned actor retry policy: %w", err)
 	}
 	delay, retry, err := taskRetryDelay(policy, attempt.Number, nil)
 	if err != nil || !retry {
@@ -369,7 +369,7 @@ func finishActorRun(ctx context.Context, store db.Querier, authority runLeaseCla
 		return err
 	}
 	if _, err := store.AppendRunEvent(ctx, db.AppendRunEventParams{OrgID: authority.run.OrgID, RunID: authority.run.ID, Kind: eventKind, Payload: payload}); err != nil {
-		return fmt.Errorf("append Actor terminal event: %w", err)
+		return fmt.Errorf("append actor terminal event: %w", err)
 	}
 	return nil
 }
@@ -403,7 +403,7 @@ func createActorContinuation(ctx context.Context, store db.Querier, actor db.Act
 	if _, err := store.CreateRunAdmissionOutbox(ctx, db.CreateRunAdmissionOutboxParams{
 		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: ws.ID, EnvironmentID: actor.EnvironmentID, RunID: run.ID,
 	}); err != nil {
-		return fmt.Errorf("enqueue Actor continuation: %w", err)
+		return fmt.Errorf("enqueue actor continuation: %w", err)
 	}
 	return nil
 }
@@ -414,7 +414,7 @@ func createActorAttemptSecretResolutions(ctx context.Context, store db.Querier, 
 		return err
 	}
 	if err := secret.CreateAttemptResolutions(ctx, store, workspaceID, runID, attempt, resolutions); err != nil {
-		return fmt.Errorf("record Actor Attempt Secret resolutions: %w", err)
+		return fmt.Errorf("record actor attempt secret resolutions: %w", err)
 	}
 	return nil
 }

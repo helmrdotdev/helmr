@@ -387,7 +387,7 @@ func (controlPlane *failingRenewalControlPlane) RenewRunLease(
 	workerapi.RunLeaseAssignment,
 ) (workerapi.RunLeaseRenewResponse, error) {
 	controlPlane.calls++
-	return workerapi.RunLeaseRenewResponse{}, errors.New("Control Plane unavailable")
+	return workerapi.RunLeaseRenewResponse{}, errors.New("control plane unavailable")
 }
 
 type staticRenewalControlPlane struct {
@@ -586,7 +586,7 @@ func (controlPlane *testRunLeaseControlPlane) CompleteActor(
 	controlPlane.trace.add("complete-actor")
 	if controlPlane.completeFailures > 0 {
 		controlPlane.completeFailures--
-		return errors.New("transient Actor completion failure")
+		return errors.New("transient actor completion failure")
 	}
 	controlPlane.completedActor = request
 	return nil
@@ -596,28 +596,28 @@ func (controlPlane *testRunLeaseControlPlane) CommitActorTurn(
 	context.Context,
 	workerapi.CommitActorTurnRequest,
 ) (workerapi.CommitActorTurnResponse, error) {
-	return workerapi.CommitActorTurnResponse{}, errors.New("unexpected Actor turn commit")
+	return workerapi.CommitActorTurnResponse{}, errors.New("unexpected actor turn commit")
 }
 
 func (controlPlane *testRunLeaseControlPlane) SendRunActorInput(
 	context.Context,
 	workerapi.SendActorInputRequest,
 ) (workerapi.SendActorInputResponse, error) {
-	return workerapi.SendActorInputResponse{}, errors.New("unexpected Actor input send")
+	return workerapi.SendActorInputResponse{}, errors.New("unexpected actor input send")
 }
 
 func (controlPlane *testRunLeaseControlPlane) AppendActorOutput(
 	context.Context,
 	workerapi.AppendActorOutputRequest,
 ) (workerapi.AppendActorOutputResponse, error) {
-	return workerapi.AppendActorOutputResponse{}, errors.New("unexpected Actor output append")
+	return workerapi.AppendActorOutputResponse{}, errors.New("unexpected actor output append")
 }
 
 func (controlPlane *testRunLeaseControlPlane) CreateRuntimeToken(
 	context.Context,
 	workerapi.CreateTokenRequest,
 ) (api.TokenResponse, error) {
-	return api.TokenResponse{}, errors.New("unexpected Token create")
+	return api.TokenResponse{}, errors.New("unexpected token create")
 }
 
 func (controlPlane *testRunLeaseControlPlane) AppendRunLog(

@@ -94,7 +94,7 @@ func ExpireParentOwnedChild(
 		parent.status != db.RunStatusWaiting &&
 		parent.status != db.RunStatusRetryDelayed {
 		return false, cancellationAuthority(
-			"queued child expiry has no active parent Wait",
+			"queued child expiry has no active parent wait",
 			nil,
 		)
 	}
@@ -105,7 +105,7 @@ func ExpireParentOwnedChild(
 		wait.expectedRunStateVersion != parent.stateVersion ||
 		wait.handoffRuntimeInstanceID.Valid ||
 		wait.handoffWorkspaceMountID.Valid) {
-		return false, cancellationAuthority("queued child expiry Wait does not match", nil)
+		return false, cancellationAuthority("queued child expiry wait does not match", nil)
 	}
 	if err := expireLockedParentOwnedChild(ctx, tx, child); err != nil {
 		return false, err
@@ -150,7 +150,7 @@ func expireLockedParentOwnedChild(
 		AttemptNumber: child.currentAttemptNumber,
 	})
 	if err != nil || rows != 1 {
-		return cancellationAuthority("expire queued child Attempt", err)
+		return cancellationAuthority("expire queued child attempt", err)
 	}
 	rows, err = q.ExpireQueuedRun(ctx, db.ExpireQueuedRunParams{
 		ErrorPayload:         errorPayload,
@@ -158,14 +158,14 @@ func expireLockedParentOwnedChild(
 		ExpectedStateVersion: child.stateVersion,
 	})
 	if err != nil || rows != 1 {
-		return cancellationAuthority("expire queued child Run", err)
+		return cancellationAuthority("expire queued child run", err)
 	}
 	rows, err = q.ReleaseQueuedRunWorkspace(ctx, db.ReleaseQueuedRunWorkspaceParams{
 		WorkspaceID: pgvalue.UUID(child.workspaceID),
 		RunID:       childID,
 	})
 	if err != nil || rows != 1 {
-		return cancellationAuthority("release expired queued child Workspace", err)
+		return cancellationAuthority("release expired queued child workspace", err)
 	}
 	if err := q.CreateQueuedRunExpiryEvent(ctx, childID); err != nil {
 		return cancellationAuthority("record queued child expiry event", err)

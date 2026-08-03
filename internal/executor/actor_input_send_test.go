@@ -46,7 +46,7 @@ func (controlPlane *actorInputSendControlPlane) AppendActorOutput(
 	context.Context,
 	workerapi.AppendActorOutputRequest,
 ) (workerapi.AppendActorOutputResponse, error) {
-	return workerapi.AppendActorOutputResponse{}, errors.New("unexpected Actor output append")
+	return workerapi.AppendActorOutputResponse{}, errors.New("unexpected actor output append")
 }
 
 func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {

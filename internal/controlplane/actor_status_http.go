@@ -69,7 +69,7 @@ func (s *Server) getActorStatusHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Context(), s.db, environmentID, actorDeclaredID, address,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(codedError{code: "actor_not_found", message: "Actor not found"}))
+		writeError(w, notFound(codedError{code: "actor_not_found", message: "actor not found"}))
 		return
 	}
 	if err != nil {
@@ -190,7 +190,7 @@ func (s *Server) writeActorReadScopeError(w http.ResponseWriter, err error) {
 func (s *Server) writeActorReadAuthorityError(w http.ResponseWriter) {
 	writeError(w, unavailable(codedError{
 		code:      "actor_read_authority_unavailable",
-		message:   "Actor read authority is unavailable",
+		message:   "actor read authority is unavailable",
 		retryable: true,
 	}))
 }
@@ -200,7 +200,7 @@ func writeActorReadAuthError(w http.ResponseWriter, log *slog.Logger, err error)
 		log.Error("Actor read authentication failed", "error", err)
 		writeError(w, unavailable(codedError{
 			code:      "actor_read_authority_unavailable",
-			message:   "Actor read authentication is unavailable",
+			message:   "actor read authentication is unavailable",
 			retryable: true,
 		}))
 		return
@@ -220,30 +220,30 @@ func projectActorStatus(record actorReadRecord) (api.ActorStatus, error) {
 		return api.ActorStatus{}, err
 	}
 	if !record.createdAt.Valid || !record.updatedAt.Valid {
-		return api.ActorStatus{}, errors.New("Actor timestamps are unavailable")
+		return api.ActorStatus{}, errors.New("actor timestamps are unavailable")
 	}
 	failed := status == api.ActorPublicStatusFailed
 	if failed != (record.failureCode.Valid && record.failureRunID.Valid) {
-		return api.ActorStatus{}, errors.New("Actor failure projection is inconsistent")
+		return api.ActorStatus{}, errors.New("actor failure projection is inconsistent")
 	}
 	if !failed && (record.failureCode.Valid || record.failureRunID.Valid) {
-		return api.ActorStatus{}, errors.New("Actor failure projection is inconsistent")
+		return api.ActorStatus{}, errors.New("actor failure projection is inconsistent")
 	}
 	if record.currentRunID.Valid {
 		if err := ids.Validate(pgvalue.UUIDString(record.currentRunID)); err != nil {
-			return api.ActorStatus{}, errors.New("Actor current Run ID is invalid")
+			return api.ActorStatus{}, errors.New("actor current run ID is invalid")
 		}
 	}
 	if record.failureRunID.Valid {
 		if err := ids.Validate(pgvalue.UUIDString(record.failureRunID)); err != nil {
-			return api.ActorStatus{}, errors.New("Actor failure Run ID is invalid")
+			return api.ActorStatus{}, errors.New("actor failure run ID is invalid")
 		}
 	}
 	if record.failureCode.Valid {
 		switch record.failureCode.String {
 		case "no_progress", "run_failed", "run_expired", "platform_failure":
 		default:
-			return api.ActorStatus{}, errors.New("Actor failure code is invalid")
+			return api.ActorStatus{}, errors.New("actor failure code is invalid")
 		}
 	}
 	result := api.ActorStatus{
@@ -278,7 +278,7 @@ func actorPublicStatus(state string) (api.ActorPublicStatus, error) {
 	case "failed":
 		return api.ActorPublicStatusFailed, nil
 	default:
-		return "", fmt.Errorf("Actor state %q has no public status", state)
+		return "", fmt.Errorf("actor state %q has no public status", state)
 	}
 }
 

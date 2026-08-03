@@ -22,23 +22,23 @@ func stateCoordinationDir(stateDir string) string {
 
 func createOwnerStateRoot(stateDir string, owner vm.Owner) (string, error) {
 	if err := owner.Validate(); err != nil {
-		return "", fmt.Errorf("firecracker owner: %w", err)
+		return "", fmt.Errorf("the Firecracker owner: %w", err)
 	}
-	if err := ensureSecureDirectory("firecracker coordination directory", stateCoordinationDir(stateDir)); err != nil {
+	if err := ensureSecureDirectory("the Firecracker coordination directory", stateCoordinationDir(stateDir)); err != nil {
 		return "", err
 	}
-	if err := ensureSecureDirectory("firecracker state directory", stateDir); err != nil {
+	if err := ensureSecureDirectory("the Firecracker state directory", stateDir); err != nil {
 		return "", err
 	}
 	statePath := filepath.Join(stateDir, owner.ID)
 	if err := os.Mkdir(statePath, 0o700); err != nil {
-		return "", fmt.Errorf("create firecracker owner state root: %w", err)
+		return "", fmt.Errorf("create Firecracker owner state root: %w", err)
 	}
 	markerPath := filepath.Join(statePath, "owner")
 	marker, err := os.OpenFile(markerPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		_ = os.Remove(statePath)
-		return "", fmt.Errorf("create firecracker ownership evidence: %w", err)
+		return "", fmt.Errorf("create Firecracker ownership evidence: %w", err)
 	}
 	_, writeErr := marker.WriteString(string(owner.Kind) + "\n" + owner.ID + "\n")
 	syncErr := marker.Sync()
@@ -46,7 +46,7 @@ func createOwnerStateRoot(stateDir string, owner vm.Owner) (string, error) {
 	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
 		_ = os.Remove(markerPath)
 		_ = os.Remove(statePath)
-		return "", fmt.Errorf("persist firecracker ownership evidence: %w", err)
+		return "", fmt.Errorf("persist Firecracker ownership evidence: %w", err)
 	}
 	if err := syncDirectory(statePath); err != nil {
 		_ = os.Remove(markerPath)
@@ -92,14 +92,14 @@ func checkSecureDirectory(label string, path string) error {
 func checkResolvedStateLayout(cfg Config) error {
 	stateDir, err := filepath.EvalSymlinks(cfg.StateDir)
 	if err != nil {
-		return fmt.Errorf("resolve firecracker state directory: %w", err)
+		return fmt.Errorf("resolve Firecracker state directory: %w", err)
 	}
 	jailerDir, err := filepath.EvalSymlinks(cfg.JailerChrootBaseDir)
 	if err != nil {
-		return fmt.Errorf("resolve firecracker jailer chroot directory: %w", err)
+		return fmt.Errorf("resolve Firecracker jailer chroot directory: %w", err)
 	}
 	if pathsOverlap(stateDir, jailerDir) {
-		return errors.New("resolved firecracker state dir and jailer chroot base directory must be disjoint")
+		return errors.New("resolved Firecracker state dir and jailer chroot base directory must be disjoint")
 	}
 	return nil
 }

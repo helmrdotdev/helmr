@@ -78,22 +78,22 @@ func ArtifactResetTarget(baseVersionID string, tree TreeIdentity, artifact Artif
 
 func ValidateResetTarget(target ResetTarget) error {
 	if strings.TrimSpace(target.BaseVersionID) == "" {
-		return errors.New("Workspace Reset base version ID is required")
+		return errors.New("workspace reset base version ID is required")
 	}
 	if !sha256sum.ValidDigest(target.Tree.Digest) || target.Tree.SizeBytes < 0 || target.Tree.SizeBytes > MaxArtifactExtractedBytes || target.Tree.EntryCount < 0 || target.Tree.EntryCount > MaxArtifactEntries {
-		return errors.New("Workspace Reset tree identity is invalid")
+		return errors.New("workspace reset tree identity is invalid")
 	}
 	switch target.Kind {
 	case ResetTargetEmpty:
 		if target.Artifact != nil || target.Tree.Digest != CanonicalEmptyTreeDigest || target.Tree.SizeBytes != 0 || target.Tree.EntryCount != 0 {
-			return errors.New("empty Workspace Reset target must be the canonical empty tree")
+			return errors.New("empty workspace reset target must be the canonical empty tree")
 		}
 	case ResetTargetArtifact:
 		if target.Artifact == nil || !sha256sum.ValidDigest(target.Artifact.Digest) || target.Artifact.MediaType != ArtifactMediaType || target.Artifact.Encoding != ArtifactEncoding || target.Artifact.SizeBytes <= 0 || target.Artifact.SizeBytes > MaxArtifactArchiveBytes || target.Artifact.EntryCount < 0 || target.Artifact.EntryCount > MaxArtifactEntries {
-			return errors.New("Workspace Reset Artifact descriptor is invalid")
+			return errors.New("workspace reset artifact descriptor is invalid")
 		}
 	default:
-		return errors.New("Workspace Reset target kind is invalid")
+		return errors.New("workspace reset target kind is invalid")
 	}
 	return nil
 }
@@ -101,7 +101,7 @@ func ValidateResetTarget(target ResetTarget) error {
 func ValidateTreeIdentity(tree TreeIdentity) error {
 	if !sha256sum.ValidDigest(tree.Digest) || tree.SizeBytes < 0 || tree.SizeBytes > MaxArtifactExtractedBytes ||
 		tree.EntryCount < 0 || tree.EntryCount > MaxArtifactEntries {
-		return errors.New("Workspace tree identity is invalid")
+		return errors.New("workspace tree identity is invalid")
 	}
 	return nil
 }
@@ -119,7 +119,7 @@ func ResetTargetsEqual(left, right ResetTarget) bool {
 func FinalizationFingerprint(kind string, request FinalizationRequest) (string, error) {
 	kind = strings.TrimSpace(kind)
 	if kind == "" || strings.TrimSpace(request.OperationID) == "" {
-		return "", errors.New("Workspace finalization kind and operation ID are required")
+		return "", errors.New("workspace finalization kind and operation ID are required")
 	}
 	body, err := json.Marshal(struct {
 		Kind    string              `json:"kind"`

@@ -48,10 +48,10 @@ func Reconcile(ctx context.Context, store ReconcileStore, regionID string, desir
 		if _, err := store.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
 			ID: spec.ID, RegionID: regionID, Name: spec.Name, Description: spec.Description,
 			AllowsRun: spec.AllowsRun, AllowsBuild: spec.AllowsBuild,
-			RequiredCpuMillis: group.Capacity.MilliCPU, RequiredMemoryBytes: group.Capacity.MemoryBytes,
+			RequiredCPUMillis: group.Capacity.MilliCPU, RequiredMemoryBytes: group.Capacity.MemoryBytes,
 			RequiredGuestEphemeralDiskBytes: group.Capacity.GuestEphemeralDiskBytes,
 			RequiredBuildCacheBytes:         group.Capacity.BuildCacheBytes, RequiredArtifactCacheBytes: group.Capacity.ArtifactCacheBytes,
-			RequiredVmSlots: group.Capacity.VMSlots, RequiredBuildExecutors: group.Capacity.BuildExecutors,
+			RequiredVMSlots: group.Capacity.VMSlots, RequiredBuildExecutors: group.Capacity.BuildExecutors,
 			ObservationTtlSeconds: group.ObservationTTLSeconds,
 			ProtocolVersion:       workerapi.CurrentProtocolVersion,
 		}); err != nil {

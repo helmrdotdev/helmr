@@ -353,7 +353,7 @@ func (r *workspaceOperationRegistry) admitProgram(entry *workspaceMountEntry, au
 	recoveryRequired := entry.recoveryRequired
 	entry.processesMu.Unlock()
 	if recoveryRequired {
-		return func() {}, errors.New("Workspace Mount requires recovery")
+		return func() {}, errors.New("workspace mount requires recovery")
 	}
 	if authority == nil || authority.GetFence() == nil || !r.currentMountLocked(
 		entry,
@@ -361,7 +361,7 @@ func (r *workspaceOperationRegistry) admitProgram(entry *workspaceMountEntry, au
 		authority.GetFence().GetWorkspaceId(),
 		authority.GetChannelToken(),
 	) {
-		return func() {}, errors.New("Program authority is not current for the Workspace Mount")
+		return func() {}, errors.New("program authority is not current for the workspace mount")
 	}
 	release, parent, err := r.claimProgramLocked(entry, authority)
 	if err != nil {
@@ -393,12 +393,12 @@ func (r *workspaceOperationRegistry) admitMountedProgram(entry *workspaceMountEn
 		entry.channelToken,
 		entry.currentFencingGeneration(),
 	) {
-		return func() {}, errors.New("Workspace is unavailable for Program admission")
+		return func() {}, errors.New("workspace is unavailable for program admission")
 	}
 	entry.authorityMu.Lock()
 	if entry.authority == nil {
 		entry.authorityMu.Unlock()
-		return func() {}, errors.New("Workspace Run authority is not installed")
+		return func() {}, errors.New("workspace run authority is not installed")
 	}
 	authority := proto.Clone(entry.authority).(*workspacev0.WorkspaceRunAuthority)
 	entry.authorityMu.Unlock()
@@ -411,7 +411,7 @@ func (r *workspaceOperationRegistry) claimProgramLocked(
 	authority *workspacev0.WorkspaceRunAuthority,
 ) (func(), *managedProgramClaim, error) {
 	if authority == nil || authority.GetFence() == nil {
-		return func() {}, nil, errors.New("managed Program authority is required")
+		return func() {}, nil, errors.New("managed program authority is required")
 	}
 	r.mu.Lock()
 	var parent *managedProgramClaim
@@ -421,7 +421,7 @@ func (r *workspaceOperationRegistry) claimProgramLocked(
 			!r.containsProgramClaimLocked(admission.parent) ||
 			validateManagedProgramChildAuthority(admission.parent.authority, authority) != nil {
 			r.mu.Unlock()
-			return func() {}, nil, errors.New("Workspace already has an active managed Program")
+			return func() {}, nil, errors.New("workspace already has an active managed program")
 		}
 		parent = admission.parent
 		r.childAdmission = nil
@@ -432,7 +432,7 @@ func (r *workspaceOperationRegistry) claimProgramLocked(
 				r.childAdmission = &managedProgramChildAdmission{entry: entry, parent: parent}
 			}
 			r.mu.Unlock()
-			return func() {}, nil, errors.New("managed Program Run Lease is already active")
+			return func() {}, nil, errors.New("managed program run lease is already active")
 		}
 	}
 	claim := &managedProgramClaim{
@@ -474,7 +474,7 @@ func (r *workspaceOperationRegistry) authorizeChildProgram(
 				return nil
 			}
 		}
-		return errors.New("managed Program child admission is already pending")
+		return errors.New("managed program child admission is already pending")
 	}
 	for index := len(r.programClaims) - 1; index >= 0; index-- {
 		claim := r.programClaims[index]
@@ -486,7 +486,7 @@ func (r *workspaceOperationRegistry) authorizeChildProgram(
 			return nil
 		}
 	}
-	return errors.New("frozen parent Program claim is not active")
+	return errors.New("frozen parent program claim is not active")
 }
 
 func (r *workspaceOperationRegistry) hasProgramClaimLocked(entry *workspaceMountEntry) bool {
@@ -507,7 +507,7 @@ func validateManagedProgramChildAuthority(
 	child *workspacev0.WorkspaceRunAuthority,
 ) error {
 	if parent == nil || parent.GetFence() == nil || child == nil || child.GetFence() == nil {
-		return errors.New("managed Program parent and child authority are required")
+		return errors.New("managed program parent and child authority are required")
 	}
 	parentFence := parent.GetFence()
 	childFence := child.GetFence()
@@ -523,7 +523,7 @@ func validateManagedProgramChildAuthority(
 		childFence.GetWriterGeneration() <= parentFence.GetWriterGeneration() ||
 		childFence.GetMountFencingGeneration() <= parentFence.GetMountFencingGeneration() ||
 		subtle.ConstantTimeCompare([]byte(parent.GetChannelToken()), []byte(child.GetChannelToken())) != 1 {
-		return errors.New("managed Program child authority does not advance the frozen parent authority")
+		return errors.New("managed program child authority does not advance the frozen parent authority")
 	}
 	return nil
 }
@@ -534,7 +534,7 @@ func (r *workspaceOperationRegistry) waitForProgramRelease(
 	authority *workspacev0.WorkspaceRunAuthority,
 ) error {
 	if authority == nil || authority.GetFence() == nil {
-		return errors.New("Workspace finalization Program authority is required")
+		return errors.New("workspace finalization program authority is required")
 	}
 	runLeaseID := authority.GetFence().GetRunLeaseId()
 	r.mu.Lock()
@@ -670,11 +670,11 @@ func (r *workspaceOperationRegistry) rebindRestoredWorkspaceMount(
 ) ([]*workspacev0.WorkspaceMountPhase, error) {
 	started := time.Now()
 	if request == nil || request.GetEnvelope() == nil || !request.GetUsePreparedRuntime() {
-		return nil, errors.New("restored Workspace rebind requires a prepared runtime")
+		return nil, errors.New("restored workspace rebind requires a prepared runtime")
 	}
 	checkpointID := strings.TrimSpace(request.GetRestoredCheckpointId())
 	if waits == nil || !waits.hasFrozenProgramCheckpoint(checkpointID) {
-		return nil, errors.New("restored Workspace rebind did not match a frozen Program Checkpoint")
+		return nil, errors.New("restored workspace rebind did not match a frozen program checkpoint")
 	}
 	envelope := request.GetEnvelope()
 	newMountID := strings.TrimSpace(envelope.GetWorkspaceMountId())
@@ -686,15 +686,15 @@ func (r *workspaceOperationRegistry) rebindRestoredWorkspaceMount(
 	if newMountID == "" || workspaceID == "" || channelToken == "" || runtimeInstanceID == "" ||
 		baseVersionID == "" || envelope.GetFencingGeneration() == 0 || mountPath == "." ||
 		mountPath == string(filepath.Separator) || !filepath.IsAbs(mountPath) {
-		return nil, errors.New("restored Workspace rebind authority is incomplete")
+		return nil, errors.New("restored workspace rebind authority is incomplete")
 	}
 	parentRunID, parentAttemptNumber, ok := waits.frozenProgramForCheckpoint(checkpointID)
 	if !ok {
-		return nil, errors.New("restored Workspace has no frozen Program identity")
+		return nil, errors.New("restored workspace has no frozen program identity")
 	}
 	entry := r.currentProgramEntry(parentRunID, parentAttemptNumber)
 	if entry == nil {
-		return nil, errors.New("restored Workspace has no active frozen Program")
+		return nil, errors.New("restored workspace has no active frozen program")
 	}
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
@@ -705,7 +705,7 @@ func (r *workspaceOperationRegistry) rebindRestoredWorkspaceMount(
 	entry.processesMu.Unlock()
 	if !r.hasProgramClaimLocked(entry) || unavailable || entry.workspaceID != workspaceID ||
 		filepath.Clean(entry.workspaceMount) != mountPath {
-		return nil, errors.New("restored Workspace rebind did not match the frozen mounted runtime")
+		return nil, errors.New("restored workspace rebind did not match the frozen mounted runtime")
 	}
 	currentGeneration := entry.currentFencingGeneration()
 	if envelope.GetFencingGeneration() == currentGeneration && entry.workspaceMountID == newMountID &&
@@ -716,10 +716,10 @@ func (r *workspaceOperationRegistry) rebindRestoredWorkspaceMount(
 		}, nil
 	}
 	if envelope.GetFencingGeneration() <= currentGeneration {
-		return nil, errors.New("restored Workspace rebind fencing generation did not advance")
+		return nil, errors.New("restored workspace rebind fencing generation did not advance")
 	}
 	if current := r.entries[newMountID]; current != nil && current != entry {
-		return nil, errors.New("restored Workspace rebind target Mount is already registered")
+		return nil, errors.New("restored workspace rebind target mount is already registered")
 	}
 	for id, current := range r.entries {
 		if current == entry {
@@ -948,7 +948,7 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 	finalizationRoot, err := os.MkdirTemp(filepath.Dir(entry.imageRoot), ".helmr-workspace-state-*")
 	if err != nil {
 		entry.cleanup()
-		return nil, phases, fmt.Errorf("create Workspace finalization state: %w", err)
+		return nil, phases, fmt.Errorf("create workspace finalization state: %w", err)
 	}
 	entry.finalizationRoot = finalizationRoot
 	cleanupMount := entry.cleanup
@@ -1338,7 +1338,7 @@ func handleWorkspaceBasicExecConnection(
 ) error {
 	var request workspacev0.WorkspaceBasicExecRequest
 	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
-		return fmt.Errorf("read Workspace BasicExec request: %w", err)
+		return fmt.Errorf("read workspace BasicExec request: %w", err)
 	}
 	envelope := request.GetEnvelope()
 	fingerprint := ""
@@ -1354,7 +1354,7 @@ func handleWorkspaceBasicExecConnection(
 	if envelope == nil {
 		return fail(
 			"workspace_exec_invalid",
-			errors.New("Workspace BasicExec envelope is required"),
+			errors.New("workspace BasicExec envelope is required"),
 		)
 	}
 	if strings.TrimSpace(envelope.OperationId) == "" ||
@@ -1362,7 +1362,7 @@ func handleWorkspaceBasicExecConnection(
 		strings.TrimSpace(envelope.WorkspaceId) == "" {
 		return fail(
 			"workspace_exec_invalid",
-			errors.New("Workspace BasicExec identity is incomplete"),
+			errors.New("workspace BasicExec identity is incomplete"),
 		)
 	}
 	entry, release, ok := registry.acquire(
@@ -1374,26 +1374,26 @@ func handleWorkspaceBasicExecConnection(
 	if !ok {
 		return fail(
 			"workspace_exec_fenced",
-			errors.New("Workspace BasicExec authority is invalid"),
+			errors.New("workspace BasicExec authority is invalid"),
 		)
 	}
 	defer release()
 	if envelope.OperationExpiresAtUnixNano <= 0 {
 		return fail(
 			"workspace_exec_invalid",
-			errors.New("Workspace BasicExec expiry is required"),
+			errors.New("workspace BasicExec expiry is required"),
 		)
 	}
 	if time.Now().UnixNano() >= envelope.OperationExpiresAtUnixNano {
 		return fail(
 			"workspace_exec_expired",
-			errors.New("Workspace BasicExec claim expired"),
+			errors.New("workspace BasicExec claim expired"),
 		)
 	}
 	if fingerprint == "" {
 		return fail(
 			"workspace_exec_invalid",
-			errors.New("Workspace BasicExec fingerprint is required"),
+			errors.New("workspace BasicExec fingerprint is required"),
 		)
 	}
 	return frameio.WriteProtoFrame(conn, entry.runWorkspaceBasicExec(ctx, &request))

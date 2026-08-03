@@ -195,14 +195,14 @@ func materializeConformanceArtifact(
 			written, copyErr := io.Copy(output, io.LimitReader(input, entry.SizeBytes+1))
 			closeErr := errors.Join(input.Close(), output.Close())
 			if copyErr != nil || closeErr != nil || written != entry.SizeBytes {
-				return errors.Join(copyErr, closeErr, errors.New("materialized Artifact size changed"))
+				return errors.Join(copyErr, closeErr, errors.New("materialized artifact size changed"))
 			}
 		case artifactEntrySymlink:
 			if err := os.Symlink(entry.LinkTarget, target); err != nil {
 				return err
 			}
 		default:
-			return fmt.Errorf("Artifact entry %q cannot be materialized", entry.Path)
+			return fmt.Errorf("artifact entry %q cannot be materialized", entry.Path)
 		}
 	}
 	return nil
@@ -230,7 +230,7 @@ func platformLogicalLimit(role artifactRole) (int64, error) {
 	case toolchainArtifact:
 		return maxToolArtifactBytes, nil
 	default:
-		return 0, fmt.Errorf("Platform Artifact role = %d", role)
+		return 0, fmt.Errorf("platform artifact role = %d", role)
 	}
 }
 
@@ -249,7 +249,7 @@ func verifyPlatformConformance(
 			return nil, err
 		}
 		var descriptor RuntimeArtifactDescriptor
-		if err := parsePlatformDocument(raw, "Runtime acquisition descriptor", &descriptor); err != nil {
+		if err := parsePlatformDocument(raw, "runtime acquisition descriptor", &descriptor); err != nil {
 			return nil, err
 		}
 		results, err = runtimeConformance(ctx, descriptor)
@@ -262,7 +262,7 @@ func verifyPlatformConformance(
 			return nil, err
 		}
 		var descriptor ManagerArtifactDescriptor
-		if err := parsePlatformDocument(raw, "Manager acquisition descriptor", &descriptor); err != nil {
+		if err := parsePlatformDocument(raw, "manager acquisition descriptor", &descriptor); err != nil {
 			return nil, err
 		}
 		results, err = managerConformance(ctx, descriptor)
@@ -315,19 +315,19 @@ func runtimeConformance(
 	node := "/opt/helmr/runtime/bin/node"
 	version, err := runConformanceCommand(ctx, nil, node, "--version")
 	if err != nil || strings.TrimSpace(version) != "v"+descriptor.NodeVersion {
-		return nil, errors.New("Runtime Node reported the wrong version")
+		return nil, errors.New("runtime Node.js reported the wrong version")
 	}
 	architecture, err := runConformanceCommand(ctx, nil, node, "-p", "process.arch")
 	if err != nil || strings.TrimSpace(architecture) != "x64" {
-		return nil, errors.New("Runtime Node reported the wrong architecture")
+		return nil, errors.New("runtime Node.js reported the wrong architecture")
 	}
 	abi, err := runConformanceCommand(ctx, nil, node, "-p", "process.versions.modules")
 	if err != nil || strings.TrimSpace(abi) != descriptor.NodeModuleABI {
-		return nil, errors.New("Runtime Node reported the wrong module ABI")
+		return nil, errors.New("runtime Node.js reported the wrong module ABI")
 	}
 	launch := append([]string(nil), descriptor.ProgramNodeFlags...)
 	if _, err := runConformanceCommand(ctx, nil, node, append(launch, "-e", "0")...); err != nil {
-		return nil, errors.New("Runtime Node does not accept its Program launch flags")
+		return nil, errors.New("runtime Node.js does not accept its program launch flags")
 	}
 	program := []byte(`const value: string = "helmr"; if (value !== "helmr") process.exit(1);`)
 	if err := os.WriteFile("/work/program.ts", program, 0600); err != nil {
@@ -339,7 +339,7 @@ func runtimeConformance(
 		node,
 		append(launch, "/work/program.ts")...,
 	); err == nil {
-		return nil, errors.New("Runtime Program mode accepted TypeScript")
+		return nil, errors.New("runtime program mode accepted TypeScript")
 	}
 	if err := os.WriteFile(
 		"/work/source-map.mjs",
@@ -361,10 +361,10 @@ func runtimeConformance(
 		node,
 		append(launch, "/work/source-map.mjs")...,
 	); err == nil || !strings.Contains(err.Error(), "source-map.ts:1") {
-		return nil, errors.New("Runtime Program mode did not apply source maps")
+		return nil, errors.New("runtime program mode did not apply source maps")
 	}
 	if _, err := runConformanceCommand(ctx, nil, node, "--check", descriptor.Entrypoint); err != nil {
-		return nil, errors.New("Runtime entrypoint is not valid JavaScript")
+		return nil, errors.New("runtime entrypoint is not valid JavaScript")
 	}
 	return passedConformanceResults(
 		"network-denied",
@@ -392,15 +392,15 @@ func managerConformance(
 	}
 	version, err := runConformanceCommand(ctx, managerEnvironment(descriptor), executable, command...)
 	if err != nil || strings.TrimSpace(version) != descriptor.PackageManager.Version {
-		return nil, errors.New("Manager reported the wrong version")
+		return nil, errors.New("manager reported the wrong version")
 	}
 	help, err := runConformanceCommand(ctx, managerEnvironment(descriptor), executable, managerHelpArguments(descriptor)...)
 	if err != nil {
-		return nil, errors.New("Manager help failed")
+		return nil, errors.New("manager help failed")
 	}
 	for _, option := range managerRequiredOptions(descriptor.PackageManager.Name) {
 		if !strings.Contains(help, option) {
-			return nil, fmt.Errorf("Manager required option %q is missing", option)
+			return nil, fmt.Errorf("manager required option %q is missing", option)
 		}
 	}
 	if descriptor.PackageManager.Name == PackageManagerPNPM {
@@ -465,7 +465,7 @@ func pnpmRuntimeReplacementConformance(
 	nodeBin := filepath.Join(project, "node_modules", ".bin", "node")
 	if _, err := os.Lstat(nodeBin); !errors.Is(err, os.ErrNotExist) {
 		if err == nil {
-			return errors.New("pnpm installed a replacement Node runtime")
+			return errors.New("pnpm installed a replacement Node.js runtime")
 		}
 		return err
 	}
@@ -507,7 +507,7 @@ func pnpmManagerReplacementConformance(
 		executable,
 		arguments...,
 	); err != nil {
-		return fmt.Errorf("pnpm Manager replacement control fixture failed: %w", err)
+		return fmt.Errorf("pnpm manager replacement control fixture failed: %w", err)
 	}
 	arguments = pnpmInstallArguments("error")
 	if descriptor.Entrypoint.Kind == ManagerEntrypointNode {
@@ -520,7 +520,7 @@ func pnpmManagerReplacementConformance(
 		executable,
 		arguments...,
 	); err == nil {
-		return errors.New("pnpm launched or accepted a replacement Manager")
+		return errors.New("pnpm launched or accepted a replacement manager")
 	} else {
 		var exitErr *exec.ExitError
 		diagnostic := err.Error()
@@ -535,7 +535,7 @@ func pnpmManagerReplacementConformance(
 				"current pnpm is v"+descriptor.PackageManager.Version,
 			) {
 			return errors.New(
-				"pnpm did not report a local Manager version rejection",
+				"pnpm did not report a local manager version rejection",
 			)
 		}
 	}
@@ -544,7 +544,7 @@ func pnpmManagerReplacementConformance(
 		return err
 	}
 	if len(entries) != 0 {
-		return errors.New("pnpm created a replacement Manager artifact")
+		return errors.New("pnpm created a replacement manager artifact")
 	}
 	return nil
 }
@@ -639,7 +639,7 @@ func compilerConformance(
 		"--describe",
 	)
 	if err != nil {
-		return errors.New("Program Compiler descriptor failed")
+		return errors.New("program compiler descriptor failed")
 	}
 	var contract struct {
 		APIVersion            string `json:"apiVersion"`
@@ -650,7 +650,7 @@ func compilerConformance(
 		contract.APIVersion != descriptor.Compiler.APIVersion ||
 		contract.EsbuildVersion != descriptor.Compiler.Esbuild.Version ||
 		contract.OptionsContractDigest != descriptor.Compiler.OptionsContractDigest {
-		return errors.New("Program Compiler descriptor does not match authority")
+		return errors.New("program compiler descriptor does not match authority")
 	}
 	project := "/opt/helmr/program"
 	for _, directory := range []string{
@@ -696,11 +696,11 @@ func compilerConformance(
 		"-c",
 		configCommand,
 	); err != nil {
-		return errors.New("Config Evaluator fixture failed")
+		return errors.New("config evaluator fixture failed")
 	}
 	frame, err := os.ReadFile("/work/config.frame")
 	if err != nil || len(frame) < 4 || int(binary.BigEndian.Uint32(frame[:4])) != len(frame)-4 {
-		return errors.New("Config Evaluator fixture returned an invalid frame")
+		return errors.New("config evaluator fixture returned an invalid frame")
 	}
 	if err := os.WriteFile("/work/config.json", frame[4:], 0600); err != nil {
 		return err
@@ -721,12 +721,12 @@ func compilerConformance(
 		"-c",
 		programCommand,
 	); err != nil {
-		return errors.New("Program Compiler fixture failed")
+		return errors.New("program compiler fixture failed")
 	}
 	programFrame, err := os.ReadFile("/work/program.frame")
 	if err != nil || len(programFrame) < 4 ||
 		int(binary.BigEndian.Uint32(programFrame[:4])) != len(programFrame)-4 {
-		return errors.New("Program Compiler fixture returned an invalid frame")
+		return errors.New("program compiler fixture returned an invalid frame")
 	}
 	for _, path := range []string{
 		"helmr/compiler-result.json",
@@ -734,20 +734,20 @@ func compilerConformance(
 	} {
 		if info, err := os.Stat(filepath.Join(output, path)); err != nil ||
 			!info.Mode().IsRegular() {
-			return fmt.Errorf("Program Compiler output %q is missing", path)
+			return fmt.Errorf("program compiler output %q is missing", path)
 		}
 	}
 	matches, err := filepath.Glob(
 		filepath.Join(output, "tasks", ".helmr", "modules", "*.mjs"),
 	)
 	if err != nil || len(matches) != 1 {
-		return errors.New("Program Compiler did not emit one independent final module")
+		return errors.New("program compiler did not emit one independent final module")
 	}
 	chunks, err := filepath.Glob(
 		filepath.Join(output, "tasks", ".helmr", "modules", "*chunk*"),
 	)
 	if err != nil || len(chunks) != 0 {
-		return errors.New("Program Compiler emitted a shared chunk")
+		return errors.New("program compiler emitted a shared chunk")
 	}
 	return nil
 }

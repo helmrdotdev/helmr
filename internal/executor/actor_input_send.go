@@ -34,37 +34,37 @@ func (task *guestRunLeaseTask) handleActorInputSend(
 		response, requestErr = task.controlPlane.SendRunActorInput(callCtx, request)
 		return requestErr
 	}); err != nil {
-		return fmt.Errorf("send Actor input: %w", err)
+		return fmt.Errorf("send actor input: %w", err)
 	}
 	if response.CorrelationID != request.CorrelationID ||
 		(response.Completed == nil) == (response.Failed == nil) {
-		return errors.New("Actor input send response did not match the request")
+		return errors.New("actor input send response did not match the request")
 	}
 	var kind string
 	var data []byte
 	if response.Completed != nil {
 		if response.Completed.Sequence <= 0 || response.Completed.Sequence > maxJavaScriptSafeInteger {
-			return errors.New("Actor input send response sequence is invalid")
+			return errors.New("actor input send response sequence is invalid")
 		}
 		kind = "completed"
 		data, err = json.Marshal(response.Completed)
 	} else {
 		if strings.TrimSpace(response.Failed.Code) == "" ||
 			strings.TrimSpace(response.Failed.Message) == "" {
-			return errors.New("Actor input send failure is invalid")
+			return errors.New("actor input send failure is invalid")
 		}
 		kind = "failed"
 		data, err = json.Marshal(response.Failed)
 	}
 	if err != nil {
-		return fmt.Errorf("encode Actor input send decision: %w", err)
+		return fmt.Errorf("encode actor input send decision: %w", err)
 	}
 	if err := wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
 		CorrelationId: request.CorrelationID,
 		Kind:          kind,
 		DataJson:      string(data),
 	}); err != nil {
-		return fmt.Errorf("write Actor input send decision: %w", err)
+		return fmt.Errorf("write actor input send decision: %w", err)
 	}
 	return nil
 }
@@ -73,10 +73,10 @@ func workerActorInputSendRequest(
 	requested *runv0.ActorInputSendRequested,
 ) (workerapi.SendActorInputRequest, error) {
 	if requested == nil {
-		return workerapi.SendActorInputRequest{}, errors.New("Actor input send request is required")
+		return workerapi.SendActorInputRequest{}, errors.New("actor input send request is required")
 	}
 	if err := ids.Validate(requested.GetCorrelationId()); err != nil {
-		return workerapi.SendActorInputRequest{}, errors.New("Actor input send correlation ID is invalid")
+		return workerapi.SendActorInputRequest{}, errors.New("actor input send correlation ID is invalid")
 	}
 	request := workerapi.SendActorInputRequest{
 		CorrelationID:   requested.GetCorrelationId(),
@@ -90,7 +90,7 @@ func workerActorInputSendRequest(
 	case *runv0.ActorInputSendRequested_ActorKey:
 		request.ActorKey = address.ActorKey
 	default:
-		return workerapi.SendActorInputRequest{}, errors.New("Actor input send address is required")
+		return workerapi.SendActorInputRequest{}, errors.New("actor input send address is required")
 	}
 	if err := api.ValidateActorDeclaredID(request.ActorDeclaredID); err != nil {
 		return workerapi.SendActorInputRequest{}, err

@@ -64,7 +64,7 @@ func (a *ScheduleAuthority) ResolveScheduledTask(
 		return schedule.TaskRun{}, errors.New("scheduled task payload kind must be standard_schema")
 	}
 	if manifest.Schedule == nil {
-		return schedule.TaskRun{}, errors.New("scheduled task manifest has no Schedule")
+		return schedule.TaskRun{}, errors.New("scheduled task manifest has no schedule")
 	}
 	var queueLimit *int64
 	for _, queue := range queueConfig.Queues {
@@ -78,11 +78,11 @@ func (a *ScheduleAuthority) ResolveScheduledTask(
 	}
 	retryPolicy, err := json.Marshal(manifest.Run.Retry)
 	if err != nil {
-		return schedule.TaskRun{}, fmt.Errorf("encode scheduled Task retry authority: %w", err)
+		return schedule.TaskRun{}, fmt.Errorf("encode scheduled task retry authority: %w", err)
 	}
 	retryPolicy, err = jsoncanon.Transform(retryPolicy)
 	if err != nil {
-		return schedule.TaskRun{}, fmt.Errorf("canonicalize scheduled Task retry authority: %w", err)
+		return schedule.TaskRun{}, fmt.Errorf("canonicalize scheduled task retry authority: %w", err)
 	}
 	var queuedTTL *int64
 	if manifest.Run.TTLMs != nil {

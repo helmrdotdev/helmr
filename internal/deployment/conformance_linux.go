@@ -61,7 +61,7 @@ func (validator ConformanceValidator) run(
 	artifacts := make([]*os.File, 0, len(trees)+1)
 	for _, tree := range trees {
 		if tree == nil || tree.artifact == nil {
-			return PlatformConformance{}, errors.New("Platform conformance tree is closed")
+			return PlatformConformance{}, errors.New("platform conformance tree is closed")
 		}
 		file, err := tree.artifact.verifierFile()
 		if err != nil {
@@ -93,9 +93,9 @@ func (validator ConformanceValidator) run(
 	case verifierInvalid:
 		return PlatformConformance{}, &verifierInvalidError{diagnostic: result.diagnostic}
 	case verifierFailed:
-		return PlatformConformance{}, errors.New("Platform conformance validator failed")
+		return PlatformConformance{}, errors.New("platform conformance validator failed")
 	default:
-		return PlatformConformance{}, fmt.Errorf("Platform conformance validator outcome = %d", result.kind)
+		return PlatformConformance{}, fmt.Errorf("platform conformance validator outcome = %d", result.kind)
 	}
 }
 

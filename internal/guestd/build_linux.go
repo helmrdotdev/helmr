@@ -252,7 +252,7 @@ func handleBuild(
 		bytes.NewReader(evaluated.supervisor),
 	)
 	if err != nil {
-		return fmt.Errorf("decode Config Evaluator result: %w", err)
+		return fmt.Errorf("decode config evaluator result: %w", err)
 	}
 	canonicalConfig, err := deployment.CanonicalBuildConfig(config)
 	if err != nil {
@@ -302,7 +302,7 @@ func handleBuild(
 		bytes.NewReader(analyzed.supervisor),
 	)
 	if err != nil {
-		return fmt.Errorf("decode Declaration Analyzer result: %w", err)
+		return fmt.Errorf("decode declaration analyzer result: %w", err)
 	}
 	if verification.Outcome == deployment.VerificationOutcomeFailed {
 		return writeBuildFailure(
@@ -444,7 +444,7 @@ func ingestCompilerOutput(project, output string) error {
 		if err == nil {
 			return errors.New("submitted source contains reserved path \"helmr\"")
 		}
-		return fmt.Errorf("stat Program output target: %w", err)
+		return fmt.Errorf("stat program output target: %w", err)
 	}
 	if err := os.Rename(filepath.Join(output, "helmr"), metadataTarget); err != nil {
 		return fmt.Errorf("ingest compiler metadata: %w", err)

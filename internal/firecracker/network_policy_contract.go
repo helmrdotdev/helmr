@@ -146,13 +146,13 @@ func canonicalIPv4PrefixSet(prefixes []netip.Prefix) []string {
 }
 
 func parseRunNetworkStatus(raw []byte) (vm.RunNetworkStatus, error) {
-	counters, err := parseNetworkCounters(raw, "Run")
+	counters, err := parseNetworkCounters(raw, "run")
 	if err != nil {
 		return vm.RunNetworkStatus{}, err
 	}
 	packets, ok := counters[runNetworkDeniedCounterName]
 	if !ok {
-		return vm.RunNetworkStatus{}, errors.New("Run denied counter is missing")
+		return vm.RunNetworkStatus{}, errors.New("run denied counter is missing")
 	}
 	return vm.RunNetworkStatus{DeniedPackets: packets}, nil
 }

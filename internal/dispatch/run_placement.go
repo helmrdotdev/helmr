@@ -89,7 +89,7 @@ SELECT EXISTS (
            OR queued_expires_at > transaction_timestamp()
        )
 )`, candidate.OrgID, candidate.RunID, candidate.ExpectedRunStateVersion).Scan(&exists); err != nil {
-		return false, fmt.Errorf("revalidate queued Run: %w", err)
+		return false, fmt.Errorf("revalidate queued run: %w", err)
 	}
 	return exists, nil
 }

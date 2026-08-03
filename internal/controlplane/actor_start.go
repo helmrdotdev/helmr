@@ -31,11 +31,11 @@ const (
 
 var (
 	errActorStartInvalid            = errors.New("actor start request is invalid")
-	errActorStartNotDeployed        = errors.New("Actor declaration is not deployed")
-	errActorStartWorkspaceNotFound  = errors.New("Actor start Workspace was not found")
+	errActorStartNotDeployed        = errors.New("actor declaration is not deployed")
+	errActorStartWorkspaceNotFound  = errors.New("actor start workspace was not found")
 	errActorStartAuthority          = errors.New("actor start authority is unavailable")
-	errActorStartWorkspaceConflict  = errors.New("actor start Workspace cannot accept execution")
-	errActorStartSecretUnavailable  = errors.New("actor start Workspace Secret is unavailable")
+	errActorStartWorkspaceConflict  = errors.New("actor start workspace cannot accept execution")
+	errActorStartSecretUnavailable  = errors.New("actor start workspace secret is unavailable")
 	errActorStartIdempotencyReceipt = errors.New("actor start idempotency receipt is invalid")
 )
 
@@ -44,7 +44,7 @@ type ActorKeyConflictError struct {
 }
 
 func (e ActorKeyConflictError) Error() string {
-	return fmt.Sprintf("Actor key %q already belongs to another Actor", e.Key)
+	return fmt.Sprintf("actor key %q already belongs to another actor", e.Key)
 }
 
 type actorStartRequest struct {
@@ -153,7 +153,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			return errActorStartNotDeployed
 		}
 		if err != nil {
-			return fmt.Errorf("lock Actor start deployment authority: %w", err)
+			return fmt.Errorf("lock actor start deployment authority: %w", err)
 		}
 		var addressedWorkspaceID pgtype.UUID
 		if normalized.Workspace.ID != nil {
@@ -174,7 +174,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			return errActorStartWorkspaceNotFound
 		}
 		if err != nil {
-			return fmt.Errorf("resolve Actor start Workspace: %w", err)
+			return fmt.Errorf("resolve actor start workspace: %w", err)
 		}
 		if normalized.DisallowedWorkspaceID != uuid.Nil &&
 			workspaceID == pgvalue.UUID(normalized.DisallowedWorkspaceID) {
@@ -182,7 +182,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		}
 		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, workspaceID)
 		if err != nil {
-			return fmt.Errorf("lock Actor start Workspace Secrets: %w", err)
+			return fmt.Errorf("lock actor start workspace secrets: %w", err)
 		}
 		for _, binding := range bindings {
 			if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
@@ -196,7 +196,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 				ActorDeclaredID: normalized.ActorDeclaredID,
 				Key:             *normalized.Key,
 			}); err != nil {
-				return fmt.Errorf("lock Actor start key: %w", err)
+				return fmt.Errorf("lock actor start key: %w", err)
 			}
 			_, err := work.q.GetActorByKey(ctx, db.GetActorByKeyParams{
 				EnvironmentID:   pgvalue.UUID(normalized.EnvironmentID),
@@ -207,7 +207,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 				return ActorKeyConflictError{Key: *normalized.Key}
 			}
 			if !errors.Is(err, pgx.ErrNoRows) {
-				return fmt.Errorf("check Actor start key: %w", err)
+				return fmt.Errorf("check actor start key: %w", err)
 			}
 		}
 
@@ -222,7 +222,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			return errActorStartWorkspaceConflict
 		}
 		if err != nil {
-			return fmt.Errorf("lock Actor start Workspace authority: %w", err)
+			return fmt.Errorf("lock actor start workspace authority: %w", err)
 		}
 		if authority.OrgID != pgvalue.UUID(normalized.OrgID) ||
 			authority.ProjectID != pgvalue.UUID(normalized.ProjectID) ||
@@ -286,7 +286,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errActorStartAuthority
 			}
-			return fmt.Errorf("create Actor: %w", err)
+			return fmt.Errorf("create actor: %w", err)
 		}
 
 		var initialRecordID *uuid.UUID
@@ -297,7 +297,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 				ID: pgvalue.UUID(recordID), Data: normalized.Input, ClaimID: claimID,
 				EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), ActorID: pgvalue.UUID(actorID),
 			}); err != nil {
-				return fmt.Errorf("create initial Actor input: %w", err)
+				return fmt.Errorf("create initial actor input: %w", err)
 			}
 			initialRecordID = &recordID
 			inputHighWatermark = 1
@@ -311,13 +311,13 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			RootSpanID:             rootSpanID,
 		})
 		if err != nil {
-			return fmt.Errorf("create Actor boot Run: %w", err)
+			return fmt.Errorf("create actor boot run: %w", err)
 		}
 		if _, err := work.q.SetActorCurrentRun(ctx, db.SetActorCurrentRunParams{
 			RunID: run.ID, EnvironmentID: run.EnvironmentID,
 			ID: pgvalue.UUID(actorID), WorkspaceID: authority.ID,
 		}); err != nil {
-			return fmt.Errorf("install Actor boot Run: %w", err)
+			return fmt.Errorf("install actor boot run: %w", err)
 		}
 		if _, err := work.q.ReserveWorkspaceForActor(ctx, db.ReserveWorkspaceForActorParams{
 			ActorID: pgvalue.UUID(actorID), EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
@@ -327,18 +327,18 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errActorStartWorkspaceConflict
 			}
-			return fmt.Errorf("reserve Workspace for Actor: %w", err)
+			return fmt.Errorf("reserve workspace for actor: %w", err)
 		}
 		if err := secret.CreateAttemptResolutions(
 			ctx, work.q, authority.ID, run.ID, 1, workspaceSecretResolutions(bindings),
 		); err != nil {
-			return fmt.Errorf("record Actor boot Run Secret resolutions: %w", err)
+			return fmt.Errorf("record actor boot run secret resolutions: %w", err)
 		}
 		if _, err := work.q.CreateRunAdmissionOutbox(ctx, db.CreateRunAdmissionOutboxParams{
 			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: authority.ID,
 			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), RunID: run.ID,
 		}); err != nil {
-			return fmt.Errorf("create Actor boot Run admission outbox: %w", err)
+			return fmt.Errorf("create actor boot run admission outbox: %w", err)
 		}
 		result = actorStartResult{
 			ActorID: actorID, InitialRecordID: initialRecordID,
@@ -384,11 +384,11 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 	}
 	workspaceRaw, err := json.Marshal(request.Workspace)
 	if err != nil {
-		return normalizedActorStart{}, fmt.Errorf("%w: encode Workspace address", errActorStartInvalid)
+		return normalizedActorStart{}, fmt.Errorf("%w: encode workspace address", errActorStartInvalid)
 	}
 	workspace, err := canonicalJSON(workspaceRaw)
 	if err != nil {
-		return normalizedActorStart{}, fmt.Errorf("%w: canonicalize Workspace address", errActorStartInvalid)
+		return normalizedActorStart{}, fmt.Errorf("%w: canonicalize workspace address", errActorStartInvalid)
 	}
 	if request.InputPresent {
 		input, err := canonicalJSON(request.Input)
@@ -399,11 +399,11 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 	} else {
 		request.Input = nil
 	}
-	request.ManagedRunMetadata, err = normalizeMetadata(request.ManagedRunMetadata, maxRunMetadataBytes, "managed Run")
+	request.ManagedRunMetadata, err = normalizeMetadata(request.ManagedRunMetadata, maxRunMetadataBytes, "managed run")
 	if err != nil {
 		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
 	}
-	request.ManagedRunTags, err = normalizeTags(request.ManagedRunTags, maxTags, "managed Run")
+	request.ManagedRunTags, err = normalizeTags(request.ManagedRunTags, maxTags, "managed run")
 	if err != nil {
 		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
 	}
@@ -416,14 +416,14 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 		value := *request.ManagedConcurrencyKey
 		if len(value) == 0 || len(value) > 512 || !utf8.ValidString(value) ||
 			strings.IndexByte(value, 0) >= 0 || hasInvalidConcurrencyKeyEdge(value) {
-			return normalizedActorStart{}, fmt.Errorf("%w: managed Run concurrency key is invalid", errActorStartInvalid)
+			return normalizedActorStart{}, fmt.Errorf("%w: managed run concurrency key is invalid", errActorStartInvalid)
 		}
 		request.ManagedConcurrencyKey = &value
 	}
 	if request.ManagedQueuedTTLMS != nil &&
 		(*request.ManagedQueuedTTLMS < 1 || *request.ManagedQueuedTTLMS > maxQueuedRunTTLMS) {
 		return normalizedActorStart{}, fmt.Errorf(
-			"%w: managed Run queued TTL must be between 1 and %d ms",
+			"%w: managed run queued TTL must be between 1 and %d ms",
 			errActorStartInvalid,
 			maxQueuedRunTTLMS,
 		)

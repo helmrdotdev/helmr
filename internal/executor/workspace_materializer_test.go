@@ -1128,7 +1128,7 @@ func TestWorkspaceMaterializerFailsWorkspaceMountWhenSessionExits(t *testing.T) 
 	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
 	go func() {
 		acknowledgeWorkspaceMount(t, initialServer, workspaceMount)
-		exit <- errors.New("firecracker exited")
+		exit <- errors.New("the Firecracker exited")
 	}()
 	client := &workspaceMaterializerTestClient{}
 	materializer := WorkspaceMaterializer{

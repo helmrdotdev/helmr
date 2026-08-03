@@ -349,8 +349,8 @@ func reconcileTestWorkerGroup(t *testing.T, ctx context.Context, q *db.Queries, 
 	if _, err := q.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
 		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
 		AllowsRun: allowsRun, AllowsBuild: allowsBuild, ProtocolVersion: workerapi.CurrentProtocolVersion,
-		RequiredCpuMillis: 1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1,
-		RequiredVmSlots: 1, RequiredBuildExecutors: buildExecutors, ObservationTtlSeconds: 120,
+		RequiredCPUMillis: 1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1,
+		RequiredVMSlots: 1, RequiredBuildExecutors: buildExecutors, ObservationTtlSeconds: 120,
 	}); err != nil {
 		t.Fatal(err)
 	}

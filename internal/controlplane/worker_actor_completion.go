@@ -22,12 +22,12 @@ func (s *Server) workerCompleteActor(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, io.EOF) {
 			err = errors.New("request body is required")
 		}
-		writeError(w, badRequest(fmt.Errorf("invalid Actor completion JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid actor completion JSON: %w", err)))
 		return
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		writeError(w, badRequest(errors.New("invalid Actor completion JSON: trailing value")))
+		writeError(w, badRequest(errors.New("invalid actor completion JSON: trailing value")))
 		return
 	}
 	completion, err := parseActorCompletionRequest(request)
@@ -42,7 +42,7 @@ func (s *Server) workerCompleteActor(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.log.Error("complete Actor failed", "run_lease_id", request.Lease.ID, "error", err)
-		writeError(w, errors.New("complete Actor"))
+		writeError(w, errors.New("complete actor"))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
