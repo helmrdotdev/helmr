@@ -33,6 +33,21 @@ let
     vendorHash = "sha256-Wu8+e0r0bkztLbxekbHktoKjg6c8q7ls5APSEdO8CKs=";
     subPackages = [ "cmd/staticcheck" ];
   };
+  deadcode = buildGo126Module {
+    pname = "deadcode";
+    version = "0.34.0";
+
+    src = pkgs.fetchFromGitHub {
+      owner = "golang";
+      repo = "tools";
+      tag = "v0.34.0";
+      hash = "sha256-C+P2JoD4NzSAkAQuA20bVrfLZrMHXekvXn8KPOM5Nj4=";
+    };
+
+    vendorHash = "sha256-UZNYHx5y+kRp3AJq6s4Wy+k789GDG7FBTSzCTorVjgg=";
+    subPackages = [ "cmd/deadcode" ];
+    doCheck = false;
+  };
   unparam = buildGo126Module {
     pname = "unparam";
     version = "2025-10-27";
@@ -58,6 +73,7 @@ in
 {
   inherit helmr;
   inherit staticcheck;
+  inherit deadcode;
   inherit unparam;
   inherit squashfsTools;
   default = helmr;
@@ -65,7 +81,12 @@ in
   apko = if pkgsUnstable ? apko then pkgsUnstable.apko else pkgs.apko;
 }
 // lib.optionalAttrs (system == "x86_64-linux") {
-  inherit compiler runtimeHarness toolchainBase nodeReleaseKeys;
+  inherit
+    compiler
+    runtimeHarness
+    toolchainBase
+    nodeReleaseKeys
+    ;
   platformRelease =
     let
       policyTool = buildGo126Module {
