@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 const maxJavaScriptSafeInteger = int64(9007199254740991)
@@ -23,10 +24,10 @@ func (task *guestRunLeaseTask) handleActorInputSend(
 	if err != nil {
 		return err
 	}
-	var response api.WorkerSendActorInputResponse
+	var response workerapi.SendActorInputResponse
 	if err := task.callRunSourceRuntime(ctx, func(
 		callCtx context.Context,
-		lease api.WorkerRunLeaseAssignment,
+		lease workerapi.RunLeaseAssignment,
 	) error {
 		request.Lease = lease.Fence()
 		var requestErr error
@@ -70,14 +71,14 @@ func (task *guestRunLeaseTask) handleActorInputSend(
 
 func workerActorInputSendRequest(
 	requested *runv0.ActorInputSendRequested,
-) (api.WorkerSendActorInputRequest, error) {
+) (workerapi.SendActorInputRequest, error) {
 	if requested == nil {
-		return api.WorkerSendActorInputRequest{}, errors.New("Actor input send request is required")
+		return workerapi.SendActorInputRequest{}, errors.New("Actor input send request is required")
 	}
 	if err := ids.Validate(requested.GetCorrelationId()); err != nil {
-		return api.WorkerSendActorInputRequest{}, errors.New("Actor input send correlation ID is invalid")
+		return workerapi.SendActorInputRequest{}, errors.New("Actor input send correlation ID is invalid")
 	}
-	request := api.WorkerSendActorInputRequest{
+	request := workerapi.SendActorInputRequest{
 		CorrelationID:   requested.GetCorrelationId(),
 		ActorDeclaredID: requested.GetDeclaredId(),
 		Input:           json.RawMessage(requested.GetDataJson()),
@@ -89,16 +90,16 @@ func workerActorInputSendRequest(
 	case *runv0.ActorInputSendRequested_ActorKey:
 		request.ActorKey = address.ActorKey
 	default:
-		return api.WorkerSendActorInputRequest{}, errors.New("Actor input send address is required")
+		return workerapi.SendActorInputRequest{}, errors.New("Actor input send address is required")
 	}
 	if err := api.ValidateActorDeclaredID(request.ActorDeclaredID); err != nil {
-		return api.WorkerSendActorInputRequest{}, err
+		return workerapi.SendActorInputRequest{}, err
 	}
 	if err := api.ValidateSendActorInputRequest(api.SendActorInputRequest{
 		ActorID: request.ActorID, ActorKey: request.ActorKey,
 		Input: request.Input, IdempotencyKey: request.IdempotencyKey,
 	}); err != nil {
-		return api.WorkerSendActorInputRequest{}, err
+		return workerapi.SendActorInputRequest{}, err
 	}
 	return request, nil
 }

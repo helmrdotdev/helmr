@@ -6,10 +6,10 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -23,10 +23,10 @@ type parsedActorTurnCommit struct {
 	targetInputSequence int64
 	baseVersionID       uuid.UUID
 	tree                workspace.TreeIdentity
-	artifact            *api.WorkerWorkspaceArtifact
+	artifact            *workerapi.WorkspaceArtifact
 }
 
-func parseActorTurnCommitRequest(request api.WorkerCommitActorTurnRequest) (parsedActorTurnCommit, error) {
+func parseActorTurnCommitRequest(request workerapi.CommitActorTurnRequest) (parsedActorTurnCommit, error) {
 	lease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		return parsedActorTurnCommit{}, err
@@ -63,17 +63,17 @@ func parseActorTurnCommitRequest(request api.WorkerCommitActorTurnRequest) (pars
 func (s *Server) commitActorTurn(
 	ctx context.Context,
 	worker workerActor,
-	request api.WorkerCommitActorTurnRequest,
+	request workerapi.CommitActorTurnRequest,
 	commit parsedActorTurnCommit,
-) (api.WorkerCommitActorTurnResponse, error) {
+) (workerapi.CommitActorTurnResponse, error) {
 	if commit.artifact != nil {
 		capture := parsedTaskWorkspaceCapture{tree: commit.tree, artifact: *commit.artifact}
 		if _, err := s.verifyTaskWorkspaceCapture(ctx, capture); err != nil {
-			return api.WorkerCommitActorTurnResponse{}, err
+			return workerapi.CommitActorTurnResponse{}, err
 		}
 	}
 
-	var response api.WorkerCommitActorTurnResponse
+	var response workerapi.CommitActorTurnResponse
 	err := s.inTx(ctx, func(work *txWork) error {
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(commit.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
@@ -263,25 +263,25 @@ func validateActorTurnAuthority(ctx context.Context, store db.Querier, authority
 func replayActorTurnCommit(
 	ctx context.Context,
 	store db.Querier,
-	request api.WorkerCommitActorTurnRequest,
+	request workerapi.CommitActorTurnRequest,
 	commit parsedActorTurnCommit,
 	authority runLeaseClaimAuthority,
-) (api.WorkerCommitActorTurnResponse, bool, error) {
+) (workerapi.CommitActorTurnResponse, bool, error) {
 	if authority.actor.CommittedInputSequence != commit.targetInputSequence ||
 		authority.workspaceMount.MaterializedVersionID != authority.workspaceLease.BaseVersionID {
-		return api.WorkerCommitActorTurnResponse{}, false, nil
+		return workerapi.CommitActorTurnResponse{}, false, nil
 	}
 	version, err := getActorTurnVersion(ctx, store, authority, authority.workspace.HeadVersionID)
 	if err != nil {
-		return api.WorkerCommitActorTurnResponse{}, false, staleActorTurnCommit(err)
+		return workerapi.CommitActorTurnResponse{}, false, staleActorTurnCommit(err)
 	}
 	if version.ContentDigest != commit.tree.Digest || version.LogicalSizeBytes != commit.tree.SizeBytes ||
 		version.EntryCount != int32(commit.tree.EntryCount) {
-		return api.WorkerCommitActorTurnResponse{}, false, nil
+		return workerapi.CommitActorTurnResponse{}, false, nil
 	}
 	if commit.artifact == nil {
 		if authority.workspace.HeadVersionID != pgvalue.UUID(commit.baseVersionID) {
-			return api.WorkerCommitActorTurnResponse{}, false, nil
+			return workerapi.CommitActorTurnResponse{}, false, nil
 		}
 	} else if version.ParentVersionID != pgvalue.UUID(commit.baseVersionID) ||
 		version.SourceWorkspaceLeaseID != authority.workspaceLease.ID ||
@@ -292,7 +292,7 @@ func replayActorTurnCommit(
 		!version.ArtifactDigest.Valid || version.ArtifactDigest.String != commit.artifact.Digest ||
 		!version.ArtifactSizeBytes.Valid || version.ArtifactSizeBytes.Int64 != commit.artifact.SizeBytes ||
 		!version.ArtifactMediaType.Valid || version.ArtifactMediaType.String != commit.artifact.MediaType {
-		return api.WorkerCommitActorTurnResponse{}, false, nil
+		return workerapi.CommitActorTurnResponse{}, false, nil
 	}
 	response, err := projectActorTurnResponse(request, commit, authority.workspace.HeadVersionID)
 	return response, err == nil, err
@@ -311,15 +311,15 @@ func getActorTurnVersion(
 }
 
 func projectActorTurnResponse(
-	request api.WorkerCommitActorTurnRequest,
+	request workerapi.CommitActorTurnRequest,
 	commit parsedActorTurnCommit,
 	versionID pgtype.UUID,
-) (api.WorkerCommitActorTurnResponse, error) {
+) (workerapi.CommitActorTurnResponse, error) {
 	workspaceVersionID, err := requiredClaimUUIDString("Actor turn Workspace version ID", versionID)
 	if err != nil {
-		return api.WorkerCommitActorTurnResponse{}, err
+		return workerapi.CommitActorTurnResponse{}, err
 	}
-	return api.WorkerCommitActorTurnResponse{
+	return workerapi.CommitActorTurnResponse{
 		Lease: request.Lease, CorrelationID: commit.correlationID.String(),
 		CommittedInputSequence: commit.targetInputSequence, WorkspaceVersionID: workspaceVersionID,
 		Tree: request.Tree,

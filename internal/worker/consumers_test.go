@@ -8,33 +8,33 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func testWorkerDeploymentBuild() api.WorkerDeploymentBuild {
-	return api.WorkerDeploymentBuild{
+func testWorkerDeploymentBuild() workerapi.DeploymentBuild {
+	return workerapi.DeploymentBuild{
 		ID:                   "deployment-1",
 		NodeVersion:          "24.16.0",
 		BuildContractVersion: deployment.ProgramBuildContractVersion,
 		ImageCacheMode:       "prefer",
-		Runtime: api.CASObject{
+		Runtime: workerapi.CASObject{
 			Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			MediaType: deployment.RuntimeArtifactMediaType,
 			SizeBytes: 1,
 		},
-		Manager: api.WorkerManagerPin{
+		Manager: workerapi.ManagerPin{
 			Name:    "npm",
 			Version: "11.5.0",
-			Artifact: api.CASObject{
+			Artifact: workerapi.CASObject{
 				Digest:    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 				MediaType: deployment.ManagerTreeMediaType,
 				SizeBytes: 1,
 			},
 		},
-		Toolchain: api.CASObject{
+		Toolchain: workerapi.CASObject{
 			Digest:    "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 			MediaType: deployment.ToolchainMediaType,
 			SizeBytes: 1,
@@ -67,16 +67,16 @@ type consumerPlatformAcquirer struct{}
 
 func (consumerPlatformAcquirer) Acquire(
 	context.Context,
-	api.WorkerPlatformAcquisition,
-) (api.WorkerPlatformAcquisitionCandidates, error) {
-	return api.WorkerPlatformAcquisitionCandidates{}, errors.New("unexpected Platform acquisition")
+	workerapi.PlatformAcquisition,
+) (workerapi.PlatformAcquisitionCandidates, error) {
+	return workerapi.PlatformAcquisitionCandidates{}, errors.New("unexpected Platform acquisition")
 }
 
 type consumerTestClient struct {
 	ControlClient
-	runWork         []api.WorkerRunLeaseWork
-	buildLease      api.WorkerDeploymentBuildLease
-	deployment      api.WorkerDeploymentBuild
+	runWork         []workerapi.RunLeaseWork
+	buildLease      workerapi.DeploymentBuildLease
+	deployment      workerapi.DeploymentBuild
 	discoveryCalls  atomic.Int32
 	buildStartCalls atomic.Int32
 	buildComplete   atomic.Int32
@@ -86,32 +86,32 @@ type consumerTestClient struct {
 	rejectReason    atomic.Value
 }
 
-func (c *consumerTestClient) DiscoverRunLeases(context.Context) (api.WorkerRunLeaseDiscoveryResponse, error) {
+func (c *consumerTestClient) DiscoverRunLeases(context.Context) (workerapi.RunLeaseDiscoveryResponse, error) {
 	c.discoveryCalls.Add(1)
-	return api.WorkerRunLeaseDiscoveryResponse{Items: c.runWork}, nil
+	return workerapi.RunLeaseDiscoveryResponse{Items: c.runWork}, nil
 }
 
-func (c *consumerTestClient) LeaseDeploymentBuild(context.Context) (api.WorkerDeploymentBuildLeaseResponse, error) {
-	return api.WorkerDeploymentBuildLeaseResponse{Lease: &c.buildLease, Deployment: &c.deployment}, nil
+func (c *consumerTestClient) LeaseDeploymentBuild(context.Context) (workerapi.DeploymentBuildLeaseResponse, error) {
+	return workerapi.DeploymentBuildLeaseResponse{Lease: &c.buildLease, Deployment: &c.deployment}, nil
 }
 
-func (c *consumerTestClient) StartDeploymentBuild(context.Context, api.WorkerDeploymentBuildLease) (api.WorkerDeploymentBuildStartResponse, error) {
+func (c *consumerTestClient) StartDeploymentBuild(context.Context, workerapi.DeploymentBuildLease) (workerapi.DeploymentBuildStartResponse, error) {
 	c.buildStartCalls.Add(1)
-	return api.WorkerDeploymentBuildStartResponse{Lease: c.buildLease}, nil
+	return workerapi.DeploymentBuildStartResponse{Lease: c.buildLease}, nil
 }
 
-func (c *consumerTestClient) CompleteDeploymentBuild(context.Context, api.WorkerDeploymentBuildLease, json.RawMessage) (api.WorkerDeploymentBuildResponse, error) {
+func (c *consumerTestClient) CompleteDeploymentBuild(context.Context, workerapi.DeploymentBuildLease, json.RawMessage) (workerapi.DeploymentBuildResponse, error) {
 	c.buildComplete.Add(1)
-	return api.WorkerDeploymentBuildResponse{Status: "deployed"}, nil
+	return workerapi.DeploymentBuildResponse{Status: "deployed"}, nil
 }
 
-func (c *consumerTestClient) ReportDeploymentBuildDeliveryFailure(_ context.Context, request api.WorkerDeploymentBuildDeliveryFailureRequest) (api.WorkerDeploymentBuildResponse, error) {
+func (c *consumerTestClient) ReportDeploymentBuildDeliveryFailure(_ context.Context, request workerapi.DeploymentBuildDeliveryFailureRequest) (workerapi.DeploymentBuildResponse, error) {
 	c.buildDelivery.Add(1)
 	c.deliveryReason.Store(request.ReasonCode)
-	return api.WorkerDeploymentBuildResponse{Status: "building"}, nil
+	return workerapi.DeploymentBuildResponse{Status: "building"}, nil
 }
 
-func (c *consumerTestClient) RejectDeploymentBuild(_ context.Context, request api.WorkerDeploymentBuildRejectRequest) error {
+func (c *consumerTestClient) RejectDeploymentBuild(_ context.Context, request workerapi.DeploymentBuildRejectRequest) error {
 	c.buildReject.Add(1)
 	c.rejectReason.Store(request.ReasonCode)
 	return nil
@@ -119,21 +119,21 @@ func (c *consumerTestClient) RejectDeploymentBuild(_ context.Context, request ap
 
 type detachedTestExecutor struct{ calls atomic.Int32 }
 
-func (e *detachedTestExecutor) ExecuteRunLease(context.Context, api.WorkerRunLeaseWork) error {
+func (e *detachedTestExecutor) ExecuteRunLease(context.Context, workerapi.RunLeaseWork) error {
 	e.calls.Add(1)
 	return nil
 }
 
 type successfulTestBuilder struct{ calls atomic.Int32 }
 
-func (b *successfulTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
+func (b *successfulTestBuilder) Build(context.Context, workerapi.DeploymentBuildLease, workerapi.DeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
 	b.calls.Add(1)
 	return json.RawMessage(`{"error":{"message":"test","reasonCode":"verification_failed"},"formatVersion":0,"outcome":"failed"}`), nil
 }
 
 type deliveryFailureTestBuilder struct{}
 
-func (*deliveryFailureTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
+func (*deliveryFailureTestBuilder) Build(context.Context, workerapi.DeploymentBuildLease, workerapi.DeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
 	return nil, deliveryFailureTestError{}
 }
 
@@ -143,13 +143,13 @@ func (deliveryFailureTestError) Error() string {
 	return "verifier infrastructure failed"
 }
 
-func (deliveryFailureTestError) DeploymentBuildDeliveryFailureReason() api.WorkerDeploymentBuildDeliveryFailureReason {
-	return api.WorkerDeploymentBuildDeliveryProgramVerifierFailed
+func (deliveryFailureTestError) DeploymentBuildDeliveryFailureReason() workerapi.DeploymentBuildDeliveryFailureReason {
+	return workerapi.DeploymentBuildDeliveryProgramVerifierFailed
 }
 
 type unclassifiedFailureTestBuilder struct{}
 
-func (*unclassifiedFailureTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
+func (*unclassifiedFailureTestBuilder) Build(context.Context, workerapi.DeploymentBuildLease, workerapi.DeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
 	return nil, errors.New("unclassified infrastructure failure")
 }
 
@@ -157,7 +157,7 @@ type cleanupUnprovenTestBuilder struct {
 	owner vm.Owner
 }
 
-func (b *cleanupUnprovenTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
+func (b *cleanupUnprovenTestBuilder) Build(context.Context, workerapi.DeploymentBuildLease, workerapi.DeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
 	return nil, vm.NewGuestError(&vm.CleanupUnprovenError{
 		Owner: b.owner,
 		Cause: errors.New("guest process absence could not be proven"),
@@ -166,7 +166,7 @@ func (b *cleanupUnprovenTestBuilder) Build(context.Context, api.WorkerDeployment
 
 type fatalBuildTestBuilder struct{}
 
-func (*fatalBuildTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
+func (*fatalBuildTestBuilder) Build(context.Context, workerapi.DeploymentBuildLease, workerapi.DeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
 	return nil, fatalBuildTestError{}
 }
 
@@ -177,14 +177,14 @@ func (fatalBuildTestError) FatalWorker() bool { return true }
 
 type canceledBuildTestBuilder struct{}
 
-func (*canceledBuildTestBuilder) Build(context.Context, api.WorkerDeploymentBuildLease, api.WorkerDeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
+func (*canceledBuildTestBuilder) Build(context.Context, workerapi.DeploymentBuildLease, workerapi.DeploymentBuild, deployment.ImageOperationRevocations) (json.RawMessage, error) {
 	return nil, context.Canceled
 }
 
 func TestRunConsumerExecutesDiscoveredLeaseInsideRegisteredWork(t *testing.T) {
 	capabilities := testCapabilities()
 	client := &consumerTestClient{
-		runWork: []api.WorkerRunLeaseWork{{LeaseID: "lease-1", LeaseSequence: 1}},
+		runWork: []workerapi.RunLeaseWork{{LeaseID: "lease-1", LeaseSequence: 1}},
 	}
 	executor := &detachedTestExecutor{}
 	runner, err := NewRunner(client, executor, capabilities, WithCapacity(testCapacity(t, capabilities)))
@@ -211,7 +211,7 @@ func TestRunConsumerExecutesDiscoveredLeaseInsideRegisteredWork(t *testing.T) {
 func TestRunConsumerDoesNotRediscoverActiveTuple(t *testing.T) {
 	capabilities := testCapabilities()
 	client := &consumerTestClient{
-		runWork: []api.WorkerRunLeaseWork{{LeaseID: "lease-1", LeaseSequence: 1}},
+		runWork: []workerapi.RunLeaseWork{{LeaseID: "lease-1", LeaseSequence: 1}},
 	}
 	executor := &detachedTestExecutor{}
 	runner, err := NewRunner(client, executor, capabilities, WithCapacity(testCapacity(t, capabilities)))
@@ -241,7 +241,7 @@ func TestBuildConsumerStartsLeaseInsideRegisteredWork(t *testing.T) {
 	capabilities.MaxBuildExecutors = 1
 	capabilities.SupportsBuild = true
 	client := &consumerTestClient{
-		buildLease: api.WorkerDeploymentBuildLease{
+		buildLease: workerapi.DeploymentBuildLease{
 			ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
 			RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
 			RequestedGuestEphemeralDiskBytes: 32 << 30,
@@ -289,7 +289,7 @@ func TestDefaultBuildEnvelopeFitsDefaultBuildWorker(t *testing.T) {
 	capabilities.VMGuestEphemeralDiskBytes = 32 << 30
 	capabilities.GuestEphemeralDiskBytes = 32 << 30
 	client := &consumerTestClient{
-		buildLease: api.WorkerDeploymentBuildLease{
+		buildLease: workerapi.DeploymentBuildLease{
 			ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
 			RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
 			RequestedGuestEphemeralDiskBytes: 32 << 30,
@@ -315,7 +315,7 @@ func TestDefaultBuildEnvelopeFitsDefaultBuildWorker(t *testing.T) {
 }
 
 func TestBuildPreStartRejectionsReturnSuccessfulNilWork(t *testing.T) {
-	validLease := api.WorkerDeploymentBuildLease{
+	validLease := workerapi.DeploymentBuildLease{
 		ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
 		RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
 		RequestedGuestEphemeralDiskBytes: 32 << 30,
@@ -323,37 +323,37 @@ func TestBuildPreStartRejectionsReturnSuccessfulNilWork(t *testing.T) {
 	tests := []struct {
 		name        string
 		reason      string
-		mutate      func(*api.WorkerCapabilities, *api.WorkerDeploymentBuildLease, *api.WorkerDeploymentBuild)
+		mutate      func(*workerapi.Capabilities, *workerapi.DeploymentBuildLease, *workerapi.DeploymentBuild)
 		withBuilder bool
 	}{
 		{
 			name: "requirements unsupported", reason: "requirements_unsupported", withBuilder: true,
-			mutate: func(capabilities *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease, _ *api.WorkerDeploymentBuild) {
+			mutate: func(capabilities *workerapi.Capabilities, _ *workerapi.DeploymentBuildLease, _ *workerapi.DeploymentBuild) {
 				capabilities.VMMilliCPU = 1999
 			},
 		},
 		{
 			name: "runtime architecture mismatch", reason: "requirements_unsupported", withBuilder: true,
-			mutate: func(capabilities *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease, _ *api.WorkerDeploymentBuild) {
+			mutate: func(capabilities *workerapi.Capabilities, _ *workerapi.DeploymentBuildLease, _ *workerapi.DeploymentBuild) {
 				capabilities.RuntimeArch = "aarch64"
 			},
 		},
 		{
 			name: "malformed runtime descriptor", reason: "requirements_unsupported", withBuilder: true,
-			mutate: func(_ *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease, deployment *api.WorkerDeploymentBuild) {
+			mutate: func(_ *workerapi.Capabilities, _ *workerapi.DeploymentBuildLease, deployment *workerapi.DeploymentBuild) {
 				deployment.Runtime.SizeBytes = 0
 			},
 		},
 		{
 			name: "unregistered toolchain", reason: "requirements_unsupported", withBuilder: true,
-			mutate: func(_ *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease, deployment *api.WorkerDeploymentBuild) {
+			mutate: func(_ *workerapi.Capabilities, _ *workerapi.DeploymentBuildLease, deployment *workerapi.DeploymentBuild) {
 				deployment.Toolchain.Digest = "invalid"
 			},
 		},
 		{name: "builder unavailable", reason: "builder_unavailable"},
 		{
 			name: "lease deadline too short", reason: "lease_deadline_too_short", withBuilder: true,
-			mutate: func(_ *api.WorkerCapabilities, lease *api.WorkerDeploymentBuildLease, _ *api.WorkerDeploymentBuild) {
+			mutate: func(_ *workerapi.Capabilities, lease *workerapi.DeploymentBuildLease, _ *workerapi.DeploymentBuild) {
 				lease.ExpiresAt = time.Now()
 			},
 		},
@@ -416,7 +416,7 @@ func TestBuildAdmissionIncludesRuntimeOccupancy(t *testing.T) {
 		t.Fatalf("reserve runtime = (%t, %v)", created, err)
 	}
 	client := &consumerTestClient{
-		buildLease: api.WorkerDeploymentBuildLease{
+		buildLease: workerapi.DeploymentBuildLease{
 			ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
 			RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
 			RequestedGuestEphemeralDiskBytes: 32 << 30,
@@ -458,8 +458,8 @@ func TestVerifierInfrastructureFailureUsesDeliveryFailureBoundary(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease := api.WorkerDeploymentBuildLease{DeploymentID: "deployment-1"}
-	if err := runner.executeStartedBuild(context.Background(), lease, api.WorkerDeploymentBuild{}); err != nil {
+	lease := workerapi.DeploymentBuildLease{DeploymentID: "deployment-1"}
+	if err := runner.executeStartedBuild(context.Background(), lease, workerapi.DeploymentBuild{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := client.buildDelivery.Load(); got != 1 {
@@ -468,7 +468,7 @@ func TestVerifierInfrastructureFailureUsesDeliveryFailureBoundary(t *testing.T) 
 	if got := client.buildComplete.Load(); got != 0 {
 		t.Fatalf("completion calls = %d", got)
 	}
-	if got := client.deliveryReason.Load(); got != api.WorkerDeploymentBuildDeliveryProgramVerifierFailed {
+	if got := client.deliveryReason.Load(); got != workerapi.DeploymentBuildDeliveryProgramVerifierFailed {
 		t.Fatalf("delivery reason = %v", got)
 	}
 }
@@ -480,7 +480,7 @@ func TestUnclassifiedBuildFailureWaitsForLeaseExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = runner.executeStartedBuild(context.Background(), api.WorkerDeploymentBuildLease{DeploymentID: "deployment-1"}, api.WorkerDeploymentBuild{})
+	err = runner.executeStartedBuild(context.Background(), workerapi.DeploymentBuildLease{DeploymentID: "deployment-1"}, workerapi.DeploymentBuild{})
 	if err == nil {
 		t.Fatal("unclassified builder error must be returned")
 	}
@@ -496,7 +496,7 @@ func TestBuildCleanupAmbiguityRetainsReservationAndTerminatesWorker(t *testing.T
 	capabilities := testCapabilities()
 	capabilities.MaxBuildExecutors = 1
 	capabilities.SupportsBuild = true
-	lease := api.WorkerDeploymentBuildLease{
+	lease := workerapi.DeploymentBuildLease{
 		ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
 		RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
 		RequestedGuestEphemeralDiskBytes: 32 << 30,
@@ -546,7 +546,7 @@ func TestBuildServiceFailureRetainsReservationAndTerminatesWorker(t *testing.T) 
 	capabilities := testCapabilities()
 	capabilities.MaxBuildExecutors = 1
 	capabilities.SupportsBuild = true
-	lease := api.WorkerDeploymentBuildLease{
+	lease := workerapi.DeploymentBuildLease{
 		ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
 		RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
 		RequestedGuestEphemeralDiskBytes: 32 << 30,
@@ -590,7 +590,7 @@ func TestCanceledBuildReleasesReservation(t *testing.T) {
 	capabilities := testCapabilities()
 	capabilities.MaxBuildExecutors = 1
 	capabilities.SupportsBuild = true
-	lease := api.WorkerDeploymentBuildLease{
+	lease := workerapi.DeploymentBuildLease{
 		ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
 		RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
 		RequestedGuestEphemeralDiskBytes: 32 << 30,

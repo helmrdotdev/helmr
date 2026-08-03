@@ -5,13 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestValidateWorkerStartupRecoveryRequiresCanonicalUUIDv7(t *testing.T) {
 	now := time.Now().UTC()
 	valid := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
-	base := api.WorkerStartupRecoveryRequest{
+	base := workerapi.StartupRecoveryRequest{
 		InventoryComplete: true,
 		InventoryScope:    "worker_runtime_state_roots_v0",
 		ObservedAt:        now,

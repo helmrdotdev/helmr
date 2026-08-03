@@ -12,14 +12,14 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
 )
@@ -498,8 +498,8 @@ func writeCheckpointPauseReadyFrame(t *testing.T, w io.Writer, runWaitID string,
 	}
 }
 
-func testCheckpointWorkspaceBase() api.WorkerCheckpointWorkspaceBase {
-	return api.WorkerCheckpointWorkspaceBase{
+func testCheckpointWorkspaceBase() workerapi.CheckpointWorkspaceBase {
+	return workerapi.CheckpointWorkspaceBase{
 		ArtifactDigest:    "sha256:workspace",
 		ArtifactMediaType: "application/vnd.helmr.workspace.v0.tar",
 		ArtifactEncoding:  "tar",
@@ -746,7 +746,7 @@ func addCheckpointRuntimeSubstrate(t *testing.T, artifact *vm.SnapshotArtifact) 
 	}
 }
 
-func checkpointPhaseHasFilepackStats(phases []api.WorkerCheckpointPhase, name string) bool {
+func checkpointPhaseHasFilepackStats(phases []workerapi.CheckpointPhase, name string) bool {
 	for _, phase := range phases {
 		if phase.Name == name && phase.Filepack != nil && phase.Filepack.LogicalBytes > 0 &&
 			phase.Filepack.SparseSupported != nil && *phase.Filepack.SparseSupported {

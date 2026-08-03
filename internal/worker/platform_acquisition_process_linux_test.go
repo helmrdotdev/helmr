@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"golang.org/x/sys/unix"
 )
 
@@ -30,7 +30,7 @@ func TestValidatePlatformAcquisitionProcess(t *testing.T) {
 		WorkDir:          "/var/lib/helmr/acquisition",
 		XZ:               "/nix/store/xz",
 	}
-	request := api.WorkerPlatformAcquisition{
+	request := workerapi.PlatformAcquisition{
 		DeploymentID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
 	}
 	if err := validatePlatformAcquisitionProcess(process, request); err != nil {

@@ -3,7 +3,7 @@ package deployment
 import (
 	"fmt"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type verifierJob string
@@ -49,7 +49,7 @@ func (err *verifierInvalidError) Error() string {
 }
 
 type buildDeliveryError struct {
-	reason api.WorkerDeploymentBuildDeliveryFailureReason
+	reason workerapi.DeploymentBuildDeliveryFailureReason
 	err    error
 }
 
@@ -61,10 +61,10 @@ func (err *buildDeliveryError) Unwrap() error {
 	return err.err
 }
 
-func (err *buildDeliveryError) DeploymentBuildDeliveryFailureReason() api.WorkerDeploymentBuildDeliveryFailureReason {
+func (err *buildDeliveryError) DeploymentBuildDeliveryFailureReason() workerapi.DeploymentBuildDeliveryFailureReason {
 	return err.reason
 }
 
 func buildGuestDeliveryFailure(err error) error {
-	return &buildDeliveryError{reason: api.WorkerDeploymentBuildDeliveryBuildGuestFailed, err: err}
+	return &buildDeliveryError{reason: workerapi.DeploymentBuildDeliveryBuildGuestFailed, err: err}
 }

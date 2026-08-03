@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/token"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -38,7 +38,7 @@ type requestedRunWaitIdentity struct {
 	resumeAttachID uuid.UUID
 }
 
-func parseRequestedRunWaitIdentity(request api.WorkerCreateRunWaitRequest) (requestedRunWaitIdentity, error) {
+func parseRequestedRunWaitIdentity(request workerapi.CreateRunWaitRequest) (requestedRunWaitIdentity, error) {
 	correlationID, err := ids.Parse(request.CorrelationID)
 	if err != nil {
 		return requestedRunWaitIdentity{}, errors.New("correlation_id must be a canonical UUIDv7")
@@ -60,7 +60,7 @@ func parseRequestedRunWaitIdentity(request api.WorkerCreateRunWaitRequest) (requ
 }
 
 func (s *Server) workerCreateRunWait(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerCreateRunWaitRequest
+	var request workerapi.CreateRunWaitRequest
 	if err := decodeClosedWorkerRequest(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker Run Wait JSON: %w", err)))
 		return
@@ -71,11 +71,11 @@ func (s *Server) workerCreateRunWait(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch request.Kind {
-	case api.WorkerRunWaitKindToken:
+	case workerapi.RunWaitKindToken:
 		s.workerCreateTokenRunWait(w, r, request, identity)
-	case api.WorkerRunWaitKindTimer:
+	case workerapi.RunWaitKindTimer:
 		s.workerCreateTimerRunWait(w, r, request, identity)
-	case api.WorkerRunWaitKindActorInput:
+	case workerapi.RunWaitKindActorInput:
 		s.workerCreateActorInputRunWait(w, r, request, identity)
 	default:
 		writeError(w, badRequest(fmt.Errorf("Run Wait kind %q is not implemented by the durable runtime", request.Kind)))
@@ -85,7 +85,7 @@ func (s *Server) workerCreateRunWait(w http.ResponseWriter, r *http.Request) {
 func (s *Server) workerCreateTokenRunWait(
 	w http.ResponseWriter,
 	r *http.Request,
-	request api.WorkerCreateRunWaitRequest,
+	request workerapi.CreateRunWaitRequest,
 	identity requestedRunWaitIdentity,
 ) {
 	var params workerTokenWaitParams
@@ -167,7 +167,7 @@ func (s *Server) workerCreateTokenRunWait(
 		writeError(w, errors.New("register worker Token Wait"))
 		return
 	}
-	response := api.WorkerCreateRunWaitResponse{
+	response := workerapi.CreateRunWaitResponse{
 		RunID: pgvalue.UUIDString(locators.RunID), RunWaitID: registered.WaitID.String(),
 		ResumeAttachID: resumeAttachID.String(), RuntimeInstanceID: pgvalue.UUIDString(locators.RuntimeInstanceID),
 		RuntimeEpoch: worker.WorkerEpoch, CheckpointDelayMs: checkpointDelay.Milliseconds(),
@@ -186,7 +186,7 @@ func (s *Server) workerCreateTokenRunWait(
 }
 
 func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerRunWaitPollRequest
+	var request workerapi.RunWaitPollRequest
 	if err := decodeClosedWorkerRequest(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker Run Wait poll JSON: %w", err)))
 		return
@@ -220,10 +220,10 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		writeError(w, conflict(errors.New("worker Run Wait fence is stale")))
 		return
 	}
-	response := api.WorkerRunWaitPollResponse{RunID: pgvalue.UUIDString(locators.RunID), RunWaitID: waitID.String()}
+	response := workerapi.RunWaitPollResponse{RunID: pgvalue.UUIDString(locators.RunID), RunWaitID: waitID.String()}
 	switch wait.SuspensionState {
 	case db.RunWaitStateReleased:
-		response.Status = api.WorkerRunWaitPollStatusResumeRequested
+		response.Status = workerapi.RunWaitPollStatusResumeRequested
 		if wait.Kind == db.WaitKindActorInput {
 			response.ResumeKind, response.ResumePayload, err = actorInputWaitDecision(wait)
 		} else if wait.Kind == db.WaitKindTimer {
@@ -257,14 +257,14 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if wait.SuspensionState == db.RunWaitStateHot {
-			response.Status = api.WorkerRunWaitPollStatusWaiting
+			response.Status = workerapi.RunWaitPollStatusWaiting
 			break
 		}
 		if !wait.SuspendCheckpointID.Valid || wait.CheckpointRequestVersion <= 0 {
 			writeError(w, errors.New("checkpointing Run Wait has incomplete authority"))
 			return
 		}
-		response.Status = api.WorkerRunWaitPollStatusCheckpointRequested
+		response.Status = workerapi.RunWaitPollStatusCheckpointRequested
 		response.RequestVersion = wait.CheckpointRequestVersion
 		response.CheckpointID = pgvalue.UUIDString(wait.SuspendCheckpointID)
 		response.CaptureWorkspace = true
@@ -273,18 +273,18 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 			writeError(w, errors.New("checkpointing Run Wait has incomplete authority"))
 			return
 		}
-		response.Status = api.WorkerRunWaitPollStatusCheckpointRequested
+		response.Status = workerapi.RunWaitPollStatusCheckpointRequested
 		response.RequestVersion = wait.CheckpointRequestVersion
 		response.CheckpointID = pgvalue.UUIDString(wait.SuspendCheckpointID)
 		response.CaptureWorkspace = true
 	default:
-		response.Status = api.WorkerRunWaitPollStatusTerminal
+		response.Status = workerapi.RunWaitPollStatusTerminal
 	}
 	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) workerAcknowledgeRunWaitResume(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerRunWaitResumeAckRequest
+	var request workerapi.RunWaitResumeAckRequest
 	if err := decodeClosedWorkerRequest(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker Run Wait resume acknowledgement JSON: %w", err)))
 		return
@@ -295,7 +295,7 @@ func (s *Server) workerAcknowledgeRunWaitResume(w http.ResponseWriter, r *http.R
 func (s *Server) requestWorkerRunWaitCheckpoint(
 	ctx context.Context,
 	worker workerActor,
-	receipt api.WorkerRunLeaseFence,
+	receipt workerapi.RunLeaseFence,
 	parsed parsedRunLeaseFence,
 	waitID uuid.UUID,
 ) (db.RunWait, error) {
@@ -376,7 +376,7 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 
 func (s *Server) loadRunWaitRegistrationAuthority(
 	ctx context.Context,
-	receipt api.WorkerRunLeaseFence,
+	receipt workerapi.RunLeaseFence,
 ) (parsedRunLeaseFence, workerActor, db.GetLiveRunLeaseLocatorsRow, db.Run, error) {
 	parsed, worker, locators, err := s.loadRunWaitLeaseAuthority(ctx, receipt)
 	if err != nil {
@@ -429,7 +429,7 @@ func childRunWaitDecision(wait db.RunWait) (string, json.RawMessage, error) {
 
 func (s *Server) loadRunWaitLeaseAuthority(
 	ctx context.Context,
-	receipt api.WorkerRunLeaseFence,
+	receipt workerapi.RunLeaseFence,
 ) (parsedRunLeaseFence, workerActor, db.GetLiveRunLeaseLocatorsRow, error) {
 	parsed, err := parseRunLeaseFence(receipt)
 	if err != nil {
@@ -450,7 +450,7 @@ func (s *Server) loadRunWaitLeaseAuthority(
 	return parsed, worker, locators, nil
 }
 
-func runWaitDeadlines(request api.WorkerCreateRunWaitRequest, defaultIdleTimeout time.Duration) (pgtype.Timestamptz, pgtype.Int8, pgtype.Timestamptz, time.Duration, error) {
+func runWaitDeadlines(request workerapi.CreateRunWaitRequest, defaultIdleTimeout time.Duration) (pgtype.Timestamptz, pgtype.Int8, pgtype.Timestamptz, time.Duration, error) {
 	now := time.Now().UTC()
 	checkpointDelay := rootRunWaitHotWindow
 	var timeoutAt pgtype.Timestamptz

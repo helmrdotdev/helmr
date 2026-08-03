@@ -16,7 +16,6 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
@@ -33,6 +32,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	workerdaemon "github.com/helmrdotdev/helmr/internal/worker"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func run(log *slog.Logger) error {
@@ -110,7 +110,7 @@ func run(log *slog.Logger) error {
 	workerCredential, err := resolveAuthenticatedWorkerCredential(ctx, cfg, workDir, func(credential workerCredentialFile) error {
 		candidate, candidateErr := client.New(cfg.ControlURL,
 			client.WithWorkerAuth(credential.WorkerInstanceID, credential.WorkerInstanceSecret),
-			client.WithWorkerService(serviceID, api.CurrentWorkerProtocolVersion, supportsRun, supportsBuild),
+			client.WithWorkerService(serviceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild),
 		)
 		if candidateErr != nil {
 			return candidateErr
@@ -354,8 +354,8 @@ func run(log *slog.Logger) error {
 			return errors.New("build worker allocatable capacity cannot host the fixed build guest")
 		}
 	}
-	workerCapabilities := api.WorkerCapabilities{
-		ProtocolVersion:           api.CurrentWorkerProtocolVersion,
+	workerCapabilities := workerapi.Capabilities{
+		ProtocolVersion:           workerapi.CurrentProtocolVersion,
 		WorkerVersion:             version.Version,
 		RuntimeID:                 runtimeIdentity.ID,
 		RuntimeArch:               runtimeIdentity.Arch,
@@ -566,7 +566,7 @@ func run(log *slog.Logger) error {
 			// the proof submitted to control and therefore must be empty.
 			return workerdaemon.RecoverLocalVMState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
 		},
-		DrainCompleted: func(status api.WorkerStatusResponse) error {
+		DrainCompleted: func(status workerapi.StatusResponse) error {
 			return writeDrainCompleteMarker(workDir, status.WorkerInstanceID)
 		},
 	})

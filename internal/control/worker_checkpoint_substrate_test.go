@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -41,10 +41,10 @@ func TestCheckpointSubstrateAuthorityMatchesRelationalIdentity(t *testing.T) {
 		LayoutAbi:              "layout-v0",
 		SubstrateSizeBytes:     4096,
 	}
-	manifest := api.WorkerCheckpointManifest{
-		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
-			Runtime: api.WorkerCheckpointRuntime{
-				Substrate: &api.WorkerCheckpointRuntimeSubstrate{
+	manifest := workerapi.CheckpointManifest{
+		RecoveryPoint: workerapi.CheckpointRecoveryPoint{
+			Runtime: workerapi.CheckpointRuntime{
+				Substrate: &workerapi.CheckpointRuntimeSubstrate{
 					Digest:     row.SubstrateDigest,
 					Format:     row.SubstrateFormat,
 					BuilderABI: row.BuilderAbi,
@@ -64,7 +64,7 @@ func TestCheckpointSubstrateAuthorityMatchesRelationalIdentity(t *testing.T) {
 	}
 
 	mismatched := manifest
-	mismatched.RecoveryPoint.Runtime.Substrate = &api.WorkerCheckpointRuntimeSubstrate{
+	mismatched.RecoveryPoint.Runtime.Substrate = &workerapi.CheckpointRuntimeSubstrate{
 		Digest:     "sha256:different",
 		Format:     row.SubstrateFormat,
 		BuilderABI: row.BuilderAbi,
@@ -95,7 +95,7 @@ func TestCheckpointSubstrateAuthorityMatchesRelationalIdentity(t *testing.T) {
 		context.Background(),
 		store,
 		authority,
-		api.WorkerCheckpointManifest{},
+		workerapi.CheckpointManifest{},
 	); err != nil {
 		t.Fatalf("absent substrate authority error = %v", err)
 	}

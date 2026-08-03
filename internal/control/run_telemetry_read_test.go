@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type runTelemetryFrontierStore struct {
@@ -85,7 +86,7 @@ func TestProjectRunLogRecordDistinguishesStructuredAndStream(t *testing.T) {
 	}
 	structured, err := projectRunLogRecord(api.RunLogChunk{
 		ID: "tc1.structured", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-		AttemptNumber: 2, Stream: string(api.WorkerLogStreamStructured),
+		AttemptNumber: 2, Stream: string(workerapi.LogStreamStructured),
 		ContentBase64: base64.StdEncoding.EncodeToString(structuredBody), At: at,
 	}, "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38")
 	if err != nil {
@@ -100,7 +101,7 @@ func TestProjectRunLogRecordDistinguishesStructuredAndStream(t *testing.T) {
 	}
 	stream, err := projectRunLogRecord(api.RunLogChunk{
 		ID: "tc1.stdout", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-		AttemptNumber: 2, Stream: string(api.WorkerLogStreamStdout),
+		AttemptNumber: 2, Stream: string(workerapi.LogStreamStdout),
 		ObservedSeq: 3, ContentBase64: "b2sK", Bytes: 3, At: at,
 	}, "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38")
 	if err != nil {

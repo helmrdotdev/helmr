@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -50,8 +50,8 @@ func (s workerLogReplayStore) AppendRunLogChunk(_ context.Context, params db.App
 func TestWorkerAppendLogsReturnsConflictForChangedReplay(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
 	lease := validRunLeaseAssignment(workerID)
-	body, err := json.Marshal(api.WorkerRunLogAppendRequest{
-		Lease: lease.Fence(), Stream: api.WorkerLogStreamStdout, ObservedSeq: 1,
+	body, err := json.Marshal(workerapi.RunLogAppendRequest{
+		Lease: lease.Fence(), Stream: workerapi.LogStreamStdout, ObservedSeq: 1,
 		ContentBase64: "YWxwaGE=",
 	})
 	if err != nil {
@@ -81,8 +81,8 @@ func TestWorkerAppendLogsReturnsConflictForChangedReplay(t *testing.T) {
 func TestWorkerAppendLogsAcceptsIdenticalReplay(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
 	lease := validRunLeaseAssignment(workerID)
-	body, err := json.Marshal(api.WorkerRunLogAppendRequest{
-		Lease: lease.Fence(), Stream: api.WorkerLogStreamStdout, ObservedSeq: 1,
+	body, err := json.Marshal(workerapi.RunLogAppendRequest{
+		Lease: lease.Fence(), Stream: workerapi.LogStreamStdout, ObservedSeq: 1,
 		ContentBase64: "YWxwaGE=",
 	})
 	if err != nil {
@@ -118,8 +118,8 @@ func TestWorkerAppendLogsAcceptsIdenticalReplay(t *testing.T) {
 func TestWorkerAppendLogsReplaysAfterLeaseIsNoLongerLive(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
 	lease := validRunLeaseAssignment(workerID)
-	body, err := json.Marshal(api.WorkerRunLogAppendRequest{
-		Lease: lease.Fence(), Stream: api.WorkerLogStreamStdout, ObservedSeq: 1,
+	body, err := json.Marshal(workerapi.RunLogAppendRequest{
+		Lease: lease.Fence(), Stream: workerapi.LogStreamStdout, ObservedSeq: 1,
 		ContentBase64: "YWxwaGE=",
 	})
 	if err != nil {
@@ -137,7 +137,7 @@ func TestWorkerAppendLogsReplaysAfterLeaseIsNoLongerLive(t *testing.T) {
 				RunID:                 pgvalue.UUID(uuid.MustParse(lease.RunID)),
 				RunLeaseID:            pgvalue.UUID(uuid.MustParse(lease.ID)),
 				AttemptNumber:         pgtype.Int4{Int32: lease.AttemptNumber, Valid: true},
-				Stream:                string(api.WorkerLogStreamStdout),
+				Stream:                string(workerapi.LogStreamStdout),
 				ObservedSeq:           pgtype.Int8{Int64: 1, Valid: true},
 				Content:               []byte("alpha"),
 				SizeBytes:             pgtype.Int8{Int64: 5, Valid: true},
@@ -167,8 +167,8 @@ func TestWorkerAppendLogsReplaysAfterLeaseIsNoLongerLive(t *testing.T) {
 func TestWorkerAppendLogsRejectsAnotherWorkersFence(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
 	lease := validRunLeaseAssignment(workerID)
-	body, err := json.Marshal(api.WorkerRunLogAppendRequest{
-		Lease: lease.Fence(), Stream: api.WorkerLogStreamStdout, ObservedSeq: 1,
+	body, err := json.Marshal(workerapi.RunLogAppendRequest{
+		Lease: lease.Fence(), Stream: workerapi.LogStreamStdout, ObservedSeq: 1,
 		ContentBase64: "YWxwaGE=",
 	})
 	if err != nil {

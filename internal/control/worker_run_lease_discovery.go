@@ -7,12 +7,12 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func (s *Server) workerDiscoverRunLeases(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerRunLeaseDiscoveryRequest
+	var request workerapi.RunLeaseDiscoveryRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil && !errors.Is(err, io.EOF) {

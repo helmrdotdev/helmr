@@ -3,9 +3,9 @@ package control
 import (
 	"context"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -18,7 +18,7 @@ func discoverWorkerRunLeases(
 	workerInstanceID pgtype.UUID,
 	workerEpoch int64,
 	protocolVersion string,
-) (api.WorkerRunLeaseDiscoveryResponse, error) {
+) (workerapi.RunLeaseDiscoveryResponse, error) {
 	rows, err := store.DiscoverWorkerRunLeaseWork(ctx, db.DiscoverWorkerRunLeaseWorkParams{
 		WorkerGroupID:         workerGroupID,
 		WorkerProtocolVersion: protocolVersion,
@@ -27,15 +27,15 @@ func discoverWorkerRunLeases(
 		WorkerEpoch:           workerEpoch,
 	})
 	if err != nil {
-		return api.WorkerRunLeaseDiscoveryResponse{}, err
+		return workerapi.RunLeaseDiscoveryResponse{}, err
 	}
 
-	items := make([]api.WorkerRunLeaseWork, 0, len(rows))
+	items := make([]workerapi.RunLeaseWork, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, api.WorkerRunLeaseWork{
+		items = append(items, workerapi.RunLeaseWork{
 			LeaseID:       pgvalue.MustUUIDValue(row.ID).String(),
 			LeaseSequence: row.LeaseSequence,
 		})
 	}
-	return api.WorkerRunLeaseDiscoveryResponse{Items: items}, nil
+	return workerapi.RunLeaseDiscoveryResponse{Items: items}, nil
 }

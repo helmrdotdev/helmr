@@ -6,13 +6,13 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestParseWorkerActorOutputAppendNormalizesPayload(t *testing.T) {
 	lease := validRunLeaseAssignment(uuid.Must(uuid.NewV7()))
-	request := api.WorkerAppendActorOutputRequest{
+	request := workerapi.AppendActorOutputRequest{
 		Lease: lease.Fence(), CorrelationID: uuid.Must(uuid.NewV7()).String(),
 		Data: json.RawMessage(`{"b":2,"a":1}`), ContentType: " application/json ",
 		IdempotencyKey: "output-1",

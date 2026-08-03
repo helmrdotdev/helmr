@@ -8,50 +8,50 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 const defaultDeploymentBuildCompletionGrace = 30 * time.Second
 
 type ControlClient interface {
-	DiscoverRunLeases(ctx context.Context) (api.WorkerRunLeaseDiscoveryResponse, error)
-	NextPlatformAcquisition(ctx context.Context) (api.WorkerPlatformAcquisitionResponse, error)
-	CompletePlatformAcquisition(ctx context.Context, request api.WorkerPlatformAcquisitionCompleteRequest) (api.WorkerPlatformAcquisitionResult, error)
-	FailPlatformAcquisition(ctx context.Context, request api.WorkerPlatformAcquisitionFailRequest) (api.WorkerPlatformAcquisitionResult, error)
-	LeaseDeploymentBuild(ctx context.Context) (api.WorkerDeploymentBuildLeaseResponse, error)
-	StartDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease) (api.WorkerDeploymentBuildStartResponse, error)
-	RenewDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease) (api.WorkerDeploymentBuildRenewResponse, error)
-	RejectDeploymentBuild(ctx context.Context, request api.WorkerDeploymentBuildRejectRequest) error
-	ReportDeploymentBuildDeliveryFailure(ctx context.Context, request api.WorkerDeploymentBuildDeliveryFailureRequest) (api.WorkerDeploymentBuildResponse, error)
-	CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease, result json.RawMessage) (api.WorkerDeploymentBuildResponse, error)
-	ClaimWorkspaceMount(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerWorkspaceMountClaimResponse, error)
-	RenewWorkspaceMount(ctx context.Context, request api.WorkerWorkspaceMountRenewRequest) (api.WorkspaceMountResponse, error)
-	MarkWorkspaceMountMounted(ctx context.Context, request api.WorkerWorkspaceMountMountedRequest) (api.WorkspaceMountResponse, error)
-	CaptureWorkspaceMount(ctx context.Context, request api.WorkerWorkspaceMountCaptureRequest) (api.WorkerWorkspaceMountCaptureResponse, error)
-	StopWorkspaceMount(ctx context.Context, request api.WorkerWorkspaceMountStopRequest) (api.WorkspaceMountResponse, error)
-	FailWorkspaceMount(ctx context.Context, request api.WorkerWorkspaceMountFailRequest) (api.WorkspaceMountResponse, error)
-	ClaimWorkspaceExec(ctx context.Context, request api.WorkerWorkspaceExecClaimRequest) (api.WorkerWorkspaceExecClaimResponse, error)
-	CompleteWorkspaceExec(ctx context.Context, request api.WorkerWorkspaceExecCompleteRequest) (api.WorkspaceMountResponse, error)
+	DiscoverRunLeases(ctx context.Context) (workerapi.RunLeaseDiscoveryResponse, error)
+	NextPlatformAcquisition(ctx context.Context) (workerapi.PlatformAcquisitionResponse, error)
+	CompletePlatformAcquisition(ctx context.Context, request workerapi.PlatformAcquisitionCompleteRequest) (workerapi.PlatformAcquisitionResult, error)
+	FailPlatformAcquisition(ctx context.Context, request workerapi.PlatformAcquisitionFailRequest) (workerapi.PlatformAcquisitionResult, error)
+	LeaseDeploymentBuild(ctx context.Context) (workerapi.DeploymentBuildLeaseResponse, error)
+	StartDeploymentBuild(ctx context.Context, lease workerapi.DeploymentBuildLease) (workerapi.DeploymentBuildStartResponse, error)
+	RenewDeploymentBuild(ctx context.Context, lease workerapi.DeploymentBuildLease) (workerapi.DeploymentBuildRenewResponse, error)
+	RejectDeploymentBuild(ctx context.Context, request workerapi.DeploymentBuildRejectRequest) error
+	ReportDeploymentBuildDeliveryFailure(ctx context.Context, request workerapi.DeploymentBuildDeliveryFailureRequest) (workerapi.DeploymentBuildResponse, error)
+	CompleteDeploymentBuild(ctx context.Context, lease workerapi.DeploymentBuildLease, result json.RawMessage) (workerapi.DeploymentBuildResponse, error)
+	ClaimWorkspaceMount(ctx context.Context, capabilities workerapi.Capabilities) (workerapi.WorkspaceMountClaimResponse, error)
+	RenewWorkspaceMount(ctx context.Context, request workerapi.WorkspaceMountRenewRequest) (workerapi.WorkspaceMountResponse, error)
+	MarkWorkspaceMountMounted(ctx context.Context, request workerapi.WorkspaceMountMountedRequest) (workerapi.WorkspaceMountResponse, error)
+	CaptureWorkspaceMount(ctx context.Context, request workerapi.WorkspaceMountCaptureRequest) (workerapi.WorkspaceMountCaptureResponse, error)
+	StopWorkspaceMount(ctx context.Context, request workerapi.WorkspaceMountStopRequest) (workerapi.WorkspaceMountResponse, error)
+	FailWorkspaceMount(ctx context.Context, request workerapi.WorkspaceMountFailRequest) (workerapi.WorkspaceMountResponse, error)
+	ClaimWorkspaceExec(ctx context.Context, request workerapi.WorkspaceExecClaimRequest) (workerapi.WorkspaceExecClaimResponse, error)
+	CompleteWorkspaceExec(ctx context.Context, request workerapi.WorkspaceExecCompleteRequest) (workerapi.WorkspaceMountResponse, error)
 }
 
 type RunLeaseExecutor interface {
-	ExecuteRunLease(context.Context, api.WorkerRunLeaseWork) error
+	ExecuteRunLease(context.Context, workerapi.RunLeaseWork) error
 }
 
 type BuildExecutor interface {
 	Build(
 		ctx context.Context,
-		lease api.WorkerDeploymentBuildLease,
-		deployment api.WorkerDeploymentBuild,
+		lease workerapi.DeploymentBuildLease,
+		deployment workerapi.DeploymentBuild,
 		revocations deployment.ImageOperationRevocations,
 	) (json.RawMessage, error)
 }
 
 type PlatformAcquirer interface {
-	Acquire(context.Context, api.WorkerPlatformAcquisition) (api.WorkerPlatformAcquisitionCandidates, error)
+	Acquire(context.Context, workerapi.PlatformAcquisition) (workerapi.PlatformAcquisitionCandidates, error)
 }
 
 type BuildPolicy interface {
@@ -63,7 +63,7 @@ type BuildPolicy interface {
 }
 
 type Materializer interface {
-	RunWorkspaceMount(ctx context.Context, mount api.WorkerWorkspaceMount, client api.WorkerWorkspaceMaterializerControlClient) error
+	RunWorkspaceMount(ctx context.Context, mount workerapi.WorkspaceMount, client workerapi.WorkspaceMaterializerControlClient) error
 }
 
 type Runner struct {
@@ -73,7 +73,7 @@ type Runner struct {
 	buildExecutor                  BuildExecutor
 	buildPolicy                    BuildPolicy
 	materializer                   Materializer
-	capabilities                   api.WorkerCapabilities
+	capabilities                   workerapi.Capabilities
 	resources                      *capacity.Ledger
 	pollEvery                      time.Duration
 	renewEvery                     time.Duration
@@ -127,7 +127,7 @@ func WithCapacity(resources *capacity.Ledger) Option {
 	}
 }
 
-func NewRunner(client ControlClient, executor RunLeaseExecutor, capabilities api.WorkerCapabilities, opts ...Option) (*Runner, error) {
+func NewRunner(client ControlClient, executor RunLeaseExecutor, capabilities workerapi.Capabilities, opts ...Option) (*Runner, error) {
 	if client == nil {
 		return nil, errors.New("worker client is required")
 	}

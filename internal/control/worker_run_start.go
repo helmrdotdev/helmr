@@ -8,10 +8,10 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -20,7 +20,7 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerRunStartRequest
+	var request workerapi.RunStartRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
@@ -57,16 +57,16 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("start Run"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerRunStartResponse{Lease: receipt})
+	writeJSON(w, http.StatusOK, workerapi.RunStartResponse{Lease: receipt})
 }
 
 func (s *Server) startRun(
 	ctx context.Context,
 	worker workerActor,
 	leaseID pgtype.UUID,
-	expected api.WorkerRunLeaseFence,
+	expected workerapi.RunLeaseFence,
 	requested runStartArm,
-) (api.WorkerRunLeaseFence, error) {
+) (workerapi.RunLeaseFence, error) {
 	err := s.inTx(ctx, func(work *txWork) error {
 		locators, err := work.q.GetRunLeaseStartLocators(ctx, db.GetRunLeaseStartLocatorsParams{
 			ID: leaseID, LeaseSequence: expected.LeaseSequence, WorkerGroupID: worker.WorkerGroupID,
@@ -134,7 +134,7 @@ func (s *Server) startRun(
 		return nil
 	})
 	if err != nil {
-		return api.WorkerRunLeaseFence{}, err
+		return workerapi.RunLeaseFence{}, err
 	}
 	return expected, nil
 }

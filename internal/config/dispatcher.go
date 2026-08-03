@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func LoadDispatcher() (Dispatcher, error) {
@@ -56,7 +56,7 @@ func LoadDispatcher() (Dispatcher, error) {
 		return cfg, errors.New("schedule claim and concurrency settings must not exceed 2147483647")
 	}
 	if cfg.RunPreparationLimit <= 0 || cfg.RunReservationTTL <= 0 || cfg.RunLeaseStartDeadline <= 0 ||
-		cfg.RunLeaseTTL < api.WorkerRunLeaseMinTTL || cfg.RunLeaseStartDeadline > cfg.RunLeaseTTL {
+		cfg.RunLeaseTTL < workerapi.RunLeaseMinTTL || cfg.RunLeaseStartDeadline > cfg.RunLeaseTTL {
 		return cfg, errors.New("run preparation and lease settings are invalid")
 	}
 	if cfg.DatabaseURL == "" {

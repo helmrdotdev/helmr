@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestAuthorizeWorkerRunSourceRequiresWorkerAndLiveFence(t *testing.T) {
@@ -49,5 +49,5 @@ func TestAuthorizeWorkerRunSourceRequiresWorkerAndLiveFence(t *testing.T) {
 }
 
 type runLeaseClaimAuthorityFixture struct {
-	fence api.WorkerRunLeaseFence
+	fence workerapi.RunLeaseFence
 }

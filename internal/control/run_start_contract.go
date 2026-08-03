@@ -3,10 +3,10 @@ package control
 import (
 	"errors"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -28,7 +28,7 @@ type runStartValidationAuthority struct {
 	runWait        db.RunWait
 }
 
-func parseRunStartArm(request api.WorkerRunStartRequest) (runStartArm, error) {
+func parseRunStartArm(request workerapi.RunStartRequest) (runStartArm, error) {
 	parseIDs := func(runWait, checkpoint, attach string) (pgtype.UUID, pgtype.UUID, pgtype.UUID, error) {
 		values := []string{runWait, checkpoint, attach}
 		parsed := make([]pgtype.UUID, len(values))

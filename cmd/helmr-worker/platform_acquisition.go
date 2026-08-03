@@ -8,10 +8,10 @@ import (
 	"io"
 	"os"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	workerdaemon "github.com/helmrdotdev/helmr/internal/worker"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 const platformAcquisitionInputBytes = 64 << 10
@@ -26,7 +26,7 @@ func runPlatformAcquisitionChild(
 	if len(arguments) != 2 {
 		return true, errors.New("Platform acquisition child arguments are invalid")
 	}
-	var request api.WorkerPlatformAcquisition
+	var request workerapi.PlatformAcquisition
 	decoder := json.NewDecoder(io.LimitReader(os.Stdin, platformAcquisitionInputBytes+1))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
@@ -70,7 +70,7 @@ func runPlatformAcquisitionChild(
 	} else {
 		result.Error = acquisitionErr.Error()
 		var deterministic interface {
-			PlatformAcquisitionFailureReason() api.WorkerPlatformAcquisitionFailureReason
+			PlatformAcquisitionFailureReason() workerapi.PlatformAcquisitionFailureReason
 		}
 		if errors.As(acquisitionErr, &deterministic) {
 			result.Reason = deterministic.PlatformAcquisitionFailureReason()

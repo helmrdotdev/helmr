@@ -8,17 +8,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/client"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type childTaskControl struct {
 	*testRunLeaseControl
-	request      api.WorkerInvokeChildTaskRequest
-	requests     []api.WorkerInvokeChildTaskRequest
-	response     api.WorkerInvokeChildTaskResponse
+	request      workerapi.InvokeChildTaskRequest
+	requests     []workerapi.InvokeChildTaskRequest
+	response     workerapi.InvokeChildTaskResponse
 	err          error
 	errors       []error
 	firstAttempt chan struct{}
@@ -26,8 +26,8 @@ type childTaskControl struct {
 
 func (control *childTaskControl) InvokeChildTask(
 	_ context.Context,
-	request api.WorkerInvokeChildTaskRequest,
-) (api.WorkerInvokeChildTaskResponse, error) {
+	request workerapi.InvokeChildTaskRequest,
+) (workerapi.InvokeChildTaskResponse, error) {
 	control.request = request
 	control.requests = append(control.requests, request)
 	if len(control.errors) != 0 {
@@ -37,7 +37,7 @@ func (control *childTaskControl) InvokeChildTask(
 			close(control.firstAttempt)
 			control.firstAttempt = nil
 		}
-		return api.WorkerInvokeChildTaskResponse{}, err
+		return workerapi.InvokeChildTaskResponse{}, err
 	}
 	return control.response, control.err
 }
@@ -50,9 +50,9 @@ func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
 	idempotencyKey := "resize:image-1"
 	control := &childTaskControl{
 		testRunLeaseControl: &testRunLeaseControl{},
-		response: api.WorkerInvokeChildTaskResponse{
+		response: workerapi.InvokeChildTaskResponse{
 			CorrelationID: correlationID,
-			Completed: &api.WorkerChildTaskStartResult{
+			Completed: &workerapi.ChildTaskStartResult{
 				RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 			},
 		},
@@ -114,9 +114,9 @@ func TestHandleChildTaskInvokeRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	firstAttempt := make(chan struct{})
 	control := &childTaskControl{
 		testRunLeaseControl: &testRunLeaseControl{},
-		response: api.WorkerInvokeChildTaskResponse{
+		response: workerapi.InvokeChildTaskResponse{
 			CorrelationID: correlationID,
-			Completed: &api.WorkerChildTaskStartResult{
+			Completed: &workerapi.ChildTaskStartResult{
 				RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3a",
 			},
 		},
@@ -171,9 +171,9 @@ func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {
 	resumeAttachID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc26"
 	actorSequence := int64(9)
 	waitClient := &fakeRunWaitClient{
-		polls: []api.WorkerRunWaitPollResponse{{
+		polls: []workerapi.RunWaitPollResponse{{
 			RunID: lease.RunID, RunWaitID: runWaitID,
-			Status:     api.WorkerRunWaitPollStatusResumeRequested,
+			Status:     workerapi.RunWaitPollStatusResumeRequested,
 			ResumeKind: "completed",
 			ResumePayload: json.RawMessage(
 				`{"ok":true,"output":{"resized":true},"run":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"}}`,
@@ -186,9 +186,9 @@ func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {
 	openedWait.ResumeAttachID = resumeAttachID
 	control := &childTaskControl{
 		testRunLeaseControl: &testRunLeaseControl{},
-		response: api.WorkerInvokeChildTaskResponse{
+		response: workerapi.InvokeChildTaskResponse{
 			CorrelationID: correlationID,
-			Completed: &api.WorkerChildTaskStartResult{
+			Completed: &workerapi.ChildTaskStartResult{
 				RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 			},
 			OpenedWait: &openedWait,
@@ -289,7 +289,7 @@ func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 	if err := <-result; err != nil {
 		t.Fatal(err)
 	}
-	var failure api.WorkerRuntimeOperationFailure
+	var failure workerapi.RuntimeOperationFailure
 	if err := json.Unmarshal([]byte(decision.GetDataJson()), &failure); err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +307,7 @@ func TestChildTaskInvokeFailureDoesNotClassifyUncodedConflict(t *testing.T) {
 		Status:     "409 Conflict",
 		Message:    "child Task invocation authority is stale",
 	})
-	if ok || failure != (api.WorkerRuntimeOperationFailure{}) {
+	if ok || failure != (workerapi.RuntimeOperationFailure{}) {
 		t.Fatalf("failure = %+v classified = %t", failure, ok)
 	}
 }

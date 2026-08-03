@@ -8,16 +8,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 const (
 	runLeaseRenewEvery     = 10 * time.Second
 	runLeaseRequestTimeout = 5 * time.Second
 	runLeaseRetryEvery     = 100 * time.Millisecond
-	runLeaseTerminalTail   = api.WorkerRunFinalizationTerminalTail
-	runLeaseReplayTail     = api.WorkerRunFinalizationReplayTail
+	runLeaseTerminalTail   = workerapi.RunFinalizationTerminalTail
+	runLeaseReplayTail     = workerapi.RunFinalizationReplayTail
 )
 
 type runLeaseTaskWait struct {
@@ -27,7 +27,7 @@ type runLeaseTaskWait struct {
 
 func (e Executor) ExecuteRunLease(
 	ctx context.Context,
-	work api.WorkerRunLeaseWork,
+	work workerapi.RunLeaseWork,
 ) error {
 	if e.RunLeases == nil {
 		return errors.New("Run Lease control is required")
@@ -68,11 +68,11 @@ func (e Executor) ExecuteRunLease(
 		return fmt.Errorf("create Run finalization operation ID: %w", err)
 	}
 	kind := runFinalizationKind(result)
-	beginRequest := api.WorkerBeginRunFinalizationRequest{
+	beginRequest := workerapi.BeginRunFinalizationRequest{
 		Lease: current.Fence(), ProgramQuiesced: result.ProgramQuiesced,
 		OperationID: operationID.String(), Kind: kind,
 	}
-	var begun api.WorkerBeginRunFinalizationResponse
+	var begun workerapi.BeginRunFinalizationResponse
 	if err := retryRunLeaseRequest(ctx, func(requestCtx context.Context) error {
 		var requestErr error
 		begun, requestErr = e.RunLeases.BeginRunFinalization(requestCtx, beginRequest)
@@ -120,13 +120,13 @@ func (e Executor) ExecuteRunLease(
 		begun.ExpiresAt,
 	)
 	defer cancelComplete()
-	completion := api.WorkerCompleteTaskRequest{Lease: begun.Lease, Outcome: result.Outcome}
-	actorCompletion := api.WorkerCompleteActorRequest{Lease: begun.Lease}
+	completion := workerapi.CompleteTaskRequest{Lease: begun.Lease, Outcome: result.Outcome}
+	actorCompletion := workerapi.CompleteActorRequest{Lease: begun.Lease}
 	if result.ActorOutcome != nil {
 		actorCompletion.Outcome = *result.ActorOutcome
 	}
-	if kind == api.WorkerRunFinalizationCapture {
-		var capture api.WorkerTaskWorkspaceCapture
+	if kind == workerapi.RunFinalizationCapture {
+		var capture workerapi.TaskWorkspaceCapture
 		if err := retryRunLeaseOperation(stageCtx, func(requestCtx context.Context) error {
 			var requestErr error
 			capture, requestErr = task.CaptureWorkspace(requestCtx)
@@ -141,7 +141,7 @@ func (e Executor) ExecuteRunLease(
 			if err != nil {
 				return fmt.Errorf("create handoff checkpoint ID: %w", err)
 			}
-			var manifest api.WorkerCheckpointManifest
+			var manifest workerapi.CheckpointManifest
 			if err := retryRunLeaseOperation(stageCtx, func(requestCtx context.Context) error {
 				var requestErr error
 				manifest, requestErr = task.CreateHandoffCheckpoint(
@@ -154,13 +154,13 @@ func (e Executor) ExecuteRunLease(
 			}); err != nil {
 				return fmt.Errorf("create handoff checkpoint: %w", err)
 			}
-			completion.Handoff = &api.WorkerTaskHandoffCheckpoint{
+			completion.Handoff = &workerapi.TaskHandoffCheckpoint{
 				CheckpointID: checkpointID.String(),
 				Manifest:     manifest,
 			}
 		}
 	} else {
-		var rollback api.WorkerTaskWorkspaceRollback
+		var rollback workerapi.TaskWorkspaceRollback
 		if err := retryRunLeaseOperation(stageCtx, func(requestCtx context.Context) error {
 			var requestErr error
 			rollback, requestErr = task.ResetWorkspace(requestCtx)
@@ -268,8 +268,8 @@ func runLeaseFinalizationDeadlines(
 func (e Executor) awaitRunLeaseTask(
 	ctx context.Context,
 	task RunLeaseTask,
-	current api.WorkerRunLeaseAssignment,
-) (RunLeaseTaskResult, api.WorkerRunLeaseAssignment, error) {
+	current workerapi.RunLeaseAssignment,
+) (RunLeaseTaskResult, workerapi.RunLeaseAssignment, error) {
 	waitCtx, cancelWait := context.WithCancel(ctx)
 	defer cancelWait()
 	waited := make(chan runLeaseTaskWait, 1)
@@ -306,8 +306,8 @@ func (e Executor) awaitRunLeaseTask(
 func (e Executor) renewRunLease(
 	ctx context.Context,
 	task RunLeaseTask,
-	current api.WorkerRunLeaseAssignment,
-) (api.WorkerRunLeaseAssignment, error) {
+	current workerapi.RunLeaseAssignment,
+) (workerapi.RunLeaseAssignment, error) {
 	renewal, err := task.RenewRunLease(ctx)
 	if err != nil {
 		return current, err
@@ -323,17 +323,17 @@ func (e Executor) renewRunLease(
 	return renewal.Lease, nil
 }
 
-func runFinalizationKind(result RunLeaseTaskResult) api.WorkerRunFinalizationKind {
+func runFinalizationKind(result RunLeaseTaskResult) workerapi.RunFinalizationKind {
 	if result.ActorOutcome != nil {
 		if result.ActorOutcome.Succeeded != nil {
-			return api.WorkerRunFinalizationCapture
+			return workerapi.RunFinalizationCapture
 		}
-		return api.WorkerRunFinalizationReset
+		return workerapi.RunFinalizationReset
 	}
 	if result.Outcome.Succeeded != nil {
-		return api.WorkerRunFinalizationCapture
+		return workerapi.RunFinalizationCapture
 	}
-	return api.WorkerRunFinalizationReset
+	return workerapi.RunFinalizationReset
 }
 
 func retryRunLeaseRequest(

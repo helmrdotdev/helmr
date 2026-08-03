@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/region"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -185,7 +186,7 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		RequiredGuestEphemeralDiskBytes: 1,
 		RequiredVmSlots:                 1,
 		RequiredBuildExecutors:          1,
-		ProtocolVersion:                 api.CurrentWorkerProtocolVersion,
+		ProtocolVersion:                 workerapi.CurrentProtocolVersion,
 	}); err != nil {
 		t.Fatal(err)
 	}

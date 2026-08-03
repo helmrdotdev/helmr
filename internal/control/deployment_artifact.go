@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -209,9 +210,9 @@ func deploymentMetadataFromRequest(request api.CreateDeploymentRequest) (deploym
 	if apiVersion != api.CurrentAPIVersion {
 		return deploymentVersionMetadata{}, fmt.Errorf("unsupported deployment api_version %q; current version is %s", apiVersion, api.CurrentAPIVersion)
 	}
-	workerProtocolVersion := firstPresentString(request.WorkerProtocolVersion, api.CurrentWorkerProtocolVersion)
-	if workerProtocolVersion != api.CurrentWorkerProtocolVersion {
-		return deploymentVersionMetadata{}, fmt.Errorf("unsupported worker_protocol_version %q; current version is %s", workerProtocolVersion, api.CurrentWorkerProtocolVersion)
+	workerProtocolVersion := firstPresentString(request.WorkerProtocolVersion, workerapi.CurrentProtocolVersion)
+	if workerProtocolVersion != workerapi.CurrentProtocolVersion {
+		return deploymentVersionMetadata{}, fmt.Errorf("unsupported worker_protocol_version %q; current version is %s", workerProtocolVersion, workerapi.CurrentProtocolVersion)
 	}
 	imageCacheMode := firstPresentString(request.ImageCacheMode, "prefer")
 	if imageCacheMode != "prefer" && imageCacheMode != "bypass" {

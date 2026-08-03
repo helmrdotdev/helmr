@@ -8,10 +8,10 @@ import (
 	"time"
 
 	actordomain "github.com/helmrdotdev/helmr/internal/actor"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -28,7 +28,7 @@ type actorWaitManifest struct {
 func (s *Server) workerCreateActorInputRunWait(
 	w http.ResponseWriter,
 	r *http.Request,
-	request api.WorkerCreateRunWaitRequest,
+	request workerapi.CreateRunWaitRequest,
 	identity requestedRunWaitIdentity,
 ) {
 	var params workerActorInputWaitParams
@@ -194,7 +194,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		writeError(w, errors.New("register worker Actor input Wait"))
 		return
 	}
-	response := api.WorkerCreateRunWaitResponse{
+	response := workerapi.CreateRunWaitResponse{
 		RunID: pgvalue.UUIDString(registrationLocators.RunID), RunWaitID: waitID.String(), ResumeAttachID: resumeAttachID.String(),
 		RuntimeInstanceID: pgvalue.UUIDString(registrationLocators.RuntimeInstanceID), RuntimeEpoch: worker.WorkerEpoch,
 		CheckpointDelayMs: checkpointDelay.Milliseconds(),

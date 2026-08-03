@@ -10,8 +10,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 const (
@@ -66,7 +65,7 @@ func (v *Verifier) HasGroup(groupID string) bool {
 	return ok
 }
 
-func (v *Verifier) Verify(request api.WorkerEnrollmentRequest) error {
+func (v *Verifier) Verify(request workerapi.EnrollmentRequest) error {
 	if v == nil {
 		return errors.New("worker enrollment is not configured")
 	}
@@ -77,7 +76,7 @@ func (v *Verifier) Verify(request api.WorkerEnrollmentRequest) error {
 	if !ok {
 		return errors.New("worker group enrollment is not configured")
 	}
-	expected := proof(secret, request.WorkerEnrollmentIntent, request.ResourceID)
+	expected := proof(secret, request.EnrollmentIntent, request.ResourceID)
 	provided, err := base64.RawURLEncoding.DecodeString(request.Proof)
 	if err != nil || base64.RawURLEncoding.EncodeToString(provided) != request.Proof || len(provided) != sha256.Size {
 		return errors.New("worker enrollment proof is invalid")
@@ -88,25 +87,25 @@ func (v *Verifier) Verify(request api.WorkerEnrollmentRequest) error {
 	return nil
 }
 
-func BuildRequest(groupID string, nonce string, supportsRun bool, supportsBuild bool, resourceID string, secret string) (api.WorkerEnrollmentRequest, error) {
-	request := api.WorkerEnrollmentRequest{
-		WorkerEnrollmentIntent: api.WorkerEnrollmentIntent{
+func BuildRequest(groupID string, nonce string, supportsRun bool, supportsBuild bool, resourceID string, secret string) (workerapi.EnrollmentRequest, error) {
+	request := workerapi.EnrollmentRequest{
+		EnrollmentIntent: workerapi.EnrollmentIntent{
 			WorkerGroupID:   groupID,
 			Nonce:           nonce,
 			SupportsRun:     supportsRun,
 			SupportsBuild:   supportsBuild,
-			ProtocolVersion: auth.WorkerProtocolVersion,
+			ProtocolVersion: workerapi.CurrentProtocolVersion,
 		},
 		ResourceID: resourceID,
 	}
 	secretBytes, err := decodeSecret(secret)
 	if err != nil {
-		return api.WorkerEnrollmentRequest{}, err
+		return workerapi.EnrollmentRequest{}, err
 	}
 	if err := validateRequest(request); err != nil {
-		return api.WorkerEnrollmentRequest{}, err
+		return workerapi.EnrollmentRequest{}, err
 	}
-	request.Proof = base64.RawURLEncoding.EncodeToString(proof(secretBytes, request.WorkerEnrollmentIntent, request.ResourceID))
+	request.Proof = base64.RawURLEncoding.EncodeToString(proof(secretBytes, request.EnrollmentIntent, request.ResourceID))
 	return request, nil
 }
 
@@ -126,14 +125,14 @@ func decodeSecret(secret string) ([]byte, error) {
 	return decoded, nil
 }
 
-func validateRequest(request api.WorkerEnrollmentRequest) error {
+func validateRequest(request workerapi.EnrollmentRequest) error {
 	if request.WorkerGroupID == "" || strings.TrimSpace(request.WorkerGroupID) != request.WorkerGroupID {
 		return errors.New("worker group id must be canonical and non-empty")
 	}
 	if request.Nonce == "" || strings.TrimSpace(request.Nonce) != request.Nonce {
 		return errors.New("worker enrollment nonce must be canonical and non-empty")
 	}
-	if request.ProtocolVersion != auth.WorkerProtocolVersion {
+	if request.ProtocolVersion != workerapi.CurrentProtocolVersion {
 		return errors.New("worker enrollment protocol version is unsupported")
 	}
 	if !request.SupportsRun && !request.SupportsBuild {
@@ -145,7 +144,7 @@ func validateRequest(request api.WorkerEnrollmentRequest) error {
 	return nil
 }
 
-func proof(secret []byte, intent api.WorkerEnrollmentIntent, resourceID string) []byte {
+func proof(secret []byte, intent workerapi.EnrollmentIntent, resourceID string) []byte {
 	mac := hmac.New(sha256.New, secret)
 	for _, field := range []string{
 		proofDomain,

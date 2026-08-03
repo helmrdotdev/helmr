@@ -9,17 +9,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type runConsumer struct {
 	runner *Runner
 	mu     sync.Mutex
-	active map[api.WorkerRunLeaseWork]struct{}
+	active map[workerapi.RunLeaseWork]struct{}
 }
 type platformAcquisitionConsumer struct{ runner *Runner }
 type buildConsumer struct{ runner *Runner }
@@ -35,23 +35,23 @@ func (err *fatalWorkerError) FatalWorker() bool { return true }
 
 type buildLeaseState struct {
 	mu    sync.RWMutex
-	lease api.WorkerDeploymentBuildLease
+	lease workerapi.DeploymentBuildLease
 }
 
-func (s *buildLeaseState) current() api.WorkerDeploymentBuildLease {
+func (s *buildLeaseState) current() workerapi.DeploymentBuildLease {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.lease
 }
 
-func (s *buildLeaseState) set(lease api.WorkerDeploymentBuildLease) {
+func (s *buildLeaseState) set(lease workerapi.DeploymentBuildLease) {
 	s.mu.Lock()
 	s.lease = lease
 	s.mu.Unlock()
 }
 
 func NewRunConsumer(runner *Runner) Consumer {
-	return &runConsumer{runner: runner, active: make(map[api.WorkerRunLeaseWork]struct{})}
+	return &runConsumer{runner: runner, active: make(map[workerapi.RunLeaseWork]struct{})}
 }
 func NewPlatformAcquisitionConsumer(runner *Runner) Consumer {
 	return platformAcquisitionConsumer{runner: runner}
@@ -67,7 +67,7 @@ func (c *runConsumer) Claim(ctx context.Context) (Work, bool, error) {
 		return nil, false, fmt.Errorf("discover Run Leases: %w", err)
 	}
 	c.mu.Lock()
-	var selected api.WorkerRunLeaseWork
+	var selected workerapi.RunLeaseWork
 	for _, work := range discovered.Items {
 		if work.LeaseID == "" || work.LeaseSequence <= 0 {
 			c.mu.Unlock()
@@ -129,7 +129,7 @@ func (c platformAcquisitionConsumer) Claim(ctx context.Context) (Work, bool, err
 		candidates, err := r.platformAcquirer.Acquire(workCtx, acquisition)
 		if err != nil {
 			var deterministic interface {
-				PlatformAcquisitionFailureReason() api.WorkerPlatformAcquisitionFailureReason
+				PlatformAcquisitionFailureReason() workerapi.PlatformAcquisitionFailureReason
 			}
 			if !errors.As(err, &deterministic) {
 				return fmt.Errorf("acquire Platform Artifacts for Deployment %s: %w", acquisition.DeploymentID, err)
@@ -137,7 +137,7 @@ func (c platformAcquisitionConsumer) Claim(ctx context.Context) (Work, bool, err
 			raw, _ := json.Marshal(map[string]string{"message": err.Error()})
 			_, reportErr := r.client.FailPlatformAcquisition(
 				workCtx,
-				api.WorkerPlatformAcquisitionFailRequest{
+				workerapi.PlatformAcquisitionFailRequest{
 					Acquisition: acquisition,
 					Reason:      deterministic.PlatformAcquisitionFailureReason(),
 					Error:       raw,
@@ -150,7 +150,7 @@ func (c platformAcquisitionConsumer) Claim(ctx context.Context) (Work, bool, err
 		}
 		_, err = r.client.CompletePlatformAcquisition(
 			workCtx,
-			api.WorkerPlatformAcquisitionCompleteRequest{
+			workerapi.PlatformAcquisitionCompleteRequest{
 				Acquisition: acquisition,
 				Candidates:  candidates,
 			},
@@ -228,8 +228,8 @@ func (c buildConsumer) Claim(ctx context.Context) (Work, bool, error) {
 }
 
 func validateBuildEnvelope(
-	capabilities api.WorkerCapabilities,
-	build api.WorkerDeploymentBuild,
+	capabilities workerapi.Capabilities,
+	build workerapi.DeploymentBuild,
 ) error {
 	if capabilities.RuntimeArch != string(deployment.ArchitectureX8664) {
 		return fmt.Errorf("build worker architecture %q is unsupported", capabilities.RuntimeArch)
@@ -257,7 +257,7 @@ func validateBuildEnvelope(
 	if err := deployment.ValidatePackageManager(manager); err != nil {
 		return fmt.Errorf("deployment Manager selector: %w", err)
 	}
-	for name, object := range map[string]api.CASObject{
+	for name, object := range map[string]workerapi.CASObject{
 		"runtime":   build.Runtime,
 		"Manager":   build.Manager.Artifact,
 		"toolchain": build.Toolchain,
@@ -277,7 +277,7 @@ func validateBuildEnvelope(
 	return nil
 }
 
-func validateBuildLeaseShape(capabilities api.WorkerCapabilities, lease api.WorkerDeploymentBuildLease) error {
+func validateBuildLeaseShape(capabilities workerapi.Capabilities, lease workerapi.DeploymentBuildLease) error {
 	envelope := compute.BuildEnvelopeResources()
 	guest := compute.BuildGuestResources()
 	if lease.RequestedCPUMillis != envelope.MilliCPU ||
@@ -297,15 +297,15 @@ func validateBuildLeaseShape(capabilities api.WorkerCapabilities, lease api.Work
 	return nil
 }
 
-func (r *Runner) rejectBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease, reason string, cause error) error {
+func (r *Runner) rejectBuild(ctx context.Context, lease workerapi.DeploymentBuildLease, reason string, cause error) error {
 	payload, _ := json.Marshal(map[string]string{"message": cause.Error()})
-	if err := r.client.RejectDeploymentBuild(ctx, api.WorkerDeploymentBuildRejectRequest{Lease: lease, ReasonCode: reason, Error: payload}); err != nil && !isStaleLease(err) {
+	if err := r.client.RejectDeploymentBuild(ctx, workerapi.DeploymentBuildRejectRequest{Lease: lease, ReasonCode: reason, Error: payload}); err != nil && !isStaleLease(err) {
 		return err
 	}
 	return nil
 }
 
-func (r *Runner) executeStartedBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) error {
+func (r *Runner) executeStartedBuild(ctx context.Context, lease workerapi.DeploymentBuildLease, deployment workerapi.DeploymentBuild) error {
 	buildCtx, cancelBuild := context.WithCancel(ctx)
 	defer cancelBuild()
 	leaseState := &buildLeaseState{lease: lease}
@@ -353,14 +353,14 @@ func (r *Runner) executeStartedBuild(ctx context.Context, lease api.WorkerDeploy
 			return outcome.err
 		}
 		var deliveryFailure interface {
-			DeploymentBuildDeliveryFailureReason() api.WorkerDeploymentBuildDeliveryFailureReason
+			DeploymentBuildDeliveryFailureReason() workerapi.DeploymentBuildDeliveryFailureReason
 		}
 		if !errors.As(outcome.err, &deliveryFailure) {
 			return fmt.Errorf("build deployment %s: %w", lease.DeploymentID, outcome.err)
 		}
 		reportCtx, cancelReport := context.WithTimeout(context.WithoutCancel(ctx), r.releaseWait)
 		defer cancelReport()
-		response, err := r.client.ReportDeploymentBuildDeliveryFailure(reportCtx, api.WorkerDeploymentBuildDeliveryFailureRequest{
+		response, err := r.client.ReportDeploymentBuildDeliveryFailure(reportCtx, workerapi.DeploymentBuildDeliveryFailureRequest{
 			Lease:      leaseState.current(),
 			ReasonCode: deliveryFailure.DeploymentBuildDeliveryFailureReason(),
 		})

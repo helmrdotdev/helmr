@@ -19,6 +19,7 @@ import (
 	rundomain "github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -47,11 +48,11 @@ type checkpointArtifactProof struct {
 	role     db.RunCheckpointArtifactRole
 	ordinal  int32
 	kind     db.ArtifactKind
-	artifact api.WorkerCheckpointArtifact
+	artifact workerapi.CheckpointArtifact
 }
 
 func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerCheckpointReadyRequest
+	var request workerapi.CheckpointReadyRequest
 	if err := decodeClosedWorkerRequest(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker checkpoint-ready JSON: %w", err)))
 		return
@@ -105,7 +106,7 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerCheckpointFailedRequest
+	var request workerapi.CheckpointFailedRequest
 	if err := decodeClosedWorkerRequest(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker checkpoint-failed JSON: %w", err)))
 		return
@@ -231,7 +232,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 		writeError(w, errors.New("commit worker checkpoint-failed"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerCheckpointResponse{
+	writeJSON(w, http.StatusOK, workerapi.CheckpointResponse{
 		RunWaitID: normalized.RunWaitID, CheckpointID: normalized.CheckpointID,
 	})
 }
@@ -660,7 +661,7 @@ func finishCheckpointFailedTask(
 	return nil
 }
 
-func parseCheckpointFailedRequest(request api.WorkerCheckpointFailedRequest) (parsedCheckpointFailed, api.WorkerCheckpointFailedRequest, error) {
+func parseCheckpointFailedRequest(request workerapi.CheckpointFailedRequest) (parsedCheckpointFailed, workerapi.CheckpointFailedRequest, error) {
 	lease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		return parsedCheckpointFailed{}, request, err
@@ -696,7 +697,7 @@ func parseCheckpointFailedRequest(request api.WorkerCheckpointFailedRequest) (pa
 	}, normalized, nil
 }
 
-func parseCheckpointReadyRequest(request api.WorkerCheckpointReadyRequest) (parsedCheckpointReady, api.WorkerCheckpointReadyRequest, error) {
+func parseCheckpointReadyRequest(request workerapi.CheckpointReadyRequest) (parsedCheckpointReady, workerapi.CheckpointReadyRequest, error) {
 	lease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		return parsedCheckpointReady{}, request, err
@@ -737,7 +738,7 @@ func parseCheckpointReadyRequest(request api.WorkerCheckpointReadyRequest) (pars
 	}, normalized, nil
 }
 
-func validateCheckpointReadyManifest(request api.WorkerCheckpointReadyRequest) ([]byte, []checkpointArtifactProof, error) {
+func validateCheckpointReadyManifest(request workerapi.CheckpointReadyRequest) ([]byte, []checkpointArtifactProof, error) {
 	return validateCheckpointManifest(
 		request.Manifest,
 		request.CheckpointID,
@@ -749,7 +750,7 @@ func validateCheckpointReadyManifest(request api.WorkerCheckpointReadyRequest) (
 }
 
 func validateCheckpointManifest(
-	manifest api.WorkerCheckpointManifest,
+	manifest workerapi.CheckpointManifest,
 	checkpointID string,
 	runID string,
 	attemptNumber int32,
@@ -841,39 +842,39 @@ func (s *Server) verifyCheckpointRuntimeArtifacts(
 	return nil
 }
 
-func (s *Server) checkpointReadyReplay(ctx context.Context, ready parsedCheckpointReady) (api.WorkerCheckpointResponse, bool, error) {
+func (s *Server) checkpointReadyReplay(ctx context.Context, ready parsedCheckpointReady) (workerapi.CheckpointResponse, bool, error) {
 	replay, err := s.db.GetCheckpointReadyReplay(ctx, pgvalue.UUID(ready.checkpointID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return api.WorkerCheckpointResponse{}, false, nil
+		return workerapi.CheckpointResponse{}, false, nil
 	}
 	if err != nil {
-		return api.WorkerCheckpointResponse{}, false, errors.New("load checkpoint-ready replay")
+		return workerapi.CheckpointResponse{}, false, errors.New("load checkpoint-ready replay")
 	}
 	if replay.RunWaitID != pgvalue.UUID(ready.waitID) || replay.SourceRunLeaseID != pgvalue.UUID(ready.lease.leaseID) ||
 		!replay.PrivateWorkspaceVersionID.Valid || !replay.ReadyRequestFingerprint.Valid ||
 		replay.ReadyRequestFingerprint.String != ready.fingerprint {
-		return api.WorkerCheckpointResponse{}, false, conflict(errors.New("checkpoint-ready replay does not match the committed request"))
+		return workerapi.CheckpointResponse{}, false, conflict(errors.New("checkpoint-ready replay does not match the committed request"))
 	}
-	return api.WorkerCheckpointResponse{
+	return workerapi.CheckpointResponse{
 		RunID: pgvalue.UUIDString(replay.RunID), RunWaitID: ready.waitID.String(), CheckpointID: ready.checkpointID.String(),
 		WorkspaceVersionID: pgvalue.UUIDString(replay.PrivateWorkspaceVersionID),
 	}, true, nil
 }
 
-func (s *Server) checkpointFailedReplay(ctx context.Context, failed parsedCheckpointFailed) (api.WorkerCheckpointResponse, bool, error) {
+func (s *Server) checkpointFailedReplay(ctx context.Context, failed parsedCheckpointFailed) (workerapi.CheckpointResponse, bool, error) {
 	replay, err := s.db.GetCheckpointFailedReplay(ctx, pgvalue.UUID(failed.checkpointID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return api.WorkerCheckpointResponse{}, false, nil
+		return workerapi.CheckpointResponse{}, false, nil
 	}
 	if err != nil {
-		return api.WorkerCheckpointResponse{}, false, errors.New("load checkpoint-failed replay")
+		return workerapi.CheckpointResponse{}, false, errors.New("load checkpoint-failed replay")
 	}
 	if replay.RunWaitID != pgvalue.UUID(failed.waitID) || replay.SourceRunLeaseID != pgvalue.UUID(failed.lease.leaseID) ||
 		!replay.FailedRequestFingerprint.Valid ||
 		replay.FailedRequestFingerprint.String != failed.fingerprint {
-		return api.WorkerCheckpointResponse{}, false, conflict(errors.New("checkpoint-failed replay does not match the committed request"))
+		return workerapi.CheckpointResponse{}, false, conflict(errors.New("checkpoint-failed replay does not match the committed request"))
 	}
-	return api.WorkerCheckpointResponse{
+	return workerapi.CheckpointResponse{
 		RunID: pgvalue.UUIDString(replay.RunID), RunWaitID: failed.waitID.String(), CheckpointID: failed.checkpointID.String(),
 	}, true, nil
 }
@@ -881,10 +882,10 @@ func (s *Server) checkpointFailedReplay(ctx context.Context, failed parsedCheckp
 func (s *Server) commitCheckpointReady(
 	ctx context.Context,
 	worker workerActor,
-	request api.WorkerCheckpointReadyRequest,
+	request workerapi.CheckpointReadyRequest,
 	ready parsedCheckpointReady,
-) (api.WorkerCheckpointResponse, error) {
-	var response api.WorkerCheckpointResponse
+) (workerapi.CheckpointResponse, error) {
+	var response workerapi.CheckpointResponse
 	err := s.inTx(ctx, func(work *txWork) error {
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(ready.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
@@ -1051,7 +1052,7 @@ func (s *Server) commitCheckpointReady(
 				return fmt.Errorf("publish checkpoint-ready resume: %w", err)
 			}
 		}
-		response = api.WorkerCheckpointResponse{
+		response = workerapi.CheckpointResponse{
 			RunID: pgvalue.UUIDString(authority.run.ID), RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID,
 			WorkspaceVersionID: pgvalue.UUIDString(workspaceVersionID),
 		}
@@ -1269,7 +1270,7 @@ func validateCheckpointSubstrateAuthority(
 		GetRuntimeSubstrateForCheckpoint(context.Context, pgtype.UUID) (db.RuntimeSubstrate, error)
 	},
 	authority runLeaseClaimAuthority,
-	manifest api.WorkerCheckpointManifest,
+	manifest workerapi.CheckpointManifest,
 ) error {
 	identity := manifest.RecoveryPoint.Runtime.Substrate
 	if !authority.runtime.RuntimeSubstrateID.Valid {

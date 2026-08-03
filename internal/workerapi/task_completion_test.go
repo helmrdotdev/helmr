@@ -1,4 +1,4 @@
-package api
+package workerapi
 
 import (
 	"bytes"
@@ -16,7 +16,7 @@ func TestWorkerCompleteTaskRequestRejectsAmbiguousWireShapes(t *testing.T) {
 		append([]byte(`{"lease":{"id":"`), append([]byte{0xff}, []byte(`"},`+validOutcome+`,`+validWorkspace+`}`)...)...),
 	}
 	for _, raw := range invalid {
-		var request WorkerCompleteTaskRequest
+		var request CompleteTaskRequest
 		if err := json.NewDecoder(bytes.NewReader(raw)).Decode(&request); err == nil {
 			t.Fatalf("ambiguous request %q was accepted", raw)
 		}
@@ -33,7 +33,7 @@ func TestWorkerTaskOutcomeRejectsAmbiguousWireShapes(t *testing.T) {
 		`{"unknown":{"output":null}}`,
 	}
 	for _, raw := range invalid {
-		var outcome WorkerTaskOutcome
+		var outcome TaskOutcome
 		if err := json.Unmarshal([]byte(raw), &outcome); err == nil {
 			t.Fatalf("ambiguous outcome %s was accepted", raw)
 		}
@@ -41,7 +41,7 @@ func TestWorkerTaskOutcomeRejectsAmbiguousWireShapes(t *testing.T) {
 }
 
 func TestWorkerTaskOutcomePreservesJSONNullOutput(t *testing.T) {
-	var outcome WorkerTaskOutcome
+	var outcome TaskOutcome
 	if err := json.Unmarshal([]byte(`{"succeeded":{"output":null}}`), &outcome); err != nil {
 		t.Fatal(err)
 	}
@@ -56,13 +56,13 @@ func TestWorkerTaskFailureRequiresMessagePresence(t *testing.T) {
 		`{"failed":{"message":null}}`,
 		`{"payload_invalid":{"details":null}}`,
 	} {
-		var outcome WorkerTaskOutcome
+		var outcome TaskOutcome
 		if err := json.Unmarshal([]byte(raw), &outcome); err == nil {
 			t.Fatalf("failure without a message %s was accepted", raw)
 		}
 	}
 
-	var outcome WorkerTaskOutcome
+	var outcome TaskOutcome
 	if err := json.Unmarshal([]byte(`{"failed":{"message":""}}`), &outcome); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestWorkerTaskWorkspaceProofRejectsAmbiguousWireShapes(t *testing.T) {
 		`{"rolled_back":{"base_workspace_version_id":"base","unknown":true}}`,
 	}
 	for _, raw := range invalid {
-		var proof WorkerTaskWorkspaceProof
+		var proof TaskWorkspaceProof
 		if err := json.Unmarshal([]byte(raw), &proof); err == nil {
 			t.Fatalf("ambiguous Workspace proof %s was accepted", raw)
 		}
@@ -93,7 +93,7 @@ func TestWorkerWorkspaceResetTargetRequiresOneSource(t *testing.T) {
 		`{"base_workspace_version_id":"base","tree":{},"artifact":{}}`,
 	}
 	for _, raw := range valid {
-		var target WorkerWorkspaceResetTarget
+		var target WorkspaceResetTarget
 		if err := json.Unmarshal([]byte(raw), &target); err != nil {
 			t.Fatalf("valid target %s was rejected: %v", raw, err)
 		}
@@ -105,7 +105,7 @@ func TestWorkerWorkspaceResetTargetRequiresOneSource(t *testing.T) {
 		`{"base_workspace_version_id":"base","tree":{},"empty":{},"unknown":true}`,
 	}
 	for _, raw := range invalid {
-		var target WorkerWorkspaceResetTarget
+		var target WorkspaceResetTarget
 		if err := json.Unmarshal([]byte(raw), &target); err == nil {
 			t.Fatalf("ambiguous target %s was accepted", raw)
 		}

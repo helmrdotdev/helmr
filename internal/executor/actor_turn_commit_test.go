@@ -9,25 +9,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 type actorTurnCommitControl struct {
 	*testRunLeaseControl
-	request api.WorkerCommitActorTurnRequest
+	request workerapi.CommitActorTurnRequest
 }
 
 func (control *actorTurnCommitControl) CommitActorTurn(
 	_ context.Context,
-	request api.WorkerCommitActorTurnRequest,
-) (api.WorkerCommitActorTurnResponse, error) {
+	request workerapi.CommitActorTurnRequest,
+) (workerapi.CommitActorTurnResponse, error) {
 	control.request = request
-	return api.WorkerCommitActorTurnResponse{
+	return workerapi.CommitActorTurnResponse{
 		Lease: request.Lease, CorrelationID: request.CorrelationID,
 		CommittedInputSequence: request.TargetInputSequence, WorkspaceVersionID: "version-2",
 		Tree: request.Tree,
@@ -37,7 +37,7 @@ func (control *actorTurnCommitControl) CommitActorTurn(
 func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 	claim := testFreshProgramClaim(t)
 	claim.Lease.WorkerGroupID = "workers"
-	claim.Lease.WorkerProtocolVersion = api.CurrentWorkerProtocolVersion
+	claim.Lease.WorkerProtocolVersion = workerapi.CurrentProtocolVersion
 	claim.Lease.RequestedCPUMillis = 1
 	claim.Lease.RequestedMemoryBytes = 1
 	claim.Lease.RequestedGuestEphemeralDiskBytes = 1
@@ -59,7 +59,7 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 	task := &guestRunLeaseTask{
 		program: freshProgram{session: fakeGuestSession{stream: host}},
 		store:   store, control: control, resetTarget: target, lease: claim.Lease,
-		authority: authority, waitWorkspace: api.WorkerWorkspace{BaseVersionID: "version-1"},
+		authority: authority, waitWorkspace: workerapi.Workspace{BaseVersionID: "version-1"},
 		checkpointer: &runtimeCheckpointer{},
 	}
 

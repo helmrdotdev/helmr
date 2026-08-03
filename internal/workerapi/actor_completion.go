@@ -1,4 +1,4 @@
-package api
+package workerapi
 
 import (
 	"encoding/json"
@@ -6,18 +6,18 @@ import (
 	"fmt"
 )
 
-func (value *WorkerCompleteActorRequest) UnmarshalJSON(raw []byte) error {
-	type request WorkerCompleteActorRequest
+func (value *CompleteActorRequest) UnmarshalJSON(raw []byte) error {
+	type request CompleteActorRequest
 	var decoded request
 	if err := decodeClosedTaskCompletionJSON(raw, &decoded); err != nil {
 		return fmt.Errorf("decode Actor completion request: %w", err)
 	}
-	*value = WorkerCompleteActorRequest(decoded)
+	*value = CompleteActorRequest(decoded)
 	return nil
 }
 
-func (value *WorkerActorOutcome) UnmarshalJSON(raw []byte) error {
-	*value = WorkerActorOutcome{}
+func (value *ActorOutcome) UnmarshalJSON(raw []byte) error {
+	*value = ActorOutcome{}
 	var envelope struct {
 		TerminalInputSequence *int64          `json:"terminal_input_sequence"`
 		Succeeded             json.RawMessage `json:"succeeded"`
@@ -36,7 +36,7 @@ func (value *WorkerActorOutcome) UnmarshalJSON(raw []byte) error {
 		if isJSONNull(envelope.Succeeded) {
 			return errors.New("Actor outcome succeeded variant must not be null")
 		}
-		var succeeded WorkerActorSucceeded
+		var succeeded ActorSucceeded
 		if err := decodeClosedTaskCompletionJSON(envelope.Succeeded, &succeeded); err != nil {
 			return fmt.Errorf("decode Actor succeeded outcome: %w", err)
 		}
@@ -47,7 +47,7 @@ func (value *WorkerActorOutcome) UnmarshalJSON(raw []byte) error {
 		if isJSONNull(envelope.Failed) {
 			return errors.New("Actor outcome failed variant must not be null")
 		}
-		var failed WorkerTaskFailure
+		var failed TaskFailure
 		if err := decodeClosedTaskCompletionJSON(envelope.Failed, &failed); err != nil {
 			return fmt.Errorf("decode Actor failed outcome: %w", err)
 		}

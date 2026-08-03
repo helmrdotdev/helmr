@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func (s *Server) workerCommitActorTurn(w http.ResponseWriter, r *http.Request) {
@@ -15,7 +15,7 @@ func (s *Server) workerCommitActorTurn(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerCommitActorTurnRequest
+	var request workerapi.CommitActorTurnRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {

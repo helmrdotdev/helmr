@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type HTTPError struct {
@@ -274,7 +275,7 @@ func (c *Client) requestWorkerToken(ctx context.Context) (string, time.Time, err
 	if c.worker.serviceID == "" || c.worker.protocolVersion == "" || !c.worker.supportsRun && !c.worker.supportsBuild {
 		return "", time.Time{}, errors.New("worker service id, protocol version, and at least one role are required")
 	}
-	if err := json.NewEncoder(&body).Encode(api.WorkerTokenRequest{
+	if err := json.NewEncoder(&body).Encode(workerapi.TokenRequest{
 		WorkerInstanceID: c.worker.workerInstanceID, WorkerInstanceSecret: c.worker.secret,
 		ServiceID: c.worker.serviceID, ProtocolVersion: c.worker.protocolVersion,
 		SupportsRun: c.worker.supportsRun, SupportsBuild: c.worker.supportsBuild,
@@ -288,7 +289,7 @@ func (c *Client) requestWorkerToken(ctx context.Context) (string, time.Time, err
 		return "", time.Time{}, err
 	}
 	req.Header.Set("content-type", "application/json")
-	var response api.WorkerTokenResponse
+	var response workerapi.TokenResponse
 	if err := c.doJSON(req, &response); err != nil {
 		return "", time.Time{}, err
 	}

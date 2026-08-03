@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func LoadControl() (Control, error) {
@@ -54,17 +54,17 @@ func LoadControl() (Control, error) {
 	if cfg.ImageCache, err = loadImageCache(); err != nil {
 		return cfg, err
 	}
-	if cfg.RunLeaseTTL < api.WorkerRunLeaseMinTTL {
+	if cfg.RunLeaseTTL < workerapi.RunLeaseMinTTL {
 		return cfg, fmt.Errorf(
 			"HELMR_RUN_LEASE_TTL must be at least %s",
-			api.WorkerRunLeaseMinTTL,
+			workerapi.RunLeaseMinTTL,
 		)
 	}
-	if cfg.RunFinalizationTTL < api.WorkerRunFinalizationMinTTL ||
+	if cfg.RunFinalizationTTL < workerapi.RunFinalizationMinTTL ||
 		cfg.RunFinalizationTTL > 24*time.Hour {
 		return cfg, fmt.Errorf(
 			"HELMR_RUN_FINALIZATION_TTL must be between %s and 24h",
-			api.WorkerRunFinalizationMinTTL,
+			workerapi.RunFinalizationMinTTL,
 		)
 	}
 	if cfg.DatabaseURL == "" {

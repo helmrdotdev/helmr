@@ -6,13 +6,13 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestParseWorkerActorInputSendRequiresExactAddress(t *testing.T) {
 	lease := validRunLeaseAssignment(uuid.Must(uuid.NewV7()))
-	request := api.WorkerSendActorInputRequest{
+	request := workerapi.SendActorInputRequest{
 		Lease: lease.Fence(), CorrelationID: uuid.Must(uuid.NewV7()).String(),
 		ActorDeclaredID: "mailbox", ActorKey: "primary",
 		Input: json.RawMessage(`{"hello":"world"}`), IdempotencyKey: "send-1",
@@ -66,7 +66,7 @@ func TestActorInputSendFailurePreservesSemanticCodes(t *testing.T) {
 
 func TestAuthorizeActorInputSendSourceRequiresExactLiveFence(t *testing.T) {
 	_, store, worker, turnRequest, _ := newActorTurnCommitFixture(t)
-	request := api.WorkerSendActorInputRequest{Lease: turnRequest.Lease}
+	request := workerapi.SendActorInputRequest{Lease: turnRequest.Lease}
 	if err := authorizeActorInputSendSource(
 		t.Context(),
 		store,

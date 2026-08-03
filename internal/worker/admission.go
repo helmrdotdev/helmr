@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"golang.org/x/sys/unix"
 )
 
@@ -62,7 +62,7 @@ type AdmissionDecision struct {
 
 type AdmissionEvaluator interface {
 	Evaluate(context.Context, AdmissionCheck) AdmissionDecision
-	Observation() api.WorkerObservation
+	Observation() workerapi.Observation
 }
 
 type HardAdmissionConfig struct {
@@ -142,12 +142,12 @@ func runtimeSlotConsumer(consumer string) bool {
 	return consumer == "workspace" || consumer == "runtime"
 }
 
-func (a *HardAdmission) Observation() api.WorkerObservation {
+func (a *HardAdmission) Observation() workerapi.Observation {
 	a.mu.RLock()
 	decisions := make(map[string]AdmissionDecision, len(a.last))
 	maps.Copy(decisions, a.last)
 	a.mu.RUnlock()
-	observation := api.WorkerObservation{}
+	observation := workerapi.Observation{}
 	decision := decisions["run"]
 	if decision.Health.DiskCapacityBytes == 0 {
 		decision = decisions["runtime"]

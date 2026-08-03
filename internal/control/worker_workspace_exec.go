@@ -10,17 +10,17 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerWorkspaceExecClaimRequest
+	var request workerapi.WorkspaceExecClaimRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Workspace exec claim JSON: %w", err)))
 		return
@@ -111,7 +111,7 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 	defer clearWorkspaceExecBytes(stdin)
 	if !authority.WorkspaceProcess.ID.Valid ||
 		authority.WorkspaceProcess.State == db.WorkspaceProcessStateExitRequested {
-		writeJSON(w, http.StatusOK, api.WorkerWorkspaceExecClaimResponse{})
+		writeJSON(w, http.StatusOK, workerapi.WorkspaceExecClaimResponse{})
 		return
 	}
 	environmentID, err := pgvalue.UUIDValue(authority.WorkspaceProcess.EnvironmentID)
@@ -131,8 +131,8 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer clearWorkspaceSecretDeliveries(deliveries)
-	writeJSON(w, http.StatusOK, api.WorkerWorkspaceExecClaimResponse{
-		Exec: &api.WorkerWorkspaceExec{
+	writeJSON(w, http.StatusOK, workerapi.WorkspaceExecClaimResponse{
+		Exec: &workerapi.WorkspaceExec{
 			ProcessID:           pgvalue.MustUUIDValue(authority.WorkspaceProcess.ID).String(),
 			WorkspaceID:         pgvalue.MustUUIDValue(authority.WorkspaceProcess.WorkspaceID).String(),
 			WorkspaceMountID:    pgvalue.MustUUIDValue(authority.WorkspaceMount.ID).String(),
@@ -150,7 +150,7 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func clearWorkspaceSecretDeliveries(deliveries []api.WorkerSecretDelivery) {
+func clearWorkspaceSecretDeliveries(deliveries []workerapi.SecretDelivery) {
 	for index := range deliveries {
 		clearWorkspaceExecBytes(deliveries[index].Value)
 	}
@@ -169,7 +169,7 @@ func clearWorkspaceExecBytes(value []byte) {
 }
 
 func (s *Server) workerCompleteWorkspaceExec(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerWorkspaceExecCompleteRequest
+	var request workerapi.WorkspaceExecCompleteRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Workspace exec completion JSON: %w", err)))
 		return
@@ -287,7 +287,7 @@ func (s *Server) workerCompleteWorkspaceExec(w http.ResponseWriter, r *http.Requ
 }
 
 func normalizeWorkspaceExecOutcome(
-	request api.WorkerWorkspaceExecCompleteRequest,
+	request workerapi.WorkspaceExecCompleteRequest,
 ) (string, string, []byte, error) {
 	outcome := strings.TrimSpace(request.Outcome)
 	if outcome == "exited" {

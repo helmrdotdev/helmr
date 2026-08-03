@@ -1,4 +1,4 @@
-package api
+package workerapi
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
-func (request *WorkerRunResumeReleaseRequest) UnmarshalJSON(raw []byte) error {
+func (request *RunResumeReleaseRequest) UnmarshalJSON(raw []byte) error {
 	var envelope struct {
 		Lease                json.RawMessage `json:"lease"`
 		RunWaitID            string          `json:"run_wait_id"`
@@ -24,11 +24,11 @@ func (request *WorkerRunResumeReleaseRequest) UnmarshalJSON(raw []byte) error {
 	if len(envelope.Lease) == 0 || bytes.Equal(bytes.TrimSpace(envelope.Lease), []byte("null")) {
 		return errors.New("Run resume release lease is required")
 	}
-	var lease WorkerRunLeaseFence
+	var lease RunLeaseFence
 	if err := decodeClosedWorkerRunResumeReleaseJSON(envelope.Lease, &lease); err != nil {
 		return fmt.Errorf("decode Run resume release lease: %w", err)
 	}
-	*request = WorkerRunResumeReleaseRequest{
+	*request = RunResumeReleaseRequest{
 		Lease:                lease,
 		RunWaitID:            envelope.RunWaitID,
 		CheckpointID:         envelope.CheckpointID,

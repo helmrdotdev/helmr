@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -27,7 +28,7 @@ type taskCompletionReplayStore interface {
 func (s *Server) completeTask(
 	ctx context.Context,
 	worker workerActor,
-	request api.WorkerCompleteTaskRequest,
+	request workerapi.CompleteTaskRequest,
 	completion parsedTaskCompletion,
 ) error {
 	replayed, err := taskCompletionWasReplayed(ctx, s.db, worker, request, completion)
@@ -245,7 +246,7 @@ func taskCompletionWasReplayed(
 	ctx context.Context,
 	store taskCompletionReplayStore,
 	worker workerActor,
-	request api.WorkerCompleteTaskRequest,
+	request workerapi.CompleteTaskRequest,
 	completion parsedTaskCompletion,
 ) (bool, error) {
 	fingerprint, err := store.GetTaskCompletionReplay(ctx, db.GetTaskCompletionReplayParams{
@@ -269,7 +270,7 @@ func taskCompletionReplayAfterError(
 	ctx context.Context,
 	store taskCompletionReplayStore,
 	worker workerActor,
-	request api.WorkerCompleteTaskRequest,
+	request workerapi.CompleteTaskRequest,
 	completion parsedTaskCompletion,
 	operationErr error,
 ) error {
@@ -289,7 +290,7 @@ func taskCompletionReplayAfterError(
 func validateTaskCompletionAuthority(
 	ctx context.Context,
 	store db.Querier,
-	request api.WorkerCompleteTaskRequest,
+	request workerapi.CompleteTaskRequest,
 	completion parsedTaskCompletion,
 	authority runLeaseClaimAuthority,
 ) error {
@@ -353,10 +354,10 @@ func validateTaskCompletionAuthority(
 		return errStaleTaskCompletion
 	}
 	var finalization workspace.FinalizationRequest
-	wantKind := string(api.WorkerRunFinalizationReset)
+	wantKind := string(workerapi.RunFinalizationReset)
 	if completion.capture != nil {
 		finalization = completion.capture.receipt
-		wantKind = string(api.WorkerRunFinalizationCapture)
+		wantKind = string(workerapi.RunFinalizationCapture)
 	} else {
 		finalization = completion.rollback.receipt
 	}

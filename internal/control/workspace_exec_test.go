@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -95,7 +95,7 @@ func TestNormalizeIdempotencyKeyRejectsInsteadOfRewriting(t *testing.T) {
 func TestNormalizeWorkspaceExecOutcomeCapturesEveryNormalExit(t *testing.T) {
 	exitCode := int32(17)
 	kind, reason, resultError, err := normalizeWorkspaceExecOutcome(
-		api.WorkerWorkspaceExecCompleteRequest{
+		workerapi.WorkspaceExecCompleteRequest{
 			Outcome: "exited", ExitCode: &exitCode,
 		},
 	)
@@ -111,7 +111,7 @@ func TestNormalizeWorkspaceExecOutcomeCapturesEveryNormalExit(t *testing.T) {
 
 func TestNormalizeWorkspaceExecOutcomeDiscardsAbnormalExit(t *testing.T) {
 	kind, reason, resultError, err := normalizeWorkspaceExecOutcome(
-		api.WorkerWorkspaceExecCompleteRequest{
+		workerapi.WorkspaceExecCompleteRequest{
 			Outcome: "workspace_exec_timed_out",
 			Error:   json.RawMessage(`{"code":"workspace_exec_timed_out"}`),
 		},
@@ -136,7 +136,7 @@ func TestNormalizeWorkspaceExecOutcomeAcceptsClosedExecutionFailures(t *testing.
 	} {
 		t.Run(outcome, func(t *testing.T) {
 			kind, reason, _, err := normalizeWorkspaceExecOutcome(
-				api.WorkerWorkspaceExecCompleteRequest{
+				workerapi.WorkspaceExecCompleteRequest{
 					Outcome: outcome,
 					Error:   json.RawMessage(`{"code":"` + outcome + `"}`),
 				},
@@ -153,7 +153,7 @@ func TestNormalizeWorkspaceExecOutcomeAcceptsClosedExecutionFailures(t *testing.
 
 func TestNormalizeWorkspaceExecOutcomeRejectsAmbiguousExit(t *testing.T) {
 	if _, _, _, err := normalizeWorkspaceExecOutcome(
-		api.WorkerWorkspaceExecCompleteRequest{Outcome: "exited"},
+		workerapi.WorkspaceExecCompleteRequest{Outcome: "exited"},
 	); err == nil {
 		t.Fatal("normal exit without exit_code was accepted")
 	}

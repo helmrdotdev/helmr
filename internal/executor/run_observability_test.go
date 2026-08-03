@@ -7,24 +7,24 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/client"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type runObservabilityRetryControl struct {
 	*testRunLeaseControl
-	metadataRequests  []api.WorkerUpdateRunMetadataRequest
+	metadataRequests  []workerapi.UpdateRunMetadataRequest
 	metadataErrors    []error
 	metadataAttempted chan struct{}
-	logRequests       []api.WorkerStructuredLogRequest
+	logRequests       []workerapi.StructuredLogRequest
 	logErrors         []error
 	logAttempted      chan struct{}
 }
 
 func (control *runObservabilityRetryControl) UpdateRunMetadata(
 	_ context.Context,
-	request api.WorkerUpdateRunMetadataRequest,
+	request workerapi.UpdateRunMetadataRequest,
 ) error {
 	control.metadataRequests = append(control.metadataRequests, request)
 	if len(control.metadataErrors) == 0 {
@@ -41,7 +41,7 @@ func (control *runObservabilityRetryControl) UpdateRunMetadata(
 
 func (control *runObservabilityRetryControl) AppendStructuredRunLog(
 	_ context.Context,
-	request api.WorkerStructuredLogRequest,
+	request workerapi.StructuredLogRequest,
 ) error {
 	control.logRequests = append(control.logRequests, request)
 	if len(control.logErrors) == 0 {
@@ -141,7 +141,7 @@ func TestTaskControlObservabilityRetryKeepsStableFenceAcrossRenewal(t *testing.T
 		go renewRunSourceReceiptAfterAttempt(task, attempted)
 		err := (taskControlEvents{task: task}).ApplyRunMetadata(
 			t.Context(),
-			api.WorkerRunLeaseAssignment{},
+			workerapi.RunLeaseAssignment{},
 			&runv0.MetadataUpdated{
 				CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000131",
 				Operation:     "set",
@@ -176,7 +176,7 @@ func TestTaskControlObservabilityRetryKeepsStableFenceAcrossRenewal(t *testing.T
 		go renewRunSourceReceiptAfterAttempt(task, attempted)
 		err := (taskControlEvents{task: task}).RecordStructuredRunLog(
 			t.Context(),
-			api.WorkerRunLeaseAssignment{},
+			workerapi.RunLeaseAssignment{},
 			17,
 			&runv0.StructuredLogRequested{
 				CorrelationId:  "019c10d5-a6f7-7af1-8f5f-000000000132",
@@ -211,7 +211,7 @@ func TestTaskControlObservabilityRejectsInvalidRequestBeforeControl(t *testing.T
 	events := taskControlEvents{task: task}
 	if err := events.ApplyRunMetadata(
 		t.Context(),
-		api.WorkerRunLeaseAssignment{},
+		workerapi.RunLeaseAssignment{},
 		&runv0.MetadataUpdated{
 			CorrelationId: "not-a-correlation-id",
 			Operation:     "set",
@@ -224,7 +224,7 @@ func TestTaskControlObservabilityRejectsInvalidRequestBeforeControl(t *testing.T
 	}
 	if err := events.RecordStructuredRunLog(
 		t.Context(),
-		api.WorkerRunLeaseAssignment{},
+		workerapi.RunLeaseAssignment{},
 		1,
 		&runv0.StructuredLogRequested{
 			CorrelationId: "not-a-correlation-id",
@@ -255,7 +255,7 @@ func TestFreshAdmissionObservabilityRetriesTransientControlFailure(t *testing.T)
 	}
 	err := state.ApplyRunMetadata(
 		t.Context(),
-		api.WorkerRunLeaseAssignment{},
+		workerapi.RunLeaseAssignment{},
 		&runv0.MetadataUpdated{
 			CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000133",
 			Operation:     "set",

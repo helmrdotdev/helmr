@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -179,8 +179,8 @@ func testCheckpointManifest(
 	waitID pgtype.UUID,
 ) []byte {
 	t.Helper()
-	manifest, err := json.Marshal(api.WorkerCheckpointManifest{
-		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
+	manifest, err := json.Marshal(workerapi.CheckpointManifest{
+		RecoveryPoint: workerapi.CheckpointRecoveryPoint{
 			ID:            pgvalue.UUIDString(checkpointID),
 			RunID:         pgvalue.UUIDString(runID),
 			AttemptNumber: attemptNumber,
@@ -241,7 +241,7 @@ func TestProjectRunWaitDecisionDistinguishesAbsentAndJSONNull(t *testing.T) {
 	if string(payload) != `{"completed":{"result_json":null}}` {
 		t.Fatalf("decision JSON = %s", payload)
 	}
-	var roundTrip api.WorkerRunLeaseDecision
+	var roundTrip workerapi.RunLeaseDecision
 	if err := json.Unmarshal(payload, &roundTrip); err != nil {
 		t.Fatalf("unmarshal decision: %v", err)
 	}

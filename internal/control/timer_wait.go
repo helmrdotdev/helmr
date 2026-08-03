@@ -9,10 +9,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -27,7 +27,7 @@ type workerTimerWaitParams struct {
 func (s *Server) workerCreateTimerRunWait(
 	w http.ResponseWriter,
 	r *http.Request,
-	request api.WorkerCreateRunWaitRequest,
+	request workerapi.CreateRunWaitRequest,
 	identity requestedRunWaitIdentity,
 ) {
 	params, dueAt, idleTimeout, checkpointDueAt, checkpointDelay, err := timerWaitDeadlines(request)
@@ -157,7 +157,7 @@ func (s *Server) workerCreateTimerRunWait(
 		writeError(w, errors.New("register worker timer Wait"))
 		return
 	}
-	response := api.WorkerCreateRunWaitResponse{
+	response := workerapi.CreateRunWaitResponse{
 		RunID: pgvalue.UUIDString(registrationLocators.RunID), RunWaitID: waitID.String(),
 		ResumeAttachID:    resumeAttachID.String(),
 		RuntimeInstanceID: pgvalue.UUIDString(registrationLocators.RuntimeInstanceID),
@@ -175,7 +175,7 @@ func (s *Server) workerCreateTimerRunWait(
 }
 
 func timerWaitDeadlines(
-	request api.WorkerCreateRunWaitRequest,
+	request workerapi.CreateRunWaitRequest,
 ) (workerTimerWaitParams, time.Time, pgtype.Int8, pgtype.Timestamptz, time.Duration, error) {
 	var params workerTimerWaitParams
 	if err := decodeClosedJSON(request.Params, &params); err != nil {

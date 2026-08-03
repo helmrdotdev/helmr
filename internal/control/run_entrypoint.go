@@ -3,9 +3,9 @@ package control
 import (
 	"context"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -15,7 +15,7 @@ func enterRunEntrypoint(
 	txb TxBeginner,
 	worker workerActor,
 	leaseID pgtype.UUID,
-	request api.WorkerRunEntrypointRequest,
+	request workerapi.RunEntrypointRequest,
 ) error {
 	return inTxWith(ctx, store, txb, func(work *txWork) error {
 		locators, err := work.q.GetRunEntrypointLocators(ctx, db.GetRunEntrypointLocatorsParams{

@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -22,7 +22,7 @@ func TestParseRunFinalization(t *testing.T) {
 		t.Fatal(err)
 	}
 	if parsed.operationID.String() != request.OperationID ||
-		parsed.kind != api.WorkerRunFinalizationCapture ||
+		parsed.kind != workerapi.RunFinalizationCapture ||
 		parsed.fingerprint == "" {
 		t.Fatalf("parsed finalization = %+v", parsed)
 	}
@@ -220,7 +220,7 @@ func TestBeginRunFinalizationAcceptsDifferentWorkspaceParentOwnedChild(t *testin
 
 func TestBeginRunFinalizationAcceptsReset(t *testing.T) {
 	server, _, worker, request, _ := validRunFinalizationFixture(t)
-	request.Kind = api.WorkerRunFinalizationReset
+	request.Kind = workerapi.RunFinalizationReset
 	parsed, err := parseRunFinalization(request)
 	if err != nil {
 		t.Fatal(err)
@@ -229,7 +229,7 @@ func TestBeginRunFinalizationAcceptsReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.Kind != api.WorkerRunFinalizationReset {
+	if response.Kind != workerapi.RunFinalizationReset {
 		t.Fatalf("kind = %q, want reset", response.Kind)
 	}
 }
@@ -314,7 +314,7 @@ func assertRunFinalizationRejected(
 	server *Server,
 	store *runLeaseClaimStore,
 	worker workerActor,
-	request api.WorkerBeginRunFinalizationRequest,
+	request workerapi.BeginRunFinalizationRequest,
 	parsed parsedRunFinalization,
 ) {
 	t.Helper()
@@ -328,7 +328,7 @@ func assertRunFinalizationRejected(
 
 func validRunFinalizationFixture(
 	t *testing.T,
-) (*Server, *runLeaseClaimStore, workerActor, api.WorkerBeginRunFinalizationRequest, parsedRunFinalization) {
+) (*Server, *runLeaseClaimStore, workerActor, workerapi.BeginRunFinalizationRequest, parsedRunFinalization) {
 	t.Helper()
 	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
 	now := store.renewalTime.Time
@@ -336,12 +336,12 @@ func validRunFinalizationFixture(
 	store.authority.attempt.EntrypointEnteredAt = pgvalue.Timestamptz(now.Add(-30 * time.Second))
 	store.finalizationTime = pgvalue.Timestamptz(now)
 	store.finalizationClear = pgtype.Bool{Bool: true, Valid: true}
-	request := api.WorkerBeginRunFinalizationRequest{
+	request := workerapi.BeginRunFinalizationRequest{
 		Lease: receipt.Fence(),
-		ProgramQuiesced: api.WorkerRunQuiescenceProof{
+		ProgramQuiesced: workerapi.RunQuiescenceProof{
 			RunID: receipt.RunID, AttemptNumber: receipt.AttemptNumber, RunLeaseID: receipt.ID,
 		},
-		OperationID: uuid.Must(uuid.NewV7()).String(), Kind: api.WorkerRunFinalizationCapture,
+		OperationID: uuid.Must(uuid.NewV7()).String(), Kind: workerapi.RunFinalizationCapture,
 	}
 	parsed, err := parseRunFinalization(request)
 	if err != nil {
@@ -441,16 +441,16 @@ func (s *runLeaseClaimStore) BeginRunWorkspaceLeaseFinalization(
 	return s.authority.workspaceLease, nil
 }
 
-func validRunFinalizationRequest() api.WorkerBeginRunFinalizationRequest {
+func validRunFinalizationRequest() workerapi.BeginRunFinalizationRequest {
 	lease := validRunLeaseAssignment(uuid.Must(uuid.NewV7()))
 	lease.StartDeadlineAt = time.Unix(1_800_000_000, 123_456_789).UTC()
 	lease.ExpiresAt = time.Unix(1_800_000_100, 987_654_321).UTC()
-	return api.WorkerBeginRunFinalizationRequest{
+	return workerapi.BeginRunFinalizationRequest{
 		Lease: lease.Fence(),
-		ProgramQuiesced: api.WorkerRunQuiescenceProof{
+		ProgramQuiesced: workerapi.RunQuiescenceProof{
 			RunID: lease.RunID, AttemptNumber: lease.AttemptNumber, RunLeaseID: lease.ID,
 		},
 		OperationID: uuid.Must(uuid.NewV7()).String(),
-		Kind:        api.WorkerRunFinalizationCapture,
+		Kind:        workerapi.RunFinalizationCapture,
 	}
 }

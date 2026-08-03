@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 const (
-	WorkerProtocolVersion     = "helmr.worker.v0"
 	WorkerRoleRun             = "run"
 	WorkerRoleBuild           = "build"
 	WorkerTokenIssuer         = "helmr-control-plane"
@@ -176,8 +176,8 @@ func validateWorkerClaims(payload WorkerClaims) error {
 		}
 		previous = role
 	}
-	if payload.ProtocolVersion != WorkerProtocolVersion {
-		return fmt.Errorf("protocol_version must be %q", WorkerProtocolVersion)
+	if payload.ProtocolVersion != workerapi.CurrentProtocolVersion {
+		return fmt.Errorf("protocol_version must be %q", workerapi.CurrentProtocolVersion)
 	}
 	if payload.IssuedAt.IsZero() {
 		return errors.New("issued_at is zero")

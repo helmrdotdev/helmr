@@ -13,13 +13,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
@@ -90,9 +90,9 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 		t.Fatalf("Run Lease renewals = %d", control.renewalCount())
 	}
 	if !slices.Equal(events.snapshot(), []testFreshProgramLog{
-		{stream: api.WorkerLogStreamStdout, observedSeq: 2, content: "loading"},
-		{stream: api.WorkerLogStreamStderr, observedSeq: 3, content: "notice"},
-		{stream: api.WorkerLogStreamStdout, observedSeq: 6, content: "done"},
+		{stream: workerapi.LogStreamStdout, observedSeq: 2, content: "loading"},
+		{stream: workerapi.LogStreamStderr, observedSeq: 3, content: "notice"},
+		{stream: workerapi.LogStreamStdout, observedSeq: 6, content: "done"},
 	}) {
 		t.Fatalf("Run logs = %+v", events.snapshot())
 	}
@@ -395,7 +395,7 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 		{
 			name: "proof before outcome",
 			events: []*runv0.RunEvent{
-				testProgramQuiescedEvent(api.WorkerRunLeaseAssignment{
+				testProgramQuiescedEvent(workerapi.RunLeaseAssignment{
 					ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 				}),
 			},
@@ -405,7 +405,7 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 			name: "mismatched proof",
 			events: []*runv0.RunEvent{
 				testTaskSucceededEvent(`null`),
-				testProgramQuiescedEvent(api.WorkerRunLeaseAssignment{
+				testProgramQuiescedEvent(workerapi.RunLeaseAssignment{
 					ID: "other", RunID: "run-1", AttemptNumber: 2,
 				}),
 			},
@@ -440,7 +440,7 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 			}()
 			program := freshProgram{
 				session: fakeGuestSession{stream: host},
-				lease: api.WorkerRunLeaseAssignment{
+				lease: workerapi.RunLeaseAssignment{
 					ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 				},
 				entrypoint: &runv0.EntrypointIdentity{
@@ -466,7 +466,7 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 }
 
 func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
-	lease := api.WorkerRunLeaseAssignment{
+	lease := workerapi.RunLeaseAssignment{
 		ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 	}
 	send := &runv0.ActorInputSendRequested{
@@ -555,7 +555,7 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 }
 
 func TestFreshProgramDispatchesActorOutputAppend(t *testing.T) {
-	lease := api.WorkerRunLeaseAssignment{
+	lease := workerapi.RunLeaseAssignment{
 		ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 	}
 	requested := &runv0.ActorOutputAppendRequested{
@@ -616,7 +616,7 @@ func TestFreshProgramDispatchesActorOutputAppend(t *testing.T) {
 
 func serveFreshProgramProtocol(
 	conn net.Conn,
-	lease api.WorkerRunLeaseAssignment,
+	lease workerapi.RunLeaseAssignment,
 	control *testFreshProgramControl,
 ) error {
 	defer conn.Close()
@@ -729,7 +729,7 @@ func testTaskSucceededEvent(output string) *runv0.RunEvent {
 	}
 }
 
-func testProgramQuiescedEvent(lease api.WorkerRunLeaseAssignment) *runv0.RunEvent {
+func testProgramQuiescedEvent(lease workerapi.RunLeaseAssignment) *runv0.RunEvent {
 	return &runv0.RunEvent{
 		Event: &runv0.RunEvent_ProgramQuiesced{
 			ProgramQuiesced: &runv0.ProgramQuiesced{
@@ -743,7 +743,7 @@ func testProgramQuiescedEvent(lease api.WorkerRunLeaseAssignment) *runv0.RunEven
 
 func readFreshProgramAdmission(
 	conn net.Conn,
-	lease api.WorkerRunLeaseAssignment,
+	lease workerapi.RunLeaseAssignment,
 ) error {
 	header, bodyLength, err := wire.ReadStreamFrameHeader(conn)
 	if err != nil {
@@ -830,7 +830,7 @@ func readFreshProgramAdmission(
 
 func testFreshProgramClaim(
 	t *testing.T,
-) api.WorkerRunLeaseClaimResponse {
+) workerapi.RunLeaseClaimResponse {
 	t.Helper()
 	var start bytes.Buffer
 	if err := frameio.WriteProtoFrame(&start, &runv0.ProgramStart{
@@ -847,8 +847,8 @@ func testFreshProgramClaim(
 	}); err != nil {
 		t.Fatal(err)
 	}
-	return api.WorkerRunLeaseClaimResponse{
-		Lease: api.WorkerRunLeaseAssignment{
+	return workerapi.RunLeaseClaimResponse{
+		Lease: workerapi.RunLeaseAssignment{
 			ID:                     "lease-1",
 			RunID:                  "run-1",
 			AttemptNumber:          2,
@@ -867,23 +867,23 @@ func testFreshProgramClaim(
 			StartDeadlineAt:        time.Now().Add(time.Minute).UTC(),
 			ExpiresAt:              time.Now().Add(5 * time.Minute).UTC(),
 		},
-		Workspace: api.WorkerWorkspaceAttachment{
+		Workspace: workerapi.WorkspaceAttachment{
 			WriteCapability: "write-capability",
 		},
-		Secrets: []api.WorkerSecretDelivery{
+		Secrets: []workerapi.SecretDelivery{
 			{
-				Env:   &api.WorkerSecretEnv{Name: "API_TOKEN"},
+				Env:   &workerapi.SecretEnv{Name: "API_TOKEN"},
 				Value: []byte("secret-one"),
 			},
 			{
-				File: &api.WorkerSecretFile{
+				File: &workerapi.SecretFile{
 					Path: "/run/helmr-secrets/config.json",
 				},
 				Value: []byte("secret-two"),
 			},
 		},
-		Execution: api.WorkerRunLeaseExecution{
-			Fresh: &api.WorkerRunLeaseFresh{
+		Execution: workerapi.RunLeaseExecution{
+			Fresh: &workerapi.RunLeaseFresh{
 				ProgramStart: start.Bytes(),
 			},
 		},
@@ -892,13 +892,13 @@ func testFreshProgramClaim(
 
 func testChildAttachProgramClaim(
 	t *testing.T,
-) api.WorkerRunLeaseClaimResponse {
+) workerapi.RunLeaseClaimResponse {
 	t.Helper()
 	claim := testFreshProgramClaim(t)
 	start := claim.Execution.Fresh.ProgramStart
-	claim.Execution = api.WorkerRunLeaseExecution{
-		Attach: &api.WorkerRunLeaseAttach{
-			Child: &api.WorkerRunLeaseChildAttach{
+	claim.Execution = workerapi.RunLeaseExecution{
+		Attach: &workerapi.RunLeaseAttach{
+			Child: &workerapi.RunLeaseChildAttach{
 				ParentRunID:         "parent-run-1",
 				ParentAttemptNumber: 3,
 				RunWaitID:           "wait-1",
@@ -913,9 +913,9 @@ func testChildAttachProgramClaim(
 }
 
 func testWorkspaceMount(
-	lease api.WorkerRunLeaseAssignment,
-) api.WorkerWorkspaceMount {
-	return api.WorkerWorkspaceMount{
+	lease workerapi.RunLeaseAssignment,
+) workerapi.WorkspaceMount {
+	return workerapi.WorkspaceMount{
 		ID:                lease.WorkspaceMountID,
 		WorkspaceID:       lease.WorkspaceID,
 		RuntimeInstanceID: lease.RuntimeInstanceID,
@@ -926,7 +926,7 @@ func testWorkspaceMount(
 
 type testFreshProgramControl struct {
 	mu                 sync.Mutex
-	lease              api.WorkerRunLeaseAssignment
+	lease              workerapi.RunLeaseAssignment
 	calls              []string
 	startErr           error
 	entrypointErr      error
@@ -937,7 +937,7 @@ type testFreshProgramControl struct {
 }
 
 type testFreshProgramLog struct {
-	stream      api.WorkerLogStream
+	stream      workerapi.LogStream
 	observedSeq uint64
 	content     string
 }
@@ -949,8 +949,8 @@ type testFreshProgramEventSink struct {
 
 func (s *testFreshProgramEventSink) AppendRunLog(
 	_ context.Context,
-	_ api.WorkerRunLeaseAssignment,
-	stream api.WorkerLogStream,
+	_ workerapi.RunLeaseAssignment,
+	stream workerapi.LogStream,
 	observedSeq uint64,
 	content []byte,
 ) error {
@@ -966,7 +966,7 @@ func (s *testFreshProgramEventSink) AppendRunLog(
 
 func (s *testFreshProgramEventSink) ApplyRunMetadata(
 	context.Context,
-	api.WorkerRunLeaseAssignment,
+	workerapi.RunLeaseAssignment,
 	*runv0.MetadataUpdated,
 ) error {
 	return nil
@@ -974,7 +974,7 @@ func (s *testFreshProgramEventSink) ApplyRunMetadata(
 
 func (s *testFreshProgramEventSink) RecordStructuredRunLog(
 	context.Context,
-	api.WorkerRunLeaseAssignment,
+	workerapi.RunLeaseAssignment,
 	uint64,
 	*runv0.StructuredLogRequested,
 ) error {
@@ -989,8 +989,8 @@ func (s *testFreshProgramEventSink) snapshot() []testFreshProgramLog {
 
 func (c *testFreshProgramControl) AcknowledgeRunStart(
 	_ context.Context,
-	request api.WorkerRunStartRequest,
-) (api.WorkerRunStartResponse, error) {
+	request workerapi.RunStartRequest,
+) (workerapi.RunStartResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.calls = append(c.calls, "start")
@@ -1008,23 +1008,23 @@ func (c *testFreshProgramControl) AcknowledgeRunStart(
 			request.Attach.Child.ResumeAttachID == "attach-1"
 	}
 	if !validArm || request.Lease != c.lease.Fence() {
-		return api.WorkerRunStartResponse{}, errors.New(
+		return workerapi.RunStartResponse{}, errors.New(
 			"unexpected start receipt",
 		)
 	}
 	if c.startErr != nil {
-		return api.WorkerRunStartResponse{}, c.startErr
+		return workerapi.RunStartResponse{}, c.startErr
 	}
 	if c.startFailures > 0 {
 		c.startFailures--
-		return api.WorkerRunStartResponse{}, errors.New("transient start acknowledgement failure")
+		return workerapi.RunStartResponse{}, errors.New("transient start acknowledgement failure")
 	}
-	return api.WorkerRunStartResponse{Lease: c.lease.Fence()}, nil
+	return workerapi.RunStartResponse{Lease: c.lease.Fence()}, nil
 }
 
 func (c *testFreshProgramControl) AcknowledgeRunEntrypoint(
 	_ context.Context,
-	request api.WorkerRunEntrypointRequest,
+	request workerapi.RunEntrypointRequest,
 ) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1046,15 +1046,15 @@ func (c *testFreshProgramControl) AcknowledgeRunEntrypoint(
 
 func (c *testFreshProgramControl) RenewRunLease(
 	_ context.Context,
-	lease api.WorkerRunLeaseAssignment,
-) (api.WorkerRunLeaseRenewResponse, error) {
+	lease workerapi.RunLeaseAssignment,
+) (workerapi.RunLeaseRenewResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.renewals++
 	if !equalRunLeaseAssignment(lease, c.lease) {
-		return api.WorkerRunLeaseRenewResponse{}, errors.New("unexpected renewal receipt")
+		return workerapi.RunLeaseRenewResponse{}, errors.New("unexpected renewal receipt")
 	}
-	return api.WorkerRunLeaseRenewResponse{
+	return workerapi.RunLeaseRenewResponse{
 		Lease: c.lease.Fence(), ExpiresAt: c.lease.ExpiresAt,
 		BaseWorkspaceVersionID: c.lease.BaseWorkspaceVersionID,
 	}, nil

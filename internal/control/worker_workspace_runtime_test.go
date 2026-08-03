@@ -11,10 +11,10 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -43,7 +43,7 @@ func TestParseWorkspaceWorkerIDsRequiresCanonicalUUIDv7(t *testing.T) {
 }
 
 func TestWorkerCompleteWorkspaceExecRejectsNonCanonicalUUIDv7(t *testing.T) {
-	body, err := json.Marshal(api.WorkerWorkspaceExecCompleteRequest{
+	body, err := json.Marshal(workerapi.WorkspaceExecCompleteRequest{
 		OrgID: " 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 	})
 	if err != nil {
@@ -104,11 +104,11 @@ func TestWorkerWorkspaceFileReadCommitsBeforeCAS(t *testing.T) {
 		db:  store,
 		cas: &workerWorkspaceFileCAS{store: store, body: artifact.Bytes()},
 	}
-	requestBody, err := json.Marshal(api.WorkerReadWorkspaceFileRequest{
-		WorkerRetrieveWorkspaceRequest: api.WorkerRetrieveWorkspaceRequest{
+	requestBody, err := json.Marshal(workerapi.ReadWorkspaceFileRequest{
+		RetrieveWorkspaceRequest: workerapi.RetrieveWorkspaceRequest{
 			Lease:         receipt.Fence(),
 			CorrelationID: uuid.Must(uuid.NewV7()).String(),
-			Workspace:     api.WorkerWorkspaceAddress{WorkspaceID: pgvalue.UUIDString(record.ID)},
+			Workspace:     workerapi.WorkspaceAddress{WorkspaceID: pgvalue.UUIDString(record.ID)},
 		},
 		Path: "src/main.txt",
 	})
@@ -124,7 +124,7 @@ func TestWorkerWorkspaceFileReadCommitsBeforeCAS(t *testing.T) {
 	if response.Code != 200 {
 		t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
 	}
-	var result api.WorkerReadWorkspaceFileResponse
+	var result workerapi.ReadWorkspaceFileResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}

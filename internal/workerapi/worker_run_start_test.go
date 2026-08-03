@@ -1,4 +1,4 @@
-package api
+package workerapi
 
 import (
 	"encoding/json"
@@ -31,7 +31,7 @@ func TestWorkerRunStartRequestClosedUnion(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			var request WorkerRunStartRequest
+			var request RunStartRequest
 			err := json.Unmarshal([]byte(test.body), &request)
 			if (err == nil) != test.ok {
 				t.Fatalf("error = %v", err)
@@ -41,9 +41,9 @@ func TestWorkerRunStartRequestClosedUnion(t *testing.T) {
 }
 
 func TestWorkerRunStartRequestMarshalUsesSelectedArm(t *testing.T) {
-	data, err := json.Marshal(WorkerRunStartRequest{
-		Lease: WorkerRunLeaseFence{ID: "lease", LeaseSequence: 1},
-		Fresh: &WorkerRunStartFresh{},
+	data, err := json.Marshal(RunStartRequest{
+		Lease: RunLeaseFence{ID: "lease", LeaseSequence: 1},
+		Fresh: &RunStartFresh{},
 	})
 	if err != nil {
 		t.Fatal(err)

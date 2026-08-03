@@ -10,13 +10,13 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 const (
@@ -32,34 +32,34 @@ const (
 type FreshProgramControl interface {
 	AcknowledgeRunStart(
 		context.Context,
-		api.WorkerRunStartRequest,
-	) (api.WorkerRunStartResponse, error)
+		workerapi.RunStartRequest,
+	) (workerapi.RunStartResponse, error)
 	AcknowledgeRunEntrypoint(
 		context.Context,
-		api.WorkerRunEntrypointRequest,
+		workerapi.RunEntrypointRequest,
 	) error
 	RenewRunLease(
 		context.Context,
-		api.WorkerRunLeaseAssignment,
-	) (api.WorkerRunLeaseRenewResponse, error)
+		workerapi.RunLeaseAssignment,
+	) (workerapi.RunLeaseRenewResponse, error)
 }
 
 type freshProgramEventSink interface {
 	AppendRunLog(
 		context.Context,
-		api.WorkerRunLeaseAssignment,
-		api.WorkerLogStream,
+		workerapi.RunLeaseAssignment,
+		workerapi.LogStream,
 		uint64,
 		[]byte,
 	) error
 	ApplyRunMetadata(
 		context.Context,
-		api.WorkerRunLeaseAssignment,
+		workerapi.RunLeaseAssignment,
 		*runv0.MetadataUpdated,
 	) error
 	RecordStructuredRunLog(
 		context.Context,
-		api.WorkerRunLeaseAssignment,
+		workerapi.RunLeaseAssignment,
 		uint64,
 		*runv0.StructuredLogRequested,
 	) error
@@ -67,8 +67,8 @@ type freshProgramEventSink interface {
 
 type freshProgram struct {
 	session          vm.Session
-	mount            api.WorkerWorkspaceMount
-	lease            api.WorkerRunLeaseAssignment
+	mount            workerapi.WorkspaceMount
+	lease            workerapi.RunLeaseAssignment
 	authority        *workspacev0.WorkspaceRunAuthority
 	entrypoint       *runv0.EntrypointIdentity
 	observedEventSeq uint64
@@ -76,13 +76,13 @@ type freshProgram struct {
 
 type newProgramAdmission struct {
 	programStart []byte
-	start        api.WorkerRunStartRequest
+	start        workerapi.RunStartRequest
 	parent       *workspacev0.VerifyProgramRestoreRequest
 }
 
 type freshAdmissionState struct {
 	mu        sync.Mutex
-	lease     api.WorkerRunLeaseAssignment
+	lease     workerapi.RunLeaseAssignment
 	authority *workspacev0.WorkspaceRunAuthority
 	mounts    WorkspaceMountSessionRegistry
 	control   FreshProgramControl
@@ -91,8 +91,8 @@ type freshAdmissionState struct {
 
 func (state *freshAdmissionState) AppendRunLog(
 	ctx context.Context,
-	_ api.WorkerRunLeaseAssignment,
-	stream api.WorkerLogStream,
+	_ workerapi.RunLeaseAssignment,
+	stream workerapi.LogStream,
 	sequence uint64,
 	content []byte,
 ) error {
@@ -114,7 +114,7 @@ func (state *freshAdmissionState) AppendRunLog(
 
 func (state *freshAdmissionState) ApplyRunMetadata(
 	ctx context.Context,
-	_ api.WorkerRunLeaseAssignment,
+	_ workerapi.RunLeaseAssignment,
 	request *runv0.MetadataUpdated,
 ) error {
 	state.mu.Lock()
@@ -128,7 +128,7 @@ func (state *freshAdmissionState) ApplyRunMetadata(
 
 func (state *freshAdmissionState) RecordStructuredRunLog(
 	ctx context.Context,
-	_ api.WorkerRunLeaseAssignment,
+	_ workerapi.RunLeaseAssignment,
 	sequence uint64,
 	request *runv0.StructuredLogRequested,
 ) error {
@@ -204,7 +204,7 @@ func (program *freshProgram) awaitTaskCompletion(
 			if err := events.AppendRunLog(
 				ctx,
 				program.lease,
-				api.WorkerLogStreamStdout,
+				workerapi.LogStreamStdout,
 				program.observedEventSeq,
 				value.StdoutChunk,
 			); err != nil {
@@ -214,7 +214,7 @@ func (program *freshProgram) awaitTaskCompletion(
 			if err := events.AppendRunLog(
 				ctx,
 				program.lease,
-				api.WorkerLogStreamStderr,
+				workerapi.LogStreamStderr,
 				program.observedEventSeq,
 				value.StderrChunk,
 			); err != nil {
@@ -363,11 +363,11 @@ func (program *freshProgram) awaitActorCompletion(
 		program.observedEventSeq++
 		switch value := event.Event.(type) {
 		case *runv0.RunEvent_StdoutChunk:
-			if err := events.AppendRunLog(ctx, program.lease, api.WorkerLogStreamStdout, program.observedEventSeq, value.StdoutChunk); err != nil {
+			if err := events.AppendRunLog(ctx, program.lease, workerapi.LogStreamStdout, program.observedEventSeq, value.StdoutChunk); err != nil {
 				return nil, nil, fmt.Errorf("append Actor stdout: %w", err)
 			}
 		case *runv0.RunEvent_StderrChunk:
-			if err := events.AppendRunLog(ctx, program.lease, api.WorkerLogStreamStderr, program.observedEventSeq, value.StderrChunk); err != nil {
+			if err := events.AppendRunLog(ctx, program.lease, workerapi.LogStreamStderr, program.observedEventSeq, value.StderrChunk); err != nil {
 				return nil, nil, fmt.Errorf("append Actor stderr: %w", err)
 			}
 		case *runv0.RunEvent_MetadataUpdated:
@@ -604,7 +604,7 @@ func validateFreshTaskFailure(message string, details *string) error {
 
 func (r ProgramRunner) startNewProgram(
 	ctx context.Context,
-	claim *api.WorkerRunLeaseClaimResponse,
+	claim *workerapi.RunLeaseClaimResponse,
 	control FreshProgramControl,
 	events freshProgramEventSink,
 ) (freshProgram, error) {
@@ -706,7 +706,7 @@ func (r ProgramRunner) startNewProgram(
 	observedEventSeq := uint64(1)
 	ackCtx, cancelAck := context.WithDeadline(ctx, claim.Lease.ExpiresAt)
 	defer cancelAck()
-	var startResponse api.WorkerRunStartResponse
+	var startResponse workerapi.RunStartResponse
 	if err := retryRunLeaseRequest(ackCtx, func(requestCtx context.Context) error {
 		var requestErr error
 		admission.start.Lease = claim.Lease.Fence()
@@ -816,7 +816,7 @@ func (r ProgramRunner) startNewProgram(
 	}
 	entrypointAckCtx, cancelEntrypointAck := context.WithDeadline(ctx, state.lease.ExpiresAt)
 	defer cancelEntrypointAck()
-	entrypointRequest := api.WorkerRunEntrypointRequest{
+	entrypointRequest := workerapi.RunEntrypointRequest{
 		Lease:                state.lease.Fence(),
 		EntrypointKind:       kind,
 		EntrypointDeclaredID: ready.GetEntrypoint().GetDeclaredId(),
@@ -886,7 +886,7 @@ func writeFreshProgramContext(
 func readFreshEntrypointReady(
 	ctx context.Context,
 	session vm.Session,
-	lease api.WorkerRunLeaseAssignment,
+	lease workerapi.RunLeaseAssignment,
 	events freshProgramEventSink,
 	observedEventSeq *uint64,
 ) (*runv0.EntrypointReady, error) {
@@ -906,7 +906,7 @@ func readFreshEntrypointReady(
 			if err := events.AppendRunLog(
 				ctx,
 				lease,
-				api.WorkerLogStreamStdout,
+				workerapi.LogStreamStdout,
 				*observedEventSeq,
 				value.StdoutChunk,
 			); err != nil {
@@ -916,7 +916,7 @@ func readFreshEntrypointReady(
 			if err := events.AppendRunLog(
 				ctx,
 				lease,
-				api.WorkerLogStreamStderr,
+				workerapi.LogStreamStderr,
 				*observedEventSeq,
 				value.StderrChunk,
 			); err != nil {
@@ -933,7 +933,7 @@ func readFreshEntrypointReady(
 }
 
 func validateNewProgramClaim(
-	claim *api.WorkerRunLeaseClaimResponse,
+	claim *workerapi.RunLeaseClaimResponse,
 ) (newProgramAdmission, error) {
 	lease := claim.Lease
 	if strings.TrimSpace(lease.ID) == "" ||
@@ -971,8 +971,8 @@ func validateNewProgramClaim(
 		len(execution.Fresh.ProgramStart) > 0:
 		admission = newProgramAdmission{
 			programStart: execution.Fresh.ProgramStart,
-			start: api.WorkerRunStartRequest{
-				Fresh: &api.WorkerRunStartFresh{},
+			start: workerapi.RunStartRequest{
+				Fresh: &workerapi.RunStartFresh{},
 			},
 		}
 	case execution.Fresh == nil &&
@@ -1001,9 +1001,9 @@ func validateNewProgramClaim(
 				CheckpointId:  child.CheckpointID,
 				CorrelationId: child.CorrelationID,
 			},
-			start: api.WorkerRunStartRequest{
-				Attach: &api.WorkerRunStartAttach{
-					Child: &api.WorkerRunStartChildAttach{
+			start: workerapi.RunStartRequest{
+				Attach: &workerapi.RunStartAttach{
+					Child: &workerapi.RunStartChildAttach{
 						RunWaitID:      child.RunWaitID,
 						CheckpointID:   child.CheckpointID,
 						ResumeAttachID: child.ResumeAttachID,
@@ -1037,8 +1037,8 @@ func validateNewProgramClaim(
 }
 
 func validateNewProgramMount(
-	lease api.WorkerRunLeaseAssignment,
-	mount api.WorkerWorkspaceMount,
+	lease workerapi.RunLeaseAssignment,
+	mount workerapi.WorkspaceMount,
 ) error {
 	if mount.ID != lease.WorkspaceMountID ||
 		mount.WorkspaceID != lease.WorkspaceID ||
@@ -1055,7 +1055,7 @@ func validateNewProgramMount(
 func writeFreshProgramAdmission(
 	stream vm.Stream,
 	channelToken string,
-	claim *api.WorkerRunLeaseClaimResponse,
+	claim *workerapi.RunLeaseClaimResponse,
 	programStart []byte,
 ) error {
 	lease := claim.Lease
@@ -1134,7 +1134,7 @@ func writeFreshProgramAdmission(
 }
 
 func freshWorkspaceAuthority(
-	claim *api.WorkerRunLeaseClaimResponse,
+	claim *workerapi.RunLeaseClaimResponse,
 	channelToken string,
 ) *workspacev0.WorkspaceRunAuthority {
 	lease := claim.Lease
@@ -1163,7 +1163,7 @@ func freshWorkspaceAuthority(
 }
 
 func freshProgramSecret(
-	delivery api.WorkerSecretDelivery,
+	delivery workerapi.SecretDelivery,
 ) (*runv0.ProgramSecret, error) {
 	secret := &runv0.ProgramSecret{
 		Value: append([]byte(nil), delivery.Value...),
@@ -1187,7 +1187,7 @@ func freshProgramSecret(
 }
 
 func programStartRelease(
-	lease api.WorkerRunLeaseAssignment,
+	lease workerapi.RunLeaseAssignment,
 ) *runv0.ProgramSupervisorCommand {
 	return &runv0.ProgramSupervisorCommand{
 		Command: &runv0.ProgramSupervisorCommand_StartRelease{
@@ -1202,7 +1202,7 @@ func programStartRelease(
 
 func validateFreshEntrypoint(
 	ready *runv0.EntrypointReady,
-	lease api.WorkerRunLeaseAssignment,
+	lease workerapi.RunLeaseAssignment,
 ) (string, error) {
 	if ready == nil ||
 		ready.GetRunId() != lease.RunID ||
@@ -1224,8 +1224,8 @@ func validateFreshEntrypoint(
 }
 
 func equalRunLeaseAssignment(
-	left api.WorkerRunLeaseAssignment,
-	right api.WorkerRunLeaseAssignment,
+	left workerapi.RunLeaseAssignment,
+	right workerapi.RunLeaseAssignment,
 ) bool {
 	if !left.StartDeadlineAt.Equal(right.StartDeadlineAt) ||
 		!left.ExpiresAt.Equal(right.ExpiresAt) {
@@ -1238,7 +1238,7 @@ func equalRunLeaseAssignment(
 	return left == right
 }
 
-func clearFreshProgramDelivery(claim *api.WorkerRunLeaseClaimResponse) {
+func clearFreshProgramDelivery(claim *workerapi.RunLeaseClaimResponse) {
 	if claim == nil {
 		return
 	}

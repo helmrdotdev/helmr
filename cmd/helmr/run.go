@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/cli/ui"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/spf13/cobra"
 )
 
@@ -193,12 +194,12 @@ func runLogsCommand() *cobra.Command {
 func writeRunLogPage(cmd *cobra.Command, page api.RunLogPage) error {
 	for _, record := range page.Logs {
 		switch record.Kind {
-		case string(api.WorkerLogStreamStdout), string(api.WorkerLogStreamStderr):
+		case string(workerapi.LogStreamStdout), string(workerapi.LogStreamStderr):
 			content, err := base64.StdEncoding.DecodeString(record.ContentBase64)
 			if err != nil {
 				return fmt.Errorf("decode %s log: %w", record.Kind, err)
 			}
-			if record.Kind == string(api.WorkerLogStreamStdout) {
+			if record.Kind == string(workerapi.LogStreamStdout) {
 				_, err = cmd.OutOrStdout().Write(content)
 			} else {
 				_, err = cmd.ErrOrStderr().Write(content)
@@ -206,7 +207,7 @@ func writeRunLogPage(cmd *cobra.Command, page api.RunLogPage) error {
 			if err != nil {
 				return err
 			}
-		case string(api.WorkerLogStreamStructured):
+		case string(workerapi.LogStreamStructured):
 			if err := format.JSONLines(cmd.OutOrStdout(), []api.RunLogRecord{record}); err != nil {
 				return err
 			}

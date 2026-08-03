@@ -15,6 +15,7 @@ import (
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
 )
@@ -27,57 +28,57 @@ var (
 )
 
 type RunLeaseControl interface {
-	ClaimRunLease(context.Context, api.WorkerRunLeaseWork) (api.WorkerRunLeaseClaimResponse, error)
-	AcknowledgeRunStart(context.Context, api.WorkerRunStartRequest) (api.WorkerRunStartResponse, error)
-	AcknowledgeRunEntrypoint(context.Context, api.WorkerRunEntrypointRequest) error
-	RenewRunLease(context.Context, api.WorkerRunLeaseAssignment) (api.WorkerRunLeaseRenewResponse, error)
-	BeginRunFinalization(context.Context, api.WorkerBeginRunFinalizationRequest) (api.WorkerBeginRunFinalizationResponse, error)
-	CompleteTask(context.Context, api.WorkerCompleteTaskRequest) error
-	CompleteActor(context.Context, api.WorkerCompleteActorRequest) error
-	CommitActorTurn(context.Context, api.WorkerCommitActorTurnRequest) (api.WorkerCommitActorTurnResponse, error)
-	SendRunActorInput(context.Context, api.WorkerSendActorInputRequest) (api.WorkerSendActorInputResponse, error)
-	AppendActorOutput(context.Context, api.WorkerAppendActorOutputRequest) (api.WorkerAppendActorOutputResponse, error)
-	CreateRuntimeToken(context.Context, api.WorkerCreateTokenRequest) (api.TokenResponse, error)
-	AppendRunLog(context.Context, api.WorkerRunLeaseAssignment, api.WorkerLogStream, uint64, []byte) error
+	ClaimRunLease(context.Context, workerapi.RunLeaseWork) (workerapi.RunLeaseClaimResponse, error)
+	AcknowledgeRunStart(context.Context, workerapi.RunStartRequest) (workerapi.RunStartResponse, error)
+	AcknowledgeRunEntrypoint(context.Context, workerapi.RunEntrypointRequest) error
+	RenewRunLease(context.Context, workerapi.RunLeaseAssignment) (workerapi.RunLeaseRenewResponse, error)
+	BeginRunFinalization(context.Context, workerapi.BeginRunFinalizationRequest) (workerapi.BeginRunFinalizationResponse, error)
+	CompleteTask(context.Context, workerapi.CompleteTaskRequest) error
+	CompleteActor(context.Context, workerapi.CompleteActorRequest) error
+	CommitActorTurn(context.Context, workerapi.CommitActorTurnRequest) (workerapi.CommitActorTurnResponse, error)
+	SendRunActorInput(context.Context, workerapi.SendActorInputRequest) (workerapi.SendActorInputResponse, error)
+	AppendActorOutput(context.Context, workerapi.AppendActorOutputRequest) (workerapi.AppendActorOutputResponse, error)
+	CreateRuntimeToken(context.Context, workerapi.CreateTokenRequest) (api.TokenResponse, error)
+	AppendRunLog(context.Context, workerapi.RunLeaseAssignment, workerapi.LogStream, uint64, []byte) error
 }
 
 type ActorRuntimeControl interface {
-	StartRunActor(context.Context, api.WorkerStartActorRequest) (api.WorkerStartActorResponse, error)
-	GetRunActorStatus(context.Context, api.WorkerActorReferenceRequest) (api.WorkerActorStatusResponse, error)
-	CloseRunActor(context.Context, api.WorkerCloseActorRequest) (api.WorkerCloseActorResponse, error)
-	ReadRunActorOutputPage(context.Context, api.WorkerReadActorOutputPageRequest) (api.WorkerReadActorOutputPageResponse, error)
+	StartRunActor(context.Context, workerapi.StartActorRequest) (workerapi.StartActorResponse, error)
+	GetRunActorStatus(context.Context, workerapi.ActorReferenceRequest) (workerapi.ActorStatusResponse, error)
+	CloseRunActor(context.Context, workerapi.CloseActorRequest) (workerapi.CloseActorResponse, error)
+	ReadRunActorOutputPage(context.Context, workerapi.ReadActorOutputPageRequest) (workerapi.ReadActorOutputPageResponse, error)
 }
 
 type WorkspaceRuntimeControl interface {
-	CreateRunWorkspace(context.Context, api.WorkerCreateWorkspaceRequest) (api.WorkerCreateWorkspaceResponse, error)
-	RetrieveRunWorkspace(context.Context, api.WorkerRetrieveWorkspaceRequest) (api.WorkerRetrieveWorkspaceResponse, error)
-	ReadRunWorkspaceFile(context.Context, api.WorkerReadWorkspaceFileRequest) (api.WorkerReadWorkspaceFileResponse, error)
-	StatRunWorkspaceFile(context.Context, api.WorkerReadWorkspaceFileRequest) (api.WorkerStatWorkspaceFileResponse, error)
-	ListRunWorkspaceFiles(context.Context, api.WorkerListWorkspaceFilesRequest) (api.WorkerListWorkspaceFilesResponse, error)
-	ExecuteRunWorkspace(context.Context, api.WorkerExecuteWorkspaceRequest) (api.WorkerExecuteWorkspaceResponse, error)
-	PollRunWorkspaceExec(context.Context, api.WorkerPollWorkspaceExecRequest) (api.WorkerExecuteWorkspaceResponse, error)
-	DeleteRunWorkspace(context.Context, api.WorkerDeleteWorkspaceRequest) (api.WorkerDeleteWorkspaceResponse, error)
+	CreateRunWorkspace(context.Context, workerapi.CreateWorkspaceRequest) (workerapi.CreateWorkspaceResponse, error)
+	RetrieveRunWorkspace(context.Context, workerapi.RetrieveWorkspaceRequest) (workerapi.RetrieveWorkspaceResponse, error)
+	ReadRunWorkspaceFile(context.Context, workerapi.ReadWorkspaceFileRequest) (workerapi.ReadWorkspaceFileResponse, error)
+	StatRunWorkspaceFile(context.Context, workerapi.ReadWorkspaceFileRequest) (workerapi.StatWorkspaceFileResponse, error)
+	ListRunWorkspaceFiles(context.Context, workerapi.ListWorkspaceFilesRequest) (workerapi.ListWorkspaceFilesResponse, error)
+	ExecuteRunWorkspace(context.Context, workerapi.ExecuteWorkspaceRequest) (workerapi.ExecuteWorkspaceResponse, error)
+	PollRunWorkspaceExec(context.Context, workerapi.PollWorkspaceExecRequest) (workerapi.ExecuteWorkspaceResponse, error)
+	DeleteRunWorkspace(context.Context, workerapi.DeleteWorkspaceRequest) (workerapi.DeleteWorkspaceResponse, error)
 }
 
 type RunLeaseTaskResult struct {
-	Outcome         api.WorkerTaskOutcome
-	ActorOutcome    *api.WorkerActorOutcome
-	ProgramQuiesced api.WorkerRunQuiescenceProof
+	Outcome         workerapi.TaskOutcome
+	ActorOutcome    *workerapi.ActorOutcome
+	ProgramQuiesced workerapi.RunQuiescenceProof
 }
 
 type RunLeaseTaskRenewal struct {
-	Previous api.WorkerRunLeaseAssignment
-	Lease    api.WorkerRunLeaseAssignment
+	Previous workerapi.RunLeaseAssignment
+	Lease    workerapi.RunLeaseAssignment
 }
 
 type RunLeaseTask interface {
 	Close()
 	Wait(context.Context) (RunLeaseTaskResult, error)
 	RenewRunLease(context.Context) (RunLeaseTaskRenewal, error)
-	BeginWorkspaceFinalization(context.Context, api.WorkerRunLeaseAssignment, api.WorkerRunLeaseAssignment, string, api.WorkerRunFinalizationKind) error
-	CaptureWorkspace(context.Context) (api.WorkerTaskWorkspaceCapture, error)
-	CreateHandoffCheckpoint(context.Context, api.WorkerRunFinalizationHandoff, string, api.WorkerTaskWorkspaceCapture) (api.WorkerCheckpointManifest, error)
-	ResetWorkspace(context.Context) (api.WorkerTaskWorkspaceRollback, error)
+	BeginWorkspaceFinalization(context.Context, workerapi.RunLeaseAssignment, workerapi.RunLeaseAssignment, string, workerapi.RunFinalizationKind) error
+	CaptureWorkspace(context.Context) (workerapi.TaskWorkspaceCapture, error)
+	CreateHandoffCheckpoint(context.Context, workerapi.RunFinalizationHandoff, string, workerapi.TaskWorkspaceCapture) (workerapi.CheckpointManifest, error)
+	ResetWorkspace(context.Context) (workerapi.TaskWorkspaceRollback, error)
 }
 
 func (task *guestRunLeaseTask) Close() {
@@ -87,7 +88,7 @@ func (task *guestRunLeaseTask) Close() {
 }
 
 type RunLeaseTaskRunner interface {
-	StartRunLeaseTask(context.Context, *api.WorkerRunLeaseClaimResponse, RunLeaseControl) (RunLeaseTask, error)
+	StartRunLeaseTask(context.Context, *workerapi.RunLeaseClaimResponse, RunLeaseControl) (RunLeaseTask, error)
 }
 
 type guestRunLeaseTask struct {
@@ -98,20 +99,20 @@ type guestRunLeaseTask struct {
 	resetTarget   workspace.ResetTarget
 	waits         *ControlRunWaits
 	checkpointer  Checkpointer
-	waitWorkspace api.WorkerWorkspace
+	waitWorkspace workerapi.Workspace
 	orgID         string
 
 	mu             sync.Mutex
-	lease          api.WorkerRunLeaseAssignment
+	lease          workerapi.RunLeaseAssignment
 	authority      *workspacev0.WorkspaceRunAuthority
 	operationID    string
-	finalizingKind api.WorkerRunFinalizationKind
+	finalizingKind workerapi.RunFinalizationKind
 	finished       bool
 }
 
 func (task *guestRunLeaseTask) callRunSourceRuntime(
 	ctx context.Context,
-	call func(context.Context, api.WorkerRunLeaseAssignment) error,
+	call func(context.Context, workerapi.RunLeaseAssignment) error,
 ) error {
 	return retryRunLeaseRequest(ctx, func(callCtx context.Context) error {
 		// Keep the local assignment expiry stable while deriving this attempt's
@@ -136,7 +137,7 @@ func (task *guestRunLeaseTask) callRunSourceRuntime(
 
 func (r ProgramRunner) StartRunLeaseTask(
 	ctx context.Context,
-	claim *api.WorkerRunLeaseClaimResponse,
+	claim *workerapi.RunLeaseClaimResponse,
 	control RunLeaseControl,
 ) (RunLeaseTask, error) {
 	if r.CAS == nil {
@@ -173,7 +174,7 @@ func (r ProgramRunner) StartRunLeaseTask(
 		lease:       program.lease,
 		authority:   authority,
 		orgID:       program.mount.OrgID,
-		waitWorkspace: api.WorkerWorkspace{
+		waitWorkspace: workerapi.Workspace{
 			ID:                program.mount.WorkspaceID,
 			WorkspaceMountID:  program.mount.ID,
 			FencingGeneration: program.mount.FencingGeneration,
@@ -192,7 +193,7 @@ func (r ProgramRunner) StartRunLeaseTask(
 			encryptor: r.CheckpointEncryptor,
 			tempDir:   r.tempDir(),
 			stream:    program.session.Stream(),
-			workspace: api.WorkerCheckpointWorkspaceBase{
+			workspace: workerapi.CheckpointWorkspaceBase{
 				ArtifactDigest:    program.mount.WorkspaceArtifact.Digest,
 				ArtifactSizeBytes: program.mount.WorkspaceArtifact.SizeBytes,
 				ArtifactMediaType: program.mount.WorkspaceArtifact.MediaType,
@@ -211,8 +212,8 @@ type runLeaseProgramEventSink struct {
 
 func (sink runLeaseProgramEventSink) AppendRunLog(
 	ctx context.Context,
-	lease api.WorkerRunLeaseAssignment,
-	stream api.WorkerLogStream,
+	lease workerapi.RunLeaseAssignment,
+	stream workerapi.LogStream,
 	sequence uint64,
 	content []byte,
 ) error {
@@ -221,7 +222,7 @@ func (sink runLeaseProgramEventSink) AppendRunLog(
 
 func (sink runLeaseProgramEventSink) ApplyRunMetadata(
 	ctx context.Context,
-	lease api.WorkerRunLeaseAssignment,
+	lease workerapi.RunLeaseAssignment,
 	request *runv0.MetadataUpdated,
 ) error {
 	control, err := requireRunObservabilityControl(sink.control)
@@ -233,7 +234,7 @@ func (sink runLeaseProgramEventSink) ApplyRunMetadata(
 
 func (sink runLeaseProgramEventSink) RecordStructuredRunLog(
 	ctx context.Context,
-	lease api.WorkerRunLeaseAssignment,
+	lease workerapi.RunLeaseAssignment,
 	sequence uint64,
 	request *runv0.StructuredLogRequested,
 ) error {
@@ -244,20 +245,20 @@ func (sink runLeaseProgramEventSink) RecordStructuredRunLog(
 	return appendStructuredRunLog(ctx, control, lease, sequence, request)
 }
 
-func (task *guestRunLeaseTask) CurrentWorkerRunLease() api.WorkerRunLease {
+func (task *guestRunLeaseTask) CurrentWorkerRunLease() workerapi.RunLease {
 	task.mu.Lock()
 	defer task.mu.Unlock()
 	return workerRunLeaseFromAssignment(task.orgID, task.lease)
 }
 
-func (task *guestRunLeaseTask) CurrentWorkerRunLeaseAssignment() api.WorkerRunLeaseAssignment {
+func (task *guestRunLeaseTask) CurrentWorkerRunLeaseAssignment() workerapi.RunLeaseAssignment {
 	task.mu.Lock()
 	defer task.mu.Unlock()
 	return task.lease
 }
 
-func workerRunLeaseFromAssignment(orgID string, assignment api.WorkerRunLeaseAssignment) api.WorkerRunLease {
-	return api.WorkerRunLease{
+func workerRunLeaseFromAssignment(orgID string, assignment workerapi.RunLeaseAssignment) workerapi.RunLease {
+	return workerapi.RunLease{
 		ID: assignment.ID, OrgID: orgID, RunID: assignment.RunID,
 		WorkerGroupID:     assignment.WorkerGroupID,
 		WorkerInstanceID:  assignment.WorkerInstanceID,
@@ -310,14 +311,14 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 	task.program.observedEventSeq++
 	switch value := event.Event.(type) {
 	case *runv0.RunEvent_StdoutChunk:
-		return taskControlEvents{task: task}.AppendRunLog(ctx, api.WorkerRunLeaseAssignment{}, api.WorkerLogStreamStdout, task.program.observedEventSeq, value.StdoutChunk)
+		return taskControlEvents{task: task}.AppendRunLog(ctx, workerapi.RunLeaseAssignment{}, workerapi.LogStreamStdout, task.program.observedEventSeq, value.StdoutChunk)
 	case *runv0.RunEvent_StderrChunk:
-		return taskControlEvents{task: task}.AppendRunLog(ctx, api.WorkerRunLeaseAssignment{}, api.WorkerLogStreamStderr, task.program.observedEventSeq, value.StderrChunk)
+		return taskControlEvents{task: task}.AppendRunLog(ctx, workerapi.RunLeaseAssignment{}, workerapi.LogStreamStderr, task.program.observedEventSeq, value.StderrChunk)
 	case *runv0.RunEvent_MetadataUpdated:
 		return processRunMetadataEvent(
 			ctx,
 			taskControlEvents{task: task},
-			api.WorkerRunLeaseAssignment{},
+			workerapi.RunLeaseAssignment{},
 			task.program.session.Stream(),
 			value.MetadataUpdated,
 		)
@@ -325,7 +326,7 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 		return processStructuredLogEvent(
 			ctx,
 			taskControlEvents{task: task},
-			api.WorkerRunLeaseAssignment{},
+			workerapi.RunLeaseAssignment{},
 			task.program.session.Stream(),
 			task.program.observedEventSeq,
 			value.StructuredLogRequested,
@@ -372,7 +373,7 @@ func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, er
 		}
 		return RunLeaseTaskResult{
 			ActorOutcome:    &converted,
-			ProgramQuiesced: api.WorkerRunQuiescenceProof{RunID: quiesced.GetRunId(), AttemptNumber: int32(quiesced.GetAttemptNumber()), RunLeaseID: quiesced.GetRunLeaseId()},
+			ProgramQuiesced: workerapi.RunQuiescenceProof{RunID: quiesced.GetRunId(), AttemptNumber: int32(quiesced.GetAttemptNumber()), RunLeaseID: quiesced.GetRunLeaseId()},
 		}, nil
 	}
 	outcome, quiesced, err := task.program.awaitTaskCompletion(
@@ -393,7 +394,7 @@ func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, er
 	}
 	return RunLeaseTaskResult{
 		Outcome: converted,
-		ProgramQuiesced: api.WorkerRunQuiescenceProof{
+		ProgramQuiesced: workerapi.RunQuiescenceProof{
 			RunID:         quiesced.GetRunId(),
 			AttemptNumber: int32(quiesced.GetAttemptNumber()),
 			RunLeaseID:    quiesced.GetRunLeaseId(),
@@ -401,19 +402,19 @@ func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, er
 	}, nil
 }
 
-func workerActorOutcome(outcome *runv0.ActorOutcome) (api.WorkerActorOutcome, error) {
+func workerActorOutcome(outcome *runv0.ActorOutcome) (workerapi.ActorOutcome, error) {
 	if err := validateFreshActorOutcome(outcome); err != nil {
-		return api.WorkerActorOutcome{}, err
+		return workerapi.ActorOutcome{}, err
 	}
-	converted := api.WorkerActorOutcome{TerminalInputSequence: outcome.GetTerminalInputSequence()}
+	converted := workerapi.ActorOutcome{TerminalInputSequence: outcome.GetTerminalInputSequence()}
 	switch value := outcome.GetOutcome().(type) {
 	case *runv0.ActorOutcome_Succeeded:
-		converted.Succeeded = &api.WorkerActorSucceeded{}
+		converted.Succeeded = &workerapi.ActorSucceeded{}
 	case *runv0.ActorOutcome_Failed:
 		failure := canonicalTaskFailure(value.Failed.GetMessage(), value.Failed.DetailsJson)
 		converted.Failed = &failure
 	default:
-		return api.WorkerActorOutcome{}, errors.New("Actor outcome variant is required")
+		return workerapi.ActorOutcome{}, errors.New("Actor outcome variant is required")
 	}
 	return converted, nil
 }
@@ -424,8 +425,8 @@ type taskControlEvents struct {
 
 func (events taskControlEvents) AppendRunLog(
 	ctx context.Context,
-	_ api.WorkerRunLeaseAssignment,
-	stream api.WorkerLogStream,
+	_ workerapi.RunLeaseAssignment,
+	stream workerapi.LogStream,
 	sequence uint64,
 	content []byte,
 ) error {
@@ -442,7 +443,7 @@ func (events taskControlEvents) AppendRunLog(
 
 func (events taskControlEvents) ApplyRunMetadata(
 	ctx context.Context,
-	_ api.WorkerRunLeaseAssignment,
+	_ workerapi.RunLeaseAssignment,
 	request *runv0.MetadataUpdated,
 ) error {
 	control, err := requireRunObservabilityControl(events.task.control)
@@ -455,7 +456,7 @@ func (events taskControlEvents) ApplyRunMetadata(
 	}
 	return events.task.callRunSourceRuntime(ctx, func(
 		callCtx context.Context,
-		lease api.WorkerRunLeaseAssignment,
+		lease workerapi.RunLeaseAssignment,
 	) error {
 		controlRequest.Lease = lease.Fence()
 		return sendRunMetadataRequest(callCtx, control, controlRequest)
@@ -464,7 +465,7 @@ func (events taskControlEvents) ApplyRunMetadata(
 
 func (events taskControlEvents) RecordStructuredRunLog(
 	ctx context.Context,
-	_ api.WorkerRunLeaseAssignment,
+	_ workerapi.RunLeaseAssignment,
 	sequence uint64,
 	request *runv0.StructuredLogRequested,
 ) error {
@@ -478,7 +479,7 @@ func (events taskControlEvents) RecordStructuredRunLog(
 	}
 	return events.task.callRunSourceRuntime(ctx, func(
 		callCtx context.Context,
-		lease api.WorkerRunLeaseAssignment,
+		lease workerapi.RunLeaseAssignment,
 	) error {
 		controlRequest.Lease = lease.Fence()
 		return sendStructuredRunLogRequest(callCtx, control, controlRequest)
@@ -514,35 +515,35 @@ func (task *guestRunLeaseTask) RenewRunLease(
 func renewRunLeaseAuthority(
 	ctx context.Context,
 	control interface {
-		RenewRunLease(context.Context, api.WorkerRunLeaseAssignment) (api.WorkerRunLeaseRenewResponse, error)
+		RenewRunLease(context.Context, workerapi.RunLeaseAssignment) (workerapi.RunLeaseRenewResponse, error)
 	},
 	mounts WorkspaceMountSessionRegistry,
-	previous api.WorkerRunLeaseAssignment,
+	previous workerapi.RunLeaseAssignment,
 	authority *workspacev0.WorkspaceRunAuthority,
-) (api.WorkerRunLeaseAssignment, *workspacev0.WorkspaceAuthorityFence, error) {
+) (workerapi.RunLeaseAssignment, *workspacev0.WorkspaceAuthorityFence, error) {
 	controlCtx, cancelControl := context.WithDeadline(ctx, previous.ExpiresAt)
 	defer cancelControl()
-	var response api.WorkerRunLeaseRenewResponse
+	var response workerapi.RunLeaseRenewResponse
 	if err := retryRunLeaseRequest(controlCtx, func(requestCtx context.Context) error {
 		var requestErr error
 		response, requestErr = control.RenewRunLease(requestCtx, previous)
 		return requestErr
 	}); err != nil {
 		if !previous.ExpiresAt.After(time.Now()) {
-			return api.WorkerRunLeaseAssignment{}, nil, fmt.Errorf("%w: %v", errRunLeaseAuthorityLapsed, err)
+			return workerapi.RunLeaseAssignment{}, nil, fmt.Errorf("%w: %v", errRunLeaseAuthorityLapsed, err)
 		}
-		return api.WorkerRunLeaseAssignment{}, nil, err
+		return workerapi.RunLeaseAssignment{}, nil, err
 	}
 	if response.Lease != previous.Fence() ||
 		response.BaseWorkspaceVersionID != previous.BaseWorkspaceVersionID {
-		return api.WorkerRunLeaseAssignment{}, nil, errors.New(
+		return workerapi.RunLeaseAssignment{}, nil, errors.New(
 			"Run Lease renewal response changed its fence or Workspace frontier",
 		)
 	}
 	renewed := previous
 	renewed.ExpiresAt = response.ExpiresAt
 	if err := validateRunLeaseExpiryAdvance(previous, renewed); err != nil {
-		return api.WorkerRunLeaseAssignment{}, nil, err
+		return workerapi.RunLeaseAssignment{}, nil, err
 	}
 	if renewed.ExpiresAt.Equal(previous.ExpiresAt) {
 		return previous, nil, nil
@@ -562,9 +563,9 @@ func renewRunLeaseAuthority(
 		return requestErr
 	}); err != nil {
 		if !renewed.ExpiresAt.After(time.Now()) {
-			return api.WorkerRunLeaseAssignment{}, nil, fmt.Errorf("%w: %v", errRunLeaseAuthorityLapsed, err)
+			return workerapi.RunLeaseAssignment{}, nil, fmt.Errorf("%w: %v", errRunLeaseAuthorityLapsed, err)
 		}
-		return api.WorkerRunLeaseAssignment{}, nil, err
+		return workerapi.RunLeaseAssignment{}, nil, err
 	}
 	return renewed, proto.Clone(fence).(*workspacev0.WorkspaceAuthorityFence), nil
 }
@@ -605,10 +606,10 @@ func retryWorkspaceAuthorityTransport(
 
 func (task *guestRunLeaseTask) BeginWorkspaceFinalization(
 	ctx context.Context,
-	previous api.WorkerRunLeaseAssignment,
-	frozen api.WorkerRunLeaseAssignment,
+	previous workerapi.RunLeaseAssignment,
+	frozen workerapi.RunLeaseAssignment,
 	operationID string,
-	kind api.WorkerRunFinalizationKind,
+	kind workerapi.RunFinalizationKind,
 ) error {
 	task.mu.Lock()
 	defer task.mu.Unlock()
@@ -625,7 +626,7 @@ func (task *guestRunLeaseTask) BeginWorkspaceFinalization(
 		return errors.New("Workspace finalization expiry did not advance")
 	}
 	if strings.TrimSpace(operationID) == "" ||
-		(kind != api.WorkerRunFinalizationCapture && kind != api.WorkerRunFinalizationReset) {
+		(kind != workerapi.RunFinalizationCapture && kind != workerapi.RunFinalizationReset) {
 		return errors.New("Workspace finalization identity is invalid")
 	}
 	response, err := task.mounts.BeginWorkspaceFinalization(
@@ -649,15 +650,15 @@ func (task *guestRunLeaseTask) BeginWorkspaceFinalization(
 
 func (task *guestRunLeaseTask) CaptureWorkspace(
 	ctx context.Context,
-) (api.WorkerTaskWorkspaceCapture, error) {
+) (workerapi.TaskWorkspaceCapture, error) {
 	task.mu.Lock()
 	defer task.mu.Unlock()
-	if task.finished || task.finalizingKind != api.WorkerRunFinalizationCapture {
-		return api.WorkerTaskWorkspaceCapture{}, errors.New("Run Lease Task is not capturing")
+	if task.finished || task.finalizingKind != workerapi.RunFinalizationCapture {
+		return workerapi.TaskWorkspaceCapture{}, errors.New("Run Lease Task is not capturing")
 	}
 	envelope, err := task.finalizationEnvelope(workspace.FinalizationCaptureKind, nil)
 	if err != nil {
-		return api.WorkerTaskWorkspaceCapture{}, err
+		return workerapi.TaskWorkspaceCapture{}, err
 	}
 	result, err := task.mounts.CaptureWorkspace(
 		ctx,
@@ -665,17 +666,17 @@ func (task *guestRunLeaseTask) CaptureWorkspace(
 		task.store,
 	)
 	if err != nil {
-		return api.WorkerTaskWorkspaceCapture{}, err
+		return workerapi.TaskWorkspaceCapture{}, err
 	}
 	task.finished = true
 	task.clearCapabilities()
-	return api.WorkerTaskWorkspaceCapture{
+	return workerapi.TaskWorkspaceCapture{
 		Receipt: workerWorkspaceFinalizationReceipt(result.Receipt),
-		Tree: api.WorkerWorkspaceTreeIdentity{
+		Tree: workerapi.WorkspaceTreeIdentity{
 			Digest: result.ReportedTree.Digest, SizeBytes: result.ReportedTree.SizeBytes,
 			EntryCount: int32(result.ReportedTree.EntryCount),
 		},
-		Artifact: api.WorkerWorkspaceArtifact{
+		Artifact: workerapi.WorkspaceArtifact{
 			Digest: result.Artifact.Digest, MediaType: result.Artifact.MediaType,
 			Encoding: result.Artifact.Encoding, SizeBytes: result.Artifact.SizeBytes,
 			EntryCount: int32(result.Artifact.EntryCount),
@@ -685,18 +686,18 @@ func (task *guestRunLeaseTask) CaptureWorkspace(
 
 func (task *guestRunLeaseTask) CreateHandoffCheckpoint(
 	ctx context.Context,
-	handoff api.WorkerRunFinalizationHandoff,
+	handoff workerapi.RunFinalizationHandoff,
 	checkpointID string,
-	capture api.WorkerTaskWorkspaceCapture,
-) (api.WorkerCheckpointManifest, error) {
+	capture workerapi.TaskWorkspaceCapture,
+) (workerapi.CheckpointManifest, error) {
 	task.mu.Lock()
 	defer task.mu.Unlock()
-	if !task.finished || task.finalizingKind != api.WorkerRunFinalizationCapture {
-		return api.WorkerCheckpointManifest{}, errors.New("Run Lease Task has not captured its Workspace")
+	if !task.finished || task.finalizingKind != workerapi.RunFinalizationCapture {
+		return workerapi.CheckpointManifest{}, errors.New("Run Lease Task has not captured its Workspace")
 	}
 	checkpointer, ok := task.checkpointer.(HandoffCheckpointer)
 	if !ok {
-		return api.WorkerCheckpointManifest{}, errors.New("Run Lease Task does not support handoff checkpoints")
+		return workerapi.CheckpointManifest{}, errors.New("Run Lease Task does not support handoff checkpoints")
 	}
 	return checkpointer.CreateHandoffCheckpoint(
 		ctx,
@@ -709,7 +710,7 @@ func (task *guestRunLeaseTask) CreateHandoffCheckpoint(
 			CheckpointID:   checkpointID,
 			ResumeAttachID: handoff.ResumeAttachID,
 		},
-		api.WorkerCheckpointWorkspaceBase{
+		workerapi.CheckpointWorkspaceBase{
 			ArtifactDigest:    capture.Artifact.Digest,
 			ArtifactSizeBytes: capture.Artifact.SizeBytes,
 			ArtifactMediaType: capture.Artifact.MediaType,
@@ -721,15 +722,15 @@ func (task *guestRunLeaseTask) CreateHandoffCheckpoint(
 
 func (task *guestRunLeaseTask) ResetWorkspace(
 	ctx context.Context,
-) (api.WorkerTaskWorkspaceRollback, error) {
+) (workerapi.TaskWorkspaceRollback, error) {
 	task.mu.Lock()
 	defer task.mu.Unlock()
-	if task.finished || task.finalizingKind != api.WorkerRunFinalizationReset {
-		return api.WorkerTaskWorkspaceRollback{}, errors.New("Run Lease Task is not resetting")
+	if task.finished || task.finalizingKind != workerapi.RunFinalizationReset {
+		return workerapi.TaskWorkspaceRollback{}, errors.New("Run Lease Task is not resetting")
 	}
 	envelope, err := task.finalizationEnvelope(workspace.FinalizationResetKind, task.resetTarget)
 	if err != nil {
-		return api.WorkerTaskWorkspaceRollback{}, err
+		return workerapi.TaskWorkspaceRollback{}, err
 	}
 	result, err := task.mounts.ResetWorkspace(
 		ctx,
@@ -740,11 +741,11 @@ func (task *guestRunLeaseTask) ResetWorkspace(
 		task.store,
 	)
 	if err != nil {
-		return api.WorkerTaskWorkspaceRollback{}, err
+		return workerapi.TaskWorkspaceRollback{}, err
 	}
 	task.finished = true
 	task.clearCapabilities()
-	return api.WorkerTaskWorkspaceRollback{
+	return workerapi.TaskWorkspaceRollback{
 		Receipt: workerWorkspaceFinalizationReceipt(result.Receipt),
 		Target:  workerWorkspaceResetTarget(result.Target),
 	}, nil
@@ -778,8 +779,8 @@ func (task *guestRunLeaseTask) clearCapabilities() {
 }
 
 func validateRunLeaseExpiryAdvance(
-	previous api.WorkerRunLeaseAssignment,
-	next api.WorkerRunLeaseAssignment,
+	previous workerapi.RunLeaseAssignment,
+	next workerapi.RunLeaseAssignment,
 ) error {
 	previousExpiry := previous.ExpiresAt
 	nextExpiry := next.ExpiresAt
@@ -795,7 +796,7 @@ func validateRunLeaseExpiryAdvance(
 }
 
 func runLeaseResetTarget(
-	claim *api.WorkerRunLeaseClaimResponse,
+	claim *workerapi.RunLeaseClaimResponse,
 ) (workspace.ResetTarget, error) {
 	if claim == nil {
 		return workspace.ResetTarget{}, errors.New("Run Lease claim is required")
@@ -826,39 +827,39 @@ func runLeaseResetTarget(
 	}
 }
 
-func workerTaskOutcome(outcome *runv0.TaskOutcome) (api.WorkerTaskOutcome, error) {
+func workerTaskOutcome(outcome *runv0.TaskOutcome) (workerapi.TaskOutcome, error) {
 	if err := validateFreshTaskOutcome(outcome); err != nil {
-		return api.WorkerTaskOutcome{}, err
+		return workerapi.TaskOutcome{}, err
 	}
 	switch value := outcome.GetOutcome().(type) {
 	case *runv0.TaskOutcome_Succeeded:
-		return api.WorkerTaskOutcome{Succeeded: &api.WorkerTaskSucceeded{
+		return workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{
 			Output: json.RawMessage(value.Succeeded.GetOutputJson()),
 		}}, nil
 	case *runv0.TaskOutcome_Failed:
 		failure := canonicalTaskFailure(value.Failed.GetMessage(), value.Failed.DetailsJson)
-		return api.WorkerTaskOutcome{Failed: &failure}, nil
+		return workerapi.TaskOutcome{Failed: &failure}, nil
 	case *runv0.TaskOutcome_PayloadInvalid:
 		failure := canonicalTaskFailure(
 			value.PayloadInvalid.GetMessage(),
 			value.PayloadInvalid.DetailsJson,
 		)
-		return api.WorkerTaskOutcome{PayloadInvalid: &failure}, nil
+		return workerapi.TaskOutcome{PayloadInvalid: &failure}, nil
 	default:
-		return api.WorkerTaskOutcome{}, errors.New("Task outcome variant is required")
+		return workerapi.TaskOutcome{}, errors.New("Task outcome variant is required")
 	}
 }
 
 func workerWorkspaceFinalizationReceipt(
 	receipt *workspacev0.WorkspaceFinalizationReceipt,
-) api.WorkerWorkspaceFinalizationReceipt {
+) workerapi.WorkspaceFinalizationReceipt {
 	if receipt == nil {
-		return api.WorkerWorkspaceFinalizationReceipt{}
+		return workerapi.WorkspaceFinalizationReceipt{}
 	}
 	fence := receipt.GetFence()
-	return api.WorkerWorkspaceFinalizationReceipt{
+	return workerapi.WorkspaceFinalizationReceipt{
 		OperationID: receipt.GetOperationId(), RequestFingerprint: receipt.GetRequestFingerprint(),
-		Fence: api.WorkerWorkspaceFinalizationFence{
+		Fence: workerapi.WorkspaceFinalizationFence{
 			WorkerInstanceID: fence.GetWorkerInstanceId(), WorkerEpoch: fence.GetWorkerEpoch(),
 			RuntimeInstanceID: fence.GetRuntimeInstanceId(), RuntimeIdentityID: fence.GetRuntimeIdentityId(),
 			WorkspaceID: fence.GetWorkspaceId(), WorkspaceMountID: fence.GetWorkspaceMountId(),
@@ -872,18 +873,18 @@ func workerWorkspaceFinalizationReceipt(
 	}
 }
 
-func workerWorkspaceResetTarget(target workspace.ResetTarget) api.WorkerWorkspaceResetTarget {
-	result := api.WorkerWorkspaceResetTarget{
+func workerWorkspaceResetTarget(target workspace.ResetTarget) workerapi.WorkspaceResetTarget {
+	result := workerapi.WorkspaceResetTarget{
 		BaseWorkspaceVersionID: target.BaseVersionID,
-		Tree: api.WorkerWorkspaceTreeIdentity{
+		Tree: workerapi.WorkspaceTreeIdentity{
 			Digest: target.Tree.Digest, SizeBytes: target.Tree.SizeBytes,
 			EntryCount: int32(target.Tree.EntryCount),
 		},
 	}
 	if target.Kind == workspace.ResetTargetEmpty {
-		result.Empty = &api.WorkerEmptyWorkspace{}
+		result.Empty = &workerapi.EmptyWorkspace{}
 	} else {
-		result.Artifact = &api.WorkerWorkspaceArtifact{
+		result.Artifact = &workerapi.WorkspaceArtifact{
 			Digest: target.Artifact.Digest, MediaType: target.Artifact.MediaType,
 			Encoding: target.Artifact.Encoding, SizeBytes: target.Artifact.SizeBytes,
 			EntryCount: int32(target.Artifact.EntryCount),
@@ -892,8 +893,8 @@ func workerWorkspaceResetTarget(target workspace.ResetTarget) api.WorkerWorkspac
 	return result
 }
 
-func canonicalTaskFailure(message string, details *string) api.WorkerTaskFailure {
-	failure := api.WorkerTaskFailure{Message: message}
+func canonicalTaskFailure(message string, details *string) workerapi.TaskFailure {
+	failure := workerapi.TaskFailure{Message: message}
 	if details != nil {
 		failure.Details = json.RawMessage(*details)
 	}

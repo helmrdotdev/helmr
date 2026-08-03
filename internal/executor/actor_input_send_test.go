@@ -12,21 +12,22 @@ import (
 	"github.com/helmrdotdev/helmr/internal/client"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type actorInputSendControl struct {
 	*testRunLeaseControl
-	request      api.WorkerSendActorInputRequest
-	requests     []api.WorkerSendActorInputRequest
-	response     api.WorkerSendActorInputResponse
+	request      workerapi.SendActorInputRequest
+	requests     []workerapi.SendActorInputRequest
+	response     workerapi.SendActorInputResponse
 	errors       []error
 	firstAttempt chan struct{}
 }
 
 func (control *actorInputSendControl) SendRunActorInput(
 	_ context.Context,
-	request api.WorkerSendActorInputRequest,
-) (api.WorkerSendActorInputResponse, error) {
+	request workerapi.SendActorInputRequest,
+) (workerapi.SendActorInputResponse, error) {
 	control.request = request
 	control.requests = append(control.requests, request)
 	if len(control.errors) != 0 {
@@ -36,16 +37,16 @@ func (control *actorInputSendControl) SendRunActorInput(
 			close(control.firstAttempt)
 			control.firstAttempt = nil
 		}
-		return api.WorkerSendActorInputResponse{}, err
+		return workerapi.SendActorInputResponse{}, err
 	}
 	return control.response, nil
 }
 
 func (control *actorInputSendControl) AppendActorOutput(
 	context.Context,
-	api.WorkerAppendActorOutputRequest,
-) (api.WorkerAppendActorOutputResponse, error) {
-	return api.WorkerAppendActorOutputResponse{}, errors.New("unexpected Actor output append")
+	workerapi.AppendActorOutputRequest,
+) (workerapi.AppendActorOutputResponse, error) {
+	return workerapi.AppendActorOutputResponse{}, errors.New("unexpected Actor output append")
 }
 
 func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
@@ -54,7 +55,7 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000111"
 	control := &actorInputSendControl{
 		testRunLeaseControl: &testRunLeaseControl{},
-		response: api.WorkerSendActorInputResponse{
+		response: workerapi.SendActorInputResponse{
 			CorrelationID: correlationID,
 			Completed:     &api.SendActorInputResponse{Sequence: 7},
 		},
@@ -111,7 +112,7 @@ func TestHandleActorInputSendRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	firstAttempt := make(chan struct{})
 	control := &actorInputSendControl{
 		testRunLeaseControl: &testRunLeaseControl{},
-		response: api.WorkerSendActorInputResponse{
+		response: workerapi.SendActorInputResponse{
 			CorrelationID: correlationID,
 			Completed:     &api.SendActorInputResponse{Sequence: 8},
 		},
@@ -168,8 +169,8 @@ func renewRunSourceReceiptAfterAttempt(task *guestRunLeaseTask, attempted <-chan
 
 func assertRetriedWithStableFence(
 	t *testing.T,
-	first api.WorkerRunLeaseFence,
-	second api.WorkerRunLeaseFence,
+	first workerapi.RunLeaseFence,
+	second workerapi.RunLeaseFence,
 	count int,
 ) {
 	t.Helper()

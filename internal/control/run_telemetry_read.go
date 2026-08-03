@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -313,9 +314,9 @@ func hasRunTelemetryPageBoundary(recordCount int, limit int32) bool {
 }
 
 func projectRunLogRecord(chunk api.RunLogChunk, runID string) (api.RunLogRecord, error) {
-	if chunk.Stream != string(api.WorkerLogStreamStructured) {
-		if chunk.Stream != string(api.WorkerLogStreamStdout) &&
-			chunk.Stream != string(api.WorkerLogStreamStderr) {
+	if chunk.Stream != string(workerapi.LogStreamStructured) {
+		if chunk.Stream != string(workerapi.LogStreamStdout) &&
+			chunk.Stream != string(workerapi.LogStreamStderr) {
 			return api.RunLogRecord{}, errors.New("Run log stream is invalid")
 		}
 		observed := chunk.ObservedSeq

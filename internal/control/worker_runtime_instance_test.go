@@ -4,24 +4,24 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestValidateRuntimeCleanupProofIsTypedAndTimeBounded(t *testing.T) {
 	now := time.Now().UTC()
 	for _, method := range []string{
-		api.WorkerRuntimeCleanupSessionClosed,
-		api.WorkerRuntimeCleanupHostReconciled,
-		api.WorkerRuntimeCleanupNotMaterialized,
+		workerapi.RuntimeCleanupSessionClosed,
+		workerapi.RuntimeCleanupHostReconciled,
+		workerapi.RuntimeCleanupNotMaterialized,
 	} {
-		if err := validateRuntimeCleanupProof(api.WorkerRuntimeCleanupProof{Method: method, CompletedAt: now}, now); err != nil {
+		if err := validateRuntimeCleanupProof(workerapi.RuntimeCleanupProof{Method: method, CompletedAt: now}, now); err != nil {
 			t.Fatalf("method %q rejected: %v", method, err)
 		}
 	}
-	for _, proof := range []api.WorkerRuntimeCleanupProof{
+	for _, proof := range []workerapi.RuntimeCleanupProof{
 		{Method: "assumed", CompletedAt: now},
-		{Method: api.WorkerRuntimeCleanupHostReconciled},
-		{Method: api.WorkerRuntimeCleanupHostReconciled, CompletedAt: now.Add(2 * time.Minute)},
+		{Method: workerapi.RuntimeCleanupHostReconciled},
+		{Method: workerapi.RuntimeCleanupHostReconciled, CompletedAt: now.Add(2 * time.Minute)},
 	} {
 		if err := validateRuntimeCleanupProof(proof, now); err == nil {
 			t.Fatalf("invalid proof accepted: %+v", proof)
@@ -32,15 +32,15 @@ func TestValidateRuntimeCleanupProofIsTypedAndTimeBounded(t *testing.T) {
 func TestValidateRuntimeClosedCleanupProofRequiresPhysicalTeardown(t *testing.T) {
 	now := time.Now().UTC()
 	for _, method := range []string{
-		api.WorkerRuntimeCleanupSessionClosed,
-		api.WorkerRuntimeCleanupHostReconciled,
+		workerapi.RuntimeCleanupSessionClosed,
+		workerapi.RuntimeCleanupHostReconciled,
 	} {
-		if err := validateRuntimeClosedCleanupProof(api.WorkerRuntimeCleanupProof{Method: method, CompletedAt: now}, now); err != nil {
+		if err := validateRuntimeClosedCleanupProof(workerapi.RuntimeCleanupProof{Method: method, CompletedAt: now}, now); err != nil {
 			t.Fatalf("method %q rejected: %v", method, err)
 		}
 	}
-	if err := validateRuntimeClosedCleanupProof(api.WorkerRuntimeCleanupProof{
-		Method: api.WorkerRuntimeCleanupNotMaterialized, CompletedAt: now,
+	if err := validateRuntimeClosedCleanupProof(workerapi.RuntimeCleanupProof{
+		Method: workerapi.RuntimeCleanupNotMaterialized, CompletedAt: now,
 	}, now); err == nil {
 		t.Fatal("not_materialized proof released a closed runtime")
 	}

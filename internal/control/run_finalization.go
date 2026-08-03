@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -21,11 +21,11 @@ type parsedRunFinalization struct {
 	runID       uuid.UUID
 	attempt     int32
 	operationID uuid.UUID
-	kind        api.WorkerRunFinalizationKind
+	kind        workerapi.RunFinalizationKind
 	fingerprint string
 }
 
-func parseRunFinalization(request api.WorkerBeginRunFinalizationRequest) (parsedRunFinalization, error) {
+func parseRunFinalization(request workerapi.BeginRunFinalizationRequest) (parsedRunFinalization, error) {
 	lease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		return parsedRunFinalization{}, err
@@ -34,7 +34,7 @@ func parseRunFinalization(request api.WorkerBeginRunFinalizationRequest) (parsed
 	if err != nil {
 		return parsedRunFinalization{}, err
 	}
-	if request.Kind != api.WorkerRunFinalizationCapture && request.Kind != api.WorkerRunFinalizationReset {
+	if request.Kind != workerapi.RunFinalizationCapture && request.Kind != workerapi.RunFinalizationReset {
 		return parsedRunFinalization{}, errors.New("kind must be capture or reset")
 	}
 	quiescedRunID, err := parseCanonicalUUID("program_quiesced.run_id", request.ProgramQuiesced.RunID)
@@ -66,10 +66,10 @@ func parseRunFinalization(request api.WorkerBeginRunFinalizationRequest) (parsed
 func (s *Server) beginRunFinalization(
 	ctx context.Context,
 	worker workerActor,
-	request api.WorkerBeginRunFinalizationRequest,
+	request workerapi.BeginRunFinalizationRequest,
 	parsed parsedRunFinalization,
-) (api.WorkerBeginRunFinalizationResponse, error) {
-	var response api.WorkerBeginRunFinalizationResponse
+) (workerapi.BeginRunFinalizationResponse, error) {
+	var response workerapi.BeginRunFinalizationResponse
 	err := s.inTx(ctx, func(work *txWork) error {
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(parsed.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
@@ -131,7 +131,7 @@ func (s *Server) beginRunFinalization(
 				!authority.runLease.FinalizationStartedAt.Valid {
 				return errStaleRunFinalization
 			}
-			response = api.WorkerBeginRunFinalizationResponse{
+			response = workerapi.BeginRunFinalizationResponse{
 				Lease: request.Lease, BaseWorkspaceVersionID: current.BaseWorkspaceVersionID,
 				ExpiresAt: current.ExpiresAt.UTC(), OperationID: parsed.operationID.String(), Kind: parsed.kind,
 				StartedAt: authority.runLease.FinalizationStartedAt.Time.UTC(),
@@ -222,7 +222,7 @@ func (s *Server) beginRunFinalization(
 		if err != nil {
 			return err
 		}
-		response = api.WorkerBeginRunFinalizationResponse{
+		response = workerapi.BeginRunFinalizationResponse{
 			Lease: request.Lease, BaseWorkspaceVersionID: frozen.BaseWorkspaceVersionID,
 			ExpiresAt: frozen.ExpiresAt.UTC(), OperationID: parsed.operationID.String(), Kind: parsed.kind,
 			StartedAt: now.Time.UTC(),
@@ -437,7 +437,7 @@ func lockSameWorkspaceChildFinalization(
 	ctx context.Context,
 	store db.Querier,
 	authority *runLeaseClaimAuthority,
-) (*api.WorkerRunFinalizationHandoff, error) {
+) (*workerapi.RunFinalizationHandoff, error) {
 	if !authority.run.ParentRunID.Valid ||
 		!authority.run.ParentOwnsLifecycle.Valid ||
 		!authority.run.ParentOwnsLifecycle.Bool ||
@@ -520,7 +520,7 @@ func lockSameWorkspaceChildFinalization(
 	if err != nil {
 		return nil, err
 	}
-	return &api.WorkerRunFinalizationHandoff{
+	return &workerapi.RunFinalizationHandoff{
 		ParentRunID:         pgvalue.UUIDString(authority.parentRun.ID),
 		ParentAttemptNumber: authority.parentAttempt.Number,
 		RunWaitID:           pgvalue.UUIDString(wait.ID),

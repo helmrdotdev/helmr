@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -77,7 +78,7 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		writeError(w, unavailable(errors.New("deployment build storage is not configured")))
 		return
 	}
-	var request api.WorkerDeploymentBuildLeaseRequest
+	var request workerapi.DeploymentBuildLeaseRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker deployment build lease JSON: %w", err)))
 		return
@@ -111,7 +112,7 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if !found {
-		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{})
+		writeJSON(w, http.StatusOK, workerapi.DeploymentBuildLeaseResponse{})
 		return
 	}
 	response, err := s.deploymentBuildLeaseResponse(r.Context(), claimed, leaseExpiresAt)
@@ -127,33 +128,33 @@ func (s *Server) deploymentBuildLeaseResponse(
 	ctx context.Context,
 	row db.ClaimNextDeploymentBuildLeaseRow,
 	expiresAt time.Time,
-) (api.WorkerDeploymentBuildLeaseResponse, error) {
+) (workerapi.DeploymentBuildLeaseResponse, error) {
 	runtimeDigest, err := deployment.RuntimeDigestString(row.BuildRuntimeDigest)
 	if err != nil {
-		return api.WorkerDeploymentBuildLeaseResponse{}, fmt.Errorf("read deployment build runtime digest: %w", err)
+		return workerapi.DeploymentBuildLeaseResponse{}, fmt.Errorf("read deployment build runtime digest: %w", err)
 	}
 	toolchainDigest, err := deployment.SHA256DigestString(row.BuildToolchainDigest)
 	if err != nil {
-		return api.WorkerDeploymentBuildLeaseResponse{}, fmt.Errorf("read deployment build toolchain digest: %w", err)
+		return workerapi.DeploymentBuildLeaseResponse{}, fmt.Errorf("read deployment build toolchain digest: %w", err)
 	}
 	managerDigest, err := deployment.SHA256DigestString(row.BuildManagerDigest)
 	if err != nil {
-		return api.WorkerDeploymentBuildLeaseResponse{}, fmt.Errorf("read deployment build Manager digest: %w", err)
+		return workerapi.DeploymentBuildLeaseResponse{}, fmt.Errorf("read deployment build Manager digest: %w", err)
 	}
 	runtimeObject, err := s.platformObject(ctx, runtimeDigest, deployment.RuntimeArtifactMediaType)
 	if err != nil {
-		return api.WorkerDeploymentBuildLeaseResponse{}, err
+		return workerapi.DeploymentBuildLeaseResponse{}, err
 	}
 	managerObject, err := s.platformObject(ctx, managerDigest, deployment.ManagerTreeMediaType)
 	if err != nil {
-		return api.WorkerDeploymentBuildLeaseResponse{}, err
+		return workerapi.DeploymentBuildLeaseResponse{}, err
 	}
 	toolchainObject, err := s.platformObject(ctx, toolchainDigest, deployment.ToolchainMediaType)
 	if err != nil {
-		return api.WorkerDeploymentBuildLeaseResponse{}, err
+		return workerapi.DeploymentBuildLeaseResponse{}, err
 	}
 	deploymentID := pgvalue.MustUUIDValue(row.DeploymentID).String()
-	lease := api.WorkerDeploymentBuildLease{
+	lease := workerapi.DeploymentBuildLease{
 		ID:                               pgvalue.MustUUIDValue(row.ID).String(),
 		OrgID:                            pgvalue.MustUUIDValue(row.OrgID).String(),
 		ProjectID:                        pgvalue.MustUUIDValue(row.ProjectID).String(),
@@ -170,7 +171,7 @@ func (s *Server) deploymentBuildLeaseResponse(
 		RequestedMemoryBytes:             row.RequestedMemoryBytes,
 		RequestedBuildExecutors:          row.RequestedBuildExecutors,
 	}
-	build := api.WorkerDeploymentBuild{
+	build := workerapi.DeploymentBuild{
 		ID:                    deploymentID,
 		Version:               row.Version,
 		APIVersion:            row.ApiVersion,
@@ -184,7 +185,7 @@ func (s *Server) deploymentBuildLeaseResponse(
 		},
 		Runtime:     runtimeObject,
 		NodeVersion: row.BuildNodeVersion,
-		Manager: api.WorkerManagerPin{
+		Manager: workerapi.ManagerPin{
 			Artifact:  managerObject,
 			Integrity: row.BuildManagerIntegrity.String,
 			Name:      row.BuildManagerName,
@@ -194,22 +195,22 @@ func (s *Server) deploymentBuildLeaseResponse(
 		BuildContractVersion: row.BuildContractVersion,
 		ImageCacheMode:       row.ImageCacheMode,
 	}
-	return api.WorkerDeploymentBuildLeaseResponse{Lease: &lease, Deployment: &build}, nil
+	return workerapi.DeploymentBuildLeaseResponse{Lease: &lease, Deployment: &build}, nil
 }
 
 func (s *Server) platformObject(
 	ctx context.Context,
 	digest string,
 	mediaType string,
-) (api.CASObject, error) {
+) (workerapi.CASObject, error) {
 	object, err := s.platformStore.Stat(ctx, digest)
 	if err != nil {
-		return api.CASObject{}, fmt.Errorf("stat Platform Artifact %s: %w", digest, err)
+		return workerapi.CASObject{}, fmt.Errorf("stat Platform Artifact %s: %w", digest, err)
 	}
 	if object.Digest != digest || object.MediaType != mediaType || object.SizeBytes < 1 {
-		return api.CASObject{}, errors.New("Platform Artifact metadata does not match its Deployment pin")
+		return workerapi.CASObject{}, errors.New("Platform Artifact metadata does not match its Deployment pin")
 	}
-	return api.CASObject{
+	return workerapi.CASObject{
 		Digest:    object.Digest,
 		SizeBytes: object.SizeBytes,
 		MediaType: object.MediaType,
@@ -222,7 +223,7 @@ func (s *Server) workerStartDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		writeError(w, unavailable(errors.New("deployment build storage is not configured")))
 		return
 	}
-	var request api.WorkerDeploymentBuildStartRequest
+	var request workerapi.DeploymentBuildStartRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker deployment build start JSON: %w", err)))
 		return
@@ -249,7 +250,7 @@ func (s *Server) workerStartDeploymentBuild(w http.ResponseWriter, r *http.Reque
 	})
 	if err == nil {
 		lease.ExpiresAt = pgvalue.Time(started.ExpiresAt)
-		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildStartResponse{Lease: lease})
+		writeJSON(w, http.StatusOK, workerapi.DeploymentBuildStartResponse{Lease: lease})
 		return
 	}
 	if !isNoRows(err) {
@@ -276,7 +277,7 @@ func (s *Server) workerStartDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	lease.ExpiresAt = pgvalue.Time(started.ExpiresAt)
-	writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildStartResponse{Lease: lease})
+	writeJSON(w, http.StatusOK, workerapi.DeploymentBuildStartResponse{Lease: lease})
 }
 
 func (s *Server) workerRenewDeploymentBuild(w http.ResponseWriter, r *http.Request) {
@@ -285,7 +286,7 @@ func (s *Server) workerRenewDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		writeError(w, unavailable(errors.New("deployment build storage is not configured")))
 		return
 	}
-	var request api.WorkerDeploymentBuildRenewRequest
+	var request workerapi.DeploymentBuildRenewRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker deployment build renew JSON: %w", err)))
 		return
@@ -339,7 +340,7 @@ func (s *Server) workerRenewDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	lease.ExpiresAt = pgvalue.Time(renewed.ExpiresAt)
-	writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildRenewResponse{
+	writeJSON(w, http.StatusOK, workerapi.DeploymentBuildRenewResponse{
 		Lease:                    lease,
 		RevokedImageOperationIDs: revokedOperationIDs,
 	})
@@ -351,7 +352,7 @@ func (s *Server) workerRejectDeploymentBuild(w http.ResponseWriter, r *http.Requ
 		writeError(w, unavailable(errors.New("deployment build storage is not configured")))
 		return
 	}
-	var request api.WorkerDeploymentBuildRejectRequest
+	var request workerapi.DeploymentBuildRejectRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker deployment build reject JSON: %w", err)))
 		return
@@ -459,13 +460,13 @@ func (s *Server) workerDeploymentBuildDeliveryFailed(w http.ResponseWriter, r *h
 		writeError(w, unavailable(errors.New("deployment build storage is not configured")))
 		return
 	}
-	var request api.WorkerDeploymentBuildDeliveryFailureRequest
+	var request workerapi.DeploymentBuildDeliveryFailureRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker deployment build delivery failure JSON: %w", err)))
 		return
 	}
-	if request.ReasonCode != api.WorkerDeploymentBuildDeliveryBuildGuestFailed &&
-		request.ReasonCode != api.WorkerDeploymentBuildDeliveryProgramVerifierFailed {
+	if request.ReasonCode != workerapi.DeploymentBuildDeliveryBuildGuestFailed &&
+		request.ReasonCode != workerapi.DeploymentBuildDeliveryProgramVerifierFailed {
 		writeError(w, badRequest(errors.New("deployment build delivery failure reasonCode is invalid")))
 		return
 	}
@@ -519,7 +520,7 @@ func (s *Server) workerDeploymentBuildDeliveryFailed(w http.ResponseWriter, r *h
 		writeError(w, errors.New("invalid deployment build delivery failure result"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildResponse{
+	writeJSON(w, http.StatusOK, workerapi.DeploymentBuildResponse{
 		DeploymentID: lease.DeploymentID,
 		Status:       string(row.DeploymentStatus),
 	})
@@ -753,7 +754,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var request struct {
-		Lease  api.WorkerDeploymentBuildLease `json:"lease"`
+		Lease  workerapi.DeploymentBuildLease `json:"lease"`
 		Result json.RawMessage                `json:"result"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
@@ -802,7 +803,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			writeError(w, conflict(errors.New("deployment build lease was terminated by another operation")))
 			return
 		}
-		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildResponse{DeploymentID: request.Lease.DeploymentID, Status: status})
+		writeJSON(w, http.StatusOK, workerapi.DeploymentBuildResponse{DeploymentID: request.Lease.DeploymentID, Status: status})
 		return
 	}
 	if !isNoRows(err) {
@@ -861,7 +862,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			preparationErr = err
 		}
 	}
-	var response api.WorkerDeploymentBuildResponse
+	var response workerapi.DeploymentBuildResponse
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		workerState, err := work.q.LockDeploymentBuildWorkerAuthority(
 			r.Context(),
@@ -902,10 +903,10 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			}
 			switch locked.State {
 			case db.DeploymentBuildLeaseStateSucceeded:
-				response = api.WorkerDeploymentBuildResponse{DeploymentID: request.Lease.DeploymentID, Status: string(db.DeploymentStatusDeployed)}
+				response = workerapi.DeploymentBuildResponse{DeploymentID: request.Lease.DeploymentID, Status: string(db.DeploymentStatusDeployed)}
 				return nil
 			case db.DeploymentBuildLeaseStateFailed:
-				response = api.WorkerDeploymentBuildResponse{DeploymentID: request.Lease.DeploymentID, Status: string(db.DeploymentStatusFailed)}
+				response = workerapi.DeploymentBuildResponse{DeploymentID: request.Lease.DeploymentID, Status: string(db.DeploymentStatusFailed)}
 				return nil
 			default:
 				return conflict(errors.New("deployment build lease was terminated by another operation"))
@@ -960,7 +961,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			if err := appendDeploymentLifecycleEvent(r.Context(), work.q, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.failed", "error", "worker", "failed", message); err != nil {
 				return errors.New("record deployment event")
 			}
-			response = api.WorkerDeploymentBuildResponse{DeploymentID: pgvalue.MustUUIDValue(row.ID).String(), Status: string(row.Status)}
+			response = workerapi.DeploymentBuildResponse{DeploymentID: pgvalue.MustUUIDValue(row.ID).String(), Status: string(row.Status)}
 			return nil
 		}
 		failInvalid := func(message string) error {
@@ -1162,7 +1163,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		if err := appendDeploymentLifecycleEvent(r.Context(), work.q, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.deployed", "info", "worker", "deployed", "Deployment build completed"); err != nil {
 			return errors.New("record deployment event")
 		}
-		response = api.WorkerDeploymentBuildResponse{DeploymentID: pgvalue.MustUUIDValue(row.ID).String(), Status: string(row.Status)}
+		response = workerapi.DeploymentBuildResponse{DeploymentID: pgvalue.MustUUIDValue(row.ID).String(), Status: string(row.Status)}
 		return nil
 	})
 	if err != nil {
@@ -1225,7 +1226,7 @@ var errManagerAuthorityMismatch = errors.New(
 	"build provenance does not match fixed authority",
 )
 
-func parseDeploymentBuildLeaseIDs(lease api.WorkerDeploymentBuildLease) (pgtype.UUID, pgtype.UUID, pgtype.UUID, pgtype.UUID, error) {
+func parseDeploymentBuildLeaseIDs(lease workerapi.DeploymentBuildLease) (pgtype.UUID, pgtype.UUID, pgtype.UUID, pgtype.UUID, error) {
 	orgID, err := ids.Parse(lease.OrgID)
 	if err != nil {
 		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease org_id must be a canonical UUIDv7")

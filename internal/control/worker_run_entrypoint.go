@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func (s *Server) workerEnterRunEntrypoint(w http.ResponseWriter, r *http.Request) {
@@ -18,7 +18,7 @@ func (s *Server) workerEnterRunEntrypoint(w http.ResponseWriter, r *http.Request
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerRunEntrypointRequest
+	var request workerapi.RunEntrypointRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {

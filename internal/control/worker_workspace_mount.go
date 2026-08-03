@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/token"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -28,7 +28,7 @@ const (
 )
 
 func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerWorkspaceMountClaimRequest
+	var request workerapi.WorkspaceMountClaimRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Workspace mount claim JSON: %w", err)))
 		return
@@ -46,7 +46,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 		GuestChannelTokenExpiresAt: pgvalue.Timestamptz(time.Now().Add(workspaceMountReservationDuration)),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeJSON(w, http.StatusOK, api.WorkerWorkspaceMountClaimResponse{})
+		writeJSON(w, http.StatusOK, workerapi.WorkspaceMountClaimResponse{})
 		return
 	}
 	if err != nil {
@@ -55,11 +55,11 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 	}
 	mount := projectWorkerWorkspaceMount(row)
 	mount.GuestdChannelToken = channelToken
-	writeJSON(w, http.StatusOK, api.WorkerWorkspaceMountClaimResponse{Mount: mount})
+	writeJSON(w, http.StatusOK, workerapi.WorkspaceMountClaimResponse{Mount: mount})
 }
 
 func (s *Server) workerRenewWorkspaceMount(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerWorkspaceMountRenewRequest
+	var request workerapi.WorkspaceMountRenewRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Workspace mount renewal JSON: %w", err)))
 		return
@@ -102,7 +102,7 @@ func (s *Server) workerRenewWorkspaceMount(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) workerMarkWorkspaceMountMounted(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerWorkspaceMountMountedRequest
+	var request workerapi.WorkspaceMountMountedRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid mounted Workspace JSON: %w", err)))
 		return
@@ -130,7 +130,7 @@ func (s *Server) workerMarkWorkspaceMountMounted(w http.ResponseWriter, r *http.
 }
 
 func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerWorkspaceMountCaptureRequest
+	var request workerapi.WorkspaceMountCaptureRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Workspace capture JSON: %w", err)))
 		return
@@ -214,13 +214,13 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 		writeError(w, errors.New("stage Workspace capture"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerWorkspaceMountCaptureResponse{
+	writeJSON(w, http.StatusOK, workerapi.WorkspaceMountCaptureResponse{
 		VersionID: pgvalue.MustUUIDValue(versionID).String(),
 	})
 }
 
 func (s *Server) workerStopWorkspaceMount(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerWorkspaceMountStopRequest
+	var request workerapi.WorkspaceMountStopRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Workspace stop JSON: %w", err)))
 		return
@@ -476,7 +476,7 @@ func workspaceExecPublicationSecretsValid(
 }
 
 func (s *Server) workerFailWorkspaceMount(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerWorkspaceMountFailRequest
+	var request workerapi.WorkspaceMountFailRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Workspace mount failure JSON: %w", err)))
 		return
@@ -688,8 +688,8 @@ func guestChannelTokenHash(value string) string {
 	return sha256sum.HexBytes([]byte(strings.TrimSpace(value)))
 }
 
-func workspaceMountResponse(row db.WorkspaceMount) api.WorkspaceMountResponse {
-	response := api.WorkspaceMountResponse{
+func workspaceMountResponse(row db.WorkspaceMount) workerapi.WorkspaceMountResponse {
+	response := workerapi.WorkspaceMountResponse{
 		ID:               pgvalue.MustUUIDValue(row.ID).String(),
 		ProjectID:        pgvalue.MustUUIDValue(row.ProjectID).String(),
 		EnvironmentID:    pgvalue.MustUUIDValue(row.EnvironmentID).String(),
@@ -715,8 +715,8 @@ func pgTime(value pgtype.Timestamptz) *time.Time {
 	return &result
 }
 
-func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) *api.WorkerWorkspaceMount {
-	return &api.WorkerWorkspaceMount{
+func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) *workerapi.WorkspaceMount {
+	return &workerapi.WorkspaceMount{
 		ID:                     pgvalue.MustUUIDValue(row.ID).String(),
 		OrgID:                  pgvalue.MustUUIDValue(row.OrgID).String(),
 		ProjectID:              pgvalue.MustUUIDValue(row.ProjectID).String(),
@@ -728,12 +728,12 @@ func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) *api.WorkerWorks
 		RuntimeEpoch:           row.WorkerEpoch,
 		GuestdChannelTokenHash: row.GuestChannelTokenHash,
 		State:                  string(row.State), RuntimeIdentityID: row.RuntimeID,
-		WorkspaceImage: api.CASObject{
+		WorkspaceImage: workerapi.CASObject{
 			Digest: row.ImageArtifactDigest, SizeBytes: row.ImageArtifactSizeBytes,
 			MediaType: row.ImageArtifactMediaType,
 		},
 		RootfsDigest: row.RootfsDigest,
-		WorkspaceArtifact: api.WorkerWorkspaceArtifact{
+		WorkspaceArtifact: workerapi.WorkspaceArtifact{
 			Digest:     row.WorkspaceArtifactDigest,
 			MediaType:  row.WorkspaceArtifactMediaType,
 			Encoding:   workspace.ArtifactEncoding,

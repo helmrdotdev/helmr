@@ -6,16 +6,16 @@ import (
 	"net"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type staticRunLease struct {
-	lease api.WorkerRunLease
+	lease workerapi.RunLease
 }
 
-func (s staticRunLease) CurrentWorkerRunLease() api.WorkerRunLease {
+func (s staticRunLease) CurrentWorkerRunLease() workerapi.RunLease {
 	return s.lease
 }
 
@@ -23,7 +23,7 @@ func TestParseWaitRequest(t *testing.T) {
 	timeout := uint64(15_000)
 	metadata := `{"source":"program"}`
 	request, err := parseWaitRequest(
-		staticRunLease{lease: api.WorkerRunLease{ID: "lease-1"}},
+		staticRunLease{lease: workerapi.RunLease{ID: "lease-1"}},
 		&runv0.RunWaitRequested{
 			CorrelationId:  "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 			RunWaitId:      "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
@@ -42,7 +42,7 @@ func TestParseWaitRequest(t *testing.T) {
 		request.CorrelationID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" ||
 		request.RunWaitID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" ||
 		request.ResumeAttachID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" ||
-		request.Kind != api.WorkerRunWaitKind("sleep") ||
+		request.Kind != workerapi.RunWaitKind("sleep") ||
 		string(request.Params) != `{"ms":100}` ||
 		string(request.Metadata) != `{"source":"program"}` ||
 		len(request.Tags) != 1 ||
@@ -81,9 +81,9 @@ func TestHandleWaitReturnsExactWaitIdentity(t *testing.T) {
 	defer host.Close()
 	task := &guestRunLeaseTask{
 		program: freshProgram{session: fakeGuestSession{stream: guest}},
-		lease:   api.WorkerRunLeaseAssignment{ID: "lease-1", RunID: "run-1"},
+		lease:   workerapi.RunLeaseAssignment{ID: "lease-1", RunID: "run-1"},
 		waits: &ControlRunWaits{Client: &fakeRunWaitClient{
-			created: api.WorkerCreateRunWaitResponse{
+			created: workerapi.CreateRunWaitResponse{
 				RunID: "run-1", RunWaitID: runWaitID, ResumeAttachID: resumeAttachID,
 				ResolutionKind: "completed",
 			},

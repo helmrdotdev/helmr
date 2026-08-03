@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -34,7 +34,7 @@ func (s *Server) workerEnrollmentChallenge(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 2<<10)
-	var request api.WorkerEnrollmentChallengeRequest
+	var request workerapi.EnrollmentChallengeRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker enrollment challenge JSON: %w", err)))
 		return
@@ -75,11 +75,11 @@ func (s *Server) workerEnrollmentChallenge(w http.ResponseWriter, r *http.Reques
 		writeError(w, errors.New("create worker enrollment challenge"))
 		return
 	}
-	writeJSON(w, http.StatusCreated, api.WorkerEnrollmentChallengeResponse{
+	writeJSON(w, http.StatusCreated, workerapi.EnrollmentChallengeResponse{
 		Nonce:           nonce,
 		WorkerGroupID:   created.WorkerGroupID,
 		ExpiresAt:       pgvalue.Time(created.ExpiresAt),
-		ProtocolVersion: auth.WorkerProtocolVersion,
+		ProtocolVersion: workerapi.CurrentProtocolVersion,
 	})
 }
 
@@ -90,12 +90,12 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-	var request api.WorkerEnrollmentRequest
+	var request workerapi.EnrollmentRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker enrollment JSON: %w", err)))
 		return
 	}
-	if request.WorkerGroupID == "" || request.ProtocolVersion != auth.WorkerProtocolVersion || (!request.SupportsRun && !request.SupportsBuild) {
+	if request.WorkerGroupID == "" || request.ProtocolVersion != workerapi.CurrentProtocolVersion || (!request.SupportsRun && !request.SupportsBuild) {
 		writeError(w, badRequest(errors.New("worker_group_id, protocol_version, and at least one supported role are required")))
 		return
 	}
@@ -156,7 +156,7 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("enroll worker"))
 		return
 	}
-	writeJSON(w, http.StatusCreated, api.WorkerEnrollmentResponse{
+	writeJSON(w, http.StatusCreated, workerapi.EnrollmentResponse{
 		WorkerInstanceID:     pgvalue.MustUUIDValue(credential.WorkerInstanceID).String(),
 		WorkerGroupID:        credential.WorkerGroupID,
 		WorkerInstanceSecret: generated.Raw,
@@ -168,7 +168,7 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("worker authentication is not configured")))
 		return
 	}
-	var request api.WorkerTokenRequest
+	var request workerapi.TokenRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker token request JSON: %w", err)))
 		return
@@ -193,8 +193,8 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	protocolVersion := strings.TrimSpace(request.ProtocolVersion)
-	if protocolVersion != auth.WorkerProtocolVersion {
-		writeError(w, badRequest(fmt.Errorf("protocol_version must be %s", auth.WorkerProtocolVersion)))
+	if protocolVersion != workerapi.CurrentProtocolVersion {
+		writeError(w, badRequest(fmt.Errorf("protocol_version must be %s", workerapi.CurrentProtocolVersion)))
 		return
 	}
 	if !request.SupportsRun && !request.SupportsBuild {
@@ -259,7 +259,7 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("mint worker token"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerTokenResponse{
+	writeJSON(w, http.StatusOK, workerapi.TokenResponse{
 		Token:            signed,
 		ExpiresInSeconds: int64(s.workerTokenTTL / time.Second),
 		WorkerEpoch:      credential.CurrentEpoch.Int64,
@@ -273,7 +273,7 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerActivateRequest
+	var request workerapi.ActivateRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
@@ -309,7 +309,7 @@ func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("worker recovery storage is not configured")))
 		return
 	}
-	var request api.WorkerStartupRecoveryRequest
+	var request workerapi.StartupRecoveryRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker startup recovery JSON: %w", err)))
 		return
@@ -339,7 +339,7 @@ func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
 }
 
 func validateWorkerStartupRecovery(
-	request api.WorkerStartupRecoveryRequest,
+	request workerapi.StartupRecoveryRequest,
 	epochStartedAt time.Time,
 	now time.Time,
 ) error {
@@ -397,7 +397,7 @@ func (s *Server) workerObserve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("worker observation storage is not configured")))
 		return
 	}
-	var request api.WorkerObserveRequest
+	var request workerapi.ObserveRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker observation JSON: %w", err)))
 		return
@@ -434,7 +434,7 @@ func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workerCompleteDrain(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
-	var request api.WorkerDrainCompletionRequest
+	var request workerapi.DrainCompletionRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker drain completion JSON: %w", err)))
 		return
@@ -477,10 +477,10 @@ func (s *Server) workerCompleteDrain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("complete worker drain returned a non-terminal worker state"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerStatusResponse{
+	writeJSON(w, http.StatusOK, workerapi.StatusResponse{
 		WorkerInstanceID: pgvalue.MustUUIDValue(completed.ID).String(),
 		WorkerGroupID:    completed.WorkerGroupID,
-		Status:           api.WorkerStatusTerminationReady,
+		Status:           workerapi.StatusTerminationReady,
 		ActiveExecutions: 0,
 	})
 }
@@ -507,7 +507,7 @@ func (s *Server) workerFence(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerFenceRequest
+	var request workerapi.FenceRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker fence request JSON: %w", err)))
 		return
@@ -557,7 +557,7 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 		writeError(w, errors.New("get worker status"))
 		return
 	}
-	readiness := api.WorkerReadiness{}
+	readiness := workerapi.Readiness{}
 	if state.SupportsRun {
 		readiness.Run = workerRoleReadiness(state, state.RunReady, state.RunPausedReason)
 		readiness.Runtime = workerRoleReadiness(state, state.RuntimeReady, state.RuntimePausedReason)
@@ -565,10 +565,10 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 	if state.SupportsBuild {
 		readiness.Build = workerRoleReadiness(state, state.BuildReady, state.BuildPausedReason)
 	}
-	writeJSON(w, http.StatusOK, api.WorkerStatusResponse{
+	writeJSON(w, http.StatusOK, workerapi.StatusResponse{
 		WorkerInstanceID: pgvalue.MustUUIDValue(state.ID).String(),
 		WorkerGroupID:    state.WorkerGroupID,
-		Status:           api.WorkerStatus(state.State),
+		Status:           workerapi.Status(state.State),
 		ActiveExecutions: state.ActiveExecutions,
 		Readiness:        readiness,
 	})
@@ -578,8 +578,8 @@ func workerRoleReadiness(
 	state db.GetWorkerInstanceStateRow,
 	ready bool,
 	pausedReason pgtype.Text,
-) *api.WorkerRoleReadiness {
-	result := &api.WorkerRoleReadiness{Ready: ready}
+) *workerapi.RoleReadiness {
+	result := &workerapi.RoleReadiness{Ready: ready}
 	if ready {
 		return result
 	}
@@ -596,7 +596,7 @@ func workerRoleReadiness(
 	return result
 }
 
-func (s *Server) recordWorkerObservation(ctx context.Context, worker workerActor, observation api.WorkerObservation) error {
+func (s *Server) recordWorkerObservation(ctx context.Context, worker workerActor, observation workerapi.Observation) error {
 	if _, err := s.db.RecordWorkerObservation(
 		ctx,
 		workerObservationParams(worker, observation),
@@ -608,7 +608,7 @@ func (s *Server) recordWorkerObservation(ctx context.Context, worker workerActor
 	return nil
 }
 
-func workerObservationParams(worker workerActor, observation api.WorkerObservation) db.RecordWorkerObservationParams {
+func workerObservationParams(worker workerActor, observation workerapi.Observation) db.RecordWorkerObservationParams {
 	health := observation.HealthDetails
 	if len(health) == 0 {
 		health = json.RawMessage(`{}`)
@@ -631,7 +631,7 @@ func workerObservationParams(worker workerActor, observation api.WorkerObservati
 
 func workerActivationParams(
 	worker workerActor,
-	c api.WorkerCapabilities,
+	c workerapi.Capabilities,
 ) db.ActivateWorkerInstanceParams {
 	supportsRun := c.SupportsRun
 	maxRuntimeStarts := c.MaxRuntimeStarts
@@ -657,8 +657,8 @@ func workerActivationParams(
 	}
 }
 
-func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabilities, error) {
-	capabilities := api.WorkerCapabilities{
+func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabilities, error) {
+	capabilities := workerapi.Capabilities{
 		ProtocolVersion:           strings.TrimSpace(input.ProtocolVersion),
 		WorkerVersion:             strings.TrimSpace(input.WorkerVersion),
 		RuntimeID:                 strings.TrimSpace(input.RuntimeID),
@@ -689,31 +689,31 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 		Observation:               input.Observation,
 	}
 	if capabilities.ProtocolVersion == "" {
-		return api.WorkerCapabilities{}, errors.New("worker protocol_version is required")
+		return workerapi.Capabilities{}, errors.New("worker protocol_version is required")
 	}
-	if capabilities.ProtocolVersion != api.CurrentWorkerProtocolVersion {
-		return api.WorkerCapabilities{}, fmt.Errorf("worker protocol_version %s is not supported; current protocol is %s", capabilities.ProtocolVersion, api.CurrentWorkerProtocolVersion)
+	if capabilities.ProtocolVersion != workerapi.CurrentProtocolVersion {
+		return workerapi.Capabilities{}, fmt.Errorf("worker protocol_version %s is not supported; current protocol is %s", capabilities.ProtocolVersion, workerapi.CurrentProtocolVersion)
 	}
 	if capabilities.RuntimeID == "" {
-		return api.WorkerCapabilities{}, errors.New("worker runtime_id is required")
+		return workerapi.Capabilities{}, errors.New("worker runtime_id is required")
 	}
 	if err := deployment.ValidateRuntimeArchitecture(deployment.RuntimeArchitecture(capabilities.RuntimeArch)); err != nil {
-		return api.WorkerCapabilities{}, fmt.Errorf("worker runtime_arch: %w", err)
+		return workerapi.Capabilities{}, fmt.Errorf("worker runtime_arch: %w", err)
 	}
 	if capabilities.RuntimeABI == "" {
-		return api.WorkerCapabilities{}, errors.New("worker runtime_abi is required")
+		return workerapi.Capabilities{}, errors.New("worker runtime_abi is required")
 	}
 	if capabilities.KernelDigest == "" {
-		return api.WorkerCapabilities{}, errors.New("worker kernel_digest is required")
+		return workerapi.Capabilities{}, errors.New("worker kernel_digest is required")
 	}
 	if capabilities.InitramfsDigest == "" {
-		return api.WorkerCapabilities{}, errors.New("worker initramfs_digest is required")
+		return workerapi.Capabilities{}, errors.New("worker initramfs_digest is required")
 	}
 	if capabilities.RootfsDigest == "" {
-		return api.WorkerCapabilities{}, errors.New("worker rootfs_digest is required")
+		return workerapi.Capabilities{}, errors.New("worker rootfs_digest is required")
 	}
-	if capabilities.NetworkABI != api.WorkerNetworkABIV0 {
-		return api.WorkerCapabilities{}, fmt.Errorf("worker network_abi must be %s", api.WorkerNetworkABIV0)
+	if capabilities.NetworkABI != workerapi.NetworkABIV0 {
+		return workerapi.Capabilities{}, fmt.Errorf("worker network_abi must be %s", workerapi.NetworkABIV0)
 	}
 	expectedRuntimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{
 		Arch:            capabilities.RuntimeArch,
@@ -724,66 +724,66 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 		NetworkABI:      capabilities.NetworkABI,
 	})
 	if err != nil {
-		return api.WorkerCapabilities{}, fmt.Errorf("worker runtime identity: %w", err)
+		return workerapi.Capabilities{}, fmt.Errorf("worker runtime identity: %w", err)
 	}
 	if capabilities.RuntimeID != expectedRuntimeID {
-		return api.WorkerCapabilities{}, fmt.Errorf("worker runtime_id %s does not match runtime identity %s", capabilities.RuntimeID, expectedRuntimeID)
+		return workerapi.Capabilities{}, fmt.Errorf("worker runtime_id %s does not match runtime identity %s", capabilities.RuntimeID, expectedRuntimeID)
 	}
 	if capabilities.MaxVCPUs <= 0 {
-		return api.WorkerCapabilities{}, errors.New("worker max_vcpus must be positive")
+		return workerapi.Capabilities{}, errors.New("worker max_vcpus must be positive")
 	}
 	if capabilities.MaxVCPUs > math.MaxInt32 {
-		return api.WorkerCapabilities{}, fmt.Errorf("worker max_vcpus exceeds max %d", math.MaxInt32)
+		return workerapi.Capabilities{}, fmt.Errorf("worker max_vcpus exceeds max %d", math.MaxInt32)
 	}
 	if capabilities.MaxMemoryMiB <= 0 {
-		return api.WorkerCapabilities{}, errors.New("worker max_memory_mib must be positive")
+		return workerapi.Capabilities{}, errors.New("worker max_memory_mib must be positive")
 	}
 	if capabilities.MaxMemoryMiB > math.MaxInt32 {
-		return api.WorkerCapabilities{}, fmt.Errorf("worker max_memory_mib exceeds max %d", math.MaxInt32)
+		return workerapi.Capabilities{}, fmt.Errorf("worker max_memory_mib exceeds max %d", math.MaxInt32)
 	}
 	if capabilities.VMMilliCPU <= 0 || capabilities.VMMilliCPU > capabilities.MaxVCPUs*1000 {
-		return api.WorkerCapabilities{}, errors.New("worker vm_milli_cpu must be positive and not exceed aggregate CPU")
+		return workerapi.Capabilities{}, errors.New("worker vm_milli_cpu must be positive and not exceed aggregate CPU")
 	}
 	if capabilities.VMMemoryMiB <= 0 || capabilities.VMMemoryMiB > capabilities.MaxMemoryMiB {
-		return api.WorkerCapabilities{}, errors.New("worker vm_memory_mib must be positive and not exceed aggregate memory")
+		return workerapi.Capabilities{}, errors.New("worker vm_memory_mib must be positive and not exceed aggregate memory")
 	}
 	if capabilities.GuestEphemeralDiskBytes <= 0 ||
 		capabilities.VMGuestEphemeralDiskBytes <= 0 ||
 		capabilities.VMGuestEphemeralDiskBytes > capabilities.GuestEphemeralDiskBytes {
-		return api.WorkerCapabilities{}, errors.New("worker VM guest ephemeral disk must be positive and not exceed aggregate capacity")
+		return workerapi.Capabilities{}, errors.New("worker VM guest ephemeral disk must be positive and not exceed aggregate capacity")
 	}
 	if capabilities.ExecutionSlotsAvailable <= 0 {
-		return api.WorkerCapabilities{}, errors.New("worker execution_slots_available must be positive")
+		return workerapi.Capabilities{}, errors.New("worker execution_slots_available must be positive")
 	}
 	if !capabilities.SupportsRun && !capabilities.SupportsBuild {
-		return api.WorkerCapabilities{}, errors.New("worker must support run, build, or both")
+		return workerapi.Capabilities{}, errors.New("worker must support run, build, or both")
 	}
 	if capabilities.SupportsBuild && capabilities.MaxBuildExecutors != 1 {
-		return api.WorkerCapabilities{}, errors.New("worker max_build_executors must be one for build role")
+		return workerapi.Capabilities{}, errors.New("worker max_build_executors must be one for build role")
 	}
 	if !capabilities.SupportsBuild && capabilities.MaxBuildExecutors != 0 {
-		return api.WorkerCapabilities{}, errors.New("worker max_build_executors must be zero without build role")
+		return workerapi.Capabilities{}, errors.New("worker max_build_executors must be zero without build role")
 	}
 	if capabilities.SupportsRun && capabilities.MaxRuntimeStarts <= 0 {
-		return api.WorkerCapabilities{}, errors.New("worker max_runtime_starts must be positive for run role")
+		return workerapi.Capabilities{}, errors.New("worker max_runtime_starts must be positive for run role")
 	}
 	if capabilities.SupportsRun {
 		if capabilities.SubstrateFormat == "" {
-			return api.WorkerCapabilities{}, errors.New("worker substrate_format is required for run role")
+			return workerapi.Capabilities{}, errors.New("worker substrate_format is required for run role")
 		}
 		if capabilities.SubstrateBuilderABI == "" {
-			return api.WorkerCapabilities{}, errors.New("worker substrate_builder_abi is required for run role")
+			return workerapi.Capabilities{}, errors.New("worker substrate_builder_abi is required for run role")
 		}
 		if capabilities.SubstrateLayoutABI == "" {
-			return api.WorkerCapabilities{}, errors.New("worker substrate_layout_abi is required for run role")
+			return workerapi.Capabilities{}, errors.New("worker substrate_layout_abi is required for run role")
 		}
 	} else if capabilities.SubstrateFormat != "" || capabilities.SubstrateBuilderABI != "" || capabilities.SubstrateLayoutABI != "" {
-		return api.WorkerCapabilities{}, errors.New("worker without run role must not report a substrate contract")
+		return workerapi.Capabilities{}, errors.New("worker without run role must not report a substrate contract")
 	}
 	return capabilities, nil
 }
 
-func (s *Server) validateWorkerBuildPolicy(capabilities api.WorkerCapabilities) error {
+func (s *Server) validateWorkerBuildPolicy(capabilities workerapi.Capabilities) error {
 	if !capabilities.SupportsBuild {
 		return nil
 	}

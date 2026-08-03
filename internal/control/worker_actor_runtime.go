@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -40,7 +41,7 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerStartActorRequest
+	var request workerapi.StartActorRequest
 	if err := decodeWorkerActorRequest(r, &request, "Actor start"); err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -111,7 +112,7 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if failure, ok := workerActorStartFailure(err); ok {
-			writeJSON(w, http.StatusOK, api.WorkerStartActorResponse{
+			writeJSON(w, http.StatusOK, workerapi.StartActorResponse{
 				CorrelationID: request.CorrelationID, Failed: &failure,
 			})
 			return
@@ -120,7 +121,7 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("start run-sourced Actor"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerStartActorResponse{
+	writeJSON(w, http.StatusOK, workerapi.StartActorResponse{
 		CorrelationID: request.CorrelationID,
 		Completed: &api.StartActorResponse{
 			ActorID: result.ActorID.String(), RunID: result.BootRunID.String(),
@@ -133,7 +134,7 @@ func (s *Server) workerGetActorStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerActorReferenceRequest
+	var request workerapi.ActorReferenceRequest
 	if err := decodeWorkerActorRequest(r, &request, "Actor status"); err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -170,7 +171,7 @@ func (s *Server) workerGetActorStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("read run-sourced Actor status"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerActorStatusResponse{
+	writeJSON(w, http.StatusOK, workerapi.ActorStatusResponse{
 		CorrelationID: request.CorrelationID, Completed: &status,
 	})
 }
@@ -180,12 +181,12 @@ func (s *Server) workerCloseActor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerCloseActorRequest
+	var request workerapi.CloseActorRequest
 	if err := decodeWorkerActorRequest(r, &request, "Actor close"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	address, err := parseWorkerActorReference(request.WorkerActorReferenceRequest)
+	address, err := parseWorkerActorReference(request.ActorReferenceRequest)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -215,9 +216,9 @@ func (s *Server) workerCloseActor(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeJSON(w, http.StatusOK, api.WorkerCloseActorResponse{
+			writeJSON(w, http.StatusOK, workerapi.CloseActorResponse{
 				CorrelationID: request.CorrelationID,
-				Failed: &api.WorkerRuntimeOperationFailure{
+				Failed: &workerapi.RuntimeOperationFailure{
 					Code: "actor_not_found", Message: "Actor was not found",
 				},
 			})
@@ -244,7 +245,7 @@ func (s *Server) workerCloseActor(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if failure, ok := workerActorCloseFailure(err); ok {
-			writeJSON(w, http.StatusOK, api.WorkerCloseActorResponse{
+			writeJSON(w, http.StatusOK, workerapi.CloseActorResponse{
 				CorrelationID: request.CorrelationID, Failed: &failure,
 			})
 			return
@@ -252,7 +253,7 @@ func (s *Server) workerCloseActor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("close run-sourced Actor"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerCloseActorResponse{
+	writeJSON(w, http.StatusOK, workerapi.CloseActorResponse{
 		CorrelationID: request.CorrelationID, Completed: &receipt,
 	})
 }
@@ -262,12 +263,12 @@ func (s *Server) workerReadActorOutputPage(w http.ResponseWriter, r *http.Reques
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerReadActorOutputPageRequest
+	var request workerapi.ReadActorOutputPageRequest
 	if err := decodeWorkerActorRequest(r, &request, "Actor output page"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	address, err := parseWorkerActorReference(request.WorkerActorReferenceRequest)
+	address, err := parseWorkerActorReference(request.ActorReferenceRequest)
 	if err != nil || request.Limit < 1 || request.Limit > actorOutputReadMaxLimit ||
 		(request.After != nil && (*request.After < 0 || *request.After > maxActorOutputSequence)) {
 		writeError(w, badRequest(errors.New("Actor output page request is invalid")))
@@ -300,13 +301,13 @@ func (s *Server) workerReadActorOutputPage(w http.ResponseWriter, r *http.Reques
 			writeError(w, errors.New("read run-sourced Actor output"))
 			return
 		}
-		writeJSON(w, http.StatusOK, api.WorkerReadActorOutputPageResponse{
+		writeJSON(w, http.StatusOK, workerapi.ReadActorOutputPageResponse{
 			CorrelationID: request.CorrelationID,
-			Failed:        &api.WorkerRuntimeOperationFailure{Code: code, Message: message},
+			Failed:        &workerapi.RuntimeOperationFailure{Code: code, Message: message},
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerReadActorOutputPageResponse{
+	writeJSON(w, http.StatusOK, workerapi.ReadActorOutputPageResponse{
 		CorrelationID: request.CorrelationID, Completed: &page,
 	})
 }
@@ -314,7 +315,7 @@ func (s *Server) workerReadActorOutputPage(w http.ResponseWriter, r *http.Reques
 func (s *Server) workerRunSource(
 	ctx context.Context,
 	worker workerActor,
-	lease api.WorkerRunLeaseFence,
+	lease workerapi.RunLeaseFence,
 ) (workerRunSourceAuthority, error) {
 	var source workerRunSourceAuthority
 	err := s.inTx(ctx, func(work *txWork) error {
@@ -326,7 +327,7 @@ func (s *Server) workerRunSource(
 }
 
 func parseWorkerActorReference(
-	request api.WorkerActorReferenceRequest,
+	request workerapi.ActorReferenceRequest,
 ) (actorReadAddress, error) {
 	if _, err := parseCanonicalUUID("correlation_id", request.CorrelationID); err != nil {
 		return actorReadAddress{}, err
@@ -369,7 +370,7 @@ func resolveActorAddress(
 	})
 }
 
-func workerActorStartFailure(err error) (api.WorkerRuntimeOperationFailure, bool) {
+func workerActorStartFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
 	var claimConflict idempotency.ConflictError
 	var keyConflict ActorKeyConflictError
 	switch {
@@ -388,11 +389,11 @@ func workerActorStartFailure(err error) (api.WorkerRuntimeOperationFailure, bool
 	case errors.Is(err, errActorInputTooLarge), errors.Is(err, errActorStartInvalid):
 		return runtimeActorFailure("invalid_actor_start", err.Error(), false), true
 	default:
-		return api.WorkerRuntimeOperationFailure{}, false
+		return workerapi.RuntimeOperationFailure{}, false
 	}
 }
 
-func workerActorCloseFailure(err error) (api.WorkerRuntimeOperationFailure, bool) {
+func workerActorCloseFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
 	var claimConflict idempotency.ConflictError
 	switch {
 	case errors.As(err, &claimConflict):
@@ -402,12 +403,12 @@ func workerActorCloseFailure(err error) (api.WorkerRuntimeOperationFailure, bool
 	case errors.Is(err, errActorCloseAuthority):
 		return runtimeActorFailure("actor_not_found", "Actor was not found", false), true
 	default:
-		return api.WorkerRuntimeOperationFailure{}, false
+		return workerapi.RuntimeOperationFailure{}, false
 	}
 }
 
-func runtimeActorFailure(code, message string, retryable bool) api.WorkerRuntimeOperationFailure {
-	return api.WorkerRuntimeOperationFailure{
+func runtimeActorFailure(code, message string, retryable bool) workerapi.RuntimeOperationFailure {
+	return workerapi.RuntimeOperationFailure{
 		Code: strings.TrimSpace(code), Message: strings.TrimSpace(message),
 		Retryable: retryable,
 	}
@@ -416,18 +417,18 @@ func runtimeActorFailure(code, message string, retryable bool) api.WorkerRuntime
 func failedWorkerActorStart(
 	correlationID, code, message string,
 	retryable bool,
-) api.WorkerStartActorResponse {
+) workerapi.StartActorResponse {
 	failure := runtimeActorFailure(code, message, retryable)
-	return api.WorkerStartActorResponse{
+	return workerapi.StartActorResponse{
 		CorrelationID: correlationID, Failed: &failure,
 	}
 }
 
 func failedWorkerActorReference(
 	correlationID, code, message string,
-) api.WorkerActorStatusResponse {
+) workerapi.ActorStatusResponse {
 	failure := runtimeActorFailure(code, message, false)
-	return api.WorkerActorStatusResponse{
+	return workerapi.ActorStatusResponse{
 		CorrelationID: correlationID, Failed: &failure,
 	}
 }

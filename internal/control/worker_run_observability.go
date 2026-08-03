@@ -10,11 +10,11 @@ import (
 	"net/http"
 	"unicode/utf8"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -35,7 +35,7 @@ type runMetadataMutation struct {
 }
 
 func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerUpdateRunMetadataRequest
+	var request workerapi.UpdateRunMetadataRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker Run metadata request JSON: %w", err)))
 		return
@@ -184,7 +184,7 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) workerAppendStructuredLog(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerStructuredLogRequest
+	var request workerapi.StructuredLogRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker structured log request JSON: %w", err)))
 		return
@@ -245,7 +245,7 @@ func (s *Server) workerAppendStructuredLog(w http.ResponseWriter, r *http.Reques
 		parsed,
 		db.AppendRunLogChunkParams{
 			Kind: "log.structured", Payload: payload, Severity: request.Level,
-			Stream:      string(api.WorkerLogStreamStructured),
+			Stream:      string(workerapi.LogStreamStructured),
 			ObservedSeq: int64(request.ObservedSeq), Content: content,
 		},
 	)
@@ -271,7 +271,7 @@ func (s *Server) workerAppendStructuredLog(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) parseWorkerRunMutation(
 	r *http.Request,
-	lease api.WorkerRunLeaseFence,
+	lease workerapi.RunLeaseFence,
 ) (parsedRunLeaseFence, workerActor, error) {
 	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
@@ -285,7 +285,7 @@ func lockReceiptRunMutation(
 	ctx context.Context,
 	q db.Querier,
 	worker workerActor,
-	lease api.WorkerRunLeaseFence,
+	lease workerapi.RunLeaseFence,
 	parsed parsedRunLeaseFence,
 ) (runLeaseClaimAuthority, error) {
 	locators, err := q.GetLiveRunLeaseLocators(
@@ -315,7 +315,7 @@ func lockReceiptRunMutation(
 }
 
 func normalizeRunMetadataMutation(
-	request api.WorkerUpdateRunMetadataRequest,
+	request workerapi.UpdateRunMetadataRequest,
 ) (runMetadataMutation, error) {
 	mutation := runMetadataMutation{operation: request.Operation}
 	switch request.Operation {

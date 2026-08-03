@@ -17,6 +17,7 @@ import (
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestStartRestoredProgramOrdersGrantStartProofAndRelease(t *testing.T) {
@@ -26,7 +27,7 @@ func TestStartRestoredProgramOrdersGrantStartProofAndRelease(t *testing.T) {
 	parent := &queuedStreamSession{streams: []vm.Stream{testVMStream(resumeHost), testVMStream(grantHost)}}
 	mounts := NewWorkspaceMountSessions()
 	unregister := mounts.RegisterWorkspaceMountSession(
-		api.WorkerWorkspaceMount{
+		workerapi.WorkspaceMount{
 			ID: claim.Lease.WorkspaceMountID, WorkspaceID: claim.Lease.WorkspaceID,
 			RuntimeInstanceID: claim.Lease.RuntimeInstanceID, BaseVersionID: claim.Lease.BaseWorkspaceVersionID,
 			FencingGeneration: claim.Lease.MountFencingGeneration, RestoreCheckpointID: "checkpoint-1",
@@ -64,15 +65,15 @@ func TestRetainedRestoreAndParentAttachResumeOnExistingMount(t *testing.T) {
 		name      string
 		wantStart string
 		wantActor bool
-		prepare   func(api.WorkerRunLeaseClaimResponse) api.WorkerRunLeaseClaimResponse
+		prepare   func(workerapi.RunLeaseClaimResponse) workerapi.RunLeaseClaimResponse
 	}{
 		{
 			name:      "retained restore",
 			wantStart: "restore",
-			prepare: func(claim api.WorkerRunLeaseClaimResponse) api.WorkerRunLeaseClaimResponse {
+			prepare: func(claim workerapi.RunLeaseClaimResponse) workerapi.RunLeaseClaimResponse {
 				restore := claim.Execution.Restore
 				restore.Recreated = nil
-				restore.Retained = &api.WorkerRunLeaseRetainedRestore{
+				restore.Retained = &workerapi.RunLeaseRetainedRestore{
 					EnclosingRunWaitID: "outer-wait-1",
 				}
 				return claim
@@ -82,11 +83,11 @@ func TestRetainedRestoreAndParentAttachResumeOnExistingMount(t *testing.T) {
 			name:      "parent attach",
 			wantStart: "parent",
 			wantActor: true,
-			prepare: func(claim api.WorkerRunLeaseClaimResponse) api.WorkerRunLeaseClaimResponse {
+			prepare: func(claim workerapi.RunLeaseClaimResponse) workerapi.RunLeaseClaimResponse {
 				restore := claim.Execution.Restore
-				claim.Execution = api.WorkerRunLeaseExecution{
-					Attach: &api.WorkerRunLeaseAttach{
-						Parent: &api.WorkerRunLeaseParentAttach{
+				claim.Execution = workerapi.RunLeaseExecution{
+					Attach: &workerapi.RunLeaseAttach{
+						Parent: &workerapi.RunLeaseParentAttach{
 							RunWaitID:            restore.RunWaitID,
 							CheckpointID:         restore.CheckpointID,
 							ResumeAttachID:       restore.ResumeAttachID,
@@ -154,17 +155,17 @@ func TestRetainedRestoreAndParentAttachResumeOnExistingMount(t *testing.T) {
 func TestRestoredProgramDecisionPreservesTerminalUnion(t *testing.T) {
 	tests := []struct {
 		name     string
-		decision api.WorkerRunLeaseDecision
+		decision workerapi.RunLeaseDecision
 		wantKind string
 		wantData string
 		noResult bool
 		wantErr  bool
 	}{
-		{name: "completed absent", decision: api.WorkerRunLeaseDecision{Completed: &api.WorkerRunLeaseCompleted{NoResult: &struct{}{}}}, wantKind: "completed", noResult: true},
-		{name: "completed null", decision: api.WorkerRunLeaseDecision{Completed: &api.WorkerRunLeaseCompleted{ResultJSON: json.RawMessage(`null`)}}, wantKind: "completed", wantData: "null"},
-		{name: "completed missing variant", decision: api.WorkerRunLeaseDecision{Completed: &api.WorkerRunLeaseCompleted{}}, wantErr: true},
-		{name: "failed", decision: api.WorkerRunLeaseDecision{Failed: &api.WorkerRunLeaseFailed{ReasonCode: "token_expired", Error: json.RawMessage(`{"message":"expired"}`)}}, wantKind: "failed", wantData: `{"reason_code":"token_expired","error":{"message":"expired"}}`},
-		{name: "cancelled", decision: api.WorkerRunLeaseDecision{Cancelled: &api.WorkerRunLeaseCancelled{ReasonCode: "run_cancelled"}}, wantKind: "cancelled", wantData: `{"reason_code":"run_cancelled"}`},
+		{name: "completed absent", decision: workerapi.RunLeaseDecision{Completed: &workerapi.RunLeaseCompleted{NoResult: &struct{}{}}}, wantKind: "completed", noResult: true},
+		{name: "completed null", decision: workerapi.RunLeaseDecision{Completed: &workerapi.RunLeaseCompleted{ResultJSON: json.RawMessage(`null`)}}, wantKind: "completed", wantData: "null"},
+		{name: "completed missing variant", decision: workerapi.RunLeaseDecision{Completed: &workerapi.RunLeaseCompleted{}}, wantErr: true},
+		{name: "failed", decision: workerapi.RunLeaseDecision{Failed: &workerapi.RunLeaseFailed{ReasonCode: "token_expired", Error: json.RawMessage(`{"message":"expired"}`)}}, wantKind: "failed", wantData: `{"reason_code":"token_expired","error":{"message":"expired"}}`},
+		{name: "cancelled", decision: workerapi.RunLeaseDecision{Cancelled: &workerapi.RunLeaseCancelled{ReasonCode: "run_cancelled"}}, wantKind: "cancelled", wantData: `{"reason_code":"run_cancelled"}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -186,22 +187,22 @@ func TestRestoredProgramDecisionPreservesTerminalUnion(t *testing.T) {
 }
 
 func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
-	artifact := func(digest, mediaType string, size int64) api.WorkerCheckpointArtifact {
-		return api.WorkerCheckpointArtifact{Digest: digest, MediaType: mediaType, SizeBytes: size}
+	artifact := func(digest, mediaType string, size int64) workerapi.CheckpointArtifact {
+		return workerapi.CheckpointArtifact{Digest: digest, MediaType: mediaType, SizeBytes: size}
 	}
-	checkpoint := api.WorkerCheckpointManifest{
-		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
+	checkpoint := workerapi.CheckpointManifest{
+		RecoveryPoint: workerapi.CheckpointRecoveryPoint{
 			ID: "checkpoint-1", RunID: "run-1", AttemptNumber: 2, RunWaitID: "wait-1", CorrelationID: "correlation-1",
-			Runtime: api.WorkerCheckpointRuntime{Backend: "firecracker", ID: "runtime-shape", Arch: testCheckpointRuntimeArchitecture(),
+			Runtime: workerapi.CheckpointRuntime{Backend: "firecracker", ID: "runtime-shape", Arch: testCheckpointRuntimeArchitecture(),
 				ABI: "abi-1", KernelDigest: "kernel", InitramfsDigest: "initramfs", RootfsDigest: "rootfs", ConfigDigest: "config"},
 		},
-		RuntimeState: api.WorkerCheckpointRuntimeState{
+		RuntimeState: workerapi.CheckpointRuntimeState{
 			ConfigArtifact:      artifact("config-object", cas.CheckpointRuntimeConfigMediaType, 10),
 			VMStateArtifact:     artifact("state-object", cas.CheckpointVMStateMediaType, 20),
-			MemoryArtifacts:     []api.WorkerCheckpointArtifact{artifact("memory-object", cas.CheckpointMemoryMediaType, 30)},
+			MemoryArtifacts:     []workerapi.CheckpointArtifact{artifact("memory-object", cas.CheckpointMemoryMediaType, 30)},
 			ScratchDiskArtifact: artifact("scratch-object", cas.CheckpointScratchDiskMediaType, 40),
 		},
-		WorkspaceState: api.WorkerCheckpointWorkspaceState{Base: api.WorkerCheckpointWorkspaceBase{
+		WorkspaceState: workerapi.CheckpointWorkspaceState{Base: workerapi.CheckpointWorkspaceBase{
 			ArtifactDigest: "workspace-object", ArtifactSizeBytes: 50,
 			ArtifactMediaType: "workspace-media", ArtifactEncoding: "workspace-encoding", MountPath: "/workspace",
 		}},
@@ -210,16 +211,16 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	object := func(value api.WorkerCheckpointArtifact) api.CASObject {
-		return api.CASObject{Digest: value.Digest, SizeBytes: value.SizeBytes, MediaType: value.MediaType}
+	object := func(value workerapi.CheckpointArtifact) workerapi.CASObject {
+		return workerapi.CASObject{Digest: value.Digest, SizeBytes: value.SizeBytes, MediaType: value.MediaType}
 	}
-	target := api.WorkerRuntimeReconcileTarget{Source: api.WorkerRuntimeSource{
-		WorkspaceArtifact: api.WorkerWorkspaceArtifact{Digest: "workspace-object", SizeBytes: 50,
+	target := workerapi.RuntimeReconcileTarget{Source: workerapi.RuntimeSource{
+		WorkspaceArtifact: workerapi.WorkspaceArtifact{Digest: "workspace-object", SizeBytes: 50,
 			MediaType: "workspace-media", Encoding: "workspace-encoding"},
-		Restore: &api.WorkerRuntimeRestore{
+		Restore: &workerapi.RuntimeRestore{
 			CheckpointID: "checkpoint-1", RunID: "run-1", AttemptNumber: 2, RunWaitID: "wait-1",
 			Kind: "suspend", Manifest: manifest,
-			Artifacts: []api.WorkerRunLeaseCheckpointArtifact{
+			Artifacts: []workerapi.RunLeaseCheckpointArtifact{
 				{Role: "runtime_config", Object: object(checkpoint.RuntimeState.ConfigArtifact)},
 				{Role: "vm_state", Object: object(checkpoint.RuntimeState.VMStateArtifact)},
 				{Role: "memory", Object: object(checkpoint.RuntimeState.MemoryArtifacts[0])},
@@ -277,10 +278,10 @@ func serveRestoredResume(conn net.Conn) error {
 	})
 }
 
-func testRestoredProgramClaim(t *testing.T) api.WorkerRunLeaseClaimResponse {
+func testRestoredProgramClaim(t *testing.T) workerapi.RunLeaseClaimResponse {
 	t.Helper()
 	claim := testFreshProgramClaim(t)
-	checkpoint := api.WorkerCheckpointManifest{RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
+	checkpoint := workerapi.CheckpointManifest{RecoveryPoint: workerapi.CheckpointRecoveryPoint{
 		ID: "checkpoint-1", RunID: claim.Lease.RunID, AttemptNumber: claim.Lease.AttemptNumber,
 		RunWaitID: "wait-1", CorrelationID: "correlation-1",
 	}}
@@ -289,12 +290,12 @@ func testRestoredProgramClaim(t *testing.T) api.WorkerRunLeaseClaimResponse {
 		t.Fatal(err)
 	}
 	claim.Secrets = nil
-	claim.Execution = api.WorkerRunLeaseExecution{Restore: &api.WorkerRunLeaseRestore{
+	claim.Execution = workerapi.RunLeaseExecution{Restore: &workerapi.RunLeaseRestore{
 		RunWaitID: "wait-1", CheckpointID: "checkpoint-1", ResumeAttachID: "attach-1",
 		ResumeRequestVersion: 4, CorrelationID: "correlation-1",
 		EntrypointKind: "task", EntrypointDeclaredID: "deploy",
-		Recreated: &api.WorkerRunLeaseRecreatedRestore{Kind: "suspend", Manifest: manifest},
-		Decision:  api.WorkerRunLeaseDecision{Completed: &api.WorkerRunLeaseCompleted{NoResult: &struct{}{}}},
+		Recreated: &workerapi.RunLeaseRecreatedRestore{Kind: "suspend", Manifest: manifest},
+		Decision:  workerapi.RunLeaseDecision{Completed: &workerapi.RunLeaseCompleted{NoResult: &struct{}{}}},
 	}}
 	return claim
 }
@@ -320,17 +321,17 @@ func (*queuedStreamSession) Wait(ctx context.Context) error { <-ctx.Done(); retu
 
 type restoredProgramControl struct {
 	mu           sync.Mutex
-	lease        api.WorkerRunLeaseAssignment
+	lease        workerapi.RunLeaseAssignment
 	started      bool
 	released     bool
 	releaseCalls int
 	wantStart    string
 }
 
-func (c *restoredProgramControl) ClaimRunLease(context.Context, api.WorkerRunLeaseWork) (api.WorkerRunLeaseClaimResponse, error) {
-	return api.WorkerRunLeaseClaimResponse{}, errors.New("unexpected claim")
+func (c *restoredProgramControl) ClaimRunLease(context.Context, workerapi.RunLeaseWork) (workerapi.RunLeaseClaimResponse, error) {
+	return workerapi.RunLeaseClaimResponse{}, errors.New("unexpected claim")
 }
-func (c *restoredProgramControl) AcknowledgeRunStart(_ context.Context, request api.WorkerRunStartRequest) (api.WorkerRunStartResponse, error) {
+func (c *restoredProgramControl) AcknowledgeRunStart(_ context.Context, request workerapi.RunStartRequest) (workerapi.RunStartResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	validArm := request.Restore != nil &&
@@ -344,72 +345,72 @@ func (c *restoredProgramControl) AcknowledgeRunStart(_ context.Context, request 
 			request.Attach.Child == nil
 	}
 	if !validArm || request.Lease != c.lease.Fence() {
-		return api.WorkerRunStartResponse{}, errors.New("unexpected restore start")
+		return workerapi.RunStartResponse{}, errors.New("unexpected restore start")
 	}
 	c.started = true
-	return api.WorkerRunStartResponse{Lease: c.lease.Fence()}, nil
+	return workerapi.RunStartResponse{Lease: c.lease.Fence()}, nil
 }
-func (*restoredProgramControl) AcknowledgeRunEntrypoint(context.Context, api.WorkerRunEntrypointRequest) error {
+func (*restoredProgramControl) AcknowledgeRunEntrypoint(context.Context, workerapi.RunEntrypointRequest) error {
 	return errors.New("unexpected entrypoint")
 }
-func (c *restoredProgramControl) RenewRunLease(context.Context, api.WorkerRunLeaseAssignment) (api.WorkerRunLeaseRenewResponse, error) {
-	return api.WorkerRunLeaseRenewResponse{
+func (c *restoredProgramControl) RenewRunLease(context.Context, workerapi.RunLeaseAssignment) (workerapi.RunLeaseRenewResponse, error) {
+	return workerapi.RunLeaseRenewResponse{
 		Lease: c.lease.Fence(), ExpiresAt: c.lease.ExpiresAt,
 		BaseWorkspaceVersionID: c.lease.BaseWorkspaceVersionID,
 	}, nil
 }
-func (*restoredProgramControl) BeginRunFinalization(context.Context, api.WorkerBeginRunFinalizationRequest) (api.WorkerBeginRunFinalizationResponse, error) {
-	return api.WorkerBeginRunFinalizationResponse{}, errors.New("unexpected finalization")
+func (*restoredProgramControl) BeginRunFinalization(context.Context, workerapi.BeginRunFinalizationRequest) (workerapi.BeginRunFinalizationResponse, error) {
+	return workerapi.BeginRunFinalizationResponse{}, errors.New("unexpected finalization")
 }
-func (*restoredProgramControl) CompleteTask(context.Context, api.WorkerCompleteTaskRequest) error {
+func (*restoredProgramControl) CompleteTask(context.Context, workerapi.CompleteTaskRequest) error {
 	return errors.New("unexpected completion")
 }
-func (*restoredProgramControl) CompleteActor(context.Context, api.WorkerCompleteActorRequest) error {
+func (*restoredProgramControl) CompleteActor(context.Context, workerapi.CompleteActorRequest) error {
 	return errors.New("unexpected Actor completion")
 }
-func (*restoredProgramControl) CommitActorTurn(context.Context, api.WorkerCommitActorTurnRequest) (api.WorkerCommitActorTurnResponse, error) {
-	return api.WorkerCommitActorTurnResponse{}, errors.New("unexpected Actor turn commit")
+func (*restoredProgramControl) CommitActorTurn(context.Context, workerapi.CommitActorTurnRequest) (workerapi.CommitActorTurnResponse, error) {
+	return workerapi.CommitActorTurnResponse{}, errors.New("unexpected Actor turn commit")
 }
-func (*restoredProgramControl) SendRunActorInput(context.Context, api.WorkerSendActorInputRequest) (api.WorkerSendActorInputResponse, error) {
-	return api.WorkerSendActorInputResponse{}, errors.New("unexpected Actor input send")
+func (*restoredProgramControl) SendRunActorInput(context.Context, workerapi.SendActorInputRequest) (workerapi.SendActorInputResponse, error) {
+	return workerapi.SendActorInputResponse{}, errors.New("unexpected Actor input send")
 }
 
-func (*restoredProgramControl) AppendActorOutput(context.Context, api.WorkerAppendActorOutputRequest) (api.WorkerAppendActorOutputResponse, error) {
-	return api.WorkerAppendActorOutputResponse{}, errors.New("unexpected Actor output append")
+func (*restoredProgramControl) AppendActorOutput(context.Context, workerapi.AppendActorOutputRequest) (workerapi.AppendActorOutputResponse, error) {
+	return workerapi.AppendActorOutputResponse{}, errors.New("unexpected Actor output append")
 }
-func (*restoredProgramControl) CreateRuntimeToken(context.Context, api.WorkerCreateTokenRequest) (api.TokenResponse, error) {
+func (*restoredProgramControl) CreateRuntimeToken(context.Context, workerapi.CreateTokenRequest) (api.TokenResponse, error) {
 	return api.TokenResponse{}, errors.New("unexpected Token create")
 }
-func (*restoredProgramControl) AppendRunLog(context.Context, api.WorkerRunLeaseAssignment, api.WorkerLogStream, uint64, []byte) error {
+func (*restoredProgramControl) AppendRunLog(context.Context, workerapi.RunLeaseAssignment, workerapi.LogStream, uint64, []byte) error {
 	return nil
 }
-func (*restoredProgramControl) CreateRunWait(context.Context, api.WorkerCreateRunWaitRequest) (api.WorkerCreateRunWaitResponse, error) {
-	return api.WorkerCreateRunWaitResponse{}, errors.New("unexpected wait")
+func (*restoredProgramControl) CreateRunWait(context.Context, workerapi.CreateRunWaitRequest) (workerapi.CreateRunWaitResponse, error) {
+	return workerapi.CreateRunWaitResponse{}, errors.New("unexpected wait")
 }
-func (*restoredProgramControl) PollRunWait(context.Context, api.WorkerRunWaitPollRequest) (api.WorkerRunWaitPollResponse, error) {
-	return api.WorkerRunWaitPollResponse{}, errors.New("unexpected poll")
+func (*restoredProgramControl) PollRunWait(context.Context, workerapi.RunWaitPollRequest) (workerapi.RunWaitPollResponse, error) {
+	return workerapi.RunWaitPollResponse{}, errors.New("unexpected poll")
 }
-func (*restoredProgramControl) AcknowledgeRunWaitResume(context.Context, api.WorkerRunWaitResumeAckRequest) (api.WorkerRunWaitResumeAckResponse, error) {
-	return api.WorkerRunWaitResumeAckResponse{}, errors.New("unexpected old resume")
+func (*restoredProgramControl) AcknowledgeRunWaitResume(context.Context, workerapi.RunWaitResumeAckRequest) (workerapi.RunWaitResumeAckResponse, error) {
+	return workerapi.RunWaitResumeAckResponse{}, errors.New("unexpected old resume")
 }
-func (*restoredProgramControl) MarkCheckpointReady(context.Context, api.WorkerCheckpointReadyRequest) (api.WorkerCheckpointResponse, error) {
-	return api.WorkerCheckpointResponse{}, errors.New("unexpected checkpoint")
+func (*restoredProgramControl) MarkCheckpointReady(context.Context, workerapi.CheckpointReadyRequest) (workerapi.CheckpointResponse, error) {
+	return workerapi.CheckpointResponse{}, errors.New("unexpected checkpoint")
 }
-func (*restoredProgramControl) MarkCheckpointFailed(context.Context, api.WorkerCheckpointFailedRequest) (api.WorkerCheckpointResponse, error) {
-	return api.WorkerCheckpointResponse{}, errors.New("unexpected checkpoint failure")
+func (*restoredProgramControl) MarkCheckpointFailed(context.Context, workerapi.CheckpointFailedRequest) (workerapi.CheckpointResponse, error) {
+	return workerapi.CheckpointResponse{}, errors.New("unexpected checkpoint failure")
 }
-func (c *restoredProgramControl) AcknowledgeRunResumeRelease(_ context.Context, request api.WorkerRunResumeReleaseRequest) (api.WorkerRunResumeReleaseResponse, error) {
+func (c *restoredProgramControl) AcknowledgeRunResumeRelease(_ context.Context, request workerapi.RunResumeReleaseRequest) (workerapi.RunResumeReleaseResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.releaseCalls++
 	if !c.started || request.Lease != c.lease.Fence() {
-		return api.WorkerRunResumeReleaseResponse{}, errors.New("release before start")
+		return workerapi.RunResumeReleaseResponse{}, errors.New("release before start")
 	}
 	if c.releaseCalls == 1 {
-		return api.WorkerRunResumeReleaseResponse{}, errors.New("transient lost release response")
+		return workerapi.RunResumeReleaseResponse{}, errors.New("transient lost release response")
 	}
 	c.released = true
-	return api.WorkerRunResumeReleaseResponse{Lease: c.lease.Fence(), RunWaitID: request.RunWaitID,
+	return workerapi.RunResumeReleaseResponse{Lease: c.lease.Fence(), RunWaitID: request.RunWaitID,
 		CheckpointID: request.CheckpointID, ResumeAttachID: request.ResumeAttachID,
 		ResumeRequestVersion: request.ResumeRequestVersion}, nil
 }

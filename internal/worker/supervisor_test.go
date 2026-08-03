@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type testControl struct {
@@ -30,24 +30,24 @@ func (c *testControl) AuthenticateWorker(context.Context) error {
 	c.authenticated.Store(true)
 	return nil
 }
-func (c *testControl) ActivateWorker(_ context.Context, capabilities api.WorkerCapabilities) (api.WorkerStatusResponse, error) {
+func (c *testControl) ActivateWorker(_ context.Context, capabilities workerapi.Capabilities) (workerapi.StatusResponse, error) {
 	if !c.authenticated.Load() {
-		return api.WorkerStatusResponse{}, errors.New("activation before authentication")
+		return workerapi.StatusResponse{}, errors.New("activation before authentication")
 	}
 	if !c.recovered.Load() {
-		return api.WorkerStatusResponse{}, errors.New("activation before startup recovery proof")
+		return workerapi.StatusResponse{}, errors.New("activation before startup recovery proof")
 	}
 	if len(capabilities.Observation.HealthDetails) == 0 {
-		return api.WorkerStatusResponse{}, errors.New("recovery evidence missing")
+		return workerapi.StatusResponse{}, errors.New("recovery evidence missing")
 	}
 	c.activated.Store(true)
-	if status, ok := c.activateStatus.Load().(api.WorkerStatusResponse); ok {
+	if status, ok := c.activateStatus.Load().(workerapi.StatusResponse); ok {
 		return status, nil
 	}
-	return api.WorkerStatusResponse{Status: api.WorkerStatusActive}, nil
+	return workerapi.StatusResponse{Status: workerapi.StatusActive}, nil
 }
 
-func (c *testControl) ReportWorkerStartupRecovery(_ context.Context, request api.WorkerStartupRecoveryRequest) error {
+func (c *testControl) ReportWorkerStartupRecovery(_ context.Context, request workerapi.StartupRecoveryRequest) error {
 	c.recoveryCalls.Add(1)
 	if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() {
 		return errors.New("incomplete startup recovery proof")
@@ -63,27 +63,27 @@ type testHTTPStatusError struct{ status int }
 
 func (e testHTTPStatusError) Error() string       { return "test HTTP status" }
 func (e testHTTPStatusError) HTTPStatusCode() int { return e.status }
-func (c *testControl) CompleteWorkerDrain(_ context.Context, request api.WorkerDrainCompletionRequest) (api.WorkerStatusResponse, error) {
+func (c *testControl) CompleteWorkerDrain(_ context.Context, request workerapi.DrainCompletionRequest) (workerapi.StatusResponse, error) {
 	if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() || len(request.Inventory) != 0 || len(request.Quarantined) != 0 || len(request.Errors) != 0 {
-		return api.WorkerStatusResponse{}, errors.New("incomplete worker drain proof")
+		return workerapi.StatusResponse{}, errors.New("incomplete worker drain proof")
 	}
 	c.completed.Add(1)
 	if c.completeErr != nil {
-		return api.WorkerStatusResponse{}, c.completeErr
+		return workerapi.StatusResponse{}, c.completeErr
 	}
-	return api.WorkerStatusResponse{Status: api.WorkerStatusTerminationReady}, nil
+	return workerapi.StatusResponse{Status: workerapi.StatusTerminationReady}, nil
 }
-func (c *testControl) returnedStatus() api.WorkerStatusResponse {
-	if status, ok := c.status.Load().(api.WorkerStatusResponse); ok {
+func (c *testControl) returnedStatus() workerapi.StatusResponse {
+	if status, ok := c.status.Load().(workerapi.StatusResponse); ok {
 		return status
 	}
-	return api.WorkerStatusResponse{Status: api.WorkerStatusActive}
+	return workerapi.StatusResponse{Status: workerapi.StatusActive}
 }
-func (c *testControl) ObserveWorker(_ context.Context, observation api.WorkerObservation) (api.WorkerStatusResponse, error) {
+func (c *testControl) ObserveWorker(_ context.Context, observation workerapi.Observation) (workerapi.StatusResponse, error) {
 	if observation.RunPausedReason == string(StateDraining) {
 		return c.returnedStatus(), nil
 	}
-	if status, ok := c.observeStatus.Load().(api.WorkerStatusResponse); ok {
+	if status, ok := c.observeStatus.Load().(workerapi.StatusResponse); ok {
 		return status, nil
 	}
 	return c.returnedStatus(), nil
@@ -230,7 +230,7 @@ func TestSupervisorRunsConcurrentWorkAndDrainsLocally(t *testing.T) {
 		func(context.Context) error { started <- struct{}{}; <-release; return nil },
 	}}
 	s, err := New(Config{
-		Control: control, Capabilities: api.WorkerCapabilities{}, PollEvery: time.Millisecond,
+		Control: control, Capabilities: workerapi.Capabilities{}, PollEvery: time.Millisecond,
 		DrainTimeout: time.Second, Consumers: []ConsumerSpec{{Name: "run", Concurrency: 2, Consumer: consumer}},
 	})
 	if err != nil {
@@ -414,7 +414,7 @@ func TestSupervisorRefusesActivationWithBuildResidue(t *testing.T) {
 	owner := vm.Owner{Kind: vm.OwnerBuild, ID: "019c10d5-a6f7-7af1-8f5f-000000000701"}
 	s, err := New(Config{
 		Control: control,
-		Capabilities: api.WorkerCapabilities{
+		Capabilities: workerapi.Capabilities{
 			SupportsBuild:     true,
 			MaxBuildExecutors: 1,
 		},
@@ -442,7 +442,7 @@ func TestSupervisorRefusesActivationWithUnownedResidue(t *testing.T) {
 	control := &testControl{}
 	s, err := New(Config{
 		Control: control,
-		Capabilities: api.WorkerCapabilities{
+		Capabilities: workerapi.Capabilities{
 			SupportsRun:             true,
 			ExecutionSlotsAvailable: 1,
 		},
@@ -598,7 +598,7 @@ func TestSupervisorObservationKeepsBuildOnlyAdmissionPause(t *testing.T) {
 
 func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T) {
 	control := &testControl{}
-	control.status.Store(api.WorkerStatusResponse{Status: api.WorkerStatusActive})
+	control.status.Store(workerapi.StatusResponse{Status: workerapi.StatusActive})
 	runStarted := make(chan struct{})
 	runRelease := make(chan struct{})
 	unexpectedRun := make(chan struct{}, 1)
@@ -636,7 +636,7 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 	case <-time.After(time.Second):
 		t.Fatal("run did not start")
 	}
-	control.status.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining, ActiveExecutions: 1})
+	control.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1})
 	deadline := time.Now().Add(time.Second)
 	for s.state.Load().(State) != StateDraining {
 		if time.Now().After(deadline) {
@@ -657,7 +657,7 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 		t.Fatal("execution consumer claimed new work after server-directed drain")
 	case <-time.After(20 * time.Millisecond):
 	}
-	control.status.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining, ActiveExecutions: 0})
+	control.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 0})
 	select {
 	case <-finalized:
 	case <-time.After(time.Second):
@@ -678,8 +678,8 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 
 func TestActivationCanResumePreviouslyRequestedDrain(t *testing.T) {
 	control := &testControl{}
-	control.activateStatus.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
-	control.status.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
+	control.activateStatus.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
+	control.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 	s, err := New(Config{
 		Control: control, PollEvery: time.Millisecond, DrainTimeout: time.Second,
 		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
@@ -700,7 +700,7 @@ func TestActivationCanResumePreviouslyRequestedDrain(t *testing.T) {
 func TestDurableDrainLatchWinsWhenShutdownIsAlsoReady(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	control := &testControl{}
-	control.status.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
+	control.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 	s, err := New(Config{
 		Control: control, PollEvery: time.Millisecond, ObservationEvery: time.Hour, DrainTimeout: time.Second,
 		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
@@ -736,8 +736,8 @@ func TestSignalDuringDurableDrainDoesNotCancelCompletion(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	control := &testControl{}
-	control.activateStatus.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
-	control.status.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
+	control.activateStatus.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
+	control.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 	finalizeStarted := make(chan struct{})
 	releaseFinalize := make(chan struct{})
 	s, err := New(Config{
@@ -786,14 +786,14 @@ func TestObservationResponseTriggersDurableDrain(t *testing.T) {
 		{
 			name: "observation",
 			setup: func(control *testControl) {
-				control.observeStatus.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
+				control.observeStatus.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			control := &testControl{}
-			control.status.Store(api.WorkerStatusResponse{Status: api.WorkerStatusDraining})
+			control.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 			tt.setup(control)
 			s, err := New(Config{
 				Control: control, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, DrainTimeout: time.Second,
@@ -817,34 +817,34 @@ func TestObservationResponseTriggersDurableDrain(t *testing.T) {
 func TestServerDirectedDrainDoesNotCompleteOnTimeoutOrDirtyInventory(t *testing.T) {
 	tests := []struct {
 		name        string
-		status      api.WorkerStatusResponse
+		status      workerapi.StatusResponse
 		finalize    func(context.Context) (RecoveryEvidence, error)
 		completeErr error
 		wantError   string
 	}{
 		{
-			name: "server authority timeout", status: api.WorkerStatusResponse{Status: api.WorkerStatusDraining, ActiveExecutions: 1},
+			name: "server authority timeout", status: workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1},
 			finalize: func(context.Context) (RecoveryEvidence, error) {
 				return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
 			},
 			wantError: "timed out",
 		},
 		{
-			name: "quarantined local inventory", status: api.WorkerStatusResponse{Status: api.WorkerStatusDraining},
+			name: "quarantined local inventory", status: workerapi.StatusResponse{Status: workerapi.StatusDraining},
 			finalize: func(context.Context) (RecoveryEvidence, error) {
 				return RecoveryEvidence{ObservedAt: time.Now().UTC(), Quarantined: []string{"runtime"}, QuarantineErrors: []string{"busy"}}, nil
 			},
 			wantError: "inventory is not clean",
 		},
 		{
-			name: "cleanup failure", status: api.WorkerStatusResponse{Status: api.WorkerStatusDraining},
+			name: "cleanup failure", status: workerapi.StatusResponse{Status: workerapi.StatusDraining},
 			finalize: func(context.Context) (RecoveryEvidence, error) {
 				return RecoveryEvidence{}, errors.New("cleanup failed")
 			},
 			wantError: "cleanup failed",
 		},
 		{
-			name: "completion response loss", status: api.WorkerStatusResponse{Status: api.WorkerStatusDraining},
+			name: "completion response loss", status: workerapi.StatusResponse{Status: workerapi.StatusDraining},
 			finalize: func(context.Context) (RecoveryEvidence, error) {
 				return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
 			},

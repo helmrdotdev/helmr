@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -15,10 +15,10 @@ func (s *Server) renewRunLease(
 	ctx context.Context,
 	worker workerActor,
 	leaseID pgtype.UUID,
-	fence api.WorkerRunLeaseFence,
+	fence workerapi.RunLeaseFence,
 	expectedExpiresAt time.Time,
-) (api.WorkerRunLeaseRenewResponse, error) {
-	var renewed api.WorkerRunLeaseRenewResponse
+) (workerapi.RunLeaseRenewResponse, error) {
+	var renewed workerapi.RunLeaseRenewResponse
 	err := s.inTx(ctx, func(work *txWork) error {
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID:                    leaseID,
@@ -124,22 +124,22 @@ func (s *Server) renewRunLease(
 }
 
 func projectRunLeaseRenewal(
-	fence api.WorkerRunLeaseFence,
+	fence workerapi.RunLeaseFence,
 	authority runLeaseClaimAuthority,
-) (api.WorkerRunLeaseRenewResponse, error) {
+) (workerapi.RunLeaseRenewResponse, error) {
 	baseWorkspaceVersionID, err := requiredClaimUUIDString(
 		"base Workspace version ID",
 		authority.workspaceLease.BaseVersionID,
 	)
 	if err != nil {
-		return api.WorkerRunLeaseRenewResponse{}, err
+		return workerapi.RunLeaseRenewResponse{}, err
 	}
 	if !authority.runLease.ExpiresAt.Valid ||
 		!authority.workspaceLease.ExpiresAt.Valid ||
 		!authority.runLease.ExpiresAt.Time.Equal(authority.workspaceLease.ExpiresAt.Time) {
-		return api.WorkerRunLeaseRenewResponse{}, errors.New("Run Lease renewal authority is inconsistent")
+		return workerapi.RunLeaseRenewResponse{}, errors.New("Run Lease renewal authority is inconsistent")
 	}
-	return api.WorkerRunLeaseRenewResponse{
+	return workerapi.RunLeaseRenewResponse{
 		Lease:                  fence,
 		ExpiresAt:              authority.runLease.ExpiresAt.Time.UTC(),
 		BaseWorkspaceVersionID: baseWorkspaceVersionID,

@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -39,7 +39,7 @@ func TestWorkerCompleteTaskReplaysPreviousEpochWithoutCAS(t *testing.T) {
 		WorkerInstanceID: workerID,
 		WorkerGroupID:    lease.WorkerGroupID,
 		WorkerEpoch:      2,
-		ProtocolVersion:  api.CurrentWorkerProtocolVersion,
+		ProtocolVersion:  workerapi.CurrentProtocolVersion,
 	}))
 	response := httptest.NewRecorder()
 
@@ -70,7 +70,7 @@ func TestWorkerCompleteTaskRejectsChangedTerminalRequest(t *testing.T) {
 		WorkerInstanceID: workerID,
 		WorkerGroupID:    lease.WorkerGroupID,
 		WorkerEpoch:      lease.WorkerEpoch,
-		ProtocolVersion:  api.CurrentWorkerProtocolVersion,
+		ProtocolVersion:  workerapi.CurrentProtocolVersion,
 	}))
 	response := httptest.NewRecorder()
 

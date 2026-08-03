@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -22,7 +23,7 @@ func (s *Server) workerCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerCreateWorkspaceRequest
+	var request workerapi.CreateWorkspaceRequest
 	if err := decodeWorkerActorRequest(r, &request, "Workspace create"); err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -67,7 +68,7 @@ func (s *Server) workerCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if failure, ok := workerWorkspaceCreateFailure(err); ok {
-			writeJSON(w, http.StatusOK, api.WorkerCreateWorkspaceResponse{
+			writeJSON(w, http.StatusOK, workerapi.CreateWorkspaceResponse{
 				CorrelationID: request.CorrelationID, Failed: &failure,
 			})
 			return
@@ -76,7 +77,7 @@ func (s *Server) workerCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("create run-sourced Workspace"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerCreateWorkspaceResponse{
+	writeJSON(w, http.StatusOK, workerapi.CreateWorkspaceResponse{
 		CorrelationID: request.CorrelationID,
 		Completed:     &api.CreateWorkspaceResponse{WorkspaceID: result.WorkspaceID.String()},
 	})
@@ -87,7 +88,7 @@ func (s *Server) workerRetrieveWorkspace(w http.ResponseWriter, r *http.Request)
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerRetrieveWorkspaceRequest
+	var request workerapi.RetrieveWorkspaceRequest
 	if err := decodeWorkerActorRequest(r, &request, "Workspace retrieve"); err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -113,13 +114,13 @@ func (s *Server) workerRetrieveWorkspace(w http.ResponseWriter, r *http.Request)
 	if s.writeWorkerWorkspaceReadResult(w, request.CorrelationID, request.Lease.ID, "retrieve", err) {
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerRetrieveWorkspaceResponse{
+	writeJSON(w, http.StatusOK, workerapi.RetrieveWorkspaceResponse{
 		CorrelationID: request.CorrelationID, Completed: &snapshot,
 	})
 }
 
 func (s *Server) workerReadWorkspaceFile(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerReadWorkspaceFileRequest
+	var request workerapi.ReadWorkspaceFileRequest
 	if !s.decodeWorkerWorkspaceFileRequest(w, r, &request, "Workspace file read") {
 		return
 	}
@@ -143,19 +144,19 @@ func (s *Server) workerReadWorkspaceFile(w http.ResponseWriter, r *http.Request)
 	}
 	if failure, handled := s.workerWorkspaceFileFailure(w, request.Lease.ID, "read", err); handled {
 		if failure != nil {
-			writeJSON(w, http.StatusOK, api.WorkerReadWorkspaceFileResponse{
+			writeJSON(w, http.StatusOK, workerapi.ReadWorkspaceFileResponse{
 				CorrelationID: request.CorrelationID, Failed: failure,
 			})
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerReadWorkspaceFileResponse{
+	writeJSON(w, http.StatusOK, workerapi.ReadWorkspaceFileResponse{
 		CorrelationID: request.CorrelationID, Completed: &content,
 	})
 }
 
 func (s *Server) workerStatWorkspaceFile(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerReadWorkspaceFileRequest
+	var request workerapi.ReadWorkspaceFileRequest
 	if !s.decodeWorkerWorkspaceFileRequest(w, r, &request, "Workspace file stat") {
 		return
 	}
@@ -179,13 +180,13 @@ func (s *Server) workerStatWorkspaceFile(w http.ResponseWriter, r *http.Request)
 	}
 	if failure, handled := s.workerWorkspaceFileFailure(w, request.Lease.ID, "stat", err); handled {
 		if failure != nil {
-			writeJSON(w, http.StatusOK, api.WorkerStatWorkspaceFileResponse{
+			writeJSON(w, http.StatusOK, workerapi.StatWorkspaceFileResponse{
 				CorrelationID: request.CorrelationID, Failed: failure,
 			})
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerStatWorkspaceFileResponse{
+	writeJSON(w, http.StatusOK, workerapi.StatWorkspaceFileResponse{
 		CorrelationID: request.CorrelationID, Completed: &entry,
 	})
 }
@@ -195,12 +196,12 @@ func (s *Server) workerListWorkspaceFiles(w http.ResponseWriter, r *http.Request
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerListWorkspaceFilesRequest
+	var request workerapi.ListWorkspaceFilesRequest
 	if err := decodeWorkerActorRequest(r, &request, "Workspace file list"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	if err := validateWorkerWorkspaceRequest(request.WorkerRetrieveWorkspaceRequest); err != nil {
+	if err := validateWorkerWorkspaceRequest(request.RetrieveWorkspaceRequest); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -238,13 +239,13 @@ func (s *Server) workerListWorkspaceFiles(w http.ResponseWriter, r *http.Request
 	}
 	if failure, handled := s.workerWorkspaceFileFailure(w, request.Lease.ID, "list", err); handled {
 		if failure != nil {
-			writeJSON(w, http.StatusOK, api.WorkerListWorkspaceFilesResponse{
+			writeJSON(w, http.StatusOK, workerapi.ListWorkspaceFilesResponse{
 				CorrelationID: request.CorrelationID, Failed: failure,
 			})
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerListWorkspaceFilesResponse{
+	writeJSON(w, http.StatusOK, workerapi.ListWorkspaceFilesResponse{
 		CorrelationID: request.CorrelationID, Completed: &page,
 	})
 }
@@ -254,12 +255,12 @@ func (s *Server) workerExecuteWorkspace(w http.ResponseWriter, r *http.Request) 
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerExecuteWorkspaceRequest
+	var request workerapi.ExecuteWorkspaceRequest
 	if err := decodeWorkerActorRequest(r, &request, "Workspace exec"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	if err := validateWorkerWorkspaceRequest(request.WorkerRetrieveWorkspaceRequest); err != nil {
+	if err := validateWorkerWorkspaceRequest(request.RetrieveWorkspaceRequest); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -273,10 +274,10 @@ func (s *Server) workerExecuteWorkspace(w http.ResponseWriter, r *http.Request) 
 		timeout = time.Duration(*request.TimeoutMS) * time.Millisecond
 	}
 	worker := workerFromContext(r.Context())
-	source, record, err := s.workerWorkspaceSourceAndRecord(r.Context(), worker, request.WorkerRetrieveWorkspaceRequest)
+	source, record, err := s.workerWorkspaceSourceAndRecord(r.Context(), worker, request.RetrieveWorkspaceRequest)
 	if err != nil {
 		if failure, ok := workerWorkspaceReferenceFailure(err); ok {
-			writeJSON(w, http.StatusOK, api.WorkerExecuteWorkspaceResponse{
+			writeJSON(w, http.StatusOK, workerapi.ExecuteWorkspaceResponse{
 				CorrelationID: request.CorrelationID, Failed: &failure,
 			})
 			return
@@ -303,7 +304,7 @@ func (s *Server) workerExecuteWorkspace(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if failure, ok := workerWorkspaceExecFailure(err); ok {
-			writeJSON(w, http.StatusOK, api.WorkerExecuteWorkspaceResponse{
+			writeJSON(w, http.StatusOK, workerapi.ExecuteWorkspaceResponse{
 				CorrelationID: request.CorrelationID, Failed: &failure,
 			})
 			return
@@ -315,7 +316,7 @@ func (s *Server) workerExecuteWorkspace(w http.ResponseWriter, r *http.Request) 
 		result, resultErr := workspaceExecResult(admission.Process)
 		if resultErr != nil {
 			if failure, ok := workerWorkspaceExecFailure(resultErr); ok {
-				writeJSON(w, http.StatusOK, api.WorkerExecuteWorkspaceResponse{
+				writeJSON(w, http.StatusOK, workerapi.ExecuteWorkspaceResponse{
 					CorrelationID: request.CorrelationID, Failed: &failure,
 				})
 				return
@@ -324,14 +325,14 @@ func (s *Server) workerExecuteWorkspace(w http.ResponseWriter, r *http.Request) 
 			writeError(w, errors.New("project run-sourced Workspace exec"))
 			return
 		}
-		writeJSON(w, http.StatusOK, api.WorkerExecuteWorkspaceResponse{
+		writeJSON(w, http.StatusOK, workerapi.ExecuteWorkspaceResponse{
 			CorrelationID: request.CorrelationID, Completed: &result,
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerExecuteWorkspaceResponse{
+	writeJSON(w, http.StatusOK, workerapi.ExecuteWorkspaceResponse{
 		CorrelationID: request.CorrelationID,
-		Pending:       &api.WorkerWorkspaceExecPending{ProcessID: pgvalue.MustUUIDValue(admission.Process.ID).String()},
+		Pending:       &workerapi.WorkspaceExecPending{ProcessID: pgvalue.MustUUIDValue(admission.Process.ID).String()},
 	})
 }
 
@@ -340,12 +341,12 @@ func (s *Server) workerPollWorkspaceExec(w http.ResponseWriter, r *http.Request)
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerPollWorkspaceExecRequest
+	var request workerapi.PollWorkspaceExecRequest
 	if err := decodeWorkerActorRequest(r, &request, "Workspace exec poll"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	if err := validateWorkerWorkspaceRequest(request.WorkerRetrieveWorkspaceRequest); err != nil {
+	if err := validateWorkerWorkspaceRequest(request.RetrieveWorkspaceRequest); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -380,7 +381,7 @@ func (s *Server) workerPollWorkspaceExec(w http.ResponseWriter, r *http.Request)
 	})
 	if err != nil {
 		if failure, ok := workerWorkspaceReferenceFailure(err); ok {
-			writeJSON(w, http.StatusOK, api.WorkerExecuteWorkspaceResponse{
+			writeJSON(w, http.StatusOK, workerapi.ExecuteWorkspaceResponse{
 				CorrelationID: request.CorrelationID, Failed: &failure,
 			})
 			return
@@ -389,16 +390,16 @@ func (s *Server) workerPollWorkspaceExec(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if !workspaceExecTerminal(process.State) {
-		writeJSON(w, http.StatusOK, api.WorkerExecuteWorkspaceResponse{
+		writeJSON(w, http.StatusOK, workerapi.ExecuteWorkspaceResponse{
 			CorrelationID: request.CorrelationID,
-			Pending:       &api.WorkerWorkspaceExecPending{ProcessID: request.ProcessID},
+			Pending:       &workerapi.WorkspaceExecPending{ProcessID: request.ProcessID},
 		})
 		return
 	}
 	result, err := workspaceExecResult(process)
 	if err != nil {
 		if failure, ok := workerWorkspaceExecFailure(err); ok {
-			writeJSON(w, http.StatusOK, api.WorkerExecuteWorkspaceResponse{
+			writeJSON(w, http.StatusOK, workerapi.ExecuteWorkspaceResponse{
 				CorrelationID: request.CorrelationID, Failed: &failure,
 			})
 			return
@@ -407,7 +408,7 @@ func (s *Server) workerPollWorkspaceExec(w http.ResponseWriter, r *http.Request)
 		writeError(w, errors.New("project run-sourced Workspace exec"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerExecuteWorkspaceResponse{
+	writeJSON(w, http.StatusOK, workerapi.ExecuteWorkspaceResponse{
 		CorrelationID: request.CorrelationID, Completed: &result,
 	})
 }
@@ -417,12 +418,12 @@ func (s *Server) workerDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerDeleteWorkspaceRequest
+	var request workerapi.DeleteWorkspaceRequest
 	if err := decodeWorkerActorRequest(r, &request, "Workspace delete"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	if err := validateWorkerWorkspaceRequest(request.WorkerRetrieveWorkspaceRequest); err != nil {
+	if err := validateWorkerWorkspaceRequest(request.RetrieveWorkspaceRequest); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -432,10 +433,10 @@ func (s *Server) workerDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	source, record, err := s.workerWorkspaceSourceAndRecord(r.Context(), worker, request.WorkerRetrieveWorkspaceRequest)
+	source, record, err := s.workerWorkspaceSourceAndRecord(r.Context(), worker, request.RetrieveWorkspaceRequest)
 	if err != nil {
 		if failure, ok := workerWorkspaceReferenceFailure(err); ok {
-			writeJSON(w, http.StatusOK, api.WorkerDeleteWorkspaceResponse{
+			writeJSON(w, http.StatusOK, workerapi.DeleteWorkspaceResponse{
 				CorrelationID: request.CorrelationID, Failed: &failure,
 			})
 			return
@@ -458,7 +459,7 @@ func (s *Server) workerDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if failure, ok := workerWorkspaceDeleteFailure(err); ok {
-			writeJSON(w, http.StatusOK, api.WorkerDeleteWorkspaceResponse{
+			writeJSON(w, http.StatusOK, workerapi.DeleteWorkspaceResponse{
 				CorrelationID: request.CorrelationID, Failed: &failure,
 			})
 			return
@@ -466,7 +467,7 @@ func (s *Server) workerDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("delete run-sourced Workspace"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerDeleteWorkspaceResponse{
+	writeJSON(w, http.StatusOK, workerapi.DeleteWorkspaceResponse{
 		CorrelationID: request.CorrelationID,
 		Completed:     &api.DeleteWorkspaceReceipt{WorkspaceID: result.WorkspaceID.String()},
 	})
@@ -475,7 +476,7 @@ func (s *Server) workerDeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 func (s *Server) workerWorkspaceSourceAndRecord(
 	ctx context.Context,
 	worker workerActor,
-	request api.WorkerRetrieveWorkspaceRequest,
+	request workerapi.RetrieveWorkspaceRequest,
 ) (workerRunSourceAuthority, db.Workspace, error) {
 	var source workerRunSourceAuthority
 	var record db.Workspace
@@ -495,7 +496,7 @@ func resolveWorkerWorkspace(
 	ctx context.Context,
 	q db.Querier,
 	source workerRunSourceAuthority,
-	address api.WorkerWorkspaceAddress,
+	address workerapi.WorkspaceAddress,
 ) (db.Workspace, error) {
 	workspaceID := pgtype.UUID{}
 	key := pgtype.Text{}
@@ -520,7 +521,7 @@ func resolveWorkerWorkspace(
 	})
 }
 
-func validateWorkerWorkspaceRequest(request api.WorkerRetrieveWorkspaceRequest) error {
+func validateWorkerWorkspaceRequest(request workerapi.RetrieveWorkspaceRequest) error {
 	if err := validateWorkerWorkspaceCorrelation(request.CorrelationID); err != nil {
 		return err
 	}
@@ -549,7 +550,7 @@ func validateWorkerWorkspaceCorrelation(value string) error {
 func (s *Server) decodeWorkerWorkspaceFileRequest(
 	w http.ResponseWriter,
 	r *http.Request,
-	request *api.WorkerReadWorkspaceFileRequest,
+	request *workerapi.ReadWorkspaceFileRequest,
 	label string,
 ) bool {
 	if s.db == nil {
@@ -560,7 +561,7 @@ func (s *Server) decodeWorkerWorkspaceFileRequest(
 		writeError(w, badRequest(err))
 		return false
 	}
-	if err := validateWorkerWorkspaceRequest(request.WorkerRetrieveWorkspaceRequest); err != nil {
+	if err := validateWorkerWorkspaceRequest(request.RetrieveWorkspaceRequest); err != nil {
 		writeError(w, badRequest(err))
 		return false
 	}
@@ -584,7 +585,7 @@ func (s *Server) writeWorkerWorkspaceReadResult(
 		return false
 	}
 	if failure, ok := workerWorkspaceReferenceFailure(err); ok {
-		writeJSON(w, http.StatusOK, api.WorkerRetrieveWorkspaceResponse{
+		writeJSON(w, http.StatusOK, workerapi.RetrieveWorkspaceResponse{
 			CorrelationID: correlationID, Failed: &failure,
 		})
 		return true
@@ -598,7 +599,7 @@ func (s *Server) workerWorkspaceFileFailure(
 	runID string,
 	operation string,
 	err error,
-) (*api.WorkerRuntimeOperationFailure, bool) {
+) (*workerapi.RuntimeOperationFailure, bool) {
 	if err == nil {
 		return nil, false
 	}
@@ -611,11 +612,11 @@ func (s *Server) workerWorkspaceFileFailure(
 	}
 	switch {
 	case errors.Is(err, archive.ErrTarEntryNotFound):
-		return &api.WorkerRuntimeOperationFailure{Code: "workspace_file_not_found", Message: "Workspace file was not found"}, true
+		return &workerapi.RuntimeOperationFailure{Code: "workspace_file_not_found", Message: "Workspace file was not found"}, true
 	case errors.Is(err, errWorkspaceFileCursorExpired):
-		return &api.WorkerRuntimeOperationFailure{Code: "workspace_file_cursor_expired", Message: "Workspace file cursor expired"}, true
+		return &workerapi.RuntimeOperationFailure{Code: "workspace_file_cursor_expired", Message: "Workspace file cursor expired"}, true
 	case errors.Is(err, errWorkspaceFileCursorInvalid):
-		return &api.WorkerRuntimeOperationFailure{Code: "invalid_workspace_file_cursor", Message: "Workspace file cursor is invalid"}, true
+		return &workerapi.RuntimeOperationFailure{Code: "invalid_workspace_file_cursor", Message: "Workspace file cursor is invalid"}, true
 	default:
 		s.log.Error("read run-sourced Workspace file", "operation", operation, "run_id", runID, "error", err)
 		writeError(w, errors.New("read run-sourced Workspace file"))
@@ -623,37 +624,37 @@ func (s *Server) workerWorkspaceFileFailure(
 	}
 }
 
-func workerWorkspaceReferenceFailure(err error) (api.WorkerRuntimeOperationFailure, bool) {
+func workerWorkspaceReferenceFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		return api.WorkerRuntimeOperationFailure{Code: "workspace_not_found", Message: "Workspace was not found"}, true
+		return workerapi.RuntimeOperationFailure{Code: "workspace_not_found", Message: "Workspace was not found"}, true
 	case errors.Is(err, errStaleWorkerRunSource):
-		return api.WorkerRuntimeOperationFailure{}, false
+		return workerapi.RuntimeOperationFailure{}, false
 	default:
-		return api.WorkerRuntimeOperationFailure{}, false
+		return workerapi.RuntimeOperationFailure{}, false
 	}
 }
 
-func workerWorkspaceCreateFailure(err error) (api.WorkerRuntimeOperationFailure, bool) {
+func workerWorkspaceCreateFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
 	var keyConflict WorkspaceKeyConflictError
 	var idempotencyConflict idempotency.ConflictError
 	switch {
 	case errors.Is(err, errWorkspaceCreateInvalid):
-		return api.WorkerRuntimeOperationFailure{Code: "invalid_workspace_create", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "invalid_workspace_create", Message: err.Error()}, true
 	case errors.Is(err, errWorkspaceNotDeployed):
-		return api.WorkerRuntimeOperationFailure{Code: "workspace_not_deployed", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "workspace_not_deployed", Message: err.Error()}, true
 	case errors.Is(err, errWorkspaceSecretUnavailable):
-		return api.WorkerRuntimeOperationFailure{Code: "secret_unavailable", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "secret_unavailable", Message: err.Error()}, true
 	case errors.As(err, &keyConflict):
-		return api.WorkerRuntimeOperationFailure{Code: "workspace_key_conflict", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "workspace_key_conflict", Message: err.Error()}, true
 	case errors.As(err, &idempotencyConflict):
-		return api.WorkerRuntimeOperationFailure{Code: "idempotency_conflict", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "idempotency_conflict", Message: err.Error()}, true
 	default:
-		return api.WorkerRuntimeOperationFailure{}, false
+		return workerapi.RuntimeOperationFailure{}, false
 	}
 }
 
-func workerWorkspaceExecFailure(err error) (api.WorkerRuntimeOperationFailure, bool) {
+func workerWorkspaceExecFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
 	var idempotencyConflict idempotency.ConflictError
 	var coder errorCoder
 	if errors.As(err, &coder) && coder.ErrorCode() != "" {
@@ -662,39 +663,39 @@ func workerWorkspaceExecFailure(err error) (api.WorkerRuntimeOperationFailure, b
 		if errors.As(err, &retryer) {
 			retryable = retryer.ErrorRetryable()
 		}
-		return api.WorkerRuntimeOperationFailure{Code: coder.ErrorCode(), Message: err.Error(), Retryable: retryable}, true
+		return workerapi.RuntimeOperationFailure{Code: coder.ErrorCode(), Message: err.Error(), Retryable: retryable}, true
 	}
 	switch {
 	case errors.Is(err, errWorkspaceExecStdinTooLarge):
-		return api.WorkerRuntimeOperationFailure{Code: "workspace_stdin_too_large", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "workspace_stdin_too_large", Message: err.Error()}, true
 	case errors.Is(err, errWorkspaceExecTooLarge):
-		return api.WorkerRuntimeOperationFailure{Code: "workspace_exec_request_too_large", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "workspace_exec_request_too_large", Message: err.Error()}, true
 	case errors.Is(err, errWorkspaceExecInvalid):
-		return api.WorkerRuntimeOperationFailure{Code: "invalid_workspace_exec", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "invalid_workspace_exec", Message: err.Error()}, true
 	case errors.Is(err, errWorkspaceSecretUnavailable):
-		return api.WorkerRuntimeOperationFailure{Code: "secret_unavailable", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "secret_unavailable", Message: err.Error()}, true
 	case errors.Is(err, errWorkspaceNotFound), errors.Is(err, pgx.ErrNoRows):
-		return api.WorkerRuntimeOperationFailure{Code: "workspace_not_found", Message: "Workspace was not found"}, true
+		return workerapi.RuntimeOperationFailure{Code: "workspace_not_found", Message: "Workspace was not found"}, true
 	case errors.Is(err, errWorkspaceBusy):
-		return api.WorkerRuntimeOperationFailure{Code: "workspace_busy", Message: err.Error(), Retryable: true}, true
+		return workerapi.RuntimeOperationFailure{Code: "workspace_busy", Message: err.Error(), Retryable: true}, true
 	case errors.As(err, &idempotencyConflict):
-		return api.WorkerRuntimeOperationFailure{Code: "idempotency_conflict", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "idempotency_conflict", Message: err.Error()}, true
 	default:
-		return api.WorkerRuntimeOperationFailure{}, false
+		return workerapi.RuntimeOperationFailure{}, false
 	}
 }
 
-func workerWorkspaceDeleteFailure(err error) (api.WorkerRuntimeOperationFailure, bool) {
+func workerWorkspaceDeleteFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
 	var idempotencyConflict idempotency.ConflictError
 	switch {
 	case errors.Is(err, errWorkspaceNotFound):
-		return api.WorkerRuntimeOperationFailure{Code: "workspace_not_found", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "workspace_not_found", Message: err.Error()}, true
 	case errors.Is(err, errWorkspaceBusy):
-		return api.WorkerRuntimeOperationFailure{Code: "workspace_busy", Message: err.Error(), Retryable: true}, true
+		return workerapi.RuntimeOperationFailure{Code: "workspace_busy", Message: err.Error(), Retryable: true}, true
 	case errors.As(err, &idempotencyConflict):
-		return api.WorkerRuntimeOperationFailure{Code: "idempotency_conflict", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "idempotency_conflict", Message: err.Error()}, true
 	default:
-		return api.WorkerRuntimeOperationFailure{}, false
+		return workerapi.RuntimeOperationFailure{}, false
 	}
 }
 

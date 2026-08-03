@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
@@ -28,17 +28,17 @@ type WaitHandler interface {
 }
 
 type RunWaitAppender interface {
-	AddRunWait(context.Context, WaitRequest) (api.WorkerCreateRunWaitResponse, error)
+	AddRunWait(context.Context, WaitRequest) (workerapi.CreateRunWaitResponse, error)
 }
 
 type WaitRequest struct {
-	Leases                        api.WorkerRunLeaseProvider
-	Lease                         api.WorkerRunLease
-	LeaseAssignment               api.WorkerRunLeaseAssignment
+	Leases                        workerapi.RunLeaseProvider
+	Lease                         workerapi.RunLease
+	LeaseAssignment               workerapi.RunLeaseAssignment
 	CorrelationID                 string
 	RunWaitID                     string
 	ResumeAttachID                string
-	Kind                          api.WorkerRunWaitKind
+	Kind                          workerapi.RunWaitKind
 	Params                        json.RawMessage
 	Metadata                      json.RawMessage
 	Tags                          []string
@@ -46,7 +46,7 @@ type WaitRequest struct {
 	IdleTimeoutMS                 *int64
 	ActorSpeculativeInputSequence *int64
 	ActiveDuration                time.Duration
-	Workspace                     api.WorkerWorkspace
+	Workspace                     workerapi.Workspace
 	Checkpointer                  Checkpointer
 	Resume                        func(context.Context, WaitResumeDecision) error
 }
@@ -64,8 +64,8 @@ type HandoffCheckpointer interface {
 	CreateHandoffCheckpoint(
 		context.Context,
 		CheckpointRequest,
-		api.WorkerCheckpointWorkspaceBase,
-	) (api.WorkerCheckpointManifest, error)
+		workerapi.CheckpointWorkspaceBase,
+	) (workerapi.CheckpointManifest, error)
 }
 
 type CheckpointRequest struct {
@@ -81,7 +81,7 @@ type CheckpointRequest struct {
 }
 
 type CheckpointResult struct {
-	Manifest         api.WorkerCheckpointManifest
+	Manifest         workerapi.CheckpointManifest
 	WorkspaceCapture *CheckpointWorkspaceCapture
 }
 

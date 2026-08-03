@@ -12,62 +12,63 @@ import (
 	"github.com/helmrdotdev/helmr/internal/client"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type workspaceRuntimeContractControl struct {
 	*testRunLeaseControl
-	createRequest  api.WorkerCreateWorkspaceRequest
-	createResponse api.WorkerCreateWorkspaceResponse
-	execRequest    api.WorkerExecuteWorkspaceRequest
-	execResponse   api.WorkerExecuteWorkspaceResponse
-	pollRequests   []api.WorkerPollWorkspaceExecRequest
-	pollResponses  []api.WorkerExecuteWorkspaceResponse
+	createRequest  workerapi.CreateWorkspaceRequest
+	createResponse workerapi.CreateWorkspaceResponse
+	execRequest    workerapi.ExecuteWorkspaceRequest
+	execResponse   workerapi.ExecuteWorkspaceResponse
+	pollRequests   []workerapi.PollWorkspaceExecRequest
+	pollResponses  []workerapi.ExecuteWorkspaceResponse
 }
 
 func (control *workspaceRuntimeContractControl) CreateRunWorkspace(
 	_ context.Context,
-	request api.WorkerCreateWorkspaceRequest,
-) (api.WorkerCreateWorkspaceResponse, error) {
+	request workerapi.CreateWorkspaceRequest,
+) (workerapi.CreateWorkspaceResponse, error) {
 	control.createRequest = request
 	return control.createResponse, nil
 }
 
 func (*workspaceRuntimeContractControl) RetrieveRunWorkspace(
-	context.Context, api.WorkerRetrieveWorkspaceRequest,
-) (api.WorkerRetrieveWorkspaceResponse, error) {
+	context.Context, workerapi.RetrieveWorkspaceRequest,
+) (workerapi.RetrieveWorkspaceResponse, error) {
 	panic("unexpected Workspace retrieve")
 }
 
 func (*workspaceRuntimeContractControl) ReadRunWorkspaceFile(
-	context.Context, api.WorkerReadWorkspaceFileRequest,
-) (api.WorkerReadWorkspaceFileResponse, error) {
+	context.Context, workerapi.ReadWorkspaceFileRequest,
+) (workerapi.ReadWorkspaceFileResponse, error) {
 	panic("unexpected Workspace file read")
 }
 
 func (*workspaceRuntimeContractControl) StatRunWorkspaceFile(
-	context.Context, api.WorkerReadWorkspaceFileRequest,
-) (api.WorkerStatWorkspaceFileResponse, error) {
+	context.Context, workerapi.ReadWorkspaceFileRequest,
+) (workerapi.StatWorkspaceFileResponse, error) {
 	panic("unexpected Workspace file stat")
 }
 
 func (*workspaceRuntimeContractControl) ListRunWorkspaceFiles(
-	context.Context, api.WorkerListWorkspaceFilesRequest,
-) (api.WorkerListWorkspaceFilesResponse, error) {
+	context.Context, workerapi.ListWorkspaceFilesRequest,
+) (workerapi.ListWorkspaceFilesResponse, error) {
 	panic("unexpected Workspace file list")
 }
 
 func (control *workspaceRuntimeContractControl) ExecuteRunWorkspace(
 	_ context.Context,
-	request api.WorkerExecuteWorkspaceRequest,
-) (api.WorkerExecuteWorkspaceResponse, error) {
+	request workerapi.ExecuteWorkspaceRequest,
+) (workerapi.ExecuteWorkspaceResponse, error) {
 	control.execRequest = request
 	return control.execResponse, nil
 }
 
 func (control *workspaceRuntimeContractControl) PollRunWorkspaceExec(
 	_ context.Context,
-	request api.WorkerPollWorkspaceExecRequest,
-) (api.WorkerExecuteWorkspaceResponse, error) {
+	request workerapi.PollWorkspaceExecRequest,
+) (workerapi.ExecuteWorkspaceResponse, error) {
 	control.pollRequests = append(control.pollRequests, request)
 	response := control.pollResponses[0]
 	control.pollResponses = control.pollResponses[1:]
@@ -75,8 +76,8 @@ func (control *workspaceRuntimeContractControl) PollRunWorkspaceExec(
 }
 
 func (*workspaceRuntimeContractControl) DeleteRunWorkspace(
-	context.Context, api.WorkerDeleteWorkspaceRequest,
-) (api.WorkerDeleteWorkspaceResponse, error) {
+	context.Context, workerapi.DeleteWorkspaceRequest,
+) (workerapi.DeleteWorkspaceResponse, error) {
 	panic("unexpected Workspace delete")
 }
 
@@ -85,7 +86,7 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 	t.Run("create happy path", func(t *testing.T) {
 		control := &workspaceRuntimeContractControl{
 			testRunLeaseControl: &testRunLeaseControl{},
-			createResponse: api.WorkerCreateWorkspaceResponse{
+			createResponse: workerapi.CreateWorkspaceResponse{
 				CorrelationID: correlationID,
 				Completed: &api.CreateWorkspaceResponse{
 					WorkspaceID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
@@ -122,9 +123,9 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 	t.Run("domain failure", func(t *testing.T) {
 		control := &workspaceRuntimeContractControl{
 			testRunLeaseControl: &testRunLeaseControl{},
-			createResponse: api.WorkerCreateWorkspaceResponse{
+			createResponse: workerapi.CreateWorkspaceResponse{
 				CorrelationID: correlationID,
-				Failed: &api.WorkerRuntimeOperationFailure{
+				Failed: &workerapi.RuntimeOperationFailure{
 					Code: "workspace_key_conflict", Message: "key is in use",
 				},
 			},
@@ -139,7 +140,7 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var failure api.WorkerRuntimeOperationFailure
+		var failure workerapi.RuntimeOperationFailure
 		if err := json.Unmarshal([]byte(decision.GetDataJson()), &failure); err != nil {
 			t.Fatal(err)
 		}
@@ -150,11 +151,11 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 	t.Run("exec admission survives through poll", func(t *testing.T) {
 		control := &workspaceRuntimeContractControl{
 			testRunLeaseControl: &testRunLeaseControl{},
-			execResponse: api.WorkerExecuteWorkspaceResponse{
+			execResponse: workerapi.ExecuteWorkspaceResponse{
 				CorrelationID: correlationID,
-				Pending:       &api.WorkerWorkspaceExecPending{ProcessID: "019c0225-f0c9-7f66-8a23-7782ca0a8462"},
+				Pending:       &workerapi.WorkspaceExecPending{ProcessID: "019c0225-f0c9-7f66-8a23-7782ca0a8462"},
 			},
-			pollResponses: []api.WorkerExecuteWorkspaceResponse{{
+			pollResponses: []workerapi.ExecuteWorkspaceResponse{{
 				CorrelationID: correlationID,
 				Completed: &api.ExecuteWorkspaceResult{
 					ExitCode: 0, StdoutBase64: "b2s=", StderrBase64: "",
@@ -208,7 +209,7 @@ func TestWorkspaceRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	task := &guestRunLeaseTask{lease: lease}
-	var assignments []api.WorkerRunLeaseAssignment
+	var assignments []workerapi.RunLeaseAssignment
 	firstAttempt := make(chan struct{})
 	go func() {
 		<-firstAttempt
@@ -219,7 +220,7 @@ func TestWorkspaceRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 	}()
 	err := task.callRunSourceRuntime(t.Context(), func(
 		_ context.Context,
-		current api.WorkerRunLeaseAssignment,
+		current workerapi.RunLeaseAssignment,
 	) error {
 		assignments = append(assignments, current)
 		if len(assignments) == 1 {

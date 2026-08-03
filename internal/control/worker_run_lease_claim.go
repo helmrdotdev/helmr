@@ -7,9 +7,9 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
@@ -17,7 +17,7 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("build policy is not configured")))
 		return
 	}
-	var request api.WorkerRunLeaseClaimRequest
+	var request workerapi.RunLeaseClaimRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {

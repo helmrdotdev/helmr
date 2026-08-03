@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -25,7 +26,7 @@ type actorCompletionReplayStore interface {
 	GetActorCompletionReplay(context.Context, db.GetActorCompletionReplayParams) (pgtype.Text, error)
 }
 
-func (s *Server) completeActor(ctx context.Context, worker workerActor, request api.WorkerCompleteActorRequest, completion parsedActorCompletion) error {
+func (s *Server) completeActor(ctx context.Context, worker workerActor, request workerapi.CompleteActorRequest, completion parsedActorCompletion) error {
 	replayed, err := actorCompletionWasReplayed(ctx, s.db, worker, request, completion)
 	if err != nil || replayed {
 		return err
@@ -129,7 +130,7 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 	return nil
 }
 
-func actorCompletionWasReplayed(ctx context.Context, store actorCompletionReplayStore, worker workerActor, request api.WorkerCompleteActorRequest, completion parsedActorCompletion) (bool, error) {
+func actorCompletionWasReplayed(ctx context.Context, store actorCompletionReplayStore, worker workerActor, request workerapi.CompleteActorRequest, completion parsedActorCompletion) (bool, error) {
 	fingerprint, err := store.GetActorCompletionReplay(ctx, db.GetActorCompletionReplayParams{
 		RunLeaseID:    pgvalue.UUID(completion.lease.leaseID),
 		LeaseSequence: request.Lease.LeaseSequence, WorkerGroupID: worker.WorkerGroupID,
@@ -147,7 +148,7 @@ func actorCompletionWasReplayed(ctx context.Context, store actorCompletionReplay
 	return true, nil
 }
 
-func actorCompletionReplayAfterError(ctx context.Context, store actorCompletionReplayStore, worker workerActor, request api.WorkerCompleteActorRequest, completion parsedActorCompletion, operationErr error) error {
+func actorCompletionReplayAfterError(ctx context.Context, store actorCompletionReplayStore, worker workerActor, request workerapi.CompleteActorRequest, completion parsedActorCompletion, operationErr error) error {
 	replayed, replayErr := actorCompletionWasReplayed(ctx, store, worker, request, completion)
 	if replayed {
 		return nil
@@ -184,10 +185,10 @@ func validateActorCompletionAuthority(
 		return errStaleActorCompletion
 	}
 	var finalization workspace.FinalizationRequest
-	wantKind := string(api.WorkerRunFinalizationReset)
+	wantKind := string(workerapi.RunFinalizationReset)
 	if completion.capture != nil {
 		finalization = completion.capture.receipt
-		wantKind = string(api.WorkerRunFinalizationCapture)
+		wantKind = string(workerapi.RunFinalizationCapture)
 	} else {
 		finalization = completion.rollback.receipt
 	}

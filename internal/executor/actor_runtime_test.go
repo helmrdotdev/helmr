@@ -13,25 +13,26 @@ import (
 	"github.com/helmrdotdev/helmr/internal/client"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type actorRuntimeContractControl struct {
 	*testRunLeaseControl
-	startRequest  api.WorkerStartActorRequest
-	startRequests []api.WorkerStartActorRequest
-	startResponse api.WorkerStartActorResponse
+	startRequest  workerapi.StartActorRequest
+	startRequests []workerapi.StartActorRequest
+	startResponse workerapi.StartActorResponse
 	startErr      error
 	startErrors   []error
 	firstAttempt  chan struct{}
-	statusRequest api.WorkerActorReferenceRequest
-	closeRequest  api.WorkerCloseActorRequest
-	outputRequest api.WorkerReadActorOutputPageRequest
+	statusRequest workerapi.ActorReferenceRequest
+	closeRequest  workerapi.CloseActorRequest
+	outputRequest workerapi.ReadActorOutputPageRequest
 }
 
 func (control *actorRuntimeContractControl) StartRunActor(
 	_ context.Context,
-	request api.WorkerStartActorRequest,
-) (api.WorkerStartActorResponse, error) {
+	request workerapi.StartActorRequest,
+) (workerapi.StartActorResponse, error) {
 	control.startRequest = request
 	control.startRequests = append(control.startRequests, request)
 	if len(control.startErrors) != 0 {
@@ -41,17 +42,17 @@ func (control *actorRuntimeContractControl) StartRunActor(
 			close(control.firstAttempt)
 			control.firstAttempt = nil
 		}
-		return api.WorkerStartActorResponse{}, err
+		return workerapi.StartActorResponse{}, err
 	}
 	return control.startResponse, control.startErr
 }
 
 func (control *actorRuntimeContractControl) GetRunActorStatus(
 	_ context.Context,
-	request api.WorkerActorReferenceRequest,
-) (api.WorkerActorStatusResponse, error) {
+	request workerapi.ActorReferenceRequest,
+) (workerapi.ActorStatusResponse, error) {
 	control.statusRequest = request
-	return api.WorkerActorStatusResponse{
+	return workerapi.ActorStatusResponse{
 		CorrelationID: request.CorrelationID,
 		Completed:     &api.ActorStatus{},
 	}, nil
@@ -59,10 +60,10 @@ func (control *actorRuntimeContractControl) GetRunActorStatus(
 
 func (control *actorRuntimeContractControl) CloseRunActor(
 	_ context.Context,
-	request api.WorkerCloseActorRequest,
-) (api.WorkerCloseActorResponse, error) {
+	request workerapi.CloseActorRequest,
+) (workerapi.CloseActorResponse, error) {
 	control.closeRequest = request
-	return api.WorkerCloseActorResponse{
+	return workerapi.CloseActorResponse{
 		CorrelationID: request.CorrelationID,
 		Completed:     &api.ActorOperationReceipt{},
 	}, nil
@@ -70,10 +71,10 @@ func (control *actorRuntimeContractControl) CloseRunActor(
 
 func (control *actorRuntimeContractControl) ReadRunActorOutputPage(
 	_ context.Context,
-	request api.WorkerReadActorOutputPageRequest,
-) (api.WorkerReadActorOutputPageResponse, error) {
+	request workerapi.ReadActorOutputPageRequest,
+) (workerapi.ReadActorOutputPageResponse, error) {
 	control.outputRequest = request
-	return api.WorkerReadActorOutputPageResponse{
+	return workerapi.ReadActorOutputPageResponse{
 		CorrelationID: request.CorrelationID,
 		Completed:     &api.ActorOutputPage{},
 	}, nil
@@ -146,7 +147,7 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 	t.Run("happy path", func(t *testing.T) {
 		control := &actorRuntimeContractControl{
 			testRunLeaseControl: &testRunLeaseControl{},
-			startResponse: api.WorkerStartActorResponse{
+			startResponse: workerapi.StartActorResponse{
 				CorrelationID: correlationID,
 				Completed: &api.StartActorResponse{
 					ActorID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
@@ -169,9 +170,9 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 	t.Run("domain failure", func(t *testing.T) {
 		control := &actorRuntimeContractControl{
 			testRunLeaseControl: &testRunLeaseControl{},
-			startResponse: api.WorkerStartActorResponse{
+			startResponse: workerapi.StartActorResponse{
 				CorrelationID: correlationID,
-				Failed: &api.WorkerRuntimeOperationFailure{
+				Failed: &workerapi.RuntimeOperationFailure{
 					Code: "actor_key_conflict", Message: "Actor key is in use",
 				},
 			},
@@ -180,7 +181,7 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var failure api.WorkerRuntimeOperationFailure
+		var failure workerapi.RuntimeOperationFailure
 		if err := json.Unmarshal([]byte(decision.GetDataJson()), &failure); err != nil {
 			t.Fatal(err)
 		}
@@ -257,7 +258,7 @@ func TestActorRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 			StatusCode: 503, Status: "503 Service Unavailable",
 			Message: "temporary control failure",
 		}},
-		startResponse: api.WorkerStartActorResponse{
+		startResponse: workerapi.StartActorResponse{
 			CorrelationID: correlationID,
 			Completed: &api.StartActorResponse{
 				ActorID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
@@ -320,7 +321,7 @@ func TestRunSourceRuntimeRejectsTerminalLocalStateWithoutRetry(t *testing.T) {
 		defer cancel()
 		err := task.callRunSourceRuntime(ctx, func(
 			context.Context,
-			api.WorkerRunLeaseAssignment,
+			workerapi.RunLeaseAssignment,
 		) error {
 			calls++
 			return nil
@@ -332,14 +333,14 @@ func TestRunSourceRuntimeRejectsTerminalLocalStateWithoutRetry(t *testing.T) {
 	t.Run("finalizing task", func(t *testing.T) {
 		task := &guestRunLeaseTask{
 			lease:          testRunLeaseAssignment(time.Now().Add(time.Minute)),
-			finalizingKind: api.WorkerRunFinalizationCapture,
+			finalizingKind: workerapi.RunFinalizationCapture,
 		}
 		calls := 0
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
 		err := task.callRunSourceRuntime(ctx, func(
 			context.Context,
-			api.WorkerRunLeaseAssignment,
+			workerapi.RunLeaseAssignment,
 		) error {
 			calls++
 			return nil
@@ -356,7 +357,7 @@ func TestRunSourceRuntimeCapsAttemptBeforeAssignmentExpiry(t *testing.T) {
 	}
 	firstAttempt := make(chan struct{})
 	renewed := make(chan struct{})
-	var leases []api.WorkerRunLeaseAssignment
+	var leases []workerapi.RunLeaseAssignment
 	go func() {
 		<-firstAttempt
 		task.mu.Lock()
@@ -368,7 +369,7 @@ func TestRunSourceRuntimeCapsAttemptBeforeAssignmentExpiry(t *testing.T) {
 	defer cancel()
 	err := task.callRunSourceRuntime(ctx, func(
 		callCtx context.Context,
-		lease api.WorkerRunLeaseAssignment,
+		lease workerapi.RunLeaseAssignment,
 	) error {
 		leases = append(leases, lease)
 		if len(leases) == 1 {

@@ -12,12 +12,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/client"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type tokenCreateControl struct {
 	*testRunLeaseControl
-	request      api.WorkerCreateTokenRequest
-	requests     []api.WorkerCreateTokenRequest
+	request      workerapi.CreateTokenRequest
+	requests     []workerapi.CreateTokenRequest
 	response     api.TokenResponse
 	err          error
 	errors       []error
@@ -26,7 +27,7 @@ type tokenCreateControl struct {
 
 func (control *tokenCreateControl) CreateRuntimeToken(
 	_ context.Context,
-	request api.WorkerCreateTokenRequest,
+	request workerapi.CreateTokenRequest,
 ) (api.TokenResponse, error) {
 	control.request = request
 	control.requests = append(control.requests, request)

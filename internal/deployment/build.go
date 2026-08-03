@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	buildmodel "github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type Builder struct {
@@ -33,8 +34,8 @@ type Builder struct {
 
 func (builder Builder) Build(
 	ctx context.Context,
-	lease api.WorkerDeploymentBuildLease,
-	deployment api.WorkerDeploymentBuild,
+	lease workerapi.DeploymentBuildLease,
+	deployment workerapi.DeploymentBuild,
 	revocations ImageOperationRevocations,
 ) (json.RawMessage, error) {
 	if revocations == nil {
@@ -61,8 +62,8 @@ func (builder Builder) Build(
 
 func (builder Builder) build(
 	ctx context.Context,
-	lease api.WorkerDeploymentBuildLease,
-	work api.WorkerDeploymentBuild,
+	lease workerapi.DeploymentBuildLease,
+	work workerapi.DeploymentBuild,
 	revocations ImageOperationRevocations,
 ) (_ BuildResult, returnErr error) {
 	if err := builder.validate(); err != nil {
@@ -358,7 +359,7 @@ func (builder Builder) validate() error {
 	return nil
 }
 
-func platformArtifactDescriptor(object api.CASObject) ArtifactDescriptor {
+func platformArtifactDescriptor(object workerapi.CASObject) ArtifactDescriptor {
 	return ArtifactDescriptor{
 		Digest:    object.Digest,
 		SizeBytes: object.SizeBytes,
@@ -560,8 +561,8 @@ func (builder Builder) snapshotSource(
 
 func (builder Builder) buildWorkspaceImages(
 	ctx context.Context,
-	lease api.WorkerDeploymentBuildLease,
-	work api.WorkerDeploymentBuild,
+	lease workerapi.DeploymentBuildLease,
+	work workerapi.DeploymentBuild,
 	plan BuildPlan,
 	tree *BuildTree,
 	treeDescriptor BuildTreeDescriptor,

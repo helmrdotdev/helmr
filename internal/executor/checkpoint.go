@@ -12,15 +12,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
@@ -73,7 +73,7 @@ func (r ProgramRunner) materializeEncryptedObject(ctx context.Context, digest st
 }
 
 func validateRestoreIdentity(
-	checkpoint api.WorkerCheckpointManifest,
+	checkpoint workerapi.CheckpointManifest,
 	workerArchitecture deployment.RuntimeArchitecture,
 ) error {
 	runtimeInfo := checkpoint.RecoveryPoint.Runtime
@@ -128,7 +128,7 @@ func requireCheckpointDigest(field string, value string) error {
 	return nil
 }
 
-func requireCheckpointArtifact(artifact api.WorkerCheckpointArtifact, field string) error {
+func requireCheckpointArtifact(artifact workerapi.CheckpointArtifact, field string) error {
 	if strings.TrimSpace(artifact.Digest) == "" {
 		return fmt.Errorf("restore checkpoint %s.digest is required", field)
 	}
@@ -144,7 +144,7 @@ type runtimeCheckpointer struct {
 	encryptor *checkpoint.Encryptor
 	tempDir   string
 	stream    io.ReadWriteCloser
-	workspace api.WorkerCheckpointWorkspaceBase
+	workspace workerapi.CheckpointWorkspaceBase
 	runEvent  func(context.Context, *runv0.RunEvent) error
 }
 
@@ -170,9 +170,9 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 	if c.stream == nil {
 		return CheckpointResult{}, errors.New("checkpoint control stream is required")
 	}
-	phases := []api.WorkerCheckpointPhase{}
+	phases := []workerapi.CheckpointPhase{}
 	recordPhase := func(name string, started time.Time) {
-		phases = append(phases, api.WorkerCheckpointPhase{Name: name, DurationMs: durationMilliseconds(time.Since(started))})
+		phases = append(phases, workerapi.CheckpointPhase{Name: name, DurationMs: durationMilliseconds(time.Since(started))})
 	}
 	started := time.Now()
 	workspaceCapture, err := c.suspendGuestForCheckpoint(ctx, request)
@@ -214,16 +214,16 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 func (c runtimeCheckpointer) CreateHandoffCheckpoint(
 	ctx context.Context,
 	request CheckpointRequest,
-	workspaceBase api.WorkerCheckpointWorkspaceBase,
-) (result api.WorkerCheckpointManifest, err error) {
+	workspaceBase workerapi.CheckpointWorkspaceBase,
+) (result workerapi.CheckpointManifest, err error) {
 	if c.session == nil {
-		return api.WorkerCheckpointManifest{}, errors.New("handoff checkpoint source session is required")
+		return workerapi.CheckpointManifest{}, errors.New("handoff checkpoint source session is required")
 	}
 	if c.cas == nil {
-		return api.WorkerCheckpointManifest{}, errors.New("handoff checkpoint CAS is required")
+		return workerapi.CheckpointManifest{}, errors.New("handoff checkpoint CAS is required")
 	}
 	if c.encryptor == nil {
-		return api.WorkerCheckpointManifest{}, errors.New("handoff checkpoint encryption is required")
+		return workerapi.CheckpointManifest{}, errors.New("handoff checkpoint encryption is required")
 	}
 	if strings.TrimSpace(request.CheckpointID) == "" ||
 		strings.TrimSpace(request.RunID) == "" ||
@@ -233,19 +233,19 @@ func (c runtimeCheckpointer) CreateHandoffCheckpoint(
 		strings.TrimSpace(request.ResumeAttachID) == "" ||
 		strings.TrimSpace(workspaceBase.ArtifactDigest) == "" ||
 		strings.TrimSpace(workspaceBase.MountPath) == "" {
-		return api.WorkerCheckpointManifest{}, errors.New("handoff checkpoint authority is incomplete")
+		return workerapi.CheckpointManifest{}, errors.New("handoff checkpoint authority is incomplete")
 	}
 
-	phases := []api.WorkerCheckpointPhase{}
+	phases := []workerapi.CheckpointPhase{}
 	recordPhase := func(name string, started time.Time) {
-		phases = append(phases, api.WorkerCheckpointPhase{
+		phases = append(phases, workerapi.CheckpointPhase{
 			Name: name, DurationMs: durationMilliseconds(time.Since(started)),
 		})
 	}
 	started := time.Now()
 	artifact, err := c.session.CreateSnapshot(ctx, vm.SnapshotRequest{ID: request.CheckpointID})
 	if err != nil {
-		return api.WorkerCheckpointManifest{}, err
+		return workerapi.CheckpointManifest{}, err
 	}
 	recordPhase("create_runtime_snapshot", started)
 	phases = append(phases, workerCheckpointPhases(artifact.Phases)...)
@@ -263,7 +263,7 @@ func (c runtimeCheckpointer) CreateHandoffCheckpoint(
 	started = time.Now()
 	result, err = c.storeSnapshotArtifact(ctx, request, artifact)
 	if err != nil {
-		return api.WorkerCheckpointManifest{}, err
+		return workerapi.CheckpointManifest{}, err
 	}
 	recordPhase("store_checkpoint_artifacts", started)
 	result.Phases = phases
@@ -440,11 +440,11 @@ func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.R
 	}
 }
 
-func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request CheckpointRequest, artifact vm.SnapshotArtifact) (api.WorkerCheckpointManifest, error) {
+func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request CheckpointRequest, artifact vm.SnapshotArtifact) (workerapi.CheckpointManifest, error) {
 	var manifest storedCheckpointArtifact
 	var state storedCheckpointArtifact
 	var scratchDisk storedCheckpointArtifact
-	memory := make([]api.WorkerCheckpointArtifact, len(artifact.Memory))
+	memory := make([]workerapi.CheckpointArtifact, len(artifact.Memory))
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(4)
 	group.Go(func() error {
@@ -482,21 +482,21 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 		})
 	}
 	if err := group.Wait(); err != nil {
-		return api.WorkerCheckpointManifest{}, err
+		return workerapi.CheckpointManifest{}, err
 	}
 	for _, artifact := range memory {
 		if strings.TrimSpace(artifact.Digest) == "" {
-			return api.WorkerCheckpointManifest{}, errors.New("stored checkpoint memory artifact is missing digest")
+			return workerapi.CheckpointManifest{}, errors.New("stored checkpoint memory artifact is missing digest")
 		}
 	}
-	return api.WorkerCheckpointManifest{
-		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
+	return workerapi.CheckpointManifest{
+		RecoveryPoint: workerapi.CheckpointRecoveryPoint{
 			ID:            request.CheckpointID,
 			RunID:         request.RunID,
 			AttemptNumber: request.AttemptNumber,
 			RunWaitID:     request.RunWaitID,
 			CorrelationID: request.CorrelationID,
-			Runtime: api.WorkerCheckpointRuntime{
+			Runtime: workerapi.CheckpointRuntime{
 				Backend:         artifact.RuntimeBackend,
 				ID:              artifact.RuntimeID,
 				Arch:            artifact.RuntimeArch,
@@ -508,24 +508,24 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 				Substrate:       checkpointRuntimeSubstrate(artifact.Substrate),
 			},
 		},
-		RuntimeState: api.WorkerCheckpointRuntimeState{
+		RuntimeState: workerapi.CheckpointRuntimeState{
 			ConfigArtifact:      manifest.artifact,
 			VMStateArtifact:     state.artifact,
 			ScratchDiskArtifact: scratchDisk.artifact,
 			MemoryArtifacts:     memory,
 			Config:              artifact.Manifest,
 		},
-		WorkspaceState: api.WorkerCheckpointWorkspaceState{
+		WorkspaceState: workerapi.CheckpointWorkspaceState{
 			Base: c.workspace,
 		},
 	}, nil
 }
 
-func checkpointRuntimeSubstrate(substrate *vm.RuntimeSubstrate) *api.WorkerCheckpointRuntimeSubstrate {
+func checkpointRuntimeSubstrate(substrate *vm.RuntimeSubstrate) *workerapi.CheckpointRuntimeSubstrate {
 	if substrate == nil {
 		return nil
 	}
-	return &api.WorkerCheckpointRuntimeSubstrate{
+	return &workerapi.CheckpointRuntimeSubstrate{
 		Digest:     strings.TrimSpace(substrate.Digest),
 		Format:     strings.TrimSpace(substrate.Format),
 		BuilderABI: strings.TrimSpace(substrate.BuilderABI),
@@ -534,7 +534,7 @@ func checkpointRuntimeSubstrate(substrate *vm.RuntimeSubstrate) *api.WorkerCheck
 }
 
 type storedCheckpointArtifact struct {
-	artifact api.WorkerCheckpointArtifact
+	artifact workerapi.CheckpointArtifact
 }
 
 func (c runtimeCheckpointer) storeSnapshotFile(ctx context.Context, file vm.SnapshotFile, suffix string) (storedCheckpointArtifact, error) {
@@ -566,7 +566,7 @@ func (c runtimeCheckpointer) storeSnapshotReader(ctx context.Context, body io.Re
 		_ = stage.Abort(context.Background())
 		return storedCheckpointArtifact{}, err
 	}
-	return storedCheckpointArtifact{artifact: api.WorkerCheckpointArtifact{
+	return storedCheckpointArtifact{artifact: workerapi.CheckpointArtifact{
 		Digest:            object.Digest,
 		SizeBytes:         object.SizeBytes,
 		MediaType:         object.MediaType,
@@ -579,19 +579,19 @@ func checkpointPurpose(suffix string) string {
 	return "helmr.checkpoint." + suffix
 }
 
-func workerCheckpointPhases(phases []vm.RuntimePhase) []api.WorkerCheckpointPhase {
+func workerCheckpointPhases(phases []vm.RuntimePhase) []workerapi.CheckpointPhase {
 	if len(phases) == 0 {
 		return nil
 	}
-	result := make([]api.WorkerCheckpointPhase, 0, len(phases))
+	result := make([]workerapi.CheckpointPhase, 0, len(phases))
 	for _, phase := range phases {
 		result = append(result, workerCheckpointPhase(phase))
 	}
 	return result
 }
 
-func workerCheckpointPhase(phase vm.RuntimePhase) api.WorkerCheckpointPhase {
-	return api.WorkerCheckpointPhase{
+func workerCheckpointPhase(phase vm.RuntimePhase) workerapi.CheckpointPhase {
+	return workerapi.CheckpointPhase{
 		Name:       phase.Name,
 		DurationMs: phase.DurationMs,
 		Role:       phase.Role,
@@ -601,11 +601,11 @@ func workerCheckpointPhase(phase vm.RuntimePhase) api.WorkerCheckpointPhase {
 	}
 }
 
-func workerCheckpointFilepackStats(stats *vm.FilepackStats) *api.WorkerCheckpointFilepackStats {
+func workerCheckpointFilepackStats(stats *vm.FilepackStats) *workerapi.CheckpointFilepackStats {
 	if stats == nil {
 		return nil
 	}
-	return &api.WorkerCheckpointFilepackStats{
+	return &workerapi.CheckpointFilepackStats{
 		LogicalBytes:       stats.LogicalBytes,
 		AllocatedBytes:     stats.AllocatedBytes,
 		SparseSupported:    stats.SparseSupported,

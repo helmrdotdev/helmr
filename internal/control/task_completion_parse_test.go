@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
@@ -29,7 +29,7 @@ func TestTaskCompletionFingerprintUsesSemanticJSONAndLeaseFence(t *testing.T) {
 	first := validTaskCompletionRequest(t)
 	second := first
 	second.Workspace.Captured = cloneTaskWorkspaceCapture(first.Workspace.Captured)
-	second.Outcome.Succeeded = &api.WorkerTaskSucceeded{Output: json.RawMessage(`{"b":2,"a":1}`)}
+	second.Outcome.Succeeded = &workerapi.TaskSucceeded{Output: json.RawMessage(`{"b":2,"a":1}`)}
 
 	left, err := parseTaskCompletionRequest(first)
 	if err != nil {
@@ -56,10 +56,10 @@ func TestTaskCompletionFingerprintUsesSemanticJSONAndLeaseFence(t *testing.T) {
 
 func TestParseTaskCompletionFailureRequiresRollback(t *testing.T) {
 	request := validTaskCompletionRequest(t)
-	request.Outcome = api.WorkerTaskOutcome{
-		Failed: &api.WorkerTaskFailure{Message: "boom", Details: json.RawMessage(`{"z":2,"a":1}`)},
+	request.Outcome = workerapi.TaskOutcome{
+		Failed: &workerapi.TaskFailure{Message: "boom", Details: json.RawMessage(`{"z":2,"a":1}`)},
 	}
-	request.Workspace = api.WorkerTaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, request.Workspace.Captured)}
+	request.Workspace = workerapi.TaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, request.Workspace.Captured)}
 	parsed, err := parseTaskCompletionRequest(request)
 	if err != nil {
 		t.Fatal(err)
@@ -76,8 +76,8 @@ func TestParseTaskCompletionFailureRequiresRollback(t *testing.T) {
 
 func TestParseTaskCompletionAcceptsEmptyFailureMessage(t *testing.T) {
 	request := validTaskCompletionRequest(t)
-	request.Outcome = api.WorkerTaskOutcome{Failed: &api.WorkerTaskFailure{}}
-	request.Workspace = api.WorkerTaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, request.Workspace.Captured)}
+	request.Outcome = workerapi.TaskOutcome{Failed: &workerapi.TaskFailure{}}
+	request.Workspace = workerapi.TaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, request.Workspace.Captured)}
 	parsed, err := parseTaskCompletionRequest(request)
 	if err != nil {
 		t.Fatal(err)
@@ -90,30 +90,30 @@ func TestParseTaskCompletionAcceptsEmptyFailureMessage(t *testing.T) {
 func TestParseTaskCompletionRejectsOpenOrMismatchedShapes(t *testing.T) {
 	tests := []struct {
 		name   string
-		mutate func(*api.WorkerCompleteTaskRequest)
+		mutate func(*workerapi.CompleteTaskRequest)
 	}{
-		{name: "missing outcome", mutate: func(r *api.WorkerCompleteTaskRequest) { r.Outcome = api.WorkerTaskOutcome{} }},
-		{name: "multiple outcomes", mutate: func(r *api.WorkerCompleteTaskRequest) {
-			r.Outcome.Failed = &api.WorkerTaskFailure{Message: "failed"}
+		{name: "missing outcome", mutate: func(r *workerapi.CompleteTaskRequest) { r.Outcome = workerapi.TaskOutcome{} }},
+		{name: "multiple outcomes", mutate: func(r *workerapi.CompleteTaskRequest) {
+			r.Outcome.Failed = &workerapi.TaskFailure{Message: "failed"}
 		}},
-		{name: "missing output", mutate: func(r *api.WorkerCompleteTaskRequest) { r.Outcome.Succeeded.Output = nil }},
-		{name: "ambiguous output", mutate: func(r *api.WorkerCompleteTaskRequest) {
+		{name: "missing output", mutate: func(r *workerapi.CompleteTaskRequest) { r.Outcome.Succeeded.Output = nil }},
+		{name: "ambiguous output", mutate: func(r *workerapi.CompleteTaskRequest) {
 			r.Outcome.Succeeded.Output = json.RawMessage(`{"a":1,"a":2}`)
 		}},
-		{name: "multiple proofs", mutate: func(r *api.WorkerCompleteTaskRequest) {
+		{name: "multiple proofs", mutate: func(r *workerapi.CompleteTaskRequest) {
 			r.Workspace.RolledBack = validTaskWorkspaceRollback(t, r.Workspace.Captured)
 		}},
-		{name: "success rollback", mutate: func(r *api.WorkerCompleteTaskRequest) {
-			r.Workspace = api.WorkerTaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, r.Workspace.Captured)}
+		{name: "success rollback", mutate: func(r *workerapi.CompleteTaskRequest) {
+			r.Workspace = workerapi.TaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, r.Workspace.Captured)}
 		}},
-		{name: "failure capture", mutate: func(r *api.WorkerCompleteTaskRequest) {
-			r.Outcome = api.WorkerTaskOutcome{Failed: &api.WorkerTaskFailure{Message: "failed"}}
+		{name: "failure capture", mutate: func(r *workerapi.CompleteTaskRequest) {
+			r.Outcome = workerapi.TaskOutcome{Failed: &workerapi.TaskFailure{Message: "failed"}}
 		}},
-		{name: "oversized message", mutate: func(r *api.WorkerCompleteTaskRequest) {
-			r.Outcome = api.WorkerTaskOutcome{PayloadInvalid: &api.WorkerTaskFailure{Message: strings.Repeat("x", maxTaskCompletionMessageBytes+1)}}
-			r.Workspace = api.WorkerTaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, r.Workspace.Captured)}
+		{name: "oversized message", mutate: func(r *workerapi.CompleteTaskRequest) {
+			r.Outcome = workerapi.TaskOutcome{PayloadInvalid: &workerapi.TaskFailure{Message: strings.Repeat("x", maxTaskCompletionMessageBytes+1)}}
+			r.Workspace = workerapi.TaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, r.Workspace.Captured)}
 		}},
-		{name: "noncanonical digest", mutate: func(r *api.WorkerCompleteTaskRequest) {
+		{name: "noncanonical digest", mutate: func(r *workerapi.CompleteTaskRequest) {
 			r.Workspace.Captured.Artifact.Digest = "SHA256:" + strings.Repeat("a", 64)
 		}},
 	}
@@ -128,28 +128,28 @@ func TestParseTaskCompletionRejectsOpenOrMismatchedShapes(t *testing.T) {
 	}
 }
 
-func validTaskCompletionRequest(t *testing.T) api.WorkerCompleteTaskRequest {
+func validTaskCompletionRequest(t *testing.T) workerapi.CompleteTaskRequest {
 	t.Helper()
 	lease := validRunLeaseAssignment(uuid.Must(uuid.NewV7()))
 	lease.StartDeadlineAt = time.Unix(1_800_000_000, 123_456_789).UTC()
 	lease.ExpiresAt = time.Unix(1_800_000_100, 987_654_321).UTC()
-	return api.WorkerCompleteTaskRequest{
+	return workerapi.CompleteTaskRequest{
 		Lease: lease.Fence(),
-		Outcome: api.WorkerTaskOutcome{Succeeded: &api.WorkerTaskSucceeded{
+		Outcome: workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{
 			Output: json.RawMessage(`{"b":2,"a":1}`),
 		}},
-		Workspace: api.WorkerTaskWorkspaceProof{Captured: validTaskWorkspaceCapture(t, lease)},
+		Workspace: workerapi.TaskWorkspaceProof{Captured: validTaskWorkspaceCapture(t, lease)},
 	}
 }
 
-func validTaskWorkspaceCapture(t *testing.T, lease api.WorkerRunLeaseAssignment) *api.WorkerTaskWorkspaceCapture {
+func validTaskWorkspaceCapture(t *testing.T, lease workerapi.RunLeaseAssignment) *workerapi.TaskWorkspaceCapture {
 	t.Helper()
-	capture := &api.WorkerTaskWorkspaceCapture{
+	capture := &workerapi.TaskWorkspaceCapture{
 		Receipt: validWorkspaceFinalizationReceipt(lease),
-		Tree: api.WorkerWorkspaceTreeIdentity{
+		Tree: workerapi.WorkspaceTreeIdentity{
 			Digest: "sha256:" + strings.Repeat("b", 64), SizeBytes: 100, EntryCount: 2,
 		},
-		Artifact: api.WorkerWorkspaceArtifact{
+		Artifact: workerapi.WorkspaceArtifact{
 			Digest: "sha256:" + strings.Repeat("a", 64), MediaType: workspace.ArtifactMediaType,
 			Encoding: workspace.ArtifactEncoding, SizeBytes: 1024, EntryCount: 2,
 		},
@@ -160,8 +160,8 @@ func validTaskWorkspaceCapture(t *testing.T, lease api.WorkerRunLeaseAssignment)
 
 func validTaskWorkspaceRollback(
 	t *testing.T,
-	capture *api.WorkerTaskWorkspaceCapture,
-) *api.WorkerTaskWorkspaceRollback {
+	capture *workerapi.TaskWorkspaceCapture,
+) *workerapi.TaskWorkspaceRollback {
 	t.Helper()
 	receipt := capture.Receipt
 	baseWorkspaceVersionID := receipt.Fence.BaseWorkspaceVersionID
@@ -169,12 +169,12 @@ func validTaskWorkspaceRollback(
 		Kind: workspace.ResetTargetEmpty, BaseVersionID: baseWorkspaceVersionID,
 		Tree: workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
 	}
-	rollback := &api.WorkerTaskWorkspaceRollback{
+	rollback := &workerapi.TaskWorkspaceRollback{
 		Receipt: receipt,
-		Target: api.WorkerWorkspaceResetTarget{
+		Target: workerapi.WorkspaceResetTarget{
 			BaseWorkspaceVersionID: baseWorkspaceVersionID,
-			Tree:                   api.WorkerWorkspaceTreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
-			Empty:                  &api.WorkerEmptyWorkspace{},
+			Tree:                   workerapi.WorkspaceTreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
+			Empty:                  &workerapi.EmptyWorkspace{},
 		},
 	}
 	fingerprint, err := workspace.FinalizationFingerprint(workspace.FinalizationResetKind, workspace.FinalizationRequest{
@@ -187,10 +187,10 @@ func validTaskWorkspaceRollback(
 	return rollback
 }
 
-func validWorkspaceFinalizationReceipt(lease api.WorkerRunLeaseAssignment) api.WorkerWorkspaceFinalizationReceipt {
-	return api.WorkerWorkspaceFinalizationReceipt{
+func validWorkspaceFinalizationReceipt(lease workerapi.RunLeaseAssignment) workerapi.WorkspaceFinalizationReceipt {
+	return workerapi.WorkspaceFinalizationReceipt{
 		OperationID: uuid.Must(uuid.NewV7()).String(),
-		Fence: api.WorkerWorkspaceFinalizationFence{
+		Fence: workerapi.WorkspaceFinalizationFence{
 			WorkerInstanceID: lease.WorkerInstanceID, WorkerEpoch: lease.WorkerEpoch,
 			RuntimeInstanceID: lease.RuntimeInstanceID, RuntimeIdentityID: lease.RuntimeIdentityID,
 			WorkspaceID: lease.WorkspaceID, WorkspaceMountID: lease.WorkspaceMountID,
@@ -203,7 +203,7 @@ func validWorkspaceFinalizationReceipt(lease api.WorkerRunLeaseAssignment) api.W
 	}
 }
 
-func setCaptureFingerprint(t *testing.T, capture *api.WorkerTaskWorkspaceCapture) {
+func setCaptureFingerprint(t *testing.T, capture *workerapi.TaskWorkspaceCapture) {
 	t.Helper()
 	fingerprint, err := workspace.FinalizationFingerprint(workspace.FinalizationCaptureKind, workspace.FinalizationRequest{
 		OperationID: capture.Receipt.OperationID, Fence: testFinalizationFence(capture.Receipt.Fence),
@@ -214,7 +214,7 @@ func setCaptureFingerprint(t *testing.T, capture *api.WorkerTaskWorkspaceCapture
 	capture.Receipt.RequestFingerprint = fingerprint
 }
 
-func testFinalizationFence(fence api.WorkerWorkspaceFinalizationFence) workspace.FinalizationFence {
+func testFinalizationFence(fence workerapi.WorkspaceFinalizationFence) workspace.FinalizationFence {
 	return workspace.FinalizationFence{
 		WorkerInstanceID: fence.WorkerInstanceID, WorkerEpoch: fence.WorkerEpoch,
 		RuntimeInstanceID: fence.RuntimeInstanceID, RuntimeIdentityID: fence.RuntimeIdentityID,
@@ -227,7 +227,7 @@ func testFinalizationFence(fence api.WorkerWorkspaceFinalizationFence) workspace
 	}
 }
 
-func cloneTaskWorkspaceCapture(capture *api.WorkerTaskWorkspaceCapture) *api.WorkerTaskWorkspaceCapture {
+func cloneTaskWorkspaceCapture(capture *workerapi.TaskWorkspaceCapture) *workerapi.TaskWorkspaceCapture {
 	copy := *capture
 	return &copy
 }

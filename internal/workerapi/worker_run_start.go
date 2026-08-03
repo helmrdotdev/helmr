@@ -1,4 +1,4 @@
-package api
+package workerapi
 
 import (
 	"bytes"
@@ -8,12 +8,12 @@ import (
 	"io"
 )
 
-func (request *WorkerRunStartRequest) UnmarshalJSON(data []byte) error {
+func (request *RunStartRequest) UnmarshalJSON(data []byte) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
 	}
-	*request = WorkerRunStartRequest{}
+	*request = RunStartRequest{}
 	for name := range fields {
 		switch name {
 		case "lease", "fresh", "restore", "attach":
@@ -35,7 +35,7 @@ func (request *WorkerRunStartRequest) UnmarshalJSON(data []byte) error {
 		if isStartJSONNull(raw) {
 			return errors.New("fresh must not be null")
 		}
-		request.Fresh = &WorkerRunStartFresh{}
+		request.Fresh = &RunStartFresh{}
 		if err := decodeStrictJSON(raw, request.Fresh); err != nil {
 			return fmt.Errorf("fresh: %w", err)
 		}
@@ -45,7 +45,7 @@ func (request *WorkerRunStartRequest) UnmarshalJSON(data []byte) error {
 		if isStartJSONNull(raw) {
 			return errors.New("restore must not be null")
 		}
-		request.Restore = &WorkerRunStartRestore{}
+		request.Restore = &RunStartRestore{}
 		if err := decodeStrictJSON(raw, request.Restore); err != nil {
 			return fmt.Errorf("restore: %w", err)
 		}
@@ -67,7 +67,7 @@ func (request *WorkerRunStartRequest) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func decodeWorkerRunStartAttach(data []byte) (*WorkerRunStartAttach, error) {
+func decodeWorkerRunStartAttach(data []byte) (*RunStartAttach, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return nil, fmt.Errorf("attach: %w", err)
@@ -77,14 +77,14 @@ func decodeWorkerRunStartAttach(data []byte) (*WorkerRunStartAttach, error) {
 			return nil, fmt.Errorf("attach: unknown field %q", name)
 		}
 	}
-	attach := &WorkerRunStartAttach{}
+	attach := &RunStartAttach{}
 	arms := 0
 	if raw, present := fields["child"]; present {
 		arms++
 		if isStartJSONNull(raw) {
 			return nil, errors.New("attach.child must not be null")
 		}
-		attach.Child = &WorkerRunStartChildAttach{}
+		attach.Child = &RunStartChildAttach{}
 		if err := decodeStrictJSON(raw, attach.Child); err != nil {
 			return nil, fmt.Errorf("attach.child: %w", err)
 		}
@@ -94,7 +94,7 @@ func decodeWorkerRunStartAttach(data []byte) (*WorkerRunStartAttach, error) {
 		if isStartJSONNull(raw) {
 			return nil, errors.New("attach.parent must not be null")
 		}
-		attach.Parent = &WorkerRunStartParentAttach{}
+		attach.Parent = &RunStartParentAttach{}
 		if err := decodeStrictJSON(raw, attach.Parent); err != nil {
 			return nil, fmt.Errorf("attach.parent: %w", err)
 		}

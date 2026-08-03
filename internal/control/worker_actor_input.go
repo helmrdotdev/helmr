@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -31,7 +32,7 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerSendActorInputRequest
+	var request workerapi.SendActorInputRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
@@ -119,13 +120,13 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("append run-sourced Actor input"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerSendActorInputResponse{
+	writeJSON(w, http.StatusOK, workerapi.SendActorInputResponse{
 		CorrelationID: request.CorrelationID,
 		Completed:     &api.SendActorInputResponse{Sequence: record.Sequence},
 	})
 }
 
-func parseWorkerActorInputSend(request api.WorkerSendActorInputRequest) (parsedWorkerActorInputSend, error) {
+func parseWorkerActorInputSend(request workerapi.SendActorInputRequest) (parsedWorkerActorInputSend, error) {
 	lease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		return parsedWorkerActorInputSend{}, err
@@ -153,7 +154,7 @@ func parseWorkerActorInputSend(request api.WorkerSendActorInputRequest) (parsedW
 }
 
 func actorInputSendSourceParams(
-	request api.WorkerSendActorInputRequest,
+	request workerapi.SendActorInputRequest,
 	parsed parsedWorkerActorInputSend,
 	worker workerActor,
 ) db.GetActorInputSendSourceParams {
@@ -168,7 +169,7 @@ func authorizeActorInputSendSource(
 	ctx context.Context,
 	q db.Querier,
 	worker workerActor,
-	request api.WorkerSendActorInputRequest,
+	request workerapi.SendActorInputRequest,
 	environmentID pgtype.UUID,
 ) error {
 	authority, err := authorizeWorkerRunSource(ctx, q, worker, request.Lease)
@@ -181,23 +182,23 @@ func authorizeActorInputSendSource(
 	return nil
 }
 
-func actorInputSendFailure(err error) (api.WorkerRuntimeOperationFailure, bool) {
+func actorInputSendFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
 	var conflictError idempotency.ConflictError
 	switch {
 	case errors.As(err, &conflictError):
-		return api.WorkerRuntimeOperationFailure{
+		return workerapi.RuntimeOperationFailure{
 			Code: "idempotency_conflict", Message: "idempotency key conflicts with an earlier Actor input",
 		}, true
 	case errors.Is(err, errActorInputTooLarge):
-		return api.WorkerRuntimeOperationFailure{Code: "actor_input_too_large", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "actor_input_too_large", Message: err.Error()}, true
 	case errors.Is(err, errActorSequenceExhausted):
-		return api.WorkerRuntimeOperationFailure{Code: "actor_sequence_exhausted", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "actor_sequence_exhausted", Message: err.Error()}, true
 	case errors.Is(err, errActorInputUnavailable):
-		return api.WorkerRuntimeOperationFailure{Code: "actor_not_open", Message: "Actor does not accept new input"}, true
+		return workerapi.RuntimeOperationFailure{Code: "actor_not_open", Message: "Actor does not accept new input"}, true
 	case errors.Is(err, errActorInputAppendConflict):
-		return api.WorkerRuntimeOperationFailure{Code: "actor_input_conflict", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "actor_input_conflict", Message: err.Error()}, true
 	default:
-		return api.WorkerRuntimeOperationFailure{}, false
+		return workerapi.RuntimeOperationFailure{}, false
 	}
 }
 
@@ -206,10 +207,10 @@ func failedActorInputSend(
 	code string,
 	message string,
 	retryable bool,
-) api.WorkerSendActorInputResponse {
-	return api.WorkerSendActorInputResponse{
+) workerapi.SendActorInputResponse {
+	return workerapi.SendActorInputResponse{
 		CorrelationID: correlationID,
-		Failed: &api.WorkerRuntimeOperationFailure{
+		Failed: &workerapi.RuntimeOperationFailure{
 			Code: strings.TrimSpace(code), Message: strings.TrimSpace(message), Retryable: retryable,
 		},
 	}

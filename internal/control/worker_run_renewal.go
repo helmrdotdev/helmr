@@ -7,8 +7,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func (s *Server) workerRenewRunLease(w http.ResponseWriter, r *http.Request) {
@@ -16,7 +16,7 @@ func (s *Server) workerRenewRunLease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerRunLeaseRenewRequest
+	var request workerapi.RunLeaseRenewRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {

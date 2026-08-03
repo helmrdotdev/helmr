@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -20,7 +20,7 @@ func TestTaskCompletionReplayUsesOnlyTerminalReceipt(t *testing.T) {
 	workerID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 	leaseID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
 	worker := workerActor{WorkerInstanceID: workerID, WorkerGroupID: "workers"}
-	request := api.WorkerCompleteTaskRequest{Lease: api.WorkerRunLeaseFence{
+	request := workerapi.CompleteTaskRequest{Lease: workerapi.RunLeaseFence{
 		ID:            leaseID.String(),
 		LeaseSequence: 7,
 	}}
@@ -48,7 +48,7 @@ func TestTaskCompletionReplayRejectsChangedFingerprint(t *testing.T) {
 		context.Background(),
 		store,
 		workerActor{},
-		api.WorkerCompleteTaskRequest{},
+		workerapi.CompleteTaskRequest{},
 		parsedTaskCompletion{fingerprint: "sha256:changed"},
 	)
 	if !errors.Is(err, errStaleTaskCompletion) {
@@ -63,7 +63,7 @@ func TestTaskCompletionReplayAfterAmbiguousError(t *testing.T) {
 		context.Background(),
 		&taskCompletionReplayFixture{fingerprint: pgvalue.Text(completion.fingerprint)},
 		workerActor{},
-		api.WorkerCompleteTaskRequest{},
+		workerapi.CompleteTaskRequest{},
 		completion,
 		operationErr,
 	); err != nil {
@@ -73,7 +73,7 @@ func TestTaskCompletionReplayAfterAmbiguousError(t *testing.T) {
 		context.Background(),
 		&taskCompletionReplayFixture{err: pgx.ErrNoRows},
 		workerActor{},
-		api.WorkerCompleteTaskRequest{},
+		workerapi.CompleteTaskRequest{},
 		completion,
 		operationErr,
 	); !errors.Is(err, operationErr) {
@@ -132,7 +132,7 @@ func TestTaskCompletionRejectsRollbackOutsideRunBase(t *testing.T) {
 	if err := validateTaskCompletionAuthority(
 		context.Background(),
 		nil,
-		api.WorkerCompleteTaskRequest{},
+		workerapi.CompleteTaskRequest{},
 		completion,
 		authority,
 	); !errors.Is(err, errStaleTaskCompletion) {
@@ -144,7 +144,7 @@ func TestTaskCompletionRejectsRunningLease(t *testing.T) {
 	if err := validateTaskCompletionAuthority(
 		context.Background(),
 		nil,
-		api.WorkerCompleteTaskRequest{},
+		workerapi.CompleteTaskRequest{},
 		parsedTaskCompletion{},
 		runLeaseClaimAuthority{
 			run:      db.Run{EntrypointKind: "task"},
@@ -173,7 +173,7 @@ func TestTaskCompletionRejectsFinalizationKindMismatch(t *testing.T) {
 		},
 		runLease: db.RunLease{
 			State: db.RunLeaseStateFinalizing, FinalizationOperationID: operationID,
-			FinalizationKind:               pgvalue.Text(string(api.WorkerRunFinalizationReset)),
+			FinalizationKind:               pgvalue.Text(string(workerapi.RunFinalizationReset)),
 			FinalizationStartedAt:          pgvalue.Timestamptz(time.Now()),
 			FinalizationRequestFingerprint: pgvalue.Text("sha256:frozen"),
 		},
@@ -204,7 +204,7 @@ func TestTaskCompletionRejectsForgedHandoffAuthority(t *testing.T) {
 		parentAttempt: db.RunAttempt{Number: 3},
 		runLease: db.RunLease{
 			State: db.RunLeaseStateFinalizing, FinalizationOperationID: operationID,
-			FinalizationKind:               pgvalue.Text(string(api.WorkerRunFinalizationCapture)),
+			FinalizationKind:               pgvalue.Text(string(workerapi.RunFinalizationCapture)),
 			FinalizationStartedAt:          pgvalue.Timestamptz(time.Now()),
 			FinalizationRequestFingerprint: pgvalue.Text("sha256:frozen"),
 		},
@@ -224,32 +224,32 @@ func TestTaskCompletionRejectsForgedHandoffAuthority(t *testing.T) {
 			waitID: pgvalue.MustUUIDValue(waitID), attemptNumber: 3,
 		},
 	}
-	request := api.WorkerCompleteTaskRequest{Handoff: &api.WorkerTaskHandoffCheckpoint{
-		Manifest: api.WorkerCheckpointManifest{RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
+	request := workerapi.CompleteTaskRequest{Handoff: &workerapi.TaskHandoffCheckpoint{
+		Manifest: workerapi.CheckpointManifest{RecoveryPoint: workerapi.CheckpointRecoveryPoint{
 			CorrelationID: "correlation-1",
 		}},
 	}}
 	tests := []struct {
 		name   string
-		mutate func(*api.WorkerCompleteTaskRequest, *parsedTaskCompletion)
+		mutate func(*workerapi.CompleteTaskRequest, *parsedTaskCompletion)
 	}{
-		{name: "parent run", mutate: func(_ *api.WorkerCompleteTaskRequest, completion *parsedTaskCompletion) {
+		{name: "parent run", mutate: func(_ *workerapi.CompleteTaskRequest, completion *parsedTaskCompletion) {
 			completion.handoff.parentRunID = uuid.Must(uuid.NewV7())
 		}},
-		{name: "parent attempt", mutate: func(_ *api.WorkerCompleteTaskRequest, completion *parsedTaskCompletion) {
+		{name: "parent attempt", mutate: func(_ *workerapi.CompleteTaskRequest, completion *parsedTaskCompletion) {
 			completion.handoff.attemptNumber++
 		}},
-		{name: "wait", mutate: func(_ *api.WorkerCompleteTaskRequest, completion *parsedTaskCompletion) {
+		{name: "wait", mutate: func(_ *workerapi.CompleteTaskRequest, completion *parsedTaskCompletion) {
 			completion.handoff.waitID = uuid.Must(uuid.NewV7())
 		}},
-		{name: "correlation", mutate: func(request *api.WorkerCompleteTaskRequest, _ *parsedTaskCompletion) {
+		{name: "correlation", mutate: func(request *workerapi.CompleteTaskRequest, _ *parsedTaskCompletion) {
 			request.Handoff.Manifest.RecoveryPoint.CorrelationID = "forged"
 		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			changedRequest := request
-			changedRequest.Handoff = &api.WorkerTaskHandoffCheckpoint{
+			changedRequest.Handoff = &workerapi.TaskHandoffCheckpoint{
 				Manifest: request.Handoff.Manifest,
 			}
 			changedCompletion := completion
@@ -499,7 +499,7 @@ func TestRecordTaskWorkspaceVersionSeparatesTreeAndArtifactIdentity(t *testing.T
 		tree: workspace.TreeIdentity{
 			Digest: "sha256:" + strings.Repeat("b", 64), SizeBytes: 12, EntryCount: 2,
 		},
-		artifact: api.WorkerWorkspaceArtifact{
+		artifact: workerapi.WorkspaceArtifact{
 			Digest: "sha256:" + strings.Repeat("a", 64), MediaType: workspace.ArtifactMediaType,
 			Encoding: workspace.ArtifactEncoding, SizeBytes: 1024, EntryCount: 2,
 		},

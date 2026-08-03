@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type upstreamRoundTripper func(*http.Request) (*http.Response, error)
@@ -26,19 +26,19 @@ func TestFetchUpstreamClassifiesPermanentAndTransientStatus(t *testing.T) {
 		diagnostic    string
 		rawURL        string
 		deterministic bool
-		reason        api.WorkerPlatformAcquisitionFailureReason
+		reason        workerapi.PlatformAcquisitionFailureReason
 	}{
 		{
 			name:          "missing selector",
 			status:        http.StatusNotFound,
 			deterministic: true,
-			reason:        api.WorkerPlatformAcquisitionUnsupportedSelector,
+			reason:        workerapi.PlatformAcquisitionUnsupportedSelector,
 		},
 		{
 			name:          "origin rejects request",
 			status:        http.StatusForbidden,
 			deterministic: true,
-			reason:        api.WorkerPlatformAcquisitionOriginRejected,
+			reason:        workerapi.PlatformAcquisitionOriginRejected,
 		},
 		{
 			name:   "origin rejects request with ordinary rate metadata",
@@ -48,7 +48,7 @@ func TestFetchUpstreamClassifiesPermanentAndTransientStatus(t *testing.T) {
 				"X-Ratelimit-Reset":     []string{"1785235800"},
 			},
 			deterministic: true,
-			reason:        api.WorkerPlatformAcquisitionOriginRejected,
+			reason:        workerapi.PlatformAcquisitionOriginRejected,
 		},
 		{
 			name:    "origin rate limits request",
@@ -98,7 +98,7 @@ func TestFetchUpstreamClassifiesPermanentAndTransientStatus(t *testing.T) {
 				t.Fatal("fetchUpstream returned nil error")
 			}
 			value, ok := err.(interface {
-				PlatformAcquisitionFailureReason() api.WorkerPlatformAcquisitionFailureReason
+				PlatformAcquisitionFailureReason() workerapi.PlatformAcquisitionFailureReason
 			})
 			if ok != test.deterministic {
 				t.Fatalf("deterministic = %v, want %v: %v", ok, test.deterministic, err)

@@ -28,8 +28,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/imagecache"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/token"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -53,7 +55,7 @@ type SecretManager interface {
 	PutScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error)
 	Revoke(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error)
 	CheckScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) error
-	ResolveScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) (api.ResolvedSecrets, error)
+	ResolveScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) (secret.Resolved, error)
 }
 
 type PlatformArtifactLocker interface {
@@ -229,17 +231,17 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if runLeaseTTL <= 0 {
 		runLeaseTTL = defaultRunLeaseTTL
 	}
-	if runLeaseTTL < api.WorkerRunLeaseMinTTL {
-		return nil, fmt.Errorf("Run Lease TTL must be at least %s", api.WorkerRunLeaseMinTTL)
+	if runLeaseTTL < workerapi.RunLeaseMinTTL {
+		return nil, fmt.Errorf("Run Lease TTL must be at least %s", workerapi.RunLeaseMinTTL)
 	}
 	runFinalizationTTL := cfg.RunFinalizationTTL
 	if runFinalizationTTL <= 0 {
 		runFinalizationTTL = 30 * time.Minute
 	}
-	if runFinalizationTTL < api.WorkerRunFinalizationMinTTL {
+	if runFinalizationTTL < workerapi.RunFinalizationMinTTL {
 		return nil, fmt.Errorf(
 			"Run finalization TTL must be at least %s",
-			api.WorkerRunFinalizationMinTTL,
+			workerapi.RunFinalizationMinTTL,
 		)
 	}
 	server := &Server{

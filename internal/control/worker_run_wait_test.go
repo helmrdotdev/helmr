@@ -7,15 +7,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestRunWaitDeadlinesApplyTokenDefaults(t *testing.T) {
 	before := time.Now().UTC()
-	timeoutAt, idleTimeout, checkpointDueAt, delay, err := runWaitDeadlines(api.WorkerCreateRunWaitRequest{}, defaultRunWaitIdleTimeout)
+	timeoutAt, idleTimeout, checkpointDueAt, delay, err := runWaitDeadlines(workerapi.CreateRunWaitRequest{}, defaultRunWaitIdleTimeout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestRunWaitDeadlinesPreserveMillisecondPrecision(t *testing.T) {
 	timeoutMS := int64(1)
 	idleTimeoutMS := int64(1501)
 	before := time.Now().UTC()
-	timeoutAt, idleTimeout, checkpointDueAt, delay, err := runWaitDeadlines(api.WorkerCreateRunWaitRequest{
+	timeoutAt, idleTimeout, checkpointDueAt, delay, err := runWaitDeadlines(workerapi.CreateRunWaitRequest{
 		TimeoutMS: &timeoutMS, IdleTimeoutMS: &idleTimeoutMS,
 	}, 30*time.Second)
 	if err != nil {
@@ -58,7 +58,7 @@ func TestTimerWaitDeadlinesSeparateDueAtFromFailureTimeout(t *testing.T) {
 	duration := "1501ms"
 	before := time.Now().UTC()
 	params, dueAt, idleTimeout, checkpointDueAt, delay, err := timerWaitDeadlines(
-		api.WorkerCreateRunWaitRequest{
+		workerapi.CreateRunWaitRequest{
 			Params:    json.RawMessage(`{"duration":"1501ms"}`),
 			TimeoutMS: &timeoutMS,
 		},
@@ -92,7 +92,7 @@ func TestTimerWaitUntilKeepsAbsoluteDueAt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	params, dueAt, _, _, _, err := timerWaitDeadlines(api.WorkerCreateRunWaitRequest{
+	params, dueAt, _, _, _, err := timerWaitDeadlines(workerapi.CreateRunWaitRequest{
 		Params: paramsJSON, TimeoutMS: &timeoutMS,
 	})
 	if err != nil {
@@ -111,14 +111,14 @@ func TestTimerWaitDeadlinesRejectAmbiguousOrInconsistentInput(t *testing.T) {
 		[]byte(`{"duration":"1000"}`),
 		[]byte(`{"duration":"1s","unexpected":true}`),
 	} {
-		if _, _, _, _, _, err := timerWaitDeadlines(api.WorkerCreateRunWaitRequest{
+		if _, _, _, _, _, err := timerWaitDeadlines(workerapi.CreateRunWaitRequest{
 			Params: raw, TimeoutMS: &oneSecond,
 		}); err == nil {
 			t.Fatalf("invalid timer params accepted: %s", raw)
 		}
 	}
 	mismatch := int64(999)
-	if _, _, _, _, _, err := timerWaitDeadlines(api.WorkerCreateRunWaitRequest{
+	if _, _, _, _, _, err := timerWaitDeadlines(workerapi.CreateRunWaitRequest{
 		Params: json.RawMessage(`{"duration":"1s"}`), TimeoutMS: &mismatch,
 	}); err == nil {
 		t.Fatal("timer duration and timeout mismatch was accepted")
@@ -149,7 +149,7 @@ func TestActorInputWaitIdleTimeoutReadsFullImmutableManifest(t *testing.T) {
 }
 
 func TestParseRequestedRunWaitIdentity(t *testing.T) {
-	request := api.WorkerCreateRunWaitRequest{
+	request := workerapi.CreateRunWaitRequest{
 		CorrelationID:  uuid.Must(uuid.NewV7()).String(),
 		RunWaitID:      uuid.Must(uuid.NewV7()).String(),
 		ResumeAttachID: uuid.Must(uuid.NewV7()).String(),
@@ -163,7 +163,7 @@ func TestParseRequestedRunWaitIdentity(t *testing.T) {
 		identity.resumeAttachID.String() != request.ResumeAttachID {
 		t.Fatalf("identity = %+v", identity)
 	}
-	for _, invalid := range []api.WorkerCreateRunWaitRequest{
+	for _, invalid := range []workerapi.CreateRunWaitRequest{
 		{CorrelationID: uuid.New().String(), RunWaitID: request.RunWaitID, ResumeAttachID: request.ResumeAttachID},
 		{CorrelationID: request.CorrelationID, RunWaitID: " " + request.RunWaitID, ResumeAttachID: request.ResumeAttachID},
 		{CorrelationID: request.CorrelationID, RunWaitID: request.RunWaitID, ResumeAttachID: request.RunWaitID},
@@ -212,12 +212,12 @@ func TestRunWaitDeadlinesEnforceTokenBounds(t *testing.T) {
 	idleTooLong := maxRunWaitIdleTimeout.Milliseconds() + 1
 	for _, test := range []struct {
 		name    string
-		request api.WorkerCreateRunWaitRequest
+		request workerapi.CreateRunWaitRequest
 	}{
-		{name: "timeout", request: api.WorkerCreateRunWaitRequest{TimeoutMS: &timeoutTooLong}},
-		{name: "idle timeout", request: api.WorkerCreateRunWaitRequest{IdleTimeoutMS: &idleTooLong}},
-		{name: "timeout overflow", request: api.WorkerCreateRunWaitRequest{TimeoutMS: new(int64(math.MaxInt64))}},
-		{name: "idle timeout overflow", request: api.WorkerCreateRunWaitRequest{IdleTimeoutMS: new(int64(math.MaxInt64))}},
+		{name: "timeout", request: workerapi.CreateRunWaitRequest{TimeoutMS: &timeoutTooLong}},
+		{name: "idle timeout", request: workerapi.CreateRunWaitRequest{IdleTimeoutMS: &idleTooLong}},
+		{name: "timeout overflow", request: workerapi.CreateRunWaitRequest{TimeoutMS: new(int64(math.MaxInt64))}},
+		{name: "idle timeout overflow", request: workerapi.CreateRunWaitRequest{IdleTimeoutMS: new(int64(math.MaxInt64))}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if _, _, _, _, err := runWaitDeadlines(test.request, defaultRunWaitIdleTimeout); err == nil {

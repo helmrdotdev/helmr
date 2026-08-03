@@ -8,16 +8,16 @@ import (
 	"os"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"golang.org/x/sync/errgroup"
 )
 
 func (p *PreparedRuntimePool) restorePreparedRuntime(
 	ctx context.Context,
-	target api.WorkerRuntimeReconcileTarget,
+	target workerapi.RuntimeReconcileTarget,
 	topology vm.RuntimeTopology,
 	readOnlyDrives []vm.ReadOnlyDrive,
 	record func(vm.RuntimePhase),
@@ -43,7 +43,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 	group, groupCtx := errgroup.WithContext(ctx)
 	artifacts := []struct {
 		index  int
-		value  api.WorkerCheckpointArtifact
+		value  workerapi.CheckpointArtifact
 		suffix string
 	}{
 		{0, runtimeState.ConfigArtifact, "manifest"},
@@ -101,35 +101,35 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 }
 
 func validatePreparedRuntimeRestore(
-	target api.WorkerRuntimeReconcileTarget,
+	target workerapi.RuntimeReconcileTarget,
 	workerArchitecture deployment.RuntimeArchitecture,
-) (api.WorkerCheckpointManifest, error) {
+) (workerapi.CheckpointManifest, error) {
 	restore := target.Source.Restore
 	if restore == nil || restore.Kind != "suspend" || strings.TrimSpace(restore.CheckpointID) == "" ||
 		strings.TrimSpace(restore.RunID) == "" || restore.AttemptNumber <= 0 ||
 		strings.TrimSpace(restore.RunWaitID) == "" || strings.TrimSpace(restore.Kind) == "" || len(restore.Manifest) == 0 {
-		return api.WorkerCheckpointManifest{}, errors.New("prepared runtime restore authority is incomplete")
+		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore authority is incomplete")
 	}
-	var checkpoint api.WorkerCheckpointManifest
+	var checkpoint workerapi.CheckpointManifest
 	if err := json.Unmarshal(restore.Manifest, &checkpoint); err != nil {
-		return api.WorkerCheckpointManifest{}, fmt.Errorf("decode prepared runtime restore manifest: %w", err)
+		return workerapi.CheckpointManifest{}, fmt.Errorf("decode prepared runtime restore manifest: %w", err)
 	}
 	if err := validateRestoreIdentity(checkpoint, workerArchitecture); err != nil {
-		return api.WorkerCheckpointManifest{}, err
+		return workerapi.CheckpointManifest{}, err
 	}
 	if checkpoint.RecoveryPoint.ID != restore.CheckpointID || checkpoint.RecoveryPoint.RunID != restore.RunID ||
 		checkpoint.RecoveryPoint.AttemptNumber != restore.AttemptNumber ||
 		checkpoint.RecoveryPoint.RunWaitID != restore.RunWaitID ||
 		strings.TrimSpace(checkpoint.RecoveryPoint.CorrelationID) == "" {
-		return api.WorkerCheckpointManifest{}, errors.New("prepared runtime restore manifest identity is inconsistent")
+		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore manifest identity is inconsistent")
 	}
 	if len(checkpoint.RuntimeState.MemoryArtifacts) != 1 {
-		return api.WorkerCheckpointManifest{}, errors.New("prepared runtime restore requires exactly one memory artifact")
+		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore requires exactly one memory artifact")
 	}
 	expected := []struct {
 		role    string
 		ordinal int32
-		value   api.WorkerCheckpointArtifact
+		value   workerapi.CheckpointArtifact
 	}{
 		{"runtime_config", 0, checkpoint.RuntimeState.ConfigArtifact},
 		{"vm_state", 0, checkpoint.RuntimeState.VMStateArtifact},
@@ -137,14 +137,14 @@ func validatePreparedRuntimeRestore(
 		{"scratch_disk", 0, checkpoint.RuntimeState.ScratchDiskArtifact},
 	}
 	if len(restore.Artifacts) != len(expected) {
-		return api.WorkerCheckpointManifest{}, errors.New("prepared runtime restore Artifact membership is incomplete")
+		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore Artifact membership is incomplete")
 	}
 	for index, want := range expected {
 		got := restore.Artifacts[index]
 		if got.Role != want.role || got.Ordinal != want.ordinal ||
 			got.Object.Digest != want.value.Digest || got.Object.SizeBytes != want.value.SizeBytes ||
 			got.Object.MediaType != want.value.MediaType {
-			return api.WorkerCheckpointManifest{}, errors.New("prepared runtime restore Artifact membership does not match its manifest")
+			return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore Artifact membership does not match its manifest")
 		}
 	}
 	base := checkpoint.WorkspaceState.Base
@@ -152,7 +152,7 @@ func validatePreparedRuntimeRestore(
 	if base.ArtifactDigest != workspace.Digest || base.ArtifactSizeBytes != workspace.SizeBytes ||
 		base.ArtifactMediaType != workspace.MediaType || base.ArtifactEncoding != workspace.Encoding ||
 		strings.TrimSpace(base.MountPath) != "/workspace" {
-		return api.WorkerCheckpointManifest{}, errors.New("prepared runtime restore Workspace frontier does not match its reservation")
+		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore Workspace frontier does not match its reservation")
 	}
 	return checkpoint, nil
 }

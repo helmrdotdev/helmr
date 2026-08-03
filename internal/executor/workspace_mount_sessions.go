@@ -7,10 +7,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 var ErrWorkspaceMountSessionNotFound = errors.New("workspace mount session not found")
@@ -22,7 +22,7 @@ type CheckpointSourceReleaser interface {
 }
 
 type WorkspaceMountSessionRegistry interface {
-	RegisterWorkspaceMountSession(mount api.WorkerWorkspaceMount, session vm.Session, channelToken string) func()
+	RegisterWorkspaceMountSession(mount workerapi.WorkspaceMount, session vm.Session, channelToken string) func()
 	OpenWorkspaceMountSession(context.Context, string) (WorkspaceMountSession, error)
 	RenewWorkspaceAuthority(context.Context, *workspacev0.RenewWorkspaceAuthorityRequest) (*workspacev0.WorkspaceAuthorityFence, error)
 	BeginWorkspaceFinalization(context.Context, *workspacev0.BeginWorkspaceFinalizationRequest) (*workspacev0.BeginWorkspaceFinalizationResponse, error)
@@ -34,7 +34,7 @@ type WorkspaceMountSession struct {
 	Session        vm.Session
 	ControlSession vm.Session
 	ChannelToken   string
-	Mount          api.WorkerWorkspaceMount
+	Mount          workerapi.WorkspaceMount
 }
 
 type WorkspaceMountSessions struct {
@@ -46,14 +46,14 @@ type WorkspaceMountSessions struct {
 type workspaceMountSessionEntry struct {
 	session      vm.Session
 	channelToken string
-	mount        api.WorkerWorkspaceMount
+	mount        workerapi.WorkspaceMount
 }
 
 func NewWorkspaceMountSessions() *WorkspaceMountSessions {
 	return &WorkspaceMountSessions{sessions: map[string]workspaceMountSessionEntry{}}
 }
 
-func (s *WorkspaceMountSessions) RegisterWorkspaceMountSession(mount api.WorkerWorkspaceMount, session vm.Session, channelToken string) func() {
+func (s *WorkspaceMountSessions) RegisterWorkspaceMountSession(mount workerapi.WorkspaceMount, session vm.Session, channelToken string) func() {
 	id := strings.TrimSpace(mount.ID)
 	if id == "" || session == nil {
 		return func() {}

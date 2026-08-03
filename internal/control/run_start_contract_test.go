@@ -3,8 +3,8 @@ package control
 import (
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -17,24 +17,24 @@ const (
 func TestParseRunStartArm(t *testing.T) {
 	tests := []struct {
 		name    string
-		request api.WorkerRunStartRequest
+		request workerapi.RunStartRequest
 		mode    runLeaseClaimMode
 		ok      bool
 	}{
-		{name: "fresh", request: api.WorkerRunStartRequest{Fresh: &api.WorkerRunStartFresh{}}, mode: runLeaseClaimFresh, ok: true},
-		{name: "restore", request: api.WorkerRunStartRequest{Restore: &api.WorkerRunStartRestore{
+		{name: "fresh", request: workerapi.RunStartRequest{Fresh: &workerapi.RunStartFresh{}}, mode: runLeaseClaimFresh, ok: true},
+		{name: "restore", request: workerapi.RunStartRequest{Restore: &workerapi.RunStartRestore{
 			RunWaitID: startWaitID, CheckpointID: startCheckpointID, ResumeAttachID: startAttachID, ResumeRequestVersion: 1,
 		}}, mode: runLeaseClaimRestore, ok: true},
-		{name: "child", request: api.WorkerRunStartRequest{Attach: &api.WorkerRunStartAttach{Child: &api.WorkerRunStartChildAttach{
+		{name: "child", request: workerapi.RunStartRequest{Attach: &workerapi.RunStartAttach{Child: &workerapi.RunStartChildAttach{
 			RunWaitID: startWaitID, CheckpointID: startCheckpointID, ResumeAttachID: startAttachID,
 		}}}, mode: runLeaseClaimAttachChild, ok: true},
-		{name: "parent", request: api.WorkerRunStartRequest{Attach: &api.WorkerRunStartAttach{Parent: &api.WorkerRunStartParentAttach{
+		{name: "parent", request: workerapi.RunStartRequest{Attach: &workerapi.RunStartAttach{Parent: &workerapi.RunStartParentAttach{
 			RunWaitID: startWaitID, CheckpointID: startCheckpointID, ResumeAttachID: startAttachID, ResumeRequestVersion: 2,
 		}}}, mode: runLeaseClaimAttachParent, ok: true},
-		{name: "bad UUID", request: api.WorkerRunStartRequest{Restore: &api.WorkerRunStartRestore{
+		{name: "bad UUID", request: workerapi.RunStartRequest{Restore: &workerapi.RunStartRestore{
 			RunWaitID: "bad", CheckpointID: startCheckpointID, ResumeAttachID: startAttachID, ResumeRequestVersion: 1,
 		}}},
-		{name: "bad version", request: api.WorkerRunStartRequest{Attach: &api.WorkerRunStartAttach{Parent: &api.WorkerRunStartParentAttach{
+		{name: "bad version", request: workerapi.RunStartRequest{Attach: &workerapi.RunStartAttach{Parent: &workerapi.RunStartParentAttach{
 			RunWaitID: startWaitID, CheckpointID: startCheckpointID, ResumeAttachID: startAttachID,
 		}}}},
 	}

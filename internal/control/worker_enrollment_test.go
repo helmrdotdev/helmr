@@ -9,10 +9,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -78,7 +78,7 @@ func testEnrollmentServer(t *testing.T, store enrollmentNonceStore, logOutput io
 	}
 }
 
-func serveWorkerEnrollment(server *Server, request api.WorkerEnrollmentRequest) *httptest.ResponseRecorder {
+func serveWorkerEnrollment(server *Server, request workerapi.EnrollmentRequest) *httptest.ResponseRecorder {
 	body := bytes.NewBufferString(`{"worker_group_id":"` + request.WorkerGroupID + `","nonce":"` + request.Nonce + `","supports_run":true,"supports_build":false,"protocol_version":"` + request.ProtocolVersion + `","resource_id":"` + request.ResourceID + `","proof":"` + request.Proof + `"}`)
 	httpRequest := httptest.NewRequest(http.MethodPost, "/api/worker/enrollment", body)
 	response := httptest.NewRecorder()

@@ -12,10 +12,10 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -25,7 +25,7 @@ func (s *Server) workerAppendRunLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerRunLogAppendRequest
+	var request workerapi.RunLogAppendRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
@@ -47,8 +47,8 @@ func (s *Server) workerAppendRunLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	kind := "log.stdout"
 	switch request.Stream {
-	case api.WorkerLogStreamStdout:
-	case api.WorkerLogStreamStderr:
+	case workerapi.LogStreamStdout:
+	case workerapi.LogStreamStderr:
 		kind = "log.stderr"
 	default:
 		writeError(w, badRequest(errors.New("stream must be stdout or stderr")))
@@ -100,7 +100,7 @@ func (s *Server) workerAppendRunLogs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) appendRunLog(
 	ctx context.Context,
 	worker workerActor,
-	lease api.WorkerRunLeaseFence,
+	lease workerapi.RunLeaseFence,
 	parsed parsedRunLeaseFence,
 	input db.AppendRunLogChunkParams,
 ) (db.AppendRunLogChunkRow, error) {
@@ -148,7 +148,7 @@ func (s *Server) appendRunLog(
 }
 
 func runMetadataClaimScopeParams(
-	lease api.WorkerRunLeaseFence,
+	lease workerapi.RunLeaseFence,
 	parsed parsedRunLeaseFence,
 	worker workerActor,
 ) db.GetRunMetadataClaimScopeParams {
@@ -161,7 +161,7 @@ func runMetadataClaimScopeParams(
 	}
 }
 
-func runLeaseFenceFingerprint(lease api.WorkerRunLeaseFence) (string, error) {
+func runLeaseFenceFingerprint(lease workerapi.RunLeaseFence) (string, error) {
 	canonical, err := jsoncanon.Transform(mustJSON(lease))
 	if err != nil {
 		return "", fmt.Errorf("canonicalize Run Lease fence: %w", err)
@@ -185,5 +185,5 @@ func equalJSON(left, right []byte) (bool, error) {
 type workerLogChunkPayload struct {
 	Bytes       int                 `json:"bytes"`
 	ObservedSeq uint64              `json:"observed_seq"`
-	Stream      api.WorkerLogStream `json:"stream"`
+	Stream      workerapi.LogStream `json:"stream"`
 }

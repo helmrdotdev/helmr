@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -25,7 +25,7 @@ func TestEnterRunEntrypointCommitsOnceAndReplaysTheSameFence(t *testing.T) {
 			Valid: true,
 		},
 	}
-	request := api.WorkerRunEntrypointRequest{
+	request := workerapi.RunEntrypointRequest{
 		Lease:                assignment.Fence(),
 		EntrypointKind:       authority.run.EntrypointKind,
 		EntrypointDeclaredID: authority.run.EntrypointDeclaredID,
@@ -66,18 +66,18 @@ func TestEnterRunEntrypointCommitsOnceAndReplaysTheSameFence(t *testing.T) {
 }
 
 func TestEnterRunEntrypointRollsBackMismatchedFenceAndIdentity(t *testing.T) {
-	for name, change := range map[string]func(*api.WorkerRunEntrypointRequest){
-		"fence": func(request *api.WorkerRunEntrypointRequest) {
+	for name, change := range map[string]func(*workerapi.RunEntrypointRequest){
+		"fence": func(request *workerapi.RunEntrypointRequest) {
 			request.Lease.LeaseSequence++
 		},
-		"identity": func(request *api.WorkerRunEntrypointRequest) {
+		"identity": func(request *workerapi.RunEntrypointRequest) {
 			request.EntrypointDeclaredID = "different"
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			worker, locators, authority, assignment := validRunEntrypointFixture(t)
 			store := &runLeaseClaimStore{authority: authority, entrypoint: locators}
-			request := api.WorkerRunEntrypointRequest{
+			request := workerapi.RunEntrypointRequest{
 				Lease:                assignment.Fence(),
 				EntrypointKind:       authority.run.EntrypointKind,
 				EntrypointDeclaredID: authority.run.EntrypointDeclaredID,
@@ -104,7 +104,7 @@ func TestEnterRunEntrypointRejectsMountedBaseOutsideAttempt(t *testing.T) {
 	authority.workspaceMount.MaterializedVersionID = differentBase
 	store := &runLeaseClaimStore{authority: authority, entrypoint: locators}
 
-	err := enterRunEntrypoint(context.Background(), store, nil, worker, authority.runLease.ID, api.WorkerRunEntrypointRequest{
+	err := enterRunEntrypoint(context.Background(), store, nil, worker, authority.runLease.ID, workerapi.RunEntrypointRequest{
 		Lease:                assignment.Fence(),
 		EntrypointKind:       authority.run.EntrypointKind,
 		EntrypointDeclaredID: authority.run.EntrypointDeclaredID,
@@ -151,7 +151,7 @@ func (s *runLeaseClaimStore) MarkRunEntrypointEntered(
 
 func validRunEntrypointFixture(
 	t *testing.T,
-) (workerActor, db.GetRunEntrypointLocatorsRow, runLeaseClaimAuthority, api.WorkerRunLeaseAssignment) {
+) (workerActor, db.GetRunEntrypointLocatorsRow, runLeaseClaimAuthority, workerapi.RunLeaseAssignment) {
 	t.Helper()
 	worker, claimLocators, authority := validRunLeaseClaimFixture()
 	now := time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)

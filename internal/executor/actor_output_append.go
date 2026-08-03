@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func (task *guestRunLeaseTask) handleActorOutputAppend(
@@ -21,10 +21,10 @@ func (task *guestRunLeaseTask) handleActorOutputAppend(
 	if err != nil {
 		return err
 	}
-	var response api.WorkerAppendActorOutputResponse
+	var response workerapi.AppendActorOutputResponse
 	if err := task.callRunSourceRuntime(ctx, func(
 		callCtx context.Context,
-		lease api.WorkerRunLeaseAssignment,
+		lease workerapi.RunLeaseAssignment,
 	) error {
 		request.Lease = lease.Fence()
 		var requestErr error
@@ -72,22 +72,22 @@ func (task *guestRunLeaseTask) handleActorOutputAppend(
 
 func workerActorOutputAppendRequest(
 	requested *runv0.ActorOutputAppendRequested,
-) (api.WorkerAppendActorOutputRequest, error) {
+) (workerapi.AppendActorOutputRequest, error) {
 	if requested == nil {
-		return api.WorkerAppendActorOutputRequest{}, errors.New("actor output append request is required")
+		return workerapi.AppendActorOutputRequest{}, errors.New("actor output append request is required")
 	}
 	if err := ids.Validate(requested.GetCorrelationId()); err != nil {
-		return api.WorkerAppendActorOutputRequest{}, errors.New("actor output append correlation ID is invalid")
+		return workerapi.AppendActorOutputRequest{}, errors.New("actor output append correlation ID is invalid")
 	}
 	data := json.RawMessage(requested.GetDataJson())
 	if len(data) == 0 || !json.Valid(data) {
-		return api.WorkerAppendActorOutputRequest{}, errors.New("actor output append data must be valid JSON")
+		return workerapi.AppendActorOutputRequest{}, errors.New("actor output append data must be valid JSON")
 	}
 	contentType := strings.TrimSpace(requested.GetContentType())
 	if contentType == "" {
-		return api.WorkerAppendActorOutputRequest{}, errors.New("actor output append content type is required")
+		return workerapi.AppendActorOutputRequest{}, errors.New("actor output append content type is required")
 	}
-	return api.WorkerAppendActorOutputRequest{
+	return workerapi.AppendActorOutputRequest{
 		CorrelationID:  requested.GetCorrelationId(),
 		Data:           data,
 		ContentType:    contentType,

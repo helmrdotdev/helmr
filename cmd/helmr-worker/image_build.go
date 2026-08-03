@@ -5,16 +5,16 @@ import (
 	"errors"
 	"slices"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/imagecache"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type workerImageControlClient interface {
-	AdmitWorkspaceImage(context.Context, api.WorkerWorkspaceImageAdmissionRequest) (api.WorkerWorkspaceImageAssignment, error)
-	FetchWorkspaceImageCredentials(context.Context, api.WorkerWorkspaceImageCredentialRequest) (api.WorkerWorkspaceImageCredentialResponse, error)
-	CompleteWorkspaceImage(context.Context, api.WorkerWorkspaceImageOperationResultRequest) (api.WorkerWorkspaceImageOperationResultResponse, error)
+	AdmitWorkspaceImage(context.Context, workerapi.WorkspaceImageAdmissionRequest) (workerapi.WorkspaceImageAssignment, error)
+	FetchWorkspaceImageCredentials(context.Context, workerapi.WorkspaceImageCredentialRequest) (workerapi.WorkspaceImageCredentialResponse, error)
+	CompleteWorkspaceImage(context.Context, workerapi.WorkspaceImageOperationResultRequest) (workerapi.WorkspaceImageOperationResultResponse, error)
 }
 
 type workerImageControl struct {
@@ -28,7 +28,7 @@ func (control workerImageControl) AdmitWorkspaceImage(
 	if control.client == nil {
 		return imagebuild.Assignment{}, errors.New("Workspace image Control client is required")
 	}
-	response, err := control.client.AdmitWorkspaceImage(ctx, api.WorkerWorkspaceImageAdmissionRequest{
+	response, err := control.client.AdmitWorkspaceImage(ctx, workerapi.WorkspaceImageAdmissionRequest{
 		Lease:                  workerImageAPILease(request.Lease),
 		DeclarationSlot:        request.DeclarationSlot,
 		RuntimeIdentityID:      request.RuntimeIdentityID,
@@ -105,7 +105,7 @@ func (control workerImageControl) FetchRegistryCredentials(
 	if control.client == nil {
 		return nil, errors.New("Workspace image Control client is required")
 	}
-	response, err := control.client.FetchWorkspaceImageCredentials(ctx, api.WorkerWorkspaceImageCredentialRequest{
+	response, err := control.client.FetchWorkspaceImageCredentials(ctx, workerapi.WorkspaceImageCredentialRequest{
 		Lease: workerImageAPILease(request.Lease), OperationID: request.OperationID,
 		AttemptID: request.AttemptID, PlanDigest: request.PlanDigest,
 		ResolutionSetDigest: request.ResolutionSetDigest,
@@ -158,7 +158,7 @@ func (control workerImageControl) CompleteWorkspaceImage(
 	} else if request.Artifact != nil {
 		return errors.New("failed Workspace image completion must not contain an Artifact")
 	}
-	response, err := control.client.CompleteWorkspaceImage(ctx, api.WorkerWorkspaceImageOperationResultRequest{
+	response, err := control.client.CompleteWorkspaceImage(ctx, workerapi.WorkspaceImageOperationResultRequest{
 		Lease:           workerImageAPILease(request.Evidence.Lease),
 		DeclarationSlot: request.Evidence.DeclarationSlot,
 		OperationID:     request.Evidence.OperationID, AttemptID: request.Evidence.AttemptID,
@@ -205,8 +205,8 @@ func (provider workerImageCacheCredentials) FetchImageCacheCredential(
 	return value, nil
 }
 
-func workerImageAPILease(lease imagebuild.BuildLeaseAuthority) api.WorkerDeploymentBuildLease {
-	return api.WorkerDeploymentBuildLease{
+func workerImageAPILease(lease imagebuild.BuildLeaseAuthority) workerapi.DeploymentBuildLease {
+	return workerapi.DeploymentBuildLease{
 		ID: lease.ID, OrgID: lease.OrgID, ProjectID: lease.ProjectID,
 		EnvironmentID: lease.EnvironmentID, DeploymentID: lease.DeploymentID,
 		WorkerGroupID: lease.WorkerGroupID, WorkerInstanceID: lease.WorkerInstanceID,
@@ -218,7 +218,7 @@ func workerImageAPILease(lease imagebuild.BuildLeaseAuthority) api.WorkerDeploym
 	}
 }
 
-func workerImageLeaseAuthority(lease api.WorkerDeploymentBuildLease) imagebuild.BuildLeaseAuthority {
+func workerImageLeaseAuthority(lease workerapi.DeploymentBuildLease) imagebuild.BuildLeaseAuthority {
 	return imagebuild.BuildLeaseAuthority{
 		ID: lease.ID, OrgID: lease.OrgID, ProjectID: lease.ProjectID,
 		EnvironmentID: lease.EnvironmentID, DeploymentID: lease.DeploymentID,

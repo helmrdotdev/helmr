@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/spf13/cobra"
 )
 
@@ -102,7 +103,7 @@ func deployCommand() *cobra.Command {
 				IdempotencyKey:        strings.TrimSpace(idempotencyKey),
 				ContentHash:           tarArchive.Digest,
 				APIVersion:            api.CurrentAPIVersion,
-				WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
+				WorkerProtocolVersion: workerapi.CurrentProtocolVersion,
 				ImageCacheMode:        "prefer",
 			}
 			if noImageCache {

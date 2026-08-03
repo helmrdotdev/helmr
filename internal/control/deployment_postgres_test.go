@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -118,7 +119,7 @@ func TestDeploymentCreateConvergesAcrossTransactions(t *testing.T) {
 					source,
 					deploymentVersionMetadata{
 						APIVersion:            api.CurrentAPIVersion,
-						WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
+						WorkerProtocolVersion: workerapi.CurrentProtocolVersion,
 						ImageCacheMode:        "prefer",
 					},
 				)

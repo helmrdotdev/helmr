@@ -15,7 +15,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -26,6 +25,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -34,7 +34,7 @@ const maxImageBuildTreeBytes = int64(11 << 30)
 var workspaceImageDeclarationPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 type workspaceImageAdmission struct {
-	request               api.WorkerWorkspaceImageAdmissionRequest
+	request               workerapi.WorkspaceImageAdmissionRequest
 	leaseID               uuid.UUID
 	environmentID         uuid.UUID
 	deploymentID          uuid.UUID
@@ -42,8 +42,8 @@ type workspaceImageAdmission struct {
 	planDigestBytes       []byte
 	admittedPathSetDigest string
 	credentials           []imagebuild.RegistryCredential
-	quotas                api.WorkerWorkspaceImageQuotas
-	output                api.WorkerWorkspaceImageOutputContract
+	quotas                workerapi.WorkspaceImageQuotas
+	output                workerapi.WorkspaceImageOutputContract
 }
 
 type workspaceImageOperationReceipt struct {
@@ -60,7 +60,7 @@ type workspaceImageOperationReceipt struct {
 }
 
 func (s *Server) workerAdmitWorkspaceImage(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerWorkspaceImageAdmissionRequest
+	var request workerapi.WorkspaceImageAdmissionRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Workspace image admission JSON: %w", err)))
 		return
@@ -86,7 +86,7 @@ func (s *Server) workerAdmitWorkspaceImage(w http.ResponseWriter, r *http.Reques
 }
 
 func normalizeWorkspaceImageAdmission(
-	request api.WorkerWorkspaceImageAdmissionRequest,
+	request workerapi.WorkspaceImageAdmissionRequest,
 	worker workerActor,
 ) (workspaceImageAdmission, error) {
 	leaseID, environmentID, deploymentID, err := validateWorkspaceImageLease(request.Lease, worker)
@@ -126,14 +126,14 @@ func normalizeWorkspaceImageAdmission(
 		return workspaceImageAdmission{}, err
 	}
 	resources := compute.ImageBuildGuestResources()
-	quotas := api.WorkerWorkspaceImageQuotas{
+	quotas := workerapi.WorkspaceImageQuotas{
 		CPUMillis: resources.MilliCPU, MemoryBytes: resources.MemoryMiB << 20,
 		ScratchBytes: resources.DiskMiB << 20, PIDs: compute.ImageBuildGuestPIDsMax,
 		MaxSourceArchiveBytes:   imagebuild.MaxSourceArchiveBytes,
 		MaxSourceArchiveEntries: imagebuild.MaxSourceArchiveEntries,
 		MaxOCIArchiveBytes:      imagebuild.MaxOCIArchiveBytes,
 	}
-	output := api.WorkerWorkspaceImageOutputContract{
+	output := workerapi.WorkspaceImageOutputContract{
 		Architecture: request.Architecture,
 		MediaType:    deployment.WorkspaceImageArtifactMediaType,
 		MaxSizeBytes: imagebuild.MaxOCIArchiveBytes,
@@ -160,8 +160,8 @@ func (s *Server) admitWorkspaceImage(
 	ctx context.Context,
 	normalized workspaceImageAdmission,
 	worker workerActor,
-) (api.WorkerWorkspaceImageAssignment, error) {
-	var assignment api.WorkerWorkspaceImageAssignment
+) (workerapi.WorkspaceImageAssignment, error) {
+	var assignment workerapi.WorkspaceImageAssignment
 	err := s.inTx(ctx, func(work *txWork) error {
 		authority, err := lockWorkspaceImageBuildLease(ctx, work.q, normalized.request.Lease, worker)
 		if err != nil {
@@ -245,7 +245,7 @@ func (s *Server) admitWorkspaceImage(
 		if err != nil {
 			return err
 		}
-		assignment = api.WorkerWorkspaceImageAssignment{
+		assignment = workerapi.WorkspaceImageAssignment{
 			Lease: normalized.request.Lease, DeclarationSlot: normalized.request.DeclarationSlot,
 			OperationID: operationID.String(), RequestFingerprint: requestFingerprint,
 			RuntimeIdentityID: normalized.request.RuntimeIdentityID,
@@ -276,7 +276,7 @@ func (s *Server) admitWorkspaceImage(
 		return validateWorkspaceImageAssignment(assignment, worker)
 	})
 	if err != nil {
-		return api.WorkerWorkspaceImageAssignment{}, err
+		return workerapi.WorkspaceImageAssignment{}, err
 	}
 	s.attachWorkspaceImageCache(ctx, normalized.environmentID, &assignment)
 	return assignment, nil
@@ -408,15 +408,15 @@ func workspaceImageTerminalResult(
 	planDigest string,
 	resolutionSetDigest string,
 	requestedCacheMode imagebuild.CacheMode,
-) (api.WorkerWorkspaceImageTerminalResult, error) {
+) (workerapi.WorkspaceImageTerminalResult, error) {
 	var receipt workspaceImageOperationReceipt
 	decoder := json.NewDecoder(bytes.NewReader(claim.Receipt))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&receipt); err != nil {
-		return api.WorkerWorkspaceImageTerminalResult{}, errors.New("Workspace image terminal receipt is invalid")
+		return workerapi.WorkspaceImageTerminalResult{}, errors.New("Workspace image terminal receipt is invalid")
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return api.WorkerWorkspaceImageTerminalResult{}, errors.New("Workspace image terminal receipt has trailing data")
+		return workerapi.WorkspaceImageTerminalResult{}, errors.New("Workspace image terminal receipt has trailing data")
 	}
 	if receipt.BuildLeaseID != buildLeaseID.String() ||
 		receipt.BuildLeaseGeneration != buildLeaseGeneration ||
@@ -426,19 +426,19 @@ func workspaceImageTerminalResult(
 		receipt.PlanDigest != planDigest ||
 		receipt.ResolutionSetDigest != resolutionSetDigest ||
 		receipt.RequestedCacheMode != requestedCacheMode {
-		return api.WorkerWorkspaceImageTerminalResult{}, conflict(errors.New("Workspace image terminal receipt conflicts with admission"))
+		return workerapi.WorkspaceImageTerminalResult{}, conflict(errors.New("Workspace image terminal receipt conflicts with admission"))
 	}
 	if err := ids.Validate(receipt.AttemptID); err != nil {
-		return api.WorkerWorkspaceImageTerminalResult{}, errors.New("Workspace image terminal attempt ID is invalid")
+		return workerapi.WorkspaceImageTerminalResult{}, errors.New("Workspace image terminal attempt ID is invalid")
 	}
 	if err := imagebuild.ValidateGuestResult(receipt.Result); err != nil {
-		return api.WorkerWorkspaceImageTerminalResult{}, errors.New("Workspace image terminal result is invalid")
+		return workerapi.WorkspaceImageTerminalResult{}, errors.New("Workspace image terminal result is invalid")
 	}
 	if claim.State == "completed" && receipt.Result.Outcome != imagebuild.GuestSucceeded ||
 		claim.State == "failed" && receipt.Result.Outcome != imagebuild.GuestFailed {
-		return api.WorkerWorkspaceImageTerminalResult{}, errors.New("Workspace image terminal state does not match its result")
+		return workerapi.WorkspaceImageTerminalResult{}, errors.New("Workspace image terminal state does not match its result")
 	}
-	return api.WorkerWorkspaceImageTerminalResult{
+	return workerapi.WorkspaceImageTerminalResult{
 		AttemptID: receipt.AttemptID, Result: receipt.Result,
 	}, nil
 }
@@ -513,7 +513,7 @@ func validateCompletedWorkspaceImageOperations(
 }
 
 func validateWorkspaceImageAssignment(
-	assignment api.WorkerWorkspaceImageAssignment,
+	assignment workerapi.WorkspaceImageAssignment,
 	worker workerActor,
 ) error {
 	return imagebuild.ValidateGuestRequest(imagebuild.GuestRequest{
@@ -535,7 +535,7 @@ func validateWorkspaceImageAssignment(
 func (s *Server) attachWorkspaceImageCache(
 	ctx context.Context,
 	environmentID uuid.UUID,
-	assignment *api.WorkerWorkspaceImageAssignment,
+	assignment *workerapi.WorkspaceImageAssignment,
 ) {
 	if assignment.TerminalResult != nil {
 		return
@@ -544,25 +544,25 @@ func (s *Server) attachWorkspaceImageCache(
 		return
 	}
 	if s.cacheRepositories == nil {
-		assignment.EffectiveCacheColdReason = api.WorkerWorkspaceImageCacheUnavailable
+		assignment.EffectiveCacheColdReason = workerapi.WorkspaceImageCacheUnavailable
 		return
 	}
 	target, err := s.cacheRepositories.Target(environmentID, assignment.CacheScope)
 	if err != nil || validateWorkspaceImageCacheTarget(target) != nil {
-		assignment.EffectiveCacheColdReason = api.WorkerWorkspaceImageCacheUnavailable
+		assignment.EffectiveCacheColdReason = workerapi.WorkspaceImageCacheUnavailable
 		return
 	}
 	for _, binding := range assignment.RegistryBindings {
 		if binding.Authority == target.Authority {
-			assignment.EffectiveCacheColdReason = api.WorkerWorkspaceImageCacheRegistryAuthorityCollision
+			assignment.EffectiveCacheColdReason = workerapi.WorkspaceImageCacheRegistryAuthorityCollision
 			return
 		}
 	}
 	if err := s.cacheRepositories.Ensure(ctx, target); err != nil {
-		assignment.EffectiveCacheColdReason = api.WorkerWorkspaceImageCacheUnavailable
+		assignment.EffectiveCacheColdReason = workerapi.WorkspaceImageCacheUnavailable
 		return
 	}
-	assignment.CacheTarget = &api.WorkerWorkspaceImageCacheTarget{
+	assignment.CacheTarget = &workerapi.WorkspaceImageCacheTarget{
 		Binding: imagebuild.CacheBinding{
 			Authority: target.Authority, Username: target.Username, Ref: target.Ref,
 		},
@@ -586,7 +586,7 @@ func validateWorkspaceImageCacheTarget(target imagecache.Target) error {
 }
 
 func (s *Server) workerFetchWorkspaceImageCredentials(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerWorkspaceImageCredentialRequest
+	var request workerapi.WorkspaceImageCredentialRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Workspace image credential JSON: %w", err)))
 		return
@@ -606,31 +606,31 @@ func (s *Server) workerFetchWorkspaceImageCredentials(w http.ResponseWriter, r *
 
 func (s *Server) fetchWorkspaceImageCredentials(
 	ctx context.Context,
-	request api.WorkerWorkspaceImageCredentialRequest,
+	request workerapi.WorkspaceImageCredentialRequest,
 	worker workerActor,
-) (api.WorkerWorkspaceImageCredentialResponse, error) {
+) (workerapi.WorkspaceImageCredentialResponse, error) {
 	leaseID, environmentID, deploymentID, err := validateWorkspaceImageLease(request.Lease, worker)
 	if err != nil {
-		return api.WorkerWorkspaceImageCredentialResponse{}, badRequest(err)
+		return workerapi.WorkspaceImageCredentialResponse{}, badRequest(err)
 	}
 	operationID, err := ids.Parse(request.OperationID)
 	if err != nil {
-		return api.WorkerWorkspaceImageCredentialResponse{}, badRequest(errors.New("Workspace image operation_id is invalid"))
+		return workerapi.WorkspaceImageCredentialResponse{}, badRequest(errors.New("Workspace image operation_id is invalid"))
 	}
 	if err := ids.Validate(request.AttemptID); err != nil {
-		return api.WorkerWorkspaceImageCredentialResponse{}, badRequest(errors.New("Workspace image attempt_id is invalid"))
+		return workerapi.WorkspaceImageCredentialResponse{}, badRequest(errors.New("Workspace image attempt_id is invalid"))
 	}
 	planDigest, err := deployment.SHA256DigestBytes(request.PlanDigest)
 	if err != nil {
-		return api.WorkerWorkspaceImageCredentialResponse{}, badRequest(errors.New("Workspace image plan_digest is invalid"))
+		return workerapi.WorkspaceImageCredentialResponse{}, badRequest(errors.New("Workspace image plan_digest is invalid"))
 	}
 	if _, err := deployment.SHA256DigestBytes(request.ResolutionSetDigest); err != nil {
-		return api.WorkerWorkspaceImageCredentialResponse{}, badRequest(errors.New("Workspace image resolution_set_digest is invalid"))
+		return workerapi.WorkspaceImageCredentialResponse{}, badRequest(errors.New("Workspace image resolution_set_digest is invalid"))
 	}
 	if s.registryCredentials == nil {
-		return api.WorkerWorkspaceImageCredentialResponse{}, unavailable(errors.New("registry credential opener is not configured"))
+		return workerapi.WorkspaceImageCredentialResponse{}, unavailable(errors.New("registry credential opener is not configured"))
 	}
-	response := api.WorkerWorkspaceImageCredentialResponse{Envelope: imagebuild.CredentialEnvelope{
+	response := workerapi.WorkspaceImageCredentialResponse{Envelope: imagebuild.CredentialEnvelope{
 		OperationID: request.OperationID, AttemptID: request.AttemptID,
 		ResolutionSetDigest: request.ResolutionSetDigest,
 		RegistryCredentials: []imagebuild.RegistryCredentialValue{},
@@ -702,7 +702,7 @@ func (s *Server) fetchWorkspaceImageCredentials(
 	})
 	if err != nil {
 		clearWorkspaceImageCredentials(response.Envelope.RegistryCredentials)
-		return api.WorkerWorkspaceImageCredentialResponse{}, err
+		return workerapi.WorkspaceImageCredentialResponse{}, err
 	}
 	return response, nil
 }
@@ -714,7 +714,7 @@ func clearWorkspaceImageCredentials(credentials []imagebuild.RegistryCredentialV
 }
 
 func (s *Server) workerCompleteWorkspaceImage(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerWorkspaceImageOperationResultRequest
+	var request workerapi.WorkspaceImageOperationResultRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Workspace image result JSON: %w", err)))
 		return
@@ -732,41 +732,41 @@ func (s *Server) workerCompleteWorkspaceImage(w http.ResponseWriter, r *http.Req
 
 func (s *Server) completeWorkspaceImage(
 	ctx context.Context,
-	request api.WorkerWorkspaceImageOperationResultRequest,
+	request workerapi.WorkspaceImageOperationResultRequest,
 	worker workerActor,
-) (api.WorkerWorkspaceImageOperationResultResponse, error) {
+) (workerapi.WorkspaceImageOperationResultResponse, error) {
 	leaseID, environmentID, deploymentID, err := validateWorkspaceImageLease(request.Lease, worker)
 	if err != nil {
-		return api.WorkerWorkspaceImageOperationResultResponse{}, badRequest(err)
+		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(err)
 	}
 	operationID, err := ids.Parse(request.OperationID)
 	if err != nil {
-		return api.WorkerWorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image operation_id is invalid"))
+		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image operation_id is invalid"))
 	}
 	if err := ids.Validate(request.AttemptID); err != nil {
-		return api.WorkerWorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image attempt_id is invalid"))
+		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image attempt_id is invalid"))
 	}
 	if !workspaceImageDeclarationPattern.MatchString(request.DeclarationSlot) {
-		return api.WorkerWorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image declaration_slot is invalid"))
+		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image declaration_slot is invalid"))
 	}
 	if request.RequestedCacheMode != imagebuild.CachePrefer && request.RequestedCacheMode != imagebuild.CacheBypass {
-		return api.WorkerWorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image requested_cache_mode is invalid"))
+		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image requested_cache_mode is invalid"))
 	}
 	requestFingerprint, err := deployment.SHA256DigestBytes(request.RequestFingerprint)
 	if err != nil {
-		return api.WorkerWorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image request_fingerprint is invalid"))
+		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image request_fingerprint is invalid"))
 	}
 	planDigest, err := deployment.SHA256DigestBytes(request.PlanDigest)
 	if err != nil {
-		return api.WorkerWorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image plan_digest is invalid"))
+		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image plan_digest is invalid"))
 	}
 	if _, err := deployment.SHA256DigestBytes(request.ResolutionSetDigest); err != nil {
-		return api.WorkerWorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image resolution_set_digest is invalid"))
+		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("Workspace image resolution_set_digest is invalid"))
 	}
 	if err := imagebuild.ValidateGuestResult(request.Result); err != nil {
-		return api.WorkerWorkspaceImageOperationResultResponse{}, badRequest(err)
+		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(err)
 	}
-	response := api.WorkerWorkspaceImageOperationResultResponse{
+	response := workerapi.WorkspaceImageOperationResultResponse{
 		OperationID: request.OperationID, AttemptID: request.AttemptID, Result: request.Result,
 	}
 	err = s.inTx(ctx, func(work *txWork) error {
@@ -852,7 +852,7 @@ func (s *Server) completeWorkspaceImage(
 		return nil
 	})
 	if err != nil {
-		return api.WorkerWorkspaceImageOperationResultResponse{}, err
+		return workerapi.WorkspaceImageOperationResultResponse{}, err
 	}
 	return response, nil
 }
@@ -870,7 +870,7 @@ func sameCanonicalJSON(left, right []byte) (bool, error) {
 }
 
 func validateWorkspaceImageLease(
-	lease api.WorkerDeploymentBuildLease,
+	lease workerapi.DeploymentBuildLease,
 	worker workerActor,
 ) (uuid.UUID, uuid.UUID, uuid.UUID, error) {
 	_, _, environmentID, deploymentID, err := parseDeploymentBuildLeaseIDs(lease)
@@ -892,7 +892,7 @@ func validateWorkspaceImageLease(
 func lockWorkspaceImageBuildLease(
 	ctx context.Context,
 	q db.Querier,
-	lease api.WorkerDeploymentBuildLease,
+	lease workerapi.DeploymentBuildLease,
 	worker workerActor,
 ) (db.LockRegistryCredentialBuildLeaseRow, error) {
 	leaseID, environmentID, deploymentID, err := validateWorkspaceImageLease(lease, worker)

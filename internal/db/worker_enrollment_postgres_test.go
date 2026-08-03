@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/runtime"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -72,13 +72,13 @@ func TestRegisteringEnrollmentRetryUsesFreshNonceAndRotatesCredential(t *testing
 
 	if _, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, WorkerInstanceID: first.WorkerInstanceID, SecretHash: []byte("first-secret"),
-		ProtocolVersion: auth.WorkerProtocolVersion, ServiceID: pgvalue.NewUUIDv7(),
+		ProtocolVersion: workerapi.CurrentProtocolVersion, ServiceID: pgvalue.NewUUIDv7(),
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("revoked response-loss credential error = %v, want pgx.ErrNoRows", err)
 	}
 	if _, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, WorkerInstanceID: second.WorkerInstanceID, SecretHash: []byte("second-secret"),
-		ProtocolVersion: auth.WorkerProtocolVersion, ServiceID: pgvalue.NewUUIDv7(),
+		ProtocolVersion: workerapi.CurrentProtocolVersion, ServiceID: pgvalue.NewUUIDv7(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestTerminalEnrollmentCreatesFreshControlIdentity(t *testing.T) {
 	serviceID := pgvalue.NewUUIDv7()
 	firstAuth, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, WorkerInstanceID: first.WorkerInstanceID, SecretHash: []byte("first-secret"),
-		ProtocolVersion: auth.WorkerProtocolVersion, ServiceID: serviceID,
+		ProtocolVersion: workerapi.CurrentProtocolVersion, ServiceID: serviceID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -195,7 +195,7 @@ func TestTerminalEnrollmentCreatesFreshControlIdentity(t *testing.T) {
 	}
 	secondAuth, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, WorkerInstanceID: second.WorkerInstanceID, SecretHash: []byte("second-secret"),
-		ProtocolVersion: auth.WorkerProtocolVersion, ServiceID: serviceID,
+		ProtocolVersion: workerapi.CurrentProtocolVersion, ServiceID: serviceID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -250,7 +250,7 @@ func authenticateTestWorker(t *testing.T, ctx context.Context, q *db.Queries, cr
 	t.Helper()
 	if _, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, WorkerInstanceID: credential.WorkerInstanceID, SecretHash: secretHash,
-		ProtocolVersion: auth.WorkerProtocolVersion, ServiceID: pgvalue.NewUUIDv7(),
+		ProtocolVersion: workerapi.CurrentProtocolVersion, ServiceID: pgvalue.NewUUIDv7(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -283,14 +283,14 @@ func TestWorkerGroupRoleNarrowingFencesCurrentCredential(t *testing.T) {
 	credential := enrollTestWorker(t, ctx, q, workerID, "operator-host-3", true, true, []byte("both-role-secret"))
 	if _, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, SupportsBuild: true, WorkerInstanceID: credential.WorkerInstanceID,
-		SecretHash: []byte("both-role-secret"), ProtocolVersion: auth.WorkerProtocolVersion, ServiceID: pgvalue.NewUUIDv7(),
+		SecretHash: []byte("both-role-secret"), ProtocolVersion: workerapi.CurrentProtocolVersion, ServiceID: pgvalue.NewUUIDv7(),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	reconcileTestWorkerGroup(t, ctx, q, dbtest.DefaultWorkerGroupID, true, false)
 	if _, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, WorkerInstanceID: credential.WorkerInstanceID,
-		SecretHash: []byte("both-role-secret"), ProtocolVersion: auth.WorkerProtocolVersion, ServiceID: pgvalue.NewUUIDv7(),
+		SecretHash: []byte("both-role-secret"), ProtocolVersion: workerapi.CurrentProtocolVersion, ServiceID: pgvalue.NewUUIDv7(),
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("narrowed credential error = %v, want pgx.ErrNoRows", err)
 	}
@@ -334,7 +334,7 @@ func createTestEnrollmentNonce(t *testing.T, ctx context.Context, q *db.Queries,
 func enrollmentParams(nonce []byte, workerID uuid.UUID, resourceID string, allowsRun bool, allowsBuild bool, secretHash []byte) db.EnrollWorkerInstanceParams {
 	return db.EnrollWorkerInstanceParams{
 		NonceHash: nonce, WorkerGroupID: dbtest.DefaultWorkerGroupID,
-		AllowsRun: allowsRun, AllowsBuild: allowsBuild, ProtocolVersion: auth.WorkerProtocolVersion,
+		AllowsRun: allowsRun, AllowsBuild: allowsBuild, ProtocolVersion: workerapi.CurrentProtocolVersion,
 		WorkerInstanceID: pgvalue.UUID(workerID), ResourceID: resourceID, CurrentServiceID: pgvalue.NewUUIDv7(),
 		CredentialID: pgvalue.NewUUIDv7(), KeyPrefix: uuid.NewString(), SecretHash: secretHash,
 	}
@@ -348,7 +348,7 @@ func reconcileTestWorkerGroup(t *testing.T, ctx context.Context, q *db.Queries, 
 	}
 	if _, err := q.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
 		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
-		AllowsRun: allowsRun, AllowsBuild: allowsBuild, ProtocolVersion: auth.WorkerProtocolVersion,
+		AllowsRun: allowsRun, AllowsBuild: allowsBuild, ProtocolVersion: workerapi.CurrentProtocolVersion,
 		RequiredCpuMillis: 1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1,
 		RequiredVmSlots: 1, RequiredBuildExecutors: buildExecutors, ObservationTtlSeconds: 120,
 	}); err != nil {

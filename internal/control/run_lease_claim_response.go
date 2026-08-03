@@ -7,11 +7,11 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
@@ -99,7 +99,7 @@ func projectRunLeaseClaimResponse(
 	platformStore cas.Reader,
 	secretDelivery SecretDeliveryOpener,
 	fencingKey workspace.FencingKey,
-) (api.WorkerRunLeaseClaimResponse, error) {
+) (workerapi.RunLeaseClaimResponse, error) {
 	physical := runLeaseProjectionAuthority{
 		run:            authority.run,
 		attempt:        authority.attempt,
@@ -111,15 +111,15 @@ func projectRunLeaseClaimResponse(
 	}
 	lease, err := projectRunLeaseAssignment(physical)
 	if err != nil {
-		return api.WorkerRunLeaseClaimResponse{}, err
+		return workerapi.RunLeaseClaimResponse{}, err
 	}
 	program, err := projectDeploymentProgram(ctx, projection.program, platformStore)
 	if err != nil {
-		return api.WorkerRunLeaseClaimResponse{}, err
+		return workerapi.RunLeaseClaimResponse{}, err
 	}
 	if projection.program.DeploymentID != authority.run.DeploymentID ||
 		projection.program.EnvironmentID != authority.run.EnvironmentID {
-		return api.WorkerRunLeaseClaimResponse{}, errors.New("Run Lease Program authority is inconsistent")
+		return workerapi.RunLeaseClaimResponse{}, errors.New("Run Lease Program authority is inconsistent")
 	}
 	var actor *db.Actor
 	if authority.actor.ID.Valid {
@@ -142,35 +142,35 @@ func projectRunLeaseClaimResponse(
 		checkpointArtifacts: projection.checkpointArtifacts,
 	})
 	if err != nil {
-		return api.WorkerRunLeaseClaimResponse{}, err
+		return workerapi.RunLeaseClaimResponse{}, err
 	}
 	capability, err := deriveWorkspaceCapability(fencingKey, authority.workspaceLease)
 	if err != nil {
-		return api.WorkerRunLeaseClaimResponse{}, err
+		return workerapi.RunLeaseClaimResponse{}, err
 	}
 	attachment, err := projectWorkspaceAttachment(physical, capability.Token, projection.resetTarget)
 	if err != nil {
-		return api.WorkerRunLeaseClaimResponse{}, err
+		return workerapi.RunLeaseClaimResponse{}, err
 	}
-	secrets := make([]api.WorkerSecretDelivery, 0)
+	secrets := make([]workerapi.SecretDelivery, 0)
 	if authority.mode == runLeaseClaimFresh || authority.mode == runLeaseClaimAttachChild {
 		if secretDelivery == nil {
-			return api.WorkerRunLeaseClaimResponse{}, errors.New("Secret delivery opener is not configured")
+			return workerapi.RunLeaseClaimResponse{}, errors.New("Secret delivery opener is not configured")
 		}
 		environmentID, err := pgvalue.UUIDValue(authority.run.EnvironmentID)
 		if err != nil {
-			return api.WorkerRunLeaseClaimResponse{}, errors.New("Run Lease Environment ID is invalid")
+			return workerapi.RunLeaseClaimResponse{}, errors.New("Run Lease Environment ID is invalid")
 		}
 		materials, err := secretDelivery.OpenDeliveries(environmentID, envelopes)
 		if err != nil {
-			return api.WorkerRunLeaseClaimResponse{}, fmt.Errorf("open Run Lease Secret delivery: %w", err)
+			return workerapi.RunLeaseClaimResponse{}, fmt.Errorf("open Run Lease Secret delivery: %w", err)
 		}
 		secrets, err = projectSecretDeliveries(materials)
 		if err != nil {
-			return api.WorkerRunLeaseClaimResponse{}, err
+			return workerapi.RunLeaseClaimResponse{}, err
 		}
 	}
-	return api.WorkerRunLeaseClaimResponse{
+	return workerapi.RunLeaseClaimResponse{
 		Lease:     lease,
 		Program:   program,
 		Workspace: attachment,

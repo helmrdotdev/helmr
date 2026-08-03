@@ -9,18 +9,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerRuntimeReconcileRequest
+	var request workerapi.RuntimeReconcileRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid runtime reconcile request JSON: %w", err)))
 		return
@@ -30,51 +30,51 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeJSON(w, http.StatusOK, api.WorkerRuntimeReconcileResponse{})
+		writeJSON(w, http.StatusOK, workerapi.RuntimeReconcileResponse{})
 		return
 	}
 	if err != nil {
 		writeError(w, errors.New("get runtime reconcile target"))
 		return
 	}
-	action := api.WorkerRuntimeReconcilePrepare
+	action := workerapi.RuntimeReconcilePrepare
 	switch {
 	case row.ObservedState == db.RuntimeObservedStateFailed:
-		action = api.WorkerRuntimeReconcileReclaim
+		action = workerapi.RuntimeReconcileReclaim
 	case row.DesiredState == db.RuntimeDesiredStateClosed:
-		action = api.WorkerRuntimeReconcileClose
+		action = workerapi.RuntimeReconcileClose
 	}
-	source := api.WorkerRuntimeSource{
+	source := workerapi.RuntimeSource{
 		DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID),
 		WorkspaceID:            pgvalue.UUIDString(row.WorkspaceID),
 		RuntimeIdentityID:      row.RuntimeIdentityID,
-		WorkspaceImage:         api.CASObject{Digest: row.WorkspaceImageDigest, SizeBytes: row.WorkspaceImageSizeBytes, MediaType: row.WorkspaceImageMediaType},
+		WorkspaceImage:         workerapi.CASObject{Digest: row.WorkspaceImageDigest, SizeBytes: row.WorkspaceImageSizeBytes, MediaType: row.WorkspaceImageMediaType},
 		WorkspaceArchitecture:  row.WorkspaceArchitecture,
 		RootfsDigest:           row.RootfsDigest,
 		ReservedCpuMillis:      int32(row.ReservedCpuMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
 		ReservedDiskMiB: row.ReservedGuestEphemeralDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
 		RuntimeABI: row.RuntimeABI,
 	}
-	if action == api.WorkerRuntimeReconcilePrepare {
+	if action == workerapi.RuntimeReconcilePrepare {
 		if err := populateRuntimePrepareSource(r.Context(), s.db, s.platformStore, &source, row); err != nil {
 			writeError(w, err)
 			return
 		}
 	}
-	target := api.WorkerRuntimeReconcileTarget{
+	target := workerapi.RuntimeReconcileTarget{
 		ID: pgvalue.UUIDString(row.ID), WorkerEpoch: row.WorkerEpoch,
 		DesiredState: string(row.DesiredState), DesiredVersion: row.DesiredVersion,
 		ObservedState: string(row.ObservedState), ObservedVersion: row.ObservedVersion, ObservedDesiredVersion: row.ObservedDesiredVersion,
 		Action: action, Source: source,
 	}
-	writeJSON(w, http.StatusOK, api.WorkerRuntimeReconcileResponse{Target: &target})
+	writeJSON(w, http.StatusOK, workerapi.RuntimeReconcileResponse{Target: &target})
 }
 
 func populateRuntimePrepareSource(
 	ctx context.Context,
 	store db.Querier,
 	platformStore cas.Reader,
-	source *api.WorkerRuntimeSource,
+	source *workerapi.RuntimeSource,
 	row db.GetNextRuntimeReconcileTargetRow,
 ) error {
 	if !row.BaseWorkspaceVersionID.Valid || !row.WorkspaceEntryCount.Valid {
@@ -84,7 +84,7 @@ func populateRuntimePrepareSource(
 		return errors.New("runtime reservation has no Workspace architecture")
 	}
 	source.BaseVersionID = pgvalue.UUIDString(row.BaseWorkspaceVersionID)
-	source.WorkspaceArtifact = api.WorkerWorkspaceArtifact{
+	source.WorkspaceArtifact = workerapi.WorkspaceArtifact{
 		Digest:     row.WorkspaceArtifactDigest,
 		MediaType:  row.WorkspaceArtifactMediaType,
 		SizeBytes:  row.WorkspaceArtifactSizeBytes,
@@ -152,7 +152,7 @@ func populateRuntimePrepareSource(
 		if err != nil {
 			return fmt.Errorf("project restored runtime Checkpoint: %w", err)
 		}
-		source.Restore = &api.WorkerRuntimeRestore{
+		source.Restore = &workerapi.RuntimeRestore{
 			CheckpointID: pgvalue.UUIDString(row.RestoreCheckpointID),
 			RunID:        pgvalue.UUIDString(checkpoint.RunID), AttemptNumber: checkpoint.AttemptNumber,
 			RunWaitID: pgvalue.UUIDString(checkpoint.RunWaitID),
@@ -173,7 +173,7 @@ func (s *Server) workerMarkRuntimeInstanceFailed(w http.ResponseWriter, r *http.
 }
 
 func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Request, state string) {
-	var request api.WorkerRuntimeInstanceStateRequest
+	var request workerapi.RuntimeInstanceStateRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker runtime instance %s request JSON: %w", state, err)))
 		return
@@ -287,9 +287,9 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, runtimeInstanceResponse(row))
 }
 
-func validateRuntimeCleanupProof(proof api.WorkerRuntimeCleanupProof, now time.Time) error {
+func validateRuntimeCleanupProof(proof workerapi.RuntimeCleanupProof, now time.Time) error {
 	switch proof.Method {
-	case api.WorkerRuntimeCleanupSessionClosed, api.WorkerRuntimeCleanupHostReconciled, api.WorkerRuntimeCleanupNotMaterialized:
+	case workerapi.RuntimeCleanupSessionClosed, workerapi.RuntimeCleanupHostReconciled, workerapi.RuntimeCleanupNotMaterialized:
 	default:
 		return errors.New("runtime cleanup proof method is unsupported")
 	}
@@ -299,8 +299,8 @@ func validateRuntimeCleanupProof(proof api.WorkerRuntimeCleanupProof, now time.T
 	return nil
 }
 
-func validateRuntimeClosedCleanupProof(proof api.WorkerRuntimeCleanupProof, now time.Time) error {
-	if proof.Method != api.WorkerRuntimeCleanupSessionClosed && proof.Method != api.WorkerRuntimeCleanupHostReconciled {
+func validateRuntimeClosedCleanupProof(proof workerapi.RuntimeCleanupProof, now time.Time) error {
+	if proof.Method != workerapi.RuntimeCleanupSessionClosed && proof.Method != workerapi.RuntimeCleanupHostReconciled {
 		return errors.New("closed runtime cleanup proof must confirm a closed session or exact host reconciliation")
 	}
 	return validateRuntimeCleanupProof(proof, now)
@@ -313,8 +313,8 @@ func normalizedJSONRawMessage(raw json.RawMessage) []byte {
 	return []byte(raw)
 }
 
-func runtimeInstanceResponse(row db.RuntimeInstance) api.WorkerRuntimeInstance {
-	return api.WorkerRuntimeInstance{
+func runtimeInstanceResponse(row db.RuntimeInstance) workerapi.RuntimeInstance {
+	return workerapi.RuntimeInstance{
 		ID:                     pgvalue.UUIDString(row.ID),
 		OrgID:                  pgvalue.UUIDString(row.OrgID),
 		ProjectID:              pgvalue.UUIDString(row.ProjectID),

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 var ErrWorkerRoleIntersectionEmpty = errors.New("worker role intersection is empty")
@@ -39,8 +40,8 @@ func (input EpochExchangeInput) Validate() error {
 	if input.ServiceID == uuid.Nil {
 		return errors.New("service_id is required")
 	}
-	if input.ProtocolVersion != WorkerProtocolVersion {
-		return fmt.Errorf("protocol_version must be %q", WorkerProtocolVersion)
+	if input.ProtocolVersion != workerapi.CurrentProtocolVersion {
+		return fmt.Errorf("protocol_version must be %q", workerapi.CurrentProtocolVersion)
 	}
 	if !input.SupervisorRoles.Run && !input.SupervisorRoles.Build {
 		return errors.New("supervisor must support at least one worker role")

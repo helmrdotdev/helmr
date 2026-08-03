@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -28,7 +28,7 @@ func authorizeWorkerRunSource(
 	ctx context.Context,
 	q db.Querier,
 	worker workerActor,
-	lease api.WorkerRunLeaseFence,
+	lease workerapi.RunLeaseFence,
 ) (workerRunSourceAuthority, error) {
 	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {

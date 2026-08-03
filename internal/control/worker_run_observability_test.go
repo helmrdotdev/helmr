@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestRunMetadataMutationNormalizesAndAppliesInApplication(t *testing.T) {
@@ -12,13 +12,13 @@ func TestRunMetadataMutationNormalizesAndAppliesInApplication(t *testing.T) {
 	tests := []struct {
 		name    string
 		current json.RawMessage
-		request api.WorkerUpdateRunMetadataRequest
+		request workerapi.UpdateRunMetadataRequest
 		want    string
 	}{
 		{
 			name:    "set",
 			current: json.RawMessage(`{"phase":"queued"}`),
-			request: api.WorkerUpdateRunMetadataRequest{
+			request: workerapi.UpdateRunMetadataRequest{
 				Operation: "set", Key: "phase",
 				Value: json.RawMessage(`"running"`),
 			},
@@ -27,7 +27,7 @@ func TestRunMetadataMutationNormalizesAndAppliesInApplication(t *testing.T) {
 		{
 			name:    "patch",
 			current: json.RawMessage(`{"phase":"running","steps":1}`),
-			request: api.WorkerUpdateRunMetadataRequest{
+			request: workerapi.UpdateRunMetadataRequest{
 				Operation: "patch",
 				Patch:     json.RawMessage(`{"approved":true,"phase":"done"}`),
 			},
@@ -36,7 +36,7 @@ func TestRunMetadataMutationNormalizesAndAppliesInApplication(t *testing.T) {
 		{
 			name:    "increment",
 			current: json.RawMessage(`{"steps":1}`),
-			request: api.WorkerUpdateRunMetadataRequest{
+			request: workerapi.UpdateRunMetadataRequest{
 				Operation: "increment", Key: "steps", Amount: &amount,
 			},
 			want: `{"steps":3}`,
@@ -66,7 +66,7 @@ func TestRunMetadataMutationNormalizesAndAppliesInApplication(t *testing.T) {
 func TestRunMetadataIncrementRejectsNonnumericStoredValue(t *testing.T) {
 	amount := 1.0
 	mutation, err := normalizeRunMetadataMutation(
-		api.WorkerUpdateRunMetadataRequest{
+		workerapi.UpdateRunMetadataRequest{
 			Operation: "increment", Key: "steps", Amount: &amount,
 		},
 	)

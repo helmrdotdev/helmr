@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -48,7 +49,7 @@ type childTaskReceipt struct {
 }
 
 type childTaskInvokeInput struct {
-	Request           api.WorkerInvokeChildTaskRequest
+	Request           workerapi.InvokeChildTaskRequest
 	Parsed            parsedRunLeaseFence
 	Worker            workerActor
 	SourceWorkspaceID uuid.UUID
@@ -59,7 +60,7 @@ type childTaskInvokeInput struct {
 
 type childTaskInvokeResult struct {
 	taskStartResult
-	openedWait *api.WorkerCreateRunWaitResponse
+	openedWait *workerapi.CreateRunWaitResponse
 }
 
 func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
@@ -67,7 +68,7 @@ func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerInvokeChildTaskRequest
+	var request workerapi.InvokeChildTaskRequest
 	if err := decodeClosedWorkerRequest(r, &request); err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_child_task_start", message: err.Error()}))
 		return
@@ -143,18 +144,18 @@ func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
 		s.writeChildTaskInvokeError(w, request.CorrelationID, request.Method, err)
 		return
 	}
-	response := api.WorkerInvokeChildTaskResponse{
+	response := workerapi.InvokeChildTaskResponse{
 		CorrelationID: request.CorrelationID,
 		OpenedWait:    result.openedWait,
 	}
 	if result.RunID != uuid.Nil {
-		response.Completed = &api.WorkerChildTaskStartResult{RunID: result.RunID.String()}
+		response.Completed = &workerapi.ChildTaskStartResult{RunID: result.RunID.String()}
 	}
 	writeJSON(w, http.StatusOK, response)
 }
 
 func normalizeWorkerChildTaskRequest(
-	request api.WorkerInvokeChildTaskRequest,
+	request workerapi.InvokeChildTaskRequest,
 	locators db.GetLiveRunLeaseLocatorsRow,
 ) (normalizedTaskStart, error) {
 	if err := api.ValidateTaskID(request.TaskDeclaredID); err != nil {
@@ -600,7 +601,7 @@ func registerSameWorkspaceChildCall(
 	claim db.IdempotencyClaim,
 	fingerprint idempotency.TaskChildInvokeFingerprint,
 	replay *childTaskReceipt,
-) (api.WorkerCreateRunWaitResponse, error) {
+) (workerapi.CreateRunWaitResponse, error) {
 	requestFingerprint := fmt.Sprintf("sha256:%x", claim.RequestFingerprint)
 	if replay != nil {
 		return replayBoundSameWorkspaceChildCall(
@@ -617,12 +618,12 @@ func registerSameWorkspaceChildCall(
 	resumeAttachID := input.ResumeAttachID
 	childRequest, err := json.Marshal(fingerprint)
 	if err != nil {
-		return api.WorkerCreateRunWaitResponse{}, fmt.Errorf(
+		return workerapi.CreateRunWaitResponse{}, fmt.Errorf(
 			"encode same-Workspace child Task call request: %w",
 			err,
 		)
 	}
-	response := api.WorkerCreateRunWaitResponse{
+	response := workerapi.CreateRunWaitResponse{
 		RunID:             pgvalue.UUIDString(authority.run.ID),
 		RunWaitID:         waitID.String(),
 		ResumeAttachID:    resumeAttachID.String(),
@@ -647,12 +648,12 @@ func registerSameWorkspaceChildCall(
 	)
 	if err == nil {
 		if err := validateRunWaitActorCursor(authority, replayed); err != nil {
-			return api.WorkerCreateRunWaitResponse{}, err
+			return workerapi.CreateRunWaitResponse{}, err
 		}
 		if replayed.SuspensionState == db.RunWaitStateReleased {
 			if replayed.ConditionState != db.WaitStateCompleted ||
 				replayed.ConditionResult == nil {
-				return api.WorkerCreateRunWaitResponse{}, errChildTaskInvokeStale
+				return workerapi.CreateRunWaitResponse{}, errChildTaskInvokeStale
 			}
 			response.ResolutionKind = "completed"
 			response.Resolution = append(
@@ -663,7 +664,7 @@ func registerSameWorkspaceChildCall(
 		return response, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return api.WorkerCreateRunWaitResponse{}, fmt.Errorf(
+		return workerapi.CreateRunWaitResponse{}, fmt.Errorf(
 			"load same-Workspace child Task call replay: %w",
 			err,
 		)
@@ -694,10 +695,10 @@ func registerSameWorkspaceChildCall(
 		},
 	)
 	if err != nil {
-		return api.WorkerCreateRunWaitResponse{}, staleChildTaskInvoke(err)
+		return workerapi.CreateRunWaitResponse{}, staleChildTaskInvoke(err)
 	}
 	if err := validateRunWaitActorCursor(authority, registered); err != nil {
-		return api.WorkerCreateRunWaitResponse{}, err
+		return workerapi.CreateRunWaitResponse{}, err
 	}
 	return response, nil
 }
@@ -710,17 +711,17 @@ func replayBoundSameWorkspaceChildCall(
 	claim db.IdempotencyClaim,
 	requestFingerprint string,
 	receipt childTaskReceipt,
-) (api.WorkerCreateRunWaitResponse, error) {
+) (workerapi.CreateRunWaitResponse, error) {
 	if receipt.RunWaitID == "" ||
 		receipt.ResumeAttachID == "" ||
 		receipt.BaseWorkspaceVersionID == "" ||
 		receipt.BaseWorkspaceDigest == "" {
-		return api.WorkerCreateRunWaitResponse{}, errWorkspaceHandoffConflict
+		return workerapi.CreateRunWaitResponse{}, errWorkspaceHandoffConflict
 	}
 	waitID := uuid.MustParse(receipt.RunWaitID)
 	resumeAttachID := uuid.MustParse(receipt.ResumeAttachID)
 	if waitID != input.RunWaitID || resumeAttachID != input.ResumeAttachID {
-		return api.WorkerCreateRunWaitResponse{}, errWorkspaceHandoffConflict
+		return workerapi.CreateRunWaitResponse{}, errWorkspaceHandoffConflict
 	}
 	childRunID := uuid.MustParse(receipt.RunID)
 	baseID := uuid.MustParse(receipt.BaseWorkspaceVersionID)
@@ -740,10 +741,10 @@ func replayBoundSameWorkspaceChildCall(
 		},
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return api.WorkerCreateRunWaitResponse{}, errWorkspaceHandoffConflict
+		return workerapi.CreateRunWaitResponse{}, errWorkspaceHandoffConflict
 	}
 	if err != nil {
-		return api.WorkerCreateRunWaitResponse{}, fmt.Errorf(
+		return workerapi.CreateRunWaitResponse{}, fmt.Errorf(
 			"load bound same-Workspace child Task call: %w",
 			err,
 		)
@@ -752,9 +753,9 @@ func replayBoundSameWorkspaceChildCall(
 		replayed.ConditionState != db.WaitStateCompleted ||
 		replayed.ConditionResult == nil ||
 		!replayed.ResumeWorkspaceVersionID.Valid {
-		return api.WorkerCreateRunWaitResponse{}, errWorkspaceHandoffConflict
+		return workerapi.CreateRunWaitResponse{}, errWorkspaceHandoffConflict
 	}
-	return api.WorkerCreateRunWaitResponse{
+	return workerapi.CreateRunWaitResponse{
 		RunID:             pgvalue.UUIDString(authority.run.ID),
 		RunWaitID:         waitID.String(),
 		ResumeAttachID:    resumeAttachID.String(),
@@ -772,7 +773,7 @@ func loadChildTaskInvokeLocators(
 	ctx context.Context,
 	q db.Querier,
 	worker workerActor,
-	lease api.WorkerRunLeaseFence,
+	lease workerapi.RunLeaseFence,
 	parsed parsedRunLeaseFence,
 ) (db.GetLiveRunLeaseLocatorsRow, error) {
 	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
@@ -795,15 +796,15 @@ func registerDifferentWorkspaceChildCall(
 	fingerprint idempotency.TaskChildInvokeFingerprint,
 	child taskStartResult,
 	childWorkspaceID uuid.UUID,
-) (api.WorkerCreateRunWaitResponse, error) {
+) (workerapi.CreateRunWaitResponse, error) {
 	waitID := input.RunWaitID
 	resumeAttachID := input.ResumeAttachID
 	requestFingerprint := fmt.Sprintf("sha256:%x", claim.RequestFingerprint)
 	childRequest, err := json.Marshal(fingerprint)
 	if err != nil {
-		return api.WorkerCreateRunWaitResponse{}, fmt.Errorf("encode child Task call request: %w", err)
+		return workerapi.CreateRunWaitResponse{}, fmt.Errorf("encode child Task call request: %w", err)
 	}
-	response := api.WorkerCreateRunWaitResponse{
+	response := workerapi.CreateRunWaitResponse{
 		RunID: pgvalue.UUIDString(authority.run.ID), RunWaitID: waitID.String(),
 		ResumeAttachID:    resumeAttachID.String(),
 		RuntimeInstanceID: pgvalue.UUIDString(authority.runtime.ID),
@@ -819,11 +820,11 @@ func registerDifferentWorkspaceChildCall(
 	})
 	if err == nil {
 		if err := validateRunWaitActorCursor(authority, replayed); err != nil {
-			return api.WorkerCreateRunWaitResponse{}, err
+			return workerapi.CreateRunWaitResponse{}, err
 		}
 		if replayed.SuspensionState == db.RunWaitStateReleased {
 			if replayed.ConditionState != db.WaitStateCompleted || replayed.ConditionResult == nil {
-				return api.WorkerCreateRunWaitResponse{}, errChildTaskInvokeStale
+				return workerapi.CreateRunWaitResponse{}, errChildTaskInvokeStale
 			}
 			response.ResolutionKind = "completed"
 			response.Resolution = append(json.RawMessage(nil), replayed.ConditionResult...)
@@ -831,7 +832,7 @@ func registerDifferentWorkspaceChildCall(
 		return response, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return api.WorkerCreateRunWaitResponse{}, fmt.Errorf("load child Task call replay: %w", err)
+		return workerapi.CreateRunWaitResponse{}, fmt.Errorf("load child Task call replay: %w", err)
 	}
 	childRun, err := store.GetRun(ctx, db.GetRunParams{
 		EnvironmentID: authority.run.EnvironmentID, ID: pgvalue.UUID(child.RunID),
@@ -841,7 +842,7 @@ func registerDifferentWorkspaceChildCall(
 		childRun.WorkspaceID != pgvalue.UUID(childWorkspaceID) ||
 		childRun.WorkspaceID == authority.run.WorkspaceID ||
 		childRun.ClaimID != claim.ID {
-		return api.WorkerCreateRunWaitResponse{}, staleChildTaskInvoke(err)
+		return workerapi.CreateRunWaitResponse{}, staleChildTaskInvoke(err)
 	}
 	actorCursor := pgtype.Int8{}
 	if input.Request.ActorSpeculativeInputSequence != nil {
@@ -865,7 +866,7 @@ func registerDifferentWorkspaceChildCall(
 		childRun.Status == db.RunStatusSystemFailed {
 		resolution, err := childTaskResult(childRun)
 		if err != nil {
-			return api.WorkerCreateRunWaitResponse{}, err
+			return workerapi.CreateRunWaitResponse{}, err
 		}
 		resolved, err := store.RegisterResolvedDifferentWorkspaceChildCall(
 			ctx,
@@ -882,10 +883,10 @@ func registerDifferentWorkspaceChildCall(
 			},
 		)
 		if err != nil {
-			return api.WorkerCreateRunWaitResponse{}, staleChildTaskInvoke(err)
+			return workerapi.CreateRunWaitResponse{}, staleChildTaskInvoke(err)
 		}
 		if err := validateRunWaitActorCursor(authority, resolved); err != nil {
-			return api.WorkerCreateRunWaitResponse{}, err
+			return workerapi.CreateRunWaitResponse{}, err
 		}
 		response.ResolutionKind = "completed"
 		response.Resolution = resolution
@@ -894,14 +895,14 @@ func registerDifferentWorkspaceChildCall(
 	if childRun.Status != db.RunStatusQueued && childRun.Status != db.RunStatusRunning &&
 		childRun.Status != db.RunStatusWaiting && childRun.Status != db.RunStatusRetryDelayed &&
 		childRun.Status != db.RunStatusCancelRequested {
-		return api.WorkerCreateRunWaitResponse{}, errChildTaskInvokeStale
+		return workerapi.CreateRunWaitResponse{}, errChildTaskInvokeStale
 	}
 	registered, err := store.RegisterDifferentWorkspaceChildCall(ctx, params)
 	if err != nil {
-		return api.WorkerCreateRunWaitResponse{}, staleChildTaskInvoke(err)
+		return workerapi.CreateRunWaitResponse{}, staleChildTaskInvoke(err)
 	}
 	if err := validateRunWaitActorCursor(authority, registered); err != nil {
-		return api.WorkerCreateRunWaitResponse{}, err
+		return workerapi.CreateRunWaitResponse{}, err
 	}
 	return response, nil
 }
@@ -1105,30 +1106,30 @@ func (s *Server) writeChildTaskInvokeError(
 	err error,
 ) {
 	var idempotencyConflict idempotency.ConflictError
-	var failure api.WorkerRuntimeOperationFailure
+	var failure workerapi.RuntimeOperationFailure
 	switch {
 	case errors.As(err, &idempotencyConflict):
-		failure = api.WorkerRuntimeOperationFailure{
+		failure = workerapi.RuntimeOperationFailure{
 			Code: "idempotency_conflict", Message: "idempotency key conflicts with an earlier child Task invocation",
 		}
 	case errors.Is(err, errChildTaskSameWorkspace):
-		failure = api.WorkerRuntimeOperationFailure{
+		failure = workerapi.RuntimeOperationFailure{
 			Code: "same_workspace_" + method + "_unsupported", Message: err.Error(),
 		}
 	case errors.Is(err, errWorkspaceHandoffConflict):
-		failure = api.WorkerRuntimeOperationFailure{
+		failure = workerapi.RuntimeOperationFailure{
 			Code: "workspace_handoff_conflict", Message: err.Error(),
 		}
 	case errors.Is(err, errTaskNotDeployed):
-		failure = api.WorkerRuntimeOperationFailure{Code: "task_not_deployed", Message: err.Error()}
+		failure = workerapi.RuntimeOperationFailure{Code: "task_not_deployed", Message: err.Error()}
 	case errors.Is(err, errTaskWorkspaceNotFound):
-		failure = api.WorkerRuntimeOperationFailure{Code: "workspace_not_found", Message: err.Error()}
+		failure = workerapi.RuntimeOperationFailure{Code: "workspace_not_found", Message: err.Error()}
 	case errors.Is(err, errTaskWorkspaceUnavailable):
-		failure = api.WorkerRuntimeOperationFailure{Code: "workspace_unavailable", Message: err.Error(), Retryable: true}
+		failure = workerapi.RuntimeOperationFailure{Code: "workspace_unavailable", Message: err.Error(), Retryable: true}
 	case errors.Is(err, errTaskSecretUnavailable):
-		failure = api.WorkerRuntimeOperationFailure{Code: "secret_unavailable", Message: err.Error()}
+		failure = workerapi.RuntimeOperationFailure{Code: "secret_unavailable", Message: err.Error()}
 	case errors.Is(err, errTaskPayloadPresenceInvalid), errors.Is(err, errTaskStartInvalid):
-		failure = api.WorkerRuntimeOperationFailure{Code: "invalid_child_task_invoke", Message: err.Error()}
+		failure = workerapi.RuntimeOperationFailure{Code: "invalid_child_task_invoke", Message: err.Error()}
 	case errors.Is(err, errChildTaskInvokeStale):
 		writeError(w, conflict(errChildTaskInvokeStale))
 		return
@@ -1140,7 +1141,7 @@ func (s *Server) writeChildTaskInvokeError(
 		}))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerInvokeChildTaskResponse{
+	writeJSON(w, http.StatusOK, workerapi.InvokeChildTaskResponse{
 		CorrelationID: correlationID, Failed: &failure,
 	})
 }

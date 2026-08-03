@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -140,10 +140,10 @@ func TestCommitActorTurnInvalidatesRestoredCheckpointBeforePublishingChangedTurn
 	if err != nil {
 		t.Fatal(err)
 	}
-	request.Tree = api.WorkerWorkspaceTreeIdentity{
+	request.Tree = workerapi.WorkspaceTreeIdentity{
 		Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: int32(tree.EntryCount),
 	}
-	request.Artifact = &api.WorkerWorkspaceArtifact{
+	request.Artifact = &workerapi.WorkspaceArtifact{
 		Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
 		SizeBytes: artifact.SizeBytes, EntryCount: int32(artifact.EntryCount),
 	}
@@ -173,7 +173,7 @@ func TestCommitActorTurnInvalidatesRestoredCheckpointBeforePublishingChangedTurn
 
 func projectActorTurnTestAssignment(
 	authority runLeaseClaimAuthority,
-) (api.WorkerRunLeaseAssignment, error) {
+) (workerapi.RunLeaseAssignment, error) {
 	return projectRunLeaseAssignment(runLeaseProjectionAuthority{
 		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
 		runLease:  authority.runLease,
@@ -201,10 +201,10 @@ func TestCommitActorTurnRollsBackChangedWorkspaceWhenCursorAdvanceFails(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	request.Tree = api.WorkerWorkspaceTreeIdentity{
+	request.Tree = workerapi.WorkspaceTreeIdentity{
 		Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: int32(tree.EntryCount),
 	}
-	request.Artifact = &api.WorkerWorkspaceArtifact{
+	request.Artifact = &workerapi.WorkspaceArtifact{
 		Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
 		SizeBytes: artifact.SizeBytes, EntryCount: int32(artifact.EntryCount),
 	}
@@ -412,7 +412,7 @@ func newActorTurnCommitFixture(t *testing.T) (
 	*Server,
 	*actorTurnCommitStore,
 	workerActor,
-	api.WorkerCommitActorTurnRequest,
+	workerapi.CommitActorTurnRequest,
 	parsedActorTurnCommit,
 ) {
 	t.Helper()
@@ -462,10 +462,10 @@ func newActorTurnCommitFixture(t *testing.T) (
 		},
 		committedAt: pgvalue.Timestamptz(now),
 	}
-	request := api.WorkerCommitActorTurnRequest{
+	request := workerapi.CommitActorTurnRequest{
 		Lease: assignment.Fence(), CorrelationID: uuid.Must(uuid.NewV7()).String(),
 		TargetInputSequence: 2, BaseWorkspaceVersionID: assignment.BaseWorkspaceVersionID,
-		Tree: api.WorkerWorkspaceTreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
+		Tree: workerapi.WorkspaceTreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
 	}
 	commit, err := parseActorTurnCommitRequest(request)
 	if err != nil {

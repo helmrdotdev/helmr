@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/archive"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func (acquirer PlatformAcquirer) runtimeTree(
@@ -35,19 +35,19 @@ func (acquirer PlatformAcquirer) runtimeTree(
 		filepath.Join(root, "bin", "node"),
 		0755,
 	); err != nil {
-		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionTopologyFailed, err)
+		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionTopologyFailed, err)
 	}
 	if err := copyRegularFile(
 		filepath.Join(node.root, "LICENSE"),
 		filepath.Join(root, "share", "licenses", "node", "LICENSE"),
 		0644,
 	); err != nil {
-		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionTopologyFailed, err)
+		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionTopologyFailed, err)
 	}
 	loader := filepath.Join(root, "lib", "ld-linux-x86-64.so.2")
 	if info, err := os.Lstat(loader); err != nil || !info.Mode().IsRegular() {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionTopologyFailed,
+			workerapi.PlatformAcquisitionTopologyFailed,
 			errors.New("Runtime harness loader is missing"),
 		)
 	}
@@ -59,7 +59,7 @@ func (acquirer PlatformAcquirer) runtimeTree(
 		filepath.Join(root, "bin", "node"),
 	); err != nil {
 		return nil, deterministicAcquisitionFailure(
-			api.WorkerPlatformAcquisitionTopologyFailed,
+			workerapi.PlatformAcquisitionTopologyFailed,
 			fmt.Errorf("patch Runtime Node: %w", err),
 		)
 	}
@@ -101,7 +101,7 @@ func (acquirer PlatformAcquirer) runtimeTree(
 	}
 	pre, err := encodePlatformTree(ctx, acquirer.WorkDir, acquirer.Encoder, runtimeArtifact, root)
 	if err != nil {
-		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionTopologyFailed, err)
+		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionTopologyFailed, err)
 	}
 	conformance, validationErr := acquirer.Validator.Runtime(ctx, identity+"-runtime", pre, descriptor)
 	closeErr := pre.Close()
@@ -113,7 +113,7 @@ func (acquirer PlatformAcquirer) runtimeTree(
 		policy.ConformanceSet,
 		platformEvidence(evidence),
 	); err != nil {
-		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionConformanceFailed, err)
+		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionConformanceFailed, err)
 	}
 	conformanceRaw, err := CanonicalPlatformDocument(conformance)
 	if err != nil {
@@ -125,7 +125,7 @@ func (acquirer PlatformAcquirer) runtimeTree(
 	}
 	final, err := encodePlatformTree(ctx, acquirer.WorkDir, acquirer.Encoder, runtimeArtifact, root)
 	if err != nil {
-		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionTopologyFailed, err)
+		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionTopologyFailed, err)
 	}
 	defer func() {
 		if final != nil {
@@ -141,7 +141,7 @@ func (acquirer PlatformAcquirer) runtimeTree(
 		return nil, err
 	}
 	if err := final.validate(ctx, expectations.Runtime); err != nil {
-		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionTopologyFailed, err)
+		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionTopologyFailed, err)
 	}
 	result := final
 	final = nil
@@ -214,7 +214,7 @@ func (acquirer PlatformAcquirer) managerTree(
 	}
 	pre, err := encodePlatformTree(ctx, acquirer.WorkDir, acquirer.Encoder, managerArtifact, root)
 	if err != nil {
-		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionTopologyFailed, err)
+		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionTopologyFailed, err)
 	}
 	conformance, validationErr := acquirer.Validator.Manager(
 		ctx,
@@ -232,7 +232,7 @@ func (acquirer PlatformAcquirer) managerTree(
 		policy.ConformanceSet,
 		platformEvidence(evidence),
 	); err != nil {
-		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionConformanceFailed, err)
+		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionConformanceFailed, err)
 	}
 	conformanceRaw, err := CanonicalPlatformDocument(conformance)
 	if err != nil {
@@ -244,7 +244,7 @@ func (acquirer PlatformAcquirer) managerTree(
 	}
 	final, err := encodePlatformTree(ctx, acquirer.WorkDir, acquirer.Encoder, managerArtifact, root)
 	if err != nil {
-		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionTopologyFailed, err)
+		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionTopologyFailed, err)
 	}
 	defer func() {
 		if final != nil {
@@ -264,7 +264,7 @@ func (acquirer PlatformAcquirer) managerTree(
 		return nil, err
 	}
 	if err := final.validate(ctx, expectations.Manager); err != nil {
-		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionTopologyFailed, err)
+		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionTopologyFailed, err)
 	}
 	result := final
 	final = nil
@@ -343,7 +343,7 @@ func (acquirer PlatformAcquirer) toolchainTree(
 	}
 	pre, err := encodePlatformTree(ctx, acquirer.WorkDir, acquirer.Encoder, toolchainArtifact, root)
 	if err != nil {
-		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionTopologyFailed, err)
+		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionTopologyFailed, err)
 	}
 	conformance, validationErr := acquirer.Validator.Toolchain(
 		ctx,
@@ -361,7 +361,7 @@ func (acquirer PlatformAcquirer) toolchainTree(
 		policy.ConformanceSet,
 		platformEvidence(evidence),
 	); err != nil {
-		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionConformanceFailed, err)
+		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionConformanceFailed, err)
 	}
 	conformanceRaw, err := CanonicalPlatformDocument(conformance)
 	if err != nil {
@@ -373,7 +373,7 @@ func (acquirer PlatformAcquirer) toolchainTree(
 	}
 	final, err := encodePlatformTree(ctx, acquirer.WorkDir, acquirer.Encoder, toolchainArtifact, root)
 	if err != nil {
-		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionTopologyFailed, err)
+		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionTopologyFailed, err)
 	}
 	defer func() {
 		if final != nil {
@@ -389,7 +389,7 @@ func (acquirer PlatformAcquirer) toolchainTree(
 		return nil, err
 	}
 	if err := final.validate(ctx, expectations.Toolchain); err != nil {
-		return nil, deterministicAcquisitionFailure(api.WorkerPlatformAcquisitionTopologyFailed, err)
+		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionTopologyFailed, err)
 	}
 	result := final
 	final = nil

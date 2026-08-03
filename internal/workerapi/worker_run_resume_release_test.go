@@ -1,4 +1,4 @@
-package api
+package workerapi
 
 import (
 	"encoding/json"
@@ -6,8 +6,8 @@ import (
 )
 
 func TestWorkerRunResumeReleaseRequestJSON(t *testing.T) {
-	request := WorkerRunResumeReleaseRequest{
-		Lease:                WorkerRunLeaseFence{ID: "lease-1", LeaseSequence: 1},
+	request := RunResumeReleaseRequest{
+		Lease:                RunLeaseFence{ID: "lease-1", LeaseSequence: 1},
 		RunWaitID:            "wait-1",
 		CheckpointID:         "checkpoint-1",
 		ResumeAttachID:       "attach-1",
@@ -32,7 +32,7 @@ func TestWorkerRunResumeReleaseRequestJSON(t *testing.T) {
 	if len(fields) != 5 {
 		t.Fatalf("serialized request fields = %v", fields)
 	}
-	var decoded WorkerRunResumeReleaseRequest
+	var decoded RunResumeReleaseRequest
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestWorkerRunResumeReleaseRequestRejectsOpenOrAmbiguousJSON(t *testing.T) {
 		[]byte(`{"lease":{"id":"first","id":"second"}}`),
 		[]byte(`{"lease":{}} {}`),
 	} {
-		var request WorkerRunResumeReleaseRequest
+		var request RunResumeReleaseRequest
 		if err := json.Unmarshal(raw, &request); err == nil {
 			t.Fatalf("ambiguous request %q was accepted", raw)
 		}
@@ -62,8 +62,8 @@ func TestWorkerRunResumeReleaseRequestRejectsOpenOrAmbiguousJSON(t *testing.T) {
 }
 
 func TestWorkerRunResumeReleaseResponseJSON(t *testing.T) {
-	raw, err := json.Marshal(WorkerRunResumeReleaseResponse{
-		Lease:                WorkerRunLeaseFence{ID: "lease-1", LeaseSequence: 1},
+	raw, err := json.Marshal(RunResumeReleaseResponse{
+		Lease:                RunLeaseFence{ID: "lease-1", LeaseSequence: 1},
 		RunWaitID:            "wait-1",
 		CheckpointID:         "checkpoint-1",
 		ResumeAttachID:       "attach-1",

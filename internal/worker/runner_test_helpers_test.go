@@ -1,14 +1,14 @@
 package worker
 
 import (
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/capacity"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func testCapacity(t interface {
 	Helper()
 	Fatal(...any)
-}, capabilities api.WorkerCapabilities) *capacity.Ledger {
+}, capabilities workerapi.Capabilities) *capacity.Ledger {
 	t.Helper()
 	resources, err := capacity.New(capacity.Vector{
 		CPUMillis:               capabilities.MaxVCPUs * 1000,
@@ -23,9 +23,9 @@ func testCapacity(t interface {
 	return resources
 }
 
-func testCapabilities() api.WorkerCapabilities {
-	return api.WorkerCapabilities{
-		ProtocolVersion: api.CurrentWorkerProtocolVersion, RuntimeID: "sha256:runtime",
+func testCapabilities() workerapi.Capabilities {
+	return workerapi.Capabilities{
+		ProtocolVersion: workerapi.CurrentProtocolVersion, RuntimeID: "sha256:runtime",
 		RuntimeArch: "x86_64", RuntimeABI: "helmr.firecracker.snapshot.v0",
 		KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", NetworkABI: "helmr/v0",
 		MaxVCPUs: 3, MaxMemoryMiB: 4096, ExecutionSlotsAvailable: 1,

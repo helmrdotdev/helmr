@@ -7,19 +7,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/runtime"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestPreparedRuntimeRestoreRebuildsAndRegistersSubstrateWithoutSubstrateCAS(t *testing.T) {
 	store, fixture := testWorkspaceMountArtifacts(t)
-	target := api.WorkerRuntimeReconcileTarget{
-		Source: api.WorkerRuntimeSource{
+	target := workerapi.RuntimeReconcileTarget{
+		Source: workerapi.RuntimeSource{
 			WorkspaceID:            "019c10d5-a6f7-7af1-8f5f-000000000801",
 			DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000802",
 			BaseVersionID:          "019c10d5-a6f7-7af1-8f5f-000000000803",
 			WorkspaceImage:         fixture.WorkspaceImage,
-			Restore:                &api.WorkerRuntimeRestore{CheckpointID: "checkpoint-1"},
+			Restore:                &workerapi.RuntimeRestore{CheckpointID: "checkpoint-1"},
 		},
 	}
 	substratePath := t.TempDir() + "/substrate.ext4"
@@ -125,13 +125,13 @@ var errRuntimeSubstrateConflict = errors.New("runtime substrate conflict")
 
 type immutableSubstrateRegistrar struct {
 	id      string
-	request api.WorkerRuntimeSubstrateRegisterRequest
+	request workerapi.RuntimeSubstrateRegisterRequest
 }
 
 func (r *immutableSubstrateRegistrar) RegisterRuntimeSubstrate(
 	_ context.Context,
-	request api.WorkerRuntimeSubstrateRegisterRequest,
-) (api.WorkerRuntimeSubstrateRegisterResponse, error) {
+	request workerapi.RuntimeSubstrateRegisterRequest,
+) (workerapi.RuntimeSubstrateRegisterResponse, error) {
 	if r.id == "" {
 		r.id = "019c10d5-a6f7-7af1-8f5f-000000000804"
 		r.request = request
@@ -141,10 +141,10 @@ func (r *immutableSubstrateRegistrar) RegisterRuntimeSubstrate(
 		request.LayoutABI != r.request.LayoutABI ||
 		request.SubstrateDigest != r.request.SubstrateDigest ||
 		request.SizeBytes != r.request.SizeBytes {
-		return api.WorkerRuntimeSubstrateRegisterResponse{}, errRuntimeSubstrateConflict
+		return workerapi.RuntimeSubstrateRegisterResponse{}, errRuntimeSubstrateConflict
 	}
-	return api.WorkerRuntimeSubstrateRegisterResponse{
-		RuntimeSubstrate: api.WorkerRuntimeSubstrate{
+	return workerapi.RuntimeSubstrateRegisterResponse{
+		RuntimeSubstrate: workerapi.RuntimeSubstrate{
 			ID:                     r.id,
 			DeploymentDefinitionID: request.DeploymentDefinitionID,
 			SubstrateDigest:        request.SubstrateDigest,

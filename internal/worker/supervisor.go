@@ -12,16 +12,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type Control interface {
 	AuthenticateWorker(context.Context) error
-	ReportWorkerStartupRecovery(context.Context, api.WorkerStartupRecoveryRequest) error
-	CompleteWorkerDrain(context.Context, api.WorkerDrainCompletionRequest) (api.WorkerStatusResponse, error)
-	ActivateWorker(context.Context, api.WorkerCapabilities) (api.WorkerStatusResponse, error)
-	ObserveWorker(context.Context, api.WorkerObservation) (api.WorkerStatusResponse, error)
+	ReportWorkerStartupRecovery(context.Context, workerapi.StartupRecoveryRequest) error
+	CompleteWorkerDrain(context.Context, workerapi.DrainCompletionRequest) (workerapi.StatusResponse, error)
+	ActivateWorker(context.Context, workerapi.Capabilities) (workerapi.StatusResponse, error)
+	ObserveWorker(context.Context, workerapi.Observation) (workerapi.StatusResponse, error)
 }
 
 type Work func(context.Context) error
@@ -54,17 +54,17 @@ type BackgroundSpec struct {
 
 type Config struct {
 	Control            Control
-	Capabilities       api.WorkerCapabilities
+	Capabilities       workerapi.Capabilities
 	Recover            func(context.Context) (RecoveryEvidence, error)
 	FinalizeDrain      func(context.Context) (RecoveryEvidence, error)
-	DrainCompleted     func(api.WorkerStatusResponse) error
+	DrainCompleted     func(workerapi.StatusResponse) error
 	Consumers          []ConsumerSpec
 	Admission          map[string]int
 	Background         []BackgroundSpec
 	ObservationEvery   time.Duration
 	PollEvery          time.Duration
 	DrainTimeout       time.Duration
-	Observation        func(State, Snapshot, RecoveryEvidence) api.WorkerObservation
+	Observation        func(State, Snapshot, RecoveryEvidence) workerapi.Observation
 	AdmissionEvaluator AdmissionEvaluator
 	Log                *slog.Logger
 }
@@ -184,7 +184,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		}
 	}
 	inventory := append(append(make([]string, 0, len(evidence.Reclaimed)+len(evidence.Quarantined)), evidence.Reclaimed...), evidence.Quarantined...)
-	if err := s.reportStartupRecovery(ctx, api.WorkerStartupRecoveryRequest{
+	if err := s.reportStartupRecovery(ctx, workerapi.StartupRecoveryRequest{
 		InventoryComplete: true,
 		InventoryScope:    "worker_runtime_state_roots_v0",
 		ObservedAt:        evidence.ObservedAt,
@@ -217,11 +217,11 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("activate worker: %w", err)
 	}
-	if status.Status != api.WorkerStatusActive && status.Status != api.WorkerStatusDraining {
+	if status.Status != workerapi.StatusActive && status.Status != workerapi.StatusDraining {
 		return fmt.Errorf("activated worker returned status %s", status.Status)
 	}
 	s.recovery = evidence
-	if status.Status == api.WorkerStatusActive {
+	if status.Status == workerapi.StatusActive {
 		s.state.Store(StateActive)
 	} else {
 		s.state.Store(StateDraining)
@@ -264,8 +264,8 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	}
 	drainRequested := make(chan struct{}, 1)
 	var drainOnce sync.Once
-	signalDrain := func(returned api.WorkerStatusResponse) {
-		if returned.Status == api.WorkerStatusDraining {
+	signalDrain := func(returned workerapi.StatusResponse) {
+		if returned.Status == workerapi.StatusDraining {
 			drainOnce.Do(func() {
 				// Publish draining before waking Run so every claim loop closes
 				// admission at the same instant the server response is observed.
@@ -276,7 +276,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	}
 	observeWG.Go(func() { s.observe(observeCtx, evidence, signalDrain) })
 	signalDrain(status)
-	if status.Status == api.WorkerStatusActive {
+	if status.Status == workerapi.StatusActive {
 		select {
 		case fatalErr := <-fatalWork:
 			cancelActiveClaims()
@@ -309,7 +309,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 
 func (s *Supervisor) reportStartupRecovery(
 	ctx context.Context,
-	request api.WorkerStartupRecoveryRequest,
+	request workerapi.StartupRecoveryRequest,
 ) error {
 	const maxAttempts = 10
 	delay := s.cfg.PollEvery
@@ -443,7 +443,7 @@ func (s *Supervisor) completeServerDirectedDrain(
 	if finalEvidence.ObservedAt.IsZero() || len(finalEvidence.Reclaimed) != 0 || len(finalEvidence.Quarantined) != 0 || len(finalEvidence.QuarantineErrors) != 0 {
 		return fail(fmt.Errorf("final worker drain inventory is not clean: reclaimed=%d quarantined=%d errors=%d", len(finalEvidence.Reclaimed), len(finalEvidence.Quarantined), len(finalEvidence.QuarantineErrors)))
 	}
-	request := api.WorkerDrainCompletionRequest{
+	request := workerapi.DrainCompletionRequest{
 		InventoryComplete: true,
 		InventoryScope:    "worker_runtime_state_roots_v0",
 		ObservedAt:        finalEvidence.ObservedAt,
@@ -456,7 +456,7 @@ func (s *Supervisor) completeServerDirectedDrain(
 	if err != nil {
 		return fail(fmt.Errorf("complete worker drain with clean local inventory: %w", err))
 	}
-	if status.Status != api.WorkerStatusTerminationReady {
+	if status.Status != workerapi.StatusTerminationReady {
 		return fail(fmt.Errorf("complete worker drain returned status %s, want termination_ready", status.Status))
 	}
 	if s.cfg.DrainCompleted != nil {
@@ -493,7 +493,7 @@ func (s *Supervisor) waitForDrainReady(ctx context.Context, evidence RecoveryEvi
 	for {
 		if s.registry.empty() {
 			status, err := s.cfg.Control.ObserveWorker(ctx, s.observation(StateDraining, evidence))
-			if err == nil && status.Status == api.WorkerStatusDraining && status.ActiveExecutions == 0 {
+			if err == nil && status.Status == workerapi.StatusDraining && status.ActiveExecutions == 0 {
 				return nil
 			}
 			if err != nil && ctx.Err() == nil {
@@ -620,7 +620,7 @@ func (s *Supervisor) acquireAdmission(ctx context.Context, name string) (func(),
 	}
 }
 
-func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, statusReturned func(api.WorkerStatusResponse)) {
+func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, statusReturned func(workerapi.StatusResponse)) {
 	ticker := time.NewTicker(s.cfg.ObservationEvery)
 	defer ticker.Stop()
 	for {
@@ -651,11 +651,11 @@ func (s *Supervisor) AdmitRuntimeStart(ctx context.Context) error {
 	return nil
 }
 
-func (s *Supervisor) observation(state State, evidence RecoveryEvidence) api.WorkerObservation {
+func (s *Supervisor) observation(state State, evidence RecoveryEvidence) workerapi.Observation {
 	if s.cfg.Observation != nil {
 		return s.cfg.Observation(state, s.registry.snapshot(), evidence)
 	}
-	observation := api.WorkerObservation{HealthDetails: evidence.HealthDetails(), QuarantinedResourceCount: int32(len(evidence.Quarantined))}
+	observation := workerapi.Observation{HealthDetails: evidence.HealthDetails(), QuarantinedResourceCount: int32(len(evidence.Quarantined))}
 	if s.cfg.AdmissionEvaluator != nil {
 		admissionObservation := s.cfg.AdmissionEvaluator.Observation()
 		observation.CPUPressureBPS = admissionObservation.CPUPressureBPS

@@ -5,15 +5,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func validRunLeaseAssignment(workerID uuid.UUID) api.WorkerRunLeaseAssignment {
-	return api.WorkerRunLeaseAssignment{
+func validRunLeaseAssignment(workerID uuid.UUID) workerapi.RunLeaseAssignment {
+	return workerapi.RunLeaseAssignment{
 		ID: uuid.Must(uuid.NewV7()).String(), RunID: uuid.Must(uuid.NewV7()).String(),
 		AttemptNumber: 1, LeaseSequence: 1, WorkerGroupID: "worker-group",
 		WorkerInstanceID: workerID.String(), WorkerEpoch: 1,
-		WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
+		WorkerProtocolVersion: workerapi.CurrentProtocolVersion,
 		RuntimeInstanceID:     uuid.Must(uuid.NewV7()).String(), RuntimeIdentityID: "runtime-identity",
 		WorkspaceID:            uuid.Must(uuid.NewV7()).String(),
 		WorkspaceMountID:       uuid.Must(uuid.NewV7()).String(),
@@ -28,7 +28,7 @@ func validRunLeaseAssignment(workerID uuid.UUID) api.WorkerRunLeaseAssignment {
 }
 
 func TestParseRunLeaseFence(t *testing.T) {
-	fence := api.WorkerRunLeaseFence{
+	fence := workerapi.RunLeaseFence{
 		ID: uuid.Must(uuid.NewV7()).String(), LeaseSequence: 3,
 	}
 	parsed, err := parseRunLeaseFence(fence)
@@ -41,7 +41,7 @@ func TestParseRunLeaseFence(t *testing.T) {
 }
 
 func TestParseRunLeaseFenceRejectsInvalidIdentity(t *testing.T) {
-	for _, fence := range []api.WorkerRunLeaseFence{
+	for _, fence := range []workerapi.RunLeaseFence{
 		{ID: "not-a-uuid", LeaseSequence: 1},
 		{ID: uuid.Must(uuid.NewV7()).String(), LeaseSequence: 0},
 	} {

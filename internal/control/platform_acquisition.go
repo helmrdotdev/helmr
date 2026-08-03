@@ -11,11 +11,11 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -24,7 +24,7 @@ func (s *Server) workerNextPlatformAcquisition(w http.ResponseWriter, r *http.Re
 		writeError(w, unavailable(errors.New("Platform Artifact authority is not configured")))
 		return
 	}
-	var request api.WorkerPlatformAcquisitionRequest
+	var request workerapi.PlatformAcquisitionRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Platform acquisition JSON: %w", err)))
 		return
@@ -40,7 +40,7 @@ func (s *Server) workerNextPlatformAcquisition(w http.ResponseWriter, r *http.Re
 		},
 	)
 	if isNoRows(err) {
-		writeJSON(w, http.StatusOK, api.WorkerPlatformAcquisitionResponse{})
+		writeJSON(w, http.StatusOK, workerapi.PlatformAcquisitionResponse{})
 		return
 	}
 	if err != nil {
@@ -52,7 +52,7 @@ func (s *Server) workerNextPlatformAcquisition(w http.ResponseWriter, r *http.Re
 		writeError(w, unavailable(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerPlatformAcquisitionResponse{
+	writeJSON(w, http.StatusOK, workerapi.PlatformAcquisitionResponse{
 		Acquisition: platformAcquisitionFromRow(row, policyDigest),
 	})
 }
@@ -62,7 +62,7 @@ func (s *Server) workerCompletePlatformAcquisition(w http.ResponseWriter, r *htt
 		writeError(w, unavailable(errors.New("Platform Artifact authority is not configured")))
 		return
 	}
-	var request api.WorkerPlatformAcquisitionCompleteRequest
+	var request workerapi.PlatformAcquisitionCompleteRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Platform acquisition completion JSON: %w", err)))
 		return
@@ -113,7 +113,7 @@ func (s *Server) workerCompletePlatformAcquisition(w http.ResponseWriter, r *htt
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerPlatformAcquisitionResult{
+	writeJSON(w, http.StatusOK, workerapi.PlatformAcquisitionResult{
 		DeploymentID: request.Acquisition.DeploymentID,
 		Status:       "pinned",
 	})
@@ -124,7 +124,7 @@ func (s *Server) workerFailPlatformAcquisition(w http.ResponseWriter, r *http.Re
 		writeError(w, unavailable(errors.New("Platform Artifact authority is not configured")))
 		return
 	}
-	var request api.WorkerPlatformAcquisitionFailRequest
+	var request workerapi.PlatformAcquisitionFailRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid Platform acquisition failure JSON: %w", err)))
 		return
@@ -144,7 +144,7 @@ func (s *Server) workerFailPlatformAcquisition(w http.ResponseWriter, r *http.Re
 		return
 	}
 	failure, err := json.Marshal(struct {
-		Reason api.WorkerPlatformAcquisitionFailureReason `json:"reason_code"`
+		Reason workerapi.PlatformAcquisitionFailureReason `json:"reason_code"`
 		Error  json.RawMessage                            `json:"error"`
 	}{
 		Reason: request.Reason,
@@ -170,7 +170,7 @@ func (s *Server) workerFailPlatformAcquisition(w http.ResponseWriter, r *http.Re
 		writeError(w, errors.New("fail Deployment Platform acquisition"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerPlatformAcquisitionResult{
+	writeJSON(w, http.StatusOK, workerapi.PlatformAcquisitionResult{
 		DeploymentID: request.Acquisition.DeploymentID,
 		Status:       "failed",
 	})
@@ -178,7 +178,7 @@ func (s *Server) workerFailPlatformAcquisition(w http.ResponseWriter, r *http.Re
 
 func (s *Server) platformAcquisitionRow(
 	ctx context.Context,
-	input api.WorkerPlatformAcquisition,
+	input workerapi.PlatformAcquisition,
 ) (db.GetDeploymentPlatformAcquisitionRow, error) {
 	worker := workerFromContext(ctx)
 	deploymentID, err := ids.Parse(input.DeploymentID)
@@ -219,7 +219,7 @@ type platformAcquisitionRow interface {
 func platformAcquisitionFromRow[T platformAcquisitionRow](
 	row T,
 	policyDigest string,
-) *api.WorkerPlatformAcquisition {
+) *workerapi.PlatformAcquisition {
 	switch value := any(row).(type) {
 	case db.GetNextDeploymentPlatformAcquisitionRow:
 		return newPlatformAcquisition(
@@ -263,8 +263,8 @@ func newPlatformAcquisition(
 	managerIntegrity pgtype.Text,
 	buildContract,
 	policyDigest string,
-) *api.WorkerPlatformAcquisition {
-	return &api.WorkerPlatformAcquisition{
+) *workerapi.PlatformAcquisition {
+	return &workerapi.PlatformAcquisition{
 		DeploymentID:      pgvalue.MustUUIDValue(id).String(),
 		OrgID:             pgvalue.MustUUIDValue(orgID).String(),
 		ProjectID:         pgvalue.MustUUIDValue(projectID).String(),
@@ -278,10 +278,10 @@ func newPlatformAcquisition(
 	}
 }
 
-func validatePlatformCandidateEnvelope(candidates api.WorkerPlatformAcquisitionCandidates) error {
+func validatePlatformCandidateEnvelope(candidates workerapi.PlatformAcquisitionCandidates) error {
 	values := []struct {
 		name      string
-		candidate api.CASObject
+		candidate workerapi.CASObject
 		mediaType string
 		maxBytes  int64
 	}{
@@ -305,7 +305,7 @@ func validatePlatformCandidateEnvelope(candidates api.WorkerPlatformAcquisitionC
 
 func (s *Server) validatePlatformCandidateObjects(
 	ctx context.Context,
-	request api.WorkerPlatformAcquisitionCompleteRequest,
+	request workerapi.PlatformAcquisitionCompleteRequest,
 ) (returnErr error) {
 	manager := deployment.PackageManager{
 		Integrity: request.Acquisition.ManagerIntegrity,
@@ -321,7 +321,7 @@ func (s *Server) validatePlatformCandidateObjects(
 		return conflict(err)
 	}
 	type candidateFile struct {
-		object api.CASObject
+		object workerapi.CASObject
 		file   *os.File
 	}
 	files := make([]candidateFile, 0, 3)
@@ -332,7 +332,7 @@ func (s *Server) validatePlatformCandidateObjects(
 			}
 		}
 	}()
-	for _, candidate := range []api.CASObject{
+	for _, candidate := range []workerapi.CASObject{
 		request.Candidates.Runtime,
 		request.Candidates.Manager,
 		request.Candidates.Toolchain,
@@ -434,7 +434,7 @@ func validatePlatformCandidateBinding(
 	return nil
 }
 
-func platformDescriptor(value api.CASObject) deployment.ArtifactDescriptor {
+func platformDescriptor(value workerapi.CASObject) deployment.ArtifactDescriptor {
 	return deployment.ArtifactDescriptor{
 		Digest:    value.Digest,
 		MediaType: value.MediaType,
@@ -442,14 +442,14 @@ func platformDescriptor(value api.CASObject) deployment.ArtifactDescriptor {
 	}
 }
 
-func validPlatformAcquisitionFailureReason(reason api.WorkerPlatformAcquisitionFailureReason) bool {
+func validPlatformAcquisitionFailureReason(reason workerapi.PlatformAcquisitionFailureReason) bool {
 	switch reason {
-	case api.WorkerPlatformAcquisitionUnsupportedSelector,
-		api.WorkerPlatformAcquisitionOriginRejected,
-		api.WorkerPlatformAcquisitionIntegrityFailed,
-		api.WorkerPlatformAcquisitionTopologyFailed,
-		api.WorkerPlatformAcquisitionConformanceFailed,
-		api.WorkerPlatformAcquisitionDenied:
+	case workerapi.PlatformAcquisitionUnsupportedSelector,
+		workerapi.PlatformAcquisitionOriginRejected,
+		workerapi.PlatformAcquisitionIntegrityFailed,
+		workerapi.PlatformAcquisitionTopologyFailed,
+		workerapi.PlatformAcquisitionConformanceFailed,
+		workerapi.PlatformAcquisitionDenied:
 		return true
 	default:
 		return false

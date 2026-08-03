@@ -8,9 +8,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -19,7 +19,7 @@ func TestNormalizeWorkerChildTaskRequestUsesParentScopeAndCallerOptions(t *testi
 	workspaceID := uuid.Must(uuid.NewV7()).String()
 	concurrencyKey := "customer:1"
 	normalized, err := normalizeWorkerChildTaskRequest(
-		api.WorkerInvokeChildTaskRequest{
+		workerapi.InvokeChildTaskRequest{
 			TaskDeclaredID: "resize-image",
 			PayloadPresent: true,
 			Payload:        json.RawMessage(`{"b":2,"a":1}`),
@@ -142,8 +142,8 @@ func TestReplayBoundSameWorkspaceChildCallUsesReceiptAuthority(t *testing.T) {
 		t.Context(),
 		store,
 		childTaskInvokeInput{
-			Request: api.WorkerInvokeChildTaskRequest{
-				Lease: api.WorkerRunLeaseFence{
+			Request: workerapi.InvokeChildTaskRequest{
+				Lease: workerapi.RunLeaseFence{
 					ID: uuid.Must(uuid.NewV7()).String(), LeaseSequence: 1,
 				},
 			},
@@ -190,8 +190,8 @@ func TestReplayBoundSameWorkspaceChildCallRejectsDifferentFrontier(t *testing.T)
 		t.Context(),
 		&sameWorkspaceChildReplayStore{err: pgx.ErrNoRows},
 		childTaskInvokeInput{
-			Request: api.WorkerInvokeChildTaskRequest{
-				Lease: api.WorkerRunLeaseFence{
+			Request: workerapi.InvokeChildTaskRequest{
+				Lease: workerapi.RunLeaseFence{
 					ID: uuid.Must(uuid.NewV7()).String(), LeaseSequence: 1,
 				},
 			},

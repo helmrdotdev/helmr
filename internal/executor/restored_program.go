@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type resumedProgramAdmission struct {
@@ -22,14 +22,14 @@ type resumedProgramAdmission struct {
 	correlationID        string
 	entrypointKind       string
 	entrypointDeclaredID string
-	decision             api.WorkerRunLeaseDecision
-	start                api.WorkerRunStartRequest
+	decision             workerapi.RunLeaseDecision
+	start                workerapi.RunStartRequest
 	recreated            bool
 }
 
 func (r ProgramRunner) startResumedProgram(
 	ctx context.Context,
-	claim *api.WorkerRunLeaseClaimResponse,
+	claim *workerapi.RunLeaseClaimResponse,
 	control RunLeaseControl,
 ) (freshProgram, error) {
 	resume, err := validateResumedProgramClaim(claim)
@@ -74,7 +74,7 @@ func (r ProgramRunner) startResumedProgram(
 	if err := grantProgramResumeOnSession(admissionCtx, opened.ControlSession, grant); err != nil {
 		return freshProgram{}, fmt.Errorf("install resumed Program authority: %w", err)
 	}
-	var startResponse api.WorkerRunStartResponse
+	var startResponse workerapi.RunStartResponse
 	if err := retryRunLeaseRequest(admissionCtx, func(requestCtx context.Context) error {
 		var requestErr error
 		resume.start.Lease = claim.Lease.Fence()
@@ -148,7 +148,7 @@ func (r ProgramRunner) startResumedProgram(
 }
 
 func validateResumedProgramClaim(
-	claim *api.WorkerRunLeaseClaimResponse,
+	claim *workerapi.RunLeaseClaimResponse,
 ) (resumedProgramAdmission, error) {
 	if claim == nil {
 		return resumedProgramAdmission{}, errors.New("Run Lease claim is required")
@@ -183,7 +183,7 @@ func validateResumedProgramClaim(
 			entrypointKind:       strings.TrimSpace(restore.EntrypointKind),
 			entrypointDeclaredID: strings.TrimSpace(restore.EntrypointDeclaredID),
 			decision:             restore.Decision,
-			start: api.WorkerRunStartRequest{Restore: &api.WorkerRunStartRestore{
+			start: workerapi.RunStartRequest{Restore: &workerapi.RunStartRestore{
 				RunWaitID:            restore.RunWaitID,
 				CheckpointID:         restore.CheckpointID,
 				ResumeAttachID:       restore.ResumeAttachID,
@@ -209,7 +209,7 @@ func validateResumedProgramClaim(
 			)
 		}
 		if restore.Recreated != nil {
-			var checkpoint api.WorkerCheckpointManifest
+			var checkpoint workerapi.CheckpointManifest
 			if err := json.Unmarshal(restore.Recreated.Manifest, &checkpoint); err != nil {
 				return resumedProgramAdmission{}, fmt.Errorf(
 					"decode restored Program Checkpoint: %w",
@@ -242,8 +242,8 @@ func validateResumedProgramClaim(
 			entrypointKind:       strings.TrimSpace(parent.EntrypointKind),
 			entrypointDeclaredID: strings.TrimSpace(parent.EntrypointDeclaredID),
 			decision:             parent.Decision,
-			start: api.WorkerRunStartRequest{Attach: &api.WorkerRunStartAttach{
-				Parent: &api.WorkerRunStartParentAttach{
+			start: workerapi.RunStartRequest{Attach: &workerapi.RunStartAttach{
+				Parent: &workerapi.RunStartParentAttach{
 					RunWaitID:            parent.RunWaitID,
 					CheckpointID:         parent.CheckpointID,
 					ResumeAttachID:       parent.ResumeAttachID,
@@ -270,8 +270,8 @@ func validateResumedProgramClaim(
 }
 
 func validateResumedProgramMount(
-	lease api.WorkerRunLeaseAssignment,
-	mount api.WorkerWorkspaceMount,
+	lease workerapi.RunLeaseAssignment,
+	mount workerapi.WorkspaceMount,
 	resume resumedProgramAdmission,
 ) error {
 	if mount.ID != lease.WorkspaceMountID ||
@@ -311,7 +311,7 @@ func resumedEntrypoint(
 	}
 }
 
-func restoredProgramDecision(decision api.WorkerRunLeaseDecision) (string, json.RawMessage, bool, error) {
+func restoredProgramDecision(decision workerapi.RunLeaseDecision) (string, json.RawMessage, bool, error) {
 	count := 0
 	if decision.Completed != nil {
 		count++

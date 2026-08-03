@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -44,7 +45,7 @@ func (s *Server) workerAppendActorOutput(w http.ResponseWriter, r *http.Request)
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerAppendActorOutputRequest
+	var request workerapi.AppendActorOutputRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
@@ -69,7 +70,7 @@ func (s *Server) workerAppendActorOutput(w http.ResponseWriter, r *http.Request)
 	record, err := s.appendActorOutput(r.Context(), worker, request, parsed)
 	if err != nil {
 		if failure, ok := actorOutputAppendFailure(err); ok {
-			writeJSON(w, http.StatusOK, api.WorkerAppendActorOutputResponse{
+			writeJSON(w, http.StatusOK, workerapi.AppendActorOutputResponse{
 				CorrelationID: request.CorrelationID,
 				Failed:        &failure,
 			})
@@ -83,14 +84,14 @@ func (s *Server) workerAppendActorOutput(w http.ResponseWriter, r *http.Request)
 		writeError(w, errors.New("append actor output"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerAppendActorOutputResponse{
+	writeJSON(w, http.StatusOK, workerapi.AppendActorOutputResponse{
 		CorrelationID: request.CorrelationID,
 		Completed:     &record,
 	})
 }
 
 func parseWorkerActorOutputAppend(
-	request api.WorkerAppendActorOutputRequest,
+	request workerapi.AppendActorOutputRequest,
 ) (parsedWorkerActorOutputAppend, error) {
 	lease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
@@ -127,7 +128,7 @@ func parseWorkerActorOutputAppend(
 func (s *Server) appendActorOutput(
 	ctx context.Context,
 	worker workerActor,
-	request api.WorkerAppendActorOutputRequest,
+	request workerapi.AppendActorOutputRequest,
 	parsed parsedWorkerActorOutputAppend,
 ) (api.ActorOutputRecord, error) {
 	if len(parsed.data) > maxActorOutputBytes {
@@ -366,22 +367,22 @@ func staleActorOutputAppend(err error) error {
 	return errors.Join(errStaleActorOutputAppend, err)
 }
 
-func actorOutputAppendFailure(err error) (api.WorkerRuntimeOperationFailure, bool) {
+func actorOutputAppendFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
 	var conflictError idempotency.ConflictError
 	switch {
 	case errors.As(err, &conflictError):
-		return api.WorkerRuntimeOperationFailure{
+		return workerapi.RuntimeOperationFailure{
 			Code: "idempotency_conflict", Message: "idempotency key conflicts with an earlier Actor output",
 		}, true
 	case errors.Is(err, errActorOutputTooLarge):
-		return api.WorkerRuntimeOperationFailure{Code: "actor_output_too_large", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "actor_output_too_large", Message: err.Error()}, true
 	case errors.Is(err, errActorSequenceExhausted):
-		return api.WorkerRuntimeOperationFailure{Code: "actor_sequence_exhausted", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "actor_sequence_exhausted", Message: err.Error()}, true
 	case errors.Is(err, errActorOutputUnavailable):
-		return api.WorkerRuntimeOperationFailure{Code: "actor_not_open", Message: "Actor does not accept output"}, true
+		return workerapi.RuntimeOperationFailure{Code: "actor_not_open", Message: "Actor does not accept output"}, true
 	case errors.Is(err, errActorOutputAppendConflict):
-		return api.WorkerRuntimeOperationFailure{Code: "actor_output_conflict", Message: err.Error()}, true
+		return workerapi.RuntimeOperationFailure{Code: "actor_output_conflict", Message: err.Error()}, true
 	default:
-		return api.WorkerRuntimeOperationFailure{}, false
+		return workerapi.RuntimeOperationFailure{}, false
 	}
 }

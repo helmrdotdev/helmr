@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
@@ -51,7 +51,7 @@ func TestParseCheckpointReadyRequestRejectsMismatchedRecoveryPoint(t *testing.T)
 
 func TestParseCheckpointFailedRequestBindsNormalizedFailure(t *testing.T) {
 	ready := validCheckpointReadyRequest()
-	request := api.WorkerCheckpointFailedRequest{
+	request := workerapi.CheckpointFailedRequest{
 		Lease: ready.Lease, RequestVersion: ready.RequestVersion,
 		RunWaitID: ready.RunWaitID, CheckpointID: ready.CheckpointID, Error: "  snapshot failed  ",
 	}
@@ -117,15 +117,15 @@ func TestDecideActorCheckpointFailureStopsAtRunExpiry(t *testing.T) {
 	}
 }
 
-func validCheckpointReadyRequest() api.WorkerCheckpointReadyRequest {
+func validCheckpointReadyRequest() workerapi.CheckpointReadyRequest {
 	runID := uuid.Must(uuid.NewV7()).String()
 	waitID := uuid.Must(uuid.NewV7()).String()
 	checkpointID := uuid.Must(uuid.NewV7()).String()
 	runtimeIdentity := digestWith("1")
-	lease := api.WorkerRunLeaseAssignment{
+	lease := workerapi.RunLeaseAssignment{
 		ID: uuid.Must(uuid.NewV7()).String(), RunID: runID, AttemptNumber: 1, LeaseSequence: 1,
 		WorkerGroupID: "run-test", WorkerInstanceID: uuid.Must(uuid.NewV7()).String(), WorkerEpoch: 1,
-		WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
+		WorkerProtocolVersion: workerapi.CurrentProtocolVersion,
 		RuntimeInstanceID:     uuid.Must(uuid.NewV7()).String(), RuntimeIdentityID: runtimeIdentity,
 		WorkspaceID: uuid.Must(uuid.NewV7()).String(), WorkspaceMountID: uuid.Must(uuid.NewV7()).String(),
 		WorkspaceLeaseID: uuid.Must(uuid.NewV7()).String(), BaseWorkspaceVersionID: uuid.Must(uuid.NewV7()).String(),
@@ -134,30 +134,30 @@ func validCheckpointReadyRequest() api.WorkerCheckpointReadyRequest {
 		MaxActiveDurationMs: 60_000, StartDeadlineAt: time.Now().UTC().Add(-time.Minute),
 		ExpiresAt: time.Now().UTC().Add(time.Minute),
 	}
-	return api.WorkerCheckpointReadyRequest{
+	return workerapi.CheckpointReadyRequest{
 		Lease: lease.Fence(), RequestVersion: 1, RunWaitID: waitID, CheckpointID: checkpointID,
-		WorkspaceCapture: api.WorkerCheckpointWorkspaceCapture{
-			Tree: api.WorkerWorkspaceTreeIdentity{Digest: digestWith("2"), SizeBytes: 10, EntryCount: 1},
-			Artifact: api.WorkerWorkspaceArtifact{
+		WorkspaceCapture: workerapi.CheckpointWorkspaceCapture{
+			Tree: workerapi.WorkspaceTreeIdentity{Digest: digestWith("2"), SizeBytes: 10, EntryCount: 1},
+			Artifact: workerapi.WorkspaceArtifact{
 				Digest: digestWith("3"), MediaType: workspace.ArtifactMediaType,
 				Encoding: workspace.ArtifactEncoding, SizeBytes: 1024, EntryCount: 1,
 			},
 		},
-		Manifest: api.WorkerCheckpointManifest{
-			RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
+		Manifest: workerapi.CheckpointManifest{
+			RecoveryPoint: workerapi.CheckpointRecoveryPoint{
 				ID: checkpointID, RunID: runID, AttemptNumber: 1, RunWaitID: waitID,
 				CorrelationID: uuid.Must(uuid.NewV7()).String(),
-				Runtime: api.WorkerCheckpointRuntime{
+				Runtime: workerapi.CheckpointRuntime{
 					Backend: "firecracker", ID: runtimeIdentity, Arch: string(deployment.ArchitectureX8664),
 					ABI: "helmr.firecracker.snapshot.v0", KernelDigest: digestWith("4"),
 					InitramfsDigest: digestWith("5"), RootfsDigest: digestWith("6"), ConfigDigest: digestWith("7"),
 				},
 			},
-			RuntimeState: api.WorkerCheckpointRuntimeState{
-				ConfigArtifact:      api.WorkerCheckpointArtifact{Digest: digestWith("a"), SizeBytes: 100, MediaType: cas.CheckpointRuntimeConfigMediaType},
-				VMStateArtifact:     api.WorkerCheckpointArtifact{Digest: digestWith("b"), SizeBytes: 100, MediaType: cas.CheckpointVMStateMediaType},
-				ScratchDiskArtifact: api.WorkerCheckpointArtifact{Digest: digestWith("c"), SizeBytes: 100, MediaType: cas.CheckpointScratchDiskMediaType},
-				MemoryArtifacts:     []api.WorkerCheckpointArtifact{{Digest: digestWith("d"), SizeBytes: 100, MediaType: cas.CheckpointMemoryMediaType}},
+			RuntimeState: workerapi.CheckpointRuntimeState{
+				ConfigArtifact:      workerapi.CheckpointArtifact{Digest: digestWith("a"), SizeBytes: 100, MediaType: cas.CheckpointRuntimeConfigMediaType},
+				VMStateArtifact:     workerapi.CheckpointArtifact{Digest: digestWith("b"), SizeBytes: 100, MediaType: cas.CheckpointVMStateMediaType},
+				ScratchDiskArtifact: workerapi.CheckpointArtifact{Digest: digestWith("c"), SizeBytes: 100, MediaType: cas.CheckpointScratchDiskMediaType},
+				MemoryArtifacts:     []workerapi.CheckpointArtifact{{Digest: digestWith("d"), SizeBytes: 100, MediaType: cas.CheckpointMemoryMediaType}},
 				Config:              json.RawMessage(`{"machine-config":{"vcpu_count":1}}`),
 			},
 		},

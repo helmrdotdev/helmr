@@ -7,15 +7,15 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 )
 
 func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerRuntimeSubstrateRegisterRequest
+	var request workerapi.RuntimeSubstrateRegisterRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker runtime substrate register request JSON: %w", err)))
 		return
@@ -86,12 +86,12 @@ func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.R
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerRuntimeSubstrateRegisterResponse{
+	writeJSON(w, http.StatusOK, workerapi.RuntimeSubstrateRegisterResponse{
 		RuntimeSubstrate: runtimeSubstrateResponse(row),
 	})
 }
 
-func validateRuntimeSubstrateRegisterRequest(request api.WorkerRuntimeSubstrateRegisterRequest) error {
+func validateRuntimeSubstrateRegisterRequest(request workerapi.RuntimeSubstrateRegisterRequest) error {
 	required := map[string]string{
 		"deployment_definition_id": request.DeploymentDefinitionID,
 		"substrate_digest":         request.SubstrateDigest,
@@ -113,8 +113,8 @@ func validateRuntimeSubstrateRegisterRequest(request api.WorkerRuntimeSubstrateR
 	return nil
 }
 
-func runtimeSubstrateResponse(row db.RuntimeSubstrate) api.WorkerRuntimeSubstrate {
-	return api.WorkerRuntimeSubstrate{
+func runtimeSubstrateResponse(row db.RuntimeSubstrate) workerapi.RuntimeSubstrate {
+	return workerapi.RuntimeSubstrate{
 		ID:                     pgvalue.UUIDString(row.ID),
 		DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID),
 		SubstrateDigest:        row.SubstrateDigest,

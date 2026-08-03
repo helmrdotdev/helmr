@@ -54,9 +54,9 @@ func TestInternalPackageDependencies(t *testing.T) {
 
 	expected := map[string][]string{
 		"actor":              {"db", "ids", "outbox", "pgvalue", "run", "secret", "tracing"},
-		"api":                {"archive", "ids", "imagebuild", "jsoncanon"},
+		"api":                {"archive", "ids", "jsoncanon"},
 		"archive":            {"safepath", "sha256sum"},
-		"auth":               {"db", "ids", "pgvalue", "token"},
+		"auth":               {"db", "ids", "pgvalue", "token", "workerapi"},
 		"buildkit":           {"imagebuild", "safepath"},
 		"capacity":           {},
 		"cas":                {"archive"},
@@ -67,20 +67,20 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"cli/ui":             {"api"},
 		"clickhouse":         {},
 		"clickhouse/schema":  {"clickhouse"},
-		"client":             {"api", "ids", "sha256sum"},
+		"client":             {"api", "ids", "sha256sum", "workerapi"},
 		"compute":            {"runtime/identity"},
-		"config":             {"api"},
+		"config":             {"workerapi"},
 		"console":            {},
-		"control":            {"actor", "api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "email", "enrollment", "frameio", "idempotency", "ids", "imagebuild", "imagecache", "jsoncanon", "pgvalue", "proto/run/v0", "region", "run", "runtime/identity", "schedule", "secret", "sha256sum", "telemetry", "token", "tracing", "workergroup", "workspace"},
+		"control":            {"actor", "api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "email", "enrollment", "frameio", "idempotency", "ids", "imagebuild", "imagecache", "jsoncanon", "pgvalue", "proto/run/v0", "region", "run", "runtime/identity", "schedule", "secret", "sha256sum", "telemetry", "token", "tracing", "workerapi", "workergroup", "workspace"},
 		"db":                 {},
 		"db/dbtest":          {},
 		"db/schema":          {},
-		"deployment":         {"api", "archive", "cas", "compute", "frameio", "ids", "imagebuild", "jsoncanon", "runtime/identity", "safepath", "schedule", "vm", "wire"},
+		"deployment":         {"api", "archive", "cas", "compute", "frameio", "ids", "imagebuild", "jsoncanon", "runtime/identity", "safepath", "schedule", "vm", "wire", "workerapi"},
 		"dispatch":           {"compute", "db", "deployment", "pgvalue", "sessionlock", "workspace"},
 		"dispatch/redis":     {"dispatch", "pgvalue"},
 		"email":              {},
-		"enrollment":         {"api", "auth"},
-		"executor":           {"api", "capacity", "cas", "checkpoint", "client", "compute", "deployment", "frameio", "ids", "jsoncanon", "localcache", "proto/run/v0", "proto/workspace/v0", "runtime", "sha256sum", "vm", "wire", "workspace"},
+		"enrollment":         {"workerapi"},
+		"executor":           {"api", "capacity", "cas", "checkpoint", "client", "compute", "deployment", "frameio", "ids", "jsoncanon", "localcache", "proto/run/v0", "proto/workspace/v0", "runtime", "sha256sum", "vm", "wire", "workerapi", "workspace"},
 		"firecracker":        {"cas", "compute", "ids", "runtime/identity", "sha256sum", "vm", "worker/datapath"},
 		"frameio":            {"sha256sum"},
 		"guestd":             {"archive", "buildkit", "deployment", "frameio", "imagebuild", "jsoncanon", "oci", "proto/run/v0", "proto/workspace/v0", "safepath", "sha256sum", "wire", "workspace"},
@@ -104,7 +104,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"runtime/identity":   {"sha256sum"},
 		"safepath":           {},
 		"schedule":           {"db", "pgvalue", "run", "tracing"},
-		"secret":             {"api", "db", "idempotency", "ids", "outbox", "pgvalue"},
+		"secret":             {"db", "idempotency", "ids", "outbox", "pgvalue"},
 		"sessionlock":        {},
 		"sha256sum":          {},
 		"telemetry":          {"api", "clickhouse", "db", "pgvalue"},
@@ -113,9 +113,10 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"version":            {},
 		"vm":                 {"compute", "ids"},
 		"wire":               {"frameio", "proto/run/v0"},
-		"worker":             {"api", "capacity", "client", "compute", "deployment", "ids", "vm"},
+		"worker":             {"capacity", "client", "compute", "deployment", "ids", "vm", "workerapi"},
 		"worker/datapath":    {},
-		"workergroup":        {"auth", "compute", "db", "enrollment", "sessionlock"},
+		"workerapi":          {"api", "imagebuild", "jsoncanon"},
+		"workergroup":        {"compute", "db", "enrollment", "sessionlock", "workerapi"},
 		"workspace":          {"archive", "jsoncanon", "proto/workspace/v0", "safepath", "sha256sum"},
 	}
 	normalizeGraph(expected)
@@ -132,12 +133,14 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 	}
 
 	for source, targets := range map[string][]string{
+		"api":       {"workerapi"},
 		"frameio":   {"api", "db", "proto/run/v0", "wire"},
 		"wire":      {"api", "control", "db", "executor", "guestd", "workspace"},
 		"guestd":    {"control", "db", "executor"},
 		"workspace": {"api", "control", "db", "executor", "guestd", "pgvalue", "wire"},
 		"control":   {"executor", "firecracker", "guestd"},
 		"secret":    {"run"},
+		"workerapi": {"control", "db", "firecracker", "imagecache/ecr"},
 	} {
 		for _, target := range targets {
 			if slices.Contains(actual[source], target) {

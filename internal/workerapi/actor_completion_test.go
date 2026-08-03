@@ -1,4 +1,4 @@
-package api
+package workerapi
 
 import (
 	"encoding/json"
@@ -14,7 +14,7 @@ func TestWorkerActorOutcomeRequiresPresentCursorAndOneVariant(t *testing.T) {
 		`{"terminal_input_sequence":0,"succeeded":null}`,
 		`{"terminal_input_sequence":0,"succeeded":{},"extra":true}`,
 	} {
-		var outcome WorkerActorOutcome
+		var outcome ActorOutcome
 		if err := json.Unmarshal([]byte(raw), &outcome); err == nil {
 			t.Fatalf("json.Unmarshal(%s) error = nil", raw)
 		}
@@ -22,7 +22,7 @@ func TestWorkerActorOutcomeRequiresPresentCursorAndOneVariant(t *testing.T) {
 }
 
 func TestWorkerActorOutcomeAcceptsZeroCursor(t *testing.T) {
-	var outcome WorkerActorOutcome
+	var outcome ActorOutcome
 	if err := json.Unmarshal([]byte(`{"terminal_input_sequence":0,"succeeded":{}}`), &outcome); err != nil {
 		t.Fatal(err)
 	}

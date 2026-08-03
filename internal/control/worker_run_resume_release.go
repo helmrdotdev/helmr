@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -25,7 +25,7 @@ func (s *Server) workerAcknowledgeRunResumeRelease(w http.ResponseWriter, r *htt
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request api.WorkerRunResumeReleaseRequest
+	var request workerapi.RunResumeReleaseRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker Run resume release request JSON: %w", err)))
 		return
@@ -53,13 +53,13 @@ func (s *Server) workerAcknowledgeRunResumeRelease(w http.ResponseWriter, r *htt
 		writeError(w, errors.New("acknowledge Run resume release"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerRunResumeReleaseResponse{
+	writeJSON(w, http.StatusOK, workerapi.RunResumeReleaseResponse{
 		Lease: receipt, RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID,
 		ResumeAttachID: request.ResumeAttachID, ResumeRequestVersion: request.ResumeRequestVersion,
 	})
 }
 
-func parseRunResumeReleaseProof(request api.WorkerRunResumeReleaseRequest) (runResumeReleaseProof, error) {
+func parseRunResumeReleaseProof(request workerapi.RunResumeReleaseRequest) (runResumeReleaseProof, error) {
 	parseID := func(name, raw string) (pgtype.UUID, error) {
 		value, err := ids.Parse(raw)
 		if err != nil {
@@ -92,9 +92,9 @@ func (s *Server) acknowledgeRunResumeRelease(
 	ctx context.Context,
 	worker workerActor,
 	leaseID pgtype.UUID,
-	expected api.WorkerRunLeaseFence,
+	expected workerapi.RunLeaseFence,
 	proof runResumeReleaseProof,
-) (api.WorkerRunLeaseFence, error) {
+) (workerapi.RunLeaseFence, error) {
 	err := s.inTx(ctx, func(work *txWork) error {
 		locators, err := work.q.GetRunLeaseStartLocators(ctx, db.GetRunLeaseStartLocatorsParams{
 			ID: leaseID, LeaseSequence: expected.LeaseSequence, WorkerGroupID: worker.WorkerGroupID,
@@ -175,7 +175,7 @@ func (s *Server) acknowledgeRunResumeRelease(
 		return nil
 	})
 	if err != nil {
-		return api.WorkerRunLeaseFence{}, err
+		return workerapi.RunLeaseFence{}, err
 	}
 	return expected, nil
 }

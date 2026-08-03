@@ -4,19 +4,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestParseActorCompletionRequestBindsCursorAndWorkspaceProof(t *testing.T) {
 	taskRequest := validTaskCompletionRequest(t)
-	request := api.WorkerCompleteActorRequest{
+	request := workerapi.CompleteActorRequest{
 		Lease: taskRequest.Lease,
-		Outcome: api.WorkerActorOutcome{
+		Outcome: workerapi.ActorOutcome{
 			TerminalInputSequence: 0,
-			Succeeded:             &api.WorkerActorSucceeded{},
+			Succeeded:             &workerapi.ActorSucceeded{},
 		},
 		Workspace: taskRequest.Workspace,
 	}

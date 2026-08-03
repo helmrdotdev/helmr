@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type actorCompletionKind string
@@ -25,7 +25,7 @@ type parsedActorCompletion struct {
 	fingerprint           string
 }
 
-func parseActorCompletionRequest(request api.WorkerCompleteActorRequest) (parsedActorCompletion, error) {
+func parseActorCompletionRequest(request workerapi.CompleteActorRequest) (parsedActorCompletion, error) {
 	lease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
 		return parsedActorCompletion{}, err
@@ -41,7 +41,7 @@ func parseActorCompletionRequest(request api.WorkerCompleteActorRequest) (parsed
 	if request.Outcome.Succeeded != nil {
 		variants++
 		parsed.kind = actorCompletionSucceeded
-		normalized.Outcome.Succeeded = &api.WorkerActorSucceeded{}
+		normalized.Outcome.Succeeded = &workerapi.ActorSucceeded{}
 	}
 	if request.Outcome.Failed != nil {
 		variants++

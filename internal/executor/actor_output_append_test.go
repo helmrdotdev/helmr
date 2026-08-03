@@ -12,21 +12,22 @@ import (
 	"github.com/helmrdotdev/helmr/internal/client"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type actorOutputAppendControl struct {
 	*testRunLeaseControl
-	request      api.WorkerAppendActorOutputRequest
-	requests     []api.WorkerAppendActorOutputRequest
-	response     api.WorkerAppendActorOutputResponse
+	request      workerapi.AppendActorOutputRequest
+	requests     []workerapi.AppendActorOutputRequest
+	response     workerapi.AppendActorOutputResponse
 	errors       []error
 	firstAttempt chan struct{}
 }
 
 func (control *actorOutputAppendControl) AppendActorOutput(
 	_ context.Context,
-	request api.WorkerAppendActorOutputRequest,
-) (api.WorkerAppendActorOutputResponse, error) {
+	request workerapi.AppendActorOutputRequest,
+) (workerapi.AppendActorOutputResponse, error) {
 	control.request = request
 	control.requests = append(control.requests, request)
 	if len(control.errors) != 0 {
@@ -36,7 +37,7 @@ func (control *actorOutputAppendControl) AppendActorOutput(
 			close(control.firstAttempt)
 			control.firstAttempt = nil
 		}
-		return api.WorkerAppendActorOutputResponse{}, err
+		return workerapi.AppendActorOutputResponse{}, err
 	}
 	return control.response, nil
 }
@@ -47,7 +48,7 @@ func TestHandleActorOutputAppendWritesCorrelatedDecision(t *testing.T) {
 	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000112"
 	control := &actorOutputAppendControl{
 		testRunLeaseControl: &testRunLeaseControl{},
-		response: api.WorkerAppendActorOutputResponse{
+		response: workerapi.AppendActorOutputResponse{
 			CorrelationID: correlationID,
 			Completed: &api.ActorOutputRecord{
 				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34", Sequence: 8,
@@ -102,7 +103,7 @@ func TestHandleActorOutputAppendRetryKeepsStableFenceAcrossRenewal(t *testing.T)
 	firstAttempt := make(chan struct{})
 	control := &actorOutputAppendControl{
 		testRunLeaseControl: &testRunLeaseControl{},
-		response: api.WorkerAppendActorOutputResponse{
+		response: workerapi.AppendActorOutputResponse{
 			CorrelationID: correlationID,
 			Completed: &api.ActorOutputRecord{
 				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Sequence: 9,

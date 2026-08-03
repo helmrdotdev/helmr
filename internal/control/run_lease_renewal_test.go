@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -148,7 +148,7 @@ func TestRenewRunLeaseReturnsCurrentExpiryWhenOperationalHorizonDoesNotAdvance(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := api.WorkerRunLeaseRenewResponse{
+	want := workerapi.RunLeaseRenewResponse{
 		Lease: assignment.Fence(), ExpiresAt: assignment.ExpiresAt,
 		BaseWorkspaceVersionID: assignment.BaseWorkspaceVersionID,
 	}
@@ -204,7 +204,7 @@ func TestRenewRunLeaseRejectsExhaustedActiveBudget(t *testing.T) {
 
 func validRunLeaseRenewalFixture(
 	t *testing.T,
-) (*Server, *runLeaseClaimStore, workerActor, api.WorkerRunLeaseAssignment) {
+) (*Server, *runLeaseClaimStore, workerActor, workerapi.RunLeaseAssignment) {
 	t.Helper()
 	worker, claimLocators, authority := validRunLeaseClaimFixture()
 	now := time.Now().UTC().Truncate(time.Microsecond)

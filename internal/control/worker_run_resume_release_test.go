@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -172,7 +172,7 @@ func TestAcknowledgeRunResumeReleaseRejectsMismatchedRestoreIdentity(t *testing.
 
 func TestParseRunResumeReleaseProofRequiresCanonicalUUIDv7(t *testing.T) {
 	valid := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
-	base := api.WorkerRunResumeReleaseRequest{
+	base := workerapi.RunResumeReleaseRequest{
 		RunWaitID: valid, CheckpointID: valid, ResumeAttachID: valid,
 		ResumeRequestVersion: 1,
 	}
@@ -197,7 +197,7 @@ func TestParseRunResumeReleaseProofRequiresCanonicalUUIDv7(t *testing.T) {
 
 func validRunResumeReleaseFixture(
 	t *testing.T,
-) (*Server, *runResumeReleaseStore, workerActor, api.WorkerRunLeaseAssignment, runResumeReleaseProof) {
+) (*Server, *runResumeReleaseStore, workerActor, workerapi.RunLeaseAssignment, runResumeReleaseProof) {
 	t.Helper()
 	worker, claimLocators, authority := validCheckpointRestoreRunLeaseClaimFixture(false)
 	authority.run.Status = db.RunStatusRunning
@@ -243,7 +243,7 @@ func validRunResumeReleaseFixture(
 
 func validParentAttachRunResumeReleaseFixture(
 	t *testing.T,
-) (*Server, *runResumeReleaseStore, workerActor, api.WorkerRunLeaseAssignment, runResumeReleaseProof) {
+) (*Server, *runResumeReleaseStore, workerActor, workerapi.RunLeaseAssignment, runResumeReleaseProof) {
 	t.Helper()
 	worker, claimLocators, authority := validSameWorkspaceParentResumeRunLeaseClaimFixture(false, true)
 	authority.run.Status = db.RunStatusRunning

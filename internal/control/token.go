@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	tokencredential "github.com/helmrdotdev/helmr/internal/token"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -54,7 +55,7 @@ type tokenOperationReceipt struct {
 }
 
 type runtimeTokenCreate struct {
-	Lease          api.WorkerRunLeaseFence
+	Lease          workerapi.RunLeaseFence
 	ParsedLease    parsedRunLeaseFence
 	Worker         workerActor
 	CorrelationID  uuid.UUID
@@ -195,7 +196,7 @@ func (s *Server) createExternalToken(
 }
 
 func (s *Server) workerCreateToken(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerCreateTokenRequest
+	var request workerapi.CreateTokenRequest
 	if err := decodeClosedWorkerRequest(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker Token create JSON: %w", err)))
 		return
@@ -362,7 +363,7 @@ func loadTokenCreateLocators(
 	ctx context.Context,
 	q db.Querier,
 	worker workerActor,
-	lease api.WorkerRunLeaseFence,
+	lease workerapi.RunLeaseFence,
 	parsed parsedRunLeaseFence,
 ) (db.GetLiveRunLeaseLocatorsRow, error) {
 	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
@@ -381,7 +382,7 @@ func lockTokenCreateAuthority(
 	ctx context.Context,
 	q db.Querier,
 	worker workerActor,
-	lease api.WorkerRunLeaseFence,
+	lease workerapi.RunLeaseFence,
 	parsed parsedRunLeaseFence,
 ) (db.GetLiveRunLeaseLocatorsRow, runLeaseClaimAuthority, error) {
 	locators, err := loadTokenCreateLocators(ctx, q, worker, lease, parsed)

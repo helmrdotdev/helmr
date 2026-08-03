@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -25,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -394,10 +394,10 @@ func newDeploymentBuildCompletionFixture(
 		ProtocolVersion:  "test",
 	}
 	body, err := json.Marshal(struct {
-		Lease  api.WorkerDeploymentBuildLease `json:"lease"`
+		Lease  workerapi.DeploymentBuildLease `json:"lease"`
 		Result json.RawMessage                `json:"result"`
 	}{
-		Lease: api.WorkerDeploymentBuildLease{
+		Lease: workerapi.DeploymentBuildLease{
 			ID:                    pgvalue.UUIDString(buildLeaseID),
 			OrgID:                 pgvalue.UUIDString(orgID),
 			ProjectID:             pgvalue.UUIDString(projectID),

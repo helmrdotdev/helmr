@@ -8,9 +8,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/imagecache"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestWorkerImageControlMapsTerminalAdmissionWithoutHiddenState(t *testing.T) {
@@ -20,11 +20,11 @@ func TestWorkerImageControlMapsTerminalAdmissionWithoutHiddenState(t *testing.T)
 		ExecutionABI: imagebuild.ExecutionABI, Outcome: imagebuild.GuestSucceeded,
 		OCIDigest: testWorkerImageDigest("a"), OCISizeBytes: 42,
 	}
-	fake := &workerImageControlFake{admit: func(input api.WorkerWorkspaceImageAdmissionRequest) api.WorkerWorkspaceImageAssignment {
+	fake := &workerImageControlFake{admit: func(input workerapi.WorkspaceImageAdmissionRequest) workerapi.WorkspaceImageAssignment {
 		if input.Lease != workerImageAPILease(request.Lease) || input.DeclarationSlot != request.DeclarationSlot {
 			t.Fatalf("admission input = %#v", input)
 		}
-		return api.WorkerWorkspaceImageAssignment{
+		return workerapi.WorkspaceImageAssignment{
 			Lease: input.Lease, DeclarationSlot: input.DeclarationSlot,
 			OperationID: uuid.Must(uuid.NewV7()).String(), RequestFingerprint: testWorkerImageDigest("b"),
 			RuntimeIdentityID: input.RuntimeIdentityID, Architecture: input.Architecture,
@@ -38,19 +38,19 @@ func TestWorkerImageControlMapsTerminalAdmissionWithoutHiddenState(t *testing.T)
 			RequestedCacheMode:     request.RequestedCacheMode,
 			CacheScope:             testWorkerImageDigest("c"), ExecutionABI: request.ExecutionABI,
 			LLBABI: request.LLBABI, CacheABI: request.CacheABI,
-			Quotas: api.WorkerWorkspaceImageQuotas{
+			Quotas: workerapi.WorkspaceImageQuotas{
 				CPUMillis: 3000, MemoryBytes: 4 << 30, ScratchBytes: 32 << 30, PIDs: 1024,
 				MaxSourceArchiveBytes:   imagebuild.MaxSourceArchiveBytes,
 				MaxSourceArchiveEntries: imagebuild.MaxSourceArchiveEntries,
 				MaxOCIArchiveBytes:      imagebuild.MaxOCIArchiveBytes,
 			},
-			Output: api.WorkerWorkspaceImageOutputContract{
+			Output: workerapi.WorkspaceImageOutputContract{
 				Architecture: request.Architecture, MediaType: "application/vnd.helmr.workspace-image.v0.oci-tar",
 				MaxSizeBytes: imagebuild.MaxOCIArchiveBytes,
 			},
 			RegistryBindings:    []imagebuild.RegistryBinding{},
 			ResolutionSetDigest: imagebuild.ResolutionSetDigest([]imagebuild.RegistryBinding{}),
-			TerminalResult:      &api.WorkerWorkspaceImageTerminalResult{AttemptID: attemptID, Result: result},
+			TerminalResult:      &workerapi.WorkspaceImageTerminalResult{AttemptID: attemptID, Result: result},
 		}
 	}}
 	assignment, err := (workerImageControl{client: fake}).AdmitWorkspaceImage(t.Context(), request)
@@ -68,7 +68,7 @@ func TestWorkerImageControlMapsTerminalAdmissionWithoutHiddenState(t *testing.T)
 func TestWorkerImageControlClearsMismatchedCredentialResponse(t *testing.T) {
 	password := []byte("plaintext")
 	lease := testWorkerImageLease()
-	fake := &workerImageControlFake{credentials: api.WorkerWorkspaceImageCredentialResponse{
+	fake := &workerImageControlFake{credentials: workerapi.WorkspaceImageCredentialResponse{
 		Envelope: imagebuild.CredentialEnvelope{
 			OperationID: "wrong", AttemptID: uuid.Must(uuid.NewV7()).String(),
 			ResolutionSetDigest: testWorkerImageDigest("d"),
@@ -105,12 +105,12 @@ func TestWorkerImageControlCompletesExactReceipt(t *testing.T) {
 			OCIDigest: testWorkerImageDigest("4"), OCISizeBytes: 42,
 		},
 	}
-	fake := &workerImageControlFake{complete: func(request api.WorkerWorkspaceImageOperationResultRequest) api.WorkerWorkspaceImageOperationResultResponse {
+	fake := &workerImageControlFake{complete: func(request workerapi.WorkspaceImageOperationResultRequest) workerapi.WorkspaceImageOperationResultResponse {
 		if request.Lease != workerImageAPILease(lease) || request.DeclarationSlot != evidence.DeclarationSlot ||
 			request.AttemptID != evidence.AttemptID || request.Result != evidence.GuestResult {
 			t.Fatalf("completion input = %#v", request)
 		}
-		return api.WorkerWorkspaceImageOperationResultResponse{
+		return workerapi.WorkspaceImageOperationResultResponse{
 			OperationID: request.OperationID, AttemptID: request.AttemptID,
 			State: "completed", Result: request.Result,
 		}
@@ -147,20 +147,20 @@ func TestWorkerImageCacheCredentialTransfersPlaintextOwnership(t *testing.T) {
 }
 
 type workerImageControlFake struct {
-	admit       func(api.WorkerWorkspaceImageAdmissionRequest) api.WorkerWorkspaceImageAssignment
-	credentials api.WorkerWorkspaceImageCredentialResponse
-	complete    func(api.WorkerWorkspaceImageOperationResultRequest) api.WorkerWorkspaceImageOperationResultResponse
+	admit       func(workerapi.WorkspaceImageAdmissionRequest) workerapi.WorkspaceImageAssignment
+	credentials workerapi.WorkspaceImageCredentialResponse
+	complete    func(workerapi.WorkspaceImageOperationResultRequest) workerapi.WorkspaceImageOperationResultResponse
 }
 
-func (fake *workerImageControlFake) AdmitWorkspaceImage(_ context.Context, request api.WorkerWorkspaceImageAdmissionRequest) (api.WorkerWorkspaceImageAssignment, error) {
+func (fake *workerImageControlFake) AdmitWorkspaceImage(_ context.Context, request workerapi.WorkspaceImageAdmissionRequest) (workerapi.WorkspaceImageAssignment, error) {
 	return fake.admit(request), nil
 }
 
-func (fake *workerImageControlFake) FetchWorkspaceImageCredentials(context.Context, api.WorkerWorkspaceImageCredentialRequest) (api.WorkerWorkspaceImageCredentialResponse, error) {
+func (fake *workerImageControlFake) FetchWorkspaceImageCredentials(context.Context, workerapi.WorkspaceImageCredentialRequest) (workerapi.WorkspaceImageCredentialResponse, error) {
 	return fake.credentials, nil
 }
 
-func (fake *workerImageControlFake) CompleteWorkspaceImage(_ context.Context, request api.WorkerWorkspaceImageOperationResultRequest) (api.WorkerWorkspaceImageOperationResultResponse, error) {
+func (fake *workerImageControlFake) CompleteWorkspaceImage(_ context.Context, request workerapi.WorkspaceImageOperationResultRequest) (workerapi.WorkspaceImageOperationResultResponse, error) {
 	return fake.complete(request), nil
 }
 

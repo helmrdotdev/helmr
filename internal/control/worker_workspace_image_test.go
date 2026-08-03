@@ -8,10 +8,10 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/imagecache"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestWorkspaceImageTerminalReplayExactMatchesDurableReceipt(t *testing.T) {
@@ -67,7 +67,7 @@ func TestAttachWorkspaceImageCachePreservesRequestedModeAndSkipsForbiddenEnsure(
 	environmentID := uuid.MustParse("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
 	t.Run("bypass", func(t *testing.T) {
 		provisioner := &recordingImageCacheProvisioner{target: target}
-		assignment := api.WorkerWorkspaceImageAssignment{RequestedCacheMode: imagebuild.CacheBypass}
+		assignment := workerapi.WorkspaceImageAssignment{RequestedCacheMode: imagebuild.CacheBypass}
 		(&Server{cacheRepositories: provisioner}).attachWorkspaceImageCache(t.Context(), environmentID, &assignment)
 		if provisioner.targetCalls != 0 || provisioner.ensureCalls != 0 || assignment.CacheTarget != nil || assignment.EffectiveCacheColdReason != "" {
 			t.Fatalf("bypass provisioner = %#v, assignment = %#v", provisioner, assignment)
@@ -75,23 +75,23 @@ func TestAttachWorkspaceImageCachePreservesRequestedModeAndSkipsForbiddenEnsure(
 	})
 	t.Run("authority collision", func(t *testing.T) {
 		provisioner := &recordingImageCacheProvisioner{target: target}
-		assignment := api.WorkerWorkspaceImageAssignment{
+		assignment := workerapi.WorkspaceImageAssignment{
 			DeclarationSlot: "workspace", Architecture: "x86_64", CacheScope: "sha256:scope",
 			RequestedCacheMode: imagebuild.CachePrefer,
 			RegistryBindings:   []imagebuild.RegistryBinding{{Authority: "ghcr.io"}},
 		}
 		(&Server{cacheRepositories: provisioner}).attachWorkspaceImageCache(t.Context(), environmentID, &assignment)
 		if provisioner.targetCalls != 1 || provisioner.ensureCalls != 0 || assignment.CacheTarget != nil ||
-			assignment.EffectiveCacheColdReason != api.WorkerWorkspaceImageCacheRegistryAuthorityCollision ||
+			assignment.EffectiveCacheColdReason != workerapi.WorkspaceImageCacheRegistryAuthorityCollision ||
 			assignment.RequestedCacheMode != imagebuild.CachePrefer {
 			t.Fatalf("collision provisioner = %#v, assignment = %#v", provisioner, assignment)
 		}
 	})
 	t.Run("terminal replay", func(t *testing.T) {
 		provisioner := &recordingImageCacheProvisioner{target: target}
-		assignment := api.WorkerWorkspaceImageAssignment{
+		assignment := workerapi.WorkspaceImageAssignment{
 			RequestedCacheMode: imagebuild.CachePrefer,
-			TerminalResult: &api.WorkerWorkspaceImageTerminalResult{
+			TerminalResult: &workerapi.WorkspaceImageTerminalResult{
 				AttemptID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 			},
 		}
@@ -110,7 +110,7 @@ func TestAttachWorkspaceImageCacheReturnsAttemptLocalTargetOrTypedCold(t *testin
 	for name, ensureErr := range map[string]error{"warm": nil, "cold": errors.New("quota")} {
 		t.Run(name, func(t *testing.T) {
 			provisioner := &recordingImageCacheProvisioner{target: target, ensureErr: ensureErr}
-			assignment := api.WorkerWorkspaceImageAssignment{
+			assignment := workerapi.WorkspaceImageAssignment{
 				DeclarationSlot: "workspace", Architecture: "x86_64", CacheScope: "sha256:scope",
 				RequestedCacheMode: imagebuild.CachePrefer, RegistryBindings: []imagebuild.RegistryBinding{},
 			}
@@ -124,7 +124,7 @@ func TestAttachWorkspaceImageCacheReturnsAttemptLocalTargetOrTypedCold(t *testin
 				}) || assignment.EffectiveCacheColdReason != "" {
 					t.Fatalf("warm assignment = %#v", assignment)
 				}
-			} else if assignment.CacheTarget != nil || assignment.EffectiveCacheColdReason != api.WorkerWorkspaceImageCacheUnavailable {
+			} else if assignment.CacheTarget != nil || assignment.EffectiveCacheColdReason != workerapi.WorkspaceImageCacheUnavailable {
 				t.Fatalf("cold assignment = %#v", assignment)
 			}
 		})

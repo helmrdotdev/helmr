@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -584,7 +583,7 @@ func (s *Store) CheckNames(ctx context.Context, orgID uuid.UUID, names []string)
 	return s.CheckScopedNames(ctx, orgID, projectID, environmentID, names)
 }
 
-func (s *Store) ResolveNames(ctx context.Context, orgID uuid.UUID, names []string) (api.ResolvedSecrets, error) {
+func (s *Store) ResolveNames(ctx context.Context, orgID uuid.UUID, names []string) (Resolved, error) {
 	projectID, environmentID, err := s.defaultScope(ctx, orgID)
 	if err != nil {
 		return nil, err
@@ -608,11 +607,11 @@ func (s *Store) CheckScopedNames(ctx context.Context, _ uuid.UUID, _ uuid.UUID, 
 	return nil
 }
 
-func (s *Store) ResolveScopedNames(ctx context.Context, _ uuid.UUID, _ uuid.UUID, environmentID uuid.UUID, names []string) (api.ResolvedSecrets, error) {
+func (s *Store) ResolveScopedNames(ctx context.Context, _ uuid.UUID, _ uuid.UUID, environmentID uuid.UUID, names []string) (Resolved, error) {
 	if len(names) == 0 {
-		return api.ResolvedSecrets{}, nil
+		return Resolved{}, nil
 	}
-	resolved := make(api.ResolvedSecrets, len(names))
+	resolved := make(Resolved, len(names))
 	for _, name := range names {
 		if err := ValidateName(name); err != nil {
 			return nil, UnavailableError{Err: fmt.Errorf("invalid secret name: %w", err)}
