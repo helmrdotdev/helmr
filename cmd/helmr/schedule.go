@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -48,10 +47,10 @@ func scheduleListCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			if jsonLines {
-				return format.JSONLines(cmd.OutOrStdout(), response.Schedules)
+				return writeJSONLines(cmd.OutOrStdout(), response.Schedules)
 			}
 			for _, schedule := range response.Schedules {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", schedule.ID, schedule.Task, schedule.Status)
@@ -93,7 +92,7 @@ func scheduleGetCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), schedule)
+				return writeJSON(cmd.OutOrStdout(), schedule)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "schedule_id: %s\n", schedule.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "task: %s\n", schedule.Task)

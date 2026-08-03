@@ -1,4 +1,4 @@
-package ui
+package main
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-func TestRunTable(t *testing.T) {
+func TestWriteRunTable(t *testing.T) {
 	var out bytes.Buffer
 	runs := []api.RunSnapshotResponse{{
 		ID:                   "1234567890abcdef",
@@ -18,16 +18,16 @@ func TestRunTable(t *testing.T) {
 		CurrentAttemptNumber: 2,
 	}}
 
-	RunTable(&out, runs)
+	writeRunTable(&out, runs)
 
 	got := out.String()
 	if !strings.Contains(got, "RUN ID") || !strings.Contains(got, "1234567890ab") ||
 		!strings.Contains(got, "task:build") || !strings.Contains(got, "2") {
-		t.Fatalf("RunTable() = %q", got)
+		t.Fatalf("writeRunTable() = %q", got)
 	}
 }
 
-func TestRunDetails(t *testing.T) {
+func TestWriteRunDetails(t *testing.T) {
 	var out bytes.Buffer
 	startedAt := time.Date(2026, 5, 10, 1, 2, 4, 0, time.UTC)
 	terminalAt := time.Date(2026, 5, 10, 1, 3, 3, 0, time.UTC)
@@ -45,7 +45,7 @@ func TestRunDetails(t *testing.T) {
 		TerminalReasonCode:   "completed",
 	}
 
-	RunDetails(&out, run)
+	writeRunDetails(&out, run)
 
 	got := out.String()
 	for _, want := range []string{
@@ -61,7 +61,7 @@ func TestRunDetails(t *testing.T) {
 		"Reason:      completed",
 	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("RunDetails() = %q, missing %q", got, want)
+			t.Fatalf("writeRunDetails() = %q, missing %q", got, want)
 		}
 	}
 }

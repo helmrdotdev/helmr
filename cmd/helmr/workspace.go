@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -62,7 +61,7 @@ func workspaceCreateCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(command.OutOrStdout(), response)
+				return writeJSON(command.OutOrStdout(), response)
 			}
 			_, err = fmt.Fprintln(command.OutOrStdout(), response.WorkspaceID)
 			return err
@@ -96,7 +95,7 @@ func workspaceGetCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(command.OutOrStdout(), snapshot)
+				return writeJSON(command.OutOrStdout(), snapshot)
 			}
 			_, err = fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%s\n", snapshot.ID, snapshot.DeclaredID, snapshot.Status)
 			return err
@@ -134,7 +133,7 @@ func workspaceDeleteCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(command.OutOrStdout(), receipt)
+				return writeJSON(command.OutOrStdout(), receipt)
 			}
 			_, err = fmt.Fprintln(command.OutOrStdout(), receipt.WorkspaceID)
 			return err
@@ -176,7 +175,7 @@ func workspaceFilesReadCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(command.OutOrStdout(), content)
+				return writeJSON(command.OutOrStdout(), content)
 			}
 			data, err := base64.StdEncoding.DecodeString(content.DataBase64)
 			if err != nil {
@@ -219,7 +218,7 @@ func workspaceFilesListCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(command.OutOrStdout(), page)
+				return writeJSON(command.OutOrStdout(), page)
 			}
 			for _, item := range page.Items {
 				if _, err := fmt.Fprintf(command.OutOrStdout(), "%s\t%s\n", item.Kind, item.Path); err != nil {
@@ -263,7 +262,7 @@ func workspaceFilesStatCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(command.OutOrStdout(), entry)
+				return writeJSON(command.OutOrStdout(), entry)
 			}
 			_, err = fmt.Fprintf(command.OutOrStdout(), "%s\t%s\n", entry.Kind, entry.Path)
 			return err
@@ -318,7 +317,7 @@ func workspaceExecCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(command.OutOrStdout(), result)
+				return writeJSON(command.OutOrStdout(), result)
 			}
 			stdout, err := base64.StdEncoding.DecodeString(result.StdoutBase64)
 			if err != nil {

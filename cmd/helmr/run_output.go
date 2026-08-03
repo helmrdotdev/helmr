@@ -1,4 +1,4 @@
-package ui
+package main
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-func RunTable(w io.Writer, runs []api.RunSnapshotResponse) {
+func writeRunTable(w io.Writer, runs []api.RunSnapshotResponse) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "RUN ID\tENTRYPOINT\tSTATUS\tATTEMPT")
 	for _, run := range runs {
@@ -19,7 +19,7 @@ func RunTable(w io.Writer, runs []api.RunSnapshotResponse) {
 	_ = tw.Flush()
 }
 
-func RunDetails(w io.Writer, run api.RunSnapshotResponse) {
+func writeRunDetails(w io.Writer, run api.RunSnapshotResponse) {
 	fmt.Fprintf(w, "ID:          %s\n", run.ID)
 	fmt.Fprintf(w, "Entrypoint:  %s %s\n", run.Entrypoint.Kind, run.Entrypoint.ID)
 	fmt.Fprintf(w, "Deployment:  %s (%s)\n", run.Deployment.ID, run.Deployment.Version)

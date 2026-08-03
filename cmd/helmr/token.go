@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -43,7 +42,7 @@ func tokenGetCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), token)
+				return writeJSON(cmd.OutOrStdout(), token)
 			}
 			writeTokenSummary(cmd, token)
 			return nil
@@ -80,7 +79,7 @@ func tokenCompleteCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "token_id: %s\n", response.Token.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "token_status: %s\n", response.Token.Status)
@@ -117,7 +116,7 @@ func tokenCancelCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), token)
+				return writeJSON(cmd.OutOrStdout(), token)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", token.ID, token.Status)
 			return nil

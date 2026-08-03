@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -50,7 +49,7 @@ func secretListCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			for _, secret := range response.Secrets {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", secret.Name, secret.State, secret.CreatedAt.Format(apiTimeFormat))
@@ -81,7 +80,7 @@ func secretGetCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), secret)
+				return writeJSON(cmd.OutOrStdout(), secret)
 			}
 			return writeSecret(cmd.OutOrStdout(), secret)
 		},
@@ -121,7 +120,7 @@ func secretCreateCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), secret)
+				return writeJSON(cmd.OutOrStdout(), secret)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", secret.Name)
 			return nil
@@ -167,7 +166,7 @@ func secretRotateCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), record)
+				return writeJSON(cmd.OutOrStdout(), record)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", record.Name)
 			return nil

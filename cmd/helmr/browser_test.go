@@ -1,15 +1,15 @@
-package browser
+package main
 
 import (
 	"context"
 	"testing"
 )
 
-func TestOpenRespectsCanceledContext(t *testing.T) {
+func TestOpenBrowserRespectsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if err := Open(ctx, "https://helmr.example.test"); err == nil {
+	if err := openBrowser(ctx, "https://helmr.example.test"); err == nil {
 		t.Fatal("expected canceled context error")
 	}
 }

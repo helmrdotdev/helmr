@@ -1,4 +1,4 @@
-package browser
+package main
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"runtime"
 )
 
-func Open(ctx context.Context, url string) error {
+func openBrowser(ctx context.Context, url string) error {
 	var command string
 	var args []string
 	switch runtime.GOOS {

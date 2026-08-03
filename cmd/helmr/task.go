@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -135,9 +134,9 @@ func taskStartCommand() *cobra.Command {
 					if err != nil {
 						return err
 					}
-					return format.JSON(cmd.OutOrStdout(), run)
+					return writeJSON(cmd.OutOrStdout(), run)
 				}
-				return format.JSON(cmd.OutOrStdout(), started)
+				return writeJSON(cmd.OutOrStdout(), started)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", started.RunID)
 			if follow {
@@ -229,7 +228,7 @@ func taskListCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			for _, task := range response.Tasks {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", task.TaskID, task.FilePath, task.ExportName)
@@ -264,7 +263,7 @@ func taskGetCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), task)
+				return writeJSON(cmd.OutOrStdout(), task)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Task:       %s\n", task.TaskID)
 			fmt.Fprintf(cmd.OutOrStdout(), "File:       %s\n", task.FilePath)

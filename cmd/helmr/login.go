@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/cli/browser"
 	"github.com/helmrdotdev/helmr/internal/cli/session"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
@@ -210,4 +209,4 @@ func deviceTokenError(err error) string {
 	return ""
 }
 
-var openURL = browser.Open
+var openURL = openBrowser

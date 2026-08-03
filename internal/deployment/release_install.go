@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -16,28 +15,14 @@ import (
 
 const BuildPolicyMediaType = "application/vnd.helmr.build-policy.v0+json"
 
-func RunReleaseInstall(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("release install", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	var storeURI, digest, output string
-	flags.StringVar(&storeURI, "store", "", "release store URI")
-	flags.StringVar(&digest, "digest", "", "build policy digest")
-	flags.StringVar(&output, "output", "", "installed build policy path")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() != 0 {
-		return errors.New("release install accepts no positional arguments")
-	}
-	if storeURI == "" || digest == "" || output == "" {
-		return errors.New("release install requires --store, --digest, and --output")
-	}
+func InstallBuildPolicy(
+	ctx context.Context,
+	store cas.Reader,
+	digest,
+	output string,
+) error {
 	if os.Geteuid() != 0 {
-		return errors.New("release install must run as root")
-	}
-	store, err := cas.NewImmutableS3(ctx, storeURI)
-	if err != nil {
-		return fmt.Errorf("configure release store: %w", err)
+		return errors.New("build policy install must run as root")
 	}
 	return installBuildPolicy(ctx, store, digest, output, 0, 0)
 }

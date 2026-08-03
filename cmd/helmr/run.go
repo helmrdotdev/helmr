@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cli/format"
-	"github.com/helmrdotdev/helmr/internal/cli/ui"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -44,7 +42,7 @@ func runCancelCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", response.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "run_status: %s\n", response.Status)
@@ -83,12 +81,12 @@ func runListCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			if jsonLines {
-				return format.JSONLines(cmd.OutOrStdout(), response.Runs)
+				return writeJSONLines(cmd.OutOrStdout(), response.Runs)
 			}
-			ui.RunTable(cmd.OutOrStdout(), response.Runs)
+			writeRunTable(cmd.OutOrStdout(), response.Runs)
 			if response.NextCursor != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "\nNext cursor: %s\n", response.NextCursor)
 			}
@@ -126,9 +124,9 @@ func runGetCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), run)
+				return writeJSON(cmd.OutOrStdout(), run)
 			}
-			ui.RunDetails(cmd.OutOrStdout(), run)
+			writeRunDetails(cmd.OutOrStdout(), run)
 			return nil
 		},
 	}
@@ -209,7 +207,7 @@ func writeRunLogPage(cmd *cobra.Command, page api.RunLogPage) error {
 				return err
 			}
 		case string(workerapi.LogStreamStructured):
-			if err := format.JSONLines(cmd.OutOrStdout(), []api.RunLogRecord{record}); err != nil {
+			if err := writeJSONLines(cmd.OutOrStdout(), []api.RunLogRecord{record}); err != nil {
 				return err
 			}
 		default:
@@ -243,7 +241,7 @@ func runEventsCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return format.JSONLines(cmd.OutOrStdout(), page.Events)
+				return writeJSONLines(cmd.OutOrStdout(), page.Events)
 			}
 			return followRunEvents(cmd, controlPlane, args[0], cursor, scope)
 		},
@@ -288,7 +286,7 @@ func runWaitCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), run)
+				return writeJSON(cmd.OutOrStdout(), run)
 			}
 			writeRunLifecycleResult(cmd, run)
 			return nil
@@ -463,7 +461,7 @@ func followRunEvents(cmd *cobra.Command, controlPlane *client.Client, runID stri
 				if api.RunEventKindIsTerminal(event.Kind) {
 					terminal = true
 				}
-				if writeErr := format.JSONLines(
+				if writeErr := writeJSONLines(
 					cmd.OutOrStdout(),
 					[]api.RunEvent{event},
 				); writeErr != nil {

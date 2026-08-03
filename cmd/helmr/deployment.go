@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/spf13/cobra"
 )
 
@@ -38,7 +37,7 @@ func deploymentListCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			for _, deployment := range response.Deployments {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", deployment.ID, deployment.Version, deployment.Status)
@@ -76,7 +75,7 @@ func deploymentGetCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), deployment)
+				return writeJSON(cmd.OutOrStdout(), deployment)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Deployment: %s\n", deployment.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "Version:    %s\n", deployment.Version)

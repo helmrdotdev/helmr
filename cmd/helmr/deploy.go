@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/archive"
-	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/spf13/cobra"
@@ -194,7 +193,7 @@ func newDeployReporter(cmd *cobra.Command, jsonOutput bool) deployReporter {
 
 func (r cliDeployReporter) Step(message string) error {
 	if r.jsonOutput {
-		return format.JSONLines(r.cmd.OutOrStdout(), []cliDeployLine{{Type: "step", Step: message}})
+		return writeJSONLines(r.cmd.OutOrStdout(), []cliDeployLine{{Type: "step", Step: message}})
 	}
 	_, err := fmt.Fprintf(r.cmd.ErrOrStderr(), "%s\n", message)
 	return err
@@ -202,7 +201,7 @@ func (r cliDeployReporter) Step(message string) error {
 
 func (r cliDeployReporter) DeploymentCreated(deployment api.DeploymentResponse) error {
 	if r.jsonOutput {
-		return format.JSONLines(r.cmd.OutOrStdout(), []cliDeployLine{{Type: "deployment_created", Deployment: &deployment}})
+		return writeJSONLines(r.cmd.OutOrStdout(), []cliDeployLine{{Type: "deployment_created", Deployment: &deployment}})
 	}
 	_, err := fmt.Fprintf(r.cmd.ErrOrStderr(), "Deployment %s queued\n", deployment.ID)
 	return err
@@ -210,7 +209,7 @@ func (r cliDeployReporter) DeploymentCreated(deployment api.DeploymentResponse) 
 
 func (r cliDeployReporter) Event(event api.RunEvent) error {
 	if r.jsonOutput {
-		return format.JSONLines(r.cmd.OutOrStdout(), []cliDeployLine{{Type: "deployment_event", Event: &event}})
+		return writeJSONLines(r.cmd.OutOrStdout(), []cliDeployLine{{Type: "deployment_event", Event: &event}})
 	}
 	message := strings.TrimSpace(event.Message)
 	if message == "" {
@@ -226,7 +225,7 @@ func (r cliDeployReporter) Event(event api.RunEvent) error {
 
 func (r cliDeployReporter) DeploymentResult(deployment api.DeploymentResponse, phase string) error {
 	if r.jsonOutput {
-		return format.JSONLines(r.cmd.OutOrStdout(), []cliDeployLine{{Type: "deployment_result", Phase: phase, Deployment: &deployment}})
+		return writeJSONLines(r.cmd.OutOrStdout(), []cliDeployLine{{Type: "deployment_result", Phase: phase, Deployment: &deployment}})
 	}
 	_, err := fmt.Fprintln(r.cmd.OutOrStdout(), deploymentOutputRef(deployment))
 	return err

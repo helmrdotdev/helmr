@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -134,7 +133,7 @@ func actorStartCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "actor_id: %s\n", response.ActorID)
 			fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", response.RunID)
@@ -186,7 +185,7 @@ func actorGetCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), status)
+				return writeJSON(cmd.OutOrStdout(), status)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "actor_id: %s\n", status.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "actor_status: %s\n", status.Status)
@@ -244,7 +243,7 @@ func actorInputSendCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "sequence: %d\n", response.Sequence)
 			return nil
@@ -301,10 +300,10 @@ func actorOutputReadCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), page)
+				return writeJSON(cmd.OutOrStdout(), page)
 			}
 			if jsonLines {
-				return format.JSONLines(cmd.OutOrStdout(), page.Records)
+				return writeJSONLines(cmd.OutOrStdout(), page.Records)
 			}
 			for _, record := range page.Records {
 				fmt.Fprintf(cmd.OutOrStdout(), "%d\t%s\n", record.Sequence, record.Data)
@@ -352,7 +351,7 @@ func actorCloseCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), receipt)
+				return writeJSON(cmd.OutOrStdout(), receipt)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "actor_id: %s\n", receipt.ActorID)
 			fmt.Fprintf(cmd.OutOrStdout(), "accepted_at: %s\n", receipt.AcceptedAt.UTC().Format("2006-01-02T15:04:05.999999999Z"))

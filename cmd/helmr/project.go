@@ -9,7 +9,6 @@ import (
 	"unicode"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/spf13/cobra"
 )
@@ -68,7 +67,7 @@ func projectListCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), response)
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			for _, project := range response.Projects {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", project.ID, project.Slug, project.Name)
@@ -100,7 +99,7 @@ func projectGetCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), project)
+				return writeJSON(cmd.OutOrStdout(), project)
 			}
 			return writeProject(cmd.OutOrStdout(), project)
 		},
@@ -134,7 +133,7 @@ func projectCreateCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), project)
+				return writeJSON(cmd.OutOrStdout(), project)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", project.ID, project.Slug, project.Name)
 			return nil
@@ -185,7 +184,7 @@ func projectUpdateCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), updated)
+				return writeJSON(cmd.OutOrStdout(), updated)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", updated.ID, updated.Slug, updated.Name)
 			return nil
@@ -251,7 +250,7 @@ func envListCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), project.Environments)
+				return writeJSON(cmd.OutOrStdout(), project.Environments)
 			}
 			for _, environment := range project.Environments {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", environment.ID, environment.Slug, environment.Name)
@@ -289,7 +288,7 @@ func envGetCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), environment)
+				return writeJSON(cmd.OutOrStdout(), environment)
 			}
 			return writeEnvironment(cmd.OutOrStdout(), environment)
 		},
@@ -341,7 +340,7 @@ func envCreateCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), environment)
+				return writeJSON(cmd.OutOrStdout(), environment)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", environment.ID, environment.Slug, environment.Name, environment.ColorHex)
 			return nil
@@ -407,7 +406,7 @@ func envUpdateCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return format.JSON(cmd.OutOrStdout(), updated)
+				return writeJSON(cmd.OutOrStdout(), updated)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", updated.ID, updated.Slug, updated.Name, updated.ColorHex)
 			return nil
