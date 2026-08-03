@@ -31,7 +31,10 @@ var newCLIStateStore = func() (cliState, error) {
 
 func controlPlaneClient(cmd *cobra.Command) (*client.Client, error) {
 	rawURL := cliControlPlaneURL(cmd)
-	bearer := strings.TrimSpace(os.Getenv(helmrAPIKeyEnv))
+	bearer := os.Getenv(helmrAPIKeyEnv)
+	if strings.TrimSpace(bearer) != bearer {
+		return nil, fmt.Errorf("%s must not have surrounding whitespace", helmrAPIKeyEnv)
+	}
 	sessionScopedRoutes := false
 	var state cliState
 	if rawURL == "" || bearer == "" {

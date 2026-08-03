@@ -164,7 +164,7 @@ variable "clickhouse_user" {
 }
 
 variable "clickhouse_password_secret_arn" {
-  description = "Secrets Manager ARN for HELMR_CLICKHOUSE_PASSWORD when the ClickHouse endpoint requires a password."
+  description = "Secrets Manager ARN for CLICKHOUSE_PASSWORD when the ClickHouse endpoint requires a password."
   type        = string
   default     = null
   nullable    = true

@@ -8,7 +8,7 @@ import (
 const rootKeySize = 32
 
 func rootKey(name string) ([]byte, error) {
-	encoded := envString(name)
+	encoded := envSecret(name)
 	if encoded == "" {
 		return nil, fmt.Errorf("%s is required", name)
 	}

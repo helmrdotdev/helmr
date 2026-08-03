@@ -34,6 +34,11 @@ type validatedConfig struct {
 	accountID string
 }
 
+func ValidateConfig(config Config) error {
+	_, err := validateConfig(config)
+	return err
+}
+
 func validateConfig(config Config) (validatedConfig, error) {
 	if strings.TrimSpace(config.RegistryAuthority) != config.RegistryAuthority ||
 		strings.TrimSpace(config.RepositoryPrefix) != config.RepositoryPrefix ||

@@ -23,6 +23,11 @@ type Config struct {
 	Password string
 }
 
+func ValidateConfig(cfg Config) error {
+	_, err := optionsFromConfig(cfg)
+	return err
+}
+
 func New(cfg Config) (*Client, error) {
 	options, err := optionsFromConfig(cfg)
 	if err != nil {

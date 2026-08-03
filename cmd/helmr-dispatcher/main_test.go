@@ -21,11 +21,11 @@ func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
 	databaseURL := newSmokeDatabase(t, ctx)
 	redisServer := miniredis.RunT(t)
 
-	t.Setenv("HELMR_DATABASE_URL", databaseURL)
-	t.Setenv("HELMR_REDIS_URL", "redis://"+redisServer.Addr()+"/0")
-	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:1")
-	t.Setenv("HELMR_SCHEDULE_POLL_INTERVAL", "50ms")
-	t.Setenv("HELMR_SCHEDULE_CLAIM_LEASE", "100ms")
+	t.Setenv("DATABASE_URL", databaseURL)
+	t.Setenv("REDIS_URL", "redis://"+redisServer.Addr()+"/0")
+	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:1")
+	t.Setenv("SCHEDULE_POLL_INTERVAL", "50ms")
+	t.Setenv("SCHEDULE_CLAIM_LEASE", "100ms")
 	t.Setenv("WORKSPACE_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 
 	runCtx, cancel := context.WithCancel(context.Background())

@@ -266,7 +266,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		workerEnrollment:      cfg.WorkerEnrollment,
 		workerEnrollmentGuard: newWorkerEnrollmentGuard(),
 		operatorTokenHash:     operatorTokenHash,
-		setupToken:            strings.TrimSpace(cfg.SetupToken),
+		setupToken:            cfg.SetupToken,
 		authKeys:              authKeys,
 		publicURL:             cfg.PublicURL,
 		authProvider:          cfg.AuthProvider,

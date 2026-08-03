@@ -98,25 +98,13 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	buildPolicy, err := loadControlPlaneBuildPolicy(cfg.BuildPolicyPath)
-	if err != nil {
-		return err
-	}
-	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
-	if err != nil {
-		return fmt.Errorf("connect database: %w", err)
-	}
-	defer pool.Close()
-	queries := db.New(pool)
 	bootstrapCfg, err := config.LoadRegionBootstrap()
 	if err != nil {
 		return fmt.Errorf("load region bootstrap config: %w", err)
 	}
 	groups, err := workergroup.DecodeConfig(cfg.WorkerGroupsJSON)
 	if err != nil {
-		return fmt.Errorf("decode HELMR_WORKER_GROUPS: %w", err)
+		return fmt.Errorf("decode WORKER_GROUPS: %w", err)
 	}
 	desiredGroups := make([]workergroup.Desired, 0, len(groups))
 	enrollmentSecrets := make([]enrollment.GroupSecret, 0, len(groups))
@@ -132,6 +120,47 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker enrollment: %w", err)
 	}
+	clickHouseConfig := clickhouse.Config{
+		URL:      cfg.ClickHouseURL,
+		User:     cfg.ClickHouseUser,
+		Password: cfg.ClickHousePassword,
+	}
+	if err := clickhouse.ValidateConfig(clickHouseConfig); err != nil {
+		return fmt.Errorf("validate clickhouse config: %w", err)
+	}
+	redisOptions, err := redis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		return fmt.Errorf("parse redis url: %w", err)
+	}
+	if err := cass3.ValidateDistinctS3Stores(cfg.CASURI, cfg.PlatformStoreURI); err != nil {
+		return fmt.Errorf("validate platform artifact store: %w", err)
+	}
+	if cfg.ImageCache != nil {
+		if err := imagecacheecr.ValidateConfig(imagecacheecr.Config{
+			RegistryAuthority:   cfg.ImageCache.RegistryAuthority,
+			RepositoryPrefix:    cfg.ImageCache.RepositoryPrefix,
+			CacheRoleARN:        cfg.ImageCache.CacheRoleARN,
+			RepositoryARNPrefix: cfg.ImageCache.RepositoryARNPrefix,
+		}); err != nil {
+			return fmt.Errorf("validate workspace image cache configuration: %w", err)
+		}
+	}
+	publicURL, err := url.Parse(cfg.PublicURL)
+	if err != nil {
+		return fmt.Errorf("parse public URL: %w", err)
+	}
+	buildPolicy, err := loadControlPlaneBuildPolicy(cfg.BuildPolicyPath)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return fmt.Errorf("connect database: %w", err)
+	}
+	defer pool.Close()
+	queries := db.New(pool)
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin worker group reconciliation: %w", err)
@@ -153,26 +182,14 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit worker group reconciliation: %w", err)
 	}
-	clickHouseClient, err := clickhouse.New(clickhouse.Config{
-		URL:      cfg.ClickHouseURL,
-		User:     cfg.ClickHouseUser,
-		Password: cfg.ClickHousePassword,
-	})
+	clickHouseClient, err := clickhouse.New(clickHouseConfig)
 	if err != nil {
 		return fmt.Errorf("configure clickhouse: %w", err)
 	}
 	defer clickHouseClient.Close()
 	telemetryReader := clickhouse.NewReader(clickHouseClient)
-	redisOptions, err := redis.ParseURL(cfg.RedisURL)
-	if err != nil {
-		return fmt.Errorf("parse redis url: %w", err)
-	}
 	redisClient := redis.NewClient(redisOptions)
 	defer redisClient.Close()
-	publicURL, err := url.Parse(cfg.PublicURL)
-	if err != nil {
-		return fmt.Errorf("parse public URL: %w", err)
-	}
 	mailer := configuredEmailSender(log, cfg)
 	eventStream, err := eventstream.New(log, queries, redisClient, eventstream.Config{
 		TelemetryReader: telemetryReader,
@@ -195,9 +212,6 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	casStore, err := cass3.New(ctx, cfg.CASURI)
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
-	}
-	if err := cass3.ValidateDistinctS3Stores(cfg.CASURI, cfg.PlatformStoreURI); err != nil {
-		return fmt.Errorf("validate platform artifact store: %w", err)
 	}
 	platformStore, err := cass3.NewImmutable(ctx, cfg.PlatformStoreURI)
 	if err != nil {

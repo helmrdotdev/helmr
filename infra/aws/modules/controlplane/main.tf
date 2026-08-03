@@ -16,7 +16,7 @@ locals {
     for group in var.worker_groups : group.id => group
   }
   worker_enrollment_secret_env_by_group = {
-    for group in var.worker_groups : group.id => "HELMR_WORKER_ENROLLMENT_SECRET_${upper(substr(sha256(group.id), 0, 16))}"
+    for group in var.worker_groups : group.id => "WORKER_GROUP_ENROLLMENT_SECRET_${upper(substr(sha256(group.id), 0, 16))}"
   }
   worker_groups_config = [for group in var.worker_groups : {
     id                      = group.id
@@ -51,81 +51,81 @@ locals {
   )
 
   clickhouse_environment = merge({
-    HELMR_CLICKHOUSE_URL = local.clickhouse_url
+    CLICKHOUSE_URL = local.clickhouse_url
     }, local.clickhouse_user == "" ? {} : {
-    HELMR_CLICKHOUSE_USER = local.clickhouse_user
+    CLICKHOUSE_USER = local.clickhouse_user
   })
   region_environment = {
-    HELMR_REGION_ID           = local.region_id
-    HELMR_DEFAULT_REGION_ID   = local.default_region_id
-    HELMR_PROVIDER            = "aws"
-    HELMR_PROVIDER_REGION     = data.aws_region.current.region
-    HELMR_REGION_DISPLAY_NAME = local.region_display_name
+    REGION_ID           = local.region_id
+    DEFAULT_REGION_ID   = local.default_region_id
+    PROVIDER            = "aws"
+    PROVIDER_REGION     = data.aws_region.current.region
+    REGION_DISPLAY_NAME = local.region_display_name
   }
 
   telemetry_secrets = var.clickhouse_password_secret_arn == null ? {} : {
-    HELMR_CLICKHOUSE_PASSWORD = var.clickhouse_password_secret_arn
+    CLICKHOUSE_PASSWORD = var.clickhouse_password_secret_arn
   }
   migration_secrets = merge({
-    HELMR_DATABASE_URL = aws_secretsmanager_secret.database_url.arn
+    DATABASE_URL = aws_secretsmanager_secret.database_url.arn
   }, local.telemetry_secrets)
 
   migration_environment = local.clickhouse_environment
 
   email_environment = merge(
     var.email_provider == "none" ? {} : {
-      HELMR_EMAIL_PROVIDER = var.email_provider
+      EMAIL_PROVIDER = var.email_provider
     },
     contains(["smtp", "resend"], var.email_provider) ? {
-      HELMR_EMAIL_FROM = local.email_from
+      EMAIL_FROM = local.email_from
     } : {},
     var.email_provider == "smtp" ? merge({
-      HELMR_SMTP_ADDR = local.smtp_addr
+      SMTP_ADDR = local.smtp_addr
       },
       local.smtp_username == "" ? {} : {
-        HELMR_SMTP_USERNAME = local.smtp_username
+        SMTP_USERNAME = local.smtp_username
       }
     ) : {}
   )
 
   email_secrets = merge(
     var.email_provider == "resend" ? {
-      HELMR_RESEND_API_KEY = aws_secretsmanager_secret.resend_api_key[0].arn
+      RESEND_API_KEY = aws_secretsmanager_secret.resend_api_key[0].arn
     } : {},
     var.email_provider == "smtp" && var.smtp_password_enabled ? {
-      HELMR_SMTP_PASSWORD = aws_secretsmanager_secret.smtp_password[0].arn
+      SMTP_PASSWORD = aws_secretsmanager_secret.smtp_password[0].arn
     } : {}
   )
 
   controlplane_environment_defaults = merge({
-    HELMR_CONTROLPLANE_ADDR                 = ":${local.controlplane_port}"
-    HELMR_DEPLOYMENT_MODE                   = var.deployment_mode
-    HELMR_CAS_URI                           = "s3://${aws_s3_bucket.cas.bucket}"
-    HELMR_BUILD_POLICY_PATH                 = "/release/build-policy.json"
-    HELMR_PLATFORM_STORE_URI                = var.platform_store_uri
-    HELMR_PUBLIC_URL                        = local.controlplane_url
-    HELMR_REDIS_URL                         = local.redis_url
-    HELMR_SCHEDULE_JITTER                   = var.schedule_jitter
-    HELMR_GITHUB_OAUTH_CLIENT_ID            = var.github_oauth_client_id
-    HELMR_WORKER_GROUPS                     = jsonencode(local.worker_groups_config)
-    HELMR_IMAGE_CACHE_REGISTRY_AUTHORITY    = local.image_cache_registry_authority
-    HELMR_IMAGE_CACHE_REPOSITORY_PREFIX     = local.image_cache_repository_prefix
-    HELMR_IMAGE_CACHE_ROLE_ARN              = aws_iam_role.image_cache.arn
-    HELMR_IMAGE_CACHE_REPOSITORY_ARN_PREFIX = local.image_cache_repository_arn_prefix
+    CONTROL_PLANE_ADDR                = ":${local.controlplane_port}"
+    DEPLOYMENT_MODE                   = var.deployment_mode
+    CAS_URI                           = "s3://${aws_s3_bucket.cas.bucket}"
+    BUILD_POLICY_PATH                 = "/release/build-policy.json"
+    PLATFORM_STORE_URI                = var.platform_store_uri
+    PUBLIC_URL                        = local.controlplane_url
+    REDIS_URL                         = local.redis_url
+    SCHEDULE_JITTER                   = var.schedule_jitter
+    GITHUB_OAUTH_CLIENT_ID            = var.github_oauth_client_id
+    WORKER_GROUPS                     = jsonencode(local.worker_groups_config)
+    IMAGE_CACHE_REGISTRY_AUTHORITY    = local.image_cache_registry_authority
+    IMAGE_CACHE_REPOSITORY_PREFIX     = local.image_cache_repository_prefix
+    IMAGE_CACHE_ROLE_ARN              = aws_iam_role.image_cache.arn
+    IMAGE_CACHE_REPOSITORY_ARN_PREFIX = local.image_cache_repository_arn_prefix
   }, local.region_environment, local.clickhouse_environment, local.email_environment)
 
   controlplane_secret_defaults = merge({
-    HELMR_DATABASE_URL               = aws_secretsmanager_secret.database_url.arn
-    WORKER_TOKEN_SIGNING_KEY         = aws_secretsmanager_secret.worker_token_signing_key.arn
-    HELMR_SETUP_TOKEN                = aws_secretsmanager_secret.setup_token.arn
-    AUTH_KEY                         = aws_secretsmanager_secret.auth_key.arn
-    ENCRYPTION_KEY                   = aws_secretsmanager_secret.encryption_key.arn
-    WORKSPACE_FENCING_KEY            = aws_secretsmanager_secret.workspace_fencing_key.arn
-    TOKEN_CREDENTIAL_KEY             = aws_secretsmanager_secret.token_credential_key.arn
-    HELMR_GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret.arn
+    DATABASE_URL               = aws_secretsmanager_secret.database_url.arn
+    WORKER_TOKEN_SIGNING_KEY   = aws_secretsmanager_secret.worker_token_signing_key.arn
+    SETUP_TOKEN                = aws_secretsmanager_secret.setup_token.arn
+    AUTH_KEY                   = aws_secretsmanager_secret.auth_key.arn
+    ENCRYPTION_KEY             = aws_secretsmanager_secret.encryption_key.arn
+    WORKSPACE_FENCING_KEY      = aws_secretsmanager_secret.workspace_fencing_key.arn
+    TOKEN_CREDENTIAL_KEY       = aws_secretsmanager_secret.token_credential_key.arn
+    GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret.arn
     },
     var.operator_token_secret_arn == null ? {} : {
-      HELMR_OPERATOR_TOKEN = var.operator_token_secret_arn
+      OPERATOR_TOKEN = var.operator_token_secret_arn
     },
     local.worker_enrollment_secrets,
     local.telemetry_secrets,
@@ -133,26 +133,26 @@ locals {
   )
 
   reserved_optional_controlplane_keys = toset([
-    "HELMR_EMAIL_PROVIDER",
-    "HELMR_EMAIL_FROM",
-    "HELMR_RESEND_API_KEY",
-    "HELMR_SMTP_ADDR",
-    "HELMR_SMTP_USERNAME",
-    "HELMR_SMTP_PASSWORD",
-    "HELMR_REGION_ID",
-    "HELMR_DEFAULT_REGION_ID",
-    "HELMR_PROVIDER",
-    "HELMR_PROVIDER_REGION",
-    "HELMR_REGION_DISPLAY_NAME",
-    "HELMR_CLICKHOUSE_URL",
-    "HELMR_CLICKHOUSE_USER",
-    "HELMR_CLICKHOUSE_PASSWORD",
+    "EMAIL_PROVIDER",
+    "EMAIL_FROM",
+    "RESEND_API_KEY",
+    "SMTP_ADDR",
+    "SMTP_USERNAME",
+    "SMTP_PASSWORD",
+    "REGION_ID",
+    "DEFAULT_REGION_ID",
+    "PROVIDER",
+    "PROVIDER_REGION",
+    "REGION_DISPLAY_NAME",
+    "CLICKHOUSE_URL",
+    "CLICKHOUSE_USER",
+    "CLICKHOUSE_PASSWORD",
   ])
   reserved_controlplane_environment_keys = toset(keys(local.controlplane_environment_defaults))
-  reserved_controlplane_secret_keys      = setunion(toset(keys(local.controlplane_secret_defaults)), toset(["HELMR_OPERATOR_TOKEN"]))
+  reserved_controlplane_secret_keys      = setunion(toset(keys(local.controlplane_secret_defaults)), toset(["OPERATOR_TOKEN"]))
   reserved_controlplane_keys             = setunion(local.reserved_controlplane_environment_keys, local.reserved_controlplane_secret_keys, local.reserved_optional_controlplane_keys)
   reserved_dispatcher_keys = setunion(toset(keys(local.dispatcher_environment_defaults)), toset(keys(local.dispatcher_secrets)), toset([
-    "HELMR_CLICKHOUSE_PASSWORD",
+    "CLICKHOUSE_PASSWORD",
   ]))
   controlplane_environment_conflicts = setintersection(keys(var.controlplane_environment), local.reserved_controlplane_keys)
   dispatcher_environment_conflicts   = setintersection(keys(var.dispatcher_environment), local.reserved_dispatcher_keys)
@@ -160,16 +160,16 @@ locals {
   controlplane_secrets               = local.controlplane_secret_defaults
 
   dispatcher_environment_defaults = merge({
-    HELMR_REDIS_URL              = local.redis_url
-    HELMR_SCHEDULE_POLL_INTERVAL = var.schedule_poll_interval
-    HELMR_SCHEDULE_CLAIM_LIMIT   = tostring(var.schedule_claim_limit)
-    HELMR_SCHEDULE_CONCURRENCY   = tostring(var.schedule_concurrency)
-    HELMR_SCHEDULE_CLAIM_LEASE   = var.schedule_claim_lease
+    REDIS_URL              = local.redis_url
+    SCHEDULE_POLL_INTERVAL = var.schedule_poll_interval
+    SCHEDULE_CLAIM_LIMIT   = tostring(var.schedule_claim_limit)
+    SCHEDULE_CONCURRENCY   = tostring(var.schedule_concurrency)
+    SCHEDULE_CLAIM_LEASE   = var.schedule_claim_lease
   }, local.clickhouse_environment)
   dispatcher_environment = merge(var.dispatcher_environment, local.dispatcher_environment_defaults)
 
   dispatcher_secrets = merge({
-    HELMR_DATABASE_URL    = aws_secretsmanager_secret.database_url.arn
+    DATABASE_URL          = aws_secretsmanager_secret.database_url.arn
     WORKSPACE_FENCING_KEY = aws_secretsmanager_secret.workspace_fencing_key.arn
     }, local.telemetry_secrets
   )

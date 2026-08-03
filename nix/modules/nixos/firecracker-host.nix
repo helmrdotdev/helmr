@@ -91,12 +91,11 @@ in
         ++ cfg.extraPackages;
 
         environment.sessionVariables = {
-          HELMR_WORKER_FIRECRACKER_PATH = "${firecrackerPackage}/bin/firecracker";
-          HELMR_WORKER_FIRECRACKER_JAILER_PATH = "${firecrackerPackage}/bin/jailer";
-          HELMR_WORKER_FIRECRACKER_JAILER_UID = toString cfg.jailerUID;
-          HELMR_WORKER_FIRECRACKER_JAILER_GID = toString cfg.jailerGID;
-          HELMR_WORKER_FIRECRACKER_CGROUP_VERSION = "2";
-          HELMR_VM_E2E = "1";
+          FIRECRACKER_PATH = "${firecrackerPackage}/bin/firecracker";
+          JAILER_PATH = "${firecrackerPackage}/bin/jailer";
+          JAILER_UID = toString cfg.jailerUID;
+          JAILER_GID = toString cfg.jailerGID;
+          JAILER_CGROUP_VERSION = "2";
         };
 
         boot.kernelModules = [ "kvm" ];

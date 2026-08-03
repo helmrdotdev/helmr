@@ -30,7 +30,7 @@ Populate these secrets after the first apply:
 | `setup_token` | High-entropy token for first organization setup. |
 | `github_oauth_client_secret` | GitHub OAuth client secret. |
 
-Create a Secrets Manager secret for `HELMR_CLICKHOUSE_PASSWORD` and pass its ARN as `clickhouse_password_secret_arn`. If that secret uses a customer-managed KMS key outside the stack, also pass the key ARN through `clickhouse_password_kms_key_arns`.
+Create a Secrets Manager secret for `CLICKHOUSE_PASSWORD` and pass its ARN as `clickhouse_password_secret_arn`. If that secret uses a customer-managed KMS key outside the stack, also pass the key ARN through `clickhouse_password_kms_key_arns`.
 
 The Terraform/OpenTofu stack creates empty Secrets Manager entries. It does not generate Helmr
 internal secret values. Use the bootstrap helper from the AWS profile directory to generate the

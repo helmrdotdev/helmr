@@ -34,8 +34,8 @@ worker_enrollment_secret_file=/run/helmr/worker-enrollment-secret
   printf 'AWS_REGION=%s\n' "$aws_region"
   printf 'AWS_DEFAULT_REGION=%s\n' "$aws_region"
   printf 'CHECKPOINT_ENCRYPTION_KEY=%s\n' "$checkpoint_key"
-  printf 'HELMR_WORKER_ENROLLMENT_SECRET_FILE=%s\n' "$worker_enrollment_secret_file"
-  printf 'HELMR_WORKER_RESOURCE_ID=%s\n' "$worker_resource_id"
+  printf 'WORKER_ENROLLMENT_SECRET_FILE=%s\n' "$worker_enrollment_secret_file"
+  printf 'WORKER_RESOURCE_ID=%s\n' "$worker_resource_id"
 } >>"$env_tmp"
 
 chown root:root "$env_tmp"

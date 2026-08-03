@@ -8,68 +8,68 @@ locals {
   network_resolver_ipv4   = coalesce(var.network_resolver_ipv4, cidrhost(data.aws_vpc.selected.cidr_block, 2))
 
   disk_environment = merge({
-    HELMR_WORKER_DISK_RESERVE_MIB = tostring(var.worker_disk_reserve_mib)
+    WORKER_DISK_RESERVE_MIB = tostring(var.worker_disk_reserve_mib)
     }, var.worker_disk_mib == null ? {} : {
-    HELMR_WORKER_DISK_MIB = tostring(var.worker_disk_mib)
+    WORKER_DISK_MIB = tostring(var.worker_disk_mib)
   })
   capacity_environment = merge(
     var.worker_capacity_vcpus == null ? {} : {
-      HELMR_WORKER_CAPACITY_VCPUS = tostring(var.worker_capacity_vcpus)
+      WORKER_CAPACITY_VCPUS = tostring(var.worker_capacity_vcpus)
     },
     var.worker_capacity_memory_mib == null ? {} : {
-      HELMR_WORKER_CAPACITY_MEMORY_MIB = tostring(var.worker_capacity_memory_mib)
+      WORKER_CAPACITY_MEMORY_MIB = tostring(var.worker_capacity_memory_mib)
     },
     var.worker_execution_slots == null ? {} : {
-      HELMR_WORKER_EXECUTION_SLOTS = tostring(var.worker_execution_slots)
+      WORKER_EXECUTION_SLOTS = tostring(var.worker_execution_slots)
     },
   )
   cache_environment = merge(
     var.substrate_cache_max_mib == null ? {} : {
-      HELMR_WORKER_SUBSTRATE_CACHE_MAX_MIB = tostring(var.substrate_cache_max_mib)
+      WORKER_SUBSTRATE_CACHE_MAX_MIB = tostring(var.substrate_cache_max_mib)
     },
     var.artifact_cache_max_mib == null ? {} : {
-      HELMR_WORKER_ARTIFACT_CACHE_MAX_MIB = tostring(var.artifact_cache_max_mib)
+      WORKER_ARTIFACT_CACHE_MAX_MIB = tostring(var.artifact_cache_max_mib)
     },
   )
 
   worker_environment = merge({
-    HELMR_CONTROLPLANE_URL                  = var.worker_controlplane_url
-    HELMR_CAS_URI                           = var.cas_uri
-    HELMR_PLATFORM_STORE_URI                = var.platform_store_uri
-    HELMR_WORKER_GROUP_ID                   = var.worker_group_id
-    HELMR_WORKER_FIRECRACKER_PATH           = "/usr/local/bin/firecracker"
-    HELMR_WORKER_FIRECRACKER_JAILER_PATH    = "/usr/local/bin/jailer"
-    HELMR_WORKER_FIRECRACKER_JAILER_UID     = tostring(var.jailer_uid)
-    HELMR_WORKER_FIRECRACKER_JAILER_GID     = tostring(var.jailer_gid)
-    HELMR_WORKER_FIRECRACKER_CGROUP_VERSION = "2"
-    HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS = jsonencode(var.network_blocked_ipv4_cidrs)
-    HELMR_WORKER_NETWORK_LINK_POOL          = var.network_link_pool
-    HELMR_WORKER_NETWORK_RESOLVER_IPV4      = local.network_resolver_ipv4
-    HELMR_WORKER_NETWORK_TRANSLATION_POOL   = var.network_translation_pool
-    HELMR_WORKER_WORK_DIR                   = contains(var.worker_roles, "build") ? "/var/lib/helmr/scratch/worker" : "/var/lib/helmr"
-    HELMR_WORKER_INSTANCE_CREDENTIAL_PATH   = "/var/lib/helmr/worker-credential.json"
-    HELMR_WORKER_ROLES                      = join(",", sort(tolist(var.worker_roles)))
-    HELMR_WORKER_IMAGES_DIR                 = "/var/lib/helmr/images"
-    HELMR_WORKER_FIRECRACKER_CHROOT_DIR     = contains(var.worker_roles, "build") ? "/var/lib/helmr/scratch/jailer" : "/var/lib/helmr/jailer"
-    HELMR_VM_VCPUS                          = tostring(var.vm_vcpus)
-    HELMR_VM_MEMORY_MIB                     = tostring(var.vm_memory_mib)
-    HELMR_VM_SCRATCH_DISK_MIB               = tostring(var.vm_scratch_disk_mib)
-    HELMR_VM_INIT_TIMEOUT                   = "30s"
-    HELMR_VM_HEALTH_TIMEOUT                 = "300s"
+    CONTROL_PLANE_URL                 = var.worker_controlplane_url
+    CAS_URI                           = var.cas_uri
+    PLATFORM_STORE_URI                = var.platform_store_uri
+    WORKER_GROUP_ID                   = var.worker_group_id
+    FIRECRACKER_PATH                  = "/usr/local/bin/firecracker"
+    JAILER_PATH                       = "/usr/local/bin/jailer"
+    JAILER_UID                        = tostring(var.jailer_uid)
+    JAILER_GID                        = tostring(var.jailer_gid)
+    JAILER_CGROUP_VERSION             = "2"
+    WORKER_NETWORK_BLOCKED_IPV4_CIDRS = jsonencode(var.network_blocked_ipv4_cidrs)
+    WORKER_NETWORK_LINK_POOL          = var.network_link_pool
+    WORKER_NETWORK_RESOLVER_IPV4      = local.network_resolver_ipv4
+    WORKER_NETWORK_TRANSLATION_POOL   = var.network_translation_pool
+    WORKER_WORK_DIR                   = contains(var.worker_roles, "build") ? "/var/lib/helmr/scratch/worker" : "/var/lib/helmr"
+    WORKER_INSTANCE_CREDENTIAL_PATH   = "/var/lib/helmr/worker-credential.json"
+    WORKER_ROLES                      = join(",", sort(tolist(var.worker_roles)))
+    WORKER_IMAGES_DIR                 = "/var/lib/helmr/images"
+    JAILER_CHROOT_DIR                 = contains(var.worker_roles, "build") ? "/var/lib/helmr/scratch/jailer" : "/var/lib/helmr/jailer"
+    VM_VCPUS                          = tostring(var.vm_vcpus)
+    VM_MEMORY_MIB                     = tostring(var.vm_memory_mib)
+    VM_SCRATCH_DISK_MIB               = tostring(var.vm_scratch_disk_mib)
+    VM_INIT_TIMEOUT                   = "30s"
+    VM_HEALTH_TIMEOUT                 = "300s"
     }, contains(var.worker_roles, "build") ? {
-    HELMR_BUILD_POLICY_PATH                 = "/etc/helmr/build-policy.json"
-    HELMR_WORKER_BUILD_CACHE_DIR            = "/var/lib/helmr/cache"
-    HELMR_WORKER_BUILD_SCRATCH_DIR          = "/var/lib/helmr/scratch"
-    HELMR_IMAGE_CACHE_REGISTRY_AUTHORITY    = var.image_cache_registry_authority
-    HELMR_IMAGE_CACHE_REPOSITORY_PREFIX     = var.image_cache_repository_prefix
-    HELMR_IMAGE_CACHE_ROLE_ARN              = var.image_cache_role_arn
-    HELMR_IMAGE_CACHE_REPOSITORY_ARN_PREFIX = var.image_cache_repository_arn_prefix
+    BUILD_POLICY_PATH                 = "/etc/helmr/build-policy.json"
+    WORKER_BUILD_CACHE_DIR            = "/var/lib/helmr/cache"
+    WORKER_BUILD_SCRATCH_DIR          = "/var/lib/helmr/scratch"
+    IMAGE_CACHE_REGISTRY_AUTHORITY    = var.image_cache_registry_authority
+    IMAGE_CACHE_REPOSITORY_PREFIX     = var.image_cache_repository_prefix
+    IMAGE_CACHE_ROLE_ARN              = var.image_cache_role_arn
+    IMAGE_CACHE_REPOSITORY_ARN_PREFIX = var.image_cache_repository_arn_prefix
   } : {}, local.disk_environment, local.capacity_environment, local.cache_environment)
 
   reserved_worker_environment_keys = toset(concat(keys(local.worker_environment), [
     "CHECKPOINT_ENCRYPTION_KEY",
-    "HELMR_BUILD_POLICY_PATH",
-    "HELMR_PLATFORM_STORE_URI",
+    "BUILD_POLICY_PATH",
+    "PLATFORM_STORE_URI",
   ]))
   worker_environment_conflicts = setintersection(keys(var.worker_environment), local.reserved_worker_environment_keys)
   base_worker_environment      = merge(local.worker_environment, var.worker_environment)
@@ -294,7 +294,7 @@ resource "aws_launch_template" "worker" {
     termination_lifecycle_hook_name      = var.enable_lifecycle_hooks ? local.termination_hook_name : ""
     termination_drain_timeout_seconds    = var.termination_drain_timeout_seconds
     lifecycle_heartbeat_interval_seconds = var.lifecycle_heartbeat_interval_seconds
-    worker_work_dir                      = local.base_worker_environment.HELMR_WORKER_WORK_DIR
+    worker_work_dir                      = local.base_worker_environment.WORKER_WORK_DIR
     aws_region                           = data.aws_region.current.region
     platform_store_uri                   = var.platform_store_uri
     build_policy_digest                  = var.build_policy_digest == null ? "" : var.build_policy_digest
@@ -360,7 +360,7 @@ resource "terraform_data" "network_preconditions" {
   lifecycle {
     precondition {
       condition     = length(local.worker_environment_conflicts) == 0
-      error_message = "worker_environment must not set infra-owned HELMR_* routing or security variables. Use explicit worker module inputs instead."
+      error_message = "worker_environment must not set infra-owned routing or security variables. Use explicit worker module inputs instead."
     }
 
     precondition {

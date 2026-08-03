@@ -143,7 +143,7 @@ variable "clickhouse_user" {
 }
 
 variable "clickhouse_password_secret_arn" {
-  description = "Secrets Manager ARN for HELMR_CLICKHOUSE_PASSWORD when the ClickHouse endpoint requires a password."
+  description = "Secrets Manager ARN for CLICKHOUSE_PASSWORD when the ClickHouse endpoint requires a password."
   type        = string
   default     = null
   nullable    = true
@@ -374,13 +374,13 @@ variable "operator_token_kms_key_arn" {
 }
 
 variable "controlplane_environment" {
-  description = "Additional non-secret environment variables for helmr-controlplane. Managed Helmr variables such as HELMR_REDIS_URL are owned by this module."
+  description = "Additional non-secret environment variables for helmr-controlplane. Managed Helmr variables such as REDIS_URL are owned by this module."
   type        = map(string)
   default     = {}
 }
 
 variable "dispatcher_environment" {
-  description = "Additional non-secret environment variables for helmr-dispatcher. Managed Helmr variables such as HELMR_REDIS_URL are owned by this module."
+  description = "Additional non-secret environment variables for helmr-dispatcher. Managed Helmr variables such as REDIS_URL are owned by this module."
   type        = map(string)
   default     = {}
 }

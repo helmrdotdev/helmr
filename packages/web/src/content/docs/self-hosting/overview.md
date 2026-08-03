@@ -33,7 +33,7 @@ AWS infrastructure provides the shared dependencies:
   and telemetry outbox state.
 - ClickHouse Cloud stores historical run logs, events, traces, terminal output, and telemetry analytics.
 - Cluster-mode disabled ElastiCache Valkey/Redis backs the dispatch queue used by
-  `HELMR_REDIS_URL`.
+  `REDIS_URL`.
 - S3 stores source bundles, runtime artifacts, and encrypted checkpoint objects.
 - AWS Secrets Manager stores database, auth, OAuth, worker, and encryption secrets.
 - ECS Fargate runs the Control Plane, dispatcher, and migration tasks.

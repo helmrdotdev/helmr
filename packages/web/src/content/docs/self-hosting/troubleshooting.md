@@ -11,7 +11,7 @@ order: 800
 | Symptom | First checks |
 | --- | --- |
 | `/healthz` fails | Control Plane task is not running, load balancer target is unhealthy, or the public URL does not route to the service. |
-| `/readyz` fails | Database URL or `HELMR_REDIS_URL` is wrong, RDS or Redis/Valkey is unavailable, or migrations have not run successfully. |
+| `/readyz` fails | Database URL or `REDIS_URL` is wrong, RDS or Redis/Valkey is unavailable, or migrations have not run successfully. |
 | GitHub login fails | Callback URL must be `<controlplane_url>/auth/github/callback`; OAuth client secret must match the OAuth app. |
 | Run stays queued | Dispatcher is not running, Redis/Valkey is unavailable, no active workers exist, desired capacity is zero, worker enrollment failed, or worker cannot reach the Control Plane. |
 | Worker does not activate | Check KVM, Firecracker, jailer, `ip`/`nft`, certified guest artifacts, the group enrollment secret file, requested roles, and outbound network access. |
