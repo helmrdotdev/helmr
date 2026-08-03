@@ -99,6 +99,7 @@ in
             ../../go.mod
             ../../go.sum
             ../../internal
+            ../../operatorapi
           ];
         };
         vendorHash = "sha256-H1tGYmaOree6IBkfqIBNcx8HapUqEvtjUUeHxVEKcYk=";
