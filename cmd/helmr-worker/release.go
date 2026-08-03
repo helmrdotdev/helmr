@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
+	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
@@ -39,7 +39,7 @@ func installRelease(ctx context.Context, args []string) error {
 	if storeURI == "" || digest == "" || output == "" {
 		return errors.New("release install requires --store, --digest, and --output")
 	}
-	store, err := cas.NewImmutableS3(ctx, storeURI)
+	store, err := cass3.NewImmutable(ctx, storeURI)
 	if err != nil {
 		return fmt.Errorf("configure release store: %w", err)
 	}

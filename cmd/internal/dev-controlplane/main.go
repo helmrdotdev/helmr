@@ -26,6 +26,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
+	"github.com/helmrdotdev/helmr/internal/eventstream"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -168,15 +169,15 @@ func main() {
 		os.Exit(1)
 	}
 	defer clickHouseClient.Close()
-	telemetryReader := telemetry.NewHistoricalReader(clickHouseClient)
-	eventStream, err := controlplane.NewEventStream(log, queries, redisClient, controlplane.EventStreamConfig{
+	telemetryReader := clickhouse.NewReader(clickHouseClient)
+	eventStream, err := eventstream.New(log, queries, redisClient, eventstream.Config{
 		TelemetryReader: telemetryReader,
 	})
 	if err != nil {
 		log.Error("configure event stream", "error", err)
 		os.Exit(1)
 	}
-	telemetryIngestor, err := telemetry.NewIngestor(log, queries, telemetry.NewClickHouseWriter(clickHouseClient))
+	telemetryIngestor, err := telemetry.NewIngestor(log, queries, clickhouse.NewWriter(clickHouseClient))
 	if err != nil {
 		log.Error("configure telemetry ingester", "error", err)
 		os.Exit(1)

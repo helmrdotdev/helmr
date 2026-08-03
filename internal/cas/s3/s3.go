@@ -1,12 +1,9 @@
-package cas
+package s3
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"net/url"
 	"os"
@@ -15,10 +12,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	"github.com/helmrdotdev/helmr/internal/archive"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -32,17 +30,17 @@ const (
 )
 
 type s3Client interface {
-	PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error)
-	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
-	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
-	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
-	CreateMultipartUpload(context.Context, *s3.CreateMultipartUploadInput, ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error)
-	UploadPart(context.Context, *s3.UploadPartInput, ...func(*s3.Options)) (*s3.UploadPartOutput, error)
-	CompleteMultipartUpload(context.Context, *s3.CompleteMultipartUploadInput, ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error)
-	AbortMultipartUpload(context.Context, *s3.AbortMultipartUploadInput, ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error)
+	PutObject(context.Context, *awss3.PutObjectInput, ...func(*awss3.Options)) (*awss3.PutObjectOutput, error)
+	HeadObject(context.Context, *awss3.HeadObjectInput, ...func(*awss3.Options)) (*awss3.HeadObjectOutput, error)
+	GetObject(context.Context, *awss3.GetObjectInput, ...func(*awss3.Options)) (*awss3.GetObjectOutput, error)
+	DeleteObject(context.Context, *awss3.DeleteObjectInput, ...func(*awss3.Options)) (*awss3.DeleteObjectOutput, error)
+	CreateMultipartUpload(context.Context, *awss3.CreateMultipartUploadInput, ...func(*awss3.Options)) (*awss3.CreateMultipartUploadOutput, error)
+	UploadPart(context.Context, *awss3.UploadPartInput, ...func(*awss3.Options)) (*awss3.UploadPartOutput, error)
+	CompleteMultipartUpload(context.Context, *awss3.CompleteMultipartUploadInput, ...func(*awss3.Options)) (*awss3.CompleteMultipartUploadOutput, error)
+	AbortMultipartUpload(context.Context, *awss3.AbortMultipartUploadInput, ...func(*awss3.Options)) (*awss3.AbortMultipartUploadOutput, error)
 }
 
-type S3 struct {
+type Store struct {
 	client  s3Client
 	bucket  string
 	prefix  string
@@ -53,25 +51,25 @@ type S3 struct {
 	multipartPartSizeBytes  int64
 }
 
-type ImmutableS3 struct {
-	store *S3
+type ImmutableStore struct {
+	store *Store
 }
 
-type S3Option func(*S3)
+type Option func(*Store)
 
-func WithS3TempDir(path string) S3Option {
-	return func(store *S3) {
+func WithTempDir(path string) Option {
+	return func(store *Store) {
 		store.tempDir = strings.TrimSpace(path)
 	}
 }
 
-func WithS3ShardedKeys() S3Option {
-	return func(store *S3) {
+func WithShardedKeys() Option {
+	return func(store *Store) {
 		store.sharded = true
 	}
 }
 
-func NewS3(ctx context.Context, rawURI string, opts ...S3Option) (*S3, error) {
+func New(ctx context.Context, rawURI string, opts ...Option) (*Store, error) {
 	uri, err := url.Parse(rawURI)
 	if err != nil {
 		return nil, err
@@ -83,13 +81,13 @@ func NewS3(ctx context.Context, rawURI string, opts ...S3Option) (*S3, error) {
 	if err != nil {
 		return nil, err
 	}
-	client := s3.NewFromConfig(cfg, func(options *s3.Options) {
+	client := awss3.NewFromConfig(cfg, func(options *awss3.Options) {
 		if endpoint := uri.Query().Get("endpoint"); endpoint != "" {
 			options.BaseEndpoint = aws.String(endpoint)
 			options.UsePathStyle = true
 		}
 	})
-	store := &S3{
+	store := &Store{
 		client: client,
 		bucket: uri.Host,
 		prefix: strings.Trim(uri.Path, "/"),
@@ -100,12 +98,12 @@ func NewS3(ctx context.Context, rawURI string, opts ...S3Option) (*S3, error) {
 	return store, nil
 }
 
-func NewImmutableS3(ctx context.Context, rawURI string, opts ...S3Option) (*ImmutableS3, error) {
-	store, err := NewS3(ctx, rawURI, opts...)
+func NewImmutable(ctx context.Context, rawURI string, opts ...Option) (*ImmutableStore, error) {
+	store, err := New(ctx, rawURI, opts...)
 	if err != nil {
 		return nil, err
 	}
-	return &ImmutableS3{store: store}, nil
+	return &ImmutableStore{store: store}, nil
 }
 
 func ValidateDisjointS3Stores(firstURI, secondURI string) error {
@@ -167,15 +165,15 @@ func s3Namespace(rawURI string) (namespace, error) {
 	}, nil
 }
 
-func (c *S3) Put(ctx context.Context, mediaType string, body io.Reader) (Object, error) {
+func (c *Store) Put(ctx context.Context, mediaType string, body io.Reader) (cas.Object, error) {
 	stage, err := c.Stage(ctx, mediaType)
 	if err != nil {
-		return Object{}, err
+		return cas.Object{}, err
 	}
-	return putStage(ctx, stage, body)
+	return cas.WriteStage(ctx, stage, body)
 }
 
-func (c *S3) Stage(ctx context.Context, mediaType string) (Stage, error) {
+func (c *Store) Stage(ctx context.Context, mediaType string) (cas.Stage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -188,20 +186,20 @@ func (c *S3) Stage(ctx context.Context, mediaType string) (Stage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &s3Stage{store: c, stageFile: newStageFile(mediaType, tmp)}, nil
+	return &s3Stage{store: c, FileStage: cas.NewFileStage(mediaType, tmp)}, nil
 }
 
-func (c *S3) uploadFile(ctx context.Context, key, mediaType, path string, size int64) error {
+func (c *Store) uploadFile(ctx context.Context, key, mediaType, path string, size int64) error {
 	if size < c.multipartThreshold() {
 		return c.putObject(ctx, key, mediaType, path, size)
 	}
 	return c.putMultipartObject(ctx, key, mediaType, path, size)
 }
 
-func (c *S3) uploadDescriptor(
+func (c *Store) uploadDescriptor(
 	ctx context.Context,
 	key string,
-	expected Descriptor,
+	expected cas.Descriptor,
 	file *os.File,
 ) error {
 	if expected.SizeBytes < c.multipartThreshold() {
@@ -210,13 +208,13 @@ func (c *S3) uploadDescriptor(
 	return c.putMultipartDescriptor(ctx, key, expected, file)
 }
 
-func (c *S3) putDescriptor(
+func (c *Store) putDescriptor(
 	ctx context.Context,
 	key string,
-	expected Descriptor,
+	expected cas.Descriptor,
 	file *os.File,
 ) error {
-	_, err := c.client.PutObject(ctx, &s3.PutObjectInput{
+	_, err := c.client.PutObject(ctx, &awss3.PutObjectInput{
 		Bucket:        aws.String(c.bucket),
 		Key:           aws.String(key),
 		Body:          io.NewSectionReader(file, 0, expected.SizeBytes),
@@ -234,13 +232,13 @@ func (c *S3) putDescriptor(
 	}
 }
 
-func (c *S3) putMultipartDescriptor(
+func (c *Store) putMultipartDescriptor(
 	ctx context.Context,
 	key string,
-	expected Descriptor,
+	expected cas.Descriptor,
 	file *os.File,
 ) error {
-	created, err := c.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+	created, err := c.client.CreateMultipartUpload(ctx, &awss3.CreateMultipartUploadInput{
 		Bucket:      aws.String(c.bucket),
 		Key:         aws.String(key),
 		ContentType: aws.String(expected.MediaType),
@@ -261,7 +259,7 @@ func (c *S3) putMultipartDescriptor(
 		partNumber := partNumber
 		currentSize := min(partSize, expected.SizeBytes-offset)
 		group.Go(func() error {
-			part, err := c.client.UploadPart(groupCtx, &s3.UploadPartInput{
+			part, err := c.client.UploadPart(groupCtx, &awss3.UploadPartInput{
 				Bucket:     aws.String(c.bucket),
 				Key:        aws.String(key),
 				UploadId:   aws.String(uploadID),
@@ -284,7 +282,7 @@ func (c *S3) putMultipartDescriptor(
 		}
 		return err
 	}
-	_, err = c.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+	_, err = c.client.CompleteMultipartUpload(ctx, &awss3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(c.bucket),
 		Key:      aws.String(key),
 		UploadId: aws.String(uploadID),
@@ -308,10 +306,10 @@ func (c *S3) putMultipartDescriptor(
 	return nil
 }
 
-func (c *S3) abortMultipartUpload(ctx context.Context, key, uploadID string) error {
+func (c *Store) abortMultipartUpload(ctx context.Context, key, uploadID string) error {
 	abortCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s3MultipartAbortTimeout)
 	defer cancel()
-	_, err := c.client.AbortMultipartUpload(abortCtx, &s3.AbortMultipartUploadInput{
+	_, err := c.client.AbortMultipartUpload(abortCtx, &awss3.AbortMultipartUploadInput{
 		Bucket:   aws.String(c.bucket),
 		Key:      aws.String(key),
 		UploadId: aws.String(uploadID),
@@ -322,13 +320,13 @@ func (c *S3) abortMultipartUpload(ctx context.Context, key, uploadID string) err
 	return nil
 }
 
-func (c *S3) putObject(ctx context.Context, key, mediaType, path string, size int64) error {
+func (c *Store) putObject(ctx context.Context, key, mediaType, path string, size int64) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	input := &s3.PutObjectInput{
+	input := &awss3.PutObjectInput{
 		Bucket:        aws.String(c.bucket),
 		Key:           aws.String(key),
 		Body:          file,
@@ -342,8 +340,8 @@ func (c *S3) putObject(ctx context.Context, key, mediaType, path string, size in
 	return err
 }
 
-func (c *S3) putMultipartObject(ctx context.Context, key, mediaType, path string, size int64) error {
-	createInput := &s3.CreateMultipartUploadInput{
+func (c *Store) putMultipartObject(ctx context.Context, key, mediaType, path string, size int64) error {
+	createInput := &awss3.CreateMultipartUploadInput{
 		Bucket:      aws.String(c.bucket),
 		Key:         aws.String(key),
 		ContentType: aws.String(mediaType),
@@ -359,7 +357,7 @@ func (c *S3) putMultipartObject(ctx context.Context, key, mediaType, path string
 	completed := false
 	defer func() {
 		if !completed {
-			_, _ = c.client.AbortMultipartUpload(context.Background(), &s3.AbortMultipartUploadInput{
+			_, _ = c.client.AbortMultipartUpload(context.Background(), &awss3.AbortMultipartUploadInput{
 				Bucket:   aws.String(c.bucket),
 				Key:      aws.String(key),
 				UploadId: aws.String(uploadID),
@@ -383,7 +381,7 @@ func (c *S3) putMultipartObject(ctx context.Context, key, mediaType, path string
 		remaining := size - offset
 		currentSize := min(partSize, remaining)
 		group.Go(func() error {
-			part, err := c.client.UploadPart(groupCtx, &s3.UploadPartInput{
+			part, err := c.client.UploadPart(groupCtx, &awss3.UploadPartInput{
 				Bucket:     aws.String(c.bucket),
 				Key:        aws.String(key),
 				UploadId:   aws.String(uploadID),
@@ -403,7 +401,7 @@ func (c *S3) putMultipartObject(ctx context.Context, key, mediaType, path string
 	if err := group.Wait(); err != nil {
 		return err
 	}
-	completeInput := &s3.CompleteMultipartUploadInput{
+	completeInput := &awss3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(c.bucket),
 		Key:      aws.String(key),
 		UploadId: aws.String(uploadID),
@@ -442,14 +440,14 @@ func conditionalWriteError(err error) conditionalWriteResult {
 	}
 }
 
-func (c *S3) multipartThreshold() int64 {
+func (c *Store) multipartThreshold() int64 {
 	if c.multipartThresholdBytes > 0 {
 		return c.multipartThresholdBytes
 	}
 	return s3MultipartThresholdBytes
 }
 
-func (c *S3) multipartPartSize(size int64) int64 {
+func (c *Store) multipartPartSize(size int64) int64 {
 	partSize := c.multipartPartSizeBytes
 	if partSize <= 0 {
 		partSize = s3MultipartPartSizeBytes
@@ -461,19 +459,19 @@ func (c *S3) multipartPartSize(size int64) int64 {
 	return partSize
 }
 
-func (c *S3) Stat(ctx context.Context, digest string) (Object, error) {
+func (c *Store) Stat(ctx context.Context, digest string) (cas.Object, error) {
 	key, err := c.objectKey(digest)
 	if err != nil {
-		return Object{}, err
+		return cas.Object{}, err
 	}
-	output, err := c.client.HeadObject(ctx, &s3.HeadObjectInput{
+	output, err := c.client.HeadObject(ctx, &awss3.HeadObjectInput{
 		Bucket: aws.String(c.bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		return Object{}, err
+		return cas.Object{}, err
 	}
-	return Object{
+	return cas.Object{
 		Digest:    digest,
 		SizeBytes: aws.ToInt64(output.ContentLength),
 		Key:       key,
@@ -481,27 +479,27 @@ func (c *S3) Stat(ctx context.Context, digest string) (Object, error) {
 	}, nil
 }
 
-func (c *S3) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
+func (c *Store) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
 	key, err := c.objectKey(digest)
 	if err != nil {
 		return nil, err
 	}
-	output, err := c.client.GetObject(ctx, &s3.GetObjectInput{
+	output, err := c.client.GetObject(ctx, &awss3.GetObjectInput{
 		Bucket: aws.String(c.bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
 		return nil, err
 	}
-	return newVerifyingReadCloser(output.Body, digest), nil
+	return cas.NewVerifyingReadCloser(output.Body, digest), nil
 }
 
-func (c *S3) Delete(ctx context.Context, digest string) error {
+func (c *Store) Delete(ctx context.Context, digest string) error {
 	key, err := c.objectKey(digest)
 	if err != nil {
 		return err
 	}
-	_, err = c.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+	_, err = c.client.DeleteObject(ctx, &awss3.DeleteObjectInput{
 		Bucket: aws.String(c.bucket),
 		Key:    aws.String(key),
 	})
@@ -512,75 +510,75 @@ func objectTagging(mediaType string) string {
 	if strings.TrimSpace(mediaType) == archive.SourceMediaType {
 		return ""
 	}
-	return url.QueryEscape(ExpirableTagKey) + "=" + url.QueryEscape(ExpirableTagValue)
+	return url.QueryEscape(cas.ExpirableTagKey) + "=" + url.QueryEscape(cas.ExpirableTagValue)
 }
 
 type s3Stage struct {
-	store *S3
-	*stageFile
+	store *Store
+	*cas.FileStage
 }
 
-func (s *s3Stage) Commit(ctx context.Context) (Object, error) {
+func (s *s3Stage) Commit(ctx context.Context) (cas.Object, error) {
 	cleanup := true
 	defer func() {
 		if cleanup {
-			_ = os.Remove(s.path)
+			_ = os.Remove(s.Path())
 		}
 	}()
-	digest, err := s.beginCommit(ctx, false)
+	digest, err := s.BeginCommit(ctx, false)
 	if err != nil {
-		return Object{}, err
+		return cas.Object{}, err
 	}
 	key, err := s.store.objectKey(digest)
 	if err != nil {
-		return Object{}, err
+		return cas.Object{}, err
 	}
-	if err := s.store.uploadFile(ctx, key, s.mediaType, s.path, s.size); err != nil {
-		return Object{}, err
+	if err := s.store.uploadFile(ctx, key, s.MediaType(), s.Path(), s.Size()); err != nil {
+		return cas.Object{}, err
 	}
-	_ = os.Remove(s.path)
+	_ = os.Remove(s.Path())
 	cleanup = false
-	return Object{Digest: digest, SizeBytes: s.size, Key: key, MediaType: s.mediaType}, nil
+	return cas.Object{Digest: digest, SizeBytes: s.Size(), Key: key, MediaType: s.MediaType()}, nil
 }
 
-var _ Store = (*S3)(nil)
+var _ cas.Store = (*Store)(nil)
 
 var (
 	errImmutableObjectExists   = errors.New("immutable object already exists")
 	errImmutableObjectConflict = errors.New("immutable object publication conflict")
 )
 
-func (c *ImmutableS3) Publish(
+func (c *ImmutableStore) Publish(
 	ctx context.Context,
-	expected Descriptor,
+	expected cas.Descriptor,
 	file *os.File,
-) (Object, error) {
+) (cas.Object, error) {
 	if ctx == nil {
-		return Object{}, errors.New("immutable publication context is nil")
+		return cas.Object{}, errors.New("immutable publication context is nil")
 	}
 	if err := ctx.Err(); err != nil {
-		return Object{}, err
+		return cas.Object{}, err
 	}
-	if err := validateDescriptor(expected); err != nil {
-		return Object{}, err
+	if err := cas.ValidateDescriptor(expected); err != nil {
+		return cas.Object{}, err
 	}
-	before, err := inspectPublishedFile(file)
+	before, err := cas.InspectPublishedFile(file)
 	if err != nil {
-		return Object{}, err
+		return cas.Object{}, err
 	}
-	if before.size != expected.SizeBytes {
-		return Object{}, fmt.Errorf(
+	if before.Size() != expected.SizeBytes {
+		return cas.Object{}, fmt.Errorf(
 			"published file size = %d, want %d",
-			before.size,
+			before.Size(),
 			expected.SizeBytes,
 		)
 	}
-	if err := verifyDescriptorFile(ctx, expected, file); err != nil {
-		return Object{}, err
+	if err := cas.VerifyDescriptorFile(ctx, expected, file); err != nil {
+		return cas.Object{}, err
 	}
 	key, err := c.store.objectKey(expected.Digest)
 	if err != nil {
-		return Object{}, err
+		return cas.Object{}, err
 	}
 
 	var uploadErr error
@@ -590,191 +588,52 @@ func (c *ImmutableS3) Publish(
 			break
 		}
 	}
-	var object Object
+	var object cas.Object
 	if errors.Is(uploadErr, errImmutableObjectExists) {
 		object, err = c.Stat(ctx, expected.Digest)
 		if err != nil {
-			return Object{}, fmt.Errorf("stat existing immutable object: %w", err)
+			return cas.Object{}, fmt.Errorf("stat existing immutable object: %w", err)
 		}
 		if object.SizeBytes != expected.SizeBytes ||
 			object.MediaType != expected.MediaType {
-			return Object{}, fmt.Errorf(
+			return cas.Object{}, fmt.Errorf(
 				"immutable object %s metadata differs from published content",
 				expected.Digest,
 			)
 		}
 	} else if uploadErr != nil {
-		return Object{}, uploadErr
+		return cas.Object{}, uploadErr
 	} else {
-		object = Object{
+		object = cas.Object{
 			Digest:    expected.Digest,
 			SizeBytes: expected.SizeBytes,
 			Key:       key,
 			MediaType: expected.MediaType,
 		}
 	}
-	after, err := inspectPublishedFile(file)
+	after, err := cas.InspectPublishedFile(file)
 	if err != nil {
-		return Object{}, fmt.Errorf("inspect published file after upload: %w", err)
+		return cas.Object{}, fmt.Errorf("inspect published file after upload: %w", err)
 	}
 	if before != after {
-		return Object{}, errors.New("published file identity changed during upload")
+		return cas.Object{}, errors.New("published file identity changed during upload")
 	}
 	return object, nil
 }
 
-func (c *ImmutableS3) Stat(ctx context.Context, digest string) (Object, error) {
+func (c *ImmutableStore) Stat(ctx context.Context, digest string) (cas.Object, error) {
 	return c.store.Stat(ctx, digest)
 }
 
-func (c *ImmutableS3) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
+func (c *ImmutableStore) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
 	return c.store.Get(ctx, digest)
 }
 
-var _ ImmutableStore = (*ImmutableS3)(nil)
+var _ cas.ImmutableStore = (*ImmutableStore)(nil)
 
-func validateDescriptor(expected Descriptor) error {
-	hash, ok := strings.CutPrefix(expected.Digest, "sha256:")
-	if !ok || len(hash) != sha256.Size*2 {
-		return errors.New("immutable descriptor digest is not a lowercase SHA-256 digest")
-	}
-	for _, character := range hash {
-		if (character < '0' || character > '9') &&
-			(character < 'a' || character > 'f') {
-			return errors.New("immutable descriptor digest is not a lowercase SHA-256 digest")
-		}
-	}
-	if expected.SizeBytes < 1 {
-		return errors.New("immutable descriptor size must be positive")
-	}
-	if expected.MediaType == "" || strings.TrimSpace(expected.MediaType) != expected.MediaType {
-		return errors.New("immutable descriptor media type is invalid")
-	}
-	return nil
-}
-
-func verifyDescriptorFile(
-	ctx context.Context,
-	expected Descriptor,
-	file *os.File,
-) error {
-	reader := io.NewSectionReader(file, 0, expected.SizeBytes+1)
-	digest := sha256.New()
-	buffer := make([]byte, 128<<10)
-	var sizeBytes int64
-	for {
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("hash immutable file: %w", err)
-		}
-		count, readErr := reader.Read(buffer)
-		if count > 0 {
-			if _, err := digest.Write(buffer[:count]); err != nil {
-				return fmt.Errorf("hash immutable file: %w", err)
-			}
-			sizeBytes += int64(count)
-			if sizeBytes > expected.SizeBytes {
-				return fmt.Errorf(
-					"immutable file exceeds expected size %d",
-					expected.SizeBytes,
-				)
-			}
-		}
-		if readErr != nil {
-			if !errors.Is(readErr, io.EOF) {
-				return fmt.Errorf("read immutable file: %w", readErr)
-			}
-			break
-		}
-		if count == 0 {
-			return io.ErrNoProgress
-		}
-	}
-	if sizeBytes != expected.SizeBytes {
-		return fmt.Errorf(
-			"immutable file size = %d, want %d",
-			sizeBytes,
-			expected.SizeBytes,
-		)
-	}
-	actual := "sha256:" + hex.EncodeToString(digest.Sum(nil))
-	if actual != expected.Digest {
-		return fmt.Errorf(
-			"immutable file digest = %s, want %s",
-			actual,
-			expected.Digest,
-		)
-	}
-	return nil
-}
-
-func (c *S3) objectKey(digest string) (string, error) {
+func (c *Store) objectKey(digest string) (string, error) {
 	if c.sharded {
-		return ShardedObjectKey(c.prefix, digest)
+		return cas.ShardedObjectKey(c.prefix, digest)
 	}
-	return ObjectKey(c.prefix, digest)
-}
-
-type verifyingReadCloser struct {
-	body     io.ReadCloser
-	hash     hash.Hash
-	expected string
-	eof      bool
-	closed   bool
-	err      error
-}
-
-func newVerifyingReadCloser(body io.ReadCloser, expected string) io.ReadCloser {
-	return &verifyingReadCloser{
-		body:     body,
-		hash:     sha256.New(),
-		expected: expected,
-	}
-}
-
-func (r *verifyingReadCloser) Read(p []byte) (int, error) {
-	n, readErr := r.body.Read(p)
-	if n > 0 {
-		_, _ = r.hash.Write(p[:n])
-	}
-	if errors.Is(readErr, io.EOF) {
-		r.eof = true
-		if err := r.verify(); err != nil {
-			return n, err
-		}
-	}
-	return n, readErr
-}
-
-func (r *verifyingReadCloser) Close() error {
-	if r.closed {
-		return r.err
-	}
-	r.closed = true
-	var drainErr error
-	if !r.eof {
-		_, drainErr = io.Copy(r.hash, r.body)
-		if drainErr == nil {
-			r.eof = true
-		}
-	}
-	closeErr := r.body.Close()
-	verifyErr := r.verify()
-	r.err = errors.Join(drainErr, closeErr, verifyErr)
-	return r.err
-}
-
-func (r *verifyingReadCloser) verify() error {
-	if r.err != nil {
-		return r.err
-	}
-	actual := "sha256:" + hex.EncodeToString(r.hash.Sum(nil))
-	if actual != r.expected {
-		r.err = fmt.Errorf(
-			"%w: expected %s, got %s",
-			ErrDigestMismatch,
-			r.expected,
-			actual,
-		)
-	}
-	return r.err
+	return cas.ObjectKey(c.prefix, digest)
 }

@@ -8,7 +8,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
+	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	workerdaemon "github.com/helmrdotdev/helmr/internal/worker"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -43,10 +43,10 @@ func runPlatformAcquisitionChild(
 	if err != nil {
 		return true, fmt.Errorf("load Platform acquisition policy: %w", err)
 	}
-	store, err := cas.NewImmutableS3(
+	store, err := cass3.NewImmutable(
 		ctx,
 		os.Getenv("HELMR_PLATFORM_ACQUISITION_STORE"),
-		cas.WithS3TempDir(workDir),
+		cass3.WithTempDir(workDir),
 	)
 	if err != nil {
 		return true, fmt.Errorf("open Platform acquisition store: %w", err)

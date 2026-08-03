@@ -15,7 +15,7 @@ import (
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awsecr "github.com/aws/aws-sdk-go-v2/service/ecr"
-	"github.com/helmrdotdev/helmr/internal/cas"
+	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
 	"github.com/helmrdotdev/helmr/internal/config"
@@ -24,13 +24,14 @@ import (
 	dbschema "github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
+	emailresend "github.com/helmrdotdev/helmr/internal/email/resend"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
+	"github.com/helmrdotdev/helmr/internal/eventstream"
 	"github.com/helmrdotdev/helmr/internal/imagecache"
 	imagecacheecr "github.com/helmrdotdev/helmr/internal/imagecache/ecr"
 	"github.com/helmrdotdev/helmr/internal/platformlock"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -158,7 +159,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure clickhouse: %w", err)
 	}
 	defer clickHouseClient.Close()
-	telemetryReader := telemetry.NewHistoricalReader(clickHouseClient)
+	telemetryReader := clickhouse.NewReader(clickHouseClient)
 	redisOptions, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("parse redis url: %w", err)
@@ -170,7 +171,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("parse public URL: %w", err)
 	}
 	mailer := configuredEmailSender(log, cfg)
-	eventStream, err := controlplane.NewEventStream(log, queries, redisClient, controlplane.EventStreamConfig{
+	eventStream, err := eventstream.New(log, queries, redisClient, eventstream.Config{
 		TelemetryReader: telemetryReader,
 	})
 	if err != nil {
@@ -194,14 +195,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Token credential key: %w", err)
 	}
-	casStore, err := cas.NewS3(ctx, cfg.CASURI)
+	casStore, err := cass3.New(ctx, cfg.CASURI)
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
-	if err := cas.ValidateDistinctS3Stores(cfg.CASURI, cfg.PlatformStoreURI); err != nil {
+	if err := cass3.ValidateDistinctS3Stores(cfg.CASURI, cfg.PlatformStoreURI); err != nil {
 		return fmt.Errorf("validate Platform Artifact store: %w", err)
 	}
-	platformStore, err := cas.NewImmutableS3(ctx, cfg.PlatformStoreURI)
+	platformStore, err := cass3.NewImmutable(ctx, cfg.PlatformStoreURI)
 	if err != nil {
 		return fmt.Errorf("configure Platform Artifact store: %w", err)
 	}
@@ -309,7 +310,7 @@ func configuredEmailSender(log *slog.Logger, cfg config.ControlPlane) email.Send
 	case config.EmailProviderSMTP:
 		return email.NewSMTPSender(cfg.SMTPAddr, cfg.SMTPUsername, cfg.SMTPPassword, cfg.EmailFrom)
 	case config.EmailProviderResend:
-		return email.NewResendSender(cfg.ResendAPIKey, cfg.EmailFrom)
+		return emailresend.New(cfg.ResendAPIKey, cfg.EmailFrom)
 	case config.EmailProviderLog:
 		return email.LogSender{Log: log}
 	default:

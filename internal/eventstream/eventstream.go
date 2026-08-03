@@ -1,4 +1,4 @@
-package controlplane
+package eventstream
 
 import (
 	"context"
@@ -27,25 +27,21 @@ const (
 	liveTelemetryPublisherRetryMax   = 30 * time.Second
 	liveTelemetryStreamBlockEvery    = time.Second
 	liveTelemetryStreamMaxLen        = int64(10000)
+	subjectPageSize                  = int32(200)
 )
 
-const (
-	eventSubjectTypeRun        = "run"
-	eventSubjectTypeDeployment = "deployment"
-)
-
-type EventStream struct {
+type Stream struct {
 	log             *slog.Logger
 	db              db.Querier
 	redis           redis.Cmdable
 	telemetryReader telemetry.Reader
 }
 
-type EventStreamConfig struct {
+type Config struct {
 	TelemetryReader telemetry.Reader
 }
 
-func NewEventStream(log *slog.Logger, queries db.Querier, redis redis.Cmdable, configs ...EventStreamConfig) (*EventStream, error) {
+func New(log *slog.Logger, queries db.Querier, redis redis.Cmdable, configs ...Config) (*Stream, error) {
 	if queries == nil {
 		return nil, errors.New("event stream database is required")
 	}
@@ -55,7 +51,7 @@ func NewEventStream(log *slog.Logger, queries db.Querier, redis redis.Cmdable, c
 	if log == nil {
 		log = slog.Default()
 	}
-	var cfg EventStreamConfig
+	var cfg Config
 	if len(configs) > 0 {
 		cfg = configs[0]
 	}
@@ -63,10 +59,10 @@ func NewEventStream(log *slog.Logger, queries db.Querier, redis redis.Cmdable, c
 	if reader == nil {
 		return nil, errors.New("event stream telemetry reader is required")
 	}
-	return &EventStream{log: log, db: queries, redis: redis, telemetryReader: reader}, nil
+	return &Stream{log: log, db: queries, redis: redis, telemetryReader: reader}, nil
 }
 
-func (s *EventStream) RunPublisher(ctx context.Context) error {
+func (s *Stream) RunPublisher(ctx context.Context) error {
 	consecutiveFailures := 0
 	for {
 		if err := ctx.Err(); err != nil {
@@ -116,7 +112,7 @@ func (s *EventStream) RunPublisher(ctx context.Context) error {
 	}
 }
 
-func (s *EventStream) publishOutboxRow(ctx context.Context, row db.ClaimLiveTelemetryOutboxRow) error {
+func (s *Stream) publishOutboxRow(ctx context.Context, row db.ClaimLiveTelemetryOutboxRow) error {
 	switch row.StreamKind {
 	case db.TelemetryStreamKindEvent:
 		return s.publishEventOutboxRow(ctx, row)
@@ -127,7 +123,7 @@ func (s *EventStream) publishOutboxRow(ctx context.Context, row db.ClaimLiveTele
 	}
 }
 
-func (s *EventStream) publishEventOutboxRow(ctx context.Context, row db.ClaimLiveTelemetryOutboxRow) error {
+func (s *Stream) publishEventOutboxRow(ctx context.Context, row db.ClaimLiveTelemetryOutboxRow) error {
 	event := eventResponseFromClaim(row)
 	payload, err := json.Marshal(event)
 	if err != nil {
@@ -136,7 +132,7 @@ func (s *EventStream) publishEventOutboxRow(ctx context.Context, row db.ClaimLiv
 	return s.publishJSON(ctx, row.StreamKey, redisEventID(row.Seq), "event", payload, row.Seq)
 }
 
-func (s *EventStream) publishTerminalOutputOutboxRow(ctx context.Context, row db.ClaimLiveTelemetryOutboxRow) error {
+func (s *Stream) publishTerminalOutputOutboxRow(ctx context.Context, row db.ClaimLiveTelemetryOutboxRow) error {
 	chunk := terminalOutputChunkFromClaim(row)
 	payload, err := json.Marshal(chunk)
 	if err != nil {
@@ -145,7 +141,7 @@ func (s *EventStream) publishTerminalOutputOutboxRow(ctx context.Context, row db
 	return s.publishJSON(ctx, row.StreamKey, redisEventID(row.OffsetEnd), "terminal_output", payload, row.OffsetEnd)
 }
 
-func (s *EventStream) publishJSON(ctx context.Context, streamKey string, id string, field string, payload []byte, seq int64) error {
+func (s *Stream) publishJSON(ctx context.Context, streamKey string, id string, field string, payload []byte, seq int64) error {
 	add := func() error {
 		return s.redis.XAdd(ctx, &redis.XAddArgs{
 			Stream: streamKey,
@@ -181,7 +177,7 @@ func (s *EventStream) publishJSON(ctx context.Context, streamKey string, id stri
 	return nil
 }
 
-func (s *EventStream) streamAdvancedPastID(ctx context.Context, streamKey string, seq int64) (bool, error) {
+func (s *Stream) streamAdvancedPastID(ctx context.Context, streamKey string, seq int64) (bool, error) {
 	records, err := s.redis.XRevRangeN(ctx, streamKey, "+", "-", 1).Result()
 	if err != nil {
 		return false, err
@@ -196,7 +192,7 @@ func (s *EventStream) streamAdvancedPastID(ctx context.Context, streamKey string
 	return latestSeq > seq, nil
 }
 
-func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectType string, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error, onIdle func() error) error {
+func (s *Stream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectType string, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error, onIdle func() error) error {
 	streamKey := eventStreamKey(orgID, subjectType, subjectID)
 	for {
 		if err := ctx.Err(); err != nil {
@@ -225,7 +221,7 @@ func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectT
 		}
 		streams, err := s.redis.XRead(ctx, &redis.XReadArgs{
 			Streams: []string{streamKey, redisEventID(cursor)},
-			Count:   int64(runEventsPageSize),
+			Count:   int64(subjectPageSize),
 			Block:   liveTelemetryStreamBlockEvery,
 		}).Result()
 		if errors.Is(err, redis.Nil) {
@@ -262,7 +258,7 @@ func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectT
 	}
 }
 
-func (s *EventStream) redisEventStreamCoversCursor(ctx context.Context, streamKey string, cursor int64) (bool, error) {
+func (s *Stream) redisEventStreamCoversCursor(ctx context.Context, streamKey string, cursor int64) (bool, error) {
 	if cursor <= 0 {
 		return true, nil
 	}
@@ -280,13 +276,13 @@ func (s *EventStream) redisEventStreamCoversCursor(ctx context.Context, streamKe
 	return first <= cursor, nil
 }
 
-func (s *EventStream) readDurableSubjectEvents(ctx context.Context, orgID uuid.UUID, subjectType string, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error) (int64, bool, error) {
+func (s *Stream) readDurableSubjectEvents(ctx context.Context, orgID uuid.UUID, subjectType string, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error) (int64, bool, error) {
 	page, err := s.telemetryReader.ListEvents(ctx, telemetry.EventQuery{
 		OrgID:       orgID,
 		SubjectType: subjectType,
 		SubjectID:   subjectID,
 		AfterSeq:    cursor,
-		Limit:       runEventsPageSize,
+		Limit:       subjectPageSize,
 	})
 	if err != nil {
 		return cursor, false, fmt.Errorf("list durable subject events: %w", err)
@@ -301,7 +297,7 @@ func (s *EventStream) readDurableSubjectEvents(ctx context.Context, orgID uuid.U
 			return cursor, false, err
 		}
 	}
-	return cursor, len(page.Events) == int(runEventsPageSize), nil
+	return cursor, len(page.Events) == int(subjectPageSize), nil
 }
 
 func eventStreamKey(orgID uuid.UUID, subjectType string, subjectID uuid.UUID) string {
@@ -421,10 +417,19 @@ func apiEventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, _ 
 		Severity:       severity,
 		Source:         source,
 		Kind:           kind,
-		Message:        firstNonEmptyString(message, rawKind),
+		Message:        firstNonEmpty(message, rawKind),
 		At:             pgvalue.Time(createdAt),
 		OccurredAt:     pgvalue.Time(occurredAt),
 		RedactionClass: redactionClass,
 		Attributes:     attributes,
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

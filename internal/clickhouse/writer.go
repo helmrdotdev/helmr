@@ -1,13 +1,14 @@
-package telemetry
+package clickhouse
 
 import (
 	"context"
 	"fmt"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 )
 
-type ClickHouseWriter struct {
+type Writer struct {
 	client batchClient
 }
 
@@ -15,11 +16,11 @@ type batchClient interface {
 	PrepareBatch(ctx context.Context, query string) (driver.Batch, error)
 }
 
-func NewClickHouseWriter(client batchClient) *ClickHouseWriter {
-	return &ClickHouseWriter{client: client}
+func NewWriter(client batchClient) *Writer {
+	return &Writer{client: client}
 }
 
-func (w *ClickHouseWriter) WriteEvents(ctx context.Context, rows []EventRecord) error {
+func (w *Writer) WriteEvents(ctx context.Context, rows []telemetry.EventRecord) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -66,7 +67,7 @@ func (w *ClickHouseWriter) WriteEvents(ctx context.Context, rows []EventRecord) 
 	return batch.Send()
 }
 
-func (w *ClickHouseWriter) WriteRunLogs(ctx context.Context, rows []RunLogRecord) error {
+func (w *Writer) WriteRunLogs(ctx context.Context, rows []telemetry.RunLogRecord) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -104,7 +105,7 @@ func (w *ClickHouseWriter) WriteRunLogs(ctx context.Context, rows []RunLogRecord
 	return batch.Send()
 }
 
-func (w *ClickHouseWriter) WriteMeterEvents(ctx context.Context, rows []MeterEventRecord) error {
+func (w *Writer) WriteMeterEvents(ctx context.Context, rows []telemetry.MeterEventRecord) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -147,7 +148,7 @@ func (w *ClickHouseWriter) WriteMeterEvents(ctx context.Context, rows []MeterEve
 	return batch.Send()
 }
 
-func (w *ClickHouseWriter) WriteTerminalOutput(ctx context.Context, rows []TerminalOutputRecord) error {
+func (w *Writer) WriteTerminalOutput(ctx context.Context, rows []telemetry.TerminalOutputRecord) error {
 	if len(rows) == 0 {
 		return nil
 	}

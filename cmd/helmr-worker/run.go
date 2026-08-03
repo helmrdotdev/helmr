@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/config"
@@ -222,10 +223,10 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("create Runtime scratch: %w", err)
 	}
 	if supportsRun || supportsBuild {
-		platformStore, err = cas.NewImmutableS3(
+		platformStore, err = cass3.NewImmutable(
 			ctx,
 			cfg.PlatformStoreURI,
-			cas.WithS3TempDir(runtimeScratch),
+			cass3.WithTempDir(runtimeScratch),
 		)
 		if err != nil {
 			return fmt.Errorf("configure Platform Artifact store: %w", err)
@@ -278,7 +279,7 @@ func run(log *slog.Logger) error {
 			XZ:               xz,
 		}
 	}
-	store, err := cas.NewS3(ctx, cfg.CASURI, cas.WithS3TempDir(filepath.Join(workDir, "tmp", "cas")))
+	store, err := cass3.New(ctx, cfg.CASURI, cass3.WithTempDir(filepath.Join(workDir, "tmp", "cas")))
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
@@ -625,7 +626,7 @@ func fitsBuildHostCompute(resources compute.ResourceVector) bool {
 }
 
 func validateWorkerStores(cfg config.Worker) error {
-	if err := cas.ValidateDistinctS3Stores(
+	if err := cass3.ValidateDistinctS3Stores(
 		cfg.CASURI,
 		cfg.PlatformStoreURI,
 	); err != nil {

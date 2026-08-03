@@ -1,4 +1,4 @@
-package telemetry
+package clickhouse
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/column"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 )
 
 func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
@@ -18,9 +19,9 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	attemptNumber := int32(2)
 	observedAt := time.Date(2026, 7, 3, 1, 2, 3, 456000000, time.UTC)
 	client := &fakeBatchClient{}
-	writer := NewClickHouseWriter(client)
+	writer := NewWriter(client)
 
-	if err := writer.WriteEvents(context.Background(), []EventRecord{{
+	if err := writer.WriteEvents(context.Background(), []telemetry.EventRecord{{
 		OrgID:          uuid.Must(uuid.NewV7()),
 		ProjectID:      uuid.Must(uuid.NewV7()),
 		EnvironmentID:  uuid.Must(uuid.NewV7()),
@@ -58,7 +59,7 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 		t.Fatalf("event observed_at = %v, want %v", got, observedAt)
 	}
 
-	if err := writer.WriteRunLogs(context.Background(), []RunLogRecord{{
+	if err := writer.WriteRunLogs(context.Background(), []telemetry.RunLogRecord{{
 		OrgID:          uuid.Must(uuid.NewV7()),
 		ProjectID:      uuid.Must(uuid.NewV7()),
 		EnvironmentID:  uuid.Must(uuid.NewV7()),
@@ -89,7 +90,7 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 		t.Fatalf("run log run_lease_id = %v, want %s", got, runLeaseID)
 	}
 
-	if err := writer.WriteMeterEvents(context.Background(), []MeterEventRecord{{
+	if err := writer.WriteMeterEvents(context.Background(), []telemetry.MeterEventRecord{{
 		OrgID:          uuid.Must(uuid.NewV7()),
 		ProjectID:      uuid.Must(uuid.NewV7()),
 		EnvironmentID:  uuid.Must(uuid.NewV7()),
@@ -121,7 +122,7 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 		t.Fatalf("meter event quantity = %v, want 123", got)
 	}
 
-	if err := writer.WriteTerminalOutput(context.Background(), []TerminalOutputRecord{{
+	if err := writer.WriteTerminalOutput(context.Background(), []telemetry.TerminalOutputRecord{{
 		OrgID:          uuid.Must(uuid.NewV7()),
 		ProjectID:      uuid.Must(uuid.NewV7()),
 		EnvironmentID:  uuid.Must(uuid.NewV7()),

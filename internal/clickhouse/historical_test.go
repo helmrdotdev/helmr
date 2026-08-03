@@ -1,4 +1,4 @@
-package telemetry
+package clickhouse
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 )
 
 func TestHistoricalReaderListsTerminalOutputFromClickHouse(t *testing.T) {
@@ -46,8 +47,8 @@ func TestHistoricalReaderListsTerminalOutputFromClickHouse(t *testing.T) {
 			return nil
 		},
 	}
-	reader := NewHistoricalReader(client)
-	page, err := reader.ListTerminalOutput(context.Background(), TerminalOutputQuery{
+	reader := NewReader(client)
+	page, err := reader.ListTerminalOutput(context.Background(), telemetry.TerminalOutputQuery{
 		OrgID:        uuid.Must(uuid.NewV7()),
 		WorkspaceID:  uuid.Must(uuid.NewV7()),
 		ResourceKind: "workspace_process",

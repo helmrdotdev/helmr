@@ -1,4 +1,4 @@
-package cas
+package s3
 
 import (
 	"bytes"
@@ -12,8 +12,10 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
+	"github.com/helmrdotdev/helmr/internal/archive"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -45,6 +47,15 @@ func TestValidateDisjointS3Stores(t *testing.T) {
 	}
 }
 
+func TestObjectTaggingKeepsDeploymentSourcesNonExpirable(t *testing.T) {
+	if got := objectTagging(archive.SourceMediaType); got != "" {
+		t.Fatalf("deployment source tagging = %q", got)
+	}
+	if got := objectTagging(cas.CheckpointVMStateMediaType); got != "helmr-expirable=true" {
+		t.Fatalf("checkpoint tagging = %q", got)
+	}
+}
+
 func TestValidateDistinctS3Stores(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
@@ -70,8 +81,8 @@ func TestValidateDistinctS3Stores(t *testing.T) {
 }
 
 func TestS3ShardedObjectKey(t *testing.T) {
-	store := &S3{prefix: "retained"}
-	WithS3ShardedKeys()(store)
+	store := &Store{prefix: "retained"}
+	WithShardedKeys()(store)
 	key, err := store.objectKey("sha256:7b927bbd759163db342b22ac0329b49998afa33e911c060e112998b1a7d5339e")
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +95,7 @@ func TestS3ShardedObjectKey(t *testing.T) {
 
 func TestS3PutUsesSinglePutBelowMultipartThreshold(t *testing.T) {
 	client := &fakeS3Client{}
-	store := &S3{
+	store := &Store{
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "prefix",
@@ -120,7 +131,7 @@ func TestS3PutUsesSinglePutBelowMultipartThreshold(t *testing.T) {
 func TestImmutableS3PublishIsCreateOnlyAndUntagged(t *testing.T) {
 	requireDescriptorPublication(t)
 	client := &fakeS3Client{}
-	store := &ImmutableS3{store: &S3{
+	store := &ImmutableStore{store: &Store{
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -148,12 +159,12 @@ func TestImmutableS3PublishReusesExactExistingObject(t *testing.T) {
 	const digest = "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
 	client := &fakeS3Client{
 		putObjectErr: &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "exists"},
-		headObject: &s3.HeadObjectOutput{
+		headObject: &awss3.HeadObjectOutput{
 			ContentLength: aws.Int64(5),
 			ContentType:   aws.String("application/vnd.helmr.runtime.v0+squashfs"),
 		},
 	}
-	store := &ImmutableS3{store: &S3{
+	store := &ImmutableStore{store: &Store{
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -174,12 +185,12 @@ func TestImmutableS3PublishRejectsExistingMetadataMismatch(t *testing.T) {
 	requireDescriptorPublication(t)
 	client := &fakeS3Client{
 		putObjectErr: &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "exists"},
-		headObject: &s3.HeadObjectOutput{
+		headObject: &awss3.HeadObjectOutput{
 			ContentLength: aws.Int64(5),
 			ContentType:   aws.String("application/octet-stream"),
 		},
 	}
-	store := &ImmutableS3{store: &S3{
+	store := &ImmutableStore{store: &Store{
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -199,12 +210,12 @@ func TestImmutableS3PublishRetriesConditionalConflict(t *testing.T) {
 			&smithy.GenericAPIError{Code: "ConditionalRequestConflict", Message: "racing writer"},
 			&smithy.GenericAPIError{Code: "PreconditionFailed", Message: "writer won"},
 		},
-		headObject: &s3.HeadObjectOutput{
+		headObject: &awss3.HeadObjectOutput{
 			ContentLength: aws.Int64(5),
 			ContentType:   aws.String("application/vnd.helmr.runtime.v0+squashfs"),
 		},
 	}
-	store := &ImmutableS3{store: &S3{
+	store := &ImmutableStore{store: &Store{
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -223,7 +234,7 @@ func TestImmutableS3PublishRetriesConditionalConflict(t *testing.T) {
 func TestImmutableS3MultipartPublishIsCreateOnlyAndUntagged(t *testing.T) {
 	requireDescriptorPublication(t)
 	client := &fakeS3Client{uploadID: "upload-1"}
-	store := &ImmutableS3{store: &S3{
+	store := &ImmutableStore{store: &Store{
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -246,7 +257,7 @@ func TestImmutableS3MultipartPublishIsCreateOnlyAndUntagged(t *testing.T) {
 func TestImmutableS3MultipartPublishUsesOnlySealedDescriptor(t *testing.T) {
 	requireDescriptorPublication(t)
 	client := &fakeS3Client{uploadID: "upload-1"}
-	store := &ImmutableS3{store: &S3{
+	store := &ImmutableStore{store: &Store{
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -283,7 +294,7 @@ func TestImmutableS3MultipartPublishRestartsAfterConditionalConflict(t *testing.
 			nil,
 		},
 	}
-	store := &ImmutableS3{store: &S3{
+	store := &ImmutableStore{store: &Store{
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -312,7 +323,7 @@ func TestImmutableS3MultipartPublishDoesNotRetryAfterAmbiguousAbort(t *testing.T
 		},
 		abortMultipartErr: errors.New("abort failed"),
 	}
-	store := &ImmutableS3{store: &S3{
+	store := &ImmutableStore{store: &Store{
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -335,7 +346,7 @@ func TestImmutableS3MultipartPublishDoesNotRetryAfterAmbiguousAbort(t *testing.T
 func TestImmutableS3PublishUsesOnlySealedDescriptor(t *testing.T) {
 	requireDescriptorPublication(t)
 	client := &fakeS3Client{}
-	store := &ImmutableS3{store: &S3{
+	store := &ImmutableStore{store: &Store{
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "runtime",
@@ -356,7 +367,7 @@ func TestImmutableS3PublishUsesOnlySealedDescriptor(t *testing.T) {
 func TestImmutableS3PublishRejectsDescriptorMismatchBeforeUpload(t *testing.T) {
 	requireDescriptorPublication(t)
 	client := &fakeS3Client{}
-	store := &ImmutableS3{store: &S3{
+	store := &ImmutableStore{store: &Store{
 		client:                  client,
 		bucket:                  "bucket",
 		multipartThresholdBytes: 10,
@@ -385,7 +396,7 @@ func TestImmutableS3PublishRejectsWritableDescriptor(t *testing.T) {
 	if err := os.Chmod(file.Name(), 0o400); err != nil {
 		t.Fatal(err)
 	}
-	store := &ImmutableS3{store: &S3{client: &fakeS3Client{}, bucket: "bucket"}}
+	store := &ImmutableStore{store: &Store{client: &fakeS3Client{}, bucket: "bucket"}}
 	if _, err := store.Publish(t.Context(), expected, writer); err == nil {
 		t.Fatal("expected writable descriptor rejection")
 	}
@@ -401,7 +412,7 @@ func TestImmutableS3PublishRejectsIdentityChangeAfterUpload(t *testing.T) {
 			}
 		},
 	}
-	store := &ImmutableS3{store: &S3{
+	store := &ImmutableStore{store: &Store{
 		client:                  client,
 		bucket:                  "bucket",
 		multipartThresholdBytes: 10,
@@ -413,14 +424,14 @@ func TestImmutableS3PublishRejectsIdentityChangeAfterUpload(t *testing.T) {
 
 func TestS3PutUsesMultipartAtOrAboveThreshold(t *testing.T) {
 	client := &fakeS3Client{uploadID: "upload-1"}
-	store := &S3{
+	store := &Store{
 		client:                  client,
 		bucket:                  "bucket",
 		multipartThresholdBytes: 6,
 		multipartPartSizeBytes:  4,
 	}
 
-	object, err := store.Put(t.Context(), CheckpointScratchDiskMediaType, bytes.NewReader([]byte("hello world")))
+	object, err := store.Put(t.Context(), cas.CheckpointScratchDiskMediaType, bytes.NewReader([]byte("hello world")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -465,14 +476,14 @@ func TestS3PutUsesMultipartAtOrAboveThreshold(t *testing.T) {
 
 func TestS3MultipartAbortsOnUploadFailure(t *testing.T) {
 	client := &fakeS3Client{uploadID: "upload-1", uploadPartErr: fmt.Errorf("upload failed")}
-	store := &S3{
+	store := &Store{
 		client:                  client,
 		bucket:                  "bucket",
 		multipartThresholdBytes: 1,
 		multipartPartSizeBytes:  4,
 	}
 
-	_, err := store.Put(t.Context(), CheckpointScratchDiskMediaType, bytes.NewReader([]byte("hello")))
+	_, err := store.Put(t.Context(), cas.CheckpointScratchDiskMediaType, bytes.NewReader([]byte("hello")))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -486,7 +497,7 @@ func TestS3MultipartAbortsOnUploadFailure(t *testing.T) {
 
 func TestS3StageCommitUsesFinalDigestKeyAndCleansTemp(t *testing.T) {
 	client := &fakeS3Client{}
-	store := &S3{
+	store := &Store{
 		client:                  client,
 		bucket:                  "bucket",
 		prefix:                  "prefix",
@@ -498,7 +509,7 @@ func TestS3StageCommitUsesFinalDigestKeyAndCleansTemp(t *testing.T) {
 		t.Fatal(err)
 	}
 	s3Stage := stage.(*s3Stage)
-	stagedPath := s3Stage.path
+	stagedPath := s3Stage.Path()
 	if _, err := stage.Write([]byte("he")); err != nil {
 		t.Fatal(err)
 	}
@@ -530,13 +541,13 @@ func TestS3StageCommitUsesFinalDigestKeyAndCleansTemp(t *testing.T) {
 
 func TestS3StageAbortCleansTempWithoutUpload(t *testing.T) {
 	client := &fakeS3Client{}
-	store := &S3{client: client, bucket: "bucket"}
+	store := &Store{client: client, bucket: "bucket"}
 	stage, err := store.Stage(t.Context(), "text/plain")
 	if err != nil {
 		t.Fatal(err)
 	}
 	s3Stage := stage.(*s3Stage)
-	stagedPath := s3Stage.path
+	stagedPath := s3Stage.Path()
 	if _, err := stage.Write([]byte("discard")); err != nil {
 		t.Fatal(err)
 	}
@@ -555,18 +566,18 @@ func TestS3StageAbortCleansTempWithoutUpload(t *testing.T) {
 
 func TestS3StageCommitCleansTempAndAbortsMultipartOnUploadFailure(t *testing.T) {
 	client := &fakeS3Client{uploadID: "upload-1", uploadPartErr: fmt.Errorf("upload failed")}
-	store := &S3{
+	store := &Store{
 		client:                  client,
 		bucket:                  "bucket",
 		multipartThresholdBytes: 1,
 		multipartPartSizeBytes:  4,
 	}
-	stage, err := store.Stage(t.Context(), CheckpointScratchDiskMediaType)
+	stage, err := store.Stage(t.Context(), cas.CheckpointScratchDiskMediaType)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s3Stage := stage.(*s3Stage)
-	stagedPath := s3Stage.path
+	stagedPath := s3Stage.Path()
 	if _, err := stage.Write([]byte("hello")); err != nil {
 		t.Fatal(err)
 	}
@@ -590,7 +601,7 @@ func TestS3StageCommitCleansTempAndAbortsMultipartOnUploadFailure(t *testing.T) 
 func TestS3GetVerifiesDigest(t *testing.T) {
 	content := []byte("hello")
 	client := &fakeS3Client{getObjectBody: content}
-	store := &S3{client: client, bucket: "bucket"}
+	store := &Store{client: client, bucket: "bucket"}
 
 	body, err := store.Get(t.Context(), sha256sum.DigestBytes(content))
 	if err != nil {
@@ -610,7 +621,7 @@ func TestS3GetVerifiesDigest(t *testing.T) {
 
 func TestS3GetRejectsDigestMismatch(t *testing.T) {
 	client := &fakeS3Client{getObjectBody: []byte("HELLO")}
-	store := &S3{client: client, bucket: "bucket"}
+	store := &Store{client: client, bucket: "bucket"}
 
 	body, err := store.Get(t.Context(), sha256sum.DigestBytes([]byte("hello")))
 	if err != nil {
@@ -627,7 +638,7 @@ func TestS3GetRejectsDigestMismatch(t *testing.T) {
 func TestVerifyingReadCloserCloseDrainsPartialBody(t *testing.T) {
 	content := []byte("hello world")
 	raw := &trackingReadCloser{Reader: bytes.NewReader(content)}
-	body := newVerifyingReadCloser(raw, sha256sum.DigestBytes(content))
+	body := cas.NewVerifyingReadCloser(raw, sha256sum.DigestBytes(content))
 
 	buf := make([]byte, 5)
 	n, err := body.Read(buf)
@@ -653,7 +664,7 @@ func TestVerifyingReadCloserCloseRejectsPartialDigestMismatch(t *testing.T) {
 	expected := []byte("hello world")
 	actual := []byte("HELLO world")
 	raw := &trackingReadCloser{Reader: bytes.NewReader(actual)}
-	body := newVerifyingReadCloser(raw, sha256sum.DigestBytes(expected))
+	body := cas.NewVerifyingReadCloser(raw, sha256sum.DigestBytes(expected))
 
 	buf := make([]byte, 5)
 	if _, err := body.Read(buf); err != nil {
@@ -687,11 +698,11 @@ func (r *trackingReadCloser) Close() error {
 
 type fakeS3Client struct {
 	mu                      sync.Mutex
-	putObject               *s3.PutObjectInput
+	putObject               *awss3.PutObjectInput
 	putObjectBody           []byte
-	createMultipart         *s3.CreateMultipartUploadInput
+	createMultipart         *awss3.CreateMultipartUploadInput
 	createdMultipart        bool
-	completedMultipart      *s3.CompleteMultipartUploadInput
+	completedMultipart      *awss3.CompleteMultipartUploadInput
 	abortedMultipart        bool
 	uploadedParts           []uploadedPart
 	uploadID                string
@@ -701,7 +712,7 @@ type fakeS3Client struct {
 	putObjectErrors         []error
 	putObjectCalls          int
 	putObjectHook           func()
-	headObject              *s3.HeadObjectOutput
+	headObject              *awss3.HeadObjectOutput
 	headObjectErr           error
 	createMultipartCalls    int
 	completeMultipartCalls  int
@@ -710,7 +721,7 @@ type fakeS3Client struct {
 	abortMultipartErr       error
 }
 
-func (f *fakeS3Client) PutObject(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+func (f *fakeS3Client) PutObject(_ context.Context, input *awss3.PutObjectInput, _ ...func(*awss3.Options)) (*awss3.PutObjectOutput, error) {
 	f.putObjectCalls++
 	f.putObject = input
 	body, err := io.ReadAll(input.Body)
@@ -722,27 +733,27 @@ func (f *fakeS3Client) PutObject(_ context.Context, input *s3.PutObjectInput, _ 
 		f.putObjectHook()
 	}
 	if f.putObjectCalls <= len(f.putObjectErrors) {
-		return &s3.PutObjectOutput{}, f.putObjectErrors[f.putObjectCalls-1]
+		return &awss3.PutObjectOutput{}, f.putObjectErrors[f.putObjectCalls-1]
 	}
-	return &s3.PutObjectOutput{}, f.putObjectErr
+	return &awss3.PutObjectOutput{}, f.putObjectErr
 }
 
-func (f *fakeS3Client) HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+func (f *fakeS3Client) HeadObject(context.Context, *awss3.HeadObjectInput, ...func(*awss3.Options)) (*awss3.HeadObjectOutput, error) {
 	if f.headObject == nil && f.headObjectErr == nil {
 		return nil, fmt.Errorf("not implemented")
 	}
 	return f.headObject, f.headObjectErr
 }
 
-func (f *fakeS3Client) GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
-	return &s3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(f.getObjectBody))}, nil
+func (f *fakeS3Client) GetObject(context.Context, *awss3.GetObjectInput, ...func(*awss3.Options)) (*awss3.GetObjectOutput, error) {
+	return &awss3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(f.getObjectBody))}, nil
 }
 
-func (f *fakeS3Client) DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
+func (f *fakeS3Client) DeleteObject(context.Context, *awss3.DeleteObjectInput, ...func(*awss3.Options)) (*awss3.DeleteObjectOutput, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
-func (f *fakeS3Client) CreateMultipartUpload(_ context.Context, input *s3.CreateMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error) {
+func (f *fakeS3Client) CreateMultipartUpload(_ context.Context, input *awss3.CreateMultipartUploadInput, _ ...func(*awss3.Options)) (*awss3.CreateMultipartUploadOutput, error) {
 	f.createMultipartCalls++
 	f.createMultipart = input
 	f.createdMultipart = true
@@ -750,10 +761,10 @@ func (f *fakeS3Client) CreateMultipartUpload(_ context.Context, input *s3.Create
 	if uploadID == "" {
 		uploadID = "upload"
 	}
-	return &s3.CreateMultipartUploadOutput{UploadId: aws.String(uploadID)}, nil
+	return &awss3.CreateMultipartUploadOutput{UploadId: aws.String(uploadID)}, nil
 }
 
-func (f *fakeS3Client) UploadPart(_ context.Context, input *s3.UploadPartInput, _ ...func(*s3.Options)) (*s3.UploadPartOutput, error) {
+func (f *fakeS3Client) UploadPart(_ context.Context, input *awss3.UploadPartInput, _ ...func(*awss3.Options)) (*awss3.UploadPartOutput, error) {
 	if f.uploadPartErr != nil {
 		return nil, f.uploadPartErr
 	}
@@ -767,22 +778,22 @@ func (f *fakeS3Client) UploadPart(_ context.Context, input *s3.UploadPartInput, 
 		number: aws.ToInt32(input.PartNumber),
 		body:   body,
 	})
-	return &s3.UploadPartOutput{ETag: aws.String(fmt.Sprintf("etag-%d", aws.ToInt32(input.PartNumber)))}, nil
+	return &awss3.UploadPartOutput{ETag: aws.String(fmt.Sprintf("etag-%d", aws.ToInt32(input.PartNumber)))}, nil
 }
 
-func (f *fakeS3Client) CompleteMultipartUpload(_ context.Context, input *s3.CompleteMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error) {
+func (f *fakeS3Client) CompleteMultipartUpload(_ context.Context, input *awss3.CompleteMultipartUploadInput, _ ...func(*awss3.Options)) (*awss3.CompleteMultipartUploadOutput, error) {
 	f.completeMultipartCalls++
 	f.completedMultipart = input
 	if f.completeMultipartCalls <= len(f.completeMultipartErrors) {
-		return &s3.CompleteMultipartUploadOutput{}, f.completeMultipartErrors[f.completeMultipartCalls-1]
+		return &awss3.CompleteMultipartUploadOutput{}, f.completeMultipartErrors[f.completeMultipartCalls-1]
 	}
-	return &s3.CompleteMultipartUploadOutput{}, nil
+	return &awss3.CompleteMultipartUploadOutput{}, nil
 }
 
-func (f *fakeS3Client) AbortMultipartUpload(context.Context, *s3.AbortMultipartUploadInput, ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error) {
+func (f *fakeS3Client) AbortMultipartUpload(context.Context, *awss3.AbortMultipartUploadInput, ...func(*awss3.Options)) (*awss3.AbortMultipartUploadOutput, error) {
 	f.abortMultipartCalls++
 	f.abortedMultipart = true
-	return &s3.AbortMultipartUploadOutput{}, f.abortMultipartErr
+	return &awss3.AbortMultipartUploadOutput{}, f.abortMultipartErr
 }
 
 var _ s3Client = (*fakeS3Client)(nil)
@@ -805,7 +816,7 @@ func requireDescriptorPublication(t *testing.T) {
 	}
 }
 
-func sealedPublicationFile(t *testing.T, content []byte) (Descriptor, *os.File) {
+func sealedPublicationFile(t *testing.T, content []byte) (cas.Descriptor, *os.File) {
 	t.Helper()
 	path := t.TempDir() + "/snapshot"
 	if err := os.WriteFile(path, content, 0o600); err != nil {
@@ -823,7 +834,7 @@ func sealedPublicationFile(t *testing.T, content []byte) (Descriptor, *os.File) 
 			t.Error(err)
 		}
 	})
-	return Descriptor{
+	return cas.Descriptor{
 		Digest:    sha256sum.DigestBytes(content),
 		SizeBytes: int64(len(content)),
 		MediaType: "application/vnd.helmr.runtime.v0+squashfs",

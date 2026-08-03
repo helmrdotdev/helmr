@@ -57,7 +57,9 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"api":               {"workerapi"},
 		"auth":              {"db"},
 		"buildkit":          {"imagebuild/worker"},
+		"cas":               {"cas/s3"},
 		"client":            {"workerapi", "workerclient"},
+		"email":             {"email/resend"},
 		"enrollment":        {"controlplane", "db"},
 		"frameio":           {"api", "db", "proto/run/v0", "wire"},
 		"httpclient":        {"controlplane", "db", "workerapi"},
@@ -67,15 +69,38 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"imagebuild/worker": {"controlplane", "db", "deployment", "guestd", "workerapi"},
 		"imagecache/ecr":    {"imagebuild/worker"},
 		"workspace":         {"api", "controlplane", "db", "executor", "guestd", "pgvalue", "wire"},
-		"controlplane":      {"executor", "firecracker", "guestd"},
+		"controlplane":      {"eventstream", "executor", "firecracker", "guestd"},
 		"secret":            {"run"},
 		"substrate":         {"controlplane", "db", "executor", "worker"},
+		"telemetry":         {"clickhouse"},
 		"workerapi":         {"controlplane", "db", "firecracker", "imagebuild/worker", "imagecache/ecr"},
 		"workerclient":      {"client"},
 	} {
 		for _, target := range targets {
 			if slices.Contains(actual[source], target) {
 				t.Fatalf("internal package import is forbidden: %s must not import %s", source, target)
+			}
+		}
+	}
+}
+
+func TestProviderNeutralPackagesExcludeProviderSDKs(t *testing.T) {
+	root := filepath.Join(repositoryRoot(t), "internal")
+	for source, forbiddenPrefixes := range map[string][]string{
+		"cas":          {"github.com/aws/aws-sdk-go-v2/", "github.com/aws/smithy-go"},
+		"controlplane": {"github.com/redis/go-redis/"},
+		"email":        {"github.com/resend/resend-go/"},
+		"telemetry":    {"github.com/ClickHouse/clickhouse-go/"},
+	} {
+		imports, err := packageImports(filepath.Join(root, source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, importPath := range imports {
+			for _, forbiddenPrefix := range forbiddenPrefixes {
+				if strings.HasPrefix(importPath, forbiddenPrefix) {
+					t.Fatalf("provider-neutral package %s must not import %s", source, importPath)
+				}
 			}
 		}
 	}
@@ -156,7 +181,13 @@ func packageImports(root string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		if d.IsDir() {
+			if path == root {
+				return nil
+			}
+			return filepath.SkipDir
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)

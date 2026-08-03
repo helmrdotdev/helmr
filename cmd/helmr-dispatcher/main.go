@@ -139,7 +139,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure build dispatch enqueuer: %w", err)
 	}
-	telemetryIngestor, err := telemetry.NewIngestor(log, queries, telemetry.NewClickHouseWriter(clickHouseClient))
+	telemetryIngestor, err := telemetry.NewIngestor(log, queries, clickhouse.NewWriter(clickHouseClient))
 	if err != nil {
 		return fmt.Errorf("configure telemetry ingester: %w", err)
 	}

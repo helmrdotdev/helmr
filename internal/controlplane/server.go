@@ -66,6 +66,10 @@ type RegistryCredentialOpener interface {
 	OpenRegistryCredential(uuid.UUID, db.Secret, db.SecretVersion) ([]byte, error)
 }
 
+type SubjectEventReader interface {
+	ReadSubject(context.Context, uuid.UUID, string, uuid.UUID, int64, func(api.RunEvent) error, func() error) error
+}
+
 type Server struct {
 	log                   *slog.Logger
 	deploymentMode        string
@@ -83,7 +87,7 @@ type Server struct {
 	cacheRepositories     imagecache.RepositoryProvisioner
 	workspaceFencingKey   workspace.FencingKey
 	tokenCredentialKey    token.CredentialKey
-	eventStream           *EventStream
+	eventStream           SubjectEventReader
 	telemetryReader       telemetry.Reader
 	workerTokenSigningKey []byte
 	workerTokenTTL        time.Duration
@@ -132,7 +136,7 @@ type ServerConfig struct {
 	CacheRepositories     imagecache.RepositoryProvisioner
 	WorkspaceFencingKey   workspace.FencingKey
 	TokenCredentialKey    token.CredentialKey
-	EventStream           *EventStream
+	EventStream           SubjectEventReader
 	TelemetryReader       telemetry.Reader
 	Mailer                email.Sender
 	AuthProvider          AuthProvider
@@ -209,11 +213,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	telemetryReader := cfg.TelemetryReader
 	if telemetryReader == nil {
 		return nil, errors.New("Control Plane telemetry reader is required")
-	}
-	if cfg.EventStream != nil {
-		if cfg.EventStream.telemetryReader == nil {
-			return nil, errors.New("event stream telemetry reader is required")
-		}
 	}
 	mailer := cfg.Mailer
 	if mailer == nil {
