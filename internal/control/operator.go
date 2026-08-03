@@ -11,12 +11,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/deployment/operatorapi"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
+	"github.com/helmrdotdev/helmr/operatorapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )

@@ -14,6 +14,37 @@ import (
 )
 
 const internalImportPrefix = "github.com/helmrdotdev/helmr/internal/"
+const moduleImportPrefix = "github.com/helmrdotdev/helmr/"
+
+func TestOperatorAPIDependencyBudget(t *testing.T) {
+	imports, err := packageImports("operatorapi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, importPath := range imports {
+		first, _, _ := strings.Cut(importPath, "/")
+		if strings.Contains(first, ".") {
+			t.Fatalf("operatorapi must depend only on the standard library; imports %s", importPath)
+		}
+	}
+}
+
+func TestPrivatePlatformPolicyDependencies(t *testing.T) {
+	imports, err := packageImports("cmd/internal/platform-policy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var internalImports []string
+	for _, importPath := range imports {
+		if strings.HasPrefix(importPath, internalImportPrefix) {
+			internalImports = append(internalImports, importPath)
+		}
+	}
+	want := []string{moduleImportPrefix + "internal/deployment"}
+	if !reflect.DeepEqual(internalImports, want) {
+		t.Fatalf("platform-policy internal imports = %v, want %v", internalImports, want)
+	}
+}
 
 func TestInternalPackageDependencies(t *testing.T) {
 	actual, err := internalPackageDependencyGraph("internal")
@@ -22,71 +53,70 @@ func TestInternalPackageDependencies(t *testing.T) {
 	}
 
 	expected := map[string][]string{
-		"actor":               {"db", "ids", "outbox", "pgvalue", "run", "secret", "tracing"},
-		"api":                 {"archive", "ids", "imagebuild", "jsoncanon"},
-		"archive":             {"safepath", "sha256sum"},
-		"auth":                {"db", "ids", "pgvalue", "token"},
-		"buildkit":            {"imagebuild", "safepath"},
-		"capacity":            {},
-		"cas":                 {"archive"},
-		"checkpoint":          {},
-		"cli/browser":         {},
-		"cli/format":          {},
-		"cli/session":         {},
-		"cli/ui":              {"api"},
-		"clickhouse":          {},
-		"clickhouse/schema":   {"clickhouse"},
-		"client":              {"api", "ids", "sha256sum"},
-		"cmd/platform-policy": {"deployment"},
-		"compute":             {"runtime/identity"},
-		"config":              {"api"},
-		"console":             {},
-		"control":             {"actor", "api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "email", "enrollment", "frameio", "idempotency", "ids", "imagebuild", "imagecache", "jsoncanon", "pgvalue", "proto/run/v0", "region", "run", "runtime/identity", "schedule", "secret", "sha256sum", "telemetry", "token", "tracing", "workergroup", "workspace"},
-		"db":                  {},
-		"db/dbtest":           {},
-		"db/schema":           {},
-		"deployment":          {"api", "archive", "cas", "compute", "frameio", "ids", "imagebuild", "jsoncanon", "runtime/identity", "safepath", "schedule", "vm", "wire"},
-		"dispatch":            {"compute", "db", "deployment", "pgvalue", "sessionlock", "workspace"},
-		"dispatch/redis":      {"dispatch", "pgvalue"},
-		"email":               {},
-		"enrollment":          {"api", "auth"},
-		"executor":            {"api", "capacity", "cas", "checkpoint", "client", "compute", "deployment", "frameio", "ids", "jsoncanon", "localcache", "proto/run/v0", "proto/workspace/v0", "runtime", "sha256sum", "vm", "wire", "workspace"},
-		"firecracker":         {"cas", "compute", "ids", "runtime/identity", "sha256sum", "vm", "worker/datapath"},
-		"frameio":             {"sha256sum"},
-		"guestd":              {"archive", "buildkit", "deployment", "frameio", "imagebuild", "jsoncanon", "oci", "proto/run/v0", "proto/workspace/v0", "safepath", "sha256sum", "wire", "workspace"},
-		"idempotency":         {"db", "jsoncanon", "pgvalue"},
-		"ids":                 {},
-		"imagebuild":          {"compute", "frameio", "ids", "imagecache", "jsoncanon", "oci", "sha256sum", "vm", "wire"},
-		"imagecache":          {},
-		"imagecache/ecr":      {"ids", "imagebuild", "imagecache"},
-		"jsoncanon":           {},
-		"localcache":          {},
-		"oci":                 {"sha256sum"},
-		"outbox":              {},
-		"pgvalue":             {},
-		"platformlock":        {"sessionlock"},
-		"proto/run/v0":        {},
-		"proto/workspace/v0":  {},
-		"region":              {"db"},
-		"run":                 {"db", "ids", "outbox", "pgvalue", "secret"},
-		"run/runtest":         {"db/dbtest", "db/schema"},
-		"runtime":             {"localcache", "oci", "sha256sum"},
-		"runtime/identity":    {"sha256sum"},
-		"safepath":            {},
-		"schedule":            {"db", "pgvalue", "run", "tracing"},
-		"secret":              {"api", "db", "idempotency", "ids", "outbox", "pgvalue"},
-		"sessionlock":         {},
-		"sha256sum":           {},
-		"telemetry":           {"api", "clickhouse", "db", "pgvalue"},
-		"token":               {"db", "ids", "outbox", "pgvalue"},
-		"tracing":             {},
-		"version":             {},
-		"vm":                  {"compute", "ids"},
-		"wire":                {"frameio", "proto/run/v0"},
-		"worker":              {"api", "capacity", "client", "compute", "deployment", "ids", "vm"},
-		"worker/datapath":     {},
-		"workergroup":         {"auth", "compute", "db", "enrollment", "sessionlock"},
-		"workspace":           {"archive", "jsoncanon", "proto/workspace/v0", "safepath", "sha256sum"},
+		"actor":              {"db", "ids", "outbox", "pgvalue", "run", "secret", "tracing"},
+		"api":                {"archive", "ids", "imagebuild", "jsoncanon"},
+		"archive":            {"safepath", "sha256sum"},
+		"auth":               {"db", "ids", "pgvalue", "token"},
+		"buildkit":           {"imagebuild", "safepath"},
+		"capacity":           {},
+		"cas":                {"archive"},
+		"checkpoint":         {},
+		"cli/browser":        {},
+		"cli/format":         {},
+		"cli/session":        {},
+		"cli/ui":             {"api"},
+		"clickhouse":         {},
+		"clickhouse/schema":  {"clickhouse"},
+		"client":             {"api", "ids", "sha256sum"},
+		"compute":            {"runtime/identity"},
+		"config":             {"api"},
+		"console":            {},
+		"control":            {"actor", "api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "email", "enrollment", "frameio", "idempotency", "ids", "imagebuild", "imagecache", "jsoncanon", "pgvalue", "proto/run/v0", "region", "run", "runtime/identity", "schedule", "secret", "sha256sum", "telemetry", "token", "tracing", "workergroup", "workspace"},
+		"db":                 {},
+		"db/dbtest":          {},
+		"db/schema":          {},
+		"deployment":         {"api", "archive", "cas", "compute", "frameio", "ids", "imagebuild", "jsoncanon", "runtime/identity", "safepath", "schedule", "vm", "wire"},
+		"dispatch":           {"compute", "db", "deployment", "pgvalue", "sessionlock", "workspace"},
+		"dispatch/redis":     {"dispatch", "pgvalue"},
+		"email":              {},
+		"enrollment":         {"api", "auth"},
+		"executor":           {"api", "capacity", "cas", "checkpoint", "client", "compute", "deployment", "frameio", "ids", "jsoncanon", "localcache", "proto/run/v0", "proto/workspace/v0", "runtime", "sha256sum", "vm", "wire", "workspace"},
+		"firecracker":        {"cas", "compute", "ids", "runtime/identity", "sha256sum", "vm", "worker/datapath"},
+		"frameio":            {"sha256sum"},
+		"guestd":             {"archive", "buildkit", "deployment", "frameio", "imagebuild", "jsoncanon", "oci", "proto/run/v0", "proto/workspace/v0", "safepath", "sha256sum", "wire", "workspace"},
+		"idempotency":        {"db", "jsoncanon", "pgvalue"},
+		"ids":                {},
+		"imagebuild":         {"compute", "frameio", "ids", "imagecache", "jsoncanon", "oci", "sha256sum", "vm", "wire"},
+		"imagecache":         {},
+		"imagecache/ecr":     {"ids", "imagebuild", "imagecache"},
+		"jsoncanon":          {},
+		"localcache":         {},
+		"oci":                {"sha256sum"},
+		"outbox":             {},
+		"pgvalue":            {},
+		"platformlock":       {"sessionlock"},
+		"proto/run/v0":       {},
+		"proto/workspace/v0": {},
+		"region":             {"db"},
+		"run":                {"db", "ids", "outbox", "pgvalue", "secret"},
+		"run/runtest":        {"db/dbtest", "db/schema"},
+		"runtime":            {"localcache", "oci", "sha256sum"},
+		"runtime/identity":   {"sha256sum"},
+		"safepath":           {},
+		"schedule":           {"db", "pgvalue", "run", "tracing"},
+		"secret":             {"api", "db", "idempotency", "ids", "outbox", "pgvalue"},
+		"sessionlock":        {},
+		"sha256sum":          {},
+		"telemetry":          {"api", "clickhouse", "db", "pgvalue"},
+		"token":              {"db", "ids", "outbox", "pgvalue"},
+		"tracing":            {},
+		"version":            {},
+		"vm":                 {"compute", "ids"},
+		"wire":               {"frameio", "proto/run/v0"},
+		"worker":             {"api", "capacity", "client", "compute", "deployment", "ids", "vm"},
+		"worker/datapath":    {},
+		"workergroup":        {"auth", "compute", "db", "enrollment", "sessionlock"},
+		"workspace":          {"archive", "jsoncanon", "proto/workspace/v0", "safepath", "sha256sum"},
 	}
 	normalizeGraph(expected)
 
@@ -171,6 +201,39 @@ func internalPackageDependencyGraph(root string) (map[string][]string, error) {
 	}
 	normalizeGraph(graph)
 	return graph, nil
+}
+
+func packageImports(root string) ([]string, error) {
+	imports := make(map[string]struct{})
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
+		if err != nil {
+			return err
+		}
+		for _, imp := range file.Imports {
+			importPath, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				return fmt.Errorf("parse import path %s: %w", path, err)
+			}
+			imports[importPath] = struct{}{}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := make([]string, 0, len(imports))
+	for importPath := range imports {
+		result = append(result, importPath)
+	}
+	slices.Sort(result)
+	return result, nil
 }
 
 func internalPackageName(root, dir string) (string, error) {

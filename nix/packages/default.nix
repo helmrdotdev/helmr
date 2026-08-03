@@ -74,14 +74,14 @@ in
         src = lib.fileset.toSource {
           root = ../..;
           fileset = lib.fileset.unions [
-            ../../deployment
+            ../../cmd/internal/platform-policy
             ../../go.mod
             ../../go.sum
             ../../internal
           ];
         };
         vendorHash = "sha256-H1tGYmaOree6IBkfqIBNcx8HapUqEvtjUUeHxVEKcYk=";
-        subPackages = [ "internal/cmd/platform-policy" ];
+        subPackages = [ "cmd/internal/platform-policy" ];
       };
     in
     pkgs.callPackage ./platform-release.nix {
