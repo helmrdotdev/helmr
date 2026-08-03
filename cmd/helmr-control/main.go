@@ -63,14 +63,14 @@ func main() {
 			}
 			return
 		case "worker-group":
-			if err := runWorkerGroupLifecycleCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
-				log.Error("manage worker group lifecycle", "error", err)
+			if err := runWorkerGroupStateCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
+				log.Error("manage worker group state", "error", err)
 				os.Exit(1)
 			}
 			return
 		case "worker-instance":
-			if err := runWorkerInstanceLifecycleCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
-				log.Error("manage worker instance lifecycle", "error", err)
+			if err := runWorkerInstanceStateCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
+				log.Error("manage worker instance state", "error", err)
 				os.Exit(1)
 			}
 			return

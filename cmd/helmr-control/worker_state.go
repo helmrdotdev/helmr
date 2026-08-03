@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func runWorkerGroupLifecycleCommand(ctx context.Context, output io.Writer, args []string) error {
+func runWorkerGroupStateCommand(ctx context.Context, output io.Writer, args []string) error {
 	if len(args) == 0 {
 		return errors.New("worker-group command is required: status, pause, activate, drain, or disable")
 	}
@@ -38,29 +38,29 @@ func runWorkerGroupLifecycleCommand(ctx context.Context, output io.Writer, args 
 		return fmt.Errorf("unknown worker-group command %q", command)
 	}
 	return withWorkerStore(ctx, func(pool *pgxpool.Pool, store *db.Queries) error {
-		var result workergroup.GroupLifecycle
+		var result workergroup.GroupStatus
 		var err error
 		switch command {
 		case "status":
-			result, err = workergroup.InspectGroupLifecycle(ctx, store, groupID)
+			result, err = workergroup.ReadGroupStatus(ctx, store, groupID)
 		case "pause":
-			err = withWorkerGroupLifecycleLease(ctx, pool, groupID, func() error {
-				result, err = workergroup.TransitionGroupLifecycle(ctx, store, groupID, expectedClaimVersion, string(db.WorkerGroupStatePaused))
+			err = withWorkerGroupStateLease(ctx, pool, groupID, func() error {
+				result, err = workergroup.PauseGroup(ctx, store, groupID, expectedClaimVersion)
 				return err
 			})
 		case "activate":
-			err = withWorkerGroupLifecycleLease(ctx, pool, groupID, func() error {
-				result, err = workergroup.TransitionGroupLifecycle(ctx, store, groupID, expectedClaimVersion, string(db.WorkerGroupStateActive))
+			err = withWorkerGroupStateLease(ctx, pool, groupID, func() error {
+				result, err = workergroup.ActivateGroup(ctx, store, groupID, expectedClaimVersion)
 				return err
 			})
 		case "drain":
-			err = withWorkerGroupLifecycleLease(ctx, pool, groupID, func() error {
-				result, err = workergroup.TransitionGroupLifecycle(ctx, store, groupID, expectedClaimVersion, string(db.WorkerGroupStateDraining))
+			err = withWorkerGroupStateLease(ctx, pool, groupID, func() error {
+				result, err = workergroup.BeginGroupDrain(ctx, store, groupID, expectedClaimVersion)
 				return err
 			})
 		case "disable":
-			err = withWorkerGroupLifecycleLease(ctx, pool, groupID, func() error {
-				result, err = workergroup.TransitionGroupLifecycle(ctx, store, groupID, expectedClaimVersion, string(db.WorkerGroupStateDisabled))
+			err = withWorkerGroupStateLease(ctx, pool, groupID, func() error {
+				result, err = workergroup.DisableGroup(ctx, store, groupID, expectedClaimVersion)
 				return err
 			})
 		}
@@ -71,7 +71,7 @@ func runWorkerGroupLifecycleCommand(ctx context.Context, output io.Writer, args 
 	})
 }
 
-func runWorkerInstanceLifecycleCommand(ctx context.Context, output io.Writer, args []string) error {
+func runWorkerInstanceStateCommand(ctx context.Context, output io.Writer, args []string) error {
 	if len(args) == 0 {
 		return errors.New("worker-instance command is required: status or lose")
 	}
@@ -96,13 +96,13 @@ func runWorkerInstanceLifecycleCommand(ctx context.Context, output io.Writer, ar
 		return fmt.Errorf("unknown worker-instance command %q", command)
 	}
 	return withWorkerStore(ctx, func(pool *pgxpool.Pool, store *db.Queries) error {
-		var result workergroup.InstanceLifecycle
+		var result workergroup.InstanceStatus
 		var err error
 		switch command {
 		case "status":
-			result, err = workergroup.InspectInstanceLifecycle(ctx, store, groupID, resourceID)
+			result, err = workergroup.ReadInstanceStatus(ctx, store, groupID, resourceID)
 		case "lose":
-			err = withWorkerGroupLifecycleLease(ctx, pool, groupID, func() error {
+			err = withWorkerGroupStateLease(ctx, pool, groupID, func() error {
 				result, err = workergroup.MarkInstanceLost(ctx, store, groupID, resourceID, expectedClaimVersion)
 				return err
 			})
@@ -127,8 +127,8 @@ func withWorkerStore(ctx context.Context, run func(*pgxpool.Pool, *db.Queries) e
 	return run(pool, db.New(pool))
 }
 
-func withWorkerGroupLifecycleLease(ctx context.Context, pool *pgxpool.Pool, groupID string, run func() error) (runErr error) {
-	guard, err := sessionlock.Acquire(ctx, pool, []int64{workergroup.LifecycleLockKey(groupID)})
+func withWorkerGroupStateLease(ctx context.Context, pool *pgxpool.Pool, groupID string, run func() error) (runErr error) {
+	guard, err := sessionlock.Acquire(ctx, pool, []int64{workergroup.StateMutationLockKey(groupID)})
 	if err != nil {
 		return fmt.Errorf("acquire Worker group lifecycle lease: %w", err)
 	}

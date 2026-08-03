@@ -154,14 +154,14 @@ func TestWorkerGroupReplacementAllowsDrainingPredecessor(t *testing.T) {
 	}
 }
 
-func TestDeploymentWorkerGroupLifecycleIsFencedAndReplaySafe(t *testing.T) {
+func TestWorkerGroupStateTransitionsAreFencedAndReplaySafe(t *testing.T) {
 	ctx := context.Background()
 	q := db.New(newPostgresDB(t, ctx))
-	initial, err := q.GetWorkerGroupLifecycle(ctx, dbtest.DefaultWorkerGroupID)
+	initial, err := q.GetWorkerGroupState(ctx, dbtest.DefaultWorkerGroupID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	paused, err := q.TransitionWorkerGroupLifecycle(ctx, db.TransitionWorkerGroupLifecycleParams{
+	paused, err := q.TransitionWorkerGroupState(ctx, db.TransitionWorkerGroupStateParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStatePaused),
 		ExpectedClaimVersion: initial.ClaimVersion,
 	})
@@ -171,7 +171,7 @@ func TestDeploymentWorkerGroupLifecycleIsFencedAndReplaySafe(t *testing.T) {
 	if paused.State != db.WorkerGroupStatePaused || paused.ClaimVersion != initial.ClaimVersion+1 || !paused.TransitionApplied {
 		t.Fatalf("paused = %+v", paused)
 	}
-	replayed, err := q.TransitionWorkerGroupLifecycle(ctx, db.TransitionWorkerGroupLifecycleParams{
+	replayed, err := q.TransitionWorkerGroupState(ctx, db.TransitionWorkerGroupStateParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStatePaused),
 		ExpectedClaimVersion: initial.ClaimVersion,
 	})
@@ -181,7 +181,7 @@ func TestDeploymentWorkerGroupLifecycleIsFencedAndReplaySafe(t *testing.T) {
 	if replayed.ClaimVersion != paused.ClaimVersion || replayed.TransitionApplied {
 		t.Fatalf("replayed pause = %+v", replayed)
 	}
-	active, err := q.TransitionWorkerGroupLifecycle(ctx, db.TransitionWorkerGroupLifecycleParams{
+	active, err := q.TransitionWorkerGroupState(ctx, db.TransitionWorkerGroupStateParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStateActive),
 		ExpectedClaimVersion: paused.ClaimVersion,
 	})
@@ -191,7 +191,7 @@ func TestDeploymentWorkerGroupLifecycleIsFencedAndReplaySafe(t *testing.T) {
 	if active.State != db.WorkerGroupStateActive || active.ClaimVersion != paused.ClaimVersion+1 || !active.TransitionApplied {
 		t.Fatalf("active = %+v", active)
 	}
-	draining, err := q.TransitionWorkerGroupLifecycle(ctx, db.TransitionWorkerGroupLifecycleParams{
+	draining, err := q.TransitionWorkerGroupState(ctx, db.TransitionWorkerGroupStateParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStateDraining),
 		ExpectedClaimVersion: active.ClaimVersion,
 	})
@@ -201,13 +201,13 @@ func TestDeploymentWorkerGroupLifecycleIsFencedAndReplaySafe(t *testing.T) {
 	if draining.State != db.WorkerGroupStateDraining || draining.ClaimVersion != active.ClaimVersion+1 || !draining.TransitionApplied {
 		t.Fatalf("draining = %+v", draining)
 	}
-	if _, err := q.TransitionWorkerGroupLifecycle(ctx, db.TransitionWorkerGroupLifecycleParams{
+	if _, err := q.TransitionWorkerGroupState(ctx, db.TransitionWorkerGroupStateParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStateActive),
 		ExpectedClaimVersion: initial.ClaimVersion,
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("stale reactivation error = %v", err)
 	}
-	disabled, err := q.TransitionWorkerGroupLifecycle(ctx, db.TransitionWorkerGroupLifecycleParams{
+	disabled, err := q.TransitionWorkerGroupState(ctx, db.TransitionWorkerGroupStateParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStateDisabled),
 		ExpectedClaimVersion: draining.ClaimVersion,
 	})
@@ -225,7 +225,7 @@ func TestDeploymentWorkerInstanceLossIsFencedAndReplaySafe(t *testing.T) {
 	q := db.New(pool)
 	workerID := insertActiveWorkerWithObservation(t, ctx, pool, time.Now())
 	resourceID := "active-" + workerID.String()
-	initial, err := q.GetWorkerInstanceLifecycle(ctx, db.GetWorkerInstanceLifecycleParams{
+	initial, err := q.GetWorkerInstanceStateByResource(ctx, db.GetWorkerInstanceStateByResourceParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, ResourceID: resourceID,
 	})
 	if err != nil {
@@ -283,7 +283,7 @@ func TestDeploymentWorkerInstanceLossTerminallyFencesRegisteringIdentity(t *test
 	resourceID := "registering-lost-" + workerID.String()
 	secretHash := []byte("registering-lost-secret")
 	credential := enrollTestWorker(t, ctx, q, workerID, resourceID, true, false, secretHash)
-	initial, err := q.GetWorkerInstanceLifecycle(ctx, db.GetWorkerInstanceLifecycleParams{
+	initial, err := q.GetWorkerInstanceStateByResource(ctx, db.GetWorkerInstanceStateByResourceParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, ResourceID: resourceID,
 	})
 	if err != nil {

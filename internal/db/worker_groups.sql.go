@@ -550,26 +550,26 @@ func (q *Queries) GetOperatorWorkerInstance(ctx context.Context, workerInstanceI
 	return i, err
 }
 
-const getWorkerGroupLifecycle = `-- name: GetWorkerGroupLifecycle :one
+const getWorkerGroupState = `-- name: GetWorkerGroupState :one
 SELECT id, state, claim_version
   FROM worker_groups
  WHERE id = $1
 `
 
-type GetWorkerGroupLifecycleRow struct {
+type GetWorkerGroupStateRow struct {
 	ID           string `json:"id"`
 	State        string `json:"state"`
 	ClaimVersion int64  `json:"claim_version"`
 }
 
-func (q *Queries) GetWorkerGroupLifecycle(ctx context.Context, workerGroupID string) (GetWorkerGroupLifecycleRow, error) {
-	row := q.db.QueryRow(ctx, getWorkerGroupLifecycle, workerGroupID)
-	var i GetWorkerGroupLifecycleRow
+func (q *Queries) GetWorkerGroupState(ctx context.Context, workerGroupID string) (GetWorkerGroupStateRow, error) {
+	row := q.db.QueryRow(ctx, getWorkerGroupState, workerGroupID)
+	var i GetWorkerGroupStateRow
 	err := row.Scan(&i.ID, &i.State, &i.ClaimVersion)
 	return i, err
 }
 
-const getWorkerInstanceLifecycle = `-- name: GetWorkerInstanceLifecycle :one
+const getWorkerInstanceStateByResource = `-- name: GetWorkerInstanceStateByResource :one
 SELECT id, resource_id, worker_group_id, state, claim_version, current_epoch
   FROM worker_instances
  WHERE worker_group_id = $1
@@ -578,12 +578,12 @@ SELECT id, resource_id, worker_group_id, state, claim_version, current_epoch
  LIMIT 1
 `
 
-type GetWorkerInstanceLifecycleParams struct {
+type GetWorkerInstanceStateByResourceParams struct {
 	WorkerGroupID string `json:"worker_group_id"`
 	ResourceID    string `json:"resource_id"`
 }
 
-type GetWorkerInstanceLifecycleRow struct {
+type GetWorkerInstanceStateByResourceRow struct {
 	ID            pgtype.UUID `json:"id"`
 	ResourceID    string      `json:"resource_id"`
 	WorkerGroupID string      `json:"worker_group_id"`
@@ -592,9 +592,9 @@ type GetWorkerInstanceLifecycleRow struct {
 	CurrentEpoch  pgtype.Int8 `json:"current_epoch"`
 }
 
-func (q *Queries) GetWorkerInstanceLifecycle(ctx context.Context, arg GetWorkerInstanceLifecycleParams) (GetWorkerInstanceLifecycleRow, error) {
-	row := q.db.QueryRow(ctx, getWorkerInstanceLifecycle, arg.WorkerGroupID, arg.ResourceID)
-	var i GetWorkerInstanceLifecycleRow
+func (q *Queries) GetWorkerInstanceStateByResource(ctx context.Context, arg GetWorkerInstanceStateByResourceParams) (GetWorkerInstanceStateByResourceRow, error) {
+	row := q.db.QueryRow(ctx, getWorkerInstanceStateByResource, arg.WorkerGroupID, arg.ResourceID)
+	var i GetWorkerInstanceStateByResourceRow
 	err := row.Scan(
 		&i.ID,
 		&i.ResourceID,
@@ -1225,7 +1225,7 @@ func (q *Queries) RecordWorkerObservation(ctx context.Context, arg RecordWorkerO
 	return i, err
 }
 
-const transitionWorkerGroupLifecycle = `-- name: TransitionWorkerGroupLifecycle :one
+const transitionWorkerGroupState = `-- name: TransitionWorkerGroupState :one
 WITH transitioned AS (
     UPDATE worker_groups
        SET state = $1,
@@ -1291,22 +1291,22 @@ SELECT worker_groups.id, worker_groups.state, worker_groups.claim_version,
 LIMIT 1
 `
 
-type TransitionWorkerGroupLifecycleParams struct {
+type TransitionWorkerGroupStateParams struct {
 	TargetState          string `json:"target_state"`
 	WorkerGroupID        string `json:"worker_group_id"`
 	ExpectedClaimVersion int64  `json:"expected_claim_version"`
 }
 
-type TransitionWorkerGroupLifecycleRow struct {
+type TransitionWorkerGroupStateRow struct {
 	ID                string `json:"id"`
 	State             string `json:"state"`
 	ClaimVersion      int64  `json:"claim_version"`
 	TransitionApplied bool   `json:"transition_applied"`
 }
 
-func (q *Queries) TransitionWorkerGroupLifecycle(ctx context.Context, arg TransitionWorkerGroupLifecycleParams) (TransitionWorkerGroupLifecycleRow, error) {
-	row := q.db.QueryRow(ctx, transitionWorkerGroupLifecycle, arg.TargetState, arg.WorkerGroupID, arg.ExpectedClaimVersion)
-	var i TransitionWorkerGroupLifecycleRow
+func (q *Queries) TransitionWorkerGroupState(ctx context.Context, arg TransitionWorkerGroupStateParams) (TransitionWorkerGroupStateRow, error) {
+	row := q.db.QueryRow(ctx, transitionWorkerGroupState, arg.TargetState, arg.WorkerGroupID, arg.ExpectedClaimVersion)
+	var i TransitionWorkerGroupStateRow
 	err := row.Scan(
 		&i.ID,
 		&i.State,

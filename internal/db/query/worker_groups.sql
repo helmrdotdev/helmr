@@ -149,12 +149,12 @@ SELECT id AS worker_group_id,
   FROM worker_groups
  WHERE id = sqlc.arg(worker_group_id);
 
--- name: GetWorkerGroupLifecycle :one
+-- name: GetWorkerGroupState :one
 SELECT id, state, claim_version
   FROM worker_groups
  WHERE id = sqlc.arg(worker_group_id);
 
--- name: TransitionWorkerGroupLifecycle :one
+-- name: TransitionWorkerGroupState :one
 WITH transitioned AS (
     UPDATE worker_groups
        SET state = sqlc.arg(target_state),
@@ -219,7 +219,7 @@ SELECT worker_groups.id, worker_groups.state, worker_groups.claim_version,
    AND NOT EXISTS (SELECT 1 FROM transitioned)
 LIMIT 1;
 
--- name: GetWorkerInstanceLifecycle :one
+-- name: GetWorkerInstanceStateByResource :one
 SELECT id, resource_id, worker_group_id, state, claim_version, current_epoch
   FROM worker_instances
  WHERE worker_group_id = sqlc.arg(worker_group_id)
