@@ -40,7 +40,7 @@ func (c *limitedStartConnector) Restore(ctx context.Context, _ RestoreRequest) (
 func (c *limitedStartConnector) Materialize(ctx context.Context, _ MaterializeRequest) (Session, error) {
 	return c.start(ctx, "materialize")
 }
-func (*limitedStartConnector) CleanupRuntime(context.Context, string) error { return nil }
+func (*limitedStartConnector) Cleanup(context.Context, Owner) error { return nil }
 
 func TestStartLimiterSharesOneHostWideBudgetAcrossStartKinds(t *testing.T) {
 	connector := &limitedStartConnector{started: make(chan string, 3), release: make(chan struct{}, 3)}

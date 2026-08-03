@@ -26,10 +26,24 @@ variable "tags" {
   default     = {}
 }
 
-variable "vpc_cidr" {
-  description = "CIDR block for the VPC."
+variable "control_vpc_cidr" {
+  description = "CIDR block for the unrouted Control VPC."
   type        = string
   default     = "10.90.0.0/16"
+}
+
+variable "execution_vpc_cidr" {
+  description = "CIDR block for the unrouted Execution VPC. The complete prefix must be covered by the deployment-supplied Worker deny set."
+  type        = string
+  default     = "10.91.0.0/16"
+
+  validation {
+    condition = can(cidrnetmask(var.execution_vpc_cidr)) && anytrue([
+      for blocked in var.worker_network_blocked_ipv4_cidrs :
+      try(cidrcontains(blocked, cidrhost(var.execution_vpc_cidr, 0)) && cidrcontains(blocked, cidrhost(var.execution_vpc_cidr, -1)), false)
+    ])
+    error_message = "execution_vpc_cidr must be an IPv4 prefix wholly contained by worker_network_blocked_ipv4_cidrs."
+  }
 }
 
 variable "availability_zone_count" {
@@ -67,10 +81,18 @@ variable "worker_group_id" {
 }
 
 variable "region_id" {
-  description = "Helmr region primitive for this stack. Defaults to aws_region."
+  description = "Explicit Helmr region primitive for this stack."
   type        = string
-  default     = null
-  nullable    = true
+
+  validation {
+    condition = (
+      var.region_id != "" &&
+      var.region_id == trimspace(var.region_id) &&
+      length(base64encode(var.region_id)) <= 340 &&
+      length(regexall("[[:cntrl:]]", var.region_id)) == 0
+    )
+    error_message = "region_id must be normalized control-free UTF-8 of 1-255 bytes."
+  }
 }
 
 variable "default_region_id" {
@@ -78,6 +100,31 @@ variable "default_region_id" {
   type        = string
   default     = null
   nullable    = true
+}
+
+variable "platform_store_uri" {
+  description = "Dedicated immutable Platform Artifact store URI exported by the bootstrap module."
+  type        = string
+}
+
+variable "platform_store_bucket_arn" {
+  description = "Platform Artifact store bucket ARN exported by the bootstrap module."
+  type        = string
+}
+
+variable "platform_store_kms_key_arn" {
+  description = "Platform Artifact store KMS key ARN exported by the bootstrap module."
+  type        = string
+}
+
+variable "build_policy_digest" {
+  description = "Exact committed build-policy digest for this stack rollout."
+  type        = string
+
+  validation {
+    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.build_policy_digest))
+    error_message = "build_policy_digest must be lowercase sha256:<64 hexadecimal digits>."
+  }
 }
 
 variable "clickhouse_url" {
@@ -152,6 +199,21 @@ variable "control_image" {
   type        = string
   default     = null
   nullable    = true
+}
+
+variable "control_image_repository_arn" {
+  description = "Exact private ECR repository ARN needed by the ECS execution roles. Leave null for public or non-ECR images."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.control_image_repository_arn == null ||
+      can(regex("^arn:[^:]+:ecr:[a-z0-9-]+:[0-9]{12}:repository/[a-z0-9._/-]+$", var.control_image_repository_arn))
+    )
+    error_message = "control_image_repository_arn must be null or an ECR repository ARN."
+  }
 }
 
 variable "create_control_service" {
@@ -308,44 +370,32 @@ variable "worker_ami_id" {
   nullable    = true
 }
 
-variable "worker_allowed_ami_ids" {
-  description = "Additional worker AMIs accepted during a rolling worker replacement. Remove superseded AMIs after the refresh completes."
-  type        = list(string)
-  default     = []
-
-  validation {
-    condition     = alltrue([for ami_id in var.worker_allowed_ami_ids : can(regex("^ami-[0-9a-fA-F]+$", ami_id))])
-    error_message = "worker_allowed_ami_ids must contain AWS AMI IDs."
-  }
-}
-
 variable "create_worker" {
   description = "Create worker EC2 Auto Scaling resources."
   type        = bool
   default     = false
 }
 
-variable "worker_fleet_controller" {
-  description = "Run/build fleet-controller policy used whenever worker groups are created."
-  type = object({
-    run_warm_workers             = optional(number, 0)
-    build_warm_workers           = optional(number, 0)
-    run_max_workers              = optional(number)
-    build_max_workers            = optional(number)
-    max_scale_out_per_cycle      = optional(number, 1)
-    max_pending_workers          = optional(number, 1)
-    max_packing_items            = optional(number, 10000)
-    controller_interval_seconds  = optional(number, 15)
-    scale_out_cooldown_seconds   = optional(number, 30)
-    scale_in_cooldown_seconds    = optional(number, 300)
-    scale_in_hysteresis_seconds  = optional(number, 300)
-    stale_worker_timeout_seconds = optional(number, 120)
-    readiness_timeout_seconds    = optional(number, 900)
-    drain_timeout_seconds        = optional(number, 1800)
-    emergency_stop               = optional(bool, false)
-    metric_interval_seconds      = optional(number, 60)
-  })
-  default = {}
+variable "worker_observation_ttl_seconds" {
+  description = "Freshness window for provider-neutral Worker readiness observations."
+  type        = number
+  default     = 120
+
+  validation {
+    condition     = var.worker_observation_ttl_seconds > 0 && var.worker_observation_ttl_seconds <= 2592000
+    error_message = "worker_observation_ttl_seconds must be between 1 and 2592000."
+  }
+}
+
+variable "worker_launch_timeout_seconds" {
+  description = "Deployment-owned ASG launch-hook timeout while a Worker reaches Control readiness."
+  type        = number
+  default     = 900
+
+  validation {
+    condition     = var.worker_launch_timeout_seconds > 30
+    error_message = "worker_launch_timeout_seconds must exceed the Worker lifecycle heartbeat interval."
+  }
 }
 
 variable "worker_instance_type" {
@@ -364,6 +414,37 @@ variable "worker_enable_ssm" {
   description = "Enable SSM Session Manager access for worker instances."
   type        = bool
   default     = true
+}
+
+variable "worker_network_blocked_ipv4_cidrs" {
+  description = "Canonical ordered IPv4 CIDRs blocked for all guest egress. Supply [] only when the deployment intentionally has no additional destination deny."
+  type        = list(string)
+
+  validation {
+    condition = length(distinct(var.worker_network_blocked_ipv4_cidrs)) == length(var.worker_network_blocked_ipv4_cidrs) && alltrue([
+      for cidr in var.worker_network_blocked_ipv4_cidrs : can(cidrnetmask(cidr)) && try(cidrhost(cidr, 0) == split("/", cidr)[0], false)
+    ])
+    error_message = "worker_network_blocked_ipv4_cidrs must contain unique canonical IPv4 CIDRs."
+  }
+}
+
+variable "worker_network_link_pool" {
+  description = "Worker-local IPv4 pool used for routed veth links."
+  type        = string
+  default     = "169.254.64.0/18"
+}
+
+variable "worker_network_translation_pool" {
+  description = "Worker-local IPv4 pool used for routed guest translation identities."
+  type        = string
+  default     = "100.96.0.0/16"
+}
+
+variable "worker_network_resolver_ipv4" {
+  description = "Exact IPv4 resolver exposed to guests. Null selects the VPC resolver."
+  type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "worker_min_size" {
@@ -459,12 +540,12 @@ variable "build_worker_disk_reserve_mib" {
 }
 variable "build_worker_vm_vcpus" {
   type     = number
-  default  = null
+  default  = 3
   nullable = true
 }
 variable "build_worker_vm_memory_mib" {
   type     = number
-  default  = null
+  default  = 4096
   nullable = true
 }
 variable "build_worker_vm_scratch_disk_mib" {
@@ -550,17 +631,4 @@ variable "worker_vm_scratch_disk_mib" {
   description = "Writable disk in MiB assigned to each worker Firecracker task VM."
   type        = number
   default     = 32768
-}
-
-variable "secret_encryption_key_old_arn" {
-  description = "Optional Secrets Manager ARN for HELMR_SECRET_ENCRYPTION_KEY_OLD during Helmr-managed secret re-encryption."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "secret_encryption_key_old_kms_key_arns" {
-  description = "Optional customer-managed KMS key ARNs needed to decrypt secret_encryption_key_old_arn when it is not encrypted by the control module KMS key."
-  type        = list(string)
-  default     = []
 }

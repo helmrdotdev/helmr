@@ -14,7 +14,9 @@ import (
 const appendRunLogChunk = `-- name: AppendRunLogChunk :one
 WITH event_args AS (
     SELECT $1::text AS event_kind,
-           $2::jsonb AS event_payload
+           $2::jsonb AS event_payload,
+           $3::text AS event_severity,
+           $4::text AS lease_fence_fingerprint
 ),
 current_run_lease AS (
     SELECT runs.org_id,
@@ -27,28 +29,32 @@ current_run_lease AS (
            run_leases.span_id,
            run_leases.parent_span_id,
            run_leases.traceparent,
-           run_leases.task_attempt_number AS attempt_number
-      FROM runs
-      JOIN run_leases ON run_leases.id = runs.current_run_lease_id
-                     AND run_leases.org_id = runs.org_id
-                     AND run_leases.run_id = runs.id
-     WHERE runs.org_id = $3
-       AND runs.id = $4
+           run_leases.attempt_number AS attempt_number
+      FROM run_leases
+      JOIN runs ON runs.id = run_leases.run_id
+               AND runs.workspace_id = run_leases.workspace_id
+     WHERE run_leases.id = $5
+       AND run_leases.lease_sequence = $6
+       AND run_leases.worker_group_id = $7
+       AND run_leases.worker_instance_id = $8
+       AND run_leases.worker_epoch = $9
+       AND run_leases.worker_protocol_version = $10
+       AND runs.current_run_lease_id = run_leases.id
+       AND runs.current_attempt_number = run_leases.attempt_number
        AND runs.status = 'running'
-       AND run_leases.id = $5
-       AND run_leases.worker_instance_id = $6
-       AND run_leases.state IN ('starting', 'running')
+       AND run_leases.state = 'running'
        AND run_leases.expires_at > now()
 ),
 candidate AS (
     SELECT current_run_lease.org_id, current_run_lease.project_id, current_run_lease.environment_id, current_run_lease.trace_id, current_run_lease.state_version, current_run_lease.id, current_run_lease.run_lease_id, current_run_lease.span_id, current_run_lease.parent_span_id, current_run_lease.traceparent, current_run_lease.attempt_number,
-           $7::text AS stream,
-           $8::bigint AS observed_seq,
-           $9::bytea AS content,
-           octet_length($9::bytea)::bigint AS size_bytes,
+           $11::text AS stream,
+           $12::bigint AS observed_seq,
+           $13::bytea AS content,
+           octet_length($13::bytea)::bigint AS size_bytes,
            event_args.event_kind,
            event_args.event_payload,
-           'run_log:' || current_run_lease.run_lease_id::text || ':' || $7::text || ':' || ($8::bigint)::text AS idempotency_key
+           event_args.lease_fence_fingerprint,
+           'run_log:' || current_run_lease.attempt_number::text || ':' || $11::text || ':' || ($12::bigint)::text AS idempotency_key
       FROM current_run_lease
       CROSS JOIN event_args
 ),
@@ -82,7 +88,8 @@ inserted_chunk AS (
                'observed_seq', candidate.observed_seq,
                'bytes', candidate.size_bytes,
                'event_kind', candidate.event_kind,
-               'event_payload', candidate.event_payload
+               'event_payload', candidate.event_payload,
+               'lease_fence_fingerprint', candidate.lease_fence_fingerprint
            ),
            candidate.content,
            candidate.size_bytes,
@@ -124,7 +131,7 @@ event_input AS (
            current_run_lease.parent_span_id,
            current_run_lease.traceparent,
            'log' AS category,
-           'info' AS severity,
+           event_args.event_severity AS severity,
            'worker' AS source,
            event_args.event_kind AS kind,
            event_args.event_kind AS message,
@@ -172,7 +179,8 @@ event AS (
 meter_event AS (
     INSERT INTO meter_events (
         org_id, project_id, environment_id, run_id, run_lease_id,
-        attempt_number, trace_id, span_id, meter, quantity, unit, details,
+        attempt_number, trace_id, span_id, meter,
+        quantity, unit, details,
         idempotency_key, idempotency_fingerprint
     )
     SELECT current_run_lease.org_id,
@@ -187,7 +195,7 @@ meter_event AS (
            selected_chunk.size_bytes,
            'bytes',
            jsonb_build_object('stream', selected_chunk.stream, 'observed_seq', selected_chunk.observed_seq),
-           'log:' || selected_chunk.run_lease_id::text || ':' || selected_chunk.stream::text || ':' || selected_chunk.observed_seq::text,
+           'log:' || selected_chunk.run_id::text || ':' || selected_chunk.attempt_number::text || ':' || selected_chunk.stream::text || ':' || selected_chunk.observed_seq::text,
            jsonb_build_object(
                'quantity', selected_chunk.size_bytes,
                'unit', 'bytes',
@@ -198,10 +206,11 @@ meter_event AS (
                             AND current_run_lease.id = selected_chunk.run_id
      WHERE selected_chunk.is_new
        AND selected_chunk.size_bytes > 0
-    ON CONFLICT (org_id, source_type, source_id, meter, idempotency_key)
+    ON CONFLICT (org_id, run_lease_id, meter, idempotency_key)
+        WHERE run_lease_id IS NOT NULL
     DO UPDATE SET idempotency_fingerprint = meter_events.idempotency_fingerprint
      WHERE meter_events.idempotency_fingerprint = excluded.idempotency_fingerprint
-    RETURNING id, org_id, project_id, environment_id, run_id, run_lease_id, deployment_id, deployment_build_lease_id, attempt_number, source_type, source_id, trace_id, span_id, meter, quantity, unit, measured_from, measured_to, occurred_at, details, idempotency_key, idempotency_fingerprint, created_at
+    RETURNING id, org_id, project_id, environment_id, run_id, run_lease_id, deployment_id, deployment_build_lease_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_from, measured_to, occurred_at, details, idempotency_key, idempotency_fingerprint, created_at
 ),
 meter_event_outbox AS (
     INSERT INTO telemetry_outbox (
@@ -211,8 +220,8 @@ meter_event_outbox AS (
     )
     SELECT meter_event.org_id,
            'meter_event',
-           meter_event.source_type,
-           meter_event.source_id,
+           'run_lease',
+           meter_event.run_lease_id,
            meter_event.project_id,
            meter_event.environment_id,
            meter_event.run_id,
@@ -250,15 +259,19 @@ SELECT selected_chunk.org_id,
 `
 
 type AppendRunLogChunkParams struct {
-	Kind             string      `json:"kind"`
-	Payload          []byte      `json:"payload"`
-	OrgID            pgtype.UUID `json:"org_id"`
-	RunID            pgtype.UUID `json:"run_id"`
-	RunLeaseID       pgtype.UUID `json:"run_lease_id"`
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	Stream           string      `json:"stream"`
-	ObservedSeq      int64       `json:"observed_seq"`
-	Content          []byte      `json:"content"`
+	Kind                  string      `json:"kind"`
+	Payload               []byte      `json:"payload"`
+	Severity              string      `json:"severity"`
+	LeaseFenceFingerprint string      `json:"lease_fence_fingerprint"`
+	RunLeaseID            pgtype.UUID `json:"run_lease_id"`
+	LeaseSequence         int64       `json:"lease_sequence"`
+	WorkerGroupID         string      `json:"worker_group_id"`
+	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch           int64       `json:"worker_epoch"`
+	WorkerProtocolVersion string      `json:"worker_protocol_version"`
+	Stream                string      `json:"stream"`
+	ObservedSeq           int64       `json:"observed_seq"`
+	Content               []byte      `json:"content"`
 }
 
 type AppendRunLogChunkRow struct {
@@ -279,10 +292,14 @@ func (q *Queries) AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkPa
 	row := q.db.QueryRow(ctx, appendRunLogChunk,
 		arg.Kind,
 		arg.Payload,
-		arg.OrgID,
-		arg.RunID,
+		arg.Severity,
+		arg.LeaseFenceFingerprint,
 		arg.RunLeaseID,
+		arg.LeaseSequence,
+		arg.WorkerGroupID,
 		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.WorkerProtocolVersion,
 		arg.Stream,
 		arg.ObservedSeq,
 		arg.Content,
@@ -300,6 +317,70 @@ func (q *Queries) AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkPa
 		&i.SizeBytes,
 		&i.CreatedAt,
 		&i.ReplayMatches,
+	)
+	return i, err
+}
+
+const getRunLogChunkReplay = `-- name: GetRunLogChunkReplay :one
+SELECT org_id,
+       run_id,
+       run_lease_id,
+       attempt_number,
+       stream_name AS stream,
+       id AS seq,
+       observed_seq,
+       content,
+       size_bytes,
+       COALESCE(payload ->> 'event_payload', '')::text AS event_payload,
+       COALESCE(payload ->> 'lease_fence_fingerprint', '')::text AS lease_fence_fingerprint,
+       created_at
+  FROM telemetry_outbox
+ WHERE stream_kind = 'run_log'
+   AND source_kind = 'run'
+   AND run_lease_id = $1
+   AND stream_name = $2
+   AND observed_seq = $3
+ ORDER BY id
+ LIMIT 1
+`
+
+type GetRunLogChunkReplayParams struct {
+	RunLeaseID  pgtype.UUID `json:"run_lease_id"`
+	Stream      string      `json:"stream"`
+	ObservedSeq pgtype.Int8 `json:"observed_seq"`
+}
+
+type GetRunLogChunkReplayRow struct {
+	OrgID                 pgtype.UUID        `json:"org_id"`
+	RunID                 pgtype.UUID        `json:"run_id"`
+	RunLeaseID            pgtype.UUID        `json:"run_lease_id"`
+	AttemptNumber         pgtype.Int4        `json:"attempt_number"`
+	Stream                string             `json:"stream"`
+	Seq                   int64              `json:"seq"`
+	ObservedSeq           pgtype.Int8        `json:"observed_seq"`
+	Content               []byte             `json:"content"`
+	SizeBytes             pgtype.Int8        `json:"size_bytes"`
+	EventPayload          string             `json:"event_payload"`
+	LeaseFenceFingerprint string             `json:"lease_fence_fingerprint"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetRunLogChunkReplay(ctx context.Context, arg GetRunLogChunkReplayParams) (GetRunLogChunkReplayRow, error) {
+	row := q.db.QueryRow(ctx, getRunLogChunkReplay, arg.RunLeaseID, arg.Stream, arg.ObservedSeq)
+	var i GetRunLogChunkReplayRow
+	err := row.Scan(
+		&i.OrgID,
+		&i.RunID,
+		&i.RunLeaseID,
+		&i.AttemptNumber,
+		&i.Stream,
+		&i.Seq,
+		&i.ObservedSeq,
+		&i.Content,
+		&i.SizeBytes,
+		&i.EventPayload,
+		&i.LeaseFenceFingerprint,
+		&i.CreatedAt,
 	)
 	return i, err
 }

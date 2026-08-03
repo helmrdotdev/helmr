@@ -34,7 +34,6 @@ export type Region = {
   state: string;
   visibility: string;
   location?: string;
-  static_ips?: string[];
 };
 
 export type ListRegionsResponse = {

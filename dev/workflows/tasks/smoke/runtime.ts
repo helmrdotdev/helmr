@@ -1,18 +1,23 @@
-import { cache, image, logger, metadata, sandbox, source, streams, task, tokens } from "@helmr/sdk"
+import {
+  image,
+  logger,
+  metadata,
+  source,
+  task,
+  tokens,
+  workspace,
+  type JsonValue,
+} from "@helmr/sdk"
 import { createHash, randomUUID } from "node:crypto"
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import { checkCommand as checkProcessCommand } from "../lib/process"
 import { z } from "zod"
 
-const dependencyInputs = source.directory(".", {
-  ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json", "!vendor", "!vendor/**"],
-})
 const guideInputs = source.directory("guides")
 
 const base = image("helmr-runtime-smoke")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
-  .copy("/opt/helmr-task", dependencyInputs)
   .copy("/opt/helmr-dev-workflows/guides", guideInputs)
   .run([
     "sh",
@@ -24,15 +29,11 @@ const base = image("helmr-runtime-smoke")
     ].join(" && "),
   ])
   .run(["npm", "install", "-g", "bun@1.3.10"])
-  .workdir("/opt/helmr-task")
-  .run(["bun", "install", "--frozen-lockfile"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("runtime-smoke-bun") }],
-  })
   .workdir("/workspace")
 
-const sbx = sandbox("helmr-runtime-smoke")
+export const runtimeSmokeWorkspace = workspace("helmr-runtime-smoke")
   .image(base)
-  .resources({ cpu: 2, memory: "2Gi", disk: "16Gi" })
+  .resources({ cpu: 2, memory: "2GiB" })
 
 const payload = z.object({
   scenario: z.string().default("release-smoke"),
@@ -40,7 +41,7 @@ const payload = z.object({
   expectedWorkspaceMarker: z.string().optional(),
   expectedEnvironment: z.enum(["production", "staging", "unknown"]).default("unknown"),
   exerciseToken: z.boolean().default(false),
-  tokenId: z.string().optional(),
+  externalTokenId: z.string().regex(/^tok_[a-z2-7]{26}$/).optional(),
   tokenTimeout: z.number().int().positive().max(900).default(120),
   largeFileKiB: z.number().int().min(1).max(4096).default(256),
 }).strict()
@@ -52,21 +53,17 @@ const approvalDecision = z.object({
   note: z.string().optional(),
 })
 
-const progressStream = streams.output("runtime-smoke.progress", { schema: z.unknown() })
-const reportStream = streams.output("runtime-smoke.report", { schema: z.unknown() })
-
-interface Check {
+type Check = {
   readonly name: string
   readonly ok: boolean
-  readonly detail: unknown
+  readonly detail: JsonValue
 }
 
 export const runtimeSmoke = task({
   id: "runtime-smoke",
-  sandbox: sbx,
-  maxDuration: 1200,
+  maxDuration: "20m",
   payload,
-  run: async (input: Payload, ctx) => {
+  run: async (input: Payload, ctx): Promise<JsonValue> => {
     const marker = input.marker?.trim() || `runtime-smoke-${ctx.run.id}`
     const checks: Check[] = []
 
@@ -75,12 +72,15 @@ export const runtimeSmoke = task({
       ok: true,
       detail: {
         runId: ctx.run.id,
-        taskId: ctx.task.id,
-        attemptId: ctx.run.attemptId ?? null,
-        attemptNumber: ctx.run.attemptNumber ?? null,
-        sessionId: ctx.session.id,
-        snapshotVersion: ctx.run.snapshotVersion ?? null,
-        workspace: ctx.workspace,
+        attemptNumber: ctx.run.attemptNumber,
+        deploymentId: ctx.deployment.id,
+        deploymentVersion: ctx.deployment.version,
+        workspace: ctx.workspace === null
+          ? null
+          : {
+              id: ctx.workspace.id,
+              attemptBaseVersionId: ctx.workspace.attemptBaseVersionId,
+            },
       },
     })
 
@@ -90,37 +90,50 @@ export const runtimeSmoke = task({
     checks.push(await collectCheck("bun-version", () => checkCommand("bun-version", ["bun", "--version"])))
     checks.push(await collectCheck("ripgrep-json", () => checkCommand("ripgrep-json", ["rg", "--json", "Helmr", "/opt/helmr-dev-workflows/guides"])))
 
-    await metadata.set("runtimeSmoke", {
-      marker,
-      completedChecks: checks.length,
-      expectedEnvironment: input.expectedEnvironment,
+    await metadata.set("smoke.phase", "running")
+    await metadata.patch({
+      "smoke.marker": marker,
+      "smoke.scenario": input.scenario,
     })
-    logger.info({
+    await metadata.increment("smoke.checks", checks.length)
+    await logger.debug("runtime smoke diagnostics complete", {
+      marker,
+      checkCount: checks.length,
+    })
+    await logger.info("runtime smoke reached token phase", {
+      marker,
+      exerciseToken: input.exerciseToken,
+    })
+    await logger.warn("runtime smoke warning probe", {
+      marker,
+      expected: true,
+    })
+    await logger.error("runtime smoke error-level probe", {
+      marker,
+      expected: true,
+    })
+
+    console.info({
       phase: "runtime-smoke",
       scenario: input.scenario,
       expectedEnvironment: input.expectedEnvironment,
       marker,
       checks: checks.map((check) => check.name),
     })
-    await progressStream.append({
-      marker,
-      scenario: input.scenario,
-      completedChecks: checks.length,
-    })
-
-    let tokenResult: unknown = null
+    let tokenResult: JsonValue = null
     if (input.exerciseToken) {
       checks.push(await collectCheck("human-token", async () => {
-        const token = input.tokenId === undefined
+        const timeout = `${input.tokenTimeout}s`
+        const token = input.externalTokenId === undefined
           ? await tokens.create({
-              timeout: input.tokenTimeout,
+              timeout,
               tags: ["smoke", "runtime"],
               metadata: { marker, subject: `Approve Helmr product smoke marker ${marker}` },
             })
-          : { id: input.tokenId }
-        tokenResult = await tokens.wait(token, {
+          : tokens.ref(input.externalTokenId)
+        tokenResult = await token.wait({
           schema: approvalDecision,
-          timeout: input.tokenTimeout,
+          timeout,
           tags: ["smoke", "runtime"],
           metadata: { marker, subject: `Approve Helmr product smoke marker ${marker}` },
         }).unwrap()
@@ -142,11 +155,11 @@ export const runtimeSmoke = task({
       checks,
     }
     await writeFile("runtime-smoke-report.json", `${JSON.stringify(report, null, 2)}\n`)
-    await reportStream.append(report, { contentType: "application/vnd.helmr.runtime-smoke+json" })
     if (failures.length > 0) {
-      logger.error({ phase: "runtime-smoke", marker, failures })
+      console.error({ phase: "runtime-smoke", marker, failures })
       throw new Error(`runtime smoke failed ${failures.length} check(s): ${failures.map((check) => check.name).join(", ")}`)
     }
+    await metadata.set("smoke.phase", "complete")
     return report
   },
 })

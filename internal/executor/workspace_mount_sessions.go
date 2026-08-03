@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"sync"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/cas"
+	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -23,11 +24,17 @@ type CheckpointSourceReleaser interface {
 type WorkspaceMountSessionRegistry interface {
 	RegisterWorkspaceMountSession(mount api.WorkerWorkspaceMount, session vm.Session, channelToken string) func()
 	OpenWorkspaceMountSession(context.Context, string) (WorkspaceMountSession, error)
+	RenewWorkspaceAuthority(context.Context, *workspacev0.RenewWorkspaceAuthorityRequest) (*workspacev0.WorkspaceAuthorityFence, error)
+	BeginWorkspaceFinalization(context.Context, *workspacev0.BeginWorkspaceFinalizationRequest) (*workspacev0.BeginWorkspaceFinalizationResponse, error)
+	CaptureWorkspace(context.Context, *workspacev0.CaptureWorkspaceRequest, cas.Store) (WorkspaceCapture, error)
+	ResetWorkspace(context.Context, *workspacev0.ResetWorkspaceRequest, cas.Reader) (WorkspaceReset, error)
 }
 
 type WorkspaceMountSession struct {
-	Session      vm.Session
-	ChannelToken string
+	Session        vm.Session
+	ControlSession vm.Session
+	ChannelToken   string
+	Mount          api.WorkerWorkspaceMount
 }
 
 type WorkspaceMountSessions struct {
@@ -39,6 +46,7 @@ type WorkspaceMountSessions struct {
 type workspaceMountSessionEntry struct {
 	session      vm.Session
 	channelToken string
+	mount        api.WorkerWorkspaceMount
 }
 
 func NewWorkspaceMountSessions() *WorkspaceMountSessions {
@@ -54,7 +62,7 @@ func (s *WorkspaceMountSessions) RegisterWorkspaceMountSession(mount api.WorkerW
 	if s.sessions == nil {
 		s.sessions = map[string]workspaceMountSessionEntry{}
 	}
-	s.sessions[id] = workspaceMountSessionEntry{session: session, channelToken: strings.TrimSpace(channelToken)}
+	s.sessions[id] = workspaceMountSessionEntry{session: session, channelToken: strings.TrimSpace(channelToken), mount: mount}
 	s.mu.Unlock()
 	return func() {
 		s.mu.Lock()
@@ -85,9 +93,116 @@ func (s *WorkspaceMountSessions) OpenWorkspaceMountSession(ctx context.Context, 
 	}
 	endForeground := s.beginForegroundRun()
 	return WorkspaceMountSession{
-		Session:      newBorrowedRunSession(entry.session, stream, endForeground),
-		ChannelToken: entry.channelToken,
+		Session:        newBorrowedRunSession(entry.session, stream, endForeground),
+		ControlSession: entry.session,
+		ChannelToken:   entry.channelToken,
+		Mount:          entry.mount,
 	}, nil
+}
+
+func (s *WorkspaceMountSessions) RenewWorkspaceAuthority(ctx context.Context, request *workspacev0.RenewWorkspaceAuthorityRequest) (*workspacev0.WorkspaceAuthorityFence, error) {
+	if request == nil || request.GetPrevious() == nil || request.GetPrevious().GetFence() == nil {
+		return nil, errors.New("previous Workspace authority is required")
+	}
+	fence := request.GetPrevious().GetFence()
+	id := strings.TrimSpace(fence.GetWorkspaceMountId())
+	s.mu.RLock()
+	entry := s.sessions[id]
+	s.mu.RUnlock()
+	if entry.session == nil {
+		return nil, fmt.Errorf("%w: %s", ErrWorkspaceMountSessionNotFound, id)
+	}
+	if entry.channelToken == "" || request.GetPrevious().GetChannelToken() != entry.channelToken {
+		return nil, errors.New("Workspace authority channel token does not match the mount session")
+	}
+	if fence.GetWorkspaceMountId() != entry.mount.ID ||
+		fence.GetWorkspaceId() != entry.mount.WorkspaceID ||
+		fence.GetRuntimeInstanceId() != entry.mount.RuntimeInstanceID ||
+		fence.GetMountFencingGeneration() != entry.mount.FencingGeneration ||
+		fence.GetBaseWorkspaceVersionId() != entry.mount.BaseVersionID {
+		return nil, errors.New("Workspace authority fence does not match the mount session")
+	}
+	return renewWorkspaceAuthorityOnSession(ctx, entry.session, request)
+}
+
+func (s *WorkspaceMountSessions) BeginWorkspaceFinalization(
+	ctx context.Context,
+	request *workspacev0.BeginWorkspaceFinalizationRequest,
+) (*workspacev0.BeginWorkspaceFinalizationResponse, error) {
+	if request == nil || request.GetPrevious() == nil || request.GetPrevious().GetFence() == nil {
+		return nil, errors.New("previous Workspace authority is required")
+	}
+	fence := request.GetPrevious().GetFence()
+	id := strings.TrimSpace(fence.GetWorkspaceMountId())
+	s.mu.RLock()
+	entry := s.sessions[id]
+	s.mu.RUnlock()
+	if entry.session == nil {
+		return nil, fmt.Errorf("%w: %s", ErrWorkspaceMountSessionNotFound, id)
+	}
+	if entry.channelToken == "" || request.GetPrevious().GetChannelToken() != entry.channelToken {
+		return nil, errors.New("Workspace authority channel token does not match the mount session")
+	}
+	if fence.GetWorkspaceMountId() != entry.mount.ID ||
+		fence.GetWorkspaceId() != entry.mount.WorkspaceID ||
+		fence.GetRuntimeInstanceId() != entry.mount.RuntimeInstanceID ||
+		fence.GetMountFencingGeneration() != entry.mount.FencingGeneration ||
+		fence.GetBaseWorkspaceVersionId() != entry.mount.BaseVersionID {
+		return nil, errors.New("Workspace authority fence does not match the mount session")
+	}
+	return beginWorkspaceFinalizationOnSession(ctx, entry.session, request)
+}
+
+func (s *WorkspaceMountSessions) CaptureWorkspace(
+	ctx context.Context,
+	request *workspacev0.CaptureWorkspaceRequest,
+	store cas.Store,
+) (WorkspaceCapture, error) {
+	entry, err := s.finalizationSession(request.GetEnvelope())
+	if err != nil {
+		return WorkspaceCapture{}, err
+	}
+	return captureWorkspaceOnSession(ctx, entry.session, store, request)
+}
+
+func (s *WorkspaceMountSessions) ResetWorkspace(
+	ctx context.Context,
+	request *workspacev0.ResetWorkspaceRequest,
+	store cas.Reader,
+) (WorkspaceReset, error) {
+	entry, err := s.finalizationSession(request.GetEnvelope())
+	if err != nil {
+		return WorkspaceReset{}, err
+	}
+	return resetWorkspaceOnSession(ctx, entry.session, store, request)
+}
+
+func (s *WorkspaceMountSessions) finalizationSession(
+	envelope *workspacev0.WorkspaceFinalizationEnvelope,
+) (workspaceMountSessionEntry, error) {
+	if envelope == nil || envelope.GetAuthority() == nil || envelope.GetAuthority().GetFence() == nil {
+		return workspaceMountSessionEntry{}, errors.New("Workspace finalization envelope is required")
+	}
+	authority := envelope.GetAuthority()
+	fence := authority.GetFence()
+	id := strings.TrimSpace(fence.GetWorkspaceMountId())
+	s.mu.RLock()
+	entry := s.sessions[id]
+	s.mu.RUnlock()
+	if entry.session == nil {
+		return workspaceMountSessionEntry{}, fmt.Errorf("%w: %s", ErrWorkspaceMountSessionNotFound, id)
+	}
+	if entry.channelToken == "" || authority.GetChannelToken() != entry.channelToken {
+		return workspaceMountSessionEntry{}, errors.New("Workspace authority channel token does not match the mount session")
+	}
+	if fence.GetWorkspaceMountId() != entry.mount.ID ||
+		fence.GetWorkspaceId() != entry.mount.WorkspaceID ||
+		fence.GetRuntimeInstanceId() != entry.mount.RuntimeInstanceID ||
+		fence.GetMountFencingGeneration() != entry.mount.FencingGeneration ||
+		fence.GetBaseWorkspaceVersionId() != entry.mount.BaseVersionID {
+		return workspaceMountSessionEntry{}, errors.New("Workspace authority fence does not match the mount session")
+	}
+	return entry, nil
 }
 
 func (s *WorkspaceMountSessions) beginForegroundRun() func() {
@@ -117,11 +232,11 @@ func newManagedWorkspaceMountSession(session vm.Session) *managedWorkspaceMountS
 	}
 }
 
-func (s *managedWorkspaceMountSession) Stream() io.ReadWriteCloser {
+func (s *managedWorkspaceMountSession) Stream() vm.Stream {
 	return s.session.Stream()
 }
 
-func (s *managedWorkspaceMountSession) OpenStream(ctx context.Context) (io.ReadWriteCloser, error) {
+func (s *managedWorkspaceMountSession) OpenStream(ctx context.Context) (vm.Stream, error) {
 	return s.session.OpenStream(ctx)
 }
 
@@ -227,24 +342,24 @@ func (s *managedWorkspaceMountSession) CheckpointReleaseResult(ctx context.Conte
 
 type borrowedRunSession struct {
 	parent        vm.Session
-	stream        io.ReadWriteCloser
+	stream        vm.Stream
 	endForeground func()
 	once          sync.Once
 	err           error
 }
 
-func newBorrowedRunSession(parent vm.Session, stream io.ReadWriteCloser, endForeground func()) vm.Session {
+func newBorrowedRunSession(parent vm.Session, stream vm.Stream, endForeground func()) vm.Session {
 	if endForeground == nil {
 		endForeground = func() {}
 	}
 	return &borrowedRunSession{parent: parent, stream: stream, endForeground: endForeground}
 }
 
-func (s *borrowedRunSession) Stream() io.ReadWriteCloser {
+func (s *borrowedRunSession) Stream() vm.Stream {
 	return s.stream
 }
 
-func (s *borrowedRunSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
+func (s *borrowedRunSession) OpenStream(context.Context) (vm.Stream, error) {
 	return nil, errors.New("borrowed run session does not support opening nested streams")
 }
 

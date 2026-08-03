@@ -11,153 +11,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const completeRunDispatch = `-- name: CompleteRunDispatch :one
-SELECT id, public_id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, resource_placement_policy, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs WHERE org_id = $1 AND id = $2
-`
-
-type CompleteRunDispatchParams struct {
-	OrgID pgtype.UUID `json:"org_id"`
-	RunID pgtype.UUID `json:"run_id"`
-}
-
-func (q *Queries) CompleteRunDispatch(ctx context.Context, arg CompleteRunDispatchParams) (Run, error) {
-	row := q.db.QueryRow(ctx, completeRunDispatch, arg.OrgID, arg.RunID)
-	var i Run
-	err := row.Scan(
-		&i.ID,
-		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.DeploymentID,
-		&i.DeploymentTaskID,
-		&i.WorkspaceID,
-		&i.DeploymentVersion,
-		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
-		&i.TaskID,
-		&i.SessionID,
-		&i.ScheduleID,
-		&i.ScheduleInstanceID,
-		&i.ScheduledAt,
-		&i.Status,
-		&i.ExecutionStatus,
-		&i.TerminalOutcome,
-		&i.Payload,
-		&i.Output,
-		&i.Metadata,
-		&i.Tags,
-		&i.LockedRetryPolicy,
-		&i.QueueClass,
-		&i.QueueName,
-		&i.QueueConcurrencyLimit,
-		&i.ConcurrencyKey,
-		&i.Priority,
-		&i.QueueTimestamp,
-		&i.Ttl,
-		&i.QueuedExpiresAt,
-		&i.RequestedMilliCpu,
-		&i.RequestedMemoryMib,
-		&i.RequestedDiskMib,
-		&i.RequestedExecutionSlots,
-		&i.RuntimeIdentityID,
-		&i.RuntimeArch,
-		&i.RuntimeABI,
-		&i.KernelDigest,
-		&i.InitramfsDigest,
-		&i.RootfsDigest,
-		&i.CniProfile,
-		&i.NetworkPolicy,
-		&i.ResourcePlacementPolicy,
-		&i.MaxActiveDurationMs,
-		&i.ActiveElapsedMs,
-		&i.ActiveStartedAt,
-		&i.TraceID,
-		&i.RootSpanID,
-		&i.StateVersion,
-		&i.CurrentAttemptNumber,
-		&i.CurrentRunLeaseID,
-		&i.LatestRunCheckpointID,
-		&i.ExitCode,
-		&i.ErrorMessage,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.StartedAt,
-		&i.FinishedAt,
-	)
-	return i, err
-}
-
-const deadLetterRunDispatch = `-- name: DeadLetterRunDispatch :one
-WITH terminalized AS (
-    UPDATE runs
-       SET status = 'failed', execution_status = 'finished', terminal_outcome = 'dead_lettered',
-           current_run_lease_id = NULL, state_version = state_version + 1,
-           error_message = $1, finished_at = COALESCE(finished_at, now()),
-           updated_at = now()
-     WHERE runs.org_id = $2 AND runs.id = $3
-       AND runs.status = 'queued' AND runs.state_version = $4
-    RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, resource_placement_policy, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
-), snapshot AS (
-    INSERT INTO run_state_snapshots
-        (org_id, run_id, version, status, execution_status, terminal_outcome,
-         attempt_number, previous_version, transition, reason, error)
-    SELECT terminalized.org_id, terminalized.id, terminalized.state_version,
-           terminalized.status, terminalized.execution_status, terminalized.terminal_outcome,
-           terminalized.current_attempt_number, terminalized.state_version - 1, 'run.dead_lettered',
-           jsonb_build_object('message', $1::text),
-           jsonb_build_object('message', $1::text)
-      FROM terminalized
-    RETURNING run_id
-)
-SELECT terminalized.id AS run_id, terminalized.org_id, terminalized.project_id,
-       terminalized.environment_id, terminalized.state_version
-  FROM terminalized JOIN snapshot ON snapshot.run_id = terminalized.id
-`
-
-type DeadLetterRunDispatchParams struct {
-	LastError               pgtype.Text `json:"last_error"`
-	OrgID                   pgtype.UUID `json:"org_id"`
-	RunID                   pgtype.UUID `json:"run_id"`
-	ExpectedRunStateVersion int64       `json:"expected_run_state_version"`
-}
-
-type DeadLetterRunDispatchRow struct {
-	RunID         pgtype.UUID `json:"run_id"`
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	StateVersion  int64       `json:"state_version"`
-}
-
-func (q *Queries) DeadLetterRunDispatch(ctx context.Context, arg DeadLetterRunDispatchParams) (DeadLetterRunDispatchRow, error) {
-	row := q.db.QueryRow(ctx, deadLetterRunDispatch,
-		arg.LastError,
-		arg.OrgID,
-		arg.RunID,
-		arg.ExpectedRunStateVersion,
-	)
-	var i DeadLetterRunDispatchRow
-	err := row.Scan(
-		&i.RunID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.StateVersion,
-	)
-	return i, err
-}
-
 const drainWorkerInstance = `-- name: DrainWorkerInstance :one
-WITH target AS (
+WITH transitioned AS (
     UPDATE worker_instances
-       SET state = 'draining', draining_at = COALESCE(draining_at, now()), updated_at = now()
+       SET state = 'draining',
+           claim_version = worker_instances.claim_version + 1,
+           draining_at = COALESCE(draining_at, now()), updated_at = now()
      WHERE worker_instances.id = $1
        AND worker_instances.worker_group_id = $2
        AND worker_instances.current_epoch = $3
-       AND worker_instances.state IN ('active', 'draining')
-    RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
+       AND worker_instances.claim_version = $4
+       AND worker_instances.state = 'active'
+    RETURNING id, resource_id, worker_group_id, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, epoch_build_cache_bytes, epoch_artifact_cache_bytes, epoch_hugepages_bytes, epoch_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
+), target AS (
+    SELECT transitioned.id, transitioned.resource_id, transitioned.worker_group_id, transitioned.state, transitioned.claim_version, transitioned.current_epoch, transitioned.current_service_id, transitioned.protocol_version, transitioned.supervisor_version, transitioned.supports_run, transitioned.supports_build, transitioned.runtime_identity_id, transitioned.substrate_format, transitioned.substrate_builder_abi, transitioned.substrate_layout_abi, transitioned.epoch_cpu_millis, transitioned.epoch_memory_bytes, transitioned.epoch_guest_ephemeral_disk_bytes, transitioned.epoch_build_cache_bytes, transitioned.epoch_artifact_cache_bytes, transitioned.epoch_hugepages_bytes, transitioned.epoch_checkpoint_bytes, transitioned.per_vm_cpu_millis, transitioned.per_vm_memory_bytes, transitioned.per_vm_guest_ephemeral_disk_bytes, transitioned.max_vm_slots, transitioned.max_run_consumers, transitioned.max_build_executors, transitioned.max_runtime_starts, transitioned.epoch_started_at, transitioned.activated_at, transitioned.draining_at, transitioned.termination_ready_at, transitioned.lost_at, transitioned.created_at, transitioned.updated_at FROM transitioned
+    UNION ALL
+    SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.epoch_build_cache_bytes, worker_instances.epoch_artifact_cache_bytes, worker_instances.epoch_hugepages_bytes, worker_instances.epoch_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
+      FROM worker_instances
+     WHERE worker_instances.id = $1
+       AND worker_instances.worker_group_id = $2
+       AND worker_instances.current_epoch = $3
+       AND worker_instances.state = 'draining'
+       AND worker_instances.claim_version = $4 + 1
+       AND NOT EXISTS (SELECT 1 FROM transitioned)
 ), idle_mounts AS (
     UPDATE workspace_mounts
        SET state = 'unmounting', stopped_at = COALESCE(stopped_at, now()), updated_at = now()
@@ -184,7 +60,7 @@ WITH target AS (
        AND NOT EXISTS (
            SELECT 1 FROM run_leases
             WHERE run_leases.runtime_instance_id = runtime_instances.id
-              AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing')
+              AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
        )
        AND NOT EXISTS (
            SELECT 1 FROM workspace_mounts
@@ -192,75 +68,80 @@ WITH target AS (
               AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
        )
     RETURNING runtime_instances.id
+), credential_fence AS (
+    UPDATE worker_instance_credentials
+       SET claim_version = target.claim_version
+      FROM target
+     WHERE worker_instance_credentials.worker_instance_id = target.id
+       AND worker_instance_credentials.revoked_at IS NULL
+       AND worker_instance_credentials.claim_version < target.claim_version
+    RETURNING worker_instance_credentials.id
 )
-SELECT target.id, target.resource_id, target.worker_group_id, target.attestation_fingerprint, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.protocol_version, target.supervisor_version, target.supports_run, target.supports_build, target.runtime_identity_id, target.certified_cpu_millis, target.certified_memory_bytes, target.certified_workload_disk_bytes, target.certified_scratch_bytes, target.certified_build_cache_bytes, target.certified_artifact_cache_bytes, target.certified_hugepages_bytes, target.certified_checkpoint_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_workload_disk_bytes, target.per_vm_scratch_bytes, target.max_vm_slots, target.max_run_consumers, target.max_build_executors, target.max_runtime_starts, target.certification_profile, target.certification_fingerprint, target.epoch_started_at, target.startup_inventory_epoch, target.startup_inventory_evidence, target.drain_cleanup_fingerprint, target.drain_cleanup_evidence, target.certified_at, target.activated_at, target.draining_at, target.disabled_at, target.lost_at, target.termination_claimed_at, target.provider_terminated_at, target.created_at, target.updated_at
+SELECT target.id, target.resource_id, target.worker_group_id, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.protocol_version, target.supervisor_version, target.supports_run, target.supports_build, target.runtime_identity_id, target.substrate_format, target.substrate_builder_abi, target.substrate_layout_abi, target.epoch_cpu_millis, target.epoch_memory_bytes, target.epoch_guest_ephemeral_disk_bytes, target.epoch_build_cache_bytes, target.epoch_artifact_cache_bytes, target.epoch_hugepages_bytes, target.epoch_checkpoint_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_run_consumers, target.max_build_executors, target.max_runtime_starts, target.epoch_started_at, target.activated_at, target.draining_at, target.termination_ready_at, target.lost_at, target.created_at, target.updated_at
   FROM target
  WHERE (SELECT count(*) FROM idle_mounts) >= 0
    AND (SELECT count(*) FROM idle_runtimes) >= 0
+   AND (SELECT count(*) FROM credential_fence) >= 0
 `
 
 type DrainWorkerInstanceParams struct {
-	ID            pgtype.UUID `json:"id"`
-	WorkerGroupID string      `json:"worker_group_id"`
-	ExpectedEpoch pgtype.Int8 `json:"expected_epoch"`
+	ID                   pgtype.UUID `json:"id"`
+	WorkerGroupID        string      `json:"worker_group_id"`
+	ExpectedEpoch        pgtype.Int8 `json:"expected_epoch"`
+	ExpectedClaimVersion int64       `json:"expected_claim_version"`
 }
 
 type DrainWorkerInstanceRow struct {
-	ID                          pgtype.UUID         `json:"id"`
-	ResourceID                  string              `json:"resource_id"`
-	WorkerGroupID               string              `json:"worker_group_id"`
-	AttestationFingerprint      string              `json:"attestation_fingerprint"`
-	State                       WorkerInstanceState `json:"state"`
-	ClaimVersion                int64               `json:"claim_version"`
-	CurrentEpoch                pgtype.Int8         `json:"current_epoch"`
-	CurrentServiceID            pgtype.UUID         `json:"current_service_id"`
-	ProtocolVersion             string              `json:"protocol_version"`
-	SupervisorVersion           string              `json:"supervisor_version"`
-	SupportsRun                 bool                `json:"supports_run"`
-	SupportsBuild               bool                `json:"supports_build"`
-	RuntimeIdentityID           pgtype.Text         `json:"runtime_identity_id"`
-	CertifiedCpuMillis          int64               `json:"certified_cpu_millis"`
-	CertifiedMemoryBytes        int64               `json:"certified_memory_bytes"`
-	CertifiedWorkloadDiskBytes  int64               `json:"certified_workload_disk_bytes"`
-	CertifiedScratchBytes       int64               `json:"certified_scratch_bytes"`
-	CertifiedBuildCacheBytes    int64               `json:"certified_build_cache_bytes"`
-	CertifiedArtifactCacheBytes int64               `json:"certified_artifact_cache_bytes"`
-	CertifiedHugepagesBytes     int64               `json:"certified_hugepages_bytes"`
-	CertifiedCheckpointBytes    int64               `json:"certified_checkpoint_bytes"`
-	PerVmCpuMillis              int64               `json:"per_vm_cpu_millis"`
-	PerVmMemoryBytes            int64               `json:"per_vm_memory_bytes"`
-	PerVmWorkloadDiskBytes      int64               `json:"per_vm_workload_disk_bytes"`
-	PerVmScratchBytes           int64               `json:"per_vm_scratch_bytes"`
-	MaxVmSlots                  int32               `json:"max_vm_slots"`
-	MaxRunConsumers             int32               `json:"max_run_consumers"`
-	MaxBuildExecutors           int32               `json:"max_build_executors"`
-	MaxRuntimeStarts            int32               `json:"max_runtime_starts"`
-	CertificationProfile        string              `json:"certification_profile"`
-	CertificationFingerprint    string              `json:"certification_fingerprint"`
-	EpochStartedAt              pgtype.Timestamptz  `json:"epoch_started_at"`
-	StartupInventoryEpoch       pgtype.Int8         `json:"startup_inventory_epoch"`
-	StartupInventoryEvidence    []byte              `json:"startup_inventory_evidence"`
-	DrainCleanupFingerprint     pgtype.Text         `json:"drain_cleanup_fingerprint"`
-	DrainCleanupEvidence        []byte              `json:"drain_cleanup_evidence"`
-	CertifiedAt                 pgtype.Timestamptz  `json:"certified_at"`
-	ActivatedAt                 pgtype.Timestamptz  `json:"activated_at"`
-	DrainingAt                  pgtype.Timestamptz  `json:"draining_at"`
-	DisabledAt                  pgtype.Timestamptz  `json:"disabled_at"`
-	LostAt                      pgtype.Timestamptz  `json:"lost_at"`
-	TerminationClaimedAt        pgtype.Timestamptz  `json:"termination_claimed_at"`
-	ProviderTerminatedAt        pgtype.Timestamptz  `json:"provider_terminated_at"`
-	CreatedAt                   pgtype.Timestamptz  `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz  `json:"updated_at"`
+	ID                           pgtype.UUID        `json:"id"`
+	ResourceID                   string             `json:"resource_id"`
+	WorkerGroupID                string             `json:"worker_group_id"`
+	State                        string             `json:"state"`
+	ClaimVersion                 int64              `json:"claim_version"`
+	CurrentEpoch                 pgtype.Int8        `json:"current_epoch"`
+	CurrentServiceID             pgtype.UUID        `json:"current_service_id"`
+	ProtocolVersion              string             `json:"protocol_version"`
+	SupervisorVersion            string             `json:"supervisor_version"`
+	SupportsRun                  bool               `json:"supports_run"`
+	SupportsBuild                bool               `json:"supports_build"`
+	RuntimeIdentityID            pgtype.Text        `json:"runtime_identity_id"`
+	SubstrateFormat              string             `json:"substrate_format"`
+	SubstrateBuilderAbi          string             `json:"substrate_builder_abi"`
+	SubstrateLayoutAbi           string             `json:"substrate_layout_abi"`
+	EpochCpuMillis               int64              `json:"epoch_cpu_millis"`
+	EpochMemoryBytes             int64              `json:"epoch_memory_bytes"`
+	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
+	EpochBuildCacheBytes         int64              `json:"epoch_build_cache_bytes"`
+	EpochArtifactCacheBytes      int64              `json:"epoch_artifact_cache_bytes"`
+	EpochHugepagesBytes          int64              `json:"epoch_hugepages_bytes"`
+	EpochCheckpointBytes         int64              `json:"epoch_checkpoint_bytes"`
+	PerVmCpuMillis               int64              `json:"per_vm_cpu_millis"`
+	PerVmMemoryBytes             int64              `json:"per_vm_memory_bytes"`
+	PerVmGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
+	MaxVmSlots                   int32              `json:"max_vm_slots"`
+	MaxRunConsumers              int32              `json:"max_run_consumers"`
+	MaxBuildExecutors            int32              `json:"max_build_executors"`
+	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
+	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
+	ActivatedAt                  pgtype.Timestamptz `json:"activated_at"`
+	DrainingAt                   pgtype.Timestamptz `json:"draining_at"`
+	TerminationReadyAt           pgtype.Timestamptz `json:"termination_ready_at"`
+	LostAt                       pgtype.Timestamptz `json:"lost_at"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) DrainWorkerInstance(ctx context.Context, arg DrainWorkerInstanceParams) (DrainWorkerInstanceRow, error) {
-	row := q.db.QueryRow(ctx, drainWorkerInstance, arg.ID, arg.WorkerGroupID, arg.ExpectedEpoch)
+	row := q.db.QueryRow(ctx, drainWorkerInstance,
+		arg.ID,
+		arg.WorkerGroupID,
+		arg.ExpectedEpoch,
+		arg.ExpectedClaimVersion,
+	)
 	var i DrainWorkerInstanceRow
 	err := row.Scan(
 		&i.ID,
 		&i.ResourceID,
 		&i.WorkerGroupID,
-		&i.AttestationFingerprint,
 		&i.State,
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
@@ -270,36 +151,28 @@ func (q *Queries) DrainWorkerInstance(ctx context.Context, arg DrainWorkerInstan
 		&i.SupportsRun,
 		&i.SupportsBuild,
 		&i.RuntimeIdentityID,
-		&i.CertifiedCpuMillis,
-		&i.CertifiedMemoryBytes,
-		&i.CertifiedWorkloadDiskBytes,
-		&i.CertifiedScratchBytes,
-		&i.CertifiedBuildCacheBytes,
-		&i.CertifiedArtifactCacheBytes,
-		&i.CertifiedHugepagesBytes,
-		&i.CertifiedCheckpointBytes,
+		&i.SubstrateFormat,
+		&i.SubstrateBuilderAbi,
+		&i.SubstrateLayoutAbi,
+		&i.EpochCpuMillis,
+		&i.EpochMemoryBytes,
+		&i.EpochGuestEphemeralDiskBytes,
+		&i.EpochBuildCacheBytes,
+		&i.EpochArtifactCacheBytes,
+		&i.EpochHugepagesBytes,
+		&i.EpochCheckpointBytes,
 		&i.PerVmCpuMillis,
 		&i.PerVmMemoryBytes,
-		&i.PerVmWorkloadDiskBytes,
-		&i.PerVmScratchBytes,
+		&i.PerVmGuestEphemeralDiskBytes,
 		&i.MaxVmSlots,
 		&i.MaxRunConsumers,
 		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
-		&i.CertificationProfile,
-		&i.CertificationFingerprint,
 		&i.EpochStartedAt,
-		&i.StartupInventoryEpoch,
-		&i.StartupInventoryEvidence,
-		&i.DrainCleanupFingerprint,
-		&i.DrainCleanupEvidence,
-		&i.CertifiedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,
-		&i.DisabledAt,
+		&i.TerminationReadyAt,
 		&i.LostAt,
-		&i.TerminationClaimedAt,
-		&i.ProviderTerminatedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -314,8 +187,9 @@ WITH target AS (
      WHERE worker_instances.id = $1
        AND worker_instances.worker_group_id = $2
        AND worker_instances.current_epoch = $3
+       AND worker_instances.claim_version = $4
        AND worker_instances.state IN ('active', 'draining')
-    RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
+    RETURNING id, resource_id, worker_group_id, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, epoch_build_cache_bytes, epoch_artifact_cache_bytes, epoch_hugepages_bytes, epoch_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
 ), revoked_credentials AS (
     UPDATE worker_instance_credentials
        SET revoked_at = COALESCE(revoked_at, now())
@@ -326,7 +200,7 @@ WITH target AS (
 ), lost_mounts AS (
     UPDATE workspace_mounts
        SET state = 'lost', lost_at = now(), terminal_at = now(),
-           terminal_reason_code = $4, updated_at = now()
+           terminal_reason_code = $5, updated_at = now()
       FROM target
      WHERE workspace_mounts.worker_instance_id = target.id
        AND workspace_mounts.worker_epoch = target.current_epoch
@@ -336,84 +210,79 @@ WITH target AS (
     UPDATE runtime_instances
        SET observed_state = 'lost', observed_version = observed_version + 1,
            observed_at = now(), lost_at = now(), terminal_at = now(),
-           terminal_reason_code = $4, updated_at = now()
+           terminal_reason_code = $5,
+           reserved_run_id = NULL, reserved_attempt_number = NULL,
+           reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+           reservation_expires_at = NULL, updated_at = now()
       FROM target
      WHERE runtime_instances.worker_instance_id = target.id
        AND runtime_instances.worker_epoch = target.current_epoch
        AND runtime_instances.reclaimed_at IS NULL
        AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
     RETURNING runtime_instances.id
-), lost_slots AS (
-    UPDATE worker_network_slots
-       SET state = 'lost', generation = generation + 1,
-           lost_at = now(), state_reason_code = $4, updated_at = now()
-      FROM target
-     WHERE worker_network_slots.worker_instance_id = target.id
-       AND worker_network_slots.worker_epoch = target.current_epoch
-       AND worker_network_slots.state IN ('assigned', 'bound', 'reclaiming', 'quarantined')
-    RETURNING worker_network_slots.id
 )
-SELECT target.id, target.resource_id, target.worker_group_id, target.attestation_fingerprint, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.protocol_version, target.supervisor_version, target.supports_run, target.supports_build, target.runtime_identity_id, target.certified_cpu_millis, target.certified_memory_bytes, target.certified_workload_disk_bytes, target.certified_scratch_bytes, target.certified_build_cache_bytes, target.certified_artifact_cache_bytes, target.certified_hugepages_bytes, target.certified_checkpoint_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_workload_disk_bytes, target.per_vm_scratch_bytes, target.max_vm_slots, target.max_run_consumers, target.max_build_executors, target.max_runtime_starts, target.certification_profile, target.certification_fingerprint, target.epoch_started_at, target.startup_inventory_epoch, target.startup_inventory_evidence, target.drain_cleanup_fingerprint, target.drain_cleanup_evidence, target.certified_at, target.activated_at, target.draining_at, target.disabled_at, target.lost_at, target.termination_claimed_at, target.provider_terminated_at, target.created_at, target.updated_at
+SELECT target.id, target.resource_id, target.worker_group_id, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.protocol_version, target.supervisor_version, target.supports_run, target.supports_build, target.runtime_identity_id, target.substrate_format, target.substrate_builder_abi, target.substrate_layout_abi, target.epoch_cpu_millis, target.epoch_memory_bytes, target.epoch_guest_ephemeral_disk_bytes, target.epoch_build_cache_bytes, target.epoch_artifact_cache_bytes, target.epoch_hugepages_bytes, target.epoch_checkpoint_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_run_consumers, target.max_build_executors, target.max_runtime_starts, target.epoch_started_at, target.activated_at, target.draining_at, target.termination_ready_at, target.lost_at, target.created_at, target.updated_at
   FROM target
  WHERE (SELECT count(*) FROM revoked_credentials) >= 0
    AND (SELECT count(*) FROM lost_mounts) >= 0
    AND (SELECT count(*) FROM lost_runtimes) >= 0
-   AND (SELECT count(*) FROM lost_slots) >= 0
+UNION ALL
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.epoch_build_cache_bytes, worker_instances.epoch_artifact_cache_bytes, worker_instances.epoch_hugepages_bytes, worker_instances.epoch_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
+  FROM worker_instances
+ WHERE worker_instances.id = $1
+   AND worker_instances.worker_group_id = $2
+   AND worker_instances.current_epoch = $3
+   AND worker_instances.state = 'lost'
+   AND worker_instances.claim_version = $4 + 1
+   AND NOT EXISTS (SELECT 1 FROM target)
+LIMIT 1
 `
 
 type FenceWorkerInstanceParams struct {
-	ID            pgtype.UUID `json:"id"`
-	WorkerGroupID string      `json:"worker_group_id"`
-	ExpectedEpoch pgtype.Int8 `json:"expected_epoch"`
-	ReasonCode    pgtype.Text `json:"reason_code"`
+	ID                   pgtype.UUID `json:"id"`
+	WorkerGroupID        string      `json:"worker_group_id"`
+	ExpectedEpoch        pgtype.Int8 `json:"expected_epoch"`
+	ExpectedClaimVersion int64       `json:"expected_claim_version"`
+	ReasonCode           pgtype.Text `json:"reason_code"`
 }
 
 type FenceWorkerInstanceRow struct {
-	ID                          pgtype.UUID         `json:"id"`
-	ResourceID                  string              `json:"resource_id"`
-	WorkerGroupID               string              `json:"worker_group_id"`
-	AttestationFingerprint      string              `json:"attestation_fingerprint"`
-	State                       WorkerInstanceState `json:"state"`
-	ClaimVersion                int64               `json:"claim_version"`
-	CurrentEpoch                pgtype.Int8         `json:"current_epoch"`
-	CurrentServiceID            pgtype.UUID         `json:"current_service_id"`
-	ProtocolVersion             string              `json:"protocol_version"`
-	SupervisorVersion           string              `json:"supervisor_version"`
-	SupportsRun                 bool                `json:"supports_run"`
-	SupportsBuild               bool                `json:"supports_build"`
-	RuntimeIdentityID           pgtype.Text         `json:"runtime_identity_id"`
-	CertifiedCpuMillis          int64               `json:"certified_cpu_millis"`
-	CertifiedMemoryBytes        int64               `json:"certified_memory_bytes"`
-	CertifiedWorkloadDiskBytes  int64               `json:"certified_workload_disk_bytes"`
-	CertifiedScratchBytes       int64               `json:"certified_scratch_bytes"`
-	CertifiedBuildCacheBytes    int64               `json:"certified_build_cache_bytes"`
-	CertifiedArtifactCacheBytes int64               `json:"certified_artifact_cache_bytes"`
-	CertifiedHugepagesBytes     int64               `json:"certified_hugepages_bytes"`
-	CertifiedCheckpointBytes    int64               `json:"certified_checkpoint_bytes"`
-	PerVmCpuMillis              int64               `json:"per_vm_cpu_millis"`
-	PerVmMemoryBytes            int64               `json:"per_vm_memory_bytes"`
-	PerVmWorkloadDiskBytes      int64               `json:"per_vm_workload_disk_bytes"`
-	PerVmScratchBytes           int64               `json:"per_vm_scratch_bytes"`
-	MaxVmSlots                  int32               `json:"max_vm_slots"`
-	MaxRunConsumers             int32               `json:"max_run_consumers"`
-	MaxBuildExecutors           int32               `json:"max_build_executors"`
-	MaxRuntimeStarts            int32               `json:"max_runtime_starts"`
-	CertificationProfile        string              `json:"certification_profile"`
-	CertificationFingerprint    string              `json:"certification_fingerprint"`
-	EpochStartedAt              pgtype.Timestamptz  `json:"epoch_started_at"`
-	StartupInventoryEpoch       pgtype.Int8         `json:"startup_inventory_epoch"`
-	StartupInventoryEvidence    []byte              `json:"startup_inventory_evidence"`
-	DrainCleanupFingerprint     pgtype.Text         `json:"drain_cleanup_fingerprint"`
-	DrainCleanupEvidence        []byte              `json:"drain_cleanup_evidence"`
-	CertifiedAt                 pgtype.Timestamptz  `json:"certified_at"`
-	ActivatedAt                 pgtype.Timestamptz  `json:"activated_at"`
-	DrainingAt                  pgtype.Timestamptz  `json:"draining_at"`
-	DisabledAt                  pgtype.Timestamptz  `json:"disabled_at"`
-	LostAt                      pgtype.Timestamptz  `json:"lost_at"`
-	TerminationClaimedAt        pgtype.Timestamptz  `json:"termination_claimed_at"`
-	ProviderTerminatedAt        pgtype.Timestamptz  `json:"provider_terminated_at"`
-	CreatedAt                   pgtype.Timestamptz  `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz  `json:"updated_at"`
+	ID                           pgtype.UUID        `json:"id"`
+	ResourceID                   string             `json:"resource_id"`
+	WorkerGroupID                string             `json:"worker_group_id"`
+	State                        string             `json:"state"`
+	ClaimVersion                 int64              `json:"claim_version"`
+	CurrentEpoch                 pgtype.Int8        `json:"current_epoch"`
+	CurrentServiceID             pgtype.UUID        `json:"current_service_id"`
+	ProtocolVersion              string             `json:"protocol_version"`
+	SupervisorVersion            string             `json:"supervisor_version"`
+	SupportsRun                  bool               `json:"supports_run"`
+	SupportsBuild                bool               `json:"supports_build"`
+	RuntimeIdentityID            pgtype.Text        `json:"runtime_identity_id"`
+	SubstrateFormat              string             `json:"substrate_format"`
+	SubstrateBuilderAbi          string             `json:"substrate_builder_abi"`
+	SubstrateLayoutAbi           string             `json:"substrate_layout_abi"`
+	EpochCpuMillis               int64              `json:"epoch_cpu_millis"`
+	EpochMemoryBytes             int64              `json:"epoch_memory_bytes"`
+	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
+	EpochBuildCacheBytes         int64              `json:"epoch_build_cache_bytes"`
+	EpochArtifactCacheBytes      int64              `json:"epoch_artifact_cache_bytes"`
+	EpochHugepagesBytes          int64              `json:"epoch_hugepages_bytes"`
+	EpochCheckpointBytes         int64              `json:"epoch_checkpoint_bytes"`
+	PerVmCpuMillis               int64              `json:"per_vm_cpu_millis"`
+	PerVmMemoryBytes             int64              `json:"per_vm_memory_bytes"`
+	PerVmGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
+	MaxVmSlots                   int32              `json:"max_vm_slots"`
+	MaxRunConsumers              int32              `json:"max_run_consumers"`
+	MaxBuildExecutors            int32              `json:"max_build_executors"`
+	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
+	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
+	ActivatedAt                  pgtype.Timestamptz `json:"activated_at"`
+	DrainingAt                   pgtype.Timestamptz `json:"draining_at"`
+	TerminationReadyAt           pgtype.Timestamptz `json:"termination_ready_at"`
+	LostAt                       pgtype.Timestamptz `json:"lost_at"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstanceParams) (FenceWorkerInstanceRow, error) {
@@ -421,6 +290,7 @@ func (q *Queries) FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstan
 		arg.ID,
 		arg.WorkerGroupID,
 		arg.ExpectedEpoch,
+		arg.ExpectedClaimVersion,
 		arg.ReasonCode,
 	)
 	var i FenceWorkerInstanceRow
@@ -428,7 +298,6 @@ func (q *Queries) FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstan
 		&i.ID,
 		&i.ResourceID,
 		&i.WorkerGroupID,
-		&i.AttestationFingerprint,
 		&i.State,
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
@@ -438,47 +307,360 @@ func (q *Queries) FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstan
 		&i.SupportsRun,
 		&i.SupportsBuild,
 		&i.RuntimeIdentityID,
-		&i.CertifiedCpuMillis,
-		&i.CertifiedMemoryBytes,
-		&i.CertifiedWorkloadDiskBytes,
-		&i.CertifiedScratchBytes,
-		&i.CertifiedBuildCacheBytes,
-		&i.CertifiedArtifactCacheBytes,
-		&i.CertifiedHugepagesBytes,
-		&i.CertifiedCheckpointBytes,
+		&i.SubstrateFormat,
+		&i.SubstrateBuilderAbi,
+		&i.SubstrateLayoutAbi,
+		&i.EpochCpuMillis,
+		&i.EpochMemoryBytes,
+		&i.EpochGuestEphemeralDiskBytes,
+		&i.EpochBuildCacheBytes,
+		&i.EpochArtifactCacheBytes,
+		&i.EpochHugepagesBytes,
+		&i.EpochCheckpointBytes,
 		&i.PerVmCpuMillis,
 		&i.PerVmMemoryBytes,
-		&i.PerVmWorkloadDiskBytes,
-		&i.PerVmScratchBytes,
+		&i.PerVmGuestEphemeralDiskBytes,
 		&i.MaxVmSlots,
 		&i.MaxRunConsumers,
 		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
-		&i.CertificationProfile,
-		&i.CertificationFingerprint,
 		&i.EpochStartedAt,
-		&i.StartupInventoryEpoch,
-		&i.StartupInventoryEvidence,
-		&i.DrainCleanupFingerprint,
-		&i.DrainCleanupEvidence,
-		&i.CertifiedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,
-		&i.DisabledAt,
+		&i.TerminationReadyAt,
 		&i.LostAt,
-		&i.TerminationClaimedAt,
-		&i.ProviderTerminatedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
+const getQueuedRunReadyHint = `-- name: GetQueuedRunReadyHint :one
+SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
+       runs.queue_name, runs.concurrency_key, runs.state_version, runs.priority,
+       runs.queue_origin_at, runs.queue_score_at, workspaces.region_id
+  FROM runs
+  JOIN workspaces
+    ON workspaces.environment_id = runs.environment_id
+   AND workspaces.id = runs.workspace_id
+ WHERE runs.org_id = $1
+   AND runs.id = $2
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+   AND (
+        (runs.entrypoint_kind = 'task'
+         AND runs.actor_id IS NULL
+         AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
+         AND (
+             (workspaces.owner_run_id = runs.id
+              AND workspaces.owner_actor_id IS NULL
+              AND (NOT EXISTS (
+                 SELECT 1
+                   FROM run_waits
+                  WHERE run_waits.run_id = runs.id
+                    AND run_waits.suspension_state IN (
+                        'hot', 'checkpointing', 'parked',
+                        'resume_pending', 'resuming'
+                    )
+              ) OR EXISTS (
+                 SELECT 1
+                   FROM run_waits
+                   JOIN run_checkpoints
+                     ON run_checkpoints.id =
+                        run_waits.suspend_checkpoint_id
+                    AND run_checkpoints.kind = 'suspend'
+                    AND run_checkpoints.run_id = run_waits.run_id
+                    AND run_checkpoints.attempt_number =
+                        run_waits.attempt_number
+                    AND run_checkpoints.run_wait_id = run_waits.id
+                    AND run_checkpoints.workspace_id =
+                        run_waits.workspace_id
+                    AND run_checkpoints.state = 'ready'
+                    AND (run_checkpoints.expires_at IS NULL
+                         OR run_checkpoints.expires_at > now())
+                   JOIN workspace_versions
+                     ON workspace_versions.workspace_id =
+                        run_checkpoints.workspace_id
+                    AND workspace_versions.id =
+                        run_checkpoints.private_workspace_version_id
+                    AND workspace_versions.state = 'private'
+                  WHERE run_waits.run_id = runs.id
+                    AND run_waits.suspension_state = 'resume_pending'
+                    AND run_waits.handoff_runtime_instance_id IS NULL
+                    AND run_waits.handoff_workspace_mount_id IS NULL
+                    AND run_waits.handoff_resume_checkpoint_id IS NULL
+              )))
+             OR EXISTS (
+                 SELECT 1
+                   FROM run_waits AS handoff
+                   JOIN runs AS parent
+                     ON parent.environment_id = handoff.environment_id
+                    AND parent.id = handoff.run_id
+                    AND parent.workspace_id = handoff.workspace_id
+                    AND parent.status = 'waiting'
+                    AND parent.current_run_lease_id IS NULL
+                   JOIN run_checkpoints AS checkpoint
+                     ON checkpoint.id = handoff.suspend_checkpoint_id
+                    AND checkpoint.kind = 'suspend'
+                    AND checkpoint.run_id = handoff.run_id
+                    AND checkpoint.attempt_number =
+                        handoff.attempt_number
+                    AND checkpoint.run_wait_id = handoff.id
+                    AND checkpoint.workspace_id = handoff.workspace_id
+                    AND checkpoint.state = 'ready'
+                   JOIN workspace_versions AS base
+                     ON base.workspace_id = handoff.workspace_id
+                    AND base.id = handoff.base_workspace_version_id
+                    AND base.state = 'private'
+                  WHERE handoff.child_run_id = runs.id
+                    AND handoff.child_parent_owned IS TRUE
+                    AND handoff.workspace_id = runs.workspace_id
+                    AND handoff.condition_state = 'pending'
+                    AND handoff.suspension_state = 'parked'
+                    AND handoff.base_workspace_version_id =
+                        runs.base_workspace_version_id
+                    AND handoff.handoff_runtime_instance_id IS NOT NULL
+                    AND handoff.handoff_workspace_mount_id IS NOT NULL
+                    AND handoff.handoff_mount_generation IS NOT NULL
+                    AND handoff.ownership_generation IS NOT NULL
+                    AND handoff.parent_writer_generation IS NOT NULL
+                    AND handoff.child_writer_generation IS NULL
+             )
+         ))
+       OR
+       (runs.entrypoint_kind = 'actor'
+        AND runs.actor_id IS NOT NULL
+        AND runs.cause_kind IN ('actor_start', 'continuation')
+        AND runs.parent_run_id IS NULL
+        AND workspaces.owner_actor_id = runs.actor_id
+        AND workspaces.owner_run_id IS NULL
+        AND EXISTS (
+            SELECT 1
+              FROM actors
+             WHERE actors.id = runs.actor_id
+               AND actors.workspace_id = runs.workspace_id
+               AND actors.current_run_id = runs.id
+               AND actors.state IN ('open', 'closing')
+        )
+        AND EXISTS (
+            SELECT 1
+              FROM run_waits
+              JOIN run_checkpoints
+                ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+               AND run_checkpoints.kind = 'suspend'
+               AND run_checkpoints.run_id = run_waits.run_id
+               AND run_checkpoints.attempt_number = run_waits.attempt_number
+               AND run_checkpoints.run_wait_id = run_waits.id
+               AND run_checkpoints.workspace_id = run_waits.workspace_id
+               AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
+               AND run_checkpoints.state = 'ready'
+               AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+              JOIN workspace_versions
+                ON workspace_versions.workspace_id = run_checkpoints.workspace_id
+               AND workspace_versions.id = run_checkpoints.private_workspace_version_id
+               AND workspace_versions.state = 'private'
+              JOIN actors AS restore_actor
+                ON restore_actor.id = runs.actor_id
+               AND restore_actor.workspace_id = runs.workspace_id
+               AND restore_actor.current_run_id = runs.id
+               AND restore_actor.state IN ('open', 'closing')
+              JOIN run_attempts AS restore_attempt
+                ON restore_attempt.run_id = runs.id
+               AND restore_attempt.number = runs.current_attempt_number
+               AND restore_attempt.workspace_id = runs.workspace_id
+               AND restore_attempt.entrypoint_kind = 'actor'
+               AND restore_attempt.actor_start_input_sequence = runs.actor_start_input_sequence
+               AND restore_attempt.terminal_at IS NULL
+             WHERE run_waits.run_id = runs.id
+               AND run_waits.suspension_state = 'resume_pending'
+               AND run_waits.handoff_runtime_instance_id IS NULL
+               AND run_waits.handoff_workspace_mount_id IS NULL
+               AND run_waits.handoff_resume_checkpoint_id IS NULL
+               AND runs.actor_start_input_sequence <= runs.actor_start_input_high_watermark
+               AND restore_actor.committed_input_sequence >= runs.actor_start_input_sequence
+               AND restore_actor.committed_input_sequence < restore_actor.next_input_sequence
+               AND run_checkpoints.actor_speculative_input_sequence
+                   BETWEEN restore_actor.committed_input_sequence
+                       AND restore_actor.next_input_sequence - 1
+        ))
+   )
+   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+`
+
+type GetQueuedRunReadyHintParams struct {
+	OrgID pgtype.UUID `json:"org_id"`
+	RunID pgtype.UUID `json:"run_id"`
+}
+
+type GetQueuedRunReadyHintRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	QueueName      string             `json:"queue_name"`
+	ConcurrencyKey pgtype.Text        `json:"concurrency_key"`
+	StateVersion   int64              `json:"state_version"`
+	Priority       int32              `json:"priority"`
+	QueueOriginAt  pgtype.Timestamptz `json:"queue_origin_at"`
+	QueueScoreAt   pgtype.Timestamptz `json:"queue_score_at"`
+	RegionID       string             `json:"region_id"`
+}
+
+func (q *Queries) GetQueuedRunReadyHint(ctx context.Context, arg GetQueuedRunReadyHintParams) (GetQueuedRunReadyHintRow, error) {
+	row := q.db.QueryRow(ctx, getQueuedRunReadyHint, arg.OrgID, arg.RunID)
+	var i GetQueuedRunReadyHintRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.StateVersion,
+		&i.Priority,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
+		&i.RegionID,
+	)
+	return i, err
+}
+
+const getQueuedRunResumeHint = `-- name: GetQueuedRunResumeHint :one
+SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
+       runs.queue_name, runs.concurrency_key, runs.state_version, runs.priority,
+       runs.queue_origin_at, runs.queue_score_at, workspaces.region_id
+  FROM runs
+  JOIN workspaces
+    ON workspaces.environment_id = runs.environment_id
+   AND workspaces.id = runs.workspace_id
+  JOIN run_waits
+    ON run_waits.environment_id = runs.environment_id
+   AND run_waits.run_id = runs.id
+   AND run_waits.workspace_id = runs.workspace_id
+   AND run_waits.attempt_number = runs.current_attempt_number
+  JOIN run_checkpoints
+    ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+   AND run_checkpoints.kind = 'suspend'
+   AND run_checkpoints.run_id = run_waits.run_id
+   AND run_checkpoints.attempt_number = run_waits.attempt_number
+   AND run_checkpoints.run_wait_id = run_waits.id
+   AND run_checkpoints.workspace_id = run_waits.workspace_id
+   AND run_checkpoints.state = 'ready'
+   AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+  JOIN workspace_versions
+    ON workspace_versions.workspace_id = run_checkpoints.workspace_id
+   AND workspace_versions.id = run_checkpoints.private_workspace_version_id
+   AND workspace_versions.state = 'private'
+ WHERE runs.environment_id = $1
+   AND runs.id = $2
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+   AND run_waits.id = $3
+   AND run_waits.condition_state <> 'pending'
+   AND run_waits.suspension_state = 'resume_pending'
+   AND run_waits.expected_run_state_version = runs.state_version
+   AND run_waits.resume_request_version = $4
+   AND run_waits.resume_ack_version < run_waits.resume_request_version
+   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+`
+
+type GetQueuedRunResumeHintParams struct {
+	EnvironmentID        pgtype.UUID `json:"environment_id"`
+	RunID                pgtype.UUID `json:"run_id"`
+	RunWaitID            pgtype.UUID `json:"run_wait_id"`
+	ResumeRequestVersion int64       `json:"resume_request_version"`
+}
+
+type GetQueuedRunResumeHintRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	QueueName      string             `json:"queue_name"`
+	ConcurrencyKey pgtype.Text        `json:"concurrency_key"`
+	StateVersion   int64              `json:"state_version"`
+	Priority       int32              `json:"priority"`
+	QueueOriginAt  pgtype.Timestamptz `json:"queue_origin_at"`
+	QueueScoreAt   pgtype.Timestamptz `json:"queue_score_at"`
+	RegionID       string             `json:"region_id"`
+}
+
+func (q *Queries) GetQueuedRunResumeHint(ctx context.Context, arg GetQueuedRunResumeHintParams) (GetQueuedRunResumeHintRow, error) {
+	row := q.db.QueryRow(ctx, getQueuedRunResumeHint,
+		arg.EnvironmentID,
+		arg.RunID,
+		arg.RunWaitID,
+		arg.ResumeRequestVersion,
+	)
+	var i GetQueuedRunResumeHintRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.StateVersion,
+		&i.Priority,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
+		&i.RegionID,
+	)
+	return i, err
+}
+
+const getRunResumeHintAuthority = `-- name: GetRunResumeHintAuthority :one
+SELECT runs.status,
+       runs.state_version,
+       runs.current_run_lease_id,
+       run_waits.condition_state,
+       run_waits.suspension_state,
+       run_waits.expected_run_state_version,
+       run_waits.resume_request_version
+  FROM runs
+  JOIN run_waits
+    ON run_waits.environment_id = runs.environment_id
+   AND run_waits.run_id = runs.id
+ WHERE runs.environment_id = $1
+   AND runs.id = $2
+   AND run_waits.id = $3
+`
+
+type GetRunResumeHintAuthorityParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+	RunWaitID     pgtype.UUID `json:"run_wait_id"`
+}
+
+type GetRunResumeHintAuthorityRow struct {
+	Status                  string      `json:"status"`
+	StateVersion            int64       `json:"state_version"`
+	CurrentRunLeaseID       pgtype.UUID `json:"current_run_lease_id"`
+	ConditionState          string      `json:"condition_state"`
+	SuspensionState         string      `json:"suspension_state"`
+	ExpectedRunStateVersion int64       `json:"expected_run_state_version"`
+	ResumeRequestVersion    int64       `json:"resume_request_version"`
+}
+
+func (q *Queries) GetRunResumeHintAuthority(ctx context.Context, arg GetRunResumeHintAuthorityParams) (GetRunResumeHintAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, getRunResumeHintAuthority, arg.EnvironmentID, arg.RunID, arg.RunWaitID)
+	var i GetRunResumeHintAuthorityRow
+	err := row.Scan(
+		&i.Status,
+		&i.StateVersion,
+		&i.CurrentRunLeaseID,
+		&i.ConditionState,
+		&i.SuspensionState,
+		&i.ExpectedRunStateVersion,
+		&i.ResumeRequestVersion,
+	)
+	return i, err
+}
+
 const getWorkerInstanceQueueCapacity = `-- name: GetWorkerInstanceQueueCapacity :one
-SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
-       GREATEST(worker_instances.certified_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
-       GREATEST(worker_instances.certified_workload_disk_bytes - usage.workload_disk_bytes, 0)::bigint AS available_workload_disk_bytes,
-       GREATEST(worker_instances.certified_scratch_bytes - usage.scratch_bytes, 0)::bigint AS available_scratch_bytes,
+SELECT GREATEST(worker_instances.epoch_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
+       GREATEST(worker_instances.epoch_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
+       GREATEST(worker_instances.epoch_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
        GREATEST(worker_instances.max_run_consumers - usage.run_consumers, 0)::int AS available_run_consumers,
        GREATEST(worker_instances.max_build_executors - usage.build_executors, 0)::int AS available_build_executors
   FROM worker_instances
@@ -502,28 +684,19 @@ SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bi
                     WHERE worker_instance_id = worker_instances.id
                       AND worker_epoch = worker_instances.current_epoch
                       AND state IN ('assigned','starting','running')), 0) AS memory_bytes,
-        COALESCE((SELECT sum(reserved_workload_disk_bytes) FROM runtime_instances
+        COALESCE((SELECT sum(reserved_guest_ephemeral_disk_bytes) FROM runtime_instances
                    WHERE worker_instance_id = worker_instances.id
                      AND worker_epoch = worker_instances.current_epoch
                      AND (observed_state IN ('allocated','preparing','ready','closing')
                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_workload_disk_bytes) FROM deployment_build_leases
+        + COALESCE((SELECT sum(requested_guest_ephemeral_disk_bytes) FROM deployment_build_leases
                     WHERE worker_instance_id = worker_instances.id
                       AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS workload_disk_bytes,
-        COALESCE((SELECT sum(reserved_scratch_bytes) FROM runtime_instances
-                   WHERE worker_instance_id = worker_instances.id
-                     AND worker_epoch = worker_instances.current_epoch
-                     AND (observed_state IN ('allocated','preparing','ready','closing')
-                          OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_scratch_bytes) FROM deployment_build_leases
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS scratch_bytes,
+                      AND state IN ('assigned','starting','running')), 0) AS guest_ephemeral_disk_bytes,
         COALESCE((SELECT sum(requested_execution_slots) FROM run_leases
                    WHERE worker_instance_id = worker_instances.id
                      AND worker_epoch = worker_instances.current_epoch
-                     AND state IN ('assigned','starting','running','checkpointing')), 0)::int AS run_consumers,
+                     AND state IN ('assigned','starting','running','checkpointing','finalizing')), 0)::int AS run_consumers,
         COALESCE((SELECT sum(requested_build_executors) FROM deployment_build_leases
                    WHERE worker_instance_id = worker_instances.id
                      AND worker_epoch = worker_instances.current_epoch
@@ -542,12 +715,11 @@ type GetWorkerInstanceQueueCapacityParams struct {
 }
 
 type GetWorkerInstanceQueueCapacityRow struct {
-	AvailableCpuMillis         int64 `json:"available_cpu_millis"`
-	AvailableMemoryBytes       int64 `json:"available_memory_bytes"`
-	AvailableWorkloadDiskBytes int64 `json:"available_workload_disk_bytes"`
-	AvailableScratchBytes      int64 `json:"available_scratch_bytes"`
-	AvailableRunConsumers      int32 `json:"available_run_consumers"`
-	AvailableBuildExecutors    int32 `json:"available_build_executors"`
+	AvailableCpuMillis               int64 `json:"available_cpu_millis"`
+	AvailableMemoryBytes             int64 `json:"available_memory_bytes"`
+	AvailableGuestEphemeralDiskBytes int64 `json:"available_guest_ephemeral_disk_bytes"`
+	AvailableRunConsumers            int32 `json:"available_run_consumers"`
+	AvailableBuildExecutors          int32 `json:"available_build_executors"`
 }
 
 func (q *Queries) GetWorkerInstanceQueueCapacity(ctx context.Context, arg GetWorkerInstanceQueueCapacityParams) (GetWorkerInstanceQueueCapacityRow, error) {
@@ -556,8 +728,7 @@ func (q *Queries) GetWorkerInstanceQueueCapacity(ctx context.Context, arg GetWor
 	err := row.Scan(
 		&i.AvailableCpuMillis,
 		&i.AvailableMemoryBytes,
-		&i.AvailableWorkloadDiskBytes,
-		&i.AvailableScratchBytes,
+		&i.AvailableGuestEphemeralDiskBytes,
 		&i.AvailableRunConsumers,
 		&i.AvailableBuildExecutors,
 	)
@@ -565,10 +736,9 @@ func (q *Queries) GetWorkerInstanceQueueCapacity(ctx context.Context, arg GetWor
 }
 
 const getWorkerInstanceRunDispatchCapacity = `-- name: GetWorkerInstanceRunDispatchCapacity :one
-SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
-       GREATEST(worker_instances.certified_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
-       GREATEST(worker_instances.certified_workload_disk_bytes - usage.workload_disk_bytes, 0)::bigint AS available_workload_disk_bytes,
-       GREATEST(worker_instances.certified_scratch_bytes - usage.scratch_bytes, 0)::bigint AS available_scratch_bytes,
+SELECT GREATEST(worker_instances.epoch_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
+       GREATEST(worker_instances.epoch_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
+       GREATEST(worker_instances.epoch_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
        GREATEST(worker_instances.max_vm_slots - usage.vm_slots, 0)::int AS available_vm_slots,
        GREATEST(worker_instances.max_run_consumers - usage.run_consumers, 0)::int AS available_run_consumers,
        GREATEST(worker_instances.max_build_executors - usage.build_executors, 0)::int AS available_build_executors
@@ -593,24 +763,15 @@ SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bi
                     WHERE worker_instance_id = worker_instances.id
                       AND worker_epoch = worker_instances.current_epoch
                       AND state IN ('assigned','starting','running')), 0) AS memory_bytes,
-        COALESCE((SELECT sum(reserved_workload_disk_bytes) FROM runtime_instances
+        COALESCE((SELECT sum(reserved_guest_ephemeral_disk_bytes) FROM runtime_instances
                     WHERE worker_instance_id = worker_instances.id
                       AND worker_epoch = worker_instances.current_epoch
                       AND (observed_state IN ('allocated','preparing','ready','closing')
                            OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_workload_disk_bytes) FROM deployment_build_leases
+        + COALESCE((SELECT sum(requested_guest_ephemeral_disk_bytes) FROM deployment_build_leases
                     WHERE worker_instance_id = worker_instances.id
                       AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS workload_disk_bytes,
-        COALESCE((SELECT sum(reserved_scratch_bytes) FROM runtime_instances
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND (observed_state IN ('allocated','preparing','ready','closing')
-                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_scratch_bytes) FROM deployment_build_leases
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS scratch_bytes,
+                      AND state IN ('assigned','starting','running')), 0) AS guest_ephemeral_disk_bytes,
         COALESCE((SELECT count(*) FROM runtime_instances
                    WHERE worker_instance_id = worker_instances.id
                      AND worker_epoch = worker_instances.current_epoch
@@ -619,7 +780,7 @@ SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bi
         COALESCE((SELECT sum(requested_execution_slots) FROM run_leases
                    WHERE worker_instance_id = worker_instances.id
                      AND worker_epoch = worker_instances.current_epoch
-                     AND state IN ('assigned','starting','running','checkpointing')), 0)::int AS run_consumers,
+                     AND state IN ('assigned','starting','running','checkpointing','finalizing')), 0)::int AS run_consumers,
         COALESCE((SELECT sum(requested_build_executors) FROM deployment_build_leases
                    WHERE worker_instance_id = worker_instances.id
                      AND worker_epoch = worker_instances.current_epoch
@@ -638,13 +799,12 @@ type GetWorkerInstanceRunDispatchCapacityParams struct {
 }
 
 type GetWorkerInstanceRunDispatchCapacityRow struct {
-	AvailableCpuMillis         int64 `json:"available_cpu_millis"`
-	AvailableMemoryBytes       int64 `json:"available_memory_bytes"`
-	AvailableWorkloadDiskBytes int64 `json:"available_workload_disk_bytes"`
-	AvailableScratchBytes      int64 `json:"available_scratch_bytes"`
-	AvailableVmSlots           int32 `json:"available_vm_slots"`
-	AvailableRunConsumers      int32 `json:"available_run_consumers"`
-	AvailableBuildExecutors    int32 `json:"available_build_executors"`
+	AvailableCpuMillis               int64 `json:"available_cpu_millis"`
+	AvailableMemoryBytes             int64 `json:"available_memory_bytes"`
+	AvailableGuestEphemeralDiskBytes int64 `json:"available_guest_ephemeral_disk_bytes"`
+	AvailableVmSlots                 int32 `json:"available_vm_slots"`
+	AvailableRunConsumers            int32 `json:"available_run_consumers"`
+	AvailableBuildExecutors          int32 `json:"available_build_executors"`
 }
 
 func (q *Queries) GetWorkerInstanceRunDispatchCapacity(ctx context.Context, arg GetWorkerInstanceRunDispatchCapacityParams) (GetWorkerInstanceRunDispatchCapacityRow, error) {
@@ -653,8 +813,7 @@ func (q *Queries) GetWorkerInstanceRunDispatchCapacity(ctx context.Context, arg 
 	err := row.Scan(
 		&i.AvailableCpuMillis,
 		&i.AvailableMemoryBytes,
-		&i.AvailableWorkloadDiskBytes,
-		&i.AvailableScratchBytes,
+		&i.AvailableGuestEphemeralDiskBytes,
 		&i.AvailableVmSlots,
 		&i.AvailableRunConsumers,
 		&i.AvailableBuildExecutors,
@@ -663,13 +822,53 @@ func (q *Queries) GetWorkerInstanceRunDispatchCapacity(ctx context.Context, arg 
 }
 
 const getWorkerInstanceState = `-- name: GetWorkerInstanceState :one
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at,
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.epoch_build_cache_bytes, worker_instances.epoch_artifact_cache_bytes, worker_instances.epoch_hugepages_bytes, worker_instances.epoch_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at,
        runtime_identities.rootfs_digest,
        runtime_identities.runtime_abi,
+       runtime_identities.runtime_arch,
+       worker_observations.observed_at,
+       worker_observations.run_paused_reason,
+       worker_observations.build_paused_reason,
+       worker_observations.runtime_paused_reason,
+       COALESCE((
+           worker_instances.state = 'active'
+           AND worker_groups.state = 'active'
+           AND worker_instances.supports_run
+           AND worker_observations.observed_at >= transaction_timestamp()
+               - worker_groups.observation_ttl_seconds * interval '1 second'
+           AND worker_observations.run_paused_reason IS NULL
+       ), false)::boolean AS run_ready,
+       COALESCE((
+           worker_instances.state = 'active'
+           AND worker_groups.state = 'active'
+           AND worker_instances.supports_build
+           AND worker_observations.observed_at >= transaction_timestamp()
+               - worker_groups.observation_ttl_seconds * interval '1 second'
+           AND worker_observations.build_paused_reason IS NULL
+       ), false)::boolean AS build_ready,
+       COALESCE((
+           worker_instances.state = 'active'
+           AND worker_groups.state = 'active'
+           AND worker_instances.supports_run
+           AND worker_observations.observed_at >= transaction_timestamp()
+               - worker_groups.observation_ttl_seconds * interval '1 second'
+           AND worker_observations.runtime_paused_reason IS NULL
+       ), false)::boolean AS runtime_ready,
+       COALESCE((
+           worker_instances.state = 'active'
+           AND worker_groups.state = 'active'
+           AND worker_observations.observed_at >= transaction_timestamp()
+               - worker_groups.observation_ttl_seconds * interval '1 second'
+           AND (NOT worker_instances.supports_run OR (
+               worker_observations.run_paused_reason IS NULL
+               AND worker_observations.runtime_paused_reason IS NULL
+           ))
+           AND (NOT worker_instances.supports_build OR worker_observations.build_paused_reason IS NULL)
+       ), false)::boolean AS all_configured_roles_ready,
        ((SELECT count(*) FROM run_leases
          WHERE run_leases.worker_instance_id = worker_instances.id
            AND run_leases.worker_epoch = worker_instances.current_epoch
-           AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing')) +
+           AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')) +
         (SELECT count(*) FROM deployment_build_leases
          WHERE deployment_build_leases.worker_instance_id = worker_instances.id
            AND deployment_build_leases.worker_epoch = worker_instances.current_epoch
@@ -678,16 +877,16 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worke
          WHERE workspace_mounts.worker_instance_id = worker_instances.id
            AND workspace_mounts.worker_epoch = worker_instances.current_epoch
            AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')) +
-        (SELECT count(*) FROM workspace_process_operations
-         WHERE workspace_process_operations.claimed_by_worker_instance_id = worker_instances.id
-           AND workspace_process_operations.claimed_worker_epoch = worker_instances.current_epoch
-           AND workspace_process_operations.state IN ('claimed', 'running')) +
         (SELECT count(*) FROM runtime_instances
          WHERE runtime_instances.worker_instance_id = worker_instances.id
            AND runtime_instances.worker_epoch = worker_instances.current_epoch
            AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')))::int AS active_executions
   FROM worker_instances
+  JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
   LEFT JOIN runtime_identities ON runtime_identities.id = worker_instances.runtime_identity_id
+  LEFT JOIN worker_observations
+    ON worker_observations.worker_instance_id = worker_instances.id
+   AND worker_observations.worker_epoch = worker_instances.current_epoch
  WHERE worker_instances.id = $1
    AND worker_instances.worker_group_id = $2
 `
@@ -698,54 +897,54 @@ type GetWorkerInstanceStateParams struct {
 }
 
 type GetWorkerInstanceStateRow struct {
-	ID                          pgtype.UUID         `json:"id"`
-	ResourceID                  string              `json:"resource_id"`
-	WorkerGroupID               string              `json:"worker_group_id"`
-	AttestationFingerprint      string              `json:"attestation_fingerprint"`
-	State                       WorkerInstanceState `json:"state"`
-	ClaimVersion                int64               `json:"claim_version"`
-	CurrentEpoch                pgtype.Int8         `json:"current_epoch"`
-	CurrentServiceID            pgtype.UUID         `json:"current_service_id"`
-	ProtocolVersion             string              `json:"protocol_version"`
-	SupervisorVersion           string              `json:"supervisor_version"`
-	SupportsRun                 bool                `json:"supports_run"`
-	SupportsBuild               bool                `json:"supports_build"`
-	RuntimeIdentityID           pgtype.Text         `json:"runtime_identity_id"`
-	CertifiedCpuMillis          int64               `json:"certified_cpu_millis"`
-	CertifiedMemoryBytes        int64               `json:"certified_memory_bytes"`
-	CertifiedWorkloadDiskBytes  int64               `json:"certified_workload_disk_bytes"`
-	CertifiedScratchBytes       int64               `json:"certified_scratch_bytes"`
-	CertifiedBuildCacheBytes    int64               `json:"certified_build_cache_bytes"`
-	CertifiedArtifactCacheBytes int64               `json:"certified_artifact_cache_bytes"`
-	CertifiedHugepagesBytes     int64               `json:"certified_hugepages_bytes"`
-	CertifiedCheckpointBytes    int64               `json:"certified_checkpoint_bytes"`
-	PerVmCpuMillis              int64               `json:"per_vm_cpu_millis"`
-	PerVmMemoryBytes            int64               `json:"per_vm_memory_bytes"`
-	PerVmWorkloadDiskBytes      int64               `json:"per_vm_workload_disk_bytes"`
-	PerVmScratchBytes           int64               `json:"per_vm_scratch_bytes"`
-	MaxVmSlots                  int32               `json:"max_vm_slots"`
-	MaxRunConsumers             int32               `json:"max_run_consumers"`
-	MaxBuildExecutors           int32               `json:"max_build_executors"`
-	MaxRuntimeStarts            int32               `json:"max_runtime_starts"`
-	CertificationProfile        string              `json:"certification_profile"`
-	CertificationFingerprint    string              `json:"certification_fingerprint"`
-	EpochStartedAt              pgtype.Timestamptz  `json:"epoch_started_at"`
-	StartupInventoryEpoch       pgtype.Int8         `json:"startup_inventory_epoch"`
-	StartupInventoryEvidence    []byte              `json:"startup_inventory_evidence"`
-	DrainCleanupFingerprint     pgtype.Text         `json:"drain_cleanup_fingerprint"`
-	DrainCleanupEvidence        []byte              `json:"drain_cleanup_evidence"`
-	CertifiedAt                 pgtype.Timestamptz  `json:"certified_at"`
-	ActivatedAt                 pgtype.Timestamptz  `json:"activated_at"`
-	DrainingAt                  pgtype.Timestamptz  `json:"draining_at"`
-	DisabledAt                  pgtype.Timestamptz  `json:"disabled_at"`
-	LostAt                      pgtype.Timestamptz  `json:"lost_at"`
-	TerminationClaimedAt        pgtype.Timestamptz  `json:"termination_claimed_at"`
-	ProviderTerminatedAt        pgtype.Timestamptz  `json:"provider_terminated_at"`
-	CreatedAt                   pgtype.Timestamptz  `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz  `json:"updated_at"`
-	RootfsDigest                pgtype.Text         `json:"rootfs_digest"`
-	RuntimeABI                  pgtype.Text         `json:"runtime_abi"`
-	ActiveExecutions            int32               `json:"active_executions"`
+	ID                           pgtype.UUID        `json:"id"`
+	ResourceID                   string             `json:"resource_id"`
+	WorkerGroupID                string             `json:"worker_group_id"`
+	State                        string             `json:"state"`
+	ClaimVersion                 int64              `json:"claim_version"`
+	CurrentEpoch                 pgtype.Int8        `json:"current_epoch"`
+	CurrentServiceID             pgtype.UUID        `json:"current_service_id"`
+	ProtocolVersion              string             `json:"protocol_version"`
+	SupervisorVersion            string             `json:"supervisor_version"`
+	SupportsRun                  bool               `json:"supports_run"`
+	SupportsBuild                bool               `json:"supports_build"`
+	RuntimeIdentityID            pgtype.Text        `json:"runtime_identity_id"`
+	SubstrateFormat              string             `json:"substrate_format"`
+	SubstrateBuilderAbi          string             `json:"substrate_builder_abi"`
+	SubstrateLayoutAbi           string             `json:"substrate_layout_abi"`
+	EpochCpuMillis               int64              `json:"epoch_cpu_millis"`
+	EpochMemoryBytes             int64              `json:"epoch_memory_bytes"`
+	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
+	EpochBuildCacheBytes         int64              `json:"epoch_build_cache_bytes"`
+	EpochArtifactCacheBytes      int64              `json:"epoch_artifact_cache_bytes"`
+	EpochHugepagesBytes          int64              `json:"epoch_hugepages_bytes"`
+	EpochCheckpointBytes         int64              `json:"epoch_checkpoint_bytes"`
+	PerVmCpuMillis               int64              `json:"per_vm_cpu_millis"`
+	PerVmMemoryBytes             int64              `json:"per_vm_memory_bytes"`
+	PerVmGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
+	MaxVmSlots                   int32              `json:"max_vm_slots"`
+	MaxRunConsumers              int32              `json:"max_run_consumers"`
+	MaxBuildExecutors            int32              `json:"max_build_executors"`
+	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
+	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
+	ActivatedAt                  pgtype.Timestamptz `json:"activated_at"`
+	DrainingAt                   pgtype.Timestamptz `json:"draining_at"`
+	TerminationReadyAt           pgtype.Timestamptz `json:"termination_ready_at"`
+	LostAt                       pgtype.Timestamptz `json:"lost_at"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	RootfsDigest                 pgtype.Text        `json:"rootfs_digest"`
+	RuntimeABI                   pgtype.Text        `json:"runtime_abi"`
+	RuntimeArch                  pgtype.Text        `json:"runtime_arch"`
+	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
+	RunPausedReason              pgtype.Text        `json:"run_paused_reason"`
+	BuildPausedReason            pgtype.Text        `json:"build_paused_reason"`
+	RuntimePausedReason          pgtype.Text        `json:"runtime_paused_reason"`
+	RunReady                     bool               `json:"run_ready"`
+	BuildReady                   bool               `json:"build_ready"`
+	RuntimeReady                 bool               `json:"runtime_ready"`
+	AllConfiguredRolesReady      bool               `json:"all_configured_roles_ready"`
+	ActiveExecutions             int32              `json:"active_executions"`
 }
 
 func (q *Queries) GetWorkerInstanceState(ctx context.Context, arg GetWorkerInstanceStateParams) (GetWorkerInstanceStateRow, error) {
@@ -755,7 +954,6 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, arg GetWorkerInsta
 		&i.ID,
 		&i.ResourceID,
 		&i.WorkerGroupID,
-		&i.AttestationFingerprint,
 		&i.State,
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
@@ -765,165 +963,222 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, arg GetWorkerInsta
 		&i.SupportsRun,
 		&i.SupportsBuild,
 		&i.RuntimeIdentityID,
-		&i.CertifiedCpuMillis,
-		&i.CertifiedMemoryBytes,
-		&i.CertifiedWorkloadDiskBytes,
-		&i.CertifiedScratchBytes,
-		&i.CertifiedBuildCacheBytes,
-		&i.CertifiedArtifactCacheBytes,
-		&i.CertifiedHugepagesBytes,
-		&i.CertifiedCheckpointBytes,
+		&i.SubstrateFormat,
+		&i.SubstrateBuilderAbi,
+		&i.SubstrateLayoutAbi,
+		&i.EpochCpuMillis,
+		&i.EpochMemoryBytes,
+		&i.EpochGuestEphemeralDiskBytes,
+		&i.EpochBuildCacheBytes,
+		&i.EpochArtifactCacheBytes,
+		&i.EpochHugepagesBytes,
+		&i.EpochCheckpointBytes,
 		&i.PerVmCpuMillis,
 		&i.PerVmMemoryBytes,
-		&i.PerVmWorkloadDiskBytes,
-		&i.PerVmScratchBytes,
+		&i.PerVmGuestEphemeralDiskBytes,
 		&i.MaxVmSlots,
 		&i.MaxRunConsumers,
 		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
-		&i.CertificationProfile,
-		&i.CertificationFingerprint,
 		&i.EpochStartedAt,
-		&i.StartupInventoryEpoch,
-		&i.StartupInventoryEvidence,
-		&i.DrainCleanupFingerprint,
-		&i.DrainCleanupEvidence,
-		&i.CertifiedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,
-		&i.DisabledAt,
+		&i.TerminationReadyAt,
 		&i.LostAt,
-		&i.TerminationClaimedAt,
-		&i.ProviderTerminatedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RootfsDigest,
 		&i.RuntimeABI,
+		&i.RuntimeArch,
+		&i.ObservedAt,
+		&i.RunPausedReason,
+		&i.BuildPausedReason,
+		&i.RuntimePausedReason,
+		&i.RunReady,
+		&i.BuildReady,
+		&i.RuntimeReady,
+		&i.AllConfiguredRolesReady,
 		&i.ActiveExecutions,
 	)
 	return i, err
 }
 
-const listQueueScopes = `-- name: ListQueueScopes :many
-SELECT runs.org_id,
-       runs.project_id,
-       runs.environment_id,
-       workspaces.region_id,
-       runs.queue_class,
-       runs.queue_name
-  FROM runs
-  JOIN workspaces
-    ON workspaces.org_id = runs.org_id
-   AND workspaces.project_id = runs.project_id
-   AND workspaces.environment_id = runs.environment_id
-   AND workspaces.id = runs.workspace_id
-  JOIN regions ON regions.id = workspaces.region_id AND regions.state = 'available'
- WHERE runs.status = 'queued'
-   AND runs.current_run_lease_id IS NULL
-   AND runs.queue_timestamp <= now()
-   AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
- GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-          runs.queue_class, runs.queue_name
- ORDER BY md5(runs.org_id::text || ':' || runs.project_id::text || ':' ||
-              runs.environment_id::text || ':' || workspaces.region_id || ':' ||
-              runs.queue_class || ':' || runs.queue_name || ':' || $1::text),
-          runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-          runs.queue_class, runs.queue_name
- LIMIT $3
-OFFSET $2
-`
-
-type ListQueueScopesParams struct {
-	ScanSeed  string `json:"scan_seed"`
-	RowOffset int32  `json:"row_offset"`
-	RowLimit  int32  `json:"row_limit"`
-}
-
-type ListQueueScopesRow struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	RegionID      string      `json:"region_id"`
-	QueueClass    string      `json:"queue_class"`
-	QueueName     string      `json:"queue_name"`
-}
-
-func (q *Queries) ListQueueScopes(ctx context.Context, arg ListQueueScopesParams) ([]ListQueueScopesRow, error) {
-	rows, err := q.db.Query(ctx, listQueueScopes, arg.ScanSeed, arg.RowOffset, arg.RowLimit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListQueueScopesRow
-	for rows.Next() {
-		var i ListQueueScopesRow
-		if err := rows.Scan(
-			&i.OrgID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.RegionID,
-			&i.QueueClass,
-			&i.QueueName,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listQueuedRunCandidateScopes = `-- name: ListQueuedRunCandidateScopes :many
 WITH candidate_scopes AS (
     SELECT runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-           runs.queue_class, runs.queue_name,
+           coalesce(runs.concurrency_key, '') AS concurrency_key, runs.queue_name,
            md5(runs.org_id::text || ':' || runs.project_id::text || ':' ||
                runs.environment_id::text || ':' || workspaces.region_id || ':' ||
-               runs.queue_class || ':' || runs.queue_name || ':' || $9::text) AS sort_key
+               coalesce(runs.concurrency_key, '') || ':' || runs.queue_name || ':' || $9::text) AS sort_key
       FROM runs
-      JOIN workspaces ON workspaces.org_id = runs.org_id
-                     AND workspaces.project_id = runs.project_id
-                     AND workspaces.environment_id = runs.environment_id
+      JOIN workspaces ON workspaces.environment_id = runs.environment_id
                      AND workspaces.id = runs.workspace_id
-     WHERE runs.status = 'queued' AND runs.current_run_lease_id IS NULL
-       AND runs.queue_timestamp <= now()
-       AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+     WHERE runs.status = 'queued'
+       AND runs.current_run_lease_id IS NULL
+       AND (
+           (runs.entrypoint_kind = 'task'
+            AND runs.actor_id IS NULL
+            AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
+            AND (
+              (workspaces.owner_run_id = runs.id
+               AND workspaces.owner_actor_id IS NULL
+               AND (NOT EXISTS (
+               SELECT 1
+                 FROM run_waits
+                WHERE run_waits.run_id = runs.id
+                  AND run_waits.suspension_state IN (
+                      'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
+                  )
+            ) OR EXISTS (
+               SELECT 1
+                 FROM run_waits
+                 JOIN run_checkpoints
+                   ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+                  AND run_checkpoints.kind = 'suspend'
+                  AND run_checkpoints.run_id = run_waits.run_id
+                  AND run_checkpoints.attempt_number = run_waits.attempt_number
+                  AND run_checkpoints.run_wait_id = run_waits.id
+                  AND run_checkpoints.workspace_id = run_waits.workspace_id
+                  AND run_checkpoints.state = 'ready'
+                  AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+                 JOIN workspace_versions
+                   ON workspace_versions.workspace_id = run_checkpoints.workspace_id
+                  AND workspace_versions.id = run_checkpoints.private_workspace_version_id
+                  AND workspace_versions.state = 'private'
+                WHERE run_waits.run_id = runs.id
+                  AND run_waits.suspension_state = 'resume_pending'
+                  AND run_waits.handoff_runtime_instance_id IS NULL
+                  AND run_waits.handoff_workspace_mount_id IS NULL
+                  AND run_waits.handoff_resume_checkpoint_id IS NULL
+              )))
+              OR EXISTS (
+                  SELECT 1
+                    FROM run_waits AS handoff
+                    JOIN runs AS parent
+                      ON parent.environment_id = handoff.environment_id
+                     AND parent.id = handoff.run_id
+                     AND parent.workspace_id = handoff.workspace_id
+                     AND parent.status = 'waiting'
+                     AND parent.current_run_lease_id IS NULL
+                    JOIN run_checkpoints AS checkpoint
+                      ON checkpoint.id = handoff.suspend_checkpoint_id
+                     AND checkpoint.kind = 'suspend'
+                     AND checkpoint.run_id = handoff.run_id
+                     AND checkpoint.attempt_number =
+                         handoff.attempt_number
+                     AND checkpoint.run_wait_id = handoff.id
+                     AND checkpoint.workspace_id = handoff.workspace_id
+                     AND checkpoint.state = 'ready'
+                    JOIN workspace_versions AS base
+                      ON base.workspace_id = handoff.workspace_id
+                     AND base.id = handoff.base_workspace_version_id
+                     AND base.state = 'private'
+                   WHERE handoff.child_run_id = runs.id
+                     AND handoff.child_parent_owned IS TRUE
+                     AND handoff.workspace_id = runs.workspace_id
+                     AND handoff.condition_state = 'pending'
+                     AND handoff.suspension_state = 'parked'
+                     AND handoff.base_workspace_version_id =
+                         runs.base_workspace_version_id
+                     AND handoff.handoff_runtime_instance_id IS NOT NULL
+                     AND handoff.handoff_workspace_mount_id IS NOT NULL
+                     AND handoff.handoff_mount_generation IS NOT NULL
+                     AND handoff.ownership_generation IS NOT NULL
+                     AND handoff.parent_writer_generation IS NOT NULL
+                     AND handoff.child_writer_generation IS NULL
+              )
+            ))
+           OR
+           (runs.entrypoint_kind = 'actor'
+            AND runs.actor_id IS NOT NULL
+            AND runs.cause_kind IN ('actor_start', 'continuation')
+            AND runs.parent_run_id IS NULL
+            AND workspaces.owner_actor_id = runs.actor_id
+            AND workspaces.owner_run_id IS NULL
+            AND EXISTS (
+                SELECT 1 FROM actors
+                 WHERE actors.id = runs.actor_id
+                   AND actors.workspace_id = runs.workspace_id
+                   AND actors.current_run_id = runs.id
+                   AND actors.state IN ('open', 'closing')
+            )
+            AND EXISTS (
+                SELECT 1
+                  FROM run_waits
+                  JOIN run_checkpoints
+                    ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+                   AND run_checkpoints.kind = 'suspend'
+                   AND run_checkpoints.run_id = run_waits.run_id
+                   AND run_checkpoints.attempt_number = run_waits.attempt_number
+                   AND run_checkpoints.run_wait_id = run_waits.id
+                   AND run_checkpoints.workspace_id = run_waits.workspace_id
+                   AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
+                   AND run_checkpoints.state = 'ready'
+                   AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+                  JOIN workspace_versions
+                    ON workspace_versions.workspace_id = run_checkpoints.workspace_id
+                   AND workspace_versions.id = run_checkpoints.private_workspace_version_id
+                   AND workspace_versions.state = 'private'
+                  JOIN actors AS restore_actor
+                    ON restore_actor.id = runs.actor_id
+                   AND restore_actor.workspace_id = runs.workspace_id
+                   AND restore_actor.current_run_id = runs.id
+                   AND restore_actor.state IN ('open', 'closing')
+                  JOIN run_attempts AS restore_attempt
+                    ON restore_attempt.run_id = runs.id
+                   AND restore_attempt.number = runs.current_attempt_number
+                   AND restore_attempt.workspace_id = runs.workspace_id
+                   AND restore_attempt.entrypoint_kind = 'actor'
+                   AND restore_attempt.actor_start_input_sequence = runs.actor_start_input_sequence
+                   AND restore_attempt.terminal_at IS NULL
+                 WHERE run_waits.run_id = runs.id
+                   AND run_waits.suspension_state = 'resume_pending'
+                   AND run_waits.handoff_runtime_instance_id IS NULL
+                   AND run_waits.handoff_workspace_mount_id IS NULL
+                   AND run_waits.handoff_resume_checkpoint_id IS NULL
+                   AND runs.actor_start_input_sequence <= runs.actor_start_input_high_watermark
+                   AND restore_actor.committed_input_sequence >= runs.actor_start_input_sequence
+                   AND restore_actor.committed_input_sequence < restore_actor.next_input_sequence
+                   AND run_checkpoints.actor_speculative_input_sequence
+                       BETWEEN restore_actor.committed_input_sequence
+                           AND restore_actor.next_input_sequence - 1
+            ))
+       )
+       AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
      GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-              runs.queue_class, runs.queue_name
+              coalesce(runs.concurrency_key, ''), runs.queue_name
 )
-SELECT org_id, project_id, environment_id, region_id, queue_class, queue_name, sort_key FROM candidate_scopes
+SELECT org_id, project_id, environment_id, region_id, concurrency_key, queue_name, sort_key FROM candidate_scopes
  WHERE $1::text = ''
-    OR (sort_key, org_id, project_id, environment_id, region_id, queue_class, queue_name)
+    OR (sort_key, org_id, project_id, environment_id, region_id, concurrency_key, queue_name)
        > ($1::text, $2::uuid,
           $3::uuid, $4::uuid,
           $5::text, $6::text,
           $7::text)
- ORDER BY sort_key, org_id, project_id, environment_id, region_id, queue_class, queue_name
+ ORDER BY sort_key, org_id, project_id, environment_id, region_id, concurrency_key, queue_name
  LIMIT $8
 `
 
 type ListQueuedRunCandidateScopesParams struct {
-	AfterSortKey       string      `json:"after_sort_key"`
-	AfterOrgID         pgtype.UUID `json:"after_org_id"`
-	AfterProjectID     pgtype.UUID `json:"after_project_id"`
-	AfterEnvironmentID pgtype.UUID `json:"after_environment_id"`
-	AfterRegionID      string      `json:"after_region_id"`
-	AfterQueueClass    string      `json:"after_queue_class"`
-	AfterQueueName     string      `json:"after_queue_name"`
-	RowLimit           int32       `json:"row_limit"`
-	ScanSeed           string      `json:"scan_seed"`
+	AfterSortKey        string      `json:"after_sort_key"`
+	AfterOrgID          pgtype.UUID `json:"after_org_id"`
+	AfterProjectID      pgtype.UUID `json:"after_project_id"`
+	AfterEnvironmentID  pgtype.UUID `json:"after_environment_id"`
+	AfterRegionID       string      `json:"after_region_id"`
+	AfterConcurrencyKey string      `json:"after_concurrency_key"`
+	AfterQueueName      string      `json:"after_queue_name"`
+	RowLimit            int32       `json:"row_limit"`
+	ScanSeed            string      `json:"scan_seed"`
 }
 
 type ListQueuedRunCandidateScopesRow struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	RegionID      string      `json:"region_id"`
-	QueueClass    string      `json:"queue_class"`
-	QueueName     string      `json:"queue_name"`
-	SortKey       string      `json:"sort_key"`
+	OrgID          pgtype.UUID `json:"org_id"`
+	ProjectID      pgtype.UUID `json:"project_id"`
+	EnvironmentID  pgtype.UUID `json:"environment_id"`
+	RegionID       string      `json:"region_id"`
+	ConcurrencyKey string      `json:"concurrency_key"`
+	QueueName      string      `json:"queue_name"`
+	SortKey        string      `json:"sort_key"`
 }
 
 func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueuedRunCandidateScopesParams) ([]ListQueuedRunCandidateScopesRow, error) {
@@ -933,7 +1188,7 @@ func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueu
 		arg.AfterProjectID,
 		arg.AfterEnvironmentID,
 		arg.AfterRegionID,
-		arg.AfterQueueClass,
+		arg.AfterConcurrencyKey,
 		arg.AfterQueueName,
 		arg.RowLimit,
 		arg.ScanSeed,
@@ -950,7 +1205,7 @@ func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueu
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RegionID,
-			&i.QueueClass,
+			&i.ConcurrencyKey,
 			&i.QueueName,
 			&i.SortKey,
 		); err != nil {
@@ -967,31 +1222,157 @@ func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueu
 const listQueuedRunDispatchCandidatesForScope = `-- name: ListQueuedRunDispatchCandidatesForScope :many
 SELECT runs.org_id, runs.id AS run_id, runs.state_version
   FROM runs
-  JOIN workspaces ON workspaces.org_id = runs.org_id
-                 AND workspaces.project_id = runs.project_id
-                 AND workspaces.environment_id = runs.environment_id
+  JOIN workspaces ON workspaces.environment_id = runs.environment_id
                  AND workspaces.id = runs.workspace_id
  WHERE runs.org_id = $1
    AND runs.project_id = $2
    AND runs.environment_id = $3
    AND workspaces.region_id = $4
-   AND runs.queue_class = $5
+   AND runs.concurrency_key IS NOT DISTINCT FROM $5::text
    AND runs.queue_name = $6
-   AND runs.status = 'queued' AND runs.current_run_lease_id IS NULL
-   AND runs.queue_timestamp <= now()
-   AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
- ORDER BY runs.priority DESC, runs.queue_timestamp, runs.id
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+   AND (
+       (runs.entrypoint_kind = 'task'
+        AND runs.actor_id IS NULL
+        AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
+        AND (
+          (workspaces.owner_run_id = runs.id
+           AND workspaces.owner_actor_id IS NULL
+           AND (NOT EXISTS (
+           SELECT 1
+             FROM run_waits
+            WHERE run_waits.run_id = runs.id
+              AND run_waits.suspension_state IN (
+                  'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
+              )
+        ) OR EXISTS (
+           SELECT 1
+             FROM run_waits
+             JOIN run_checkpoints
+               ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+              AND run_checkpoints.kind = 'suspend'
+              AND run_checkpoints.run_id = run_waits.run_id
+              AND run_checkpoints.attempt_number = run_waits.attempt_number
+              AND run_checkpoints.run_wait_id = run_waits.id
+              AND run_checkpoints.workspace_id = run_waits.workspace_id
+              AND run_checkpoints.state = 'ready'
+              AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+             JOIN workspace_versions
+               ON workspace_versions.workspace_id = run_checkpoints.workspace_id
+              AND workspace_versions.id = run_checkpoints.private_workspace_version_id
+              AND workspace_versions.state = 'private'
+            WHERE run_waits.run_id = runs.id
+              AND run_waits.suspension_state = 'resume_pending'
+              AND run_waits.handoff_runtime_instance_id IS NULL
+              AND run_waits.handoff_workspace_mount_id IS NULL
+              AND run_waits.handoff_resume_checkpoint_id IS NULL
+          )))
+          OR EXISTS (
+              SELECT 1
+                FROM run_waits AS handoff
+                JOIN runs AS parent
+                  ON parent.environment_id = handoff.environment_id
+                 AND parent.id = handoff.run_id
+                 AND parent.workspace_id = handoff.workspace_id
+                 AND parent.status = 'waiting'
+                 AND parent.current_run_lease_id IS NULL
+                JOIN run_checkpoints AS checkpoint
+                  ON checkpoint.id = handoff.suspend_checkpoint_id
+                 AND checkpoint.kind = 'suspend'
+                 AND checkpoint.run_id = handoff.run_id
+                 AND checkpoint.attempt_number = handoff.attempt_number
+                 AND checkpoint.run_wait_id = handoff.id
+                 AND checkpoint.workspace_id = handoff.workspace_id
+                 AND checkpoint.state = 'ready'
+                JOIN workspace_versions AS base
+                  ON base.workspace_id = handoff.workspace_id
+                 AND base.id = handoff.base_workspace_version_id
+                 AND base.state = 'private'
+               WHERE handoff.child_run_id = runs.id
+                 AND handoff.child_parent_owned IS TRUE
+                 AND handoff.workspace_id = runs.workspace_id
+                 AND handoff.condition_state = 'pending'
+                 AND handoff.suspension_state = 'parked'
+                 AND handoff.base_workspace_version_id =
+                     runs.base_workspace_version_id
+                 AND handoff.handoff_runtime_instance_id IS NOT NULL
+                 AND handoff.handoff_workspace_mount_id IS NOT NULL
+                 AND handoff.handoff_mount_generation IS NOT NULL
+                 AND handoff.ownership_generation IS NOT NULL
+                 AND handoff.parent_writer_generation IS NOT NULL
+                 AND handoff.child_writer_generation IS NULL
+          )
+        ))
+       OR
+       (runs.entrypoint_kind = 'actor'
+        AND runs.actor_id IS NOT NULL
+        AND runs.cause_kind IN ('actor_start', 'continuation')
+        AND runs.parent_run_id IS NULL
+        AND workspaces.owner_actor_id = runs.actor_id
+        AND workspaces.owner_run_id IS NULL
+        AND EXISTS (
+            SELECT 1 FROM actors
+             WHERE actors.id = runs.actor_id
+               AND actors.workspace_id = runs.workspace_id
+               AND actors.current_run_id = runs.id
+               AND actors.state IN ('open', 'closing')
+        )
+        AND EXISTS (
+            SELECT 1
+              FROM run_waits
+              JOIN run_checkpoints
+                ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+               AND run_checkpoints.kind = 'suspend'
+               AND run_checkpoints.run_id = run_waits.run_id
+               AND run_checkpoints.attempt_number = run_waits.attempt_number
+               AND run_checkpoints.run_wait_id = run_waits.id
+               AND run_checkpoints.workspace_id = run_waits.workspace_id
+               AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
+               AND run_checkpoints.state = 'ready'
+               AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+              JOIN workspace_versions
+                ON workspace_versions.workspace_id = run_checkpoints.workspace_id
+               AND workspace_versions.id = run_checkpoints.private_workspace_version_id
+               AND workspace_versions.state = 'private'
+              JOIN actors AS restore_actor
+                ON restore_actor.id = runs.actor_id
+               AND restore_actor.workspace_id = runs.workspace_id
+               AND restore_actor.current_run_id = runs.id
+               AND restore_actor.state IN ('open', 'closing')
+              JOIN run_attempts AS restore_attempt
+                ON restore_attempt.run_id = runs.id
+               AND restore_attempt.number = runs.current_attempt_number
+               AND restore_attempt.workspace_id = runs.workspace_id
+               AND restore_attempt.entrypoint_kind = 'actor'
+               AND restore_attempt.actor_start_input_sequence = runs.actor_start_input_sequence
+               AND restore_attempt.terminal_at IS NULL
+             WHERE run_waits.run_id = runs.id
+               AND run_waits.suspension_state = 'resume_pending'
+               AND run_waits.handoff_runtime_instance_id IS NULL
+               AND run_waits.handoff_workspace_mount_id IS NULL
+               AND run_waits.handoff_resume_checkpoint_id IS NULL
+               AND runs.actor_start_input_sequence <= runs.actor_start_input_high_watermark
+               AND restore_actor.committed_input_sequence >= runs.actor_start_input_sequence
+               AND restore_actor.committed_input_sequence < restore_actor.next_input_sequence
+               AND run_checkpoints.actor_speculative_input_sequence
+                   BETWEEN restore_actor.committed_input_sequence
+                       AND restore_actor.next_input_sequence - 1
+        ))
+   )
+   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+ ORDER BY runs.queue_score_at, runs.id
  LIMIT $7
 `
 
 type ListQueuedRunDispatchCandidatesForScopeParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	RegionID      string      `json:"region_id"`
-	QueueClass    string      `json:"queue_class"`
-	QueueName     string      `json:"queue_name"`
-	RowLimit      int32       `json:"row_limit"`
+	OrgID          pgtype.UUID `json:"org_id"`
+	ProjectID      pgtype.UUID `json:"project_id"`
+	EnvironmentID  pgtype.UUID `json:"environment_id"`
+	RegionID       string      `json:"region_id"`
+	ConcurrencyKey pgtype.Text `json:"concurrency_key"`
+	QueueName      string      `json:"queue_name"`
+	RowLimit       int32       `json:"row_limit"`
 }
 
 type ListQueuedRunDispatchCandidatesForScopeRow struct {
@@ -1006,7 +1387,7 @@ func (q *Queries) ListQueuedRunDispatchCandidatesForScope(ctx context.Context, a
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.RegionID,
-		arg.QueueClass,
+		arg.ConcurrencyKey,
 		arg.QueueName,
 		arg.RowLimit,
 	)
@@ -1029,7 +1410,7 @@ func (q *Queries) ListQueuedRunDispatchCandidatesForScope(ctx context.Context, a
 }
 
 const listWorkerInstances = `-- name: ListWorkerInstances :many
-SELECT id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at FROM worker_instances
+SELECT id, resource_id, worker_group_id, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, epoch_build_cache_bytes, epoch_artifact_cache_bytes, epoch_hugepages_bytes, epoch_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at FROM worker_instances
  WHERE $1::text = 'all' OR state::text = $1::text
  ORDER BY updated_at DESC, created_at ASC
  LIMIT $2
@@ -1053,7 +1434,6 @@ func (q *Queries) ListWorkerInstances(ctx context.Context, arg ListWorkerInstanc
 			&i.ID,
 			&i.ResourceID,
 			&i.WorkerGroupID,
-			&i.AttestationFingerprint,
 			&i.State,
 			&i.ClaimVersion,
 			&i.CurrentEpoch,
@@ -1063,36 +1443,28 @@ func (q *Queries) ListWorkerInstances(ctx context.Context, arg ListWorkerInstanc
 			&i.SupportsRun,
 			&i.SupportsBuild,
 			&i.RuntimeIdentityID,
-			&i.CertifiedCpuMillis,
-			&i.CertifiedMemoryBytes,
-			&i.CertifiedWorkloadDiskBytes,
-			&i.CertifiedScratchBytes,
-			&i.CertifiedBuildCacheBytes,
-			&i.CertifiedArtifactCacheBytes,
-			&i.CertifiedHugepagesBytes,
-			&i.CertifiedCheckpointBytes,
+			&i.SubstrateFormat,
+			&i.SubstrateBuilderAbi,
+			&i.SubstrateLayoutAbi,
+			&i.EpochCpuMillis,
+			&i.EpochMemoryBytes,
+			&i.EpochGuestEphemeralDiskBytes,
+			&i.EpochBuildCacheBytes,
+			&i.EpochArtifactCacheBytes,
+			&i.EpochHugepagesBytes,
+			&i.EpochCheckpointBytes,
 			&i.PerVmCpuMillis,
 			&i.PerVmMemoryBytes,
-			&i.PerVmWorkloadDiskBytes,
-			&i.PerVmScratchBytes,
+			&i.PerVmGuestEphemeralDiskBytes,
 			&i.MaxVmSlots,
 			&i.MaxRunConsumers,
 			&i.MaxBuildExecutors,
 			&i.MaxRuntimeStarts,
-			&i.CertificationProfile,
-			&i.CertificationFingerprint,
 			&i.EpochStartedAt,
-			&i.StartupInventoryEpoch,
-			&i.StartupInventoryEvidence,
-			&i.DrainCleanupFingerprint,
-			&i.DrainCleanupEvidence,
-			&i.CertifiedAt,
 			&i.ActivatedAt,
 			&i.DrainingAt,
-			&i.DisabledAt,
+			&i.TerminationReadyAt,
 			&i.LostAt,
-			&i.TerminationClaimedAt,
-			&i.ProviderTerminatedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -1104,242 +1476,4 @@ func (q *Queries) ListWorkerInstances(ctx context.Context, arg ListWorkerInstanc
 		return nil, err
 	}
 	return items, nil
-}
-
-const prepareQueuedRunDispatch = `-- name: PrepareQueuedRunDispatch :one
-SELECT runs.id, runs.public_id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_identity_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.resource_placement_policy, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_run_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, workspaces.region_id
-  FROM runs
-  JOIN workspaces
-    ON workspaces.org_id = runs.org_id
-   AND workspaces.project_id = runs.project_id
-   AND workspaces.environment_id = runs.environment_id
-   AND workspaces.id = runs.workspace_id
- WHERE runs.org_id = $1
-   AND runs.id = $2
-   AND runs.status = 'queued'
-   AND runs.current_run_lease_id IS NULL
-   AND runs.queue_timestamp <= now()
-   AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
- FOR UPDATE OF runs
-`
-
-type PrepareQueuedRunDispatchParams struct {
-	OrgID pgtype.UUID `json:"org_id"`
-	RunID pgtype.UUID `json:"run_id"`
-}
-
-type PrepareQueuedRunDispatchRow struct {
-	ID                      pgtype.UUID            `json:"id"`
-	PublicID                string                 `json:"public_id"`
-	OrgID                   pgtype.UUID            `json:"org_id"`
-	ProjectID               pgtype.UUID            `json:"project_id"`
-	EnvironmentID           pgtype.UUID            `json:"environment_id"`
-	DeploymentID            pgtype.UUID            `json:"deployment_id"`
-	DeploymentTaskID        pgtype.UUID            `json:"deployment_task_id"`
-	WorkspaceID             pgtype.UUID            `json:"workspace_id"`
-	DeploymentVersion       string                 `json:"deployment_version"`
-	ApiVersion              string                 `json:"api_version"`
-	SdkVersion              string                 `json:"sdk_version"`
-	CliVersion              string                 `json:"cli_version"`
-	TaskID                  string                 `json:"task_id"`
-	SessionID               pgtype.UUID            `json:"session_id"`
-	ScheduleID              pgtype.UUID            `json:"schedule_id"`
-	ScheduleInstanceID      pgtype.UUID            `json:"schedule_instance_id"`
-	ScheduledAt             pgtype.Timestamptz     `json:"scheduled_at"`
-	Status                  RunStatus              `json:"status"`
-	ExecutionStatus         RunExecutionStatus     `json:"execution_status"`
-	TerminalOutcome         NullRunTerminalOutcome `json:"terminal_outcome"`
-	Payload                 []byte                 `json:"payload"`
-	Output                  []byte                 `json:"output"`
-	Metadata                []byte                 `json:"metadata"`
-	Tags                    []string               `json:"tags"`
-	LockedRetryPolicy       []byte                 `json:"locked_retry_policy"`
-	QueueClass              string                 `json:"queue_class"`
-	QueueName               string                 `json:"queue_name"`
-	QueueConcurrencyLimit   pgtype.Int4            `json:"queue_concurrency_limit"`
-	ConcurrencyKey          pgtype.Text            `json:"concurrency_key"`
-	Priority                int32                  `json:"priority"`
-	QueueTimestamp          pgtype.Timestamptz     `json:"queue_timestamp"`
-	Ttl                     string                 `json:"ttl"`
-	QueuedExpiresAt         pgtype.Timestamptz     `json:"queued_expires_at"`
-	RequestedMilliCpu       int64                  `json:"requested_milli_cpu"`
-	RequestedMemoryMib      int64                  `json:"requested_memory_mib"`
-	RequestedDiskMib        int64                  `json:"requested_disk_mib"`
-	RequestedExecutionSlots int32                  `json:"requested_execution_slots"`
-	RuntimeIdentityID       string                 `json:"runtime_identity_id"`
-	RuntimeArch             string                 `json:"runtime_arch"`
-	RuntimeABI              string                 `json:"runtime_abi"`
-	KernelDigest            string                 `json:"kernel_digest"`
-	InitramfsDigest         string                 `json:"initramfs_digest"`
-	RootfsDigest            string                 `json:"rootfs_digest"`
-	CniProfile              string                 `json:"cni_profile"`
-	NetworkPolicy           []byte                 `json:"network_policy"`
-	ResourcePlacementPolicy []byte                 `json:"resource_placement_policy"`
-	MaxActiveDurationMs     int64                  `json:"max_active_duration_ms"`
-	ActiveElapsedMs         int64                  `json:"active_elapsed_ms"`
-	ActiveStartedAt         pgtype.Timestamptz     `json:"active_started_at"`
-	TraceID                 pgtype.Text            `json:"trace_id"`
-	RootSpanID              string                 `json:"root_span_id"`
-	StateVersion            int64                  `json:"state_version"`
-	CurrentAttemptNumber    int32                  `json:"current_attempt_number"`
-	CurrentRunLeaseID       pgtype.UUID            `json:"current_run_lease_id"`
-	LatestRunCheckpointID   pgtype.UUID            `json:"latest_run_checkpoint_id"`
-	ExitCode                pgtype.Int4            `json:"exit_code"`
-	ErrorMessage            pgtype.Text            `json:"error_message"`
-	CreatedAt               pgtype.Timestamptz     `json:"created_at"`
-	UpdatedAt               pgtype.Timestamptz     `json:"updated_at"`
-	StartedAt               pgtype.Timestamptz     `json:"started_at"`
-	FinishedAt              pgtype.Timestamptz     `json:"finished_at"`
-	RegionID                string                 `json:"region_id"`
-}
-
-func (q *Queries) PrepareQueuedRunDispatch(ctx context.Context, arg PrepareQueuedRunDispatchParams) (PrepareQueuedRunDispatchRow, error) {
-	row := q.db.QueryRow(ctx, prepareQueuedRunDispatch, arg.OrgID, arg.RunID)
-	var i PrepareQueuedRunDispatchRow
-	err := row.Scan(
-		&i.ID,
-		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.DeploymentID,
-		&i.DeploymentTaskID,
-		&i.WorkspaceID,
-		&i.DeploymentVersion,
-		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
-		&i.TaskID,
-		&i.SessionID,
-		&i.ScheduleID,
-		&i.ScheduleInstanceID,
-		&i.ScheduledAt,
-		&i.Status,
-		&i.ExecutionStatus,
-		&i.TerminalOutcome,
-		&i.Payload,
-		&i.Output,
-		&i.Metadata,
-		&i.Tags,
-		&i.LockedRetryPolicy,
-		&i.QueueClass,
-		&i.QueueName,
-		&i.QueueConcurrencyLimit,
-		&i.ConcurrencyKey,
-		&i.Priority,
-		&i.QueueTimestamp,
-		&i.Ttl,
-		&i.QueuedExpiresAt,
-		&i.RequestedMilliCpu,
-		&i.RequestedMemoryMib,
-		&i.RequestedDiskMib,
-		&i.RequestedExecutionSlots,
-		&i.RuntimeIdentityID,
-		&i.RuntimeArch,
-		&i.RuntimeABI,
-		&i.KernelDigest,
-		&i.InitramfsDigest,
-		&i.RootfsDigest,
-		&i.CniProfile,
-		&i.NetworkPolicy,
-		&i.ResourcePlacementPolicy,
-		&i.MaxActiveDurationMs,
-		&i.ActiveElapsedMs,
-		&i.ActiveStartedAt,
-		&i.TraceID,
-		&i.RootSpanID,
-		&i.StateVersion,
-		&i.CurrentAttemptNumber,
-		&i.CurrentRunLeaseID,
-		&i.LatestRunCheckpointID,
-		&i.ExitCode,
-		&i.ErrorMessage,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.StartedAt,
-		&i.FinishedAt,
-		&i.RegionID,
-	)
-	return i, err
-}
-
-const setWorkerInstanceState = `-- name: SetWorkerInstanceState :one
-UPDATE worker_instances
-   SET state = $1::worker_instance_state,
-       draining_at = CASE WHEN $1::worker_instance_state = 'draining'
-                          THEN COALESCE(draining_at, now()) ELSE draining_at END,
-       disabled_at = CASE WHEN $1::worker_instance_state = 'disabled'
-                          THEN COALESCE(disabled_at, now()) ELSE disabled_at END,
-       lost_at = CASE WHEN $1::worker_instance_state = 'lost'
-                      THEN COALESCE(lost_at, now()) ELSE lost_at END,
-       updated_at = now()
- WHERE id = $2
-   AND worker_group_id = $3
-   AND ($4::bigint IS NULL OR current_epoch = $4::bigint)
-RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
-`
-
-type SetWorkerInstanceStateParams struct {
-	State         WorkerInstanceState `json:"state"`
-	ID            pgtype.UUID         `json:"id"`
-	WorkerGroupID string              `json:"worker_group_id"`
-	ExpectedEpoch pgtype.Int8         `json:"expected_epoch"`
-}
-
-func (q *Queries) SetWorkerInstanceState(ctx context.Context, arg SetWorkerInstanceStateParams) (WorkerInstance, error) {
-	row := q.db.QueryRow(ctx, setWorkerInstanceState,
-		arg.State,
-		arg.ID,
-		arg.WorkerGroupID,
-		arg.ExpectedEpoch,
-	)
-	var i WorkerInstance
-	err := row.Scan(
-		&i.ID,
-		&i.ResourceID,
-		&i.WorkerGroupID,
-		&i.AttestationFingerprint,
-		&i.State,
-		&i.ClaimVersion,
-		&i.CurrentEpoch,
-		&i.CurrentServiceID,
-		&i.ProtocolVersion,
-		&i.SupervisorVersion,
-		&i.SupportsRun,
-		&i.SupportsBuild,
-		&i.RuntimeIdentityID,
-		&i.CertifiedCpuMillis,
-		&i.CertifiedMemoryBytes,
-		&i.CertifiedWorkloadDiskBytes,
-		&i.CertifiedScratchBytes,
-		&i.CertifiedBuildCacheBytes,
-		&i.CertifiedArtifactCacheBytes,
-		&i.CertifiedHugepagesBytes,
-		&i.CertifiedCheckpointBytes,
-		&i.PerVmCpuMillis,
-		&i.PerVmMemoryBytes,
-		&i.PerVmWorkloadDiskBytes,
-		&i.PerVmScratchBytes,
-		&i.MaxVmSlots,
-		&i.MaxRunConsumers,
-		&i.MaxBuildExecutors,
-		&i.MaxRuntimeStarts,
-		&i.CertificationProfile,
-		&i.CertificationFingerprint,
-		&i.EpochStartedAt,
-		&i.StartupInventoryEpoch,
-		&i.StartupInventoryEvidence,
-		&i.DrainCleanupFingerprint,
-		&i.DrainCleanupEvidence,
-		&i.CertifiedAt,
-		&i.ActivatedAt,
-		&i.DrainingAt,
-		&i.DisabledAt,
-		&i.LostAt,
-		&i.TerminationClaimedAt,
-		&i.ProviderTerminatedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
 }

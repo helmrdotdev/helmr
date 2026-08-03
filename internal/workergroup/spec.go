@@ -31,27 +31,24 @@ func Normalize(spec Spec) (Spec, error) {
 }
 
 type Desired struct {
-	Spec                           Spec
-	Capacity                       Capacity
-	EnrollmentPolicyFingerprint    string
-	AllowedAttestationFingerprints []string
-	LaunchAttestationFingerprint   string
+	Spec                  Spec
+	Capacity              Capacity
+	ObservationTTLSeconds int32
 }
 
 type Capacity struct {
-	MilliCPU           int64 `json:"milli_cpu"`
-	MemoryBytes        int64 `json:"memory_bytes"`
-	WorkloadDiskBytes  int64 `json:"workload_disk_bytes"`
-	ScratchBytes       int64 `json:"scratch_bytes"`
-	BuildCacheBytes    int64 `json:"build_cache_bytes"`
-	ArtifactCacheBytes int64 `json:"artifact_cache_bytes"`
-	VMSlots            int32 `json:"vm_slots"`
-	BuildExecutors     int32 `json:"build_executors"`
+	MilliCPU                int64 `json:"milli_cpu"`
+	MemoryBytes             int64 `json:"memory_bytes"`
+	GuestEphemeralDiskBytes int64 `json:"guest_ephemeral_disk_bytes"`
+	BuildCacheBytes         int64 `json:"build_cache_bytes"`
+	ArtifactCacheBytes      int64 `json:"artifact_cache_bytes"`
+	VMSlots                 int32 `json:"vm_slots"`
+	BuildExecutors          int32 `json:"build_executors"`
 }
 
 func (capacity Capacity) Validate(spec Spec) error {
-	if capacity.MilliCPU <= 0 || capacity.MemoryBytes <= 0 || capacity.WorkloadDiskBytes <= 0 || capacity.ScratchBytes <= 0 {
-		return errors.New("worker group cpu, memory, workload disk, and scratch capacity must be positive")
+	if capacity.MilliCPU <= 0 || capacity.MemoryBytes <= 0 || capacity.GuestEphemeralDiskBytes <= 0 {
+		return errors.New("worker group cpu, memory, and guest ephemeral disk capacity must be positive")
 	}
 	if capacity.BuildCacheBytes < 0 || capacity.ArtifactCacheBytes < 0 || capacity.VMSlots < 0 || capacity.BuildExecutors < 0 {
 		return errors.New("worker group capacity must not be negative")

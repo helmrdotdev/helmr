@@ -3,12 +3,12 @@ data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
 locals {
-  public_url_host          = var.public_url == null ? null : regex("^https?://([^/:]+)", var.public_url)[0]
-  worker_control_dns_name  = var.enable_cloudfront ? var.cloudfront_origin_domain_name : local.public_url_host
-  private_control_dns_name = var.create_worker ? local.worker_control_dns_name : null
-  worker_control_url       = module.control.private_control_url
-  worker_ami_id            = coalesce(module.release_artifacts.worker_ami_id, "ami-unconfigured")
-  worker_allowed_ami_ids   = distinct(compact(concat([local.worker_ami_id], var.worker_allowed_ami_ids)))
+  worker_control_url      = module.control.control_url
+  worker_ami_id           = coalesce(module.release_artifacts.worker_ami_id, "ami-unconfigured")
+  boot_corpus_reserve_mib = 2048
+  build_scratch_min_mib   = max(32768, coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib)) + local.boot_corpus_reserve_mib
+  build_worker_cpu_millis = coalesce(var.build_worker_capacity_vcpus, var.worker_capacity_vcpus, 0) * 1000
+  build_worker_memory_mib = coalesce(var.build_worker_capacity_memory_mib, var.worker_capacity_memory_mib, 0)
   worker_pools = {
     run = {
       name         = "${lower(var.name)}-run"
@@ -30,120 +30,45 @@ locals {
     }
   }
   worker_groups = [for pool in values(local.worker_pools) : {
-    id                   = pool.group_id
-    name                 = one(pool.roles)
-    description          = "${title(one(pool.roles))} workers"
-    region               = var.aws_region
-    account_id           = data.aws_caller_identity.current.account_id
-    autoscaling_group    = "${pool.name}-worker"
-    instance_profile_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${pool.name}-worker"
-    launch_ami_id        = local.worker_ami_id
-    ami_ids              = local.worker_allowed_ami_ids
-    allows_run           = pool.allows_run
-    allows_build         = pool.allows_build
+    id                      = pool.group_id
+    name                    = one(pool.roles)
+    description             = "${title(one(pool.roles))} workers"
+    allows_run              = pool.allows_run
+    allows_build            = pool.allows_build
+    observation_ttl_seconds = var.worker_observation_ttl_seconds
     instance_capacity = !var.create_worker ? {
-      milli_cpu         = 1, memory_bytes = 1, workload_disk_bytes = 1, scratch_bytes = 1,
+      milli_cpu         = 1, memory_bytes = 1, guest_ephemeral_disk_bytes = 1,
       build_cache_bytes = 0, artifact_cache_bytes = 0,
       vm_slots          = pool.allows_run ? 1 : 0, build_executors = pool.allows_build ? 1 : 0
       } : pool.allows_run ? {
-      milli_cpu            = coalesce(var.worker_capacity_vcpus, 0) * 1000
-      memory_bytes         = coalesce(var.worker_capacity_memory_mib, 0) * 1048576
-      workload_disk_bytes  = local.run_worker_workload_disk_mib * 1048576
-      scratch_bytes        = local.run_worker_scratch_mib * 1048576
-      build_cache_bytes    = local.run_worker_build_cache_mib * 1048576
-      artifact_cache_bytes = local.run_worker_artifact_cache_mib * 1048576
-      vm_slots             = coalesce(var.worker_execution_slots, 0)
-      build_executors      = 0
+      milli_cpu                  = coalesce(var.worker_capacity_vcpus, 0) * 1000
+      memory_bytes               = coalesce(var.worker_capacity_memory_mib, 0) * 1048576
+      guest_ephemeral_disk_bytes = local.run_worker_guest_ephemeral_disk_mib * 1048576
+      build_cache_bytes          = local.run_worker_build_cache_mib * 1048576
+      artifact_cache_bytes       = local.run_worker_artifact_cache_mib * 1048576
+      vm_slots                   = coalesce(var.worker_execution_slots, 0)
+      build_executors            = 0
       } : {
-      milli_cpu            = coalesce(var.build_worker_capacity_vcpus, var.worker_capacity_vcpus, 0) * 1000
-      memory_bytes         = coalesce(var.build_worker_capacity_memory_mib, var.worker_capacity_memory_mib, 0) * 1048576
-      workload_disk_bytes  = local.build_worker_workload_disk_mib * 1048576
-      scratch_bytes        = local.build_worker_scratch_mib * 1048576
-      build_cache_bytes    = local.build_worker_build_cache_mib * 1048576
-      artifact_cache_bytes = local.build_worker_artifact_cache_mib * 1048576
-      vm_slots             = 0
-      build_executors      = coalesce(var.build_worker_execution_slots, var.worker_execution_slots, 0)
+      milli_cpu                  = local.build_worker_cpu_millis
+      memory_bytes               = local.build_worker_memory_mib * 1048576
+      guest_ephemeral_disk_bytes = local.build_worker_guest_ephemeral_disk_mib * 1048576
+      build_cache_bytes          = local.build_worker_build_cache_mib * 1048576
+      artifact_cache_bytes       = local.build_worker_artifact_cache_mib * 1048576
+      vm_slots                   = 0
+      build_executors            = coalesce(var.build_worker_execution_slots, var.worker_execution_slots, 0)
     }
   }]
-  run_worker_build_cache_mib      = coalesce(var.worker_substrate_cache_max_mib, 0)
-  run_worker_artifact_cache_mib   = coalesce(var.worker_artifact_cache_max_mib, 0)
-  run_worker_disk_reserve_mib     = var.worker_disk_reserve_mib
-  run_worker_shared_disk_mib      = coalesce(var.worker_disk_mib, 0) - local.run_worker_disk_reserve_mib - local.run_worker_build_cache_mib - local.run_worker_artifact_cache_mib
-  run_worker_workload_disk_mib    = floor(local.run_worker_shared_disk_mib / 2)
-  run_worker_scratch_mib          = ceil(local.run_worker_shared_disk_mib / 2)
-  build_worker_build_cache_mib    = coalesce(var.build_worker_substrate_cache_max_mib, var.worker_substrate_cache_max_mib, 0)
-  build_worker_artifact_cache_mib = coalesce(var.build_worker_artifact_cache_max_mib, var.worker_artifact_cache_max_mib, 0)
-  build_worker_disk_reserve_mib   = coalesce(var.build_worker_disk_reserve_mib, var.worker_disk_reserve_mib)
-  build_worker_shared_disk_mib    = coalesce(var.build_worker_disk_mib, var.worker_disk_mib, 0) - local.build_worker_disk_reserve_mib - local.build_worker_build_cache_mib - local.build_worker_artifact_cache_mib
-  build_worker_workload_disk_mib  = floor(local.build_worker_shared_disk_mib / 2)
-  build_worker_scratch_mib        = ceil(local.build_worker_shared_disk_mib / 2)
-  worker_fleets = var.create_worker ? [
-    {
-      group_id           = local.worker_pools.run.group_id
-      autoscaling_group  = "${local.worker_pools.run.name}-worker"
-      role               = "run"
-      compatibility_keys = [local.worker_pools.run.group_id]
-      instance_capacity = {
-        milli_cpu            = coalesce(var.worker_capacity_vcpus, 0) * 1000
-        memory_bytes         = coalesce(var.worker_capacity_memory_mib, 0) * 1048576
-        workload_disk_bytes  = local.run_worker_workload_disk_mib * 1048576
-        scratch_bytes        = local.run_worker_scratch_mib * 1048576
-        build_cache_bytes    = local.run_worker_build_cache_mib * 1048576
-        artifact_cache_bytes = local.run_worker_artifact_cache_mib * 1048576
-        vm_slots             = coalesce(var.worker_execution_slots, 0)
-        build_executors      = 0
-      }
-      queued_run_scratch_bytes     = var.worker_vm_scratch_disk_mib * 1048576
-      min_workers                  = var.worker_min_size
-      warm_workers                 = var.worker_fleet_controller.run_warm_workers
-      max_workers                  = coalesce(var.worker_fleet_controller.run_max_workers, var.worker_max_size)
-      max_scale_out_per_cycle      = var.worker_fleet_controller.max_scale_out_per_cycle
-      max_pending_workers          = var.worker_fleet_controller.max_pending_workers
-      max_packing_items            = var.worker_fleet_controller.max_packing_items
-      controller_interval_seconds  = var.worker_fleet_controller.controller_interval_seconds
-      scale_out_cooldown_seconds   = var.worker_fleet_controller.scale_out_cooldown_seconds
-      scale_in_cooldown_seconds    = var.worker_fleet_controller.scale_in_cooldown_seconds
-      scale_in_hysteresis_seconds  = var.worker_fleet_controller.scale_in_hysteresis_seconds
-      stale_worker_timeout_seconds = var.worker_fleet_controller.stale_worker_timeout_seconds
-      readiness_timeout_seconds    = var.worker_fleet_controller.readiness_timeout_seconds
-      drain_timeout_seconds        = var.worker_fleet_controller.drain_timeout_seconds
-      emergency_stop               = var.worker_fleet_controller.emergency_stop
-      metric_interval_seconds      = var.worker_fleet_controller.metric_interval_seconds
-    },
-    {
-      group_id           = local.worker_pools.build.group_id
-      autoscaling_group  = "${local.worker_pools.build.name}-worker"
-      role               = "build"
-      compatibility_keys = [local.worker_pools.build.group_id]
-      instance_capacity = {
-        milli_cpu            = coalesce(var.build_worker_capacity_vcpus, var.worker_capacity_vcpus, 0) * 1000
-        memory_bytes         = coalesce(var.build_worker_capacity_memory_mib, var.worker_capacity_memory_mib, 0) * 1048576
-        workload_disk_bytes  = local.build_worker_workload_disk_mib * 1048576
-        scratch_bytes        = local.build_worker_scratch_mib * 1048576
-        build_cache_bytes    = local.build_worker_build_cache_mib * 1048576
-        artifact_cache_bytes = local.build_worker_artifact_cache_mib * 1048576
-        vm_slots             = 0
-        build_executors      = coalesce(var.build_worker_execution_slots, var.worker_execution_slots, 0)
-      }
-      queued_run_scratch_bytes     = 0
-      min_workers                  = var.build_worker_min_size
-      warm_workers                 = var.worker_fleet_controller.build_warm_workers
-      max_workers                  = coalesce(var.worker_fleet_controller.build_max_workers, var.build_worker_max_size)
-      max_scale_out_per_cycle      = var.worker_fleet_controller.max_scale_out_per_cycle
-      max_pending_workers          = var.worker_fleet_controller.max_pending_workers
-      max_packing_items            = var.worker_fleet_controller.max_packing_items
-      controller_interval_seconds  = var.worker_fleet_controller.controller_interval_seconds
-      scale_out_cooldown_seconds   = var.worker_fleet_controller.scale_out_cooldown_seconds
-      scale_in_cooldown_seconds    = var.worker_fleet_controller.scale_in_cooldown_seconds
-      scale_in_hysteresis_seconds  = var.worker_fleet_controller.scale_in_hysteresis_seconds
-      stale_worker_timeout_seconds = var.worker_fleet_controller.stale_worker_timeout_seconds
-      readiness_timeout_seconds    = var.worker_fleet_controller.readiness_timeout_seconds
-      drain_timeout_seconds        = var.worker_fleet_controller.drain_timeout_seconds
-      emergency_stop               = var.worker_fleet_controller.emergency_stop
-      metric_interval_seconds      = var.worker_fleet_controller.metric_interval_seconds
-    }
-  ] : []
-
+  run_worker_build_cache_mib            = coalesce(var.worker_substrate_cache_max_mib, 0)
+  run_worker_artifact_cache_mib         = coalesce(var.worker_artifact_cache_max_mib, 0)
+  run_worker_disk_reserve_mib           = var.worker_disk_reserve_mib
+  run_worker_shared_disk_mib            = coalesce(var.worker_disk_mib, 0) - local.run_worker_disk_reserve_mib - local.run_worker_build_cache_mib - local.run_worker_artifact_cache_mib
+  run_worker_guest_ephemeral_disk_mib   = local.run_worker_shared_disk_mib
+  build_worker_build_cache_mib          = coalesce(var.build_worker_substrate_cache_max_mib, var.worker_substrate_cache_max_mib, 0)
+  build_worker_artifact_cache_mib       = coalesce(var.build_worker_artifact_cache_max_mib, var.worker_artifact_cache_max_mib, 0)
+  build_worker_disk_reserve_mib         = coalesce(var.build_worker_disk_reserve_mib, var.worker_disk_reserve_mib)
+  build_worker_shared_disk_mib          = coalesce(var.build_worker_disk_mib, var.worker_disk_mib, 0) - local.build_worker_disk_reserve_mib - local.build_worker_build_cache_mib - local.build_worker_artifact_cache_mib
+  build_worker_guest_ephemeral_disk_mib = local.build_worker_scratch_mib - local.boot_corpus_reserve_mib
+  build_worker_scratch_mib              = local.build_worker_shared_disk_mib
   tags = merge(var.tags, {
     Project     = "helmr"
     Environment = var.environment
@@ -152,11 +77,21 @@ locals {
   })
 }
 
-module "network" {
+module "control_network" {
   source = "../modules/network"
 
-  name                    = var.name
-  vpc_cidr                = var.vpc_cidr
+  name                    = "${var.name}-control"
+  vpc_cidr                = var.control_vpc_cidr
+  availability_zone_count = var.availability_zone_count
+  enable_nat_gateway      = true
+  tags                    = local.tags
+}
+
+module "execution_network" {
+  source = "../modules/network"
+
+  name                    = "${var.name}-execution"
+  vpc_cidr                = var.execution_vpc_cidr
   availability_zone_count = var.availability_zone_count
   enable_nat_gateway      = true
   tags                    = local.tags
@@ -177,54 +112,55 @@ module "release_artifacts" {
 module "control" {
   source = "../modules/control"
 
-  name                                   = var.name
-  vpc_id                                 = module.network.vpc_id
-  public_subnet_ids                      = module.network.public_subnet_ids
-  private_subnet_ids                     = module.network.private_subnet_ids
-  public_url                             = var.public_url
-  deployment_mode                        = var.deployment_mode
-  worker_group_id                        = var.worker_group_id
-  worker_groups                          = local.worker_groups
-  worker_fleets                          = local.worker_fleets
-  region_id                              = var.region_id
-  default_region_id                      = var.default_region_id
-  clickhouse_url                         = var.clickhouse_url
-  clickhouse_user                        = var.clickhouse_user
-  clickhouse_password_secret_arn         = var.clickhouse_password_secret_arn
-  clickhouse_password_kms_key_arns       = var.clickhouse_password_kms_key_arns
-  additional_control_security_group_ids  = var.additional_control_security_group_ids
-  cloudfront_origin_domain_name          = var.cloudfront_origin_domain_name
-  control_image                          = module.release_artifacts.control_image
-  create_control_service                 = var.create_control_service
-  control_desired_count                  = var.control_desired_count
-  dispatcher_desired_count               = var.dispatcher_desired_count
-  control_assign_public_ip               = false
-  control_health_check_path              = var.control_health_check_path
-  email_provider                         = var.email_provider
-  email_from                             = var.email_from
-  smtp_addr                              = var.smtp_addr
-  smtp_username                          = var.smtp_username
-  smtp_password_enabled                  = var.smtp_password_enabled
-  redis_node_type                        = var.redis_node_type
-  redis_node_count                       = var.redis_node_count
-  certificate_arn                        = var.certificate_arn
-  allow_insecure_http                    = false
-  enable_cloudfront                      = var.enable_cloudfront
-  private_control_dns_name               = local.private_control_dns_name
-  github_oauth_client_id                 = var.github_oauth_client_id
-  secret_encryption_key_old_arn          = var.secret_encryption_key_old_arn
-  secret_encryption_key_old_kms_key_arns = var.secret_encryption_key_old_kms_key_arns
-  database_instance_class                = var.database_instance_class
-  database_allocated_storage_gb          = var.database_allocated_storage_gb
-  database_multi_az                      = var.database_multi_az
-  database_backup_retention_days         = var.database_backup_retention_days
-  database_performance_insights_enabled  = var.database_performance_insights_enabled
-  database_deletion_protection           = var.database_deletion_protection
-  database_skip_final_snapshot           = var.database_skip_final_snapshot
-  control_log_retention_days             = var.control_log_retention_days
-  kms_deletion_window_in_days            = var.kms_deletion_window_in_days
-  secret_recovery_window_in_days         = var.secret_recovery_window_in_days
-  tags                                   = local.tags
+  name                                  = var.name
+  vpc_id                                = module.control_network.vpc_id
+  public_subnet_ids                     = module.control_network.public_subnet_ids
+  private_subnet_ids                    = module.control_network.private_subnet_ids
+  public_url                            = var.public_url
+  deployment_mode                       = var.deployment_mode
+  worker_groups                         = local.worker_groups
+  image_cache_worker_role_arns          = [for pool in values(local.worker_pools) : "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${pool.name}-worker" if pool.allows_build]
+  region_id                             = var.region_id
+  default_region_id                     = var.default_region_id
+  clickhouse_url                        = var.clickhouse_url
+  clickhouse_user                       = var.clickhouse_user
+  clickhouse_password_secret_arn        = var.clickhouse_password_secret_arn
+  clickhouse_password_kms_key_arns      = var.clickhouse_password_kms_key_arns
+  additional_control_security_group_ids = var.additional_control_security_group_ids
+  cloudfront_origin_domain_name         = var.cloudfront_origin_domain_name
+  control_image                         = module.release_artifacts.control_image
+  control_image_repository_arn          = var.control_image_repository_arn
+  platform_store_uri                    = var.platform_store_uri
+  platform_store_bucket_arn             = var.platform_store_bucket_arn
+  platform_store_kms_key_arn            = var.platform_store_kms_key_arn
+  build_policy_digest                   = var.build_policy_digest
+  create_control_service                = var.create_control_service
+  control_desired_count                 = var.control_desired_count
+  dispatcher_desired_count              = var.dispatcher_desired_count
+  control_assign_public_ip              = false
+  control_health_check_path             = var.control_health_check_path
+  email_provider                        = var.email_provider
+  email_from                            = var.email_from
+  smtp_addr                             = var.smtp_addr
+  smtp_username                         = var.smtp_username
+  smtp_password_enabled                 = var.smtp_password_enabled
+  redis_node_type                       = var.redis_node_type
+  redis_node_count                      = var.redis_node_count
+  certificate_arn                       = var.certificate_arn
+  allow_insecure_http                   = false
+  enable_cloudfront                     = var.enable_cloudfront
+  github_oauth_client_id                = var.github_oauth_client_id
+  database_instance_class               = var.database_instance_class
+  database_allocated_storage_gb         = var.database_allocated_storage_gb
+  database_multi_az                     = var.database_multi_az
+  database_backup_retention_days        = var.database_backup_retention_days
+  database_performance_insights_enabled = var.database_performance_insights_enabled
+  database_deletion_protection          = var.database_deletion_protection
+  database_skip_final_snapshot          = var.database_skip_final_snapshot
+  control_log_retention_days            = var.control_log_retention_days
+  kms_deletion_window_in_days           = var.kms_deletion_window_in_days
+  secret_recovery_window_in_days        = var.secret_recovery_window_in_days
+  tags                                  = local.tags
 }
 
 module "worker_group" {
@@ -235,13 +171,17 @@ module "worker_group" {
   name                                       = each.value.name
   worker_group_id                            = each.value.group_id
   worker_roles                               = each.value.roles
-  vpc_id                                     = module.network.vpc_id
-  subnet_ids                                 = module.network.private_subnet_ids
+  network_blocked_ipv4_cidrs                 = var.worker_network_blocked_ipv4_cidrs
+  network_link_pool                          = var.worker_network_link_pool
+  network_translation_pool                   = var.worker_network_translation_pool
+  network_resolver_ipv4                      = var.worker_network_resolver_ipv4
+  vpc_id                                     = module.execution_network.vpc_id
+  subnet_ids                                 = module.execution_network.private_subnet_ids
   ami_id                                     = module.release_artifacts.worker_ami_id
   instance_type                              = each.key == "build" ? coalesce(var.build_worker_instance_type, var.worker_instance_type) : var.worker_instance_type
   enable_nested_virtualization               = each.key == "build" && var.build_worker_enable_nested_virtualization != null ? var.build_worker_enable_nested_virtualization : var.worker_enable_nested_virtualization
   enable_ssm                                 = var.worker_enable_ssm
-  launch_lifecycle_heartbeat_timeout_seconds = var.worker_fleet_controller.readiness_timeout_seconds
+  launch_lifecycle_heartbeat_timeout_seconds = var.worker_launch_timeout_seconds
   min_size                                   = each.value.min_size
   max_size                                   = each.value.max_size
   root_volume_size_gb                        = each.key == "build" ? coalesce(var.build_worker_root_volume_size_gb, var.worker_root_volume_size_gb) : var.worker_root_volume_size_gb
@@ -257,13 +197,24 @@ module "worker_group" {
   worker_execution_slots                     = each.key == "build" && var.build_worker_execution_slots != null ? var.build_worker_execution_slots : var.worker_execution_slots
   substrate_cache_max_mib                    = each.key == "build" && var.build_worker_substrate_cache_max_mib != null ? var.build_worker_substrate_cache_max_mib : var.worker_substrate_cache_max_mib
   artifact_cache_max_mib                     = each.key == "build" && var.build_worker_artifact_cache_max_mib != null ? var.build_worker_artifact_cache_max_mib : var.worker_artifact_cache_max_mib
+  build_cache_mib                            = each.key == "build" ? local.build_worker_build_cache_mib + local.build_worker_artifact_cache_mib : null
+  build_scratch_mib                          = each.key == "build" ? local.build_worker_scratch_mib : null
   worker_control_url                         = local.worker_control_url
   cas_uri                                    = module.control.cas_uri
   cas_bucket_arn                             = module.control.cas_bucket_arn
   kms_key_arn                                = module.control.kms_key_arn
+  platform_store_uri                         = var.platform_store_uri
+  platform_store_bucket_arn                  = var.platform_store_bucket_arn
+  platform_store_kms_key_arn                 = var.platform_store_kms_key_arn
+  build_policy_digest                        = each.key == "build" ? var.build_policy_digest : null
+  image_cache_registry_authority             = module.control.image_cache_registry_authority
+  image_cache_repository_prefix              = module.control.image_cache_repository_prefix
+  image_cache_role_arn                       = module.control.image_cache_role_arn
+  image_cache_repository_arn_prefix          = module.control.image_cache_repository_arn_prefix
 
   secret_arns = {
     checkpoint_encryption_key = module.control.secret_arns.checkpoint_encryption_key
+    worker_enrollment         = module.control.worker_enrollment_secret_arns[each.value.group_id]
   }
 
   tags = local.tags
@@ -303,24 +254,15 @@ resource "terraform_data" "worker_preconditions" {
         coalesce(var.worker_capacity_memory_mib, 0) > 0 &&
         coalesce(var.worker_execution_slots, 0) > 0 &&
         local.run_worker_build_cache_mib > 0 && local.run_worker_artifact_cache_mib > 0 &&
-        local.run_worker_workload_disk_mib >= var.worker_vm_scratch_disk_mib &&
-        local.run_worker_scratch_mib >= var.worker_vm_scratch_disk_mib &&
-        coalesce(var.build_worker_capacity_vcpus, var.worker_capacity_vcpus, 0) > 0 &&
-        coalesce(var.build_worker_capacity_memory_mib, var.worker_capacity_memory_mib, 0) > 0 &&
-        coalesce(var.build_worker_execution_slots, var.worker_execution_slots, 0) > 0 &&
+        local.run_worker_guest_ephemeral_disk_mib >= var.worker_vm_scratch_disk_mib &&
+        local.build_worker_cpu_millis >= 2000 &&
+        local.build_worker_memory_mib >= 2048 &&
+        coalesce(var.build_worker_execution_slots, var.worker_execution_slots, 0) == 1 &&
         local.build_worker_build_cache_mib > 0 && local.build_worker_artifact_cache_mib > 0 &&
-        local.build_worker_workload_disk_mib >= coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib) &&
-        local.build_worker_scratch_mib >= coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib)
+        local.build_worker_guest_ephemeral_disk_mib >= coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib) &&
+        local.build_worker_scratch_mib >= local.build_scratch_min_mib
       )
-      error_message = "worker groups require explicit certified CPU, memory, cache, disk-partition, and execution-slot capacity; one VM workload and scratch shape must fit each host partition."
-    }
-
-    precondition {
-      condition = !var.create_worker || (
-        coalesce(var.worker_fleet_controller.run_max_workers, var.worker_max_size) <= var.worker_max_size &&
-        coalesce(var.worker_fleet_controller.build_max_workers, var.build_worker_max_size) <= var.build_worker_max_size
-      )
-      error_message = "fleet policy max_workers cannot exceed its Auto Scaling group max_size."
+      error_message = "worker groups require configured CPU, memory, cache, disk partitions, and concurrency; build capacity must fit one fixed build guest after the service reserve and expose exactly one build executor."
     }
 
   }

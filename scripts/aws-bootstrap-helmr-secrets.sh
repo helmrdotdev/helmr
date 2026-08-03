@@ -5,6 +5,7 @@ tf="${TOFU:-tofu}"
 overwrite="${OVERWRITE_SECRETS:-0}"
 
 secret_arns="$("$tf" output -json secret_arns)"
+worker_enrollment_secret_arns="$("$tf" output -json worker_enrollment_secret_arns)"
 
 secret_arn() {
   jq -er --arg key "$1" '.[$key]' <<<"$secret_arns"
@@ -53,15 +54,39 @@ put_secret_file() {
   printf 'populated %s\n' "$key" >&2
 }
 
+put_secret_arn() {
+  local label="$1"
+  local arn="$2"
+  local value="$3"
+
+  if [ "$overwrite" != "1" ] && secret_has_value "$arn"; then
+    printf 'skip %s: already has AWSCURRENT value\n' "$label" >&2
+    return 0
+  fi
+  aws secretsmanager put-secret-value --secret-id "$arn" --secret-string "$value" >/dev/null
+  printf 'populated %s\n' "$label" >&2
+}
+
 random_base64_32() {
   openssl rand -base64 32 | tr -d '\n'
 }
 
-put_secret worker_token_signing_key "$(openssl rand -hex 32)"
-put_secret auth_secret "$(openssl rand -hex 32)"
-put_secret secret_encryption_key "$(random_base64_32)"
+random_base64url_32() {
+  openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n'
+}
+
+put_secret worker_token_signing_key "$(random_base64_32)"
+put_secret auth_key "$(random_base64_32)"
+put_secret encryption_key "$(random_base64_32)"
+put_secret workspace_fencing_key "$(random_base64_32)"
+put_secret token_credential_key "$(random_base64_32)"
 put_secret checkpoint_encryption_key "$(random_base64_32)"
 put_secret setup_token "$(openssl rand -hex 32)"
+
+while IFS=$'\t' read -r group_id arn; do
+  [ -n "$group_id" ] || continue
+  put_secret_arn "worker_enrollment[$group_id]" "$arn" "$(random_base64url_32)"
+done < <(jq -r 'to_entries[] | [.key, .value] | @tsv' <<<"$worker_enrollment_secret_arns")
 
 if [ -n "${HELMR_DATABASE_URL:-}" ]; then
   put_secret database_url "$HELMR_DATABASE_URL"

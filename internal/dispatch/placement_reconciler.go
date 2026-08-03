@@ -23,6 +23,8 @@ const (
 	defaultBuildPlacementFailureBackoff = 5 * time.Second
 	defaultBuildPlacementTimeout        = 30 * time.Second
 	defaultBuildPlacementLimit          = int32(8)
+	defaultWorkspaceExecPlacementLimit  = int32(32)
+	defaultWorkspaceExecPendingTimeout  = 10 * time.Minute
 )
 
 type RunPlacementDiscovery interface {
@@ -36,11 +38,38 @@ type BuildPlacementDiscovery interface {
 }
 
 type RunPlacementAuthority interface {
-	PlaceReadyRun(context.Context, ReadyRunCandidate, pgtype.Timestamptz) (ReadyRunPlacement, error)
+	PlaceReadyRun(context.Context, ReadyRunCandidate) (ReadyRunPlacement, error)
 }
 
 type BuildPlacementAuthority interface {
-	PlaceReadyBuild(context.Context, ReadyBuildCandidate, pgtype.Timestamptz) (db.LeaseQueuedDeploymentBuildRow, error)
+	PlaceReadyBuild(context.Context, ReadyBuildCandidate) (db.LeaseQueuedDeploymentBuildRow, error)
+}
+
+type WorkspaceExecPlacementDiscovery interface {
+	ListPendingWorkspaceExecCandidates(
+		context.Context,
+		int32,
+	) ([]db.ListPendingWorkspaceExecCandidatesRow, error)
+	ListRecoverableWorkspaceExecCandidates(
+		context.Context,
+		int32,
+	) ([]db.ListRecoverableWorkspaceExecCandidatesRow, error)
+}
+
+type WorkspaceExecPlacementAuthority interface {
+	PlaceWorkspaceExec(
+		context.Context,
+		ReadyWorkspaceExecCandidate,
+	) (WorkspaceExecPlacement, error)
+	RecoverWorkspaceExec(
+		context.Context,
+		RecoverableWorkspaceExecCandidate,
+	) error
+	FailPendingWorkspaceExec(
+		context.Context,
+		ReadyWorkspaceExecCandidate,
+		string,
+	) error
 }
 
 type WorkerWake struct {
@@ -59,16 +88,19 @@ type WorkerWakePublisher interface {
 // Valkey is notified only after commit; a lost notification is repaired by the
 // next DB replay.
 type PlacementReconciler struct {
-	runDiscovery   RunPlacementDiscovery
-	runAuthority   RunPlacementAuthority
-	buildDiscovery BuildPlacementDiscovery
-	buildAuthority BuildPlacementAuthority
-	ready          Queue
-	wakes          WorkerWakePublisher
-	runPolicy      placementLoopPolicy
-	buildPolicy    placementLoopPolicy
-	metrics        reconcileMetrics
-	log            *slog.Logger
+	runDiscovery           RunPlacementDiscovery
+	runAuthority           RunPlacementAuthority
+	buildDiscovery         BuildPlacementDiscovery
+	buildAuthority         BuildPlacementAuthority
+	workspaceExecDiscovery WorkspaceExecPlacementDiscovery
+	workspaceExecAuthority WorkspaceExecPlacementAuthority
+	ready                  Queue
+	wakes                  WorkerWakePublisher
+	runPolicy              placementLoopPolicy
+	buildPolicy            placementLoopPolicy
+	workspaceExecPolicy    placementLoopPolicy
+	metrics                reconcileMetrics
+	log                    *slog.Logger
 }
 
 type placementLoopPolicy struct {
@@ -80,18 +112,23 @@ type placementLoopPolicy struct {
 
 func NewPlacementReconciler(runDiscovery RunPlacementDiscovery, runAuthority RunPlacementAuthority,
 	buildDiscovery BuildPlacementDiscovery, buildAuthority BuildPlacementAuthority,
+	workspaceExecDiscovery WorkspaceExecPlacementDiscovery,
+	workspaceExecAuthority WorkspaceExecPlacementAuthority,
 	ready Queue, wakes WorkerWakePublisher, log *slog.Logger,
 ) (*PlacementReconciler, error) {
-	if runDiscovery == nil || runAuthority == nil || buildDiscovery == nil || buildAuthority == nil || ready == nil || wakes == nil {
-		return nil, errors.New("run and build placement discovery, authority, ready index, and wake publisher are required")
+	if runDiscovery == nil || runAuthority == nil || buildDiscovery == nil || buildAuthority == nil ||
+		workspaceExecDiscovery == nil || workspaceExecAuthority == nil || ready == nil || wakes == nil {
+		return nil, errors.New("run, build, and Workspace exec placement dependencies are required")
 	}
 	if log == nil {
 		log = slog.Default()
 	}
-	return &PlacementReconciler{
+	reconciler := &PlacementReconciler{
 		runDiscovery: runDiscovery, runAuthority: runAuthority,
 		buildDiscovery: buildDiscovery, buildAuthority: buildAuthority,
-		ready: ready, wakes: wakes, log: log, metrics: newReconcileMetrics(),
+		workspaceExecDiscovery: workspaceExecDiscovery,
+		workspaceExecAuthority: workspaceExecAuthority,
+		ready:                  ready, wakes: wakes, log: log, metrics: newReconcileMetrics(),
 		runPolicy: placementLoopPolicy{
 			interval: defaultRunPlacementInterval, failureBackoff: defaultRunPlacementFailureBackoff,
 			timeout: defaultRunPlacementTimeout, limit: defaultRunPlacementLimit,
@@ -100,17 +137,31 @@ func NewPlacementReconciler(runDiscovery RunPlacementDiscovery, runAuthority Run
 			interval: defaultBuildPlacementInterval, failureBackoff: defaultBuildPlacementFailureBackoff,
 			timeout: defaultBuildPlacementTimeout, limit: defaultBuildPlacementLimit,
 		},
-	}, nil
+		workspaceExecPolicy: placementLoopPolicy{
+			interval: defaultRunPlacementInterval, failureBackoff: defaultRunPlacementFailureBackoff,
+			timeout: defaultRunPlacementTimeout, limit: defaultWorkspaceExecPlacementLimit,
+		},
+	}
+	return reconciler, nil
 }
 
 func (r *PlacementReconciler) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	errC := make(chan error, 2)
+	loops := 3
+	errC := make(chan error, loops)
 	go func() { errC <- r.runLoop(runCtx, "run", r.runPolicy, r.ReconcileRuns) }()
 	go func() { errC <- r.runLoop(runCtx, "build", r.buildPolicy, r.ReconcileBuilds) }()
+	go func() {
+		errC <- r.runLoop(
+			runCtx,
+			"workspace_exec",
+			r.workspaceExecPolicy,
+			r.ReconcileWorkspaceExecs,
+		)
+	}()
 	var firstErr error
-	for i := range 2 {
+	for i := range loops {
 		err := <-errC
 		if firstErr == nil && err != nil && !errors.Is(err, context.Canceled) {
 			firstErr = err
@@ -123,6 +174,88 @@ func (r *PlacementReconciler) Run(ctx context.Context) error {
 		return firstErr
 	}
 	return ctx.Err()
+}
+
+func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error {
+	recoverable, err := r.workspaceExecDiscovery.ListRecoverableWorkspaceExecCandidates(
+		ctx,
+		r.workspaceExecPolicy.limit,
+	)
+	if err != nil {
+		return fmt.Errorf("list recoverable Workspace execs: %w", err)
+	}
+	var problems []error
+	for _, row := range recoverable {
+		err := r.workspaceExecAuthority.RecoverWorkspaceExec(
+			ctx,
+			RecoverableWorkspaceExecCandidate{
+				OrgID:                row.OrgID,
+				ProcessID:            row.ID,
+				WorkspaceID:          row.WorkspaceID,
+				ExpectedStateVersion: row.StateVersion,
+			},
+		)
+		if errors.Is(err, ErrCandidateChanged) || errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			problems = append(problems, err)
+		}
+	}
+	rows, err := r.workspaceExecDiscovery.ListPendingWorkspaceExecCandidates(
+		ctx,
+		r.workspaceExecPolicy.limit,
+	)
+	if err != nil {
+		return fmt.Errorf("list pending Workspace execs: %w", err)
+	}
+	expiredBefore := time.Now().UTC().Add(-defaultWorkspaceExecPendingTimeout)
+	for _, row := range rows {
+		candidate := ReadyWorkspaceExecCandidate{
+			OrgID:                row.OrgID,
+			ProcessID:            row.ID,
+			ExpectedStateVersion: row.StateVersion,
+		}
+		if !row.CreatedAt.Time.After(expiredBefore) {
+			err := r.workspaceExecAuthority.FailPendingWorkspaceExec(
+				ctx,
+				candidate,
+				"workspace_exec_placement_timed_out",
+			)
+			if errors.Is(err, ErrCandidateChanged) || errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				problems = append(problems, err)
+			}
+			continue
+		}
+		placement, err := r.workspaceExecAuthority.PlaceWorkspaceExec(
+			ctx,
+			candidate,
+		)
+		if err != nil {
+			if errors.Is(err, ErrCandidateChanged) ||
+				errors.Is(err, ErrCapacityUnavailable) ||
+				errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			problems = append(problems, err)
+			continue
+		}
+		if !placement.ProcessBound && placement.WorkspaceMountID.Valid {
+			if err := r.wakes.PublishWorkerWake(ctx, WorkerWake{
+				Domain:      "workspace",
+				WorkerID:    placement.WorkerInstanceID,
+				WorkerEpoch: placement.WorkerEpoch,
+				RuntimeID:   placement.RuntimeInstanceID,
+				AuthorityID: placement.WorkspaceMountID,
+			}); err != nil {
+				problems = append(problems, fmt.Errorf("publish Workspace exec mount wake: %w", err))
+			}
+		}
+	}
+	return errors.Join(problems...)
 }
 
 func (r *PlacementReconciler) runLoop(ctx context.Context, domain string, policy placementLoopPolicy, reconcile func(context.Context) error) error {
@@ -153,7 +286,6 @@ func (r *PlacementReconciler) runLoop(ctx context.Context, domain string, policy
 }
 
 func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
-	freshAfter := pgtype.Timestamptz{Time: time.Now().UTC().Add(-2 * time.Minute), Valid: true}
 	remaining := r.runPolicy.limit
 	attempted := make(map[string]struct{}, r.runPolicy.limit)
 	var problems []error
@@ -186,7 +318,7 @@ func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
 				attempted[message.RunID] = struct{}{}
 				remaining--
 				if err := r.placeRunCandidate(ctx, ReadyRunCandidate{OrgID: orgID, RunID: runID,
-					ExpectedRunStateVersion: message.RunStateVersion}, freshAfter, message.RunID); err != nil {
+					ExpectedRunStateVersion: message.RunStateVersion}, message.RunID); err != nil {
 					problems = append(problems, err)
 				}
 			}
@@ -206,7 +338,7 @@ func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
 	for _, scope := range scopes {
 		fairScopes = append(fairScopes, QueueScope{OrgID: scope.OrgID, ProjectID: scope.ProjectID,
 			EnvironmentID: scope.EnvironmentID, RegionID: scope.RegionID,
-			QueueClass: scope.QueueClass, QueueName: scope.QueueName})
+			ConcurrencyKey: scope.ConcurrencyKey, QueueName: scope.QueueName})
 	}
 	fairScopes = (RoundRobinQueueScopeSelector{}).Order(fairScopes)
 	for _, scope := range fairScopes {
@@ -215,8 +347,13 @@ func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
 		}
 		rows, err := r.runDiscovery.ListQueuedRunDispatchCandidatesForScope(ctx, db.ListQueuedRunDispatchCandidatesForScopeParams{
 			OrgID: scope.OrgID, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
-			RegionID: scope.RegionID, QueueClass: scope.QueueClass, QueueName: scope.QueueName,
-			RowLimit: remaining,
+			RegionID: scope.RegionID,
+			ConcurrencyKey: pgtype.Text{
+				String: scope.ConcurrencyKey,
+				Valid:  scope.ConcurrencyKey != "",
+			},
+			QueueName: scope.QueueName,
+			RowLimit:  remaining,
 		})
 		if err != nil {
 			problems = append(problems, err)
@@ -231,7 +368,7 @@ func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
 			if err := r.placeRunCandidate(ctx, ReadyRunCandidate{
 				OrgID: candidate.OrgID, RunID: candidate.RunID,
 				ExpectedRunStateVersion: candidate.StateVersion,
-			}, freshAfter, runID); err != nil {
+			}, runID); err != nil {
 				problems = append(problems, err)
 			}
 		}
@@ -239,8 +376,8 @@ func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
 	return errors.Join(problems...)
 }
 
-func (r *PlacementReconciler) placeRunCandidate(ctx context.Context, candidate ReadyRunCandidate, freshAfter pgtype.Timestamptz, runID string) error {
-	placement, err := r.runAuthority.PlaceReadyRun(ctx, candidate, freshAfter)
+func (r *PlacementReconciler) placeRunCandidate(ctx context.Context, candidate ReadyRunCandidate, runID string) error {
+	placement, err := r.runAuthority.PlaceReadyRun(ctx, candidate)
 	if err != nil {
 		if errors.Is(err, ErrCandidateChanged) {
 			if cleanupErr := r.ready.RemoveReady(ctx, WorkKindRun, runID, fmt.Sprintf("run:%d", candidate.ExpectedRunStateVersion)); cleanupErr != nil {
@@ -254,14 +391,6 @@ func (r *PlacementReconciler) placeRunCandidate(ctx context.Context, candidate R
 		return err
 	}
 	if !placement.LeaseCreated {
-		if placement.RuntimeCreated {
-			if err := r.wakes.PublishWorkerWake(ctx, WorkerWake{Domain: "runtime",
-				WorkerID: placement.WorkerInstanceID, WorkerEpoch: placement.WorkerEpoch,
-				RuntimeID: placement.RuntimeInstanceID, AuthorityID: placement.RuntimeInstanceID}); err != nil {
-				return fmt.Errorf("publish run runtime wake: %w", err)
-			}
-			return nil
-		}
 		if placement.WorkspaceMountID.Valid {
 			if err := r.wakes.PublishWorkerWake(ctx, WorkerWake{Domain: "workspace",
 				WorkerID: placement.WorkerInstanceID, WorkerEpoch: placement.WorkerEpoch,
@@ -291,7 +420,6 @@ func parseUUID(value string) (pgtype.UUID, error) {
 }
 
 func (r *PlacementReconciler) ReconcileBuilds(ctx context.Context) error {
-	freshAfter := pgtype.Timestamptz{Time: time.Now().UTC().Add(-2 * time.Minute), Valid: true}
 	var problems []error
 	remaining := r.buildPolicy.limit
 	attempted := make(map[string]struct{}, r.buildPolicy.limit)
@@ -316,11 +444,7 @@ func (r *PlacementReconciler) ReconcileBuilds(ctx context.Context) error {
 				attempted[message.DeploymentID] = struct{}{}
 				remaining--
 				if err := r.placeBuildCandidate(ctx, ReadyBuildCandidate{OrgID: orgID, DeploymentID: deploymentID,
-					BuildRegionID: message.RegionID, BuildAttemptNumber: message.BuildAttemptNumber, LeaseSequence: message.LeaseSequence,
-					RequestedCPUMillis: message.BuildResources.CPUMillis, RequestedMemoryBytes: message.BuildResources.MemoryBytes,
-					RequestedWorkloadDiskBytes: message.BuildResources.WorkloadDiskBytes, RequestedScratchBytes: message.BuildResources.ScratchBytes,
-					RequestedBuildCacheBytes: message.BuildResources.BuildCacheBytes, RequestedArtifactCacheBytes: message.BuildResources.ArtifactCacheBytes,
-					RequestedBuildExecutors: message.BuildResources.Executors}, freshAfter, message.DeploymentID); err != nil {
+					BuildRegionID: message.RegionID, LeaseSequence: message.LeaseSequence}, message.DeploymentID); err != nil {
 					problems = append(problems, err)
 				}
 			}
@@ -352,15 +476,9 @@ func (r *PlacementReconciler) ReconcileBuilds(ctx context.Context) error {
 			remaining--
 			if err := r.placeBuildCandidate(ctx, ReadyBuildCandidate{
 				OrgID: candidate.OrgID, DeploymentID: candidate.DeploymentID,
-				BuildRegionID: candidate.BuildRegionID, BuildAttemptNumber: candidate.BuildAttemptNumber, LeaseSequence: candidate.LeaseSequence,
-				RequestedCPUMillis:          candidate.BuildRequestedCpuMillis,
-				RequestedMemoryBytes:        candidate.BuildRequestedMemoryBytes,
-				RequestedWorkloadDiskBytes:  candidate.BuildRequestedWorkloadDiskBytes,
-				RequestedScratchBytes:       candidate.BuildRequestedScratchBytes,
-				RequestedBuildCacheBytes:    candidate.BuildRequestedBuildCacheBytes,
-				RequestedArtifactCacheBytes: candidate.BuildRequestedArtifactCacheBytes,
-				RequestedBuildExecutors:     candidate.BuildRequestedExecutors,
-			}, freshAfter, deploymentID); err != nil {
+				BuildRegionID: candidate.BuildRegionID,
+				LeaseSequence: candidate.LeaseSequence,
+			}, deploymentID); err != nil {
 				problems = append(problems, err)
 			}
 		}
@@ -368,9 +486,9 @@ func (r *PlacementReconciler) ReconcileBuilds(ctx context.Context) error {
 	return errors.Join(problems...)
 }
 
-func (r *PlacementReconciler) placeBuildCandidate(ctx context.Context, candidate ReadyBuildCandidate, freshAfter pgtype.Timestamptz, deploymentID string) error {
-	lease, err := r.buildAuthority.PlaceReadyBuild(ctx, candidate, freshAfter)
-	fence := fmt.Sprintf("build:%d:%d", candidate.BuildAttemptNumber, candidate.LeaseSequence)
+func (r *PlacementReconciler) placeBuildCandidate(ctx context.Context, candidate ReadyBuildCandidate, deploymentID string) error {
+	lease, err := r.buildAuthority.PlaceReadyBuild(ctx, candidate)
+	fence := fmt.Sprintf("build:%d", candidate.LeaseSequence)
 	if err != nil {
 		if errors.Is(err, ErrCandidateChanged) {
 			return r.ready.RemoveReady(ctx, WorkKindBuild, deploymentID, fence)

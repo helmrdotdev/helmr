@@ -10,34 +10,27 @@ import (
 type Permission string
 
 const (
-	PermissionAPIKeysManage            Permission = "api_keys.manage"
-	PermissionMembersManage            Permission = "members.manage"
-	PermissionProjectsManage           Permission = "projects.manage"
-	PermissionRunsCreate               Permission = "runs.create"
-	PermissionRunsRead                 Permission = "runs.read"
-	PermissionRunsManage               Permission = "runs.manage"
-	PermissionSessionStreamsRead       Permission = "session.streams.read"
-	PermissionSessionInputSend         Permission = "session.input.send"
-	PermissionSessionOutputAppend      Permission = "session.output.append"
-	PermissionTokensCreate             Permission = "tokens.create"
-	PermissionTokensRead               Permission = "tokens.read"
-	PermissionTokensComplete           Permission = "tokens.complete"
-	PermissionTokensCancel             Permission = "tokens.cancel"
-	PermissionWorkspaceLifecycleManage Permission = "workspace.lifecycle.manage"
-	PermissionFilesRead                Permission = "workspace.files.read"
-	PermissionFilesWrite               Permission = "workspace.files.write"
-	PermissionVersionsRead             Permission = "workspace.versions.read"
-	PermissionVersionsCapture          Permission = "workspace.versions.capture"
-	PermissionVersionsRestore          Permission = "workspace.versions.restore"
-	PermissionVersionsDiff             Permission = "workspace.versions.diff"
-	PermissionExecCreate               Permission = "workspace.exec.create"
-	PermissionExecRead                 Permission = "workspace.exec.read"
-	PermissionExecManage               Permission = "workspace.exec.manage"
-	PermissionPtyCreate                Permission = "workspace.pty.create"
-	PermissionPtyRead                  Permission = "workspace.pty.read"
-	PermissionPtyManage                Permission = "workspace.pty.manage"
-	PermissionSecretsWrite             Permission = "secrets.write"
-	PermissionTasksDeploy              Permission = "tasks.deploy"
+	PermissionAPIKeysManage       Permission = "api_keys.manage"
+	PermissionMembersManage       Permission = "members.manage"
+	PermissionProjectsManage      Permission = "projects.manage"
+	PermissionRunsCreate          Permission = "runs.create"
+	PermissionRunsRead            Permission = "runs.read"
+	PermissionRunsManage          Permission = "runs.manage"
+	PermissionActorsRead          Permission = "actors.read"
+	PermissionActorsStart         Permission = "actors.start"
+	PermissionActorsInputSend     Permission = "actors.input.send"
+	PermissionActorsCloseManage   Permission = "actors.close"
+	PermissionTokensCreate        Permission = "tokens.create"
+	PermissionTokensRead          Permission = "tokens.read"
+	PermissionTokensComplete      Permission = "tokens.complete"
+	PermissionTokensCancel        Permission = "tokens.cancel"
+	PermissionWorkspacesCreate    Permission = "workspaces.create"
+	PermissionWorkspacesRead      Permission = "workspaces.read"
+	PermissionWorkspacesDelete    Permission = "workspaces.delete"
+	PermissionWorkspaceFilesRead  Permission = "workspace.files.read"
+	PermissionWorkspaceExecCreate Permission = "workspace.exec.create"
+	PermissionSecretsWrite        Permission = "secrets.write"
+	PermissionTasksDeploy         Permission = "tasks.deploy"
 )
 
 type Scope struct {
@@ -73,26 +66,19 @@ func RoleAllows(role Role, permission Permission) bool {
 		case PermissionRunsCreate,
 			PermissionRunsRead,
 			PermissionRunsManage,
-			PermissionSessionStreamsRead,
-			PermissionSessionInputSend,
-			PermissionSessionOutputAppend,
+			PermissionActorsRead,
+			PermissionActorsStart,
+			PermissionActorsInputSend,
+			PermissionActorsCloseManage,
 			PermissionTokensCreate,
 			PermissionTokensRead,
 			PermissionTokensComplete,
 			PermissionTokensCancel,
-			PermissionWorkspaceLifecycleManage,
-			PermissionFilesRead,
-			PermissionFilesWrite,
-			PermissionVersionsRead,
-			PermissionVersionsCapture,
-			PermissionVersionsRestore,
-			PermissionVersionsDiff,
-			PermissionExecCreate,
-			PermissionExecRead,
-			PermissionExecManage,
-			PermissionPtyCreate,
-			PermissionPtyRead,
-			PermissionPtyManage,
+			PermissionWorkspacesCreate,
+			PermissionWorkspacesRead,
+			PermissionWorkspacesDelete,
+			PermissionWorkspaceFilesRead,
+			PermissionWorkspaceExecCreate,
 			PermissionTasksDeploy:
 			return true
 		default:
@@ -101,12 +87,10 @@ func RoleAllows(role Role, permission Permission) bool {
 	case RoleViewer:
 		switch permission {
 		case PermissionRunsRead,
-			PermissionSessionStreamsRead,
+			PermissionActorsRead,
 			PermissionTokensRead,
-			PermissionFilesRead,
-			PermissionVersionsRead,
-			PermissionExecRead,
-			PermissionPtyRead:
+			PermissionWorkspacesRead,
+			PermissionWorkspaceFilesRead:
 			return true
 		default:
 			return false

@@ -8,11 +8,6 @@ output "worker_control_url" {
   value       = local.worker_control_url
 }
 
-output "private_control_dns_name" {
-  description = "Private Route53 control DNS name when enabled."
-  value       = local.private_control_dns_name
-}
-
 output "public_url" {
   description = "Customer-managed control-plane URL."
   value       = var.enable_cloudfront ? null : var.public_url
@@ -26,11 +21,6 @@ output "control_cloudfront_domain_name" {
 output "control_load_balancer_dns_name" {
   description = "Control-plane load balancer DNS name."
   value       = module.control.load_balancer_dns_name
-}
-
-output "private_control_load_balancer_dns_name" {
-  description = "Private worker-facing load balancer DNS name when enabled."
-  value       = module.control.private_load_balancer_dns_name
 }
 
 output "control_image" {
@@ -108,9 +98,19 @@ output "secret_arns" {
   value       = module.control.secret_arns
 }
 
-output "nat_gateway_id" {
-  description = "NAT Gateway ID."
-  value       = module.network.nat_gateway_id
+output "worker_enrollment_secret_arns" {
+  description = "Per-worker-group enrollment secret ARNs."
+  value       = module.control.worker_enrollment_secret_arns
+}
+
+output "control_nat_gateway_id" {
+  description = "Control VPC NAT Gateway ID."
+  value       = module.control_network.nat_gateway_id
+}
+
+output "execution_nat_gateway_id" {
+  description = "Execution VPC NAT Gateway ID."
+  value       = module.execution_network.nat_gateway_id
 }
 
 output "worker_autoscaling_group_name" {

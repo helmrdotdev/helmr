@@ -3,230 +3,88 @@ package control
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"log/slog"
-	"net/http"
 	"net/http/httptest"
-	"strings"
+	"net/url"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/db"
 )
 
-func TestLoginStartCreatesFlowCookie(t *testing.T) {
-	provider := &fakeAuthProvider{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &browserAuthStore{}, AuthSecret: []byte("abcdefghijabcdefghijabcdefghij12"), PublicURL: mustParseTestURL("https://helmr.example.test"), AuthProvider: provider})
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/github/start", strings.NewReader(`{"next":"/runs"}`))
-	rec := httptest.NewRecorder()
+type browserAuthQuerier struct {
+	db.Querier
+	sessionHash    []byte
+	invitationHash []byte
+}
 
-	server.ServeHTTP(rec, req)
+func (q *browserAuthQuerier) CreateAuthSession(_ context.Context, arg db.CreateAuthSessionParams) (db.AuthSession, error) {
+	q.sessionHash = append([]byte(nil), arg.TokenHash...)
+	return db.AuthSession{}, nil
+}
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if provider.state == "" || provider.verifier == "" {
-		t.Fatalf("auth provider state=%q verifier=%q", provider.state, provider.verifier)
-	}
-	if cookie := rec.Result().Cookies()[0]; cookie.Name != "helmr_auth_flow_dev" || !cookie.HttpOnly {
-		t.Fatalf("cookie = %+v", cookie)
-	}
-	var response api.GitHubAuthStartResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+func (q *browserAuthQuerier) GetActiveInvitation(_ context.Context, tokenHash []byte) (db.GetActiveInvitationRow, error) {
+	q.invitationHash = append([]byte(nil), tokenHash...)
+	return db.GetActiveInvitationRow{}, nil
+}
+
+func TestBrowserAuthUsesSessionDomainForIssuedSession(t *testing.T) {
+	keys, err := auth.NewKeys(bytes.Repeat([]byte{1}, auth.RootKeySize))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if response.RedirectURL != "https://github.test/oauth?state="+provider.state {
-		t.Fatalf("response = %+v", response)
+	queries := &browserAuthQuerier{}
+	server := &Server{authKeys: keys}
+
+	raw, err := server.issueSessionForOrg(
+		httptest.NewRequest("POST", "/", nil),
+		queries,
+		pgtype.UUID{Bytes: uuid.Must(uuid.NewV7()), Valid: true},
+		pgtype.UUID{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := auth.HashToken(keys.Session, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(queries.sessionHash, want) {
+		t.Fatal("issued session was not hashed with the session key")
 	}
 }
 
-func TestLoginStartTrustsCloudFrontViewerProto(t *testing.T) {
-	provider := &fakeAuthProvider{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &browserAuthStore{}, AuthSecret: []byte("abcdefghijabcdefghijabcdefghij12"), PublicURL: mustParseTestURL("https://d123.cloudfront.net"), AuthProvider: provider})
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/github/start", strings.NewReader(`{}`))
-	req.Header.Set("cloudfront-forwarded-proto", "https")
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+func TestBrowserAuthUsesInvitationDomainForInvitationValidation(t *testing.T) {
+	keys, err := auth.NewKeys(bytes.Repeat([]byte{1}, auth.RootKeySize))
+	if err != nil {
+		t.Fatal(err)
 	}
-	cookie := rec.Result().Cookies()[0]
-	if cookie.Name != "__Host-helmr_auth_flow" || !cookie.Secure {
-		t.Fatalf("cookie = %+v", cookie)
+	queries := &browserAuthQuerier{}
+	publicURL, err := url.Parse("https://helmr.example.test")
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestLoginStartCreatesLoginFlowForFreshInstance(t *testing.T) {
-	provider := &fakeAuthProvider{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &browserAuthStore{}, AuthSecret: []byte("abcdefghijabcdefghijabcdefghij12"), PublicURL: mustParseTestURL("https://helmr.example.test"), AuthProvider: provider})
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/github/start", strings.NewReader(`{"next":"/runs"}`))
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if provider.state == "" || provider.verifier == "" {
-		t.Fatalf("auth provider state=%q verifier=%q", provider.state, provider.verifier)
-	}
-	if !hasCookie(rec.Result().Cookies(), "helmr_auth_flow_dev") {
-		t.Fatalf("cookies = %v", rec.Result().Cookies())
-	}
-}
-
-func TestLoginStartCreatesLoginFlowWithoutOrganization(t *testing.T) {
-	provider := &fakeAuthProvider{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &browserAuthStore{}, AuthSecret: []byte("abcdefghijabcdefghijabcdefghij12"), PublicURL: mustParseTestURL("https://helmr.example.test"), AuthProvider: provider})
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/github/start", strings.NewReader(`{"next":"/runs"}`))
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if provider.state == "" || provider.verifier == "" {
-		t.Fatalf("auth provider state=%q verifier=%q", provider.state, provider.verifier)
-	}
-}
-
-func TestLoginCallbackIssuesSession(t *testing.T) {
-	store := &browserAuthStore{orgID: uuid.Must(uuid.NewV7()), userID: uuid.Must(uuid.NewV7())}
-	provider := &fakeAuthProvider{identity: authIdentity{
-		Provider:        "github",
-		Subject:         "123",
-		DisplayName:     "octocat",
-		ProfileImageURL: "https://avatars.example.test/octocat.png",
-		Claims:          json.RawMessage(`{"login":"octocat"}`),
-	}}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, AuthSecret: []byte("abcdefghijabcdefghijabcdefghij12"), PublicURL: mustParseTestURL("https://helmr.example.test"), AuthProvider: provider})
-
-	start := httptest.NewRecorder()
-	server.ServeHTTP(start, httptest.NewRequest(http.MethodPost, "/api/auth/github/start", bytes.NewReader([]byte(`{}`))))
-	if start.Code != http.StatusOK {
-		t.Fatalf("start status = %d body=%s", start.Code, start.Body.String())
+	server := &Server{
+		db:        queries,
+		authKeys:  keys,
+		publicURL: publicURL,
 	}
 
-	body, _ := json.Marshal(api.GitHubAuthFinishRequest{Code: "code", State: provider.state})
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/github/finish", bytes.NewReader(body))
-	for _, cookie := range start.Result().Cookies() {
-		req.AddCookie(cookie)
+	raw := "invite-token"
+	got, err := server.validateInvitationToken(
+		httptest.NewRequest("POST", "/", nil),
+		raw,
+	)
+	if err != nil {
+		t.Fatal(err)
 	}
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("callback status = %d body=%s", rec.Code, rec.Body.String())
+	want, err := auth.HashToken(keys.Invitation, raw)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if store.createdSession.UserID != pgvalue.UUID(store.userID) || len(store.createdSession.TokenHash) == 0 {
-		t.Fatalf("created session = %+v", store.createdSession)
+	if !bytes.Equal(got, want) || !bytes.Equal(queries.invitationHash, want) {
+		t.Fatal("invitation was not validated with the invitation key")
 	}
-	if store.upsertedIdentity.ProfileImageUrl.String != "https://avatars.example.test/octocat.png" {
-		t.Fatalf("upserted identity = %+v", store.upsertedIdentity)
-	}
-	if !hasCookie(rec.Result().Cookies(), "helmr_session_dev") {
-		t.Fatalf("cookies = %v", rec.Result().Cookies())
-	}
-}
-
-type fakeAuthProvider struct {
-	state    string
-	verifier string
-	identity authIdentity
-}
-
-func (p *fakeAuthProvider) RedirectURL(state string, verifier string) string {
-	p.state = state
-	p.verifier = verifier
-	return "https://github.test/oauth?state=" + state
-}
-
-func (p *fakeAuthProvider) Resolve(context.Context, string, string) (authIdentity, error) {
-	return p.identity, nil
-}
-
-type browserAuthStore struct {
-	db.Querier
-	orgID            uuid.UUID
-	userID           uuid.UUID
-	createdSession   db.CreateAuthSessionParams
-	upsertedIdentity db.UpsertAuthIdentityParams
-}
-
-func (s *browserAuthStore) UpsertAuthIdentity(_ context.Context, arg db.UpsertAuthIdentityParams) (db.UpsertAuthIdentityRow, error) {
-	s.upsertedIdentity = arg
-	return db.UpsertAuthIdentityRow{
-		ID:              pgvalue.UUID(s.userID),
-		DisplayName:     arg.DisplayName,
-		ProfileImageUrl: arg.ProfileImageUrl,
-		PrimaryEmail:    arg.Email,
-	}, nil
-}
-
-func (s *browserAuthStore) CreateAuthSession(_ context.Context, arg db.CreateAuthSessionParams) (db.AuthSession, error) {
-	s.createdSession = arg
-	return db.AuthSession{
-		ID:        arg.ID,
-		OrgID:     arg.OrgID,
-		UserID:    arg.UserID,
-		TokenHash: arg.TokenHash,
-		ExpiresAt: arg.ExpiresAt,
-	}, nil
-}
-
-type scanRow struct {
-	values []any
-	err    error
-}
-
-func (row scanRow) Scan(dest ...any) error {
-	if row.err != nil {
-		return row.err
-	}
-	if len(dest) != len(row.values) {
-		return fmt.Errorf("scan destinations = %d, want %d", len(dest), len(row.values))
-	}
-	for i, value := range row.values {
-		switch target := dest[i].(type) {
-		case *bool:
-			*target = value.(bool)
-		case *int64:
-			*target = value.(int64)
-		case *string:
-			*target = value.(string)
-		case *[]byte:
-			*target = value.([]byte)
-		case *pgtype.UUID:
-			*target = value.(pgtype.UUID)
-		case *pgtype.Text:
-			*target = value.(pgtype.Text)
-		case *pgtype.Timestamptz:
-			*target = value.(pgtype.Timestamptz)
-		case *db.OrgMemberRole:
-			*target = value.(db.OrgMemberRole)
-		case *db.MagicLinkPurpose:
-			*target = value.(db.MagicLinkPurpose)
-		default:
-			return fmt.Errorf("unexpected scan target %T", target)
-		}
-	}
-	return nil
-}
-
-func hasCookie(cookies []*http.Cookie, name string) bool {
-	for _, cookie := range cookies {
-		if cookie.Name == name {
-			return true
-		}
-	}
-	return false
 }

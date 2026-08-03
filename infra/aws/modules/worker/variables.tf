@@ -35,7 +35,7 @@ variable "subnet_ids" {
 }
 
 variable "ami_id" {
-  description = "Worker AMI with Firecracker, jailer, BuildKit, CNI plugins, and helmr-worker installed."
+  description = "Worker AMI with Firecracker, jailer, routed-TAP prerequisites, and helmr-worker installed."
   type        = string
 }
 
@@ -175,7 +175,7 @@ variable "worker_disk_reserve_mib" {
 }
 
 variable "vm_vcpus" {
-  description = "vCPU count assigned to each Firecracker task VM and advertised as worker CPU capacity."
+  description = "Maximum vCPU count assigned to one Firecracker VM."
   type        = number
   default     = 2
 
@@ -186,7 +186,7 @@ variable "vm_vcpus" {
 }
 
 variable "vm_memory_mib" {
-  description = "Memory in MiB assigned to each Firecracker task VM and advertised as worker memory capacity."
+  description = "Maximum memory in MiB assigned to one Firecracker VM."
   type        = number
   default     = 4096
 
@@ -208,7 +208,7 @@ variable "vm_scratch_disk_mib" {
 }
 
 variable "worker_capacity_vcpus" {
-  description = "Total vCPU capacity advertised by the worker for concurrent materializations and runs."
+  description = "Worker host vCPU pool after kernel and supervisor reserves."
   type        = number
   default     = null
   nullable    = true
@@ -220,7 +220,7 @@ variable "worker_capacity_vcpus" {
 }
 
 variable "worker_capacity_memory_mib" {
-  description = "Total memory capacity in MiB advertised by the worker for concurrent materializations and runs."
+  description = "Worker host memory pool after kernel and supervisor reserves."
   type        = number
   default     = null
   nullable    = true
@@ -232,7 +232,7 @@ variable "worker_capacity_memory_mib" {
 }
 
 variable "worker_execution_slots" {
-  description = "Total execution slots advertised by the worker for concurrent materializations and runs."
+  description = "Maximum concurrent Firecracker VM slots. Build execution has an independent fixed single-executor limit."
   type        = number
   default     = null
   nullable    = true
@@ -267,6 +267,30 @@ variable "artifact_cache_max_mib" {
   }
 }
 
+variable "build_cache_mib" {
+  description = "Usable MiB allocated to the physically isolated build-cache filesystem."
+  type        = number
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.build_cache_mib == null || var.build_cache_mib > 0
+    error_message = "build_cache_mib must be null or positive."
+  }
+}
+
+variable "build_scratch_mib" {
+  description = "Usable MiB allocated to the physically isolated build-scratch filesystem."
+  type        = number
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.build_scratch_mib == null || var.build_scratch_mib > 0
+    error_message = "build_scratch_mib must be null or positive."
+  }
+}
+
 variable "worker_control_url" {
   description = "Worker-facing control-plane API URL for HELMR_CONTROL_URL. Prefer a private DNS name that matches the HTTPS certificate."
   type        = string
@@ -287,10 +311,52 @@ variable "kms_key_arn" {
   type        = string
 }
 
+variable "platform_store_uri" {
+  description = "Dedicated immutable Platform Artifact store URI ending in /objects."
+  type        = string
+
+  validation {
+    condition     = can(regex("^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/objects$", var.platform_store_uri))
+    error_message = "platform_store_uri must be an S3 bucket URI ending exactly in /objects."
+  }
+}
+
+variable "platform_store_bucket_arn" {
+  description = "S3 bucket ARN backing platform_store_uri."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:[^:]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.platform_store_bucket_arn))
+    error_message = "platform_store_bucket_arn must be an S3 bucket ARN."
+  }
+}
+
+variable "platform_store_kms_key_arn" {
+  description = "KMS key ARN used by the dedicated Platform Artifact store."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[0-9a-fA-F-]+$", var.platform_store_kms_key_arn))
+    error_message = "platform_store_kms_key_arn must be a KMS key ARN."
+  }
+}
+
+variable "build_policy_digest" {
+  description = "Exact build-policy digest installed by build-capable workers; must be null for run-only workers."
+  type        = string
+  nullable    = true
+
+  validation {
+    condition     = var.build_policy_digest == null || can(regex("^sha256:[0-9a-f]{64}$", var.build_policy_digest))
+    error_message = "build_policy_digest must be null or lowercase sha256:<64 hexadecimal digits>."
+  }
+}
+
 variable "secret_arns" {
   description = "Secret ARNs required by the worker."
   type = object({
     checkpoint_encryption_key = string
+    worker_enrollment         = string
   })
 }
 
@@ -306,12 +372,6 @@ variable "jailer_gid" {
   default     = 1001
 }
 
-variable "buildkit_service_name" {
-  description = "systemd service name for BuildKit on the worker AMI."
-  type        = string
-  default     = "buildkit"
-}
-
 variable "worker_service_name" {
   description = "systemd service name for helmr-worker on the worker AMI."
   type        = string
@@ -324,51 +384,76 @@ variable "worker_environment" {
   default     = {}
 }
 
-variable "buildkit_slirp_cidr" {
-  description = "IPv4 CIDR used by rootlesskit/slirp4netns inside the BuildKit service namespace. It must not overlap network_blocked_ipv4_cidrs."
-  type        = string
-  default     = "198.18.0.0/24"
-
-  validation {
-    condition     = can(cidrnetmask(var.buildkit_slirp_cidr))
-    error_message = "buildkit_slirp_cidr must be an IPv4 CIDR prefix."
-  }
-}
-
 variable "network_blocked_ipv4_cidrs" {
-  description = "IPv4 CIDRs blocked from Firecracker task egress. This is the infra-owned baseline policy passed to helmr-worker."
+  description = "Canonical IPv4 CIDRs added to the Worker-wide guest destination deny set. Use an explicit empty list for no additional deny."
   type        = list(string)
-  default = [
-    "0.0.0.0/8",
-    "10.0.0.0/8",
-    "100.64.0.0/10",
-    "127.0.0.0/8",
-    "169.254.0.0/16",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-    "224.0.0.0/4",
-    "240.0.0.0/4",
-  ]
 
   validation {
-    condition = alltrue([
-      for cidr in var.network_blocked_ipv4_cidrs :
-      can(cidrnetmask(cidr))
+    condition = length(distinct(var.network_blocked_ipv4_cidrs)) == length(var.network_blocked_ipv4_cidrs) && alltrue([
+      for cidr in var.network_blocked_ipv4_cidrs : can(cidrnetmask(cidr)) && try(cidrhost(cidr, 0) == split("/", cidr)[0], false)
     ])
-    error_message = "network_blocked_ipv4_cidrs must contain only IPv4 CIDR prefixes."
+    error_message = "network_blocked_ipv4_cidrs must contain unique canonical IPv4 CIDRs."
   }
 }
 
-variable "network_blocked_ipv6_cidrs" {
-  description = "IPv6 CIDRs blocked from Firecracker task egress. This is the infra-owned baseline policy passed to helmr-worker."
-  type        = list(string)
-  default = [
-    "::/128",
-    "::1/128",
-    "fc00::/7",
-    "fe80::/10",
-    "ff00::/8",
-  ]
+variable "network_link_pool" {
+  description = "Canonical IPv4 pool used to allocate one host/namespace veth /31 per concurrent VM."
+  type        = string
+
+  validation {
+    condition     = can(cidrnetmask(var.network_link_pool)) && try(cidrhost(var.network_link_pool, 0) == split("/", var.network_link_pool)[0], false)
+    error_message = "network_link_pool must be a canonical IPv4 CIDR."
+  }
+}
+
+variable "network_translation_pool" {
+  description = "Canonical IPv4 pool used to allocate one routed translation address per concurrent VM."
+  type        = string
+
+  validation {
+    condition     = can(cidrnetmask(var.network_translation_pool)) && try(cidrhost(var.network_translation_pool, 0) == split("/", var.network_translation_pool)[0], false)
+    error_message = "network_translation_pool must be a canonical IPv4 CIDR."
+  }
+}
+
+variable "network_resolver_ipv4" {
+  description = "Optional exact IPv4 resolver exposed to guests. Null selects the VPC resolver."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = var.network_resolver_ipv4 == null || (
+      can(cidrnetmask("${var.network_resolver_ipv4}/32")) &&
+      try(cidrhost("${var.network_resolver_ipv4}/32", 0) == var.network_resolver_ipv4, false)
+    )
+    error_message = "network_resolver_ipv4 must be an IPv4 address when set."
+  }
+}
+
+variable "image_cache_registry_authority" {
+  description = "Canonical regional ECR registry authority for the Platform image cache."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com(\\.cn)?$", var.image_cache_registry_authority))
+    error_message = "image_cache_registry_authority must be a canonical private ECR registry authority."
+  }
+}
+
+variable "image_cache_repository_prefix" {
+  description = "Bounded ECR repository namespace for Environment image caches."
+  type        = string
+}
+
+variable "image_cache_role_arn" {
+  description = "Exact regional Execution image-cache role ARN."
+  type        = string
+}
+
+variable "image_cache_repository_arn_prefix" {
+  description = "Exact ECR repository ARN prefix matching image_cache_repository_prefix."
+  type        = string
 }
 
 variable "tags" {

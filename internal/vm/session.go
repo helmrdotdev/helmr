@@ -3,11 +3,13 @@ package vm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
 type Connector interface {
@@ -24,35 +26,38 @@ type MaterializingConnector interface {
 	Materialize(context.Context, MaterializeRequest) (Session, error)
 }
 
-// RuntimeCleanupConnector removes physical state for one exact durable runtime
-// owner. A nil result is proof that process, network namespace, and owned
-// filesystem roots for the ID are absent.
-type RuntimeCleanupConnector interface {
-	CleanupRuntime(context.Context, string) error
+type Cleaner interface {
+	Cleanup(context.Context, Owner) error
+}
+
+type Stream interface {
+	io.ReadWriteCloser
 }
 
 type Session interface {
-	Stream() io.ReadWriteCloser
-	OpenStream(context.Context) (io.ReadWriteCloser, error)
+	Stream() Stream
+	OpenStream(context.Context) (Stream, error)
 	Wait(context.Context) error
 	Close(context.Context) error
 }
 
-// NetworkFacts are CNI-assigned facts observed after runtime materialization.
-// Placement authority must not synthesize them.
-type NetworkFacts struct {
-	HostInterfaceName string
-	GuestAddress      string
-	GatewayAddress    string
-	Subnet            string
-	TapName           string
-	NetNSName         string
-	GuestMAC          string
+type BuildNetworkStatus struct {
+	DeniedPackets uint64
+	LimitPackets  uint64
 }
 
-type NetworkFactSession interface {
+type BuildNetworkSession interface {
 	Session
-	NetworkFacts() (NetworkFacts, error)
+	BuildNetworkStatus(context.Context) (BuildNetworkStatus, error)
+}
+
+type RunNetworkStatus struct {
+	DeniedPackets uint64
+}
+
+type RunNetworkSession interface {
+	Session
+	RunNetworkStatus(context.Context) (RunNetworkStatus, error)
 }
 
 type CheckpointableSession interface {
@@ -62,10 +67,34 @@ type CheckpointableSession interface {
 }
 
 type ConnectRequest struct {
+	ID             string
+	OwnerKind      OwnerKind
+	Binding        WorkloadBinding
+	Resources      compute.ResourceVector
+	PIDsMax        int64
+	Topology       RuntimeTopology
+	ReadOnlyDrives []ReadOnlyDrive
+}
+
+type ReadOnlyDrive struct {
 	ID        string
-	OwnerKind string
-	Network   compute.NetworkPolicy
-	Topology  RuntimeTopology
+	Digest    string
+	SizeBytes int64
+	MediaType string
+	Source    ReadOnlyDriveSource
+}
+
+const (
+	ProgramRuntimeDrive = "program_runtime"
+	ProgramDrive        = "program"
+	ManagerDrive        = "manager"
+	ManagedRuntimeDrive = "managed_runtime"
+	ToolchainDrive      = "toolchain"
+	BuildTreeDrive      = "build_tree"
+)
+
+type ReadOnlyDriveSource interface {
+	LinkInto(directory string, name string, uid int, gid int) error
 }
 
 type RuntimeTopology struct {
@@ -78,6 +107,7 @@ type RuntimeSubstrate struct {
 	Format     string
 	BuilderABI string
 	LayoutABI  string
+	SizeBytes  int64
 }
 
 type SnapshotRequest struct {
@@ -110,7 +140,8 @@ type SnapshotFile struct {
 type RestoreRequest struct {
 	ID                   string
 	RuntimeInstanceID    string
-	OwnerKind            string
+	OwnerKind            OwnerKind
+	Binding              WorkloadBinding
 	VMState              string
 	VMStateMediaType     string
 	ScratchDisk          string
@@ -119,28 +150,142 @@ type RestoreRequest struct {
 	MemoryMediaTypes     []string
 	Manifest             []byte
 	Checkpoint           CheckpointIdentity
-	Network              compute.NetworkPolicy
 	Topology             RuntimeTopology
+	ReadOnlyDrives       []ReadOnlyDrive
 	RecordPhase          func(RuntimePhase)
 }
 
 type MaterializeRequest struct {
 	ID                 string
-	OwnerKind          string
+	OwnerKind          OwnerKind
+	Binding            WorkloadBinding
 	RootfsDigest       string
-	ImageDigest        string
-	ImageFormat        string
 	WorkspaceMountPath string
 	BaseVersionID      string
 	Resources          compute.ResourceVector
-	Network            compute.NetworkPolicy
 	Topology           RuntimeTopology
+	ReadOnlyDrives     []ReadOnlyDrive
 }
 
+// WorkloadBinding is the closed logical authority that a connector binds to
+// its locally owned network attachment before a guest can receive input or
+// network access. Runtime workloads use their immutable Runtime Instance ID
+// with generation 1; Program builds use the current Build Lease sequence; each
+// physical image-build attempt uses its fresh owner UUID and generation 1.
+type WorkloadBinding struct {
+	WorkerEpoch       int64
+	OwnerID           string
+	Generation        int64
+	RuntimeInstanceID string
+	RuntimeIdentityID string
+}
+
+func (binding WorkloadBinding) Validate(owner Owner) error {
+	if binding.WorkerEpoch <= 0 {
+		return errors.New("workload binding worker epoch must be positive")
+	}
+	if binding.OwnerID != owner.ID {
+		return errors.New("workload binding owner does not exact-match VM owner")
+	}
+	if binding.Generation <= 0 {
+		return errors.New("workload binding generation must be positive")
+	}
+	if strings.TrimSpace(binding.RuntimeIdentityID) == "" {
+		return errors.New("workload binding runtime identity is required")
+	}
+	switch owner.Kind {
+	case OwnerRuntime:
+		if binding.RuntimeInstanceID != owner.ID ||
+			binding.Generation != 1 {
+			return errors.New("runtime workload binding is incomplete")
+		}
+	case OwnerBuild:
+		if binding.RuntimeInstanceID != "" {
+			return errors.New("build workload binding contains runtime authority")
+		}
+	case OwnerImageBuild:
+		if binding.RuntimeInstanceID != "" || binding.Generation != 1 {
+			return errors.New("image-build workload binding is incomplete")
+		}
+	default:
+		return errors.New("workload binding owner kind is invalid")
+	}
+	return nil
+}
+
+type OwnerKind string
+
 const (
-	RuntimeOwnerRuntime = "runtime"
-	RuntimeOwnerBuild   = "build"
+	OwnerRuntime    OwnerKind = "runtime"
+	OwnerBuild      OwnerKind = "build"
+	OwnerImageBuild OwnerKind = "image_build"
 )
+
+type Owner struct {
+	Kind OwnerKind `json:"kind"`
+	ID   string    `json:"id"`
+}
+
+func (o Owner) Validate() error {
+	if o.Kind != OwnerRuntime && o.Kind != OwnerBuild && o.Kind != OwnerImageBuild {
+		return errors.New("VM owner kind must be runtime, build, or image_build")
+	}
+	if err := ids.Validate(o.ID); err != nil {
+		return errors.New("VM owner id must be a canonical UUIDv7")
+	}
+	return nil
+}
+
+func (o Owner) String() string {
+	return string(o.Kind) + ":" + o.ID
+}
+
+type CleanupUnprovenError struct {
+	Owner Owner
+	Cause error
+}
+
+func (e *CleanupUnprovenError) Error() string {
+	if e == nil {
+		return "VM cleanup is unproven"
+	}
+	if e.Cause == nil {
+		return fmt.Sprintf("VM cleanup is unproven for %s", e.Owner)
+	}
+	return fmt.Sprintf("VM cleanup is unproven for %s: %v", e.Owner, e.Cause)
+}
+
+func (e *CleanupUnprovenError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+type GuestError struct {
+	Cause error
+}
+
+func NewGuestError(cause error) error {
+	if cause == nil {
+		return nil
+	}
+	return &GuestError{Cause: cause}
+}
+
+func (e *GuestError) Error() string {
+	if e == nil || e.Cause == nil {
+		return "guest execution failed"
+	}
+	return "guest execution failed: " + e.Cause.Error()
+}
+
+func (e *GuestError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
 
 type CheckpointIdentity struct {
 	RuntimeBackend      string

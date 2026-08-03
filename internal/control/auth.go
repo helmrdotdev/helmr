@@ -21,23 +21,33 @@ type actorContextKey struct{}
 type workerContextKey struct{}
 
 type workerActor struct {
-	WorkerInstanceID uuid.UUID
-	WorkerGroupID    string
-	WorkerEpoch      int64
-	ClaimVersion     int64
-	ProtocolVersion  string
-	Roles            []string
-	ResourceID       string
-	State            db.WorkerInstanceState
-	EpochStartedAt   time.Time
+	WorkerInstanceID  uuid.UUID
+	WorkerGroupID     string
+	WorkerEpoch       int64
+	ClaimVersion      int64
+	GroupClaimVersion int64
+	ProtocolVersion   string
+	Roles             []string
+	ResourceID        string
+	State             db.WorkerInstanceState
+	EpochStartedAt    time.Time
 }
 
 func (s *Server) requireActor(next http.Handler) http.Handler {
+	return s.requireActorWithErrorWriter(next, writeActorAuthError)
+}
+
+type actorAuthErrorWriter func(http.ResponseWriter, *slog.Logger, error)
+
+func (s *Server) requireActorWithErrorWriter(
+	next http.Handler,
+	writeAuthError actorAuthErrorWriter,
+) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if token, ok := bearerToken(r.Header.Get("authorization")); ok {
 			actor, err := s.bearerActor(r, token)
 			if err != nil {
-				writeActorAuthError(w, s.log, err)
+				writeAuthError(w, s.log, err)
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor)))
@@ -45,13 +55,10 @@ func (s *Server) requireActor(next http.Handler) http.Handler {
 		}
 		actor, rawSession, err := s.sessionActor(r)
 		if err != nil {
-			if !errors.Is(err, auth.ErrUnauthenticated) {
-				s.log.Error("session authentication failed", "error", err)
-				writeError(w, unavailable(errors.New("authentication is unavailable")))
-				return
+			if errors.Is(err, auth.ErrUnauthenticated) {
+				clearSessionCookie(w, r)
 			}
-			clearSessionCookie(w, r)
-			writeError(w, unauthorized(errors.New("authentication is required")))
+			writeAuthError(w, s.log, err)
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor))
@@ -110,16 +117,23 @@ func writeActorAuthError(w http.ResponseWriter, log *slog.Logger, err error) {
 }
 
 func (s *Server) requireSession(next http.Handler) http.Handler {
+	return s.requireSessionWithErrorWriter(next, writeSessionAuthError)
+}
+
+func (s *Server) requireSessionWithErrorWriter(
+	next http.Handler,
+	writeAuthError actorAuthErrorWriter,
+) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if token, ok := bearerToken(r.Header.Get("authorization")); ok {
 			token = strings.TrimSpace(token)
 			if strings.HasPrefix(token, auth.APIKeyPrefix) || !looksLikeSessionBearerToken(token) {
-				writeError(w, unauthorized(errors.New("session authentication is required")))
+				writeAuthError(w, s.log, auth.ErrUnauthenticated)
 				return
 			}
 			actor, err := s.sessionActorFromToken(r, token)
 			if err != nil {
-				writeError(w, unauthorized(errors.New("session authentication is required")))
+				writeAuthError(w, s.log, err)
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor)))
@@ -128,7 +142,7 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 		actor, rawSession, err := s.sessionActor(r)
 		if err != nil {
 			clearSessionCookie(w, r)
-			writeError(w, unauthorized(errors.New("authentication is required")))
+			writeAuthError(w, s.log, err)
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor))
@@ -136,6 +150,26 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 		next.ServeHTTP(recorder, r)
 		recorder.finish()
 	})
+}
+
+func writeSessionAuthError(w http.ResponseWriter, _ *slog.Logger, _ error) {
+	writeError(w, unauthorized(errors.New("session authentication is required")))
+}
+
+func writeActorStartAuthError(w http.ResponseWriter, log *slog.Logger, err error) {
+	if !errors.Is(err, auth.ErrUnauthenticated) {
+		log.Error("Actor start authentication failed", "error", err)
+		writeError(w, unavailable(codedError{
+			code:      "actor_start_authority_unavailable",
+			message:   "Actor start authentication is unavailable",
+			retryable: true,
+		}))
+		return
+	}
+	writeError(w, unauthorized(codedError{
+		code:    "authentication_required",
+		message: "authentication is required",
+	}))
 }
 
 func looksLikeSessionBearerToken(token string) bool {
@@ -183,7 +217,7 @@ func (s *Server) sessionActorFromToken(r *http.Request, rawSession string) (auth
 	if err := s.userAuthConfigured(); err != nil {
 		return auth.Actor{}, err
 	}
-	tokenHash, err := auth.HashToken(s.authSecret, rawSession)
+	tokenHash, err := auth.HashToken(s.authKeys.Session, rawSession)
 	if err != nil {
 		return auth.Actor{}, err
 	}
@@ -225,20 +259,38 @@ func (s *Server) sessionActorFromToken(r *http.Request, rawSession string) (auth
 }
 
 func (s *Server) requireWorker(next http.Handler) http.Handler {
-	return s.requireWorkerState(false, false, next)
+	return s.requireWorkerState(workerAuthActive, next)
 }
 
 func (s *Server) requireRegisteringWorker(next http.Handler) http.Handler {
-	return s.requireWorkerState(true, false, next)
+	return s.requireWorkerState(workerAuthRegistering, next)
 }
 
-func (s *Server) requireTerminalWorker(next http.Handler) http.Handler {
-	return s.requireWorkerState(false, true, next)
+func (s *Server) requireRecoveringWorker(next http.Handler) http.Handler {
+	return s.requireWorkerState(workerAuthRecovering, next)
 }
 
-func (s *Server) requireWorkerState(registering, terminal bool, next http.Handler) http.Handler {
+func (s *Server) requireWorkerDrainCompletion(next http.Handler) http.Handler {
+	return s.requireWorkerState(workerAuthDrainCompletion, next)
+}
+
+func (s *Server) requireWorkerFence(next http.Handler) http.Handler {
+	return s.requireWorkerState(workerAuthFence, next)
+}
+
+type workerAuthState uint8
+
+const (
+	workerAuthActive workerAuthState = iota
+	workerAuthRegistering
+	workerAuthRecovering
+	workerAuthDrainCompletion
+	workerAuthFence
+)
+
+func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.db == nil || len(s.workerTokenSecret) == 0 {
+		if s.db == nil || len(s.workerTokenSigningKey) == 0 {
 			writeError(w, unavailable(errors.New("worker authentication is not configured")))
 			return
 		}
@@ -247,7 +299,7 @@ func (s *Server) requireWorkerState(registering, terminal bool, next http.Handle
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
-		payload, err := auth.VerifyWorkerToken(s.workerTokenSecret, token, time.Now())
+		payload, err := auth.VerifyWorkerToken(s.workerTokenSigningKey, token, time.Now())
 		if err != nil {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
@@ -271,13 +323,32 @@ func (s *Server) requireWorkerState(registering, terminal bool, next http.Handle
 		}
 		var row db.AuthorizeWorkerInstanceCredentialRow
 		var authorizationErr error
-		if registering {
+		switch state {
+		case workerAuthRegistering:
 			startupRow, startupErr := s.db.AuthorizeRegisteringWorkerInstanceCredential(r.Context(), db.AuthorizeRegisteringWorkerInstanceCredentialParams(params))
 			row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(startupRow), startupErr
-		} else if terminal {
-			terminalRow, terminalErr := s.db.AuthorizeTerminalWorkerInstanceCredential(r.Context(), db.AuthorizeTerminalWorkerInstanceCredentialParams(params))
-			row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(terminalRow), terminalErr
-		} else {
+		case workerAuthRecovering:
+			recoveryRow, recoveryErr := s.db.AuthorizeRecoveringWorkerInstanceCredential(r.Context(), db.AuthorizeRecoveringWorkerInstanceCredentialParams(params))
+			row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(recoveryRow), recoveryErr
+		case workerAuthDrainCompletion:
+			row, authorizationErr = s.db.AuthorizeWorkerInstanceCredential(r.Context(), params)
+			if isNoRows(authorizationErr) {
+				replayRow, replayErr := s.db.AuthorizeWorkerDrainReplay(r.Context(), db.AuthorizeWorkerDrainReplayParams{
+					CredentialID: params.CredentialID, ClaimVersion: params.ClaimVersion,
+					ProtocolVersion: params.ProtocolVersion, WorkerEpoch: params.WorkerEpoch,
+				})
+				row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(replayRow), replayErr
+			}
+		case workerAuthFence:
+			row, authorizationErr = s.db.AuthorizeWorkerInstanceCredential(r.Context(), params)
+			if isNoRows(authorizationErr) {
+				replayRow, replayErr := s.db.AuthorizeWorkerFenceReplay(r.Context(), db.AuthorizeWorkerFenceReplayParams{
+					CredentialID: params.CredentialID, ClaimVersion: params.ClaimVersion,
+					ProtocolVersion: params.ProtocolVersion, WorkerEpoch: params.WorkerEpoch,
+				})
+				row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(replayRow), replayErr
+			}
+		default:
 			row, authorizationErr = s.db.AuthorizeWorkerInstanceCredential(r.Context(), params)
 		}
 		if isNoRows(authorizationErr) {
@@ -290,15 +361,16 @@ func (s *Server) requireWorkerState(registering, terminal bool, next http.Handle
 			return
 		}
 		worker := workerActor{
-			WorkerInstanceID: workerInstanceID,
-			WorkerGroupID:    strings.TrimSpace(row.WorkerGroupID),
-			ClaimVersion:     row.ClaimVersion,
-			ResourceID:       strings.TrimSpace(row.ResourceID),
-			WorkerEpoch:      payload.WorkerEpoch,
-			ProtocolVersion:  payload.ProtocolVersion,
-			Roles:            append([]string(nil), payload.Roles...),
-			State:            row.WorkerState,
-			EpochStartedAt:   pgvalue.Time(row.EpochStartedAt),
+			WorkerInstanceID:  workerInstanceID,
+			WorkerGroupID:     strings.TrimSpace(row.WorkerGroupID),
+			ClaimVersion:      row.ClaimVersion,
+			GroupClaimVersion: payload.GroupClaimVersion,
+			ResourceID:        strings.TrimSpace(row.ResourceID),
+			WorkerEpoch:       payload.WorkerEpoch,
+			ProtocolVersion:   payload.ProtocolVersion,
+			Roles:             append([]string(nil), payload.Roles...),
+			State:             row.WorkerState,
+			EpochStartedAt:    pgvalue.Time(row.EpochStartedAt),
 		}
 		if pgvalue.MustUUIDValue(row.WorkerInstanceID) != workerInstanceID || worker.WorkerGroupID != payload.WorkerGroupID {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
@@ -308,16 +380,18 @@ func (s *Server) requireWorkerState(registering, terminal bool, next http.Handle
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
-		expectedRoles := make([]string, 0, 2)
-		if row.SupportsBuild {
-			expectedRoles = append(expectedRoles, auth.WorkerRoleBuild)
-		}
-		if row.SupportsRun {
-			expectedRoles = append(expectedRoles, auth.WorkerRoleRun)
-		}
-		if !slices.Equal(payload.Roles, expectedRoles) {
-			writeError(w, unauthorized(errors.New("worker authentication is required")))
-			return
+		if row.SupportsRun || row.SupportsBuild {
+			expectedRoles := make([]string, 0, 2)
+			if row.SupportsBuild {
+				expectedRoles = append(expectedRoles, auth.WorkerRoleBuild)
+			}
+			if row.SupportsRun {
+				expectedRoles = append(expectedRoles, auth.WorkerRoleRun)
+			}
+			if !slices.Equal(payload.Roles, expectedRoles) {
+				writeError(w, unauthorized(errors.New("worker authentication is required")))
+				return
+			}
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), workerContextKey{}, worker)))
 	})

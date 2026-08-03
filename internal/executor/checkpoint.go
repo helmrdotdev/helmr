@@ -5,19 +5,17 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"os"
-	"runtime"
 	"strings"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -28,11 +26,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func (r GuestRunner) materializeCheckpointObject(ctx context.Context, digest string, suffix string) (string, error) {
+func (r ProgramRunner) materializeCheckpointObject(ctx context.Context, digest string, suffix string) (string, error) {
 	return r.materializeEncryptedObject(ctx, digest, suffix, checkpointPurpose(suffix))
 }
 
-func (r GuestRunner) materializeEncryptedObject(ctx context.Context, digest string, suffix string, purpose string) (string, error) {
+func (r ProgramRunner) materializeEncryptedObject(ctx context.Context, digest string, suffix string, purpose string) (string, error) {
 	if r.CheckpointEncryptor == nil {
 		return "", errors.New("checkpoint encryption is required")
 	}
@@ -74,26 +72,19 @@ func (r GuestRunner) materializeEncryptedObject(ctx context.Context, digest stri
 	return path, nil
 }
 
-func checkpointFileDigest(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return "", err
-	}
-	return sha256sum.DigestHash(hash), nil
-}
-
-func validateRestoreIdentity(checkpoint api.WorkerCheckpointManifest) error {
+func validateRestoreIdentity(
+	checkpoint api.WorkerCheckpointManifest,
+	workerArchitecture deployment.RuntimeArchitecture,
+) error {
 	runtimeInfo := checkpoint.RecoveryPoint.Runtime
 	if runtimeInfo.Backend != "firecracker" {
 		return fmt.Errorf("restore checkpoint recovery_point.runtime.backend %q is not supported", runtimeInfo.Backend)
 	}
-	if runtimeInfo.Arch != runtime.GOARCH {
-		return fmt.Errorf("restore checkpoint recovery_point.runtime.arch %q does not match worker arch %q", runtimeInfo.Arch, runtime.GOARCH)
+	if err := deployment.ValidateRuntimeArchitecture(workerArchitecture); err != nil {
+		return fmt.Errorf("validate worker runtime architecture: %w", err)
+	}
+	if runtimeInfo.Arch != string(workerArchitecture) {
+		return fmt.Errorf("restore checkpoint recovery_point.runtime.arch %q does not match worker arch %q", runtimeInfo.Arch, workerArchitecture)
 	}
 	if strings.TrimSpace(runtimeInfo.ABI) == "" {
 		return errors.New("restore checkpoint recovery_point.runtime.abi is required")
@@ -126,19 +117,6 @@ func validateRestoreIdentity(checkpoint api.WorkerCheckpointManifest) error {
 		if strings.TrimSpace(runtimeInfo.Substrate.LayoutABI) == "" {
 			return errors.New("restore checkpoint recovery_point.runtime.substrate.layout_abi is required")
 		}
-		if checkpoint.RuntimeState.RuntimeSubstrate == nil {
-			return errors.New("restore checkpoint runtime_state.runtime_substrate is required")
-		}
-		substrateArtifact := checkpoint.RuntimeState.RuntimeSubstrate
-		if strings.TrimSpace(substrateArtifact.ID) == "" {
-			return errors.New("restore checkpoint runtime_state.runtime_substrate.id is required")
-		}
-		if strings.TrimSpace(substrateArtifact.Artifact.Digest) == "" {
-			return errors.New("restore checkpoint runtime_state.runtime_substrate.artifact.digest is required")
-		}
-		if strings.TrimSpace(substrateArtifact.Artifact.MediaType) == "" {
-			return errors.New("restore checkpoint runtime_state.runtime_substrate.artifact.media_type is required")
-		}
 	}
 	return requireCheckpointArtifact(checkpoint.RuntimeState.ConfigArtifact, "runtime_state.config_artifact")
 }
@@ -161,18 +139,28 @@ func requireCheckpointArtifact(artifact api.WorkerCheckpointArtifact, field stri
 }
 
 type runtimeCheckpointer struct {
-	session           vm.CheckpointableSession
-	cas               cas.Store
-	encryptor         *checkpoint.Encryptor
-	tempDir           string
-	stream            io.ReadWriteCloser
-	workspace         api.WorkerCheckpointWorkspaceBase
-	substrateSource   *api.WorkerRuntimeSubstrateSource
-	runtimeSubstrates RuntimeSubstrateRegistrar
-	runEvent          func(context.Context, *runv0.RunEvent) error
+	session   vm.CheckpointableSession
+	cas       cas.Store
+	encryptor *checkpoint.Encryptor
+	tempDir   string
+	stream    io.ReadWriteCloser
+	workspace api.WorkerCheckpointWorkspaceBase
+	runEvent  func(context.Context, *runv0.RunEvent) error
 }
 
-func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request CheckpointRequest) (CheckpointResult, error) {
+func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request CheckpointRequest) (result CheckpointResult, err error) {
+	if c.session == nil {
+		return CheckpointResult{}, errors.New("checkpoint source session is required")
+	}
+	sourceReleaseAttempted := false
+	defer func() {
+		if err == nil || sourceReleaseAttempted {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		_ = c.releaseCheckpointSource(cleanupCtx)
+	}()
 	if c.cas == nil {
 		return CheckpointResult{}, errors.New("checkpoint CAS is required")
 	}
@@ -194,14 +182,12 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 	recordPhase("suspend_guest", started)
 	started = time.Now()
 	if err := c.stream.Close(); err != nil {
-		_ = c.session.Resume(ctx)
 		return CheckpointResult{}, fmt.Errorf("close checkpoint control stream: %w", err)
 	}
 	recordPhase("close_control_stream", started)
 	started = time.Now()
 	artifact, err := c.session.CreateSnapshot(ctx, vm.SnapshotRequest{ID: request.CheckpointID})
 	if err != nil {
-		_ = c.session.Resume(ctx)
 		return CheckpointResult{}, err
 	}
 	recordPhase("create_runtime_snapshot", started)
@@ -212,17 +198,76 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 	started = time.Now()
 	manifest, err := c.storeSnapshotArtifact(ctx, request, artifact)
 	if err != nil {
-		_ = c.session.Resume(ctx)
 		return CheckpointResult{}, err
 	}
 	recordPhase("store_checkpoint_artifacts", started)
 	started = time.Now()
+	sourceReleaseAttempted = true
 	if err := c.releaseCheckpointSource(ctx); err != nil {
 		return CheckpointResult{}, fmt.Errorf("release checkpoint source: %w", err)
 	}
 	recordPhase("release_checkpoint_source", started)
 	manifest.Phases = phases
 	return CheckpointResult{Manifest: manifest, WorkspaceCapture: workspaceCapture}, nil
+}
+
+func (c runtimeCheckpointer) CreateHandoffCheckpoint(
+	ctx context.Context,
+	request CheckpointRequest,
+	workspaceBase api.WorkerCheckpointWorkspaceBase,
+) (result api.WorkerCheckpointManifest, err error) {
+	if c.session == nil {
+		return api.WorkerCheckpointManifest{}, errors.New("handoff checkpoint source session is required")
+	}
+	if c.cas == nil {
+		return api.WorkerCheckpointManifest{}, errors.New("handoff checkpoint CAS is required")
+	}
+	if c.encryptor == nil {
+		return api.WorkerCheckpointManifest{}, errors.New("handoff checkpoint encryption is required")
+	}
+	if strings.TrimSpace(request.CheckpointID) == "" ||
+		strings.TrimSpace(request.RunID) == "" ||
+		request.AttemptNumber <= 0 ||
+		strings.TrimSpace(request.RunWaitID) == "" ||
+		strings.TrimSpace(request.CorrelationID) == "" ||
+		strings.TrimSpace(request.ResumeAttachID) == "" ||
+		strings.TrimSpace(workspaceBase.ArtifactDigest) == "" ||
+		strings.TrimSpace(workspaceBase.MountPath) == "" {
+		return api.WorkerCheckpointManifest{}, errors.New("handoff checkpoint authority is incomplete")
+	}
+
+	phases := []api.WorkerCheckpointPhase{}
+	recordPhase := func(name string, started time.Time) {
+		phases = append(phases, api.WorkerCheckpointPhase{
+			Name: name, DurationMs: durationMilliseconds(time.Since(started)),
+		})
+	}
+	started := time.Now()
+	artifact, err := c.session.CreateSnapshot(ctx, vm.SnapshotRequest{ID: request.CheckpointID})
+	if err != nil {
+		return api.WorkerCheckpointManifest{}, err
+	}
+	recordPhase("create_runtime_snapshot", started)
+	phases = append(phases, workerCheckpointPhases(artifact.Phases)...)
+	defer cleanupSnapshotArtifact(artifact)
+	defer func() {
+		resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		resumeErr := c.session.Resume(resumeCtx)
+		if resumeErr != nil {
+			err = errors.Join(err, fmt.Errorf("resume handoff checkpoint source: %w", resumeErr))
+		}
+	}()
+
+	c.workspace = workspaceBase
+	started = time.Now()
+	result, err = c.storeSnapshotArtifact(ctx, request, artifact)
+	if err != nil {
+		return api.WorkerCheckpointManifest{}, err
+	}
+	recordPhase("store_checkpoint_artifacts", started)
+	result.Phases = phases
+	return result, nil
 }
 
 func (c runtimeCheckpointer) releaseCheckpointSource(ctx context.Context) error {
@@ -232,31 +277,73 @@ func (c runtimeCheckpointer) releaseCheckpointSource(ctx context.Context) error 
 	return c.session.Close(ctx)
 }
 
-func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, request CheckpointRequest) (*workspace.WorkspaceArtifact, error) {
+func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, request CheckpointRequest) (*CheckpointWorkspaceCapture, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if err := wire.WriteCheckpointPauseRequest(c.stream, &runv0.CheckpointPauseRequest{
-		RunWaitId:        request.RunWaitID,
-		CheckpointId:     request.CheckpointID,
-		CaptureWorkspace: request.CaptureWorkspace,
+		RunId:                    request.RunID,
+		AttemptNumber:            uint32(request.AttemptNumber),
+		RunLeaseId:               request.RunLeaseID,
+		RunWaitId:                request.RunWaitID,
+		CorrelationId:            request.CorrelationID,
+		CheckpointId:             request.CheckpointID,
+		ResumeAttachId:           request.ResumeAttachID,
+		CheckpointRequestVersion: request.CheckpointRequestVersion,
+		CaptureWorkspace:         request.CaptureWorkspace,
 	}); err != nil {
 		return nil, fmt.Errorf("write checkpoint suspend: %w", err)
 	}
 	reader := bufio.NewReader(c.stream)
 	pauseCtx, cancelPause := context.WithTimeout(ctx, checkpointSuspendTimeout)
-	ready, workspaceCapture, err := c.readPauseReadyContext(pauseCtx, reader, request)
+	ready, workspaceArtifact, err := c.readPauseReadyContext(pauseCtx, reader, request)
 	cancelPause()
 	if err != nil {
 		return nil, fmt.Errorf("read checkpoint pause ready: %w", err)
 	}
-	if ready.RunWaitId != request.RunWaitID || ready.CheckpointId != request.CheckpointID {
-		return nil, fmt.Errorf("checkpoint pause ready mismatch: run_wait_id=%q checkpoint_id=%q", ready.RunWaitId, ready.CheckpointId)
+	if err := validateCheckpointPauseReady(ready, request); err != nil {
+		return nil, err
 	}
-	if request.CaptureWorkspace && workspaceCapture == nil {
+	if request.CaptureWorkspace && workspaceArtifact == nil {
 		return nil, errors.New("checkpoint pause did not return required workspace capture")
 	}
-	return workspaceCapture, nil
+	if workspaceArtifact == nil {
+		return nil, nil
+	}
+	body, err := c.cas.Get(ctx, workspaceArtifact.Digest)
+	if err != nil {
+		return nil, fmt.Errorf("reopen checkpoint Workspace Artifact: %w", err)
+	}
+	tree, inspectErr := workspace.InspectArtifact(body, *workspaceArtifact)
+	closeErr := body.Close()
+	if inspectErr != nil {
+		return nil, fmt.Errorf("inspect checkpoint Workspace Artifact: %w", inspectErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close checkpoint Workspace Artifact: %w", closeErr)
+	}
+	return &CheckpointWorkspaceCapture{Tree: tree, Artifact: *workspaceArtifact}, nil
+}
+
+func validateCheckpointPauseReady(ready *runv0.CheckpointPauseReady, request CheckpointRequest) error {
+	if request.ResumeAttachID == "" {
+		if ready == nil || ready.GetRunWaitId() != request.RunWaitID || ready.GetCheckpointId() != request.CheckpointID {
+			return errors.New("checkpoint pause ready did not match request")
+		}
+		return nil
+	}
+	if ready == nil ||
+		ready.GetRunId() != request.RunID ||
+		ready.GetAttemptNumber() != uint32(request.AttemptNumber) ||
+		ready.GetRunLeaseId() != request.RunLeaseID ||
+		ready.GetRunWaitId() != request.RunWaitID ||
+		ready.GetCorrelationId() != request.CorrelationID ||
+		ready.GetCheckpointId() != request.CheckpointID ||
+		ready.GetResumeAttachId() != request.ResumeAttachID ||
+		ready.GetCheckpointRequestVersion() != request.CheckpointRequestVersion {
+		return errors.New("checkpoint pause ready did not match exact request authority")
+	}
+	return nil
 }
 
 func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *bufio.Reader, request CheckpointRequest) (*runv0.CheckpointPauseReady, *workspace.WorkspaceArtifact, error) {
@@ -301,14 +388,23 @@ func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.R
 			}
 			switch header.Type {
 			case wire.StreamTypeCheckpointPauseReady:
-				if bodyLen != 0 {
-					return nil, fmt.Errorf("checkpoint pause ready body length %d must be zero", bodyLen)
-				}
 				if header.RunWaitID != request.RunWaitID || header.CheckpointID != request.CheckpointID {
 					return nil, fmt.Errorf("checkpoint pause ready mismatch: run_wait_id=%q checkpoint_id=%q", header.RunWaitID, header.CheckpointID)
 				}
-				ready.RunWaitId = header.RunWaitID
-				ready.CheckpointId = header.CheckpointID
+				if bodyLen == 0 {
+					ready.RunWaitId = header.RunWaitID
+					ready.CheckpointId = header.CheckpointID
+				} else if bodyLen > uint64(frameio.MaxFrameBytes) {
+					return nil, fmt.Errorf("checkpoint pause ready body length %d exceeds max %d", bodyLen, frameio.MaxFrameBytes)
+				} else if body, err := io.ReadAll(io.LimitReader(reader, int64(bodyLen))); err != nil {
+					return nil, fmt.Errorf("read checkpoint pause ready: %w", err)
+				} else if uint64(len(body)) != bodyLen {
+					return nil, io.ErrUnexpectedEOF
+				} else if err := proto.Unmarshal(body, ready); err != nil {
+					return nil, fmt.Errorf("unmarshal checkpoint pause ready: %w", err)
+				} else if ready.GetRunWaitId() != header.RunWaitID || ready.GetCheckpointId() != header.CheckpointID {
+					return nil, errors.New("checkpoint pause ready header did not match body")
+				}
 				return workspaceCapture, nil
 			case wire.StreamTypeWorkspaceArtifact:
 				if !request.CaptureWorkspace {
@@ -348,7 +444,6 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 	var manifest storedCheckpointArtifact
 	var state storedCheckpointArtifact
 	var scratchDisk storedCheckpointArtifact
-	var substrate *api.WorkerRuntimeSubstrate
 	memory := make([]api.WorkerCheckpointArtifact, len(artifact.Memory))
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(4)
@@ -376,16 +471,6 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 		scratchDisk = stored
 		return nil
 	})
-	if artifact.Substrate != nil {
-		group.Go(func() error {
-			stored, err := c.ensureRuntimeSubstrate(groupCtx, artifact.Substrate)
-			if err != nil {
-				return fmt.Errorf("ensure runtime substrate: %w", err)
-			}
-			substrate = stored
-			return nil
-		})
-	}
 	for i, file := range artifact.Memory {
 		group.Go(func() error {
 			stored, err := c.storeSnapshotFile(groupCtx, file, "memory")
@@ -406,9 +491,11 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 	}
 	return api.WorkerCheckpointManifest{
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
-			ID:        request.CheckpointID,
-			RunID:     request.RunID,
-			RunWaitID: request.RunWaitID,
+			ID:            request.CheckpointID,
+			RunID:         request.RunID,
+			AttemptNumber: request.AttemptNumber,
+			RunWaitID:     request.RunWaitID,
+			CorrelationID: request.CorrelationID,
 			Runtime: api.WorkerCheckpointRuntime{
 				Backend:         artifact.RuntimeBackend,
 				ID:              artifact.RuntimeID,
@@ -425,7 +512,6 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 			ConfigArtifact:      manifest.artifact,
 			VMStateArtifact:     state.artifact,
 			ScratchDiskArtifact: scratchDisk.artifact,
-			RuntimeSubstrate:    substrate,
 			MemoryArtifacts:     memory,
 			Config:              artifact.Manifest,
 		},
@@ -445,131 +531,6 @@ func checkpointRuntimeSubstrate(substrate *vm.RuntimeSubstrate) *api.WorkerCheck
 		BuilderABI: strings.TrimSpace(substrate.BuilderABI),
 		LayoutABI:  strings.TrimSpace(substrate.LayoutABI),
 	}
-}
-
-func (c runtimeCheckpointer) ensureRuntimeSubstrate(ctx context.Context, substrate *vm.RuntimeSubstrate) (*api.WorkerRuntimeSubstrate, error) {
-	if substrate == nil {
-		return nil, nil
-	}
-	if c.substrateSource != nil && runtimeSubstrateMatches(c.substrateSource.RuntimeSubstrate, substrate) {
-		return c.substrateSource.RuntimeSubstrate, nil
-	}
-	if c.runtimeSubstrates == nil {
-		return nil, errors.New("runtime substrate registrar is required")
-	}
-	if c.substrateSource == nil || strings.TrimSpace(c.substrateSource.DeploymentSandboxID) == "" {
-		return nil, errors.New("runtime substrate source deployment_sandbox_id is required")
-	}
-	if lookup, ok := c.runtimeSubstrates.(RuntimeSubstrateLookup); ok {
-		response, err := lookup.LookupRuntimeSubstrate(ctx, api.WorkerRuntimeSubstrateLookupRequest{
-			DeploymentSandboxID: strings.TrimSpace(c.substrateSource.DeploymentSandboxID),
-			SubstrateDigest:     strings.TrimSpace(substrate.Digest),
-			Format:              strings.TrimSpace(substrate.Format),
-			BuilderABI:          strings.TrimSpace(substrate.BuilderABI),
-			LayoutABI:           strings.TrimSpace(substrate.LayoutABI),
-		})
-		if err == nil {
-			artifact := response.RuntimeSubstrate
-			return &artifact, nil
-		}
-		if !isHTTPStatus(err, 404) {
-			return nil, fmt.Errorf("lookup runtime substrate: %w", err)
-		}
-	}
-	if strings.TrimSpace(substrate.Path) == "" {
-		return nil, errors.New("runtime substrate path is required")
-	}
-	body, err := os.Open(substrate.Path)
-	if err != nil {
-		return nil, err
-	}
-	defer body.Close()
-	info, err := body.Stat()
-	if err != nil {
-		return nil, err
-	}
-	encryptStarted := time.Now()
-	stage, err := c.cas.Stage(ctx, cas.RuntimeSubstrateMediaType)
-	if err != nil {
-		return nil, err
-	}
-	if err := c.encryptor.Encrypt(ctx, body, stage, runtimeSubstratePurpose(substrate.Digest)); err != nil {
-		_ = stage.Abort(context.Background())
-		return nil, err
-	}
-	encryptDuration := time.Since(encryptStarted)
-	storeStarted := time.Now()
-	object, err := stage.Commit(ctx)
-	if err != nil {
-		_ = stage.Abort(context.Background())
-		return nil, err
-	}
-	source, err := runtimeSubstrateSource(c.substrateSource, map[string]any{
-		"producer":            "checkpoint",
-		"encrypt_duration_ms": durationMilliseconds(encryptDuration),
-		"store_duration_ms":   durationMilliseconds(time.Since(storeStarted)),
-	})
-	if err != nil {
-		return nil, err
-	}
-	response, err := c.runtimeSubstrates.RegisterRuntimeSubstrate(ctx, api.WorkerRuntimeSubstrateRegisterRequest{
-		DeploymentSandboxID: strings.TrimSpace(c.substrateSource.DeploymentSandboxID),
-		Artifact: api.CASObject{
-			Digest:    object.Digest,
-			SizeBytes: object.SizeBytes,
-			MediaType: object.MediaType,
-		},
-		SubstrateDigest: strings.TrimSpace(substrate.Digest),
-		Format:          strings.TrimSpace(substrate.Format),
-		BuilderABI:      strings.TrimSpace(substrate.BuilderABI),
-		LayoutABI:       strings.TrimSpace(substrate.LayoutABI),
-		SizeBytes:       info.Size(),
-		Source:          source,
-	})
-	if err != nil {
-		return nil, err
-	}
-	artifact := response.RuntimeSubstrate
-	return &artifact, nil
-}
-
-func runtimeSubstrateSource(source *api.WorkerRuntimeSubstrateSource, metadata map[string]any) ([]byte, error) {
-	body := map[string]any{}
-	maps.Copy(body, metadata)
-	if source != nil {
-		body["substrate_source"] = map[string]string{
-			"sandbox_artifact_digest": strings.TrimSpace(source.SandboxImageArtifact.Digest),
-			"sandbox_artifact_format": strings.TrimSpace(source.SandboxImageArtifactFormat),
-			"image_digest":            strings.TrimSpace(source.ImageDigest),
-			"rootfs_digest":           strings.TrimSpace(source.RootfsDigest),
-			"runtime_abi":             strings.TrimSpace(source.RuntimeABI),
-			"guestd_abi":              strings.TrimSpace(source.GuestdABI),
-			"adapter_abi":             strings.TrimSpace(source.AdapterABI),
-			"workspace_mount_path":    strings.TrimSpace(source.WorkspaceMountPath),
-		}
-	}
-	return json.Marshal(body)
-}
-
-type httpStatusError interface {
-	HTTPStatusCode() int
-}
-
-func isHTTPStatus(err error, statusCode int) bool {
-	var statusErr httpStatusError
-	return errors.As(err, &statusErr) && statusErr.HTTPStatusCode() == statusCode
-}
-
-func runtimeSubstrateMatches(artifact *api.WorkerRuntimeSubstrate, substrate *vm.RuntimeSubstrate) bool {
-	if artifact == nil || substrate == nil {
-		return false
-	}
-	return strings.TrimSpace(artifact.SubstrateDigest) == strings.TrimSpace(substrate.Digest) &&
-		strings.TrimSpace(artifact.Format) == strings.TrimSpace(substrate.Format) &&
-		strings.TrimSpace(artifact.BuilderABI) == strings.TrimSpace(substrate.BuilderABI) &&
-		strings.TrimSpace(artifact.LayoutABI) == strings.TrimSpace(substrate.LayoutABI) &&
-		strings.TrimSpace(artifact.ID) != "" &&
-		strings.TrimSpace(artifact.Artifact.Digest) != ""
 }
 
 type storedCheckpointArtifact struct {
@@ -616,10 +577,6 @@ func (c runtimeCheckpointer) storeSnapshotReader(ctx context.Context, body io.Re
 
 func checkpointPurpose(suffix string) string {
 	return "helmr.checkpoint." + suffix
-}
-
-func runtimeSubstratePurpose(rawDigest string) string {
-	return "helmr.runtime-substrate." + strings.TrimSpace(rawDigest)
 }
 
 func workerCheckpointPhases(phases []vm.RuntimePhase) []api.WorkerCheckpointPhase {

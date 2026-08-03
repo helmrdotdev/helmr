@@ -3,278 +3,196 @@ package schedule
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestEngineRepairRegistersEveryPage(t *testing.T) {
-	ctx := context.Background()
-	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	firstID := uuid.Must(uuid.NewV7())
-	secondID := uuid.Must(uuid.NewV7())
-	thirdID := uuid.Must(uuid.NewV7())
-	store := &fakeRepairStore{
-		pages: [][]db.ListScheduleRepairEntriesRow{
-			{
-				scheduleRepairRow(firstID, 1, now.Add(time.Minute), pgtype.Timestamptz{}),
-				scheduleRepairRow(secondID, 1, now.Add(2*time.Minute), pgtype.Timestamptz{}),
-			},
-			{
-				scheduleRepairRow(thirdID, 2, now.Add(3*time.Minute), pgtype.Timestamptz{}),
-			},
-		},
-	}
-	index := &fakeScheduleIndex{}
-	engine, err := NewEngine(nil, fakeDBTX{}, index, fakeRunCreator{}, EngineConfig{
-		RepairLimit:   2,
-		ReconcileLock: &fakeReconcileLock{store: store, locked: true},
-		Now:           func() time.Time { return now },
-	})
+func TestWorkerClaimsAndAdmitsSchedule(t *testing.T) {
+	now := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
+	store := &workerStore{claimed: []db.Schedule{scheduleAt(now)}}
+	admitter := &workerAdmitter{}
+	worker, err := NewWorker(nil, store, admitter)
 	if err != nil {
 		t.Fatal(err)
 	}
+	worker.now = func() time.Time { return now }
 
-	if err := engine.Repair(ctx); err != nil {
+	if err := worker.tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(index.enqueued) != 3 {
-		t.Fatalf("enqueued = %d, want 3", len(index.enqueued))
+	if len(admitter.admissions) != 1 {
+		t.Fatalf("admissions = %d, want 1", len(admitter.admissions))
 	}
-	if len(store.args) != 2 {
-		t.Fatalf("list calls = %d, want 2", len(store.args))
-	}
-	if store.args[0].AfterAvailableAt.Valid {
-		t.Fatalf("first page after_available_at = %+v, want invalid", store.args[0].AfterAvailableAt)
-	}
-	if !store.args[1].AfterAvailableAt.Time.Equal(now.Add(2*time.Minute)) || pgvalue.MustUUIDValue(store.args[1].AfterInstanceID) != secondID {
-		t.Fatalf("second page cursor = %+v / %+v", store.args[1].AfterAvailableAt, store.args[1].AfterInstanceID)
+	if len(store.retryable) != 0 || len(store.errored) != 0 {
+		t.Fatalf("unexpected transitions: retryable=%d errored=%d", len(store.retryable), len(store.errored))
 	}
 }
 
-func TestEngineRepairSkipsWhenLockIsHeld(t *testing.T) {
-	ctx := context.Background()
-	index := &fakeScheduleIndex{}
-	lock := &fakeReconcileLock{store: &fakeRepairStore{}, locked: false}
-	engine, err := NewEngine(nil, fakeDBTX{}, index, fakeRunCreator{}, EngineConfig{ReconcileLock: lock})
+func TestWorkerBindsPendingWorkspaceBeforeClaiming(t *testing.T) {
+	now := time.Date(2026, 6, 2, 0, 2, 0, 0, time.UTC)
+	scheduleID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store := &workerStore{
+		pending: []db.ListPendingScheduleBindingsRow{{
+			ID:                  scheduleID,
+			EnvironmentID:       environmentID,
+			WorkspaceRefKey:     pgvalue.Text("scheduler"),
+			CronPattern:         "*/5 * * * *",
+			Timezone:            "UTC",
+			Generation:          3,
+			State:               "pending_workspace",
+			ResolvedWorkspaceID: workspaceID,
+		}},
+	}
+	worker, err := NewWorker(nil, store, &workerAdmitter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := engine.Repair(ctx); err != nil {
+	worker.now = func() time.Time { return now }
+
+	if err := worker.tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if lock.guardRequested {
-		t.Fatal("store was requested without lock")
+	if len(store.activated) != 1 {
+		t.Fatalf("activations = %d, want 1", len(store.activated))
 	}
-	if len(index.enqueued) != 0 {
-		t.Fatalf("enqueued = %d, want 0", len(index.enqueued))
+	got := store.activated[0]
+	if got.ID != scheduleID ||
+		got.EnvironmentID != environmentID ||
+		got.WorkspaceID != workspaceID ||
+		got.ExpectedGeneration != 3 ||
+		!got.NextFireAt.Time.Equal(time.Date(2026, 6, 2, 0, 5, 0, 0, time.UTC)) {
+		t.Fatalf("activation = %+v", got)
 	}
 }
 
-func TestEngineDeferTriggerNacksWithoutConsumingAttempts(t *testing.T) {
-	ctx := context.Background()
-	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	instanceID := uuid.Must(uuid.NewV7())
-	index := &fakeScheduleIndex{}
-	engine, err := NewEngine(nil, fakeDBTX{allowExec: true, execTag: pgconn.NewCommandTag("UPDATE 1")}, index, fakeRunCreator{}, EngineConfig{Now: func() time.Time { return now }})
+func TestWorkerPersistsRetryStepAndSampledDelay(t *testing.T) {
+	now := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
+	value := scheduleAt(now)
+	value.RetryStep = pgtype.Int2{Int16: 9, Valid: true}
+	store := &workerStore{claimed: []db.Schedule{value}}
+	admitter := &workerAdmitter{err: errors.New("database unavailable")}
+	worker, err := NewWorker(nil, store, admitter)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease := IndexLease{
-		Entry: IndexEntry{
-			InstanceID:  instanceID,
-			Generation:  7,
-			ScheduledAt: now.Add(-time.Minute),
-			AvailableAt: now,
-		},
-		Attempt: 2,
-	}
-	row := db.GetScheduleTriggerCandidateRow{
-		InstanceID:          pgvalue.UUID(instanceID),
-		Generation:          7,
-		NextFireAt:          pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
-		TriggerAttemptCount: 3,
+	worker.now = func() time.Time { return now }
+	worker.jitter = func(maximum time.Duration) (time.Duration, error) {
+		if maximum != 5*time.Minute {
+			t.Fatalf("jitter maximum = %s", maximum)
+		}
+		return 42 * time.Second, nil
 	}
 
-	if err := engine.deferTrigger(ctx, lease, row); err != nil {
+	if err := worker.tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(index.nacks) != 1 {
-		t.Fatalf("nacks = %d, want 1", len(index.nacks))
+	if len(store.retryable) != 1 {
+		t.Fatalf("retry transitions = %d, want 1", len(store.retryable))
 	}
-	wantRetryAt := now.Add(RetryDelay(5))
-	if !index.nacks[0].retryAt.Equal(wantRetryAt) {
-		t.Fatalf("retryAt = %s, want %s", index.nacks[0].retryAt, wantRetryAt)
-	}
-	if len(index.enqueued) != 0 {
-		t.Fatalf("enqueued = %d, want 0", len(index.enqueued))
+	got := store.retryable[0]
+	if got.RetryStep.Int16 != 10 || !got.RetryAfter.Time.Equal(now.Add(42*time.Second)) {
+		t.Fatalf("retry transition = %+v", got)
 	}
 }
 
-func TestEngineDeferTriggerAcksStaleScheduleRow(t *testing.T) {
-	ctx := context.Background()
-	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	instanceID := uuid.Must(uuid.NewV7())
-	index := &fakeScheduleIndex{}
-	engine, err := NewEngine(nil, fakeDBTX{allowExec: true, execTag: pgconn.NewCommandTag("UPDATE 0")}, index, fakeRunCreator{}, EngineConfig{Now: func() time.Time { return now }})
+func TestWorkerPersistsBoundedPermanentError(t *testing.T) {
+	now := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
+	store := &workerStore{claimed: []db.Schedule{scheduleAt(now)}}
+	admitter := &workerAdmitter{err: &AdmissionError{
+		Code:    ErrorWorkspaceUnavailable,
+		Message: string(make([]byte, 2048)),
+	}}
+	worker, err := NewWorker(nil, store, admitter)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease := IndexLease{
-		Entry: IndexEntry{
-			InstanceID:  instanceID,
-			Generation:  7,
-			ScheduledAt: now.Add(-time.Minute),
-			AvailableAt: now,
-		},
-		Attempt: 1,
-	}
-	row := db.GetScheduleTriggerCandidateRow{
-		InstanceID:          pgvalue.UUID(instanceID),
-		Generation:          7,
-		NextFireAt:          pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
-		TriggerAttemptCount: 3,
-	}
+	worker.now = func() time.Time { return now }
 
-	if err := engine.deferTrigger(ctx, lease, row); err != nil {
+	if err := worker.tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(index.acks) != 1 {
-		t.Fatalf("acks = %d, want 1", len(index.acks))
+	if len(store.errored) != 1 {
+		t.Fatalf("error transitions = %d, want 1", len(store.errored))
 	}
-	if len(index.nacks) != 0 {
-		t.Fatalf("nacks = %d, want 0", len(index.nacks))
+	lastError := store.errored[0]
+	if lastError.LastErrorCode.String != string(ErrorWorkspaceUnavailable) {
+		t.Fatalf("last error code = %q", lastError.LastErrorCode.String)
 	}
-}
-
-func scheduleRepairRow(instanceID uuid.UUID, generation int64, scheduledAt time.Time, retryAfter pgtype.Timestamptz) db.ListScheduleRepairEntriesRow {
-	availableAt := pgtype.Timestamptz{Time: scheduledAt.UTC(), Valid: true}
-	if retryAfter.Valid {
-		availableAt = retryAfter
-	}
-	return db.ListScheduleRepairEntriesRow{
-		ScheduleID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		InstanceID:    pgvalue.UUID(instanceID),
-		OrgID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		ProjectID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		EnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		Generation:    generation,
-		NextFireAt:    pgtype.Timestamptz{Time: scheduledAt.UTC(), Valid: true},
-		RetryAfter:    retryAfter,
-		AvailableAt:   availableAt,
+	if len(lastError.LastErrorMessage.String) > 1024 {
+		t.Fatalf("last error was not bounded: %d bytes", len(lastError.LastErrorMessage.String))
 	}
 }
 
-type fakeRepairStore struct {
-	pages [][]db.ListScheduleRepairEntriesRow
-	args  []db.ListScheduleRepairEntriesParams
-}
-
-func (f *fakeRepairStore) ListScheduleRepairEntries(_ context.Context, arg db.ListScheduleRepairEntriesParams) ([]db.ListScheduleRepairEntriesRow, error) {
-	f.args = append(f.args, arg)
-	if len(f.pages) == 0 {
-		return nil, nil
+func TestTruncateUTF8SuppliesValidNonemptyDiagnostic(t *testing.T) {
+	for _, value := range []string{"", " \t", "failure\xffdetail", strings.Repeat(" ", 1024) + "detail"} {
+		got := truncateUTF8(value, 1024)
+		if got == "" {
+			t.Fatalf("truncateUTF8(%q) returned empty", value)
+		}
+		if len(got) > 1024 {
+			t.Fatalf("truncateUTF8(%q) returned %d bytes", value, len(got))
+		}
 	}
-	page := f.pages[0]
-	f.pages = f.pages[1:]
-	return page, nil
 }
 
-type fakeReconcileLock struct {
-	store          RepairStore
-	locked         bool
-	guardRequested bool
-}
-
-func (f *fakeReconcileLock) TryLock(context.Context) (ReconcileLockGuard, bool, error) {
-	if !f.locked {
-		return nil, false, nil
+func scheduleAt(at time.Time) db.Schedule {
+	return db.Schedule{
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		EnvironmentID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		CronPattern:          "0 9 * * *",
+		Timezone:             "Asia/Tokyo",
+		CronSemanticsVersion: CronSemanticsVersion,
+		Generation:           3,
+		NextFireAt:           pgvalue.TimestamptzUTCZeroInvalid(at),
+		ClaimedBy:            pgvalue.Text("worker"),
 	}
-	return &fakeReconcileLockGuard{owner: f}, true, nil
 }
 
-type fakeReconcileLockGuard struct {
-	owner *fakeReconcileLock
+type workerStore struct {
+	pending   []db.ListPendingScheduleBindingsRow
+	activated []db.ActivatePendingScheduleParams
+	claimed   []db.Schedule
+	retryable []db.MarkScheduleAdmissionRetryableParams
+	errored   []db.MarkScheduleAdmissionErroredParams
 }
 
-func (f *fakeReconcileLockGuard) Store(RepairStore) RepairStore {
-	f.owner.guardRequested = true
-	return f.owner.store
+func (s *workerStore) ListPendingScheduleBindings(context.Context, int32) ([]db.ListPendingScheduleBindingsRow, error) {
+	return s.pending, nil
 }
 
-func (f *fakeReconcileLockGuard) Unlock(context.Context) error {
-	return nil
+func (s *workerStore) ActivatePendingSchedule(_ context.Context, value db.ActivatePendingScheduleParams) (db.Schedule, error) {
+	s.activated = append(s.activated, value)
+	return db.Schedule{}, nil
 }
 
-type fakeScheduleIndex struct {
-	enqueued []IndexEntry
-	acks     []IndexLease
-	nacks    []fakeScheduleNack
+func (s *workerStore) ClaimDueSchedules(context.Context, db.ClaimDueSchedulesParams) ([]db.Schedule, error) {
+	return s.claimed, nil
 }
 
-type fakeScheduleNack struct {
-	lease   IndexLease
-	retryAt time.Time
+func (s *workerStore) MarkScheduleAdmissionRetryable(_ context.Context, value db.MarkScheduleAdmissionRetryableParams) (db.Schedule, error) {
+	s.retryable = append(s.retryable, value)
+	return db.Schedule{}, nil
 }
 
-func (f *fakeScheduleIndex) Enqueue(_ context.Context, entry IndexEntry) error {
-	f.enqueued = append(f.enqueued, entry)
-	return nil
+func (s *workerStore) MarkScheduleAdmissionErrored(_ context.Context, value db.MarkScheduleAdmissionErroredParams) (db.Schedule, error) {
+	s.errored = append(s.errored, value)
+	return db.Schedule{}, nil
 }
 
-func (f *fakeScheduleIndex) Delete(context.Context, uuid.UUID) error {
-	return nil
+type workerAdmitter struct {
+	admissions []db.Schedule
+	err        error
 }
 
-func (f *fakeScheduleIndex) Dequeue(context.Context, DequeueRequest) ([]IndexLease, error) {
-	return nil, nil
-}
-
-func (f *fakeScheduleIndex) Ack(_ context.Context, lease IndexLease) error {
-	f.acks = append(f.acks, lease)
-	return nil
-}
-
-func (f *fakeScheduleIndex) Nack(_ context.Context, lease IndexLease, retryAt time.Time) error {
-	f.nacks = append(f.nacks, fakeScheduleNack{lease: lease, retryAt: retryAt})
-	return nil
-}
-
-type fakeRunCreator struct{}
-
-func (fakeRunCreator) CreateScheduleRun(context.Context, db.GetScheduleTriggerCandidateRow) (pgtype.UUID, error) {
-	return pgtype.UUID{}, errors.New("unexpected schedule run creation")
-}
-
-type fakeDBTX struct {
-	allowExec bool
-	execTag   pgconn.CommandTag
-	execErr   error
-}
-
-func (f fakeDBTX) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
-	if f.allowExec {
-		return f.execTag, f.execErr
-	}
-	return pgconn.CommandTag{}, errors.New("unexpected exec")
-}
-
-func (fakeDBTX) Query(context.Context, string, ...any) (pgx.Rows, error) {
-	return nil, errors.New("unexpected query")
-}
-
-func (fakeDBTX) QueryRow(context.Context, string, ...any) pgx.Row {
-	return fakeRow{}
-}
-
-type fakeRow struct{}
-
-func (fakeRow) Scan(...any) error {
-	return errors.New("unexpected query row")
+func (a *workerAdmitter) AdmitSchedule(_ context.Context, value db.Schedule) error {
+	a.admissions = append(a.admissions, value)
+	return a.err
 }

@@ -24,15 +24,24 @@ const (
 	errTooManyRequests
 )
 
-var errRecordNotFound = errors.New("record not found")
+var (
+	errRecordNotFound                 = errors.New("record not found")
+	errPermissionRequired             = errors.New("permission is required")
+	errAPIKeyEnvironmentScopeRequired = errors.New("API key is not bound to an environment")
+)
 
 type errorCoder interface {
 	ErrorCode() string
 }
 
+type errorRetryer interface {
+	ErrorRetryable() bool
+}
+
 type codedError struct {
-	code    string
-	message string
+	code      string
+	message   string
+	retryable bool
 }
 
 func (e codedError) Error() string {
@@ -44,6 +53,10 @@ func (e codedError) Error() string {
 
 func (e codedError) ErrorCode() string {
 	return e.code
+}
+
+func (e codedError) ErrorRetryable() bool {
+	return e.retryable
 }
 
 type apiError struct {
@@ -139,10 +152,14 @@ func writeError(w http.ResponseWriter, err error) {
 }
 
 func writeErrorStatus(w http.ResponseWriter, status int, err error) {
-	response := map[string]string{"error": err.Error()}
+	response := map[string]any{"error": err.Error()}
 	var coder errorCoder
 	if errors.As(err, &coder) && coder.ErrorCode() != "" {
 		response["code"] = coder.ErrorCode()
+	}
+	var retryer errorRetryer
+	if errors.As(err, &retryer) {
+		response["retryable"] = retryer.ErrorRetryable()
 	}
 	writeJSON(w, status, response)
 }

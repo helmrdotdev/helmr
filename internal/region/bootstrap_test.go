@@ -59,6 +59,35 @@ func TestEnsureRegionRejectsMissingConfiguredDefaultRegion(t *testing.T) {
 	}
 }
 
+func TestEnsureRegionRejectsInvalidIdentifiersBeforeStorage(t *testing.T) {
+	for name, configure := range map[string]func(*BootstrapConfig){
+		"region": func(cfg *BootstrapConfig) {
+			cfg.RegionID = strings.Repeat("r", MaxIDBytes+1)
+		},
+		"default region": func(cfg *BootstrapConfig) {
+			cfg.DefaultRegionID = "default\nregion"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := &bootstrapStore{}
+			cfg := BootstrapConfig{
+				RegionID:          strings.Repeat("r", MaxIDBytes),
+				DefaultRegionID:   strings.Repeat("r", MaxIDBytes),
+				Provider:          "test",
+				ProviderRegion:    "test",
+				RegionDisplayName: "Test",
+			}
+			configure(&cfg)
+			if err := Ensure(context.Background(), store, cfg); err == nil {
+				t.Fatal("Ensure returned nil error")
+			}
+			if store.regionID != "" {
+				t.Fatalf("stored invalid region %q", store.regionID)
+			}
+		})
+	}
+}
+
 type bootstrapStore struct {
 	regionID         string
 	defaultRegion    db.Region

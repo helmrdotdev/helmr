@@ -10,22 +10,22 @@ import (
 )
 
 const ensureRegion = `-- name: EnsureRegion :one
-INSERT INTO regions (id, provider, provider_region, display_name, state, visibility, location, static_ips)
+INSERT INTO regions (id, provider, provider_region, display_name, state, visibility, location)
 VALUES (
     $1,
     $2,
     $3,
     $4,
-    $5::region_state,
+    $5::text,
     $6::region_visibility,
-    $7::text,
-    $8::text[]
+    $7::text
 )
 ON CONFLICT (id) DO UPDATE
    SET provider = EXCLUDED.provider,
        provider_region = EXCLUDED.provider_region,
-       display_name = EXCLUDED.display_name
-RETURNING id, provider, provider_region, display_name, state, visibility, location, static_ips, created_at, updated_at
+       display_name = EXCLUDED.display_name,
+       updated_at = now()
+RETURNING id, provider, provider_region, display_name, state, visibility, location, created_at, updated_at
 `
 
 type EnsureRegionParams struct {
@@ -33,10 +33,9 @@ type EnsureRegionParams struct {
 	Provider       string           `json:"provider"`
 	ProviderRegion string           `json:"provider_region"`
 	DisplayName    string           `json:"display_name"`
-	State          RegionState      `json:"state"`
+	State          string           `json:"state"`
 	Visibility     RegionVisibility `json:"visibility"`
 	Location       string           `json:"location"`
-	StaticIps      []string         `json:"static_ips"`
 }
 
 func (q *Queries) EnsureRegion(ctx context.Context, arg EnsureRegionParams) (Region, error) {
@@ -48,7 +47,6 @@ func (q *Queries) EnsureRegion(ctx context.Context, arg EnsureRegionParams) (Reg
 		arg.State,
 		arg.Visibility,
 		arg.Location,
-		arg.StaticIps,
 	)
 	var i Region
 	err := row.Scan(
@@ -59,7 +57,6 @@ func (q *Queries) EnsureRegion(ctx context.Context, arg EnsureRegionParams) (Reg
 		&i.State,
 		&i.Visibility,
 		&i.Location,
-		&i.StaticIps,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -67,7 +64,7 @@ func (q *Queries) EnsureRegion(ctx context.Context, arg EnsureRegionParams) (Reg
 }
 
 const getRegion = `-- name: GetRegion :one
-SELECT id, provider, provider_region, display_name, state, visibility, location, static_ips, created_at, updated_at
+SELECT id, provider, provider_region, display_name, state, visibility, location, created_at, updated_at
   FROM regions
  WHERE id = $1
 `
@@ -83,7 +80,6 @@ func (q *Queries) GetRegion(ctx context.Context, id string) (Region, error) {
 		&i.State,
 		&i.Visibility,
 		&i.Location,
-		&i.StaticIps,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -91,7 +87,7 @@ func (q *Queries) GetRegion(ctx context.Context, id string) (Region, error) {
 }
 
 const getRegionByProviderRegion = `-- name: GetRegionByProviderRegion :one
-SELECT id, provider, provider_region, display_name, state, visibility, location, static_ips, created_at, updated_at
+SELECT id, provider, provider_region, display_name, state, visibility, location, created_at, updated_at
   FROM regions
  WHERE provider = $1
    AND provider_region = $2
@@ -113,7 +109,6 @@ func (q *Queries) GetRegionByProviderRegion(ctx context.Context, arg GetRegionBy
 		&i.State,
 		&i.Visibility,
 		&i.Location,
-		&i.StaticIps,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -121,7 +116,7 @@ func (q *Queries) GetRegionByProviderRegion(ctx context.Context, arg GetRegionBy
 }
 
 const listRegions = `-- name: ListRegions :many
-SELECT id, provider, provider_region, display_name, state, visibility, location, static_ips, created_at, updated_at
+SELECT id, provider, provider_region, display_name, state, visibility, location, created_at, updated_at
   FROM regions
  ORDER BY lower(display_name), id
 `
@@ -143,7 +138,6 @@ func (q *Queries) ListRegions(ctx context.Context) ([]Region, error) {
 			&i.State,
 			&i.Visibility,
 			&i.Location,
-			&i.StaticIps,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {

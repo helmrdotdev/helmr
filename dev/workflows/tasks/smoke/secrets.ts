@@ -1,24 +1,15 @@
-import { cache, image, logger, sandbox, source, task } from "@helmr/sdk"
+import { image, task, workspace } from "@helmr/sdk"
 import { z } from "zod"
-
-const dependencyInputs = source.directory(".", {
-  ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json", "!vendor", "!vendor/**"],
-})
 
 const base = image("helmr-secret-smoke")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
-  .copy("/opt/helmr-task", dependencyInputs)
   .run(["npm", "install", "-g", "bun@1.3.10"])
-  .workdir("/opt/helmr-task")
-  .run(["bun", "install", "--frozen-lockfile"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("secret-smoke-bun") }],
-  })
   .workdir("/workspace")
 
-const sbx = sandbox("helmr-secret-smoke")
+export const secretSmokeWorkspace = workspace("helmr-secret-smoke")
   .image(base)
-  .resources({ cpu: 1, memory: "1Gi", disk: "8Gi" })
+  .resources({ cpu: 1, memory: "1GiB" })
 
 const payload = z.object({
   scenario: z.string().default("secret-smoke"),
@@ -34,18 +25,11 @@ const secretNames = [
 
 export const secretSmoke = task({
   id: "secret-smoke",
-  sandbox: sbx,
-  maxDuration: 300,
-  secrets: [
-    { name: "ANTHROPIC_API_KEY", env: "ANTHROPIC_API_KEY" },
-    { name: "CURSOR_API_KEY", env: "CURSOR_API_KEY" },
-    { name: "GITHUB_TOKEN", env: "GITHUB_TOKEN" },
-    { name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" },
-  ],
+  maxDuration: "5m",
   payload,
   run: async (input, ctx) => {
     const secrets = Object.fromEntries(secretNames.map((name) => [name, secretFingerprint(name)]))
-    logger.info({
+    console.info({
       phase: "secret-smoke",
       scenario: input.scenario,
       expectedEnvironment: input.expectedEnvironment,
@@ -63,14 +47,7 @@ export const secretSmoke = task({
 
 export const missingSecretSmoke = task({
   id: "missing-secret-smoke",
-  sandbox: sbx,
-  maxDuration: 300,
-  secrets: [
-    {
-      name: "HELMR_RELEASE_SMOKE_REQUIRED_ABSENT_SECRET",
-      env: "HELMR_RELEASE_SMOKE_REQUIRED_ABSENT_SECRET",
-    },
-  ],
+  maxDuration: "5m",
   payload,
   run: async () => {
     throw new Error("missing-secret-smoke should be rejected before run creation")

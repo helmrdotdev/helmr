@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -17,28 +16,20 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	tokencredential "github.com/helmrdotdev/helmr/internal/token"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-func TestWorkerEnrollmentConfigurationAlwaysLoadsAWS(t *testing.T) {
-	original := loadAWSWorkerEnrollmentVerifier
-	loadAWSWorkerEnrollmentVerifier = func(context.Context, []enrollment.AWSGroupBoundary) (*enrollment.AWSVerifier, error) {
-		return nil, errors.New("aws unavailable")
-	}
-	t.Cleanup(func() { loadAWSWorkerEnrollmentVerifier = original })
-	if _, err := loadAWSWorkerEnrollmentVerifier(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "aws unavailable") {
-		t.Fatalf("error = %v", err)
-	}
-}
 
 func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 	store := &emptyStore{}
@@ -48,19 +39,22 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler, err := control.NewServer(control.ServerConfig{
-		Log:                log,
-		DB:                 store,
-		TX:                 panicTxBeginner{},
-		Auth:               auth.NewDBAuthenticator(store),
-		WorkerEnrollment:   controltestWorkerEnrollmentVerifier{},
-		AuthSecret:         []byte("abcdefghijabcdefghijabcdefghij12"),
-		PublicURL:          publicURL,
-		WorkerGroupID:      "us-east-1-worker-group-1",
-		RegionID:           "us-east-1",
-		DefaultRegionID:    "us-east-1",
-		TelemetryReader:    controltestTelemetryReader{store: store},
-		MagicLinkDebugURLs: true,
-		Mailer:             configuredEmailSender(log, config.Control{EmailProvider: config.EmailProviderNone}),
+		Log:                   log,
+		DB:                    store,
+		TX:                    panicTxBeginner{},
+		Auth:                  auth.NewDBAuthenticator(store),
+		WorkerEnrollment:      controltestWorkerEnrollmentVerifier(),
+		SecretDelivery:        controltestSecretDeliveryOpener{},
+		RegistryCredentials:   controltestRegistryCredentialOpener{},
+		WorkspaceFencingKey:   controltestWorkspaceFencingKey(),
+		TokenCredentialKey:    controltestTokenCredentialKey(),
+		AuthKey:               make([]byte, auth.RootKeySize),
+		WorkerTokenSigningKey: make([]byte, auth.WorkerTokenSigningKeySize),
+		PublicURL:             publicURL,
+		TelemetryReader:       controltestTelemetryReader{store: store},
+		PlatformArtifactLocks: controltestPlatformArtifactLocker{},
+		MagicLinkDebugURLs:    true,
+		Mailer:                configuredEmailSender(log, config.Control{EmailProvider: config.EmailProviderNone}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -78,6 +72,55 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 	}
 }
 
+type controltestPlatformArtifactLocker struct{}
+
+func (controltestPlatformArtifactLocker) With(
+	_ context.Context,
+	_ []string,
+	fn func() error,
+) error {
+	return fn()
+}
+
+type controltestSecretDeliveryOpener struct{}
+
+func (controltestSecretDeliveryOpener) OpenDeliveries(
+	uuid.UUID,
+	[]secret.DeliveryEnvelope,
+) ([]secret.DeliveryMaterial, error) {
+	return nil, nil
+}
+
+type controltestRegistryCredentialOpener struct{}
+
+func (controltestRegistryCredentialOpener) OpenRegistryCredential(
+	uuid.UUID,
+	db.Secret,
+	db.SecretVersion,
+) ([]byte, error) {
+	return []byte("registry-password"), nil
+}
+
+func controltestWorkspaceFencingKey() workspace.FencingKey {
+	key, err := workspace.NewFencingKey(make([]byte, workspace.FencingKeySize))
+	if err != nil {
+		panic(err)
+	}
+	return key
+}
+
+func controltestTokenCredentialKey() tokencredential.CredentialKey {
+	key := make([]byte, tokencredential.CredentialKeySize)
+	for index := range key {
+		key[index] = 3
+	}
+	credentialKey, err := tokencredential.NewCredentialKey(key)
+	if err != nil {
+		panic(err)
+	}
+	return credentialKey
+}
+
 func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := newSmokeDatabase(t, ctx)
@@ -89,16 +132,30 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("HELMR_REDIS_URL", "redis://"+redisServer.Addr()+"/0")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:1")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-smoke")
-	t.Setenv("HELMR_WORKER_GROUP_ID", "us-east-1-worker-group-1")
+	buildPolicyPath := t.TempDir() + "/build-policy.json"
+	buildPolicy := smokeBuildPolicy(t)
+	if err := os.WriteFile(buildPolicyPath, []byte(buildPolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HELMR_BUILD_POLICY_PATH", buildPolicyPath)
+	t.Setenv("HELMR_PLATFORM_STORE_URI", "s3://helmr-smoke-runtime")
+	originalBuildPolicyLoader := loadControlBuildPolicy
+	loadControlBuildPolicy = func(string) (*deployment.BuildPolicy, error) {
+		return deployment.ParseBuildPolicy([]byte(buildPolicy))
+	}
+	t.Cleanup(func() { loadControlBuildPolicy = originalBuildPolicyLoader })
 	t.Setenv("HELMR_REGION_ID", "us-east-1")
 	t.Setenv("HELMR_DEFAULT_REGION_ID", "us-east-1")
 	t.Setenv("HELMR_PROVIDER", "aws")
 	t.Setenv("HELMR_PROVIDER_REGION", "us-east-1")
-	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
-	t.Setenv("HELMR_WORKER_GROUPS", `[{"id":"us-east-1-worker-group-1","name":"run","region":"us-east-1","account_id":"123456789012","autoscaling_group":"test-run","instance_profile_arn":"arn:aws:iam::123456789012:instance-profile/test-run","launch_ami_id":"ami-test","ami_ids":["ami-test"],"allows_run":true,"allows_build":false,"instance_capacity":{"milli_cpu":1000,"memory_bytes":1024,"workload_disk_bytes":1024,"scratch_bytes":1024,"vm_slots":1}}]`)
+	t.Setenv("WORKER_TOKEN_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
+	t.Setenv("TOKEN_CREDENTIAL_KEY", "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=")
+	t.Setenv("HELMR_WORKER_GROUPS", `[{"id":"us-east-1-worker-group-1","name":"run","enrollment_secret_env":"HELMR_WORKER_ENROLLMENT_SECRET_RUN","allows_run":true,"allows_build":false,"observation_ttl_seconds":3600,"instance_capacity":{"milli_cpu":1000,"memory_bytes":1024,"guest_ephemeral_disk_bytes":1024,"vm_slots":1}}]`)
+	t.Setenv("HELMR_WORKER_ENROLLMENT_SECRET_RUN", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
-	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
-	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
+	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("WORKSPACE_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 	t.Setenv("HELMR_PUBLIC_URL", "http://"+addr)
 	t.Setenv("HELMR_EMAIL_PROVIDER", "none")
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
@@ -138,10 +195,15 @@ type emptyStore struct {
 	db.Querier
 }
 
-type controltestWorkerEnrollmentVerifier struct{}
-
-func (controltestWorkerEnrollmentVerifier) VerifyWorkerEnrollment(context.Context, api.WorkerEnrollmentRequest) (control.VerifiedWorkerEnrollment, error) {
-	return control.VerifiedWorkerEnrollment{}, nil
+func controltestWorkerEnrollmentVerifier() *enrollment.Verifier {
+	verifier, err := enrollment.NewVerifier([]enrollment.GroupSecret{{
+		GroupID: "us-east-1-worker-group-1",
+		Secret:  "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+	}})
+	if err != nil {
+		panic(err)
+	}
+	return verifier
 }
 
 type controltestTelemetryReader struct {
@@ -212,12 +274,63 @@ func newSmokeDatabase(t *testing.T, ctx context.Context) string {
 	}
 	pool.Close()
 	if serverVersion < 180000 {
-		t.Skipf("Postgres %d does not provide uuidv7(); skipping control smoke test", serverVersion)
+		t.Skipf("Postgres %d is older than the Helmr PostgreSQL 18 schema baseline; skipping control smoke test", serverVersion)
 	}
 	if err := schema.Up(ctx, databaseURL); err != nil {
 		t.Fatal(err)
 	}
 	return databaseURL
+}
+
+func smokeBuildPolicy(t *testing.T) string {
+	t.Helper()
+	digest := func(character string) string {
+		return "sha256:" + strings.Repeat(character, 64)
+	}
+	raw, err := deployment.ComposeBuildPolicy(
+		deployment.RuntimeInputs{
+			Harness: deployment.ArtifactDescriptor{
+				Digest: digest("1"), MediaType: deployment.PlatformTreeInputMediaType, SizeBytes: 4096,
+			},
+		},
+		deployment.ToolchainInputs{
+			Base: deployment.ArtifactDescriptor{
+				Digest: digest("2"), MediaType: deployment.PlatformTreeInputMediaType, SizeBytes: 4096,
+			},
+			Compiler: deployment.CompilerInputs{
+				APIVersion: "helmr.compiler.v0",
+				ConfigEvaluator: deployment.CompilerEntrypoint{
+					APIVersion: deployment.ConfigEvaluatorAPIVersion,
+					Digest:     digest("3"), Entrypoint: "/nix/helmr/config-evaluator.mjs",
+				},
+				Esbuild: deployment.EsbuildInputs{
+					APIPackageDigest: digest("4"), BinaryDigest: digest("5"),
+					BinaryPath: "/nix/helmr/esbuild", PackagePath: "/nix/node_modules/esbuild",
+					Version: "0.28.1",
+				},
+				OptionsContractDigest: digest("6"),
+				Output: deployment.CompilerOutputContract{
+					Aggregate: "analysis-only", FinalModules: "independent", SourceMaps: "external",
+				},
+				ProgramCompiler: deployment.CompilerEntrypoint{
+					APIVersion: "helmr.compiler.v0",
+					Digest:     digest("7"), Entrypoint: "/nix/helmr/program-compiler.mjs",
+				},
+				Source: deployment.CompilerSourceContract{
+					DeclarationExtensions: []string{".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"},
+					PackageDependencies:   "external",
+					Semantics:             "pinned-esbuild",
+					WorkspaceDependencies: "bundled",
+				},
+			},
+		},
+		[]byte("node release keyring"),
+		[]string{"00112233445566778899AABBCCDDEEFF00112233"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }
 
 func freeSmokeAddr(t *testing.T) string {

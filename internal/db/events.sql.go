@@ -99,6 +99,103 @@ func (q *Queries) AppendDeploymentEvent(ctx context.Context, arg AppendDeploymen
 	return i, err
 }
 
+const appendDeploymentEvents = `-- name: AppendDeploymentEvents :execrows
+WITH target_deployment AS (
+    SELECT deployments.id,
+           deployments.org_id,
+           deployments.project_id,
+           deployments.environment_id
+      FROM deployments
+     WHERE deployments.org_id = $8
+       AND deployments.project_id = $9
+       AND deployments.environment_id = $10
+       AND deployments.id = $11
+)
+INSERT INTO telemetry_outbox (
+    org_id, stream_kind, source_kind, source_id, project_id,
+    environment_id, deployment_id, category, severity, source, kind, message,
+    payload, redaction_class, observed_at
+)
+SELECT target_deployment.org_id,
+       'event',
+       'deployment',
+       target_deployment.id,
+       target_deployment.project_id,
+       target_deployment.environment_id,
+       target_deployment.id,
+       COALESCE(NULLIF(input_categories.category, ''), 'system'),
+       COALESCE(NULLIF(input_severities.severity, ''), 'info'),
+       COALESCE(NULLIF(input_sources.source, ''), 'control'),
+       input_kinds.kind,
+       COALESCE(input_messages.message, ''),
+       COALESCE(input_payloads.payload::jsonb, '{}'::jsonb),
+       COALESCE(NULLIF(input_classes.redaction_class, ''), 'internal'),
+       now()
+  FROM target_deployment
+ CROSS JOIN unnest($1::text[])
+       WITH ORDINALITY AS input_categories(category, position)
+  JOIN unnest($2::text[])
+       WITH ORDINALITY AS input_severities(severity, position)
+    ON input_severities.position = input_categories.position
+  JOIN unnest($3::text[])
+       WITH ORDINALITY AS input_sources(source, position)
+    ON input_sources.position = input_categories.position
+  JOIN unnest($4::text[])
+       WITH ORDINALITY AS input_kinds(kind, position)
+    ON input_kinds.position = input_categories.position
+  JOIN unnest($5::text[])
+       WITH ORDINALITY AS input_messages(message, position)
+    ON input_messages.position = input_categories.position
+  JOIN unnest($6::text[])
+       WITH ORDINALITY AS input_payloads(payload, position)
+    ON input_payloads.position = input_categories.position
+  JOIN unnest($7::text[])
+       WITH ORDINALITY AS input_classes(redaction_class, position)
+    ON input_classes.position = input_categories.position
+ WHERE cardinality($1::text[]) BETWEEN 1 AND 66
+   AND cardinality($2::text[]) = cardinality($1::text[])
+   AND cardinality($3::text[]) = cardinality($1::text[])
+   AND cardinality($4::text[]) = cardinality($1::text[])
+   AND cardinality($5::text[]) = cardinality($1::text[])
+   AND cardinality($6::text[]) = cardinality($1::text[])
+   AND cardinality($7::text[]) = cardinality($1::text[])
+ ORDER BY input_categories.position
+`
+
+type AppendDeploymentEventsParams struct {
+	Categories       []string    `json:"categories"`
+	Severities       []string    `json:"severities"`
+	Sources          []string    `json:"sources"`
+	Kinds            []string    `json:"kinds"`
+	Messages         []string    `json:"messages"`
+	Payloads         []string    `json:"payloads"`
+	RedactionClasses []string    `json:"redaction_classes"`
+	OrgID            pgtype.UUID `json:"org_id"`
+	ProjectID        pgtype.UUID `json:"project_id"`
+	EnvironmentID    pgtype.UUID `json:"environment_id"`
+	DeploymentID     pgtype.UUID `json:"deployment_id"`
+}
+
+func (q *Queries) AppendDeploymentEvents(ctx context.Context, arg AppendDeploymentEventsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, appendDeploymentEvents,
+		arg.Categories,
+		arg.Severities,
+		arg.Sources,
+		arg.Kinds,
+		arg.Messages,
+		arg.Payloads,
+		arg.RedactionClasses,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.DeploymentID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const appendRunEvent = `-- name: AppendRunEvent :one
 WITH event_args AS (
     SELECT $1::text AS event_kind,
@@ -215,7 +312,7 @@ current_run_lease AS (
            run_leases.span_id,
            run_leases.parent_span_id,
            run_leases.traceparent,
-           run_leases.task_attempt_number AS attempt_number
+           run_leases.attempt_number AS attempt_number
       FROM runs
       JOIN run_leases ON run_leases.id = runs.current_run_lease_id
                      AND run_leases.org_id = runs.org_id

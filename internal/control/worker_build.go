@@ -1,32 +1,75 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const (
-	deploymentBuildLeaseDuration = 30 * time.Minute
-	currentGuestdABI             = "helmr.guestd.v0"
-	currentAdapterABI            = "helmr.adapter.v0"
-)
+const deploymentBuildLeaseDuration = 30 * time.Minute
+
+type workerMessagePayload struct {
+	Message string `json:"message"`
+}
+
+type deploymentBuildCompletionAuthority struct {
+	buildNodeVersion      string
+	buildRuntimeDigest    []byte
+	buildToolchainDigest  []byte
+	buildManagerName      string
+	buildManagerVersion   string
+	buildManagerIntegrity pgtype.Text
+	buildManagerDigest    []byte
+	buildContractVersion  string
+	imageCacheMode        string
+	sourceArtifactID      pgtype.UUID
+	sourceDigest          string
+	sourceSizeBytes       int64
+	sourceMediaType       string
+}
+
+type normalizedDeploymentDefinition struct {
+	input          deployment.DefinitionInput
+	manifest       []byte
+	manifestDigest [sha256.Size]byte
+}
+
+type preparedDeploymentBuild struct {
+	succeeded       deployment.BuildSucceeded
+	objects         []deploymentBuildObject
+	definitions     []normalizedDeploymentDefinition
+	queueConfigJSON []byte
+}
+
+type invalidDeploymentBuildOutput struct {
+	err error
+}
+
+func (err invalidDeploymentBuildOutput) Error() string {
+	return err.err.Error()
+}
+
+func (err invalidDeploymentBuildOutput) Unwrap() error {
+	return err.err
+}
 
 func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
@@ -40,47 +83,97 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	leaseExpiresAt := time.Now().Add(deploymentBuildLeaseDuration)
-	row, err := s.db.ClaimNextDeploymentBuildLease(r.Context(), db.ClaimNextDeploymentBuildLeaseParams{
-		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
-		ExpiresAt: pgvalue.Timestamptz(leaseExpiresAt),
-	})
-	if isNoRows(err) {
-		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{})
+	if s.buildPolicy == nil || s.platformStore == nil {
+		writeError(w, unavailable(errors.New("deployment build authority is not configured")))
 		return
 	}
+	var claimed db.ClaimNextDeploymentBuildLeaseRow
+	var found bool
+	err := s.inTx(r.Context(), func(work *txWork) error {
+		row, err := work.q.ClaimNextDeploymentBuildLease(r.Context(), db.ClaimNextDeploymentBuildLeaseParams{
+			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
+			ExpiresAt: pgvalue.Timestamptz(leaseExpiresAt),
+		})
+		if isNoRows(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("claim assigned deployment build: %w", err)
+		}
+		claimed = row
+		found = true
+		return nil
+	})
 	if err != nil {
 		s.log.Error("claim assigned deployment build failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
 		writeError(w, errors.New("claim assigned deployment build"))
 		return
 	}
+	if !found {
+		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{})
+		return
+	}
+	response, err := s.deploymentBuildLeaseResponse(r.Context(), claimed, leaseExpiresAt)
+	if err != nil {
+		s.log.Error("project claimed deployment build failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
+		writeError(w, errors.New("project claimed deployment build"))
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) deploymentBuildLeaseResponse(
+	ctx context.Context,
+	row db.ClaimNextDeploymentBuildLeaseRow,
+	expiresAt time.Time,
+) (api.WorkerDeploymentBuildLeaseResponse, error) {
+	runtimeDigest, err := deployment.RuntimeDigestString(row.BuildRuntimeDigest)
+	if err != nil {
+		return api.WorkerDeploymentBuildLeaseResponse{}, fmt.Errorf("read deployment build runtime digest: %w", err)
+	}
+	toolchainDigest, err := deployment.SHA256DigestString(row.BuildToolchainDigest)
+	if err != nil {
+		return api.WorkerDeploymentBuildLeaseResponse{}, fmt.Errorf("read deployment build toolchain digest: %w", err)
+	}
+	managerDigest, err := deployment.SHA256DigestString(row.BuildManagerDigest)
+	if err != nil {
+		return api.WorkerDeploymentBuildLeaseResponse{}, fmt.Errorf("read deployment build Manager digest: %w", err)
+	}
+	runtimeObject, err := s.platformObject(ctx, runtimeDigest, deployment.RuntimeArtifactMediaType)
+	if err != nil {
+		return api.WorkerDeploymentBuildLeaseResponse{}, err
+	}
+	managerObject, err := s.platformObject(ctx, managerDigest, deployment.ManagerTreeMediaType)
+	if err != nil {
+		return api.WorkerDeploymentBuildLeaseResponse{}, err
+	}
+	toolchainObject, err := s.platformObject(ctx, toolchainDigest, deployment.ToolchainMediaType)
+	if err != nil {
+		return api.WorkerDeploymentBuildLeaseResponse{}, err
+	}
 	deploymentID := pgvalue.MustUUIDValue(row.DeploymentID).String()
 	lease := api.WorkerDeploymentBuildLease{
-		ID:                         pgvalue.MustUUIDValue(row.ID).String(),
-		OrgID:                      pgvalue.MustUUIDValue(row.OrgID).String(),
-		ProjectID:                  pgvalue.MustUUIDValue(row.ProjectID).String(),
-		EnvironmentID:              pgvalue.MustUUIDValue(row.EnvironmentID).String(),
-		DeploymentID:               deploymentID,
-		WorkerGroupID:              row.WorkerGroupID,
-		WorkerInstanceID:           pgvalue.MustUUIDValue(row.WorkerInstanceID).String(),
-		WorkerEpoch:                row.WorkerEpoch,
-		BuildAttemptNumber:         row.BuildAttemptNumber,
-		LeaseSequence:              row.LeaseSequence,
-		WorkerProtocolVersion:      row.WorkerProtocolVersion,
-		ExpiresAt:                  leaseExpiresAt,
-		RequestedWorkloadDiskBytes: row.RequestedWorkloadDiskBytes,
-		RequestedScratchBytes:      row.RequestedScratchBytes,
-		RequestedCPUMillis:         row.RequestedCpuMillis,
-		RequestedMemoryBytes:       row.RequestedMemoryBytes,
-		RequestedBuildExecutors:    row.RequestedBuildExecutors,
+		ID:                               pgvalue.MustUUIDValue(row.ID).String(),
+		OrgID:                            pgvalue.MustUUIDValue(row.OrgID).String(),
+		ProjectID:                        pgvalue.MustUUIDValue(row.ProjectID).String(),
+		EnvironmentID:                    pgvalue.MustUUIDValue(row.EnvironmentID).String(),
+		DeploymentID:                     deploymentID,
+		WorkerGroupID:                    row.WorkerGroupID,
+		WorkerInstanceID:                 pgvalue.MustUUIDValue(row.WorkerInstanceID).String(),
+		WorkerEpoch:                      row.WorkerEpoch,
+		LeaseSequence:                    row.LeaseSequence,
+		WorkerProtocolVersion:            row.WorkerProtocolVersion,
+		ExpiresAt:                        expiresAt,
+		RequestedGuestEphemeralDiskBytes: row.RequestedGuestEphemeralDiskBytes,
+		RequestedCPUMillis:               row.RequestedCpuMillis,
+		RequestedMemoryBytes:             row.RequestedMemoryBytes,
+		RequestedBuildExecutors:          row.RequestedBuildExecutors,
 	}
-	deployment := api.WorkerDeploymentBuild{
+	build := api.WorkerDeploymentBuild{
 		ID:                    deploymentID,
 		Version:               row.Version,
 		APIVersion:            row.ApiVersion,
-		SDKVersion:            row.SdkVersion,
-		CLIVersion:            row.CliVersion,
-		BundleFormatVersion:   row.BundleFormatVersion,
 		WorkerProtocolVersion: row.WorkerProtocolVersion,
 		ProjectID:             pgvalue.MustUUIDValue(row.ProjectID).String(),
 		EnvironmentID:         pgvalue.MustUUIDValue(row.EnvironmentID).String(),
@@ -89,8 +182,38 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 			SizeBytes: row.SourceSizeBytes,
 			MediaType: row.SourceMediaType,
 		},
+		Runtime:     runtimeObject,
+		NodeVersion: row.BuildNodeVersion,
+		Manager: api.WorkerManagerPin{
+			Artifact:  managerObject,
+			Integrity: row.BuildManagerIntegrity.String,
+			Name:      row.BuildManagerName,
+			Version:   row.BuildManagerVersion,
+		},
+		Toolchain:            toolchainObject,
+		BuildContractVersion: row.BuildContractVersion,
+		ImageCacheMode:       row.ImageCacheMode,
 	}
-	writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{Lease: &lease, Deployment: &deployment})
+	return api.WorkerDeploymentBuildLeaseResponse{Lease: &lease, Deployment: &build}, nil
+}
+
+func (s *Server) platformObject(
+	ctx context.Context,
+	digest string,
+	mediaType string,
+) (api.CASObject, error) {
+	object, err := s.platformStore.Stat(ctx, digest)
+	if err != nil {
+		return api.CASObject{}, fmt.Errorf("stat Platform Artifact %s: %w", digest, err)
+	}
+	if object.Digest != digest || object.MediaType != mediaType || object.SizeBytes < 1 {
+		return api.CASObject{}, errors.New("Platform Artifact metadata does not match its Deployment pin")
+	}
+	return api.CASObject{
+		Digest:    object.Digest,
+		SizeBytes: object.SizeBytes,
+		MediaType: object.MediaType,
+	}, nil
 }
 
 func (s *Server) workerStartDeploymentBuild(w http.ResponseWriter, r *http.Request) {
@@ -110,18 +233,18 @@ func (s *Server) workerStartDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		writeError(w, badRequest(err))
 		return
 	}
-	leaseID, err := uuid.Parse(strings.TrimSpace(lease.ID))
-	if err != nil || lease.WorkerGroupID != worker.WorkerGroupID || lease.WorkerInstanceID != worker.WorkerInstanceID.String() || lease.WorkerEpoch != worker.WorkerEpoch || lease.BuildAttemptNumber <= 0 || lease.LeaseSequence <= 0 || lease.WorkerProtocolVersion != worker.ProtocolVersion {
+	leaseID, err := ids.Parse(lease.ID)
+	if err != nil || lease.WorkerGroupID != worker.WorkerGroupID || lease.WorkerInstanceID != worker.WorkerInstanceID.String() || lease.WorkerEpoch != worker.WorkerEpoch || lease.LeaseSequence < 1 || lease.LeaseSequence > 3 || lease.WorkerProtocolVersion != worker.ProtocolVersion {
 		writeError(w, conflict(errors.New("deployment build lease is stale")))
 		return
 	}
 	started, err := s.db.GetStartedDeploymentBuildLease(r.Context(), db.GetStartedDeploymentBuildLeaseParams{
 		OrgID: orgID, DeploymentID: deploymentID, BuildLeaseID: pgvalue.UUID(leaseID),
-		BuildAttemptNumber: lease.BuildAttemptNumber, LeaseSequence: lease.LeaseSequence,
+		LeaseSequence: lease.LeaseSequence,
 		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
-		WorkerProtocolVersion:      worker.ProtocolVersion,
-		RequestedWorkloadDiskBytes: lease.RequestedWorkloadDiskBytes, RequestedScratchBytes: lease.RequestedScratchBytes,
-		RequestedCpuMillis: lease.RequestedCPUMillis, RequestedMemoryBytes: lease.RequestedMemoryBytes,
+		WorkerProtocolVersion:            worker.ProtocolVersion,
+		RequestedGuestEphemeralDiskBytes: lease.RequestedGuestEphemeralDiskBytes,
+		RequestedCpuMillis:               lease.RequestedCPUMillis, RequestedMemoryBytes: lease.RequestedMemoryBytes,
 		RequestedBuildExecutors: lease.RequestedBuildExecutors,
 	})
 	if err == nil {
@@ -136,14 +259,13 @@ func (s *Server) workerStartDeploymentBuild(w http.ResponseWriter, r *http.Reque
 	expiresAt := time.Now().Add(deploymentBuildLeaseDuration)
 	started, err = s.db.StartDeploymentBuildLease(r.Context(), db.StartDeploymentBuildLeaseParams{
 		ExpiresAt: pgvalue.Timestamptz(expiresAt), OrgID: orgID, DeploymentID: deploymentID,
-		BuildLeaseID: pgvalue.UUID(leaseID), BuildAttemptNumber: lease.BuildAttemptNumber,
-		LeaseSequence: lease.LeaseSequence, WorkerGroupID: worker.WorkerGroupID,
+		BuildLeaseID: pgvalue.UUID(leaseID), LeaseSequence: lease.LeaseSequence,
+		WorkerGroupID:    worker.WorkerGroupID,
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
-		RequestedWorkloadDiskBytes: lease.RequestedWorkloadDiskBytes,
-		RequestedScratchBytes:      lease.RequestedScratchBytes,
-		RequestedCpuMillis:         lease.RequestedCPUMillis,
-		RequestedMemoryBytes:       lease.RequestedMemoryBytes,
-		RequestedBuildExecutors:    lease.RequestedBuildExecutors,
+		RequestedGuestEphemeralDiskBytes: lease.RequestedGuestEphemeralDiskBytes,
+		RequestedCpuMillis:               lease.RequestedCPUMillis,
+		RequestedMemoryBytes:             lease.RequestedMemoryBytes,
+		RequestedBuildExecutors:          lease.RequestedBuildExecutors,
 	})
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("deployment build lease is stale")))
@@ -174,45 +296,74 @@ func (s *Server) workerRenewDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		writeError(w, badRequest(err))
 		return
 	}
-	leaseID, err := uuid.Parse(strings.TrimSpace(lease.ID))
-	if err != nil || lease.WorkerGroupID != worker.WorkerGroupID || lease.WorkerInstanceID != worker.WorkerInstanceID.String() || lease.WorkerEpoch != worker.WorkerEpoch || lease.BuildAttemptNumber <= 0 || lease.LeaseSequence <= 0 || lease.WorkerProtocolVersion != worker.ProtocolVersion {
+	leaseID, err := ids.Parse(lease.ID)
+	if err != nil || lease.WorkerGroupID != worker.WorkerGroupID || lease.WorkerInstanceID != worker.WorkerInstanceID.String() || lease.WorkerEpoch != worker.WorkerEpoch || lease.LeaseSequence < 1 || lease.LeaseSequence > 3 || lease.WorkerProtocolVersion != worker.ProtocolVersion {
 		writeError(w, conflict(errors.New("deployment build lease is stale")))
 		return
 	}
 	expiresAt := time.Now().Add(deploymentBuildLeaseDuration)
-	renewed, err := s.db.RenewDeploymentBuildLease(r.Context(), db.RenewDeploymentBuildLeaseParams{
-		ExpiresAt: pgvalue.Timestamptz(expiresAt), OrgID: orgID, DeploymentID: deploymentID,
-		BuildLeaseID: pgvalue.UUID(leaseID), BuildAttemptNumber: lease.BuildAttemptNumber,
-		LeaseSequence: lease.LeaseSequence, WorkerGroupID: worker.WorkerGroupID,
-		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+	var renewed db.DeploymentBuildLease
+	revokedOperationIDs := make([]string, 0)
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		row, err := work.q.RenewDeploymentBuildLease(r.Context(), db.RenewDeploymentBuildLeaseParams{
+			ExpiresAt: pgvalue.Timestamptz(expiresAt), OrgID: orgID, DeploymentID: deploymentID,
+			BuildLeaseID: pgvalue.UUID(leaseID), LeaseSequence: lease.LeaseSequence,
+			WorkerGroupID:    worker.WorkerGroupID,
+			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+		})
+		if isNoRows(err) {
+			return conflict(errors.New("deployment build lease is stale"))
+		}
+		if err != nil {
+			return errors.New("renew deployment build")
+		}
+		rows, err := work.q.ListRevokedImageOperationIDsForBuildLease(
+			r.Context(),
+			pgvalue.UUID(leaseID),
+		)
+		if err != nil {
+			return errors.New("list revoked Workspace image operations")
+		}
+		for _, operationID := range rows {
+			value, err := pgvalue.UUIDValue(operationID)
+			if err != nil {
+				return errors.New("revoked Workspace image operation ID is invalid")
+			}
+			revokedOperationIDs = append(revokedOperationIDs, value.String())
+		}
+		renewed = row
+		return nil
 	})
-	if isNoRows(err) {
-		writeError(w, conflict(errors.New("deployment build lease is stale")))
-		return
-	}
 	if err != nil {
-		writeError(w, errors.New("renew deployment build"))
+		writeError(w, err)
 		return
 	}
 	lease.ExpiresAt = pgvalue.Time(renewed.ExpiresAt)
-	writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildRenewResponse{Lease: lease})
+	writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildRenewResponse{
+		Lease:                    lease,
+		RevokedImageOperationIDs: revokedOperationIDs,
+	})
 }
 
 func (s *Server) workerRejectDeploymentBuild(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
+	if s.db == nil {
+		writeError(w, unavailable(errors.New("deployment build storage is not configured")))
+		return
+	}
 	var request api.WorkerDeploymentBuildRejectRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker deployment build reject JSON: %w", err)))
 		return
 	}
 	lease := request.Lease
-	orgID, _, _, deploymentID, err := parseDeploymentBuildLeaseIDs(lease)
+	orgID, projectID, environmentID, deploymentID, err := parseDeploymentBuildLeaseIDs(lease)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	leaseID, err := uuid.Parse(strings.TrimSpace(lease.ID))
-	if err != nil || lease.WorkerGroupID != worker.WorkerGroupID || lease.WorkerInstanceID != worker.WorkerInstanceID.String() || lease.WorkerEpoch != worker.WorkerEpoch || lease.BuildAttemptNumber <= 0 || lease.LeaseSequence <= 0 || lease.WorkerProtocolVersion != worker.ProtocolVersion {
+	leaseID, err := ids.Parse(lease.ID)
+	if err != nil || lease.WorkerGroupID != worker.WorkerGroupID || lease.WorkerInstanceID != worker.WorkerInstanceID.String() || lease.WorkerEpoch != worker.WorkerEpoch || lease.LeaseSequence < 1 || lease.LeaseSequence > 3 || lease.WorkerProtocolVersion != worker.ProtocolVersion {
 		writeError(w, conflict(errors.New("deployment build lease is stale")))
 		return
 	}
@@ -230,7 +381,7 @@ func (s *Server) workerRejectDeploymentBuild(w http.ResponseWriter, r *http.Requ
 	}
 	terminal, err := s.db.GetDeploymentBuildTerminalResult(r.Context(), db.GetDeploymentBuildTerminalResultParams{
 		OrgID: orgID, DeploymentID: deploymentID, BuildLeaseID: pgvalue.UUID(leaseID),
-		BuildAttemptNumber: lease.BuildAttemptNumber, LeaseSequence: lease.LeaseSequence,
+		LeaseSequence: lease.LeaseSequence,
 		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
 	})
@@ -246,21 +397,353 @@ func (s *Server) workerRejectDeploymentBuild(w http.ResponseWriter, r *http.Requ
 		writeError(w, errors.New("get terminal deployment build"))
 		return
 	}
-	_, err = s.db.RejectDeploymentBuildLease(r.Context(), db.RejectDeploymentBuildLeaseParams{
-		ReasonCode: pgtype.Text{String: reason, Valid: true}, Error: request.Error, OrgID: orgID, DeploymentID: deploymentID,
-		BuildLeaseID: pgvalue.UUID(leaseID), BuildAttemptNumber: lease.BuildAttemptNumber, LeaseSequence: lease.LeaseSequence,
-		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
-		TerminalRequestFingerprint: fingerprint,
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		locked, err := work.q.LockDeploymentBuildTerminalFence(r.Context(), db.LockDeploymentBuildTerminalFenceParams{
+			OrgID:                 orgID,
+			ProjectID:             projectID,
+			EnvironmentID:         environmentID,
+			DeploymentID:          deploymentID,
+			BuildLeaseID:          pgvalue.UUID(leaseID),
+			LeaseSequence:         lease.LeaseSequence,
+			WorkerGroupID:         worker.WorkerGroupID,
+			WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerEpoch:           worker.WorkerEpoch,
+			WorkerProtocolVersion: worker.ProtocolVersion,
+		})
+		if isNoRows(err) {
+			return conflict(errors.New("deployment build lease is stale"))
+		}
+		if err != nil {
+			return errors.New("lock deployment build terminal fence")
+		}
+		if locked.State == db.DeploymentBuildLeaseStateSucceeded || locked.State == db.DeploymentBuildLeaseStateFailed || locked.State == db.DeploymentBuildLeaseStateRejected {
+			if locked.State != db.DeploymentBuildLeaseStateRejected ||
+				!locked.TerminalRequestFingerprint.Valid ||
+				locked.TerminalRequestFingerprint.String != fingerprint {
+				return conflict(errors.New("deployment build lease already has a different terminal result"))
+			}
+			return nil
+		}
+		if (locked.State != db.DeploymentBuildLeaseStateAssigned && locked.State != db.DeploymentBuildLeaseStateStarting) ||
+			locked.DeploymentStatus != db.DeploymentStatusBuilding ||
+			!locked.CurrentBuildLeaseID.Valid ||
+			locked.CurrentBuildLeaseID != pgvalue.UUID(leaseID) ||
+			!locked.ExpiresAt.Valid ||
+			!locked.ExpiresAt.Time.After(time.Now()) {
+			return conflict(errors.New("deployment build lease is stale"))
+		}
+		_, err = work.q.RejectDeploymentBuildLease(r.Context(), db.RejectDeploymentBuildLeaseParams{
+			ReasonCode: pgtype.Text{String: reason, Valid: true}, Error: request.Error, OrgID: orgID, DeploymentID: deploymentID,
+			BuildLeaseID: pgvalue.UUID(leaseID), LeaseSequence: lease.LeaseSequence,
+			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+			TerminalRequestFingerprint: fingerprint,
+		})
+		if isNoRows(err) {
+			return conflict(errors.New("deployment build lease is stale"))
+		}
+		if err != nil {
+			return errors.New("reject deployment build")
+		}
+		return nil
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) workerDeploymentBuildDeliveryFailed(w http.ResponseWriter, r *http.Request) {
+	worker := workerFromContext(r.Context())
+	if s.db == nil {
+		writeError(w, unavailable(errors.New("deployment build storage is not configured")))
+		return
+	}
+	var request api.WorkerDeploymentBuildDeliveryFailureRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, badRequest(fmt.Errorf("invalid worker deployment build delivery failure JSON: %w", err)))
+		return
+	}
+	if request.ReasonCode != api.WorkerDeploymentBuildDeliveryBuildGuestFailed &&
+		request.ReasonCode != api.WorkerDeploymentBuildDeliveryProgramVerifierFailed {
+		writeError(w, badRequest(errors.New("deployment build delivery failure reasonCode is invalid")))
+		return
+	}
+	lease := request.Lease
+	orgID, projectID, environmentID, deploymentID, err := parseDeploymentBuildLeaseIDs(lease)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	leaseID, err := ids.Parse(lease.ID)
+	if err != nil ||
+		lease.WorkerGroupID != worker.WorkerGroupID ||
+		lease.WorkerInstanceID != worker.WorkerInstanceID.String() ||
+		lease.WorkerEpoch != worker.WorkerEpoch ||
+		lease.LeaseSequence < 1 ||
+		lease.LeaseSequence > 3 ||
+		lease.WorkerProtocolVersion != worker.ProtocolVersion {
+		writeError(w, conflict(errors.New("deployment build lease is stale")))
+		return
+	}
+	row, err := s.db.FailDeploymentBuildDelivery(r.Context(), db.FailDeploymentBuildDeliveryParams{
+		OrgID:                 orgID,
+		ProjectID:             projectID,
+		EnvironmentID:         environmentID,
+		DeploymentID:          deploymentID,
+		BuildLeaseID:          pgvalue.UUID(leaseID),
+		LeaseSequence:         lease.LeaseSequence,
+		WorkerGroupID:         worker.WorkerGroupID,
+		WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch:           worker.WorkerEpoch,
+		WorkerProtocolVersion: worker.ProtocolVersion,
+		ReasonCode:            pgtype.Text{String: string(request.ReasonCode), Valid: true},
 	})
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("deployment build lease is stale")))
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("reject deployment build"))
+		writeError(w, errors.New("fail deployment build delivery"))
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	if row.State != db.DeploymentBuildLeaseStateLost ||
+		!row.TerminalReasonCode.Valid ||
+		row.TerminalReasonCode.String != string(request.ReasonCode) ||
+		!row.TerminalAt.Valid ||
+		row.LeaseSequence != lease.LeaseSequence ||
+		row.DeploymentID != deploymentID ||
+		(row.DeploymentStatus != db.DeploymentStatusBuilding &&
+			row.DeploymentStatus != db.DeploymentStatusDeployed &&
+			row.DeploymentStatus != db.DeploymentStatusFailed) {
+		writeError(w, errors.New("invalid deployment build delivery failure result"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildResponse{
+		DeploymentID: lease.DeploymentID,
+		Status:       string(row.DeploymentStatus),
+	})
+}
+
+func deploymentBuildAuthority(
+	row db.GetDeploymentBuildCompletionAuthorityRow,
+) deploymentBuildCompletionAuthority {
+	return deploymentBuildCompletionAuthority{
+		buildNodeVersion:      row.BuildNodeVersion,
+		buildRuntimeDigest:    append([]byte(nil), row.BuildRuntimeDigest...),
+		buildToolchainDigest:  append([]byte(nil), row.BuildToolchainDigest...),
+		buildManagerName:      row.BuildManagerName,
+		buildManagerVersion:   row.BuildManagerVersion,
+		buildManagerIntegrity: row.BuildManagerIntegrity,
+		buildManagerDigest:    append([]byte(nil), row.BuildManagerDigest...),
+		buildContractVersion:  row.BuildContractVersion,
+		imageCacheMode:        row.ImageCacheMode,
+		sourceArtifactID:      row.DeploymentSourceArtifactID,
+		sourceDigest:          row.DeploymentSourceDigest,
+		sourceSizeBytes:       row.DeploymentSourceSizeBytes,
+		sourceMediaType:       row.DeploymentSourceMediaType,
+	}
+}
+
+func lockedDeploymentBuildAuthority(
+	row db.LockDeploymentBuildTerminalFenceRow,
+) deploymentBuildCompletionAuthority {
+	return deploymentBuildCompletionAuthority{
+		buildNodeVersion:      row.BuildNodeVersion,
+		buildRuntimeDigest:    row.BuildRuntimeDigest,
+		buildToolchainDigest:  row.BuildToolchainDigest,
+		buildManagerName:      row.BuildManagerName,
+		buildManagerVersion:   row.BuildManagerVersion,
+		buildManagerIntegrity: row.BuildManagerIntegrity,
+		buildManagerDigest:    row.BuildManagerDigest,
+		buildContractVersion:  row.BuildContractVersion,
+		imageCacheMode:        row.ImageCacheMode,
+		sourceArtifactID:      row.DeploymentSourceArtifactID,
+		sourceDigest:          row.DeploymentSourceDigest,
+		sourceSizeBytes:       row.DeploymentSourceSizeBytes,
+		sourceMediaType:       row.DeploymentSourceMediaType,
+	}
+}
+
+func (authority deploymentBuildCompletionAuthority) equal(
+	other deploymentBuildCompletionAuthority,
+) bool {
+	return authority.buildNodeVersion == other.buildNodeVersion &&
+		bytes.Equal(authority.buildRuntimeDigest, other.buildRuntimeDigest) &&
+		bytes.Equal(
+			authority.buildToolchainDigest,
+			other.buildToolchainDigest,
+		) &&
+		authority.buildManagerName == other.buildManagerName &&
+		authority.buildManagerVersion == other.buildManagerVersion &&
+		authority.buildManagerIntegrity == other.buildManagerIntegrity &&
+		bytes.Equal(authority.buildManagerDigest, other.buildManagerDigest) &&
+		authority.buildContractVersion == other.buildContractVersion &&
+		authority.sourceArtifactID == other.sourceArtifactID &&
+		authority.sourceDigest == other.sourceDigest &&
+		authority.sourceSizeBytes == other.sourceSizeBytes &&
+		authority.sourceMediaType == other.sourceMediaType
+}
+
+func liveDeploymentBuildLease(
+	state string,
+	deploymentStatus string,
+	currentBuildLeaseID pgtype.UUID,
+	buildLeaseID pgtype.UUID,
+	expiresAt pgtype.Timestamptz,
+	now time.Time,
+) bool {
+	return state == db.DeploymentBuildLeaseStateRunning &&
+		deploymentStatus == db.DeploymentStatusBuilding &&
+		currentBuildLeaseID.Valid &&
+		currentBuildLeaseID == buildLeaseID &&
+		expiresAt.Valid &&
+		expiresAt.Time.After(now)
+}
+
+func (s *Server) prepareDeploymentBuild(
+	ctx context.Context,
+	result deployment.BuildResult,
+	authority deploymentBuildCompletionAuthority,
+) (preparedDeploymentBuild, error) {
+	if s.cas == nil {
+		return preparedDeploymentBuild{}, errors.New("deployment build CAS is not configured")
+	}
+	runtimeDigest, err := deployment.RuntimeDigestString(authority.buildRuntimeDigest)
+	if err != nil {
+		return preparedDeploymentBuild{}, errors.New("deployment build runtime digest is invalid")
+	}
+	toolchainDigest, err := deployment.SHA256DigestString(
+		authority.buildToolchainDigest,
+	)
+	if err != nil {
+		return preparedDeploymentBuild{}, errors.New(
+			"deployment build toolchain digest is invalid",
+		)
+	}
+	if authority.buildContractVersion != deployment.ProgramBuildContractVersion {
+		return preparedDeploymentBuild{}, errors.New("deployment build contract is unsupported")
+	}
+	if err := deployment.ValidateBuildResultTarget(
+		result,
+		runtimeDigest,
+		deployment.ArchitectureX8664,
+	); err != nil {
+		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{err: err}
+	}
+
+	succeeded := *result.Succeeded
+	source, err := s.cas.Get(ctx, authority.sourceDigest)
+	if err != nil {
+		return preparedDeploymentBuild{}, fmt.Errorf(
+			"read deployment source authority: %w",
+			err,
+		)
+	}
+	selection, inspectErr := deployment.InspectSource(source)
+	closeErr := source.Close()
+	if inspectErr != nil {
+		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{err: inspectErr}
+	}
+	if closeErr != nil {
+		return preparedDeploymentBuild{}, fmt.Errorf(
+			"close deployment source authority: %w",
+			closeErr,
+		)
+	}
+	managerDigest, err := deployment.SHA256DigestString(authority.buildManagerDigest)
+	if err != nil {
+		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{
+			err: errors.New("deployment build Manager digest is invalid"),
+		}
+	}
+	if succeeded.Provenance.Architecture != deployment.ArchitectureX8664 ||
+		succeeded.Provenance.BuildContractVersion != authority.buildContractVersion ||
+		succeeded.Provenance.RuntimeDigest != runtimeDigest ||
+		succeeded.Provenance.ToolchainDigest != toolchainDigest ||
+		succeeded.Provenance.Submitted.SourceDigest != authority.sourceDigest ||
+		succeeded.Provenance.Submitted.LockfileName != selection.LockfileName ||
+		succeeded.Provenance.Submitted.LockfileDigest != selection.LockfileDigest ||
+		succeeded.Provenance.Manager.Name != deployment.PackageManagerName(authority.buildManagerName) ||
+		succeeded.Provenance.Manager.Version != authority.buildManagerVersion ||
+		succeeded.Provenance.Manager.Name != selection.Manager.Name ||
+		succeeded.Provenance.Manager.Version != selection.Manager.Version ||
+		selection.Manager.Integrity != authority.buildManagerIntegrity.String ||
+		succeeded.Provenance.Manager.Digest != managerDigest {
+		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{
+			err: errManagerAuthorityMismatch,
+		}
+	}
+	if selection.NodeVersion != authority.buildNodeVersion {
+		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{
+			err: errors.New("deployment build Node selector does not match submitted source"),
+		}
+	}
+	objects, err := deploymentBuildObjects(succeeded)
+	if err != nil {
+		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{err: err}
+	}
+	if err := s.verifyDeploymentBuildArtifacts(ctx, objects); err != nil {
+		var mismatch *deploymentBuildArtifactMismatch
+		if errors.As(err, &mismatch) {
+			return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{err: err}
+		}
+		return preparedDeploymentBuild{}, fmt.Errorf(
+			"verify deployment build artifacts: %w",
+			err,
+		)
+	}
+
+	workspaceImages := make(map[string]deployment.WorkspaceImageArtifact)
+	for _, image := range succeeded.WorkspaceImages {
+		workspaceImages[image.DeclaredID] = image.Artifact
+	}
+	definitions := make(
+		[]normalizedDeploymentDefinition,
+		0,
+		len(succeeded.Plan.Definitions),
+	)
+	for _, definition := range succeeded.Plan.Definitions {
+		var workspaceImage *deployment.WorkspaceImageArtifact
+		if definition.Workspace != nil {
+			image, ok := workspaceImages[definition.DeclaredID]
+			if !ok {
+				return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{
+					err: fmt.Errorf(
+						"Workspace %q has no image Artifact",
+						definition.DeclaredID,
+					),
+				}
+			}
+			workspaceImage = &image
+		}
+		manifest, manifestDigest, err := deploymentDefinitionManifest(
+			definition,
+			workspaceImage,
+		)
+		if err != nil {
+			return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{err: err}
+		}
+		definitions = append(definitions, normalizedDeploymentDefinition{
+			input:          definition,
+			manifest:       manifest,
+			manifestDigest: manifestDigest,
+		})
+	}
+	queueConfig, err := deployment.QueueConfigFromPlan(succeeded.Plan)
+	if err != nil {
+		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{err: err}
+	}
+	queueConfigJSON, err := deployment.CanonicalQueueConfig(queueConfig)
+	if err != nil {
+		return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{err: err}
+	}
+	return preparedDeploymentBuild{
+		succeeded:       succeeded,
+		objects:         objects,
+		definitions:     definitions,
+		queueConfigJSON: queueConfigJSON,
+	}, nil
 }
 
 func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Request) {
@@ -269,7 +752,10 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		writeError(w, unavailable(errors.New("deployment build storage is not configured")))
 		return
 	}
-	var request api.WorkerCompleteDeploymentBuildRequest
+	var request struct {
+		Lease  api.WorkerDeploymentBuildLease `json:"lease"`
+		Result json.RawMessage                `json:"result"`
+	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker deployment build completion JSON: %w", err)))
 		return
@@ -283,19 +769,21 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		writeError(w, badRequest(err))
 		return
 	}
-	buildLeaseUUID, err := uuid.Parse(strings.TrimSpace(request.Lease.ID))
-	if err != nil || request.Lease.WorkerGroupID != worker.WorkerGroupID || request.Lease.WorkerEpoch != worker.WorkerEpoch || request.Lease.BuildAttemptNumber <= 0 || request.Lease.LeaseSequence <= 0 {
+	buildLeaseUUID, err := ids.Parse(request.Lease.ID)
+	if err != nil ||
+		request.Lease.WorkerGroupID != worker.WorkerGroupID ||
+		request.Lease.WorkerEpoch != worker.WorkerEpoch ||
+		request.Lease.LeaseSequence < 1 ||
+		request.Lease.LeaseSequence > 3 ||
+		request.Lease.WorkerProtocolVersion != worker.ProtocolVersion {
 		writeError(w, conflict(errors.New("deployment build lease is stale")))
 		return
 	}
-	fingerprint, err := terminalRequestFingerprint("deployment_build.complete", request.Result)
-	if err != nil {
-		writeError(w, errors.New("fingerprint deployment build completion"))
-		return
-	}
+	result, resultErr := deployment.ParseBuildResult(request.Result)
+	fingerprint := deploymentBuildResultFingerprint(request.Result)
 	terminal, err := s.db.GetDeploymentBuildTerminalResult(r.Context(), db.GetDeploymentBuildTerminalResultParams{
 		OrgID: orgID, DeploymentID: deploymentID, BuildLeaseID: pgvalue.UUID(buildLeaseUUID),
-		BuildAttemptNumber: request.Lease.BuildAttemptNumber, LeaseSequence: request.Lease.LeaseSequence,
+		LeaseSequence: request.Lease.LeaseSequence,
 		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
 	})
@@ -321,30 +809,147 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		writeError(w, errors.New("get terminal deployment build"))
 		return
 	}
-	if time.Now().After(request.Lease.ExpiresAt) {
-		writeError(w, conflict(errors.New("deployment build lease expired")))
-		return
-	}
-
 	buildWorkerInstanceID := pgvalue.UUID(worker.WorkerInstanceID)
+	var authority *deploymentBuildCompletionAuthority
+	var prepared *preparedDeploymentBuild
+	var preparationErr error
+	if resultErr == nil && result.Outcome == deployment.BuildOutcomeSucceeded {
+		row, err := s.db.GetDeploymentBuildCompletionAuthority(
+			r.Context(),
+			db.GetDeploymentBuildCompletionAuthorityParams{
+				OrgID:                 orgID,
+				ProjectID:             projectID,
+				EnvironmentID:         environmentID,
+				DeploymentID:          deploymentID,
+				BuildLeaseID:          pgvalue.UUID(buildLeaseUUID),
+				LeaseSequence:         request.Lease.LeaseSequence,
+				WorkerGroupID:         worker.WorkerGroupID,
+				WorkerInstanceID:      buildWorkerInstanceID,
+				WorkerEpoch:           worker.WorkerEpoch,
+				WorkerProtocolVersion: worker.ProtocolVersion,
+			},
+		)
+		if isNoRows(err) {
+			writeError(w, conflict(errors.New("deployment build lease is stale")))
+			return
+		}
+		if err != nil {
+			writeError(w, errors.New("get deployment build completion authority"))
+			return
+		}
+		terminal := row.State == db.DeploymentBuildLeaseStateSucceeded ||
+			row.State == db.DeploymentBuildLeaseStateFailed ||
+			row.State == db.DeploymentBuildLeaseStateRejected
+		if !terminal {
+			if !liveDeploymentBuildLease(
+				row.State,
+				row.DeploymentStatus,
+				row.CurrentBuildLeaseID,
+				pgvalue.UUID(buildLeaseUUID),
+				row.ExpiresAt,
+				time.Now(),
+			) {
+				writeError(w, conflict(errors.New("deployment build lease is stale")))
+				return
+			}
+			value := deploymentBuildAuthority(row)
+			authority = &value
+			valuePrepared, err := s.prepareDeploymentBuild(r.Context(), result, value)
+			if err == nil {
+				prepared = &valuePrepared
+			}
+			preparationErr = err
+		}
+	}
 	var response api.WorkerDeploymentBuildResponse
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		failBuild := func(message string) error {
+		workerState, err := work.q.LockDeploymentBuildWorkerAuthority(
+			r.Context(),
+			db.LockDeploymentBuildWorkerAuthorityParams{
+				WorkerGroupID:         worker.WorkerGroupID,
+				WorkerInstanceID:      buildWorkerInstanceID,
+				WorkerEpoch:           worker.WorkerEpoch,
+				WorkerProtocolVersion: worker.ProtocolVersion,
+			},
+		)
+		if isNoRows(err) {
+			return conflict(errors.New("deployment build worker authority was withdrawn"))
+		}
+		if err != nil {
+			return errors.New("lock deployment build worker authority")
+		}
+		locked, err := work.q.LockDeploymentBuildTerminalFence(r.Context(), db.LockDeploymentBuildTerminalFenceParams{
+			OrgID:                 orgID,
+			ProjectID:             projectID,
+			EnvironmentID:         environmentID,
+			DeploymentID:          deploymentID,
+			BuildLeaseID:          pgvalue.UUID(buildLeaseUUID),
+			LeaseSequence:         request.Lease.LeaseSequence,
+			WorkerGroupID:         worker.WorkerGroupID,
+			WorkerInstanceID:      buildWorkerInstanceID,
+			WorkerEpoch:           worker.WorkerEpoch,
+			WorkerProtocolVersion: worker.ProtocolVersion,
+		})
+		if isNoRows(err) {
+			return conflict(errors.New("deployment build lease is stale"))
+		}
+		if err != nil {
+			return errors.New("lock deployment build terminal fence")
+		}
+		if locked.State == db.DeploymentBuildLeaseStateSucceeded || locked.State == db.DeploymentBuildLeaseStateFailed || locked.State == db.DeploymentBuildLeaseStateRejected {
+			if !locked.TerminalRequestFingerprint.Valid || locked.TerminalRequestFingerprint.String != fingerprint {
+				return conflict(errors.New("deployment build lease already has a different terminal result"))
+			}
+			switch locked.State {
+			case db.DeploymentBuildLeaseStateSucceeded:
+				response = api.WorkerDeploymentBuildResponse{DeploymentID: request.Lease.DeploymentID, Status: string(db.DeploymentStatusDeployed)}
+				return nil
+			case db.DeploymentBuildLeaseStateFailed:
+				response = api.WorkerDeploymentBuildResponse{DeploymentID: request.Lease.DeploymentID, Status: string(db.DeploymentStatusFailed)}
+				return nil
+			default:
+				return conflict(errors.New("deployment build lease was terminated by another operation"))
+			}
+		}
+		if !liveDeploymentBuildLease(
+			locked.State,
+			locked.DeploymentStatus,
+			locked.CurrentBuildLeaseID,
+			pgvalue.UUID(buildLeaseUUID),
+			locked.ExpiresAt,
+			time.Now(),
+		) {
+			return conflict(errors.New("deployment build lease is stale"))
+		}
+		failBuildWithReason := func(reasonCode, fallback, message string) error {
 			message = strings.TrimSpace(message)
 			if message == "" {
-				message = "deployment build failed"
+				message = fallback
 			}
-			payload, err := json.Marshal(workerMessagePayload{Message: message})
+			payload, err := boundedWorkerMessagePayload(message, fallback)
 			if err != nil {
 				return errors.New("marshal deployment build error")
 			}
+			if resultErr == nil && result.Logs != nil {
+				if err := appendDeploymentBuildLogs(
+					r.Context(),
+					work.q,
+					locked.OrgID,
+					locked.ProjectID,
+					locked.EnvironmentID,
+					locked.DeploymentID,
+					*result.Logs,
+				); err != nil {
+					return errors.New("record deployment build logs")
+				}
+			}
 			row, err := work.q.FailDeploymentBuild(r.Context(), db.FailDeploymentBuildParams{
-				Failure: payload, ReasonCode: pgtype.Text{String: "worker_reported_failure", Valid: true},
+				Failure: payload, ReasonCode: pgtype.Text{String: reasonCode, Valid: true},
 				TerminalRequestFingerprint: fingerprint,
 				OrgID:                      orgID, ID: deploymentID, BuildLeaseID: pgvalue.UUID(buildLeaseUUID),
 				BuildWorkerInstanceID: buildWorkerInstanceID,
-				WorkerEpoch:           worker.WorkerEpoch, BuildAttemptNumber: request.Lease.BuildAttemptNumber,
-				LeaseSequence: request.Lease.LeaseSequence,
+				WorkerEpoch:           worker.WorkerEpoch,
+				LeaseSequence:         request.Lease.LeaseSequence,
 			})
 			if isNoRows(err) {
 				return conflict(errors.New("deployment build lease is stale"))
@@ -358,236 +963,195 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			response = api.WorkerDeploymentBuildResponse{DeploymentID: pgvalue.MustUUIDValue(row.ID).String(), Status: string(row.Status)}
 			return nil
 		}
-		if request.Result.Error != nil {
-			return failBuild(*request.Result.Error)
+		failInvalid := func(message string) error {
+			return failBuildWithReason(
+				"output_invalid",
+				"deployment build output is invalid",
+				message,
+			)
 		}
-		casObjects, err := deployment.ValidateBuildResult(request.Result)
-		if err != nil {
-			return failBuild(err.Error())
+		if resultErr != nil {
+			return failInvalid(
+				fmt.Sprintf("invalid deployment build result: %v", resultErr),
+			)
 		}
-		if err := s.verifyDeploymentBuildArtifacts(r.Context(), casObjects); err != nil {
-			return failBuild(err.Error())
+		if result.Outcome == deployment.BuildOutcomeFailed {
+			return failBuildWithReason(
+				string(result.Failed.Error.ReasonCode),
+				"deployment build failed",
+				result.Failed.Error.Message,
+			)
 		}
-		buildDeployment, err := work.q.GetDeploymentBuildLease(r.Context(), db.GetDeploymentBuildLeaseParams{
-			OrgID: orgID, ID: deploymentID, BuildLeaseID: pgvalue.UUID(buildLeaseUUID),
-			BuildWorkerInstanceID: buildWorkerInstanceID,
-			WorkerEpoch:           worker.WorkerEpoch,
-		})
-		if isNoRows(err) {
-			return conflict(errors.New("deployment build lease is stale"))
+		if authority == nil {
+			return errors.New("deployment build completion authority is missing")
 		}
-		if err != nil {
-			return errors.New("get deployment build lease")
+		if !authority.equal(lockedDeploymentBuildAuthority(locked)) {
+			return conflict(errors.New("deployment build authority changed"))
 		}
-		if buildDeployment.WorkerGroupID != worker.WorkerGroupID {
-			return forbidden(errors.New("deployment build lease belongs to another worker group"))
+		if !workerState.RuntimeArch.Valid ||
+			workerState.RuntimeArch.String != string(deployment.ArchitectureX8664) {
+			return conflict(errors.New("deployment build worker authority was withdrawn"))
 		}
-		workerGroupID := buildDeployment.WorkerGroupID
-		workerState, err := work.q.GetWorkerInstanceState(r.Context(), db.GetWorkerInstanceStateParams{
-			ID:            buildWorkerInstanceID,
-			WorkerGroupID: workerGroupID,
-		})
-		if isNoRows(err) {
-			return failBuild("deployment build worker instance was not found")
+		var invalid invalidDeploymentBuildOutput
+		if errors.As(preparationErr, &invalid) {
+			return failInvalid(preparationErr.Error())
 		}
-		if err != nil {
-			return errors.New("get deployment build worker state")
+		if preparationErr != nil {
+			return preparationErr
 		}
-		casObjectByDigest := make(map[string]api.CASObject, len(casObjects))
-		for _, object := range casObjects {
-			casObjectByDigest[strings.TrimSpace(object.Digest)] = object
+		if prepared == nil {
+			return errors.New("prepared deployment build is missing")
+		}
+		succeeded := prepared.succeeded
+		objects := prepared.objects
+		definitions := prepared.definitions
+		queueConfigJSON := prepared.queueConfigJSON
+		if err := validateCompletedWorkspaceImageOperations(
+			r.Context(),
+			work.q,
+			pgvalue.MustUUIDValue(environmentID),
+			buildLeaseUUID,
+			request.Lease.LeaseSequence,
+			imagebuild.CacheMode(authority.imageCacheMode),
+			succeeded.WorkspaceImages,
+		); err != nil {
+			var invalid invalidDeploymentBuildOutput
+			if errors.As(err, &invalid) {
+				return failInvalid(err.Error())
+			}
+			return err
+		}
+
+		for _, object := range objects {
 			if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
 				OrgID:     orgID,
 				Digest:    object.Digest,
 				SizeBytes: object.SizeBytes,
 				MediaType: object.MediaType,
 			}); err != nil {
-				return failBuild("record deployment build artifact: " + err.Error())
+				return fmt.Errorf("record deployment build CAS object: %w", err)
 			}
 		}
-		buildManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.BuildManifestDigest), db.ArtifactKindBuildManifest, casObjectByDigest)
-		if err != nil {
-			return failBuild("record build manifest artifact: " + err.Error())
+
+		artifactByRole := make(map[string]db.Artifact)
+		createArtifact := func(
+			kind db.ArtifactKind,
+			object deploymentBuildObject,
+		) (db.Artifact, error) {
+			key := string(kind) + "\x00" + object.Digest
+			if artifact, ok := artifactByRole[key]; ok {
+				return artifact, nil
+			}
+			artifact, err := createDeploymentBuildArtifact(
+				r.Context(),
+				work.q,
+				orgID,
+				projectID,
+				environmentID,
+				buildWorkerInstanceID,
+				kind,
+				object,
+			)
+			if err != nil {
+				return db.Artifact{}, err
+			}
+			artifactByRole[key] = artifact
+			return artifact, nil
 		}
-		deploymentManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.DeploymentManifestDigest), db.ArtifactKindDeploymentManifest, casObjectByDigest)
-		if err != nil {
-			return failBuild("record deployment manifest artifact: " + err.Error())
+
+		var programArtifactID pgtype.UUID
+		var programIndexDigest []byte
+		if succeeded.Program != nil {
+			artifact, err := createArtifact(
+				db.ArtifactKindDeploymentProgram,
+				deploymentBuildObjectFromProgram(succeeded.Program.Artifact),
+			)
+			if err != nil {
+				return fmt.Errorf("record deployment Program: %w", err)
+			}
+			programArtifactID = artifact.ID
+			index, err := deployment.CanonicalProgramIndex(succeeded.Program.Index)
+			if err != nil {
+				return failInvalid(err.Error())
+			}
+			indexDigest := sha256.Sum256(index)
+			programIndexDigest = indexDigest[:]
 		}
-		queueConcurrencyLimits := map[string]*int32{}
-		for _, queue := range request.Result.Queues {
-			queueName := strings.TrimSpace(queue.Name)
-			queueConcurrencyLimits[queueName] = queue.ConcurrencyLimit
-			if _, err := work.q.CreateDeploymentQueue(r.Context(), db.CreateDeploymentQueueParams{
-				ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				OrgID:            orgID,
-				ProjectID:        projectID,
-				EnvironmentID:    environmentID,
-				DeploymentID:     deploymentID,
-				Name:             queueName,
-				ConcurrencyLimit: pgvalue.Int4Ptr(queue.ConcurrencyLimit),
-			}); err != nil {
-				return failBuild("record deployment queue: " + err.Error())
+
+		workspaceArtifacts := make(map[string]db.Artifact)
+		for _, image := range succeeded.WorkspaceImages {
+			artifact, err := createArtifact(
+				db.ArtifactKindWorkspaceImage,
+				deploymentBuildObjectFromWorkspace(image.Artifact),
+			)
+			if err != nil {
+				return fmt.Errorf(
+					"record deployment Workspace %q image: %w",
+					image.DeclaredID,
+					err,
+				)
 			}
+			workspaceArtifacts[image.DeclaredID] = artifact
 		}
-		deploymentSandboxIDs := map[string]pgtype.UUID{}
-		for _, task := range request.Result.Tasks {
-			bundleArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.BundleDigest), db.ArtifactKindTaskBundle, casObjectByDigest)
-			if err != nil {
-				return failBuild("record task bundle artifact: " + err.Error())
-			}
-			secretDeclarations, err := json.Marshal(task.Secrets)
-			if err != nil {
-				return failBuild("encode deployment task secrets: " + err.Error())
-			}
-			scheduleDeclarations, err := json.Marshal(task.Schedules)
-			if err != nil {
-				return failBuild("encode deployment task schedules: " + err.Error())
-			}
-			networkPolicy, err := json.Marshal(task.Network)
-			if err != nil {
-				return failBuild("encode deployment task network: " + err.Error())
-			}
-			sandboxID := strings.TrimSpace(task.SandboxID)
-			deploymentSandboxID, ok := deploymentSandboxIDs[sandboxID]
-			if !ok {
-				imageArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.SandboxImageArtifact.Digest), db.ArtifactKindSandboxImage, casObjectByDigest)
-				if err != nil {
-					return failBuild("record deployment sandbox image artifact: " + err.Error())
+
+		for _, definition := range definitions {
+			var artifactID pgtype.UUID
+			if definition.input.Workspace != nil {
+				artifact, ok := workspaceArtifacts[definition.input.DeclaredID]
+				if !ok {
+					return fmt.Errorf(
+						"record deployment Workspace %q: image Artifact is missing",
+						definition.input.DeclaredID,
+					)
 				}
-				resourceFloor, err := json.Marshal(map[string]any{
-					"milli_cpu":  task.RequestedMilliCPU,
-					"memory_mib": task.RequestedMemoryMiB,
-					"disk_mib":   task.RequestedDiskMiB,
-				})
-				if err != nil {
-					return failBuild("encode deployment sandbox resource floor: " + err.Error())
-				}
-				fingerprint, err := deploymentSandboxContractFingerprint(deploymentSandboxContractFingerprintInput{
-					RootfsDigest:       pgvalue.TextValue(workerState.RootfsDigest),
-					RuntimeABI:         pgvalue.TextValue(workerState.RuntimeABI),
-					GuestdABI:          currentGuestdABI,
-					AdapterABI:         currentAdapterABI,
-					WorkspaceMountPath: strings.TrimSpace(task.WorkspaceMountPath),
-					NetworkPolicy:      task.Network,
-					FilesystemFormat:   strings.TrimSpace(task.FilesystemFormat),
-					ContractVersion:    1,
-				})
-				if err != nil {
-					return failBuild("fingerprint deployment sandbox contract: " + err.Error())
-				}
-				var sandboxPublicID string
-				row, err := createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.Sandbox, value: &sandboxPublicID}}, func() (db.DeploymentSandbox, error) {
-					return work.q.CreateDeploymentSandbox(r.Context(), db.CreateDeploymentSandboxParams{
-						ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-						PublicID:            sandboxPublicID,
-						OrgID:               orgID,
-						ProjectID:           projectID,
-						EnvironmentID:       environmentID,
-						DeploymentID:        deploymentID,
-						SandboxID:           sandboxID,
-						ImageArtifactID:     imageArtifact.ID,
-						ImageArtifactFormat: strings.TrimSpace(task.SandboxImageArtifactFormat),
-						RootfsDigest:        pgvalue.TextValue(workerState.RootfsDigest),
-						ImageDigest:         imageArtifact.Digest,
-						ImageFormat:         strings.TrimSpace(task.SandboxImageFormat),
-						WorkspaceMountPath:  strings.TrimSpace(task.WorkspaceMountPath),
-						ResourceFloor:       resourceFloor,
-						DiskFloorMib:        task.RequestedDiskMiB,
-						NetworkPolicy:       networkPolicy,
-						RuntimeABI:          pgvalue.TextValue(workerState.RuntimeABI),
-						GuestdAbi:           currentGuestdABI,
-						AdapterAbi:          currentAdapterABI,
-						FilesystemFormat:    strings.TrimSpace(task.FilesystemFormat),
-						DefaultUid:          pgtype.Int8{},
-						DefaultGid:          pgtype.Int8{},
-						DefaultWorkdir:      "",
-						ContractVersion:     1,
-						Fingerprint:         fingerprint,
-					})
-				})
-				if err != nil {
-					return failBuild("record deployment sandbox: " + err.Error())
-				}
-				deploymentSandboxID = row.ID
-				deploymentSandboxIDs[sandboxID] = deploymentSandboxID
+				artifactID = artifact.ID
 			}
-			queueName := strings.TrimSpace(task.QueueName)
-			queueConcurrencyLimit, ok := queueConcurrencyLimits[queueName]
-			if !ok {
-				return failBuild("deployment task references undefined queue")
-			}
-			retryPolicy, err := normalizedRetryPolicy(task.RetryPolicy)
-			if err != nil {
-				return failBuild("validate deployment task retry policy: " + err.Error())
-			}
-			var deploymentTaskPublicID, taskPublicID string
-			if _, err := createWithPublicID(r.Context(), []publicIDSlot{
-				{prefix: publicid.DeploymentTask, value: &deploymentTaskPublicID},
-				{prefix: publicid.Task, value: &taskPublicID},
-			}, func() (db.DeploymentTask, error) {
-				return work.q.CreateDeploymentTask(r.Context(), db.CreateDeploymentTaskParams{
-					ID:                    pgvalue.UUID(uuid.Must(uuid.NewV7())),
-					PublicID:              deploymentTaskPublicID,
-					OrgID:                 orgID,
-					ProjectID:             projectID,
-					EnvironmentID:         environmentID,
-					DeploymentID:          deploymentID,
-					DeploymentSandboxID:   deploymentSandboxID,
-					TaskID:                strings.TrimSpace(task.TaskID),
-					TaskPublicID:          taskPublicID,
-					FilePath:              strings.TrimSpace(task.FilePath),
-					ExportName:            strings.TrimSpace(task.ExportName),
-					HandlerEntrypoint:     strings.TrimSpace(task.HandlerEntrypoint),
-					BundleArtifactID:      bundleArtifact.ID,
-					BundleFormatVersion:   firstPositiveInt32(task.BundleFormatVersion, api.CurrentBundleFormatVersion),
-					RequestedMilliCpu:     task.RequestedMilliCPU,
-					RequestedMemoryMib:    task.RequestedMemoryMiB,
-					RequestedDiskMib:      task.RequestedDiskMiB,
-					SecretDeclarations:    secretDeclarations,
-					ResourceRequirements:  []byte("{}"),
-					NetworkPolicy:         networkPolicy,
-					ScheduleDeclarations:  scheduleDeclarations,
-					QueueName:             queueName,
-					QueueConcurrencyLimit: pgvalue.Int4Ptr(queueConcurrencyLimit),
-					Ttl:                   strings.TrimSpace(task.TTL),
-					MaxActiveDurationMs:   int64(task.MaxDurationSeconds) * 1000,
-					RetryPolicy:           retryPolicy,
-				})
-			}); err != nil {
-				return failBuild("record deployment task: " + err.Error())
+			if _, err := work.q.CreateDeploymentDefinition(
+				r.Context(),
+				db.CreateDeploymentDefinitionParams{
+					ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+					EnvironmentID:   environmentID,
+					DeploymentID:    deploymentID,
+					Kind:            string(definition.input.Kind),
+					DeclaredID:      definition.input.DeclaredID,
+					ManifestVersion: deployment.BuildPlanFormatVersion,
+					Manifest:        definition.manifest,
+					ManifestDigest:  definition.manifestDigest[:],
+					ArtifactID:      artifactID,
+				},
+			); err != nil {
+				return fmt.Errorf(
+					"record deployment %s %q: %w",
+					definition.input.Kind,
+					definition.input.DeclaredID,
+					err,
+				)
 			}
 		}
-		for _, stream := range request.Result.Streams {
-			schemaJSON := stream.SchemaJSON
-			if len(schemaJSON) == 0 {
-				schemaJSON = []byte("null")
-			}
-			if _, err := work.q.UpsertDeploymentStream(r.Context(), db.UpsertDeploymentStreamParams{
-				ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				OrgID:             orgID,
-				ProjectID:         projectID,
-				EnvironmentID:     environmentID,
-				DeploymentID:      deploymentID,
-				Name:              strings.TrimSpace(stream.Name),
-				Direction:         db.StreamDirection(strings.TrimSpace(stream.Direction)),
-				SchemaFingerprint: strings.TrimSpace(stream.SchemaFingerprint),
-				SchemaJson:        schemaJSON,
-				Metadata:          []byte("{}"),
-			}); err != nil {
-				return failBuild("record deployment stream: " + err.Error())
+		if result.Logs != nil {
+			if err := appendDeploymentBuildLogs(
+				r.Context(),
+				work.q,
+				locked.OrgID,
+				locked.ProjectID,
+				locked.EnvironmentID,
+				locked.DeploymentID,
+				*result.Logs,
+			); err != nil {
+				return errors.New("record deployment build logs")
 			}
 		}
 		row, err := work.q.CompleteDeploymentBuild(r.Context(), db.CompleteDeploymentBuildParams{
-			BuildManifestArtifactID:      buildManifestArtifact.ID,
-			DeploymentManifestArtifactID: deploymentManifestArtifact.ID,
-			OrgID:                        orgID,
-			ID:                           deploymentID,
-			BuildLeaseID:                 pgvalue.UUID(buildLeaseUUID),
-			BuildWorkerInstanceID:        buildWorkerInstanceID,
-			WorkerEpoch:                  worker.WorkerEpoch,
-			BuildAttemptNumber:           request.Lease.BuildAttemptNumber,
-			LeaseSequence:                request.Lease.LeaseSequence,
-			TerminalRequestFingerprint:   fingerprint,
+			ProgramArtifactID:          programArtifactID,
+			ProgramIndexDigest:         programIndexDigest,
+			QueueConfig:                queueConfigJSON,
+			OrgID:                      orgID,
+			ID:                         deploymentID,
+			BuildLeaseID:               pgvalue.UUID(buildLeaseUUID),
+			BuildWorkerInstanceID:      buildWorkerInstanceID,
+			WorkerEpoch:                worker.WorkerEpoch,
+			LeaseSequence:              request.Lease.LeaseSequence,
+			TerminalRequestFingerprint: fingerprint,
 		})
 		if isNoRows(err) {
 			return conflict(errors.New("deployment build lease is stale"))
@@ -608,133 +1172,203 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, response)
 }
 
+func deploymentBuildResultFingerprint(raw []byte) string {
+	hash := sha256.New()
+	_, _ = hash.Write([]byte("helmr.deployment-build-result.v0\x00"))
+	var size [8]byte
+	binary.BigEndian.PutUint64(size[:], uint64(len(raw)))
+	_, _ = hash.Write(size[:])
+	_, _ = hash.Write(raw)
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
+}
+
+const maxDeploymentBuildTerminalErrorPayloadBytes = (16 << 10) - 1
+
+func boundedWorkerMessagePayload(message, fallback string) ([]byte, error) {
+	fallback = strings.TrimSpace(strings.ToValidUTF8(fallback, "\uFFFD"))
+	if fallback == "" {
+		fallback = "deployment build failed"
+	}
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = fallback
+	}
+	message = strings.ToValidUTF8(message, "\uFFFD")
+	for {
+		payload, err := json.Marshal(workerMessagePayload{Message: message})
+		if err != nil {
+			return nil, err
+		}
+		if len(payload) <= maxDeploymentBuildTerminalErrorPayloadBytes {
+			return payload, nil
+		}
+		over := len(payload) - maxDeploymentBuildTerminalErrorPayloadBytes
+		cut := len(message) - max(over, 1)
+		if cut <= 0 {
+			payload, err := json.Marshal(workerMessagePayload{Message: fallback})
+			if err != nil {
+				return nil, err
+			}
+			if len(payload) > maxDeploymentBuildTerminalErrorPayloadBytes {
+				return nil, errors.New("deployment build fallback error exceeds storage limit")
+			}
+			return payload, nil
+		}
+		for cut > 0 && !utf8.RuneStart(message[cut]) {
+			cut--
+		}
+		message = strings.TrimSpace(message[:cut])
+	}
+}
+
+var errManagerAuthorityMismatch = errors.New(
+	"build provenance does not match fixed authority",
+)
+
 func parseDeploymentBuildLeaseIDs(lease api.WorkerDeploymentBuildLease) (pgtype.UUID, pgtype.UUID, pgtype.UUID, pgtype.UUID, error) {
-	orgID, err := uuid.Parse(lease.OrgID)
+	orgID, err := ids.Parse(lease.OrgID)
 	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease org_id must be a UUID")
+		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease org_id must be a canonical UUIDv7")
 	}
-	projectID, err := uuid.Parse(lease.ProjectID)
+	projectID, err := ids.Parse(lease.ProjectID)
 	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease project_id must be a UUID")
+		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease project_id must be a canonical UUIDv7")
 	}
-	environmentID, err := uuid.Parse(lease.EnvironmentID)
+	environmentID, err := ids.Parse(lease.EnvironmentID)
 	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease environment_id must be a UUID")
+		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease environment_id must be a canonical UUIDv7")
 	}
-	deploymentID, err := uuid.Parse(lease.DeploymentID)
+	deploymentID, err := ids.Parse(lease.DeploymentID)
 	if err != nil {
-		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease deployment_id must be a UUID")
+		return pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("deployment build lease deployment_id must be a canonical UUIDv7")
 	}
 	return pgvalue.UUID(orgID), pgvalue.UUID(projectID), pgvalue.UUID(environmentID), pgvalue.UUID(deploymentID), nil
 }
 
-type deploymentSandboxContractFingerprintInput struct {
-	RootfsDigest       string
-	RuntimeABI         string
-	GuestdABI          string
-	AdapterABI         string
-	WorkspaceMountPath string
-	NetworkPolicy      compute.NetworkPolicy
-	FilesystemFormat   string
-	DefaultUID         pgtype.Int8
-	DefaultGID         pgtype.Int8
-	DefaultWorkdir     string
-	ContractVersion    int32
+type deploymentBuildObject struct {
+	Digest    string
+	SizeBytes int64
+	MediaType string
 }
 
-type deploymentSandboxContractFingerprintDocument struct {
-	AdapterABI         string                         `json:"adapter_abi"`
-	ContractVersion    int32                          `json:"contract_version"`
-	DefaultGID         *int64                         `json:"default_gid"`
-	DefaultUID         *int64                         `json:"default_uid"`
-	DefaultWorkdir     string                         `json:"default_workdir"`
-	FilesystemFormat   string                         `json:"filesystem_format"`
-	GuestdABI          string                         `json:"guestd_abi"`
-	NetworkPolicy      deploymentSandboxNetworkPolicy `json:"network_policy"`
-	RootfsDigest       string                         `json:"rootfs_digest"`
-	RuntimeABI         string                         `json:"runtime_abi"`
-	WorkspaceMountPath string                         `json:"workspace_mount_path"`
+func deploymentBuildObjectFromProgram(
+	descriptor deployment.ProgramDescriptor,
+) deploymentBuildObject {
+	return deploymentBuildObject{
+		Digest:    descriptor.Digest,
+		SizeBytes: descriptor.SizeBytes,
+		MediaType: descriptor.MediaType,
+	}
 }
 
-type deploymentSandboxNetworkPolicy struct {
-	Allow    []string `json:"allow"`
-	Deny     []string `json:"deny"`
-	Internet bool     `json:"internet"`
+func deploymentBuildObjectFromWorkspace(
+	artifact deployment.WorkspaceImageArtifact,
+) deploymentBuildObject {
+	return deploymentBuildObject{
+		Digest:    artifact.Digest,
+		SizeBytes: artifact.SizeBytes,
+		MediaType: artifact.MediaType,
+	}
 }
 
-func deploymentSandboxContractFingerprint(input deploymentSandboxContractFingerprintInput) (string, error) {
-	network := input.NetworkPolicy
-	network.Allow = append([]string(nil), network.Allow...)
-	network.Deny = append([]string(nil), network.Deny...)
-	sort.Strings(network.Allow)
-	sort.Strings(network.Deny)
-	document := deploymentSandboxContractFingerprintDocument{
-		AdapterABI:       strings.TrimSpace(input.AdapterABI),
-		ContractVersion:  input.ContractVersion,
-		DefaultWorkdir:   strings.TrimSpace(input.DefaultWorkdir),
-		FilesystemFormat: strings.TrimSpace(input.FilesystemFormat),
-		GuestdABI:        strings.TrimSpace(input.GuestdABI),
-		NetworkPolicy: deploymentSandboxNetworkPolicy{
-			Allow:    network.Allow,
-			Deny:     network.Deny,
-			Internet: network.Internet,
-		},
-		RootfsDigest:       strings.TrimSpace(input.RootfsDigest),
-		RuntimeABI:         strings.TrimSpace(input.RuntimeABI),
-		WorkspaceMountPath: strings.TrimSpace(input.WorkspaceMountPath),
+func deploymentBuildObjects(
+	result deployment.BuildSucceeded,
+) ([]deploymentBuildObject, error) {
+	objects := make([]deploymentBuildObject, 0, 1+len(result.WorkspaceImages))
+	if result.Program != nil {
+		objects = append(
+			objects,
+			deploymentBuildObjectFromProgram(result.Program.Artifact),
+		)
 	}
-	if input.DefaultUID.Valid {
-		value := input.DefaultUID.Int64
-		document.DefaultUID = &value
+	for _, image := range result.WorkspaceImages {
+		objects = append(objects, deploymentBuildObjectFromWorkspace(image.Artifact))
 	}
-	if input.DefaultGID.Valid {
-		value := input.DefaultGID.Int64
-		document.DefaultGID = &value
+	unique := make([]deploymentBuildObject, 0, len(objects))
+	byDigest := make(map[string]deploymentBuildObject, len(objects))
+	for _, object := range objects {
+		if existing, ok := byDigest[object.Digest]; ok {
+			if existing != object {
+				return nil, fmt.Errorf(
+					"deployment build reports conflicting metadata for %s",
+					object.Digest,
+				)
+			}
+			continue
+		}
+		byDigest[object.Digest] = object
+		unique = append(unique, object)
 	}
-	if document.RootfsDigest == "" {
-		return "", errors.New("rootfs_digest is required")
+	return unique, nil
+}
+
+func deploymentDefinitionManifest(
+	definition deployment.DefinitionInput,
+	workspaceImage *deployment.WorkspaceImageArtifact,
+) ([]byte, [sha256.Size]byte, error) {
+	var manifest any
+	switch definition.Kind {
+	case deployment.DefinitionKindTask:
+		manifest = definition.Task
+	case deployment.DefinitionKindActor:
+		manifest = definition.Actor
+	case deployment.DefinitionKindWorkspace:
+		if definition.Workspace == nil || workspaceImage == nil {
+			return nil, [sha256.Size]byte{}, fmt.Errorf(
+				"deployment Workspace %q requires its image result",
+				definition.DeclaredID,
+			)
+		}
+		manifest = deployment.WorkspaceManifest{
+			Image: deployment.WorkspaceArtifactManifest{
+				ArtifactDigest: workspaceImage.Digest,
+				MediaType:      workspaceImage.MediaType,
+			},
+			Resources: definition.Workspace.Resources,
+		}
+	default:
+		return nil, [sha256.Size]byte{}, fmt.Errorf(
+			"deployment definition kind %q is unsupported",
+			definition.Kind,
+		)
 	}
-	if document.RuntimeABI == "" {
-		return "", errors.New("runtime_abi is required")
-	}
-	if document.GuestdABI == "" {
-		return "", errors.New("guestd_abi is required")
-	}
-	if document.AdapterABI == "" {
-		return "", errors.New("adapter_abi is required")
-	}
-	if document.WorkspaceMountPath == "" {
-		return "", errors.New("workspace_mount_path is required")
-	}
-	if document.FilesystemFormat == "" {
-		return "", errors.New("filesystem_format is required")
-	}
-	if document.ContractVersion <= 0 {
-		return "", errors.New("contract_version is required")
-	}
-	body, err := json.Marshal(document)
+	raw, err := json.Marshal(manifest)
 	if err != nil {
-		return "", err
+		return nil, [sha256.Size]byte{}, fmt.Errorf(
+			"encode deployment %s %q manifest: %w",
+			definition.Kind,
+			definition.DeclaredID,
+			err,
+		)
 	}
-	canonical, err := canonicalJSON(body)
+	canonical, digest, err := deployment.CanonicalManifestAndDigest(raw)
 	if err != nil {
-		return "", err
+		return nil, [sha256.Size]byte{}, fmt.Errorf(
+			"canonicalize deployment %s %q manifest: %w",
+			definition.Kind,
+			definition.DeclaredID,
+			err,
+		)
 	}
-	sum := sha256.Sum256(canonical)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	return canonical, digest, nil
 }
 
-func createDeploymentBuildArtifact(ctx context.Context, queries db.Querier, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, workerInstanceID pgtype.UUID, digest string, kind db.ArtifactKind, objects map[string]api.CASObject) (db.Artifact, error) {
-	object, ok := objects[strings.TrimSpace(digest)]
-	if !ok {
-		return db.Artifact{}, fmt.Errorf("missing CAS object %s", digest)
-	}
+func createDeploymentBuildArtifact(
+	ctx context.Context,
+	queries db.Querier,
+	orgID pgtype.UUID,
+	projectID pgtype.UUID,
+	environmentID pgtype.UUID,
+	workerInstanceID pgtype.UUID,
+	kind db.ArtifactKind,
+	object deploymentBuildObject,
+) (db.Artifact, error) {
 	return queries.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     orgID,
 		ProjectID:                 projectID,
 		EnvironmentID:             environmentID,
-		Digest:                    strings.TrimSpace(object.Digest),
+		Digest:                    object.Digest,
 		Kind:                      kind,
 		SizeBytes:                 object.SizeBytes,
 		MediaType:                 object.MediaType,
@@ -742,21 +1376,40 @@ func createDeploymentBuildArtifact(ctx context.Context, queries db.Querier, orgI
 	})
 }
 
-func (s *Server) verifyDeploymentBuildArtifacts(ctx context.Context, objects []api.CASObject) error {
+func (s *Server) verifyDeploymentBuildArtifacts(
+	ctx context.Context,
+	objects []deploymentBuildObject,
+) error {
 	if s.cas == nil {
-		return nil
+		return errors.New("deployment build CAS is not configured")
 	}
 	for _, object := range objects {
 		stat, err := s.cas.Stat(ctx, object.Digest)
 		if err != nil {
-			return fmt.Errorf("deployment build artifact %s is missing from CAS: %w", object.Digest, err)
+			return fmt.Errorf(
+				"deployment build artifact %s is missing from CAS: %w",
+				object.Digest,
+				err,
+			)
 		}
 		if stat.SizeBytes != object.SizeBytes {
-			return fmt.Errorf("deployment build artifact %s size mismatch", object.Digest)
+			return &deploymentBuildArtifactMismatch{
+				message: fmt.Sprintf("deployment build artifact %s size mismatch", object.Digest),
+			}
 		}
 		if strings.TrimSpace(stat.MediaType) != object.MediaType {
-			return fmt.Errorf("deployment build artifact %s media_type mismatch", object.Digest)
+			return &deploymentBuildArtifactMismatch{
+				message: fmt.Sprintf("deployment build artifact %s media_type mismatch", object.Digest),
+			}
 		}
 	}
 	return nil
+}
+
+type deploymentBuildArtifactMismatch struct {
+	message string
+}
+
+func (err *deploymentBuildArtifactMismatch) Error() string {
+	return err.message
 }

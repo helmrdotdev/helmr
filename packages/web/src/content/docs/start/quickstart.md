@@ -47,27 +47,35 @@ Use that URL to create a local owner session and inspect seeded runs.
 helmr init
 ```
 
-This creates `package.json`, `helmr.config.ts`, and `tasks/hello.ts`. A task project must have a default-exported `defineConfig({ project, dirs: [...] })`; files in those directories are indexed for exported `task(...)` definitions.
+This creates `.helmrignore`, `package.json`, `tsconfig.json`,
+`helmr.config.ts`, and `tasks/hello.ts`. Install the declared dependencies once
+to create the exact lockfile. `helmr.config.ts` selects `tasks` as the source
+declaration boundary; deploy compiles those modules remotely.
 
 ## Deploy Tasks
 
 ```sh
-helmr deploy .
+helmr deploy . --project PROJECT --env ENVIRONMENT
 ```
 
-Deployment indexes the configured task files, uploads a content-hashed deployment-source archive, and records the current deployment for the configured project and selected environment.
+Deployment uploads a content-hashed source archive, builds and discovers the
+project remotely, and records the immutable Program for the explicit project
+and environment.
 
 ## Start A Task
 
 ```sh
-helmr session start hello \
-  --payload name=Ada
+WORKSPACE_ID="$(helmr workspace create hello \
+  --key quickstart \
+  --idempotency-key quickstart-workspace)"
+
+helmr task start hello \
+  --workspace "${WORKSPACE_ID}" \
+  --idempotency-key quickstart-run
 ```
 
-Remote session starts require a configured control plane and a worker capable of
-executing the task. If no workspace is supplied, Helmr creates a durable
-workspace using the deployed task's sandbox and attaches the new session to
-it.
+Remote Task starts require a configured control plane, a deployed Workspace
+declaration, and an active worker.
 
 ## Inspect The Run
 
@@ -78,14 +86,14 @@ helmr run logs RUN_ID
 helmr run events RUN_ID
 ```
 
-If a task is waiting for human input, append to the session input stream from a
-trusted app, webhook handler, or operator tool:
+For one external approval, create a Token in Task code and complete it from a
+trusted backend:
 
 ```ts
-await client.sessions.open(sessionId).input("approval").send({
-  decision: "approve",
+await client.tokens.complete(tokenId, {
+  result: { decision: "approve" },
+  idempotencyKey: "approval:123",
 })
 ```
 
-Use an external callback token instead when the integration should complete a
-one-shot callback URL, such as an email link or third party webhook.
+Use an Actor's fixed input channel for continuing multi-message workflows.

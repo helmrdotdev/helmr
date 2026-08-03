@@ -4,12 +4,17 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/frameio"
+	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/wire"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestManagedWorkspaceMountSessionClosesPhysicalSessionOnce(t *testing.T) {
@@ -94,7 +99,7 @@ func waitForTestError(t *testing.T, result <-chan error, name string) error {
 func TestBorrowedRunSessionReleaseCheckpointSourceClosesParentWorkspaceMount(t *testing.T) {
 	parent := &borrowedParentSession{stream: discardReadWriteCloser{}}
 	runStream := &countingReadWriteCloser{}
-	session := newBorrowedRunSession(parent, runStream, nil)
+	session := newBorrowedRunSession(parent, testVMStream(runStream), nil)
 
 	checkpointable, ok := session.(vm.CheckpointableSession)
 	if !ok {
@@ -157,18 +162,201 @@ func TestOpenWorkspaceMountSessionMarksForegroundRun(t *testing.T) {
 	}
 }
 
+func TestRenewWorkspaceAuthorityUsesMountedSession(t *testing.T) {
+	host, guest := net.Pipe()
+	defer host.Close()
+	defer guest.Close()
+	parent := &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}
+	registry := NewWorkspaceMountSessions()
+	registry.RegisterWorkspaceMountSession(api.WorkerWorkspaceMount{
+		ID:                "mount-1",
+		WorkspaceID:       "workspace-1",
+		RuntimeInstanceID: "runtime-1",
+		FencingGeneration: 4,
+		BaseVersionID:     "version-1",
+	}, parent, "channel-1")
+	request := &workspacev0.RenewWorkspaceAuthorityRequest{
+		Previous: &workspacev0.WorkspaceRunAuthority{
+			Fence: &workspacev0.WorkspaceAuthorityFence{
+				WorkspaceMountId:       "mount-1",
+				WorkspaceId:            "workspace-1",
+				RuntimeInstanceId:      "runtime-1",
+				MountFencingGeneration: 4,
+				RunId:                  "run-1",
+				ExpiresAtUnixNano:      100,
+				BaseWorkspaceVersionId: "version-1",
+			},
+			ChannelToken: "channel-1",
+		},
+		NewExpiresAtUnixNano: 200,
+	}
+	serverResult := make(chan error, 1)
+	go func() {
+		header, bodyLength, err := wire.ReadStreamFrameHeader(guest)
+		if err != nil {
+			serverResult <- err
+			return
+		}
+		if header.Type != wire.StreamTypeWorkspaceAuthorityRenew ||
+			header.RunID != "run-1" ||
+			header.WorkspaceID != "workspace-1" ||
+			header.WorkspaceMountID != "mount-1" || bodyLength != 0 {
+			serverResult <- errors.New("unexpected Workspace authority renewal header")
+			return
+		}
+		var received workspacev0.RenewWorkspaceAuthorityRequest
+		if err := frameio.ReadProtoFrame(guest, &received); err != nil {
+			serverResult <- err
+			return
+		}
+		if received.GetNewExpiresAtUnixNano() != 200 {
+			serverResult <- errors.New("unexpected renewed expiry")
+			return
+		}
+		renewed := proto.Clone(received.GetPrevious().GetFence()).(*workspacev0.WorkspaceAuthorityFence)
+		renewed.ExpiresAtUnixNano = received.GetNewExpiresAtUnixNano()
+		serverResult <- frameio.WriteProtoFrame(guest, &workspacev0.RenewWorkspaceAuthorityResponse{Fence: renewed})
+	}()
+	renewed, err := registry.RenewWorkspaceAuthority(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.GetExpiresAtUnixNano() != 200 {
+		t.Fatalf("renewed fence = %+v", renewed)
+	}
+	if err := <-serverResult; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBeginWorkspaceFinalizationUsesMountedSession(t *testing.T) {
+	host, guest := net.Pipe()
+	defer host.Close()
+	defer guest.Close()
+	parent := &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}
+	registry := NewWorkspaceMountSessions()
+	registry.RegisterWorkspaceMountSession(api.WorkerWorkspaceMount{
+		ID: "mount-1", WorkspaceID: "workspace-1", RuntimeInstanceID: "runtime-1",
+		FencingGeneration: 4, BaseVersionID: "version-1",
+	}, parent, "channel-1")
+	request := &workspacev0.BeginWorkspaceFinalizationRequest{
+		Previous: &workspacev0.WorkspaceRunAuthority{
+			Fence: &workspacev0.WorkspaceAuthorityFence{
+				WorkspaceMountId: "mount-1", WorkspaceId: "workspace-1", RuntimeInstanceId: "runtime-1",
+				MountFencingGeneration: 4, RunId: "run-1", ExpiresAtUnixNano: 100,
+				BaseWorkspaceVersionId: "version-1",
+			},
+			ChannelToken: "channel-1",
+		},
+		FinalizationExpiresAtUnixNano: 200,
+		OperationId:                   "11111111-1111-4111-8111-111111111111",
+		Kind:                          "capture",
+	}
+	serverResult := make(chan error, 1)
+	go func() {
+		header, bodyLength, err := wire.ReadStreamFrameHeader(guest)
+		if err != nil {
+			serverResult <- err
+			return
+		}
+		if header.Type != wire.StreamTypeWorkspaceFinalizationBegin ||
+			header.RunID != "run-1" || header.WorkspaceID != "workspace-1" ||
+			header.WorkspaceMountID != "mount-1" || header.OperationID != request.GetOperationId() || bodyLength != 0 {
+			serverResult <- errors.New("unexpected Workspace finalization header")
+			return
+		}
+		var received workspacev0.BeginWorkspaceFinalizationRequest
+		if err := frameio.ReadProtoFrame(guest, &received); err != nil {
+			serverResult <- err
+			return
+		}
+		frozen := proto.Clone(received.GetPrevious().GetFence()).(*workspacev0.WorkspaceAuthorityFence)
+		frozen.ExpiresAtUnixNano = received.GetFinalizationExpiresAtUnixNano()
+		serverResult <- frameio.WriteProtoFrame(guest, &workspacev0.BeginWorkspaceFinalizationResponse{
+			Fence: frozen, OperationId: received.GetOperationId(), Kind: received.GetKind(),
+		})
+	}()
+	response, err := registry.BeginWorkspaceFinalization(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.GetFence().GetExpiresAtUnixNano() != 200 ||
+		response.GetOperationId() != request.GetOperationId() || response.GetKind() != request.GetKind() {
+		t.Fatalf("finalization response = %+v", response)
+	}
+	if err := <-serverResult; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRenewWorkspaceAuthorityCancellationPreservesMountedSession(t *testing.T) {
+	host, guest := net.Pipe()
+	defer guest.Close()
+	parent := &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}
+	registry := NewWorkspaceMountSessions()
+	registry.RegisterWorkspaceMountSession(api.WorkerWorkspaceMount{
+		ID:                "mount-1",
+		WorkspaceID:       "workspace-1",
+		RuntimeInstanceID: "runtime-1",
+		FencingGeneration: 4,
+		BaseVersionID:     "version-1",
+	}, parent, "channel-1")
+	request := &workspacev0.RenewWorkspaceAuthorityRequest{
+		Previous: &workspacev0.WorkspaceRunAuthority{
+			Fence: &workspacev0.WorkspaceAuthorityFence{
+				WorkspaceMountId:       "mount-1",
+				WorkspaceId:            "workspace-1",
+				RuntimeInstanceId:      "runtime-1",
+				MountFencingGeneration: 4,
+				RunId:                  "run-1",
+				ExpiresAtUnixNano:      100,
+				BaseWorkspaceVersionId: "version-1",
+			},
+			ChannelToken: "channel-1",
+		},
+		NewExpiresAtUnixNano: 200,
+	}
+	requestRead := make(chan struct{})
+	go func() {
+		_, _, _ = wire.ReadStreamFrameHeader(guest)
+		var received workspacev0.RenewWorkspaceAuthorityRequest
+		_ = frameio.ReadProtoFrame(guest, &received)
+		close(requestRead)
+		var response workspacev0.RenewWorkspaceAuthorityResponse
+		_ = frameio.ReadProtoFrame(guest, &response)
+	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, err := registry.RenewWorkspaceAuthority(ctx, request)
+		result <- err
+	}()
+	waitForTestSignal(t, requestRead, "Workspace authority request")
+	cancel()
+	if err := waitForTestError(t, result, "Workspace authority cancellation"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("renewal error = %v, want context.Canceled", err)
+	}
+	if parent.closeCount != 0 {
+		t.Fatalf("mounted session close count = %d, want 0", parent.closeCount)
+	}
+}
+
 type borrowedParentSession struct {
 	stream     io.ReadWriteCloser
+	openStream io.ReadWriteCloser
 	artifact   vm.SnapshotArtifact
 	closeCount int
 }
 
-func (s *borrowedParentSession) Stream() io.ReadWriteCloser {
-	return s.stream
+func (s *borrowedParentSession) Stream() vm.Stream {
+	return testVMStream(s.stream)
 }
 
-func (s *borrowedParentSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
-	return &countingReadWriteCloser{}, nil
+func (s *borrowedParentSession) OpenStream(context.Context) (vm.Stream, error) {
+	if s.openStream != nil {
+		return testVMStream(s.openStream), nil
+	}
+	return testVMStream(&countingReadWriteCloser{}), nil
 }
 
 func (s *borrowedParentSession) Wait(ctx context.Context) error {
@@ -207,10 +395,10 @@ type blockingCloseSession struct {
 	closeErr   error
 }
 
-func (s *blockingCloseSession) Stream() io.ReadWriteCloser { return discardReadWriteCloser{} }
+func (s *blockingCloseSession) Stream() vm.Stream { return testVMStream(discardReadWriteCloser{}) }
 
-func (s *blockingCloseSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
-	return discardReadWriteCloser{}, nil
+func (s *blockingCloseSession) OpenStream(context.Context) (vm.Stream, error) {
+	return testVMStream(discardReadWriteCloser{}), nil
 }
 
 func (s *blockingCloseSession) Wait(ctx context.Context) error {

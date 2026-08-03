@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,13 +10,11 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/helmrdotdev/helmr/internal/api"
+	awsecr "github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
@@ -26,18 +23,29 @@ import (
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	dbschema "github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
-	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
+	"github.com/helmrdotdev/helmr/internal/imagecache"
+	imagecacheecr "github.com/helmrdotdev/helmr/internal/imagecache/ecr"
+	"github.com/helmrdotdev/helmr/internal/platformlock"
 	"github.com/helmrdotdev/helmr/internal/region"
-	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
+
+var loadControlBuildPolicy = func(path string) (*deployment.BuildPolicy, error) {
+	policy, err := deployment.LoadBuildPolicy(path)
+	if err != nil {
+		return nil, fmt.Errorf("load build policy: %w", err)
+	}
+	return policy, nil
+}
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -49,9 +57,21 @@ func main() {
 				os.Exit(1)
 			}
 			return
-		case "secrets":
-			if err := runSecretsCommand(log, os.Args[2:]); err != nil {
-				log.Error("manage secrets", "error", err)
+		case "release":
+			if err := runReleaseCommand(context.Background(), os.Args[2:]); err != nil {
+				log.Error("install release", "error", err)
+				os.Exit(1)
+			}
+			return
+		case "worker-group":
+			if err := runWorkerGroupLifecycleCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
+				log.Error("manage worker group lifecycle", "error", err)
+				os.Exit(1)
+			}
+			return
+		case "worker-instance":
+			if err := runWorkerInstanceLifecycleCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
+				log.Error("manage worker instance lifecycle", "error", err)
 				os.Exit(1)
 			}
 			return
@@ -71,6 +91,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	buildPolicy, err := loadControlBuildPolicy(cfg.BuildPolicyPath)
+	if err != nil {
+		return err
+	}
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	backgroundCtx, cancelBackground := context.WithCancel(context.Background())
@@ -83,27 +107,27 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	defer pool.Close()
 	queries := db.New(pool)
-	bootstrapCfg, err := config.LoadWorkerGroupBootstrap()
+	bootstrapCfg, err := config.LoadRegionBootstrap()
 	if err != nil {
-		return fmt.Errorf("load worker group bootstrap config: %w", err)
+		return fmt.Errorf("load region bootstrap config: %w", err)
 	}
-	var groups []configuredWorkerGroup
-	if err := json.Unmarshal([]byte(cfg.WorkerGroupsJSON), &groups); err != nil {
+	groups, err := workergroup.DecodeConfig(cfg.WorkerGroupsJSON)
+	if err != nil {
 		return fmt.Errorf("decode HELMR_WORKER_GROUPS: %w", err)
 	}
-	awsGroups := make([]enrollment.AWSGroupBoundary, 0, len(groups))
 	desiredGroups := make([]workergroup.Desired, 0, len(groups))
+	enrollmentSecrets := make([]enrollment.GroupSecret, 0, len(groups))
 	for _, configuredGroup := range groups {
-		boundary, desired, err := enrollment.PrepareAWSGroup(configuredGroup.awsWorkerGroup())
+		desired, groupSecret, err := configuredGroup.Prepare(os.LookupEnv)
 		if err != nil {
 			return fmt.Errorf("prepare worker group %q: %w", configuredGroup.ID, err)
 		}
-		awsGroups = append(awsGroups, boundary)
 		desiredGroups = append(desiredGroups, desired)
+		enrollmentSecrets = append(enrollmentSecrets, groupSecret)
 	}
-	verifier, err := loadAWSWorkerEnrollmentVerifier(ctx, awsGroups)
+	workerEnrollment, err := enrollment.NewVerifier(enrollmentSecrets)
 	if err != nil {
-		return err
+		return fmt.Errorf("configure worker enrollment: %w", err)
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -120,13 +144,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}); err != nil {
 		return fmt.Errorf("bootstrap region: %w", err)
 	}
-	if err := workergroup.Reconcile(ctx, txQueries, cfg.RegionID, desiredGroups); err != nil {
+	if err := workergroup.Reconcile(ctx, txQueries, bootstrapCfg.RegionID, desiredGroups); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit worker group reconciliation: %w", err)
 	}
-	workerEnrollment := controlWorkerEnrollmentVerifier{verifier: verifier}
 	clickHouseClient, err := clickhouse.New(clickhouse.Config{
 		URL:      cfg.ClickHouseURL,
 		User:     cfg.ClickHouseUser,
@@ -143,41 +166,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	redisClient := redis.NewClient(redisOptions)
 	defer redisClient.Close()
-	dispatchQueue, err := dispatchredis.New(redisClient)
-	if err != nil {
-		return fmt.Errorf("configure run queue: %w", err)
-	}
-	runEnqueuer, err := dispatch.NewEnqueuer(queries, dispatchQueue)
-	if err != nil {
-		return fmt.Errorf("configure dispatch enqueuer: %w", err)
-	}
-	wakePublisher, err := dispatchredis.NewWakePublisher(redisClient)
-	if err != nil {
-		return fmt.Errorf("configure worker wake publisher: %w", err)
-	}
-	executionAuthority, err := dispatch.NewAuthority(pool)
-	if err != nil {
-		return fmt.Errorf("configure execution authority: %w", err)
-	}
-	preparedRuntimeWarmLock, err := dispatch.NewRuntimePrepareAdvisoryLock(pool)
-	if err != nil {
-		return fmt.Errorf("configure prepared runtime supply lock: %w", err)
-	}
-	preparedRuntimeSupply, err := dispatch.NewRuntimePreparer(
-		executionAuthority,
-		dispatch.WithRuntimePrepareLogger(log),
-		dispatch.WithRuntimePrepareLock(preparedRuntimeWarmLock),
-		dispatch.WithRuntimePrepareTarget(int32(cfg.RuntimePrepareTarget)),
-		dispatch.WithRuntimePrepareLimit(int32(cfg.RuntimePrepareLimit)),
-		dispatch.WithRuntimePrepareWakePublisher(wakePublisher),
-	)
-	if err != nil {
-		return fmt.Errorf("configure prepared runtime supply reconciler: %w", err)
-	}
-	scheduleIndex, err := schedule.NewRedisIndex(redisClient)
-	if err != nil {
-		return fmt.Errorf("configure schedule index: %w", err)
-	}
 	publicURL, err := url.Parse(cfg.PublicURL)
 	if err != nil {
 		return fmt.Errorf("parse public URL: %w", err)
@@ -195,56 +183,88 @@ func run(ctx context.Context, log *slog.Logger) error {
 			cancelServer()
 		}
 	}()
-	keyring, err := secret.KeyringFromBase64(cfg.SecretEncryptionKey, cfg.SecretEncryptionKeyOld)
-	if err != nil {
-		return fmt.Errorf("load secret encryption key: %w", err)
-	}
-	secretStore, err := secret.New(queries, keyring)
+	secretStore, err := secret.New(queries, pool, cfg.EncryptionKey)
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}
-	scheduleRunCreator, err := control.NewScheduleRunCreator(log, pool, secretStore, runEnqueuer, eventStream)
+	workspaceFencingKey, err := workspace.NewFencingKey(cfg.WorkspaceFencingKey)
 	if err != nil {
-		return fmt.Errorf("configure schedule run creator: %w", err)
+		return fmt.Errorf("configure Workspace fencing key: %w", err)
 	}
-	scheduleEngine, err := schedule.NewEngine(log, pool, scheduleIndex, scheduleRunCreator, schedule.EngineConfig{
-		Jitter: cfg.ScheduleJitter,
-	})
+	tokenCredentialKey, err := token.NewCredentialKey(cfg.TokenCredentialKey)
 	if err != nil {
-		return fmt.Errorf("configure schedule engine: %w", err)
+		return fmt.Errorf("configure Token credential key: %w", err)
 	}
 	casStore, err := cas.NewS3(ctx, cfg.CASURI)
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
+	if err := cas.ValidateDistinctS3Stores(cfg.CASURI, cfg.PlatformStoreURI); err != nil {
+		return fmt.Errorf("validate Platform Artifact store: %w", err)
+	}
+	platformStore, err := cas.NewImmutableS3(ctx, cfg.PlatformStoreURI)
+	if err != nil {
+		return fmt.Errorf("configure Platform Artifact store: %w", err)
+	}
+	platformArtifactLocks, err := platformlock.New(pool)
+	if err != nil {
+		return fmt.Errorf("configure Platform Artifact locks: %w", err)
+	}
 	var authProvider control.AuthProvider
 	if cfg.GitHubOAuthClientID != "" && cfg.GitHubOAuthClientSecret != "" {
 		authProvider = control.NewGitHubOAuthProvider(cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, publicURL)
 	}
+	var cacheRepositories imagecache.RepositoryProvisioner
+	var cacheRetirer imagecache.RepositoryRetirer
+	if cfg.ImageCache != nil {
+		awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
+		if err != nil {
+			return fmt.Errorf("load Workspace image cache AWS configuration: %w", err)
+		}
+		provisioner, err := imagecacheecr.NewProvisioner(
+			imagecacheecr.Config{
+				RegistryAuthority:   cfg.ImageCache.RegistryAuthority,
+				RepositoryPrefix:    cfg.ImageCache.RepositoryPrefix,
+				CacheRoleARN:        cfg.ImageCache.CacheRoleARN,
+				RepositoryARNPrefix: cfg.ImageCache.RepositoryARNPrefix,
+			},
+			awsecr.NewFromConfig(awsCfg),
+		)
+		if err != nil {
+			return fmt.Errorf("configure Workspace image cache repositories: %w", err)
+		}
+		cacheRepositories = provisioner
+		cacheRetirer = provisioner
+		go control.RunImageCacheRetirement(backgroundCtx, log, queries, cacheRetirer)
+	}
 	handler, err := control.NewServer(control.ServerConfig{
 		Log:                   log,
 		DeploymentMode:        cfg.DeploymentMode,
-		WorkerGroupID:         cfg.WorkerGroupID,
-		RegionID:              cfg.RegionID,
-		DefaultRegionID:       cfg.DefaultRegionID,
 		DB:                    queries,
 		TX:                    pool,
 		ReadinessDB:           pool,
 		Auth:                  auth.NewDBAuthenticator(queries),
 		CAS:                   casStore,
+		BuildPolicy:           buildPolicy,
+		PlatformStore:         platformStore,
+		PlatformArtifactLocks: platformArtifactLocks,
 		Secrets:               secretStore,
-		RunEnqueuer:           runEnqueuer,
-		PreparedRuntimeSupply: preparedRuntimeSupply,
-		DispatchQueue:         dispatchQueue,
-		ScheduleEngine:        scheduleEngine,
+		SecretDelivery:        secretStore,
+		RegistryCredentials:   secretStore,
+		CacheRepositories:     cacheRepositories,
+		WorkspaceFencingKey:   workspaceFencingKey,
+		TokenCredentialKey:    tokenCredentialKey,
 		EventStream:           eventStream,
 		TelemetryReader:       telemetryReader,
 		Mailer:                mailer,
 		AuthProvider:          authProvider,
-		WorkerTokenSecret:     []byte(cfg.WorkerTokenSigningKey),
+		WorkerTokenSigningKey: cfg.WorkerTokenSigningKey,
+		RunLeaseTTL:           cfg.RunLeaseTTL,
+		RunFinalizationTTL:    cfg.RunFinalizationTTL,
 		WorkerEnrollment:      workerEnrollment,
+		OperatorToken:         cfg.OperatorToken,
 		SetupToken:            cfg.SetupToken,
-		AuthSecret:            []byte(cfg.AuthSecret),
+		AuthKey:               cfg.AuthKey,
 		PublicURL:             publicURL,
 		MagicLinkDebugURLs:    cfg.MagicLinkDebugURLs,
 		BackgroundContext:     backgroundCtx,
@@ -283,36 +303,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	cancelBackground()
 	cancelServer()
 	return nil
-}
-
-var loadAWSWorkerEnrollmentVerifier = func(ctx context.Context, groups []enrollment.AWSGroupBoundary) (*enrollment.AWSVerifier, error) {
-	awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("load AWS worker enrollment configuration: %w", err)
-	}
-	verifier, err := enrollment.NewAWSVerifier(awsCfg, groups)
-	if err != nil {
-		return nil, fmt.Errorf("configure AWS worker enrollment: %w", err)
-	}
-	return verifier, nil
-}
-
-type controlWorkerEnrollmentVerifier struct {
-	verifier *enrollment.AWSVerifier
-}
-
-func (v controlWorkerEnrollmentVerifier) VerifyWorkerEnrollment(ctx context.Context, request api.WorkerEnrollmentRequest) (control.VerifiedWorkerEnrollment, error) {
-	verified, err := v.verifier.VerifyWorkerEnrollment(ctx, request)
-	if err != nil {
-		return control.VerifiedWorkerEnrollment{}, err
-	}
-	return control.VerifiedWorkerEnrollment{
-		WorkerGroupID: verified.WorkerGroupID, ResourceID: verified.ResourceID,
-		AllowsRun: verified.AllowsRun, AllowsBuild: verified.AllowsBuild,
-		ProtocolVersion:             verified.ProtocolVersion,
-		EnrollmentPolicyFingerprint: verified.EnrollmentPolicyFingerprint,
-		AttestationFingerprint:      verified.AttestationFingerprint,
-	}, nil
 }
 
 func configuredEmailSender(log *slog.Logger, cfg config.Control) email.Sender {
@@ -354,97 +344,4 @@ func runMigrate(log *slog.Logger, args []string) error {
 	}
 	log.Info("database migrations are up to date")
 	return nil
-}
-
-func runSecretsCommand(log *slog.Logger, args []string) error {
-	if len(args) == 0 {
-		return errors.New("usage: helmr-control secrets key-usage|reencrypt [--limit N]")
-	}
-	cfg, err := config.LoadDatabase()
-	if err != nil {
-		return fmt.Errorf("load database config: %w", err)
-	}
-	currentKey := strings.TrimSpace(os.Getenv("HELMR_SECRET_ENCRYPTION_KEY"))
-	if currentKey == "" {
-		return errors.New("HELMR_SECRET_ENCRYPTION_KEY is required")
-	}
-	oldKey := strings.TrimSpace(os.Getenv("HELMR_SECRET_ENCRYPTION_KEY_OLD"))
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	pool, err := pgxpool.New(ctx, cfg.URL)
-	if err != nil {
-		return fmt.Errorf("connect database: %w", err)
-	}
-	defer pool.Close()
-	queries := db.New(pool)
-	keyring, err := secret.KeyringFromBase64(currentKey, oldKey)
-	if err != nil {
-		return fmt.Errorf("load secret encryption key: %w", err)
-	}
-	store, err := secret.New(queries, keyring)
-	if err != nil {
-		return fmt.Errorf("configure secret store: %w", err)
-	}
-	switch args[0] {
-	case "key-usage":
-		if len(args) != 1 {
-			return errors.New("usage: helmr-control secrets key-usage")
-		}
-		usage, err := store.KeyUsage(ctx)
-		if err != nil {
-			return err
-		}
-		for _, row := range usage {
-			log.Info("secret key usage", "key_id", row.KeyID, "secret_count", row.SecretCount, "current", row.Current, "old", row.Old)
-		}
-		return nil
-	case "reencrypt":
-		limit, err := parseReencryptLimit(args[1:])
-		if err != nil {
-			return err
-		}
-		oldKeyID, ok := keyring.OldKeyID()
-		if !ok {
-			return errors.New("HELMR_SECRET_ENCRYPTION_KEY_OLD is required for secret re-encryption")
-		}
-		result, err := store.ReencryptBatch(ctx, oldKeyID, limit)
-		if err != nil {
-			return err
-		}
-		remaining, err := store.CountByKeyID(ctx, oldKeyID)
-		if err != nil {
-			return err
-		}
-		log.Info("secret re-encryption batch complete", "scanned", result.Scanned, "reencrypted", result.Reencrypted, "skipped", result.Skipped, "failed", result.Failed, "remaining_old_key_count", remaining)
-		if result.Failed > 0 {
-			return fmt.Errorf("%d secrets could not be decrypted with HELMR_SECRET_ENCRYPTION_KEY_OLD", result.Failed)
-		}
-		return nil
-	default:
-		return errors.New("usage: helmr-control secrets key-usage|reencrypt [--limit N]")
-	}
-}
-
-func parseReencryptLimit(args []string) (int32, error) {
-	limit := int64(500)
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--limit":
-			if i+1 >= len(args) {
-				return 0, errors.New("--limit requires a value")
-			}
-			parsed, err := strconv.ParseInt(args[i+1], 10, 32)
-			if err != nil {
-				return 0, fmt.Errorf("--limit must be an integer: %w", err)
-			}
-			limit = parsed
-			i++
-		default:
-			return 0, fmt.Errorf("unknown secrets reencrypt argument %q", args[i])
-		}
-	}
-	if limit <= 0 {
-		return 0, errors.New("--limit must be positive")
-	}
-	return int32(limit), nil
 }

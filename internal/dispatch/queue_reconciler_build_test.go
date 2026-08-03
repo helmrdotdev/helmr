@@ -14,7 +14,21 @@ import (
 
 type buildReconcileStoreFake struct{}
 
+func (buildReconcileStoreFake) RecoverExpiredRunResumes(context.Context, db.RecoverExpiredRunResumesParams) ([]db.RecoverExpiredRunResumesRow, error) {
+	return nil, nil
+}
+
 func (buildReconcileStoreFake) ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error) {
+	return nil, nil
+}
+
+type countingResumeRecoverer struct{ calls atomic.Int64 }
+
+func (r *countingResumeRecoverer) RecoverExpiredRunResumes(
+	context.Context,
+	int32,
+) ([]db.RecoverExpiredRunResumesRow, error) {
+	r.calls.Add(1)
 	return nil, nil
 }
 
@@ -43,7 +57,31 @@ func TestQueueReconcilerReconstructsBuildReadyIndex(t *testing.T) {
 	}
 }
 
+func TestQueueReconcilerUsesConfiguredRunResumeRecovery(t *testing.T) {
+	enqueuer := &buildReconcileEnqueuerFake{}
+	recoverer := &countingResumeRecoverer{}
+	reconciler, err := NewQueueReconciler(
+		buildReconcileStoreFake{},
+		enqueuer,
+		enqueuer,
+		WithRunResumeRecoverer(recoverer),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.ReconcileRunsOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if recoverer.calls.Load() != 1 {
+		t.Fatalf("configured resume recovery calls = %d, want 1", recoverer.calls.Load())
+	}
+}
+
 type isolatedQueueStoreFake struct{}
+
+func (isolatedQueueStoreFake) RecoverExpiredRunResumes(context.Context, db.RecoverExpiredRunResumesParams) ([]db.RecoverExpiredRunResumesRow, error) {
+	return nil, nil
+}
 
 func (isolatedQueueStoreFake) ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error) {
 	return []db.ListQueuedRunCandidateScopesRow{{QueueName: "run"}}, nil

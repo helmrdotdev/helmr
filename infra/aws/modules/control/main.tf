@@ -3,7 +3,6 @@ locals {
   control_port        = 8080
   bucket_prefix       = lower(coalesce(var.bucket_name_prefix, "${local.name}-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}"))
   control_url         = var.enable_cloudfront ? "https://${aws_cloudfront_distribution.control[0].domain_name}" : var.public_url
-  private_control_url = var.private_control_dns_name == null ? null : "https://${var.private_control_dns_name}"
   control_subnet_ids  = var.control_assign_public_ip ? var.public_subnet_ids : var.private_subnet_ids
   email_from          = var.email_from == null ? "" : var.email_from
   smtp_addr           = var.smtp_addr == null ? "" : var.smtp_addr
@@ -13,16 +12,37 @@ locals {
   region_id           = trimspace(coalesce(var.region_id, data.aws_region.current.region))
   default_region_id   = trimspace(coalesce(var.default_region_id, local.region_id))
   region_display_name = trimspace(coalesce(var.region_display_name, local.region_id))
-  worker_group_id     = trimspace(var.worker_group_id)
   worker_groups_by_id = {
     for group in var.worker_groups : group.id => group
   }
-  worker_fleets_by_group = {
-    for fleet in var.worker_fleets : fleet.group_id => fleet
+  worker_enrollment_secret_env_by_group = {
+    for group in var.worker_groups : group.id => "HELMR_WORKER_ENROLLMENT_SECRET_${upper(substr(sha256(group.id), 0, 16))}"
+  }
+  worker_groups_config = [for group in var.worker_groups : {
+    id                      = group.id
+    name                    = group.name
+    description             = group.description
+    enrollment_secret_env   = local.worker_enrollment_secret_env_by_group[group.id]
+    allows_run              = group.allows_run
+    allows_build            = group.allows_build
+    observation_ttl_seconds = group.observation_ttl_seconds
+    instance_capacity       = group.instance_capacity
+  }]
+  image_cache_repository_prefix     = "${local.name}/image-cache"
+  image_cache_repository_arn_prefix = "arn:${data.aws_partition.current.partition}:ecr:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:repository/${local.image_cache_repository_prefix}/"
+  image_cache_registry_authority    = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${data.aws_region.current.region}.${data.aws_partition.current.dns_suffix}"
+  image_cache_worker_role_arns      = sort(distinct(var.image_cache_worker_role_arns))
+  worker_enrollment_secrets = {
+    for group_id, environment_name in local.worker_enrollment_secret_env_by_group :
+    environment_name => aws_secretsmanager_secret.worker_enrollment[group_id].arn
   }
   secret_kms_key_arns = distinct(concat(
     [aws_kms_key.helmr.arn],
-    var.secret_encryption_key_old_kms_key_arns,
+    var.clickhouse_password_kms_key_arns,
+    var.operator_token_kms_key_arn == null ? [] : [var.operator_token_kms_key_arn]
+  ))
+  dispatcher_secret_kms_key_arns = distinct(concat(
+    [aws_kms_key.helmr.arn],
     var.clickhouse_password_kms_key_arns
   ))
   control_security_group_ids = concat(
@@ -30,22 +50,18 @@ locals {
     var.additional_control_security_group_ids
   )
 
-  telemetry_environment = merge(
-    {
-      HELMR_WORKER_GROUP_ID     = local.worker_group_id
-      HELMR_REGION_ID           = local.region_id
-      HELMR_DEFAULT_REGION_ID   = local.default_region_id
-      HELMR_PROVIDER            = "aws"
-      HELMR_PROVIDER_REGION     = data.aws_region.current.region
-      HELMR_REGION_DISPLAY_NAME = local.region_display_name
-    },
-    {
-      HELMR_CLICKHOUSE_URL = local.clickhouse_url
-    },
-    local.clickhouse_user == "" ? {} : {
-      HELMR_CLICKHOUSE_USER = local.clickhouse_user
-    }
-  )
+  clickhouse_environment = merge({
+    HELMR_CLICKHOUSE_URL = local.clickhouse_url
+    }, local.clickhouse_user == "" ? {} : {
+    HELMR_CLICKHOUSE_USER = local.clickhouse_user
+  })
+  region_environment = {
+    HELMR_REGION_ID           = local.region_id
+    HELMR_DEFAULT_REGION_ID   = local.default_region_id
+    HELMR_PROVIDER            = "aws"
+    HELMR_PROVIDER_REGION     = data.aws_region.current.region
+    HELMR_REGION_DISPLAY_NAME = local.region_display_name
+  }
 
   telemetry_secrets = var.clickhouse_password_secret_arn == null ? {} : {
     HELMR_CLICKHOUSE_PASSWORD = var.clickhouse_password_secret_arn
@@ -54,7 +70,7 @@ locals {
     HELMR_DATABASE_URL = aws_secretsmanager_secret.database_url.arn
   }, local.telemetry_secrets)
 
-  migration_environment = local.telemetry_environment
+  migration_environment = local.clickhouse_environment
 
   email_environment = merge(
     var.email_provider == "none" ? {} : {
@@ -82,39 +98,47 @@ locals {
   )
 
   control_environment_defaults = merge({
-    HELMR_CONTROL_ADDR           = ":${local.control_port}"
-    HELMR_DEPLOYMENT_MODE        = var.deployment_mode
-    HELMR_CAS_URI                = "s3://${aws_s3_bucket.cas.bucket}"
-    HELMR_PUBLIC_URL             = local.control_url
-    HELMR_REDIS_URL              = local.redis_url
-    HELMR_SCHEDULE_JITTER        = var.schedule_jitter
-    HELMR_GITHUB_OAUTH_CLIENT_ID = var.github_oauth_client_id
-    HELMR_WORKER_GROUPS          = jsonencode(var.worker_groups)
-  }, local.telemetry_environment, local.email_environment)
+    HELMR_CONTROL_ADDR                      = ":${local.control_port}"
+    HELMR_DEPLOYMENT_MODE                   = var.deployment_mode
+    HELMR_CAS_URI                           = "s3://${aws_s3_bucket.cas.bucket}"
+    HELMR_BUILD_POLICY_PATH                 = "/release/build-policy.json"
+    HELMR_PLATFORM_STORE_URI                = var.platform_store_uri
+    HELMR_PUBLIC_URL                        = local.control_url
+    HELMR_REDIS_URL                         = local.redis_url
+    HELMR_SCHEDULE_JITTER                   = var.schedule_jitter
+    HELMR_GITHUB_OAUTH_CLIENT_ID            = var.github_oauth_client_id
+    HELMR_WORKER_GROUPS                     = jsonencode(local.worker_groups_config)
+    HELMR_IMAGE_CACHE_REGISTRY_AUTHORITY    = local.image_cache_registry_authority
+    HELMR_IMAGE_CACHE_REPOSITORY_PREFIX     = local.image_cache_repository_prefix
+    HELMR_IMAGE_CACHE_ROLE_ARN              = aws_iam_role.image_cache.arn
+    HELMR_IMAGE_CACHE_REPOSITORY_ARN_PREFIX = local.image_cache_repository_arn_prefix
+  }, local.region_environment, local.clickhouse_environment, local.email_environment)
 
   control_secret_defaults = merge({
     HELMR_DATABASE_URL               = aws_secretsmanager_secret.database_url.arn
-    HELMR_WORKER_TOKEN_SIGNING_KEY   = aws_secretsmanager_secret.worker_token_signing_key.arn
+    WORKER_TOKEN_SIGNING_KEY         = aws_secretsmanager_secret.worker_token_signing_key.arn
     HELMR_SETUP_TOKEN                = aws_secretsmanager_secret.setup_token.arn
-    HELMR_AUTH_SECRET                = aws_secretsmanager_secret.auth_secret.arn
-    HELMR_SECRET_ENCRYPTION_KEY      = aws_secretsmanager_secret.secret_encryption_key.arn
+    AUTH_KEY                         = aws_secretsmanager_secret.auth_key.arn
+    ENCRYPTION_KEY                   = aws_secretsmanager_secret.encryption_key.arn
+    WORKSPACE_FENCING_KEY            = aws_secretsmanager_secret.workspace_fencing_key.arn
+    TOKEN_CREDENTIAL_KEY             = aws_secretsmanager_secret.token_credential_key.arn
     HELMR_GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret.arn
     },
-    var.secret_encryption_key_old_arn != null ? {
-      HELMR_SECRET_ENCRYPTION_KEY_OLD = var.secret_encryption_key_old_arn
-    } : {},
+    var.operator_token_secret_arn == null ? {} : {
+      HELMR_OPERATOR_TOKEN = var.operator_token_secret_arn
+    },
+    local.worker_enrollment_secrets,
     local.telemetry_secrets,
     local.email_secrets
   )
 
-  reserved_email_keys = toset([
+  reserved_optional_control_keys = toset([
     "HELMR_EMAIL_PROVIDER",
     "HELMR_EMAIL_FROM",
     "HELMR_RESEND_API_KEY",
     "HELMR_SMTP_ADDR",
     "HELMR_SMTP_USERNAME",
     "HELMR_SMTP_PASSWORD",
-    "HELMR_WORKER_GROUP_ID",
     "HELMR_REGION_ID",
     "HELMR_DEFAULT_REGION_ID",
     "HELMR_PROVIDER",
@@ -125,12 +149,10 @@ locals {
     "HELMR_CLICKHOUSE_PASSWORD",
   ])
   reserved_control_environment_keys = toset(keys(local.control_environment_defaults))
-  reserved_control_secret_keys      = toset(keys(local.control_secret_defaults))
-  reserved_secret_rotation_keys     = toset(["HELMR_SECRET_ENCRYPTION_KEY_OLD"])
-  reserved_control_keys             = setunion(local.reserved_control_environment_keys, local.reserved_control_secret_keys, local.reserved_email_keys, local.reserved_secret_rotation_keys)
-  reserved_dispatcher_keys = setunion(local.reserved_control_keys, toset(keys(local.dispatcher_environment_defaults)), toset([
-    "HELMR_WORKER_FLEETS",
-    "HELMR_FLEET_METRICS_NAMESPACE",
+  reserved_control_secret_keys      = setunion(toset(keys(local.control_secret_defaults)), toset(["HELMR_OPERATOR_TOKEN"]))
+  reserved_control_keys             = setunion(local.reserved_control_environment_keys, local.reserved_control_secret_keys, local.reserved_optional_control_keys)
+  reserved_dispatcher_keys = setunion(toset(keys(local.dispatcher_environment_defaults)), toset(keys(local.dispatcher_secrets)), toset([
+    "HELMR_CLICKHOUSE_PASSWORD",
   ]))
   control_environment_conflicts    = setintersection(keys(var.control_environment), local.reserved_control_keys)
   dispatcher_environment_conflicts = setintersection(keys(var.dispatcher_environment), local.reserved_dispatcher_keys)
@@ -138,38 +160,21 @@ locals {
   control_secrets                  = local.control_secret_defaults
 
   dispatcher_environment_defaults = merge({
-    HELMR_PUBLIC_URL                   = local.control_url
-    HELMR_REDIS_URL                    = local.redis_url
-    HELMR_SCHEDULE_REPAIR_EVERY        = var.schedule_repair_every
-    HELMR_SCHEDULE_REPAIR_LIMIT        = tostring(var.schedule_repair_limit)
-    HELMR_SCHEDULE_TRIGGER_CONCURRENCY = tostring(var.schedule_trigger_concurrency)
-    HELMR_SCHEDULE_REPAIR_LOOKAHEAD    = var.schedule_repair_lookahead
-    HELMR_SCHEDULE_LEASE               = var.schedule_lease
-    HELMR_SCHEDULE_MAX_ATTEMPTS        = tostring(var.schedule_max_attempts)
-    HELMR_SCHEDULE_JITTER              = var.schedule_jitter
-    }, length(var.worker_fleets) > 0 ? {
-    HELMR_WORKER_FLEETS           = jsonencode(var.worker_fleets)
-    HELMR_FLEET_METRICS_NAMESPACE = var.fleet_metrics_namespace
-  } : {}, local.telemetry_environment, local.email_environment)
+    HELMR_REDIS_URL              = local.redis_url
+    HELMR_SCHEDULE_POLL_INTERVAL = var.schedule_poll_interval
+    HELMR_SCHEDULE_CLAIM_LIMIT   = tostring(var.schedule_claim_limit)
+    HELMR_SCHEDULE_CONCURRENCY   = tostring(var.schedule_concurrency)
+    HELMR_SCHEDULE_CLAIM_LEASE   = var.schedule_claim_lease
+  }, local.clickhouse_environment)
   dispatcher_environment = merge(var.dispatcher_environment, local.dispatcher_environment_defaults)
 
   dispatcher_secrets = merge({
-    HELMR_AUTH_SECRET           = aws_secretsmanager_secret.auth_secret.arn
-    HELMR_DATABASE_URL          = aws_secretsmanager_secret.database_url.arn
-    HELMR_SECRET_ENCRYPTION_KEY = aws_secretsmanager_secret.secret_encryption_key.arn
-    },
-    var.secret_encryption_key_old_arn != null ? {
-      HELMR_SECRET_ENCRYPTION_KEY_OLD = var.secret_encryption_key_old_arn
-    } : {},
-    local.telemetry_secrets,
-    local.email_secrets
+    HELMR_DATABASE_URL    = aws_secretsmanager_secret.database_url.arn
+    WORKSPACE_FENCING_KEY = aws_secretsmanager_secret.workspace_fencing_key.arn
+    }, local.telemetry_secrets
   )
 
   redis_url = "rediss://${aws_elasticache_replication_group.dispatch.primary_endpoint_address}:${aws_elasticache_replication_group.dispatch.port}/0"
-}
-
-data "aws_vpc" "control" {
-  id = var.vpc_id
 }
 
 resource "terraform_data" "bootstrap_preconditions" {
@@ -177,12 +182,12 @@ resource "terraform_data" "bootstrap_preconditions" {
     certificate_arn                   = var.certificate_arn
     cloudfront_origin                 = var.cloudfront_origin_domain_name
     enable_cloudfront                 = var.enable_cloudfront
-    private_control_dns               = var.private_control_dns_name
     public_url                        = var.public_url
     reserved_env_conflicts            = local.control_environment_conflicts
     reserved_dispatcher_env_conflicts = local.dispatcher_environment_conflicts
     email_provider                    = var.email_provider
-    worker_fleets                     = var.worker_fleets
+    platform_store_uri                = var.platform_store_uri
+    platform_store_bucket_arn         = var.platform_store_bucket_arn
   }
 
   lifecycle {
@@ -192,82 +197,47 @@ resource "terraform_data" "bootstrap_preconditions" {
     }
 
     precondition {
+      condition     = length(local.image_cache_worker_role_arns) > 0
+      error_message = "image_cache_worker_role_arns must contain at least one deployment-owned build Worker role."
+    }
+
+    precondition {
       condition     = length(local.dispatcher_environment_conflicts) == 0
       error_message = "dispatcher_environment must not set managed Helmr variables. Use explicit module inputs and secret containers for managed settings."
     }
 
     precondition {
-      condition     = length(local.worker_fleets_by_group) == length(var.worker_fleets)
-      error_message = "worker_fleets group_id values must be unique."
+      condition     = var.platform_store_uri == "s3://${trimprefix(var.platform_store_bucket_arn, "arn:${data.aws_partition.current.partition}:s3:::")}/objects"
+      error_message = "platform_store_uri must identify the bucket supplied by platform_store_bucket_arn and end in /objects."
     }
 
     precondition {
-      condition     = length(var.worker_fleets) == 0 || toset(keys(local.worker_groups_by_id)) == toset(keys(local.worker_fleets_by_group))
-      error_message = "worker_groups and worker_fleets must cover the same group IDs when fleet control is configured."
-    }
-
-    precondition {
-      condition = alltrue([
-        for fleet in var.worker_fleets :
-        contains(keys(local.worker_groups_by_id), fleet.group_id) &&
-        local.worker_groups_by_id[fleet.group_id].autoscaling_group == fleet.autoscaling_group &&
-        local.worker_groups_by_id[fleet.group_id].instance_capacity == fleet.instance_capacity
-      ])
-      error_message = "each worker fleet must project the Auto Scaling group and capacity declared by its worker group."
+      condition     = var.platform_store_bucket_arn != aws_s3_bucket.cas.arn
+      error_message = "platform_store_bucket_arn must identify the dedicated bootstrap store, not the mutable Control CAS bucket."
     }
 
     precondition {
       condition = alltrue([
         for group in var.worker_groups :
-        trimspace(group.id) != "" && trimspace(group.region) != "" && trimspace(group.account_id) != "" &&
-        trimspace(group.autoscaling_group) != "" && trimspace(group.instance_profile_arn) != "" &&
-        trimspace(group.launch_ami_id) != "" && contains(group.ami_ids, group.launch_ami_id) &&
+        trimspace(group.id) != "" && trimspace(group.name) != "" &&
         (group.allows_run || group.allows_build) &&
+        group.observation_ttl_seconds > 0 && group.observation_ttl_seconds <= 2592000 &&
         group.instance_capacity.milli_cpu > 0 && group.instance_capacity.memory_bytes > 0 &&
-        group.instance_capacity.workload_disk_bytes > 0 && group.instance_capacity.scratch_bytes > 0 &&
+        group.instance_capacity.guest_ephemeral_disk_bytes > 0 &&
         group.instance_capacity.build_cache_bytes >= 0 && group.instance_capacity.artifact_cache_bytes >= 0 &&
         group.instance_capacity.vm_slots >= 0 && group.instance_capacity.build_executors >= 0 &&
         (!group.allows_run || group.instance_capacity.vm_slots > 0) &&
         (!group.allows_build || group.instance_capacity.build_executors > 0)
       ])
-      error_message = "worker_groups must define a complete AWS identity boundary and a positive role-compatible capacity floor."
-    }
-
-    precondition {
-      condition     = length(distinct([for fleet in var.worker_fleets : fleet.autoscaling_group])) == length(var.worker_fleets)
-      error_message = "each worker fleet must own a distinct Auto Scaling group."
+      error_message = "worker_groups must define a complete logical role boundary and a positive role-compatible capacity floor."
     }
 
     precondition {
       condition = alltrue([
-        for fleet in var.worker_fleets :
-        contains(["run", "build"], fleet.role) && trimspace(fleet.autoscaling_group) != "" &&
-        length(fleet.compatibility_keys) > 0 && length(distinct(fleet.compatibility_keys)) == length(fleet.compatibility_keys) &&
-        fleet.min_workers >= 0 && fleet.warm_workers >= 0 &&
-        fleet.max_workers >= fleet.min_workers && fleet.max_workers >= fleet.warm_workers && fleet.max_workers <= 10000 &&
-        fleet.max_scale_out_per_cycle > 0 && fleet.max_scale_out_per_cycle <= fleet.max_workers &&
-        fleet.max_pending_workers >= 0 && fleet.max_pending_workers <= fleet.max_workers && fleet.max_packing_items > 0 && fleet.max_packing_items <= 1000000 &&
-        fleet.instance_capacity.milli_cpu > 0 && fleet.instance_capacity.memory_bytes > 0 &&
-        fleet.instance_capacity.workload_disk_bytes > 0 && fleet.instance_capacity.scratch_bytes > 0 &&
-        fleet.instance_capacity.build_cache_bytes >= 0 && fleet.instance_capacity.artifact_cache_bytes >= 0 &&
-        (fleet.role == "run" ? (fleet.instance_capacity.vm_slots > 0 && fleet.instance_capacity.build_executors == 0) : (fleet.instance_capacity.vm_slots == 0 && fleet.instance_capacity.build_executors > 0 && fleet.instance_capacity.build_cache_bytes > 0 && fleet.instance_capacity.artifact_cache_bytes > 0)) &&
-        (fleet.role == "run" ? (fleet.queued_run_scratch_bytes > 0 && fleet.queued_run_scratch_bytes <= fleet.instance_capacity.scratch_bytes) : fleet.queued_run_scratch_bytes == 0) &&
-        fleet.controller_interval_seconds > 0 && fleet.controller_interval_seconds <= 2592000 &&
-        fleet.scale_out_cooldown_seconds > 0 && fleet.scale_out_cooldown_seconds <= 2592000 &&
-        fleet.scale_in_cooldown_seconds > 0 && fleet.scale_in_cooldown_seconds <= 2592000 &&
-        fleet.scale_in_hysteresis_seconds > 0 && fleet.scale_in_hysteresis_seconds <= 2592000 &&
-        fleet.stale_worker_timeout_seconds > 0 && fleet.stale_worker_timeout_seconds <= 2592000 &&
-        fleet.readiness_timeout_seconds > 0 && fleet.readiness_timeout_seconds <= 2592000 &&
-        fleet.drain_timeout_seconds > 0 && fleet.drain_timeout_seconds <= 2592000 &&
-        fleet.metric_interval_seconds > 0 && fleet.metric_interval_seconds <= 2592000 &&
-        fleet.controller_interval_seconds <= fleet.readiness_timeout_seconds && fleet.metric_interval_seconds <= fleet.readiness_timeout_seconds
+        for role_arn in var.image_cache_worker_role_arns :
+        startswith(role_arn, "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/")
       ])
-      error_message = "worker fleet shape, bounds, timeouts, and role-specific capacity must be valid."
-    }
-
-    precondition {
-      condition     = length([for fleet in var.worker_fleets : fleet if fleet.role == "run"]) <= 1 && length([for fleet in var.worker_fleets : fleet if fleet.role == "build"]) <= 1
-      error_message = "run and build roles must be non-overlapping and assigned to at most one fleet each."
+      error_message = "image_cache_worker_role_arns must identify roles in the Control AWS account."
     }
 
     precondition {
@@ -305,10 +275,6 @@ resource "terraform_data" "bootstrap_preconditions" {
       error_message = "enable_cloudfront requires certificate_arn and cloudfront_origin_domain_name so CloudFront can use a TLS ALB origin without pointing at its own viewer hostname."
     }
 
-    precondition {
-      condition     = var.private_control_dns_name == null || var.certificate_arn != null
-      error_message = "certificate_arn is required when private_control_dns_name is set because workers must use HTTPS for registration credentials."
-    }
   }
 }
 
@@ -503,56 +469,6 @@ resource "aws_vpc_security_group_ingress_rule" "postgres_control" {
   to_port                      = 5432
 }
 
-resource "aws_ecr_repository" "control" {
-  count = var.create_control_repository ? 1 : 0
-
-  name                 = "${local.name}/control"
-  image_tag_mutability = "MUTABLE"
-  force_delete         = var.control_repository_force_delete
-  tags                 = var.tags
-
-  image_scanning_configuration {
-    scan_on_push = true
-  }
-}
-
-resource "aws_ecr_lifecycle_policy" "control" {
-  count = var.create_control_repository && (var.control_ecr_max_images != null || var.control_ecr_untagged_image_expiration_days != null) ? 1 : 0
-
-  repository = aws_ecr_repository.control[0].name
-
-  policy = jsonencode({
-    rules = concat(
-      var.control_ecr_max_images == null ? [] : [{
-        rulePriority = 1
-        description  = "Keep the most recent tagged control images"
-        selection = {
-          tagStatus      = "tagged"
-          tagPatternList = ["*"]
-          countType      = "imageCountMoreThan"
-          countNumber    = var.control_ecr_max_images
-        }
-        action = {
-          type = "expire"
-        }
-      }],
-      var.control_ecr_untagged_image_expiration_days == null ? [] : [{
-        rulePriority = 2
-        description  = "Expire untagged control images"
-        selection = {
-          tagStatus   = "untagged"
-          countType   = "sinceImagePushed"
-          countUnit   = "days"
-          countNumber = var.control_ecr_untagged_image_expiration_days
-        }
-        action = {
-          type = "expire"
-        }
-      }]
-    )
-  })
-}
-
 resource "aws_cloudwatch_log_group" "control" {
   name              = "/aws/ecs/${local.name}/control"
   retention_in_days = var.control_log_retention_days
@@ -626,15 +542,6 @@ resource "aws_vpc_security_group_ingress_rule" "control_alb" {
   to_port                      = local.control_port
 }
 
-resource "aws_vpc_security_group_ingress_rule" "control_private_alb" {
-  count                        = var.private_control_dns_name == null ? 0 : 1
-  security_group_id            = aws_security_group.control.id
-  referenced_security_group_id = aws_security_group.private_alb[0].id
-  from_port                    = local.control_port
-  ip_protocol                  = "tcp"
-  to_port                      = local.control_port
-}
-
 resource "aws_vpc_security_group_egress_rule" "control" {
   security_group_id = aws_security_group.control.id
   cidr_ipv4         = "0.0.0.0/0"
@@ -650,62 +557,8 @@ resource "aws_lb" "control" {
   tags               = var.tags
 }
 
-resource "aws_security_group" "private_alb" {
-  count       = var.private_control_dns_name == null ? 0 : 1
-  name        = "${local.name}-private-alb"
-  description = "Helmr private worker-to-control load balancer"
-  vpc_id      = var.vpc_id
-  tags        = var.tags
-}
-
-resource "aws_vpc_security_group_ingress_rule" "private_alb_https" {
-  count             = var.private_control_dns_name == null ? 0 : 1
-  security_group_id = aws_security_group.private_alb[0].id
-  cidr_ipv4         = data.aws_vpc.control.cidr_block
-  from_port         = 443
-  ip_protocol       = "tcp"
-  to_port           = 443
-}
-
-resource "aws_vpc_security_group_egress_rule" "private_alb" {
-  count             = var.private_control_dns_name == null ? 0 : 1
-  security_group_id = aws_security_group.private_alb[0].id
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
-}
-
-resource "aws_lb" "private_control" {
-  count              = var.private_control_dns_name == null ? 0 : 1
-  name               = "${local.name}-private"
-  load_balancer_type = "application"
-  internal           = true
-  security_groups    = [aws_security_group.private_alb[0].id]
-  subnets            = var.private_subnet_ids
-  tags               = var.tags
-}
-
 resource "aws_lb_target_group" "control" {
   name        = "${local.name}-control"
-  port        = local.control_port
-  protocol    = "HTTP"
-  target_type = "ip"
-  vpc_id      = var.vpc_id
-  tags        = var.tags
-
-  health_check {
-    enabled             = true
-    healthy_threshold   = 2
-    interval            = 30
-    matcher             = "200"
-    path                = var.control_health_check_path
-    timeout             = 5
-    unhealthy_threshold = 2
-  }
-}
-
-resource "aws_lb_target_group" "private_control" {
-  count       = var.private_control_dns_name == null ? 0 : 1
-  name        = "${local.name}-private"
   port        = local.control_port
   protocol    = "HTTP"
   target_type = "ip"
@@ -763,46 +616,6 @@ resource "aws_lb_listener" "https" {
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.control.arn
-  }
-}
-
-resource "aws_lb_listener" "private_https" {
-  count             = var.private_control_dns_name == null ? 0 : 1
-  load_balancer_arn = aws_lb.private_control[0].arn
-  port              = 443
-  protocol          = "HTTPS"
-  certificate_arn   = var.certificate_arn
-  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.private_control[0].arn
-  }
-}
-
-resource "aws_route53_zone" "private_control" {
-  count = var.private_control_dns_name == null ? 0 : 1
-
-  name = var.private_control_dns_name
-
-  vpc {
-    vpc_id = var.vpc_id
-  }
-
-  tags = var.tags
-}
-
-resource "aws_route53_record" "private_control" {
-  count = var.private_control_dns_name == null ? 0 : 1
-
-  zone_id = aws_route53_zone.private_control[0].zone_id
-  name    = var.private_control_dns_name
-  type    = "A"
-
-  alias {
-    name                   = aws_lb.private_control[0].dns_name
-    zone_id                = aws_lb.private_control[0].zone_id
-    evaluate_target_health = true
   }
 }
 
@@ -896,11 +709,6 @@ resource "aws_iam_role" "control_execution" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "control_execution" {
-  role       = aws_iam_role.control_execution.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-}
-
 resource "aws_iam_role" "dispatcher_execution" {
   name = "${local.name}-dispatcher-execution"
   tags = var.tags
@@ -917,18 +725,19 @@ resource "aws_iam_role" "dispatcher_execution" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "dispatcher_execution" {
-  role       = aws_iam_role.dispatcher_execution.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-}
-
 resource "aws_iam_role_policy" "control_execution" {
   name = "${local.name}-control-execution"
   role = aws_iam_role.control_execution.id
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
+      {
+        Sid      = "WriteControlLogs"
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = "${aws_cloudwatch_log_group.control.arn}:*"
+      },
       {
         Effect = "Allow"
         Action = [
@@ -948,7 +757,23 @@ resource "aws_iam_role_policy" "control_execution" {
           }
         }
       }
-    ]
+      ], var.control_image_repository_arn == null ? [] : [
+      {
+        Sid      = "AuthenticateControlReleaseRegistry"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Sid    = "PullControlReleaseImage"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer"
+        ]
+        Resource = var.control_image_repository_arn
+      }
+    ])
   })
 }
 
@@ -958,7 +783,13 @@ resource "aws_iam_role_policy" "dispatcher_execution" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
+      {
+        Sid      = "WriteDispatcherLogs"
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = "${aws_cloudwatch_log_group.control.arn}:*"
+      },
       {
         Effect = "Allow"
         Action = [
@@ -971,15 +802,91 @@ resource "aws_iam_role_policy" "dispatcher_execution" {
         Action = [
           "kms:Decrypt"
         ]
-        Resource = local.secret_kms_key_arns
+        Resource = local.dispatcher_secret_kms_key_arns
         Condition = {
           StringEquals = {
             "kms:ViaService" = "secretsmanager.${data.aws_region.current.region}.amazonaws.com"
           }
         }
       }
+      ], var.control_image_repository_arn == null ? [] : [
+      {
+        Sid      = "AuthenticateControlReleaseRegistry"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Sid    = "PullControlReleaseImage"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer"
+        ]
+        Resource = var.control_image_repository_arn
+      }
+    ])
+  })
+}
+
+resource "aws_iam_policy" "image_cache_boundary" {
+  name = "${local.name}-image-cache-boundary"
+  tags = var.tags
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "AuthenticateExecutionCacheRegistry"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Sid    = "UseExecutionCacheRepositories"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:BatchGetImage",
+          "ecr:CompleteLayerUpload",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:InitiateLayerUpload",
+          "ecr:PutImage",
+          "ecr:UploadLayerPart"
+        ]
+        Resource = "${local.image_cache_repository_arn_prefix}environments/*"
+      }
     ]
   })
+}
+
+resource "aws_iam_role" "image_cache" {
+  name                 = "${local.name}-image-cache"
+  permissions_boundary = aws_iam_policy.image_cache_boundary.arn
+  tags                 = var.tags
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        AWS = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"
+      }
+      Action = "sts:AssumeRole"
+      Condition = {
+        ArnEquals = {
+          "aws:PrincipalArn" = local.image_cache_worker_role_arns
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "image_cache" {
+  name = "${local.name}-image-cache"
+  role = aws_iam_role.image_cache.id
+
+  policy = aws_iam_policy.image_cache_boundary.policy
 }
 
 resource "aws_iam_role" "control_task" {
@@ -1033,20 +940,40 @@ resource "aws_iam_role_policy" "control_task" {
             "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
           }
         }
-      }
+      },
+      {
+        Sid      = "ReadManagedRuntimeObjects"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = "${var.platform_store_bucket_arn}/objects/sha256/*"
+      },
+      {
+        Sid      = "DecryptManagedRuntimeObjects"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = var.platform_store_kms_key_arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
+          }
+        }
+      },
       ], [for statement in [
         {
+          Sid    = "ProvisionExecutionImageCache"
           Effect = "Allow"
           Action = [
-            "ec2:DescribeInstances",
-            "autoscaling:DescribeAutoScalingInstances"
+            "ecr:CreateRepository",
+            "ecr:DeleteRepository",
+            "ecr:DescribeRepositories",
+            "ecr:ListTagsForResource",
+            "ecr:PutImageTagMutability",
+            "ecr:PutLifecyclePolicy",
+            "ecr:SetRepositoryPolicy",
+            "ecr:TagResource",
+            "ecr:UntagResource"
           ]
-          Resource = "*"
-        },
-        {
-          Effect   = "Allow"
-          Action   = ["iam:GetInstanceProfile"]
-          Resource = [for group in var.worker_groups : group.instance_profile_arn]
+          Resource = "${local.image_cache_repository_arn_prefix}environments/*"
         }
     ] : statement])
   })
@@ -1068,121 +995,20 @@ resource "aws_iam_role" "dispatcher_task" {
   })
 }
 
-resource "aws_iam_role_policy" "dispatcher_fleet_controller" {
-  count = length(var.worker_fleets) > 0 ? 1 : 0
+resource "aws_iam_role" "migration_task" {
+  name = "${local.name}-migration-task"
+  tags = var.tags
 
-  name = "${local.name}-dispatcher-fleet-controller"
-  role = aws_iam_role.dispatcher_task.id
-
-  policy = jsonencode({
+  assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "DescribeConfiguredFleets"
-        Effect = "Allow"
-        Action = [
-          "autoscaling:DescribeAutoScalingGroups"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "MutateConfiguredFleets"
-        Effect = "Allow"
-        Action = [
-          "autoscaling:SetDesiredCapacity",
-          "autoscaling:SetInstanceProtection",
-          "autoscaling:TerminateInstanceInAutoScalingGroup"
-        ]
-        Resource = [for fleet in var.worker_fleets : "arn:${data.aws_partition.current.partition}:autoscaling:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:autoScalingGroup:*:autoScalingGroupName/${fleet.autoscaling_group}"]
-      },
-      {
-        Sid      = "ProjectFleetMetrics"
-        Effect   = "Allow"
-        Action   = ["cloudwatch:PutMetricData"]
-        Resource = "*"
-        Condition = {
-          StringEquals = {
-            "cloudwatch:namespace" = var.fleet_metrics_namespace
-          }
-        }
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ecs-tasks.amazonaws.com"
       }
-    ]
+      Action = "sts:AssumeRole"
+    }]
   })
-}
-
-resource "aws_cloudwatch_metric_alarm" "fleet_pending_readiness" {
-  for_each = local.worker_fleets_by_group
-
-  alarm_name          = "${local.name}-${each.value.role}-worker-pending-readiness"
-  alarm_description   = "Worker pending readiness exceeded its configured timeout. This alarm never writes desired capacity."
-  namespace           = var.fleet_metrics_namespace
-  metric_name         = "PendingWorkers"
-  dimensions          = { WorkerGroupID = each.key, Role = each.value.role }
-  comparison_operator = "GreaterThanThreshold"
-  threshold           = 0
-  evaluation_periods  = max(1, ceil(each.value.readiness_timeout_seconds / max(60, ceil(each.value.metric_interval_seconds / 60) * 60)))
-  datapoints_to_alarm = max(1, ceil(each.value.readiness_timeout_seconds / max(60, ceil(each.value.metric_interval_seconds / 60) * 60)))
-  period              = max(60, ceil(each.value.metric_interval_seconds / 60) * 60)
-  statistic           = "Maximum"
-  treat_missing_data  = "notBreaching"
-  tags                = var.tags
-}
-
-resource "aws_cloudwatch_metric_alarm" "fleet_run_identity_bootstrap" {
-  for_each = length(var.worker_fleets) > 0 ? {
-    for group_id, fleet in local.worker_fleets_by_group : group_id => fleet
-    if fleet.role == "run"
-  } : {}
-
-  alarm_name          = "${local.name}-${each.value.role}-identity-bootstrap"
-  alarm_description   = "A run worker attestation has not produced a certified runtime identity within the readiness window. This alarm never writes desired capacity."
-  namespace           = var.fleet_metrics_namespace
-  metric_name         = "BootstrapPending"
-  dimensions          = { WorkerGroupID = each.key, Role = each.value.role }
-  comparison_operator = "GreaterThanThreshold"
-  threshold           = 0
-  evaluation_periods  = max(1, ceil(each.value.readiness_timeout_seconds / max(60, ceil(each.value.metric_interval_seconds / 60) * 60)))
-  datapoints_to_alarm = max(1, ceil(each.value.readiness_timeout_seconds / max(60, ceil(each.value.metric_interval_seconds / 60) * 60)))
-  period              = max(60, ceil(each.value.metric_interval_seconds / 60) * 60)
-  statistic           = "Maximum"
-  treat_missing_data  = "notBreaching"
-  tags                = var.tags
-}
-
-resource "aws_cloudwatch_metric_alarm" "fleet_drain" {
-  for_each = local.worker_fleets_by_group
-
-  alarm_name          = "${local.name}-${each.value.role}-worker-drain"
-  alarm_description   = "Worker drain exceeded its configured timeout. This alarm never writes desired capacity."
-  namespace           = var.fleet_metrics_namespace
-  metric_name         = "DrainAgeSeconds"
-  dimensions          = { WorkerGroupID = each.key, Role = each.value.role }
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  threshold           = each.value.drain_timeout_seconds
-  evaluation_periods  = 1
-  datapoints_to_alarm = 1
-  period              = max(60, ceil(each.value.metric_interval_seconds / 60) * 60)
-  statistic           = "Maximum"
-  treat_missing_data  = "notBreaching"
-  tags                = var.tags
-}
-
-resource "aws_cloudwatch_metric_alarm" "fleet_deficit" {
-  for_each = local.worker_fleets_by_group
-
-  alarm_name          = "${local.name}-${each.value.role}-worker-deficit"
-  alarm_description   = "Worker demand remains above its configured maximum capacity. This alarm never writes desired capacity."
-  namespace           = var.fleet_metrics_namespace
-  metric_name         = "UnmetCapacity"
-  dimensions          = { WorkerGroupID = each.key, Role = each.value.role }
-  comparison_operator = "GreaterThanThreshold"
-  threshold           = 0
-  evaluation_periods  = 2
-  datapoints_to_alarm = 2
-  period              = max(60, ceil(each.value.metric_interval_seconds / 60) * 60)
-  statistic           = "Maximum"
-  treat_missing_data  = "notBreaching"
-  tags                = var.tags
 }
 
 resource "aws_ecs_task_definition" "control" {
@@ -1200,37 +1026,82 @@ resource "aws_ecs_task_definition" "control" {
     cpu_architecture        = var.control_architecture
   }
 
-  container_definitions = jsonencode([{
-    name       = "control"
-    image      = var.control_image
-    essential  = true
-    entryPoint = var.control_entrypoint
-    portMappings = [{
-      containerPort = local.control_port
-      hostPort      = local.control_port
-      protocol      = "tcp"
-    }]
-    environment = [
-      for key, value in local.control_environment : {
-        name  = key
-        value = value
+  volume {
+    name = "release-policy"
+  }
+
+  container_definitions = jsonencode([
+    {
+      name       = "release-install"
+      image      = var.control_image
+      essential  = false
+      user       = "0"
+      entryPoint = ["helmr-control"]
+      command = [
+        "release",
+        "install",
+        "--store",
+        var.platform_store_uri,
+        "--digest",
+        var.build_policy_digest,
+        "--output",
+        "/release/build-policy.json"
+      ]
+      mountPoints = [{
+        sourceVolume  = "release-policy"
+        containerPath = "/release"
+        readOnly      = false
+      }]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.control.name
+          awslogs-region        = data.aws_region.current.region
+          awslogs-stream-prefix = "release-install"
+        }
       }
-    ]
-    secrets = [
-      for key, value in local.control_secrets : {
-        name      = key
-        valueFrom = value
-      }
-    ]
-    logConfiguration = {
-      logDriver = "awslogs"
-      options = {
-        awslogs-group         = aws_cloudwatch_log_group.control.name
-        awslogs-region        = data.aws_region.current.region
-        awslogs-stream-prefix = "control"
+    },
+    {
+      name       = "control"
+      image      = var.control_image
+      essential  = true
+      entryPoint = var.control_entrypoint
+      dependsOn = [{
+        containerName = "release-install"
+        condition     = "SUCCESS"
+      }]
+      mountPoints = [{
+        sourceVolume  = "release-policy"
+        containerPath = "/release"
+        readOnly      = true
+      }]
+      portMappings = [{
+        containerPort = local.control_port
+        hostPort      = local.control_port
+        protocol      = "tcp"
+      }]
+      environment = [
+        for key, value in local.control_environment : {
+          name  = key
+          value = value
+        }
+      ]
+      secrets = [
+        for key, value in local.control_secrets : {
+          name      = key
+          valueFrom = value
+        }
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.control.name
+          awslogs-region        = data.aws_region.current.region
+          awslogs-stream-prefix = "control"
+        }
       }
     }
-  }])
+  ])
 }
 
 resource "aws_ecs_task_definition" "dispatcher" {
@@ -1283,7 +1154,7 @@ resource "aws_ecs_task_definition" "migration" {
   cpu                      = "256"
   memory                   = "512"
   execution_role_arn       = aws_iam_role.control_execution.arn
-  task_role_arn            = aws_iam_role.control_task.arn
+  task_role_arn            = aws_iam_role.migration_task.arn
   tags                     = var.tags
 
   runtime_platform {
@@ -1342,16 +1213,6 @@ resource "aws_ecs_service" "control" {
     container_port   = local.control_port
   }
 
-  dynamic "load_balancer" {
-    for_each = var.private_control_dns_name == null ? [] : [aws_lb_target_group.private_control[0].arn]
-
-    content {
-      target_group_arn = load_balancer.value
-      container_name   = "control"
-      container_port   = local.control_port
-    }
-  }
-
   deployment_circuit_breaker {
     enable   = true
     rollback = true
@@ -1361,7 +1222,6 @@ resource "aws_ecs_service" "control" {
     aws_lb_listener.http,
     aws_lb_listener.http_redirect,
     aws_lb_listener.https,
-    aws_lb_listener.private_https,
     aws_cloudfront_distribution.control
   ]
 
@@ -1411,8 +1271,8 @@ resource "aws_secretsmanager_secret" "worker_token_signing_key" {
   tags                    = var.tags
 }
 
-resource "aws_secretsmanager_secret" "auth_secret" {
-  name                    = "${local.name}/control/auth-secret"
+resource "aws_secretsmanager_secret" "auth_key" {
+  name                    = "${local.name}/control/auth-key"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags
@@ -1425,8 +1285,22 @@ resource "aws_secretsmanager_secret" "setup_token" {
   tags                    = var.tags
 }
 
-resource "aws_secretsmanager_secret" "secret_encryption_key" {
-  name                    = "${local.name}/control/secret-encryption-key"
+resource "aws_secretsmanager_secret" "encryption_key" {
+  name                    = "${local.name}/control/encryption-key"
+  kms_key_id              = aws_kms_key.helmr.arn
+  recovery_window_in_days = var.secret_recovery_window_in_days
+  tags                    = var.tags
+}
+
+resource "aws_secretsmanager_secret" "workspace_fencing_key" {
+  name                    = "${local.name}/control/workspace-fencing-key"
+  kms_key_id              = aws_kms_key.helmr.arn
+  recovery_window_in_days = var.secret_recovery_window_in_days
+  tags                    = var.tags
+}
+
+resource "aws_secretsmanager_secret" "token_credential_key" {
+  name                    = "${local.name}/control/token-credential-key"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags
@@ -1457,6 +1331,15 @@ resource "aws_secretsmanager_secret" "smtp_password" {
 
 resource "aws_secretsmanager_secret" "checkpoint_encryption_key" {
   name                    = "${local.name}/worker/checkpoint-encryption-key"
+  kms_key_id              = aws_kms_key.helmr.arn
+  recovery_window_in_days = var.secret_recovery_window_in_days
+  tags                    = var.tags
+}
+
+resource "aws_secretsmanager_secret" "worker_enrollment" {
+  for_each = local.worker_groups_by_id
+
+  name                    = "${local.name}/worker-enrollment/${substr(sha256(each.key), 0, 16)}"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

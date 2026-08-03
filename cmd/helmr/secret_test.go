@@ -12,11 +12,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-func TestSecretSetCommand(t *testing.T) {
+func TestSecretCreateCommand(t *testing.T) {
 	state, _ := installTestCLIConfig(t)
-	var request api.SetSecretRequest
+	var request api.CreateSecretRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut || r.URL.Path != "/api/projects/project-1/environments/env-1/secrets/github-token" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/project-1/environments/env-1/secrets" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("authorization"); got != "Bearer session-test" {
@@ -37,23 +37,20 @@ func TestSecretSetCommand(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"secret", "set", "github-token", "secret-value", "--project", "project-1", "--env", "env-1"})
+	cmd.SetArgs([]string{"secret", "create", "github-token", "secret-value", "--project", "project-1", "--env", "env-1"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if request.Value != "secret-value" {
+	if request.Name != "github-token" || request.Value != "secret-value" {
 		t.Fatalf("request = %+v", request)
-	}
-	if request.ProjectID != "" || request.EnvironmentID != "" {
-		t.Fatalf("scope = %+v", request)
 	}
 	if strings.TrimSpace(out.String()) != "github-token" {
 		t.Fatalf("output = %q", out.String())
 	}
 }
 
-func TestSecretSetCommandPreservesStdin(t *testing.T) {
-	var request api.SetSecretRequest
+func TestSecretCreateCommandPreservesStdin(t *testing.T) {
+	var request api.CreateSecretRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
@@ -68,7 +65,7 @@ func TestSecretSetCommandPreservesStdin(t *testing.T) {
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetIn(strings.NewReader("secret-value\nsecond-line\n"))
-	cmd.SetArgs([]string{"secret", "set", "github-token"})
+	cmd.SetArgs([]string{"secret", "create", "github-token"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -88,11 +85,9 @@ func TestSecretListCommand(t *testing.T) {
 			t.Fatalf("query = %s", r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(api.ListSecretsResponse{Secrets: []api.SecretResponse{{
-			ProjectID:     "project-1",
-			EnvironmentID: "env-1",
-			Name:          "github-token",
-			CreatedAt:     secretTime,
-			UpdatedAt:     secretTime,
+			Name:      "github-token",
+			State:     "active",
+			CreatedAt: secretTime,
 		}}})
 	}))
 	defer server.Close()
@@ -118,15 +113,13 @@ func TestSecretGetCommandReturnsMetadataOnly(t *testing.T) {
 	state, _ := installTestCLIConfig(t)
 	secretTime := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/projects/project-1/environments/env-1/secrets/github-token" {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/projects/project-1/environments/env-1/secrets/by-name/github-token" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(api.SecretResponse{
-			ProjectID:     "project-1",
-			EnvironmentID: "env-1",
-			Name:          "github-token",
-			CreatedAt:     secretTime,
-			UpdatedAt:     secretTime,
+			Name:      "github-token",
+			State:     "active",
+			CreatedAt: secretTime,
 		})
 	}))
 	defer server.Close()
@@ -148,16 +141,20 @@ func TestSecretGetCommandReturnsMetadataOnly(t *testing.T) {
 	}
 }
 
-func TestSecretDeleteCommand(t *testing.T) {
+func TestSecretRevokeCommand(t *testing.T) {
 	state, _ := installTestCLIConfig(t)
+	var request api.RevokeSecretRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Path != "/api/projects/project-1/environments/env-1/secrets/github-token" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/project-1/environments/env-1/secrets/by-name/github-token/revoke" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if r.URL.RawQuery != "" {
 			t.Fatalf("query = %s", r.URL.RawQuery)
 		}
-		w.WriteHeader(http.StatusNoContent)
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(api.SecretResponse{Name: "github-token", State: "revoked"})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -169,22 +166,31 @@ func TestSecretDeleteCommand(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"secret", "delete", "github-token", "--project", "project-1", "--env", "env-1", "--yes"})
+	cmd.SetArgs([]string{
+		"secret", "revoke", "github-token",
+		"--project", "project-1",
+		"--env", "env-1",
+		"--idempotency-key", "revoke-1",
+		"--yes",
+	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
+	}
+	if request.IdempotencyKey != "revoke-1" {
+		t.Fatalf("request = %+v", request)
 	}
 	if strings.TrimSpace(out.String()) != "github-token" {
 		t.Fatalf("output = %q", out.String())
 	}
 }
 
-func TestSecretDeleteCommandRequiresYes(t *testing.T) {
+func TestSecretRevokeCommandRequiresYes(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"secret", "delete", "github-token"})
+	cmd.SetArgs([]string{"secret", "revoke", "github-token"})
 	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "secret delete requires --yes") {
+	if err == nil || !strings.Contains(err.Error(), "secret revoke requires --yes") {
 		t.Fatalf("err = %v", err)
 	}
 }

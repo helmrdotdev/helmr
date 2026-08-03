@@ -13,7 +13,7 @@ current_run_lease AS (
            run_leases.span_id,
            run_leases.parent_span_id,
            run_leases.traceparent,
-           run_leases.task_attempt_number AS attempt_number
+           run_leases.attempt_number AS attempt_number
       FROM runs
       JOIN run_leases ON run_leases.id = runs.current_run_lease_id
                      AND run_leases.org_id = runs.org_id
@@ -72,6 +72,68 @@ appended AS (
 )
 SELECT *
   FROM appended;
+
+-- name: AppendDeploymentEvents :execrows
+WITH target_deployment AS (
+    SELECT deployments.id,
+           deployments.org_id,
+           deployments.project_id,
+           deployments.environment_id
+      FROM deployments
+     WHERE deployments.org_id = sqlc.arg(org_id)
+       AND deployments.project_id = sqlc.arg(project_id)
+       AND deployments.environment_id = sqlc.arg(environment_id)
+       AND deployments.id = sqlc.arg(deployment_id)
+)
+INSERT INTO telemetry_outbox (
+    org_id, stream_kind, source_kind, source_id, project_id,
+    environment_id, deployment_id, category, severity, source, kind, message,
+    payload, redaction_class, observed_at
+)
+SELECT target_deployment.org_id,
+       'event',
+       'deployment',
+       target_deployment.id,
+       target_deployment.project_id,
+       target_deployment.environment_id,
+       target_deployment.id,
+       COALESCE(NULLIF(input_categories.category, ''), 'system'),
+       COALESCE(NULLIF(input_severities.severity, ''), 'info'),
+       COALESCE(NULLIF(input_sources.source, ''), 'control'),
+       input_kinds.kind,
+       COALESCE(input_messages.message, ''),
+       COALESCE(input_payloads.payload::jsonb, '{}'::jsonb),
+       COALESCE(NULLIF(input_classes.redaction_class, ''), 'internal'),
+       now()
+  FROM target_deployment
+ CROSS JOIN unnest(sqlc.arg(categories)::text[])
+       WITH ORDINALITY AS input_categories(category, position)
+  JOIN unnest(sqlc.arg(severities)::text[])
+       WITH ORDINALITY AS input_severities(severity, position)
+    ON input_severities.position = input_categories.position
+  JOIN unnest(sqlc.arg(sources)::text[])
+       WITH ORDINALITY AS input_sources(source, position)
+    ON input_sources.position = input_categories.position
+  JOIN unnest(sqlc.arg(kinds)::text[])
+       WITH ORDINALITY AS input_kinds(kind, position)
+    ON input_kinds.position = input_categories.position
+  JOIN unnest(sqlc.arg(messages)::text[])
+       WITH ORDINALITY AS input_messages(message, position)
+    ON input_messages.position = input_categories.position
+  JOIN unnest(sqlc.arg(payloads)::text[])
+       WITH ORDINALITY AS input_payloads(payload, position)
+    ON input_payloads.position = input_categories.position
+  JOIN unnest(sqlc.arg(redaction_classes)::text[])
+       WITH ORDINALITY AS input_classes(redaction_class, position)
+    ON input_classes.position = input_categories.position
+ WHERE cardinality(sqlc.arg(categories)::text[]) BETWEEN 1 AND 66
+   AND cardinality(sqlc.arg(severities)::text[]) = cardinality(sqlc.arg(categories)::text[])
+   AND cardinality(sqlc.arg(sources)::text[]) = cardinality(sqlc.arg(categories)::text[])
+   AND cardinality(sqlc.arg(kinds)::text[]) = cardinality(sqlc.arg(categories)::text[])
+   AND cardinality(sqlc.arg(messages)::text[]) = cardinality(sqlc.arg(categories)::text[])
+   AND cardinality(sqlc.arg(payloads)::text[]) = cardinality(sqlc.arg(categories)::text[])
+   AND cardinality(sqlc.arg(redaction_classes)::text[]) = cardinality(sqlc.arg(categories)::text[])
+ ORDER BY input_categories.position;
 
 -- name: AppendRunEvent :one
 WITH event_args AS (

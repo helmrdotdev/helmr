@@ -1,57 +1,47 @@
 # Release security
 
-Release workflows are treated as privileged code because they can publish files, container images, signed boot artifacts, and future AWS worker AMIs.
+Helmr releases three independent products:
 
-## Required repository settings
+- the Control container image;
+- the Worker AMI, which contains Helmr executables, guest images, and
+  acquisition tools but no Node, package-manager, or build-toolchain catalog;
+- the signed Platform release, which contains the immutable Runtime harness,
+  base toolchain, and closed build-policy input.
 
-- Create a GitHub Actions environment named `release-production`.
-- Restrict deployments to release tags or `main` workflow dispatch runs.
-- For a single-maintainer project, leave required reviewers disabled so the maintainer can publish releases.
-- When more than one maintainer can approve releases, require reviewer approval for `release-production` and disable self-approval.
-- Treat prerelease tags such as `vX.Y.Z-rc.N` as release jobs: they still publish public
-  artifacts, use the same protected environment, and must be marked as prereleases instead of
-  latest releases.
-- Add environment variables for official worker AMI releases:
-  - `RELEASE_AWS_ROLE_ARN`: IAM role assumed by GitHub OIDC.
-  - `RELEASE_AWS_STATE_BUCKET`: S3 backend bucket for the worker-image OpenTofu state.
-  - `RELEASE_AWS_STATE_KEY`: S3 backend key for the release worker-image stack,
-    initially `helmr/stacks/release-worker-image/terraform.tfstate`.
-  - `RELEASE_AWS_REGION`: primary Image Builder region, initially `us-east-1`.
-  - `RELEASE_AWS_STATE_REGION`: state bucket region, if different from `RELEASE_AWS_REGION`.
-  - `RELEASE_WORKER_AMI_REGIONS`: comma-separated public AMI regions, initially `us-east-1,us-west-2,ap-northeast-1`.
-  - `RELEASE_WORKER_AMI_KEEP`: public release AMIs to keep per region before building the next
-    release AMI, initially `4` so the default AWS public AMI quota has one free slot.
+The Platform release is built from one source commit by Nix. Its tar archive is
+deterministic, its provenance records the archive digest and build-policy
+digest, and `cosign sign-blob` binds those bytes to the release workflow.
+Production publication runs only for a Platform tag. The branch/manual
+`platform-release-dev` job produces the same archive shape for an exact commit
+without repository-write or AWS authority.
 
-## Workflow rules
+Control publishes only complete, closed Platform release objects. It validates
+the release manifest and every object before writing immutable
+content-addressed bytes to the Platform store. The build policy is published
+last, so a partial upload is never usable as a complete release. Object
+publication does not activate a GC root or mutate a Deployment.
 
-- Do not use `pull_request_target`.
-- Do not use GitHub Actions cache in release workflows.
-- Do not pass `CACHIX_AUTH_TOKEN` to release workflows.
-- Keep write credentials in the smallest possible job.
-- Build jobs should use `contents: read` and upload workflow artifacts.
-- Publish jobs should download artifacts, check out only the release helper scripts needed for
-  manifest verification, and avoid building repository code.
-- `id-token: write` is only allowed when the line is marked with `security-check: allow-id-token` and the job is protected by the `release-production` environment.
+For a Deployment, Control submits an exact Node and package-manager selector to
+a trusted host-side acquisition executor on an existing build-capable Worker.
+That executor obtains official upstream artifacts, verifies upstream integrity,
+builds closed Runtime/Manager/toolchain trees, performs bounded mechanical
+conformance checks, and publishes candidates to the Platform store. Control
+then independently reads and validates the complete candidates and atomically
+pins all Deployment digests. Tenant Build VMs and ordinary build leases receive
+digests only and cannot resolve selectors.
 
-## Worker AMI release rules
+The Platform store is versioned, private, KMS-encrypted, and public-access
+blocked. Control and Workers may create and read immutable objects but have no
+delete authority. Referenced Deployment pins and active GitOps build-policy
+manifests are GC roots. The post-smoke reaper will receive separate,
+exact-version deletion authority and must recheck roots under the shared
+platform-artifact lock before deletion.
 
-The worker AMI release job assumes a narrowly scoped AWS role through GitHub OIDC and starts or
-monitors AWS Image Builder. The publish job assumes the same role to verify that every AMI recorded
-in `aws-artifacts.json` is visible in its declared region before publishing the manifest. Do not add
-long-lived AWS access keys to GitHub. The actual worker image build happens inside AWS Image
-Builder with a separate least-privilege instance profile.
+Control images and Worker AMIs are built directly from the same checked-out
+source. Their provenance binds the image digest or AMI/Image Builder result to
+the exact source commit. They do not embed, download, or validate a mutable
+Platform release during image construction.
 
-Scope the role trust policy to the repository and `release-production` environment, with
-`token.actions.githubusercontent.com:aud` equal to `sts.amazonaws.com` and
-`token.actions.githubusercontent.com:sub` equal to:
-
-```text
-repo:helmrdotdev/helmr:environment:release-production
-```
-
-Set the role maximum session duration to at least four hours so the workflow can poll long Image
-Builder runs. The role permissions should cover only the worker-image OpenTofu stack and release
-manifest verification: S3 state access, EC2 Image Builder pipeline/configuration resources, the
-image-builder instance profile and role, required EC2 describe/distribution calls including
-`ec2:DescribeImages`, public release AMI retention cleanup with `ec2:DeregisterImage` and
-`ec2:DeleteSnapshot`, and `iam:PassRole` for the image-builder instance profile role.
+Release repair never rebuilds signed bytes. It downloads the existing archive,
+provenance, and Sigstore bundle and verifies the exact archive with
+`cosign verify-blob`.

@@ -3,7 +3,7 @@
 Protocol definitions and generated TypeScript bindings live here.
 
 Current contents:
-- `bundle.proto`, `run.proto`: shared protocol definitions.
+- `run.proto`, `workspace.proto`: shared runtime protocol definitions.
 - `buf.gen.yaml`: Go and TypeScript generation config.
 - `typescript/`: generated `@helmr/proto` workspace package for TypeScript consumers.
 

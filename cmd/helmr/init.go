@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -29,7 +28,9 @@ func initCommand() *cobra.Command {
 				return err
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "created helmr.config.ts")
-			fmt.Fprintln(cmd.OutOrStdout(), "created or updated package.json")
+			fmt.Fprintln(cmd.OutOrStdout(), "created .helmrignore")
+			fmt.Fprintln(cmd.OutOrStdout(), "created package.json")
+			fmt.Fprintln(cmd.OutOrStdout(), "created tsconfig.json")
 			fmt.Fprintln(cmd.OutOrStdout(), "created tasks/hello.ts")
 			return nil
 		},
@@ -42,10 +43,13 @@ func initCommand() *cobra.Command {
 func writeStarterProject(root string, force bool) error {
 	files := map[string]string{
 		"helmr.config.ts": starterHelmrConfig,
+		".helmrignore":    starterHelmrIgnore,
+		"package.json":    starterPackageJSON(),
 		"tasks/hello.ts":  starterHelloTask,
+		"tsconfig.json":   starterTSConfig,
 	}
 	if !force {
-		for _, name := range []string{"helmr.config.ts", "tasks/hello.ts"} {
+		for _, name := range []string{".helmrignore", "helmr.config.ts", "package.json", "tasks/hello.ts", "tsconfig.json"} {
 			path := filepath.Join(root, filepath.FromSlash(name))
 			if _, err := os.Stat(path); err == nil {
 				return fmt.Errorf("%s already exists; pass --force to overwrite", path)
@@ -63,18 +67,25 @@ func writeStarterProject(root string, force bool) error {
 			return err
 		}
 	}
-	if err := ensureStarterPackageJSON(root); err != nil {
-		return err
-	}
 	return nil
 }
 
 const starterHelmrConfig = `import { defineConfig } from "@helmr/sdk"
 
 export default defineConfig({
-  project: "my-project",
-  dirs: ["./tasks"],
+  dirs: ["tasks"],
+  ignorePatterns: ["**/*.test.ts"],
 })
+`
+
+const starterHelmrIgnore = `node_modules/
+helmr/
+dist/
+.env
+.env.*
+!.env*.example
+!.env*.sample
+!.env*.template
 `
 
 func starterPackageJSON() string {
@@ -82,43 +93,18 @@ func starterPackageJSON() string {
   "private": true,
   "type": "module",
   "packageManager": "bun@1.3.10",
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "24.16.0",
+      "onFail": "error"
+    }
+  },
   "dependencies": {
     "@helmr/sdk": ` + strconv.Quote(starterSDKVersion()) + `
   }
 }
 `
-}
-
-func ensureStarterPackageJSON(root string) error {
-	path := filepath.Join(root, "package.json")
-	current, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return os.WriteFile(path, []byte(starterPackageJSON()), 0o644)
-		}
-		return err
-	}
-	var packageJSON map[string]any
-	if err := json.Unmarshal(current, &packageJSON); err != nil {
-		return fmt.Errorf("decode package.json: %w", err)
-	}
-	dependencies, ok := packageJSON["dependencies"].(map[string]any)
-	if !ok {
-		dependencies = map[string]any{}
-		packageJSON["dependencies"] = dependencies
-	}
-	if _, ok := dependencies["@helmr/sdk"]; !ok {
-		dependencies["@helmr/sdk"] = starterSDKVersion()
-	}
-	if _, ok := packageJSON["packageManager"].(string); !ok {
-		packageJSON["packageManager"] = "bun@1.3.10"
-	}
-	next, err := json.MarshalIndent(packageJSON, "", "  ")
-	if err != nil {
-		return err
-	}
-	next = append(next, '\n')
-	return os.WriteFile(path, next, 0o644)
 }
 
 func starterSDKVersion() string {
@@ -151,24 +137,36 @@ func isSemverVersion(value string) bool {
 	return true
 }
 
-const starterHelloTask = `import { cache, image, sandbox, source, task } from "@helmr/sdk"
+const starterTSConfig = `{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["tasks/**/*.ts"]
+}
+`
+
+const starterHelloTask = `import { image, source, task, workspace } from "@helmr/sdk"
 
 const runtime = image("hello")
   .from("node:24-bookworm-slim")
   .workdir("/app")
   .run(["npm", "install", "-g", "bun@1.3.10"])
   .copy("/app/package.json", source.file("package.json"))
-  .run(["bun", "install"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("hello-bun") }],
-  })
+  .run(["bun", "install"])
 
-const sb = sandbox("hello")
+export const helloWorkspace = workspace("hello")
   .image(runtime)
-  .workspace("/app")
+  .resources({ cpu: 1, memory: "1Gi" })
 
 export const hello = task({
   id: "hello",
-  sandbox: sb,
   run: async () => ({ ok: true }),
 })
 `

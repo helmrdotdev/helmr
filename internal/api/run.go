@@ -2,59 +2,17 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 var taskIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 var queueNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$`)
-
-type CreateRunRequest struct {
-	ProjectID     string           `json:"project_id,omitempty"`
-	EnvironmentID string           `json:"environment_id,omitempty"`
-	TaskID        string           `json:"task_id"`
-	Payload       json.RawMessage  `json:"payload"`
-	Options       CreateRunOptions `json:"options"`
-}
-
-type CreateRunOptions struct {
-	Queue              *RunQueueOption `json:"queue,omitempty"`
-	ConcurrencyKey     string          `json:"concurrency_key,omitempty"`
-	Priority           int32           `json:"priority,omitempty"`
-	TTL                string          `json:"ttl,omitempty"`
-	MaxDurationSeconds int32           `json:"max_duration_seconds,omitempty"`
-	Retry              json.RawMessage `json:"retry,omitempty"`
-	Metadata           json.RawMessage `json:"metadata,omitempty"`
-	Tags               []string        `json:"tags,omitempty"`
-}
-
-type RunQueueOption struct {
-	Name string `json:"name,omitempty"`
-}
-
-type CancelRunRequest struct {
-	Reason         string `json:"reason,omitempty"`
-	Force          bool   `json:"force,omitempty"`
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
-}
-
-type RunOperationResponse struct {
-	ID        string     `json:"id"`
-	RunID     string     `json:"run_id"`
-	Kind      string     `json:"kind"`
-	Status    string     `json:"status"`
-	Reason    string     `json:"reason,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	AppliedAt *time.Time `json:"applied_at,omitempty"`
-}
-
-type CancelRunResponse struct {
-	Run       RunResponse          `json:"run"`
-	Operation RunOperationResponse `json:"operation"`
-}
 
 func ValidateTaskID(id string) error {
 	if !taskIDPattern.MatchString(id) {
@@ -68,6 +26,26 @@ func ValidateQueueName(name string) error {
 		return fmt.Errorf("queue name %q must match %s", name, queueNamePattern.String())
 	}
 	return nil
+}
+
+func ValidateConcurrencyKey(key string) error {
+	if !utf8.ValidString(key) {
+		return errors.New("concurrency_key must be valid UTF-8")
+	}
+	if len(key) == 0 || len(key) > 512 {
+		return errors.New("concurrency_key must be between 1 and 512 bytes")
+	}
+	if strings.IndexByte(key, 0) >= 0 {
+		return errors.New("concurrency_key must not contain NUL")
+	}
+	if invalidConcurrencyKeyBoundary(key[0]) || invalidConcurrencyKeyBoundary(key[len(key)-1]) {
+		return errors.New("concurrency_key must not start or end with ASCII whitespace")
+	}
+	return nil
+}
+
+func invalidConcurrencyKeyBoundary(value byte) bool {
+	return value == 0x20 || (value >= 0x09 && value <= 0x0d)
 }
 
 func ParsePositiveDuration(raw string, label string) (time.Duration, error) {
@@ -86,55 +64,46 @@ func ParsePositiveDuration(raw string, label string) (time.Duration, error) {
 	return duration, nil
 }
 
-type SetSecretRequest struct {
-	ProjectID     string `json:"project_id,omitempty"`
-	EnvironmentID string `json:"environment_id,omitempty"`
-	Value         string `json:"value"`
+type CreateSecretRequest struct {
+	Name           string `json:"name"`
+	Value          string `json:"value"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type RotateSecretRequest struct {
+	Value          string `json:"value"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type RevokeSecretRequest struct {
+	IdempotencyKey string `json:"idempotency_key"`
 }
 
 type SecretResponse struct {
-	ProjectID     string    `json:"project_id"`
-	EnvironmentID string    `json:"environment_id"`
-	Name          string    `json:"name"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	State     string     `json:"state"`
+	CreatedAt time.Time  `json:"created_at"`
+	RotatedAt *time.Time `json:"rotated_at,omitempty"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 }
 
 type ListSecretsResponse struct {
-	Secrets []SecretResponse `json:"secrets"`
-}
-
-type RunResponse struct {
-	ID                string          `json:"id"`
-	ProjectID         string          `json:"project_id"`
-	EnvironmentID     string          `json:"environment_id"`
-	DeploymentID      string          `json:"deployment_id"`
-	DeploymentTaskID  string          `json:"deployment_task_id"`
-	SessionID         string          `json:"session_id"`
-	Version           string          `json:"version"`
-	DeploymentVersion string          `json:"deployment_version"`
-	APIVersion        string          `json:"api_version"`
-	SDKVersion        string          `json:"sdk_version,omitempty"`
-	CLIVersion        string          `json:"cli_version,omitempty"`
-	TaskID            string          `json:"task_id"`
-	Status            string          `json:"status"`
-	Metadata          json.RawMessage `json:"metadata,omitempty"`
-	AttemptNumber     *int32          `json:"attempt_number,omitempty"`
-	ExitCode          *int32          `json:"exit_code"`
-	Output            json.RawMessage `json:"output,omitempty"`
-	CreatedAt         time.Time       `json:"created_at"`
-	UpdatedAt         time.Time       `json:"updated_at"`
-	PendingWait       *PendingWait    `json:"pending_wait,omitempty"`
+	Secrets    []SecretResponse `json:"secrets"`
+	NextCursor string           `json:"next_cursor,omitempty"`
 }
 
 const (
-	RunStatusQueued    = "queued"
-	RunStatusRunning   = "running"
-	RunStatusWaiting   = "waiting"
-	RunStatusSucceeded = "succeeded"
-	RunStatusFailed    = "failed"
-	RunStatusCancelled = "cancelled"
-	RunStatusExpired   = "expired"
+	RunStatusQueued          = "queued"
+	RunStatusRunning         = "running"
+	RunStatusWaiting         = "waiting"
+	RunStatusRetryDelayed    = "retry-delayed"
+	RunStatusCancelRequested = "cancel-requested"
+	RunStatusSucceeded       = "succeeded"
+	RunStatusFailed          = "failed"
+	RunStatusCancelled       = "cancelled"
+	RunStatusExpired         = "expired"
+	RunStatusSystemFailed    = "system-failed"
 
 	RunEventKindCompleted = "run.completed"
 	RunEventKindFailed    = "run.failed"
@@ -144,7 +113,7 @@ const (
 
 func RunStatusIsTerminal(status string) bool {
 	switch strings.TrimSpace(status) {
-	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusExpired:
+	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusExpired, RunStatusSystemFailed:
 		return true
 	default:
 		return false
@@ -160,40 +129,6 @@ func RunEventKindIsTerminal(kind string) bool {
 	}
 }
 
-type PendingWait struct {
-	ID        string          `json:"id"`
-	Kind      string          `json:"kind,omitempty"`
-	Status    string          `json:"status,omitempty"`
-	Params    json.RawMessage `json:"params,omitempty"`
-	Metadata  json.RawMessage `json:"metadata,omitempty"`
-	Tags      []string        `json:"tags,omitempty"`
-	Timeout   *int32          `json:"timeout,omitempty"`
-	CreatedAt time.Time       `json:"created_at"`
-}
-
-type ListRunsResponse struct {
-	Runs []RunResponse `json:"runs"`
-}
-
-type RunCountsResponse struct {
-	Queued    int64 `json:"queued"`
-	Running   int64 `json:"running"`
-	Waiting   int64 `json:"waiting"`
-	Succeeded int64 `json:"succeeded"`
-	Failed    int64 `json:"failed"`
-	Cancelled int64 `json:"cancelled"`
-	Expired   int64 `json:"expired"`
-}
-
-type LogSnapshotResponse struct {
-	StdoutBase64 string `json:"stdout_base64"`
-	StderrBase64 string `json:"stderr_base64"`
-	Cursor       string `json:"cursor"`
-	StdoutBytes  int64  `json:"stdout_bytes"`
-	StderrBytes  int64  `json:"stderr_bytes"`
-	Truncated    bool   `json:"truncated"`
-}
-
 type RunLogChunk struct {
 	ID            string    `json:"id"`
 	RunID         string    `json:"run_id"`
@@ -203,6 +138,25 @@ type RunLogChunk struct {
 	Bytes         int64     `json:"bytes"`
 	ObservedSeq   int64     `json:"observed_seq"`
 	At            time.Time `json:"at"`
+}
+
+type RunLogRecord struct {
+	ID               string          `json:"id"`
+	Kind             string          `json:"kind"`
+	RunID            string          `json:"run_id"`
+	AttemptNumber    int32           `json:"attempt_number"`
+	Level            string          `json:"level,omitempty"`
+	Message          string          `json:"message,omitempty"`
+	Attributes       json.RawMessage `json:"attributes,omitempty"`
+	ObservedSequence *int64          `json:"observed_sequence,omitempty"`
+	ContentBase64    string          `json:"content_base64,omitempty"`
+	Bytes            *int64          `json:"bytes,omitempty"`
+	At               time.Time       `json:"at"`
+}
+
+type RunLogPage struct {
+	Logs       []RunLogRecord `json:"logs"`
+	NextCursor string         `json:"next_cursor,omitempty"`
 }
 
 type RunEvent struct {
@@ -224,6 +178,5 @@ type RunEvent struct {
 
 type RunEventPage struct {
 	Events     []RunEvent `json:"events"`
-	Cursor     string     `json:"cursor"`
 	NextCursor *string    `json:"next_cursor,omitempty"`
 }

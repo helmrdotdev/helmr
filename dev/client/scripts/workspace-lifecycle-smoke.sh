@@ -20,4 +20,4 @@ if [ "${SKIP_DEPLOY:-0}" != "1" ]; then
   HELMR_API_URL="${HELMR_API_URL}" go run ./cmd/helmr deploy ./dev/workflows --timeout 20m
 fi
 
-HELMR_API_URL="${HELMR_API_URL}" bun run --cwd dev/client workspace:lifecycle
+HELMR_API_URL="${HELMR_API_URL}" bun run --cwd dev/client smoke

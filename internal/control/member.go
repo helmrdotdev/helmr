@@ -9,13 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -140,23 +138,19 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("generate invitation token"))
 		return
 	}
-	tokenHash, err := auth.HashToken(s.authSecret, rawToken)
+	tokenHash, err := auth.HashToken(s.authKeys.Invitation, rawToken)
 	if err != nil {
 		writeError(w, errors.New("hash invitation token"))
 		return
 	}
-	var publicID string
-	record, err := createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.Invitation, value: &publicID}}, func() (db.Invitation, error) {
-		return s.db.CreateInvitation(r.Context(), db.CreateInvitationParams{
-			ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			PublicID:        publicID,
-			OrgID:           pgvalue.UUID(actor.OrgID),
-			InviteeEmail:    email,
-			Role:            role,
-			InvitedByUserID: pgvalue.UUID(actor.UserID),
-			TokenHash:       tokenHash,
-			ExpiresAt:       pgvalue.Timestamptz(time.Now().AddDate(0, 0, expiresInDays)),
-		})
+	record, err := s.db.CreateInvitation(r.Context(), db.CreateInvitationParams{
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:           pgvalue.UUID(actor.OrgID),
+		InviteeEmail:    email,
+		Role:            role,
+		InvitedByUserID: pgvalue.UUID(actor.UserID),
+		TokenHash:       tokenHash,
+		ExpiresAt:       pgvalue.Timestamptz(time.Now().AddDate(0, 0, expiresInDays)),
 	})
 	if err != nil {
 		if isNoRows(err) {
@@ -191,7 +185,7 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request) {
-	invitationID, err := uuid.Parse(chi.URLParam(r, "id"))
+	invitationID, err := parseUUIDParam(r, "id")
 	if err != nil {
 		writeError(w, notFound(errors.New("invitation not found")))
 		return
@@ -230,7 +224,7 @@ func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
-	targetUserID, err := uuid.Parse(chi.URLParam(r, "userID"))
+	targetUserID, err := parseUUIDParam(r, "userID")
 	if err != nil {
 		writeError(w, notFound(errors.New("member not found")))
 		return
@@ -303,7 +297,7 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
-	targetUserID, err := uuid.Parse(chi.URLParam(r, "userID"))
+	targetUserID, err := parseUUIDParam(r, "userID")
 	if err != nil {
 		writeError(w, notFound(errors.New("member not found")))
 		return

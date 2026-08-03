@@ -28,16 +28,126 @@ func (c *Client) EnrollWorker(ctx context.Context, request api.WorkerEnrollmentR
 	return response, nil
 }
 
-func (c *Client) LeaseRun(ctx context.Context) (api.WorkerRunLeaseResponse, error) {
-	var response api.WorkerRunLeaseResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/lease", api.WorkerRunLeaseRequest{}, &response); err != nil {
-		return api.WorkerRunLeaseResponse{}, err
+func (c *Client) DiscoverRunLeases(ctx context.Context) (api.WorkerRunLeaseDiscoveryResponse, error) {
+	var response api.WorkerRunLeaseDiscoveryResponse
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/leases/discover",
+		api.WorkerRunLeaseDiscoveryRequest{},
+		&response,
+	); err != nil {
+		return api.WorkerRunLeaseDiscoveryResponse{}, err
 	}
 	return response, nil
 }
 
+func (c *Client) ClaimRunLease(
+	ctx context.Context,
+	work api.WorkerRunLeaseWork,
+) (api.WorkerRunLeaseClaimResponse, error) {
+	var response api.WorkerRunLeaseClaimResponse
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/leases/claim",
+		api.WorkerRunLeaseClaimRequest(work),
+		&response,
+	); err != nil {
+		return api.WorkerRunLeaseClaimResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) AcknowledgeRunStart(
+	ctx context.Context,
+	request api.WorkerRunStartRequest,
+) (api.WorkerRunStartResponse, error) {
+	var response api.WorkerRunStartResponse
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/leases/start",
+		request,
+		&response,
+	); err != nil {
+		return api.WorkerRunStartResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) AcknowledgeRunResumeRelease(
+	ctx context.Context,
+	request api.WorkerRunResumeReleaseRequest,
+) (api.WorkerRunResumeReleaseResponse, error) {
+	var response api.WorkerRunResumeReleaseResponse
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/leases/resume-release",
+		request,
+		&response,
+	); err != nil {
+		return api.WorkerRunResumeReleaseResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) AcknowledgeRunEntrypoint(
+	ctx context.Context,
+	request api.WorkerRunEntrypointRequest,
+) error {
+	return c.postWorkerJSON(
+		ctx,
+		"/api/worker/leases/entrypoint",
+		request,
+		nil,
+	)
+}
+
 func (c *Client) RejectRun(ctx context.Context, request api.WorkerRejectRunRequest) error {
 	return c.postWorkerJSON(ctx, "/api/worker/leases/reject", request, nil)
+}
+
+func (c *Client) NextPlatformAcquisition(ctx context.Context) (api.WorkerPlatformAcquisitionResponse, error) {
+	var response api.WorkerPlatformAcquisitionResponse
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/platform-acquisitions/next",
+		api.WorkerPlatformAcquisitionRequest{},
+		&response,
+	); err != nil {
+		return api.WorkerPlatformAcquisitionResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CompletePlatformAcquisition(
+	ctx context.Context,
+	request api.WorkerPlatformAcquisitionCompleteRequest,
+) (api.WorkerPlatformAcquisitionResult, error) {
+	var response api.WorkerPlatformAcquisitionResult
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/platform-acquisitions/complete",
+		request,
+		&response,
+	); err != nil {
+		return api.WorkerPlatformAcquisitionResult{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) FailPlatformAcquisition(
+	ctx context.Context,
+	request api.WorkerPlatformAcquisitionFailRequest,
+) (api.WorkerPlatformAcquisitionResult, error) {
+	var response api.WorkerPlatformAcquisitionResult
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/platform-acquisitions/fail",
+		request,
+		&response,
+	); err != nil {
+		return api.WorkerPlatformAcquisitionResult{}, err
+	}
+	return response, nil
 }
 
 func (c *Client) LeaseDeploymentBuild(ctx context.Context) (api.WorkerDeploymentBuildLeaseResponse, error) {
@@ -64,8 +174,52 @@ func (c *Client) RenewDeploymentBuild(ctx context.Context, lease api.WorkerDeplo
 	return response, nil
 }
 
+func (c *Client) AdmitWorkspaceImage(
+	ctx context.Context,
+	request api.WorkerWorkspaceImageAdmissionRequest,
+) (api.WorkerWorkspaceImageAssignment, error) {
+	var response api.WorkerWorkspaceImageAssignment
+	if err := c.postWorkerJSON(ctx, "/api/worker/deployments/workspace-images/admit", request, &response); err != nil {
+		return api.WorkerWorkspaceImageAssignment{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) FetchWorkspaceImageCredentials(
+	ctx context.Context,
+	request api.WorkerWorkspaceImageCredentialRequest,
+) (api.WorkerWorkspaceImageCredentialResponse, error) {
+	var response api.WorkerWorkspaceImageCredentialResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/deployments/workspace-images/credentials", request, &response); err != nil {
+		return api.WorkerWorkspaceImageCredentialResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CompleteWorkspaceImage(
+	ctx context.Context,
+	request api.WorkerWorkspaceImageOperationResultRequest,
+) (api.WorkerWorkspaceImageOperationResultResponse, error) {
+	var response api.WorkerWorkspaceImageOperationResultResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/deployments/workspace-images/complete", request, &response); err != nil {
+		return api.WorkerWorkspaceImageOperationResultResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) RejectDeploymentBuild(ctx context.Context, request api.WorkerDeploymentBuildRejectRequest) error {
 	return c.postWorkerJSON(ctx, "/api/worker/deployments/reject", request, nil)
+}
+
+func (c *Client) ReportDeploymentBuildDeliveryFailure(
+	ctx context.Context,
+	request api.WorkerDeploymentBuildDeliveryFailureRequest,
+) (api.WorkerDeploymentBuildResponse, error) {
+	var response api.WorkerDeploymentBuildResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/deployments/delivery-failed", request, &response); err != nil {
+		return api.WorkerDeploymentBuildResponse{}, err
+	}
+	return response, nil
 }
 
 func (c *Client) ClaimWorkspaceMount(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerWorkspaceMountClaimResponse, error) {
@@ -116,114 +270,26 @@ func (c *Client) FailWorkspaceMount(ctx context.Context, request api.WorkerWorks
 	return response, nil
 }
 
-func (c *Client) ClaimWorkspaceOperation(ctx context.Context, request api.WorkerWorkspaceOperationClaimRequest) (api.WorkerWorkspaceOperationClaimResponse, error) {
-	var response api.WorkerWorkspaceOperationClaimResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/mounts/operations/claim", request, &response); err != nil {
-		return api.WorkerWorkspaceOperationClaimResponse{}, err
+func (c *Client) ClaimWorkspaceExec(ctx context.Context, request api.WorkerWorkspaceExecClaimRequest) (api.WorkerWorkspaceExecClaimResponse, error) {
+	var response api.WorkerWorkspaceExecClaimResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/execs/claim", request, &response); err != nil {
+		return api.WorkerWorkspaceExecClaimResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) StartWorkspaceOperation(ctx context.Context, request api.WorkerWorkspaceOperationStartRequest) (api.WorkspaceOperationResponse, error) {
-	var response api.WorkspaceOperationResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/mounts/operations/start", request, &response); err != nil {
-		return api.WorkspaceOperationResponse{}, err
+func (c *Client) CompleteWorkspaceExec(ctx context.Context, request api.WorkerWorkspaceExecCompleteRequest) (api.WorkspaceMountResponse, error) {
+	var response api.WorkspaceMountResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/execs/complete", request, &response); err != nil {
+		return api.WorkspaceMountResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) CompleteWorkspaceOperation(ctx context.Context, request api.WorkerWorkspaceOperationCompleteRequest) (api.WorkspaceOperationResponse, error) {
-	var response api.WorkspaceOperationResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/mounts/operations/complete", request, &response); err != nil {
-		return api.WorkspaceOperationResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) MarkWorkspaceExecStarted(ctx context.Context, request api.WorkerWorkspaceExecStartedRequest) (api.WorkspaceExecEnvelope, error) {
-	var response api.WorkspaceExecEnvelope
-	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/execs/started", request, &response); err != nil {
-		return api.WorkspaceExecEnvelope{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) AppendWorkspaceExecOutput(ctx context.Context, request api.WorkerWorkspaceExecOutputRequest) (api.ListWorkspaceExecStreamChunksResponse, error) {
-	var response api.ListWorkspaceExecStreamChunksResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/execs/output", request, &response); err != nil {
-		return api.ListWorkspaceExecStreamChunksResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) ListWorkspaceExecInput(ctx context.Context, request api.WorkerWorkspaceExecInputRequest) (api.WorkerWorkspaceExecInputResponse, error) {
-	var response api.WorkerWorkspaceExecInputResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/execs/input", request, &response); err != nil {
-		return api.WorkerWorkspaceExecInputResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) AdvanceWorkspaceExecInputDelivered(ctx context.Context, request api.WorkerWorkspaceExecInputDeliveredRequest) (api.WorkspaceExecEnvelope, error) {
-	var response api.WorkspaceExecEnvelope
-	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/execs/input-delivered", request, &response); err != nil {
-		return api.WorkspaceExecEnvelope{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) MarkWorkspaceExecExited(ctx context.Context, request api.WorkerWorkspaceExecExitedRequest) (api.WorkspaceExecEnvelope, error) {
-	var response api.WorkspaceExecEnvelope
-	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/execs/exited", request, &response); err != nil {
-		return api.WorkspaceExecEnvelope{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) MarkWorkspacePtyOpened(ctx context.Context, request api.WorkerWorkspacePtyOpenedRequest) (api.WorkspacePtyEnvelope, error) {
-	var response api.WorkspacePtyEnvelope
-	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/ptys/opened", request, &response); err != nil {
-		return api.WorkspacePtyEnvelope{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) AppendWorkspacePtyOutput(ctx context.Context, request api.WorkerWorkspacePtyOutputRequest) (api.ListWorkspacePtyStreamChunksResponse, error) {
-	var response api.ListWorkspacePtyStreamChunksResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/ptys/output", request, &response); err != nil {
-		return api.ListWorkspacePtyStreamChunksResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) ListWorkspacePtyInput(ctx context.Context, request api.WorkerWorkspacePtyInputRequest) (api.WorkerWorkspacePtyInputResponse, error) {
-	var response api.WorkerWorkspacePtyInputResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/ptys/input", request, &response); err != nil {
-		return api.WorkerWorkspacePtyInputResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) AdvanceWorkspacePtyInputDelivered(ctx context.Context, request api.WorkerWorkspacePtyInputDeliveredRequest) (api.WorkspacePtyEnvelope, error) {
-	var response api.WorkspacePtyEnvelope
-	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/ptys/input-delivered", request, &response); err != nil {
-		return api.WorkspacePtyEnvelope{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) MarkWorkspacePtyResizeApplied(ctx context.Context, request api.WorkerWorkspacePtyResizeAppliedRequest) (api.WorkspacePtyEnvelope, error) {
-	var response api.WorkspacePtyEnvelope
-	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/ptys/resize-applied", request, &response); err != nil {
-		return api.WorkspacePtyEnvelope{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) MarkWorkspacePtyClosed(ctx context.Context, request api.WorkerWorkspacePtyClosedRequest) (api.WorkspacePtyEnvelope, error) {
-	var response api.WorkspacePtyEnvelope
-	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/ptys/closed", request, &response); err != nil {
-		return api.WorkspacePtyEnvelope{}, err
+func (c *Client) AppendActorOutput(ctx context.Context, request api.WorkerAppendActorOutputRequest) (api.WorkerAppendActorOutputResponse, error) {
+	var response api.WorkerAppendActorOutputResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/actor-outputs", request, &response); err != nil {
+		return api.WorkerAppendActorOutputResponse{}, err
 	}
 	return response, nil
 }
@@ -232,14 +298,6 @@ func (c *Client) RegisterRuntimeSubstrate(ctx context.Context, request api.Worke
 	var response api.WorkerRuntimeSubstrateRegisterResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/runtime-substrates/register", request, &response); err != nil {
 		return api.WorkerRuntimeSubstrateRegisterResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) LookupRuntimeSubstrate(ctx context.Context, request api.WorkerRuntimeSubstrateLookupRequest) (api.WorkerRuntimeSubstrateLookupResponse, error) {
-	var response api.WorkerRuntimeSubstrateLookupResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/runtime-substrates/lookup", request, &response); err != nil {
-		return api.WorkerRuntimeSubstrateLookupResponse{}, err
 	}
 	return response, nil
 }
@@ -264,14 +322,6 @@ func (c *Client) ObserveWorker(ctx context.Context, observation api.WorkerObserv
 	return response, nil
 }
 
-func (c *Client) RenewWorkerCertification(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerStatusResponse, error) {
-	var response api.WorkerStatusResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/certification/renew", api.WorkerCertificationRenewRequest{Capabilities: capabilities}, &response); err != nil {
-		return api.WorkerStatusResponse{}, err
-	}
-	return response, nil
-}
-
 func (c *Client) DrainWorker(ctx context.Context) (api.WorkerStatusResponse, error) {
 	var response api.WorkerStatusResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/drain", struct{}{}, &response); err != nil {
@@ -289,7 +339,7 @@ func (c *Client) CompleteWorkerDrain(ctx context.Context, request api.WorkerDrai
 		if lastErr == nil {
 			return response, nil
 		}
-		if !ambiguousWorkerDrainCompletion(lastErr) || attempt == attempts-1 {
+		if !ambiguousWorkerTerminalMutation(lastErr) || attempt == attempts-1 {
 			break
 		}
 		delay := time.Duration(attempt+1) * 100 * time.Millisecond
@@ -304,7 +354,7 @@ func (c *Client) CompleteWorkerDrain(ctx context.Context, request api.WorkerDrai
 	return api.WorkerStatusResponse{}, fmt.Errorf("worker drain completion was not confirmed after %d identical attempts: %w", attempts, lastErr)
 }
 
-func ambiguousWorkerDrainCompletion(err error) bool {
+func ambiguousWorkerTerminalMutation(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
@@ -322,7 +372,27 @@ func ambiguousWorkerDrainCompletion(err error) bool {
 }
 
 func (c *Client) FenceWorker(ctx context.Context, reasonCode string) error {
-	return c.postWorkerJSON(ctx, "/api/worker/fence", api.WorkerFenceRequest{ReasonCode: reasonCode}, nil)
+	const attempts = 3
+	var lastErr error
+	request := api.WorkerFenceRequest{ReasonCode: reasonCode}
+	for attempt := range attempts {
+		lastErr = c.postWorkerJSON(ctx, "/api/worker/fence", request, nil)
+		if lastErr == nil {
+			return nil
+		}
+		if !ambiguousWorkerTerminalMutation(lastErr) || attempt == attempts-1 {
+			break
+		}
+		delay := time.Duration(attempt+1) * 100 * time.Millisecond
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return fmt.Errorf("worker fence was not confirmed after %d identical attempts: %w", attempts, lastErr)
 }
 
 func (c *Client) GetWorkerStatus(ctx context.Context) (api.WorkerStatusResponse, error) {
@@ -389,6 +459,225 @@ func (c *Client) RenewRun(ctx context.Context, lease api.WorkerRunLease) (api.Wo
 	return response, nil
 }
 
+func (c *Client) RenewRunLease(
+	ctx context.Context,
+	lease api.WorkerRunLeaseAssignment,
+) (api.WorkerRunLeaseRenewResponse, error) {
+	var response api.WorkerRunLeaseRenewResponse
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/leases/run-renew",
+		api.WorkerRunLeaseRenewRequest{
+			Lease:             lease.Fence(),
+			ExpectedExpiresAt: lease.ExpiresAt,
+		},
+		&response,
+	); err != nil {
+		return api.WorkerRunLeaseRenewResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) BeginRunFinalization(
+	ctx context.Context,
+	request api.WorkerBeginRunFinalizationRequest,
+) (api.WorkerBeginRunFinalizationResponse, error) {
+	var response api.WorkerBeginRunFinalizationResponse
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/leases/finalization/begin",
+		request,
+		&response,
+	); err != nil {
+		return api.WorkerBeginRunFinalizationResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CommitActorTurn(
+	ctx context.Context,
+	request api.WorkerCommitActorTurnRequest,
+) (api.WorkerCommitActorTurnResponse, error) {
+	var response api.WorkerCommitActorTurnResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/actor-turns/commit", request, &response); err != nil {
+		return api.WorkerCommitActorTurnResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) SendRunActorInput(
+	ctx context.Context,
+	request api.WorkerSendActorInputRequest,
+) (api.WorkerSendActorInputResponse, error) {
+	var response api.WorkerSendActorInputResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/actor-inputs/send", request, &response); err != nil {
+		return api.WorkerSendActorInputResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) StartRunActor(
+	ctx context.Context,
+	request api.WorkerStartActorRequest,
+) (api.WorkerStartActorResponse, error) {
+	var response api.WorkerStartActorResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/actors/start", request, &response); err != nil {
+		return api.WorkerStartActorResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) GetRunActorStatus(
+	ctx context.Context,
+	request api.WorkerActorReferenceRequest,
+) (api.WorkerActorStatusResponse, error) {
+	var response api.WorkerActorStatusResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/actors/status", request, &response); err != nil {
+		return api.WorkerActorStatusResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CloseRunActor(
+	ctx context.Context,
+	request api.WorkerCloseActorRequest,
+) (api.WorkerCloseActorResponse, error) {
+	var response api.WorkerCloseActorResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/actors/close", request, &response); err != nil {
+		return api.WorkerCloseActorResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ReadRunActorOutputPage(
+	ctx context.Context,
+	request api.WorkerReadActorOutputPageRequest,
+) (api.WorkerReadActorOutputPageResponse, error) {
+	var response api.WorkerReadActorOutputPageResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/actors/output-page", request, &response); err != nil {
+		return api.WorkerReadActorOutputPageResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CreateRunWorkspace(
+	ctx context.Context,
+	request api.WorkerCreateWorkspaceRequest,
+) (api.WorkerCreateWorkspaceResponse, error) {
+	var response api.WorkerCreateWorkspaceResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/workspaces/create", request, &response); err != nil {
+		return api.WorkerCreateWorkspaceResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) RetrieveRunWorkspace(
+	ctx context.Context,
+	request api.WorkerRetrieveWorkspaceRequest,
+) (api.WorkerRetrieveWorkspaceResponse, error) {
+	var response api.WorkerRetrieveWorkspaceResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/workspaces/retrieve", request, &response); err != nil {
+		return api.WorkerRetrieveWorkspaceResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ReadRunWorkspaceFile(
+	ctx context.Context,
+	request api.WorkerReadWorkspaceFileRequest,
+) (api.WorkerReadWorkspaceFileResponse, error) {
+	var response api.WorkerReadWorkspaceFileResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/workspaces/files/read", request, &response); err != nil {
+		return api.WorkerReadWorkspaceFileResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) StatRunWorkspaceFile(
+	ctx context.Context,
+	request api.WorkerReadWorkspaceFileRequest,
+) (api.WorkerStatWorkspaceFileResponse, error) {
+	var response api.WorkerStatWorkspaceFileResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/workspaces/files/stat", request, &response); err != nil {
+		return api.WorkerStatWorkspaceFileResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ListRunWorkspaceFiles(
+	ctx context.Context,
+	request api.WorkerListWorkspaceFilesRequest,
+) (api.WorkerListWorkspaceFilesResponse, error) {
+	var response api.WorkerListWorkspaceFilesResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/workspaces/files/list", request, &response); err != nil {
+		return api.WorkerListWorkspaceFilesResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) ExecuteRunWorkspace(
+	ctx context.Context,
+	request api.WorkerExecuteWorkspaceRequest,
+) (api.WorkerExecuteWorkspaceResponse, error) {
+	var response api.WorkerExecuteWorkspaceResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/workspaces/exec", request, &response); err != nil {
+		return api.WorkerExecuteWorkspaceResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) PollRunWorkspaceExec(
+	ctx context.Context,
+	request api.WorkerPollWorkspaceExecRequest,
+) (api.WorkerExecuteWorkspaceResponse, error) {
+	var response api.WorkerExecuteWorkspaceResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/workspaces/exec/poll", request, &response); err != nil {
+		return api.WorkerExecuteWorkspaceResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) DeleteRunWorkspace(
+	ctx context.Context,
+	request api.WorkerDeleteWorkspaceRequest,
+) (api.WorkerDeleteWorkspaceResponse, error) {
+	var response api.WorkerDeleteWorkspaceResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/workspaces/delete", request, &response); err != nil {
+		return api.WorkerDeleteWorkspaceResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) InvokeChildTask(
+	ctx context.Context,
+	request api.WorkerInvokeChildTaskRequest,
+) (api.WorkerInvokeChildTaskResponse, error) {
+	var response api.WorkerInvokeChildTaskResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/task-children/invoke", request, &response); err != nil {
+		return api.WorkerInvokeChildTaskResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CompleteTask(
+	ctx context.Context,
+	request api.WorkerCompleteTaskRequest,
+) error {
+	return c.postWorkerJSON(
+		ctx,
+		"/api/worker/leases/tasks/complete",
+		request,
+		nil,
+	)
+}
+
+func (c *Client) CompleteActor(
+	ctx context.Context,
+	request api.WorkerCompleteActorRequest,
+) error {
+	return c.postWorkerJSON(ctx, "/api/worker/leases/actors/complete", request, nil)
+}
+
 func (c *Client) ReleaseRun(ctx context.Context, lease api.WorkerRunLease, result api.WorkerReleaseResult) (api.WorkerReleaseResponse, error) {
 	var response api.WorkerReleaseResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/leases/release", api.WorkerReleaseRequest{Lease: lease, Result: result}, &response); err != nil {
@@ -397,7 +686,7 @@ func (c *Client) ReleaseRun(ctx context.Context, lease api.WorkerRunLease, resul
 	return response, nil
 }
 
-func (c *Client) CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease, result api.WorkerDeploymentBuildResult) (api.WorkerDeploymentBuildResponse, error) {
+func (c *Client) CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease, result json.RawMessage) (api.WorkerDeploymentBuildResponse, error) {
 	var response api.WorkerDeploymentBuildResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/deployments/complete", api.WorkerCompleteDeploymentBuildRequest{Lease: lease, Result: result}, &response); err != nil {
 		return api.WorkerDeploymentBuildResponse{}, err
@@ -405,55 +694,27 @@ func (c *Client) CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDe
 	return response, nil
 }
 
-func (c *Client) AppendLog(ctx context.Context, lease api.WorkerRunLease, stream api.WorkerLogStream, observedSeq uint64, content []byte) (api.WorkerEventResponse, error) {
-	var response api.WorkerEventResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/logs", api.WorkerAppendLogRequest{
-		Lease:         lease,
+func (c *Client) AppendRunLog(
+	ctx context.Context,
+	lease api.WorkerRunLeaseAssignment,
+	stream api.WorkerLogStream,
+	observedSeq uint64,
+	content []byte,
+) error {
+	return c.postWorkerJSON(ctx, "/api/worker/leases/run-logs", api.WorkerRunLogAppendRequest{
+		Lease:         lease.Fence(),
 		Stream:        stream,
 		ObservedSeq:   observedSeq,
 		ContentBase64: base64.StdEncoding.EncodeToString(content),
-	}, &response); err != nil {
-		return api.WorkerEventResponse{}, err
-	}
-	return response, nil
+	}, nil)
 }
 
-func (c *Client) RecordLogEntry(ctx context.Context, lease api.WorkerRunLease, entry string) (api.WorkerEventResponse, error) {
-	var response api.WorkerEventResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/log-entries", api.WorkerRecordLogEntryRequest{
-		Lease: lease,
-		Entry: entry,
-	}, &response); err != nil {
-		return api.WorkerEventResponse{}, err
-	}
-	return response, nil
+func (c *Client) UpdateRunMetadata(ctx context.Context, request api.WorkerUpdateRunMetadataRequest) error {
+	return c.postWorkerJSON(ctx, "/api/worker/leases/run-metadata", request, nil)
 }
 
-func (c *Client) AppendOutputStream(ctx context.Context, request api.WorkerOutputStreamAppendRequest) (api.AppendStreamRecordResponse, error) {
-	var response api.AppendStreamRecordResponse
-	if len(request.Data) == 0 {
-		request.Data = json.RawMessage(`null`)
-	}
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/streams/output", request, &response); err != nil {
-		return api.AppendStreamRecordResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) ReadInputStream(ctx context.Context, request api.WorkerActiveStreamReadRequest) (api.WorkerActiveStreamReadResponse, error) {
-	var response api.WorkerActiveStreamReadResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/streams/input/read", request, &response); err != nil {
-		return api.WorkerActiveStreamReadResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) UpdateRunMetadata(ctx context.Context, request api.WorkerUpdateRunMetadataRequest) (api.WorkerEventResponse, error) {
-	var response api.WorkerEventResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/metadata", request, &response); err != nil {
-		return api.WorkerEventResponse{}, err
-	}
-	return response, nil
+func (c *Client) AppendStructuredRunLog(ctx context.Context, request api.WorkerStructuredLogRequest) error {
+	return c.postWorkerJSON(ctx, "/api/worker/leases/structured-logs", request, nil)
 }
 
 func (c *Client) CreateRuntimeToken(ctx context.Context, request api.WorkerCreateTokenRequest) (api.TokenResponse, error) {
@@ -484,14 +745,6 @@ func (c *Client) AcknowledgeRunWaitResume(ctx context.Context, request api.Worke
 	var response api.WorkerRunWaitResumeAckResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/leases/run-waits/resume-ack", request, &response); err != nil {
 		return api.WorkerRunWaitResumeAckResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) CaptureRunWaitWorkspace(ctx context.Context, request api.WorkerRunWaitWorkspaceCaptureRequest) (api.WorkerRunWaitWorkspaceCaptureResponse, error) {
-	var response api.WorkerRunWaitWorkspaceCaptureResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/run-waits/workspace-capture", request, &response); err != nil {
-		return api.WorkerRunWaitWorkspaceCaptureResponse{}, err
 	}
 	return response, nil
 }

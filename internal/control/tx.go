@@ -17,8 +17,8 @@ type queryTransactionBeginner interface {
 }
 
 type txWork struct {
-	q           db.Querier
-	afterCommit []func(context.Context)
+	q  db.Querier
+	tx controlTransaction
 }
 
 type txLifecycleError struct {
@@ -39,16 +39,6 @@ func txError(stage string, err error) error {
 		return nil
 	}
 	return txLifecycleError{stage: stage, err: err}
-}
-
-// AfterCommit registers a best-effort post-commit effect for the current unit
-// of work. Effects run synchronously after Commit succeeds, in registration
-// order, with context cancellation detached from the request.
-func (work *txWork) AfterCommit(fn func(context.Context)) {
-	if fn == nil {
-		return
-	}
-	work.afterCommit = append(work.afterCommit, fn)
 }
 
 // inTx owns the control-plane transaction lifecycle for request-level units of
@@ -87,7 +77,7 @@ func runControlTransaction(ctx context.Context, q db.Querier, tx controlTransact
 	if tx == nil {
 		return errors.New("transaction is required")
 	}
-	work := &txWork{q: q}
+	work := &txWork{q: q, tx: tx}
 	committed := false
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -107,8 +97,5 @@ func runControlTransaction(ctx context.Context, q db.Querier, tx controlTransact
 		return txError("commit transaction", err)
 	}
 	committed = true
-	for _, effect := range work.afterCommit {
-		effect(context.WithoutCancel(ctx))
-	}
 	return nil
 }

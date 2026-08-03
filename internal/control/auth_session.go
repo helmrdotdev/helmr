@@ -72,19 +72,11 @@ func sessionPermissions(role auth.Role) []string {
 		auth.PermissionRunsCreate,
 		auth.PermissionRunsManage,
 		auth.PermissionRunsRead,
-		auth.PermissionWorkspaceLifecycleManage,
-		auth.PermissionFilesRead,
-		auth.PermissionFilesWrite,
-		auth.PermissionVersionsRead,
-		auth.PermissionVersionsCapture,
-		auth.PermissionVersionsRestore,
-		auth.PermissionVersionsDiff,
-		auth.PermissionExecCreate,
-		auth.PermissionExecRead,
-		auth.PermissionExecManage,
-		auth.PermissionPtyCreate,
-		auth.PermissionPtyRead,
-		auth.PermissionPtyManage,
+		auth.PermissionWorkspacesCreate,
+		auth.PermissionWorkspacesRead,
+		auth.PermissionWorkspacesDelete,
+		auth.PermissionWorkspaceFilesRead,
+		auth.PermissionWorkspaceExecCreate,
 		auth.PermissionSecretsWrite,
 		auth.PermissionTasksDeploy,
 	}
@@ -113,7 +105,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) revokeSessionToken(r *http.Request, raw string) {
-	tokenHash, err := auth.HashToken(s.authSecret, raw)
+	tokenHash, err := auth.HashToken(s.authKeys.Session, raw)
 	if err != nil {
 		return
 	}

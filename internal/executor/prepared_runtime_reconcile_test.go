@@ -9,14 +9,18 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
 type typedRuntimeClient struct {
-	targets []api.WorkerRuntimeReconcileResponse
-	closed  []api.WorkerRuntimeInstanceStateRequest
-	failed  []api.WorkerRuntimeInstanceStateRequest
+	targets      []api.WorkerRuntimeReconcileResponse
+	closed       []api.WorkerRuntimeInstanceStateRequest
+	failed       []api.WorkerRuntimeInstanceStateRequest
+	failedErrors []error
 }
 
 type cleanupRuntimeConnector struct {
@@ -26,6 +30,7 @@ type cleanupRuntimeConnector struct {
 
 type closeTrackingRuntimeSession struct {
 	closed int
+	err    error
 }
 
 type stuckPreparedRuntimeSession struct {
@@ -53,23 +58,23 @@ func (c *cleanupRuntimeConnector) Connect(context.Context, vm.ConnectRequest) (v
 	return nil, errors.New("not used")
 }
 
-func (c *cleanupRuntimeConnector) CleanupRuntime(_ context.Context, id string) error {
-	c.cleaned = append(c.cleaned, id)
+func (c *cleanupRuntimeConnector) Cleanup(_ context.Context, owner vm.Owner) error {
+	c.cleaned = append(c.cleaned, owner.ID)
 	return c.err
 }
 
-func (*closeTrackingRuntimeSession) Stream() io.ReadWriteCloser { return nil }
-func (*closeTrackingRuntimeSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
+func (*closeTrackingRuntimeSession) Stream() vm.Stream { return nil }
+func (*closeTrackingRuntimeSession) OpenStream(context.Context) (vm.Stream, error) {
 	return nil, nil
 }
 func (*closeTrackingRuntimeSession) Wait(context.Context) error { return nil }
 func (s *closeTrackingRuntimeSession) Close(context.Context) error {
 	s.closed++
-	return nil
+	return s.err
 }
 
-func (*stuckPreparedRuntimeSession) Stream() io.ReadWriteCloser { return nil }
-func (*stuckPreparedRuntimeSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
+func (*stuckPreparedRuntimeSession) Stream() vm.Stream { return nil }
+func (*stuckPreparedRuntimeSession) OpenStream(context.Context) (vm.Stream, error) {
 	return nil, nil
 }
 func (s *stuckPreparedRuntimeSession) Wait(context.Context) error {
@@ -126,6 +131,11 @@ func (c *typedRuntimeClient) MarkRuntimeInstanceClosed(_ context.Context, reques
 }
 func (c *typedRuntimeClient) MarkRuntimeInstanceFailed(_ context.Context, request api.WorkerRuntimeInstanceStateRequest) (api.WorkerRuntimeInstance, error) {
 	c.failed = append(c.failed, request)
+	if len(c.failedErrors) > 0 {
+		err := c.failedErrors[0]
+		c.failedErrors = c.failedErrors[1:]
+		return api.WorkerRuntimeInstance{}, err
+	}
 	return api.WorkerRuntimeInstance{ID: request.ID}, nil
 }
 
@@ -165,7 +175,9 @@ func TestStopRuntimeTargetDefersToCheckedOutWorkspaceRuntime(t *testing.T) {
 	if len(client.closed) != 0 {
 		t.Fatalf("checked-out runtime was closed by the pool reconciler: %+v", client.closed)
 	}
-	pool.ReleaseCheckout(target.ID, target.WorkerEpoch)
+	if err := pool.ReleaseCheckout(target.ID, target.WorkerEpoch); err != nil {
+		t.Fatal(err)
+	}
 	if err := pool.StopRuntimeTarget(context.Background(), client, target); err == nil {
 		t.Fatal("untracked runtime teardown unexpectedly succeeded")
 	}
@@ -275,10 +287,240 @@ func TestWarmRuntimeTargetRetriesCapacityBackpressureWithoutDurableFailure(t *te
 	}
 }
 
+func TestPreparedRuntimeCapacityReservationLivesThroughCheckout(t *testing.T) {
+	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000510", 7)
+	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
+	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
+	if err := pool.reserveRuntimeCapacity(target); err != nil {
+		t.Fatal(err)
+	}
+	wantKey := runtimeCapacityKey(target.ID, target.WorkerEpoch)
+	wantVector := capacity.Vector{
+		CPUMillis: 1000, MemoryBytes: 512 << 20, GuestEphemeralDiskBytes: 1024 << 20,
+		VMSlots: 1,
+	}
+	if got := pool.Capacity.Snapshot().Reservations[wantKey]; got != wantVector {
+		t.Fatalf("reservation = %+v, want %+v", got, wantVector)
+	}
+
+	mount := preparedRuntimeWorkspaceMountFromSource(target.Source)
+	mount.RuntimeInstanceID = target.ID
+	mount.RuntimeEpoch = target.WorkerEpoch
+	key := runtimeInstanceIDFromWorkspaceMount(mount)
+	ready := newPreparedRuntimeSignal()
+	ready.finish(nil)
+	pool.entries[key] = []preparedRuntimeEntry{{
+		session: &closeTrackingRuntimeSession{}, poolKey: key,
+		runtimeInstanceID: target.ID, runtimeEpoch: target.WorkerEpoch,
+		target: target, exit: newPreparedRuntimeSignal(), ready: ready,
+	}}
+
+	if _, _, ok := pool.Checkout(context.Background(), mount); !ok {
+		t.Fatal("reserved runtime was not checked out")
+	}
+	if got := len(pool.Capacity.Snapshot().Reservations); got != 1 {
+		t.Fatalf("reservations after checkout = %d, want 1", got)
+	}
+	if err := pool.ReleaseCheckout(target.ID, target.WorkerEpoch); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(pool.Capacity.Snapshot().Reservations); got != 0 {
+		t.Fatalf("reservations after successful checkout cleanup = %d, want 0", got)
+	}
+}
+
+func TestPreparedRuntimeSourcePreservesWorkspaceReservationAuthority(t *testing.T) {
+	source := api.WorkerRuntimeSource{
+		WorkspaceID:            "019c10d5-a6f7-7af1-8f5f-000000000701",
+		DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000702",
+		BaseVersionID:          "019c10d5-a6f7-7af1-8f5f-000000000703",
+		WorkspaceArtifact: api.WorkerWorkspaceArtifact{
+			Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			SizeBytes: 512, MediaType: "application/vnd.helmr.workspace.v0+tar",
+			Encoding: "tar", EntryCount: 3,
+		},
+	}
+	mount := preparedRuntimeWorkspaceMountFromSource(source)
+	if mount.WorkspaceID != source.WorkspaceID ||
+		mount.BaseVersionID != source.BaseVersionID ||
+		mount.WorkspaceArtifact != source.WorkspaceArtifact {
+		t.Fatalf("mount = %#v, want exact Workspace reservation source", mount)
+	}
+}
+
+func TestPreparedRuntimeRejectsWorkspaceArchitectureOutsideWorkerCertification(t *testing.T) {
+	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
+	pool.RuntimeArchitecture = deployment.ArchitectureX8664
+	_, closeProgram, err := pool.prepareProgram(
+		context.Background(),
+		t.TempDir(),
+		api.WorkerRuntimeReconcileTarget{Source: api.WorkerRuntimeSource{
+			WorkspaceArchitecture: "aarch64",
+		}},
+	)
+	if closeErr := closeProgram(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err == nil || !strings.Contains(err.Error(), "does not match Workspace architecture") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestPreparedRuntimeBindsProgramIndexToDeploymentReceipt(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	index := deployment.ProgramIndex{
+		Architecture:       deployment.ArchitectureX8664,
+		ConfigResultDigest: digest,
+		Declarations: []deployment.ProgramIndexDeclaration{{
+			Kind:       deployment.DefinitionKindTask,
+			DeclaredID: "task",
+			Task: &deployment.TaskManifest{
+				Payload: deployment.SchemaManifest{Kind: deployment.SchemaKindNone},
+				Run: deployment.RunManifest{
+					Queue:         "task/task",
+					MaxDurationMs: 900000,
+					Retry:         deployment.RetryManifest{Enabled: false},
+				},
+			},
+			Locator: &deployment.ProgramLocator{
+				ExportName: "task",
+				ModulePath: ".helmr/modules/" + strings.Repeat("1", 64) + ".mjs",
+				Slot:       deployment.DeclarationSlotHandler,
+			},
+		}},
+		FormatVersion: deployment.ProgramIndexFormatVersion,
+		Queues: []deployment.QueueInput{{
+			Name: "task/task",
+		}},
+		RuntimeAPIVersion: deployment.RuntimeAPIVersion,
+	}
+	canonical, err := deployment.CanonicalProgramIndex(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyProgramIndexDigest(index, sha256sum.DigestBytes(canonical)); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyProgramIndexDigest(
+		index,
+		"sha256:"+strings.Repeat("b", 64),
+	); err == nil {
+		t.Fatal("mismatched Program index digest was accepted")
+	}
+}
+
+func TestPreparedRuntimeVerifiesReservedWorkspaceArtifactBeforeReady(t *testing.T) {
+	store, mount := testWorkspaceMountArtifacts(t)
+	pool := NewPreparedRuntimePool(nil, store, 1, nil)
+	materializer := WorkspaceMaterializer{CAS: store}
+	if err := pool.verifyReservedWorkspaceVersion(
+		context.Background(),
+		materializer,
+		t.TempDir(),
+		mount,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.getCalls[mount.WorkspaceArtifact.Digest]; got != 1 {
+		t.Fatalf("Workspace Artifact reads = %d, want 1", got)
+	}
+
+	mount.WorkspaceArtifact = api.WorkerWorkspaceArtifact{}
+	if err := pool.verifyReservedWorkspaceVersion(
+		context.Background(),
+		materializer,
+		t.TempDir(),
+		mount,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPreparedRuntimeCapacityExhaustionIsRetryableBackpressure(t *testing.T) {
+	pool := NewPreparedRuntimePool(nil, nil, 2, nil)
+	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
+	first := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000511", 7)
+	if err := pool.reserveRuntimeCapacity(first); err != nil {
+		t.Fatal(err)
+	}
+	assertRuntimeBackpressure(t, pool.reserveRuntimeCapacity(first), PreparedRuntimeBackpressureCapacity)
+
+	err := pool.reserveRuntimeCapacity(runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000512", 7))
+	assertRuntimeBackpressure(t, err, PreparedRuntimeBackpressureCapacity)
+	if got := len(pool.Capacity.Snapshot().Reservations); got != 1 {
+		t.Fatalf("reservations = %d, want 1", got)
+	}
+}
+
+func TestPreparedRuntimeCapacityRejectsNegativeGuestDisk(t *testing.T) {
+	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
+	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
+	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000514", 7)
+	target.Source.ReservedDiskMiB = -1
+	if err := pool.reserveRuntimeCapacity(target); err == nil {
+		t.Fatal("negative guest disk capacity unexpectedly reserved")
+	}
+	if got := len(pool.Capacity.Snapshot().Reservations); got != 0 {
+		t.Fatalf("reservations = %d, want 0", got)
+	}
+}
+
+func TestPreparedRuntimeCloseFailureRetainsCapacityUntilReclaim(t *testing.T) {
+	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000513", 7)
+	connector := &cleanupRuntimeConnector{}
+	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
+	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
+	if err := pool.reserveRuntimeCapacity(target); err != nil {
+		t.Fatal(err)
+	}
+	session := &closeTrackingRuntimeSession{err: errors.New("close failed")}
+	pool.entries["runtime-key"] = []preparedRuntimeEntry{{
+		session: session, poolKey: "runtime-key",
+		runtimeInstanceID: target.ID, runtimeEpoch: target.WorkerEpoch, target: target,
+	}}
+	client := &typedRuntimeClient{}
+
+	if err := pool.StopRuntimeTarget(context.Background(), client, target); err == nil {
+		t.Fatal("close failure unexpectedly succeeded")
+	}
+	if got := len(pool.Capacity.Snapshot().Reservations); got != 1 {
+		t.Fatalf("reservations after close failure = %d, want 1", got)
+	}
+	if err := pool.ReclaimFailedRuntimeTarget(context.Background(), client, target); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(pool.Capacity.Snapshot().Reservations); got != 0 {
+		t.Fatalf("reservations after exact reclaim = %d, want 0", got)
+	}
+}
+
+func newPreparedRuntimeCapacity(t *testing.T, vmSlots int64) *capacity.Ledger {
+	t.Helper()
+	ledger, err := capacity.New(capacity.Vector{
+		CPUMillis: 1000, MemoryBytes: 512 << 20, GuestEphemeralDiskBytes: 1024 << 20,
+		VMSlots: vmSlots,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ledger
+}
+
+func runtimeCapacityTarget(id string, epoch int64) api.WorkerRuntimeReconcileTarget {
+	return api.WorkerRuntimeReconcileTarget{
+		ID: id, WorkerEpoch: epoch,
+		Source: api.WorkerRuntimeSource{
+			DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000703",
+			ReservedCpuMillis:      1000, ReservedMemoryMiB: 512, ReservedDiskMiB: 1024,
+			ReservedExecutionSlots: 5,
+		},
+	}
+}
+
 func retryableWarmTarget() api.WorkerRuntimeReconcileTarget {
 	return api.WorkerRuntimeReconcileTarget{
-		ID: "00000000-0000-0000-0000-000000000503", WorkerEpoch: 7,
-		Source: api.WorkerPreparedRuntimeSource{DeploymentSandboxID: "00000000-0000-0000-0000-000000000703"},
+		ID: "019c10d5-a6f7-7af1-8f5f-000000000503", WorkerEpoch: 7,
+		Source: api.WorkerRuntimeSource{DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000703"},
 	}
 }
 
@@ -295,8 +537,7 @@ func TestReclaimFailedRuntimeTargetPersistsProofOnlyAfterExactHostCleanup(t *tes
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	client := &typedRuntimeClient{}
 	target := api.WorkerRuntimeReconcileTarget{
-		ID: "00000000-0000-0000-0000-000000000501", WorkerEpoch: 7,
-		NetworkSlotID: "00000000-0000-0000-0000-000000000601", NetworkSlotGeneration: 3,
+		ID: "019c10d5-a6f7-7af1-8f5f-000000000501", WorkerEpoch: 7,
 		DesiredVersion: 2, ObservedVersion: 4, Action: api.WorkerRuntimeReconcileReclaim,
 	}
 	if err := pool.ReclaimFailedRuntimeTarget(context.Background(), client, target); err != nil {
@@ -314,11 +555,115 @@ func TestReclaimFailedRuntimeTargetKeepsQuarantineWhenCleanupIsAmbiguous(t *test
 	connector := &cleanupRuntimeConnector{err: errors.New("process still alive")}
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	client := &typedRuntimeClient{}
-	target := api.WorkerRuntimeReconcileTarget{ID: "00000000-0000-0000-0000-000000000502", WorkerEpoch: 7}
+	target := api.WorkerRuntimeReconcileTarget{ID: "019c10d5-a6f7-7af1-8f5f-000000000502", WorkerEpoch: 7}
 	if err := pool.ReclaimFailedRuntimeTarget(context.Background(), client, target); err == nil {
 		t.Fatal("ambiguous cleanup unexpectedly succeeded")
 	}
 	if len(client.failed) != 0 {
 		t.Fatalf("cleanup proof persisted after failure: %+v", client.failed)
+	}
+}
+
+func TestReclaimFailedCheckedOutRuntimeClearsExactCheckoutAfterPhysicalCleanup(t *testing.T) {
+	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000515", 7)
+	target.DesiredVersion = 2
+	target.ObservedVersion = 4
+	connector := &cleanupRuntimeConnector{}
+	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
+	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
+	if err := pool.reserveRuntimeCapacity(target); err != nil {
+		t.Fatal(err)
+	}
+	pool.mu.Lock()
+	pool.markRuntimeCheckedOutLocked(target.ID, target.WorkerEpoch)
+	pool.markRuntimeCheckedOutLocked("019c10d5-a6f7-7af1-8f5f-000000000516", target.WorkerEpoch)
+	pool.mu.Unlock()
+	client := &typedRuntimeClient{}
+
+	if err := pool.ReclaimFailedRuntimeTarget(context.Background(), client, target); err != nil {
+		t.Fatal(err)
+	}
+	if pool.runtimeCheckedOut(target.ID, target.WorkerEpoch) {
+		t.Fatal("reclaimed runtime remains checked out")
+	}
+	if !pool.runtimeCheckedOut("019c10d5-a6f7-7af1-8f5f-000000000516", target.WorkerEpoch) {
+		t.Fatal("reclaim cleared a different checkout")
+	}
+	if got := len(pool.Capacity.Snapshot().Reservations); got != 0 {
+		t.Fatalf("reservations after reclaim = %d, want 0", got)
+	}
+	if len(connector.cleaned) != 1 || connector.cleaned[0] != target.ID {
+		t.Fatalf("cleaned = %v, want exact runtime", connector.cleaned)
+	}
+	if len(client.failed) != 1 || client.failed[0].CleanupProof == nil ||
+		client.failed[0].CleanupProof.Method != api.WorkerRuntimeCleanupHostReconciled {
+		t.Fatalf("cleanup proof = %+v, want host reconciliation", client.failed)
+	}
+}
+
+func TestReclaimFailedCheckedOutRuntimeRetainsCheckoutWhenPhysicalCleanupFails(t *testing.T) {
+	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000517", 7)
+	connector := &cleanupRuntimeConnector{err: errors.New("runtime still exists")}
+	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
+	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
+	if err := pool.reserveRuntimeCapacity(target); err != nil {
+		t.Fatal(err)
+	}
+	pool.mu.Lock()
+	pool.markRuntimeCheckedOutLocked(target.ID, target.WorkerEpoch)
+	pool.mu.Unlock()
+	client := &typedRuntimeClient{}
+
+	if err := pool.ReclaimFailedRuntimeTarget(context.Background(), client, target); err == nil {
+		t.Fatal("cleanup failure unexpectedly reclaimed runtime")
+	}
+	if !pool.runtimeCheckedOut(target.ID, target.WorkerEpoch) {
+		t.Fatal("cleanup failure cleared checkout")
+	}
+	if got := len(pool.Capacity.Snapshot().Reservations); got != 1 {
+		t.Fatalf("reservations after cleanup failure = %d, want 1", got)
+	}
+	if len(client.failed) != 0 {
+		t.Fatalf("cleanup failure persisted proof: %+v", client.failed)
+	}
+}
+
+func TestReclaimFailedCheckedOutRuntimeRetriesProofAfterLocalRelease(t *testing.T) {
+	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000518", 7)
+	target.DesiredVersion = 2
+	target.ObservedVersion = 4
+	connector := &cleanupRuntimeConnector{}
+	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
+	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
+	if err := pool.reserveRuntimeCapacity(target); err != nil {
+		t.Fatal(err)
+	}
+	pool.mu.Lock()
+	pool.markRuntimeCheckedOutLocked(target.ID, target.WorkerEpoch)
+	pool.mu.Unlock()
+	client := &typedRuntimeClient{failedErrors: []error{errors.New("proof response lost")}}
+
+	if err := pool.ReclaimFailedRuntimeTarget(context.Background(), client, target); err == nil {
+		t.Fatal("proof persistence failure unexpectedly succeeded")
+	}
+	if pool.runtimeCheckedOut(target.ID, target.WorkerEpoch) {
+		t.Fatal("physical cleanup success retained checkout after proof failure")
+	}
+	if got := len(pool.Capacity.Snapshot().Reservations); got != 0 {
+		t.Fatalf("reservations after physical cleanup = %d, want 0", got)
+	}
+	if err := pool.ReclaimFailedRuntimeTarget(context.Background(), client, target); err != nil {
+		t.Fatal(err)
+	}
+	if len(connector.cleaned) != 2 {
+		t.Fatalf("physical cleanup attempts = %d, want 2 idempotent attempts", len(connector.cleaned))
+	}
+	if len(client.failed) != 2 {
+		t.Fatalf("proof attempts = %d, want 2", len(client.failed))
+	}
+	for _, request := range client.failed {
+		if request.CleanupProof == nil || request.CleanupProof.Method != api.WorkerRuntimeCleanupHostReconciled {
+			t.Fatalf("proof attempt = %+v, want host reconciliation", request)
+		}
 	}
 }

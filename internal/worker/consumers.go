@@ -10,11 +10,28 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/capacity"
+	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
-type runConsumer struct{ runner *Runner }
+type runConsumer struct {
+	runner *Runner
+	mu     sync.Mutex
+	active map[api.WorkerRunLeaseWork]struct{}
+}
+type platformAcquisitionConsumer struct{ runner *Runner }
 type buildConsumer struct{ runner *Runner }
 type workspaceConsumer struct{ runner *Runner }
+
+type fatalWorkerError struct {
+	err error
+}
+
+func (err *fatalWorkerError) Error() string     { return err.err.Error() }
+func (err *fatalWorkerError) Unwrap() error     { return err.err }
+func (err *fatalWorkerError) FatalWorker() bool { return true }
 
 type buildLeaseState struct {
 	mu    sync.RWMutex
@@ -33,92 +50,116 @@ func (s *buildLeaseState) set(lease api.WorkerDeploymentBuildLease) {
 	s.mu.Unlock()
 }
 
-func NewRunConsumer(runner *Runner) Consumer   { return runConsumer{runner: runner} }
+func NewRunConsumer(runner *Runner) Consumer {
+	return &runConsumer{runner: runner, active: make(map[api.WorkerRunLeaseWork]struct{})}
+}
+func NewPlatformAcquisitionConsumer(runner *Runner) Consumer {
+	return platformAcquisitionConsumer{runner: runner}
+}
 func NewBuildConsumer(runner *Runner) Consumer { return buildConsumer{runner: runner} }
 func NewWorkspaceConsumer(runner *Runner) Consumer {
 	return workspaceConsumer{runner: runner}
 }
 
-func (c runConsumer) Claim(ctx context.Context) (Work, bool, error) {
-	r := c.runner
-	leased, err := r.client.LeaseRun(ctx)
+func (c *runConsumer) Claim(ctx context.Context) (Work, bool, error) {
+	discovered, err := c.runner.client.DiscoverRunLeases(ctx)
 	if err != nil {
-		return nil, false, fmt.Errorf("lease run: %w", err)
+		return nil, false, fmt.Errorf("discover Run Leases: %w", err)
 	}
-	if leased.Lease == nil || leased.Run == nil {
+	c.mu.Lock()
+	var selected api.WorkerRunLeaseWork
+	for _, work := range discovered.Items {
+		if work.LeaseID == "" || work.LeaseSequence <= 0 {
+			c.mu.Unlock()
+			return nil, false, errors.New("discovered Run Lease identity is invalid")
+		}
+		if _, running := c.active[work]; running {
+			continue
+		}
+		selected = work
+		c.active[work] = struct{}{}
+		break
+	}
+	c.mu.Unlock()
+	if selected.LeaseID == "" {
 		return nil, false, nil
 	}
-	lease, run := *leased.Lease, *leased.Run
-	if err := validateLeaseRequirements(r.capabilities, lease, run); err != nil {
-		payload, _ := json.Marshal(map[string]string{"message": err.Error()})
-		if rejectErr := r.client.RejectRun(ctx, api.WorkerRejectRunRequest{Lease: lease, ReasonCode: "requirements_unsupported", Error: payload}); rejectErr != nil && !isStaleLease(rejectErr) {
-			return nil, true, rejectErr
-		}
-		return func(context.Context) error { return nil }, true, nil
-	}
 	return func(workCtx context.Context) error {
-		started, err := r.client.StartRun(workCtx, lease)
-		if err != nil {
+		defer func() {
+			c.mu.Lock()
+			delete(c.active, selected)
+			c.mu.Unlock()
+		}()
+		if err := c.runner.runLeaseExecutor.ExecuteRunLease(workCtx, selected); err != nil {
 			if isStaleLease(err) {
 				return nil
 			}
-			return fmt.Errorf("start run %s: %w", lease.RunID, err)
+			return fmt.Errorf(
+				"execute Run Lease %s/%d: %w",
+				selected.LeaseID,
+				selected.LeaseSequence,
+				err,
+			)
 		}
-		return r.executeStartedRun(workCtx, started.Lease, run)
+		return nil
 	}, true, nil
 }
 
-func (r *Runner) executeStartedRun(ctx context.Context, lease api.WorkerRunLease, run api.WorkerRun) error {
-	leaseState := newRunLeaseState(lease)
-	execCtx, cancelExec := context.WithCancel(ctx)
-	defer cancelExec()
-	renewDone := make(chan *renewError, 1)
-	go func() { renewDone <- r.renewUntilDone(execCtx, leaseState) }()
-	resultDone := make(chan api.WorkerReleaseResult, 1)
-	go func() { resultDone <- r.executor.Execute(execCtx, leaseState, run) }()
-	var result api.WorkerReleaseResult
-	var renewErr *renewError
-	renewObserved := false
-	select {
-	case result = <-resultDone:
-	case renewErr = <-renewDone:
-		renewObserved = true
-		cancelExec()
-		if renewErr != nil {
-			result = <-resultDone
-			if renewErr.kind == renewStale {
+func (c platformAcquisitionConsumer) Claim(ctx context.Context) (Work, bool, error) {
+	r := c.runner
+	next, err := r.client.NextPlatformAcquisition(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("read Platform acquisition: %w", err)
+	}
+	if next.Acquisition == nil {
+		return nil, false, nil
+	}
+	acquisition := *next.Acquisition
+	policyDigest, err := r.buildPolicy.Digest()
+	if err != nil {
+		return nil, true, &fatalWorkerError{err: fmt.Errorf("read build policy digest: %w", err)}
+	}
+	if acquisition.BuildPolicyDigest != policyDigest {
+		return nil, true, &fatalWorkerError{err: errors.New("Control and Worker build policies differ")}
+	}
+	if r.platformAcquirer == nil {
+		return nil, true, &fatalWorkerError{err: errors.New("Platform acquirer is not configured")}
+	}
+	return func(workCtx context.Context) error {
+		candidates, err := r.platformAcquirer.Acquire(workCtx, acquisition)
+		if err != nil {
+			var deterministic interface {
+				PlatformAcquisitionFailureReason() api.WorkerPlatformAcquisitionFailureReason
+			}
+			if !errors.As(err, &deterministic) {
+				return fmt.Errorf("acquire Platform Artifacts for Deployment %s: %w", acquisition.DeploymentID, err)
+			}
+			raw, _ := json.Marshal(map[string]string{"message": err.Error()})
+			_, reportErr := r.client.FailPlatformAcquisition(
+				workCtx,
+				api.WorkerPlatformAcquisitionFailRequest{
+					Acquisition: acquisition,
+					Reason:      deterministic.PlatformAcquisitionFailureReason(),
+					Error:       raw,
+				},
+			)
+			if isStaleLease(reportErr) {
 				return nil
 			}
-			if renewErr.kind == renewTimeout && result.Kind == "" {
-				message := fmt.Sprintf("worker lease renew timed out: %v", renewErr.err)
-				result = api.WorkerReleaseResult{Kind: "failed", Error: &message}
-			}
-			if renewErr.kind == renewFailed {
-				return fmt.Errorf("renew run %s: %w", lease.RunID, renewErr.err)
-			}
-		} else {
-			result = <-resultDone
+			return reportErr
 		}
-	}
-	if result.Kind == "detached" {
-		cancelExec()
-		if !renewObserved {
-			<-renewDone
+		_, err = r.client.CompletePlatformAcquisition(
+			workCtx,
+			api.WorkerPlatformAcquisitionCompleteRequest{
+				Acquisition: acquisition,
+				Candidates:  candidates,
+			},
+		)
+		if isStaleLease(err) {
+			return nil
 		}
-		return nil
-	}
-	if err := r.release(leaseState.CurrentWorkerRunLease(), result); err != nil {
-		cancelExec()
-		if !renewObserved {
-			<-renewDone
-		}
-		return fmt.Errorf("release run %s: %w", lease.RunID, err)
-	}
-	cancelExec()
-	if !renewObserved {
-		<-renewDone
-	}
-	return nil
+		return err
+	}, true, nil
 }
 
 func (c buildConsumer) Claim(ctx context.Context) (Work, bool, error) {
@@ -131,40 +172,127 @@ func (c buildConsumer) Claim(ctx context.Context) (Work, bool, error) {
 		return nil, false, nil
 	}
 	lease, deployment := *leased.Lease, *leased.Deployment
+	if err := validateBuildEnvelope(r.capabilities, deployment); err != nil {
+		return nil, true, r.rejectBuild(ctx, lease, "requirements_unsupported", err)
+	}
 	if err := validateBuildLeaseShape(r.capabilities, lease); err != nil {
 		return nil, true, r.rejectBuild(ctx, lease, "requirements_unsupported", err)
 	}
-	if r.deploymentBuilder == nil {
-		err := errors.New("deployment builder is not configured")
+	if r.buildExecutor == nil {
+		err := errors.New("build executor is not configured")
 		return nil, true, r.rejectBuild(ctx, lease, "builder_unavailable", err)
 	}
 	if !lease.ExpiresAt.Add(-r.deploymentBuildCompletionGrace).After(time.Now()) {
 		err := errors.New("deployment build lease does not have enough time remaining")
 		return nil, true, r.rejectBuild(ctx, lease, "lease_deadline_too_short", err)
 	}
+	resourceKey := capacity.Key{Kind: "build", Epoch: lease.WorkerEpoch, ID: lease.ID}
+	created, err := r.resources.Reserve(resourceKey, capacity.Vector{
+		CPUMillis:               lease.RequestedCPUMillis,
+		MemoryBytes:             lease.RequestedMemoryBytes,
+		GuestEphemeralDiskBytes: lease.RequestedGuestEphemeralDiskBytes,
+		BuildSlots:              int64(lease.RequestedBuildExecutors),
+	})
+	if err != nil {
+		return nil, true, r.rejectBuild(ctx, lease, "local_capacity_exceeded", err)
+	}
+	if !created {
+		return nil, true, errors.New("deployment build is already reserved locally")
+	}
 	return func(workCtx context.Context) error {
+		releaseCapacity := true
+		defer func() {
+			if !releaseCapacity {
+				return
+			}
+			if err := r.resources.Release(resourceKey); err != nil {
+				r.log.Error("release deployment build capacity", "deployment_id", lease.DeploymentID, "error", err)
+			}
+		}()
 		started, err := r.client.StartDeploymentBuild(workCtx, lease)
 		if err != nil {
 			return fmt.Errorf("start deployment build %s: %w", lease.DeploymentID, err)
 		}
-		return r.executeStartedBuild(workCtx, started.Lease, deployment)
+		err = r.executeStartedBuild(workCtx, started.Lease, deployment)
+		var cleanupUnproven *vm.CleanupUnprovenError
+		if errors.As(err, &cleanupUnproven) {
+			releaseCapacity = false
+			return &fatalWorkerError{err: err}
+		}
+		var fatal FatalWorkError
+		if errors.As(err, &fatal) && fatal.FatalWorker() {
+			releaseCapacity = false
+		}
+		return err
 	}, true, nil
 }
 
+func validateBuildEnvelope(
+	capabilities api.WorkerCapabilities,
+	build api.WorkerDeploymentBuild,
+) error {
+	if capabilities.RuntimeArch != string(deployment.ArchitectureX8664) {
+		return fmt.Errorf("build worker architecture %q is unsupported", capabilities.RuntimeArch)
+	}
+	if build.BuildContractVersion != deployment.ProgramBuildContractVersion {
+		return fmt.Errorf(
+			"deployment build contract version %q is unsupported",
+			build.BuildContractVersion,
+		)
+	}
+	if build.ImageCacheMode != "prefer" && build.ImageCacheMode != "bypass" {
+		return fmt.Errorf(
+			"deployment image cache mode %q is unsupported",
+			build.ImageCacheMode,
+		)
+	}
+	if !capabilities.SupportsBuild {
+		return errors.New("worker is not enabled for builds")
+	}
+	manager := deployment.PackageManager{
+		Integrity: build.Manager.Integrity,
+		Name:      deployment.PackageManagerName(build.Manager.Name),
+		Version:   build.Manager.Version,
+	}
+	if err := deployment.ValidatePackageManager(manager); err != nil {
+		return fmt.Errorf("deployment Manager selector: %w", err)
+	}
+	for name, object := range map[string]api.CASObject{
+		"runtime":   build.Runtime,
+		"Manager":   build.Manager.Artifact,
+		"toolchain": build.Toolchain,
+	} {
+		if _, err := deployment.SHA256DigestBytes(object.Digest); err != nil {
+			return fmt.Errorf("deployment %s digest: %w", name, err)
+		}
+		if object.SizeBytes < 1 {
+			return fmt.Errorf("deployment %s size is invalid", name)
+		}
+	}
+	if build.Runtime.MediaType != deployment.RuntimeArtifactMediaType ||
+		build.Manager.Artifact.MediaType != deployment.ManagerTreeMediaType ||
+		build.Toolchain.MediaType != deployment.ToolchainMediaType {
+		return errors.New("deployment Platform Artifact media type is invalid")
+	}
+	return nil
+}
+
 func validateBuildLeaseShape(capabilities api.WorkerCapabilities, lease api.WorkerDeploymentBuildLease) error {
-	if lease.RequestedBuildExecutors <= 0 || lease.RequestedCPUMillis <= 0 || lease.RequestedMemoryBytes <= 0 || lease.RequestedWorkloadDiskBytes < 0 || lease.RequestedScratchBytes < 0 {
-		return errors.New("build lease resource vector is invalid")
+	envelope := compute.BuildEnvelopeResources()
+	guest := compute.BuildGuestResources()
+	if lease.RequestedCPUMillis != envelope.MilliCPU ||
+		lease.RequestedMemoryBytes != envelope.MemoryMiB<<20 ||
+		lease.RequestedGuestEphemeralDiskBytes != guest.DiskMiB<<20 ||
+		lease.RequestedBuildExecutors != 1 {
+		return errors.New("build lease does not match the fixed build envelope")
 	}
-	if lease.RequestedBuildExecutors > capabilities.MaxBuildExecutors {
-		return errors.New("build executor count exceeds worker capacity")
+	if capabilities.MaxBuildExecutors != 1 {
+		return errors.New("build worker must expose exactly one build executor")
 	}
-	executors := int64(lease.RequestedBuildExecutors)
-	perExecutorWorkload := (lease.RequestedWorkloadDiskBytes + executors - 1) / executors
-	perExecutorScratch := (lease.RequestedScratchBytes + executors - 1) / executors
-	perExecutorCPU := (lease.RequestedCPUMillis + executors - 1) / executors
-	perExecutorMemory := (lease.RequestedMemoryBytes + executors - 1) / executors
-	if perExecutorCPU > capabilities.VMMilliCPU || perExecutorMemory > capabilities.VMMemoryMiB*1024*1024 || perExecutorWorkload > capabilities.VMMaxDiskMiB*1024*1024 || perExecutorScratch > capabilities.VMMaxScratchBytes {
-		return fmt.Errorf("build per-executor disk shape exceeds worker VM shape")
+	if capabilities.VMMilliCPU < guest.MilliCPU ||
+		capabilities.VMMemoryMiB < guest.MemoryMiB ||
+		capabilities.VMGuestEphemeralDiskBytes < guest.DiskMiB<<20 {
+		return errors.New("worker VM shape cannot host the fixed build guest")
 	}
 	return nil
 }
@@ -181,33 +309,77 @@ func (r *Runner) executeStartedBuild(ctx context.Context, lease api.WorkerDeploy
 	buildCtx, cancelBuild := context.WithCancel(ctx)
 	defer cancelBuild()
 	leaseState := &buildLeaseState{lease: lease}
+	revocations := newImageOperationRevocations()
 	renewDone := make(chan error, 1)
-	go func() { renewDone <- r.renewBuildUntilDone(buildCtx, leaseState) }()
-	resultDone := make(chan api.WorkerDeploymentBuildResult, 1)
-	go func() { resultDone <- r.deploymentBuilder.BuildDeployment(buildCtx, lease, deployment) }()
-	var result api.WorkerDeploymentBuildResult
+	go func() {
+		renewDone <- r.renewBuildUntilDone(buildCtx, leaseState, revocations)
+	}()
+	type buildOutcome struct {
+		result json.RawMessage
+		err    error
+	}
+	resultDone := make(chan buildOutcome, 1)
+	go func() {
+		result, err := r.buildExecutor.Build(
+			buildCtx,
+			lease,
+			deployment,
+			revocations,
+		)
+		resultDone <- buildOutcome{result: result, err: err}
+	}()
+	var outcome buildOutcome
 	select {
-	case result = <-resultDone:
+	case outcome = <-resultDone:
 		cancelBuild()
 		<-renewDone
 	case renewErr := <-renewDone:
 		if renewErr == nil {
-			result = <-resultDone
+			outcome = <-resultDone
 			break
 		}
 		cancelBuild()
-		result = <-resultDone
+		outcome = <-resultDone
 		if isStaleLease(renewErr) {
 			return nil
 		}
-		if result.Error == nil {
-			message := "deployment build lease renewal failed: " + renewErr.Error()
-			result.Error = &message
+		if outcome.err == nil {
+			outcome.err = fmt.Errorf("renew deployment build lease: %w", renewErr)
 		}
+	}
+	if outcome.err != nil {
+		var cleanupUnproven *vm.CleanupUnprovenError
+		if errors.As(outcome.err, &cleanupUnproven) {
+			return outcome.err
+		}
+		var deliveryFailure interface {
+			DeploymentBuildDeliveryFailureReason() api.WorkerDeploymentBuildDeliveryFailureReason
+		}
+		if !errors.As(outcome.err, &deliveryFailure) {
+			return fmt.Errorf("build deployment %s: %w", lease.DeploymentID, outcome.err)
+		}
+		reportCtx, cancelReport := context.WithTimeout(context.WithoutCancel(ctx), r.releaseWait)
+		defer cancelReport()
+		response, err := r.client.ReportDeploymentBuildDeliveryFailure(reportCtx, api.WorkerDeploymentBuildDeliveryFailureRequest{
+			Lease:      leaseState.current(),
+			ReasonCode: deliveryFailure.DeploymentBuildDeliveryFailureReason(),
+		})
+		if err != nil {
+			if isStaleLease(err) {
+				return nil
+			}
+			return fmt.Errorf("report deployment build delivery failure %s: %w", lease.DeploymentID, err)
+		}
+		if strings.TrimSpace(response.Status) != "building" &&
+			strings.TrimSpace(response.Status) != "deployed" &&
+			strings.TrimSpace(response.Status) != "failed" {
+			r.log.Warn("worker reported deployment build delivery failure with unexpected status", "deployment_id", lease.DeploymentID, "status", response.Status)
+		}
+		return nil
 	}
 	completeCtx, cancelComplete := context.WithTimeout(context.WithoutCancel(ctx), r.releaseWait)
 	defer cancelComplete()
-	response, err := r.client.CompleteDeploymentBuild(completeCtx, leaseState.current(), result)
+	response, err := r.client.CompleteDeploymentBuild(completeCtx, leaseState.current(), outcome.result)
 	if err != nil {
 		return fmt.Errorf("complete deployment build %s: %w", lease.DeploymentID, err)
 	}
@@ -217,7 +389,11 @@ func (r *Runner) executeStartedBuild(ctx context.Context, lease api.WorkerDeploy
 	return nil
 }
 
-func (r *Runner) renewBuildUntilDone(ctx context.Context, state *buildLeaseState) error {
+func (r *Runner) renewBuildUntilDone(
+	ctx context.Context,
+	state *buildLeaseState,
+	revocations *imageOperationRevocations,
+) error {
 	ticker := time.NewTicker(r.renewEvery)
 	defer ticker.Stop()
 	for {
@@ -237,6 +413,9 @@ func (r *Runner) renewBuildUntilDone(ctx context.Context, state *buildLeaseState
 		}
 		if strings.TrimSpace(response.Lease.ID) == "" {
 			return errors.New("renew deployment build response did not include a lease")
+		}
+		if err := revocations.apply(response.RevokedImageOperationIDs); err != nil {
+			return fmt.Errorf("apply revoked Workspace image operations: %w", err)
 		}
 		state.set(response.Lease)
 	}

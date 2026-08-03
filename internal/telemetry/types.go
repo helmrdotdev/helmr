@@ -33,6 +33,7 @@ type EventQuery struct {
 	SubjectID   uuid.UUID
 	AfterSeq    int64
 	Limit       int32
+	Severities  []string
 }
 
 type EventPage struct {
@@ -48,6 +49,7 @@ type RunLogChunkQuery struct {
 	RunID    uuid.UUID
 	AfterSeq int64
 	Limit    int32
+	Levels   []string
 }
 
 type RunLogChunkPage struct {
@@ -129,7 +131,7 @@ type MeterEventRecord struct {
 	SourceID       uuid.UUID  `json:"source_id"`
 	RunID          *uuid.UUID `json:"run_id,omitempty"`
 	DeploymentID   *uuid.UUID `json:"deployment_id,omitempty"`
-	AttemptNumber  int32      `json:"attempt_number"`
+	AttemptNumber  *int32     `json:"attempt_number,omitempty"`
 	TraceID        string     `json:"trace_id"`
 	SpanID         string     `json:"span_id"`
 	Meter          string     `json:"meter"`

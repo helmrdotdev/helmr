@@ -15,13 +15,13 @@ const (
 	WorkerRoleBuild           = "build"
 	WorkerTokenIssuer         = "helmr-control-plane"
 	WorkerTokenAudience       = "helmr-worker"
-	minWorkerTokenSecretBytes = 32
+	WorkerTokenSigningKeySize = 32
 )
 
 var (
-	ErrInvalidWorkerToken    = errors.New("invalid worker JWT")
-	ErrExpiredWorkerToken    = errors.New("expired worker JWT")
-	ErrWeakWorkerTokenSecret = errors.New("worker JWT signing secret must be at least 32 bytes")
+	ErrInvalidWorkerToken           = errors.New("invalid worker JWT")
+	ErrExpiredWorkerToken           = errors.New("expired worker JWT")
+	ErrInvalidWorkerTokenSigningKey = errors.New("worker JWT signing key must be exactly 32 bytes")
 )
 
 type WorkerClaims struct {
@@ -49,8 +49,8 @@ type workerJWTClaims struct {
 	jwt.RegisteredClaims
 }
 
-func IssueWorkerToken(secret []byte, payload WorkerClaims) (string, error) {
-	if err := ValidateWorkerTokenSecret(secret); err != nil {
+func IssueWorkerToken(signingKey []byte, payload WorkerClaims) (string, error) {
+	if err := ValidateWorkerTokenSigningKey(signingKey); err != nil {
 		return "", err
 	}
 	if err := validateWorkerClaims(payload); err != nil {
@@ -69,15 +69,15 @@ func IssueWorkerToken(secret []byte, payload WorkerClaims) (string, error) {
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	token.Header["typ"] = "JWT"
-	signed, err := token.SignedString(secret)
+	signed, err := token.SignedString(signingKey)
 	if err != nil {
 		return "", fmt.Errorf("sign worker JWT: %w", err)
 	}
 	return signed, nil
 }
 
-func VerifyWorkerToken(secret []byte, rawToken string, now time.Time) (WorkerClaims, error) {
-	if err := ValidateWorkerTokenSecret(secret); err != nil {
+func VerifyWorkerToken(signingKey []byte, rawToken string, now time.Time) (WorkerClaims, error) {
+	if err := ValidateWorkerTokenSigningKey(signingKey); err != nil {
 		return WorkerClaims{}, err
 	}
 	if now.IsZero() {
@@ -98,7 +98,7 @@ func VerifyWorkerToken(secret []byte, rawToken string, now time.Time) (WorkerCla
 		if token.Method != jwt.SigningMethodHS256 {
 			return nil, fmt.Errorf("%w: unexpected signing method %s", ErrInvalidWorkerToken, token.Method.Alg())
 		}
-		return secret, nil
+		return signingKey, nil
 	})
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {
@@ -137,9 +137,9 @@ func VerifyWorkerToken(secret []byte, rawToken string, now time.Time) (WorkerCla
 	return payload, nil
 }
 
-func ValidateWorkerTokenSecret(secret []byte) error {
-	if len(secret) < minWorkerTokenSecretBytes {
-		return ErrWeakWorkerTokenSecret
+func ValidateWorkerTokenSigningKey(signingKey []byte) error {
+	if len(signingKey) != WorkerTokenSigningKeySize {
+		return ErrInvalidWorkerTokenSigningKey
 	}
 	return nil
 }

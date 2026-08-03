@@ -152,7 +152,7 @@ const claimLiveTelemetryOutbox = `-- name: ClaimLiveTelemetryOutbox :many
 WITH claimed AS (
     SELECT telemetry_outbox.id
       FROM telemetry_outbox
-     WHERE telemetry_outbox.stream_kind IN ('event', 'run_log', 'terminal_output')
+     WHERE telemetry_outbox.stream_kind IN ('event', 'terminal_output')
        AND telemetry_outbox.published_at IS NULL
        AND (telemetry_outbox.publish_locked_until IS NULL OR telemetry_outbox.publish_locked_until < now())
        AND telemetry_outbox.state <> 'dead_lettered'
@@ -187,8 +187,6 @@ SELECT updated.id AS outbox_id,
        CASE updated.stream_kind
            WHEN 'event' THEN
                ('helmr:events:' || updated.org_id::text || ':' || updated.source_kind || ':' || updated.source_id::text)::text
-           WHEN 'run_log' THEN
-               ('helmr:run_logs:' || updated.org_id::text || ':' || updated.run_id::text)::text
            WHEN 'terminal_output' THEN
                ('helmr:terminal_outputs:' || updated.org_id::text || ':' || updated.workspace_id::text || ':' || updated.resource_kind || ':' || updated.resource_id::text || ':' || updated.stream_name)::text
            ELSE ''
@@ -363,8 +361,14 @@ SELECT updated.id AS outbox_id,
        meter_events.org_id,
        meter_events.project_id,
        meter_events.environment_id,
-       meter_events.source_type,
-       meter_events.source_id,
+       CASE
+           WHEN meter_events.run_lease_id IS NOT NULL THEN 'run_lease'::text
+           ELSE 'deployment_build_lease'::text
+       END AS source_type,
+       COALESCE(
+           meter_events.run_lease_id,
+           meter_events.deployment_build_lease_id
+       ) AS source_id,
        meter_events.run_id,
        meter_events.deployment_id,
        meter_events.attempt_number,
@@ -400,7 +404,7 @@ type ClaimMeterEventIngestBatchRow struct {
 	SourceID               pgtype.UUID        `json:"source_id"`
 	RunID                  pgtype.UUID        `json:"run_id"`
 	DeploymentID           pgtype.UUID        `json:"deployment_id"`
-	AttemptNumber          int32              `json:"attempt_number"`
+	AttemptNumber          pgtype.Int4        `json:"attempt_number"`
 	TraceID                pgtype.Text        `json:"trace_id"`
 	SpanID                 pgtype.Text        `json:"span_id"`
 	Meter                  string             `json:"meter"`
@@ -768,7 +772,7 @@ DELETE FROM telemetry_outbox
  WHERE (
         (
             written_at IS NOT NULL
-            AND (stream_kind NOT IN ('event', 'run_log', 'terminal_output') OR published_at IS NOT NULL)
+            AND (stream_kind NOT IN ('event', 'terminal_output') OR published_at IS NOT NULL)
             AND written_at < now() - $1::interval
         )
         OR (

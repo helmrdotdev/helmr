@@ -1,8 +1,11 @@
 locals {
-  name                  = lower(var.name)
-  asg_name              = "${local.name}-worker"
-  launch_hook_name      = "${local.name}-worker-launch"
-  termination_hook_name = "${local.name}-worker-terminate"
+  name                    = lower(var.name)
+  asg_name                = "${local.name}-worker"
+  launch_hook_name        = "${local.name}-worker-launch"
+  termination_hook_name   = "${local.name}-worker-terminate"
+  boot_corpus_reserve_mib = 2048
+  build_scratch_min_mib   = max(32768, var.vm_scratch_disk_mib) + local.boot_corpus_reserve_mib
+  network_resolver_ipv4   = coalesce(var.network_resolver_ipv4, cidrhost(data.aws_vpc.selected.cidr_block, 2))
 
   disk_environment = merge({
     HELMR_WORKER_DISK_RESERVE_MIB = tostring(var.worker_disk_reserve_mib)
@@ -32,101 +35,48 @@ locals {
   worker_environment = merge({
     HELMR_CONTROL_URL                       = var.worker_control_url
     HELMR_CAS_URI                           = var.cas_uri
+    HELMR_PLATFORM_STORE_URI                = var.platform_store_uri
     HELMR_WORKER_GROUP_ID                   = var.worker_group_id
-    HELMR_WORKER_PROVIDER_REGION            = data.aws_region.current.region
-    HELMR_WORKER_BUILDKIT_ADDR              = "unix:///run/helmr/buildkit/buildkitd.sock"
-    HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE   = local.name
     HELMR_WORKER_FIRECRACKER_PATH           = "/usr/local/bin/firecracker"
     HELMR_WORKER_FIRECRACKER_JAILER_PATH    = "/usr/local/bin/jailer"
     HELMR_WORKER_FIRECRACKER_JAILER_UID     = tostring(var.jailer_uid)
     HELMR_WORKER_FIRECRACKER_JAILER_GID     = tostring(var.jailer_gid)
     HELMR_WORKER_FIRECRACKER_CGROUP_VERSION = "2"
-    HELMR_WORKER_CNI_NETWORK                = "helmr"
-    HELMR_WORKER_CNI_PROFILE                = "helmr/v0"
-    HELMR_WORKER_WORK_DIR                   = "/var/lib/helmr"
+    HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS = jsonencode(var.network_blocked_ipv4_cidrs)
+    HELMR_WORKER_NETWORK_LINK_POOL          = var.network_link_pool
+    HELMR_WORKER_NETWORK_RESOLVER_IPV4      = local.network_resolver_ipv4
+    HELMR_WORKER_NETWORK_TRANSLATION_POOL   = var.network_translation_pool
+    HELMR_WORKER_WORK_DIR                   = contains(var.worker_roles, "build") ? "/var/lib/helmr/scratch/worker" : "/var/lib/helmr"
     HELMR_WORKER_INSTANCE_CREDENTIAL_PATH   = "/var/lib/helmr/worker-credential.json"
     HELMR_WORKER_ROLES                      = join(",", sort(tolist(var.worker_roles)))
     HELMR_WORKER_IMAGES_DIR                 = "/var/lib/helmr/images"
-    HELMR_WORKER_FIRECRACKER_CHROOT_DIR     = "/var/lib/helmr/jailer"
-    HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS = length(var.network_blocked_ipv4_cidrs) == 0 ? "none" : join(",", var.network_blocked_ipv4_cidrs)
-    HELMR_WORKER_NETWORK_BLOCKED_IPV6_CIDRS = length(var.network_blocked_ipv6_cidrs) == 0 ? "none" : join(",", var.network_blocked_ipv6_cidrs)
+    HELMR_WORKER_FIRECRACKER_CHROOT_DIR     = contains(var.worker_roles, "build") ? "/var/lib/helmr/scratch/jailer" : "/var/lib/helmr/jailer"
     HELMR_VM_VCPUS                          = tostring(var.vm_vcpus)
     HELMR_VM_MEMORY_MIB                     = tostring(var.vm_memory_mib)
     HELMR_VM_SCRATCH_DISK_MIB               = tostring(var.vm_scratch_disk_mib)
+    HELMR_VM_INIT_TIMEOUT                   = "30s"
     HELMR_VM_HEALTH_TIMEOUT                 = "300s"
-  }, local.disk_environment, local.capacity_environment, local.cache_environment)
+    }, contains(var.worker_roles, "build") ? {
+    HELMR_BUILD_POLICY_PATH                 = "/etc/helmr/build-policy.json"
+    HELMR_WORKER_BUILD_CACHE_DIR            = "/var/lib/helmr/cache"
+    HELMR_WORKER_BUILD_SCRATCH_DIR          = "/var/lib/helmr/scratch"
+    HELMR_IMAGE_CACHE_REGISTRY_AUTHORITY    = var.image_cache_registry_authority
+    HELMR_IMAGE_CACHE_REPOSITORY_PREFIX     = var.image_cache_repository_prefix
+    HELMR_IMAGE_CACHE_ROLE_ARN              = var.image_cache_role_arn
+    HELMR_IMAGE_CACHE_REPOSITORY_ARN_PREFIX = var.image_cache_repository_arn_prefix
+  } : {}, local.disk_environment, local.capacity_environment, local.cache_environment)
 
-  reserved_worker_environment_keys = toset(concat(keys(local.worker_environment), ["HELMR_CHECKPOINT_ENCRYPTION_KEY"]))
-  worker_environment_conflicts     = setintersection(keys(var.worker_environment), local.reserved_worker_environment_keys)
-  base_worker_environment          = merge(local.worker_environment, var.worker_environment)
+  reserved_worker_environment_keys = toset(concat(keys(local.worker_environment), [
+    "CHECKPOINT_ENCRYPTION_KEY",
+    "HELMR_BUILD_POLICY_PATH",
+    "HELMR_PLATFORM_STORE_URI",
+  ]))
+  worker_environment_conflicts = setintersection(keys(var.worker_environment), local.reserved_worker_environment_keys)
+  base_worker_environment      = merge(local.worker_environment, var.worker_environment)
 
-  buildkit_slirp_cidr_parts   = regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)\\.([0-9]+)/([0-9]+)$", var.buildkit_slirp_cidr)
-  buildkit_slirp_cidr_prefix  = tonumber(local.buildkit_slirp_cidr_parts[4])
-  buildkit_slirp_cidr_address = tonumber(local.buildkit_slirp_cidr_parts[0]) * 16777216 + tonumber(local.buildkit_slirp_cidr_parts[1]) * 65536 + tonumber(local.buildkit_slirp_cidr_parts[2]) * 256 + tonumber(local.buildkit_slirp_cidr_parts[3])
-  buildkit_slirp_cidr_size    = pow(2, 32 - local.buildkit_slirp_cidr_prefix)
-  buildkit_slirp_cidr_start   = local.buildkit_slirp_cidr_address - local.buildkit_slirp_cidr_address % local.buildkit_slirp_cidr_size
-  buildkit_slirp_cidr_end     = local.buildkit_slirp_cidr_start + local.buildkit_slirp_cidr_size - 1
-
-  network_blocked_ipv4_cidr_parts = [
-    for cidr in var.network_blocked_ipv4_cidrs :
-    regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)\\.([0-9]+)/([0-9]+)$", cidr)
-  ]
-  network_blocked_ipv4_cidr_prefixes = [
-    for parts in local.network_blocked_ipv4_cidr_parts :
-    tonumber(parts[4])
-  ]
-  network_blocked_ipv4_cidr_addresses = [
-    for parts in local.network_blocked_ipv4_cidr_parts :
-    tonumber(parts[0]) * 16777216 + tonumber(parts[1]) * 65536 + tonumber(parts[2]) * 256 + tonumber(parts[3])
-  ]
-  network_blocked_ipv4_cidr_sizes = [
-    for prefix in local.network_blocked_ipv4_cidr_prefixes :
-    pow(2, 32 - prefix)
-  ]
-  network_blocked_ipv4_ranges = [
-    for i, address in local.network_blocked_ipv4_cidr_addresses : {
-      start = address - address % local.network_blocked_ipv4_cidr_sizes[i]
-      end   = address - address % local.network_blocked_ipv4_cidr_sizes[i] + local.network_blocked_ipv4_cidr_sizes[i] - 1
-    }
-  ]
-}
-
-resource "aws_security_group" "worker" {
-  name        = "${local.name}-worker"
-  description = "Helmr worker instances"
-  vpc_id      = var.vpc_id
-  tags        = var.tags
-}
-
-resource "aws_vpc_security_group_egress_rule" "worker" {
-  security_group_id = aws_security_group.worker.id
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
-}
-
-resource "aws_iam_role" "worker" {
-  name = "${local.name}-worker"
-  tags = var.tags
-
-  assume_role_policy = jsonencode({
+  worker_permission_policy = {
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      }
-      Action = "sts:AssumeRole"
-    }]
-  })
-}
-
-resource "aws_iam_role_policy" "worker" {
-  name = "${local.name}-worker"
-  role = aws_iam_role.worker.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Effect = "Allow"
         Action = [
@@ -171,10 +121,146 @@ resource "aws_iam_role_policy" "worker" {
         Action = [
           "secretsmanager:GetSecretValue"
         ]
-        Resource = [var.secret_arns.checkpoint_encryption_key]
+        Resource = [
+          var.secret_arns.checkpoint_encryption_key,
+          var.secret_arns.worker_enrollment,
+        ]
+      },
+      ], [
+      {
+        Sid    = "ReadPlatformObjects"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject"
+        ]
+        Resource = "${var.platform_store_bucket_arn}/objects/sha256/*"
+      },
+      {
+        Sid    = "DecryptPlatformObjects"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt"
+        ]
+        Resource = var.platform_store_kms_key_arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
+          }
+        }
+      },
+      ], [
+      for statement in [
+        {
+          Sid      = "AssumeExecutionImageCacheRole"
+          Effect   = "Allow"
+          Action   = ["sts:AssumeRole"]
+          Resource = var.image_cache_role_arn
+        },
+        {
+          Sid    = "CreatePlatformObjects"
+          Effect = "Allow"
+          Action = [
+            "s3:PutObject",
+            "s3:AbortMultipartUpload",
+            "s3:ListMultipartUploadParts"
+          ]
+          Resource = "${var.platform_store_bucket_arn}/objects/sha256/*"
+        },
+        {
+          Sid    = "EncryptPlatformObjects"
+          Effect = "Allow"
+          Action = [
+            "kms:Encrypt",
+            "kms:GenerateDataKey"
+          ]
+          Resource = var.platform_store_kms_key_arn
+          Condition = {
+            StringEquals = {
+              "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
+            }
+          }
+        },
+      ] : statement if contains(var.worker_roles, "build")
+    ])
+  }
+  worker_boundary_policy = {
+    Version = local.worker_permission_policy.Version
+    Statement = concat(local.worker_permission_policy.Statement, var.enable_ssm ? [{
+      Sid    = "SSMManagedInstanceCore"
+      Effect = "Allow"
+      Action = [
+        "ec2messages:AcknowledgeMessage",
+        "ec2messages:DeleteMessage",
+        "ec2messages:FailMessage",
+        "ec2messages:GetEndpoint",
+        "ec2messages:GetMessages",
+        "ec2messages:SendReply",
+        "ssm:DescribeAssociation",
+        "ssm:DescribeDocument",
+        "ssm:GetDeployablePatchSnapshotForInstance",
+        "ssm:GetDocument",
+        "ssm:GetManifest",
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:ListAssociations",
+        "ssm:ListInstanceAssociations",
+        "ssm:PutComplianceItems",
+        "ssm:PutConfigurePackageResult",
+        "ssm:PutInventory",
+        "ssm:UpdateAssociationStatus",
+        "ssm:UpdateInstanceAssociationStatus",
+        "ssm:UpdateInstanceInformation",
+        "ssmmessages:CreateControlChannel",
+        "ssmmessages:CreateDataChannel",
+        "ssmmessages:OpenControlChannel",
+        "ssmmessages:OpenDataChannel"
+      ]
+      Resource = "*"
+    }] : [])
+  }
+}
+
+resource "aws_security_group" "worker" {
+  name        = "${local.name}-worker"
+  description = "Helmr worker instances"
+  vpc_id      = var.vpc_id
+  tags        = var.tags
+}
+
+resource "aws_vpc_security_group_egress_rule" "worker" {
+  security_group_id = aws_security_group.worker.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+}
+
+resource "aws_iam_policy" "worker_boundary" {
+  name   = "${local.name}-worker-boundary"
+  policy = jsonencode(local.worker_boundary_policy)
+  tags   = var.tags
+}
+
+resource "aws_iam_role" "worker" {
+  name                 = "${local.name}-worker"
+  permissions_boundary = aws_iam_policy.worker_boundary.arn
+  tags                 = var.tags
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
       }
-    ]
+      Action = "sts:AssumeRole"
+    }]
   })
+}
+
+resource "aws_iam_role_policy" "worker" {
+  name = "${local.name}-worker"
+  role = aws_iam_role.worker.id
+
+  policy = jsonencode(local.worker_permission_policy)
 }
 
 resource "aws_iam_role_policy_attachment" "ssm" {
@@ -198,7 +284,7 @@ resource "aws_launch_template" "worker" {
   user_data = base64encode(templatefile("${path.module}/templates/user-data.sh.tftpl", {
     environment                          = local.base_worker_environment
     checkpoint_key_secret_arn            = var.secret_arns.checkpoint_encryption_key
-    buildkit_service_name                = var.buildkit_service_name
+    worker_enrollment_secret_arn         = var.secret_arns.worker_enrollment
     worker_supports_build                = contains(var.worker_roles, "build")
     worker_service_name                  = var.worker_service_name
     worker_binary_path                   = var.worker_binary_path
@@ -209,10 +295,12 @@ resource "aws_launch_template" "worker" {
     termination_drain_timeout_seconds    = var.termination_drain_timeout_seconds
     lifecycle_heartbeat_interval_seconds = var.lifecycle_heartbeat_interval_seconds
     worker_work_dir                      = local.base_worker_environment.HELMR_WORKER_WORK_DIR
-    buildkit_slirp_cidr                  = var.buildkit_slirp_cidr
-    network_blocked_ipv4_cidrs           = var.network_blocked_ipv4_cidrs
-    network_blocked_ipv6_cidrs           = var.network_blocked_ipv6_cidrs
     aws_region                           = data.aws_region.current.region
+    platform_store_uri                   = var.platform_store_uri
+    build_policy_digest                  = var.build_policy_digest == null ? "" : var.build_policy_digest
+    build_cache_mib                      = var.build_cache_mib == null ? 0 : var.build_cache_mib
+    build_scratch_mib                    = var.build_scratch_mib == null ? 0 : var.build_scratch_mib
+    worker_disk_reserve_mib              = var.worker_disk_reserve_mib
   }))
 
   iam_instance_profile {
@@ -256,9 +344,17 @@ resource "aws_launch_template" "worker" {
 
 resource "terraform_data" "network_preconditions" {
   input = {
-    buildkit_slirp_cidr        = var.buildkit_slirp_cidr
-    network_blocked_ipv4_cidrs = var.network_blocked_ipv4_cidrs
-    reserved_env_conflicts     = local.worker_environment_conflicts
+    network_policy = jsonencode({
+      blocked_ipv4_cidrs = var.network_blocked_ipv4_cidrs
+      link_pool          = var.network_link_pool
+      resolver_ipv4      = local.network_resolver_ipv4
+      translation_pool   = var.network_translation_pool
+    })
+    reserved_env_conflicts = local.worker_environment_conflicts
+    platform_store_uri     = var.platform_store_uri
+    build_policy_digest    = var.build_policy_digest
+    build_cache_mib        = var.build_cache_mib
+    build_scratch_mib      = var.build_scratch_mib
   }
 
   lifecycle {
@@ -268,16 +364,59 @@ resource "terraform_data" "network_preconditions" {
     }
 
     precondition {
+      condition     = var.platform_store_uri == "s3://${trimprefix(var.platform_store_bucket_arn, "arn:${data.aws_partition.current.partition}:s3:::")}/objects"
+      error_message = "platform_store_uri must identify the bucket supplied by platform_store_bucket_arn and end in /objects."
+    }
+
+    precondition {
+      condition     = var.platform_store_bucket_arn != var.cas_bucket_arn
+      error_message = "platform_store_bucket_arn must identify the dedicated bootstrap store, not the mutable Artifact CAS bucket."
+    }
+
+
+    precondition {
+      condition     = contains(var.worker_roles, "build") == (var.build_policy_digest != null)
+      error_message = "build-capable workers require build_policy_digest; run-only workers must not receive the current build policy."
+    }
+
+    precondition {
+      condition = contains(var.worker_roles, "build") == (
+        var.build_cache_mib != null &&
+        var.build_scratch_mib != null
+      )
+      error_message = "build-capable workers require build_cache_mib and build_scratch_mib; run-only workers must not allocate build filesystems."
+    }
+
+    precondition {
+      condition = !contains(var.worker_roles, "build") || (
+        var.worker_disk_reserve_mib >= 1024 &&
+        coalesce(var.build_scratch_mib, 0) >= local.build_scratch_min_mib
+      )
+      error_message = "build workers require at least 1024 MiB of unadvertised root reserve and a two-GiB boot-corpus reserve beyond the larger of the fixed build envelope and configured VM scratch."
+    }
+
+    precondition {
       condition     = var.worker_disk_mib == null || var.worker_disk_mib > var.worker_disk_reserve_mib
       error_message = "worker_disk_mib must exceed worker_disk_reserve_mib when an explicit filesystem capacity is configured."
     }
 
     precondition {
-      condition = alltrue([
-        for blocked in local.network_blocked_ipv4_ranges :
-        local.buildkit_slirp_cidr_start > blocked.end || blocked.start > local.buildkit_slirp_cidr_end
-      ])
-      error_message = "buildkit_slirp_cidr must not overlap network_blocked_ipv4_cidrs because BuildKit rootless DNS and NAT must remain reachable inside the service namespace."
+      condition = !contains(var.worker_roles, "build") || (
+        var.vm_vcpus >= 3 &&
+        var.vm_memory_mib >= 4096 &&
+        var.vm_scratch_disk_mib >= 32768
+      )
+      error_message = "build workers require a VM shape that fits the fixed 3000 milli-CPU, 4096 MiB, and 32768 MiB image-build guest."
+    }
+
+    precondition {
+      condition = !contains(var.worker_roles, "build") || (
+        var.worker_capacity_vcpus != null &&
+        var.worker_capacity_memory_mib != null &&
+        var.worker_capacity_vcpus >= (contains(var.worker_roles, "run") ? max(3, var.vm_vcpus + 1) : 3) &&
+        var.worker_capacity_memory_mib >= (contains(var.worker_roles, "run") ? max(4096, var.vm_memory_mib + 2048) : 4096)
+      )
+      error_message = "build workers require a host pool that fits the fixed image-build guest and any configured run VM shape."
     }
   }
 }
@@ -296,6 +435,18 @@ resource "aws_autoscaling_group" "worker" {
   launch_template {
     id      = aws_launch_template.worker.id
     version = aws_launch_template.worker.latest_version
+  }
+
+  instance_refresh {
+    strategy = "Rolling"
+
+    preferences {
+      min_healthy_percentage       = 100
+      max_healthy_percentage       = 100
+      scale_in_protected_instances = "Refresh"
+      standby_instances            = "Terminate"
+      skip_matching                = true
+    }
   }
 
   dynamic "initial_lifecycle_hook" {

@@ -2,7 +2,9 @@ package control
 
 import (
 	"bytes"
-	"context"
+	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,499 +12,311 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func (s *Server) workerMarkWorkspaceExecStarted(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerWorkspaceExecStartedRequest
+func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request) {
+	var request api.WorkerWorkspaceExecClaimRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker workspace exec started request JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid Workspace exec claim JSON: %w", err)))
 		return
 	}
-	mount, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), request.WorkerWorkspacePrimitiveScope)
+	orgID, mountID, err := parseWorkspaceWorkerIDs(request.OrgID, request.WorkspaceMountID)
 	if err != nil {
-		s.writeWorkspacePrimitiveError(w, "validate workspace exec event scope", err)
+		writeError(w, err)
 		return
 	}
-	execID, err := parseWorkerPrimitiveUUID("exec_id", request.ExecID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	row, err := s.db.MarkWorkspaceExecStarted(r.Context(), db.MarkWorkspaceExecStartedParams{
-		RuntimeProcessID: strings.TrimSpace(request.ProcessID),
-		OrgID:            mount.OrgID,
-		ProjectID:        mount.ProjectID,
-		EnvironmentID:    mount.EnvironmentID,
-		WorkspaceID:      mount.WorkspaceID,
-		ID:               execID,
-		WorkspaceMountID: mount.ID,
-	})
-	if err != nil {
-		if isNoRows(err) {
-			existing, getErr := s.db.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
-				OrgID:         mount.OrgID,
-				ProjectID:     mount.ProjectID,
-				EnvironmentID: mount.EnvironmentID,
-				WorkspaceID:   mount.WorkspaceID,
-				ID:            execID,
-			})
-			if getErr == nil && workerPrimitiveWorkspaceMountMatches(existing.WorkspaceMountID, mount.ID) && execStateTerminal(existing.State) {
-				writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(existing)})
-				return
-			}
+	worker := workerFromContext(r.Context())
+	var (
+		authority  db.LockWorkspaceExecWorkerAuthorityRow
+		envelopes  []secret.DeliveryEnvelope
+		stdin      []byte
+		capability string
+	)
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		locator, err := work.q.GetWorkspaceExecLocatorForMount(
+			r.Context(),
+			db.GetWorkspaceExecLocatorForMountParams{
+				OrgID:            orgID,
+				WorkspaceMountID: mountID,
+			},
+		)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
 		}
-		s.writeWorkspacePrimitiveError(w, "mark workspace exec started", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(db.WorkspaceProcess(row))})
-}
-
-func (s *Server) workerAppendWorkspaceExecOutput(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerWorkspaceExecOutputRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker workspace exec output request JSON: %w", err)))
-		return
-	}
-	mount, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), request.WorkerWorkspacePrimitiveScope)
-	if err != nil {
-		s.writeWorkspacePrimitiveError(w, "validate workspace exec output scope", err)
-		return
-	}
-	execID, err := parseWorkerPrimitiveUUID("exec_id", request.ExecID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	exec, err := s.db.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
-		OrgID:         mount.OrgID,
-		ProjectID:     mount.ProjectID,
-		EnvironmentID: mount.EnvironmentID,
-		WorkspaceID:   mount.WorkspaceID,
-		ID:            execID,
-	})
-	if err != nil {
-		s.writeWorkspacePrimitiveError(w, "get workspace exec", err)
-		return
-	}
-	if !exec.WorkspaceMountID.Valid || pgvalue.MustUUIDValue(exec.WorkspaceMountID) != pgvalue.MustUUIDValue(mount.ID) {
-		writeError(w, conflict(errors.New("workspace exec is not bound to this workspace mount")))
-		return
-	}
-	out := make([]api.WorkspaceExecStreamChunkResponse, 0, len(request.Chunks))
-	for _, input := range request.Chunks {
-		stream := string(strings.TrimSpace(input.Stream))
-		if stream != workspaceStreamStdout && stream != workspaceStreamStderr {
-			writeError(w, badRequest(errors.New("exec output stream must be stdout or stderr")))
-			return
-		}
-		chunk, err := s.appendWorkspaceExecOutputStreamChunk(r.Context(), exec, stream, input.OffsetStart, input.Data)
 		if err != nil {
-			s.writeWorkspacePrimitiveError(w, "append workspace exec output", err)
-			return
+			return fmt.Errorf("locate Workspace exec: %w", err)
 		}
-		out = append(out, workspaceExecStreamChunkResponse(chunk))
-	}
-	writeJSON(w, http.StatusOK, api.ListWorkspaceExecStreamChunksResponse{Chunks: out})
-}
-
-func (s *Server) workerListWorkspaceExecInput(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerWorkspaceExecInputRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker workspace exec input request JSON: %w", err)))
-		return
-	}
-	mount, exec, ok := s.loadWorkerWorkspaceExecBoundToWorkspaceMount(w, r, request.WorkerWorkspacePrimitiveScope, request.ExecID)
-	if !ok {
-		_ = mount
-		return
-	}
-	limit := request.Limit
-	if limit <= 0 || limit > 100 {
-		limit = 100
-	}
-	rows, err := s.db.ListWorkspaceExecStdinChunksAfterDelivered(r.Context(), db.ListWorkspaceExecStdinChunksAfterDeliveredParams{
-		OrgID:         mount.OrgID,
-		ProjectID:     mount.ProjectID,
-		EnvironmentID: mount.EnvironmentID,
-		WorkspaceID:   mount.WorkspaceID,
-		ProcessID:     exec.ID,
-		LimitCount:    limit,
-	})
-	if err != nil {
-		s.writeWorkspacePrimitiveError(w, "list workspace exec input", err)
-		return
-	}
-	out := make([]api.WorkspaceExecStreamChunkResponse, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, workspaceExecStreamChunkResponse(row))
-	}
-	writeJSON(w, http.StatusOK, api.WorkerWorkspaceExecInputResponse{
-		Chunks:               out,
-		StdinClosedAt:        optionalWorkspaceTime(exec.StdinClosedAt),
-		StdinCursor:          exec.StdinCursor,
-		StdinDeliveredCursor: exec.StdinDeliveredCursor,
-		State:                string(exec.State),
-	})
-}
-
-func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerWorkspaceExecInputDeliveredRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker workspace exec input delivered request JSON: %w", err)))
-		return
-	}
-	mount, exec, ok := s.loadWorkerWorkspaceExecBoundToWorkspaceMount(w, r, request.WorkerWorkspacePrimitiveScope, request.ExecID)
-	if !ok {
-		_ = mount
-		return
-	}
-	var row db.WorkspaceProcess
-	if err := s.inTx(r.Context(), func(work *txWork) error {
-		deliveredChunk, err := work.q.GetWorkspaceExecStreamChunkAtOffset(r.Context(), db.GetWorkspaceExecStreamChunkAtOffsetParams{
-			OrgID:         mount.OrgID,
-			ProjectID:     mount.ProjectID,
-			EnvironmentID: mount.EnvironmentID,
-			WorkspaceID:   mount.WorkspaceID,
-			ProcessID:     exec.ID,
-			StreamName:    workspaceStreamStdin,
-			OffsetStart:   request.OffsetStart,
-		})
+		envelopes, err = secret.LockProcessDelivery(
+			r.Context(),
+			work.q,
+			locator.ID,
+			locator.WorkspaceID,
+		)
 		if err != nil {
-			if isNoRows(err) {
-				current, getErr := work.q.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
-					OrgID:         mount.OrgID,
-					ProjectID:     mount.ProjectID,
-					EnvironmentID: mount.EnvironmentID,
-					WorkspaceID:   mount.WorkspaceID,
-					ID:            exec.ID,
-				})
-				if getErr == nil && current.StdinDeliveredCursor >= request.OffsetEnd {
-					row = current
-					return nil
-				}
-			}
 			return err
 		}
-		if deliveredChunk.OffsetEnd != request.OffsetEnd {
-			return conflict(errWorkspaceStreamOffsetConflict)
+		authority, err = work.q.LockWorkspaceExecWorkerAuthority(
+			r.Context(),
+			db.LockWorkspaceExecWorkerAuthorityParams{
+				OrgID:            orgID,
+				ProcessID:        locator.ID,
+				WorkspaceMountID: mountID,
+				WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+				WorkerEpoch:      worker.WorkerEpoch,
+			},
+		)
+		if err != nil {
+			return err
 		}
-		deliveredDigest := streamDataSHA256(deliveredChunk.Data)
-		if _, err := work.q.InsertWorkspaceExecStreamChunkReceipt(r.Context(), db.InsertWorkspaceExecStreamChunkReceiptParams{
-			OrgID:         mount.OrgID,
-			ProjectID:     mount.ProjectID,
-			EnvironmentID: mount.EnvironmentID,
-			WorkspaceID:   mount.WorkspaceID,
-			ProcessID:     exec.ID,
-			StreamName:    workspaceStreamStdin,
-			OffsetStart:   deliveredChunk.OffsetStart,
-			OffsetEnd:     deliveredChunk.OffsetEnd,
-			DataSha256:    deliveredDigest,
-			DataSize:      int32(len(deliveredChunk.Data)),
-			ObservedAt:    nil,
-		}); err != nil {
-			if isNoRows(err) {
-				receipt, getErr := work.q.GetWorkspaceExecStreamChunkReceiptAtOffset(r.Context(), db.GetWorkspaceExecStreamChunkReceiptAtOffsetParams{
-					OrgID:         mount.OrgID,
-					ProjectID:     mount.ProjectID,
-					EnvironmentID: mount.EnvironmentID,
-					WorkspaceID:   mount.WorkspaceID,
-					ProcessID:     exec.ID,
-					StreamName:    workspaceStreamStdin,
-					OffsetStart:   deliveredChunk.OffsetStart,
-				})
-				if getErr == nil && receipt.OffsetEnd == deliveredChunk.OffsetEnd && receipt.DataSize == int32(len(deliveredChunk.Data)) && bytes.Equal(receipt.DataSha256, deliveredDigest) {
-					err = nil
-				} else {
-					return conflict(errWorkspaceStreamOffsetConflict)
-				}
-			}
+		if authority.WorkspaceProcess.State == db.WorkspaceProcessStateExitRequested {
+			return nil
+		}
+		if authority.WorkspaceProcess.State == db.WorkspaceProcessStateStarting {
+			started, err := work.q.StartWorkspaceExec(r.Context(), db.StartWorkspaceExecParams{
+				ProcessID:        authority.WorkspaceProcess.ID,
+				WorkspaceMountID: authority.WorkspaceMount.ID,
+			})
 			if err != nil {
 				return err
 			}
+			authority.WorkspaceProcess = started
 		}
-		row, err = work.q.AdvanceWorkspaceExecStdinDeliveredCursor(r.Context(), db.AdvanceWorkspaceExecStdinDeliveredCursorParams{
-			OffsetEnd:     request.OffsetEnd,
-			OrgID:         mount.OrgID,
-			ProjectID:     mount.ProjectID,
-			EnvironmentID: mount.EnvironmentID,
-			WorkspaceID:   mount.WorkspaceID,
-			ProcessID:     exec.ID,
-			OffsetStart:   request.OffsetStart,
-		})
+		derived, err := deriveWorkspaceCapability(
+			s.workspaceFencingKey,
+			authority.WorkspaceLease,
+		)
 		if err != nil {
-			if isNoRows(err) {
-				current, getErr := work.q.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
-					OrgID:         mount.OrgID,
-					ProjectID:     mount.ProjectID,
-					EnvironmentID: mount.EnvironmentID,
-					WorkspaceID:   mount.WorkspaceID,
-					ID:            exec.ID,
-				})
-				if getErr == nil && current.StdinDeliveredCursor >= request.OffsetEnd {
-					row = current
-					return nil
-				}
-			}
 			return err
 		}
-		if err := work.q.DeleteWorkspaceExecStreamChunksBefore(r.Context(), db.DeleteWorkspaceExecStreamChunksBeforeParams{
-			OrgID:             mount.OrgID,
-			ProjectID:         mount.ProjectID,
-			EnvironmentID:     mount.EnvironmentID,
-			WorkspaceID:       mount.WorkspaceID,
-			ProcessID:         exec.ID,
-			StreamName:        workspaceStreamStdin,
-			RetainAfterOffset: request.OffsetEnd,
-		}); err != nil {
-			return err
+		capability = derived.Token
+		stdin = bytes.Clone(authority.WorkspaceProcess.Stdin)
+		if len(stdin) > workspaceExecStdinMaxBytes {
+			return errors.New("Workspace exec stdin exceeds its persisted limit")
 		}
 		return nil
-	}); err != nil {
-		s.writeWorkspacePrimitiveError(w, "advance workspace exec input delivered", err)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, conflict(errors.New("Workspace exec claim is stale")))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(row)})
+	if err != nil {
+		writeError(w, errors.New("claim Workspace exec"))
+		return
+	}
+	defer clearWorkspaceExecBytes(stdin)
+	if !authority.WorkspaceProcess.ID.Valid ||
+		authority.WorkspaceProcess.State == db.WorkspaceProcessStateExitRequested {
+		writeJSON(w, http.StatusOK, api.WorkerWorkspaceExecClaimResponse{})
+		return
+	}
+	environmentID, err := pgvalue.UUIDValue(authority.WorkspaceProcess.EnvironmentID)
+	if err != nil {
+		writeError(w, errors.New("Workspace exec environment is invalid"))
+		return
+	}
+	materials, err := s.secretDelivery.OpenDeliveries(environmentID, envelopes)
+	if err != nil {
+		writeError(w, errors.New("open Workspace exec Secrets"))
+		return
+	}
+	defer clearWorkspaceExecMaterials(materials)
+	deliveries, err := projectSecretDeliveries(materials)
+	if err != nil {
+		writeError(w, errors.New("project Workspace exec Secrets"))
+		return
+	}
+	defer clearWorkspaceSecretDeliveries(deliveries)
+	writeJSON(w, http.StatusOK, api.WorkerWorkspaceExecClaimResponse{
+		Exec: &api.WorkerWorkspaceExec{
+			ProcessID:           pgvalue.MustUUIDValue(authority.WorkspaceProcess.ID).String(),
+			WorkspaceID:         pgvalue.MustUUIDValue(authority.WorkspaceProcess.WorkspaceID).String(),
+			WorkspaceMountID:    pgvalue.MustUUIDValue(authority.WorkspaceMount.ID).String(),
+			RequestFingerprint:  hex.EncodeToString(authority.RequestFingerprint),
+			Request:             bytes.Clone(authority.WorkspaceProcess.Request),
+			Stdin:               stdin,
+			Secrets:             deliveries,
+			WorkspaceLeaseID:    pgvalue.MustUUIDValue(authority.WorkspaceLease.ID).String(),
+			WriteCapability:     capability,
+			FencingGeneration:   authority.WorkspaceLease.MountFencingGeneration,
+			OwnershipGeneration: authority.WorkspaceLease.OwnershipGeneration,
+			WriterGeneration:    authority.WorkspaceLease.WriterGeneration,
+			ExpiresAt:           authority.WorkspaceLease.ExpiresAt.Time,
+		},
+	})
 }
 
-func (s *Server) workerMarkWorkspaceExecExited(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerWorkspaceExecExitedRequest
+func clearWorkspaceSecretDeliveries(deliveries []api.WorkerSecretDelivery) {
+	for index := range deliveries {
+		clearWorkspaceExecBytes(deliveries[index].Value)
+	}
+}
+
+func clearWorkspaceExecMaterials(materials []secret.DeliveryMaterial) {
+	for index := range materials {
+		clearWorkspaceExecBytes(materials[index].Value)
+	}
+}
+
+func clearWorkspaceExecBytes(value []byte) {
+	for index := range value {
+		value[index] = 0
+	}
+}
+
+func (s *Server) workerCompleteWorkspaceExec(w http.ResponseWriter, r *http.Request) {
+	var request api.WorkerWorkspaceExecCompleteRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker workspace exec exited request JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid Workspace exec completion JSON: %w", err)))
 		return
 	}
-	mount, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), request.WorkerWorkspacePrimitiveScope)
+	orgID, err := ids.Parse(request.OrgID)
 	if err != nil {
-		s.writeWorkspacePrimitiveError(w, "validate workspace exec terminal scope", err)
+		writeError(w, badRequest(errors.New("org_id must be a canonical UUIDv7")))
 		return
 	}
-	execID, err := parseWorkerPrimitiveUUID("exec_id", request.ExecID)
+	processID, err := ids.Parse(request.ProcessID)
+	if err != nil {
+		writeError(w, badRequest(errors.New("process_id must be a canonical UUIDv7")))
+		return
+	}
+	leaseID, err := ids.Parse(request.WorkspaceLeaseID)
+	if err != nil {
+		writeError(w, badRequest(errors.New("workspace_lease_id must be a canonical UUIDv7")))
+		return
+	}
+	if len(request.Stdout) > workspaceExecOutputMaxBytes ||
+		len(request.Stderr) > workspaceExecOutputMaxBytes {
+		writeError(w, badRequest(errors.New("Workspace exec output exceeds its limit")))
+		return
+	}
+	finalizationKind, reasonCode, resultError, err := normalizeWorkspaceExecOutcome(request)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	state, err := normalizeWorkerWorkspaceExecTerminalState(request.State)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	exitCode := pgtype.Int4{}
-	if request.ExitCode != nil {
-		exitCode = pgvalue.Int4Ptr(request.ExitCode)
-	}
-	errJSON, err := normalizedOptionalJSONObject(request.Error, "error")
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	if len(errJSON) == 0 {
-		errJSON = []byte(`{}`)
-	}
-	row, err := s.db.MarkWorkspaceExecExited(r.Context(), db.MarkWorkspaceExecExitedParams{
-		State:            state,
-		ExitCode:         exitCode,
-		Signal:           strings.TrimSpace(request.Signal),
-		Error:            errJSON,
-		OrgID:            mount.OrgID,
-		ProjectID:        mount.ProjectID,
-		EnvironmentID:    mount.EnvironmentID,
-		WorkspaceID:      mount.WorkspaceID,
-		ID:               execID,
-		WorkspaceMountID: mount.ID,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			existing, getErr := s.db.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
-				OrgID:         mount.OrgID,
-				ProjectID:     mount.ProjectID,
-				EnvironmentID: mount.EnvironmentID,
-				WorkspaceID:   mount.WorkspaceID,
-				ID:            execID,
-			})
-			if getErr == nil && workspaceExecTerminalEventMatches(existing, mount.ID, state, exitCode, strings.TrimSpace(request.Signal), errJSON) {
-				writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(existing)})
-				return
-			}
-			if getErr == nil {
-				writeError(w, conflict(errWorkspaceLifecycleEventConflict))
-				return
-			}
-		}
-		s.writeWorkspacePrimitiveError(w, "mark workspace exec terminal", err)
-		return
-	}
-	writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(db.WorkspaceProcess(row))})
-}
-
-func workspaceExecTerminalEventMatches(row db.WorkspaceProcess, workspaceMountID pgtype.UUID, state db.WorkspaceProcessState, exitCode pgtype.Int4, signal string, errorJSON []byte) bool {
-	if !workerPrimitiveWorkspaceMountMatches(row.WorkspaceMountID, workspaceMountID) {
-		return false
-	}
-	if row.State == db.WorkspaceProcessStateLost {
-		return true
-	}
-	if row.State != state {
-		return false
-	}
-	if !workerPrimitiveInt4Equal(row.ExitCode, exitCode) {
-		return false
-	}
-	if row.Signal != signal {
-		return false
-	}
-	return workerPrimitiveJSONEqual(row.TerminalError, errorJSON)
-}
-
-func (s *Server) loadWorkerWorkspaceExecBoundToWorkspaceMount(w http.ResponseWriter, r *http.Request, scope api.WorkerWorkspacePrimitiveScope, rawExecID string) (db.WorkspaceMount, db.WorkspaceProcess, bool) {
-	mount, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), scope)
-	if err != nil {
-		s.writeWorkspacePrimitiveError(w, "validate workspace exec scope", err)
-		return db.WorkspaceMount{}, db.WorkspaceProcess{}, false
-	}
-	execID, err := parseWorkerPrimitiveUUID("exec_id", rawExecID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return db.WorkspaceMount{}, db.WorkspaceProcess{}, false
-	}
-	exec, err := s.db.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
-		OrgID:         mount.OrgID,
-		ProjectID:     mount.ProjectID,
-		EnvironmentID: mount.EnvironmentID,
-		WorkspaceID:   mount.WorkspaceID,
-		ID:            execID,
-	})
-	if err != nil {
-		s.writeWorkspacePrimitiveError(w, "get workspace exec", err)
-		return db.WorkspaceMount{}, db.WorkspaceProcess{}, false
-	}
-	if !exec.WorkspaceMountID.Valid || pgvalue.MustUUIDValue(exec.WorkspaceMountID) != pgvalue.MustUUIDValue(mount.ID) {
-		writeError(w, conflict(errors.New("workspace exec is not bound to this workspace mount")))
-		return db.WorkspaceMount{}, db.WorkspaceProcess{}, false
-	}
-	return mount, exec, true
-}
-
-func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec db.WorkspaceProcess, stream string, requestedOffset *int64, data []byte) (db.WorkspaceProcessStreamChunk, error) {
-	if requestedOffset == nil {
-		return db.WorkspaceProcessStreamChunk{}, badRequest(errors.New("offset_start is required"))
-	}
-	if *requestedOffset < 0 {
-		return db.WorkspaceProcessStreamChunk{}, badRequest(errors.New("offset must be non-negative"))
-	}
-	if len(data) == 0 {
-		return db.WorkspaceProcessStreamChunk{}, badRequest(errors.New("data is required"))
-	}
-	if len(data) > workspaceStreamChunkMaxBytes {
-		return db.WorkspaceProcessStreamChunk{}, tooLarge(fmt.Errorf("stream chunk is %d bytes, exceeds max %d", len(data), workspaceStreamChunkMaxBytes))
-	}
-	var chunk db.WorkspaceProcessStreamChunk
-	err := s.inTx(ctx, func(work *txWork) error {
-		locked, err := work.q.LockWorkspaceExecForStreamAppend(ctx, db.LockWorkspaceExecForStreamAppendParams{
-			OrgID:         exec.OrgID,
-			ProjectID:     exec.ProjectID,
-			EnvironmentID: exec.EnvironmentID,
-			WorkspaceID:   exec.WorkspaceID,
-			ProcessID:     exec.ID,
-		})
+	worker := workerFromContext(r.Context())
+	var mount db.WorkspaceMount
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		locator, err := work.q.GetWorkspaceExecLocator(
+			r.Context(),
+			db.GetWorkspaceExecLocatorParams{
+				OrgID:     pgvalue.UUID(orgID),
+				ProcessID: pgvalue.UUID(processID),
+			},
+		)
 		if err != nil {
 			return err
 		}
-		tail := execStreamCursor(locked, stream)
-		offset := *requestedOffset
-		if offset != tail {
-			existing, getErr := work.q.GetWorkspaceExecStreamChunkAtOffset(ctx, db.GetWorkspaceExecStreamChunkAtOffsetParams{
-				OrgID:         exec.OrgID,
-				ProjectID:     exec.ProjectID,
-				EnvironmentID: exec.EnvironmentID,
-				WorkspaceID:   exec.WorkspaceID,
-				ProcessID:     exec.ID,
-				StreamName:    stream,
-				OffsetStart:   offset,
-			})
-			if getErr == nil && existing.OffsetEnd == offset+int64(len(data)) && bytes.Equal(existing.Data, data) {
-				chunk = existing
-				return nil
-			}
-			return conflict(errWorkspaceStreamOffsetConflict)
-		}
-		inserted, insertErr := work.q.InsertWorkspaceExecOutputStreamChunk(ctx, db.InsertWorkspaceExecOutputStreamChunkParams{
-			OrgID:         exec.OrgID,
-			ProjectID:     exec.ProjectID,
-			EnvironmentID: exec.EnvironmentID,
-			WorkspaceID:   exec.WorkspaceID,
-			ProcessID:     exec.ID,
-			StreamName:    stream,
-			OffsetStart:   offset,
-			OffsetEnd:     offset + int64(len(data)),
-			Data:          data,
-			ObservedAt:    nil,
-		})
-		err = insertErr
-		chunk = db.WorkspaceProcessStreamChunk(inserted)
-		if errors.Is(err, pgx.ErrNoRows) {
-			existing, getErr := work.q.GetWorkspaceExecStreamChunkAtOffset(ctx, db.GetWorkspaceExecStreamChunkAtOffsetParams{
-				OrgID:         exec.OrgID,
-				ProjectID:     exec.ProjectID,
-				EnvironmentID: exec.EnvironmentID,
-				WorkspaceID:   exec.WorkspaceID,
-				ProcessID:     exec.ID,
-				StreamName:    stream,
-				OffsetStart:   offset,
-			})
-			if getErr == nil && existing.OffsetEnd == offset+int64(len(data)) && bytes.Equal(existing.Data, data) {
-				chunk = existing
-				return nil
-			}
-			return conflict(errWorkspaceStreamOffsetConflict)
-		}
-		if err != nil {
-			if isUniqueViolation(err) || isExclusionViolation(err) {
-				return conflict(errWorkspaceStreamOffsetConflict)
-			}
-			return err
-		}
-		row, err := work.q.AdvanceWorkspaceExecOutputCursor(ctx, db.AdvanceWorkspaceExecOutputCursorParams{
-			StreamName:    stream,
-			OrgID:         exec.OrgID,
-			ProjectID:     exec.ProjectID,
-			EnvironmentID: exec.EnvironmentID,
-			WorkspaceID:   exec.WorkspaceID,
-			ProcessID:     exec.ID,
-		})
+		authority, err := work.q.LockWorkspaceExecWorkerAuthority(
+			r.Context(),
+			db.LockWorkspaceExecWorkerAuthorityParams{
+				OrgID:            pgvalue.UUID(orgID),
+				ProcessID:        pgvalue.UUID(processID),
+				WorkspaceMountID: locator.WorkspaceMountID,
+				WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+				WorkerEpoch:      worker.WorkerEpoch,
+			},
+		)
 		if err != nil {
 			return err
 		}
-		retainAfter := execStreamCursorFromRow(row, stream) - workspaceStreamRetainedMaxBytes
-		if retainAfter > 0 {
-			if err := work.q.DeleteWorkspaceExecStreamChunksBefore(ctx, db.DeleteWorkspaceExecStreamChunksBeforeParams{
-				OrgID:             exec.OrgID,
-				ProjectID:         exec.ProjectID,
-				EnvironmentID:     exec.EnvironmentID,
-				WorkspaceID:       exec.WorkspaceID,
-				ProcessID:         exec.ID,
-				StreamName:        stream,
-				RetainAfterOffset: retainAfter,
-			}); err != nil {
-				return err
-			}
+		if authority.WorkspaceLease.ID != pgvalue.UUID(leaseID) ||
+			authority.WorkspaceLease.MountFencingGeneration != request.FencingGeneration ||
+			authority.WorkspaceLease.OwnershipGeneration != request.OwnershipGeneration ||
+			authority.WorkspaceLease.WriterGeneration != request.WriterGeneration ||
+			hex.EncodeToString(authority.RequestFingerprint) != strings.TrimSpace(request.RequestFingerprint) {
+			return errors.New("Workspace exec completion fence is stale")
 		}
+		capability, err := deriveWorkspaceCapability(s.workspaceFencingKey, authority.WorkspaceLease)
+		if err != nil {
+			return err
+		}
+		if subtle.ConstantTimeCompare(
+			[]byte(capability.Token),
+			[]byte(strings.TrimSpace(request.WriteCapability)),
+		) != 1 {
+			return errors.New("Workspace exec write capability is invalid")
+		}
+		var exitCode pgtype.Int4
+		if request.ExitCode != nil {
+			exitCode = pgtype.Int4{Int32: *request.ExitCode, Valid: true}
+		}
+		if _, err := work.q.SetWorkspaceExecResult(
+			r.Context(),
+			db.SetWorkspaceExecResultParams{
+				ExitCode:         exitCode,
+				Stdout:           nonNilWorkspaceExecBytes(request.Stdout),
+				Stderr:           nonNilWorkspaceExecBytes(request.Stderr),
+				ProcessID:        authority.WorkspaceProcess.ID,
+				WorkspaceMountID: authority.WorkspaceMount.ID,
+			},
+		); err != nil {
+			return err
+		}
+		requested, err := work.q.RequestWorkspaceExecMountFinalization(
+			r.Context(),
+			db.RequestWorkspaceExecMountFinalizationParams{
+				FinalizationKind: pgvalue.Text(finalizationKind),
+				ReasonCode:       pgvalue.Text(reasonCode),
+				Error:            resultError,
+				WorkspaceMountID: authority.WorkspaceMount.ID,
+				WorkerInstanceID: authority.WorkspaceMount.WorkerInstanceID,
+				WorkerEpoch:      authority.WorkspaceMount.WorkerEpoch,
+			},
+		)
+		if err != nil {
+			return err
+		}
+		mount = workspaceMountFromFinalization(requested)
 		return nil
 	})
-	if err != nil {
-		return db.WorkspaceProcessStreamChunk{}, err
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, conflict(errors.New("Workspace exec completion is stale")))
+		return
 	}
-	return chunk, nil
+	if err != nil {
+		writeError(w, errors.New("complete Workspace exec"))
+		return
+	}
+	writeJSON(w, http.StatusOK, workspaceMountResponse(mount))
 }
 
-func normalizeWorkerWorkspaceExecTerminalState(raw string) (db.WorkspaceProcessState, error) {
-	switch db.WorkspaceProcessState(strings.TrimSpace(raw)) {
-	case db.WorkspaceProcessStateExited:
-		return db.WorkspaceProcessStateExited, nil
-	case db.WorkspaceProcessStateFailed:
-		return db.WorkspaceProcessStateFailed, nil
-	default:
-		return "", errors.New("exec terminal state must be exited or failed")
+func normalizeWorkspaceExecOutcome(
+	request api.WorkerWorkspaceExecCompleteRequest,
+) (string, string, []byte, error) {
+	outcome := strings.TrimSpace(request.Outcome)
+	if outcome == "exited" {
+		if request.ExitCode == nil || len(request.Error) != 0 {
+			return "", "", nil, errors.New("exited Workspace exec requires exit_code and no error")
+		}
+		return "capture", "workspace_exec_completed", nil, nil
 	}
+	switch outcome {
+	case "workspace_exec_failed",
+		"workspace_exec_secret_delivery_failed",
+		"workspace_exec_timed_out",
+		"workspace_exec_signaled",
+		"workspace_exec_launch_failed",
+		"workspace_exec_output_limit_exceeded",
+		"workspace_exec_result_uncertain":
+	default:
+		return "", "", nil, fmt.Errorf("Workspace exec outcome %q is unsupported", outcome)
+	}
+	errorJSON, err := normalizedJSONObject(request.Error, "error")
+	if err != nil {
+		return "", "", nil, err
+	}
+	if len(errorJSON) == 0 {
+		errorJSON, _ = json.Marshal(map[string]string{"code": outcome})
+	}
+	return "discard", outcome, errorJSON, nil
+}
+
+func workspaceMountFromFinalization(row db.RequestWorkspaceExecMountFinalizationRow) db.WorkspaceMount {
+	return db.WorkspaceMount(row)
 }

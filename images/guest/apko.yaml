@@ -14,10 +14,10 @@ contents:
     - git
     - python-3
     - build-base
+    - buildkitd
     - bun
     - nodejs-22
 entrypoint:
   command: /init
 archs:
-  - aarch64
   - x86_64

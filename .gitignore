@@ -15,6 +15,7 @@ images/*/out/
 **/.terraform/
 **/.terraform.lock.hcl
 dev/workflows/vendor/
+dev/workflows-failing-build/vendor/
 *.tfstate
 *.tfstate.*
 *.tfvars
@@ -24,3 +25,4 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+.helmr-release-artifacts/

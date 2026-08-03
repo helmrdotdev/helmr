@@ -20,9 +20,8 @@ Task authors define:
 | --- | --- |
 | Image contents | `image(...).from(...).run(...).copy(...)` |
 | Runtime dependencies | Package manager and install steps in the image build |
-| Workspace mount path | `sandbox(...).workspace("/path")` |
-| CPU and memory | `sandbox(...).resources(...)` |
-| Secrets | Task `secrets` declarations and run-time bindings |
+| CPU and memory | `workspace(...).resources(...)` |
+| Secrets | Workspace create Secret placements |
 | Task behavior | The exported `task(...).run` function |
 
 TypeScript task images must provide Node.js 22.18 or newer as `node` on `PATH`.
@@ -34,13 +33,13 @@ tools, package manager, and dependencies installed in your image.
 Helmr manages:
 
 - Firecracker VM lifecycle, guest boot, and guest agent startup.
-- A writable workspace mounted at the sandbox workspace path.
+- A writable Workspace mounted at `/workspace`.
 - Deployment task source used to load the task module.
 - Secret materialization as environment variables, files, or directories.
 - Runtime filesystems such as `/proc`, `/dev`, `/dev/pts`, `/dev/shm`, `/tmp`,
   and `/run`.
 - Basic network readiness, DNS resolver files, and hostname setup.
-- Logs, events, session streams, metadata updates, waits, timers, and run status.
+- Logs, events, Actor input/output, metadata updates, waits, timers, and Run status.
 - Checkpoint compatibility checks.
 
 These details are product-managed. Task code should rely on the resulting Linux
@@ -83,10 +82,10 @@ Inside the sandbox image, Helmr provides:
 - `/etc/hostname` containing `helmr-sandbox`.
 - `/etc/hosts` with localhost and `helmr-sandbox` entries.
 
-Do not depend on `/run/resolv.conf`, tap devices, CNI names, nftables rules, or
-other implementation details. If Helmr exposes user-facing egress controls, they
-should be configured through documented product policy rather than by mutating
-resolver files or host networking state from task code.
+Do not depend on `/run/resolv.conf`, tap devices, network namespace or link
+names, nftables rules, or other implementation details. Helmr v0 exposes no
+user-configurable egress policy, and task code cannot mutate host networking
+state.
 
 Self-hosted workers still need outbound access to the services your tasks use,
 as well as GitHub, S3, ECR, AWS APIs, and the Helmr control URL.

@@ -39,12 +39,92 @@ mount_base() {
 	is_mounted /run || mount -t tmpfs -o mode=0755 tmpfs /run
 }
 
-configure_namespaces() {
+enable_user_namespaces() {
 	if [ -w /proc/sys/user/max_user_namespaces ]; then
 		echo 16384 > /proc/sys/user/max_user_namespaces
 	fi
 	if [ -w /proc/sys/kernel/unprivileged_userns_clone ]; then
 		echo 1 > /proc/sys/kernel/unprivileged_userns_clone
+	fi
+}
+
+disable_user_namespaces() {
+	max_namespaces=/proc/sys/user/max_user_namespaces
+	if [ ! -w "$max_namespaces" ]; then
+		echo "user namespace limit is unavailable" >&2
+		exit 1
+	fi
+	echo 0 > "$max_namespaces"
+	if [ "$(cat "$max_namespaces")" != 0 ]; then
+		echo "user namespaces remain enabled" >&2
+		exit 1
+	fi
+
+	unprivileged_clone=/proc/sys/kernel/unprivileged_userns_clone
+	if [ -e "$unprivileged_clone" ]; then
+		if [ ! -w "$unprivileged_clone" ]; then
+			echo "unprivileged user namespace policy is read-only" >&2
+			exit 1
+		fi
+		echo 0 > "$unprivileged_clone"
+		if [ "$(cat "$unprivileged_clone")" != 0 ]; then
+			echo "unprivileged user namespace cloning remains enabled" >&2
+			exit 1
+		fi
+	fi
+}
+
+configure_process_limit() {
+	profile=$1
+	limit=$(kernel_arg helmr.pids_max || true)
+	[ -n "$limit" ] || return 0
+	case "$limit" in
+		*[!0-9]*|0)
+			echo "invalid Helmr process limit" >&2
+			exit 1
+			;;
+	esac
+	mkdir -p /sys/fs/cgroup
+	is_mounted /sys/fs/cgroup || mount -t cgroup2 cgroup2 /sys/fs/cgroup
+	case "$profile" in
+		build|image-build)
+			;;
+		*)
+		if ! grep -qw pids /sys/fs/cgroup/cgroup.controllers; then
+			echo "pids controller unavailable" >&2
+			exit 1
+		fi
+		echo +pids > /sys/fs/cgroup/cgroup.subtree_control
+		mkdir /sys/fs/cgroup/helmr
+		echo "$limit" > /sys/fs/cgroup/helmr/pids.max
+		echo $$ > /sys/fs/cgroup/helmr/cgroup.procs
+		if [ "$(cat /sys/fs/cgroup/helmr/pids.max)" != "$limit" ]; then
+			echo "Helmr process limit was not applied" >&2
+			exit 1
+		fi
+		return 0
+			;;
+	esac
+	for controller in cpu memory pids; do
+		if ! grep -qw "$controller" /sys/fs/cgroup/cgroup.controllers; then
+			echo "$controller controller unavailable" >&2
+			exit 1
+		fi
+	done
+	echo "+cpu +memory +pids" > /sys/fs/cgroup/cgroup.subtree_control
+	mkdir /sys/fs/cgroup/helmr
+	echo "+cpu +memory +pids" > /sys/fs/cgroup/helmr/cgroup.subtree_control
+	mkdir /sys/fs/cgroup/helmr/supervisor
+	echo $$ > /sys/fs/cgroup/helmr/supervisor/cgroup.procs
+	for controller in cpu memory pids; do
+		if ! grep -qw "$controller" /sys/fs/cgroup/helmr/cgroup.subtree_control; then
+			echo "$controller controller was not delegated" >&2
+			exit 1
+		fi
+	done
+	if ! grep -qx '0::/helmr/supervisor' /proc/self/cgroup; then
+		echo "Helmr supervisor cgroup placement failed" >&2
+		exit 1
 	fi
 }
 
@@ -62,14 +142,42 @@ mount_scratch() {
 }
 
 mount_substrate() {
-	if [ ! -b /dev/vdc ]; then
+	if [ "$(kernel_arg helmr.substrate || true)" != 1 ]; then
 		return 0
+	fi
+	if [ ! -b /dev/vdc ]; then
+		echo "missing required Helmr runtime substrate /dev/vdc" >&2
+		exit 1
 	fi
 	mkdir -p /var/lib/helmr/substrate
 	if ! is_mounted /var/lib/helmr/substrate; then
 		mount -t ext4 -o ro /dev/vdc /var/lib/helmr/substrate
 	fi
 	export HELMR_GUESTD_SUBSTRATE_ROOT=/var/lib/helmr/substrate
+}
+
+mount_program() {
+	if [ "$(kernel_arg helmr.program || true)" != 1 ]; then
+		return 0
+	fi
+	if [ "$(kernel_arg helmr.substrate || true)" = 1 ]; then
+		runtime_device=/dev/vdd
+		program_device=/dev/vde
+	else
+		runtime_device=/dev/vdc
+		program_device=/dev/vdd
+	fi
+	for device in "$runtime_device" "$program_device"; do
+		if [ ! -b "$device" ]; then
+			echo "missing required Helmr Program drive $device" >&2
+			exit 1
+		fi
+	done
+	mkdir -p \
+		/var/lib/helmr/program/runtime \
+		/var/lib/helmr/program/artifact
+	mount -t squashfs -o ro,nodev,nosuid "$runtime_device" /var/lib/helmr/program/runtime
+	mount -t squashfs -o ro,nodev,nosuid "$program_device" /var/lib/helmr/program/artifact
 }
 
 load_vsock() {
@@ -179,6 +287,40 @@ kernel_arg() {
 	return 1
 }
 
+guest_profile() {
+	found=0
+	profile=
+	for arg in $(cat /proc/cmdline); do
+		case "$arg" in
+			helmr.profile=*)
+				if [ "$found" -ne 0 ]; then
+					echo "duplicate Helmr guest profile" >&2
+					return 1
+				fi
+				found=1
+				profile=${arg#*=}
+				;;
+			helmr.profile)
+				echo "invalid Helmr guest profile" >&2
+				return 1
+				;;
+		esac
+	done
+	if [ "$found" -ne 0 ] && [ -z "$profile" ]; then
+		echo "invalid empty Helmr guest profile" >&2
+		return 1
+	fi
+	case "$profile" in
+		""|build|image-build)
+			echo "$profile"
+			;;
+		*)
+			echo "invalid Helmr guest profile: $profile" >&2
+			return 1
+			;;
+	esac
+}
+
 first_non_loopback_iface() {
 	for net in /sys/class/net/*; do
 		[ -e "$net" ] || continue
@@ -233,6 +375,10 @@ has_static_network() {
 }
 
 configure_network() {
+	if [ "$(kernel_arg helmr.network || true)" = "none" ]; then
+		: > /run/resolv.conf
+		return
+	fi
 	echo "nameserver 1.1.1.1" > /run/resolv.conf
 	if configure_static_from_cmdline; then
 		require_network_ready
@@ -277,21 +423,35 @@ configure_runtime_identity() {
 }
 
 mount_base
-configure_namespaces
+profile=$(guest_profile)
+configure_process_limit "$profile"
+if [ "$profile" = image-build ]; then
+	export BUILDKIT_NO_CLIENT_TOKEN=1
+fi
+if [ -z "$profile" ]; then
+	enable_user_namespaces
+else
+	disable_user_namespaces
+fi
 mount_scratch
-mount_substrate
 load_vsock
-configure_network
+if [ -z "$profile" ]; then
+	mount_substrate
+	mount_program
+	configure_network
+else
+	configure_network
+fi
 configure_runtime_identity
 
 export HELMR_GUESTD_TMPDIR=/var/lib/helmr/tmp
 if [ -f /etc/helmr/checkpoint-storage-telemetry ]; then
-  export HELMR_CHECKPOINT_STORAGE_TELEMETRY=1
+	export HELMR_CHECKPOINT_STORAGE_TELEMETRY=1
 fi
-exec /usr/bin/guestd \
-  --adapter-runtime-path /usr/bin/node \
-  --adapter-register-path /opt/helmr/adapter/register.mjs \
-  --adapter-path /opt/helmr/adapter/main.js \
-  --adapter-bundle-path /opt/helmr-adapter \
-  --vsock-port 5000 \
-  --health-port 5001
+set -- /usr/bin/guestd \
+	--vsock-port 5000 \
+	--health-port 5001
+if [ -n "$profile" ]; then
+	set -- "$@" --profile "$profile"
+fi
+exec "$@"

@@ -2,7 +2,6 @@ package client
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -17,46 +16,9 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
-
-func (c *Client) StartSession(ctx context.Context, taskID string, input api.SessionStartRequest) (api.SessionStartResponse, error) {
-	taskID = strings.TrimSpace(taskID)
-	if err := api.ValidateTaskID(taskID); err != nil {
-		return api.SessionStartResponse{}, err
-	}
-	input.TaskID = taskID
-	path, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/sessions")
-	if err != nil {
-		return api.SessionStartResponse{}, err
-	}
-	if scoped {
-		input.ProjectID = ""
-		input.EnvironmentID = ""
-	}
-	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(input); err != nil {
-		return api.SessionStartResponse{}, fmt.Errorf("encode request: %w", err)
-	}
-	req, err := c.newRequestWithBearer(ctx, http.MethodPost, path, bytes.NewReader(body.Bytes()), c.bearer)
-	if err != nil {
-		return api.SessionStartResponse{}, err
-	}
-	req.Header.Set("content-type", "application/json")
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return api.SessionStartResponse{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return api.SessionStartResponse{}, decodeError(resp)
-	}
-	var response api.SessionStartResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return api.SessionStartResponse{}, fmt.Errorf("decode response: %w", err)
-	}
-	return response, nil
-}
 
 func (c *Client) ListProjects(ctx context.Context) (api.ListProjectsResponse, error) {
 	req, err := c.newRequest(ctx, http.MethodGet, "/api/projects", nil)
@@ -147,8 +109,6 @@ func projectEnvironmentPath(projectID string, environmentID string) string {
 }
 
 func (c *Client) environmentScopedPath(projectID string, environmentID string, suffix string) (string, bool, error) {
-	projectID = strings.TrimSpace(projectID)
-	environmentID = strings.TrimSpace(environmentID)
 	if projectID == "" && environmentID == "" {
 		if c.sessionScopedRoutes {
 			return "", false, fmt.Errorf("project and environment are required for session-scoped API routes")
@@ -169,6 +129,10 @@ func environmentScopedResourcePath(base string, id string, suffix string) string
 }
 
 func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymentRequest, sourceTarPath string) (api.DeploymentResponse, error) {
+	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
+	if input.IdempotencyKey == "" {
+		return api.DeploymentResponse{}, errors.New("deployment idempotency key is required")
+	}
 	file, err := os.Open(sourceTarPath)
 	if err != nil {
 		return api.DeploymentResponse{}, fmt.Errorf("open deployment source archive: %w", err)
@@ -183,9 +147,6 @@ func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymen
 	} else if input.ContentHash != digest {
 		return api.DeploymentResponse{}, fmt.Errorf("deployment source archive digest %s does not match metadata content_hash %s", digest, input.ContentHash)
 	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return api.DeploymentResponse{}, fmt.Errorf("rewind deployment source archive: %w", err)
-	}
 	path, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/deployments")
 	if err != nil {
 		return api.DeploymentResponse{}, err
@@ -194,26 +155,62 @@ func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymen
 		input.ProjectID = ""
 		input.EnvironmentID = ""
 	}
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return api.DeploymentResponse{}, fmt.Errorf("rewind deployment source archive: %w", err)
+		}
+		response, err := c.createDeploymentAttempt(ctx, path, input, file)
+		if err == nil {
+			return response, nil
+		}
+		lastErr = err
+		var httpErr *HTTPError
+		if errors.As(err, &httpErr) || ctx.Err() != nil {
+			return api.DeploymentResponse{}, err
+		}
+	}
+	return api.DeploymentResponse{}, lastErr
+}
+
+func (c *Client) createDeploymentAttempt(
+	ctx context.Context,
+	path string,
+	input api.CreateDeploymentRequest,
+	source io.Reader,
+) (api.DeploymentResponse, error) {
 	reader, pipeWriter := io.Pipe()
 	multipartWriter := multipart.NewWriter(pipeWriter)
+	writeDone := make(chan error, 1)
 	go func() {
-		err := writeDeploymentMultipart(multipartWriter, input, file)
-		_ = pipeWriter.CloseWithError(err)
+		writeErr := writeDeploymentMultipart(multipartWriter, input, source)
+		_ = pipeWriter.CloseWithError(writeErr)
+		writeDone <- writeErr
 	}()
 	req, err := c.newRequestWithBearer(ctx, http.MethodPost, path, reader, c.bearer)
 	if err != nil {
 		_ = reader.Close()
+		<-writeDone
 		return api.DeploymentResponse{}, err
 	}
 	req.Header.Set("content-type", multipartWriter.FormDataContentType())
 	var response api.DeploymentResponse
 	if err := c.doJSON(req, &response); err != nil {
+		_ = reader.Close()
+		<-writeDone
+		return api.DeploymentResponse{}, err
+	}
+	_ = reader.Close()
+	if err := <-writeDone; err != nil {
 		return api.DeploymentResponse{}, err
 	}
 	return response, nil
 }
 
 func (c *Client) GetDeployment(ctx context.Context, deploymentID string, input api.GetDeploymentRequest) (api.DeploymentResponse, error) {
+	if err := ids.Validate(deploymentID); err != nil {
+		return api.DeploymentResponse{}, err
+	}
 	basePath, _, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/deployments")
 	if err != nil {
 		return api.DeploymentResponse{}, err
@@ -231,6 +228,9 @@ func (c *Client) GetDeployment(ctx context.Context, deploymentID string, input a
 }
 
 func (c *Client) FollowDeploymentEvents(ctx context.Context, deploymentID string, input api.GetDeploymentRequest, cursor string, handle func(api.RunEvent) error) error {
+	if err := ids.Validate(deploymentID); err != nil {
+		return err
+	}
 	basePath, _, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/deployments")
 	if err != nil {
 		return err
@@ -274,6 +274,9 @@ func (c *Client) FollowDeploymentEvents(ctx context.Context, deploymentID string
 }
 
 func (c *Client) PromoteDeployment(ctx context.Context, deployment string, input api.PromoteDeploymentRequest) (api.DeploymentResponse, error) {
+	if err := ids.Validate(deployment); err != nil {
+		return api.DeploymentResponse{}, err
+	}
 	basePath, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/deployments")
 	if err != nil {
 		return api.DeploymentResponse{}, err
@@ -342,7 +345,7 @@ func (c *Client) ListSecrets(ctx context.Context, opts ...SecretOptions) (api.Li
 }
 
 func (c *Client) GetSecret(ctx context.Context, name string, opts ...SecretOptions) (api.SecretResponse, error) {
-	path, err := c.secretItemPath(name, opts...)
+	path, err := c.secretNamePath(name, opts...)
 	if err != nil {
 		return api.SecretResponse{}, err
 	}
@@ -357,37 +360,46 @@ func (c *Client) GetSecret(ctx context.Context, name string, opts ...SecretOptio
 	return response, nil
 }
 
-func (c *Client) SetSecret(ctx context.Context, name string, value string, opts ...SecretOptions) (api.SecretResponse, error) {
+func (c *Client) CreateSecret(ctx context.Context, name string, value string, idempotencyKey string, opts ...SecretOptions) (api.SecretResponse, error) {
 	var response api.SecretResponse
-	request := api.SetSecretRequest{Value: value}
-	path, scoped, err := c.secretItemPathWithScope(name, opts...)
+	path, err := c.secretCollectionPath(opts...)
 	if err != nil {
 		return api.SecretResponse{}, err
 	}
-	if len(opts) > 0 {
-		request.ProjectID = opts[0].ProjectID
-		request.EnvironmentID = opts[0].EnvironmentID
-	}
-	if scoped {
-		request.ProjectID = ""
-		request.EnvironmentID = ""
-	}
-	if err := c.putJSON(ctx, path, request, &response); err != nil {
+	if err := c.postJSON(ctx, path, api.CreateSecretRequest{
+		Name: name, Value: value, IdempotencyKey: idempotencyKey,
+	}, &response); err != nil {
 		return api.SecretResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) DeleteSecret(ctx context.Context, name string, opts ...SecretOptions) error {
-	path, err := c.secretItemPath(name, opts...)
+func (c *Client) RotateSecret(ctx context.Context, name string, value string, idempotencyKey string, opts ...SecretOptions) (api.SecretResponse, error) {
+	var response api.SecretResponse
+	path, err := c.secretNamePath(name, opts...)
 	if err != nil {
-		return err
+		return api.SecretResponse{}, err
 	}
-	req, err := c.newRequest(ctx, http.MethodDelete, path, nil)
+	if err := c.postJSON(ctx, path+"/rotate", api.RotateSecretRequest{
+		Value: value, IdempotencyKey: idempotencyKey,
+	}, &response); err != nil {
+		return api.SecretResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) RevokeSecret(ctx context.Context, name string, idempotencyKey string, opts ...SecretOptions) (api.SecretResponse, error) {
+	var response api.SecretResponse
+	path, err := c.secretNamePath(name, opts...)
 	if err != nil {
-		return err
+		return api.SecretResponse{}, err
 	}
-	return c.doJSON(req, nil)
+	if err := c.postJSON(ctx, path+"/revoke", api.RevokeSecretRequest{
+		IdempotencyKey: idempotencyKey,
+	}, &response); err != nil {
+		return api.SecretResponse{}, err
+	}
+	return response, nil
 }
 
 func (c *Client) secretCollectionPath(opts ...SecretOptions) (string, error) {
@@ -409,28 +421,23 @@ func (c *Client) secretCollectionPathWithScope(opts SecretOptions) (string, erro
 	return path, err
 }
 
-func (c *Client) secretItemPath(name string, opts ...SecretOptions) (string, error) {
-	path, _, err := c.secretItemPathWithScope(name, opts...)
-	return path, err
-}
-
-func (c *Client) secretItemPathWithScope(name string, opts ...SecretOptions) (string, bool, error) {
+func (c *Client) secretNamePath(name string, opts ...SecretOptions) (string, error) {
 	hasScope := len(opts) > 0 && (strings.TrimSpace(opts[0].ProjectID) != "" || strings.TrimSpace(opts[0].EnvironmentID) != "")
 	if c.sessionScopedRoutes {
 		scope := SecretOptions{}
 		if len(opts) > 0 {
 			scope = opts[0]
 		}
-		basePath, scoped, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/secrets")
+		basePath, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/secrets")
 		if err != nil {
-			return "", false, err
+			return "", err
 		}
-		return environmentScopedResourcePath(basePath, name, ""), scoped, nil
+		return environmentScopedResourcePath(basePath+"/by-name", name, ""), nil
 	}
 	if hasScope {
-		return "", false, errors.New("project and environment scope is only accepted on session-scoped API routes")
+		return "", errors.New("project and environment scope is only accepted on session-scoped API routes")
 	}
-	return "/api/secrets/" + url.PathEscape(name), false, nil
+	return "/api/secrets/by-name/" + url.PathEscape(name), nil
 }
 
 type RunScopeOptions struct {
@@ -438,49 +445,64 @@ type RunScopeOptions struct {
 	EnvironmentID string
 }
 
-func (c *Client) GetRun(ctx context.Context, id string, opts ...RunScopeOptions) (api.RunResponse, error) {
+func (c *Client) GetRun(ctx context.Context, id string, opts ...RunScopeOptions) (api.RunSnapshotResponse, error) {
 	path, err := c.runItemPath(id, "", opts...)
 	if err != nil {
-		return api.RunResponse{}, err
+		return api.RunSnapshotResponse{}, err
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.RunResponse{}, err
+		return api.RunSnapshotResponse{}, err
 	}
-	var response api.RunResponse
+	var response api.RunSnapshotResponse
 	if err := c.doJSON(req, &response); err != nil {
-		return api.RunResponse{}, err
+		return api.RunSnapshotResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) CancelRun(ctx context.Context, id string, input api.CancelRunRequest, opts ...RunScopeOptions) (api.CancelRunResponse, error) {
-	var response api.CancelRunResponse
+func (c *Client) CancelRun(ctx context.Context, id string, opts ...RunScopeOptions) (api.RunSnapshotResponse, error) {
 	path, err := c.runItemPath(id, "/cancel", opts...)
 	if err != nil {
-		return api.CancelRunResponse{}, err
+		return api.RunSnapshotResponse{}, err
 	}
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.CancelRunResponse{}, err
+	req, err := c.newRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return api.RunSnapshotResponse{}, err
+	}
+	var response api.RunSnapshotResponse
+	if err := c.doJSON(req, &response); err != nil {
+		return api.RunSnapshotResponse{}, err
 	}
 	return response, nil
 }
 
 type ListRunsOptions struct {
-	Status        string
+	Statuses      []string
+	Cursor        string
 	Limit         int32
-	SessionID     string
 	ProjectID     string
 	EnvironmentID string
 }
 
 type ListRunEventsOptions struct {
+	Cursor     string
+	Limit      int32
+	Severities []string
+	RunScopeOptions
+}
+
+type ListRunLogsOptions struct {
 	Cursor string
 	Limit  int32
+	Levels []string
 	RunScopeOptions
 }
 
 func (c *Client) runItemPath(id string, suffix string, opts ...RunScopeOptions) (string, error) {
+	if err := ids.Validate(id); err != nil {
+		return "", err
+	}
 	scope := RunScopeOptions{}
 	if len(opts) > 0 {
 		scope = opts[0]
@@ -492,7 +514,7 @@ func (c *Client) runItemPath(id string, suffix string, opts ...RunScopeOptions) 
 	return environmentScopedResourcePath(basePath, id, suffix), nil
 }
 
-func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.ListRunsResponse, error) {
+func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.ListRunSnapshotsResponse, error) {
 	scope := RunScopeOptions{}
 	if len(opts) > 0 {
 		scope.ProjectID = opts[0].ProjectID
@@ -500,18 +522,20 @@ func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.Lis
 	}
 	path, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/runs")
 	if err != nil {
-		return api.ListRunsResponse{}, err
+		return api.ListRunSnapshotsResponse{}, err
 	}
 	if len(opts) > 0 {
 		values := url.Values{}
-		if opts[0].Status != "" {
-			values.Set("status", opts[0].Status)
+		for _, status := range opts[0].Statuses {
+			if status = strings.TrimSpace(status); status != "" {
+				values.Add("status", status)
+			}
+		}
+		if cursor := strings.TrimSpace(opts[0].Cursor); cursor != "" {
+			values.Set("cursor", cursor)
 		}
 		if opts[0].Limit > 0 {
 			values.Set("limit", strconv.FormatInt(int64(opts[0].Limit), 10))
-		}
-		if strings.TrimSpace(opts[0].SessionID) != "" {
-			values.Set("session_id", strings.TrimSpace(opts[0].SessionID))
 		}
 		if encoded := values.Encode(); encoded != "" {
 			path += "?" + encoded
@@ -519,72 +543,48 @@ func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.Lis
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.ListRunsResponse{}, err
+		return api.ListRunSnapshotsResponse{}, err
 	}
-	var response api.ListRunsResponse
+	var response api.ListRunSnapshotsResponse
 	if err := c.doJSON(req, &response); err != nil {
-		return api.ListRunsResponse{}, err
+		return api.ListRunSnapshotsResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) GetRunLogs(ctx context.Context, id string, opts ...RunScopeOptions) (api.LogSnapshotResponse, error) {
-	path, err := c.runItemPath(id, "/logs", opts...)
+func (c *Client) ListRunLogs(ctx context.Context, id string, opts ...ListRunLogsOptions) (api.RunLogPage, error) {
+	scope := RunScopeOptions{}
+	if len(opts) > 0 {
+		scope = opts[0].RunScopeOptions
+	}
+	path, err := c.runItemPath(id, "/logs", scope)
 	if err != nil {
-		return api.LogSnapshotResponse{}, err
+		return api.RunLogPage{}, err
+	}
+	if len(opts) > 0 {
+		values := url.Values{}
+		if opts[0].Cursor != "" {
+			values.Set("cursor", opts[0].Cursor)
+		}
+		if opts[0].Limit > 0 {
+			values.Set("limit", strconv.FormatInt(int64(opts[0].Limit), 10))
+		}
+		for _, level := range opts[0].Levels {
+			values.Add("level", level)
+		}
+		if encoded := values.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.LogSnapshotResponse{}, err
+		return api.RunLogPage{}, err
 	}
-	var response api.LogSnapshotResponse
+	var response api.RunLogPage
 	if err := c.doJSON(req, &response); err != nil {
-		return api.LogSnapshotResponse{}, err
+		return api.RunLogPage{}, err
 	}
 	return response, nil
-}
-
-func (c *Client) FollowRunLogs(ctx context.Context, id string, cursor string, handle func(api.RunLogChunk) error, opts ...RunScopeOptions) error {
-	values := url.Values{}
-	values.Set("follow", "1")
-	path, err := c.runItemPath(id, "/logs", opts...)
-	if err != nil {
-		return err
-	}
-	path += "?" + values.Encode()
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("accept", "text/event-stream")
-	if cursor != "" {
-		req.Header.Set("Last-Event-ID", cursor)
-	}
-	res, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return decodeError(res)
-	}
-	scanner := bufio.NewScanner(res.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		data, ok := strings.CutPrefix(line, "data: ")
-		if !ok {
-			continue
-		}
-		var chunk api.RunLogChunk
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			return err
-		}
-		if err := handle(chunk); err != nil {
-			return err
-		}
-	}
-	return scanner.Err()
 }
 
 func (c *Client) ListRunEvents(ctx context.Context, id string, opts ...ListRunEventsOptions) (api.RunEventPage, error) {
@@ -604,6 +604,9 @@ func (c *Client) ListRunEvents(ctx context.Context, id string, opts ...ListRunEv
 		if opts[0].Limit > 0 {
 			values.Set("limit", strconv.FormatInt(int64(opts[0].Limit), 10))
 		}
+		for _, severity := range opts[0].Severities {
+			values.Add("severity", severity)
+		}
 		if encoded := values.Encode(); encoded != "" {
 			path += "?" + encoded
 		}
@@ -617,47 +620,4 @@ func (c *Client) ListRunEvents(ctx context.Context, id string, opts ...ListRunEv
 		return api.RunEventPage{}, err
 	}
 	return response, nil
-}
-
-func (c *Client) FollowRunEvents(ctx context.Context, id string, cursor string, handle func(api.RunEvent) error, opts ...RunScopeOptions) error {
-	values := url.Values{}
-	values.Set("follow", "1")
-	path, err := c.runItemPath(id, "/events", opts...)
-	if err != nil {
-		return err
-	}
-	path += "?" + values.Encode()
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("accept", "text/event-stream")
-	if cursor != "" {
-		req.Header.Set("Last-Event-ID", cursor)
-	}
-	res, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return decodeError(res)
-	}
-	scanner := bufio.NewScanner(res.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		data, ok := strings.CutPrefix(line, "data: ")
-		if !ok {
-			continue
-		}
-		var event api.RunEvent
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			return err
-		}
-		if err := handle(event); err != nil {
-			return err
-		}
-	}
-	return scanner.Err()
 }

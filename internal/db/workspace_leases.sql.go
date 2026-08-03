@@ -11,488 +11,82 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const acquireWorkspaceInstanceLease = `-- name: AcquireWorkspaceInstanceLease :one
-INSERT INTO workspace_leases (
-    id, org_id, project_id, environment_id, region_id, worker_group_id,
-    worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
-    workspace_mount_id, lease_kind, owner_run_id, owner_process_id,
-    base_version_id, acquired_version_id, acquired_fencing_generation,
-    fencing_token, expires_at
-)
-SELECT $1, workspace_mounts.org_id, workspace_mounts.project_id,
-       workspace_mounts.environment_id, workspace_mounts.region_id,
-       workspace_mounts.worker_group_id, workspace_mounts.worker_instance_id,
-       workspace_mounts.worker_epoch, workspace_mounts.runtime_instance_id,
-       workspace_mounts.workspace_id, workspace_mounts.id, 'instance',
-       $2, $3,
-       workspace_mounts.base_version_id, $4,
-       workspace_mounts.fencing_generation, $5, $6
-  FROM workspace_mounts
- WHERE workspace_mounts.org_id = $7
-   AND workspace_mounts.workspace_id = $8
-   AND workspace_mounts.id = $9
-   AND workspace_mounts.state = 'mounted'
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_process_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+const getRunOwnedWorkspaceLease = `-- name: GetRunOwnedWorkspaceLease :one
+SELECT workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error
+  FROM workspace_leases
+  JOIN run_leases
+    ON run_leases.workspace_id = workspace_leases.workspace_id
+   AND run_leases.id = workspace_leases.owner_run_lease_id
+ WHERE run_leases.run_id = $1
+   AND run_leases.attempt_number = $2
+   AND workspace_leases.workspace_id = $3
+   AND workspace_leases.id = $4
 `
 
-type AcquireWorkspaceInstanceLeaseParams struct {
-	ID                pgtype.UUID        `json:"id"`
-	OwnerRunID        pgtype.UUID        `json:"owner_run_id"`
-	OwnerProcessID    pgtype.UUID        `json:"owner_process_id"`
-	AcquiredVersionID pgtype.UUID        `json:"acquired_version_id"`
-	FencingToken      string             `json:"fencing_token"`
-	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
-	OrgID             pgtype.UUID        `json:"org_id"`
-	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
-	WorkspaceMountID  pgtype.UUID        `json:"workspace_mount_id"`
+type GetRunOwnedWorkspaceLeaseParams struct {
+	RunID         pgtype.UUID `json:"run_id"`
+	AttemptNumber int32       `json:"attempt_number"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	ID            pgtype.UUID `json:"id"`
 }
 
-func (q *Queries) AcquireWorkspaceInstanceLease(ctx context.Context, arg AcquireWorkspaceInstanceLeaseParams) (WorkspaceLease, error) {
-	row := q.db.QueryRow(ctx, acquireWorkspaceInstanceLease,
-		arg.ID,
-		arg.OwnerRunID,
-		arg.OwnerProcessID,
-		arg.AcquiredVersionID,
-		arg.FencingToken,
-		arg.ExpiresAt,
-		arg.OrgID,
-		arg.WorkspaceID,
-		arg.WorkspaceMountID,
-	)
-	var i WorkspaceLease
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.WorkerInstanceID,
-		&i.WorkerEpoch,
-		&i.RuntimeInstanceID,
-		&i.WorkspaceID,
-		&i.WorkspaceMountID,
-		&i.LeaseKind,
-		&i.State,
-		&i.OwnerRunID,
-		&i.OwnerProcessID,
-		&i.BaseVersionID,
-		&i.AcquiredVersionID,
-		&i.AcquiredFencingGeneration,
-		&i.FencingToken,
-		&i.AcquiredAt,
-		&i.RenewedAt,
-		&i.ExpiresAt,
-		&i.ReleasedAt,
-		&i.LostAt,
-		&i.UpdatedAt,
-		&i.TerminalAt,
-		&i.TerminalReasonCode,
-		&i.TerminalError,
-	)
-	return i, err
-}
-
-const acquireWorkspaceWriteLease = `-- name: AcquireWorkspaceWriteLease :one
-WITH locked AS (
-    SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at FROM workspace_mounts
-     WHERE workspace_mounts.org_id = $7 AND workspace_mounts.workspace_id = $8
-       AND workspace_mounts.id = $9 AND workspace_mounts.state = 'mounted'
-     FOR UPDATE
-), fenced AS (
-    UPDATE workspace_mounts
-       SET fencing_generation = workspace_mounts.fencing_generation + 1, updated_at = now()
-      FROM locked WHERE workspace_mounts.id = locked.id
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
-)
-INSERT INTO workspace_leases (
-    id, org_id, project_id, environment_id, region_id, worker_group_id,
-    worker_instance_id, worker_epoch, runtime_instance_id, workspace_id,
-    workspace_mount_id, lease_kind, owner_run_id, owner_process_id,
-    base_version_id, acquired_version_id, acquired_fencing_generation,
-    fencing_token, expires_at
-)
-SELECT $1, fenced.org_id, fenced.project_id, fenced.environment_id,
-       fenced.region_id, fenced.worker_group_id, fenced.worker_instance_id,
-       fenced.worker_epoch, fenced.runtime_instance_id, fenced.workspace_id,
-       fenced.id, 'write', $2, $3,
-       fenced.base_version_id, $4, fenced.fencing_generation,
-       $5, $6
-  FROM fenced
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_process_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
-`
-
-type AcquireWorkspaceWriteLeaseParams struct {
-	ID                pgtype.UUID        `json:"id"`
-	OwnerRunID        pgtype.UUID        `json:"owner_run_id"`
-	OwnerProcessID    pgtype.UUID        `json:"owner_process_id"`
-	AcquiredVersionID pgtype.UUID        `json:"acquired_version_id"`
-	FencingToken      string             `json:"fencing_token"`
-	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
-	OrgID             pgtype.UUID        `json:"org_id"`
-	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
-	WorkspaceMountID  pgtype.UUID        `json:"workspace_mount_id"`
-}
-
-func (q *Queries) AcquireWorkspaceWriteLease(ctx context.Context, arg AcquireWorkspaceWriteLeaseParams) (WorkspaceLease, error) {
-	row := q.db.QueryRow(ctx, acquireWorkspaceWriteLease,
-		arg.ID,
-		arg.OwnerRunID,
-		arg.OwnerProcessID,
-		arg.AcquiredVersionID,
-		arg.FencingToken,
-		arg.ExpiresAt,
-		arg.OrgID,
-		arg.WorkspaceID,
-		arg.WorkspaceMountID,
-	)
-	var i WorkspaceLease
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.WorkerInstanceID,
-		&i.WorkerEpoch,
-		&i.RuntimeInstanceID,
-		&i.WorkspaceID,
-		&i.WorkspaceMountID,
-		&i.LeaseKind,
-		&i.State,
-		&i.OwnerRunID,
-		&i.OwnerProcessID,
-		&i.BaseVersionID,
-		&i.AcquiredVersionID,
-		&i.AcquiredFencingGeneration,
-		&i.FencingToken,
-		&i.AcquiredAt,
-		&i.RenewedAt,
-		&i.ExpiresAt,
-		&i.ReleasedAt,
-		&i.LostAt,
-		&i.UpdatedAt,
-		&i.TerminalAt,
-		&i.TerminalReasonCode,
-		&i.TerminalError,
-	)
-	return i, err
-}
-
-const createAndPromoteWorkspaceCapture = `-- name: CreateAndPromoteWorkspaceCapture :one
-WITH existing AS (
-    SELECT workspace_versions.id, workspace_versions.public_id, workspace_versions.org_id, workspace_versions.project_id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.source_workspace_mount_id, workspace_versions.source_write_lease_id, workspace_versions.produced_by_run_id, workspace_versions.kind, workspace_versions.state, workspace_versions.artifact_id, workspace_versions.artifact_encoding, workspace_versions.artifact_entry_count, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.message, workspace_versions.error, workspace_versions.promoted_at, workspace_versions.created_at
-      FROM run_waits
-      JOIN workspace_versions
-        ON workspace_versions.org_id = run_waits.org_id
-       AND workspace_versions.workspace_id = run_waits.reserved_workspace_id
-       AND workspace_versions.id = run_waits.reserved_workspace_version_id
-     WHERE run_waits.org_id = $1
-       AND run_waits.run_id = $2
-       AND run_waits.id = $3
-       AND run_waits.checkpoint_request_version = $4
-       AND run_waits.checkpoint_attempt_id = $5
-       AND workspace_versions.content_digest = $6
-       AND workspace_versions.size_bytes = $7
-       AND workspace_versions.artifact_encoding = $8
-), valid AS (
-    SELECT workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.lease_kind, workspace_leases.state, workspace_leases.owner_run_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.acquired_version_id, workspace_leases.acquired_fencing_generation, workspace_leases.fencing_token, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error
-      FROM workspace_leases
-      JOIN run_waits ON run_waits.org_id = workspace_leases.org_id
-                    AND run_waits.run_id = workspace_leases.owner_run_id
-                    AND run_waits.id = $3
-     WHERE workspace_leases.org_id = $1
-       AND workspace_leases.workspace_id = $9
-       AND workspace_leases.id = $10
-       AND workspace_leases.workspace_mount_id = $11
-       AND workspace_leases.owner_run_id = $2
-       AND workspace_leases.worker_instance_id = $12
-       AND workspace_leases.worker_epoch = $13
-       AND workspace_leases.lease_kind = 'write'
-       AND workspace_leases.state = 'active'
-       AND workspace_leases.fencing_token = $14
-       AND workspace_leases.acquired_fencing_generation = $15
-       AND workspace_leases.expires_at > now()
-       AND run_waits.state = 'checkpointing'
-       AND run_waits.checkpoint_request_version = $4
-       AND run_waits.checkpoint_attempt_id = $5
-       AND run_waits.reserved_workspace_id IS NULL
-     FOR UPDATE OF workspace_leases, run_waits
-), created AS (
-    INSERT INTO workspace_versions (
-        id, public_id, org_id, project_id, environment_id, workspace_id,
-        parent_version_id, source_workspace_mount_id, source_write_lease_id,
-        produced_by_run_id, kind, state, artifact_id, artifact_encoding,
-        artifact_entry_count, content_digest, size_bytes, message, promoted_at
-    )
-    SELECT $16, $17,
-           valid.org_id, valid.project_id, valid.environment_id, valid.workspace_id,
-           COALESCE(valid.acquired_version_id, valid.base_version_id), valid.workspace_mount_id,
-           valid.id, valid.owner_run_id, 'system', 'ready', $18,
-           $8, $19,
-           $6, $7,
-           'system capture before parked wait', now()
-      FROM valid
-    RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_at
-), updated_lease AS (
-    UPDATE workspace_leases
-       SET acquired_version_id = created.id, renewed_at = now(), updated_at = now()
-      FROM created
-     WHERE workspace_leases.org_id = created.org_id
-       AND workspace_leases.id = created.source_write_lease_id
-    RETURNING workspace_leases.id
-), updated_workspace AS (
-    UPDATE workspaces
-       SET current_version_id = created.id, dirty_state = 'clean', updated_at = now()
-      FROM created, updated_lease
-     WHERE workspaces.org_id = created.org_id AND workspaces.id = created.workspace_id
-    RETURNING workspaces.id
-), updated_wait AS (
-    UPDATE run_waits
-       SET reserved_workspace_id = created.workspace_id,
-           reserved_workspace_version_id = created.id, updated_at = now()
-      FROM created, updated_workspace
-     WHERE run_waits.org_id = created.org_id
-       AND run_waits.run_id = created.produced_by_run_id
-       AND run_waits.id = $3
-       AND run_waits.checkpoint_request_version = $4
-       AND run_waits.checkpoint_attempt_id = $5
-    RETURNING run_waits.id
-)
-SELECT created.id, created.public_id, created.org_id, created.project_id, created.environment_id, created.workspace_id, created.parent_version_id, created.source_workspace_mount_id, created.source_write_lease_id, created.produced_by_run_id, created.kind, created.state, created.artifact_id, created.artifact_encoding, created.artifact_entry_count, created.content_digest, created.size_bytes, created.message, created.error, created.promoted_at, created.created_at FROM created JOIN updated_wait ON true
-UNION ALL
-SELECT existing.id, existing.public_id, existing.org_id, existing.project_id, existing.environment_id, existing.workspace_id, existing.parent_version_id, existing.source_workspace_mount_id, existing.source_write_lease_id, existing.produced_by_run_id, existing.kind, existing.state, existing.artifact_id, existing.artifact_encoding, existing.artifact_entry_count, existing.content_digest, existing.size_bytes, existing.message, existing.error, existing.promoted_at, existing.created_at FROM existing
-LIMIT 1
-`
-
-type CreateAndPromoteWorkspaceCaptureParams struct {
-	OrgID                    pgtype.UUID `json:"org_id"`
-	RunID                    pgtype.UUID `json:"run_id"`
-	RunWaitID                pgtype.UUID `json:"run_wait_id"`
-	CheckpointRequestVersion int64       `json:"checkpoint_request_version"`
-	CheckpointAttemptID      pgtype.UUID `json:"checkpoint_attempt_id"`
-	ContentDigest            string      `json:"content_digest"`
-	SizeBytes                int64       `json:"size_bytes"`
-	ArtifactEncoding         string      `json:"artifact_encoding"`
-	WorkspaceID              pgtype.UUID `json:"workspace_id"`
-	WriteLeaseID             pgtype.UUID `json:"write_lease_id"`
-	WorkspaceMountID         pgtype.UUID `json:"workspace_mount_id"`
-	WorkerInstanceID         pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch              int64       `json:"worker_epoch"`
-	FencingToken             string      `json:"fencing_token"`
-	FencingGeneration        int64       `json:"fencing_generation"`
-	WorkspaceVersionID       pgtype.UUID `json:"workspace_version_id"`
-	WorkspaceVersionPublicID string      `json:"workspace_version_public_id"`
-	ArtifactID               pgtype.UUID `json:"artifact_id"`
-	ArtifactEntryCount       int32       `json:"artifact_entry_count"`
-}
-
-type CreateAndPromoteWorkspaceCaptureRow struct {
-	ID                     pgtype.UUID           `json:"id"`
-	PublicID               string                `json:"public_id"`
-	OrgID                  pgtype.UUID           `json:"org_id"`
-	ProjectID              pgtype.UUID           `json:"project_id"`
-	EnvironmentID          pgtype.UUID           `json:"environment_id"`
-	WorkspaceID            pgtype.UUID           `json:"workspace_id"`
-	ParentVersionID        pgtype.UUID           `json:"parent_version_id"`
-	SourceWorkspaceMountID pgtype.UUID           `json:"source_workspace_mount_id"`
-	SourceWriteLeaseID     pgtype.UUID           `json:"source_write_lease_id"`
-	ProducedByRunID        pgtype.UUID           `json:"produced_by_run_id"`
-	Kind                   WorkspaceVersionKind  `json:"kind"`
-	State                  WorkspaceVersionState `json:"state"`
-	ArtifactID             pgtype.UUID           `json:"artifact_id"`
-	ArtifactEncoding       string                `json:"artifact_encoding"`
-	ArtifactEntryCount     int32                 `json:"artifact_entry_count"`
-	ContentDigest          string                `json:"content_digest"`
-	SizeBytes              int64                 `json:"size_bytes"`
-	Message                string                `json:"message"`
-	Error                  []byte                `json:"error"`
-	PromotedAt             pgtype.Timestamptz    `json:"promoted_at"`
-	CreatedAt              pgtype.Timestamptz    `json:"created_at"`
-}
-
-func (q *Queries) CreateAndPromoteWorkspaceCapture(ctx context.Context, arg CreateAndPromoteWorkspaceCaptureParams) (CreateAndPromoteWorkspaceCaptureRow, error) {
-	row := q.db.QueryRow(ctx, createAndPromoteWorkspaceCapture,
-		arg.OrgID,
+func (q *Queries) GetRunOwnedWorkspaceLease(ctx context.Context, arg GetRunOwnedWorkspaceLeaseParams) (WorkspaceLease, error) {
+	row := q.db.QueryRow(ctx, getRunOwnedWorkspaceLease,
 		arg.RunID,
-		arg.RunWaitID,
-		arg.CheckpointRequestVersion,
-		arg.CheckpointAttemptID,
-		arg.ContentDigest,
-		arg.SizeBytes,
-		arg.ArtifactEncoding,
+		arg.AttemptNumber,
 		arg.WorkspaceID,
-		arg.WriteLeaseID,
-		arg.WorkspaceMountID,
-		arg.WorkerInstanceID,
-		arg.WorkerEpoch,
-		arg.FencingToken,
-		arg.FencingGeneration,
-		arg.WorkspaceVersionID,
-		arg.WorkspaceVersionPublicID,
-		arg.ArtifactID,
-		arg.ArtifactEntryCount,
+		arg.ID,
 	)
-	var i CreateAndPromoteWorkspaceCaptureRow
+	var i WorkspaceLease
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.OrgID,
+		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
+		&i.RegionID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
 		&i.WorkspaceID,
-		&i.ParentVersionID,
-		&i.SourceWorkspaceMountID,
-		&i.SourceWriteLeaseID,
-		&i.ProducedByRunID,
-		&i.Kind,
+		&i.WorkspaceMountID,
 		&i.State,
-		&i.ArtifactID,
-		&i.ArtifactEncoding,
-		&i.ArtifactEntryCount,
-		&i.ContentDigest,
-		&i.SizeBytes,
-		&i.Message,
-		&i.Error,
-		&i.PromotedAt,
-		&i.CreatedAt,
+		&i.OwnerRunLeaseID,
+		&i.OwnerProcessID,
+		&i.BaseVersionID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.MountFencingGeneration,
+		&i.FencingTokenHash,
+		&i.AcquiredAt,
+		&i.RenewedAt,
+		&i.ExpiresAt,
+		&i.ReleasedAt,
+		&i.LostAt,
+		&i.UpdatedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 	)
 	return i, err
-}
-
-const expireWorkspaceLeases = `-- name: ExpireWorkspaceLeases :many
-WITH candidates AS (
-    SELECT workspace_leases.id
-      FROM workspace_leases
-     WHERE workspace_leases.state IN ('active','releasing')
-       AND workspace_leases.expires_at <= now()
-     ORDER BY workspace_leases.expires_at, workspace_leases.id
-     LIMIT $1
-     FOR UPDATE SKIP LOCKED
-), expired AS (
-    UPDATE workspace_leases
-       SET state = 'expired', terminal_at = now(), terminal_reason_code = 'lease_expired',
-           terminal_error = NULL, updated_at = now()
-      FROM candidates
-     WHERE workspace_leases.id = candidates.id
-    RETURNING workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.lease_kind, workspace_leases.state, workspace_leases.owner_run_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.acquired_version_id, workspace_leases.acquired_fencing_generation, workspace_leases.fencing_token, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error
-), requested_mount_stop AS (
-    UPDATE workspace_mounts
-       SET state = 'unmounting', stopped_at = COALESCE(workspace_mounts.stopped_at, now()),
-           fencing_generation = workspace_mounts.fencing_generation + 1, updated_at = now()
-      FROM expired
-     WHERE expired.lease_kind = 'write'
-       AND workspace_mounts.id = expired.workspace_mount_id
-       AND workspace_mounts.state IN ('mounting','mounted')
-    RETURNING workspace_mounts.runtime_instance_id
-), requested_runtime_close AS (
-    UPDATE runtime_instances
-       SET desired_state = 'closed', desired_version = runtime_instances.desired_version + 1,
-           desired_at = now(), desired_reason = 'workspace_lease_expired', updated_at = now()
-      FROM requested_mount_stop
-     WHERE runtime_instances.id = requested_mount_stop.runtime_instance_id
-       AND runtime_instances.desired_state <> 'closed'
-       AND runtime_instances.observed_state IN ('allocated','preparing','ready')
-    RETURNING runtime_instances.id
-)
-SELECT expired.id, expired.org_id, expired.worker_group_id, expired.project_id, expired.environment_id, expired.region_id, expired.worker_instance_id, expired.worker_epoch, expired.runtime_instance_id, expired.workspace_id, expired.workspace_mount_id, expired.lease_kind, expired.state, expired.owner_run_id, expired.owner_process_id, expired.base_version_id, expired.acquired_version_id, expired.acquired_fencing_generation, expired.fencing_token, expired.acquired_at, expired.renewed_at, expired.expires_at, expired.released_at, expired.lost_at, expired.updated_at, expired.terminal_at, expired.terminal_reason_code, expired.terminal_error FROM expired
-`
-
-type ExpireWorkspaceLeasesRow struct {
-	ID                        pgtype.UUID         `json:"id"`
-	OrgID                     pgtype.UUID         `json:"org_id"`
-	WorkerGroupID             string              `json:"worker_group_id"`
-	ProjectID                 pgtype.UUID         `json:"project_id"`
-	EnvironmentID             pgtype.UUID         `json:"environment_id"`
-	RegionID                  string              `json:"region_id"`
-	WorkerInstanceID          pgtype.UUID         `json:"worker_instance_id"`
-	WorkerEpoch               int64               `json:"worker_epoch"`
-	RuntimeInstanceID         pgtype.UUID         `json:"runtime_instance_id"`
-	WorkspaceID               pgtype.UUID         `json:"workspace_id"`
-	WorkspaceMountID          pgtype.UUID         `json:"workspace_mount_id"`
-	LeaseKind                 WorkspaceLeaseKind  `json:"lease_kind"`
-	State                     WorkspaceLeaseState `json:"state"`
-	OwnerRunID                pgtype.UUID         `json:"owner_run_id"`
-	OwnerProcessID            pgtype.UUID         `json:"owner_process_id"`
-	BaseVersionID             pgtype.UUID         `json:"base_version_id"`
-	AcquiredVersionID         pgtype.UUID         `json:"acquired_version_id"`
-	AcquiredFencingGeneration int64               `json:"acquired_fencing_generation"`
-	FencingToken              string              `json:"fencing_token"`
-	AcquiredAt                pgtype.Timestamptz  `json:"acquired_at"`
-	RenewedAt                 pgtype.Timestamptz  `json:"renewed_at"`
-	ExpiresAt                 pgtype.Timestamptz  `json:"expires_at"`
-	ReleasedAt                pgtype.Timestamptz  `json:"released_at"`
-	LostAt                    pgtype.Timestamptz  `json:"lost_at"`
-	UpdatedAt                 pgtype.Timestamptz  `json:"updated_at"`
-	TerminalAt                pgtype.Timestamptz  `json:"terminal_at"`
-	TerminalReasonCode        pgtype.Text         `json:"terminal_reason_code"`
-	TerminalError             []byte              `json:"terminal_error"`
-}
-
-func (q *Queries) ExpireWorkspaceLeases(ctx context.Context, limitCount int32) ([]ExpireWorkspaceLeasesRow, error) {
-	rows, err := q.db.Query(ctx, expireWorkspaceLeases, limitCount)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ExpireWorkspaceLeasesRow
-	for rows.Next() {
-		var i ExpireWorkspaceLeasesRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.WorkerGroupID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.RegionID,
-			&i.WorkerInstanceID,
-			&i.WorkerEpoch,
-			&i.RuntimeInstanceID,
-			&i.WorkspaceID,
-			&i.WorkspaceMountID,
-			&i.LeaseKind,
-			&i.State,
-			&i.OwnerRunID,
-			&i.OwnerProcessID,
-			&i.BaseVersionID,
-			&i.AcquiredVersionID,
-			&i.AcquiredFencingGeneration,
-			&i.FencingToken,
-			&i.AcquiredAt,
-			&i.RenewedAt,
-			&i.ExpiresAt,
-			&i.ReleasedAt,
-			&i.LostAt,
-			&i.UpdatedAt,
-			&i.TerminalAt,
-			&i.TerminalReasonCode,
-			&i.TerminalError,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const getWorkspaceLease = `-- name: GetWorkspaceLease :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_process_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error FROM workspace_leases
- WHERE org_id = $1 AND workspace_id = $2
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+  FROM workspace_leases
+ WHERE environment_id = $1
+   AND workspace_id = $2
    AND id = $3
 `
 
 type GetWorkspaceLeaseParams struct {
-	OrgID       pgtype.UUID `json:"org_id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	ID          pgtype.UUID `json:"id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	ID            pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) GetWorkspaceLease(ctx context.Context, arg GetWorkspaceLeaseParams) (WorkspaceLease, error) {
-	row := q.db.QueryRow(ctx, getWorkspaceLease, arg.OrgID, arg.WorkspaceID, arg.ID)
+	row := q.db.QueryRow(ctx, getWorkspaceLease, arg.EnvironmentID, arg.WorkspaceID, arg.ID)
 	var i WorkspaceLease
 	err := row.Scan(
 		&i.ID,
@@ -506,272 +100,14 @@ func (q *Queries) GetWorkspaceLease(ctx context.Context, arg GetWorkspaceLeasePa
 		&i.RuntimeInstanceID,
 		&i.WorkspaceID,
 		&i.WorkspaceMountID,
-		&i.LeaseKind,
 		&i.State,
-		&i.OwnerRunID,
+		&i.OwnerRunLeaseID,
 		&i.OwnerProcessID,
 		&i.BaseVersionID,
-		&i.AcquiredVersionID,
-		&i.AcquiredFencingGeneration,
-		&i.FencingToken,
-		&i.AcquiredAt,
-		&i.RenewedAt,
-		&i.ExpiresAt,
-		&i.ReleasedAt,
-		&i.LostAt,
-		&i.UpdatedAt,
-		&i.TerminalAt,
-		&i.TerminalReasonCode,
-		&i.TerminalError,
-	)
-	return i, err
-}
-
-const markWorkspaceWriteLeaseDirty = `-- name: MarkWorkspaceWriteLeaseDirty :one
-WITH valid AS (
-    SELECT workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.lease_kind, workspace_leases.state, workspace_leases.owner_run_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.acquired_version_id, workspace_leases.acquired_fencing_generation, workspace_leases.fencing_token, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error FROM workspace_leases
-     WHERE workspace_leases.org_id = $1 AND workspace_leases.workspace_id = $2
-       AND workspace_leases.id = $3 AND workspace_leases.lease_kind = 'write' AND workspace_leases.state = 'active'
-       AND workspace_leases.fencing_token = $4
-       AND workspace_leases.acquired_fencing_generation = $5
-       AND workspace_leases.expires_at > now() FOR UPDATE
-)
-UPDATE workspaces SET dirty_state = 'dirty', updated_at = now()
-  FROM valid WHERE workspaces.org_id = valid.org_id AND workspaces.id = valid.workspace_id
-RETURNING valid.id, valid.org_id, valid.worker_group_id, valid.project_id, valid.environment_id, valid.region_id, valid.worker_instance_id, valid.worker_epoch, valid.runtime_instance_id, valid.workspace_id, valid.workspace_mount_id, valid.lease_kind, valid.state, valid.owner_run_id, valid.owner_process_id, valid.base_version_id, valid.acquired_version_id, valid.acquired_fencing_generation, valid.fencing_token, valid.acquired_at, valid.renewed_at, valid.expires_at, valid.released_at, valid.lost_at, valid.updated_at, valid.terminal_at, valid.terminal_reason_code, valid.terminal_error
-`
-
-type MarkWorkspaceWriteLeaseDirtyParams struct {
-	OrgID             pgtype.UUID `json:"org_id"`
-	WorkspaceID       pgtype.UUID `json:"workspace_id"`
-	ID                pgtype.UUID `json:"id"`
-	FencingToken      string      `json:"fencing_token"`
-	FencingGeneration int64       `json:"fencing_generation"`
-}
-
-type MarkWorkspaceWriteLeaseDirtyRow struct {
-	ID                        pgtype.UUID         `json:"id"`
-	OrgID                     pgtype.UUID         `json:"org_id"`
-	WorkerGroupID             string              `json:"worker_group_id"`
-	ProjectID                 pgtype.UUID         `json:"project_id"`
-	EnvironmentID             pgtype.UUID         `json:"environment_id"`
-	RegionID                  string              `json:"region_id"`
-	WorkerInstanceID          pgtype.UUID         `json:"worker_instance_id"`
-	WorkerEpoch               int64               `json:"worker_epoch"`
-	RuntimeInstanceID         pgtype.UUID         `json:"runtime_instance_id"`
-	WorkspaceID               pgtype.UUID         `json:"workspace_id"`
-	WorkspaceMountID          pgtype.UUID         `json:"workspace_mount_id"`
-	LeaseKind                 WorkspaceLeaseKind  `json:"lease_kind"`
-	State                     WorkspaceLeaseState `json:"state"`
-	OwnerRunID                pgtype.UUID         `json:"owner_run_id"`
-	OwnerProcessID            pgtype.UUID         `json:"owner_process_id"`
-	BaseVersionID             pgtype.UUID         `json:"base_version_id"`
-	AcquiredVersionID         pgtype.UUID         `json:"acquired_version_id"`
-	AcquiredFencingGeneration int64               `json:"acquired_fencing_generation"`
-	FencingToken              string              `json:"fencing_token"`
-	AcquiredAt                pgtype.Timestamptz  `json:"acquired_at"`
-	RenewedAt                 pgtype.Timestamptz  `json:"renewed_at"`
-	ExpiresAt                 pgtype.Timestamptz  `json:"expires_at"`
-	ReleasedAt                pgtype.Timestamptz  `json:"released_at"`
-	LostAt                    pgtype.Timestamptz  `json:"lost_at"`
-	UpdatedAt                 pgtype.Timestamptz  `json:"updated_at"`
-	TerminalAt                pgtype.Timestamptz  `json:"terminal_at"`
-	TerminalReasonCode        pgtype.Text         `json:"terminal_reason_code"`
-	TerminalError             []byte              `json:"terminal_error"`
-}
-
-func (q *Queries) MarkWorkspaceWriteLeaseDirty(ctx context.Context, arg MarkWorkspaceWriteLeaseDirtyParams) (MarkWorkspaceWriteLeaseDirtyRow, error) {
-	row := q.db.QueryRow(ctx, markWorkspaceWriteLeaseDirty,
-		arg.OrgID,
-		arg.WorkspaceID,
-		arg.ID,
-		arg.FencingToken,
-		arg.FencingGeneration,
-	)
-	var i MarkWorkspaceWriteLeaseDirtyRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.WorkerInstanceID,
-		&i.WorkerEpoch,
-		&i.RuntimeInstanceID,
-		&i.WorkspaceID,
-		&i.WorkspaceMountID,
-		&i.LeaseKind,
-		&i.State,
-		&i.OwnerRunID,
-		&i.OwnerProcessID,
-		&i.BaseVersionID,
-		&i.AcquiredVersionID,
-		&i.AcquiredFencingGeneration,
-		&i.FencingToken,
-		&i.AcquiredAt,
-		&i.RenewedAt,
-		&i.ExpiresAt,
-		&i.ReleasedAt,
-		&i.LostAt,
-		&i.UpdatedAt,
-		&i.TerminalAt,
-		&i.TerminalReasonCode,
-		&i.TerminalError,
-	)
-	return i, err
-}
-
-const promoteWorkspaceCapture = `-- name: PromoteWorkspaceCapture :one
-WITH valid AS (
-    UPDATE workspace_leases SET acquired_version_id = $1,
-                                renewed_at = now(), updated_at = now()
-     WHERE workspace_leases.org_id = $2 AND workspace_leases.workspace_id = $3
-       AND workspace_leases.id = $4 AND workspace_leases.lease_kind = 'write' AND workspace_leases.state = 'active'
-       AND workspace_leases.fencing_token = $5
-       AND workspace_leases.acquired_fencing_generation = $6
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_process_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
-)
-UPDATE workspaces SET current_version_id = $1,
-                      dirty_state = 'clean', updated_at = now()
-  FROM valid WHERE workspaces.org_id = valid.org_id AND workspaces.id = valid.workspace_id
-RETURNING valid.id, valid.org_id, valid.worker_group_id, valid.project_id, valid.environment_id, valid.region_id, valid.worker_instance_id, valid.worker_epoch, valid.runtime_instance_id, valid.workspace_id, valid.workspace_mount_id, valid.lease_kind, valid.state, valid.owner_run_id, valid.owner_process_id, valid.base_version_id, valid.acquired_version_id, valid.acquired_fencing_generation, valid.fencing_token, valid.acquired_at, valid.renewed_at, valid.expires_at, valid.released_at, valid.lost_at, valid.updated_at, valid.terminal_at, valid.terminal_reason_code, valid.terminal_error
-`
-
-type PromoteWorkspaceCaptureParams struct {
-	WorkspaceVersionID pgtype.UUID `json:"workspace_version_id"`
-	OrgID              pgtype.UUID `json:"org_id"`
-	WorkspaceID        pgtype.UUID `json:"workspace_id"`
-	ID                 pgtype.UUID `json:"id"`
-	FencingToken       string      `json:"fencing_token"`
-	FencingGeneration  int64       `json:"fencing_generation"`
-}
-
-type PromoteWorkspaceCaptureRow struct {
-	ID                        pgtype.UUID         `json:"id"`
-	OrgID                     pgtype.UUID         `json:"org_id"`
-	WorkerGroupID             string              `json:"worker_group_id"`
-	ProjectID                 pgtype.UUID         `json:"project_id"`
-	EnvironmentID             pgtype.UUID         `json:"environment_id"`
-	RegionID                  string              `json:"region_id"`
-	WorkerInstanceID          pgtype.UUID         `json:"worker_instance_id"`
-	WorkerEpoch               int64               `json:"worker_epoch"`
-	RuntimeInstanceID         pgtype.UUID         `json:"runtime_instance_id"`
-	WorkspaceID               pgtype.UUID         `json:"workspace_id"`
-	WorkspaceMountID          pgtype.UUID         `json:"workspace_mount_id"`
-	LeaseKind                 WorkspaceLeaseKind  `json:"lease_kind"`
-	State                     WorkspaceLeaseState `json:"state"`
-	OwnerRunID                pgtype.UUID         `json:"owner_run_id"`
-	OwnerProcessID            pgtype.UUID         `json:"owner_process_id"`
-	BaseVersionID             pgtype.UUID         `json:"base_version_id"`
-	AcquiredVersionID         pgtype.UUID         `json:"acquired_version_id"`
-	AcquiredFencingGeneration int64               `json:"acquired_fencing_generation"`
-	FencingToken              string              `json:"fencing_token"`
-	AcquiredAt                pgtype.Timestamptz  `json:"acquired_at"`
-	RenewedAt                 pgtype.Timestamptz  `json:"renewed_at"`
-	ExpiresAt                 pgtype.Timestamptz  `json:"expires_at"`
-	ReleasedAt                pgtype.Timestamptz  `json:"released_at"`
-	LostAt                    pgtype.Timestamptz  `json:"lost_at"`
-	UpdatedAt                 pgtype.Timestamptz  `json:"updated_at"`
-	TerminalAt                pgtype.Timestamptz  `json:"terminal_at"`
-	TerminalReasonCode        pgtype.Text         `json:"terminal_reason_code"`
-	TerminalError             []byte              `json:"terminal_error"`
-}
-
-func (q *Queries) PromoteWorkspaceCapture(ctx context.Context, arg PromoteWorkspaceCaptureParams) (PromoteWorkspaceCaptureRow, error) {
-	row := q.db.QueryRow(ctx, promoteWorkspaceCapture,
-		arg.WorkspaceVersionID,
-		arg.OrgID,
-		arg.WorkspaceID,
-		arg.ID,
-		arg.FencingToken,
-		arg.FencingGeneration,
-	)
-	var i PromoteWorkspaceCaptureRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.WorkerInstanceID,
-		&i.WorkerEpoch,
-		&i.RuntimeInstanceID,
-		&i.WorkspaceID,
-		&i.WorkspaceMountID,
-		&i.LeaseKind,
-		&i.State,
-		&i.OwnerRunID,
-		&i.OwnerProcessID,
-		&i.BaseVersionID,
-		&i.AcquiredVersionID,
-		&i.AcquiredFencingGeneration,
-		&i.FencingToken,
-		&i.AcquiredAt,
-		&i.RenewedAt,
-		&i.ExpiresAt,
-		&i.ReleasedAt,
-		&i.LostAt,
-		&i.UpdatedAt,
-		&i.TerminalAt,
-		&i.TerminalReasonCode,
-		&i.TerminalError,
-	)
-	return i, err
-}
-
-const releaseWorkspaceLease = `-- name: ReleaseWorkspaceLease :one
-UPDATE workspace_leases
-   SET state = 'released', released_at = now(), terminal_at = now(),
-       terminal_reason_code = $1, terminal_error = NULL,
-       updated_at = now()
- WHERE org_id = $2 AND workspace_id = $3
-   AND id = $4 AND state IN ('active','releasing')
-   AND fencing_token = $5
-   AND acquired_fencing_generation = $6
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_process_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
-`
-
-type ReleaseWorkspaceLeaseParams struct {
-	ReasonCode        pgtype.Text `json:"reason_code"`
-	OrgID             pgtype.UUID `json:"org_id"`
-	WorkspaceID       pgtype.UUID `json:"workspace_id"`
-	ID                pgtype.UUID `json:"id"`
-	FencingToken      string      `json:"fencing_token"`
-	FencingGeneration int64       `json:"fencing_generation"`
-}
-
-func (q *Queries) ReleaseWorkspaceLease(ctx context.Context, arg ReleaseWorkspaceLeaseParams) (WorkspaceLease, error) {
-	row := q.db.QueryRow(ctx, releaseWorkspaceLease,
-		arg.ReasonCode,
-		arg.OrgID,
-		arg.WorkspaceID,
-		arg.ID,
-		arg.FencingToken,
-		arg.FencingGeneration,
-	)
-	var i WorkspaceLease
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.WorkerInstanceID,
-		&i.WorkerEpoch,
-		&i.RuntimeInstanceID,
-		&i.WorkspaceID,
-		&i.WorkspaceMountID,
-		&i.LeaseKind,
-		&i.State,
-		&i.OwnerRunID,
-		&i.OwnerProcessID,
-		&i.BaseVersionID,
-		&i.AcquiredVersionID,
-		&i.AcquiredFencingGeneration,
-		&i.FencingToken,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.MountFencingGeneration,
+		&i.FencingTokenHash,
 		&i.AcquiredAt,
 		&i.RenewedAt,
 		&i.ExpiresAt,

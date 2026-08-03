@@ -15,19 +15,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type deploymentVersionMetadata struct {
 	APIVersion            string
-	SDKVersion            string
-	CLIVersion            string
-	BundleFormatVersion   int32
 	WorkerProtocolVersion string
+	ImageCacheMode        string
 }
 
 type casObjectLookupStore interface {
@@ -48,9 +47,18 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	metadata, err := deploymentMetadataFromRequest(r, request)
+	metadata, err := deploymentMetadataFromRequest(request)
 	if err != nil {
 		writeError(w, badRequest(err))
+		return
+	}
+	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	if idempotencyKey == "" {
+		writeError(w, badRequest(errors.New("idempotency_key is required")))
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -69,11 +77,41 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanup()
-	if err := validateDeploymentSourceArtifactArchive(archivePath); err != nil {
+	selection, err := inspectDeploymentSourceArtifactArchive(archivePath)
+	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid deployment source artifact: %w", err)))
 		return
 	}
 	if err := validateDeploymentContentHash(archivePath, request.ContentHash); err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	project, err := s.db.GetProject(r.Context(), db.GetProjectParams{
+		OrgID: pgvalue.UUID(actor.OrgID),
+		ID:    projectID,
+	})
+	if err != nil {
+		writeError(w, errors.New("resolve deployment build region"))
+		return
+	}
+	buildRegionID := project.DefaultRegionID
+	claimRequest, err := idempotency.NewDeploymentCreateRequest(
+		pgvalue.MustUUIDValue(environmentID),
+		pgvalue.MustUUIDValue(projectID),
+		idempotencyKey,
+		idempotency.DeploymentCreateFingerprint{
+			SourceDigest:         strings.TrimSpace(request.ContentHash),
+			LockfileDigest:       selection.LockfileDigest,
+			LockfileName:         selection.LockfileName,
+			NodeVersion:          selection.NodeVersion,
+			ManagerName:          string(selection.Manager.Name),
+			ManagerVersion:       selection.Manager.Version,
+			ManagerIntegrity:     selection.Manager.Integrity,
+			BuildContractVersion: deployment.ProgramBuildContractVersion,
+			ImageCacheMode:       metadata.ImageCacheMode,
+		},
+	)
+	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -101,6 +139,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		s.deleteUnreferencedDeploymentSourceArtifact(r.Context(), actor.OrgID, artifact.Digest)
 	}
 	var response api.DeploymentResponse
+	status := http.StatusCreated
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		store, ok := work.q.(deploymentStore)
 		if !ok {
@@ -112,40 +151,76 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		claims, err := idempotency.TransactionForQueries(work.q)
+		if err != nil {
+			return err
+		}
+		acquired, err := claims.Acquire(r.Context(), claimRequest)
+		if err != nil {
+			return err
+		}
+		if !acquired.New {
+			replayed, err := replayDeploymentCreation(
+				r.Context(),
+				work.q,
+				store,
+				acquired.Claim,
+				pgvalue.UUID(actor.OrgID),
+				projectID,
+			)
+			if err != nil {
+				return err
+			}
+			response = replayed
+			status = http.StatusOK
+			return nil
+		}
+		if project.DefaultRegionID != buildRegionID {
+			return conflict(errors.New("project default region changed; retry deployment creation"))
+		}
 		var createErr error
-		response, createErr = createDeploymentRecords(r.Context(), store, project.DefaultRegionID, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, metadata)
-		return createErr
+		response, createErr = createDeploymentRecords(
+			r.Context(),
+			store,
+			buildRegionID,
+			selection,
+			actor.OrgID,
+			projectID,
+			environmentID,
+			strings.TrimSpace(request.ContentHash),
+			artifact,
+			metadata,
+		)
+		if createErr != nil {
+			return createErr
+		}
+		return completeDeploymentCreation(r.Context(), claims, acquired.Claim, response.ID)
 	})
 	if err != nil {
 		cleanupArtifact()
 		writeDeploymentError(w, s, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, response)
+	writeJSON(w, status, response)
 }
 
-func deploymentMetadataFromRequest(r *http.Request, request api.CreateDeploymentRequest) (deploymentVersionMetadata, error) {
-	apiVersion := firstNonEmptyString(request.APIVersion, requestAPIVersion(r))
+func deploymentMetadataFromRequest(request api.CreateDeploymentRequest) (deploymentVersionMetadata, error) {
+	apiVersion := firstPresentString(request.APIVersion, api.CurrentAPIVersion)
 	if apiVersion != api.CurrentAPIVersion {
 		return deploymentVersionMetadata{}, fmt.Errorf("unsupported deployment api_version %q; current version is %s", apiVersion, api.CurrentAPIVersion)
 	}
-	bundleFormatVersion := request.BundleFormatVersion
-	if bundleFormatVersion == 0 {
-		bundleFormatVersion = api.CurrentBundleFormatVersion
-	}
-	if bundleFormatVersion != api.CurrentBundleFormatVersion {
-		return deploymentVersionMetadata{}, fmt.Errorf("unsupported bundle_format_version %d; current version is %d", bundleFormatVersion, api.CurrentBundleFormatVersion)
-	}
-	workerProtocolVersion := firstNonEmptyString(request.WorkerProtocolVersion, api.CurrentWorkerProtocolVersion)
+	workerProtocolVersion := firstPresentString(request.WorkerProtocolVersion, api.CurrentWorkerProtocolVersion)
 	if workerProtocolVersion != api.CurrentWorkerProtocolVersion {
 		return deploymentVersionMetadata{}, fmt.Errorf("unsupported worker_protocol_version %q; current version is %s", workerProtocolVersion, api.CurrentWorkerProtocolVersion)
 	}
+	imageCacheMode := firstPresentString(request.ImageCacheMode, "prefer")
+	if imageCacheMode != "prefer" && imageCacheMode != "bypass" {
+		return deploymentVersionMetadata{}, fmt.Errorf("unsupported image_cache_mode %q; expected prefer or bypass", imageCacheMode)
+	}
 	return deploymentVersionMetadata{
 		APIVersion:            apiVersion,
-		SDKVersion:            firstNonEmptyString(request.SDKVersion, r.Header.Get(api.SDKVersionHeader)),
-		CLIVersion:            firstNonEmptyString(request.CLIVersion, r.Header.Get(api.CLIVersionHeader), r.Header.Get(api.ClientVersionHeader)),
-		BundleFormatVersion:   bundleFormatVersion,
 		WorkerProtocolVersion: workerProtocolVersion,
+		ImageCacheMode:        imageCacheMode,
 	}, nil
 }
 
@@ -255,21 +330,18 @@ func (s *Server) deleteUnreferencedDeploymentSourceArtifact(ctx context.Context,
 	}
 }
 
-func validateDeploymentSourceArtifactArchive(archivePath string) error {
+func inspectDeploymentSourceArtifactArchive(
+	archivePath string,
+) (deployment.SourceSelection, error) {
 	file, err := os.Open(archivePath)
 	if err != nil {
-		return fmt.Errorf("open deployment source artifact: %w", err)
+		return deployment.SourceSelection{}, fmt.Errorf(
+			"open deployment source artifact: %w",
+			err,
+		)
 	}
 	defer file.Close()
-	destination, err := os.MkdirTemp("", "helmr-deployment-source-validate-*")
-	if err != nil {
-		return fmt.Errorf("create deployment source validation directory: %w", err)
-	}
-	defer os.RemoveAll(destination)
-	if err := archive.ExtractTar(file, destination); err != nil {
-		return err
-	}
-	return nil
+	return deployment.InspectSource(file)
 }
 
 func deploymentArchiveDigest(archivePath string) (string, error) {
@@ -291,12 +363,6 @@ type artifactLister interface {
 
 func deploymentResponseWithArtifacts(ctx context.Context, store artifactLister, deployment db.Deployment) (api.DeploymentResponse, error) {
 	idsToResolve := []pgtype.UUID{deployment.DeploymentSourceArtifactID}
-	if deployment.BuildManifestArtifactID.Valid {
-		idsToResolve = append(idsToResolve, deployment.BuildManifestArtifactID)
-	}
-	if deployment.DeploymentManifestArtifactID.Valid {
-		idsToResolve = append(idsToResolve, deployment.DeploymentManifestArtifactID)
-	}
 	artifacts, err := scopedArtifactsByID(ctx, store, deployment.OrgID, deployment.ProjectID, deployment.EnvironmentID, idsToResolve)
 	if err != nil {
 		return api.DeploymentResponse{}, err
@@ -305,15 +371,7 @@ func deploymentResponseWithArtifacts(ctx context.Context, store artifactLister, 
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	buildManifestDigest, err := optionalDeploymentArtifactDigest(artifacts, deployment.BuildManifestArtifactID)
-	if err != nil {
-		return api.DeploymentResponse{}, err
-	}
-	deploymentManifestDigest, err := optionalDeploymentArtifactDigest(artifacts, deployment.DeploymentManifestArtifactID)
-	if err != nil {
-		return api.DeploymentResponse{}, err
-	}
-	return deploymentResponse(deployment, sourceArtifact, buildManifestDigest, deploymentManifestDigest), nil
+	return deploymentResponse(deployment, sourceArtifact), nil
 }
 
 func deploymentSourceArtifact(artifacts map[pgtype.UUID]db.Artifact, artifactID pgtype.UUID) (api.DeploymentSourceArtifact, error) {
@@ -326,17 +384,6 @@ func deploymentSourceArtifact(artifacts map[pgtype.UUID]db.Artifact, artifactID 
 		SizeBytes: artifact.SizeBytes,
 		MediaType: artifact.MediaType,
 	}, nil
-}
-
-func optionalDeploymentArtifactDigest(artifacts map[pgtype.UUID]db.Artifact, artifactID pgtype.UUID) (string, error) {
-	if !artifactID.Valid {
-		return "", nil
-	}
-	artifact, err := requiredArtifact(artifacts, artifactID)
-	if err != nil {
-		return "", err
-	}
-	return artifact.Digest, nil
 }
 
 func scopedArtifactsByID(ctx context.Context, store artifactLister, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, artifactIDs []pgtype.UUID) (map[pgtype.UUID]db.Artifact, error) {

@@ -1,22 +1,11 @@
-# Helmr AWS Worker Image Module
+# Worker image module
 
-This module creates an EC2 Image Builder pipeline for the worker AMI consumed by
-`modules/worker`.
+This module builds the Helmr Worker AMI from one exact source ref. The image
+contains the Worker binaries, certified Firecracker guest images with the
+pinned guest BuildKit daemon, and the host tools needed for Platform Artifact
+acquisition. The Worker host does not run a BuildKit service.
 
-The image build clones the configured Helmr repository/ref, enters the Nix `smoke-linux` shell, and
-installs:
-
-- `helmr-worker`, `helmr`, `helmr-control`, and `helmr-dispatcher`
-- Firecracker and jailer
-- BuildKit and OCI runtime tooling
-- CNI plugins including `tc-redirect-tap`
-- guest boot artifacts under `/var/lib/helmr/images/guest/out`
-- `buildkit.service` and `helmr-worker.service`
-
-Run the emitted `image_pipeline_arn` with EC2 Image Builder, then pass the produced AMI ID to the
-worker module as `worker_ami_id`.
-
-By default the module distributes a private AMI in the provider region and encrypts the root volume
-snapshot. For official customer releases, set `distribution_regions` to the supported regions,
-`ami_public=true`, and `root_volume_encrypted=false`. AWS public AMIs cannot use encrypted
-snapshots.
+Managed Runtime, Manager, and standard-toolchain trees are not baked into the
+AMI. A build-capable Worker host acquires exact Control-assigned selectors,
+publishes immutable trees to the Platform Artifact CAS, and tenant build work
+receives only Control-pinned digests.

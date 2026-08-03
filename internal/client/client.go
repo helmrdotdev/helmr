@@ -15,13 +15,15 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/version"
 )
 
 type HTTPError struct {
 	StatusCode int
 	Status     string
 	Message    string
+	Code       string
+	Retryable  bool
+	RequestID  string
 }
 
 func (e *HTTPError) HTTPStatusCode() int {
@@ -47,8 +49,6 @@ type Client struct {
 	baseURL             *url.URL
 	bearer              string
 	httpClient          *http.Client
-	clientName          string
-	clientVersion       string
 	sessionScopedRoutes bool
 	worker              workerAuth
 }
@@ -108,13 +108,6 @@ func WithHTTPClient(httpClient *http.Client) Option {
 	}
 }
 
-func WithClientIdentity(name string, version string) Option {
-	return func(client *Client) {
-		client.clientName = strings.TrimSpace(name)
-		client.clientVersion = strings.TrimSpace(version)
-	}
-}
-
 func New(baseURL string, opts ...Option) (*Client, error) {
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
@@ -133,10 +126,8 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 		return nil, err
 	}
 	client := &Client{
-		baseURL:       parsed,
-		httpClient:    http.DefaultClient,
-		clientName:    "go",
-		clientVersion: strings.TrimSpace(version.Version),
+		baseURL:    parsed,
+		httpClient: http.DefaultClient,
 	}
 	for _, opt := range opts {
 		opt(client)
@@ -328,19 +319,6 @@ func (c *Client) postJSON(ctx context.Context, path string, in any, out any) err
 	return c.doJSON(req, out)
 }
 
-func (c *Client) putJSON(ctx context.Context, path string, in any, out any) error {
-	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(in); err != nil {
-		return fmt.Errorf("encode request: %w", err)
-	}
-	req, err := c.newRequestWithBearer(ctx, http.MethodPut, path, &body, c.bearer)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("content-type", "application/json")
-	return c.doJSON(req, out)
-}
-
 func (c *Client) patchJSON(ctx context.Context, path string, in any, out any) error {
 	var body bytes.Buffer
 	if err := json.NewEncoder(&body).Encode(in); err != nil {
@@ -379,15 +357,6 @@ func (c *Client) newRequestWithBearer(ctx context.Context, method string, path s
 	}
 	req.Header.Set("accept", "application/json")
 	req.Header.Set(api.APIVersionHeader, api.CurrentAPIVersion)
-	if c.clientVersion != "" {
-		req.Header.Set(api.ClientVersionHeader, c.clientVersion)
-		switch c.clientName {
-		case "cli":
-			req.Header.Set(api.CLIVersionHeader, c.clientVersion)
-		case "sdk":
-			req.Header.Set(api.SDKVersionHeader, c.clientVersion)
-		}
-	}
 	if bearer != "" {
 		req.Header.Set("authorization", "Bearer "+bearer)
 	}
@@ -424,10 +393,20 @@ func decodeError(resp *http.Response) error {
 
 func decodeErrorBody(statusCode int, status string, body []byte) error {
 	var payload struct {
-		Error string `json:"error"`
+		Error     string `json:"error"`
+		Code      string `json:"code"`
+		Retryable bool   `json:"retryable"`
+		RequestID string `json:"requestId"`
 	}
 	if err := json.Unmarshal(body, &payload); err == nil && payload.Error != "" {
-		return &HTTPError{StatusCode: statusCode, Status: status, Message: payload.Error}
+		return &HTTPError{
+			StatusCode: statusCode,
+			Status:     status,
+			Message:    payload.Error,
+			Code:       payload.Code,
+			Retryable:  payload.Retryable,
+			RequestID:  payload.RequestID,
+		}
 	}
 	return &HTTPError{StatusCode: statusCode, Status: status}
 }

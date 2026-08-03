@@ -1,5 +1,11 @@
 aws_region = "us-east-1"
 name       = "helmr-quickstart"
+region_id  = "us-east-1"
+
+platform_store_uri         = "s3://replace-with-bootstrap-platform-store/objects"
+platform_store_bucket_arn  = "arn:aws:s3:::replace-with-bootstrap-platform-store"
+platform_store_kms_key_arn = "arn:aws:kms:us-east-1:123456789012:key/replace-me"
+build_policy_digest       = "sha256:replace-with-64-lowercase-hexadecimal-digits"
 
 helmr_version = "replace-with-helmr-release-version"
 
@@ -40,7 +46,10 @@ redis_node_count = 1
 # Optional custom builds. Leave null to use the official release artifacts.
 control_image = null
 worker_ami_id = null
-worker_allowed_ami_ids = []
+worker_network_blocked_ipv4_cidrs = [
+  "10.0.0.0/8",
+  "169.254.0.0/16",
+]
 
 # Optional smoke worker. The official worker AMI is resolved from helmr_version
 # and aws_region. NAT Gateway is required because workers run in private subnets.

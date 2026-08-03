@@ -10,6 +10,8 @@ SELECT workers.id,
            ELSE 'worker_observation_stale'
        END::text AS reason
   FROM worker_instances AS workers
+  JOIN worker_groups AS groups
+    ON groups.id = workers.worker_group_id
   LEFT JOIN worker_observations AS observations
     ON observations.worker_instance_id = workers.id
    AND observations.worker_epoch = workers.current_epoch
@@ -23,7 +25,8 @@ SELECT workers.id,
        OR
        (workers.state IN ('active', 'draining')
         AND COALESCE(observations.observed_at, workers.epoch_started_at, workers.updated_at)
-            < sqlc.arg(observation_stale_before))
+            < transaction_timestamp()
+              - groups.observation_ttl_seconds * interval '1 second')
    )
  ORDER BY COALESCE(observations.observed_at, workers.epoch_started_at, workers.updated_at),
           workers.id
@@ -33,21 +36,13 @@ SELECT workers.id,
 -- name: RecheckAndFenceStaleWorkerInstance :one
 WITH target AS (
     UPDATE worker_instances AS workers
-       SET state = CASE
-               WHEN workers.current_epoch IS NULL THEN 'disabled'::worker_instance_state
-               ELSE 'lost'::worker_instance_state
-           END,
+       SET state = 'lost',
            claim_version = workers.claim_version + 1,
-           disabled_at = CASE
-               WHEN workers.current_epoch IS NULL THEN COALESCE(workers.disabled_at, now())
-               ELSE workers.disabled_at
-           END,
-           lost_at = CASE
-               WHEN workers.current_epoch IS NOT NULL THEN COALESCE(workers.lost_at, now())
-               ELSE workers.lost_at
-           END,
+           lost_at = COALESCE(workers.lost_at, now()),
            updated_at = now()
+      FROM worker_groups AS groups
      WHERE workers.id = sqlc.arg(id)
+       AND groups.id = workers.worker_group_id
        AND workers.worker_group_id = sqlc.arg(worker_group_id)
        AND workers.current_epoch IS NOT DISTINCT FROM sqlc.arg(expected_epoch)
        AND workers.state IN ('registering', 'active', 'draining')
@@ -70,7 +65,8 @@ WITH target AS (
                         AND observations.worker_epoch = workers.current_epoch),
                     workers.epoch_started_at,
                     workers.updated_at
-                ) < sqlc.arg(observation_stale_before))
+                ) < transaction_timestamp()
+                  - groups.observation_ttl_seconds * interval '1 second')
        )
     RETURNING workers.*
 ), revoked_credentials AS (
@@ -93,29 +89,22 @@ WITH target AS (
     UPDATE runtime_instances AS runtimes
        SET observed_state = 'lost', observed_version = runtimes.observed_version + 1,
            observed_at = now(), lost_at = now(), terminal_at = now(),
-           terminal_reason_code = sqlc.arg(reason_code), updated_at = now()
+           terminal_reason_code = sqlc.arg(reason_code),
+           reserved_run_id = NULL, reserved_attempt_number = NULL,
+           reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+           reservation_expires_at = NULL, updated_at = now()
       FROM target
      WHERE runtimes.worker_instance_id = target.id
        AND runtimes.worker_epoch = target.current_epoch
        AND runtimes.reclaimed_at IS NULL
        AND runtimes.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
     RETURNING runtimes.id
-), lost_slots AS (
-    UPDATE worker_network_slots AS slots
-       SET state = 'lost', generation = slots.generation + 1,
-           lost_at = now(), state_reason_code = sqlc.arg(reason_code), updated_at = now()
-      FROM target
-     WHERE slots.worker_instance_id = target.id
-       AND slots.worker_epoch = target.current_epoch
-       AND slots.state IN ('assigned', 'bound', 'reclaiming', 'quarantined')
-    RETURNING slots.id
 )
--- Immediate fencing revokes credentials and terminalizes mount/runtime/slot
+-- Immediate fencing revokes credentials and terminalizes mount/runtime
 -- observations. Run/build/workspace authority is recovered by its canonical
 -- expiry and recovery loops; this transition does not imply zero authority.
 SELECT target.id, target.worker_group_id, target.current_epoch, target.state
   FROM target
  WHERE (SELECT count(*) FROM revoked_credentials) >= 0
    AND (SELECT count(*) FROM lost_mounts) >= 0
-   AND (SELECT count(*) FROM lost_runtimes) >= 0
-   AND (SELECT count(*) FROM lost_slots) >= 0;
+   AND (SELECT count(*) FROM lost_runtimes) >= 0;

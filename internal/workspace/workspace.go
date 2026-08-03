@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -47,12 +48,15 @@ func CreateWorkspaceArtifactFromRoot(root string, tempDir string, trustedRoot st
 }
 
 func CreateWorkspaceArtifactFromRootWithExcludes(root string, tempDir string, trustedRoot string, excludePatterns []string) (WorkspaceArtifact, func(), error) {
+	return CreateWorkspaceArtifactFromRootWithExcludesContext(context.Background(), root, tempDir, trustedRoot, excludePatterns)
+}
+
+func CreateWorkspaceArtifactFromRootWithExcludesContext(ctx context.Context, root string, tempDir string, trustedRoot string, excludePatterns []string) (WorkspaceArtifact, func(), error) {
 	if err := validateRootInside(root, trustedRoot); err != nil {
 		return WorkspaceArtifact{}, func() {}, err
 	}
-	excludes := append([]string{"**/.git/**"}, excludePatterns...)
-	tarArchive, cleanup, err := archive.CreateTarWithOptions(root, tempDir, archive.TarOptions{
-		ExcludePatterns: excludes,
+	tarArchive, cleanup, err := archive.CreateTarWithOptionsContext(ctx, root, tempDir, archive.TarOptions{
+		ExcludePatterns: append([]string(nil), excludePatterns...),
 		MaxBytes:        MaxArtifactExtractedBytes,
 		MaxEntries:      MaxArtifactEntries,
 	})

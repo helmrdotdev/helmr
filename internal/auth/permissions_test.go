@@ -74,26 +74,56 @@ func TestGranularWorkspacePermissionsDoNotEscalate(t *testing.T) {
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		Permissions: []Permission{
-			PermissionFilesRead,
-			PermissionVersionsRead,
-			PermissionExecRead,
-			PermissionPtyRead,
+			PermissionWorkspacesRead,
+			PermissionWorkspaceFilesRead,
 		},
 	}
 
 	for _, permission := range []Permission{
-		PermissionWorkspaceLifecycleManage,
-		PermissionFilesWrite,
-		PermissionVersionsCapture,
-		PermissionVersionsRestore,
-		PermissionVersionsDiff,
-		PermissionExecCreate,
-		PermissionExecManage,
-		PermissionPtyCreate,
-		PermissionPtyManage,
+		PermissionWorkspacesCreate,
+		PermissionWorkspacesDelete,
+		PermissionWorkspaceExecCreate,
 	} {
 		if actor.HasPermission(permission, scope) {
 			t.Fatalf("read-only workspace grants allowed %s", permission)
 		}
+	}
+}
+
+func TestActorInputPermissionIsWritableButNotReadableRoleAuthority(t *testing.T) {
+	if !RoleAllows(RoleDeveloper, PermissionActorsInputSend) {
+		t.Fatal("developer should be allowed to send Actor input")
+	}
+	if RoleAllows(RoleViewer, PermissionActorsInputSend) {
+		t.Fatal("viewer should not be allowed to send Actor input")
+	}
+	normalized := normalizeAPIKeyGrantPermission(string(PermissionActorsInputSend))
+	if len(normalized) != 1 || normalized[0] != PermissionActorsInputSend {
+		t.Fatalf("normalized Actor input permission = %v", normalized)
+	}
+}
+
+func TestActorStartPermissionIsWritableButNotReadableRoleAuthority(t *testing.T) {
+	if !RoleAllows(RoleDeveloper, PermissionActorsStart) {
+		t.Fatal("developer should be allowed to start an Actor")
+	}
+	if RoleAllows(RoleViewer, PermissionActorsStart) {
+		t.Fatal("viewer should not be allowed to start an Actor")
+	}
+	normalized := normalizeAPIKeyGrantPermission(string(PermissionActorsStart))
+	if len(normalized) != 1 || normalized[0] != PermissionActorsStart {
+		t.Fatalf("normalized Actor start permission = %v", normalized)
+	}
+}
+
+func TestActorReadPermissionAllowsReadOnlyRoles(t *testing.T) {
+	for _, role := range []Role{RoleOwner, RoleAdmin, RoleDeveloper, RoleViewer} {
+		if !RoleAllows(role, PermissionActorsRead) {
+			t.Fatalf("%s should be allowed to read Actors", role)
+		}
+	}
+	normalized := normalizeAPIKeyGrantPermission(string(PermissionActorsRead))
+	if len(normalized) != 1 || normalized[0] != PermissionActorsRead {
+		t.Fatalf("normalized Actor read permission = %v", normalized)
 	}
 }

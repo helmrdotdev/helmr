@@ -1,131 +1,176 @@
-import { postJson, request } from "./api";
+import { request } from "./api";
 
 export type RunStatus =
   | "queued"
   | "running"
   | "waiting"
+  | "retry-delayed"
+  | "cancel-requested"
   | "succeeded"
   | "failed"
   | "cancelled"
-  | "expired";
+  | "expired"
+  | "system-failed";
 
 export type RunFilter = RunStatus | "live" | "all";
-
 export type TaskOutput = unknown;
-
-export type PendingWait = {
-  id: string;
-  kind?: string;
-  status?: string;
-  params?: unknown;
-  metadata?: unknown;
-  tags?: string[];
-  timeout?: number;
-  created_at: string;
-};
 
 export type Run = {
   id: string;
-  project_id: string;
-  environment_id: string;
-  version: string;
-  deployment_version: string;
-  session_id: string;
-  api_version: string;
-  sdk_version?: string;
-  cli_version?: string;
-  attempt_number?: number | null;
-  task_id: string;
   status: RunStatus;
-  exit_code: number | null;
-  output?: TaskOutput;
+  entrypoint: {
+    kind: string;
+    id: string;
+  };
+  deployment: {
+    id: string;
+    version: string;
+  };
+  workspace_id: string;
+  actor_id?: string;
+  parent_run_id?: string;
+  parent_owns_lifecycle?: boolean;
+  current_attempt_number: number;
+  cause: {
+    type: string;
+    parent_run_id?: string;
+    schedule_id?: string;
+    scheduled_at?: string;
+    last_scheduled_at?: string;
+    timezone?: string;
+  };
+  metadata: unknown;
+  tags: string[];
+  output?: unknown;
+  terminal_reason_code?: string;
+  error?: {
+    code: string;
+    message: string;
+    retryable: boolean;
+    details?: unknown;
+  };
   created_at: string;
-  updated_at: string;
-  pending_wait?: PendingWait;
+  started_at?: string;
+  terminal_at?: string;
 };
 
 export type ListRunsResponse = {
   runs: Run[];
+  next_cursor?: string;
 };
 
-export type RunCountsResponse = Record<RunStatus, number>;
+export type RunLogRecord = {
+  id: string;
+  kind: "stdout" | "stderr" | "structured";
+  run_id: string;
+  attempt_number: number;
+  level?: string;
+  message?: string;
+  attributes?: unknown;
+  observed_sequence?: number;
+  content_base64?: string;
+  bytes?: number;
+  at: string;
+};
 
-export type LogSnapshot = {
-  stdout_base64: string;
-  stderr_base64: string;
-  cursor: string;
-  truncated: boolean;
+export type RunLogPage = {
+  logs: RunLogRecord[];
+  next_cursor?: string;
 };
 
 export type RunEventRecord = {
   id: string;
   run_id?: string | null;
   attempt_number?: number | null;
+  category: string;
+  severity: string;
+  source: string;
   kind: string;
   message: string;
   at: string;
+  occurred_at: string;
+  redaction_class: string;
   attributes: unknown;
 };
 
 export type RunEventPage = {
   events: RunEventRecord[];
-  cursor: string;
   next_cursor?: string | null;
 };
 
-export type ListRunEventsOptions = {
+export type ListRunTelemetryOptions = {
   cursor?: string;
   limit?: number;
 };
 
-export type CompletePendingTokenResponse = {
-  status: "completed" | "already_completed";
-};
-
 export type ListRunsOptions = {
   filter?: RunFilter;
+  statuses?: RunStatus[];
+  cursor?: string;
   limit?: number;
   projectID: string;
   environmentID: string;
 };
 
-export async function listRuns(options: ListRunsOptions): Promise<ListRunsResponse> {
-  const filter = options.filter ?? "all";
-  const rowLimit = options.limit ?? 100;
-  const params = new URLSearchParams({ status: filter, limit: String(rowLimit) });
-  return request<ListRunsResponse>(`${environmentPath(options.projectID, options.environmentID)}/runs?${params.toString()}`);
-}
+const LIVE_STATUSES: RunStatus[] = [
+  "queued",
+  "running",
+  "waiting",
+  "retry-delayed",
+  "cancel-requested",
+];
 
-export async function countRuns(options: Pick<ListRunsOptions, "projectID" | "environmentID">): Promise<RunCountsResponse> {
-  return request<RunCountsResponse>(`${environmentPath(options.projectID, options.environmentID)}/runs/counts`);
+export async function listRuns(options: ListRunsOptions): Promise<ListRunsResponse> {
+  const params = new URLSearchParams();
+  const statuses =
+    options.statuses ??
+    (options.filter === "live"
+      ? LIVE_STATUSES
+      : options.filter && options.filter !== "all"
+        ? [options.filter]
+        : []);
+  for (const status of statuses) params.append("status", status);
+  if (options.cursor) params.set("cursor", options.cursor);
+  params.set("limit", String(options.limit ?? 100));
+  return request<ListRunsResponse>(
+    `${environmentPath(options.projectID, options.environmentID)}/runs?${params.toString()}`,
+  );
 }
 
 export async function getRun(id: string, projectID: string, environmentID: string): Promise<Run> {
   return request<Run>(`${environmentPath(projectID, environmentID)}/runs/${encodeURIComponent(id)}`);
 }
 
-export async function getRunLogs(id: string, projectID: string, environmentID: string): Promise<LogSnapshot> {
-  return request<LogSnapshot>(`${environmentPath(projectID, environmentID)}/runs/${encodeURIComponent(id)}/logs`);
-}
-
-export async function getRunEvents(id: string, projectID: string, environmentID: string, options: ListRunEventsOptions = {}): Promise<RunEventPage> {
-  const params = new URLSearchParams();
-  if (options.cursor !== undefined) params.set("cursor", String(options.cursor));
-  if (options.limit !== undefined) params.set("limit", String(options.limit));
-  const query = params.toString();
-  return request<RunEventPage>(`${environmentPath(projectID, environmentID)}/runs/${encodeURIComponent(id)}/events${query ? `?${query}` : ""}`);
-}
-
-export async function completePendingToken(
-  tokenID: string,
-  data: unknown,
+export async function getRunLogs(
+  id: string,
   projectID: string,
   environmentID: string,
-): Promise<CompletePendingTokenResponse> {
-  return postJson<{ data: unknown }, CompletePendingTokenResponse>(
-    `${environmentPath(projectID, environmentID)}/tokens/${encodeURIComponent(tokenID)}/complete`,
-    { data },
+  options: ListRunTelemetryOptions = {},
+): Promise<RunLogPage> {
+  const params = telemetryParams(options);
+  return request<RunLogPage>(
+    `${environmentPath(projectID, environmentID)}/runs/${encodeURIComponent(id)}/logs${params}`,
   );
+}
+
+export async function getRunEvents(
+  id: string,
+  projectID: string,
+  environmentID: string,
+  options: ListRunTelemetryOptions = {},
+): Promise<RunEventPage> {
+  const params = telemetryParams(options);
+  return request<RunEventPage>(
+    `${environmentPath(projectID, environmentID)}/runs/${encodeURIComponent(id)}/events${params}`,
+  );
+}
+
+function telemetryParams(options: ListRunTelemetryOptions): string {
+  const params = new URLSearchParams();
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  const query = params.toString();
+  return query ? `?${query}` : "";
 }
 
 function environmentPath(projectID: string | undefined, environmentID: string | undefined): string {

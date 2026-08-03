@@ -7,7 +7,7 @@ CONSOLE_OUT := $(CURDIR)/internal/console/out
 
 MIGRATE_VERSION ?= v4.19.1
 
-.PHONY: all tools generate proto sqlc fmt modernize modernize-check test go-test test-race go-test-race test-linux-compile lint go-lint build go-build console-build verify dev dev-console-stack images boot-artifacts clean migration migrate-up migrate-down doctor doctor-linux
+.PHONY: all tools generate datapath-bpf proto sqlc fmt modernize modernize-check test go-test test-race go-test-race test-linux-compile lint go-lint build go-build console-build verify dev dev-console-stack images boot-artifacts clean migration migrate-up migrate-down doctor doctor-linux
 
 all: verify
 
@@ -15,10 +15,17 @@ tools:
 	@command -v protoc-gen-go >/dev/null
 	@command -v protoc-gen-es >/dev/null
 
-generate: proto sqlc
+generate: datapath-bpf proto sqlc
+
+datapath-bpf:
+	$(GO) generate ./internal/worker/datapath
 
 proto: tools
-	$(BUF) generate proto --template proto/buf.gen.yaml --path proto/bundle.proto --path proto/run.proto --path proto/workspace.proto
+	$(BUF) generate proto --template proto/buf.gen.yaml --path proto/run.proto --path proto/workspace.proto
+	@for file in proto/typescript/src/gen/*.ts; do \
+		awk 'NF { last = NR } { lines[NR] = $$0 } END { for (i = 1; i <= last; i++) print lines[i] }' "$$file" >"$$file.tmp"; \
+		mv "$$file.tmp" "$$file"; \
+	done
 
 sqlc:
 	$(SQLC) generate
@@ -48,10 +55,7 @@ test-linux-compile:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) test -c -o /tmp/helmr-guestd-linux-amd64.test ./cmd/guestd
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) test -c -o /tmp/helmr-firecracker-linux-amd64.test ./internal/firecracker
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) test -c -o /tmp/helmr-worker-linux-amd64.test ./cmd/helmr-worker
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) test -c -o /tmp/helmr-guestd-linux-arm64.test ./cmd/guestd
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) test -c -o /tmp/helmr-firecracker-linux-arm64.test ./internal/firecracker
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) test -c -o /tmp/helmr-worker-linux-arm64.test ./cmd/helmr-worker
-	rm -f /tmp/helmr-guestd-linux-amd64.test /tmp/helmr-firecracker-linux-amd64.test /tmp/helmr-worker-linux-amd64.test /tmp/helmr-guestd-linux-arm64.test /tmp/helmr-firecracker-linux-arm64.test /tmp/helmr-worker-linux-arm64.test
+	rm -f /tmp/helmr-guestd-linux-amd64.test /tmp/helmr-firecracker-linux-amd64.test /tmp/helmr-worker-linux-amd64.test
 
 lint: go-lint
 

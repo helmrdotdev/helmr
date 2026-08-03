@@ -2,87 +2,29 @@ package executor
 
 import (
 	"context"
+	"errors"
+	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/substrate"
+	"github.com/helmrdotdev/helmr/internal/runtime"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
 type RuntimeSubstrateResolver interface {
-	Resolve(context.Context, string, substrate.Source) (substrate.Result, error)
-}
-
-type RuntimeSubstrateDigestLookup interface {
-	LookupDigest(context.Context, string) (substrate.Result, error)
+	Resolve(context.Context, string, runtime.Source) (runtime.Result, error)
 }
 
 type RuntimeSubstrateRegistrar interface {
 	RegisterRuntimeSubstrate(context.Context, api.WorkerRuntimeSubstrateRegisterRequest) (api.WorkerRuntimeSubstrateRegisterResponse, error)
 }
 
-type RuntimeSubstrateLookup interface {
-	LookupRuntimeSubstrate(context.Context, api.WorkerRuntimeSubstrateLookupRequest) (api.WorkerRuntimeSubstrateLookupResponse, error)
-}
-
 func runtimeSubstrateTopology(ctx context.Context, resolver RuntimeSubstrateResolver, imagePath string, mount api.WorkerWorkspaceMount) (vm.RuntimeTopology, error) {
-	return runtimeSubstrateTopologyFromSource(ctx, resolver, imagePath, api.WorkerRuntimeSubstrateSource{
-		DeploymentSandboxID:        mount.DeploymentSandboxID,
-		SandboxImageArtifact:       mount.SandboxImageArtifact,
-		SandboxImageArtifactFormat: mount.SandboxImageArtifactFormat,
-		ImageDigest:                mount.ImageDigest,
-		ImageFormat:                mount.ImageFormat,
-		RootfsDigest:               mount.RootfsDigest,
-		RuntimeABI:                 mount.RuntimeABI,
-		GuestdABI:                  mount.GuestdABI,
-		AdapterABI:                 mount.AdapterABI,
-		WorkspaceMountPath:         mount.WorkspaceMountPath,
-	})
-}
-
-func runtimeSubstrateSourceFromPreparedSource(source api.WorkerPreparedRuntimeSource) *api.WorkerRuntimeSubstrateSource {
-	return &api.WorkerRuntimeSubstrateSource{
-		DeploymentSandboxID:        source.DeploymentSandboxID,
-		SandboxImageArtifact:       source.SandboxImageArtifact,
-		SandboxImageArtifactFormat: source.SandboxImageArtifactFormat,
-		RootfsDigest:               source.RootfsDigest,
-		ImageDigest:                source.ImageDigest,
-		ImageFormat:                source.ImageFormat,
-		WorkspaceMountPath:         source.WorkspaceMountPath,
-		RuntimeABI:                 source.RuntimeABI,
-		GuestdABI:                  source.GuestdABI,
-		AdapterABI:                 source.AdapterABI,
-		RuntimeSubstrate:           source.RuntimeSubstrate,
-	}
-}
-
-func runtimeSubstrateSourceFromWorkspaceMount(mount api.WorkerWorkspaceMount) *api.WorkerRuntimeSubstrateSource {
-	return &api.WorkerRuntimeSubstrateSource{
-		DeploymentSandboxID:        mount.DeploymentSandboxID,
-		SandboxImageArtifact:       mount.SandboxImageArtifact,
-		SandboxImageArtifactFormat: mount.SandboxImageArtifactFormat,
-		RootfsDigest:               mount.RootfsDigest,
-		ImageDigest:                mount.ImageDigest,
-		ImageFormat:                mount.ImageFormat,
-		WorkspaceMountPath:         mount.WorkspaceMountPath,
-		RuntimeABI:                 mount.RuntimeABI,
-		GuestdABI:                  mount.GuestdABI,
-		AdapterABI:                 mount.AdapterABI,
-	}
-}
-
-func runtimeSubstrateTopologyFromSource(ctx context.Context, resolver RuntimeSubstrateResolver, imagePath string, source api.WorkerRuntimeSubstrateSource) (vm.RuntimeTopology, error) {
 	if resolver == nil {
 		return vm.RuntimeTopology{}, nil
 	}
-	result, err := resolver.Resolve(ctx, imagePath, substrate.Source{
-		SandboxArtifactDigest: source.SandboxImageArtifact.Digest,
-		SandboxArtifactFormat: source.SandboxImageArtifactFormat,
-		ImageDigest:           source.ImageDigest,
-		RootfsDigest:          source.RootfsDigest,
-		RuntimeABI:            source.RuntimeABI,
-		GuestdABI:             source.GuestdABI,
-		AdapterABI:            source.AdapterABI,
-		WorkspaceMountPath:    source.WorkspaceMountPath,
+	result, err := resolver.Resolve(ctx, imagePath, runtime.Source{
+		WorkspaceImageDigest:    mount.WorkspaceImage.Digest,
+		WorkspaceImageMediaType: mount.WorkspaceImage.MediaType,
 	})
 	if err != nil {
 		return vm.RuntimeTopology{}, err
@@ -93,6 +35,7 @@ func runtimeSubstrateTopologyFromSource(ctx context.Context, resolver RuntimeSub
 		Format:     result.Format,
 		BuilderABI: result.BuilderABI,
 		LayoutABI:  result.LayoutABI,
+		SizeBytes:  result.SizeBytes,
 	}}, nil
 }
 
@@ -108,4 +51,37 @@ func runtimeSubstrateID(artifact *api.WorkerRuntimeSubstrate) string {
 		return ""
 	}
 	return artifact.ID
+}
+
+func registerRuntimeSubstrate(
+	ctx context.Context,
+	registrar RuntimeSubstrateRegistrar,
+	deploymentDefinitionID string,
+	substrate *vm.RuntimeSubstrate,
+) (*api.WorkerRuntimeSubstrate, error) {
+	if substrate == nil {
+		return nil, nil
+	}
+	if registrar == nil {
+		return nil, errors.New("runtime substrate registrar is required")
+	}
+	if strings.TrimSpace(deploymentDefinitionID) == "" {
+		return nil, errors.New("runtime substrate deployment_definition_id is required")
+	}
+	response, err := registrar.RegisterRuntimeSubstrate(
+		ctx,
+		api.WorkerRuntimeSubstrateRegisterRequest{
+			DeploymentDefinitionID: strings.TrimSpace(deploymentDefinitionID),
+			SubstrateDigest:        strings.TrimSpace(substrate.Digest),
+			Format:                 strings.TrimSpace(substrate.Format),
+			BuilderABI:             strings.TrimSpace(substrate.BuilderABI),
+			LayoutABI:              strings.TrimSpace(substrate.LayoutABI),
+			SizeBytes:              substrate.SizeBytes,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	registered := response.RuntimeSubstrate
+	return &registered, nil
 }

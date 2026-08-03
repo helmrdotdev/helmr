@@ -13,7 +13,7 @@ let
     pkgs.runCommand name
       {
         nativeBuildInputs = [
-          pkgs.go
+          pkgs.go_1_26
           pkgs.git
         ];
         src = ../.;
@@ -58,24 +58,12 @@ let
   checkedFirecrackerHostModule =
     let
       cfg = firecrackerHostEval.config;
-      buildkitService = cfg.systemd.services.helmr-buildkit.serviceConfig;
-      buildkitExecStart = buildkitService.ExecStart;
       workerGroups = cfg.users.users.helmr-ci.extraGroups;
     in
-    require (buildkitService.User == "helmr-buildkit") "helmr-buildkit service user changed"
-    && require (buildkitService.Group == "helmr-buildkit") "helmr-buildkit service group changed"
-    && require (cfg.boot.kernel.sysctl."net.ipv4.ip_forward" == 1) "IPv4 forwarding is not enabled"
-    && require (
-      cfg.boot.kernel.sysctl."user.max_user_namespaces" == 16384
-    ) "user namespace limit changed"
+    require (cfg.boot.kernel.sysctl."net.ipv4.ip_forward" == 1) "IPv4 forwarding is not enabled"
     && require (lib.elem "kvm" cfg.boot.kernelModules) "kvm kernel module is not requested"
     && require (lib.elem "kvm" workerGroups) "firecracker users are not added to kvm"
-    && require (lib.elem "helmr-buildkit" workerGroups) "firecracker users are not added to helmr-buildkit"
-    && require (lib.hasInfix ''KERNEL=="kvm", GROUP="helmr-vmm", MODE="0660"'' cfg.services.udev.extraRules) "kvm udev rule changed"
-    && require (lib.hasInfix "rootlesskit" buildkitExecStart) "BuildKit service no longer starts through rootlesskit"
-    && require (lib.hasInfix "--net=slirp4netns" buildkitExecStart) "BuildKit service no longer uses slirp4netns"
-    && require (lib.hasInfix "buildkitd" buildkitExecStart) "BuildKit service no longer starts buildkitd"
-    && require (lib.hasInfix "unix:///run/helmr/buildkit/buildkitd.sock" buildkitExecStart) "BuildKit socket path changed";
+    && require (lib.hasInfix ''KERNEL=="kvm", GROUP="helmr-vmm", MODE="0660"'' cfg.services.udev.extraRules) "kvm udev rule changed";
 
   firecrackerHostModuleCheck =
     assert checkedFirecrackerHostModule;
@@ -104,7 +92,81 @@ in
       exit 1
     fi
   '';
+  squashfs-tools = helmrPackages.squashfsTools;
 }
-// lib.optionalAttrs pkgs.stdenv.isLinux {
-  firecracker-host-module = firecrackerHostModuleCheck;
-}
+// lib.optionalAttrs (system == "x86_64-linux") (
+  let
+    platformAcquisitionCgroupTestBinary =
+      pkgs.runCommand "platform-acquisition-cgroup-test-binary"
+        {
+          nativeBuildInputs = [ pkgs.go_1_26 ];
+          src = ../.;
+        }
+        ''
+          cp -R "$src" source
+          chmod -R u+w source
+          cd source
+          export HOME="$TMPDIR/home"
+          mkdir -p "$HOME" "$out/bin"
+          cp -R ${helmrPackages.helmr.goModules} vendor
+          export GOFLAGS=-mod=vendor
+          export GOPROXY=off
+          export GOSUMDB=off
+          export GOTOOLCHAIN=local
+          export CGO_ENABLED=0
+          go test -c -o "$out/bin/worker-cgroup.test" ./internal/worker
+        '';
+  in
+  {
+    firecracker-host-module = firecrackerHostModuleCheck;
+    platform-acquisition-cgroup = pkgs.testers.runNixOSTest {
+      name = "platform-acquisition-cgroup";
+      nodes.machine =
+        { ... }:
+        {
+          virtualisation.memorySize = 2048;
+          systemd.services.platform-acquisition-cgroup-test = {
+            environment.HELMR_PLATFORM_ACQUISITION_CGROUP_INTEGRATION = "1";
+            serviceConfig = {
+              Type = "oneshot";
+              Delegate = true;
+              DelegateSubgroup = "supervisor";
+              TasksMax = "infinity";
+              ExecStart = "${platformAcquisitionCgroupTestBinary}/bin/worker-cgroup.test -test.run=^TestPlatformAcquisitionCgroupIntegration$ -test.v";
+            };
+          };
+        };
+      testScript = ''
+        machine.start()
+        machine.wait_for_unit("multi-user.target")
+        machine.succeed("systemctl start platform-acquisition-cgroup-test.service")
+      '';
+    };
+    platform-release = helmrPackages.platformRelease;
+    program-archive-contract =
+      pkgs.runCommand "program-archive-contract-check"
+        {
+          nativeBuildInputs = [
+            pkgs.go_1_26
+            helmrPackages.squashfsTools
+          ];
+          src = ../.;
+        }
+        ''
+          cp -R "$src" source
+          chmod -R u+w source
+          cd source
+          export HOME="$TMPDIR/home"
+          mkdir -p "$HOME"
+          cp -R ${helmrPackages.helmr.goModules} vendor
+          export GOFLAGS=-mod=vendor
+          export GOPROXY=off
+          export GOSUMDB=off
+          export GOTOOLCHAIN=local
+          export CGO_ENABLED=0
+          HELMR_SQUASHFS_ENCODER=${helmrPackages.squashfsTools}/bin/mksquashfs \
+            go test ./internal/deployment -run '^TestPinnedProgramEncoder$'
+          touch "$out"
+        '';
+  }
+)

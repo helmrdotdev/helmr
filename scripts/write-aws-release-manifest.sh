@@ -3,12 +3,13 @@ set -euo pipefail
 
 control_image="${1:-}"
 worker_amis_json="${2:-}"
-output="${3:-aws-artifacts.json}"
+platform_release_json="${3:-}"
+output="${4:-aws-artifacts.json}"
 required_worker_ami_regions="${REQUIRED_WORKER_AMI_REGIONS:-us-east-1,us-west-2,ap-northeast-1}"
 verify_release_artifacts="${VERIFY_RELEASE_ARTIFACTS:-0}"
 
-if [ -z "$control_image" ] || [ -z "$worker_amis_json" ]; then
-  echo "usage: scripts/write-aws-release-manifest.sh <control-image> <worker-amis-json> [output]" >&2
+if [ -z "$control_image" ] || [ -z "$worker_amis_json" ] || [ -z "$platform_release_json" ]; then
+  echo "usage: scripts/write-aws-release-manifest.sh <control-image> <worker-amis-json> <platform-release-json> [output]" >&2
   echo "set VERIFY_RELEASE_ARTIFACTS=1 to verify image and AMI visibility before writing" >&2
   exit 1
 fi
@@ -43,6 +44,18 @@ jq -e --arg required_worker_ami_regions "$required_worker_ami_regions" '
   and all(keys[]; test("^[a-z]{2}-[a-z-]+-[0-9]+$"))
   and all(.[]; type == "string" and test("^ami-[0-9a-f]{8,}$"))
 ' >/dev/null <<<"$worker_amis_json"
+
+jq -e '
+  keys == ["archive", "buildPolicyDigest", "formatVersion", "sourceCommit", "sourceRef"]
+  and .formatVersion == 0
+  and (.archive | keys == ["digest", "mediaType", "sizeBytes"])
+  and (.archive.digest | test("^sha256:[0-9a-f]{64}$"))
+  and .archive.mediaType == "application/vnd.helmr.platform-release.v0+tar"
+  and (.archive.sizeBytes | type == "number" and . > 0 and floor == .)
+  and (.buildPolicyDigest | test("^sha256:[0-9a-f]{64}$"))
+  and (.sourceCommit | test("^[0-9a-f]{40}$"))
+  and (.sourceRef | test("^refs/(tags|heads)/[^[:space:]]+$"))
+' >/dev/null <<<"$platform_release_json"
 
 verify_control_image() {
   if command -v docker >/dev/null 2>&1; then
@@ -85,7 +98,9 @@ fi
 jq -n \
   --arg control_image "$control_image" \
   --argjson worker_amis "$worker_amis_json" \
+  --argjson platform_release "$platform_release_json" \
   '{
     control_image: $control_image,
+    platform_release: $platform_release,
     worker_amis: $worker_amis
   }' >"$output"

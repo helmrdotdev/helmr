@@ -1,11 +1,12 @@
-import { del, request } from "./api";
+import { request } from "./api";
 
 export type Secret = {
-  project_id: string;
-  environment_id: string;
+  id: string;
   name: string;
+  state: "active" | "revoked";
   created_at: string;
-  updated_at: string;
+  rotated_at?: string;
+  revoked_at?: string;
 };
 
 export type ListSecretsResponse = {
@@ -30,8 +31,13 @@ export async function setSecret(
   });
 }
 
-export async function deleteSecret(name: string, projectID: string, environmentID: string): Promise<void> {
-  await del<Record<string, never>>(`${secretsPath(projectID, environmentID)}/${encodeURIComponent(name)}`);
+export async function revokeSecret(name: string, projectID: string, environmentID: string): Promise<Secret> {
+  return request<Secret>(`${secretsPath(projectID, environmentID)}/${encodeURIComponent(name)}/revoke`, {
+    method: "POST",
+    body: JSON.stringify({
+      idempotency_key: crypto.randomUUID(),
+    }),
+  });
 }
 
 function secretsPath(projectID: string, environmentID: string): string {

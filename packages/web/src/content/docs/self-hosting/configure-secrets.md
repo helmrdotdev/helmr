@@ -14,21 +14,23 @@ The AWS stack creates Secrets Manager entries and returns their ARNs:
 tofu output -json secret_arns
 ```
 
-Do not place Helmr application secret values in `terraform.tfvars` or Terraform state. The ClickHouse Cloud Terraform module is the exception: it generates the ClickHouse password and writes it to Secrets Manager, so the Terraform state for that module must use an encrypted, access-restricted backend.
+Do not place Helmr application secret values in `terraform.tfvars` or Terraform state. Provision the ClickHouse password in your deployment secret manager and pass only its ARN to the Control module.
 
 Populate these secrets after the first apply:
 
 | Secret | Value |
 | --- | --- |
 | `database_url` | PostgreSQL connection string for the Helmr database. |
-| `worker_token_signing_key` | High-entropy signing key. |
-| `auth_secret` | High-entropy auth secret. |
-| `secret_encryption_key` | Base64-encoded 32-byte key. |
+| `worker_token_signing_key` | Base64-encoded 32-byte signing key. |
+| `auth_key` | Base64-encoded 32-byte authentication root. |
+| `encryption_key` | Base64-encoded 32-byte key used for Secret values. |
+| `workspace_fencing_key` | Base64-encoded 32-byte Workspace fencing root. |
+| `token_credential_key` | Base64-encoded 32-byte Token credential root. |
 | `checkpoint_encryption_key` | Base64-encoded 32-byte key. |
 | `setup_token` | High-entropy token for first organization setup. |
 | `github_oauth_client_secret` | GitHub OAuth client secret. |
 
-When you use `infra/aws/modules/clickhouse-cloud`, the module creates and populates the ClickHouse password secret. When you bring an existing ClickHouse endpoint, create your own Secrets Manager secret for `HELMR_CLICKHOUSE_PASSWORD` and pass its ARN as `clickhouse_password_secret_arn`. If that secret uses a customer-managed KMS key outside the stack, also pass the key ARN through `clickhouse_password_kms_key_arns`.
+Create a Secrets Manager secret for `HELMR_CLICKHOUSE_PASSWORD` and pass its ARN as `clickhouse_password_secret_arn`. If that secret uses a customer-managed KMS key outside the stack, also pass the key ARN through `clickhouse_password_kms_key_arns`.
 
 The Terraform/OpenTofu stack creates empty Secrets Manager entries. It does not generate Helmr
 internal secret values. Use the bootstrap helper from the AWS profile directory to generate the

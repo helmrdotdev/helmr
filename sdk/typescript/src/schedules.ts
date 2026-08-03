@@ -1,124 +1,173 @@
-import {
-  markScheduledTask,
-  type MarkedTask,
-  type MaybePromise,
-  type SecretDecls,
-  type TaskContext,
-  type TaskConfigBase,
-} from "./internal"
+import type {
+  JsonValue,
+  MaybePromise,
+  PayloadTaskDefinition,
+  TaskConfigBase,
+  TaskExecutionContext,
+  WorkspaceTarget,
+} from "./contract"
+import { createScheduledTask } from "./definitions"
+import { resourceID } from "./internal/id"
 import type { PayloadSchema } from "./schema/payload"
 
+export type Cron = Readonly<{
+  pattern: string
+  timezone: string
+}>
+
+export type ScheduledTaskInput = Readonly<{
+  scheduledAt: string
+  lastScheduledAt?: string
+  timezone: string
+  scheduleId: string
+  upcoming: readonly string[]
+}>
+
 export interface ScheduledTaskPayload {
-  readonly timestamp: Date
-  readonly lastTimestamp?: Date
+  readonly scheduledAt: Date
+  readonly lastScheduledAt?: Date
   readonly timezone: string
   readonly scheduleId: string
-  readonly scheduleType: "declarative" | "imperative"
-  readonly externalId?: string
   readonly upcoming: readonly Date[]
 }
 
-export type ScheduleCron =
-  | string
-  | {
-      readonly pattern: string
-      readonly timezone?: string
-    }
+export type ScheduledTaskConfig<TOutput extends JsonValue> = Omit<
+  TaskConfigBase,
+  "id"
+> & Readonly<{
+    id: string
+    cron: Cron
+    workspace: WorkspaceTarget
+    run(
+      payload: ScheduledTaskPayload,
+      ctx: TaskExecutionContext,
+    ): MaybePromise<TOutput>
+  }>
 
-type DeclarativeScheduleFields =
-  | {
-      readonly cron: ScheduleCron
-    }
-  | {
-      readonly cron?: undefined
-    }
-
-export type ScheduledTaskConfig<
-  TOutput = unknown,
-  TSecrets extends SecretDecls = readonly [],
-> = Omit<TaskConfigBase<TSecrets>, "payload"> & DeclarativeScheduleFields & {
-  readonly payload?: never
-  readonly run: (payload: ScheduledTaskPayload, ctx: TaskContext) => MaybePromise<TOutput>
+export function scheduledTask<TOutput extends JsonValue>(
+  config: ScheduledTaskConfig<TOutput>,
+): PayloadTaskDefinition<
+  ScheduledTaskInput,
+  ScheduledTaskPayload,
+  TOutput
+> {
+  validateCron(config.cron)
+  return createScheduledTask({
+    id: config.id,
+    payload: scheduledTaskSchema,
+    run: config.run,
+    ...(config.queue === undefined ? {} : { queue: config.queue }),
+    ...(config.maxDuration === undefined
+      ? {}
+      : { maxDuration: config.maxDuration }),
+    ...(config.ttl === undefined ? {} : { ttl: config.ttl }),
+    ...(config.retry === undefined ? {} : { retry: config.retry }),
+    schedule: {
+      cron: config.cron.pattern,
+      timezone: config.cron.timezone,
+      workspace: config.workspace,
+    },
+  })
 }
 
-export function task<TOutput = unknown, TSecrets extends SecretDecls = readonly []>(
-  config: ScheduledTaskConfig<TOutput, TSecrets>,
-): MarkedTask<ScheduledTaskPayload, Awaited<TOutput>, TSecrets, typeof scheduledTaskPayloadSchema> {
-  const { cron, ...taskConfig } = config
-  const schedule = cron === undefined
-    ? undefined
-    : {
-        cron: typeof cron === "string" ? cron : cron.pattern,
-        ...(typeof cron === "string" || cron.timezone === undefined ? {} : { timezone: cron.timezone }),
-      }
-  const marked = markScheduledTask(
-    { ...taskConfig, payload: scheduledTaskPayloadSchema } as never,
-    schedule,
-  )
-  return marked as unknown as MarkedTask<ScheduledTaskPayload, Awaited<TOutput>, TSecrets, typeof scheduledTaskPayloadSchema>
-}
+export const schedules = Object.freeze({
+  task: scheduledTask,
+})
 
-const scheduledTaskPayloadSchema: PayloadSchema<unknown, ScheduledTaskPayload> = {
+const scheduledTaskSchema: PayloadSchema<
+  ScheduledTaskInput,
+  ScheduledTaskPayload
+> = {
   "~standard": {
     version: 1,
     vendor: "helmr",
     validate(value) {
       if (value === null || typeof value !== "object" || Array.isArray(value)) {
-        return { issues: [{ message: "expected scheduled task payload object" }] }
+        return { issues: [{ message: "expected scheduled task input object" }] }
       }
       const input = value as Record<string, unknown>
-      const timestamp = parseDateField(input["timestamp"], "timestamp")
-      const lastTimestamp = parseOptionalDateField(input["lastTimestamp"], "lastTimestamp")
-      const timezone = input["timezone"]
-      const scheduleId = input["scheduleId"]
-      const scheduleType = input["scheduleType"]
-      const externalId = input["externalId"]
+      const allowed = new Set([
+        "scheduledAt",
+        "lastScheduledAt",
+        "timezone",
+        "scheduleId",
+        "upcoming",
+      ])
+      if (Object.keys(input).some((key) => !allowed.has(key))) {
+        return { issues: [{ message: "scheduled task input has unknown members" }] }
+      }
+      const scheduledAt = parseDate(input["scheduledAt"])
+      const lastScheduledAt =
+        input["lastScheduledAt"] === undefined
+          ? undefined
+          : parseDate(input["lastScheduledAt"])
       const upcoming = input["upcoming"]
-      const issues = [
-        ...timestamp.issues,
-        ...lastTimestamp.issues,
-        ...(typeof timezone === "string" && timezone.trim() !== "" ? [] : [{ message: "expected string", path: ["timezone"] }]),
-        ...(typeof scheduleId === "string" && scheduleId.trim() !== "" ? [] : [{ message: "expected string", path: ["scheduleId"] }]),
-        ...(scheduleType === "declarative" || scheduleType === "imperative" ? [] : [{ message: "expected declarative or imperative", path: ["scheduleType"] }]),
-        ...(externalId === undefined || typeof externalId === "string" ? [] : [{ message: "expected string", path: ["externalId"] }]),
-        ...(Array.isArray(upcoming) ? [] : [{ message: "expected array", path: ["upcoming"] }]),
-      ]
-      const upcomingDates = Array.isArray(upcoming)
-        ? upcoming.map((item, index) => parseDateField(item, `upcoming.${index}`))
-        : []
-      issues.push(...upcomingDates.flatMap((item) => item.issues))
-      if (issues.length > 0) {
-        return { issues }
+      if (
+        scheduledAt === undefined ||
+        (input["lastScheduledAt"] !== undefined &&
+          lastScheduledAt === undefined) ||
+        typeof input["timezone"] !== "string" ||
+        typeof input["scheduleId"] !== "string" ||
+        !Array.isArray(upcoming)
+      ) {
+        return { issues: [{ message: "invalid scheduled task input" }] }
+      }
+      const parsedUpcoming = upcoming.map(parseDate)
+      if (parsedUpcoming.some((date) => date === undefined)) {
+        return { issues: [{ message: "invalid upcoming timestamp" }] }
+      }
+      let scheduleId: string
+      try {
+        scheduleId = resourceID(
+          input["scheduleId"],
+          "Scheduled task input.scheduleId",
+        )
+      } catch {
+        return { issues: [{ message: "invalid scheduled task input" }] }
       }
       return {
         value: {
-          timestamp: timestamp.value,
-          ...(lastTimestamp.value === undefined ? {} : { lastTimestamp: lastTimestamp.value }),
-          timezone: timezone as string,
-          scheduleId: scheduleId as string,
-          scheduleType: scheduleType as "declarative" | "imperative",
-          ...(externalId === undefined ? {} : { externalId: externalId as string }),
-          upcoming: upcomingDates.map((item) => item.value),
+          scheduledAt,
+          ...(lastScheduledAt === undefined ? {} : { lastScheduledAt }),
+          timezone: input["timezone"],
+          scheduleId,
+          upcoming: parsedUpcoming as Date[],
         },
       }
     },
   },
 }
 
-function parseDateField(value: unknown, path: string): { value: Date; issues: { message: string; path?: (string | number)[] }[] } {
-  if (typeof value !== "string") {
-    return { value: new Date(0), issues: [{ message: "expected ISO timestamp", path: path.split(".") }] }
+function parseDate(value: unknown): Date | undefined {
+  if (typeof value !== "string") return undefined
+  if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(value)
+  ) {
+    return undefined
   }
   const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return { value: new Date(0), issues: [{ message: "expected ISO timestamp", path: path.split(".") }] }
-  }
-  return { value: date, issues: [] }
+  return Number.isNaN(date.valueOf()) ? undefined : date
 }
 
-function parseOptionalDateField(value: unknown, path: string): { value?: Date; issues: { message: string; path?: (string | number)[] }[] } {
-  if (value === undefined || value === null) {
-    return { issues: [] }
+function validateCron(cron: Cron): void {
+  if (
+    cron === null ||
+    typeof cron !== "object" ||
+    Array.isArray(cron) ||
+    Object.keys(cron).length !== 2 ||
+    !Object.hasOwn(cron, "pattern") ||
+    !Object.hasOwn(cron, "timezone") ||
+    typeof cron.pattern !== "string" ||
+    typeof cron.timezone !== "string"
+  ) {
+    throw new Error("cron must contain exactly pattern and timezone")
   }
-  return parseDateField(value, path)
+  if (
+    new TextEncoder().encode(cron.pattern).length === 0 ||
+    new TextEncoder().encode(cron.pattern).length > 1024 ||
+    new TextEncoder().encode(cron.timezone).length === 0 ||
+    new TextEncoder().encode(cron.timezone).length > 255
+  ) {
+    throw new Error("cron pattern and timezone must be non-empty bounded strings")
+  }
 }

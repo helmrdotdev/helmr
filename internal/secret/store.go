@@ -5,59 +5,43 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
-	keyIDPrefix        = "k_"
-	maxWriteAttempts   = 3
-	keyIDDeriveContext = "helmr-secret-key-id:"
-	aadVersion         = "1"
+	maxWriteAttempts = 3
+	envelopeDomain   = "helmr.secret-envelope.v0"
 )
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
 type Store struct {
-	db      db.Querier
-	keyring Keyring
-	rand    io.Reader
+	db         db.Querier
+	tx         transactionBeginner
+	encryption cipher.AEAD
+	rand       io.Reader
 }
 
-type Keyring struct {
-	current secretKey
-	keys    map[string]secretKey
-	oldID   string
-}
-
-type secretKey struct {
-	id   string
-	aead cipher.AEAD
-}
-
-type KeyUsage struct {
-	KeyID       string
-	SecretCount int64
-	Current     bool
-	Old         bool
-}
-
-type ReencryptBatchResult struct {
-	Scanned     int
-	Reencrypted int
-	Skipped     int
-	Failed      int
+type transactionBeginner interface {
+	Begin(context.Context) (pgx.Tx, error)
 }
 
 type UnavailableError struct {
@@ -77,75 +61,27 @@ func IsUnavailable(err error) bool {
 	return errors.As(err, &unavailable)
 }
 
-func New(database db.Querier, keyring Keyring) (*Store, error) {
+func New(database db.Querier, transactions transactionBeginner, encryptionKey []byte) (*Store, error) {
 	if database == nil {
 		return nil, errors.New("secret database is required")
 	}
-	if keyring.current.id == "" {
-		return nil, errors.New("secret keyring current key is required")
+	if len(encryptionKey) != 32 {
+		return nil, fmt.Errorf("secret encryption key must be 32 bytes, got %d", len(encryptionKey))
 	}
-	return &Store{db: database, keyring: keyring, rand: rand.Reader}, nil
-}
-
-func NewKeyring(current []byte, old []byte) (Keyring, error) {
-	currentKey, err := newSecretKey(current)
+	block, err := aes.NewCipher(encryptionKey)
 	if err != nil {
-		return Keyring{}, fmt.Errorf("configure current secret encryption key: %w", err)
+		return nil, fmt.Errorf("configure secret cipher: %w", err)
 	}
-	keys := map[string]secretKey{currentKey.id: currentKey}
-	keyring := Keyring{current: currentKey, keys: keys}
-	if len(old) > 0 {
-		oldKey, err := newSecretKey(old)
-		if err != nil {
-			return Keyring{}, fmt.Errorf("configure old secret encryption key: %w", err)
-		}
-		if oldKey.id == currentKey.id {
-			return Keyring{}, errors.New("old secret encryption key must differ from current key")
-		}
-		keys[oldKey.id] = oldKey
-		keyring.oldID = oldKey.id
-	}
-	return keyring, nil
-}
-
-func KeyringFromBase64(current string, old string) (Keyring, error) {
-	currentKey, err := KeyFromBase64(current)
+	encryption, err := cipher.NewGCM(block)
 	if err != nil {
-		return Keyring{}, err
+		return nil, fmt.Errorf("configure secret cipher: %w", err)
 	}
-	var oldKey []byte
-	if strings.TrimSpace(old) != "" {
-		oldKey, err = KeyFromBase64(old)
-		if err != nil {
-			return Keyring{}, fmt.Errorf("decode old secret encryption key: %w", err)
-		}
-	}
-	return NewKeyring(currentKey, oldKey)
-}
-
-func (k Keyring) CurrentKeyID() string {
-	return k.current.id
-}
-
-func (k Keyring) OldKeyID() (string, bool) {
-	return k.oldID, k.oldID != ""
-}
-
-func (k Keyring) key(keyID string) (secretKey, bool) {
-	secretKey, ok := k.keys[keyID]
-	return secretKey, ok
-}
-
-func newSecretKey(key []byte) (secretKey, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return secretKey{}, err
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return secretKey{}, fmt.Errorf("configure secret cipher: %w", err)
-	}
-	return secretKey{id: keyID(key), aead: aead}, nil
+	return &Store{
+		db:         database,
+		tx:         transactions,
+		encryption: encryption,
+		rand:       rand.Reader,
+	}, nil
 }
 
 func KeyFromBase64(raw string) ([]byte, error) {
@@ -170,44 +106,65 @@ func ValidateName(name string) error {
 	return nil
 }
 
-func (s *Store) Put(ctx context.Context, orgID uuid.UUID, name string, value []byte) (db.Secret, error) {
-	projectID, environmentID, err := s.defaultScope(ctx, orgID)
-	if err != nil {
-		return db.Secret{}, err
-	}
-	return s.PutScoped(ctx, orgID, projectID, environmentID, name, value)
-}
-
-func (s *Store) PutScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error) {
+func (s *Store) create(ctx context.Context, environmentID uuid.UUID, name string, value []byte) (db.Secret, error) {
 	if err := ValidateName(name); err != nil {
 		return db.Secret{}, err
 	}
+	secretID := uuid.Must(uuid.NewV7())
+	versionID := uuid.Must(uuid.NewV7())
+	encrypted, err := s.encrypt(environmentID, secretID, versionID, 1, value)
+	if err != nil {
+		return db.Secret{}, err
+	}
+	row, err := s.db.CreateSecret(ctx, db.CreateSecretParams{
+		ID:            pgvalue.UUID(secretID),
+		EnvironmentID: pgvalue.UUID(environmentID),
+		Name:          name,
+		VersionID:     pgvalue.UUID(versionID),
+		Nonce:         encrypted.nonce,
+		Ciphertext:    encrypted.ciphertext,
+	})
+	if err != nil {
+		return db.Secret{}, err
+	}
+	return secretFromCreate(row), nil
+}
+
+func (s *Store) rotate(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID, value []byte) (db.Secret, error) {
 	var lastErr error
 	for range maxWriteAttempts {
-		record, err := s.scopedSecret(ctx, orgID, projectID, environmentID, name)
-		previousVersion := int32(0)
-		version := int32(1)
-		if err == nil {
-			previousVersion = record.Version
-			version = record.Version + 1
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return db.Secret{}, err
-		}
-		encrypted, err := s.encrypt(orgID, projectID, environmentID, name, version, value)
+		record, err := s.db.GetSecret(ctx, db.GetSecretParams{
+			EnvironmentID: pgvalue.UUID(environmentID),
+			ID:            pgvalue.UUID(secretID),
+		})
 		if err != nil {
 			return db.Secret{}, err
 		}
-		updated, err := s.db.UpsertScopedSecret(ctx, db.UpsertScopedSecretParams{
-			ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:           pgvalue.UUID(orgID),
-			ProjectID:       pgvalue.UUID(projectID),
-			EnvironmentID:   pgvalue.UUID(environmentID),
-			Name:            name,
-			Version:         version,
-			KeyID:           encrypted.keyID,
-			Nonce:           encrypted.nonce,
-			Ciphertext:      encrypted.ciphertext,
-			PreviousVersion: previousVersion,
+		if record.State != "active" {
+			return db.Secret{}, UnavailableError{Err: fmt.Errorf("secret %q is %s", record.Name, record.State)}
+		}
+		current, err := s.db.GetCurrentSecretValue(ctx, db.GetCurrentSecretValueParams{
+			EnvironmentID: pgvalue.UUID(environmentID),
+			SecretID:      record.ID,
+		})
+		if err != nil {
+			return db.Secret{}, err
+		}
+		versionID := uuid.Must(uuid.NewV7())
+		version := current.Version + 1
+		encrypted, err := s.encrypt(environmentID, secretID, versionID, version, value)
+		if err != nil {
+			return db.Secret{}, err
+		}
+		updated, err := s.db.RotateSecret(ctx, db.RotateSecretParams{
+			VersionID:                pgvalue.UUID(versionID),
+			Version:                  version,
+			Nonce:                    encrypted.nonce,
+			Ciphertext:               encrypted.ciphertext,
+			EnvironmentID:            pgvalue.UUID(environmentID),
+			SecretID:                 record.ID,
+			ExpectedStateVersion:     record.StateVersion,
+			ExpectedCurrentVersionID: record.CurrentVersionID,
 		})
 		if err == nil {
 			return updated, nil
@@ -218,7 +175,405 @@ func (s *Store) PutScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.U
 		}
 		return db.Secret{}, err
 	}
-	return db.Secret{}, fmt.Errorf("write secret %q after concurrent updates: %w", name, lastErr)
+	return db.Secret{}, fmt.Errorf("rotate secret after concurrent updates: %w", lastErr)
+}
+
+type mutationReceipt struct {
+	SecretID        string `json:"secretId"`
+	SecretVersionID string `json:"secretVersionId"`
+}
+
+func (s *Store) Create(
+	ctx context.Context,
+	environmentID uuid.UUID,
+	name string,
+	value []byte,
+	idempotencyKey string,
+) (db.GetSecretSnapshotRow, error) {
+	if s.tx == nil {
+		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
+	}
+	if err := ValidateName(name); err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("begin Secret creation: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	queries := db.New(tx)
+	var claim *db.IdempotencyClaim
+	if idempotencyKey != "" {
+		claims, err := idempotency.TransactionFor(tx)
+		if err != nil {
+			return db.GetSecretSnapshotRow{}, err
+		}
+		request, err := idempotency.NewSecretCreateRequest(
+			environmentID,
+			name,
+			idempotencyKey,
+		)
+		if err != nil {
+			return db.GetSecretSnapshotRow{}, err
+		}
+		acquired, err := claims.Acquire(ctx, request)
+		if err != nil {
+			return db.GetSecretSnapshotRow{}, err
+		}
+		if !acquired.New {
+			snapshot, err := s.replayMutation(ctx, queries, acquired.Claim, value)
+			if err != nil {
+				return db.GetSecretSnapshotRow{}, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret creation replay: %w", err)
+			}
+			return snapshot, nil
+		}
+		claim = &acquired.Claim
+	}
+
+	bound := *s
+	bound.db = queries
+	record, err := bound.create(ctx, environmentID, name, value)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	snapshot, err := queries.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{
+		EnvironmentID: pgvalue.UUID(environmentID),
+		ID:            record.ID,
+	})
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	if claim != nil {
+		claims, err := idempotency.TransactionFor(tx)
+		if err != nil {
+			return db.GetSecretSnapshotRow{}, err
+		}
+		if err := completeMutation(ctx, claims, *claim, record.ID, record.CurrentVersionID); err != nil {
+			return db.GetSecretSnapshotRow{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret creation: %w", err)
+	}
+	return snapshot, nil
+}
+
+func (s *Store) Rotate(
+	ctx context.Context,
+	environmentID uuid.UUID,
+	secretID uuid.UUID,
+	value []byte,
+	idempotencyKey string,
+) (db.GetSecretSnapshotRow, error) {
+	if s.tx == nil {
+		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
+	}
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("begin Secret rotation: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	claims, err := idempotency.TransactionFor(tx)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	queries := claims.Queries()
+	request, err := idempotency.NewSecretRotateRequest(
+		environmentID,
+		secretID,
+		strings.TrimSpace(idempotencyKey),
+	)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	acquired, err := claims.Acquire(ctx, request)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	if !acquired.New {
+		snapshot, err := s.replayMutation(ctx, queries, acquired.Claim, value)
+		if err != nil {
+			return db.GetSecretSnapshotRow{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret rotation replay: %w", err)
+		}
+		return snapshot, nil
+	}
+	bound := *s
+	bound.db = queries
+	rotated, err := bound.rotate(ctx, environmentID, secretID, value)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	snapshot, err := queries.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{
+		EnvironmentID: pgvalue.UUID(environmentID),
+		ID:            rotated.ID,
+	})
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	if err := completeMutation(ctx, claims, acquired.Claim, rotated.ID, rotated.CurrentVersionID); err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret rotation: %w", err)
+	}
+	return snapshot, nil
+}
+
+func completeMutation(
+	ctx context.Context,
+	claims *idempotency.Transaction,
+	claim db.IdempotencyClaim,
+	secretID pgtype.UUID,
+	secretVersionID pgtype.UUID,
+) error {
+	receipt, err := json.Marshal(mutationReceipt{
+		SecretID:        pgvalue.MustUUIDValue(secretID).String(),
+		SecretVersionID: pgvalue.MustUUIDValue(secretVersionID).String(),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal Secret mutation receipt: %w", err)
+	}
+	_, err = claims.Complete(ctx, claim, receipt)
+	return err
+}
+
+func (s *Store) replayMutation(
+	ctx context.Context,
+	queries *db.Queries,
+	claim db.IdempotencyClaim,
+	value []byte,
+) (db.GetSecretSnapshotRow, error) {
+	if claim.State != "completed" {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf(
+			"secret mutation claim is %s",
+			claim.State,
+		)
+	}
+	var receipt mutationReceipt
+	if err := json.Unmarshal(claim.Receipt, &receipt); err != nil {
+		return db.GetSecretSnapshotRow{}, errors.New("secret mutation receipt is invalid")
+	}
+	secretID, err := ids.Parse(receipt.SecretID)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, errors.New("secret mutation receipt is invalid")
+	}
+	secretVersionID, err := ids.Parse(receipt.SecretVersionID)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, errors.New("secret mutation receipt is invalid")
+	}
+	version, err := queries.LockSecretVersion(ctx, db.LockSecretVersionParams{
+		EnvironmentID: claim.EnvironmentID,
+		SecretID:      pgvalue.UUID(secretID),
+		VersionID:     pgvalue.UUID(secretVersionID),
+	})
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("lock replayed Secret version: %w", err)
+	}
+	plaintext, err := s.decryptVersion(
+		pgvalue.MustUUIDValue(claim.EnvironmentID),
+		secretID,
+		secretVersionID,
+		version,
+	)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("decrypt replayed Secret version: %w", err)
+	}
+	if subtle.ConstantTimeCompare(plaintext, value) != 1 {
+		return db.GetSecretSnapshotRow{}, idempotency.ConflictError{
+			ClaimID: pgvalue.MustUUIDValue(claim.ID),
+		}
+	}
+	return queries.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{
+		EnvironmentID: claim.EnvironmentID,
+		ID:            pgvalue.UUID(secretID),
+	})
+}
+
+func (s *Store) Revoke(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
+	if s.tx == nil {
+		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
+	}
+	request, err := idempotency.NewSecretRevokeRequest(
+		environmentID,
+		secretID,
+		strings.TrimSpace(idempotencyKey),
+	)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("begin Secret revocation: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	claims, err := idempotency.TransactionFor(tx)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	acquired, err := claims.Acquire(ctx, request)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	queries := claims.Queries()
+	if !acquired.New {
+		if acquired.Claim.State != "completed" {
+			return db.GetSecretSnapshotRow{}, fmt.Errorf(
+				"secret revoke claim is %s",
+				acquired.Claim.State,
+			)
+		}
+		snapshot, err := queries.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{
+			EnvironmentID: pgvalue.UUID(environmentID),
+			ID:            pgvalue.UUID(secretID),
+		})
+		if err != nil {
+			return db.GetSecretSnapshotRow{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret revoke replay: %w", err)
+		}
+		return snapshot, nil
+	}
+	bound := *s
+	bound.db = queries
+	record, changed, err := bound.revoke(ctx, environmentID, secretID)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	if changed {
+		payload, err := json.Marshal(map[string]any{
+			"environmentId":        environmentID.String(),
+			"revocationGeneration": record.RevocationGeneration,
+			"secretId":             secretID.String(),
+		})
+		if err != nil {
+			return db.GetSecretSnapshotRow{}, fmt.Errorf("marshal Secret revocation intent: %w", err)
+		}
+		if _, err := queries.CreateOutboxMessage(ctx, db.CreateOutboxMessageParams{
+			ID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			Lane:         "control",
+			Topic:        "secret.revoked",
+			PartitionKey: secretID.String(),
+			Payload:      payload,
+			AvailableAt:  pgvalue.TimestamptzUTCZeroInvalid(time.Now()),
+		}); err != nil {
+			return db.GetSecretSnapshotRow{}, fmt.Errorf("create Secret revocation intent: %w", err)
+		}
+	}
+	snapshot, err := queries.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{
+		EnvironmentID: pgvalue.UUID(environmentID),
+		ID:            pgvalue.UUID(secretID),
+	})
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	receipt, err := json.Marshal(map[string]any{
+		"revocationGeneration": record.RevocationGeneration,
+		"secretId":             secretID.String(),
+		"stateVersion":         record.StateVersion,
+	})
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("marshal Secret revoke receipt: %w", err)
+	}
+	if _, err := claims.Complete(ctx, acquired.Claim, receipt); err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret revocation: %w", err)
+	}
+	return snapshot, nil
+}
+
+func (s *Store) revoke(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID) (db.Secret, bool, error) {
+	var lastErr error
+	for range maxWriteAttempts {
+		record, err := s.db.GetSecret(ctx, db.GetSecretParams{
+			EnvironmentID: pgvalue.UUID(environmentID),
+			ID:            pgvalue.UUID(secretID),
+		})
+		if err != nil {
+			return db.Secret{}, false, err
+		}
+		if record.State == "revoked" {
+			return record, false, nil
+		}
+		if record.State != "active" {
+			return db.Secret{}, false, UnavailableError{Err: fmt.Errorf("secret %q is %s", record.Name, record.State)}
+		}
+		revoked, err := s.db.RevokeSecret(ctx, db.RevokeSecretParams{
+			EnvironmentID:        pgvalue.UUID(environmentID),
+			ID:                   record.ID,
+			ExpectedStateVersion: record.StateVersion,
+		})
+		if err == nil {
+			return revoked, true, nil
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			lastErr = err
+			continue
+		}
+		return db.Secret{}, false, err
+	}
+	return db.Secret{}, false, fmt.Errorf("revoke secret after concurrent updates: %w", lastErr)
+}
+
+func (s *Store) Put(ctx context.Context, orgID uuid.UUID, name string, value []byte) (db.Secret, error) {
+	projectID, environmentID, err := s.defaultScope(ctx, orgID)
+	if err != nil {
+		return db.Secret{}, err
+	}
+	return s.PutScoped(ctx, orgID, projectID, environmentID, name, value)
+}
+
+func (s *Store) PutScoped(ctx context.Context, _ uuid.UUID, _ uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error) {
+	if s.tx == nil {
+		return db.Secret{}, errors.New("secret transaction beginner is required")
+	}
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return db.Secret{}, fmt.Errorf("begin Secret mutation: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	queries := db.New(tx)
+	bound := *s
+	bound.db = queries
+	record, err := bound.putScoped(ctx, environmentID, name, value)
+	if err != nil {
+		return db.Secret{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.Secret{}, fmt.Errorf("commit Secret mutation: %w", err)
+	}
+	return record, nil
+}
+
+func (s *Store) putScoped(ctx context.Context, environmentID uuid.UUID, name string, value []byte) (db.Secret, error) {
+	record, err := s.db.GetSecretByName(ctx, db.GetSecretByNameParams{
+		EnvironmentID: pgvalue.UUID(environmentID),
+		Name:          name,
+	})
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return s.create(ctx, environmentID, name, value)
+	case err != nil:
+		return db.Secret{}, err
+	case record.State != "active":
+		return db.Secret{}, UnavailableError{Err: fmt.Errorf("secret %q is %s", name, record.State)}
+	default:
+		secretID, err := pgvalue.UUIDValue(record.ID)
+		if err != nil {
+			return db.Secret{}, err
+		}
+		return s.rotate(ctx, environmentID, secretID, value)
+	}
 }
 
 func (s *Store) CheckNames(ctx context.Context, orgID uuid.UUID, names []string) error {
@@ -237,26 +592,23 @@ func (s *Store) ResolveNames(ctx context.Context, orgID uuid.UUID, names []strin
 	return s.ResolveScopedNames(ctx, orgID, projectID, environmentID, names)
 }
 
-func (s *Store) CheckScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) error {
-	if len(names) == 0 {
-		return nil
-	}
+func (s *Store) CheckScopedNames(ctx context.Context, _ uuid.UUID, _ uuid.UUID, environmentID uuid.UUID, names []string) error {
 	for _, name := range names {
 		if err := ValidateName(name); err != nil {
 			return fmt.Errorf("invalid secret name: %w", err)
 		}
-		record, err := s.scopedSecret(ctx, orgID, projectID, environmentID, name)
+		secret, _, err := s.currentByName(ctx, environmentID, name)
 		if err != nil {
 			return fmt.Errorf("secret %q is unavailable: %w", name, err)
 		}
-		if _, ok := s.keyring.key(record.KeyID); !ok {
-			return UnavailableError{Err: fmt.Errorf("secret %q uses unsupported key id %q", name, record.KeyID)}
+		if secret.State != "active" {
+			return UnavailableError{Err: fmt.Errorf("secret %q is %s", name, secret.State)}
 		}
 	}
 	return nil
 }
 
-func (s *Store) ResolveScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) (api.ResolvedSecrets, error) {
+func (s *Store) ResolveScopedNames(ctx context.Context, _ uuid.UUID, _ uuid.UUID, environmentID uuid.UUID, names []string) (api.ResolvedSecrets, error) {
 	if len(names) == 0 {
 		return api.ResolvedSecrets{}, nil
 	}
@@ -265,150 +617,93 @@ func (s *Store) ResolveScopedNames(ctx context.Context, orgID uuid.UUID, project
 		if err := ValidateName(name); err != nil {
 			return nil, UnavailableError{Err: fmt.Errorf("invalid secret name: %w", err)}
 		}
-		record, err := s.scopedSecret(ctx, orgID, projectID, environmentID, name)
+		secret, version, err := s.currentByName(ctx, environmentID, name)
 		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, UnavailableError{Err: fmt.Errorf("resolve secret %q: %w", name, err)}
-			}
-			return nil, fmt.Errorf("resolve secret %q: %w", name, err)
+			return nil, UnavailableError{Err: fmt.Errorf("resolve secret %q: %w", name, err)}
 		}
-		key, ok := s.keyring.key(record.KeyID)
-		if !ok {
-			return nil, UnavailableError{Err: fmt.Errorf("secret %q uses unsupported key id %q", name, record.KeyID)}
-		}
-		plaintext, err := key.aead.Open(nil, record.Nonce, record.Ciphertext, scopedAdditionalData(orgID, projectID, environmentID, record.Name, record.Version, record.KeyID))
+		plaintext, err := s.decrypt(environmentID, secret, version)
 		if err != nil {
-			return nil, UnavailableError{Err: fmt.Errorf("decrypt secret %q: %w", name, err)}
+			return nil, UnavailableError{Err: fmt.Errorf("resolve secret %q: %w", name, err)}
 		}
 		resolved[name] = plaintext
 	}
 	return resolved, nil
 }
 
-func (s *Store) scopedSecret(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string) (db.Secret, error) {
-	record, err := s.db.GetScopedSecretByName(ctx, db.GetScopedSecretByNameParams{
-		OrgID:         pgvalue.UUID(orgID),
-		ProjectID:     pgvalue.UUID(projectID),
+func (s *Store) currentByName(ctx context.Context, environmentID uuid.UUID, name string) (db.Secret, db.SecretVersion, error) {
+	record, err := s.db.GetSecretByName(ctx, db.GetSecretByNameParams{
 		EnvironmentID: pgvalue.UUID(environmentID),
 		Name:          name,
 	})
 	if err != nil {
-		return db.Secret{}, err
+		return db.Secret{}, db.SecretVersion{}, err
 	}
-	return record, nil
-}
-
-func (s *Store) ReencryptBatch(ctx context.Context, fromKeyID string, limit int32) (ReencryptBatchResult, error) {
-	fromKeyID = strings.TrimSpace(fromKeyID)
-	if fromKeyID == "" {
-		return ReencryptBatchResult{}, errors.New("source key id is required")
+	if record.State != "active" {
+		return record, db.SecretVersion{}, UnavailableError{Err: fmt.Errorf("secret %q is %s", name, record.State)}
 	}
-	if fromKeyID == s.keyring.CurrentKeyID() {
-		return ReencryptBatchResult{}, errors.New("source key id must not be the current key")
-	}
-	if limit <= 0 {
-		return ReencryptBatchResult{}, errors.New("rotation batch limit must be positive")
-	}
-	sourceKey, ok := s.keyring.key(fromKeyID)
-	if !ok {
-		return ReencryptBatchResult{}, fmt.Errorf("source key id %q is not configured", fromKeyID)
-	}
-	rows, err := s.db.ListSecretsByKeyIDForRotation(ctx, db.ListSecretsByKeyIDForRotationParams{
-		KeyID:    fromKeyID,
-		RowLimit: limit,
+	version, err := s.db.GetCurrentSecretValue(ctx, db.GetCurrentSecretValueParams{
+		EnvironmentID: pgvalue.UUID(environmentID),
+		SecretID:      record.ID,
 	})
 	if err != nil {
-		return ReencryptBatchResult{}, err
+		return db.Secret{}, db.SecretVersion{}, err
 	}
-	result := ReencryptBatchResult{Scanned: len(rows)}
-	for _, row := range rows {
-		orgID, err := pgvalue.UUIDValue(row.OrgID)
-		if err != nil {
-			return result, err
-		}
-		projectID, err := pgvalue.UUIDValue(row.ProjectID)
-		if err != nil {
-			return result, err
-		}
-		environmentID, err := pgvalue.UUIDValue(row.EnvironmentID)
-		if err != nil {
-			return result, err
-		}
-		plaintext, err := sourceKey.aead.Open(nil, row.Nonce, row.Ciphertext, scopedAdditionalData(orgID, projectID, environmentID, row.Name, row.Version, row.KeyID))
-		if err != nil {
-			result.Failed++
-			continue
-		}
-		newVersion := row.Version + 1
-		encrypted, err := s.encrypt(orgID, projectID, environmentID, row.Name, newVersion, plaintext)
-		if err != nil {
-			return result, err
-		}
-		updated, err := s.db.UpdateSecretCiphertextForRotation(ctx, db.UpdateSecretCiphertextForRotationParams{
-			NewVersion:      newVersion,
-			NewKeyID:        encrypted.keyID,
-			Nonce:           encrypted.nonce,
-			Ciphertext:      encrypted.ciphertext,
-			ID:              row.ID,
-			PreviousKeyID:   row.KeyID,
-			PreviousVersion: row.Version,
-		})
-		if err != nil {
-			return result, err
-		}
-		if updated == 0 {
-			result.Skipped++
-			continue
-		}
-		result.Reencrypted++
-	}
-	return result, nil
-}
-
-func (s *Store) KeyUsage(ctx context.Context) ([]KeyUsage, error) {
-	rows, err := s.db.ListSecretKeyUsage(ctx)
-	if err != nil {
-		return nil, err
-	}
-	usage := make([]KeyUsage, 0, len(rows))
-	for _, row := range rows {
-		usage = append(usage, KeyUsage{
-			KeyID:       row.KeyID,
-			SecretCount: row.SecretCount,
-			Current:     row.KeyID == s.keyring.CurrentKeyID(),
-			Old:         row.KeyID == s.keyring.oldID,
-		})
-	}
-	return usage, nil
-}
-
-func (s *Store) CountByKeyID(ctx context.Context, keyID string) (int64, error) {
-	return s.db.CountSecretsByKeyID(ctx, keyID)
+	return record, version, nil
 }
 
 type encryptedSecret struct {
-	keyID      string
 	nonce      []byte
 	ciphertext []byte
 }
 
-func (s *Store) encrypt(orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, version int32, value []byte) (encryptedSecret, error) {
-	key := s.keyring.current
-	nonce := make([]byte, key.aead.NonceSize())
+func (s *Store) encrypt(environmentID uuid.UUID, secretID uuid.UUID, versionID uuid.UUID, version int64, value []byte) (encryptedSecret, error) {
+	nonce := make([]byte, s.encryption.NonceSize())
 	if _, err := io.ReadFull(s.rand, nonce); err != nil {
 		return encryptedSecret{}, fmt.Errorf("generate secret nonce: %w", err)
 	}
-	ciphertext := key.aead.Seal(nil, nonce, value, scopedAdditionalData(orgID, projectID, environmentID, name, version, key.id))
-	return encryptedSecret{keyID: key.id, nonce: nonce, ciphertext: ciphertext}, nil
+	ciphertext := s.encryption.Seal(nil, nonce, value, envelopeAAD(environmentID, secretID, versionID, version))
+	return encryptedSecret{nonce: nonce, ciphertext: ciphertext}, nil
 }
 
-func keyID(key []byte) string {
-	sum := sha256.Sum256(append([]byte(keyIDDeriveContext), key...))
-	return keyIDPrefix + base64.RawURLEncoding.EncodeToString(sum[:16])
+func (s *Store) decrypt(environmentID uuid.UUID, secret db.Secret, version db.SecretVersion) ([]byte, error) {
+	secretID, err := pgvalue.UUIDValue(secret.ID)
+	if err != nil {
+		return nil, err
+	}
+	versionID, err := pgvalue.UUIDValue(version.ID)
+	if err != nil {
+		return nil, err
+	}
+	return s.decryptVersion(environmentID, secretID, versionID, version)
 }
 
-func scopedAdditionalData(orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, version int32, keyID string) []byte {
-	return []byte(aadVersion + "\x00" + orgID.String() + "\x00" + projectID.String() + "\x00" + environmentID.String() + "\x00" + name + "\x00" + fmt.Sprint(version) + "\x00" + keyID)
+func (s *Store) decryptVersion(
+	environmentID uuid.UUID,
+	secretID uuid.UUID,
+	versionID uuid.UUID,
+	version db.SecretVersion,
+) ([]byte, error) {
+	return s.encryption.Open(
+		nil,
+		version.Nonce,
+		version.Ciphertext,
+		envelopeAAD(environmentID, secretID, versionID, version.Version),
+	)
+}
+
+func envelopeAAD(environmentID uuid.UUID, secretID uuid.UUID, versionID uuid.UUID, version int64) []byte {
+	frame := make([]byte, 0, len(envelopeDomain)+1+16*3+8)
+	frame = append(frame, envelopeDomain...)
+	frame = append(frame, 0)
+	frame = append(frame, environmentID[:]...)
+	frame = append(frame, secretID[:]...)
+	frame = append(frame, versionID[:]...)
+	frame = binary.BigEndian.AppendUint64(frame, uint64(version))
+	return frame
+}
+
+func secretFromCreate(row db.CreateSecretRow) db.Secret {
+	return db.Secret(row)
 }
 
 func (s *Store) defaultScope(ctx context.Context, orgID uuid.UUID) (uuid.UUID, uuid.UUID, error) {

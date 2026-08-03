@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
@@ -104,11 +105,11 @@ func (a Actor) EnvironmentScope() (Scope, bool) {
 	if a.ProjectID == "" || a.EnvironmentID == "" {
 		return Scope{}, false
 	}
-	projectID, err := uuid.Parse(a.ProjectID)
+	projectID, err := ids.Parse(a.ProjectID)
 	if err != nil || projectID == uuid.Nil {
 		return Scope{}, false
 	}
-	environmentID, err := uuid.Parse(a.EnvironmentID)
+	environmentID, err := ids.Parse(a.EnvironmentID)
 	if err != nil || environmentID == uuid.Nil {
 		return Scope{}, false
 	}
@@ -173,12 +174,14 @@ func normalizeAPIKeyGrantPermission(permission string) []Permission {
 		return []Permission{PermissionRunsRead}
 	case string(PermissionRunsManage):
 		return []Permission{PermissionRunsManage}
-	case string(PermissionSessionStreamsRead):
-		return []Permission{PermissionSessionStreamsRead}
-	case string(PermissionSessionInputSend):
-		return []Permission{PermissionSessionInputSend}
-	case string(PermissionSessionOutputAppend):
-		return []Permission{PermissionSessionOutputAppend}
+	case string(PermissionActorsRead):
+		return []Permission{PermissionActorsRead}
+	case string(PermissionActorsStart):
+		return []Permission{PermissionActorsStart}
+	case string(PermissionActorsInputSend):
+		return []Permission{PermissionActorsInputSend}
+	case string(PermissionActorsCloseManage):
+		return []Permission{PermissionActorsCloseManage}
 	case string(PermissionTokensCreate):
 		return []Permission{PermissionTokensCreate}
 	case string(PermissionTokensRead):
@@ -187,32 +190,16 @@ func normalizeAPIKeyGrantPermission(permission string) []Permission {
 		return []Permission{PermissionTokensComplete}
 	case string(PermissionTokensCancel):
 		return []Permission{PermissionTokensCancel}
-	case string(PermissionWorkspaceLifecycleManage):
-		return []Permission{PermissionWorkspaceLifecycleManage}
-	case string(PermissionFilesRead):
-		return []Permission{PermissionFilesRead}
-	case string(PermissionFilesWrite):
-		return []Permission{PermissionFilesWrite}
-	case string(PermissionVersionsRead):
-		return []Permission{PermissionVersionsRead}
-	case string(PermissionVersionsCapture):
-		return []Permission{PermissionVersionsCapture}
-	case string(PermissionVersionsRestore):
-		return []Permission{PermissionVersionsRestore}
-	case string(PermissionVersionsDiff):
-		return []Permission{PermissionVersionsDiff}
-	case string(PermissionExecCreate):
-		return []Permission{PermissionExecCreate}
-	case string(PermissionExecRead):
-		return []Permission{PermissionExecRead}
-	case string(PermissionExecManage):
-		return []Permission{PermissionExecManage}
-	case string(PermissionPtyCreate):
-		return []Permission{PermissionPtyCreate}
-	case string(PermissionPtyRead):
-		return []Permission{PermissionPtyRead}
-	case string(PermissionPtyManage):
-		return []Permission{PermissionPtyManage}
+	case string(PermissionWorkspacesCreate):
+		return []Permission{PermissionWorkspacesCreate}
+	case string(PermissionWorkspacesRead):
+		return []Permission{PermissionWorkspacesRead}
+	case string(PermissionWorkspacesDelete):
+		return []Permission{PermissionWorkspacesDelete}
+	case string(PermissionWorkspaceFilesRead):
+		return []Permission{PermissionWorkspaceFilesRead}
+	case string(PermissionWorkspaceExecCreate):
+		return []Permission{PermissionWorkspaceExecCreate}
 	case string(PermissionSecretsWrite):
 		return []Permission{PermissionSecretsWrite}
 	case string(PermissionTasksDeploy):

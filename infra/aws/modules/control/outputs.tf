@@ -53,11 +53,6 @@ output "control_url" {
   value       = local.control_url
 }
 
-output "private_control_url" {
-  description = "Private worker-facing control-plane URL when private_control_dns_name is set."
-  value       = local.private_control_url
-}
-
 output "load_balancer_dns_name" {
   description = "Control-plane load balancer DNS name."
   value       = aws_lb.control.dns_name
@@ -66,11 +61,6 @@ output "load_balancer_dns_name" {
 output "load_balancer_zone_id" {
   description = "Control-plane load balancer Route53 hosted zone ID."
   value       = aws_lb.control.zone_id
-}
-
-output "private_load_balancer_dns_name" {
-  description = "Private worker-facing load balancer DNS name when private_control_dns_name is set."
-  value       = try(aws_lb.private_control[0].dns_name, null)
 }
 
 output "cloudfront_distribution_domain_name" {
@@ -98,14 +88,14 @@ output "control_assign_public_ip" {
   value       = var.control_assign_public_ip
 }
 
-output "control_ecr_repository_url" {
-  description = "ECR repository URL for custom control-plane images when create_control_repository is true."
-  value       = try(aws_ecr_repository.control[0].repository_url, null)
-}
-
 output "control_cluster_name" {
   description = "ECS cluster name for helmr-control."
   value       = aws_ecs_cluster.control.name
+}
+
+output "control_cluster_arn" {
+  description = "ECS cluster ARN shared with one-shot deployment tasks."
+  value       = aws_ecs_cluster.control.arn
 }
 
 output "control_service_name" {
@@ -134,8 +124,10 @@ output "secret_arns" {
     database_url               = aws_secretsmanager_secret.database_url.arn
     worker_token_signing_key   = aws_secretsmanager_secret.worker_token_signing_key.arn
     setup_token                = aws_secretsmanager_secret.setup_token.arn
-    auth_secret                = aws_secretsmanager_secret.auth_secret.arn
-    secret_encryption_key      = aws_secretsmanager_secret.secret_encryption_key.arn
+    auth_key                   = aws_secretsmanager_secret.auth_key.arn
+    encryption_key             = aws_secretsmanager_secret.encryption_key.arn
+    workspace_fencing_key      = aws_secretsmanager_secret.workspace_fencing_key.arn
+    token_credential_key       = aws_secretsmanager_secret.token_credential_key.arn
     github_oauth_client_secret = aws_secretsmanager_secret.github_oauth_client_secret.arn
     checkpoint_encryption_key  = aws_secretsmanager_secret.checkpoint_encryption_key.arn
     },
@@ -148,7 +140,27 @@ output "secret_arns" {
   )
 }
 
-output "worker_fleets" {
-  description = "Exact non-secret fleet-controller configuration delivered to helmr-dispatcher."
-  value       = var.worker_fleets
+output "worker_enrollment_secret_arns" {
+  description = "Per-logical-group enrollment secrets populated and distributed by the deployment."
+  value       = { for group_id, secret in aws_secretsmanager_secret.worker_enrollment : group_id => secret.arn }
+}
+
+output "image_cache_registry_authority" {
+  description = "Canonical ECR registry authority injected into Control and Workers."
+  value       = local.image_cache_registry_authority
+}
+
+output "image_cache_repository_prefix" {
+  description = "Execution image-cache repository namespace."
+  value       = local.image_cache_repository_prefix
+}
+
+output "image_cache_role_arn" {
+  description = "Regional Execution image-cache role assumed only by build-capable Workers."
+  value       = aws_iam_role.image_cache.arn
+}
+
+output "image_cache_repository_arn_prefix" {
+  description = "Exact Environment repository ARN prefix used to derive Worker session policy resources."
+  value       = local.image_cache_repository_arn_prefix
 }

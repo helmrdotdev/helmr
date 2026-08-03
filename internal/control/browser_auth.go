@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -253,20 +252,16 @@ func (s *Server) upsertAuthIdentity(r *http.Request, queries db.Querier, identit
 	if len(claims) == 0 || !json.Valid(claims) {
 		claims = []byte(`{}`)
 	}
-	var userPublicID string
-	return createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.User, value: &userPublicID}}, func() (db.UpsertAuthIdentityRow, error) {
-		return queries.UpsertAuthIdentity(r.Context(), db.UpsertAuthIdentityParams{
-			UserID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			UserPublicID:     userPublicID,
-			IdentityID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			IdentityProvider: identity.Provider,
-			IdentitySubject:  identity.Subject,
-			DisplayName:      identity.DisplayName,
-			ProfileImageUrl:  pgtype.Text{String: identity.ProfileImageURL, Valid: identity.ProfileImageURL != ""},
-			Email:            email,
-			EmailVerified:    identity.EmailVerified,
-			Claims:           claims,
-		})
+	return queries.UpsertAuthIdentity(r.Context(), db.UpsertAuthIdentityParams{
+		UserID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		IdentityID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		IdentityProvider: identity.Provider,
+		IdentitySubject:  identity.Subject,
+		DisplayName:      identity.DisplayName,
+		ProfileImageUrl:  pgtype.Text{String: identity.ProfileImageURL, Valid: identity.ProfileImageURL != ""},
+		Email:            email,
+		EmailVerified:    identity.EmailVerified,
+		Claims:           claims,
 	})
 }
 
@@ -279,7 +274,7 @@ func (s *Server) issueSessionForOrg(r *http.Request, queries db.Querier, userID 
 	if err != nil {
 		return "", err
 	}
-	hash, err := auth.HashToken(s.authSecret, raw)
+	hash, err := auth.HashToken(s.authKeys.Session, raw)
 	if err != nil {
 		return "", err
 	}
@@ -300,7 +295,7 @@ func (s *Server) validateInvitationToken(r *http.Request, raw string) ([]byte, e
 	if err := s.userAuthConfigured(); err != nil {
 		return nil, err
 	}
-	tokenHash, err := auth.HashToken(s.authSecret, raw)
+	tokenHash, err := auth.HashToken(s.authKeys.Invitation, raw)
 	if err != nil {
 		return nil, errors.New("invalid invite token")
 	}
@@ -347,9 +342,11 @@ func (s *Server) encodeAuthFlow(flow browserAuthFlow) (string, error) {
 		return "", err
 	}
 	encodedPayload := base64.RawURLEncoding.EncodeToString(payload)
-	mac := hmac.New(sha256.New, s.authSecret)
-	_, _ = mac.Write([]byte(encodedPayload))
-	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	mac, err := auth.MAC(s.authKeys.BrowserAuth, []byte(encodedPayload))
+	if err != nil {
+		return "", err
+	}
+	signature := base64.RawURLEncoding.EncodeToString(mac)
 	return encodedPayload + "." + signature, nil
 }
 
@@ -366,9 +363,8 @@ func (s *Server) decodeAuthFlow(r *http.Request) (browserAuthFlow, error) {
 	if err != nil {
 		return browserAuthFlow{}, errors.New("auth flow is invalid")
 	}
-	mac := hmac.New(sha256.New, s.authSecret)
-	_, _ = mac.Write([]byte(payload))
-	if !hmac.Equal(actual, mac.Sum(nil)) {
+	expected, err := auth.MAC(s.authKeys.BrowserAuth, []byte(payload))
+	if err != nil || !hmac.Equal(actual, expected) {
 		return browserAuthFlow{}, errors.New("auth flow is invalid")
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(payload)

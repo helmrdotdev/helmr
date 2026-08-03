@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/api"
 )
 
 func LoadControl() (Control, error) {
@@ -17,21 +17,17 @@ func LoadControl() (Control, error) {
 	cfg := Control{
 		Addr:                    env("HELMR_CONTROL_ADDR", ":8080"),
 		DeploymentMode:          env("HELMR_DEPLOYMENT_MODE", DeploymentModeSelfHosted),
-		WorkerGroupID:           envString("HELMR_WORKER_GROUP_ID"),
-		RegionID:                envString("HELMR_REGION_ID"),
-		DefaultRegionID:         envString("HELMR_DEFAULT_REGION_ID"),
 		DatabaseURL:             envString("HELMR_DATABASE_URL"),
 		RedisURL:                env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
 		ClickHouseURL:           envString("HELMR_CLICKHOUSE_URL"),
 		ClickHouseUser:          envString("HELMR_CLICKHOUSE_USER"),
 		ClickHousePassword:      envString("HELMR_CLICKHOUSE_PASSWORD"),
 		CASURI:                  envString("HELMR_CAS_URI"),
-		WorkerTokenSigningKey:   envString("HELMR_WORKER_TOKEN_SIGNING_KEY"),
+		BuildPolicyPath:         envString("HELMR_BUILD_POLICY_PATH"),
+		PlatformStoreURI:        envString("HELMR_PLATFORM_STORE_URI"),
 		WorkerGroupsJSON:        envString("HELMR_WORKER_GROUPS"),
+		OperatorToken:           envString("HELMR_OPERATOR_TOKEN"),
 		SetupToken:              envString("HELMR_SETUP_TOKEN"),
-		AuthSecret:              envString("HELMR_AUTH_SECRET"),
-		SecretEncryptionKey:     envString("HELMR_SECRET_ENCRYPTION_KEY"),
-		SecretEncryptionKeyOld:  envString("HELMR_SECRET_ENCRYPTION_KEY_OLD"),
 		PublicURL:               publicURL,
 		MagicLinkDebugURLs:      magicLinkDebugURLs,
 		EmailProvider:           envLower("HELMR_EMAIL_PROVIDER"),
@@ -43,23 +39,33 @@ func LoadControl() (Control, error) {
 		GitHubOAuthClientID:     envString("HELMR_GITHUB_OAUTH_CLIENT_ID"),
 		GitHubOAuthClientSecret: envString("HELMR_GITHUB_OAUTH_CLIENT_SECRET"),
 		ScheduleJitter:          30 * time.Second,
-		RuntimePrepareTarget:    0,
-		RuntimePrepareLimit:     20,
+		RunLeaseTTL:             5 * time.Minute,
+		RunFinalizationTTL:      30 * time.Minute,
 	}
 	if cfg.ScheduleJitter, err = envDuration("HELMR_SCHEDULE_JITTER", cfg.ScheduleJitter); err != nil {
 		return cfg, err
 	}
-	if cfg.RuntimePrepareTarget, err = envInt("HELMR_PREPARED_RUNTIME_WARM_TARGET", cfg.RuntimePrepareTarget); err != nil {
+	if cfg.RunLeaseTTL, err = envDuration("HELMR_RUN_LEASE_TTL", cfg.RunLeaseTTL); err != nil {
 		return cfg, err
 	}
-	if cfg.RuntimePrepareTarget < 0 {
-		return cfg, errors.New("HELMR_PREPARED_RUNTIME_WARM_TARGET must be non-negative")
-	}
-	if cfg.RuntimePrepareLimit, err = envInt("HELMR_PREPARED_RUNTIME_WARM_LIMIT", cfg.RuntimePrepareLimit); err != nil {
+	if cfg.RunFinalizationTTL, err = envDuration("HELMR_RUN_FINALIZATION_TTL", cfg.RunFinalizationTTL); err != nil {
 		return cfg, err
 	}
-	if cfg.RuntimePrepareLimit <= 0 {
-		return cfg, errors.New("HELMR_PREPARED_RUNTIME_WARM_LIMIT must be positive")
+	if cfg.ImageCache, err = loadImageCache(); err != nil {
+		return cfg, err
+	}
+	if cfg.RunLeaseTTL < api.WorkerRunLeaseMinTTL {
+		return cfg, fmt.Errorf(
+			"HELMR_RUN_LEASE_TTL must be at least %s",
+			api.WorkerRunLeaseMinTTL,
+		)
+	}
+	if cfg.RunFinalizationTTL < api.WorkerRunFinalizationMinTTL ||
+		cfg.RunFinalizationTTL > 24*time.Hour {
+		return cfg, fmt.Errorf(
+			"HELMR_RUN_FINALIZATION_TTL must be between %s and 24h",
+			api.WorkerRunFinalizationMinTTL,
+		)
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")
@@ -67,17 +73,8 @@ func LoadControl() (Control, error) {
 	if cfg.DeploymentMode != DeploymentModeSelfHosted && cfg.DeploymentMode != DeploymentModeManagedCloud {
 		return cfg, errors.New("HELMR_DEPLOYMENT_MODE must be self-hosted or managed-cloud")
 	}
-	if cfg.WorkerGroupID == "" {
-		return cfg, errors.New("HELMR_WORKER_GROUP_ID is required")
-	}
 	if cfg.WorkerGroupsJSON == "" {
 		return cfg, errors.New("HELMR_WORKER_GROUPS is required")
-	}
-	if cfg.RegionID == "" {
-		return cfg, errors.New("HELMR_REGION_ID is required")
-	}
-	if cfg.DefaultRegionID == "" {
-		return cfg, errors.New("HELMR_DEFAULT_REGION_ID is required")
 	}
 	if cfg.ClickHouseURL == "" {
 		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")
@@ -85,20 +82,26 @@ func LoadControl() (Control, error) {
 	if cfg.CASURI == "" {
 		return cfg, errors.New("HELMR_CAS_URI is required")
 	}
-	if cfg.WorkerTokenSigningKey == "" {
-		return cfg, errors.New("HELMR_WORKER_TOKEN_SIGNING_KEY is required")
+	if cfg.BuildPolicyPath == "" {
+		return cfg, errors.New("HELMR_BUILD_POLICY_PATH is required")
 	}
-	if err := auth.ValidateWorkerTokenSecret([]byte(cfg.WorkerTokenSigningKey)); err != nil {
-		return cfg, fmt.Errorf("HELMR_WORKER_TOKEN_SIGNING_KEY: %w", err)
+	if cfg.PlatformStoreURI == "" {
+		return cfg, errors.New("HELMR_PLATFORM_STORE_URI is required")
 	}
-	if cfg.AuthSecret == "" {
-		return cfg, errors.New("HELMR_AUTH_SECRET is required")
-	}
-	if err := auth.ValidateTokenSecret([]byte(cfg.AuthSecret)); err != nil {
-		return cfg, fmt.Errorf("HELMR_AUTH_SECRET: %w", err)
-	}
-	if cfg.SecretEncryptionKey == "" {
-		return cfg, errors.New("HELMR_SECRET_ENCRYPTION_KEY is required")
+	for _, root := range []struct {
+		name   string
+		target *[]byte
+	}{
+		{"AUTH_KEY", &cfg.AuthKey},
+		{"TOKEN_CREDENTIAL_KEY", &cfg.TokenCredentialKey},
+		{"WORKSPACE_FENCING_KEY", &cfg.WorkspaceFencingKey},
+		{"ENCRYPTION_KEY", &cfg.EncryptionKey},
+		{"WORKER_TOKEN_SIGNING_KEY", &cfg.WorkerTokenSigningKey},
+	} {
+		*root.target, err = rootKey(root.name)
+		if err != nil {
+			return cfg, err
+		}
 	}
 	if err := validatePublicURL(cfg.PublicURL); err != nil {
 		return cfg, err

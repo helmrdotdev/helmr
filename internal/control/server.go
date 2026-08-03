@@ -18,57 +18,80 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
-	"github.com/helmrdotdev/helmr/internal/schedule"
+	"github.com/helmrdotdev/helmr/internal/enrollment"
+	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/imagecache"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/token"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 const (
-	readinessTimeout                      = 2 * time.Second
-	preparedRuntimeSupplyReconcileTimeout = 2 * time.Second
-	apiRequestBodyLimit                   = int64(128 << 20)
-	workerLogRequestBodyLimit             = int64(256 << 10)
-	maxControlPageSize                    = int32(500)
+	readinessTimeout           = 2 * time.Second
+	apiRequestBodyLimit        = int64(128 << 20)
+	deploymentRequestBodyLimit = archive.MaxSourceArtifactBytes + 2<<20
+	workerLogRequestBodyLimit  = int64(256 << 10)
+	taskCompletionBodyLimit    = int64(17 << 20)
+	workspaceExecResultLimit   = int64(10 << 20)
+	secretRequestBodyLimit     = int64(1 << 20)
+	maxControlPageSize         = int32(500)
+	defaultRunLeaseTTL         = 5 * time.Minute
 )
 
 type SecretManager interface {
+	Create(ctx context.Context, environmentID uuid.UUID, name string, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error)
+	Rotate(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error)
 	PutScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error)
+	Revoke(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error)
 	CheckScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) error
 	ResolveScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) (api.ResolvedSecrets, error)
+}
+
+type PlatformArtifactLocker interface {
+	With(context.Context, []string, func() error) error
+}
+
+type RegistryCredentialOpener interface {
+	OpenRegistryCredential(uuid.UUID, db.Secret, db.SecretVersion) ([]byte, error)
 }
 
 type Server struct {
 	log                   *slog.Logger
 	deploymentMode        string
-	workerGroupID         string
-	regionID              string
-	defaultRegionID       string
 	db                    db.Querier
 	tx                    TxBeginner
 	readinessDB           db.DBTX
 	auth                  auth.Authenticator
 	cas                   cas.Store
+	buildPolicy           *deployment.BuildPolicy
+	platformStore         cas.Reader
+	platformArtifactLocks PlatformArtifactLocker
 	secrets               SecretManager
-	runEnqueuer           RunEnqueuer
-	preparedRuntimeSupply PreparedRuntimeSupplyReconciler
-	dispatchQueue         dispatch.Queue
-	scheduleEngine        ScheduleRegistrar
+	secretDelivery        SecretDeliveryOpener
+	registryCredentials   RegistryCredentialOpener
+	cacheRepositories     imagecache.RepositoryProvisioner
+	workspaceFencingKey   workspace.FencingKey
+	tokenCredentialKey    token.CredentialKey
 	eventStream           *EventStream
 	telemetryReader       telemetry.Reader
-	workerTokenSecret     []byte
+	workerTokenSigningKey []byte
 	workerTokenTTL        time.Duration
-	workerEnrollment      WorkerEnrollmentVerifier
+	runLeaseTTL           time.Duration
+	runFinalizationTTL    time.Duration
+	workerEnrollment      *enrollment.Verifier
 	workerEnrollmentGuard *workerEnrollmentGuard
+	operatorTokenHash     []byte
 	setupToken            string
-	authSecret            []byte
+	authKeys              auth.Keys
 	publicURL             *url.URL
 	authProvider          AuthProvider
 	mailer                email.Sender
@@ -79,48 +102,18 @@ type Server struct {
 	devicePollEvery       time.Duration
 }
 
-type apiVersionContextKey struct{}
-type requestVersionMetadataContextKey struct{}
-
-type requestVersionMetadata struct {
-	APIVersion string
-	SDKVersion string
-	CLIVersion string
-}
-
 const (
 	deploymentModeSelfHosted   = "self-hosted"
 	deploymentModeManagedCloud = "managed-cloud"
 )
 
-type RunEnqueuer interface {
-	EnqueueRun(context.Context, pgtype.UUID, pgtype.UUID) (dispatch.EnqueueResult, error)
-}
-
-type PreparedRuntimeSupplyReconciler interface {
-	Reconcile(context.Context) error
-}
-
-type ScheduleRegistrar interface {
-	RegisterNext(context.Context, schedule.Instance) error
-	DeleteInstance(context.Context, pgtype.UUID) error
-}
-
 type TxBeginner interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
 
-type dbTXBeginner interface {
-	db.DBTX
-	TxBeginner
-}
-
 type ServerConfig struct {
-	Log             *slog.Logger
-	DeploymentMode  string
-	WorkerGroupID   string
-	RegionID        string
-	DefaultRegionID string
+	Log            *slog.Logger
+	DeploymentMode string
 
 	DB          db.Querier
 	TX          TxBeginner
@@ -128,22 +121,29 @@ type ServerConfig struct {
 
 	Auth                  auth.Authenticator
 	CAS                   cas.Store
+	BuildPolicy           *deployment.BuildPolicy
+	PlatformStore         cas.Reader
+	PlatformArtifactLocks PlatformArtifactLocker
 	Secrets               SecretManager
-	RunEnqueuer           RunEnqueuer
-	PreparedRuntimeSupply PreparedRuntimeSupplyReconciler
-	DispatchQueue         dispatch.Queue
-	ScheduleEngine        ScheduleRegistrar
+	SecretDelivery        SecretDeliveryOpener
+	RegistryCredentials   RegistryCredentialOpener
+	CacheRepositories     imagecache.RepositoryProvisioner
+	WorkspaceFencingKey   workspace.FencingKey
+	TokenCredentialKey    token.CredentialKey
 	EventStream           *EventStream
 	TelemetryReader       telemetry.Reader
 	Mailer                email.Sender
 	AuthProvider          AuthProvider
 
-	WorkerTokenSecret []byte
-	WorkerTokenTTL    time.Duration
-	WorkerEnrollment  WorkerEnrollmentVerifier
-	SetupToken        string
-	AuthSecret        []byte
-	PublicURL         *url.URL
+	WorkerTokenSigningKey []byte
+	WorkerTokenTTL        time.Duration
+	RunLeaseTTL           time.Duration
+	RunFinalizationTTL    time.Duration
+	WorkerEnrollment      *enrollment.Verifier
+	OperatorToken         string
+	SetupToken            string
+	AuthKey               []byte
+	PublicURL             *url.URL
 
 	MagicLinkDebugURLs bool
 	SessionTTL         time.Duration
@@ -168,24 +168,41 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if cfg.Auth == nil {
 		return nil, errors.New("control authenticator is required")
 	}
+	if cfg.PlatformArtifactLocks == nil {
+		return nil, errors.New("platform artifact locks are required")
+	}
 	deploymentMode := strings.TrimSpace(cfg.DeploymentMode)
 	if deploymentMode == "" {
 		deploymentMode = deploymentModeSelfHosted
 	}
-	workerGroupID := strings.TrimSpace(cfg.WorkerGroupID)
 	if deploymentMode != deploymentModeSelfHosted && deploymentMode != deploymentModeManagedCloud {
 		return nil, errors.New("deployment mode must be self-hosted or managed-cloud")
 	}
 	if cfg.WorkerEnrollment == nil {
-		return nil, errors.New("worker enrollment verifier is required")
+		return nil, errors.New("worker enrollment configuration is required")
 	}
-	regionID := strings.TrimSpace(cfg.RegionID)
-	if regionID == "" {
-		return nil, errors.New("control region id is required")
+	operatorTokenHash, err := hashOperatorToken(cfg.OperatorToken)
+	if err != nil {
+		return nil, err
 	}
-	defaultRegionID := strings.TrimSpace(cfg.DefaultRegionID)
-	if defaultRegionID == "" {
-		return nil, errors.New("control default region id is required")
+	if cfg.SecretDelivery == nil {
+		return nil, errors.New("Secret delivery opener is required")
+	}
+	if cfg.RegistryCredentials == nil {
+		return nil, errors.New("registry credential opener is required")
+	}
+	if !cfg.WorkspaceFencingKey.Valid() {
+		return nil, errors.New("Workspace fencing key is required")
+	}
+	if !cfg.TokenCredentialKey.Valid() {
+		return nil, errors.New("Token credential key is required")
+	}
+	authKeys, err := auth.NewKeys(cfg.AuthKey)
+	if err != nil {
+		return nil, err
+	}
+	if err := auth.ValidateWorkerTokenSigningKey(cfg.WorkerTokenSigningKey); err != nil {
+		return nil, err
 	}
 	telemetryReader := cfg.TelemetryReader
 	if telemetryReader == nil {
@@ -208,30 +225,51 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if workerTokenTTL <= 0 {
 		workerTokenTTL = defaultWorkerTokenTTL
 	}
+	runLeaseTTL := cfg.RunLeaseTTL
+	if runLeaseTTL <= 0 {
+		runLeaseTTL = defaultRunLeaseTTL
+	}
+	if runLeaseTTL < api.WorkerRunLeaseMinTTL {
+		return nil, fmt.Errorf("Run Lease TTL must be at least %s", api.WorkerRunLeaseMinTTL)
+	}
+	runFinalizationTTL := cfg.RunFinalizationTTL
+	if runFinalizationTTL <= 0 {
+		runFinalizationTTL = 30 * time.Minute
+	}
+	if runFinalizationTTL < api.WorkerRunFinalizationMinTTL {
+		return nil, fmt.Errorf(
+			"Run finalization TTL must be at least %s",
+			api.WorkerRunFinalizationMinTTL,
+		)
+	}
 	server := &Server{
 		log:                   log,
 		deploymentMode:        deploymentMode,
-		workerGroupID:         workerGroupID,
-		regionID:              regionID,
-		defaultRegionID:       defaultRegionID,
 		db:                    cfg.DB,
 		tx:                    cfg.TX,
 		readinessDB:           cfg.ReadinessDB,
 		auth:                  cfg.Auth,
 		cas:                   cfg.CAS,
+		buildPolicy:           cfg.BuildPolicy,
+		platformStore:         cfg.PlatformStore,
+		platformArtifactLocks: cfg.PlatformArtifactLocks,
 		secrets:               cfg.Secrets,
-		runEnqueuer:           cfg.RunEnqueuer,
-		preparedRuntimeSupply: cfg.PreparedRuntimeSupply,
-		dispatchQueue:         cfg.DispatchQueue,
-		scheduleEngine:        cfg.ScheduleEngine,
+		secretDelivery:        cfg.SecretDelivery,
+		registryCredentials:   cfg.RegistryCredentials,
+		cacheRepositories:     cfg.CacheRepositories,
+		workspaceFencingKey:   cfg.WorkspaceFencingKey,
+		tokenCredentialKey:    cfg.TokenCredentialKey,
 		eventStream:           cfg.EventStream,
 		telemetryReader:       telemetryReader,
-		workerTokenSecret:     cfg.WorkerTokenSecret,
+		workerTokenSigningKey: cfg.WorkerTokenSigningKey,
 		workerTokenTTL:        workerTokenTTL,
+		runLeaseTTL:           runLeaseTTL,
+		runFinalizationTTL:    runFinalizationTTL,
 		workerEnrollment:      cfg.WorkerEnrollment,
 		workerEnrollmentGuard: newWorkerEnrollmentGuard(),
+		operatorTokenHash:     operatorTokenHash,
 		setupToken:            strings.TrimSpace(cfg.SetupToken),
-		authSecret:            cfg.AuthSecret,
+		authKeys:              authKeys,
 		publicURL:             cfg.PublicURL,
 		authProvider:          cfg.AuthProvider,
 		mailer:                mailer,
@@ -242,7 +280,8 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		devicePollEvery:       cfg.DevicePollEvery,
 	}
 	if cfg.BackgroundContext != nil {
-		go server.sessionContinuationRequestWorkflow().run(cfg.BackgroundContext)
+		go (runRetryReadyWorkflow{log: server.log, store: server.db}).run(cfg.BackgroundContext)
+		go (queuedChildExpiryWorkflow{server: server}).run(cfg.BackgroundContext)
 	}
 	router := chi.NewRouter()
 	router.Use(server.recoverPanics)
@@ -297,30 +336,35 @@ func (s *Server) recoverPanics(next http.Handler) http.Handler {
 }
 
 func (s *Server) mountAPIRoutes(r chi.Router) {
-	r.Use(limitRequestBody(apiRequestBodyLimit))
-	r.Use(s.requireCurrentAPIVersion)
-	r.Options("/v1/tokens/{tokenID}/complete", s.completeTokenPublicAccessTokenPreflight)
-	r.Post("/v1/tokens/{tokenID}/complete", s.completeTokenWithPublicAccessToken)
-	r.Post("/v1/tokens/{tokenID}/callback/{callbackSecret}", s.completeTokenWithCallbackSecret)
-	r.Options("/v1/sessions/by-external-id/inputs/{stream}", s.publicSessionInputStreamPreflight)
-	r.Post("/v1/sessions/by-external-id/inputs/{stream}", s.appendSessionInputStreamWithPublicAccessToken)
-	r.Options("/v1/sessions/by-external-id/outputs/{stream}/read", s.publicSessionOutputStreamReadPreflight)
-	r.Get("/v1/sessions/by-external-id/outputs/{stream}/read", s.readSessionOutputStreamWithPublicAccessToken)
-	r.Options("/v1/sessions/{sessionID}/inputs/{stream}", s.publicSessionInputStreamPreflight)
-	r.Post("/v1/sessions/{sessionID}/inputs/{stream}", s.appendSessionInputStreamWithPublicAccessToken)
-	r.Options("/v1/sessions/{sessionID}/outputs/{stream}/read", s.publicSessionOutputStreamReadPreflight)
-	r.Get("/v1/sessions/{sessionID}/outputs/{stream}/read", s.readSessionOutputStreamWithPublicAccessToken)
+	r.Use(limitAPIRequestBody)
+	r.Use(s.requireRequestVersions)
+	r.With(limitRequestBody(tokenRequestBodyLimit)).
+		Post("/token-callbacks/{tokenID}/{callbackSecret}", s.completeTokenWithCallback)
+	r.With(limitRequestBody(tokenRequestBodyLimit)).
+		Post("/public/tokens/{tokenID}/complete", s.completeTokenWithBearer)
+	r.Options("/public/tokens/{tokenID}/complete", s.completeTokenBearerPreflight)
 	s.mountAuthRoutes(r)
 	s.mountOwnerRoutes(r)
-	s.mountRunRoutes(r)
-	s.mountScheduleRoutes(r)
+	s.mountOperatorRoutes(r)
 	s.mountWorkerRoutes(r)
 }
 
-func (s *Server) requireCurrentAPIVersion(next http.Handler) http.Handler {
+func limitAPIRequestBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limit := apiRequestBodyLimit
+		if r.Method == http.MethodPost &&
+			(r.URL.Path == "/api/deployments" ||
+				strings.HasSuffix(r.URL.Path, "/deployments")) {
+			limit = deploymentRequestBodyLimit
+		}
+		limitRequestBody(limit)(next).ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) requireRequestVersions(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(api.APIVersionHeader, api.CurrentAPIVersion)
-		requested := strings.TrimSpace(r.Header.Get(api.APIVersionHeader))
+		requested := r.Header.Get(api.APIVersionHeader)
 		if requested != "" && requested != api.CurrentAPIVersion {
 			writeError(w, badRequest(codedError{
 				code:    "unsupported_api_version",
@@ -328,33 +372,8 @@ func (s *Server) requireCurrentAPIVersion(next http.Handler) http.Handler {
 			}))
 			return
 		}
-		ctx := context.WithValue(r.Context(), apiVersionContextKey{}, api.CurrentAPIVersion)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		next.ServeHTTP(w, r)
 	})
-}
-
-func requestAPIVersion(r *http.Request) string {
-	version, _ := r.Context().Value(apiVersionContextKey{}).(string)
-	if strings.TrimSpace(version) == "" {
-		return api.CurrentAPIVersion
-	}
-	return version
-}
-
-func contextWithRequestVersionMetadata(ctx context.Context, r *http.Request) context.Context {
-	return context.WithValue(ctx, requestVersionMetadataContextKey{}, requestVersionMetadata{
-		APIVersion: requestAPIVersion(r),
-		SDKVersion: strings.TrimSpace(r.Header.Get(api.SDKVersionHeader)),
-		CLIVersion: firstNonEmptyString(r.Header.Get(api.CLIVersionHeader), r.Header.Get(api.ClientVersionHeader)),
-	})
-}
-
-func requestVersionMetadataFromContext(ctx context.Context) requestVersionMetadata {
-	metadata, _ := ctx.Value(requestVersionMetadataContextKey{}).(requestVersionMetadata)
-	if strings.TrimSpace(metadata.APIVersion) == "" {
-		metadata.APIVersion = api.CurrentAPIVersion
-	}
-	return metadata
 }
 
 func (s *Server) mountAuthRoutes(r chi.Router) {
@@ -408,59 +427,75 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/current", s.getCurrentDeployment)
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}", s.getDeployment)
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/events", s.getDeploymentEvents)
-		r.Post("/projects/{projectID}/environments/{environmentID}/deployments/{deployment}/promote", s.promoteDeployment)
-		r.Get("/projects/{projectID}/environments/{environmentID}/sandboxes", s.listSandboxes)
-		r.Get("/projects/{projectID}/environments/{environmentID}/sandboxes/{sandboxID}", s.getSandbox)
-		r.Get("/projects/{projectID}/environments/{environmentID}/runs", s.listRuns)
-		r.Get("/projects/{projectID}/environments/{environmentID}/runs/counts", s.countRuns)
-		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{id}", s.getRun)
-		r.Post("/projects/{projectID}/environments/{environmentID}/runs/{id}/cancel", s.cancelRun)
-		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{id}/events", s.getRunEvents)
-		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{id}/logs", s.getRunLogs)
-		r.Post("/projects/{projectID}/environments/{environmentID}/tokens", s.createToken)
-		r.Get("/projects/{projectID}/environments/{environmentID}/tokens", s.listTokens)
-		r.Get("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}", s.getToken)
-		r.Post("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/complete", s.completeToken)
-		r.Post("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/cancel", s.cancelToken)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces", s.createWorkspace)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces", s.listWorkspaces)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.getWorkspace)
-		r.Patch("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.patchWorkspace)
-		r.Delete("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.deleteWorkspace)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/materialize", s.requestWorkspaceMount)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/connect", s.connectWorkspace)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/stop", s.stopWorkspace)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files", s.listWorkspaceFiles)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/content", s.readWorkspaceFile)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/stat", s.statWorkspaceFile)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/versions", s.listWorkspaceVersions)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/versions/{versionID}", s.getWorkspaceVersion)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs", s.createWorkspaceExec)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs", s.listWorkspaceExecs)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs/{execID}", s.getWorkspaceExec)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs/{execID}/stdin", s.writeWorkspaceExecStdin)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs/{execID}/stdin/close", s.closeWorkspaceExecStdin)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs/{execID}/stdout", s.listWorkspaceExecStdout)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs/{execID}/stderr", s.listWorkspaceExecStderr)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty", s.createWorkspacePty)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty", s.listWorkspacePtys)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}", s.getWorkspacePty)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/input", s.writeWorkspacePtyInput)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/output", s.listWorkspacePtyOutput)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/resize", s.resizeWorkspacePty)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/close", s.closeWorkspacePty)
-		s.mountSessionRoutes(r, "/projects/{projectID}/environments/{environmentID}")
+		r.Post("/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/promote", s.promoteDeployment)
 		r.Get("/projects/{projectID}/environments/{environmentID}/schedules", s.listSchedules)
-		r.Post("/projects/{projectID}/environments/{environmentID}/schedules", s.createSchedule)
-		r.Get("/projects/{projectID}/environments/{environmentID}/schedules/{id}", s.getSchedule)
-		r.Put("/projects/{projectID}/environments/{environmentID}/schedules/{id}", s.updateSchedule)
-		r.Post("/projects/{projectID}/environments/{environmentID}/schedules/{id}/activate", s.activateSchedule)
-		r.Post("/projects/{projectID}/environments/{environmentID}/schedules/{id}/deactivate", s.deactivateSchedule)
-		r.Delete("/projects/{projectID}/environments/{environmentID}/schedules/{id}", s.deleteSchedule)
+		r.Get("/projects/{projectID}/environments/{environmentID}/schedules/{scheduleID}", s.getSchedule)
+		r.Get("/projects/{projectID}/environments/{environmentID}/tokens", s.listTokens)
+		r.With(limitRequestBody(tokenRequestBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/tokens", s.createToken)
+		r.Get("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}", s.getToken)
+		r.With(limitRequestBody(tokenRequestBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/complete", s.completeToken)
+		r.With(limitRequestBody(tokenRequestBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/cancel", s.cancelToken)
 		r.Get("/projects/{projectID}/environments/{environmentID}/secrets", s.listSecrets)
-		r.Get("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.getSecret)
-		r.Put("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.setSecret)
-		r.Delete("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.deleteSecret)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/secrets", s.createSecret)
+		r.Get("/projects/{projectID}/environments/{environmentID}/secrets/by-name/{name}", s.getSecretByName)
+		r.Get("/projects/{projectID}/environments/{environmentID}/secrets/{secretID}", s.getSecretByID)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/secrets/by-name/{name}/rotate", s.rotateSecretByName)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/rotate", s.rotateSecretByID)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/secrets/by-name/{name}/revoke", s.revokeSecretByName)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/revoke", s.revokeSecretByID)
+		r.With(limitRequestBody(workspaceCreateBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceDeclaredID}/create", s.createWorkspaceHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/by-key/{workspaceDeclaredID}", s.getWorkspaceByKeyHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files", s.listWorkspaceFilesHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/content", s.readWorkspaceFileHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/stat", s.statWorkspaceFileHTTP)
+		r.With(limitRequestBody(workspaceExecBodyMaxBytes)).
+			Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/exec", s.executeWorkspaceHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.getWorkspaceHTTP)
+		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/delete", s.deleteWorkspaceHTTP)
+		r.With(limitRequestBody(taskStartBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/tasks/{taskDeclaredID}/start", s.startTaskHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/runs", s.listRunSnapshotsHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{runID}", s.getRunSnapshotHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{runID}/logs", s.listRunLogsHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{runID}/events", s.listRunEventsHTTP)
+		r.Post("/projects/{projectID}/environments/{environmentID}/runs/{runID}/cancel", s.cancelRunHTTP)
+		r.With(limitActorInputBody).
+			Post("/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/input", s.sendActorInput)
+	})
+	r.Group(func(r chi.Router) {
+		r.Use(func(next http.Handler) http.Handler {
+			return s.requireSessionWithErrorWriter(next, writeActorStartAuthError)
+		})
+		r.With(limitActorStartBody).
+			Post("/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/start", s.startActorHTTP)
+	})
+	r.Group(func(r chi.Router) {
+		r.Use(func(next http.Handler) http.Handler {
+			return s.requireSessionWithErrorWriter(next, writeActorCloseAuthError)
+		})
+		r.With(limitActorCloseBody).
+			Post("/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/close", s.closeActorHTTP)
+	})
+	r.Group(func(r chi.Router) {
+		r.Use(func(next http.Handler) http.Handler {
+			return s.requireSessionWithErrorWriter(next, writeActorReadAuthError)
+		})
+		r.Get("/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/status", s.getActorStatusHTTP)
+	})
+	r.Group(func(r chi.Router) {
+		r.Use(func(next http.Handler) http.Handler {
+			return s.requireSessionWithErrorWriter(next, writeActorOutputReadAuthError)
+		})
+		r.Get("/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/output", s.readActorOutputHTTP)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -479,94 +514,78 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/deployments/current", s.getCurrentDeployment)
 		r.Get("/deployments/{deploymentID}", s.getDeployment)
 		r.Get("/deployments/{deploymentID}/events", s.getDeploymentEvents)
-		r.Post("/deployments/{deployment}/promote", s.promoteDeployment)
 		r.Post("/deployments", s.createDeployment)
+		r.Post("/deployments/{deploymentID}/promote", s.promoteDeployment)
+		r.Get("/schedules", s.listSchedules)
+		r.Get("/schedules/{scheduleID}", s.getSchedule)
+		r.Get("/tokens", s.listTokens)
+		r.With(limitRequestBody(tokenRequestBodyLimit)).Post("/tokens", s.createToken)
+		r.Get("/tokens/{tokenID}", s.getToken)
+		r.With(limitRequestBody(tokenRequestBodyLimit)).
+			Post("/tokens/{tokenID}/complete", s.completeToken)
+		r.With(limitRequestBody(tokenRequestBodyLimit)).
+			Post("/tokens/{tokenID}/cancel", s.cancelToken)
+		r.With(limitRequestBody(taskStartBodyLimit)).
+			Post("/tasks/{taskDeclaredID}/start", s.startTaskHTTP)
+		r.Get("/runs", s.listRunSnapshotsHTTP)
+		r.Get("/runs/{runID}", s.getRunSnapshotHTTP)
+		r.Get("/runs/{runID}/logs", s.listRunLogsHTTP)
+		r.Get("/runs/{runID}/events", s.listRunEventsHTTP)
+		r.Post("/runs/{runID}/cancel", s.cancelRunHTTP)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireActor)
 		r.Get("/secrets", s.listSecrets)
-		r.Get("/secrets/{name}", s.getSecret)
-		r.Put("/secrets/{name}", s.setSecret)
-		r.Delete("/secrets/{name}", s.deleteSecret)
+		r.With(limitRequestBody(secretRequestBodyLimit)).Post("/secrets", s.createSecret)
+		r.Get("/secrets/by-name/{name}", s.getSecretByName)
+		r.Get("/secrets/{secretID}", s.getSecretByID)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/secrets/by-name/{name}/rotate", s.rotateSecretByName)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/secrets/{secretID}/rotate", s.rotateSecretByID)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/secrets/by-name/{name}/revoke", s.revokeSecretByName)
+		r.With(limitRequestBody(secretRequestBodyLimit)).
+			Post("/secrets/{secretID}/revoke", s.revokeSecretByID)
+		r.With(limitRequestBody(workspaceCreateBodyLimit)).
+			Post("/workspaces/{workspaceDeclaredID}/create", s.createWorkspaceHTTP)
+		r.Get("/workspaces/by-key/{workspaceDeclaredID}", s.getWorkspaceByKeyHTTP)
+		r.Get("/workspaces/{workspaceID}/files", s.listWorkspaceFilesHTTP)
+		r.Get("/workspaces/{workspaceID}/files/content", s.readWorkspaceFileHTTP)
+		r.Get("/workspaces/{workspaceID}/files/stat", s.statWorkspaceFileHTTP)
+		r.With(limitRequestBody(workspaceExecBodyMaxBytes)).
+			Post("/workspaces/{workspaceID}/exec", s.executeWorkspaceHTTP)
+		r.Get("/workspaces/{workspaceID}", s.getWorkspaceHTTP)
+		r.Post("/workspaces/{workspaceID}/delete", s.deleteWorkspaceHTTP)
+		r.With(limitActorInputBody).
+			Post("/actors/{actorDeclaredID}/input", s.sendActorInput)
 	})
-}
-
-func (s *Server) mountRunRoutes(r chi.Router) {
 	r.Group(func(r chi.Router) {
-		r.Use(s.requireActor)
-		s.mountSessionRoutes(r, "")
-		r.Get("/runs", s.listRuns)
-		r.Get("/runs/counts", s.countRuns)
-		r.Get("/runs/{id}", s.getRun)
-		r.Post("/runs/{id}/cancel", s.cancelRun)
-		r.Get("/runs/{id}/events", s.getRunEvents)
-		r.Get("/runs/{id}/logs", s.getRunLogs)
-		r.Post("/tokens", s.createToken)
-		r.Get("/tokens", s.listTokens)
-		r.Get("/tokens/{tokenID}", s.getToken)
-		r.Post("/tokens/{tokenID}/complete", s.completeToken)
-		r.Post("/tokens/{tokenID}/cancel", s.cancelToken)
-		r.Post("/public-access-tokens", s.createPublicAccessToken)
-		r.Post("/workspaces", s.createWorkspace)
-		r.Get("/workspaces", s.listWorkspaces)
-		r.Get("/workspaces/{workspaceID}", s.getWorkspace)
-		r.Patch("/workspaces/{workspaceID}", s.patchWorkspace)
-		r.Delete("/workspaces/{workspaceID}", s.deleteWorkspace)
-		r.Post("/workspaces/{workspaceID}/materialize", s.requestWorkspaceMount)
-		r.Post("/workspaces/{workspaceID}/connect", s.connectWorkspace)
-		r.Post("/workspaces/{workspaceID}/stop", s.stopWorkspace)
-		r.Get("/workspaces/{workspaceID}/files", s.listWorkspaceFiles)
-		r.Get("/workspaces/{workspaceID}/files/content", s.readWorkspaceFile)
-		r.Get("/workspaces/{workspaceID}/files/stat", s.statWorkspaceFile)
-		r.Get("/workspaces/{workspaceID}/versions", s.listWorkspaceVersions)
-		r.Get("/workspaces/{workspaceID}/versions/{versionID}", s.getWorkspaceVersion)
-		r.Post("/workspaces/{workspaceID}/execs", s.createWorkspaceExec)
-		r.Get("/workspaces/{workspaceID}/execs", s.listWorkspaceExecs)
-		r.Get("/workspaces/{workspaceID}/execs/{execID}", s.getWorkspaceExec)
-		r.Post("/workspaces/{workspaceID}/execs/{execID}/stdin", s.writeWorkspaceExecStdin)
-		r.Post("/workspaces/{workspaceID}/execs/{execID}/stdin/close", s.closeWorkspaceExecStdin)
-		r.Get("/workspaces/{workspaceID}/execs/{execID}/stdout", s.listWorkspaceExecStdout)
-		r.Get("/workspaces/{workspaceID}/execs/{execID}/stderr", s.listWorkspaceExecStderr)
-		r.Post("/workspaces/{workspaceID}/pty", s.createWorkspacePty)
-		r.Get("/workspaces/{workspaceID}/pty", s.listWorkspacePtys)
-		r.Get("/workspaces/{workspaceID}/pty/{ptyID}", s.getWorkspacePty)
-		r.Post("/workspaces/{workspaceID}/pty/{ptyID}/input", s.writeWorkspacePtyInput)
-		r.Get("/workspaces/{workspaceID}/pty/{ptyID}/output", s.listWorkspacePtyOutput)
-		r.Post("/workspaces/{workspaceID}/pty/{ptyID}/resize", s.resizeWorkspacePty)
-		r.Post("/workspaces/{workspaceID}/pty/{ptyID}/close", s.closeWorkspacePty)
-		r.Get("/sandboxes", s.listSandboxes)
-		r.Get("/sandboxes/{sandboxID}", s.getSandbox)
+		r.Use(func(next http.Handler) http.Handler {
+			return s.requireActorWithErrorWriter(next, writeActorStartAuthError)
+		})
+		r.With(limitActorStartBody).
+			Post("/actors/{actorDeclaredID}/start", s.startActorHTTP)
 	})
-}
-
-func (s *Server) mountSessionRoutes(r chi.Router, prefix string) {
-	r.Get(prefix+"/tasks", s.listTasks)
-	r.Get(prefix+"/tasks/{taskID}", s.getTask)
-	r.Post(prefix+"/sessions", s.startSession)
-	r.Post(prefix+"/sessions/start-and-wait", s.startSessionAndWait)
-	r.Get(prefix+"/sessions", s.listSessions)
-	r.Get(prefix+"/sessions/by-external-id", s.getSession)
-	r.Patch(prefix+"/sessions/by-external-id", s.patchSession)
-	r.Post(prefix+"/sessions/by-external-id/close", s.closeSession)
-	r.Post(prefix+"/sessions/by-external-id/cancel", s.cancelSession)
-	r.Get(prefix+"/sessions/by-external-id/runs", s.listSessionRuns)
-	r.Get(prefix+"/sessions/by-external-id/streams", s.listSessionStreams)
-	r.Post(prefix+"/sessions/by-external-id/inputs/{stream}", s.appendSessionInputStream)
-	r.Get(prefix+"/sessions/by-external-id/inputs/{stream}", s.listSessionInputStreamRecords)
-	r.Post(prefix+"/sessions/by-external-id/outputs/{stream}", s.appendSessionOutputStream)
-	r.Get(prefix+"/sessions/by-external-id/outputs/{stream}", s.listSessionOutputStreamRecords)
-	r.Get(prefix+"/sessions/by-external-id/outputs/{stream}/read", s.readSessionOutputStreamRecord)
-	r.Get(prefix+"/sessions/{sessionID}", s.getSession)
-	r.Patch(prefix+"/sessions/{sessionID}", s.patchSession)
-	r.Post(prefix+"/sessions/{sessionID}/close", s.closeSession)
-	r.Post(prefix+"/sessions/{sessionID}/cancel", s.cancelSession)
-	r.Get(prefix+"/sessions/{sessionID}/runs", s.listSessionRuns)
-	r.Get(prefix+"/sessions/{sessionID}/streams", s.listSessionStreams)
-	r.Post(prefix+"/sessions/{sessionID}/inputs/{stream}", s.appendSessionInputStream)
-	r.Get(prefix+"/sessions/{sessionID}/inputs/{stream}", s.listSessionInputStreamRecords)
-	r.Post(prefix+"/sessions/{sessionID}/outputs/{stream}", s.appendSessionOutputStream)
-	r.Get(prefix+"/sessions/{sessionID}/outputs/{stream}", s.listSessionOutputStreamRecords)
-	r.Get(prefix+"/sessions/{sessionID}/outputs/{stream}/read", s.readSessionOutputStreamRecord)
+	r.Group(func(r chi.Router) {
+		r.Use(func(next http.Handler) http.Handler {
+			return s.requireActorWithErrorWriter(next, writeActorCloseAuthError)
+		})
+		r.With(limitActorCloseBody).
+			Post("/actors/{actorDeclaredID}/close", s.closeActorHTTP)
+	})
+	r.Group(func(r chi.Router) {
+		r.Use(func(next http.Handler) http.Handler {
+			return s.requireActorWithErrorWriter(next, writeActorReadAuthError)
+		})
+		r.Get("/actors/{actorDeclaredID}/status", s.getActorStatusHTTP)
+	})
+	r.Group(func(r chi.Router) {
+		r.Use(func(next http.Handler) http.Handler {
+			return s.requireActorWithErrorWriter(next, writeActorOutputReadAuthError)
+		})
+		r.Get("/actors/{actorDeclaredID}/output", s.readActorOutputHTTP)
+	})
 }
 
 func (s *Server) mountWorkerRoutes(r chi.Router) {
@@ -574,22 +593,28 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 		r.Post("/enrollment/challenge", s.workerEnrollmentChallenge)
 		r.Post("/enrollment", s.workerEnroll)
 		r.Post("/auth/token", s.workerAuthToken)
-		r.With(s.requireRegisteringWorker).Post("/startup-recovery", s.workerStartupRecovery)
+		r.With(s.requireRecoveringWorker).Post("/startup-recovery", s.workerStartupRecovery)
 		r.With(s.requireRegisteringWorker).Post("/activate", s.workerActivate)
-		r.With(s.requireTerminalWorker).Get("/status", s.workerStatus)
-		r.With(s.requireTerminalWorker).Post("/drain/complete", s.workerCompleteDrain)
+		r.With(s.requireWorker).Get("/status", s.workerStatus)
+		r.With(s.requireWorkerDrainCompletion).Post("/drain/complete", s.workerCompleteDrain)
+		r.With(s.requireWorkerFence).Post("/fence", s.workerFence)
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireWorker)
 			r.Post("/observe", s.workerObserve)
-			r.Post("/certification/renew", s.workerRenewCertification)
 			r.Post("/drain", s.workerDrain)
-			r.Post("/fence", s.workerFence)
 			r.Group(func(r chi.Router) {
 				r.Use(func(next http.Handler) http.Handler { return requireWorkerRole(auth.WorkerRoleBuild, next) })
+				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleBuild, next) }).Post("/platform-acquisitions/next", s.workerNextPlatformAcquisition)
+				r.Post("/platform-acquisitions/complete", s.workerCompletePlatformAcquisition)
+				r.Post("/platform-acquisitions/fail", s.workerFailPlatformAcquisition)
 				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleBuild, next) }).Post("/deployments/lease", s.workerLeaseDeploymentBuild)
 				r.Post("/deployments/start", s.workerStartDeploymentBuild)
 				r.Post("/deployments/renew", s.workerRenewDeploymentBuild)
 				r.Post("/deployments/reject", s.workerRejectDeploymentBuild)
+				r.Post("/deployments/delivery-failed", s.workerDeploymentBuildDeliveryFailed)
+				r.Post("/deployments/workspace-images/admit", s.workerAdmitWorkspaceImage)
+				r.Post("/deployments/workspace-images/credentials", s.workerFetchWorkspaceImageCredentials)
+				r.Post("/deployments/workspace-images/complete", s.workerCompleteWorkspaceImage)
 				r.Post("/deployments/complete", s.workerCompleteDeploymentBuild)
 			})
 			r.Group(func(r chi.Router) {
@@ -599,45 +624,49 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.Post("/runtime-instances/closed", s.workerMarkRuntimeInstanceClosed)
 				r.Post("/runtime-instances/failed", s.workerMarkRuntimeInstanceFailed)
 				r.Post("/runtime-substrates/register", s.workerRegisterRuntimeSubstrate)
-				r.Post("/runtime-substrates/lookup", s.workerLookupRuntimeSubstrate)
-				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleRun, next) }).Post("/leases/lease", s.workerLease)
-				r.Post("/leases/start", s.workerStart)
-				r.Post("/leases/reject", s.workerRejectRun)
-				r.Post("/leases/renew", s.workerRenew)
-				r.Post("/leases/release", s.workerRelease)
-				r.Post("/leases/tokens", s.workerCreateToken)
-				r.Post("/leases/run-waits", s.workerCreateRunWait)
-				r.Post("/leases/run-waits/poll", s.workerPollRunWait)
-				r.Post("/leases/run-waits/resume-ack", s.workerAcknowledgeRunWaitResume)
-				r.Post("/leases/run-waits/workspace-capture", s.workerCaptureRunWaitWorkspace)
-				r.Post("/leases/streams/input/read", s.workerReadInputStream)
-				r.Post("/leases/streams/output", s.workerAppendOutputStream)
-				r.Post("/leases/metadata", s.workerUpdateRunMetadata)
-				r.Post("/leases/checkpoints/ready", s.workerMarkCheckpointReady)
-				r.Post("/leases/checkpoints/failed", s.workerMarkCheckpointFailed)
-				r.Post("/leases/restores/ack", s.workerAcknowledgeRestore)
-				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/logs", s.workerAppendLogs)
-				r.Post("/leases/log-entries", s.workerRecordLogEntry)
-				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleRun, next) }).Post("/workspaces/mounts/claim", s.workerClaimWorkspaceMount)
+				r.Post("/workspaces/mounts/claim", s.workerClaimWorkspaceMount)
 				r.Post("/workspaces/mounts/renew", s.workerRenewWorkspaceMount)
 				r.Post("/workspaces/mounts/mounted", s.workerMarkWorkspaceMountMounted)
 				r.Post("/workspaces/mounts/capture", s.workerCaptureWorkspaceMount)
-				r.Post("/workspaces/mounts/fail", s.workerFailWorkspaceMount)
 				r.Post("/workspaces/mounts/stop", s.workerStopWorkspaceMount)
-				r.Post("/workspaces/mounts/operations/claim", s.workerClaimWorkspaceOperation)
-				r.Post("/workspaces/mounts/operations/start", s.workerStartWorkspaceOperation)
-				r.Post("/workspaces/mounts/operations/complete", s.workerCompleteWorkspaceOperation)
-				r.Post("/workspaces/execs/started", s.workerMarkWorkspaceExecStarted)
-				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/workspaces/execs/output", s.workerAppendWorkspaceExecOutput)
-				r.Post("/workspaces/execs/input", s.workerListWorkspaceExecInput)
-				r.Post("/workspaces/execs/input-delivered", s.workerAdvanceWorkspaceExecInputDelivered)
-				r.Post("/workspaces/execs/exited", s.workerMarkWorkspaceExecExited)
-				r.Post("/workspaces/ptys/opened", s.workerMarkWorkspacePtyOpened)
-				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/workspaces/ptys/output", s.workerAppendWorkspacePtyOutput)
-				r.Post("/workspaces/ptys/input", s.workerListWorkspacePtyInput)
-				r.Post("/workspaces/ptys/input-delivered", s.workerAdvanceWorkspacePtyInputDelivered)
-				r.Post("/workspaces/ptys/resize-applied", s.workerMarkWorkspacePtyResizeApplied)
-				r.Post("/workspaces/ptys/closed", s.workerMarkWorkspacePtyClosed)
+				r.Post("/workspaces/mounts/fail", s.workerFailWorkspaceMount)
+				r.Post("/workspaces/execs/claim", s.workerClaimWorkspaceExec)
+				r.With(limitRequestBody(workspaceExecResultLimit)).
+					Post("/workspaces/execs/complete", s.workerCompleteWorkspaceExec)
+				r.Post("/leases/discover", s.workerDiscoverRunLeases)
+				r.Post("/leases/claim", s.workerClaimRunLease)
+				r.Post("/leases/start", s.workerStart)
+				r.Post("/leases/resume-release", s.workerAcknowledgeRunResumeRelease)
+				r.Post("/leases/entrypoint", s.workerEnterRunEntrypoint)
+				r.Post("/leases/run-renew", s.workerRenewRunLease)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/run-waits", s.workerCreateRunWait)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/run-waits/poll", s.workerPollRunWait)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/run-waits/resume-ack", s.workerAcknowledgeRunWaitResume)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/checkpoints/ready", s.workerMarkCheckpointReady)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/checkpoints/failed", s.workerMarkCheckpointFailed)
+				r.Post("/leases/finalization/begin", s.workerBeginRunFinalization)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actor-turns/commit", s.workerCommitActorTurn)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actor-outputs", s.workerAppendActorOutput)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actor-inputs/send", s.workerSendActorInput)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/start", s.workerStartActor)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/status", s.workerGetActorStatus)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/close", s.workerCloseActor)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/output-page", s.workerReadActorOutputPage)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/create", s.workerCreateWorkspace)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/retrieve", s.workerRetrieveWorkspace)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/files/read", s.workerReadWorkspaceFile)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/files/stat", s.workerStatWorkspaceFile)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/files/list", s.workerListWorkspaceFiles)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/exec", s.workerExecuteWorkspace)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/exec/poll", s.workerPollWorkspaceExec)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/delete", s.workerDeleteWorkspace)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/task-children/invoke", s.workerInvokeChildTask)
+				r.With(limitRequestBody(tokenRequestBodyLimit)).Post("/leases/tokens", s.workerCreateToken)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/tasks/complete", s.workerCompleteTask)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/complete", s.workerCompleteActor)
+				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/run-logs", s.workerAppendRunLogs)
+				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/structured-logs", s.workerAppendStructuredLog)
+				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/run-metadata", s.workerUpdateRunMetadata)
 			})
 		})
 	})
@@ -725,14 +754,6 @@ func decodeOptionalJSON(r io.Reader, out any) error {
 	return nil
 }
 
-func optionalText(value string) pgtype.Text {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return pgtype.Text{}
-	}
-	return pgtype.Text{String: value, Valid: true}
-}
-
 func optionalLimitQuery(r *http.Request, defaultLimit int32) (int32, error) {
 	limit := defaultLimit
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
@@ -743,13 +764,6 @@ func optionalLimitQuery(r *http.Request, defaultLimit int32) (int32, error) {
 		limit = int32(parsed)
 	}
 	return limit, nil
-}
-
-func optionalUUIDString(value pgtype.UUID) string {
-	if !value.Valid {
-		return ""
-	}
-	return uuid.UUID(value.Bytes).String()
 }
 
 func limitRequestBody(limit int64) func(http.Handler) http.Handler {
@@ -765,17 +779,24 @@ func limitRequestBody(limit int64) func(http.Handler) http.Handler {
 	}
 }
 
+func limitActorInputBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, actorInputSendBodyLimit)
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) userAuthConfigured() error {
 	if s.db == nil {
 		return errors.New("run storage is not configured")
 	}
-	if len(s.authSecret) == 0 {
+	if !s.authKeys.Valid() {
 		return errors.New("user authentication is not configured")
 	}
 	if s.publicURL == nil {
 		return errors.New("public URL is not configured")
 	}
-	return auth.ValidateTokenSecret(s.authSecret)
+	return nil
 }
 
 func (s *Server) effectiveSessionTTL() time.Duration {
@@ -807,22 +828,9 @@ func (s *Server) effectiveDevicePollEvery() time.Duration {
 }
 
 func parseUUIDParam(r *http.Request, name string) (uuid.UUID, error) {
-	id, err := uuid.Parse(chi.URLParam(r, name))
+	id, err := ids.Parse(chi.URLParam(r, name))
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("%s must be a UUID", name)
+		return uuid.Nil, fmt.Errorf("%s must be a canonical UUIDv7", name)
 	}
 	return id, nil
-}
-
-func (s *Server) mountScheduleRoutes(r chi.Router) {
-	r.Group(func(r chi.Router) {
-		r.Use(s.requireActor)
-		r.Get("/schedules", s.listSchedules)
-		r.Post("/schedules", s.createSchedule)
-		r.Get("/schedules/{id}", s.getSchedule)
-		r.Put("/schedules/{id}", s.updateSchedule)
-		r.Post("/schedules/{id}/activate", s.activateSchedule)
-		r.Post("/schedules/{id}/deactivate", s.deactivateSchedule)
-		r.Delete("/schedules/{id}", s.deleteSchedule)
-	})
 }

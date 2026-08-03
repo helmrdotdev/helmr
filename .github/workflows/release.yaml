@@ -7,14 +7,17 @@ on:
       - "sdk/typescript/v*"
   workflow_dispatch:
     inputs:
-      tag:
-        description: GitHub Release tag to create or update, for example v0.1.1 or v0.1.1-rc.1
+      mode:
+        description: Release operation
         required: true
-        default: v0.1.0
-      worker_amis_json:
-        description: Optional JSON object mapping AWS regions to worker AMI IDs. Leave {} to build official worker AMIs.
+        default: repair
+        type: choice
+        options:
+          - repair
+          - dev-platform
+      tag:
+        description: Existing platform release tag to repair
         required: false
-        default: "{}"
 
 permissions:
   contents: read
@@ -24,15 +27,144 @@ env:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  cli:
-    name: cli
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+  platform-release:
+    name: platform release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    environment: release-production
+    permissions:
+      contents: read
+      id-token: write # Needed for keyless Platform release signing. security-check: allow-id-token
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-nix
+
+      - name: Build and sign Platform release
+        run: |
+          nix develop .#images --command \
+            ./scripts/build-platform-release.sh dist/platform-release
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: platform-release-assets
+          if-no-files-found: error
+          retention-days: 7
+          path: dist/platform-release
+
+  platform-release-dev:
+    name: development platform release
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.mode == 'dev-platform' &&
+      startsWith(github.ref, 'refs/heads/') &&
+      github.ref != 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: dev-runtime
+    permissions:
+      contents: read
+      id-token: write # Needed for keyless development release signing. security-check: allow-id-token
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-nix
+
+      - name: Build and sign development Platform release
+        run: |
+          nix develop .#images --command \
+            ./scripts/build-platform-release.sh dist/platform-release
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: platform-release-assets
+          if-no-files-found: error
+          retention-days: 7
+          path: dist/platform-release
+
+  platform-release-repair:
+    name: consume platform release
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.mode == 'repair' &&
+      github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Validate release tag
+        run: |
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq "$PLATFORM_RELEASE_TAG_PATTERN"; then
+            echo "release tag must match vX.Y.Z or vX.Y.Z-prerelease" >&2
+            exit 1
+          fi
+          git check-ref-format --allow-onelevel "$RELEASE_TAG"
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-nix
+
+      - name: Download and verify Platform release
+        run: |
+          mkdir -p dist/platform-release
+          gh release download "$RELEASE_TAG" \
+            --pattern 'platform-release*' \
+            --dir dist/platform-release
+          cosign verify-blob \
+            --bundle dist/platform-release/platform-release.sigstore.json \
+            --certificate-identity \
+              "https://github.com/helmrdotdev/helmr/.github/workflows/release.yaml@refs/tags/$RELEASE_TAG" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            dist/platform-release/platform-release.tar
+          archive_sha256="sha256:$(sha256sum dist/platform-release/platform-release.tar | awk '{print $1}')"
+          archive_size="$(stat -c '%s' dist/platform-release/platform-release.tar)"
+          build_policy_digest="$(tar -xOf dist/platform-release/platform-release.tar ./build-policy.digest)"
+          source_commit="$(git rev-parse HEAD)"
+          printf '%s' "$build_policy_digest" |
+            grep -Eq '^sha256:[0-9a-f]{64}$'
+          jq -e \
+            --arg digest "$archive_sha256" \
+            --argjson size "$archive_size" \
+            --arg buildPolicyDigest "$build_policy_digest" \
+            --arg sourceCommit "$source_commit" \
+            --arg sourceRef "refs/tags/$RELEASE_TAG" \
+            '.formatVersion == 0 and
+             .archive.digest == $digest and
+             .archive.sizeBytes == $size and
+             .buildPolicyDigest == $buildPolicyDigest and
+             .sourceCommit == $sourceCommit and
+             .sourceRef == $sourceRef' \
+            dist/platform-release/platform-release-provenance.json >/dev/null
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: platform-release-assets
+          if-no-files-found: error
+          retention-days: 7
+          path: dist/platform-release
+
+  cli:
+    name: cli
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.mode == 'repair' &&
+       github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
@@ -42,34 +174,20 @@ jobs:
             echo "release tag must match vX.Y.Z or vX.Y.Z-prerelease" >&2
             exit 1
           fi
-          if ! git check-ref-format --allow-onelevel "$RELEASE_TAG"; then
-            echo "release tag must be a valid git ref name" >&2
-            exit 1
-          fi
+          git check-ref-format --allow-onelevel "$RELEASE_TAG"
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ github.ref }}
-          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && '0' || '1' }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
           persist-credentials: false
-
-      - name: Use existing release tag
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
-            git checkout --detach "refs/tags/$RELEASE_TAG"
-          fi
 
       - uses: ./.github/actions/setup-nix
 
       - name: Build CLI archives
         run: |
-          nix develop --command bash <<'EOF'
-          set -euo pipefail
+          nix develop --command bash -euo pipefail <<'EOF'
           bun install --frozen-lockfile --ignore-scripts
-          scripts/build-embedded-adapter.sh
-          git diff --exit-code -- internal/adapter/js
-          test -z "$(git status --porcelain -- internal/adapter/js)"
+          scripts/build-runtime-entry.sh --check
           mkdir -p dist/cli
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
             os="${target%/*}"
@@ -84,7 +202,7 @@ jobs:
             tar -C "$out_dir" -czf "dist/helmr-${os}-${arch}.tar.gz" helmr
           done
           cd dist
-          sha256sum helmr-*.tar.gz > checksums.txt
+          sha256sum helmr-*.tar.gz >checksums.txt
           EOF
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -101,37 +219,20 @@ jobs:
 
   control-image:
     name: control image
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.mode == 'repair' &&
+       github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
       CONTROL_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-control
     steps:
-      - name: Validate release tag
-        run: |
-          if ! printf '%s' "$RELEASE_TAG" | grep -Eq "$PLATFORM_RELEASE_TAG_PATTERN"; then
-            echo "release tag must match vX.Y.Z or vX.Y.Z-prerelease" >&2
-            exit 1
-          fi
-          if ! git check-ref-format --allow-onelevel "$RELEASE_TAG"; then
-            echo "release tag must be a valid git ref name" >&2
-            exit 1
-          fi
-
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ github.ref }}
-          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && '0' || '1' }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
           persist-credentials: false
-
-      - name: Use existing release tag
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
-            git checkout --detach "refs/tags/$RELEASE_TAG"
-          fi
 
       - uses: ./.github/actions/setup-nix
 
@@ -140,10 +241,7 @@ jobs:
           IMAGE_URI: ${{ env.CONTROL_IMAGE_REPOSITORY }}:${{ env.RELEASE_TAG }}
           HELMR_BUILD_VERSION: ${{ env.RELEASE_TAG }}
         run: |
-          nix develop .#images --command bash <<'EOF'
-          set -euo pipefail
-          ./scripts/build-control-image.sh "$IMAGE_URI"
-          EOF
+          nix develop .#images --command ./scripts/build-control-image.sh "$IMAGE_URI"
           mkdir -p dist
           docker save "$IMAGE_URI" -o dist/control-image.tar
 
@@ -154,12 +252,238 @@ jobs:
           retention-days: 7
           path: dist/control-image.tar
 
+  worker-ami:
+    name: worker AMI
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.mode == 'repair' &&
+       github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    environment: release-production
+    permissions:
+      contents: read
+      id-token: write # Needed to assume the AWS release role through GitHub OIDC. security-check: allow-id-token
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      WORKER_AMI_REGIONS: ${{ vars.RELEASE_WORKER_AMI_REGIONS || 'us-east-1,us-west-2,ap-northeast-1' }}
+      AWS_REGION: ${{ vars.RELEASE_AWS_REGION || 'us-east-1' }}
+      STATE_REGION: ${{ vars.RELEASE_AWS_STATE_REGION || vars.RELEASE_AWS_REGION || 'us-east-1' }}
+      STATE_BUCKET: ${{ vars.RELEASE_AWS_STATE_BUCKET }}
+      STATE_KEY_BASE: ${{ vars.RELEASE_AWS_STATE_KEY || 'helmr/stacks/release-worker-image/terraform.tfstate' }}
+      WORKER_IMAGE_NAME_BASE: ${{ vars.RELEASE_WORKER_IMAGE_NAME || 'helmr-release-image' }}
+      WORKER_IMAGE_INSTANCE_PROFILE_NAME_OVERRIDE: ${{ vars.RELEASE_WORKER_IMAGE_INSTANCE_PROFILE_NAME }}
+      RELEASE_WORKER_AMI_KEEP: ${{ vars.RELEASE_WORKER_AMI_KEEP || '4' }}
+      IMAGE_WAIT_INTERVAL_SECONDS: ${{ vars.RELEASE_WORKER_IMAGE_WAIT_INTERVAL_SECONDS || '60' }}
+      IMAGE_WAIT_TIMEOUT_SECONDS: ${{ vars.RELEASE_IMAGE_WAIT_TIMEOUT_SECONDS || '14400' }}
+      TOFU_APPLY_ARGS: -auto-approve
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+
+      - name: Check AWS release settings
+        env:
+          RELEASE_AWS_ROLE_ARN: ${{ vars.RELEASE_AWS_ROLE_ARN }}
+        run: |
+          [ -n "$RELEASE_AWS_ROLE_ARN" ] || {
+            echo "RELEASE_AWS_ROLE_ARN is required" >&2
+            exit 1
+          }
+          [ -n "$STATE_BUCKET" ] || {
+            echo "RELEASE_AWS_STATE_BUCKET is required" >&2
+            exit 1
+          }
+
+      - uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.RELEASE_AWS_ROLE_ARN }}
+          role-duration-seconds: 14400
+          mask-aws-account-id: true
+
+      - uses: ./.github/actions/setup-nix
+
+      - name: Resolve worker AMI identity
+        run: |
+          scripts/release-worker-image-identity.sh \
+            "$RELEASE_TAG" \
+            "$WORKER_IMAGE_NAME_BASE" \
+            "$STATE_KEY_BASE" >"$RUNNER_TEMP/worker-image-identity.env"
+          while IFS='=' read -r key value; do
+            case "$key" in
+              worker_image_name)
+                printf 'WORKER_IMAGE_NAME=%s\n' "$value" >>"$GITHUB_ENV"
+                ;;
+              worker_image_version)
+                printf 'WORKER_IMAGE_VERSION=%s\n' "$value" >>"$GITHUB_ENV"
+                ;;
+              instance_profile_name)
+                printf 'WORKER_IMAGE_INSTANCE_PROFILE_NAME=%s\n' \
+                  "${WORKER_IMAGE_INSTANCE_PROFILE_NAME_OVERRIDE:-$value}" >>"$GITHUB_ENV"
+                ;;
+              state_key)
+                printf 'STATE_KEY=%s\n' "$value" >>"$GITHUB_ENV"
+                ;;
+            esac
+          done <"$RUNNER_TEMP/worker-image-identity.env"
+
+      - name: Build worker AMIs
+        id: build_worker_amis
+        env:
+          WORKER_IMAGE_SOURCE_REF: ${{ env.RELEASE_TAG }}
+          WORKER_IMAGE_DISTRIBUTION_REGIONS: ${{ env.WORKER_AMI_REGIONS }}
+          WORKER_IMAGE_AMI_PUBLIC: "true"
+          WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED: "false"
+        run: |
+          nix develop .#infra --command bash -euo pipefail <<'EOF'
+          scripts/aws-release-artifacts.sh check
+          scripts/aws-release-artifacts.sh worker-image-source-check
+          scripts/aws-release-artifacts.sh worker-image-init
+          scripts/aws-release-artifacts.sh worker-image-apply
+          scripts/release-worker-ami-cleanup.sh \
+            "$WORKER_IMAGE_NAME_BASE" \
+            "$WORKER_AMI_REGIONS" \
+            "$RELEASE_WORKER_AMI_KEEP"
+          scripts/aws-release-artifacts.sh worker-image-start
+          scripts/aws-release-artifacts.sh worker-image-wait
+          worker_amis_json="$(scripts/aws-release-artifacts.sh worker-image-amis)"
+          printf 'worker_amis_json=%s\n' "$worker_amis_json" >>"$GITHUB_OUTPUT"
+          EOF
+
+      - name: Write worker release artifact
+        env:
+          WORKER_AMIS_JSON: ${{ steps.build_worker_amis.outputs.worker_amis_json }}
+        run: |
+          mkdir -p dist
+          jq -cS \
+            --arg sourceCommit "$(git rev-parse HEAD)" \
+            --argjson workerAMIs "$WORKER_AMIS_JSON" \
+            '{formatVersion: 0, sourceCommit: $sourceCommit, workerAMIs: $workerAMIs}' \
+            >dist/worker-artifacts.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: worker-release-artifact
+          if-no-files-found: error
+          retention-days: 30
+          path: dist/worker-artifacts.json
+
+  publish:
+    name: publish
+    if: >-
+      always() &&
+      (startsWith(github.ref, 'refs/tags/v') ||
+       (github.event_name == 'workflow_dispatch' &&
+        inputs.mode == 'repair' &&
+        github.ref == 'refs/heads/main')) &&
+      needs.cli.result == 'success' &&
+      needs.control-image.result == 'success' &&
+      needs.worker-ami.result == 'success' &&
+      (needs.platform-release.result == 'success' ||
+       needs.platform-release-repair.result == 'success')
+    needs:
+      - platform-release
+      - platform-release-repair
+      - cli
+      - control-image
+      - worker-ami
+    runs-on: ubuntu-24.04
+    environment: release-production
+    permissions:
+      contents: write # Needed to create or update GitHub Release assets.
+      id-token: write # Needed to verify Worker AMIs through the AWS release role. security-check: allow-id-token
+      packages: write # Needed to publish the official Control image.
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      CONTROL_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-control
+      IMAGE_URI: ghcr.io/${{ github.repository_owner }}/helmr-control:${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      WORKER_AMI_REGIONS: ${{ vars.RELEASE_WORKER_AMI_REGIONS || 'us-east-1,us-west-2,ap-northeast-1' }}
+      AWS_REGION: ${{ vars.RELEASE_AWS_REGION || 'us-east-1' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: scripts
+          sparse-checkout-cone-mode: true
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: platform-release-assets
+          path: dist/platform-release
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: cli-release-assets
+          path: dist
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: control-image
+          path: dist/control-image
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: worker-release-artifact
+          path: dist/worker
+
+      - name: Push control image
+        id: push
+        env:
+          GHCR_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          docker load -i dist/control-image/control-image.tar
+          printf '%s' "$GHCR_TOKEN" |
+            docker login ghcr.io --username "$GHCR_ACTOR" --password-stdin
+          push_output="$(docker push "$IMAGE_URI")"
+          printf '%s\n' "$push_output"
+          digest="$(printf '%s\n' "$push_output" | awk '/digest:/ { print $3 }' | tail -n 1)"
+          [ -n "$digest" ]
+          printf 'control_image=%s@%s\n' "$CONTROL_IMAGE_REPOSITORY" "$digest" >>"$GITHUB_OUTPUT"
+
+      - uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ vars.RELEASE_AWS_ROLE_ARN }}
+          mask-aws-account-id: true
+
+      - name: Write AWS release manifest
+        env:
+          CONTROL_IMAGE: ${{ steps.push.outputs.control_image }}
+          REQUIRED_WORKER_AMI_REGIONS: ${{ env.WORKER_AMI_REGIONS }}
+          VERIFY_RELEASE_ARTIFACTS: "1"
+        run: |
+          scripts/write-aws-release-manifest.sh \
+            "$CONTROL_IMAGE" \
+            "$(jq -c '.workerAMIs' dist/worker/worker-artifacts.json)" \
+            "$(cat dist/platform-release/platform-release-provenance.json)" \
+            dist/aws-artifacts.json
+
+      - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
+          make_latest: ${{ contains(env.RELEASE_TAG, '-') && 'false' || 'true' }}
+          files: |
+            dist/helmr-linux-amd64.tar.gz
+            dist/helmr-linux-arm64.tar.gz
+            dist/helmr-darwin-amd64.tar.gz
+            dist/helmr-darwin-arm64.tar.gz
+            dist/checksums.txt
+            dist/platform-release/platform-release.tar
+            dist/platform-release/platform-release.sigstore.json
+            dist/platform-release/platform-release-provenance.json
+            dist/aws-artifacts.json
+
   typescript-sdk-packages:
     name: typescript sdk packages
     if: startsWith(github.ref, 'refs/tags/sdk/typescript/v')
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
     outputs:
       platform_tag: ${{ steps.version.outputs.platform_tag }}
       sdk_version: ${{ steps.version.outputs.sdk_version }}
@@ -169,17 +493,15 @@ jobs:
       - name: Validate TypeScript SDK release tag
         id: version
         run: |
-          if ! printf '%s' "$SDK_RELEASE_TAG" | grep -Eq '^sdk/typescript/v[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z-]+([.][0-9A-Za-z-]+)*)?$'; then
-            echo "TypeScript SDK release tag must match sdk/typescript/vX.Y.Z or sdk/typescript/vX.Y.Z-prerelease" >&2
+          if ! printf '%s' "$SDK_RELEASE_TAG" |
+            grep -Eq '^sdk/typescript/v[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z-]+([.][0-9A-Za-z-]+)*)?$'; then
+            echo "invalid TypeScript SDK release tag" >&2
             exit 1
           fi
-          if ! git check-ref-format --allow-onelevel "$SDK_RELEASE_TAG"; then
-            echo "TypeScript SDK release tag must be a valid git ref name" >&2
-            exit 1
-          fi
+          git check-ref-format --allow-onelevel "$SDK_RELEASE_TAG"
           sdk_version="${SDK_RELEASE_TAG#sdk/typescript/v}"
-          printf 'sdk_version=%s\n' "$sdk_version" >> "$GITHUB_OUTPUT"
-          printf 'platform_tag=v%s\n' "$sdk_version" >> "$GITHUB_OUTPUT"
+          printf 'sdk_version=%s\n' "$sdk_version" >>"$GITHUB_OUTPUT"
+          printf 'platform_tag=v%s\n' "$sdk_version" >>"$GITHUB_OUTPUT"
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -189,12 +511,14 @@ jobs:
       - uses: ./.github/actions/setup-nix
 
       - name: Build TypeScript SDK npm packages
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.sdk_version }}
         run: |
-          nix develop --command bash -ceu '
-            bun install --frozen-lockfile --ignore-scripts
-            PACKAGE_VERSION="${{ steps.version.outputs.sdk_version }}" bun run build:npm
-            bun run pack:npm dist/npm-tarballs
-          '
+          nix develop --command bash -euo pipefail <<'EOF'
+          bun install --frozen-lockfile --ignore-scripts
+          PACKAGE_VERSION="$PACKAGE_VERSION" bun run build:npm
+          bun run pack:npm dist/npm-tarballs
+          EOF
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -229,11 +553,6 @@ jobs:
         env:
           SDK_VERSION: ${{ needs.typescript-sdk-packages.outputs.sdk_version }}
         run: |
-          npm_version="$(npm --version)"
-          if [ "$(printf '%s\n' 11.5.1 "$npm_version" | sort -V | head -n 1)" != 11.5.1 ]; then
-            echo "npm CLI 11.5.1 or newer is required for Trusted Publishing: $npm_version" >&2
-            exit 1
-          fi
           publish_package() {
             package_name="$1"
             tarball="$2"
@@ -241,9 +560,9 @@ jobs:
               echo "${package_name}@${SDK_VERSION} is already published; skipping"
               return
             fi
-            npm_tag="latest"
+            npm_tag=latest
             case "$SDK_VERSION" in
-              *-*) npm_tag="next" ;;
+              *-*) npm_tag=next ;;
             esac
             npm publish "$tarball" --access public --provenance --tag "$npm_tag"
           }
@@ -259,7 +578,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment: release-production
     permissions:
-      contents: write # Needed to create or update GitHub Release assets.
+      contents: write # Needed to create the SDK GitHub release.
     env:
       PLATFORM_TAG: ${{ needs.typescript-sdk-packages.outputs.platform_tag }}
       SDK_RELEASE_TAG: ${{ github.ref_name }}
@@ -277,273 +596,3 @@ jobs:
             Packages:
             - https://www.npmjs.com/package/@helmr/proto/v/${{ env.SDK_VERSION }}
             - https://www.npmjs.com/package/@helmr/sdk/v/${{ env.SDK_VERSION }}
-
-  worker-ami:
-    name: worker AMI
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 360
-    environment: release-production
-    permissions:
-      contents: read
-      id-token: write # Needed to assume the AWS release role through GitHub OIDC. security-check: allow-id-token
-    outputs:
-      worker_amis_json: ${{ steps.provided_worker_amis.outputs.worker_amis_json || steps.build_worker_amis.outputs.worker_amis_json }}
-    env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-      WORKER_AMIS_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.worker_amis_json || '{}' }}
-      WORKER_AMI_REGIONS: ${{ vars.RELEASE_WORKER_AMI_REGIONS || 'us-east-1,us-west-2,ap-northeast-1' }}
-      AWS_REGION: ${{ vars.RELEASE_AWS_REGION || 'us-east-1' }}
-      STATE_REGION: ${{ vars.RELEASE_AWS_STATE_REGION || vars.RELEASE_AWS_REGION || 'us-east-1' }}
-      STATE_BUCKET: ${{ vars.RELEASE_AWS_STATE_BUCKET }}
-      STATE_KEY_BASE: ${{ vars.RELEASE_AWS_STATE_KEY || 'helmr/stacks/release-worker-image/terraform.tfstate' }}
-      WORKER_IMAGE_NAME_BASE: ${{ vars.RELEASE_WORKER_IMAGE_NAME || 'helmr-release-image' }}
-      WORKER_IMAGE_INSTANCE_PROFILE_NAME_OVERRIDE: ${{ vars.RELEASE_WORKER_IMAGE_INSTANCE_PROFILE_NAME }}
-      RELEASE_WORKER_AMI_KEEP: ${{ vars.RELEASE_WORKER_AMI_KEEP || '4' }}
-      IMAGE_WAIT_INTERVAL_SECONDS: ${{ vars.RELEASE_WORKER_IMAGE_WAIT_INTERVAL_SECONDS || '60' }}
-      IMAGE_WAIT_TIMEOUT_SECONDS: ${{ vars.RELEASE_WORKER_IMAGE_WAIT_TIMEOUT_SECONDS || '14400' }}
-      TOFU_APPLY_ARGS: -auto-approve
-    steps:
-      - name: Validate release tag
-        run: |
-          if ! printf '%s' "$RELEASE_TAG" | grep -Eq "$PLATFORM_RELEASE_TAG_PATTERN"; then
-            echo "worker AMI releases require a vX.Y.Z or vX.Y.Z-prerelease release tag" >&2
-            exit 1
-          fi
-          if ! git check-ref-format --allow-onelevel "$RELEASE_TAG"; then
-            echo "release tag must be a valid git ref name" >&2
-            exit 1
-          fi
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          ref: ${{ github.ref }}
-          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && '0' || '1' }}
-          persist-credentials: false
-
-      - name: Use provided worker AMIs
-        id: provided_worker_amis
-        if: env.WORKER_AMIS_INPUT != '' && env.WORKER_AMIS_INPUT != '{}'
-        run: |
-          REQUIRED_WORKER_AMI_REGIONS="$WORKER_AMI_REGIONS" \
-            scripts/write-aws-release-manifest.sh \
-              "ghcr.io/helmrdotdev/helmr-control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
-              "$WORKER_AMIS_INPUT" \
-              "$RUNNER_TEMP/provided-aws-artifacts.json"
-          worker_amis_json="$(jq -c '.worker_amis' "$RUNNER_TEMP/provided-aws-artifacts.json")"
-          printf 'worker_amis_json=%s\n' "$worker_amis_json" >> "$GITHUB_OUTPUT"
-
-      - name: Check AWS release settings
-        if: steps.provided_worker_amis.outcome == 'skipped'
-        env:
-          RELEASE_AWS_ROLE_ARN: ${{ vars.RELEASE_AWS_ROLE_ARN }}
-        run: |
-          [ -n "$RELEASE_AWS_ROLE_ARN" ] || { echo "RELEASE_AWS_ROLE_ARN environment variable is required" >&2; exit 1; }
-          [ -n "$STATE_BUCKET" ] || { echo "RELEASE_AWS_STATE_BUCKET environment variable is required" >&2; exit 1; }
-
-      - name: Resolve worker AMI source ref
-        id: worker_source_ref
-        if: steps.provided_worker_amis.outcome == 'skipped'
-        run: |
-          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
-            source_ref="$RELEASE_TAG"
-          else
-            source_ref="$GITHUB_SHA"
-          fi
-          printf 'source_ref=%s\n' "$source_ref" >> "$GITHUB_OUTPUT"
-
-      - uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885
-        if: steps.provided_worker_amis.outcome == 'skipped'
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ vars.RELEASE_AWS_ROLE_ARN }}
-          role-duration-seconds: 14400
-          mask-aws-account-id: true
-
-      - uses: ./.github/actions/setup-nix
-        if: steps.provided_worker_amis.outcome == 'skipped'
-
-      - name: Resolve worker AMI release identity
-        id: worker_identity
-        if: steps.provided_worker_amis.outcome == 'skipped'
-        run: |
-          scripts/release-worker-image-identity.sh \
-            "$RELEASE_TAG" \
-            "$WORKER_IMAGE_NAME_BASE" \
-            "$STATE_KEY_BASE" > "$RUNNER_TEMP/worker-image-identity.env"
-          cat "$RUNNER_TEMP/worker-image-identity.env"
-          while IFS='=' read -r key value; do
-            case "$key" in
-              release_slug)
-                printf 'release_slug=%s\n' "$value" >> "$GITHUB_OUTPUT"
-                ;;
-              worker_image_name)
-                printf 'WORKER_IMAGE_NAME=%s\n' "$value" >> "$GITHUB_ENV"
-                printf 'worker_image_name=%s\n' "$value" >> "$GITHUB_OUTPUT"
-                ;;
-              worker_image_version)
-                printf 'WORKER_IMAGE_VERSION=%s\n' "$value" >> "$GITHUB_ENV"
-                printf 'worker_image_version=%s\n' "$value" >> "$GITHUB_OUTPUT"
-                ;;
-              instance_profile_name)
-                instance_profile_name="${WORKER_IMAGE_INSTANCE_PROFILE_NAME_OVERRIDE:-$value}"
-                printf 'WORKER_IMAGE_INSTANCE_PROFILE_NAME=%s\n' "$instance_profile_name" >> "$GITHUB_ENV"
-                printf 'instance_profile_name=%s\n' "$instance_profile_name" >> "$GITHUB_OUTPUT"
-                ;;
-              state_key)
-                printf 'STATE_KEY=%s\n' "$value" >> "$GITHUB_ENV"
-                printf 'state_key=%s\n' "$value" >> "$GITHUB_OUTPUT"
-                ;;
-            esac
-          done < "$RUNNER_TEMP/worker-image-identity.env"
-
-      - name: Build worker AMIs
-        id: build_worker_amis
-        if: steps.provided_worker_amis.outcome == 'skipped'
-        env:
-          WORKER_IMAGE_SOURCE_REF: ${{ steps.worker_source_ref.outputs.source_ref }}
-          WORKER_IMAGE_DISTRIBUTION_REGIONS: ${{ env.WORKER_AMI_REGIONS }}
-          WORKER_IMAGE_AMI_PUBLIC: "true"
-          WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED: "false"
-        run: |
-          nix develop .#infra --command bash -seu <<'EOF'
-            scripts/aws-dev-smoke.sh check
-            scripts/aws-dev-smoke.sh worker-image-source-check
-            scripts/aws-dev-smoke.sh worker-image-init
-            scripts/aws-dev-smoke.sh worker-image-apply
-            scripts/release-worker-ami-cleanup.sh "$WORKER_IMAGE_NAME_BASE" "$WORKER_AMI_REGIONS" "$RELEASE_WORKER_AMI_KEEP"
-            scripts/aws-dev-smoke.sh worker-image-start
-            scripts/aws-dev-smoke.sh worker-image-wait
-            worker_amis_json="$(scripts/aws-dev-smoke.sh worker-image-amis)"
-            printf "worker_amis_json=%s\n" "$worker_amis_json" >> "$GITHUB_OUTPUT"
-          EOF
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: steps.provided_worker_amis.outcome == 'skipped'
-        with:
-          name: worker-ami-release-assets
-          if-no-files-found: error
-          retention-days: 30
-          path: |
-            .helmr-aws-dev-smoke/worker-image-build-version-arn
-            .helmr-aws-dev-smoke/worker-ami-id
-            .helmr-aws-dev-smoke/worker-ami-ids.json
-
-  publish:
-    name: publish
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
-    needs:
-      - cli
-      - control-image
-      - worker-ami
-    runs-on: ubuntu-24.04
-    environment: release-production
-    permissions:
-      contents: write # Needed to create or update GitHub Release assets.
-      id-token: write # Needed to verify worker AMI visibility through the AWS release role. security-check: allow-id-token
-      packages: write # Needed to push the official control image to GHCR.
-    env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-      CONTROL_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-control
-      IMAGE_URI: ghcr.io/${{ github.repository_owner }}/helmr-control:${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-      WORKER_AMIS_JSON: ${{ needs.worker-ami.outputs.worker_amis_json }}
-      WORKER_AMI_REGIONS: ${{ vars.RELEASE_WORKER_AMI_REGIONS || 'us-east-1,us-west-2,ap-northeast-1' }}
-      AWS_REGION: ${{ vars.RELEASE_AWS_REGION || 'us-east-1' }}
-    steps:
-      - name: Validate release tag
-        run: |
-          if ! printf '%s' "$RELEASE_TAG" | grep -Eq "$PLATFORM_RELEASE_TAG_PATTERN"; then
-            echo "release tag must match vX.Y.Z or vX.Y.Z-prerelease" >&2
-            exit 1
-          fi
-          if ! git check-ref-format --allow-onelevel "$RELEASE_TAG"; then
-            echo "release tag must be a valid git ref name" >&2
-            exit 1
-          fi
-
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          ref: ${{ github.ref }}
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: scripts
-          sparse-checkout-cone-mode: true
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: cli-release-assets
-          path: dist
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: control-image
-          path: dist/control-image
-
-      - name: Push control image
-        id: push
-        env:
-          GHCR_ACTOR: ${{ github.actor }}
-          GHCR_TOKEN: ${{ github.token }}
-        run: |
-          docker load -i dist/control-image/control-image.tar
-          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_ACTOR" --password-stdin
-          push_output="$(docker push "$IMAGE_URI")"
-          printf '%s\n' "$push_output"
-          digest="$(printf '%s\n' "$push_output" | awk '/digest:/ { print $3 }' | tail -n 1)"
-          if [ -z "$digest" ]; then
-            echo "failed to parse pushed image digest" >&2
-            exit 1
-          fi
-          printf 'control_image=%s@%s\n' "${CONTROL_IMAGE_REPOSITORY}" "$digest" >> "$GITHUB_OUTPUT"
-
-      - name: Check AWS release verification settings
-        env:
-          RELEASE_AWS_ROLE_ARN: ${{ vars.RELEASE_AWS_ROLE_ARN }}
-        run: |
-          [ -n "$RELEASE_AWS_ROLE_ARN" ] || { echo "RELEASE_AWS_ROLE_ARN environment variable is required" >&2; exit 1; }
-
-      - uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ vars.RELEASE_AWS_ROLE_ARN }}
-          mask-aws-account-id: true
-
-      - name: Write AWS release manifest
-        env:
-          CONTROL_IMAGE: ${{ steps.push.outputs.control_image }}
-        run: |
-          REQUIRED_WORKER_AMI_REGIONS="$WORKER_AMI_REGIONS" \
-            VERIFY_RELEASE_ARTIFACTS=1 \
-            scripts/write-aws-release-manifest.sh \
-              "$CONTROL_IMAGE" \
-              "$WORKER_AMIS_JSON" \
-              dist/aws-artifacts.json
-
-      - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
-        if: github.event_name == 'workflow_dispatch'
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          target_commitish: ${{ github.sha }}
-          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
-          make_latest: ${{ contains(env.RELEASE_TAG, '-') && 'false' || 'true' }}
-          files: |
-            dist/helmr-linux-amd64.tar.gz
-            dist/helmr-linux-arm64.tar.gz
-            dist/helmr-darwin-amd64.tar.gz
-            dist/helmr-darwin-arm64.tar.gz
-            dist/checksums.txt
-            dist/aws-artifacts.json
-
-      - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
-        if: github.event_name != 'workflow_dispatch'
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
-          make_latest: ${{ contains(env.RELEASE_TAG, '-') && 'false' || 'true' }}
-          files: |
-            dist/helmr-linux-amd64.tar.gz
-            dist/helmr-linux-arm64.tar.gz
-            dist/helmr-darwin-amd64.tar.gz
-            dist/helmr-darwin-arm64.tar.gz
-            dist/checksums.txt
-            dist/aws-artifacts.json

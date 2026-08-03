@@ -17,7 +17,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -203,7 +202,7 @@ func (s *Server) createPendingMagicLink(r *http.Request, purpose db.MagicLinkPur
 		if err != nil {
 			return err
 		}
-		tokenHash, err := auth.HashToken(s.authSecret, rawToken)
+		tokenHash, err := auth.HashToken(s.authKeys.MagicLink, rawToken)
 		if err != nil {
 			return err
 		}
@@ -301,7 +300,7 @@ func (s *Server) magicLinkFinish(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid magic link finish JSON: %w", err)))
 		return
 	}
-	tokenHash, err := auth.HashToken(s.authSecret, request.Token)
+	tokenHash, err := auth.HashToken(s.authKeys.MagicLink, request.Token)
 	if err != nil {
 		writeAuthError(w, http.StatusBadRequest, errInvalidOrExpiredToken)
 		return
@@ -442,19 +441,15 @@ func (s *Server) upsertMagicLinkAuthIdentity(r *http.Request, queries db.Querier
 	if len(claims) == 0 || !json.Valid(claims) {
 		claims = []byte(`{}`)
 	}
-	var userPublicID string
-	return createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.User, value: &userPublicID}}, func() (db.UpsertMagicLinkAuthIdentityRow, error) {
-		return queries.UpsertMagicLinkAuthIdentity(r.Context(), db.UpsertMagicLinkAuthIdentityParams{
-			UserID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			UserPublicID:     userPublicID,
-			IdentityID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			IdentityProvider: identity.Provider,
-			IdentitySubject:  identity.Subject,
-			DisplayName:      identity.DisplayName,
-			ProfileImageUrl:  pgtype.Text{String: identity.ProfileImageURL, Valid: identity.ProfileImageURL != ""},
-			Email:            pgtype.Text{String: identity.Email, Valid: true},
-			Claims:           claims,
-		})
+	return queries.UpsertMagicLinkAuthIdentity(r.Context(), db.UpsertMagicLinkAuthIdentityParams{
+		UserID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		IdentityID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		IdentityProvider: identity.Provider,
+		IdentitySubject:  identity.Subject,
+		DisplayName:      identity.DisplayName,
+		ProfileImageUrl:  pgtype.Text{String: identity.ProfileImageURL, Valid: identity.ProfileImageURL != ""},
+		Email:            pgtype.Text{String: identity.Email, Valid: true},
+		Claims:           claims,
 	})
 }
 

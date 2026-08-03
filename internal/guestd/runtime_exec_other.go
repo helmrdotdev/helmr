@@ -9,19 +9,19 @@ import (
 	"syscall"
 )
 
-type adapterCommandOptions struct {
-	ImageMode bool
-	Pty       bool
+type imageCommandOptions struct {
+	ManagedProgram  bool
+	CgroupNamespace bool
+	CgroupLeaf      string
+	StartProof      bool
+	Pty             bool
 }
 
-func adapterCommand(ctx context.Context, bunPath string, args []string, launchCwd string, env []string, imageRoot string, user *resolvedRuntimeUser, opts adapterCommandOptions) (*exec.Cmd, error) {
+func imageCommand(ctx context.Context, bunPath string, args []string, launchCwd string, env []string, imageRoot string, user *resolvedRuntimeUser, opts imageCommandOptions) (*exec.Cmd, error) {
 	cmd := exec.CommandContext(ctx, bunPath, args...)
 	cmd.Dir = launchCwd
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: !opts.Pty}
-	if !opts.ImageMode {
-		return cmd, nil
-	}
 	if user == nil {
 		return nil, errors.New("image runtime user is required")
 	}

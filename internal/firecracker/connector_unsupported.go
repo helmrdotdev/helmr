@@ -13,6 +13,12 @@ var ErrUnsupported = errors.New("firecracker connector is only supported on Linu
 
 type Connector struct{}
 
+type NetworkReclaimer struct{}
+
+func NewNetworkReclaimer(Config) (*NetworkReclaimer, error) { return nil, ErrUnsupported }
+
+func (*NetworkReclaimer) Reclaim(context.Context, vm.Owner) error { return ErrUnsupported }
+
 func NewConnector(Config) (*Connector, error) {
 	return nil, ErrUnsupported
 }
@@ -29,7 +35,7 @@ func (*Connector) Materialize(context.Context, vm.MaterializeRequest) (vm.Sessio
 	return nil, ErrUnsupported
 }
 
-func (*Connector) CleanupRuntime(context.Context, string) error { return ErrUnsupported }
+func (*Connector) Cleanup(context.Context, vm.Owner) error { return ErrUnsupported }
 
 func (*Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 	return RuntimeCapabilities{}, ErrUnsupported
@@ -38,3 +44,5 @@ func (*Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 func (*Connector) Preflight(context.Context) error {
 	return ErrUnsupported
 }
+
+func (*Connector) DatapathHealth() error { return ErrUnsupported }

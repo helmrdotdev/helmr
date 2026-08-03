@@ -1,4 +1,4 @@
-import { cache, image, logger, sandbox, source, task } from "@helmr/sdk"
+import { image, source, task, workspace } from "@helmr/sdk"
 import { spawn } from "node:child_process"
 import { writeFile } from "node:fs/promises"
 import { z } from "zod"
@@ -16,14 +16,12 @@ const base = image("cli-tooling")
   .run(["sh", "-ceu", installTools])
   .copy("/opt/helmr-task/package.json", source.file("package.json"))
   .workdir("/opt/helmr-task")
-  .run(["bun", "install"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("cli-tooling-bun") }],
-  })
+  .run(["bun", "install"])
   .workdir("/workspace")
 
-const sbx = sandbox("cli-tooling")
+export const cliToolingWorkspace = workspace("cli-tooling")
   .image(base)
-  .resources({ cpu: 1, memory: "1Gi" })
+  .resources({ cpu: 1, memory: "1GiB" })
 
 const payload = z.object({
   pattern: z.string().optional(),
@@ -31,8 +29,7 @@ const payload = z.object({
 
 export const cliTooling = task({
   id: "cli-tooling",
-  sandbox: sbx,
-  maxDuration: 300,
+  maxDuration: "5m",
   payload,
   run: async (payload, ctx) => {
     const pattern = payload.pattern?.trim() || "export const"
@@ -55,7 +52,7 @@ export const cliTooling = task({
 
     const report = { runId: ctx.run.id, tool: "ripgrep", pattern, matches }
     await writeFile("cli-tooling-report.json", `${JSON.stringify(report, null, 2)}\n`)
-    logger.info({ report: "cli-tooling-report.json", matches: matches.length })
+    console.info({ report: "cli-tooling-report.json", matches: matches.length })
     return report
   },
 })

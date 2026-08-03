@@ -9,12 +9,11 @@ volume. The module does not build the worker AMI.
 The AMI must provide:
 
 - `helmr-worker` at `worker_binary_path`
-- systemd units named by `worker_service_name` and `buildkit_service_name`
+- the worker unit named by `worker_service_name`
 - AWS CLI v2 and `curl`
 - Firecracker and jailer binaries
 - `/dev/kvm` capable instance support
-- CNI config and plugins, including `tc-redirect-tap`
-- BuildKit daemon listening on `HELMR_WORKER_BUILDKIT_ADDR`
+- `ip` and `nft` for the Worker-owned routed-TAP datapath
 - guest boot artifacts under `HELMR_WORKER_IMAGES_DIR`
 
 For cost-controlled smoke environments, set `enable_nested_virtualization = true` and use an AWS
@@ -22,10 +21,12 @@ instance family that supports EC2 nested virtualization, such as C8i/M8i/R8i. Le
 metal worker instances and for instance families that do not support the option.
 
 The module writes `/etc/helmr/worker.env` from Terraform inputs and Secrets Manager values, then
-starts BuildKit, `helmr-worker`, and a small lifecycle watcher.
+starts `helmr-worker` and a small lifecycle watcher. Build-capable workers additionally allocate
+and mount fixed Worker-cache and image-build scratch ext4 filesystems; all untrusted BuildKit
+execution stays inside the fresh image-build VM.
 
 `worker_environment` is only for additional non-secret worker variables. It cannot override
-infra-owned `HELMR_*` routing, storage, enrollment, Firecracker, BuildKit, or network policy
+infra-owned `HELMR_*` routing, storage, enrollment, Firecracker, image-cache, or network policy
 settings; use the module inputs for those values.
 
 Size `root_volume_size_gb`, `root_volume_iops`, and `root_volume_throughput` for expected
@@ -38,22 +39,25 @@ SSM Session Manager access is enabled by default through `AmazonSSMManagedInstan
 inbound SSH rules for bootstrap and smoke debugging. Set `enable_ssm = false` only if the AMI role is
 managed elsewhere.
 
-`worker_group_id` and `worker_roles` select the enrollment and scheduling boundary in every
-deployment. Every AWS worker proves its EC2 identity with temporary instance-profile credentials;
-control verifies its account, region, Auto Scaling group, instance profile, and AMI before issuing
-the same scoped worker credential used by the runtime path.
+`worker_group_id` and `worker_roles` select the logical enrollment and
+scheduling boundary in every deployment. During boot, the module fetches the
+group-specific enrollment secret into a root-only volatile file and binds the
+nonce proof to the requested roles and EC2 instance ID as an opaque operator
+locator. Control authenticates the logical group proof; AWS identity and fleet
+configuration remain operator and infrastructure responsibilities.
 
 ## Lifecycle
 
-The application controller is the only desired-capacity writer. Terraform enforces `min_size` and
-`max_size`, and new instances start protected from scale in so provider policies cannot bypass
-drain selection. Fixed capacity is expressed with equal minimum and maximum values.
+Deployment infrastructure is the only desired-capacity writer. Terraform enforces `min_size` and
+`max_size`, and new instances start protected from scale in so provider policy cannot bypass the
+exact drain path. Fixed capacity is expressed with equal minimum and maximum values.
 
 When capacity is raised, the launch lifecycle hook keeps the instance out of service until the
-BuildKit and worker systemd units are active. During scale-in or instance refresh, the termination
+worker systemd unit is active. During scale-in or instance refresh, the termination
 lifecycle hook gives `helmr-worker drain` time to stop accepting leases and wait for active
 executions before the instance terminates.
 
-Launch-template changes do not start an automatic instance refresh. Apply the new worker-group AMI
-allowlist and launch policy first, then explicitly start the Auto Scaling instance refresh. Remove
-the old AMI from the allowlist only after replacement completes.
+Launch-template changes do not start an automatic instance refresh. Drain the
+exact logical worker instance to `termination_ready` before provider deletion,
+then explicitly start or coordinate the Auto Scaling instance refresh. Control
+does not maintain an AMI allowlist.

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -27,36 +28,23 @@ import (
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
 	"github.com/firecracker-microvm/firecracker-go-sdk/vsock"
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
+	runtimeidentity "github.com/helmrdotdev/helmr/internal/runtime/identity"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
 
-func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
-	cfg := (Config{}).WithDefaults()
-	machine := &firecracker.Machine{
-		Cfg: firecracker.Config{
-			NetworkInterfaces: firecracker.NetworkInterfaces{{
-				StaticConfiguration: &firecracker.StaticNetworkConfiguration{
-					IPConfiguration: &firecracker.IPConfiguration{
-						IPAddr: net.IPNet{
-							IP:   net.IPv4(192, 168, 127, 2),
-							Mask: net.CIDRMask(24, 32),
-						},
-					},
-				},
-			}},
-		},
-	}
-
-	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: runtime.GOARCH, ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", CNIProfile: cfg.CNIProfile})
+func TestSnapshotRuntimeConfigIncludesNetworkABI(t *testing.T) {
+	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
+	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", NetworkABI: NetworkABIV0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest, manifestBytes, err := snapshotRuntimeConfig(cfg, machine, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", vm.RuntimeTopology{})
+	digest, manifestBytes, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", defaultKernelArgs, vm.RuntimeTopology{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,77 +56,155 @@ func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	network := manifest.RuntimeState.Network
-	if network.Mode != "cni" || network.Profile != cfg.CNIProfile || network.NetworkName != cfg.CNINetworkName || network.IfName != cfg.CNIIfName || network.VMIfName != cfg.CNIVMIfName || network.GuestIPCIDR != "192.168.127.2/24" {
+	if network.NetworkABI != NetworkABIV0 || network.GuestIPv4CIDR != GuestNetworkCIDRV0 || network.GuestMAC != GuestMACV0 || network.GatewayIPv4 != GuestGatewayIPv4V0 || network.GatewayMAC != GuestGatewayMACV0 || network.GuestInterfaceName != GuestInterfaceNameV0 || network.MTU != GuestMTUV0 || len(network.ResolverAddresses) != 1 || network.ResolverAddresses[0] != "10.0.0.2" {
 		t.Fatalf("network = %+v", network)
+	}
+	if manifest.RecoveryPoint.Runtime.Network.NetworkABI != NetworkABIV0 {
+		t.Fatalf("network identity = %+v", manifest.RecoveryPoint.Runtime.Network)
 	}
 	if manifest.RecoveryPoint.Runtime.ID != runtimeID || manifest.RecoveryPoint.Runtime.InitramfsDigest != "sha256:initramfs" {
 		t.Fatalf("runtime = %+v", manifest.RecoveryPoint.Runtime)
 	}
 }
 
-func TestCleanupRuntimeRequiresCanonicalExactOwnership(t *testing.T) {
+func TestExt4FreeBytesReadsFreshFilesystemCapacity(t *testing.T) {
+	raw := make([]byte, ext4SuperblockOffset+ext4SuperblockBytes)
+	superblock := raw[ext4SuperblockOffset:]
+	binary.LittleEndian.PutUint16(superblock[56:58], ext4Magic)
+	binary.LittleEndian.PutUint32(superblock[24:28], 2)
+	binary.LittleEndian.PutUint32(superblock[12:16], 17)
+	binary.LittleEndian.PutUint32(superblock[0x158:0x15c], 1)
+	path := filepath.Join(t.TempDir(), "scratch.ext4")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ext4FreeBytes(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := (uint64(1)<<32 | 17) * 4096
+	if got != want {
+		t.Fatalf("free bytes = %d, want %d", got, want)
+	}
+}
+
+func TestScratchUsableFloorMatchesBuildProfiles(t *testing.T) {
+	tests := []struct {
+		name       string
+		kernelArgs string
+		want       uint64
+	}{
+		{name: "staged build", kernelArgs: buildKernelArgs, want: 19 * 1024 * 1024 * 1024},
+		{name: "image build", kernelArgs: imageBuildKernelArgs, want: 19 * 1024 * 1024 * 1024},
+		{name: "runtime", kernelArgs: defaultKernelArgs},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			connector := &Connector{kernelArgs: test.kernelArgs}
+			if got := connector.scratchUsableFloor(); got != test.want {
+				t.Fatalf("usable floor = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
+func TestSnapshotRuntimeConfigBindsManagedProgramTopology(t *testing.T) {
+	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
+	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{
+		Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel",
+		InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs",
+		NetworkABI: NetworkABIV0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drives := testProgramDrives(&recordingReadOnlyDriveSource{})
+	_, manifestBytes, err := snapshotRuntimeConfig(
+		cfg, "checkpoint-1", runtimeID, "sha256:kernel",
+		"sha256:initramfs", "sha256:rootfs", defaultKernelArgs+" helmr.program=1", vm.RuntimeTopology{}, drives,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest snapshotManifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.RecoveryPoint.Runtime.KernelArgs != defaultKernelArgs+" helmr.program=1" {
+		t.Fatalf("kernel args = %q", manifest.RecoveryPoint.Runtime.KernelArgs)
+	}
+	program := manifest.RecoveryPoint.Runtime.Program
+	if program == nil ||
+		program.Runtime.Digest != drives[0].Digest ||
+		program.Artifact.Digest != drives[1].Digest {
+		t.Fatalf("Program = %+v", program)
+	}
+	if err := validateSnapshotProgram(program, drives); err != nil {
+		t.Fatal(err)
+	}
+	mismatch := append([]vm.ReadOnlyDrive(nil), drives...)
+	mismatch[1].Digest = "sha256:" + strings.Repeat("4", 64)
+	if err := validateSnapshotProgram(program, mismatch); err == nil {
+		t.Fatal("mismatched Program was accepted")
+	}
+}
+
+func TestCleanupRequiresCanonicalExactOwnership(t *testing.T) {
 	stateDir := t.TempDir()
 	jailerDir := t.TempDir()
-	id := "00000000-0000-0000-0000-000000000701"
+	id := "019fc619-8443-77f6-9498-8c348c25f701"
 	statePath := filepath.Join(stateDir, id)
 	if err := os.MkdirAll(statePath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(vm.RuntimeOwnerBuild+"\n"+id+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(vm.OwnerBuild)+"\n"+id+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	connector := &Connector{cfg: Config{StateDir: stateDir, JailerChrootBaseDir: jailerDir, IPPath: "/bin/true"}}
-	if err := connector.CleanupRuntime(context.Background(), id); err == nil || !strings.Contains(err.Error(), "ownership evidence") {
-		t.Fatalf("CleanupRuntime() error = %v, want exact ownership rejection", err)
+	err := connector.Cleanup(context.Background(), vm.Owner{Kind: vm.OwnerRuntime, ID: id})
+	var unproven *vm.CleanupUnprovenError
+	if !errors.As(err, &unproven) || unproven.Owner != (vm.Owner{Kind: vm.OwnerRuntime, ID: id}) || !strings.Contains(err.Error(), "ownership marker") {
+		t.Fatalf("Cleanup() error = %v, want typed exact ownership rejection", err)
 	}
 	if _, err := os.Stat(statePath); err != nil {
 		t.Fatalf("mismatched owner state was removed: %v", err)
 	}
-	if err := connector.CleanupRuntime(context.Background(), strings.ToUpper(id)); err == nil {
+	if err := connector.Cleanup(context.Background(), vm.Owner{Kind: vm.OwnerRuntime, ID: strings.ToUpper(id)}); !errors.As(err, &unproven) {
 		t.Fatal("non-canonical owner id was accepted")
 	}
 }
 
-func TestGuestSessionExposesActualCNINetworkFacts(t *testing.T) {
-	cfg := (Config{}).WithDefaults()
-	session := &guestSession{cfg: cfg, machine: &firecracker.Machine{Cfg: firecracker.Config{
-		NetNS: "/var/run/netns/0190f9c2-aaaa-7bbb-8ccc-0123456789ab",
-		NetworkInterfaces: firecracker.NetworkInterfaces{{StaticConfiguration: &firecracker.StaticNetworkConfiguration{
-			HostDevName: "tap7f3a", MacAddress: "06:00:ac:10:00:02",
-			IPConfiguration: &firecracker.IPConfiguration{
-				IPAddr:  net.IPNet{IP: net.IPv4(172, 16, 0, 2), Mask: net.CIDRMask(24, 32)},
-				Gateway: net.IPv4(172, 16, 0, 1),
-			},
-		}}},
-	}}}
-	facts, err := session.NetworkFacts()
-	if err != nil {
+func TestCleanupRemovesExactBuildOwnerAndMarkerLast(t *testing.T) {
+	stateDir := t.TempDir()
+	jailerDir := t.TempDir()
+	id := "019fc619-8443-77f6-9498-8c348c25f702"
+	statePath := filepath.Join(stateDir, id)
+	jailerPath := filepath.Join(jailerDir, "firecracker", id)
+	if err := os.MkdirAll(statePath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if facts.HostInterfaceName != "tap7f3a" || facts.TapName != "tap7f3a" ||
-		facts.NetNSName != "0190f9c2-aaaa-7bbb-8ccc-0123456789ab" ||
-		facts.GuestAddress != "172.16.0.2" || facts.GatewayAddress != "172.16.0.1" ||
-		facts.Subnet != "172.16.0.0/24" || facts.GuestMAC != "06:00:ac:10:00:02" {
-		t.Fatalf("network facts = %+v", facts)
+	if err := os.MkdirAll(jailerPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte("build\n"+id+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(statePath, "scratch"), []byte("state"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	connector := &Connector{cfg: Config{StateDir: stateDir, JailerChrootBaseDir: jailerDir, IPPath: "/bin/true"}}
+	if err := connector.Cleanup(context.Background(), vm.Owner{Kind: vm.OwnerBuild, ID: id}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{statePath, jailerPath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("cleanup path remains %s: %v", path, err)
+		}
 	}
 }
 
 func TestSnapshotRuntimeConfigIncludesSubstrateIdentity(t *testing.T) {
-	cfg := (Config{}).WithDefaults()
-	machine := &firecracker.Machine{
-		Cfg: firecracker.Config{
-			NetworkInterfaces: firecracker.NetworkInterfaces{{
-				StaticConfiguration: &firecracker.StaticNetworkConfiguration{
-					IPConfiguration: &firecracker.IPConfiguration{
-						IPAddr: net.IPNet{
-							IP:   net.IPv4(192, 168, 127, 2),
-							Mask: net.CIDRMask(24, 32),
-						},
-					},
-				},
-			}},
-		},
-	}
+	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
 	topology := vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
 		Path:       filepath.Join(t.TempDir(), "substrate.ext4"),
 		Digest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -146,11 +212,11 @@ func TestSnapshotRuntimeConfigIncludesSubstrateIdentity(t *testing.T) {
 		BuilderABI: "builder-v1",
 		LayoutABI:  "layout-v1",
 	}}
-	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: runtime.GOARCH, ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", CNIProfile: cfg.CNIProfile})
+	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", NetworkABI: NetworkABIV0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, manifestBytes, err := snapshotRuntimeConfig(cfg, machine, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", topology)
+	_, manifestBytes, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", defaultKernelArgs+" helmr.substrate=1", topology)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,26 +323,69 @@ func (e testWrappedErrors) WrappedErrors() []error {
 	return []error(e)
 }
 
-func TestSnapshotRuntimeConfigRequiresCNIIP(t *testing.T) {
+func TestSnapshotRuntimeConfigRequiresResolver(t *testing.T) {
 	cfg := (Config{}).WithDefaults()
-	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: runtime.GOARCH, ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", CNIProfile: cfg.CNIProfile})
+	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", NetworkABI: NetworkABIV0})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = snapshotRuntimeConfig(cfg, &firecracker.Machine{}, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", vm.RuntimeTopology{})
+	_, _, err = snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, "sha256:kernel", "sha256:initramfs", "sha256:rootfs", defaultKernelArgs, vm.RuntimeTopology{})
 	if err == nil {
-		t.Fatal("expected missing guest IP error")
+		t.Fatal("expected missing resolver error")
 	}
 }
 
-func TestRestoreNetworkInterfaceRequestsCheckpointIP(t *testing.T) {
-	connector := &Connector{cfg: (Config{}).WithDefaults()}
-	iface := connector.networkInterface(&snapshotNetworkManifest{GuestIPCIDR: "192.168.127.2/24"})
-	if iface.CNIConfiguration == nil || len(iface.CNIConfiguration.Args) != 1 {
+func TestStaticNetworkInterfaceMatchesNetworkABI(t *testing.T) {
+	iface := staticNetworkInterface("10.0.0.2")
+	if iface.StaticConfiguration == nil || iface.StaticConfiguration.IPConfiguration == nil {
 		t.Fatalf("interface = %+v", iface)
 	}
-	if got := iface.CNIConfiguration.Args[0]; got != [2]string{"IP", "192.168.127.2/24"} {
-		t.Fatalf("args = %+v", iface.CNIConfiguration.Args)
+	static := iface.StaticConfiguration
+	if static.HostDevName != GuestTapNameV0 || static.MacAddress != GuestMACV0 || static.IPConfiguration.IPAddr.String() != GuestNetworkCIDRV0 || static.IPConfiguration.Gateway.String() != GuestGatewayIPv4V0 || static.IPConfiguration.IfName != GuestInterfaceNameV0 || len(static.IPConfiguration.Nameservers) != 1 || static.IPConfiguration.Nameservers[0] != "10.0.0.2" {
+		t.Fatalf("static interface = %+v", static)
+	}
+}
+
+func TestValidateRestoredNetworkConfigRequiresExactGuestVisibleIdentity(t *testing.T) {
+	expected := snapshotNetworkConfig(Config{NetworkResolverIPv4: "10.0.0.2"})
+	if err := validateRestoredNetworkConfig(expected, expected); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		edit func(*snapshotNetworkManifest)
+	}{
+		{name: "guest IP", edit: func(network *snapshotNetworkManifest) {
+			network.GuestIPv4CIDR = "192.168.127.3/30"
+		}},
+		{name: "guest MAC", edit: func(network *snapshotNetworkManifest) {
+			network.GuestMAC = "06:00:ac:10:00:03"
+		}},
+		{name: "gateway", edit: func(network *snapshotNetworkManifest) {
+			network.GatewayIPv4 = "192.168.127.254"
+		}},
+		{name: "gateway MAC", edit: func(network *snapshotNetworkManifest) {
+			network.GatewayMAC = "02:fc:00:00:00:03"
+		}},
+		{name: "resolver", edit: func(network *snapshotNetworkManifest) {
+			network.ResolverAddresses = []string{"10.0.0.3"}
+		}},
+		{name: "guest interface", edit: func(network *snapshotNetworkManifest) {
+			network.GuestInterfaceName = "eth1"
+		}},
+		{name: "mtu", edit: func(network *snapshotNetworkManifest) {
+			network.MTU++
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			actual := expected
+			actual.ResolverAddresses = append([]string(nil), expected.ResolverAddresses...)
+			test.edit(&actual)
+			if err := validateRestoredNetworkConfig(expected, actual); err == nil {
+				t.Fatal("expected network mismatch")
+			}
+		})
 	}
 }
 
@@ -351,7 +460,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 	kernelDigest := testDigest([]byte("kernel"))
 	initramfsDigest := testDigest([]byte("initramfs"))
 	rootfsDigest := testDigest([]byte("rootfs"))
-	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: runtime.GOARCH, ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, CNIProfile: cfg.CNIProfile})
+	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, NetworkABI: NetworkABIV0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +472,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 			Runtime: snapshotRuntimeManifest{
 				Backend:         "firecracker",
 				ID:              runtimeID,
-				Arch:            runtime.GOARCH,
+				Arch:            testCheckpointArchitecture(t),
 				ABI:             runtimeABI,
 				VCPUCount:       cfg.VCPUCount,
 				MemoryMiB:       cfg.MemoryMiB,
@@ -374,24 +483,11 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 				RootfsDigest:    rootfsDigest,
 				GuestPort:       cfg.GuestPort,
 				HealthPort:      cfg.HealthPort,
-				Network: snapshotNetworkIdentityManifest{
-					Mode:        "cni",
-					Profile:     cfg.CNIProfile,
-					NetworkName: cfg.CNINetworkName,
-					IfName:      cfg.CNIIfName,
-					VMIfName:    cfg.CNIVMIfName,
-				},
+				Network:         snapshotNetworkIdentityManifest{NetworkABI: NetworkABIV0},
 			},
 		},
 		RuntimeState: snapshotRuntimeStateManifest{
-			Network: snapshotNetworkManifest{
-				Mode:        "cni",
-				Profile:     cfg.CNIProfile,
-				NetworkName: cfg.CNINetworkName,
-				IfName:      cfg.CNIIfName,
-				VMIfName:    cfg.CNIVMIfName,
-				GuestIPCIDR: "192.168.127.2/24",
-			},
+			Network: snapshotNetworkConfig(cfg),
 		},
 	}
 
@@ -428,12 +524,9 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 		{name: "manifest kernel args", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.KernelArgs = "other" }, want: "checkpoint manifest runtime ports or kernel args do not match"},
 		{name: "manifest guest port", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.GuestPort++ }, want: "checkpoint manifest runtime ports or kernel args do not match"},
 		{name: "manifest health port", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.HealthPort++ }, want: "checkpoint manifest runtime ports or kernel args do not match"},
-		{name: "manifest network mode", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.Mode = "tap" }, want: `checkpoint manifest network mode "tap" is not supported`},
-		{name: "manifest CNI profile", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.Profile = "other/v1" }, want: "checkpoint manifest CNI configuration does not match"},
-		{name: "manifest CNI network", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.NetworkName = "other" }, want: "checkpoint manifest CNI configuration does not match"},
-		{name: "manifest CNI if", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.IfName = "other0" }, want: "checkpoint manifest CNI configuration does not match"},
-		{name: "manifest CNI vm if", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.VMIfName = "other0" }, want: "checkpoint manifest CNI configuration does not match"},
-		{name: "manifest guest ip", editManifest: func(m *snapshotManifest) { m.RuntimeState.Network.GuestIPCIDR = "" }, want: "checkpoint manifest guest_ip_cidr is required"},
+		{name: "manifest network abi", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.NetworkABI = "other/v1" }, want: "checkpoint manifest network_abi"},
+		{name: "manifest state network abi", editManifest: func(m *snapshotManifest) { m.RuntimeState.Network.NetworkABI = "other/v1" }, want: "checkpoint manifest network_abi"},
+		{name: "manifest guest ip", editManifest: func(m *snapshotManifest) { m.RuntimeState.Network.GuestIPv4CIDR = "" }, want: "checkpoint manifest guest_ipv4_cidr"},
 	}
 
 	for _, tt := range tests {
@@ -457,7 +550,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 			identity := vm.CheckpointIdentity{
 				RuntimeBackend:      "firecracker",
 				RuntimeID:           runtimeID,
-				RuntimeArch:         runtime.GOARCH,
+				RuntimeArch:         testCheckpointArchitecture(t),
 				RuntimeABI:          runtimeABI,
 				KernelDigest:        kernelDigest,
 				InitramfsDigest:     initramfsDigest,
@@ -468,7 +561,14 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 				tt.editIdentity(&identity)
 			}
 
-			_, _, err := connector.validateRestoreIdentity(checkpointID, manifestBytes, identity, vm.RuntimeTopology{})
+			_, _, err := connector.validateRestoreIdentity(
+				checkpointID,
+				manifestBytes,
+				identity,
+				vm.RuntimeTopology{},
+				defaultKernelArgs,
+				nil,
+			)
 			if tt.want == "" {
 				if err != nil {
 					t.Fatalf("err = %v", err)
@@ -499,7 +599,14 @@ func TestValidateRestoreIdentityUsesManifestRuntimeShape(t *testing.T) {
 	}
 	identity.RuntimeConfigDigest = sha256sum.DigestBytes(manifestBytes)
 
-	_, restoreCfg, err := connector.validateRestoreIdentity("checkpoint-1", manifestBytes, identity, vm.RuntimeTopology{})
+	_, restoreCfg, err := connector.validateRestoreIdentity(
+		"checkpoint-1",
+		manifestBytes,
+		identity,
+		vm.RuntimeTopology{},
+		defaultKernelArgs,
+		nil,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,11 +643,18 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifestBytes, identity := testRestoreManifestAndIdentity(t, cfg, "checkpoint-1")
+	runtimeInstanceID := uuid.Must(uuid.NewV7()).String()
 	var mu sync.Mutex
 	var phases []vm.RuntimePhase
 
 	_, err := connector.Restore(context.Background(), vm.RestoreRequest{
-		ID:                   "checkpoint-1",
+		ID:                "checkpoint-1",
+		RuntimeInstanceID: runtimeInstanceID,
+		OwnerKind:         vm.OwnerRuntime,
+		Binding: vm.WorkloadBinding{
+			WorkerEpoch: 1, OwnerID: runtimeInstanceID, Generation: 1,
+			RuntimeInstanceID: runtimeInstanceID, RuntimeIdentityID: NetworkABIV0,
+		},
 		VMState:              statePath,
 		VMStateMediaType:     cas.CheckpointVMStateMediaType,
 		ScratchDisk:          scratchPack,
@@ -568,6 +682,10 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 	if !hasRuntimePhase(phases, "restore_unpack_memory_filepack", "io") {
 		t.Fatalf("missing memory unpack failure phase: %+v", phases)
 	}
+	entries, readErr := os.ReadDir(cfg.StateDir)
+	if readErr != nil || len(entries) != 0 {
+		t.Fatalf("failed restore left owner state: entries=%v err=%v", entries, readErr)
+	}
 }
 
 func TestUnpackRestoreArtifactReturnsFilepackStats(t *testing.T) {
@@ -583,12 +701,20 @@ func TestUnpackRestoreArtifactReturnsFilepackStats(t *testing.T) {
 	if _, err := packRuntimeFile(context.Background(), raw, pack, filepackScratchRole); err != nil {
 		t.Fatal(err)
 	}
-
-	restored, phase, err := connector.unpackRestoreArtifact(context.Background(), pack, filepackScratchRole, "scratch.ext4", 1<<20, cas.CheckpointScratchDiskMediaType)
+	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.Must(uuid.NewV7()).String()}
+	ownerDir, err := createOwnerStateRoot(cfg.StateDir, owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(restored)
+
+	restored, phase, err := connector.unpackRestoreArtifact(context.Background(), ownerDir, pack, filepackScratchRole, "scratch.ext4", 1<<20, cas.CheckpointScratchDiskMediaType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer removeStateRootLast(ownerDir, owner)
+	if filepath.Dir(restored) != ownerDir {
+		t.Fatalf("restore artifact path = %q, want owner directory %q", restored, ownerDir)
+	}
 	if phase.Name != "restore_unpack_scratch_filepack" || phase.ErrorClass != "" || phase.Filepack == nil || phase.Filepack.LogicalBytes != 1<<20 {
 		t.Fatalf("phase = %+v", phase)
 	}
@@ -845,6 +971,52 @@ func TestConnectGuestPortReturnsMachineExitWithoutHealthTimeout(t *testing.T) {
 	}
 }
 
+func TestConnectGuestPortUsesFullDuplexStream(t *testing.T) {
+	previousDial := dialVsock
+	defer func() { dialVsock = previousDial }()
+
+	client, server := net.Pipe()
+	defer server.Close()
+	dialVsock = func(context.Context, string, uint32, ...vsock.DialOption) (net.Conn, error) {
+		return client, nil
+	}
+
+	connector := &Connector{cfg: (Config{HealthTimeout: time.Second}).WithDefaults()}
+	stream, err := connector.connectGuestPort(context.Background(), "vsock.sock", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	errChannel := make(chan error, 1)
+	go func() {
+		request := make([]byte, len("request"))
+		if _, err := io.ReadFull(server, request); err != nil {
+			errChannel <- err
+			return
+		}
+		if string(request) != "request" {
+			errChannel <- fmt.Errorf("request = %q, want request", request)
+			return
+		}
+		_, err := io.WriteString(server, "response")
+		errChannel <- err
+	}()
+	if _, err := io.WriteString(stream, "request"); err != nil {
+		t.Fatal(err)
+	}
+	response := make([]byte, len("response"))
+	if _, err := io.ReadFull(stream, response); err != nil {
+		t.Fatal(err)
+	}
+	if string(response) != "response" {
+		t.Fatalf("response = %q, want response", response)
+	}
+	if err := <-errChannel; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReadHealthRejectsOversizedBody(t *testing.T) {
 	client, server := net.Pipe()
 	errc := make(chan error, 1)
@@ -896,7 +1068,7 @@ func TestReadHealthAcceptsChunkedBody(t *testing.T) {
 	}
 }
 
-func TestConnectReadyGuestWaitsForHealthBeforeGuestPort(t *testing.T) {
+func TestPreparedGuestSeparatesHealthFromGuestPort(t *testing.T) {
 	previousDial := dialVsock
 	defer func() { dialVsock = previousDial }()
 
@@ -926,7 +1098,22 @@ func TestConnectReadyGuestWaitsForHealthBeforeGuestPort(t *testing.T) {
 	}
 
 	connector := &Connector{cfg: (Config{HealthTimeout: time.Second}).WithDefaults()}
-	conn, err := connector.connectReadyGuest(context.Background(), "vsock.sock", nil, nil)
+	if err := connector.waitForHealth(
+		context.Background(),
+		"vsock.sock",
+		nil,
+		nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(ports) != 2 {
+		t.Fatalf("ports after health = %v, want health only", ports)
+	}
+	conn, err := connector.connectGuestPort(
+		context.Background(),
+		"vsock.sock",
+		nil,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1073,7 +1260,7 @@ func TestWithJailedRestoreFilesLinksScratchDiskAndRewritesDrivePaths(t *testing.
 }
 
 func TestRuntimeDrivesIncludeOptionalReadonlySubstrate(t *testing.T) {
-	drives := runtimeDrives("/rootfs.ext4", "/scratch.ext4", "/substrate.ext4")
+	drives := runtimeDrives("/rootfs.ext4", "/scratch.ext4", "/substrate.ext4", nil)
 	if len(drives) != 3 {
 		t.Fatalf("drive count = %d, want 3", len(drives))
 	}
@@ -1086,6 +1273,459 @@ func TestRuntimeDrivesIncludeOptionalReadonlySubstrate(t *testing.T) {
 	if firecracker.BoolValue(drives[2].IsRootDevice) {
 		t.Fatalf("substrate drive must not be root device")
 	}
+}
+
+func TestRuntimeDrivesIncludeSealedReadOnlyDrives(t *testing.T) {
+	source := &recordingReadOnlyDriveSource{}
+	drives := runtimeDrives(
+		"/rootfs.ext4",
+		"/scratch.ext4",
+		"",
+		[]vm.ReadOnlyDrive{{ID: vm.ProgramDrive, Source: source}},
+	)
+	if len(drives) != 3 {
+		t.Fatalf("drive count = %d, want 3", len(drives))
+	}
+	if got := firecracker.StringValue(drives[2].DriveID); got != vm.ProgramDrive {
+		t.Fatalf("program drive id = %q", got)
+	}
+	if got := firecracker.StringValue(drives[2].PathOnHost); got != "program.squashfs" {
+		t.Fatalf("program drive path = %q", got)
+	}
+	if !firecracker.BoolValue(drives[2].IsReadOnly) {
+		t.Fatal("program drive should be read-only")
+	}
+}
+
+func TestRuntimeDrivesUseFixedProgramOrder(t *testing.T) {
+	source := &recordingReadOnlyDriveSource{}
+	drives := runtimeDrives(
+		"/rootfs.ext4",
+		"/scratch.ext4",
+		"/workspace.ext4",
+		[]vm.ReadOnlyDrive{
+			{ID: vm.ProgramDrive, Source: source},
+			{ID: vm.ProgramRuntimeDrive, Source: source},
+		},
+	)
+	want := []string{
+		"rootfs",
+		"scratch",
+		"substrate",
+		vm.ProgramRuntimeDrive,
+		vm.ProgramDrive,
+	}
+	if len(drives) != len(want) {
+		t.Fatalf("drive count = %d, want %d", len(drives), len(want))
+	}
+	for index, drive := range drives {
+		if got := firecracker.StringValue(drive.DriveID); got != want[index] {
+			t.Fatalf("drive %d ID = %q, want %q", index, got, want[index])
+		}
+	}
+}
+
+func TestRuntimeKernelArgsDescribeExactDriveTopology(t *testing.T) {
+	source := &recordingReadOnlyDriveSource{}
+	program := []vm.ReadOnlyDrive{
+		{ID: vm.ProgramRuntimeDrive, Source: source},
+		{ID: vm.ProgramDrive, Source: source},
+	}
+	if got := runtimeKernelArgs(vm.RuntimeTopology{}, nil); got != defaultKernelArgs {
+		t.Fatalf("default args = %q", got)
+	}
+	if got := runtimeKernelArgs(
+		vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{}},
+		nil,
+	); got != defaultKernelArgs+" helmr.substrate=1" {
+		t.Fatalf("substrate args = %q", got)
+	}
+	if got := runtimeKernelArgs(
+		vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{}},
+		program,
+	); got != defaultKernelArgs+" helmr.substrate=1 helmr.program=1" {
+		t.Fatalf("Program args = %q", got)
+	}
+}
+
+func TestMaterializeAcceptsOnlyCompleteProgramDriveSet(t *testing.T) {
+	source := &recordingReadOnlyDriveSource{}
+	runtimeInstanceID := uuid.Must(uuid.NewV7()).String()
+	rootfsDigest := "sha256:" + strings.Repeat("0", 64)
+	connector := &Connector{artifacts: runtimeArtifacts{Rootfs: runtimeArtifact{Digest: rootfsDigest}}}
+	request := vm.MaterializeRequest{
+		ID:        runtimeInstanceID,
+		OwnerKind: vm.OwnerRuntime,
+		Binding: vm.WorkloadBinding{
+			WorkerEpoch: 1, OwnerID: runtimeInstanceID, Generation: 1,
+			RuntimeInstanceID: runtimeInstanceID, RuntimeIdentityID: NetworkABIV0,
+		},
+		RootfsDigest:       rootfsDigest,
+		WorkspaceMountPath: "/workspace",
+		ReadOnlyDrives:     testProgramDrives(source),
+	}
+	if err := connector.validateMaterializeRequest(request); err != nil {
+		t.Fatal(err)
+	}
+	request.ReadOnlyDrives = request.ReadOnlyDrives[:1]
+	if err := connector.validateMaterializeRequest(request); err == nil {
+		t.Fatal("incomplete Program drive set was accepted")
+	}
+}
+
+func TestBuildGuestProfilesUseExactDriveSets(t *testing.T) {
+	source := &recordingReadOnlyDriveSource{}
+	tests := map[string]struct {
+		request    vm.ConnectRequest
+		kernelArgs string
+	}{
+		"build": {
+			request: vm.ConnectRequest{
+				OwnerKind: vm.OwnerBuild,
+				Resources: compute.BuildGuestResources(),
+				PIDsMax:   compute.BuildGuestPIDsMax,
+				ReadOnlyDrives: []vm.ReadOnlyDrive{
+					{ID: vm.ToolchainDrive, Source: source},
+					{ID: vm.ManagerDrive, Source: source},
+					{ID: vm.ManagedRuntimeDrive, Source: source},
+				},
+			},
+			kernelArgs: buildKernelArgs,
+		},
+		"image build": {
+			request: vm.ConnectRequest{
+				OwnerKind: vm.OwnerImageBuild,
+				Resources: compute.ImageBuildGuestResources(),
+				PIDsMax:   compute.ImageBuildGuestPIDsMax,
+			},
+			kernelArgs: imageBuildKernelArgs,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			kernelArgs, err := buildGuestProfile(test.request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kernelArgs != test.kernelArgs {
+				t.Fatalf("profile = %q, want %q", kernelArgs, test.kernelArgs)
+			}
+		})
+	}
+}
+
+func TestBuildGuestProfileRejectsOpenProfiles(t *testing.T) {
+	source := &recordingReadOnlyDriveSource{}
+	required := []vm.ReadOnlyDrive{
+		{ID: vm.ManagerDrive, Source: source},
+		{ID: vm.ManagedRuntimeDrive, Source: source},
+		{ID: vm.ToolchainDrive, Source: source},
+	}
+	tests := map[string]vm.ConnectRequest{
+		"missing component": {
+			OwnerKind:      vm.OwnerBuild,
+			Resources:      compute.BuildGuestResources(),
+			PIDsMax:        compute.BuildGuestPIDsMax,
+			ReadOnlyDrives: required[:2],
+		},
+		"wrong process limit": {
+			OwnerKind:      vm.OwnerBuild,
+			Resources:      compute.BuildGuestResources(),
+			PIDsMax:        compute.BuildGuestPIDsMax - 1,
+			ReadOnlyDrives: required,
+		},
+		"workspace substrate": {
+			OwnerKind: vm.OwnerBuild,
+			Resources: compute.BuildGuestResources(),
+			PIDsMax:   compute.BuildGuestPIDsMax,
+			Topology: vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
+				Path: "workspace.ext4",
+			}},
+			ReadOnlyDrives: required,
+		},
+		"build drives on standard build": {
+			OwnerKind:      vm.OwnerBuild,
+			Resources:      compute.BuildGuestResources(),
+			ReadOnlyDrives: required,
+		},
+		"image build with drive": {
+			OwnerKind:      vm.OwnerImageBuild,
+			Resources:      compute.ImageBuildGuestResources(),
+			PIDsMax:        compute.ImageBuildGuestPIDsMax,
+			ReadOnlyDrives: required[:1],
+		},
+	}
+	for name, request := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := buildGuestProfile(request); err == nil {
+				t.Fatal("buildGuestProfile error = nil")
+			}
+		})
+	}
+}
+
+func TestRuntimeDrivesUseFixedBuildOrder(t *testing.T) {
+	source := &recordingReadOnlyDriveSource{}
+	drives := runtimeDrives(
+		"/rootfs.ext4",
+		"/scratch.ext4",
+		"",
+		[]vm.ReadOnlyDrive{
+			{ID: vm.BuildTreeDrive, Source: source},
+			{ID: vm.ToolchainDrive, Source: source},
+			{ID: vm.ManagedRuntimeDrive, Source: source},
+			{ID: vm.ManagerDrive, Source: source},
+		},
+	)
+	want := []string{
+		"rootfs",
+		"scratch",
+		vm.ManagerDrive,
+		vm.ManagedRuntimeDrive,
+		vm.ToolchainDrive,
+		vm.BuildTreeDrive,
+	}
+	if len(drives) != len(want) {
+		t.Fatalf("drive count = %d, want %d", len(drives), len(want))
+	}
+	for index, drive := range drives {
+		if got := firecracker.StringValue(drive.DriveID); got != want[index] {
+			t.Fatalf("drive %d ID = %q, want %q", index, got, want[index])
+		}
+	}
+}
+
+func TestSealedDriveChrootStrategySeparatesSourceCapabilities(t *testing.T) {
+	chrootBase := t.TempDir()
+	vmID := "vm-1"
+	root := filepath.Join(chrootBase, "firecracker", vmID, "root")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sourceDirectory := t.TempDir()
+	kernelPath := filepath.Join(sourceDirectory, "vmlinux")
+	rootfsPath := filepath.Join(sourceDirectory, "rootfs.ext4")
+	scratchPath := filepath.Join(sourceDirectory, "scratch.ext4")
+	for _, path := range []string{kernelPath, rootfsPath, scratchPath} {
+		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := &recordingReadOnlyDriveSource{}
+	machine := &firecracker.Machine{
+		Cfg: firecracker.Config{
+			KernelImagePath: kernelPath,
+			JailerCfg: &firecracker.JailerConfig{
+				ExecFile:      "/usr/bin/firecracker",
+				ChrootBaseDir: chrootBase,
+				ID:            vmID,
+				UID:           firecracker.Int(os.Getuid()),
+				GID:           firecracker.Int(os.Getgid()),
+			},
+			Drives: runtimeDrives(
+				rootfsPath,
+				scratchPath,
+				"",
+				[]vm.ReadOnlyDrive{{
+					ID:     vm.ProgramDrive,
+					Source: source,
+				}},
+			),
+		},
+		Handlers: firecracker.Handlers{
+			FcInit: firecracker.HandlerList{}.Append(firecracker.Handler{
+				Name: firecracker.CreateLogFilesHandlerName,
+				Fn: func(context.Context, *firecracker.Machine) error {
+					return nil
+				},
+			}),
+		},
+	}
+	firecracker.WithLogger(logrus.NewEntry(logrus.New()))(machine)
+	strategy := sealedDriveChrootStrategy{
+		kernelImagePath: kernelPath,
+		drives: []vm.ReadOnlyDrive{{
+			ID:     vm.ProgramDrive,
+			Source: source,
+		}},
+	}
+	if err := strategy.AdaptHandlers(&machine.Handlers); err != nil {
+		t.Fatal(err)
+	}
+	if err := machine.Handlers.FcInit.Run(context.Background(), machine); err != nil {
+		t.Fatal(err)
+	}
+	if source.directory != root ||
+		source.name != "program.squashfs" ||
+		source.uid != os.Getuid() ||
+		source.gid != os.Getgid() {
+		t.Fatalf("link request = %+v", source)
+	}
+	if len(machine.Cfg.Drives) != 3 {
+		t.Fatalf("drive count = %d, want 3", len(machine.Cfg.Drives))
+	}
+	if got := firecracker.StringValue(machine.Cfg.Drives[2].PathOnHost); got != "program.squashfs" {
+		t.Fatalf("program drive path = %q", got)
+	}
+	for _, name := range []string{
+		filepath.Base(kernelPath),
+		filepath.Base(rootfsPath),
+		filepath.Base(scratchPath),
+	} {
+		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
+			t.Fatalf("ordinary jail link %q: %v", name, err)
+		}
+	}
+}
+
+func TestSealedDriveChrootStrategyPreservesBuildDriveOrder(t *testing.T) {
+	chrootBase := t.TempDir()
+	vmID := "vm-build"
+	root := filepath.Join(chrootBase, "firecracker", vmID, "root")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sourceDirectory := t.TempDir()
+	kernelPath := filepath.Join(sourceDirectory, "vmlinux")
+	rootfsPath := filepath.Join(sourceDirectory, "rootfs.ext4")
+	scratchPath := filepath.Join(sourceDirectory, "scratch.ext4")
+	for _, path := range []string{kernelPath, rootfsPath, scratchPath} {
+		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sources := map[string]*recordingReadOnlyDriveSource{
+		vm.ManagerDrive:        {},
+		vm.ManagedRuntimeDrive: {},
+		vm.ToolchainDrive:      {},
+		vm.BuildTreeDrive:      {},
+	}
+	declared := []vm.ReadOnlyDrive{
+		{ID: vm.BuildTreeDrive, Source: sources[vm.BuildTreeDrive]},
+		{ID: vm.ToolchainDrive, Source: sources[vm.ToolchainDrive]},
+		{ID: vm.ManagedRuntimeDrive, Source: sources[vm.ManagedRuntimeDrive]},
+		{ID: vm.ManagerDrive, Source: sources[vm.ManagerDrive]},
+	}
+	machine := &firecracker.Machine{
+		Cfg: firecracker.Config{
+			KernelImagePath: kernelPath,
+			JailerCfg: &firecracker.JailerConfig{
+				ExecFile:      "/usr/bin/firecracker",
+				ChrootBaseDir: chrootBase,
+				ID:            vmID,
+				UID:           firecracker.Int(os.Getuid()),
+				GID:           firecracker.Int(os.Getgid()),
+			},
+			Drives: runtimeDrives(rootfsPath, scratchPath, "", declared),
+		},
+		Handlers: firecracker.Handlers{
+			FcInit: firecracker.HandlerList{}.Append(firecracker.Handler{
+				Name: firecracker.CreateLogFilesHandlerName,
+				Fn: func(context.Context, *firecracker.Machine) error {
+					return nil
+				},
+			}),
+		},
+	}
+	firecracker.WithLogger(logrus.NewEntry(logrus.New()))(machine)
+	strategy := sealedDriveChrootStrategy{kernelImagePath: kernelPath, drives: declared}
+	if err := strategy.AdaptHandlers(&machine.Handlers); err != nil {
+		t.Fatal(err)
+	}
+	if err := machine.Handlers.FcInit.Run(context.Background(), machine); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"rootfs",
+		"scratch",
+		vm.ManagerDrive,
+		vm.ManagedRuntimeDrive,
+		vm.ToolchainDrive,
+		vm.BuildTreeDrive,
+	}
+	if len(machine.Cfg.Drives) != len(want) {
+		t.Fatalf("drive count = %d, want %d", len(machine.Cfg.Drives), len(want))
+	}
+	for index, drive := range machine.Cfg.Drives {
+		id := firecracker.StringValue(drive.DriveID)
+		if id != want[index] {
+			t.Fatalf("drive %d ID = %q, want %q", index, id, want[index])
+		}
+		if source := sources[id]; source != nil {
+			if source.directory != root ||
+				source.name != readOnlyDriveName(id) ||
+				source.uid != os.Getuid() ||
+				source.gid != os.Getgid() {
+				t.Fatalf("drive %q link request = %+v", id, source)
+			}
+		}
+	}
+}
+
+func TestValidateReadOnlyDrivesRejectsInvalidDeclarations(t *testing.T) {
+	source := &recordingReadOnlyDriveSource{}
+	for _, test := range []struct {
+		name   string
+		drives []vm.ReadOnlyDrive
+	}{
+		{
+			name:   "path ID",
+			drives: []vm.ReadOnlyDrive{{ID: "../code", Source: source}},
+		},
+		{
+			name:   "nil source",
+			drives: []vm.ReadOnlyDrive{{ID: vm.ProgramDrive}},
+		},
+		{
+			name: "duplicate ID",
+			drives: []vm.ReadOnlyDrive{
+				{ID: vm.ProgramDrive, Source: source},
+				{ID: vm.ProgramDrive, Source: source},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateReadOnlyDrives(test.drives); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
+type recordingReadOnlyDriveSource struct {
+	directory string
+	name      string
+	uid       int
+	gid       int
+}
+
+func testProgramDrives(source vm.ReadOnlyDriveSource) []vm.ReadOnlyDrive {
+	return []vm.ReadOnlyDrive{
+		{
+			ID: vm.ProgramRuntimeDrive, Digest: "sha256:" + strings.Repeat("1", 64),
+			SizeBytes: 4096, MediaType: "application/vnd.helmr.runtime.v0+squashfs",
+			Source: source,
+		},
+		{
+			ID: vm.ProgramDrive, Digest: "sha256:" + strings.Repeat("2", 64),
+			SizeBytes: 4096, MediaType: "application/vnd.helmr.deployment-program.v0+squashfs",
+			Source: source,
+		},
+	}
+}
+
+func (source *recordingReadOnlyDriveSource) LinkInto(
+	directory string,
+	name string,
+	uid int,
+	gid int,
+) error {
+	source.directory = directory
+	source.name = name
+	source.uid = uid
+	source.gid = gid
+	return nil
 }
 
 func TestWithSnapshotRestoreSkipsVsockReconfiguration(t *testing.T) {
@@ -1115,6 +1755,7 @@ func TestConfigForMaterializeRequestUsesRequestedRuntimeResources(t *testing.T) 
 			MilliCPU:  1500,
 			MemoryMiB: 1024,
 			DiskMiB:   4096,
+			Slots:     1,
 		},
 	})
 	if err != nil {
@@ -1133,14 +1774,16 @@ func TestConfigForMaterializeRequestUsesRequestedRuntimeResources(t *testing.T) 
 
 func TestConfigForMaterializeRequestRejectsOversizedRuntimeResources(t *testing.T) {
 	connector := &Connector{cfg: Config{VCPUCount: 2, MemoryMiB: 2048, ScratchDiskMiB: 8192}}
-	if _, err := connector.configForMaterializeRequest(vm.MaterializeRequest{Resources: compute.ResourceVector{MemoryMiB: 4096}}); err == nil {
-		t.Fatal("expected oversized memory request to fail")
-	}
-	if _, err := connector.configForMaterializeRequest(vm.MaterializeRequest{Resources: compute.ResourceVector{MilliCPU: 3000}}); err == nil {
-		t.Fatal("expected oversized cpu request to fail")
-	}
-	if _, err := connector.configForMaterializeRequest(vm.MaterializeRequest{Resources: compute.ResourceVector{DiskMiB: 16384}}); err == nil {
-		t.Fatal("expected oversized disk request to fail")
+	for name, resources := range map[string]compute.ResourceVector{
+		"memory": {MilliCPU: 1000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 1},
+		"cpu":    {MilliCPU: 3000, MemoryMiB: 1024, DiskMiB: 4096, Slots: 1},
+		"disk":   {MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 16384, Slots: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := connector.configForMaterializeRequest(vm.MaterializeRequest{Resources: resources}); err == nil {
+				t.Fatalf("expected oversized %s request to fail", name)
+			}
+		})
 	}
 }
 
@@ -1191,33 +1834,6 @@ func TestConfigForRestoreManifestRejectsInvalidOrOversizedRuntimeShape(t *testin
 	}
 }
 
-func TestRestoreCleanupSessionPreservesCheckpointSupport(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "restore.raw")
-	if err := os.WriteFile(path, []byte("restore"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	inner := &checkpointableTestSession{}
-	session := restoreCleanupSession{CheckpointableSession: inner, paths: []string{path}}
-	if _, ok := any(session).(vm.CheckpointableSession); !ok {
-		t.Fatal("restore cleanup session must remain checkpointable")
-	}
-	if _, err := session.CreateSnapshot(context.Background(), vm.SnapshotRequest{ID: "checkpoint-1"}); err != nil {
-		t.Fatal(err)
-	}
-	if !inner.snapshotCalled {
-		t.Fatal("snapshot call did not reach inner session")
-	}
-	if err := session.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if !inner.closed {
-		t.Fatal("close call did not reach inner session")
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("restore file still exists: %v", err)
-	}
-}
-
 func testRestoreConfig(t *testing.T) Config {
 	t.Helper()
 	dir := t.TempDir()
@@ -1234,11 +1850,12 @@ func testRestoreConfig(t *testing.T) Config {
 		t.Fatal(err)
 	}
 	cfg := (Config{
-		KernelPath:    kernelPath,
-		InitramfsPath: initramfsPath,
-		RootfsPath:    rootfsPath,
-		VCPUCount:     2,
-		MemoryMiB:     256,
+		KernelPath:          kernelPath,
+		InitramfsPath:       initramfsPath,
+		RootfsPath:          rootfsPath,
+		NetworkResolverIPv4: "10.0.0.2",
+		VCPUCount:           2,
+		MemoryMiB:           256,
 	}).WithDefaults()
 	manifest := runtimeArtifacts{
 		Schema:     runtimeArtifactsSchema,
@@ -1267,12 +1884,21 @@ func testConnector(t *testing.T, cfg Config) *Connector {
 	return &Connector{cfg: cfg, artifacts: artifacts}
 }
 
+func testCheckpointArchitecture(t *testing.T) string {
+	t.Helper()
+	architecture, err := runtimeidentity.ArchitectureFromGo(runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return architecture
+}
+
 func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID string) ([]byte, vm.CheckpointIdentity) {
 	t.Helper()
 	kernelDigest := testDigest([]byte("kernel"))
 	initramfsDigest := testDigest([]byte("initramfs"))
 	rootfsDigest := testDigest([]byte("rootfs"))
-	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: runtime.GOARCH, ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, CNIProfile: cfg.CNIProfile})
+	runtimeID, err := runtimeidentity.Digest(runtimeidentity.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, NetworkABI: NetworkABIV0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1282,7 +1908,7 @@ func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID strin
 			Runtime: snapshotRuntimeManifest{
 				Backend:         "firecracker",
 				ID:              runtimeID,
-				Arch:            runtime.GOARCH,
+				Arch:            testCheckpointArchitecture(t),
 				ABI:             runtimeABI,
 				VCPUCount:       cfg.VCPUCount,
 				MemoryMiB:       cfg.MemoryMiB,
@@ -1293,24 +1919,11 @@ func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID strin
 				RootfsDigest:    rootfsDigest,
 				GuestPort:       cfg.GuestPort,
 				HealthPort:      cfg.HealthPort,
-				Network: snapshotNetworkIdentityManifest{
-					Mode:        "cni",
-					Profile:     cfg.CNIProfile,
-					NetworkName: cfg.CNINetworkName,
-					IfName:      cfg.CNIIfName,
-					VMIfName:    cfg.CNIVMIfName,
-				},
+				Network:         snapshotNetworkIdentityManifest{NetworkABI: NetworkABIV0},
 			},
 		},
 		RuntimeState: snapshotRuntimeStateManifest{
-			Network: snapshotNetworkManifest{
-				Mode:        "cni",
-				Profile:     cfg.CNIProfile,
-				NetworkName: cfg.CNINetworkName,
-				IfName:      cfg.CNIIfName,
-				VMIfName:    cfg.CNIVMIfName,
-				GuestIPCIDR: "192.168.127.2/24",
-			},
+			Network: snapshotNetworkConfig(cfg),
 		},
 	}
 	manifestBytes, err := json.Marshal(manifest)
@@ -1320,7 +1933,7 @@ func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID strin
 	return manifestBytes, vm.CheckpointIdentity{
 		RuntimeBackend:      "firecracker",
 		RuntimeID:           runtimeID,
-		RuntimeArch:         runtime.GOARCH,
+		RuntimeArch:         testCheckpointArchitecture(t),
 		RuntimeABI:          runtimeABI,
 		KernelDigest:        kernelDigest,
 		InitramfsDigest:     initramfsDigest,
@@ -1354,50 +1967,4 @@ func hasRuntimePhase(phases []vm.RuntimePhase, name string, errorClass string) b
 func testDigest(body []byte) string {
 	sum := sha256.Sum256(body)
 	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-type checkpointableTestSession struct {
-	closed         bool
-	snapshotCalled bool
-}
-
-func (s *checkpointableTestSession) Stream() io.ReadWriteCloser {
-	return readWriteNopCloser{}
-}
-
-func (s *checkpointableTestSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
-	return readWriteNopCloser{}, nil
-}
-
-func (s *checkpointableTestSession) Close(context.Context) error {
-	s.closed = true
-	return nil
-}
-
-func (s *checkpointableTestSession) Wait(ctx context.Context) error {
-	<-ctx.Done()
-	return ctx.Err()
-}
-
-func (s *checkpointableTestSession) CreateSnapshot(context.Context, vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
-	s.snapshotCalled = true
-	return vm.SnapshotArtifact{}, nil
-}
-
-func (s *checkpointableTestSession) Resume(context.Context) error {
-	return nil
-}
-
-type readWriteNopCloser struct{}
-
-func (readWriteNopCloser) Read([]byte) (int, error) {
-	return 0, io.EOF
-}
-
-func (readWriteNopCloser) Write(p []byte) (int, error) {
-	return len(p), nil
-}
-
-func (readWriteNopCloser) Close() error {
-	return nil
 }

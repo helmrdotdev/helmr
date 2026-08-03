@@ -2,91 +2,79 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
 const defaultDeploymentBuildCompletionGrace = 30 * time.Second
 
 type ControlClient interface {
+	DiscoverRunLeases(ctx context.Context) (api.WorkerRunLeaseDiscoveryResponse, error)
+	NextPlatformAcquisition(ctx context.Context) (api.WorkerPlatformAcquisitionResponse, error)
+	CompletePlatformAcquisition(ctx context.Context, request api.WorkerPlatformAcquisitionCompleteRequest) (api.WorkerPlatformAcquisitionResult, error)
+	FailPlatformAcquisition(ctx context.Context, request api.WorkerPlatformAcquisitionFailRequest) (api.WorkerPlatformAcquisitionResult, error)
 	LeaseDeploymentBuild(ctx context.Context) (api.WorkerDeploymentBuildLeaseResponse, error)
 	StartDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease) (api.WorkerDeploymentBuildStartResponse, error)
 	RenewDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease) (api.WorkerDeploymentBuildRenewResponse, error)
 	RejectDeploymentBuild(ctx context.Context, request api.WorkerDeploymentBuildRejectRequest) error
-	CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease, result api.WorkerDeploymentBuildResult) (api.WorkerDeploymentBuildResponse, error)
+	ReportDeploymentBuildDeliveryFailure(ctx context.Context, request api.WorkerDeploymentBuildDeliveryFailureRequest) (api.WorkerDeploymentBuildResponse, error)
+	CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease, result json.RawMessage) (api.WorkerDeploymentBuildResponse, error)
 	ClaimWorkspaceMount(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerWorkspaceMountClaimResponse, error)
 	RenewWorkspaceMount(ctx context.Context, request api.WorkerWorkspaceMountRenewRequest) (api.WorkspaceMountResponse, error)
 	MarkWorkspaceMountMounted(ctx context.Context, request api.WorkerWorkspaceMountMountedRequest) (api.WorkspaceMountResponse, error)
 	CaptureWorkspaceMount(ctx context.Context, request api.WorkerWorkspaceMountCaptureRequest) (api.WorkerWorkspaceMountCaptureResponse, error)
 	StopWorkspaceMount(ctx context.Context, request api.WorkerWorkspaceMountStopRequest) (api.WorkspaceMountResponse, error)
 	FailWorkspaceMount(ctx context.Context, request api.WorkerWorkspaceMountFailRequest) (api.WorkspaceMountResponse, error)
-	ClaimWorkspaceOperation(ctx context.Context, request api.WorkerWorkspaceOperationClaimRequest) (api.WorkerWorkspaceOperationClaimResponse, error)
-	StartWorkspaceOperation(ctx context.Context, request api.WorkerWorkspaceOperationStartRequest) (api.WorkspaceOperationResponse, error)
-	CompleteWorkspaceOperation(ctx context.Context, request api.WorkerWorkspaceOperationCompleteRequest) (api.WorkspaceOperationResponse, error)
-	MarkWorkspaceExecStarted(ctx context.Context, request api.WorkerWorkspaceExecStartedRequest) (api.WorkspaceExecEnvelope, error)
-	AppendWorkspaceExecOutput(ctx context.Context, request api.WorkerWorkspaceExecOutputRequest) (api.ListWorkspaceExecStreamChunksResponse, error)
-	ListWorkspaceExecInput(ctx context.Context, request api.WorkerWorkspaceExecInputRequest) (api.WorkerWorkspaceExecInputResponse, error)
-	AdvanceWorkspaceExecInputDelivered(ctx context.Context, request api.WorkerWorkspaceExecInputDeliveredRequest) (api.WorkspaceExecEnvelope, error)
-	MarkWorkspaceExecExited(ctx context.Context, request api.WorkerWorkspaceExecExitedRequest) (api.WorkspaceExecEnvelope, error)
-	MarkWorkspacePtyOpened(ctx context.Context, request api.WorkerWorkspacePtyOpenedRequest) (api.WorkspacePtyEnvelope, error)
-	AppendWorkspacePtyOutput(ctx context.Context, request api.WorkerWorkspacePtyOutputRequest) (api.ListWorkspacePtyStreamChunksResponse, error)
-	ListWorkspacePtyInput(ctx context.Context, request api.WorkerWorkspacePtyInputRequest) (api.WorkerWorkspacePtyInputResponse, error)
-	AdvanceWorkspacePtyInputDelivered(ctx context.Context, request api.WorkerWorkspacePtyInputDeliveredRequest) (api.WorkspacePtyEnvelope, error)
-	MarkWorkspacePtyResizeApplied(ctx context.Context, request api.WorkerWorkspacePtyResizeAppliedRequest) (api.WorkspacePtyEnvelope, error)
-	MarkWorkspacePtyClosed(ctx context.Context, request api.WorkerWorkspacePtyClosedRequest) (api.WorkspacePtyEnvelope, error)
-	LeaseRun(ctx context.Context) (api.WorkerRunLeaseResponse, error)
-	RejectRun(ctx context.Context, request api.WorkerRejectRunRequest) error
-	StartRun(ctx context.Context, lease api.WorkerRunLease) (api.WorkerStartResponse, error)
-	RenewRun(ctx context.Context, lease api.WorkerRunLease) (api.WorkerRenewResponse, error)
-	ReleaseRun(ctx context.Context, lease api.WorkerRunLease, result api.WorkerReleaseResult) (api.WorkerReleaseResponse, error)
+	ClaimWorkspaceExec(ctx context.Context, request api.WorkerWorkspaceExecClaimRequest) (api.WorkerWorkspaceExecClaimResponse, error)
+	CompleteWorkspaceExec(ctx context.Context, request api.WorkerWorkspaceExecCompleteRequest) (api.WorkspaceMountResponse, error)
 }
 
-type Executor interface {
-	Execute(ctx context.Context, leases api.WorkerRunLeaseProvider, run api.WorkerRun) api.WorkerReleaseResult
+type RunLeaseExecutor interface {
+	ExecuteRunLease(context.Context, api.WorkerRunLeaseWork) error
 }
 
-type DeploymentBuilder interface {
-	BuildDeployment(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) api.WorkerDeploymentBuildResult
+type BuildExecutor interface {
+	Build(
+		ctx context.Context,
+		lease api.WorkerDeploymentBuildLease,
+		deployment api.WorkerDeploymentBuild,
+		revocations deployment.ImageOperationRevocations,
+	) (json.RawMessage, error)
+}
+
+type PlatformAcquirer interface {
+	Acquire(context.Context, api.WorkerPlatformAcquisition) (api.WorkerPlatformAcquisitionCandidates, error)
+}
+
+type BuildPolicy interface {
+	Digest() (string, error)
+	Node(string) (deployment.VersionDomain, []string, error)
+	Manager(deployment.PackageManager) (deployment.ManagerPolicy, error)
+	DeniesDigest(string) bool
+	DeniesSelector(string) bool
 }
 
 type Materializer interface {
 	RunWorkspaceMount(ctx context.Context, mount api.WorkerWorkspaceMount, client api.WorkerWorkspaceMaterializerControlClient) error
 }
 
-type runLeaseState struct {
-	mu    sync.RWMutex
-	lease api.WorkerRunLease
-}
-
-func newRunLeaseState(lease api.WorkerRunLease) *runLeaseState {
-	return &runLeaseState{lease: lease}
-}
-
-func (s *runLeaseState) CurrentWorkerRunLease() api.WorkerRunLease {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.lease
-}
-
-func (s *runLeaseState) set(lease api.WorkerRunLease) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.lease = lease
-}
-
 type Runner struct {
 	client                         ControlClient
-	executor                       Executor
-	deploymentBuilder              DeploymentBuilder
+	runLeaseExecutor               RunLeaseExecutor
+	platformAcquirer               PlatformAcquirer
+	buildExecutor                  BuildExecutor
+	buildPolicy                    BuildPolicy
 	materializer                   Materializer
 	capabilities                   api.WorkerCapabilities
+	resources                      *capacity.Ledger
 	pollEvery                      time.Duration
 	renewEvery                     time.Duration
 	renewWait                      time.Duration
@@ -103,21 +91,27 @@ func WithPollEvery(duration time.Duration) Option {
 	}
 }
 
-func WithRenewEvery(duration time.Duration) Option {
-	return func(runner *Runner) {
-		runner.renewEvery = duration
-	}
-}
-
 func WithLogger(log *slog.Logger) Option {
 	return func(runner *Runner) {
 		runner.log = log
 	}
 }
 
-func WithDeploymentBuilder(builder DeploymentBuilder) Option {
+func WithBuildExecutor(executor BuildExecutor) Option {
 	return func(runner *Runner) {
-		runner.deploymentBuilder = builder
+		runner.buildExecutor = executor
+	}
+}
+
+func WithPlatformAcquirer(acquirer PlatformAcquirer) Option {
+	return func(runner *Runner) {
+		runner.platformAcquirer = acquirer
+	}
+}
+
+func WithBuildPolicy(policy BuildPolicy) Option {
+	return func(runner *Runner) {
+		runner.buildPolicy = policy
 	}
 }
 
@@ -127,7 +121,13 @@ func WithMaterializer(materializer Materializer) Option {
 	}
 }
 
-func NewRunner(client ControlClient, executor Executor, capabilities api.WorkerCapabilities, opts ...Option) (*Runner, error) {
+func WithCapacity(resources *capacity.Ledger) Option {
+	return func(runner *Runner) {
+		runner.resources = resources
+	}
+}
+
+func NewRunner(client ControlClient, executor RunLeaseExecutor, capabilities api.WorkerCapabilities, opts ...Option) (*Runner, error) {
 	if client == nil {
 		return nil, errors.New("worker client is required")
 	}
@@ -136,7 +136,7 @@ func NewRunner(client ControlClient, executor Executor, capabilities api.WorkerC
 	}
 	runner := &Runner{
 		client:                         client,
-		executor:                       executor,
+		runLeaseExecutor:               executor,
 		capabilities:                   capabilities,
 		pollEvery:                      2 * time.Second,
 		renewEvery:                     10 * time.Second,
@@ -166,94 +166,19 @@ func NewRunner(client ControlClient, executor Executor, capabilities api.WorkerC
 	if runner.deploymentBuildCompletionGrace <= 0 {
 		return nil, errors.New("worker deployment build completion grace must be positive")
 	}
+	if runner.resources == nil {
+		return nil, errors.New("worker capacity ledger is required")
+	}
+	if capabilities.SupportsBuild && runner.buildPolicy == nil {
+		return nil, errors.New("build worker policy is required")
+	}
+	if capabilities.SupportsBuild && runner.platformAcquirer == nil {
+		return nil, errors.New("build worker Platform acquirer is required")
+	}
 	if runner.log == nil {
 		runner.log = slog.Default()
 	}
 	return runner, nil
-}
-
-func (r *Runner) release(lease api.WorkerRunLease, result api.WorkerReleaseResult) error {
-	releaseCtx, cancelRelease := context.WithTimeout(context.Background(), r.releaseWait)
-	defer cancelRelease()
-	retryEvery := r.renewEvery / 2
-	if retryEvery <= 0 || retryEvery > time.Second {
-		retryEvery = time.Second
-	}
-	var lastErr error
-	for {
-		if _, err := r.client.ReleaseRun(releaseCtx, lease, result); err == nil {
-			return nil
-		} else {
-			lastErr = err
-			if isStaleLease(err) {
-				return err
-			}
-		}
-		timer := time.NewTimer(retryEvery)
-		select {
-		case <-releaseCtx.Done():
-			timer.Stop()
-			if lastErr != nil {
-				return lastErr
-			}
-			return releaseCtx.Err()
-		case <-timer.C:
-		}
-	}
-}
-
-type renewErrorKind int
-
-const (
-	renewFailed renewErrorKind = iota
-	renewStale
-	renewTimeout
-)
-
-type renewError struct {
-	kind renewErrorKind
-	err  error
-}
-
-func (e *renewError) Error() string {
-	return e.err.Error()
-}
-
-func (e *renewError) Unwrap() error {
-	return e.err
-}
-
-func (r *Runner) renewUntilDone(ctx context.Context, leaseState *runLeaseState) *renewError {
-	ticker := time.NewTicker(r.renewEvery)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			renewCtx, cancelRenew := context.WithTimeout(ctx, r.renewWait)
-			renewed, err := r.client.RenewRun(renewCtx, leaseState.CurrentWorkerRunLease())
-			timedOut := errors.Is(renewCtx.Err(), context.DeadlineExceeded)
-			cancelRenew()
-			if err != nil {
-				if ctx.Err() != nil {
-					return nil
-				}
-				if timedOut || errors.Is(err, context.DeadlineExceeded) {
-					return &renewError{kind: renewTimeout, err: err}
-				}
-				if isStaleLease(err) {
-					return &renewError{kind: renewStale, err: err}
-				}
-				return &renewError{kind: renewFailed, err: err}
-			}
-			if strings.TrimSpace(renewed.Lease.ID) == "" {
-				return &renewError{kind: renewFailed, err: errors.New("renew run response did not include a lease")}
-			}
-			leaseState.set(renewed.Lease)
-		}
-	}
 }
 
 func isStaleLease(err error) bool {

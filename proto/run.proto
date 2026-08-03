@@ -4,182 +4,436 @@ package helmr.run.v0;
 
 option go_package = "github.com/helmrdotdev/helmr/internal/proto/run/v0;runv0";
 
-message RunTaskWorkspace {
-  string path = 1;
-  string project_path = 2;
-  WorkspaceArtifact artifact = 3;
-  bool writable = 5;
-}
+message ProgramStart {
+  string entrypoint_declared_id = 1;
+  string run_id = 2;
+  uint32 attempt_number = 3;
+  RunCause cause = 4;
+  string deployment_id = 5;
+  string deployment_version = 6;
+  string workspace_id = 7;
+  string base_workspace_version_id = 8;
 
-message WorkspaceArtifact {
-  string digest = 1;
-  string media_type = 2;
-  string encoding = 3;
-  uint64 size_bytes = 4;
-  uint32 entry_count = 5;
-}
-
-message RunTaskRequest {
-  string task_id = 1;
-  string module_path = 2;
-  string cwd = 3;
-  repeated SecretInject secrets = 4;
-  string run_id = 5;
-  string payload_json = 6;
-  RunTaskWorkspace workspace = 7;
-  TraceContext trace = 8;
-  uint32 attempt_number = 9;
-  string run_lease_id = 10;
-  uint64 snapshot_version = 11;
-  string session_id = 12;
-  string retry_reason = 13;
-}
-
-message TraceContext {
-  string trace_id = 1;
-  string span_id = 2;
-  string traceparent = 3;
-}
-
-message SecretInject {
-  string name = 1;
-  Placement placement = 2;
-  bytes value_bytes = 3;
-}
-
-message Placement {
-  oneof kind {
-    EnvPlacement env = 1;
-    FilePlacement file = 2;
-    DirPlacement dir = 3;
+  oneof entrypoint {
+    TaskStart task = 9;
+    ActorStart actor = 10;
   }
 }
 
-message EnvPlacement {
-  string name = 1;
+message TaskStart {
+  oneof payload {
+    NoPayload no_payload = 1;
+    bytes payload_json = 2;
+  }
 }
 
-message FilePlacement {
-  string path = 1;
-  // Optional octal permission bits for the materialized secret file.
-  // Accepts values such as "0400", "600", and "0o600"; special bits are rejected.
-  optional string mode = 2;
-  // Optional runtime owner as an OCI-style user or user:group spec.
-  // Defaults to the resolved runtime user.
-  optional string owner = 3;
+message NoPayload {}
+
+message ActorStart {
+  string actor_id = 1;
+  optional string key = 2;
+  int64 start_input_sequence = 3;
+  int64 input_high_watermark = 4;
 }
 
-message DirPlacement {
-  string path = 1;
-  // Optional octal permission bits for the materialized secret directory.
-  // Accepts values such as "0700", "700", and "0o700"; special bits are rejected.
-  optional string mode = 2;
-  // Optional runtime owner as an OCI-style user or user:group spec.
-  // Defaults to the resolved runtime user.
-  optional string owner = 3;
+message RunCause {
+  oneof kind {
+    ApiCause api = 1;
+    ManualCause manual = 2;
+    ChildCause child = 3;
+    ScheduleCause schedule = 4;
+    ActorStartCause actor_start = 5;
+    ContinuationCause continuation = 6;
+  }
+}
+
+message ApiCause {}
+
+message ManualCause {}
+
+message ChildCause {
+  string parent_run_id = 1;
+}
+
+message ScheduleCause {
+  string schedule_id = 1;
+  int64 scheduled_at_unix_ms = 2;
+  optional int64 previous_scheduled_at_unix_ms = 3;
+  string timezone = 4;
+}
+
+message ActorStartCause {}
+
+message ContinuationCause {}
+
+message ProgramRunRequest {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  string run_lease_id = 3;
+  bytes program_start_frame = 4;
+  uint32 secret_count = 5;
+  int64 start_deadline_unix_ms = 6;
+}
+
+message ProgramSecret {
+  oneof placement {
+    string env = 1;
+    string file = 2;
+  }
+  bytes value = 3;
+}
+
+message ProgramSecretsComplete {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  string run_lease_id = 3;
+  uint32 secret_count = 4;
+}
+
+message ProgramSupervisorCommand {
+  oneof command {
+    ProgramSecret secret_delivery = 1;
+    ProgramSecretsComplete secrets_complete = 2;
+    ProgramStartRelease start_release = 3;
+    EntrypointRelease entrypoint_release = 4;
+  }
+}
+
+message ProgramProcessStarted {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  string run_lease_id = 3;
+}
+
+message ProgramStartRelease {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  string run_lease_id = 3;
+}
+
+message EntrypointIdentity {
+  string declared_id = 1;
+  oneof kind {
+    TaskEntrypoint task = 2;
+    ActorEntrypoint actor = 3;
+  }
+}
+
+message TaskEntrypoint {}
+
+message ActorEntrypoint {}
+
+message EntrypointReady {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  EntrypointIdentity entrypoint = 3;
+}
+
+message EntrypointRelease {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  EntrypointIdentity entrypoint = 3;
 }
 
 message RunEvent {
+  reserved 3, 9, 10;
+
   oneof event {
     bytes stdout_chunk = 1;
     bytes stderr_chunk = 2;
-    string log_entry = 3;
-    TaskResult task_result = 4;
     RunWaitRequested run_wait_requested = 5;
     MetadataUpdated metadata_updated = 7;
     TokenCreateRequested token_create_requested = 8;
-    OutputStreamAppended output_stream_appended = 9;
-    ActiveStreamReadRequested active_stream_read_requested = 10;
     ResumeConsumed resume_consumed = 6;
+    ProgramProcessStarted program_process_started = 11;
+    EntrypointReady entrypoint_ready = 12;
+    TaskOutcome task_outcome = 13;
+    ProgramQuiesced program_quiesced = 14;
+    ActorOutcome actor_outcome = 15;
+    ActorTurnCommitRequested actor_turn_commit_requested = 16;
+    ActorOutputAppendRequested actor_output_append_requested = 17;
+    ActorInputSendRequested actor_input_send_requested = 18;
+    StructuredLogRequested structured_log_requested = 19;
+    TaskChildInvokeRequested task_child_invoke_requested = 20;
+    ActorStartRequested actor_start_requested = 21;
+    ActorStatusRequested actor_status_requested = 22;
+    ActorCloseRequested actor_close_requested = 23;
+    ActorOutputPageRequested actor_output_page_requested = 24;
+    WorkspaceCreateRequested workspace_create_requested = 25;
+    WorkspaceRetrieveRequested workspace_retrieve_requested = 26;
+    WorkspaceFileReadRequested workspace_file_read_requested = 27;
+    WorkspaceFileStatRequested workspace_file_stat_requested = 28;
+    WorkspaceFileListRequested workspace_file_list_requested = 29;
+    WorkspaceExecRequested workspace_exec_requested = 30;
+    WorkspaceDeleteRequested workspace_delete_requested = 31;
   }
 }
 
-message TaskResult {
-  int32 exit_code = 1;
-  optional string error_message = 2;
-  optional string output_json = 3;
-  optional TaskError error = 4;
+message TaskOutcome {
+  oneof outcome {
+    TaskSucceeded succeeded = 1;
+    TaskFailed failed = 2;
+    TaskPayloadInvalid payload_invalid = 3;
+  }
 }
 
-message TaskError {
-  string type = 1;
-  string code = 2;
-  string message = 3;
-  bool retryable = 4;
-  string details_json = 5;
+message TaskSucceeded {
+  string output_json = 1;
+}
+
+message TaskFailed {
+  string message = 1;
+  optional string details_json = 2;
+}
+
+message TaskPayloadInvalid {
+  string message = 1;
+  optional string details_json = 2;
+}
+
+message ActorOutcome {
+  optional int64 terminal_input_sequence = 1;
+  oneof outcome {
+    ActorSucceeded succeeded = 2;
+    ActorFailed failed = 3;
+  }
+}
+
+message ActorSucceeded {}
+
+message ActorFailed {
+  string message = 1;
+  optional string details_json = 2;
+}
+
+message ActorTurnCommitRequested {
+  string correlation_id = 1;
+  int64 target_input_sequence = 2;
+}
+
+message ActorTurnCommitPauseRequest {
+  string correlation_id = 1;
+  int64 target_input_sequence = 2;
+  string run_id = 3;
+  uint32 attempt_number = 4;
+  string run_lease_id = 5;
+  string expected_tree_digest = 6;
+  int64 expected_tree_size_bytes = 7;
+  uint32 expected_tree_entry_count = 8;
+  string expected_base_workspace_version_id = 9;
+}
+
+message ActorTurnCommitPauseReady {
+  string correlation_id = 1;
+  int64 target_input_sequence = 2;
+  string run_id = 3;
+  uint32 attempt_number = 4;
+  string run_lease_id = 5;
+  string tree_digest = 6;
+  int64 tree_size_bytes = 7;
+  uint32 tree_entry_count = 8;
+  bool workspace_changed = 9;
+}
+
+message ActorOutputAppendRequested {
+  string correlation_id = 1;
+  string data_json = 2;
+  string content_type = 3;
+  optional string idempotency_key = 4;
+}
+
+message ActorInputSendRequested {
+  string correlation_id = 1;
+  string declared_id = 2;
+  oneof address {
+    string actor_id = 3;
+    string actor_key = 4;
+  }
+  string data_json = 5;
+  optional string idempotency_key = 6;
+}
+
+message ActorStartRequested {
+  string correlation_id = 1;
+  string declared_id = 2;
+  oneof workspace {
+    string workspace_id = 3;
+    string workspace_key = 4;
+  }
+  optional string key = 5;
+  optional string input_json = 6;
+  optional string idempotency_key = 7;
+  string run_options_json = 8;
+}
+
+message ActorStatusRequested {
+  string correlation_id = 1;
+  string declared_id = 2;
+  oneof address {
+    string actor_id = 3;
+    string actor_key = 4;
+  }
+}
+
+message ActorCloseRequested {
+  string correlation_id = 1;
+  string declared_id = 2;
+  oneof address {
+    string actor_id = 3;
+    string actor_key = 4;
+  }
+  optional string idempotency_key = 5;
+}
+
+message ActorOutputPageRequested {
+  string correlation_id = 1;
+  string declared_id = 2;
+  oneof address {
+    string actor_id = 3;
+    string actor_key = 4;
+  }
+  optional int64 after = 5;
+  uint32 limit = 6;
+}
+
+message WorkspaceAddress {
+  oneof address {
+    string workspace_id = 1;
+    string workspace_key = 2;
+  }
+}
+
+message WorkspaceSecretPlacement {
+  string name = 1;
+  oneof placement {
+    string env = 2;
+    string file = 3;
+  }
+}
+
+message WorkspaceCreateRequested {
+  string correlation_id = 1;
+  string declared_id = 2;
+  optional string key = 3;
+  repeated WorkspaceSecretPlacement secrets = 4;
+  optional string idempotency_key = 5;
+}
+
+message WorkspaceRetrieveRequested {
+  string correlation_id = 1;
+  WorkspaceAddress workspace = 2;
+}
+
+message WorkspaceFileReadRequested {
+  string correlation_id = 1;
+  WorkspaceAddress workspace = 2;
+  string path = 3;
+}
+
+message WorkspaceFileStatRequested {
+  string correlation_id = 1;
+  WorkspaceAddress workspace = 2;
+  string path = 3;
+}
+
+message WorkspaceFileListRequested {
+  string correlation_id = 1;
+  WorkspaceAddress workspace = 2;
+  string path = 3;
+  optional string cursor = 4;
+  uint32 limit = 5;
+}
+
+message WorkspaceExecRequested {
+  string correlation_id = 1;
+  WorkspaceAddress workspace = 2;
+  repeated string command = 3;
+  optional string cwd = 4;
+  map<string, string> env = 5;
+  bytes stdin = 6;
+  optional uint64 timeout_ms = 7;
+  string idempotency_key = 8;
+}
+
+message WorkspaceDeleteRequested {
+  string correlation_id = 1;
+  WorkspaceAddress workspace = 2;
+  optional string idempotency_key = 3;
+}
+
+message ProgramQuiesced {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  string run_lease_id = 3;
 }
 
 message RunWaitRequested {
-  reserved 7, 8;
-
   string correlation_id = 1;
   string kind = 2;
   string params_json = 3;
   optional string metadata_json = 4;
-  optional uint32 timeout = 5;
+  optional uint64 timeout_ms = 5;
   repeated string tags = 6;
-  optional uint32 idle_timeout = 9;
+  string run_wait_id = 7;
+  string resume_attach_id = 8;
+  optional uint64 idle_timeout_ms = 9;
+  optional int64 actor_speculative_input_sequence = 10;
 }
 
 message TokenCreateRequested {
-  optional string timeout_at = 1;
-  optional uint32 timeout_in_seconds = 2;
+  optional uint64 timeout_ms = 1;
+  string correlation_id = 2;
+  optional string idempotency_key = 3;
   repeated string tags = 4;
   optional string metadata_json = 5;
 }
 
-message TokenCreateResult {
-  string id = 1;
-  string callback_url = 2;
-  optional string public_access_token = 3;
-  optional string timeout_at = 4;
-  optional string status = 5;
-  repeated string tags = 6;
-  optional string metadata_json = 7;
-  optional string error_message = 9;
-}
-
-message ActiveStreamReadRequested {
+message TaskChildInvokeRequested {
   string correlation_id = 1;
-  string stream = 2;
-  int64 after_sequence = 3;
-  optional string record_correlation_id = 4;
-  optional uint32 timeout = 5;
-  bool block = 6;
-}
-
-message StreamRecord {
-  string id = 1;
-  string stream_id = 2;
-  int64 sequence = 3;
-  string data_json = 4;
-  optional string correlation_id = 5;
-  string content_type = 6;
-  string created_at = 7;
-}
-
-message ActiveStreamReadResult {
-  string correlation_id = 1;
-  optional StreamRecord record = 2;
-  bool timed_out = 3;
-  optional string error_message = 4;
+  string declared_id = 2;
+  string method = 3;
+  bool payload_present = 4;
+  optional string payload_json = 5;
+  string workspace_json = 6;
+  string options_json = 7;
+  optional string idempotency_key = 8;
+  optional int64 actor_speculative_input_sequence = 9;
+  string run_wait_id = 10;
+  string resume_attach_id = 11;
 }
 
 message CheckpointPauseRequest {
   string run_wait_id = 1;
   string checkpoint_id = 2;
   bool capture_workspace = 3;
+  string run_id = 4;
+  uint32 attempt_number = 5;
+  string run_lease_id = 6;
+  string resume_attach_id = 7;
+  int64 checkpoint_request_version = 8;
+  string correlation_id = 9;
 }
 
 message CheckpointPauseReady {
   string run_wait_id = 1;
   string checkpoint_id = 2;
+  string run_id = 3;
+  uint32 attempt_number = 4;
+  string run_lease_id = 5;
+  string resume_attach_id = 6;
+  int64 checkpoint_request_version = 7;
+  string correlation_id = 8;
 }
 
 message ResumeAttach {
   string checkpoint_id = 1;
   string run_wait_id = 2;
   string run_lease_id = 3;
+  string run_id = 4;
+  uint32 attempt_number = 5;
+  string resume_attach_id = 6;
+  int64 resume_request_version = 7;
+  string correlation_id = 8;
 }
 
 message ResumeDecision {
@@ -187,20 +441,30 @@ message ResumeDecision {
   string kind = 2;
   string data_json = 3;
   bool require_consumed_ack = 4;
+  string checkpoint_id = 5;
+  string resume_attach_id = 6;
+  int64 resume_request_version = 7;
+  string run_lease_id = 8;
+  string correlation_id = 9;
+  bool no_result = 10;
 }
 
 message ResumeAck {
   string run_wait_id = 1;
+  string checkpoint_id = 2;
+  string resume_attach_id = 3;
+  int64 resume_request_version = 4;
+  string run_lease_id = 5;
+  string correlation_id = 6;
 }
 
 message ResumeConsumed {
   string run_wait_id = 1;
-}
-
-message OutputStreamAppended {
-  string stream = 1;
-  string payload_json = 2;
-  optional string content_type = 3;
+  string checkpoint_id = 2;
+  string resume_attach_id = 3;
+  int64 resume_request_version = 4;
+  string run_lease_id = 5;
+  string correlation_id = 6;
 }
 
 message MetadataUpdated {
@@ -209,4 +473,12 @@ message MetadataUpdated {
   optional string value_json = 3;
   optional string patch_json = 4;
   optional double amount = 5;
+  string correlation_id = 6;
+}
+
+message StructuredLogRequested {
+  string correlation_id = 1;
+  string level = 2;
+  string message = 3;
+  string attributes_json = 4;
 }

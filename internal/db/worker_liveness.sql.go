@@ -23,6 +23,8 @@ SELECT workers.id,
            ELSE 'worker_observation_stale'
        END::text AS reason
   FROM worker_instances AS workers
+  JOIN worker_groups AS groups
+    ON groups.id = workers.worker_group_id
   LEFT JOIN worker_observations AS observations
     ON observations.worker_instance_id = workers.id
    AND observations.worker_epoch = workers.current_epoch
@@ -36,37 +38,32 @@ SELECT workers.id,
        OR
        (workers.state IN ('active', 'draining')
         AND COALESCE(observations.observed_at, workers.epoch_started_at, workers.updated_at)
-            < $3)
+            < transaction_timestamp()
+              - groups.observation_ttl_seconds * interval '1 second')
    )
  ORDER BY COALESCE(observations.observed_at, workers.epoch_started_at, workers.updated_at),
           workers.id
- LIMIT $4
+ LIMIT $3
  FOR UPDATE OF workers SKIP LOCKED
 `
 
 type ListStaleWorkerFenceCandidatesParams struct {
 	WorkerGroupID           string             `json:"worker_group_id"`
 	RegistrationStaleBefore pgtype.Timestamptz `json:"registration_stale_before"`
-	ObservationStaleBefore  pgtype.Timestamptz `json:"observation_stale_before"`
 	RowLimit                int32              `json:"row_limit"`
 }
 
 type ListStaleWorkerFenceCandidatesRow struct {
-	ID            pgtype.UUID         `json:"id"`
-	WorkerGroupID string              `json:"worker_group_id"`
-	CurrentEpoch  pgtype.Int8         `json:"current_epoch"`
-	State         WorkerInstanceState `json:"state"`
-	FreshnessAt   pgtype.Timestamptz  `json:"freshness_at"`
-	Reason        string              `json:"reason"`
+	ID            pgtype.UUID        `json:"id"`
+	WorkerGroupID string             `json:"worker_group_id"`
+	CurrentEpoch  pgtype.Int8        `json:"current_epoch"`
+	State         string             `json:"state"`
+	FreshnessAt   pgtype.Timestamptz `json:"freshness_at"`
+	Reason        string             `json:"reason"`
 }
 
 func (q *Queries) ListStaleWorkerFenceCandidates(ctx context.Context, arg ListStaleWorkerFenceCandidatesParams) ([]ListStaleWorkerFenceCandidatesRow, error) {
-	rows, err := q.db.Query(ctx, listStaleWorkerFenceCandidates,
-		arg.WorkerGroupID,
-		arg.RegistrationStaleBefore,
-		arg.ObservationStaleBefore,
-		arg.RowLimit,
-	)
+	rows, err := q.db.Query(ctx, listStaleWorkerFenceCandidates, arg.WorkerGroupID, arg.RegistrationStaleBefore, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -95,21 +92,13 @@ func (q *Queries) ListStaleWorkerFenceCandidates(ctx context.Context, arg ListSt
 const recheckAndFenceStaleWorkerInstance = `-- name: RecheckAndFenceStaleWorkerInstance :one
 WITH target AS (
     UPDATE worker_instances AS workers
-       SET state = CASE
-               WHEN workers.current_epoch IS NULL THEN 'disabled'::worker_instance_state
-               ELSE 'lost'::worker_instance_state
-           END,
+       SET state = 'lost',
            claim_version = workers.claim_version + 1,
-           disabled_at = CASE
-               WHEN workers.current_epoch IS NULL THEN COALESCE(workers.disabled_at, now())
-               ELSE workers.disabled_at
-           END,
-           lost_at = CASE
-               WHEN workers.current_epoch IS NOT NULL THEN COALESCE(workers.lost_at, now())
-               ELSE workers.lost_at
-           END,
+           lost_at = COALESCE(workers.lost_at, now()),
            updated_at = now()
+      FROM worker_groups AS groups
      WHERE workers.id = $1
+       AND groups.id = workers.worker_group_id
        AND workers.worker_group_id = $2
        AND workers.current_epoch IS NOT DISTINCT FROM $3
        AND workers.state IN ('registering', 'active', 'draining')
@@ -132,9 +121,10 @@ WITH target AS (
                         AND observations.worker_epoch = workers.current_epoch),
                     workers.epoch_started_at,
                     workers.updated_at
-                ) < $5)
+                ) < transaction_timestamp()
+                  - groups.observation_ttl_seconds * interval '1 second')
        )
-    RETURNING workers.id, workers.resource_id, workers.worker_group_id, workers.attestation_fingerprint, workers.state, workers.claim_version, workers.current_epoch, workers.current_service_id, workers.protocol_version, workers.supervisor_version, workers.supports_run, workers.supports_build, workers.runtime_identity_id, workers.certified_cpu_millis, workers.certified_memory_bytes, workers.certified_workload_disk_bytes, workers.certified_scratch_bytes, workers.certified_build_cache_bytes, workers.certified_artifact_cache_bytes, workers.certified_hugepages_bytes, workers.certified_checkpoint_bytes, workers.per_vm_cpu_millis, workers.per_vm_memory_bytes, workers.per_vm_workload_disk_bytes, workers.per_vm_scratch_bytes, workers.max_vm_slots, workers.max_run_consumers, workers.max_build_executors, workers.max_runtime_starts, workers.certification_profile, workers.certification_fingerprint, workers.epoch_started_at, workers.startup_inventory_epoch, workers.startup_inventory_evidence, workers.drain_cleanup_fingerprint, workers.drain_cleanup_evidence, workers.certified_at, workers.activated_at, workers.draining_at, workers.disabled_at, workers.lost_at, workers.termination_claimed_at, workers.provider_terminated_at, workers.created_at, workers.updated_at
+    RETURNING workers.id, workers.resource_id, workers.worker_group_id, workers.state, workers.claim_version, workers.current_epoch, workers.current_service_id, workers.protocol_version, workers.supervisor_version, workers.supports_run, workers.supports_build, workers.runtime_identity_id, workers.substrate_format, workers.substrate_builder_abi, workers.substrate_layout_abi, workers.epoch_cpu_millis, workers.epoch_memory_bytes, workers.epoch_guest_ephemeral_disk_bytes, workers.epoch_build_cache_bytes, workers.epoch_artifact_cache_bytes, workers.epoch_hugepages_bytes, workers.epoch_checkpoint_bytes, workers.per_vm_cpu_millis, workers.per_vm_memory_bytes, workers.per_vm_guest_ephemeral_disk_bytes, workers.max_vm_slots, workers.max_run_consumers, workers.max_build_executors, workers.max_runtime_starts, workers.epoch_started_at, workers.activated_at, workers.draining_at, workers.termination_ready_at, workers.lost_at, workers.created_at, workers.updated_at
 ), revoked_credentials AS (
     UPDATE worker_instance_credentials AS credentials
        SET revoked_at = COALESCE(credentials.revoked_at, now())
@@ -145,7 +135,7 @@ WITH target AS (
 ), lost_mounts AS (
     UPDATE workspace_mounts AS mounts
        SET state = 'lost', lost_at = now(), terminal_at = now(),
-           terminal_reason_code = $6, updated_at = now()
+           terminal_reason_code = $5, updated_at = now()
       FROM target
      WHERE mounts.worker_instance_id = target.id
        AND mounts.worker_epoch = target.current_epoch
@@ -155,29 +145,22 @@ WITH target AS (
     UPDATE runtime_instances AS runtimes
        SET observed_state = 'lost', observed_version = runtimes.observed_version + 1,
            observed_at = now(), lost_at = now(), terminal_at = now(),
-           terminal_reason_code = $6, updated_at = now()
+           terminal_reason_code = $5,
+           reserved_run_id = NULL, reserved_attempt_number = NULL,
+           reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+           reservation_expires_at = NULL, updated_at = now()
       FROM target
      WHERE runtimes.worker_instance_id = target.id
        AND runtimes.worker_epoch = target.current_epoch
        AND runtimes.reclaimed_at IS NULL
        AND runtimes.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
     RETURNING runtimes.id
-), lost_slots AS (
-    UPDATE worker_network_slots AS slots
-       SET state = 'lost', generation = slots.generation + 1,
-           lost_at = now(), state_reason_code = $6, updated_at = now()
-      FROM target
-     WHERE slots.worker_instance_id = target.id
-       AND slots.worker_epoch = target.current_epoch
-       AND slots.state IN ('assigned', 'bound', 'reclaiming', 'quarantined')
-    RETURNING slots.id
 )
 SELECT target.id, target.worker_group_id, target.current_epoch, target.state
   FROM target
  WHERE (SELECT count(*) FROM revoked_credentials) >= 0
    AND (SELECT count(*) FROM lost_mounts) >= 0
    AND (SELECT count(*) FROM lost_runtimes) >= 0
-   AND (SELECT count(*) FROM lost_slots) >= 0
 `
 
 type RecheckAndFenceStaleWorkerInstanceParams struct {
@@ -185,18 +168,17 @@ type RecheckAndFenceStaleWorkerInstanceParams struct {
 	WorkerGroupID           string             `json:"worker_group_id"`
 	ExpectedEpoch           pgtype.Int8        `json:"expected_epoch"`
 	RegistrationStaleBefore pgtype.Timestamptz `json:"registration_stale_before"`
-	ObservationStaleBefore  pgtype.Timestamptz `json:"observation_stale_before"`
 	ReasonCode              pgtype.Text        `json:"reason_code"`
 }
 
 type RecheckAndFenceStaleWorkerInstanceRow struct {
-	ID            pgtype.UUID         `json:"id"`
-	WorkerGroupID string              `json:"worker_group_id"`
-	CurrentEpoch  pgtype.Int8         `json:"current_epoch"`
-	State         WorkerInstanceState `json:"state"`
+	ID            pgtype.UUID `json:"id"`
+	WorkerGroupID string      `json:"worker_group_id"`
+	CurrentEpoch  pgtype.Int8 `json:"current_epoch"`
+	State         string      `json:"state"`
 }
 
-// Immediate fencing revokes credentials and terminalizes mount/runtime/slot
+// Immediate fencing revokes credentials and terminalizes mount/runtime
 // observations. Run/build/workspace authority is recovered by its canonical
 // expiry and recovery loops; this transition does not imply zero authority.
 func (q *Queries) RecheckAndFenceStaleWorkerInstance(ctx context.Context, arg RecheckAndFenceStaleWorkerInstanceParams) (RecheckAndFenceStaleWorkerInstanceRow, error) {
@@ -205,7 +187,6 @@ func (q *Queries) RecheckAndFenceStaleWorkerInstance(ctx context.Context, arg Re
 		arg.WorkerGroupID,
 		arg.ExpectedEpoch,
 		arg.RegistrationStaleBefore,
-		arg.ObservationStaleBefore,
 		arg.ReasonCode,
 	)
 	var i RecheckAndFenceStaleWorkerInstanceRow

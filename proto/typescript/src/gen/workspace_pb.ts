@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file workspace.proto.
  */
 export const file_workspace: GenFile = /*@__PURE__*/
-  fileDesc("Cg93b3Jrc3BhY2UucHJvdG8SEmhlbG1yLndvcmtzcGFjZS52MCKmAgoaV29ya3NwYWNlT3BlcmF0aW9uRW52ZWxvcGUSFAoMb3BlcmF0aW9uX2lkGAEgASgJEhoKEndvcmtzcGFjZV9tb3VudF9pZBgCIAEoCRIUCgx3b3Jrc3BhY2VfaWQYAyABKAkSFQoNY2hhbm5lbF90b2tlbhgEIAEoCRIaChJmZW5jaW5nX2dlbmVyYXRpb24YBSABKAQSGQoRaW5zdGFuY2VfbGVhc2VfaWQYBiABKAkSFgoOd3JpdGVfbGVhc2VfaWQYByABKAkSFQoNZmVuY2luZ190b2tlbhgIIAEoCRImCh5vcGVyYXRpb25fZXhwaXJlc19hdF91bml4X25hbm8YCSABKAMSGwoTcmVxdWVzdF9maW5nZXJwcmludBgKIAEoCSJyChFXb3Jrc3BhY2VBcnRpZmFjdBIOCgZkaWdlc3QYASABKAkSEgoKbWVkaWFfdHlwZRgCIAEoCRIQCghlbmNvZGluZxgDIAEoCRISCgpzaXplX2J5dGVzGAQgASgEEhMKC2VudHJ5X2NvdW50GAUgASgNIr4CChtNYXRlcmlhbGl6ZVdvcmtzcGFjZVJlcXVlc3QSQAoIZW52ZWxvcGUYASABKAsyLi5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlT3BlcmF0aW9uRW52ZWxvcGUSEgoKbW91bnRfcGF0aBgCIAEoCRIXCg9iYXNlX3ZlcnNpb25faWQYAyABKAkSPAoNYmFzZV9hcnRpZmFjdBgEIAEoCzIlLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VBcnRpZmFjdBI/ChBzYW5kYm94X2FydGlmYWN0GAUgASgLMiUuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUFydGlmYWN0EhwKFHVzZV9wcmVwYXJlZF9ydW50aW1lGAYgASgIEhMKC3J1bnRpbWVfa2V5GAcgASgJInAKE1dvcmtzcGFjZU1vdW50UGhhc2USDAoEbmFtZRgBIAEoCRITCgtkdXJhdGlvbl9tcxgCIAEoBBISCgpzaXplX2J5dGVzGAMgASgEEhMKC2VudHJ5X2NvdW50GAQgASgNEg0KBWVycm9yGAUgASgJIokBChxNYXRlcmlhbGl6ZVdvcmtzcGFjZVJlc3BvbnNlEg0KBXN0YXRlGAEgASgJEiEKGWd1ZXN0ZF9jaGFubmVsX3Rva2VuX2hhc2gYAiABKAkSNwoGcGhhc2VzGAMgAygLMicuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU1vdW50UGhhc2UiigEKHlByZXBhcmVXb3Jrc3BhY2VSdW50aW1lUmVxdWVzdBITCgtydW50aW1lX2tleRgBIAEoCRISCgptb3VudF9wYXRoGAIgASgJEj8KEHNhbmRib3hfYXJ0aWZhY3QYAyABKAsyJS5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXJ0aWZhY3QifgofUHJlcGFyZVdvcmtzcGFjZVJ1bnRpbWVSZXNwb25zZRINCgVzdGF0ZRgBIAEoCRITCgtydW50aW1lX2tleRgCIAEoCRI3CgZwaGFzZXMYAyADKAsyJy5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlTW91bnRQaGFzZSKGAQoZSGVhcnRiZWF0V29ya3NwYWNlUmVxdWVzdBJACghlbnZlbG9wZRgBIAEoCzIuLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VPcGVyYXRpb25FbnZlbG9wZRINCgVzdGF0ZRgCIAEoCRIYChBkaXJ0eV9nZW5lcmF0aW9uGAMgASgEIkMKGkhlYXJ0YmVhdFdvcmtzcGFjZVJlc3BvbnNlEg0KBXN0YXRlGAEgASgJEhYKDnN0b3BfcmVxdWVzdGVkGAIgASgIIo4BChdDYXB0dXJlV29ya3NwYWNlUmVxdWVzdBJACghlbnZlbG9wZRgBIAEoCzIuLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VPcGVyYXRpb25FbnZlbG9wZRIXCg9iYXNlX3ZlcnNpb25faWQYAiABKAkSGAoQZGlydHlfZ2VuZXJhdGlvbhgDIAEoBCJTChhDYXB0dXJlV29ya3NwYWNlUmVzcG9uc2USNwoIYXJ0aWZhY3QYASABKAsyJS5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXJ0aWZhY3QijAEKFFN0b3BXb3Jrc3BhY2VSZXF1ZXN0EkAKCGVudmVsb3BlGAEgASgLMi4uaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU9wZXJhdGlvbkVudmVsb3BlEhsKE2NhcHR1cmVfYmVmb3JlX3N0b3AYAiABKAgSFQoNZmluYWxpemVfc3RvcBgDIAEoCCJ8ChVTdG9wV29ya3NwYWNlUmVzcG9uc2USDQoFc3RhdGUYASABKAkSQAoRY2FwdHVyZWRfYXJ0aWZhY3QYAiABKAsyJS5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXJ0aWZhY3QSEgoKZXJyb3JfanNvbhgDIAEoCSKLAQoZV29ya3NwYWNlT3BlcmF0aW9uUmVxdWVzdBJACghlbnZlbG9wZRgBIAEoCzIuLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VPcGVyYXRpb25FbnZlbG9wZRIWCg5vcGVyYXRpb25fa2luZBgCIAEoCRIUCgxyZXF1ZXN0X2pzb24YAyABKAkiQwoYV29ya3NwYWNlT3BlcmF0aW9uUmVzdWx0EhMKC3Jlc3VsdF9qc29uGAEgASgJEhIKCmVycm9yX2pzb24YAiABKAkiOwoUV29ya3NwYWNlRXhlY1N0YXJ0ZWQSDwoHZXhlY19pZBgBIAEoCRISCgpwcm9jZXNzX2lkGAIgASgJIjkKGFdvcmtzcGFjZUV4ZWNPdXRwdXRDaHVuaxIPCgdleGVjX2lkGAEgASgJEgwKBGRhdGEYAiABKAwiXQoTV29ya3NwYWNlRXhlY0V4aXRlZBIPCgdleGVjX2lkGAEgASgJEhEKCWV4aXRfY29kZRgCIAEoBRIOCgZzaWduYWwYAyABKAkSEgoKZXJyb3JfanNvbhgEIAEoCSI5ChJXb3Jrc3BhY2VFeGVjRXJyb3ISDwoHZXhlY19pZBgBIAEoCRISCgplcnJvcl9qc29uGAIgASgJIlQKEldvcmtzcGFjZVB0eU9wZW5lZBIOCgZwdHlfaWQYASABKAkSEgoKcHJvY2Vzc19pZBgCIAEoCRIMCgRjb2xzGAMgASgNEgwKBHJvd3MYBCABKA0iNwoXV29ya3NwYWNlUHR5T3V0cHV0Q2h1bmsSDgoGcHR5X2lkGAEgASgJEgwKBGRhdGEYAiABKAwiRwoZV29ya3NwYWNlUHR5UmVzaXplQXBwbGllZBIOCgZwdHlfaWQYASABKAkSDAoEY29scxgCIAEoDRIMCgRyb3dzGAMgASgNIkgKEldvcmtzcGFjZVB0eUNsb3NlZBIOCgZwdHlfaWQYASABKAkSDgoGcmVhc29uGAIgASgJEhIKCmVycm9yX2pzb24YAyABKAkiNwoRV29ya3NwYWNlUHR5RXJyb3ISDgoGcHR5X2lkGAEgASgJEhIKCmVycm9yX2pzb24YAiABKAkiiAYKF1dvcmtzcGFjZU9wZXJhdGlvbkV2ZW50EkAKCGVudmVsb3BlGAEgASgLMi4uaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU9wZXJhdGlvbkVudmVsb3BlEkAKDGV4ZWNfc3RhcnRlZBgCIAEoCzIoLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VFeGVjU3RhcnRlZEgAEkkKEWV4ZWNfc3Rkb3V0X2NodW5rGAMgASgLMiwuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUV4ZWNPdXRwdXRDaHVua0gAEkkKEWV4ZWNfc3RkZXJyX2NodW5rGAQgASgLMiwuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUV4ZWNPdXRwdXRDaHVua0gAEj4KC2V4ZWNfZXhpdGVkGAUgASgLMicuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUV4ZWNFeGl0ZWRIABI8CgpleGVjX2Vycm9yGAYgASgLMiYuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUV4ZWNFcnJvckgAEjwKCnB0eV9vcGVuZWQYByABKAsyJi5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlUHR5T3BlbmVkSAASRwoQcHR5X291dHB1dF9jaHVuaxgIIAEoCzIrLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VQdHlPdXRwdXRDaHVua0gAEksKEnB0eV9yZXNpemVfYXBwbGllZBgJIAEoCzItLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VQdHlSZXNpemVBcHBsaWVkSAASPAoKcHR5X2Nsb3NlZBgKIAEoCzImLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VQdHlDbG9zZWRIABI6CglwdHlfZXJyb3IYCyABKAsyJS5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlUHR5RXJyb3JIAEIHCgVldmVudCKqAQoSV29ya3NwYWNlU3RyZWFtQWNrEkAKCGVudmVsb3BlGAEgASgLMi4uaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU9wZXJhdGlvbkVudmVsb3BlEhUKDXJlc291cmNlX2tpbmQYAiABKAkSEwoLcmVzb3VyY2VfaWQYAyABKAkSDgoGc3RyZWFtGAQgASgJEhYKDmR1cmFibGVfb2Zmc2V0GAUgASgEIrcBChNXb3Jrc3BhY2VJbnB1dENodW5rEkAKCGVudmVsb3BlGAEgASgLMi4uaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU9wZXJhdGlvbkVudmVsb3BlEhUKDXJlc291cmNlX2tpbmQYAiABKAkSEwoLcmVzb3VyY2VfaWQYAyABKAkSDgoGc3RyZWFtGAQgASgJEhQKDG9mZnNldF9zdGFydBgFIAEoBBIMCgRkYXRhGAYgASgMIqMBChNXb3Jrc3BhY2VJbnB1dENsb3NlEkAKCGVudmVsb3BlGAEgASgLMi4uaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU9wZXJhdGlvbkVudmVsb3BlEhUKDXJlc291cmNlX2tpbmQYAiABKAkSEwoLcmVzb3VyY2VfaWQYAyABKAkSDgoGc3RyZWFtGAQgASgJEg4KBm9mZnNldBgFIAEoBCKSAQoTV29ya3NwYWNlSW5wdXRGcmFtZRI4CgVjaHVuaxgBIAEoCzInLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VJbnB1dENodW5rSAASOAoFY2xvc2UYAiABKAsyJy5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlSW5wdXRDbG9zZUgAQgcKBWZyYW1lQkZaRGdpdGh1Yi5jb20vaGVsbXJkb3RkZXYvaGVsbXIvaW50ZXJuYWwvcHJvdG8vd29ya3NwYWNlL3YwO3dvcmtzcGFjZXYwYgZwcm90bzM");
+  fileDesc("Cg93b3Jrc3BhY2UucHJvdG8SEmhlbG1yLndvcmtzcGFjZS52MCKmAgoaV29ya3NwYWNlT3BlcmF0aW9uRW52ZWxvcGUSFAoMb3BlcmF0aW9uX2lkGAEgASgJEhoKEndvcmtzcGFjZV9tb3VudF9pZBgCIAEoCRIUCgx3b3Jrc3BhY2VfaWQYAyABKAkSFQoNY2hhbm5lbF90b2tlbhgEIAEoCRIaChJmZW5jaW5nX2dlbmVyYXRpb24YBSABKAQSGQoRaW5zdGFuY2VfbGVhc2VfaWQYBiABKAkSFgoOd3JpdGVfbGVhc2VfaWQYByABKAkSFQoNZmVuY2luZ190b2tlbhgIIAEoCRImCh5vcGVyYXRpb25fZXhwaXJlc19hdF91bml4X25hbm8YCSABKAMSGwoTcmVxdWVzdF9maW5nZXJwcmludBgKIAEoCSJyChFXb3Jrc3BhY2VBcnRpZmFjdBIOCgZkaWdlc3QYASABKAkSEgoKbWVkaWFfdHlwZRgCIAEoCRIQCghlbmNvZGluZxgDIAEoCRISCgpzaXplX2J5dGVzGAQgASgEEhMKC2VudHJ5X2NvdW50GAUgASgNIsUDChdXb3Jrc3BhY2VBdXRob3JpdHlGZW5jZRIaChJ3b3JrZXJfaW5zdGFuY2VfaWQYASABKAkSFAoMd29ya2VyX2Vwb2NoGAIgASgDEhsKE3J1bnRpbWVfaW5zdGFuY2VfaWQYAyABKAkSGwoTcnVudGltZV9pZGVudGl0eV9pZBgEIAEoCRIUCgx3b3Jrc3BhY2VfaWQYBSABKAkSGgoSd29ya3NwYWNlX21vdW50X2lkGAYgASgJEg4KBnJ1bl9pZBgHIAEoCRIWCg5hdHRlbXB0X251bWJlchgIIAEoDRIUCgxydW5fbGVhc2VfaWQYCSABKAkSFgoObGVhc2Vfc2VxdWVuY2UYCiABKAMSGgoSd29ya3NwYWNlX2xlYXNlX2lkGAsgASgJEhwKFG93bmVyc2hpcF9nZW5lcmF0aW9uGAwgASgDEhkKEXdyaXRlcl9nZW5lcmF0aW9uGA0gASgDEiAKGG1vdW50X2ZlbmNpbmdfZ2VuZXJhdGlvbhgOIAEoAxIcChRleHBpcmVzX2F0X3VuaXhfbmFubxgPIAEoAxIhChliYXNlX3dvcmtzcGFjZV92ZXJzaW9uX2lkGBAgASgJIoQBChVXb3Jrc3BhY2VSdW5BdXRob3JpdHkSOgoFZmVuY2UYASABKAsyKy5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXV0aG9yaXR5RmVuY2USFQoNY2hhbm5lbF90b2tlbhgCIAEoCRIYChB3cml0ZV9jYXBhYmlsaXR5GAMgASgJIn8KHlJlbmV3V29ya3NwYWNlQXV0aG9yaXR5UmVxdWVzdBI7CghwcmV2aW91cxgBIAEoCzIpLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VSdW5BdXRob3JpdHkSIAoYbmV3X2V4cGlyZXNfYXRfdW5peF9uYW5vGAIgASgDImwKH1JlbmV3V29ya3NwYWNlQXV0aG9yaXR5UmVzcG9uc2USOgoFZmVuY2UYASABKAsyKy5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXV0aG9yaXR5RmVuY2USDQoFZXJyb3IYAiABKAki1wEKGUdyYW50UHJvZ3JhbVJlc3VtZVJlcXVlc3QSPAoJYXV0aG9yaXR5GAEgASgLMikuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZVJ1bkF1dGhvcml0eRITCgtydW5fd2FpdF9pZBgCIAEoCRIVCg1jaGVja3BvaW50X2lkGAMgASgJEhgKEHJlc3VtZV9hdHRhY2hfaWQYBCABKAkSHgoWcmVzdW1lX3JlcXVlc3RfdmVyc2lvbhgFIAEoAxIWCg5jb3JyZWxhdGlvbl9pZBgGIAEoCSLWAQoaR3JhbnRQcm9ncmFtUmVzdW1lUmVzcG9uc2USOgoFZmVuY2UYASABKAsyKy5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXV0aG9yaXR5RmVuY2USEwoLcnVuX3dhaXRfaWQYAiABKAkSFQoNY2hlY2twb2ludF9pZBgDIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAQgASgJEh4KFnJlc3VtZV9yZXF1ZXN0X3ZlcnNpb24YBSABKAMSFgoOY29ycmVsYXRpb25faWQYBiABKAkiiQEKG1ZlcmlmeVByb2dyYW1SZXN0b3JlUmVxdWVzdBIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SEwoLcnVuX3dhaXRfaWQYAyABKAkSFQoNY2hlY2twb2ludF9pZBgEIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgFIAEoCSKKAQocVmVyaWZ5UHJvZ3JhbVJlc3RvcmVSZXNwb25zZRIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SEwoLcnVuX3dhaXRfaWQYAyABKAkSFQoNY2hlY2twb2ludF9pZBgEIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgFIAEoCSKvAQohQmVnaW5Xb3Jrc3BhY2VGaW5hbGl6YXRpb25SZXF1ZXN0EjsKCHByZXZpb3VzGAEgASgLMikuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZVJ1bkF1dGhvcml0eRIpCiFmaW5hbGl6YXRpb25fZXhwaXJlc19hdF91bml4X25hbm8YAiABKAMSFAoMb3BlcmF0aW9uX2lkGAMgASgJEgwKBGtpbmQYBCABKAkikwEKIkJlZ2luV29ya3NwYWNlRmluYWxpemF0aW9uUmVzcG9uc2USOgoFZmVuY2UYASABKAsyKy5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXV0aG9yaXR5RmVuY2USFAoMb3BlcmF0aW9uX2lkGAIgASgJEgwKBGtpbmQYAyABKAkSDQoFZXJyb3IYBCABKAkiUAoVV29ya3NwYWNlVHJlZUlkZW50aXR5Eg4KBmRpZ2VzdBgBIAEoCRISCgpzaXplX2J5dGVzGAIgASgDEhMKC2VudHJ5X2NvdW50GAMgASgNIpABCh1Xb3Jrc3BhY2VGaW5hbGl6YXRpb25FbnZlbG9wZRIUCgxvcGVyYXRpb25faWQYASABKAkSGwoTcmVxdWVzdF9maW5nZXJwcmludBgCIAEoCRI8CglhdXRob3JpdHkYAyABKAsyKS5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlUnVuQXV0aG9yaXR5Io0BChxXb3Jrc3BhY2VGaW5hbGl6YXRpb25SZWNlaXB0EhQKDG9wZXJhdGlvbl9pZBgBIAEoCRIbChNyZXF1ZXN0X2ZpbmdlcnByaW50GAIgASgJEjoKBWZlbmNlGAMgASgLMisuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUF1dGhvcml0eUZlbmNlIuUCChtNYXRlcmlhbGl6ZVdvcmtzcGFjZVJlcXVlc3QSQAoIZW52ZWxvcGUYASABKAsyLi5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlT3BlcmF0aW9uRW52ZWxvcGUSEgoKbW91bnRfcGF0aBgCIAEoCRIXCg9iYXNlX3ZlcnNpb25faWQYAyABKAkSPAoNYmFzZV9hcnRpZmFjdBgEIAEoCzIlLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VBcnRpZmFjdBI+Cg93b3Jrc3BhY2VfaW1hZ2UYBSABKAsyJS5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXJ0aWZhY3QSHAoUdXNlX3ByZXBhcmVkX3J1bnRpbWUYBiABKAgSGwoTcnVudGltZV9pbnN0YW5jZV9pZBgHIAEoCRIeChZyZXN0b3JlZF9jaGVja3BvaW50X2lkGAggASgJInAKE1dvcmtzcGFjZU1vdW50UGhhc2USDAoEbmFtZRgBIAEoCRITCgtkdXJhdGlvbl9tcxgCIAEoBBISCgpzaXplX2J5dGVzGAMgASgEEhMKC2VudHJ5X2NvdW50GAQgASgNEg0KBWVycm9yGAUgASgJIokBChxNYXRlcmlhbGl6ZVdvcmtzcGFjZVJlc3BvbnNlEg0KBXN0YXRlGAEgASgJEiEKGWd1ZXN0ZF9jaGFubmVsX3Rva2VuX2hhc2gYAiABKAkSNwoGcGhhc2VzGAMgAygLMicuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU1vdW50UGhhc2UikQEKHlByZXBhcmVXb3Jrc3BhY2VSdW50aW1lUmVxdWVzdBIbChNydW50aW1lX2luc3RhbmNlX2lkGAEgASgJEhIKCm1vdW50X3BhdGgYAiABKAkSPgoPd29ya3NwYWNlX2ltYWdlGAMgASgLMiUuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUFydGlmYWN0IoYBCh9QcmVwYXJlV29ya3NwYWNlUnVudGltZVJlc3BvbnNlEg0KBXN0YXRlGAEgASgJEhsKE3J1bnRpbWVfaW5zdGFuY2VfaWQYAiABKAkSNwoGcGhhc2VzGAMgAygLMicuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU1vdW50UGhhc2UihgEKGUhlYXJ0YmVhdFdvcmtzcGFjZVJlcXVlc3QSQAoIZW52ZWxvcGUYASABKAsyLi5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlT3BlcmF0aW9uRW52ZWxvcGUSDQoFc3RhdGUYAiABKAkSGAoQZGlydHlfZ2VuZXJhdGlvbhgDIAEoBCJDChpIZWFydGJlYXRXb3Jrc3BhY2VSZXNwb25zZRINCgVzdGF0ZRgBIAEoCRIWCg5zdG9wX3JlcXVlc3RlZBgCIAEoCCJeChdDYXB0dXJlV29ya3NwYWNlUmVxdWVzdBJDCghlbnZlbG9wZRgBIAEoCzIxLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VGaW5hbGl6YXRpb25FbnZlbG9wZSLeAQoYQ2FwdHVyZVdvcmtzcGFjZVJlc3BvbnNlEkEKB3JlY2VpcHQYASABKAsyMC5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlRmluYWxpemF0aW9uUmVjZWlwdBI3CgR0cmVlGAIgASgLMikuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZVRyZWVJZGVudGl0eRI3CghhcnRpZmFjdBgDIAEoCzIlLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VBcnRpZmFjdBINCgVlcnJvchgEIAEoCSIbChlFbXB0eVdvcmtzcGFjZVJlc2V0VGFyZ2V0Iu0BChRXb3Jrc3BhY2VSZXNldFRhcmdldBIXCg9iYXNlX3ZlcnNpb25faWQYASABKAkSNwoEdHJlZRgCIAEoCzIpLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VUcmVlSWRlbnRpdHkSPgoFZW1wdHkYAyABKAsyLS5oZWxtci53b3Jrc3BhY2UudjAuRW1wdHlXb3Jrc3BhY2VSZXNldFRhcmdldEgAEjkKCGFydGlmYWN0GAQgASgLMiUuaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZUFydGlmYWN0SABCCAoGc291cmNlIpYBChVSZXNldFdvcmtzcGFjZVJlcXVlc3QSQwoIZW52ZWxvcGUYASABKAsyMS5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlRmluYWxpemF0aW9uRW52ZWxvcGUSOAoGdGFyZ2V0GAIgASgLMiguaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZVJlc2V0VGFyZ2V0IqQBChZSZXNldFdvcmtzcGFjZVJlc3BvbnNlEkEKB3JlY2VpcHQYASABKAsyMC5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlRmluYWxpemF0aW9uUmVjZWlwdBI4CgZ0YXJnZXQYAiABKAsyKC5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlUmVzZXRUYXJnZXQSDQoFZXJyb3IYAyABKAkijAEKFFN0b3BXb3Jrc3BhY2VSZXF1ZXN0EkAKCGVudmVsb3BlGAEgASgLMi4uaGVsbXIud29ya3NwYWNlLnYwLldvcmtzcGFjZU9wZXJhdGlvbkVudmVsb3BlEhsKE2NhcHR1cmVfYmVmb3JlX3N0b3AYAiABKAgSFQoNZmluYWxpemVfc3RvcBgDIAEoCCJ8ChVTdG9wV29ya3NwYWNlUmVzcG9uc2USDQoFc3RhdGUYASABKAkSQAoRY2FwdHVyZWRfYXJ0aWZhY3QYAiABKAsyJS5oZWxtci53b3Jrc3BhY2UudjAuV29ya3NwYWNlQXJ0aWZhY3QSEgoKZXJyb3JfanNvbhgDIAEoCSLAAQoZV29ya3NwYWNlQmFzaWNFeGVjUmVxdWVzdBJACghlbnZlbG9wZRgBIAEoCzIuLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VPcGVyYXRpb25FbnZlbG9wZRIUCgxyZXF1ZXN0X2pzb24YAiABKAkSPAoHc2VjcmV0cxgDIAMoCzIrLmhlbG1yLndvcmtzcGFjZS52MC5Xb3Jrc3BhY2VTZWNyZXREZWxpdmVyeRINCgVzdGRpbhgEIAEoDCKPAQoYV29ya3NwYWNlQmFzaWNFeGVjUmVzdWx0EhIKCmVycm9yX2pzb24YASABKAkSEQoJZXhpdF9jb2RlGAIgASgFEg4KBnN0ZG91dBgDIAEoDBIOCgZzdGRlcnIYBCABKAwSDwoHb3V0Y29tZRgFIAEoCRIbChNyZXF1ZXN0X2ZpbmdlcnByaW50GAYgASgJIloKF1dvcmtzcGFjZVNlY3JldERlbGl2ZXJ5EhYKDnBsYWNlbWVudF9raW5kGAEgASgJEhgKEHBsYWNlbWVudF90YXJnZXQYAiABKAkSDQoFdmFsdWUYAyABKAxCRlpEZ2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by93b3Jrc3BhY2UvdjA7d29ya3NwYWNldjBiBnByb3RvMw");
 
 /**
  * @generated from message helmr.workspace.v0.WorkspaceOperationEnvelope
@@ -112,6 +112,472 @@ export const WorkspaceArtifactSchema: GenMessage<WorkspaceArtifact> = /*@__PURE_
   messageDesc(file_workspace, 1);
 
 /**
+ * @generated from message helmr.workspace.v0.WorkspaceAuthorityFence
+ */
+export type WorkspaceAuthorityFence = Message<"helmr.workspace.v0.WorkspaceAuthorityFence"> & {
+  /**
+   * @generated from field: string worker_instance_id = 1;
+   */
+  workerInstanceId: string;
+
+  /**
+   * @generated from field: int64 worker_epoch = 2;
+   */
+  workerEpoch: bigint;
+
+  /**
+   * @generated from field: string runtime_instance_id = 3;
+   */
+  runtimeInstanceId: string;
+
+  /**
+   * @generated from field: string runtime_identity_id = 4;
+   */
+  runtimeIdentityId: string;
+
+  /**
+   * @generated from field: string workspace_id = 5;
+   */
+  workspaceId: string;
+
+  /**
+   * @generated from field: string workspace_mount_id = 6;
+   */
+  workspaceMountId: string;
+
+  /**
+   * @generated from field: string run_id = 7;
+   */
+  runId: string;
+
+  /**
+   * @generated from field: uint32 attempt_number = 8;
+   */
+  attemptNumber: number;
+
+  /**
+   * @generated from field: string run_lease_id = 9;
+   */
+  runLeaseId: string;
+
+  /**
+   * @generated from field: int64 lease_sequence = 10;
+   */
+  leaseSequence: bigint;
+
+  /**
+   * @generated from field: string workspace_lease_id = 11;
+   */
+  workspaceLeaseId: string;
+
+  /**
+   * @generated from field: int64 ownership_generation = 12;
+   */
+  ownershipGeneration: bigint;
+
+  /**
+   * @generated from field: int64 writer_generation = 13;
+   */
+  writerGeneration: bigint;
+
+  /**
+   * @generated from field: int64 mount_fencing_generation = 14;
+   */
+  mountFencingGeneration: bigint;
+
+  /**
+   * @generated from field: int64 expires_at_unix_nano = 15;
+   */
+  expiresAtUnixNano: bigint;
+
+  /**
+   * @generated from field: string base_workspace_version_id = 16;
+   */
+  baseWorkspaceVersionId: string;
+};
+
+/**
+ * Describes the message helmr.workspace.v0.WorkspaceAuthorityFence.
+ * Use `create(WorkspaceAuthorityFenceSchema)` to create a new message.
+ */
+export const WorkspaceAuthorityFenceSchema: GenMessage<WorkspaceAuthorityFence> = /*@__PURE__*/
+  messageDesc(file_workspace, 2);
+
+/**
+ * @generated from message helmr.workspace.v0.WorkspaceRunAuthority
+ */
+export type WorkspaceRunAuthority = Message<"helmr.workspace.v0.WorkspaceRunAuthority"> & {
+  /**
+   * @generated from field: helmr.workspace.v0.WorkspaceAuthorityFence fence = 1;
+   */
+  fence?: WorkspaceAuthorityFence;
+
+  /**
+   * @generated from field: string channel_token = 2;
+   */
+  channelToken: string;
+
+  /**
+   * @generated from field: string write_capability = 3;
+   */
+  writeCapability: string;
+};
+
+/**
+ * Describes the message helmr.workspace.v0.WorkspaceRunAuthority.
+ * Use `create(WorkspaceRunAuthoritySchema)` to create a new message.
+ */
+export const WorkspaceRunAuthoritySchema: GenMessage<WorkspaceRunAuthority> = /*@__PURE__*/
+  messageDesc(file_workspace, 3);
+
+/**
+ * @generated from message helmr.workspace.v0.RenewWorkspaceAuthorityRequest
+ */
+export type RenewWorkspaceAuthorityRequest = Message<"helmr.workspace.v0.RenewWorkspaceAuthorityRequest"> & {
+  /**
+   * @generated from field: helmr.workspace.v0.WorkspaceRunAuthority previous = 1;
+   */
+  previous?: WorkspaceRunAuthority;
+
+  /**
+   * @generated from field: int64 new_expires_at_unix_nano = 2;
+   */
+  newExpiresAtUnixNano: bigint;
+};
+
+/**
+ * Describes the message helmr.workspace.v0.RenewWorkspaceAuthorityRequest.
+ * Use `create(RenewWorkspaceAuthorityRequestSchema)` to create a new message.
+ */
+export const RenewWorkspaceAuthorityRequestSchema: GenMessage<RenewWorkspaceAuthorityRequest> = /*@__PURE__*/
+  messageDesc(file_workspace, 4);
+
+/**
+ * @generated from message helmr.workspace.v0.RenewWorkspaceAuthorityResponse
+ */
+export type RenewWorkspaceAuthorityResponse = Message<"helmr.workspace.v0.RenewWorkspaceAuthorityResponse"> & {
+  /**
+   * @generated from field: helmr.workspace.v0.WorkspaceAuthorityFence fence = 1;
+   */
+  fence?: WorkspaceAuthorityFence;
+
+  /**
+   * @generated from field: string error = 2;
+   */
+  error: string;
+};
+
+/**
+ * Describes the message helmr.workspace.v0.RenewWorkspaceAuthorityResponse.
+ * Use `create(RenewWorkspaceAuthorityResponseSchema)` to create a new message.
+ */
+export const RenewWorkspaceAuthorityResponseSchema: GenMessage<RenewWorkspaceAuthorityResponse> = /*@__PURE__*/
+  messageDesc(file_workspace, 5);
+
+/**
+ * @generated from message helmr.workspace.v0.GrantProgramResumeRequest
+ */
+export type GrantProgramResumeRequest = Message<"helmr.workspace.v0.GrantProgramResumeRequest"> & {
+  /**
+   * @generated from field: helmr.workspace.v0.WorkspaceRunAuthority authority = 1;
+   */
+  authority?: WorkspaceRunAuthority;
+
+  /**
+   * @generated from field: string run_wait_id = 2;
+   */
+  runWaitId: string;
+
+  /**
+   * @generated from field: string checkpoint_id = 3;
+   */
+  checkpointId: string;
+
+  /**
+   * @generated from field: string resume_attach_id = 4;
+   */
+  resumeAttachId: string;
+
+  /**
+   * @generated from field: int64 resume_request_version = 5;
+   */
+  resumeRequestVersion: bigint;
+
+  /**
+   * @generated from field: string correlation_id = 6;
+   */
+  correlationId: string;
+};
+
+/**
+ * Describes the message helmr.workspace.v0.GrantProgramResumeRequest.
+ * Use `create(GrantProgramResumeRequestSchema)` to create a new message.
+ */
+export const GrantProgramResumeRequestSchema: GenMessage<GrantProgramResumeRequest> = /*@__PURE__*/
+  messageDesc(file_workspace, 6);
+
+/**
+ * @generated from message helmr.workspace.v0.GrantProgramResumeResponse
+ */
+export type GrantProgramResumeResponse = Message<"helmr.workspace.v0.GrantProgramResumeResponse"> & {
+  /**
+   * @generated from field: helmr.workspace.v0.WorkspaceAuthorityFence fence = 1;
+   */
+  fence?: WorkspaceAuthorityFence;
+
+  /**
+   * @generated from field: string run_wait_id = 2;
+   */
+  runWaitId: string;
+
+  /**
+   * @generated from field: string checkpoint_id = 3;
+   */
+  checkpointId: string;
+
+  /**
+   * @generated from field: string resume_attach_id = 4;
+   */
+  resumeAttachId: string;
+
+  /**
+   * @generated from field: int64 resume_request_version = 5;
+   */
+  resumeRequestVersion: bigint;
+
+  /**
+   * @generated from field: string correlation_id = 6;
+   */
+  correlationId: string;
+};
+
+/**
+ * Describes the message helmr.workspace.v0.GrantProgramResumeResponse.
+ * Use `create(GrantProgramResumeResponseSchema)` to create a new message.
+ */
+export const GrantProgramResumeResponseSchema: GenMessage<GrantProgramResumeResponse> = /*@__PURE__*/
+  messageDesc(file_workspace, 7);
+
+/**
+ * @generated from message helmr.workspace.v0.VerifyProgramRestoreRequest
+ */
+export type VerifyProgramRestoreRequest = Message<"helmr.workspace.v0.VerifyProgramRestoreRequest"> & {
+  /**
+   * @generated from field: string run_id = 1;
+   */
+  runId: string;
+
+  /**
+   * @generated from field: uint32 attempt_number = 2;
+   */
+  attemptNumber: number;
+
+  /**
+   * @generated from field: string run_wait_id = 3;
+   */
+  runWaitId: string;
+
+  /**
+   * @generated from field: string checkpoint_id = 4;
+   */
+  checkpointId: string;
+
+  /**
+   * @generated from field: string correlation_id = 5;
+   */
+  correlationId: string;
+};
+
+/**
+ * Describes the message helmr.workspace.v0.VerifyProgramRestoreRequest.
+ * Use `create(VerifyProgramRestoreRequestSchema)` to create a new message.
+ */
+export const VerifyProgramRestoreRequestSchema: GenMessage<VerifyProgramRestoreRequest> = /*@__PURE__*/
+  messageDesc(file_workspace, 8);
+
+/**
+ * @generated from message helmr.workspace.v0.VerifyProgramRestoreResponse
+ */
+export type VerifyProgramRestoreResponse = Message<"helmr.workspace.v0.VerifyProgramRestoreResponse"> & {
+  /**
+   * @generated from field: string run_id = 1;
+   */
+  runId: string;
+
+  /**
+   * @generated from field: uint32 attempt_number = 2;
+   */
+  attemptNumber: number;
+
+  /**
+   * @generated from field: string run_wait_id = 3;
+   */
+  runWaitId: string;
+
+  /**
+   * @generated from field: string checkpoint_id = 4;
+   */
+  checkpointId: string;
+
+  /**
+   * @generated from field: string correlation_id = 5;
+   */
+  correlationId: string;
+};
+
+/**
+ * Describes the message helmr.workspace.v0.VerifyProgramRestoreResponse.
+ * Use `create(VerifyProgramRestoreResponseSchema)` to create a new message.
+ */
+export const VerifyProgramRestoreResponseSchema: GenMessage<VerifyProgramRestoreResponse> = /*@__PURE__*/
+  messageDesc(file_workspace, 9);
+
+/**
+ * @generated from message helmr.workspace.v0.BeginWorkspaceFinalizationRequest
+ */
+export type BeginWorkspaceFinalizationRequest = Message<"helmr.workspace.v0.BeginWorkspaceFinalizationRequest"> & {
+  /**
+   * @generated from field: helmr.workspace.v0.WorkspaceRunAuthority previous = 1;
+   */
+  previous?: WorkspaceRunAuthority;
+
+  /**
+   * @generated from field: int64 finalization_expires_at_unix_nano = 2;
+   */
+  finalizationExpiresAtUnixNano: bigint;
+
+  /**
+   * @generated from field: string operation_id = 3;
+   */
+  operationId: string;
+
+  /**
+   * @generated from field: string kind = 4;
+   */
+  kind: string;
+};
+
+/**
+ * Describes the message helmr.workspace.v0.BeginWorkspaceFinalizationRequest.
+ * Use `create(BeginWorkspaceFinalizationRequestSchema)` to create a new message.
+ */
+export const BeginWorkspaceFinalizationRequestSchema: GenMessage<BeginWorkspaceFinalizationRequest> = /*@__PURE__*/
+  messageDesc(file_workspace, 10);
+
+/**
+ * @generated from message helmr.workspace.v0.BeginWorkspaceFinalizationResponse
+ */
+export type BeginWorkspaceFinalizationResponse = Message<"helmr.workspace.v0.BeginWorkspaceFinalizationResponse"> & {
+  /**
+   * @generated from field: helmr.workspace.v0.WorkspaceAuthorityFence fence = 1;
+   */
+  fence?: WorkspaceAuthorityFence;
+
+  /**
+   * @generated from field: string operation_id = 2;
+   */
+  operationId: string;
+
+  /**
+   * @generated from field: string kind = 3;
+   */
+  kind: string;
+
+  /**
+   * @generated from field: string error = 4;
+   */
+  error: string;
+};
+
+/**
+ * Describes the message helmr.workspace.v0.BeginWorkspaceFinalizationResponse.
+ * Use `create(BeginWorkspaceFinalizationResponseSchema)` to create a new message.
+ */
+export const BeginWorkspaceFinalizationResponseSchema: GenMessage<BeginWorkspaceFinalizationResponse> = /*@__PURE__*/
+  messageDesc(file_workspace, 11);
+
+/**
+ * @generated from message helmr.workspace.v0.WorkspaceTreeIdentity
+ */
+export type WorkspaceTreeIdentity = Message<"helmr.workspace.v0.WorkspaceTreeIdentity"> & {
+  /**
+   * @generated from field: string digest = 1;
+   */
+  digest: string;
+
+  /**
+   * @generated from field: int64 size_bytes = 2;
+   */
+  sizeBytes: bigint;
+
+  /**
+   * @generated from field: uint32 entry_count = 3;
+   */
+  entryCount: number;
+};
+
+/**
+ * Describes the message helmr.workspace.v0.WorkspaceTreeIdentity.
+ * Use `create(WorkspaceTreeIdentitySchema)` to create a new message.
+ */
+export const WorkspaceTreeIdentitySchema: GenMessage<WorkspaceTreeIdentity> = /*@__PURE__*/
+  messageDesc(file_workspace, 12);
+
+/**
+ * @generated from message helmr.workspace.v0.WorkspaceFinalizationEnvelope
+ */
+export type WorkspaceFinalizationEnvelope = Message<"helmr.workspace.v0.WorkspaceFinalizationEnvelope"> & {
+  /**
+   * @generated from field: string operation_id = 1;
+   */
+  operationId: string;
+
+  /**
+   * @generated from field: string request_fingerprint = 2;
+   */
+  requestFingerprint: string;
+
+  /**
+   * @generated from field: helmr.workspace.v0.WorkspaceRunAuthority authority = 3;
+   */
+  authority?: WorkspaceRunAuthority;
+};
+
+/**
+ * Describes the message helmr.workspace.v0.WorkspaceFinalizationEnvelope.
+ * Use `create(WorkspaceFinalizationEnvelopeSchema)` to create a new message.
+ */
+export const WorkspaceFinalizationEnvelopeSchema: GenMessage<WorkspaceFinalizationEnvelope> = /*@__PURE__*/
+  messageDesc(file_workspace, 13);
+
+/**
+ * @generated from message helmr.workspace.v0.WorkspaceFinalizationReceipt
+ */
+export type WorkspaceFinalizationReceipt = Message<"helmr.workspace.v0.WorkspaceFinalizationReceipt"> & {
+  /**
+   * @generated from field: string operation_id = 1;
+   */
+  operationId: string;
+
+  /**
+   * @generated from field: string request_fingerprint = 2;
+   */
+  requestFingerprint: string;
+
+  /**
+   * @generated from field: helmr.workspace.v0.WorkspaceAuthorityFence fence = 3;
+   */
+  fence?: WorkspaceAuthorityFence;
+};
+
+/**
+ * Describes the message helmr.workspace.v0.WorkspaceFinalizationReceipt.
+ * Use `create(WorkspaceFinalizationReceiptSchema)` to create a new message.
+ */
+export const WorkspaceFinalizationReceiptSchema: GenMessage<WorkspaceFinalizationReceipt> = /*@__PURE__*/
+  messageDesc(file_workspace, 14);
+
+/**
  * @generated from message helmr.workspace.v0.MaterializeWorkspaceRequest
  */
 export type MaterializeWorkspaceRequest = Message<"helmr.workspace.v0.MaterializeWorkspaceRequest"> & {
@@ -136,9 +602,9 @@ export type MaterializeWorkspaceRequest = Message<"helmr.workspace.v0.Materializ
   baseArtifact?: WorkspaceArtifact;
 
   /**
-   * @generated from field: helmr.workspace.v0.WorkspaceArtifact sandbox_artifact = 5;
+   * @generated from field: helmr.workspace.v0.WorkspaceArtifact workspace_image = 5;
    */
-  sandboxArtifact?: WorkspaceArtifact;
+  workspaceImage?: WorkspaceArtifact;
 
   /**
    * @generated from field: bool use_prepared_runtime = 6;
@@ -146,9 +612,14 @@ export type MaterializeWorkspaceRequest = Message<"helmr.workspace.v0.Materializ
   usePreparedRuntime: boolean;
 
   /**
-   * @generated from field: string runtime_key = 7;
+   * @generated from field: string runtime_instance_id = 7;
    */
-  runtimeKey: string;
+  runtimeInstanceId: string;
+
+  /**
+   * @generated from field: string restored_checkpoint_id = 8;
+   */
+  restoredCheckpointId: string;
 };
 
 /**
@@ -156,7 +627,7 @@ export type MaterializeWorkspaceRequest = Message<"helmr.workspace.v0.Materializ
  * Use `create(MaterializeWorkspaceRequestSchema)` to create a new message.
  */
 export const MaterializeWorkspaceRequestSchema: GenMessage<MaterializeWorkspaceRequest> = /*@__PURE__*/
-  messageDesc(file_workspace, 2);
+  messageDesc(file_workspace, 15);
 
 /**
  * @generated from message helmr.workspace.v0.WorkspaceMountPhase
@@ -193,7 +664,7 @@ export type WorkspaceMountPhase = Message<"helmr.workspace.v0.WorkspaceMountPhas
  * Use `create(WorkspaceMountPhaseSchema)` to create a new message.
  */
 export const WorkspaceMountPhaseSchema: GenMessage<WorkspaceMountPhase> = /*@__PURE__*/
-  messageDesc(file_workspace, 3);
+  messageDesc(file_workspace, 16);
 
 /**
  * @generated from message helmr.workspace.v0.MaterializeWorkspaceResponse
@@ -220,16 +691,16 @@ export type MaterializeWorkspaceResponse = Message<"helmr.workspace.v0.Materiali
  * Use `create(MaterializeWorkspaceResponseSchema)` to create a new message.
  */
 export const MaterializeWorkspaceResponseSchema: GenMessage<MaterializeWorkspaceResponse> = /*@__PURE__*/
-  messageDesc(file_workspace, 4);
+  messageDesc(file_workspace, 17);
 
 /**
  * @generated from message helmr.workspace.v0.PrepareWorkspaceRuntimeRequest
  */
 export type PrepareWorkspaceRuntimeRequest = Message<"helmr.workspace.v0.PrepareWorkspaceRuntimeRequest"> & {
   /**
-   * @generated from field: string runtime_key = 1;
+   * @generated from field: string runtime_instance_id = 1;
    */
-  runtimeKey: string;
+  runtimeInstanceId: string;
 
   /**
    * @generated from field: string mount_path = 2;
@@ -237,9 +708,9 @@ export type PrepareWorkspaceRuntimeRequest = Message<"helmr.workspace.v0.Prepare
   mountPath: string;
 
   /**
-   * @generated from field: helmr.workspace.v0.WorkspaceArtifact sandbox_artifact = 3;
+   * @generated from field: helmr.workspace.v0.WorkspaceArtifact workspace_image = 3;
    */
-  sandboxArtifact?: WorkspaceArtifact;
+  workspaceImage?: WorkspaceArtifact;
 };
 
 /**
@@ -247,7 +718,7 @@ export type PrepareWorkspaceRuntimeRequest = Message<"helmr.workspace.v0.Prepare
  * Use `create(PrepareWorkspaceRuntimeRequestSchema)` to create a new message.
  */
 export const PrepareWorkspaceRuntimeRequestSchema: GenMessage<PrepareWorkspaceRuntimeRequest> = /*@__PURE__*/
-  messageDesc(file_workspace, 5);
+  messageDesc(file_workspace, 18);
 
 /**
  * @generated from message helmr.workspace.v0.PrepareWorkspaceRuntimeResponse
@@ -259,9 +730,9 @@ export type PrepareWorkspaceRuntimeResponse = Message<"helmr.workspace.v0.Prepar
   state: string;
 
   /**
-   * @generated from field: string runtime_key = 2;
+   * @generated from field: string runtime_instance_id = 2;
    */
-  runtimeKey: string;
+  runtimeInstanceId: string;
 
   /**
    * @generated from field: repeated helmr.workspace.v0.WorkspaceMountPhase phases = 3;
@@ -274,7 +745,7 @@ export type PrepareWorkspaceRuntimeResponse = Message<"helmr.workspace.v0.Prepar
  * Use `create(PrepareWorkspaceRuntimeResponseSchema)` to create a new message.
  */
 export const PrepareWorkspaceRuntimeResponseSchema: GenMessage<PrepareWorkspaceRuntimeResponse> = /*@__PURE__*/
-  messageDesc(file_workspace, 6);
+  messageDesc(file_workspace, 19);
 
 /**
  * @generated from message helmr.workspace.v0.HeartbeatWorkspaceRequest
@@ -301,7 +772,7 @@ export type HeartbeatWorkspaceRequest = Message<"helmr.workspace.v0.HeartbeatWor
  * Use `create(HeartbeatWorkspaceRequestSchema)` to create a new message.
  */
 export const HeartbeatWorkspaceRequestSchema: GenMessage<HeartbeatWorkspaceRequest> = /*@__PURE__*/
-  messageDesc(file_workspace, 7);
+  messageDesc(file_workspace, 20);
 
 /**
  * @generated from message helmr.workspace.v0.HeartbeatWorkspaceResponse
@@ -323,26 +794,16 @@ export type HeartbeatWorkspaceResponse = Message<"helmr.workspace.v0.HeartbeatWo
  * Use `create(HeartbeatWorkspaceResponseSchema)` to create a new message.
  */
 export const HeartbeatWorkspaceResponseSchema: GenMessage<HeartbeatWorkspaceResponse> = /*@__PURE__*/
-  messageDesc(file_workspace, 8);
+  messageDesc(file_workspace, 21);
 
 /**
  * @generated from message helmr.workspace.v0.CaptureWorkspaceRequest
  */
 export type CaptureWorkspaceRequest = Message<"helmr.workspace.v0.CaptureWorkspaceRequest"> & {
   /**
-   * @generated from field: helmr.workspace.v0.WorkspaceOperationEnvelope envelope = 1;
+   * @generated from field: helmr.workspace.v0.WorkspaceFinalizationEnvelope envelope = 1;
    */
-  envelope?: WorkspaceOperationEnvelope;
-
-  /**
-   * @generated from field: string base_version_id = 2;
-   */
-  baseVersionId: string;
-
-  /**
-   * @generated from field: uint64 dirty_generation = 3;
-   */
-  dirtyGeneration: bigint;
+  envelope?: WorkspaceFinalizationEnvelope;
 };
 
 /**
@@ -350,16 +811,31 @@ export type CaptureWorkspaceRequest = Message<"helmr.workspace.v0.CaptureWorkspa
  * Use `create(CaptureWorkspaceRequestSchema)` to create a new message.
  */
 export const CaptureWorkspaceRequestSchema: GenMessage<CaptureWorkspaceRequest> = /*@__PURE__*/
-  messageDesc(file_workspace, 9);
+  messageDesc(file_workspace, 22);
 
 /**
  * @generated from message helmr.workspace.v0.CaptureWorkspaceResponse
  */
 export type CaptureWorkspaceResponse = Message<"helmr.workspace.v0.CaptureWorkspaceResponse"> & {
   /**
-   * @generated from field: helmr.workspace.v0.WorkspaceArtifact artifact = 1;
+   * @generated from field: helmr.workspace.v0.WorkspaceFinalizationReceipt receipt = 1;
+   */
+  receipt?: WorkspaceFinalizationReceipt;
+
+  /**
+   * @generated from field: helmr.workspace.v0.WorkspaceTreeIdentity tree = 2;
+   */
+  tree?: WorkspaceTreeIdentity;
+
+  /**
+   * @generated from field: helmr.workspace.v0.WorkspaceArtifact artifact = 3;
    */
   artifact?: WorkspaceArtifact;
+
+  /**
+   * @generated from field: string error = 4;
+   */
+  error: string;
 };
 
 /**
@@ -367,7 +843,108 @@ export type CaptureWorkspaceResponse = Message<"helmr.workspace.v0.CaptureWorksp
  * Use `create(CaptureWorkspaceResponseSchema)` to create a new message.
  */
 export const CaptureWorkspaceResponseSchema: GenMessage<CaptureWorkspaceResponse> = /*@__PURE__*/
-  messageDesc(file_workspace, 10);
+  messageDesc(file_workspace, 23);
+
+/**
+ * @generated from message helmr.workspace.v0.EmptyWorkspaceResetTarget
+ */
+export type EmptyWorkspaceResetTarget = Message<"helmr.workspace.v0.EmptyWorkspaceResetTarget"> & {
+};
+
+/**
+ * Describes the message helmr.workspace.v0.EmptyWorkspaceResetTarget.
+ * Use `create(EmptyWorkspaceResetTargetSchema)` to create a new message.
+ */
+export const EmptyWorkspaceResetTargetSchema: GenMessage<EmptyWorkspaceResetTarget> = /*@__PURE__*/
+  messageDesc(file_workspace, 24);
+
+/**
+ * @generated from message helmr.workspace.v0.WorkspaceResetTarget
+ */
+export type WorkspaceResetTarget = Message<"helmr.workspace.v0.WorkspaceResetTarget"> & {
+  /**
+   * @generated from field: string base_version_id = 1;
+   */
+  baseVersionId: string;
+
+  /**
+   * @generated from field: helmr.workspace.v0.WorkspaceTreeIdentity tree = 2;
+   */
+  tree?: WorkspaceTreeIdentity;
+
+  /**
+   * @generated from oneof helmr.workspace.v0.WorkspaceResetTarget.source
+   */
+  source: {
+    /**
+     * @generated from field: helmr.workspace.v0.EmptyWorkspaceResetTarget empty = 3;
+     */
+    value: EmptyWorkspaceResetTarget;
+    case: "empty";
+  } | {
+    /**
+     * @generated from field: helmr.workspace.v0.WorkspaceArtifact artifact = 4;
+     */
+    value: WorkspaceArtifact;
+    case: "artifact";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message helmr.workspace.v0.WorkspaceResetTarget.
+ * Use `create(WorkspaceResetTargetSchema)` to create a new message.
+ */
+export const WorkspaceResetTargetSchema: GenMessage<WorkspaceResetTarget> = /*@__PURE__*/
+  messageDesc(file_workspace, 25);
+
+/**
+ * @generated from message helmr.workspace.v0.ResetWorkspaceRequest
+ */
+export type ResetWorkspaceRequest = Message<"helmr.workspace.v0.ResetWorkspaceRequest"> & {
+  /**
+   * @generated from field: helmr.workspace.v0.WorkspaceFinalizationEnvelope envelope = 1;
+   */
+  envelope?: WorkspaceFinalizationEnvelope;
+
+  /**
+   * @generated from field: helmr.workspace.v0.WorkspaceResetTarget target = 2;
+   */
+  target?: WorkspaceResetTarget;
+};
+
+/**
+ * Describes the message helmr.workspace.v0.ResetWorkspaceRequest.
+ * Use `create(ResetWorkspaceRequestSchema)` to create a new message.
+ */
+export const ResetWorkspaceRequestSchema: GenMessage<ResetWorkspaceRequest> = /*@__PURE__*/
+  messageDesc(file_workspace, 26);
+
+/**
+ * @generated from message helmr.workspace.v0.ResetWorkspaceResponse
+ */
+export type ResetWorkspaceResponse = Message<"helmr.workspace.v0.ResetWorkspaceResponse"> & {
+  /**
+   * @generated from field: helmr.workspace.v0.WorkspaceFinalizationReceipt receipt = 1;
+   */
+  receipt?: WorkspaceFinalizationReceipt;
+
+  /**
+   * @generated from field: helmr.workspace.v0.WorkspaceResetTarget target = 2;
+   */
+  target?: WorkspaceResetTarget;
+
+  /**
+   * @generated from field: string error = 3;
+   */
+  error: string;
+};
+
+/**
+ * Describes the message helmr.workspace.v0.ResetWorkspaceResponse.
+ * Use `create(ResetWorkspaceResponseSchema)` to create a new message.
+ */
+export const ResetWorkspaceResponseSchema: GenMessage<ResetWorkspaceResponse> = /*@__PURE__*/
+  messageDesc(file_workspace, 27);
 
 /**
  * @generated from message helmr.workspace.v0.StopWorkspaceRequest
@@ -394,7 +971,7 @@ export type StopWorkspaceRequest = Message<"helmr.workspace.v0.StopWorkspaceRequ
  * Use `create(StopWorkspaceRequestSchema)` to create a new message.
  */
 export const StopWorkspaceRequestSchema: GenMessage<StopWorkspaceRequest> = /*@__PURE__*/
-  messageDesc(file_workspace, 11);
+  messageDesc(file_workspace, 28);
 
 /**
  * @generated from message helmr.workspace.v0.StopWorkspaceResponse
@@ -421,109 +998,48 @@ export type StopWorkspaceResponse = Message<"helmr.workspace.v0.StopWorkspaceRes
  * Use `create(StopWorkspaceResponseSchema)` to create a new message.
  */
 export const StopWorkspaceResponseSchema: GenMessage<StopWorkspaceResponse> = /*@__PURE__*/
-  messageDesc(file_workspace, 12);
+  messageDesc(file_workspace, 29);
 
 /**
- * @generated from message helmr.workspace.v0.WorkspaceOperationRequest
+ * @generated from message helmr.workspace.v0.WorkspaceBasicExecRequest
  */
-export type WorkspaceOperationRequest = Message<"helmr.workspace.v0.WorkspaceOperationRequest"> & {
+export type WorkspaceBasicExecRequest = Message<"helmr.workspace.v0.WorkspaceBasicExecRequest"> & {
   /**
    * @generated from field: helmr.workspace.v0.WorkspaceOperationEnvelope envelope = 1;
    */
   envelope?: WorkspaceOperationEnvelope;
 
   /**
-   * @generated from field: string operation_kind = 2;
-   */
-  operationKind: string;
-
-  /**
-   * @generated from field: string request_json = 3;
+   * @generated from field: string request_json = 2;
    */
   requestJson: string;
+
+  /**
+   * @generated from field: repeated helmr.workspace.v0.WorkspaceSecretDelivery secrets = 3;
+   */
+  secrets: WorkspaceSecretDelivery[];
+
+  /**
+   * @generated from field: bytes stdin = 4;
+   */
+  stdin: Uint8Array;
 };
 
 /**
- * Describes the message helmr.workspace.v0.WorkspaceOperationRequest.
- * Use `create(WorkspaceOperationRequestSchema)` to create a new message.
+ * Describes the message helmr.workspace.v0.WorkspaceBasicExecRequest.
+ * Use `create(WorkspaceBasicExecRequestSchema)` to create a new message.
  */
-export const WorkspaceOperationRequestSchema: GenMessage<WorkspaceOperationRequest> = /*@__PURE__*/
-  messageDesc(file_workspace, 13);
+export const WorkspaceBasicExecRequestSchema: GenMessage<WorkspaceBasicExecRequest> = /*@__PURE__*/
+  messageDesc(file_workspace, 30);
 
 /**
- * @generated from message helmr.workspace.v0.WorkspaceOperationResult
+ * @generated from message helmr.workspace.v0.WorkspaceBasicExecResult
  */
-export type WorkspaceOperationResult = Message<"helmr.workspace.v0.WorkspaceOperationResult"> & {
+export type WorkspaceBasicExecResult = Message<"helmr.workspace.v0.WorkspaceBasicExecResult"> & {
   /**
-   * @generated from field: string result_json = 1;
-   */
-  resultJson: string;
-
-  /**
-   * @generated from field: string error_json = 2;
+   * @generated from field: string error_json = 1;
    */
   errorJson: string;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspaceOperationResult.
- * Use `create(WorkspaceOperationResultSchema)` to create a new message.
- */
-export const WorkspaceOperationResultSchema: GenMessage<WorkspaceOperationResult> = /*@__PURE__*/
-  messageDesc(file_workspace, 14);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspaceExecStarted
- */
-export type WorkspaceExecStarted = Message<"helmr.workspace.v0.WorkspaceExecStarted"> & {
-  /**
-   * @generated from field: string exec_id = 1;
-   */
-  execId: string;
-
-  /**
-   * @generated from field: string process_id = 2;
-   */
-  processId: string;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspaceExecStarted.
- * Use `create(WorkspaceExecStartedSchema)` to create a new message.
- */
-export const WorkspaceExecStartedSchema: GenMessage<WorkspaceExecStarted> = /*@__PURE__*/
-  messageDesc(file_workspace, 15);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspaceExecOutputChunk
- */
-export type WorkspaceExecOutputChunk = Message<"helmr.workspace.v0.WorkspaceExecOutputChunk"> & {
-  /**
-   * @generated from field: string exec_id = 1;
-   */
-  execId: string;
-
-  /**
-   * @generated from field: bytes data = 2;
-   */
-  data: Uint8Array;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspaceExecOutputChunk.
- * Use `create(WorkspaceExecOutputChunkSchema)` to create a new message.
- */
-export const WorkspaceExecOutputChunkSchema: GenMessage<WorkspaceExecOutputChunk> = /*@__PURE__*/
-  messageDesc(file_workspace, 16);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspaceExecExited
- */
-export type WorkspaceExecExited = Message<"helmr.workspace.v0.WorkspaceExecExited"> & {
-  /**
-   * @generated from field: string exec_id = 1;
-   */
-  execId: string;
 
   /**
    * @generated from field: int32 exit_code = 2;
@@ -531,399 +1047,56 @@ export type WorkspaceExecExited = Message<"helmr.workspace.v0.WorkspaceExecExite
   exitCode: number;
 
   /**
-   * @generated from field: string signal = 3;
+   * @generated from field: bytes stdout = 3;
    */
-  signal: string;
+  stdout: Uint8Array;
 
   /**
-   * @generated from field: string error_json = 4;
+   * @generated from field: bytes stderr = 4;
    */
-  errorJson: string;
+  stderr: Uint8Array;
+
+  /**
+   * @generated from field: string outcome = 5;
+   */
+  outcome: string;
+
+  /**
+   * @generated from field: string request_fingerprint = 6;
+   */
+  requestFingerprint: string;
 };
 
 /**
- * Describes the message helmr.workspace.v0.WorkspaceExecExited.
- * Use `create(WorkspaceExecExitedSchema)` to create a new message.
+ * Describes the message helmr.workspace.v0.WorkspaceBasicExecResult.
+ * Use `create(WorkspaceBasicExecResultSchema)` to create a new message.
  */
-export const WorkspaceExecExitedSchema: GenMessage<WorkspaceExecExited> = /*@__PURE__*/
-  messageDesc(file_workspace, 17);
+export const WorkspaceBasicExecResultSchema: GenMessage<WorkspaceBasicExecResult> = /*@__PURE__*/
+  messageDesc(file_workspace, 31);
 
 /**
- * @generated from message helmr.workspace.v0.WorkspaceExecError
+ * @generated from message helmr.workspace.v0.WorkspaceSecretDelivery
  */
-export type WorkspaceExecError = Message<"helmr.workspace.v0.WorkspaceExecError"> & {
+export type WorkspaceSecretDelivery = Message<"helmr.workspace.v0.WorkspaceSecretDelivery"> & {
   /**
-   * @generated from field: string exec_id = 1;
+   * @generated from field: string placement_kind = 1;
    */
-  execId: string;
+  placementKind: string;
 
   /**
-   * @generated from field: string error_json = 2;
+   * @generated from field: string placement_target = 2;
    */
-  errorJson: string;
+  placementTarget: string;
+
+  /**
+   * @generated from field: bytes value = 3;
+   */
+  value: Uint8Array;
 };
 
 /**
- * Describes the message helmr.workspace.v0.WorkspaceExecError.
- * Use `create(WorkspaceExecErrorSchema)` to create a new message.
+ * Describes the message helmr.workspace.v0.WorkspaceSecretDelivery.
+ * Use `create(WorkspaceSecretDeliverySchema)` to create a new message.
  */
-export const WorkspaceExecErrorSchema: GenMessage<WorkspaceExecError> = /*@__PURE__*/
-  messageDesc(file_workspace, 18);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspacePtyOpened
- */
-export type WorkspacePtyOpened = Message<"helmr.workspace.v0.WorkspacePtyOpened"> & {
-  /**
-   * @generated from field: string pty_id = 1;
-   */
-  ptyId: string;
-
-  /**
-   * @generated from field: string process_id = 2;
-   */
-  processId: string;
-
-  /**
-   * @generated from field: uint32 cols = 3;
-   */
-  cols: number;
-
-  /**
-   * @generated from field: uint32 rows = 4;
-   */
-  rows: number;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspacePtyOpened.
- * Use `create(WorkspacePtyOpenedSchema)` to create a new message.
- */
-export const WorkspacePtyOpenedSchema: GenMessage<WorkspacePtyOpened> = /*@__PURE__*/
-  messageDesc(file_workspace, 19);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspacePtyOutputChunk
- */
-export type WorkspacePtyOutputChunk = Message<"helmr.workspace.v0.WorkspacePtyOutputChunk"> & {
-  /**
-   * @generated from field: string pty_id = 1;
-   */
-  ptyId: string;
-
-  /**
-   * @generated from field: bytes data = 2;
-   */
-  data: Uint8Array;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspacePtyOutputChunk.
- * Use `create(WorkspacePtyOutputChunkSchema)` to create a new message.
- */
-export const WorkspacePtyOutputChunkSchema: GenMessage<WorkspacePtyOutputChunk> = /*@__PURE__*/
-  messageDesc(file_workspace, 20);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspacePtyResizeApplied
- */
-export type WorkspacePtyResizeApplied = Message<"helmr.workspace.v0.WorkspacePtyResizeApplied"> & {
-  /**
-   * @generated from field: string pty_id = 1;
-   */
-  ptyId: string;
-
-  /**
-   * @generated from field: uint32 cols = 2;
-   */
-  cols: number;
-
-  /**
-   * @generated from field: uint32 rows = 3;
-   */
-  rows: number;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspacePtyResizeApplied.
- * Use `create(WorkspacePtyResizeAppliedSchema)` to create a new message.
- */
-export const WorkspacePtyResizeAppliedSchema: GenMessage<WorkspacePtyResizeApplied> = /*@__PURE__*/
-  messageDesc(file_workspace, 21);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspacePtyClosed
- */
-export type WorkspacePtyClosed = Message<"helmr.workspace.v0.WorkspacePtyClosed"> & {
-  /**
-   * @generated from field: string pty_id = 1;
-   */
-  ptyId: string;
-
-  /**
-   * @generated from field: string reason = 2;
-   */
-  reason: string;
-
-  /**
-   * @generated from field: string error_json = 3;
-   */
-  errorJson: string;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspacePtyClosed.
- * Use `create(WorkspacePtyClosedSchema)` to create a new message.
- */
-export const WorkspacePtyClosedSchema: GenMessage<WorkspacePtyClosed> = /*@__PURE__*/
-  messageDesc(file_workspace, 22);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspacePtyError
- */
-export type WorkspacePtyError = Message<"helmr.workspace.v0.WorkspacePtyError"> & {
-  /**
-   * @generated from field: string pty_id = 1;
-   */
-  ptyId: string;
-
-  /**
-   * @generated from field: string error_json = 2;
-   */
-  errorJson: string;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspacePtyError.
- * Use `create(WorkspacePtyErrorSchema)` to create a new message.
- */
-export const WorkspacePtyErrorSchema: GenMessage<WorkspacePtyError> = /*@__PURE__*/
-  messageDesc(file_workspace, 23);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspaceOperationEvent
- */
-export type WorkspaceOperationEvent = Message<"helmr.workspace.v0.WorkspaceOperationEvent"> & {
-  /**
-   * @generated from field: helmr.workspace.v0.WorkspaceOperationEnvelope envelope = 1;
-   */
-  envelope?: WorkspaceOperationEnvelope;
-
-  /**
-   * @generated from oneof helmr.workspace.v0.WorkspaceOperationEvent.event
-   */
-  event: {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspaceExecStarted exec_started = 2;
-     */
-    value: WorkspaceExecStarted;
-    case: "execStarted";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspaceExecOutputChunk exec_stdout_chunk = 3;
-     */
-    value: WorkspaceExecOutputChunk;
-    case: "execStdoutChunk";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspaceExecOutputChunk exec_stderr_chunk = 4;
-     */
-    value: WorkspaceExecOutputChunk;
-    case: "execStderrChunk";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspaceExecExited exec_exited = 5;
-     */
-    value: WorkspaceExecExited;
-    case: "execExited";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspaceExecError exec_error = 6;
-     */
-    value: WorkspaceExecError;
-    case: "execError";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspacePtyOpened pty_opened = 7;
-     */
-    value: WorkspacePtyOpened;
-    case: "ptyOpened";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspacePtyOutputChunk pty_output_chunk = 8;
-     */
-    value: WorkspacePtyOutputChunk;
-    case: "ptyOutputChunk";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspacePtyResizeApplied pty_resize_applied = 9;
-     */
-    value: WorkspacePtyResizeApplied;
-    case: "ptyResizeApplied";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspacePtyClosed pty_closed = 10;
-     */
-    value: WorkspacePtyClosed;
-    case: "ptyClosed";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspacePtyError pty_error = 11;
-     */
-    value: WorkspacePtyError;
-    case: "ptyError";
-  } | { case: undefined; value?: undefined };
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspaceOperationEvent.
- * Use `create(WorkspaceOperationEventSchema)` to create a new message.
- */
-export const WorkspaceOperationEventSchema: GenMessage<WorkspaceOperationEvent> = /*@__PURE__*/
-  messageDesc(file_workspace, 24);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspaceStreamAck
- */
-export type WorkspaceStreamAck = Message<"helmr.workspace.v0.WorkspaceStreamAck"> & {
-  /**
-   * @generated from field: helmr.workspace.v0.WorkspaceOperationEnvelope envelope = 1;
-   */
-  envelope?: WorkspaceOperationEnvelope;
-
-  /**
-   * @generated from field: string resource_kind = 2;
-   */
-  resourceKind: string;
-
-  /**
-   * @generated from field: string resource_id = 3;
-   */
-  resourceId: string;
-
-  /**
-   * @generated from field: string stream = 4;
-   */
-  stream: string;
-
-  /**
-   * @generated from field: uint64 durable_offset = 5;
-   */
-  durableOffset: bigint;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspaceStreamAck.
- * Use `create(WorkspaceStreamAckSchema)` to create a new message.
- */
-export const WorkspaceStreamAckSchema: GenMessage<WorkspaceStreamAck> = /*@__PURE__*/
-  messageDesc(file_workspace, 25);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspaceInputChunk
- */
-export type WorkspaceInputChunk = Message<"helmr.workspace.v0.WorkspaceInputChunk"> & {
-  /**
-   * @generated from field: helmr.workspace.v0.WorkspaceOperationEnvelope envelope = 1;
-   */
-  envelope?: WorkspaceOperationEnvelope;
-
-  /**
-   * @generated from field: string resource_kind = 2;
-   */
-  resourceKind: string;
-
-  /**
-   * @generated from field: string resource_id = 3;
-   */
-  resourceId: string;
-
-  /**
-   * @generated from field: string stream = 4;
-   */
-  stream: string;
-
-  /**
-   * @generated from field: uint64 offset_start = 5;
-   */
-  offsetStart: bigint;
-
-  /**
-   * @generated from field: bytes data = 6;
-   */
-  data: Uint8Array;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspaceInputChunk.
- * Use `create(WorkspaceInputChunkSchema)` to create a new message.
- */
-export const WorkspaceInputChunkSchema: GenMessage<WorkspaceInputChunk> = /*@__PURE__*/
-  messageDesc(file_workspace, 26);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspaceInputClose
- */
-export type WorkspaceInputClose = Message<"helmr.workspace.v0.WorkspaceInputClose"> & {
-  /**
-   * @generated from field: helmr.workspace.v0.WorkspaceOperationEnvelope envelope = 1;
-   */
-  envelope?: WorkspaceOperationEnvelope;
-
-  /**
-   * @generated from field: string resource_kind = 2;
-   */
-  resourceKind: string;
-
-  /**
-   * @generated from field: string resource_id = 3;
-   */
-  resourceId: string;
-
-  /**
-   * @generated from field: string stream = 4;
-   */
-  stream: string;
-
-  /**
-   * @generated from field: uint64 offset = 5;
-   */
-  offset: bigint;
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspaceInputClose.
- * Use `create(WorkspaceInputCloseSchema)` to create a new message.
- */
-export const WorkspaceInputCloseSchema: GenMessage<WorkspaceInputClose> = /*@__PURE__*/
-  messageDesc(file_workspace, 27);
-
-/**
- * @generated from message helmr.workspace.v0.WorkspaceInputFrame
- */
-export type WorkspaceInputFrame = Message<"helmr.workspace.v0.WorkspaceInputFrame"> & {
-  /**
-   * @generated from oneof helmr.workspace.v0.WorkspaceInputFrame.frame
-   */
-  frame: {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspaceInputChunk chunk = 1;
-     */
-    value: WorkspaceInputChunk;
-    case: "chunk";
-  } | {
-    /**
-     * @generated from field: helmr.workspace.v0.WorkspaceInputClose close = 2;
-     */
-    value: WorkspaceInputClose;
-    case: "close";
-  } | { case: undefined; value?: undefined };
-};
-
-/**
- * Describes the message helmr.workspace.v0.WorkspaceInputFrame.
- * Use `create(WorkspaceInputFrameSchema)` to create a new message.
- */
-export const WorkspaceInputFrameSchema: GenMessage<WorkspaceInputFrame> = /*@__PURE__*/
-  messageDesc(file_workspace, 28);
-
+export const WorkspaceSecretDeliverySchema: GenMessage<WorkspaceSecretDelivery> = /*@__PURE__*/
+  messageDesc(file_workspace, 32);

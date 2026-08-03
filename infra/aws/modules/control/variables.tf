@@ -43,39 +43,23 @@ variable "deployment_mode" {
   }
 }
 
-variable "worker_group_id" {
-  description = "Default worker group ID used by this control-plane stack."
-  type        = string
-
-  validation {
-    condition     = trimspace(var.worker_group_id) != ""
-    error_message = "worker_group_id must be non-empty."
-  }
-}
-
 variable "worker_groups" {
-  description = "EC2 identity, enrollment, and scheduling boundaries for worker groups."
+  description = "Logical enrollment, role, and scheduling boundaries for worker groups."
   type = list(object({
-    id                   = string
-    name                 = string
-    description          = optional(string, "")
-    region               = string
-    account_id           = string
-    autoscaling_group    = string
-    instance_profile_arn = string
-    launch_ami_id        = string
-    ami_ids              = list(string)
-    allows_run           = bool
-    allows_build         = bool
+    id                      = string
+    name                    = string
+    description             = optional(string, "")
+    allows_run              = bool
+    allows_build            = bool
+    observation_ttl_seconds = number
     instance_capacity = object({
-      milli_cpu            = number
-      memory_bytes         = number
-      workload_disk_bytes  = number
-      scratch_bytes        = number
-      build_cache_bytes    = number
-      artifact_cache_bytes = number
-      vm_slots             = number
-      build_executors      = number
+      milli_cpu                  = number
+      memory_bytes               = number
+      guest_ephemeral_disk_bytes = number
+      build_cache_bytes          = number
+      artifact_cache_bytes       = number
+      vm_slots                   = number
+      build_executors            = number
     })
   }))
   validation {
@@ -84,52 +68,10 @@ variable "worker_groups" {
   }
 }
 
-variable "worker_fleets" {
-  description = "Run/build fleet policy passed to helmr-dispatcher. An empty list disables fleet control."
-  type = list(object({
-    group_id           = string
-    autoscaling_group  = string
-    role               = string
-    compatibility_keys = list(string)
-    instance_capacity = object({
-      milli_cpu            = number
-      memory_bytes         = number
-      workload_disk_bytes  = number
-      scratch_bytes        = number
-      build_cache_bytes    = number
-      artifact_cache_bytes = number
-      vm_slots             = number
-      build_executors      = number
-    })
-    queued_run_scratch_bytes     = number
-    min_workers                  = number
-    warm_workers                 = number
-    max_workers                  = number
-    max_scale_out_per_cycle      = number
-    max_pending_workers          = number
-    max_packing_items            = number
-    controller_interval_seconds  = number
-    scale_out_cooldown_seconds   = number
-    scale_in_cooldown_seconds    = number
-    scale_in_hysteresis_seconds  = number
-    stale_worker_timeout_seconds = number
-    readiness_timeout_seconds    = number
-    drain_timeout_seconds        = number
-    emergency_stop               = bool
-    metric_interval_seconds      = number
-  }))
-  default = []
-}
-
-variable "fleet_metrics_namespace" {
-  description = "CloudWatch namespace used only for fleet-controller metric projection and alarms."
-  type        = string
-  default     = "Helmr/WorkerFleet"
-
-  validation {
-    condition     = trimspace(var.fleet_metrics_namespace) != ""
-    error_message = "fleet_metrics_namespace must be non-empty."
-  }
+variable "image_cache_worker_role_arns" {
+  description = "Deployment-owned IAM roles permitted to assume the Execution image-cache role."
+  type        = list(string)
+  default     = []
 }
 
 variable "region_id" {
@@ -139,8 +81,13 @@ variable "region_id" {
   nullable    = true
 
   validation {
-    condition     = var.region_id == null || trimspace(var.region_id) != ""
-    error_message = "region_id must be null or non-empty."
+    condition = var.region_id == null ? true : (
+      var.region_id != "" &&
+      var.region_id == trimspace(var.region_id) &&
+      length(base64encode(var.region_id)) <= 340 &&
+      length(regexall("[[:cntrl:]]", var.region_id)) == 0
+    )
+    error_message = "region_id must be null or normalized control-free UTF-8 of 1-255 bytes."
   }
 }
 
@@ -151,8 +98,13 @@ variable "default_region_id" {
   nullable    = true
 
   validation {
-    condition     = var.default_region_id == null || trimspace(var.default_region_id) != ""
-    error_message = "default_region_id must be null or non-empty."
+    condition = var.default_region_id == null ? true : (
+      var.default_region_id != "" &&
+      var.default_region_id == trimspace(var.default_region_id) &&
+      length(base64encode(var.default_region_id)) <= 340 &&
+      length(regexall("[[:cntrl:]]", var.default_region_id)) == 0
+    )
+    error_message = "default_region_id must be null or normalized control-free UTF-8 of 1-255 bytes."
   }
 }
 
@@ -209,8 +161,68 @@ variable "clickhouse_password_kms_key_arns" {
 }
 
 variable "control_image" {
-  description = "Container image URI containing helmr-control and helmr-dispatcher. Managed release flows should pass a digest-pinned image."
+  description = "Container image URI containing helmr-control, helmr-dispatcher, and deployment tooling. Managed release flows should pass a digest-pinned image."
   type        = string
+
+  validation {
+    condition     = can(regex("@sha256:[0-9a-f]{64}$", var.control_image))
+    error_message = "control_image must be pinned by a lowercase sha256 digest."
+  }
+}
+
+variable "control_image_repository_arn" {
+  description = "Exact ECR repository ARN from which ECS task execution roles may pull the Control image. Leave null only for a non-ECR self-hosted image."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.control_image_repository_arn == null ||
+      can(regex("^arn:[^:]+:ecr:[a-z0-9-]+:[0-9]{12}:repository/[a-z0-9._/-]+$", var.control_image_repository_arn))
+    )
+    error_message = "control_image_repository_arn must be null or an ECR repository ARN."
+  }
+}
+
+variable "platform_store_uri" {
+  description = "Dedicated immutable Platform Artifact store URI ending in /objects."
+  type        = string
+
+  validation {
+    condition     = can(regex("^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/objects$", var.platform_store_uri))
+    error_message = "platform_store_uri must be an S3 bucket URI ending exactly in /objects."
+  }
+}
+
+variable "platform_store_bucket_arn" {
+  description = "S3 bucket ARN backing platform_store_uri."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:[^:]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.platform_store_bucket_arn))
+    error_message = "platform_store_bucket_arn must be an S3 bucket ARN."
+  }
+}
+
+variable "platform_store_kms_key_arn" {
+  description = "KMS key ARN used by the dedicated Platform Artifact store."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[0-9a-fA-F-]+$", var.platform_store_kms_key_arn))
+    error_message = "platform_store_kms_key_arn must be a KMS key ARN."
+  }
+}
+
+variable "build_policy_digest" {
+  description = "Exact immutable build-policy object digest installed before Control starts."
+  type        = string
+
+  validation {
+    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.build_policy_digest))
+    error_message = "build_policy_digest must be lowercase sha256:<64 hexadecimal digits>."
+  }
 }
 
 variable "control_entrypoint" {
@@ -254,69 +266,47 @@ variable "dispatcher_desired_count" {
   default     = 1
 }
 
-variable "schedule_repair_every" {
-  description = "Schedule repair polling interval."
+variable "schedule_poll_interval" {
+  description = "PostgreSQL Schedule claim polling interval."
   type        = string
-  default     = "5s"
+  default     = "1s"
 
   validation {
-    condition     = can(regex("^[1-9]", var.schedule_repair_every))
-    error_message = "schedule_repair_every must be a positive duration."
+    condition     = can(regex("^[1-9]", var.schedule_poll_interval))
+    error_message = "schedule_poll_interval must be a positive duration."
   }
 }
 
-variable "schedule_repair_limit" {
-  description = "Maximum schedule repair entries scanned or due fires claimed per worker tick."
+variable "schedule_claim_limit" {
+  description = "Maximum due Schedule rows claimed per dispatcher poll."
   type        = number
   default     = 100
 
   validation {
-    condition     = var.schedule_repair_limit > 0
-    error_message = "schedule_repair_limit must be positive."
+    condition     = var.schedule_claim_limit > 0 && floor(var.schedule_claim_limit) == var.schedule_claim_limit && var.schedule_claim_limit <= 2147483647
+    error_message = "schedule_claim_limit must be an integer between 1 and 2147483647."
   }
 }
 
-variable "schedule_trigger_concurrency" {
-  description = "Maximum concurrent scheduled run creation operations per dispatcher task."
+variable "schedule_concurrency" {
+  description = "Maximum concurrent Schedule admission transactions per dispatcher task."
   type        = number
   default     = 10
 
   validation {
-    condition     = var.schedule_trigger_concurrency > 0
-    error_message = "schedule_trigger_concurrency must be positive."
+    condition     = var.schedule_concurrency > 0 && floor(var.schedule_concurrency) == var.schedule_concurrency && var.schedule_concurrency <= 2147483647
+    error_message = "schedule_concurrency must be an integer between 1 and 2147483647."
   }
 }
 
-variable "schedule_repair_lookahead" {
-  description = "How far ahead schedule workers repair database next-fire state into Redis."
-  type        = string
-  default     = "1h"
-
-  validation {
-    condition     = can(regex("^[1-9]", var.schedule_repair_lookahead))
-    error_message = "schedule_repair_lookahead must be a positive duration."
-  }
-}
-
-variable "schedule_lease" {
-  description = "Redis schedule fire visibility lease duration."
+variable "schedule_claim_lease" {
+  description = "PostgreSQL Schedule claim lease duration."
   type        = string
   default     = "5m"
 
   validation {
-    condition     = can(regex("^[1-9]", var.schedule_lease))
-    error_message = "schedule_lease must be a positive duration."
-  }
-}
-
-variable "schedule_max_attempts" {
-  description = "Maximum attempts for one schedule fire before it is skipped with an error."
-  type        = number
-  default     = 10
-
-  validation {
-    condition     = var.schedule_max_attempts > 0
-    error_message = "schedule_max_attempts must be positive."
+    condition     = can(regex("^[1-9]", var.schedule_claim_lease))
+    error_message = "schedule_claim_lease must be a positive duration."
   }
 }
 
@@ -354,6 +344,30 @@ variable "create_control_service" {
   default     = false
 }
 
+variable "operator_token_secret_arn" {
+  description = "Optional externally owned Secrets Manager ARN containing the provider-neutral deployment-operator credential."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.operator_token_secret_arn == null || can(regex("^arn:[^:]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$", var.operator_token_secret_arn))
+    error_message = "operator_token_secret_arn must be a Secrets Manager secret ARN."
+  }
+}
+
+variable "operator_token_kms_key_arn" {
+  description = "Optional KMS key ARN required to decrypt operator_token_secret_arn."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.operator_token_kms_key_arn == null || can(regex("^arn:[^:]+:kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]+$", var.operator_token_kms_key_arn))
+    error_message = "operator_token_kms_key_arn must be a KMS key ARN."
+  }
+}
+
 variable "control_environment" {
   description = "Additional non-secret environment variables for helmr-control. Managed Helmr variables such as HELMR_REDIS_URL are owned by this module."
   type        = map(string)
@@ -364,29 +378,6 @@ variable "dispatcher_environment" {
   description = "Additional non-secret environment variables for helmr-dispatcher. Managed Helmr variables such as HELMR_REDIS_URL are owned by this module."
   type        = map(string)
   default     = {}
-}
-
-variable "secret_encryption_key_old_arn" {
-  description = "Optional Secrets Manager ARN for HELMR_SECRET_ENCRYPTION_KEY_OLD during Helmr-managed secret re-encryption."
-  type        = string
-  default     = null
-  nullable    = true
-
-  validation {
-    condition     = var.secret_encryption_key_old_arn == null || trimspace(var.secret_encryption_key_old_arn) != ""
-    error_message = "secret_encryption_key_old_arn must be null or a non-empty Secrets Manager ARN."
-  }
-}
-
-variable "secret_encryption_key_old_kms_key_arns" {
-  description = "Optional customer-managed KMS key ARNs needed to decrypt secret_encryption_key_old_arn when it is not encrypted by this module's KMS key."
-  type        = list(string)
-  default     = []
-
-  validation {
-    condition     = alltrue([for arn in var.secret_encryption_key_old_kms_key_arns : trimspace(arn) != ""])
-    error_message = "secret_encryption_key_old_kms_key_arns entries must be non-empty KMS key ARNs."
-  }
 }
 
 variable "email_provider" {
@@ -481,13 +472,6 @@ variable "cloudfront_origin_domain_name" {
   nullable    = true
 }
 
-variable "private_control_dns_name" {
-  description = "Optional VPC-private DNS name for worker-to-control traffic. Use a hostname covered by certificate_arn."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
 variable "database_instance_class" {
   description = "RDS Postgres instance class."
   type        = string
@@ -535,32 +519,6 @@ variable "database_skip_final_snapshot" {
   description = "Skip the final RDS snapshot on destroy. Intended for ephemeral development stacks."
   type        = bool
   default     = false
-}
-
-variable "create_control_repository" {
-  description = "Create an ECR repository for custom control images. Official release deployments can leave this false."
-  type        = bool
-  default     = false
-}
-
-variable "control_repository_force_delete" {
-  description = "Delete the control ECR repository even when it contains images. Intended for ephemeral development stacks."
-  type        = bool
-  default     = false
-}
-
-variable "control_ecr_max_images" {
-  description = "Maximum tagged control images to retain in ECR. Set null to disable this lifecycle rule."
-  type        = number
-  default     = null
-  nullable    = true
-}
-
-variable "control_ecr_untagged_image_expiration_days" {
-  description = "Days before untagged control images expire in ECR. Set null to disable this lifecycle rule."
-  type        = number
-  default     = null
-  nullable    = true
 }
 
 variable "control_log_retention_days" {

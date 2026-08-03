@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"golang.org/x/sys/unix"
 )
 
@@ -37,6 +38,30 @@ func advertisedWorkerDiskMiB(workDir string, configuredMiB int64, reserveMiB int
 		return 0, errors.New("worker filesystem has no advertisable disk capacity")
 	}
 	return advertisedMiB, nil
+}
+
+func admissionDiskFloorMiB(supportsBuild bool, vmScratchMiB, reserveMiB int64) int64 {
+	if supportsBuild {
+		return max(vmScratchMiB, compute.BuildEnvelopeResources().DiskMiB)
+	}
+	return reserveMiB + vmScratchMiB
+}
+
+func capGuestEphemeralDiskCapacity(capacity compute.WorkerDiskCapacity, reserve, available uint64) (compute.WorkerDiskCapacity, error) {
+	if err := capacity.Validate(); err != nil {
+		return compute.WorkerDiskCapacity{}, err
+	}
+	if reserve == 0 || reserve >= uint64(capacity.HostGuestEphemeralDiskBytes) {
+		return compute.WorkerDiskCapacity{}, errors.New("worker disk reserve consumes aggregate capacity")
+	}
+	capacity.HostGuestEphemeralDiskBytes -= int64(reserve)
+	if available < uint64(capacity.HostGuestEphemeralDiskBytes) {
+		capacity.HostGuestEphemeralDiskBytes = int64(available)
+	}
+	if err := capacity.Validate(); err != nil {
+		return compute.WorkerDiskCapacity{}, err
+	}
+	return capacity, nil
 }
 
 func workerCacheBudgetBytes(configuredMiB int64, hostDiskMiB int64, numerator int64, denominator int64, floorMiB int64, ceilingMiB int64) int64 {

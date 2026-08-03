@@ -18,36 +18,18 @@ User, API-key, console, CLI, SDK, and worker API requests use a date-pinned API 
 Helmr-API-Version: 2026-06-06
 ```
 
-The date is a fixed build constant, not the request date. The control plane echoes the effective version in `Helmr-API-Version`. Requests with an unsupported non-empty version return `400 Bad Request`; omitted versions currently default to the current version during pre-release development.
-
-Client provenance headers are separate from the API contract:
-
-| Header | Meaning |
-| --- | --- |
-| `Helmr-Client-Version` | Generic client build version. |
-| `Helmr-CLI-Version` | CLI build version for CLI-originated requests. |
-| `Helmr-SDK-Version` | SDK package version for SDK-originated requests. |
-
-These provenance headers are recorded on deployments and runs where available. They are diagnostic metadata and should not be used as authorization or compatibility gates.
+The date is a fixed build constant, not the request date. The control plane echoes the effective version in `Helmr-API-Version`. Requests with an unsupported non-empty version return `400 Bad Request`; omitted versions currently default to the current version during pre-release development. Header values are exact and are not trimmed.
 
 Common user/API-key routes:
 
 | Method | Path |
 | --- | --- |
-| `POST` | `/api/sessions` |
-| `POST` | `/api/sessions/start-and-wait` |
-| `GET` | `/api/sessions` |
-| `GET` | `/api/sessions/{id}` |
-| `PATCH` | `/api/sessions/{id}` |
-| `POST` | `/api/sessions/{id}/close` |
-| `POST` | `/api/sessions/{id}/cancel` |
-| `GET` | `/api/sessions/{id}/runs` |
-| `GET` | `/api/sessions/{id}/streams` |
-| `POST` | `/api/sessions/{id}/inputs/{stream}` |
-| `GET` | `/api/sessions/{id}/inputs/{stream}` |
-| `POST` | `/api/sessions/{id}/outputs/{stream}` |
-| `GET` | `/api/sessions/{id}/outputs/{stream}` |
-| `GET` | `/api/sessions/{id}/outputs/{stream}/read` |
+| `POST` | `/api/tasks/{taskDeclaredID}/start` |
+| `POST` | `/api/actors/{actorDeclaredID}/start` |
+| `POST` | `/api/actors/{actorDeclaredID}/input` |
+| `GET` | `/api/actors/{actorDeclaredID}/output` |
+| `GET` | `/api/actors/{actorDeclaredID}/status` |
+| `POST` | `/api/actors/{actorDeclaredID}/close` |
 | `GET` | `/api/runs` |
 | `GET` | `/api/runs/counts` |
 | `GET` | `/api/runs/{id}` |
@@ -58,86 +40,72 @@ Common user/API-key routes:
 | `GET` | `/api/tokens/{id}` |
 | `POST` | `/api/tokens/{id}/complete` |
 | `POST` | `/api/tokens/{id}/cancel` |
-| `POST` | `/api/public-access-tokens` |
 | `POST` | `/api/v1/tokens/{id}/complete` |
 | `POST` | `/api/v1/tokens/{id}/callback/{secret}` |
-| `POST` | `/api/v1/sessions/{id}/inputs/{stream}` |
-| `GET` | `/api/v1/sessions/{id}/outputs/{stream}/read` |
-| `POST` | `/api/workspaces` |
-| `GET` | `/api/workspaces` |
+| `POST` | `/api/workspaces/{workspaceDeclaredID}/create` |
+| `GET` | `/api/workspaces/by-key/{workspaceDeclaredID}?key=...` |
 | `GET` | `/api/workspaces/{workspace_id}` |
-| `PATCH` | `/api/workspaces/{workspace_id}` |
-| `DELETE` | `/api/workspaces/{workspace_id}` |
-| `POST` | `/api/workspaces/{workspace_id}/materialize` |
-| `POST` | `/api/workspaces/{workspace_id}/connect` |
-| `POST` | `/api/workspaces/{workspace_id}/stop` |
+| `POST` | `/api/workspaces/{workspace_id}/delete` |
 | `GET` | `/api/workspaces/{workspace_id}/files` |
 | `GET` | `/api/workspaces/{workspace_id}/files/content` |
 | `GET` | `/api/workspaces/{workspace_id}/files/stat` |
-| `GET` | `/api/workspaces/{workspace_id}/versions` |
-| `GET` | `/api/workspaces/{workspace_id}/versions/{version_id}` |
-| `POST` | `/api/workspaces/{workspace_id}/execs` |
-| `GET` | `/api/workspaces/{workspace_id}/execs` |
-| `GET` | `/api/workspaces/{workspace_id}/execs/{exec_id}` |
-| `POST` | `/api/workspaces/{workspace_id}/execs/{exec_id}/stdin` |
-| `POST` | `/api/workspaces/{workspace_id}/execs/{exec_id}/stdin/close` |
-| `GET` | `/api/workspaces/{workspace_id}/execs/{exec_id}/stdout` |
-| `GET` | `/api/workspaces/{workspace_id}/execs/{exec_id}/stderr` |
-| `POST` | `/api/workspaces/{workspace_id}/pty` |
-| `GET` | `/api/workspaces/{workspace_id}/pty` |
-| `GET` | `/api/workspaces/{workspace_id}/pty/{pty_id}` |
-| `POST` | `/api/workspaces/{workspace_id}/pty/{pty_id}/input` |
-| `GET` | `/api/workspaces/{workspace_id}/pty/{pty_id}/output` |
-| `POST` | `/api/workspaces/{workspace_id}/pty/{pty_id}/resize` |
-| `POST` | `/api/workspaces/{workspace_id}/pty/{pty_id}/close` |
-| `POST` | `/api/schedules` |
+| `POST` | `/api/workspaces/{workspace_id}/exec` |
 | `GET` | `/api/schedules` |
 | `GET` | `/api/schedules/{id}` |
-| `PUT` | `/api/schedules/{id}` |
-| `POST` | `/api/schedules/{id}/activate` |
-| `POST` | `/api/schedules/{id}/deactivate` |
-| `DELETE` | `/api/schedules/{id}` |
+| `POST` | `/api/tokens` |
+| `GET` | `/api/tokens` |
+| `GET` | `/api/tokens/{id}` |
+| `POST` | `/api/tokens/{id}/complete` |
+| `POST` | `/api/tokens/{id}/cancel` |
 | `POST` | `/api/deployments` |
 | `GET` | `/api/deployments/current` |
+| `POST` | `/api/deployments/{id}/promote` |
+| `POST` | `/api/secrets` |
 | `GET` | `/api/secrets` |
-| `GET` | `/api/secrets/{name}` |
-| `PUT` | `/api/secrets/{name}` |
-| `DELETE` | `/api/secrets/{name}` |
+| `GET` | `/api/secrets/{secret_id}` |
+| `GET` | `/api/secrets/by-name/{name}` |
+| `POST` | `/api/secrets/{secret_id}/rotate` |
+| `POST` | `/api/secrets/by-name/{name}/rotate` |
+| `POST` | `/api/secrets/{secret_id}/revoke` |
+| `POST` | `/api/secrets/by-name/{name}/revoke` |
 
 Auth routes include GitHub OAuth, magic links, device auth, logout, API keys, members, invitations, projects, and environments.
 
-`GET /api/sessions?external_id=...` filters the session collection by an environment-scoped external conversation id. `/api/sessions/{id}` treats its path segment as a session id only. Session operations can address the same resource by external id through reserved routes such as `GET /api/sessions/by-external-id?external_id=...` and `POST /api/sessions/by-external-id/inputs/{stream}?external_id=...`.
+`POST /api/tokens` accepts an authenticated Environment-scoped caller with
+`tokens.create`; omitted timeout defaults to 10 minutes. The SDK and REST API
+support this external creation path, while CLI and Console creation are not v0
+surfaces.
 
-`POST /api/tokens/{id}/complete` accepts a Helmr API key or session bearer with `tokens.complete` permission for the token's project environment. Browser completion uses `POST /api/v1/tokens/{id}/complete` with the token's scoped `public_access_token`; provider callbacks use `POST /api/v1/tokens/{id}/callback/{secret}` and do not use CORS. Token id knowledge is not authorization. Completion responses are `{ "status": "completed" | "already_completed", "token": { ... } }`. Retrying the same canonical completion returns `already_completed`; completing with different data returns `409 token_completion_conflict` and never overwrites the token.
+`POST /api/tokens/{id}/complete` accepts a Helmr API key or session bearer with `tokens.complete` permission for the token's project environment. Browser completion uses `POST /api/public/tokens/{id}/complete` with the token's scoped `public_access_token`; provider callbacks use the creation response's `/api/token-callbacks/{id}/{secret}` URL and do not use CORS. Token ID knowledge alone is not authorization. Retrying the same canonical completion replays; completing with different data returns `409 token_completion_conflict` and never overwrites the accepted result.
 
-`POST /api/public-access-tokens` creates narrow browser capabilities bound to one stream scope. Its scope accepts a typed session address, for example `{ "session": { "type": "id", "id": "..." } }` or `{ "session": { "type": "external_id", "external_id": "..." } }`. API keys use the environment bound to the key; user/session auth should include top-level `project_id` and `environment_id` when resolving an external id. `session.input.send` tokens can call `POST /api/v1/sessions/{id}/inputs/{stream}` or `POST /api/v1/sessions/by-external-id/inputs/{stream}?external_id=...`. `session.output.read` tokens can call the matching output read routes. The public token's stored scope is still checked against the concrete session stream row, stream direction, and optional `correlation_id` before the token is consumed.
+Actor input and output are fixed durable channels. They are addressed by the
+Actor declaration plus exactly one Actor ID or key; callers never create or
+name channel resources. Public browser grants for Actor channels are deferred.
+The only public-access grant in v0 is `token.complete`.
 
-Worker routes include registration, activation, drain/status, execution lease/start/renew/release, log/event append, internal wait suspension, token creation, stream output append, metadata updates, and checkpoint ready/failed notifications. Worker registration and status responses include `worker_group_id`. Worker run leases and worker run payloads include `attempt_number`; this is the task attempt number, not the queue dispatch attempt.
+Worker routes include registration, activation, drain/status, execution
+lease/start/renew/release, log/event append, Actor input/output operations,
+internal wait suspension, token creation, metadata updates, and checkpoint
+ready/failed notifications.
 
-`GET /api/runs/{id}/events` returns JSON pages by default and streams SSE when `follow=1` or `Accept: text/event-stream` is present. Page cursors and SSE `id` values are opaque run event cursors.
+`GET /api/runs/{id}/events` returns one finite JSON page. Its cursor is opaque.
 
-`GET /api/runs/{id}/logs` returns the latest stdout/stderr snapshot by default. The response `cursor` is a run-wide opaque log cursor. When `follow=1` or `Accept: text/event-stream` is present, the same route streams `run_log` SSE records after the supplied cursor. Pass the cursor as `Last-Event-ID` or `?cursor=CURSOR` to continue after chunks already received.
+`GET /api/runs/{id}/logs` returns one finite page of stdout, stderr, and
+structured log records. The response cursor is opaque. Clients poll from the
+next cursor when they need to follow progress.
 
-Workspace routes manage durable workspace records and live materializations.
-`GET /api/workspaces/{workspace_id}/files/content?path=...` reads raw bytes
-from a ready workspace version. `GET /api/workspaces/{workspace_id}/files`
-lists direct children and `GET /api/workspaces/{workspace_id}/files/stat`
-returns one file entry. File reads use `source=current` by default, where
-`current` means the workspace's ready `current_version_id`. To read another
-ready version in the same workspace, pass `source=version&version_id=...`.
-`version_id` without `source=version` is rejected. `source=live` is reserved and
-returns not implemented until live file reads are available. Version routes list
-and retrieve ready versions only. File listing uses `limit` with a default of
-200 and a maximum of 500. Version listing uses `limit` with a default of 100 and
-a maximum of 200.
+Workspace routes expose create/ref/retrieve/delete, committed file reads, and
+one bounded basic exec. `GET /api/workspaces/{workspace_id}/files/content`
+reads raw bytes; the list and stat routes return committed file metadata.
 
-`POST /api/workspaces/{workspace_id}/execs` starts a write-capable command in
-the workspace. `POST /api/workspaces/{workspace_id}/pty` starts an interactive
-PTY. Exec stdout/stderr and PTY output routes return stored chunks by default
-and stream SSE when `follow=1` or `Accept: text/event-stream` is present. Pass
-the cursor as `Last-Event-ID` or `?cursor=N` to continue after chunks already
-received.
+`POST /api/workspaces/{workspace_id}/exec` executes one write-capable command
+and returns its bounded terminal stdout, stderr, and exit code. Process handles,
+PTYs, materialization controls, and public Workspace-version management are not
+v0 routes.
 
-`POST /api/schedules` creates or replaces an imperative schedule for the selected project environment. The request body uses required `deduplication_key`, `task`, and `cron`, plus optional `external_id`, `timezone`, `active`, and schedule run `options`. `deduplication_key` is the stable public key for the project-level logical schedule and selected environment instance. Schedule requests do not accept arbitrary payload, secret bindings, or user-supplied idempotency options; scheduled runs receive Helmr-generated schedule metadata. `PUT /api/schedules/{id}` replaces the imperative schedule definition and selected environment instance settings and does not accept `deduplication_key`. Declarative schedules are synchronized from deployments and return `400 Bad Request` for imperative edit, activate, deactivate, or delete routes.
+Schedules are declared only with `schedules.task()` in source. Deployment
+promotion reconciles them atomically. Authenticated Schedule routes are
+read-only list/retrieve operations; timing or lifecycle changes require another
+source Deployment promotion.
 
-`POST /api/deployments` records the API version, CLI version, SDK version, bundle format version, and worker protocol version used to create the deployment. Deployment responses include those fields plus the immutable deployment `version`. Promotion is separate from creation; promoting a deployment moves the selected environment's current deployment pointer.
+`POST /api/deployments` records the API and worker-protocol versions used to create the deployment. Deployment responses include those fields plus the immutable deployment `version`. Promotion is separate from creation; promoting a deployment moves the selected environment's current deployment pointer.

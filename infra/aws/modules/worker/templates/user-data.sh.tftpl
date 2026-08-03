@@ -4,12 +4,7 @@ umask 077
 date +%s >/run/helmr-launch-started-at
 
 install -d -m 0750 -o root -g root /etc/helmr
-cat >/etc/helmr/guest-resolv.conf <<'EOF'
-nameserver 1.1.1.1
-nameserver 8.8.8.8
-EOF
-chown root:root /etc/helmr/guest-resolv.conf
-chmod 0644 /etc/helmr/guest-resolv.conf
+install -d -m 0700 -o root -g root /run/helmr
 
 metadata_url=http://169.254.169.254/latest
 metadata_token() {
@@ -32,16 +27,168 @@ ${key}=${value}
 EOF
 
 checkpoint_key="$(aws secretsmanager get-secret-value --secret-id '${checkpoint_key_secret_arn}' --query SecretString --output text)"
+worker_resource_id="$(metadata_get meta-data/instance-id)"
+worker_enrollment_secret_file=/run/helmr/worker-enrollment-secret
 
 {
   printf 'AWS_REGION=%s\n' "$aws_region"
   printf 'AWS_DEFAULT_REGION=%s\n' "$aws_region"
-  printf 'HELMR_CHECKPOINT_ENCRYPTION_KEY=%s\n' "$checkpoint_key"
+  printf 'CHECKPOINT_ENCRYPTION_KEY=%s\n' "$checkpoint_key"
+  printf 'HELMR_WORKER_ENROLLMENT_SECRET_FILE=%s\n' "$worker_enrollment_secret_file"
+  printf 'HELMR_WORKER_RESOURCE_ID=%s\n' "$worker_resource_id"
 } >>"$env_tmp"
 
 chown root:root "$env_tmp"
 chmod 0600 "$env_tmp"
 mv "$env_tmp" /etc/helmr/worker.env
+
+cat >/usr/local/sbin/helmr-worker-enrollment-secret <<'EOF'
+#!/bin/sh
+set -eu
+umask 077
+
+export AWS_REGION='${aws_region}'
+export AWS_DEFAULT_REGION="$AWS_REGION"
+secret="$(aws secretsmanager get-secret-value --secret-id '${worker_enrollment_secret_arn}' --query SecretString --output text)"
+install -d -m 0700 -o root -g root /run/helmr
+secret_tmp="$(mktemp /run/helmr/worker-enrollment-secret.XXXXXX)"
+printf '%s' "$secret" >"$secret_tmp"
+chmod 0400 "$secret_tmp"
+mv "$secret_tmp" /run/helmr/worker-enrollment-secret
+unset secret
+EOF
+chmod 0700 /usr/local/sbin/helmr-worker-enrollment-secret
+
+cat >/etc/systemd/system/helmr-worker-enrollment-secret.service <<'EOF'
+[Unit]
+Description=Materialize the Helmr Worker enrollment secret
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/helmr-worker-enrollment-secret
+Restart=on-failure
+RestartSec=30s
+EOF
+
+%{ if worker_supports_build ~}
+storage_dir=/var/lib/helmr/storage
+cache_mount=/var/lib/helmr/cache
+scratch_mount=/var/lib/helmr/scratch
+cache_backing="$storage_dir/build-cache.ext4"
+scratch_backing="$storage_dir/build-scratch.ext4"
+cache_usable_bytes=$((${build_cache_mib} * 1048576))
+scratch_usable_bytes=$((${build_scratch_mib} * 1048576))
+cache_headroom_bytes=$((512 * 1048576 + cache_usable_bytes / 100))
+scratch_headroom_bytes=$((512 * 1048576 + scratch_usable_bytes / 100))
+cache_raw_bytes=$((cache_usable_bytes + cache_headroom_bytes))
+scratch_raw_bytes=$((scratch_usable_bytes + scratch_headroom_bytes))
+fixed_reserve_bytes=$((${worker_disk_reserve_mib} * 1048576))
+required_free_bytes=$fixed_reserve_bytes
+
+for path in "$storage_dir" "$cache_mount" "$scratch_mount" "$cache_backing" "$scratch_backing"; do
+  [ ! -L "$path" ] || {
+    echo "$path must not be a symlink" >&2
+    exit 1
+  }
+done
+install -d -m 0700 -o root -g root "$storage_dir"
+install -d -m 0755 -o root -g root "$cache_mount" "$scratch_mount"
+for mount_path in "$cache_mount" "$scratch_mount"; do
+  if ! mountpoint -q "$mount_path" &&
+    find "$mount_path" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+    echo "$mount_path contains data on the parent filesystem" >&2
+    exit 1
+  fi
+done
+[ -e "$cache_backing" ] || required_free_bytes=$((required_free_bytes + cache_raw_bytes))
+[ -e "$scratch_backing" ] || required_free_bytes=$((required_free_bytes + scratch_raw_bytes))
+parent_available_bytes="$(df -B1 --output=avail /var/lib/helmr | tail -n 1 | tr -d ' ')"
+[ "$parent_available_bytes" -ge "$required_free_bytes" ] || {
+  echo "the root data extent cannot allocate both build filesystems while preserving its fixed reserve" >&2
+  exit 1
+}
+
+prepare_backing() {
+  path="$1"
+  raw_bytes="$2"
+
+  if [ -e "$path" ]; then
+    [ -f "$path" ] || {
+      echo "$path is not a regular backing file" >&2
+      exit 1
+    }
+    [ "$(stat -c %s "$path")" -eq "$raw_bytes" ] || {
+      echo "$path has an unexpected size; build filesystems are never resized in place" >&2
+      exit 1
+    }
+  else
+    fallocate --posix -l "$raw_bytes" "$path"
+    mkfs.ext4 -F -q -m 0 -T largefile4 \
+      -E nodiscard,lazy_itable_init=0,lazy_journal_init=0 "$path"
+  fi
+
+  allocated_blocks=$(stat -c %b "$path")
+  allocated_block_bytes=$(stat -c %B "$path")
+  allocated_bytes=$((allocated_blocks * allocated_block_bytes))
+  [ "$allocated_bytes" -ge "$raw_bytes" ] || {
+    echo "$path allocation is smaller than its configured raw size" >&2
+    exit 1
+  }
+  [ "$(blkid -p -s TYPE -o value "$path")" = ext4 ] || {
+    echo "$path is not an ext4 filesystem" >&2
+    exit 1
+  }
+}
+
+prepare_backing "$cache_backing" "$cache_raw_bytes"
+prepare_backing "$scratch_backing" "$scratch_raw_bytes"
+
+parent_available_bytes="$(df -B1 --output=avail /var/lib/helmr | tail -n 1 | tr -d ' ')"
+[ "$parent_available_bytes" -ge "$fixed_reserve_bytes" ] || {
+  echo "the root data extent did not preserve its fixed reserve after build filesystem allocation" >&2
+  exit 1
+}
+
+cat >/etc/systemd/system/var-lib-helmr-cache.mount <<'EOF'
+[Unit]
+Description=Helmr build cache filesystem
+Before=${worker_service_name}.service
+
+[Mount]
+What=/var/lib/helmr/storage/build-cache.ext4
+Where=/var/lib/helmr/cache
+Type=ext4
+Options=loop,nosuid,nodev,nodiscard
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat >/etc/systemd/system/var-lib-helmr-scratch.mount <<'EOF'
+[Unit]
+Description=Helmr build scratch filesystem
+Before=${worker_service_name}.service
+
+[Mount]
+What=/var/lib/helmr/storage/build-scratch.ext4
+Where=/var/lib/helmr/scratch
+Type=ext4
+Options=loop,nosuid,nodev,nodiscard
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+install -d -m 0755 "/etc/systemd/system/${worker_service_name}.service.d"
+cat >"/etc/systemd/system/${worker_service_name}.service.d/20-build-storage.conf" <<'EOF'
+[Unit]
+RequiresMountsFor=/var/lib/helmr/cache /var/lib/helmr/scratch
+After=var-lib-helmr-cache.mount var-lib-helmr-scratch.mount
+EOF
+%{ endif ~}
 
 cat >/usr/local/bin/helmr-asg-lifecycle <<'EOF'
 #!/bin/sh
@@ -120,12 +267,9 @@ complete_launch() {
   if [ -z "$launch_hook" ]; then
     return 0
   fi
-%{ if worker_supports_build ~}
-  systemctl is-active --quiet '${buildkit_service_name}'
-%{ endif ~}
-  systemctl is-active --quiet '${worker_service_name}'
+  systemctl is-active --quiet '${worker_service_name}' || return 1
   load_worker_env
-  "$worker_binary" status >/dev/null
+  "$worker_binary" status >/dev/null || return 1
   complete_lifecycle_action "$launch_hook" CONTINUE
 }
 
@@ -190,24 +334,10 @@ esac
 EOF
 chmod 0755 /usr/local/bin/helmr-asg-lifecycle
 
-install -d -m 0755 /etc/systemd/system/'${buildkit_service_name}'.service.d
-cat >/etc/systemd/system/'${buildkit_service_name}'.service.d/10-network-policy.conf <<'EOF'
-[Service]
-BindReadOnlyPaths=/etc/helmr/guest-resolv.conf:/etc/resolv.conf
-ExecStart=
-ExecStart=/usr/local/bin/rootlesskit --net=slirp4netns --cidr=${buildkit_slirp_cidr} --copy-up=/etc --disable-host-loopback /usr/local/bin/buildkitd --addr unix:///run/helmr/buildkit/buildkitd.sock --root /var/lib/helmr/buildkit --oci-worker=true --oci-worker-snapshotter=fuse-overlayfs
-%{ for cidr in network_blocked_ipv4_cidrs ~}
-IPAddressDeny=${cidr}
-%{ endfor ~}
-%{ for cidr in network_blocked_ipv6_cidrs ~}
-IPAddressDeny=${cidr}
-%{ endfor ~}
-EOF
-
 cat >/etc/systemd/system/helmr-asg-lifecycle.service <<'EOF'
 [Unit]
 Description=Helmr Auto Scaling lifecycle integration
-After=network-online.target%{ if worker_supports_build } ${buildkit_service_name}.service%{ endif } ${worker_service_name}.service
+After=network-online.target ${worker_service_name}.service
 Wants=network-online.target
 
 [Service]
@@ -222,9 +352,59 @@ EOF
 
 systemctl daemon-reload
 %{ if worker_supports_build ~}
-systemctl enable --now '${buildkit_service_name}'
-%{ else ~}
-systemctl disable --now '${buildkit_service_name}' || true
+systemctl enable --now var-lib-helmr-cache.mount var-lib-helmr-scratch.mount
+
+cache_source="$(findmnt -n -o SOURCE --target /var/lib/helmr/cache)"
+scratch_source="$(findmnt -n -o SOURCE --target /var/lib/helmr/scratch)"
+cache_device="$(findmnt -n -o MAJ:MIN --target /var/lib/helmr/cache)"
+scratch_device="$(findmnt -n -o MAJ:MIN --target /var/lib/helmr/scratch)"
+parent_device="$(findmnt -n -o MAJ:MIN --target /var/lib/helmr)"
+[ "$cache_source" != "$scratch_source" ] &&
+  [ "$cache_device" != "$scratch_device" ] &&
+  [ "$cache_device" != "$parent_device" ] &&
+  [ "$scratch_device" != "$parent_device" ] || {
+  echo "build cache and scratch must be distinct mounted filesystems" >&2
+  exit 1
+}
+losetup -j "$cache_backing" | cut -d: -f1 | grep -Fx "$cache_source" >/dev/null || {
+  echo "build cache mount source does not match its backing file" >&2
+  exit 1
+}
+losetup -j "$scratch_backing" | cut -d: -f1 | grep -Fx "$scratch_source" >/dev/null || {
+  echo "build scratch mount source does not match its backing file" >&2
+  exit 1
+}
+[ "$(df -B1 --output=avail "$cache_mount" | tail -n 1 | tr -d ' ')" -ge "$cache_usable_bytes" ] || {
+  echo "build cache filesystem has less usable capacity than configured" >&2
+  exit 1
+}
+[ "$(df -B1 --output=avail "$scratch_mount" | tail -n 1 | tr -d ' ')" -ge "$scratch_usable_bytes" ] || {
+  echo "build scratch filesystem has less usable capacity than configured" >&2
+  exit 1
+}
+for path in "$scratch_mount/worker" "$scratch_mount/jailer"; do
+  [ ! -L "$path" ] || {
+    echo "$path must not be a symlink" >&2
+    exit 1
+  }
+done
+install -d -m 0755 "$scratch_mount/worker" "$scratch_mount/jailer"
+
+"${worker_binary_path}" release install \
+  --store '${platform_store_uri}' \
+  --digest '${build_policy_digest}' \
+  --output /etc/helmr/build-policy.json
 %{ endif ~}
+install -d -m 0755 '/etc/systemd/system/${worker_service_name}.service.d'
+cat >'/etc/systemd/system/${worker_service_name}.service.d/10-entry.conf' <<'EOF'
+[Unit]
+Wants=helmr-worker-enrollment-secret.service
+After=helmr-worker-enrollment-secret.service
+
+[Service]
+ExecStart=
+ExecStart=${worker_binary_path}
+EOF
+systemctl daemon-reload
 systemctl enable --now '${worker_service_name}'
 systemctl enable --now helmr-asg-lifecycle.service

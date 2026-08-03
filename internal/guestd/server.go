@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -17,20 +16,14 @@ import (
 )
 
 type Config struct {
-	AdapterRuntimePath  string
-	AdapterRegisterPath string
-	AdapterPath         string
-	AdapterBundlePath   string
-	VsockPort           uint
-	HealthPort          uint
+	Profile    string
+	VsockPort  uint
+	HealthPort uint
 }
 
 func ParseFlags() Config {
 	var cfg Config
-	flag.StringVar(&cfg.AdapterRuntimePath, "adapter-runtime-path", "/usr/bin/node", "adapter runtime executable path")
-	flag.StringVar(&cfg.AdapterRegisterPath, "adapter-register-path", "/opt/helmr/adapter/register.mjs", "adapter runtime register hook path")
-	flag.StringVar(&cfg.AdapterPath, "adapter-path", "/opt/helmr/adapter/main.js", "adapter entrypoint path")
-	flag.StringVar(&cfg.AdapterBundlePath, "adapter-bundle-path", "/opt/helmr-adapter", "adapter bundle path")
+	flag.StringVar(&cfg.Profile, "profile", "", "guest execution profile")
 	flag.UintVar(&cfg.VsockPort, "vsock-port", 5000, "guest task vsock port")
 	flag.UintVar(&cfg.HealthPort, "health-port", 5001, "health check vsock port")
 	flag.Parse()
@@ -38,11 +31,9 @@ func ParseFlags() Config {
 }
 
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
-	if strings.TrimSpace(cfg.AdapterRuntimePath) == "" {
-		return errors.New("adapter runtime path is required")
-	}
-	if strings.TrimSpace(cfg.AdapterPath) == "" {
-		return errors.New("adapter path is required")
+	profile, err := parseGuestProfile(cfg.Profile)
+	if err != nil {
+		return err
 	}
 	healthListener, err := vsock.Listen(uint32(cfg.HealthPort), nil)
 	if err != nil {
@@ -62,6 +53,16 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 
 	registry := newWaitingRunRegistry()
 	workspaceRegistry := newWorkspaceOperationRegistry()
+	if profile != ordinaryGuestProfile {
+		return serveOneShotGuest(
+			ctx,
+			runListener,
+			cfg,
+			logger,
+			registry,
+			workspaceRegistry,
+		)
+	}
 	for {
 		conn, err := runListener.Accept()
 		if err != nil {
@@ -86,6 +87,38 @@ func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
 			}
 		}()
 	}
+}
+
+func serveOneShotGuest(
+	ctx context.Context,
+	listener net.Listener,
+	cfg Config,
+	logger *slog.Logger,
+	registry *waitingRunRegistry,
+	workspaceRegistry *workspaceOperationRegistry,
+) (retErr error) {
+	conn, err := listener.Accept()
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("accept build guest connection: %w", err)
+	}
+	defer func() {
+		retErr = errors.Join(retErr, conn.Close())
+	}()
+	keepOpen, err := handleConnection(
+		ctx,
+		conn,
+		cfg,
+		logger,
+		registry,
+		workspaceRegistry,
+	)
+	if keepOpen {
+		return errors.New("build guest attempted to retain its one-shot connection")
+	}
+	return err
 }
 
 func serveHealth(listener net.Listener, ready func() bool, logger *slog.Logger) {

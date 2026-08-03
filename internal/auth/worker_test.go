@@ -16,11 +16,11 @@ func TestWorkerTokenRoundTrip(t *testing.T) {
 	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
 	payload := validWorkerClaims(now)
 
-	token, err := IssueWorkerToken(workerSecret(), payload)
+	token, err := IssueWorkerToken(workerSigningKey(), payload)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := VerifyWorkerToken(workerSecret(), token, now.Add(time.Minute))
+	got, err := VerifyWorkerToken(workerSigningKey(), token, now.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestWorkerTokenRoundTrip(t *testing.T) {
 
 func TestWorkerTokenUsesCanonicalClaims(t *testing.T) {
 	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
-	token, err := IssueWorkerToken(workerSecret(), validWorkerClaims(now))
+	token, err := IssueWorkerToken(workerSigningKey(), validWorkerClaims(now))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,30 +84,30 @@ func TestWorkerTokenValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			claims := validWorkerClaims(now)
 			tt.edit(&claims)
-			_, err := IssueWorkerToken(workerSecret(), claims)
+			_, err := IssueWorkerToken(workerSigningKey(), claims)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want %q", err, tt.want)
 			}
 		})
 	}
 
-	if _, err := IssueWorkerToken([]byte("short"), validWorkerClaims(now)); !errors.Is(err, ErrWeakWorkerTokenSecret) {
+	if _, err := IssueWorkerToken([]byte("short"), validWorkerClaims(now)); !errors.Is(err, ErrInvalidWorkerTokenSigningKey) {
 		t.Fatalf("weak secret error = %v", err)
 	}
-	if _, err := VerifyWorkerToken(workerSecret(), " ", now); !errors.Is(err, ErrInvalidWorkerToken) {
+	if _, err := VerifyWorkerToken(workerSigningKey(), " ", now); !errors.Is(err, ErrInvalidWorkerToken) {
 		t.Fatalf("empty token error = %v", err)
 	}
-	if _, err := VerifyWorkerToken(workerSecret(), "not-a-token", now); !errors.Is(err, ErrInvalidWorkerToken) {
+	if _, err := VerifyWorkerToken(workerSigningKey(), "not-a-token", now); !errors.Is(err, ErrInvalidWorkerToken) {
 		t.Fatalf("malformed token error = %v", err)
 	}
-	if _, err := VerifyWorkerToken(workerSecret(), "not-a-token", time.Time{}); !errors.Is(err, ErrInvalidWorkerToken) {
+	if _, err := VerifyWorkerToken(workerSigningKey(), "not-a-token", time.Time{}); !errors.Is(err, ErrInvalidWorkerToken) {
 		t.Fatalf("zero time error = %v", err)
 	}
 }
 
 func TestVerifyWorkerTokenRejectsInvalidTokens(t *testing.T) {
 	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
-	valid, err := IssueWorkerToken(workerSecret(), validWorkerClaims(now))
+	valid, err := IssueWorkerToken(workerSigningKey(), validWorkerClaims(now))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,27 +122,27 @@ func TestVerifyWorkerTokenRejectsInvalidTokens(t *testing.T) {
 		{"expired", func() string { return valid }, now.Add(time.Hour), ErrExpiredWorkerToken},
 		{"tampered", func() string { return mutateJWTClaim(t, valid, "worker_epoch", float64(8)) }, now.Add(time.Minute), ErrInvalidWorkerToken},
 		{"wrong protocol", func() string {
-			return signWorkerClaims(t, workerSecret(), now, func(c *workerJWTClaims) { c.ProtocolVersion = "helmr.worker.v1" })
+			return signWorkerClaims(t, workerSigningKey(), now, func(c *workerJWTClaims) { c.ProtocolVersion = "helmr.worker.v1" })
 		}, now.Add(time.Minute), ErrInvalidWorkerToken},
 		{"unknown role", func() string {
-			return signWorkerClaims(t, workerSecret(), now, func(c *workerJWTClaims) { c.Roles = []string{"admin"} })
+			return signWorkerClaims(t, workerSigningKey(), now, func(c *workerJWTClaims) { c.Roles = []string{"admin"} })
 		}, now.Add(time.Minute), ErrInvalidWorkerToken},
 		{"wrong subject", func() string {
-			return signWorkerClaims(t, workerSecret(), now, func(c *workerJWTClaims) { c.Subject = "worker-2" })
+			return signWorkerClaims(t, workerSigningKey(), now, func(c *workerJWTClaims) { c.Subject = "worker-2" })
 		}, now.Add(time.Minute), ErrInvalidWorkerToken},
 		{"extra audience", func() string {
-			return signWorkerClaims(t, workerSecret(), now, func(c *workerJWTClaims) { c.Audience = append(c.Audience, "other") })
+			return signWorkerClaims(t, workerSigningKey(), now, func(c *workerJWTClaims) { c.Audience = append(c.Audience, "other") })
 		}, now.Add(time.Minute), ErrInvalidWorkerToken},
-		{"wrong type", func() string { return signWorkerClaimsWithType(t, workerSecret(), now, "at+jwt") }, now.Add(time.Minute), ErrInvalidWorkerToken},
+		{"wrong type", func() string { return signWorkerClaimsWithType(t, workerSigningKey(), now, "at+jwt") }, now.Add(time.Minute), ErrInvalidWorkerToken},
 		{"future issued at", func() string {
-			return signWorkerClaims(t, workerSecret(), now, func(c *workerJWTClaims) { c.IssuedAt = jwt.NewNumericDate(now.Add(time.Minute)) })
+			return signWorkerClaims(t, workerSigningKey(), now, func(c *workerJWTClaims) { c.IssuedAt = jwt.NewNumericDate(now.Add(time.Minute)) })
 		}, now, ErrInvalidWorkerToken},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			secret := workerSecret()
+			secret := workerSigningKey()
 			if tt.name == "bad signature" {
-				secret = otherWorkerTokenSecret()
+				secret = otherWorkerTokenSigningKey()
 			}
 			_, err := VerifyWorkerToken(secret, tt.token(), tt.at)
 			if !errors.Is(err, tt.want) {
@@ -224,5 +224,5 @@ func decodeJWTPart(t *testing.T, raw string) map[string]any {
 	return result
 }
 
-func workerSecret() []byte           { return []byte("01234567890123456789012345678901") }
-func otherWorkerTokenSecret() []byte { return []byte("abcdefabcdefabcdefabcdefabcdef12") }
+func workerSigningKey() []byte           { return []byte("01234567890123456789012345678901") }
+func otherWorkerTokenSigningKey() []byte { return []byte("abcdefabcdefabcdefabcdefabcdef12") }

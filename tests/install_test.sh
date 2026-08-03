@@ -13,11 +13,6 @@ assert_file() {
   [ -f "$path" ] || fail "expected file $path"
 }
 
-assert_not_exists() {
-  local path="$1"
-  [ ! -e "$path" ] || fail "expected $path to be absent"
-}
-
 assert_equal() {
   local expected="$1"
   local actual="$2"
@@ -53,46 +48,9 @@ test_binary_install_copies_only_binary() {
   HELMR_INSTALL_DIR="$tmp/install" \
     HOME="$tmp/home" \
     SHELL=/bin/sh \
-    "$repo_root/install" --binary "$tmp/source/helmr" --no-modify-path >/dev/null
+  "$repo_root/install" --binary "$tmp/source/helmr" --no-modify-path >/dev/null
 
   assert_file "$tmp/install/helmr"
-  assert_not_exists "$tmp/install/adapter"
-}
-
-test_binary_install_removes_existing_sidecar_adapter() {
-  local tmp
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
-
-  mkdir -p "$tmp/source" "$tmp/home" "$tmp/install/adapter"
-  write_helmr_binary "$tmp/source/helmr"
-  printf 'old adapter\n' > "$tmp/install/adapter/main.js"
-
-  HELMR_INSTALL_DIR="$tmp/install" \
-    HOME="$tmp/home" \
-    SHELL=/bin/sh \
-    "$repo_root/install" --binary "$tmp/source/helmr" --no-modify-path >/dev/null
-
-  assert_file "$tmp/install/helmr"
-  assert_not_exists "$tmp/install/adapter"
-}
-
-test_binary_install_accepts_missing_sidecar_adapter() {
-  local tmp
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
-
-  mkdir -p "$tmp/source/adapter" "$tmp/home"
-  write_helmr_binary "$tmp/source/helmr"
-  printf 'stale sidecar\n' > "$tmp/source/adapter/main.js"
-
-  HELMR_INSTALL_DIR="$tmp/install" \
-    HOME="$tmp/home" \
-    SHELL=/bin/sh \
-    "$repo_root/install" --binary "$tmp/source/helmr" --no-modify-path >/dev/null
-
-  assert_file "$tmp/install/helmr"
-  assert_not_exists "$tmp/install/adapter"
 }
 
 write_release_fixture() {
@@ -211,7 +169,6 @@ JSON
 
   assert_equal "https://github.com/helmrdotdev/helmr/releases/download/v9.8.7/helmr-linux-amd64.tar.gz" "$(cat "$tmp/download-url")" "download url"
   assert_file "$tmp/install/helmr"
-  assert_not_exists "$tmp/install/adapter"
 }
 
 test_same_version_elsewhere_on_path_does_not_skip_install() {
@@ -233,26 +190,6 @@ test_same_version_elsewhere_on_path_does_not_skip_install() {
 
   assert_equal "https://github.com/helmrdotdev/helmr/releases/download/v9.8.7/helmr-linux-amd64.tar.gz" "$(cat "$tmp/download-url")" "download url"
   assert_file "$tmp/install/helmr"
-  assert_not_exists "$tmp/install/adapter"
-}
-
-test_same_version_installed_path_removes_existing_sidecar_adapter() {
-  local tmp
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
-
-  mkdir -p "$tmp/install/adapter" "$tmp/home"
-  write_helmr_binary "$tmp/install/helmr" "v9.8.7"
-  printf 'old adapter\n' > "$tmp/install/adapter/main.js"
-
-  PATH="$tmp/install:/usr/bin:/bin:/usr/sbin:/sbin" \
-    HELMR_INSTALL_DIR="$tmp/install" \
-    HOME="$tmp/home" \
-    SHELL=/bin/sh \
-    "$repo_root/install" --version v9.8.7 --no-modify-path >/dev/null
-
-  assert_file "$tmp/install/helmr"
-  assert_not_exists "$tmp/install/adapter"
 }
 
 test_path_snippet_quotes_install_dir_and_handles_spaced_home() {
@@ -273,10 +210,7 @@ test_path_snippet_quotes_install_dir_and_handles_spaced_home() {
 }
 
 test_binary_install_copies_only_binary
-test_binary_install_accepts_missing_sidecar_adapter
-test_binary_install_removes_existing_sidecar_adapter
 test_latest_release_skips_non_cli_release
 test_same_version_elsewhere_on_path_does_not_skip_install
-test_same_version_installed_path_removes_existing_sidecar_adapter
 test_path_snippet_quotes_install_dir_and_handles_spaced_home
 printf 'ok - installer tests\n'

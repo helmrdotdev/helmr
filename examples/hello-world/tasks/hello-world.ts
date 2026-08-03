@@ -1,4 +1,4 @@
-import { cache, image, sandbox, source, task } from "@helmr/sdk"
+import { image, source, task, workspace } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 import { z } from "zod"
 
@@ -8,14 +8,12 @@ const base = image("hello-world")
   .run(["npm", "install", "-g", "bun@1.3.10"])
   .copy("/opt/helmr-task/package.json", source.file("package.json"))
   .workdir("/opt/helmr-task")
-  .run(["bun", "install"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("hello-world-bun") }],
-  })
+  .run(["bun", "install"])
   .workdir("/workspace")
 
-const sbx = sandbox("hello-world")
+export const helloWorldWorkspace = workspace("hello-world")
   .image(base)
-  .resources({ cpu: 1, memory: "1Gi" })
+  .resources({ cpu: 1, memory: "1GiB" })
 
 const payload = z.object({
   name: z.string().optional(),
@@ -23,8 +21,7 @@ const payload = z.object({
 
 export const helloWorld = task({
   id: "hello-world",
-  sandbox: sbx,
-  maxDuration: 300,
+  maxDuration: "5m",
   payload,
   run: async (payload, ctx) => {
     const name = payload.name?.trim() || "Helmr"

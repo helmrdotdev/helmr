@@ -68,27 +68,32 @@ const API_KEY_SCOPE_OPTIONS: {
   {
     value: "runs:manage",
     label: "Manage runs",
-    description: "Allow automation to cancel runs and sessions.",
+    description: "Allow automation to cancel Runs.",
   },
   {
-    value: "session-streams:read",
-    label: "Read streams",
-    description: "Allow automation to list session streams and read stream records.",
+    value: "actors:read",
+    label: "Read actors",
+    description: "Allow automation to read Actor state in the selected project and environment.",
   },
   {
-    value: "session-input:send",
-    label: "Send input",
-    description: "Allow automation to append input stream records in the selected environment.",
+    value: "actors:start",
+    label: "Start actors",
+    description: "Allow automation to start declared Actors.",
   },
   {
-    value: "session-output:append",
-    label: "Append output",
-    description: "Allow automation to append output stream records in the selected environment.",
+    value: "actors-input:send",
+    label: "Send actor input",
+    description: "Allow automation to append durable input to Actors.",
+  },
+  {
+    value: "actors-lifecycle:manage",
+    label: "Manage actor lifecycle",
+    description: "Allow automation to suspend and terminate Actors.",
   },
   {
     value: "secrets:write",
     label: "Manage secrets",
-    description: "Allow automation to list, create, update, and delete secrets in the selected project and environment.",
+    description: "Allow automation to list, create, rotate, and revoke secrets in the selected project and environment.",
   },
   {
     value: "tokens:create",
@@ -111,39 +116,29 @@ const API_KEY_SCOPE_OPTIONS: {
     description: "Allow automation to cancel pending tokens.",
   },
   {
-    value: "workspace-lifecycle:manage",
-    label: "Manage workspaces",
-    description: "Allow automation to create, update, materialize, stop, and delete workspaces.",
+    value: "workspaces:create",
+    label: "Create workspaces",
+    description: "Allow automation to create declared Workspaces.",
+  },
+  {
+    value: "workspaces:read",
+    label: "Read workspaces",
+    description: "Allow automation to read Workspace state and configuration.",
+  },
+  {
+    value: "workspaces:delete",
+    label: "Delete workspaces",
+    description: "Allow automation to delete Workspaces.",
+  },
+  {
+    value: "workspace-files:read",
+    label: "Read workspace files",
+    description: "Allow automation to read committed Workspace files.",
   },
   {
     value: "workspace-exec:create",
-    label: "Start execs",
-    description: "Allow automation to start workspace execs.",
-  },
-  {
-    value: "workspace-exec:read",
-    label: "Read execs",
-    description: "Allow automation to read workspace exec metadata and output.",
-  },
-  {
-    value: "workspace-exec:manage",
-    label: "Manage execs",
-    description: "Allow automation to manage workspace exec lifecycle.",
-  },
-  {
-    value: "workspace-pty:create",
-    label: "Create PTYs",
-    description: "Allow automation to create workspace PTY sessions.",
-  },
-  {
-    value: "workspace-pty:read",
-    label: "Read PTYs",
-    description: "Allow automation to read workspace PTY metadata and output.",
-  },
-  {
-    value: "workspace-pty:manage",
-    label: "Manage PTYs",
-    description: "Allow automation to manage workspace PTY lifecycle.",
+    label: "Run workspace commands",
+    description: "Allow automation to run bounded synchronous BasicExec commands.",
   },
   {
     value: "tasks:deploy",

@@ -15,12 +15,11 @@ for contributors, early adopters, and self-hosted evaluation.
 
 ## What Helmr provides
 
-- TypeScript tasks that declare images, sandboxes, resources, secrets, streams,
-  tokens, timers,
-  and run logic
+- TypeScript Tasks and Actors with declared Workspaces, Secrets, Tokens,
+  timers, and run logic
 - Durable writable workspaces mounted inside isolated Linux guests
-- Durable stream input, external completion tokens, and long timers before
-  reviews, patches, or other side effects
+- Durable Actor input/output, external completion Tokens, and long timers
+  before reviews, patches, or other side effects
 - Run status, logs, events, payloads, and history in the control plane
 - Task-declared secrets injected only at run time
 - A runtime boundary you own: your AWS account, your integrations, your workers
@@ -75,14 +74,14 @@ Use that URL to create a local owner session and inspect seeded runs.
 
 ## Define a task
 
-A task binds a sandbox, TypeScript run logic, declared secrets, and optional
-streams, tokens, and timers. The code inside the task can call any agent SDK or
-tool; Helmr owns the adapter protocol around it.
+A Task binds JavaScript run logic to an explicit Workspace. You may author it
+in TypeScript and compile it with the project's own build. The code inside the
+Task can call any agent SDK or tool; Helmr owns the adapter protocol around it.
 
 Create a task project with `helmr.config.ts` and one or more task modules:
 
 ```ts
-import { cache, image, sandbox, source, task, tokens } from "@helmr/sdk"
+import { image, source, task, tokens, workspace } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 import { z } from "zod"
 
@@ -95,24 +94,20 @@ const base = image("repo-agent")
   .workdir("/workspace")
   .run(["npm", "install", "-g", "bun@1.3.10"])
   .copy("/workspace/package.json", source.file("package.json"))
-  .run(["bun", "install"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("repo-agent-bun") }],
-  })
+  .run(["bun", "install"])
   .run([
     "sh",
     "-ceu",
     "apt-get update && apt-get install -y git ripgrep",
   ])
 
-const sbx = sandbox("repo-agent")
+export const repoWorkspace = workspace("github-pr-review")
   .image(base)
-  .resources({ cpu: 2, memory: "4Gi" })
+  .resources({ cpu: 2, memory: "4GiB" })
 
 export const reviewPr = task({
   id: "review-pr",
-  sandbox: sbx,
-  maxDuration: 900,
-  secrets: [{ name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" }],
+  maxDuration: "15m",
   payload,
   run: async (event, ctx) => {
     // Call your agent SDK or review tooling here.
@@ -141,8 +136,7 @@ export const reviewPr = task({
 import { defineConfig } from "@helmr/sdk"
 
 export default defineConfig({
-  project: "github-pr-review",
-  dirs: ["./tasks"],
+  dirs: ["tasks"],
 })
 ```
 
@@ -150,18 +144,24 @@ Tasks start in the mounted workspace directory. Use relative paths for workspace
 files; absolute paths keep normal Linux container semantics.
 
 See [examples/](examples/) for deployable task projects, including dependency
-caching, CLI tooling, stream/token/timer waits, task secrets, and GitHub PR review
+caching, CLI tooling, Token/timer waits, Task Secrets, and GitHub PR review
 flows.
 
 ## Run A Task
 
-Remote runs execute a deployed task in an attached writable workspace. If no
-workspace is supplied, Helmr creates one from the deployed task's sandbox:
+Remote Runs execute a deployed Task in an existing writable Workspace:
 
 ```sh
-helmr deploy PATH/TO/TASK_PROJECT
+helmr deploy PATH/TO/TASK_PROJECT --project PROJECT --env ENVIRONMENT
 
-helmr session start review-pr \
+WORKSPACE_ID="$(helmr workspace create github-pr-review \
+  --key review-pr-123 \
+  --secret-env OPENAI_API_KEY=OPENAI_API_KEY \
+  --idempotency-key review-pr-123-workspace)"
+
+helmr task start review-pr \
+  --workspace "${WORKSPACE_ID}" \
+  --idempotency-key review-pr-123-run \
   --payload-json '{"owner":"OWNER","repo":"REPO","prNumber":123}'
 ```
 
@@ -172,15 +172,15 @@ GitHub is a task integration, not a required run source.
 ## Payloads and secrets
 
 Payload is audit data. Helmr persists it in plaintext in the database, run
-events, and event streams. Do not put tokens, API keys, credentials, or sensitive
+events, and telemetry. Do not put tokens, API keys, credentials, or sensitive
 personal data in payloads.
 
 Tasks declare the Helmr secret names they need and where each value appears
 inside the guest, such as an environment variable:
 
 ```sh
-printf '%s' "$OPENAI_API_KEY" | helmr secret set OPENAI_API_KEY
-helmr session start my-task
+printf '%s' "$OPENAI_API_KEY" | helmr secret create OPENAI_API_KEY
+helmr task start my-task --workspace WORKSPACE_ID
 ```
 
 Runs never receive secret values or binding maps. The deployed task definition is
@@ -190,7 +190,7 @@ environment when the run starts.
 ## Checkpoint encryption
 
 Checkpoint artifacts are encrypted before leaving the worker staging directory.
-Workers require `HELMR_CHECKPOINT_ENCRYPTION_KEY`, a base64-encoded 32-byte key.
+Workers require `CHECKPOINT_ENCRYPTION_KEY`, a base64-encoded 32-byte key.
 Use the same key for workers that must restore the same checkpoint state:
 
 ```sh
@@ -223,7 +223,6 @@ nix run .#ci-go-race
 nix run .#ci-linux-compile
 nix run .#ci-linux-lint
 nix run .#ci-postgres
-nix run .#ci-buildkit
 ```
 
 On Linux, `nix flake check` also evaluates the Firecracker host NixOS module.

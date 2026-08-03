@@ -7,368 +7,65 @@ package db
 
 import (
 	"context"
-	"net"
-	"net/netip"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createPreparedRuntimeInstanceForWorkspaceMountSource = `-- name: CreatePreparedRuntimeInstanceForWorkspaceMountSource :one
-INSERT INTO runtime_instances (
-    id, org_id, project_id, environment_id, region_id, worker_group_id,
-    worker_instance_id, worker_epoch, runtime_identity_id, deployment_sandbox_id,
-    runtime_substrate_id, runtime_key_hash, runtime_key, sandbox_fingerprint,
-    rootfs_digest, image_digest, image_format, sandbox_image_artifact_id,
-    sandbox_image_artifact_digest, sandbox_image_artifact_format, runtime_abi,
-    guestd_abi, adapter_abi, network_policy, reserved_cpu_millis,
-    reserved_memory_bytes, reserved_workload_disk_bytes, reserved_scratch_bytes,
-    reserved_execution_slots, reserved_workspace_id, reserved_workspace_version_id,
-    reservation_expires_at, desired_reason, allocated_at
-) VALUES (
-    $1, $2, $3, $4,
-    $5, $6, $7,
-    $8, $9, $10,
-    $11, $12, $13,
-    $14, $15, $16,
-    $17, $18,
-    $19, $20,
-    $21, $22, $23,
-    $24, $25,
-    $26, $27,
-    $28, $29,
-    $30, $31,
-    $32, $33, now()
-)
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_sandbox_id, runtime_substrate_id, worker_epoch, runtime_key_hash, runtime_key, sandbox_fingerprint, rootfs_digest, image_digest, image_format, sandbox_image_artifact_id, sandbox_image_artifact_digest, sandbox_image_artifact_format, runtime_abi, guestd_abi, adapter_abi, network_policy, reserved_cpu_millis, reserved_memory_bytes, reserved_workload_disk_bytes, reserved_scratch_bytes, reserved_execution_slots, workspace_id, workspace_version_id, reserved_workspace_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
-`
-
-type CreatePreparedRuntimeInstanceForWorkspaceMountSourceParams struct {
-	ID                         pgtype.UUID        `json:"id"`
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	ProjectID                  pgtype.UUID        `json:"project_id"`
-	EnvironmentID              pgtype.UUID        `json:"environment_id"`
-	RegionID                   string             `json:"region_id"`
-	WorkerGroupID              string             `json:"worker_group_id"`
-	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch                int64              `json:"worker_epoch"`
-	RuntimeIdentityID          string             `json:"runtime_identity_id"`
-	DeploymentSandboxID        pgtype.UUID        `json:"deployment_sandbox_id"`
-	RuntimeSubstrateID         pgtype.UUID        `json:"runtime_substrate_id"`
-	RuntimeKeyHash             string             `json:"runtime_key_hash"`
-	RuntimeKey                 []byte             `json:"runtime_key"`
-	SandboxFingerprint         string             `json:"sandbox_fingerprint"`
-	RootfsDigest               string             `json:"rootfs_digest"`
-	ImageDigest                string             `json:"image_digest"`
-	ImageFormat                string             `json:"image_format"`
-	SandboxImageArtifactID     pgtype.UUID        `json:"sandbox_image_artifact_id"`
-	SandboxImageArtifactDigest pgtype.Text        `json:"sandbox_image_artifact_digest"`
-	SandboxImageArtifactFormat pgtype.Text        `json:"sandbox_image_artifact_format"`
-	RuntimeABI                 string             `json:"runtime_abi"`
-	GuestdAbi                  string             `json:"guestd_abi"`
-	AdapterAbi                 string             `json:"adapter_abi"`
-	NetworkPolicy              []byte             `json:"network_policy"`
-	ReservedCpuMillis          int64              `json:"reserved_cpu_millis"`
-	ReservedMemoryBytes        int64              `json:"reserved_memory_bytes"`
-	ReservedWorkloadDiskBytes  int64              `json:"reserved_workload_disk_bytes"`
-	ReservedScratchBytes       int64              `json:"reserved_scratch_bytes"`
-	ReservedExecutionSlots     int32              `json:"reserved_execution_slots"`
-	ReservedWorkspaceID        pgtype.UUID        `json:"reserved_workspace_id"`
-	ReservedWorkspaceVersionID pgtype.UUID        `json:"reserved_workspace_version_id"`
-	ReservationExpiresAt       pgtype.Timestamptz `json:"reservation_expires_at"`
-	DesiredReason              string             `json:"desired_reason"`
-}
-
-func (q *Queries) CreatePreparedRuntimeInstanceForWorkspaceMountSource(ctx context.Context, arg CreatePreparedRuntimeInstanceForWorkspaceMountSourceParams) (RuntimeInstance, error) {
-	row := q.db.QueryRow(ctx, createPreparedRuntimeInstanceForWorkspaceMountSource,
-		arg.ID,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.RegionID,
-		arg.WorkerGroupID,
-		arg.WorkerInstanceID,
-		arg.WorkerEpoch,
-		arg.RuntimeIdentityID,
-		arg.DeploymentSandboxID,
-		arg.RuntimeSubstrateID,
-		arg.RuntimeKeyHash,
-		arg.RuntimeKey,
-		arg.SandboxFingerprint,
-		arg.RootfsDigest,
-		arg.ImageDigest,
-		arg.ImageFormat,
-		arg.SandboxImageArtifactID,
-		arg.SandboxImageArtifactDigest,
-		arg.SandboxImageArtifactFormat,
-		arg.RuntimeABI,
-		arg.GuestdAbi,
-		arg.AdapterAbi,
-		arg.NetworkPolicy,
-		arg.ReservedCpuMillis,
-		arg.ReservedMemoryBytes,
-		arg.ReservedWorkloadDiskBytes,
-		arg.ReservedScratchBytes,
-		arg.ReservedExecutionSlots,
-		arg.ReservedWorkspaceID,
-		arg.ReservedWorkspaceVersionID,
-		arg.ReservationExpiresAt,
-		arg.DesiredReason,
-	)
-	var i RuntimeInstance
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.WorkerInstanceID,
-		&i.RuntimeIdentityID,
-		&i.DeploymentSandboxID,
-		&i.RuntimeSubstrateID,
-		&i.WorkerEpoch,
-		&i.RuntimeKeyHash,
-		&i.RuntimeKey,
-		&i.SandboxFingerprint,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.SandboxImageArtifactID,
-		&i.SandboxImageArtifactDigest,
-		&i.SandboxImageArtifactFormat,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
-		&i.NetworkPolicy,
-		&i.ReservedCpuMillis,
-		&i.ReservedMemoryBytes,
-		&i.ReservedWorkloadDiskBytes,
-		&i.ReservedScratchBytes,
-		&i.ReservedExecutionSlots,
-		&i.WorkspaceID,
-		&i.WorkspaceVersionID,
-		&i.ReservedWorkspaceID,
-		&i.ReservedWorkspaceVersionID,
-		&i.ReservationExpiresAt,
-		&i.DesiredState,
-		&i.DesiredVersion,
-		&i.DesiredAt,
-		&i.DesiredReason,
-		&i.ObservedState,
-		&i.ObservedVersion,
-		&i.ObservedDesiredVersion,
-		&i.ObservedAt,
-		&i.AllocatedAt,
-		&i.PreparingAt,
-		&i.ReadyAt,
-		&i.ClosingAt,
-		&i.ClosedAt,
-		&i.LostAt,
-		&i.FailedAt,
-		&i.ReclaimedAt,
-		&i.TerminalAt,
-		&i.TerminalReasonCode,
-		&i.TerminalError,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const createRuntimeInstanceForDeploymentSandbox = `-- name: CreateRuntimeInstanceForDeploymentSandbox :one
-INSERT INTO runtime_instances (
-    id, org_id, project_id, environment_id, region_id, worker_group_id,
-    worker_instance_id, worker_epoch, runtime_identity_id, deployment_sandbox_id,
-    runtime_substrate_id, runtime_key_hash, runtime_key, sandbox_fingerprint,
-    rootfs_digest, image_digest, image_format, sandbox_image_artifact_id,
-    sandbox_image_artifact_digest, sandbox_image_artifact_format, runtime_abi,
-    guestd_abi, adapter_abi, network_policy, reserved_cpu_millis,
-    reserved_memory_bytes, reserved_workload_disk_bytes, reserved_scratch_bytes,
-    reserved_execution_slots, desired_reason, allocated_at
-) VALUES (
-    $1, $2, $3, $4,
-    $5, $6, $7,
-    $8, $9, $10,
-    $11, $12, $13,
-    $14, $15, $16,
-    $17, $18,
-    $19, $20,
-    $21, $22, $23,
-    $24, $25,
-    $26, $27,
-    $28, $29,
-    $30, now()
-)
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_sandbox_id, runtime_substrate_id, worker_epoch, runtime_key_hash, runtime_key, sandbox_fingerprint, rootfs_digest, image_digest, image_format, sandbox_image_artifact_id, sandbox_image_artifact_digest, sandbox_image_artifact_format, runtime_abi, guestd_abi, adapter_abi, network_policy, reserved_cpu_millis, reserved_memory_bytes, reserved_workload_disk_bytes, reserved_scratch_bytes, reserved_execution_slots, workspace_id, workspace_version_id, reserved_workspace_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
-`
-
-type CreateRuntimeInstanceForDeploymentSandboxParams struct {
-	ID                         pgtype.UUID `json:"id"`
-	OrgID                      pgtype.UUID `json:"org_id"`
-	ProjectID                  pgtype.UUID `json:"project_id"`
-	EnvironmentID              pgtype.UUID `json:"environment_id"`
-	RegionID                   string      `json:"region_id"`
-	WorkerGroupID              string      `json:"worker_group_id"`
-	WorkerInstanceID           pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch                int64       `json:"worker_epoch"`
-	RuntimeIdentityID          string      `json:"runtime_identity_id"`
-	DeploymentSandboxID        pgtype.UUID `json:"deployment_sandbox_id"`
-	RuntimeSubstrateID         pgtype.UUID `json:"runtime_substrate_id"`
-	RuntimeKeyHash             string      `json:"runtime_key_hash"`
-	RuntimeKey                 []byte      `json:"runtime_key"`
-	SandboxFingerprint         string      `json:"sandbox_fingerprint"`
-	RootfsDigest               string      `json:"rootfs_digest"`
-	ImageDigest                string      `json:"image_digest"`
-	ImageFormat                string      `json:"image_format"`
-	SandboxImageArtifactID     pgtype.UUID `json:"sandbox_image_artifact_id"`
-	SandboxImageArtifactDigest pgtype.Text `json:"sandbox_image_artifact_digest"`
-	SandboxImageArtifactFormat pgtype.Text `json:"sandbox_image_artifact_format"`
-	RuntimeABI                 string      `json:"runtime_abi"`
-	GuestdAbi                  string      `json:"guestd_abi"`
-	AdapterAbi                 string      `json:"adapter_abi"`
-	NetworkPolicy              []byte      `json:"network_policy"`
-	ReservedCpuMillis          int64       `json:"reserved_cpu_millis"`
-	ReservedMemoryBytes        int64       `json:"reserved_memory_bytes"`
-	ReservedWorkloadDiskBytes  int64       `json:"reserved_workload_disk_bytes"`
-	ReservedScratchBytes       int64       `json:"reserved_scratch_bytes"`
-	ReservedExecutionSlots     int32       `json:"reserved_execution_slots"`
-	DesiredReason              string      `json:"desired_reason"`
-}
-
-func (q *Queries) CreateRuntimeInstanceForDeploymentSandbox(ctx context.Context, arg CreateRuntimeInstanceForDeploymentSandboxParams) (RuntimeInstance, error) {
-	row := q.db.QueryRow(ctx, createRuntimeInstanceForDeploymentSandbox,
-		arg.ID,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.RegionID,
-		arg.WorkerGroupID,
-		arg.WorkerInstanceID,
-		arg.WorkerEpoch,
-		arg.RuntimeIdentityID,
-		arg.DeploymentSandboxID,
-		arg.RuntimeSubstrateID,
-		arg.RuntimeKeyHash,
-		arg.RuntimeKey,
-		arg.SandboxFingerprint,
-		arg.RootfsDigest,
-		arg.ImageDigest,
-		arg.ImageFormat,
-		arg.SandboxImageArtifactID,
-		arg.SandboxImageArtifactDigest,
-		arg.SandboxImageArtifactFormat,
-		arg.RuntimeABI,
-		arg.GuestdAbi,
-		arg.AdapterAbi,
-		arg.NetworkPolicy,
-		arg.ReservedCpuMillis,
-		arg.ReservedMemoryBytes,
-		arg.ReservedWorkloadDiskBytes,
-		arg.ReservedScratchBytes,
-		arg.ReservedExecutionSlots,
-		arg.DesiredReason,
-	)
-	var i RuntimeInstance
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.WorkerInstanceID,
-		&i.RuntimeIdentityID,
-		&i.DeploymentSandboxID,
-		&i.RuntimeSubstrateID,
-		&i.WorkerEpoch,
-		&i.RuntimeKeyHash,
-		&i.RuntimeKey,
-		&i.SandboxFingerprint,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.SandboxImageArtifactID,
-		&i.SandboxImageArtifactDigest,
-		&i.SandboxImageArtifactFormat,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
-		&i.NetworkPolicy,
-		&i.ReservedCpuMillis,
-		&i.ReservedMemoryBytes,
-		&i.ReservedWorkloadDiskBytes,
-		&i.ReservedScratchBytes,
-		&i.ReservedExecutionSlots,
-		&i.WorkspaceID,
-		&i.WorkspaceVersionID,
-		&i.ReservedWorkspaceID,
-		&i.ReservedWorkspaceVersionID,
-		&i.ReservationExpiresAt,
-		&i.DesiredState,
-		&i.DesiredVersion,
-		&i.DesiredAt,
-		&i.DesiredReason,
-		&i.ObservedState,
-		&i.ObservedVersion,
-		&i.ObservedDesiredVersion,
-		&i.ObservedAt,
-		&i.AllocatedAt,
-		&i.PreparingAt,
-		&i.ReadyAt,
-		&i.ClosingAt,
-		&i.ClosedAt,
-		&i.LostAt,
-		&i.FailedAt,
-		&i.ReclaimedAt,
-		&i.TerminalAt,
-		&i.TerminalReasonCode,
-		&i.TerminalError,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getNextRuntimeReconcileTarget = `-- name: GetNextRuntimeReconcileTarget :one
-SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.workspace_version_id, runtime_instances.reserved_workspace_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at,
-       worker_network_slots.id AS network_slot_id,
-       worker_network_slots.generation AS network_slot_generation,
-       artifacts.digest AS sandbox_image_artifact_digest_value,
-       artifacts.size_bytes AS sandbox_image_artifact_size_bytes,
-       artifacts.media_type AS sandbox_image_artifact_media_type,
-       deployment_sandboxes.workspace_mount_path,
-       runtime_substrates.substrate_digest,
-       runtime_substrates.substrate_format,
-       runtime_substrates.builder_abi,
-       runtime_substrates.layout_abi,
-       runtime_substrates.substrate_size_bytes,
-       COALESCE(substrate_artifacts.digest, '') AS runtime_substrate_blob_digest,
-       COALESCE(substrate_artifacts.size_bytes, 0) AS runtime_substrate_blob_size_bytes,
-       COALESCE(substrate_artifacts.media_type, '') AS runtime_substrate_blob_media_type
+SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at,
+       artifacts.digest AS workspace_image_digest,
+       artifacts.size_bytes AS workspace_image_size_bytes,
+       artifacts.media_type AS workspace_image_media_type,
+       '/workspace'::text AS workspace_mount_path,
+       reserved_workspace_versions.id AS base_workspace_version_id,
+       reserved_workspace_versions.entry_count AS workspace_entry_count,
+       COALESCE(reserved_workspace_artifacts.digest, '') AS workspace_artifact_digest,
+       COALESCE(reserved_workspace_artifacts.size_bytes, 0) AS workspace_artifact_size_bytes,
+       COALESCE(reserved_workspace_artifacts.media_type, '') AS workspace_artifact_media_type,
+       runtime_identities.runtime_arch AS workspace_architecture,
+       program_deployments.id AS program_deployment_authority_id,
+       program_deployments.build_runtime_digest AS program_runtime_digest,
+       program_deployments.build_contract_version AS program_build_contract_version,
+       program_deployments.program_index_digest,
+       COALESCE(program_artifact.digest, '') AS program_artifact_digest,
+       COALESCE(program_artifact.size_bytes, 0) AS program_artifact_size_bytes,
+       COALESCE(program_artifact.media_type, '') AS program_artifact_media_type,
+       runtime_identities.rootfs_digest,
+       runtime_identities.runtime_abi
   FROM runtime_instances
   JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
                        AND worker_instances.worker_group_id = runtime_instances.worker_group_id
-  JOIN worker_network_slots ON worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
-                    AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
-                    AND worker_network_slots.runtime_instance_id = runtime_instances.id
-                    AND worker_network_slots.state IN ('assigned', 'bound', 'reclaiming', 'quarantined')
-  JOIN artifacts ON artifacts.org_id = runtime_instances.org_id
-                AND artifacts.project_id = runtime_instances.project_id
-                AND artifacts.environment_id = runtime_instances.environment_id
-                AND artifacts.id = runtime_instances.sandbox_image_artifact_id
-  JOIN deployment_sandboxes ON deployment_sandboxes.org_id = runtime_instances.org_id
-                           AND deployment_sandboxes.project_id = runtime_instances.project_id
-                           AND deployment_sandboxes.environment_id = runtime_instances.environment_id
-                           AND deployment_sandboxes.id = runtime_instances.deployment_sandbox_id
-  LEFT JOIN runtime_substrates ON runtime_substrates.org_id = runtime_instances.org_id
-                              AND runtime_substrates.project_id = runtime_instances.project_id
-                              AND runtime_substrates.environment_id = runtime_instances.environment_id
-                              AND runtime_substrates.id = runtime_instances.runtime_substrate_id
-  LEFT JOIN artifacts AS substrate_artifacts
-    ON substrate_artifacts.org_id = runtime_substrates.org_id
-   AND substrate_artifacts.project_id = runtime_substrates.project_id
-   AND substrate_artifacts.environment_id = runtime_substrates.environment_id
-   AND substrate_artifacts.id = runtime_substrates.artifact_id
+  JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
+  JOIN runtime_identities ON runtime_identities.id = runtime_instances.runtime_identity_id
+                         AND runtime_identities.network_abi = 'helmr/v0'
+  LEFT JOIN worker_observations
+    ON worker_observations.worker_instance_id = worker_instances.id
+   AND worker_observations.worker_epoch = worker_instances.current_epoch
+  JOIN deployment_definitions
+    ON deployment_definitions.environment_id = runtime_instances.environment_id
+   AND deployment_definitions.id = runtime_instances.deployment_definition_id
+   AND deployment_definitions.kind = 'workspace'
+  JOIN artifacts ON artifacts.environment_id = deployment_definitions.environment_id
+                AND artifacts.id = deployment_definitions.artifact_id
+  LEFT JOIN workspace_versions AS reserved_workspace_versions
+    ON reserved_workspace_versions.environment_id = runtime_instances.environment_id
+   AND reserved_workspace_versions.workspace_id = runtime_instances.workspace_id
+   AND reserved_workspace_versions.id = runtime_instances.reserved_workspace_version_id
+   AND reserved_workspace_versions.state = CASE
+           WHEN runtime_instances.restore_checkpoint_id IS NULL THEN 'committed'
+           ELSE 'private'
+       END
+  LEFT JOIN artifacts AS reserved_workspace_artifacts
+    ON reserved_workspace_artifacts.environment_id = reserved_workspace_versions.environment_id
+   AND reserved_workspace_artifacts.id = reserved_workspace_versions.artifact_id
+  LEFT JOIN deployments AS program_deployments
+    ON program_deployments.environment_id = runtime_instances.environment_id
+   AND program_deployments.id = runtime_instances.program_deployment_id
+   AND program_deployments.status = 'deployed'
+  LEFT JOIN artifacts AS program_artifact
+    ON program_artifact.environment_id = program_deployments.environment_id
+   AND program_artifact.id = program_deployments.program_artifact_id
+   AND program_artifact.kind = 'deployment_program'
  WHERE runtime_instances.worker_group_id = $1
    AND runtime_instances.worker_instance_id = $2
    AND runtime_instances.worker_epoch = $3
@@ -377,16 +74,25 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
    AND worker_instances.state IN ('active', 'draining')
    AND (
        (runtime_instances.desired_state = 'ready'
-        AND runtime_instances.observed_state IN ('allocated', 'preparing')
-        AND runtime_instances.observed_desired_version < runtime_instances.desired_version
-        AND worker_instances.state = 'active')
+       AND runtime_instances.observed_state IN ('allocated', 'preparing')
+       AND runtime_instances.observed_desired_version < runtime_instances.desired_version
+        AND worker_instances.state = 'active'
+        AND worker_observations.observed_at >= transaction_timestamp()
+            - worker_groups.observation_ttl_seconds * interval '1 second'
+        AND worker_observations.runtime_paused_reason IS NULL
+       )
        OR
        (runtime_instances.desired_state = 'closed'
         AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing'))
        OR
        (runtime_instances.observed_state = 'failed'
         AND runtime_instances.reclaimed_at IS NULL
-        AND worker_network_slots.state IN ('reclaiming', 'quarantined'))
+        AND NOT EXISTS (
+            SELECT 1
+              FROM run_leases
+             WHERE run_leases.runtime_instance_id = runtime_instances.id
+               AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+        ))
    )
  ORDER BY runtime_instances.desired_at, runtime_instances.id
  LIMIT 1
@@ -399,75 +105,70 @@ type GetNextRuntimeReconcileTargetParams struct {
 }
 
 type GetNextRuntimeReconcileTargetRow struct {
-	ID                              pgtype.UUID          `json:"id"`
-	OrgID                           pgtype.UUID          `json:"org_id"`
-	WorkerGroupID                   string               `json:"worker_group_id"`
-	ProjectID                       pgtype.UUID          `json:"project_id"`
-	EnvironmentID                   pgtype.UUID          `json:"environment_id"`
-	RegionID                        string               `json:"region_id"`
-	WorkerInstanceID                pgtype.UUID          `json:"worker_instance_id"`
-	RuntimeIdentityID               string               `json:"runtime_identity_id"`
-	DeploymentSandboxID             pgtype.UUID          `json:"deployment_sandbox_id"`
-	RuntimeSubstrateID              pgtype.UUID          `json:"runtime_substrate_id"`
-	WorkerEpoch                     int64                `json:"worker_epoch"`
-	RuntimeKeyHash                  string               `json:"runtime_key_hash"`
-	RuntimeKey                      []byte               `json:"runtime_key"`
-	SandboxFingerprint              string               `json:"sandbox_fingerprint"`
-	RootfsDigest                    string               `json:"rootfs_digest"`
-	ImageDigest                     string               `json:"image_digest"`
-	ImageFormat                     string               `json:"image_format"`
-	SandboxImageArtifactID          pgtype.UUID          `json:"sandbox_image_artifact_id"`
-	SandboxImageArtifactDigest      pgtype.Text          `json:"sandbox_image_artifact_digest"`
-	SandboxImageArtifactFormat      pgtype.Text          `json:"sandbox_image_artifact_format"`
-	RuntimeABI                      string               `json:"runtime_abi"`
-	GuestdAbi                       string               `json:"guestd_abi"`
-	AdapterAbi                      string               `json:"adapter_abi"`
-	NetworkPolicy                   []byte               `json:"network_policy"`
-	ReservedCpuMillis               int64                `json:"reserved_cpu_millis"`
-	ReservedMemoryBytes             int64                `json:"reserved_memory_bytes"`
-	ReservedWorkloadDiskBytes       int64                `json:"reserved_workload_disk_bytes"`
-	ReservedScratchBytes            int64                `json:"reserved_scratch_bytes"`
-	ReservedExecutionSlots          int32                `json:"reserved_execution_slots"`
-	WorkspaceID                     pgtype.UUID          `json:"workspace_id"`
-	WorkspaceVersionID              pgtype.UUID          `json:"workspace_version_id"`
-	ReservedWorkspaceID             pgtype.UUID          `json:"reserved_workspace_id"`
-	ReservedWorkspaceVersionID      pgtype.UUID          `json:"reserved_workspace_version_id"`
-	ReservationExpiresAt            pgtype.Timestamptz   `json:"reservation_expires_at"`
-	DesiredState                    RuntimeDesiredState  `json:"desired_state"`
-	DesiredVersion                  int64                `json:"desired_version"`
-	DesiredAt                       pgtype.Timestamptz   `json:"desired_at"`
-	DesiredReason                   string               `json:"desired_reason"`
-	ObservedState                   RuntimeObservedState `json:"observed_state"`
-	ObservedVersion                 int64                `json:"observed_version"`
-	ObservedDesiredVersion          int64                `json:"observed_desired_version"`
-	ObservedAt                      pgtype.Timestamptz   `json:"observed_at"`
-	AllocatedAt                     pgtype.Timestamptz   `json:"allocated_at"`
-	PreparingAt                     pgtype.Timestamptz   `json:"preparing_at"`
-	ReadyAt                         pgtype.Timestamptz   `json:"ready_at"`
-	ClosingAt                       pgtype.Timestamptz   `json:"closing_at"`
-	ClosedAt                        pgtype.Timestamptz   `json:"closed_at"`
-	LostAt                          pgtype.Timestamptz   `json:"lost_at"`
-	FailedAt                        pgtype.Timestamptz   `json:"failed_at"`
-	ReclaimedAt                     pgtype.Timestamptz   `json:"reclaimed_at"`
-	TerminalAt                      pgtype.Timestamptz   `json:"terminal_at"`
-	TerminalReasonCode              pgtype.Text          `json:"terminal_reason_code"`
-	TerminalError                   []byte               `json:"terminal_error"`
-	CreatedAt                       pgtype.Timestamptz   `json:"created_at"`
-	UpdatedAt                       pgtype.Timestamptz   `json:"updated_at"`
-	NetworkSlotID                   pgtype.UUID          `json:"network_slot_id"`
-	NetworkSlotGeneration           int64                `json:"network_slot_generation"`
-	SandboxImageArtifactDigestValue string               `json:"sandbox_image_artifact_digest_value"`
-	SandboxImageArtifactSizeBytes   int64                `json:"sandbox_image_artifact_size_bytes"`
-	SandboxImageArtifactMediaType   string               `json:"sandbox_image_artifact_media_type"`
-	WorkspaceMountPath              string               `json:"workspace_mount_path"`
-	SubstrateDigest                 pgtype.Text          `json:"substrate_digest"`
-	SubstrateFormat                 pgtype.Text          `json:"substrate_format"`
-	BuilderAbi                      pgtype.Text          `json:"builder_abi"`
-	LayoutAbi                       pgtype.Text          `json:"layout_abi"`
-	SubstrateSizeBytes              pgtype.Int8          `json:"substrate_size_bytes"`
-	RuntimeSubstrateBlobDigest      string               `json:"runtime_substrate_blob_digest"`
-	RuntimeSubstrateBlobSizeBytes   int64                `json:"runtime_substrate_blob_size_bytes"`
-	RuntimeSubstrateBlobMediaType   string               `json:"runtime_substrate_blob_media_type"`
+	ID                              pgtype.UUID        `json:"id"`
+	OrgID                           pgtype.UUID        `json:"org_id"`
+	WorkerGroupID                   string             `json:"worker_group_id"`
+	ProjectID                       pgtype.UUID        `json:"project_id"`
+	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
+	RegionID                        string             `json:"region_id"`
+	WorkerInstanceID                pgtype.UUID        `json:"worker_instance_id"`
+	RuntimeIdentityID               string             `json:"runtime_identity_id"`
+	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
+	RuntimeSubstrateID              pgtype.UUID        `json:"runtime_substrate_id"`
+	WorkerEpoch                     int64              `json:"worker_epoch"`
+	ReservedCpuMillis               int64              `json:"reserved_cpu_millis"`
+	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
+	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
+	ReservedExecutionSlots          int32              `json:"reserved_execution_slots"`
+	WorkspaceID                     pgtype.UUID        `json:"workspace_id"`
+	ProgramDeploymentID             pgtype.UUID        `json:"program_deployment_id"`
+	RestoreCheckpointID             pgtype.UUID        `json:"restore_checkpoint_id"`
+	ReservedRunID                   pgtype.UUID        `json:"reserved_run_id"`
+	ReservedAttemptNumber           pgtype.Int4        `json:"reserved_attempt_number"`
+	ReservedProcessID               pgtype.UUID        `json:"reserved_process_id"`
+	ReservedWorkspaceVersionID      pgtype.UUID        `json:"reserved_workspace_version_id"`
+	ReservationExpiresAt            pgtype.Timestamptz `json:"reservation_expires_at"`
+	DesiredState                    string             `json:"desired_state"`
+	DesiredVersion                  int64              `json:"desired_version"`
+	DesiredAt                       pgtype.Timestamptz `json:"desired_at"`
+	DesiredReason                   string             `json:"desired_reason"`
+	ObservedState                   string             `json:"observed_state"`
+	ObservedVersion                 int64              `json:"observed_version"`
+	ObservedDesiredVersion          int64              `json:"observed_desired_version"`
+	ObservedAt                      pgtype.Timestamptz `json:"observed_at"`
+	AllocatedAt                     pgtype.Timestamptz `json:"allocated_at"`
+	PreparingAt                     pgtype.Timestamptz `json:"preparing_at"`
+	ReadyAt                         pgtype.Timestamptz `json:"ready_at"`
+	ClosingAt                       pgtype.Timestamptz `json:"closing_at"`
+	ClosedAt                        pgtype.Timestamptz `json:"closed_at"`
+	LostAt                          pgtype.Timestamptz `json:"lost_at"`
+	FailedAt                        pgtype.Timestamptz `json:"failed_at"`
+	ReclaimedAt                     pgtype.Timestamptz `json:"reclaimed_at"`
+	ReclaimEvidence                 []byte             `json:"reclaim_evidence"`
+	TerminalAt                      pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode              pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError                   []byte             `json:"terminal_error"`
+	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
+	WorkspaceImageDigest            string             `json:"workspace_image_digest"`
+	WorkspaceImageSizeBytes         int64              `json:"workspace_image_size_bytes"`
+	WorkspaceImageMediaType         string             `json:"workspace_image_media_type"`
+	WorkspaceMountPath              string             `json:"workspace_mount_path"`
+	BaseWorkspaceVersionID          pgtype.UUID        `json:"base_workspace_version_id"`
+	WorkspaceEntryCount             pgtype.Int4        `json:"workspace_entry_count"`
+	WorkspaceArtifactDigest         string             `json:"workspace_artifact_digest"`
+	WorkspaceArtifactSizeBytes      int64              `json:"workspace_artifact_size_bytes"`
+	WorkspaceArtifactMediaType      string             `json:"workspace_artifact_media_type"`
+	WorkspaceArchitecture           string             `json:"workspace_architecture"`
+	ProgramDeploymentAuthorityID    pgtype.UUID        `json:"program_deployment_authority_id"`
+	ProgramRuntimeDigest            []byte             `json:"program_runtime_digest"`
+	ProgramBuildContractVersion     pgtype.Text        `json:"program_build_contract_version"`
+	ProgramIndexDigest              []byte             `json:"program_index_digest"`
+	ProgramArtifactDigest           string             `json:"program_artifact_digest"`
+	ProgramArtifactSizeBytes        int64              `json:"program_artifact_size_bytes"`
+	ProgramArtifactMediaType        string             `json:"program_artifact_media_type"`
+	RootfsDigest                    string             `json:"rootfs_digest"`
+	RuntimeABI                      string             `json:"runtime_abi"`
 }
 
 func (q *Queries) GetNextRuntimeReconcileTarget(ctx context.Context, arg GetNextRuntimeReconcileTargetParams) (GetNextRuntimeReconcileTargetRow, error) {
@@ -482,30 +183,19 @@ func (q *Queries) GetNextRuntimeReconcileTarget(ctx context.Context, arg GetNext
 		&i.RegionID,
 		&i.WorkerInstanceID,
 		&i.RuntimeIdentityID,
-		&i.DeploymentSandboxID,
+		&i.DeploymentDefinitionID,
 		&i.RuntimeSubstrateID,
 		&i.WorkerEpoch,
-		&i.RuntimeKeyHash,
-		&i.RuntimeKey,
-		&i.SandboxFingerprint,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.SandboxImageArtifactID,
-		&i.SandboxImageArtifactDigest,
-		&i.SandboxImageArtifactFormat,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
-		&i.NetworkPolicy,
 		&i.ReservedCpuMillis,
 		&i.ReservedMemoryBytes,
-		&i.ReservedWorkloadDiskBytes,
-		&i.ReservedScratchBytes,
+		&i.ReservedGuestEphemeralDiskBytes,
 		&i.ReservedExecutionSlots,
 		&i.WorkspaceID,
-		&i.WorkspaceVersionID,
-		&i.ReservedWorkspaceID,
+		&i.ProgramDeploymentID,
+		&i.RestoreCheckpointID,
+		&i.ReservedRunID,
+		&i.ReservedAttemptNumber,
+		&i.ReservedProcessID,
 		&i.ReservedWorkspaceVersionID,
 		&i.ReservationExpiresAt,
 		&i.DesiredState,
@@ -524,738 +214,73 @@ func (q *Queries) GetNextRuntimeReconcileTarget(ctx context.Context, arg GetNext
 		&i.LostAt,
 		&i.FailedAt,
 		&i.ReclaimedAt,
+		&i.ReclaimEvidence,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
 		&i.TerminalError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.NetworkSlotID,
-		&i.NetworkSlotGeneration,
-		&i.SandboxImageArtifactDigestValue,
-		&i.SandboxImageArtifactSizeBytes,
-		&i.SandboxImageArtifactMediaType,
+		&i.WorkspaceImageDigest,
+		&i.WorkspaceImageSizeBytes,
+		&i.WorkspaceImageMediaType,
 		&i.WorkspaceMountPath,
-		&i.SubstrateDigest,
-		&i.SubstrateFormat,
-		&i.BuilderAbi,
-		&i.LayoutAbi,
-		&i.SubstrateSizeBytes,
-		&i.RuntimeSubstrateBlobDigest,
-		&i.RuntimeSubstrateBlobSizeBytes,
-		&i.RuntimeSubstrateBlobMediaType,
+		&i.BaseWorkspaceVersionID,
+		&i.WorkspaceEntryCount,
+		&i.WorkspaceArtifactDigest,
+		&i.WorkspaceArtifactSizeBytes,
+		&i.WorkspaceArtifactMediaType,
+		&i.WorkspaceArchitecture,
+		&i.ProgramDeploymentAuthorityID,
+		&i.ProgramRuntimeDigest,
+		&i.ProgramBuildContractVersion,
+		&i.ProgramIndexDigest,
+		&i.ProgramArtifactDigest,
+		&i.ProgramArtifactSizeBytes,
+		&i.ProgramArtifactMediaType,
+		&i.RootfsDigest,
+		&i.RuntimeABI,
 	)
 	return i, err
 }
 
-const listRuntimeInstanceWarmTargets = `-- name: ListRuntimeInstanceWarmTargets :many
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_sandbox_id, runtime_substrate_id, worker_epoch, runtime_key_hash, runtime_key, sandbox_fingerprint, rootfs_digest, image_digest, image_format, sandbox_image_artifact_id, sandbox_image_artifact_digest, sandbox_image_artifact_format, runtime_abi, guestd_abi, adapter_abi, network_policy, reserved_cpu_millis, reserved_memory_bytes, reserved_workload_disk_bytes, reserved_scratch_bytes, reserved_execution_slots, workspace_id, workspace_version_id, reserved_workspace_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at FROM runtime_instances
- WHERE worker_instance_id = $1
-   AND worker_epoch = $2 AND observed_state = 'ready'
-   AND workspace_id IS NULL AND reserved_workspace_id IS NULL
- ORDER BY ready_at, id LIMIT $3
-`
-
-type ListRuntimeInstanceWarmTargetsParams struct {
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch      int64       `json:"worker_epoch"`
-	LimitCount       int32       `json:"limit_count"`
-}
-
-func (q *Queries) ListRuntimeInstanceWarmTargets(ctx context.Context, arg ListRuntimeInstanceWarmTargetsParams) ([]RuntimeInstance, error) {
-	rows, err := q.db.Query(ctx, listRuntimeInstanceWarmTargets, arg.WorkerInstanceID, arg.WorkerEpoch, arg.LimitCount)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []RuntimeInstance
-	for rows.Next() {
-		var i RuntimeInstance
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.WorkerGroupID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.RegionID,
-			&i.WorkerInstanceID,
-			&i.RuntimeIdentityID,
-			&i.DeploymentSandboxID,
-			&i.RuntimeSubstrateID,
-			&i.WorkerEpoch,
-			&i.RuntimeKeyHash,
-			&i.RuntimeKey,
-			&i.SandboxFingerprint,
-			&i.RootfsDigest,
-			&i.ImageDigest,
-			&i.ImageFormat,
-			&i.SandboxImageArtifactID,
-			&i.SandboxImageArtifactDigest,
-			&i.SandboxImageArtifactFormat,
-			&i.RuntimeABI,
-			&i.GuestdAbi,
-			&i.AdapterAbi,
-			&i.NetworkPolicy,
-			&i.ReservedCpuMillis,
-			&i.ReservedMemoryBytes,
-			&i.ReservedWorkloadDiskBytes,
-			&i.ReservedScratchBytes,
-			&i.ReservedExecutionSlots,
-			&i.WorkspaceID,
-			&i.WorkspaceVersionID,
-			&i.ReservedWorkspaceID,
-			&i.ReservedWorkspaceVersionID,
-			&i.ReservationExpiresAt,
-			&i.DesiredState,
-			&i.DesiredVersion,
-			&i.DesiredAt,
-			&i.DesiredReason,
-			&i.ObservedState,
-			&i.ObservedVersion,
-			&i.ObservedDesiredVersion,
-			&i.ObservedAt,
-			&i.AllocatedAt,
-			&i.PreparingAt,
-			&i.ReadyAt,
-			&i.ClosingAt,
-			&i.ClosedAt,
-			&i.LostAt,
-			&i.FailedAt,
-			&i.ReclaimedAt,
-			&i.TerminalAt,
-			&i.TerminalReasonCode,
-			&i.TerminalError,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listRuntimeSubstratePrepareTargets = `-- name: ListRuntimeSubstratePrepareTargets :many
-SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.workspace_version_id, runtime_instances.reserved_workspace_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at FROM runtime_instances
- WHERE worker_instance_id = $1
-   AND worker_epoch = $2
-   AND runtime_substrate_id IS NULL AND observed_state IN ('allocated','preparing')
- ORDER BY allocated_at, id LIMIT $3
-`
-
-type ListRuntimeSubstratePrepareTargetsParams struct {
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch      int64       `json:"worker_epoch"`
-	LimitCount       int32       `json:"limit_count"`
-}
-
-func (q *Queries) ListRuntimeSubstratePrepareTargets(ctx context.Context, arg ListRuntimeSubstratePrepareTargetsParams) ([]RuntimeInstance, error) {
-	rows, err := q.db.Query(ctx, listRuntimeSubstratePrepareTargets, arg.WorkerInstanceID, arg.WorkerEpoch, arg.LimitCount)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []RuntimeInstance
-	for rows.Next() {
-		var i RuntimeInstance
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.WorkerGroupID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.RegionID,
-			&i.WorkerInstanceID,
-			&i.RuntimeIdentityID,
-			&i.DeploymentSandboxID,
-			&i.RuntimeSubstrateID,
-			&i.WorkerEpoch,
-			&i.RuntimeKeyHash,
-			&i.RuntimeKey,
-			&i.SandboxFingerprint,
-			&i.RootfsDigest,
-			&i.ImageDigest,
-			&i.ImageFormat,
-			&i.SandboxImageArtifactID,
-			&i.SandboxImageArtifactDigest,
-			&i.SandboxImageArtifactFormat,
-			&i.RuntimeABI,
-			&i.GuestdAbi,
-			&i.AdapterAbi,
-			&i.NetworkPolicy,
-			&i.ReservedCpuMillis,
-			&i.ReservedMemoryBytes,
-			&i.ReservedWorkloadDiskBytes,
-			&i.ReservedScratchBytes,
-			&i.ReservedExecutionSlots,
-			&i.WorkspaceID,
-			&i.WorkspaceVersionID,
-			&i.ReservedWorkspaceID,
-			&i.ReservedWorkspaceVersionID,
-			&i.ReservationExpiresAt,
-			&i.DesiredState,
-			&i.DesiredVersion,
-			&i.DesiredAt,
-			&i.DesiredReason,
-			&i.ObservedState,
-			&i.ObservedVersion,
-			&i.ObservedDesiredVersion,
-			&i.ObservedAt,
-			&i.AllocatedAt,
-			&i.PreparingAt,
-			&i.ReadyAt,
-			&i.ClosingAt,
-			&i.ClosedAt,
-			&i.LostAt,
-			&i.FailedAt,
-			&i.ReclaimedAt,
-			&i.TerminalAt,
-			&i.TerminalReasonCode,
-			&i.TerminalError,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const markExpiredRuntimeInstancesLost = `-- name: MarkExpiredRuntimeInstancesLost :many
-UPDATE runtime_instances
-   SET observed_state = 'lost', observed_version = observed_version + 1,
-       observed_at = now(), lost_at = now(), terminal_at = now(),
-       terminal_reason_code = 'worker_epoch_lost', updated_at = now()
- WHERE id IN (
-     SELECT runtime_instances.id FROM runtime_instances
-      JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
-      WHERE runtime_instances.reclaimed_at IS NULL
-        AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
-        AND (runtime_instances.worker_epoch IS DISTINCT FROM worker_instances.current_epoch
-             OR worker_instances.state IN ('disabled', 'lost'))
-      ORDER BY runtime_instances.updated_at, runtime_instances.id
-      LIMIT $1 FOR UPDATE OF runtime_instances SKIP LOCKED
- )
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_sandbox_id, runtime_substrate_id, worker_epoch, runtime_key_hash, runtime_key, sandbox_fingerprint, rootfs_digest, image_digest, image_format, sandbox_image_artifact_id, sandbox_image_artifact_digest, sandbox_image_artifact_format, runtime_abi, guestd_abi, adapter_abi, network_policy, reserved_cpu_millis, reserved_memory_bytes, reserved_workload_disk_bytes, reserved_scratch_bytes, reserved_execution_slots, workspace_id, workspace_version_id, reserved_workspace_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
-`
-
-func (q *Queries) MarkExpiredRuntimeInstancesLost(ctx context.Context, limitCount int32) ([]RuntimeInstance, error) {
-	rows, err := q.db.Query(ctx, markExpiredRuntimeInstancesLost, limitCount)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []RuntimeInstance
-	for rows.Next() {
-		var i RuntimeInstance
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.WorkerGroupID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.RegionID,
-			&i.WorkerInstanceID,
-			&i.RuntimeIdentityID,
-			&i.DeploymentSandboxID,
-			&i.RuntimeSubstrateID,
-			&i.WorkerEpoch,
-			&i.RuntimeKeyHash,
-			&i.RuntimeKey,
-			&i.SandboxFingerprint,
-			&i.RootfsDigest,
-			&i.ImageDigest,
-			&i.ImageFormat,
-			&i.SandboxImageArtifactID,
-			&i.SandboxImageArtifactDigest,
-			&i.SandboxImageArtifactFormat,
-			&i.RuntimeABI,
-			&i.GuestdAbi,
-			&i.AdapterAbi,
-			&i.NetworkPolicy,
-			&i.ReservedCpuMillis,
-			&i.ReservedMemoryBytes,
-			&i.ReservedWorkloadDiskBytes,
-			&i.ReservedScratchBytes,
-			&i.ReservedExecutionSlots,
-			&i.WorkspaceID,
-			&i.WorkspaceVersionID,
-			&i.ReservedWorkspaceID,
-			&i.ReservedWorkspaceVersionID,
-			&i.ReservationExpiresAt,
-			&i.DesiredState,
-			&i.DesiredVersion,
-			&i.DesiredAt,
-			&i.DesiredReason,
-			&i.ObservedState,
-			&i.ObservedVersion,
-			&i.ObservedDesiredVersion,
-			&i.ObservedAt,
-			&i.AllocatedAt,
-			&i.PreparingAt,
-			&i.ReadyAt,
-			&i.ClosingAt,
-			&i.ClosedAt,
-			&i.LostAt,
-			&i.FailedAt,
-			&i.ReclaimedAt,
-			&i.TerminalAt,
-			&i.TerminalReasonCode,
-			&i.TerminalError,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const markRuntimeInstanceClosed = `-- name: MarkRuntimeInstanceClosed :one
-WITH closed AS (
 UPDATE runtime_instances
    SET observed_state = 'closed', observed_version = observed_version + 1,
        observed_desired_version = desired_version, observed_at = now(),
        closing_at = COALESCE(closing_at, now()), closed_at = now(),
        terminal_at = now(), terminal_reason_code = $1,
-       terminal_error = NULL, reclaimed_at = now(), updated_at = now()
-  FROM worker_network_slots
- WHERE runtime_instances.id = $2 AND runtime_instances.worker_instance_id = $3
-   AND runtime_instances.worker_epoch = $4
-   AND runtime_instances.desired_state = 'closed' AND runtime_instances.desired_version = $5
-   AND worker_network_slots.id = $6
-   AND worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
-   AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
-   AND worker_network_slots.generation = $7
-   AND worker_network_slots.runtime_instance_id = runtime_instances.id
-   AND worker_network_slots.state IN ('assigned', 'bound', 'reclaiming')
-   AND observed_version = $8
+       terminal_error = NULL, reclaimed_at = now(),
+       reclaim_evidence = $2::jsonb,
+       reserved_run_id = NULL, reserved_attempt_number = NULL,
+       reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+       reservation_expires_at = NULL, updated_at = now()
+ WHERE runtime_instances.id = $3 AND runtime_instances.worker_instance_id = $4
+   AND runtime_instances.worker_epoch = $5
+   AND runtime_instances.desired_state = 'closed' AND runtime_instances.desired_version = $6
+   AND observed_version = $7
    AND observed_state IN ('allocated','preparing','ready','closing')
-RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.workspace_version_id, runtime_instances.reserved_workspace_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
-), reclaimed AS (
-UPDATE worker_network_slots
-   SET state = 'available', generation = generation + 1, runtime_instance_id = NULL,
-       host_interface_name = NULL, guest_address = NULL, gateway_address = NULL, subnet = NULL,
-       tap_name = NULL, netns_name = NULL, guest_mac = NULL,
-       reclaiming_at = NULL, quarantined_at = NULL, lost_at = NULL,
-       reclaimed_at = now(), reclaim_evidence = $9::jsonb,
-       state_reason_code = NULL, state_error = NULL, updated_at = now()
-  FROM closed
- WHERE worker_network_slots.id = $6
-   AND worker_network_slots.worker_instance_id = closed.worker_instance_id
-   AND worker_network_slots.worker_epoch = closed.worker_epoch
-   AND worker_network_slots.generation = $7
-   AND worker_network_slots.runtime_instance_id = closed.id
-RETURNING worker_network_slots.id
-)
-SELECT closed.id, closed.org_id, closed.worker_group_id, closed.project_id, closed.environment_id, closed.region_id, closed.worker_instance_id, closed.runtime_identity_id, closed.deployment_sandbox_id, closed.runtime_substrate_id, closed.worker_epoch, closed.runtime_key_hash, closed.runtime_key, closed.sandbox_fingerprint, closed.rootfs_digest, closed.image_digest, closed.image_format, closed.sandbox_image_artifact_id, closed.sandbox_image_artifact_digest, closed.sandbox_image_artifact_format, closed.runtime_abi, closed.guestd_abi, closed.adapter_abi, closed.network_policy, closed.reserved_cpu_millis, closed.reserved_memory_bytes, closed.reserved_workload_disk_bytes, closed.reserved_scratch_bytes, closed.reserved_execution_slots, closed.workspace_id, closed.workspace_version_id, closed.reserved_workspace_id, closed.reserved_workspace_version_id, closed.reservation_expires_at, closed.desired_state, closed.desired_version, closed.desired_at, closed.desired_reason, closed.observed_state, closed.observed_version, closed.observed_desired_version, closed.observed_at, closed.allocated_at, closed.preparing_at, closed.ready_at, closed.closing_at, closed.closed_at, closed.lost_at, closed.failed_at, closed.reclaimed_at, closed.terminal_at, closed.terminal_reason_code, closed.terminal_error, closed.created_at, closed.updated_at FROM closed JOIN reclaimed ON true
+RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
 `
 
 type MarkRuntimeInstanceClosedParams struct {
 	ReasonCode              pgtype.Text `json:"reason_code"`
+	CleanupProof            []byte      `json:"cleanup_proof"`
 	ID                      pgtype.UUID `json:"id"`
 	WorkerInstanceID        pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch             int64       `json:"worker_epoch"`
 	DesiredVersion          int64       `json:"desired_version"`
-	NetworkSlotID           pgtype.UUID `json:"network_slot_id"`
-	NetworkSlotGeneration   int64       `json:"network_slot_generation"`
 	ExpectedObservedVersion int64       `json:"expected_observed_version"`
-	CleanupProof            []byte      `json:"cleanup_proof"`
 }
 
-type MarkRuntimeInstanceClosedRow struct {
-	ID                         pgtype.UUID          `json:"id"`
-	OrgID                      pgtype.UUID          `json:"org_id"`
-	WorkerGroupID              string               `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID          `json:"project_id"`
-	EnvironmentID              pgtype.UUID          `json:"environment_id"`
-	RegionID                   string               `json:"region_id"`
-	WorkerInstanceID           pgtype.UUID          `json:"worker_instance_id"`
-	RuntimeIdentityID          string               `json:"runtime_identity_id"`
-	DeploymentSandboxID        pgtype.UUID          `json:"deployment_sandbox_id"`
-	RuntimeSubstrateID         pgtype.UUID          `json:"runtime_substrate_id"`
-	WorkerEpoch                int64                `json:"worker_epoch"`
-	RuntimeKeyHash             string               `json:"runtime_key_hash"`
-	RuntimeKey                 []byte               `json:"runtime_key"`
-	SandboxFingerprint         string               `json:"sandbox_fingerprint"`
-	RootfsDigest               string               `json:"rootfs_digest"`
-	ImageDigest                string               `json:"image_digest"`
-	ImageFormat                string               `json:"image_format"`
-	SandboxImageArtifactID     pgtype.UUID          `json:"sandbox_image_artifact_id"`
-	SandboxImageArtifactDigest pgtype.Text          `json:"sandbox_image_artifact_digest"`
-	SandboxImageArtifactFormat pgtype.Text          `json:"sandbox_image_artifact_format"`
-	RuntimeABI                 string               `json:"runtime_abi"`
-	GuestdAbi                  string               `json:"guestd_abi"`
-	AdapterAbi                 string               `json:"adapter_abi"`
-	NetworkPolicy              []byte               `json:"network_policy"`
-	ReservedCpuMillis          int64                `json:"reserved_cpu_millis"`
-	ReservedMemoryBytes        int64                `json:"reserved_memory_bytes"`
-	ReservedWorkloadDiskBytes  int64                `json:"reserved_workload_disk_bytes"`
-	ReservedScratchBytes       int64                `json:"reserved_scratch_bytes"`
-	ReservedExecutionSlots     int32                `json:"reserved_execution_slots"`
-	WorkspaceID                pgtype.UUID          `json:"workspace_id"`
-	WorkspaceVersionID         pgtype.UUID          `json:"workspace_version_id"`
-	ReservedWorkspaceID        pgtype.UUID          `json:"reserved_workspace_id"`
-	ReservedWorkspaceVersionID pgtype.UUID          `json:"reserved_workspace_version_id"`
-	ReservationExpiresAt       pgtype.Timestamptz   `json:"reservation_expires_at"`
-	DesiredState               RuntimeDesiredState  `json:"desired_state"`
-	DesiredVersion             int64                `json:"desired_version"`
-	DesiredAt                  pgtype.Timestamptz   `json:"desired_at"`
-	DesiredReason              string               `json:"desired_reason"`
-	ObservedState              RuntimeObservedState `json:"observed_state"`
-	ObservedVersion            int64                `json:"observed_version"`
-	ObservedDesiredVersion     int64                `json:"observed_desired_version"`
-	ObservedAt                 pgtype.Timestamptz   `json:"observed_at"`
-	AllocatedAt                pgtype.Timestamptz   `json:"allocated_at"`
-	PreparingAt                pgtype.Timestamptz   `json:"preparing_at"`
-	ReadyAt                    pgtype.Timestamptz   `json:"ready_at"`
-	ClosingAt                  pgtype.Timestamptz   `json:"closing_at"`
-	ClosedAt                   pgtype.Timestamptz   `json:"closed_at"`
-	LostAt                     pgtype.Timestamptz   `json:"lost_at"`
-	FailedAt                   pgtype.Timestamptz   `json:"failed_at"`
-	ReclaimedAt                pgtype.Timestamptz   `json:"reclaimed_at"`
-	TerminalAt                 pgtype.Timestamptz   `json:"terminal_at"`
-	TerminalReasonCode         pgtype.Text          `json:"terminal_reason_code"`
-	TerminalError              []byte               `json:"terminal_error"`
-	CreatedAt                  pgtype.Timestamptz   `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz   `json:"updated_at"`
-}
-
-func (q *Queries) MarkRuntimeInstanceClosed(ctx context.Context, arg MarkRuntimeInstanceClosedParams) (MarkRuntimeInstanceClosedRow, error) {
+func (q *Queries) MarkRuntimeInstanceClosed(ctx context.Context, arg MarkRuntimeInstanceClosedParams) (RuntimeInstance, error) {
 	row := q.db.QueryRow(ctx, markRuntimeInstanceClosed,
 		arg.ReasonCode,
-		arg.ID,
-		arg.WorkerInstanceID,
-		arg.WorkerEpoch,
-		arg.DesiredVersion,
-		arg.NetworkSlotID,
-		arg.NetworkSlotGeneration,
-		arg.ExpectedObservedVersion,
 		arg.CleanupProof,
-	)
-	var i MarkRuntimeInstanceClosedRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.WorkerInstanceID,
-		&i.RuntimeIdentityID,
-		&i.DeploymentSandboxID,
-		&i.RuntimeSubstrateID,
-		&i.WorkerEpoch,
-		&i.RuntimeKeyHash,
-		&i.RuntimeKey,
-		&i.SandboxFingerprint,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.SandboxImageArtifactID,
-		&i.SandboxImageArtifactDigest,
-		&i.SandboxImageArtifactFormat,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
-		&i.NetworkPolicy,
-		&i.ReservedCpuMillis,
-		&i.ReservedMemoryBytes,
-		&i.ReservedWorkloadDiskBytes,
-		&i.ReservedScratchBytes,
-		&i.ReservedExecutionSlots,
-		&i.WorkspaceID,
-		&i.WorkspaceVersionID,
-		&i.ReservedWorkspaceID,
-		&i.ReservedWorkspaceVersionID,
-		&i.ReservationExpiresAt,
-		&i.DesiredState,
-		&i.DesiredVersion,
-		&i.DesiredAt,
-		&i.DesiredReason,
-		&i.ObservedState,
-		&i.ObservedVersion,
-		&i.ObservedDesiredVersion,
-		&i.ObservedAt,
-		&i.AllocatedAt,
-		&i.PreparingAt,
-		&i.ReadyAt,
-		&i.ClosingAt,
-		&i.ClosedAt,
-		&i.LostAt,
-		&i.FailedAt,
-		&i.ReclaimedAt,
-		&i.TerminalAt,
-		&i.TerminalReasonCode,
-		&i.TerminalError,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const markRuntimeInstanceFailed = `-- name: MarkRuntimeInstanceFailed :one
-WITH failed AS (
-UPDATE runtime_instances
-   SET observed_state = 'failed', observed_version = observed_version + 1,
-       observed_at = now(), failed_at = now(), terminal_at = now(),
-       terminal_reason_code = $1, terminal_error = $2,
-       updated_at = now()
-  FROM worker_network_slots
- WHERE runtime_instances.id = $3 AND runtime_instances.worker_instance_id = $4
-   AND runtime_instances.worker_epoch = $5
-   AND worker_network_slots.id = $6
-   AND worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
-   AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
-   AND worker_network_slots.generation = $7
-   AND worker_network_slots.runtime_instance_id = runtime_instances.id
-   AND worker_network_slots.state IN ('assigned', 'bound')
-   AND runtime_instances.desired_version = $8
-   AND observed_version = $9
-   AND observed_state IN ('allocated','preparing','ready','closing')
-RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.workspace_version_id, runtime_instances.reserved_workspace_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
-), quarantined AS (
-UPDATE worker_network_slots
-   SET state = 'quarantined', reclaiming_at = COALESCE(reclaiming_at, now()),
-       quarantined_at = now(), state_reason_code = 'runtime_physical_cleanup_pending',
-       state_error = $2, updated_at = now()
-  FROM failed
- WHERE worker_network_slots.id = $6
-   AND worker_network_slots.worker_instance_id = failed.worker_instance_id
-   AND worker_network_slots.worker_epoch = failed.worker_epoch
-   AND worker_network_slots.generation = $7
-   AND worker_network_slots.runtime_instance_id = failed.id
-RETURNING worker_network_slots.id
-)
-SELECT failed.id, failed.org_id, failed.worker_group_id, failed.project_id, failed.environment_id, failed.region_id, failed.worker_instance_id, failed.runtime_identity_id, failed.deployment_sandbox_id, failed.runtime_substrate_id, failed.worker_epoch, failed.runtime_key_hash, failed.runtime_key, failed.sandbox_fingerprint, failed.rootfs_digest, failed.image_digest, failed.image_format, failed.sandbox_image_artifact_id, failed.sandbox_image_artifact_digest, failed.sandbox_image_artifact_format, failed.runtime_abi, failed.guestd_abi, failed.adapter_abi, failed.network_policy, failed.reserved_cpu_millis, failed.reserved_memory_bytes, failed.reserved_workload_disk_bytes, failed.reserved_scratch_bytes, failed.reserved_execution_slots, failed.workspace_id, failed.workspace_version_id, failed.reserved_workspace_id, failed.reserved_workspace_version_id, failed.reservation_expires_at, failed.desired_state, failed.desired_version, failed.desired_at, failed.desired_reason, failed.observed_state, failed.observed_version, failed.observed_desired_version, failed.observed_at, failed.allocated_at, failed.preparing_at, failed.ready_at, failed.closing_at, failed.closed_at, failed.lost_at, failed.failed_at, failed.reclaimed_at, failed.terminal_at, failed.terminal_reason_code, failed.terminal_error, failed.created_at, failed.updated_at FROM failed JOIN quarantined ON true
-`
-
-type MarkRuntimeInstanceFailedParams struct {
-	ReasonCode              pgtype.Text `json:"reason_code"`
-	Error                   []byte      `json:"error"`
-	ID                      pgtype.UUID `json:"id"`
-	WorkerInstanceID        pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch             int64       `json:"worker_epoch"`
-	NetworkSlotID           pgtype.UUID `json:"network_slot_id"`
-	NetworkSlotGeneration   int64       `json:"network_slot_generation"`
-	DesiredVersion          int64       `json:"desired_version"`
-	ExpectedObservedVersion int64       `json:"expected_observed_version"`
-}
-
-type MarkRuntimeInstanceFailedRow struct {
-	ID                         pgtype.UUID          `json:"id"`
-	OrgID                      pgtype.UUID          `json:"org_id"`
-	WorkerGroupID              string               `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID          `json:"project_id"`
-	EnvironmentID              pgtype.UUID          `json:"environment_id"`
-	RegionID                   string               `json:"region_id"`
-	WorkerInstanceID           pgtype.UUID          `json:"worker_instance_id"`
-	RuntimeIdentityID          string               `json:"runtime_identity_id"`
-	DeploymentSandboxID        pgtype.UUID          `json:"deployment_sandbox_id"`
-	RuntimeSubstrateID         pgtype.UUID          `json:"runtime_substrate_id"`
-	WorkerEpoch                int64                `json:"worker_epoch"`
-	RuntimeKeyHash             string               `json:"runtime_key_hash"`
-	RuntimeKey                 []byte               `json:"runtime_key"`
-	SandboxFingerprint         string               `json:"sandbox_fingerprint"`
-	RootfsDigest               string               `json:"rootfs_digest"`
-	ImageDigest                string               `json:"image_digest"`
-	ImageFormat                string               `json:"image_format"`
-	SandboxImageArtifactID     pgtype.UUID          `json:"sandbox_image_artifact_id"`
-	SandboxImageArtifactDigest pgtype.Text          `json:"sandbox_image_artifact_digest"`
-	SandboxImageArtifactFormat pgtype.Text          `json:"sandbox_image_artifact_format"`
-	RuntimeABI                 string               `json:"runtime_abi"`
-	GuestdAbi                  string               `json:"guestd_abi"`
-	AdapterAbi                 string               `json:"adapter_abi"`
-	NetworkPolicy              []byte               `json:"network_policy"`
-	ReservedCpuMillis          int64                `json:"reserved_cpu_millis"`
-	ReservedMemoryBytes        int64                `json:"reserved_memory_bytes"`
-	ReservedWorkloadDiskBytes  int64                `json:"reserved_workload_disk_bytes"`
-	ReservedScratchBytes       int64                `json:"reserved_scratch_bytes"`
-	ReservedExecutionSlots     int32                `json:"reserved_execution_slots"`
-	WorkspaceID                pgtype.UUID          `json:"workspace_id"`
-	WorkspaceVersionID         pgtype.UUID          `json:"workspace_version_id"`
-	ReservedWorkspaceID        pgtype.UUID          `json:"reserved_workspace_id"`
-	ReservedWorkspaceVersionID pgtype.UUID          `json:"reserved_workspace_version_id"`
-	ReservationExpiresAt       pgtype.Timestamptz   `json:"reservation_expires_at"`
-	DesiredState               RuntimeDesiredState  `json:"desired_state"`
-	DesiredVersion             int64                `json:"desired_version"`
-	DesiredAt                  pgtype.Timestamptz   `json:"desired_at"`
-	DesiredReason              string               `json:"desired_reason"`
-	ObservedState              RuntimeObservedState `json:"observed_state"`
-	ObservedVersion            int64                `json:"observed_version"`
-	ObservedDesiredVersion     int64                `json:"observed_desired_version"`
-	ObservedAt                 pgtype.Timestamptz   `json:"observed_at"`
-	AllocatedAt                pgtype.Timestamptz   `json:"allocated_at"`
-	PreparingAt                pgtype.Timestamptz   `json:"preparing_at"`
-	ReadyAt                    pgtype.Timestamptz   `json:"ready_at"`
-	ClosingAt                  pgtype.Timestamptz   `json:"closing_at"`
-	ClosedAt                   pgtype.Timestamptz   `json:"closed_at"`
-	LostAt                     pgtype.Timestamptz   `json:"lost_at"`
-	FailedAt                   pgtype.Timestamptz   `json:"failed_at"`
-	ReclaimedAt                pgtype.Timestamptz   `json:"reclaimed_at"`
-	TerminalAt                 pgtype.Timestamptz   `json:"terminal_at"`
-	TerminalReasonCode         pgtype.Text          `json:"terminal_reason_code"`
-	TerminalError              []byte               `json:"terminal_error"`
-	CreatedAt                  pgtype.Timestamptz   `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz   `json:"updated_at"`
-}
-
-func (q *Queries) MarkRuntimeInstanceFailed(ctx context.Context, arg MarkRuntimeInstanceFailedParams) (MarkRuntimeInstanceFailedRow, error) {
-	row := q.db.QueryRow(ctx, markRuntimeInstanceFailed,
-		arg.ReasonCode,
-		arg.Error,
 		arg.ID,
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
-		arg.NetworkSlotID,
-		arg.NetworkSlotGeneration,
 		arg.DesiredVersion,
 		arg.ExpectedObservedVersion,
-	)
-	var i MarkRuntimeInstanceFailedRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.WorkerInstanceID,
-		&i.RuntimeIdentityID,
-		&i.DeploymentSandboxID,
-		&i.RuntimeSubstrateID,
-		&i.WorkerEpoch,
-		&i.RuntimeKeyHash,
-		&i.RuntimeKey,
-		&i.SandboxFingerprint,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.SandboxImageArtifactID,
-		&i.SandboxImageArtifactDigest,
-		&i.SandboxImageArtifactFormat,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
-		&i.NetworkPolicy,
-		&i.ReservedCpuMillis,
-		&i.ReservedMemoryBytes,
-		&i.ReservedWorkloadDiskBytes,
-		&i.ReservedScratchBytes,
-		&i.ReservedExecutionSlots,
-		&i.WorkspaceID,
-		&i.WorkspaceVersionID,
-		&i.ReservedWorkspaceID,
-		&i.ReservedWorkspaceVersionID,
-		&i.ReservationExpiresAt,
-		&i.DesiredState,
-		&i.DesiredVersion,
-		&i.DesiredAt,
-		&i.DesiredReason,
-		&i.ObservedState,
-		&i.ObservedVersion,
-		&i.ObservedDesiredVersion,
-		&i.ObservedAt,
-		&i.AllocatedAt,
-		&i.PreparingAt,
-		&i.ReadyAt,
-		&i.ClosingAt,
-		&i.ClosedAt,
-		&i.LostAt,
-		&i.FailedAt,
-		&i.ReclaimedAt,
-		&i.TerminalAt,
-		&i.TerminalReasonCode,
-		&i.TerminalError,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const markRuntimeInstanceReady = `-- name: MarkRuntimeInstanceReady :one
-WITH bound AS (
-    UPDATE worker_network_slots
-       SET state = 'bound', host_interface_name = $6,
-           guest_address = $7, gateway_address = $8,
-           subnet = $9, tap_name = $10,
-           netns_name = $11, guest_mac = $12,
-           updated_at = now()
-      FROM runtime_instances
-     WHERE worker_network_slots.id = $13
-       AND worker_network_slots.worker_instance_id = $3
-       AND worker_network_slots.worker_epoch = $4
-       AND worker_network_slots.generation = $14
-       AND worker_network_slots.runtime_instance_id = $2
-       AND worker_network_slots.state = 'assigned'
-       AND runtime_instances.id = worker_network_slots.runtime_instance_id
-       AND runtime_instances.worker_instance_id = worker_network_slots.worker_instance_id
-       AND runtime_instances.worker_epoch = worker_network_slots.worker_epoch
-       AND runtime_instances.desired_version = $1
-       AND runtime_instances.observed_version = $5
-       AND runtime_instances.observed_state IN ('allocated','preparing')
-    RETURNING worker_network_slots.runtime_instance_id
-)
-UPDATE runtime_instances
-   SET observed_state = 'ready', observed_version = observed_version + 1,
-       observed_desired_version = $1, observed_at = now(),
-       preparing_at = COALESCE(preparing_at, now()), ready_at = COALESCE(ready_at, now()),
-       workspace_id = COALESCE(workspace_id, reserved_workspace_id),
-       workspace_version_id = COALESCE(workspace_version_id, reserved_workspace_version_id),
-       reserved_workspace_id = NULL, reserved_workspace_version_id = NULL,
-       reservation_expires_at = NULL, updated_at = now()
-  FROM bound
- WHERE runtime_instances.id = $2 AND runtime_instances.worker_instance_id = $3
-   AND bound.runtime_instance_id = runtime_instances.id
-   AND runtime_instances.worker_epoch = $4 AND runtime_instances.desired_version = $1
-   AND runtime_instances.observed_version = $5
-   AND runtime_instances.observed_state IN ('allocated', 'preparing')
-RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.workspace_version_id, runtime_instances.reserved_workspace_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
-`
-
-type MarkRuntimeInstanceReadyParams struct {
-	DesiredVersion          int64            `json:"desired_version"`
-	ID                      pgtype.UUID      `json:"id"`
-	WorkerInstanceID        pgtype.UUID      `json:"worker_instance_id"`
-	WorkerEpoch             int64            `json:"worker_epoch"`
-	ExpectedObservedVersion int64            `json:"expected_observed_version"`
-	HostInterfaceName       pgtype.Text      `json:"host_interface_name"`
-	GuestAddress            *netip.Addr      `json:"guest_address"`
-	GatewayAddress          *netip.Addr      `json:"gateway_address"`
-	Subnet                  *netip.Prefix    `json:"subnet"`
-	TapName                 pgtype.Text      `json:"tap_name"`
-	NetnsName               pgtype.Text      `json:"netns_name"`
-	GuestMac                net.HardwareAddr `json:"guest_mac"`
-	NetworkSlotID           pgtype.UUID      `json:"network_slot_id"`
-	NetworkSlotGeneration   int64            `json:"network_slot_generation"`
-}
-
-func (q *Queries) MarkRuntimeInstanceReady(ctx context.Context, arg MarkRuntimeInstanceReadyParams) (RuntimeInstance, error) {
-	row := q.db.QueryRow(ctx, markRuntimeInstanceReady,
-		arg.DesiredVersion,
-		arg.ID,
-		arg.WorkerInstanceID,
-		arg.WorkerEpoch,
-		arg.ExpectedObservedVersion,
-		arg.HostInterfaceName,
-		arg.GuestAddress,
-		arg.GatewayAddress,
-		arg.Subnet,
-		arg.TapName,
-		arg.NetnsName,
-		arg.GuestMac,
-		arg.NetworkSlotID,
-		arg.NetworkSlotGeneration,
 	)
 	var i RuntimeInstance
 	err := row.Scan(
@@ -1267,30 +292,19 @@ func (q *Queries) MarkRuntimeInstanceReady(ctx context.Context, arg MarkRuntimeI
 		&i.RegionID,
 		&i.WorkerInstanceID,
 		&i.RuntimeIdentityID,
-		&i.DeploymentSandboxID,
+		&i.DeploymentDefinitionID,
 		&i.RuntimeSubstrateID,
 		&i.WorkerEpoch,
-		&i.RuntimeKeyHash,
-		&i.RuntimeKey,
-		&i.SandboxFingerprint,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.SandboxImageArtifactID,
-		&i.SandboxImageArtifactDigest,
-		&i.SandboxImageArtifactFormat,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
-		&i.NetworkPolicy,
 		&i.ReservedCpuMillis,
 		&i.ReservedMemoryBytes,
-		&i.ReservedWorkloadDiskBytes,
-		&i.ReservedScratchBytes,
+		&i.ReservedGuestEphemeralDiskBytes,
 		&i.ReservedExecutionSlots,
 		&i.WorkspaceID,
-		&i.WorkspaceVersionID,
-		&i.ReservedWorkspaceID,
+		&i.ProgramDeploymentID,
+		&i.RestoreCheckpointID,
+		&i.ReservedRunID,
+		&i.ReservedAttemptNumber,
+		&i.ReservedProcessID,
 		&i.ReservedWorkspaceVersionID,
 		&i.ReservationExpiresAt,
 		&i.DesiredState,
@@ -1309,6 +323,445 @@ func (q *Queries) MarkRuntimeInstanceReady(ctx context.Context, arg MarkRuntimeI
 		&i.LostAt,
 		&i.FailedAt,
 		&i.ReclaimedAt,
+		&i.ReclaimEvidence,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markRuntimeInstanceFailed = `-- name: MarkRuntimeInstanceFailed :one
+UPDATE runtime_instances
+   SET observed_state = 'failed', observed_version = observed_version + 1,
+       observed_at = now(), failed_at = now(), terminal_at = now(),
+       terminal_reason_code = $1, terminal_error = $2,
+       reserved_run_id = NULL, reserved_attempt_number = NULL,
+       reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+       reservation_expires_at = NULL,
+       updated_at = now()
+ WHERE runtime_instances.id = $3 AND runtime_instances.worker_instance_id = $4
+   AND runtime_instances.worker_epoch = $5
+   AND runtime_instances.desired_version = $6
+   AND observed_version = $7
+   AND observed_state IN ('allocated','preparing','ready','closing')
+RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
+`
+
+type MarkRuntimeInstanceFailedParams struct {
+	ReasonCode              pgtype.Text `json:"reason_code"`
+	Error                   []byte      `json:"error"`
+	ID                      pgtype.UUID `json:"id"`
+	WorkerInstanceID        pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch             int64       `json:"worker_epoch"`
+	DesiredVersion          int64       `json:"desired_version"`
+	ExpectedObservedVersion int64       `json:"expected_observed_version"`
+}
+
+func (q *Queries) MarkRuntimeInstanceFailed(ctx context.Context, arg MarkRuntimeInstanceFailedParams) (RuntimeInstance, error) {
+	row := q.db.QueryRow(ctx, markRuntimeInstanceFailed,
+		arg.ReasonCode,
+		arg.Error,
+		arg.ID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.DesiredVersion,
+		arg.ExpectedObservedVersion,
+	)
+	var i RuntimeInstance
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.WorkerInstanceID,
+		&i.RuntimeIdentityID,
+		&i.DeploymentDefinitionID,
+		&i.RuntimeSubstrateID,
+		&i.WorkerEpoch,
+		&i.ReservedCpuMillis,
+		&i.ReservedMemoryBytes,
+		&i.ReservedGuestEphemeralDiskBytes,
+		&i.ReservedExecutionSlots,
+		&i.WorkspaceID,
+		&i.ProgramDeploymentID,
+		&i.RestoreCheckpointID,
+		&i.ReservedRunID,
+		&i.ReservedAttemptNumber,
+		&i.ReservedProcessID,
+		&i.ReservedWorkspaceVersionID,
+		&i.ReservationExpiresAt,
+		&i.DesiredState,
+		&i.DesiredVersion,
+		&i.DesiredAt,
+		&i.DesiredReason,
+		&i.ObservedState,
+		&i.ObservedVersion,
+		&i.ObservedDesiredVersion,
+		&i.ObservedAt,
+		&i.AllocatedAt,
+		&i.PreparingAt,
+		&i.ReadyAt,
+		&i.ClosingAt,
+		&i.ClosedAt,
+		&i.LostAt,
+		&i.FailedAt,
+		&i.ReclaimedAt,
+		&i.ReclaimEvidence,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markRuntimeInstanceReady = `-- name: MarkRuntimeInstanceReady :one
+WITH restore_secret_authority AS MATERIALIZED (
+    SELECT runtime_instances.id AS runtime_instance_id,
+           workspace_secrets.placement_kind,
+           workspace_secrets.placement_target
+      FROM runtime_instances
+      JOIN workspace_secrets
+        ON workspace_secrets.workspace_id = runtime_instances.workspace_id
+      JOIN secrets
+        ON secrets.id = workspace_secrets.secret_id
+       AND secrets.state = 'active'
+      JOIN secret_resolutions
+        ON secret_resolutions.workspace_id = workspace_secrets.workspace_id
+       AND secret_resolutions.run_id = runtime_instances.reserved_run_id
+       AND secret_resolutions.attempt_number = runtime_instances.reserved_attempt_number
+       AND secret_resolutions.placement_kind = workspace_secrets.placement_kind
+       AND secret_resolutions.placement_target = workspace_secrets.placement_target
+       AND secret_resolutions.secret_id = workspace_secrets.secret_id
+       AND secret_resolutions.revocation_generation = secrets.revocation_generation
+     WHERE runtime_instances.id = $3
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
+       AND runtime_instances.restore_checkpoint_id IS NOT NULL
+     ORDER BY secrets.id, workspace_secrets.placement_kind, workspace_secrets.placement_target
+     FOR UPDATE OF secrets
+), restore_actor_authority AS MATERIALIZED (
+    SELECT runtime_instances.id AS runtime_instance_id,
+           actors.id AS actor_id,
+           actors.committed_input_sequence,
+           actors.next_input_sequence
+      FROM runtime_instances
+      JOIN runs
+        ON runs.id = runtime_instances.reserved_run_id
+       AND runs.entrypoint_kind = 'actor'
+       AND runs.actor_id IS NOT NULL
+      JOIN actors
+        ON actors.id = runs.actor_id
+       AND actors.workspace_id = runtime_instances.workspace_id
+       AND actors.current_run_id = runs.id
+       AND actors.state IN ('open', 'closing')
+     WHERE runtime_instances.id = $3
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
+       AND runtime_instances.restore_checkpoint_id IS NOT NULL
+       AND (SELECT count(*) FROM restore_secret_authority) >= 0
+     FOR UPDATE OF actors
+), restore_entrypoint_authority AS MATERIALIZED (
+    SELECT runtime_instances.id AS runtime_instance_id,
+           NULL::uuid AS actor_id,
+           NULL::bigint AS committed_input_sequence,
+           NULL::bigint AS next_input_sequence
+      FROM runtime_instances
+      JOIN runs ON runs.id = runtime_instances.reserved_run_id
+     WHERE runtime_instances.id = $3
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
+       AND runtime_instances.restore_checkpoint_id IS NOT NULL
+       AND runs.entrypoint_kind = 'task'
+       AND runs.actor_id IS NULL
+       AND (SELECT count(*) FROM restore_secret_authority) >= 0
+    UNION ALL
+    SELECT restore_actor_authority.runtime_instance_id, restore_actor_authority.actor_id, restore_actor_authority.committed_input_sequence, restore_actor_authority.next_input_sequence FROM restore_actor_authority
+), restore_run_authority AS MATERIALIZED (
+    SELECT runtime_instances.id AS runtime_instance_id,
+           restore_entrypoint_authority.actor_id,
+           restore_entrypoint_authority.committed_input_sequence,
+           restore_entrypoint_authority.next_input_sequence,
+           runs.entrypoint_kind,
+           runs.actor_start_input_sequence,
+           runs.actor_start_input_high_watermark
+      FROM restore_entrypoint_authority
+      JOIN runtime_instances
+        ON runtime_instances.id = restore_entrypoint_authority.runtime_instance_id
+      JOIN runs
+        ON runs.id = runtime_instances.reserved_run_id
+       AND runs.org_id = runtime_instances.org_id
+       AND runs.project_id = runtime_instances.project_id
+       AND runs.environment_id = runtime_instances.environment_id
+       AND runs.workspace_id = runtime_instances.workspace_id
+       AND runs.current_attempt_number = runtime_instances.reserved_attempt_number
+       AND runs.status = 'queued'
+       AND runs.current_run_lease_id IS NULL
+       AND ((runs.entrypoint_kind = 'task'
+             AND runs.actor_id IS NULL
+             AND restore_entrypoint_authority.actor_id IS NULL)
+            OR (runs.entrypoint_kind = 'actor'
+                AND runs.actor_id = restore_entrypoint_authority.actor_id
+                AND runs.cause_kind IN ('actor_start', 'continuation')
+                AND runs.parent_run_id IS NULL))
+     FOR UPDATE OF runs
+), restore_workspace_authority AS MATERIALIZED (
+    SELECT restore_run_authority.runtime_instance_id, restore_run_authority.actor_id, restore_run_authority.committed_input_sequence, restore_run_authority.next_input_sequence, restore_run_authority.entrypoint_kind, restore_run_authority.actor_start_input_sequence, restore_run_authority.actor_start_input_high_watermark
+      FROM restore_run_authority
+      JOIN runtime_instances
+        ON runtime_instances.id = restore_run_authority.runtime_instance_id
+      JOIN workspaces
+        ON workspaces.id = runtime_instances.workspace_id
+       AND workspaces.environment_id = runtime_instances.environment_id
+       AND ((restore_run_authority.entrypoint_kind = 'task'
+             AND workspaces.owner_run_id = runtime_instances.reserved_run_id
+             AND workspaces.owner_actor_id IS NULL)
+            OR (restore_run_authority.entrypoint_kind = 'actor'
+                AND workspaces.owner_actor_id = restore_run_authority.actor_id
+                AND workspaces.owner_run_id IS NULL))
+       AND workspaces.state = 'active'
+       AND workspaces.desired_state = 'active'
+       AND workspaces.dirty_state = 'clean'
+     FOR UPDATE OF workspaces
+), restore_attempt_authority AS MATERIALIZED (
+    SELECT restore_workspace_authority.runtime_instance_id, restore_workspace_authority.actor_id, restore_workspace_authority.committed_input_sequence, restore_workspace_authority.next_input_sequence, restore_workspace_authority.entrypoint_kind, restore_workspace_authority.actor_start_input_sequence, restore_workspace_authority.actor_start_input_high_watermark
+      FROM restore_workspace_authority
+      JOIN runtime_instances
+        ON runtime_instances.id = restore_workspace_authority.runtime_instance_id
+      JOIN run_attempts
+        ON run_attempts.run_id = runtime_instances.reserved_run_id
+       AND run_attempts.number = runtime_instances.reserved_attempt_number
+       AND run_attempts.workspace_id = runtime_instances.workspace_id
+       AND run_attempts.entrypoint_kind = restore_workspace_authority.entrypoint_kind
+       AND run_attempts.terminal_at IS NULL
+       AND (restore_workspace_authority.entrypoint_kind = 'task'
+            OR (run_attempts.actor_start_input_sequence IS NOT NULL
+                AND run_attempts.actor_start_input_sequence = restore_workspace_authority.actor_start_input_sequence
+                AND restore_workspace_authority.actor_start_input_sequence
+                    <= restore_workspace_authority.actor_start_input_high_watermark
+                AND restore_workspace_authority.actor_start_input_sequence
+                    <= restore_workspace_authority.committed_input_sequence
+                AND restore_workspace_authority.committed_input_sequence
+                    < restore_workspace_authority.next_input_sequence))
+     FOR UPDATE OF run_attempts
+), substrate_authority AS MATERIALIZED (
+    SELECT runtime_instances.id AS runtime_instance_id
+      FROM runtime_instances
+      JOIN worker_instances
+        ON worker_instances.id = runtime_instances.worker_instance_id
+       AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+       AND worker_instances.current_epoch = runtime_instances.worker_epoch
+       AND worker_instances.state IN ('active', 'draining')
+       AND worker_instances.supports_run
+      JOIN runtime_substrates
+        ON runtime_substrates.id = $1
+       AND runtime_substrates.org_id = runtime_instances.org_id
+       AND runtime_substrates.project_id = runtime_instances.project_id
+       AND runtime_substrates.environment_id = runtime_instances.environment_id
+       AND runtime_substrates.deployment_definition_id = runtime_instances.deployment_definition_id
+       AND runtime_substrates.substrate_format = worker_instances.substrate_format
+       AND runtime_substrates.builder_abi = worker_instances.substrate_builder_abi
+       AND runtime_substrates.layout_abi = worker_instances.substrate_layout_abi
+     WHERE runtime_instances.id = $3
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
+       AND (SELECT count(*) FROM restore_secret_authority) >= 0
+       AND (runtime_instances.restore_checkpoint_id IS NULL
+            OR EXISTS (
+                SELECT 1
+                  FROM restore_attempt_authority
+                 WHERE restore_attempt_authority.runtime_instance_id = runtime_instances.id
+            ))
+     ORDER BY worker_instances.id, runtime_substrates.id
+     FOR UPDATE OF worker_instances, runtime_substrates
+), runtime_authority AS MATERIALIZED (
+    SELECT runtime_instances.id AS runtime_instance_id
+      FROM substrate_authority
+      JOIN runtime_instances
+        ON runtime_instances.id = substrate_authority.runtime_instance_id
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
+       AND runtime_instances.desired_version = $2
+       AND runtime_instances.observed_version = $6
+       AND runtime_instances.observed_state IN ('allocated', 'preparing')
+       AND (runtime_instances.runtime_substrate_id IS NULL
+            OR runtime_instances.runtime_substrate_id = $1)
+     FOR UPDATE OF runtime_instances
+), restore_authority AS MATERIALIZED (
+    SELECT runtime_instances.id AS runtime_instance_id
+      FROM runtime_authority
+      JOIN runtime_instances
+        ON runtime_instances.id = runtime_authority.runtime_instance_id
+      JOIN restore_attempt_authority
+        ON restore_attempt_authority.runtime_instance_id = runtime_instances.id
+      JOIN run_waits
+        ON run_waits.run_id = runtime_instances.reserved_run_id
+       AND run_waits.attempt_number = runtime_instances.reserved_attempt_number
+       AND run_waits.workspace_id = runtime_instances.workspace_id
+       AND run_waits.suspension_state = 'resume_pending'
+       AND run_waits.resume_writer_generation IS NULL
+       AND (
+           (run_waits.handoff_runtime_instance_id IS NULL
+            AND run_waits.handoff_workspace_mount_id IS NULL
+            AND run_waits.handoff_resume_checkpoint_id IS NULL)
+           OR
+           (run_waits.handoff_runtime_instance_id IS NOT NULL
+            AND run_waits.handoff_workspace_mount_id IS NOT NULL
+            AND run_waits.handoff_mount_generation IS NOT NULL
+            AND run_waits.ownership_generation IS NOT NULL
+            AND run_waits.parent_writer_generation IS NOT NULL
+            AND run_waits.child_writer_generation IS NOT NULL
+            AND run_waits.resume_workspace_version_id
+                = runtime_instances.reserved_workspace_version_id
+            AND (
+                (run_waits.condition_state = 'completed'
+                 AND run_waits.handoff_resume_checkpoint_id
+                     = runtime_instances.restore_checkpoint_id)
+                OR
+                (run_waits.condition_state IN ('failed', 'cancelled')
+                 AND run_waits.handoff_resume_checkpoint_id IS NULL
+                 AND run_waits.suspend_checkpoint_id
+                     = runtime_instances.restore_checkpoint_id)
+            ))
+       )
+      JOIN run_checkpoints
+        ON run_checkpoints.id = runtime_instances.restore_checkpoint_id
+       AND run_checkpoints.id = CASE
+               WHEN run_waits.handoff_runtime_instance_id IS NOT NULL
+                AND run_waits.condition_state = 'completed'
+               THEN run_waits.handoff_resume_checkpoint_id
+               ELSE run_waits.suspend_checkpoint_id
+           END
+       AND run_checkpoints.kind = CASE
+               WHEN run_waits.handoff_runtime_instance_id IS NOT NULL
+                AND run_waits.condition_state = 'completed'
+               THEN 'handoff_resume'::run_checkpoint_kind
+               ELSE 'suspend'::run_checkpoint_kind
+           END
+       AND run_checkpoints.run_id = runtime_instances.reserved_run_id
+       AND run_checkpoints.attempt_number = runtime_instances.reserved_attempt_number
+       AND run_checkpoints.run_wait_id = run_waits.id
+       AND run_checkpoints.workspace_id = runtime_instances.workspace_id
+       AND run_checkpoints.private_workspace_version_id = runtime_instances.reserved_workspace_version_id
+       AND run_checkpoints.state = 'ready'
+       AND ((restore_attempt_authority.entrypoint_kind = 'task'
+             AND run_checkpoints.actor_speculative_input_sequence IS NULL)
+            OR (restore_attempt_authority.entrypoint_kind = 'actor'
+                AND run_checkpoints.actor_speculative_input_sequence
+                    BETWEEN restore_attempt_authority.committed_input_sequence
+                        AND restore_attempt_authority.next_input_sequence - 1))
+       AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > transaction_timestamp())
+      JOIN run_leases AS source_lease
+        ON source_lease.id = run_checkpoints.source_run_lease_id
+       AND source_lease.run_id = run_checkpoints.run_id
+       AND source_lease.attempt_number = run_checkpoints.attempt_number
+       AND source_lease.workspace_id = run_checkpoints.workspace_id
+       AND source_lease.state = 'checkpointed'
+      JOIN runtime_instances AS source_runtime
+        ON source_runtime.id = source_lease.runtime_instance_id
+       AND source_runtime.runtime_identity_id = runtime_instances.runtime_identity_id
+       AND source_runtime.runtime_substrate_id = $1
+      JOIN workspace_versions
+        ON workspace_versions.workspace_id = runtime_instances.workspace_id
+       AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
+       AND workspace_versions.state = 'private'
+     WHERE runtime_instances.id = $3
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
+       AND (SELECT count(*) FROM workspace_secrets
+             WHERE workspace_secrets.workspace_id = runtime_instances.workspace_id)
+           = (SELECT count(*) FROM restore_secret_authority
+               WHERE restore_secret_authority.runtime_instance_id = runtime_instances.id)
+     FOR UPDATE OF run_waits, run_checkpoints, workspace_versions
+)
+UPDATE runtime_instances
+   SET runtime_substrate_id = $1,
+       observed_state = 'ready', observed_version = observed_version + 1,
+       observed_desired_version = $2, observed_at = now(),
+       preparing_at = COALESCE(preparing_at, now()), ready_at = COALESCE(ready_at, now()),
+       updated_at = now()
+  FROM runtime_authority
+ WHERE runtime_instances.id = $3 AND runtime_instances.worker_instance_id = $4
+   AND runtime_authority.runtime_instance_id = runtime_instances.id
+   AND runtime_instances.worker_epoch = $5 AND runtime_instances.desired_version = $2
+   AND runtime_instances.observed_version = $6
+   AND runtime_instances.observed_state IN ('allocated', 'preparing')
+   AND (runtime_instances.runtime_substrate_id IS NULL
+        OR runtime_instances.runtime_substrate_id = $1)
+   AND (runtime_instances.restore_checkpoint_id IS NULL
+        OR EXISTS (
+            SELECT 1 FROM restore_authority
+             WHERE restore_authority.runtime_instance_id = runtime_instances.id
+        ))
+RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
+`
+
+type MarkRuntimeInstanceReadyParams struct {
+	RuntimeSubstrateID      pgtype.UUID `json:"runtime_substrate_id"`
+	DesiredVersion          int64       `json:"desired_version"`
+	ID                      pgtype.UUID `json:"id"`
+	WorkerInstanceID        pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch             int64       `json:"worker_epoch"`
+	ExpectedObservedVersion int64       `json:"expected_observed_version"`
+}
+
+func (q *Queries) MarkRuntimeInstanceReady(ctx context.Context, arg MarkRuntimeInstanceReadyParams) (RuntimeInstance, error) {
+	row := q.db.QueryRow(ctx, markRuntimeInstanceReady,
+		arg.RuntimeSubstrateID,
+		arg.DesiredVersion,
+		arg.ID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.ExpectedObservedVersion,
+	)
+	var i RuntimeInstance
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.WorkerInstanceID,
+		&i.RuntimeIdentityID,
+		&i.DeploymentDefinitionID,
+		&i.RuntimeSubstrateID,
+		&i.WorkerEpoch,
+		&i.ReservedCpuMillis,
+		&i.ReservedMemoryBytes,
+		&i.ReservedGuestEphemeralDiskBytes,
+		&i.ReservedExecutionSlots,
+		&i.WorkspaceID,
+		&i.ProgramDeploymentID,
+		&i.RestoreCheckpointID,
+		&i.ReservedRunID,
+		&i.ReservedAttemptNumber,
+		&i.ReservedProcessID,
+		&i.ReservedWorkspaceVersionID,
+		&i.ReservationExpiresAt,
+		&i.DesiredState,
+		&i.DesiredVersion,
+		&i.DesiredAt,
+		&i.DesiredReason,
+		&i.ObservedState,
+		&i.ObservedVersion,
+		&i.ObservedDesiredVersion,
+		&i.ObservedAt,
+		&i.AllocatedAt,
+		&i.PreparingAt,
+		&i.ReadyAt,
+		&i.ClosingAt,
+		&i.ClosedAt,
+		&i.LostAt,
+		&i.FailedAt,
+		&i.ReclaimedAt,
+		&i.ReclaimEvidence,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
 		&i.TerminalError,
@@ -1319,124 +772,47 @@ func (q *Queries) MarkRuntimeInstanceReady(ctx context.Context, arg MarkRuntimeI
 }
 
 const reclaimFailedRuntimeInstance = `-- name: ReclaimFailedRuntimeInstance :one
-WITH reclaimed_runtime AS (
 UPDATE runtime_instances
-   SET reclaimed_at = now(), updated_at = now()
-  FROM worker_network_slots
- WHERE runtime_instances.id = $1
-   AND runtime_instances.worker_instance_id = $2
-   AND runtime_instances.worker_epoch = $3
-   AND runtime_instances.desired_version = $4
-   AND runtime_instances.observed_version = $5
+   SET reclaimed_at = now(),
+       reclaim_evidence = $1::jsonb,
+       reserved_run_id = NULL, reserved_attempt_number = NULL,
+       reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+       reservation_expires_at = NULL, updated_at = now()
+ WHERE runtime_instances.id = $2
+   AND runtime_instances.worker_instance_id = $3
+   AND runtime_instances.worker_epoch = $4
+   AND runtime_instances.desired_version = $5
+   AND runtime_instances.observed_version = $6
    AND runtime_instances.observed_state = 'failed'
    AND runtime_instances.reclaimed_at IS NULL
-   AND worker_network_slots.id = $6
-   AND worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
-   AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
-   AND worker_network_slots.generation = $7
-   AND worker_network_slots.runtime_instance_id = runtime_instances.id
-   AND worker_network_slots.state IN ('reclaiming', 'quarantined')
-RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.workspace_version_id, runtime_instances.reserved_workspace_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
-), reclaimed_slot AS (
-UPDATE worker_network_slots
-   SET state = 'available', generation = generation + 1, runtime_instance_id = NULL,
-       host_interface_name = NULL, guest_address = NULL, gateway_address = NULL, subnet = NULL,
-       tap_name = NULL, netns_name = NULL, guest_mac = NULL,
-       reclaiming_at = NULL, quarantined_at = NULL, lost_at = NULL,
-       reclaimed_at = now(), reclaim_evidence = $8::jsonb,
-       state_reason_code = NULL, state_error = NULL, updated_at = now()
-  FROM reclaimed_runtime
- WHERE worker_network_slots.id = $6
-   AND worker_network_slots.worker_instance_id = reclaimed_runtime.worker_instance_id
-   AND worker_network_slots.worker_epoch = reclaimed_runtime.worker_epoch
-   AND worker_network_slots.generation = $7
-   AND worker_network_slots.runtime_instance_id = reclaimed_runtime.id
-RETURNING worker_network_slots.id
-)
-SELECT reclaimed_runtime.id, reclaimed_runtime.org_id, reclaimed_runtime.worker_group_id, reclaimed_runtime.project_id, reclaimed_runtime.environment_id, reclaimed_runtime.region_id, reclaimed_runtime.worker_instance_id, reclaimed_runtime.runtime_identity_id, reclaimed_runtime.deployment_sandbox_id, reclaimed_runtime.runtime_substrate_id, reclaimed_runtime.worker_epoch, reclaimed_runtime.runtime_key_hash, reclaimed_runtime.runtime_key, reclaimed_runtime.sandbox_fingerprint, reclaimed_runtime.rootfs_digest, reclaimed_runtime.image_digest, reclaimed_runtime.image_format, reclaimed_runtime.sandbox_image_artifact_id, reclaimed_runtime.sandbox_image_artifact_digest, reclaimed_runtime.sandbox_image_artifact_format, reclaimed_runtime.runtime_abi, reclaimed_runtime.guestd_abi, reclaimed_runtime.adapter_abi, reclaimed_runtime.network_policy, reclaimed_runtime.reserved_cpu_millis, reclaimed_runtime.reserved_memory_bytes, reclaimed_runtime.reserved_workload_disk_bytes, reclaimed_runtime.reserved_scratch_bytes, reclaimed_runtime.reserved_execution_slots, reclaimed_runtime.workspace_id, reclaimed_runtime.workspace_version_id, reclaimed_runtime.reserved_workspace_id, reclaimed_runtime.reserved_workspace_version_id, reclaimed_runtime.reservation_expires_at, reclaimed_runtime.desired_state, reclaimed_runtime.desired_version, reclaimed_runtime.desired_at, reclaimed_runtime.desired_reason, reclaimed_runtime.observed_state, reclaimed_runtime.observed_version, reclaimed_runtime.observed_desired_version, reclaimed_runtime.observed_at, reclaimed_runtime.allocated_at, reclaimed_runtime.preparing_at, reclaimed_runtime.ready_at, reclaimed_runtime.closing_at, reclaimed_runtime.closed_at, reclaimed_runtime.lost_at, reclaimed_runtime.failed_at, reclaimed_runtime.reclaimed_at, reclaimed_runtime.terminal_at, reclaimed_runtime.terminal_reason_code, reclaimed_runtime.terminal_error, reclaimed_runtime.created_at, reclaimed_runtime.updated_at FROM reclaimed_runtime JOIN reclaimed_slot ON true
+   AND NOT EXISTS (
+       SELECT 1
+         FROM run_leases
+        WHERE run_leases.runtime_instance_id = runtime_instances.id
+          AND run_leases.state IN ('assigned', 'starting', 'running')
+   )
+RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
 `
 
 type ReclaimFailedRuntimeInstanceParams struct {
+	CleanupProof            []byte      `json:"cleanup_proof"`
 	ID                      pgtype.UUID `json:"id"`
 	WorkerInstanceID        pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch             int64       `json:"worker_epoch"`
 	DesiredVersion          int64       `json:"desired_version"`
 	ExpectedObservedVersion int64       `json:"expected_observed_version"`
-	NetworkSlotID           pgtype.UUID `json:"network_slot_id"`
-	NetworkSlotGeneration   int64       `json:"network_slot_generation"`
-	CleanupProof            []byte      `json:"cleanup_proof"`
 }
 
-type ReclaimFailedRuntimeInstanceRow struct {
-	ID                         pgtype.UUID          `json:"id"`
-	OrgID                      pgtype.UUID          `json:"org_id"`
-	WorkerGroupID              string               `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID          `json:"project_id"`
-	EnvironmentID              pgtype.UUID          `json:"environment_id"`
-	RegionID                   string               `json:"region_id"`
-	WorkerInstanceID           pgtype.UUID          `json:"worker_instance_id"`
-	RuntimeIdentityID          string               `json:"runtime_identity_id"`
-	DeploymentSandboxID        pgtype.UUID          `json:"deployment_sandbox_id"`
-	RuntimeSubstrateID         pgtype.UUID          `json:"runtime_substrate_id"`
-	WorkerEpoch                int64                `json:"worker_epoch"`
-	RuntimeKeyHash             string               `json:"runtime_key_hash"`
-	RuntimeKey                 []byte               `json:"runtime_key"`
-	SandboxFingerprint         string               `json:"sandbox_fingerprint"`
-	RootfsDigest               string               `json:"rootfs_digest"`
-	ImageDigest                string               `json:"image_digest"`
-	ImageFormat                string               `json:"image_format"`
-	SandboxImageArtifactID     pgtype.UUID          `json:"sandbox_image_artifact_id"`
-	SandboxImageArtifactDigest pgtype.Text          `json:"sandbox_image_artifact_digest"`
-	SandboxImageArtifactFormat pgtype.Text          `json:"sandbox_image_artifact_format"`
-	RuntimeABI                 string               `json:"runtime_abi"`
-	GuestdAbi                  string               `json:"guestd_abi"`
-	AdapterAbi                 string               `json:"adapter_abi"`
-	NetworkPolicy              []byte               `json:"network_policy"`
-	ReservedCpuMillis          int64                `json:"reserved_cpu_millis"`
-	ReservedMemoryBytes        int64                `json:"reserved_memory_bytes"`
-	ReservedWorkloadDiskBytes  int64                `json:"reserved_workload_disk_bytes"`
-	ReservedScratchBytes       int64                `json:"reserved_scratch_bytes"`
-	ReservedExecutionSlots     int32                `json:"reserved_execution_slots"`
-	WorkspaceID                pgtype.UUID          `json:"workspace_id"`
-	WorkspaceVersionID         pgtype.UUID          `json:"workspace_version_id"`
-	ReservedWorkspaceID        pgtype.UUID          `json:"reserved_workspace_id"`
-	ReservedWorkspaceVersionID pgtype.UUID          `json:"reserved_workspace_version_id"`
-	ReservationExpiresAt       pgtype.Timestamptz   `json:"reservation_expires_at"`
-	DesiredState               RuntimeDesiredState  `json:"desired_state"`
-	DesiredVersion             int64                `json:"desired_version"`
-	DesiredAt                  pgtype.Timestamptz   `json:"desired_at"`
-	DesiredReason              string               `json:"desired_reason"`
-	ObservedState              RuntimeObservedState `json:"observed_state"`
-	ObservedVersion            int64                `json:"observed_version"`
-	ObservedDesiredVersion     int64                `json:"observed_desired_version"`
-	ObservedAt                 pgtype.Timestamptz   `json:"observed_at"`
-	AllocatedAt                pgtype.Timestamptz   `json:"allocated_at"`
-	PreparingAt                pgtype.Timestamptz   `json:"preparing_at"`
-	ReadyAt                    pgtype.Timestamptz   `json:"ready_at"`
-	ClosingAt                  pgtype.Timestamptz   `json:"closing_at"`
-	ClosedAt                   pgtype.Timestamptz   `json:"closed_at"`
-	LostAt                     pgtype.Timestamptz   `json:"lost_at"`
-	FailedAt                   pgtype.Timestamptz   `json:"failed_at"`
-	ReclaimedAt                pgtype.Timestamptz   `json:"reclaimed_at"`
-	TerminalAt                 pgtype.Timestamptz   `json:"terminal_at"`
-	TerminalReasonCode         pgtype.Text          `json:"terminal_reason_code"`
-	TerminalError              []byte               `json:"terminal_error"`
-	CreatedAt                  pgtype.Timestamptz   `json:"created_at"`
-	UpdatedAt                  pgtype.Timestamptz   `json:"updated_at"`
-}
-
-func (q *Queries) ReclaimFailedRuntimeInstance(ctx context.Context, arg ReclaimFailedRuntimeInstanceParams) (ReclaimFailedRuntimeInstanceRow, error) {
+func (q *Queries) ReclaimFailedRuntimeInstance(ctx context.Context, arg ReclaimFailedRuntimeInstanceParams) (RuntimeInstance, error) {
 	row := q.db.QueryRow(ctx, reclaimFailedRuntimeInstance,
+		arg.CleanupProof,
 		arg.ID,
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
 		arg.DesiredVersion,
 		arg.ExpectedObservedVersion,
-		arg.NetworkSlotID,
-		arg.NetworkSlotGeneration,
-		arg.CleanupProof,
 	)
-	var i ReclaimFailedRuntimeInstanceRow
+	var i RuntimeInstance
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -1446,30 +822,19 @@ func (q *Queries) ReclaimFailedRuntimeInstance(ctx context.Context, arg ReclaimF
 		&i.RegionID,
 		&i.WorkerInstanceID,
 		&i.RuntimeIdentityID,
-		&i.DeploymentSandboxID,
+		&i.DeploymentDefinitionID,
 		&i.RuntimeSubstrateID,
 		&i.WorkerEpoch,
-		&i.RuntimeKeyHash,
-		&i.RuntimeKey,
-		&i.SandboxFingerprint,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.SandboxImageArtifactID,
-		&i.SandboxImageArtifactDigest,
-		&i.SandboxImageArtifactFormat,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
-		&i.NetworkPolicy,
 		&i.ReservedCpuMillis,
 		&i.ReservedMemoryBytes,
-		&i.ReservedWorkloadDiskBytes,
-		&i.ReservedScratchBytes,
+		&i.ReservedGuestEphemeralDiskBytes,
 		&i.ReservedExecutionSlots,
 		&i.WorkspaceID,
-		&i.WorkspaceVersionID,
-		&i.ReservedWorkspaceID,
+		&i.ProgramDeploymentID,
+		&i.RestoreCheckpointID,
+		&i.ReservedRunID,
+		&i.ReservedAttemptNumber,
+		&i.ReservedProcessID,
 		&i.ReservedWorkspaceVersionID,
 		&i.ReservationExpiresAt,
 		&i.DesiredState,
@@ -1488,6 +853,7 @@ func (q *Queries) ReclaimFailedRuntimeInstance(ctx context.Context, arg ReclaimF
 		&i.LostAt,
 		&i.FailedAt,
 		&i.ReclaimedAt,
+		&i.ReclaimEvidence,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
 		&i.TerminalError,
@@ -1500,26 +866,17 @@ func (q *Queries) ReclaimFailedRuntimeInstance(ctx context.Context, arg ReclaimF
 const renewRuntimeInstance = `-- name: RenewRuntimeInstance :one
 UPDATE runtime_instances
    SET observed_at = now(), observed_version = observed_version + 1, updated_at = now()
-  FROM worker_network_slots
  WHERE runtime_instances.id = $1 AND runtime_instances.worker_instance_id = $2
    AND runtime_instances.worker_epoch = $3
-   AND worker_network_slots.id = $4
-   AND worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
-   AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
-   AND worker_network_slots.generation = $5
-   AND worker_network_slots.runtime_instance_id = runtime_instances.id
-   AND worker_network_slots.state IN ('assigned', 'bound', 'reclaiming')
-   AND observed_version = $6
+   AND observed_version = $4
    AND observed_state IN ('allocated', 'preparing', 'ready', 'closing')
-RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.workspace_version_id, runtime_instances.reserved_workspace_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
+RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
 `
 
 type RenewRuntimeInstanceParams struct {
 	ID                      pgtype.UUID `json:"id"`
 	WorkerInstanceID        pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch             int64       `json:"worker_epoch"`
-	NetworkSlotID           pgtype.UUID `json:"network_slot_id"`
-	NetworkSlotGeneration   int64       `json:"network_slot_generation"`
 	ExpectedObservedVersion int64       `json:"expected_observed_version"`
 }
 
@@ -1528,8 +885,6 @@ func (q *Queries) RenewRuntimeInstance(ctx context.Context, arg RenewRuntimeInst
 		arg.ID,
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
-		arg.NetworkSlotID,
-		arg.NetworkSlotGeneration,
 		arg.ExpectedObservedVersion,
 	)
 	var i RuntimeInstance
@@ -1542,30 +897,19 @@ func (q *Queries) RenewRuntimeInstance(ctx context.Context, arg RenewRuntimeInst
 		&i.RegionID,
 		&i.WorkerInstanceID,
 		&i.RuntimeIdentityID,
-		&i.DeploymentSandboxID,
+		&i.DeploymentDefinitionID,
 		&i.RuntimeSubstrateID,
 		&i.WorkerEpoch,
-		&i.RuntimeKeyHash,
-		&i.RuntimeKey,
-		&i.SandboxFingerprint,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.SandboxImageArtifactID,
-		&i.SandboxImageArtifactDigest,
-		&i.SandboxImageArtifactFormat,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
-		&i.NetworkPolicy,
 		&i.ReservedCpuMillis,
 		&i.ReservedMemoryBytes,
-		&i.ReservedWorkloadDiskBytes,
-		&i.ReservedScratchBytes,
+		&i.ReservedGuestEphemeralDiskBytes,
 		&i.ReservedExecutionSlots,
 		&i.WorkspaceID,
-		&i.WorkspaceVersionID,
-		&i.ReservedWorkspaceID,
+		&i.ProgramDeploymentID,
+		&i.RestoreCheckpointID,
+		&i.ReservedRunID,
+		&i.ReservedAttemptNumber,
+		&i.ReservedProcessID,
 		&i.ReservedWorkspaceVersionID,
 		&i.ReservationExpiresAt,
 		&i.DesiredState,
@@ -1584,6 +928,7 @@ func (q *Queries) RenewRuntimeInstance(ctx context.Context, arg RenewRuntimeInst
 		&i.LostAt,
 		&i.FailedAt,
 		&i.ReclaimedAt,
+		&i.ReclaimEvidence,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
 		&i.TerminalError,

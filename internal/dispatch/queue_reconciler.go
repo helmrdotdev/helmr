@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 const (
@@ -25,7 +26,30 @@ const (
 )
 
 type QueueReconcilerStore interface {
+	runResumeRecoveryStore
 	ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error)
+}
+
+type RunResumeRecoverer interface {
+	RecoverExpiredRunResumes(context.Context, int32) ([]db.RecoverExpiredRunResumesRow, error)
+}
+
+type runResumeRecoveryStore interface {
+	RecoverExpiredRunResumes(context.Context, db.RecoverExpiredRunResumesParams) ([]db.RecoverExpiredRunResumesRow, error)
+}
+
+type queryRunResumeRecoverer struct {
+	store runResumeRecoveryStore
+}
+
+func (r queryRunResumeRecoverer) RecoverExpiredRunResumes(
+	ctx context.Context,
+	limit int32,
+) ([]db.RecoverExpiredRunResumesRow, error) {
+	return r.store.RecoverExpiredRunResumes(ctx, db.RecoverExpiredRunResumesParams{
+		OutboxMessageIds: pgvalue.NewUUIDv7Batch(limit),
+		LimitCount:       limit,
+	})
 }
 
 type RunQueueEnqueuer interface {
@@ -47,6 +71,7 @@ type QueueReconcileLockGuard interface {
 
 type QueueReconciler struct {
 	store               QueueReconcilerStore
+	resumeRecoverer     RunResumeRecoverer
 	runEnqueuer         RunQueueEnqueuer
 	buildEnqueuer       BuildQueueEnqueuer
 	runLock             QueueReconcileLock
@@ -69,24 +94,10 @@ type QueueReconciler struct {
 
 type QueueReconcilerOption func(*QueueReconciler)
 
-func WithQueueReconcileInterval(every time.Duration) QueueReconcilerOption {
-	return func(reconciler *QueueReconciler) {
-		reconciler.runEvery = every
-		reconciler.buildEvery = every
-	}
-}
-
 func WithQueueReconcileIntervals(runEvery, buildEvery time.Duration) QueueReconcilerOption {
 	return func(reconciler *QueueReconciler) {
 		reconciler.runEvery = runEvery
 		reconciler.buildEvery = buildEvery
-	}
-}
-
-func WithQueueReconcileLimits(scopeLimit int32, runLimit int32) QueueReconcilerOption {
-	return func(reconciler *QueueReconciler) {
-		reconciler.scopeLimit = scopeLimit
-		reconciler.runLimit = runLimit
 	}
 }
 
@@ -135,9 +146,9 @@ func WithBuildQueueReconcileLock(lock QueueReconcileLock) QueueReconcilerOption 
 	}
 }
 
-func WithQueueReconcileScopeSelector(selector QueueScopeSelector) QueueReconcilerOption {
+func WithRunResumeRecoverer(recoverer RunResumeRecoverer) QueueReconcilerOption {
 	return func(reconciler *QueueReconciler) {
-		reconciler.selector = selector
+		reconciler.resumeRecoverer = recoverer
 	}
 }
 
@@ -255,6 +266,7 @@ func (r *QueueReconciler) ReconcileOnce(ctx context.Context) error {
 func (r *QueueReconciler) ReconcileRunsOnce(ctx context.Context) error {
 	var guard QueueReconcileLockGuard
 	store := r.store
+	recoverer := r.resumeRecoverer
 	if r.runLock != nil {
 		var locked bool
 		var err error
@@ -269,24 +281,36 @@ func (r *QueueReconciler) ReconcileRunsOnce(ctx context.Context) error {
 			return nil
 		}
 		store = guard.Store(r.store)
+		if recoverer == nil {
+			recoverer = queryRunResumeRecoverer{store: store}
+		}
 		defer r.unlockQueueReconcile(ctx, "run", guard)
 	}
+	if recoverer == nil {
+		recoverer = queryRunResumeRecoverer{store: store}
+	}
 	var problems []error
+	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, r.runQueryTimeout)
+	_, recoveryErr := recoverer.RecoverExpiredRunResumes(recoveryCtx, r.runLimit)
+	recoveryCancel()
+	if recoveryErr != nil {
+		return recoveryErr
+	}
 	scanSeed := time.Now().UTC().Format(time.RFC3339Nano)
 	var afterSortKey string
 	var afterRow db.ListQueuedRunCandidateScopesRow
 	for {
 		queryCtx, cancel := context.WithTimeout(ctx, r.runQueryTimeout)
 		rows, err := store.ListQueuedRunCandidateScopes(queryCtx, db.ListQueuedRunCandidateScopesParams{
-			AfterSortKey:       afterSortKey,
-			AfterOrgID:         afterRow.OrgID,
-			AfterProjectID:     afterRow.ProjectID,
-			AfterEnvironmentID: afterRow.EnvironmentID,
-			AfterRegionID:      afterRow.RegionID,
-			AfterQueueClass:    afterRow.QueueClass,
-			AfterQueueName:     afterRow.QueueName,
-			RowLimit:           r.scopeLimit,
-			ScanSeed:           scanSeed,
+			AfterSortKey:        afterSortKey,
+			AfterOrgID:          afterRow.OrgID,
+			AfterProjectID:      afterRow.ProjectID,
+			AfterEnvironmentID:  afterRow.EnvironmentID,
+			AfterRegionID:       afterRow.RegionID,
+			AfterConcurrencyKey: afterRow.ConcurrencyKey,
+			AfterQueueName:      afterRow.QueueName,
+			RowLimit:            r.scopeLimit,
+			ScanSeed:            scanSeed,
 		})
 		cancel()
 		if err != nil {
@@ -295,12 +319,12 @@ func (r *QueueReconciler) ReconcileRunsOnce(ctx context.Context) error {
 		scopes := make([]QueueScope, 0, len(rows))
 		for _, row := range rows {
 			scopes = append(scopes, QueueScope{
-				OrgID:         row.OrgID,
-				RegionID:      row.RegionID,
-				ProjectID:     row.ProjectID,
-				EnvironmentID: row.EnvironmentID,
-				QueueClass:    row.QueueClass,
-				QueueName:     row.QueueName,
+				OrgID:          row.OrgID,
+				RegionID:       row.RegionID,
+				ProjectID:      row.ProjectID,
+				EnvironmentID:  row.EnvironmentID,
+				ConcurrencyKey: row.ConcurrencyKey,
+				QueueName:      row.QueueName,
 			})
 		}
 		for _, scope := range r.selector.Order(scopes) {

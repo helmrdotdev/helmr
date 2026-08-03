@@ -1,25 +1,16 @@
-import { cache, ConcurrentWaitError, image, logger, sandbox, source, task, tokens } from "@helmr/sdk"
+import { image, task, tokens, workspace, type HelmrError, type JsonValue } from "@helmr/sdk"
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { z } from "zod"
-
-const dependencyInputs = source.directory(".", {
-  ignore: ["*", "!package.json", "!bun.lock", "!tsconfig.json", "!vendor", "!vendor/**"],
-})
 
 const base = image("helmr-edge-smoke")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
-  .copy("/opt/helmr-task", dependencyInputs)
   .run(["npm", "install", "-g", "bun@1.3.10"])
-  .workdir("/opt/helmr-task")
-  .run(["bun", "install", "--frozen-lockfile"], {
-    cache: [{ mountPath: "/root/.bun/install/cache", cache: cache("edge-smoke-bun") }],
-  })
   .workdir("/workspace")
 
-const sbx = sandbox("helmr-edge-smoke")
+export const edgeSmokeWorkspace = workspace("helmr-edge-smoke")
   .image(base)
-  .resources({ cpu: 1, memory: "1Gi", disk: "8Gi" })
+  .resources({ cpu: 1, memory: "1GiB" })
 
 const payload = z.object({
   mode: z.enum(["concurrent-wait", "workspace-overwrite", "expected-error"]),
@@ -35,12 +26,11 @@ const approvalDecision = z.object({
 
 export const edgeSmoke = task({
   id: "edge-smoke",
-  sandbox: sbx,
-  maxDuration: 300,
+  maxDuration: "5m",
   payload,
-  run: async (input: Payload, ctx) => {
+  run: async (input: Payload, ctx): Promise<JsonValue> => {
     const marker = input.marker?.trim() || `edge-${ctx.run.id}`
-    logger.info({ phase: "edge-smoke", mode: input.mode, marker })
+    console.info({ phase: "edge-smoke", mode: input.mode, marker })
 
     switch (input.mode) {
       case "concurrent-wait":
@@ -62,31 +52,37 @@ export const edgeSmoke = task({
 })
 
 async function assertConcurrentWaitRejected(timeout: number): Promise<boolean> {
+  const duration = `${timeout}s`
   const firstToken = await tokens.create({
-    timeout,
+    timeout: duration,
     tags: ["smoke", "edge-case"],
     metadata: { subject: "Concurrent wait diagnostic first wait" },
   })
   const first = firstToken.wait({
     schema: approvalDecision,
-    timeout,
+    timeout: duration,
     tags: ["smoke", "edge-case"],
     metadata: { subject: "Concurrent wait diagnostic first wait" },
   }).unwrap()
   try {
     const secondToken = await tokens.create({
-      timeout,
+      timeout: duration,
       tags: ["smoke", "edge-case"],
       metadata: { subject: "Concurrent wait diagnostic second wait" },
     })
     await secondToken.wait({
       schema: approvalDecision,
-      timeout,
+      timeout: duration,
       tags: ["smoke", "edge-case"],
       metadata: { subject: "Concurrent wait diagnostic second wait" },
     }).unwrap()
   } catch (error) {
-    if (error instanceof ConcurrentWaitError || String(error).includes("ConcurrentWaitError")) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as HelmrError).code === "concurrent_wait"
+    ) {
       return true
     }
     throw error

@@ -9,43 +9,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
-	"github.com/helmrdotdev/helmr/internal/builder"
+	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	bkclient "github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	"github.com/moby/buildkit/session"
-	"github.com/moby/buildkit/session/secrets/secretsprovider"
 )
 
 const (
-	defaultBuildKitAddr = "unix:///run/helmr/buildkit/buildkitd.sock"
-	defaultOutputRoot   = "helmr-worker-builds"
-	defaultPlatform     = "linux/amd64"
-	defaultCacheNS      = "helmr"
+	defaultOutputRoot = "helmr-worker-builds"
+	defaultPlatform   = "linux/amd64"
 )
-
-type Config struct {
-	Addr           string
-	OutputRoot     string
-	CacheNamespace string
-}
-
-func (cfg Config) addr() string {
-	if addr := strings.TrimSpace(cfg.Addr); addr != "" {
-		return addr
-	}
-	return defaultBuildKitAddr
-}
-
-func (cfg Config) endpoint() (string, error) {
-	addr := cfg.addr()
-	lower := strings.ToLower(addr)
-	if strings.Contains(lower, "/var/run/docker.sock") || strings.Contains(lower, "/run/docker.sock") || strings.HasPrefix(lower, "docker-container://") || strings.HasPrefix(lower, "npipe://") {
-		return "", fmt.Errorf("buildkit addr must point to buildkitd, not a Docker endpoint: %s", addr)
-	}
-	return addr, nil
-}
 
 type buildkitSolver interface {
 	Solve(context.Context, *llb.Definition, bkclient.SolveOpt, chan *bkclient.SolveStatus) (*bkclient.SolveResponse, error)
@@ -54,30 +30,23 @@ type buildkitSolver interface {
 type Builder struct {
 	client         buildkitSolver
 	outputRoot     string
-	cacheNamespace string
+	ociOutputLimit int64
+	sessions       []session.Attachable
 }
 
-func Open(ctx context.Context, cfg Config) (*Builder, func() error, error) {
-	addr, err := cfg.endpoint()
-	if err != nil {
-		return nil, nil, err
-	}
-	client, err := bkclient.New(ctx, addr)
-	if err != nil {
-		return nil, nil, err
-	}
-	b := New(client, cfg.OutputRoot, cfg.CacheNamespace)
-	return b, client.Close, nil
+type OutputQuotaFailure struct {
+	LimitBytes int64
 }
 
-func New(client buildkitSolver, outputRoot string, cacheNamespace ...string) *Builder {
+func (failure *OutputQuotaFailure) Error() string {
+	return fmt.Sprintf("image-build OCI output exceeds the %d-byte contract", failure.LimitBytes)
+}
+
+func New(client buildkitSolver, outputRoot string) *Builder {
 	b := &Builder{
 		client:         client,
 		outputRoot:     outputRoot,
-		cacheNamespace: defaultCacheNS,
-	}
-	if len(cacheNamespace) > 0 && strings.TrimSpace(cacheNamespace[0]) != "" {
-		b.cacheNamespace = safeNamespace(cacheNamespace[0])
+		ociOutputLimit: imagebuild.MaxOCIArchiveBytes,
 	}
 	if strings.TrimSpace(b.outputRoot) == "" {
 		b.outputRoot = filepath.Join(os.TempDir(), defaultOutputRoot)
@@ -85,42 +54,63 @@ func New(client buildkitSolver, outputRoot string, cacheNamespace ...string) *Bu
 	return b
 }
 
-func (b *Builder) Build(ctx context.Context, request builder.Request) (builder.Artifact, error) {
+func (b *Builder) BuildImage(
+	ctx context.Context,
+	request imagebuild.Request,
+) (imagebuild.Artifact, error) {
 	if b.client == nil {
-		return builder.Artifact{}, errors.New("buildkit client is required")
-	}
-	if request.Bundle == nil || request.Bundle.Image == nil {
-		return builder.Artifact{}, errors.New("bundle image is required")
+		return imagebuild.Artifact{}, errors.New("buildkit client is required")
 	}
 	if strings.TrimSpace(request.Source.ProjectRoot) == "" {
-		return builder.Artifact{}, errors.New("source project root is required")
+		return imagebuild.Artifact{}, errors.New("source project root is required")
 	}
-	plan, err := planImage(request.Bundle.Image, request.Bundle.SubImages, request.Source.ProjectRoot, defaultPlatform, b.requestCacheNamespace(request))
+	plan, err := planDeclaredImage(
+		request.Build,
+		request.Source.ProjectRoot,
+	)
 	if err != nil {
-		return builder.Artifact{}, err
+		return imagebuild.Artifact{}, err
 	}
-	if err := validateBuildSecrets(request.Bundle.Image, request.Bundle.SubImages, request.BuildSecrets); err != nil {
-		return builder.Artifact{}, err
-	}
-	output, err := b.output(request)
+	return b.solve(ctx, imageSolveRequest{
+		runID:     request.RunID,
+		itemID:    request.WorkspaceID,
+		sourceSHA: request.Source.SHA,
+		plan:      plan,
+		cache:     request.Cache,
+	})
+}
+
+type imageSolveRequest struct {
+	runID     string
+	itemID    string
+	sourceSHA string
+	plan      llbPlan
+	cache     *imagebuild.CacheBinding
+}
+
+func (b *Builder) solve(
+	ctx context.Context,
+	request imageSolveRequest,
+) (imagebuild.Artifact, error) {
+	output, err := b.output(request.runID, request.itemID)
 	if err != nil {
-		return builder.Artifact{}, err
+		return imagebuild.Artifact{}, err
 	}
-	platform, err := platformSpec(plan.Platform)
+	platform, err := platformSpec(request.plan.Platform)
 	if err != nil {
-		return builder.Artifact{}, err
+		return imagebuild.Artifact{}, err
 	}
-	definition, err := plan.State.Marshal(ctx, llb.Platform(platform))
+	definition, err := request.plan.State.Marshal(ctx, llb.Platform(platform))
 	if err != nil {
-		return builder.Artifact{}, fmt.Errorf("marshal build graph: %w", err)
+		return imagebuild.Artifact{}, fmt.Errorf("marshal build graph: %w", err)
 	}
-	configJSON, err := json.Marshal(plan.Config)
+	configJSON, err := json.Marshal(request.plan.Config)
 	if err != nil {
-		return builder.Artifact{}, fmt.Errorf("encode image config: %w", err)
+		return imagebuild.Artifact{}, fmt.Errorf("encode image config: %w", err)
 	}
 	imageFile, err := os.Create(output.imageTar)
 	if err != nil {
-		return builder.Artifact{}, fmt.Errorf("create image tar: %w", err)
+		return imagebuild.Artifact{}, fmt.Errorf("create image tar: %w", err)
 	}
 	closeImage := func() error {
 		if imageFile == nil {
@@ -131,46 +121,83 @@ func (b *Builder) Build(ctx context.Context, request builder.Request) (builder.A
 		return err
 	}
 	defer func() { _ = closeImage() }()
+	imageOutput := &boundedWriteCloser{
+		writer: imageFile,
+		limit:  b.ociOutputLimit,
+	}
 
-	response, err := b.client.Solve(ctx, definition, bkclient.SolveOpt{
-		LocalMounts: plan.LocalMounts,
+	solveOptions := bkclient.SolveOpt{
+		LocalMounts: request.plan.LocalMounts,
+		Session:     b.sessions,
 		Exports: []bkclient.ExportEntry{{
 			Type: bkclient.ExporterOCI,
 			Attrs: map[string]string{
-				"name":                          "helmr/" + safeSegment(request.RunID),
+				"name":                          "helmr/" + safeSegment(request.runID),
 				"platform-split":                "false",
 				exptypes.ExporterImageConfigKey: string(configJSON),
 			},
 			Output: func(map[string]string) (io.WriteCloser, error) {
-				return noCloseWriteCloser{Writer: imageFile}, nil
+				return imageOutput, nil
 			},
 		}},
-		Session: buildSecretSession(request.BuildSecrets),
-	}, nil)
+	}
+	if request.cache != nil {
+		solveOptions.CacheImports = []bkclient.CacheOptionsEntry{{
+			Type: "registry",
+			Attrs: map[string]string{
+				"ref": request.cache.Ref,
+			},
+		}}
+		solveOptions.CacheExports = []bkclient.CacheOptionsEntry{{
+			Type: "registry",
+			Attrs: map[string]string{
+				"ref":            request.cache.Ref,
+				"mode":           "max",
+				"oci-mediatypes": "true",
+				"image-manifest": "true",
+				"ignore-error":   "true",
+			},
+		}}
+	}
+	response, err := b.client.Solve(ctx, definition, solveOptions, nil)
+	if imageOutput.exceededQuota() {
+		err = &OutputQuotaFailure{LimitBytes: b.ociOutputLimit}
+	}
 	if err != nil {
-		return builder.Artifact{}, fmt.Errorf("solve build graph: %s", redactBuildError(err, request.BuildSecrets))
+		closeErr := closeImage()
+		removeErr := os.RemoveAll(output.root)
+		return imagebuild.Artifact{}, errors.Join(b.solveError(ctx, err), closeErr, removeErr)
 	}
 	if err := closeImage(); err != nil {
-		return builder.Artifact{}, fmt.Errorf("close image tar: %w", err)
+		removeErr := os.RemoveAll(output.root)
+		return imagebuild.Artifact{}, errors.Join(fmt.Errorf("close image tar: %w", err), removeErr)
 	}
 	if err := os.WriteFile(output.config, configJSON, 0o644); err != nil {
-		return builder.Artifact{}, err
+		return imagebuild.Artifact{}, err
 	}
 	if err := writeJSONFile(output.manifest, map[string]any{
 		"kind":      "buildkit-oci-tar",
-		"runID":     request.RunID,
-		"taskID":    request.TaskID,
-		"sourceSHA": request.Source.SHA,
-		"platform":  plan.Platform,
+		"runID":     request.runID,
+		"itemID":    request.itemID,
+		"sourceSHA": request.sourceSHA,
+		"platform":  request.plan.Platform,
 		"exporter":  exporterResponse(response),
 	}); err != nil {
-		return builder.Artifact{}, err
+		return imagebuild.Artifact{}, err
 	}
-	return builder.Artifact{RootPath: output.root, ImageTarPath: output.imageTar, ConfigPath: output.config, ManifestPath: output.manifest}, nil
+	return imagebuild.Artifact{RootPath: output.root, ImageTarPath: output.imageTar, ConfigPath: output.config, ManifestPath: output.manifest}, nil
 }
 
-func (b *Builder) output(request builder.Request) (buildOutput, error) {
-	root := filepath.Join(b.outputRoot, safeSegment(request.RunID), safeSegment(request.TaskID))
+func (b *Builder) solveError(ctx context.Context, solveErr error) error {
+	failure := fmt.Errorf("solve build graph: %w", solveErr)
+	if ctx.Err() != nil {
+		return errors.Join(failure, context.Cause(ctx))
+	}
+	return failure
+}
+
+func (b *Builder) output(runID, itemID string) (buildOutput, error) {
+	root := filepath.Join(b.outputRoot, safeSegment(runID), safeSegment(itemID))
 	if err := os.RemoveAll(root); err != nil {
 		return buildOutput{}, fmt.Errorf("clean build output: %w", err)
 	}
@@ -185,17 +212,6 @@ func (b *Builder) output(request builder.Request) (buildOutput, error) {
 	}, nil
 }
 
-func (b *Builder) requestCacheNamespace(request builder.Request) string {
-	scope := safeNamespace(request.CacheScope)
-	if scope == "_" {
-		scope = safeSegment(request.TaskID)
-	}
-	if scope == "_" {
-		return b.cacheNamespace
-	}
-	return b.cacheNamespace + "/" + scope
-}
-
 type buildOutput struct {
 	root     string
 	imageTar string
@@ -203,11 +219,47 @@ type buildOutput struct {
 	manifest string
 }
 
-type noCloseWriteCloser struct {
-	io.Writer
+type boundedWriteCloser struct {
+	mu       sync.Mutex
+	writer   io.Writer
+	limit    int64
+	written  int64
+	exceeded bool
 }
 
-func (noCloseWriteCloser) Close() error { return nil }
+func (writer *boundedWriteCloser) Write(content []byte) (int, error) {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	remaining := writer.limit - writer.written
+	if remaining >= int64(len(content)) {
+		written, err := writer.writer.Write(content)
+		writer.written += int64(written)
+		return written, err
+	}
+	allowed := max(remaining, 0)
+	written := 0
+	if allowed > 0 {
+		count, err := writer.writer.Write(content[:allowed])
+		written = count
+		writer.written += int64(count)
+		if err != nil {
+			return written, err
+		}
+		if int64(count) != allowed {
+			return written, io.ErrShortWrite
+		}
+	}
+	writer.exceeded = true
+	return written, &OutputQuotaFailure{LimitBytes: writer.limit}
+}
+
+func (*boundedWriteCloser) Close() error { return nil }
+
+func (writer *boundedWriteCloser) exceededQuota() bool {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return writer.exceeded
+}
 
 func writeJSONFile(path string, value any) error {
 	content, err := json.MarshalIndent(value, "", "  ")
@@ -236,29 +288,6 @@ func safeSegment(value string) string {
 		}
 	}
 	return builder.String()
-}
-
-func safeNamespace(value string) string {
-	segments := strings.FieldsFunc(value, func(r rune) bool {
-		return r == '/' || r == '\\'
-	})
-	safe := make([]string, 0, len(segments))
-	for _, segment := range segments {
-		if next := safeSegment(segment); next != "_" {
-			safe = append(safe, next)
-		}
-	}
-	if len(safe) == 0 {
-		return "_"
-	}
-	return strings.Join(safe, "/")
-}
-
-func buildSecretSession(secrets map[string][]byte) []session.Attachable {
-	if len(secrets) == 0 {
-		return nil
-	}
-	return []session.Attachable{secretsprovider.FromMap(secrets)}
 }
 
 func exporterResponse(response *bkclient.SolveResponse) map[string]string {

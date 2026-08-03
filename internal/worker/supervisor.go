@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
 type Control interface {
@@ -20,10 +22,14 @@ type Control interface {
 	CompleteWorkerDrain(context.Context, api.WorkerDrainCompletionRequest) (api.WorkerStatusResponse, error)
 	ActivateWorker(context.Context, api.WorkerCapabilities) (api.WorkerStatusResponse, error)
 	ObserveWorker(context.Context, api.WorkerObservation) (api.WorkerStatusResponse, error)
-	RenewWorkerCertification(context.Context, api.WorkerCapabilities) (api.WorkerStatusResponse, error)
 }
 
 type Work func(context.Context) error
+
+type FatalWorkError interface {
+	error
+	FatalWorker() bool
+}
 
 type Consumer interface {
 	Claim(context.Context) (Work, bool, error)
@@ -56,7 +62,6 @@ type Config struct {
 	Admission          map[string]int
 	Background         []BackgroundSpec
 	ObservationEvery   time.Duration
-	CertificationTTL   time.Duration
 	PollEvery          time.Duration
 	DrainTimeout       time.Duration
 	Observation        func(State, Snapshot, RecoveryEvidence) api.WorkerObservation
@@ -121,13 +126,11 @@ func (r *Registry) notify() {
 }
 
 type Supervisor struct {
-	cfg                   Config
-	registry              *Registry
-	admission             map[string]chan struct{}
-	state                 atomic.Value
-	certifiedAt           atomic.Value
-	recovery              RecoveryEvidence
-	certifiedCapabilities api.WorkerCapabilities
+	cfg       Config
+	registry  *Registry
+	admission map[string]chan struct{}
+	state     atomic.Value
+	recovery  RecoveryEvidence
 }
 
 func New(cfg Config) (*Supervisor, error) {
@@ -139,9 +142,6 @@ func New(cfg Config) (*Supervisor, error) {
 	}
 	if cfg.PollEvery <= 0 {
 		cfg.PollEvery = 2 * time.Second
-	}
-	if cfg.CertificationTTL <= 0 {
-		cfg.CertificationTTL = 24 * time.Hour
 	}
 	if cfg.DrainTimeout <= 0 {
 		cfg.DrainTimeout = 30 * time.Minute
@@ -184,7 +184,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		}
 	}
 	inventory := append(append(make([]string, 0, len(evidence.Reclaimed)+len(evidence.Quarantined)), evidence.Reclaimed...), evidence.Quarantined...)
-	if err := s.cfg.Control.ReportWorkerStartupRecovery(ctx, api.WorkerStartupRecoveryRequest{
+	if err := s.reportStartupRecovery(ctx, api.WorkerStartupRecoveryRequest{
 		InventoryComplete: true,
 		InventoryScope:    "worker_runtime_state_roots_v0",
 		ObservedAt:        evidence.ObservedAt,
@@ -196,8 +196,15 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		return fmt.Errorf("record worker startup recovery: %w", err)
 	}
 	capabilities := s.cfg.Capabilities
-	if capabilities.SupportsRun && len(evidence.Quarantined) != 0 {
-		capabilities.ExecutionSlotsAvailable -= int32(len(evidence.Quarantined))
+	runtimeQuarantines, err := activationQuarantines(evidence)
+	if err != nil {
+		return err
+	}
+	if runtimeQuarantines != 0 && !capabilities.SupportsRun {
+		return errors.New("runtime residue cannot be quarantined on a worker without runtime capacity")
+	}
+	if capabilities.SupportsRun && runtimeQuarantines != 0 {
+		capabilities.ExecutionSlotsAvailable -= int32(runtimeQuarantines)
 		if capabilities.MaxRuntimeStarts > capabilities.ExecutionSlotsAvailable {
 			capabilities.MaxRuntimeStarts = capabilities.ExecutionSlotsAvailable
 		}
@@ -206,7 +213,6 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		}
 	}
 	capabilities.Observation = s.observation(StateStarting, evidence)
-	s.certifiedCapabilities = capabilities
 	status, err := s.cfg.Control.ActivateWorker(ctx, capabilities)
 	if err != nil {
 		return fmt.Errorf("activate worker: %w", err)
@@ -214,7 +220,6 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	if status.Status != api.WorkerStatusActive && status.Status != api.WorkerStatusDraining {
 		return fmt.Errorf("activated worker returned status %s", status.Status)
 	}
-	s.certifiedAt.Store(time.Now().UTC())
 	s.recovery = evidence
 	if status.Status == api.WorkerStatusActive {
 		s.state.Store(StateActive)
@@ -236,13 +241,14 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	var consumerWG sync.WaitGroup
 	var backgroundWG sync.WaitGroup
 	var observeWG sync.WaitGroup
+	fatalWork := make(chan error, 1)
 	for _, spec := range s.cfg.Consumers {
 		claimCtx := activeClaimCtx
 		if spec.DrainEligible {
 			claimCtx = drainClaimCtx
 		}
 		for range spec.Concurrency {
-			consumerWG.Go(func() { s.consume(claimCtx, workCtx, spec, evidence) })
+			consumerWG.Go(func() { s.consume(claimCtx, workCtx, spec, evidence, fatalWork) })
 		}
 	}
 	for _, background := range s.cfg.Background {
@@ -272,6 +278,22 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	signalDrain(status)
 	if status.Status == api.WorkerStatusActive {
 		select {
+		case fatalErr := <-fatalWork:
+			cancelActiveClaims()
+			cancelDrainClaims()
+			cancelActiveBackground()
+			cancelDrainBackground()
+			cancelObserve()
+			cancelWork()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), s.cfg.DrainTimeout)
+			defer cancel()
+			if !waitGroup(shutdownCtx, &consumerWG) ||
+				!waitGroup(shutdownCtx, &backgroundWG) ||
+				!waitGroup(shutdownCtx, &observeWG) {
+				return fmt.Errorf("worker fatal execution did not stop all local work: %w", fatalErr)
+			}
+			s.state.Store(StateStopped)
+			return fmt.Errorf("worker fatal execution: %w", fatalErr)
 		case <-ctx.Done():
 			// A returned draining response stores StateDraining before publishing
 			// drainRequested. If shutdown and that response become ready together,
@@ -282,7 +304,42 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		case <-drainRequested:
 		}
 	}
-	return s.completeServerDirectedDrain(ctx, cancelActiveClaims, cancelDrainClaims, cancelActiveBackground, cancelDrainBackground, cancelObserve, cancelWork, &consumerWG, &backgroundWG, &observeWG, evidence)
+	return s.completeServerDirectedDrain(ctx, cancelActiveClaims, cancelDrainClaims, cancelActiveBackground, cancelDrainBackground, cancelObserve, cancelWork, &consumerWG, &backgroundWG, &observeWG, evidence, fatalWork)
+}
+
+func (s *Supervisor) reportStartupRecovery(
+	ctx context.Context,
+	request api.WorkerStartupRecoveryRequest,
+) error {
+	const maxAttempts = 10
+	delay := s.cfg.PollEvery
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		err := s.cfg.Control.ReportWorkerStartupRecovery(ctx, request)
+		if err == nil {
+			return nil
+		}
+		var statusErr interface{ HTTPStatusCode() int }
+		if !errors.As(err, &statusErr) || statusErr.HTTPStatusCode() != http.StatusConflict {
+			return err
+		}
+		if attempt == maxAttempts {
+			return fmt.Errorf("startup recovery conflict did not clear after %d attempts: %w", maxAttempts, err)
+		}
+		s.cfg.Log.Info("worker startup recovery is waiting for prior-epoch Leases to be fenced")
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+		if delay < 30*time.Second {
+			delay = min(delay*2, 30*time.Second)
+		}
+	}
+	return errors.New("startup recovery retry exhausted")
 }
 
 func (s *Supervisor) shutdownProcess(
@@ -320,6 +377,7 @@ func (s *Supervisor) completeServerDirectedDrain(
 	cancelActiveClaims, cancelDrainClaims, cancelActiveBackground, cancelDrainBackground, cancelObserve, cancelWork context.CancelFunc,
 	consumerWG, backgroundWG, observeWG *sync.WaitGroup,
 	startupEvidence RecoveryEvidence,
+	fatalWork <-chan error,
 ) error {
 	s.state.Store(StateDraining)
 	cancelActiveClaims()
@@ -337,7 +395,21 @@ func (s *Supervisor) completeServerDirectedDrain(
 		s.state.Store(StateStopped)
 		return err
 	}
+	checkFatalWork := func() error {
+		select {
+		case err := <-fatalWork:
+			return fmt.Errorf("worker fatal execution during drain: %w", err)
+		default:
+			return nil
+		}
+	}
+	if err := checkFatalWork(); err != nil {
+		return fail(err)
+	}
 	if err := s.waitForDrainReady(drainCtx, startupEvidence); err != nil {
+		return fail(err)
+	}
+	if err := checkFatalWork(); err != nil {
 		return fail(err)
 	}
 	// Freeze cleanup admission before final proof. Claim consumers finish before
@@ -346,6 +418,9 @@ func (s *Supervisor) completeServerDirectedDrain(
 	cancelDrainClaims()
 	if !waitGroup(drainCtx, consumerWG) {
 		return fail(fmt.Errorf("worker durable drain timed out waiting for cleanup claims: %w", drainCtx.Err()))
+	}
+	if err := checkFatalWork(); err != nil {
+		return fail(err)
 	}
 	cancelDrainBackground()
 	if !waitGroup(drainCtx, backgroundWG) {
@@ -381,8 +456,8 @@ func (s *Supervisor) completeServerDirectedDrain(
 	if err != nil {
 		return fail(fmt.Errorf("complete worker drain with clean local inventory: %w", err))
 	}
-	if status.Status != api.WorkerStatusDisabled {
-		return fail(fmt.Errorf("complete worker drain returned status %s, want disabled", status.Status))
+	if status.Status != api.WorkerStatusTerminationReady {
+		return fail(fmt.Errorf("complete worker drain returned status %s, want termination_ready", status.Status))
 	}
 	if s.cfg.DrainCompleted != nil {
 		if err := s.cfg.DrainCompleted(status); err != nil {
@@ -392,6 +467,24 @@ func (s *Supervisor) completeServerDirectedDrain(
 	cancelWork()
 	s.state.Store(StateStopped)
 	return nil
+}
+
+func activationQuarantines(evidence RecoveryEvidence) (int, error) {
+	if len(evidence.Quarantined) != len(evidence.QuarantinedOwners) {
+		return 0, errors.New("worker activation is blocked by residue without exact VM ownership")
+	}
+	runtimeCount := 0
+	for _, owner := range evidence.QuarantinedOwners {
+		switch owner.Kind {
+		case vm.OwnerRuntime:
+			runtimeCount++
+		case vm.OwnerBuild, vm.OwnerImageBuild:
+			return 0, errors.New("worker activation is blocked by quarantined build residue")
+		default:
+			return 0, errors.New("worker activation is blocked by unknown VM owner kind")
+		}
+	}
+	return runtimeCount, nil
 }
 
 func (s *Supervisor) waitForDrainReady(ctx context.Context, evidence RecoveryEvidence) error {
@@ -427,7 +520,13 @@ func waitGroup(ctx context.Context, wg *sync.WaitGroup) bool {
 	}
 }
 
-func (s *Supervisor) consume(claimCtx context.Context, workCtx context.Context, spec ConsumerSpec, evidence RecoveryEvidence) {
+func (s *Supervisor) consume(
+	claimCtx context.Context,
+	workCtx context.Context,
+	spec ConsumerSpec,
+	evidence RecoveryEvidence,
+	fatalWork chan<- error,
+) {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -455,10 +554,9 @@ func (s *Supervisor) consume(claimCtx context.Context, workCtx context.Context, 
 		// Host admission (for example, low disk or unavailable KVM) must not
 		// deadlock that cleanup once the server has durably closed placement.
 		if s.cfg.AdmissionEvaluator != nil && !(spec.DrainEligible && state == StateDraining) {
-			certifiedAt, _ := s.certifiedAt.Load().(time.Time)
 			decision := s.cfg.AdmissionEvaluator.Evaluate(claimCtx, AdmissionCheck{
 				Consumer: spec.Name, State: s.state.Load().(State), Snapshot: s.registry.snapshot(),
-				Recovery: evidence, CertifiedAt: certifiedAt, CertificationTTL: s.cfg.CertificationTTL,
+				Recovery: evidence,
 			})
 			if !decision.Allowed {
 				releaseAdmission()
@@ -481,13 +579,30 @@ func (s *Supervisor) consume(claimCtx context.Context, workCtx context.Context, 
 			timer.Reset(s.cfg.PollEvery)
 			continue
 		}
+		if work == nil {
+			releaseAdmission()
+			timer.Reset(s.cfg.PollEvery)
+			continue
+		}
 		finish := s.registry.begin(spec.Name)
+		retryDelay := time.Duration(0)
 		if err := work(workCtx); err != nil && !errors.Is(err, context.Canceled) {
+			var fatal FatalWorkError
+			if errors.As(err, &fatal) && fatal.FatalWorker() {
+				select {
+				case fatalWork <- err:
+				default:
+				}
+				finish()
+				releaseAdmission()
+				return
+			}
 			s.cfg.Log.Error("worker execution failed", "consumer", spec.Name, "error", err)
+			retryDelay = s.cfg.PollEvery
 		}
 		finish()
 		releaseAdmission()
-		timer.Reset(0)
+		timer.Reset(retryDelay)
 	}
 }
 
@@ -506,11 +621,7 @@ func (s *Supervisor) acquireAdmission(ctx context.Context, name string) (func(),
 }
 
 func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, statusReturned func(api.WorkerStatusResponse)) {
-	interval := min(s.cfg.ObservationEvery, s.cfg.CertificationTTL/2)
-	if interval <= 0 {
-		interval = s.cfg.CertificationTTL
-	}
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(s.cfg.ObservationEvery)
 	defer ticker.Stop()
 	for {
 		select {
@@ -519,19 +630,6 @@ func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, sta
 		case <-ticker.C:
 		}
 		state := s.state.Load().(State)
-		certifiedAt, _ := s.certifiedAt.Load().(time.Time)
-		if state == StateActive && time.Now().After(certifiedAt.Add(s.cfg.CertificationTTL/2)) {
-			capabilities := s.certifiedCapabilities
-			capabilities.Observation = s.observation(state, evidence)
-			if status, err := s.cfg.Control.RenewWorkerCertification(ctx, capabilities); err != nil {
-				s.cfg.Log.Warn("worker certification renewal failed", "error", err)
-			} else {
-				statusReturned(status)
-				if status.Status == api.WorkerStatusActive {
-					s.certifiedAt.Store(time.Now().UTC())
-				}
-			}
-		}
 		if status, err := s.cfg.Control.ObserveWorker(ctx, s.observation(state, evidence)); err != nil && ctx.Err() == nil {
 			s.cfg.Log.Warn("worker observation failed", "error", err)
 		} else if err == nil {
@@ -544,10 +642,8 @@ func (s *Supervisor) AdmitRuntimeStart(ctx context.Context) error {
 	if s.cfg.AdmissionEvaluator == nil {
 		return nil
 	}
-	certifiedAt, _ := s.certifiedAt.Load().(time.Time)
 	decision := s.cfg.AdmissionEvaluator.Evaluate(ctx, AdmissionCheck{
 		Consumer: "runtime", State: s.state.Load().(State), Snapshot: s.registry.snapshot(), Recovery: s.recovery,
-		CertifiedAt: certifiedAt, CertificationTTL: s.cfg.CertificationTTL,
 	})
 	if !decision.Allowed {
 		return fmt.Errorf("runtime start admission paused: %s", decision.Reason)
@@ -559,13 +655,12 @@ func (s *Supervisor) observation(state State, evidence RecoveryEvidence) api.Wor
 	if s.cfg.Observation != nil {
 		return s.cfg.Observation(state, s.registry.snapshot(), evidence)
 	}
-	observation := api.WorkerObservation{HealthDetails: evidence.HealthDetails(), LeakedSlotCount: int32(len(evidence.Quarantined))}
+	observation := api.WorkerObservation{HealthDetails: evidence.HealthDetails(), QuarantinedResourceCount: int32(len(evidence.Quarantined))}
 	if s.cfg.AdmissionEvaluator != nil {
 		admissionObservation := s.cfg.AdmissionEvaluator.Observation()
 		observation.CPUPressureBPS = admissionObservation.CPUPressureBPS
 		observation.MemoryPressureBPS = admissionObservation.MemoryPressureBPS
-		observation.WorkloadDiskPressureBPS = admissionObservation.WorkloadDiskPressureBPS
-		observation.ScratchPressureBPS = admissionObservation.ScratchPressureBPS
+		observation.GuestEphemeralDiskPressureBPS = admissionObservation.GuestEphemeralDiskPressureBPS
 		if len(admissionObservation.HealthDetails) != 0 {
 			combined, err := json.Marshal(map[string]json.RawMessage{
 				"startup_recovery": evidence.HealthDetails(),
@@ -575,13 +670,11 @@ func (s *Supervisor) observation(state State, evidence RecoveryEvidence) api.Wor
 				observation.HealthDetails = combined
 			}
 		}
-		if admissionObservation.RunPausedReason != "" {
-			observation.RunPausedReason = admissionObservation.RunPausedReason
-			observation.BuildPausedReason = admissionObservation.BuildPausedReason
-			observation.RuntimePausedReason = admissionObservation.RuntimePausedReason
-		}
+		observation.RunPausedReason = admissionObservation.RunPausedReason
+		observation.BuildPausedReason = admissionObservation.BuildPausedReason
+		observation.RuntimePausedReason = admissionObservation.RuntimePausedReason
 	}
-	if observation.LeakedSlotCount > 0 {
+	if observation.QuarantinedResourceCount > 0 {
 		observation.RunPausedReason = "startup_recovery_leak"
 		observation.BuildPausedReason = "startup_recovery_leak"
 		observation.RuntimePausedReason = "startup_recovery_leak"

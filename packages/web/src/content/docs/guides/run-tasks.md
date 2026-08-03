@@ -1,6 +1,6 @@
 ---
 title: Run tasks
-description: Start a deployed task with payloads, secrets, and an attached workspace.
+description: Create a Workspace and start a deployed Task Run.
 section: Guides
 sidebarLabel: Run tasks
 order: 320
@@ -8,47 +8,41 @@ order: 320
 
 # Run tasks
 
-Remote session starts execute a deployed task in an attached workspace. If no
-workspace is supplied, Helmr creates one from the task's deployed sandbox.
+Create a Workspace from a deployed declaration, then start the Task in that
+Workspace:
 
 ```sh
-helmr session start hello
-```
+WORKSPACE_ID="$(helmr workspace create app-workspace \
+  --key demo \
+  --idempotency-key workspace:demo)"
 
-Pass payload as one JSON source:
-
-```sh
-helmr session start hello \
+helmr task start hello \
+  --workspace "${WORKSPACE_ID}" \
+  --idempotency-key hello:demo \
   --payload-json '{"name":"Ada"}'
 ```
 
-or:
+Payload can come from `--payload-json`, `--payload-file`, or repeated
+`--payload KEY=VALUE` flags. Secret values are not payload fields; place
+declared Secrets when creating the Workspace.
+
+Use `--wait` for the terminal snapshot or `--follow` to print finite log pages
+until the Run becomes terminal:
 
 ```sh
-helmr session start hello \
-  --payload-file payload.json
+helmr task start hello \
+  --workspace "${WORKSPACE_ID}" \
+  --idempotency-key hello:demo:2 \
+  --payload-file payload.json \
+  --wait
 ```
 
-For simple string fields, use repeated `--payload` entries:
-
-```sh
-helmr session start cli-tooling \
-  --payload pattern="export const"
-```
-
-Tasks that need secrets receive them through declarations in the task source.
-Session starts provide payload and workspace attachment, not secret values:
-
-```sh
-helmr session start use-secret
-```
-
-Useful follow-up commands:
+Useful inspection commands:
 
 ```sh
 helmr run list
 helmr run get RUN_ID
 helmr run logs RUN_ID
-helmr run events RUN_ID --follow
+helmr run events RUN_ID
 helmr run wait RUN_ID --timeout 10m
 ```

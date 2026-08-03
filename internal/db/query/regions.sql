@@ -1,19 +1,19 @@
 -- name: EnsureRegion :one
-INSERT INTO regions (id, provider, provider_region, display_name, state, visibility, location, static_ips)
+INSERT INTO regions (id, provider, provider_region, display_name, state, visibility, location)
 VALUES (
     sqlc.arg(id),
     sqlc.arg(provider),
     sqlc.arg(provider_region),
     sqlc.arg(display_name),
-    sqlc.arg(state)::region_state,
+    sqlc.arg(state)::text,
     sqlc.arg(visibility)::region_visibility,
-    sqlc.arg(location)::text,
-    sqlc.arg(static_ips)::text[]
+    sqlc.arg(location)::text
 )
 ON CONFLICT (id) DO UPDATE
    SET provider = EXCLUDED.provider,
        provider_region = EXCLUDED.provider_region,
-       display_name = EXCLUDED.display_name
+       display_name = EXCLUDED.display_name,
+       updated_at = now()
 RETURNING *;
 
 -- name: GetRegion :one

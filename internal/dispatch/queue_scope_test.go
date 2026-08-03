@@ -48,5 +48,5 @@ func sameQueueScopes(a, b []QueueScope) bool {
 }
 
 func testQueueScope(orgID pgtype.UUID, queueName string) QueueScope {
-	return QueueScope{OrgID: orgID, RegionID: "us-east-1", QueueClass: "default", QueueName: queueName}
+	return QueueScope{OrgID: orgID, RegionID: "us-east-1", QueueName: queueName}
 }

@@ -8,26 +8,22 @@ order: 180
 
 # Secrets
 
-Secrets are encrypted values stored by name and scoped to a project environment. Task code must declare where each secret should appear inside the guest.
+Secrets are encrypted values stored by name and scoped to a project
+environment. Workspace creation declares where each Secret appears in the
+guest:
 
-```ts
-export const useSecret = task({
-  id: "use-secret",
-  sandbox: sb,
-  secrets: [
-    { name: "API_TOKEN", env: "API_TOKEN" },
-    { name: "config-json", file: "/run/secrets/config.json", mode: "0400" },
-  ],
-  run: async () => {
-    return { hasToken: Boolean(process.env.API_TOKEN) }
-  },
-})
+```sh
+helmr workspace create app-workspace \
+  --key app \
+  --secret-env API_TOKEN=API_TOKEN \
+  --secret-file config-json=/run/secrets/config.json \
+  --idempotency-key app-workspace
 ```
 
 ## Store Values
 
 ```sh
-printf '%s' "$API_TOKEN" | helmr secret set API_TOKEN
+printf '%s' "$API_TOKEN" | helmr secret create API_TOKEN
 ```
 
 The web UI lists secret names and timestamps, but it does not display saved values.
@@ -35,11 +31,15 @@ The web UI lists secret names and timestamps, but it does not display saved valu
 ## Run With Secrets
 
 ```sh
-helmr session start use-secret
+helmr task start use-secret --workspace WORKSPACE_ID
 ```
 
-Runs do not accept secret values or binding maps. Secret values are injected only at run time from the deployed task's declared secret names and should never be sent through payload.
+Runs do not accept secret values or binding maps. They use the placements fixed
+when their Workspace was created. Secret values should never be sent through
+payload.
 
 ## Names And Placement
 
-Secret names must match `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`. The `name` is the Helmr project-environment secret name. `env`, `file`, or `dir` declares where that value appears inside the runtime.
+Secret names must match `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`. The `name` is the
+Helmr project-environment Secret name. A Workspace placement selects one
+environment variable or one absolute file path.

@@ -3,19 +3,16 @@ package workergroup
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 type ReconcileStore interface {
 	LockWorkerGroupsForReconciliation(context.Context, db.LockWorkerGroupsForReconciliationParams) ([]string, error)
 	ReconcileWorkerGroup(context.Context, db.ReconcileWorkerGroupParams) (db.ReconcileWorkerGroupRow, error)
 	LockAbsentWorkerGroups(context.Context, db.LockAbsentWorkerGroupsParams) ([]string, error)
-	DisableAbsentWorkerGroups(context.Context, db.DisableAbsentWorkerGroupsParams) ([]db.DisableAbsentWorkerGroupsRow, error)
-	ListLiveAbsentWorkerGroupIDs(context.Context, db.ListLiveAbsentWorkerGroupIDsParams) ([]string, error)
+	DrainAbsentWorkerGroups(context.Context, db.DrainAbsentWorkerGroupsParams) ([]db.DrainAbsentWorkerGroupsRow, error)
 }
 
 func Reconcile(ctx context.Context, store ReconcileStore, regionID string, desired []Desired) error {
@@ -29,6 +26,9 @@ func Reconcile(ctx context.Context, store ReconcileStore, regionID string, desir
 		}
 		if err := group.Capacity.Validate(spec); err != nil {
 			return fmt.Errorf("validate worker group %q capacity: %w", spec.ID, err)
+		}
+		if group.ObservationTTLSeconds <= 0 {
+			return fmt.Errorf("validate worker group %q: observation TTL must be positive", spec.ID)
 		}
 		if _, duplicate := seen[spec.ID]; duplicate {
 			return fmt.Errorf("worker group %q is duplicated", spec.ID)
@@ -49,13 +49,11 @@ func Reconcile(ctx context.Context, store ReconcileStore, regionID string, desir
 			ID: spec.ID, RegionID: regionID, Name: spec.Name, Description: spec.Description,
 			AllowsRun: spec.AllowsRun, AllowsBuild: spec.AllowsBuild,
 			RequiredCpuMillis: group.Capacity.MilliCPU, RequiredMemoryBytes: group.Capacity.MemoryBytes,
-			RequiredWorkloadDiskBytes: group.Capacity.WorkloadDiskBytes, RequiredScratchBytes: group.Capacity.ScratchBytes,
-			RequiredBuildCacheBytes: group.Capacity.BuildCacheBytes, RequiredArtifactCacheBytes: group.Capacity.ArtifactCacheBytes,
+			RequiredGuestEphemeralDiskBytes: group.Capacity.GuestEphemeralDiskBytes,
+			RequiredBuildCacheBytes:         group.Capacity.BuildCacheBytes, RequiredArtifactCacheBytes: group.Capacity.ArtifactCacheBytes,
 			RequiredVmSlots: group.Capacity.VMSlots, RequiredBuildExecutors: group.Capacity.BuildExecutors,
-			ProtocolVersion:                auth.WorkerProtocolVersion,
-			EnrollmentPolicyFingerprint:    group.EnrollmentPolicyFingerprint,
-			AllowedAttestationFingerprints: group.AllowedAttestationFingerprints,
-			LaunchAttestationFingerprint:   pgvalue.Text(group.LaunchAttestationFingerprint),
+			ObservationTtlSeconds: group.ObservationTTLSeconds,
+			ProtocolVersion:       auth.WorkerProtocolVersion,
 		}); err != nil {
 			return fmt.Errorf("reconcile worker group %q: %w", spec.ID, err)
 		}
@@ -65,19 +63,10 @@ func Reconcile(ctx context.Context, store ReconcileStore, regionID string, desir
 	}); err != nil {
 		return fmt.Errorf("lock removed worker groups: %w", err)
 	}
-	if _, err := store.DisableAbsentWorkerGroups(ctx, db.DisableAbsentWorkerGroupsParams{
+	if _, err := store.DrainAbsentWorkerGroups(ctx, db.DrainAbsentWorkerGroupsParams{
 		RegionID: regionID, DesiredIds: ids,
 	}); err != nil {
-		return fmt.Errorf("disable removed worker groups: %w", err)
-	}
-	live, err := store.ListLiveAbsentWorkerGroupIDs(ctx, db.ListLiveAbsentWorkerGroupIDsParams{
-		RegionID: regionID, DesiredIds: ids,
-	})
-	if err != nil {
-		return fmt.Errorf("check removed worker groups: %w", err)
-	}
-	if len(live) > 0 {
-		return fmt.Errorf("worker groups %s still have live or fenced instances; drain and terminate every member before removing the group", strings.Join(live, ", "))
+		return fmt.Errorf("drain removed worker groups: %w", err)
 	}
 	return nil
 }

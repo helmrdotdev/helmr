@@ -1,7 +1,9 @@
 -- name: AppendRunLogChunk :one
 WITH event_args AS (
     SELECT sqlc.arg(kind)::text AS event_kind,
-           sqlc.arg(payload)::jsonb AS event_payload
+           sqlc.arg(payload)::jsonb AS event_payload,
+           sqlc.arg(severity)::text AS event_severity,
+           sqlc.arg(lease_fence_fingerprint)::text AS lease_fence_fingerprint
 ),
 current_run_lease AS (
     SELECT runs.org_id,
@@ -14,17 +16,20 @@ current_run_lease AS (
            run_leases.span_id,
            run_leases.parent_span_id,
            run_leases.traceparent,
-           run_leases.task_attempt_number AS attempt_number
-      FROM runs
-      JOIN run_leases ON run_leases.id = runs.current_run_lease_id
-                     AND run_leases.org_id = runs.org_id
-                     AND run_leases.run_id = runs.id
-     WHERE runs.org_id = sqlc.arg(org_id)
-       AND runs.id = sqlc.arg(run_id)
-       AND runs.status = 'running'
-       AND run_leases.id = sqlc.arg(run_lease_id)
+           run_leases.attempt_number AS attempt_number
+      FROM run_leases
+      JOIN runs ON runs.id = run_leases.run_id
+               AND runs.workspace_id = run_leases.workspace_id
+     WHERE run_leases.id = sqlc.arg(run_lease_id)
+       AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
+       AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
        AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND run_leases.state IN ('starting', 'running')
+       AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
+       AND run_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
+       AND runs.current_run_lease_id = run_leases.id
+       AND runs.current_attempt_number = run_leases.attempt_number
+       AND runs.status = 'running'
+       AND run_leases.state = 'running'
        AND run_leases.expires_at > now()
 ),
 candidate AS (
@@ -35,7 +40,8 @@ candidate AS (
            octet_length(sqlc.arg(content)::bytea)::bigint AS size_bytes,
            event_args.event_kind,
            event_args.event_payload,
-           'run_log:' || current_run_lease.run_lease_id::text || ':' || sqlc.arg(stream)::text || ':' || (sqlc.arg(observed_seq)::bigint)::text AS idempotency_key
+           event_args.lease_fence_fingerprint,
+           'run_log:' || current_run_lease.attempt_number::text || ':' || sqlc.arg(stream)::text || ':' || (sqlc.arg(observed_seq)::bigint)::text AS idempotency_key
       FROM current_run_lease
       CROSS JOIN event_args
 ),
@@ -69,7 +75,8 @@ inserted_chunk AS (
                'observed_seq', candidate.observed_seq,
                'bytes', candidate.size_bytes,
                'event_kind', candidate.event_kind,
-               'event_payload', candidate.event_payload
+               'event_payload', candidate.event_payload,
+               'lease_fence_fingerprint', candidate.lease_fence_fingerprint
            ),
            candidate.content,
            candidate.size_bytes,
@@ -111,7 +118,7 @@ event_input AS (
            current_run_lease.parent_span_id,
            current_run_lease.traceparent,
            'log' AS category,
-           'info' AS severity,
+           event_args.event_severity AS severity,
            'worker' AS source,
            event_args.event_kind AS kind,
            event_args.event_kind AS message,
@@ -159,7 +166,8 @@ event AS (
 meter_event AS (
     INSERT INTO meter_events (
         org_id, project_id, environment_id, run_id, run_lease_id,
-        attempt_number, trace_id, span_id, meter, quantity, unit, details,
+        attempt_number, trace_id, span_id, meter,
+        quantity, unit, details,
         idempotency_key, idempotency_fingerprint
     )
     SELECT current_run_lease.org_id,
@@ -174,7 +182,7 @@ meter_event AS (
            selected_chunk.size_bytes,
            'bytes',
            jsonb_build_object('stream', selected_chunk.stream, 'observed_seq', selected_chunk.observed_seq),
-           'log:' || selected_chunk.run_lease_id::text || ':' || selected_chunk.stream::text || ':' || selected_chunk.observed_seq::text,
+           'log:' || selected_chunk.run_id::text || ':' || selected_chunk.attempt_number::text || ':' || selected_chunk.stream::text || ':' || selected_chunk.observed_seq::text,
            jsonb_build_object(
                'quantity', selected_chunk.size_bytes,
                'unit', 'bytes',
@@ -185,7 +193,8 @@ meter_event AS (
                             AND current_run_lease.id = selected_chunk.run_id
      WHERE selected_chunk.is_new
        AND selected_chunk.size_bytes > 0
-    ON CONFLICT (org_id, source_type, source_id, meter, idempotency_key)
+    ON CONFLICT (org_id, run_lease_id, meter, idempotency_key)
+        WHERE run_lease_id IS NOT NULL
     DO UPDATE SET idempotency_fingerprint = meter_events.idempotency_fingerprint
      WHERE meter_events.idempotency_fingerprint = excluded.idempotency_fingerprint
     RETURNING *
@@ -198,8 +207,8 @@ meter_event_outbox AS (
     )
     SELECT meter_event.org_id,
            'meter_event',
-           meter_event.source_type,
-           meter_event.source_id,
+           'run_lease',
+           meter_event.run_lease_id,
            meter_event.project_id,
            meter_event.environment_id,
            meter_event.run_id,
@@ -234,3 +243,25 @@ SELECT selected_chunk.org_id,
        OR selected_chunk.size_bytes = 0
        OR EXISTS (SELECT 1 FROM meter_event_outbox)
    );
+
+-- name: GetRunLogChunkReplay :one
+SELECT org_id,
+       run_id,
+       run_lease_id,
+       attempt_number,
+       stream_name AS stream,
+       id AS seq,
+       observed_seq,
+       content,
+       size_bytes,
+       COALESCE(payload ->> 'event_payload', '')::text AS event_payload,
+       COALESCE(payload ->> 'lease_fence_fingerprint', '')::text AS lease_fence_fingerprint,
+       created_at
+  FROM telemetry_outbox
+ WHERE stream_kind = 'run_log'
+   AND source_kind = 'run'
+   AND run_lease_id = sqlc.arg(run_lease_id)
+   AND stream_name = sqlc.arg(stream)
+   AND observed_seq = sqlc.arg(observed_seq)
+ ORDER BY id
+ LIMIT 1;

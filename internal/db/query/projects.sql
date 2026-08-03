@@ -1,8 +1,7 @@
 -- name: CreateProject :one
-INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name, is_default)
+INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default)
 VALUES (
     sqlc.arg(id),
-    sqlc.arg(public_id),
     sqlc.arg(org_id),
     sqlc.arg(default_region_id),
     sqlc.arg(slug),
@@ -13,10 +12,9 @@ RETURNING *;
 
 -- name: CreateProjectWithDefaultEnvironment :one
 WITH project AS (
-    INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name, is_default)
+    INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default)
     VALUES (
         sqlc.arg(id),
-        sqlc.arg(public_id),
         sqlc.arg(org_id),
         sqlc.arg(default_region_id),
         sqlc.arg(slug),
@@ -30,14 +28,14 @@ WITH project AS (
     RETURNING *
 ),
 environment AS (
-    INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex, is_default)
-    SELECT initial_environment.id, initial_environment.public_id, project.org_id, project.id, initial_environment.slug, initial_environment.name, initial_environment.color_hex, initial_environment.is_default
+    INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default)
+    SELECT initial_environment.id, project.org_id, project.id, initial_environment.slug, initial_environment.name, initial_environment.color_hex, initial_environment.is_default
       FROM project
       CROSS JOIN (
           VALUES
-              (sqlc.arg(environment_id)::uuid, sqlc.arg(environment_public_id)::text, 'production'::text, 'Production'::text, '#315FCE'::text, true),
-              (sqlc.arg(staging_environment_id)::uuid, sqlc.arg(staging_environment_public_id)::text, 'staging'::text, 'Staging'::text, '#F59E0B'::text, false)
-      ) AS initial_environment(id, public_id, slug, name, color_hex, is_default)
+              (sqlc.arg(environment_id)::uuid, 'production'::text, 'Production'::text, '#315FCE'::text, true),
+              (sqlc.arg(staging_environment_id)::uuid, 'staging'::text, 'Staging'::text, '#F59E0B'::text, false)
+      ) AS initial_environment(id, slug, name, color_hex, is_default)
     RETURNING id
 )
 SELECT project.*
@@ -59,7 +57,8 @@ SELECT *
 -- name: UpdateProjectDetails :one
 UPDATE projects
    SET slug = sqlc.arg(slug),
-       name = sqlc.arg(name)
+       name = sqlc.arg(name),
+       updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
 RETURNING *;
@@ -72,13 +71,15 @@ RETURNING *;
 
 -- name: ClearDefaultProject :execrows
 UPDATE projects
-   SET is_default = false
+   SET is_default = false,
+       updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND is_default;
 
 -- name: SetDefaultProject :execrows
 UPDATE projects
-   SET is_default = true
+   SET is_default = true,
+       updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id);
 
@@ -96,10 +97,9 @@ SELECT *
  FOR UPDATE;
 
 -- name: CreateEnvironment :one
-INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex, is_default)
+INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default)
 VALUES (
     sqlc.arg(id),
-    sqlc.arg(public_id),
     sqlc.arg(org_id),
     sqlc.arg(project_id),
     sqlc.arg(slug),
@@ -113,7 +113,8 @@ RETURNING *;
 UPDATE environments
    SET slug = sqlc.arg(slug),
        name = sqlc.arg(name),
-       color_hex = sqlc.arg(color_hex)
+       color_hex = sqlc.arg(color_hex),
+       updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND id = sqlc.arg(id)

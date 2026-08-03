@@ -13,7 +13,7 @@ afterEach(() => {
 test("redirects unauthorized requests and rejects instead of hanging", async () => {
   const windowMock = {
     location: {
-      pathname: "/sessions",
+      pathname: "/runs",
       search: "",
       href: "",
     },

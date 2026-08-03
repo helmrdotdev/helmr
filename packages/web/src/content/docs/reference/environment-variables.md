@@ -1,6 +1,6 @@
 ---
 title: Environment variables
-description: Environment variables read by Helmr control, worker, CLI, deploy adapter, and SDK client.
+description: Environment variables read by Helmr control, worker, CLI, and SDK client.
 section: Reference
 sidebarLabel: Environment variables
 order: 960
@@ -14,35 +14,29 @@ order: 960
 | --- | --- |
 | `HELMR_API_URL` | Control-plane base URL. |
 | `HELMR_API_KEY` | Bearer token for CLI or `HelmrClient`. |
-| `HELMR_ADAPTER_RUNTIME_PATH` | Adapter runtime executable used by `helmr deploy`. |
-| `HELMR_ADAPTER_CACHE_DIR` | Directory used to materialize the embedded deploy adapter before invoking the runtime. |
-| `HELMR_ADAPTER_PATH` | Development override for the adapter entrypoint. Must be set with `HELMR_ADAPTER_REGISTER_PATH`. |
-| `HELMR_ADAPTER_REGISTER_PATH` | Development override for the adapter register hook. Must be set with `HELMR_ADAPTER_PATH`. |
-
-`HELMR_ADAPTER_CACHE_DIR` should point to a user-private directory when overridden.
 
 ## Control plane
 
-Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CAS_URI`, `HELMR_CLICKHOUSE_URL`, `HELMR_WORKER_TOKEN_SIGNING_KEY`, `HELMR_WORKER_GROUPS`, `HELMR_WORKER_GROUP_ID`, `HELMR_REGION_ID`, `HELMR_DEFAULT_REGION_ID`, `HELMR_AUTH_SECRET`, `HELMR_SECRET_ENCRYPTION_KEY`, `HELMR_GITHUB_OAUTH_CLIENT_ID`, and `HELMR_GITHUB_OAUTH_CLIENT_SECRET`.
+Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CAS_URI`, `HELMR_CLICKHOUSE_URL`, `WORKER_TOKEN_SIGNING_KEY`, `HELMR_WORKER_GROUPS`, `HELMR_REGION_ID`, `HELMR_DEFAULT_REGION_ID`, `HELMR_PROVIDER`, `HELMR_PROVIDER_REGION`, `AUTH_KEY`, `ENCRYPTION_KEY`, `WORKSPACE_FENCING_KEY`, `TOKEN_CREDENTIAL_KEY`, `HELMR_GITHUB_OAUTH_CLIENT_ID`, and `HELMR_GITHUB_OAUTH_CLIENT_SECRET`.
 
 Deployment mode: `HELMR_DEPLOYMENT_MODE` defaults to `self-hosted`. In `self-hosted` mode, `HELMR_SETUP_TOKEN` is required to create the first and only organization. In `managed-cloud` mode, authenticated users can create organizations without a setup token.
 
-`HELMR_WORKER_GROUPS` is the authoritative JSON list of AWS worker-group enrollment policies. Each group identifies its AWS account, region, Auto Scaling group, instance profile, allowed AMIs, and run/build role. The same group and enrollment model is used in both deployment modes.
+`HELMR_WORKER_GROUPS` is the authoritative JSON list of logical worker groups.
+Each group declares its ID, presentation fields, allowed run/build roles,
+observation TTL, instance-capacity vector, and the name of its distinct
+`HELMR_WORKER_ENROLLMENT_SECRET_*` environment variable. It contains no AWS
+account, Auto Scaling group, instance profile, AMI, or topology authority.
+
+`HELMR_REGION_ID` and `HELMR_DEFAULT_REGION_ID` are opaque Helmr identifiers, not provider-region or DNS names. Their normalized UTF-8 values must be 1–255 bytes and contain no surrounding whitespace or control characters.
 
 Optional: `HELMR_CONTROL_ADDR`, `HELMR_PUBLIC_URL`, and `HELMR_MAGIC_LINK_DEBUG_URLS`.
 
 ClickHouse telemetry: `HELMR_CLICKHOUSE_URL` is required. Set `HELMR_CLICKHOUSE_USER` when the service user is not `default`, and set `HELMR_CLICKHOUSE_PASSWORD` when the service requires a password.
 
-`HELMR_SECRET_ENCRYPTION_KEY_OLD` is optional and should only be set during
-Helmr-managed secret key rotation. While it is set, control and dispatcher can
-decrypt secrets written with the old key, and new writes use
-`HELMR_SECRET_ENCRYPTION_KEY`. Run `helmr-control secrets reencrypt` to rewrite
-old-key secrets before removing `HELMR_SECRET_ENCRYPTION_KEY_OLD`; repeat the
-command until `remaining_old_key_count` is `0`.
-
-When using the AWS module with `secret_encryption_key_old_arn`, also set
-`secret_encryption_key_old_kms_key_arns` if that old-key secret uses a
-customer-managed KMS key other than the module KMS key.
+`AUTH_KEY`, `TOKEN_CREDENTIAL_KEY`, `WORKSPACE_FENCING_KEY`,
+`ENCRYPTION_KEY`, and `WORKER_TOKEN_SIGNING_KEY` are distinct single roots.
+Each must be base64 and decode to exactly 32 bytes. Every Control replica uses
+the same values. Online rotation and multi-key verification are not supported.
 
 Email delivery is disabled by default. Set `HELMR_EMAIL_PROVIDER` to choose a sender:
 
@@ -57,31 +51,48 @@ Email delivery is disabled by default. Set `HELMR_EMAIL_PROVIDER` to choose a se
 
 ## Dispatcher
 
-Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CLICKHOUSE_URL`, `HELMR_AUTH_SECRET`, and `HELMR_SECRET_ENCRYPTION_KEY`.
+Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CLICKHOUSE_URL`,
+and `WORKSPACE_FENCING_KEY`.
 
-Set `HELMR_SECRET_ENCRYPTION_KEY_OLD` on the dispatcher during the same rotation
-window as control so scheduled runs can resolve old-key secrets until
-re-encryption completes.
+`ENCRYPTION_KEY` is control-plane authority and is not provided to the dispatcher.
+
+The dispatcher uses the same single base64-encoded 32-byte
+`WORKSPACE_FENCING_KEY` as the control service.
 
 The AWS control module provisions cluster-mode disabled ElastiCache Valkey/Redis and injects
 `HELMR_REDIS_URL` into both `helmr-control` and `helmr-dispatcher`.
 
-Optional schedule worker tuning:
+Optional Run placement tuning:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HELMR_SCHEDULE_REPAIR_EVERY` | `5s` | How often the dispatcher repairs schedule Redis entries from the database and drains due entries. |
-| `HELMR_SCHEDULE_REPAIR_LIMIT` | `100` | Schedule repair page size and due-entry dequeue batch size. |
-| `HELMR_SCHEDULE_TRIGGER_CONCURRENCY` | `10` | Maximum concurrent scheduled task-start attempts per dispatcher. |
-| `HELMR_SCHEDULE_REPAIR_LOOKAHEAD` | `40s` | Safety-net window of upcoming next-fire entries repaired into Redis. Steady-state schedules enqueue their next fire directly. |
-| `HELMR_SCHEDULE_LEASE` | `5m` | Redis lease duration for a due schedule fire. |
-| `HELMR_SCHEDULE_MAX_ATTEMPTS` | `10` | Retry attempts before the current schedule fire is skipped. |
-| `HELMR_SCHEDULE_JITTER` | `30s` | Stable per-schedule jitter applied when registering next-fire entries. |
+| `HELMR_RUN_PREPARATION_LIMIT` | `32` | Maximum concurrent Run runtime preparations in one queue scope before applying any lower pinned queue limit. |
+| `HELMR_RUN_RESERVATION_TTL` | `5m` | Lifetime of a cold runtime reservation before fenced cleanup is required. |
+| `HELMR_RUN_LEASE_START_DEADLINE` | `1m` | Time allowed for a worker to claim a newly assigned Run Lease. |
+| `HELMR_RUN_LEASE_TTL` | `5m` | Operational lifetime sampled when a Run and Workspace Lease are granted or renewed. Must be at least the start deadline. |
+
+Optional Schedule worker tuning:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `HELMR_SCHEDULE_POLL_INTERVAL` | `1s` | How often the dispatcher claims due Schedule cursors from PostgreSQL. |
+| `HELMR_SCHEDULE_CLAIM_LIMIT` | `100` | Maximum due Schedule rows claimed per poll; must be an integer from 1 through 2147483647. |
+| `HELMR_SCHEDULE_CONCURRENCY` | `10` | Maximum concurrent Schedule admission transactions per dispatcher; must be an integer from 1 through 2147483647. |
+| `HELMR_SCHEDULE_CLAIM_LEASE` | `5m` | PostgreSQL claim lease held while one Schedule cursor is admitted. |
 
 ## Worker
 
-Required: `HELMR_CONTROL_URL`, `HELMR_CAS_URI`, `HELMR_WORKER_GROUP_ID`, `HELMR_WORKER_PROVIDER_REGION`, `HELMR_CHECKPOINT_ENCRYPTION_KEY`, `HELMR_WORKER_FIRECRACKER_JAILER_UID`, and `HELMR_WORKER_FIRECRACKER_JAILER_GID`.
+Required: `HELMR_CONTROL_URL`, `HELMR_CAS_URI`, `HELMR_WORKER_GROUP_ID`,
+`HELMR_WORKER_RESOURCE_ID`, `HELMR_WORKER_ENROLLMENT_SECRET_FILE`,
+`CHECKPOINT_ENCRYPTION_KEY`, `HELMR_WORKER_FIRECRACKER_JAILER_UID`, and
+`HELMR_WORKER_FIRECRACKER_JAILER_GID`.
 
-The worker requests a one-time enrollment challenge and proves its AWS EC2 identity with the instance identity document and a nonce-bound signed STS request. Control verifies the instance against the configured worker-group policy, then issues a renewable worker credential stored at `HELMR_WORKER_INSTANCE_CREDENTIAL_PATH`. No deployment-mode or shared bootstrap credential is accepted by the worker.
+The worker requests a one-time enrollment challenge and proves possession of
+its worker-group enrollment secret over the nonce, requested roles, and opaque
+operator resource locator. Control verifies the proof and group roles, creates
+the authoritative worker-instance identity, and issues a renewable per-instance
+credential stored at `HELMR_WORKER_INSTANCE_CREDENTIAL_PATH`. Provider identity
+and infrastructure inventory are deployment responsibilities rather than
+Control authentication inputs.
 
-Runtime inputs include `HELMR_WORKER_WORK_DIR`, `HELMR_WORKER_IMAGES_DIR`, `HELMR_GIT_PATH`, `HELMR_WORKER_BUILDKIT_ADDR`, `HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE`, Firecracker paths and jailer settings, CNI paths/profile, blocked CIDR lists, `HELMR_WORKER_PROVIDER_REGION`, `HELMR_WORKER_LABELS`, `HELMR_VM_VCPUS`, `HELMR_VM_MEMORY_MIB`, `HELMR_WORKER_DISK_MIB`, and `HELMR_VM_HEALTH_TIMEOUT`. `HELMR_WORKER_LABELS` is a comma-separated `key=value` list used for placement matching. `HELMR_WORKER_DISK_MIB` overrides the filesystem capacity advertised by filesystem-first worker instances.
+Runtime inputs include `HELMR_WORKER_WORK_DIR`, `HELMR_WORKER_IMAGES_DIR`, `HELMR_GIT_PATH`, Firecracker paths and jailer settings, routed-network link and translation pools, resolver and blocked CIDRs, `HELMR_VM_VCPUS`, `HELMR_VM_MEMORY_MIB`, `HELMR_WORKER_DISK_MIB`, and `HELMR_VM_HEALTH_TIMEOUT`. `HELMR_WORKER_DISK_MIB` overrides the filesystem capacity advertised by filesystem-first worker instances. Workspace-image builds start the pinned BuildKit daemon inside a fresh image-build guest; there is no host BuildKit address or service setting.

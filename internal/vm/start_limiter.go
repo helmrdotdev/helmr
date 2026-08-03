@@ -5,13 +5,13 @@ import (
 	"errors"
 )
 
-// Permits cover startup only; certified execution slots govern steady state.
+// Permits cover startup only; current-epoch execution slots govern steady state.
 type StartLimiter struct {
 	connector interface {
 		Connector
 		RestoringConnector
 		MaterializingConnector
-		RuntimeCleanupConnector
+		Cleaner
 	}
 	permits chan struct{}
 }
@@ -20,7 +20,7 @@ func NewStartLimiter(connector interface {
 	Connector
 	RestoringConnector
 	MaterializingConnector
-	RuntimeCleanupConnector
+	Cleaner
 }, maximum int) (*StartLimiter, error) {
 	if connector == nil || maximum <= 0 {
 		return nil, errors.New("VM start limiter requires a connector and positive maximum")
@@ -50,6 +50,6 @@ func (l *StartLimiter) Materialize(ctx context.Context, request MaterializeReque
 	return l.withPermit(ctx, func() (Session, error) { return l.connector.Materialize(ctx, request) })
 }
 
-func (l *StartLimiter) CleanupRuntime(ctx context.Context, runtimeID string) error {
-	return l.connector.CleanupRuntime(ctx, runtimeID)
+func (l *StartLimiter) Cleanup(ctx context.Context, owner Owner) error {
+	return l.connector.Cleanup(ctx, owner)
 }

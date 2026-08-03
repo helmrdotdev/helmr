@@ -12,75 +12,19 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-func TestTokenCreateSendsDurationMetadataTagsAndIdempotency(t *testing.T) {
-	var request api.CreateTokenRequest
-	timeoutAt := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tokens" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		_ = json.NewEncoder(w).Encode(api.TokenResponse{
-			ID:          "token-1",
-			Status:      "pending",
-			CallbackURL: "https://api.example.test/api/v1/tokens/token-1/callback/secret",
-			TimeoutAt:   &timeoutAt,
-		})
-	}))
-	defer server.Close()
-	t.Setenv(helmrAPIURLEnv, server.URL)
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-
-	var out bytes.Buffer
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"token", "create", "--timeout", "7d", "--metadata-json", `{"release":"v1"}`, "--tag", "release", "--idempotency-key", "approval-1"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if string(request.Timeout) != `"7d"` || string(request.Metadata) != `{"release":"v1"}` || request.IdempotencyKey != "approval-1" {
-		t.Fatalf("request = %+v", request)
-	}
-	if len(request.Tags) != 1 || request.Tags[0] != "release" {
-		t.Fatalf("tags = %#v", request.Tags)
-	}
-	if !strings.Contains(out.String(), "Token:       token-1") || !strings.Contains(out.String(), "Callback:") {
-		t.Fatalf("output = %q", out.String())
-	}
-}
-
-func TestTokenCreateRejectsUnexpectedArgs(t *testing.T) {
-	cmd := newRootCommand()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"token", "create", "approval"})
-	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), `unknown command`) && !strings.Contains(err.Error(), `accepts 0 arg`) {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestTokenCreateInvalidMetadataNamesActualFlag(t *testing.T) {
-	cmd := newRootCommand()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"token", "create", "--metadata-json", `{bad`})
-	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "--metadata-json must be valid JSON") {
-		t.Fatalf("err = %v", err)
+func TestTokenCreateIsRuntimeOnly(t *testing.T) {
+	if commandByPath(newRootCommand(), "token", "create") != nil {
+		t.Fatal("token create command is registered")
 	}
 }
 
 func TestTokenGetUsesCanonicalCommand(t *testing.T) {
 	timeoutAt := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/tokens/token-1" {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/tokens/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		_ = json.NewEncoder(w).Encode(api.TokenResponse{ID: "token-1", Status: "pending", TimeoutAt: &timeoutAt})
+		_ = json.NewEncoder(w).Encode(api.TokenResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", Status: "pending", TimeoutAt: &timeoutAt})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -90,19 +34,19 @@ func TestTokenGetUsesCanonicalCommand(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"token", "get", "token-1", "--json"})
+	cmd.SetArgs([]string{"token", "get", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), `"id":"token-1"`) {
+	if !strings.Contains(out.String(), `"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37"`) {
 		t.Fatalf("output = %q", out.String())
 	}
 }
 
-func TestTokenCompleteSendsData(t *testing.T) {
+func TestTokenCompleteSendsResultAndIdempotencyKey(t *testing.T) {
 	var request api.CompleteTokenRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tokens/token-1/complete" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tokens/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37/complete" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -110,7 +54,7 @@ func TestTokenCompleteSendsData(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(api.CompleteTokenResponse{
 			Status: "completed",
-			Token:  api.TokenResponse{ID: "token-1", Status: "completed"},
+			Token:  api.TokenResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", Status: "completed"},
 		})
 	}))
 	defer server.Close()
@@ -121,15 +65,19 @@ func TestTokenCompleteSendsData(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"token", "complete", "token-1", "--data-json", `{"approved":true}`})
+	cmd.SetArgs([]string{
+		"token", "complete", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
+		"--data-json", `{"approved":true}`,
+		"--idempotency-key", "approval-1",
+	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if string(request.Data) != `{"approved":true}` {
+	if string(request.Result) != `{"approved":true}` || request.IdempotencyKey != "approval-1" {
 		t.Fatalf("request = %+v", request)
 	}
 	for _, want := range []string{
-		"token_id: token-1",
+		"token_id: 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
 		"token_status: completed",
 		"completion_status: completed",
 	} {
@@ -141,12 +89,12 @@ func TestTokenCompleteSendsData(t *testing.T) {
 
 func TestTokenCompleteJSONEmitsResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tokens/token-1/complete" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tokens/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37/complete" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(api.CompleteTokenResponse{
 			Status: "completed",
-			Token:  api.TokenResponse{ID: "token-1", Status: "completed"},
+			Token:  api.TokenResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", Status: "completed"},
 		})
 	}))
 	defer server.Close()
@@ -157,21 +105,25 @@ func TestTokenCompleteJSONEmitsResponse(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"token", "complete", "token-1", "--data-json", `{"approved":true}`, "--json"})
+	cmd.SetArgs([]string{"token", "complete", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", "--data-json", `{"approved":true}`, "--json"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), `"status":"completed"`) || !strings.Contains(out.String(), `"id":"token-1"`) {
+	if !strings.Contains(out.String(), `"status":"completed"`) || !strings.Contains(out.String(), `"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37"`) {
 		t.Fatalf("output = %q", out.String())
 	}
 }
 
 func TestTokenCancelUsesCanonicalCommand(t *testing.T) {
+	var request api.CancelTokenRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tokens/token-1/cancel" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tokens/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37/cancel" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		_ = json.NewEncoder(w).Encode(api.TokenResponse{ID: "token-1", Status: "cancelled"})
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(api.TokenResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", Status: "cancelled"})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -181,11 +133,14 @@ func TestTokenCancelUsesCanonicalCommand(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"token", "cancel", "token-1"})
+	cmd.SetArgs([]string{"token", "cancel", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", "--idempotency-key", "cancel-1"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(out.String()); got != "token-1 cancelled" {
+	if got := strings.TrimSpace(out.String()); got != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37 cancelled" {
 		t.Fatalf("output = %q", out.String())
+	}
+	if request.IdempotencyKey != "cancel-1" {
+		t.Fatalf("request = %+v", request)
 	}
 }

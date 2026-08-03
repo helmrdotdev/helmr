@@ -12,14 +12,16 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 func TestClientErrorUsesServerMessage(t *testing.T) {
@@ -33,7 +35,12 @@ func TestClientErrorUsesServerMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.StartSession(context.Background(), "deploy", api.SessionStartRequest{})
+	_, err = client.StartTask(
+		context.Background(),
+		"deploy",
+		api.StartTaskRequest{},
+		EnvironmentScopeOptions{},
+	)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -65,68 +72,12 @@ func TestNewAllowsPlainHTTPLoopback(t *testing.T) {
 	}
 }
 
-func TestClientSendsPinnedVersionHeaders(t *testing.T) {
+func TestClientSendsAPIVersionHeader(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get(api.APIVersionHeader); got != api.CurrentAPIVersion {
 			t.Fatalf("%s = %q", api.APIVersionHeader, got)
 		}
-		if got := r.Header.Get(api.ClientVersionHeader); got != "0.2.3-test" {
-			t.Fatalf("%s = %q", api.ClientVersionHeader, got)
-		}
-		if got := r.Header.Get(api.CLIVersionHeader); got != "0.2.3-test" {
-			t.Fatalf("%s = %q", api.CLIVersionHeader, got)
-		}
-		if got := r.Header.Get(api.SDKVersionHeader); got != "" {
-			t.Fatalf("%s = %q", api.SDKVersionHeader, got)
-		}
-		_ = json.NewEncoder(w).Encode(api.SessionStartResponse{Run: api.RunResponse{
-			ID:     "run-1",
-			TaskID: "deploy",
-			Status: "queued",
-		}})
-	}))
-	defer server.Close()
-
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithClientIdentity("cli", "0.2.3-test"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.StartSession(context.Background(), "deploy", api.SessionStartRequest{}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestClientSendsSDKVersionHeaderForSDKIdentity(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get(api.ClientVersionHeader); got != "1.2.3-sdk" {
-			t.Fatalf("%s = %q", api.ClientVersionHeader, got)
-		}
-		if got := r.Header.Get(api.SDKVersionHeader); got != "1.2.3-sdk" {
-			t.Fatalf("%s = %q", api.SDKVersionHeader, got)
-		}
-		if got := r.Header.Get(api.CLIVersionHeader); got != "" {
-			t.Fatalf("%s = %q", api.CLIVersionHeader, got)
-		}
-		_ = json.NewEncoder(w).Encode(api.SessionStartResponse{Run: api.RunResponse{
-			ID:     "run-1",
-			TaskID: "deploy",
-			Status: "queued",
-		}})
-	}))
-	defer server.Close()
-
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithClientIdentity("sdk", "1.2.3-sdk"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.StartSession(context.Background(), "deploy", api.SessionStartRequest{}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestClientRejectsPlainHTTPNonLoopbackRedirect(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://helmr.example/api/sessions", http.StatusTemporaryRedirect)
+		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
 	}))
 	defer server.Close()
 
@@ -134,16 +85,30 @@ func TestClientRejectsPlainHTTPNonLoopbackRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.StartSession(context.Background(), "deploy", api.SessionStartRequest{})
+	if _, err := client.StartTask(context.Background(), "deploy", api.StartTaskRequest{}, EnvironmentScopeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClientRejectsPlainHTTPNonLoopbackRedirect(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://helmr.example/api/tasks/deploy/start", http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.StartTask(context.Background(), "deploy", api.StartTaskRequest{}, EnvironmentScopeOptions{})
 	if err == nil || !strings.Contains(err.Error(), "plaintext non-loopback") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestStartSession(t *testing.T) {
-	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
+func TestStartTask(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		body, err := io.ReadAll(r.Body)
@@ -154,20 +119,14 @@ func TestStartSession(t *testing.T) {
 		if err := json.Unmarshal(body, &raw); err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := raw["source"]; ok {
-			t.Fatalf("request JSON included source: %s", body)
-		}
-		var request api.SessionStartRequest
+		var request api.StartTaskRequest
 		if err := json.Unmarshal(body, &request); err != nil {
 			t.Fatal(err)
 		}
-		_ = json.NewEncoder(w).Encode(api.SessionStartResponse{Run: api.RunResponse{
-			ID:        "run-1",
-			TaskID:    "deploy",
-			Status:    "queued",
-			CreatedAt: now,
-			UpdatedAt: now,
-		}})
+		if request.Workspace.ID == nil || *request.Workspace.ID != "ws_1" {
+			t.Fatalf("request = %+v", request)
+		}
+		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
 	}))
 	defer server.Close()
 
@@ -175,26 +134,28 @@ func TestStartSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	started, err := client.StartSession(context.Background(), "deploy", api.SessionStartRequest{
-		Payload: json.RawMessage(`{"env":"prod"}`),
-	})
+	workspaceID := "ws_1"
+	started, err := client.StartTask(context.Background(), "deploy", api.StartTaskRequest{
+		Payload:   json.RawMessage(`{"env":"prod"}`),
+		Workspace: api.WorkspaceTarget{ID: &workspaceID},
+	}, EnvironmentScopeOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if started.Run.ID != "run-1" || started.Run.Status != "queued" {
+	if started.RunID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" {
 		t.Fatalf("started = %+v", started)
 	}
 }
 
-func TestStartSessionReturnsAcceptedHTTPError(t *testing.T) {
+func TestStartTaskReturnsHTTPError(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"error":"accepted elsewhere"}`))
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"already started differently"}`))
 	}))
 	defer server.Close()
 
@@ -202,36 +163,26 @@ func TestStartSessionReturnsAcceptedHTTPError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.StartSession(context.Background(), "deploy", api.SessionStartRequest{})
+	_, err = client.StartTask(context.Background(), "deploy", api.StartTaskRequest{}, EnvironmentScopeOptions{})
 	var httpErr *HTTPError
-	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusAccepted || !strings.Contains(httpErr.Message, "accepted elsewhere") {
-		t.Fatalf("err = %#v, want 202 HTTPError", err)
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict || !strings.Contains(httpErr.Message, "already started differently") {
+		t.Fatalf("err = %#v, want 409 HTTPError", err)
 	}
 	if calls != 1 {
 		t.Fatalf("calls = %d, want 1", calls)
 	}
 }
 
-func TestStartSessionUsesSessionScopedRoute(t *testing.T) {
-	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
+func TestStartTaskUsesEnvironmentScopedRoute(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/project-1/environments/env-1/sessions" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/project-1/environments/env-1/tasks/deploy/start" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		var request api.SessionStartRequest
+		var request api.StartTaskRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		if request.ProjectID != "" || request.EnvironmentID != "" {
-			t.Fatalf("scoped route leaked body scope: %+v", request)
-		}
-		_ = json.NewEncoder(w).Encode(api.SessionStartResponse{Run: api.RunResponse{
-			ID:        "run-1",
-			TaskID:    "deploy",
-			Status:    "queued",
-			CreatedAt: now,
-			UpdatedAt: now,
-		}})
+		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
 	}))
 	defer server.Close()
 
@@ -239,15 +190,13 @@ func TestStartSessionUsesSessionScopedRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	started, err := client.StartSession(context.Background(), "deploy", api.SessionStartRequest{
-		ProjectID:     "project-1",
-		EnvironmentID: "env-1",
-		Payload:       json.RawMessage(`{"env":"prod"}`),
-	})
+	started, err := client.StartTask(context.Background(), "deploy", api.StartTaskRequest{
+		Payload: json.RawMessage(`{"env":"prod"}`),
+	}, EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if started.Run.ID != "run-1" || started.Run.Status != "queued" {
+	if started.RunID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" {
 		t.Fatalf("started = %+v", started)
 	}
 }
@@ -257,17 +206,12 @@ func TestRunOperations(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.Method+" "+r.URL.Path)
 		switch r.URL.Path {
-		case "/api/runs/run-1/cancel":
-			var request api.CancelRunRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
+		case "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/cancel":
+			if r.ContentLength > 0 {
+				t.Fatalf("cancel request body length = %d", r.ContentLength)
 			}
-			if request.Reason != "cleanup" || !request.Force || request.IdempotencyKey != "cancel-1" {
-				t.Fatalf("cancel request = %+v", request)
-			}
-			_ = json.NewEncoder(w).Encode(api.CancelRunResponse{
-				Run:       api.RunResponse{ID: "run-1", Status: "cancelled"},
-				Operation: api.RunOperationResponse{ID: "op-1", RunID: "run-1", Kind: "cancel", Status: "applied"},
+			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{
+				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: "cancelled",
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -279,18 +223,14 @@ func TestRunOperations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cancelled, err := client.CancelRun(context.Background(), "run-1", api.CancelRunRequest{
-		Reason:         "cleanup",
-		Force:          true,
-		IdempotencyKey: "cancel-1",
-	})
+	cancelled, err := client.CancelRun(context.Background(), "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cancelled.Run.Status != "cancelled" || cancelled.Operation.Kind != "cancel" {
+	if cancelled.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" || cancelled.Status != "cancelled" {
 		t.Fatalf("cancelled = %+v", cancelled)
 	}
-	if got := strings.Join(paths, ","); got != "POST /api/runs/run-1/cancel" {
+	if got := strings.Join(paths, ","); got != "POST /api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/cancel" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -334,7 +274,7 @@ func TestCreateDeploymentSendsContentHash(t *testing.T) {
 			}
 			_ = part.Close()
 		}
-		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "deployment-1"})
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"})
 	}))
 	defer server.Close()
 
@@ -342,18 +282,78 @@ func TestCreateDeploymentSendsContentHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := client.CreateDeployment(context.Background(), api.CreateDeploymentRequest{}, sourcePath)
+	response, err := client.CreateDeployment(
+		context.Background(),
+		api.CreateDeploymentRequest{IdempotencyKey: "deploy-1"},
+		sourcePath,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.ID != "deployment-1" {
+	if response.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35" {
 		t.Fatalf("response = %+v", response)
 	}
-	if metadata.ProjectID != "" || metadata.EnvironmentID != "" || metadata.ContentHash != sha256sum.DigestBytes(source) {
+	if metadata.ProjectID != "" || metadata.EnvironmentID != "" ||
+		metadata.IdempotencyKey != "deploy-1" ||
+		metadata.ContentHash != sha256sum.DigestBytes(source) {
 		t.Fatalf("metadata = %+v", metadata)
 	}
 	if !bytes.Equal(uploaded, source) {
 		t.Fatalf("uploaded = %q", uploaded)
+	}
+}
+
+func TestCreateDeploymentRetriesLostResponseWithSameKey(t *testing.T) {
+	source := []byte("deployment archive")
+	sourcePath := filepath.Join(t.TempDir(), "deployment-source.tar")
+	if err := os.WriteFile(sourcePath, source, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var mutex sync.Mutex
+	var keys []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatal(err)
+		}
+		var metadata api.CreateDeploymentRequest
+		if err := json.Unmarshal([]byte(r.FormValue("metadata")), &metadata); err != nil {
+			t.Fatal(err)
+		}
+		mutex.Lock()
+		keys = append(keys, metadata.IdempotencyKey)
+		attempt := len(keys)
+		mutex.Unlock()
+		if attempt == 1 {
+			connection, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = connection.Close()
+			return
+		}
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.CreateDeployment(
+		context.Background(),
+		api.CreateDeploymentRequest{IdempotencyKey: "deploy-retry"},
+		sourcePath,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35" {
+		t.Fatalf("response = %+v", response)
+	}
+	mutex.Lock()
+	defer mutex.Unlock()
+	if !slices.Equal(keys, []string{"deploy-retry", "deploy-retry"}) {
+		t.Fatalf("idempotency keys = %v", keys)
 	}
 }
 
@@ -415,28 +415,35 @@ func TestDeviceCodeFlowClient(t *testing.T) {
 	}
 }
 
-func TestListRunsOptionsAndGetRunLogs(t *testing.T) {
+func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	paths := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.RequestURI())
 		switch r.URL.Path {
 		case "/api/runs":
-			if r.URL.Query().Get("status") != "all" || r.URL.Query().Get("limit") != "25" || r.URL.Query().Get("session_id") != "session-1" {
+			if got := r.URL.Query()["status"]; !slices.Equal(got, []string{"running", "waiting"}) ||
+				r.URL.Query().Get("cursor") != "cursor-1" ||
+				r.URL.Query().Get("limit") != "25" {
 				t.Fatalf("query = %s", r.URL.RawQuery)
 			}
-			_ = json.NewEncoder(w).Encode(api.ListRunsResponse{Runs: []api.RunResponse{{
-				ID:        "run-1",
-				TaskID:    "deploy",
-				Status:    "succeeded",
-				CreatedAt: now,
-				UpdatedAt: now,
-			}}})
-		case "/api/runs/run-1/logs":
-			_ = json.NewEncoder(w).Encode(api.LogSnapshotResponse{
-				StdoutBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
-				StderrBase64: base64.StdEncoding.EncodeToString([]byte("warn\n")),
-				Cursor:       "0",
+			_ = json.NewEncoder(w).Encode(api.ListRunSnapshotsResponse{
+				Runs: []api.RunSnapshotResponse{{
+					ID:         "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
+					Status:     "succeeded",
+					Entrypoint: api.RunEntrypointResponse{Kind: "task", ID: "deploy"},
+					CreatedAt:  now,
+				}},
+				NextCursor: "cursor-2",
+			})
+		case "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs":
+			_ = json.NewEncoder(w).Encode(api.RunLogPage{
+				Logs: []api.RunLogRecord{{
+					ID: "rt1.log", Kind: "stdout", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
+					AttemptNumber: 1,
+					ContentBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
+				}},
+				NextCursor: "rt1.next",
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -448,22 +455,59 @@ func TestListRunsOptionsAndGetRunLogs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runs, err := client.ListRuns(context.Background(), ListRunsOptions{Status: "all", Limit: 25, SessionID: "session-1"})
+	runs, err := client.ListRuns(context.Background(), ListRunsOptions{
+		Statuses: []string{"running", "waiting"},
+		Cursor:   "cursor-1",
+		Limit:    25,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runs.Runs) != 1 || runs.Runs[0].ID != "run-1" {
+	if len(runs.Runs) != 1 || runs.Runs[0].ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" ||
+		runs.Runs[0].Entrypoint.ID != "deploy" || runs.NextCursor != "cursor-2" {
 		t.Fatalf("runs = %+v", runs)
 	}
-	logs, err := client.GetRunLogs(context.Background(), "run-1")
+	logs, err := client.ListRunLogs(context.Background(), "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if logs.StdoutBase64 != base64.StdEncoding.EncodeToString([]byte("hello\n")) || logs.StderrBase64 != base64.StdEncoding.EncodeToString([]byte("warn\n")) {
+	if len(logs.Logs) != 1 ||
+		logs.Logs[0].ContentBase64 != base64.StdEncoding.EncodeToString([]byte("hello\n")) ||
+		logs.NextCursor != "rt1.next" {
 		t.Fatalf("logs = %+v", logs)
 	}
-	if got := strings.Join(paths, ","); got != "/api/runs?limit=25&session_id=session-1&status=all,/api/runs/run-1/logs" {
+	if got := strings.Join(paths, ","); got != "/api/runs?cursor=cursor-1&limit=25&status=running&status=waiting,/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" {
 		t.Fatalf("paths = %s", got)
+	}
+}
+
+func TestRevokeSecretUsesExplicitOperation(t *testing.T) {
+	var request api.RevokeSecretRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/secrets/by-name/API_TOKEN/revoke" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(api.SecretResponse{
+			ID:    "secret-1",
+			Name:  "API_TOKEN",
+			State: "revoked",
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := client.RevokeSecret(context.Background(), "API_TOKEN", "revoke-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.IdempotencyKey != "revoke-1" || snapshot.State != "revoked" {
+		t.Fatalf("request = %+v snapshot = %+v", request, snapshot)
 	}
 }
 
@@ -475,7 +519,7 @@ func TestSessionScopedClientRequiresEnvironmentScope(t *testing.T) {
 	if _, err := client.ListRuns(context.Background()); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
 		t.Fatalf("ListRuns err = %v", err)
 	}
-	if _, err := client.GetRun(context.Background(), "run-1"); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
+	if _, err := client.GetRun(context.Background(), "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
 		t.Fatalf("GetRun err = %v", err)
 	}
 	if _, err := client.ListSecrets(context.Background()); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
@@ -485,33 +529,35 @@ func TestSessionScopedClientRequiresEnvironmentScope(t *testing.T) {
 	if err := os.WriteFile(sourcePath, []byte("deployment source"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.CreateDeployment(context.Background(), api.CreateDeploymentRequest{}, sourcePath); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
+	if _, err := client.CreateDeployment(
+		context.Background(),
+		api.CreateDeploymentRequest{IdempotencyKey: "deploy-1"},
+		sourcePath,
+	); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
 		t.Fatalf("CreateDeployment err = %v", err)
 	}
 }
 
-func TestFollowRunLogsSendsCursorAndDecodesChunks(t *testing.T) {
-	var gotLastEventID string
+func TestListRunLogsSendsCursorAndFilters(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/run-1/logs" || r.URL.Query().Get("follow") != "1" {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" ||
+			r.URL.Query().Get("cursor") != "rt1.previous" ||
+			r.URL.Query().Get("limit") != "25" ||
+			strings.Join(r.URL.Query()["level"], ",") != "warn,error" {
 			t.Fatalf("%s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
 		}
-		gotLastEventID = r.Header.Get("Last-Event-ID")
-		w.Header().Set("content-type", "text/event-stream")
-		_, _ = io.WriteString(w, "id: tc1.eyJzIjo5fQ\n")
-		_, _ = io.WriteString(w, "event: run_log\n")
-		_, _ = io.WriteString(w, "data: ")
-		_ = json.NewEncoder(w).Encode(api.RunLogChunk{
-			ID:            "tc1.eyJzIjo5fQ",
-			RunID:         "run-1",
-			AttemptNumber: 1,
-			Stream:        "stdout",
-			ContentBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
-			Bytes:         6,
-			ObservedSeq:   2,
-			At:            time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC),
-		})
-		_, _ = io.WriteString(w, "\n")
+		observed := int64(2)
+		bytes := int64(6)
+		_ = json.NewEncoder(w).Encode(api.RunLogPage{Logs: []api.RunLogRecord{{
+			ID:               "rt1.log",
+			RunID:            "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
+			AttemptNumber:    1,
+			Kind:             "stdout",
+			ContentBase64:    base64.StdEncoding.EncodeToString([]byte("hello\n")),
+			Bytes:            &bytes,
+			ObservedSequence: &observed,
+			At:               time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC),
+		}}, NextCursor: "rt1.next"})
 	}))
 	defer server.Close()
 
@@ -519,18 +565,19 @@ func TestFollowRunLogsSendsCursorAndDecodesChunks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var chunks []api.RunLogChunk
-	if err := client.FollowRunLogs(context.Background(), "run-1", "tc1.eyJzIjo4fQ", func(chunk api.RunLogChunk) error {
-		chunks = append(chunks, chunk)
-		return nil
-	}); err != nil {
+	page, err := client.ListRunLogs(
+		context.Background(),
+		"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
+		ListRunLogsOptions{
+			Cursor: "rt1.previous", Limit: 25, Levels: []string{"warn", "error"},
+		},
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if gotLastEventID != "tc1.eyJzIjo4fQ" {
-		t.Fatalf("last event id = %q", gotLastEventID)
-	}
-	if len(chunks) != 1 || chunks[0].ID != "tc1.eyJzIjo5fQ" || chunks[0].ContentBase64 != base64.StdEncoding.EncodeToString([]byte("hello\n")) {
-		t.Fatalf("chunks = %+v", chunks)
+	if len(page.Logs) != 1 || page.Logs[0].ID != "rt1.log" ||
+		page.NextCursor != "rt1.next" {
+		t.Fatalf("page = %+v", page)
 	}
 }
 
@@ -539,7 +586,6 @@ func TestWorkerLifecycleClient(t *testing.T) {
 		ID: "00000000-0000-0000-0000-000000000001", RunID: "00000000-0000-0000-0000-000000000002",
 		WorkerGroupID: "run-us-east-1", WorkerInstanceID: "00000000-0000-0000-0000-000000000401",
 		WorkerEpoch: 1, LeaseSequence: 1, RuntimeInstanceID: "00000000-0000-0000-0000-000000000501",
-		NetworkSlotID: "00000000-0000-0000-0000-000000000601", NetworkSlotGeneration: 1,
 		AttemptNumber: 1, ProtocolVersion: api.CurrentWorkerProtocolVersion,
 		ExpiresAt: time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
 	}
@@ -563,29 +609,19 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				Token:            workerToken,
 				ExpiresInSeconds: int64(time.Hour / time.Second),
 			})
-		case "/api/worker/leases/lease":
+		case "/api/worker/leases/discover":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
+			var request api.WorkerRunLeaseDiscoveryRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if strings.TrimSpace(string(body)) != "{}" {
-				t.Fatalf("run claim body = %s, want empty authority request", body)
-			}
-			_ = json.NewEncoder(w).Encode(api.WorkerRunLeaseResponse{
-				Lease: &claim,
-				Run: &api.WorkerRun{
-					ID:                    claim.RunID,
-					TaskID:                "deploy",
-					Payload:               json.RawMessage(`{}`),
-					Secrets:               api.ResolvedSecrets{},
-					DeploymentSource:      api.DeploymentSourceArtifact{Digest: "sha256:" + strings.Repeat("a", 64)},
-					WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
-					Requirements:          workerClientRequirements(),
-					MaxDurationSeconds:    3600,
-				},
+			_ = json.NewEncoder(w).Encode(api.WorkerRunLeaseDiscoveryResponse{
+				Items: []api.WorkerRunLeaseWork{{
+					LeaseID:       claim.ID,
+					LeaseSequence: claim.LeaseSequence,
+				}},
 			})
 		case "/api/worker/activate":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
@@ -615,7 +651,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() || len(request.Inventory) != 0 {
 				t.Fatalf("worker drain completion = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerStatusResponse{WorkerInstanceID: "00000000-0000-0000-0000-000000000401", Status: api.WorkerStatusDisabled})
+			_ = json.NewEncoder(w).Encode(api.WorkerStatusResponse{WorkerInstanceID: "00000000-0000-0000-0000-000000000401", Status: api.WorkerStatusTerminationReady})
 		case "/api/worker/status":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
@@ -643,34 +679,6 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				t.Fatalf("worker auth = %s", got)
 			}
 			_ = json.NewEncoder(w).Encode(api.WorkerRenewResponse{Lease: claim})
-		case "/api/worker/leases/logs":
-			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
-				t.Fatalf("worker auth = %s", got)
-			}
-			var request api.WorkerAppendLogRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
-			}
-			content, err := base64.StdEncoding.DecodeString(request.ContentBase64)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if request.Lease.ID != claim.ID || request.Stream != api.WorkerLogStreamStdout || request.ObservedSeq != 7 || string(content) != "hello\n" {
-				t.Fatalf("log request = %+v content=%q", request, content)
-			}
-			_ = json.NewEncoder(w).Encode(api.WorkerEventResponse{RunID: claim.RunID})
-		case "/api/worker/leases/log-entries":
-			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
-				t.Fatalf("worker auth = %s", got)
-			}
-			var request api.WorkerRecordLogEntryRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
-			}
-			if request.Lease.ID != claim.ID || request.Entry != "building" {
-				t.Fatalf("log entry request = %+v", request)
-			}
-			_ = json.NewEncoder(w).Encode(api.WorkerEventResponse{RunID: claim.RunID})
 		case "/api/worker/leases/release":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
@@ -686,12 +694,14 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	leased, err := client.LeaseRun(context.Background())
+	discovered, err := client.DiscoverRunLeases(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if leased.Lease == nil || leased.Run == nil {
-		t.Fatalf("leased = %+v", leased)
+	if len(discovered.Items) != 1 ||
+		discovered.Items[0].LeaseID != claim.ID ||
+		discovered.Items[0].LeaseSequence != claim.LeaseSequence {
+		t.Fatalf("discovered = %+v", discovered)
 	}
 	if status, err := client.ActivateWorker(context.Background(), workerClientCapabilities()); err != nil || status.Status != api.WorkerStatusActive {
 		t.Fatalf("activate status = %+v err=%v", status, err)
@@ -707,29 +717,267 @@ func TestWorkerLifecycleClient(t *testing.T) {
 		InventoryScope:    "worker_runtime_state_roots_v0",
 		ObservedAt:        time.Now().UTC(),
 		Inventory:         []string{},
-	}); err != nil || status.Status != api.WorkerStatusDisabled {
+	}); err != nil || status.Status != api.WorkerStatusTerminationReady {
 		t.Fatalf("complete worker drain status = %+v, err = %v", status, err)
 	}
-	if _, err := client.StartRun(context.Background(), *leased.Lease); err != nil {
+	if _, err := client.StartRun(context.Background(), claim); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.RenewRun(context.Background(), *leased.Lease); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.AppendLog(context.Background(), *leased.Lease, api.WorkerLogStreamStdout, 7, []byte("hello\n")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.RecordLogEntry(context.Background(), *leased.Lease, "building"); err != nil {
+	if _, err := client.RenewRun(context.Background(), claim); err != nil {
 		t.Fatal(err)
 	}
 	exitCode := int32(0)
-	if _, err := client.ReleaseRun(context.Background(), *leased.Lease, api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode}); err != nil {
+	if _, err := client.ReleaseRun(context.Background(), claim, api.WorkerReleaseResult{Kind: "completed", ExitCode: &exitCode}); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.FenceWorker(context.Background(), "termination_drain_failed"); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/leases/lease,/api/worker/activate,/api/worker/drain,/api/worker/status,/api/worker/drain/complete,/api/worker/leases/start,/api/worker/leases/renew,/api/worker/leases/logs,/api/worker/leases/log-entries,/api/worker/leases/release,/api/worker/fence" {
+	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/leases/discover,/api/worker/activate,/api/worker/drain,/api/worker/status,/api/worker/drain/complete,/api/worker/leases/start,/api/worker/leases/renew,/api/worker/leases/release,/api/worker/fence" {
+		t.Fatalf("paths = %s", got)
+	}
+}
+
+func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
+	receipt := api.WorkerRunLeaseAssignment{
+		ID:                     "00000000-0000-0000-0000-000000000001",
+		RunID:                  "00000000-0000-0000-0000-000000000002",
+		AttemptNumber:          1,
+		LeaseSequence:          3,
+		BaseWorkspaceVersionID: "00000000-0000-0000-0000-000000000003",
+	}
+	operationID := "00000000-0000-0000-0000-000000000004"
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			paths = append(paths, r.URL.Path)
+			switch r.URL.Path {
+			case "/api/worker/auth/token":
+				_ = json.NewEncoder(w).Encode(api.WorkerTokenResponse{
+					Token:            "worker-token",
+					ExpiresInSeconds: 3600,
+				})
+			case "/api/worker/leases/claim":
+				var request api.WorkerRunLeaseClaimRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				if request.LeaseID != receipt.ID ||
+					request.LeaseSequence != receipt.LeaseSequence {
+					t.Fatalf("claim request = %+v", request)
+				}
+				_ = json.NewEncoder(w).Encode(
+					api.WorkerRunLeaseClaimResponse{
+						Lease: receipt,
+						Workspace: api.WorkerWorkspaceAttachment{ResetTarget: api.WorkerWorkspaceResetTarget{
+							BaseWorkspaceVersionID: receipt.BaseWorkspaceVersionID,
+							Tree: api.WorkerWorkspaceTreeIdentity{
+								Digest: workspace.CanonicalEmptyTreeDigest,
+							},
+							Empty: &api.WorkerEmptyWorkspace{},
+						}},
+						Execution: api.WorkerRunLeaseExecution{
+							Fresh: &api.WorkerRunLeaseFresh{
+								ProgramStart: []byte("frame"),
+							},
+						},
+					},
+				)
+			case "/api/worker/leases/start":
+				var request api.WorkerRunStartRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				if request.Lease != receipt.Fence() || request.Fresh == nil ||
+					request.Restore != nil || request.Attach != nil {
+					t.Fatalf("start request = %+v", request)
+				}
+				_ = json.NewEncoder(w).Encode(
+					api.WorkerRunStartResponse{Lease: receipt.Fence()},
+				)
+			case "/api/worker/leases/entrypoint":
+				var request api.WorkerRunEntrypointRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				if request.Lease != receipt.Fence() ||
+					request.EntrypointKind != "task" ||
+					request.EntrypointDeclaredID != "deploy" {
+					t.Fatalf("entrypoint request = %+v", request)
+				}
+				w.WriteHeader(http.StatusNoContent)
+			case "/api/worker/leases/run-renew":
+				var request api.WorkerRunLeaseRenewRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				if request.Lease != receipt.Fence() ||
+					!request.ExpectedExpiresAt.Equal(receipt.ExpiresAt) {
+					t.Fatalf("renew request = %+v", request)
+				}
+				_ = json.NewEncoder(w).Encode(api.WorkerRunLeaseRenewResponse{
+					Lease: receipt.Fence(), ExpiresAt: receipt.ExpiresAt,
+					BaseWorkspaceVersionID: receipt.BaseWorkspaceVersionID,
+				})
+			case "/api/worker/leases/run-logs":
+				var request api.WorkerRunLogAppendRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				if request.Lease != receipt.Fence() ||
+					request.Stream != api.WorkerLogStreamStdout ||
+					request.ObservedSeq != 7 ||
+					request.ContentBase64 != "bG9n" {
+					t.Fatalf("log request = %+v", request)
+				}
+				w.WriteHeader(http.StatusNoContent)
+			case "/api/worker/leases/finalization/begin":
+				var request api.WorkerBeginRunFinalizationRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				if request.Lease != receipt.Fence() ||
+					request.OperationID != operationID ||
+					request.Kind != api.WorkerRunFinalizationCapture ||
+					request.ProgramQuiesced.RunID != receipt.RunID ||
+					request.ProgramQuiesced.AttemptNumber != receipt.AttemptNumber ||
+					request.ProgramQuiesced.RunLeaseID != receipt.ID {
+					t.Fatalf("finalization request = %+v", request)
+				}
+				_ = json.NewEncoder(w).Encode(
+					api.WorkerBeginRunFinalizationResponse{
+						Lease: receipt.Fence(), BaseWorkspaceVersionID: receipt.BaseWorkspaceVersionID,
+						ExpiresAt: receipt.ExpiresAt, OperationID: operationID,
+						Kind: api.WorkerRunFinalizationCapture,
+					},
+				)
+			case "/api/worker/leases/tasks/complete":
+				var request api.WorkerCompleteTaskRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				if request.Lease != receipt.Fence() ||
+					request.Outcome.Succeeded == nil ||
+					string(request.Outcome.Succeeded.Output) != `{"ok":true}` ||
+					request.Workspace.Captured == nil ||
+					request.Workspace.Captured.Receipt.OperationID != operationID {
+					t.Fatalf("Task completion request = %+v", request)
+				}
+				w.WriteHeader(http.StatusNoContent)
+			default:
+				t.Fatalf("unexpected path %s", r.URL.Path)
+			}
+		},
+	))
+	defer server.Close()
+	client, err := New(
+		server.URL,
+		WithHTTPClient(server.Client()),
+		WithWorkerAuth(
+			"00000000-0000-0000-0000-000000000401",
+			"worker-secret",
+		),
+		WithWorkerService(
+			"00000000-0000-0000-0000-000000000901",
+			api.CurrentWorkerProtocolVersion,
+			true,
+			false,
+		),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := client.ClaimRunLease(
+		context.Background(),
+		api.WorkerRunLeaseWork{
+			LeaseID:       receipt.ID,
+			LeaseSequence: receipt.LeaseSequence,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim.Lease != receipt ||
+		claim.Execution.Fresh == nil ||
+		string(claim.Execution.Fresh.ProgramStart) != "frame" {
+		t.Fatalf("claim response = %+v", claim)
+	}
+	started, err := client.AcknowledgeRunStart(
+		context.Background(),
+		api.WorkerRunStartRequest{Lease: receipt.Fence(), Fresh: &api.WorkerRunStartFresh{}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.Lease != receipt.Fence() {
+		t.Fatalf("start response = %+v", started)
+	}
+	if err := client.AcknowledgeRunEntrypoint(
+		context.Background(),
+		api.WorkerRunEntrypointRequest{
+			Lease:                receipt.Fence(),
+			EntrypointKind:       "task",
+			EntrypointDeclaredID: "deploy",
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	renewed, err := client.RenewRunLease(context.Background(), receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.Lease != receipt.Fence() {
+		t.Fatalf("renew response = %+v", renewed)
+	}
+	finalization, err := client.BeginRunFinalization(
+		context.Background(),
+		api.WorkerBeginRunFinalizationRequest{
+			Lease: receipt.Fence(),
+			ProgramQuiesced: api.WorkerRunQuiescenceProof{
+				RunID: receipt.RunID, AttemptNumber: receipt.AttemptNumber,
+				RunLeaseID: receipt.ID,
+			},
+			OperationID: operationID,
+			Kind:        api.WorkerRunFinalizationCapture,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finalization.Lease != receipt.Fence() ||
+		finalization.OperationID != operationID ||
+		finalization.Kind != api.WorkerRunFinalizationCapture {
+		t.Fatalf("finalization response = %+v", finalization)
+	}
+	if err := client.CompleteTask(
+		context.Background(),
+		api.WorkerCompleteTaskRequest{
+			Lease: receipt.Fence(),
+			Outcome: api.WorkerTaskOutcome{Succeeded: &api.WorkerTaskSucceeded{
+				Output: json.RawMessage(`{"ok":true}`),
+			}},
+			Workspace: api.WorkerTaskWorkspaceProof{Captured: &api.WorkerTaskWorkspaceCapture{
+				Receipt: api.WorkerWorkspaceFinalizationReceipt{OperationID: operationID},
+			}},
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	err = client.AppendRunLog(
+		context.Background(),
+		receipt,
+		api.WorkerLogStreamStdout,
+		7,
+		[]byte("log"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(paths, ","); got !=
+		"/api/worker/auth/token,/api/worker/leases/claim,"+
+			"/api/worker/leases/start,/api/worker/leases/entrypoint,/api/worker/leases/run-renew,"+
+			"/api/worker/leases/finalization/begin,/api/worker/leases/tasks/complete,"+
+			"/api/worker/leases/run-logs" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -752,7 +1000,7 @@ func TestCompleteWorkerDrainRetriesTheIdenticalProofAfterAmbiguousResponse(t *te
 				http.Error(w, "ambiguous upstream failure", http.StatusServiceUnavailable)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(api.WorkerStatusResponse{Status: api.WorkerStatusDisabled})
+			_ = json.NewEncoder(w).Encode(api.WorkerStatusResponse{Status: api.WorkerStatusTerminationReady})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -767,8 +1015,44 @@ func TestCompleteWorkerDrainRetriesTheIdenticalProofAfterAmbiguousResponse(t *te
 		ObservedAt: time.Now().UTC(), Inventory: []string{},
 	}
 	status, err := client.CompleteWorkerDrain(context.Background(), request)
-	if err != nil || status.Status != api.WorkerStatusDisabled {
+	if err != nil || status.Status != api.WorkerStatusTerminationReady {
 		t.Fatalf("status = %+v, err = %v", status, err)
+	}
+	if attempts != 2 || len(bodies) != 2 || !bytes.Equal(bodies[0], bodies[1]) {
+		t.Fatalf("attempts = %d, request bodies differ: %q != %q", attempts, bodies[0], bodies[1])
+	}
+}
+
+func TestFenceWorkerRetriesTheIdenticalRequestAfterAmbiguousResponse(t *testing.T) {
+	attempts := 0
+	var bodies [][]byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/worker/auth/token":
+			_ = json.NewEncoder(w).Encode(api.WorkerTokenResponse{Token: "worker-token", ExpiresInSeconds: 3600})
+		case "/api/worker/fence":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bodies = append(bodies, body)
+			attempts++
+			if attempts == 1 {
+				http.Error(w, "ambiguous upstream failure", http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithWorkerAuth("worker", "secret"), WithWorkerService("service", api.CurrentWorkerProtocolVersion, true, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.FenceWorker(context.Background(), "termination_drain_failed"); err != nil {
+		t.Fatal(err)
 	}
 	if attempts != 2 || len(bodies) != 2 || !bytes.Equal(bodies[0], bodies[1]) {
 		t.Fatalf("attempts = %d, request bodies differ: %q != %q", attempts, bodies[0], bodies[1])
@@ -834,13 +1118,16 @@ func TestWorkerClientRefreshesTokenAndReplaysBufferedRequestAfterUnauthorized(t 
 }
 
 func TestWorkerRunWaitClient(t *testing.T) {
-	claim := api.WorkerRunLease{
+	claim := api.WorkerRunLeaseAssignment{
 		ID: "00000000-0000-0000-0000-000000000001", RunID: "00000000-0000-0000-0000-000000000002",
 		WorkerGroupID: "run-us-east-1", WorkerInstanceID: "00000000-0000-0000-0000-000000000401",
 		WorkerEpoch: 1, LeaseSequence: 1, RuntimeInstanceID: "00000000-0000-0000-0000-000000000501",
-		NetworkSlotID: "00000000-0000-0000-0000-000000000601", NetworkSlotGeneration: 1,
-		AttemptNumber: 1, ProtocolVersion: api.CurrentWorkerProtocolVersion,
-		ExpiresAt: time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
+		AttemptNumber: 1, WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
+		WorkspaceID:            "00000000-0000-0000-0000-000000000701",
+		WorkspaceMountID:       "00000000-0000-0000-0000-000000000702",
+		WorkspaceLeaseID:       "00000000-0000-0000-0000-000000000703",
+		BaseWorkspaceVersionID: "00000000-0000-0000-0000-000000000704",
+		ExpiresAt:              time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
 	}
 	kernelDigest := "sha256:kernel"
 	rootfsDigest := "sha256:rootfs"
@@ -897,7 +1184,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Lease.ID != claim.ID || request.RequestVersion != 42 || request.RunWaitID != "run-wait-id-1" || request.CheckpointID != "checkpoint-1" || request.ActiveDurationMs != 123 {
+			if request.Lease.ID != claim.ID || request.RequestVersion != 42 || request.RunWaitID != "run-wait-id-1" || request.CheckpointID != "checkpoint-1" {
 				t.Fatalf("checkpoint ready request = %+v", request)
 			}
 			if request.Manifest.RecoveryPoint.Runtime.KernelDigest != kernelDigest || request.Manifest.RecoveryPoint.Runtime.RootfsDigest != rootfsDigest {
@@ -933,7 +1220,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	created, err := client.CreateRunWait(context.Background(), api.WorkerCreateRunWaitRequest{
-		Lease:         claim,
+		Lease:         claim.Fence(),
 		CorrelationID: "corr-1",
 		Kind:          api.WorkerRunWaitKindToken,
 		Params:        json.RawMessage(`{"prompt":"ship?"}`),
@@ -944,23 +1231,22 @@ func TestWorkerRunWaitClient(t *testing.T) {
 	if created.RunWaitID != "run-wait-id-1" {
 		t.Fatalf("created = %+v", created)
 	}
-	polled, err := client.PollRunWait(context.Background(), api.WorkerRunWaitPollRequest{Lease: claim, RunWaitID: "run-wait-id-1"})
+	polled, err := client.PollRunWait(context.Background(), api.WorkerRunWaitPollRequest{Lease: claim.Fence(), RunWaitID: "run-wait-id-1"})
 	if err != nil || polled.RequestVersion != 7 || polled.ResumeKind != "completed" {
 		t.Fatalf("polled = %+v, err = %v", polled, err)
 	}
 	resumeAck, err := client.AcknowledgeRunWaitResume(context.Background(), api.WorkerRunWaitResumeAckRequest{
-		Lease: claim, RunWaitID: "run-wait-id-1", ResumeRequestVersion: 7,
+		Lease: claim.Fence(), RunWaitID: "run-wait-id-1", ResumeRequestVersion: 7,
 	})
 	if err != nil || resumeAck.ResumeRequestVersion != 7 {
 		t.Fatalf("resume ack = %+v, err = %v", resumeAck, err)
 	}
 	ready, err := client.MarkCheckpointReady(context.Background(), api.WorkerCheckpointReadyRequest{
-		Lease:            claim,
-		RequestVersion:   42,
-		RunWaitID:        "run-wait-id-1",
-		CheckpointID:     "checkpoint-1",
-		ActiveDurationMs: 123,
-		Manifest:         testClientCheckpointManifest(kernelDigest, rootfsDigest, configDigest, manifestDigest, vmStateDigest, scratchDigest, memoryDigest),
+		Lease:          claim.Fence(),
+		RequestVersion: 42,
+		RunWaitID:      "run-wait-id-1",
+		CheckpointID:   "checkpoint-1",
+		Manifest:       testClientCheckpointManifest(kernelDigest, rootfsDigest, configDigest, manifestDigest, vmStateDigest, scratchDigest, memoryDigest),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -969,7 +1255,12 @@ func TestWorkerRunWaitClient(t *testing.T) {
 		t.Fatalf("ready = %+v", ready)
 	}
 	acknowledged, err := client.AcknowledgeRestore(context.Background(), api.WorkerAcknowledgeRestoreRequest{
-		Lease:        claim,
+		Lease: api.WorkerRunLease{
+			ID: claim.ID, RunID: claim.RunID, AttemptNumber: claim.AttemptNumber,
+			LeaseSequence: claim.LeaseSequence, WorkerGroupID: claim.WorkerGroupID,
+			WorkerInstanceID: claim.WorkerInstanceID, WorkerEpoch: claim.WorkerEpoch,
+			ProtocolVersion: claim.WorkerProtocolVersion,
+		},
 		RunWaitID:    "run-wait-id-1",
 		CheckpointID: "checkpoint-1",
 	})
@@ -980,7 +1271,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 		t.Fatalf("acknowledged = %+v", acknowledged)
 	}
 	failed, err := client.MarkCheckpointFailed(context.Background(), api.WorkerCheckpointFailedRequest{
-		Lease:          claim,
+		Lease:          claim.Fence(),
 		RequestVersion: 43,
 		RunWaitID:      "run-wait-id-1",
 		CheckpointID:   "checkpoint-1",
@@ -994,6 +1285,70 @@ func TestWorkerRunWaitClient(t *testing.T) {
 	}
 	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/leases/run-waits,/api/worker/leases/run-waits/poll,/api/worker/leases/run-waits/resume-ack,/api/worker/leases/checkpoints/ready,/api/worker/leases/restores/ack,/api/worker/leases/checkpoints/failed" {
 		t.Fatalf("paths = %s", got)
+	}
+}
+
+func TestAcknowledgeRunResumeRelease(t *testing.T) {
+	lease := api.WorkerRunLeaseAssignment{ID: "lease-1", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", LeaseSequence: 3}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/worker/auth/token":
+			_ = json.NewEncoder(w).Encode(api.WorkerTokenResponse{
+				Token: "worker-token", ExpiresInSeconds: int64(time.Hour / time.Second),
+			})
+		case "/api/worker/leases/resume-release":
+			if got := r.Header.Get("authorization"); got != "Bearer worker-token" {
+				t.Fatalf("worker auth = %q", got)
+			}
+			var request api.WorkerRunResumeReleaseRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if request.Lease != lease.Fence() ||
+				request.RunWaitID != "wait-1" ||
+				request.CheckpointID != "checkpoint-1" ||
+				request.ResumeAttachID != "attach-1" ||
+				request.ResumeRequestVersion != 7 {
+				t.Fatalf("resume release request = %+v", request)
+			}
+			_ = json.NewEncoder(w).Encode(api.WorkerRunResumeReleaseResponse{
+				Lease:                lease.Fence(),
+				RunWaitID:            request.RunWaitID,
+				CheckpointID:         request.CheckpointID,
+				ResumeAttachID:       request.ResumeAttachID,
+				ResumeRequestVersion: request.ResumeRequestVersion,
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := New(
+		server.URL,
+		WithHTTPClient(server.Client()),
+		WithWorkerAuth("worker-1", "worker-secret"),
+		WithWorkerService("service-1", api.CurrentWorkerProtocolVersion, true, false),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.AcknowledgeRunResumeRelease(context.Background(), api.WorkerRunResumeReleaseRequest{
+		Lease:                lease.Fence(),
+		RunWaitID:            "wait-1",
+		CheckpointID:         "checkpoint-1",
+		ResumeAttachID:       "attach-1",
+		ResumeRequestVersion: 7,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Lease.ID != lease.ID ||
+		response.RunWaitID != "wait-1" ||
+		response.CheckpointID != "checkpoint-1" ||
+		response.ResumeAttachID != "attach-1" ||
+		response.ResumeRequestVersion != 7 {
+		t.Fatalf("resume release response = %+v", response)
 	}
 }
 
@@ -1024,48 +1379,20 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 
 func workerClientCapabilities() api.WorkerCapabilities {
 	return api.WorkerCapabilities{
-		ProtocolVersion:         api.CurrentWorkerProtocolVersion,
-		RuntimeID:               "sha256:runtime",
-		RuntimeArch:             "arm64",
-		RuntimeABI:              "helmr.firecracker.snapshot.v0",
-		KernelDigest:            "sha256:kernel",
-		InitramfsDigest:         "sha256:initramfs",
-		RootfsDigest:            "sha256:rootfs",
-		CNIProfile:              "helmr/v0",
-		MaxVCPUs:                2,
-		MaxMemoryMiB:            2048,
-		VMMilliCPU:              2000,
-		VMMemoryMiB:             2048,
-		MaxDiskMiB:              20480,
-		VMMaxDiskMiB:            20480,
-		ScratchBytes:            20480 << 20,
-		VMMaxScratchBytes:       20480 << 20,
-		ExecutionSlotsAvailable: 1,
-		Network: api.WorkerNetworkCapabilities{
-			Internet:      true,
-			BlockInternet: true,
-			DenyCIDRs:     true,
-		},
-	}
-}
-
-func workerClientRequirements() compute.RunRuntimeRequirements {
-	return compute.RunRuntimeRequirements{
-		Resources: compute.ResourceVector{
-			MilliCPU:  1000,
-			MemoryMiB: 512,
-			DiskMiB:   1024,
-			Slots:     1,
-		},
-		Runtime: compute.RuntimeSelector{
-			ID:              "sha256:runtime",
-			Arch:            "arm64",
-			ABI:             "helmr.firecracker.snapshot.v0",
-			KernelDigest:    "sha256:kernel",
-			InitramfsDigest: "sha256:initramfs",
-			RootfsDigest:    "sha256:rootfs",
-			CNIProfile:      "helmr/v0",
-		},
-		Network: compute.DefaultNetworkPolicy(),
+		ProtocolVersion:           api.CurrentWorkerProtocolVersion,
+		RuntimeID:                 "sha256:runtime",
+		RuntimeArch:               "arm64",
+		RuntimeABI:                "helmr.firecracker.snapshot.v0",
+		KernelDigest:              "sha256:kernel",
+		InitramfsDigest:           "sha256:initramfs",
+		RootfsDigest:              "sha256:rootfs",
+		NetworkABI:                "helmr/v0",
+		MaxVCPUs:                  2,
+		MaxMemoryMiB:              2048,
+		VMMilliCPU:                2000,
+		VMMemoryMiB:               2048,
+		GuestEphemeralDiskBytes:   32768 << 20,
+		VMGuestEphemeralDiskBytes: 32768 << 20,
+		ExecutionSlotsAvailable:   1,
 	}
 }

@@ -32,14 +32,51 @@ func TestAdvertisedWorkerDiskCapacityFitsNButNotNPlusOne(t *testing.T) {
 		t.Fatal(err)
 	}
 	capacity := compute.WorkerDiskCapacity{
-		VMWorkloadDiskMiB: 8192, VMScratchBytes: 8192 << 20,
-		HostWorkloadMiB: hostMiB, HostScratchBytes: hostMiB << 20,
+		VMGuestEphemeralDiskBytes:   8192 << 20,
+		HostGuestEphemeralDiskBytes: hostMiB << 20,
 	}
 	if !capacity.FitsVMs(4) {
 		t.Fatal("explicit reserve was not removed before four-slot exact fit")
 	}
 	if capacity.FitsVMs(5) {
 		t.Fatal("N+1 VM fit past net aggregate host capacity")
+	}
+}
+
+func TestAdmissionDiskFloorMatchesWorkerFilesystemContract(t *testing.T) {
+	if got := admissionDiskFloorMiB(false, 8192, 1024); got != 9216 {
+		t.Fatalf("run disk floor = %d, want 9216", got)
+	}
+	if got := admissionDiskFloorMiB(true, 32768, 1024); got != 32768 {
+		t.Fatalf("build disk floor = %d, want 32768", got)
+	}
+	if got := admissionDiskFloorMiB(true, 65536, 1024); got != 65536 {
+		t.Fatalf("mixed worker disk floor = %d, want 65536", got)
+	}
+}
+
+func TestCapGuestEphemeralDiskCapacityUsesPostStageAvailability(t *testing.T) {
+	capacity := compute.WorkerDiskCapacity{
+		VMGuestEphemeralDiskBytes:   32768 << 20,
+		HostGuestEphemeralDiskBytes: 65536 << 20,
+	}
+	got, err := capGuestEphemeralDiskCapacity(capacity, 2048<<20, 32768<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HostGuestEphemeralDiskBytes != 32768<<20 {
+		t.Fatalf("guest disk capacity = %d, want %d", got.HostGuestEphemeralDiskBytes, int64(32768<<20))
+	}
+	capacity.HostGuestEphemeralDiskBytes = 34816 << 20
+	got, err = capGuestEphemeralDiskCapacity(capacity, 2048<<20, 33000<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HostGuestEphemeralDiskBytes != 32768<<20 {
+		t.Fatalf("reserved guest disk capacity = %d, want %d", got.HostGuestEphemeralDiskBytes, int64(32768<<20))
+	}
+	if _, err := capGuestEphemeralDiskCapacity(capacity, 2048<<20, (32768<<20)-1); err == nil {
+		t.Fatal("available capacity below one VM was accepted")
 	}
 }
 

@@ -14,8 +14,7 @@ import { Login } from "./routes/login";
 import { AuthGitHubCallback } from "./routes/auth-github-callback";
 import { AuthMagicLinkCallback } from "./routes/auth-magic-link-callback";
 import { RunDetail } from "./routes/run-detail";
-import { SessionDetail } from "./routes/session-detail";
-import { Sessions } from "./routes/sessions";
+import { Runs } from "./routes/runs";
 import { Schedules } from "./routes/schedules";
 import { Tasks } from "./routes/tasks";
 import { ApiKeys } from "./routes/api-keys";
@@ -28,7 +27,7 @@ import { OrganizationNew } from "./routes/organization-new";
 import { AccessRequired } from "./routes/access-required";
 import { Device } from "./routes/device";
 import { WorkspaceDetail } from "./routes/workspace-detail";
-import { WorkspaceExecDetail } from "./routes/workspace-exec-detail";
+import { ActorDetail } from "./routes/actor-detail";
 
 function TabLink(props: {
   href: string;
@@ -165,7 +164,7 @@ function AppShell(props: { children?: JSX.Element }) {
         <nav class={"flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-1 scrollbar-none [&::-webkit-scrollbar]:hidden"} aria-label="Sections">
           <TabLink href="/">Dashboard</TabLink>
           <TabLink href="/tasks">Tasks</TabLink>
-          <TabLink href="/sessions" matchPrefix>Sessions</TabLink>
+          <TabLink href="/runs" matchPrefix>Runs</TabLink>
           <TabLink href="/schedules">Schedules</TabLink>
           <TabLink href="/settings/projects" activePrefix="/settings">Settings</TabLink>
         </nav>
@@ -215,13 +214,12 @@ export function App() {
       <Route path="/access-required" component={() => <RequireAuth allowOnboarding><AccessRequired /></RequireAuth>} />
       <Route path="/organizations/new" component={() => <RequireAuth allowOnboarding><OrganizationNew /></RequireAuth>} />
 
-      <Route path="/sessions" component={wrap(Sessions)} />
-      <Route path="/sessions/:session_id/runs/:run_id" component={wrap(RunDetail)} />
-      <Route path="/sessions/:id" component={wrap(SessionDetail)} />
+      <Route path="/runs" component={wrap(Runs)} />
+      <Route path="/runs/:run_id" component={wrap(RunDetail)} />
+      <Route path="/actors/:declared_id/:actor_id" component={wrap(ActorDetail)} />
       <Route path="/schedules" component={wrap(Schedules)} />
       <Route path="/tasks" component={wrap(Tasks)} />
       <Route path="/workspaces/:workspace_id" component={wrap(WorkspaceDetail)} />
-      <Route path="/workspaces/:workspace_id/execs/:exec_id" component={wrap(WorkspaceExecDetail)} />
       <Route path="/projects/new" component={() => <RequireAuth allowOnboarding><ProjectNew /></RequireAuth>} />
 
       <Route path="/settings" component={() => <Navigate href="/settings/projects" />} />

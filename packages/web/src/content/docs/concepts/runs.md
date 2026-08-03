@@ -1,6 +1,6 @@
 ---
 title: Runs
-description: Execution attempts, logs, events, payloads, stream output, and task output.
+description: Task and Actor execution, attempts, telemetry, waits, and results.
 section: Concepts
 sidebarLabel: Runs
 order: 160
@@ -8,13 +8,11 @@ order: 160
 
 # Runs
 
-A run is one execution attempt for a session. It records the pinned
-deployment, pinned deployment task, task ID, payload, task-declared secret
-requirements, attached workspace, max duration, status, output, logs, stream
-output, events, metadata, and pending wait.
+A Run is one Task or Actor execution. It records the pinned Deployment and
+entrypoint, attached Workspace, payload or Actor input boundary, duration,
+status, output, logs, events, metadata, and pending Wait.
 
-A run does not own the workspace. The session references a workspace, and
-each run executes against that attached workspace.
+A Run does not own its Workspace. The Workspace can outlive the Run.
 
 ## Statuses
 
@@ -23,29 +21,26 @@ each run executes against that attached workspace.
 | `queued` | The run is waiting for a worker. |
 | `running` | A worker has started or is executing the run, including workspace preparation. |
 | `waiting` | The task is paused for stream input, token completion, or a timer. |
+| `retry-delayed` | A retry is scheduled after backoff. |
+| `cancel-requested` | Cancellation is admitted and waiting for terminal convergence. |
 | `succeeded` | The task completed successfully. |
 | `failed` | The task failed or exceeded a limit. |
 | `cancelled` | The run was cancelled. |
 | `expired` | The queued run TTL expired before execution started. |
+| `system-failed` | Helmr could not safely continue the Run. |
 
 ## Workspace Attachment
 
-Starting a task creates or reuses a session, and that session is attached to
-a workspace. The run receives the workspace mount metadata and executes the task
-inside the sandbox workspace path.
+Every external Task start supplies an existing Workspace. Helmr validates the
+deployed Task and Workspace authority before creating the Run.
 
-If no workspace is supplied, Helmr creates one using the deployed task's sandbox
-definition. If a workspace is supplied, Helmr validates that the task's sandbox
-is compatible with the workspace before running.
-
-Direct workspace operations such as exec and PTY are not runs. They have their
-own workspace handles and stream state.
+Direct Workspace exec is not a Run. It is one bounded operation with a
+terminal result.
 
 ## Duration
 
-Run duration is limited. The default is 900 seconds, and accepted limits are 5
-to 86400 seconds. A task can declare `maxDuration`; callers can also pass a max
-duration option when starting a task.
+Run duration is limited by the deployed Task declaration. External starts do
+not override that execution boundary.
 
 ## Attempts
 
@@ -66,7 +61,8 @@ helmr run logs RUN_ID
 helmr run events RUN_ID
 ```
 
-The SDK client can retrieve, list, wait for, and stream run events. Run logs are
-stored as stdout and stderr snapshots; events include logs, waits and
-decisions, stream output records, metadata updates, completion, failures,
-queued expiry, and cancellation.
+The SDK client can retrieve, list, wait for, and page through Run logs and
+events. Logs contain stdout, stderr, and structured records. Events contain
+wait decisions, metadata updates, completion, failures, queued expiry, and
+cancellation. Actor progressive output is read from the Actor output channel,
+not Run telemetry.

@@ -4,13 +4,15 @@ package firecracker
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
+	"syscall"
+
+	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
 func (c *Connector) Preflight(ctx context.Context) error {
@@ -27,20 +29,126 @@ func (c *Connector) Preflight(ctx context.Context) error {
 		checkReadWriteFile("KVM device", c.cfg.KVMPath),
 		checkReadWriteFile("TUN device", "/dev/net/tun"),
 		checkCgroup(c.cfg.CgroupVersion),
-		checkDirectory("CNI config directory", c.cfg.CNIConfDir),
-		checkDirectory("CNI plugin directory", c.cfg.CNIBinDir),
-		checkCommand("CNI tc-redirect-tap plugin", filepath.Join(c.cfg.CNIBinDir, "tc-redirect-tap")),
-		checkCNINetworkConfig(c.cfg.CNIConfDir, c.cfg.CNINetworkName),
 	)
-	if c.cfg.CNICacheDir != "" {
-		problems = append(problems, ensureDirectory("CNI cache directory", c.cfg.CNICacheDir))
-	}
-	problems = append(problems, ensureDirectory("firecracker state directory", c.cfg.StateDir))
-	problems = append(problems, ensureDirectory("firecracker jailer chroot directory", c.cfg.JailerChrootBaseDir))
+	_, _, poolErr := validateNetworkPools(c.cfg)
+	problems = append(problems, poolErr)
+	problems = append(problems, ensureSecureDirectory("firecracker coordination directory", stateCoordinationDir(c.cfg.StateDir)))
+	problems = append(problems, ensureSecureDirectory("firecracker state directory", c.cfg.StateDir))
+	problems = append(problems, ensureSecureDirectory("firecracker jailer chroot directory", c.cfg.JailerChrootBaseDir))
+	problems = append(problems, checkResolvedStateLayout(c.cfg))
+	problems = append(problems, checkHardLinkLayout(c.cfg))
+	problems = append(problems, c.datapath.VerifyKernel())
 	if err := ctx.Err(); err != nil {
 		problems = append(problems, err)
 	}
-	return errors.Join(problems...)
+	if err := errors.Join(problems...); err != nil {
+		return err
+	}
+	return c.proveRoutedNetworkLifecycle(ctx)
+}
+
+func (c *Connector) proveRoutedNetworkLifecycle(ctx context.Context) error {
+	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: uuid.Must(uuid.NewV7()).String()}
+	statePath, err := createOwnerStateRoot(c.cfg.StateDir, owner)
+	if err != nil {
+		return fmt.Errorf("create routed network proof owner: %w", err)
+	}
+	binding, err := c.prepareNetworkBinding(ctx, owner, vm.WorkloadBinding{
+		WorkerEpoch: 1, OwnerID: owner.ID, Generation: 1,
+		RuntimeInstanceID: owner.ID, RuntimeIdentityID: NetworkABIV0,
+	})
+	if err != nil {
+		cleanupErr := c.Cleanup(context.Background(), owner)
+		return fmt.Errorf("exercise routed network lifecycle: %w", errors.Join(err, cleanupErr))
+	}
+	deactivateErr := binding.Deactivate()
+	closeErr := binding.Close()
+	if closeErr != nil {
+		return fmt.Errorf("close routed network proof: %w", errors.Join(deactivateErr, closeErr))
+	}
+	if err := c.cleanupNetworkAttachment(ctx, owner); err != nil {
+		return fmt.Errorf("reclaim routed network proof: %w", errors.Join(deactivateErr, err))
+	}
+	if err := removeStateRootLast(statePath, owner); err != nil {
+		return fmt.Errorf("remove routed network proof state: %w", err)
+	}
+	if err := syncDirectory(c.cfg.StateDir); err != nil {
+		return err
+	}
+	if exists, err := pathExists(statePath); err != nil || exists {
+		return fmt.Errorf("prove routed network proof state absence: exists=%t: %v", exists, err)
+	}
+	return deactivateErr
+}
+
+func checkHardLinkLayout(cfg Config) error {
+	paths := []struct {
+		name string
+		path string
+	}{
+		{name: "guest kernel", path: cfg.KernelPath},
+		{name: "guest initramfs", path: cfg.InitramfsPath},
+		{name: "guest rootfs", path: cfg.RootfsPath},
+		{name: "firecracker state directory", path: cfg.StateDir},
+		{name: "firecracker jailer chroot directory", path: cfg.JailerChrootBaseDir},
+	}
+	var device uint64
+	for index, item := range paths {
+		info, err := os.Stat(item.path)
+		if err != nil {
+			return fmt.Errorf("inspect %s filesystem: %w", item.name, err)
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			return fmt.Errorf("inspect %s filesystem: unsupported stat result", item.name)
+		}
+		if index == 0 {
+			device = uint64(stat.Dev)
+			continue
+		}
+		if uint64(stat.Dev) != device {
+			return fmt.Errorf("%s is on a different filesystem than the guest kernel", item.name)
+		}
+	}
+
+	for _, item := range paths[:3] {
+		if err := proveHardLink(item.name, item.path, cfg.JailerChrootBaseDir); err != nil {
+			return err
+		}
+	}
+	probe, err := os.CreateTemp(stateCoordinationDir(cfg.StateDir), ".hardlink-")
+	if err != nil {
+		return fmt.Errorf("create firecracker hard-link probe: %w", err)
+	}
+	source := probe.Name()
+	if err := probe.Close(); err != nil {
+		_ = os.Remove(source)
+		return fmt.Errorf("close firecracker hard-link probe: %w", err)
+	}
+	defer os.Remove(source)
+	return proveHardLink("firecracker state", source, cfg.JailerChrootBaseDir)
+}
+
+func proveHardLink(label, source, directory string) error {
+	target := filepath.Join(directory, ".hardlink-"+uuid.Must(uuid.NewV7()).String())
+	defer os.Remove(target)
+	if err := os.Link(source, target); err != nil {
+		return fmt.Errorf("prove %s hard-link layout: %w", label, err)
+	}
+	sourceInfo, err := os.Stat(source)
+	if err != nil {
+		return fmt.Errorf("stat %s hard-link source: %w", label, err)
+	}
+	targetInfo, err := os.Stat(target)
+	if err != nil {
+		return fmt.Errorf("stat %s hard-link target: %w", label, err)
+	}
+	sourceStat, sourceOK := sourceInfo.Sys().(*syscall.Stat_t)
+	targetStat, targetOK := targetInfo.Sys().(*syscall.Stat_t)
+	if !sourceOK || !targetOK || sourceStat.Dev != targetStat.Dev || sourceStat.Ino != targetStat.Ino {
+		return fmt.Errorf("%s hard-link probe did not preserve inode identity", label)
+	}
+	return nil
 }
 
 func checkCommand(label string, path string) error {
@@ -111,13 +219,6 @@ func checkDirectory(label string, path string) error {
 	return nil
 }
 
-func ensureDirectory(label string, path string) error {
-	if err := os.MkdirAll(path, 0o700); err != nil {
-		return fmt.Errorf("%s %q could not be created: %w", label, path, err)
-	}
-	return checkDirectory(label, path)
-}
-
 func checkCgroup(version string) error {
 	switch version {
 	case "2":
@@ -132,34 +233,4 @@ func checkCgroup(version string) error {
 		return fmt.Errorf("unsupported firecracker cgroup version %q", version)
 	}
 	return nil
-}
-
-func checkCNINetworkConfig(confDir string, networkName string) error {
-	entries, err := os.ReadDir(confDir)
-	if err != nil {
-		return fmt.Errorf("read CNI config directory %q: %w", confDir, err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".conf") && !strings.HasSuffix(name, ".conflist") && !strings.HasSuffix(name, ".json") {
-			continue
-		}
-		raw, err := os.ReadFile(filepath.Join(confDir, name))
-		if err != nil {
-			return fmt.Errorf("read CNI config %q: %w", name, err)
-		}
-		var cfg struct {
-			Name string `json:"name"`
-		}
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			return fmt.Errorf("decode CNI config %q: %w", name, err)
-		}
-		if cfg.Name == networkName {
-			return nil
-		}
-	}
-	return fmt.Errorf("CNI network %q was not found in %q", networkName, confDir)
 }

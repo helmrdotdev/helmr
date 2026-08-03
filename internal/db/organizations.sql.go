@@ -23,34 +23,26 @@ func (q *Queries) CountOrganizations(ctx context.Context) (int64, error) {
 }
 
 const createOrganization = `-- name: CreateOrganization :one
-INSERT INTO organizations (id, public_id, name, slug)
+INSERT INTO organizations (id, name, slug)
 VALUES (
     $1,
     $2,
-    $3,
-    $4
+    $3
 )
-RETURNING id, public_id, name, slug, created_at, updated_at
+RETURNING id, name, slug, created_at, updated_at
 `
 
 type CreateOrganizationParams struct {
-	ID       pgtype.UUID `json:"id"`
-	PublicID string      `json:"public_id"`
-	Name     string      `json:"name"`
-	Slug     string      `json:"slug"`
+	ID   pgtype.UUID `json:"id"`
+	Name string      `json:"name"`
+	Slug string      `json:"slug"`
 }
 
 func (q *Queries) CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error) {
-	row := q.db.QueryRow(ctx, createOrganization,
-		arg.ID,
-		arg.PublicID,
-		arg.Name,
-		arg.Slug,
-	)
+	row := q.db.QueryRow(ctx, createOrganization, arg.ID, arg.Name, arg.Slug)
 	var i Organization
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.Name,
 		&i.Slug,
 		&i.CreatedAt,
@@ -86,7 +78,7 @@ func (q *Queries) GetDefaultProjectEnvironment(ctx context.Context, orgID pgtype
 }
 
 const getOrganization = `-- name: GetOrganization :one
-SELECT id, public_id, name, slug, created_at, updated_at
+SELECT id, name, slug, created_at, updated_at
   FROM organizations
  WHERE id = $1
 `
@@ -96,7 +88,6 @@ func (q *Queries) GetOrganization(ctx context.Context, id pgtype.UUID) (Organiza
 	var i Organization
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.Name,
 		&i.Slug,
 		&i.CreatedAt,

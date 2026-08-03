@@ -8,16 +8,13 @@ order: 310
 
 # Deploy
 
-Deploy uploads task source from a project directory that contains `package.json` and `helmr.config.ts`.
-
-```sh
-helmr deploy ./my-helmr-tasks
-```
-
-Use an environment scope when needed:
+Deploy uploads task source from a project directory containing `package.json`,
+one exact supported lockfile, and `helmr.config.ts`. `helmr init` also creates
+a safe starter `.helmrignore`.
 
 ```sh
 helmr deploy ./my-helmr-tasks \
+  --project agents \
   --env prod
 ```
 
@@ -27,43 +24,43 @@ helmr deploy ./my-helmr-tasks \
 import { defineConfig } from "@helmr/sdk"
 
 export default defineConfig({
-  project: "agents",
-  dirs: ["./tasks"],
+  dirs: ["tasks"],
 })
 ```
 
-`project` and `dirs` are required. `project` selects the deploy target from source-controlled config; `dirs` must contain at least one task directory.
+`dirs` selects source declaration directories. Project and
+environment are deployment authority, not config properties. A saved login
+requires both `--project` and `--env`; an environment API key derives both and
+rejects those flags.
 
-Use `--project` when automation needs to override the source-controlled project:
-
-```sh
-helmr deploy ./my-helmr-tasks \
-  --project agents \
-  --env prod
-```
-
-`package.json` must declare `@helmr/sdk` in `dependencies` and an explicit `packageManager`. `helmr init` creates this for new projects.
+`package.json` must set `"type": "module"`, select an exact Node through
+`devEngines.runtime`, select exact npm, pnpm, or Bun through `packageManager`,
+and match exactly one root lockfile. Install dependencies locally before deploy
+so that lockfile already exists; deploy never runs that install for you.
 
 During deploy, the CLI:
 
-- Validates `package.json` and installs missing task project dependencies locally with the declared `packageManager` so config inspection can run.
-- Loads the config.
-- Indexes exported tasks from the configured directories.
-- Archives the source directory.
+- Applies `.helmrignore`, validates retained source and exact selectors, and
+  archives the source directory.
 - Sends the archive content hash with the upload metadata so the control plane can reject mismatched uploads.
 - Creates a deployment, streams deployment events while the remote build runs, promotes the completed deployment by default, and prints the deployment version or ID.
 
-The archive always excludes `node_modules`, `.git`, `.helmr`, `.next`, `.env`, and `.env.*`. If `ignorePatterns` is not set, it also excludes tests, specs, and files that start with `_`.
+`.helmrignore` is the only source-selection input; `.gitignore` is not merged.
+Root `.git` is always excluded. Retained root `node_modules` and `helmr` are
+rejected. Retained `.env` and `.env.*` basenames are rejected except exact
+`.example`, `.sample`, and `.template` suffixes. `ignorePatterns` affects only
+remote declaration discovery.
 
-Remote deployment builds install archived project dependencies in a product-managed build environment using the explicit `packageManager` from `package.json`. Runtime dependencies are not installed by deploy. Install them explicitly in the sandbox image build.
-
-Use `--env-file FILE` to load local variables into the CLI process before package installation and `helmr.config.ts` inspection run. Those values are visible to child processes started by the deploy command. Values from the file do not override variables already present in the CLI process environment.
-
-`--env-file` is for task project configuration, not Helmr CLI or runtime configuration. `HELMR_` is a reserved namespace and the deploy command rejects `HELMR_` keys in `--env-file`. Set `HELMR_API_URL` in the shell or pass `--api-url`; set `HELMR_API_KEY` in the shell or use `helmr login`.
-
-Treat the env file as trusted project input: values are added to the deploy process environment and inherited by child processes started by deploy.
-
-The env-file parser supports `KEY=VALUE`, `export KEY=VALUE`, single-quoted values, double-quoted values with `\n`, `\r`, `\t`, `\"`, and `\\` escapes, blank lines, whole-line comments, and unquoted trailing comments written as `KEY=value # comment`.
+The remote build uses the exact selected Manager's standard frozen install with
+ordinary lifecycle semantics. In the same fresh, resource-bounded Build VM it
+evaluates `helmr.config.ts` once for that build attempt and compiles project and
+workspace-local declaration source with the pinned Platform esbuild. Non-local
+packages stay external in the complete installed project tree and use standard
+Node resolution. Install, lifecycle, config, and compilation have bounded
+public egress; private, link-local, metadata, and Control-plane destinations are
+blocked. The Build VM receives no Platform, Control, or runtime secrets and is
+destroyed after artifact ingestion. The CLI never executes config or
+declaration modules.
 
 For automation, use JSON lines:
 

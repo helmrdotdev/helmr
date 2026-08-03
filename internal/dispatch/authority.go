@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,15 +14,55 @@ import (
 
 var (
 	ErrNilPool             = errors.New("dispatch: nil pgx pool")
-	ErrCapacityUnavailable = errors.New("dispatch: certified capacity unavailable")
+	ErrCapacityUnavailable = errors.New("dispatch: ready capacity unavailable")
 	ErrCandidateChanged    = errors.New("dispatch: placement candidate changed while locking")
 )
 
+const platformArchitecture = "x86_64"
+
 type Authority struct {
-	pool *pgxpool.Pool
+	pool          *pgxpool.Pool
+	fencingKey    workspace.FencingKey
+	runPolicy     RunPlacementPolicy
+	nestedResumes nestedResumeCursor
 }
 
-func NewAuthority(pool *pgxpool.Pool) (*Authority, error) {
+type RunPlacementPolicy struct {
+	PreparationLimit int64
+	ReservationTTL   time.Duration
+	StartDeadline    time.Duration
+	LeaseTTL         time.Duration
+}
+
+func NewRunAuthority(
+	pool *pgxpool.Pool,
+	fencingKey workspace.FencingKey,
+	policy RunPlacementPolicy,
+) (*Authority, error) {
+	authority, err := newAuthority(pool)
+	if err != nil {
+		return nil, err
+	}
+	if !fencingKey.Valid() {
+		return nil, errors.New("run authority Workspace fencing key is required")
+	}
+	if policy.PreparationLimit <= 0 ||
+		policy.ReservationTTL <= 0 ||
+		policy.StartDeadline <= 0 ||
+		policy.LeaseTTL <= 0 ||
+		policy.StartDeadline > policy.LeaseTTL {
+		return nil, errors.New("run authority placement policy is invalid")
+	}
+	authority.fencingKey = fencingKey
+	authority.runPolicy = policy
+	return authority, nil
+}
+
+func NewBuildAuthority(pool *pgxpool.Pool) (*Authority, error) {
+	return newAuthority(pool)
+}
+
+func newAuthority(pool *pgxpool.Pool) (*Authority, error) {
 	if pool == nil {
 		return nil, ErrNilPool
 	}
@@ -41,8 +83,8 @@ type workerFence struct {
 	WorkerInstanceID      pgtype.UUID
 	WorkerEpoch           int64
 	WorkerProtocolVersion string
-	ObservationFreshAfter pgtype.Timestamptz
 	Role                  string
+	RunArchitecture       string
 }
 
 // lockWorkerFence takes the worker-group lock before the worker lock, matching
@@ -61,10 +103,18 @@ SELECT id
 		return fmt.Errorf("lock eligible worker group: %w", err)
 	}
 
+	architecture := fence.RunArchitecture
+	if fence.Role == "build" {
+		architecture = platformArchitecture
+	}
 	var workerID pgtype.UUID
 	err = tx.QueryRow(ctx, `
 SELECT worker_instances.id
   FROM worker_instances
+  JOIN worker_groups
+    ON worker_groups.id = worker_instances.worker_group_id
+  LEFT JOIN runtime_identities
+    ON runtime_identities.id = worker_instances.runtime_identity_id
   JOIN worker_observations
     ON worker_observations.worker_instance_id = worker_instances.id
    AND worker_observations.worker_epoch = worker_instances.current_epoch
@@ -73,14 +123,17 @@ SELECT worker_instances.id
    AND worker_instances.current_epoch = $3
    AND worker_instances.state = 'active'
    AND worker_instances.protocol_version = $4
-   AND worker_observations.observed_at >= $5
-   AND (($6 = 'run' AND worker_instances.supports_run)
-        OR ($6 = 'build' AND worker_instances.supports_build))
-   AND (($6 = 'run' AND worker_observations.run_paused_reason IS NULL)
-        OR ($6 = 'build' AND worker_observations.build_paused_reason IS NULL))
+   AND worker_observations.observed_at >= transaction_timestamp()
+       - worker_groups.observation_ttl_seconds * interval '1 second'
+   AND (($5 = 'run' AND worker_instances.supports_run)
+        OR ($5 = 'build' AND worker_instances.supports_build))
+   AND (($5 = 'run' AND worker_observations.run_paused_reason IS NULL)
+        OR ($5 = 'build' AND worker_observations.build_paused_reason IS NULL))
+	   AND runtime_identities.runtime_arch = $6
+	   AND runtime_identities.network_abi = 'helmr/v0'
  FOR UPDATE OF worker_instances`, fence.WorkerInstanceID, fence.GroupID,
-		fence.WorkerEpoch, fence.WorkerProtocolVersion, fence.ObservationFreshAfter,
-		fence.Role).Scan(&workerID)
+		fence.WorkerEpoch, fence.WorkerProtocolVersion, fence.Role, architecture,
+	).Scan(&workerID)
 	if err != nil {
 		return fmt.Errorf("lock eligible worker epoch: %w", err)
 	}

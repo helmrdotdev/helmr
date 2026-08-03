@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/client"
@@ -24,8 +25,9 @@ func secretCommand() *cobra.Command {
 	secret.AddCommand(
 		secretListCommand(),
 		secretGetCommand(),
-		secretSetCommand(),
-		secretDeleteCommand(),
+		secretCreateCommand(),
+		secretRotateCommand(),
+		secretRevokeCommand(),
 	)
 	return secret
 }
@@ -51,7 +53,7 @@ func secretListCommand() *cobra.Command {
 				return format.JSON(cmd.OutOrStdout(), response)
 			}
 			for _, secret := range response.Secrets {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", secret.Name, secret.UpdatedAt.Format(apiTimeFormat), secret.CreatedAt.Format(apiTimeFormat))
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", secret.Name, secret.State, secret.CreatedAt.Format(apiTimeFormat))
 			}
 			return nil
 		},
@@ -89,35 +91,32 @@ func secretGetCommand() *cobra.Command {
 	return cmd
 }
 
-func secretSetCommand() *cobra.Command {
+func secretCreateCommand() *cobra.Command {
 	var valueFlag string
 	var projectID string
 	var environmentID string
+	var idempotencyKey string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "set NAME [VALUE]",
-		Short: "Create or update a remote secret.",
+		Use:   "create NAME [VALUE]",
+		Short: "Create a remote secret.",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 2 && valueFlag != "" {
-				return errors.New("secret value cannot be provided both positionally and with --value")
-			}
-			value := valueFlag
-			if len(args) == 2 {
-				value = args[1]
-			}
-			if len(args) == 1 && valueFlag == "" {
-				bytes, err := io.ReadAll(cmd.InOrStdin())
-				if err != nil {
-					return err
-				}
-				value = string(bytes)
+			value, err := readSecretValue(cmd, args, valueFlag)
+			if err != nil {
+				return err
 			}
 			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
-			secret, err := control.SetSecret(cmd.Context(), args[0], value, client.SecretOptions(secretOptions(projectID, environmentID)))
+			secret, err := control.CreateSecret(
+				cmd.Context(),
+				args[0],
+				value,
+				idempotencyKey,
+				client.SecretOptions(secretOptions(projectID, environmentID)),
+			)
 			if err != nil {
 				return err
 			}
@@ -129,36 +128,111 @@ func secretSetCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&valueFlag, "value", "", "Secret value. Reads stdin if omitted.")
+	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Stable key for retrying this creation.")
 	addSecretScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }
 
-func secretDeleteCommand() *cobra.Command {
+func secretRotateCommand() *cobra.Command {
+	var valueFlag string
 	var projectID string
 	var environmentID string
-	var yes bool
+	var idempotencyKey string
+	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "delete NAME --yes",
-		Short: "Delete a remote secret.",
-		Args:  cobra.ExactArgs(1),
+		Use:   "rotate NAME [VALUE]",
+		Short: "Rotate a remote secret.",
+		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !yes {
-				return errors.New("secret delete requires --yes")
+			value, err := readSecretValue(cmd, args, valueFlag)
+			if err != nil {
+				return err
 			}
 			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
-			if err := control.DeleteSecret(cmd.Context(), args[0], secretOptions(projectID, environmentID)); err != nil {
+			if strings.TrimSpace(idempotencyKey) == "" {
+				idempotencyKey = uuid.Must(uuid.NewV7()).String()
+			}
+			record, err := control.RotateSecret(
+				cmd.Context(),
+				args[0],
+				value,
+				idempotencyKey,
+				client.SecretOptions(secretOptions(projectID, environmentID)),
+			)
+			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", args[0])
+			if jsonOutput {
+				return format.JSON(cmd.OutOrStdout(), record)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", record.Name)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&valueFlag, "value", "", "Secret value. Reads stdin if omitted.")
+	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Stable key for retrying this rotation.")
+	addSecretScopeFlags(cmd, &projectID, &environmentID)
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
+	return cmd
+}
+
+func readSecretValue(cmd *cobra.Command, args []string, valueFlag string) (string, error) {
+	if len(args) == 2 && valueFlag != "" {
+		return "", errors.New("secret value cannot be provided both positionally and with --value")
+	}
+	if len(args) == 2 {
+		return args[1], nil
+	}
+	if valueFlag != "" {
+		return valueFlag, nil
+	}
+	value, err := io.ReadAll(cmd.InOrStdin())
+	if err != nil {
+		return "", err
+	}
+	return string(value), nil
+}
+
+func secretRevokeCommand() *cobra.Command {
+	var projectID string
+	var environmentID string
+	var idempotencyKey string
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "revoke NAME --yes",
+		Short: "Revoke a remote secret.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !yes {
+				return errors.New("secret revoke requires --yes")
+			}
+			control, err := controlClient(cmd)
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(idempotencyKey) == "" {
+				idempotencyKey = uuid.Must(uuid.NewV7()).String()
+			}
+			secret, err := control.RevokeSecret(
+				cmd.Context(),
+				args[0],
+				idempotencyKey,
+				secretOptions(projectID, environmentID),
+			)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", secret.Name)
 			return nil
 		},
 	}
 	addSecretScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm deletion.")
+	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Stable key for retrying this revocation.")
+	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm revocation.")
 	return cmd
 }
 
@@ -178,9 +252,13 @@ func secretOptions(projectID string, environmentID string) client.SecretOptions 
 
 func writeSecret(w io.Writer, secret api.SecretResponse) error {
 	fmt.Fprintf(w, "Name: %s\n", secret.Name)
-	fmt.Fprintf(w, "Project: %s\n", secret.ProjectID)
-	fmt.Fprintf(w, "Environment: %s\n", secret.EnvironmentID)
+	fmt.Fprintf(w, "State: %s\n", secret.State)
 	fmt.Fprintf(w, "Created: %s\n", secret.CreatedAt.Format(apiTimeFormat))
-	fmt.Fprintf(w, "Updated: %s\n", secret.UpdatedAt.Format(apiTimeFormat))
+	if secret.RotatedAt != nil {
+		fmt.Fprintf(w, "Rotated: %s\n", secret.RotatedAt.Format(apiTimeFormat))
+	}
+	if secret.RevokedAt != nil {
+		fmt.Fprintf(w, "Revoked: %s\n", secret.RevokedAt.Format(apiTimeFormat))
+	}
 	return nil
 }

@@ -1,11 +1,12 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/archive"
 )
 
 var environmentColorHexPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
@@ -70,11 +71,10 @@ func NormalizeEnvironmentColorHex(colorHex string) (string, error) {
 type CreateDeploymentRequest struct {
 	ProjectID             string `json:"project_id"`
 	EnvironmentID         string `json:"environment_id,omitempty"`
+	IdempotencyKey        string `json:"idempotency_key"`
 	ContentHash           string `json:"content_hash"`
+	ImageCacheMode        string `json:"image_cache_mode,omitempty"`
 	APIVersion            string `json:"api_version,omitempty"`
-	SDKVersion            string `json:"sdk_version,omitempty"`
-	CLIVersion            string `json:"cli_version,omitempty"`
-	BundleFormatVersion   int32  `json:"bundle_format_version,omitempty"`
 	WorkerProtocolVersion string `json:"worker_protocol_version,omitempty"`
 }
 
@@ -84,27 +84,24 @@ type GetDeploymentRequest struct {
 }
 
 type DeploymentResponse struct {
-	ID                       string                   `json:"id"`
-	Version                  string                   `json:"version"`
-	APIVersion               string                   `json:"api_version"`
-	SDKVersion               string                   `json:"sdk_version,omitempty"`
-	CLIVersion               string                   `json:"cli_version,omitempty"`
-	BundleFormatVersion      int32                    `json:"bundle_format_version"`
-	WorkerProtocolVersion    string                   `json:"worker_protocol_version"`
-	ProjectID                string                   `json:"project_id"`
-	EnvironmentID            string                   `json:"environment_id"`
-	ContentHash              string                   `json:"content_hash"`
-	DeploymentSource         DeploymentSourceArtifact `json:"deployment_source"`
-	BuildManifestDigest      string                   `json:"build_manifest_digest,omitempty"`
-	DeploymentManifestDigest string                   `json:"deployment_manifest_digest,omitempty"`
-	Status                   string                   `json:"status"`
-	Error                    *DeploymentErrorResponse `json:"error,omitempty"`
-	Tasks                    []DeploymentTaskResponse `json:"tasks"`
-	CreatedAt                time.Time                `json:"created_at"`
-	BuildingAt               time.Time                `json:"building_at"`
-	BuiltAt                  time.Time                `json:"built_at"`
-	DeployedAt               time.Time                `json:"deployed_at"`
-	FailedAt                 time.Time                `json:"failed_at"`
+	ID                    string                   `json:"id"`
+	Version               string                   `json:"version"`
+	APIVersion            string                   `json:"api_version"`
+	WorkerProtocolVersion string                   `json:"worker_protocol_version"`
+	ProjectID             string                   `json:"project_id"`
+	EnvironmentID         string                   `json:"environment_id"`
+	ContentHash           string                   `json:"content_hash"`
+	DeploymentSource      DeploymentSourceArtifact `json:"deployment_source"`
+	Status                string                   `json:"status"`
+	Error                 *DeploymentErrorResponse `json:"error,omitempty"`
+	Tasks                 []string                 `json:"tasks"`
+	Actors                []string                 `json:"actors"`
+	Workspaces            []string                 `json:"workspaces"`
+	CreatedAt             time.Time                `json:"created_at"`
+	BuildingAt            time.Time                `json:"building_at"`
+	BuiltAt               time.Time                `json:"built_at"`
+	DeployedAt            time.Time                `json:"deployed_at"`
+	FailedAt              time.Time                `json:"failed_at"`
 }
 
 type PromoteDeploymentRequest struct {
@@ -125,11 +122,7 @@ type ListDeploymentsResponse struct {
 	Deployments []DeploymentResponse `json:"deployments"`
 }
 
-const DeploymentSourceArtifactMediaType = "application/vnd.helmr.deployment-source.v0.tar"
-const TaskBundleArtifactMediaType = "application/vnd.helmr.task-bundle.v0+proto"
-const DeploymentManifestArtifactMediaType = "application/vnd.helmr.deployment-manifest.v0+json"
-const BuildManifestArtifactMediaType = "application/vnd.helmr.build-manifest.v0+json"
-const SandboxImageArtifactMediaType = "application/vnd.helmr.sandbox-image.v0.oci-tar"
+const DeploymentSourceArtifactMediaType = archive.SourceMediaType
 
 type DeploymentSourceArtifact struct {
 	Digest    string `json:"digest"`
@@ -138,48 +131,17 @@ type DeploymentSourceArtifact struct {
 }
 
 type DeploymentTaskResponse struct {
-	ID                  string    `json:"id"`
-	TaskID              string    `json:"task_id"`
-	FilePath            string    `json:"file_path,omitempty"`
-	ExportName          string    `json:"export_name,omitempty"`
-	HandlerEntrypoint   string    `json:"handler_entrypoint,omitempty"`
-	BundleDigest        string    `json:"bundle_digest,omitempty"`
-	BundleFormatVersion int32     `json:"bundle_format_version"`
-	QueueName           string    `json:"queue_name,omitempty"`
-	ConcurrencyLimit    *int32    `json:"concurrency_limit,omitempty"`
-	TTL                 string    `json:"ttl,omitempty"`
-	CreatedAt           time.Time `json:"created_at"`
+	ID                string    `json:"id"`
+	TaskID            string    `json:"task_id"`
+	FilePath          string    `json:"file_path,omitempty"`
+	ExportName        string    `json:"export_name,omitempty"`
+	HandlerEntrypoint string    `json:"handler_entrypoint,omitempty"`
+	QueueName         string    `json:"queue_name,omitempty"`
+	ConcurrencyLimit  *int32    `json:"concurrency_limit,omitempty"`
+	TTL               string    `json:"ttl,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 type ListTasksResponse struct {
 	Tasks []DeploymentTaskResponse `json:"tasks"`
-}
-
-type SandboxResponse struct {
-	ID                  string          `json:"id"`
-	DeploymentID        string          `json:"deployment_id"`
-	SandboxID           string          `json:"sandbox_id"`
-	Fingerprint         string          `json:"fingerprint"`
-	ImageArtifactID     string          `json:"image_artifact_id"`
-	ImageArtifactFormat string          `json:"image_artifact_format"`
-	RootfsDigest        string          `json:"rootfs_digest"`
-	ImageDigest         string          `json:"image_digest"`
-	ImageFormat         string          `json:"image_format"`
-	WorkspaceMountPath  string          `json:"workspace_mount_path"`
-	ResourceFloor       json.RawMessage `json:"resource_floor,omitempty"`
-	DiskFloorMib        int32           `json:"disk_floor_mib"`
-	NetworkPolicy       json.RawMessage `json:"network_policy,omitempty"`
-	RuntimeABI          string          `json:"runtime_abi"`
-	GuestdABI           string          `json:"guestd_abi"`
-	AdapterABI          string          `json:"adapter_abi"`
-	FilesystemFormat    string          `json:"filesystem_format"`
-	DefaultUID          *int32          `json:"default_uid,omitempty"`
-	DefaultGID          *int32          `json:"default_gid,omitempty"`
-	DefaultWorkdir      string          `json:"default_workdir"`
-	ContractVersion     int32           `json:"contract_version"`
-	CreatedAt           time.Time       `json:"created_at"`
-}
-
-type ListSandboxesResponse struct {
-	Sandboxes []SandboxResponse `json:"sandboxes"`
 }

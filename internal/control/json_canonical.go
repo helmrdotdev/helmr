@@ -3,11 +3,11 @@ package control
 import (
 	"encoding/json"
 
-	"github.com/helmrdotdev/helmr/internal/stablejson"
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
 func canonicalJSON(raw json.RawMessage) (json.RawMessage, error) {
-	canonical, err := stablejson.Encode(raw)
+	canonical, err := jsoncanon.Transform(raw)
 	if err != nil {
 		return nil, err
 	}

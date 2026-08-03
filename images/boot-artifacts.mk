@@ -1,11 +1,8 @@
 ALPINE_VERSION ?= 3.22.2
 ALPINE_BRANCH ?= v3.22
-ARCH ?= aarch64
+ARCH ?= x86_64
 
-ifeq ($(ARCH),aarch64)
-ALPINE_ARCH ?= aarch64
-APKO_ARCH ?= aarch64
-else ifeq ($(ARCH),x86_64)
+ifeq ($(ARCH),x86_64)
 ALPINE_ARCH ?= x86_64
 APKO_ARCH ?= x86_64
 else
@@ -90,10 +87,9 @@ $(ROOTFS): $(APKO_CONFIG) $(APKO_LOCK) $(INITRAMFS) $(ROLE_ROOTFS_DEPS) ../build
 
 $(RUNTIME_ARTIFACTS): $(KERNEL) $(INITRAMFS) $(ROOTFS) ../boot-artifacts.mk
 	@set -eu; \
-	case "$(ARCH)" in aarch64) goarch=arm64 ;; x86_64) goarch=amd64 ;; esac; \
 	tmp="$@.tmp"; trap 'rm -f "$$tmp"' EXIT; \
 	printf '{\n  "schema": "helmr.runtime-artifacts.v0",\n  "arch": "%s",\n  "runtime_abi": "helmr.firecracker.snapshot.v0",\n  "kernel": {"path": "%s", "digest": "sha256:%s", "size_bytes": %s},\n  "initramfs": {"path": "%s", "digest": "sha256:%s", "size_bytes": %s},\n  "rootfs": {"path": "%s", "digest": "sha256:%s", "size_bytes": %s}\n}\n' \
-		"$$goarch" "$(notdir $(KERNEL))" "$$(shasum -a 256 "$(KERNEL)" | awk '{print $$1}')" "$$(wc -c < "$(KERNEL)" | tr -d ' ')" \
+		"amd64" "$(notdir $(KERNEL))" "$$(shasum -a 256 "$(KERNEL)" | awk '{print $$1}')" "$$(wc -c < "$(KERNEL)" | tr -d ' ')" \
 		"$(notdir $(INITRAMFS))" "$$(shasum -a 256 "$(INITRAMFS)" | awk '{print $$1}')" "$$(wc -c < "$(INITRAMFS)" | tr -d ' ')" \
 		"$(notdir $(ROOTFS))" "$$(shasum -a 256 "$(ROOTFS)" | awk '{print $$1}')" "$$(wc -c < "$(ROOTFS)" | tr -d ' ')" > "$$tmp"; \
 	mv "$$tmp" "$@"; trap - EXIT

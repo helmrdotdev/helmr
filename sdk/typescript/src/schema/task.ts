@@ -1,8 +1,5 @@
 const TASK_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" as const
 const TASK_ID_MAX_LENGTH = 128
-const DEFAULT_MAX_DURATION_SECONDS = 900
-const MIN_MAX_DURATION_SECONDS = 5
-const MAX_DURATION_SECONDS = 86400
 const QUEUE_NAME_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$" as const
 const QUEUE_NAME_MAX_LENGTH = 256
 
@@ -37,43 +34,6 @@ function isValidTaskId(value: string): boolean {
     }
   }
   return true
-}
-
-class TaskMaxDurationError extends Error {
-  override readonly name = "TaskMaxDurationError"
-  readonly value: unknown
-  readonly label: string
-
-  constructor(value: unknown, label: string = "task maxDuration") {
-    super(
-      `${label} must be an integer number of seconds between ${MIN_MAX_DURATION_SECONDS} and ${MAX_DURATION_SECONDS}`,
-    )
-    this.value = value
-    this.label = label
-  }
-}
-
-export function readOptionalMaxDurationSeconds(
-  value: unknown,
-  label = "task maxDuration",
-): number {
-  if (value === undefined) {
-    return DEFAULT_MAX_DURATION_SECONDS
-  }
-  if (
-    typeof value === "number" &&
-    Number.isInteger(value) &&
-    Number.isFinite(value) &&
-    value >= MIN_MAX_DURATION_SECONDS &&
-    value <= MAX_DURATION_SECONDS
-  ) {
-    return value
-  }
-  throw new TaskMaxDurationError(value, label)
-}
-
-export function validateOptionalMaxDurationSeconds(value: unknown, label = "task maxDuration"): void {
-  readOptionalMaxDurationSeconds(value, label)
 }
 
 class TaskQueueNameError extends Error {
@@ -123,7 +83,7 @@ export function validateOptionalQueueConcurrencyLimit(value: unknown): void {
   if (value === undefined || value === null) {
     return
   }
-  if (typeof value === "number" && Number.isInteger(value) && Number.isFinite(value) && value > 0) {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
     return
   }
   throw new TaskQueueConcurrencyLimitError(value)

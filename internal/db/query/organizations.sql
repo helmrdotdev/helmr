@@ -5,10 +5,9 @@ LOCK TABLE organizations IN EXCLUSIVE MODE;
 SELECT count(*) FROM organizations;
 
 -- name: CreateOrganization :one
-INSERT INTO organizations (id, public_id, name, slug)
+INSERT INTO organizations (id, name, slug)
 VALUES (
     sqlc.arg(id),
-    sqlc.arg(public_id),
     sqlc.arg(name),
     sqlc.arg(slug)
 )

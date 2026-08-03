@@ -3,11 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "workspace:lifecycle": "bun run src/workspace/lifecycle.ts",
-    "workspace:exec": "bun run src/workspace/exec.ts",
-    "workspace:pty": "bun run src/workspace/pty.ts",
-    "workspace:stop": "bun run src/workspace/stop.ts",
-    "workspace:files": "bun run src/workspace/files.ts",
+    "smoke": "bun run src/smoke.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   }
 }

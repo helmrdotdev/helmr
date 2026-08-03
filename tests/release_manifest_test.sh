@@ -1,104 +1,78 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-
-fail() {
-  printf 'not ok - %s\n' "$1" >&2
-  exit 1
-}
-
-tmp="$(mktemp -d)"
+repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+script="$repo_root/scripts/write-aws-release-manifest.sh"
+tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-"$repo_root/scripts/write-aws-release-manifest.sh" \
-  "ghcr.io/helmrdotdev/helmr-control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
-  '{"us-east-1":"ami-0123456789abcdef0","us-west-2":"ami-00112233445566778","ap-northeast-1":"ami-0fedcba9876543210"}' \
-  "$tmp/aws-artifacts.json"
+control_image="ghcr.io/helmrdotdev/helmr-control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+worker_amis='{"ap-northeast-1":"ami-0fedcba9876543210","us-east-1":"ami-0123456789abcdef0","us-west-2":"ami-00112233445566778"}'
+platform_release='{"archive":{"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","mediaType":"application/vnd.helmr.platform-release.v0+tar","sizeBytes":4096},"buildPolicyDigest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","formatVersion":0,"sourceCommit":"dddddddddddddddddddddddddddddddddddddddd","sourceRef":"refs/tags/v0.1.0"}'
 
-control_image="$(jq -r '.control_image' "$tmp/aws-artifacts.json")"
-[ "$control_image" = "ghcr.io/helmrdotdev/helmr-control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ] || fail "control image mismatch"
+"$script" "$control_image" "$worker_amis" "$platform_release" "$tmp/aws-artifacts.json"
+jq -e \
+  --arg image "$control_image" \
+  --argjson amis "$worker_amis" \
+  --argjson release "$platform_release" \
+  'keys == ["control_image", "platform_release", "worker_amis"] and
+   .control_image == $image and
+   .worker_amis == $amis and
+   .platform_release == $release' \
+  "$tmp/aws-artifacts.json" >/dev/null
 
-worker_ami="$(jq -r '.worker_amis["ap-northeast-1"]' "$tmp/aws-artifacts.json")"
-[ "$worker_ami" = "ami-0fedcba9876543210" ] || fail "worker AMI mismatch"
-
-if "$repo_root/scripts/write-aws-release-manifest.sh" "ghcr.io/helmrdotdev/helmr-control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" '[]' "$tmp/invalid.json" 2>/dev/null; then
-  fail "array worker AMI JSON should fail"
+if "$script" \
+  "ghcr.io/helmrdotdev/helmr-control:latest" \
+  "$worker_amis" \
+  "$platform_release" \
+  "$tmp/tagged-image.json" 2>/dev/null; then
+  echo "tagged Control image was accepted" >&2
+  exit 1
 fi
-
-if "$repo_root/scripts/write-aws-release-manifest.sh" "ghcr.io/helmrdotdev/helmr-control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" '{"us-east-1":"ami-0123456789abcdef0"}' "$tmp/missing-region.json" 2>/dev/null; then
-  fail "missing required worker AMI region should fail"
+if "$script" \
+  "$control_image" \
+  '{"us-east-1":"ami-0123456789abcdef0"}' \
+  "$platform_release" \
+  "$tmp/missing-region.json" 2>/dev/null; then
+  echo "incomplete Worker AMI set was accepted" >&2
+  exit 1
 fi
-
-if "$repo_root/scripts/write-aws-release-manifest.sh" "ghcr.io/helmrdotdev/helmr-control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" '{"us-east-1":"not-an-ami","us-west-2":"ami-00112233445566778","ap-northeast-1":"ami-0fedcba9876543210"}' "$tmp/invalid-ami.json" 2>/dev/null; then
-  fail "invalid worker AMI ID should fail"
-fi
-
-if "$repo_root/scripts/write-aws-release-manifest.sh" "ghcr.io/helmrdotdev/helmr-control:latest" '{"us-east-1":"ami-0123456789abcdef0","us-west-2":"ami-00112233445566778","ap-northeast-1":"ami-0fedcba9876543210"}' "$tmp/tagged-image.json" 2>/dev/null; then
-  fail "tagged control image should fail"
+if "$script" \
+  "$control_image" \
+  "$worker_amis" \
+  "${platform_release/sha256:cccc/sha256:CCCC}" \
+  "$tmp/invalid-policy.json" 2>/dev/null; then
+  echo "invalid Platform release was accepted" >&2
+  exit 1
 fi
 
 mkdir -p "$tmp/bin"
-
 cat >"$tmp/bin/docker" <<'EOF'
 #!/usr/bin/env bash
-set -euo pipefail
+exit "${MOCK_CONTROL_IMAGE_FAIL:-0}"
+EOF
+cat >"$tmp/bin/aws" <<'EOF'
+#!/usr/bin/env bash
+if [ "${MOCK_MISSING_AMI_REGION:-}" = "${4:-}" ]; then
+  printf 'None\n'
+else
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--image-ids" ]; then
+      printf '%s\n' "$2"
+      exit 0
+    fi
+    shift
+  done
+fi
+EOF
+chmod 0755 "$tmp/bin/docker" "$tmp/bin/aws"
 
-if [ "${MOCK_CONTROL_IMAGE_FAIL:-0}" = "1" ]; then
+VERIFY_RELEASE_ARTIFACTS=1 PATH="$tmp/bin:$PATH" \
+  "$script" "$control_image" "$worker_amis" "$platform_release" "$tmp/verified.json"
+if VERIFY_RELEASE_ARTIFACTS=1 MOCK_CONTROL_IMAGE_FAIL=1 PATH="$tmp/bin:$PATH" \
+  "$script" "$control_image" "$worker_amis" "$platform_release" "$tmp/bad-image.json" 2>/dev/null; then
+  echo "uninspectable Control image was accepted" >&2
   exit 1
 fi
 
-case "$*" in
-  "buildx imagetools inspect "* | "manifest inspect "*) exit 0 ;;
-  *) exit 1 ;;
-esac
-EOF
-
-cat >"$tmp/bin/aws" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-region=""
-image_id=""
-
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --region)
-      region="$2"
-      shift 2
-      ;;
-    --image-ids)
-      image_id="$2"
-      shift 2
-      ;;
-    *)
-      shift
-      ;;
-  esac
-done
-
-if [ "${MOCK_MISSING_AMI_REGION:-}" = "$region" ]; then
-  exit 254
-fi
-
-printf '%s\n' "$image_id"
-EOF
-
-chmod +x "$tmp/bin/docker" "$tmp/bin/aws"
-
-VERIFY_RELEASE_ARTIFACTS=1 PATH="$tmp/bin:$PATH" "$repo_root/scripts/write-aws-release-manifest.sh" \
-  "ghcr.io/helmrdotdev/helmr-control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
-  '{"us-east-1":"ami-0123456789abcdef0","us-west-2":"ami-00112233445566778","ap-northeast-1":"ami-0fedcba9876543210"}' \
-  "$tmp/verified.json"
-
-if VERIFY_RELEASE_ARTIFACTS=1 MOCK_CONTROL_IMAGE_FAIL=1 PATH="$tmp/bin:$PATH" "$repo_root/scripts/write-aws-release-manifest.sh" "ghcr.io/helmrdotdev/helmr-control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" '{"us-east-1":"ami-0123456789abcdef0","us-west-2":"ami-00112233445566778","ap-northeast-1":"ami-0fedcba9876543210"}' "$tmp/bad-image.json" 2>/dev/null; then
-  fail "uninspectable control image should fail verification"
-fi
-[ ! -e "$tmp/bad-image.json" ] || fail "verification failure should not write manifest"
-
-if VERIFY_RELEASE_ARTIFACTS=1 MOCK_MISSING_AMI_REGION=us-west-2 PATH="$tmp/bin:$PATH" "$repo_root/scripts/write-aws-release-manifest.sh" "ghcr.io/helmrdotdev/helmr-control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" '{"us-east-1":"ami-0123456789abcdef0","us-west-2":"ami-00112233445566778","ap-northeast-1":"ami-0fedcba9876543210"}' "$tmp/bad-ami.json" 2>/dev/null; then
-  fail "missing worker AMI should fail verification"
-fi
-[ ! -e "$tmp/bad-ami.json" ] || fail "AMI verification failure should not write manifest"
-
-printf 'ok - release manifest tests\n'
+printf 'ok - AWS release manifest tests\n'

@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,201 +12,473 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workspace"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+)
+
+const (
+	workspaceMountReservationDuration = 5 * time.Minute
+	workspaceExecLeaseRenewalTTL      = 30 * time.Minute
 )
 
 func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 	var request api.WorkerWorkspaceMountClaimRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker workspace mount claim request JSON: %w", err)))
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, badRequest(fmt.Errorf("invalid Workspace mount claim JSON: %w", err)))
 		return
 	}
 	worker := workerFromContext(r.Context())
-	guestdChannelToken, err := token.GenerateOpaque(32)
+	channelToken, err := token.GenerateOpaque(32)
 	if err != nil {
-		writeError(w, errors.New("generate workspace mount guest channel token"))
+		writeError(w, errors.New("generate Workspace mount channel token"))
 		return
 	}
 	row, err := s.db.ClaimWorkspaceMount(r.Context(), db.ClaimWorkspaceMountParams{
-		WorkerInstanceID:            pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch:                 worker.WorkerEpoch,
-		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(workspaceMountReservationDuration), Valid: true},
-		GuestdChannelTokenHash:      guestdChannelTokenHash(guestdChannelToken),
+		WorkerInstanceID:           pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch:                worker.WorkerEpoch,
+		GuestChannelTokenHash:      guestChannelTokenHash(channelToken),
+		GuestChannelTokenExpiresAt: pgvalue.Timestamptz(time.Now().Add(workspaceMountReservationDuration)),
 	})
-	if isNoRows(err) {
+	if errors.Is(err, pgx.ErrNoRows) {
 		writeJSON(w, http.StatusOK, api.WorkerWorkspaceMountClaimResponse{})
 		return
 	}
 	if err != nil {
-		s.log.Error("claim workspace mount failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, errors.New("claim workspace mount"))
+		writeError(w, errors.New("claim Workspace mount"))
 		return
 	}
-	mount := workerWorkspaceMountFromClaim(row)
-	mount.GuestdChannelToken = guestdChannelToken
+	mount := projectWorkerWorkspaceMount(row)
+	mount.GuestdChannelToken = channelToken
 	writeJSON(w, http.StatusOK, api.WorkerWorkspaceMountClaimResponse{Mount: mount})
 }
 
 func (s *Server) workerRenewWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 	var request api.WorkerWorkspaceMountRenewRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker workspace mount renew request JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid Workspace mount renewal JSON: %w", err)))
 		return
 	}
-	row, err := s.workerRenewWorkspaceMountTransition(r.Context(), request.OrgID, request.WorkspaceMountID)
-	if isNoRows(err) {
-		writeError(w, conflict(errors.New("workspace mount is stale")))
+	params, err := s.workspaceMountTransition(r.Context(), request.OrgID, request.WorkspaceMountID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	var mount db.WorkspaceMount
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		row, err := work.q.RenewWorkspaceMount(r.Context(), db.RenewWorkspaceMountParams{
+			GuestChannelTokenExpiresAt: pgvalue.Timestamptz(time.Now().Add(workspaceMountReservationDuration)),
+			OrgID:                      params.orgID, ID: params.mount.ID,
+			WorkerInstanceID: params.workerID, WorkerEpoch: params.epoch,
+			RuntimeInstanceID: params.mount.RuntimeInstanceID,
+		})
+		if err != nil {
+			return err
+		}
+		mount = row
+		_, err = work.q.RenewWorkspaceExecLeaseForMount(
+			r.Context(),
+			db.RenewWorkspaceExecLeaseForMountParams{
+				ExpiresAt:        pgvalue.Timestamptz(time.Now().Add(workspaceExecLeaseRenewalTTL)),
+				WorkspaceMountID: mount.ID,
+			},
+		)
+		return err
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, conflict(errors.New("Workspace mount is stale")))
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("renew workspace mount"))
+		writeError(w, errors.New("renew Workspace mount"))
 		return
 	}
-	writeJSON(w, http.StatusOK, workspaceMountResponse(row))
+	writeJSON(w, http.StatusOK, workspaceMountResponse(mount))
 }
 
 func (s *Server) workerMarkWorkspaceMountMounted(w http.ResponseWriter, r *http.Request) {
 	var request api.WorkerWorkspaceMountMountedRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker workspace mount mounted request JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid mounted Workspace JSON: %w", err)))
 		return
 	}
-	row, err := s.workerMarkWorkspaceMountMountedTransition(r.Context(), request.OrgID, request.WorkspaceMountID)
-	if isNoRows(err) {
-		writeError(w, conflict(errors.New("workspace mount is stale")))
+	params, err := s.workspaceMountTransition(r.Context(), request.OrgID, request.WorkspaceMountID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	mount, err := s.db.MarkWorkspaceMountMounted(r.Context(), db.MarkWorkspaceMountMountedParams{
+		OrgID: params.orgID, ID: params.mount.ID,
+		WorkerInstanceID: params.workerID, WorkerEpoch: params.epoch,
+		RuntimeInstanceID: params.mount.RuntimeInstanceID,
+		FencingGeneration: params.mount.FencingGeneration,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, conflict(errors.New("Workspace mount is stale")))
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("mark workspace mount mounted"))
+		writeError(w, errors.New("mark Workspace mount mounted"))
 		return
 	}
-	writeJSON(w, http.StatusOK, workspaceMountResponse(row))
+	writeJSON(w, http.StatusOK, workspaceMountResponse(mount))
 }
 
 func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 	var request api.WorkerWorkspaceMountCaptureRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker workspace mount capture request JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid Workspace capture JSON: %w", err)))
 		return
 	}
-	params, err := s.workerWorkspaceMountTransitionParams(r.Context(), request.OrgID, request.WorkspaceMountID)
+	params, err := s.workspaceMountTransition(r.Context(), request.OrgID, request.WorkspaceMountID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	projectID, err := uuid.Parse(strings.TrimSpace(request.ProjectID))
-	if err != nil {
-		writeError(w, badRequest(errors.New("project_id must be a UUID")))
+	if strings.TrimSpace(request.ArtifactMediaType) != workspace.ArtifactMediaType ||
+		strings.TrimSpace(request.ArtifactEncoding) != workspace.ArtifactEncoding ||
+		request.ArtifactSizeBytes <= 0 || request.ArtifactEntryCount < 0 ||
+		strings.TrimSpace(request.ArtifactDigest) == "" {
+		writeError(w, badRequest(errors.New("Workspace capture artifact is invalid")))
 		return
 	}
-	environmentID, err := uuid.Parse(strings.TrimSpace(request.EnvironmentID))
-	if err != nil {
-		writeError(w, badRequest(errors.New("environment_id must be a UUID")))
-		return
-	}
-	workspaceID, err := uuid.Parse(strings.TrimSpace(request.WorkspaceID))
-	if err != nil {
-		writeError(w, badRequest(errors.New("workspace_id must be a UUID")))
-		return
-	}
-	digest := strings.TrimSpace(request.ArtifactDigest)
-	if digest == "" {
-		writeError(w, badRequest(errors.New("artifact_digest is required")))
-		return
-	}
-	if request.ArtifactSizeBytes <= 0 {
-		writeError(w, badRequest(errors.New("artifact_size_bytes must be positive")))
-		return
-	}
-	if strings.TrimSpace(request.ArtifactMediaType) != workspace.ArtifactMediaType {
-		writeError(w, badRequest(errors.New("artifact_media_type is unsupported")))
-		return
-	}
-	if strings.TrimSpace(request.ArtifactEncoding) != workspace.ArtifactEncoding {
-		writeError(w, badRequest(errors.New("artifact_encoding is unsupported")))
-		return
-	}
-	if request.ArtifactEntryCount < 0 {
-		writeError(w, badRequest(errors.New("artifact_entry_count must be non-negative")))
-		return
-	}
-	var response api.WorkerWorkspaceMountCaptureResponse
+	var versionID pgtype.UUID
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		_, err := work.q.GetWorkspaceMountForWorkerPrimitiveScope(r.Context(), db.GetWorkspaceMountForWorkerPrimitiveScopeParams{
-			OrgID: params.OrgID, WorkspaceID: pgvalue.UUID(workspaceID), ID: params.ID,
-			WorkerInstanceID: params.WorkerInstanceID, WorkerEpoch: params.WorkerEpoch,
-			RuntimeInstanceID: params.RuntimeInstanceID,
-		})
-		if isNoRows(err) {
-			return conflict(codedError{code: "workspace_mount_capture_rejected", message: "workspace mount capture is stale"})
+		existing, err := work.q.GetStagedWorkspaceExecCapture(
+			r.Context(),
+			db.GetStagedWorkspaceExecCaptureParams{
+				WorkspaceMountID: params.mount.ID,
+				WorkerInstanceID: params.workerID,
+				WorkerEpoch:      params.epoch,
+			},
+		)
+		if err == nil {
+			if existing.ContentDigest != strings.TrimSpace(request.ArtifactDigest) ||
+				existing.SizeBytes != request.ArtifactSizeBytes ||
+				existing.EntryCount != request.ArtifactEntryCount {
+				return conflict(errors.New("Workspace capture replay differs"))
+			}
+			versionID = existing.ID
+			return nil
 		}
-		if err != nil {
-			return errors.New("authorize workspace mount capture")
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
 		}
 		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
-			OrgID:     params.OrgID,
-			Digest:    digest,
+			OrgID: params.orgID, Digest: strings.TrimSpace(request.ArtifactDigest),
 			SizeBytes: request.ArtifactSizeBytes,
 			MediaType: strings.TrimSpace(request.ArtifactMediaType),
 		}); err != nil {
-			return errors.New("record workspace capture CAS object")
+			return err
 		}
 		artifact, err := work.q.CreateArtifact(r.Context(), db.CreateArtifactParams{
-			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:                     params.OrgID,
-			ProjectID:                 pgvalue.UUID(projectID),
-			EnvironmentID:             pgvalue.UUID(environmentID),
-			Digest:                    digest,
-			Kind:                      db.ArtifactKindWorkspaceVersion,
-			SizeBytes:                 request.ArtifactSizeBytes,
+			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), OrgID: params.orgID,
+			ProjectID: params.mount.ProjectID, EnvironmentID: params.mount.EnvironmentID,
+			Digest: strings.TrimSpace(request.ArtifactDigest),
+			Kind:   db.ArtifactKindWorkspaceVersion, SizeBytes: request.ArtifactSizeBytes,
 			MediaType:                 strings.TrimSpace(request.ArtifactMediaType),
-			CreatedByWorkerInstanceID: params.WorkerInstanceID,
+			CreatedByWorkerInstanceID: params.workerID,
 		})
 		if err != nil {
-			return errors.New("record workspace capture artifact")
+			return err
 		}
-		var versionPublicID string
-		version, err := createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.WorkspaceVersion, value: &versionPublicID}}, func() (db.PromoteWorkspaceMountStopCaptureRow, error) {
-			return work.q.PromoteWorkspaceMountStopCapture(r.Context(), db.PromoteWorkspaceMountStopCaptureParams{
-				OrgID: params.OrgID, ProjectID: pgvalue.UUID(projectID), EnvironmentID: pgvalue.UUID(environmentID),
-				WorkspaceID: pgvalue.UUID(workspaceID), ID: params.ID,
-				WorkerInstanceID: params.WorkerInstanceID, WorkerEpoch: params.WorkerEpoch,
-				RuntimeInstanceID: params.RuntimeInstanceID, FencingGeneration: params.FencingGeneration,
-				WorkspaceVersionID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceVersionPublicID: versionPublicID,
-				ArtifactID: artifact.ID, ArtifactEncoding: strings.TrimSpace(request.ArtifactEncoding),
-				ArtifactEntryCount: request.ArtifactEntryCount, ContentDigest: digest,
-				SizeBytes: request.ArtifactSizeBytes, Message: "system capture before workspace stop",
-			})
-		})
-		if isNoRows(err) {
-			return conflict(codedError{code: "workspace_mount_capture_rejected", message: "workspace mount capture is stale"})
-		}
+		staged, err := work.q.StageWorkspaceExecCapture(
+			r.Context(),
+			db.StageWorkspaceExecCaptureParams{
+				WorkspaceMountID:   params.mount.ID,
+				WorkerInstanceID:   params.workerID,
+				WorkerEpoch:        params.epoch,
+				WorkspaceVersionID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				ArtifactID:         artifact.ID,
+				ContentDigest:      strings.TrimSpace(request.ArtifactDigest),
+				SizeBytes:          request.ArtifactSizeBytes,
+				EntryCount:         request.ArtifactEntryCount,
+			},
+		)
 		if err != nil {
-			return errors.New("promote workspace mount capture")
+			return err
 		}
-		response = api.WorkerWorkspaceMountCaptureResponse{
-			VersionID: pgvalue.MustUUIDValue(version.ID).String(),
-		}
+		versionID = staged.ID
 		return nil
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, conflict(errors.New("Workspace capture is stale")))
+		return
+	}
+	if err != nil {
+		writeError(w, errors.New("stage Workspace capture"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.WorkerWorkspaceMountCaptureResponse{
+		VersionID: pgvalue.MustUUIDValue(versionID).String(),
+	})
+}
+
+func (s *Server) workerStopWorkspaceMount(w http.ResponseWriter, r *http.Request) {
+	var request api.WorkerWorkspaceMountStopRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, badRequest(fmt.Errorf("invalid Workspace stop JSON: %w", err)))
+		return
+	}
+	if err := validateRuntimeClosedCleanupProof(request.CleanupProof, time.Now()); err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	cleanupProof, err := json.Marshal(request.CleanupProof)
+	if err != nil {
+		writeError(w, badRequest(errors.New("encode runtime cleanup proof")))
+		return
+	}
+	params, err := s.workspaceMountTransition(r.Context(), request.OrgID, request.WorkspaceMountID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, response)
+	var stopped db.WorkspaceMount
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		locator, locatorErr := work.q.GetWorkspaceExecLocatorForMount(
+			r.Context(),
+			db.GetWorkspaceExecLocatorForMountParams{
+				OrgID: params.orgID, WorkspaceMountID: params.mount.ID,
+			},
+		)
+		if locatorErr == nil {
+			secretsValid, err := lockWorkspaceExecPublicationSecrets(
+				r.Context(),
+				work.q,
+				locator.ID,
+				params.mount.WorkspaceID,
+			)
+			if err != nil {
+				return err
+			}
+			if _, err := work.q.LockWorkspaceExecFailureWorkspace(
+				r.Context(),
+				db.LockWorkspaceExecFailureWorkspaceParams{
+					OrgID:       params.orgID,
+					WorkspaceID: params.mount.WorkspaceID,
+				},
+			); err != nil {
+				return err
+			}
+			authority, err := work.q.LockWorkspaceExecWorkerAuthority(
+				r.Context(),
+				db.LockWorkspaceExecWorkerAuthorityParams{
+					OrgID: params.orgID, ProcessID: locator.ID,
+					WorkspaceMountID: params.mount.ID,
+					WorkerInstanceID: params.workerID, WorkerEpoch: params.epoch,
+				},
+			)
+			if err != nil {
+				return err
+			}
+			if err := s.finalizeWorkspaceExec(
+				r.Context(),
+				work,
+				authority,
+				secretsValid,
+			); err != nil {
+				return err
+			}
+		} else if !errors.Is(locatorErr, pgx.ErrNoRows) {
+			return locatorErr
+		}
+		row, err := work.q.StopWorkspaceMount(r.Context(), db.StopWorkspaceMountParams{
+			ReasonCode: pgvalue.Text("worker_unmounted"),
+			OrgID:      params.orgID, ID: params.mount.ID,
+			WorkerInstanceID: params.workerID, WorkerEpoch: params.epoch,
+			RuntimeInstanceID: params.mount.RuntimeInstanceID,
+			FencingGeneration: params.mount.FencingGeneration,
+			CleanupProof:      cleanupProof,
+		})
+		if err != nil {
+			return err
+		}
+		stopped = db.WorkspaceMount(row)
+		return nil
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, conflict(errors.New("Workspace stop is stale")))
+		return
+	}
+	if err != nil {
+		writeError(w, errors.New("stop Workspace mount"))
+		return
+	}
+	writeJSON(w, http.StatusOK, workspaceMountResponse(stopped))
+}
+
+func (s *Server) finalizeWorkspaceExec(
+	ctx context.Context,
+	work *txWork,
+	authority db.LockWorkspaceExecWorkerAuthorityRow,
+	secretsValid bool,
+) error {
+	mount := authority.WorkspaceMount
+	process := authority.WorkspaceProcess
+	lease := authority.WorkspaceLease
+	var versionID pgtype.UUID
+	finalState := db.WorkspaceProcessStateFailed
+	reasonCode := mount.FinalizationReasonCode
+	errorJSON := mount.FinalizationError
+	if mount.FinalizationKind.String == "capture" {
+		if !mount.StagedVersionID.Valid {
+			return errors.New("Workspace exec capture is not staged")
+		}
+		if secretsValid {
+			if _, err := work.q.CommitStagedWorkspaceExecVersion(
+				ctx,
+				db.CommitStagedWorkspaceExecVersionParams{
+					VersionID:   mount.StagedVersionID,
+					WorkspaceID: mount.WorkspaceID,
+				},
+			); err != nil {
+				return err
+			}
+			versionID = mount.StagedVersionID
+			finalState = db.WorkspaceProcessStateExited
+		} else {
+			affected, err := work.q.DiscardStagedWorkspaceExecVersion(
+				ctx,
+				db.DiscardStagedWorkspaceExecVersionParams{
+					VersionID:   mount.StagedVersionID,
+					WorkspaceID: mount.WorkspaceID,
+				},
+			)
+			if err != nil {
+				return err
+			}
+			if affected != 1 {
+				return errors.New("revoked Workspace exec version is not discardable")
+			}
+			reasonCode = pgvalue.Text("workspace_exec_secret_revoked")
+			errorJSON, err = json.Marshal(map[string]string{
+				"code": "workspace_exec_secret_revoked",
+			})
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := work.q.FinalizeWorkspaceExecWorkspace(
+		ctx,
+		db.FinalizeWorkspaceExecWorkspaceParams{
+			VersionID:           versionID,
+			RestoreDesiredState: process.RestoreDesiredState,
+			WorkspaceID:         process.WorkspaceID,
+			BaseVersionID:       process.BaseVersionID,
+			OwnershipGeneration: lease.OwnershipGeneration,
+			WriterGeneration:    lease.WriterGeneration,
+		},
+	); err != nil {
+		return err
+	}
+	finalized, err := work.q.FinalizeWorkspaceExecProcess(
+		ctx,
+		db.FinalizeWorkspaceExecProcessParams{
+			State:            finalState,
+			ReasonCode:       reasonCode,
+			Error:            errorJSON,
+			ProcessID:        process.ID,
+			WorkspaceMountID: mount.ID,
+		},
+	)
+	if err != nil {
+		return err
+	}
+	if _, err := work.q.ReleaseWorkspaceExecLease(
+		ctx,
+		db.ReleaseWorkspaceExecLeaseParams{
+			LeaseID:   lease.ID,
+			ProcessID: process.ID,
+		},
+	); err != nil {
+		return err
+	}
+	claim, err := work.q.GetIdempotencyClaim(ctx, db.GetIdempotencyClaimParams{
+		EnvironmentID: process.EnvironmentID,
+		ID:            process.ClaimID,
+	})
+	if err != nil {
+		return err
+	}
+	if claim.RetiredAt.Valid {
+		return nil
+	}
+	receipt, err := json.Marshal(map[string]string{
+		"process_id":  pgvalue.MustUUIDValue(finalized.ID).String(),
+		"reason_code": reasonCode.String,
+	})
+	if err != nil {
+		return err
+	}
+	claims, err := idempotency.TransactionForQueries(work.q)
+	if err != nil {
+		return err
+	}
+	if finalState == db.WorkspaceProcessStateExited {
+		_, err = claims.Complete(ctx, claim, receipt)
+	} else {
+		_, err = claims.Fail(ctx, claim, receipt)
+	}
+	return err
+}
+
+func lockWorkspaceExecPublicationSecrets(
+	ctx context.Context,
+	q interface {
+		LockProcessSecretDelivery(
+			context.Context,
+			db.LockProcessSecretDeliveryParams,
+		) ([]db.LockProcessSecretDeliveryRow, error)
+	},
+	processID pgtype.UUID,
+	workspaceID pgtype.UUID,
+) (bool, error) {
+	rows, err := q.LockProcessSecretDelivery(
+		ctx,
+		db.LockProcessSecretDeliveryParams{
+			ProcessID:   processID,
+			WorkspaceID: workspaceID,
+		},
+	)
+	if err != nil {
+		return false, err
+	}
+	if len(rows) > maxWorkspaceSecrets {
+		return false, errors.New("Workspace Secret placements exceed their bound")
+	}
+	return workspaceExecPublicationSecretsValid(rows, processID), nil
+}
+
+func workspaceExecPublicationSecretsValid(
+	rows []db.LockProcessSecretDeliveryRow,
+	processID pgtype.UUID,
+) bool {
+	for _, row := range rows {
+		if row.Secret.State != "active" ||
+			!row.ResolutionID.Valid ||
+			!row.ResolutionProcessID.Valid ||
+			row.ResolutionProcessID != processID ||
+			!row.ResolutionSecretVersionID.Valid ||
+			!row.ResolutionRevocationGeneration.Valid ||
+			row.ResolutionRevocationGeneration.Int64 !=
+				row.Secret.RevocationGeneration {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) workerFailWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 	var request api.WorkerWorkspaceMountFailRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker workspace mount fail request JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid Workspace mount failure JSON: %w", err)))
 		return
 	}
 	errorJSON, err := normalizedJSONObject(request.Error, "error")
@@ -213,169 +486,267 @@ func (s *Server) workerFailWorkspaceMount(w http.ResponseWriter, r *http.Request
 		writeError(w, badRequest(err))
 		return
 	}
-	params, err := s.workerWorkspaceMountTransitionParams(r.Context(), request.OrgID, request.WorkspaceMountID)
+	params, err := s.workspaceMountTransition(r.Context(), request.OrgID, request.WorkspaceMountID)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	var response api.WorkspaceMountResponse
+	var failed db.WorkspaceMount
 	err = s.inTx(r.Context(), func(work *txWork) error {
+		var execAuthority *db.LockWorkspaceExecFailureAuthorityRow
+		locator, locatorErr := work.q.GetWorkspaceExecLocatorForMount(
+			r.Context(),
+			db.GetWorkspaceExecLocatorForMountParams{
+				OrgID: params.orgID, WorkspaceMountID: params.mount.ID,
+			},
+		)
+		if locatorErr == nil {
+			if _, err := work.q.LockWorkspaceExecFailureWorkspace(
+				r.Context(),
+				db.LockWorkspaceExecFailureWorkspaceParams{
+					OrgID: params.orgID, WorkspaceID: locator.WorkspaceID,
+				},
+			); err != nil {
+				return err
+			}
+			authority, err := work.q.LockWorkspaceExecFailureAuthority(
+				r.Context(),
+				db.LockWorkspaceExecFailureAuthorityParams{
+					OrgID: params.orgID, ProcessID: locator.ID,
+					WorkspaceMountID: params.mount.ID,
+					WorkerInstanceID: params.workerID, WorkerEpoch: params.epoch,
+				},
+			)
+			if err != nil {
+				return err
+			}
+			execAuthority = &authority
+		} else if !errors.Is(locatorErr, pgx.ErrNoRows) {
+			return locatorErr
+		}
 		row, err := work.q.FailWorkspaceMount(r.Context(), db.FailWorkspaceMountParams{
-			ReasonCode: pgtype.Text{String: "worker_mount_failed", Valid: true}, Error: errorJSON,
-			OrgID: params.OrgID, ID: params.ID, WorkerInstanceID: params.WorkerInstanceID,
-			WorkerEpoch: params.WorkerEpoch, RuntimeInstanceID: params.RuntimeInstanceID,
-			FencingGeneration: params.FencingGeneration,
+			ReasonCode: pgvalue.Text("worker_mount_failed"), Error: errorJSON,
+			OrgID: params.orgID, ID: params.mount.ID,
+			WorkerInstanceID: params.workerID, WorkerEpoch: params.epoch,
+			RuntimeInstanceID: params.mount.RuntimeInstanceID,
+			FencingGeneration: params.mount.FencingGeneration,
 		})
-		if isNoRows(err) {
-			return conflict(errors.New("workspace mount is stale"))
-		}
 		if err != nil {
-			return errors.New("fail workspace mount")
+			return err
 		}
-		response = failedWorkspaceMountResponse(row)
+		failed = row
+		if execAuthority != nil {
+			return s.failWorkspaceExec(
+				r.Context(),
+				work,
+				*execAuthority,
+				"worker_mount_failed",
+				errorJSON,
+			)
+		}
 		return nil
 	})
-	if err != nil {
-		writeError(w, err)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, conflict(errors.New("Workspace mount is stale")))
 		return
 	}
-	writeJSON(w, http.StatusOK, response)
+	if err != nil {
+		writeError(w, errors.New("fail Workspace mount"))
+		return
+	}
+	writeJSON(w, http.StatusOK, workspaceMountResponse(failed))
 }
 
-func guestdChannelTokenHash(token string) string {
-	return sha256sum.HexBytes([]byte(strings.TrimSpace(token)))
-}
-
-func failedWorkspaceMountResponse(row db.WorkspaceMount) api.WorkspaceMountResponse {
-	return workspaceMountResponse(db.WorkspaceMount{
-		ID:                  row.ID,
-		ProjectID:           row.ProjectID,
-		EnvironmentID:       row.EnvironmentID,
-		WorkspaceID:         row.WorkspaceID,
-		DeploymentSandboxID: row.DeploymentSandboxID,
-		BaseVersionID:       row.BaseVersionID,
-		RuntimeInstanceID:   row.RuntimeInstanceID,
-		State:               row.State,
-		ClaimAttempt:        row.ClaimAttempt,
-		FencingGeneration:   row.FencingGeneration,
-		DirtyGeneration:     row.DirtyGeneration,
-		CreatedAt:           row.CreatedAt,
-		UpdatedAt:           row.UpdatedAt,
+func (s *Server) failWorkspaceExec(
+	ctx context.Context,
+	work *txWork,
+	authority db.LockWorkspaceExecFailureAuthorityRow,
+	reasonCode string,
+	errorJSON []byte,
+) error {
+	process := authority.WorkspaceProcess
+	mount := authority.WorkspaceMount
+	lease := authority.WorkspaceLease
+	if mount.StagedVersionID.Valid {
+		affected, err := work.q.DiscardStagedWorkspaceExecVersion(
+			ctx,
+			db.DiscardStagedWorkspaceExecVersionParams{
+				VersionID:   mount.StagedVersionID,
+				WorkspaceID: process.WorkspaceID,
+			},
+		)
+		if err != nil {
+			return err
+		}
+		if affected != 1 {
+			return errors.New("staged Workspace exec version is not discardable")
+		}
+	}
+	if _, err := work.q.MarkWorkspaceExecRecoveryRequired(
+		ctx,
+		db.MarkWorkspaceExecRecoveryRequiredParams{
+			WorkspaceID:         process.WorkspaceID,
+			BaseVersionID:       process.BaseVersionID,
+			OwnershipGeneration: lease.OwnershipGeneration,
+			WriterGeneration:    lease.WriterGeneration,
+		},
+	); err != nil {
+		return err
+	}
+	failed, err := work.q.FailWorkspaceExecProcess(
+		ctx,
+		db.FailWorkspaceExecProcessParams{
+			ReasonCode:       pgvalue.Text(reasonCode),
+			Error:            errorJSON,
+			ProcessID:        process.ID,
+			WorkspaceMountID: mount.ID,
+		},
+	)
+	if err != nil {
+		return err
+	}
+	if _, err := work.q.ReleaseWorkspaceExecLease(
+		ctx,
+		db.ReleaseWorkspaceExecLeaseParams{
+			LeaseID: lease.ID, ProcessID: process.ID,
+		},
+	); err != nil {
+		return err
+	}
+	claim, err := work.q.GetIdempotencyClaim(ctx, db.GetIdempotencyClaimParams{
+		EnvironmentID: process.EnvironmentID,
+		ID:            process.ClaimID,
 	})
+	if err != nil {
+		return err
+	}
+	if claim.RetiredAt.Valid {
+		return nil
+	}
+	receipt, err := json.Marshal(map[string]string{
+		"process_id":  pgvalue.MustUUIDValue(failed.ID).String(),
+		"reason_code": reasonCode,
+	})
+	if err != nil {
+		return err
+	}
+	claims, err := idempotency.TransactionForQueries(work.q)
+	if err != nil {
+		return err
+	}
+	_, err = claims.Fail(ctx, claim, receipt)
+	return err
 }
 
-type workerWorkspaceMountFields struct {
-	id                         pgtype.UUID
-	orgID                      pgtype.UUID
-	projectID                  pgtype.UUID
-	environmentID              pgtype.UUID
-	workspaceID                pgtype.UUID
-	deploymentSandboxID        pgtype.UUID
-	baseVersionID              pgtype.UUID
-	runtimeInstanceID          pgtype.UUID
-	runtimeEpoch               int64
-	networkSlotID              pgtype.UUID
-	networkSlotGeneration      int64
-	guestdChannelTokenHash     string
-	state                      db.WorkspaceMountState
-	runtimeID                  string
-	sandboxImageArtifact       api.CASObject
-	sandboxImageArtifactFormat string
-	rootfsDigest               string
-	imageDigest                string
-	imageFormat                string
-	workspaceArtifact          api.WorkerWorkspaceArtifact
-	workspaceMountPath         string
-	requestedMilliCPU          int64
-	requestedMemoryMiB         int64
-	requestedDiskMiB           int64
-	requestedExecutionSlots    int32
-	runtimeABI                 string
-	guestdABI                  string
-	adapterABI                 string
-	fencingGeneration          int64
-	expiresAt                  time.Time
+type workspaceMountTransitionAuthority struct {
+	orgID    pgtype.UUID
+	workerID pgtype.UUID
+	epoch    int64
+	mount    db.WorkspaceMount
 }
 
-func workerWorkspaceMountFromClaim(row db.ClaimWorkspaceMountRow) *api.WorkerWorkspaceMount {
-	return workerWorkspaceMountFromFields(workerWorkspaceMountFields{
-		id:                     row.ID,
-		orgID:                  row.OrgID,
-		projectID:              row.ProjectID,
-		environmentID:          row.EnvironmentID,
-		workspaceID:            row.WorkspaceID,
-		deploymentSandboxID:    row.DeploymentSandboxID,
-		baseVersionID:          row.BaseVersionID,
-		runtimeInstanceID:      row.RuntimeInstanceID,
-		runtimeEpoch:           row.WorkerEpoch,
-		networkSlotID:          row.NetworkSlotID,
-		networkSlotGeneration:  row.NetworkSlotGeneration,
-		guestdChannelTokenHash: row.GuestdChannelTokenHash,
-		state:                  row.State,
-		runtimeID:              row.RuntimeID,
-		sandboxImageArtifact: api.CASObject{
-			Digest:    row.ImageDigest,
-			SizeBytes: row.ImageArtifactSizeBytes,
+func (s *Server) workspaceMountTransition(
+	ctx context.Context,
+	rawOrgID string,
+	rawMountID string,
+) (workspaceMountTransitionAuthority, error) {
+	orgID, mountID, err := parseWorkspaceWorkerIDs(rawOrgID, rawMountID)
+	if err != nil {
+		return workspaceMountTransitionAuthority{}, err
+	}
+	worker := workerFromContext(ctx)
+	mount, err := s.db.GetWorkspaceMountForWorkerTransition(
+		ctx,
+		db.GetWorkspaceMountForWorkerTransitionParams{
+			OrgID: orgID, ID: mountID,
+			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerEpoch:      worker.WorkerEpoch,
+		},
+	)
+	if err != nil {
+		return workspaceMountTransitionAuthority{}, err
+	}
+	return workspaceMountTransitionAuthority{
+		orgID: orgID, workerID: pgvalue.UUID(worker.WorkerInstanceID),
+		epoch: worker.WorkerEpoch, mount: mount,
+	}, nil
+}
+
+func parseWorkspaceWorkerIDs(rawOrgID, rawMountID string) (pgtype.UUID, pgtype.UUID, error) {
+	orgID, err := ids.Parse(rawOrgID)
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, badRequest(errors.New("org_id must be a canonical UUIDv7"))
+	}
+	mountID, err := ids.Parse(rawMountID)
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, badRequest(errors.New("workspace_mount_id must be a canonical UUIDv7"))
+	}
+	return pgvalue.UUID(orgID), pgvalue.UUID(mountID), nil
+}
+
+func guestChannelTokenHash(value string) string {
+	return sha256sum.HexBytes([]byte(strings.TrimSpace(value)))
+}
+
+func workspaceMountResponse(row db.WorkspaceMount) api.WorkspaceMountResponse {
+	response := api.WorkspaceMountResponse{
+		ID:               pgvalue.MustUUIDValue(row.ID).String(),
+		ProjectID:        pgvalue.MustUUIDValue(row.ProjectID).String(),
+		EnvironmentID:    pgvalue.MustUUIDValue(row.EnvironmentID).String(),
+		WorkspaceID:      pgvalue.MustUUIDValue(row.WorkspaceID).String(),
+		BaseVersionID:    pgvalue.MustUUIDValue(row.MaterializedVersionID).String(),
+		WorkerInstanceID: pgvalue.MustUUIDValue(row.WorkerInstanceID).String(),
+		State:            string(row.State), ClaimAttempt: row.ClaimAttempt,
+		FencingGeneration:    row.FencingGeneration,
+		DirtyGeneration:      row.DirtyGeneration,
+		FinalizationKind:     row.FinalizationKind.String,
+		ReservationExpiresAt: pgTime(row.GuestChannelTokenExpiresAt),
+		LastHeartbeatAt:      pgTime(row.UpdatedAt),
+		CreatedAt:            row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
+	}
+	return response
+}
+
+func pgTime(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	result := value.Time
+	return &result
+}
+
+func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) *api.WorkerWorkspaceMount {
+	return &api.WorkerWorkspaceMount{
+		ID:                     pgvalue.MustUUIDValue(row.ID).String(),
+		OrgID:                  pgvalue.MustUUIDValue(row.OrgID).String(),
+		ProjectID:              pgvalue.MustUUIDValue(row.ProjectID).String(),
+		EnvironmentID:          pgvalue.MustUUIDValue(row.EnvironmentID).String(),
+		WorkspaceID:            pgvalue.MustUUIDValue(row.WorkspaceID).String(),
+		DeploymentDefinitionID: pgvalue.MustUUIDValue(row.DeploymentDefinitionID).String(),
+		BaseVersionID:          pgvalue.MustUUIDValue(row.MaterializedVersionID).String(),
+		RuntimeInstanceID:      pgvalue.MustUUIDValue(row.RuntimeInstanceID).String(),
+		RuntimeEpoch:           row.WorkerEpoch,
+		GuestdChannelTokenHash: row.GuestChannelTokenHash,
+		State:                  string(row.State), RuntimeIdentityID: row.RuntimeID,
+		WorkspaceImage: api.CASObject{
+			Digest: row.ImageArtifactDigest, SizeBytes: row.ImageArtifactSizeBytes,
 			MediaType: row.ImageArtifactMediaType,
 		},
-		sandboxImageArtifactFormat: row.ImageArtifactFormat,
-		rootfsDigest:               row.RootfsDigest,
-		imageDigest:                row.ImageDigest,
-		imageFormat:                row.ImageFormat,
-		workspaceArtifact: api.WorkerWorkspaceArtifact{
+		RootfsDigest: row.RootfsDigest,
+		WorkspaceArtifact: api.WorkerWorkspaceArtifact{
 			Digest:     row.WorkspaceArtifactDigest,
 			MediaType:  row.WorkspaceArtifactMediaType,
-			Encoding:   row.WorkspaceArtifactEncoding,
+			Encoding:   workspace.ArtifactEncoding,
 			SizeBytes:  row.WorkspaceArtifactSizeBytes,
-			EntryCount: row.WorkspaceArtifactEntryCount,
+			EntryCount: row.WorkspaceEntryCount,
 		},
-		workspaceMountPath:      row.WorkspaceMountPath,
-		requestedMilliCPU:       row.ReservedCpuMillis,
-		requestedMemoryMiB:      row.ReservedMemoryBytes / (1024 * 1024),
-		requestedDiskMiB:        row.ReservedWorkloadDiskBytes / (1024 * 1024),
-		requestedExecutionSlots: row.ReservedExecutionSlots,
-		runtimeABI:              row.RuntimeABI,
-		guestdABI:               row.GuestdAbi,
-		adapterABI:              row.AdapterAbi,
-		fencingGeneration:       row.FencingGeneration,
-		expiresAt:               row.GuestdChannelTokenExpiresAt.Time,
-	})
-}
-
-func workerWorkspaceMountFromFields(fields workerWorkspaceMountFields) *api.WorkerWorkspaceMount {
-	mount := &api.WorkerWorkspaceMount{
-		ID:                         pgvalue.MustUUIDValue(fields.id).String(),
-		OrgID:                      pgvalue.MustUUIDValue(fields.orgID).String(),
-		ProjectID:                  pgvalue.MustUUIDValue(fields.projectID).String(),
-		EnvironmentID:              pgvalue.MustUUIDValue(fields.environmentID).String(),
-		WorkspaceID:                pgvalue.MustUUIDValue(fields.workspaceID).String(),
-		DeploymentSandboxID:        pgvalue.MustUUIDValue(fields.deploymentSandboxID).String(),
-		RuntimeInstanceID:          pgvalue.UUIDString(fields.runtimeInstanceID),
-		RuntimeEpoch:               fields.runtimeEpoch,
-		NetworkSlotID:              pgvalue.UUIDString(fields.networkSlotID),
-		NetworkSlotGeneration:      fields.networkSlotGeneration,
-		GuestdChannelTokenHash:     fields.guestdChannelTokenHash,
-		State:                      string(fields.state),
-		RuntimeID:                  fields.runtimeID,
-		SandboxImageArtifact:       fields.sandboxImageArtifact,
-		SandboxImageArtifactFormat: fields.sandboxImageArtifactFormat,
-		RootfsDigest:               fields.rootfsDigest,
-		ImageDigest:                fields.imageDigest,
-		ImageFormat:                fields.imageFormat,
-		WorkspaceArtifact:          fields.workspaceArtifact,
-		WorkspaceMountPath:         fields.workspaceMountPath,
-		RequestedMilliCPU:          fields.requestedMilliCPU,
-		RequestedMemoryMiB:         fields.requestedMemoryMiB,
-		RequestedDiskMiB:           fields.requestedDiskMiB,
-		RequestedExecutionSlots:    fields.requestedExecutionSlots,
-		RuntimeABI:                 fields.runtimeABI,
-		GuestdABI:                  fields.guestdABI,
-		AdapterABI:                 fields.adapterABI,
-		FencingGeneration:          fields.fencingGeneration,
-		ExpiresAt:                  fields.expiresAt,
+		WorkspaceMountPath:      "/workspace",
+		RequestedMilliCPU:       row.ReservedCpuMillis,
+		RequestedMemoryMiB:      row.ReservedMemoryBytes / (1024 * 1024),
+		RequestedDiskMiB:        row.ReservedGuestEphemeralDiskBytes / (1024 * 1024),
+		RequestedExecutionSlots: row.ReservedExecutionSlots,
+		RuntimeABI:              row.RuntimeABI,
+		FencingGeneration:       row.FencingGeneration,
+		ExpiresAt:               row.GuestChannelTokenExpiresAt.Time,
 	}
-	if fields.baseVersionID.Valid {
-		mount.BaseVersionID = pgvalue.MustUUIDValue(fields.baseVersionID).String()
-	}
-	return mount
 }
