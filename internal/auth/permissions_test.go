@@ -97,8 +97,8 @@ func TestActorInputPermissionIsWritableButNotReadableRoleAuthority(t *testing.T)
 	if RoleAllows(RoleViewer, PermissionActorsInputSend) {
 		t.Fatal("viewer should not be allowed to send Actor input")
 	}
-	normalized := normalizeAPIKeyGrantPermission(string(PermissionActorsInputSend))
-	if len(normalized) != 1 || normalized[0] != PermissionActorsInputSend {
+	normalized, ok := ParseAPIKeyGrant(string(PermissionActorsInputSend))
+	if !ok || normalized != PermissionActorsInputSend {
 		t.Fatalf("normalized Actor input permission = %v", normalized)
 	}
 }
@@ -110,8 +110,8 @@ func TestActorStartPermissionIsWritableButNotReadableRoleAuthority(t *testing.T)
 	if RoleAllows(RoleViewer, PermissionActorsStart) {
 		t.Fatal("viewer should not be allowed to start an Actor")
 	}
-	normalized := normalizeAPIKeyGrantPermission(string(PermissionActorsStart))
-	if len(normalized) != 1 || normalized[0] != PermissionActorsStart {
+	normalized, ok := ParseAPIKeyGrant(string(PermissionActorsStart))
+	if !ok || normalized != PermissionActorsStart {
 		t.Fatalf("normalized Actor start permission = %v", normalized)
 	}
 }
@@ -122,8 +122,8 @@ func TestActorReadPermissionAllowsReadOnlyRoles(t *testing.T) {
 			t.Fatalf("%s should be allowed to read Actors", role)
 		}
 	}
-	normalized := normalizeAPIKeyGrantPermission(string(PermissionActorsRead))
-	if len(normalized) != 1 || normalized[0] != PermissionActorsRead {
+	normalized, ok := ParseAPIKeyGrant(string(PermissionActorsRead))
+	if !ok || normalized != PermissionActorsRead {
 		t.Fatalf("normalized Actor read permission = %v", normalized)
 	}
 }

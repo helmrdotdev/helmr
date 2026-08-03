@@ -42,7 +42,7 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		Log:                   log,
 		DB:                    store,
 		TX:                    panicTxBeginner{},
-		Auth:                  auth.NewDBAuthenticator(store),
+		Auth:                  control.NewDBAuthenticator(store),
 		WorkerEnrollment:      controltestWorkerEnrollmentVerifier(),
 		SecretDelivery:        controltestSecretDeliveryOpener{},
 		RegistryCredentials:   controltestRegistryCredentialOpener{},

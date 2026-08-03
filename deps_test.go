@@ -56,7 +56,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"actor":              {"db", "ids", "outbox", "pgvalue", "run", "secret", "tracing"},
 		"api":                {"archive", "ids", "jsoncanon"},
 		"archive":            {"safepath", "sha256sum"},
-		"auth":               {"db", "ids", "pgvalue", "token", "workerapi"},
+		"auth":               {"ids", "token", "workerapi"},
 		"buildkit":           {"imagebuild", "safepath"},
 		"capacity":           {},
 		"cas":                {"archive"},
@@ -133,14 +133,16 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 	}
 
 	for source, targets := range map[string][]string{
-		"api":       {"workerapi"},
-		"frameio":   {"api", "db", "proto/run/v0", "wire"},
-		"wire":      {"api", "control", "db", "executor", "guestd", "workspace"},
-		"guestd":    {"control", "db", "executor"},
-		"workspace": {"api", "control", "db", "executor", "guestd", "pgvalue", "wire"},
-		"control":   {"executor", "firecracker", "guestd"},
-		"secret":    {"run"},
-		"workerapi": {"control", "db", "firecracker", "imagecache/ecr"},
+		"api":        {"workerapi"},
+		"auth":       {"db"},
+		"enrollment": {"control", "db"},
+		"frameio":    {"api", "db", "proto/run/v0", "wire"},
+		"wire":       {"api", "control", "db", "executor", "guestd", "workspace"},
+		"guestd":     {"control", "db", "executor"},
+		"workspace":  {"api", "control", "db", "executor", "guestd", "pgvalue", "wire"},
+		"control":    {"executor", "firecracker", "guestd"},
+		"secret":     {"run"},
+		"workerapi":  {"control", "db", "firecracker", "imagecache/ecr"},
 	} {
 		for _, target := range targets {
 			if slices.Contains(actual[source], target) {

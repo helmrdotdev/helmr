@@ -217,7 +217,7 @@ func main() {
 		DB:                    queries,
 		TX:                    pool,
 		ReadinessDB:           pool,
-		Auth:                  auth.NewDBAuthenticator(queries),
+		Auth:                  control.NewDBAuthenticator(queries),
 		CAS:                   casStore,
 		BuildPolicy:           buildPolicy,
 		Secrets:               secretStore,

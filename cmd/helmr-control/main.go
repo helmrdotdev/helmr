@@ -15,7 +15,6 @@ import (
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awsecr "github.com/aws/aws-sdk-go-v2/service/ecr"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
@@ -243,7 +242,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		DB:                    queries,
 		TX:                    pool,
 		ReadinessDB:           pool,
-		Auth:                  auth.NewDBAuthenticator(queries),
+		Auth:                  control.NewDBAuthenticator(queries),
 		CAS:                   casStore,
 		BuildPolicy:           buildPolicy,
 		PlatformStore:         platformStore,
