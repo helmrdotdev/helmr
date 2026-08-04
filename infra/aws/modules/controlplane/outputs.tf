@@ -14,7 +14,7 @@ output "cas_bucket_name" {
 }
 
 output "cas_uri" {
-  description = "CAS URI for HELMR_CAS_URI."
+  description = "CAS URI for CAS_URI."
   value       = "s3://${aws_s3_bucket.cas.bucket}"
 }
 

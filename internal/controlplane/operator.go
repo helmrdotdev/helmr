@@ -38,7 +38,6 @@ var operatorInstanceStates = map[string]struct{}{
 }
 
 func hashOperatorToken(raw string) ([]byte, error) {
-	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
 	}

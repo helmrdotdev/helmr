@@ -124,10 +124,10 @@ run "deployment_owns_protected_capacity" {
   assert {
     condition = (
       strcontains(base64decode(aws_launch_template.worker.user_data), "ExecStart=helmr-worker") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS=[\"10.0.0.0/8\",\"169.254.0.0/16\"]") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_NETWORK_LINK_POOL=169.254.64.0/18") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_NETWORK_RESOLVER_IPV4=10.20.0.2") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_NETWORK_TRANSLATION_POOL=100.96.0.0/16")
+      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_NETWORK_BLOCKED_IPV4_CIDRS=[\"10.0.0.0/8\",\"169.254.0.0/16\"]") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_NETWORK_LINK_POOL=169.254.64.0/18") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_NETWORK_RESOLVER_IPV4=10.20.0.2") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_NETWORK_TRANSLATION_POOL=100.96.0.0/16")
     )
     error_message = "worker user data must receive the complete generic routed-network configuration"
   }
@@ -135,22 +135,21 @@ run "deployment_owns_protected_capacity" {
   assert {
     condition = (
       strcontains(base64decode(aws_launch_template.worker.user_data), var.secret_arns.worker_enrollment) &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_ENROLLMENT_SECRET_FILE=%s") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_ENROLLMENT_SECRET_FILE=%s") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "/run/helmr/worker-enrollment-secret") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-worker-enrollment-secret.service") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "Wants=helmr-worker-enrollment-secret.service") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "After=helmr-worker-enrollment-secret.service") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "Restart=on-failure") &&
       !strcontains(base64decode(aws_launch_template.worker.user_data), "Requires=helmr-worker-enrollment-secret.service") &&
-      !strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_ENROLLMENT_SECRET=%s") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_RESOURCE_ID=%s") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_RESOURCE_ID=%s") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "meta-data/instance-id")
     )
     error_message = "worker bootstrap must refresh the volatile group secret without making an existing credential depend on the secret store, and report only an opaque host locator"
   }
 
   assert {
-    condition     = strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_DISK_RESERVE_MIB=1024")
+    condition     = strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_DISK_RESERVE_MIB=1024")
     error_message = "worker user data must pin the disk reserve used by configured capacity math"
   }
 
@@ -199,25 +198,25 @@ run "deployment_owns_protected_capacity" {
 
   assert {
     condition = (
-      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_PLATFORM_STORE_URI=s3://helmr-test-runtime/objects") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "PLATFORM_STORE_URI=s3://helmr-test-runtime/objects") &&
       strcontains(aws_iam_role_policy.worker.policy, "${var.platform_store_bucket_arn}/objects/sha256/*") &&
       strcontains(aws_iam_role_policy.worker.policy, var.platform_store_kms_key_arn) &&
       !strcontains(aws_iam_role_policy.worker.policy, "CreatePlatformObjects") &&
       !strcontains(aws_iam_role_policy.worker.policy, "EncryptPlatformObjects") &&
       !strcontains(aws_iam_role_policy.worker.policy, "AssumeExecutionImageCacheRole") &&
-      !strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_IMAGE_CACHE_")
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "IMAGE_CACHE_")
     )
     error_message = "run-only workers must receive read-only Platform Artifact authority without image-cache config or IAM"
   }
 
   assert {
-    condition     = !strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_BUILD_POLICY_PATH") && !strcontains(base64decode(aws_launch_template.worker.user_data), "release install")
+    condition     = !strcontains(base64decode(aws_launch_template.worker.user_data), "BUILD_POLICY_PATH") && !strcontains(base64decode(aws_launch_template.worker.user_data), "release install")
     error_message = "run-only workers must not receive or install the current build policy"
   }
 
   assert {
     condition = (
-      !strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_BUILD_CACHE_DIR") &&
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_BUILD_CACHE_DIR") &&
       !strcontains(base64decode(aws_launch_template.worker.user_data), "build-cache.ext4") &&
       !strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-buildkit")
     )
@@ -272,7 +271,7 @@ run "build_worker_installs_exact_policy_before_service" {
 
   assert {
     condition = (
-      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_BUILD_POLICY_PATH=/etc/helmr/build-policy.json") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "BUILD_POLICY_PATH=/etc/helmr/build-policy.json") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "\"helmr-worker\" release install") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "--store 's3://helmr-test-runtime/objects'") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "--digest 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'") &&
@@ -304,8 +303,8 @@ run "build_worker_installs_exact_policy_before_service" {
       strcontains(base64decode(aws_launch_template.worker.user_data), "did not preserve its fixed reserve after build filesystem allocation") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "Options=loop,nosuid,nodev,nodiscard") &&
       !strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-buildkit") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_WORK_DIR=/var/lib/helmr/scratch/worker") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_WORKER_FIRECRACKER_CHROOT_DIR=/var/lib/helmr/scratch/jailer")
+      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_WORK_DIR=/var/lib/helmr/scratch/worker") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "JAILER_CHROOT_DIR=/var/lib/helmr/scratch/jailer")
     )
     error_message = "build workers must mount distinct fixed ext4 filesystems for Worker cache and image-build VM scratch without host BuildKit"
   }
@@ -324,7 +323,7 @@ run "build_worker_installs_exact_policy_before_service" {
         Resource = var.image_cache_role_arn
         Sid      = "AssumeExecutionImageCacheRole"
       } &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_IMAGE_CACHE_REPOSITORY_ARN_PREFIX=${var.image_cache_repository_arn_prefix}")
+      strcontains(base64decode(aws_launch_template.worker.user_data), "IMAGE_CACHE_REPOSITORY_ARN_PREFIX=${var.image_cache_repository_arn_prefix}")
     )
     error_message = "build Workers must receive the exact ECR cache config and independently allow only the exact cache role in their identity policy and mandatory boundary"
   }

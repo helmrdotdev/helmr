@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-url="${HELMR_CLICKHOUSE_URL:-http://127.0.0.1:8123}"
-user="${HELMR_CLICKHOUSE_USER:-default}"
-password="${HELMR_CLICKHOUSE_PASSWORD:-}"
+url="${CLICKHOUSE_URL:-http://127.0.0.1:8123}"
+user="${CLICKHOUSE_USER:-default}"
+password="${CLICKHOUSE_PASSWORD:-}"
 migration_dir="${HELMR_CLICKHOUSE_MIGRATIONS:-internal/clickhouse/schema/migrations}"
 
 curl_args=(-fsS --user "${user}:${password}")

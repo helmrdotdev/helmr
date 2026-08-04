@@ -51,6 +51,16 @@ func TestControlPlaneClientRejectsPlainHTTPNonLoopback(t *testing.T) {
 	}
 }
 
+func TestControlPlaneClientRejectsAPIKeyWhitespace(t *testing.T) {
+	t.Setenv(helmrAPIURLEnv, "https://helmr.example")
+	t.Setenv(helmrAPIKeyEnv, " test-key")
+
+	_, err := controlPlaneClient(nil)
+	if err == nil || !strings.Contains(err.Error(), "must not have surrounding whitespace") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestControlPlaneClientRejectsURLQueryAndFragment(t *testing.T) {
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 	for _, raw := range []string{"https://helmr.example?x=1", "https://helmr.example/#fragment"} {

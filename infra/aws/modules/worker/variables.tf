@@ -292,12 +292,12 @@ variable "build_scratch_mib" {
 }
 
 variable "worker_controlplane_url" {
-  description = "Worker-facing control-plane API URL for HELMR_CONTROLPLANE_URL. Prefer a private DNS name that matches the HTTPS certificate."
+  description = "Worker-facing control-plane API URL for CONTROL_PLANE_URL. Prefer a private DNS name that matches the HTTPS certificate."
   type        = string
 }
 
 variable "cas_uri" {
-  description = "CAS URI for HELMR_CAS_URI."
+  description = "CAS URI for CAS_URI."
   type        = string
 }
 

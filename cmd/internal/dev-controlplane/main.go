@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -294,26 +295,30 @@ type devConfig struct {
 
 func loadConfig() (devConfig, error) {
 	cfg := devConfig{
-		addr:               env("HELMR_CONTROLPLANE_ADDR", defaultAddr),
-		deploymentMode:     env("HELMR_DEPLOYMENT_MODE", "self-hosted"),
-		databaseURL:        os.Getenv("HELMR_DATABASE_URL"),
-		regionID:           strings.TrimSpace(os.Getenv("HELMR_REGION_ID")),
-		defaultRegionID:    strings.TrimSpace(os.Getenv("HELMR_DEFAULT_REGION_ID")),
-		provider:           strings.TrimSpace(os.Getenv("HELMR_PROVIDER")),
-		providerRegion:     strings.TrimSpace(os.Getenv("HELMR_PROVIDER_REGION")),
-		regionDisplayName:  strings.TrimSpace(os.Getenv("HELMR_REGION_DISPLAY_NAME")),
-		clickHouseURL:      strings.TrimSpace(os.Getenv("HELMR_CLICKHOUSE_URL")),
-		clickHouseUser:     strings.TrimSpace(os.Getenv("HELMR_CLICKHOUSE_USER")),
-		clickHousePassword: os.Getenv("HELMR_CLICKHOUSE_PASSWORD"),
-		redisURL:           env("HELMR_REDIS_URL", defaultRedisURL),
-		casDir:             env("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
-		buildPolicyPath:    strings.TrimSpace(os.Getenv("HELMR_BUILD_POLICY_PATH")),
-		publicURL:          env("HELMR_PUBLIC_URL", defaultPublicURL),
-		setupToken:         env("HELMR_SETUP_TOKEN", defaultSetupToken),
-		resetDatabase:      envBool("HELMR_DEV_RESET_DATABASE"),
-		seedData:           envBoolDefault("HELMR_DEV_SEED_DATA", true),
+		addr:               textEnv("CONTROL_PLANE_ADDR", defaultAddr),
+		deploymentMode:     textEnv("DEPLOYMENT_MODE", "self-hosted"),
+		databaseURL:        textEnv("DATABASE_URL", ""),
+		regionID:           textEnv("REGION_ID", ""),
+		defaultRegionID:    textEnv("DEFAULT_REGION_ID", ""),
+		provider:           textEnv("PROVIDER", ""),
+		providerRegion:     textEnv("PROVIDER_REGION", ""),
+		regionDisplayName:  textEnv("REGION_DISPLAY_NAME", ""),
+		clickHouseURL:      textEnv("CLICKHOUSE_URL", ""),
+		clickHouseUser:     textEnv("CLICKHOUSE_USER", ""),
+		clickHousePassword: secretEnv("CLICKHOUSE_PASSWORD", ""),
+		redisURL:           textEnv("REDIS_URL", defaultRedisURL),
+		casDir:             textEnv("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
+		buildPolicyPath:    textEnv("BUILD_POLICY_PATH", ""),
+		publicURL:          textEnv("PUBLIC_URL", defaultPublicURL),
+		setupToken:         secretEnv("SETUP_TOKEN", defaultSetupToken),
 	}
 	var err error
+	if cfg.resetDatabase, err = boolEnv("HELMR_DEV_RESET_DATABASE", false); err != nil {
+		return cfg, err
+	}
+	if cfg.seedData, err = boolEnv("HELMR_DEV_SEED_DATA", true); err != nil {
+		return cfg, err
+	}
 	for _, key := range []struct {
 		name     string
 		fallback string
@@ -325,44 +330,46 @@ func loadConfig() (devConfig, error) {
 		{name: "WORKSPACE_FENCING_KEY", fallback: defaultWorkspaceFencingKey, target: &cfg.workspaceFencingKey},
 		{name: "TOKEN_CREDENTIAL_KEY", fallback: defaultTokenCredentialKey, target: &cfg.tokenCredentialKey},
 	} {
-		*key.target, err = decodeRootKey(key.name, env(key.name, key.fallback))
+		*key.target, err = decodeRootKey(key.name, secretEnv(key.name, key.fallback))
 		if err != nil {
 			return cfg, err
 		}
 	}
 	if cfg.databaseURL == "" {
-		return cfg, errors.New("HELMR_DATABASE_URL is required")
+		return cfg, errors.New("DATABASE_URL is required")
+	}
+	if strings.TrimSpace(cfg.setupToken) != cfg.setupToken {
+		return cfg, errors.New("SETUP_TOKEN must not have surrounding whitespace")
 	}
 	if cfg.buildPolicyPath == "" {
-		return cfg, errors.New("HELMR_BUILD_POLICY_PATH is required")
+		return cfg, errors.New("BUILD_POLICY_PATH is required")
 	}
 	if cfg.regionID == "" {
-		return cfg, errors.New("HELMR_REGION_ID is required")
+		return cfg, errors.New("REGION_ID is required")
 	}
 	if cfg.defaultRegionID == "" {
-		return cfg, errors.New("HELMR_DEFAULT_REGION_ID is required")
+		return cfg, errors.New("DEFAULT_REGION_ID is required")
 	}
 	if cfg.provider == "" {
-		return cfg, errors.New("HELMR_PROVIDER is required")
+		return cfg, errors.New("PROVIDER is required")
 	}
 	if cfg.providerRegion == "" {
-		return cfg, errors.New("HELMR_PROVIDER_REGION is required")
+		return cfg, errors.New("PROVIDER_REGION is required")
 	}
 	if cfg.regionDisplayName == "" {
 		cfg.regionDisplayName = cfg.regionID
 	}
-	cfg.workerGroups, err = workergroup.DecodeConfig(strings.TrimSpace(os.Getenv("HELMR_WORKER_GROUPS")))
+	cfg.workerGroups, err = workergroup.DecodeConfig(strings.TrimSpace(os.Getenv("WORKER_GROUPS")))
 	if err != nil {
-		return cfg, fmt.Errorf("HELMR_WORKER_GROUPS: %w", err)
+		return cfg, fmt.Errorf("WORKER_GROUPS: %w", err)
 	}
 	if cfg.clickHouseURL == "" {
-		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")
+		return cfg, errors.New("CLICKHOUSE_URL is required")
 	}
 	return cfg, nil
 }
 
 func decodeRootKey(name, encoded string) ([]byte, error) {
-	encoded = strings.TrimSpace(encoded)
 	key, err := base64.StdEncoding.Strict().DecodeString(encoded)
 	if err != nil {
 		return nil, fmt.Errorf("%s must be base64: %w", name, err)
@@ -376,24 +383,30 @@ func decodeRootKey(name, encoded string) ([]byte, error) {
 	return key, nil
 }
 
-func env(name string, fallback string) string {
+func textEnv(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func secretEnv(name, fallback string) string {
 	if value := os.Getenv(name); value != "" {
 		return value
 	}
 	return fallback
 }
 
-func envBool(name string) bool {
-	value := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
-	return value == "1" || value == "true" || value == "yes"
-}
-
-func envBoolDefault(name string, fallback bool) bool {
-	value := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+func boolEnv(name string, fallback bool) (bool, error) {
+	value := strings.TrimSpace(os.Getenv(name))
 	if value == "" {
-		return fallback
+		return fallback, nil
 	}
-	return value == "1" || value == "true" || value == "yes"
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean: %w", name, err)
+	}
+	return parsed, nil
 }
 
 func migrate(ctx context.Context, pool *pgxpool.Pool, reset bool) error {

@@ -167,38 +167,38 @@ func workerCredentialPath(workDir string, configured string) string {
 func readWorkerEnrollmentSecret(path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return "", errors.New("HELMR_WORKER_ENROLLMENT_SECRET_FILE is required for worker enrollment")
+		return "", errors.New("WORKER_ENROLLMENT_SECRET_FILE is required for worker enrollment")
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
-		return "", fmt.Errorf("read HELMR_WORKER_ENROLLMENT_SECRET_FILE: %w", err)
+		return "", fmt.Errorf("read WORKER_ENROLLMENT_SECRET_FILE: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", errors.New("HELMR_WORKER_ENROLLMENT_SECRET_FILE must be a regular file")
+		return "", errors.New("WORKER_ENROLLMENT_SECRET_FILE must be a regular file")
 	}
 	if permissions := info.Mode().Perm(); permissions != 0o400 && permissions != 0o600 {
-		return "", errors.New("HELMR_WORKER_ENROLLMENT_SECRET_FILE must have mode 0400 or 0600")
+		return "", errors.New("WORKER_ENROLLMENT_SECRET_FILE must have mode 0400 or 0600")
 	}
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
-		return "", fmt.Errorf("open HELMR_WORKER_ENROLLMENT_SECRET_FILE without following links: %w", err)
+		return "", fmt.Errorf("open WORKER_ENROLLMENT_SECRET_FILE without following links: %w", err)
 	}
 	file := os.NewFile(uintptr(fd), path)
 	defer file.Close()
 	opened, err := file.Stat()
 	if err != nil {
-		return "", fmt.Errorf("inspect HELMR_WORKER_ENROLLMENT_SECRET_FILE: %w", err)
+		return "", fmt.Errorf("inspect WORKER_ENROLLMENT_SECRET_FILE: %w", err)
 	}
 	if !opened.Mode().IsRegular() || opened.Mode().Perm() != info.Mode().Perm() {
-		return "", errors.New("HELMR_WORKER_ENROLLMENT_SECRET_FILE changed type or permissions while opening")
+		return "", errors.New("WORKER_ENROLLMENT_SECRET_FILE changed type or permissions while opening")
 	}
 	secretBytes, err := io.ReadAll(file)
 	if err != nil {
-		return "", fmt.Errorf("read HELMR_WORKER_ENROLLMENT_SECRET_FILE: %w", err)
+		return "", fmt.Errorf("read WORKER_ENROLLMENT_SECRET_FILE: %w", err)
 	}
 	secret := string(secretBytes)
 	if err := enrollment.ValidateSecret(secret); err != nil {
-		return "", fmt.Errorf("HELMR_WORKER_ENROLLMENT_SECRET_FILE: %w", err)
+		return "", fmt.Errorf("WORKER_ENROLLMENT_SECRET_FILE: %w", err)
 	}
 	return secret, nil
 }

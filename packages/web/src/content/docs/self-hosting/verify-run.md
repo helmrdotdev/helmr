@@ -13,7 +13,7 @@ After the Control Plane and dispatcher services are ready and at least one Worke
 Log in to the Control Plane URL:
 
 ```sh
-helmr login "$CONTROLPLANE_URL"
+helmr login "$CONTROL_PLANE_URL"
 ```
 
 Deploy the task project from a local checkout:

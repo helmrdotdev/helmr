@@ -207,26 +207,25 @@ run "controlplane_installs_exact_policy_before_start" {
 
   assert {
     condition = (
-      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.HELMR_BUILD_POLICY_PATH == "/release/build-policy.json" &&
-      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.HELMR_PLATFORM_STORE_URI == var.platform_store_uri &&
-      !contains([for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name], "HELMR_RETAINED_CAS_URI")
+      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.BUILD_POLICY_PATH == "/release/build-policy.json" &&
+      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.PLATFORM_STORE_URI == var.platform_store_uri
     )
     error_message = "Only the main Control Plane container must load the installed policy and immutable Platform Artifact store."
   }
 
   assert {
     condition = (
-      jsondecode({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.HELMR_WORKER_GROUPS)[0].id == "run-workers" &&
-      jsondecode({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.HELMR_WORKER_GROUPS)[0].enrollment_secret_env == "HELMR_WORKER_ENROLLMENT_SECRET_${upper(substr(sha256("run-workers"), 0, 16))}" &&
+      jsondecode({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.WORKER_GROUPS)[0].id == "run-workers" &&
+      jsondecode({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.WORKER_GROUPS)[0].enrollment_secret_env == "WORKER_GROUP_ENROLLMENT_SECRET_${upper(substr(sha256("run-workers"), 0, 16))}" &&
       contains(
         [for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].secrets : item.name],
-        "HELMR_WORKER_ENROLLMENT_SECRET_${upper(substr(sha256("run-workers"), 0, 16))}"
+        "WORKER_GROUP_ENROLLMENT_SECRET_${upper(substr(sha256("run-workers"), 0, 16))}"
       ) &&
-      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.HELMR_WORKER_GROUPS, "account_id") &&
-      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.HELMR_WORKER_GROUPS, "region") &&
-      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.HELMR_WORKER_GROUPS, "autoscaling_group") &&
-      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.HELMR_WORKER_GROUPS, "ami") &&
-      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.HELMR_WORKER_GROUPS, "instance_profile")
+      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.WORKER_GROUPS, "account_id") &&
+      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.WORKER_GROUPS, "region") &&
+      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.WORKER_GROUPS, "autoscaling_group") &&
+      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.WORKER_GROUPS, "ami") &&
+      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.WORKER_GROUPS, "instance_profile")
     )
     error_message = "Worker Group configuration must remain logical and resolve enrollment authority only through its deployment-injected secret."
   }
@@ -245,18 +244,18 @@ run "controlplane_installs_exact_policy_before_start" {
 
   assert {
     condition = (
-      !contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name], "HELMR_BUILD_POLICY_PATH") &&
-      !contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name], "HELMR_PLATFORM_STORE_URI") &&
-      !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "HELMR_BUILD_POLICY_PATH") &&
-      !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "HELMR_PLATFORM_STORE_URI")
+      !contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name], "BUILD_POLICY_PATH") &&
+      !contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name], "PLATFORM_STORE_URI") &&
+      !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "BUILD_POLICY_PATH") &&
+      !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "PLATFORM_STORE_URI")
     )
     error_message = "Dispatcher and migration must not receive build policy configuration."
   }
 
   assert {
     condition = (
-      toset([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name]) == toset(["HELMR_CLICKHOUSE_URL"]) &&
-      toset([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].secrets : item.name]) == toset(["HELMR_DATABASE_URL"])
+      toset([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name]) == toset(["CLICKHOUSE_URL"]) &&
+      toset([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].secrets : item.name]) == toset(["DATABASE_URL"])
     )
     error_message = "Migration must receive only PostgreSQL and ClickHouse migration configuration, without Control Plane region or Worker configuration."
   }
@@ -304,11 +303,11 @@ run "operator_api_credential_is_explicit_composition" {
     condition = (
       contains(
         [for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].secrets : item.name],
-        "HELMR_OPERATOR_TOKEN"
+        "OPERATOR_TOKEN"
       ) &&
       !contains(
         [for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].secrets : item.name],
-        "HELMR_OPERATOR_TOKEN"
+        "OPERATOR_TOKEN"
       )
     )
     error_message = "only Control Plane receives the externally composed deployment-operator credential"
@@ -320,7 +319,7 @@ run "operator_api_credential_rejects_plaintext_environment" {
 
   variables {
     controlplane_environment = {
-      HELMR_OPERATOR_TOKEN = "plaintext-must-not-enter-task-definition"
+      OPERATOR_TOKEN = "plaintext-must-not-enter-task-definition"
     }
   }
 
@@ -332,13 +331,13 @@ run "workspace_image_cache_is_exact_and_controlplane_only" {
 
   assert {
     condition = (
-      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.HELMR_IMAGE_CACHE_REGISTRY_AUTHORITY == "000000000000.dkr.ecr.us-east-1.amazonaws.com" &&
-      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.HELMR_IMAGE_CACHE_REPOSITORY_PREFIX == "helmr-test/image-cache" &&
-      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.HELMR_IMAGE_CACHE_ROLE_ARN == "arn:aws:iam::000000000000:role/helmr-test-image-cache" &&
-      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.HELMR_IMAGE_CACHE_REPOSITORY_ARN_PREFIX == "arn:aws:ecr:us-east-1:000000000000:repository/helmr-test/image-cache/" &&
-      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.HELMR_WORKER_GROUPS, "instance_role_arn") &&
-      !contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name], "HELMR_IMAGE_CACHE_ROLE_ARN") &&
-      !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "HELMR_IMAGE_CACHE_ROLE_ARN")
+      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.IMAGE_CACHE_REGISTRY_AUTHORITY == "000000000000.dkr.ecr.us-east-1.amazonaws.com" &&
+      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.IMAGE_CACHE_REPOSITORY_PREFIX == "helmr-test/image-cache" &&
+      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.IMAGE_CACHE_ROLE_ARN == "arn:aws:iam::000000000000:role/helmr-test-image-cache" &&
+      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.IMAGE_CACHE_REPOSITORY_ARN_PREFIX == "arn:aws:ecr:us-east-1:000000000000:repository/helmr-test/image-cache/" &&
+      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.WORKER_GROUPS, "instance_role_arn") &&
+      !contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name], "IMAGE_CACHE_ROLE_ARN") &&
+      !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "IMAGE_CACHE_ROLE_ARN")
     )
     error_message = "only Control Plane must receive the complete exact Execution image-cache configuration"
   }

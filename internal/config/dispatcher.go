@@ -11,11 +11,11 @@ func LoadDispatcher() (Dispatcher, error) {
 	const maxInt32 = int(1<<31 - 1)
 	var err error
 	cfg := Dispatcher{
-		DatabaseURL:           envString("HELMR_DATABASE_URL"),
-		RedisURL:              env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
-		ClickHouseURL:         envString("HELMR_CLICKHOUSE_URL"),
-		ClickHouseUser:        envString("HELMR_CLICKHOUSE_USER"),
-		ClickHousePassword:    envString("HELMR_CLICKHOUSE_PASSWORD"),
+		DatabaseURL:           envText("DATABASE_URL"),
+		RedisURL:              env("REDIS_URL", "redis://127.0.0.1:6379/0"),
+		ClickHouseURL:         envText("CLICKHOUSE_URL"),
+		ClickHouseUser:        envText("CLICKHOUSE_USER"),
+		ClickHousePassword:    envSecret("CLICKHOUSE_PASSWORD"),
 		RunPreparationLimit:   32,
 		RunReservationTTL:     5 * time.Minute,
 		RunLeaseStartDeadline: time.Minute,
@@ -25,28 +25,28 @@ func LoadDispatcher() (Dispatcher, error) {
 		ScheduleConcurrency:   10,
 		ScheduleClaimLease:    5 * time.Minute,
 	}
-	if cfg.SchedulePollInterval, err = envDuration("HELMR_SCHEDULE_POLL_INTERVAL", cfg.SchedulePollInterval); err != nil {
+	if cfg.SchedulePollInterval, err = envDuration("SCHEDULE_POLL_INTERVAL", cfg.SchedulePollInterval); err != nil {
 		return cfg, err
 	}
-	if cfg.ScheduleClaimLimit, err = envInt("HELMR_SCHEDULE_CLAIM_LIMIT", cfg.ScheduleClaimLimit); err != nil {
+	if cfg.ScheduleClaimLimit, err = envInt("SCHEDULE_CLAIM_LIMIT", cfg.ScheduleClaimLimit); err != nil {
 		return cfg, err
 	}
-	if cfg.ScheduleConcurrency, err = envInt("HELMR_SCHEDULE_CONCURRENCY", cfg.ScheduleConcurrency); err != nil {
+	if cfg.ScheduleConcurrency, err = envInt("SCHEDULE_CONCURRENCY", cfg.ScheduleConcurrency); err != nil {
 		return cfg, err
 	}
-	if cfg.ScheduleClaimLease, err = envDuration("HELMR_SCHEDULE_CLAIM_LEASE", cfg.ScheduleClaimLease); err != nil {
+	if cfg.ScheduleClaimLease, err = envDuration("SCHEDULE_CLAIM_LEASE", cfg.ScheduleClaimLease); err != nil {
 		return cfg, err
 	}
-	if cfg.RunPreparationLimit, err = envInt("HELMR_RUN_PREPARATION_LIMIT", cfg.RunPreparationLimit); err != nil {
+	if cfg.RunPreparationLimit, err = envInt("RUN_PREPARATION_LIMIT", cfg.RunPreparationLimit); err != nil {
 		return cfg, err
 	}
-	if cfg.RunReservationTTL, err = envDuration("HELMR_RUN_RESERVATION_TTL", cfg.RunReservationTTL); err != nil {
+	if cfg.RunReservationTTL, err = envDuration("RUN_RESERVATION_TTL", cfg.RunReservationTTL); err != nil {
 		return cfg, err
 	}
-	if cfg.RunLeaseStartDeadline, err = envDuration("HELMR_RUN_LEASE_START_DEADLINE", cfg.RunLeaseStartDeadline); err != nil {
+	if cfg.RunLeaseStartDeadline, err = envDuration("RUN_LEASE_START_DEADLINE", cfg.RunLeaseStartDeadline); err != nil {
 		return cfg, err
 	}
-	if cfg.RunLeaseTTL, err = envDuration("HELMR_RUN_LEASE_TTL", cfg.RunLeaseTTL); err != nil {
+	if cfg.RunLeaseTTL, err = envDuration("RUN_LEASE_TTL", cfg.RunLeaseTTL); err != nil {
 		return cfg, err
 	}
 	if cfg.SchedulePollInterval <= 0 || cfg.ScheduleClaimLimit <= 0 || cfg.ScheduleConcurrency <= 0 || cfg.ScheduleClaimLease <= 0 {
@@ -60,10 +60,10 @@ func LoadDispatcher() (Dispatcher, error) {
 		return cfg, errors.New("run preparation and lease settings are invalid")
 	}
 	if cfg.DatabaseURL == "" {
-		return cfg, errors.New("HELMR_DATABASE_URL is required")
+		return cfg, errors.New("DATABASE_URL is required")
 	}
 	if cfg.ClickHouseURL == "" {
-		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")
+		return cfg, errors.New("CLICKHOUSE_URL is required")
 	}
 	cfg.WorkspaceFencingKey, err = rootKey("WORKSPACE_FENCING_KEY")
 	if err != nil {

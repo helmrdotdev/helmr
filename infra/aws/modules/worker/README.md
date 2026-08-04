@@ -14,7 +14,7 @@ The AMI must provide:
 - Firecracker and jailer binaries
 - `/dev/kvm` capable instance support
 - `ip` and `nft` for the Worker-owned routed-TAP datapath
-- guest boot artifacts under `HELMR_WORKER_IMAGES_DIR`
+- guest boot artifacts under `WORKER_IMAGES_DIR`
 
 For cost-controlled smoke environments, set `enable_nested_virtualization = true` and use an AWS
 instance family that supports EC2 nested virtualization, such as C8i/M8i/R8i. Leave it disabled for
@@ -26,7 +26,7 @@ and mount fixed Worker-cache and image-build scratch ext4 filesystems; all untru
 execution stays inside the fresh image-build VM.
 
 `worker_environment` is only for additional non-secret worker variables. It cannot override
-infra-owned `HELMR_*` routing, storage, enrollment, Firecracker, image-cache, or network policy
+infra-owned routing, storage, enrollment, Firecracker, image-cache, or network policy
 settings; use the module inputs for those values.
 
 Size `root_volume_size_gb`, `root_volume_iops`, and `root_volume_throughput` for expected

@@ -109,31 +109,31 @@ check_linux() {
 		fail "/dev/kvm is missing; KVM or nested virtualization is not available"
 	fi
 
-	if [ -n "${HELMR_WORKER_FIRECRACKER_PATH:-}" ]; then
-		if [ -x "$HELMR_WORKER_FIRECRACKER_PATH" ]; then
-			ok "HELMR_WORKER_FIRECRACKER_PATH points to an executable"
+	if [ -n "${FIRECRACKER_PATH:-}" ]; then
+		if [ -x "$FIRECRACKER_PATH" ]; then
+			ok "FIRECRACKER_PATH points to an executable"
 		else
-			fail "HELMR_WORKER_FIRECRACKER_PATH is set but not executable: $HELMR_WORKER_FIRECRACKER_PATH"
+			fail "FIRECRACKER_PATH is set but not executable: $FIRECRACKER_PATH"
 		fi
 	else
-		warn "HELMR_WORKER_FIRECRACKER_PATH is unset; the worker will resolve firecracker from PATH"
+		warn "FIRECRACKER_PATH is unset; the worker will resolve firecracker from PATH"
 	fi
 
-	jailer_path=${HELMR_WORKER_FIRECRACKER_JAILER_PATH:-jailer}
+	jailer_path=${JAILER_PATH:-jailer}
 	if command -v "$jailer_path" >/dev/null 2>&1 || [ -x "$jailer_path" ]; then
 		ok "Firecracker jailer is available: $jailer_path"
 	else
 		fail "Firecracker jailer is missing or not executable: $jailer_path"
 	fi
-	if [ -n "${HELMR_WORKER_FIRECRACKER_JAILER_UID:-}" ] && [ "$HELMR_WORKER_FIRECRACKER_JAILER_UID" -gt 0 ] 2>/dev/null; then
+	if [ -n "${JAILER_UID:-}" ] && [ "$JAILER_UID" -gt 0 ] 2>/dev/null; then
 		ok "Firecracker jailer uid is configured"
 	else
-		fail "HELMR_WORKER_FIRECRACKER_JAILER_UID must be a positive integer"
+		fail "JAILER_UID must be a positive integer"
 	fi
-	if [ -n "${HELMR_WORKER_FIRECRACKER_JAILER_GID:-}" ] && [ "$HELMR_WORKER_FIRECRACKER_JAILER_GID" -gt 0 ] 2>/dev/null; then
+	if [ -n "${JAILER_GID:-}" ] && [ "$JAILER_GID" -gt 0 ] 2>/dev/null; then
 		ok "Firecracker jailer gid is configured"
 	else
-		fail "HELMR_WORKER_FIRECRACKER_JAILER_GID must be a positive integer"
+		fail "JAILER_GID must be a positive integer"
 	fi
 	ok "Firecracker built-in seccomp filter will be used"
 	if [ -d /sys/fs/cgroup ]; then
@@ -146,7 +146,7 @@ check_linux() {
 	else
 		fail "/dev/net/tun is missing; routed TAP setup requires tun support"
 	fi
-	for variable in HELMR_WORKER_NETWORK_LINK_POOL HELMR_WORKER_NETWORK_TRANSLATION_POOL HELMR_WORKER_NETWORK_RESOLVER_IPV4; do
+	for variable in WORKER_NETWORK_LINK_POOL WORKER_NETWORK_TRANSLATION_POOL WORKER_NETWORK_RESOLVER_IPV4; do
 		eval "value=\${$variable:-}"
 		if [ -n "$value" ]; then
 			ok "$variable is configured"
@@ -154,7 +154,7 @@ check_linux() {
 			fail "$variable is required for the routed network ABI"
 		fi
 	done
-	for command in "${HELMR_WORKER_IP_PATH:-ip}" "${HELMR_WORKER_NFT_PATH:-nft}"; do
+	for command in "${IP_PATH:-ip}" "${NFT_PATH:-nft}"; do
 		if command -v "$command" >/dev/null 2>&1 || [ -x "$command" ]; then
 			ok "routed network command is available: $command"
 		else

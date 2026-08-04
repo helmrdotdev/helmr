@@ -52,10 +52,10 @@ func (group Config) Prepare(lookupEnv func(string) (string, bool)) (Desired, enr
 		return Desired{}, enrollment.GroupSecret{}, errors.New("observation TTL must be positive")
 	}
 	if !validEnrollmentSecretEnv(group.EnrollmentSecretEnv) {
-		return Desired{}, enrollment.GroupSecret{}, errors.New("enrollment_secret_env must be a HELMR_WORKER_ENROLLMENT_SECRET_* environment variable")
+		return Desired{}, enrollment.GroupSecret{}, errors.New("enrollment_secret_env must be a WORKER_GROUP_ENROLLMENT_SECRET_* environment variable")
 	}
 	secret, ok := lookupEnv(group.EnrollmentSecretEnv)
-	if !ok {
+	if !ok || secret == "" {
 		return Desired{}, enrollment.GroupSecret{}, fmt.Errorf("%s is required", group.EnrollmentSecretEnv)
 	}
 	return Desired{
@@ -64,7 +64,7 @@ func (group Config) Prepare(lookupEnv func(string) (string, bool)) (Desired, enr
 }
 
 func validEnrollmentSecretEnv(name string) bool {
-	const prefix = "HELMR_WORKER_ENROLLMENT_SECRET_"
+	const prefix = "WORKER_GROUP_ENROLLMENT_SECRET_"
 	if !strings.HasPrefix(name, prefix) || len(name) == len(prefix) {
 		return false
 	}

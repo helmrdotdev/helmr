@@ -33,7 +33,7 @@ nix run .#doctor
 make dev
 ```
 
-The dev stack starts a disposable PostgreSQL database when `HELMR_DATABASE_URL` is not set, runs the Control Plane, and serves the local web UI at:
+The dev stack starts a disposable PostgreSQL database when `DATABASE_URL` is not set, runs the Control Plane, and serves the local web UI at:
 
 ```text
 http://127.0.0.1:3000/dev/login

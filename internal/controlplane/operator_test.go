@@ -25,7 +25,7 @@ func TestHashOperatorTokenRequiresCanonicalHighEntropyValue(t *testing.T) {
 	if hash, err := hashOperatorToken(valid); err != nil || len(hash) == 0 {
 		t.Fatalf("hash valid operator token: hash=%x err=%v", hash, err)
 	}
-	for _, invalid := range []string{"short", valid + "=", base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 31))} {
+	for _, invalid := range []string{"short", valid + "=", " " + valid, base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 31))} {
 		if _, err := hashOperatorToken(invalid); err == nil {
 			t.Fatalf("hashOperatorToken(%q) succeeded", invalid)
 		}

@@ -63,7 +63,7 @@ nix develop
 make dev
 ```
 
-The dev stack starts a disposable PostgreSQL database when `HELMR_DATABASE_URL`
+The dev stack starts a disposable PostgreSQL database when `DATABASE_URL`
 is not set, runs the Control Plane, and serves the console at:
 
 ```text

@@ -445,9 +445,6 @@ fi
 configure_runtime_identity
 
 export HELMR_GUESTD_TMPDIR=/var/lib/helmr/tmp
-if [ -f /etc/helmr/checkpoint-storage-telemetry ]; then
-	export HELMR_CHECKPOINT_STORAGE_TELEMETRY=1
-fi
 set -- /usr/bin/guestd \
 	--vsock-port 5000 \
 	--health-port 5001

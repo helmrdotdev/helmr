@@ -238,7 +238,7 @@ func TestResolveWorkerInstanceCredentialRequiresUsableEnrollmentSecretOnlyWhenEn
 		_, err := resolveWorkerInstanceCredential(context.Background(), config.Worker{
 			WorkerEnrollmentSecretFile: filepath.Join(t.TempDir(), "missing"),
 		}, t.TempDir())
-		if err == nil || !strings.Contains(err.Error(), "HELMR_WORKER_ENROLLMENT_SECRET_FILE") {
+		if err == nil || !strings.Contains(err.Error(), "WORKER_ENROLLMENT_SECRET_FILE") {
 			t.Fatalf("error = %v", err)
 		}
 	})

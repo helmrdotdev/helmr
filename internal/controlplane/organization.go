@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -102,8 +101,8 @@ func (s *Server) listRegions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) initialSetupTokenMatches(token string) bool {
-	expected := strings.TrimSpace(s.setupToken)
-	provided := strings.TrimSpace(token)
+	expected := s.setupToken
+	provided := token
 	if expected == "" || provided == "" {
 		return false
 	}

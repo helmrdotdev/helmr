@@ -13,7 +13,7 @@ Defaults:
 - The `helmr-controlplane` service desired count is `1`.
 - The `helmr-dispatcher` service desired count is `1`.
 - A single-node, cluster-mode disabled ElastiCache Valkey/Redis queue is provisioned for
-  `HELMR_REDIS_URL`.
+  `REDIS_URL`.
 - Worker resources are off by default.
 - RDS deletion protection is off and final snapshots are skipped so evaluation stacks can be
   destroyed cleanly.

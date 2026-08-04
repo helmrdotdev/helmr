@@ -163,31 +163,31 @@ type WorkerControlPlane struct {
 }
 
 func LoadDatabase() (Database, error) {
-	cfg := Database{URL: envString("HELMR_DATABASE_URL")}
+	cfg := Database{URL: envText("DATABASE_URL")}
 	if cfg.URL == "" {
-		return cfg, errors.New("HELMR_DATABASE_URL is required")
+		return cfg, errors.New("DATABASE_URL is required")
 	}
 	return cfg, nil
 }
 
 func LoadClickHouse() (ClickHouse, error) {
 	cfg := ClickHouse{
-		URL:      envString("HELMR_CLICKHOUSE_URL"),
-		User:     envString("HELMR_CLICKHOUSE_USER"),
-		Password: envString("HELMR_CLICKHOUSE_PASSWORD"),
+		URL:      envText("CLICKHOUSE_URL"),
+		User:     envText("CLICKHOUSE_USER"),
+		Password: envSecret("CLICKHOUSE_PASSWORD"),
 	}
 	if cfg.URL == "" {
-		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")
+		return cfg, errors.New("CLICKHOUSE_URL is required")
 	}
 	return cfg, nil
 }
 
 func loadImageCache() (*ImageCache, error) {
 	config := ImageCache{
-		RegistryAuthority:   envString("HELMR_IMAGE_CACHE_REGISTRY_AUTHORITY"),
-		RepositoryPrefix:    envString("HELMR_IMAGE_CACHE_REPOSITORY_PREFIX"),
-		CacheRoleARN:        envString("HELMR_IMAGE_CACHE_ROLE_ARN"),
-		RepositoryARNPrefix: envString("HELMR_IMAGE_CACHE_REPOSITORY_ARN_PREFIX"),
+		RegistryAuthority:   envText("IMAGE_CACHE_REGISTRY_AUTHORITY"),
+		RepositoryPrefix:    envText("IMAGE_CACHE_REPOSITORY_PREFIX"),
+		CacheRoleARN:        envText("IMAGE_CACHE_ROLE_ARN"),
+		RepositoryARNPrefix: envText("IMAGE_CACHE_REPOSITORY_ARN_PREFIX"),
 	}
 	values := []string{
 		config.RegistryAuthority, config.RepositoryPrefix,
@@ -203,32 +203,32 @@ func loadImageCache() (*ImageCache, error) {
 		return nil, nil
 	}
 	if configured != len(values) {
-		return nil, errors.New("HELMR_IMAGE_CACHE_REGISTRY_AUTHORITY, HELMR_IMAGE_CACHE_REPOSITORY_PREFIX, HELMR_IMAGE_CACHE_ROLE_ARN, and HELMR_IMAGE_CACHE_REPOSITORY_ARN_PREFIX must be configured together")
+		return nil, errors.New("IMAGE_CACHE_REGISTRY_AUTHORITY, IMAGE_CACHE_REPOSITORY_PREFIX, IMAGE_CACHE_ROLE_ARN, and IMAGE_CACHE_REPOSITORY_ARN_PREFIX must be configured together")
 	}
 	return &config, nil
 }
 
 func LoadRegionBootstrap() (RegionBootstrap, error) {
-	regionID := envString("HELMR_REGION_ID")
-	defaultRegionID := envString("HELMR_DEFAULT_REGION_ID")
+	regionID := envText("REGION_ID")
+	defaultRegionID := envText("DEFAULT_REGION_ID")
 	cfg := RegionBootstrap{
 		RegionID:          regionID,
 		DefaultRegionID:   defaultRegionID,
-		Provider:          envString("HELMR_PROVIDER"),
-		ProviderRegion:    envString("HELMR_PROVIDER_REGION"),
-		RegionDisplayName: envString("HELMR_REGION_DISPLAY_NAME"),
+		Provider:          envText("PROVIDER"),
+		ProviderRegion:    envText("PROVIDER_REGION"),
+		RegionDisplayName: envText("REGION_DISPLAY_NAME"),
 	}
 	if cfg.RegionID == "" {
-		return cfg, errors.New("HELMR_REGION_ID is required")
+		return cfg, errors.New("REGION_ID is required")
 	}
 	if cfg.DefaultRegionID == "" {
-		return cfg, errors.New("HELMR_DEFAULT_REGION_ID is required")
+		return cfg, errors.New("DEFAULT_REGION_ID is required")
 	}
 	if cfg.Provider == "" {
-		return cfg, errors.New("HELMR_PROVIDER is required")
+		return cfg, errors.New("PROVIDER is required")
 	}
 	if cfg.ProviderRegion == "" {
-		return cfg, errors.New("HELMR_PROVIDER_REGION is required")
+		return cfg, errors.New("PROVIDER_REGION is required")
 	}
 	if cfg.RegionDisplayName == "" {
 		cfg.RegionDisplayName = cfg.RegionID
@@ -239,13 +239,13 @@ func LoadRegionBootstrap() (RegionBootstrap, error) {
 func validatePublicURL(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return fmt.Errorf("HELMR_PUBLIC_URL must be an absolute URL")
+		return fmt.Errorf("PUBLIC_URL must be an absolute URL")
 	}
 	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return fmt.Errorf("HELMR_PUBLIC_URL must use http or https")
+		return fmt.Errorf("PUBLIC_URL must use http or https")
 	}
 	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
-		return fmt.Errorf("HELMR_PUBLIC_URL must use https for non-loopback hosts")
+		return fmt.Errorf("PUBLIC_URL must use https for non-loopback hosts")
 	}
 	return nil
 }
@@ -260,22 +260,26 @@ func isLoopbackHost(host string) bool {
 }
 
 func env(name, fallback string) string {
-	if value := envString(name); value != "" {
+	if value := envText(name); value != "" {
 		return value
 	}
 	return fallback
 }
 
-func envString(name string) string {
+func envText(name string) string {
 	return strings.TrimSpace(os.Getenv(name))
 }
 
+func envSecret(name string) string {
+	return os.Getenv(name)
+}
+
 func envLower(name string) string {
-	return strings.ToLower(envString(name))
+	return strings.ToLower(envText(name))
 }
 
 func envInt64(name string, fallback int64) (int64, error) {
-	value := envString(name)
+	value := envText(name)
 	if value == "" {
 		return fallback, nil
 	}
@@ -287,7 +291,7 @@ func envInt64(name string, fallback int64) (int64, error) {
 }
 
 func envInt(name string, fallback int) (int, error) {
-	value := envString(name)
+	value := envText(name)
 	if value == "" {
 		return fallback, nil
 	}
@@ -299,7 +303,7 @@ func envInt(name string, fallback int) (int, error) {
 }
 
 func envDuration(name string, fallback time.Duration) (time.Duration, error) {
-	value := envString(name)
+	value := envText(name)
 	if value == "" {
 		return fallback, nil
 	}
@@ -311,7 +315,7 @@ func envDuration(name string, fallback time.Duration) (time.Duration, error) {
 }
 
 func envBool(name string, fallback bool) (bool, error) {
-	value := envString(name)
+	value := envText(name)
 	if value == "" {
 		return fallback, nil
 	}
