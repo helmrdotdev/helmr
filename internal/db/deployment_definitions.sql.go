@@ -116,6 +116,35 @@ func (q *Queries) GetCurrentDeploymentDefinition(ctx context.Context, arg GetCur
 	return i, err
 }
 
+const getDefinitionSnapshot = `-- name: GetDefinitionSnapshot :one
+SELECT declared_id
+  FROM deployment_definitions
+ WHERE environment_id = $1
+   AND deployment_id = $2
+   AND kind = $3
+   AND declared_id = $4
+ LIMIT 1
+`
+
+type GetDefinitionSnapshotParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	DeploymentID  pgtype.UUID `json:"deployment_id"`
+	Kind          string      `json:"kind"`
+	DeclaredID    string      `json:"declared_id"`
+}
+
+func (q *Queries) GetDefinitionSnapshot(ctx context.Context, arg GetDefinitionSnapshotParams) (string, error) {
+	row := q.db.QueryRow(ctx, getDefinitionSnapshot,
+		arg.EnvironmentID,
+		arg.DeploymentID,
+		arg.Kind,
+		arg.DeclaredID,
+	)
+	var declared_id string
+	err := row.Scan(&declared_id)
+	return declared_id, err
+}
+
 const getDeploymentDefinition = `-- name: GetDeploymentDefinition :one
 SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.artifact_id, deployment_definitions.created_at
   FROM deployment_definitions
@@ -219,6 +248,53 @@ func (q *Queries) GetDeploymentProgramAuthority(ctx context.Context, arg GetDepl
 		&i.QueueConfig,
 	)
 	return i, err
+}
+
+const listDefinitionSnapshots = `-- name: ListDefinitionSnapshots :many
+SELECT declared_id
+  FROM deployment_definitions
+ WHERE environment_id = $1
+   AND deployment_id = $2
+   AND kind = $3
+   AND (NOT $4::boolean OR declared_id COLLATE "C" > $5::text COLLATE "C")
+ ORDER BY declared_id COLLATE "C", id
+ LIMIT $6
+`
+
+type ListDefinitionSnapshotsParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	DeploymentID  pgtype.UUID `json:"deployment_id"`
+	Kind          string      `json:"kind"`
+	HasAfter      bool        `json:"has_after"`
+	AfterID       string      `json:"after_id"`
+	RowLimit      int32       `json:"row_limit"`
+}
+
+func (q *Queries) ListDefinitionSnapshots(ctx context.Context, arg ListDefinitionSnapshotsParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listDefinitionSnapshots,
+		arg.EnvironmentID,
+		arg.DeploymentID,
+		arg.Kind,
+		arg.HasAfter,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var declared_id string
+		if err := rows.Scan(&declared_id); err != nil {
+			return nil, err
+		}
+		items = append(items, declared_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listDeploymentDefinitionsForDeployment = `-- name: ListDeploymentDefinitionsForDeployment :many

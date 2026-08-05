@@ -12,7 +12,7 @@ import type {
   TaskPayloadInput,
   TaskResult,
   RunOptions,
-  WorkspaceTarget,
+  WorkspaceIdAddress,
   TaskWait,
 } from "./contract"
 import { runtimeOperationsInstalled } from "./internal/runtime"
@@ -23,17 +23,21 @@ import type {
   TokenSnapshot,
 } from "./tokens"
 import {
-  HELMR_API_VERSION,
-  HELMR_API_VERSION_HEADER,
-} from "./version"
-import {
   createClientWorkspaces,
   type ClientWorkspacesApi,
-} from "./workspace"
+} from "./client-workspace"
+import {
+  createClientSandboxes,
+  type ClientSandboxesApi,
+} from "./client-sandbox"
 import {
   createClientActors,
   type ClientActorsApi,
 } from "./client-actor"
+import {
+  createClientSessions,
+  type ClientSessionsApi,
+} from "./client-session"
 import {
   createClientDeployments,
   type ClientDeploymentsApi,
@@ -48,9 +52,10 @@ import {
 } from "./client-secret"
 import type { RequestOptions } from "./request"
 import type { LogAttributes, RunLogLevel } from "./logger"
+import { requireWorkspaceIDAddress } from "./workspace"
 
 export interface HelmrClientOptions {
-  readonly url: string
+  readonly url?: string
   readonly apiKey: string
   readonly fetch?: typeof fetch
 }
@@ -84,7 +89,7 @@ export interface ClientTokensApi {
 
 type ClientTaskRunRequest = RunOptions & Readonly<{
   idempotencyKey?: string
-  workspace: WorkspaceTarget
+  workspace: WorkspaceIdAddress
 }>
 
 export type ClientTaskStartRequest<TTask extends TaskDefinition> =
@@ -93,11 +98,31 @@ export type ClientTaskStartRequest<TTask extends TaskDefinition> =
     : ClientTaskRunRequest & Readonly<{ payload?: never }>
 
 export interface ClientTasksApi {
+  retrieve(taskId: string, query?: ClientTaskReadQuery, options?: RequestOptions): Promise<TaskSnapshot>
+  list(query?: ClientTaskListQuery, options?: RequestOptions): Promise<TaskPage>
   start<TTask extends TaskDefinition>(
     taskDeclaredId: string,
     request: ClientTaskStartRequest<TTask>,
     options?: RequestOptions,
   ): Promise<RunHandle>
+}
+
+export interface ClientTaskReadQuery {
+  readonly deploymentId?: string
+}
+
+export interface ClientTaskListQuery extends ClientTaskReadQuery {
+  readonly cursor?: string
+  readonly limit?: number
+}
+
+export interface TaskSnapshot {
+  readonly id: string
+  readonly deploymentId: string
+}
+
+export interface TaskPage extends CursorPage<TaskSnapshot> {
+  readonly deploymentId: string
 }
 
 export interface ClientRunListQuery {
@@ -188,6 +213,8 @@ export interface ClientRunsApi {
 export class HelmrClient {
   readonly tasks: ClientTasksApi
   readonly actors: ClientActorsApi
+  readonly sessions: ClientSessionsApi
+  readonly sandboxes: ClientSandboxesApi
   readonly deployments: ClientDeploymentsApi
   readonly schedules: ClientSchedulesApi
   readonly secrets: ClientSecretsApi
@@ -199,6 +226,8 @@ export class HelmrClient {
     const transport = new ClientTransport(options)
     this.tasks = Object.freeze(new ClientTasks(transport))
     this.actors = createClientActors(transport)
+    this.sessions = createClientSessions(transport)
+    this.sandboxes = createClientSandboxes(transport)
     this.deployments = createClientDeployments(transport)
     this.schedules = createClientSchedules(transport)
     this.secrets = createClientSecrets(transport)
@@ -215,6 +244,42 @@ class ClientTasks implements ClientTasksApi {
     this.#transport = transport
   }
 
+  async retrieve(
+    taskId: string,
+    query: ClientTaskReadQuery = {},
+    options: RequestOptions = {},
+  ): Promise<TaskSnapshot> {
+    validateTaskId(taskId)
+    return parseTask(await this.#transport.request(
+      "GET",
+      `/v1/tasks/${encodeURIComponent(taskId)}${taskReadQuery(query)}`,
+      options.signal === undefined ? {} : { signal: options.signal },
+    ))
+  }
+
+  async list(
+    query: ClientTaskListQuery = {},
+    options: RequestOptions = {},
+  ): Promise<TaskPage> {
+    const response = objectValue(await this.#transport.request(
+      "GET",
+      `/v1/tasks${taskReadQuery(query)}`,
+      options.signal === undefined ? {} : { signal: options.signal },
+    ), "Task list response")
+    if (!Array.isArray(response["tasks"])) {
+      throw new Error("Task list response.tasks must be an array")
+    }
+    const nextCursor = response["next_cursor"]
+    if (nextCursor !== undefined && typeof nextCursor !== "string") {
+      throw new Error("Task list response.next_cursor must be a string")
+    }
+    return Object.freeze({
+      deploymentId: resourceID(response["deployment_id"], "Task list response.deployment_id"),
+      items: Object.freeze(response["tasks"].map(parseTask)),
+      ...(nextCursor === undefined ? {} : { nextCursor }),
+    })
+  }
+
   async start<TTask extends TaskDefinition>(
     taskDeclaredId: string,
     request: ClientTaskStartRequest<TTask>,
@@ -224,7 +289,7 @@ class ClientTasks implements ClientTasksApi {
     const response = objectValue(
       await this.#transport.request(
         "POST",
-        `/api/tasks/${encodeURIComponent(taskDeclaredId)}/start`,
+        `/v1/tasks/${encodeURIComponent(taskDeclaredId)}/start`,
         {
           body: {
             ...("payload" in request ? { payload: request.payload } : {}),
@@ -242,6 +307,32 @@ class ClientTasks implements ClientTasksApi {
   }
 }
 
+function taskReadQuery(queryInput: ClientTaskListQuery): string {
+  const query = new URLSearchParams()
+  if (queryInput.deploymentId !== undefined) {
+    query.set("deployment_id", resourceID(queryInput.deploymentId, "Deployment ID"))
+  }
+  if (queryInput.cursor !== undefined) {
+    if (queryInput.cursor.length === 0) throw new Error("Task cursor is required")
+    query.set("cursor", queryInput.cursor)
+  }
+  if (queryInput.limit !== undefined) {
+    if (!Number.isInteger(queryInput.limit) || queryInput.limit < 1 || queryInput.limit > 100) {
+      throw new Error("Task limit must be an integer in [1,100]")
+    }
+    query.set("limit", queryInput.limit.toString())
+  }
+  return query.size === 0 ? "" : `?${query.toString()}`
+}
+
+function parseTask(value: unknown): TaskSnapshot {
+  const input = objectValue(value, "Task response")
+  return Object.freeze({
+    id: requiredStringFrom(input, "id", "Task response"),
+    deploymentId: resourceID(input["deployment_id"], "Task response.deployment_id"),
+  })
+}
+
 class ClientRuns implements ClientRunsApi {
   readonly #transport: ClientTransport
 
@@ -256,7 +347,7 @@ class ClientRuns implements ClientRunsApi {
     return parseRunSnapshot<TOutput>(
       await this.#transport.request(
         "GET",
-        `/api/runs/${encodeURIComponent(resourceID(runId, "Run ID"))}`,
+        `/v1/runs/${encodeURIComponent(resourceID(runId, "Run ID"))}`,
         options.signal === undefined ? {} : { signal: options.signal },
       ),
     )
@@ -277,7 +368,7 @@ class ClientRuns implements ClientRunsApi {
     if (queryInput.limit !== undefined) query.set("limit", String(queryInput.limit))
     const suffix = query.size === 0 ? "" : `?${query.toString()}`
     const response = objectValue(
-      await this.#transport.request("GET", `/api/runs${suffix}`, {
+      await this.#transport.request("GET", `/v1/runs${suffix}`, {
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       }),
       "Run list response",
@@ -302,7 +393,7 @@ class ClientRuns implements ClientRunsApi {
     return parseRunSnapshot(
       await this.#transport.request(
         "POST",
-        `/api/runs/${encodeURIComponent(resourceID(runId, "Run ID"))}/cancel`,
+        `/v1/runs/${encodeURIComponent(resourceID(runId, "Run ID"))}/cancel`,
         options.signal === undefined ? {} : { signal: options.signal },
       ),
     )
@@ -322,7 +413,7 @@ class ClientRuns implements ClientRunsApi {
     const response = objectValue(
       await this.#transport.request(
         "GET",
-        `/api/runs/${encodeURIComponent(resourceID(runId, "Run ID"))}/logs${query}`,
+        `/v1/runs/${encodeURIComponent(resourceID(runId, "Run ID"))}/logs${query}`,
         options.signal === undefined ? {} : { signal: options.signal },
       ),
       "Run log page",
@@ -351,7 +442,7 @@ class ClientRuns implements ClientRunsApi {
     const response = objectValue(
       await this.#transport.request(
         "GET",
-        `/api/runs/${encodeURIComponent(resourceID(runId, "Run ID"))}/events${query}`,
+        `/v1/runs/${encodeURIComponent(resourceID(runId, "Run ID"))}/events${query}`,
         options.signal === undefined ? {} : { signal: options.signal },
       ),
       "Run event page",
@@ -433,7 +524,7 @@ class ClientTokens implements ClientTokensApi {
     request: ClientTokenCreateRequest = {},
     options: RequestOptions = {},
   ): Promise<ClientTokenCreateResult> {
-    const response = await this.#transport.request("POST", "/api/tokens", {
+    const response = await this.#transport.request("POST", "/v1/tokens", {
       body: {
         ...(request.timeout === undefined ? {} : { timeout: request.timeout }),
         ...(request.metadata === undefined ? {} : { metadata: request.metadata }),
@@ -458,7 +549,7 @@ class ClientTokens implements ClientTokensApi {
     return parseToken(
       await this.#transport.request(
         "GET",
-        `/api/tokens/${encodeURIComponent(resourceID(id, "Token ID"))}`,
+        `/v1/tokens/${encodeURIComponent(resourceID(id, "Token ID"))}`,
         options.signal === undefined ? {} : { signal: options.signal },
       ),
       false,
@@ -474,7 +565,7 @@ class ClientTokens implements ClientTokensApi {
     if (queryInput.limit !== undefined) query.set("limit", String(queryInput.limit))
     const suffix = query.size === 0 ? "" : `?${query.toString()}`
     const response = objectValue(
-      await this.#transport.request("GET", `/api/tokens${suffix}`, {
+      await this.#transport.request("GET", `/v1/tokens${suffix}`, {
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       }),
       "Token list response",
@@ -500,7 +591,7 @@ class ClientTokens implements ClientTokensApi {
     const response = objectValue(
       await this.#transport.request(
         "POST",
-        `/api/tokens/${encodeURIComponent(resourceID(id, "Token ID"))}/complete`,
+        `/v1/tokens/${encodeURIComponent(resourceID(id, "Token ID"))}/complete`,
         {
           body: {
             result: request.result,
@@ -524,7 +615,7 @@ class ClientTokens implements ClientTokensApi {
     return parseToken(
       await this.#transport.request(
         "POST",
-        `/api/tokens/${encodeURIComponent(resourceID(id, "Token ID"))}/cancel`,
+        `/v1/tokens/${encodeURIComponent(resourceID(id, "Token ID"))}/cancel`,
         {
           body: request.idempotencyKey === undefined
             ? {}
@@ -538,12 +629,10 @@ class ClientTokens implements ClientTokensApi {
 }
 
 function taskStartRequest(
-  request: ClientTaskRunRequest,
+	request: ClientTaskRunRequest,
 ): Record<string, unknown> {
   return {
-    workspace: "id" in request.workspace
-      ? { id: request.workspace.id }
-      : { key: request.workspace.key },
+    workspace: { id: requireWorkspaceIDAddress(request.workspace) },
     ...(request.idempotencyKey === undefined
       ? {}
       : { idempotency_key: request.idempotencyKey }),
@@ -594,7 +683,7 @@ class ClientTransport {
   readonly #fetch: typeof fetch
 
   constructor(options: HelmrClientOptions) {
-    this.#baseURL = clientBaseURL(options.url)
+    this.#baseURL = clientBaseURL(options.url ?? "https://api.helmr.dev")
     this.#apiKey = options.apiKey.trim()
     if (this.#apiKey === "") throw new Error("Helmr API key is required")
     this.#fetch = options.fetch ?? globalThis.fetch
@@ -604,7 +693,7 @@ class ClientTransport {
   }
 
   async request(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "DELETE",
     path: string,
     options: Readonly<{ body?: unknown; signal?: AbortSignal }> = {},
   ): Promise<unknown> {
@@ -612,7 +701,6 @@ class ClientTransport {
       method,
       headers: {
         Authorization: `Bearer ${this.#apiKey}`,
-        [HELMR_API_VERSION_HEADER]: HELMR_API_VERSION,
         ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
       },
       ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
@@ -681,8 +769,9 @@ function responseStatusCode(status: number): string {
 
 function clientBaseURL(raw: string): URL {
   const url = new URL(raw)
-  if (url.search !== "" || url.hash !== "") {
-    throw new Error("Helmr API URL must not include query or fragment")
+  if (url.username !== "" || url.password !== "" ||
+    (url.pathname !== "" && url.pathname !== "/") || url.search !== "" || url.hash !== "") {
+    throw new Error("Helmr API URL must be an origin without credentials, path, query, or fragment")
   }
   if (url.protocol !== "https:" && !(
     url.protocol === "http:" &&
@@ -690,7 +779,7 @@ function clientBaseURL(raw: string): URL {
   )) {
     throw new Error("Helmr API URL must use HTTPS except on loopback")
   }
-  if (!url.pathname.endsWith("/")) url.pathname += "/"
+  url.pathname = "/"
   return url
 }
 
@@ -699,13 +788,13 @@ function runStatus(value: string): RunStatus {
     case "queued":
     case "running":
     case "waiting":
-    case "retry-delayed":
-    case "cancel-requested":
+    case "retry_delayed":
+    case "cancel_requested":
     case "succeeded":
     case "failed":
     case "cancelled":
     case "expired":
-    case "system-failed":
+    case "system_failed":
       return value
     default:
       throw new Error(`Run status ${JSON.stringify(value)} is invalid`)
@@ -717,7 +806,7 @@ function runStatusIsTerminal(status: RunStatus): boolean {
     status === "failed" ||
     status === "cancelled" ||
     status === "expired" ||
-    status === "system-failed"
+    status === "system_failed"
 }
 
 function parseRunSnapshot<TOutput extends JsonValue = JsonValue>(
@@ -755,12 +844,12 @@ function parseRunSnapshot<TOutput extends JsonValue = JsonValue>(
       requiredStringFrom(run, "workspace_id", "Run response"),
       "Run response.workspace_id",
     ),
-    ...(run["actor_id"] === undefined
+    ...(run["session_id"] === undefined
       ? {}
       : {
-          actorId: resourceID(
-            requiredStringFrom(run, "actor_id", "Run response"),
-            "Run response.actor_id",
+          sessionId: resourceID(
+            requiredStringFrom(run, "session_id", "Run response"),
+            "Run response.session_id",
           ),
         }),
     ...(run["parent_run_id"] === undefined
@@ -831,7 +920,7 @@ function parseRunCause(value: unknown): RunSnapshot["cause"] {
   switch (type) {
     case "api":
     case "manual":
-    case "actor-start":
+    case "actor_start":
     case "continuation":
       return Object.freeze({ type })
     case "child":

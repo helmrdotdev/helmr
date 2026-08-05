@@ -2,8 +2,9 @@ import { create, fromBinary, toBinary } from "@bufbuild/protobuf"
 import { runProto } from "@helmr/proto"
 import {
   canonicalizeJsonValue,
+  brandWorkspaceIdAddress,
   inspectDefinition,
-  inspectSecretNameRef,
+  encodeWorkspaceSecrets,
   installRuntimeOperations,
   parseWorkspaceDeleteReceipt,
   parseWorkspaceExecResult,
@@ -11,6 +12,7 @@ import {
   parseWorkspaceFileEntry,
   parseWorkspaceFilePage,
   parseWorkspaceSnapshot,
+  requireWorkspaceIDAddress,
   resourceID,
   trimGoSpace,
   type InternalActorDefinition,
@@ -19,14 +21,15 @@ import {
 } from "@helmr/sdk/internal"
 import type {
   ActorExecutionContext,
+  ExecutionContextBase,
   ActorInputResult,
-  ActorOperationOptions,
-  ActorOperationReceipt,
+  RuntimeSessionOperationOptions,
+  RuntimeSessionOperationReceipt,
   ActorOutputRecord,
   ActorReceive,
-  ActorSelf,
+  SessionSelf,
   ActorStartOptions,
-  ActorStatus,
+  RuntimeSessionSnapshot,
   Duration,
   JsonValue,
   LogAttributes,
@@ -66,14 +69,6 @@ const MAX_RUN_LOG_ATTRIBUTES_BYTES = 16 * 1024
 const MAX_TASK_ERROR_MESSAGE_BYTES = 1024
 const MAX_ACTOR_INPUT_BYTES = 1 * 1024 * 1024
 
-function requireSecretName(value: unknown): string {
-  const name = inspectSecretNameRef(value)
-  if (name === undefined) {
-    throw new Error("Workspace Secret requires secrets.fromName()")
-  }
-  return name
-}
-
 function newUUIDv7(): string {
   const bytes = randomBytes(16)
   let timestamp = Date.now()
@@ -104,7 +99,7 @@ interface ProgramLocator {
 
 interface ProgramIndexDeclaration {
   readonly declaredId: string
-  readonly kind: "task" | "actor" | "workspace"
+  readonly kind: "task" | "actor" | "sandbox"
   readonly locator?: ProgramLocator
 }
 
@@ -492,7 +487,7 @@ function parseProgramIndexDeclaration(
     (
       record["kind"] !== "task" &&
       record["kind"] !== "actor" &&
-      record["kind"] !== "workspace"
+      record["kind"] !== "sandbox"
     ) ||
     typeof record["declaredId"] !== "string" ||
     record["declaredId"] === "" ||
@@ -501,12 +496,12 @@ function parseProgramIndexDeclaration(
   ) {
     throw new Error(`Program index declaration ${index} is invalid`)
   }
-  if (record["kind"] === "workspace") {
+  if (record["kind"] === "sandbox") {
     if (record["locator"] !== undefined) {
-      throw new Error(`Program index Workspace declaration ${index} has a locator`)
+      throw new Error(`Program index Sandbox declaration ${index} has a locator`)
     }
     return {
-      kind: "workspace",
+      kind: "sandbox",
       declaredId: record["declaredId"],
     }
   }
@@ -764,11 +759,7 @@ function programRuntimeOperations(
       ? new TextDecoder().decode(canonicalizeJsonValue(payload as JsonValue))
       : undefined
     const workspaceJson = new TextDecoder().decode(
-      canonicalizeJsonValue(
-        "id" in options.workspace
-          ? { id: options.workspace.id }
-          : { key: options.workspace.key },
-      ),
+      canonicalizeJsonValue({ id: requireWorkspaceIDAddress(options.workspace) }),
     )
     const requestOptions = {
       ...(options.queue === undefined ? {} : { queue: options.queue }),
@@ -842,11 +833,7 @@ function programRuntimeOperations(
             )
           : undefined
         const workspaceJson = new TextDecoder().decode(
-          canonicalizeJsonValue(
-            "id" in options.workspace
-              ? { id: options.workspace.id }
-              : { key: options.workspace.key },
-          ),
+          canonicalizeJsonValue({ id: requireWorkspaceIDAddress(options.workspace) }),
         )
         const requestOptions = {
           ...(options.queue === undefined ? {} : { queue: options.queue }),
@@ -1000,10 +987,7 @@ function programRuntimeOperations(
   const wait = (params: JsonValue, timeoutMs: number): Promise<void> =>
     runOperations.track(() => performWait(params, timeoutMs))
   const performActorInputSend = async (
-    target: Readonly<{
-      declaredId: string
-      address: { readonly id: string } | { readonly key: string }
-    }>,
+    sessionId: string,
     input: JsonValue,
     options?: SendOptions,
   ): Promise<{ sequence: number }> => {
@@ -1024,13 +1008,10 @@ function programRuntimeOperations(
     const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-        case: "actorInputSendRequested",
-        value: create(runProto.ActorInputSendRequestedSchema, {
+        case: "sessionInputSendRequested",
+        value: create(runProto.SessionInputSendRequestedSchema, {
           correlationId,
-          declaredId: target.declaredId,
-          address: "id" in target.address
-            ? { case: "actorId", value: target.address.id }
-            : { case: "actorKey", value: target.address.key },
+          sessionId,
           dataJson: new TextDecoder().decode(normalized),
           ...(idempotencyKey === undefined
             ? {}
@@ -1055,15 +1036,10 @@ function programRuntimeOperations(
     })
     return await abortableRuntimeOperation(operation, options?.signal)
   }
-  const actorAddress = (
-    address: { readonly id: string } | { readonly key: string },
-  ) => "id" in address
-    ? { case: "actorId" as const, value: address.id }
-    : { case: "actorKey" as const, value: address.key }
   const performActorStart = async (
     declaredId: string,
     options: ActorStartOptions,
-  ): Promise<Readonly<{ actorId: string; runId: string }>> => {
+  ): Promise<Readonly<{ sessionId: string; runId: string }>> => {
     if (options.signal?.aborted) throw abortSignalReason(options.signal)
     const correlationId = newUUIDv7()
     const run = options.run
@@ -1087,9 +1063,7 @@ function programRuntimeOperations(
         value: create(runProto.ActorStartRequestedSchema, {
           correlationId,
           declaredId,
-          workspace: "id" in options.workspace
-            ? { case: "workspaceId", value: options.workspace.id }
-            : { case: "workspaceKey", value: options.workspace.key },
+          workspaceId: requireWorkspaceIDAddress(options.workspace),
           ...(options.key === undefined ? {} : { key: options.key }),
           ...(inputPresent
             ? {
@@ -1112,33 +1086,28 @@ function programRuntimeOperations(
       }
       return parseRuntimeProtocolValue("Actor start result", () => {
         const value = parseObjectJSON(decision.dataJson, "Actor start result")
-        requireExactKeys(value, ["actor_id", "run_id"], "Actor start result")
-        const actorId = resourceID(
-          stringField(value, "actor_id", "Actor start result"),
-          "Actor start result.actor_id",
+        requireExactKeys(value, ["run_id", "session_id"], "Actor start result")
+        const sessionId = resourceID(
+          stringField(value, "session_id", "Actor start result"),
+          "Actor start result.session_id",
         )
         const runId = resourceID(
           stringField(value, "run_id", "Actor start result"),
           "Actor start result.run_id",
         )
-        return Object.freeze({ actorId, runId })
+        return Object.freeze({ sessionId, runId })
       })
     })
     return abortableRuntimeOperation(operation, options.signal)
   }
-  const performActorStatus = async (
-    target: Readonly<{
-      declaredId: string
-      address: { readonly id: string } | { readonly key: string }
-    }>,
-  ): Promise<ActorStatus> => {
+  const performSessionStatus = async (
+    sessionId: string,
+  ): Promise<RuntimeSessionSnapshot> => {
     const correlationId = newUUIDv7()
     const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-      case: "actorStatusRequested",
-      value: create(runProto.ActorStatusRequestedSchema, {
-        correlationId,
-        declaredId: target.declaredId,
-        address: actorAddress(target.address),
+      case: "sessionStatusRequested",
+      value: create(runProto.SessionStatusRequestedSchema, {
+        correlationId, sessionId,
       }),
     })
     requireRuntimeOperationDecision(decision, correlationId, "Actor status")
@@ -1147,25 +1116,21 @@ function programRuntimeOperations(
     }
     return parseRuntimeProtocolValue(
       "Actor status result",
-      () => parseActorStatus(decision.dataJson),
+      () => parseRuntimeSessionSnapshot(decision.dataJson),
     )
   }
-  const performActorClose = async (
-    target: Readonly<{
-      declaredId: string
-      address: { readonly id: string } | { readonly key: string }
-    }>,
-    options?: ActorOperationOptions,
-  ): Promise<ActorOperationReceipt> => {
+  const performSessionClose = async (
+    sessionId: string,
+    options?: RuntimeSessionOperationOptions,
+  ): Promise<RuntimeSessionOperationReceipt> => {
     if (options?.signal?.aborted) throw abortSignalReason(options.signal)
     const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-        case: "actorCloseRequested",
-        value: create(runProto.ActorCloseRequestedSchema, {
+        case: "sessionCloseRequested",
+        value: create(runProto.SessionCloseRequestedSchema, {
           correlationId,
-          declaredId: target.declaredId,
-          address: actorAddress(target.address),
+          sessionId,
           ...(options?.idempotencyKey === undefined
             ? {}
             : { idempotencyKey: options.idempotencyKey }),
@@ -1177,10 +1142,10 @@ function programRuntimeOperations(
       }
       return parseRuntimeProtocolValue("Actor close result", () => {
         const value = parseObjectJSON(decision.dataJson, "Actor close result")
-        requireExactKeys(value, ["accepted_at", "actor_id"], "Actor close result")
-        const actorId = resourceID(
-          stringField(value, "actor_id", "Actor close result"),
-          "Actor close result.actor_id",
+        requireExactKeys(value, ["accepted_at", "session_id"], "Actor close result")
+        const sessionId = resourceID(
+          stringField(value, "session_id", "Actor close result"),
+          "Actor close result.session_id",
         )
         const acceptedAt = new Date(
           stringField(value, "accepted_at", "Actor close result"),
@@ -1188,27 +1153,23 @@ function programRuntimeOperations(
         if (Number.isNaN(acceptedAt.getTime())) {
           throw new Error("Actor close result is invalid")
         }
-        return Object.freeze({ actorId, acceptedAt })
+        return Object.freeze({ sessionId, acceptedAt })
       })
     })
     return abortableRuntimeOperation(operation, options?.signal)
   }
-  const performActorOutputPage = async (
-    target: Readonly<{
-      declaredId: string
-      address: { readonly id: string } | { readonly key: string }
-    }>,
+  const performSessionOutputPage = async (
+    sessionId: string,
     options?: Readonly<{ after?: number; limit?: number; signal?: AbortSignal }>,
   ) => {
     if (options?.signal?.aborted) throw abortSignalReason(options.signal)
     const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-        case: "actorOutputPageRequested",
-        value: create(runProto.ActorOutputPageRequestedSchema, {
+        case: "sessionOutputPageRequested",
+        value: create(runProto.SessionOutputPageRequestedSchema, {
           correlationId,
-          declaredId: target.declaredId,
-          address: actorAddress(target.address),
+          sessionId,
           ...(options?.after === undefined
             ? {}
             : { after: BigInt(options.after) }),
@@ -1253,15 +1214,8 @@ function programRuntimeOperations(
     })
     return abortableRuntimeOperation(operation, options?.signal)
   }
-  const workspaceAddress = (
-    address: Readonly<{ id: string } | { key: string }>,
-  ) => "id" in address
-    ? create(runProto.WorkspaceAddressSchema, {
-        address: { case: "workspaceId", value: address.id },
-      })
-    : create(runProto.WorkspaceAddressSchema, {
-        address: { case: "workspaceKey", value: address.key },
-      })
+  const workspaceAddress = (workspaceId: string) =>
+    create(runProto.WorkspaceAddressSchema, { workspaceId })
   const performWorkspaceCreate = async (
     declaredId: string,
     options: import("@helmr/sdk").RuntimeWorkspaceCreateOptions = {},
@@ -1275,9 +1229,9 @@ function programRuntimeOperations(
           correlationId,
           declaredId,
           ...(options.key === undefined ? {} : { key: options.key }),
-          secrets: options.secrets?.map((secret) =>
+          secrets: encodeWorkspaceSecrets(options.secrets).map((secret) =>
             create(runProto.WorkspaceSecretPlacementSchema, {
-              name: requireSecretName(secret.secret),
+              name: secret.name,
               placement: "env" in secret
                 ? { case: "env", value: secret.env }
                 : { case: "file", value: secret.file },
@@ -1309,7 +1263,7 @@ function programRuntimeOperations(
     return abortableRuntimeOperation(operation, options.signal)
   }
   const performWorkspaceRetrieve = async (
-    address: Readonly<{ id: string } | { key: string }>,
+    workspaceId: string,
     signal?: AbortSignal,
   ): Promise<WorkspaceSnapshot> => {
     if (signal?.aborted) throw abortSignalReason(signal)
@@ -1319,7 +1273,7 @@ function programRuntimeOperations(
         case: "workspaceRetrieveRequested",
         value: create(runProto.WorkspaceRetrieveRequestedSchema, {
           correlationId,
-          workspace: workspaceAddress(address),
+          workspace: workspaceAddress(workspaceId),
         }),
       })
       requireRuntimeOperationDecision(decision, correlationId, "Workspace retrieve")
@@ -1334,7 +1288,7 @@ function programRuntimeOperations(
     return abortableRuntimeOperation(operation, signal)
   }
   const performWorkspaceFileRead = async (
-    address: Readonly<{ id: string } | { key: string }>,
+    workspaceId: string,
     filePath: string,
     signal?: AbortSignal,
   ): Promise<Uint8Array> => {
@@ -1345,7 +1299,7 @@ function programRuntimeOperations(
         case: "workspaceFileReadRequested",
         value: create(runProto.WorkspaceFileReadRequestedSchema, {
           correlationId,
-          workspace: workspaceAddress(address),
+          workspace: workspaceAddress(workspaceId),
           path: filePath,
         }),
       })
@@ -1361,7 +1315,7 @@ function programRuntimeOperations(
     return abortableRuntimeOperation(operation, signal)
   }
   const performWorkspaceFileStat = async (
-    address: Readonly<{ id: string } | { key: string }>,
+    workspaceId: string,
     filePath: string,
     signal?: AbortSignal,
   ): Promise<WorkspaceFileEntry> => {
@@ -1372,7 +1326,7 @@ function programRuntimeOperations(
         case: "workspaceFileStatRequested",
         value: create(runProto.WorkspaceFileStatRequestedSchema, {
           correlationId,
-          workspace: workspaceAddress(address),
+          workspace: workspaceAddress(workspaceId),
           path: filePath,
         }),
       })
@@ -1388,7 +1342,7 @@ function programRuntimeOperations(
     return abortableRuntimeOperation(operation, signal)
   }
   const performWorkspaceFileList = async (
-    address: Readonly<{ id: string } | { key: string }>,
+    workspaceId: string,
     filePath: string,
     query: WorkspaceFileListQuery = {},
     signal?: AbortSignal,
@@ -1404,7 +1358,7 @@ function programRuntimeOperations(
         case: "workspaceFileListRequested",
         value: create(runProto.WorkspaceFileListRequestedSchema, {
           correlationId,
-          workspace: workspaceAddress(address),
+          workspace: workspaceAddress(workspaceId),
           path: filePath,
           ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
           limit,
@@ -1422,7 +1376,7 @@ function programRuntimeOperations(
     return abortableRuntimeOperation(operation, signal)
   }
   const performWorkspaceExec = async (
-    address: Readonly<{ id: string } | { key: string }>,
+    workspaceId: string,
     request: WorkspaceExecRequest,
     signal?: AbortSignal,
   ): Promise<WorkspaceExecResult> => {
@@ -1439,7 +1393,7 @@ function programRuntimeOperations(
         case: "workspaceExecRequested",
         value: create(runProto.WorkspaceExecRequestedSchema, {
           correlationId,
-          workspace: workspaceAddress(address),
+          workspace: workspaceAddress(workspaceId),
           command: [...request.command],
           ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
           env: request.env === undefined ? {} : { ...request.env },
@@ -1462,7 +1416,7 @@ function programRuntimeOperations(
     return abortableRuntimeOperation(operation, signal)
   }
   const performWorkspaceDelete = async (
-    address: Readonly<{ id: string } | { key: string }>,
+    workspaceId: string,
     request: WorkspaceDeleteRequest = {},
     signal?: AbortSignal,
   ): Promise<WorkspaceDeleteReceipt> => {
@@ -1473,7 +1427,7 @@ function programRuntimeOperations(
         case: "workspaceDeleteRequested",
         value: create(runProto.WorkspaceDeleteRequestedSchema, {
           correlationId,
-          workspace: workspaceAddress(address),
+          workspace: workspaceAddress(workspaceId),
           ...(request.idempotencyKey === undefined
             ? {}
             : { idempotencyKey: request.idempotencyKey }),
@@ -1700,14 +1654,14 @@ function programRuntimeOperations(
     actorStart(declaredId, options) {
       return performActorStart(declaredId, options)
     },
-    actorStatus(target) {
-      return runOperations.trackDrainable(() => performActorStatus(target))
+    sessionStatus(sessionId) {
+      return runOperations.trackDrainable(() => performSessionStatus(sessionId))
     },
-    actorClose(target, options) {
-      return performActorClose(target, options)
+    sessionClose(sessionId, options) {
+      return performSessionClose(sessionId, options)
     },
-    actorOutputPage(target, options) {
-      return performActorOutputPage(target, options)
+    sessionOutputPage(sessionId, options) {
+      return performSessionOutputPage(sessionId, options)
     },
     workspaceCreate(declaredId, options) {
       return performWorkspaceCreate(declaredId, options)
@@ -2209,7 +2163,7 @@ function actorSelf(
   cursor: { value: bigint },
   waitGate: ConsumingWaitGate,
   actorOperations: RunOperationState,
-): ActorSelf {
+): SessionSelf {
   if (start.entrypoint.case !== "actor") {
     throw new Error("Actor Program-start entrypoint is required")
   }
@@ -2253,7 +2207,7 @@ function actorSelf(
           resumeAttachId,
           kind: "actor_input",
           paramsJson: JSON.stringify({
-            actor_id: actorStart.actorId,
+            session_id: actorStart.sessionId,
             after_input_sequence: safeActorSequence(cursor.value),
           }),
           ...(options?.metadata === undefined
@@ -2390,6 +2344,8 @@ function actorSelf(
   }
 
   return Object.freeze({
+    id: actorStart.sessionId,
+    ...(actorStart.key === undefined ? {} : { key: actorStart.key }),
     input: Object.freeze({ receive }),
     output: Object.freeze({
       append,
@@ -2513,7 +2469,7 @@ function parseActorOutputRecord(dataJson: string): ActorOutputRecord {
   })
 }
 
-function parseActorStatus(dataJson: string): ActorStatus {
+function parseRuntimeSessionSnapshot(dataJson: string): RuntimeSessionSnapshot {
   const value = parseObjectJSON(dataJson, "Actor status result")
   const optional = ["current_run_id", "failure", "key"]
   const required = ["created_at", "id", "status", "updated_at"]
@@ -2545,7 +2501,7 @@ function parseActorStatus(dataJson: string): ActorStatus {
   if (Number.isNaN(createdAt.getTime()) || Number.isNaN(updatedAt.getTime())) {
     throw new Error("Actor status result timestamps are invalid")
   }
-  let failure: ActorStatus["failure"]
+  let failure: RuntimeSessionSnapshot["failure"]
   if (Object.hasOwn(value, "failure")) {
     const raw = objectField(value, "failure", "Actor status result")
     requireExactKeys(raw, ["code", "run_id"], "Actor status failure")
@@ -2684,12 +2640,9 @@ function actorContext(
     throw new Error("Actor Program-start entrypoint is required")
   }
   return Object.freeze({
-    ...taskContext(start, signal),
+    ...executionContext(start, signal),
     actor: Object.freeze({
-      id: start.entrypoint.value.actorId,
-      ...(start.entrypoint.value.key === undefined
-        ? {}
-        : { key: start.entrypoint.value.key }),
+      id: start.entrypointDeclaredId,
     }),
   }) as ActorExecutionContext
 }
@@ -2722,6 +2675,16 @@ function taskContext(
   signal = new AbortController().signal,
 ): TaskExecutionContext {
   return Object.freeze({
+    ...executionContext(start, signal),
+    task: Object.freeze({ id: start.entrypointDeclaredId }),
+  }) as TaskExecutionContext
+}
+
+function executionContext(
+  start: runProto.ProgramStart,
+  signal: AbortSignal,
+): ExecutionContextBase {
+  return Object.freeze({
     signal,
     run: Object.freeze({
       id: start.runId,
@@ -2732,11 +2695,11 @@ function taskContext(
       id: start.deploymentId,
       version: start.deploymentVersion,
     }),
-    workspace: Object.freeze({
+    workspace: brandWorkspaceIdAddress({
       id: start.workspaceId,
       attemptBaseVersionId: start.baseWorkspaceVersionId,
     }),
-  }) as TaskExecutionContext
+  }) as ExecutionContextBase
 }
 
 function runCause(cause: runProto.RunCause): RunCause {
@@ -2767,7 +2730,7 @@ function runCause(cause: runProto.RunCause): RunCause {
         timezone: cause.kind.value.timezone,
       }
     case "actorStart":
-      return { type: "actor-start" }
+      return { type: "actor_start" }
     case "continuation":
       return { type: "continuation" }
     default:

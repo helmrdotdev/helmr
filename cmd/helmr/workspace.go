@@ -31,8 +31,6 @@ func workspaceCreateCommand() *cobra.Command {
 	var projectID string
 	var environmentID string
 	var key string
-	var secretEnv []string
-	var secretFile []string
 	var idempotencyKey string
 	var jsonOutput bool
 	command := &cobra.Command{
@@ -40,10 +38,6 @@ func workspaceCreateCommand() *cobra.Command {
 		Short: "Create a Workspace from a deployed declaration.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			secrets, err := workspaceSecrets(secretEnv, secretFile)
-			if err != nil {
-				return err
-			}
 			controlPlane, scope, err := scopedWorkspaceClient(command, projectID, environmentID)
 			if err != nil {
 				return err
@@ -54,7 +48,6 @@ func workspaceCreateCommand() *cobra.Command {
 			}
 			response, err := controlPlane.CreateWorkspace(command.Context(), args[0], api.CreateWorkspaceRequest{
 				Key:            keyPointer,
-				Secrets:        secrets,
 				IdempotencyKey: idempotencyKey,
 			}, scope)
 			if err != nil {
@@ -63,14 +56,12 @@ func workspaceCreateCommand() *cobra.Command {
 			if jsonOutput {
 				return writeJSON(command.OutOrStdout(), response)
 			}
-			_, err = fmt.Fprintln(command.OutOrStdout(), response.WorkspaceID)
+			_, err = fmt.Fprintln(command.OutOrStdout(), response.ID)
 			return err
 		},
 	}
 	addScopeFlags(command, &projectID, &environmentID)
 	command.Flags().StringVar(&key, "key", "", "Immutable Workspace key.")
-	command.Flags().StringArrayVar(&secretEnv, "secret-env", nil, "Secret placement NAME=ENV. Repeatable.")
-	command.Flags().StringArrayVar(&secretFile, "secret-file", nil, "Secret placement NAME=/absolute/path. Repeatable.")
 	command.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
 	command.Flags().BoolVar(&jsonOutput, "json", false, "Emit JSON.")
 	return command
@@ -97,7 +88,7 @@ func workspaceGetCommand() *cobra.Command {
 			if jsonOutput {
 				return writeJSON(command.OutOrStdout(), snapshot)
 			}
-			_, err = fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%s\n", snapshot.ID, snapshot.DeclaredID, snapshot.Status)
+			_, err = fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%s\n", snapshot.ID, snapshot.SandboxID, snapshot.Status)
 			return err
 		},
 	}
@@ -352,15 +343,13 @@ func workspaceExecCommand() *cobra.Command {
 }
 
 type workspaceAddressFlags struct {
-	id         string
-	key        string
-	declaredID string
+	id  string
+	key string
 }
 
 func (flags *workspaceAddressFlags) add(command *cobra.Command) {
-	command.Flags().StringVar(&flags.id, "id", "", "Workspace ID.")
+	command.Flags().StringVar(&flags.id, "id", "", "Workspace UUID.")
 	command.Flags().StringVar(&flags.key, "key", "", "Workspace key.")
-	command.Flags().StringVar(&flags.declaredID, "declared-id", "", "Workspace declared ID (required with --key).")
 }
 
 func (flags workspaceAddressFlags) retrieve(
@@ -374,7 +363,14 @@ func (flags workspaceAddressFlags) retrieve(
 	if flags.id != "" {
 		return controlPlane.GetWorkspace(command.Context(), flags.id, scope)
 	}
-	return controlPlane.GetWorkspaceByKey(command.Context(), flags.declaredID, flags.key, scope)
+	response, err := controlPlane.ListWorkspaces(command.Context(), &flags.key, scope)
+	if err != nil {
+		return api.WorkspaceSnapshot{}, err
+	}
+	if len(response.Workspaces) == 0 {
+		return api.WorkspaceSnapshot{}, errors.New("workspace not found")
+	}
+	return response.Workspaces[0], nil
 }
 
 func (flags workspaceAddressFlags) resolveID(
@@ -393,12 +389,6 @@ func (flags workspaceAddressFlags) validate() error {
 	if (flags.id == "") == (flags.key == "") {
 		return errors.New("exactly one of --id or --key is required")
 	}
-	if flags.key != "" && flags.declaredID == "" {
-		return errors.New("--declared-id is required with --key")
-	}
-	if flags.id != "" && flags.declaredID != "" {
-		return errors.New("--declared-id is only accepted with --key")
-	}
 	return nil
 }
 
@@ -416,25 +406,6 @@ func scopedWorkspaceClient(
 		return nil, client.WorkspaceScopeOptions{}, err
 	}
 	return controlPlane, scope, nil
-}
-
-func workspaceSecrets(envValues []string, fileValues []string) ([]api.WorkspaceSecret, error) {
-	secrets := make([]api.WorkspaceSecret, 0, len(envValues)+len(fileValues))
-	for _, raw := range envValues {
-		name, target, err := workspacePair(raw, "--secret-env")
-		if err != nil {
-			return nil, err
-		}
-		secrets = append(secrets, api.WorkspaceSecret{Name: name, Env: target})
-	}
-	for _, raw := range fileValues {
-		name, target, err := workspacePair(raw, "--secret-file")
-		if err != nil {
-			return nil, err
-		}
-		secrets = append(secrets, api.WorkspaceSecret{Name: name, File: target})
-	}
-	return secrets, nil
 }
 
 func workspaceEnv(values []string) (map[string]string, error) {

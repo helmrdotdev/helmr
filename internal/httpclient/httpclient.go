@@ -10,8 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-
-	"github.com/helmrdotdev/helmr/internal/api"
 )
 
 type Error struct {
@@ -57,12 +55,17 @@ func New(baseURL string, httpClient *http.Client) (*Transport, error) {
 	if parsed.Scheme == "" || parsed.Host == "" {
 		return nil, errors.New("base URL must include scheme and host")
 	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, fmt.Errorf("unsupported base URL scheme %q; expected http or https", parsed.Scheme)
 	}
-	if parsed.RawQuery != "" || parsed.Fragment != "" {
-		return nil, errors.New("base URL must not include query or fragment")
+	if parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, errors.New("base URL must be an origin without credentials, path, query, or fragment")
 	}
+	parsed.User = nil
+	parsed.Path = ""
+	parsed.RawPath = ""
 	if err := rejectPlaintextNonLoopbackURL(parsed); err != nil {
 		return nil, err
 	}
@@ -92,7 +95,6 @@ func (t *Transport) Request(ctx context.Context, method string, path string, bod
 		return nil, err
 	}
 	req.Header.Set("accept", "application/json")
-	req.Header.Set(api.APIVersionHeader, api.CurrentAPIVersion)
 	if bearer != "" {
 		req.Header.Set("authorization", "Bearer "+bearer)
 	}

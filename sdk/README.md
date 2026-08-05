@@ -14,14 +14,14 @@ definition generic:
 
 ```ts
 import { HelmrClient } from "@helmr/sdk"
-import type { issueTask, issueWorkspace } from "./definitions"
+import type { issueTask } from "./definitions"
 
 const client = new HelmrClient({
   url: process.env.HELMR_API_URL!,
   apiKey: process.env.HELMR_API_KEY!,
 })
 
-const workspace = await client.workspaces.create<typeof issueWorkspace>(
+const workspace = await client.sandboxes.createWorkspace(
   "issue-workspace",
   {
     key: "issue:123",
@@ -33,7 +33,7 @@ const run = await client.tasks.start<typeof issueTask>(
   "issue-task",
   {
     payload: { issue: 123 },
-    workspace: { id: workspace.id },
+    workspace,
     idempotencyKey: "issue:123:run",
   },
 )

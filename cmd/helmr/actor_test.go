@@ -13,14 +13,14 @@ import (
 )
 
 const (
-	testActorID     = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
+	testSessionID   = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
 	testWorkspaceID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
 )
 
 func TestActorStartPreservesIdentityInputAndRunTemplate(t *testing.T) {
 	var request api.StartActorRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/actors/operator.v1/start" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/actors/operator.v1/start" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -28,8 +28,8 @@ func TestActorStartPreservesIdentityInputAndRunTemplate(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(api.StartActorResponse{
-			ActorID: testActorID,
-			RunID:   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
+			SessionID: testSessionID,
+			RunID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 		})
 	}))
 	defer server.Close()
@@ -57,12 +57,12 @@ func TestActorStartPreservesIdentityInputAndRunTemplate(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != "actor_id: "+testActorID+"\nrun_id: 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31\n" {
+	if out.String() != "session_id: "+testSessionID+"\nrun_id: 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31\n" {
 		t.Fatalf("output = %q", out.String())
 	}
 	if request.Key == nil || *request.Key != "thread:東京" ||
 		string(request.Input) != "null" ||
-		request.Workspace.ID == nil || *request.Workspace.ID != testWorkspaceID ||
+		request.Workspace.ID != testWorkspaceID ||
 		request.IdempotencyKey != "actor:start:1" {
 		t.Fatalf("request = %+v", request)
 	}
@@ -90,7 +90,7 @@ func TestActorStartDistinguishesOmittedInput(t *testing.T) {
 		if _, ok := raw["input"]; ok {
 			t.Fatalf("omitted input was serialized: %+v", raw)
 		}
-		_ = json.NewEncoder(w).Encode(api.StartActorResponse{ActorID: testActorID})
+		_ = json.NewEncoder(w).Encode(api.StartActorResponse{SessionID: testSessionID})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -105,40 +105,36 @@ func TestActorStartDistinguishesOmittedInput(t *testing.T) {
 	}
 }
 
-func TestActorAddressedCommandsUseDeclaredIDAndOneAddress(t *testing.T) {
+func TestSessionCommandsUseSessionID(t *testing.T) {
 	currentRunID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
 	acceptedAt := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/actors/operator.v1/status":
-			if r.URL.Query().Get("actor_key") != "thread:東京" {
-				t.Fatalf("status query = %q", r.URL.RawQuery)
-			}
-			_ = json.NewEncoder(w).Encode(api.ActorStatus{
-				ID: testActorID, Status: api.ActorPublicStatusOpen,
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sessions/"+testSessionID:
+			_ = json.NewEncoder(w).Encode(api.Session{
+				ID: testSessionID, ActorID: "operator.v1", DeploymentID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30", Status: api.SessionStatusOpen,
 				CurrentRunID: &currentRunID,
 			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/actors/operator.v1/input":
-			var request api.SendActorInputRequest
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sessions/"+testSessionID+"/inputs":
+			var request api.SendSessionInputRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.ActorID != testActorID ||
-				string(request.Input) != "null" ||
+			if string(request.Input) != "null" ||
 				request.IdempotencyKey != "input:1" {
 				t.Fatalf("input request = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(api.SendActorInputResponse{Sequence: 8})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/actors/operator.v1/close":
-			var request api.ActorOperationRequest
+			_ = json.NewEncoder(w).Encode(api.SessionInput{Sequence: 8})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/sessions/"+testSessionID+"/close":
+			var request api.CloseSessionRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.ActorID != testActorID || request.IdempotencyKey != "close:1" {
+			if request.IdempotencyKey != "close:1" {
 				t.Fatalf("close request = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(api.ActorOperationReceipt{
-				ActorID: testActorID, AcceptedAt: acceptedAt,
+			_ = json.NewEncoder(w).Encode(api.SessionCloseReceipt{
+				SessionID: testSessionID, AcceptedAt: acceptedAt,
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
@@ -152,11 +148,11 @@ func TestActorAddressedCommandsUseDeclaredIDAndOneAddress(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"actor", "get", "operator.v1", "--key", "thread:東京"})
+	cmd.SetArgs([]string{"actor", "get", testSessionID})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "actor_status: open") ||
+	if !strings.Contains(out.String(), "session_status: open") ||
 		!strings.Contains(out.String(), "run_id: "+currentRunID) {
 		t.Fatalf("get output = %q", out.String())
 	}
@@ -166,8 +162,7 @@ func TestActorAddressedCommandsUseDeclaredIDAndOneAddress(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
-		"actor", "input", "send", "operator.v1",
-		"--id", testActorID,
+		"actor", "input", "send", testSessionID,
 		"--input-json", "null",
 		"--idempotency-key", "input:1",
 	})
@@ -183,14 +178,13 @@ func TestActorAddressedCommandsUseDeclaredIDAndOneAddress(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
-		"actor", "close", "operator.v1",
-		"--id", testActorID,
+		"actor", "close", testSessionID,
 		"--idempotency-key", "close:1",
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "actor_id: "+testActorID) ||
+	if !strings.Contains(out.String(), "session_id: "+testSessionID) ||
 		!strings.Contains(out.String(), "accepted_at: 2030-01-02T03:04:05Z") {
 		t.Fatalf("close output = %q", out.String())
 	}
@@ -198,16 +192,15 @@ func TestActorAddressedCommandsUseDeclaredIDAndOneAddress(t *testing.T) {
 
 func TestActorOutputReadsFiniteSequencePage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/actors/operator.v1/output" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/sessions/"+testSessionID+"/outputs" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		if r.URL.Query().Get("actor_id") != testActorID ||
-			r.URL.Query().Get("after") != "7" ||
+		if r.URL.Query().Get("after") != "7" ||
 			r.URL.Query().Get("limit") != "1" {
 			t.Fatalf("query = %q", r.URL.RawQuery)
 		}
-		_ = json.NewEncoder(w).Encode(api.ActorOutputPage{
-			Records: []api.ActorOutputRecord{{
+		_ = json.NewEncoder(w).Encode(api.SessionOutputPage{
+			Records: []api.SessionOutput{{
 				ID:       "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
 				Sequence: 8,
 				Data:     json.RawMessage(`{"message":"ready"}`),
@@ -225,8 +218,7 @@ func TestActorOutputReadsFiniteSequencePage(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
-		"actor", "output", "read", "operator.v1",
-		"--id", testActorID,
+		"actor", "output", "read", testSessionID,
 		"--after", "7",
 		"--limit", "1",
 	})
@@ -238,25 +230,18 @@ func TestActorOutputReadsFiniteSequencePage(t *testing.T) {
 	}
 }
 
-func TestActorCommandsRejectInvalidAddressAndMissingInput(t *testing.T) {
+func TestSessionCommandsRejectInvalidArgumentsAndMissingInput(t *testing.T) {
 	t.Setenv(helmrAPIURLEnv, "http://127.0.0.1")
 	t.Setenv(helmrAPIKeyEnv, "test-key")
 	for _, test := range []struct {
 		args []string
 		want string
 	}{
-		{[]string{"actor", "get", "operator.v1"}, "exactly one of --id or --key"},
-		{[]string{"actor", "get", "operator.v1", "--id", " " + testActorID}, "invalid actor ID"},
-		{[]string{"actor", "get", "operator.v1", "--id", testActorID, "--key", "thread"}, "exactly one of --id or --key"},
-		{[]string{"actor", "input", "send", "operator.v1", "--input-json", "null"}, "exactly one of --id or --key"},
-		{[]string{"actor", "input", "send", "operator.v1", "--id", testActorID, "--key", "thread", "--input-json", "null"}, "exactly one of --id or --key"},
-		{[]string{"actor", "input", "send", "operator.v1", "--id", testActorID}, "--input-file or --input-json is required"},
-		{[]string{"actor", "output", "read", "operator.v1"}, "exactly one of --id or --key"},
-		{[]string{"actor", "output", "read", "operator.v1", "--id", testActorID, "--key", "thread"}, "exactly one of --id or --key"},
-		{[]string{"actor", "output", "read", "operator.v1", "--id", testActorID, "--limit", "0"}, "--limit must be in [1,100]"},
-		{[]string{"actor", "output", "read", "operator.v1", "--id", testActorID, "--limit", "101"}, "limit must be in [1,100]"},
-		{[]string{"actor", "close", "operator.v1"}, "exactly one of --id or --key"},
-		{[]string{"actor", "close", "operator.v1", "--id", testActorID, "--key", "thread"}, "exactly one of --id or --key"},
+		{[]string{"actor", "get"}, "accepts 1 arg"},
+		{[]string{"actor", "get", "invalid"}, "invalid UUIDv7"},
+		{[]string{"actor", "input", "send", testSessionID}, "--input-file or --input-json is required"},
+		{[]string{"actor", "output", "read", testSessionID, "--limit", "0"}, "--limit must be in [1,100]"},
+		{[]string{"actor", "output", "read", testSessionID, "--limit", "101"}, "limit must be in [1,100]"},
 	} {
 		cmd := newRootCommand()
 		cmd.SetOut(&bytes.Buffer{})
@@ -277,8 +262,7 @@ func TestActorOutputDoesNotExposeStreamingOrOpaqueCursorFlags(t *testing.T) {
 		cmd.SetOut(&bytes.Buffer{})
 		cmd.SetErr(&bytes.Buffer{})
 		cmd.SetArgs([]string{
-			"actor", "output", "read", "operator.v1",
-			"--id", testActorID,
+			"actor", "output", "read", testSessionID,
 			flag, "value",
 		})
 		err := cmd.Execute()

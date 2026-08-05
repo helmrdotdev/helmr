@@ -78,7 +78,7 @@ func (q *Queries) CloseRunRuntimes(ctx context.Context, arg CloseRunRuntimesPara
 }
 
 const detachActorFromCancelledRun = `-- name: DetachActorFromCancelledRun :execrows
-UPDATE actors
+UPDATE sessions
    SET current_run_id = NULL,
        run_generation = run_generation + 1,
        state_version = state_version + 1,
@@ -91,13 +91,13 @@ UPDATE actors
 `
 
 type DetachActorFromCancelledRunParams struct {
-	ActorID     pgtype.UUID `json:"actor_id"`
+	SessionID   pgtype.UUID `json:"session_id"`
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 	RunID       pgtype.UUID `json:"run_id"`
 }
 
 func (q *Queries) DetachActorFromCancelledRun(ctx context.Context, arg DetachActorFromCancelledRunParams) (int64, error) {
-	result, err := q.db.Exec(ctx, detachActorFromCancelledRun, arg.ActorID, arg.WorkspaceID, arg.RunID)
+	result, err := q.db.Exec(ctx, detachActorFromCancelledRun, arg.SessionID, arg.WorkspaceID, arg.RunID)
 	if err != nil {
 		return 0, err
 	}
@@ -105,7 +105,7 @@ func (q *Queries) DetachActorFromCancelledRun(ctx context.Context, arg DetachAct
 }
 
 const failActorForRunTermination = `-- name: FailActorForRunTermination :execrows
-UPDATE actors
+UPDATE sessions
    SET state = 'failed',
        current_run_id = NULL,
        run_generation = run_generation + 1,
@@ -124,7 +124,7 @@ UPDATE actors
 type FailActorForRunTerminationParams struct {
 	FailureCode string      `json:"failure_code"`
 	RunID       pgtype.UUID `json:"run_id"`
-	ActorID     pgtype.UUID `json:"actor_id"`
+	SessionID   pgtype.UUID `json:"session_id"`
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
@@ -132,7 +132,7 @@ func (q *Queries) FailActorForRunTermination(ctx context.Context, arg FailActorF
 	result, err := q.db.Exec(ctx, failActorForRunTermination,
 		arg.FailureCode,
 		arg.RunID,
-		arg.ActorID,
+		arg.SessionID,
 		arg.WorkspaceID,
 	)
 	if err != nil {
@@ -353,17 +353,17 @@ func (q *Queries) ListOwnedCancellationRuns(ctx context.Context, arg ListOwnedCa
 }
 
 const lockCancellationActors = `-- name: LockCancellationActors :many
-SELECT actors.id
+SELECT sessions.id
   FROM runs
-  JOIN actors
-    ON actors.id = runs.actor_id
-   AND actors.environment_id = runs.environment_id
+  JOIN sessions
+    ON sessions.id = runs.session_id
+   AND sessions.environment_id = runs.environment_id
  WHERE runs.id = ANY($1::uuid[])
    AND runs.org_id = $2
    AND runs.project_id = $3
    AND runs.environment_id = $4
- ORDER BY actors.id
- FOR UPDATE OF actors
+ ORDER BY sessions.id
+ FOR UPDATE OF sessions
 `
 
 type LockCancellationActorsParams struct {
@@ -495,7 +495,7 @@ SELECT id,
        parent_owns_lifecycle,
        environment_id,
        workspace_id,
-       actor_id,
+       session_id,
        status,
        current_attempt_number,
        current_run_lease_id,
@@ -521,7 +521,7 @@ type LockCancellationRunRow struct {
 	ParentOwnsLifecycle  pgtype.Bool `json:"parent_owns_lifecycle"`
 	EnvironmentID        pgtype.UUID `json:"environment_id"`
 	WorkspaceID          pgtype.UUID `json:"workspace_id"`
-	ActorID              pgtype.UUID `json:"actor_id"`
+	SessionID            pgtype.UUID `json:"session_id"`
 	Status               string      `json:"status"`
 	CurrentAttemptNumber int32       `json:"current_attempt_number"`
 	CurrentRunLeaseID    pgtype.UUID `json:"current_run_lease_id"`
@@ -542,7 +542,7 @@ func (q *Queries) LockCancellationRun(ctx context.Context, arg LockCancellationR
 		&i.ParentOwnsLifecycle,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
-		&i.ActorID,
+		&i.SessionID,
 		&i.Status,
 		&i.CurrentAttemptNumber,
 		&i.CurrentRunLeaseID,
@@ -896,23 +896,23 @@ func (q *Queries) RecordRunTerminalEvent(ctx context.Context, arg RecordRunTermi
 
 const releaseActorWorkspace = `-- name: ReleaseActorWorkspace :exec
 UPDATE workspaces
-   SET owner_actor_id = NULL,
+   SET owner_session_id = NULL,
        ownership_generation = ownership_generation + 1,
        state_version = state_version + 1,
        last_activity_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
  WHERE id = $1
-   AND owner_actor_id = $2
+   AND owner_session_id = $2
    AND owner_run_id IS NULL
 `
 
 type ReleaseActorWorkspaceParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	ActorID     pgtype.UUID `json:"actor_id"`
+	SessionID   pgtype.UUID `json:"session_id"`
 }
 
 func (q *Queries) ReleaseActorWorkspace(ctx context.Context, arg ReleaseActorWorkspaceParams) error {
-	_, err := q.db.Exec(ctx, releaseActorWorkspace, arg.WorkspaceID, arg.ActorID)
+	_, err := q.db.Exec(ctx, releaseActorWorkspace, arg.WorkspaceID, arg.SessionID)
 	return err
 }
 
@@ -925,7 +925,7 @@ UPDATE workspaces
        updated_at = transaction_timestamp()
  WHERE id = $1
    AND owner_run_id = $2
-   AND owner_actor_id IS NULL
+   AND owner_session_id IS NULL
 `
 
 type ReleaseTaskWorkspaceParams struct {

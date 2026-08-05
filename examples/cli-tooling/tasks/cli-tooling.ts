@@ -1,4 +1,4 @@
-import { image, source, task, workspace } from "@helmr/sdk"
+import { image, source, task, sandbox } from "@helmr/sdk"
 import { spawn } from "node:child_process"
 import { writeFile } from "node:fs/promises"
 import { z } from "zod"
@@ -11,15 +11,15 @@ const installTools = [
 
 const base = image("cli-tooling")
   .from("node:24-bookworm-slim")
-  .workdir("/workspace")
+  .workdir("/sandbox")
   .run(["npm", "install", "-g", "bun@1.3.10"])
   .run(["sh", "-ceu", installTools])
   .copy("/opt/helmr-task/package.json", source.file("package.json"))
   .workdir("/opt/helmr-task")
   .run(["bun", "install"])
-  .workdir("/workspace")
+  .workdir("/sandbox")
 
-export const cliToolingWorkspace = workspace("cli-tooling")
+export const cliToolingWorkspace = sandbox({ id: "cli-tooling" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 

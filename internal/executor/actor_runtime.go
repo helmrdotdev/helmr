@@ -21,9 +21,9 @@ func (task *guestRunLeaseTask) handleResourceRuntime(
 ) error {
 	switch event.GetEvent().(type) {
 	case *runv0.RunEvent_ActorStartRequested,
-		*runv0.RunEvent_ActorStatusRequested,
-		*runv0.RunEvent_ActorCloseRequested,
-		*runv0.RunEvent_ActorOutputPageRequested:
+		*runv0.RunEvent_SessionStatusRequested,
+		*runv0.RunEvent_SessionCloseRequested,
+		*runv0.RunEvent_SessionOutputPageRequested:
 		return task.handleActorRuntime(ctx, event)
 	default:
 		return task.handleWorkspaceRuntime(ctx, event)
@@ -69,50 +69,50 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 		if response.CorrelationID != correlationID {
 			return errors.New("actor start response correlation mismatch")
 		}
-	case *runv0.RunEvent_ActorStatusRequested:
-		request, err := workerActorReferenceRequest(value.ActorStatusRequested)
+	case *runv0.RunEvent_SessionStatusRequested:
+		request, err := workerSessionReferenceRequest(value.SessionStatusRequested)
 		if err != nil {
 			return err
 		}
 		correlationID = request.CorrelationID
-		var response workerapi.ActorStatusResponse
+		var response workerapi.SessionStatusResponse
 		err = task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
 			lease workerapi.RunLeaseAssignment,
 		) error {
 			request.Lease = lease.Fence()
 			var callErr error
-			response, callErr = controlPlane.GetRunActorStatus(callCtx, request)
+			response, callErr = controlPlane.GetRunSessionStatus(callCtx, request)
 			return callErr
 		})
 		if err != nil {
-			return fmt.Errorf("read actor status: %w", err)
+			return fmt.Errorf("read session status: %w", err)
 		}
 		if response.Completed != nil {
 			completed = response.Completed
 		}
 		failed = response.Failed
 		if response.CorrelationID != correlationID {
-			return errors.New("actor status response correlation mismatch")
+			return errors.New("session status response correlation mismatch")
 		}
-	case *runv0.RunEvent_ActorCloseRequested:
-		base, err := workerActorReferenceRequestFromClose(value.ActorCloseRequested)
+	case *runv0.RunEvent_SessionCloseRequested:
+		base, err := workerSessionReferenceRequestFromClose(value.SessionCloseRequested)
 		if err != nil {
 			return err
 		}
-		request := workerapi.CloseActorRequest{
-			ActorReferenceRequest: base,
-			IdempotencyKey:        value.ActorCloseRequested.GetIdempotencyKey(),
+		request := workerapi.CloseSessionRequest{
+			SessionReferenceRequest: base,
+			IdempotencyKey:          value.SessionCloseRequested.GetIdempotencyKey(),
 		}
 		correlationID = request.CorrelationID
-		var response workerapi.CloseActorResponse
+		var response workerapi.CloseSessionResponse
 		err = task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
 			lease workerapi.RunLeaseAssignment,
 		) error {
 			request.Lease = lease.Fence()
 			var callErr error
-			response, callErr = controlPlane.CloseRunActor(callCtx, request)
+			response, callErr = controlPlane.CloseRunSession(callCtx, request)
 			return callErr
 		})
 		if err != nil {
@@ -123,41 +123,41 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 		}
 		failed = response.Failed
 		if response.CorrelationID != correlationID {
-			return errors.New("actor close response correlation mismatch")
+			return errors.New("session close response correlation mismatch")
 		}
-	case *runv0.RunEvent_ActorOutputPageRequested:
-		base, err := workerActorReferenceRequestFromOutput(value.ActorOutputPageRequested)
+	case *runv0.RunEvent_SessionOutputPageRequested:
+		base, err := workerSessionReferenceRequestFromOutput(value.SessionOutputPageRequested)
 		if err != nil {
 			return err
 		}
-		request := workerapi.ReadActorOutputPageRequest{
-			ActorReferenceRequest: base,
-			Limit:                 int32(value.ActorOutputPageRequested.GetLimit()),
+		request := workerapi.ReadSessionOutputPageRequest{
+			SessionReferenceRequest: base,
+			Limit:                   int32(value.SessionOutputPageRequested.GetLimit()),
 		}
-		if value.ActorOutputPageRequested.After != nil {
-			after := value.ActorOutputPageRequested.GetAfter()
+		if value.SessionOutputPageRequested.After != nil {
+			after := value.SessionOutputPageRequested.GetAfter()
 			request.After = &after
 		}
 		correlationID = request.CorrelationID
-		var response workerapi.ReadActorOutputPageResponse
+		var response workerapi.ReadSessionOutputPageResponse
 		err = task.callRunSourceRuntime(ctx, func(
 			callCtx context.Context,
 			lease workerapi.RunLeaseAssignment,
 		) error {
 			request.Lease = lease.Fence()
 			var callErr error
-			response, callErr = controlPlane.ReadRunActorOutputPage(callCtx, request)
+			response, callErr = controlPlane.ReadRunSessionOutputPage(callCtx, request)
 			return callErr
 		})
 		if err != nil {
-			return fmt.Errorf("read actor output page: %w", err)
+			return fmt.Errorf("read session output page: %w", err)
 		}
 		if response.Completed != nil {
 			completed = response.Completed
 		}
 		failed = response.Failed
 		if response.CorrelationID != correlationID {
-			return errors.New("actor output page response correlation mismatch")
+			return errors.New("session output page response correlation mismatch")
 		}
 	default:
 		return errors.New("unsupported actor runtime event")
@@ -215,19 +215,12 @@ func workerActorStartRequest(
 	if requested.InputJson != nil {
 		request.Input = json.RawMessage(requested.GetInputJson())
 	}
-	switch address := requested.GetWorkspace().(type) {
-	case *runv0.ActorStartRequested_WorkspaceId:
-		request.Workspace.ID = &address.WorkspaceId
-	case *runv0.ActorStartRequested_WorkspaceKey:
-		request.Workspace.Key = &address.WorkspaceKey
-	default:
-		return workerapi.StartActorRequest{}, errors.New("actor start workspace address is required")
-	}
+	request.Workspace.ID = requested.GetWorkspaceId()
 	if err := api.ValidateActorDeclaredID(request.ActorDeclaredID); err != nil {
 		return workerapi.StartActorRequest{}, err
 	}
-	if err := api.ValidateStartActorRequest(api.StartActorRequest{
-		Key: request.Key, Input: request.Input, IdempotencyKey: request.IdempotencyKey,
+	if err := api.ValidateActorStartOptions(api.ActorStartOptions{
+		Key: request.Key, Input: request.Input,
 		Workspace: request.Workspace, Run: request.Run,
 	}); err != nil {
 		return workerapi.StartActorRequest{}, err
@@ -235,84 +228,55 @@ func workerActorStartRequest(
 	return request, nil
 }
 
-func workerActorReferenceRequest(
-	requested *runv0.ActorStatusRequested,
-) (workerapi.ActorReferenceRequest, error) {
+func workerSessionReferenceRequest(
+	requested *runv0.SessionStatusRequested,
+) (workerapi.SessionReferenceRequest, error) {
 	if requested == nil {
-		return workerapi.ActorReferenceRequest{}, errors.New("actor status request is required")
+		return workerapi.SessionReferenceRequest{}, errors.New("session status request is required")
 	}
-	request := workerapi.ActorReferenceRequest{
-		CorrelationID: requested.GetCorrelationId(), ActorDeclaredID: requested.GetDeclaredId(),
+	request := workerapi.SessionReferenceRequest{
+		CorrelationID: requested.GetCorrelationId(), SessionID: requested.GetSessionId(),
 	}
-	switch address := requested.GetAddress().(type) {
-	case *runv0.ActorStatusRequested_ActorId:
-		request.ActorID = address.ActorId
-	case *runv0.ActorStatusRequested_ActorKey:
-		request.ActorKey = address.ActorKey
-	default:
-		return workerapi.ActorReferenceRequest{}, errors.New("actor address is required")
-	}
-	return validateWorkerActorReference(request)
+	return validateWorkerSessionReference(request)
 }
 
-func workerActorReferenceRequestFromClose(
-	requested *runv0.ActorCloseRequested,
-) (workerapi.ActorReferenceRequest, error) {
+func workerSessionReferenceRequestFromClose(
+	requested *runv0.SessionCloseRequested,
+) (workerapi.SessionReferenceRequest, error) {
 	if requested == nil {
-		return workerapi.ActorReferenceRequest{}, errors.New("actor close request is required")
+		return workerapi.SessionReferenceRequest{}, errors.New("session close request is required")
 	}
-	request := workerapi.ActorReferenceRequest{
-		CorrelationID: requested.GetCorrelationId(), ActorDeclaredID: requested.GetDeclaredId(),
+	request := workerapi.SessionReferenceRequest{
+		CorrelationID: requested.GetCorrelationId(), SessionID: requested.GetSessionId(),
 	}
-	switch address := requested.GetAddress().(type) {
-	case *runv0.ActorCloseRequested_ActorId:
-		request.ActorID = address.ActorId
-	case *runv0.ActorCloseRequested_ActorKey:
-		request.ActorKey = address.ActorKey
-	default:
-		return workerapi.ActorReferenceRequest{}, errors.New("actor address is required")
-	}
-	return validateWorkerActorReference(request)
+	return validateWorkerSessionReference(request)
 }
 
-func workerActorReferenceRequestFromOutput(
-	requested *runv0.ActorOutputPageRequested,
-) (workerapi.ActorReferenceRequest, error) {
+func workerSessionReferenceRequestFromOutput(
+	requested *runv0.SessionOutputPageRequested,
+) (workerapi.SessionReferenceRequest, error) {
 	if requested == nil {
-		return workerapi.ActorReferenceRequest{}, errors.New("actor output page request is required")
+		return workerapi.SessionReferenceRequest{}, errors.New("session output page request is required")
 	}
 	if requested.GetLimit() < 1 || requested.GetLimit() > 100 ||
 		(requested.After != nil &&
 			(requested.GetAfter() < 0 || requested.GetAfter() > maxJavaScriptSafeInteger)) {
-		return workerapi.ActorReferenceRequest{}, errors.New("actor output page bounds are invalid")
+		return workerapi.SessionReferenceRequest{}, errors.New("session output page bounds are invalid")
 	}
-	request := workerapi.ActorReferenceRequest{
-		CorrelationID: requested.GetCorrelationId(), ActorDeclaredID: requested.GetDeclaredId(),
+	request := workerapi.SessionReferenceRequest{
+		CorrelationID: requested.GetCorrelationId(), SessionID: requested.GetSessionId(),
 	}
-	switch address := requested.GetAddress().(type) {
-	case *runv0.ActorOutputPageRequested_ActorId:
-		request.ActorID = address.ActorId
-	case *runv0.ActorOutputPageRequested_ActorKey:
-		request.ActorKey = address.ActorKey
-	default:
-		return workerapi.ActorReferenceRequest{}, errors.New("actor address is required")
-	}
-	return validateWorkerActorReference(request)
+	return validateWorkerSessionReference(request)
 }
 
-func validateWorkerActorReference(
-	request workerapi.ActorReferenceRequest,
-) (workerapi.ActorReferenceRequest, error) {
+func validateWorkerSessionReference(
+	request workerapi.SessionReferenceRequest,
+) (workerapi.SessionReferenceRequest, error) {
 	if err := validateRuntimeActorCorrelation(request.CorrelationID); err != nil {
-		return workerapi.ActorReferenceRequest{}, err
+		return workerapi.SessionReferenceRequest{}, err
 	}
-	if err := api.ValidateActorDeclaredID(request.ActorDeclaredID); err != nil {
-		return workerapi.ActorReferenceRequest{}, err
-	}
-	if err := api.ValidateActorReference(api.ActorReference{
-		ActorID: request.ActorID, ActorKey: request.ActorKey,
-	}); err != nil {
-		return workerapi.ActorReferenceRequest{}, err
+	if err := api.ValidateActorID(request.SessionID); err != nil {
+		return workerapi.SessionReferenceRequest{}, err
 	}
 	return request, nil
 }

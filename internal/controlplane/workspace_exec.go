@@ -286,7 +286,7 @@ func (s *Server) admitWorkspaceExec(ctx context.Context, request workspaceExecRe
 				return errWorkspaceBusy
 			}
 		}
-		if authority.OwnerActorID.Valid || authority.OwnerRunID.Valid ||
+		if authority.OwnerSessionID.Valid || authority.OwnerRunID.Valid ||
 			authority.HasActiveLease || authority.HasActiveProcess {
 			return errWorkspaceBusy
 		}

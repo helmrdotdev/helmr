@@ -54,17 +54,17 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 	assertActorStartTuple(t, fixture, created, 1)
 
 	if _, err := fixture.pool.Exec(t.Context(), `
-		UPDATE actors
+		UPDATE sessions
 		   SET state = 'closing'
 		 WHERE id = $1
-	`, created.ActorID); err != nil {
+	`, created.SessionID); err != nil {
 		t.Fatal(err)
 	}
 	replayed, err := fixture.server.startActor(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !replayed.Replayed || replayed.ActorID != created.ActorID ||
+	if !replayed.Replayed || replayed.SessionID != created.SessionID ||
 		replayed.BootRunID != created.BootRunID ||
 		replayed.InitialRecordID == nil || *replayed.InitialRecordID != *created.InitialRecordID {
 		t.Fatalf("replayed = %+v, created = %+v", replayed, created)
@@ -78,7 +78,7 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("replay after undeploy: %v", err)
 	}
-	if !replayedAfterUndeploy.Replayed || replayedAfterUndeploy.ActorID != created.ActorID {
+	if !replayedAfterUndeploy.Replayed || replayedAfterUndeploy.SessionID != created.SessionID {
 		t.Fatalf("undeployed replay = %+v, created = %+v", replayedAfterUndeploy, created)
 	}
 	if _, err := fixture.pool.Exec(t.Context(), `
@@ -109,13 +109,13 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT
 		    (SELECT count(*) FROM idempotency_claims WHERE operation = 'actor.start'),
-		    (SELECT count(*) FROM actors),
+		    (SELECT count(*) FROM sessions),
 		    (SELECT count(*) FROM runs WHERE cause_kind = 'actor_start')
 	`).Scan(&claimCount, &actorCount, &runCount); err != nil {
 		t.Fatal(err)
 	}
 	if claimCount != 1 || actorCount != 1 || runCount != 1 {
-		t.Fatalf("counts after conflicts = claims %d actors %d runs %d", claimCount, actorCount, runCount)
+		t.Fatalf("counts after conflicts = claims %d sessions %d runs %d", claimCount, actorCount, runCount)
 	}
 
 	if _, err := fixture.pool.Exec(t.Context(), `
@@ -151,7 +151,7 @@ func TestActorStartHTTPPostgresCreatesAndReplaysIDs(t *testing.T) {
 		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 			t.Fatal(err)
 		}
-		if err := ids.Validate(response.ActorID); err != nil {
+		if err := ids.Validate(response.SessionID); err != nil {
 			t.Fatalf("Actor ID: %v", err)
 		}
 		if err := ids.Validate(response.RunID); err != nil {
@@ -183,12 +183,12 @@ func TestActorStartHTTPPostgresDeniesBeforeAdmission(t *testing.T) {
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	var actors int
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM actors`).Scan(&actors); err != nil {
+	var sessions int
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions`).Scan(&sessions); err != nil {
 		t.Fatal(err)
 	}
-	if actors != 0 {
-		t.Fatalf("actors = %d, want 0", actors)
+	if sessions != 0 {
+		t.Fatalf("sessions = %d, want 0", sessions)
 	}
 }
 
@@ -219,18 +219,18 @@ func TestActorStartHTTPPostgresAcceptsCanonicalInputBelowLimit(t *testing.T) {
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	var actors int
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM actors`).Scan(&actors); err != nil {
+	var sessions int
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions`).Scan(&sessions); err != nil {
 		t.Fatal(err)
 	}
-	if actors != 1 {
-		t.Fatalf("actors = %d, want 1", actors)
+	if sessions != 1 {
+		t.Fatalf("sessions = %d, want 1", sessions)
 	}
 }
 
 func TestActorStartHTTPSessionPostgresCreates(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
-	body := fmt.Sprintf(`{"workspace":{"key":%q}}`, fixture.workspaceKeys[0])
+	body := fmt.Sprintf(`{"workspace":{"id":%q}}`, fixture.workspaceRefs[0])
 	principal := auth.Actor{
 		OrgID: fixture.orgID,
 		Kind:  auth.ActorKindSession,
@@ -254,7 +254,7 @@ func TestActorStartHTTPSessionPostgresCreates(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if err := ids.Validate(response.ActorID); err != nil {
+	if err := ids.Validate(response.SessionID); err != nil {
 		t.Fatalf("Actor ID: %v", err)
 	}
 }
@@ -282,24 +282,24 @@ func TestActorStartPostgresRollbackLeavesNoResidue(t *testing.T) {
 	if _, err := fixture.server.startActor(t.Context(), fixture.request(0, &key, "rollback-1")); err == nil {
 		t.Fatal("expected rejected outbox")
 	}
-	var claims, actors, records, runs, attempts, resolutions, outboxes, owned int
+	var claims, sessions, records, runs, attempts, resolutions, outboxes, owned int
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT
 		    (SELECT count(*) FROM idempotency_claims WHERE operation = 'actor.start'),
-		    (SELECT count(*) FROM actors),
-		    (SELECT count(*) FROM actor_records),
+		    (SELECT count(*) FROM sessions),
+		    (SELECT count(*) FROM session_records),
 		    (SELECT count(*) FROM runs WHERE cause_kind = 'actor_start'),
 		    (SELECT count(*) FROM run_attempts),
 		    (SELECT count(*) FROM secret_resolutions),
 		    (SELECT count(*) FROM outbox_messages WHERE topic = 'run.admit'),
-		    (SELECT count(*) FROM workspaces WHERE owner_actor_id IS NOT NULL OR owner_run_id IS NOT NULL)
-	`).Scan(&claims, &actors, &records, &runs, &attempts, &resolutions, &outboxes, &owned); err != nil {
+		    (SELECT count(*) FROM workspaces WHERE owner_session_id IS NOT NULL OR owner_run_id IS NOT NULL)
+	`).Scan(&claims, &sessions, &records, &runs, &attempts, &resolutions, &outboxes, &owned); err != nil {
 		t.Fatal(err)
 	}
-	if claims+actors+records+runs+attempts+resolutions+outboxes+owned != 0 {
+	if claims+sessions+records+runs+attempts+resolutions+outboxes+owned != 0 {
 		t.Fatalf(
-			"rollback residue = claims %d actors %d records %d runs %d attempts %d resolutions %d outboxes %d owned %d",
-			claims, actors, records, runs, attempts, resolutions, outboxes, owned,
+			"rollback residue = claims %d sessions %d records %d runs %d attempts %d resolutions %d outboxes %d owned %d",
+			claims, sessions, records, runs, attempts, resolutions, outboxes, owned,
 		)
 	}
 }
@@ -308,7 +308,6 @@ func TestActorStartPostgresNoInputBootsAtZeroHighWatermark(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
 	key := "no-input"
 	request := fixture.request(0, &key, "no-input-1")
-	request.Workspace = api.WorkspaceTarget{Key: &fixture.workspaceKeys[0]}
 	request.ManagedQueueName = "priority"
 	created, err := fixture.server.startActor(t.Context(), request)
 	if err != nil {
@@ -327,18 +326,18 @@ func TestActorStartPostgresKeylessRequestsRemainAtLeastOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	var claims, actors, runs, owned int
+	var claims, sessions, runs, owned int
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT
 		    (SELECT count(*) FROM idempotency_claims WHERE operation = 'actor.start'),
-		    (SELECT count(*) FROM actors),
+		    (SELECT count(*) FROM sessions),
 		    (SELECT count(*) FROM runs WHERE cause_kind = 'actor_start'),
-		    (SELECT count(*) FROM workspaces WHERE owner_actor_id IS NOT NULL)
-	`).Scan(&claims, &actors, &runs, &owned); err != nil {
+		    (SELECT count(*) FROM workspaces WHERE owner_session_id IS NOT NULL)
+	`).Scan(&claims, &sessions, &runs, &owned); err != nil {
 		t.Fatal(err)
 	}
-	if claims != 0 || actors != 2 || runs != 2 || owned != 2 {
-		t.Fatalf("keyless counts claims=%d actors=%d runs=%d owned=%d", claims, actors, runs, owned)
+	if claims != 0 || sessions != 2 || runs != 2 || owned != 2 {
+		t.Fatalf("keyless counts claims=%d sessions=%d runs=%d owned=%d", claims, sessions, runs, owned)
 	}
 }
 
@@ -379,27 +378,26 @@ func TestActorStartPostgresConcurrentKeyCollisionCreatesOneIdentity(t *testing.T
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT
 		    (SELECT count(*) FROM idempotency_claims WHERE operation = 'actor.start'),
-		    (SELECT count(*) FROM actors),
+		    (SELECT count(*) FROM sessions),
 		    (SELECT count(*) FROM runs WHERE cause_kind = 'actor_start'),
-		    (SELECT count(*) FROM workspaces WHERE owner_actor_id IS NOT NULL)
+		    (SELECT count(*) FROM workspaces WHERE owner_session_id IS NOT NULL)
 	`).Scan(&claimCount, &actorCount, &runCount, &ownedCount); err != nil {
 		t.Fatal(err)
 	}
 	if successes != 1 || conflicts != 1 ||
 		claimCount != 1 || actorCount != 1 || runCount != 1 || ownedCount != 1 {
 		t.Fatalf(
-			"race successes=%d conflicts=%d claims=%d actors=%d runs=%d owned=%d",
+			"race successes=%d conflicts=%d claims=%d sessions=%d runs=%d owned=%d",
 			successes, conflicts, claimCount, actorCount, runCount, ownedCount,
 		)
 	}
 }
 
 func (fixture actorStartPostgresFixture) request(index int, key *string, idempotencyKey string) actorStartRequest {
-	workspaceID := fixture.workspaceRefs[index]
 	return actorStartRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
 		ActorDeclaredID: "operator.v1",
-		Workspace:       api.WorkspaceTarget{ID: &workspaceID},
+		WorkspaceID:     fixture.workspaceIDs[index],
 		Key:             key, IdempotencyKey: idempotencyKey,
 	}
 }
@@ -458,9 +456,9 @@ func assertActorStartTupleWithQueue(
 		SELECT current_run_id, next_input_sequence, committed_input_sequence,
 		       run_queue_name, run_queue_concurrency_limit,
 		       run_max_active_duration_ms, run_retry_policy
-		  FROM actors
+		  FROM sessions
 		 WHERE id = $1
-	`, result.ActorID).Scan(
+	`, result.SessionID).Scan(
 		&actorCurrentRun,
 		&actorNextInput,
 		&actorCommitted,
@@ -472,25 +470,25 @@ func assertActorStartTupleWithQueue(
 		t.Fatal(err)
 	}
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT owner_actor_id FROM workspaces WHERE id = $1
+		SELECT owner_session_id FROM workspaces WHERE id = $1
 	`, fixture.workspaceIDs[0]).Scan(&workspaceOwner); err != nil {
 		t.Fatal(err)
 	}
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT actor_id, cause_kind, actor_start_input_sequence, actor_start_input_high_watermark
+		SELECT session_id, cause_kind, session_input_start_sequence, session_input_high_watermark
 		  FROM runs
 		 WHERE id = $1
 	`, result.BootRunID).Scan(&runActor, &runCause, &runStart, &runHigh); err != nil {
 		t.Fatal(err)
 	}
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT actor_start_input_sequence FROM run_attempts WHERE run_id = $1 AND number = 1
+		SELECT session_input_start_sequence FROM run_attempts WHERE run_id = $1 AND number = 1
 	`, result.BootRunID).Scan(&attemptStart); err != nil {
 		t.Fatal(err)
 	}
 	if result.InitialRecordID != nil {
 		if err := fixture.pool.QueryRow(t.Context(), `
-			SELECT sequence, source_kind FROM actor_records WHERE id = $1
+			SELECT sequence, source_kind FROM session_records WHERE id = $1
 		`, *result.InitialRecordID).Scan(&recordSequence, &recordSource); err != nil {
 			t.Fatal(err)
 		}
@@ -513,8 +511,8 @@ func assertActorStartTupleWithQueue(
 		(highWatermark == 1 && recordSequence == 1 && recordSource == "external")
 	queueLimitValid := (wantQueueLimit == nil && actorQueueLimit == nil) ||
 		(wantQueueLimit != nil && actorQueueLimit != nil && *wantQueueLimit == *actorQueueLimit)
-	if actorCurrentRun != result.BootRunID || workspaceOwner != result.ActorID ||
-		runActor != result.ActorID || runCause != "actor_start" ||
+	if actorCurrentRun != result.BootRunID || workspaceOwner != result.SessionID ||
+		runActor != result.SessionID || runCause != "actor_start" ||
 		runStart != 0 || runHigh != highWatermark || attemptStart != 0 ||
 		actorNextInput != highWatermark+1 || actorCommitted != 0 ||
 		actorQueue != wantQueue || !queueLimitValid || actorMaxDuration != 300_000 ||
@@ -622,7 +620,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		) VALUES
 		    ($1, $4, $5, 'actor', 'operator.v1', 0, $7::jsonb, $8, NULL),
 		    ($2, $4, $5, 'task', 'resize-image', 0, $9::jsonb, $10, NULL),
-		    ($3, $4, $5, 'workspace', 'workspace.v1', 0, '{}'::jsonb, decode(repeat('04', 32), 'hex'), $6)
+		    ($3, $4, $5, 'sandbox', 'workspace.v1', 0, '{}'::jsonb, decode(repeat('04', 32), 'hex'), $6)
 	`, actorDefinitionID, taskDefinitionID, workspaceDefinitionID,
 		fixture.environmentID, deploymentID, imageID,
 		actorManifest, actorManifestDigest[:], taskManifest, taskManifestDigest[:])
@@ -655,7 +653,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		dbtest.MustExec(t, t.Context(), tx, `
 			INSERT INTO workspaces (
 			    id, environment_id, region_id,
-			    workspace_declared_id, deployment_definition_id, head_version_id, key
+			    sandbox_declared_id, deployment_definition_id, head_version_id, key
 			) VALUES ($1, $2, 'us-east-1', 'workspace.v1', $3, $4, $5)
 		`, workspaceID, fixture.environmentID, workspaceDefinitionID, versionID,
 			fixture.workspaceKeys[index])

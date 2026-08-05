@@ -55,7 +55,7 @@ export function ProjectNew() {
     staleTime: 60_000,
   }));
   const availableRegions = createMemo(() =>
-    (regions.data?.regions ?? []).filter((region) => region.state === "available"),
+	(regions.data?.regions ?? []).filter((region) => region.status === "available"),
   );
   const firstProject = createMemo(() =>
     !projects.isPending && !projects.isError && (projects.data?.projects.length ?? 0) === 0,

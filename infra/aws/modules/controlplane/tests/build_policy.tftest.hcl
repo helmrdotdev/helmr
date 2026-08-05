@@ -291,35 +291,35 @@ run "execution_roles_are_pull_only_for_the_exact_controlplane_repository" {
   }
 }
 
-run "operator_api_credential_is_explicit_composition" {
+run "capacity_api_credential_is_explicit_composition" {
   command = plan
 
   variables {
-    operator_token_secret_arn  = "arn:aws:secretsmanager:us-east-1:111122223333:secret:helmr/operator-token"
-    operator_token_kms_key_arn = "arn:aws:kms:us-east-1:111122223333:key/12345678-1234-1234-1234-123456789012"
+    capacity_token_secret_arn  = "arn:aws:secretsmanager:us-east-1:111122223333:secret:helmr/capacity-token"
+    capacity_token_kms_key_arn = "arn:aws:kms:us-east-1:111122223333:key/12345678-1234-1234-1234-123456789012"
   }
 
   assert {
     condition = (
       contains(
         [for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].secrets : item.name],
-        "OPERATOR_TOKEN"
+        "CAPACITY_TOKEN"
       ) &&
       !contains(
         [for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].secrets : item.name],
-        "OPERATOR_TOKEN"
+        "CAPACITY_TOKEN"
       )
     )
-    error_message = "only Control Plane receives the externally composed deployment-operator credential"
+    error_message = "only Control Plane receives the externally composed capacity credential"
   }
 }
 
-run "operator_api_credential_rejects_plaintext_environment" {
+run "capacity_api_credential_rejects_plaintext_environment" {
   command = plan
 
   variables {
     controlplane_environment = {
-      OPERATOR_TOKEN = "plaintext-must-not-enter-task-definition"
+      CAPACITY_TOKEN = "plaintext-must-not-enter-task-definition"
     }
   }
 

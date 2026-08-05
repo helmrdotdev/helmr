@@ -37,7 +37,7 @@ func TestValidateRunStartArmModesAndReplay(t *testing.T) {
 	})
 	t.Run("fresh Actor", func(t *testing.T) {
 		authority := base
-		authority.run.ActorID = id(11)
+		authority.run.SessionID = id(11)
 		authority.run.EntrypointKind = "actor"
 		if err := validateRunStartArm(runStartArm{mode: runLeaseClaimFresh}, authority); err != nil {
 			t.Fatal(err)

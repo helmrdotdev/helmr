@@ -17,7 +17,7 @@ import { schedules, workspaces } from "@helmr/sdk"
 export const maintenance = schedules.task({
   id: "maintenance",
   cron: { pattern: "0 3 * * *", timezone: "UTC" },
-  workspace: workspaces.ref({ key: "maintenance" }),
+  workspace: workspaces.fromKey("maintenance"),
   run: async ({ scheduledAt, lastScheduledAt, upcoming }, ctx) => {
     if (ctx.run.cause.type !== "schedule") {
       throw new Error("maintenance requires a Schedule cause")
@@ -40,5 +40,5 @@ Deployment. To stop the Schedule, remove the scheduled Task declaration and
 promote. There is intentionally no imperative Schedule mutation path.
 
 If a key-addressed Workspace does not exist yet, the Schedule remains
-`pending-workspace`. Create the matching Workspace; bounded scheduler
+`pending_workspace`. Create the matching Workspace; bounded scheduler
 reconciliation pins it and activates a new Schedule generation.

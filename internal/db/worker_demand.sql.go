@@ -26,7 +26,7 @@ WITH logical_groups AS (
       JOIN deployment_definitions AS workspace_definitions
         ON workspace_definitions.environment_id = workspaces.environment_id
        AND workspace_definitions.id = workspaces.deployment_definition_id
-       AND workspace_definitions.kind = 'workspace'
+       AND workspace_definitions.kind = 'sandbox'
       JOIN runs ON runs.environment_id = workspaces.environment_id
                AND runs.workspace_id = workspaces.id
      WHERE logical_groups.state = 'active'

@@ -121,7 +121,7 @@ func New(t *testing.T) Fixture {
 			$1, $3, $4, 'task', 'test-task', 0, '{}'::jsonb,
 			decode(repeat('03', 32), 'hex'), NULL
 		), (
-			$2, $3, $4, 'workspace', 'test-workspace', 0, '{}'::jsonb,
+			$2, $3, $4, 'sandbox', 'test-workspace', 0, '{}'::jsonb,
 			decode(repeat('04', 32), 'hex'), $5
 		)
 	`, fixture.TaskDefinitionID, fixture.WorkspaceDefinitionID,
@@ -176,7 +176,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspaces (
 			id, environment_id, region_id,
-			workspace_declared_id, deployment_definition_id,
+			sandbox_declared_id, deployment_definition_id,
 			owner_run_id, ownership_generation, writer_generation, head_version_id
 		) VALUES (
 			$1, $2, $3, 'test-workspace', $4,
@@ -325,7 +325,7 @@ INSERT INTO deployment_definitions (
     decode(repeat('05', 32), 'hex')
 )`, actorDefinitionID, fixture.EnvironmentID, fixture.DeploymentID)
 	dbtest.MustExec(t, ctx, tx, `
-INSERT INTO actors (
+INSERT INTO sessions (
     id, environment_id,
     actor_declared_id, deployment_definition_id, workspace_id, current_run_id,
     next_input_sequence, committed_input_sequence,
@@ -337,20 +337,20 @@ INSERT INTO actors (
 )`, actorID, fixture.EnvironmentID, actorDefinitionID, workspaceID, work.RunID, retryPolicy)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE workspaces
-   SET owner_actor_id = $1, owner_run_id = NULL
+   SET owner_session_id = $1, owner_run_id = NULL
  WHERE id = $2`, actorID, workspaceID)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE runs
    SET deployment_definition_id = $1,
        entrypoint_kind = 'actor', entrypoint_declared_id = 'test-actor',
-       actor_id = $2, cause_kind = 'actor_start',
-       actor_start_input_sequence = 1, actor_start_input_high_watermark = 2,
+       session_id = $2, cause_kind = 'actor_start',
+       session_input_start_sequence = 1, session_input_high_watermark = 2,
        payload = NULL, retry_policy = $3::jsonb
  WHERE id = $4`, actorDefinitionID, actorID, retryPolicy, work.RunID)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE run_attempts
    SET entrypoint_kind = 'actor',
-       actor_start_input_sequence = 1
+       session_input_start_sequence = 1
  WHERE run_id = $1 AND number = 1`, work.RunID)
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)

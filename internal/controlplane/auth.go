@@ -33,8 +33,27 @@ type workerActor struct {
 	EpochStartedAt    time.Time
 }
 
-func (s *Server) requireActor(next http.Handler) http.Handler {
-	return s.requireActorWithErrorWriter(next, writeActorAuthError)
+func (s *Server) requireAPIKey(next http.Handler) http.Handler {
+	return s.requireAPIKeyWithErrorWriter(next, writeActorAuthError)
+}
+
+func (s *Server) requireAPIKeyWithErrorWriter(
+	next http.Handler,
+	writeAuthError actorAuthErrorWriter,
+) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token, ok := bearerToken(r.Header.Get("authorization"))
+		if !ok || !strings.HasPrefix(strings.TrimSpace(token), auth.APIKeyPrefix) {
+			writeAuthError(w, s.log, auth.ErrUnauthenticated)
+			return
+		}
+		actor, err := s.apiKeyActor(r, token)
+		if err != nil {
+			writeAuthError(w, s.log, err)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor)))
+	})
 }
 
 type actorAuthErrorWriter func(http.ResponseWriter, *slog.Logger, error)

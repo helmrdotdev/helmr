@@ -27,7 +27,7 @@ type runLeaseExecutionProjection struct {
 	restoreSource       runLeaseRestoreSource
 	run                 db.Run
 	attempt             db.RunAttempt
-	actor               *db.Actor
+	actor               *db.Session
 	definition          db.DeploymentDefinition
 	deploymentVersion   string
 	runtime             db.RuntimeInstance

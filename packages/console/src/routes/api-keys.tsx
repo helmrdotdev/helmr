@@ -71,9 +71,9 @@ const API_KEY_SCOPE_OPTIONS: {
     description: "Allow automation to cancel Runs.",
   },
   {
-    value: "actors:read",
-    label: "Read actors",
-    description: "Allow automation to read Actor state in the selected project and environment.",
+    value: "sessions:read",
+    label: "Read sessions",
+    description: "Allow automation to read Session state in the selected project and environment.",
   },
   {
     value: "actors:start",
@@ -81,14 +81,14 @@ const API_KEY_SCOPE_OPTIONS: {
     description: "Allow automation to start declared Actors.",
   },
   {
-    value: "actors-input:send",
-    label: "Send actor input",
-    description: "Allow automation to append durable input to Actors.",
+    value: "sessions-input:send",
+    label: "Send session input",
+    description: "Allow automation to append durable input to Sessions.",
   },
   {
-    value: "actors-lifecycle:manage",
-    label: "Manage actor lifecycle",
-    description: "Allow automation to suspend and terminate Actors.",
+    value: "sessions:close",
+    label: "Close sessions",
+    description: "Allow automation to close Sessions.",
   },
   {
     value: "secrets:write",

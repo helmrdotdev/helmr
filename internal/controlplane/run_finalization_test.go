@@ -188,11 +188,11 @@ func TestBeginRunFinalizationRejectsChangedReplay(t *testing.T) {
 func TestBeginRunFinalizationAcceptsActorOwner(t *testing.T) {
 	server, store, worker, request, parsed := validRunFinalizationFixture(t)
 	actorID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store.renewal.ActorID = actorID
+	store.renewal.SessionID = actorID
 	store.authority.run.EntrypointKind = "actor"
-	store.authority.run.ActorID = actorID
+	store.authority.run.SessionID = actorID
 	store.authority.attempt.EntrypointKind = "actor"
-	store.authority.actor = db.Actor{
+	store.authority.actor = db.Session{
 		ID: actorID, CurrentRunID: store.authority.run.ID, WorkspaceID: store.authority.workspace.ID,
 		State: "open",
 	}
@@ -262,8 +262,8 @@ func TestLockLiveRunFinalizationAuthorityLocksLineageBeforePhysicalAuthority(t *
 	}
 	root := lineageRun(rootID, pgtype.UUID{})
 	root.EntrypointKind = "actor"
-	root.ActorID = actorID
-	store.authority.actor = db.Actor{
+	root.SessionID = actorID
+	store.authority.actor = db.Session{
 		ID: actorID, CurrentRunID: rootID, WorkspaceID: workspaceID, State: "open",
 	}
 	store.finalizationLineage = []db.ListSameWorkspaceHandoffAncestorRunsRow{

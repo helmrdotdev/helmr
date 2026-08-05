@@ -227,9 +227,9 @@ func newDeploymentBuildCompletionFixture(
 			Plan: deployment.BuildPlan{
 				FormatVersion: deployment.BuildPlanFormatVersion,
 				Definitions: []deployment.DefinitionInput{{
-					Kind:       deployment.DefinitionKindWorkspace,
+					Kind:       deployment.DefinitionKindSandbox,
 					DeclaredID: "repo",
-					Workspace: &deployment.WorkspaceInputManifest{
+					Sandbox: &deployment.SandboxInputManifest{
 						ImageBuild: imagePlan,
 						Resources: deployment.ResourcesManifest{
 							MilliCPU:  1,
@@ -416,7 +416,7 @@ func newDeploymentBuildCompletionFixture(
 	}
 	request := httptest.NewRequest(
 		"POST",
-		"/api/worker/deployments/complete",
+		"/api/worker/v0/build/deployments/complete",
 		bytes.NewReader(body),
 	)
 	request = request.WithContext(

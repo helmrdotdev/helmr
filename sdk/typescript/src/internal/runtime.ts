@@ -1,9 +1,9 @@
 import type {
-  ActorOperationOptions,
-  ActorOperationReceipt,
+  RuntimeSessionOperationOptions,
+  RuntimeSessionOperationReceipt,
   ActorOutputRecord,
   ActorStartOptions,
-  ActorStatus,
+  RuntimeSessionSnapshot,
   Duration,
   JsonValue,
   Metadata,
@@ -47,35 +47,21 @@ export interface RuntimeOperations {
   readonly waitFor: (duration: Duration) => Promise<void>
   readonly waitUntil: (date: Date) => Promise<void>
   readonly actorInputSend: (
-    target: Readonly<{
-      declaredId: string
-      address: { readonly id: string } | { readonly key: string }
-    }>,
+    sessionId: string,
     input: JsonValue,
     options?: SendOptions,
   ) => Promise<{ sequence: number }>
   readonly actorStart: (
     declaredId: string,
     options: ActorStartOptions,
-  ) => Promise<Readonly<{ actorId: string; runId: string }>>
-  readonly actorStatus: (
-    target: Readonly<{
-      declaredId: string
-      address: { readonly id: string } | { readonly key: string }
-    }>,
-  ) => Promise<ActorStatus>
-  readonly actorClose: (
-    target: Readonly<{
-      declaredId: string
-      address: { readonly id: string } | { readonly key: string }
-    }>,
-    options?: ActorOperationOptions,
-  ) => Promise<ActorOperationReceipt>
-  readonly actorOutputPage: (
-    target: Readonly<{
-      declaredId: string
-      address: { readonly id: string } | { readonly key: string }
-    }>,
+  ) => Promise<Readonly<{ sessionId: string; runId: string }>>
+  readonly sessionStatus: (sessionId: string) => Promise<RuntimeSessionSnapshot>
+  readonly sessionClose: (
+    sessionId: string,
+    options?: RuntimeSessionOperationOptions,
+  ) => Promise<RuntimeSessionOperationReceipt>
+  readonly sessionOutputPage: (
+    sessionId: string,
     options?: Readonly<{ after?: number; limit?: number; signal?: AbortSignal }>,
   ) => Promise<Readonly<{
     records: readonly ActorOutputRecord[]
@@ -87,32 +73,32 @@ export interface RuntimeOperations {
     options?: RuntimeWorkspaceCreateOptions,
   ) => Promise<Readonly<{ workspaceId: string }>>
   readonly workspaceRetrieve: (
-    address: Readonly<{ id: string } | { key: string }>,
+    workspaceId: string,
     signal?: AbortSignal,
   ) => Promise<WorkspaceSnapshot>
   readonly workspaceFileRead: (
-    address: Readonly<{ id: string } | { key: string }>,
+    workspaceId: string,
     path: string,
     signal?: AbortSignal,
   ) => Promise<Uint8Array>
   readonly workspaceFileStat: (
-    address: Readonly<{ id: string } | { key: string }>,
+    workspaceId: string,
     path: string,
     signal?: AbortSignal,
   ) => Promise<WorkspaceFileEntry>
   readonly workspaceFileList: (
-    address: Readonly<{ id: string } | { key: string }>,
+    workspaceId: string,
     path: string,
     query?: WorkspaceFileListQuery,
     signal?: AbortSignal,
   ) => Promise<CursorPage<WorkspaceFileEntry>>
   readonly workspaceExec: (
-    address: Readonly<{ id: string } | { key: string }>,
+    workspaceId: string,
     request: WorkspaceExecRequest,
     signal?: AbortSignal,
   ) => Promise<WorkspaceExecResult>
   readonly workspaceDelete: (
-    address: Readonly<{ id: string } | { key: string }>,
+    workspaceId: string,
     request?: WorkspaceDeleteRequest,
     signal?: AbortSignal,
   ) => Promise<WorkspaceDeleteReceipt>

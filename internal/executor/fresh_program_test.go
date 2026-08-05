@@ -469,19 +469,16 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 	lease := workerapi.RunLeaseAssignment{
 		ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 	}
-	send := &runv0.ActorInputSendRequested{
+	send := &runv0.SessionInputSendRequested{
 		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000111",
-		DeclaredId:    "mailbox",
-		Address: &runv0.ActorInputSendRequested_ActorKey{
-			ActorKey: "primary",
-		},
-		DataJson: `{"message":"hello"}`,
+		SessionId:     "019c10d5-a6f7-7af1-8f5f-000000000112",
+		DataJson:      `{"message":"hello"}`,
 	}
 	tests := []struct {
 		name       string
 		entrypoint *runv0.EntrypointIdentity
 		outcome    *runv0.RunEvent
-		await      func(*freshProgram, freshProgramEventSink, func(context.Context, *runv0.ActorInputSendRequested) error) error
+		await      func(*freshProgram, freshProgramEventSink, func(context.Context, *runv0.SessionInputSendRequested) error) error
 	}{
 		{
 			name: "Task",
@@ -489,7 +486,7 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 				Kind: &runv0.EntrypointIdentity_Task{Task: &runv0.TaskEntrypoint{}},
 			},
 			outcome: testTaskSucceededEvent(`null`),
-			await: func(program *freshProgram, events freshProgramEventSink, callback func(context.Context, *runv0.ActorInputSendRequested) error) error {
+			await: func(program *freshProgram, events freshProgramEventSink, callback func(context.Context, *runv0.SessionInputSendRequested) error) error {
 				_, _, err := program.awaitTaskCompletion(t.Context(), events, nil, callback, nil, nil)
 				return err
 			},
@@ -509,7 +506,7 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 					},
 				},
 			},
-			await: func(program *freshProgram, events freshProgramEventSink, callback func(context.Context, *runv0.ActorInputSendRequested) error) error {
+			await: func(program *freshProgram, events freshProgramEventSink, callback func(context.Context, *runv0.SessionInputSendRequested) error) error {
 				_, _, err := program.awaitActorCompletion(t.Context(), events, nil, nil, callback, nil, nil, nil)
 				return err
 			},
@@ -521,8 +518,8 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 			go func() {
 				defer guest.Close()
 				_ = frameio.WriteProtoFrame(guest, &runv0.RunEvent{
-					Event: &runv0.RunEvent_ActorInputSendRequested{
-						ActorInputSendRequested: send,
+					Event: &runv0.RunEvent_SessionInputSendRequested{
+						SessionInputSendRequested: send,
 					},
 				})
 				_ = frameio.WriteProtoFrame(guest, test.outcome)
@@ -533,11 +530,11 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 				lease:      lease,
 				entrypoint: test.entrypoint,
 			}
-			var observed *runv0.ActorInputSendRequested
+			var observed *runv0.SessionInputSendRequested
 			err := test.await(
 				program,
 				&testFreshProgramEventSink{},
-				func(_ context.Context, requested *runv0.ActorInputSendRequested) error {
+				func(_ context.Context, requested *runv0.SessionInputSendRequested) error {
 					observed = requested
 					return nil
 				},
@@ -546,7 +543,7 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 				t.Fatal(err)
 			}
 			if observed.GetCorrelationId() != send.GetCorrelationId() ||
-				observed.GetActorKey() != send.GetActorKey() ||
+				observed.GetSessionId() != send.GetSessionId() ||
 				observed.GetDataJson() != send.GetDataJson() {
 				t.Fatalf("Actor input send = %+v", observed)
 			}

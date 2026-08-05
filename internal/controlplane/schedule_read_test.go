@@ -18,7 +18,7 @@ func TestScheduleListCursorRoundTripAndScope(t *testing.T) {
 	}
 	request := httptest.NewRequest(
 		http.MethodGet,
-		"/api/schedules?limit=25&cursor="+raw,
+		"/v1/schedules?limit=25&cursor="+raw,
 		nil,
 	)
 	limit, cursor, err := parseScheduleListQuery(
@@ -45,10 +45,10 @@ func TestScheduleListCursorRoundTripAndScope(t *testing.T) {
 
 func TestScheduleListQueryRejectsUnknownAndInvalidValues(t *testing.T) {
 	for _, target := range []string{
-		"/api/schedules?task=legacy",
-		"/api/schedules?limit=0",
-		"/api/schedules?limit=101",
-		"/api/schedules?cursor=invalid",
+		"/v1/schedules?task=legacy",
+		"/v1/schedules?limit=0",
+		"/v1/schedules?limit=101",
+		"/v1/schedules?cursor=invalid",
 	} {
 		request := httptest.NewRequest(http.MethodGet, target, nil)
 		if _, _, err := parseScheduleListQuery(

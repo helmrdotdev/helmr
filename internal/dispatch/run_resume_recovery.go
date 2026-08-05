@@ -335,7 +335,7 @@ SELECT runs.id, runs.org_id, runs.workspace_id, resume_wait.id,
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
  WHERE runs.entrypoint_kind = 'task'
-   AND runs.actor_id IS NULL
+   AND runs.session_id IS NULL
    AND runs.parent_owns_lifecycle IS TRUE
    AND runs.status IN ('queued', 'running')
    AND ($2::uuid IS NULL OR runs.id > $2)
@@ -433,7 +433,7 @@ func (d *Authority) recoverExpiredNestedRunResume(
 		}
 		if err := tx.QueryRow(ctx, `
 SELECT id
-  FROM actors
+  FROM sessions
  WHERE id = $1
    AND current_run_id = $2
    AND state IN ('open', 'closing')
@@ -479,7 +479,7 @@ SELECT id
 	err = tx.QueryRow(ctx, `
 SELECT workspaces.ownership_generation, workspaces.writer_generation,
        workspaces.state, workspaces.desired_state, workspaces.dirty_state,
-       workspaces.owner_run_id, workspaces.owner_actor_id
+       workspaces.owner_run_id, workspaces.owner_session_id
   FROM workspaces
   JOIN environments ON environments.id = workspaces.environment_id
  WHERE workspaces.id = $1
@@ -869,7 +869,7 @@ func discoverNestedResumeRoot(
 	var kind string
 	var actorID pgtype.UUID
 	err := tx.QueryRow(ctx, `
-SELECT entrypoint_kind, actor_id
+SELECT entrypoint_kind, session_id
   FROM runs
  WHERE id = $1`,
 		runID,
@@ -884,7 +884,7 @@ func lockNestedResumeRun(
 ) (nestedResumeRun, error) {
 	var run nestedResumeRun
 	err := tx.QueryRow(ctx, `
-SELECT id, entrypoint_kind, actor_id, org_id, project_id, environment_id,
+SELECT id, entrypoint_kind, session_id, org_id, project_id, environment_id,
        workspace_id,
        current_attempt_number, state_version, status, current_run_lease_id,
        active_started_at, active_elapsed_ms, max_active_duration_ms,

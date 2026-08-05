@@ -54,3 +54,13 @@ func TestValidateWorkspaceKeyPreservesExactBytes(t *testing.T) {
 		t.Fatalf("valid exact UTF-8 key: %v", err)
 	}
 }
+
+func TestWorkspacePublicStatusUsesPublicSpelling(t *testing.T) {
+	status, err := workspacePublicStatus("recovery_required")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != api.WorkspaceStatusRecoveryRequired || string(status) != "recovery_required" {
+		t.Fatalf("recovery status = %q", status)
+	}
+}

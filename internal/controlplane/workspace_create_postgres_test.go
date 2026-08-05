@@ -1,7 +1,9 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -13,13 +15,13 @@ import (
 
 func TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
-	sourceWorkspaceID := fixture.workspaceRefs[0]
+	sourceWorkspaceID := fixture.workspaceIDs[0]
 	source, err := fixture.server.startTask(t.Context(), taskStartRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
 		TaskDeclaredID: "resize-image",
 		PayloadPresent: true,
 		Payload:        []byte(`{"source":"workspace-create"}`),
-		Workspace:      api.WorkspaceTarget{ID: &sourceWorkspaceID},
+		WorkspaceID:    sourceWorkspaceID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +67,11 @@ func TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim(t *tes
 		Declaration: workspaceDeclarationSelector{
 			Kind: workspaceDeclarationRunPinned, RunID: source.RunID,
 		},
-		DeclaredID: "workspace.v1", Key: &key, IdempotencyKey: "create",
+		DeclaredID: "workspace.v1", Key: &key,
+		Secrets: []api.WorkspaceSecret{
+			{Name: "API_TOKEN", Env: "API_TOKEN"},
+		},
+		IdempotencyKey: "create",
 		Authorize: func(context.Context, db.Querier) error {
 			return nil
 		},
@@ -74,40 +80,82 @@ func TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	if created.Snapshot.ID != created.WorkspaceID.String() ||
+		created.Snapshot.Status != api.WorkspaceStatusAvailable ||
+		len(created.Snapshot.Secrets) != 1 ||
+		created.Snapshot.Secrets[0] != (api.WorkspaceSecret{Name: "API_TOKEN", Env: "API_TOKEN"}) {
+		t.Fatalf("creation snapshot = %+v", created.Snapshot)
+	}
+	if _, err := fixture.pool.Exec(t.Context(), `
+		UPDATE workspaces
+		   SET state = 'deleting', desired_state = 'deleted', updated_at = now() + interval '1 minute'
+		 WHERE id = $1
+	`, created.WorkspaceID); err != nil {
+		t.Fatal(err)
+	}
 	replayed, err := fixture.server.createWorkspace(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !replayed.Replayed || replayed.WorkspaceID != created.WorkspaceID {
+	createdSnapshot, err := json.Marshal(created.Snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayedSnapshot, err := json.Marshal(replayed.Snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replayed.Replayed || replayed.WorkspaceID != created.WorkspaceID ||
+		!bytes.Equal(replayedSnapshot, createdSnapshot) {
 		t.Fatalf("replayed = %+v, created = %+v", replayed, created)
+	}
+	if _, err := fixture.pool.Exec(t.Context(), `
+		UPDATE environments SET current_deployment_id = $1 WHERE id = $2
+	`, fixture.deploymentID, fixture.environmentID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = fixture.server.createWorkspace(t.Context(), workspaceCreateRequest{
+		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
+		Declaration: workspaceDeclarationSelector{Kind: workspaceDeclarationPromoted},
+		DeclaredID:  request.DeclaredID, Key: request.Key, Secrets: request.Secrets,
+		IdempotencyKey: request.IdempotencyKey,
+	})
+	var keyConflict WorkspaceKeyConflictError
+	if !errors.As(err, &keyConflict) {
+		t.Fatalf("cross-authority create error = %v, want WorkspaceKeyConflictError", err)
 	}
 
 	var deploymentID uuid.UUID
-	var versionCount int
+	var versionCount, secretPlacementCount int
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT deployment_definitions.deployment_id,
-		       (SELECT count(*) FROM workspace_versions WHERE workspace_id = workspaces.id)
+		       (SELECT count(*) FROM workspace_versions WHERE workspace_id = workspaces.id),
+		       (SELECT count(*) FROM workspace_secrets WHERE workspace_id = workspaces.id)
 		  FROM workspaces
 		  JOIN deployment_definitions
 		    ON deployment_definitions.id = workspaces.deployment_definition_id
 		 WHERE workspaces.id = $1
-	`, created.WorkspaceID).Scan(&deploymentID, &versionCount); err != nil {
+	`, created.WorkspaceID).Scan(&deploymentID, &versionCount, &secretPlacementCount); err != nil {
 		t.Fatal(err)
 	}
-	if deploymentID != fixture.deploymentID || versionCount != 1 {
-		t.Fatalf("deployment=%s versions=%d", deploymentID, versionCount)
+	if deploymentID != fixture.deploymentID || versionCount != 1 || secretPlacementCount != 1 {
+		t.Fatalf(
+			"deployment=%s versions=%d secret placements=%d",
+			deploymentID,
+			versionCount,
+			secretPlacementCount,
+		)
 	}
 }
 
 func TestRunSourcedWorkspaceSelfExecAndDeleteAreBusyWithoutSideEffects(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
 	sourceWorkspaceID := fixture.workspaceIDs[0]
-	sourceWorkspaceRef := sourceWorkspaceID.String()
 	source, err := fixture.server.startTask(t.Context(), taskStartRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
 		TaskDeclaredID: "resize-image", PayloadPresent: true,
-		Payload:   []byte(`{"source":"self-workspace"}`),
-		Workspace: api.WorkspaceTarget{ID: &sourceWorkspaceRef},
+		Payload:     []byte(`{"source":"self-workspace"}`),
+		WorkspaceID: sourceWorkspaceID,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -1,11 +1,11 @@
-import { image, task, workspace } from "@helmr/sdk"
+import { image, task, sandbox } from "@helmr/sdk"
 import { readFile } from "node:fs/promises"
 
 const base = image("helmr-network-smoke")
   .from("node:24-bookworm-slim")
-  .workdir("/workspace")
+  .workdir("/sandbox")
 
-export const networkSmokeWorkspace = workspace("helmr-network-smoke")
+export const networkSmokeWorkspace = sandbox({ id: "helmr-network-smoke" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 

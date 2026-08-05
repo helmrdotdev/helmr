@@ -21,7 +21,7 @@ func TestActorOutputAppendPostgresSequencesAndReplays(t *testing.T) {
 	}
 	appendRequest, err := idempotency.NewActorOutputAppendRequest(
 		fixture.environmentID,
-		started.ActorID,
+		started.SessionID,
 		"output-1",
 		[]byte(`{"b":2,"a":1}`),
 		"application/json",
@@ -46,7 +46,7 @@ func TestActorOutputAppendPostgresSequencesAndReplays(t *testing.T) {
 	recordID := uuid.Must(uuid.NewV7())
 	row, err := db.New(tx).AppendActorOutputRecord(t.Context(), db.AppendActorOutputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: acquired.Claim.ID,
-		ActorID: pgvalue.UUID(started.ActorID), ProducerRunID: pgvalue.UUID(started.BootRunID),
+		SessionID: pgvalue.UUID(started.SessionID), ProducerRunID: pgvalue.UUID(started.BootRunID),
 		ProducerAttemptNumber: 1, ExpectedRequestFingerprint: acquired.Claim.RequestFingerprint,
 		ID: pgvalue.UUID(recordID), Data: []byte(`{"a":1,"b":2}`), ContentType: "application/json",
 	})
@@ -59,7 +59,7 @@ func TestActorOutputAppendPostgresSequencesAndReplays(t *testing.T) {
 	if _, err := db.New(tx).CompleteActorOutputClaim(t.Context(), db.CompleteActorOutputClaimParams{
 		EnvironmentID: row.EnvironmentID, ClaimID: acquired.Claim.ID,
 		RequestFingerprint: acquired.Claim.RequestFingerprint,
-		ActorID:            row.ActorID, RecordID: row.ID,
+		SessionID:          row.SessionID, RecordID: row.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestActorOutputAppendPostgresSequencesAndReplays(t *testing.T) {
 	}
 	stored, err := db.New(replay).GetActorOutputRecordByID(t.Context(), db.GetActorOutputRecordByIDParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID),
-		ActorID:       pgvalue.UUID(started.ActorID),
+		SessionID:     pgvalue.UUID(started.SessionID),
 		ID:            pgvalue.UUID(recordID),
 	})
 	if err != nil {
@@ -104,7 +104,7 @@ func TestActorOutputAppendPostgresSequencesAndReplays(t *testing.T) {
 
 	conflictRequest, err := idempotency.NewActorOutputAppendRequest(
 		fixture.environmentID,
-		started.ActorID,
+		started.SessionID,
 		"output-1",
 		[]byte(`{"a":2}`),
 		"application/json",

@@ -94,9 +94,6 @@ type DeploymentResponse struct {
 	DeploymentSource      DeploymentSourceArtifact `json:"deployment_source"`
 	Status                string                   `json:"status"`
 	Error                 *DeploymentErrorResponse `json:"error,omitempty"`
-	Tasks                 []string                 `json:"tasks"`
-	Actors                []string                 `json:"actors"`
-	Workspaces            []string                 `json:"workspaces"`
 	CreatedAt             time.Time                `json:"created_at"`
 	BuildingAt            time.Time                `json:"building_at"`
 	BuiltAt               time.Time                `json:"built_at"`
@@ -128,20 +125,4 @@ type DeploymentSourceArtifact struct {
 	Digest    string `json:"digest"`
 	SizeBytes int64  `json:"size_bytes,omitempty"`
 	MediaType string `json:"media_type,omitempty"`
-}
-
-type DeploymentTaskResponse struct {
-	ID                string    `json:"id"`
-	TaskID            string    `json:"task_id"`
-	FilePath          string    `json:"file_path,omitempty"`
-	ExportName        string    `json:"export_name,omitempty"`
-	HandlerEntrypoint string    `json:"handler_entrypoint,omitempty"`
-	QueueName         string    `json:"queue_name,omitempty"`
-	ConcurrencyLimit  *int32    `json:"concurrency_limit,omitempty"`
-	TTL               string    `json:"ttl,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
-}
-
-type ListTasksResponse struct {
-	Tasks []DeploymentTaskResponse `json:"tasks"`
 }

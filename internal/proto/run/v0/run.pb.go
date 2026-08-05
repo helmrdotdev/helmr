@@ -287,7 +287,7 @@ func (*NoPayload) Descriptor() ([]byte, []int) {
 
 type ActorStart struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
-	ActorId            string                 `protobuf:"bytes,1,opt,name=actor_id,json=actorId,proto3" json:"actor_id,omitempty"`
+	SessionId          string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	Key                *string                `protobuf:"bytes,2,opt,name=key,proto3,oneof" json:"key,omitempty"`
 	StartInputSequence int64                  `protobuf:"varint,3,opt,name=start_input_sequence,json=startInputSequence,proto3" json:"start_input_sequence,omitempty"`
 	InputHighWatermark int64                  `protobuf:"varint,4,opt,name=input_high_watermark,json=inputHighWatermark,proto3" json:"input_high_watermark,omitempty"`
@@ -325,9 +325,9 @@ func (*ActorStart) Descriptor() ([]byte, []int) {
 	return file_run_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *ActorStart) GetActorId() string {
+func (x *ActorStart) GetSessionId() string {
 	if x != nil {
-		return x.ActorId
+		return x.SessionId
 	}
 	return ""
 }
@@ -1530,13 +1530,13 @@ type RunEvent struct {
 	//	*RunEvent_ActorOutcome
 	//	*RunEvent_ActorTurnCommitRequested
 	//	*RunEvent_ActorOutputAppendRequested
-	//	*RunEvent_ActorInputSendRequested
+	//	*RunEvent_SessionInputSendRequested
 	//	*RunEvent_StructuredLogRequested
 	//	*RunEvent_TaskChildInvokeRequested
 	//	*RunEvent_ActorStartRequested
-	//	*RunEvent_ActorStatusRequested
-	//	*RunEvent_ActorCloseRequested
-	//	*RunEvent_ActorOutputPageRequested
+	//	*RunEvent_SessionStatusRequested
+	//	*RunEvent_SessionCloseRequested
+	//	*RunEvent_SessionOutputPageRequested
 	//	*RunEvent_WorkspaceCreateRequested
 	//	*RunEvent_WorkspaceRetrieveRequested
 	//	*RunEvent_WorkspaceFileReadRequested
@@ -1703,10 +1703,10 @@ func (x *RunEvent) GetActorOutputAppendRequested() *ActorOutputAppendRequested {
 	return nil
 }
 
-func (x *RunEvent) GetActorInputSendRequested() *ActorInputSendRequested {
+func (x *RunEvent) GetSessionInputSendRequested() *SessionInputSendRequested {
 	if x != nil {
-		if x, ok := x.Event.(*RunEvent_ActorInputSendRequested); ok {
-			return x.ActorInputSendRequested
+		if x, ok := x.Event.(*RunEvent_SessionInputSendRequested); ok {
+			return x.SessionInputSendRequested
 		}
 	}
 	return nil
@@ -1739,28 +1739,28 @@ func (x *RunEvent) GetActorStartRequested() *ActorStartRequested {
 	return nil
 }
 
-func (x *RunEvent) GetActorStatusRequested() *ActorStatusRequested {
+func (x *RunEvent) GetSessionStatusRequested() *SessionStatusRequested {
 	if x != nil {
-		if x, ok := x.Event.(*RunEvent_ActorStatusRequested); ok {
-			return x.ActorStatusRequested
+		if x, ok := x.Event.(*RunEvent_SessionStatusRequested); ok {
+			return x.SessionStatusRequested
 		}
 	}
 	return nil
 }
 
-func (x *RunEvent) GetActorCloseRequested() *ActorCloseRequested {
+func (x *RunEvent) GetSessionCloseRequested() *SessionCloseRequested {
 	if x != nil {
-		if x, ok := x.Event.(*RunEvent_ActorCloseRequested); ok {
-			return x.ActorCloseRequested
+		if x, ok := x.Event.(*RunEvent_SessionCloseRequested); ok {
+			return x.SessionCloseRequested
 		}
 	}
 	return nil
 }
 
-func (x *RunEvent) GetActorOutputPageRequested() *ActorOutputPageRequested {
+func (x *RunEvent) GetSessionOutputPageRequested() *SessionOutputPageRequested {
 	if x != nil {
-		if x, ok := x.Event.(*RunEvent_ActorOutputPageRequested); ok {
-			return x.ActorOutputPageRequested
+		if x, ok := x.Event.(*RunEvent_SessionOutputPageRequested); ok {
+			return x.SessionOutputPageRequested
 		}
 	}
 	return nil
@@ -1885,8 +1885,8 @@ type RunEvent_ActorOutputAppendRequested struct {
 	ActorOutputAppendRequested *ActorOutputAppendRequested `protobuf:"bytes,17,opt,name=actor_output_append_requested,json=actorOutputAppendRequested,proto3,oneof"`
 }
 
-type RunEvent_ActorInputSendRequested struct {
-	ActorInputSendRequested *ActorInputSendRequested `protobuf:"bytes,18,opt,name=actor_input_send_requested,json=actorInputSendRequested,proto3,oneof"`
+type RunEvent_SessionInputSendRequested struct {
+	SessionInputSendRequested *SessionInputSendRequested `protobuf:"bytes,18,opt,name=session_input_send_requested,json=sessionInputSendRequested,proto3,oneof"`
 }
 
 type RunEvent_StructuredLogRequested struct {
@@ -1901,16 +1901,16 @@ type RunEvent_ActorStartRequested struct {
 	ActorStartRequested *ActorStartRequested `protobuf:"bytes,21,opt,name=actor_start_requested,json=actorStartRequested,proto3,oneof"`
 }
 
-type RunEvent_ActorStatusRequested struct {
-	ActorStatusRequested *ActorStatusRequested `protobuf:"bytes,22,opt,name=actor_status_requested,json=actorStatusRequested,proto3,oneof"`
+type RunEvent_SessionStatusRequested struct {
+	SessionStatusRequested *SessionStatusRequested `protobuf:"bytes,22,opt,name=session_status_requested,json=sessionStatusRequested,proto3,oneof"`
 }
 
-type RunEvent_ActorCloseRequested struct {
-	ActorCloseRequested *ActorCloseRequested `protobuf:"bytes,23,opt,name=actor_close_requested,json=actorCloseRequested,proto3,oneof"`
+type RunEvent_SessionCloseRequested struct {
+	SessionCloseRequested *SessionCloseRequested `protobuf:"bytes,23,opt,name=session_close_requested,json=sessionCloseRequested,proto3,oneof"`
 }
 
-type RunEvent_ActorOutputPageRequested struct {
-	ActorOutputPageRequested *ActorOutputPageRequested `protobuf:"bytes,24,opt,name=actor_output_page_requested,json=actorOutputPageRequested,proto3,oneof"`
+type RunEvent_SessionOutputPageRequested struct {
+	SessionOutputPageRequested *SessionOutputPageRequested `protobuf:"bytes,24,opt,name=session_output_page_requested,json=sessionOutputPageRequested,proto3,oneof"`
 }
 
 type RunEvent_WorkspaceCreateRequested struct {
@@ -1967,7 +1967,7 @@ func (*RunEvent_ActorTurnCommitRequested) isRunEvent_Event() {}
 
 func (*RunEvent_ActorOutputAppendRequested) isRunEvent_Event() {}
 
-func (*RunEvent_ActorInputSendRequested) isRunEvent_Event() {}
+func (*RunEvent_SessionInputSendRequested) isRunEvent_Event() {}
 
 func (*RunEvent_StructuredLogRequested) isRunEvent_Event() {}
 
@@ -1975,11 +1975,11 @@ func (*RunEvent_TaskChildInvokeRequested) isRunEvent_Event() {}
 
 func (*RunEvent_ActorStartRequested) isRunEvent_Event() {}
 
-func (*RunEvent_ActorStatusRequested) isRunEvent_Event() {}
+func (*RunEvent_SessionStatusRequested) isRunEvent_Event() {}
 
-func (*RunEvent_ActorCloseRequested) isRunEvent_Event() {}
+func (*RunEvent_SessionCloseRequested) isRunEvent_Event() {}
 
-func (*RunEvent_ActorOutputPageRequested) isRunEvent_Event() {}
+func (*RunEvent_SessionOutputPageRequested) isRunEvent_Event() {}
 
 func (*RunEvent_WorkspaceCreateRequested) isRunEvent_Event() {}
 
@@ -2755,35 +2755,30 @@ func (x *ActorOutputAppendRequested) GetIdempotencyKey() string {
 	return ""
 }
 
-type ActorInputSendRequested struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	DeclaredId    string                 `protobuf:"bytes,2,opt,name=declared_id,json=declaredId,proto3" json:"declared_id,omitempty"`
-	// Types that are valid to be assigned to Address:
-	//
-	//	*ActorInputSendRequested_ActorId
-	//	*ActorInputSendRequested_ActorKey
-	Address        isActorInputSendRequested_Address `protobuf_oneof:"address"`
-	DataJson       string                            `protobuf:"bytes,5,opt,name=data_json,json=dataJson,proto3" json:"data_json,omitempty"`
-	IdempotencyKey *string                           `protobuf:"bytes,6,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
+type SessionInputSendRequested struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId  string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	SessionId      string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	DataJson       string                 `protobuf:"bytes,3,opt,name=data_json,json=dataJson,proto3" json:"data_json,omitempty"`
+	IdempotencyKey *string                `protobuf:"bytes,4,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *ActorInputSendRequested) Reset() {
-	*x = ActorInputSendRequested{}
+func (x *SessionInputSendRequested) Reset() {
+	*x = SessionInputSendRequested{}
 	mi := &file_run_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ActorInputSendRequested) String() string {
+func (x *SessionInputSendRequested) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ActorInputSendRequested) ProtoMessage() {}
+func (*SessionInputSendRequested) ProtoMessage() {}
 
-func (x *ActorInputSendRequested) ProtoReflect() protoreflect.Message {
+func (x *SessionInputSendRequested) ProtoReflect() protoreflect.Message {
 	mi := &file_run_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -2795,93 +2790,48 @@ func (x *ActorInputSendRequested) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ActorInputSendRequested.ProtoReflect.Descriptor instead.
-func (*ActorInputSendRequested) Descriptor() ([]byte, []int) {
+// Deprecated: Use SessionInputSendRequested.ProtoReflect.Descriptor instead.
+func (*SessionInputSendRequested) Descriptor() ([]byte, []int) {
 	return file_run_proto_rawDescGZIP(), []int{34}
 }
 
-func (x *ActorInputSendRequested) GetCorrelationId() string {
+func (x *SessionInputSendRequested) GetCorrelationId() string {
 	if x != nil {
 		return x.CorrelationId
 	}
 	return ""
 }
 
-func (x *ActorInputSendRequested) GetDeclaredId() string {
+func (x *SessionInputSendRequested) GetSessionId() string {
 	if x != nil {
-		return x.DeclaredId
+		return x.SessionId
 	}
 	return ""
 }
 
-func (x *ActorInputSendRequested) GetAddress() isActorInputSendRequested_Address {
-	if x != nil {
-		return x.Address
-	}
-	return nil
-}
-
-func (x *ActorInputSendRequested) GetActorId() string {
-	if x != nil {
-		if x, ok := x.Address.(*ActorInputSendRequested_ActorId); ok {
-			return x.ActorId
-		}
-	}
-	return ""
-}
-
-func (x *ActorInputSendRequested) GetActorKey() string {
-	if x != nil {
-		if x, ok := x.Address.(*ActorInputSendRequested_ActorKey); ok {
-			return x.ActorKey
-		}
-	}
-	return ""
-}
-
-func (x *ActorInputSendRequested) GetDataJson() string {
+func (x *SessionInputSendRequested) GetDataJson() string {
 	if x != nil {
 		return x.DataJson
 	}
 	return ""
 }
 
-func (x *ActorInputSendRequested) GetIdempotencyKey() string {
+func (x *SessionInputSendRequested) GetIdempotencyKey() string {
 	if x != nil && x.IdempotencyKey != nil {
 		return *x.IdempotencyKey
 	}
 	return ""
 }
 
-type isActorInputSendRequested_Address interface {
-	isActorInputSendRequested_Address()
-}
-
-type ActorInputSendRequested_ActorId struct {
-	ActorId string `protobuf:"bytes,3,opt,name=actor_id,json=actorId,proto3,oneof"`
-}
-
-type ActorInputSendRequested_ActorKey struct {
-	ActorKey string `protobuf:"bytes,4,opt,name=actor_key,json=actorKey,proto3,oneof"`
-}
-
-func (*ActorInputSendRequested_ActorId) isActorInputSendRequested_Address() {}
-
-func (*ActorInputSendRequested_ActorKey) isActorInputSendRequested_Address() {}
-
 type ActorStartRequested struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	DeclaredId    string                 `protobuf:"bytes,2,opt,name=declared_id,json=declaredId,proto3" json:"declared_id,omitempty"`
-	// Types that are valid to be assigned to Workspace:
-	//
-	//	*ActorStartRequested_WorkspaceId
-	//	*ActorStartRequested_WorkspaceKey
-	Workspace      isActorStartRequested_Workspace `protobuf_oneof:"workspace"`
-	Key            *string                         `protobuf:"bytes,5,opt,name=key,proto3,oneof" json:"key,omitempty"`
-	InputJson      *string                         `protobuf:"bytes,6,opt,name=input_json,json=inputJson,proto3,oneof" json:"input_json,omitempty"`
-	IdempotencyKey *string                         `protobuf:"bytes,7,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
-	RunOptionsJson string                          `protobuf:"bytes,8,opt,name=run_options_json,json=runOptionsJson,proto3" json:"run_options_json,omitempty"`
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId  string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	DeclaredId     string                 `protobuf:"bytes,2,opt,name=declared_id,json=declaredId,proto3" json:"declared_id,omitempty"`
+	WorkspaceId    string                 `protobuf:"bytes,3,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	Key            *string                `protobuf:"bytes,5,opt,name=key,proto3,oneof" json:"key,omitempty"`
+	InputJson      *string                `protobuf:"bytes,6,opt,name=input_json,json=inputJson,proto3,oneof" json:"input_json,omitempty"`
+	IdempotencyKey *string                `protobuf:"bytes,7,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
+	RunOptionsJson string                 `protobuf:"bytes,8,opt,name=run_options_json,json=runOptionsJson,proto3" json:"run_options_json,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -2930,27 +2880,9 @@ func (x *ActorStartRequested) GetDeclaredId() string {
 	return ""
 }
 
-func (x *ActorStartRequested) GetWorkspace() isActorStartRequested_Workspace {
-	if x != nil {
-		return x.Workspace
-	}
-	return nil
-}
-
 func (x *ActorStartRequested) GetWorkspaceId() string {
 	if x != nil {
-		if x, ok := x.Workspace.(*ActorStartRequested_WorkspaceId); ok {
-			return x.WorkspaceId
-		}
-	}
-	return ""
-}
-
-func (x *ActorStartRequested) GetWorkspaceKey() string {
-	if x != nil {
-		if x, ok := x.Workspace.(*ActorStartRequested_WorkspaceKey); ok {
-			return x.WorkspaceKey
-		}
+		return x.WorkspaceId
 	}
 	return ""
 }
@@ -2983,49 +2915,28 @@ func (x *ActorStartRequested) GetRunOptionsJson() string {
 	return ""
 }
 
-type isActorStartRequested_Workspace interface {
-	isActorStartRequested_Workspace()
-}
-
-type ActorStartRequested_WorkspaceId struct {
-	WorkspaceId string `protobuf:"bytes,3,opt,name=workspace_id,json=workspaceId,proto3,oneof"`
-}
-
-type ActorStartRequested_WorkspaceKey struct {
-	WorkspaceKey string `protobuf:"bytes,4,opt,name=workspace_key,json=workspaceKey,proto3,oneof"`
-}
-
-func (*ActorStartRequested_WorkspaceId) isActorStartRequested_Workspace() {}
-
-func (*ActorStartRequested_WorkspaceKey) isActorStartRequested_Workspace() {}
-
-type ActorStatusRequested struct {
+type SessionStatusRequested struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	DeclaredId    string                 `protobuf:"bytes,2,opt,name=declared_id,json=declaredId,proto3" json:"declared_id,omitempty"`
-	// Types that are valid to be assigned to Address:
-	//
-	//	*ActorStatusRequested_ActorId
-	//	*ActorStatusRequested_ActorKey
-	Address       isActorStatusRequested_Address `protobuf_oneof:"address"`
+	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ActorStatusRequested) Reset() {
-	*x = ActorStatusRequested{}
+func (x *SessionStatusRequested) Reset() {
+	*x = SessionStatusRequested{}
 	mi := &file_run_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ActorStatusRequested) String() string {
+func (x *SessionStatusRequested) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ActorStatusRequested) ProtoMessage() {}
+func (*SessionStatusRequested) ProtoMessage() {}
 
-func (x *ActorStatusRequested) ProtoReflect() protoreflect.Message {
+func (x *SessionStatusRequested) ProtoReflect() protoreflect.Message {
 	mi := &file_run_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3037,94 +2948,48 @@ func (x *ActorStatusRequested) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ActorStatusRequested.ProtoReflect.Descriptor instead.
-func (*ActorStatusRequested) Descriptor() ([]byte, []int) {
+// Deprecated: Use SessionStatusRequested.ProtoReflect.Descriptor instead.
+func (*SessionStatusRequested) Descriptor() ([]byte, []int) {
 	return file_run_proto_rawDescGZIP(), []int{36}
 }
 
-func (x *ActorStatusRequested) GetCorrelationId() string {
+func (x *SessionStatusRequested) GetCorrelationId() string {
 	if x != nil {
 		return x.CorrelationId
 	}
 	return ""
 }
 
-func (x *ActorStatusRequested) GetDeclaredId() string {
+func (x *SessionStatusRequested) GetSessionId() string {
 	if x != nil {
-		return x.DeclaredId
+		return x.SessionId
 	}
 	return ""
 }
 
-func (x *ActorStatusRequested) GetAddress() isActorStatusRequested_Address {
-	if x != nil {
-		return x.Address
-	}
-	return nil
-}
-
-func (x *ActorStatusRequested) GetActorId() string {
-	if x != nil {
-		if x, ok := x.Address.(*ActorStatusRequested_ActorId); ok {
-			return x.ActorId
-		}
-	}
-	return ""
-}
-
-func (x *ActorStatusRequested) GetActorKey() string {
-	if x != nil {
-		if x, ok := x.Address.(*ActorStatusRequested_ActorKey); ok {
-			return x.ActorKey
-		}
-	}
-	return ""
-}
-
-type isActorStatusRequested_Address interface {
-	isActorStatusRequested_Address()
-}
-
-type ActorStatusRequested_ActorId struct {
-	ActorId string `protobuf:"bytes,3,opt,name=actor_id,json=actorId,proto3,oneof"`
-}
-
-type ActorStatusRequested_ActorKey struct {
-	ActorKey string `protobuf:"bytes,4,opt,name=actor_key,json=actorKey,proto3,oneof"`
-}
-
-func (*ActorStatusRequested_ActorId) isActorStatusRequested_Address() {}
-
-func (*ActorStatusRequested_ActorKey) isActorStatusRequested_Address() {}
-
-type ActorCloseRequested struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	DeclaredId    string                 `protobuf:"bytes,2,opt,name=declared_id,json=declaredId,proto3" json:"declared_id,omitempty"`
-	// Types that are valid to be assigned to Address:
-	//
-	//	*ActorCloseRequested_ActorId
-	//	*ActorCloseRequested_ActorKey
-	Address        isActorCloseRequested_Address `protobuf_oneof:"address"`
-	IdempotencyKey *string                       `protobuf:"bytes,5,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
+type SessionCloseRequested struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId  string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	SessionId      string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	IdempotencyKey *string                `protobuf:"bytes,3,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *ActorCloseRequested) Reset() {
-	*x = ActorCloseRequested{}
+func (x *SessionCloseRequested) Reset() {
+	*x = SessionCloseRequested{}
 	mi := &file_run_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ActorCloseRequested) String() string {
+func (x *SessionCloseRequested) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ActorCloseRequested) ProtoMessage() {}
+func (*SessionCloseRequested) ProtoMessage() {}
 
-func (x *ActorCloseRequested) ProtoReflect() protoreflect.Message {
+func (x *SessionCloseRequested) ProtoReflect() protoreflect.Message {
 	mi := &file_run_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3136,102 +3001,56 @@ func (x *ActorCloseRequested) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ActorCloseRequested.ProtoReflect.Descriptor instead.
-func (*ActorCloseRequested) Descriptor() ([]byte, []int) {
+// Deprecated: Use SessionCloseRequested.ProtoReflect.Descriptor instead.
+func (*SessionCloseRequested) Descriptor() ([]byte, []int) {
 	return file_run_proto_rawDescGZIP(), []int{37}
 }
 
-func (x *ActorCloseRequested) GetCorrelationId() string {
+func (x *SessionCloseRequested) GetCorrelationId() string {
 	if x != nil {
 		return x.CorrelationId
 	}
 	return ""
 }
 
-func (x *ActorCloseRequested) GetDeclaredId() string {
+func (x *SessionCloseRequested) GetSessionId() string {
 	if x != nil {
-		return x.DeclaredId
+		return x.SessionId
 	}
 	return ""
 }
 
-func (x *ActorCloseRequested) GetAddress() isActorCloseRequested_Address {
-	if x != nil {
-		return x.Address
-	}
-	return nil
-}
-
-func (x *ActorCloseRequested) GetActorId() string {
-	if x != nil {
-		if x, ok := x.Address.(*ActorCloseRequested_ActorId); ok {
-			return x.ActorId
-		}
-	}
-	return ""
-}
-
-func (x *ActorCloseRequested) GetActorKey() string {
-	if x != nil {
-		if x, ok := x.Address.(*ActorCloseRequested_ActorKey); ok {
-			return x.ActorKey
-		}
-	}
-	return ""
-}
-
-func (x *ActorCloseRequested) GetIdempotencyKey() string {
+func (x *SessionCloseRequested) GetIdempotencyKey() string {
 	if x != nil && x.IdempotencyKey != nil {
 		return *x.IdempotencyKey
 	}
 	return ""
 }
 
-type isActorCloseRequested_Address interface {
-	isActorCloseRequested_Address()
-}
-
-type ActorCloseRequested_ActorId struct {
-	ActorId string `protobuf:"bytes,3,opt,name=actor_id,json=actorId,proto3,oneof"`
-}
-
-type ActorCloseRequested_ActorKey struct {
-	ActorKey string `protobuf:"bytes,4,opt,name=actor_key,json=actorKey,proto3,oneof"`
-}
-
-func (*ActorCloseRequested_ActorId) isActorCloseRequested_Address() {}
-
-func (*ActorCloseRequested_ActorKey) isActorCloseRequested_Address() {}
-
-type ActorOutputPageRequested struct {
+type SessionOutputPageRequested struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	DeclaredId    string                 `protobuf:"bytes,2,opt,name=declared_id,json=declaredId,proto3" json:"declared_id,omitempty"`
-	// Types that are valid to be assigned to Address:
-	//
-	//	*ActorOutputPageRequested_ActorId
-	//	*ActorOutputPageRequested_ActorKey
-	Address       isActorOutputPageRequested_Address `protobuf_oneof:"address"`
-	After         *int64                             `protobuf:"varint,5,opt,name=after,proto3,oneof" json:"after,omitempty"`
-	Limit         uint32                             `protobuf:"varint,6,opt,name=limit,proto3" json:"limit,omitempty"`
+	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	After         *int64                 `protobuf:"varint,3,opt,name=after,proto3,oneof" json:"after,omitempty"`
+	Limit         uint32                 `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ActorOutputPageRequested) Reset() {
-	*x = ActorOutputPageRequested{}
+func (x *SessionOutputPageRequested) Reset() {
+	*x = SessionOutputPageRequested{}
 	mi := &file_run_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ActorOutputPageRequested) String() string {
+func (x *SessionOutputPageRequested) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ActorOutputPageRequested) ProtoMessage() {}
+func (*SessionOutputPageRequested) ProtoMessage() {}
 
-func (x *ActorOutputPageRequested) ProtoReflect() protoreflect.Message {
+func (x *SessionOutputPageRequested) ProtoReflect() protoreflect.Message {
 	mi := &file_run_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3243,87 +3062,42 @@ func (x *ActorOutputPageRequested) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ActorOutputPageRequested.ProtoReflect.Descriptor instead.
-func (*ActorOutputPageRequested) Descriptor() ([]byte, []int) {
+// Deprecated: Use SessionOutputPageRequested.ProtoReflect.Descriptor instead.
+func (*SessionOutputPageRequested) Descriptor() ([]byte, []int) {
 	return file_run_proto_rawDescGZIP(), []int{38}
 }
 
-func (x *ActorOutputPageRequested) GetCorrelationId() string {
+func (x *SessionOutputPageRequested) GetCorrelationId() string {
 	if x != nil {
 		return x.CorrelationId
 	}
 	return ""
 }
 
-func (x *ActorOutputPageRequested) GetDeclaredId() string {
+func (x *SessionOutputPageRequested) GetSessionId() string {
 	if x != nil {
-		return x.DeclaredId
+		return x.SessionId
 	}
 	return ""
 }
 
-func (x *ActorOutputPageRequested) GetAddress() isActorOutputPageRequested_Address {
-	if x != nil {
-		return x.Address
-	}
-	return nil
-}
-
-func (x *ActorOutputPageRequested) GetActorId() string {
-	if x != nil {
-		if x, ok := x.Address.(*ActorOutputPageRequested_ActorId); ok {
-			return x.ActorId
-		}
-	}
-	return ""
-}
-
-func (x *ActorOutputPageRequested) GetActorKey() string {
-	if x != nil {
-		if x, ok := x.Address.(*ActorOutputPageRequested_ActorKey); ok {
-			return x.ActorKey
-		}
-	}
-	return ""
-}
-
-func (x *ActorOutputPageRequested) GetAfter() int64 {
+func (x *SessionOutputPageRequested) GetAfter() int64 {
 	if x != nil && x.After != nil {
 		return *x.After
 	}
 	return 0
 }
 
-func (x *ActorOutputPageRequested) GetLimit() uint32 {
+func (x *SessionOutputPageRequested) GetLimit() uint32 {
 	if x != nil {
 		return x.Limit
 	}
 	return 0
 }
 
-type isActorOutputPageRequested_Address interface {
-	isActorOutputPageRequested_Address()
-}
-
-type ActorOutputPageRequested_ActorId struct {
-	ActorId string `protobuf:"bytes,3,opt,name=actor_id,json=actorId,proto3,oneof"`
-}
-
-type ActorOutputPageRequested_ActorKey struct {
-	ActorKey string `protobuf:"bytes,4,opt,name=actor_key,json=actorKey,proto3,oneof"`
-}
-
-func (*ActorOutputPageRequested_ActorId) isActorOutputPageRequested_Address() {}
-
-func (*ActorOutputPageRequested_ActorKey) isActorOutputPageRequested_Address() {}
-
 type WorkspaceAddress struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Types that are valid to be assigned to Address:
-	//
-	//	*WorkspaceAddress_WorkspaceId
-	//	*WorkspaceAddress_WorkspaceKey
-	Address       isWorkspaceAddress_Address `protobuf_oneof:"address"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3358,46 +3132,12 @@ func (*WorkspaceAddress) Descriptor() ([]byte, []int) {
 	return file_run_proto_rawDescGZIP(), []int{39}
 }
 
-func (x *WorkspaceAddress) GetAddress() isWorkspaceAddress_Address {
-	if x != nil {
-		return x.Address
-	}
-	return nil
-}
-
 func (x *WorkspaceAddress) GetWorkspaceId() string {
 	if x != nil {
-		if x, ok := x.Address.(*WorkspaceAddress_WorkspaceId); ok {
-			return x.WorkspaceId
-		}
+		return x.WorkspaceId
 	}
 	return ""
 }
-
-func (x *WorkspaceAddress) GetWorkspaceKey() string {
-	if x != nil {
-		if x, ok := x.Address.(*WorkspaceAddress_WorkspaceKey); ok {
-			return x.WorkspaceKey
-		}
-	}
-	return ""
-}
-
-type isWorkspaceAddress_Address interface {
-	isWorkspaceAddress_Address()
-}
-
-type WorkspaceAddress_WorkspaceId struct {
-	WorkspaceId string `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3,oneof"`
-}
-
-type WorkspaceAddress_WorkspaceKey struct {
-	WorkspaceKey string `protobuf:"bytes,2,opt,name=workspace_key,json=workspaceKey,proto3,oneof"`
-}
-
-func (*WorkspaceAddress_WorkspaceId) isWorkspaceAddress_Address() {}
-
-func (*WorkspaceAddress_WorkspaceKey) isWorkspaceAddress_Address() {}
 
 type WorkspaceSecretPlacement struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -5117,10 +4857,11 @@ const file_run_proto_rawDesc = "" +
 	"no_payload\x18\x01 \x01(\v2\x17.helmr.run.v0.NoPayloadH\x00R\tnoPayload\x12#\n" +
 	"\fpayload_json\x18\x02 \x01(\fH\x00R\vpayloadJsonB\t\n" +
 	"\apayload\"\v\n" +
-	"\tNoPayload\"\xaa\x01\n" +
+	"\tNoPayload\"\xae\x01\n" +
 	"\n" +
-	"ActorStart\x12\x19\n" +
-	"\bactor_id\x18\x01 \x01(\tR\aactorId\x12\x15\n" +
+	"ActorStart\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x15\n" +
 	"\x03key\x18\x02 \x01(\tH\x00R\x03key\x88\x01\x01\x120\n" +
 	"\x14start_input_sequence\x18\x03 \x01(\x03R\x12startInputSequence\x120\n" +
 	"\x14input_high_watermark\x18\x04 \x01(\x03R\x12inputHighWatermarkB\x06\n" +
@@ -5203,7 +4944,7 @@ const file_run_proto_rawDesc = "" +
 	"\x0eattempt_number\x18\x02 \x01(\rR\rattemptNumber\x12@\n" +
 	"\n" +
 	"entrypoint\x18\x03 \x01(\v2 .helmr.run.v0.EntrypointIdentityR\n" +
-	"entrypoint\"\x97\x13\n" +
+	"entrypoint\"\xaf\x13\n" +
 	"\bRunEvent\x12#\n" +
 	"\fstdout_chunk\x18\x01 \x01(\fH\x00R\vstdoutChunk\x12#\n" +
 	"\fstderr_chunk\x18\x02 \x01(\fH\x00R\vstderrChunk\x12N\n" +
@@ -5217,14 +4958,14 @@ const file_run_proto_rawDesc = "" +
 	"\x10program_quiesced\x18\x0e \x01(\v2\x1d.helmr.run.v0.ProgramQuiescedH\x00R\x0fprogramQuiesced\x12A\n" +
 	"\ractor_outcome\x18\x0f \x01(\v2\x1a.helmr.run.v0.ActorOutcomeH\x00R\factorOutcome\x12g\n" +
 	"\x1bactor_turn_commit_requested\x18\x10 \x01(\v2&.helmr.run.v0.ActorTurnCommitRequestedH\x00R\x18actorTurnCommitRequested\x12m\n" +
-	"\x1dactor_output_append_requested\x18\x11 \x01(\v2(.helmr.run.v0.ActorOutputAppendRequestedH\x00R\x1aactorOutputAppendRequested\x12d\n" +
-	"\x1aactor_input_send_requested\x18\x12 \x01(\v2%.helmr.run.v0.ActorInputSendRequestedH\x00R\x17actorInputSendRequested\x12`\n" +
+	"\x1dactor_output_append_requested\x18\x11 \x01(\v2(.helmr.run.v0.ActorOutputAppendRequestedH\x00R\x1aactorOutputAppendRequested\x12j\n" +
+	"\x1csession_input_send_requested\x18\x12 \x01(\v2'.helmr.run.v0.SessionInputSendRequestedH\x00R\x19sessionInputSendRequested\x12`\n" +
 	"\x18structured_log_requested\x18\x13 \x01(\v2$.helmr.run.v0.StructuredLogRequestedH\x00R\x16structuredLogRequested\x12g\n" +
 	"\x1btask_child_invoke_requested\x18\x14 \x01(\v2&.helmr.run.v0.TaskChildInvokeRequestedH\x00R\x18taskChildInvokeRequested\x12W\n" +
-	"\x15actor_start_requested\x18\x15 \x01(\v2!.helmr.run.v0.ActorStartRequestedH\x00R\x13actorStartRequested\x12Z\n" +
-	"\x16actor_status_requested\x18\x16 \x01(\v2\".helmr.run.v0.ActorStatusRequestedH\x00R\x14actorStatusRequested\x12W\n" +
-	"\x15actor_close_requested\x18\x17 \x01(\v2!.helmr.run.v0.ActorCloseRequestedH\x00R\x13actorCloseRequested\x12g\n" +
-	"\x1bactor_output_page_requested\x18\x18 \x01(\v2&.helmr.run.v0.ActorOutputPageRequestedH\x00R\x18actorOutputPageRequested\x12f\n" +
+	"\x15actor_start_requested\x18\x15 \x01(\v2!.helmr.run.v0.ActorStartRequestedH\x00R\x13actorStartRequested\x12`\n" +
+	"\x18session_status_requested\x18\x16 \x01(\v2$.helmr.run.v0.SessionStatusRequestedH\x00R\x16sessionStatusRequested\x12]\n" +
+	"\x17session_close_requested\x18\x17 \x01(\v2#.helmr.run.v0.SessionCloseRequestedH\x00R\x15sessionCloseRequested\x12m\n" +
+	"\x1dsession_output_page_requested\x18\x18 \x01(\v2(.helmr.run.v0.SessionOutputPageRequestedH\x00R\x1asessionOutputPageRequested\x12f\n" +
 	"\x1aworkspace_create_requested\x18\x19 \x01(\v2&.helmr.run.v0.WorkspaceCreateRequestedH\x00R\x18workspaceCreateRequested\x12l\n" +
 	"\x1cworkspace_retrieve_requested\x18\x1a \x01(\v2(.helmr.run.v0.WorkspaceRetrieveRequestedH\x00R\x1aworkspaceRetrieveRequested\x12m\n" +
 	"\x1dworkspace_file_read_requested\x18\x1b \x01(\v2(.helmr.run.v0.WorkspaceFileReadRequestedH\x00R\x1aworkspaceFileReadRequested\x12m\n" +
@@ -5294,62 +5035,46 @@ const file_run_proto_rawDesc = "" +
 	"\tdata_json\x18\x02 \x01(\tR\bdataJson\x12!\n" +
 	"\fcontent_type\x18\x03 \x01(\tR\vcontentType\x12,\n" +
 	"\x0fidempotency_key\x18\x04 \x01(\tH\x00R\x0eidempotencyKey\x88\x01\x01B\x12\n" +
-	"\x10_idempotency_key\"\x87\x02\n" +
-	"\x17ActorInputSendRequested\x12%\n" +
-	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1f\n" +
-	"\vdeclared_id\x18\x02 \x01(\tR\n" +
-	"declaredId\x12\x1b\n" +
-	"\bactor_id\x18\x03 \x01(\tH\x00R\aactorId\x12\x1d\n" +
-	"\tactor_key\x18\x04 \x01(\tH\x00R\bactorKey\x12\x1b\n" +
-	"\tdata_json\x18\x05 \x01(\tR\bdataJson\x12,\n" +
-	"\x0fidempotency_key\x18\x06 \x01(\tH\x01R\x0eidempotencyKey\x88\x01\x01B\t\n" +
-	"\aaddressB\x12\n" +
-	"\x10_idempotency_key\"\xf4\x02\n" +
+	"\x10_idempotency_key\"\xc0\x01\n" +
+	"\x19SessionInputSendRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x1b\n" +
+	"\tdata_json\x18\x03 \x01(\tR\bdataJson\x12,\n" +
+	"\x0fidempotency_key\x18\x04 \x01(\tH\x00R\x0eidempotencyKey\x88\x01\x01B\x12\n" +
+	"\x10_idempotency_key\"\xbe\x02\n" +
 	"\x13ActorStartRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1f\n" +
 	"\vdeclared_id\x18\x02 \x01(\tR\n" +
-	"declaredId\x12#\n" +
-	"\fworkspace_id\x18\x03 \x01(\tH\x00R\vworkspaceId\x12%\n" +
-	"\rworkspace_key\x18\x04 \x01(\tH\x00R\fworkspaceKey\x12\x15\n" +
-	"\x03key\x18\x05 \x01(\tH\x01R\x03key\x88\x01\x01\x12\"\n" +
+	"declaredId\x12!\n" +
+	"\fworkspace_id\x18\x03 \x01(\tR\vworkspaceId\x12\x15\n" +
+	"\x03key\x18\x05 \x01(\tH\x00R\x03key\x88\x01\x01\x12\"\n" +
 	"\n" +
-	"input_json\x18\x06 \x01(\tH\x02R\tinputJson\x88\x01\x01\x12,\n" +
-	"\x0fidempotency_key\x18\a \x01(\tH\x03R\x0eidempotencyKey\x88\x01\x01\x12(\n" +
-	"\x10run_options_json\x18\b \x01(\tR\x0erunOptionsJsonB\v\n" +
-	"\tworkspaceB\x06\n" +
+	"input_json\x18\x06 \x01(\tH\x01R\tinputJson\x88\x01\x01\x12,\n" +
+	"\x0fidempotency_key\x18\a \x01(\tH\x02R\x0eidempotencyKey\x88\x01\x01\x12(\n" +
+	"\x10run_options_json\x18\b \x01(\tR\x0erunOptionsJsonB\x06\n" +
 	"\x04_keyB\r\n" +
 	"\v_input_jsonB\x12\n" +
-	"\x10_idempotency_key\"\xa5\x01\n" +
-	"\x14ActorStatusRequested\x12%\n" +
-	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1f\n" +
-	"\vdeclared_id\x18\x02 \x01(\tR\n" +
-	"declaredId\x12\x1b\n" +
-	"\bactor_id\x18\x03 \x01(\tH\x00R\aactorId\x12\x1d\n" +
-	"\tactor_key\x18\x04 \x01(\tH\x00R\bactorKeyB\t\n" +
-	"\aaddress\"\xe6\x01\n" +
-	"\x13ActorCloseRequested\x12%\n" +
-	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1f\n" +
-	"\vdeclared_id\x18\x02 \x01(\tR\n" +
-	"declaredId\x12\x1b\n" +
-	"\bactor_id\x18\x03 \x01(\tH\x00R\aactorId\x12\x1d\n" +
-	"\tactor_key\x18\x04 \x01(\tH\x00R\bactorKey\x12,\n" +
-	"\x0fidempotency_key\x18\x05 \x01(\tH\x01R\x0eidempotencyKey\x88\x01\x01B\t\n" +
-	"\aaddressB\x12\n" +
-	"\x10_idempotency_key\"\xe4\x01\n" +
-	"\x18ActorOutputPageRequested\x12%\n" +
-	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1f\n" +
-	"\vdeclared_id\x18\x02 \x01(\tR\n" +
-	"declaredId\x12\x1b\n" +
-	"\bactor_id\x18\x03 \x01(\tH\x00R\aactorId\x12\x1d\n" +
-	"\tactor_key\x18\x04 \x01(\tH\x00R\bactorKey\x12\x19\n" +
-	"\x05after\x18\x05 \x01(\x03H\x01R\x05after\x88\x01\x01\x12\x14\n" +
-	"\x05limit\x18\x06 \x01(\rR\x05limitB\t\n" +
-	"\aaddressB\b\n" +
-	"\x06_after\"i\n" +
-	"\x10WorkspaceAddress\x12#\n" +
-	"\fworkspace_id\x18\x01 \x01(\tH\x00R\vworkspaceId\x12%\n" +
-	"\rworkspace_key\x18\x02 \x01(\tH\x00R\fworkspaceKeyB\t\n" +
-	"\aaddress\"e\n" +
+	"\x10_idempotency_key\"^\n" +
+	"\x16SessionStatusRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\"\x9f\x01\n" +
+	"\x15SessionCloseRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12,\n" +
+	"\x0fidempotency_key\x18\x03 \x01(\tH\x00R\x0eidempotencyKey\x88\x01\x01B\x12\n" +
+	"\x10_idempotency_key\"\x9d\x01\n" +
+	"\x1aSessionOutputPageRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x19\n" +
+	"\x05after\x18\x03 \x01(\x03H\x00R\x05after\x88\x01\x01\x12\x14\n" +
+	"\x05limit\x18\x04 \x01(\rR\x05limitB\b\n" +
+	"\x06_after\"5\n" +
+	"\x10WorkspaceAddress\x12!\n" +
+	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\"e\n" +
 	"\x18WorkspaceSecretPlacement\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x03env\x18\x02 \x01(\tH\x00R\x03env\x12\x14\n" +
@@ -5579,11 +5304,11 @@ var file_run_proto_goTypes = []any{
 	(*ActorTurnCommitPauseRequest)(nil), // 31: helmr.run.v0.ActorTurnCommitPauseRequest
 	(*ActorTurnCommitPauseReady)(nil),   // 32: helmr.run.v0.ActorTurnCommitPauseReady
 	(*ActorOutputAppendRequested)(nil),  // 33: helmr.run.v0.ActorOutputAppendRequested
-	(*ActorInputSendRequested)(nil),     // 34: helmr.run.v0.ActorInputSendRequested
+	(*SessionInputSendRequested)(nil),   // 34: helmr.run.v0.SessionInputSendRequested
 	(*ActorStartRequested)(nil),         // 35: helmr.run.v0.ActorStartRequested
-	(*ActorStatusRequested)(nil),        // 36: helmr.run.v0.ActorStatusRequested
-	(*ActorCloseRequested)(nil),         // 37: helmr.run.v0.ActorCloseRequested
-	(*ActorOutputPageRequested)(nil),    // 38: helmr.run.v0.ActorOutputPageRequested
+	(*SessionStatusRequested)(nil),      // 36: helmr.run.v0.SessionStatusRequested
+	(*SessionCloseRequested)(nil),       // 37: helmr.run.v0.SessionCloseRequested
+	(*SessionOutputPageRequested)(nil),  // 38: helmr.run.v0.SessionOutputPageRequested
 	(*WorkspaceAddress)(nil),            // 39: helmr.run.v0.WorkspaceAddress
 	(*WorkspaceSecretPlacement)(nil),    // 40: helmr.run.v0.WorkspaceSecretPlacement
 	(*WorkspaceCreateRequested)(nil),    // 41: helmr.run.v0.WorkspaceCreateRequested
@@ -5637,13 +5362,13 @@ var file_run_proto_depIdxs = []int32{
 	27, // 26: helmr.run.v0.RunEvent.actor_outcome:type_name -> helmr.run.v0.ActorOutcome
 	30, // 27: helmr.run.v0.RunEvent.actor_turn_commit_requested:type_name -> helmr.run.v0.ActorTurnCommitRequested
 	33, // 28: helmr.run.v0.RunEvent.actor_output_append_requested:type_name -> helmr.run.v0.ActorOutputAppendRequested
-	34, // 29: helmr.run.v0.RunEvent.actor_input_send_requested:type_name -> helmr.run.v0.ActorInputSendRequested
+	34, // 29: helmr.run.v0.RunEvent.session_input_send_requested:type_name -> helmr.run.v0.SessionInputSendRequested
 	59, // 30: helmr.run.v0.RunEvent.structured_log_requested:type_name -> helmr.run.v0.StructuredLogRequested
 	51, // 31: helmr.run.v0.RunEvent.task_child_invoke_requested:type_name -> helmr.run.v0.TaskChildInvokeRequested
 	35, // 32: helmr.run.v0.RunEvent.actor_start_requested:type_name -> helmr.run.v0.ActorStartRequested
-	36, // 33: helmr.run.v0.RunEvent.actor_status_requested:type_name -> helmr.run.v0.ActorStatusRequested
-	37, // 34: helmr.run.v0.RunEvent.actor_close_requested:type_name -> helmr.run.v0.ActorCloseRequested
-	38, // 35: helmr.run.v0.RunEvent.actor_output_page_requested:type_name -> helmr.run.v0.ActorOutputPageRequested
+	36, // 33: helmr.run.v0.RunEvent.session_status_requested:type_name -> helmr.run.v0.SessionStatusRequested
+	37, // 34: helmr.run.v0.RunEvent.session_close_requested:type_name -> helmr.run.v0.SessionCloseRequested
+	38, // 35: helmr.run.v0.RunEvent.session_output_page_requested:type_name -> helmr.run.v0.SessionOutputPageRequested
 	41, // 36: helmr.run.v0.RunEvent.workspace_create_requested:type_name -> helmr.run.v0.WorkspaceCreateRequested
 	42, // 37: helmr.run.v0.RunEvent.workspace_retrieve_requested:type_name -> helmr.run.v0.WorkspaceRetrieveRequested
 	43, // 38: helmr.run.v0.RunEvent.workspace_file_read_requested:type_name -> helmr.run.v0.WorkspaceFileReadRequested
@@ -5722,13 +5447,13 @@ func file_run_proto_init() {
 		(*RunEvent_ActorOutcome)(nil),
 		(*RunEvent_ActorTurnCommitRequested)(nil),
 		(*RunEvent_ActorOutputAppendRequested)(nil),
-		(*RunEvent_ActorInputSendRequested)(nil),
+		(*RunEvent_SessionInputSendRequested)(nil),
 		(*RunEvent_StructuredLogRequested)(nil),
 		(*RunEvent_TaskChildInvokeRequested)(nil),
 		(*RunEvent_ActorStartRequested)(nil),
-		(*RunEvent_ActorStatusRequested)(nil),
-		(*RunEvent_ActorCloseRequested)(nil),
-		(*RunEvent_ActorOutputPageRequested)(nil),
+		(*RunEvent_SessionStatusRequested)(nil),
+		(*RunEvent_SessionCloseRequested)(nil),
+		(*RunEvent_SessionOutputPageRequested)(nil),
 		(*RunEvent_WorkspaceCreateRequested)(nil),
 		(*RunEvent_WorkspaceRetrieveRequested)(nil),
 		(*RunEvent_WorkspaceFileReadRequested)(nil),
@@ -5750,30 +5475,10 @@ func file_run_proto_init() {
 	}
 	file_run_proto_msgTypes[29].OneofWrappers = []any{}
 	file_run_proto_msgTypes[33].OneofWrappers = []any{}
-	file_run_proto_msgTypes[34].OneofWrappers = []any{
-		(*ActorInputSendRequested_ActorId)(nil),
-		(*ActorInputSendRequested_ActorKey)(nil),
-	}
-	file_run_proto_msgTypes[35].OneofWrappers = []any{
-		(*ActorStartRequested_WorkspaceId)(nil),
-		(*ActorStartRequested_WorkspaceKey)(nil),
-	}
-	file_run_proto_msgTypes[36].OneofWrappers = []any{
-		(*ActorStatusRequested_ActorId)(nil),
-		(*ActorStatusRequested_ActorKey)(nil),
-	}
-	file_run_proto_msgTypes[37].OneofWrappers = []any{
-		(*ActorCloseRequested_ActorId)(nil),
-		(*ActorCloseRequested_ActorKey)(nil),
-	}
-	file_run_proto_msgTypes[38].OneofWrappers = []any{
-		(*ActorOutputPageRequested_ActorId)(nil),
-		(*ActorOutputPageRequested_ActorKey)(nil),
-	}
-	file_run_proto_msgTypes[39].OneofWrappers = []any{
-		(*WorkspaceAddress_WorkspaceId)(nil),
-		(*WorkspaceAddress_WorkspaceKey)(nil),
-	}
+	file_run_proto_msgTypes[34].OneofWrappers = []any{}
+	file_run_proto_msgTypes[35].OneofWrappers = []any{}
+	file_run_proto_msgTypes[37].OneofWrappers = []any{}
+	file_run_proto_msgTypes[38].OneofWrappers = []any{}
 	file_run_proto_msgTypes[40].OneofWrappers = []any{
 		(*WorkspaceSecretPlacement_Env)(nil),
 		(*WorkspaceSecretPlacement_File)(nil),

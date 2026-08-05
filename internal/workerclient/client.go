@@ -214,7 +214,7 @@ func (c *Client) requestToken(ctx context.Context) (string, time.Time, error) {
 	}
 	tokenCtx, cancel := context.WithTimeout(ctx, tokenRequestTimeout)
 	defer cancel()
-	req, err := c.transport.Request(tokenCtx, http.MethodPost, "/api/worker/auth/token", &body, "")
+	req, err := c.transport.Request(tokenCtx, http.MethodPost, "/api/worker/v0/instance/token", &body, "")
 	if err != nil {
 		return "", time.Time{}, err
 	}

@@ -14,7 +14,7 @@ import (
 type runLeaseClaimAuthority struct {
 	mode                 runLeaseClaimMode
 	restoreSource        runLeaseRestoreSource
-	actor                db.Actor
+	actor                db.Session
 	parentRun            db.Run
 	childRun             db.Run
 	run                  db.Run
@@ -100,7 +100,7 @@ func (s *Server) claimRunLease(
 			authority, err = claimSameWorkspaceChildRunLeaseInTx(
 				ctx, work.q, worker, leaseID, leaseSequence, locators,
 			)
-		case locators.ActorID.Valid:
+		case locators.SessionID.Valid:
 			authority, err = claimActorRunLeaseInTx(
 				ctx, work.q, worker, leaseID, leaseSequence, locators,
 			)
@@ -202,7 +202,7 @@ func claimActorRunLeaseInTx(
 	locators db.GetRunLeaseClaimLocatorsRow,
 ) (runLeaseClaimAuthority, error) {
 	if locators.RunWaitID.Valid ||
-		!locators.ActorID.Valid ||
+		!locators.SessionID.Valid ||
 		!locators.ActorRunGeneration.Valid {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
@@ -210,7 +210,7 @@ func claimActorRunLeaseInTx(
 	authority := runLeaseClaimAuthority{mode: runLeaseClaimFresh}
 	var err error
 	authority.actor, err = q.LockRunLeaseClaimActor(ctx, db.LockRunLeaseClaimActorParams{
-		ID:          locators.ActorID,
+		ID:          locators.SessionID,
 		WorkspaceID: locators.WorkspaceID,
 	})
 	if err != nil {
@@ -236,7 +236,7 @@ func claimActorRunLeaseInTx(
 		authority.run.CurrentAttemptNumber != locators.AttemptNumber ||
 		authority.run.CurrentRunLeaseID != leaseID ||
 		authority.run.EntrypointKind != "actor" ||
-		authority.run.ActorID != authority.actor.ID ||
+		authority.run.SessionID != authority.actor.ID ||
 		authority.run.DeploymentDefinitionID != authority.actor.DeploymentDefinitionID ||
 		authority.run.EntrypointDeclaredID != authority.actor.ActorDeclaredID {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
@@ -254,7 +254,7 @@ func claimActorRunLeaseInTx(
 	}
 	if authority.workspace.State != db.WorkspaceStateActive ||
 		authority.workspace.DesiredState != db.WorkspaceDesiredStateActive ||
-		authority.workspace.OwnerActorID != authority.actor.ID ||
+		authority.workspace.OwnerSessionID != authority.actor.ID ||
 		authority.workspace.OwnerRunID.Valid {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
@@ -269,19 +269,19 @@ func claimActorRunLeaseInTx(
 	}
 	if authority.attempt.TerminalAt.Valid ||
 		authority.attempt.EntrypointKind != "actor" ||
-		!authority.attempt.ActorStartInputSequence.Valid ||
-		!authority.run.ActorStartInputSequence.Valid ||
-		!authority.run.ActorStartInputHighWatermark.Valid ||
-		authority.actor.CommittedInputSequence != authority.attempt.ActorStartInputSequence.Int64 ||
-		authority.attempt.ActorStartInputSequence.Int64 < authority.run.ActorStartInputSequence.Int64 ||
-		authority.run.ActorStartInputHighWatermark.Int64 < authority.attempt.ActorStartInputSequence.Int64 ||
-		authority.run.ActorStartInputHighWatermark.Int64 >= authority.actor.NextInputSequence ||
+		!authority.attempt.SessionInputStartSequence.Valid ||
+		!authority.run.SessionInputStartSequence.Valid ||
+		!authority.run.SessionInputHighWatermark.Valid ||
+		authority.actor.CommittedInputSequence != authority.attempt.SessionInputStartSequence.Int64 ||
+		authority.attempt.SessionInputStartSequence.Int64 < authority.run.SessionInputStartSequence.Int64 ||
+		authority.run.SessionInputHighWatermark.Int64 < authority.attempt.SessionInputStartSequence.Int64 ||
+		authority.run.SessionInputHighWatermark.Int64 >= authority.actor.NextInputSequence ||
 		!authority.workspace.HeadVersionID.Valid ||
 		authority.attempt.BaseWorkspaceVersionID != authority.workspace.HeadVersionID {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 	if authority.attempt.Number == 1 &&
-		(authority.attempt.ActorStartInputSequence.Int64 != authority.run.ActorStartInputSequence.Int64 ||
+		(authority.attempt.SessionInputStartSequence.Int64 != authority.run.SessionInputStartSequence.Int64 ||
 			authority.attempt.BaseWorkspaceVersionID != authority.run.BaseWorkspaceVersionID) {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
@@ -342,12 +342,12 @@ func claimSameWorkspaceChildRunLeaseInTx(
 
 	authority := runLeaseClaimAuthority{mode: runLeaseClaimAttachChild}
 	var err error
-	if locators.ParentActorID.Valid {
+	if locators.ParentSessionID.Valid {
 		if hasParentEnclosingWait {
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 		}
 		authority.actor, err = q.LockRunLeaseClaimActor(ctx, db.LockRunLeaseClaimActorParams{
-			ID:          locators.ParentActorID,
+			ID:          locators.ParentSessionID,
 			WorkspaceID: locators.WorkspaceID,
 		})
 		if err != nil {
@@ -378,14 +378,14 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		authority.parentRun.CurrentRunLeaseID.Valid {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
-	if locators.ParentActorID.Valid {
+	if locators.ParentSessionID.Valid {
 		if authority.parentRun.EntrypointKind != "actor" ||
-			authority.parentRun.ActorID != authority.actor.ID ||
+			authority.parentRun.SessionID != authority.actor.ID ||
 			authority.parentRun.DeploymentDefinitionID != authority.actor.DeploymentDefinitionID ||
 			authority.parentRun.EntrypointDeclaredID != authority.actor.ActorDeclaredID {
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 		}
-	} else if authority.parentRun.EntrypointKind != "task" || authority.parentRun.ActorID.Valid {
+	} else if authority.parentRun.EntrypointKind != "task" || authority.parentRun.SessionID.Valid {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
@@ -403,7 +403,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		authority.run.CurrentAttemptNumber != locators.AttemptNumber ||
 		authority.run.CurrentRunLeaseID != leaseID ||
 		authority.run.EntrypointKind != "task" ||
-		authority.run.ActorID.Valid ||
+		authority.run.SessionID.Valid ||
 		authority.run.ParentRunID != authority.parentRun.ID ||
 		!authority.run.ParentOwnsLifecycle.Valid ||
 		!authority.run.ParentOwnsLifecycle.Bool ||
@@ -429,20 +429,20 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		authority.workspace.WriterGeneration != locators.EnclosingChildWriterGeneration.Int64 {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
-	if locators.ParentActorID.Valid {
-		if authority.workspace.OwnerActorID != authority.actor.ID ||
+	if locators.ParentSessionID.Valid {
+		if authority.workspace.OwnerSessionID != authority.actor.ID ||
 			authority.workspace.OwnerRunID.Valid {
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 		}
 	} else if hasParentEnclosingWait {
-		if authority.workspace.OwnerRunID.Valid == authority.workspace.OwnerActorID.Valid ||
+		if authority.workspace.OwnerRunID.Valid == authority.workspace.OwnerSessionID.Valid ||
 			authority.workspace.OwnerRunID == authority.parentRun.ID ||
 			authority.workspace.OwnerRunID == authority.run.ID {
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 		}
 	} else {
 		if authority.workspace.OwnerRunID != authority.parentRun.ID ||
-			authority.workspace.OwnerActorID.Valid {
+			authority.workspace.OwnerSessionID.Valid {
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 		}
 	}
@@ -460,17 +460,17 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		authority.parentAttempt.EntrypointKind != authority.parentRun.EntrypointKind {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
-	if locators.ParentActorID.Valid {
-		if !authority.parentAttempt.ActorStartInputSequence.Valid ||
-			!authority.parentRun.ActorStartInputSequence.Valid ||
-			!authority.parentRun.ActorStartInputHighWatermark.Valid ||
-			authority.parentAttempt.ActorStartInputSequence.Int64 < authority.parentRun.ActorStartInputSequence.Int64 ||
-			authority.parentAttempt.ActorStartInputSequence.Int64 > authority.parentRun.ActorStartInputHighWatermark.Int64 ||
-			authority.actor.CommittedInputSequence < authority.parentAttempt.ActorStartInputSequence.Int64 ||
+	if locators.ParentSessionID.Valid {
+		if !authority.parentAttempt.SessionInputStartSequence.Valid ||
+			!authority.parentRun.SessionInputStartSequence.Valid ||
+			!authority.parentRun.SessionInputHighWatermark.Valid ||
+			authority.parentAttempt.SessionInputStartSequence.Int64 < authority.parentRun.SessionInputStartSequence.Int64 ||
+			authority.parentAttempt.SessionInputStartSequence.Int64 > authority.parentRun.SessionInputHighWatermark.Int64 ||
+			authority.actor.CommittedInputSequence < authority.parentAttempt.SessionInputStartSequence.Int64 ||
 			authority.actor.CommittedInputSequence >= authority.actor.NextInputSequence {
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 		}
-	} else if authority.parentAttempt.ActorStartInputSequence.Valid {
+	} else if authority.parentAttempt.SessionInputStartSequence.Valid {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
@@ -485,7 +485,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 	if authority.attempt.TerminalAt.Valid ||
 		authority.attempt.EntrypointEnteredAt.Valid ||
 		authority.attempt.EntrypointKind != "task" ||
-		authority.attempt.ActorStartInputSequence.Valid ||
+		authority.attempt.SessionInputStartSequence.Valid ||
 		authority.attempt.BaseWorkspaceVersionID != locators.EnclosingBaseWorkspaceVersionID {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
@@ -613,7 +613,7 @@ func claimSameWorkspaceParentResumeRunLeaseInTx(
 	authority := runLeaseClaimAuthority{}
 	var err error
 	if hasEnclosingWait {
-		if locators.ActorID.Valid ||
+		if locators.SessionID.Valid ||
 			!locators.ParentRunID.Valid ||
 			!locators.ParentOwnsLifecycle.Valid ||
 			!locators.ParentOwnsLifecycle.Bool ||
@@ -636,9 +636,9 @@ func claimSameWorkspaceParentResumeRunLeaseInTx(
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 		}
 	}
-	if locators.ActorID.Valid {
+	if locators.SessionID.Valid {
 		authority.actor, err = q.LockRunLeaseClaimActor(ctx, db.LockRunLeaseClaimActorParams{
-			ID:          locators.ActorID,
+			ID:          locators.SessionID,
 			WorkspaceID: locators.WorkspaceID,
 		})
 		if err != nil {
@@ -677,14 +677,14 @@ func claimSameWorkspaceParentResumeRunLeaseInTx(
 			authority.run.DeploymentID != authority.parentRun.DeploymentID) {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
-	if locators.ActorID.Valid {
+	if locators.SessionID.Valid {
 		if authority.run.EntrypointKind != "actor" ||
-			authority.run.ActorID != authority.actor.ID ||
+			authority.run.SessionID != authority.actor.ID ||
 			authority.run.DeploymentDefinitionID != authority.actor.DeploymentDefinitionID ||
 			authority.run.EntrypointDeclaredID != authority.actor.ActorDeclaredID {
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 		}
-	} else if authority.run.EntrypointKind != "task" || authority.run.ActorID.Valid {
+	} else if authority.run.EntrypointKind != "task" || authority.run.SessionID.Valid {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
@@ -704,7 +704,7 @@ func claimSameWorkspaceParentResumeRunLeaseInTx(
 		authority.childRun.WorkspaceID != authority.run.WorkspaceID ||
 		authority.childRun.DeploymentID != authority.run.DeploymentID ||
 		authority.childRun.EntrypointKind != "task" ||
-		authority.childRun.ActorID.Valid ||
+		authority.childRun.SessionID.Valid ||
 		authority.childRun.CurrentAttemptNumber != locators.ResumeChildAttemptNumber ||
 		authority.childRun.CurrentRunLeaseID.Valid {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
@@ -728,18 +728,18 @@ func claimSameWorkspaceParentResumeRunLeaseInTx(
 	}
 	if hasEnclosingWait {
 		if authority.workspace.OwnershipGeneration != locators.EnclosingOwnershipGeneration.Int64 ||
-			authority.workspace.OwnerRunID.Valid == authority.workspace.OwnerActorID.Valid ||
+			authority.workspace.OwnerRunID.Valid == authority.workspace.OwnerSessionID.Valid ||
 			authority.workspace.OwnerRunID == authority.run.ID ||
 			authority.workspace.OwnerRunID == authority.childRun.ID {
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 		}
-	} else if locators.ActorID.Valid {
-		if authority.workspace.OwnerActorID != authority.actor.ID ||
+	} else if locators.SessionID.Valid {
+		if authority.workspace.OwnerSessionID != authority.actor.ID ||
 			authority.workspace.OwnerRunID.Valid {
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 		}
 	} else if authority.workspace.OwnerRunID != authority.run.ID ||
-		authority.workspace.OwnerActorID.Valid {
+		authority.workspace.OwnerSessionID.Valid {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
@@ -756,17 +756,17 @@ func claimSameWorkspaceParentResumeRunLeaseInTx(
 		authority.attempt.EntrypointKind != authority.run.EntrypointKind {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
-	if locators.ActorID.Valid {
-		if !authority.attempt.ActorStartInputSequence.Valid ||
-			!authority.run.ActorStartInputSequence.Valid ||
-			!authority.run.ActorStartInputHighWatermark.Valid ||
-			authority.attempt.ActorStartInputSequence.Int64 < authority.run.ActorStartInputSequence.Int64 ||
-			authority.attempt.ActorStartInputSequence.Int64 > authority.run.ActorStartInputHighWatermark.Int64 ||
-			authority.actor.CommittedInputSequence < authority.attempt.ActorStartInputSequence.Int64 ||
+	if locators.SessionID.Valid {
+		if !authority.attempt.SessionInputStartSequence.Valid ||
+			!authority.run.SessionInputStartSequence.Valid ||
+			!authority.run.SessionInputHighWatermark.Valid ||
+			authority.attempt.SessionInputStartSequence.Int64 < authority.run.SessionInputStartSequence.Int64 ||
+			authority.attempt.SessionInputStartSequence.Int64 > authority.run.SessionInputHighWatermark.Int64 ||
+			authority.actor.CommittedInputSequence < authority.attempt.SessionInputStartSequence.Int64 ||
 			authority.actor.CommittedInputSequence >= authority.actor.NextInputSequence {
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 		}
-	} else if authority.attempt.ActorStartInputSequence.Valid {
+	} else if authority.attempt.SessionInputStartSequence.Valid {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
@@ -925,7 +925,7 @@ func claimCheckpointRestoreRunLeaseInTx(
 	authority := runLeaseClaimAuthority{mode: runLeaseClaimRestore}
 	var err error
 	if hasEnclosingWait {
-		if locators.ActorID.Valid ||
+		if locators.SessionID.Valid ||
 			!locators.ParentRunID.Valid ||
 			!locators.ParentOwnsLifecycle.Valid ||
 			!locators.ParentOwnsLifecycle.Bool ||
@@ -948,9 +948,9 @@ func claimCheckpointRestoreRunLeaseInTx(
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 		}
 	}
-	if locators.ActorID.Valid {
+	if locators.SessionID.Valid {
 		authority.actor, err = q.LockRunLeaseClaimActor(ctx, db.LockRunLeaseClaimActorParams{
-			ID:          locators.ActorID,
+			ID:          locators.SessionID,
 			WorkspaceID: locators.WorkspaceID,
 		})
 		if err != nil {
@@ -989,14 +989,14 @@ func claimCheckpointRestoreRunLeaseInTx(
 			authority.run.DeploymentID != authority.parentRun.DeploymentID) {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
-	if locators.ActorID.Valid {
+	if locators.SessionID.Valid {
 		if authority.run.EntrypointKind != "actor" ||
-			authority.run.ActorID != authority.actor.ID ||
+			authority.run.SessionID != authority.actor.ID ||
 			authority.run.DeploymentDefinitionID != authority.actor.DeploymentDefinitionID ||
 			authority.run.EntrypointDeclaredID != authority.actor.ActorDeclaredID {
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 		}
-	} else if authority.run.EntrypointKind != "task" || authority.run.ActorID.Valid {
+	} else if authority.run.EntrypointKind != "task" || authority.run.SessionID.Valid {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
@@ -1015,14 +1015,14 @@ func claimCheckpointRestoreRunLeaseInTx(
 			authority.workspace.DesiredState != db.WorkspaceDesiredStateActive ||
 			authority.workspace.OwnershipGeneration != locators.EnclosingOwnershipGeneration.Int64 ||
 			authority.workspace.WriterGeneration != locators.EnclosingChildWriterGeneration.Int64 ||
-			authority.workspace.OwnerRunID.Valid == authority.workspace.OwnerActorID.Valid ||
+			authority.workspace.OwnerRunID.Valid == authority.workspace.OwnerSessionID.Valid ||
 			authority.workspace.OwnerRunID == authority.run.ID {
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 		}
-	} else if locators.ActorID.Valid {
+	} else if locators.SessionID.Valid {
 		if authority.workspace.State != db.WorkspaceStateActive ||
 			authority.workspace.DesiredState != db.WorkspaceDesiredStateActive ||
-			authority.workspace.OwnerActorID != authority.actor.ID ||
+			authority.workspace.OwnerSessionID != authority.actor.ID ||
 			authority.workspace.OwnerRunID.Valid {
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 		}
@@ -1043,17 +1043,17 @@ func claimCheckpointRestoreRunLeaseInTx(
 		authority.attempt.EntrypointKind != authority.run.EntrypointKind {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
-	if locators.ActorID.Valid {
-		if !authority.attempt.ActorStartInputSequence.Valid ||
-			!authority.run.ActorStartInputSequence.Valid ||
-			!authority.run.ActorStartInputHighWatermark.Valid ||
-			authority.attempt.ActorStartInputSequence.Int64 < authority.run.ActorStartInputSequence.Int64 ||
-			authority.attempt.ActorStartInputSequence.Int64 > authority.run.ActorStartInputHighWatermark.Int64 ||
-			authority.actor.CommittedInputSequence < authority.attempt.ActorStartInputSequence.Int64 ||
+	if locators.SessionID.Valid {
+		if !authority.attempt.SessionInputStartSequence.Valid ||
+			!authority.run.SessionInputStartSequence.Valid ||
+			!authority.run.SessionInputHighWatermark.Valid ||
+			authority.attempt.SessionInputStartSequence.Int64 < authority.run.SessionInputStartSequence.Int64 ||
+			authority.attempt.SessionInputStartSequence.Int64 > authority.run.SessionInputHighWatermark.Int64 ||
+			authority.actor.CommittedInputSequence < authority.attempt.SessionInputStartSequence.Int64 ||
 			authority.actor.CommittedInputSequence >= authority.actor.NextInputSequence {
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 		}
-	} else if authority.attempt.ActorStartInputSequence.Valid ||
+	} else if authority.attempt.SessionInputStartSequence.Valid ||
 		authority.attempt.BaseWorkspaceVersionID != authority.run.BaseWorkspaceVersionID {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
@@ -1302,9 +1302,9 @@ func validateClaimWorkspace(run db.Run, workspace db.Workspace) error {
 		return errStaleRunLeaseClaim
 	}
 	if run.EntrypointKind != "task" ||
-		run.ActorID.Valid ||
+		run.SessionID.Valid ||
 		workspace.OwnerRunID != run.ID ||
-		workspace.OwnerActorID.Valid {
+		workspace.OwnerSessionID.Valid {
 		return errStaleRunLeaseClaim
 	}
 	return nil
@@ -1449,7 +1449,7 @@ func validateCheckpointRestore(authority runLeaseClaimAuthority) error {
 	}
 	if !checkpoint.ActorSpeculativeInputSequence.Valid ||
 		checkpoint.ActorSpeculativeInputSequence.Int64 < authority.actor.CommittedInputSequence ||
-		checkpoint.ActorSpeculativeInputSequence.Int64 < authority.attempt.ActorStartInputSequence.Int64 ||
+		checkpoint.ActorSpeculativeInputSequence.Int64 < authority.attempt.SessionInputStartSequence.Int64 ||
 		checkpoint.ActorSpeculativeInputSequence.Int64 >= authority.actor.NextInputSequence {
 		return errStaleRunLeaseClaim
 	}
@@ -1623,7 +1623,7 @@ func validateSameWorkspaceChildCheckpoint(authority runLeaseClaimAuthority) erro
 	}
 	if !checkpoint.ActorSpeculativeInputSequence.Valid ||
 		checkpoint.ActorSpeculativeInputSequence.Int64 < authority.actor.CommittedInputSequence ||
-		checkpoint.ActorSpeculativeInputSequence.Int64 < authority.parentAttempt.ActorStartInputSequence.Int64 ||
+		checkpoint.ActorSpeculativeInputSequence.Int64 < authority.parentAttempt.SessionInputStartSequence.Int64 ||
 		checkpoint.ActorSpeculativeInputSequence.Int64 >= authority.actor.NextInputSequence {
 		return errStaleRunLeaseClaim
 	}
@@ -1714,7 +1714,7 @@ func validateSameWorkspaceParentResumeCheckpoint(authority runLeaseClaimAuthorit
 	}
 	if !checkpoint.ActorSpeculativeInputSequence.Valid ||
 		checkpoint.ActorSpeculativeInputSequence.Int64 < authority.actor.CommittedInputSequence ||
-		checkpoint.ActorSpeculativeInputSequence.Int64 < authority.attempt.ActorStartInputSequence.Int64 ||
+		checkpoint.ActorSpeculativeInputSequence.Int64 < authority.attempt.SessionInputStartSequence.Int64 ||
 		checkpoint.ActorSpeculativeInputSequence.Int64 >= authority.actor.NextInputSequence {
 		return errStaleRunLeaseClaim
 	}

@@ -2,7 +2,7 @@
 WITH selected_definition AS (
     SELECT deployment_definitions.environment_id,
            deployment_definitions.id AS deployment_definition_id,
-           deployment_definitions.declared_id AS workspace_declared_id,
+           deployment_definitions.declared_id AS sandbox_declared_id,
            projects.default_region_id
       FROM deployment_definitions
       JOIN environments
@@ -18,14 +18,14 @@ WITH selected_definition AS (
        AND environments.org_id = sqlc.arg(org_id)
      WHERE deployment_definitions.environment_id = sqlc.arg(environment_id)
        AND deployment_definitions.id = sqlc.arg(deployment_definition_id)
-       AND deployment_definitions.kind = 'workspace'
-       AND deployment_definitions.declared_id = sqlc.arg(workspace_declared_id)
+       AND deployment_definitions.kind = 'sandbox'
+       AND deployment_definitions.declared_id = sqlc.arg(sandbox_declared_id)
 ), created_workspace AS (
     INSERT INTO workspaces (
         id,
         environment_id,
         region_id,
-        workspace_declared_id,
+        sandbox_declared_id,
         deployment_definition_id,
         head_version_id,
         key
@@ -33,7 +33,7 @@ WITH selected_definition AS (
     SELECT sqlc.arg(id),
            selected_definition.environment_id,
            selected_definition.default_region_id,
-           selected_definition.workspace_declared_id,
+           selected_definition.sandbox_declared_id,
            selected_definition.deployment_definition_id,
            sqlc.arg(initial_version_id),
            sqlc.narg(key)
@@ -81,8 +81,8 @@ SELECT deployment_definitions.*
   JOIN environments
     ON environments.id = deployment_definitions.environment_id
  WHERE deployment_definitions.environment_id = sqlc.arg(environment_id)
-   AND deployment_definitions.kind = 'workspace'
-   AND deployment_definitions.declared_id = sqlc.arg(workspace_declared_id)
+   AND deployment_definitions.kind = 'sandbox'
+   AND deployment_definitions.declared_id = sqlc.arg(sandbox_declared_id)
    AND environments.current_deployment_id = deployment_definitions.deployment_id
  LIMIT 1;
 
@@ -92,8 +92,8 @@ SELECT deployment_definitions.*
   JOIN deployment_definitions
     ON deployment_definitions.environment_id = runs.environment_id
    AND deployment_definitions.deployment_id = runs.deployment_id
-   AND deployment_definitions.kind = 'workspace'
-   AND deployment_definitions.declared_id = sqlc.arg(workspace_declared_id)
+   AND deployment_definitions.kind = 'sandbox'
+   AND deployment_definitions.declared_id = sqlc.arg(sandbox_declared_id)
  WHERE runs.environment_id = sqlc.arg(environment_id)
    AND runs.id = sqlc.arg(run_id)
    AND runs.status IN ('queued', 'running', 'waiting', 'retry_delayed')
@@ -109,16 +109,39 @@ SELECT workspaces.*
    AND workspaces.id = sqlc.arg(id)
    AND workspaces.deleted_at IS NULL;
 
--- name: GetWorkspaceByDeclaredIDAndKey :one
+-- name: GetWorkspaceByKey :one
 SELECT workspaces.*
   FROM workspaces
   JOIN environments ON environments.id = workspaces.environment_id
  WHERE environments.org_id = sqlc.arg(org_id)
    AND environments.project_id = sqlc.arg(project_id)
    AND workspaces.environment_id = sqlc.arg(environment_id)
-   AND workspaces.workspace_declared_id = sqlc.arg(workspace_declared_id)
    AND workspaces.key = sqlc.arg(key)
    AND workspaces.deleted_at IS NULL;
+
+-- name: ListWorkspaceSnapshots :many
+SELECT workspaces.*
+  FROM workspaces
+  JOIN environments ON environments.id = workspaces.environment_id
+ WHERE environments.org_id = sqlc.arg(org_id)
+   AND environments.project_id = sqlc.arg(project_id)
+   AND workspaces.environment_id = sqlc.arg(environment_id)
+   AND workspaces.deleted_at IS NULL
+   AND (
+       NOT sqlc.arg(has_after)::boolean
+       OR (workspaces.created_at, workspaces.id) < (sqlc.arg(after_created_at)::timestamptz, sqlc.arg(after_id)::uuid)
+   )
+ ORDER BY workspaces.created_at DESC, workspaces.id DESC
+ LIMIT sqlc.arg(row_limit);
+
+-- name: GetWorkspaceDefinitionIdentity :one
+SELECT deployment_definitions.declared_id,
+       deployment_definitions.deployment_id
+  FROM deployment_definitions
+ WHERE deployment_definitions.environment_id = sqlc.arg(environment_id)
+   AND deployment_definitions.id = sqlc.arg(deployment_definition_id)
+   AND deployment_definitions.kind = 'sandbox'
+ LIMIT 1;
 
 -- name: CreateWorkspaceSecret :one
 INSERT INTO workspace_secrets (
@@ -184,8 +207,8 @@ SELECT workspaces.*,
   JOIN deployment_definitions AS definitions
     ON definitions.environment_id = workspaces.environment_id
    AND definitions.id = workspaces.deployment_definition_id
-   AND definitions.kind = 'workspace'
-   AND definitions.declared_id = workspaces.workspace_declared_id
+   AND definitions.kind = 'sandbox'
+   AND definitions.declared_id = workspaces.sandbox_declared_id
   JOIN workspace_versions AS head
     ON head.workspace_id = workspaces.id
    AND head.id = workspaces.head_version_id
@@ -227,7 +250,7 @@ UPDATE workspaces
    AND id = sqlc.arg(id)
    AND state_version = sqlc.arg(expected_state_version)
    AND state IN ('active', 'recovery_required')
-   AND owner_actor_id IS NULL
+   AND owner_session_id IS NULL
    AND owner_run_id IS NULL
 RETURNING *;
 
@@ -236,7 +259,7 @@ SELECT *
   FROM workspaces
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
-   AND owner_actor_id = sqlc.arg(actor_id)
+   AND owner_session_id = sqlc.arg(session_id)
    AND owner_run_id IS NULL
  FOR UPDATE;
 
@@ -255,7 +278,7 @@ UPDATE workspaces
    AND workspaces.state = 'active'
    AND workspaces.desired_state IN ('active', 'stopped')
    AND workspaces.dirty_state = 'clean'
-   AND workspaces.owner_actor_id IS NULL
+   AND workspaces.owner_session_id IS NULL
    AND workspaces.owner_run_id IS NULL
    AND NOT EXISTS (
        SELECT 1
@@ -273,7 +296,7 @@ RETURNING *;
 
 -- name: ReserveWorkspaceForActor :one
 UPDATE workspaces
-   SET owner_actor_id = sqlc.arg(actor_id),
+   SET owner_session_id = sqlc.arg(session_id),
        ownership_generation = ownership_generation + 1,
        state_version = state_version + 1,
        desired_state = 'active',
@@ -286,7 +309,7 @@ UPDATE workspaces
    AND workspaces.state = 'active'
    AND workspaces.desired_state IN ('active', 'stopped')
    AND workspaces.dirty_state = 'clean'
-   AND workspaces.owner_actor_id IS NULL
+   AND workspaces.owner_session_id IS NULL
    AND workspaces.owner_run_id IS NULL
    AND NOT EXISTS (
        SELECT 1

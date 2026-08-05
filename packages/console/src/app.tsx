@@ -27,7 +27,7 @@ import { OrganizationNew } from "./routes/organization-new";
 import { AccessRequired } from "./routes/access-required";
 import { Device } from "./routes/device";
 import { WorkspaceDetail } from "./routes/workspace-detail";
-import { ActorDetail } from "./routes/actor-detail";
+import { SessionDetail } from "./routes/session-detail";
 
 function TabLink(props: {
   href: string;
@@ -216,7 +216,7 @@ export function App() {
 
       <Route path="/runs" component={wrap(Runs)} />
       <Route path="/runs/:run_id" component={wrap(RunDetail)} />
-      <Route path="/actors/:declared_id/:actor_id" component={wrap(ActorDetail)} />
+      <Route path="/sessions/:session_id" component={wrap(SessionDetail)} />
       <Route path="/schedules" component={wrap(Schedules)} />
       <Route path="/tasks" component={wrap(Tasks)} />
       <Route path="/workspaces/:workspace_id" component={wrap(WorkspaceDetail)} />

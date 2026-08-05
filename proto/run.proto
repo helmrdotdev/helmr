@@ -30,7 +30,7 @@ message TaskStart {
 message NoPayload {}
 
 message ActorStart {
-  string actor_id = 1;
+  string session_id = 1;
   optional string key = 2;
   int64 start_input_sequence = 3;
   int64 input_high_watermark = 4;
@@ -152,13 +152,13 @@ message RunEvent {
     ActorOutcome actor_outcome = 15;
     ActorTurnCommitRequested actor_turn_commit_requested = 16;
     ActorOutputAppendRequested actor_output_append_requested = 17;
-    ActorInputSendRequested actor_input_send_requested = 18;
+    SessionInputSendRequested session_input_send_requested = 18;
     StructuredLogRequested structured_log_requested = 19;
     TaskChildInvokeRequested task_child_invoke_requested = 20;
     ActorStartRequested actor_start_requested = 21;
-    ActorStatusRequested actor_status_requested = 22;
-    ActorCloseRequested actor_close_requested = 23;
-    ActorOutputPageRequested actor_output_page_requested = 24;
+    SessionStatusRequested session_status_requested = 22;
+    SessionCloseRequested session_close_requested = 23;
+    SessionOutputPageRequested session_output_page_requested = 24;
     WorkspaceCreateRequested workspace_create_requested = 25;
     WorkspaceRetrieveRequested workspace_retrieve_requested = 26;
     WorkspaceFileReadRequested workspace_file_read_requested = 27;
@@ -242,65 +242,43 @@ message ActorOutputAppendRequested {
   optional string idempotency_key = 4;
 }
 
-message ActorInputSendRequested {
+message SessionInputSendRequested {
   string correlation_id = 1;
-  string declared_id = 2;
-  oneof address {
-    string actor_id = 3;
-    string actor_key = 4;
-  }
-  string data_json = 5;
-  optional string idempotency_key = 6;
+  string session_id = 2;
+  string data_json = 3;
+  optional string idempotency_key = 4;
 }
 
 message ActorStartRequested {
   string correlation_id = 1;
   string declared_id = 2;
-  oneof workspace {
-    string workspace_id = 3;
-    string workspace_key = 4;
-  }
+  string workspace_id = 3;
   optional string key = 5;
   optional string input_json = 6;
   optional string idempotency_key = 7;
   string run_options_json = 8;
 }
 
-message ActorStatusRequested {
+message SessionStatusRequested {
   string correlation_id = 1;
-  string declared_id = 2;
-  oneof address {
-    string actor_id = 3;
-    string actor_key = 4;
-  }
+  string session_id = 2;
 }
 
-message ActorCloseRequested {
+message SessionCloseRequested {
   string correlation_id = 1;
-  string declared_id = 2;
-  oneof address {
-    string actor_id = 3;
-    string actor_key = 4;
-  }
-  optional string idempotency_key = 5;
+  string session_id = 2;
+  optional string idempotency_key = 3;
 }
 
-message ActorOutputPageRequested {
+message SessionOutputPageRequested {
   string correlation_id = 1;
-  string declared_id = 2;
-  oneof address {
-    string actor_id = 3;
-    string actor_key = 4;
-  }
-  optional int64 after = 5;
-  uint32 limit = 6;
+  string session_id = 2;
+  optional int64 after = 3;
+  uint32 limit = 4;
 }
 
 message WorkspaceAddress {
-  oneof address {
-    string workspace_id = 1;
-    string workspace_key = 2;
-  }
+  string workspace_id = 1;
 }
 
 message WorkspaceSecretPlacement {

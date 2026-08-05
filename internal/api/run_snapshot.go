@@ -9,9 +9,9 @@ type RunSnapshotResponse struct {
 	ID                   string                `json:"id"`
 	Status               string                `json:"status"`
 	Entrypoint           RunEntrypointResponse `json:"entrypoint"`
-	Deployment           RunDeploymentResponse `json:"deployment"`
+	Deployment           DeploymentReference   `json:"deployment"`
 	WorkspaceID          string                `json:"workspace_id"`
-	ActorID              string                `json:"actor_id,omitempty"`
+	SessionID            string                `json:"session_id,omitempty"`
 	ParentRunID          string                `json:"parent_run_id,omitempty"`
 	ParentOwnsLifecycle  *bool                 `json:"parent_owns_lifecycle,omitempty"`
 	CurrentAttemptNumber int32                 `json:"current_attempt_number"`
@@ -31,7 +31,7 @@ type RunEntrypointResponse struct {
 	ID   string `json:"id"`
 }
 
-type RunDeploymentResponse struct {
+type DeploymentReference struct {
 	ID      string `json:"id"`
 	Version string `json:"version"`
 }

@@ -139,7 +139,7 @@ SELECT deployments.org_id,
   JOIN deployment_definitions
     ON deployment_definitions.environment_id = runtime_instances.environment_id
    AND deployment_definitions.id = runtime_instances.deployment_definition_id
-   AND deployment_definitions.kind = 'workspace'
+   AND deployment_definitions.kind = 'sandbox'
   JOIN deployments
     ON deployments.environment_id = deployment_definitions.environment_id
    AND deployments.id = deployment_definitions.deployment_id

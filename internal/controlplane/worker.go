@@ -565,13 +565,32 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 	if state.SupportsBuild {
 		readiness.Build = workerRoleReadiness(state, state.BuildReady, state.BuildPausedReason)
 	}
+	status, err := workerPublicStatus(state.State)
+	if err != nil {
+		s.log.Error("project worker status", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
+		writeError(w, errors.New("project worker status"))
+		return
+	}
 	writeJSON(w, http.StatusOK, workerapi.StatusResponse{
 		WorkerInstanceID: pgvalue.MustUUIDValue(state.ID).String(),
 		WorkerGroupID:    state.WorkerGroupID,
-		Status:           workerapi.Status(state.State),
+		Status:           status,
 		ActiveExecutions: state.ActiveExecutions,
 		Readiness:        readiness,
 	})
+}
+
+func workerPublicStatus(state string) (workerapi.Status, error) {
+	switch state {
+	case db.WorkerInstanceStateActive:
+		return workerapi.StatusActive, nil
+	case db.WorkerInstanceStateDraining:
+		return workerapi.StatusDraining, nil
+	case db.WorkerInstanceStateTerminationReady:
+		return workerapi.StatusTerminationReady, nil
+	default:
+		return "", fmt.Errorf("worker instance state %q has no Worker projection", state)
+	}
 }
 
 func workerRoleReadiness(

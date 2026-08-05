@@ -158,7 +158,7 @@ UPDATE runs
  WHERE id = sqlc.arg(id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND entrypoint_kind = 'task'
-   AND actor_id IS NULL
+   AND session_id IS NULL
    AND status = 'running'
    AND current_attempt_number = sqlc.arg(attempt_number)
    AND current_run_lease_id = sqlc.arg(run_lease_id)
@@ -182,7 +182,7 @@ SELECT runs.id,
  WHERE runs.id = sqlc.arg(run_id)
    AND runs.workspace_id = sqlc.arg(workspace_id)
    AND runs.entrypoint_kind = 'task'
-   AND runs.actor_id IS NULL
+   AND runs.session_id IS NULL
    AND runs.status = 'running'
    AND runs.current_attempt_number = sqlc.arg(previous_attempt_number)
    AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
@@ -199,7 +199,7 @@ UPDATE runs
  WHERE id = sqlc.arg(id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND entrypoint_kind = 'task'
-   AND actor_id IS NULL
+   AND session_id IS NULL
    AND status = 'running'
    AND current_attempt_number = sqlc.arg(previous_attempt_number)
    AND current_run_lease_id = sqlc.arg(run_lease_id)
@@ -367,7 +367,7 @@ UPDATE runs
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND entrypoint_kind = 'task'
-   AND actor_id IS NULL
+   AND session_id IS NULL
    AND status = 'waiting'
    AND current_attempt_number = sqlc.arg(attempt_number)
    AND current_run_lease_id IS NULL
@@ -390,7 +390,7 @@ SELECT runs.id,
  WHERE runs.id = sqlc.arg(run_id)
    AND runs.workspace_id = sqlc.arg(workspace_id)
    AND runs.entrypoint_kind = 'task'
-   AND runs.actor_id IS NULL
+   AND runs.session_id IS NULL
    AND runs.status = 'waiting'
    AND runs.current_attempt_number = sqlc.arg(previous_attempt_number)
    AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
@@ -408,7 +408,7 @@ UPDATE runs
  WHERE id = sqlc.arg(id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND entrypoint_kind = 'task'
-   AND actor_id IS NULL
+   AND session_id IS NULL
    AND status = 'waiting'
    AND current_attempt_number = sqlc.arg(previous_attempt_number)
    AND current_run_lease_id = sqlc.arg(run_lease_id)
@@ -428,7 +428,7 @@ UPDATE runs
  WHERE id = sqlc.arg(id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND entrypoint_kind = 'task'
-   AND actor_id IS NULL
+   AND session_id IS NULL
    AND status = 'waiting'
    AND current_attempt_number = sqlc.arg(attempt_number)
    AND current_run_lease_id = sqlc.arg(run_lease_id)
@@ -450,7 +450,7 @@ UPDATE workspaces
    AND environments.project_id = sqlc.arg(project_id)
    AND workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.owner_run_id = sqlc.arg(run_id)
-   AND workspaces.owner_actor_id IS NULL
+   AND workspaces.owner_session_id IS NULL
    AND workspaces.ownership_generation = sqlc.arg(ownership_generation)
    AND workspaces.writer_generation = sqlc.arg(writer_generation)
    AND workspaces.head_version_id = sqlc.arg(expected_head_version_id)

@@ -21,13 +21,13 @@ A Run does not own its Workspace. The Workspace can outlive the Run.
 | `queued` | The run is waiting for a worker. |
 | `running` | A worker has started or is executing the run, including workspace preparation. |
 | `waiting` | The task is paused for stream input, token completion, or a timer. |
-| `retry-delayed` | A retry is scheduled after backoff. |
-| `cancel-requested` | Cancellation is admitted and waiting for terminal convergence. |
+| `retry_delayed` | A retry is scheduled after backoff. |
+| `cancel_requested` | Cancellation is admitted and waiting for terminal convergence. |
 | `succeeded` | The task completed successfully. |
 | `failed` | The task failed or exceeded a limit. |
 | `cancelled` | The run was cancelled. |
 | `expired` | The queued run TTL expired before execution started. |
-| `system-failed` | Helmr could not safely continue the Run. |
+| `system_failed` | Helmr could not safely continue the Run. |
 
 ## Workspace Attachment
 

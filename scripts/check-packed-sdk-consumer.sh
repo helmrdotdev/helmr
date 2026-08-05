@@ -30,9 +30,9 @@ cat >"${consumer}/consumer.ts" <<'EOF'
 import {
   HelmrClient,
   image,
+  sandbox,
   task,
   type StandardSchemaV1,
-  workspace,
   workspaces,
 } from "@helmr/sdk"
 
@@ -54,7 +54,7 @@ const fixture = task({
   run: (value) => value,
 })
 
-const fixtureWorkspace = workspace("packed-consumer")
+const fixtureSandbox = sandbox({ id: "packed-consumer" })
   .image(image("packed-consumer").from("node:24-bookworm-slim"))
   .resources({ cpu: 1, memory: "1GiB" })
 
@@ -71,7 +71,7 @@ const client = new HelmrClient({
 })
 const run = await client.tasks.start<typeof fixture>("packed-consumer", {
   payload: "typed",
-  workspace: workspaces.ref({ key: "packed-consumer" }),
+  workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
   idempotencyKey: "packed-consumer-start",
 })
 if (run.id !== "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31") {
@@ -81,7 +81,7 @@ if (requests.length !== 1) {
   throw new Error(`packed client made ${requests.length} requests`)
 }
 const request = requests[0]
-if (request?.url !== "https://example.invalid/api/tasks/packed-consumer/start") {
+if (request?.url !== "https://example.invalid/v1/tasks/packed-consumer/start") {
   throw new Error(`packed client used an unexpected URL: ${request?.url}`)
 }
 if (request.init?.method !== "POST") {
@@ -90,14 +90,14 @@ if (request.init?.method !== "POST") {
 const body = JSON.parse(String(request.init?.body))
 if (
   body.payload !== "typed" ||
-  body.workspace?.key !== "packed-consumer" ||
+  body.workspace?.id !== "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" ||
   body.idempotency_key !== "packed-consumer-start"
 ) {
   throw new Error(`packed client serialized an unexpected body: ${JSON.stringify(body)}`)
 }
 if (
   fixture.id !== "packed-consumer" ||
-  fixtureWorkspace.id !== "packed-consumer"
+  fixtureSandbox.id !== "packed-consumer"
 ) {
   throw new Error("packed definition builders returned an invalid contract")
 }

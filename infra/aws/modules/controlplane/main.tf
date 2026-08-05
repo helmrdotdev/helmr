@@ -39,7 +39,7 @@ locals {
   secret_kms_key_arns = distinct(concat(
     [aws_kms_key.helmr.arn],
     var.clickhouse_password_kms_key_arns,
-    var.operator_token_kms_key_arn == null ? [] : [var.operator_token_kms_key_arn]
+    var.capacity_token_kms_key_arn == null ? [] : [var.capacity_token_kms_key_arn]
   ))
   dispatcher_secret_kms_key_arns = distinct(concat(
     [aws_kms_key.helmr.arn],
@@ -124,8 +124,8 @@ locals {
     TOKEN_CREDENTIAL_KEY       = aws_secretsmanager_secret.token_credential_key.arn
     GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret.arn
     },
-    var.operator_token_secret_arn == null ? {} : {
-      OPERATOR_TOKEN = var.operator_token_secret_arn
+    var.capacity_token_secret_arn == null ? {} : {
+      CAPACITY_TOKEN = var.capacity_token_secret_arn
     },
     local.worker_enrollment_secrets,
     local.telemetry_secrets,
@@ -149,7 +149,7 @@ locals {
     "CLICKHOUSE_PASSWORD",
   ])
   reserved_controlplane_environment_keys = toset(keys(local.controlplane_environment_defaults))
-  reserved_controlplane_secret_keys      = setunion(toset(keys(local.controlplane_secret_defaults)), toset(["OPERATOR_TOKEN"]))
+  reserved_controlplane_secret_keys      = setunion(toset(keys(local.controlplane_secret_defaults)), toset(["CAPACITY_TOKEN"]))
   reserved_controlplane_keys             = setunion(local.reserved_controlplane_environment_keys, local.reserved_controlplane_secret_keys, local.reserved_optional_controlplane_keys)
   reserved_dispatcher_keys = setunion(toset(keys(local.dispatcher_environment_defaults)), toset(keys(local.dispatcher_secrets)), toset([
     "CLICKHOUSE_PASSWORD",

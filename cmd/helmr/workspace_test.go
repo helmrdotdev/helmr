@@ -11,11 +11,9 @@ func TestWorkspaceAddressRequiresExactlyOneAddress(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "id", address: workspaceAddressFlags{id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}},
-		{name: "key", address: workspaceAddressFlags{key: "repository", declaredID: "repository-agent"}},
+		{name: "key", address: workspaceAddressFlags{key: "repository"}},
 		{name: "missing", wantErr: true},
 		{name: "both", address: workspaceAddressFlags{id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32", key: "repository"}, wantErr: true},
-		{name: "key without declaration", address: workspaceAddressFlags{key: "repository"}, wantErr: true},
-		{name: "declaration with id", address: workspaceAddressFlags{id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32", declaredID: "repository-agent"}, wantErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			err := test.address.validate()
@@ -23,21 +21,6 @@ func TestWorkspaceAddressRequiresExactlyOneAddress(t *testing.T) {
 				t.Fatalf("validate() error = %v, wantErr = %v", err, test.wantErr)
 			}
 		})
-	}
-}
-
-func TestWorkspaceSecretsPreserveDeclaredPlacements(t *testing.T) {
-	secrets, err := workspaceSecrets(
-		[]string{"github=GITHUB_TOKEN"},
-		[]string{"config=/run/helmr-secrets/config.json"},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(secrets) != 2 ||
-		secrets[0].Name != "github" || secrets[0].Env != "GITHUB_TOKEN" ||
-		secrets[1].Name != "config" || secrets[1].File != "/run/helmr-secrets/config.json" {
-		t.Fatalf("secrets = %#v", secrets)
 	}
 }
 

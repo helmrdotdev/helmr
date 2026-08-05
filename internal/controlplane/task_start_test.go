@@ -6,19 +6,18 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 )
 
 func TestNormalizeTaskStartCanonicalizesCallerSemantics(t *testing.T) {
-	workspaceID := uuid.Must(uuid.NewV7()).String()
+	workspaceID := uuid.Must(uuid.NewV7())
 	ttl := int64(60_000)
 	concurrencyKey := "customer:1"
 	normalized, err := normalizeTaskStart(taskStartRequest{
 		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
 		EnvironmentID: uuid.Must(uuid.NewV7()), TaskDeclaredID: "resize-image",
 		PayloadPresent: true, Payload: json.RawMessage(`{"b":2,"a":1}`),
-		Workspace: api.WorkspaceTarget{ID: &workspaceID},
-		QueueName: "images", ConcurrencyKey: &concurrencyKey, QueuedTTLMS: &ttl,
+		WorkspaceID: workspaceID,
+		QueueName:   "images", ConcurrencyKey: &concurrencyKey, QueuedTTLMS: &ttl,
 		Metadata: json.RawMessage(`{"source":"backend"}`),
 		Tags:     []string{" resize ", "image", "image"},
 	})
@@ -37,11 +36,11 @@ func TestNormalizeTaskStartCanonicalizesCallerSemantics(t *testing.T) {
 }
 
 func TestNormalizeTaskStartRejectsInvalidCallerValues(t *testing.T) {
-	workspaceID := uuid.Must(uuid.NewV7()).String()
+	workspaceID := uuid.Must(uuid.NewV7())
 	base := taskStartRequest{
 		OrgID: uuid.Must(uuid.NewV7()), ProjectID: uuid.Must(uuid.NewV7()),
 		EnvironmentID: uuid.Must(uuid.NewV7()), TaskDeclaredID: "task",
-		Workspace: api.WorkspaceTarget{ID: &workspaceID},
+		WorkspaceID: workspaceID,
 	}
 	invalidKey := " leading"
 	request := base

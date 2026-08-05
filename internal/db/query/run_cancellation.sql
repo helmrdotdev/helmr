@@ -71,17 +71,17 @@ SELECT id, depth, cycle
  LIMIT sqlc.arg(limit_count);
 
 -- name: LockCancellationActors :many
-SELECT actors.id
+SELECT sessions.id
   FROM runs
-  JOIN actors
-    ON actors.id = runs.actor_id
-   AND actors.environment_id = runs.environment_id
+  JOIN sessions
+    ON sessions.id = runs.session_id
+   AND sessions.environment_id = runs.environment_id
  WHERE runs.id = ANY(sqlc.arg(run_ids)::uuid[])
    AND runs.org_id = sqlc.arg(org_id)
    AND runs.project_id = sqlc.arg(project_id)
    AND runs.environment_id = sqlc.arg(environment_id)
- ORDER BY actors.id
- FOR UPDATE OF actors;
+ ORDER BY sessions.id
+ FOR UPDATE OF sessions;
 
 -- name: LockCancellationRun :one
 SELECT id,
@@ -89,7 +89,7 @@ SELECT id,
        parent_owns_lifecycle,
        environment_id,
        workspace_id,
-       actor_id,
+       session_id,
        status,
        current_attempt_number,
        current_run_lease_id,
@@ -317,19 +317,19 @@ VALUES (
 );
 
 -- name: DetachActorFromCancelledRun :execrows
-UPDATE actors
+UPDATE sessions
    SET current_run_id = NULL,
        run_generation = run_generation + 1,
        state_version = state_version + 1,
        manual_run_cancelled = true,
        updated_at = transaction_timestamp()
- WHERE id = sqlc.arg(actor_id)
+ WHERE id = sqlc.arg(session_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND current_run_id = sqlc.arg(run_id)
    AND state IN ('open', 'closing');
 
 -- name: FailActorForRunTermination :execrows
-UPDATE actors
+UPDATE sessions
    SET state = 'failed',
        current_run_id = NULL,
        run_generation = run_generation + 1,
@@ -339,7 +339,7 @@ UPDATE actors
        failure_run_id = sqlc.arg(run_id),
        failed_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
- WHERE id = sqlc.arg(actor_id)
+ WHERE id = sqlc.arg(session_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND current_run_id = sqlc.arg(run_id)
    AND state IN ('open', 'closing');
@@ -500,17 +500,17 @@ UPDATE workspaces
        updated_at = transaction_timestamp()
  WHERE id = sqlc.arg(workspace_id)
    AND owner_run_id = sqlc.arg(run_id)
-   AND owner_actor_id IS NULL;
+   AND owner_session_id IS NULL;
 
 -- name: ReleaseActorWorkspace :exec
 UPDATE workspaces
-   SET owner_actor_id = NULL,
+   SET owner_session_id = NULL,
        ownership_generation = ownership_generation + 1,
        state_version = state_version + 1,
        last_activity_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
  WHERE id = sqlc.arg(workspace_id)
-   AND owner_actor_id = sqlc.arg(actor_id)
+   AND owner_session_id = sqlc.arg(session_id)
    AND owner_run_id IS NULL;
 
 -- name: RecordRunTerminalEvent :exec

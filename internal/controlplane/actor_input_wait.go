@@ -7,17 +7,17 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/actor"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type workerActorInputWaitParams struct {
-	ActorID            string `json:"actor_id"`
+	SessionID          string `json:"session_id"`
 	AfterInputSequence int64  `json:"after_input_sequence"`
 }
 
@@ -36,7 +36,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		writeError(w, badRequest(fmt.Errorf("invalid actor input wait params: %w", err)))
 		return
 	}
-	actorID, err := parseCanonicalUUID("params.actor_id", params.ActorID)
+	sessionID, err := parseCanonicalUUID("params.session_id", params.SessionID)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -56,7 +56,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		writeError(w, err)
 		return
 	}
-	if run.EntrypointKind != "actor" || !run.ActorID.Valid || run.ActorID != pgvalue.UUID(actorID) {
+	if run.EntrypointKind != "actor" || !run.SessionID.Valid || run.SessionID != pgvalue.UUID(sessionID) {
 		writeError(w, conflict(errors.New("actor input wait must target the owning actor")))
 		return
 	}
@@ -82,7 +82,7 @@ func (s *Server) workerCreateActorInputRunWait(
 	}
 	normalized := request
 	normalized.Params, err = json.Marshal(workerActorInputWaitParams{
-		ActorID: actorID.String(), AfterInputSequence: params.AfterInputSequence,
+		SessionID: sessionID.String(), AfterInputSequence: params.AfterInputSequence,
 	})
 	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("normalize actor input wait params: %w", err)))
@@ -125,7 +125,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		}
 		authority.actor = owner.actor
 		if authority.run.ParentRunID.Valid || authority.run.EntrypointKind != "actor" ||
-			authority.run.ActorID != pgvalue.UUID(actorID) || authority.runLease.State != db.RunLeaseStateRunning {
+			authority.run.SessionID != pgvalue.UUID(sessionID) || authority.runLease.State != db.RunLeaseStateRunning {
 			return errStaleRunLeaseClaim
 		}
 		cursor := pgtype.Int8{Int64: params.AfterInputSequence, Valid: true}
@@ -134,7 +134,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		}
 		replayParams := db.GetActorInputRunWaitRegistrationReplayParams{
 			ID: pgvalue.UUID(waitID), EnvironmentID: authority.run.EnvironmentID, RunID: authority.run.ID,
-			WorkspaceID: authority.workspace.ID, ActorID: authority.actor.ID,
+			WorkspaceID: authority.workspace.ID, SessionID: authority.actor.ID,
 			AfterInputSequence: cursor, ActorSpeculativeInputSequence: cursor,
 			AttemptNumber: authority.attempt.Number, ResumeAttachID: pgvalue.UUID(resumeAttachID),
 			RegistrationRequestFingerprint: pgvalue.Text(fingerprint), Metadata: metadata, Tags: tags,
@@ -158,7 +158,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		}
 		registered, err = work.q.RegisterActorInputRunWait(r.Context(), db.RegisterActorInputRunWaitParams{
 			ID: pgvalue.UUID(waitID), EnvironmentID: authority.run.EnvironmentID, TimeoutAt: timeoutAt,
-			IdleTimeoutMs: idleTimeout, ActorID: authority.actor.ID, AfterInputSequence: cursor,
+			IdleTimeoutMs: idleTimeout, SessionID: authority.actor.ID, AfterInputSequence: cursor,
 			RegistrationRequestFingerprint: pgvalue.Text(fingerprint), AttemptNumber: authority.attempt.Number,
 			ActorSpeculativeInputSequence: cursor, CurrentRunLeaseID: authority.runLease.ID,
 			CheckpointDueAt: checkpointDueAt, ResumeAttachID: pgvalue.UUID(resumeAttachID), Metadata: metadata, Tags: tags,
@@ -168,13 +168,13 @@ func (s *Server) workerCreateActorInputRunWait(
 			return staleRunLeaseClaim(err)
 		}
 		record, err := work.q.GetActorInputRecordAtSequenceForUpdate(r.Context(), db.GetActorInputRecordAtSequenceForUpdateParams{
-			EnvironmentID: authority.run.EnvironmentID, ActorID: authority.actor.ID,
+			EnvironmentID: authority.run.EnvironmentID, SessionID: authority.actor.ID,
 			Sequence: params.AfterInputSequence + 1,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			if authority.actor.State == "closing" && authority.actor.CloseSequence.Valid &&
 				params.AfterInputSequence >= authority.actor.CloseSequence.Int64 {
-				registered, err = actor.FailWait(r.Context(), work.q, registered, "actor_closed")
+				registered, err = session.FailWait(r.Context(), work.q, registered, "actor_closed")
 				return err
 			}
 			return nil
@@ -182,7 +182,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		if err != nil {
 			return err
 		}
-		registered, err = actor.CompleteWait(r.Context(), work.q, registered, record)
+		registered, err = session.CompleteWait(r.Context(), work.q, registered, record)
 		return err
 	})
 	if errors.Is(err, errStaleRunLeaseClaim) {

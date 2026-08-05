@@ -132,7 +132,8 @@ export function WorkspaceDetail() {
                     <dl class="m-0 grid gap-2.5 [&>div]:grid [&>div]:gap-0.75 [&_dt]:m-0 [&_dt]:font-mono [&_dt]:text-[10px] [&_dt]:font-medium [&_dt]:uppercase [&_dt]:tracking-[0.06em] [&_dt]:text-console-subtle [&_dd]:m-0 [&_dd]:[overflow-wrap:anywhere] [&_dd]:text-[12.5px] [&_dd]:text-console-text [&_dd_code]:font-mono [&_dd_code]:text-[11.5px]">
                       <div><dt>ID</dt><dd><code>{current().id}</code></dd></div>
                       <div><dt>Key</dt><dd><code>{current().key ?? "—"}</code></dd></div>
-                      <div><dt>Declared ID</dt><dd><code>{current().declared_id}</code></dd></div>
+                      <div><dt>Sandbox ID</dt><dd><code>{current().sandbox_id}</code></dd></div>
+                      <div><dt>Deployment</dt><dd><code>{current().deployment_id}</code></dd></div>
                       <div><dt>Last activity</dt><dd>{formatRelative(current().last_activity_at)}</dd></div>
                       <div><dt>Created</dt><dd>{formatRelative(current().created_at)}</dd></div>
                       <div><dt>Updated</dt><dd>{formatRelative(current().updated_at)}</dd></div>

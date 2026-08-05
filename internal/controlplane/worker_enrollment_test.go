@@ -80,7 +80,7 @@ func testEnrollmentServer(t *testing.T, store enrollmentNonceStore, logOutput io
 
 func serveWorkerEnrollment(server *Server, request workerapi.EnrollmentRequest) *httptest.ResponseRecorder {
 	body := bytes.NewBufferString(`{"worker_group_id":"` + request.WorkerGroupID + `","nonce":"` + request.Nonce + `","supports_run":true,"supports_build":false,"protocol_version":"` + request.ProtocolVersion + `","resource_id":"` + request.ResourceID + `","proof":"` + request.Proof + `"}`)
-	httpRequest := httptest.NewRequest(http.MethodPost, "/api/worker/enrollment", body)
+	httpRequest := httptest.NewRequest(http.MethodPost, "/api/worker/v0/enrollment", body)
 	response := httptest.NewRecorder()
 	server.workerEnroll(response, httpRequest)
 	return response

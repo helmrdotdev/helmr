@@ -46,7 +46,10 @@ func TestTokenCreateResponseRemainsOriginalPendingProjection(t *testing.T) {
 				),
 			}
 
-			response := server.tokenCreateResponse(row, credentials)
+			response, err := server.tokenCreateResponse(row, credentials)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if response.Status != "pending" ||
 				response.Result != nil ||
 				response.CompletedAt != nil ||

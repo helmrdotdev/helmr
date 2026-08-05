@@ -100,6 +100,56 @@ func TestDBAdmitterRejectsTaskWithoutScheduledPayloadAuthority(t *testing.T) {
 	assertScheduleCursor(t, pool, value, value.NextFireAt.Time, time.Time{})
 }
 
+func TestWorkerRetriesSameScheduleInstantWhenWorkspaceSecretIsRevoked(t *testing.T) {
+	pool := openSchedulePostgres(t)
+	value, runtimeDigest := seedScheduleAdmission(t, pool)
+	dbtest.MustExec(t, t.Context(), pool, `
+		UPDATE secrets
+		   SET state = 'revoked',
+		       current_version_id = NULL,
+		       revocation_generation = revocation_generation + 1,
+		       revoked_at = now(),
+		       updated_at = now()
+		 WHERE id = (
+		       SELECT secret_id
+		         FROM workspace_secrets
+		        WHERE workspace_id = $1
+		        LIMIT 1
+		 )
+	`, value.WorkspaceID)
+	admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: runtimeDigest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitter.now = func() time.Time { return value.NextFireAt.Time }
+	worker, err := NewWorker(nil, db.New(pool), admitter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker.now = func() time.Time { return value.NextFireAt.Time }
+	worker.jitter = func(time.Duration) (time.Duration, error) { return 0, nil }
+
+	err = worker.process(t.Context(), value)
+	var permanent *AdmissionError
+	if err == nil || errors.As(err, &permanent) {
+		t.Fatalf("Secret-unavailable admission error = %v, want retryable non-AdmissionError", err)
+	}
+	assertScheduleAdmissionCounts(t, pool, value, 0, 0, 0)
+	assertScheduleCursor(t, pool, value, value.NextFireAt.Time, time.Time{})
+	after, err := db.New(pool).GetSchedule(t.Context(), db.GetScheduleParams{
+		EnvironmentID: value.EnvironmentID,
+		ID:            value.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.State != "active" || !after.RetryStep.Valid || !after.RetryAfter.Valid ||
+		after.LastErrorCode.Valid || after.LastErrorMessage.Valid ||
+		after.ClaimedBy.Valid || after.ClaimExpiresAt.Valid {
+		t.Fatalf("retryable Schedule state = %+v", after)
+	}
+}
+
 func TestPendingScheduleBindsMatchingWorkspaceWithGenerationFence(t *testing.T) {
 	pool := openSchedulePostgres(t)
 	value, _ := seedScheduleAdmission(t, pool)
@@ -288,7 +338,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 			id, environment_id, deployment_id, kind, declared_id,
 			manifest_version, manifest, manifest_digest, artifact_id
 		)
-		VALUES ($1, $2, $3, 'workspace', 'scheduler', 0, '{}',
+		VALUES ($1, $2, $3, 'sandbox', 'scheduler', 0, '{}',
 		        decode(repeat('05', 32), 'hex'), $4)
 	`, workspaceDefinitionID, environmentID, deploymentID, imageArtifactID)
 	dbtest.MustExec(t, t.Context(), pool, `
@@ -306,7 +356,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	if _, err := tx.Exec(t.Context(), `
 		INSERT INTO workspaces (
 			id, environment_id, region_id,
-			workspace_declared_id, deployment_definition_id,
+			sandbox_declared_id, deployment_definition_id,
 			head_version_id, key
 		)
 		VALUES ($1, $2, $3, 'scheduler', $4, $5, 'scheduler')

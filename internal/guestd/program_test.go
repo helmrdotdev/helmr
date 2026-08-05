@@ -430,14 +430,11 @@ func TestRelayProgramRoutesActorInputSendDecisionWithoutConsumingWaitAuthority(t
 	}()
 	correlationID := "00000000-0000-0000-0000-000000000111"
 	if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
-		Event: &runv0.RunEvent_ActorInputSendRequested{
-			ActorInputSendRequested: &runv0.ActorInputSendRequested{
+		Event: &runv0.RunEvent_SessionInputSendRequested{
+			SessionInputSendRequested: &runv0.SessionInputSendRequested{
 				CorrelationId: correlationID,
-				DeclaredId:    "mailbox",
-				Address: &runv0.ActorInputSendRequested_ActorKey{
-					ActorKey: "primary",
-				},
-				DataJson: `{"message":"hello"}`,
+				SessionId:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+				DataJson:      `{"message":"hello"}`,
 			},
 		},
 	}); err != nil {
@@ -447,8 +444,8 @@ func TestRelayProgramRoutesActorInputSendDecisionWithoutConsumingWaitAuthority(t
 	if err := frameio.ReadProtoFrame(host, &event); err != nil {
 		t.Fatal(err)
 	}
-	if event.GetActorInputSendRequested().GetCorrelationId() != correlationID {
-		t.Fatalf("Actor input send event = %#v", event.GetEvent())
+	if event.GetSessionInputSendRequested().GetCorrelationId() != correlationID {
+		t.Fatalf("Session input send event = %#v", event.GetEvent())
 	}
 	decision := &runv0.ResumeDecision{
 		CorrelationId: correlationID,
@@ -557,7 +554,7 @@ func TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain(t *testing
 				WorkspaceRetrieveRequested: &runv0.WorkspaceRetrieveRequested{
 					CorrelationId: correlationID,
 					Workspace: &runv0.WorkspaceAddress{
-						Address: &runv0.WorkspaceAddress_WorkspaceKey{WorkspaceKey: "cache"},
+						WorkspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 					},
 				},
 			},

@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
@@ -22,9 +23,10 @@ import (
 var errStaleActorInputSend = errors.New("actor input send source authority is stale")
 
 type parsedWorkerActorInputSend struct {
-	lease          parsedRunLeaseFence
-	correlationID  uuid.UUID
-	idempotencyKey string
+	lease           parsedRunLeaseFence
+	correlationID   uuid.UUID
+	idempotencyKey  string
+	targetSessionID uuid.UUID
 }
 
 func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
@@ -64,11 +66,9 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("load actor input send source"))
 		return
 	}
-	targetRequest := api.SendActorInputRequest{
-		ActorID: request.ActorID, ActorKey: request.ActorKey,
-		Input: request.Input, IdempotencyKey: parsed.idempotencyKey,
-	}
-	target, err := s.resolveActorInputAddress(r, source.EnvironmentID, request.ActorDeclaredID, targetRequest)
+	target, err := s.db.GetActor(r.Context(), db.GetActorParams{
+		EnvironmentID: source.EnvironmentID, ID: pgvalue.UUID(parsed.targetSessionID),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := s.inTx(r.Context(), func(work *txWork) error {
 			return authorizeActorInputSendSource(
@@ -95,7 +95,7 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 	}
 	record, err := s.appendActorInput(r.Context(), appendActorInputRequest{
 		EnvironmentID:  pgvalue.MustUUIDValue(source.EnvironmentID),
-		ActorID:        pgvalue.MustUUIDValue(target.ID),
+		SessionID:      pgvalue.MustUUIDValue(target.ID),
 		RecordID:       uuid.Must(uuid.NewV7()),
 		Data:           request.Input,
 		SourceKind:     "run",
@@ -120,9 +120,14 @@ func (s *Server) workerSendActorInput(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("append run-sourced actor input"))
 		return
 	}
+	completed, err := projectSessionInput(record)
+	if err != nil {
+		writeError(w, errors.New("project run-sourced session input"))
+		return
+	}
 	writeJSON(w, http.StatusOK, workerapi.SendActorInputResponse{
 		CorrelationID: request.CorrelationID,
-		Completed:     &api.SendActorInputResponse{Sequence: record.Sequence},
+		Completed:     &completed,
 	})
 }
 
@@ -135,12 +140,12 @@ func parseWorkerActorInputSend(request workerapi.SendActorInputRequest) (parsedW
 	if err != nil {
 		return parsedWorkerActorInputSend{}, err
 	}
-	if err := api.ValidateActorDeclaredID(request.ActorDeclaredID); err != nil {
+	targetSessionID, err := ids.Parse(request.SessionID)
+	if err != nil {
 		return parsedWorkerActorInputSend{}, err
 	}
-	if err := api.ValidateSendActorInputRequest(api.SendActorInputRequest{
-		ActorID: request.ActorID, ActorKey: request.ActorKey, Input: request.Input,
-		IdempotencyKey: request.IdempotencyKey,
+	if err := api.ValidateSendSessionInputRequest(api.SendSessionInputRequest{
+		Input: request.Input, IdempotencyKey: request.IdempotencyKey,
 	}); err != nil {
 		return parsedWorkerActorInputSend{}, err
 	}
@@ -150,6 +155,7 @@ func parseWorkerActorInputSend(request workerapi.SendActorInputRequest) (parsedW
 	}
 	return parsedWorkerActorInputSend{
 		lease: lease, correlationID: correlationID, idempotencyKey: idempotencyKey,
+		targetSessionID: targetSessionID,
 	}, nil
 }
 

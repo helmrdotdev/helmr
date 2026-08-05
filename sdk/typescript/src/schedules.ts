@@ -4,11 +4,12 @@ import type {
   PayloadTaskDefinition,
   TaskConfigBase,
   TaskExecutionContext,
-  WorkspaceTarget,
+  WorkspaceAddress,
 } from "./contract"
 import { createScheduledTask } from "./definitions"
 import { resourceID } from "./internal/id"
 import type { PayloadSchema } from "./schema/payload"
+import { inspectWorkspaceAddress } from "./workspace"
 
 export type Cron = Readonly<{
   pattern: string
@@ -37,7 +38,7 @@ export type ScheduledTaskConfig<TOutput extends JsonValue> = Omit<
 > & Readonly<{
     id: string
     cron: Cron
-    workspace: WorkspaceTarget
+    workspace: WorkspaceAddress
     run(
       payload: ScheduledTaskPayload,
       ctx: TaskExecutionContext,
@@ -51,7 +52,12 @@ export function scheduledTask<TOutput extends JsonValue>(
   ScheduledTaskPayload,
   TOutput
 > {
+  validateScheduleMembers(config)
   validateCron(config.cron)
+  const workspace = inspectWorkspaceAddress(config.workspace)
+  if (workspace === undefined) {
+    throw new Error("schedule workspace requires a Workspace address")
+  }
   return createScheduledTask({
     id: config.id,
     payload: scheduledTaskSchema,
@@ -65,9 +71,26 @@ export function scheduledTask<TOutput extends JsonValue>(
     schedule: {
       cron: config.cron.pattern,
       timezone: config.cron.timezone,
-      workspace: config.workspace,
+      workspace,
     },
   })
+}
+
+function validateScheduleMembers(value: object): void {
+  const allowed = new Set([
+    "id",
+    "cron",
+    "workspace",
+    "run",
+    "queue",
+    "maxDuration",
+    "ttl",
+    "retry",
+  ])
+  const unknown = Object.keys(value).find((key) => !allowed.has(key))
+  if (unknown !== undefined) {
+    throw new Error(`schedule has unknown member ${JSON.stringify(unknown)}`)
+  }
 }
 
 export const schedules = Object.freeze({

@@ -1,6 +1,6 @@
 import { query, type Options as ClaudeOptions } from "@anthropic-ai/claude-agent-sdk"
 import { Agent } from "@cursor/sdk"
-import { image, source, task, workspace, type JsonValue } from "@helmr/sdk"
+import { image, source, task, sandbox, type JsonValue } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 import { runCodex as runCodexTurn, type CodexThreadOptions } from "../lib/agents/codex-app-server"
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CURSOR_MODEL } from "../lib/agents/models"
@@ -13,7 +13,7 @@ const guideInputs = source.directory("guides")
 
 const base = image("helmr-agent-toolchain-smoke")
   .from("node:24-bookworm-slim")
-  .workdir("/workspace")
+  .workdir("/sandbox")
   .copy("/opt/helmr-dev-workflows/guides", guideInputs)
   .run([
     "sh",
@@ -37,9 +37,9 @@ const base = image("helmr-agent-toolchain-smoke")
   ])
   .env("PATH", "/root/.nix-profile/bin:/nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
   .run(["npm", "install", "-g", "bun@1.3.10"])
-  .workdir("/workspace")
+  .workdir("/sandbox")
 
-export const agentToolchainSmokeWorkspace = workspace("helmr-agent-toolchain-smoke")
+export const agentToolchainSmokeWorkspace = sandbox({ id: "helmr-agent-toolchain-smoke" })
   .image(base)
   .resources({ cpu: 2, memory: "4GiB" })
 

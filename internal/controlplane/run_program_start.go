@@ -20,7 +20,7 @@ import (
 func encodeProgramStart(
 	run db.Run,
 	attempt db.RunAttempt,
-	actor *db.Actor,
+	actor *db.Session,
 	definition db.DeploymentDefinition,
 	deploymentVersion string,
 ) ([]byte, error) {
@@ -111,13 +111,13 @@ func encodeProgramStart(
 
 func programStartTask(
 	run db.Run,
-	actor *db.Actor,
+	actor *db.Session,
 	definition db.DeploymentDefinition,
 ) (*runv0.TaskStart, error) {
 	if actor != nil ||
-		run.ActorID.Valid ||
-		run.ActorStartInputSequence.Valid ||
-		run.ActorStartInputHighWatermark.Valid {
+		run.SessionID.Valid ||
+		run.SessionInputStartSequence.Valid ||
+		run.SessionInputHighWatermark.Valid {
 		return nil, errors.New("task program-start contains actor authority")
 	}
 	manifest, err := deployment.ParseTaskManifest(
@@ -156,32 +156,32 @@ func programStartTask(
 func programStartActor(
 	run db.Run,
 	attempt db.RunAttempt,
-	actor *db.Actor,
+	actor *db.Session,
 ) (*runv0.ActorStart, error) {
 	if actor == nil ||
-		!run.ActorID.Valid ||
-		actor.ID != run.ActorID ||
+		!run.SessionID.Valid ||
+		actor.ID != run.SessionID ||
 		actor.DeploymentDefinitionID != run.DeploymentDefinitionID ||
 		actor.WorkspaceID != run.WorkspaceID ||
 		actor.ActorDeclaredID != run.EntrypointDeclaredID ||
 		run.Payload != nil ||
-		!attempt.ActorStartInputSequence.Valid ||
-		!run.ActorStartInputSequence.Valid ||
-		!run.ActorStartInputHighWatermark.Valid ||
-		attempt.ActorStartInputSequence.Int64 < 0 ||
-		run.ActorStartInputSequence.Int64 < 0 ||
-		attempt.ActorStartInputSequence.Int64 < run.ActorStartInputSequence.Int64 ||
-		attempt.ActorStartInputSequence.Int64 > run.ActorStartInputHighWatermark.Int64 {
+		!attempt.SessionInputStartSequence.Valid ||
+		!run.SessionInputStartSequence.Valid ||
+		!run.SessionInputHighWatermark.Valid ||
+		attempt.SessionInputStartSequence.Int64 < 0 ||
+		run.SessionInputStartSequence.Int64 < 0 ||
+		attempt.SessionInputStartSequence.Int64 < run.SessionInputStartSequence.Int64 ||
+		attempt.SessionInputStartSequence.Int64 > run.SessionInputHighWatermark.Int64 {
 		return nil, errors.New("actor program-start authority is inconsistent")
 	}
-	actorID, err := requiredClaimUUIDString("actor ID", actor.ID)
+	sessionID, err := requiredClaimUUIDString("session ID", actor.ID)
 	if err != nil {
 		return nil, err
 	}
 	start := &runv0.ActorStart{
-		ActorId:            actorID,
-		StartInputSequence: attempt.ActorStartInputSequence.Int64,
-		InputHighWatermark: run.ActorStartInputHighWatermark.Int64,
+		SessionId:          sessionID,
+		StartInputSequence: attempt.SessionInputStartSequence.Int64,
+		InputHighWatermark: run.SessionInputHighWatermark.Int64,
 	}
 	if actor.Key.Valid {
 		key := actor.Key.String

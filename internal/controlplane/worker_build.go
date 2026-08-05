@@ -467,7 +467,7 @@ func (s *Server) workerDeploymentBuildDeliveryFailed(w http.ResponseWriter, r *h
 	}
 	if request.ReasonCode != workerapi.DeploymentBuildDeliveryBuildGuestFailed &&
 		request.ReasonCode != workerapi.DeploymentBuildDeliveryProgramVerifierFailed {
-		writeError(w, badRequest(errors.New("deployment build delivery failure reasonCode is invalid")))
+		writeError(w, badRequest(errors.New("deployment build delivery failure reason_code is invalid")))
 		return
 	}
 	lease := request.Lease
@@ -706,7 +706,7 @@ func (s *Server) prepareDeploymentBuild(
 	)
 	for _, definition := range succeeded.Plan.Definitions {
 		var workspaceImage *deployment.WorkspaceImageArtifact
-		if definition.Workspace != nil {
+		if definition.Sandbox != nil {
 			image, ok := workspaceImages[definition.DeclaredID]
 			if !ok {
 				return preparedDeploymentBuild{}, invalidDeploymentBuildOutput{
@@ -1097,7 +1097,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 
 		for _, definition := range definitions {
 			var artifactID pgtype.UUID
-			if definition.input.Workspace != nil {
+			if definition.input.Sandbox != nil {
 				artifact, ok := workspaceArtifacts[definition.input.DeclaredID]
 				if !ok {
 					return fmt.Errorf(
@@ -1313,19 +1313,19 @@ func deploymentDefinitionManifest(
 		manifest = definition.Task
 	case deployment.DefinitionKindActor:
 		manifest = definition.Actor
-	case deployment.DefinitionKindWorkspace:
-		if definition.Workspace == nil || workspaceImage == nil {
+	case deployment.DefinitionKindSandbox:
+		if definition.Sandbox == nil || workspaceImage == nil {
 			return nil, [sha256.Size]byte{}, fmt.Errorf(
 				"deployment workspace %q requires its image result",
 				definition.DeclaredID,
 			)
 		}
-		manifest = deployment.WorkspaceManifest{
-			Image: deployment.WorkspaceArtifactManifest{
+		manifest = deployment.SandboxManifest{
+			Image: deployment.SandboxImageManifest{
 				ArtifactDigest: workspaceImage.Digest,
 				MediaType:      workspaceImage.MediaType,
 			},
-			Resources: definition.Workspace.Resources,
+			Resources: definition.Sandbox.Resources,
 		}
 	default:
 		return nil, [sha256.Size]byte{}, fmt.Errorf(

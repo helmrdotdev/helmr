@@ -314,10 +314,6 @@ func (c *fakeRunWaitClient) AcknowledgeRunWaitResume(_ context.Context, request 
 	}, nil
 }
 
-func (c *fakeRunWaitClient) AcknowledgeRestore(_ context.Context, request workerapi.AcknowledgeRestoreRequest) (workerapi.AcknowledgeRestoreResponse, error) {
-	return workerapi.AcknowledgeRestoreResponse{RunID: request.Lease.RunID, RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID}, nil
-}
-
 func (c *fakeRunWaitClient) AcknowledgeRunResumeRelease(_ context.Context, request workerapi.RunResumeReleaseRequest) (workerapi.RunResumeReleaseResponse, error) {
 	c.resumeRelease = &request
 	return workerapi.RunResumeReleaseResponse(request), nil

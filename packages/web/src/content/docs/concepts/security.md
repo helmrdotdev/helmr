@@ -22,10 +22,11 @@ ABI, vCPU, memory, and execution slots.
 
 Secrets are stored encrypted and scoped to a project environment. API keys are stored by hash, can expire or be revoked, and are bound to one project environment. API key grants describe allowed actions inside that environment.
 
-API-key capabilities are explicit and Environment-scoped. Actor input and
-output use `actors.input.send` and `actors.read`; named Session-stream
-permissions do not exist. Token, Secret, Run, Workspace, and deployment
-permissions remain separate. Secret API responses never return Secret values.
+API-key capabilities are explicit and Environment-scoped. Actor definition
+start uses `actors.start`. Session input, read, and close use
+`sessions.input.send`, `sessions.read`, and `sessions.close`. Token, Secret,
+Run, Workspace, and deployment permissions remain separate. Secret API
+responses never return Secret values.
 
 ## Payloads Are Plaintext
 

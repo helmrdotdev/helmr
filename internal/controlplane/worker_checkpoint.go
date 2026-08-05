@@ -406,7 +406,7 @@ func failCheckpointActorAttempt(
 		return staleRunLeaseClaim(err)
 	}
 	if _, err := store.CompleteActorAttempt(ctx, db.CompleteActorAttemptParams{
-		TerminalActorInputSequence: pgtype.Int8{}, TerminalOutcome: pgvalue.Text("failed"),
+		TerminalSessionInputSequence: pgtype.Int8{}, TerminalOutcome: pgvalue.Text("failed"),
 		ReasonCode: pgvalue.Text(decision.reason), Error: failed.errorPayload, CompletedAt: failedAt,
 		RunID: authority.run.ID, Number: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
 	}); err != nil {
@@ -505,7 +505,7 @@ func scheduleActorCheckpointFailureRetry(
 	}
 	if _, err := store.DelayActorCheckpointFailureRetry(ctx, db.DelayActorCheckpointFailureRetryParams{
 		NextAttemptNumber: nextAttempt, RetryAt: pgvalue.Timestamptz(retryAt), FailedAt: failedAt,
-		ID: authority.run.ID, WorkspaceID: authority.workspace.ID, ActorID: authority.actor.ID,
+		ID: authority.run.ID, WorkspaceID: authority.workspace.ID, SessionID: authority.actor.ID,
 		PreviousAttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
 	}); err != nil {
 		return staleRunLeaseClaim(err)
@@ -534,7 +534,7 @@ func finishCheckpointFailedActor(
 	actorFailureCode := pgvalue.Text(failureCode)
 	if _, err := store.FinishCheckpointFailedActorRun(ctx, db.FinishCheckpointFailedActorRunParams{
 		Status: status, ReasonCode: pgvalue.Text(reason), Error: errorPayload, FailedAt: failedAt,
-		ID: authority.run.ID, WorkspaceID: authority.workspace.ID, ActorID: authority.actor.ID,
+		ID: authority.run.ID, WorkspaceID: authority.workspace.ID, SessionID: authority.actor.ID,
 		AttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
 	}); err != nil {
 		return staleRunLeaseClaim(err)
@@ -552,7 +552,7 @@ func finishCheckpointFailedActor(
 	if _, err := store.ReleaseActorWorkspaceOwner(ctx, db.ReleaseActorWorkspaceOwnerParams{
 		CompletedAt: failedAt, ID: authority.workspace.ID,
 		EnvironmentID: authority.run.EnvironmentID,
-		ActorID:       actor.ID, OwnershipGeneration: authority.workspace.OwnershipGeneration,
+		SessionID:     actor.ID, OwnershipGeneration: authority.workspace.OwnershipGeneration,
 		WriterGeneration: authority.workspace.WriterGeneration,
 	}); err != nil {
 		return staleRunLeaseClaim(err)

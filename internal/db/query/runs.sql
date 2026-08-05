@@ -242,35 +242,35 @@ SELECT created_run.*
 
 -- name: CreateActorStartRun :one
 WITH selected_actor AS MATERIALIZED (
-    SELECT actors.*,
+    SELECT sessions.*,
            environments.org_id,
            environments.project_id,
            deployment_definitions.deployment_id
-      FROM actors
-      JOIN environments ON environments.id = actors.environment_id
+      FROM sessions
+      JOIN environments ON environments.id = sessions.environment_id
       JOIN deployment_definitions
-        ON deployment_definitions.environment_id = actors.environment_id
-       AND deployment_definitions.id = actors.deployment_definition_id
+        ON deployment_definitions.environment_id = sessions.environment_id
+       AND deployment_definitions.id = sessions.deployment_definition_id
        AND deployment_definitions.kind = 'actor'
-       AND deployment_definitions.declared_id = actors.actor_declared_id
-     WHERE actors.environment_id = sqlc.arg(environment_id)
-       AND actors.id = sqlc.arg(actor_id)
-       AND actors.workspace_id = sqlc.arg(workspace_id)
-       AND actors.state = 'open'
-       AND actors.current_run_id IS NULL
+       AND deployment_definitions.declared_id = sessions.actor_declared_id
+     WHERE sessions.environment_id = sqlc.arg(environment_id)
+       AND sessions.id = sqlc.arg(session_id)
+       AND sessions.workspace_id = sqlc.arg(workspace_id)
+       AND sessions.state = 'open'
+       AND sessions.current_run_id IS NULL
        AND (
            sqlc.narg(claim_id)::uuid IS NULL
            OR EXISTS (
                SELECT 1
                  FROM idempotency_claims
-                WHERE idempotency_claims.environment_id = actors.environment_id
+                WHERE idempotency_claims.environment_id = sessions.environment_id
                   AND idempotency_claims.id = sqlc.narg(claim_id)
                   AND idempotency_claims.operation = 'actor.start'
                   AND idempotency_claims.state = 'pending'
                   AND idempotency_claims.retired_at IS NULL
            )
        )
-     FOR UPDATE OF actors
+     FOR UPDATE OF sessions
 ), created_run AS (
     INSERT INTO runs (
         id,
@@ -281,12 +281,12 @@ WITH selected_actor AS MATERIALIZED (
         deployment_definition_id,
         entrypoint_kind,
         entrypoint_declared_id,
-        actor_id,
+        session_id,
         cause_kind,
         workspace_id,
         base_workspace_version_id,
-        actor_start_input_sequence,
-        actor_start_input_high_watermark,
+        session_input_start_sequence,
+        session_input_high_watermark,
         metadata,
         tags,
         queue_name,
@@ -341,7 +341,7 @@ WITH selected_actor AS MATERIALIZED (
         number,
         entrypoint_kind,
         workspace_id,
-        actor_start_input_sequence,
+        session_input_start_sequence,
         base_workspace_version_id
     )
     SELECT created_run.id,
@@ -675,7 +675,7 @@ SELECT child.id,
        child.environment_id
   FROM runs AS child
  WHERE child.entrypoint_kind = 'task'
-   AND child.actor_id IS NULL
+   AND child.session_id IS NULL
    AND child.parent_run_id IS NOT NULL
    AND child.parent_owns_lifecycle IS TRUE
    AND child.status = 'queued'
@@ -754,7 +754,7 @@ UPDATE workspaces
        updated_at = transaction_timestamp()
  WHERE workspaces.id = sqlc.arg(workspace_id)
    AND workspaces.owner_run_id = sqlc.arg(run_id)
-   AND workspaces.owner_actor_id IS NULL
+   AND workspaces.owner_session_id IS NULL
    AND NOT EXISTS (
        SELECT 1
          FROM workspace_leases

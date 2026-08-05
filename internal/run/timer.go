@@ -83,10 +83,10 @@ func (r *TimerWaitReconciler) reconcileOne(
 	if _, err := q.LockWorkspaceSecretsForAdmission(ctx, candidate.WorkspaceID); err != nil {
 		return false, err
 	}
-	if locator.ActorID.Valid {
+	if locator.SessionID.Valid {
 		actor, err := q.LockActorForInputReconcile(ctx, db.LockActorForInputReconcileParams{
 			EnvironmentID: locator.EnvironmentID,
-			ActorID:       locator.ActorID,
+			SessionID:     locator.SessionID,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, tx.Commit(ctx)

@@ -8,11 +8,11 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/actor"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -29,7 +29,7 @@ var (
 
 type appendActorInputRequest struct {
 	EnvironmentID  uuid.UUID
-	ActorID        uuid.UUID
+	SessionID      uuid.UUID
 	RecordID       uuid.UUID
 	Data           json.RawMessage
 	SourceKind     string
@@ -38,30 +38,30 @@ type appendActorInputRequest struct {
 	Authorize      func(context.Context, db.Querier) error
 }
 
-// appendActorInput is the internal durable primitive behind ActorRef.input.send().
+// appendActorInput is the internal durable primitive behind SessionRef.input.send().
 // Claim acquisition, append, receipt completion, wait wakeup, continuation
 // admission, and repair intent are one transaction.
-func (s *Server) appendActorInput(ctx context.Context, request appendActorInputRequest) (db.ActorRecord, error) {
-	if request.EnvironmentID == uuid.Nil || request.ActorID == uuid.Nil || request.RecordID == uuid.Nil {
-		return db.ActorRecord{}, errActorInputAppendConflict
+func (s *Server) appendActorInput(ctx context.Context, request appendActorInputRequest) (db.SessionRecord, error) {
+	if request.EnvironmentID == uuid.Nil || request.SessionID == uuid.Nil || request.RecordID == uuid.Nil {
+		return db.SessionRecord{}, errActorInputAppendConflict
 	}
 	if request.SourceKind != "external" && request.SourceKind != "run" {
-		return db.ActorRecord{}, errActorInputAppendConflict
+		return db.SessionRecord{}, errActorInputAppendConflict
 	}
 	if (request.SourceKind == "run") != (request.SourceRunID != uuid.Nil) {
-		return db.ActorRecord{}, errActorInputAppendConflict
+		return db.SessionRecord{}, errActorInputAppendConflict
 	}
 	if len(request.Data) == 0 || !json.Valid(request.Data) {
-		return db.ActorRecord{}, errActorInputAppendConflict
+		return db.SessionRecord{}, errActorInputAppendConflict
 	}
 	canonical, err := canonicalJSON(request.Data)
 	if err != nil {
-		return db.ActorRecord{}, errActorInputAppendConflict
+		return db.SessionRecord{}, errActorInputAppendConflict
 	}
 	if len(canonical) > maxActorInputBytes {
-		return db.ActorRecord{}, errActorInputTooLarge
+		return db.SessionRecord{}, errActorInputTooLarge
 	}
-	var result db.ActorRecord
+	var result db.SessionRecord
 	err = s.inTx(ctx, func(work *txWork) error {
 		claimID := pgtype.UUID{}
 		fingerprint := []byte(nil)
@@ -72,7 +72,7 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 			}
 			idempotencyRequest, err := idempotency.NewActorInputSendRequest(
 				request.EnvironmentID,
-				request.ActorID,
+				request.SessionID,
 				request.IdempotencyKey,
 				canonical,
 			)
@@ -84,7 +84,7 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 				return err
 			}
 			if acquired.Claim.State == "completed" {
-				replayed, err := actorInputRecordFromReceipt(request, acquired.Claim)
+				replayed, err := actorInputRecordFromReceipt(ctx, work.q, request, acquired.Claim)
 				if err != nil {
 					return errActorInputAppendConflict
 				}
@@ -99,7 +99,7 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 		}
 		locator, err := work.q.GetActor(ctx, db.GetActorParams{
 			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
-			ID:            pgvalue.UUID(request.ActorID),
+			ID:            pgvalue.UUID(request.SessionID),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errActorInputUnavailable
@@ -120,7 +120,7 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 		}
 		appended, err := work.q.AppendActorInputRecord(ctx, db.AppendActorInputRecordParams{
 			EnvironmentID: pgvalue.UUID(request.EnvironmentID), ClaimID: claimID,
-			ActorID: pgvalue.UUID(request.ActorID), ExpectedRequestFingerprint: fingerprint,
+			SessionID: pgvalue.UUID(request.SessionID), ExpectedRequestFingerprint: fingerprint,
 			ID: pgvalue.UUID(request.RecordID), Data: canonical,
 			SourceKind: pgvalue.Text(request.SourceKind), SourceRunID: sourceRunID,
 		})
@@ -128,7 +128,7 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 			if errors.Is(err, pgx.ErrNoRows) {
 				current, readErr := work.q.GetActor(ctx, db.GetActorParams{
 					EnvironmentID: pgvalue.UUID(request.EnvironmentID),
-					ID:            pgvalue.UUID(request.ActorID),
+					ID:            pgvalue.UUID(request.SessionID),
 				})
 				if readErr == nil &&
 					current.State == "open" &&
@@ -151,7 +151,7 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 		if claimID.Valid {
 			_, claimErr := work.q.CompleteActorInputClaim(ctx, db.CompleteActorInputClaimParams{
 				EnvironmentID: result.EnvironmentID, ClaimID: claimID,
-				RequestFingerprint: fingerprint, ActorID: result.ActorID, RecordID: result.ID,
+				RequestFingerprint: fingerprint, SessionID: result.SessionID, RecordID: result.ID,
 			})
 			if errors.Is(claimErr, pgx.ErrNoRows) {
 				claim, err := work.q.GetIdempotencyClaim(ctx, db.GetIdempotencyClaimParams{
@@ -166,7 +166,7 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 		}
 
 		lockedActor, err := work.q.LockActorForInputReconcile(ctx, db.LockActorForInputReconcileParams{
-			EnvironmentID: result.EnvironmentID, ActorID: result.ActorID,
+			EnvironmentID: result.EnvironmentID, SessionID: result.SessionID,
 		})
 		if err != nil || lockedActor.WorkspaceID != locator.WorkspaceID {
 			return errActorInputAppendConflict
@@ -178,7 +178,7 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 			// Avoiding a second run lock also keeps A→B/B→A sends from acquiring
 			// source and target runs in opposite orders.
 			currentRun, err = work.q.GetActorInputCurrentRun(ctx, db.GetActorInputCurrentRunParams{
-				EnvironmentID: result.EnvironmentID, RunID: lockedActor.CurrentRunID, ActorID: result.ActorID,
+				EnvironmentID: result.EnvironmentID, RunID: lockedActor.CurrentRunID, SessionID: result.SessionID,
 			})
 			if err != nil {
 				return errActorInputAppendConflict
@@ -186,32 +186,32 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 		}
 
 		wait, waitErr := work.q.GetPendingActorInputRunWait(ctx, db.GetPendingActorInputRunWaitParams{
-			EnvironmentID: result.EnvironmentID, ActorID: result.ActorID,
+			EnvironmentID: result.EnvironmentID, SessionID: result.SessionID,
 			RunID: currentRun.ID, AttemptNumber: currentRun.CurrentAttemptNumber,
 			AfterInputSequence: pgtype.Int8{Int64: result.Sequence - 1, Valid: true},
 		})
 		if waitErr == nil {
-			if _, err := actor.CompleteWait(ctx, work.q, wait, result); err != nil {
+			if _, err := session.CompleteWait(ctx, work.q, wait, result); err != nil {
 				return err
 			}
 		} else if !errors.Is(waitErr, pgx.ErrNoRows) {
 			return waitErr
 		}
 
-		if actor.CanStartContinuation(lockedActor) {
+		if session.CanStartContinuation(lockedActor) {
 			workspace, err := work.q.LockActorInputWorkspace(ctx, db.LockActorInputWorkspaceParams{
-				EnvironmentID: result.EnvironmentID, ID: lockedActor.WorkspaceID, ActorID: result.ActorID,
+				EnvironmentID: result.EnvironmentID, ID: lockedActor.WorkspaceID, SessionID: result.SessionID,
 			})
 			if err != nil {
 				return errActorInputAppendConflict
 			}
-			if _, err := actor.CreateContinuation(ctx, work.q, lockedActor, workspace, bindings); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			if _, err := session.CreateContinuation(ctx, work.q, lockedActor, workspace, bindings); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return err
 			}
 		}
 
 		return work.q.CreateActorInputReconcileOutbox(ctx, db.CreateActorInputReconcileOutboxParams{
-			ID: result.ID, ActorID: result.ActorID,
+			ID: result.ID, SessionID: result.SessionID,
 			EnvironmentID: result.EnvironmentID, RecordID: result.ID,
 		})
 	})
@@ -219,32 +219,38 @@ func (s *Server) appendActorInput(ctx context.Context, request appendActorInputR
 }
 
 type actorRecordClaimReceipt struct {
-	RecordID string `json:"recordId"`
-	Sequence int64  `json:"sequence"`
+	SessionRecordID string `json:"session_record_id"`
+	Sequence        int64  `json:"sequence"`
 }
 
-func actorInputRecordFromReceipt(request appendActorInputRequest, claim db.IdempotencyClaim) (db.ActorRecord, error) {
+func actorInputRecordFromReceipt(
+	ctx context.Context,
+	q db.Querier,
+	request appendActorInputRequest,
+	claim db.IdempotencyClaim,
+) (db.SessionRecord, error) {
 	var receipt actorRecordClaimReceipt
 	if err := json.Unmarshal(claim.Receipt, &receipt); err != nil {
-		return db.ActorRecord{}, err
+		return db.SessionRecord{}, err
 	}
-	recordID, err := ids.Parse(receipt.RecordID)
+	recordID, err := ids.Parse(receipt.SessionRecordID)
 	if err != nil || recordID == uuid.Nil || receipt.Sequence <= 0 || receipt.Sequence > maxActorSequence {
-		return db.ActorRecord{}, errActorInputAppendConflict
+		return db.SessionRecord{}, errActorInputAppendConflict
 	}
-	return db.ActorRecord{
-		ID:            pgvalue.UUID(recordID),
+	record, err := q.GetActorInputRecordByIDForUpdate(ctx, db.GetActorInputRecordByIDForUpdateParams{
 		EnvironmentID: pgvalue.UUID(request.EnvironmentID),
-		ActorID:       pgvalue.UUID(request.ActorID),
-		Direction:     "input",
-		Sequence:      receipt.Sequence,
-		ClaimID:       claim.ID,
-	}, nil
+		SessionID:     pgvalue.UUID(request.SessionID),
+		ID:            pgvalue.UUID(recordID),
+	})
+	if err != nil || record.Sequence != receipt.Sequence || record.ClaimID != claim.ID {
+		return db.SessionRecord{}, errActorInputAppendConflict
+	}
+	return record, nil
 }
 
-func actorRecordFromAppend(row db.AppendActorInputRecordRow) db.ActorRecord {
-	return db.ActorRecord{
-		ID: row.ID, EnvironmentID: row.EnvironmentID, ActorID: row.ActorID,
+func actorRecordFromAppend(row db.AppendActorInputRecordRow) db.SessionRecord {
+	return db.SessionRecord{
+		ID: row.ID, EnvironmentID: row.EnvironmentID, SessionID: row.SessionID,
 		Direction: row.Direction, Sequence: row.Sequence, Data: row.Data, ContentType: row.ContentType,
 		SourceKind: row.SourceKind, SourceRunID: row.SourceRunID,
 		ProducerRunID: row.ProducerRunID, ProducerAttemptNumber: row.ProducerAttemptNumber,

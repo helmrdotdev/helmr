@@ -33,15 +33,15 @@ func (declaration ProgramIndexDeclaration) MarshalJSON() ([]byte, error) {
 			Locator    *ProgramLocator `json:"locator"`
 			Manifest   *ActorManifest  `json:"manifest"`
 		}{declaration.DeclaredID, declaration.Kind, declaration.Locator, declaration.Actor})
-	case DefinitionKindWorkspace:
-		if declaration.Workspace == nil || declaration.Locator != nil {
-			return nil, errors.New("workspace program index declaration requires manifest and forbids locator")
+	case DefinitionKindSandbox:
+		if declaration.Sandbox == nil || declaration.Locator != nil {
+			return nil, errors.New("sandbox program index declaration requires manifest and forbids locator")
 		}
 		return json.Marshal(struct {
-			DeclaredID string             `json:"declaredId"`
-			Kind       DefinitionKind     `json:"kind"`
-			Manifest   *WorkspaceManifest `json:"manifest"`
-		}{declaration.DeclaredID, declaration.Kind, declaration.Workspace})
+			DeclaredID string           `json:"declaredId"`
+			Kind       DefinitionKind   `json:"kind"`
+			Manifest   *SandboxManifest `json:"manifest"`
+		}{declaration.DeclaredID, declaration.Kind, declaration.Sandbox})
 	default:
 		return nil, fmt.Errorf("program index declaration kind %q is unsupported", declaration.Kind)
 	}
@@ -82,17 +82,17 @@ func (declaration *ProgramIndexDeclaration) UnmarshalJSON(raw []byte) error {
 		declaration.DeclaredID = wire.DeclaredID
 		declaration.Locator = wire.Locator
 		declaration.Actor = wire.Manifest
-	case DefinitionKindWorkspace:
+	case DefinitionKindSandbox:
 		var wire struct {
-			DeclaredID string             `json:"declaredId"`
-			Kind       DefinitionKind     `json:"kind"`
-			Manifest   *WorkspaceManifest `json:"manifest"`
+			DeclaredID string           `json:"declaredId"`
+			Kind       DefinitionKind   `json:"kind"`
+			Manifest   *SandboxManifest `json:"manifest"`
 		}
 		if err := decodeClosedDefinition(raw, &wire); err != nil {
 			return err
 		}
 		declaration.DeclaredID = wire.DeclaredID
-		declaration.Workspace = wire.Manifest
+		declaration.Sandbox = wire.Manifest
 	default:
 		return fmt.Errorf("program index declaration kind %q is unsupported", header.Kind)
 	}
@@ -104,7 +104,7 @@ func (declaration ProgramIndexDeclaration) manifestCount() int {
 	for _, present := range []bool{
 		declaration.Task != nil,
 		declaration.Actor != nil,
-		declaration.Workspace != nil,
+		declaration.Sandbox != nil,
 	} {
 		if present {
 			count++
@@ -159,24 +159,24 @@ func validateProgramIndexDeclaration(
 			return fmt.Errorf("actor idleTimeoutMs must be in [1,%d]", maxActorIdleMs)
 		}
 		return validateProgramLocator(*declaration.Locator)
-	case DefinitionKindWorkspace:
-		if declaration.Workspace == nil || declaration.Locator != nil {
-			return errors.New("workspace requires manifest and forbids locator")
+	case DefinitionKindSandbox:
+		if declaration.Sandbox == nil || declaration.Locator != nil {
+			return errors.New("sandbox requires manifest and forbids locator")
 		}
 		if !sha256DigestPattern.MatchString(
-			declaration.Workspace.Image.ArtifactDigest,
+			declaration.Sandbox.Image.ArtifactDigest,
 		) {
 			return errors.New("workspace image artifactDigest is not a lowercase SHA-256 digest")
 		}
-		if declaration.Workspace.Image.MediaType != WorkspaceImageArtifactMediaType {
+		if declaration.Sandbox.Image.MediaType != WorkspaceImageArtifactMediaType {
 			return fmt.Errorf(
-				"workspace image mediaType = %q, want %q",
-				declaration.Workspace.Image.MediaType,
+				"sandbox image mediaType = %q, want %q",
+				declaration.Sandbox.Image.MediaType,
 				WorkspaceImageArtifactMediaType,
 			)
 		}
-		if err := validateResourcesManifest(declaration.Workspace.Resources); err != nil {
-			return fmt.Errorf("workspace resources: %w", err)
+		if err := validateResourcesManifest(declaration.Sandbox.Resources); err != nil {
+			return fmt.Errorf("sandbox resources: %w", err)
 		}
 		return nil
 	default:
@@ -229,9 +229,9 @@ func cloneProgramIndexDeclaration(
 		value := *declaration.Actor
 		declaration.Actor = &value
 	}
-	if declaration.Workspace != nil {
-		value := *declaration.Workspace
-		declaration.Workspace = &value
+	if declaration.Sandbox != nil {
+		value := *declaration.Sandbox
+		declaration.Sandbox = &value
 	}
 	if declaration.Locator != nil {
 		value := *declaration.Locator
@@ -295,20 +295,20 @@ func buildProgramIndex(
 				ModulePath: located.ModulePath,
 				Slot:       located.Slot,
 			}
-		case DefinitionKindWorkspace:
+		case DefinitionKindSandbox:
 			image, exists := workspaceImages[definition.DeclaredID]
-			if !exists || definition.Workspace == nil {
+			if !exists || definition.Sandbox == nil {
 				return ProgramIndex{}, fmt.Errorf(
-					"workspace %q has no image result",
+					"sandbox %q has no image result",
 					definition.DeclaredID,
 				)
 			}
-			declaration.Workspace = &WorkspaceManifest{
-				Image: WorkspaceArtifactManifest{
+			declaration.Sandbox = &SandboxManifest{
+				Image: SandboxImageManifest{
 					ArtifactDigest: image.Digest,
 					MediaType:      image.MediaType,
 				},
-				Resources: definition.Workspace.Resources,
+				Resources: definition.Sandbox.Resources,
 			}
 		default:
 			return ProgramIndex{}, fmt.Errorf(

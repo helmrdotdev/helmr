@@ -5,6 +5,7 @@ import { formatRelative } from "../features/runs/display";
 import { ApiError } from "../lib/api";
 import { getCurrentDeployment, type Deployment, type DeploymentStatus } from "../lib/deployments";
 import { useScope } from "../lib/scope";
+import { listTasks, type Task } from "../lib/tasks";
 import { statusBadgeClass, ui } from "../ui/styles";
 
 function tasksErrorMessage(error: unknown): string {
@@ -52,10 +53,11 @@ function deploymentTime(deployment: Deployment): { label: string; value: string 
   return { label: "Created", value: deployment.created_at };
 }
 
-function TaskRow(props: { task: string }) {
+function TaskRow(props: { task: Task }) {
   return (
     <tr>
-      <td><strong class="font-medium text-console-text">{props.task}</strong></td>
+      <td><strong class="font-medium text-console-text">{props.task.id}</strong></td>
+      <td><code>{props.task.queue}</code></td>
       <td>
         <A href="/runs" class={"font-mono text-[11.5px] text-console-accent hover:text-console-accent-hover"}>
           Runs
@@ -111,7 +113,7 @@ export default defineConfig({
 
 export function Tasks() {
   const scope = useScope();
-  const query = createQuery(() => ({
+  const deploymentQuery = createQuery(() => ({
     queryKey: ["deployments", "current", scope.selectedProjectID(), scope.selectedEnvironmentID()],
     queryFn: () =>
       getCurrentDeployment({
@@ -121,8 +123,17 @@ export function Tasks() {
     enabled: !!scope.selectedProjectID() && !!scope.selectedEnvironmentID(),
     retry: false,
   }));
-  const deployment = createMemo(() => query.data?.deployment ?? null);
-  const tasks = createMemo(() => deployment()?.tasks ?? []);
+  const taskQuery = createQuery(() => ({
+    queryKey: ["tasks", scope.selectedProjectID(), scope.selectedEnvironmentID()],
+    queryFn: () => listTasks({
+      projectID: scope.selectedProjectID(),
+      environmentID: scope.selectedEnvironmentID(),
+    }),
+    enabled: !!scope.selectedProjectID() && !!scope.selectedEnvironmentID(),
+    retry: false,
+  }));
+  const deployment = createMemo(() => deploymentQuery.data?.deployment ?? null);
+  const tasks = createMemo(() => taskQuery.data?.tasks ?? []);
 
   return (
     <section class={ui.page}>
@@ -135,15 +146,15 @@ export function Tasks() {
         </div>
       </div>
 
-      <Show when={query.isError}>
-        <p class={ui.error} role="alert">{tasksErrorMessage(query.error)}</p>
+      <Show when={deploymentQuery.isError || taskQuery.isError}>
+        <p class={ui.error} role="alert">{tasksErrorMessage(deploymentQuery.error ?? taskQuery.error)}</p>
       </Show>
 
-      <Show when={query.isPending}>
+      <Show when={deploymentQuery.isPending || taskQuery.isPending}>
         <p class={ui.muted}>Loading tasks...</p>
       </Show>
 
-        <Show when={!query.isPending && !query.isError}>
+        <Show when={!deploymentQuery.isPending && !deploymentQuery.isError && !taskQuery.isPending && !taskQuery.isError}>
           <Show when={deployment()} fallback={<TasksOnboarding />}>
             {(currentDeployment) => (
               <>
@@ -163,6 +174,7 @@ export function Tasks() {
                       <thead>
                         <tr>
                           <th>Task</th>
+                          <th>Queue</th>
                           <th>History</th>
                         </tr>
                       </thead>
@@ -171,7 +183,7 @@ export function Tasks() {
                           each={tasks()}
                           fallback={
                             <tr>
-                              <td colSpan={2}>
+                              <td colSpan={3}>
                                 <span class={ui.muted}>No task entries are available for this deployment yet.</span>
                               </td>
                             </tr>

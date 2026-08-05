@@ -34,7 +34,7 @@ export type RetryPolicy =
   | Readonly<{ enabled: false }>
 
 export interface QueueDefinition {
-  readonly id: string
+  readonly name: string
   readonly concurrencyLimit?: number | null
 }
 
@@ -55,23 +55,23 @@ export interface DefinitionRunDefaults {
   readonly retry?: RetryPolicy
 }
 
-declare const workspaceTargetBrand: unique symbol
+declare const workspaceAddressTypeBrand: unique symbol
 
-export interface WorkspaceIdTarget {
-  readonly [workspaceTargetBrand]: true
+export interface WorkspaceIdAddress {
+  readonly [workspaceAddressTypeBrand]: true
   readonly id: string
   readonly key?: never
 }
 
-export interface WorkspaceKeyTarget {
-  readonly [workspaceTargetBrand]: true
+export interface WorkspaceKeyAddress {
+  readonly [workspaceAddressTypeBrand]: true
   readonly id?: never
   readonly key: string
 }
 
-export type WorkspaceTarget = WorkspaceIdTarget | WorkspaceKeyTarget
+export type WorkspaceAddress = WorkspaceIdAddress | WorkspaceKeyAddress
 
-export interface ReadonlyWorkspaceRef extends WorkspaceIdTarget {
+export interface ExecutionWorkspace extends WorkspaceIdAddress {
   readonly attemptBaseVersionId: string
 }
 
@@ -85,7 +85,7 @@ export type RunCause =
       lastScheduledAt?: Date
       timezone: string
     }>
-  | Readonly<{ type: "actor-start" | "continuation" }>
+  | Readonly<{ type: "actor_start" | "continuation" }>
 
 export interface ExecutionContextBase {
   readonly signal: AbortSignal
@@ -98,17 +98,20 @@ export interface ExecutionContextBase {
     id: string
     version: string
   }>
-  readonly workspace: ReadonlyWorkspaceRef
+  readonly workspace: ExecutionWorkspace
 }
 
 export interface TaskExecutionContext extends ExecutionContextBase {
+  readonly task: Readonly<{
+    id: string
+  }>
   readonly actor?: never
 }
 
 export interface ActorExecutionContext extends ExecutionContextBase {
+  readonly task?: never
   readonly actor: Readonly<{
     id: string
-    key?: string
   }>
 }
 
@@ -122,13 +125,13 @@ export type RunStatus =
   | "queued"
   | "running"
   | "waiting"
-  | "retry-delayed"
-  | "cancel-requested"
+  | "retry_delayed"
+  | "cancel_requested"
   | "succeeded"
   | "failed"
   | "cancelled"
   | "expired"
-  | "system-failed"
+  | "system_failed"
 
 export interface RunHandle {
   readonly id: string
@@ -152,7 +155,7 @@ export interface RunSnapshot<TOutput extends JsonValue = JsonValue>
   }>
   readonly deployment: Readonly<{ id: string; version: string }>
   readonly workspaceId: string
-  readonly actorId?: string
+  readonly sessionId?: string
   readonly parentRunId?: string
   readonly parentOwnsLifecycle?: boolean
   readonly currentAttemptNumber: number
@@ -178,13 +181,13 @@ export interface TaskWait<T extends JsonValue>
 
 export interface TaskStartOptions extends RunOptions {
   readonly idempotencyKey?: string
-  readonly workspace: WorkspaceTarget
+  readonly workspace: WorkspaceIdAddress
   readonly signal?: AbortSignal
 }
 
 export interface TaskCallOptions extends RunOptions {
   readonly idempotencyKey: string
-  readonly workspace: WorkspaceTarget
+  readonly workspace: WorkspaceIdAddress
   readonly signal?: AbortSignal
 }
 
@@ -331,7 +334,7 @@ export interface ReceiveOptions {
   readonly tags?: readonly string[]
 }
 
-export interface ActorInputRef {
+export interface SessionInputRef {
   send(
     input: JsonValue,
     options?: SendOptions,
@@ -387,14 +390,16 @@ export interface ActorOutputSelf {
   writer(options?: OutputSequenceOptions): ActorOutputWriter
 }
 
-export interface ActorOutputRef {
+export interface SessionOutputRef {
   read(options?: OutputReadOptions): AsyncIterable<ActorOutputRecord>
   list(
     options?: OutputReadOptions,
   ): Promise<readonly ActorOutputRecord[]>
 }
 
-export interface ActorSelf {
+export interface SessionSelf {
+  readonly id: string
+  readonly key?: string
   readonly input: ActorInputSelf
   readonly output: ActorOutputSelf
 }
@@ -403,7 +408,7 @@ export interface ActorConfig extends DefinitionRunDefaults {
   readonly id: string
   readonly idleTimeout?: Duration
   readonly run: (
-    self: ActorSelf,
+    session: SessionSelf,
     ctx: ActorExecutionContext,
   ) => MaybePromise<void>
 }
@@ -412,14 +417,14 @@ export interface ActorStartOptions {
   readonly key?: string
   readonly input?: JsonValue
   readonly idempotencyKey?: string
-  readonly workspace: WorkspaceTarget
+  readonly workspace: WorkspaceIdAddress
   readonly run?: RunOptions
   readonly signal?: AbortSignal
 }
 
-export type ActorPublicStatus = "open" | "closed" | "cancelled" | "failed"
+export type RuntimeSessionStatusValue = "open" | "closed" | "cancelled" | "failed"
 
-export interface ActorFailure {
+export interface RuntimeSessionFailure {
   readonly code:
     | "no_progress"
     | "run_failed"
@@ -428,50 +433,41 @@ export interface ActorFailure {
   readonly runId: string
 }
 
-export interface ActorStatus {
+export interface RuntimeSessionSnapshot {
   readonly id: string
   readonly key?: string
-  readonly status: ActorPublicStatus
+  readonly status: RuntimeSessionStatusValue
   readonly createdAt: Date
   readonly updatedAt: Date
   readonly currentRunId?: string
-  readonly failure?: ActorFailure
+  readonly failure?: RuntimeSessionFailure
 }
 
-export interface ActorOperationOptions {
+export interface RuntimeSessionOperationOptions {
   readonly idempotencyKey?: string
   readonly signal?: AbortSignal
 }
 
-export interface ActorOperationReceipt {
-  readonly actorId: string
+export interface RuntimeSessionOperationReceipt {
+  readonly sessionId: string
   readonly acceptedAt: Date
 }
 
-export interface ActorRefBase {
-  readonly input: ActorInputRef
-  readonly output: ActorOutputRef
-  status(): Promise<ActorStatus>
-  close(options?: ActorOperationOptions): Promise<ActorOperationReceipt>
+export interface RuntimeSessionRef {
+  readonly id: string
+  readonly input: SessionInputRef
+  readonly output: SessionOutputRef
+  status(): Promise<RuntimeSessionSnapshot>
+  close(options?: RuntimeSessionOperationOptions): Promise<RuntimeSessionOperationReceipt>
 }
 
-export type ActorIdRef = ActorRefBase &
-  Readonly<{ id: string; key?: never }>
-export type ActorKeyRef = ActorRefBase &
-  Readonly<{ key: string; id?: never }>
-export type ActorRef = ActorIdRef | ActorKeyRef
+export interface RuntimeSessions {
+  ref(id: string): RuntimeSessionRef
+}
 
 export interface ActorDefinition {
   readonly id: string
   start(
     options: ActorStartOptions,
-  ): Promise<{ ref: ActorIdRef; run: RunHandle }>
-  ref(address: {
-    readonly id: string
-    readonly key?: never
-  }): ActorIdRef
-  ref(address: {
-    readonly key: string
-    readonly id?: never
-  }): ActorKeyRef
+  ): Promise<{ session: RuntimeSessionRef; run: RunHandle }>
 }

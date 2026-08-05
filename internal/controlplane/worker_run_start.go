@@ -145,9 +145,9 @@ func lockRunStartAuthority(
 ) (runLeaseClaimAuthority, error) {
 	authority := runLeaseClaimAuthority{mode: mode}
 	var err error
-	if locators.ActorID.Valid {
+	if locators.SessionID.Valid {
 		authority.actor, err = q.LockRunLeaseClaimActor(ctx, db.LockRunLeaseClaimActorParams{
-			ID: locators.ActorID, WorkspaceID: locators.WorkspaceID,
+			ID: locators.SessionID, WorkspaceID: locators.WorkspaceID,
 		})
 		if err != nil {
 			return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
@@ -176,8 +176,8 @@ func lockRunStartAuthority(
 	if authority.run.CurrentAttemptNumber != locators.AttemptNumber || authority.run.CurrentRunLeaseID != leaseID {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
-	if mode == runLeaseClaimFresh && locators.ActorID.Valid &&
-		(authority.run.EntrypointKind != "actor" || authority.run.ActorID != locators.ActorID) {
+	if mode == runLeaseClaimFresh && locators.SessionID.Valid &&
+		(authority.run.EntrypointKind != "actor" || authority.run.SessionID != locators.SessionID) {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 	authority.workspace, err = q.LockRunLeaseClaimWorkspace(ctx, db.LockRunLeaseClaimWorkspaceParams{
@@ -391,7 +391,7 @@ func lockRunStartCheckpointAuthority(
 
 func validateRunStartArm(requested runStartArm, authority runStartValidationAuthority) error {
 	if requested.mode == runLeaseClaimFresh {
-		if authority.run.ActorID.Valid {
+		if authority.run.SessionID.Valid {
 			if authority.run.EntrypointKind != "actor" {
 				return errStaleRunLeaseClaim
 			}

@@ -53,11 +53,16 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	correlationID := "019c10d5-a6f7-7af1-8f5f-000000000111"
+	createdAt := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 	controlPlane := &actorInputSendControlPlane{
 		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 		response: workerapi.SendActorInputResponse{
 			CorrelationID: correlationID,
-			Completed:     &api.SendActorInputResponse{Sequence: 7},
+			Completed: &api.SessionInput{
+				ID: "019c10d5-a6f7-7af1-8f5f-000000000112", Sequence: 7,
+				Data: []byte(`{"hello":"world"}`), Source: api.SessionInputSource{Kind: "external"},
+				CreatedAt: createdAt,
+			},
 		},
 	}
 	guest, host := net.Pipe()
@@ -70,12 +75,9 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() {
-		result <- task.handleActorInputSend(t.Context(), &runv0.ActorInputSendRequested{
-			CorrelationId: correlationID,
-			DeclaredId:    "mailbox",
-			Address: &runv0.ActorInputSendRequested_ActorKey{
-				ActorKey: "primary",
-			},
+		result <- task.handleActorInputSend(t.Context(), &runv0.SessionInputSendRequested{
+			CorrelationId:  correlationID,
+			SessionId:      "019c10d5-a6f7-7af1-8f5f-000000000111",
 			DataJson:       `{"hello":"world"}`,
 			IdempotencyKey: new("send-1"),
 		})
@@ -94,12 +96,11 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 	}
 	if decision.GetCorrelationId() != correlationID ||
 		decision.GetKind() != "completed" ||
-		decision.GetDataJson() != `{"sequence":7}` {
+		decision.GetDataJson() != `{"id":"019c10d5-a6f7-7af1-8f5f-000000000112","sequence":7,"data":{"hello":"world"},"source":{"kind":"external"},"created_at":"2030-01-02T03:04:05Z"}` {
 		t.Fatalf("decision = %+v", decision)
 	}
 	if controlPlane.request.Lease != lease.Fence() ||
-		controlPlane.request.ActorDeclaredID != "mailbox" ||
-		controlPlane.request.ActorKey != "primary" ||
+		controlPlane.request.SessionID != "019c10d5-a6f7-7af1-8f5f-000000000111" ||
 		controlPlane.request.IdempotencyKey != "send-1" {
 		t.Fatalf("request = %+v", controlPlane.request)
 	}
@@ -114,7 +115,7 @@ func TestHandleActorInputSendRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 		response: workerapi.SendActorInputResponse{
 			CorrelationID: correlationID,
-			Completed:     &api.SendActorInputResponse{Sequence: 8},
+			Completed:     &api.SessionInput{Sequence: 8},
 		},
 		errors: []error{&httpclient.Error{
 			StatusCode: 503,
@@ -134,13 +135,10 @@ func TestHandleActorInputSendRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	go renewRunSourceReceiptAfterAttempt(task, firstAttempt)
 	result := make(chan error, 1)
 	go func() {
-		result <- task.handleActorInputSend(t.Context(), &runv0.ActorInputSendRequested{
+		result <- task.handleActorInputSend(t.Context(), &runv0.SessionInputSendRequested{
 			CorrelationId: correlationID,
-			DeclaredId:    "mailbox",
-			Address: &runv0.ActorInputSendRequested_ActorKey{
-				ActorKey: "primary",
-			},
-			DataJson: `{"hello":"again"}`,
+			SessionId:     "019c10d5-a6f7-7af1-8f5f-000000000111",
+			DataJson:      `{"hello":"again"}`,
 		})
 	}()
 	reader := bufio.NewReader(host)

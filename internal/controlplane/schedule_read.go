@@ -148,7 +148,7 @@ func parseScheduleListQuery(
 	if cursor.ProjectID != projectID || cursor.EnvironmentID != environmentID {
 		return 0, nil, errors.New("schedule cursor belongs to another scope")
 	}
-	if err := api.ValidateTaskID(cursor.TaskDeclaredID); err != nil {
+	if err := api.ValidateDefinitionID(cursor.TaskDeclaredID); err != nil {
 		return 0, nil, errors.New("schedule cursor is invalid")
 	}
 	if ids.Validate(cursor.ScheduleID) != nil {
@@ -237,11 +237,15 @@ func scheduleResponse(row db.Schedule) (api.ScheduleResponse, error) {
 	if ids.Validate(scheduleID) != nil {
 		return api.ScheduleResponse{}, errors.New("schedule identity is invalid")
 	}
+	status, err := schedulePublicStatus(row.State)
+	if err != nil {
+		return api.ScheduleResponse{}, err
+	}
 	response := api.ScheduleResponse{
 		ID:         scheduleID,
-		Task:       row.TaskDeclaredID,
+		TaskID:     row.TaskDeclaredID,
 		Cron:       api.ScheduleCron{Pattern: row.CronPattern, Timezone: row.Timezone},
-		Status:     strings.ReplaceAll(row.State, "_", "-"),
+		Status:     status,
 		Generation: row.Generation,
 		NextFireAt: pgvalue.TimePtr(row.NextFireAt),
 		LastFireAt: pgvalue.TimePtr(row.LastFireAt),
@@ -264,6 +268,13 @@ func scheduleResponse(row db.Schedule) (api.ScheduleResponse, error) {
 	default:
 		return api.ScheduleResponse{}, errors.New("schedule workspace address is absent")
 	}
+	if row.WorkspaceID.Valid {
+		workspaceID := pgvalue.UUIDString(row.WorkspaceID)
+		if ids.Validate(workspaceID) != nil {
+			return api.ScheduleResponse{}, errors.New("bound schedule workspace identity is invalid")
+		}
+		response.WorkspaceID = workspaceID
+	}
 	if row.LastErrorCode.Valid || row.LastErrorMessage.Valid {
 		if !row.LastErrorCode.Valid || !row.LastErrorMessage.Valid {
 			return api.ScheduleResponse{}, errors.New("schedule error is incomplete")
@@ -274,4 +285,19 @@ func scheduleResponse(row db.Schedule) (api.ScheduleResponse, error) {
 		}
 	}
 	return response, nil
+}
+
+func schedulePublicStatus(state string) (api.ScheduleStatus, error) {
+	switch state {
+	case "pending_workspace":
+		return api.ScheduleStatusPendingWorkspace, nil
+	case "active":
+		return api.ScheduleStatusActive, nil
+	case "errored":
+		return api.ScheduleStatusErrored, nil
+	case "archived":
+		return api.ScheduleStatusArchived, nil
+	default:
+		return "", fmt.Errorf("schedule state %q has no public projection", state)
+	}
 }

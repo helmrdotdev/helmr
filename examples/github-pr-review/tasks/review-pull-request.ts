@@ -1,16 +1,16 @@
-import { image, source, task, workspace } from "@helmr/sdk"
+import { image, source, task, sandbox } from "@helmr/sdk"
 import { z } from "zod"
 
 const base = image("github-pr-review")
   .from("node:24-bookworm-slim")
-  .workdir("/workspace")
+  .workdir("/sandbox")
   .run(["npm", "install", "-g", "bun@1.3.10"])
   .copy("/opt/helmr-task/package.json", source.file("package.json"))
   .workdir("/opt/helmr-task")
   .run(["bun", "install"])
-  .workdir("/workspace")
+  .workdir("/sandbox")
 
-export const githubPRReviewWorkspace = workspace("github-pr-review")
+export const githubPRReviewWorkspace = sandbox({ id: "github-pr-review" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 

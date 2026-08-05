@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -19,13 +18,13 @@ import (
 
 func TestTaskStartPostgresCommitsAndReplaysOneAdmission(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 2)
-	workspaceID := fixture.workspaceRefs[0]
+	workspaceID := fixture.workspaceIDs[0]
 	ttl := int64(60_000)
 	request := taskStartRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
 		TaskDeclaredID: "resize-image", PayloadPresent: true,
 		Payload:        json.RawMessage(`{"imageId":"image-1"}`),
-		Workspace:      api.WorkspaceTarget{ID: &workspaceID},
+		WorkspaceID:    workspaceID,
 		IdempotencyKey: "image-1", QueuedTTLMS: &ttl,
 		Metadata: json.RawMessage(`{"source":"test"}`), Tags: []string{"image"},
 	}
@@ -116,12 +115,12 @@ func TestTaskStartPostgresConcurrentClaimsDoNotDeadlockDeploymentAuthority(t *te
 	for index := range 2 {
 		go func() {
 			<-start
-			workspaceID := fixture.workspaceRefs[index]
+			workspaceID := fixture.workspaceIDs[index]
 			result, err := fixture.server.startTask(context.Background(), taskStartRequest{
 				OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
 				TaskDeclaredID: "resize-image", PayloadPresent: true,
 				Payload:        json.RawMessage(fmt.Sprintf(`{"imageId":"image-%d"}`, index)),
-				Workspace:      api.WorkspaceTarget{ID: &workspaceID},
+				WorkspaceID:    workspaceID,
 				IdempotencyKey: fmt.Sprintf("concurrent-%d", index),
 			})
 			outcomes <- outcome{result: result, err: err}
@@ -143,12 +142,12 @@ func TestTaskStartPostgresConcurrentClaimsDoNotDeadlockDeploymentAuthority(t *te
 
 func TestCreateKeylessDetachedChildTaskRunFromParentDeployment(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 2)
-	parentWorkspaceID := fixture.workspaceRefs[0]
+	parentWorkspaceID := fixture.workspaceIDs[0]
 	parent, err := fixture.server.startTask(t.Context(), taskStartRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
 		TaskDeclaredID: "resize-image", PayloadPresent: true,
-		Payload:   json.RawMessage(`{"imageId":"parent"}`),
-		Workspace: api.WorkspaceTarget{ID: &parentWorkspaceID},
+		Payload:     json.RawMessage(`{"imageId":"parent"}`),
+		WorkspaceID: parentWorkspaceID,
 	})
 	if err != nil {
 		t.Fatal(err)

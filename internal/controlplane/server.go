@@ -94,7 +94,7 @@ type Server struct {
 	runFinalizationTTL    time.Duration
 	workerEnrollment      *enrollment.Verifier
 	workerEnrollmentGuard *workerEnrollmentGuard
-	operatorTokenHash     []byte
+	capacityTokenHash     []byte
 	setupToken            string
 	authKeys              auth.Keys
 	publicURL             *url.URL
@@ -145,7 +145,7 @@ type ServerConfig struct {
 	RunLeaseTTL           time.Duration
 	RunFinalizationTTL    time.Duration
 	WorkerEnrollment      *enrollment.Verifier
-	OperatorToken         string
+	CapacityToken         string
 	SetupToken            string
 	AuthKey               []byte
 	PublicURL             *url.URL
@@ -184,7 +184,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if cfg.WorkerEnrollment == nil {
 		return nil, errors.New("worker enrollment configuration is required")
 	}
-	operatorTokenHash, err := hashOperatorToken(cfg.OperatorToken)
+	capacityTokenHash, err := hashCapacityToken(cfg.CapacityToken)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +265,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		runFinalizationTTL:    runFinalizationTTL,
 		workerEnrollment:      cfg.WorkerEnrollment,
 		workerEnrollmentGuard: newWorkerEnrollmentGuard(),
-		operatorTokenHash:     operatorTokenHash,
+		capacityTokenHash:     capacityTokenHash,
 		setupToken:            cfg.SetupToken,
 		authKeys:              authKeys,
 		publicURL:             cfg.PublicURL,
@@ -280,11 +280,16 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	router := chi.NewRouter()
 	router.Use(server.recoverPanics)
 	router.Use(otelhttp.NewMiddleware("helmr-controlplane"))
-	router.Get("/healthz", server.healthz)
-	router.Get("/readyz", server.readyz)
-	router.Route("/api", server.mountAPIRoutes)
+	server.mountRoutes(router)
 	router.NotFound(server.notFound)
 	return router, nil
+}
+
+func (s *Server) mountRoutes(router chi.Router) {
+	router.Get("/healthz", s.healthz)
+	router.Get("/readyz", s.readyz)
+	router.Route("/api", s.mountManagementRoutes)
+	router.Route("/v1", s.mountDeveloperRoutes)
 }
 
 func (s *Server) recoverPanics(next http.Handler) http.Handler {
@@ -329,44 +334,26 @@ func (s *Server) recoverPanics(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) mountAPIRoutes(r chi.Router) {
+func (s *Server) mountManagementRoutes(r chi.Router) {
 	r.Use(limitAPIRequestBody)
-	r.Use(s.requireRequestVersions)
 	r.With(limitRequestBody(tokenRequestBodyLimit)).
 		Post("/token-callbacks/{tokenID}/{callbackSecret}", s.completeTokenWithCallback)
 	r.With(limitRequestBody(tokenRequestBodyLimit)).
 		Post("/public/tokens/{tokenID}/complete", s.completeTokenWithBearer)
 	r.Options("/public/tokens/{tokenID}/complete", s.completeTokenBearerPreflight)
 	s.mountAuthRoutes(r)
-	s.mountOwnerRoutes(r)
-	s.mountOperatorRoutes(r)
+	s.mountSessionRoutes(r)
+	s.mountCapacityRoutes(r)
 	s.mountWorkerRoutes(r)
 }
 
 func limitAPIRequestBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		limit := apiRequestBodyLimit
-		if r.Method == http.MethodPost &&
-			(r.URL.Path == "/api/deployments" ||
-				strings.HasSuffix(r.URL.Path, "/deployments")) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/deployments") {
 			limit = deploymentRequestBodyLimit
 		}
 		limitRequestBody(limit)(next).ServeHTTP(w, r)
-	})
-}
-
-func (s *Server) requireRequestVersions(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set(api.APIVersionHeader, api.CurrentAPIVersion)
-		requested := r.Header.Get(api.APIVersionHeader)
-		if requested != "" && requested != api.CurrentAPIVersion {
-			writeError(w, badRequest(codedError{
-				code:    "unsupported_api_version",
-				message: fmt.Sprintf("unsupported %s %q; current version is %s", api.APIVersionHeader, requested, api.CurrentAPIVersion),
-			}))
-			return
-		}
-		next.ServeHTTP(w, r)
 	})
 }
 
@@ -391,7 +378,7 @@ func (s *Server) mountAuthRoutes(r chi.Router) {
 	})
 }
 
-func (s *Server) mountOwnerRoutes(r chi.Router) {
+func (s *Server) mountSessionRoutes(r chi.Router) {
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
 			return s.requireSessionPermission(auth.PermissionAPIKeysManage, next)
@@ -435,35 +422,36 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}/environments/{environmentID}/secrets", s.listSecrets)
 		r.With(limitRequestBody(secretRequestBodyLimit)).
 			Post("/projects/{projectID}/environments/{environmentID}/secrets", s.createSecret)
-		r.Get("/projects/{projectID}/environments/{environmentID}/secrets/by-name/{name}", s.getSecretByName)
 		r.Get("/projects/{projectID}/environments/{environmentID}/secrets/{secretID}", s.getSecretByID)
-		r.With(limitRequestBody(secretRequestBodyLimit)).
-			Post("/projects/{projectID}/environments/{environmentID}/secrets/by-name/{name}/rotate", s.rotateSecretByName)
 		r.With(limitRequestBody(secretRequestBodyLimit)).
 			Post("/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/rotate", s.rotateSecretByID)
 		r.With(limitRequestBody(secretRequestBodyLimit)).
-			Post("/projects/{projectID}/environments/{environmentID}/secrets/by-name/{name}/revoke", s.revokeSecretByName)
-		r.With(limitRequestBody(secretRequestBodyLimit)).
 			Post("/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/revoke", s.revokeSecretByID)
 		r.With(limitRequestBody(workspaceCreateBodyLimit)).
-			Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceDeclaredID}/create", s.createWorkspaceHTTP)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/by-key/{workspaceDeclaredID}", s.getWorkspaceByKeyHTTP)
+			Post("/projects/{projectID}/environments/{environmentID}/sandboxes/{sandboxID}/workspaces", s.createWorkspaceHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces", s.listWorkspacesHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files", s.listWorkspaceFilesHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/content", s.readWorkspaceFileHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/stat", s.statWorkspaceFileHTTP)
 		r.With(limitRequestBody(workspaceExecBodyMaxBytes)).
 			Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/exec", s.executeWorkspaceHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.getWorkspaceHTTP)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/delete", s.deleteWorkspaceHTTP)
+		r.Delete("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.deleteWorkspaceHTTP)
 		r.With(limitRequestBody(taskStartBodyLimit)).
 			Post("/projects/{projectID}/environments/{environmentID}/tasks/{taskDeclaredID}/start", s.startTaskHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/tasks", s.listTasks)
+		r.Get("/projects/{projectID}/environments/{environmentID}/tasks/{taskID}", s.getTask)
+		r.Get("/projects/{projectID}/environments/{environmentID}/actors", s.listActors)
+		r.Get("/projects/{projectID}/environments/{environmentID}/actors/{actorID}", s.getActor)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sandboxes", s.listSandboxes)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sandboxes/{sandboxID}", s.getSandbox)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs", s.listRunSnapshotsHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{runID}", s.getRunSnapshotHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{runID}/logs", s.listRunLogsHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{runID}/events", s.listRunEventsHTTP)
 		r.Post("/projects/{projectID}/environments/{environmentID}/runs/{runID}/cancel", s.cancelRunHTTP)
-		r.With(limitActorInputBody).
-			Post("/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/input", s.sendActorInput)
+		r.With(limitSessionInputBody).
+			Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/inputs", s.sendSessionInput)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -474,22 +462,23 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
-			return s.requireSessionWithErrorWriter(next, writeActorCloseAuthError)
+			return s.requireSessionWithErrorWriter(next, writeSessionCloseAuthError)
 		})
-		r.With(limitActorCloseBody).
-			Post("/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/close", s.closeActorHTTP)
+		r.With(limitSessionCloseBody).
+			Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/close", s.closeSessionHTTP)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
-			return s.requireSessionWithErrorWriter(next, writeActorReadAuthError)
+			return s.requireSessionWithErrorWriter(next, writeSessionReadAuthError)
 		})
-		r.Get("/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/status", s.getActorStatusHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sessions", s.listSessionsHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}", s.getSessionHTTP)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
-			return s.requireSessionWithErrorWriter(next, writeActorOutputReadAuthError)
+			return s.requireSessionWithErrorWriter(next, writeSessionOutputReadAuthError)
 		})
-		r.Get("/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/output", s.readActorOutputHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/outputs", s.readSessionOutputHTTP)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -502,8 +491,12 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Patch("/projects/{projectID}/environments/{environmentID}", s.updateEnvironment)
 		r.Delete("/projects/{projectID}/environments/{environmentID}", s.deleteEnvironment)
 	})
+}
+
+func (s *Server) mountDeveloperRoutes(r chi.Router) {
+	r.Use(limitAPIRequestBody)
 	r.Group(func(r chi.Router) {
-		r.Use(s.requireActor)
+		r.Use(s.requireAPIKey)
 		r.Get("/deployments", s.listDeployments)
 		r.Get("/deployments/current", s.getCurrentDeployment)
 		r.Get("/deployments/{deploymentID}", s.getDeployment)
@@ -515,152 +508,142 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/tokens", s.listTokens)
 		r.With(limitRequestBody(tokenRequestBodyLimit)).Post("/tokens", s.createToken)
 		r.Get("/tokens/{tokenID}", s.getToken)
-		r.With(limitRequestBody(tokenRequestBodyLimit)).
-			Post("/tokens/{tokenID}/complete", s.completeToken)
-		r.With(limitRequestBody(tokenRequestBodyLimit)).
-			Post("/tokens/{tokenID}/cancel", s.cancelToken)
-		r.With(limitRequestBody(taskStartBodyLimit)).
-			Post("/tasks/{taskDeclaredID}/start", s.startTaskHTTP)
+		r.With(limitRequestBody(tokenRequestBodyLimit)).Post("/tokens/{tokenID}/complete", s.completeToken)
+		r.With(limitRequestBody(tokenRequestBodyLimit)).Post("/tokens/{tokenID}/cancel", s.cancelToken)
+		r.With(limitRequestBody(taskStartBodyLimit)).Post("/tasks/{taskDeclaredID}/start", s.startTaskHTTP)
+		r.Get("/tasks", s.listTasks)
+		r.Get("/tasks/{taskID}", s.getTask)
+		r.Get("/actors", s.listActors)
+		r.Get("/actors/{actorID}", s.getActor)
+		r.Get("/sandboxes", s.listSandboxes)
+		r.Get("/sandboxes/{sandboxID}", s.getSandbox)
 		r.Get("/runs", s.listRunSnapshotsHTTP)
 		r.Get("/runs/{runID}", s.getRunSnapshotHTTP)
 		r.Get("/runs/{runID}/logs", s.listRunLogsHTTP)
 		r.Get("/runs/{runID}/events", s.listRunEventsHTTP)
 		r.Post("/runs/{runID}/cancel", s.cancelRunHTTP)
-	})
-	r.Group(func(r chi.Router) {
-		r.Use(s.requireActor)
+
 		r.Get("/secrets", s.listSecrets)
 		r.With(limitRequestBody(secretRequestBodyLimit)).Post("/secrets", s.createSecret)
-		r.Get("/secrets/by-name/{name}", s.getSecretByName)
 		r.Get("/secrets/{secretID}", s.getSecretByID)
-		r.With(limitRequestBody(secretRequestBodyLimit)).
-			Post("/secrets/by-name/{name}/rotate", s.rotateSecretByName)
-		r.With(limitRequestBody(secretRequestBodyLimit)).
-			Post("/secrets/{secretID}/rotate", s.rotateSecretByID)
-		r.With(limitRequestBody(secretRequestBodyLimit)).
-			Post("/secrets/by-name/{name}/revoke", s.revokeSecretByName)
-		r.With(limitRequestBody(secretRequestBodyLimit)).
-			Post("/secrets/{secretID}/revoke", s.revokeSecretByID)
-		r.With(limitRequestBody(workspaceCreateBodyLimit)).
-			Post("/workspaces/{workspaceDeclaredID}/create", s.createWorkspaceHTTP)
-		r.Get("/workspaces/by-key/{workspaceDeclaredID}", s.getWorkspaceByKeyHTTP)
+		r.With(limitRequestBody(secretRequestBodyLimit)).Post("/secrets/{secretID}/rotate", s.rotateSecretByID)
+		r.With(limitRequestBody(secretRequestBodyLimit)).Post("/secrets/{secretID}/revoke", s.revokeSecretByID)
+		r.With(limitRequestBody(workspaceCreateBodyLimit)).Post("/sandboxes/{sandboxID}/workspaces", s.createWorkspaceHTTP)
+		r.Get("/workspaces", s.listWorkspacesHTTP)
 		r.Get("/workspaces/{workspaceID}/files", s.listWorkspaceFilesHTTP)
 		r.Get("/workspaces/{workspaceID}/files/content", s.readWorkspaceFileHTTP)
 		r.Get("/workspaces/{workspaceID}/files/stat", s.statWorkspaceFileHTTP)
-		r.With(limitRequestBody(workspaceExecBodyMaxBytes)).
-			Post("/workspaces/{workspaceID}/exec", s.executeWorkspaceHTTP)
+		r.With(limitRequestBody(workspaceExecBodyMaxBytes)).Post("/workspaces/{workspaceID}/exec", s.executeWorkspaceHTTP)
 		r.Get("/workspaces/{workspaceID}", s.getWorkspaceHTTP)
-		r.Post("/workspaces/{workspaceID}/delete", s.deleteWorkspaceHTTP)
-		r.With(limitActorInputBody).
-			Post("/actors/{actorDeclaredID}/input", s.sendActorInput)
+		r.Delete("/workspaces/{workspaceID}", s.deleteWorkspaceHTTP)
+		r.With(limitSessionInputBody).Post("/sessions/{sessionID}/inputs", s.sendSessionInput)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
-			return s.requireActorWithErrorWriter(next, writeActorStartAuthError)
+			return s.requireAPIKeyWithErrorWriter(next, writeActorStartAuthError)
 		})
-		r.With(limitActorStartBody).
-			Post("/actors/{actorDeclaredID}/start", s.startActorHTTP)
+		r.With(limitActorStartBody).Post("/actors/{actorDeclaredID}/start", s.startActorHTTP)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
-			return s.requireActorWithErrorWriter(next, writeActorCloseAuthError)
+			return s.requireAPIKeyWithErrorWriter(next, writeSessionCloseAuthError)
 		})
-		r.With(limitActorCloseBody).
-			Post("/actors/{actorDeclaredID}/close", s.closeActorHTTP)
+		r.With(limitSessionCloseBody).Post("/sessions/{sessionID}/close", s.closeSessionHTTP)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
-			return s.requireActorWithErrorWriter(next, writeActorReadAuthError)
+			return s.requireAPIKeyWithErrorWriter(next, writeSessionReadAuthError)
 		})
-		r.Get("/actors/{actorDeclaredID}/status", s.getActorStatusHTTP)
+		r.Get("/sessions", s.listSessionsHTTP)
+		r.Get("/sessions/{sessionID}", s.getSessionHTTP)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
-			return s.requireActorWithErrorWriter(next, writeActorOutputReadAuthError)
+			return s.requireAPIKeyWithErrorWriter(next, writeSessionOutputReadAuthError)
 		})
-		r.Get("/actors/{actorDeclaredID}/output", s.readActorOutputHTTP)
+		r.Get("/sessions/{sessionID}/outputs", s.readSessionOutputHTTP)
 	})
 }
 
 func (s *Server) mountWorkerRoutes(r chi.Router) {
-	r.Route("/worker", func(r chi.Router) {
+	r.Route("/worker/v0", func(r chi.Router) {
 		r.Post("/enrollment/challenge", s.workerEnrollmentChallenge)
 		r.Post("/enrollment", s.workerEnroll)
-		r.Post("/auth/token", s.workerAuthToken)
-		r.With(s.requireRecoveringWorker).Post("/startup-recovery", s.workerStartupRecovery)
-		r.With(s.requireRegisteringWorker).Post("/activate", s.workerActivate)
-		r.With(s.requireWorker).Get("/status", s.workerStatus)
-		r.With(s.requireWorkerDrainCompletion).Post("/drain/complete", s.workerCompleteDrain)
-		r.With(s.requireWorkerFence).Post("/fence", s.workerFence)
+		r.Post("/instance/token", s.workerAuthToken)
+		r.With(s.requireRecoveringWorker).Post("/instance/recover", s.workerStartupRecovery)
+		r.With(s.requireRegisteringWorker).Post("/instance/activate", s.workerActivate)
+		r.With(s.requireWorker).Get("/instance", s.workerStatus)
+		r.With(s.requireWorkerDrainCompletion).Post("/instance/drain/complete", s.workerCompleteDrain)
+		r.With(s.requireWorkerFence).Post("/instance/fence", s.workerFence)
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireWorker)
-			r.Post("/observe", s.workerObserve)
-			r.Post("/drain", s.workerDrain)
+			r.Post("/instance/observations", s.workerObserve)
+			r.Post("/instance/drain", s.workerDrain)
 			r.Group(func(r chi.Router) {
 				r.Use(func(next http.Handler) http.Handler { return requireWorkerRole(auth.WorkerRoleBuild, next) })
-				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleBuild, next) }).Post("/platform-acquisitions/next", s.workerNextPlatformAcquisition)
-				r.Post("/platform-acquisitions/complete", s.workerCompletePlatformAcquisition)
-				r.Post("/platform-acquisitions/fail", s.workerFailPlatformAcquisition)
-				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleBuild, next) }).Post("/deployments/lease", s.workerLeaseDeploymentBuild)
-				r.Post("/deployments/start", s.workerStartDeploymentBuild)
-				r.Post("/deployments/renew", s.workerRenewDeploymentBuild)
-				r.Post("/deployments/reject", s.workerRejectDeploymentBuild)
-				r.Post("/deployments/delivery-failed", s.workerDeploymentBuildDeliveryFailed)
-				r.Post("/deployments/workspace-images/admit", s.workerAdmitWorkspaceImage)
-				r.Post("/deployments/workspace-images/credentials", s.workerFetchWorkspaceImageCredentials)
-				r.Post("/deployments/workspace-images/complete", s.workerCompleteWorkspaceImage)
-				r.Post("/deployments/complete", s.workerCompleteDeploymentBuild)
+				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleBuild, next) }).Post("/build/platform-acquisitions/next", s.workerNextPlatformAcquisition)
+				r.Post("/build/platform-acquisitions/complete", s.workerCompletePlatformAcquisition)
+				r.Post("/build/platform-acquisitions/fail", s.workerFailPlatformAcquisition)
+				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleBuild, next) }).Post("/build/deployments/lease", s.workerLeaseDeploymentBuild)
+				r.Post("/build/deployments/start", s.workerStartDeploymentBuild)
+				r.Post("/build/deployments/renew", s.workerRenewDeploymentBuild)
+				r.Post("/build/deployments/reject", s.workerRejectDeploymentBuild)
+				r.Post("/build/deployments/delivery-failed", s.workerDeploymentBuildDeliveryFailed)
+				r.Post("/build/deployments/workspace-images/admit", s.workerAdmitWorkspaceImage)
+				r.Post("/build/deployments/workspace-images/credentials", s.workerFetchWorkspaceImageCredentials)
+				r.Post("/build/deployments/workspace-images/complete", s.workerCompleteWorkspaceImage)
+				r.Post("/build/deployments/complete", s.workerCompleteDeploymentBuild)
 			})
 			r.Group(func(r chi.Router) {
 				r.Use(func(next http.Handler) http.Handler { return requireWorkerRole(auth.WorkerRoleRun, next) })
-				r.Post("/runtime-instances/reconcile", s.workerNextRuntimeReconcileTarget)
-				r.Post("/runtime-instances/ready", s.workerMarkRuntimeInstanceReady)
-				r.Post("/runtime-instances/closed", s.workerMarkRuntimeInstanceClosed)
-				r.Post("/runtime-instances/failed", s.workerMarkRuntimeInstanceFailed)
-				r.Post("/runtime-substrates/register", s.workerRegisterRuntimeSubstrate)
-				r.Post("/workspaces/mounts/claim", s.workerClaimWorkspaceMount)
-				r.Post("/workspaces/mounts/renew", s.workerRenewWorkspaceMount)
-				r.Post("/workspaces/mounts/mounted", s.workerMarkWorkspaceMountMounted)
-				r.Post("/workspaces/mounts/capture", s.workerCaptureWorkspaceMount)
-				r.Post("/workspaces/mounts/stop", s.workerStopWorkspaceMount)
-				r.Post("/workspaces/mounts/fail", s.workerFailWorkspaceMount)
-				r.Post("/workspaces/execs/claim", s.workerClaimWorkspaceExec)
+				r.Post("/run/runtime-instances/reconcile", s.workerNextRuntimeReconcileTarget)
+				r.Post("/run/runtime-instances/ready", s.workerMarkRuntimeInstanceReady)
+				r.Post("/run/runtime-instances/closed", s.workerMarkRuntimeInstanceClosed)
+				r.Post("/run/runtime-instances/failed", s.workerMarkRuntimeInstanceFailed)
+				r.Post("/run/runtime-substrates/register", s.workerRegisterRuntimeSubstrate)
+				r.Post("/run/workspace-mounts/claim", s.workerClaimWorkspaceMount)
+				r.Post("/run/workspace-mounts/renew", s.workerRenewWorkspaceMount)
+				r.Post("/run/workspace-mounts/mounted", s.workerMarkWorkspaceMountMounted)
+				r.Post("/run/workspace-mounts/capture", s.workerCaptureWorkspaceMount)
+				r.Post("/run/workspace-mounts/stop", s.workerStopWorkspaceMount)
+				r.Post("/run/workspace-mounts/fail", s.workerFailWorkspaceMount)
+				r.Post("/run/workspace-execs/claim", s.workerClaimWorkspaceExec)
 				r.With(limitRequestBody(workspaceExecResultLimit)).
-					Post("/workspaces/execs/complete", s.workerCompleteWorkspaceExec)
-				r.Post("/leases/discover", s.workerDiscoverRunLeases)
-				r.Post("/leases/claim", s.workerClaimRunLease)
-				r.Post("/leases/start", s.workerStart)
-				r.Post("/leases/resume-release", s.workerAcknowledgeRunResumeRelease)
-				r.Post("/leases/entrypoint", s.workerEnterRunEntrypoint)
-				r.Post("/leases/run-renew", s.workerRenewRunLease)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/run-waits", s.workerCreateRunWait)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/run-waits/poll", s.workerPollRunWait)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/run-waits/resume-ack", s.workerAcknowledgeRunWaitResume)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/checkpoints/ready", s.workerMarkCheckpointReady)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/checkpoints/failed", s.workerMarkCheckpointFailed)
-				r.Post("/leases/finalization/begin", s.workerBeginRunFinalization)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actor-turns/commit", s.workerCommitActorTurn)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actor-outputs", s.workerAppendActorOutput)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actor-inputs/send", s.workerSendActorInput)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/start", s.workerStartActor)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/status", s.workerGetActorStatus)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/close", s.workerCloseActor)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/output-page", s.workerReadActorOutputPage)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/create", s.workerCreateWorkspace)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/retrieve", s.workerRetrieveWorkspace)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/files/read", s.workerReadWorkspaceFile)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/files/stat", s.workerStatWorkspaceFile)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/files/list", s.workerListWorkspaceFiles)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/exec", s.workerExecuteWorkspace)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/exec/poll", s.workerPollWorkspaceExec)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/workspaces/delete", s.workerDeleteWorkspace)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/task-children/invoke", s.workerInvokeChildTask)
-				r.With(limitRequestBody(tokenRequestBodyLimit)).Post("/leases/tokens", s.workerCreateToken)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/tasks/complete", s.workerCompleteTask)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/complete", s.workerCompleteActor)
-				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/run-logs", s.workerAppendRunLogs)
-				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/structured-logs", s.workerAppendStructuredLog)
-				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/run-metadata", s.workerUpdateRunMetadata)
+					Post("/run/workspace-execs/complete", s.workerCompleteWorkspaceExec)
+				r.Post("/run/leases/discover", s.workerDiscoverRunLeases)
+				r.Post("/run/leases/claim", s.workerClaimRunLease)
+				r.Post("/run/leases/start", s.workerStart)
+				r.Post("/run/leases/resume-release", s.workerAcknowledgeRunResumeRelease)
+				r.Post("/run/leases/entrypoint", s.workerEnterRunEntrypoint)
+				r.Post("/run/leases/renew", s.workerRenewRunLease)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/waits/create", s.workerCreateRunWait)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/waits/poll", s.workerPollRunWait)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/waits/resume-ack", s.workerAcknowledgeRunWaitResume)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/checkpoints/ready", s.workerMarkCheckpointReady)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/checkpoints/failed", s.workerMarkCheckpointFailed)
+				r.Post("/run/finalization/begin", s.workerBeginRunFinalization)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/turns/commit", s.workerCommitActorTurn)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/outputs/append", s.workerAppendActorOutput)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/inputs/send", s.workerSendActorInput)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/actors/start", s.workerStartActor)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/retrieve", s.workerGetSessionStatus)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/close", s.workerCloseSession)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/outputs/read-page", s.workerReadSessionOutputPage)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/workspaces/create", s.workerCreateWorkspace)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/workspaces/retrieve", s.workerRetrieveWorkspace)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/workspaces/files/read", s.workerReadWorkspaceFile)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/workspaces/files/stat", s.workerStatWorkspaceFile)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/workspaces/files/list", s.workerListWorkspaceFiles)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/workspaces/exec", s.workerExecuteWorkspace)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/workspaces/exec/poll", s.workerPollWorkspaceExec)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/workspaces/delete", s.workerDeleteWorkspace)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/tasks/invoke", s.workerInvokeChildTask)
+				r.With(limitRequestBody(tokenRequestBodyLimit)).Post("/run/tokens/create", s.workerCreateToken)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/tasks/complete", s.workerCompleteTask)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/complete", s.workerCompleteActor)
+				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/run/logs/append", s.workerAppendRunLogs)
+				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/run/structured-logs/append", s.workerAppendStructuredLog)
+				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/run/metadata/update", s.workerUpdateRunMetadata)
 			})
 		})
 	})
@@ -773,9 +756,9 @@ func limitRequestBody(limit int64) func(http.Handler) http.Handler {
 	}
 }
 
-func limitActorInputBody(next http.Handler) http.Handler {
+func limitSessionInputBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, actorInputSendBodyLimit)
+		r.Body = http.MaxBytesReader(w, r.Body, sessionInputBodyLimit)
 		next.ServeHTTP(w, r)
 	})
 }

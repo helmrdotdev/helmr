@@ -4,22 +4,19 @@ import type { RequestOptions } from "./request"
 import { validateSecretName } from "./secret"
 
 export type SecretValue = string
-export type SecretState = "active" | "revoked"
+export type SecretStatus = "active" | "revoked"
 
 export interface SecretSnapshot {
   readonly id: string
   readonly name: string
-  readonly state: SecretState
+  readonly status: SecretStatus
   readonly createdAt: Date
   readonly rotatedAt?: Date
   readonly revokedAt?: Date
 }
 
-export type SecretAddress =
-  | Readonly<{ id: string; name?: never }>
-  | Readonly<{ id?: never; name: string }>
-
 export interface SecretRef {
+  readonly id: string
   retrieve(options?: RequestOptions): Promise<SecretSnapshot>
   rotate(
     request: Readonly<{ value: SecretValue; idempotencyKey: string }>,
@@ -40,9 +37,9 @@ export interface ClientSecretsApi {
     }>,
     options?: RequestOptions,
   ): Promise<SecretSnapshot>
-  ref(address: SecretAddress): SecretRef
+  ref(id: string): SecretRef
   list(
-    query?: Readonly<{ cursor?: string; limit?: number }>,
+    query?: Readonly<{ cursor?: string; limit?: number; name?: string }>,
     options?: RequestOptions,
   ): Promise<CursorPage<SecretSnapshot>>
 }
@@ -73,7 +70,7 @@ export function createClientSecrets(
       }
       validateOptionalIdempotencyKey(request.idempotencyKey)
       return parseSecretSnapshot(
-        await transport.request("POST", "/api/secrets", {
+        await transport.request("POST", "/v1/secrets", {
           body: {
             name: request.name,
             value: request.value,
@@ -85,14 +82,21 @@ export function createClientSecrets(
         }),
       )
     },
-    ref(address: SecretAddress): SecretRef {
-      return createSecretRef(address, transport)
+    ref(id: string): SecretRef {
+      return createSecretRef(id, transport)
     },
     async list(
-      queryInput: Readonly<{ cursor?: string; limit?: number }> = {},
+      queryInput: Readonly<{ cursor?: string; limit?: number; name?: string }> = {},
       options: RequestOptions = {},
     ): Promise<CursorPage<SecretSnapshot>> {
       const query = new URLSearchParams()
+      if (queryInput.name !== undefined) {
+        validateSecretName(queryInput.name)
+        if (queryInput.cursor !== undefined || queryInput.limit !== undefined) {
+          throw new Error("Secret exact name lookup does not accept cursor or limit")
+        }
+        query.set("name", queryInput.name)
+      }
       if (queryInput.cursor !== undefined) {
         if (queryInput.cursor.trim() === "") {
           throw new Error("Secret list query.cursor must not be empty")
@@ -111,7 +115,7 @@ export function createClientSecrets(
       }
       const suffix = query.size === 0 ? "" : `?${query.toString()}`
       const response = objectValue(
-        await transport.request("GET", `/api/secrets${suffix}`, {
+        await transport.request("GET", `/v1/secrets${suffix}`, {
           ...(options.signal === undefined ? {} : { signal: options.signal }),
         }),
         "Secret list response",
@@ -134,11 +138,13 @@ export function createClientSecrets(
 }
 
 function createSecretRef(
-  address: SecretAddress,
+  id: string,
   transport: SecretTransport,
 ): SecretRef {
-  const path = secretAddressPath(address)
+  const secretID = resourceID(id, "Secret ID")
+  const path = `/v1/secrets/${encodeURIComponent(secretID)}`
   return Object.freeze({
+    id: secretID,
     async retrieve(options: RequestOptions = {}): Promise<SecretSnapshot> {
       return parseSecretSnapshot(
         await transport.request(
@@ -181,45 +187,24 @@ function createSecretRef(
   })
 }
 
-function secretAddressPath(address: SecretAddress): string {
-  if (
-    address === null ||
-    typeof address !== "object" ||
-    Array.isArray(address)
-  ) {
-    throw new Error("Secret address must be an object")
-  }
-  if ("id" in address && address.id !== undefined) {
-    if ("name" in address && address.name !== undefined) {
-      throw new Error("Secret address must contain exactly one of id or name")
-    }
-    return `/api/secrets/${encodeURIComponent(resourceID(address.id, "Secret ID"))}`
-  }
-  if ("name" in address && address.name !== undefined) {
-    validateSecretName(address.name)
-    return `/api/secrets/by-name/${encodeURIComponent(address.name)}`
-  }
-  throw new Error("Secret address must contain exactly one of id or name")
-}
-
 function parseSecretSnapshot(value: unknown): SecretSnapshot {
   const input = objectValue(value, "Secret response")
   const id = input["id"]
   const name = input["name"]
-  const state = input["state"]
+  const status = input["status"]
   if (typeof id !== "string") throw new Error("Secret response.id must be a string")
   if (typeof name !== "string") {
     throw new Error("Secret response.name must be a string")
   }
-  if (state !== "active" && state !== "revoked") {
-    throw new Error("Secret response.state must be active or revoked")
+  if (status !== "active" && status !== "revoked") {
+    throw new Error("Secret response.status must be active or revoked")
   }
   const canonicalID = resourceID(id, "Secret response.id")
   validateSecretName(name)
   return Object.freeze({
     id: canonicalID,
     name,
-    state,
+    status,
     createdAt: dateValue(input["created_at"], "Secret response.created_at"),
     ...optionalDate(input, "rotated_at", "rotatedAt"),
     ...optionalDate(input, "revoked_at", "revokedAt"),

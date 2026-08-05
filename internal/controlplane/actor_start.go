@@ -52,7 +52,7 @@ type actorStartRequest struct {
 	ProjectID             uuid.UUID
 	EnvironmentID         uuid.UUID
 	ActorDeclaredID       string
-	Workspace             api.WorkspaceTarget
+	WorkspaceID           uuid.UUID
 	Key                   *string
 	InputPresent          bool
 	Input                 json.RawMessage
@@ -69,14 +69,14 @@ type actorStartRequest struct {
 }
 
 type actorStartResult struct {
-	ActorID         uuid.UUID
+	SessionID       uuid.UUID
 	InitialRecordID *uuid.UUID
 	BootRunID       uuid.UUID
 	Replayed        bool
 }
 
 type actorStartReceipt struct {
-	ActorID         string  `json:"actorId"`
+	SessionID       string  `json:"actorId"`
 	InitialRecordID *string `json:"initialRecordId,omitempty"`
 	BootRunID       string  `json:"bootRunId"`
 }
@@ -155,39 +155,10 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		if err != nil {
 			return fmt.Errorf("lock actor start deployment authority: %w", err)
 		}
-		var addressedWorkspaceID pgtype.UUID
-		if normalized.Workspace.ID != nil {
-			parsed, err := ids.Parse(*normalized.Workspace.ID)
-			if err != nil {
-				return errActorStartWorkspaceNotFound
-			}
-			addressedWorkspaceID = pgvalue.UUID(parsed)
-		}
-		workspaceID, err := work.q.ResolveWorkspaceTarget(ctx, db.ResolveWorkspaceTargetParams{
-			OrgID:         pgvalue.UUID(normalized.OrgID),
-			ProjectID:     pgvalue.UUID(normalized.ProjectID),
-			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
-			ID:            addressedWorkspaceID,
-			Key:           pgvalue.TextPtr(normalized.Workspace.Key),
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errActorStartWorkspaceNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("resolve actor start workspace: %w", err)
-		}
+		workspaceID := pgvalue.UUID(normalized.WorkspaceID)
 		if normalized.DisallowedWorkspaceID != uuid.Nil &&
 			workspaceID == pgvalue.UUID(normalized.DisallowedWorkspaceID) {
 			return errActorStartWorkspaceConflict
-		}
-		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, workspaceID)
-		if err != nil {
-			return fmt.Errorf("lock actor start workspace secrets: %w", err)
-		}
-		for _, binding := range bindings {
-			if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
-				return errActorStartSecretUnavailable
-			}
 		}
 
 		if normalized.Key != nil {
@@ -231,9 +202,18 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 				authority.DesiredState != db.WorkspaceDesiredStateStopped) ||
 			authority.DirtyState != db.WorkspaceDirtyStateClean ||
 			!authority.HeadVersionID.Valid ||
-			authority.OwnerActorID.Valid || authority.OwnerRunID.Valid ||
+			authority.OwnerSessionID.Valid || authority.OwnerRunID.Valid ||
 			authority.HasActiveLease || authority.HasActiveProcess {
 			return errActorStartWorkspaceConflict
+		}
+		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, workspaceID)
+		if err != nil {
+			return fmt.Errorf("lock actor start workspace secrets: %w", err)
+		}
+		for _, binding := range bindings {
+			if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
+				return errActorStartSecretUnavailable
+			}
 		}
 		runAuthority, err := deployment.ResolveActorRunAdmission(
 			deploymentAuthority.ActorManifestVersion,
@@ -295,7 +275,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			recordID := uuid.Must(uuid.NewV7())
 			if _, err := work.q.CreateActorStartInputRecord(ctx, db.CreateActorStartInputRecordParams{
 				ID: pgvalue.UUID(recordID), Data: normalized.Input, ClaimID: claimID,
-				EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), ActorID: pgvalue.UUID(actorID),
+				EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), SessionID: pgvalue.UUID(actorID),
 			}); err != nil {
 				return fmt.Errorf("create initial actor input: %w", err)
 			}
@@ -303,7 +283,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			inputHighWatermark = 1
 		}
 		run, err := work.q.CreateActorStartRun(ctx, db.CreateActorStartRunParams{
-			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), ActorID: pgvalue.UUID(actorID),
+			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), SessionID: pgvalue.UUID(actorID),
 			WorkspaceID: authority.ID, ClaimID: claimID,
 			ID:                     pgvalue.UUID(runID),
 			BaseWorkspaceVersionID: authority.HeadVersionID,
@@ -320,7 +300,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			return fmt.Errorf("install actor boot run: %w", err)
 		}
 		if _, err := work.q.ReserveWorkspaceForActor(ctx, db.ReserveWorkspaceForActorParams{
-			ActorID: pgvalue.UUID(actorID), EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
+			SessionID: pgvalue.UUID(actorID), EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
 			ID: authority.ID, ExpectedStateVersion: authority.StateVersion,
 			ExpectedHeadVersionID: authority.HeadVersionID,
 		}); err != nil {
@@ -341,7 +321,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			return fmt.Errorf("create actor boot run admission outbox: %w", err)
 		}
 		result = actorStartResult{
-			ActorID: actorID, InitialRecordID: initialRecordID,
+			SessionID: actorID, InitialRecordID: initialRecordID,
 			BootRunID: runID,
 		}
 		if claim != nil {
@@ -377,12 +357,10 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 		key := *request.Key
 		request.Key = &key
 	}
-	if err := api.ValidateStartActorRequest(api.StartActorRequest{
-		Workspace: request.Workspace,
-	}); err != nil {
-		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
+	if request.WorkspaceID == uuid.Nil {
+		return normalizedActorStart{}, errActorStartInvalid
 	}
-	workspaceRaw, err := json.Marshal(request.Workspace)
+	workspaceRaw, err := json.Marshal(api.WorkspaceIDTarget{ID: request.WorkspaceID.String()})
 	if err != nil {
 		return normalizedActorStart{}, fmt.Errorf("%w: encode workspace address", errActorStartInvalid)
 	}
@@ -512,7 +490,7 @@ func stringPtrValue(value *string) string {
 
 func actorStartReceiptFromResult(result actorStartResult) actorStartReceipt {
 	receipt := actorStartReceipt{
-		ActorID:   result.ActorID.String(),
+		SessionID: result.SessionID.String(),
 		BootRunID: result.BootRunID.String(),
 	}
 	if result.InitialRecordID != nil {
@@ -527,7 +505,7 @@ func actorStartResultFromReceipt(raw []byte) (actorStartResult, error) {
 	if err := json.Unmarshal(raw, &receipt); err != nil {
 		return actorStartResult{}, errActorStartIdempotencyReceipt
 	}
-	actorID, err := ids.Parse(receipt.ActorID)
+	actorID, err := ids.Parse(receipt.SessionID)
 	if err != nil {
 		return actorStartResult{}, errActorStartIdempotencyReceipt
 	}
@@ -544,7 +522,7 @@ func actorStartResultFromReceipt(raw []byte) (actorStartResult, error) {
 		initialRecordID = &value
 	}
 	return actorStartResult{
-		ActorID:         actorID,
+		SessionID:       actorID,
 		InitialRecordID: initialRecordID, BootRunID: runID,
 	}, nil
 }

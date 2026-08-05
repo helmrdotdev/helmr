@@ -10,7 +10,6 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/helmrdotdev/helmr/internal/actor"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -20,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -297,11 +297,11 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure timer wait reconciler: %w", err)
 	}
-	actorReconciler, err := actor.NewReconciler(pool)
+	actorReconciler, err := session.NewReconciler(pool)
 	if err != nil {
 		return fmt.Errorf("configure actor input reconciler: %w", err)
 	}
-	actorInputDelivery, err := actor.NewDeliveryWorker(
+	actorInputDelivery, err := session.NewDeliveryWorker(
 		log,
 		queries,
 		actorReconciler.ReconcileInput,

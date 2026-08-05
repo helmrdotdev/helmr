@@ -5,11 +5,11 @@ const STATUS_LABELS: Record<RunStatus, string> = {
   queued: "Queued",
   running: "Running",
   waiting: "Waiting",
-  "retry-delayed": "Retry delayed",
-  "cancel-requested": "Cancel requested",
+  retry_delayed: "Retry delayed",
+  cancel_requested: "Cancel requested",
   succeeded: "Succeeded",
   failed: "Failed",
-  "system-failed": "System failed",
+  system_failed: "System failed",
   cancelled: "Cancelled",
   expired: "Expired",
 };
@@ -39,7 +39,7 @@ export function formatRelative(iso: string | null | undefined): string {
 export function StatusBadge(props: { status: RunStatus }) {
   const tone = (): "active" | "waiting" | "succeeded" | "revoked" | "expired" => {
     if (props.status === "queued" || props.status === "running") return "active";
-    if (props.status === "waiting" || props.status === "retry-delayed" || props.status === "cancel-requested") return "waiting";
+    if (props.status === "waiting" || props.status === "retry_delayed" || props.status === "cancel_requested") return "waiting";
     if (props.status === "succeeded") return "succeeded";
     if (props.status === "expired") return "expired";
     return "revoked";

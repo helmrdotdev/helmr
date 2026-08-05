@@ -136,10 +136,6 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("get promoted deployment artifacts: %w", err))
 		return
 	}
-	if err := populateDeploymentDeclarations(r.Context(), store, record, &response); err != nil {
-		writeError(w, fmt.Errorf("get promoted deployment declarations: %w", err))
-		return
-	}
 	writeJSON(w, http.StatusOK, response)
 }
 

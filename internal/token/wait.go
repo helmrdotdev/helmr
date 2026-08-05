@@ -140,8 +140,8 @@ func (r *WaitReconciler) RegisterWait(
 	}
 	var lockedActorCurrentRunID pgtype.UUID
 	var lockedActorCommittedInputSequence, lockedActorNextInputSequence int64
-	if locator.OwnerActorID.Valid {
-		actor, err := q.LockTokenWaitActor(ctx, locator.OwnerActorID)
+	if locator.OwnerSessionID.Valid {
+		actor, err := q.LockTokenWaitActor(ctx, locator.OwnerSessionID)
 		if err != nil {
 			return WaitRegistrationResult{}, tokenWaitAuthorityError("lock owning actor", err)
 		}
@@ -191,9 +191,9 @@ func (r *WaitReconciler) RegisterWait(
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current run attempt", err)
 	}
 	if err := validateTokenWaitActorCursor(
-		request.ActorSpeculativeInputSequence, locator.OwnerActorID, lockedActorCurrentRunID,
+		request.ActorSpeculativeInputSequence, locator.OwnerSessionID, lockedActorCurrentRunID,
 		lockedActorCommittedInputSequence, lockedActorNextInputSequence,
-		run, attempt.EntrypointKind, attempt.ActorStartInputSequence,
+		run, attempt.EntrypointKind, attempt.SessionInputStartSequence,
 	); err != nil {
 		return WaitRegistrationResult{}, err
 	}
@@ -502,10 +502,10 @@ func validateAndLockTokenWaitWorkspace(
 	}
 	if db.WorkspaceState(workspace.State) != db.WorkspaceStateActive ||
 		db.WorkspaceDesiredState(workspace.DesiredState) != db.WorkspaceDesiredStateActive ||
-		workspace.OwnerActorID != locator.OwnerActorID {
+		workspace.OwnerSessionID != locator.OwnerSessionID {
 		return db.LockTokenWaitWorkspaceRow{}, tokenWaitAuthorityError("workspace ownership changed", nil)
 	}
-	if workspace.OwnerActorID.Valid {
+	if workspace.OwnerSessionID.Valid {
 		if !lockedActorCurrentRunID.Valid || !tokenWaitLineageContains(lineage, lockedActorCurrentRunID) {
 			return db.LockTokenWaitWorkspaceRow{}, tokenWaitAuthorityError("actor current run is outside the locked lineage", nil)
 		}
@@ -518,25 +518,25 @@ func validateAndLockTokenWaitWorkspace(
 
 func validateTokenWaitActorCursor(
 	cursor pgtype.Int8,
-	ownerActorID pgtype.UUID,
+	ownerSessionID pgtype.UUID,
 	actorCurrentRunID pgtype.UUID,
 	actorCommittedInputSequence int64,
 	actorNextInputSequence int64,
 	run tokenWaitLockedRun,
 	attemptEntrypointKind string,
-	attemptActorStartInputSequence pgtype.Int8,
+	attemptSessionInputStartSequence pgtype.Int8,
 ) error {
 	switch run.entrypointKind {
 	case "task":
-		if run.actorID.Valid || ownerActorID.Valid || cursor.Valid || attemptEntrypointKind != "task" ||
-			attemptActorStartInputSequence.Valid {
+		if run.actorID.Valid || ownerSessionID.Valid || cursor.Valid || attemptEntrypointKind != "task" ||
+			attemptSessionInputStartSequence.Valid {
 			return tokenWaitAuthorityError("task token wait carries actor authority", nil)
 		}
 	case "actor":
-		if !run.actorID.Valid || run.actorID != ownerActorID || !actorCurrentRunID.Valid ||
+		if !run.actorID.Valid || run.actorID != ownerSessionID || !actorCurrentRunID.Valid ||
 			uuid.UUID(actorCurrentRunID.Bytes) != run.id || attemptEntrypointKind != "actor" ||
-			!attemptActorStartInputSequence.Valid || !cursor.Valid ||
-			attemptActorStartInputSequence.Int64 > actorCommittedInputSequence ||
+			!attemptSessionInputStartSequence.Valid || !cursor.Valid ||
+			attemptSessionInputStartSequence.Int64 > actorCommittedInputSequence ||
 			cursor.Int64 < actorCommittedInputSequence ||
 			cursor.Int64 > actorCommittedInputSequence+1 ||
 			cursor.Int64 >= actorNextInputSequence {
@@ -621,8 +621,8 @@ func (r *WaitReconciler) reconcileOne(
 	}
 
 	var lockedActorCurrentRunID pgtype.UUID
-	if locator.OwnerActorID.Valid {
-		actor, err := q.LockTokenWaitActor(ctx, locator.OwnerActorID)
+	if locator.OwnerSessionID.Valid {
+		actor, err := q.LockTokenWaitActor(ctx, locator.OwnerSessionID)
 		if err != nil {
 			return false, false, tokenWaitAuthorityError("lock owning actor", err)
 		}
@@ -650,10 +650,10 @@ func (r *WaitReconciler) reconcileOne(
 	}
 	if db.WorkspaceState(workspace.State) != db.WorkspaceStateActive ||
 		db.WorkspaceDesiredState(workspace.DesiredState) != db.WorkspaceDesiredStateActive ||
-		workspace.OwnerActorID != locator.OwnerActorID {
+		workspace.OwnerSessionID != locator.OwnerSessionID {
 		return false, false, tokenWaitAuthorityError("workspace ownership changed", nil)
 	}
-	if workspace.OwnerActorID.Valid {
+	if workspace.OwnerSessionID.Valid {
 		if !lockedActorCurrentRunID.Valid || !tokenWaitLineageContains(lineage, lockedActorCurrentRunID) {
 			return false, false, tokenWaitAuthorityError("actor current run is outside the locked lineage", nil)
 		}
@@ -768,7 +768,7 @@ func lockTokenWaitLineage(
 			id:                pgvalue.MustUUIDValue(locked.ID),
 			parentRunID:       locked.ParentRunID,
 			workspaceID:       pgvalue.MustUUIDValue(locked.WorkspaceID),
-			actorID:           locked.ActorID,
+			actorID:           locked.SessionID,
 			entrypointKind:    locked.EntrypointKind,
 			status:            db.RunStatus(locked.Status),
 			stateVersion:      locked.StateVersion,

@@ -39,13 +39,14 @@ type ControlPlane struct {
 	PlatformStoreURI        string
 	WorkerTokenSigningKey   []byte
 	WorkerGroupsJSON        string
-	OperatorToken           string
+	CapacityToken           string
 	SetupToken              string
 	AuthKey                 []byte
 	EncryptionKey           []byte
 	WorkspaceFencingKey     []byte
 	TokenCredentialKey      []byte
 	PublicURL               string
+	APIOrigin               string
 	MagicLinkDebugURLs      bool
 	EmailProvider           string
 	ResendAPIKey            string
@@ -236,18 +237,28 @@ func LoadRegionBootstrap() (RegionBootstrap, error) {
 	return cfg, nil
 }
 
-func validatePublicURL(raw string) error {
+func normalizeOrigin(name string, raw string) (string, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return fmt.Errorf("PUBLIC_URL must be an absolute URL")
+		return "", fmt.Errorf("%s must be an absolute URL", name)
 	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
 	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return fmt.Errorf("PUBLIC_URL must use http or https")
+		return "", fmt.Errorf("%s must use http or https", name)
 	}
 	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
-		return fmt.Errorf("PUBLIC_URL must use https for non-loopback hosts")
+		return "", fmt.Errorf("%s must use https for non-loopback hosts", name)
 	}
-	return nil
+	if parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("%s must be an origin without credentials, path, query, or fragment", name)
+	}
+	parsed.User = nil
+	parsed.Path = ""
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), nil
 }
 
 func isLoopbackHost(host string) bool {

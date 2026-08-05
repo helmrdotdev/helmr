@@ -1,12 +1,12 @@
-import { image, task, workspace, type JsonValue } from "@helmr/sdk"
+import { image, task, sandbox, type JsonValue } from "@helmr/sdk"
 import { appendFile, readFile } from "node:fs/promises"
 import { z } from "zod"
 
 const base = image("helmr-fault-probe")
   .from("node:24-bookworm-slim")
-  .workdir("/workspace")
+  .workdir("/sandbox")
 
-export const faultProbeWorkspace = workspace("helmr-fault-probe")
+export const faultProbeWorkspace = sandbox({ id: "helmr-fault-probe" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 

@@ -21,7 +21,7 @@ func TestTokenCreateIsRuntimeOnly(t *testing.T) {
 func TestTokenGetUsesCanonicalCommand(t *testing.T) {
 	timeoutAt := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/tokens/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/tokens/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(api.TokenResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", Status: "pending", TimeoutAt: &timeoutAt})
@@ -46,7 +46,7 @@ func TestTokenGetUsesCanonicalCommand(t *testing.T) {
 func TestTokenCompleteSendsResultAndIdempotencyKey(t *testing.T) {
 	var request api.CompleteTokenRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tokens/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37/complete" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/tokens/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37/complete" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -89,7 +89,7 @@ func TestTokenCompleteSendsResultAndIdempotencyKey(t *testing.T) {
 
 func TestTokenCompleteJSONEmitsResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tokens/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37/complete" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/tokens/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37/complete" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(api.CompleteTokenResponse{
@@ -117,7 +117,7 @@ func TestTokenCompleteJSONEmitsResponse(t *testing.T) {
 func TestTokenCancelUsesCanonicalCommand(t *testing.T) {
 	var request api.CancelTokenRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tokens/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37/cancel" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/tokens/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37/cancel" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {

@@ -83,3 +83,22 @@ SELECT deployments.id AS deployment_id,
    AND deployments.id = sqlc.arg(deployment_id)
    AND deployments.status = 'deployed'
  LIMIT 1;
+
+-- name: ListDefinitionSnapshots :many
+SELECT declared_id
+  FROM deployment_definitions
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND deployment_id = sqlc.arg(deployment_id)
+   AND kind = sqlc.arg(kind)
+   AND (NOT sqlc.arg(has_after)::boolean OR declared_id COLLATE "C" > sqlc.arg(after_id)::text COLLATE "C")
+ ORDER BY declared_id COLLATE "C", id
+ LIMIT sqlc.arg(row_limit);
+
+-- name: GetDefinitionSnapshot :one
+SELECT declared_id
+  FROM deployment_definitions
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND deployment_id = sqlc.arg(deployment_id)
+   AND kind = sqlc.arg(kind)
+   AND declared_id = sqlc.arg(declared_id)
+ LIMIT 1;

@@ -20,7 +20,7 @@ import (
 func TestTaskStartCreatesTaskRun(t *testing.T) {
 	var request api.StartTaskRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/tasks/deploy/start" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("authorization"); got != "Bearer test-key" {
@@ -72,7 +72,7 @@ func TestTaskStartCreatesTaskRun(t *testing.T) {
 			t.Fatalf("output = %q, missing %q", out.String(), want)
 		}
 	}
-	if request.Workspace.ID == nil || *request.Workspace.ID != testWorkspaceID ||
+	if request.Workspace.ID != testWorkspaceID ||
 		request.IdempotencyKey != "start-1" {
 		t.Fatalf("request = %+v", request)
 	}
@@ -91,7 +91,7 @@ func TestTaskStartCreatesTaskRun(t *testing.T) {
 
 func TestTaskStartOmitsPayloadWhenNotSpecified(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/tasks/deploy/start" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		body, err := io.ReadAll(r.Body)
@@ -124,7 +124,7 @@ func TestTaskStartOmitsPayloadWhenNotSpecified(t *testing.T) {
 func TestTaskCommandReadsPayloadFile(t *testing.T) {
 	var request api.StartTaskRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/tasks/deploy/start" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -186,10 +186,10 @@ func TestTaskStartWaitWaitsForRun(t *testing.T) {
 	getRunCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/tasks/deploy/start":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tasks/deploy/start":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31":
 			getRunCalls++
 			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{
 				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: api.RunStatusSucceeded,
@@ -223,10 +223,10 @@ func TestTaskStartWaitPollsRunSnapshot(t *testing.T) {
 	getRunCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/tasks/deploy/start":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tasks/deploy/start":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31":
 			getRunCalls++
 			status := api.RunStatusQueued
 			if getRunCalls > 1 {
@@ -290,12 +290,12 @@ func TestTaskStartFollowTimeoutReturnsError(t *testing.T) {
 	})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/tasks/deploy/start":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tasks/deploy/start":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs":
 			_ = json.NewEncoder(w).Encode(api.RunLogPage{})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31":
 			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{
 				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: api.RunStatusQueued,
 			})

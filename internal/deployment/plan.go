@@ -18,9 +18,9 @@ import (
 const (
 	BuildPlanFormatVersion = 0
 
-	DefinitionKindTask      = DefinitionKind("task")
-	DefinitionKindActor     = DefinitionKind("actor")
-	DefinitionKindWorkspace = DefinitionKind("workspace")
+	DefinitionKindTask    = DefinitionKind("task")
+	DefinitionKindActor   = DefinitionKind("actor")
+	DefinitionKindSandbox = DefinitionKind("sandbox")
 
 	SchemaKindNone     = SchemaKind("none")
 	SchemaKindStandard = SchemaKind("standard_schema")
@@ -55,7 +55,7 @@ type DefinitionInput struct {
 	DeclaredID string         `json:"-"`
 	Task       *TaskManifest
 	Actor      *ActorManifest
-	Workspace  *WorkspaceInputManifest
+	Sandbox    *SandboxInputManifest
 }
 
 type TaskManifest struct {
@@ -69,17 +69,17 @@ type ActorManifest struct {
 	IdleTimeoutMs int64       `json:"idleTimeoutMs"`
 }
 
-type WorkspaceInputManifest struct {
+type SandboxInputManifest struct {
 	ImageBuild imagebuild.Build  `json:"imageBuild"`
 	Resources  ResourcesManifest `json:"resources"`
 }
 
-type WorkspaceManifest struct {
-	Image     WorkspaceArtifactManifest `json:"image"`
-	Resources ResourcesManifest         `json:"resources"`
+type SandboxManifest struct {
+	Image     SandboxImageManifest `json:"image"`
+	Resources ResourcesManifest    `json:"resources"`
 }
 
-type WorkspaceArtifactManifest struct {
+type SandboxImageManifest struct {
 	ArtifactDigest string `json:"artifactDigest"`
 	MediaType      string `json:"mediaType"`
 }
@@ -273,8 +273,8 @@ func ValidateBuildPlan(plan BuildPlan) error {
 		if index > 0 && compareDefinitionInputs(plan.Definitions[index-1], definition) >= 0 {
 			return fmt.Errorf("build plan definitions are not in canonical order at position %d", index)
 		}
-		if definition.Workspace != nil {
-			imageSteps += imagebuild.StepCount(definition.Workspace.ImageBuild)
+		if definition.Sandbox != nil {
+			imageSteps += imagebuild.StepCount(definition.Sandbox.ImageBuild)
 			if imageSteps > maxBuildImageSteps {
 				return fmt.Errorf("build plan contains more than %d image steps", maxBuildImageSteps)
 			}
@@ -306,15 +306,15 @@ func (input DefinitionInput) MarshalJSON() ([]byte, error) {
 			DeclaredID string         `json:"declaredId"`
 			Manifest   *ActorManifest `json:"manifest"`
 		}{input.Kind, input.DeclaredID, input.Actor})
-	case DefinitionKindWorkspace:
-		if input.Workspace == nil {
-			return nil, errors.New("workspace definition requires a workspace manifest")
+	case DefinitionKindSandbox:
+		if input.Sandbox == nil {
+			return nil, errors.New("sandbox definition requires a sandbox manifest")
 		}
 		return json.Marshal(struct {
-			Kind       DefinitionKind          `json:"kind"`
-			DeclaredID string                  `json:"declaredId"`
-			Manifest   *WorkspaceInputManifest `json:"manifest"`
-		}{input.Kind, input.DeclaredID, input.Workspace})
+			Kind       DefinitionKind        `json:"kind"`
+			DeclaredID string                `json:"declaredId"`
+			Manifest   *SandboxInputManifest `json:"manifest"`
+		}{input.Kind, input.DeclaredID, input.Sandbox})
 	default:
 		return nil, fmt.Errorf("definition input kind %q is unsupported", input.Kind)
 	}
@@ -352,17 +352,17 @@ func (input *DefinitionInput) UnmarshalJSON(raw []byte) error {
 		}
 		input.DeclaredID = wire.DeclaredID
 		input.Actor = wire.Manifest
-	case DefinitionKindWorkspace:
+	case DefinitionKindSandbox:
 		var wire struct {
-			Kind       DefinitionKind          `json:"kind"`
-			DeclaredID string                  `json:"declaredId"`
-			Manifest   *WorkspaceInputManifest `json:"manifest"`
+			Kind       DefinitionKind        `json:"kind"`
+			DeclaredID string                `json:"declaredId"`
+			Manifest   *SandboxInputManifest `json:"manifest"`
 		}
 		if err := decodeClosedDefinition(raw, &wire); err != nil {
 			return err
 		}
 		input.DeclaredID = wire.DeclaredID
-		input.Workspace = wire.Manifest
+		input.Sandbox = wire.Manifest
 	default:
 		return fmt.Errorf("definition input kind %q is unsupported", header.Kind)
 	}
@@ -383,7 +383,7 @@ func (input DefinitionInput) manifestCount() int {
 	for _, present := range []bool{
 		input.Task != nil,
 		input.Actor != nil,
-		input.Workspace != nil,
+		input.Sandbox != nil,
 	} {
 		if present {
 			count++
@@ -428,18 +428,18 @@ func validateDefinitionInput(input DefinitionInput, queues map[string]struct{}) 
 		if input.Actor.IdleTimeoutMs < 1 || input.Actor.IdleTimeoutMs > maxActorIdleMs {
 			return fmt.Errorf("actor idleTimeoutMs must be in [1,%d]", maxActorIdleMs)
 		}
-	case DefinitionKindWorkspace:
-		if input.Workspace == nil {
-			return errors.New("workspace definition requires a workspace manifest")
+	case DefinitionKindSandbox:
+		if input.Sandbox == nil {
+			return errors.New("sandbox definition requires a sandbox manifest")
 		}
 		if err := imagebuild.Validate(
-			input.Workspace.ImageBuild,
+			input.Sandbox.ImageBuild,
 			string(ArchitectureX8664),
 		); err != nil {
 			return fmt.Errorf("workspace imageBuild: %w", err)
 		}
-		if err := validateResourcesManifest(input.Workspace.Resources); err != nil {
-			return fmt.Errorf("workspace resources: %w", err)
+		if err := validateResourcesManifest(input.Sandbox.Resources); err != nil {
+			return fmt.Errorf("sandbox resources: %w", err)
 		}
 	default:
 		return fmt.Errorf("definition input kind %q is unsupported", input.Kind)
@@ -608,7 +608,7 @@ func definitionKindOrder(kind DefinitionKind) int {
 		return 0
 	case DefinitionKindActor:
 		return 1
-	case DefinitionKindWorkspace:
+	case DefinitionKindSandbox:
 		return 2
 	default:
 		return 3

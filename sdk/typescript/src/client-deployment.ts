@@ -4,9 +4,6 @@ import { resourceID } from "./internal/id"
 export interface DeploymentSnapshot {
   readonly id: string
   readonly version: string
-  readonly tasks: readonly string[]
-  readonly actors: readonly string[]
-  readonly workspaces: readonly string[]
 }
 
 export interface ClientDeploymentsApi {
@@ -35,7 +32,7 @@ export function createClientDeployments(
       const response = deploymentObject(
         await transport.request(
           "GET",
-          "/api/deployments/current",
+          "/v1/deployments/current",
           options.signal === undefined ? {} : { signal: options.signal },
         ),
         "Current Deployment response",
@@ -52,7 +49,7 @@ export function createClientDeployments(
       return parseDeployment(
         await transport.request(
           "GET",
-          `/api/deployments/${encodeURIComponent(resourceID(deploymentId, "Deployment ID"))}`,
+          `/v1/deployments/${encodeURIComponent(resourceID(deploymentId, "Deployment ID"))}`,
           options.signal === undefined ? {} : { signal: options.signal },
         ),
       )
@@ -65,9 +62,6 @@ function parseDeployment(value: unknown): DeploymentSnapshot {
   return Object.freeze({
     id: resourceID(input["id"], "Deployment response.id"),
     version: requiredString(input, "version"),
-    tasks: stringArray(input["tasks"], "tasks"),
-    actors: stringArray(input["actors"], "actors"),
-    workspaces: stringArray(input["workspaces"], "workspaces"),
   })
 }
 
@@ -87,11 +81,4 @@ function requiredString(value: Record<string, unknown>, field: string): string {
     throw new Error(`Deployment response.${field} must be a non-empty string`)
   }
   return result
-}
-
-function stringArray(value: unknown, field: string): readonly string[] {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
-    throw new Error(`Deployment response.${field} must be an array of strings`)
-  }
-  return Object.freeze([...value]) as readonly string[]
 }

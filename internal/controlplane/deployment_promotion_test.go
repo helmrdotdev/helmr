@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -186,10 +187,12 @@ func (s *promotionScheduleStore) ArchiveOmittedSchedules(
 func TestScheduleResponseProjectsOnlyPublicAuthority(t *testing.T) {
 	now := time.Date(2026, 7, 24, 3, 0, 0, 0, time.UTC)
 	scheduleID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.Must(uuid.NewV7())
 	row := db.Schedule{
 		ID:                   pgvalue.UUID(scheduleID),
 		TaskDeclaredID:       "daily-report",
 		WorkspaceRefKey:      pgvalue.Text("scheduler"),
+		WorkspaceID:          pgvalue.UUID(workspaceID),
 		CronPattern:          "0 9 * * *",
 		Timezone:             "UTC",
 		CronSemanticsVersion: "robfig-cron-v3.0.1/standard-5-field",
@@ -207,8 +210,9 @@ func TestScheduleResponseProjectsOnlyPublicAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	if response.ID != scheduleID.String() ||
-		response.Task != row.TaskDeclaredID ||
+		response.TaskID != row.TaskDeclaredID ||
 		response.Workspace.Key != "scheduler" ||
+		response.WorkspaceID != workspaceID.String() ||
 		response.Status != "errored" ||
 		response.LastError == nil ||
 		response.LastError.Code != "workspace_unavailable" {
@@ -224,6 +228,7 @@ func TestScheduleResponseUsesWorkspaceID(t *testing.T) {
 		ID:                   pgvalue.UUID(scheduleID),
 		TaskDeclaredID:       "daily-report",
 		WorkspaceRefID:       pgvalue.UUID(workspaceID),
+		WorkspaceID:          pgvalue.UUID(workspaceID),
 		CronPattern:          "0 9 * * *",
 		Timezone:             "UTC",
 		CronSemanticsVersion: "robfig-cron-v3.0.1/standard-5-field",
@@ -238,7 +243,31 @@ func TestScheduleResponseUsesWorkspaceID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.Workspace.ID != workspaceID.String() {
-		t.Fatalf("workspace ID = %q", response.Workspace.ID)
+	if response.Workspace.ID != workspaceID.String() || response.WorkspaceID != workspaceID.String() {
+		t.Fatalf("workspace address/bound ID = %q/%q", response.Workspace.ID, response.WorkspaceID)
+	}
+}
+
+func TestScheduleResponseLeavesPendingKeyUnbound(t *testing.T) {
+	now := time.Date(2026, 7, 24, 3, 0, 0, 0, time.UTC)
+	row := db.Schedule{
+		ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		TaskDeclaredID:       "daily-report",
+		WorkspaceRefKey:      pgvalue.Text("scheduler"),
+		CronPattern:          "0 9 * * *",
+		Timezone:             "UTC",
+		CronSemanticsVersion: "robfig-cron-v3.0.1/standard-5-field",
+		Generation:           1,
+		State:                "pending_workspace",
+		EffectiveFrom:        pgvalue.Timestamptz(now),
+		CreatedAt:            pgvalue.Timestamptz(now),
+		UpdatedAt:            pgvalue.Timestamptz(now),
+	}
+	response, err := scheduleResponse(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Workspace.Key != "scheduler" || response.WorkspaceID != "" || response.Status != api.ScheduleStatusPendingWorkspace {
+		t.Fatalf("pending Schedule response = %+v", response)
 	}
 }

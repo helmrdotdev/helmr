@@ -126,7 +126,7 @@ class CodexAppServer {
       model: options.model ?? null,
       cwd: options.workingDirectory ?? process.cwd(),
       approvalPolicy: options.approvalPolicy ?? "never",
-      sandbox: options.sandboxMode ?? "read-only",
+      workspace: options.sandboxMode ?? "read-only",
       config: codexConfig(options),
       serviceName: "helmr-dev-workflows",
       developerInstructions: null,

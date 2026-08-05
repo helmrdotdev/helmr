@@ -1,7 +1,7 @@
 import {
+  type ClientWorkspaceRef,
   type HelmrClient,
   type RunSnapshot,
-  type WorkspaceIdRef,
 } from "@helmr/sdk"
 import type {
   scheduleSmoke,
@@ -32,7 +32,7 @@ export async function runManagementSmoke(
   client: HelmrClient,
   marker: string,
 ): Promise<ManagementEvidence> {
-  const workspaces: Array<Readonly<{ ref: WorkspaceIdRef; deleteKey: string }>> = []
+  const workspaces: Array<Readonly<{ ref: ClientWorkspaceRef; deleteKey: string }>> = []
   let succeeded = false
   try {
     const deployment = await client.deployments.current({
@@ -47,14 +47,16 @@ export async function runManagementSmoke(
       deployment.id,
       "Deployment retrieve changed the current Deployment ID",
     )
+    const deploymentTasks = await client.tasks.list(
+      { deploymentId: deployment.id, limit: 100 },
+      { signal: AbortSignal.timeout(30_000) },
+    )
     assert(
-      deployment.tasks.includes("schedule-smoke"),
+      deploymentTasks.items.some((task) => task.id === "schedule-smoke"),
       "current Deployment omitted the scheduled Task definition",
     )
 
-    const scheduleWorkspace = await client.workspaces.create<
-      typeof scheduleSmokeWorkspace
-    >(
+    const scheduleWorkspace = await client.sandboxes.createWorkspace(
       "helmr-schedule-smoke",
       {
         key: "release-gate",
@@ -68,7 +70,7 @@ export async function runManagementSmoke(
       signal: AbortSignal.timeout(30_000),
     })
     assertEqual(retrievedSchedule.id, schedule.id, "Schedule retrieve changed the ID")
-    assertEqual(retrievedSchedule.task, "schedule-smoke", "Schedule task ID mismatch")
+    assertEqual(retrievedSchedule.taskId, "schedule-smoke", "Schedule task ID mismatch")
     assertEqual(retrievedSchedule.status, "active", "Schedule was not active")
     const firedSchedule = await waitForScheduleFire(
       client,
@@ -106,11 +108,17 @@ export async function runManagementSmoke(
       },
       { signal: AbortSignal.timeout(30_000) },
     )
-    const secretRef = client.secrets.ref({ name: secretName })
-    const retrievedSecret = await secretRef.retrieve({
-      signal: AbortSignal.timeout(30_000),
-    })
-    assertEqual(retrievedSecret.id, secret.id, "Secret name ref changed the ID")
+	const exactSecretPage = await client.secrets.list(
+		{ name: secretName },
+		{ signal: AbortSignal.timeout(30_000) },
+	)
+	assertEqual(exactSecretPage.items.length, 1, "Secret name lookup was not exact")
+	assertEqual(exactSecretPage.items[0]!.id, secret.id, "Secret name lookup changed the ID")
+	const secretRef = client.secrets.ref(secret.id)
+	const retrievedSecret = await secretRef.retrieve({
+		signal: AbortSignal.timeout(30_000),
+	})
+	assertEqual(retrievedSecret.id, secret.id, "Secret ID ref changed the ID")
     const secretPage = await client.secrets.list(
       { limit: 100 },
       { signal: AbortSignal.timeout(30_000) },
@@ -131,7 +139,7 @@ export async function runManagementSmoke(
       { idempotencyKey: `secret:revoke:${marker}` },
       { signal: AbortSignal.timeout(30_000) },
     )
-    assertEqual(revoked.state, "revoked", "Secret was not revoked")
+    assertEqual(revoked.status, "revoked", "Secret was not revoked")
 
     const completedToken = await client.tokens.create(
       {
@@ -145,7 +153,7 @@ export async function runManagementSmoke(
     const externalTokenRuns: string[] = []
     const externalTokenWorkspaces: string[] = []
     for (const suffix of ["fanout-a", "fanout-b"] as const) {
-      const tokenWorkspace = await client.workspaces.create<typeof runtimeSmokeWorkspace>(
+      const tokenWorkspace = await client.sandboxes.createWorkspace(
         "helmr-runtime-smoke",
         {
           key: `${suffix}-${marker}`,
@@ -204,7 +212,7 @@ export async function runManagementSmoke(
       "external Token completion did not resume every waiting Run",
     )
 
-    const lateWorkspace = await client.workspaces.create<typeof runtimeSmokeWorkspace>(
+    const lateWorkspace = await client.sandboxes.createWorkspace(
       "helmr-runtime-smoke",
       {
         key: `completion-before-wait-${marker}`,
@@ -252,7 +260,7 @@ export async function runManagementSmoke(
       "Token list omitted the completed Token",
     )
 
-    const timerWorkspace = await client.workspaces.create<typeof timerSmokeWorkspace>(
+    const timerWorkspace = await client.sandboxes.createWorkspace(
       "helmr-timer-smoke",
       {
         key: `cancel-${marker}`,
@@ -330,7 +338,7 @@ async function waitForActiveSchedule(client: HelmrClient) {
       { limit: 100 },
       { signal: AbortSignal.timeout(30_000) },
     )
-    const schedule = schedules.items.find((item) => item.task === "schedule-smoke")
+    const schedule = schedules.items.find((item) => item.taskId === "schedule-smoke")
     if (schedule?.status === "active") return schedule
     if (schedule?.status === "errored") {
       throw new Error(`schedule-smoke admission failed: ${schedule.lastError?.code}`)
@@ -432,7 +440,7 @@ async function waitForRunStatus(
       run.status === "failed" ||
       run.status === "cancelled" ||
       run.status === "expired" ||
-      run.status === "system-failed"
+      run.status === "system_failed"
     ) {
       throw new Error(`Run ${runId} reached unexpected terminal status ${run.status}`)
     }

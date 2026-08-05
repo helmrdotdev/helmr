@@ -212,7 +212,7 @@ UPDATE workspaces
    AND workspaces.state = 'active'
    AND workspaces.desired_state IN ('active', 'stopped')
    AND workspaces.dirty_state = 'clean'
-   AND workspaces.owner_actor_id IS NULL
+   AND workspaces.owner_session_id IS NULL
    AND workspaces.owner_run_id IS NULL
    AND NOT EXISTS (
        SELECT 1

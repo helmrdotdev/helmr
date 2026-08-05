@@ -12,7 +12,8 @@ import (
 )
 
 func (s *Server) notFound(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
+	if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") ||
+		r.URL.Path == "/v1" || strings.HasPrefix(r.URL.Path, "/v1/") {
 		writeError(w, notFound(errors.New("not found")))
 		return
 	}

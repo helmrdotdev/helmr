@@ -1,75 +1,53 @@
 import type {
-  ActorFailure,
-  ActorOperationReceipt,
-  ActorOutputRecord,
+  ActorDefinition,
   ActorStartOptions,
-  ActorStatus,
-  JsonValue,
+  CursorPage,
   RunHandle,
+  WorkspaceIdAddress,
 } from "./contract"
-import type { ActorDefinition } from "./contract"
-import type { RequestOptions } from "./request"
 import { resourceID } from "./internal/id"
+import type { RequestOptions } from "./request"
 import { validateTaskId } from "./schema/task"
+import { createSessionRef, type SessionRef } from "./client-session"
+import { requireWorkspaceIDAddress } from "./workspace"
 
-export type ClientActorStartRequest = Omit<ActorStartOptions, "signal">
+export type ClientActorStartRequest = Omit<ActorStartOptions, "signal" | "workspace"> & Readonly<{
+  workspace: WorkspaceIdAddress
+}>
 
-export interface ClientActorOutputQuery {
-  readonly after?: number
+export interface ActorSnapshot {
+  readonly id: string
+  readonly deploymentId: string
+}
+
+export interface ActorReadQuery {
+  readonly deploymentId?: string
+}
+
+export interface ActorListQuery extends ActorReadQuery {
+  readonly cursor?: string
   readonly limit?: number
 }
 
-export interface ClientActorInputRef {
-  send(
-    input: JsonValue,
-    request?: Readonly<{ idempotencyKey?: string }>,
-    options?: RequestOptions,
-  ): Promise<{ sequence: number }>
+export interface ActorPage extends CursorPage<ActorSnapshot> {
+  readonly deploymentId: string
 }
-
-export interface ClientActorOutputRef {
-  list(
-    query?: ClientActorOutputQuery,
-    options?: RequestOptions,
-  ): Promise<readonly ActorOutputRecord[]>
-  read(
-    query?: ClientActorOutputQuery,
-    options?: RequestOptions,
-  ): AsyncIterable<ActorOutputRecord>
-}
-
-export interface ClientActorRefBase {
-  readonly input: ClientActorInputRef
-  readonly output: ClientActorOutputRef
-  status(options?: RequestOptions): Promise<ActorStatus>
-  close(
-    request?: Readonly<{ idempotencyKey?: string }>,
-    options?: RequestOptions,
-  ): Promise<ActorOperationReceipt>
-}
-
-export type ClientActorIdRef =
-  & ClientActorRefBase
-  & Readonly<{ id: string; key?: never }>
-
-export type ClientActorKeyRef =
-  & ClientActorRefBase
-  & Readonly<{ id?: never; key: string }>
 
 export interface ClientActorsApi {
+  retrieve(
+    id: string,
+    query?: ActorReadQuery,
+    options?: RequestOptions,
+  ): Promise<ActorSnapshot>
+  list(
+    query?: ActorListQuery,
+    options?: RequestOptions,
+  ): Promise<ActorPage>
   start<TActor extends ActorDefinition>(
-    actorDeclaredId: string,
+    id: string,
     request: ClientActorStartRequest,
     options?: RequestOptions,
-  ): Promise<{ ref: ClientActorIdRef; run: RunHandle }>
-  ref<TActor extends ActorDefinition>(
-    actorDeclaredId: string,
-    address: Readonly<{ id: string; key?: never }>,
-  ): ClientActorIdRef
-  ref<TActor extends ActorDefinition>(
-    actorDeclaredId: string,
-    address: Readonly<{ id?: never; key: string }>,
-  ): ClientActorKeyRef
+  ): Promise<{ session: SessionRef; run: RunHandle }>
 }
 
 interface ActorTransport {
@@ -80,194 +58,92 @@ interface ActorTransport {
   ): Promise<unknown>
 }
 
-export function createClientActors(
-  transport: ActorTransport,
-): ClientActorsApi {
-  function ref<TActor extends ActorDefinition>(
-    actorDeclaredId: string,
-    address:
-      | Readonly<{ id: string; key?: never }>
-      | Readonly<{ id?: never; key: string }>,
-  ): ClientActorIdRef | ClientActorKeyRef {
-    validateTaskId(actorDeclaredId)
-    validateActorAddress(address)
-    return createClientActorRef(actorDeclaredId, address, transport)
-  }
+export function createClientActors(transport: ActorTransport): ClientActorsApi {
   return Object.freeze({
+    async retrieve(
+      id: string,
+      query: ActorReadQuery = {},
+      options: RequestOptions = {},
+    ): Promise<ActorSnapshot> {
+      validateTaskId(id)
+      return parseActorSnapshot(await transport.request(
+        "GET",
+        `/v1/actors/${encodeURIComponent(id)}${definitionQuery(query)}`,
+        options.signal === undefined ? {} : { signal: options.signal },
+      ))
+    },
+    async list(
+      queryInput: ActorListQuery = {},
+      options: RequestOptions = {},
+    ): Promise<ActorPage> {
+      const response = objectValue(await transport.request(
+        "GET",
+        `/v1/actors${definitionQuery(queryInput)}`,
+        options.signal === undefined ? {} : { signal: options.signal },
+      ), "Actor list response")
+      if (!Array.isArray(response["actors"])) {
+        throw new Error("Actor list response.actors must be an array")
+      }
+      const nextCursor = response["next_cursor"]
+      if (nextCursor !== undefined && typeof nextCursor !== "string") {
+        throw new Error("Actor list response.next_cursor must be a string")
+      }
+      return Object.freeze({
+        deploymentId: resourceID(response["deployment_id"], "Actor list response.deployment_id"),
+        items: Object.freeze(response["actors"].map(parseActorSnapshot)),
+        ...(nextCursor === undefined ? {} : { nextCursor }),
+      })
+    },
     async start<TActor extends ActorDefinition>(
-      actorDeclaredId: string,
+      id: string,
       request: ClientActorStartRequest,
       options: RequestOptions = {},
-    ): Promise<{ ref: ClientActorIdRef; run: RunHandle }> {
-      validateTaskId(actorDeclaredId)
-      const response = actorObject(
-        await transport.request(
-          "POST",
-          `/api/actors/${encodeURIComponent(actorDeclaredId)}/start`,
-          {
-            body: actorStartBody(request),
-            ...(options.signal === undefined ? {} : { signal: options.signal }),
-          },
-        ),
-        "Actor start response",
-      )
-      const actorID = resourceID(response["actor_id"], "Actor ID")
-      const runID = resourceID(response["run_id"], "Run ID")
+    ): Promise<{ session: SessionRef; run: RunHandle }> {
+      validateTaskId(id)
+      const response = objectValue(await transport.request(
+        "POST",
+        `/v1/actors/${encodeURIComponent(id)}/start`,
+        {
+          body: actorStartBody(request),
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        },
+      ), "Actor start response")
+      const sessionID = resourceID(response["session_id"], "Actor start response.session_id")
+      const runID = resourceID(response["run_id"], "Actor start response.run_id")
       return Object.freeze({
-        ref: createClientActorRef(
-          actorDeclaredId,
-          { id: actorID },
-          transport,
-        ) as ClientActorIdRef,
+        session: createSessionRef(sessionID, transport),
         run: Object.freeze({ id: runID }),
       })
     },
-    ref,
-  }) as ClientActorsApi
+  })
 }
 
-function createClientActorRef(
-  actorDeclaredId: string,
-  address:
-    | Readonly<{ id: string; key?: never }>
-    | Readonly<{ id?: never; key: string }>,
-  transport: ActorTransport,
-): ClientActorIdRef | ClientActorKeyRef {
-  const addressBody = (): Record<string, string> =>
-    "id" in address && address.id !== undefined
-      ? { actor_id: address.id }
-      : { actor_key: address.key }
-  const addressQuery = () => new URLSearchParams(addressBody()).toString()
-  const readPage = async (
-    query: ClientActorOutputQuery,
-    options: RequestOptions,
-  ): Promise<{
-    records: readonly ActorOutputRecord[]
-    nextAfter: number
-    hasMore: boolean
-  }> => {
-    const values = new URLSearchParams(addressBody())
-    if (query.after !== undefined) values.set("after", String(query.after))
-    if (query.limit !== undefined) values.set("limit", String(query.limit))
-    const response = actorObject(
-      await transport.request(
-        "GET",
-        `/api/actors/${encodeURIComponent(actorDeclaredId)}/output?${values}`,
-        options.signal === undefined ? {} : { signal: options.signal },
-      ),
-      "Actor output response",
-    )
-    if (!Array.isArray(response["records"])) {
-      throw new Error("Actor output response.records must be an array")
-    }
-    return {
-      records: Object.freeze(response["records"].map(parseActorOutputRecord)),
-      nextAfter: safeSequence(response["next_after"], "Actor output next_after"),
-      hasMore: requiredBoolean(response, "has_more", "Actor output response"),
-    }
+function definitionQuery(queryInput: ActorListQuery): string {
+  const query = new URLSearchParams()
+  if (queryInput.deploymentId !== undefined) {
+    query.set("deployment_id", resourceID(queryInput.deploymentId, "Deployment ID"))
   }
-  const output: ClientActorOutputRef = Object.freeze({
-    async list(
-      query: ClientActorOutputQuery = {},
-      options: RequestOptions = {},
-    ): Promise<readonly ActorOutputRecord[]> {
-      return (await readPage(query, options)).records
-    },
-    read(
-      query: ClientActorOutputQuery = {},
-      options: RequestOptions = {},
-    ): AsyncIterable<ActorOutputRecord> {
-      return {
-        async *[Symbol.asyncIterator]() {
-          let after = query.after
-          while (true) {
-            options.signal?.throwIfAborted()
-            const page = await readPage(
-              {
-                ...(after === undefined ? {} : { after }),
-                ...(query.limit === undefined ? {} : { limit: query.limit }),
-              },
-              options,
-            )
-            for (const record of page.records) {
-              options.signal?.throwIfAborted()
-              yield record
-            }
-            if (!page.hasMore) return
-            after = page.nextAfter
-          }
-        },
-      }
-    },
+  if (queryInput.cursor !== undefined) {
+    if (queryInput.cursor.length === 0) throw new Error("Actor cursor is required")
+    query.set("cursor", queryInput.cursor)
+  }
+  if (queryInput.limit !== undefined) {
+    if (!Number.isInteger(queryInput.limit) || queryInput.limit < 1 || queryInput.limit > 100) {
+      throw new Error("Actor limit must be an integer in [1,100]")
+    }
+    query.set("limit", queryInput.limit.toString())
+  }
+  return query.size === 0 ? "" : `?${query.toString()}`
+}
+
+function parseActorSnapshot(value: unknown): ActorSnapshot {
+  const input = objectValue(value, "Actor response")
+  const id = requiredString(input, "id", "Actor response")
+  validateTaskId(id)
+  return Object.freeze({
+    id,
+    deploymentId: resourceID(input["deployment_id"], "Actor response.deployment_id"),
   })
-  const value: ClientActorRefBase = {
-    input: Object.freeze({
-      async send(
-        input: JsonValue,
-        request: Readonly<{ idempotencyKey?: string }> = {},
-        options: RequestOptions = {},
-      ): Promise<{ sequence: number }> {
-        const response = actorObject(
-          await transport.request(
-            "POST",
-            `/api/actors/${encodeURIComponent(actorDeclaredId)}/input`,
-            {
-              body: {
-                ...addressBody(),
-                input,
-                ...(request.idempotencyKey === undefined
-                  ? {}
-                  : { idempotency_key: request.idempotencyKey }),
-              },
-              ...(options.signal === undefined ? {} : { signal: options.signal }),
-            },
-          ),
-          "Actor input response",
-        )
-        return Object.freeze({
-          sequence: safeSequence(response["sequence"], "Actor input sequence"),
-        })
-      },
-    }),
-    output,
-    async status(options: RequestOptions = {}): Promise<ActorStatus> {
-      return parseActorStatus(
-        await transport.request(
-          "GET",
-          `/api/actors/${encodeURIComponent(actorDeclaredId)}/status?${addressQuery()}`,
-          options.signal === undefined ? {} : { signal: options.signal },
-        ),
-      )
-    },
-    async close(
-      request: Readonly<{ idempotencyKey?: string }> = {},
-      options: RequestOptions = {},
-    ): Promise<ActorOperationReceipt> {
-      const response = actorObject(
-        await transport.request(
-          "POST",
-          `/api/actors/${encodeURIComponent(actorDeclaredId)}/close`,
-          {
-            body: {
-              ...addressBody(),
-              ...(request.idempotencyKey === undefined
-                ? {}
-                : { idempotency_key: request.idempotencyKey }),
-            },
-            ...(options.signal === undefined ? {} : { signal: options.signal }),
-          },
-        ),
-        "Actor close response",
-      )
-      return Object.freeze({
-        actorId: resourceID(response["actor_id"], "Actor ID"),
-        acceptedAt: timestamp(response["accepted_at"], "Actor close accepted_at"),
-      })
-    },
-  }
-  return Object.freeze({ ...address, ...value }) as
-    | ClientActorIdRef
-    | ClientActorKeyRef
 }
 
 function actorStartBody(request: ClientActorStartRequest): Record<string, unknown> {
@@ -277,199 +153,61 @@ function actorStartBody(request: ClientActorStartRequest): Record<string, unknow
     ...(request.idempotencyKey === undefined
       ? {}
       : { idempotency_key: request.idempotencyKey }),
-    workspace: "id" in request.workspace
-      ? { id: request.workspace.id }
-      : { key: request.workspace.key },
-    ...(request.run === undefined
+    workspace: { id: requireWorkspaceIDAddress(request.workspace) },
+    ...(request.run === undefined ? {} : { run: runOptionsBody(request.run) }),
+  }
+}
+
+function runOptionsBody(run: NonNullable<ActorStartOptions["run"]>): Record<string, unknown> {
+  return {
+    ...(run.queue === undefined ? {} : { queue: run.queue }),
+    ...(run.concurrencyKey === undefined ? {} : { concurrency_key: run.concurrencyKey }),
+    ...(run.priority === undefined ? {} : { priority: run.priority }),
+    ...(run.ttl === undefined ? {} : { ttl: run.ttl }),
+    ...(run.retry === undefined
       ? {}
       : {
-          run: {
-            ...(request.run.queue === undefined ? {} : { queue: request.run.queue }),
-            ...(request.run.concurrencyKey === undefined
-              ? {}
-              : { concurrency_key: request.run.concurrencyKey }),
-            ...(request.run.priority === undefined
-              ? {}
-              : { priority: request.run.priority }),
-            ...(request.run.ttl === undefined ? {} : { ttl: request.run.ttl }),
-            ...(request.run.retry === undefined
-              ? {}
-              : {
-                  retry: request.run.retry.enabled === false
-                    ? { enabled: false }
-                    : {
-                        ...(request.run.retry.enabled === undefined
+          retry: run.retry.enabled === false
+            ? { enabled: false }
+            : {
+                ...(run.retry.enabled === undefined ? {} : { enabled: run.retry.enabled }),
+                max_attempts: run.retry.maxAttempts,
+                ...(run.retry.backoff === undefined
+                  ? {}
+                  : {
+                      backoff: {
+                        ...(run.retry.backoff.minDelay === undefined
                           ? {}
-                          : { enabled: request.run.retry.enabled }),
-                        max_attempts: request.run.retry.maxAttempts,
-                        ...(request.run.retry.backoff === undefined
+                          : { min_delay: run.retry.backoff.minDelay }),
+                        ...(run.retry.backoff.maxDelay === undefined
                           ? {}
-                          : {
-                              backoff: {
-                                ...(request.run.retry.backoff.minDelay === undefined
-                                  ? {}
-                                  : { min_delay: request.run.retry.backoff.minDelay }),
-                                ...(request.run.retry.backoff.maxDelay === undefined
-                                  ? {}
-                                  : { max_delay: request.run.retry.backoff.maxDelay }),
-                                ...(request.run.retry.backoff.factor === undefined
-                                  ? {}
-                                  : { factor: request.run.retry.backoff.factor }),
-                                ...(request.run.retry.backoff.jitter === undefined
-                                  ? {}
-                                  : { jitter: request.run.retry.backoff.jitter }),
-                              },
-                            }),
+                          : { max_delay: run.retry.backoff.maxDelay }),
+                        ...(run.retry.backoff.factor === undefined
+                          ? {}
+                          : { factor: run.retry.backoff.factor }),
+                        ...(run.retry.backoff.jitter === undefined
+                          ? {}
+                          : { jitter: run.retry.backoff.jitter }),
                       },
-                }),
-            ...(request.run.metadata === undefined
-              ? {}
-              : { metadata: request.run.metadata }),
-            ...(request.run.tags === undefined
-              ? {}
-              : { tags: [...request.run.tags] }),
-          },
+                    }),
+              },
         }),
+    ...(run.metadata === undefined ? {} : { metadata: run.metadata }),
+    ...(run.tags === undefined ? {} : { tags: [...run.tags] }),
   }
 }
 
-function parseActorStatus(value: unknown): ActorStatus {
-  const input = actorObject(value, "Actor status response")
-  const status = input["status"]
-  if (
-    status !== "open" &&
-    status !== "closed" &&
-    status !== "cancelled" &&
-    status !== "failed"
-  ) {
-    throw new Error("Actor status response.status is invalid")
-  }
-  const failure = input["failure"] === undefined
-    ? undefined
-    : parseActorFailure(input["failure"])
-  return Object.freeze({
-    id: resourceID(input["id"], "Actor ID"),
-    ...(input["key"] === undefined
-      ? {}
-      : { key: requiredString(input, "key", "Actor status response") }),
-    status,
-    createdAt: timestamp(input["created_at"], "Actor status created_at"),
-    updatedAt: timestamp(input["updated_at"], "Actor status updated_at"),
-    ...(input["current_run_id"] === undefined
-      ? {}
-      : {
-          currentRunId: resourceID(
-            requiredString(input, "current_run_id", "Actor status response"),
-            "Run ID",
-          ),
-        }),
-    ...(failure === undefined ? {} : { failure }),
-  })
-}
-
-function parseActorFailure(value: unknown): ActorFailure {
-  const input = actorObject(value, "Actor failure")
-  const code = requiredString(input, "code", "Actor failure")
-  if (
-    code !== "no_progress" &&
-    code !== "run_failed" &&
-    code !== "run_expired" &&
-    code !== "platform_failure"
-  ) {
-    throw new Error("Actor failure.code is invalid")
-  }
-  return Object.freeze({
-    code,
-    runId: resourceID(requiredString(input, "run_id", "Actor failure"), "Run ID"),
-  })
-}
-
-function parseActorOutputRecord(value: unknown): ActorOutputRecord {
-  const input = actorObject(value, "Actor output record")
-  const provenance = actorObject(input["provenance"], "Actor output provenance")
-  return Object.freeze({
-    id: resourceID(input["id"], "Actor record ID"),
-    sequence: safeSequence(input["sequence"], "Actor output sequence"),
-    data: input["data"],
-    contentType: requiredString(input, "content_type", "Actor output record"),
-    createdAt: timestamp(input["created_at"], "Actor output created_at").toISOString(),
-    provenance: Object.freeze({
-      runId: resourceID(requiredString(provenance, "run_id", "Actor output provenance"), "Run ID"),
-      attemptNumber: safeSequence(
-        provenance["attempt_number"],
-        "Actor output attempt_number",
-      ),
-      deploymentId: resourceID(
-        requiredString(
-          provenance,
-          "deployment_id",
-          "Actor output provenance",
-        ),
-        "Deployment ID",
-      ),
-    }),
-  })
-}
-
-function validateActorAddress(
-  address:
-    | Readonly<{ id: string; key?: never }>
-    | Readonly<{ id?: never; key: string }>,
-): void {
-  if (
-    ("id" in address && typeof address.id === "string") ===
-    ("key" in address && typeof address.key === "string")
-  ) {
-    throw new Error("Actor ref requires exactly one of id or key")
-  }
-  if ("id" in address && address.id !== undefined) {
-    resourceID(address.id, "Actor ID")
-  } else if (address.key.length === 0) {
-    throw new Error("Actor key is required")
-  }
-}
-
-function actorObject(value: unknown, label: string): Record<string, unknown> {
+function objectValue(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object`)
   }
   return value as Record<string, unknown>
 }
 
-function requiredString(
-  value: Record<string, unknown>,
-  field: string,
-  label: string,
-): string {
+function requiredString(value: Record<string, unknown>, field: string, label: string): string {
   const result = value[field]
-  if (typeof result !== "string" || result === "") {
+  if (typeof result !== "string" || result.length === 0) {
     throw new Error(`${label}.${field} must be a non-empty string`)
   }
-  return result
-}
-
-function requiredBoolean(
-  value: Record<string, unknown>,
-  field: string,
-  label: string,
-): boolean {
-  const result = value[field]
-  if (typeof result !== "boolean") {
-    throw new Error(`${label}.${field} must be a boolean`)
-  }
-  return result
-}
-
-function safeSequence(value: unknown, label: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    throw new Error(`${label} must be a non-negative safe integer`)
-  }
-  return value as number
-}
-
-function timestamp(value: unknown, label: string): Date {
-  if (typeof value !== "string") throw new Error(`${label} must be a timestamp`)
-  const result = new Date(value)
-  if (Number.isNaN(result.valueOf())) throw new Error(`${label} must be a timestamp`)
   return result
 }

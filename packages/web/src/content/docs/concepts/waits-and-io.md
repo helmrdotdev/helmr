@@ -21,20 +21,21 @@ output channel. They are fixed, not named, and not separately declared.
 Application protocols use ordinary tagged JSON values.
 
 ```ts
-const input = await self.input.receive({ idleTimeout: "30m" }).unwrap()
-await self.output.append({ type: "accepted", input })
+const input = await session.input.receive({ idleTimeout: "30m" }).unwrap()
+await session.output.append({ type: "accepted", input })
 ```
 
-External clients and other Runs send Actor input through `ActorRef.input`.
-Actor output may have many independent readers:
+External clients use a Session UUID ref. Other managed Runs can retain the
+Session ref returned by Actor start. Session output may have many independent
+readers:
 
 ```ts
-await operator.ref({ key: "production" }).input.send(
+await sessions.ref(sessionId).input.send(
   { type: "steer", instruction: "also update the tests" },
   { idempotencyKey: "slack:thread-1:message-7" },
 )
 
-const records = await operator.ref({ key: "production" }).output.list()
+const records = await sessions.ref(sessionId).output.list()
 ```
 
 Actor input may durably suspend the current managed Run. Only that Actor's

@@ -262,7 +262,7 @@ const decision = await approval.wait({
     tone: "pink",
     title: "Start from anywhere",
     caption: "Your product, a webhook, or CI starts a declared Task in an existing durable Workspace.",
-    code: `const workspace = await client.workspaces.create<typeof repoWorkspace>(
+    code: `const workspace = await client.sandboxes.createWorkspace(
   "repo-agent",
   {
     key: \`github-pr:\${pr.id}\`,
@@ -274,7 +274,7 @@ const run = await client.tasks.start<typeof reviewPr>(
   "review-pr",
   {
     payload: { prNumber: 482 },
-    workspace: { id: workspace.id },
+    workspace,
     idempotencyKey: \`github-pr:\${pr.id}:\${pr.head.sha}\`
   }
 )`,

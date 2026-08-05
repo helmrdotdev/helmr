@@ -1,4 +1,5 @@
 export { actor } from "./actor"
+export { sessions } from "./session"
 export { HelmrClient } from "./client"
 export { image, source } from "./image"
 export { logger } from "./logger"
@@ -9,18 +10,45 @@ export { secrets } from "./secret"
 export { queue, task } from "./task"
 export { timers } from "./timers"
 export { tokens } from "./tokens"
-export { workspace, workspaces } from "./workspace"
+export { sandbox, workspaces } from "./workspace"
 
 export type {
-  ClientActorIdRef,
-  ClientActorInputRef,
-  ClientActorKeyRef,
-  ClientActorOutputQuery,
-  ClientActorOutputRef,
-  ClientActorRefBase,
+  ActorListQuery,
+  ActorPage,
+  ActorReadQuery,
+  ActorSnapshot,
   ClientActorsApi,
   ClientActorStartRequest,
 } from "./client-actor"
+
+export type {
+  ClientSessionsApi,
+  SessionCloseReceipt,
+  SessionFailure,
+  SessionInputRecord,
+  SessionInputSource,
+  SessionListQuery,
+  SessionOutputQuery,
+  SessionOutputRecord,
+  SessionRef,
+  SessionSnapshot,
+  SessionStatus,
+} from "./client-session"
+
+export type {
+  ClientSandboxesApi,
+  SandboxListQuery,
+  SandboxPage,
+  SandboxReadQuery,
+  SandboxSnapshot,
+  SandboxWorkspaceCreateRequest,
+} from "./client-sandbox"
+
+export type {
+  ClientWorkspaceRef,
+  ClientWorkspacesApi,
+  WorkspaceListQuery,
+} from "./client-workspace"
 
 export type {
   ClientDeploymentsApi,
@@ -36,10 +64,9 @@ export type {
 
 export type {
   ClientSecretsApi,
-  SecretAddress,
   SecretRef,
   SecretSnapshot,
-  SecretState,
+  SecretStatus,
   SecretValue,
 } from "./client-secret"
 
@@ -49,11 +76,15 @@ export type {
   ClientRunEventQuery,
   ClientRunsApi,
   ClientTasksApi,
+  ClientTaskListQuery,
+  ClientTaskReadQuery,
   ClientTaskStartRequest,
   ClientTokenCreateRequest,
   ClientTokenCreateResult,
   ClientTokensApi,
   HelmrClientOptions,
+  TaskSnapshot,
+  TaskPage,
   RunEventRecord,
   RunLogRecord,
   StreamRunLogRecord,
@@ -63,8 +94,8 @@ export type {
 export type { RequestOptions } from "./request"
 
 export type {
-  SecretNameRef,
-  SecretReferences,
+  SecretAddress,
+  SecretAddresses,
 } from "./secret"
 
 export type {
@@ -82,25 +113,24 @@ export type {
   ActorConfig,
   ActorDefinition,
   ActorExecutionContext,
-  ActorFailure,
-  ActorIdRef,
   ActorInputMetadata,
-  ActorInputRef,
+  SessionInputRef,
   ActorInputResult,
   ActorInputSelf,
   ActorInputSource,
-  ActorKeyRef,
-  ActorPublicStatus,
-  ActorOperationOptions,
-  ActorOperationReceipt,
+  RuntimeSessionFailure,
+  RuntimeSessionStatusValue,
+  RuntimeSessionOperationOptions,
+  RuntimeSessionOperationReceipt,
   ActorOutputRecord,
-  ActorOutputRef,
+  SessionOutputRef,
   ActorOutputSelf,
   ActorReceive,
-  ActorRef,
-  ActorSelf,
+  RuntimeSessionRef,
+  RuntimeSessions,
+  SessionSelf,
   ActorStartOptions,
-  ActorStatus,
+  RuntimeSessionSnapshot,
   CursorPage,
   DefinitionRunDefaults,
   Duration,
@@ -116,7 +146,7 @@ export type {
   PayloadSchema,
   PayloadTaskDefinition,
   QueueDefinition,
-  ReadonlyWorkspaceRef,
+  ExecutionWorkspace,
   ReceiveOptions,
   RetryPolicy,
   RunCause,
@@ -143,9 +173,9 @@ export type {
   TaskStartOptions,
   TaskWait,
   WaitTimeoutError,
-  WorkspaceIdTarget,
-  WorkspaceKeyTarget,
-  WorkspaceTarget,
+  WorkspaceAddress,
+  WorkspaceIdAddress,
+  WorkspaceKeyAddress,
 } from "./contract"
 
 export type {
@@ -181,25 +211,23 @@ export type {
 } from "./tokens"
 
 export type {
-  WorkspaceBuilder,
-  ClientWorkspacesApi,
+  SandboxBuilder,
   RuntimeWorkspaceCreateOptions,
   WorkspaceCreateRequest,
   WorkspaceDeleteRequest,
   WorkspaceDeleteReceipt,
-  WorkspaceDefinition,
+  SandboxDefinition,
   WorkspaceExecRequest,
   WorkspaceExecResult,
   WorkspaceFileEntry,
   WorkspaceFileListQuery,
   WorkspaceFiles,
   WorkspaceIdRef,
-  WorkspaceKeyRef,
   WorkspaceMemory,
   WorkspaceRef,
   WorkspaceRefBase,
   WorkspaceResources,
-  WorkspaceResourceBuilder,
+  SandboxResourceBuilder,
   WorkspaceSecretInput,
   WorkspaceSecretSnapshot,
   WorkspaceSecretPlacement,

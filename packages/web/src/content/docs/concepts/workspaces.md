@@ -17,7 +17,7 @@ The v0 public lifecycle is deliberately narrow:
 | Action | Meaning |
 | --- | --- |
 | Create | Create a Workspace from a deployed declaration, optionally with a stable key and Secret placements. |
-| Retrieve/ref | Address it by resource ID or by declaration plus key. |
+| Retrieve/ref | Address it by resource UUID. A key is a collection lookup filter. |
 | Read files | Read, list, or stat the current committed filesystem. |
 | Exec | Run one bounded command and receive its terminal stdout, stderr, and exit code. |
 | Delete | Remove the Workspace from normal use. |
@@ -25,16 +25,15 @@ The v0 public lifecycle is deliberately narrow:
 Task start always names an existing Workspace. The Workspace can outlive a Run
 and can be reused by later Task or Actor work.
 
-Workspace declarations expose CPU and memory. Helmr chooses the v0 ephemeral
+Sandbox definitions expose CPU and memory. Helmr chooses the v0 ephemeral
 disk default internally and retains the concrete disk allocation for placement
 and capacity enforcement. Persistent Workspace state is a separate storage
 contract.
 
 ```ts
 import { HelmrClient } from "@helmr/sdk"
-import type { repositoryWorkspace } from "./helmr-definitions"
 
-const workspace = await client.workspaces.create<typeof repositoryWorkspace>(
+const workspace = await client.sandboxes.createWorkspace(
   "repository-agent",
   {
     key: "repo:helmrdotdev/helmr",

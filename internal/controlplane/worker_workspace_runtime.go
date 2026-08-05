@@ -15,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (s *Server) workerCreateWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +31,7 @@ func (s *Server) workerCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if err := api.ValidateWorkspaceDeclaredID(request.WorkspaceDeclaredID); err != nil {
+	if err := api.ValidateSandboxDeclaredID(request.SandboxDeclaredID); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -55,7 +54,7 @@ func (s *Server) workerCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 			Kind:  workspaceDeclarationRunPinned,
 			RunID: pgvalue.MustUUIDValue(source.RunID),
 		},
-		DeclaredID: request.WorkspaceDeclaredID,
+		DeclaredID: request.SandboxDeclaredID,
 		Key:        request.Key, Secrets: request.Secrets, IdempotencyKey: idempotencyKey,
 		Authorize: func(ctx context.Context, q db.Querier) error {
 			_, err := authorizeWorkerRunSource(ctx, q, worker, request.Lease)
@@ -79,7 +78,7 @@ func (s *Server) workerCreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, workerapi.CreateWorkspaceResponse{
 		CorrelationID: request.CorrelationID,
-		Completed:     &api.CreateWorkspaceResponse{WorkspaceID: result.WorkspaceID.String()},
+		Completed:     &workerapi.CreateWorkspaceResult{WorkspaceID: result.WorkspaceID.String()},
 	})
 }
 
@@ -498,26 +497,13 @@ func resolveWorkerWorkspace(
 	source workerRunSourceAuthority,
 	address workerapi.WorkspaceAddress,
 ) (db.Workspace, error) {
-	workspaceID := pgtype.UUID{}
-	key := pgtype.Text{}
-	if address.WorkspaceID != "" {
-		id, err := ids.Parse(address.WorkspaceID)
-		if err != nil {
-			return db.Workspace{}, err
-		}
-		workspaceID = pgvalue.UUID(id)
-	} else {
-		key = pgtype.Text{String: address.WorkspaceKey, Valid: true}
-	}
-	id, err := q.ResolveWorkspaceTarget(ctx, db.ResolveWorkspaceTargetParams{
-		OrgID: source.OrgID, ProjectID: source.ProjectID, EnvironmentID: source.EnvironmentID,
-		ID: workspaceID, Key: key,
-	})
+	id, err := ids.Parse(address.WorkspaceID)
 	if err != nil {
 		return db.Workspace{}, err
 	}
 	return q.GetWorkspace(ctx, db.GetWorkspaceParams{
-		OrgID: source.OrgID, ProjectID: source.ProjectID, EnvironmentID: source.EnvironmentID, ID: id,
+		OrgID: source.OrgID, ProjectID: source.ProjectID, EnvironmentID: source.EnvironmentID,
+		ID: pgvalue.UUID(id),
 	})
 }
 
@@ -525,17 +511,8 @@ func validateWorkerWorkspaceRequest(request workerapi.RetrieveWorkspaceRequest) 
 	if err := validateWorkerWorkspaceCorrelation(request.CorrelationID); err != nil {
 		return err
 	}
-	hasID := request.Workspace.WorkspaceID != ""
-	hasKey := request.Workspace.WorkspaceKey != ""
-	if hasID == hasKey {
-		return errors.New("workspace address requires exactly one of workspace_id or workspace_key")
-	}
-	if hasID {
-		if err := ids.Validate(request.Workspace.WorkspaceID); err != nil {
-			return errors.New("workspace ID is invalid")
-		}
-	} else if err := validateWorkspaceKey(&request.Workspace.WorkspaceKey); err != nil {
-		return err
+	if err := ids.Validate(request.Workspace.WorkspaceID); err != nil {
+		return errors.New("workspace ID is invalid")
 	}
 	return nil
 }

@@ -1,9 +1,10 @@
 import type {
   CursorPage,
-  WorkspaceTarget,
+  WorkspaceAddress,
 } from "./contract"
 import type { RequestOptions } from "./request"
 import { resourceID } from "./internal/id"
+import { workspaces } from "./workspace"
 
 export interface ScheduleError {
   readonly code:
@@ -17,10 +18,11 @@ export interface ScheduleError {
 
 export interface ScheduleSnapshot {
   readonly id: string
-  readonly task: string
-  readonly workspace: WorkspaceTarget
+  readonly taskId: string
+  readonly workspace: WorkspaceAddress
+  readonly workspaceId?: string
   readonly cron: Readonly<{ pattern: string; timezone: string }>
-  readonly status: "pending-workspace" | "active" | "errored" | "archived"
+  readonly status: "pending_workspace" | "active" | "errored" | "archived"
   readonly lastError?: ScheduleError
   readonly nextFireAt?: string
   readonly lastFireAt?: string
@@ -63,7 +65,7 @@ export function createClientSchedules(
       return parseSchedule(
         await transport.request(
           "GET",
-          `/api/schedules/${encodeURIComponent(resourceID(scheduleId, "Schedule ID"))}`,
+          `/v1/schedules/${encodeURIComponent(resourceID(scheduleId, "Schedule ID"))}`,
           options.signal === undefined ? {} : { signal: options.signal },
         ),
       )
@@ -79,7 +81,7 @@ export function createClientSchedules(
       const response = scheduleObject(
         await transport.request(
           "GET",
-          `/api/schedules${suffix}`,
+          `/v1/schedules${suffix}`,
           options.signal === undefined ? {} : { signal: options.signal },
         ),
         "Schedule list response",
@@ -107,10 +109,13 @@ function parseSchedule(value: unknown): ScheduleSnapshot {
   if (hasID === hasKey) {
     throw new Error("Schedule workspace must contain exactly one address")
   }
+  const workspaceAddress = hasID
+    ? workspaces.fromId(resourceID(workspace["id"], "Schedule workspace.id"))
+    : workspaces.fromKey(workspace["key"] as string)
   const cron = scheduleObject(input["cron"], "Schedule cron")
   const status = input["status"]
   if (
-    status !== "pending-workspace" &&
+    status !== "pending_workspace" &&
     status !== "active" &&
     status !== "errored" &&
     status !== "archived"
@@ -120,14 +125,30 @@ function parseSchedule(value: unknown): ScheduleSnapshot {
   const lastError = input["last_error"] === undefined
     ? undefined
     : parseScheduleError(input["last_error"])
+  const workspaceId = input["workspace_id"] === undefined
+    ? undefined
+    : resourceID(input["workspace_id"], "Schedule response.workspace_id")
+  if (status === "pending_workspace" && workspaceId !== undefined) {
+    throw new Error("pending Schedule response must not contain workspace_id")
+  }
+  if (
+    (status === "active" || status === "errored") &&
+    workspaceId === undefined
+  ) {
+    throw new Error(`Schedule response with status ${status} requires workspace_id`)
+  }
+  if (
+    workspaceAddress.id !== undefined &&
+    workspaceId !== undefined &&
+    workspaceAddress.id !== workspaceId
+  ) {
+    throw new Error("Schedule response workspace_id must match its ID address")
+  }
   return Object.freeze({
     id: resourceID(input["id"], "Schedule response.id"),
-    task: requiredString(input, "task", "Schedule response"),
-    workspace: Object.freeze(
-      hasID
-        ? { id: resourceID(workspace["id"], "Schedule workspace.id") }
-        : { key: workspace["key"] as string },
-    ) as WorkspaceTarget,
+    taskId: requiredString(input, "task_id", "Schedule response"),
+    workspace: workspaceAddress,
+    ...(workspaceId === undefined ? {} : { workspaceId }),
     cron: Object.freeze({
       pattern: requiredString(cron, "pattern", "Schedule cron"),
       timezone: requiredString(cron, "timezone", "Schedule cron"),

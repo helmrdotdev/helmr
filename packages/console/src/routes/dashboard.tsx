@@ -87,7 +87,7 @@ export function Dashboard() {
     queryKey: ["runs", "dashboard", "failed", scope.selectedProjectID(), scope.selectedEnvironmentID()],
     queryFn: () => listRuns({
       ...runtimeScope(),
-      statuses: ["failed", "system-failed"],
+      statuses: ["failed", "system_failed"],
       limit: 6,
     }),
     enabled: enabled(),
@@ -162,7 +162,7 @@ export function Dashboard() {
                     <For each={scheduleItems()}>
                       {(schedule) => (
                         <tr>
-                          <td><strong>{schedule.task}</strong></td>
+						  <td><strong>{schedule.task_id}</strong></td>
                           <td>{schedule.status}</td>
                           <td><span class={ui.muted}>{formatRelative(schedule.next_fire_at)}</span></td>
                         </tr>

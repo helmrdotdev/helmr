@@ -9,7 +9,8 @@ import {
   task,
   timers,
   tokens,
-  workspace,
+  sandbox,
+  sessions,
   workspaces,
 } from "@helmr/sdk"
 import { describe, expect, test } from "bun:test"
@@ -23,9 +24,13 @@ const locatorURL = new URL(
 describe("runProgram", () => {
   test("reports an Actor return with its terminal cursor", async () => {
     let actorID = ""
+    let sessionID = ""
     const definition = actor({
       id: "worker",
-      run(_self, ctx) { actorID = ctx.actor.id },
+      run(session, ctx) {
+        actorID = ctx.actor.id
+        sessionID = session.id
+      },
     })
     const start = actorStart(0n, 0n)
     const output: Uint8Array[] = []
@@ -37,7 +42,8 @@ describe("runProgram", () => {
       definition,
       output,
     }))
-    expect(actorID).toBe("actor-1")
+    expect(actorID).toBe("worker")
+    expect(sessionID).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
     const outcome = readEvent(output[1]!).event
     expect(outcome.case).toBe("actorOutcome")
     if (outcome.case === "actorOutcome") {
@@ -596,11 +602,11 @@ describe("runProgram", () => {
       id: "deploy",
       async run() {
         sent = await Promise.all([
-          mailbox.ref({ id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" }).input.send(
+          sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").input.send(
             { z: 1, a: 2 },
             { idempotencyKey: "\u0085first\u0085" },
           ),
-          mailbox.ref({ key: "primary" }).input.send(null),
+          sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").input.send(null),
         ])
         return null
       },
@@ -614,18 +620,18 @@ describe("runProgram", () => {
       await sendsWritten.promise
       const first = readEvent(output[1]!).event
       const second = readEvent(output[2]!).event
-      expect(first.case).toBe("actorInputSendRequested")
-      expect(second.case).toBe("actorInputSendRequested")
-      if (first.case !== "actorInputSendRequested" ||
-          second.case !== "actorInputSendRequested") return
-      expect(first.value.declaredId).toBe("mailbox")
-      expect(first.value.address).toEqual({
-        case: "actorId",
-        value: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-      })
+      expect(first.case).toBe("sessionInputSendRequested")
+      expect(second.case).toBe("sessionInputSendRequested")
+      if (first.case !== "sessionInputSendRequested" ||
+          second.case !== "sessionInputSendRequested") return
+      expect(first.value.sessionId).toBe(
+        "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+      )
       expect(first.value.dataJson).toBe('{"a":2,"z":1}')
       expect(first.value.idempotencyKey).toBe("first")
-      expect(second.value.address).toEqual({ case: "actorKey", value: "primary" })
+      expect(second.value.sessionId).toBe(
+        "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+      )
       expect(second.value.dataJson).toBe("null")
       yield actorDecision(second.value.correlationId, "completed", '{"sequence":2}')
       yield actorDecision(first.value.correlationId, "completed", '{"sequence":1}')
@@ -639,8 +645,8 @@ describe("runProgram", () => {
     expect(sent).toEqual([{ sequence: 1 }, { sequence: 2 }])
     expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
       "entrypointReady",
-      "actorInputSendRequested",
-      "actorInputSendRequested",
+      "sessionInputSendRequested",
+      "sessionInputSendRequested",
       "taskOutcome",
     ])
   })
@@ -665,7 +671,7 @@ describe("runProgram", () => {
         return await child.start(
           { imageId: "image-1" },
           {
-            workspace: workspaces.ref({ key: "child-workspace" }),
+            workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
             idempotencyKey: "resize:image-1",
             queue: "priority",
             retry: {
@@ -697,7 +703,9 @@ describe("runProgram", () => {
       expect(event.value.method).toBe("start")
       expect(event.value.payloadPresent).toBe(true)
       expect(event.value.payloadJson).toBe('{"imageId":"image-1"}')
-      expect(event.value.workspaceJson).toBe('{"key":"child-workspace"}')
+      expect(event.value.workspaceJson).toBe(
+        '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}',
+      )
       expect(JSON.parse(event.value.optionsJson)).toEqual({
         metadata: { source: "parent" },
         queue: "priority",
@@ -748,10 +756,10 @@ describe("runProgram", () => {
       id: "deploy",
       async run() {
         await mailbox.start({
-          workspace: workspaces.ref({ key: "actor-workspace" }),
+          workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
         })
         await mailbox.start({
-          workspace: workspaces.ref({ key: "actor-workspace" }),
+          workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
           input: null,
         })
         return null
@@ -771,7 +779,7 @@ describe("runProgram", () => {
         yield actorDecision(
           event.value.correlationId,
           "completed",
-          '{"actor_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33","run_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"}',
+          '{"run_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31","session_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"}',
         )
       }
     }
@@ -794,14 +802,14 @@ describe("runProgram", () => {
   })
 
   test("bridges every Workspace runtime operation through typed events", async () => {
-    const cache = workspace("cache")
+    const cache = sandbox({ id: "cache" })
       .image(image("root").from("debian:bookworm-slim"))
       .resources({ cpu: 1, memory: "1GiB" })
     const observed: string[] = []
     const definition = task({
       id: "deploy",
       async run() {
-        const created = await cache.create({
+        const created = await cache.createWorkspace({
           key: "build-cache",
           secrets: [{ secret: secrets.fromName("TOKEN"), env: "TOKEN" }],
           idempotencyKey: "create:cache",
@@ -836,7 +844,7 @@ describe("runProgram", () => {
       yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
       const responses = [
         '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}',
-        '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","key":"build-cache","declared_id":"cache","status":"available","secrets":[{"name":"TOKEN","env":"TOKEN"}],"last_activity_at":"2026-07-26T00:00:00Z","created_at":"2026-07-26T00:00:00Z","updated_at":"2026-07-26T00:00:00Z"}',
+        '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","key":"build-cache","sandbox_id":"cache","deployment_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35","status":"available","secrets":[{"name":"TOKEN","env":"TOKEN"}],"last_activity_at":"2026-07-26T00:00:00Z","created_at":"2026-07-26T00:00:00Z","updated_at":"2026-07-26T00:00:00Z"}',
         '{"data_base64":"b2s="}',
         '{"path":"result.txt","kind":"file","mode":420,"size_bytes":2}',
         '{"items":[{"path":"result.txt","kind":"file","mode":420,"size_bytes":2}]}',
@@ -848,6 +856,12 @@ describe("runProgram", () => {
         const event = readEvent(output[index + 1]!).event
         if (event.case === undefined) return
         observed.push(event.case)
+        if (event.case === "workspaceCreateRequested") {
+          expect(event.value.secrets).toMatchObject([{
+            name: "TOKEN",
+            placement: { case: "env", value: "TOKEN" },
+          }])
+        }
         const correlationId = "correlationId" in event.value
           ? event.value.correlationId as string
           : ""
@@ -904,7 +918,7 @@ describe("runProgram", () => {
         const called = child.call(
           { imageId: "image-1" },
           {
-            workspace: workspaces.ref({ key: "child-workspace" }),
+            workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
             idempotencyKey: "resize:image-1",
           },
         )
@@ -970,7 +984,7 @@ describe("runProgram", () => {
       async run() {
         try {
           await child.call({
-            workspace: workspaces.ref({ key: "child-workspace" }),
+            workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
             idempotencyKey: "resize:image-1",
           }).unwrap()
         } catch (error) {
@@ -1218,7 +1232,7 @@ describe("runProgram", () => {
       id: "deploy",
       async run() {
         try {
-          await mailbox.ref({ key: "primary" }).input.send(null, {
+          await sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").input.send(null, {
             idempotencyKey: "a".repeat(513),
           })
         } catch (error) {
@@ -1255,7 +1269,7 @@ describe("runProgram", () => {
       id: "worker",
       async run() {
         try {
-          await mailbox.ref({ key: "closed" }).input.send({ hello: "world" })
+          await sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34").input.send({ hello: "world" })
         } catch (error) {
           failure = error
         }
@@ -1269,7 +1283,7 @@ describe("runProgram", () => {
       yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
       await sendWritten.promise
       const send = readEvent(output[1]!).event
-      if (send.case !== "actorInputSendRequested") return
+      if (send.case !== "sessionInputSendRequested") return
       yield actorDecision(send.value.correlationId, "failed", JSON.stringify({
         code: "actor_not_open",
         message: "Actor does not accept new input",
@@ -1302,7 +1316,7 @@ describe("runProgram", () => {
       async run() {
         for (const signal of [preAborted.signal, postEmission.signal]) {
           try {
-            await mailbox.ref({ key: "primary" }).input.send(null, { signal })
+            await sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").input.send(null, { signal })
           } catch (error) {
             failures.push(error)
           }
@@ -1318,7 +1332,7 @@ describe("runProgram", () => {
       yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
       await sendWritten.promise
       const send = readEvent(output[1]!).event
-      if (send.case !== "actorInputSendRequested") return
+      if (send.case !== "sessionInputSendRequested") return
       yield actorDecision(send.value.correlationId, "completed", '{"sequence":3}')
     }
     await runProgram(locatorURL, programIO({
@@ -1338,7 +1352,7 @@ describe("runProgram", () => {
     )).toEqual(["pre-aborted", "post-emission"])
     expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
       "entrypointReady",
-      "actorInputSendRequested",
+      "sessionInputSendRequested",
       "taskOutcome",
     ])
   })
@@ -1851,7 +1865,7 @@ function taskStart(
     }),
     deploymentId: "deployment-1",
     deploymentVersion: "v1",
-    workspaceId: "workspace-1",
+    workspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30",
     baseWorkspaceVersionId: "version-1",
     entrypoint: {
       case: "task",
@@ -1880,12 +1894,12 @@ function actorStart(start: bigint, highWatermark: bigint): runProto.ProgramStart
     }),
     deploymentId: "deployment-1",
     deploymentVersion: "v1",
-    workspaceId: "workspace-1",
+    workspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30",
     baseWorkspaceVersionId: "version-1",
     entrypoint: {
       case: "actor",
       value: create(runProto.ActorStartSchema, {
-        actorId: "actor-1",
+        sessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
         startInputSequence: start,
         inputHighWatermark: highWatermark,
       }),

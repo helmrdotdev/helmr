@@ -23,8 +23,8 @@ WITH candidates AS (
        )
        AND NOT EXISTS (
            SELECT 1
-             FROM actor_records
-            WHERE actor_records.claim_id = idempotency_claims.id
+             FROM session_records
+            WHERE session_records.claim_id = idempotency_claims.id
        )
        AND NOT EXISTS (
            SELECT 1

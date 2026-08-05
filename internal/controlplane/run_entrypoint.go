@@ -79,7 +79,7 @@ func lockRunEntrypointAuthority(
 	if authority.run.Status != db.RunStatusRunning ||
 		authority.run.CurrentAttemptNumber != locators.AttemptNumber ||
 		authority.run.CurrentRunLeaseID != leaseID ||
-		(authority.run.EntrypointKind == "task") == authority.run.ActorID.Valid {
+		(authority.run.EntrypointKind == "task") == authority.run.SessionID.Valid {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 

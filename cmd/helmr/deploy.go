@@ -101,7 +101,7 @@ func deployCommand() *cobra.Command {
 			deployRequest := api.CreateDeploymentRequest{
 				IdempotencyKey:        strings.TrimSpace(idempotencyKey),
 				ContentHash:           tarArchive.Digest,
-				APIVersion:            api.CurrentAPIVersion,
+				APIVersion:            deployment.APIVersion,
 				WorkerProtocolVersion: workerapi.CurrentProtocolVersion,
 				ImageCacheMode:        "prefer",
 			}

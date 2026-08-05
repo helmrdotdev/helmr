@@ -484,6 +484,51 @@ func (q *Queries) DrainAbsentWorkerGroups(ctx context.Context, arg DrainAbsentWo
 	return items, nil
 }
 
+const getCapacityWorkerInstance = `-- name: GetCapacityWorkerInstance :one
+SELECT id, resource_id, worker_group_id, state, claim_version, current_epoch,
+       supports_run, supports_build, draining_at, termination_ready_at, lost_at,
+       created_at, updated_at
+  FROM worker_instances
+ WHERE id = $1
+`
+
+type GetCapacityWorkerInstanceRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	ResourceID         string             `json:"resource_id"`
+	WorkerGroupID      string             `json:"worker_group_id"`
+	State              string             `json:"state"`
+	ClaimVersion       int64              `json:"claim_version"`
+	CurrentEpoch       pgtype.Int8        `json:"current_epoch"`
+	SupportsRun        bool               `json:"supports_run"`
+	SupportsBuild      bool               `json:"supports_build"`
+	DrainingAt         pgtype.Timestamptz `json:"draining_at"`
+	TerminationReadyAt pgtype.Timestamptz `json:"termination_ready_at"`
+	LostAt             pgtype.Timestamptz `json:"lost_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetCapacityWorkerInstance(ctx context.Context, workerInstanceID pgtype.UUID) (GetCapacityWorkerInstanceRow, error) {
+	row := q.db.QueryRow(ctx, getCapacityWorkerInstance, workerInstanceID)
+	var i GetCapacityWorkerInstanceRow
+	err := row.Scan(
+		&i.ID,
+		&i.ResourceID,
+		&i.WorkerGroupID,
+		&i.State,
+		&i.ClaimVersion,
+		&i.CurrentEpoch,
+		&i.SupportsRun,
+		&i.SupportsBuild,
+		&i.DrainingAt,
+		&i.TerminationReadyAt,
+		&i.LostAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getControlPlaneWorkerGroupReadiness = `-- name: GetControlPlaneWorkerGroupReadiness :one
 SELECT id AS worker_group_id,
        state,
@@ -502,51 +547,6 @@ func (q *Queries) GetControlPlaneWorkerGroupReadiness(ctx context.Context, worke
 	row := q.db.QueryRow(ctx, getControlPlaneWorkerGroupReadiness, workerGroupID)
 	var i GetControlPlaneWorkerGroupReadinessRow
 	err := row.Scan(&i.WorkerGroupID, &i.State, &i.Routable)
-	return i, err
-}
-
-const getOperatorWorkerInstance = `-- name: GetOperatorWorkerInstance :one
-SELECT id, resource_id, worker_group_id, state, claim_version, current_epoch,
-       supports_run, supports_build, draining_at, termination_ready_at, lost_at,
-       created_at, updated_at
-  FROM worker_instances
- WHERE id = $1
-`
-
-type GetOperatorWorkerInstanceRow struct {
-	ID                 pgtype.UUID        `json:"id"`
-	ResourceID         string             `json:"resource_id"`
-	WorkerGroupID      string             `json:"worker_group_id"`
-	State              string             `json:"state"`
-	ClaimVersion       int64              `json:"claim_version"`
-	CurrentEpoch       pgtype.Int8        `json:"current_epoch"`
-	SupportsRun        bool               `json:"supports_run"`
-	SupportsBuild      bool               `json:"supports_build"`
-	DrainingAt         pgtype.Timestamptz `json:"draining_at"`
-	TerminationReadyAt pgtype.Timestamptz `json:"termination_ready_at"`
-	LostAt             pgtype.Timestamptz `json:"lost_at"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
-}
-
-func (q *Queries) GetOperatorWorkerInstance(ctx context.Context, workerInstanceID pgtype.UUID) (GetOperatorWorkerInstanceRow, error) {
-	row := q.db.QueryRow(ctx, getOperatorWorkerInstance, workerInstanceID)
-	var i GetOperatorWorkerInstanceRow
-	err := row.Scan(
-		&i.ID,
-		&i.ResourceID,
-		&i.WorkerGroupID,
-		&i.State,
-		&i.ClaimVersion,
-		&i.CurrentEpoch,
-		&i.SupportsRun,
-		&i.SupportsBuild,
-		&i.DrainingAt,
-		&i.TerminationReadyAt,
-		&i.LostAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
 	return i, err
 }
 
@@ -606,7 +606,7 @@ func (q *Queries) GetWorkerInstanceStateByResource(ctx context.Context, arg GetW
 	return i, err
 }
 
-const listOperatorWorkerInstances = `-- name: ListOperatorWorkerInstances :many
+const listCapacityWorkerInstances = `-- name: ListCapacityWorkerInstances :many
 WITH current_instances AS (
     SELECT DISTINCT ON (worker_group_id, resource_id)
            id, resource_id, worker_group_id, state, claim_version, current_epoch,
@@ -632,14 +632,14 @@ SELECT id, resource_id, worker_group_id, state, claim_version, current_epoch, su
  LIMIT $2
 `
 
-type ListOperatorWorkerInstancesParams struct {
+type ListCapacityWorkerInstancesParams struct {
 	States        []string    `json:"states"`
 	RowLimit      int32       `json:"row_limit"`
 	WorkerGroupID pgtype.Text `json:"worker_group_id"`
 	ResourceIds   []string    `json:"resource_ids"`
 }
 
-type ListOperatorWorkerInstancesRow struct {
+type ListCapacityWorkerInstancesRow struct {
 	ID                 pgtype.UUID        `json:"id"`
 	ResourceID         string             `json:"resource_id"`
 	WorkerGroupID      string             `json:"worker_group_id"`
@@ -655,8 +655,8 @@ type ListOperatorWorkerInstancesRow struct {
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
-func (q *Queries) ListOperatorWorkerInstances(ctx context.Context, arg ListOperatorWorkerInstancesParams) ([]ListOperatorWorkerInstancesRow, error) {
-	rows, err := q.db.Query(ctx, listOperatorWorkerInstances,
+func (q *Queries) ListCapacityWorkerInstances(ctx context.Context, arg ListCapacityWorkerInstancesParams) ([]ListCapacityWorkerInstancesRow, error) {
+	rows, err := q.db.Query(ctx, listCapacityWorkerInstances,
 		arg.States,
 		arg.RowLimit,
 		arg.WorkerGroupID,
@@ -666,9 +666,9 @@ func (q *Queries) ListOperatorWorkerInstances(ctx context.Context, arg ListOpera
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListOperatorWorkerInstancesRow
+	var items []ListCapacityWorkerInstancesRow
 	for rows.Next() {
-		var i ListOperatorWorkerInstancesRow
+		var i ListCapacityWorkerInstancesRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ResourceID,

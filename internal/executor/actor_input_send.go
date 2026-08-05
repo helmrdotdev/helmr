@@ -18,7 +18,7 @@ const maxJavaScriptSafeInteger = int64(9007199254740991)
 
 func (task *guestRunLeaseTask) handleActorInputSend(
 	ctx context.Context,
-	requested *runv0.ActorInputSendRequested,
+	requested *runv0.SessionInputSendRequested,
 ) error {
 	request, err := workerActorInputSendRequest(requested)
 	if err != nil {
@@ -70,7 +70,7 @@ func (task *guestRunLeaseTask) handleActorInputSend(
 }
 
 func workerActorInputSendRequest(
-	requested *runv0.ActorInputSendRequested,
+	requested *runv0.SessionInputSendRequested,
 ) (workerapi.SendActorInputRequest, error) {
 	if requested == nil {
 		return workerapi.SendActorInputRequest{}, errors.New("actor input send request is required")
@@ -79,24 +79,15 @@ func workerActorInputSendRequest(
 		return workerapi.SendActorInputRequest{}, errors.New("actor input send correlation ID is invalid")
 	}
 	request := workerapi.SendActorInputRequest{
-		CorrelationID:   requested.GetCorrelationId(),
-		ActorDeclaredID: requested.GetDeclaredId(),
-		Input:           json.RawMessage(requested.GetDataJson()),
-		IdempotencyKey:  requested.GetIdempotencyKey(),
+		CorrelationID:  requested.GetCorrelationId(),
+		SessionID:      requested.GetSessionId(),
+		Input:          json.RawMessage(requested.GetDataJson()),
+		IdempotencyKey: requested.GetIdempotencyKey(),
 	}
-	switch address := requested.GetAddress().(type) {
-	case *runv0.ActorInputSendRequested_ActorId:
-		request.ActorID = address.ActorId
-	case *runv0.ActorInputSendRequested_ActorKey:
-		request.ActorKey = address.ActorKey
-	default:
-		return workerapi.SendActorInputRequest{}, errors.New("actor input send address is required")
-	}
-	if err := api.ValidateActorDeclaredID(request.ActorDeclaredID); err != nil {
+	if err := api.ValidateActorID(request.SessionID); err != nil {
 		return workerapi.SendActorInputRequest{}, err
 	}
-	if err := api.ValidateSendActorInputRequest(api.SendActorInputRequest{
-		ActorID: request.ActorID, ActorKey: request.ActorKey,
+	if err := api.ValidateSendSessionInputRequest(api.SendSessionInputRequest{
 		Input: request.Input, IdempotencyKey: request.IdempotencyKey,
 	}); err != nil {
 		return workerapi.SendActorInputRequest{}, err

@@ -134,7 +134,7 @@ func lockRunPlacementAuthority(
 	var actorNextInputSequence int64
 	var err error
 	if err := tx.QueryRow(ctx, `
-SELECT entrypoint_kind, actor_id
+SELECT entrypoint_kind, session_id
   FROM runs
  WHERE org_id = $1
    AND id = $2
@@ -164,7 +164,7 @@ SELECT entrypoint_kind, actor_id
 	if authority.ownerActorID.Valid {
 		err := tx.QueryRow(ctx, `
 SELECT run_generation, committed_input_sequence, next_input_sequence
-  FROM actors
+  FROM sessions
  WHERE id = $1
    AND current_run_id = $2
    AND state IN ('open', 'closing')
@@ -222,8 +222,8 @@ SELECT runs.id,
 	       restore_wait.parent_writer_generation,
 	       restore_wait.child_writer_generation,
 	       coalesce(restore_wait.condition_state = 'completed', false),
-	       runs.actor_start_input_sequence,
-       runs.actor_start_input_high_watermark
+	       runs.session_input_start_sequence,
+       runs.session_input_high_watermark
   FROM runs
   LEFT JOIN LATERAL (
        SELECT handoff.id,
@@ -332,9 +332,9 @@ SELECT runs.id,
    AND runs.id = $2
    AND runs.state_version = $3
    AND runs.entrypoint_kind = $4
-   AND (($4 = 'task' AND runs.actor_id IS NULL
+   AND (($4 = 'task' AND runs.session_id IS NULL
          AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child'))
-        OR ($4 = 'actor' AND runs.actor_id = $5
+        OR ($4 = 'actor' AND runs.session_id = $5
             AND runs.cause_kind IN ('actor_start', 'continuation')
             AND runs.parent_run_id IS NULL))
    AND runs.status = 'queued'
@@ -425,17 +425,17 @@ SELECT runs.id,
 		return runPlacementAuthority{}, pgx.ErrNoRows
 	}
 	var manifest []byte
-	workspaceOwnerPredicate := "workspaces.owner_run_id = $5 AND workspaces.owner_actor_id IS NULL"
+	workspaceOwnerPredicate := "workspaces.owner_run_id = $5 AND workspaces.owner_session_id IS NULL"
 	workspaceOwnerID := authority.runID
 	if authority.handoffChildWaitID.Valid {
 		workspaceOwnerPredicate = `(
 			(workspaces.owner_run_id IS NOT NULL
-			 OR workspaces.owner_actor_id IS NOT NULL)
+			 OR workspaces.owner_session_id IS NOT NULL)
 			AND $5::uuid IS NULL
 		)`
 		workspaceOwnerID = pgtype.UUID{}
 	} else if authority.entrypointKind == "actor" {
-		workspaceOwnerPredicate = "workspaces.owner_actor_id = $5 AND workspaces.owner_run_id IS NULL"
+		workspaceOwnerPredicate = "workspaces.owner_session_id = $5 AND workspaces.owner_run_id IS NULL"
 		workspaceOwnerID = authority.actorID
 	}
 	err = tx.QueryRow(ctx, fmt.Sprintf(`
@@ -450,8 +450,8 @@ SELECT workspaces.deployment_definition_id,
   JOIN deployment_definitions AS workspace_definitions
     ON workspace_definitions.environment_id = workspaces.environment_id
    AND workspace_definitions.id = workspaces.deployment_definition_id
-   AND workspace_definitions.kind = 'workspace'
-   AND workspace_definitions.declared_id = workspaces.workspace_declared_id
+   AND workspace_definitions.kind = 'sandbox'
+   AND workspace_definitions.declared_id = workspaces.sandbox_declared_id
  WHERE workspace_environment.org_id = $1
    AND workspace_environment.project_id = $2
    AND workspaces.environment_id = $3
@@ -528,10 +528,10 @@ SELECT EXISTS (
 	}
 
 	var attemptBaseVersionID pgtype.UUID
-	var attemptActorStartInputSequence pgtype.Int8
+	var attemptSessionInputStartSequence pgtype.Int8
 	err = tx.QueryRow(ctx, `
 SELECT run_attempts.base_workspace_version_id,
-       run_attempts.actor_start_input_sequence
+       run_attempts.session_input_start_sequence
   FROM run_attempts
   JOIN workspace_versions
     ON workspace_versions.workspace_id = run_attempts.workspace_id
@@ -548,7 +548,7 @@ SELECT run_attempts.base_workspace_version_id,
 		authority.workspaceID,
 		authority.entrypointKind,
 		authority.handoffChildWaitID.Valid,
-	).Scan(&attemptBaseVersionID, &attemptActorStartInputSequence)
+	).Scan(&attemptBaseVersionID, &attemptSessionInputStartSequence)
 	if err != nil {
 		return runPlacementAuthority{}, err
 	}
@@ -556,8 +556,8 @@ SELECT run_attempts.base_workspace_version_id,
 		authority.baseVersionID = attemptBaseVersionID
 	}
 	if authority.entrypointKind == "actor" &&
-		(!actorStartInputSequence.Valid || !attemptActorStartInputSequence.Valid ||
-			attemptActorStartInputSequence.Int64 != actorStartInputSequence.Int64 ||
+		(!actorStartInputSequence.Valid || !attemptSessionInputStartSequence.Valid ||
+			attemptSessionInputStartSequence.Int64 != actorStartInputSequence.Int64 ||
 			!actorStartInputHighWatermark.Valid ||
 			actorStartInputSequence.Int64 > actorStartInputHighWatermark.Int64 ||
 			actorCommittedInputSequence < actorStartInputSequence.Int64 ||
@@ -707,7 +707,7 @@ SELECT deployments.id
 	if err != nil {
 		return runPlacementAuthority{}, err
 	}
-	var workspaceManifest deployment.WorkspaceManifest
+	var workspaceManifest deployment.SandboxManifest
 	decoder := json.NewDecoder(bytes.NewReader(manifest))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&workspaceManifest); err != nil {
@@ -737,7 +737,7 @@ WITH RECURSIVE ancestors AS (
            parent.workspace_id,
            parent.parent_run_id,
            parent.parent_owns_lifecycle,
-           parent.actor_id
+           parent.session_id
       FROM run_waits AS handoff
       JOIN runs AS parent
         ON parent.environment_id = handoff.environment_id
@@ -761,7 +761,7 @@ WITH RECURSIVE ancestors AS (
            parent.workspace_id,
            parent.parent_run_id,
            parent.parent_owns_lifecycle,
-           parent.actor_id
+           parent.session_id
       FROM ancestors AS child
       JOIN runs AS parent
         ON parent.environment_id = child.environment_id
@@ -769,9 +769,9 @@ WITH RECURSIVE ancestors AS (
        AND parent.workspace_id = child.workspace_id
      WHERE child.parent_owns_lifecycle IS TRUE
 )
-SELECT actor_id, id
+SELECT session_id, id
   FROM ancestors
- WHERE actor_id IS NOT NULL`,
+ WHERE session_id IS NOT NULL`,
 		childRunID,
 	)
 	if err != nil {
@@ -808,7 +808,7 @@ WITH RECURSIVE ancestors AS (
            parent.workspace_id,
            parent.parent_run_id,
            parent.parent_owns_lifecycle,
-           parent.actor_id,
+           parent.session_id,
            0 AS depth
       FROM run_waits AS handoff
       JOIN runs AS parent
@@ -834,7 +834,7 @@ WITH RECURSIVE ancestors AS (
            parent.workspace_id,
            parent.parent_run_id,
            parent.parent_owns_lifecycle,
-           parent.actor_id,
+           parent.session_id,
            child.depth + 1
       FROM ancestors AS child
       JOIN runs AS parent
@@ -845,7 +845,7 @@ WITH RECURSIVE ancestors AS (
 )
 SELECT ancestors.wait_id,
        locked_parent.id,
-       locked_parent.actor_id
+       locked_parent.session_id
   FROM ancestors
   JOIN runs AS locked_parent
     ON locked_parent.id = ancestors.id
@@ -1133,11 +1133,11 @@ SELECT handoff.run_id,
        handoff.prior_run_lease_id,
        (
            (workspaces.owner_run_id = parent.id
-            AND workspaces.owner_actor_id IS NULL)
+            AND workspaces.owner_session_id IS NULL)
            OR
-           (workspaces.owner_actor_id = parent.actor_id
+           (workspaces.owner_session_id = parent.session_id
             AND workspaces.owner_run_id IS NULL
-            AND parent.actor_id IS NOT NULL)
+            AND parent.session_id IS NOT NULL)
        )
   FROM run_waits AS handoff
   JOIN runs AS parent

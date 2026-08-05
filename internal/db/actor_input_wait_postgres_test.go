@@ -38,7 +38,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 			register := func() RunWait {
 				wait, err := fixture.queries.RegisterActorInputRunWait(ctx, RegisterActorInputRunWaitParams{
 					ID: pgvalue.UUID(waitID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
-					IdleTimeoutMs: pgtype.Int8{Int64: 30_000, Valid: true}, ActorID: pgvalue.UUID(actorID),
+					IdleTimeoutMs: pgtype.Int8{Int64: 30_000, Valid: true}, SessionID: pgvalue.UUID(actorID),
 					AfterInputSequence:             pgtype.Int8{Int64: 2, Valid: true},
 					RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("actor-input-wait")), AttemptNumber: 1,
 					ActorSpeculativeInputSequence: pgtype.Int8{Int64: 2, Valid: true},
@@ -54,7 +54,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 			}
 			appendRecord := func() AppendActorInputRecordRow {
 				record, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
-					EnvironmentID: pgvalue.UUID(fixture.environmentID), ActorID: pgvalue.UUID(actorID),
+					EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID),
 					ID: pgvalue.UUID(recordID), Data: []byte(`{"message":"ready"}`), SourceKind: pgvalue.Text("external"),
 				})
 				if err != nil {
@@ -76,7 +76,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 				record = appendRecord()
 			}
 			pending, err := fixture.queries.GetPendingActorInputRunWait(ctx, GetPendingActorInputRunWaitParams{
-				EnvironmentID: pgvalue.UUID(fixture.environmentID), ActorID: pgvalue.UUID(actorID),
+				EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID),
 				RunID: pgvalue.UUID(work.runID), AttemptNumber: 1,
 				AfterInputSequence: pgtype.Int8{Int64: 2, Valid: true},
 			})
@@ -120,7 +120,7 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 		go func() {
 			start.Wait()
 			row, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
-				EnvironmentID: pgvalue.UUID(fixture.environmentID), ActorID: pgvalue.UUID(actorID),
+				EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID),
 				ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Data: []byte(`{"sender":` + string(rune('0'+index)) + `}`),
 				SourceKind: pgvalue.Text("external"),
 			})
@@ -151,12 +151,12 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 		INSERT INTO idempotency_claims (
 			id, environment_id, operation, slot_hash,
 			request_fingerprint, accepted_at, expires_at
-		) VALUES ($1, $2, 'actor.input.send', $3, $4, now(), now() + interval '30 days')
+		) VALUES ($1, $2, 'session.input.send', $3, $4, now(), now() + interval '30 days')
 	`, claimID, fixture.environmentID, dbtest.Hash("actor-input-slot"), fingerprint)
 	recordID := uuid.Must(uuid.NewV7())
 	first, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
-		ActorID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: fingerprint,
+		SessionID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: fingerprint,
 		ID: pgvalue.UUID(recordID), Data: []byte(`{"keyed":true}`), SourceKind: pgvalue.Text("run"),
 		SourceRunID: pgvalue.UUID(work.runID),
 	})
@@ -166,21 +166,21 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 	}
 	claim, err := fixture.queries.CompleteActorInputClaim(ctx, CompleteActorInputClaimParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
-		RequestFingerprint: fingerprint, ActorID: pgvalue.UUID(actorID), RecordID: first.ID,
+		RequestFingerprint: fingerprint, SessionID: pgvalue.UUID(actorID), RecordID: first.ID,
 	})
 	if err != nil || claim.State != "completed" {
 		t.Fatalf("claim completion = %+v, %v", claim, err)
 	}
 	var receipt map[string]any
-	if err := json.Unmarshal(claim.Receipt, &receipt); err != nil || receipt["recordId"] != recordID.String() || receipt["sequence"] != float64(first.Sequence) {
+	if err := json.Unmarshal(claim.Receipt, &receipt); err != nil || receipt["session_record_id"] != recordID.String() || receipt["sequence"] != float64(first.Sequence) {
 		t.Fatalf("claim receipt = %s, %v", claim.Receipt, err)
 	}
 	dbtest.MustExec(t, ctx, fixture.pool, `
-		UPDATE actors SET manual_run_cancelled = true WHERE id = $1
+		UPDATE sessions SET manual_run_cancelled = true WHERE id = $1
 	`, actorID)
 	replay, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
-		ActorID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: fingerprint,
+		SessionID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: fingerprint,
 		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Data: []byte(`{"keyed":true}`), SourceKind: pgvalue.Text("run"),
 		SourceRunID: pgvalue.UUID(work.runID),
 	})
@@ -189,7 +189,7 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 		t.Fatalf("keyed replay = %+v, %v", replay, err)
 	}
 	var manualRunCancelled bool
-	if err := fixture.pool.QueryRow(ctx, `SELECT manual_run_cancelled FROM actors WHERE id = $1`, actorID).Scan(&manualRunCancelled); err != nil {
+	if err := fixture.pool.QueryRow(ctx, `SELECT manual_run_cancelled FROM sessions WHERE id = $1`, actorID).Scan(&manualRunCancelled); err != nil {
 		t.Fatal(err)
 	}
 	if !manualRunCancelled {
@@ -197,7 +197,7 @@ func TestActorInputAppendConcurrentSequencesAndKeyedReplay(t *testing.T) {
 	}
 	mismatch, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
-		ActorID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: bytes.Repeat([]byte{8}, 32),
+		SessionID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: bytes.Repeat([]byte{8}, 32),
 		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Data: []byte(`{"keyed":false}`), SourceKind: pgvalue.Text("run"),
 		SourceRunID: pgvalue.UUID(work.runID),
 	})
@@ -225,13 +225,13 @@ func TestActorInputRunSourceTransactionRollbackLeavesNoResidue(t *testing.T) {
 		INSERT INTO idempotency_claims (
 			id, environment_id, operation, slot_hash,
 			request_fingerprint, accepted_at, expires_at
-		) VALUES ($1, $2, 'actor.input.send', $3, $4, now(), now() + interval '30 days')
+		) VALUES ($1, $2, 'session.input.send', $3, $4, now(), now() + interval '30 days')
 	`, claimID, fixture.environmentID, dbtest.Hash("run-source-rollback-scope"),
 		fingerprint)
 	queries := New(tx)
 	appended, err := queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
-		ActorID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: fingerprint,
+		SessionID: pgvalue.UUID(actorID), ExpectedRequestFingerprint: fingerprint,
 		ID: pgvalue.UUID(recordID), Data: []byte(`{"rollback":true}`),
 		SourceKind: pgvalue.Text("run"), SourceRunID: pgvalue.UUID(work.runID),
 	})
@@ -241,13 +241,13 @@ func TestActorInputRunSourceTransactionRollbackLeavesNoResidue(t *testing.T) {
 	if _, err := queries.CompleteActorInputClaim(ctx, CompleteActorInputClaimParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), ClaimID: pgvalue.UUID(claimID),
 		RequestFingerprint: fingerprint,
-		ActorID:            pgvalue.UUID(actorID), RecordID: appended.ID,
+		SessionID:          pgvalue.UUID(actorID), RecordID: appended.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := queries.CreateActorInputReconcileOutbox(ctx, CreateActorInputReconcileOutboxParams{
 		ID: pgvalue.UUID(reconcileID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
-		ActorID: pgvalue.UUID(actorID), RecordID: appended.ID,
+		SessionID: pgvalue.UUID(actorID), RecordID: appended.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -261,11 +261,11 @@ func TestActorInputRunSourceTransactionRollbackLeavesNoResidue(t *testing.T) {
 	var recordCount, claimCount, outboxCount int
 	if err := fixture.pool.QueryRow(ctx, `
 		SELECT next_input_sequence,
-		       (SELECT count(*) FROM actor_records WHERE id = $2),
+		       (SELECT count(*) FROM session_records WHERE id = $2),
 		       (SELECT count(*) FROM idempotency_claims
-		         WHERE environment_id = $3 AND operation = 'actor.input.send'),
+		         WHERE environment_id = $3 AND operation = 'session.input.send'),
 		       (SELECT count(*) FROM outbox_messages WHERE id = $4)
-		  FROM actors
+		  FROM sessions
 		 WHERE id = $1
 	`, actorID, recordID, fixture.environmentID, reconcileID).Scan(
 		&nextInputSequence, &recordCount, &claimCount, &outboxCount,
@@ -333,7 +333,7 @@ func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testin
 	const maxSafeSequence int64 = 9_007_199_254_740_991
 	const exhaustedSentinel int64 = maxSafeSequence + 1
 	dbtest.MustExec(t, ctx, fixture.pool, `
-		UPDATE actors SET next_input_sequence = $2 WHERE id = $1
+		UPDATE sessions SET next_input_sequence = $2 WHERE id = $1
 	`, actorID, maxSafeSequence)
 
 	claimID := uuid.Must(uuid.NewV7())
@@ -342,13 +342,13 @@ func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testin
 		INSERT INTO idempotency_claims (
 			id, environment_id, operation, slot_hash,
 			request_fingerprint, accepted_at, expires_at
-		) VALUES ($1, $2, 'actor.input.send', $3, $4, now(), now() + interval '30 days')
+		) VALUES ($1, $2, 'session.input.send', $3, $4, now(), now() + interval '30 days')
 	`, claimID, fixture.environmentID, dbtest.Hash("actor-input-max-slot"), fingerprint)
 	recordID := uuid.Must(uuid.NewV7())
 	first, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID:              pgvalue.UUID(fixture.environmentID),
 		ClaimID:                    pgvalue.UUID(claimID),
-		ActorID:                    pgvalue.UUID(actorID),
+		SessionID:                  pgvalue.UUID(actorID),
 		ExpectedRequestFingerprint: fingerprint,
 		ID:                         pgvalue.UUID(recordID),
 		Data:                       []byte(`{"at":"maximum"}`),
@@ -361,7 +361,7 @@ func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testin
 		EnvironmentID:      pgvalue.UUID(fixture.environmentID),
 		ClaimID:            pgvalue.UUID(claimID),
 		RequestFingerprint: fingerprint,
-		ActorID:            pgvalue.UUID(actorID),
+		SessionID:          pgvalue.UUID(actorID),
 		RecordID:           first.ID,
 	})
 	if err != nil || claim.State != "completed" {
@@ -370,7 +370,7 @@ func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testin
 
 	_, err = fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID: pgvalue.UUID(fixture.environmentID),
-		ActorID:       pgvalue.UUID(actorID),
+		SessionID:     pgvalue.UUID(actorID),
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Data:          []byte(`{"after":"maximum"}`),
 		SourceKind:    pgvalue.Text("external"),
@@ -382,7 +382,7 @@ func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testin
 	replay, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
 		EnvironmentID:              pgvalue.UUID(fixture.environmentID),
 		ClaimID:                    pgvalue.UUID(claimID),
-		ActorID:                    pgvalue.UUID(actorID),
+		SessionID:                  pgvalue.UUID(actorID),
 		ExpectedRequestFingerprint: fingerprint,
 		ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Data:                       []byte(`{"at":"maximum"}`),
@@ -396,9 +396,9 @@ func TestActorInputSequenceSafeIntegerBoundaryPreservesCompletedReplay(t *testin
 	var recordCount int
 	if err := fixture.pool.QueryRow(ctx, `
 		SELECT next_input_sequence,
-		       (SELECT count(*) FROM actor_records
-		         WHERE actor_id = actors.id AND direction = 'input' AND sequence = $2)
-		  FROM actors
+		       (SELECT count(*) FROM session_records
+		         WHERE session_id = sessions.id AND direction = 'input' AND sequence = $2)
+		  FROM sessions
 		 WHERE id = $1
 	`, actorID, maxSafeSequence).Scan(&nextInputSequence, &recordCount); err != nil {
 		t.Fatal(err)
@@ -422,7 +422,7 @@ func TestActorInputWaitTimeoutReleasesHotRun(t *testing.T) {
 	wait, err := fixture.queries.RegisterActorInputRunWait(ctx, RegisterActorInputRunWaitParams{
 		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), EnvironmentID: pgvalue.UUID(fixture.environmentID),
 		TimeoutAt:     pgvalue.Timestamptz(time.Now().Add(-time.Millisecond)),
-		IdleTimeoutMs: pgtype.Int8{Int64: 30_000, Valid: true}, ActorID: pgvalue.UUID(actorID),
+		IdleTimeoutMs: pgtype.Int8{Int64: 30_000, Valid: true}, SessionID: pgvalue.UUID(actorID),
 		AfterInputSequence:             pgtype.Int8{Int64: 2, Valid: true},
 		RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("actor-input-timeout")), AttemptNumber: 1,
 		ActorSpeculativeInputSequence: pgtype.Int8{Int64: 2, Valid: true}, CurrentRunLeaseID: pgvalue.UUID(work.leaseID),
@@ -461,7 +461,7 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	actorID := fixture.convertToActor(t, ctx, work, `{"enabled":false}`)
 	var workspaceID uuid.UUID
-	if err := fixture.pool.QueryRow(ctx, `SELECT workspace_id FROM actors WHERE id = $1`, actorID).Scan(&workspaceID); err != nil {
+	if err := fixture.pool.QueryRow(ctx, `SELECT workspace_id FROM sessions WHERE id = $1`, actorID).Scan(&workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, fixture.pool, `
@@ -481,27 +481,27 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 		 WHERE id = $1
 	`, work.runID)
 	dbtest.MustExec(t, ctx, fixture.pool, `
-		UPDATE actors
+		UPDATE sessions
 		   SET current_run_id = NULL, committed_input_sequence = 2,
 		       manual_run_cancelled = true
 		 WHERE id = $1
 	`, actorID)
 	input, err := fixture.queries.AppendActorInputRecord(ctx, AppendActorInputRecordParams{
-		EnvironmentID: pgvalue.UUID(fixture.environmentID), ActorID: pgvalue.UUID(actorID),
+		EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID),
 		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Data: []byte(`{"wake":true}`), SourceKind: pgvalue.Text("external"),
 	})
 	if err != nil || input.Sequence != 3 {
 		t.Fatalf("wake input = %+v, %v", input, err)
 	}
 	var manualRunCancelled bool
-	if err := fixture.pool.QueryRow(ctx, `SELECT manual_run_cancelled FROM actors WHERE id = $1`, actorID).Scan(&manualRunCancelled); err != nil {
+	if err := fixture.pool.QueryRow(ctx, `SELECT manual_run_cancelled FROM sessions WHERE id = $1`, actorID).Scan(&manualRunCancelled); err != nil {
 		t.Fatal(err)
 	}
 	if manualRunCancelled {
 		t.Fatal("new input did not clear the manual Run cancellation hold")
 	}
 	dbtest.MustExec(t, ctx, fixture.pool, `
-		UPDATE actors
+		UPDATE sessions
 		   SET state = 'closing', close_sequence = 3
 		 WHERE id = $1
 	`, actorID)
@@ -520,7 +520,7 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 				RunID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				QueueOriginAt: pgvalue.Timestamptz(time.Now().UTC()),
 				TraceID:       pgvalue.Text("11111111111111111111111111111111"), RootSpanID: "2222222222222222",
-				EnvironmentID: pgvalue.UUID(fixture.environmentID), ActorID: pgvalue.UUID(actorID),
+				EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID),
 				WorkspaceID: pgvalue.UUID(workspaceID), ExpectedRunGeneration: 1,
 			})
 			results <- result{run: run, err: err}
@@ -542,16 +542,16 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 		}
 	}
 	if createdCount != 1 || noRowsCount != 1 || created.CauseKind != "continuation" ||
-		created.ActorStartInputSequence.Int64 != 2 || created.ActorStartInputHighWatermark.Int64 != 3 {
+		created.SessionInputStartSequence.Int64 != 2 || created.SessionInputHighWatermark.Int64 != 3 {
 		t.Fatalf("continuation CAS = created %d no-rows %d run %+v", createdCount, noRowsCount, created)
 	}
 	var actorCurrentRun uuid.UUID
 	var runCount, attemptCount int
 	if err := fixture.pool.QueryRow(ctx, `
-		SELECT actors.current_run_id,
-		       (SELECT count(*) FROM runs WHERE actor_id = actors.id AND cause_kind = 'continuation'),
-		       (SELECT count(*) FROM run_attempts WHERE run_id = actors.current_run_id)
-		  FROM actors WHERE actors.id = $1
+		SELECT sessions.current_run_id,
+		       (SELECT count(*) FROM runs WHERE session_id = sessions.id AND cause_kind = 'continuation'),
+		       (SELECT count(*) FROM run_attempts WHERE run_id = sessions.current_run_id)
+		  FROM sessions WHERE sessions.id = $1
 	`, actorID).Scan(&actorCurrentRun, &runCount, &attemptCount); err != nil {
 		t.Fatal(err)
 	}

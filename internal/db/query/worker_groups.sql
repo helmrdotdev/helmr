@@ -227,14 +227,14 @@ SELECT id, resource_id, worker_group_id, state, claim_version, current_epoch
  ORDER BY (state IN ('registering', 'active', 'draining')) DESC, created_at DESC
  LIMIT 1;
 
--- name: GetOperatorWorkerInstance :one
+-- name: GetCapacityWorkerInstance :one
 SELECT id, resource_id, worker_group_id, state, claim_version, current_epoch,
        supports_run, supports_build, draining_at, termination_ready_at, lost_at,
        created_at, updated_at
   FROM worker_instances
  WHERE id = sqlc.arg(worker_instance_id);
 
--- name: ListOperatorWorkerInstances :many
+-- name: ListCapacityWorkerInstances :many
 WITH current_instances AS (
     SELECT DISTINCT ON (worker_group_id, resource_id)
            id, resource_id, worker_group_id, state, claim_version, current_epoch,

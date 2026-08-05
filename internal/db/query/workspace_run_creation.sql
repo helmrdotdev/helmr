@@ -2,14 +2,14 @@
 WITH selected_definition AS (
     SELECT deployment_definitions.environment_id,
            deployment_definitions.id AS deployment_definition_id,
-           deployment_definitions.declared_id AS workspace_declared_id,
+           deployment_definitions.declared_id AS sandbox_declared_id,
            projects.default_region_id
       FROM runs
       JOIN deployment_definitions
         ON deployment_definitions.environment_id = runs.environment_id
        AND deployment_definitions.deployment_id = runs.deployment_id
-       AND deployment_definitions.kind = 'workspace'
-       AND deployment_definitions.declared_id = sqlc.arg(workspace_declared_id)
+       AND deployment_definitions.kind = 'sandbox'
+       AND deployment_definitions.declared_id = sqlc.arg(sandbox_declared_id)
       JOIN environments
         ON environments.id = runs.environment_id
       JOIN projects
@@ -23,7 +23,7 @@ WITH selected_definition AS (
         id,
         environment_id,
         region_id,
-        workspace_declared_id,
+        sandbox_declared_id,
         deployment_definition_id,
         head_version_id,
         key
@@ -31,7 +31,7 @@ WITH selected_definition AS (
     SELECT sqlc.arg(id),
            selected_definition.environment_id,
            selected_definition.default_region_id,
-           selected_definition.workspace_declared_id,
+           selected_definition.sandbox_declared_id,
            selected_definition.deployment_definition_id,
            sqlc.arg(initial_version_id),
            sqlc.narg(key)

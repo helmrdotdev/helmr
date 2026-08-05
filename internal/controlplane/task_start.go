@@ -42,7 +42,7 @@ type taskStartRequest struct {
 	TaskDeclaredID string
 	PayloadPresent bool
 	Payload        json.RawMessage
-	Workspace      api.WorkspaceTarget
+	WorkspaceID    uuid.UUID
 	IdempotencyKey string
 	QueueName      string
 	ConcurrencyKey *string
@@ -144,36 +144,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			return errTaskPayloadPresenceInvalid
 		}
 
-		var workspaceIDParam pgtype.UUID
-		if normalized.Workspace.ID != nil {
-			id, err := ids.Parse(*normalized.Workspace.ID)
-			if err != nil {
-				return errTaskWorkspaceNotFound
-			}
-			workspaceIDParam = pgvalue.UUID(id)
-		}
-		workspaceID, err := work.q.ResolveWorkspaceTarget(ctx, db.ResolveWorkspaceTargetParams{
-			OrgID:         pgvalue.UUID(normalized.OrgID),
-			ProjectID:     pgvalue.UUID(normalized.ProjectID),
-			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
-			ID:            workspaceIDParam,
-			Key:           pgvalue.TextPtr(normalized.Workspace.Key),
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errTaskWorkspaceNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("resolve task start workspace: %w", err)
-		}
-		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, workspaceID)
-		if err != nil {
-			return fmt.Errorf("lock task start workspace secrets: %w", err)
-		}
-		for _, binding := range bindings {
-			if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
-				return errTaskSecretUnavailable
-			}
-		}
+		workspaceID := pgvalue.UUID(normalized.WorkspaceID)
 		workspace, err := work.q.LockWorkspaceAdmissionAuthority(
 			ctx,
 			db.LockWorkspaceAdmissionAuthorityParams{
@@ -183,6 +154,15 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 		)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errTaskWorkspaceUnavailable
+		}
+		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, workspaceID)
+		if err != nil {
+			return fmt.Errorf("lock task start workspace secrets: %w", err)
+		}
+		for _, binding := range bindings {
+			if binding.SecretState != "active" || !binding.CurrentVersionID.Valid {
+				return errTaskSecretUnavailable
+			}
 		}
 		if err != nil {
 			return fmt.Errorf("lock task start workspace authority: %w", err)
@@ -194,7 +174,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 				workspace.DesiredState != db.WorkspaceDesiredStateStopped) ||
 			workspace.DirtyState != db.WorkspaceDirtyStateClean ||
 			!workspace.HeadVersionID.Valid ||
-			workspace.OwnerActorID.Valid || workspace.OwnerRunID.Valid ||
+			workspace.OwnerSessionID.Valid || workspace.OwnerRunID.Valid ||
 			workspace.HasActiveLease || workspace.HasActiveProcess {
 			return errTaskWorkspaceUnavailable
 		}
@@ -291,13 +271,13 @@ func normalizeTaskStart(request taskStartRequest) (normalizedTaskStart, error) {
 		request.EnvironmentID == uuid.Nil {
 		return normalizedTaskStart{}, errTaskStartInvalid
 	}
-	if err := api.ValidateTaskID(request.TaskDeclaredID); err != nil {
+	if err := api.ValidateDefinitionID(request.TaskDeclaredID); err != nil {
 		return normalizedTaskStart{}, fmt.Errorf("%w: %v", errTaskStartInvalid, err)
 	}
-	if err := api.ValidateWorkspaceTarget(request.Workspace); err != nil {
-		return normalizedTaskStart{}, fmt.Errorf("%w: %v", errTaskStartInvalid, err)
+	if request.WorkspaceID == uuid.Nil {
+		return normalizedTaskStart{}, errTaskStartInvalid
 	}
-	workspaceRaw, err := json.Marshal(request.Workspace)
+	workspaceRaw, err := json.Marshal(api.WorkspaceIDTarget{ID: request.WorkspaceID.String()})
 	if err != nil {
 		return normalizedTaskStart{}, fmt.Errorf("%w: encode workspace", errTaskStartInvalid)
 	}

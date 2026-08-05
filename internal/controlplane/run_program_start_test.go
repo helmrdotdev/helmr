@@ -60,16 +60,16 @@ func TestEncodeProgramStartActorAndScheduleCause(t *testing.T) {
 	actorID := pgvalue.UUID(uuid.New())
 	run.EntrypointKind = "actor"
 	run.EntrypointDeclaredID = "reviewer"
-	run.ActorID = actorID
+	run.SessionID = actorID
 	run.CauseKind = "continuation"
-	run.ActorStartInputSequence = pgtype.Int8{Int64: 4, Valid: true}
-	run.ActorStartInputHighWatermark = pgtype.Int8{Int64: 7, Valid: true}
+	run.SessionInputStartSequence = pgtype.Int8{Int64: 4, Valid: true}
+	run.SessionInputHighWatermark = pgtype.Int8{Int64: 7, Valid: true}
 	attempt.EntrypointKind = "actor"
-	attempt.ActorStartInputSequence = pgtype.Int8{Int64: 5, Valid: true}
+	attempt.SessionInputStartSequence = pgtype.Int8{Int64: 5, Valid: true}
 	definition.Kind = "actor"
 	definition.DeclaredID = "reviewer"
 	key := "repository-17"
-	actor := db.Actor{
+	actor := db.Session{
 		ID:                     actorID,
 		ActorDeclaredID:        "reviewer",
 		DeploymentDefinitionID: run.DeploymentDefinitionID,
@@ -84,7 +84,7 @@ func TestEncodeProgramStartActorAndScheduleCause(t *testing.T) {
 	if err := frameio.ReadProtoFrame(bytes.NewReader(body), &message); err != nil {
 		t.Fatalf("read Actor Program-start frame: %v", err)
 	}
-	if message.GetActor().GetActorId() != pgvalue.UUIDString(actorID) ||
+	if message.GetActor().GetSessionId() != pgvalue.UUIDString(actorID) ||
 		message.GetActor().GetKey() != key ||
 		message.GetActor().GetStartInputSequence() != 5 ||
 		message.GetActor().GetInputHighWatermark() != 7 ||

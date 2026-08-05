@@ -93,19 +93,19 @@ func TestLimitAPIRequestBodyAllowsCanonicalSourceEnvelopeOnlyForDeployments(t *t
 		},
 		{
 			name:       "environment deployment",
-			path:       "/api/deployments",
+			path:       "/v1/deployments",
 			size:       archive.MaxSourceArtifactBytes + 1,
 			wantStatus: http.StatusNoContent,
 		},
 		{
 			name:       "other API route",
-			path:       "/api/runs",
+			path:       "/v1/runs",
 			size:       archive.MaxSourceArtifactBytes + 1,
 			wantStatus: http.StatusRequestEntityTooLarge,
 		},
 		{
 			name:       "deployment envelope exceeded",
-			path:       "/api/deployments",
+			path:       "/v1/deployments",
 			size:       deploymentRequestBodyLimit + 1,
 			wantStatus: http.StatusRequestEntityTooLarge,
 		},

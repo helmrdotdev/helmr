@@ -110,7 +110,7 @@ func TestRunListCursorIsBoundToScopeAndFilter(t *testing.T) {
 }
 
 func TestRunReadDeniesBeforeScopeLookup(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/api/runs", nil)
+	request := httptest.NewRequest(http.MethodGet, "/v1/runs", nil)
 	route := chi.NewRouteContext()
 	route.URLParams.Add("projectID", "missing")
 	route.URLParams.Add("environmentID", "missing")

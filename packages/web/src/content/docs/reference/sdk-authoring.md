@@ -18,11 +18,12 @@ import {
   logger,
   metadata,
   schedules,
+  sandbox,
   source,
   task,
   timers,
   tokens,
-  workspace,
+  workspaces,
 } from "@helmr/sdk"
 ```
 
@@ -36,7 +37,7 @@ const runtime = image("review")
   .from("node:24-bookworm-slim")
   .workdir("/workspace")
 
-export const reviewWorkspace = workspace("review-workspace")
+export const reviewSandbox = sandbox({ id: "review-workspace" })
   .image(runtime)
   .resources({ cpu: 2, memory: "4GiB" })
 
@@ -52,7 +53,7 @@ export const review = task({
 })
 ```
 
-Task, Actor, and Workspace IDs use
+Task, Actor, and Sandbox IDs use
 `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Durations use the closed `ms`, `s`, `m`,
 `h`, or `d` grammar.
 
@@ -62,7 +63,7 @@ Schedules are source-only:
 export const cleanup = schedules.task({
   id: "cleanup",
   cron: { pattern: "0 2 * * *", timezone: "UTC" },
-  workspace: { key: "maintenance" },
+  workspace: workspaces.fromKey("maintenance"),
   run: async (input) => {
     logger.info("scheduled", { scheduledAt: input.scheduledAt.toISOString() })
     return { ok: true }

@@ -44,9 +44,9 @@ type RunLeaseControlPlane interface {
 
 type ActorRuntimeControlPlane interface {
 	StartRunActor(context.Context, workerapi.StartActorRequest) (workerapi.StartActorResponse, error)
-	GetRunActorStatus(context.Context, workerapi.ActorReferenceRequest) (workerapi.ActorStatusResponse, error)
-	CloseRunActor(context.Context, workerapi.CloseActorRequest) (workerapi.CloseActorResponse, error)
-	ReadRunActorOutputPage(context.Context, workerapi.ReadActorOutputPageRequest) (workerapi.ReadActorOutputPageResponse, error)
+	GetRunSessionStatus(context.Context, workerapi.SessionReferenceRequest) (workerapi.SessionStatusResponse, error)
+	CloseRunSession(context.Context, workerapi.CloseSessionRequest) (workerapi.CloseSessionResponse, error)
+	ReadRunSessionOutputPage(context.Context, workerapi.ReadSessionOutputPageRequest) (workerapi.ReadSessionOutputPageResponse, error)
 }
 
 type WorkspaceRuntimeControlPlane interface {
@@ -334,9 +334,9 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 	case *runv0.RunEvent_TaskChildInvokeRequested:
 		return task.handleChildTaskInvoke(ctx, value.TaskChildInvokeRequested)
 	case *runv0.RunEvent_ActorStartRequested,
-		*runv0.RunEvent_ActorStatusRequested,
-		*runv0.RunEvent_ActorCloseRequested,
-		*runv0.RunEvent_ActorOutputPageRequested:
+		*runv0.RunEvent_SessionStatusRequested,
+		*runv0.RunEvent_SessionCloseRequested,
+		*runv0.RunEvent_SessionOutputPageRequested:
 		return task.handleActorRuntime(ctx, event)
 	case *runv0.RunEvent_WorkspaceCreateRequested,
 		*runv0.RunEvent_WorkspaceRetrieveRequested,

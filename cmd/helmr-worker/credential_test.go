@@ -33,7 +33,7 @@ func TestResolveWorkerInstanceCredentialUsesEnrollment(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/worker/enrollment/challenge":
+		case "/api/worker/v0/enrollment/challenge":
 			var request workerapi.EnrollmentChallengeRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
@@ -42,7 +42,7 @@ func TestResolveWorkerInstanceCredentialUsesEnrollment(t *testing.T) {
 				t.Fatalf("challenge = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.EnrollmentChallengeResponse{Nonce: "fresh-nonce", WorkerGroupID: "run-workers"})
-		case "/api/worker/enrollment":
+		case "/api/worker/v0/enrollment":
 			var request workerapi.EnrollmentIntent
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
@@ -83,9 +83,9 @@ func TestResolveWorkerInstanceCredentialSerializesEnrollment(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/worker/enrollment/challenge":
+		case "/api/worker/v0/enrollment/challenge":
 			_ = json.NewEncoder(w).Encode(workerapi.EnrollmentChallengeResponse{Nonce: "nonce", WorkerGroupID: "run-workers"})
-		case "/api/worker/enrollment":
+		case "/api/worker/v0/enrollment":
 			requests.Add(1)
 			_ = json.NewEncoder(w).Encode(workerapi.EnrollmentResponse{
 				WorkerInstanceID: "00000000-0000-0000-0000-000000000401",
@@ -188,9 +188,9 @@ func TestResolveAuthenticatedWorkerCredentialReenrollsAfterUnauthorized(t *testi
 	t.Cleanup(func() { buildWorkerEnrollmentRequest = originalBuilder })
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/worker/enrollment/challenge":
+		case "/api/worker/v0/enrollment/challenge":
 			_ = json.NewEncoder(w).Encode(workerapi.EnrollmentChallengeResponse{Nonce: "replacement-nonce", WorkerGroupID: "build-workers"})
-		case "/api/worker/enrollment":
+		case "/api/worker/v0/enrollment":
 			_ = json.NewEncoder(w).Encode(workerapi.EnrollmentResponse{
 				WorkerInstanceID: "00000000-0000-0000-0000-000000000401",
 				WorkerGroupID:    "build-workers", WorkerInstanceSecret: "replacement-secret",

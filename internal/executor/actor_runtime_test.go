@@ -24,9 +24,9 @@ type actorRuntimeContractControlPlane struct {
 	startErr      error
 	startErrors   []error
 	firstAttempt  chan struct{}
-	statusRequest workerapi.ActorReferenceRequest
-	closeRequest  workerapi.CloseActorRequest
-	outputRequest workerapi.ReadActorOutputPageRequest
+	statusRequest workerapi.SessionReferenceRequest
+	closeRequest  workerapi.CloseSessionRequest
+	outputRequest workerapi.ReadSessionOutputPageRequest
 }
 
 func (controlPlane *actorRuntimeContractControlPlane) StartRunActor(
@@ -47,47 +47,45 @@ func (controlPlane *actorRuntimeContractControlPlane) StartRunActor(
 	return controlPlane.startResponse, controlPlane.startErr
 }
 
-func (controlPlane *actorRuntimeContractControlPlane) GetRunActorStatus(
+func (controlPlane *actorRuntimeContractControlPlane) GetRunSessionStatus(
 	_ context.Context,
-	request workerapi.ActorReferenceRequest,
-) (workerapi.ActorStatusResponse, error) {
+	request workerapi.SessionReferenceRequest,
+) (workerapi.SessionStatusResponse, error) {
 	controlPlane.statusRequest = request
-	return workerapi.ActorStatusResponse{
+	return workerapi.SessionStatusResponse{
 		CorrelationID: request.CorrelationID,
-		Completed:     &api.ActorStatus{},
+		Completed:     &api.SessionStatusSnapshot{},
 	}, nil
 }
 
-func (controlPlane *actorRuntimeContractControlPlane) CloseRunActor(
+func (controlPlane *actorRuntimeContractControlPlane) CloseRunSession(
 	_ context.Context,
-	request workerapi.CloseActorRequest,
-) (workerapi.CloseActorResponse, error) {
+	request workerapi.CloseSessionRequest,
+) (workerapi.CloseSessionResponse, error) {
 	controlPlane.closeRequest = request
-	return workerapi.CloseActorResponse{
+	return workerapi.CloseSessionResponse{
 		CorrelationID: request.CorrelationID,
-		Completed:     &api.ActorOperationReceipt{},
+		Completed:     &api.SessionCloseReceipt{},
 	}, nil
 }
 
-func (controlPlane *actorRuntimeContractControlPlane) ReadRunActorOutputPage(
+func (controlPlane *actorRuntimeContractControlPlane) ReadRunSessionOutputPage(
 	_ context.Context,
-	request workerapi.ReadActorOutputPageRequest,
-) (workerapi.ReadActorOutputPageResponse, error) {
+	request workerapi.ReadSessionOutputPageRequest,
+) (workerapi.ReadSessionOutputPageResponse, error) {
 	controlPlane.outputRequest = request
-	return workerapi.ReadActorOutputPageResponse{
+	return workerapi.ReadSessionOutputPageResponse{
 		CorrelationID: request.CorrelationID,
-		Completed:     &api.ActorOutputPage{},
+		Completed:     &api.SessionOutputPage{},
 	}, nil
 }
 
 func TestWorkerActorStartRequestPreservesInputPresence(t *testing.T) {
 	base := func() *runv0.ActorStartRequested {
 		return &runv0.ActorStartRequested{
-			CorrelationId: "019c0225-f0c9-7f66-8a23-7782ca0a8461",
-			DeclaredId:    "mailbox",
-			Workspace: &runv0.ActorStartRequested_WorkspaceKey{
-				WorkspaceKey: "actor-workspace",
-			},
+			CorrelationId:  "019c0225-f0c9-7f66-8a23-7782ca0a8461",
+			DeclaredId:     "mailbox",
+			WorkspaceId:    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
 			RunOptionsJson: `{}`,
 		}
 	}
@@ -110,25 +108,22 @@ func TestWorkerActorStartRequestPreservesInputPresence(t *testing.T) {
 	}
 }
 
-func TestWorkerActorReferencesRequireCanonicalCorrelationAndExactAddress(t *testing.T) {
-	request := &runv0.ActorStatusRequested{
+func TestWorkerSessionReferencesRequireCanonicalCorrelationAndID(t *testing.T) {
+	request := &runv0.SessionStatusRequested{
 		CorrelationId: "019c0225-f0c9-7f66-8a23-7782ca0a8461",
-		DeclaredId:    "mailbox",
-		Address: &runv0.ActorStatusRequested_ActorKey{
-			ActorKey: "primary",
-		},
+		SessionId:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 	}
-	if _, err := workerActorReferenceRequest(request); err != nil {
+	if _, err := workerSessionReferenceRequest(request); err != nil {
 		t.Fatal(err)
 	}
 	request.CorrelationId = "019C0225-F0C9-7F66-8A23-7782CA0A8461"
-	if _, err := workerActorReferenceRequest(request); err == nil {
+	if _, err := workerSessionReferenceRequest(request); err == nil {
 		t.Fatal("non-canonical correlation ID was accepted")
 	}
 	request.CorrelationId = "019c0225-f0c9-7f66-8a23-7782ca0a8461"
-	request.Address = nil
-	if _, err := workerActorReferenceRequest(request); err == nil {
-		t.Fatal("missing Actor address was accepted")
+	request.SessionId = ""
+	if _, err := workerSessionReferenceRequest(request); err == nil {
+		t.Fatal("missing Session ID was accepted")
 	}
 }
 
@@ -136,11 +131,9 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 	const correlationID = "019c0225-f0c9-7f66-8a23-7782ca0a8461"
 	event := &runv0.RunEvent{Event: &runv0.RunEvent_ActorStartRequested{
 		ActorStartRequested: &runv0.ActorStartRequested{
-			CorrelationId: correlationID,
-			DeclaredId:    "mailbox",
-			Workspace: &runv0.ActorStartRequested_WorkspaceKey{
-				WorkspaceKey: "mailbox-data",
-			},
+			CorrelationId:  correlationID,
+			DeclaredId:     "mailbox",
+			WorkspaceId:    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
 			RunOptionsJson: `{}`,
 		},
 	}}
@@ -150,8 +143,8 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 			startResponse: workerapi.StartActorResponse{
 				CorrelationID: correlationID,
 				Completed: &api.StartActorResponse{
-					ActorID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-					RunID:   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
+					SessionID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+					RunID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 				},
 			},
 		}
@@ -162,8 +155,7 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 		if decision.GetKind() != "completed" ||
 			controlPlane.startRequest.Lease.ID == "" ||
 			controlPlane.startRequest.ActorDeclaredID != "mailbox" ||
-			controlPlane.startRequest.Workspace.Key == nil ||
-			*controlPlane.startRequest.Workspace.Key != "mailbox-data" {
+			controlPlane.startRequest.Workspace.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" {
 			t.Fatalf("decision = %+v request = %+v", decision, controlPlane.startRequest)
 		}
 	})
@@ -207,23 +199,20 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 			testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 		}
 		events := []*runv0.RunEvent{
-			{Event: &runv0.RunEvent_ActorStatusRequested{
-				ActorStatusRequested: &runv0.ActorStatusRequested{
-					CorrelationId: correlationID, DeclaredId: "mailbox",
-					Address: &runv0.ActorStatusRequested_ActorKey{ActorKey: "primary"},
+			{Event: &runv0.RunEvent_SessionStatusRequested{
+				SessionStatusRequested: &runv0.SessionStatusRequested{
+					CorrelationId: correlationID, SessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 				},
 			}},
-			{Event: &runv0.RunEvent_ActorCloseRequested{
-				ActorCloseRequested: &runv0.ActorCloseRequested{
-					CorrelationId: correlationID, DeclaredId: "mailbox",
-					Address: &runv0.ActorCloseRequested_ActorKey{ActorKey: "primary"},
+			{Event: &runv0.RunEvent_SessionCloseRequested{
+				SessionCloseRequested: &runv0.SessionCloseRequested{
+					CorrelationId: correlationID, SessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 				},
 			}},
-			{Event: &runv0.RunEvent_ActorOutputPageRequested{
-				ActorOutputPageRequested: &runv0.ActorOutputPageRequested{
-					CorrelationId: correlationID, DeclaredId: "mailbox",
-					Address: &runv0.ActorOutputPageRequested_ActorKey{ActorKey: "primary"},
-					Limit:   25,
+			{Event: &runv0.RunEvent_SessionOutputPageRequested{
+				SessionOutputPageRequested: &runv0.SessionOutputPageRequested{
+					CorrelationId: correlationID, SessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+					Limit: 25,
 				},
 			}},
 		}
@@ -236,9 +225,9 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 				t.Fatalf("decision = %+v", decision)
 			}
 		}
-		if controlPlane.statusRequest.ActorKey != "primary" ||
-			controlPlane.closeRequest.ActorKey != "primary" ||
-			controlPlane.outputRequest.ActorKey != "primary" ||
+		if controlPlane.statusRequest.SessionID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" ||
+			controlPlane.closeRequest.SessionID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" ||
+			controlPlane.outputRequest.SessionID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" ||
 			controlPlane.outputRequest.Limit != 25 {
 			t.Fatalf("status=%+v close=%+v output=%+v",
 				controlPlane.statusRequest, controlPlane.closeRequest, controlPlane.outputRequest)
@@ -261,8 +250,8 @@ func TestActorRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 		startResponse: workerapi.StartActorResponse{
 			CorrelationID: correlationID,
 			Completed: &api.StartActorResponse{
-				ActorID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-				RunID:   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
+				SessionID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+				RunID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 			},
 		},
 	}
@@ -286,9 +275,7 @@ func TestActorRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 			Event: &runv0.RunEvent_ActorStartRequested{
 				ActorStartRequested: &runv0.ActorStartRequested{
 					CorrelationId: correlationID, DeclaredId: "mailbox",
-					Workspace: &runv0.ActorStartRequested_WorkspaceKey{
-						WorkspaceKey: "mailbox-data",
-					},
+					WorkspaceId:    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
 					RunOptionsJson: `{}`,
 				},
 			},

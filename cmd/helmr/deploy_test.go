@@ -72,7 +72,7 @@ func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.Path)
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
 			if got := r.Header.Get("authorization"); got != "Bearer test-key" {
 				t.Fatalf("auth = %s", got)
 			}
@@ -92,14 +92,14 @@ func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", ProjectID: "project-resolved", EnvironmentID: "environment-resolved", Status: "queued"})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
 			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
-		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
 			if r.URL.RawQuery != "" {
 				t.Fatalf("deployment query = %s", r.URL.RawQuery)
 			}
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Version: "20260101.1", Status: "deployed"})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote":
 			var request api.PromoteDeploymentRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
@@ -133,7 +133,7 @@ func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
 	if strings.TrimSpace(out.String()) != "20260101.1" {
 		t.Fatalf("output = %q", out.String())
 	}
-	if got := strings.Join(requests, ","); got != "POST /api/deployments,GET /api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events,GET /api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35,POST /api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote" {
+	if got := strings.Join(requests, ","); got != "POST /v1/deployments,GET /v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events,GET /v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35,POST /v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote" {
 		t.Fatalf("requests = %s", got)
 	}
 	if metadata.ProjectID != "" || metadata.EnvironmentID != "" {
@@ -171,7 +171,7 @@ func TestDeployCommandDoesNotExecuteOrMutateSource(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/deployments" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/deployments" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "queued"})
@@ -210,21 +210,21 @@ func TestDeployCommandWaitsWithResolvedConfiguredScope(t *testing.T) {
 	root, _ := deployCommandFixture(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
 				ID:            "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
 				ProjectID:     "project-resolved",
 				EnvironmentID: "environment-resolved",
 				Status:        "queued",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
 			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
-		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
 			if r.URL.RawQuery != "" {
 				t.Fatalf("deployment query = %s", r.URL.RawQuery)
 			}
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "deployed"})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "deployed"})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
@@ -256,14 +256,14 @@ func TestDeployCommandReconnectsDeploymentEventsUntilTerminal(t *testing.T) {
 	deploymentRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
 				ID:            "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
 				ProjectID:     "project-resolved",
 				EnvironmentID: "environment-resolved",
 				Status:        "queued",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
 			eventRequests++
 			if r.URL.Query().Get("follow") != "1" {
 				t.Fatalf("events query = %s", r.URL.RawQuery)
@@ -277,14 +277,14 @@ func TestDeployCommandReconnectsDeploymentEventsUntilTerminal(t *testing.T) {
 				t.Fatalf("last event id = %q", got)
 			}
 			_, _ = fmt.Fprint(w, "id: tc1.eyJzIjoyfQ\nevent: deployment_event\ndata: {\"id\":\"tc1.eyJzIjoyfQ\",\"deployment_id\":\"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35\",\"kind\":\"deployment.deployed\",\"message\":\"Deployment build completed\"}\n\n")
-		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
 			deploymentRequests++
 			status := "queued"
 			if eventRequests >= 2 {
 				status = "deployed"
 			}
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: status})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "deployed"})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
@@ -313,7 +313,7 @@ func TestDeployCommandReconnectsDeploymentEventsUntilTerminal(t *testing.T) {
 func TestDeployCommandDetachReturnsQueuedDeploymentID(t *testing.T) {
 	root, _ := deployCommandFixture(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/deployments" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/deployments" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "queued"})
@@ -362,7 +362,7 @@ func TestFailingBuildFixtureReachesDeploymentCreation(t *testing.T) {
 
 	var uploaded []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/deployments" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/deployments" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if err := r.ParseMultipartForm(32 << 20); err != nil {
@@ -487,16 +487,16 @@ func TestDeployCommandSkipPromotionDoesNotPromote(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.Path)
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
 				ID:            "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
 				ProjectID:     "project-resolved",
 				EnvironmentID: "environment-resolved",
 				Status:        "queued",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
 			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
-		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Version: "20260101.1", Status: "deployed"})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
@@ -517,7 +517,7 @@ func TestDeployCommandSkipPromotionDoesNotPromote(t *testing.T) {
 	if strings.TrimSpace(out.String()) != "20260101.1" {
 		t.Fatalf("output = %q", out.String())
 	}
-	if got := strings.Join(requests, ","); got != "POST /api/deployments,GET /api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events,GET /api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35" {
+	if got := strings.Join(requests, ","); got != "POST /v1/deployments,GET /v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events,GET /v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35" {
 		t.Fatalf("requests = %s", got)
 	}
 }
@@ -526,16 +526,16 @@ func TestDeployCommandReturnsFailedDeploymentError(t *testing.T) {
 	root, _ := deployCommandFixture(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/deployments":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
 				ID:            "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
 				ProjectID:     "project-resolved",
 				EnvironmentID: "environment-resolved",
 				Status:        "queued",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
 			writeDeploymentEventSSE(t, w, r, "deployment.failed")
-		case r.Method == http.MethodGet && r.URL.Path == "/api/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
 				ID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
 				Status: "failed",

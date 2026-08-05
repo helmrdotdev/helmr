@@ -22,7 +22,7 @@ func TestWaitCommandPollsUntilTerminal(t *testing.T) {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		switch r.URL.Path {
-		case "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31":
+		case "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31":
 			requests++
 			status := "running"
 			if requests > 1 {
@@ -56,7 +56,7 @@ func TestWaitCommandPollsUntilTerminal(t *testing.T) {
 func TestRunEventsFollowStopsAfterTerminalEvent(t *testing.T) {
 	eventRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/events" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/events" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		eventRequests++
@@ -93,7 +93,7 @@ func TestEventsCommandFollowsRunEvents(t *testing.T) {
 	t.Cleanup(func() { runFollowPollInterval = oldPollInterval })
 	var requests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/events" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/events" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		request := atomic.AddInt32(&requests, 1)
@@ -137,14 +137,14 @@ func TestLogsCommandFollowsRunLogs(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" && r.URL.Query().Get("cursor") == "":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" && r.URL.Query().Get("cursor") == "":
 			_ = json.NewEncoder(w).Encode(api.RunLogPage{
 				Logs: []api.RunLogRecord{{
 					Kind: "stdout", ContentBase64: base64.StdEncoding.EncodeToString([]byte("old\n")),
 				}},
 				NextCursor: "rt1.old",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" && r.URL.Query().Get("cursor") == "rt1.old":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" && r.URL.Query().Get("cursor") == "rt1.old":
 			_ = json.NewEncoder(w).Encode(api.RunLogPage{
 				Logs: []api.RunLogRecord{
 					{Kind: "stdout", ContentBase64: base64.StdEncoding.EncodeToString([]byte("new\n"))},
@@ -152,9 +152,9 @@ func TestLogsCommandFollowsRunLogs(t *testing.T) {
 				},
 				NextCursor: "rt1.new",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" && r.URL.Query().Get("cursor") == "rt1.new":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" && r.URL.Query().Get("cursor") == "rt1.new":
 			_ = json.NewEncoder(w).Encode(api.RunLogPage{})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31":
 			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: api.RunStatusSucceeded})
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.RequestURI())
@@ -179,14 +179,14 @@ func TestLogsCommandFollowsRunLogs(t *testing.T) {
 	if errOut.String() != "warn\n" {
 		t.Fatalf("stderr = %q", errOut.String())
 	}
-	if got := strings.Join(requests, ","); got != "GET /api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs,GET /api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs?cursor=rt1.old,GET /api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31,GET /api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs?cursor=rt1.new" {
+	if got := strings.Join(requests, ","); got != "GET /v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs,GET /v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs?cursor=rt1.old,GET /v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31,GET /v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs?cursor=rt1.new" {
 		t.Fatalf("requests = %s", got)
 	}
 }
 
 func TestLogsCommandPrintsStreams(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(api.RunLogPage{Logs: []api.RunLogRecord{
@@ -213,7 +213,7 @@ func TestLogsCommandPrintsStreams(t *testing.T) {
 
 func TestEventsCommandPrintsJSONLines(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/events" || r.URL.Query().Get("cursor") != "tc1.eyJzIjo0fQ" || r.URL.Query().Get("limit") != "2" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/events" || r.URL.Query().Get("cursor") != "tc1.eyJzIjo0fQ" || r.URL.Query().Get("limit") != "2" {
 			t.Fatalf("%s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(api.RunEventPage{

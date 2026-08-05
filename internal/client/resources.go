@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -33,29 +34,29 @@ func (c *Client) GetMe(ctx context.Context) (api.MeResponse, error) {
 	return response, nil
 }
 
-func (c *Client) SendActorInput(
+func (c *Client) SendSessionInput(
 	ctx context.Context,
-	actorDeclaredID string,
-	input api.SendActorInputRequest,
+	sessionID string,
+	input api.SendSessionInputRequest,
 	opts EnvironmentScopeOptions,
-) (api.SendActorInputResponse, error) {
-	if err := api.ValidateActorDeclaredID(actorDeclaredID); err != nil {
-		return api.SendActorInputResponse{}, err
+) (api.SessionInput, error) {
+	if err := ids.Validate(sessionID); err != nil {
+		return api.SessionInput{}, err
 	}
-	if err := api.ValidateSendActorInputRequest(input); err != nil {
-		return api.SendActorInputResponse{}, err
+	if err := api.ValidateSendSessionInputRequest(input); err != nil {
+		return api.SessionInput{}, err
 	}
 	path, _, err := c.environmentScopedPath(
 		opts.ProjectID,
 		opts.EnvironmentID,
-		"/actors/"+url.PathEscape(actorDeclaredID)+"/input",
+		"/sessions/"+url.PathEscape(sessionID)+"/inputs",
 	)
 	if err != nil {
-		return api.SendActorInputResponse{}, err
+		return api.SessionInput{}, err
 	}
-	var response api.SendActorInputResponse
+	var response api.SessionInput
 	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.SendActorInputResponse{}, err
+		return api.SessionInput{}, err
 	}
 	return response, nil
 }
@@ -87,67 +88,115 @@ func (c *Client) StartActor(
 	return response, nil
 }
 
-func (c *Client) CloseActor(
+func (c *Client) CloseSession(
 	ctx context.Context,
-	actorDeclaredID string,
-	input api.ActorOperationRequest,
+	sessionID string,
+	input api.CloseSessionRequest,
 	opts EnvironmentScopeOptions,
-) (api.ActorOperationReceipt, error) {
-	if err := api.ValidateActorDeclaredID(actorDeclaredID); err != nil {
-		return api.ActorOperationReceipt{}, err
+) (api.SessionCloseReceipt, error) {
+	if err := ids.Validate(sessionID); err != nil {
+		return api.SessionCloseReceipt{}, err
 	}
-	if err := api.ValidateActorOperationRequest(input); err != nil {
-		return api.ActorOperationReceipt{}, err
+	if err := api.ValidateCloseSessionRequest(input); err != nil {
+		return api.SessionCloseReceipt{}, err
 	}
 	path, _, err := c.environmentScopedPath(
 		opts.ProjectID,
 		opts.EnvironmentID,
-		"/actors/"+url.PathEscape(actorDeclaredID)+"/close",
+		"/sessions/"+url.PathEscape(sessionID)+"/close",
 	)
 	if err != nil {
-		return api.ActorOperationReceipt{}, err
+		return api.SessionCloseReceipt{}, err
 	}
-	var response api.ActorOperationReceipt
+	var response api.SessionCloseReceipt
 	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.ActorOperationReceipt{}, err
+		return api.SessionCloseReceipt{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) GetActorStatus(
+func (c *Client) RetrieveSession(
 	ctx context.Context,
-	actorDeclaredID string,
-	reference api.ActorReference,
+	sessionID string,
 	opts EnvironmentScopeOptions,
-) (api.ActorStatus, error) {
-	if err := api.ValidateActorDeclaredID(actorDeclaredID); err != nil {
-		return api.ActorStatus{}, err
-	}
-	if err := api.ValidateActorReference(reference); err != nil {
-		return api.ActorStatus{}, err
+) (api.Session, error) {
+	if err := ids.Validate(sessionID); err != nil {
+		return api.Session{}, err
 	}
 	path, _, err := c.environmentScopedPath(
 		opts.ProjectID,
 		opts.EnvironmentID,
-		"/actors/"+url.PathEscape(actorDeclaredID)+"/status",
+		"/sessions/"+url.PathEscape(sessionID),
 	)
 	if err != nil {
-		return api.ActorStatus{}, err
+		return api.Session{}, err
 	}
-	values := url.Values{}
-	if reference.ActorID != "" {
-		values.Set("actor_id", reference.ActorID)
-	} else {
-		values.Set("actor_key", reference.ActorKey)
-	}
-	path += "?" + values.Encode()
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.ActorStatus{}, err
+		return api.Session{}, err
 	}
-	var response api.ActorStatus
+	var response api.Session
 	if err := c.doJSON(req, &response); err != nil {
-		return api.ActorStatus{}, err
+		return api.Session{}, err
+	}
+	return response, nil
+}
+
+type SessionListOptions struct {
+	Cursor  string
+	Limit   int32
+	ActorID string
+	Key     string
+	EnvironmentScopeOptions
+}
+
+func (c *Client) ListSessions(ctx context.Context, opts SessionListOptions) (api.ListSessionsResponse, error) {
+	hasActorID := opts.ActorID != ""
+	hasKey := opts.Key != ""
+	if hasActorID != hasKey {
+		return api.ListSessionsResponse{}, errors.New("actor ID and key must be provided together")
+	}
+	if hasActorID {
+		if opts.Cursor != "" || opts.Limit != 0 {
+			return api.ListSessionsResponse{}, errors.New("cursor and limit are not accepted with actor ID and key")
+		}
+		if err := api.ValidateActorDeclaredID(opts.ActorID); err != nil {
+			return api.ListSessionsResponse{}, err
+		}
+		if err := api.ValidateActorKey(opts.Key); err != nil {
+			return api.ListSessionsResponse{}, err
+		}
+	} else if opts.Limit < 0 || opts.Limit > 100 {
+		return api.ListSessionsResponse{}, errors.New("session list limit must be in [1,100] when present")
+	}
+	path, _, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/sessions")
+	if err != nil {
+		return api.ListSessionsResponse{}, err
+	}
+	values := url.Values{}
+	if opts.Cursor != "" {
+		values.Set("cursor", opts.Cursor)
+	}
+	if opts.Limit > 0 {
+		values.Set("limit", strconv.FormatInt(int64(opts.Limit), 10))
+	}
+	if hasActorID {
+		values.Set("actor_id", opts.ActorID)
+		values.Set("key", opts.Key)
+	}
+	if encoded := values.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return api.ListSessionsResponse{}, err
+	}
+	var response api.ListSessionsResponse
+	if err := c.doJSON(req, &response); err != nil {
+		return api.ListSessionsResponse{}, err
+	}
+	if response.Sessions == nil {
+		response.Sessions = []api.Session{}
 	}
 	return response, nil
 }
@@ -158,26 +207,22 @@ type ActorOutputReadOptions struct {
 	EnvironmentScopeOptions
 }
 
-func (c *Client) ReadActorOutput(
+func (c *Client) ReadSessionOutputs(
 	ctx context.Context,
-	actorDeclaredID string,
-	reference api.ActorReference,
+	sessionID string,
 	opts ActorOutputReadOptions,
-) (api.ActorOutputPage, error) {
-	if err := api.ValidateActorDeclaredID(actorDeclaredID); err != nil {
-		return api.ActorOutputPage{}, err
-	}
-	if err := api.ValidateActorReference(reference); err != nil {
-		return api.ActorOutputPage{}, err
+) (api.SessionOutputPage, error) {
+	if err := ids.Validate(sessionID); err != nil {
+		return api.SessionOutputPage{}, err
 	}
 	if opts.After != nil && (*opts.After < 0 || *opts.After > maxActorOutputSequence) {
-		return api.ActorOutputPage{}, fmt.Errorf(
+		return api.SessionOutputPage{}, fmt.Errorf(
 			"actor output after must be in [0,%d] when present",
 			maxActorOutputSequence,
 		)
 	}
 	if opts.Limit < 0 || opts.Limit > maxActorOutputReadLimit {
-		return api.ActorOutputPage{}, fmt.Errorf(
+		return api.SessionOutputPage{}, fmt.Errorf(
 			"actor output limit must be in [1,%d] when present",
 			maxActorOutputReadLimit,
 		)
@@ -185,17 +230,12 @@ func (c *Client) ReadActorOutput(
 	path, _, err := c.environmentScopedPath(
 		opts.ProjectID,
 		opts.EnvironmentID,
-		"/actors/"+url.PathEscape(actorDeclaredID)+"/output",
+		"/sessions/"+url.PathEscape(sessionID)+"/outputs",
 	)
 	if err != nil {
-		return api.ActorOutputPage{}, err
+		return api.SessionOutputPage{}, err
 	}
 	values := url.Values{}
-	if reference.ActorID != "" {
-		values.Set("actor_id", reference.ActorID)
-	} else {
-		values.Set("actor_key", reference.ActorKey)
-	}
 	if opts.After != nil {
 		values.Set("after", strconv.FormatInt(*opts.After, 10))
 	}
@@ -205,14 +245,14 @@ func (c *Client) ReadActorOutput(
 	path += "?" + values.Encode()
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.ActorOutputPage{}, err
+		return api.SessionOutputPage{}, err
 	}
-	var response api.ActorOutputPage
+	var response api.SessionOutputPage
 	if err := c.doJSON(req, &response); err != nil {
-		return api.ActorOutputPage{}, err
+		return api.SessionOutputPage{}, err
 	}
 	if response.Records == nil {
-		response.Records = []api.ActorOutputRecord{}
+		response.Records = []api.SessionOutput{}
 	}
 	return response, nil
 }
@@ -254,18 +294,18 @@ func (c *Client) ListTasks(ctx context.Context, opts EnvironmentScopeOptions) (a
 	return response, nil
 }
 
-func (c *Client) GetTask(ctx context.Context, taskID string, opts EnvironmentScopeOptions) (api.DeploymentTaskResponse, error) {
+func (c *Client) GetTask(ctx context.Context, taskID string, opts EnvironmentScopeOptions) (api.Task, error) {
 	path, _, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/tasks/"+url.PathEscape(taskID))
 	if err != nil {
-		return api.DeploymentTaskResponse{}, err
+		return api.Task{}, err
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.DeploymentTaskResponse{}, err
+		return api.Task{}, err
 	}
-	var response api.DeploymentTaskResponse
+	var response api.Task
 	if err := c.doJSON(req, &response); err != nil {
-		return api.DeploymentTaskResponse{}, err
+		return api.Task{}, err
 	}
 	return response, nil
 }
@@ -277,7 +317,7 @@ func (c *Client) StartTask(
 	opts EnvironmentScopeOptions,
 ) (api.StartTaskResponse, error) {
 	taskID = strings.TrimSpace(taskID)
-	if err := api.ValidateTaskID(taskID); err != nil {
+	if err := api.ValidateDefinitionID(taskID); err != nil {
 		return api.StartTaskResponse{}, err
 	}
 	path, _, err := c.environmentScopedPath(
@@ -325,14 +365,14 @@ func (c *Client) CreateWorkspace(
 	declaredID string,
 	input api.CreateWorkspaceRequest,
 	opts WorkspaceScopeOptions,
-) (api.CreateWorkspaceResponse, error) {
-	path, err := c.workspaceItemPath(declaredID, "/create", opts)
+) (api.WorkspaceSnapshot, error) {
+	path, _, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/sandboxes/"+url.PathEscape(declaredID)+"/workspaces")
 	if err != nil {
-		return api.CreateWorkspaceResponse{}, err
+		return api.WorkspaceSnapshot{}, err
 	}
-	var response api.CreateWorkspaceResponse
+	var response api.WorkspaceSnapshot
 	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.CreateWorkspaceResponse{}, err
+		return api.WorkspaceSnapshot{}, err
 	}
 	return response, nil
 }
@@ -353,24 +393,25 @@ func (c *Client) GetWorkspace(ctx context.Context, workspaceID string, opts Work
 	return response, nil
 }
 
-func (c *Client) GetWorkspaceByKey(
+func (c *Client) ListWorkspaces(
 	ctx context.Context,
-	declaredID string,
-	key string,
+	key *string,
 	opts WorkspaceScopeOptions,
-) (api.WorkspaceSnapshot, error) {
-	path, err := c.workspaceItemPath("by-key", "/"+url.PathEscape(declaredID), opts)
+) (api.ListWorkspacesResponse, error) {
+	path, err := c.workspaceCollectionPath(opts)
 	if err != nil {
-		return api.WorkspaceSnapshot{}, err
+		return api.ListWorkspacesResponse{}, err
 	}
-	path += "?" + url.Values{"key": []string{key}}.Encode()
+	if key != nil {
+		path += "?" + url.Values{"key": []string{*key}}.Encode()
+	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.WorkspaceSnapshot{}, err
+		return api.ListWorkspacesResponse{}, err
 	}
-	var response api.WorkspaceSnapshot
+	var response api.ListWorkspacesResponse
 	if err := c.doJSON(req, &response); err != nil {
-		return api.WorkspaceSnapshot{}, err
+		return api.ListWorkspacesResponse{}, err
 	}
 	return response, nil
 }
@@ -381,12 +422,12 @@ func (c *Client) DeleteWorkspace(
 	input api.DeleteWorkspaceRequest,
 	opts WorkspaceScopeOptions,
 ) (api.DeleteWorkspaceReceipt, error) {
-	path, err := c.workspaceResourcePath(workspaceID, "/delete", opts)
+	path, err := c.workspaceResourcePath(workspaceID, "", opts)
 	if err != nil {
 		return api.DeleteWorkspaceReceipt{}, err
 	}
 	var response api.DeleteWorkspaceReceipt
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
+	if err := c.deleteJSON(ctx, path, input, &response); err != nil {
 		return api.DeleteWorkspaceReceipt{}, err
 	}
 	return response, nil

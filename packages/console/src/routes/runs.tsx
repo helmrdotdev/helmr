@@ -15,7 +15,7 @@ const FILTERS: SelectOption<RunFilter>[] = [
   { value: "waiting", label: "Waiting" },
   { value: "succeeded", label: "Succeeded" },
   { value: "failed", label: "Failed" },
-  { value: "system-failed", label: "System failed" },
+  { value: "system_failed", label: "System failed" },
   { value: "cancelled", label: "Cancelled" },
   { value: "expired", label: "Expired" },
 ];

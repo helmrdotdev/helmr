@@ -134,108 +134,29 @@ func runScopeIDs(scope auth.Scope) (pgtype.UUID, pgtype.UUID, error) {
 }
 
 func (s *Server) normalizeProjectEnvironmentScope(ctx context.Context, orgID uuid.UUID, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
-	project, err := s.resolveProjectRef(ctx, orgID, projectID)
+	parsedProjectID, err := ids.Parse(projectID)
 	if err != nil {
-		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
+		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, invalidEnvironmentScopeReference("project_id must be a canonical project UUIDv7")
 	}
-	environment, err := s.resolveEnvironmentRef(ctx, orgID, project.ID, environmentID)
-	if err != nil {
-		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
-	}
-	return auth.Scope{OrgID: orgID, ProjectID: pgvalue.MustUUIDValue(project.ID).String(), EnvironmentID: pgvalue.MustUUIDValue(environment.ID).String()}, project.ID, environment.ID, nil
-}
-
-func (s *Server) resolveProjectRef(ctx context.Context, orgID uuid.UUID, projectRef string) (db.Project, error) {
-	rawProjectRef := projectRef
-	projectRef = strings.TrimSpace(projectRef)
-	if rawProjectRef != projectRef {
-		return db.Project{}, invalidEnvironmentScopeReference(
-			"project_id must be a canonical project UUIDv7 or a project slug",
-		)
-	}
-	if projectRef == "" {
-		defaultScope, err := s.db.GetDefaultProjectEnvironment(ctx, pgvalue.UUID(orgID))
-		if err != nil {
-			return db.Project{}, fmt.Errorf("load project selection: %w", err)
-		}
-		return s.db.GetProject(ctx, db.GetProjectParams{OrgID: pgvalue.UUID(orgID), ID: defaultScope.ProjectID})
-	}
-	if parsed, err := uuid.Parse(projectRef); err == nil {
-		if err := ids.Validate(rawProjectRef); err != nil {
-			return db.Project{}, invalidEnvironmentScopeReference(
-				"project_id must be a canonical project UUIDv7 or a project slug",
-			)
-		}
-		project, err := s.db.GetProject(ctx, db.GetProjectParams{OrgID: pgvalue.UUID(orgID), ID: pgvalue.UUID(parsed)})
-		if isNoRows(err) {
-			return db.Project{}, invalidEnvironmentScopeReference(
-				"project_id must reference an active project",
-			)
-		}
-		if err != nil {
-			return db.Project{}, fmt.Errorf("load project: %w", err)
-		}
-		return project, nil
-	}
-	project, err := s.db.GetProjectBySlug(ctx, db.GetProjectBySlugParams{OrgID: pgvalue.UUID(orgID), Slug: strings.ToLower(projectRef)})
+	project, err := s.db.GetProject(ctx, db.GetProjectParams{OrgID: pgvalue.UUID(orgID), ID: pgvalue.UUID(parsedProjectID)})
 	if isNoRows(err) {
-		return db.Project{}, invalidEnvironmentScopeReference(
-			"project_id must be a project UUID or a project slug",
-		)
+		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, invalidEnvironmentScopeReference("project_id must reference an active project")
 	}
 	if err != nil {
-		return db.Project{}, fmt.Errorf("load project: %w", err)
+		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, fmt.Errorf("load project: %w", err)
 	}
-	return project, nil
-}
-
-func (s *Server) resolveEnvironmentRef(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentRef string) (db.Environment, error) {
-	rawEnvironmentRef := environmentRef
-	environmentRef = strings.TrimSpace(environmentRef)
-	if rawEnvironmentRef != environmentRef {
-		return db.Environment{}, invalidEnvironmentScopeReference(
-			"environment_id must be a canonical environment UUIDv7 or an environment slug",
-		)
+	parsedEnvironmentID, err := ids.Parse(environmentID)
+	if err != nil {
+		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, invalidEnvironmentScopeReference("environment_id must be a canonical environment UUIDv7")
 	}
-	if environmentRef == "" {
-		environment, err := s.db.GetDefaultEnvironment(ctx, db.GetDefaultEnvironmentParams{OrgID: pgvalue.UUID(orgID), ProjectID: projectID})
-		if isNoRows(err) {
-			return db.Environment{}, invalidEnvironmentScopeReference(
-				"environment_id must reference an active environment",
-			)
-		}
-		if err != nil {
-			return db.Environment{}, fmt.Errorf("load environment: %w", err)
-		}
-		return environment, nil
-	}
-	if parsed, err := uuid.Parse(environmentRef); err == nil {
-		if err := ids.Validate(rawEnvironmentRef); err != nil {
-			return db.Environment{}, invalidEnvironmentScopeReference(
-				"environment_id must be a canonical environment UUIDv7 or an environment slug",
-			)
-		}
-		environment, err := s.db.GetEnvironment(ctx, db.GetEnvironmentParams{OrgID: pgvalue.UUID(orgID), ProjectID: projectID, ID: pgvalue.UUID(parsed)})
-		if isNoRows(err) {
-			return db.Environment{}, invalidEnvironmentScopeReference(
-				"environment_id must reference an active environment",
-			)
-		}
-		if err != nil {
-			return db.Environment{}, fmt.Errorf("load environment: %w", err)
-		}
-		return environment, nil
-	}
-	environment, err := s.db.GetEnvironmentBySlug(ctx, db.GetEnvironmentBySlugParams{OrgID: pgvalue.UUID(orgID), ProjectID: projectID, Slug: strings.ToLower(environmentRef)})
+	environment, err := s.db.GetEnvironment(ctx, db.GetEnvironmentParams{OrgID: pgvalue.UUID(orgID), ProjectID: project.ID, ID: pgvalue.UUID(parsedEnvironmentID)})
 	if isNoRows(err) {
-		return db.Environment{}, invalidEnvironmentScopeReference(
-			"environment_id must be an environment UUID or an environment slug",
-		)
+		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, invalidEnvironmentScopeReference("environment_id must reference an active environment")
 	}
 	if err != nil {
-		return db.Environment{}, fmt.Errorf("load environment: %w", err)
+		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, fmt.Errorf("load environment: %w", err)
 	}
-	return environment, nil
+	return auth.Scope{OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID}, project.ID, environment.ID, nil
 }
 
 func (s *Server) secretRequestScope(ctx context.Context, orgID uuid.UUID, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {

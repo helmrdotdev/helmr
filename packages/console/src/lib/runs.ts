@@ -4,13 +4,13 @@ export type RunStatus =
   | "queued"
   | "running"
   | "waiting"
-  | "retry-delayed"
-  | "cancel-requested"
+  | "retry_delayed"
+  | "cancel_requested"
   | "succeeded"
   | "failed"
   | "cancelled"
   | "expired"
-  | "system-failed";
+  | "system_failed";
 
 export type RunFilter = RunStatus | "live" | "all";
 export type TaskOutput = unknown;
@@ -27,7 +27,7 @@ export type Run = {
     version: string;
   };
   workspace_id: string;
-  actor_id?: string;
+  session_id?: string;
   parent_run_id?: string;
   parent_owns_lifecycle?: boolean;
   current_attempt_number: number;
@@ -116,8 +116,8 @@ const LIVE_STATUSES: RunStatus[] = [
   "queued",
   "running",
   "waiting",
-  "retry-delayed",
-  "cancel-requested",
+  "retry_delayed",
+  "cancel_requested",
 ];
 
 export async function listRuns(options: ListRunsOptions): Promise<ListRunsResponse> {
