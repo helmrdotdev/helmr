@@ -24,8 +24,7 @@ SELECT deployments.org_id,
    AND worker_instances.state IN ('active', 'draining')
    AND worker_instances.supports_run
    AND worker_instances.substrate_format = sqlc.arg(substrate_format)
-   AND worker_instances.substrate_builder_abi = sqlc.arg(builder_abi)
-   AND worker_instances.substrate_layout_abi = sqlc.arg(layout_abi)
+   AND worker_instances.substrate_contract = sqlc.arg(substrate_contract)
  LIMIT 1
  FOR SHARE OF runtime_instances, worker_instances;
 
@@ -38,8 +37,7 @@ INSERT INTO runtime_substrates (
     deployment_definition_id,
     substrate_digest,
     substrate_format,
-    builder_abi,
-    layout_abi,
+    substrate_contract,
     substrate_size_bytes
 ) VALUES (
     sqlc.arg(id),
@@ -49,8 +47,7 @@ INSERT INTO runtime_substrates (
     sqlc.arg(deployment_definition_id),
     sqlc.arg(substrate_digest),
     sqlc.arg(substrate_format),
-    sqlc.arg(builder_abi),
-    sqlc.arg(layout_abi),
+    sqlc.arg(substrate_contract),
     sqlc.arg(substrate_size_bytes)
 )
 ON CONFLICT ON CONSTRAINT runtime_substrates_input_key DO NOTHING;
@@ -63,8 +60,7 @@ SELECT *
    AND environment_id = sqlc.arg(environment_id)
    AND deployment_definition_id = sqlc.arg(deployment_definition_id)
    AND substrate_format = sqlc.arg(substrate_format)
-   AND builder_abi = sqlc.arg(builder_abi)
-   AND layout_abi = sqlc.arg(layout_abi)
+   AND substrate_contract = sqlc.arg(substrate_contract)
    AND substrate_digest = sqlc.arg(substrate_digest)
    AND substrate_size_bytes = sqlc.arg(substrate_size_bytes)
  LIMIT 1;

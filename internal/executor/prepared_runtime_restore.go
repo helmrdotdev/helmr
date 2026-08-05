@@ -80,7 +80,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 		Manifest: manifest,
 		Checkpoint: vm.CheckpointIdentity{
 			RuntimeBackend: runtimeInfo.Backend, RuntimeID: runtimeInfo.ID,
-			RuntimeArch: runtimeInfo.Arch, RuntimeABI: runtimeInfo.ABI,
+			RuntimeArch: runtimeInfo.Arch, VMRuntimeContract: runtimeInfo.Contract,
 			KernelDigest: runtimeInfo.KernelDigest, InitramfsDigest: runtimeInfo.InitramfsDigest,
 			RootfsDigest: runtimeInfo.RootfsDigest, RuntimeConfigDigest: runtimeInfo.ConfigDigest,
 		},

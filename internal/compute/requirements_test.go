@@ -13,11 +13,10 @@ func TestRunRuntimeRequirementsFromFields(t *testing.T) {
 		RequestedExecutionSlots: 1,
 		RuntimeID:               "sha256:runtime",
 		RuntimeArch:             "amd64",
-		RuntimeABI:              "helmr.firecracker.snapshot.v0",
+		VMRuntimeContract:       "helmr.vm-runtime.v0",
 		KernelDigest:            "sha256:kernel",
 		InitramfsDigest:         "sha256:initramfs",
 		RootfsDigest:            "sha256:rootfs",
-		NetworkABI:              "helmr/v0",
 		PlacementJSON:           []byte(`{"tags":{"pool":"warm"}}`),
 	})
 	if err != nil {
@@ -36,11 +35,10 @@ func TestRunRuntimeRequirementsRejectsPlacementRegion(t *testing.T) {
 		RequestedExecutionSlots: 1,
 		RuntimeID:               "sha256:runtime",
 		RuntimeArch:             "amd64",
-		RuntimeABI:              "helmr.firecracker.snapshot.v0",
+		VMRuntimeContract:       "helmr.vm-runtime.v0",
 		KernelDigest:            "sha256:kernel",
 		InitramfsDigest:         "sha256:initramfs",
 		RootfsDigest:            "sha256:rootfs",
-		NetworkABI:              "helmr/v0",
 		PlacementJSON:           []byte(`{"region":"local"}`),
 	})
 	if err == nil {
@@ -56,11 +54,10 @@ func TestRunRuntimeRequirementsFromFieldsRejectsPhysicalPlacementAuthority(t *te
 		RequestedExecutionSlots: 1,
 		RuntimeID:               "runtime",
 		RuntimeArch:             "amd64",
-		RuntimeABI:              "v1",
+		VMRuntimeContract:       "v1",
 		KernelDigest:            "sha256:kernel",
 		InitramfsDigest:         "sha256:initramfs",
 		RootfsDigest:            "sha256:rootfs",
-		NetworkABI:              "default",
 		PlacementJSON:           []byte(`{"worker_group_id":"hidden-authority"}`),
 	})
 	if err == nil || !strings.Contains(err.Error(), "unknown field") {

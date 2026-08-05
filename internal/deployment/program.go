@@ -16,12 +16,11 @@ import (
 )
 
 const (
-	ProgramIndexFormatVersion  = 0
 	programVerificationVersion = 0
 
-	RuntimeAPIVersion                     = "helmr.runtime.v0"
-	ConfigEvaluatorAPIVersion             = "helmr.config-evaluator.v0"
-	ProgramBuildContractVersion           = "helmr.program-build.v0"
+	RuntimeContract                       = "helmr.runtime.v0"
+	ConfigEvaluatorContract               = "helmr.config-evaluator.v0"
+	ProgramBuildContract                  = "helmr.program-build.v0"
 	ProgramArtifactMediaType              = "application/vnd.helmr.deployment-program.v0+squashfs"
 	manifestDigestDomain                  = "helmr.deployment-definition-manifest.v0\x00"
 	maxJSONSafeInteger              int64 = 9007199254740991
@@ -85,28 +84,27 @@ type ProgramSubmittedSource struct {
 }
 
 type BuildProvenance struct {
-	Architecture         RuntimeArchitecture    `json:"architecture"`
-	BuildContractVersion string                 `json:"buildContractVersion"`
-	Config               ProgramConfig          `json:"config"`
-	Manager              ProgramManager         `json:"manager"`
-	RuntimeDigest        string                 `json:"runtimeDigest"`
-	ToolchainDigest      string                 `json:"toolchainDigest"`
-	Submitted            ProgramSubmittedSource `json:"submitted"`
+	Architecture    RuntimeArchitecture    `json:"architecture"`
+	BuildContract   string                 `json:"buildContract"`
+	Config          ProgramConfig          `json:"config"`
+	Manager         ProgramManager         `json:"manager"`
+	RuntimeDigest   string                 `json:"runtimeDigest"`
+	ToolchainDigest string                 `json:"toolchainDigest"`
+	Submitted       ProgramSubmittedSource `json:"submitted"`
 }
 
 type ProgramConfig struct {
-	EvaluatorAPIVersion string `json:"evaluatorApiVersion"`
-	SourceDigest        string `json:"sourceDigest"`
-	ResultDigest        string `json:"resultDigest"`
+	EvaluatorContract string `json:"evaluatorContract"`
+	SourceDigest      string `json:"sourceDigest"`
+	ResultDigest      string `json:"resultDigest"`
 }
 
 type ProgramIndex struct {
 	Architecture       RuntimeArchitecture       `json:"architecture"`
 	ConfigResultDigest string                    `json:"configResultDigest"`
 	Declarations       []ProgramIndexDeclaration `json:"declarations"`
-	FormatVersion      int                       `json:"formatVersion"`
 	Queues             []QueueInput              `json:"queues"`
-	RuntimeAPIVersion  string                    `json:"runtimeApiVersion"`
+	RuntimeContract    string                    `json:"runtimeContract"`
 }
 
 // ProgramOutput is the build worker's verified Program publication result.
@@ -310,11 +308,8 @@ func CanonicalProgramIndex(index ProgramIndex) ([]byte, error) {
 }
 
 func ValidateProgramIndex(index ProgramIndex) error {
-	if index.FormatVersion != ProgramIndexFormatVersion {
-		return fmt.Errorf("program index formatVersion = %d, want %d", index.FormatVersion, ProgramIndexFormatVersion)
-	}
-	if index.RuntimeAPIVersion != RuntimeAPIVersion {
-		return fmt.Errorf("program index runtimeApiVersion = %q, want %q", index.RuntimeAPIVersion, RuntimeAPIVersion)
+	if index.RuntimeContract != RuntimeContract {
+		return fmt.Errorf("program index runtimeContract = %q, want %q", index.RuntimeContract, RuntimeContract)
 	}
 	if !validArchitecture(index.Architecture) {
 		return fmt.Errorf("program index architecture %q is unsupported", index.Architecture)
@@ -357,12 +352,12 @@ func ValidateProgramIndex(index ProgramIndex) error {
 }
 
 func validateBuildProvenance(prefix string, provenance BuildProvenance) error {
-	if provenance.BuildContractVersion != ProgramBuildContractVersion {
+	if provenance.BuildContract != ProgramBuildContract {
 		return fmt.Errorf(
-			"%s buildContractVersion = %q, want %q",
+			"%s buildContract = %q, want %q",
 			prefix,
-			provenance.BuildContractVersion,
-			ProgramBuildContractVersion,
+			provenance.BuildContract,
+			ProgramBuildContract,
 		)
 	}
 	if !sha256DigestPattern.MatchString(provenance.RuntimeDigest) {
@@ -403,7 +398,7 @@ func validateBuildProvenance(prefix string, provenance BuildProvenance) error {
 }
 
 func validateProgramConfig(config ProgramConfig) error {
-	if config.EvaluatorAPIVersion != ConfigEvaluatorAPIVersion ||
+	if config.EvaluatorContract != ConfigEvaluatorContract ||
 		!sha256DigestPattern.MatchString(config.SourceDigest) ||
 		!sha256DigestPattern.MatchString(config.ResultDigest) {
 		return errors.New("config provenance is invalid")

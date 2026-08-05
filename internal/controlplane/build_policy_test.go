@@ -42,7 +42,7 @@ func controlPlaneCompilerInputs() deployment.CompilerInputs {
 	return deployment.CompilerInputs{
 		APIVersion: "helmr.compiler.v0",
 		ConfigEvaluator: deployment.CompilerEntrypoint{
-			APIVersion: deployment.ConfigEvaluatorAPIVersion,
+			APIVersion: deployment.ConfigEvaluatorContract,
 			Digest:     controlPlaneDigest("config evaluator"),
 			Entrypoint: "/nix/helmr/config-evaluator.mjs",
 		},

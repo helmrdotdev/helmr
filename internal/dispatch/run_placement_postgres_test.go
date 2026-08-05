@@ -537,12 +537,11 @@ SELECT parent_lease.mount_fencing_generation,
 	locators, err := db.New(fixture.pool).GetRunLeaseClaimLocators(
 		fixture.ctx,
 		db.GetRunLeaseClaimLocatorsParams{
-			ID:                    granted.Lease.ID,
-			LeaseSequence:         granted.Lease.LeaseSequence,
-			WorkerGroupID:         fixture.groupID,
-			WorkerInstanceID:      granted.Lease.WorkerInstanceID,
-			WorkerEpoch:           granted.Lease.WorkerEpoch,
-			WorkerProtocolVersion: granted.Lease.WorkerProtocolVersion,
+			ID:               granted.Lease.ID,
+			LeaseSequence:    granted.Lease.LeaseSequence,
+			WorkerGroupID:    fixture.groupID,
+			WorkerInstanceID: granted.Lease.WorkerInstanceID,
+			WorkerEpoch:      granted.Lease.WorkerEpoch,
 		},
 	)
 	if err != nil {
@@ -1502,7 +1501,7 @@ INSERT INTO run_leases (
     id, org_id, project_id, environment_id, run_id, workspace_id,
     region_id, lease_sequence, attempt_number, worker_group_id,
     worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id,
-    worker_protocol_version, requested_cpu_millis, requested_memory_bytes,
+    requested_cpu_millis, requested_memory_bytes,
     requested_guest_ephemeral_disk_bytes,
     requested_execution_slots, trace_id, span_id, state, assigned_at,
     start_deadline_at, claimed_at, started_at, expires_at,
@@ -1511,7 +1510,7 @@ INSERT INTO run_leases (
 SELECT $1, org_id, project_id, environment_id, $2, workspace_id,
        region_id, 1, 1, worker_group_id, worker_instance_id, worker_epoch,
        runtime_instance_id,
-       runtime_identity_id, worker_protocol_version, requested_cpu_millis,
+       runtime_identity_id, requested_cpu_millis,
        requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
        requested_execution_slots, trace_id, span_id,
        'checkpointed', assigned_at, start_deadline_at, assigned_at, assigned_at,
@@ -1550,7 +1549,7 @@ INSERT INTO run_leases (
     id, org_id, project_id, environment_id, run_id, workspace_id,
     region_id, lease_sequence, attempt_number, worker_group_id,
     worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id,
-    worker_protocol_version, requested_cpu_millis, requested_memory_bytes,
+    requested_cpu_millis, requested_memory_bytes,
     requested_guest_ephemeral_disk_bytes,
     requested_execution_slots, trace_id, span_id, state, assigned_at,
     start_deadline_at, claimed_at, started_at, expires_at,
@@ -1558,7 +1557,7 @@ INSERT INTO run_leases (
 )
 SELECT $1, org_id, project_id, environment_id, $2, workspace_id,
        region_id, lease_sequence - 1, 1, worker_group_id, worker_instance_id,
-       worker_epoch, runtime_instance_id, runtime_identity_id, worker_protocol_version,
+       worker_epoch, runtime_instance_id, runtime_identity_id,
        requested_cpu_millis, requested_memory_bytes,
        requested_guest_ephemeral_disk_bytes,
        requested_execution_slots, trace_id, span_id, 'checkpointed',
@@ -1901,12 +1900,12 @@ UPDATE runtime_instances
 		ExpectedRunStateVersion: 3,
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_instances SET substrate_layout_abi = 'incompatible-layout' WHERE id = $1`, fixture.workerID)
+UPDATE worker_instances SET substrate_contract = 'incompatible-contract' WHERE id = $1`, fixture.workerID)
 	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate); !errors.Is(err, ErrCapacityUnavailable) {
 		t.Fatalf("restore placement with incompatible substrate contract error = %v, want ErrCapacityUnavailable", err)
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_instances SET substrate_layout_abi = 'layout-v0' WHERE id = $1`, fixture.workerID)
+UPDATE worker_instances SET substrate_contract = 'builder-v0' WHERE id = $1`, fixture.workerID)
 	restored, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate)
 	if err != nil {
 		t.Fatal(err)
@@ -2177,14 +2176,13 @@ UPDATE runs
 	defer func() { _ = startupTx.Rollback(fixture.ctx) }()
 	if _, err := startupTx.Exec(fixture.ctx, `
 UPDATE worker_instances
-   SET state = 'registering', current_epoch = 2,
+	   SET state = 'registering', current_epoch = 2,
        supervisor_version = '',
        supports_run = false,
        supports_build = false,
-       runtime_identity_id = NULL,
-       substrate_format = '',
-       substrate_builder_abi = '',
-       substrate_layout_abi = '',
+	       runtime_identity_id = NULL,
+	       substrate_format = '',
+	       substrate_contract = '',
        epoch_cpu_millis = 0,
        epoch_memory_bytes = 0,
        epoch_guest_ephemeral_disk_bytes = 0,
@@ -2285,16 +2283,16 @@ UPDATE worker_instances
 	}
 	var lostRunState, lostWaitState, lostMountState string
 	var lostRunLeaseState, lostRunLeaseReason, lostWorkspaceLeaseState, lostWorkspaceLeaseReason string
-	var lostAttemptOutcome, lostRunReason pgtype.Text
+	var lostAttemptOutcome pgtype.Text
 	var lostAttemptTerminalAt, lostRunTerminalAt pgtype.Timestamptz
 	var lostActiveElapsed, lostRunVersion, lostResumeRequestVersion int64
 	var lostWaitLeaseID pgtype.UUID
 	var ownerRunID pgtype.UUID
 	err = fixture.pool.QueryRow(fixture.ctx, `
 SELECT runs.status, run_waits.suspension_state, run_waits.current_run_lease_id,
-       runs.state_version, run_waits.resume_request_version,
-       run_attempts.terminal_outcome, run_attempts.terminal_at,
-       runs.terminal_reason_code, runs.terminal_at, runs.active_elapsed_ms,
+	       runs.state_version, run_waits.resume_request_version,
+	       run_attempts.terminal_outcome, run_attempts.terminal_at,
+	       runs.terminal_at, runs.active_elapsed_ms,
        workspaces.owner_run_id, run_leases.state, run_leases.terminal_reason_code,
        workspace_leases.state, workspace_leases.terminal_reason_code,
        workspace_mounts.state
@@ -2311,7 +2309,7 @@ SELECT runs.status, run_waits.suspension_state, run_waits.current_run_lease_id,
 		&lostRunState, &lostWaitState, &lostWaitLeaseID,
 		&lostRunVersion, &lostResumeRequestVersion,
 		&lostAttemptOutcome, &lostAttemptTerminalAt,
-		&lostRunReason, &lostRunTerminalAt, &lostActiveElapsed,
+		&lostRunTerminalAt, &lostActiveElapsed,
 		&ownerRunID, &lostRunLeaseState, &lostRunLeaseReason,
 		&lostWorkspaceLeaseState, &lostWorkspaceLeaseReason,
 		&lostMountState,
@@ -2322,16 +2320,16 @@ SELECT runs.status, run_waits.suspension_state, run_waits.current_run_lease_id,
 	if lostRunState != "queued" || lostWaitState != "resume_pending" || lostWaitLeaseID.Valid ||
 		lostRunVersion != 9 || lostResumeRequestVersion != 3 ||
 		lostAttemptOutcome.Valid || lostAttemptTerminalAt.Valid ||
-		lostRunReason.Valid || lostRunTerminalAt.Valid ||
+		lostRunTerminalAt.Valid ||
 		lostActiveElapsed < 9000 || lostActiveElapsed > 15000 ||
 		ownerRunID != pgvalue.UUID(fixture.runID) ||
 		lostRunLeaseState != "expired" || lostRunLeaseReason != "lease_expired" ||
 		lostWorkspaceLeaseState != "expired" || lostWorkspaceLeaseReason != "lease_expired" ||
 		lostMountState != "failed" {
-		t.Fatalf("worker-loss recovery run=%s wait=%s wait_lease=%s run_version=%d request_version=%d attempt=%v attempt_at=%v run_reason=%v run_at=%v active=%d owner=%s run_lease=%s/%s workspace_lease=%s/%s mount=%s",
+		t.Fatalf("worker-loss recovery run=%s wait=%s wait_lease=%s run_version=%d request_version=%d attempt=%v attempt_at=%v run_at=%v active=%d owner=%s run_lease=%s/%s workspace_lease=%s/%s mount=%s",
 			lostRunState, lostWaitState, pgvalue.UUIDString(lostWaitLeaseID), lostRunVersion,
 			lostResumeRequestVersion, lostAttemptOutcome, lostAttemptTerminalAt,
-			lostRunReason, lostRunTerminalAt, lostActiveElapsed, pgvalue.UUIDString(ownerRunID),
+			lostRunTerminalAt, lostActiveElapsed, pgvalue.UUIDString(ownerRunID),
 			lostRunLeaseState, lostRunLeaseReason, lostWorkspaceLeaseState,
 			lostWorkspaceLeaseReason, lostMountState)
 	}
@@ -2503,7 +2501,7 @@ UPDATE workspace_leases
 			var terminalCursor pgtype.Int8
 			err = fixture.pool.QueryRow(fixture.ctx, `
 SELECT sessions.state, sessions.current_run_id, sessions.run_generation, sessions.state_version,
-       sessions.failure_code, workspaces.owner_session_id, workspaces.ownership_generation,
+	   sessions.failure->>'code', workspaces.owner_session_id, workspaces.ownership_generation,
        run_waits.suspension_state, runs.status, run_attempts.terminal_session_input_sequence
   FROM sessions
   JOIN workspaces ON workspaces.id = sessions.workspace_id
@@ -2673,13 +2671,13 @@ WITH runtime AS (
      WHERE runtime_instances.id = $1
 ),
 inserted AS (
-    INSERT INTO runtime_substrates (
-        id, org_id, project_id, environment_id, deployment_definition_id,
-        substrate_digest, substrate_format, builder_abi, layout_abi,
-        substrate_size_bytes
-    )
-    SELECT $2, org_id, project_id, environment_id, deployment_definition_id,
-           'sha256:test-runtime-substrate', 'squashfs', 'builder-v0', 'layout-v0', 1
+	INSERT INTO runtime_substrates (
+		id, org_id, project_id, environment_id, deployment_definition_id,
+		substrate_digest, substrate_format, substrate_contract,
+		substrate_size_bytes
+	)
+	SELECT $2, org_id, project_id, environment_id, deployment_definition_id,
+		   'sha256:test-runtime-substrate', 'squashfs', 'builder-v0', 1
       FROM runtime
     ON CONFLICT ON CONSTRAINT runtime_substrates_input_key DO NOTHING
     RETURNING id
@@ -2690,8 +2688,7 @@ SELECT runtime_substrates.id
   FROM runtime_substrates
   JOIN runtime USING (org_id, project_id, environment_id, deployment_definition_id)
  WHERE substrate_format = 'squashfs'
-   AND builder_abi = 'builder-v0'
-   AND layout_abi = 'layout-v0'
+   AND substrate_contract = 'builder-v0'
 LIMIT 1`, runtimeID, pgvalue.NewUUIDv7()).Scan(&runtimeSubstrateID)
 	if err != nil {
 		t.Fatal(err)
@@ -2765,12 +2762,12 @@ UPDATE worker_instances
 INSERT INTO deployment_build_leases (
     id, org_id, project_id, environment_id, deployment_id, build_region_id,
     lease_sequence, worker_group_id, worker_instance_id, worker_epoch,
-    worker_protocol_version, requested_cpu_millis, requested_memory_bytes,
+    requested_cpu_millis, requested_memory_bytes,
     requested_guest_ephemeral_disk_bytes, requested_build_executors,
     build_snapshot, start_deadline_at, expires_at
 ) VALUES (
     $1, $2, $3, $4, $5, 'us-east-1', 1, $6, $7, 1,
-    'helmr.worker.v0', 3000, 4294967296, 34359738368,
+    3000, 4294967296, 34359738368,
     1, '{}'::jsonb, now() + interval '1 minute', now() + interval '5 minutes'
 )`,
 		uuid.Must(uuid.NewV7()),
@@ -2903,7 +2900,7 @@ INSERT INTO deployments (
     id, org_id, project_id, environment_id, build_region_id,
     build_node_version, build_runtime_digest, build_toolchain_digest,
     build_manager_name, build_manager_version, build_manager_digest,
-    build_contract_version, image_cache_mode, version, content_hash, deployment_source_artifact_id,
+    build_contract, image_cache_mode, version, content_hash, deployment_source_artifact_id,
     program_artifact_id, program_index_digest, queue_config, status
 ) VALUES (
     $1, $2, $3, $4, 'us-east-1', '24.16.0',
@@ -2948,24 +2945,24 @@ INSERT INTO worker_groups (
 	)
 	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO runtime_identities (
-    id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
-    rootfs_digest, network_abi
-) VALUES ($1, 'x86_64', 'helmr.runtime.v0', 'kernel', 'initramfs', 'rootfs', 'helmr/v0')`,
+    id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest,
+    rootfs_digest
+) VALUES ($1, 'x86_64', 'helmr.vm-runtime.v0', 'kernel', 'initramfs', 'rootfs')`,
 		runtimeIdentityID,
 	)
 	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO worker_instances (
     id, resource_id, worker_group_id, state,
-    current_epoch, current_service_id, protocol_version, supervisor_version,
+	current_epoch, current_service_id, supervisor_version,
     supports_run, runtime_identity_id,
-    substrate_format, substrate_builder_abi, substrate_layout_abi,
+	substrate_format, substrate_contract,
     epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
     per_vm_cpu_millis, per_vm_memory_bytes,
     per_vm_guest_ephemeral_disk_bytes, max_vm_slots,
     max_run_consumers, max_runtime_starts, epoch_started_at, activated_at
 ) VALUES (
-    $1, $2, $3, 'active', 1, $4, 'helmr.worker.v0',
-    'test-worker', true, $5, 'squashfs', 'builder-v0', 'layout-v0',
+	$1, $2, $3, 'active', 1, $4,
+	'test-worker', true, $5, 'squashfs', 'builder-v0',
     8000, 8589934592, 274877906944,
     1000, 1073741824, 34359738368,
     8, 8, 8, now(), now()

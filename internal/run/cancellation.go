@@ -305,15 +305,11 @@ func (g OwnedFinalization) FailCurrentForSecretRevocation(
 					nil,
 				)
 			}
-			result, err := json.Marshal(map[string]any{
-				"ok": false,
-				"error": map[string]any{
-					"code":      "secret_revoked",
-					"message":   "A Workspace Secret used by the child Run was revoked",
-					"retryable": false,
-				},
-				"run": map[string]any{"id": target.id.String()},
-			})
+			result, err := marshalChildFailureResult(
+				target.id,
+				"secret_revoked",
+				"A Workspace Secret used by the child Run was revoked",
+			)
 			if err != nil {
 				return 0, err
 			}
@@ -878,6 +874,10 @@ func terminateLockedRun(
 	if err != nil {
 		return err
 	}
+	failure, err := MarshalFailure(termination.errorCode, termination.errorMessage, nil)
+	if err != nil {
+		return err
+	}
 	queries := db.New(tx)
 	if run.actorID.Valid {
 		var affected int64
@@ -891,10 +891,18 @@ func terminateLockedRun(
 				},
 			)
 		} else {
+			sessionFailure, marshalErr := MarshalFailure(
+				termination.actorFailureCode,
+				"Session failed because its Run terminated",
+				map[string]any{"run_id": run.id.String()},
+			)
+			if marshalErr != nil {
+				return marshalErr
+			}
 			affected, err = queries.FailActorForRunTermination(
 				ctx,
 				db.FailActorForRunTerminationParams{
-					FailureCode: termination.actorFailureCode,
+					Failure:     sessionFailure,
 					RunID:       pgvalue.UUID(run.id),
 					SessionID:   run.actorID,
 					WorkspaceID: pgvalue.UUID(run.workspaceID),
@@ -984,8 +992,7 @@ func terminateLockedRun(
 		ctx,
 		db.TerminalizeRunParams{
 			Status:               termination.runStatus,
-			ReasonCode:           termination.reasonCode,
-			ErrorPayload:         errorPayload,
+			Failure:              failure,
 			ID:                   pgvalue.UUID(run.id),
 			ExpectedStateVersion: run.stateVersion,
 		},
@@ -1070,14 +1077,11 @@ func resolveCancelledDifferentWorkspaceChildWait(
 	child cancellationRun,
 	wait cancellationWait,
 ) error {
-	result, err := json.Marshal(map[string]any{
-		"ok": false,
-		"error": map[string]any{
-			"code": "child_run_cancelled", "message": "Child Run was cancelled",
-			"retryable": false,
-		},
-		"run": map[string]any{"id": child.id.String()},
-	})
+	result, err := marshalChildFailureResult(
+		child.id,
+		"child_run_cancelled",
+		"Child Run was cancelled",
+	)
 	if err != nil {
 		return err
 	}

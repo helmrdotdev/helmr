@@ -17,7 +17,7 @@ func TestVerifierAcceptsBoundEnrollmentRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if request.Proof != "haOpQjqAKMs1qpvLfVzbpXjLMsfM4hAGNNkCqtHWuf8" {
+	if request.Proof != "NbOlRBp-xpJi_Uhr5EyeG9PERWvtDNcu3eUg-wWdcS8" {
 		t.Fatalf("proof = %q", request.Proof)
 	}
 	if err := verifier.Verify(request); err != nil {

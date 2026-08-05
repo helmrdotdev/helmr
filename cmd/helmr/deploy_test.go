@@ -278,13 +278,13 @@ func TestDeployCommandReconnectsDeploymentEventsUntilTerminal(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "text/event-stream")
 			if eventRequests == 1 {
-				_, _ = fmt.Fprint(w, "id: tc1.eyJzIjoxfQ\nevent: deployment_event\ndata: {\"id\":\"tc1.eyJzIjoxfQ\",\"deployment_id\":\"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35\",\"kind\":\"deployment.building\",\"message\":\"Deployment build started\"}\n\n")
+				_, _ = fmt.Fprint(w, "id: event-cursor-1\nevent: deployment_event\ndata: {\"id\":\"event-cursor-1\",\"deployment_id\":\"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35\",\"kind\":\"deployment.building\",\"message\":\"Deployment build started\"}\n\n")
 				return
 			}
-			if got := r.Header.Get("Last-Event-ID"); got != "tc1.eyJzIjoxfQ" {
+			if got := r.Header.Get("Last-Event-ID"); got != "event-cursor-1" {
 				t.Fatalf("last event id = %q", got)
 			}
-			_, _ = fmt.Fprint(w, "id: tc1.eyJzIjoyfQ\nevent: deployment_event\ndata: {\"id\":\"tc1.eyJzIjoyfQ\",\"deployment_id\":\"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35\",\"kind\":\"deployment.deployed\",\"message\":\"Deployment build completed\"}\n\n")
+			_, _ = fmt.Fprint(w, "id: event-cursor-2\nevent: deployment_event\ndata: {\"id\":\"event-cursor-2\",\"deployment_id\":\"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35\",\"kind\":\"deployment.deployed\",\"message\":\"Deployment build completed\"}\n\n")
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
 			deploymentRequests++
 			status := "queued"
@@ -553,9 +553,9 @@ func TestDeployCommandReturnsFailedDeploymentError(t *testing.T) {
 			writeDeploymentEventSSE(t, w, r, "deployment.failed")
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-				ID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-				Status: "failed",
-				Error:  &api.DeploymentErrorResponse{Message: "build failed"},
+				ID:      "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
+				Status:  "failed",
+				Failure: &api.DeploymentFailure{Code: "build_failed", Message: "build failed", Details: json.RawMessage(`{}`)},
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)

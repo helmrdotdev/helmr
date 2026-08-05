@@ -468,7 +468,7 @@ UPDATE run_leases
    AND finalization_request_fingerprint IS NOT NULL
    AND terminal_request_fingerprint IS NULL
    AND expires_at > $2
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type CompleteTaskRunLeaseParams struct {
@@ -513,7 +513,6 @@ func (q *Queries) CompleteTaskRunLease(ctx context.Context, arg CompleteTaskRunL
 		&i.WorkerEpoch,
 		&i.RuntimeInstanceID,
 		&i.RuntimeIdentityID,
-		&i.WorkerProtocolVersion,
 		&i.RequestedCPUMillis,
 		&i.RequestedMemoryBytes,
 		&i.RequestedGuestEphemeralDiskBytes,
@@ -680,7 +679,7 @@ UPDATE runs
    AND current_attempt_number = $6
    AND current_run_lease_id = $7
    AND active_started_at IS NULL
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 `
 
 type DelayCheckpointFailureRetryParams struct {
@@ -728,8 +727,7 @@ func (q *Queries) DelayCheckpointFailureRetry(ctx context.Context, arg DelayChec
 		&i.SessionInputHighWatermark,
 		&i.Payload,
 		&i.Output,
-		&i.TerminalReasonCode,
-		&i.Error,
+		&i.Failure,
 		&i.Status,
 		&i.StateVersion,
 		&i.CurrentAttemptNumber,
@@ -776,7 +774,7 @@ UPDATE runs
    AND current_attempt_number = $6
    AND current_run_lease_id = $7
    AND active_started_at IS NULL
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 `
 
 type DelayTaskRunRetryParams struct {
@@ -824,8 +822,7 @@ func (q *Queries) DelayTaskRunRetry(ctx context.Context, arg DelayTaskRunRetryPa
 		&i.SessionInputHighWatermark,
 		&i.Payload,
 		&i.Output,
-		&i.TerminalReasonCode,
-		&i.Error,
+		&i.Failure,
 		&i.Status,
 		&i.StateVersion,
 		&i.CurrentAttemptNumber,
@@ -908,8 +905,7 @@ func (q *Queries) FailNestedSameWorkspaceAttempt(ctx context.Context, arg FailNe
 const failNestedSameWorkspaceRun = `-- name: FailNestedSameWorkspaceRun :one
 UPDATE runs
    SET status = 'system_failed',
-       terminal_reason_code = 'same_workspace_handoff_runtime_lost',
-       error = $1::jsonb,
+       failure = $1::jsonb,
        state_version = state_version + 1,
        current_run_lease_id = NULL,
        retry_at = NULL,
@@ -923,11 +919,11 @@ UPDATE runs
    AND status = 'waiting'
    AND current_attempt_number = $6
    AND current_run_lease_id IS NULL
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 `
 
 type FailNestedSameWorkspaceRunParams struct {
-	Error         []byte             `json:"error"`
+	Failure       []byte             `json:"failure"`
 	FailedAt      pgtype.Timestamptz `json:"failed_at"`
 	RunID         pgtype.UUID        `json:"run_id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
@@ -937,7 +933,7 @@ type FailNestedSameWorkspaceRunParams struct {
 
 func (q *Queries) FailNestedSameWorkspaceRun(ctx context.Context, arg FailNestedSameWorkspaceRunParams) (Run, error) {
 	row := q.db.QueryRow(ctx, failNestedSameWorkspaceRun,
-		arg.Error,
+		arg.Failure,
 		arg.FailedAt,
 		arg.RunID,
 		arg.EnvironmentID,
@@ -969,8 +965,7 @@ func (q *Queries) FailNestedSameWorkspaceRun(ctx context.Context, arg FailNested
 		&i.SessionInputHighWatermark,
 		&i.Payload,
 		&i.Output,
-		&i.TerminalReasonCode,
-		&i.Error,
+		&i.Failure,
 		&i.Status,
 		&i.StateVersion,
 		&i.CurrentAttemptNumber,
@@ -1131,28 +1126,26 @@ func (q *Queries) FailNestedSameWorkspaceWait(ctx context.Context, arg FailNeste
 const finishCheckpointFailedTaskRun = `-- name: FinishCheckpointFailedTaskRun :one
 UPDATE runs
    SET status = $1,
-       terminal_reason_code = $2,
-       error = $3::jsonb,
+       failure = $2::jsonb,
        state_version = state_version + 1,
        current_run_lease_id = NULL,
        retry_at = NULL,
-       terminal_at = $4,
-       updated_at = $4
- WHERE id = $5
-   AND workspace_id = $6
+       terminal_at = $3,
+       updated_at = $3
+ WHERE id = $4
+   AND workspace_id = $5
    AND entrypoint_kind = 'task'
    AND session_id IS NULL
    AND status = 'waiting'
-   AND current_attempt_number = $7
-   AND current_run_lease_id = $8
+   AND current_attempt_number = $6
+   AND current_run_lease_id = $7
    AND active_started_at IS NULL
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 `
 
 type FinishCheckpointFailedTaskRunParams struct {
 	Status        string             `json:"status"`
-	ReasonCode    pgtype.Text        `json:"reason_code"`
-	Error         []byte             `json:"error"`
+	Failure       []byte             `json:"failure"`
 	FailedAt      pgtype.Timestamptz `json:"failed_at"`
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
@@ -1163,8 +1156,7 @@ type FinishCheckpointFailedTaskRunParams struct {
 func (q *Queries) FinishCheckpointFailedTaskRun(ctx context.Context, arg FinishCheckpointFailedTaskRunParams) (Run, error) {
 	row := q.db.QueryRow(ctx, finishCheckpointFailedTaskRun,
 		arg.Status,
-		arg.ReasonCode,
-		arg.Error,
+		arg.Failure,
 		arg.FailedAt,
 		arg.ID,
 		arg.WorkspaceID,
@@ -1196,8 +1188,7 @@ func (q *Queries) FinishCheckpointFailedTaskRun(ctx context.Context, arg FinishC
 		&i.SessionInputHighWatermark,
 		&i.Payload,
 		&i.Output,
-		&i.TerminalReasonCode,
-		&i.Error,
+		&i.Failure,
 		&i.Status,
 		&i.StateVersion,
 		&i.CurrentAttemptNumber,
@@ -1232,29 +1223,27 @@ const finishTaskRun = `-- name: FinishTaskRun :one
 UPDATE runs
    SET status = $1,
        output = $2,
-       terminal_reason_code = $3,
-       error = $4,
+       failure = $3,
        state_version = state_version + 1,
        current_run_lease_id = NULL,
        retry_at = NULL,
-       terminal_at = $5,
-       updated_at = $5
- WHERE id = $6
-   AND workspace_id = $7
+       terminal_at = $4,
+       updated_at = $4
+ WHERE id = $5
+   AND workspace_id = $6
    AND entrypoint_kind = 'task'
    AND session_id IS NULL
    AND status = 'running'
-   AND current_attempt_number = $8
-   AND current_run_lease_id = $9
+   AND current_attempt_number = $7
+   AND current_run_lease_id = $8
    AND active_started_at IS NULL
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 `
 
 type FinishTaskRunParams struct {
 	Status        string             `json:"status"`
 	Output        []byte             `json:"output"`
-	ReasonCode    pgtype.Text        `json:"reason_code"`
-	Error         []byte             `json:"error"`
+	Failure       []byte             `json:"failure"`
 	CompletedAt   pgtype.Timestamptz `json:"completed_at"`
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
@@ -1266,8 +1255,7 @@ func (q *Queries) FinishTaskRun(ctx context.Context, arg FinishTaskRunParams) (R
 	row := q.db.QueryRow(ctx, finishTaskRun,
 		arg.Status,
 		arg.Output,
-		arg.ReasonCode,
-		arg.Error,
+		arg.Failure,
 		arg.CompletedAt,
 		arg.ID,
 		arg.WorkspaceID,
@@ -1299,8 +1287,7 @@ func (q *Queries) FinishTaskRun(ctx context.Context, arg FinishTaskRunParams) (R
 		&i.SessionInputHighWatermark,
 		&i.Payload,
 		&i.Output,
-		&i.TerminalReasonCode,
-		&i.Error,
+		&i.Failure,
 		&i.Status,
 		&i.StateVersion,
 		&i.CurrentAttemptNumber,

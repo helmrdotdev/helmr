@@ -38,8 +38,7 @@ func authorizeWorkerRunSource(
 		ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence,
 		WorkerGroupID:    worker.WorkerGroupID,
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch:      worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
-	})
+		WorkerEpoch:      worker.WorkerEpoch})
 	if err != nil {
 		return workerRunSourceAuthority{}, staleWorkerRunSource(err)
 	}

@@ -776,7 +776,7 @@ func TestValidateResumeDecisionAuthorityRejectsMalformedResultUnion(t *testing.T
 		{name: "failed reason", decision: &runv0.ResumeDecision{Kind: "failed", DataJson: `{"reason_code":"token_expired"}`}},
 		{name: "failed no result", decision: &runv0.ResumeDecision{Kind: "failed", NoResult: true, DataJson: `{"reason_code":"token_expired"}`}, wantErr: true},
 		{name: "failed missing reason", decision: &runv0.ResumeDecision{Kind: "failed", DataJson: `{}`}, wantErr: true},
-		{name: "legacy fourth state", decision: &runv0.ResumeDecision{Kind: "timed_out", DataJson: "null"}, wantErr: true},
+		{name: "unknown kind", decision: &runv0.ResumeDecision{Kind: "timed_out", DataJson: "null"}, wantErr: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

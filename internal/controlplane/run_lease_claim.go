@@ -46,12 +46,11 @@ func (s *Server) claimRunLease(
 	leaseSequence int64,
 ) (runLeaseClaimAuthority, []secret.DeliveryEnvelope, error) {
 	secretLocators, err := s.db.GetRunLeaseSecretDeliveryLocators(ctx, db.GetRunLeaseSecretDeliveryLocatorsParams{
-		ID:                    leaseID,
-		LeaseSequence:         leaseSequence,
-		WorkerGroupID:         worker.WorkerGroupID,
-		WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch:           worker.WorkerEpoch,
-		WorkerProtocolVersion: worker.ProtocolVersion,
+		ID:               leaseID,
+		LeaseSequence:    leaseSequence,
+		WorkerGroupID:    worker.WorkerGroupID,
+		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch:      worker.WorkerEpoch,
 	})
 	if err != nil {
 		return runLeaseClaimAuthority{}, nil, staleRunLeaseClaim(err)
@@ -71,12 +70,11 @@ func (s *Server) claimRunLease(
 			return err
 		}
 		locators, err := work.q.GetRunLeaseClaimLocators(ctx, db.GetRunLeaseClaimLocatorsParams{
-			ID:                    leaseID,
-			LeaseSequence:         leaseSequence,
-			WorkerGroupID:         worker.WorkerGroupID,
-			WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch:           worker.WorkerEpoch,
-			WorkerProtocolVersion: worker.ProtocolVersion,
+			ID:               leaseID,
+			LeaseSequence:    leaseSequence,
+			WorkerGroupID:    worker.WorkerGroupID,
+			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerEpoch:      worker.WorkerEpoch,
 		})
 		if err != nil {
 			return staleRunLeaseClaim(err)
@@ -1175,8 +1173,7 @@ func claimRunLeasePhysicalInTx(
 	}
 	if (authority.workerGroup.State != db.WorkerGroupStateActive &&
 		authority.workerGroup.State != db.WorkerGroupStateDraining) ||
-		authority.workerGroup.ClaimVersion != worker.GroupClaimVersion ||
-		authority.workerGroup.ProtocolVersion != worker.ProtocolVersion {
+		authority.workerGroup.ClaimVersion != worker.GroupClaimVersion {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
@@ -1282,12 +1279,11 @@ func markRunLeaseStartingInTx(
 		return authority, nil
 	}
 	runLease, err := q.MarkRunLeaseStarting(ctx, db.MarkRunLeaseStartingParams{
-		ID:                    leaseID,
-		LeaseSequence:         leaseSequence,
-		WorkerGroupID:         worker.WorkerGroupID,
-		WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch:           worker.WorkerEpoch,
-		WorkerProtocolVersion: worker.ProtocolVersion,
+		ID:               leaseID,
+		LeaseSequence:    leaseSequence,
+		WorkerGroupID:    worker.WorkerGroupID,
+		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch:      worker.WorkerEpoch,
 	})
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
@@ -1314,7 +1310,6 @@ func validateClaimWorker(authenticated workerActor, worker db.WorkerInstance) er
 	if !worker.CurrentEpoch.Valid ||
 		worker.CurrentEpoch.Int64 != authenticated.WorkerEpoch ||
 		worker.ClaimVersion != authenticated.ClaimVersion ||
-		worker.ProtocolVersion != authenticated.ProtocolVersion ||
 		!worker.SupportsRun ||
 		(worker.State != db.WorkerInstanceStateActive && worker.State != db.WorkerInstanceStateDraining) {
 		return errStaleRunLeaseClaim
@@ -1328,7 +1323,6 @@ func validateClaimPhysicalAuthority(worker workerActor, authority runLeaseClaimA
 	if lease.WorkerGroupID != worker.WorkerGroupID ||
 		lease.WorkerInstanceID != pgvalue.UUID(worker.WorkerInstanceID) ||
 		lease.WorkerEpoch != worker.WorkerEpoch ||
-		lease.WorkerProtocolVersion != worker.ProtocolVersion ||
 		lease.RuntimeInstanceID != runtime.ID ||
 		lease.RuntimeIdentityID != runtime.RuntimeIdentityID {
 		return errStaleRunLeaseClaim

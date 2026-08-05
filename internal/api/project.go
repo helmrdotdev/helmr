@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -69,11 +70,9 @@ func NormalizeEnvironmentColorHex(colorHex string) (string, error) {
 }
 
 type CreateDeploymentRequest struct {
-	IdempotencyKey        string `json:"idempotency_key"`
-	ContentHash           string `json:"content_hash"`
-	ImageCacheMode        string `json:"image_cache_mode,omitempty"`
-	APIVersion            string `json:"api_version,omitempty"`
-	WorkerProtocolVersion string `json:"worker_protocol_version,omitempty"`
+	IdempotencyKey string `json:"idempotency_key"`
+	ContentHash    string `json:"content_hash"`
+	ImageCacheMode string `json:"image_cache_mode,omitempty"`
 }
 
 type DeploymentStatus string
@@ -86,33 +85,29 @@ const (
 )
 
 type DeploymentResponse struct {
-	ID                    string                   `json:"id"`
-	Version               string                   `json:"version"`
-	APIVersion            string                   `json:"api_version"`
-	WorkerProtocolVersion string                   `json:"worker_protocol_version"`
-	ProjectID             string                   `json:"project_id"`
-	EnvironmentID         string                   `json:"environment_id"`
-	ContentHash           string                   `json:"content_hash"`
-	DeploymentSource      DeploymentSourceArtifact `json:"deployment_source"`
-	Status                DeploymentStatus         `json:"status"`
-	Error                 *DeploymentErrorResponse `json:"error,omitempty"`
-	CreatedAt             time.Time                `json:"created_at"`
-	BuildingAt            time.Time                `json:"building_at"`
-	BuiltAt               time.Time                `json:"built_at"`
-	DeployedAt            time.Time                `json:"deployed_at"`
-	FailedAt              time.Time                `json:"failed_at"`
+	ID               string                   `json:"id"`
+	Version          string                   `json:"version"`
+	ProjectID        string                   `json:"project_id"`
+	EnvironmentID    string                   `json:"environment_id"`
+	ContentHash      string                   `json:"content_hash"`
+	DeploymentSource DeploymentSourceArtifact `json:"deployment_source"`
+	Status           DeploymentStatus         `json:"status"`
+	Failure          *DeploymentFailure       `json:"failure,omitempty"`
+	CreatedAt        time.Time                `json:"created_at"`
+	BuildingAt       *time.Time               `json:"building_at,omitempty"`
+	BuiltAt          *time.Time               `json:"built_at,omitempty"`
+	DeployedAt       *time.Time               `json:"deployed_at,omitempty"`
+	FailedAt         *time.Time               `json:"failed_at,omitempty"`
 }
 
 type PromoteDeploymentRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-type DeploymentErrorResponse struct {
-	Message string `json:"message,omitempty"`
-}
-
-type GetCurrentDeploymentResponse struct {
-	Deployment *DeploymentResponse `json:"deployment"`
+type DeploymentFailure struct {
+	Code    string          `json:"code"`
+	Message string          `json:"message"`
+	Details json.RawMessage `json:"details"`
 }
 
 type ListDeploymentsResponse struct {

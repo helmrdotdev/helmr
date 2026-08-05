@@ -102,22 +102,22 @@ UPDATE run_waits
 			}
 
 			var childStatus db.RunStatus
-			var reason string
+			var failureCode string
 			var ownerRunID *uuid.UUID
 			if err := fixture.pool.QueryRow(ctx, `
-SELECT runs.status, runs.terminal_reason_code, workspaces.owner_run_id
+SELECT runs.status, runs.failure->>'code', workspaces.owner_run_id
   FROM runs
   JOIN workspaces ON workspaces.id = runs.workspace_id
  WHERE runs.id = $1`,
 				child.runID,
-			).Scan(&childStatus, &reason, &ownerRunID); err != nil {
+			).Scan(&childStatus, &failureCode, &ownerRunID); err != nil {
 				t.Fatal(err)
 			}
-			if childStatus != db.RunStatusExpired || reason != "queued_ttl_expired" ||
+			if childStatus != db.RunStatusExpired || failureCode != "queued_ttl_expired" ||
 				ownerRunID != nil {
 				t.Fatalf(
-					"child expiry = status:%s reason:%s owner:%v",
-					childStatus, reason, ownerRunID,
+					"child expiry = status:%s failure:%s owner:%v",
+					childStatus, failureCode, ownerRunID,
 				)
 			}
 			var result json.RawMessage
@@ -132,7 +132,7 @@ SELECT condition_result, condition_state, suspension_state
 				t.Fatal(err)
 			}
 			wantResult := `{"ok": false, "run": {"id": "` + childID +
-				`"}, "error": {"code": "queued_ttl_expired", "message": "Child Run queued TTL expired", "retryable": false}}`
+				`"}, "failure": {"code": "queued_ttl_expired", "message": "Child Run queued TTL expired", "details": {}}}`
 			var gotValue, wantValue any
 			if err := json.Unmarshal(result, &gotValue); err != nil {
 				t.Fatal(err)

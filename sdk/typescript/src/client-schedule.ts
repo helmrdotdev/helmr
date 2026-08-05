@@ -1,12 +1,13 @@
 import type {
   CursorPage,
+  JsonValue,
   WorkspaceAddress,
 } from "./contract"
 import type { RequestOptions } from "./request"
 import { resourceID } from "./internal/id"
 import { workspaces } from "./workspace"
 
-export interface ScheduleError {
+export interface ScheduleFailure {
   readonly code:
     | "task_authority_invalid"
     | "workspace_unavailable"
@@ -14,6 +15,7 @@ export interface ScheduleError {
     | "generation_invalid"
     | "input_invalid"
   readonly message: string
+  readonly details: Readonly<Record<string, JsonValue>>
 }
 
 export interface ScheduleSnapshot {
@@ -23,7 +25,7 @@ export interface ScheduleSnapshot {
   readonly workspaceId?: string
   readonly cron: Readonly<{ pattern: string; timezone: string }>
   readonly status: "pending_workspace" | "active" | "errored" | "archived"
-  readonly lastError?: ScheduleError
+  readonly lastFailure?: ScheduleFailure
   readonly nextFireAt?: string
   readonly lastFireAt?: string
   readonly createdAt: string
@@ -122,9 +124,12 @@ function parseSchedule(value: unknown): ScheduleSnapshot {
   ) {
     throw new Error("Schedule response.status is invalid")
   }
-  const lastError = input["last_error"] === undefined
+  const lastFailure = input["last_failure"] === undefined
     ? undefined
-    : parseScheduleError(input["last_error"])
+    : parseScheduleFailure(input["last_failure"])
+  if (status === "errored" && lastFailure === undefined) {
+    throw new Error("Errored Schedule response must contain last_failure")
+  }
   const workspaceId = input["workspace_id"] === undefined
     ? undefined
     : resourceID(input["workspace_id"], "Schedule response.workspace_id")
@@ -154,7 +159,7 @@ function parseSchedule(value: unknown): ScheduleSnapshot {
       timezone: requiredString(cron, "timezone", "Schedule cron"),
     }),
     status,
-    ...(lastError === undefined ? {} : { lastError }),
+    ...(lastFailure === undefined ? {} : { lastFailure }),
     ...(input["next_fire_at"] === undefined
       ? {}
       : { nextFireAt: timestamp(input["next_fire_at"], "next_fire_at") }),
@@ -166,9 +171,9 @@ function parseSchedule(value: unknown): ScheduleSnapshot {
   })
 }
 
-function parseScheduleError(value: unknown): ScheduleError {
-  const input = scheduleObject(value, "Schedule error")
-  const code = requiredString(input, "code", "Schedule error")
+function parseScheduleFailure(value: unknown): ScheduleFailure {
+  const input = scheduleObject(value, "Schedule failure")
+  const code = requiredString(input, "code", "Schedule failure")
   if (
     code !== "task_authority_invalid" &&
     code !== "workspace_unavailable" &&
@@ -176,11 +181,12 @@ function parseScheduleError(value: unknown): ScheduleError {
     code !== "generation_invalid" &&
     code !== "input_invalid"
   ) {
-    throw new Error("Schedule error.code is invalid")
+    throw new Error("Schedule failure.code is invalid")
   }
   return Object.freeze({
     code,
-    message: requiredString(input, "message", "Schedule error"),
+    message: requiredString(input, "message", "Schedule failure"),
+    details: Object.freeze({ ...scheduleObject(input["details"], "Schedule failure.details") }) as Readonly<Record<string, JsonValue>>,
   })
 }
 

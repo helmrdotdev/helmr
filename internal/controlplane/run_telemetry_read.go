@@ -27,7 +27,6 @@ import (
 const (
 	runTelemetryDefaultLimit = int32(100)
 	runTelemetryMaxLimit     = int32(200)
-	runTelemetryCursorPrefix = "rt1."
 	runTelemetryCursorMax    = 4096
 )
 
@@ -406,18 +405,16 @@ func (s *Server) signRunTelemetryCursor(cursor runTelemetryCursor) (string, erro
 	if err != nil {
 		return "", err
 	}
-	return runTelemetryCursorPrefix +
-		base64.RawURLEncoding.EncodeToString(payload) + "." +
+	return base64.RawURLEncoding.EncodeToString(payload) + "." +
 		base64.RawURLEncoding.EncodeToString(mac), nil
 }
 
 func (s *Server) parseRunTelemetryCursor(raw string) (runTelemetryCursor, error) {
 	if len(raw) > runTelemetryCursorMax ||
-		!strings.HasPrefix(raw, runTelemetryCursorPrefix) ||
 		len(s.authKeys.TelemetryCursor) == 0 {
 		return runTelemetryCursor{}, errTelemetryInvalidCursor
 	}
-	parts := strings.Split(strings.TrimPrefix(raw, runTelemetryCursorPrefix), ".")
+	parts := strings.Split(raw, ".")
 	if len(parts) != 2 {
 		return runTelemetryCursor{}, errTelemetryInvalidCursor
 	}

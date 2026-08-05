@@ -17,9 +17,7 @@ import (
 )
 
 const (
-	ExecutionABI = "helmr.image-build.v0"
-	LLBABI       = "helmr.image-llb.v0"
-	CacheABI     = "helmr.image-cache.v0"
+	Contract = "helmr.image-build.v0"
 
 	RequestDocumentMaxBytes    = 16 << 20
 	CredentialEnvelopeMaxBytes = 1 << 20
@@ -38,9 +36,7 @@ const (
 )
 
 type GuestRequest struct {
-	ExecutionABI string `json:"executionAbi"`
-	LLBABI       string `json:"llbAbi"`
-	CacheABI     string `json:"cacheAbi"`
+	Contract string `json:"contract"`
 
 	OperationID          string `json:"operationId"`
 	AttemptID            string `json:"attemptId"`
@@ -137,7 +133,7 @@ const (
 )
 
 type GuestResult struct {
-	ExecutionABI  string             `json:"executionAbi"`
+	Contract      string             `json:"contract"`
 	Outcome       GuestOutcome       `json:"outcome"`
 	FailureReason GuestFailureReason `json:"failureReason,omitempty"`
 	OCIDigest     string             `json:"ociDigest,omitempty"`
@@ -192,8 +188,8 @@ func ParseGuestResult(raw []byte) (GuestResult, error) {
 }
 
 func ValidateGuestRequest(request GuestRequest) error {
-	if request.ExecutionABI != ExecutionABI || request.LLBABI != LLBABI || request.CacheABI != CacheABI {
-		return errors.New("image-build ABI does not match the guest")
+	if request.Contract != Contract {
+		return errors.New("image-build contract does not match the guest")
 	}
 	for _, identity := range []struct {
 		label string
@@ -367,8 +363,8 @@ func credentialBindings(request GuestRequest) []credentialBinding {
 }
 
 func ValidateGuestResult(result GuestResult) error {
-	if result.ExecutionABI != ExecutionABI {
-		return errors.New("image-build result ABI does not match")
+	if result.Contract != Contract {
+		return errors.New("image-build result contract does not match")
 	}
 	switch result.Outcome {
 	case GuestSucceeded:

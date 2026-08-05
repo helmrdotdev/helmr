@@ -542,12 +542,12 @@ func testWorkspaceImageOperation(
 func testBuildProvenance(t *testing.T) BuildProvenance {
 	t.Helper()
 	return BuildProvenance{
-		Architecture:         ArchitectureX8664,
-		BuildContractVersion: ProgramBuildContractVersion,
+		Architecture:  ArchitectureX8664,
+		BuildContract: ProgramBuildContract,
 		Config: ProgramConfig{
-			EvaluatorAPIVersion: ConfigEvaluatorAPIVersion,
-			SourceDigest:        "sha256:" + strings.Repeat("3", 64),
-			ResultDigest:        "sha256:" + strings.Repeat("4", 64),
+			EvaluatorContract: ConfigEvaluatorContract,
+			SourceDigest:      "sha256:" + strings.Repeat("3", 64),
+			ResultDigest:      "sha256:" + strings.Repeat("4", 64),
 		},
 		Manager: ProgramManager{
 			Digest:  "sha256:" + strings.Repeat("7", 64),

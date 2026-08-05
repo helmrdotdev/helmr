@@ -42,7 +42,7 @@ WITH candidate AS (
 SELECT claimed.id, claimed.org_id, claimed.worker_group_id, claimed.project_id, claimed.environment_id, claimed.region_id, claimed.worker_instance_id, claimed.worker_epoch, claimed.workspace_id, claimed.materialized_version_id, claimed.runtime_instance_id, claimed.claim_attempt, claimed.guest_channel_token_hash, claimed.guest_channel_token_expires_at, claimed.state, claimed.request, claimed.dirty_generation, claimed.fencing_generation, claimed.finalization_kind, claimed.finalization_reason_code, claimed.finalization_error, claimed.staged_version_id, claimed.requested_at, claimed.mounted_at, claimed.unmounted_at, claimed.stopped_at, claimed.lost_at, claimed.failed_at, claimed.terminal_at, claimed.terminal_reason_code, claimed.terminal_error, claimed.created_at, claimed.updated_at, runtime_instances.runtime_identity_id AS runtime_id,
        runtime_instances.deployment_definition_id,
        runtime_identities.rootfs_digest,
-       runtime_identities.runtime_abi,
+       runtime_identities.vm_runtime_contract,
        runtime_instances.reserved_cpu_millis,
        runtime_instances.reserved_memory_bytes,
        runtime_instances.reserved_guest_ephemeral_disk_bytes,
@@ -119,7 +119,7 @@ type ClaimWorkspaceMountRow struct {
 	RuntimeID                       string             `json:"runtime_id"`
 	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
 	RootfsDigest                    string             `json:"rootfs_digest"`
-	RuntimeABI                      string             `json:"runtime_abi"`
+	VMRuntimeContract               string             `json:"vm_runtime_contract"`
 	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
 	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
 	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
@@ -180,7 +180,7 @@ func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMou
 		&i.RuntimeID,
 		&i.DeploymentDefinitionID,
 		&i.RootfsDigest,
-		&i.RuntimeABI,
+		&i.VMRuntimeContract,
 		&i.ReservedCPUMillis,
 		&i.ReservedMemoryBytes,
 		&i.ReservedGuestEphemeralDiskBytes,

@@ -466,7 +466,7 @@ func smokeBuildPolicy(t *testing.T) string {
 			Compiler: deployment.CompilerInputs{
 				APIVersion: "helmr.compiler.v0",
 				ConfigEvaluator: deployment.CompilerEntrypoint{
-					APIVersion: deployment.ConfigEvaluatorAPIVersion,
+					APIVersion: deployment.ConfigEvaluatorContract,
 					Digest:     digest("3"), Entrypoint: "/nix/helmr/config-evaluator.mjs",
 				},
 				Esbuild: deployment.EsbuildInputs{

@@ -10,34 +10,31 @@ import (
 func TestRuntimeIdentityDigestMatchesCASDigest(t *testing.T) {
 	runtime := Selector{
 		Arch:            "amd64",
-		ABI:             "linux",
+		Contract:        Contract,
 		KernelDigest:    "sha256:kernel",
 		InitramfsDigest: "sha256:initramfs",
 		RootfsDigest:    "sha256:rootfs",
-		NetworkABI:      "default",
 	}
 	got, err := Digest(runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
 	payload, err := json.Marshal(struct {
-		Schema          string `json:"schema"`
+		Domain          string `json:"domain"`
 		Backend         string `json:"backend"`
 		Arch            string `json:"arch"`
-		ABI             string `json:"abi"`
+		Contract        string `json:"contract"`
 		KernelDigest    string `json:"kernel_digest"`
 		InitramfsDigest string `json:"initramfs_digest"`
 		RootfsDigest    string `json:"rootfs_digest"`
-		NetworkABI      string `json:"network_abi"`
 	}{
-		Schema:          Schema,
+		Domain:          digestDomain,
 		Backend:         "firecracker",
 		Arch:            runtime.Arch,
-		ABI:             runtime.ABI,
+		Contract:        runtime.Contract,
 		KernelDigest:    runtime.KernelDigest,
 		InitramfsDigest: runtime.InitramfsDigest,
 		RootfsDigest:    runtime.RootfsDigest,
-		NetworkABI:      runtime.NetworkABI,
 	})
 	if err != nil {
 		t.Fatal(err)

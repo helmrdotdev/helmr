@@ -17,14 +17,12 @@ func discoverWorkerRunLeases(
 	workerGroupID string,
 	workerInstanceID pgtype.UUID,
 	workerEpoch int64,
-	protocolVersion string,
 ) (workerapi.RunLeaseDiscoveryResponse, error) {
 	rows, err := store.DiscoverWorkerRunLeaseWork(ctx, db.DiscoverWorkerRunLeaseWorkParams{
-		WorkerGroupID:         workerGroupID,
-		WorkerProtocolVersion: protocolVersion,
-		RowLimit:              workerRunLeaseDiscoveryLimit,
-		WorkerInstanceID:      workerInstanceID,
-		WorkerEpoch:           workerEpoch,
+		WorkerGroupID:    workerGroupID,
+		RowLimit:         workerRunLeaseDiscoveryLimit,
+		WorkerInstanceID: workerInstanceID,
+		WorkerEpoch:      workerEpoch,
 	})
 	if err != nil {
 		return workerapi.RunLeaseDiscoveryResponse{}, err

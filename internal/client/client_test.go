@@ -270,7 +270,8 @@ func TestCreateDeploymentSendsContentHash(t *testing.T) {
 	}
 	response, err := client.CreateDeployment(
 		context.Background(),
-		api.CreateDeploymentRequest{IdempotencyKey: "deploy-1"},
+		api.CreateDeploymentRequest{
+			IdempotencyKey: "deploy-1"},
 		sourcePath,
 		EnvironmentScopeOptions{},
 	)
@@ -327,7 +328,8 @@ func TestCreateDeploymentRetriesLostResponseWithSameKey(t *testing.T) {
 	}
 	response, err := client.CreateDeployment(
 		context.Background(),
-		api.CreateDeploymentRequest{IdempotencyKey: "deploy-retry"},
+		api.CreateDeploymentRequest{
+			IdempotencyKey: "deploy-retry"},
 		sourcePath,
 		EnvironmentScopeOptions{},
 	)
@@ -426,11 +428,11 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 		case "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs":
 			_ = json.NewEncoder(w).Encode(api.RunLogPage{
 				Logs: []api.RunLogRecord{{
-					ID: "rt1.log", Kind: "stdout", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
+					ID: "log-cursor", Kind: "stdout", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 					AttemptNumber: 1,
 					ContentBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
 				}},
-				NextCursor: "rt1.next",
+				NextCursor: "cursor-next",
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -460,7 +462,7 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 	}
 	if len(logs.Logs) != 1 ||
 		logs.Logs[0].ContentBase64 != base64.StdEncoding.EncodeToString([]byte("hello\n")) ||
-		logs.NextCursor != "rt1.next" {
+		logs.NextCursor != "cursor-next" {
 		t.Fatalf("logs = %+v", logs)
 	}
 	if got := strings.Join(paths, ","); got != "/v1/runs?cursor=cursor-1&limit=25&status=running&status=waiting,/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" {
@@ -518,7 +520,8 @@ func TestSessionScopedClientRequiresEnvironmentScope(t *testing.T) {
 	}
 	if _, err := client.CreateDeployment(
 		context.Background(),
-		api.CreateDeploymentRequest{IdempotencyKey: "deploy-1"},
+		api.CreateDeploymentRequest{
+			IdempotencyKey: "deploy-1"},
 		sourcePath,
 		EnvironmentScopeOptions{},
 	); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
@@ -529,7 +532,7 @@ func TestSessionScopedClientRequiresEnvironmentScope(t *testing.T) {
 func TestListRunLogsSendsCursorAndFilters(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" ||
-			r.URL.Query().Get("cursor") != "rt1.previous" ||
+			r.URL.Query().Get("cursor") != "cursor-previous" ||
 			r.URL.Query().Get("limit") != "25" ||
 			strings.Join(r.URL.Query()["level"], ",") != "warn,error" {
 			t.Fatalf("%s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
@@ -537,7 +540,7 @@ func TestListRunLogsSendsCursorAndFilters(t *testing.T) {
 		observed := int64(2)
 		bytes := int64(6)
 		_ = json.NewEncoder(w).Encode(api.RunLogPage{Logs: []api.RunLogRecord{{
-			ID:               "rt1.log",
+			ID:               "log-cursor",
 			RunID:            "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 			AttemptNumber:    1,
 			Kind:             "stdout",
@@ -545,7 +548,7 @@ func TestListRunLogsSendsCursorAndFilters(t *testing.T) {
 			Bytes:            &bytes,
 			ObservedSequence: &observed,
 			At:               time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC),
-		}}, NextCursor: "rt1.next"})
+		}}, NextCursor: "cursor-next"})
 	}))
 	defer server.Close()
 
@@ -557,14 +560,14 @@ func TestListRunLogsSendsCursorAndFilters(t *testing.T) {
 		context.Background(),
 		"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 		ListRunLogsOptions{
-			Cursor: "rt1.previous", Limit: 25, Levels: []string{"warn", "error"},
+			Cursor: "cursor-previous", Limit: 25, Levels: []string{"warn", "error"},
 		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Logs) != 1 || page.Logs[0].ID != "rt1.log" ||
-		page.NextCursor != "rt1.next" {
+	if len(page.Logs) != 1 || page.Logs[0].ID != "log-cursor" ||
+		page.NextCursor != "cursor-next" {
 		t.Fatalf("page = %+v", page)
 	}
 }

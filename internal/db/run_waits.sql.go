@@ -22,7 +22,7 @@ UPDATE run_leases
    AND lease_sequence = $5
    AND state = 'running'
    AND expires_at > transaction_timestamp()
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type BeginRunLeaseCheckpointParams struct {
@@ -57,7 +57,6 @@ func (q *Queries) BeginRunLeaseCheckpoint(ctx context.Context, arg BeginRunLease
 		&i.WorkerEpoch,
 		&i.RuntimeInstanceID,
 		&i.RuntimeIdentityID,
-		&i.WorkerProtocolVersion,
 		&i.RequestedCPUMillis,
 		&i.RequestedMemoryBytes,
 		&i.RequestedGuestEphemeralDiskBytes,
@@ -1923,9 +1922,8 @@ SELECT run_waits.id AS wait_id,
    AND run_leases.worker_group_id = $9
    AND run_leases.worker_instance_id = $10
    AND run_leases.worker_epoch = $11
-   AND run_leases.worker_protocol_version = $12
    AND run_waits.actor_speculative_input_sequence
-       IS NOT DISTINCT FROM $13
+       IS NOT DISTINCT FROM $12
 `
 
 type GetTokenWaitRegistrationReplayParams struct {
@@ -1940,7 +1938,6 @@ type GetTokenWaitRegistrationReplayParams struct {
 	WorkerGroupID                 string      `json:"worker_group_id"`
 	WorkerInstanceID              pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch                   int64       `json:"worker_epoch"`
-	WorkerProtocolVersion         string      `json:"worker_protocol_version"`
 	ActorSpeculativeInputSequence pgtype.Int8 `json:"actor_speculative_input_sequence"`
 }
 
@@ -1966,7 +1963,6 @@ func (q *Queries) GetTokenWaitRegistrationReplay(ctx context.Context, arg GetTok
 		arg.WorkerGroupID,
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
-		arg.WorkerProtocolVersion,
 		arg.ActorSpeculativeInputSequence,
 	)
 	var i GetTokenWaitRegistrationReplayRow
@@ -2189,7 +2185,7 @@ WITH RECURSIVE ancestors AS (
        AND outer_wait.condition_state = 'pending'
        AND outer_wait.suspension_state = 'parked'
 )
-SELECT parent.id, parent.org_id, parent.project_id, parent.environment_id, parent.deployment_id, parent.deployment_definition_id, parent.entrypoint_kind, parent.entrypoint_declared_id, parent.session_id, parent.cause_kind, parent.schedule_id, parent.schedule_generation, parent.scheduled_at, parent.previous_scheduled_at, parent.schedule_timezone, parent.parent_run_id, parent.parent_owns_lifecycle, parent.workspace_id, parent.base_workspace_version_id, parent.session_input_start_sequence, parent.session_input_high_watermark, parent.payload, parent.output, parent.terminal_reason_code, parent.error, parent.status, parent.state_version, parent.current_attempt_number, parent.current_run_lease_id, parent.metadata, parent.tags, parent.queue_name, parent.concurrency_key, parent.queue_concurrency_limit, parent.priority, parent.queue_origin_at, parent.queue_score_at, parent.queued_expires_at, parent.max_active_duration_ms, parent.retry_policy, parent.active_elapsed_ms, parent.active_started_at, parent.trace_id, parent.root_span_id, parent.claim_id, parent.created_at, parent.updated_at, parent.first_lease_at, parent.started_at, parent.retry_at, parent.terminal_at,
+SELECT parent.id, parent.org_id, parent.project_id, parent.environment_id, parent.deployment_id, parent.deployment_definition_id, parent.entrypoint_kind, parent.entrypoint_declared_id, parent.session_id, parent.cause_kind, parent.schedule_id, parent.schedule_generation, parent.scheduled_at, parent.previous_scheduled_at, parent.schedule_timezone, parent.parent_run_id, parent.parent_owns_lifecycle, parent.workspace_id, parent.base_workspace_version_id, parent.session_input_start_sequence, parent.session_input_high_watermark, parent.payload, parent.output, parent.failure, parent.status, parent.state_version, parent.current_attempt_number, parent.current_run_lease_id, parent.metadata, parent.tags, parent.queue_name, parent.concurrency_key, parent.queue_concurrency_limit, parent.priority, parent.queue_origin_at, parent.queue_score_at, parent.queued_expires_at, parent.max_active_duration_ms, parent.retry_policy, parent.active_elapsed_ms, parent.active_started_at, parent.trace_id, parent.root_span_id, parent.claim_id, parent.created_at, parent.updated_at, parent.first_lease_at, parent.started_at, parent.retry_at, parent.terminal_at,
        ancestors.depth
   FROM ancestors
   JOIN runs AS parent
@@ -2245,8 +2241,7 @@ func (q *Queries) ListSameWorkspaceHandoffAncestorRuns(ctx context.Context, arg 
 			&i.Run.SessionInputHighWatermark,
 			&i.Run.Payload,
 			&i.Run.Output,
-			&i.Run.TerminalReasonCode,
-			&i.Run.Error,
+			&i.Run.Failure,
 			&i.Run.Status,
 			&i.Run.StateVersion,
 			&i.Run.CurrentAttemptNumber,
@@ -2533,7 +2528,7 @@ WITH RECURSIVE ancestors AS (
        AND outer_wait.suspension_state = 'parked'
 )
 SELECT handoff.id, handoff.environment_id, handoff.run_id, handoff.workspace_id, handoff.kind, handoff.condition_state, handoff.due_at, handoff.timeout_at, handoff.idle_timeout_ms, handoff.token_id, handoff.child_run_id, handoff.child_parent_owned, handoff.child_target_declared_id, handoff.child_claim_id, handoff.child_request, handoff.session_id, handoff.after_input_sequence, handoff.condition_result, handoff.condition_error, handoff.condition_terminal_at, handoff.condition_reason_code, handoff.completed_actor_record_id, handoff.completed_actor_record_direction, handoff.suspension_state, handoff.token_registration_run_state_version, handoff.registration_request_fingerprint, handoff.expected_run_state_version, handoff.attempt_number, handoff.actor_speculative_input_sequence, handoff.current_run_lease_id, handoff.prior_run_lease_id, handoff.checkpoint_request_version, handoff.checkpoint_ack_version, handoff.checkpoint_due_at, handoff.suspend_checkpoint_id, handoff.handoff_resume_checkpoint_id, handoff.resume_attach_id, handoff.resume_request_version, handoff.resume_ack_version, handoff.base_workspace_version_id, handoff.base_workspace_content_digest, handoff.child_result_version_id, handoff.resume_workspace_version_id, handoff.handoff_runtime_instance_id, handoff.handoff_workspace_mount_id, handoff.handoff_mount_generation, handoff.ownership_generation, handoff.parent_writer_generation, handoff.child_writer_generation, handoff.resume_writer_generation, handoff.metadata, handoff.tags, handoff.suspension_terminal_at, handoff.suspension_reason_code, handoff.suspension_error, handoff.created_at, handoff.updated_at,
-       parent.id, parent.org_id, parent.project_id, parent.environment_id, parent.deployment_id, parent.deployment_definition_id, parent.entrypoint_kind, parent.entrypoint_declared_id, parent.session_id, parent.cause_kind, parent.schedule_id, parent.schedule_generation, parent.scheduled_at, parent.previous_scheduled_at, parent.schedule_timezone, parent.parent_run_id, parent.parent_owns_lifecycle, parent.workspace_id, parent.base_workspace_version_id, parent.session_input_start_sequence, parent.session_input_high_watermark, parent.payload, parent.output, parent.terminal_reason_code, parent.error, parent.status, parent.state_version, parent.current_attempt_number, parent.current_run_lease_id, parent.metadata, parent.tags, parent.queue_name, parent.concurrency_key, parent.queue_concurrency_limit, parent.priority, parent.queue_origin_at, parent.queue_score_at, parent.queued_expires_at, parent.max_active_duration_ms, parent.retry_policy, parent.active_elapsed_ms, parent.active_started_at, parent.trace_id, parent.root_span_id, parent.claim_id, parent.created_at, parent.updated_at, parent.first_lease_at, parent.started_at, parent.retry_at, parent.terminal_at,
+       parent.id, parent.org_id, parent.project_id, parent.environment_id, parent.deployment_id, parent.deployment_definition_id, parent.entrypoint_kind, parent.entrypoint_declared_id, parent.session_id, parent.cause_kind, parent.schedule_id, parent.schedule_generation, parent.scheduled_at, parent.previous_scheduled_at, parent.schedule_timezone, parent.parent_run_id, parent.parent_owns_lifecycle, parent.workspace_id, parent.base_workspace_version_id, parent.session_input_start_sequence, parent.session_input_high_watermark, parent.payload, parent.output, parent.failure, parent.status, parent.state_version, parent.current_attempt_number, parent.current_run_lease_id, parent.metadata, parent.tags, parent.queue_name, parent.concurrency_key, parent.queue_concurrency_limit, parent.priority, parent.queue_origin_at, parent.queue_score_at, parent.queued_expires_at, parent.max_active_duration_ms, parent.retry_policy, parent.active_elapsed_ms, parent.active_started_at, parent.trace_id, parent.root_span_id, parent.claim_id, parent.created_at, parent.updated_at, parent.first_lease_at, parent.started_at, parent.retry_at, parent.terminal_at,
        attempt.run_id, attempt.number, attempt.entrypoint_kind, attempt.workspace_id, attempt.entrypoint_entered_at, attempt.session_input_start_sequence, attempt.base_workspace_version_id, attempt.terminal_session_input_sequence, attempt.terminal_outcome, attempt.terminal_reason_code, attempt.terminal_error, attempt.created_at, attempt.terminal_at,
        ancestors.depth
   FROM ancestors
@@ -2657,8 +2652,7 @@ func (q *Queries) LockSameWorkspaceHandoffAncestors(ctx context.Context, arg Loc
 			&i.Run.SessionInputHighWatermark,
 			&i.Run.Payload,
 			&i.Run.Output,
-			&i.Run.TerminalReasonCode,
-			&i.Run.Error,
+			&i.Run.Failure,
 			&i.Run.Status,
 			&i.Run.StateVersion,
 			&i.Run.CurrentAttemptNumber,
@@ -2887,26 +2881,24 @@ SELECT state
    AND worker_epoch = $8
    AND runtime_instance_id = $9
    AND runtime_identity_id = $10
-   AND worker_protocol_version = $11
-   AND region_id = $12
+   AND region_id = $11
    AND state = 'running'
    AND expires_at > transaction_timestamp()
  FOR UPDATE
 `
 
 type LockTokenWaitRunLeaseParams struct {
-	ID                    pgtype.UUID `json:"id"`
-	RunID                 pgtype.UUID `json:"run_id"`
-	AttemptNumber         int32       `json:"attempt_number"`
-	WorkspaceID           pgtype.UUID `json:"workspace_id"`
-	LeaseSequence         int64       `json:"lease_sequence"`
-	WorkerGroupID         string      `json:"worker_group_id"`
-	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch           int64       `json:"worker_epoch"`
-	RuntimeInstanceID     pgtype.UUID `json:"runtime_instance_id"`
-	RuntimeIdentityID     string      `json:"runtime_identity_id"`
-	WorkerProtocolVersion string      `json:"worker_protocol_version"`
-	RegionID              string      `json:"region_id"`
+	ID                pgtype.UUID `json:"id"`
+	RunID             pgtype.UUID `json:"run_id"`
+	AttemptNumber     int32       `json:"attempt_number"`
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	LeaseSequence     int64       `json:"lease_sequence"`
+	WorkerGroupID     string      `json:"worker_group_id"`
+	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch       int64       `json:"worker_epoch"`
+	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
+	RuntimeIdentityID string      `json:"runtime_identity_id"`
+	RegionID          string      `json:"region_id"`
 }
 
 func (q *Queries) LockTokenWaitRunLease(ctx context.Context, arg LockTokenWaitRunLeaseParams) (string, error) {
@@ -2921,7 +2913,6 @@ func (q *Queries) LockTokenWaitRunLease(ctx context.Context, arg LockTokenWaitRu
 		arg.WorkerEpoch,
 		arg.RuntimeInstanceID,
 		arg.RuntimeIdentityID,
-		arg.WorkerProtocolVersion,
 		arg.RegionID,
 	)
 	var state string
@@ -3174,7 +3165,7 @@ WITH moved_run AS (
        AND runs.active_started_at IS NOT NULL
        AND transaction_timestamp() < runs.active_started_at
              + ((runs.max_active_duration_ms - runs.active_elapsed_ms) * interval '1 millisecond')
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 )
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, timeout_at,
@@ -3309,7 +3300,7 @@ WITH moved_run AS (
        AND runs.current_run_lease_id = $9
        AND runs.workspace_id <> $14
        AND runs.active_started_at IS NOT NULL
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 )
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind,
@@ -3574,7 +3565,7 @@ WITH moved_run AS (
        AND runs.current_attempt_number = $6
        AND runs.current_run_lease_id = $8
        AND runs.active_started_at IS NOT NULL
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 )
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind,
@@ -3705,7 +3696,7 @@ WITH moved_run AS (
        AND runs.active_started_at IS NOT NULL
        AND transaction_timestamp() < runs.active_started_at
              + ((runs.max_active_duration_ms - runs.active_elapsed_ms) * interval '1 millisecond')
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 )
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, due_at,
@@ -3838,7 +3829,7 @@ WITH moved_run AS (
                  (runs.max_active_duration_ms - runs.active_elapsed_ms)
                  * interval '1 millisecond'
              )
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.terminal_reason_code, runs.error, runs.status, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.terminal_at
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.terminal_at
 )
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, timeout_at,

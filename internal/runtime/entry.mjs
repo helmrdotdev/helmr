@@ -4276,11 +4276,11 @@ async function loadProgramIndex(url, io) {
     throw new Error("Program index must be an object");
   }
   const record = value;
-  if (record["formatVersion"] !== 0 || record["architecture"] !== "x86_64" || record["runtimeApiVersion"] !== "helmr.runtime.v0" || typeof record["configResultDigest"] !== "string" || !Array.isArray(record["queues"]) || !Array.isArray(record["declarations"]) || record["declarations"].length === 0) {
+  if (record["architecture"] !== "x86_64" || record["runtimeContract"] !== "helmr.runtime.v0" || typeof record["configResultDigest"] !== "string" || !Array.isArray(record["queues"]) || !Array.isArray(record["declarations"]) || record["declarations"].length === 0) {
     throw new Error("Program index has an invalid v0 shape");
   }
   const declarations = record["declarations"].map((entry, index) => parseProgramIndexDeclaration(entry, index));
-  return { declarations, formatVersion: 0 };
+  return { declarations };
 }
 function parseProgramIndexDeclaration(value, index) {
   if (typeof value !== "object" || value === null) {
@@ -5234,24 +5234,18 @@ function parseTaskResult(dataJson) {
   if (ok !== false) {
     throw new Error("Task child call result.ok must be a boolean");
   }
-  requireExactKeys(value, ["error", "ok", "run"], "Task child call failure");
-  const rawError = objectField(value, "error", "Task child call failure");
-  const errorKeys = Object.keys(rawError);
-  requireExactKeys(rawError, errorKeys.includes("details") ? ["code", "details", "message", "retryable"] : ["code", "message", "retryable"], "Task child call failure.error");
-  const retryable = rawError["retryable"];
-  if (typeof retryable !== "boolean") {
-    throw new Error("Task child call failure.error.retryable must be a boolean");
-  }
-  const error = new Error(stringField(rawError, "message", "Task child call failure.error"));
-  error.name = "HelmrError";
-  error.code = stringField(rawError, "code", "Task child call failure.error");
-  error.retryable = retryable;
-  if (errorKeys.includes("details")) {
-    error.details = jsonValueField(rawError, "details", "Task child call failure.error");
-  }
+  requireExactKeys(value, ["failure", "ok", "run"], "Task child call failure");
+  const rawFailure = objectField(value, "failure", "Task child call failure");
+  requireExactKeys(rawFailure, ["code", "details", "message"], "Task child call failure.failure");
+  const details = objectField(rawFailure, "details", "Task child call failure.failure");
+  const failure = Object.freeze({
+    code: stringField(rawFailure, "code", "Task child call failure.failure"),
+    message: stringField(rawFailure, "message", "Task child call failure.failure"),
+    details: Object.freeze({ ...details })
+  });
   return Object.freeze({
     ok: false,
-    error: Object.freeze(error),
+    failure,
     run: parseTaskResultRun(value)
   });
 }
@@ -5739,7 +5733,7 @@ function actorContext(start, signal) {
   });
 }
 async function writeActorFailure(io, terminalInputSequence, message) {
-  const normalizedMessage = boundedUtf8(message === "" ? "actor failed" : message, MAX_TASK_ERROR_MESSAGE_BYTES);
+  const normalizedMessage = canonicalFailureMessage(message, "actor failed");
   await writeRunEvent(io, {
     case: "actorOutcome",
     value: create(exports_run_pb.ActorOutcomeSchema, {
@@ -5807,7 +5801,7 @@ function runCause(cause) {
   }
 }
 async function writeTaskFailure(io, kind, message, details) {
-  const normalizedMessage = boundedUtf8(message === "" ? "task failed" : message, MAX_TASK_ERROR_MESSAGE_BYTES);
+  const normalizedMessage = canonicalFailureMessage(message, "task failed");
   let detailsJson;
   if (details !== undefined) {
     detailsJson = new TextDecoder().decode(canonicalizeJsonValue(details));
@@ -5864,6 +5858,10 @@ function boundedUtf8(value, maxBytes) {
     size += characterBytes;
   }
   return result + suffix;
+}
+function canonicalFailureMessage(message, fallback) {
+  const canonical = trimGoSpace(message);
+  return boundedUtf8(canonical === "" ? fallback : canonical, MAX_TASK_ERROR_MESSAGE_BYTES);
 }
 async function writeRunEvent(io, event) {
   const body = toBinary(exports_run_pb.RunEventSchema, create(exports_run_pb.RunEventSchema, { event }));

@@ -147,12 +147,12 @@ func (executor Executor) build(
 		return deployment.BuildResult{}, err
 	}
 	provenance := deployment.BuildProvenance{
-		Architecture:         deployment.ArchitectureX8664,
-		BuildContractVersion: work.BuildContractVersion,
+		Architecture:  deployment.ArchitectureX8664,
+		BuildContract: work.BuildContract,
 		Config: deployment.ProgramConfig{
-			EvaluatorAPIVersion: deployment.ConfigEvaluatorAPIVersion,
-			SourceDigest:        selection.ConfigDigest,
-			ResultDigest:        configResultDigest,
+			EvaluatorContract: deployment.ConfigEvaluatorContract,
+			SourceDigest:      selection.ConfigDigest,
+			ResultDigest:      configResultDigest,
 		},
 		Manager: deployment.ProgramManager{
 			Digest:  manager.Artifact.Digest,
@@ -312,7 +312,6 @@ func (executor Executor) buildWorkspaceImages(
 				EnvironmentID: lease.EnvironmentID, DeploymentID: lease.DeploymentID,
 				WorkerGroupID: lease.WorkerGroupID, WorkerInstanceID: lease.WorkerInstanceID,
 				WorkerEpoch: lease.WorkerEpoch, Generation: lease.LeaseSequence,
-				WorkerProtocolVersion:            lease.WorkerProtocolVersion,
 				RequestedGuestEphemeralDiskBytes: lease.RequestedGuestEphemeralDiskBytes,
 				RequestedCPUMillis:               lease.RequestedCPUMillis,
 				RequestedMemoryBytes:             lease.RequestedMemoryBytes,

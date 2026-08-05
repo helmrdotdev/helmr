@@ -64,7 +64,6 @@ func TestWorkerAppendLogsReturnsConflictForChangedReplay(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: workerID, WorkerGroupID: lease.WorkerGroupID, WorkerEpoch: lease.WorkerEpoch,
-		ProtocolVersion: lease.WorkerProtocolVersion,
 	}))
 	recorder := httptest.NewRecorder()
 
@@ -96,7 +95,6 @@ func TestWorkerAppendLogsAcceptsIdenticalReplay(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: workerID, WorkerGroupID: lease.WorkerGroupID, WorkerEpoch: lease.WorkerEpoch,
-		ProtocolVersion: lease.WorkerProtocolVersion,
 	}))
 	recorder := httptest.NewRecorder()
 
@@ -109,8 +107,7 @@ func TestWorkerAppendLogsAcceptsIdenticalReplay(t *testing.T) {
 		params.LeaseSequence != lease.LeaseSequence ||
 		params.WorkerGroupID != lease.WorkerGroupID ||
 		pgvalue.UUIDString(params.WorkerInstanceID) != lease.WorkerInstanceID ||
-		params.WorkerEpoch != lease.WorkerEpoch ||
-		params.WorkerProtocolVersion != lease.WorkerProtocolVersion {
+		params.WorkerEpoch != lease.WorkerEpoch {
 		t.Fatalf("database receipt params = %+v", params)
 	}
 }
@@ -150,8 +147,7 @@ func TestWorkerAppendLogsReplaysAfterLeaseIsNoLongerLive(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: workerID, WorkerGroupID: lease.WorkerGroupID,
-		WorkerEpoch: lease.WorkerEpoch, ProtocolVersion: lease.WorkerProtocolVersion,
-	}))
+		WorkerEpoch: lease.WorkerEpoch}))
 	recorder := httptest.NewRecorder()
 
 	server.workerAppendRunLogs(recorder, request)
@@ -187,7 +183,6 @@ func TestWorkerAppendLogsRejectsAnotherWorkersFence(t *testing.T) {
 		WorkerInstanceID: uuid.Must(uuid.NewV7()),
 		WorkerGroupID:    lease.WorkerGroupID,
 		WorkerEpoch:      lease.WorkerEpoch,
-		ProtocolVersion:  lease.WorkerProtocolVersion,
 	}))
 	recorder := httptest.NewRecorder()
 

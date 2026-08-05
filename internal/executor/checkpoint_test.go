@@ -65,7 +65,7 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	vmStatePut := checkpointPutByMediaType(t, store, cas.CheckpointVMStateMediaType)
 	scratchPut := checkpointPutByMediaType(t, store, cas.CheckpointScratchDiskMediaType)
 	memoryPut := checkpointPutByMediaType(t, store, cas.CheckpointMemoryMediaType)
-	if manifest.RecoveryPoint.Runtime.Backend != "firecracker" || manifest.RecoveryPoint.Runtime.Arch != "x86_64" || manifest.RecoveryPoint.Runtime.ABI != "helmr.firecracker.snapshot.v0" {
+	if manifest.RecoveryPoint.Runtime.Backend != "firecracker" || manifest.RecoveryPoint.Runtime.Arch != "x86_64" || manifest.RecoveryPoint.Runtime.Contract != "helmr.vm-runtime.v0" {
 		t.Fatalf("manifest identity = %+v", manifest)
 	}
 	if manifest.RecoveryPoint.ID != "checkpoint-1" || manifest.RecoveryPoint.RunWaitID != "run-wait-id-1" {
@@ -695,7 +695,7 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 		RuntimeBackend:      "firecracker",
 		RuntimeID:           "sha256:runtime",
 		RuntimeArch:         "x86_64",
-		RuntimeABI:          "helmr.firecracker.snapshot.v0",
+		VMRuntimeContract:   "helmr.vm-runtime.v0",
 		KernelDigest:        "sha256:kernel",
 		InitramfsDigest:     "sha256:initramfs",
 		RootfsDigest:        "sha256:rootfs",
@@ -738,11 +738,10 @@ func addCheckpointRuntimeSubstrate(t *testing.T, artifact *vm.SnapshotArtifact) 
 		t.Fatal(err)
 	}
 	artifact.Substrate = &vm.RuntimeSubstrate{
-		Path:       path,
-		Digest:     sha256sum.DigestBytes([]byte("substrate")),
-		Format:     "ext4",
-		BuilderABI: "helmr.runtime-substrate.builder.v0",
-		LayoutABI:  "helmr.runtime-substrate.layout.v0",
+		Path:     path,
+		Digest:   sha256sum.DigestBytes([]byte("substrate")),
+		Format:   "ext4",
+		Contract: "helmr.runtime-substrate.builder.v0",
 	}
 }
 

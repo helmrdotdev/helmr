@@ -3,6 +3,7 @@ package token
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -448,7 +449,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 				failureCode = pgvalue.Text("run_expired")
 			}
 			if _, err := fixture.queries.FinishCheckpointFailedActorRun(ctx, db.FinishCheckpointFailedActorRunParams{
-				Status: runStatus, ReasonCode: pgvalue.Text(reason), Error: failureError, FailedAt: failedAt,
+				Status: runStatus, Failure: fmt.Appendf(nil, `{"code":%q,"message":"Checkpoint failed","details":{}}`, reason), FailedAt: failedAt,
 				ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 				SessionID: pgvalue.UUID(actorID), AttemptNumber: int32(1),
 				RunLeaseID: pgvalue.UUID(work.leaseID),
@@ -456,7 +457,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 				t.Fatal(err)
 			}
 			if _, err := fixture.queries.ReconcileActorTerminalRun(ctx, db.ReconcileActorTerminalRunParams{
-				State: actorState, FailureCode: failureCode, FailureRunID: failureRunID, CompletedAt: failedAt,
+				State: actorState, Failure: fmt.Appendf(nil, `{"code":%q,"message":"Session run failed","details":{"run_id":%q}}`, failureCode.String, work.runID.String()), FailureRunID: failureRunID, CompletedAt: failedAt,
 				EnvironmentID: pgvalue.UUID(fixture.environmentID), ID: pgvalue.UUID(actorID),
 				WorkspaceID: pgvalue.UUID(authority.workspaceID), RunID: pgvalue.UUID(work.runID),
 				ExpectedRunGeneration: 1,
@@ -480,7 +481,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 				t.Fatal(err)
 			}
 			if _, err := fixture.queries.FinishCheckpointFailedTaskRun(ctx, db.FinishCheckpointFailedTaskRunParams{
-				Status: db.RunStatusSystemFailed, ReasonCode: pgvalue.Text("checkpoint_failed"), Error: failureError,
+				Status: db.RunStatusSystemFailed, Failure: []byte(`{"code":"checkpoint_failed","message":"Checkpoint failed","details":{}}`),
 				FailedAt: failedAt, ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 				AttemptNumber: int32(1), RunLeaseID: pgvalue.UUID(work.leaseID),
 			}); err != nil {
@@ -562,7 +563,7 @@ SELECT runs.status, run_leases.state, run_waits.condition_state, run_waits.suspe
 		var nextBase, workspaceHead pgtype.UUID
 		if err := fixture.pool.QueryRow(ctx, `
 SELECT sessions.state, sessions.current_run_id, sessions.run_generation,
-       sessions.failure_code, sessions.failure_run_id, workspaces.owner_session_id,
+	   sessions.failure->>'code', sessions.failure_run_id, workspaces.owner_session_id,
        next_attempt.session_input_start_sequence, runs.session_input_high_watermark,
        next_attempt.base_workspace_version_id, workspaces.head_version_id
   FROM sessions
@@ -1043,14 +1044,12 @@ func tokenWaitRegistrationRequest(
 	}
 	if err := fixture.pool.QueryRow(ctx, `
 		SELECT run_leases.lease_sequence, run_leases.worker_group_id,
-		       run_leases.worker_instance_id, run_leases.worker_epoch,
-		       run_leases.worker_protocol_version
+		       run_leases.worker_instance_id, run_leases.worker_epoch
 		  FROM run_leases
 		 WHERE run_leases.id = $1
 	`, work.leaseID).Scan(
 		&request.LeaseSequence, &request.WorkerGroupID,
 		&request.WorkerInstanceID, &request.WorkerEpoch,
-		&request.WorkerProtocolVersion,
 	); err != nil {
 		t.Fatal(err)
 	}

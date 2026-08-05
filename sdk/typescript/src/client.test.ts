@@ -384,7 +384,7 @@ describe("HelmrClient Secrets", () => {
       },
       {
         secrets: [active],
-        next_cursor: "sec1.next",
+        next_cursor: "cursor-next",
       },
       {
         ...active,
@@ -436,12 +436,12 @@ describe("HelmrClient Secrets", () => {
     })
 
     const page = await client.secrets.list(
-      { cursor: "sec1.current", limit: 10 },
+      { cursor: "cursor-current", limit: 10 },
       { signal },
     )
-    expect(page.nextCursor).toBe("sec1.next")
+    expect(page.nextCursor).toBe("cursor-next")
     expect(requests[3]!.url).toBe(
-      "https://api.example.test/v1/secrets?cursor=sec1.current&limit=10",
+      "https://api.example.test/v1/secrets?cursor=cursor-current&limit=10",
     )
 
     const revoked = await secretRef.revoke(
@@ -471,18 +471,30 @@ describe("HelmrClient Secrets", () => {
 
 describe("HelmrClient Deployments", () => {
   test("distinguishes an absent current Deployment from retrieval", async () => {
-    const responses: unknown[] = [
-      { deployment: null },
-      {
+    const responses: Response[] = [
+      Response.json({
+        error: {
+          code: "no_current_deployment",
+          message: "No current Deployment exists",
+          details: {},
+        },
+      }, { status: 404 }),
+      Response.json({
         id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
         version: "2026.07.25.1",
-      },
+        project_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
+        environment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
+        content_hash: "sha256:source",
+        deployment_source: { digest: "sha256:artifact", size_bytes: 4096 },
+        status: "deployed",
+        created_at: "2026-07-25T10:00:00Z",
+        deployed_at: "2026-07-25T10:01:00Z",
+      }),
     ]
     const client = new HelmrClient({
       url: "https://api.example.test",
       apiKey: "api-key",
-      fetch: (async () =>
-        Response.json(responses.shift(), { status: 200 })) as typeof fetch,
+      fetch: (async () => responses.shift()!) as typeof fetch,
     })
 
     await expect(client.deployments.current()).resolves.toBeNull()
@@ -491,6 +503,13 @@ describe("HelmrClient Deployments", () => {
     ).resolves.toEqual({
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
       version: "2026.07.25.1",
+      projectId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
+      environmentId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
+      contentHash: "sha256:source",
+      deploymentSource: { digest: "sha256:artifact", sizeBytes: 4096 },
+      status: "deployed",
+      createdAt: "2026-07-25T10:00:00Z",
+      deployedAt: "2026-07-25T10:01:00Z",
     })
   })
 })
@@ -519,7 +538,7 @@ describe("HelmrClient Schedules", () => {
         return String(input).includes("?")
           ? Response.json({
               schedules: [snapshot],
-              next_cursor: "sc1.next",
+              next_cursor: "cursor-next",
             })
           : Response.json(snapshot)
       }) as typeof fetch,
@@ -529,7 +548,7 @@ describe("HelmrClient Schedules", () => {
       "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
     )
     const listed = await client.schedules.list({
-      cursor: "sc1.previous",
+      cursor: "cursor-previous",
       limit: 10,
     })
 
@@ -541,9 +560,9 @@ describe("HelmrClient Schedules", () => {
       workspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
     })
     expect(listed.items).toHaveLength(1)
-    expect(listed.nextCursor).toBe("sc1.next")
+    expect(listed.nextCursor).toBe("cursor-next")
     expect(requests[1]).toBe(
-      "https://api.example.test/v1/schedules?cursor=sc1.previous&limit=10",
+      "https://api.example.test/v1/schedules?cursor=cursor-previous&limit=10",
     )
   })
 
@@ -588,6 +607,74 @@ describe("HelmrClient Schedules", () => {
     expect(schedule.workspace).toMatchObject({ key: "maintenance" })
     expect(schedule.workspaceId).toBeUndefined()
   })
+
+  test("requires last_failure for an errored Schedule", async () => {
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async () => Response.json({
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
+        task_id: "scheduled-maintenance",
+        workspace: { key: "maintenance" },
+        workspace_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
+        cron: { pattern: "0 * * * *", timezone: "UTC" },
+        status: "errored",
+        created_at: "2026-07-24T11:00:00Z",
+        updated_at: "2026-07-24T11:00:00Z",
+      })) as typeof fetch,
+    })
+
+    await expect(client.schedules.retrieve(
+      "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
+    )).rejects.toThrow("must contain last_failure")
+  })
+})
+
+describe("HelmrClient Sessions", () => {
+  test("requires failure for an unsuccessful Session", async () => {
+    const sessionId = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async () => Response.json({
+        id: sessionId,
+        actor_id: "operator",
+        deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
+        status: "failed",
+        created_at: "2026-07-24T11:50:00Z",
+        updated_at: "2026-07-24T11:50:01Z",
+      })) as typeof fetch,
+    })
+
+    await expect(client.sessions.retrieve(sessionId)).rejects.toThrow(
+      "inconsistent failure projection",
+    )
+  })
+
+  test("validates Session failure code against its status", async () => {
+    const sessionId = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async () => Response.json({
+        id: sessionId,
+        actor_id: "operator",
+        deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
+        status: "failed",
+        failure: {
+          code: "cancelled",
+          message: "Session was cancelled",
+          details: {},
+        },
+        created_at: "2026-07-24T11:50:00Z",
+        updated_at: "2026-07-24T11:50:01Z",
+      })) as typeof fetch,
+    })
+
+    await expect(client.sessions.retrieve(sessionId)).rejects.toThrow(
+      "failure code is inconsistent",
+    )
+  })
 })
 
 describe("HelmrClient Runs", () => {
@@ -617,7 +704,7 @@ describe("HelmrClient Runs", () => {
       fetch: (async (input: URL | RequestInfo) => {
         requests.push(String(input))
         return String(input).includes("?")
-          ? Response.json({ runs: [snapshot], next_cursor: "rn1.next" })
+          ? Response.json({ runs: [snapshot], next_cursor: "cursor-next" })
           : Response.json(snapshot)
       }) as typeof fetch,
     })
@@ -626,7 +713,7 @@ describe("HelmrClient Runs", () => {
     const signal = new AbortController().signal
     const listed = await client.runs.list({
       status: ["running", "waiting"],
-      cursor: "rn1.previous",
+      cursor: "cursor-previous",
       limit: 10,
     }, { signal })
 
@@ -638,9 +725,9 @@ describe("HelmrClient Runs", () => {
       cause: { type: "api" },
     })
     expect(listed.items).toHaveLength(1)
-    expect(listed.nextCursor).toBe("rn1.next")
+    expect(listed.nextCursor).toBe("cursor-next")
     expect(requests[1]).toBe(
-      "https://api.example.test/v1/runs?status=running&status=waiting&cursor=rn1.previous&limit=10",
+      "https://api.example.test/v1/runs?status=running&status=waiting&cursor=cursor-previous&limit=10",
     )
   })
 
@@ -650,7 +737,7 @@ describe("HelmrClient Runs", () => {
       {
         logs: [
           {
-            id: "rt1.log",
+            id: "log-cursor",
             kind: "structured",
             run_id: runID,
             attempt_number: 2,
@@ -660,7 +747,7 @@ describe("HelmrClient Runs", () => {
             at: "2026-07-24T11:50:02Z",
           },
           {
-            id: "rt1.stderr",
+            id: "stderr-cursor",
             kind: "stderr",
             run_id: runID,
             attempt_number: 2,
@@ -670,12 +757,12 @@ describe("HelmrClient Runs", () => {
             at: "2026-07-24T11:50:03Z",
           },
         ],
-        next_cursor: "rt1.logs-next",
+        next_cursor: "logs-next-cursor",
       },
       {
         events: [
           {
-            id: "rt1.event",
+            id: "event-cursor",
             run_id: runID,
             attempt_number: 2,
             category: "lifecycle",
@@ -701,7 +788,7 @@ describe("HelmrClient Runs", () => {
     const signal = new AbortController().signal
 
     const logs = await client.runs.logs(runID, {
-      cursor: "rt1.logs",
+      cursor: "logs-cursor",
       limit: 25,
       level: ["warn", "error"],
     }, { signal })
@@ -712,7 +799,7 @@ describe("HelmrClient Runs", () => {
     expect(logs).toEqual({
       items: [
         {
-          id: "rt1.log",
+          id: "log-cursor",
           kind: "structured",
           runId: runID,
           attemptNumber: 2,
@@ -722,7 +809,7 @@ describe("HelmrClient Runs", () => {
           at: "2026-07-24T11:50:02Z",
         },
         {
-          id: "rt1.stderr",
+          id: "stderr-cursor",
           kind: "stderr",
           runId: runID,
           attemptNumber: 2,
@@ -732,16 +819,16 @@ describe("HelmrClient Runs", () => {
           at: "2026-07-24T11:50:03Z",
         },
       ],
-      nextCursor: "rt1.logs-next",
+      nextCursor: "logs-next-cursor",
     })
     expect(events.items[0]).toMatchObject({
-      id: "rt1.event",
+      id: "event-cursor",
       runId: runID,
       severity: "error",
       attributes: { code: "task_failed" },
     })
     expect(requests[0]!.url).toBe(
-      `https://api.example.test/v1/runs/${runID}/logs?cursor=rt1.logs&limit=25&level=warn&level=error`,
+      `https://api.example.test/v1/runs/${runID}/logs?cursor=logs-cursor&limit=25&level=warn&level=error`,
     )
     expect(requests[0]!.init?.signal).toBe(signal)
     expect(requests[1]!.url).toBe(
@@ -769,11 +856,10 @@ describe("HelmrClient Runs", () => {
           cause: { type: "api" },
           metadata: {},
           tags: [],
-          terminal_reason_code: "run_cancelled",
-          error: {
+          failure: {
             code: "run_cancelled",
             message: "Run was cancelled",
-            retryable: false,
+            details: {},
           },
           created_at: "2026-07-24T11:50:00Z",
           terminal_at: "2026-07-24T11:50:05Z",
@@ -786,13 +872,13 @@ describe("HelmrClient Runs", () => {
     expect(snapshot).toMatchObject({
       id: runID,
       status: "cancelled",
-      terminalReasonCode: "run_cancelled",
-      error: {
+      failure: {
         code: "run_cancelled",
         message: "Run was cancelled",
-        retryable: false,
+        details: {},
       },
     })
+    expect(snapshot.failure).not.toBeInstanceOf(Error)
     expect(requests).toHaveLength(1)
     expect(requests[0]!.url).toBe(
       `https://api.example.test/v1/runs/${runID}/cancel`,
@@ -801,7 +887,7 @@ describe("HelmrClient Runs", () => {
     expect(requests[0]!.init?.body).toBeUndefined()
   })
 
-  test("wait unwraps success and throws a recorded RunError", async () => {
+  test("wait unwraps success and throws a recorded Run failure", async () => {
     const succeeded = new HelmrClient({
       url: "https://api.example.test",
       apiKey: "api-key",
@@ -843,11 +929,9 @@ describe("HelmrClient Runs", () => {
         cause: { type: "api" },
         metadata: {},
         tags: [],
-        terminal_reason_code: "task_failed",
-        error: {
+        failure: {
           code: "task_failed",
           message: "resize failed",
-          retryable: false,
           details: { imageId: "image-1" },
         },
         created_at: "2026-07-24T11:50:00Z",
@@ -859,10 +943,9 @@ describe("HelmrClient Runs", () => {
       throw new Error("expected Run wait to fail")
     } catch (error) {
       expect(error).toMatchObject({
-        name: "RunError",
+        name: "RunFailure",
         message: "resize failed",
         code: "task_failed",
-        retryable: false,
         details: { imageId: "image-1" },
       })
     }

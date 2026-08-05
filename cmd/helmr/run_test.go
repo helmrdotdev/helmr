@@ -73,7 +73,6 @@ func TestRunGetCommandPrintsSnapshotSemantics(t *testing.T) {
 			Cause:                api.RunCauseResponse{Type: "direct"},
 			CreatedAt:            terminalAt.Add(-time.Minute),
 			TerminalAt:           &terminalAt,
-			TerminalReasonCode:   "completed",
 		})
 	}))
 	defer server.Close()
@@ -92,7 +91,6 @@ func TestRunGetCommandPrintsSnapshotSemantics(t *testing.T) {
 		"Entrypoint:  task deploy",
 		"Deployment:  dep-1 (20260726-test)",
 		"Workspace:   ws-1",
-		"Reason:      completed",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output = %q, missing %q", out.String(), want)

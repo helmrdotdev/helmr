@@ -78,13 +78,12 @@ func rollback(ctx context.Context, tx pgx.Tx) {
 }
 
 type workerFence struct {
-	GroupID               string
-	RegionID              string
-	WorkerInstanceID      pgtype.UUID
-	WorkerEpoch           int64
-	WorkerProtocolVersion string
-	Role                  string
-	RunArchitecture       string
+	GroupID          string
+	RegionID         string
+	WorkerInstanceID pgtype.UUID
+	WorkerEpoch      int64
+	Role             string
+	RunArchitecture  string
 }
 
 // lockWorkerFence takes the worker-group lock before the worker lock, matching
@@ -96,9 +95,8 @@ func lockWorkerFence(ctx context.Context, tx pgx.Tx, fence workerFence) error {
 SELECT id
   FROM worker_groups
  WHERE id = $1 AND region_id = $2 AND state = 'active'
-   AND protocol_version = $3
-   AND (($4 = 'run' AND allows_run) OR ($4 = 'build' AND allows_build))
- FOR UPDATE`, fence.GroupID, fence.RegionID, fence.WorkerProtocolVersion, fence.Role).Scan(&groupID)
+   AND (($3 = 'run' AND allows_run) OR ($3 = 'build' AND allows_build))
+ FOR UPDATE`, fence.GroupID, fence.RegionID, fence.Role).Scan(&groupID)
 	if err != nil {
 		return fmt.Errorf("lock eligible worker group: %w", err)
 	}
@@ -122,17 +120,16 @@ SELECT worker_instances.id
    AND worker_instances.worker_group_id = $2
    AND worker_instances.current_epoch = $3
    AND worker_instances.state = 'active'
-   AND worker_instances.protocol_version = $4
    AND worker_observations.observed_at >= transaction_timestamp()
        - worker_groups.observation_ttl_seconds * interval '1 second'
-   AND (($5 = 'run' AND worker_instances.supports_run)
-        OR ($5 = 'build' AND worker_instances.supports_build))
-   AND (($5 = 'run' AND worker_observations.run_paused_reason IS NULL)
-        OR ($5 = 'build' AND worker_observations.build_paused_reason IS NULL))
-	   AND runtime_identities.runtime_arch = $6
-	   AND runtime_identities.network_abi = 'helmr/v0'
+	AND (($4 = 'run' AND worker_instances.supports_run)
+	     OR ($4 = 'build' AND worker_instances.supports_build))
+	AND (($4 = 'run' AND worker_observations.run_paused_reason IS NULL)
+	     OR ($4 = 'build' AND worker_observations.build_paused_reason IS NULL))
+	AND runtime_identities.runtime_arch = $5
+	   AND runtime_identities.vm_runtime_contract = 'helmr.vm-runtime.v0'
  FOR UPDATE OF worker_instances`, fence.WorkerInstanceID, fence.GroupID,
-		fence.WorkerEpoch, fence.WorkerProtocolVersion, fence.Role, architecture,
+		fence.WorkerEpoch, fence.Role, architecture,
 	).Scan(&workerID)
 	if err != nil {
 		return fmt.Errorf("lock eligible worker epoch: %w", err)

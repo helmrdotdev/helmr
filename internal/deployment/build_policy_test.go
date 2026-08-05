@@ -178,7 +178,7 @@ func testCompilerInputs() CompilerInputs {
 	return CompilerInputs{
 		APIVersion: "helmr.compiler.v0",
 		ConfigEvaluator: CompilerEntrypoint{
-			APIVersion: ConfigEvaluatorAPIVersion,
+			APIVersion: ConfigEvaluatorContract,
 			Digest:     testDigest("config evaluator"),
 			Entrypoint: "/nix/helmr/config-evaluator.mjs",
 		},

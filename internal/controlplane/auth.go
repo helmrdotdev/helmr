@@ -26,7 +26,6 @@ type workerActor struct {
 	WorkerEpoch       int64
 	ClaimVersion      int64
 	GroupClaimVersion int64
-	ProtocolVersion   string
 	Roles             []string
 	ResourceID        string
 	State             db.WorkerInstanceState
@@ -337,7 +336,6 @@ func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) ht
 			CredentialID:      pgvalue.UUID(credentialID),
 			ClaimVersion:      payload.ClaimVersion,
 			GroupClaimVersion: payload.GroupClaimVersion,
-			ProtocolVersion:   payload.ProtocolVersion,
 			WorkerEpoch:       pgtype.Int8{Int64: payload.WorkerEpoch, Valid: true},
 		}
 		var row db.AuthorizeWorkerInstanceCredentialRow
@@ -354,7 +352,7 @@ func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) ht
 			if isNoRows(authorizationErr) {
 				replayRow, replayErr := s.db.AuthorizeWorkerDrainReplay(r.Context(), db.AuthorizeWorkerDrainReplayParams{
 					CredentialID: params.CredentialID, ClaimVersion: params.ClaimVersion,
-					ProtocolVersion: params.ProtocolVersion, WorkerEpoch: params.WorkerEpoch,
+					WorkerEpoch: params.WorkerEpoch,
 				})
 				row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(replayRow), replayErr
 			}
@@ -363,7 +361,7 @@ func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) ht
 			if isNoRows(authorizationErr) {
 				replayRow, replayErr := s.db.AuthorizeWorkerFenceReplay(r.Context(), db.AuthorizeWorkerFenceReplayParams{
 					CredentialID: params.CredentialID, ClaimVersion: params.ClaimVersion,
-					ProtocolVersion: params.ProtocolVersion, WorkerEpoch: params.WorkerEpoch,
+					WorkerEpoch: params.WorkerEpoch,
 				})
 				row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(replayRow), replayErr
 			}
@@ -386,7 +384,6 @@ func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) ht
 			GroupClaimVersion: payload.GroupClaimVersion,
 			ResourceID:        strings.TrimSpace(row.ResourceID),
 			WorkerEpoch:       payload.WorkerEpoch,
-			ProtocolVersion:   payload.ProtocolVersion,
 			Roles:             append([]string(nil), payload.Roles...),
 			State:             row.WorkerState,
 			EpochStartedAt:    pgvalue.Time(row.EpochStartedAt),

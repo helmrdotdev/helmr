@@ -193,7 +193,7 @@ func (s *Server) admitWorkspaceImage(
 			SourceArchiveSizeBytes: normalized.request.SourceArchiveSizeBytes,
 			SourceArchiveEntries:   normalized.request.SourceArchiveEntries,
 			ImageCacheMode:         string(cacheMode), CacheScope: cacheScope,
-			ExecutionABI: imagebuild.ExecutionABI, LLBABI: imagebuild.LLBABI, CacheABI: imagebuild.CacheABI,
+			ImageBuildContract: imagebuild.Contract,
 			Quotas: idempotency.WorkspaceImageBuildQuotas{
 				CPUMillis: normalized.quotas.CPUMillis, MemoryBytes: normalized.quotas.MemoryBytes,
 				ScratchBytes: normalized.quotas.ScratchBytes, PIDs: normalized.quotas.PIDs,
@@ -256,8 +256,8 @@ func (s *Server) admitWorkspaceImage(
 			SourceArchiveSizeBytes: normalized.request.SourceArchiveSizeBytes,
 			SourceArchiveEntries:   normalized.request.SourceArchiveEntries,
 			RequestedCacheMode:     cacheMode, CacheScope: cacheScope,
-			ExecutionABI: imagebuild.ExecutionABI, LLBABI: imagebuild.LLBABI, CacheABI: imagebuild.CacheABI,
-			Quotas: normalized.quotas, Output: normalized.output,
+			ImageBuildContract: imagebuild.Contract,
+			Quotas:             normalized.quotas, Output: normalized.output,
 			RegistryBindings: bindings, ResolutionSetDigest: resolutionSetDigest,
 		}
 		if !pending {
@@ -515,7 +515,7 @@ func validateWorkspaceImageAssignment(
 	worker workerActor,
 ) error {
 	return imagebuild.ValidateGuestRequest(imagebuild.GuestRequest{
-		ExecutionABI: assignment.ExecutionABI, LLBABI: assignment.LLBABI, CacheABI: assignment.CacheABI,
+		Contract:    assignment.ImageBuildContract,
 		OperationID: assignment.OperationID, AttemptID: uuid.Must(uuid.NewV7()).String(),
 		BuildLeaseID: assignment.Lease.ID, BuildLeaseGeneration: assignment.Lease.LeaseSequence,
 		WorkerEpoch: worker.WorkerEpoch, RuntimeIdentityID: assignment.RuntimeIdentityID,
@@ -909,7 +909,6 @@ func lockWorkspaceImageBuildLease(
 	projectID, _ := ids.Parse(lease.ProjectID)
 	if row.Deployment.OrgID != pgvalue.UUID(orgID) || row.Deployment.ProjectID != pgvalue.UUID(projectID) ||
 		row.DeploymentBuildLease.WorkerGroupID != lease.WorkerGroupID ||
-		row.DeploymentBuildLease.WorkerProtocolVersion != lease.WorkerProtocolVersion ||
 		row.DeploymentBuildLease.RequestedCPUMillis != lease.RequestedCPUMillis ||
 		row.DeploymentBuildLease.RequestedMemoryBytes != lease.RequestedMemoryBytes ||
 		row.DeploymentBuildLease.RequestedGuestEphemeralDiskBytes != lease.RequestedGuestEphemeralDiskBytes ||

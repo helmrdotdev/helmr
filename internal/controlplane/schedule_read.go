@@ -22,7 +22,6 @@ import (
 const (
 	scheduleListDefaultLimit = int32(50)
 	scheduleListMaxLimit     = int32(100)
-	scheduleListCursorPrefix = "sc1."
 )
 
 type scheduleListCursor struct {
@@ -157,17 +156,11 @@ func encodeScheduleListCursor(cursor scheduleListCursor) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return scheduleListCursorPrefix +
-		base64.RawURLEncoding.EncodeToString(raw), nil
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 func decodeScheduleListCursor(raw string) (scheduleListCursor, error) {
-	if !strings.HasPrefix(raw, scheduleListCursorPrefix) {
-		return scheduleListCursor{}, errors.New("schedule cursor is invalid")
-	}
-	decoded, err := base64.RawURLEncoding.DecodeString(
-		strings.TrimPrefix(raw, scheduleListCursorPrefix),
-	)
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
 		return scheduleListCursor{}, errors.New("schedule cursor is invalid")
 	}
@@ -265,14 +258,20 @@ func scheduleResponse(row db.Schedule) (api.ScheduleResponse, error) {
 		}
 		response.WorkspaceID = workspaceID
 	}
-	if row.LastErrorCode.Valid || row.LastErrorMessage.Valid {
-		if !row.LastErrorCode.Valid || !row.LastErrorMessage.Valid {
-			return api.ScheduleResponse{}, errors.New("schedule error is incomplete")
+	if status == api.ScheduleStatusErrored && len(row.LastFailure) == 0 {
+		return api.ScheduleResponse{}, errors.New("errored schedule failure is unavailable")
+	}
+	if len(row.LastFailure) > 0 {
+		var failure api.ScheduleFailure
+		if err := json.Unmarshal(row.LastFailure, &failure); err != nil ||
+			failure.Code == "" || failure.Message == "" || len(failure.Details) == 0 {
+			return api.ScheduleResponse{}, errors.New("schedule failure is invalid")
 		}
-		response.LastError = &api.ScheduleError{
-			Code:    row.LastErrorCode.String,
-			Message: row.LastErrorMessage.String,
+		var details map[string]json.RawMessage
+		if err := json.Unmarshal(failure.Details, &details); err != nil || details == nil {
+			return api.ScheduleResponse{}, errors.New("schedule failure details are invalid")
 		}
+		response.LastFailure = &failure
 	}
 	return response, nil
 }

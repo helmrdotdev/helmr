@@ -71,7 +71,7 @@ SELECT deployments.id AS deployment_id,
        program_artifact.size_bytes AS program_artifact_size_bytes,
        program_artifact.media_type AS program_artifact_media_type,
        deployments.build_runtime_digest,
-       deployments.build_contract_version,
+       deployments.build_contract,
        deployments.program_index_digest,
        deployments.queue_config
   FROM deployments

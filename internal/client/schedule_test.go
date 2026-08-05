@@ -41,13 +41,13 @@ func testScheduleReads(
 		switch r.URL.Path {
 		case collectionPath:
 			if r.Method != http.MethodGet ||
-				r.URL.Query().Get("cursor") != "sc1.cursor" ||
+				r.URL.Query().Get("cursor") != "cursor-current" ||
 				r.URL.Query().Get("limit") != "25" {
 				t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
 			}
 			_ = json.NewEncoder(w).Encode(api.ListSchedulesResponse{
 				Schedules:  []api.ScheduleResponse{{ID: testScheduleID, TaskID: "nightly", Status: "active"}},
-				NextCursor: "sc1.next",
+				NextCursor: "cursor-next",
 			})
 		case collectionPath + "/" + testScheduleID:
 			if r.Method != http.MethodGet {
@@ -71,12 +71,12 @@ func testScheduleReads(
 		t.Fatal(err)
 	}
 	page, err := controlPlane.ListSchedules(context.Background(), ListSchedulesOptions{
-		Cursor: "sc1.cursor", Limit: 25, EnvironmentScopeOptions: scope,
+		Cursor: "cursor-current", Limit: 25, EnvironmentScopeOptions: scope,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Schedules) != 1 || page.NextCursor != "sc1.next" {
+	if len(page.Schedules) != 1 || page.NextCursor != "cursor-next" {
 		t.Fatalf("page = %+v", page)
 	}
 	schedule, err := controlPlane.GetSchedule(context.Background(), testScheduleID, scope)

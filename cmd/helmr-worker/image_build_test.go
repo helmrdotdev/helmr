@@ -18,7 +18,7 @@ func TestWorkerImageControlPlaneMapsTerminalAdmissionWithoutHiddenState(t *testi
 	request := testWorkerImageAdmission()
 	attemptID := uuid.Must(uuid.NewV7()).String()
 	result := imagebuild.GuestResult{
-		ExecutionABI: imagebuild.ExecutionABI, Outcome: imagebuild.GuestSucceeded,
+		Contract: imagebuild.Contract, Outcome: imagebuild.GuestSucceeded,
 		OCIDigest: testWorkerImageDigest("a"), OCISizeBytes: 42,
 	}
 	fake := &workerImageControlPlaneFake{admit: func(input workerapi.WorkspaceImageAdmissionRequest) workerapi.WorkspaceImageAssignment {
@@ -37,8 +37,7 @@ func TestWorkerImageControlPlaneMapsTerminalAdmissionWithoutHiddenState(t *testi
 			SourceArchiveSizeBytes: input.SourceArchiveSizeBytes,
 			SourceArchiveEntries:   input.SourceArchiveEntries,
 			RequestedCacheMode:     request.RequestedCacheMode,
-			CacheScope:             testWorkerImageDigest("c"), ExecutionABI: request.ExecutionABI,
-			LLBABI: request.LLBABI, CacheABI: request.CacheABI,
+			CacheScope:             testWorkerImageDigest("c"), ImageBuildContract: request.ImageBuildContract,
 			Quotas: workerapi.WorkspaceImageQuotas{
 				CPUMillis: 3000, MemoryBytes: 4 << 30, ScratchBytes: 32 << 30, PIDs: 1024,
 				MaxSourceArchiveBytes:   imagebuild.MaxSourceArchiveBytes,
@@ -102,7 +101,7 @@ func TestWorkerImageControlPlaneCompletesExactReceipt(t *testing.T) {
 		PlanDigest: testWorkerImageDigest("2"), ResolutionSetDigest: testWorkerImageDigest("3"),
 		RequestedCacheMode: imagebuild.CachePrefer,
 		GuestResult: imagebuild.GuestResult{
-			ExecutionABI: imagebuild.ExecutionABI, Outcome: imagebuild.GuestSucceeded,
+			Contract: imagebuild.Contract, Outcome: imagebuild.GuestSucceeded,
 			OCIDigest: testWorkerImageDigest("4"), OCISizeBytes: 42,
 		},
 	}
@@ -188,7 +187,7 @@ func testWorkerImageAdmission() programbuild.AdmissionRequest {
 		AdmittedPathSetDigest: testWorkerImageDigest("9"),
 		SourceArchiveDigest:   testWorkerImageDigest("a"), SourceArchiveSizeBytes: 42,
 		SourceArchiveEntries: 0, RequestedCacheMode: imagebuild.CachePrefer,
-		ExecutionABI: imagebuild.ExecutionABI, LLBABI: imagebuild.LLBABI, CacheABI: imagebuild.CacheABI,
+		ImageBuildContract: imagebuild.Contract,
 	}
 }
 
@@ -198,8 +197,8 @@ func testWorkerImageLease() programbuild.LeaseAuthority {
 		ProjectID: uuid.Must(uuid.NewV7()).String(), EnvironmentID: uuid.Must(uuid.NewV7()).String(),
 		DeploymentID: uuid.Must(uuid.NewV7()).String(), WorkerGroupID: "build",
 		WorkerInstanceID: uuid.Must(uuid.NewV7()).String(), WorkerEpoch: 1, Generation: 1,
-		WorkerProtocolVersion: "test", RequestedGuestEphemeralDiskBytes: 32 << 30,
-		RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30, RequestedBuildExecutors: 1,
+		RequestedGuestEphemeralDiskBytes: 32 << 30,
+		RequestedCPUMillis:               3000, RequestedMemoryBytes: 4 << 30, RequestedBuildExecutors: 1,
 	}
 }
 

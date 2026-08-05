@@ -111,7 +111,7 @@ UPDATE sessions
        run_generation = run_generation + 1,
        state_version = state_version + 1,
        manual_run_cancelled = false,
-       failure_code = $1::text,
+       failure = $1::jsonb,
        failure_run_id = $2,
        failed_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
@@ -122,7 +122,7 @@ UPDATE sessions
 `
 
 type FailActorForRunTerminationParams struct {
-	FailureCode string      `json:"failure_code"`
+	Failure     []byte      `json:"failure"`
 	RunID       pgtype.UUID `json:"run_id"`
 	SessionID   pgtype.UUID `json:"session_id"`
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
@@ -130,7 +130,7 @@ type FailActorForRunTerminationParams struct {
 
 func (q *Queries) FailActorForRunTermination(ctx context.Context, arg FailActorForRunTerminationParams) (int64, error) {
 	result, err := q.db.Exec(ctx, failActorForRunTermination,
-		arg.FailureCode,
+		arg.Failure,
 		arg.RunID,
 		arg.SessionID,
 		arg.WorkspaceID,
@@ -1121,8 +1121,7 @@ func (q *Queries) ResolveParkedTerminalChildWait(ctx context.Context, arg Resolv
 const terminalizeRun = `-- name: TerminalizeRun :execrows
 UPDATE runs
    SET status = $1::text,
-       terminal_reason_code = $2::text,
-       error = $3::jsonb,
+       failure = $2::jsonb,
        state_version = state_version + 1,
        current_run_lease_id = NULL,
        retry_at = NULL,
@@ -1141,15 +1140,14 @@ UPDATE runs
        active_started_at = NULL,
        terminal_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
- WHERE id = $4
-   AND state_version = $5
+ WHERE id = $3
+   AND state_version = $4
    AND status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested')
 `
 
 type TerminalizeRunParams struct {
 	Status               string      `json:"status"`
-	ReasonCode           string      `json:"reason_code"`
-	ErrorPayload         []byte      `json:"error_payload"`
+	Failure              []byte      `json:"failure"`
 	ID                   pgtype.UUID `json:"id"`
 	ExpectedStateVersion int64       `json:"expected_state_version"`
 }
@@ -1157,8 +1155,7 @@ type TerminalizeRunParams struct {
 func (q *Queries) TerminalizeRun(ctx context.Context, arg TerminalizeRunParams) (int64, error) {
 	result, err := q.db.Exec(ctx, terminalizeRun,
 		arg.Status,
-		arg.ReasonCode,
-		arg.ErrorPayload,
+		arg.Failure,
 		arg.ID,
 		arg.ExpectedStateVersion,
 	)

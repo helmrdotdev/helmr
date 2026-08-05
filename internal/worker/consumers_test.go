@@ -16,10 +16,10 @@ import (
 
 func testWorkerDeploymentBuild() workerapi.DeploymentBuild {
 	return workerapi.DeploymentBuild{
-		ID:                   "deployment-1",
-		NodeVersion:          "24.16.0",
-		BuildContractVersion: deployment.ProgramBuildContractVersion,
-		ImageCacheMode:       "prefer",
+		ID:             "deployment-1",
+		NodeVersion:    "24.16.0",
+		BuildContract:  deployment.ProgramBuildContract,
+		ImageCacheMode: "prefer",
 		Runtime: workerapi.CASObject{
 			Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			MediaType: deployment.RuntimeArtifactMediaType,

@@ -45,7 +45,7 @@ func TestScheduleListCursorRoundTripAndScope(t *testing.T) {
 
 func TestScheduleListQueryRejectsUnknownAndInvalidValues(t *testing.T) {
 	for _, target := range []string{
-		"/v1/schedules?task=legacy",
+		"/v1/schedules?task=unexpected",
 		"/v1/schedules?limit=0",
 		"/v1/schedules?limit=101",
 		"/v1/schedules?cursor=invalid",

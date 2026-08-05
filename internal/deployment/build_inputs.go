@@ -78,7 +78,7 @@ func OpenProgramBuildInputs(
 	}
 
 	work := request.Build
-	if work.BuildContractVersion != ProgramBuildContractVersion {
+	if work.BuildContract != ProgramBuildContract {
 		return nil, &ProgramBuildInputFailure{
 			Reason: BuildFailureUnsupportedToolchain,
 			err:    errors.New("deployment build contract is unsupported"),

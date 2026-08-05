@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -25,7 +24,6 @@ import (
 const (
 	sessionListDefaultLimit = int32(50)
 	sessionListMaxLimit     = int32(100)
-	sessionListCursorPrefix = "ss1."
 )
 
 type sessionListCursor struct {
@@ -52,7 +50,7 @@ type sessionProjectionRow struct {
 	createdAt    pgtype.Timestamptz
 	updatedAt    pgtype.Timestamptz
 	currentRunID pgtype.UUID
-	failureCode  pgtype.Text
+	failure      []byte
 	failureRunID pgtype.UUID
 }
 
@@ -248,15 +246,11 @@ func encodeSessionListCursor(cursor sessionListCursor) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return sessionListCursorPrefix + base64.RawURLEncoding.EncodeToString(raw), nil
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 func decodeSessionListCursor(raw string) (sessionListCursor, error) {
-	encoded, ok := strings.CutPrefix(raw, sessionListCursorPrefix)
-	if !ok {
-		return sessionListCursor{}, errors.New("session cursor is invalid")
-	}
-	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
 		return sessionListCursor{}, errors.New("session cursor is invalid")
 	}
@@ -271,7 +265,7 @@ func projectSession(row sessionProjectionRow) (api.Session, error) {
 	status, err := projectSessionStatus(sessionReadRecord{
 		id: row.id, key: row.key, state: row.state, createdAt: row.createdAt,
 		updatedAt: row.updatedAt, currentRunID: row.currentRunID,
-		failureCode: row.failureCode, failureRunID: row.failureRunID,
+		failure: row.failure, failureRunID: row.failureRunID,
 	})
 	if err != nil {
 		return api.Session{}, err
@@ -288,15 +282,15 @@ func projectSession(row sessionProjectionRow) (api.Session, error) {
 }
 
 func sessionProjectionFromGetRow(row db.GetSessionSnapshotRow) sessionProjectionRow {
-	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, key: row.Key, state: row.State, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failureCode: row.FailureCode, failureRunID: row.FailureRunID}
+	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, key: row.Key, state: row.State, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
 }
 
 func sessionProjectionFromKeyRow(row db.GetSessionSnapshotByKeyRow) sessionProjectionRow {
-	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, key: row.Key, state: row.State, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failureCode: row.FailureCode, failureRunID: row.FailureRunID}
+	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, key: row.Key, state: row.State, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
 }
 
 func sessionProjectionFromListRow(row db.ListSessionSnapshotsRow) sessionProjectionRow {
-	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, key: row.Key, state: row.State, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failureCode: row.FailureCode, failureRunID: row.FailureRunID}
+	return sessionProjectionRow{id: row.ID, actorID: row.ActorDeclaredID, deploymentID: row.DeploymentID, key: row.Key, state: row.State, createdAt: row.CreatedAt, updatedAt: row.UpdatedAt, currentRunID: row.CurrentRunID, failure: row.Failure, failureRunID: row.FailureRunID}
 }
 
 func (s *Server) writeSessionReadAuthorityError(w http.ResponseWriter, err error) {

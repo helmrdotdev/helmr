@@ -602,7 +602,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		    id, org_id, project_id, environment_id, build_region_id,
 		    build_node_version, build_runtime_digest, build_toolchain_digest,
 		    build_manager_name, build_manager_version, build_manager_digest,
-		    build_contract_version, image_cache_mode, version, content_hash, deployment_source_artifact_id,
+		    build_contract, image_cache_mode, version, content_hash, deployment_source_artifact_id,
 		    program_artifact_id, program_index_digest, queue_config, status
 		) VALUES (
 		    $1, $2, $3, $4, 'us-east-1', '24.16.0',

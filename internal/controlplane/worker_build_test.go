@@ -43,6 +43,28 @@ func TestWorkerCompleteDeploymentBuildReadsCASBeforeTransaction(t *testing.T) {
 	}
 }
 
+func TestBoundedDeploymentFailurePayloadFitsFailureContract(t *testing.T) {
+	payload, err := boundedDeploymentFailurePayload(
+		"build_failed",
+		strings.Repeat("é", maxDeploymentFailureMessageBytes),
+		"deployment build failed",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var failure deploymentFailurePayload
+	if err := json.Unmarshal(payload, &failure); err != nil {
+		t.Fatal(err)
+	}
+	if len(failure.Message) != maxDeploymentFailureMessageBytes ||
+		!strings.HasSuffix(failure.Message, "é") {
+		t.Fatalf("message bytes = %d, message tail is invalid", len(failure.Message))
+	}
+	if len(payload) > maxDeploymentBuildTerminalErrorPayloadBytes {
+		t.Fatalf("payload bytes = %d", len(payload))
+	}
+}
+
 func TestWorkerCompleteDeploymentBuildRejectsAuthorityDrift(t *testing.T) {
 	server, store, request, _ := newDeploymentBuildCompletionFixture(t)
 	store.locked.BuildManagerVersion = "1.3.12"
@@ -240,12 +262,12 @@ func newDeploymentBuildCompletionFixture(
 				Queues: []deployment.QueueInput{},
 			},
 			Provenance: deployment.BuildProvenance{
-				Architecture:         deployment.ArchitectureX8664,
-				BuildContractVersion: deployment.ProgramBuildContractVersion,
+				Architecture:  deployment.ArchitectureX8664,
+				BuildContract: deployment.ProgramBuildContract,
 				Config: deployment.ProgramConfig{
-					EvaluatorAPIVersion: deployment.ConfigEvaluatorAPIVersion,
-					SourceDigest:        controlPlaneDigest("config source"),
-					ResultDigest:        controlPlaneDigest("config result"),
+					EvaluatorContract: deployment.ConfigEvaluatorContract,
+					SourceDigest:      controlPlaneDigest("config source"),
+					ResultDigest:      controlPlaneDigest("config result"),
 				},
 				Manager: deployment.ProgramManager{
 					Digest:  managerDigestString,
@@ -310,7 +332,7 @@ func newDeploymentBuildCompletionFixture(
 		ResolutionSetDigest:  resolutionSetDigest,
 		RequestedCacheMode:   imagebuild.CachePrefer,
 		Result: imagebuild.GuestResult{
-			ExecutionABI: imagebuild.ExecutionABI,
+			Contract:     imagebuild.Contract,
 			Outcome:      imagebuild.GuestSucceeded,
 			OCIDigest:    imageDigest,
 			OCISizeBytes: 1,
@@ -340,7 +362,7 @@ func newDeploymentBuildCompletionFixture(
 		BuildManagerName:           string(deployment.PackageManagerBun),
 		BuildManagerVersion:        "1.3.11",
 		BuildManagerDigest:         managerDigest,
-		BuildContractVersion:       deployment.ProgramBuildContractVersion,
+		BuildContract:              deployment.ProgramBuildContract,
 		ImageCacheMode:             string(imagebuild.CachePrefer),
 		DeploymentSourceArtifactID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		DeploymentSourceDigest:     source.Digest,
@@ -364,7 +386,7 @@ func newDeploymentBuildCompletionFixture(
 			BuildManagerName:           authority.BuildManagerName,
 			BuildManagerVersion:        authority.BuildManagerVersion,
 			BuildManagerDigest:         authority.BuildManagerDigest,
-			BuildContractVersion:       authority.BuildContractVersion,
+			BuildContract:              authority.BuildContract,
 			ImageCacheMode:             authority.ImageCacheMode,
 			DeploymentSourceArtifactID: authority.DeploymentSourceArtifactID,
 			DeploymentSourceDigest:     authority.DeploymentSourceDigest,
@@ -391,23 +413,21 @@ func newDeploymentBuildCompletionFixture(
 		WorkerInstanceID: workerInstanceID,
 		WorkerGroupID:    "build",
 		WorkerEpoch:      1,
-		ProtocolVersion:  "test",
 	}
 	body, err := json.Marshal(struct {
 		Lease  workerapi.DeploymentBuildLease `json:"lease"`
 		Result json.RawMessage                `json:"result"`
 	}{
 		Lease: workerapi.DeploymentBuildLease{
-			ID:                    pgvalue.UUIDString(buildLeaseID),
-			OrgID:                 pgvalue.UUIDString(orgID),
-			ProjectID:             pgvalue.UUIDString(projectID),
-			EnvironmentID:         pgvalue.UUIDString(environmentID),
-			DeploymentID:          pgvalue.UUIDString(deploymentID),
-			WorkerGroupID:         worker.WorkerGroupID,
-			WorkerInstanceID:      worker.WorkerInstanceID.String(),
-			WorkerEpoch:           worker.WorkerEpoch,
-			LeaseSequence:         1,
-			WorkerProtocolVersion: worker.ProtocolVersion,
+			ID:               pgvalue.UUIDString(buildLeaseID),
+			OrgID:            pgvalue.UUIDString(orgID),
+			ProjectID:        pgvalue.UUIDString(projectID),
+			EnvironmentID:    pgvalue.UUIDString(environmentID),
+			DeploymentID:     pgvalue.UUIDString(deploymentID),
+			WorkerGroupID:    worker.WorkerGroupID,
+			WorkerInstanceID: worker.WorkerInstanceID.String(),
+			WorkerEpoch:      worker.WorkerEpoch,
+			LeaseSequence:    1,
 		},
 		Result: rawResult,
 	})

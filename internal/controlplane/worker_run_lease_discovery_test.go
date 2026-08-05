@@ -32,7 +32,6 @@ func TestWorkerDiscoverRunLeasesReturnsExactTuples(t *testing.T) {
 		WorkerInstanceID: workerID,
 		WorkerGroupID:    "run-workers",
 		WorkerEpoch:      9,
-		ProtocolVersion:  "helmr.worker.v0",
 	}))
 	response := httptest.NewRecorder()
 

@@ -238,7 +238,7 @@ func validRunLeaseClaimResponse(
 			ProgramArtifactDigest:    validDigest('a'),
 			ProgramArtifactSizeBytes: 100,
 			ProgramArtifactMediaType: deployment.ProgramArtifactMediaType,
-			BuildContractVersion:     deployment.ProgramBuildContractVersion,
+			BuildContract:            deployment.ProgramBuildContract,
 			ProgramIndexDigest:       validDigestBytes(t, 'b'),
 		},
 		definition:  definition,
@@ -271,12 +271,12 @@ func deriveWorkspaceCapabilityInput(
 
 func claimResponseRuntimeDescriptor() deployment.RuntimeDescriptor {
 	return deployment.RuntimeDescriptor{
-		Architecture:      deployment.ArchitectureX8664,
-		Digest:            "sha256:" + strings.Repeat("9", 64),
-		FormatVersion:     deployment.RuntimeDescriptorFormatVersion,
-		MediaType:         deployment.RuntimeArtifactMediaType,
-		RuntimeAPIVersion: deployment.RuntimeAPIVersion,
-		SizeBytes:         4096,
+		Architecture:    deployment.ArchitectureX8664,
+		Digest:          "sha256:" + strings.Repeat("9", 64),
+		FormatVersion:   deployment.RuntimeDescriptorFormatVersion,
+		MediaType:       deployment.RuntimeArtifactMediaType,
+		RuntimeContract: deployment.RuntimeContract,
+		SizeBytes:       4096,
 	}
 }
 

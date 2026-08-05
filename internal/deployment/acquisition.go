@@ -127,7 +127,7 @@ func (acquirer PlatformAcquirer) Acquire(
 		return workerapi.PlatformAcquisitionCandidates{}, err
 	}
 	if request.BuildPolicyDigest != policyDigest ||
-		request.BuildContract != ProgramBuildContractVersion {
+		request.BuildContract != ProgramBuildContract {
 		return workerapi.PlatformAcquisitionCandidates{}, deterministicAcquisitionFailure(
 			workerapi.PlatformAcquisitionUnsupportedSelector,
 			errors.New("platform acquisition request does not match worker authority"),

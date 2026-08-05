@@ -38,8 +38,7 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 		DeploymentDefinitionID: pgvalue.UUID(definitionID),
 		SubstrateDigest:        dbtest.Digest("substrate-first"),
 		SubstrateFormat:        substrate.Format,
-		BuilderAbi:             substrate.BuilderABI,
-		LayoutAbi:              substrate.LayoutABI,
+		SubstrateContract:      substrate.Contract,
 		SubstrateSizeBytes:     4096,
 	}
 	rows, err := queries.InsertRuntimeSubstrate(ctx, params)
@@ -71,7 +70,7 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 
 	concurrent := params
 	concurrent.ID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	concurrent.BuilderAbi = substrate.BuilderABI + ".concurrent"
+	concurrent.SubstrateContract = substrate.Contract + ".concurrent"
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -137,8 +136,7 @@ func TestLockRuntimeSubstrateAuthorityFencesWorkerAndContract(t *testing.T) {
 		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		WorkerEpoch:            1,
 		SubstrateFormat:        substrate.Format,
-		BuilderAbi:             substrate.BuilderABI,
-		LayoutAbi:              substrate.LayoutABI,
+		SubstrateContract:      substrate.Contract,
 	}
 	if _, err := queries.LockRuntimeSubstrateAuthority(ctx, params); err != nil {
 		t.Fatal(err)
@@ -164,12 +162,8 @@ func TestLockRuntimeSubstrateAuthorityFencesWorkerAndContract(t *testing.T) {
 			value.SubstrateFormat += ".other"
 			return value
 		}},
-		{name: "builder mismatch", mutate: func(value db.LockRuntimeSubstrateAuthorityParams) db.LockRuntimeSubstrateAuthorityParams {
-			value.BuilderAbi += ".other"
-			return value
-		}},
-		{name: "layout mismatch", mutate: func(value db.LockRuntimeSubstrateAuthorityParams) db.LockRuntimeSubstrateAuthorityParams {
-			value.LayoutAbi += ".other"
+		{name: "contract mismatch", mutate: func(value db.LockRuntimeSubstrateAuthorityParams) db.LockRuntimeSubstrateAuthorityParams {
+			value.SubstrateContract += ".other"
 			return value
 		}},
 	}
@@ -195,8 +189,7 @@ func TestLockRuntimeSubstrateAuthorityFencesWorkerAndContract(t *testing.T) {
 		       supports_run = false,
 		       runtime_identity_id = NULL,
 		       substrate_format = '',
-		       substrate_builder_abi = '',
-		       substrate_layout_abi = '',
+		       substrate_contract = '',
 		       epoch_cpu_millis = 0,
 		       epoch_memory_bytes = 0,
 		       epoch_guest_ephemeral_disk_bytes = 0,
@@ -266,7 +259,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 			id, org_id, build_region_id, project_id, environment_id,
 			build_node_version, build_runtime_digest, build_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
-			build_contract_version, image_cache_mode, version, content_hash, deployment_source_artifact_id,
+			build_contract, image_cache_mode, version, content_hash, deployment_source_artifact_id,
 			queue_config, status
 		) VALUES (
 			$1, $2, $3, $4, $5, '24.16.0',
@@ -324,16 +317,16 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	runtimeIdentityID := "authority-" + dbtest.ShortID(uuid.Must(uuid.NewV7()))
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO runtime_identities (
-			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, network_abi
-		) VALUES ($1, 'x86_64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+			id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest, rootfs_digest
+		) VALUES ($1, 'x86_64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs')
 	`, runtimeIdentityID)
 	workerID := uuid.Must(uuid.NewV7())
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, state,
-			current_epoch, current_service_id, protocol_version, supervisor_version,
+			current_epoch, current_service_id, supervisor_version,
 			supports_run, runtime_identity_id,
-			substrate_format, substrate_builder_abi, substrate_layout_abi,
+			substrate_format, substrate_contract,
 			epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
 			per_vm_cpu_millis, per_vm_memory_bytes,
 			per_vm_guest_ephemeral_disk_bytes,
@@ -341,14 +334,14 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 			epoch_started_at, activated_at
 		) VALUES (
 			$1, $2, $3, 'active',
-			1, $4, 'helmr.worker.v0', 'test-worker',
-			true, $5, $6, $7, $8,
+			1, $4, 'test-worker',
+			true, $5, $6, $7,
 			2000, 2147483648, 4294967296,
 			1000, 1073741824, 2147483648,
 			1, 1, 1, now(), now()
 		)
 	`, workerID, "authority-"+workerID.String(), dbtest.DefaultWorkerGroupID,
-		uuid.Must(uuid.NewV7()), runtimeIdentityID, substrate.Format, substrate.BuilderABI, substrate.LayoutABI)
+		uuid.Must(uuid.NewV7()), runtimeIdentityID, substrate.Format, substrate.Contract)
 	runtimeID := uuid.Must(uuid.NewV7())
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO runtime_instances (
@@ -385,8 +378,7 @@ func registrationLookup(params db.InsertRuntimeSubstrateParams) db.GetRuntimeSub
 		DeploymentDefinitionID: params.DeploymentDefinitionID,
 		SubstrateDigest:        params.SubstrateDigest,
 		SubstrateFormat:        params.SubstrateFormat,
-		BuilderAbi:             params.BuilderAbi,
-		LayoutAbi:              params.LayoutAbi,
+		SubstrateContract:      params.SubstrateContract,
 		SubstrateSizeBytes:     params.SubstrateSizeBytes,
 	}
 }

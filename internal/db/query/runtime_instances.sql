@@ -12,19 +12,19 @@ SELECT runtime_instances.*,
        runtime_identities.runtime_arch AS workspace_architecture,
        program_deployments.id AS program_deployment_authority_id,
        program_deployments.build_runtime_digest AS program_runtime_digest,
-       program_deployments.build_contract_version AS program_build_contract_version,
+       program_deployments.build_contract AS program_build_contract,
        program_deployments.program_index_digest,
        COALESCE(program_artifact.digest, '') AS program_artifact_digest,
        COALESCE(program_artifact.size_bytes, 0) AS program_artifact_size_bytes,
        COALESCE(program_artifact.media_type, '') AS program_artifact_media_type,
        runtime_identities.rootfs_digest,
-       runtime_identities.runtime_abi
+       runtime_identities.vm_runtime_contract
   FROM runtime_instances
   JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
                        AND worker_instances.worker_group_id = runtime_instances.worker_group_id
   JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
-  JOIN runtime_identities ON runtime_identities.id = runtime_instances.runtime_identity_id
-                         AND runtime_identities.network_abi = 'helmr/v0'
+	JOIN runtime_identities ON runtime_identities.id = runtime_instances.runtime_identity_id
+	                       AND runtime_identities.vm_runtime_contract = 'helmr.vm-runtime.v0'
   LEFT JOIN worker_observations
     ON worker_observations.worker_instance_id = worker_instances.id
    AND worker_observations.worker_epoch = worker_instances.current_epoch
@@ -238,8 +238,7 @@ WITH restore_secret_authority AS MATERIALIZED (
        AND runtime_substrates.environment_id = runtime_instances.environment_id
        AND runtime_substrates.deployment_definition_id = runtime_instances.deployment_definition_id
        AND runtime_substrates.substrate_format = worker_instances.substrate_format
-       AND runtime_substrates.builder_abi = worker_instances.substrate_builder_abi
-       AND runtime_substrates.layout_abi = worker_instances.substrate_layout_abi
+       AND runtime_substrates.substrate_contract = worker_instances.substrate_contract
      WHERE runtime_instances.id = sqlc.arg(id)
        AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
        AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)

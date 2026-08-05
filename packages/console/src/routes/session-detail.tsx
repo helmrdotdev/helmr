@@ -195,7 +195,9 @@ export function SessionDetail() {
                         {(failure) => (
                           <>
                             <div><dt>Failure</dt><dd>{failure().code}</dd></div>
-                            <div><dt>Failure Run</dt><dd><A class="text-console-accent" href={runHref(failure().run_id, projectID(), environmentID())}>{failure().run_id}</A></dd></div>
+                            <Show when={failure().details.run_id}>
+                              {(runID) => <div><dt>Failure Run</dt><dd><A class="text-console-accent" href={runHref(runID(), projectID(), environmentID())}>{runID()}</A></dd></div>}
+                            </Show>
                           </>
                         )}
                       </Show>

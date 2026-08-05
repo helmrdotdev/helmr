@@ -745,7 +745,7 @@ func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) *workerapi.Works
 		RequestedMemoryMiB:      row.ReservedMemoryBytes / (1024 * 1024),
 		RequestedDiskMiB:        row.ReservedGuestEphemeralDiskBytes / (1024 * 1024),
 		RequestedExecutionSlots: row.ReservedExecutionSlots,
-		RuntimeABI:              row.RuntimeABI,
+		VMRuntimeContract:       row.VMRuntimeContract,
 		FencingGeneration:       row.FencingGeneration,
 		ExpiresAt:               row.GuestChannelTokenExpiresAt.Time,
 	}

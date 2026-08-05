@@ -13,7 +13,6 @@ import (
 )
 
 const (
-	RuntimeIndexFormatVersion      = 0
 	RuntimeDescriptorFormatVersion = 0
 	RuntimeArtifactMediaType       = "application/vnd.helmr.runtime.v0+squashfs"
 	maxRuntimeDocumentBytes        = 4096
@@ -21,18 +20,17 @@ const (
 )
 
 type RuntimeIndex struct {
-	Architecture      RuntimeArchitecture `json:"architecture"`
-	FormatVersion     int                 `json:"formatVersion"`
-	RuntimeAPIVersion string              `json:"runtimeApiVersion"`
+	Architecture    RuntimeArchitecture `json:"architecture"`
+	RuntimeContract string              `json:"runtimeContract"`
 }
 
 type RuntimeDescriptor struct {
-	Architecture      RuntimeArchitecture `json:"architecture"`
-	Digest            string              `json:"digest"`
-	FormatVersion     int                 `json:"formatVersion"`
-	MediaType         string              `json:"mediaType"`
-	RuntimeAPIVersion string              `json:"runtimeApiVersion"`
-	SizeBytes         int64               `json:"sizeBytes"`
+	Architecture    RuntimeArchitecture `json:"architecture"`
+	Digest          string              `json:"digest"`
+	FormatVersion   int                 `json:"formatVersion"`
+	MediaType       string              `json:"mediaType"`
+	RuntimeContract string              `json:"runtimeContract"`
+	SizeBytes       int64               `json:"sizeBytes"`
 }
 
 func RuntimeArchitectureFromGo(value string) (RuntimeArchitecture, error) {
@@ -99,18 +97,11 @@ func CanonicalRuntimeIndex(index RuntimeIndex) ([]byte, error) {
 }
 
 func ValidateRuntimeIndex(index RuntimeIndex) error {
-	if index.FormatVersion != RuntimeIndexFormatVersion {
+	if index.RuntimeContract != RuntimeContract {
 		return fmt.Errorf(
-			"runtime index formatVersion = %d, want %d",
-			index.FormatVersion,
-			RuntimeIndexFormatVersion,
-		)
-	}
-	if index.RuntimeAPIVersion != RuntimeAPIVersion {
-		return fmt.Errorf(
-			"runtime index runtimeApiVersion = %q, want %q",
-			index.RuntimeAPIVersion,
-			RuntimeAPIVersion,
+			"runtime index runtimeContract = %q, want %q",
+			index.RuntimeContract,
+			RuntimeContract,
 		)
 	}
 	if !validArchitecture(index.Architecture) {
@@ -167,11 +158,11 @@ func ValidateRuntimeDescriptor(descriptor RuntimeDescriptor) error {
 			RuntimeArtifactMediaType,
 		)
 	}
-	if descriptor.RuntimeAPIVersion != RuntimeAPIVersion {
+	if descriptor.RuntimeContract != RuntimeContract {
 		return fmt.Errorf(
-			"runtime descriptor runtimeApiVersion = %q, want %q",
-			descriptor.RuntimeAPIVersion,
-			RuntimeAPIVersion,
+			"runtime descriptor runtimeContract = %q, want %q",
+			descriptor.RuntimeContract,
+			RuntimeContract,
 		)
 	}
 	if descriptor.SizeBytes < 1 || descriptor.SizeBytes > maxJSONSafeInteger {

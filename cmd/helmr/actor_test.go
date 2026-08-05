@@ -253,21 +253,3 @@ func TestSessionCommandsRejectInvalidArgumentsAndMissingInput(t *testing.T) {
 		}
 	}
 }
-
-func TestActorOutputDoesNotExposeStreamingOrOpaqueCursorFlags(t *testing.T) {
-	t.Setenv(helmrAPIURLEnv, "http://127.0.0.1")
-	t.Setenv(helmrAPIKeyEnv, "test-key")
-	for _, flag := range []string{"--follow", "--cursor"} {
-		cmd := newRootCommand()
-		cmd.SetOut(&bytes.Buffer{})
-		cmd.SetErr(&bytes.Buffer{})
-		cmd.SetArgs([]string{
-			"actor", "output", "read", testSessionID,
-			flag, "value",
-		})
-		err := cmd.Execute()
-		if err == nil || !strings.Contains(err.Error(), "unknown flag") {
-			t.Fatalf("%s error = %v", flag, err)
-		}
-	}
-}

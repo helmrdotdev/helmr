@@ -228,8 +228,8 @@ func (q *Queries) LockCompletedWorkspaceImageOperation(ctx context.Context, arg 
 }
 
 const lockRegistryCredentialBuildLease = `-- name: LockRegistryCredentialBuildLease :one
-SELECT deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_node_version, deployments.build_runtime_digest, deployments.build_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_integrity, deployments.build_manager_digest, deployments.build_contract_version, deployments.image_cache_mode, deployments.version, deployments.content_hash, deployments.api_version, deployments.worker_protocol_version, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at,
-       deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.worker_protocol_version, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_guest_ephemeral_disk_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at,
+SELECT deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_node_version, deployments.build_runtime_digest, deployments.build_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_integrity, deployments.build_manager_digest, deployments.build_contract, deployments.image_cache_mode, deployments.version, deployments.content_hash, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at,
+       deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_guest_ephemeral_disk_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at,
        deployment_source_artifacts.digest AS submitted_source_digest,
        worker_instances.runtime_identity_id AS runtime_identity_id
   FROM deployments
@@ -295,12 +295,10 @@ func (q *Queries) LockRegistryCredentialBuildLease(ctx context.Context, arg Lock
 		&i.Deployment.BuildManagerVersion,
 		&i.Deployment.BuildManagerIntegrity,
 		&i.Deployment.BuildManagerDigest,
-		&i.Deployment.BuildContractVersion,
+		&i.Deployment.BuildContract,
 		&i.Deployment.ImageCacheMode,
 		&i.Deployment.Version,
 		&i.Deployment.ContentHash,
-		&i.Deployment.APIVersion,
-		&i.Deployment.WorkerProtocolVersion,
 		&i.Deployment.DeploymentSourceArtifactID,
 		&i.Deployment.ProgramArtifactID,
 		&i.Deployment.ProgramArtifactKind,
@@ -325,7 +323,6 @@ func (q *Queries) LockRegistryCredentialBuildLease(ctx context.Context, arg Lock
 		&i.DeploymentBuildLease.WorkerGroupID,
 		&i.DeploymentBuildLease.WorkerInstanceID,
 		&i.DeploymentBuildLease.WorkerEpoch,
-		&i.DeploymentBuildLease.WorkerProtocolVersion,
 		&i.DeploymentBuildLease.RequestedCPUMillis,
 		&i.DeploymentBuildLease.RequestedMemoryBytes,
 		&i.DeploymentBuildLease.RequestedGuestEphemeralDiskBytes,

@@ -47,7 +47,7 @@ func TestResolveWorkerInstanceCredentialUsesEnrollment(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.WorkerGroupID != "run-workers" || request.Nonce != "fresh-nonce" || !request.SupportsRun || request.SupportsBuild || request.ProtocolVersion != workerapi.CurrentProtocolVersion {
+			if request.WorkerGroupID != "run-workers" || request.Nonce != "fresh-nonce" || !request.SupportsRun || request.SupportsBuild {
 				t.Fatalf("enrollment = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.EnrollmentResponse{
@@ -287,7 +287,6 @@ func testWorkerEnrollmentRequest(groupID string, nonce string, supportsRun bool,
 	return workerapi.EnrollmentRequest{
 		EnrollmentIntent: workerapi.EnrollmentIntent{
 			WorkerGroupID: groupID, Nonce: nonce, SupportsRun: supportsRun, SupportsBuild: supportsBuild,
-			ProtocolVersion: workerapi.CurrentProtocolVersion,
 		},
 		ResourceID: "host-1",
 		Proof:      "proof",

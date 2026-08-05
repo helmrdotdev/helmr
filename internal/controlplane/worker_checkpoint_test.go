@@ -125,8 +125,7 @@ func validCheckpointReadyRequest() workerapi.CheckpointReadyRequest {
 	lease := workerapi.RunLeaseAssignment{
 		ID: uuid.Must(uuid.NewV7()).String(), RunID: runID, AttemptNumber: 1, LeaseSequence: 1,
 		WorkerGroupID: "run-test", WorkerInstanceID: uuid.Must(uuid.NewV7()).String(), WorkerEpoch: 1,
-		WorkerProtocolVersion: workerapi.CurrentProtocolVersion,
-		RuntimeInstanceID:     uuid.Must(uuid.NewV7()).String(), RuntimeIdentityID: runtimeIdentity,
+		RuntimeInstanceID: uuid.Must(uuid.NewV7()).String(), RuntimeIdentityID: runtimeIdentity,
 		WorkspaceID: uuid.Must(uuid.NewV7()).String(), WorkspaceMountID: uuid.Must(uuid.NewV7()).String(),
 		WorkspaceLeaseID: uuid.Must(uuid.NewV7()).String(), BaseWorkspaceVersionID: uuid.Must(uuid.NewV7()).String(),
 		OwnershipGeneration: 1, WriterGeneration: 1, MountFencingGeneration: 1,
@@ -149,7 +148,7 @@ func validCheckpointReadyRequest() workerapi.CheckpointReadyRequest {
 				CorrelationID: uuid.Must(uuid.NewV7()).String(),
 				Runtime: workerapi.CheckpointRuntime{
 					Backend: "firecracker", ID: runtimeIdentity, Arch: string(deployment.ArchitectureX8664),
-					ABI: "helmr.firecracker.snapshot.v0", KernelDigest: digestWith("4"),
+					Contract: "helmr.vm-runtime.v0", KernelDigest: digestWith("4"),
 					InitramfsDigest: digestWith("5"), RootfsDigest: digestWith("6"), ConfigDigest: digestWith("7"),
 				},
 			},

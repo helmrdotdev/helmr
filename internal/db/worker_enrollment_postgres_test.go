@@ -13,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/substrate"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,7 +24,7 @@ func activateWorkspaceWorker(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		UPDATE worker_instances
 		   SET state = 'active', supervisor_version = 'test-worker',
 		       supports_run = true, runtime_identity_id = 'test-runtime',
-		       substrate_format = $2, substrate_builder_abi = $3, substrate_layout_abi = $4,
+		       substrate_format = $2, substrate_contract = $3,
 		       epoch_cpu_millis = 4000, epoch_memory_bytes = 8589934592,
 		       epoch_guest_ephemeral_disk_bytes = 10737418240,
 		       per_vm_cpu_millis = 2000, per_vm_memory_bytes = 2147483648,
@@ -33,7 +32,7 @@ func activateWorkspaceWorker(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		       max_vm_slots = 2, max_run_consumers = 2, max_runtime_starts = 2,
 		       activated_at = now()
 		 WHERE id = $1
-	`, workerID, substrate.Format, substrate.BuilderABI, substrate.LayoutABI)
+	`, workerID, substrate.Format, substrate.Contract)
 }
 
 func TestRegisteringEnrollmentRetryUsesFreshNonceAndRotatesCredential(t *testing.T) {
@@ -72,21 +71,21 @@ func TestRegisteringEnrollmentRetryUsesFreshNonceAndRotatesCredential(t *testing
 
 	if _, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, WorkerInstanceID: first.WorkerInstanceID, SecretHash: []byte("first-secret"),
-		ProtocolVersion: workerapi.CurrentProtocolVersion, ServiceID: pgvalue.NewUUIDv7(),
+		ServiceID: pgvalue.NewUUIDv7(),
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("revoked response-loss credential error = %v, want pgx.ErrNoRows", err)
 	}
 	if _, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, WorkerInstanceID: second.WorkerInstanceID, SecretHash: []byte("second-secret"),
-		ProtocolVersion: workerapi.CurrentProtocolVersion, ServiceID: pgvalue.NewUUIDv7(),
+		ServiceID: pgvalue.NewUUIDv7(),
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO runtime_identities (
-			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, network_abi
-		) VALUES ('test-runtime', 'x86_64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0')
+			id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest, rootfs_digest
+		) VALUES ('test-runtime', 'x86_64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs')
 	`)
 	activateWorkspaceWorker(t, ctx, pool, firstWorkerID)
 	rejectedNonce := createTestEnrollmentNonce(t, ctx, q, dbtest.DefaultWorkerGroupID)
@@ -182,7 +181,7 @@ func TestTerminalEnrollmentCreatesFreshControlPlaneIdentity(t *testing.T) {
 	serviceID := pgvalue.NewUUIDv7()
 	firstAuth, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, WorkerInstanceID: first.WorkerInstanceID, SecretHash: []byte("first-secret"),
-		ProtocolVersion: workerapi.CurrentProtocolVersion, ServiceID: serviceID,
+		ServiceID: serviceID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -195,7 +194,7 @@ func TestTerminalEnrollmentCreatesFreshControlPlaneIdentity(t *testing.T) {
 	}
 	secondAuth, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, WorkerInstanceID: second.WorkerInstanceID, SecretHash: []byte("second-secret"),
-		ProtocolVersion: workerapi.CurrentProtocolVersion, ServiceID: serviceID,
+		ServiceID: serviceID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -211,8 +210,8 @@ func TestEnrollmentRetryRejectsLiveIdentityStates(t *testing.T) {
 	q := db.New(pool)
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO runtime_identities (
-			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, network_abi
-		) VALUES ('test-runtime', 'x86_64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0')
+			id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest, rootfs_digest
+		) VALUES ('test-runtime', 'x86_64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs')
 	`)
 	for _, state := range []string{"active", "draining"} {
 		t.Run(state, func(t *testing.T) {
@@ -250,7 +249,7 @@ func authenticateTestWorker(t *testing.T, ctx context.Context, q *db.Queries, cr
 	t.Helper()
 	if _, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, WorkerInstanceID: credential.WorkerInstanceID, SecretHash: secretHash,
-		ProtocolVersion: workerapi.CurrentProtocolVersion, ServiceID: pgvalue.NewUUIDv7(),
+		ServiceID: pgvalue.NewUUIDv7(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -283,14 +282,14 @@ func TestWorkerGroupRoleNarrowingFencesCurrentCredential(t *testing.T) {
 	credential := enrollTestWorker(t, ctx, q, workerID, "operator-host-3", true, true, []byte("both-role-secret"))
 	if _, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, SupportsBuild: true, WorkerInstanceID: credential.WorkerInstanceID,
-		SecretHash: []byte("both-role-secret"), ProtocolVersion: workerapi.CurrentProtocolVersion, ServiceID: pgvalue.NewUUIDv7(),
+		SecretHash: []byte("both-role-secret"), ServiceID: pgvalue.NewUUIDv7(),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	reconcileTestWorkerGroup(t, ctx, q, dbtest.DefaultWorkerGroupID, true, false)
 	if _, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, WorkerInstanceID: credential.WorkerInstanceID,
-		SecretHash: []byte("both-role-secret"), ProtocolVersion: workerapi.CurrentProtocolVersion, ServiceID: pgvalue.NewUUIDv7(),
+		SecretHash: []byte("both-role-secret"), ServiceID: pgvalue.NewUUIDv7(),
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("narrowed credential error = %v, want pgx.ErrNoRows", err)
 	}
@@ -334,8 +333,7 @@ func createTestEnrollmentNonce(t *testing.T, ctx context.Context, q *db.Queries,
 func enrollmentParams(nonce []byte, workerID uuid.UUID, resourceID string, allowsRun bool, allowsBuild bool, secretHash []byte) db.EnrollWorkerInstanceParams {
 	return db.EnrollWorkerInstanceParams{
 		NonceHash: nonce, WorkerGroupID: dbtest.DefaultWorkerGroupID,
-		AllowsRun: allowsRun, AllowsBuild: allowsBuild, ProtocolVersion: workerapi.CurrentProtocolVersion,
-		WorkerInstanceID: pgvalue.UUID(workerID), ResourceID: resourceID, CurrentServiceID: pgvalue.NewUUIDv7(),
+		AllowsRun: allowsRun, AllowsBuild: allowsBuild, WorkerInstanceID: pgvalue.UUID(workerID), ResourceID: resourceID, CurrentServiceID: pgvalue.NewUUIDv7(),
 		CredentialID: pgvalue.NewUUIDv7(), KeyPrefix: uuid.NewString(), SecretHash: secretHash,
 	}
 }
@@ -348,8 +346,7 @@ func reconcileTestWorkerGroup(t *testing.T, ctx context.Context, q *db.Queries, 
 	}
 	if _, err := q.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
 		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
-		AllowsRun: allowsRun, AllowsBuild: allowsBuild, ProtocolVersion: workerapi.CurrentProtocolVersion,
-		RequiredCPUMillis: 1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1,
+		AllowsRun: allowsRun, AllowsBuild: allowsBuild, RequiredCPUMillis: 1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1,
 		RequiredVMSlots: 1, RequiredBuildExecutors: buildExecutors, ObservationTtlSeconds: 120,
 	}); err != nil {
 		t.Fatal(err)

@@ -13,7 +13,8 @@ export type Session = {
   current_run_id?: string;
   failure?: {
     code: string;
-    run_id: string;
+    message: string;
+    details: { run_id?: string };
   };
 };
 

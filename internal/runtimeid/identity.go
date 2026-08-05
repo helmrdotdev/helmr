@@ -10,14 +10,16 @@ import (
 type Selector struct {
 	ID              string `json:"id"`
 	Arch            string `json:"arch"`
-	ABI             string `json:"abi"`
+	Contract        string `json:"contract"`
 	KernelDigest    string `json:"kernel_digest"`
 	InitramfsDigest string `json:"initramfs_digest"`
 	RootfsDigest    string `json:"rootfs_digest"`
-	NetworkABI      string `json:"network_abi"`
 }
 
-const Schema = "helmr.runtime.identity.v0"
+const (
+	digestDomain = "helmr.vm-runtime-identity.v0"
+	Contract     = "helmr.vm-runtime.v0"
+)
 
 func ArchitectureFromGo(value string) (string, error) {
 	if value == "amd64" {
@@ -28,23 +30,21 @@ func ArchitectureFromGo(value string) (string, error) {
 
 func Digest(runtime Selector) (string, error) {
 	payload, err := json.Marshal(struct {
-		Schema          string `json:"schema"`
+		Domain          string `json:"domain"`
 		Backend         string `json:"backend"`
 		Arch            string `json:"arch"`
-		ABI             string `json:"abi"`
+		Contract        string `json:"contract"`
 		KernelDigest    string `json:"kernel_digest"`
 		InitramfsDigest string `json:"initramfs_digest"`
 		RootfsDigest    string `json:"rootfs_digest"`
-		NetworkABI      string `json:"network_abi"`
 	}{
-		Schema:          Schema,
+		Domain:          digestDomain,
 		Backend:         "firecracker",
 		Arch:            runtime.Arch,
-		ABI:             runtime.ABI,
+		Contract:        runtime.Contract,
 		KernelDigest:    runtime.KernelDigest,
 		InitramfsDigest: runtime.InitramfsDigest,
 		RootfsDigest:    runtime.RootfsDigest,
-		NetworkABI:      runtime.NetworkABI,
 	})
 	if err != nil {
 		return "", err

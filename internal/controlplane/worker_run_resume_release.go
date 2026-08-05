@@ -99,7 +99,6 @@ func (s *Server) acknowledgeRunResumeRelease(
 		locators, err := work.q.GetRunLeaseStartLocators(ctx, db.GetRunLeaseStartLocatorsParams{
 			ID: leaseID, LeaseSequence: expected.LeaseSequence, WorkerGroupID: worker.WorkerGroupID,
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
-			WorkerProtocolVersion: worker.ProtocolVersion,
 		})
 		if err != nil {
 			return staleRunLeaseClaim(err)

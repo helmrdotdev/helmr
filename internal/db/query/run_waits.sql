@@ -37,7 +37,6 @@ SELECT run_waits.id AS wait_id,
    AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
    AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
    AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
-   AND run_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
    AND run_waits.actor_speculative_input_sequence
        IS NOT DISTINCT FROM sqlc.narg(actor_speculative_input_sequence);
 
@@ -98,7 +97,6 @@ SELECT state
    AND worker_epoch = sqlc.arg(worker_epoch)
    AND runtime_instance_id = sqlc.arg(runtime_instance_id)
    AND runtime_identity_id = sqlc.arg(runtime_identity_id)
-   AND worker_protocol_version = sqlc.arg(worker_protocol_version)
    AND region_id = sqlc.arg(region_id)
    AND state = 'running'
    AND expires_at > transaction_timestamp()

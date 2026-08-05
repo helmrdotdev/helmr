@@ -234,10 +234,10 @@ func validateBuildEnvelope(
 	if capabilities.RuntimeArch != string(deployment.ArchitectureX8664) {
 		return fmt.Errorf("build worker architecture %q is unsupported", capabilities.RuntimeArch)
 	}
-	if build.BuildContractVersion != deployment.ProgramBuildContractVersion {
+	if build.BuildContract != deployment.ProgramBuildContract {
 		return fmt.Errorf(
 			"deployment build contract version %q is unsupported",
-			build.BuildContractVersion,
+			build.BuildContract,
 		)
 	}
 	if build.ImageCacheMode != "prefer" && build.ImageCacheMode != "bypass" {

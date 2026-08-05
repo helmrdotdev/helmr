@@ -37,8 +37,7 @@ type runPlacementAuthority struct {
 	restoreRuntimeIdentityID  string
 	restoreSubstrateID        pgtype.UUID
 	restoreSubstrateFormat    string
-	restoreSubstrateBuilder   string
-	restoreSubstrateLayout    string
+	restoreSubstrateContract  string
 	sameWorkspaceResume       bool
 	handoffResumeSucceeded    bool
 	resumeHandoffRuntimeID    pgtype.UUID
@@ -569,9 +568,8 @@ SELECT run_attempts.base_workspace_version_id,
 SELECT source_runtime.id,
        source_runtime.runtime_identity_id,
        source_runtime.runtime_substrate_id,
-       runtime_substrates.substrate_format,
-       runtime_substrates.builder_abi,
-       runtime_substrates.layout_abi
+	       runtime_substrates.substrate_format,
+	       runtime_substrates.substrate_contract
 	  FROM run_waits
 	  JOIN run_checkpoints
 	    ON run_checkpoints.id = CASE
@@ -676,8 +674,7 @@ SELECT source_runtime.id,
 			&authority.restoreRuntimeIdentityID,
 			&authority.restoreSubstrateID,
 			&authority.restoreSubstrateFormat,
-			&authority.restoreSubstrateBuilder,
-			&authority.restoreSubstrateLayout,
+			&authority.restoreSubstrateContract,
 		)
 		if err != nil {
 			return runPlacementAuthority{}, err

@@ -22,6 +22,7 @@ import {
   validateTaskId,
 } from "./schema/task"
 import { currentRuntimeOperations } from "./internal/runtime"
+import { runFailureError } from "./internal/run-failure"
 import { createRuntimeSessionRef } from "./session"
 
 const privateDefinitionBrand = Symbol.for("helmr.sdk.v0.definition")
@@ -380,7 +381,7 @@ function taskWait<T extends JsonValue>(
     },
     async unwrap(): Promise<T> {
       const settled = await result
-      if (!settled.ok) throw settled.error
+      if (!settled.ok) throw runFailureError(settled.failure)
       return settled.output
     },
   })

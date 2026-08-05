@@ -157,7 +157,7 @@ func TestVerifiedRuntimeResultMatchesDescriptor(t *testing.T) {
 			value.Architecture = RuntimeArchitecture("aarch64")
 		},
 		"runtime API": func(value *RuntimeDescriptor) {
-			value.RuntimeAPIVersion = "helmr.runtime.v1"
+			value.RuntimeContract = "helmr.runtime.v1"
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -227,7 +227,7 @@ func newRuntimeTopology(t *testing.T) (RuntimeDescriptor, *memoryArtifact) {
 		NodeModuleABI:           "137",
 		NodeVersion:             "24.16.0",
 		ProgramNodeFlags:        []string{NodeNoStripTypes, "--enable-source-maps"},
-		RuntimeAPIVersion:       RuntimeAPIVersion,
+		RuntimeContract:         RuntimeContract,
 		RuntimeHarnessDigest:    testDigest("harness"),
 		Source:                  source,
 	}

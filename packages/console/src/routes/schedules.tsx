@@ -117,14 +117,14 @@ export function Schedules() {
                   <For each={items()}>
                     {(schedule) => (
                       <tr class={ui.detailTableRow}>
-						<td><strong>{schedule.task_id}</strong></td>
+                        <td><strong>{schedule.task_id}</strong></td>
                         <td>
                           <div class={ui.tableCellStack}>
                             <span class={statusBadgeClass(statusTone(schedule))}>
                               {statusLabel(schedule.status)}
                             </span>
-                            <Show when={schedule.last_error}>
-                              {(error) => <span class={ui.muted}>{error().message}</span>}
+                            <Show when={schedule.last_failure}>
+                              {(failure) => <span class={ui.muted}>{failure().message}</span>}
                             </Show>
                           </div>
                         </td>

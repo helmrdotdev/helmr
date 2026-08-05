@@ -111,14 +111,11 @@ func ExpireParentOwnedChild(
 		return false, err
 	}
 	if hasWait {
-		result, err := json.Marshal(map[string]any{
-			"ok": false,
-			"error": map[string]any{
-				"code": "queued_ttl_expired", "message": "Child Run queued TTL expired",
-				"retryable": false,
-			},
-			"run": map[string]any{"id": child.id.String()},
-		})
+		result, err := marshalChildFailureResult(
+			child.id,
+			"queued_ttl_expired",
+			"Child Run queued TTL expired",
+		)
 		if err != nil {
 			return false, err
 		}
@@ -136,6 +133,14 @@ func expireLockedParentOwnedChild(
 	tx pgx.Tx,
 	child cancellationRun,
 ) error {
+	failure, err := MarshalFailure(
+		"queued_ttl_expired",
+		"Child Run queued TTL expired",
+		nil,
+	)
+	if err != nil {
+		return err
+	}
 	errorPayload := json.RawMessage(
 		`{"code":"queued_ttl_expired","message":"Child Run queued TTL expired","retryable":false}`,
 	)
@@ -153,7 +158,7 @@ func expireLockedParentOwnedChild(
 		return cancellationAuthority("expire queued child attempt", err)
 	}
 	rows, err = q.ExpireQueuedRun(ctx, db.ExpireQueuedRunParams{
-		ErrorPayload:         errorPayload,
+		Failure:              failure,
 		ID:                   childID,
 		ExpectedStateVersion: child.stateVersion,
 	})

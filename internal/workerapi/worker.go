@@ -12,7 +12,6 @@ type TokenRequest struct {
 	WorkerInstanceID     string `json:"worker_instance_id"`
 	WorkerInstanceSecret string `json:"worker_instance_secret"`
 	ServiceID            string `json:"service_id"`
-	ProtocolVersion      string `json:"protocol_version"`
 	SupportsRun          bool   `json:"supports_run"`
 	SupportsBuild        bool   `json:"supports_build"`
 }
@@ -22,7 +21,6 @@ type TokenResponse struct {
 	ExpiresInSeconds int64    `json:"expires_in_seconds"`
 	WorkerEpoch      int64    `json:"worker_epoch"`
 	Roles            []string `json:"roles"`
-	ProtocolVersion  string   `json:"protocol_version"`
 }
 
 type EnrollmentResponse struct {
@@ -36,18 +34,16 @@ type EnrollmentChallengeRequest struct {
 }
 
 type EnrollmentChallengeResponse struct {
-	Nonce           string    `json:"nonce"`
-	WorkerGroupID   string    `json:"worker_group_id"`
-	ExpiresAt       time.Time `json:"expires_at"`
-	ProtocolVersion string    `json:"protocol_version"`
+	Nonce         string    `json:"nonce"`
+	WorkerGroupID string    `json:"worker_group_id"`
+	ExpiresAt     time.Time `json:"expires_at"`
 }
 
 type EnrollmentIntent struct {
-	WorkerGroupID   string `json:"worker_group_id"`
-	Nonce           string `json:"nonce,omitempty"`
-	SupportsRun     bool   `json:"supports_run"`
-	SupportsBuild   bool   `json:"supports_build"`
-	ProtocolVersion string `json:"protocol_version"`
+	WorkerGroupID string `json:"worker_group_id"`
+	Nonce         string `json:"nonce,omitempty"`
+	SupportsRun   bool   `json:"supports_run"`
+	SupportsBuild bool   `json:"supports_build"`
 }
 
 type EnrollmentRequest struct {
@@ -123,18 +119,15 @@ type Observation struct {
 }
 
 type Capabilities struct {
-	ProtocolVersion           string      `json:"protocol_version"`
 	WorkerVersion             string      `json:"worker_version,omitempty"`
 	RuntimeID                 string      `json:"runtime_id"`
 	RuntimeArch               string      `json:"runtime_arch"`
-	RuntimeABI                string      `json:"runtime_abi"`
+	VMRuntimeContract         string      `json:"vm_runtime_contract"`
 	KernelDigest              string      `json:"kernel_digest"`
 	InitramfsDigest           string      `json:"initramfs_digest"`
 	RootfsDigest              string      `json:"rootfs_digest"`
-	NetworkABI                string      `json:"network_abi"`
 	SubstrateFormat           string      `json:"substrate_format,omitempty"`
-	SubstrateBuilderABI       string      `json:"substrate_builder_abi,omitempty"`
-	SubstrateLayoutABI        string      `json:"substrate_layout_abi,omitempty"`
+	SubstrateContract         string      `json:"substrate_contract,omitempty"`
 	MaxVCPUs                  int64       `json:"max_vcpus"`
 	MaxMemoryMiB              int64       `json:"max_memory_mib"`
 	VMMilliCPU                int64       `json:"vm_milli_cpu"`
@@ -152,8 +145,6 @@ type Capabilities struct {
 	CheckpointBytes           int64       `json:"checkpoint_bytes"`
 	Observation               Observation `json:"observation"`
 }
-
-const NetworkABIV0 = "helmr/v0"
 
 type DeploymentBuildLeaseRequest struct{}
 
@@ -299,9 +290,7 @@ type WorkspaceImageAssignment struct {
 	SourceArchiveEntries     int                           `json:"source_archive_entries"`
 	RequestedCacheMode       imagebuild.CacheMode          `json:"requested_cache_mode"`
 	CacheScope               string                        `json:"cache_scope"`
-	ExecutionABI             string                        `json:"execution_abi"`
-	LLBABI                   string                        `json:"llb_abi"`
-	CacheABI                 string                        `json:"cache_abi"`
+	ImageBuildContract       string                        `json:"image_build_contract"`
 	Quotas                   WorkspaceImageQuotas          `json:"quotas"`
 	Output                   WorkspaceImageOutputContract  `json:"output"`
 	RegistryBindings         []imagebuild.RegistryBinding  `json:"registry_bindings"`
@@ -427,7 +416,7 @@ type RuntimeSource struct {
 	ReservedMemoryMiB      int32             `json:"reserved_memory_mib"`
 	ReservedDiskMiB        int64             `json:"reserved_disk_mib"`
 	ReservedExecutionSlots int32             `json:"reserved_execution_slots"`
-	RuntimeABI             string            `json:"runtime_abi"`
+	VMRuntimeContract      string            `json:"vm_runtime_contract"`
 	Program                *RuntimeProgram   `json:"program,omitempty"`
 	Restore                *RuntimeRestore   `json:"restore,omitempty"`
 }
@@ -443,11 +432,11 @@ type RuntimeRestore struct {
 }
 
 type RuntimeProgram struct {
-	DeploymentID         string    `json:"deployment_id"`
-	Runtime              CASObject `json:"runtime"`
-	Artifact             CASObject `json:"artifact"`
-	BuildContractVersion string    `json:"build_contract_version"`
-	IndexDigest          string    `json:"index_digest"`
+	DeploymentID  string    `json:"deployment_id"`
+	Runtime       CASObject `json:"runtime"`
+	Artifact      CASObject `json:"artifact"`
+	BuildContract string    `json:"build_contract"`
+	IndexDigest   string    `json:"index_digest"`
 }
 
 type RuntimeInstanceStateRequest struct {
@@ -961,7 +950,6 @@ type RunLeaseAssignment struct {
 	WorkerGroupID                    string           `json:"worker_group_id"`
 	WorkerInstanceID                 string           `json:"worker_instance_id"`
 	WorkerEpoch                      int64            `json:"worker_epoch"`
-	WorkerProtocolVersion            string           `json:"worker_protocol_version"`
 	RuntimeInstanceID                string           `json:"runtime_instance_id"`
 	RuntimeIdentityID                string           `json:"runtime_identity_id"`
 	WorkspaceID                      string           `json:"workspace_id"`
@@ -1104,7 +1092,6 @@ type RunLease struct {
 	LeaseSequence     int64            `json:"lease_sequence"`
 	SnapshotVersion   int64            `json:"snapshot_version"`
 	RuntimeInstanceID string           `json:"runtime_instance_id"`
-	ProtocolVersion   string           `json:"protocol_version"`
 	AttemptNumber     int32            `json:"attempt_number"`
 	Trace             api.TraceContext `json:"trace"`
 	ExpiresAt         time.Time        `json:"expires_at"`
@@ -1128,7 +1115,6 @@ type DeploymentBuildLease struct {
 	WorkerInstanceID                 string    `json:"worker_instance_id"`
 	WorkerEpoch                      int64     `json:"worker_epoch"`
 	LeaseSequence                    int64     `json:"lease_sequence"`
-	WorkerProtocolVersion            string    `json:"worker_protocol_version"`
 	ExpiresAt                        time.Time `json:"expires_at"`
 	RequestedGuestEphemeralDiskBytes int64     `json:"requested_guest_ephemeral_disk_bytes"`
 	RequestedCPUMillis               int64     `json:"requested_cpu_millis"`
@@ -1137,19 +1123,17 @@ type DeploymentBuildLease struct {
 }
 
 type DeploymentBuild struct {
-	ID                    string                       `json:"id"`
-	Version               string                       `json:"version"`
-	APIVersion            string                       `json:"api_version"`
-	WorkerProtocolVersion string                       `json:"worker_protocol_version"`
-	ProjectID             string                       `json:"project_id"`
-	EnvironmentID         string                       `json:"environment_id"`
-	DeploymentSource      api.DeploymentSourceArtifact `json:"deployment_source"`
-	Runtime               CASObject                    `json:"runtime"`
-	NodeVersion           string                       `json:"node_version"`
-	Manager               ManagerPin                   `json:"manager"`
-	Toolchain             CASObject                    `json:"toolchain"`
-	BuildContractVersion  string                       `json:"build_contract_version"`
-	ImageCacheMode        string                       `json:"image_cache_mode"`
+	ID               string                       `json:"id"`
+	Version          string                       `json:"version"`
+	ProjectID        string                       `json:"project_id"`
+	EnvironmentID    string                       `json:"environment_id"`
+	DeploymentSource api.DeploymentSourceArtifact `json:"deployment_source"`
+	Runtime          CASObject                    `json:"runtime"`
+	NodeVersion      string                       `json:"node_version"`
+	Manager          ManagerPin                   `json:"manager"`
+	Toolchain        CASObject                    `json:"toolchain"`
+	BuildContract    string                       `json:"build_contract"`
+	ImageCacheMode   string                       `json:"image_cache_mode"`
 }
 
 type ManagerPin struct {
@@ -1175,8 +1159,7 @@ type RuntimeSubstrate struct {
 	DeploymentDefinitionID string `json:"deployment_definition_id"`
 	SubstrateDigest        string `json:"substrate_digest"`
 	Format                 string `json:"format"`
-	BuilderABI             string `json:"builder_abi"`
-	LayoutABI              string `json:"layout_abi"`
+	Contract               string `json:"contract"`
 	SizeBytes              int64  `json:"size_bytes"`
 }
 
@@ -1184,8 +1167,7 @@ type RuntimeSubstrateRegisterRequest struct {
 	DeploymentDefinitionID string `json:"deployment_definition_id"`
 	SubstrateDigest        string `json:"substrate_digest"`
 	Format                 string `json:"format"`
-	BuilderABI             string `json:"builder_abi"`
-	LayoutABI              string `json:"layout_abi"`
+	Contract               string `json:"contract"`
 	SizeBytes              int64  `json:"size_bytes"`
 }
 
@@ -1386,7 +1368,7 @@ type CheckpointRuntime struct {
 	Backend         string                      `json:"backend"`
 	ID              string                      `json:"id"`
 	Arch            string                      `json:"arch"`
-	ABI             string                      `json:"abi"`
+	Contract        string                      `json:"contract"`
 	KernelDigest    string                      `json:"kernel_digest"`
 	InitramfsDigest string                      `json:"initramfs_digest"`
 	RootfsDigest    string                      `json:"rootfs_digest"`
@@ -1395,10 +1377,9 @@ type CheckpointRuntime struct {
 }
 
 type CheckpointRuntimeSubstrate struct {
-	Digest     string `json:"digest"`
-	Format     string `json:"format"`
-	BuilderABI string `json:"builder_abi"`
-	LayoutABI  string `json:"layout_abi"`
+	Digest   string `json:"digest"`
+	Format   string `json:"format"`
+	Contract string `json:"contract"`
 }
 
 type CheckpointRuntimeState struct {

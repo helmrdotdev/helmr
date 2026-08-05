@@ -11,15 +11,14 @@ import (
 
 func TestRuntimeIndexRoundTrip(t *testing.T) {
 	index := RuntimeIndex{
-		Architecture:      ArchitectureX8664,
-		FormatVersion:     RuntimeIndexFormatVersion,
-		RuntimeAPIVersion: RuntimeAPIVersion,
+		Architecture:    ArchitectureX8664,
+		RuntimeContract: RuntimeContract,
 	}
 	canonical, err := CanonicalRuntimeIndex(index)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"architecture":"x86_64","formatVersion":0,"runtimeApiVersion":"helmr.runtime.v0"}`
+	const want = `{"architecture":"x86_64","runtimeContract":"helmr.runtime.v0"}`
 	if string(canonical) != want {
 		t.Fatalf("canonical runtime index = %q, want %q", canonical, want)
 	}
@@ -38,7 +37,7 @@ func TestRuntimeDescriptorRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"architecture":"x86_64","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","formatVersion":0,"mediaType":"application/vnd.helmr.runtime.v0+squashfs","runtimeApiVersion":"helmr.runtime.v0","sizeBytes":4096}`
+	const want = `{"architecture":"x86_64","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","formatVersion":0,"mediaType":"application/vnd.helmr.runtime.v0+squashfs","runtimeContract":"helmr.runtime.v0","sizeBytes":4096}`
 	if string(canonical) != want {
 		t.Fatalf("canonical runtime descriptor = %q, want %q", canonical, want)
 	}
@@ -102,14 +101,12 @@ func TestRuntimeDescriptorDomainIsIndependentFromArtifactAdmission(t *testing.T)
 
 func TestRuntimeDocumentsRejectIncompleteOrDivergentShape(t *testing.T) {
 	index := RuntimeIndex{
-		Architecture:      ArchitectureX8664,
-		FormatVersion:     RuntimeIndexFormatVersion,
-		RuntimeAPIVersion: RuntimeAPIVersion,
+		Architecture:    ArchitectureX8664,
+		RuntimeContract: RuntimeContract,
 	}
 	indexTests := map[string]func(*RuntimeIndex){
-		"format version": func(value *RuntimeIndex) { value.FormatVersion = 1 },
-		"runtime API":    func(value *RuntimeIndex) { value.RuntimeAPIVersion = "helmr.runtime.v1" },
-		"architecture":   func(value *RuntimeIndex) { value.Architecture = "amd64" },
+		"runtime API":  func(value *RuntimeIndex) { value.RuntimeContract = "helmr.runtime.v1" },
+		"architecture": func(value *RuntimeIndex) { value.Architecture = "amd64" },
 	}
 	for name, mutate := range indexTests {
 		t.Run("index "+name, func(t *testing.T) {
@@ -127,7 +124,7 @@ func TestRuntimeDocumentsRejectIncompleteOrDivergentShape(t *testing.T) {
 		"architecture":   func(value *RuntimeDescriptor) { value.Architecture = "amd64" },
 		"digest":         func(value *RuntimeDescriptor) { value.Digest = "sha256:invalid" },
 		"media type":     func(value *RuntimeDescriptor) { value.MediaType += "; charset=binary" },
-		"runtime API":    func(value *RuntimeDescriptor) { value.RuntimeAPIVersion = "helmr.runtime.v1" },
+		"runtime API":    func(value *RuntimeDescriptor) { value.RuntimeContract = "helmr.runtime.v1" },
 		"zero size":      func(value *RuntimeDescriptor) { value.SizeBytes = 0 },
 		"oversize":       func(value *RuntimeDescriptor) { value.SizeBytes = maxJSONSafeInteger + 1 },
 	}
@@ -144,9 +141,8 @@ func TestRuntimeDocumentsRejectIncompleteOrDivergentShape(t *testing.T) {
 
 func TestRuntimeDocumentParsersRequireClosedCanonicalObjects(t *testing.T) {
 	index, err := CanonicalRuntimeIndex(RuntimeIndex{
-		Architecture:      ArchitectureX8664,
-		FormatVersion:     RuntimeIndexFormatVersion,
-		RuntimeAPIVersion: RuntimeAPIVersion,
+		Architecture:    ArchitectureX8664,
+		RuntimeContract: RuntimeContract,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -215,11 +211,11 @@ func TestRuntimeDocumentParsersRequireClosedCanonicalObjects(t *testing.T) {
 
 func testRuntimeDescriptor() RuntimeDescriptor {
 	return RuntimeDescriptor{
-		Architecture:      ArchitectureX8664,
-		Digest:            "sha256:" + strings.Repeat("a", 64),
-		FormatVersion:     RuntimeDescriptorFormatVersion,
-		MediaType:         RuntimeArtifactMediaType,
-		RuntimeAPIVersion: RuntimeAPIVersion,
-		SizeBytes:         squashFSPhysicalAlign,
+		Architecture:    ArchitectureX8664,
+		Digest:          "sha256:" + strings.Repeat("a", 64),
+		FormatVersion:   RuntimeDescriptorFormatVersion,
+		MediaType:       RuntimeArtifactMediaType,
+		RuntimeContract: RuntimeContract,
+		SizeBytes:       squashFSPhysicalAlign,
 	}
 }

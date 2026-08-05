@@ -27,8 +27,12 @@ func TestActorReadPostgresProjectsStableStatus(t *testing.T) {
 		UPDATE sessions
 		   SET state = 'failed',
 		       current_run_id = NULL,
-		       failure_code = 'run_failed',
-		       failure_run_id = $1,
+		       failure = jsonb_build_object(
+		           'code', 'run_failed',
+		           'message', 'Session run failed',
+		           'details', jsonb_build_object('run_id', ($1::uuid)::text)
+		       ),
+		       failure_run_id = $1::uuid,
 		       failed_at = $2,
 		       updated_at = $2
 		 WHERE id = $3
@@ -54,7 +58,7 @@ func TestActorReadPostgresProjectsStableStatus(t *testing.T) {
 	if status.ID != result.SessionID.String() ||
 		status.Status != api.SessionStatusFailed ||
 		status.Failure == nil ||
-		status.Failure.RunID != result.BootRunID.String() ||
+		status.Failure.Details.RunID != result.BootRunID.String() ||
 		status.CurrentRunID != nil {
 		t.Fatalf("status HTTP response = %+v", status)
 	}

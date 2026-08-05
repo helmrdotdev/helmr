@@ -133,8 +133,7 @@ func (fixture runLeaseClaimFixture) runningRunLeaseRenewalAuthority(
 	locators, err := fixture.queries.GetLiveRunLeaseLocators(ctx, GetLiveRunLeaseLocatorsParams{
 		ID: params.RunLeaseID, LeaseSequence: params.LeaseSequence,
 		WorkerGroupID: params.WorkerGroupID, WorkerInstanceID: params.WorkerInstanceID,
-		WorkerEpoch: params.WorkerEpoch, WorkerProtocolVersion: params.WorkerProtocolVersion,
-	})
+		WorkerEpoch: params.WorkerEpoch})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,7 +14,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestDeploymentCreateConvergesAcrossTransactions(t *testing.T) {
@@ -62,14 +61,14 @@ func TestDeploymentCreateConvergesAcrossTransactions(t *testing.T) {
 		projectID,
 		"deployment-create-1",
 		idempotency.DeploymentCreateFingerprint{
-			SourceDigest:         source.Digest,
-			LockfileDigest:       selection.LockfileDigest,
-			LockfileName:         selection.LockfileName,
-			NodeVersion:          selection.NodeVersion,
-			ManagerName:          string(selection.Manager.Name),
-			ManagerVersion:       selection.Manager.Version,
-			BuildContractVersion: deployment.ProgramBuildContractVersion,
-			ImageCacheMode:       "prefer",
+			SourceDigest:   source.Digest,
+			LockfileDigest: selection.LockfileDigest,
+			LockfileName:   selection.LockfileName,
+			NodeVersion:    selection.NodeVersion,
+			ManagerName:    string(selection.Manager.Name),
+			ManagerVersion: selection.Manager.Version,
+			BuildContract:  deployment.ProgramBuildContract,
+			ImageCacheMode: "prefer",
 		},
 	)
 	if err != nil {
@@ -117,9 +116,7 @@ func TestDeploymentCreateConvergesAcrossTransactions(t *testing.T) {
 					source.Digest,
 					source,
 					deploymentVersionMetadata{
-						APIVersion:            deployment.APIVersion,
-						WorkerProtocolVersion: workerapi.CurrentProtocolVersion,
-						ImageCacheMode:        "prefer",
+						ImageCacheMode: "prefer",
 					},
 				)
 				if err != nil {

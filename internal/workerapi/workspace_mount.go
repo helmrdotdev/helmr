@@ -73,7 +73,7 @@ type WorkspaceMount struct {
 	RequestedMemoryMiB      int64             `json:"requested_memory_mib"`
 	RequestedDiskMiB        int64             `json:"requested_disk_mib"`
 	RequestedExecutionSlots int32             `json:"requested_execution_slots"`
-	RuntimeABI              string            `json:"runtime_abi"`
+	VMRuntimeContract       string            `json:"vm_runtime_contract"`
 	FencingGeneration       int64             `json:"fencing_generation"`
 	ExpiresAt               time.Time         `json:"expires_at"`
 }

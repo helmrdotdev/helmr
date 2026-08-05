@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type ReconcileStore interface {
@@ -53,7 +52,6 @@ func Reconcile(ctx context.Context, store ReconcileStore, regionID string, desir
 			RequiredBuildCacheBytes:         group.Capacity.BuildCacheBytes, RequiredArtifactCacheBytes: group.Capacity.ArtifactCacheBytes,
 			RequiredVMSlots: group.Capacity.VMSlots, RequiredBuildExecutors: group.Capacity.BuildExecutors,
 			ObservationTtlSeconds: group.ObservationTTLSeconds,
-			ProtocolVersion:       workerapi.CurrentProtocolVersion,
 		}); err != nil {
 			return fmt.Errorf("reconcile worker group %q: %w", spec.ID, err)
 		}

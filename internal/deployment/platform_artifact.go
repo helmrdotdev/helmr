@@ -53,7 +53,7 @@ type RuntimeArtifactDescriptor struct {
 	NodeModuleABI           string              `json:"nodeModuleAbi"`
 	NodeVersion             string              `json:"nodeVersion"`
 	ProgramNodeFlags        []string            `json:"programNodeFlags"`
-	RuntimeAPIVersion       string              `json:"runtimeApiVersion"`
+	RuntimeContract         string              `json:"runtimeContract"`
 	RuntimeHarnessDigest    string              `json:"runtimeHarnessDigest"`
 	Source                  PlatformSource      `json:"source"`
 }
@@ -888,7 +888,7 @@ func validateRuntimeArtifactDescriptor(
 		value.AdapterVersion != NodeRuntimeAdapterVersion ||
 		value.Architecture != ArchitectureX8664 ||
 		value.MediaType != RuntimeArtifactMediaType ||
-		value.RuntimeAPIVersion != RuntimeAPIVersion ||
+		value.RuntimeContract != RuntimeContract ||
 		value.Entrypoint != "/opt/helmr/runtime/helmr/entry.mjs" ||
 		value.NodeVersion != expectation.NodeVersion ||
 		value.RuntimeHarnessDigest != expectation.RuntimeHarnessDigest ||

@@ -2,12 +2,10 @@ package auth
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 var ErrWorkerRoleIntersectionEmpty = errors.New("worker role intersection is empty")
@@ -20,7 +18,6 @@ type WorkerRoles struct {
 type EpochExchangeInput struct {
 	ServiceID       uuid.UUID
 	SupervisorRoles WorkerRoles
-	ProtocolVersion string
 }
 
 // WorkerTokenAuthority is loaded by the epoch-exchange transaction. It keeps
@@ -39,9 +36,6 @@ type WorkerTokenAuthority struct {
 func (input EpochExchangeInput) Validate() error {
 	if input.ServiceID == uuid.Nil {
 		return errors.New("service_id is required")
-	}
-	if input.ProtocolVersion != workerapi.CurrentProtocolVersion {
-		return fmt.Errorf("protocol_version must be %q", workerapi.CurrentProtocolVersion)
 	}
 	if !input.SupervisorRoles.Run && !input.SupervisorRoles.Build {
 		return errors.New("supervisor must support at least one worker role")
@@ -84,6 +78,6 @@ func (authority WorkerTokenAuthority) Claims(input EpochExchangeInput, issuedAt,
 		WorkerGroupID: authority.WorkerGroupID, WorkerInstanceID: authority.WorkerInstanceID.String(),
 		CredentialID: authority.CredentialID.String(), WorkerEpoch: authority.WorkerEpoch,
 		ClaimVersion: authority.ClaimVersion, GroupClaimVersion: authority.GroupClaimVersion,
-		Roles: roles, ProtocolVersion: input.ProtocolVersion, IssuedAt: issuedAt, ExpiresAt: expiresAt,
+		Roles: roles, IssuedAt: issuedAt, ExpiresAt: expiresAt,
 	}, nil
 }

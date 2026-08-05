@@ -37,7 +37,6 @@ type WaitRegistration struct {
 	WorkerGroupID                 string
 	WorkerInstanceID              uuid.UUID
 	WorkerEpoch                   int64
-	WorkerProtocolVersion         string
 	RequestFingerprint            string
 	ActorSpeculativeInputSequence pgtype.Int8
 	TimeoutAt                     pgtype.Timestamptz
@@ -81,7 +80,6 @@ func (r *WaitReconciler) RegisterWait(
 		return WaitRegistrationResult{}, errors.New("token wait registration IDs are required")
 	}
 	if request.LeaseSequence <= 0 || request.WorkerEpoch <= 0 || request.WorkerGroupID == "" ||
-		request.WorkerProtocolVersion == "" ||
 		len(request.RequestFingerprint) != 71 || request.RequestFingerprint[:7] != "sha256:" {
 		return WaitRegistrationResult{}, errors.New("token wait registration fences are invalid")
 	}
@@ -120,7 +118,7 @@ func (r *WaitReconciler) RegisterWait(
 	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 		ID: pgvalue.UUID(request.RunLeaseID), LeaseSequence: request.LeaseSequence,
 		WorkerGroupID: request.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(request.WorkerInstanceID),
-		WorkerEpoch: request.WorkerEpoch, WorkerProtocolVersion: request.WorkerProtocolVersion,
+		WorkerEpoch: request.WorkerEpoch,
 	})
 	if err != nil {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("load token wait lease authority", err)
@@ -202,8 +200,7 @@ func (r *WaitReconciler) RegisterWait(
 	})
 	if err != nil ||
 		(workerGroup.State != db.WorkerGroupStateActive && workerGroup.State != db.WorkerGroupStateDraining) ||
-		!workerGroup.AllowsRun ||
-		workerGroup.ProtocolVersion != request.WorkerProtocolVersion {
+		!workerGroup.AllowsRun {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock active worker group", err)
 	}
 	worker, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{
@@ -213,7 +210,7 @@ func (r *WaitReconciler) RegisterWait(
 		(worker.State != db.WorkerInstanceStateActive && worker.State != db.WorkerInstanceStateDraining) ||
 		!worker.CurrentEpoch.Valid ||
 		worker.CurrentEpoch.Int64 != request.WorkerEpoch ||
-		!worker.SupportsRun || worker.ProtocolVersion != request.WorkerProtocolVersion ||
+		!worker.SupportsRun ||
 		!worker.RuntimeIdentityID.Valid {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current worker epoch", err)
 	}
@@ -230,18 +227,17 @@ func (r *WaitReconciler) RegisterWait(
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock ready runtime", err)
 	}
 	leaseState, err := q.LockTokenWaitRunLease(ctx, db.LockTokenWaitRunLeaseParams{
-		ID:                    pgvalue.UUID(request.RunLeaseID),
-		RunID:                 locators.RunID,
-		AttemptNumber:         attemptNumber,
-		WorkspaceID:           locator.WorkspaceID,
-		LeaseSequence:         request.LeaseSequence,
-		WorkerGroupID:         request.WorkerGroupID,
-		WorkerInstanceID:      pgvalue.UUID(request.WorkerInstanceID),
-		WorkerEpoch:           request.WorkerEpoch,
-		RuntimeInstanceID:     locators.RuntimeInstanceID,
-		RuntimeIdentityID:     runtime.RuntimeIdentityID,
-		WorkerProtocolVersion: request.WorkerProtocolVersion,
-		RegionID:              locators.RegionID,
+		ID:                pgvalue.UUID(request.RunLeaseID),
+		RunID:             locators.RunID,
+		AttemptNumber:     attemptNumber,
+		WorkspaceID:       locator.WorkspaceID,
+		LeaseSequence:     request.LeaseSequence,
+		WorkerGroupID:     request.WorkerGroupID,
+		WorkerInstanceID:  pgvalue.UUID(request.WorkerInstanceID),
+		WorkerEpoch:       request.WorkerEpoch,
+		RuntimeInstanceID: locators.RuntimeInstanceID,
+		RuntimeIdentityID: runtime.RuntimeIdentityID,
+		RegionID:          locators.RegionID,
 	})
 	if err != nil || db.RunLeaseState(leaseState) != db.RunLeaseStateRunning {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current unexpired run lease", err)
@@ -364,7 +360,6 @@ func replayTokenWaitRegistration(
 			WorkerGroupID:                 request.WorkerGroupID,
 			WorkerInstanceID:              pgvalue.UUID(request.WorkerInstanceID),
 			WorkerEpoch:                   request.WorkerEpoch,
-			WorkerProtocolVersion:         request.WorkerProtocolVersion,
 			ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,
 		},
 	)

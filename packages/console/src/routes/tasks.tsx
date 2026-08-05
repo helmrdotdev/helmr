@@ -132,7 +132,7 @@ export function Tasks() {
     enabled: !!scope.selectedProjectID() && !!scope.selectedEnvironmentID(),
     retry: false,
   }));
-  const deployment = createMemo(() => deploymentQuery.data?.deployment ?? null);
+  const deployment = createMemo(() => deploymentQuery.data ?? null);
   const tasks = createMemo(() => taskQuery.data?.tasks ?? []);
 
   return (

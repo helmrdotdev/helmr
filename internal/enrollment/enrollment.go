@@ -90,11 +90,10 @@ func (v *Verifier) Verify(request workerapi.EnrollmentRequest) error {
 func BuildRequest(groupID string, nonce string, supportsRun bool, supportsBuild bool, resourceID string, secret string) (workerapi.EnrollmentRequest, error) {
 	request := workerapi.EnrollmentRequest{
 		EnrollmentIntent: workerapi.EnrollmentIntent{
-			WorkerGroupID:   groupID,
-			Nonce:           nonce,
-			SupportsRun:     supportsRun,
-			SupportsBuild:   supportsBuild,
-			ProtocolVersion: workerapi.CurrentProtocolVersion,
+			WorkerGroupID: groupID,
+			Nonce:         nonce,
+			SupportsRun:   supportsRun,
+			SupportsBuild: supportsBuild,
 		},
 		ResourceID: resourceID,
 	}
@@ -132,9 +131,6 @@ func validateRequest(request workerapi.EnrollmentRequest) error {
 	if request.Nonce == "" || strings.TrimSpace(request.Nonce) != request.Nonce {
 		return errors.New("worker enrollment nonce must be canonical and non-empty")
 	}
-	if request.ProtocolVersion != workerapi.CurrentProtocolVersion {
-		return errors.New("worker enrollment protocol version is unsupported")
-	}
 	if !request.SupportsRun && !request.SupportsBuild {
 		return errors.New("worker enrollment must request at least one role")
 	}
@@ -148,7 +144,6 @@ func proof(secret []byte, intent workerapi.EnrollmentIntent, resourceID string) 
 	mac := hmac.New(sha256.New, secret)
 	for _, field := range []string{
 		proofDomain,
-		intent.ProtocolVersion,
 		intent.WorkerGroupID,
 		intent.Nonce,
 		boolField(intent.SupportsRun),

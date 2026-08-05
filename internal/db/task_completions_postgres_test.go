@@ -206,7 +206,7 @@ func TestRestoredTaskFailureRollsBackPhysicalFrontier(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := queries.FinishTaskRun(ctx, FinishTaskRunParams{
-		Status: RunStatusFailed, ReasonCode: pgvalue.Text("task_failed"), Error: []byte(`{"message":"failed"}`),
+		Status: RunStatusFailed, Failure: []byte(`{"code":"task_failed","message":"failed","details":{}}`),
 		CompletedAt: completedAt, ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 		AttemptNumber: 1, RunLeaseID: pgvalue.UUID(work.leaseID),
 	}); err != nil {

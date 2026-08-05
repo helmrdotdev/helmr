@@ -152,8 +152,7 @@ func (s *Server) workerCreateTokenRunWait(
 		TokenID: tokenID, WaitID: waitID, ResumeAttachID: resumeAttachID,
 		RunLeaseID: parsed.leaseID, LeaseSequence: request.Lease.LeaseSequence,
 		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: worker.WorkerInstanceID,
-		WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
-		RequestFingerprint:            fingerprint,
+		WorkerEpoch: worker.WorkerEpoch, RequestFingerprint: fingerprint,
 		ActorSpeculativeInputSequence: actorCursor,
 		TimeoutAt:                     timeoutAt, IdleTimeoutMS: idleTimeout, CheckpointDueAt: checkpointDueAt,
 		Metadata: metadata, Tags: tags,
@@ -304,8 +303,7 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: receipt.LeaseSequence,
 			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
-		})
+			WorkerEpoch: worker.WorkerEpoch})
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
@@ -439,8 +437,7 @@ func (s *Server) loadRunWaitLeaseAuthority(
 	locators, err := s.db.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 		ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: receipt.LeaseSequence,
 		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
-	})
+		WorkerEpoch: worker.WorkerEpoch})
 	if isNoRows(err) {
 		return parsedRunLeaseFence{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, conflict(errors.New("worker run wait receipt is stale"))
 	}

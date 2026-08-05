@@ -198,7 +198,7 @@ SELECT deployments.id AS deployment_id,
        program_artifact.size_bytes AS program_artifact_size_bytes,
        program_artifact.media_type AS program_artifact_media_type,
        deployments.build_runtime_digest,
-       deployments.build_contract_version,
+       deployments.build_contract,
        deployments.program_index_digest,
        deployments.queue_config
   FROM deployments
@@ -226,7 +226,7 @@ type GetDeploymentProgramAuthorityRow struct {
 	ProgramArtifactSizeBytes int64       `json:"program_artifact_size_bytes"`
 	ProgramArtifactMediaType string      `json:"program_artifact_media_type"`
 	BuildRuntimeDigest       []byte      `json:"build_runtime_digest"`
-	BuildContractVersion     string      `json:"build_contract_version"`
+	BuildContract            string      `json:"build_contract"`
 	ProgramIndexDigest       []byte      `json:"program_index_digest"`
 	QueueConfig              []byte      `json:"queue_config"`
 }
@@ -243,7 +243,7 @@ func (q *Queries) GetDeploymentProgramAuthority(ctx context.Context, arg GetDepl
 		&i.ProgramArtifactSizeBytes,
 		&i.ProgramArtifactMediaType,
 		&i.BuildRuntimeDigest,
-		&i.BuildContractVersion,
+		&i.BuildContract,
 		&i.ProgramIndexDigest,
 		&i.QueueConfig,
 	)

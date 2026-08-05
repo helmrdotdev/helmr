@@ -797,28 +797,6 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 	if authorityColumns != 10 {
 		t.Fatalf("workspace version authority columns = %d, want 10", authorityColumns)
 	}
-	var legacyColumns int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM information_schema.columns
-		 WHERE table_schema = 'public'
-		   AND table_name = 'workspace_versions'
-		   AND column_name = ANY($1::text[])
-	`, []string{
-		"source_workspace_mount_id",
-		"source_write_lease_id",
-		"produced_by_run_id",
-		"artifact_encoding",
-		"artifact_entry_count",
-		"message",
-		"error",
-		"promoted_at",
-	}).Scan(&legacyColumns); err != nil {
-		t.Fatal(err)
-	}
-	if legacyColumns != 0 {
-		t.Fatalf("legacy workspace version columns = %d, want 0", legacyColumns)
-	}
 	var emptyTreeCheck bool
 	if err := pool.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -894,7 +872,7 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 		"workspace_artifact_id",
 		"workspace_artifact_digest",
 		"workspace_mount_path",
-		"runtime_abi",
+		"vm_runtime_contract",
 		"guestd_abi",
 		"adapter_abi",
 	}).Scan(&mountProjectionColumns); err != nil {
@@ -912,7 +890,7 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 		   AND column_name = ANY($1::text[])
 	`, []string{
 		"rootfs_digest",
-		"runtime_abi",
+		"vm_runtime_contract",
 		"guestd_abi",
 		"adapter_abi",
 	}).Scan(&runtimeProjectionColumns); err != nil {
@@ -980,7 +958,7 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		"build_manager_name",
 		"build_manager_version",
 		"build_manager_digest",
-		"build_contract_version",
+		"build_contract",
 		"program_artifact_id",
 		"program_index_digest",
 	}).Scan(&deploymentColumns); err != nil {
@@ -988,27 +966,6 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 	}
 	if deploymentColumns != 9 {
 		t.Fatalf("deployment authority columns = %d, want 9", deploymentColumns)
-	}
-	var removedColumns int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM information_schema.columns
-		 WHERE table_schema = 'public'
-		   AND table_name IN ('deployments', 'deployment_definitions')
-		   AND column_name = ANY($1::text[])
-	`, []string{
-		"build_architecture",
-		"program_runtime_digest",
-		"program_architecture",
-		"program_receipt",
-		"workspace_architecture",
-		"sdk_version",
-		"cli_version",
-	}).Scan(&removedColumns); err != nil {
-		t.Fatal(err)
-	}
-	if removedColumns != 0 {
-		t.Fatalf("removed deployment projections = %d, want 0", removedColumns)
 	}
 	var constraints int
 	if err := pool.QueryRow(ctx, `
@@ -1187,19 +1144,6 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 
 func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
-	var redundantMeterSourceColumns int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM information_schema.columns
-		 WHERE table_schema = 'public'
-		   AND table_name = 'meter_events'
-		   AND column_name = ANY(ARRAY['source_type', 'source_id'])
-	`).Scan(&redundantMeterSourceColumns); err != nil {
-		t.Fatal(err)
-	}
-	if redundantMeterSourceColumns != 0 {
-		t.Fatalf("redundant meter source columns = %d, want 0", redundantMeterSourceColumns)
-	}
 	var meterIdempotencyIndexes int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
@@ -1215,70 +1159,6 @@ func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	}
 	if meterIdempotencyIndexes != 2 {
 		t.Fatalf("meter source idempotency indexes = %d, want 2", meterIdempotencyIndexes)
-	}
-	var legacyMeterIdempotencyIndex bool
-	if err := pool.QueryRow(
-		ctx,
-		`SELECT to_regclass('public.meter_events_idempotency_idx') IS NOT NULL`,
-	).Scan(&legacyMeterIdempotencyIndex); err != nil {
-		t.Fatal(err)
-	}
-	if legacyMeterIdempotencyIndex {
-		t.Fatal("legacy polymorphic meter idempotency index exists")
-	}
-
-	var legacyPayloadRelations int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM pg_class
-		  JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
-		 WHERE pg_namespace.nspname = 'public'
-		   AND pg_class.relname IN ('events', 'run_log_chunks')
-		   AND pg_class.relkind IN ('r', 'p', 'v', 'm')
-	`).Scan(&legacyPayloadRelations); err != nil {
-		t.Fatal(err)
-	}
-	if legacyPayloadRelations != 0 {
-		t.Fatalf("legacy telemetry payload relations = %d, want 0", legacyPayloadRelations)
-	}
-	var boundedHotTables int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM information_schema.columns
-		 WHERE table_schema = 'public'
-		   AND table_name IN (
-		       'event_hot_payloads',
-		       'run_log_hot_chunks'
-		   )
-		   AND column_name = 'expires_at'
-		   AND is_nullable = 'NO'
-	`).Scan(&boundedHotTables); err != nil {
-		t.Fatal(err)
-	}
-	if boundedHotTables != 0 {
-		t.Fatalf("separate telemetry hot payload tables = %d, want 0", boundedHotTables)
-	}
-	var oldUsageEnums int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM pg_type
-		 WHERE typname LIKE 'run\_usage\_event\_%' ESCAPE '\'
-	`).Scan(&oldUsageEnums); err != nil {
-		t.Fatal(err)
-	}
-	if oldUsageEnums != 0 {
-		t.Fatalf("legacy usage enum types = %d, want 0", oldUsageEnums)
-	}
-	var workerGroupPropagationFunctions int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM pg_proc
-		 WHERE proname LIKE 'set\_%\_worker\_group\_id' ESCAPE '\'
-	`).Scan(&workerGroupPropagationFunctions); err != nil {
-		t.Fatal(err)
-	}
-	if workerGroupPropagationFunctions != 0 {
-		t.Fatalf("worker group propagation functions = %d, want 0", workerGroupPropagationFunctions)
 	}
 }
 
@@ -1313,46 +1193,5 @@ func assertWorkspaceExecSchema(
 	}
 	if !claimRequired {
 		t.Fatal("Workspace BasicExec claim_id is nullable")
-	}
-	var legacyColumns int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM information_schema.columns
-		 WHERE table_schema = 'public'
-		   AND table_name = 'workspace_processes'
-		   AND column_name = ANY($1::text[])
-	`, []string{
-		"kind",
-		"runtime_process_id",
-		"signal",
-		"pty_cols",
-		"pty_rows",
-		"pending_pty_cols",
-		"pending_pty_rows",
-		"resize_generation",
-		"pending_resize_generation",
-		"stdout_cursor",
-		"stderr_cursor",
-		"stdin_cursor",
-		"stdin_delivered_cursor",
-		"stdin_closed_at",
-		"input_cursor",
-		"input_delivered_cursor",
-		"output_cursor",
-	}).Scan(&legacyColumns); err != nil {
-		t.Fatal(err)
-	}
-	if legacyColumns != 0 {
-		t.Fatalf("legacy Workspace process columns = %d, want 0", legacyColumns)
-	}
-	var legacyTable bool
-	if err := pool.QueryRow(
-		ctx,
-		`SELECT to_regclass('public.workspace_process_records') IS NOT NULL`,
-	).Scan(&legacyTable); err != nil {
-		t.Fatal(err)
-	}
-	if legacyTable {
-		t.Fatal("legacy workspace_process_records table exists")
 	}
 }

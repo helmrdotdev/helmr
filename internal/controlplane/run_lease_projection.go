@@ -369,9 +369,8 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 		return workerapi.RunLeaseAssignment{}, errors.New("run lease assignment fields are invalid")
 	}
 	for name, value := range map[string]string{
-		"worker group ID":         lease.WorkerGroupID,
-		"worker protocol version": lease.WorkerProtocolVersion,
-		"runtime identity ID":     lease.RuntimeIdentityID,
+		"worker group ID":     lease.WorkerGroupID,
+		"runtime identity ID": lease.RuntimeIdentityID,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return workerapi.RunLeaseAssignment{}, fmt.Errorf("%s is required", name)
@@ -385,7 +384,6 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 		WorkerGroupID:                    lease.WorkerGroupID,
 		WorkerInstanceID:                 workerID,
 		WorkerEpoch:                      lease.WorkerEpoch,
-		WorkerProtocolVersion:            lease.WorkerProtocolVersion,
 		RuntimeInstanceID:                runtimeID,
 		RuntimeIdentityID:                lease.RuntimeIdentityID,
 		WorkspaceID:                      workspaceID,

@@ -40,7 +40,6 @@ const (
 
 type networkOwnerManifest struct {
 	Version             string `json:"version"`
-	NetworkABI          string `json:"network_abi"`
 	OwnerKind           string `json:"owner_kind"`
 	OwnerID             string `json:"owner_id"`
 	WorkerEpoch         int64  `json:"worker_epoch"`
@@ -261,7 +260,7 @@ func (c *Connector) networkOwnerManifest(owner vm.Owner, workerEpoch, generation
 	digest := sha256.Sum256([]byte(owner.ID + "\x00" + strconv.FormatInt(generation, 10)))
 	suffix := hex.EncodeToString(digest[:])
 	return networkOwnerManifest{
-		Version: networkManifestVersion, NetworkABI: NetworkABIV0,
+		Version:   networkManifestVersion,
 		OwnerKind: string(owner.Kind), OwnerID: owner.ID,
 		WorkerEpoch: workerEpoch, Generation: generation,
 		AllocationIndex: allocationIndex, NamespaceName: owner.ID,
@@ -372,8 +371,8 @@ func (c *Connector) validateNetworkOwnerManifest(manifest networkOwnerManifest, 
 	if err := owner.Validate(); err != nil {
 		return err
 	}
-	if manifest.Version != networkManifestVersion || manifest.NetworkABI != NetworkABIV0 {
-		return errors.New("network owner manifest ABI is invalid")
+	if manifest.Version != networkManifestVersion {
+		return errors.New("network owner manifest version is invalid")
 	}
 	if manifest.OwnerKind != string(owner.Kind) || manifest.OwnerID != owner.ID || manifest.NamespaceName != owner.ID {
 		return errors.New("network owner manifest does not exact-match owner")

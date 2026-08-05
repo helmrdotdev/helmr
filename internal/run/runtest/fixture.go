@@ -13,9 +13,8 @@ import (
 )
 
 const (
-	Region         = "us-east-1"
-	WorkerGroup    = "run-workers"
-	WorkerProtocol = "helmr.worker.v0"
+	Region      = "us-east-1"
+	WorkerGroup = "run-workers"
 )
 
 type Fixture struct {
@@ -64,9 +63,9 @@ func New(t *testing.T) Fixture {
 	`, Region)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO worker_groups (
-			id, region_id, name, protocol_version, observation_ttl_seconds
-		) VALUES ($1, $2, $1, $3, 120)
-	`, WorkerGroup, Region, WorkerProtocol)
+			id, region_id, name, observation_ttl_seconds
+		) VALUES ($1, $2, $1, 120)
+	`, WorkerGroup, Region)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO organizations (id, name, slug)
 		VALUES ($1, 'Run Lease Test', $2)
@@ -101,7 +100,7 @@ func New(t *testing.T) Fixture {
 			id, org_id, project_id, environment_id, build_region_id,
 			build_node_version, build_runtime_digest, build_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
-			build_contract_version, image_cache_mode, version, content_hash, deployment_source_artifact_id,
+			build_contract, image_cache_mode, version, content_hash, deployment_source_artifact_id,
 			program_artifact_id, program_index_digest, queue_config, status
 		) VALUES (
 			$1, $2, $3, $4, $5, '24.16.0',
@@ -128,30 +127,30 @@ func New(t *testing.T) Fixture {
 		fixture.EnvironmentID, fixture.DeploymentID, imageID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO runtime_identities (
-			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
-			rootfs_digest, network_abi
-		) VALUES ($1, 'x86_64', 'test', 'kernel', 'initramfs', 'rootfs', 'helmr/v0')
+			id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest,
+			rootfs_digest
+		) VALUES ($1, 'x86_64', 'test', 'kernel', 'initramfs', 'rootfs')
 	`, fixture.RuntimeIdentityID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, state,
-			current_epoch, current_service_id, protocol_version, supervisor_version,
+			current_epoch, current_service_id, supervisor_version,
 			supports_run, runtime_identity_id,
-			substrate_format, substrate_builder_abi, substrate_layout_abi,
+			substrate_format, substrate_contract,
 			epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
 			per_vm_cpu_millis, per_vm_memory_bytes,
 			per_vm_guest_ephemeral_disk_bytes,
 			max_vm_slots, max_run_consumers, max_runtime_starts,
 			epoch_started_at, activated_at
 		) VALUES (
-			$1, $2, $3, 'active', 1, $4, $5, 'test',
-			true, $6, 'squashfs', 'builder-v0', 'layout-v0',
+			$1, $2, $3, 'active', 1, $4, 'test',
+			true, $5, 'squashfs', 'builder-v0',
 			8000, 8589934592, 17179869184,
 			1000, 1073741824, 2147483648,
 			8, 8, 8, now(), now()
 		)
 	`, fixture.WorkerID, fixture.WorkerID.String(), WorkerGroup,
-		uuid.Must(uuid.NewV7()), WorkerProtocol, fixture.RuntimeIdentityID)
+		uuid.Must(uuid.NewV7()), fixture.RuntimeIdentityID)
 	return fixture
 }
 
@@ -252,19 +251,19 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 			id, org_id, project_id, environment_id, run_id, workspace_id, region_id,
 			lease_sequence, attempt_number, worker_group_id, worker_instance_id,
 			worker_epoch, runtime_instance_id,
-			runtime_identity_id, worker_protocol_version, requested_cpu_millis,
+			runtime_identity_id, requested_cpu_millis,
 			requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
 			requested_execution_slots, state, assigned_at, start_deadline_at,
 			claimed_at, expires_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, 1, 1, $8, $9, 1, $10,
-			$11, $12, 1000, 1073741824, 2147483648, 1,
-			$13::text, $14, now() + interval '5 minutes', $15,
+			$11, 1000, 1073741824, 2147483648, 1,
+			$12::text, $13, now() + interval '5 minutes', $14,
 			now() + interval '10 minutes'
 		)
 	`, leaseID, fixture.OrgID, fixture.ProjectID, fixture.EnvironmentID, runID,
 		workspaceID, Region, WorkerGroup, fixture.WorkerID,
-		runtimeID, fixture.RuntimeIdentityID, WorkerProtocol,
+		runtimeID, fixture.RuntimeIdentityID,
 		state, assignedAt, claimedAt)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_leases (
@@ -573,7 +572,7 @@ func (fixture Fixture) parkHandoff(
 			id, org_id, project_id, environment_id, run_id, workspace_id, region_id,
 			lease_sequence, attempt_number, worker_group_id, worker_instance_id,
 			worker_epoch, runtime_instance_id,
-			runtime_identity_id, worker_protocol_version, requested_cpu_millis,
+			runtime_identity_id, requested_cpu_millis,
 			requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
 			requested_execution_slots, state, assigned_at, start_deadline_at,
 			claimed_at, started_at, expires_at
@@ -581,7 +580,7 @@ func (fixture Fixture) parkHandoff(
 		SELECT $1, org_id, project_id, environment_id, $2, workspace_id, region_id,
 		       1, 1, worker_group_id, worker_instance_id, worker_epoch,
 		       runtime_instance_id,
-		       runtime_identity_id, worker_protocol_version, requested_cpu_millis,
+		       runtime_identity_id, requested_cpu_millis,
 		       requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
 		       requested_execution_slots, 'running',
 		       now() - interval '1 minute', now() + interval '5 minutes',

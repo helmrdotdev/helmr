@@ -30,7 +30,7 @@ func TestResolverBuildsContentAddressedSubstrateAndReusesCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Format != Format || first.BuilderABI != BuilderABI || first.LayoutABI != LayoutABI {
+	if first.Format != Format || first.Contract != Contract {
 		t.Fatalf("unexpected substrate identity: %+v", first)
 	}
 	if first.Digest == "" || first.Path == "" {
@@ -180,7 +180,7 @@ func TestCacheKeyMatchesGoldenSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "sha256:81af2bcec14402036cfccdd2e6396b378ddde06422a7838ec8e3edfc1669f537"
+	const want = "sha256:f9ddca7796d2ecee7007b44e4d934261caf450e9dd26f73d4dd0c3e0eeb8a486"
 	if key != want {
 		t.Fatalf("cache key = %s, want %s", key, want)
 	}
@@ -232,17 +232,15 @@ func TestEnforceSubstrateCacheBudgetEvictsOldDigestAndMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := publishMetadata(cacheDir, key, cacheMetadata{
-		CacheKey:   key,
-		Digest:     oldDigest,
-		Format:     Format,
-		BuilderABI: BuilderABI,
-		LayoutABI:  LayoutABI,
-		SizeBytes:  10,
+		CacheKey:  key,
+		Digest:    oldDigest,
+		Format:    Format,
+		Contract:  Contract,
+		SizeBytes: 10,
 		Identity: cacheIdentity{
-			Source:     normalizeSource(testSource()),
-			Format:     Format,
-			BuilderABI: BuilderABI,
-			LayoutABI:  LayoutABI,
+			Source:   normalizeSource(testSource()),
+			Format:   Format,
+			Contract: Contract,
 		},
 	}); err != nil {
 		t.Fatal(err)

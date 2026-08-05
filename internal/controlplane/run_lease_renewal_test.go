@@ -257,8 +257,7 @@ func (s *runLeaseClaimStore) GetLiveRunLeaseLocators(
 		params.LeaseSequence != lease.LeaseSequence ||
 		params.WorkerGroupID != lease.WorkerGroupID ||
 		params.WorkerInstanceID != lease.WorkerInstanceID ||
-		params.WorkerEpoch != lease.WorkerEpoch ||
-		params.WorkerProtocolVersion != lease.WorkerProtocolVersion {
+		params.WorkerEpoch != lease.WorkerEpoch {
 		return db.GetLiveRunLeaseLocatorsRow{}, pgx.ErrNoRows
 	}
 	return s.renewal, nil

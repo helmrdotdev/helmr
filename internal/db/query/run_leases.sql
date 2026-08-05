@@ -29,11 +29,9 @@ WITH worker AS (
       JOIN worker_groups
         ON worker_groups.id = worker_instances.worker_group_id
        AND worker_groups.state IN ('active', 'draining')
-       AND worker_groups.protocol_version = worker_instances.protocol_version
      WHERE worker_instances.id = sqlc.arg(worker_instance_id)
        AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
        AND worker_instances.current_epoch = sqlc.arg(worker_epoch)::bigint
-       AND worker_instances.protocol_version = sqlc.arg(worker_protocol_version)
        AND worker_instances.state IN ('active', 'draining')
        AND worker_instances.supports_run
 )
@@ -44,7 +42,6 @@ SELECT run_leases.id,
     ON run_leases.worker_instance_id = worker.id
    AND run_leases.worker_epoch = worker.current_epoch
  WHERE run_leases.worker_group_id = sqlc.arg(worker_group_id)
-   AND run_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
    AND run_leases.state IN ('assigned', 'starting')
    AND run_leases.start_deadline_at > transaction_timestamp()
    AND run_leases.expires_at > transaction_timestamp()
@@ -127,12 +124,10 @@ SELECT run_leases.org_id,
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
    AND worker_groups.state IN ('active', 'draining')
-   AND worker_groups.protocol_version = run_leases.worker_protocol_version
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
-   AND worker_instances.protocol_version = run_leases.worker_protocol_version
    AND worker_instances.state IN ('active', 'draining')
    AND worker_instances.supports_run
   JOIN runtime_instances
@@ -192,7 +187,6 @@ SELECT run_leases.org_id,
    AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
    AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
    AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
-   AND run_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
    AND run_leases.state IN ('assigned', 'starting')
    AND run_leases.start_deadline_at > transaction_timestamp()
    AND run_leases.expires_at > transaction_timestamp()
@@ -247,12 +241,10 @@ SELECT run_leases.org_id,
    AND worker_groups.region_id = run_leases.region_id
    AND worker_groups.state IN ('active', 'draining')
    AND worker_groups.allows_run
-   AND worker_groups.protocol_version = run_leases.worker_protocol_version
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
-   AND worker_instances.protocol_version = run_leases.worker_protocol_version
    AND worker_instances.state IN ('active', 'draining')
    AND worker_instances.supports_run
   JOIN runtime_instances
@@ -290,7 +282,6 @@ SELECT run_leases.org_id,
    AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
    AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
    AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
-   AND run_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
    AND run_leases.state IN ('starting', 'running')
    AND run_leases.expires_at > transaction_timestamp()
    AND (run_leases.state = 'running'
@@ -306,12 +297,10 @@ SELECT run_leases.environment_id,
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
    AND worker_groups.state IN ('active', 'draining')
-   AND worker_groups.protocol_version = run_leases.worker_protocol_version
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
-   AND worker_instances.protocol_version = run_leases.worker_protocol_version
    AND worker_instances.state IN ('active', 'draining')
    AND worker_instances.supports_run
  WHERE run_leases.id = sqlc.arg(id)
@@ -319,7 +308,6 @@ SELECT run_leases.environment_id,
    AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
    AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
    AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
-   AND run_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
    AND run_leases.state IN ('assigned', 'starting')
    AND run_leases.start_deadline_at > transaction_timestamp()
    AND run_leases.expires_at > transaction_timestamp()
@@ -355,12 +343,10 @@ SELECT run_leases.org_id,
    AND worker_groups.region_id = run_leases.region_id
    AND worker_groups.state = 'active'
    AND worker_groups.allows_run
-   AND worker_groups.protocol_version = run_leases.worker_protocol_version
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
-   AND worker_instances.protocol_version = run_leases.worker_protocol_version
    AND worker_instances.state IN ('active', 'draining')
    AND worker_instances.supports_run
   JOIN workspace_leases
@@ -373,7 +359,6 @@ SELECT run_leases.org_id,
    AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
    AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
    AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
-   AND run_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
    AND run_leases.state = 'running'
    AND run_leases.expires_at > transaction_timestamp()
    AND NOT EXISTS (
@@ -411,12 +396,10 @@ SELECT run_leases.org_id,
    AND worker_groups.region_id = run_leases.region_id
    AND worker_groups.state IN ('active', 'draining')
    AND worker_groups.allows_run
-   AND worker_groups.protocol_version = run_leases.worker_protocol_version
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
-   AND worker_instances.protocol_version = run_leases.worker_protocol_version
    AND worker_instances.state IN ('active', 'draining')
    AND worker_instances.supports_run
   JOIN workspace_leases
@@ -429,7 +412,6 @@ SELECT run_leases.org_id,
    AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
    AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
    AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
-   AND run_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
    AND run_leases.state IN ('running', 'checkpointing', 'finalizing')
    AND run_leases.expires_at > transaction_timestamp();
 
@@ -578,7 +560,6 @@ SELECT environment_id, run_id
    AND worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instance_id = sqlc.arg(worker_instance_id)
    AND worker_epoch = sqlc.arg(worker_epoch)
-   AND worker_protocol_version = sqlc.arg(worker_protocol_version)
    AND state IN ('running', 'checkpointing', 'finalizing')
    AND expires_at > transaction_timestamp();
 
@@ -707,7 +688,6 @@ UPDATE run_leases
    AND worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instance_id = sqlc.arg(worker_instance_id)
    AND worker_epoch = sqlc.arg(worker_epoch)
-   AND worker_protocol_version = sqlc.arg(worker_protocol_version)
    AND state = 'assigned'
    AND start_deadline_at > transaction_timestamp()
    AND expires_at > transaction_timestamp()
@@ -807,7 +787,6 @@ UPDATE run_leases
    AND worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instance_id = sqlc.arg(worker_instance_id)
    AND worker_epoch = sqlc.arg(worker_epoch)
-   AND worker_protocol_version = sqlc.arg(worker_protocol_version)
    AND runtime_instance_id = sqlc.arg(runtime_instance_id)
    AND runtime_identity_id = sqlc.arg(runtime_identity_id)
    AND state = 'starting'
@@ -1425,7 +1404,14 @@ candidates AS MATERIALIZED (
                WHEN locked_checkpoints.active_budget_exhausted THEN 'expired'
                ELSE 'system_failed'
            END,
-           terminal_reason_code = locked_checkpoints.recovery_terminal_reason_code,
+	       failure = jsonb_build_object(
+	           'code', locked_checkpoints.recovery_terminal_reason_code,
+	           'message', CASE
+	               WHEN locked_checkpoints.active_budget_exhausted THEN 'Run maximum active duration was exceeded'
+	               ELSE 'Run recovery failed'
+	           END,
+	           'details', jsonb_build_object()
+	       ),
            current_run_lease_id = NULL,
            active_elapsed_ms = CASE
                WHEN locked_checkpoints.active_budget_exhausted THEN runs.max_active_duration_ms
@@ -1481,12 +1467,19 @@ candidates AS MATERIALIZED (
        SET state = 'failed',
            current_run_id = NULL,
            run_generation = sessions.run_generation + 1,
-           state_version = sessions.state_version + 1,
-           manual_run_cancelled = false,
-           failure_code = CASE
-               WHEN locked_checkpoints.active_budget_exhausted THEN 'run_expired'
-               ELSE 'platform_failure'
-           END,
+	       state_version = sessions.state_version + 1,
+	       manual_run_cancelled = false,
+	       failure = jsonb_build_object(
+	           'code', CASE
+	               WHEN locked_checkpoints.active_budget_exhausted THEN 'run_expired'
+	               ELSE 'platform_failure'
+	           END,
+	           'message', CASE
+	               WHEN locked_checkpoints.active_budget_exhausted THEN 'Session run expired'
+	               ELSE 'Session run failed'
+	           END,
+	           'details', jsonb_build_object('run_id', failed_runs.id::text)
+	       ),
            failure_run_id = failed_runs.id,
            failed_at = transaction_timestamp(),
            updated_at = transaction_timestamp()

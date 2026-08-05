@@ -101,11 +101,10 @@ func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 	rootfsDigest := c.artifacts.Rootfs.Digest
 	runtimeID, err := runtimeid.Digest(runtimeid.Selector{
 		Arch:            runtime.GOARCH,
-		ABI:             runtimeABI,
+		Contract:        runtimeid.Contract,
 		KernelDigest:    kernelDigest,
 		InitramfsDigest: initramfsDigest,
 		RootfsDigest:    rootfsDigest,
-		NetworkABI:      NetworkABIV0,
 	})
 	if err != nil {
 		return RuntimeCapabilities{}, err
@@ -113,11 +112,10 @@ func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 	return RuntimeCapabilities{
 		ID:              runtimeID,
 		Arch:            runtime.GOARCH,
-		ABI:             runtimeABI,
+		Contract:        runtimeid.Contract,
 		KernelDigest:    kernelDigest,
 		InitramfsDigest: initramfsDigest,
 		RootfsDigest:    rootfsDigest,
-		NetworkABI:      NetworkABIV0,
 		VCPUCount:       c.cfg.VCPUCount,
 		MemoryMiB:       c.cfg.MemoryMiB,
 	}, nil
@@ -673,8 +671,8 @@ func (c *Connector) validateRestoreIdentity(
 	if identity.RuntimeArch != workerArchitecture {
 		return manifest, Config{}, fmt.Errorf("checkpoint runtime arch %q does not match worker arch %q", identity.RuntimeArch, workerArchitecture)
 	}
-	if identity.RuntimeABI != runtimeABI {
-		return manifest, Config{}, fmt.Errorf("checkpoint runtime abi %q does not match worker abi %q", identity.RuntimeABI, runtimeABI)
+	if identity.VMRuntimeContract != runtimeid.Contract {
+		return manifest, Config{}, fmt.Errorf("checkpoint runtime contract %q does not match worker contract %q", identity.VMRuntimeContract, runtimeid.Contract)
 	}
 	if len(manifestBytes) == 0 {
 		return manifest, Config{}, errors.New("checkpoint manifest is required")
@@ -702,11 +700,10 @@ func (c *Connector) validateRestoreIdentity(
 	}
 	runtimeID, err := runtimeid.Digest(runtimeid.Selector{
 		Arch:            workerArchitecture,
-		ABI:             runtimeABI,
+		Contract:        runtimeid.Contract,
 		KernelDigest:    kernelDigest,
 		InitramfsDigest: initramfsDigest,
 		RootfsDigest:    rootfsDigest,
-		NetworkABI:      NetworkABIV0,
 	})
 	if err != nil {
 		return manifest, Config{}, err
@@ -1867,11 +1864,10 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	}
 	runtimeID, err := runtimeid.Digest(runtimeid.Selector{
 		Arch:            workerArchitecture,
-		ABI:             runtimeABI,
+		Contract:        runtimeid.Contract,
 		KernelDigest:    kernelDigest,
 		InitramfsDigest: initramfsDigest,
 		RootfsDigest:    rootfsDigest,
-		NetworkABI:      NetworkABIV0,
 	})
 	if err != nil {
 		_ = s.Resume(context.Background())
@@ -1918,7 +1914,7 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	return vm.SnapshotArtifact{
 		RuntimeBackend:      "firecracker",
 		RuntimeArch:         workerArchitecture,
-		RuntimeABI:          runtimeABI,
+		VMRuntimeContract:   runtimeid.Contract,
 		RuntimeID:           runtimeID,
 		KernelDigest:        kernelDigest,
 		InitramfsDigest:     initramfsDigest,
@@ -2122,22 +2118,21 @@ type snapshotRecoveryPointManifest struct {
 }
 
 type snapshotRuntimeManifest struct {
-	Backend         string                          `json:"backend"`
-	ID              string                          `json:"id"`
-	Arch            string                          `json:"arch"`
-	ABI             string                          `json:"abi"`
-	VCPUCount       int64                           `json:"vcpu_count"`
-	MemoryMiB       int64                           `json:"memory_mib"`
-	ScratchDiskMiB  int64                           `json:"scratch_disk_mib"`
-	KernelArgs      string                          `json:"kernel_args"`
-	KernelDigest    string                          `json:"kernel_digest"`
-	InitramfsDigest string                          `json:"initramfs_digest"`
-	RootfsDigest    string                          `json:"rootfs_digest"`
-	Substrate       *snapshotRuntimeSubstrate       `json:"substrate,omitempty"`
-	Program         *snapshotProgramManifest        `json:"program,omitempty"`
-	GuestPort       uint32                          `json:"guest_port"`
-	HealthPort      uint32                          `json:"health_port"`
-	Network         snapshotNetworkIdentityManifest `json:"network"`
+	Backend         string                    `json:"backend"`
+	ID              string                    `json:"id"`
+	Arch            string                    `json:"arch"`
+	Contract        string                    `json:"contract"`
+	VCPUCount       int64                     `json:"vcpu_count"`
+	MemoryMiB       int64                     `json:"memory_mib"`
+	ScratchDiskMiB  int64                     `json:"scratch_disk_mib"`
+	KernelArgs      string                    `json:"kernel_args"`
+	KernelDigest    string                    `json:"kernel_digest"`
+	InitramfsDigest string                    `json:"initramfs_digest"`
+	RootfsDigest    string                    `json:"rootfs_digest"`
+	Substrate       *snapshotRuntimeSubstrate `json:"substrate,omitempty"`
+	Program         *snapshotProgramManifest  `json:"program,omitempty"`
+	GuestPort       uint32                    `json:"guest_port"`
+	HealthPort      uint32                    `json:"health_port"`
 }
 
 type snapshotProgramManifest struct {
@@ -2192,22 +2187,16 @@ func validateSnapshotProgram(manifest *snapshotProgramManifest, drives []vm.Read
 }
 
 type snapshotRuntimeSubstrate struct {
-	Digest     string `json:"digest"`
-	Format     string `json:"format"`
-	BuilderABI string `json:"builder_abi"`
-	LayoutABI  string `json:"layout_abi"`
+	Digest   string `json:"digest"`
+	Format   string `json:"format"`
+	Contract string `json:"contract"`
 }
 
 type snapshotRuntimeStateManifest struct {
 	Network snapshotNetworkManifest `json:"network"`
 }
 
-type snapshotNetworkIdentityManifest struct {
-	NetworkABI string `json:"network_abi"`
-}
-
 type snapshotNetworkManifest struct {
-	NetworkABI         string   `json:"network_abi"`
 	GuestIPv4CIDR      string   `json:"guest_ipv4_cidr"`
 	GuestMAC           string   `json:"guest_mac"`
 	GatewayIPv4        string   `json:"gateway_ipv4"`
@@ -2225,10 +2214,9 @@ func snapshotSubstrateManifest(substrate *vm.RuntimeSubstrate) (*snapshotRuntime
 		return nil, err
 	}
 	return &snapshotRuntimeSubstrate{
-		Digest:     strings.TrimSpace(substrate.Digest),
-		Format:     strings.TrimSpace(substrate.Format),
-		BuilderABI: strings.TrimSpace(substrate.BuilderABI),
-		LayoutABI:  strings.TrimSpace(substrate.LayoutABI),
+		Digest:   strings.TrimSpace(substrate.Digest),
+		Format:   strings.TrimSpace(substrate.Format),
+		Contract: strings.TrimSpace(substrate.Contract),
 	}, nil
 }
 
@@ -2253,11 +2241,8 @@ func validateRuntimeSubstrateTopology(substrate *vm.RuntimeSubstrate) error {
 	if strings.TrimSpace(substrate.Format) != "ext4" {
 		return fmt.Errorf("runtime substrate format %q is not supported", substrate.Format)
 	}
-	if strings.TrimSpace(substrate.BuilderABI) == "" {
-		return errors.New("runtime substrate builder abi is required")
-	}
-	if strings.TrimSpace(substrate.LayoutABI) == "" {
-		return errors.New("runtime substrate layout abi is required")
+	if strings.TrimSpace(substrate.Contract) == "" {
+		return errors.New("runtime substrate contract is required")
 	}
 	return nil
 }
@@ -2296,7 +2281,7 @@ func snapshotRuntimeConfig(cfg Config, checkpointID string, runtimeID string, ke
 				Backend:         "firecracker",
 				ID:              runtimeID,
 				Arch:            workerArchitecture,
-				ABI:             runtimeABI,
+				Contract:        runtimeid.Contract,
 				VCPUCount:       cfg.VCPUCount,
 				MemoryMiB:       cfg.MemoryMiB,
 				ScratchDiskMiB:  cfg.ScratchDiskMiB,
@@ -2308,7 +2293,6 @@ func snapshotRuntimeConfig(cfg Config, checkpointID string, runtimeID string, ke
 				Program:         program,
 				GuestPort:       cfg.GuestPort,
 				HealthPort:      cfg.HealthPort,
-				Network:         snapshotNetworkIdentityManifest{NetworkABI: network.NetworkABI},
 			},
 		},
 		RuntimeState: snapshotRuntimeStateManifest{
@@ -2323,7 +2307,6 @@ func snapshotRuntimeConfig(cfg Config, checkpointID string, runtimeID string, ke
 
 func snapshotNetworkConfig(cfg Config) snapshotNetworkManifest {
 	return snapshotNetworkManifest{
-		NetworkABI:         NetworkABIV0,
 		GuestIPv4CIDR:      GuestNetworkCIDRV0,
 		GuestMAC:           GuestMACV0,
 		GatewayIPv4:        GuestGatewayIPv4V0,
@@ -2335,27 +2318,24 @@ func snapshotNetworkConfig(cfg Config) snapshotNetworkManifest {
 }
 
 func validateSnapshotNetwork(network snapshotNetworkManifest) error {
-	if network.NetworkABI != NetworkABIV0 {
-		return fmt.Errorf("checkpoint manifest network_abi %q is not supported", network.NetworkABI)
-	}
 	guestIP, guestCIDR, err := net.ParseCIDR(network.GuestIPv4CIDR)
 	if err != nil || guestIP.To4() == nil {
 		return errors.New("checkpoint manifest guest_ipv4_cidr must be canonical IPv4 CIDR")
 	}
 	if guestIP.String()+"/"+strconv.Itoa(maskSize(guestCIDR.Mask)) != network.GuestIPv4CIDR || network.GuestIPv4CIDR != GuestNetworkCIDRV0 {
-		return errors.New("checkpoint manifest guest_ipv4_cidr does not match network ABI")
+		return errors.New("checkpoint manifest guest_ipv4_cidr does not match VM runtime contract")
 	}
 	mac, err := net.ParseMAC(network.GuestMAC)
 	if err != nil || len(mac) != 6 || mac.String() != network.GuestMAC || network.GuestMAC != GuestMACV0 {
-		return errors.New("checkpoint manifest guest_mac does not match network ABI")
+		return errors.New("checkpoint manifest guest_mac does not match VM runtime contract")
 	}
 	gateway := net.ParseIP(network.GatewayIPv4)
 	if gateway == nil || gateway.To4() == nil || gateway.String() != network.GatewayIPv4 || network.GatewayIPv4 != GuestGatewayIPv4V0 || !guestCIDR.Contains(gateway) {
-		return errors.New("checkpoint manifest gateway_ipv4 does not match network ABI")
+		return errors.New("checkpoint manifest gateway_ipv4 does not match VM runtime contract")
 	}
 	gatewayMAC, err := net.ParseMAC(network.GatewayMAC)
 	if err != nil || len(gatewayMAC) != 6 || gatewayMAC.String() != network.GatewayMAC || network.GatewayMAC != GuestGatewayMACV0 {
-		return errors.New("checkpoint manifest gateway_mac does not match network ABI")
+		return errors.New("checkpoint manifest gateway_mac does not match VM runtime contract")
 	}
 	if len(network.ResolverAddresses) != 1 {
 		return errors.New("checkpoint manifest must contain exactly one IPv4 resolver")
@@ -2367,10 +2347,10 @@ func validateSnapshotNetwork(network snapshotNetworkManifest) error {
 		}
 	}
 	if network.GuestInterfaceName != GuestInterfaceNameV0 {
-		return errors.New("checkpoint manifest guest_interface_name does not match network ABI")
+		return errors.New("checkpoint manifest guest_interface_name does not match VM runtime contract")
 	}
 	if network.MTU != GuestMTUV0 {
-		return errors.New("checkpoint manifest mtu does not match network ABI")
+		return errors.New("checkpoint manifest mtu does not match VM runtime contract")
 	}
 	return nil
 }
@@ -2387,8 +2367,7 @@ func validateRestoredNetworkConfig(expected snapshotNetworkManifest, actual snap
 	if err := validateSnapshotNetwork(actual); err != nil {
 		return fmt.Errorf("validate recreated checkpoint network: %w", err)
 	}
-	if expected.NetworkABI != actual.NetworkABI ||
-		expected.GuestIPv4CIDR != actual.GuestIPv4CIDR ||
+	if expected.GuestIPv4CIDR != actual.GuestIPv4CIDR ||
 		expected.GuestMAC != actual.GuestMAC ||
 		expected.GatewayIPv4 != actual.GatewayIPv4 ||
 		expected.GatewayMAC != actual.GatewayMAC ||
@@ -2422,8 +2401,8 @@ func validateRuntimeManifest(
 	if runtimeManifest.Arch != workerArchitecture {
 		return fmt.Errorf("checkpoint manifest runtime arch %q does not match worker arch %q", runtimeManifest.Arch, workerArchitecture)
 	}
-	if runtimeManifest.ABI != runtimeABI {
-		return fmt.Errorf("checkpoint manifest runtime abi %q does not match worker abi %q", runtimeManifest.ABI, runtimeABI)
+	if runtimeManifest.Contract != runtimeid.Contract {
+		return fmt.Errorf("checkpoint manifest runtime contract %q does not match worker contract %q", runtimeManifest.Contract, runtimeid.Contract)
 	}
 	if runtimeManifest.ID == "" {
 		return errors.New("checkpoint manifest runtime id is required")
@@ -2457,16 +2436,12 @@ func validateRuntimeManifest(
 		runtimeManifest.HealthPort != cfg.HealthPort {
 		return errors.New("checkpoint manifest runtime ports or kernel args do not match worker runtime")
 	}
-	networkIdentity := runtimeManifest.Network
-	if networkIdentity.NetworkABI != NetworkABIV0 {
-		return fmt.Errorf("checkpoint manifest network_abi %q does not match worker network ABI %q", networkIdentity.NetworkABI, NetworkABIV0)
-	}
 	network := manifest.RuntimeState.Network
 	if err := validateSnapshotNetwork(network); err != nil {
 		return err
 	}
 	if err := validateRestoredNetworkConfig(snapshotNetworkConfig(cfg), network); err != nil {
-		return fmt.Errorf("checkpoint manifest network does not match worker network ABI: %w", err)
+		return fmt.Errorf("checkpoint manifest network does not match VM runtime contract: %w", err)
 	}
 	return nil
 }
@@ -2489,11 +2464,8 @@ func validateRuntimeSubstrateManifest(manifest *snapshotRuntimeSubstrate, expect
 	if manifest.Format != strings.TrimSpace(expected.Format) {
 		return fmt.Errorf("checkpoint manifest substrate format %s does not match restore substrate format %s", manifest.Format, expected.Format)
 	}
-	if manifest.BuilderABI != strings.TrimSpace(expected.BuilderABI) {
-		return fmt.Errorf("checkpoint manifest substrate builder abi %s does not match restore substrate builder abi %s", manifest.BuilderABI, expected.BuilderABI)
-	}
-	if manifest.LayoutABI != strings.TrimSpace(expected.LayoutABI) {
-		return fmt.Errorf("checkpoint manifest substrate layout abi %s does not match restore substrate layout abi %s", manifest.LayoutABI, expected.LayoutABI)
+	if manifest.Contract != strings.TrimSpace(expected.Contract) {
+		return fmt.Errorf("checkpoint manifest substrate contract %s does not match restore substrate contract %s", manifest.Contract, expected.Contract)
 	}
 	return nil
 }

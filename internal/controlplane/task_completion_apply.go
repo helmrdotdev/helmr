@@ -57,12 +57,11 @@ func (s *Server) completeTask(
 			return err
 		}
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
-			ID:                    pgvalue.UUID(completion.lease.leaseID),
-			LeaseSequence:         request.Lease.LeaseSequence,
-			WorkerGroupID:         worker.WorkerGroupID,
-			WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch:           worker.WorkerEpoch,
-			WorkerProtocolVersion: worker.ProtocolVersion,
+			ID:               pgvalue.UUID(completion.lease.leaseID),
+			LeaseSequence:    request.Lease.LeaseSequence,
+			WorkerGroupID:    worker.WorkerGroupID,
+			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerEpoch:      worker.WorkerEpoch,
 		})
 		if err != nil {
 			return staleTaskCompletion(err)
@@ -121,7 +120,7 @@ func (s *Server) completeTask(
 			if err != nil ||
 				identity.ID != manifestIdentity.ID ||
 				identity.RuntimeArch != manifestIdentity.Arch ||
-				identity.RuntimeABI != manifestIdentity.ABI ||
+				identity.VMRuntimeContract != manifestIdentity.Contract ||
 				identity.KernelDigest != manifestIdentity.KernelDigest ||
 				identity.InitramfsDigest != manifestIdentity.InitramfsDigest ||
 				identity.RootfsDigest != manifestIdentity.RootfsDigest {
@@ -652,7 +651,7 @@ func finishTask(
 ) error {
 	status := db.RunStatusFailed
 	reason := pgvalue.Text("task_failed")
-	var output, terminalError []byte
+	var output, failure []byte
 	eventKind := api.RunEventKindFailed
 	switch completion.kind {
 	case taskCompletionSucceeded:
@@ -661,10 +660,18 @@ func finishTask(
 		output = completion.output
 		eventKind = api.RunEventKindCompleted
 	case taskCompletionFailed:
-		terminalError = completion.errorObject
+		var err error
+		failure, err = runFailureFromCompletion(reason.String, completion.errorObject)
+		if err != nil {
+			return err
+		}
 	case taskCompletionPayloadInvalid:
 		reason = pgvalue.Text("task_payload_invalid")
-		terminalError = completion.errorObject
+		var err error
+		failure, err = runFailureFromCompletion(reason.String, completion.errorObject)
+		if err != nil {
+			return err
+		}
 	default:
 		return errors.New("task completion outcome is unsupported")
 	}
@@ -679,7 +686,7 @@ func finishTask(
 		return staleTaskCompletion(err)
 	}
 	if _, err := store.FinishTaskRun(ctx, db.FinishTaskRunParams{
-		Status: status, Output: output, ReasonCode: reason, Error: terminalError,
+		Status: status, Output: output, Failure: failure,
 		CompletedAt: completedAt, ID: authority.run.ID, WorkspaceID: authority.workspace.ID,
 		AttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
 	}); err != nil {
@@ -701,8 +708,7 @@ func finishTask(
 		terminalRun := authority.run
 		terminalRun.Status = status
 		terminalRun.Output = output
-		terminalRun.TerminalReasonCode = reason
-		terminalRun.Error = terminalError
+		terminalRun.Failure = failure
 		if err := resolveParentOwnedChildWait(
 			ctx, store, authority, terminalRun, completedAt,
 		); err != nil {
@@ -724,7 +730,7 @@ func finishSameWorkspaceChild(
 	wait := authority.enclosingWait
 	status := db.RunStatusFailed
 	reason := pgvalue.Text("task_failed")
-	var output, terminalError []byte
+	var output, terminalError, failure []byte
 	eventKind := api.RunEventKindFailed
 	switch completion.kind {
 	case taskCompletionSucceeded:
@@ -738,9 +744,19 @@ func finishSameWorkspaceChild(
 		eventKind = api.RunEventKindCompleted
 	case taskCompletionFailed:
 		terminalError = completion.errorObject
+		var err error
+		failure, err = runFailureFromCompletion(reason.String, completion.errorObject)
+		if err != nil {
+			return err
+		}
 	case taskCompletionPayloadInvalid:
 		reason = pgvalue.Text("task_payload_invalid")
 		terminalError = completion.errorObject
+		var err error
+		failure, err = runFailureFromCompletion(reason.String, completion.errorObject)
+		if err != nil {
+			return err
+		}
 	default:
 		return errors.New("same-workspace child outcome is unsupported")
 	}
@@ -776,7 +792,7 @@ func finishSameWorkspaceChild(
 	}
 
 	child, err := store.FinishTaskRun(ctx, db.FinishTaskRunParams{
-		Status: status, Output: output, ReasonCode: reason, Error: terminalError,
+		Status: status, Output: output, Failure: failure,
 		CompletedAt: completedAt, ID: authority.run.ID, WorkspaceID: authority.workspace.ID,
 		AttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
 	})
@@ -898,6 +914,13 @@ func cascadeSameWorkspaceChildFailure(
 	if err != nil {
 		return db.RunWait{}, err
 	}
+	failureObject, err := runFailure(
+		"same_workspace_handoff_runtime_lost",
+		"Nested same-Workspace handoff runtime was discarded after descendant failure",
+	)
+	if err != nil {
+		return db.RunWait{}, err
+	}
 	reason := pgvalue.Text("same_workspace_handoff_runtime_lost")
 	innerWait := authority.enclosingWait
 	innerParent := authority.parentRun
@@ -931,7 +954,7 @@ func cascadeSameWorkspaceChildFailure(
 		if _, err := store.FailNestedSameWorkspaceRun(
 			ctx,
 			db.FailNestedSameWorkspaceRunParams{
-				Error: errorObject, FailedAt: failedAt, RunID: innerParent.ID,
+				Failure: failureObject, FailedAt: failedAt, RunID: innerParent.ID,
 				EnvironmentID: innerParent.EnvironmentID, WorkspaceID: authority.workspace.ID,
 				AttemptNumber: innerAttempt.Number,
 			},

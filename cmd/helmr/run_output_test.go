@@ -42,7 +42,6 @@ func TestWriteRunDetails(t *testing.T) {
 		CreatedAt:            time.Date(2026, 5, 10, 1, 2, 3, 0, time.UTC),
 		StartedAt:            &startedAt,
 		TerminalAt:           &terminalAt,
-		TerminalReasonCode:   "completed",
 	}
 
 	writeRunDetails(&out, run)
@@ -58,7 +57,6 @@ func TestWriteRunDetails(t *testing.T) {
 		"Cause:       direct",
 		"Created:     2026-05-10T01:02:03Z",
 		"Terminal:    2026-05-10T01:03:03Z",
-		"Reason:      completed",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("writeRunDetails() = %q, missing %q", got, want)

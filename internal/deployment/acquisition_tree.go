@@ -95,7 +95,7 @@ func (acquirer PlatformAcquirer) runtimeTree(
 		NodeModuleABI:           node.moduleABI,
 		NodeVersion:             nodeVersion,
 		ProgramNodeFlags:        append([]string(nil), policy.NodeFlags...),
-		RuntimeAPIVersion:       RuntimeAPIVersion,
+		RuntimeContract:         RuntimeContract,
 		RuntimeHarnessDigest:    policy.Runtime.Harness.Digest,
 		Source:                  node.distribution.source,
 	}

@@ -160,7 +160,7 @@ func newWorkerRunLeaseClaimHTTPFixture(
 			ProgramArtifactDigest:    validDigest('a'),
 			ProgramArtifactSizeBytes: 100,
 			ProgramArtifactMediaType: deployment.ProgramArtifactMediaType,
-			BuildContractVersion:     deployment.ProgramBuildContractVersion,
+			BuildContract:            deployment.ProgramBuildContract,
 			ProgramIndexDigest:       validDigestBytes(t, 'b'),
 		},
 		definition: definition,

@@ -1487,6 +1487,14 @@ func failNestedResumeLineage(
 	if err != nil {
 		return err
 	}
+	failureObject, err := json.Marshal(map[string]any{
+		"code":    "same_workspace_handoff_runtime_lost",
+		"message": "Nested same-Workspace resume lost its retained runtime",
+		"details": map[string]any{},
+	})
+	if err != nil {
+		return err
+	}
 	reason := pgvalue.Text("same_workspace_handoff_runtime_lost")
 	current := lineage[len(lineage)-1]
 	command, err := tx.Exec(ctx, `
@@ -1526,8 +1534,7 @@ UPDATE run_waits
 	command, err = tx.Exec(ctx, `
 UPDATE runs
    SET status = 'system_failed',
-       terminal_reason_code = 'same_workspace_handoff_runtime_lost',
-       error = $2::jsonb, current_run_lease_id = NULL,
+	   failure = $2::jsonb, current_run_lease_id = NULL,
        active_elapsed_ms = LEAST(
            max_active_duration_ms,
            active_elapsed_ms + CASE
@@ -1545,7 +1552,7 @@ UPDATE runs
    AND state_version = $4
    AND current_run_lease_id = $5`,
 		current.id,
-		errorObject,
+		failureObject,
 		failedAt,
 		current.stateVersion,
 		current.currentLeaseID,
@@ -1590,7 +1597,7 @@ UPDATE runs
 		if _, err := q.FailNestedSameWorkspaceRun(
 			ctx,
 			db.FailNestedSameWorkspaceRunParams{
-				Error: errorObject, FailedAt: failedAt, RunID: parent.id,
+				Failure: failureObject, FailedAt: failedAt, RunID: parent.id,
 				EnvironmentID: parent.environmentID, WorkspaceID: parent.workspaceID,
 				AttemptNumber: parent.attempt,
 			},

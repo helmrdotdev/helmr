@@ -16,7 +16,7 @@ func TestScheduleListAndGet(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/schedules":
-			if r.URL.Query().Get("cursor") != "sc1.cursor" ||
+			if r.URL.Query().Get("cursor") != "cursor-current" ||
 				r.URL.Query().Get("limit") != "25" {
 				t.Fatalf("query = %q", r.URL.RawQuery)
 			}
@@ -24,7 +24,7 @@ func TestScheduleListAndGet(t *testing.T) {
 				Schedules: []api.ScheduleResponse{{
 					ID: scheduleID, TaskID: "nightly", Status: "active",
 				}},
-				NextCursor: "sc1.next",
+				NextCursor: "cursor-next",
 			})
 		case "/v1/schedules/" + scheduleID:
 			_ = json.NewEncoder(w).Encode(api.ScheduleResponse{
@@ -42,11 +42,11 @@ func TestScheduleListAndGet(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"schedule", "list", "--cursor", "sc1.cursor", "--limit", "25"})
+	cmd.SetArgs([]string{"schedule", "list", "--cursor", "cursor-current", "--limit", "25"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != scheduleID+"\tnightly\tactive\nnext_cursor: sc1.next\n" {
+	if out.String() != scheduleID+"\tnightly\tactive\nnext_cursor: cursor-next\n" {
 		t.Fatalf("list output = %q", out.String())
 	}
 

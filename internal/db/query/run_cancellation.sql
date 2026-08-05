@@ -335,7 +335,7 @@ UPDATE sessions
        run_generation = run_generation + 1,
        state_version = state_version + 1,
        manual_run_cancelled = false,
-       failure_code = sqlc.arg(failure_code)::text,
+       failure = sqlc.arg(failure)::jsonb,
        failure_run_id = sqlc.arg(run_id),
        failed_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
@@ -467,8 +467,7 @@ UPDATE run_attempts
 -- name: TerminalizeRun :execrows
 UPDATE runs
    SET status = sqlc.arg(status)::text,
-       terminal_reason_code = sqlc.arg(reason_code)::text,
-       error = sqlc.arg(error_payload)::jsonb,
+       failure = sqlc.arg(failure)::jsonb,
        state_version = state_version + 1,
        current_run_lease_id = NULL,
        retry_at = NULL,

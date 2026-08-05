@@ -117,13 +117,12 @@ func (d *Authority) PlaceWorkspaceExec(
 		return WorkspaceExecPlacement{}, fmt.Errorf("discover workspace exec runtime: %w", err)
 	}
 	if err := lockWorkerFence(ctx, tx, workerFence{
-		GroupID:               runtime.groupID,
-		RegionID:              authority.regionID,
-		WorkerInstanceID:      runtime.workerID,
-		WorkerEpoch:           runtime.workerEpoch,
-		WorkerProtocolVersion: runtime.protocolVersion,
-		Role:                  "run",
-		RunArchitecture:       authority.architecture,
+		GroupID:          runtime.groupID,
+		RegionID:         authority.regionID,
+		WorkerInstanceID: runtime.workerID,
+		WorkerEpoch:      runtime.workerEpoch,
+		Role:             "run",
+		RunArchitecture:  authority.architecture,
 	}); err != nil {
 		return WorkspaceExecPlacement{}, ErrCapacityUnavailable
 	}
@@ -412,13 +411,12 @@ func (d *Authority) createWorkspaceExecRuntime(
 		return WorkspaceExecPlacement{}, fmt.Errorf("select workspace exec worker: %w", err)
 	}
 	if err := lockWorkerFence(ctx, tx, workerFence{
-		GroupID:               worker.groupID,
-		RegionID:              authority.regionID,
-		WorkerInstanceID:      worker.workerID,
-		WorkerEpoch:           worker.workerEpoch,
-		WorkerProtocolVersion: worker.protocolVersion,
-		Role:                  "run",
-		RunArchitecture:       authority.architecture,
+		GroupID:          worker.groupID,
+		RegionID:         authority.regionID,
+		WorkerInstanceID: worker.workerID,
+		WorkerEpoch:      worker.workerEpoch,
+		Role:             "run",
+		RunArchitecture:  authority.architecture,
 	}); err != nil {
 		return WorkspaceExecPlacement{}, ErrCapacityUnavailable
 	}

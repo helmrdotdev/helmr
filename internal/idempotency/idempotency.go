@@ -89,15 +89,15 @@ type ActorStartFingerprint struct {
 }
 
 type DeploymentCreateFingerprint struct {
-	SourceDigest         string `json:"sourceDigest"`
-	LockfileDigest       string `json:"lockfileDigest"`
-	LockfileName         string `json:"lockfileName"`
-	NodeVersion          string `json:"nodeVersion"`
-	ManagerName          string `json:"managerName"`
-	ManagerVersion       string `json:"managerVersion"`
-	ManagerIntegrity     string `json:"managerIntegrity,omitempty"`
-	BuildContractVersion string `json:"buildContractVersion"`
-	ImageCacheMode       string `json:"imageCacheMode"`
+	SourceDigest     string `json:"sourceDigest"`
+	LockfileDigest   string `json:"lockfileDigest"`
+	LockfileName     string `json:"lockfileName"`
+	NodeVersion      string `json:"nodeVersion"`
+	ManagerName      string `json:"managerName"`
+	ManagerVersion   string `json:"managerVersion"`
+	ManagerIntegrity string `json:"managerIntegrity,omitempty"`
+	BuildContract    string `json:"buildContract"`
+	ImageCacheMode   string `json:"imageCacheMode"`
 }
 
 type TokenCreateFingerprint struct {
@@ -158,9 +158,7 @@ type WorkspaceImageBuildFingerprint struct {
 	SourceArchiveEntries   int                               `json:"sourceArchiveEntries"`
 	ImageCacheMode         string                            `json:"imageCacheMode"`
 	CacheScope             string                            `json:"cacheScope"`
-	ExecutionABI           string                            `json:"executionAbi"`
-	LLBABI                 string                            `json:"llbAbi"`
-	CacheABI               string                            `json:"cacheAbi"`
+	ImageBuildContract     string                            `json:"imageBuildContract"`
 	Quotas                 WorkspaceImageBuildQuotas         `json:"quotas"`
 	Output                 WorkspaceImageBuildOutputContract `json:"output"`
 }
@@ -318,9 +316,7 @@ func validateWorkspaceImageBuildFingerprint(
 		"admitted path-set digest": fingerprint.AdmittedPathSetDigest,
 		"source archive digest":    fingerprint.SourceArchiveDigest,
 		"cache scope":              fingerprint.CacheScope,
-		"execution ABI":            fingerprint.ExecutionABI,
-		"LLB ABI":                  fingerprint.LLBABI,
-		"cache ABI":                fingerprint.CacheABI,
+		"image build contract":     fingerprint.ImageBuildContract,
 		"output architecture":      fingerprint.Output.Architecture,
 		"output media type":        fingerprint.Output.MediaType,
 	} {

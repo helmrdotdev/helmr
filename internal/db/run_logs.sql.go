@@ -38,7 +38,6 @@ current_run_lease AS (
        AND run_leases.worker_group_id = $7
        AND run_leases.worker_instance_id = $8
        AND run_leases.worker_epoch = $9
-       AND run_leases.worker_protocol_version = $10
        AND runs.current_run_lease_id = run_leases.id
        AND runs.current_attempt_number = run_leases.attempt_number
        AND runs.status = 'running'
@@ -47,14 +46,14 @@ current_run_lease AS (
 ),
 candidate AS (
     SELECT current_run_lease.org_id, current_run_lease.project_id, current_run_lease.environment_id, current_run_lease.trace_id, current_run_lease.state_version, current_run_lease.id, current_run_lease.run_lease_id, current_run_lease.span_id, current_run_lease.parent_span_id, current_run_lease.traceparent, current_run_lease.attempt_number,
-           $11::text AS stream,
-           $12::bigint AS observed_seq,
-           $13::bytea AS content,
-           octet_length($13::bytea)::bigint AS size_bytes,
+           $10::text AS stream,
+           $11::bigint AS observed_seq,
+           $12::bytea AS content,
+           octet_length($12::bytea)::bigint AS size_bytes,
            event_args.event_kind,
            event_args.event_payload,
            event_args.lease_fence_fingerprint,
-           'run_log:' || current_run_lease.attempt_number::text || ':' || $11::text || ':' || ($12::bigint)::text AS idempotency_key
+           'run_log:' || current_run_lease.attempt_number::text || ':' || $10::text || ':' || ($11::bigint)::text AS idempotency_key
       FROM current_run_lease
       CROSS JOIN event_args
 ),
@@ -268,7 +267,6 @@ type AppendRunLogChunkParams struct {
 	WorkerGroupID         string      `json:"worker_group_id"`
 	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch           int64       `json:"worker_epoch"`
-	WorkerProtocolVersion string      `json:"worker_protocol_version"`
 	Stream                string      `json:"stream"`
 	ObservedSeq           int64       `json:"observed_seq"`
 	Content               []byte      `json:"content"`
@@ -299,7 +297,6 @@ func (q *Queries) AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkPa
 		arg.WorkerGroupID,
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
-		arg.WorkerProtocolVersion,
 		arg.Stream,
 		arg.ObservedSeq,
 		arg.Content,

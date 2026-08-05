@@ -14,7 +14,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/spf13/cobra"
 )
 
@@ -100,11 +99,9 @@ func deployCommand() *cobra.Command {
 				return err
 			}
 			deployRequest := api.CreateDeploymentRequest{
-				IdempotencyKey:        strings.TrimSpace(idempotencyKey),
-				ContentHash:           tarArchive.Digest,
-				APIVersion:            deployment.APIVersion,
-				WorkerProtocolVersion: workerapi.CurrentProtocolVersion,
-				ImageCacheMode:        "prefer",
+				IdempotencyKey: strings.TrimSpace(idempotencyKey),
+				ContentHash:    tarArchive.Digest,
+				ImageCacheMode: "prefer",
 			}
 			if noImageCache {
 				deployRequest.ImageCacheMode = "bypass"
@@ -361,8 +358,8 @@ func deploymentTerminalResult(deployment api.DeploymentResponse) (api.Deployment
 }
 
 func deploymentErrorMessage(deployment api.DeploymentResponse) string {
-	if deployment.Error == nil {
+	if deployment.Failure == nil {
 		return ""
 	}
-	return strings.TrimSpace(deployment.Error.Message)
+	return strings.TrimSpace(deployment.Failure.Message)
 }

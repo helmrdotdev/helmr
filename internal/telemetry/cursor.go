@@ -15,18 +15,14 @@ func Cursor(seq int64) string {
 		seq = 0
 	}
 	raw, _ := json.Marshal(cursorPayload{Seq: seq})
-	return "tc1." + base64.RawURLEncoding.EncodeToString(raw)
+	return base64.RawURLEncoding.EncodeToString(raw)
 }
 
 func ParseCursor(raw string) (int64, error) {
 	if raw == "" {
 		return 0, nil
 	}
-	const prefix = "tc1."
-	if len(raw) <= len(prefix) || raw[:len(prefix)] != prefix {
-		return 0, fmt.Errorf("invalid cursor")
-	}
-	decoded, err := base64.RawURLEncoding.DecodeString(raw[len(prefix):])
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
 		return 0, fmt.Errorf("invalid cursor")
 	}

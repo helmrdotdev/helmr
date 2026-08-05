@@ -13,14 +13,12 @@ type RunSnapshotResponse struct {
 	WorkspaceID          string                `json:"workspace_id"`
 	SessionID            string                `json:"session_id,omitempty"`
 	ParentRunID          string                `json:"parent_run_id,omitempty"`
-	ParentOwnsLifecycle  *bool                 `json:"parent_owns_lifecycle,omitempty"`
 	CurrentAttemptNumber int32                 `json:"current_attempt_number"`
 	Cause                RunCauseResponse      `json:"cause"`
 	Metadata             json.RawMessage       `json:"metadata"`
 	Tags                 []string              `json:"tags"`
 	Output               json.RawMessage       `json:"output,omitempty"`
-	TerminalReasonCode   string                `json:"terminal_reason_code,omitempty"`
-	Error                *RunErrorResponse     `json:"error,omitempty"`
+	Failure              *RunFailureResponse   `json:"failure,omitempty"`
 	CreatedAt            time.Time             `json:"created_at"`
 	StartedAt            *time.Time            `json:"started_at,omitempty"`
 	TerminalAt           *time.Time            `json:"terminal_at,omitempty"`
@@ -45,11 +43,10 @@ type RunCauseResponse struct {
 	Timezone        string     `json:"timezone,omitempty"`
 }
 
-type RunErrorResponse struct {
-	Code      string          `json:"code"`
-	Message   string          `json:"message"`
-	Retryable bool            `json:"retryable"`
-	Details   json.RawMessage `json:"details,omitempty"`
+type RunFailureResponse struct {
+	Code    string          `json:"code"`
+	Message string          `json:"message"`
+	Details json.RawMessage `json:"details"`
 }
 
 type ListRunSnapshotsResponse struct {

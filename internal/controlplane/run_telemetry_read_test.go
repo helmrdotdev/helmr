@@ -85,7 +85,7 @@ func TestProjectRunLogRecordDistinguishesStructuredAndStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	structured, err := projectRunLogRecord(api.RunLogChunk{
-		ID: "tc1.structured", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
+		ID: "structured-cursor", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 		AttemptNumber: 2, Stream: string(workerapi.LogStreamStructured),
 		ContentBase64: base64.StdEncoding.EncodeToString(structuredBody), At: at,
 	}, "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38")
@@ -100,7 +100,7 @@ func TestProjectRunLogRecordDistinguishesStructuredAndStream(t *testing.T) {
 		t.Fatalf("structured = %+v", structured)
 	}
 	stream, err := projectRunLogRecord(api.RunLogChunk{
-		ID: "tc1.stdout", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
+		ID: "stdout-cursor", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 		AttemptNumber: 2, Stream: string(workerapi.LogStreamStdout),
 		ObservedSeq: 3, ContentBase64: "b2sK", Bytes: 3, At: at,
 	}, "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38")

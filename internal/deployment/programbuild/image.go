@@ -52,7 +52,6 @@ type LeaseAuthority struct {
 	WorkerInstanceID                 string
 	WorkerEpoch                      int64
 	Generation                       int64
-	WorkerProtocolVersion            string
 	RequestedGuestEphemeralDiskBytes int64
 	RequestedCPUMillis               int64
 	RequestedMemoryBytes             int64
@@ -90,9 +89,7 @@ type AdmissionRequest struct {
 	SourceArchiveSizeBytes int64
 	SourceArchiveEntries   int
 	RequestedCacheMode     imagebuild.CacheMode
-	ExecutionABI           string
-	LLBABI                 string
-	CacheABI               string
+	ImageBuildContract     string
 }
 
 // Assignment is Control Plane's non-secret, current-Build-Lease dispatch result.
@@ -463,7 +460,7 @@ func (engine imageEngine) BuildWorkspaceImage(
 
 func imageBuildNetworkQuotaResult() imagebuild.GuestResult {
 	return imagebuild.GuestResult{
-		ExecutionABI:  imagebuild.ExecutionABI,
+		Contract:      imagebuild.Contract,
 		Outcome:       imagebuild.GuestFailed,
 		FailureReason: imagebuild.GuestFailureNetworkQuota,
 		Error:         "image-build public-egress limit was exceeded",
@@ -566,9 +563,7 @@ func prepareAdmissionRequest(request buildRequest) (AdmissionRequest, error) {
 		SourceArchiveSizeBytes: descriptor.ArchiveSizeBytes,
 		SourceArchiveEntries:   descriptor.ArchiveEntries,
 		RequestedCacheMode:     request.RequestedCacheMode,
-		ExecutionABI:           imagebuild.ExecutionABI,
-		LLBABI:                 imagebuild.LLBABI,
-		CacheABI:               imagebuild.CacheABI,
+		ImageBuildContract:     imagebuild.Contract,
 	}
 	if err := validateAdmissionRequest(admission); err != nil {
 		return AdmissionRequest{}, err
@@ -594,8 +589,8 @@ func validateAdmissionRequest(request AdmissionRequest) error {
 		request.SourceArchiveEntries > imagebuild.MaxSourceArchiveEntries {
 		return errors.New("workspace image admission size is invalid")
 	}
-	if request.ExecutionABI != imagebuild.ExecutionABI || request.LLBABI != imagebuild.LLBABI || request.CacheABI != imagebuild.CacheABI {
-		return errors.New("workspace image admission ABI is invalid")
+	if request.ImageBuildContract != imagebuild.Contract {
+		return errors.New("workspace image admission contract is invalid")
 	}
 	if request.RequestedCacheMode != imagebuild.CachePrefer && request.RequestedCacheMode != imagebuild.CacheBypass {
 		return errors.New("workspace image requested cache mode is invalid")
@@ -623,7 +618,6 @@ func validateLeaseAuthority(lease LeaseAuthority) error {
 		}
 	}
 	if lease.WorkerGroupID == "" || strings.TrimSpace(lease.WorkerGroupID) != lease.WorkerGroupID ||
-		lease.WorkerProtocolVersion == "" || strings.TrimSpace(lease.WorkerProtocolVersion) != lease.WorkerProtocolVersion ||
 		lease.WorkerEpoch < 1 || lease.Generation < 1 ||
 		lease.RequestedGuestEphemeralDiskBytes < 1 || lease.RequestedCPUMillis < 1 ||
 		lease.RequestedMemoryBytes < 1 || lease.RequestedBuildExecutors < 1 {
@@ -672,7 +666,7 @@ func validateAssignment(request AdmissionRequest, assignment Assignment) error {
 func assignmentGuestRequest(assignment Assignment, attemptID string) imagebuild.GuestRequest {
 	request := assignment.Request
 	guest := imagebuild.GuestRequest{
-		ExecutionABI: request.ExecutionABI, LLBABI: request.LLBABI, CacheABI: request.CacheABI,
+		Contract:    request.ImageBuildContract,
 		OperationID: assignment.OperationID, AttemptID: attemptID,
 		BuildLeaseID: request.Lease.ID, BuildLeaseGeneration: request.Lease.Generation,
 		WorkerEpoch: request.Lease.WorkerEpoch, RuntimeIdentityID: request.RuntimeIdentityID,

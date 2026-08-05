@@ -34,11 +34,8 @@ func writeRunDetails(w io.Writer, run api.RunSnapshotResponse) {
 	if run.TerminalAt != nil {
 		fmt.Fprintf(w, "Terminal:    %s\n", run.TerminalAt.Format(time.RFC3339))
 	}
-	if run.TerminalReasonCode != "" {
-		fmt.Fprintf(w, "Reason:      %s\n", run.TerminalReasonCode)
-	}
-	if run.Error != nil {
-		fmt.Fprintf(w, "Error:       %s: %s\n", run.Error.Code, run.Error.Message)
+	if run.Failure != nil {
+		fmt.Fprintf(w, "Failure:     %s: %s\n", run.Failure.Code, run.Failure.Message)
 	}
 }
 

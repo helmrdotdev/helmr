@@ -53,7 +53,7 @@ describe("runProgram", () => {
   })
 
   test("reports an Actor throw as a bounded failure with its cursor", async () => {
-    const definition = actor({ id: "worker", run() { throw new Error("boom") } })
+    const definition = actor({ id: "worker", run() { throw new Error("\u0085boom\u0085") } })
     const start = actorStart(4n, 7n)
     const output: Uint8Array[] = []
     await runProgram(locatorURL, programIO({
@@ -69,6 +69,9 @@ describe("runProgram", () => {
     if (outcome.case === "actorOutcome") {
       expect(outcome.value.terminalInputSequence).toBe(4n)
       expect(outcome.value.outcome.case).toBe("failed")
+      if (outcome.value.outcome.case === "failed") {
+        expect(outcome.value.outcome.value.message).toBe("boom")
+      }
     }
   })
 
@@ -976,7 +979,7 @@ describe("runProgram", () => {
     ])
   })
 
-  test("task.call unwrap throws the recorded remote RunError", async () => {
+  test("task.call unwrap throws the recorded remote Run failure", async () => {
     const child = task({ id: "resize-image", run: () => null })
     let failure: unknown
     const definition = task({
@@ -1009,10 +1012,9 @@ describe("runProgram", () => {
         "completed",
         JSON.stringify({
           ok: false,
-          error: {
+          failure: {
             code: "task_failed",
             message: "resize failed",
-            retryable: false,
             details: { stage: "decode" },
           },
           run: { id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc38" },
@@ -1030,10 +1032,9 @@ describe("runProgram", () => {
     }))
     expect(failure).toBeInstanceOf(Error)
     expect(failure).toMatchObject({
-      name: "HelmrError",
+      name: "RunFailure",
       message: "resize failed",
       code: "task_failed",
-      retryable: false,
       details: { stage: "decode" },
     })
   })
@@ -1458,8 +1459,8 @@ describe("runProgram", () => {
     const start = taskStart("noPayload")
     const output: Uint8Array[] = []
     const waitWritten = deferred<void>()
-		let correlationId = ""
-		let runWaitId = ""
+    let correlationId = ""
+    let runWaitId = ""
     async function* input(): AsyncIterable<Uint8Array> {
       yield frameMessage(runProto.ProgramStartSchema, start)
       yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
@@ -1467,23 +1468,23 @@ describe("runProgram", () => {
       const event = readEvent(output[1]!).event
       expect(event.case).toBe("runWaitRequested")
       if (event.case !== "runWaitRequested") return
-			correlationId = event.value.correlationId
-			runWaitId = event.value.runWaitId
+      correlationId = event.value.correlationId
+      runWaitId = event.value.runWaitId
       expect(event.value.kind).toBe("timer")
       expect(event.value.timeoutMs).toBe(60_000n)
       expect(JSON.parse(event.value.paramsJson)).toEqual({ duration: "1m" })
       yield frameMessage(runProto.ResumeDecisionSchema, create(
         runProto.ResumeDecisionSchema,
         {
-			runWaitId: event.value.runWaitId,
-			correlationId: event.value.correlationId,
+          runWaitId: event.value.runWaitId,
+          correlationId: event.value.correlationId,
           kind: "completed",
           dataJson: "null",
-			requireConsumedAck: true,
-			checkpointId: "checkpoint-1",
-			resumeAttachId: event.value.resumeAttachId,
-			resumeRequestVersion: 4n,
-			runLeaseId: "lease-2",
+          requireConsumedAck: true,
+          checkpointId: "checkpoint-1",
+          resumeAttachId: event.value.resumeAttachId,
+          resumeRequestVersion: 4n,
+          runLeaseId: "lease-2",
         },
       ))
     }
@@ -1497,15 +1498,15 @@ describe("runProgram", () => {
       },
     }))
 
-		const consumed = readEvent(output[2]!).event
-		expect(consumed.case).toBe("resumeConsumed")
-		if (consumed.case === "resumeConsumed") {
-			expect(consumed.value.runWaitId).toBe(runWaitId)
-			expect(consumed.value.resumeRequestVersion).toBe(4n)
-			expect(consumed.value.correlationId).toBe(correlationId)
-		}
+    const consumed = readEvent(output[2]!).event
+    expect(consumed.case).toBe("resumeConsumed")
+    if (consumed.case === "resumeConsumed") {
+      expect(consumed.value.runWaitId).toBe(runWaitId)
+      expect(consumed.value.resumeRequestVersion).toBe(4n)
+      expect(consumed.value.correlationId).toBe(correlationId)
+    }
 
-		const result = readEvent(output[3]!).event
+    const result = readEvent(output[3]!).event
     expect(result.case).toBe("taskOutcome")
     if (result.case === "taskOutcome" && result.value.outcome.case === "succeeded") {
       expect(result.value.outcome.value.outputJson).toBe('{"resumed":true}')
@@ -1551,7 +1552,7 @@ describe("runProgram", () => {
     expect(output).toHaveLength(2)
   })
 
-  test("classifies a throwing payload schema as a bounded non-retryable validation failure", async () => {
+  test("classifies a throwing payload schema as a bounded terminal validation failure", async () => {
     let invoked = false
     const definition = task({
       id: "deploy",
@@ -1652,6 +1653,32 @@ describe("runProgram", () => {
         ).toBeLessThanOrEqual(1_024)
         expect(result.value.outcome.value.detailsJson).toBeUndefined()
       }
+    }
+  })
+
+  test("canonicalizes Task handler failure messages", async () => {
+    const definition = task({
+      id: "deploy",
+      run() {
+        throw new Error("\u0085failed\u0085")
+      },
+    })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+
+    await runProgram(locatorURL, programIO({
+      input: frames(
+        frameMessage(runProto.ProgramStartSchema, start),
+        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+      ),
+      definition,
+      output,
+    }))
+
+    const result = readEvent(output[1]!).event
+    expect(result.case).toBe("taskOutcome")
+    if (result.case === "taskOutcome" && result.value.outcome.case === "failed") {
+      expect(result.value.outcome.value.message).toBe("failed")
     }
   })
 
@@ -1835,7 +1862,7 @@ function programIO(options: {
         ],
         formatVersion: 0,
         queues: [],
-        runtimeApiVersion: "helmr.runtime.v0",
+        runtimeContract: "helmr.runtime.v0",
       }),
     importModule: async () => ({ definition: options.definition }),
     write: async (value) => {

@@ -169,8 +169,7 @@ RETURNING *;
 UPDATE runs
    SET status = sqlc.arg(status),
        output = NULL,
-       terminal_reason_code = sqlc.narg(reason_code),
-       error = sqlc.narg(error),
+       failure = sqlc.narg(failure),
        state_version = state_version + 1,
        current_run_lease_id = NULL,
        retry_at = NULL,
@@ -190,8 +189,7 @@ RETURNING *;
 UPDATE runs
    SET status = sqlc.arg(status),
        output = NULL,
-       terminal_reason_code = sqlc.narg(reason_code),
-       error = sqlc.narg(error),
+       failure = sqlc.narg(failure),
        state_version = state_version + 1,
        current_run_lease_id = NULL,
        retry_at = NULL,
@@ -214,7 +212,7 @@ UPDATE sessions
        run_generation = run_generation + 1,
        state_version = state_version + 1,
        committed_input_sequence = COALESCE(sqlc.narg(committed_input_sequence), committed_input_sequence),
-       failure_code = sqlc.narg(failure_code),
+       failure = sqlc.narg(failure),
        failure_run_id = sqlc.narg(failure_run_id),
        closed_at = CASE WHEN sqlc.arg(state)::text = 'closed' THEN sqlc.arg(completed_at) ELSE closed_at END,
        failed_at = CASE WHEN sqlc.arg(state)::text = 'failed' THEN sqlc.arg(completed_at) ELSE failed_at END,
@@ -313,6 +311,10 @@ WITH created_run AS (
             WHERE workspace_processes.workspace_id = workspaces.id
               AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
        )
+	ON CONFLICT (session_id)
+	    WHERE session_id IS NOT NULL
+	      AND status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested')
+	DO NOTHING
     RETURNING *
 ), created_attempt AS (
     INSERT INTO run_attempts (

@@ -11,10 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const (
-	testWorkerGroup    = runtest.WorkerGroup
-	testWorkerProtocol = runtest.WorkerProtocol
-)
+const testWorkerGroup = runtest.WorkerGroup
 
 type postgresFixture struct {
 	base          runtest.Fixture
