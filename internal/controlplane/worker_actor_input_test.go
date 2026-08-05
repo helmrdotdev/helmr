@@ -15,7 +15,7 @@ func TestParseWorkerActorInputSendRequiresSessionID(t *testing.T) {
 	request := workerapi.SendActorInputRequest{
 		Lease: lease.Fence(), CorrelationID: uuid.Must(uuid.NewV7()).String(),
 		SessionID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-		Input: json.RawMessage(`{"hello":"world"}`), IdempotencyKey: "send-1",
+		Input:     json.RawMessage(`{"hello":"world"}`), IdempotencyKey: "send-1",
 	}
 	parsed, err := parseWorkerActorInputSend(request)
 	if err != nil {

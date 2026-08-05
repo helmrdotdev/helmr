@@ -76,8 +76,8 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 	result := make(chan error, 1)
 	go func() {
 		result <- task.handleActorInputSend(t.Context(), &runv0.SessionInputSendRequested{
-			CorrelationId: correlationID,
-			SessionId:     "019c10d5-a6f7-7af1-8f5f-000000000111",
+			CorrelationId:  correlationID,
+			SessionId:      "019c10d5-a6f7-7af1-8f5f-000000000111",
 			DataJson:       `{"hello":"world"}`,
 			IdempotencyKey: new("send-1"),
 		})
@@ -138,7 +138,7 @@ func TestHandleActorInputSendRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 		result <- task.handleActorInputSend(t.Context(), &runv0.SessionInputSendRequested{
 			CorrelationId: correlationID,
 			SessionId:     "019c10d5-a6f7-7af1-8f5f-000000000111",
-			DataJson: `{"hello":"again"}`,
+			DataJson:      `{"hello":"again"}`,
 		})
 	}()
 	reader := bufio.NewReader(host)

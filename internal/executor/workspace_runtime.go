@@ -366,7 +366,7 @@ func workerWorkspaceRetrieveRequest(
 	}
 	return workerapi.RetrieveWorkspaceRequest{
 		CorrelationID: correlationID,
-		Workspace: workerapi.WorkspaceAddress{WorkspaceID: address.GetWorkspaceId()},
+		Workspace:     workerapi.WorkspaceAddress{WorkspaceID: address.GetWorkspaceId()},
 	}, nil
 }
 

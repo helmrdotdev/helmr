@@ -472,7 +472,7 @@ func TestFreshProgramDispatchesActorInputSendForTaskAndActor(t *testing.T) {
 	send := &runv0.SessionInputSendRequested{
 		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000111",
 		SessionId:     "019c10d5-a6f7-7af1-8f5f-000000000112",
-		DataJson: `{"message":"hello"}`,
+		DataJson:      `{"message":"hello"}`,
 	}
 	tests := []struct {
 		name       string
