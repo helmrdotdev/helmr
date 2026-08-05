@@ -15,7 +15,7 @@ import (
 
 func TestRunListCommandUsesSnapshotPagination(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/runs" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/runs" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if got := r.URL.Query()["status"]; !slices.Equal(got, []string{"running", "waiting"}) ||
@@ -60,14 +60,14 @@ func TestRunListCommandUsesSnapshotPagination(t *testing.T) {
 func TestRunGetCommandPrintsSnapshotSemantics(t *testing.T) {
 	terminalAt := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{
 			ID:                   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 			Status:               api.RunStatusSucceeded,
 			Entrypoint:           api.RunEntrypointResponse{Kind: "task", ID: "deploy"},
-			Deployment:           api.RunDeploymentResponse{ID: "dep-1", Version: "20260726-test"},
+			Deployment:           api.DeploymentReference{ID: "dep-1", Version: "20260726-test"},
 			WorkspaceID:          "ws-1",
 			CurrentAttemptNumber: 1,
 			Cause:                api.RunCauseResponse{Type: "direct"},
@@ -102,7 +102,7 @@ func TestRunGetCommandPrintsSnapshotSemantics(t *testing.T) {
 
 func TestRunCancelCommandCancelsRun(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/cancel" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/cancel" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if r.ContentLength > 0 {

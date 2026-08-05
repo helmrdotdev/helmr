@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -37,7 +38,7 @@ func TestAppendActorInputCompletedClaimBypassesCurrentActorState(t *testing.T) {
 	authorized := false
 	record, err := server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID:  environmentID,
-		ActorID:        actorID,
+		SessionID:      actorID,
 		RecordID:       uuid.Must(uuid.NewV7()),
 		Data:           []byte(`{"b":2,"a":1}`),
 		SourceKind:     "external",
@@ -62,7 +63,7 @@ func TestAppendActorInputCompletedClaimBypassesCurrentActorState(t *testing.T) {
 	if store.commits != 1 || store.rollbacks != 0 {
 		t.Fatalf("transactions: commits=%d rollbacks=%d", store.commits, store.rollbacks)
 	}
-	if !slices.Equal(store.calls, []string{"claim_lock", "commit"}) {
+	if !slices.Equal(store.calls, []string{"claim_lock", "record_get", "commit"}) {
 		t.Fatalf("calls = %v", store.calls)
 	}
 }
@@ -75,7 +76,7 @@ func TestAppendActorInputRollsBackNewClaimWhenActorIsUnavailable(t *testing.T) {
 
 	_, err := server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID:  environmentID,
-		ActorID:        actorID,
+		SessionID:      actorID,
 		RecordID:       uuid.Must(uuid.NewV7()),
 		Data:           []byte(`{"message":"queued"}`),
 		SourceKind:     "external",
@@ -102,7 +103,7 @@ func TestAppendActorInputRollsBackProvisionalRunSourceWhenAuthorityIsStale(t *te
 	actorID := uuid.Must(uuid.NewV7())
 	sourceRunID := uuid.Must(uuid.NewV7())
 	store := newActorInputClaimStore()
-	store.locator = db.Actor{
+	store.locator = db.Session{
 		ID:                pgvalue.UUID(actorID),
 		EnvironmentID:     pgvalue.UUID(environmentID),
 		WorkspaceID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -114,7 +115,7 @@ func TestAppendActorInputRollsBackProvisionalRunSourceWhenAuthorityIsStale(t *te
 
 	_, err := server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID:  environmentID,
-		ActorID:        actorID,
+		SessionID:      actorID,
 		RecordID:       uuid.Must(uuid.NewV7()),
 		Data:           []byte(`{"message":"queued"}`),
 		SourceKind:     "run",
@@ -146,7 +147,7 @@ func TestAppendActorInputRejectsOversizedCanonicalInputBeforeTransaction(t *test
 
 	_, err := server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID:  environmentID,
-		ActorID:        actorID,
+		SessionID:      actorID,
 		RecordID:       uuid.Must(uuid.NewV7()),
 		Data:           data,
 		SourceKind:     "external",
@@ -164,14 +165,14 @@ func TestAppendActorInputClassifiesLockedSequenceExhaustion(t *testing.T) {
 	environmentID := uuid.Must(uuid.NewV7())
 	actorID := uuid.Must(uuid.NewV7())
 	store := newActorInputClaimStore()
-	store.locator = db.Actor{
+	store.locator = db.Session{
 		ID:                pgvalue.UUID(actorID),
 		EnvironmentID:     pgvalue.UUID(environmentID),
 		WorkspaceID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		State:             "open",
 		NextInputSequence: maxActorSequence,
 	}
-	store.locatorAfterAppend = db.Actor{
+	store.locatorAfterAppend = db.Session{
 		ID:                pgvalue.UUID(actorID),
 		EnvironmentID:     pgvalue.UUID(environmentID),
 		WorkspaceID:       store.locator.WorkspaceID,
@@ -183,7 +184,7 @@ func TestAppendActorInputClassifiesLockedSequenceExhaustion(t *testing.T) {
 
 	_, err := server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID: environmentID,
-		ActorID:       actorID,
+		SessionID:     actorID,
 		RecordID:      uuid.Must(uuid.NewV7()),
 		Data:          []byte(`{"message":"queued"}`),
 		SourceKind:    "external",
@@ -196,9 +197,10 @@ func TestAppendActorInputClassifiesLockedSequenceExhaustion(t *testing.T) {
 type actorInputClaimStore struct {
 	db.Querier
 	claim              db.IdempotencyClaim
-	addressed          db.Actor
-	locator            db.Actor
-	locatorAfterAppend db.Actor
+	addressed          db.Session
+	locator            db.Session
+	locatorAfterAppend db.Session
+	replayRecord       db.SessionRecord
 	project            db.Project
 	environment        db.Environment
 	appendErr          error
@@ -244,9 +246,28 @@ func completeActorInputClaim(
 	store.claim = acquired.Claim
 	store.claim.State = "completed"
 	store.claim.Receipt = []byte(
-		`{"recordId":"` + recordID.String() + `","sequence":` +
+		`{"session_record_id":"` + recordID.String() + `","sequence":` +
 			fmt.Sprintf("%d", sequence) + `}`,
 	)
+	store.replayRecord = db.SessionRecord{
+		ID: pgvalue.UUID(recordID), EnvironmentID: pgvalue.UUID(environmentID),
+		SessionID: pgvalue.UUID(actorID), Direction: "input", Sequence: sequence,
+		Data: input, ContentType: "application/json", SourceKind: pgvalue.Text("external"),
+		ClaimID: store.claim.ID, CreatedAt: pgvalue.Timestamptz(time.Now().UTC()),
+	}
+}
+
+func (s *actorInputClaimStore) GetActorInputRecordByIDForUpdate(
+	_ context.Context,
+	params db.GetActorInputRecordByIDForUpdateParams,
+) (db.SessionRecord, error) {
+	s.calls = append(s.calls, "record_get")
+	if s.replayRecord.EnvironmentID != params.EnvironmentID ||
+		s.replayRecord.SessionID != params.SessionID ||
+		s.replayRecord.ID != params.ID {
+		return db.SessionRecord{}, pgx.ErrNoRows
+	}
+	return s.replayRecord, nil
 }
 
 func (s *actorInputClaimStore) BeginQuerier(context.Context) (db.Querier, transaction, error) {
@@ -292,16 +313,16 @@ func (s *actorInputClaimStore) CreateIdempotencyClaim(
 	return s.claim, nil
 }
 
-func (s *actorInputClaimStore) GetActor(context.Context, db.GetActorParams) (db.Actor, error) {
+func (s *actorInputClaimStore) GetActor(_ context.Context, params db.GetActorParams) (db.Session, error) {
 	s.calls = append(s.calls, "actor_get")
 	s.actorReads++
-	if s.actorReads > 1 && s.locatorAfterAppend.ID.Valid {
+	if s.actorReads > 1 && s.locatorAfterAppend.ID == params.ID && s.locatorAfterAppend.EnvironmentID == params.EnvironmentID {
 		return s.locatorAfterAppend, nil
 	}
-	if s.locator.ID.Valid {
+	if s.locator.ID == params.ID && s.locator.EnvironmentID == params.EnvironmentID {
 		return s.locator, nil
 	}
-	return db.Actor{}, pgx.ErrNoRows
+	return db.Session{}, pgx.ErrNoRows
 }
 
 func (s *actorInputClaimStore) LockWorkspaceSecretsForAdmission(
@@ -321,7 +342,7 @@ func (s *actorInputClaimStore) AppendActorInputRecord(
 	return db.AppendActorInputRecordRow{
 		ID:            params.ID,
 		EnvironmentID: params.EnvironmentID,
-		ActorID:       params.ActorID,
+		SessionID:     params.SessionID,
 		Direction:     "input",
 		Sequence:      s.locator.NextInputSequence,
 		Data:          params.Data,
@@ -336,13 +357,13 @@ func (s *actorInputClaimStore) AppendActorInputRecord(
 func (s *actorInputClaimStore) GetActorByKey(
 	_ context.Context,
 	params db.GetActorByKeyParams,
-) (db.Actor, error) {
+) (db.Session, error) {
 	s.addressReads++
 	if !s.addressed.ID.Valid ||
 		s.addressed.EnvironmentID != params.EnvironmentID ||
 		s.addressed.ActorDeclaredID != params.ActorDeclaredID ||
 		s.addressed.Key != params.Key {
-		return db.Actor{}, pgx.ErrNoRows
+		return db.Session{}, pgx.ErrNoRows
 	}
 	return s.addressed, nil
 }

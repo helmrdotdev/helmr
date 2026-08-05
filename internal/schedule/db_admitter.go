@@ -147,7 +147,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 	if workspace.DirtyState != db.WorkspaceDirtyStateClean {
 		return run.ErrWorkspaceReservationConflict
 	}
-	if workspace.OwnerActorID.Valid || workspace.OwnerRunID.Valid ||
+	if workspace.OwnerSessionID.Valid || workspace.OwnerRunID.Valid ||
 		workspace.HasActiveLease || workspace.HasActiveProcess {
 		return run.ErrWorkspaceReservationConflict
 	}
@@ -187,7 +187,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		WorkspaceStateVersion: workspace.StateVersion,
 	}); err != nil {
 		if errors.Is(err, run.ErrSecretUnavailable) {
-			return workspaceError("schedule workspace secret is unavailable")
+			return fmt.Errorf("schedule workspace secret is unavailable: %w", err)
 		}
 		return err
 	}

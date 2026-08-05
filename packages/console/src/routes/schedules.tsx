@@ -117,7 +117,7 @@ export function Schedules() {
                   <For each={items()}>
                     {(schedule) => (
                       <tr class={ui.detailTableRow}>
-                        <td><strong>{schedule.task}</strong></td>
+						<td><strong>{schedule.task_id}</strong></td>
                         <td>
                           <div class={ui.tableCellStack}>
                             <span class={statusBadgeClass(statusTone(schedule))}>

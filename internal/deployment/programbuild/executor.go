@@ -292,7 +292,7 @@ func (executor Executor) buildWorkspaceImages(
 ) ([]deployment.WorkspaceImage, error) {
 	workspaces := make([]deployment.DefinitionInput, 0)
 	for _, definition := range plan.Definitions {
-		if definition.Kind == deployment.DefinitionKindWorkspace {
+		if definition.Kind == deployment.DefinitionKindSandbox {
 			workspaces = append(workspaces, definition)
 		}
 	}
@@ -302,7 +302,7 @@ func (executor Executor) buildWorkspaceImages(
 	engine := executor.imageEngine()
 	images := make([]deployment.WorkspaceImage, 0, len(workspaces))
 	for _, definition := range workspaces {
-		source, err := tree.SelectImageSource(ctx, definition.Workspace.ImageBuild)
+		source, err := tree.SelectImageSource(ctx, definition.Sandbox.ImageBuild)
 		if err != nil {
 			return nil, fmt.Errorf("select workspace %q image source: %w", definition.DeclaredID, err)
 		}
@@ -321,7 +321,7 @@ func (executor Executor) buildWorkspaceImages(
 			RuntimeIdentityID:     executor.RuntimeIdentityID,
 			DeclarationSlot:       definition.DeclaredID,
 			Architecture:          string(architecture),
-			Plan:                  definition.Workspace.ImageBuild,
+			Plan:                  definition.Sandbox.ImageBuild,
 			SubmittedSourceDigest: work.DeploymentSource.Digest,
 			BuildTreeDigest:       treeDescriptor.Digest,
 			BuildTreeSizeBytes:    treeDescriptor.SizeBytes,

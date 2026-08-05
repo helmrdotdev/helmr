@@ -31,7 +31,7 @@ export const reviewer = actor({
 Send follow-up input with an idempotency key derived from the upstream event:
 
 ```ts
-await reviewer.ref({ key: "github:owner/repo#42" }).input.send(
+await sessions.ref(sessionId).input.send(
   { type: "instruction", text: "Please also update the tests." },
   { idempotencyKey: "slack:T123:C456:1712345678.000100" },
 )

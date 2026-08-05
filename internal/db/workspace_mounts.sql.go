@@ -63,7 +63,7 @@ SELECT claimed.id, claimed.org_id, claimed.worker_group_id, claimed.project_id, 
   JOIN deployment_definitions
     ON deployment_definitions.environment_id = runtime_instances.environment_id
    AND deployment_definitions.id = runtime_instances.deployment_definition_id
-   AND deployment_definitions.kind = 'workspace'
+   AND deployment_definitions.kind = 'sandbox'
   JOIN workspace_versions
     ON workspace_versions.workspace_id = claimed.workspace_id
    AND workspace_versions.id = claimed.materialized_version_id
@@ -819,7 +819,7 @@ SELECT workspaces.id AS workspace_id, workspaces.head_version_id,
   LEFT JOIN deployment_definitions
     ON deployment_definitions.environment_id = workspaces.environment_id
    AND deployment_definitions.id = workspaces.deployment_definition_id
-   AND deployment_definitions.kind = 'workspace'
+   AND deployment_definitions.kind = 'sandbox'
   LEFT JOIN artifacts AS image_artifacts
     ON image_artifacts.environment_id = deployment_definitions.environment_id
    AND image_artifacts.id = deployment_definitions.artifact_id

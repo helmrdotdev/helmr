@@ -2,17 +2,27 @@ import { describe, expect, test } from "bun:test"
 
 import {
   inspectDefinition,
-  inspectWorkspaceDefinition,
+  inspectSandboxDefinition,
+  inspectWorkspaceAddress,
   installRuntimeOperations,
   isQueueDefinition,
 } from "./internal"
-import { actor, image, queue, task, workspace, workspaces } from "./index"
+import {
+  actor,
+  image,
+  queue,
+  sandbox,
+  schedules,
+  sessions,
+  task,
+  workspaces,
+} from "./index"
 
 describe("private definition inspection", () => {
   test("distinguishes helpers from malformed branded values", () => {
     expect(inspectDefinition({ id: "helper" })).toBeUndefined()
-    expect(isQueueDefinition({ id: "helper" })).toBe(false)
-    expect(inspectWorkspaceDefinition({ id: "helper" })).toBeUndefined()
+    expect(isQueueDefinition({ name: "helper" })).toBe(false)
+    expect(inspectSandboxDefinition({ id: "helper" })).toBeUndefined()
 
     expect(() =>
       inspectDefinition({
@@ -25,10 +35,10 @@ describe("private definition inspection", () => {
       }),
     ).toThrow("private queue")
     expect(() =>
-      inspectWorkspaceDefinition({
-        [Symbol.for("helmr.sdk.v0.workspace")]: true,
+      inspectSandboxDefinition({
+        [Symbol.for("helmr.sdk.v0.sandbox")]: true,
       }),
-    ).toThrow("private workspace")
+    ).toThrow("private Sandbox")
   })
 
   test("accepts SDK-created definitions", () => {
@@ -40,11 +50,36 @@ describe("private definition inspection", () => {
       kind: "task",
       id: "resize",
     })
-    expect(isQueueDefinition(queue({ id: "images" }))).toBe(true)
+    expect(isQueueDefinition(queue({ name: "images" }))).toBe(true)
+  })
+
+  test("constructs branded Workspace addresses without operations", () => {
+    const id = workspaces.fromId("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
+    const key = workspaces.fromKey("machine")
+    const ref = workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
+
+    expect(inspectWorkspaceAddress(id)).toEqual({
+      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
+    })
+    expect(inspectWorkspaceAddress(key)).toEqual({ key: "machine" })
+    expect(inspectWorkspaceAddress(ref)?.id).toBe(id.id)
+    expect(inspectWorkspaceAddress({ key: "machine" })).toBeUndefined()
+    expect(Object.isFrozen(id)).toBe(true)
+    expect(Object.isFrozen(key)).toBe(true)
+    expect(Object.isFrozen(ref)).toBe(true)
+  })
+
+  test("rejects a forged Schedule Workspace address", () => {
+    expect(() => schedules.task({
+      id: "maintenance",
+      cron: { pattern: "0 3 * * *", timezone: "UTC" },
+      workspace: { key: "machine" } as never,
+      run: () => null,
+    })).toThrow("Workspace address")
   })
 
   test("rejects untyped Workspace resource extensions", () => {
-    const builder = workspace("machine")
+    const builder = sandbox({ id: "machine" })
       .image(image("root").from("debian:bookworm-slim"))
     expect(() =>
       builder.resources({
@@ -80,7 +115,7 @@ describe("private definition inspection", () => {
         run: () => ({ resized: true }),
       })
       const options = {
-        workspace: workspaces.ref({ key: "images" }),
+        workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
         idempotencyKey: "resize:image-1",
       }
       const wait = child.call({ imageId: "image-1" }, options)
@@ -100,74 +135,38 @@ describe("private definition inspection", () => {
     }
   })
 
-  test("captures the Actor declared ID and exact address for input send", async () => {
+  test("addresses Session input only by UUID", async () => {
     const calls: unknown[] = []
     const uninstall = installRuntimeOperations({
       waitFor: async () => {},
       waitUntil: async () => {},
-      actorInputSend: async (target, input, options) => {
-        calls.push({ target, input, options })
+      actorInputSend: async (sessionId, input, options) => {
+        calls.push({ sessionId, input, options })
         return { sequence: 7 }
       },
     })
     try {
-      const config = { id: "mailbox", run() {} }
-      const definition = actor(config)
-      config.id = "mutated"
-      const idAddress = { id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" }
-      const idRef = definition.ref(idAddress)
-      idAddress.id = "act_invalid"
-      await expect(idRef.input.send(
+      const ref = sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
+      await expect(ref.input.send(
         { message: "hello" },
         { idempotencyKey: "send-1" },
       )).resolves.toEqual({ sequence: 7 })
-      const keyAddress = { key: "primary" }
-      const keyRef = definition.ref(keyAddress)
-      keyAddress.key = "mutated"
-      await keyRef.input.send(null)
-      expect(idRef.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
-      expect(keyRef.key).toBe("primary")
+      expect(ref.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
     } finally {
       uninstall()
     }
     expect(calls).toEqual([
       {
-        target: {
-          declaredId: "mailbox",
-          address: { id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" },
-        },
+        sessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
         input: { message: "hello" },
         options: { idempotencyKey: "send-1" },
-      },
-      {
-        target: { declaredId: "mailbox", address: { key: "primary" } },
-        input: null,
-        options: undefined,
       },
     ])
   })
 
-  test("rejects malformed Actor ref addresses before runtime dispatch", () => {
-    const definition = actor({ id: "mailbox", run() {} })
-    expect(() => definition.ref({ id: "act_not-canonical" })).toThrow(
-      "Actor ref ID must be a canonical UUIDv7",
-    )
-    for (const key of [
-      "",
-      " leading",
-      "trailing ",
-      "\u0085leading",
-      "embedded\0nul",
-      "a".repeat(513),
-    ]) {
-      expect(() => definition.ref({ key })).toThrow("actor ref key")
-    }
-    expect(() => definition.ref({
-      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-      key: "primary",
-    } as never)).toThrow("exactly one")
-    expect(definition.ref({ key: "\ufeffprimary" }).key).toBe(
-      "\ufeffprimary",
+  test("rejects malformed Session IDs before runtime dispatch", () => {
+    expect(() => sessions.ref("act_not-canonical")).toThrow(
+      "Session ID must be a canonical UUIDv7",
     )
   })
 
@@ -178,12 +177,12 @@ describe("private definition inspection", () => {
       actorStart: async (declaredId, options) => {
         calls.push({ operation: "start", declaredId, options })
         return {
-          actorId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+          sessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
           runId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
         }
       },
-      actorStatus: async (target) => {
-        calls.push({ operation: "status", target })
+      sessionStatus: async (sessionId) => {
+        calls.push({ operation: "status", sessionId })
         return {
           id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
           status: "open",
@@ -191,15 +190,15 @@ describe("private definition inspection", () => {
           updatedAt: new Date("2026-07-26T00:00:01Z"),
         }
       },
-      actorClose: async (target, options) => {
-        calls.push({ operation: "close", target, options })
+      sessionClose: async (sessionId, options) => {
+        calls.push({ operation: "close", sessionId, options })
         return {
-          actorId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+          sessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
           acceptedAt: new Date("2026-07-26T00:00:02Z"),
         }
       },
-      actorOutputPage: async (target, options) => {
-        calls.push({ operation: "output", target, options })
+      sessionOutputPage: async (sessionId, options) => {
+        calls.push({ operation: "output", sessionId, options })
         page++
         return page === 1
           ? {
@@ -224,16 +223,16 @@ describe("private definition inspection", () => {
     try {
       const definition = actor({ id: "mailbox", run() {} })
       const omitted = {
-        workspace: workspaces.ref({ key: "actor-workspace" }),
+        workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
       }
       const started = await definition.start(omitted)
-      expect(started.ref.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
+      expect(started.session.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
       expect(started.run.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31")
       await definition.start({
-        workspace: workspaces.ref({ key: "actor-workspace" }),
+        workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
         input: null,
       })
-      const ref = definition.ref({ id: started.ref.id })
+      const ref = started.session
       await ref.status()
       await ref.close({ idempotencyKey: "close-1" })
       expect(await ref.output.list({ limit: 1 })).toHaveLength(1)
@@ -258,15 +257,13 @@ describe("private definition inspection", () => {
     let requests = 0
     const controller = new AbortController()
     const uninstall = installRuntimeOperations({
-      actorOutputPage: async () => {
+      sessionOutputPage: async () => {
         requests++
         return { records: [], nextAfter: 0, hasMore: false }
       },
     } as never)
     try {
-      const ref = actor({ id: "mailbox", run() {} }).ref({
-        key: "primary",
-      })
+      const ref = sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
       controller.abort(new Error("stop output"))
       const iterator = ref.output.read({ signal: controller.signal })
       await expect(iterator[Symbol.asyncIterator]().next()).rejects.toThrow(

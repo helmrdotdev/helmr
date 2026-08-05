@@ -171,7 +171,7 @@ func (program *freshProgram) awaitTaskCompletion(
 	ctx context.Context,
 	events freshProgramEventSink,
 	wait func(context.Context, *runv0.RunWaitRequested) error,
-	sendActorInput func(context.Context, *runv0.ActorInputSendRequested) error,
+	sendActorInput func(context.Context, *runv0.SessionInputSendRequested) error,
 	createToken func(context.Context, *runv0.TokenCreateRequested) error,
 	invokeChildTask func(context.Context, *runv0.TaskChildInvokeRequested) error,
 	resourceRuntime ...func(context.Context, *runv0.RunEvent) error,
@@ -265,14 +265,14 @@ func (program *freshProgram) awaitTaskCompletion(
 			if err := wait(ctx, value.RunWaitRequested); err != nil {
 				return nil, nil, err
 			}
-		case *runv0.RunEvent_ActorInputSendRequested:
+		case *runv0.RunEvent_SessionInputSendRequested:
 			if outcome != nil {
 				return nil, nil, errors.New("program emitted an actor input send after task outcome")
 			}
 			if sendActorInput == nil {
 				return nil, nil, errors.New("fresh program actor input send support is required")
 			}
-			if err := sendActorInput(ctx, value.ActorInputSendRequested); err != nil {
+			if err := sendActorInput(ctx, value.SessionInputSendRequested); err != nil {
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_TokenCreateRequested:
@@ -296,9 +296,9 @@ func (program *freshProgram) awaitTaskCompletion(
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_ActorStartRequested,
-			*runv0.RunEvent_ActorStatusRequested,
-			*runv0.RunEvent_ActorCloseRequested,
-			*runv0.RunEvent_ActorOutputPageRequested,
+			*runv0.RunEvent_SessionStatusRequested,
+			*runv0.RunEvent_SessionCloseRequested,
+			*runv0.RunEvent_SessionOutputPageRequested,
 			*runv0.RunEvent_WorkspaceCreateRequested,
 			*runv0.RunEvent_WorkspaceRetrieveRequested,
 			*runv0.RunEvent_WorkspaceFileReadRequested,
@@ -338,7 +338,7 @@ func (program *freshProgram) awaitActorCompletion(
 	events freshProgramEventSink,
 	wait func(context.Context, *runv0.RunWaitRequested) error,
 	turnCommit func(context.Context, *runv0.ActorTurnCommitRequested) error,
-	sendActorInput func(context.Context, *runv0.ActorInputSendRequested) error,
+	sendActorInput func(context.Context, *runv0.SessionInputSendRequested) error,
 	appendActorOutput func(context.Context, *runv0.ActorOutputAppendRequested) error,
 	createToken func(context.Context, *runv0.TokenCreateRequested) error,
 	invokeChildTask func(context.Context, *runv0.TaskChildInvokeRequested) error,
@@ -425,14 +425,14 @@ func (program *freshProgram) awaitActorCompletion(
 			if err := turnCommit(ctx, value.ActorTurnCommitRequested); err != nil {
 				return nil, nil, err
 			}
-		case *runv0.RunEvent_ActorInputSendRequested:
+		case *runv0.RunEvent_SessionInputSendRequested:
 			if outcome != nil {
 				return nil, nil, errors.New("program emitted an actor input send after actor outcome")
 			}
 			if sendActorInput == nil {
 				return nil, nil, errors.New("fresh program actor input send support is required")
 			}
-			if err := sendActorInput(ctx, value.ActorInputSendRequested); err != nil {
+			if err := sendActorInput(ctx, value.SessionInputSendRequested); err != nil {
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_ActorOutputAppendRequested:
@@ -466,9 +466,9 @@ func (program *freshProgram) awaitActorCompletion(
 				return nil, nil, err
 			}
 		case *runv0.RunEvent_ActorStartRequested,
-			*runv0.RunEvent_ActorStatusRequested,
-			*runv0.RunEvent_ActorCloseRequested,
-			*runv0.RunEvent_ActorOutputPageRequested,
+			*runv0.RunEvent_SessionStatusRequested,
+			*runv0.RunEvent_SessionCloseRequested,
+			*runv0.RunEvent_SessionOutputPageRequested,
 			*runv0.RunEvent_WorkspaceCreateRequested,
 			*runv0.RunEvent_WorkspaceRetrieveRequested,
 			*runv0.RunEvent_WorkspaceFileReadRequested,

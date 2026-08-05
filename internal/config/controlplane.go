@@ -10,7 +10,18 @@ import (
 )
 
 func LoadControlPlane() (ControlPlane, error) {
-	publicURL := env("PUBLIC_URL", DefaultPublicURL)
+	publicURL, err := normalizeOrigin("PUBLIC_URL", env("PUBLIC_URL", DefaultPublicURL))
+	if err != nil {
+		return ControlPlane{}, err
+	}
+	apiOriginRaw := envText("API_ORIGIN")
+	if apiOriginRaw == "" {
+		apiOriginRaw = publicURL
+	}
+	apiOrigin, err := normalizeOrigin("API_ORIGIN", apiOriginRaw)
+	if err != nil {
+		return ControlPlane{}, err
+	}
 	magicLinkDebugURLs, err := envBool("MAGIC_LINK_DEBUG_URLS", false)
 	if err != nil {
 		return ControlPlane{}, err
@@ -27,9 +38,10 @@ func LoadControlPlane() (ControlPlane, error) {
 		BuildPolicyPath:         envText("BUILD_POLICY_PATH"),
 		PlatformStoreURI:        envText("PLATFORM_STORE_URI"),
 		WorkerGroupsJSON:        envText("WORKER_GROUPS"),
-		OperatorToken:           envSecret("OPERATOR_TOKEN"),
+		CapacityToken:           envSecret("CAPACITY_TOKEN"),
 		SetupToken:              envSecret("SETUP_TOKEN"),
 		PublicURL:               publicURL,
+		APIOrigin:               apiOrigin,
 		MagicLinkDebugURLs:      magicLinkDebugURLs,
 		EmailProvider:           envLower("EMAIL_PROVIDER"),
 		ResendAPIKey:            envSecret("RESEND_API_KEY"),
@@ -104,9 +116,6 @@ func LoadControlPlane() (ControlPlane, error) {
 			return cfg, err
 		}
 	}
-	if err := validatePublicURL(cfg.PublicURL); err != nil {
-		return cfg, err
-	}
 	if err := validateControlPlaneEmailConfig(&cfg); err != nil {
 		return cfg, err
 	}
@@ -120,7 +129,7 @@ func LoadControlPlane() (ControlPlane, error) {
 		name  string
 		value string
 	}{
-		{"OPERATOR_TOKEN", cfg.OperatorToken},
+		{"CAPACITY_TOKEN", cfg.CapacityToken},
 		{"SETUP_TOKEN", cfg.SetupToken},
 	} {
 		if strings.TrimSpace(token.value) != token.value {

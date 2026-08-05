@@ -206,9 +206,9 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 }
 
 func deploymentMetadataFromRequest(request api.CreateDeploymentRequest) (deploymentVersionMetadata, error) {
-	apiVersion := firstPresentString(request.APIVersion, api.CurrentAPIVersion)
-	if apiVersion != api.CurrentAPIVersion {
-		return deploymentVersionMetadata{}, fmt.Errorf("unsupported deployment api_version %q; current version is %s", apiVersion, api.CurrentAPIVersion)
+	apiVersion := firstPresentString(request.APIVersion, deployment.APIVersion)
+	if apiVersion != deployment.APIVersion {
+		return deploymentVersionMetadata{}, fmt.Errorf("unsupported deployment api_version %q; current version is %s", apiVersion, deployment.APIVersion)
 	}
 	workerProtocolVersion := firstPresentString(request.WorkerProtocolVersion, workerapi.CurrentProtocolVersion)
 	if workerProtocolVersion != workerapi.CurrentProtocolVersion {

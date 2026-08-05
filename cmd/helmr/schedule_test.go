@@ -15,20 +15,20 @@ func TestScheduleListAndGet(t *testing.T) {
 	const scheduleID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/schedules":
+		case "/v1/schedules":
 			if r.URL.Query().Get("cursor") != "sc1.cursor" ||
 				r.URL.Query().Get("limit") != "25" {
 				t.Fatalf("query = %q", r.URL.RawQuery)
 			}
 			_ = json.NewEncoder(w).Encode(api.ListSchedulesResponse{
 				Schedules: []api.ScheduleResponse{{
-					ID: scheduleID, Task: "nightly", Status: "active",
+					ID: scheduleID, TaskID: "nightly", Status: "active",
 				}},
 				NextCursor: "sc1.next",
 			})
-		case "/api/schedules/" + scheduleID:
+		case "/v1/schedules/" + scheduleID:
 			_ = json.NewEncoder(w).Encode(api.ScheduleResponse{
-				ID: scheduleID, Task: "nightly", Status: "active",
+				ID: scheduleID, TaskID: "nightly", Status: "active",
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.RequestURI())

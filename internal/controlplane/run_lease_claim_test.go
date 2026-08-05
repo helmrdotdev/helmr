@@ -260,10 +260,10 @@ func TestClaimFreshTaskRunLeaseInTxRejectsActorAuthority(t *testing.T) {
 	worker, locators, authority := validRunLeaseClaimFixture()
 	actorID := pgvalue.UUID(uuid.New())
 	authority.run.EntrypointKind = "actor"
-	authority.run.ActorID = actorID
+	authority.run.SessionID = actorID
 	authority.attempt.EntrypointKind = "actor"
 	authority.workspace.OwnerRunID = pgtype.UUID{}
-	authority.workspace.OwnerActorID = actorID
+	authority.workspace.OwnerSessionID = actorID
 	store := &runLeaseClaimStore{authority: authority}
 
 	_, err := claimFreshTaskRunLeaseInTx(
@@ -400,7 +400,7 @@ func TestClaimActorRunLeaseInTxAcceptsRetryAttemptFrontier(t *testing.T) {
 	locators.AttemptNumber = 2
 	authority.run.CurrentAttemptNumber = 2
 	authority.attempt.Number = 2
-	authority.attempt.ActorStartInputSequence = pgtype.Int8{Int64: 2, Valid: true}
+	authority.attempt.SessionInputStartSequence = pgtype.Int8{Int64: 2, Valid: true}
 	authority.attempt.BaseWorkspaceVersionID = retryVersionID
 	authority.actor.CommittedInputSequence = 2
 	authority.workspace.HeadVersionID = retryVersionID
@@ -426,7 +426,7 @@ func TestClaimActorRunLeaseInTxRejectsRetryCursorMismatch(t *testing.T) {
 	locators.AttemptNumber = 2
 	authority.run.CurrentAttemptNumber = 2
 	authority.attempt.Number = 2
-	authority.attempt.ActorStartInputSequence = pgtype.Int8{Int64: 2, Valid: true}
+	authority.attempt.SessionInputStartSequence = pgtype.Int8{Int64: 2, Valid: true}
 	authority.runLease.AttemptNumber = 2
 	store := &runLeaseClaimStore{authority: authority}
 
@@ -449,7 +449,7 @@ func TestClaimActorRunLeaseInTxRejectsRetryBaseThatIsNotWorkspaceHead(t *testing
 	locators.AttemptNumber = 2
 	authority.run.CurrentAttemptNumber = 2
 	authority.attempt.Number = 2
-	authority.attempt.ActorStartInputSequence = pgtype.Int8{Int64: 2, Valid: true}
+	authority.attempt.SessionInputStartSequence = pgtype.Int8{Int64: 2, Valid: true}
 	authority.attempt.BaseWorkspaceVersionID = retryVersionID
 	authority.actor.CommittedInputSequence = 2
 	authority.runLease.AttemptNumber = 2
@@ -1263,7 +1263,7 @@ func (s *runLeaseClaimStore) GetWorkspaceResetTargetAuthority(
 	return s.resetTarget, nil
 }
 
-func (s *runLeaseClaimStore) LockRunLeaseClaimActor(context.Context, db.LockRunLeaseClaimActorParams) (db.Actor, error) {
+func (s *runLeaseClaimStore) LockRunLeaseClaimActor(context.Context, db.LockRunLeaseClaimActorParams) (db.Session, error) {
 	s.calls = append(s.calls, "actor")
 	return s.authority.actor, nil
 }
@@ -1583,9 +1583,9 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 func validActorRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, runLeaseClaimAuthority) {
 	worker, locators, authority := validRunLeaseClaimFixture()
 	actorID := pgvalue.UUID(uuid.New())
-	locators.ActorID = actorID
+	locators.SessionID = actorID
 	locators.ActorRunGeneration = pgtype.Int8{Int64: 9, Valid: true}
-	authority.actor = db.Actor{
+	authority.actor = db.Session{
 		ID:                     actorID,
 		ActorDeclaredID:        "test-actor",
 		DeploymentDefinitionID: authority.run.DeploymentDefinitionID,
@@ -1598,13 +1598,13 @@ func validActorRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsR
 	}
 	authority.run.EntrypointKind = "actor"
 	authority.run.EntrypointDeclaredID = "test-actor"
-	authority.run.ActorID = actorID
-	authority.run.ActorStartInputSequence = pgtype.Int8{Int64: 1, Valid: true}
-	authority.run.ActorStartInputHighWatermark = pgtype.Int8{Int64: 3, Valid: true}
+	authority.run.SessionID = actorID
+	authority.run.SessionInputStartSequence = pgtype.Int8{Int64: 1, Valid: true}
+	authority.run.SessionInputHighWatermark = pgtype.Int8{Int64: 3, Valid: true}
 	authority.workspace.OwnerRunID = pgtype.UUID{}
-	authority.workspace.OwnerActorID = actorID
+	authority.workspace.OwnerSessionID = actorID
 	authority.attempt.EntrypointKind = "actor"
-	authority.attempt.ActorStartInputSequence = pgtype.Int8{Int64: 1, Valid: true}
+	authority.attempt.SessionInputStartSequence = pgtype.Int8{Int64: 1, Valid: true}
 	return worker, locators, authority
 }
 
@@ -1786,9 +1786,9 @@ func validSameWorkspaceChildRunLeaseClaimFixture(actorParent bool) (workerActor,
 	}
 	if actorParent {
 		actorID := pgvalue.UUID(uuid.New())
-		locators.ParentActorID = actorID
+		locators.ParentSessionID = actorID
 		locators.ParentActorRunGeneration = pgtype.Int8{Int64: 7, Valid: true}
-		authority.actor = db.Actor{
+		authority.actor = db.Session{
 			ID:                     actorID,
 			ActorDeclaredID:        "parent-actor",
 			DeploymentDefinitionID: authority.parentRun.DeploymentDefinitionID,
@@ -1801,13 +1801,13 @@ func validSameWorkspaceChildRunLeaseClaimFixture(actorParent bool) (workerActor,
 		}
 		authority.parentRun.EntrypointKind = "actor"
 		authority.parentRun.EntrypointDeclaredID = "parent-actor"
-		authority.parentRun.ActorID = actorID
-		authority.parentRun.ActorStartInputSequence = pgtype.Int8{Int64: 1, Valid: true}
-		authority.parentRun.ActorStartInputHighWatermark = pgtype.Int8{Int64: 3, Valid: true}
+		authority.parentRun.SessionID = actorID
+		authority.parentRun.SessionInputStartSequence = pgtype.Int8{Int64: 1, Valid: true}
+		authority.parentRun.SessionInputHighWatermark = pgtype.Int8{Int64: 3, Valid: true}
 		authority.parentAttempt.EntrypointKind = "actor"
-		authority.parentAttempt.ActorStartInputSequence = pgtype.Int8{Int64: 1, Valid: true}
+		authority.parentAttempt.SessionInputStartSequence = pgtype.Int8{Int64: 1, Valid: true}
 		authority.workspace.OwnerRunID = pgtype.UUID{}
-		authority.workspace.OwnerActorID = actorID
+		authority.workspace.OwnerSessionID = actorID
 		authority.checkpoint.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 2, Valid: true}
 	}
 	return worker, locators, authority

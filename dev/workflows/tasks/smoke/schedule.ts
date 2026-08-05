@@ -1,10 +1,10 @@
-import { image, schedules, workspace, workspaces } from "@helmr/sdk"
+import { image, schedules, sandbox, workspaces } from "@helmr/sdk"
 
 const base = image("helmr-schedule-smoke")
   .from("node:24-bookworm-slim")
-  .workdir("/workspace")
+  .workdir("/sandbox")
 
-export const scheduleSmokeWorkspace = workspace("helmr-schedule-smoke")
+export const scheduleSmokeWorkspace = sandbox({ id: "helmr-schedule-smoke" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 
@@ -14,7 +14,7 @@ export const scheduleSmoke = schedules.task({
     pattern: "* * * * *",
     timezone: "UTC",
   },
-  workspace: workspaces.ref({ key: "release-gate" }),
+  workspace: workspaces.fromKey("release-gate"),
   maxDuration: "5m",
   retry: { enabled: false },
   run: async (input, ctx) => {

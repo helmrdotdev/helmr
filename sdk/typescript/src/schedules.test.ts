@@ -2,12 +2,13 @@ import { expect, test } from "bun:test"
 
 import { inspectDefinition } from "./internal"
 import { schedules } from "./schedules"
+import { workspaces } from "./workspace"
 
 test("scheduled payload accepts Control RFC3339Nano timestamps", async () => {
   const definition = schedules.task({
     id: "daily-report",
     cron: { pattern: "0 9 * * *", timezone: "UTC" },
-    workspace: { key: "scheduler" },
+    workspace: workspaces.fromKey("scheduler"),
     run: () => null,
   })
   const internal = inspectDefinition(definition)
@@ -33,7 +34,7 @@ test("scheduled payload rejects non-canonical Schedule IDs", async () => {
   const definition = schedules.task({
     id: "daily-report",
     cron: { pattern: "0 9 * * *", timezone: "UTC" },
-    workspace: { key: "scheduler" },
+    workspace: workspaces.fromKey("scheduler"),
     run: () => null,
   })
   const internal = inspectDefinition(definition)
@@ -53,4 +54,14 @@ test("scheduled payload rejects non-canonical Schedule IDs", async () => {
     })
     expect(result.issues).toBeDefined()
   }
+})
+
+test("Schedule declarations reject Secret placement", () => {
+  expect(() => schedules.task({
+    id: "daily-report",
+    cron: { pattern: "0 9 * * *", timezone: "UTC" },
+    workspace: workspaces.fromKey("scheduler"),
+    secrets: [{ secret: "TOKEN", env: "TOKEN" }],
+    run: () => null,
+  } as never)).toThrow('unknown member "secrets"')
 })

@@ -56,7 +56,7 @@ export function ScopeSwitcher() {
     staleTime: 60_000,
   }));
   const availableRegions = createMemo(() =>
-    (regions.data?.regions ?? []).filter((region) => region.state === "available"),
+	(regions.data?.regions ?? []).filter((region) => region.status === "available"),
   );
 
   const filteredProjects = createMemo(() => {

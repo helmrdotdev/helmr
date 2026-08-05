@@ -70,11 +70,12 @@ const (
 
 type workspaceCreateResult struct {
 	WorkspaceID uuid.UUID
+	Snapshot    api.WorkspaceSnapshot
 	Replayed    bool
 }
 
 type workspaceCreateReceipt struct {
-	WorkspaceID string `json:"workspace_id"`
+	Workspace api.WorkspaceSnapshot `json:"workspace"`
 }
 
 type workspaceSecretPlacement struct {
@@ -109,12 +110,21 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 	}
 	var claimRequest idempotency.Request
 	if request.IdempotencyKey != "" {
-		claimRequest, err = idempotency.NewWorkspaceCreateRequest(
-			request.EnvironmentID,
-			request.DeclaredID,
-			request.IdempotencyKey,
-			idempotency.WorkspaceCreateFingerprint{Key: request.Key, Secrets: placementJSON},
-		)
+		fingerprint := idempotency.WorkspaceCreateFingerprint{
+			Key: request.Key, Secrets: placementJSON,
+		}
+		switch request.Declaration.Kind {
+		case workspaceDeclarationPromoted:
+			claimRequest, err = idempotency.NewExternalWorkspaceCreateRequest(
+				request.EnvironmentID, request.DeclaredID,
+				request.IdempotencyKey, fingerprint,
+			)
+		case workspaceDeclarationRunPinned:
+			claimRequest, err = idempotency.NewRuntimeWorkspaceCreateRequest(
+				request.EnvironmentID, request.Declaration.RunID,
+				request.DeclaredID, request.IdempotencyKey, fingerprint,
+			)
+		}
 		if err != nil {
 			return workspaceCreateResult{}, fmt.Errorf("%w: %v", errWorkspaceCreateInvalid, err)
 		}
@@ -158,17 +168,17 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 			definition, err = work.q.ResolveCurrentWorkspaceDefinitionForCreate(
 				ctx,
 				db.ResolveCurrentWorkspaceDefinitionForCreateParams{
-					EnvironmentID:       pgvalue.UUID(request.EnvironmentID),
-					WorkspaceDeclaredID: request.DeclaredID,
+					EnvironmentID:     pgvalue.UUID(request.EnvironmentID),
+					SandboxDeclaredID: request.DeclaredID,
 				},
 			)
 		case workspaceDeclarationRunPinned:
 			definition, err = work.q.ResolveRunPinnedWorkspaceDefinitionForCreate(
 				ctx,
 				db.ResolveRunPinnedWorkspaceDefinitionForCreateParams{
-					EnvironmentID:       pgvalue.UUID(request.EnvironmentID),
-					RunID:               pgvalue.UUID(request.Declaration.RunID),
-					WorkspaceDeclaredID: request.DeclaredID,
+					EnvironmentID:     pgvalue.UUID(request.EnvironmentID),
+					RunID:             pgvalue.UUID(request.Declaration.RunID),
+					SandboxDeclaredID: request.DeclaredID,
 				},
 			)
 		}
@@ -212,6 +222,11 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 			key = pgtype.Text{String: *request.Key, Valid: true}
 		}
 		var createdWorkspaceID pgtype.UUID
+		var createdKey pgtype.Text
+		var createdState string
+		var createdLastActivityAt pgtype.Timestamptz
+		var createdAt pgtype.Timestamptz
+		var createdUpdatedAt pgtype.Timestamptz
 		switch request.Declaration.Kind {
 		case workspaceDeclarationPromoted:
 			created, createErr := work.q.CreateWorkspaceFromCurrentDeployment(
@@ -221,7 +236,7 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 					OrgID:                  pgvalue.UUID(request.OrgID),
 					EnvironmentID:          pgvalue.UUID(request.EnvironmentID),
 					DeploymentDefinitionID: definition.ID,
-					WorkspaceDeclaredID:    request.DeclaredID,
+					SandboxDeclaredID:      request.DeclaredID,
 					ID:                     pgvalue.UUID(workspaceID),
 					InitialVersionID:       pgvalue.UUID(versionID),
 					Key:                    key,
@@ -229,20 +244,30 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 			)
 			err = createErr
 			createdWorkspaceID = created.ID
+			createdKey = created.Key
+			createdState = created.State
+			createdLastActivityAt = created.LastActivityAt
+			createdAt = created.CreatedAt
+			createdUpdatedAt = created.UpdatedAt
 		case workspaceDeclarationRunPinned:
 			created, createErr := work.q.CreateWorkspaceFromRunDeployment(
 				ctx,
 				db.CreateWorkspaceFromRunDeploymentParams{
-					EnvironmentID:       pgvalue.UUID(request.EnvironmentID),
-					RunID:               pgvalue.UUID(request.Declaration.RunID),
-					WorkspaceDeclaredID: request.DeclaredID,
-					ID:                  pgvalue.UUID(workspaceID),
-					InitialVersionID:    pgvalue.UUID(versionID),
-					Key:                 key,
+					EnvironmentID:     pgvalue.UUID(request.EnvironmentID),
+					RunID:             pgvalue.UUID(request.Declaration.RunID),
+					SandboxDeclaredID: request.DeclaredID,
+					ID:                pgvalue.UUID(workspaceID),
+					InitialVersionID:  pgvalue.UUID(versionID),
+					Key:               key,
 				},
 			)
 			err = createErr
 			createdWorkspaceID = created.ID
+			createdKey = created.Key
+			createdState = created.State
+			createdLastActivityAt = created.LastActivityAt
+			createdAt = created.CreatedAt
+			createdUpdatedAt = created.UpdatedAt
 		}
 		if err != nil {
 			var postgresError *pgconn.PgError
@@ -267,10 +292,43 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 				return fmt.Errorf("create workspace secret placement: %w", err)
 			}
 		}
-		result = workspaceCreateResult{WorkspaceID: workspaceID}
+		status, err := workspacePublicStatus(createdState)
+		if err != nil {
+			return err
+		}
+		var snapshotKey *string
+		if createdKey.Valid {
+			value := createdKey.String
+			snapshotKey = &value
+		}
+		snapshotSecrets := make([]api.WorkspaceSecret, 0, len(placements))
+		for _, placement := range placements {
+			item := api.WorkspaceSecret{Name: placement.Name}
+			switch placement.Kind {
+			case "env":
+				item.Env = placement.Target
+			case "file":
+				item.File = placement.Target
+			default:
+				return fmt.Errorf("unsupported workspace secret placement %q", placement.Kind)
+			}
+			snapshotSecrets = append(snapshotSecrets, item)
+		}
+		snapshot := api.WorkspaceSnapshot{
+			ID:             workspaceID.String(),
+			Key:            snapshotKey,
+			SandboxID:      definition.DeclaredID,
+			DeploymentID:   pgvalue.UUIDString(definition.DeploymentID),
+			Status:         status,
+			Secrets:        snapshotSecrets,
+			LastActivityAt: pgvalue.Time(createdLastActivityAt),
+			CreatedAt:      pgvalue.Time(createdAt),
+			UpdatedAt:      pgvalue.Time(createdUpdatedAt),
+		}
+		result = workspaceCreateResult{WorkspaceID: workspaceID, Snapshot: snapshot}
 		if claim != nil {
 			receipt, err := json.Marshal(workspaceCreateReceipt{
-				WorkspaceID: workspaceID.String(),
+				Workspace: snapshot,
 			})
 			if err != nil {
 				return err
@@ -376,9 +434,24 @@ func workspaceCreateResultFromReceipt(raw []byte) (workspaceCreateResult, error)
 	if err := json.Unmarshal(raw, &receipt); err != nil {
 		return workspaceCreateResult{}, errWorkspaceCreateReceipt
 	}
-	workspaceID, err := ids.Parse(receipt.WorkspaceID)
+	workspaceID, err := ids.Parse(receipt.Workspace.ID)
 	if err != nil {
 		return workspaceCreateResult{}, errWorkspaceCreateReceipt
 	}
-	return workspaceCreateResult{WorkspaceID: workspaceID}, nil
+	if ids.Validate(receipt.Workspace.DeploymentID) != nil ||
+		api.ValidateSandboxDeclaredID(receipt.Workspace.SandboxID) != nil ||
+		receipt.Workspace.Status != api.WorkspaceStatusAvailable ||
+		receipt.Workspace.LastActivityAt.IsZero() ||
+		receipt.Workspace.CreatedAt.IsZero() ||
+		receipt.Workspace.UpdatedAt.IsZero() ||
+		validateWorkspaceKey(receipt.Workspace.Key) != nil {
+		return workspaceCreateResult{}, errWorkspaceCreateReceipt
+	}
+	if _, err := normalizeWorkspaceSecretPlacements(receipt.Workspace.Secrets); err != nil {
+		return workspaceCreateResult{}, errWorkspaceCreateReceipt
+	}
+	return workspaceCreateResult{
+		WorkspaceID: workspaceID,
+		Snapshot:    receipt.Workspace,
+	}, nil
 }

@@ -648,19 +648,17 @@ type CommitActorTurnResponse struct {
 }
 
 type SendActorInputRequest struct {
-	Lease           RunLeaseFence   `json:"lease"`
-	CorrelationID   string          `json:"correlation_id"`
-	ActorDeclaredID string          `json:"actor_declared_id"`
-	ActorID         string          `json:"actor_id,omitempty"`
-	ActorKey        string          `json:"actor_key,omitempty"`
-	Input           json.RawMessage `json:"input"`
-	IdempotencyKey  string          `json:"idempotency_key,omitempty"`
+	Lease          RunLeaseFence   `json:"lease"`
+	CorrelationID  string          `json:"correlation_id"`
+	SessionID      string          `json:"session_id"`
+	Input          json.RawMessage `json:"input"`
+	IdempotencyKey string          `json:"idempotency_key,omitempty"`
 }
 
 type SendActorInputResponse struct {
-	CorrelationID string                      `json:"correlation_id"`
-	Completed     *api.SendActorInputResponse `json:"completed,omitempty"`
-	Failed        *RuntimeOperationFailure    `json:"failed,omitempty"`
+	CorrelationID string                   `json:"correlation_id"`
+	Completed     *api.SessionInput        `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
 }
 
 type StartActorRequest struct {
@@ -671,7 +669,7 @@ type StartActorRequest struct {
 	InputPresent    bool                      `json:"input_present"`
 	Input           json.RawMessage           `json:"input,omitempty"`
 	IdempotencyKey  string                    `json:"idempotency_key,omitempty"`
-	Workspace       api.WorkspaceTarget       `json:"workspace"`
+	Workspace       api.WorkspaceIDTarget     `json:"workspace"`
 	Run             *api.StartActorRunOptions `json:"run,omitempty"`
 }
 
@@ -681,61 +679,62 @@ type StartActorResponse struct {
 	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
 }
 
-type ActorReferenceRequest struct {
-	Lease           RunLeaseFence `json:"lease"`
-	CorrelationID   string        `json:"correlation_id"`
-	ActorDeclaredID string        `json:"actor_declared_id"`
-	ActorID         string        `json:"actor_id,omitempty"`
-	ActorKey        string        `json:"actor_key,omitempty"`
+type SessionReferenceRequest struct {
+	Lease         RunLeaseFence `json:"lease"`
+	CorrelationID string        `json:"correlation_id"`
+	SessionID     string        `json:"session_id"`
 }
 
-type ActorStatusResponse struct {
-	CorrelationID string                   `json:"correlation_id"`
-	Completed     *api.ActorStatus         `json:"completed,omitempty"`
-	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
-}
-
-type CloseActorRequest struct {
-	ActorReferenceRequest
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
-}
-
-type CloseActorResponse struct {
+type SessionStatusResponse struct {
 	CorrelationID string                     `json:"correlation_id"`
-	Completed     *api.ActorOperationReceipt `json:"completed,omitempty"`
+	Completed     *api.SessionStatusSnapshot `json:"completed,omitempty"`
 	Failed        *RuntimeOperationFailure   `json:"failed,omitempty"`
 }
 
-type ReadActorOutputPageRequest struct {
-	ActorReferenceRequest
+type CloseSessionRequest struct {
+	SessionReferenceRequest
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+type CloseSessionResponse struct {
+	CorrelationID string                   `json:"correlation_id"`
+	Completed     *api.SessionCloseReceipt `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type ReadSessionOutputPageRequest struct {
+	SessionReferenceRequest
 	After *int64 `json:"after,omitempty"`
 	Limit int32  `json:"limit"`
 }
 
-type ReadActorOutputPageResponse struct {
+type ReadSessionOutputPageResponse struct {
 	CorrelationID string                   `json:"correlation_id"`
-	Completed     *api.ActorOutputPage     `json:"completed,omitempty"`
+	Completed     *api.SessionOutputPage   `json:"completed,omitempty"`
 	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
 }
 
 type WorkspaceAddress struct {
-	WorkspaceID  string `json:"workspace_id,omitempty"`
-	WorkspaceKey string `json:"workspace_key,omitempty"`
+	WorkspaceID string `json:"workspace_id"`
 }
 
 type CreateWorkspaceRequest struct {
-	Lease               RunLeaseFence         `json:"lease"`
-	CorrelationID       string                `json:"correlation_id"`
-	WorkspaceDeclaredID string                `json:"workspace_declared_id"`
-	Key                 *string               `json:"key,omitempty"`
-	Secrets             []api.WorkspaceSecret `json:"secrets,omitempty"`
-	IdempotencyKey      string                `json:"idempotency_key,omitempty"`
+	Lease             RunLeaseFence         `json:"lease"`
+	CorrelationID     string                `json:"correlation_id"`
+	SandboxDeclaredID string                `json:"sandbox_declared_id"`
+	Key               *string               `json:"key,omitempty"`
+	Secrets           []api.WorkspaceSecret `json:"secrets,omitempty"`
+	IdempotencyKey    string                `json:"idempotency_key,omitempty"`
 }
 
 type CreateWorkspaceResponse struct {
-	CorrelationID string                       `json:"correlation_id"`
-	Completed     *api.CreateWorkspaceResponse `json:"completed,omitempty"`
-	Failed        *RuntimeOperationFailure     `json:"failed,omitempty"`
+	CorrelationID string                   `json:"correlation_id"`
+	Completed     *CreateWorkspaceResult   `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
+}
+
+type CreateWorkspaceResult struct {
+	WorkspaceID string `json:"workspace_id"`
 }
 
 type RetrieveWorkspaceRequest struct {
@@ -852,7 +851,7 @@ type AppendActorOutputRequest struct {
 
 type AppendActorOutputResponse struct {
 	CorrelationID string                   `json:"correlation_id"`
-	Completed     *api.ActorOutputRecord   `json:"completed,omitempty"`
+	Completed     *api.SessionOutput       `json:"completed,omitempty"`
 	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
 }
 
@@ -1209,65 +1208,6 @@ type RestoreRunWait struct {
 	Kind                 string          `json:"kind"`
 	ResumeKind           string          `json:"resume_kind"`
 	ResumePayloadJSON    json.RawMessage `json:"resume_payload_json"`
-}
-
-type StartRequest struct {
-	Lease RunLease `json:"lease"`
-}
-
-type RejectRunRequest struct {
-	Lease      RunLease        `json:"lease"`
-	ReasonCode string          `json:"reason_code"`
-	Error      json.RawMessage `json:"error,omitempty"`
-}
-
-type StartResponse struct {
-	RunID  string   `json:"run_id"`
-	Status string   `json:"status"`
-	Lease  RunLease `json:"lease"`
-}
-
-type AcknowledgeRestoreRequest struct {
-	Lease                RunLease          `json:"lease"`
-	RunWaitID            string            `json:"run_wait_id"`
-	CheckpointID         string            `json:"checkpoint_id"`
-	ResumeRequestVersion int64             `json:"resume_request_version"`
-	Phases               []CheckpointPhase `json:"phases,omitempty"`
-}
-
-type AcknowledgeRestoreResponse struct {
-	RunID        string `json:"run_id"`
-	RunWaitID    string `json:"run_wait_id"`
-	CheckpointID string `json:"checkpoint_id"`
-}
-
-type RenewRequest struct {
-	Lease RunLease `json:"lease"`
-}
-
-type RenewResponse struct {
-	Lease RunLease `json:"lease"`
-}
-
-type ReleaseRequest struct {
-	Lease  RunLease      `json:"lease"`
-	Result ReleaseResult `json:"result"`
-}
-
-type ReleaseResult struct {
-	Kind             string          `json:"kind"`
-	ActiveDurationMs int64           `json:"active_duration_ms,omitempty"`
-	ExitCode         *int32          `json:"exit_code,omitempty"`
-	Output           json.RawMessage `json:"output,omitempty"`
-	Error            *string         `json:"error,omitempty"`
-	FailureKind      *string         `json:"failure_kind,omitempty"`
-	LimitSeconds     *int32          `json:"limit_seconds,omitempty"`
-	Workspace        *Workspace      `json:"workspace,omitempty"`
-}
-
-type ReleaseResponse struct {
-	RunID  string `json:"run_id"`
-	Status string `json:"status"`
 }
 
 type SecretDeclaration struct {

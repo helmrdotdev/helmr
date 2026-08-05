@@ -37,17 +37,17 @@ func TestActorInputAppendPostgresRejectsOversizedCanonicalInputWithoutResidue(
 	readState := func() state {
 		var value state
 		if err := fixture.pool.QueryRow(t.Context(), `
-SELECT actors.next_input_sequence,
-       (SELECT count(*) FROM actor_records WHERE actor_id = actors.id),
+SELECT sessions.next_input_sequence,
+       (SELECT count(*) FROM session_records WHERE session_id = sessions.id),
        (SELECT count(*) FROM idempotency_claims
-         WHERE environment_id = actors.environment_id
-           AND operation = 'actor.input.send'),
+         WHERE environment_id = sessions.environment_id
+           AND operation = 'session.input.send'),
        (SELECT count(*) FROM outbox_messages
-         WHERE topic = 'actor.input.reconcile'
-           AND partition_key = actors.id::text)
-  FROM actors
- WHERE actors.id = $1`,
-			started.ActorID,
+         WHERE topic = 'session.input.reconcile'
+           AND partition_key = sessions.id::text)
+  FROM sessions
+ WHERE sessions.id = $1`,
+			started.SessionID,
 		).Scan(
 			&value.nextSequence,
 			&value.records,
@@ -62,7 +62,7 @@ SELECT actors.next_input_sequence,
 	recordID := uuid.Must(uuid.NewV7())
 	_, err = fixture.server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID:  fixture.environmentID,
-		ActorID:        started.ActorID,
+		SessionID:      started.SessionID,
 		RecordID:       recordID,
 		Data:           data,
 		SourceKind:     "external",
@@ -78,7 +78,7 @@ SELECT actors.next_input_sequence,
 	var recordCount int
 	if err := fixture.pool.QueryRow(
 		t.Context(),
-		`SELECT count(*) FROM actor_records WHERE id = $1`,
+		`SELECT count(*) FROM session_records WHERE id = $1`,
 		recordID,
 	).Scan(&recordCount); err != nil {
 		t.Fatal(err)

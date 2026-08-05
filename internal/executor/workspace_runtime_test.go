@@ -88,7 +88,7 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 			testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 			createResponse: workerapi.CreateWorkspaceResponse{
 				CorrelationID: correlationID,
-				Completed: &api.CreateWorkspaceResponse{
+				Completed: &workerapi.CreateWorkspaceResult{
 					WorkspaceID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
 				},
 			},
@@ -114,7 +114,7 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 		}
 		if decision.GetKind() != "completed" ||
 			controlPlane.createRequest.Lease.ID == "" ||
-			controlPlane.createRequest.WorkspaceDeclaredID != "cache" ||
+			controlPlane.createRequest.SandboxDeclaredID != "cache" ||
 			controlPlane.createRequest.Key == nil || *controlPlane.createRequest.Key != key ||
 			len(controlPlane.createRequest.Secrets) != 1 {
 			t.Fatalf("decision = %+v request = %+v", decision, controlPlane.createRequest)
@@ -168,7 +168,7 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 				WorkspaceExecRequested: &runv0.WorkspaceExecRequested{
 					CorrelationId: correlationID,
 					Workspace: &runv0.WorkspaceAddress{
-						Address: &runv0.WorkspaceAddress_WorkspaceKey{WorkspaceKey: "cache"},
+						WorkspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
 					},
 					Command:   []string{"sh", "-c", "printf ok"},
 					TimeoutMs: &timeout, IdempotencyKey: "exec:ok",
@@ -191,9 +191,7 @@ func TestWorkspaceRuntimeVerticalContract(t *testing.T) {
 func TestWorkerWorkspaceRequestsRequireTypedCanonicalIdentity(t *testing.T) {
 	_, err := workerWorkspaceRetrieveRequest(
 		"019C0225-F0C9-7F66-8A23-7782CA0A8461",
-		&runv0.WorkspaceAddress{Address: &runv0.WorkspaceAddress_WorkspaceKey{
-			WorkspaceKey: "cache",
-		}},
+		&runv0.WorkspaceAddress{WorkspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},
 	)
 	if err == nil {
 		t.Fatal("non-canonical correlation ID was accepted")

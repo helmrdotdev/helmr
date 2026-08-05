@@ -21,27 +21,29 @@ type CreateWorkspaceRequest struct {
 	IdempotencyKey string            `json:"idempotency_key,omitempty"`
 }
 
-type CreateWorkspaceResponse struct {
-	WorkspaceID string `json:"workspace_id"`
-}
-
 type WorkspaceStatus string
 
 const (
 	WorkspaceStatusAvailable        WorkspaceStatus = "available"
-	WorkspaceStatusRecoveryRequired WorkspaceStatus = "recovery_required"
+	WorkspaceStatusRecoveryRequired WorkspaceStatus = "recovery-required"
 	WorkspaceStatusDeleting         WorkspaceStatus = "deleting"
 )
 
 type WorkspaceSnapshot struct {
 	ID             string            `json:"id"`
 	Key            *string           `json:"key,omitempty"`
-	DeclaredID     string            `json:"declared_id"`
+	SandboxID      string            `json:"sandbox_id"`
+	DeploymentID   string            `json:"deployment_id"`
 	Status         WorkspaceStatus   `json:"status"`
 	Secrets        []WorkspaceSecret `json:"secrets"`
 	LastActivityAt time.Time         `json:"last_activity_at"`
 	CreatedAt      time.Time         `json:"created_at"`
 	UpdatedAt      time.Time         `json:"updated_at"`
+}
+
+type ListWorkspacesResponse struct {
+	Workspaces []WorkspaceSnapshot `json:"workspaces"`
+	NextCursor string              `json:"next_cursor,omitempty"`
 }
 
 type DeleteWorkspaceRequest struct {
@@ -52,7 +54,7 @@ type DeleteWorkspaceReceipt struct {
 	WorkspaceID string `json:"workspace_id"`
 }
 
-func ValidateWorkspaceDeclaredID(id string) error {
+func ValidateSandboxDeclaredID(id string) error {
 	if !workspaceDeclaredIDPattern.MatchString(id) {
 		return fmt.Errorf(
 			"workspace declared ID %q must match %s",

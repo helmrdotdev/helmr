@@ -130,9 +130,9 @@ func (s *Server) appendActorOutput(
 	worker workerActor,
 	request workerapi.AppendActorOutputRequest,
 	parsed parsedWorkerActorOutputAppend,
-) (api.ActorOutputRecord, error) {
+) (api.SessionOutput, error) {
 	if len(parsed.data) > maxActorOutputBytes {
-		return api.ActorOutputRecord{}, errActorOutputTooLarge
+		return api.SessionOutput{}, errActorOutputTooLarge
 	}
 	locatorParams := db.GetLiveRunLeaseLocatorsParams{
 		ID:                    pgvalue.UUID(parsed.lease.leaseID),
@@ -143,18 +143,18 @@ func (s *Server) appendActorOutput(
 		WorkerProtocolVersion: worker.ProtocolVersion,
 	}
 	discovered, err := s.db.GetLiveRunLeaseLocators(ctx, locatorParams)
-	if err != nil || !discovered.ActorID.Valid {
-		return api.ActorOutputRecord{}, staleActorOutputAppend(err)
+	if err != nil || !discovered.SessionID.Valid {
+		return api.SessionOutput{}, staleActorOutputAppend(err)
 	}
 	environmentID, err := pgvalue.UUIDValue(discovered.EnvironmentID)
 	if err != nil {
-		return api.ActorOutputRecord{}, errStaleActorOutputAppend
+		return api.SessionOutput{}, errStaleActorOutputAppend
 	}
-	actorID, err := pgvalue.UUIDValue(discovered.ActorID)
+	actorID, err := pgvalue.UUIDValue(discovered.SessionID)
 	if err != nil {
-		return api.ActorOutputRecord{}, errStaleActorOutputAppend
+		return api.SessionOutput{}, errStaleActorOutputAppend
 	}
-	var response api.ActorOutputRecord
+	var response api.SessionOutput
 	err = s.inTx(ctx, func(work *txWork) error {
 		claimID := pgtype.UUID{}
 		fingerprint := []byte(nil)
@@ -188,7 +188,7 @@ func (s *Server) appendActorOutput(
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, locatorParams)
 		if err != nil ||
 			locators.EnvironmentID != discovered.EnvironmentID ||
-			locators.ActorID != discovered.ActorID {
+			locators.SessionID != discovered.SessionID {
 			return staleActorOutputAppend(err)
 		}
 		if _, err := secret.LockAttemptDelivery(
@@ -214,7 +214,7 @@ func (s *Server) appendActorOutput(
 		authority.actor = owner.actor
 		if authority.run.ParentRunID.Valid ||
 			authority.run.EntrypointKind != "actor" ||
-			authority.run.ActorID != authority.actor.ID ||
+			authority.run.SessionID != authority.actor.ID ||
 			authority.actor.CurrentRunID != authority.run.ID ||
 			(authority.actor.State != "open" && authority.actor.State != "closing") ||
 			authority.run.Status != db.RunStatusRunning ||
@@ -233,14 +233,14 @@ func (s *Server) appendActorOutput(
 			response, err = projectAppendedActorOutput(ctx, work.q, record)
 			return err
 		}
-		if authority.actor.NextOutputSequence > maxActorOutputSequence {
+		if authority.actor.NextOutputSequence > maxSessionOutputSequence {
 			return errActorSequenceExhausted
 		}
 
 		row, err := work.q.AppendActorOutputRecord(ctx, db.AppendActorOutputRecordParams{
 			EnvironmentID:              authority.run.EnvironmentID,
 			ClaimID:                    claimID,
-			ActorID:                    authority.actor.ID,
+			SessionID:                  authority.actor.ID,
 			ProducerRunID:              authority.run.ID,
 			ProducerAttemptNumber:      authority.attempt.Number,
 			ExpectedRequestFingerprint: fingerprint,
@@ -263,7 +263,7 @@ func (s *Server) appendActorOutput(
 				EnvironmentID:      record.EnvironmentID,
 				ClaimID:            claimID,
 				RequestFingerprint: fingerprint,
-				ActorID:            record.ActorID,
+				SessionID:          record.SessionID,
 				RecordID:           record.ID,
 			}); err != nil {
 				return fmt.Errorf("complete actor output idempotency claim: %w", err)
@@ -280,32 +280,32 @@ func actorOutputRecordFromReceipt(
 	q db.Querier,
 	authority runLeaseClaimAuthority,
 	claim db.IdempotencyClaim,
-) (db.ActorRecord, error) {
+) (db.SessionRecord, error) {
 	var receipt actorRecordClaimReceipt
 	if err := json.Unmarshal(claim.Receipt, &receipt); err != nil {
-		return db.ActorRecord{}, err
+		return db.SessionRecord{}, err
 	}
-	recordID, err := ids.Parse(receipt.RecordID)
-	if err != nil || recordID == uuid.Nil || receipt.Sequence <= 0 || receipt.Sequence > maxActorOutputSequence {
-		return db.ActorRecord{}, errActorOutputAppendConflict
+	recordID, err := ids.Parse(receipt.SessionRecordID)
+	if err != nil || recordID == uuid.Nil || receipt.Sequence <= 0 || receipt.Sequence > maxSessionOutputSequence {
+		return db.SessionRecord{}, errActorOutputAppendConflict
 	}
 	record, err := q.GetActorOutputRecordByID(ctx, db.GetActorOutputRecordByIDParams{
 		EnvironmentID: authority.run.EnvironmentID,
-		ActorID:       authority.actor.ID,
+		SessionID:     authority.actor.ID,
 		ID:            pgvalue.UUID(recordID),
 	})
 	if err != nil ||
 		record.Sequence != receipt.Sequence ||
 		!record.ProducerRunID.Valid ||
 		!record.ProducerAttemptNumber.Valid {
-		return db.ActorRecord{}, errActorOutputAppendConflict
+		return db.SessionRecord{}, errActorOutputAppendConflict
 	}
 	return record, nil
 }
 
-func actorOutputRecordFromAppend(row db.AppendActorOutputRecordRow) db.ActorRecord {
-	return db.ActorRecord{
-		ID: row.ID, EnvironmentID: row.EnvironmentID, ActorID: row.ActorID,
+func actorOutputRecordFromAppend(row db.AppendActorOutputRecordRow) db.SessionRecord {
+	return db.SessionRecord{
+		ID: row.ID, EnvironmentID: row.EnvironmentID, SessionID: row.SessionID,
 		Direction: row.Direction, Sequence: row.Sequence, Data: row.Data, ContentType: row.ContentType,
 		SourceKind: row.SourceKind, SourceRunID: row.SourceRunID,
 		ProducerRunID: row.ProducerRunID, ProducerAttemptNumber: row.ProducerAttemptNumber,
@@ -316,44 +316,44 @@ func actorOutputRecordFromAppend(row db.AppendActorOutputRecordRow) db.ActorReco
 func projectAppendedActorOutput(
 	ctx context.Context,
 	q db.Querier,
-	record db.ActorRecord,
-) (api.ActorOutputRecord, error) {
+	record db.SessionRecord,
+) (api.SessionOutput, error) {
 	recordUUID, err := pgvalue.UUIDValue(record.ID)
 	if err != nil {
-		return api.ActorOutputRecord{}, errActorOutputAppendConflict
+		return api.SessionOutput{}, errActorOutputAppendConflict
 	}
 	if ids.Validate(recordUUID.String()) != nil {
-		return api.ActorOutputRecord{}, errActorOutputAppendConflict
+		return api.SessionOutput{}, errActorOutputAppendConflict
 	}
 	if record.Direction != "output" ||
 		!record.ProducerAttemptNumber.Valid ||
 		record.ProducerAttemptNumber.Int32 < 1 ||
 		record.Sequence <= 0 ||
-		record.Sequence > maxActorOutputSequence ||
+		record.Sequence > maxSessionOutputSequence ||
 		!json.Valid(record.Data) ||
 		record.ContentType == "" ||
 		!record.CreatedAt.Valid {
-		return api.ActorOutputRecord{}, errActorOutputAppendConflict
+		return api.SessionOutput{}, errActorOutputAppendConflict
 	}
 	run, err := q.GetRun(ctx, db.GetRunParams{
 		EnvironmentID: record.EnvironmentID,
 		ID:            record.ProducerRunID,
 	})
-	if err != nil || run.ActorID != record.ActorID {
-		return api.ActorOutputRecord{}, errActorOutputAppendConflict
+	if err != nil || run.SessionID != record.SessionID {
+		return api.SessionOutput{}, errActorOutputAppendConflict
 	}
 	runID := pgvalue.UUIDString(run.ID)
 	deploymentID := pgvalue.UUIDString(run.DeploymentID)
 	if ids.Validate(runID) != nil {
-		return api.ActorOutputRecord{}, errActorOutputAppendConflict
+		return api.SessionOutput{}, errActorOutputAppendConflict
 	}
 	if ids.Validate(deploymentID) != nil {
-		return api.ActorOutputRecord{}, errActorOutputAppendConflict
+		return api.SessionOutput{}, errActorOutputAppendConflict
 	}
-	return api.ActorOutputRecord{
+	return api.SessionOutput{
 		ID: recordUUID.String(), Sequence: record.Sequence, Data: append(json.RawMessage(nil), record.Data...),
 		ContentType: record.ContentType, CreatedAt: record.CreatedAt.Time.UTC(),
-		Provenance: api.ActorOutputProvenance{
+		Provenance: api.SessionOutputProvenance{
 			RunID: runID, AttemptNumber: record.ProducerAttemptNumber.Int32,
 			DeploymentID: deploymentID,
 		},

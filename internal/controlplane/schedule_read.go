@@ -148,7 +148,7 @@ func parseScheduleListQuery(
 	if cursor.ProjectID != projectID || cursor.EnvironmentID != environmentID {
 		return 0, nil, errors.New("schedule cursor belongs to another scope")
 	}
-	if err := api.ValidateTaskID(cursor.TaskDeclaredID); err != nil {
+	if err := api.ValidateDefinitionID(cursor.TaskDeclaredID); err != nil {
 		return 0, nil, errors.New("schedule cursor is invalid")
 	}
 	if ids.Validate(cursor.ScheduleID) != nil {
@@ -239,7 +239,7 @@ func scheduleResponse(row db.Schedule) (api.ScheduleResponse, error) {
 	}
 	response := api.ScheduleResponse{
 		ID:         scheduleID,
-		Task:       row.TaskDeclaredID,
+		TaskID:     row.TaskDeclaredID,
 		Cron:       api.ScheduleCron{Pattern: row.CronPattern, Timezone: row.Timezone},
 		Status:     strings.ReplaceAll(row.State, "_", "-"),
 		Generation: row.Generation,
@@ -263,6 +263,13 @@ func scheduleResponse(row db.Schedule) (api.ScheduleResponse, error) {
 		response.Workspace.Key = row.WorkspaceRefKey.String
 	default:
 		return api.ScheduleResponse{}, errors.New("schedule workspace address is absent")
+	}
+	if row.WorkspaceID.Valid {
+		workspaceID := pgvalue.UUIDString(row.WorkspaceID)
+		if ids.Validate(workspaceID) != nil {
+			return api.ScheduleResponse{}, errors.New("bound schedule workspace identity is invalid")
+		}
+		response.WorkspaceID = workspaceID
 	}
 	if row.LastErrorCode.Valid || row.LastErrorMessage.Valid {
 		if !row.LastErrorCode.Valid || !row.LastErrorMessage.Valid {

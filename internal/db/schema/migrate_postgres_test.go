@@ -754,7 +754,7 @@ func assertIdempotencyClaimCollectionIndexes(t *testing.T, ctx context.Context, 
 		"idempotency_claims_live_expiry_idx",
 		"idempotency_claims_retired_idx",
 		"runs_claim_idx",
-		"actor_records_claim_idx",
+		"session_records_claim_idx",
 		"run_waits_child_claim_idx",
 	}
 	var count int
@@ -1033,7 +1033,7 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		  FROM pg_constraint
 		 WHERE conrelid = 'deployment_definitions'::regclass
 		   AND contype = 'c'
-		   AND pg_get_constraintdef(oid) LIKE '%task%actor%workspace%'
+		   AND pg_get_constraintdef(oid) LIKE '%task%actor%sandbox%'
 	`).Scan(&definitionKinds); err != nil {
 		t.Fatal(err)
 	}
@@ -1086,7 +1086,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if !exactFit || overShape {
 		t.Fatalf("fixed build guest exact/over shape fence = %t/%t", exactFit, overShape)
 	}
-	logicalTables := []string{"idempotency_claims", "schedules", "workspaces", "actors", "actor_records", "runs", "run_attempts", "run_waits", "run_checkpoints", "run_checkpoint_artifacts", "meter_events", "telemetry_outbox"}
+	logicalTables := []string{"idempotency_claims", "schedules", "workspaces", "sessions", "session_records", "runs", "run_attempts", "run_waits", "run_checkpoints", "run_checkpoint_artifacts", "meter_events", "telemetry_outbox"}
 	var placementLeaks int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM information_schema.columns

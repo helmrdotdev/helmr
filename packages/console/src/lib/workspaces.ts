@@ -9,8 +9,9 @@ export type WorkspaceSecret = {
 export type Workspace = {
   id: string;
   key?: string;
-  declared_id: string;
-  status: "available" | "recovery_required" | "deleting";
+  sandbox_id: string;
+  deployment_id: string;
+  status: "available" | "recovery-required" | "deleting";
   secrets: WorkspaceSecret[];
   last_activity_at: string;
   created_at: string;

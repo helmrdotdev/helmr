@@ -24,9 +24,9 @@ definition` for compile-time inference. Importing a definition is type-only and
 does not bundle its handler into the calling backend:
 
 ```ts
-import type { resizeImage, repositoryWorkspace } from "./helmr-definitions"
+import type { resizeImage } from "./helmr-definitions"
 
-const workspace = await client.workspaces.create<typeof repositoryWorkspace>(
+const workspace = await client.sandboxes.createWorkspace(
   "repository-agent",
   {
     key: "repo:helmrdotdev/helmr",
@@ -38,7 +38,7 @@ const run = await client.tasks.start<typeof resizeImage>(
   "resize-image",
   {
     payload: { imageId: "img_123" },
-    workspace: { id: workspace.id },
+    workspace,
     idempotencyKey: "resize:img_123",
     metadata: { customerId: "cus_123" },
     tags: ["image"],
@@ -66,9 +66,9 @@ Main surfaces:
 | `client.runs.logs(runId, query?, options?)` | Read one finite page of Run logs. |
 | `client.runs.events(runId, query?, options?)` | Read one finite page of Run events. |
 | `client.actors.start<typeof actor>(declaredId, request, options?)` | Start or address an Actor. |
-| `client.actors.ref<typeof actor>(declaredId, address)` | Create a typed Actor reference. |
-| `client.workspaces.create<typeof workspace>(declaredId, request?, options?)` | Create a Workspace from a deployed declaration. |
-| `client.workspaces.ref<typeof workspace>(declaredId, address)` | Create a typed Workspace reference. |
+| `client.sessions.ref(sessionId)` | Create a typed Session reference by UUID. |
+| `client.sandboxes.createWorkspace(declaredId, request?, options?)` | Create a Workspace from a deployed Sandbox declaration. |
+| `client.workspaces.ref(workspaceId)` | Create a typed Workspace reference by UUID. |
 | `workspace.retrieve(options?)` | Retrieve Workspace state. |
 | `workspace.files.read/stat/list(...)` | Read the current committed filesystem. |
 | `workspace.exec(request, options?)` | Execute one bounded command and return its terminal output. |

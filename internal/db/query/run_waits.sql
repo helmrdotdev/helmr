@@ -50,7 +50,7 @@ SELECT EXISTS (
 
 -- name: GetTokenWaitRegistrationLocator :one
 SELECT runs.workspace_id,
-       workspaces.owner_actor_id,
+       workspaces.owner_session_id,
        runs.org_id,
        runs.project_id
   FROM runs
@@ -65,12 +65,12 @@ SELECT state,
        current_run_id,
        committed_input_sequence,
        next_input_sequence
-  FROM actors
- WHERE id = sqlc.arg(actor_id)
+  FROM sessions
+ WHERE id = sqlc.arg(session_id)
  FOR UPDATE;
 
 -- name: LockTokenWaitWorkspace :one
-SELECT owner_actor_id, owner_run_id, state, desired_state,
+SELECT owner_session_id, owner_run_id, state, desired_state,
        ownership_generation, writer_generation
   FROM workspaces
  WHERE id = sqlc.arg(workspace_id)
@@ -78,7 +78,7 @@ SELECT owner_actor_id, owner_run_id, state, desired_state,
  FOR UPDATE;
 
 -- name: LockTokenWaitAttempt :one
-SELECT entrypoint_kind, actor_start_input_sequence, terminal_at
+SELECT entrypoint_kind, session_input_start_sequence, terminal_at
   FROM run_attempts
  WHERE run_id = sqlc.arg(run_id)
    AND number = sqlc.arg(attempt_number)
@@ -163,7 +163,7 @@ SELECT run_waits.id AS wait_id,
        run_waits.run_id,
        run_waits.workspace_id,
        run_waits.attempt_number,
-       workspaces.owner_actor_id
+       workspaces.owner_session_id
   FROM run_waits
   JOIN runs
     ON runs.environment_id = run_waits.environment_id
@@ -205,7 +205,7 @@ WITH RECURSIVE lineage AS (
 SELECT runs.id,
        runs.parent_run_id,
        runs.workspace_id,
-       runs.actor_id,
+       runs.session_id,
        runs.entrypoint_kind,
        runs.status,
        runs.state_version,
@@ -883,7 +883,7 @@ WITH moved_run AS (
            updated_at = transaction_timestamp()
      WHERE runs.id = sqlc.arg(run_id)
        AND runs.environment_id = sqlc.arg(environment_id)
-       AND runs.actor_id = sqlc.arg(actor_id)
+       AND runs.session_id = sqlc.arg(session_id)
        AND runs.status = 'running'
        AND runs.state_version = sqlc.arg(expected_running_state_version)
        AND runs.current_attempt_number = sqlc.arg(attempt_number)
@@ -895,14 +895,14 @@ WITH moved_run AS (
 )
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, timeout_at,
-    idle_timeout_ms, actor_id, after_input_sequence,
+    idle_timeout_ms, session_id, after_input_sequence,
     registration_request_fingerprint, expected_run_state_version, attempt_number,
     actor_speculative_input_sequence, current_run_lease_id,
     checkpoint_due_at, resume_attach_id, metadata, tags
 )
 SELECT sqlc.arg(id), sqlc.arg(environment_id), moved_run.id, moved_run.workspace_id,
        'actor_input', sqlc.narg(timeout_at), sqlc.arg(idle_timeout_ms),
-       sqlc.arg(actor_id), sqlc.arg(after_input_sequence),
+       sqlc.arg(session_id), sqlc.arg(after_input_sequence),
        sqlc.arg(registration_request_fingerprint), moved_run.state_version,
        sqlc.arg(attempt_number), sqlc.arg(actor_speculative_input_sequence),
        sqlc.arg(current_run_lease_id), sqlc.arg(checkpoint_due_at),
@@ -918,7 +918,7 @@ SELECT *
    AND run_id = sqlc.arg(run_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND kind = 'actor_input'
-   AND actor_id = sqlc.arg(actor_id)
+   AND session_id = sqlc.arg(session_id)
    AND after_input_sequence = sqlc.arg(after_input_sequence)
    AND actor_speculative_input_sequence = sqlc.arg(actor_speculative_input_sequence)
    AND attempt_number = sqlc.arg(attempt_number)
@@ -935,7 +935,7 @@ SELECT *
  WHERE environment_id = sqlc.arg(environment_id)
    AND run_id = sqlc.arg(run_id)
    AND attempt_number = sqlc.arg(attempt_number)
-   AND actor_id = sqlc.arg(actor_id)
+   AND session_id = sqlc.arg(session_id)
    AND kind = 'actor_input'
    AND after_input_sequence = sqlc.arg(after_input_sequence)
    AND condition_state = 'pending'

@@ -2,14 +2,14 @@ import {
   inspectDefinition,
   inspectImage,
   isQueueDefinition,
-  inspectWorkspaceDefinition,
+  inspectSandboxDefinition,
   validateQueueName,
   type InternalImage,
   type InternalImageStep,
   type InternalActorDefinition,
   type InternalDefinition,
   type InternalTaskDefinition,
-  type InternalWorkspaceDefinition,
+  type InternalSandboxDefinition,
   type ProgramDeclaration,
   type RuntimeArchitecture,
 } from "@helmr/sdk/internal"
@@ -67,7 +67,7 @@ export type BuildPlanDefinition =
       }>
     }>
   | Readonly<{
-      kind: "workspace"
+      kind: "sandbox"
       declaredId: string
       manifest: Readonly<{
         imageBuild: ImageBuild
@@ -176,7 +176,7 @@ export interface AnalysisResult {
 }
 
 interface LocatedDefinition {
-  readonly definition: InternalDefinition | InternalWorkspaceDefinition
+  readonly definition: InternalDefinition | InternalSandboxDefinition
   readonly modulePath: string
   readonly exportName: string
 }
@@ -198,10 +198,10 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
     compileDefinition(definition, options, queues),
   )
   const locatorEntries = located.flatMap((item) =>
-    item.definition.kind === "workspace" ? [] : [locatorEntry(item)],
+    item.definition.kind === "sandbox" ? [] : [locatorEntry(item)],
   )
   const programDeclarations = located.flatMap(({ definition }) =>
-    definition.kind === "workspace"
+    definition.kind === "sandbox"
       ? []
       : [programDeclaration(definition)],
   )
@@ -251,7 +251,7 @@ function discoverDefinitions(
   }>()
   for (const item of exports) {
     const definition =
-      inspectDefinition(item.value) ?? inspectWorkspaceDefinition(item.value)
+      inspectDefinition(item.value) ?? inspectSandboxDefinition(item.value)
     if (definition === undefined) continue
     validateModulePath(item.modulePath)
     validateExportName(item.exportName)
@@ -287,7 +287,7 @@ function discoverDefinitions(
 }
 
 function compileDefinition(
-  definition: InternalDefinition | InternalWorkspaceDefinition,
+  definition: InternalDefinition | InternalSandboxDefinition,
   options: AnalyzeOptions,
   queues: ReadonlyMap<string, BuildPlanQueue>,
 ): BuildPlanDefinition {
@@ -332,9 +332,9 @@ function compileDefinition(
                 ),
         },
       }
-    case "workspace":
-      return {
-        kind: "workspace",
+	case "sandbox":
+		return {
+			kind: "sandbox",
         declaredId: definition.id,
         manifest: {
           imageBuild: compileImageBuild(definition.image, options),
@@ -360,7 +360,7 @@ function compileQueues(
       addQueue(queues, definition.queue, definition.queue)
     } else if (definition.queue === undefined) {
       addQueue(queues, {
-        id: `${definition.kind}/${definition.id}`,
+        name: `${definition.kind}/${definition.id}`,
       }, definition)
     }
   }
@@ -388,23 +388,23 @@ interface QueueEntry {
 
 function addQueue(
   queues: Map<string, QueueEntry>,
-  queue: { readonly id: string; readonly concurrencyLimit?: number | null },
+  queue: { readonly name: string; readonly concurrencyLimit?: number | null },
   owner: object,
 ): void {
-  validateQueueName(queue.id)
+  validateQueueName(queue.name)
   const next: BuildPlanQueue = {
-    name: queue.id,
+    name: queue.name,
     ...(queue.concurrencyLimit === undefined ||
     queue.concurrencyLimit === null
       ? {}
       : { concurrencyLimit: queue.concurrencyLimit }),
   }
-  const existing = queues.get(queue.id)
+  const existing = queues.get(queue.name)
   if (existing !== undefined) {
     if (existing.owner === owner) return
-    throw new Error(`duplicate queue declaration ${JSON.stringify(queue.id)}`)
+    throw new Error(`duplicate queue declaration ${JSON.stringify(queue.name)}`)
   }
-  queues.set(queue.id, { owner, queue: next })
+  queues.set(queue.name, { owner, queue: next })
 }
 
 function normalizeRun(
@@ -417,7 +417,7 @@ function normalizeRun(
       ? `${kind}/${definition.id}`
       : typeof definition.queue === "string"
         ? definition.queue
-        : definition.queue.id
+        : definition.queue.name
   if (!queues.has(queue)) {
     throw new Error(`${kind} ${JSON.stringify(definition.id)} queue is undefined`)
   }
@@ -499,18 +499,18 @@ function compileImageBuild(
   const images = new Map<string, InternalImage>()
   const visiting = new Set<string>()
   const visit = (image: InternalImage): void => {
-    if (visiting.has(image.id)) {
-      throw new Error(`image graph contains a cycle at ${JSON.stringify(image.id)}`)
+    if (visiting.has(image.key)) {
+      throw new Error(`image graph contains a cycle at ${JSON.stringify(image.key)}`)
     }
-    const existing = images.get(image.id)
+    const existing = images.get(image.key)
     if (existing !== undefined) {
       if (existing !== image) {
-        throw new Error(`image key ${JSON.stringify(image.id)} is not unique`)
+        throw new Error(`image key ${JSON.stringify(image.key)} is not unique`)
       }
       return
     }
-    visiting.add(image.id)
-    images.set(image.id, image)
+    visiting.add(image.key)
+    images.set(image.key, image)
     for (const step of image.steps) {
       if (step.kind === "copy_from_image") {
         const source = inspectImage(step.source)
@@ -518,13 +518,13 @@ function compileImageBuild(
         visit(source)
       }
     }
-    visiting.delete(image.id)
+    visiting.delete(image.key)
   }
   visit(root)
   const specs = [...images.values()]
-    .sort((left, right) => compareUtf8(left.id, right.id))
+    .sort((left, right) => compareUtf8(left.key, right.key))
     .map((image) => ({
-      key: image.id,
+      key: image.key,
       platform: {
         os: "linux" as const,
         architecture: options.architecture,
@@ -535,7 +535,7 @@ function compileImageBuild(
   if (stepCount > 10_000) throw new Error("image build exceeds 10000 steps")
   return {
     formatVersion: 0,
-    root: root.id,
+    root: root.key,
     images: specs,
   }
 }
@@ -608,7 +608,7 @@ function compileImageStep(
       return {
         copyFromImage: {
           dst: step.destination,
-          imageKey: source.id,
+          imageKey: source.key,
           srcPath: step.sourcePath,
         },
       }
@@ -640,8 +640,8 @@ function assertExactKeys(
 }
 
 function locatorEntry(item: LocatedDefinition): DeclarationLocatorEntry {
-  if (item.definition.kind === "workspace") {
-    throw new Error("workspace has no executable locator")
+  if (item.definition.kind === "sandbox") {
+    throw new Error("Sandbox has no executable locator")
   }
   return {
     declaredId: item.definition.id,
@@ -815,7 +815,7 @@ function compareLocatedDefinitions(
   const order: Readonly<Record<LocatedDefinition["definition"]["kind"], number>> = {
     task: 0,
     actor: 1,
-    workspace: 2,
+    sandbox: 2,
   }
   return (
     order[left.definition.kind] - order[right.definition.kind] ||

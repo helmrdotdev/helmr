@@ -60,7 +60,7 @@ func (s *Server) deleteWorkspace(ctx context.Context, request workspaceDeleteReq
 		}
 		workspaceID := pgvalue.MustUUIDValue(authority.ID)
 		if authority.State != db.WorkspaceStateDeleting &&
-			(authority.OwnerActorID.Valid || authority.OwnerRunID.Valid ||
+			(authority.OwnerSessionID.Valid || authority.OwnerRunID.Valid ||
 				authority.HasActiveLease || authority.HasActiveProcess) {
 			return errWorkspaceBusy
 		}

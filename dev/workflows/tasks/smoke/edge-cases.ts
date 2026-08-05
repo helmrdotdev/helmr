@@ -1,19 +1,19 @@
-import { image, task, tokens, workspace, type HelmrError, type JsonValue } from "@helmr/sdk"
+import { image, task, tokens, sandbox, type HelmrError, type JsonValue } from "@helmr/sdk"
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
 import { z } from "zod"
 
 const base = image("helmr-edge-smoke")
   .from("node:24-bookworm-slim")
-  .workdir("/workspace")
+  .workdir("/sandbox")
   .run(["npm", "install", "-g", "bun@1.3.10"])
-  .workdir("/workspace")
+  .workdir("/sandbox")
 
-export const edgeSmokeWorkspace = workspace("helmr-edge-smoke")
+export const edgeSmokeWorkspace = sandbox({ id: "helmr-edge-smoke" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 
 const payload = z.object({
-  mode: z.enum(["concurrent-wait", "workspace-overwrite", "expected-error"]),
+  mode: z.enum(["concurrent-wait", "sandbox-overwrite", "expected-error"]),
   marker: z.string().optional(),
   waitTimeout: z.number().int().positive().max(120).default(30),
 }).strict()
@@ -39,7 +39,7 @@ export const edgeSmoke = task({
           marker,
           concurrentWaitRejected: await assertConcurrentWaitRejected(input.waitTimeout),
         }
-      case "workspace-overwrite":
+      case "sandbox-overwrite":
         return {
           mode: input.mode,
           marker,
@@ -100,7 +100,7 @@ async function exerciseWorkspaceOverwrite(marker: string): Promise<{ path: strin
   await writeFile(path, `final:${marker}\n`)
   const content = await readFile(path, "utf8")
   if (content !== `final:${marker}\n`) {
-    throw new Error(`workspace overwrite produced unexpected content: ${content}`)
+    throw new Error(`sandbox overwrite produced unexpected content: ${content}`)
   }
   return { path, content }
 }

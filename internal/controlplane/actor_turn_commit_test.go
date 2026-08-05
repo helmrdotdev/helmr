@@ -273,9 +273,9 @@ func (s *actorTurnCommitStore) GetTaskCompletionTime(context.Context) (pgtype.Ti
 func (s *actorTurnCommitStore) AdvanceActorTurnCursor(
 	_ context.Context,
 	params db.AdvanceActorTurnCursorParams,
-) (db.Actor, error) {
+) (db.Session, error) {
 	if s.cursorErr != nil {
-		return db.Actor{}, s.cursorErr
+		return db.Session{}, s.cursorErr
 	}
 	s.cursor = params
 	s.cursorWrites++
@@ -453,7 +453,7 @@ func newActorTurnCommitFixture(t *testing.T) (
 				OrgID: locators.OrgID, ProjectID: locators.ProjectID,
 				EnvironmentID: locators.EnvironmentID, RunID: locators.RunID,
 				WorkspaceID: locators.WorkspaceID, AttemptNumber: locators.AttemptNumber,
-				ActorID: authority.actor.ID, RegionID: locators.RegionID,
+				SessionID: authority.actor.ID, RegionID: locators.RegionID,
 				RuntimeInstanceID: locators.RuntimeInstanceID,
 				WorkspaceLeaseID:  locators.WorkspaceLeaseID, WorkspaceMountID: locators.WorkspaceMountID,
 			},

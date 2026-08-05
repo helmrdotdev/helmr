@@ -24,14 +24,12 @@ type workspaceReference struct {
 	OrgID         uuid.UUID
 	ProjectID     pgtype.UUID
 	EnvironmentID pgtype.UUID
-	DeclaredID    string
 	ID            string
-	Key           *string
 }
 
 func (s *Server) createWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
-	declaredID := chi.URLParam(r, "workspaceDeclaredID")
-	if err := api.ValidateWorkspaceDeclaredID(declaredID); err != nil {
+	declaredID := chi.URLParam(r, "sandboxID")
+	if err := api.ValidateSandboxDeclaredID(declaredID); err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_workspace_create", message: err.Error()}))
 		return
 	}
@@ -77,15 +75,11 @@ func (s *Server) createWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeWorkspaceCreateError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, api.CreateWorkspaceResponse{WorkspaceID: result.WorkspaceID.String()})
+	writeJSON(w, http.StatusCreated, result.Snapshot)
 }
 
 func (s *Server) getWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
-	s.getWorkspaceByReferenceHTTP(w, r, false)
-}
-
-func (s *Server) getWorkspaceByKeyHTTP(w http.ResponseWriter, r *http.Request) {
-	s.getWorkspaceByReferenceHTTP(w, r, true)
+	s.getWorkspaceByReferenceHTTP(w, r)
 }
 
 func (s *Server) deleteWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +144,7 @@ func (s *Server) deleteWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, api.DeleteWorkspaceReceipt{WorkspaceID: result.WorkspaceID.String()})
 }
 
-func (s *Server) getWorkspaceByReferenceHTTP(w http.ResponseWriter, r *http.Request, byKey bool) {
+func (s *Server) getWorkspaceByReferenceHTTP(w http.ResponseWriter, r *http.Request) {
 	principal := actorFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal, "", "")
 	if err != nil {
@@ -163,19 +157,13 @@ func (s *Server) getWorkspaceByReferenceHTTP(w http.ResponseWriter, r *http.Requ
 	}
 	reference := workspaceReference{
 		OrgID: principal.OrgID, ProjectID: projectID, EnvironmentID: environmentID,
+		ID: chi.URLParam(r, "workspaceID"),
 	}
-	if byKey {
-		key := r.URL.Query().Get("key")
-		reference.DeclaredID = chi.URLParam(r, "workspaceDeclaredID")
-		reference.Key = &key
-	} else {
-		reference.ID = chi.URLParam(r, "workspaceID")
-		if err := ids.Validate(reference.ID); err != nil {
-			writeError(w, badRequest(codedError{
-				code: "invalid_workspace_reference", message: "workspaceID must be a canonical UUIDv7",
-			}))
-			return
-		}
+	if err := ids.Validate(reference.ID); err != nil {
+		writeError(w, badRequest(codedError{
+			code: "invalid_workspace_reference", message: "workspaceID must be a canonical UUIDv7",
+		}))
+		return
 	}
 	record, err := s.resolveWorkspaceReference(r.Context(), reference)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -206,35 +194,15 @@ func (s *Server) resolveWorkspaceReference(
 	ctx context.Context,
 	reference workspaceReference,
 ) (db.Workspace, error) {
-	hasID := reference.ID != ""
-	hasKey := reference.Key != nil
-	if hasID == hasKey {
-		return db.Workspace{}, errors.New("workspace reference requires exactly one of ID or key")
+	id, err := ids.Parse(reference.ID)
+	if err != nil {
+		return db.Workspace{}, errors.New("workspace ID is invalid")
 	}
-	if hasID {
-		id, err := ids.Parse(reference.ID)
-		if err != nil {
-			return db.Workspace{}, errors.New("workspace ID is invalid")
-		}
-		return s.db.GetWorkspace(ctx, db.GetWorkspaceParams{
-			OrgID:         pgvalue.UUID(reference.OrgID),
-			ProjectID:     reference.ProjectID,
-			EnvironmentID: reference.EnvironmentID,
-			ID:            pgvalue.UUID(id),
-		})
-	}
-	if err := api.ValidateWorkspaceDeclaredID(reference.DeclaredID); err != nil {
-		return db.Workspace{}, err
-	}
-	if err := validateWorkspaceKey(reference.Key); err != nil {
-		return db.Workspace{}, err
-	}
-	return s.db.GetWorkspaceByDeclaredIDAndKey(ctx, db.GetWorkspaceByDeclaredIDAndKeyParams{
-		OrgID:               pgvalue.UUID(reference.OrgID),
-		ProjectID:           reference.ProjectID,
-		EnvironmentID:       reference.EnvironmentID,
-		WorkspaceDeclaredID: pgvalue.Text(reference.DeclaredID),
-		Key:                 pgtype.Text{String: *reference.Key, Valid: true},
+	return s.db.GetWorkspace(ctx, db.GetWorkspaceParams{
+		OrgID:         pgvalue.UUID(reference.OrgID),
+		ProjectID:     reference.ProjectID,
+		EnvironmentID: reference.EnvironmentID,
+		ID:            pgvalue.UUID(id),
 	})
 }
 
@@ -244,6 +212,12 @@ func (s *Server) workspaceSnapshot(
 	record db.Workspace,
 ) (api.WorkspaceSnapshot, error) {
 	bindings, err := q.ListWorkspaceSecrets(ctx, record.ID)
+	if err != nil {
+		return api.WorkspaceSnapshot{}, err
+	}
+	definition, err := q.GetWorkspaceDefinitionIdentity(ctx, db.GetWorkspaceDefinitionIdentityParams{
+		EnvironmentID: record.EnvironmentID, DeploymentDefinitionID: record.DeploymentDefinitionID,
+	})
 	if err != nil {
 		return api.WorkspaceSnapshot{}, err
 	}
@@ -260,16 +234,9 @@ func (s *Server) workspaceSnapshot(
 		}
 		secrets = append(secrets, item)
 	}
-	var status api.WorkspaceStatus
-	switch record.State {
-	case db.WorkspaceStateActive:
-		status = api.WorkspaceStatusAvailable
-	case db.WorkspaceStateRecoveryRequired:
-		status = api.WorkspaceStatusRecoveryRequired
-	case db.WorkspaceStateDeleting:
-		status = api.WorkspaceStatusDeleting
-	default:
-		return api.WorkspaceSnapshot{}, fmt.Errorf("workspace state %q has no public projection", record.State)
+	status, err := workspacePublicStatus(record.State)
+	if err != nil {
+		return api.WorkspaceSnapshot{}, err
 	}
 	var key *string
 	if record.Key.Valid {
@@ -279,13 +246,27 @@ func (s *Server) workspaceSnapshot(
 	return api.WorkspaceSnapshot{
 		ID:             pgvalue.UUIDString(record.ID),
 		Key:            key,
-		DeclaredID:     record.WorkspaceDeclaredID.String,
+		SandboxID:      definition.DeclaredID,
+		DeploymentID:   pgvalue.UUIDString(definition.DeploymentID),
 		Status:         status,
 		Secrets:        secrets,
 		LastActivityAt: pgvalue.Time(record.LastActivityAt),
 		CreatedAt:      pgvalue.Time(record.CreatedAt),
 		UpdatedAt:      pgvalue.Time(record.UpdatedAt),
 	}, nil
+}
+
+func workspacePublicStatus(state string) (api.WorkspaceStatus, error) {
+	switch state {
+	case db.WorkspaceStateActive:
+		return api.WorkspaceStatusAvailable, nil
+	case db.WorkspaceStateRecoveryRequired:
+		return api.WorkspaceStatusRecoveryRequired, nil
+	case db.WorkspaceStateDeleting:
+		return api.WorkspaceStatusDeleting, nil
+	default:
+		return "", fmt.Errorf("workspace state %q has no public projection", state)
+	}
 }
 
 func (s *Server) writeWorkspaceCreateError(w http.ResponseWriter, err error) {

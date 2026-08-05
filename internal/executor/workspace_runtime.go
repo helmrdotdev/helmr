@@ -323,7 +323,7 @@ func workerWorkspaceCreateRequest(
 	if err := validateRuntimeWorkspaceCorrelation(requested.GetCorrelationId()); err != nil {
 		return workerapi.CreateWorkspaceRequest{}, err
 	}
-	if err := api.ValidateWorkspaceDeclaredID(requested.GetDeclaredId()); err != nil {
+	if err := api.ValidateSandboxDeclaredID(requested.GetDeclaredId()); err != nil {
 		return workerapi.CreateWorkspaceRequest{}, err
 	}
 	secrets := make([]api.WorkspaceSecret, 0, len(requested.GetSecrets()))
@@ -346,7 +346,7 @@ func workerWorkspaceCreateRequest(
 		secrets = append(secrets, secret)
 	}
 	return workerapi.CreateWorkspaceRequest{
-		CorrelationID: requested.GetCorrelationId(), WorkspaceDeclaredID: requested.GetDeclaredId(),
+		CorrelationID: requested.GetCorrelationId(), SandboxDeclaredID: requested.GetDeclaredId(),
 		Key: requested.Key, Secrets: secrets, IdempotencyKey: requested.GetIdempotencyKey(),
 	}, nil
 }
@@ -361,16 +361,13 @@ func workerWorkspaceRetrieveRequest(
 	if address == nil {
 		return workerapi.RetrieveWorkspaceRequest{}, errors.New("workspace address is required")
 	}
-	request := workerapi.RetrieveWorkspaceRequest{CorrelationID: correlationID}
-	switch value := address.GetAddress().(type) {
-	case *runv0.WorkspaceAddress_WorkspaceId:
-		request.Workspace.WorkspaceID = value.WorkspaceId
-	case *runv0.WorkspaceAddress_WorkspaceKey:
-		request.Workspace.WorkspaceKey = value.WorkspaceKey
-	default:
-		return workerapi.RetrieveWorkspaceRequest{}, errors.New("workspace address is required")
+	if err := api.ValidateWorkspaceID(address.GetWorkspaceId()); err != nil {
+		return workerapi.RetrieveWorkspaceRequest{}, err
 	}
-	return request, nil
+	return workerapi.RetrieveWorkspaceRequest{
+		CorrelationID: correlationID,
+		Workspace: workerapi.WorkspaceAddress{WorkspaceID: address.GetWorkspaceId()},
+	}, nil
 }
 
 func workerWorkspaceExecRequest(

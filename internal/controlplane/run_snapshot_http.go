@@ -422,7 +422,7 @@ func projectRunSnapshot(record runSnapshotRecord) (api.RunSnapshotResponse, erro
 		Entrypoint: api.RunEntrypointResponse{
 			Kind: record.entrypointKind, ID: record.entrypointDeclaredID,
 		},
-		Deployment: api.RunDeploymentResponse{
+		Deployment: api.DeploymentReference{
 			ID: deploymentID, Version: record.deploymentVersion,
 		},
 		WorkspaceID: workspaceID, CurrentAttemptNumber: record.currentAttemptNumber,
@@ -430,7 +430,7 @@ func projectRunSnapshot(record runSnapshotRecord) (api.RunSnapshotResponse, erro
 		Tags: append([]string{}, record.tags...), CreatedAt: record.createdAt.Time.UTC(),
 	}
 	if record.actorID.Valid {
-		response.ActorID = actorID
+		response.SessionID = actorID
 	}
 	if record.parentRunID.Valid {
 		response.ParentRunID = parentRunID
@@ -536,7 +536,7 @@ func runSnapshotRecordFromGet(row db.GetRunSnapshotRow) runSnapshotRecord {
 		id: row.ID, status: row.Status,
 		entrypointKind: row.EntrypointKind, entrypointDeclaredID: row.EntrypointDeclaredID,
 		deploymentID: row.DeploymentID, deploymentVersion: row.DeploymentVersion,
-		workspaceID: row.WorkspaceID, actorID: row.ActorID,
+		workspaceID: row.WorkspaceID, actorID: row.SessionID,
 		parentRunID: row.ParentRunID, parentOwnsLifecycle: row.ParentOwnsLifecycle,
 		currentAttemptNumber: row.CurrentAttemptNumber, causeKind: row.CauseKind,
 		scheduleID: row.ScheduleID, scheduledAt: row.ScheduledAt,
@@ -552,7 +552,7 @@ func runSnapshotRecordFromList(row db.ListRunSnapshotsRow) runSnapshotRecord {
 		id: row.ID, status: row.Status,
 		entrypointKind: row.EntrypointKind, entrypointDeclaredID: row.EntrypointDeclaredID,
 		deploymentID: row.DeploymentID, deploymentVersion: row.DeploymentVersion,
-		workspaceID: row.WorkspaceID, actorID: row.ActorID,
+		workspaceID: row.WorkspaceID, actorID: row.SessionID,
 		parentRunID: row.ParentRunID, parentOwnsLifecycle: row.ParentOwnsLifecycle,
 		currentAttemptNumber: row.CurrentAttemptNumber, causeKind: row.CauseKind,
 		scheduleID: row.ScheduleID, scheduledAt: row.ScheduledAt,

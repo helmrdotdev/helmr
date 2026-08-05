@@ -53,7 +53,7 @@ func scheduleListCommand() *cobra.Command {
 				return writeJSONLines(cmd.OutOrStdout(), response.Schedules)
 			}
 			for _, schedule := range response.Schedules {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", schedule.ID, schedule.Task, schedule.Status)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", schedule.ID, schedule.TaskID, schedule.Status)
 			}
 			if response.NextCursor != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "next_cursor: %s\n", response.NextCursor)
@@ -95,7 +95,7 @@ func scheduleGetCommand() *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), schedule)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "schedule_id: %s\n", schedule.ID)
-			fmt.Fprintf(cmd.OutOrStdout(), "task: %s\n", schedule.Task)
+			fmt.Fprintf(cmd.OutOrStdout(), "task: %s\n", schedule.TaskID)
 			fmt.Fprintf(cmd.OutOrStdout(), "status: %s\n", schedule.Status)
 			if schedule.NextFireAt != nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "next_fire_at: %s\n", schedule.NextFireAt.UTC().Format("2006-01-02T15:04:05.999999999Z"))

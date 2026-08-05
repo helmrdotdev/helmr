@@ -8847,25 +8847,71 @@ function resourceID(value, label) {
   return value;
 }
 
+// sdk/typescript/src/session.ts
+function createRuntimeSessionRef(id) {
+  const sessionID = resourceID(id, "Session ID");
+  return Object.freeze({
+    id: sessionID,
+    input: Object.freeze({
+      send(input, options) {
+        return currentRuntimeOperations().actorInputSend(sessionID, input, options);
+      }
+    }),
+    output: Object.freeze({
+      async* read(options) {
+        let after = options?.after;
+        for (;; ) {
+          if (options?.signal?.aborted)
+            throw options.signal.reason;
+          const page = await currentRuntimeOperations().sessionOutputPage(sessionID, {
+            ...after === undefined ? {} : { after },
+            ...options?.limit === undefined ? {} : { limit: options.limit },
+            ...options?.signal === undefined ? {} : { signal: options.signal }
+          });
+          for (const record of page.records)
+            yield record;
+          if (!page.hasMore)
+            return;
+          after = page.nextAfter;
+        }
+      },
+      async list(options) {
+        return (await currentRuntimeOperations().sessionOutputPage(sessionID, options)).records;
+      }
+    }),
+    status() {
+      return currentRuntimeOperations().sessionStatus(sessionID);
+    },
+    close(options) {
+      return currentRuntimeOperations().sessionClose(sessionID, options);
+    }
+  });
+}
+var sessions = Object.freeze({
+  ref(id) {
+    return createRuntimeSessionRef(id);
+  }
+});
+
 // sdk/typescript/src/definitions.ts
 var privateDefinitionBrand = Symbol.for("helmr.sdk.v0.definition");
 var privateQueueBrand = Symbol.for("helmr.sdk.v0.queue");
 // sdk/typescript/src/secret.ts
-var secretNameRefBrand = Symbol.for("helmr.sdk.v0.secret-name-ref");
+var secretAddressBrand = Symbol.for("helmr.sdk.v0.secret-address");
 var secretNamePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 
-class SecretName {
+class SecretNameAddress {
   name;
   constructor(name) {
     validateSecretName(name);
     this.name = name;
-    Object.defineProperty(this, secretNameRefBrand, { value: true });
+    Object.defineProperty(this, secretAddressBrand, { value: true });
     Object.freeze(this);
   }
 }
 var secrets = Object.freeze({
   fromName(name) {
-    return new SecretName(name);
+    return new SecretNameAddress(name);
   }
 });
 function validateSecretName(value) {
@@ -8904,50 +8950,59 @@ var source = Object.freeze({
   }
 });
 // sdk/typescript/src/workspace.ts
-var workspaceDefinitionBrand = Symbol.for("helmr.sdk.v0.workspace");
-function workspaceRef(address) {
-  validateWorkspaceAddress(address);
-  return createWorkspaceRef(address);
-}
+var sandboxDefinitionBrand = Symbol.for("helmr.sdk.v0.sandbox");
+var workspaceAddressBrand = Symbol.for("helmr.sdk.v0.workspace-address");
 var workspaces = Object.freeze({
-  ref: workspaceRef
+  ref: createWorkspaceRef,
+  fromId: createWorkspaceIdAddress,
+  fromKey: createWorkspaceKeyAddress
 });
-function createWorkspaceRef(address) {
-  const immutableAddress = address.id !== undefined ? Object.freeze({ id: address.id }) : Object.freeze({ key: address.key });
+function createWorkspaceRef(id) {
+  const workspaceID = resourceID(id, "Workspace ID");
   const files = Object.freeze({
     read(path, options) {
-      return currentRuntimeOperations().workspaceFileRead(immutableAddress, path, options?.signal);
+      return currentRuntimeOperations().workspaceFileRead(workspaceID, path, options?.signal);
     },
     stat(path, options) {
-      return currentRuntimeOperations().workspaceFileStat(immutableAddress, path, options?.signal);
+      return currentRuntimeOperations().workspaceFileStat(workspaceID, path, options?.signal);
     },
     list(path, query, options) {
-      return currentRuntimeOperations().workspaceFileList(immutableAddress, path, query, options?.signal);
+      return currentRuntimeOperations().workspaceFileList(workspaceID, path, query, options?.signal);
     }
   });
   const operations = {
     files,
     retrieve(options) {
-      return currentRuntimeOperations().workspaceRetrieve(immutableAddress, options?.signal);
+      return currentRuntimeOperations().workspaceRetrieve(workspaceID, options?.signal);
     },
     exec(request, options) {
-      return currentRuntimeOperations().workspaceExec(immutableAddress, request, options?.signal);
+      return currentRuntimeOperations().workspaceExec(workspaceID, request, options?.signal);
     },
     delete(request, options) {
-      return currentRuntimeOperations().workspaceDelete(immutableAddress, request, options?.signal);
+      return currentRuntimeOperations().workspaceDelete(workspaceID, request, options?.signal);
     }
   };
-  return Object.freeze({ ...immutableAddress, ...operations });
+  return brandWorkspaceIdAddress({ id: workspaceID, ...operations });
 }
-function validateWorkspaceAddress(address) {
-  if ((("id" in address) && typeof address.id === "string") === (("key" in address) && typeof address.key === "string")) {
-    throw new Error("Workspace ref requires exactly one of id or key");
+function createWorkspaceIdAddress(id) {
+  return brandWorkspaceIdAddress({ id: resourceID(id, "Workspace ID") });
+}
+function createWorkspaceKeyAddress(key) {
+  if (typeof key !== "string" || new TextEncoder().encode(key).length < 1 || new TextEncoder().encode(key).length > 512) {
+    throw new Error("Workspace key must contain 1 to 512 UTF-8 bytes");
   }
-  if ("id" in address && address.id !== undefined) {
-    resourceID(address.id, "Workspace ID");
-  } else if (address.key.length === 0) {
-    throw new Error("Workspace key is required");
+  if (key.trim() !== key) {
+    throw new Error("Workspace key cannot begin or end with whitespace");
   }
+  return brandWorkspaceAddress({ key });
+}
+function brandWorkspaceIdAddress(value) {
+  resourceID(value.id, "Workspace ID");
+  return brandWorkspaceAddress(value);
+}
+function brandWorkspaceAddress(value) {
+  Object.defineProperty(value, workspaceAddressBrand, { value: true });
+  return Object.freeze(value);
 }
 // sdk/typescript/src/internal/jsoncanon.ts
 var textDecoder = new TextDecoder("utf-8", { fatal: true });

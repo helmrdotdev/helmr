@@ -14,7 +14,7 @@ import (
 
 func TestAPIURLFlagOverridesEnvironmentURL(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("authorization"); got != "Bearer env-key" {
@@ -66,7 +66,7 @@ func TestControlPlaneClientRejectsURLQueryAndFragment(t *testing.T) {
 	for _, raw := range []string{"https://helmr.example?x=1", "https://helmr.example/#fragment"} {
 		t.Setenv(helmrAPIURLEnv, raw)
 		_, err := controlPlaneClient(nil)
-		if err == nil || !strings.Contains(err.Error(), "must not include query or fragment") {
+		if err == nil || !strings.Contains(err.Error(), "must be an origin without credentials, path, query, or fragment") {
 			t.Fatalf("controlPlaneClient(%q) err = %v", raw, err)
 		}
 	}

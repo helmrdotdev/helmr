@@ -1,13 +1,13 @@
-import { image, task, workspace } from "@helmr/sdk"
+import { image, task, sandbox } from "@helmr/sdk"
 import { z } from "zod"
 
 const base = image("helmr-secret-smoke")
   .from("node:24-bookworm-slim")
-  .workdir("/workspace")
+  .workdir("/sandbox")
   .run(["npm", "install", "-g", "bun@1.3.10"])
-  .workdir("/workspace")
+  .workdir("/sandbox")
 
-export const secretSmokeWorkspace = workspace("helmr-secret-smoke")
+export const secretSmokeWorkspace = sandbox({ id: "helmr-secret-smoke" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 

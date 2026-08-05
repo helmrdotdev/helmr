@@ -16,7 +16,11 @@ export {
   type InternalImageStep,
 } from "./image"
 export {
-  inspectWorkspaceDefinition,
+  inspectSandboxDefinition,
+  inspectWorkspaceAddress,
+  requireWorkspaceIDAddress,
+  brandWorkspaceIdAddress,
+  encodeWorkspaceSecrets,
   parseWorkspaceDeleteReceipt,
   parseWorkspaceExecResult,
   parseWorkspaceFileContent,
@@ -24,7 +28,7 @@ export {
   parseWorkspaceFilePage,
   parseWorkspaceSnapshot,
   type WorkspaceResources,
-  type InternalWorkspaceDefinition,
+  type InternalSandboxDefinition,
 } from "./workspace"
 export {
   canonicalizeJson,
@@ -42,6 +46,6 @@ export {
   type RuntimeOperations,
 } from "./internal/runtime"
 export { resourceID } from "./internal/id"
-export { inspectSecretNameRef } from "./secret"
+export { inspectSecretAddress } from "./secret"
 export { trimGoSpace } from "./internal/strings"
 export { validateQueueName } from "./schema/task"

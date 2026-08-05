@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/actor"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -25,7 +25,7 @@ var (
 
 type actorCloseRequest struct {
 	EnvironmentID  uuid.UUID
-	ActorID        uuid.UUID
+	SessionID      uuid.UUID
 	WorkspaceID    uuid.UUID
 	IdempotencyKey string
 	Authorize      func(context.Context, db.Querier) error
@@ -34,21 +34,21 @@ type actorCloseRequest struct {
 func (s *Server) closeActor(
 	ctx context.Context,
 	request actorCloseRequest,
-) (api.ActorOperationReceipt, error) {
+) (api.SessionCloseReceipt, error) {
 	var claimRequest idempotency.Request
 	var err error
 	if request.IdempotencyKey != "" {
 		claimRequest, err = idempotency.NewActorCloseRequest(
 			request.EnvironmentID,
-			request.ActorID,
+			request.SessionID,
 			request.IdempotencyKey,
 		)
 		if err != nil {
-			return api.ActorOperationReceipt{}, fmt.Errorf("%w: %v", errActorCloseAuthority, err)
+			return api.SessionCloseReceipt{}, fmt.Errorf("%w: %v", errActorCloseAuthority, err)
 		}
 	}
 
-	var receipt api.ActorOperationReceipt
+	var receipt api.SessionCloseReceipt
 	err = s.inTx(ctx, func(work *txWork) error {
 		if request.Authorize != nil {
 			if err := request.Authorize(ctx, work.q); err != nil {
@@ -70,7 +70,7 @@ func (s *Server) closeActor(
 				if err != nil {
 					return err
 				}
-				if replayed.ActorID != request.ActorID.String() {
+				if replayed.SessionID != request.SessionID.String() {
 					return errActorCloseReceipt
 				}
 				receipt = replayed
@@ -91,7 +91,7 @@ func (s *Server) closeActor(
 		}
 		lockedActor, err := work.q.LockActorClose(ctx, db.LockActorCloseParams{
 			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
-			ActorID:       pgvalue.UUID(request.ActorID),
+			SessionID:     pgvalue.UUID(request.SessionID),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errActorCloseAuthority
@@ -107,7 +107,7 @@ func (s *Server) closeActor(
 		case "open", "closing":
 			lockedActor, err = work.q.BeginActorClose(ctx, db.BeginActorCloseParams{
 				EnvironmentID: lockedActor.EnvironmentID,
-				ActorID:       lockedActor.ID,
+				SessionID:     lockedActor.ID,
 			})
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errActorCloseConflict
@@ -116,7 +116,7 @@ func (s *Server) closeActor(
 				return fmt.Errorf("begin actor close: %w", err)
 			}
 			var deferred bool
-			lockedActor, deferred, err = actor.ReconcileClose(ctx, work.q, lockedActor, bindings)
+			lockedActor, deferred, err = session.ReconcileClose(ctx, work.q, lockedActor, bindings)
 			if err != nil {
 				return err
 			}
@@ -136,8 +136,8 @@ func (s *Server) closeActor(
 		if err != nil {
 			return err
 		}
-		receipt = api.ActorOperationReceipt{
-			ActorID:    pgvalue.UUIDString(lockedActor.ID),
+		receipt = api.SessionCloseReceipt{
+			SessionID:  pgvalue.UUIDString(lockedActor.ID),
 			AcceptedAt: acceptedAt,
 		}
 		if claim != nil {
@@ -176,14 +176,14 @@ func actorCloseAcceptedAt(
 	return now.Time.UTC(), nil
 }
 
-func actorCloseReceipt(raw []byte) (api.ActorOperationReceipt, error) {
-	var receipt api.ActorOperationReceipt
+func actorCloseReceipt(raw []byte) (api.SessionCloseReceipt, error) {
+	var receipt api.SessionCloseReceipt
 	if err := decodeClosedJSON(raw, &receipt); err != nil {
-		return api.ActorOperationReceipt{}, errActorCloseReceipt
+		return api.SessionCloseReceipt{}, errActorCloseReceipt
 	}
-	if err := ids.Validate(receipt.ActorID); err != nil ||
+	if err := ids.Validate(receipt.SessionID); err != nil ||
 		receipt.AcceptedAt.IsZero() {
-		return api.ActorOperationReceipt{}, errActorCloseReceipt
+		return api.SessionCloseReceipt{}, errActorCloseReceipt
 	}
 	receipt.AcceptedAt = receipt.AcceptedAt.UTC()
 	return receipt, nil
@@ -192,7 +192,7 @@ func actorCloseReceipt(raw []byte) (api.ActorOperationReceipt, error) {
 func createActorCloseReconcileIntent(
 	ctx context.Context,
 	store db.Querier,
-	actor db.Actor,
+	actor db.Session,
 ) error {
 	if !actor.CloseSequence.Valid {
 		return errActorCloseAuthority
@@ -201,7 +201,7 @@ func createActorCloseReconcileIntent(
 		ctx,
 		db.CreateActorCloseReconcileOutboxParams{
 			ID:            actor.ID,
-			ActorID:       actor.ID,
+			SessionID:     actor.ID,
 			EnvironmentID: actor.EnvironmentID,
 		},
 	); err != nil {

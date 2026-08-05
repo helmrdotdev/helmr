@@ -15,7 +15,7 @@ func TestRequireWorkerRoleAllowsDrainingInFlightMutation(t *testing.T) {
 	handler := requireWorkerRole(auth.WorkerRoleRun, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		called = true
 	}))
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/renew", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/leases/renew", nil)
 	req = req.WithContext(context.WithValue(req.Context(), workerContextKey{}, workerActor{
 		State: db.WorkerInstanceStateDraining,
 		Roles: []string{auth.WorkerRoleRun},
@@ -32,9 +32,10 @@ func TestRequireWorkerRoleRejectsCrossDomainMutation(t *testing.T) {
 		name     string
 		required string
 		roles    []string
+		path     string
 	}{
-		{name: "build-only token on run route", required: auth.WorkerRoleRun, roles: []string{auth.WorkerRoleBuild}},
-		{name: "run-only token on build route", required: auth.WorkerRoleBuild, roles: []string{auth.WorkerRoleRun}},
+		{name: "build-only token on run route", required: auth.WorkerRoleRun, roles: []string{auth.WorkerRoleBuild}, path: "/api/worker/v0/run/leases/renew"},
+		{name: "run-only token on build route", required: auth.WorkerRoleBuild, roles: []string{auth.WorkerRoleRun}, path: "/api/worker/v0/build/deployments/renew"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -42,7 +43,7 @@ func TestRequireWorkerRoleRejectsCrossDomainMutation(t *testing.T) {
 			handler := requireWorkerRole(tt.required, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 				called = true
 			}))
-			req := httptest.NewRequest(http.MethodPost, "/api/worker/domain-mutation", nil)
+			req := httptest.NewRequest(http.MethodPost, tt.path, nil)
 			req = req.WithContext(context.WithValue(req.Context(), workerContextKey{}, workerActor{
 				State: db.WorkerInstanceStateActive,
 				Roles: tt.roles,
@@ -61,7 +62,7 @@ func TestRequireActiveWorkerRoleRejectsDrainingClaim(t *testing.T) {
 	handler := requireActiveWorkerRole(auth.WorkerRoleRun, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		called = true
 	}))
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/lease", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/v0/run/leases/claim", nil)
 	req = req.WithContext(context.WithValue(req.Context(), workerContextKey{}, workerActor{
 		State: db.WorkerInstanceStateDraining,
 		Roles: []string{auth.WorkerRoleRun},

@@ -220,6 +220,49 @@ func TestWorkspaceImageBuildRequestBindsLeaseGenerationSlotAndFingerprint(t *tes
 	}
 }
 
+func TestWorkspaceCreateSlotsBindSourceAuthority(t *testing.T) {
+	environmentID := uuid.New()
+	firstRunID := uuid.New()
+	secondRunID := uuid.New()
+	fingerprint := WorkspaceCreateFingerprint{Secrets: []byte(`[]`)}
+	external, err := NewExternalWorkspaceCreateRequest(
+		environmentID, "sandbox", "create-1", fingerprint,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRun, err := NewRuntimeWorkspaceCreateRequest(
+		environmentID, firstRunID, "sandbox", "create-1", fingerprint,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRunReplay, err := NewRuntimeWorkspaceCreateRequest(
+		environmentID, firstRunID, "sandbox", "create-1", fingerprint,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondRun, err := NewRuntimeWorkspaceCreateRequest(
+		environmentID, secondRunID, "sandbox", "create-1", fingerprint,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	externalSlot := idempotencySlotHash(external.idempotencyRequest())
+	firstRunSlot := idempotencySlotHash(firstRun.idempotencyRequest())
+	if externalSlot == firstRunSlot {
+		t.Fatal("external and Run-internal Workspace creation shared a claim slot")
+	}
+	if firstRunSlot != idempotencySlotHash(firstRunReplay.idempotencyRequest()) {
+		t.Fatal("same source Run did not reproduce its Workspace creation slot")
+	}
+	if firstRunSlot == idempotencySlotHash(secondRun.idempotencyRequest()) {
+		t.Fatal("different source Runs shared a Workspace creation slot")
+	}
+}
+
 func testWorkspaceImageBuildFingerprint() WorkspaceImageBuildFingerprint {
 	return WorkspaceImageBuildFingerprint{
 		Architecture:           "x86_64",

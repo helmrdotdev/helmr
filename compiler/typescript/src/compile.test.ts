@@ -8,7 +8,7 @@ import {
   secrets,
   source,
   task,
-  workspace,
+  sandbox,
   workspaces,
   type JsonValue,
   type PayloadSchema,
@@ -36,7 +36,7 @@ const identitySchema: PayloadSchema<JsonValue> = {
 
 describe("declaration analysis", () => {
   test("emits one deterministic BuildPlan and declaration locator", () => {
-    const jobs = queue({ id: "jobs", concurrencyLimit: 3 })
+    const jobs = queue({ name: "jobs", concurrencyLimit: 3 })
     const payloadTask = task({
       id: "constructor",
       payload: identitySchema,
@@ -55,7 +55,7 @@ describe("declaration analysis", () => {
       idleTimeout: "1500ms",
       run: async () => {},
     })
-    const machine = workspace("machine")
+    const machine = sandbox({ id: "machine" })
       .image(image("root").from("debian:bookworm"))
       .resources({ cpu: 0.125, memory: "1024MiB" })
     const exports = [
@@ -80,7 +80,7 @@ describe("declaration analysis", () => {
       "task",
       "task",
       "actor",
-      "workspace",
+		"sandbox",
     ])
     expect(result.buildPlan.queues).toEqual([
       { name: "actor/service" },
@@ -111,8 +111,8 @@ describe("declaration analysis", () => {
       },
     ])
     const workspaceDefinition = result.buildPlan.definitions[3]
-    expect(workspaceDefinition?.kind).toBe("workspace")
-    if (workspaceDefinition?.kind !== "workspace") throw new Error("workspace missing")
+    expect(workspaceDefinition?.kind).toBe("sandbox")
+    if (workspaceDefinition?.kind !== "sandbox") throw new Error("Sandbox missing")
     expect(workspaceDefinition.manifest.resources).toEqual({
       milliCpu: 125,
       memoryMiB: 1024,
@@ -152,7 +152,7 @@ describe("declaration analysis", () => {
   })
 
   test("deduplicates one Queue object and rejects distinct objects with the same ID", () => {
-    const shared = queue({ id: "shared", concurrencyLimit: 2 })
+    const shared = queue({ name: "shared", concurrencyLimit: 2 })
     expect(() =>
       analyze({
         architecture: "x86_64",
@@ -171,8 +171,8 @@ describe("declaration analysis", () => {
       }),
     ).not.toThrow()
 
-    const first = queue({ id: "duplicate", concurrencyLimit: 2 })
-    const second = queue({ id: "duplicate", concurrencyLimit: 2 })
+    const first = queue({ name: "duplicate", concurrencyLimit: 2 })
+    const second = queue({ name: "duplicate", concurrencyLimit: 2 })
     expect(() =>
       analyze({
         architecture: "x86_64",
@@ -274,7 +274,7 @@ describe("declaration analysis", () => {
   })
 
   test("emits source copies without caller-provided integrity fields", () => {
-    const machine = workspace("source-copy")
+    const machine = sandbox({ id: "source-copy" })
       .image(
         image("root")
           .from("debian:bookworm")
@@ -291,8 +291,8 @@ describe("declaration analysis", () => {
       }],
     })
     const definition = result.buildPlan.definitions[0]
-    expect(definition?.kind).toBe("workspace")
-    if (definition?.kind !== "workspace") throw new Error("workspace missing")
+    expect(definition?.kind).toBe("sandbox")
+    if (definition?.kind !== "sandbox") throw new Error("Sandbox missing")
     expect(definition.manifest.imageBuild.images[0]?.steps.slice(1)).toEqual([
       {
         copySourceFile: {
@@ -310,7 +310,7 @@ describe("declaration analysis", () => {
   })
 
   test("emits closed registry authentication without credential bytes", () => {
-    const machine = workspace("private-base")
+    const machine = sandbox({ id: "private-base" })
       .image(image("root").from("ghcr.io/acme/base:1", {
         auth: {
           username: "aktky",
@@ -327,8 +327,8 @@ describe("declaration analysis", () => {
       }],
     })
     const definition = result.buildPlan.definitions[0]
-    expect(definition?.kind).toBe("workspace")
-    if (definition?.kind !== "workspace") throw new Error("workspace missing")
+    expect(definition?.kind).toBe("sandbox")
+    if (definition?.kind !== "sandbox") throw new Error("Sandbox missing")
     expect(definition.manifest.imageBuild.images[0]?.steps[0]).toEqual({
       from: {
         ref: "ghcr.io/acme/base:1",
@@ -364,7 +364,7 @@ describe("declaration analysis", () => {
         exports: [{
           modulePath: "src/workspace.ts",
           exportName: "machine",
-          value: workspace("machine")
+          value: sandbox({ id: "machine" })
             .image(forged as never)
             .resources({ cpu: 1, memory: "1GiB" }),
         }],
@@ -376,7 +376,7 @@ describe("declaration analysis", () => {
     const scheduled = schedules.task({
       id: "nightly",
       cron: { pattern: "0 3 * * *", timezone: "UTC" },
-      workspace: workspaces.ref({ key: "maintenance" }),
+      workspace: workspaces.fromKey("maintenance"),
       run: () => null,
     })
     const result = analyze({
@@ -451,7 +451,7 @@ describe("declaration analysis", () => {
         schedules.task({
           id: `valid-${index}`,
           cron: { pattern, timezone: "UTC" },
-          workspace: workspaces.ref({ key: "maintenance" }),
+          workspace: workspaces.fromKey("maintenance"),
           run: () => null,
         }),
       ).not.toThrow()
@@ -460,7 +460,7 @@ describe("declaration analysis", () => {
       schedules.task({
         id: "timezone",
         cron: { pattern: "0 3 * * *", timezone: "utc" },
-        workspace: workspaces.ref({ key: "maintenance" }),
+        workspace: workspaces.fromKey("maintenance"),
         run: () => null,
       }),
     ).not.toThrow()
@@ -468,7 +468,7 @@ describe("declaration analysis", () => {
       schedules.task({
         id: "empty",
         cron: { pattern: "", timezone: "UTC" },
-        workspace: workspaces.ref({ key: "maintenance" }),
+        workspace: workspaces.fromKey("maintenance"),
         run: () => null,
       }),
     ).toThrow()
@@ -506,7 +506,7 @@ describe("declaration analysis", () => {
       ],
     })
 
-    const machine = workspace("machine")
+    const machine = sandbox({ id: "machine" })
       .image(image("root").from("debian:bookworm"))
       .resources({ cpu: 1, memory: "1GiB" })
     const workspaceOnly = analyze({

@@ -20,7 +20,7 @@ Task authors define:
 | --- | --- |
 | Image contents | `image(...).from(...).run(...).copy(...)` |
 | Runtime dependencies | Package manager and install steps in the image build |
-| CPU and memory | `workspace(...).resources(...)` |
+| CPU and memory | `sandbox({ id }).resources(...)` |
 | Secrets | Workspace create Secret placements |
 | Task behavior | The exported `task(...).run` function |
 

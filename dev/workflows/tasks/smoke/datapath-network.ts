@@ -1,4 +1,4 @@
-import { image, source, task, workspace, type JsonValue } from "@helmr/sdk"
+import { image, source, task, sandbox, type JsonValue } from "@helmr/sdk"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { z } from "zod"
@@ -15,9 +15,9 @@ const base = image("helmr-datapath-network")
     "apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*",
   ])
   .user("root")
-  .workdir("/workspace")
+  .workdir("/sandbox")
 
-export const datapathNetworkWorkspace = workspace("helmr-datapath-network")
+export const datapathNetworkWorkspace = sandbox({ id: "helmr-datapath-network" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 

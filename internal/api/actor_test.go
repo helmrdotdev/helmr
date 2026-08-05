@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestValidateActorReferenceParts(t *testing.T) {
+func TestValidateActorAndSessionIdentifiers(t *testing.T) {
 	if err := ValidateActorDeclaredID("operator.v1"); err != nil {
 		t.Fatalf("ValidateActorDeclaredID() error = %v", err)
 	}
@@ -36,26 +36,24 @@ func TestValidateActorKeyRejectsMutationProneValues(t *testing.T) {
 	}
 }
 
-func TestValidateSendActorInputRequestAcceptsJSONNull(t *testing.T) {
-	if err := ValidateSendActorInputRequest(SendActorInputRequest{
-		ActorKey: "thread:1",
-		Input:    json.RawMessage(`null`),
+func TestValidateSendSessionInputRequestAcceptsJSONNull(t *testing.T) {
+	if err := ValidateSendSessionInputRequest(SendSessionInputRequest{
+		Input: json.RawMessage(`null`),
 	}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestValidateSendActorInputRequestRejectsAmbiguousIJSON(t *testing.T) {
+func TestValidateSendSessionInputRequestRejectsAmbiguousIJSON(t *testing.T) {
 	for _, input := range []json.RawMessage{
 		json.RawMessage(`{"value":1,"value":2}`),
 		json.RawMessage(`"\ud800"`),
 		json.RawMessage(`1e999`),
 	} {
-		if err := ValidateSendActorInputRequest(SendActorInputRequest{
-			ActorKey: "thread:1",
-			Input:    input,
+		if err := ValidateSendSessionInputRequest(SendSessionInputRequest{
+			Input: input,
 		}); err == nil {
-			t.Fatalf("ValidateSendActorInputRequest(input=%s) succeeded", input)
+			t.Fatalf("ValidateSendSessionInputRequest(input=%s) succeeded", input)
 		}
 	}
 }
@@ -63,7 +61,7 @@ func TestValidateSendActorInputRequestRejectsAmbiguousIJSON(t *testing.T) {
 func TestValidateStartActorRequestPreservesOptionalNullInput(t *testing.T) {
 	workspaceID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
 	if err := ValidateStartActorRequest(StartActorRequest{
-		Workspace: WorkspaceTarget{ID: &workspaceID},
+		Workspace: WorkspaceIDTarget{ID: workspaceID},
 		Input:     json.RawMessage(`null`),
 	}); err != nil {
 		t.Fatal(err)
@@ -118,27 +116,26 @@ func TestNormalizeStartActorRetryFillsPublicDefaults(t *testing.T) {
 
 func TestValidateStartActorRequestRejectsInvalidWorkspaceAndRetry(t *testing.T) {
 	workspaceID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
-	workspaceKey := "thread:1"
 	maxAttempts := int64(3)
 	emptyConcurrencyKey := ""
 	for _, request := range []StartActorRequest{
 		{},
-		{Workspace: WorkspaceTarget{ID: &workspaceID, Key: &workspaceKey}},
+		{Workspace: WorkspaceIDTarget{ID: "thread:1"}},
 		{
-			Workspace: WorkspaceTarget{ID: &workspaceID},
+			Workspace: WorkspaceIDTarget{ID: workspaceID},
 			Run: &StartActorRunOptions{
 				TTL:   "1h30m",
 				Retry: &StartActorRetryPolicy{MaxAttempts: &maxAttempts},
 			},
 		},
 		{
-			Workspace: WorkspaceTarget{ID: &workspaceID},
+			Workspace: WorkspaceIDTarget{ID: workspaceID},
 			Run: &StartActorRunOptions{
 				ConcurrencyKey: &emptyConcurrencyKey,
 			},
 		},
 		{
-			Workspace: WorkspaceTarget{ID: &workspaceID},
+			Workspace: WorkspaceIDTarget{ID: workspaceID},
 			Run: &StartActorRunOptions{
 				Retry: &StartActorRetryPolicy{
 					MaxAttempts: &maxAttempts,
@@ -153,61 +150,26 @@ func TestValidateStartActorRequestRejectsInvalidWorkspaceAndRetry(t *testing.T) 
 	}
 }
 
-func TestValidateActorOperationRequestRequiresOneExactAddress(t *testing.T) {
-	validID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
-	for _, request := range []ActorOperationRequest{
-		{ActorID: validID},
-		{ActorKey: "thread:1"},
-	} {
-		if err := ValidateActorOperationRequest(request); err != nil {
-			t.Fatalf("ValidateActorOperationRequest(%+v): %v", request, err)
-		}
-	}
-	for _, request := range []ActorOperationRequest{
-		{},
-		{ActorID: validID, ActorKey: "thread:1"},
-		{ActorID: "act_invalid"},
-		{ActorKey: " thread:1"},
-	} {
-		if err := ValidateActorOperationRequest(request); err == nil {
-			t.Fatalf("ValidateActorOperationRequest(%+v) succeeded", request)
-		}
+func TestValidateCloseSessionRequestAcceptsPathAddressedCommand(t *testing.T) {
+	if err := ValidateCloseSessionRequest(CloseSessionRequest{IdempotencyKey: "close-1"}); err != nil {
+		t.Fatal(err)
 	}
 }
 
 func TestValidateActorReadContractUsesClosedEnumsAndReferences(t *testing.T) {
-	for _, status := range []ActorPublicStatus{
-		ActorPublicStatusOpen,
-		ActorPublicStatusClosed,
-		ActorPublicStatusCancelled,
-		ActorPublicStatusFailed,
+	for _, status := range []SessionStatus{
+		SessionStatusOpen,
+		SessionStatusClosed,
+		SessionStatusCancelled,
+		SessionStatusFailed,
 	} {
-		if err := ValidateActorPublicStatus(string(status)); err != nil {
-			t.Fatalf("ValidateActorPublicStatus(%q): %v", status, err)
+		if err := ValidateSessionStatus(string(status)); err != nil {
+			t.Fatalf("ValidateSessionStatus(%q): %v", status, err)
 		}
 	}
 	for _, status := range []string{"", "OPEN", "closing", "unknown"} {
-		if err := ValidateActorPublicStatus(status); err == nil {
-			t.Fatalf("ValidateActorPublicStatus(%q) succeeded", status)
-		}
-	}
-	validID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
-	for _, reference := range []ActorReference{
-		{ActorID: validID},
-		{ActorKey: "thread:1"},
-	} {
-		if err := ValidateActorReference(reference); err != nil {
-			t.Fatalf("ValidateActorReference(%+v): %v", reference, err)
-		}
-	}
-	for _, reference := range []ActorReference{
-		{},
-		{ActorID: validID, ActorKey: "thread:1"},
-		{ActorID: "act_invalid"},
-		{ActorKey: " thread:1"},
-	} {
-		if err := ValidateActorReference(reference); err == nil {
-			t.Fatalf("ValidateActorReference(%+v) succeeded", reference)
+		if err := ValidateSessionStatus(status); err == nil {
+			t.Fatalf("ValidateSessionStatus(%q) succeeded", status)
 		}
 	}
 }

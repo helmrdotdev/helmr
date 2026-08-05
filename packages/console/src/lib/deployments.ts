@@ -15,9 +15,6 @@ export type Deployment = {
   environment_id: string;
   deployment_source: DeploymentSourceArtifact;
   status: DeploymentStatus;
-  tasks: string[];
-  actors: string[];
-  workspaces: string[];
   created_at: string;
   building_at?: string;
   built_at?: string;

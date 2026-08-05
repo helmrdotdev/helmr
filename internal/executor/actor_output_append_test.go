@@ -50,7 +50,7 @@ func TestHandleActorOutputAppendWritesCorrelatedDecision(t *testing.T) {
 		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 		response: workerapi.AppendActorOutputResponse{
 			CorrelationID: correlationID,
-			Completed: &api.ActorOutputRecord{
+			Completed: &api.SessionOutput{
 				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34", Sequence: 8,
 				Data: json.RawMessage(`{"status":"working"}`), ContentType: "application/json",
 			},
@@ -105,7 +105,7 @@ func TestHandleActorOutputAppendRetryKeepsStableFenceAcrossRenewal(t *testing.T)
 		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 		response: workerapi.AppendActorOutputResponse{
 			CorrelationID: correlationID,
-			Completed: &api.ActorOutputRecord{
+			Completed: &api.SessionOutput{
 				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Sequence: 9,
 				Data: json.RawMessage(`{"status":"done"}`), ContentType: "application/json",
 			},

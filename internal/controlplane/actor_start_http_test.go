@@ -35,7 +35,7 @@ func TestDecodeStartActorRequestIsClosedAndPresenceAware(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/",
-		strings.NewReader(`{"workspace":{"key":"workspace:1"},"input":null}`),
+		strings.NewReader(`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"input":null}`),
 	)
 	decoded, err := decodeStartActorRequest(request)
 	if err != nil {
@@ -46,37 +46,38 @@ func TestDecodeStartActorRequestIsClosedAndPresenceAware(t *testing.T) {
 	}
 
 	for _, body := range []string{
-		`{"workspace":{"key":"workspace:1","unknown":true}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"unknown":true}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"retry":{"backoff":{"unknown":true}}}}`,
-		`{"workspace":{"key":"workspace:1"},"workspace":{"key":"workspace:2"}}`,
-		`{"workspace":{"key":"workspace:1"}} {}`,
+		`{"workspace":{"key":"workspace:1"}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","unknown":true}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"unknown":true}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":{"unknown":true}}}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}} {}`,
 		`null`,
 		`{"workspace":null}`,
 		`{"workspace":{"key":null}}`,
-		`{"workspace":{"key":"workspace:1"},"key":null}`,
-		`{"workspace":{"key":"workspace:1"},"idempotency_key":null}`,
-		`{"workspace":{"key":"workspace:1"},"run":null}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"queue":null}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"concurrency_key":null}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"priority":null}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"ttl":null}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"retry":null}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"metadata":null}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"tags":[null]}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"retry":{"enabled":null}}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"retry":{"max_attempts":null}}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"retry":{"backoff":null}}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"retry":{"backoff":{"min_delay":null}}}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"retry":{"backoff":{"max_delay":null}}}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"retry":{"backoff":{"factor":null}}}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"retry":{"backoff":{"jitter":null}}}}`,
-		`{"workspace":{"key":"workspace:1"},"idempotency_key":""}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"queue":""}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"ttl":""}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"retry":{"max_attempts":3,"backoff":{"min_delay":""}}}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"retry":{"max_attempts":3,"backoff":{"max_delay":""}}}}`,
-		`{"workspace":{"key":"workspace:1"},"run":{"retry":{"max_attempts":3,"backoff":{"jitter":""}}}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"key":null}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":null}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":null}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"queue":null}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"concurrency_key":null}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"priority":null}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"ttl":null}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":null}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"metadata":null}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"tags":[null]}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"enabled":null}}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"max_attempts":null}}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":null}}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":{"min_delay":null}}}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":{"max_delay":null}}}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":{"factor":null}}}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":{"jitter":null}}}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":""}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"queue":""}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"ttl":""}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"max_attempts":3,"backoff":{"min_delay":""}}}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"max_attempts":3,"backoff":{"max_delay":""}}}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"max_attempts":3,"backoff":{"jitter":""}}}}`,
 	} {
 		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 		if _, err := decodeStartActorRequest(request); err == nil {
@@ -133,10 +134,10 @@ func TestActorStartPresenceErrorsUseContractSpecificCodes(t *testing.T) {
 		body string
 		code string
 	}{
-		{body: `{"workspace":{"key":"workspace:1"},"idempotency_key":null}`, code: "invalid_idempotency_key"},
-		{body: `{"workspace":{"key":"workspace:1"},"idempotency_key":""}`, code: "invalid_idempotency_key"},
-		{body: `{"workspace":{"key":"workspace:1"},"idempotency_key":" \t "}`, code: "invalid_idempotency_key"},
-		{body: `{"workspace":{"key":"workspace:1"},"idempotency_key":1}`, code: "invalid_idempotency_key"},
+		{body: `{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":null}`, code: "invalid_idempotency_key"},
+		{body: `{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":""}`, code: "invalid_idempotency_key"},
+		{body: `{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":" \t "}`, code: "invalid_idempotency_key"},
+		{body: `{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":1}`, code: "invalid_idempotency_key"},
 		{body: `{"workspace":null}`, code: "invalid_workspace_reference"},
 		{body: `{"workspace":{"key":null}}`, code: "invalid_workspace_reference"},
 		{body: `{"workspace":{"key":1}}`, code: "invalid_workspace_reference"},
@@ -187,7 +188,7 @@ func TestAuthorizeActorStartRejectsBeforeScopeLookup(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/projects/missing/environments/missing/actors/operator.v1/start",
-		strings.NewReader(`{"workspace":{"key":"workspace:1"}}`),
+		strings.NewReader(`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}}`),
 	)
 	route := chi.NewRouteContext()
 	route.URLParams.Add("projectID", "missing")

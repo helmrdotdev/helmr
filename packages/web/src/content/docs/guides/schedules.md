@@ -17,7 +17,7 @@ import { schedules, workspaces } from "@helmr/sdk"
 export const maintenance = schedules.task({
   id: "maintenance",
   cron: { pattern: "0 3 * * *", timezone: "UTC" },
-  workspace: workspaces.ref({ key: "maintenance" }),
+  workspace: workspaces.fromKey("maintenance"),
   run: async ({ scheduledAt, lastScheduledAt, upcoming }, ctx) => {
     if (ctx.run.cause.type !== "schedule") {
       throw new Error("maintenance requires a Schedule cause")

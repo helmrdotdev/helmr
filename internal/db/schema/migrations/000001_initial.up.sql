@@ -714,7 +714,7 @@ CREATE TABLE deployment_definitions (
     id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('task', 'actor', 'workspace')),
+    kind TEXT NOT NULL CHECK (kind IN ('task', 'actor', 'sandbox')),
     declared_id TEXT NOT NULL CHECK (
         declared_id ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
         AND octet_length(declared_id) BETWEEN 1 AND 128
@@ -742,7 +742,7 @@ CREATE TABLE deployment_definitions (
         ON DELETE RESTRICT,
     CONSTRAINT deployment_definitions_projection_check CHECK (
         (
-            kind = 'workspace'
+			kind = 'sandbox'
             AND artifact_id IS NOT NULL
         )
         OR
@@ -1152,11 +1152,11 @@ CREATE TABLE workspaces (
     id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
     region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
-    workspace_declared_id TEXT CHECK (
-        workspace_declared_id IS NULL
+    sandbox_declared_id TEXT CHECK (
+        sandbox_declared_id IS NULL
         OR (
-        workspace_declared_id ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
-        AND octet_length(workspace_declared_id) BETWEEN 1 AND 128
+        sandbox_declared_id ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+        AND octet_length(sandbox_declared_id) BETWEEN 1 AND 128
         )
     ),
     deployment_definition_id UUID,
@@ -1169,7 +1169,7 @@ CREATE TABLE workspaces (
         )
     ),
     state_version BIGINT NOT NULL DEFAULT 1 CHECK (state_version > 0),
-    owner_actor_id UUID,
+    owner_session_id UUID,
     owner_run_id UUID,
     ownership_generation BIGINT NOT NULL DEFAULT 0 CHECK (ownership_generation >= 0),
     writer_generation BIGINT NOT NULL DEFAULT 0 CHECK (writer_generation >= 0),
@@ -1194,19 +1194,19 @@ CREATE TABLE workspaces (
         FOREIGN KEY (environment_id, deployment_definition_id)
         REFERENCES deployment_definitions(environment_id, id)
         ON DELETE RESTRICT,
-    CHECK (num_nonnulls(owner_actor_id, owner_run_id) <= 1),
+    CHECK (num_nonnulls(owner_session_id, owner_run_id) <= 1),
     CHECK (
         (state <> 'deleted'
-         AND workspace_declared_id IS NOT NULL
+         AND sandbox_declared_id IS NOT NULL
          AND deployment_definition_id IS NOT NULL
          AND head_version_id IS NOT NULL
          AND deleted_at IS NULL)
         OR
         (state = 'deleted'
-         AND workspace_declared_id IS NULL
+         AND sandbox_declared_id IS NULL
          AND deployment_definition_id IS NULL
          AND head_version_id IS NULL
-         AND owner_actor_id IS NULL
+         AND owner_session_id IS NULL
          AND owner_run_id IS NULL
          AND dirty_state = 'clean'
          AND desired_state = 'deleted'
@@ -1224,7 +1224,7 @@ CREATE INDEX workspaces_deployment_definition_idx
     ON workspaces (
         environment_id,
         deployment_definition_id,
-        workspace_declared_id
+        sandbox_declared_id
     );
 
 ALTER TABLE schedules
@@ -1262,7 +1262,7 @@ CREATE TABLE workspace_secrets (
 CREATE INDEX workspace_secrets_secret_idx
     ON workspace_secrets (secret_id, workspace_id);
 
-CREATE TABLE actors (
+CREATE TABLE sessions (
     id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
     actor_declared_id TEXT NOT NULL CHECK (
@@ -1319,7 +1319,7 @@ CREATE TABLE actors (
     FOREIGN KEY (environment_id)
         REFERENCES environments(id)
         ON DELETE CASCADE,
-    CONSTRAINT actors_deployment_definition_fk
+    CONSTRAINT sessions_deployment_definition_fk
         FOREIGN KEY (environment_id, deployment_definition_id)
         REFERENCES deployment_definitions(environment_id, id)
         ON DELETE RESTRICT,
@@ -1334,9 +1334,9 @@ CREATE TABLE actors (
     CHECK (committed_input_sequence < next_input_sequence),
     CHECK (input_retention_floor <= committed_input_sequence + 1),
     CHECK (output_retention_floor <= next_output_sequence),
-    CONSTRAINT actors_run_retry_policy_object
+    CONSTRAINT sessions_run_retry_policy_object
         CHECK (jsonb_typeof(run_retry_policy) = 'object'),
-    CONSTRAINT actors_run_metadata_object
+    CONSTRAINT sessions_run_metadata_object
         CHECK (jsonb_typeof(run_metadata) = 'object'),
     CHECK (
         (state = 'failed' AND failure_code IN ('no_progress', 'run_failed', 'run_expired', 'platform_failure') AND failure_run_id IS NOT NULL)
@@ -1345,16 +1345,19 @@ CREATE TABLE actors (
     )
 );
 
-CREATE UNIQUE INDEX actors_environment_declared_id_key_uidx
-    ON actors (environment_id, actor_declared_id, key)
+CREATE UNIQUE INDEX sessions_environment_declared_id_key_uidx
+    ON sessions (environment_id, actor_declared_id, key)
     WHERE key IS NOT NULL;
 
-CREATE INDEX actors_deployment_definition_idx
-    ON actors (
+CREATE INDEX sessions_deployment_definition_idx
+    ON sessions (
         environment_id,
         deployment_definition_id,
         actor_declared_id
     );
+
+CREATE INDEX sessions_environment_created_id_idx
+    ON sessions (environment_id, created_at DESC, id DESC);
 
 CREATE TABLE runs (
     id UUID PRIMARY KEY,
@@ -1368,7 +1371,7 @@ CREATE TABLE runs (
         entrypoint_declared_id ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
         AND octet_length(entrypoint_declared_id) BETWEEN 1 AND 128
     ),
-    actor_id UUID,
+    session_id UUID,
     cause_kind TEXT NOT NULL CHECK (
         cause_kind IN ('api', 'manual', 'child', 'schedule', 'actor_start', 'continuation')
     ),
@@ -1381,8 +1384,8 @@ CREATE TABLE runs (
     parent_owns_lifecycle BOOLEAN,
     workspace_id UUID NOT NULL,
     base_workspace_version_id UUID NOT NULL,
-    actor_start_input_sequence BIGINT,
-    actor_start_input_high_watermark BIGINT,
+    session_input_start_sequence BIGINT,
+    session_input_high_watermark BIGINT,
     payload JSONB,
     output JSONB,
     terminal_reason_code TEXT,
@@ -1441,8 +1444,8 @@ CREATE TABLE runs (
     UNIQUE (org_id, project_id, environment_id, id, deployment_id),
     UNIQUE (org_id, project_id, environment_id, id, workspace_id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
-    UNIQUE (actor_id, id),
-    UNIQUE (actor_id, workspace_id, id),
+    UNIQUE (session_id, id),
+    UNIQUE (session_id, workspace_id, id),
     UNIQUE (id, workspace_id),
     UNIQUE (id, entrypoint_kind, workspace_id),
     UNIQUE (parent_run_id, id, parent_owns_lifecycle),
@@ -1475,8 +1478,8 @@ CREATE TABLE runs (
         REFERENCES workspaces(environment_id, id)
         ON DELETE RESTRICT,
     CONSTRAINT runs_actor_definition_workspace_fk
-        FOREIGN KEY (actor_id, entrypoint_declared_id, deployment_definition_id, workspace_id)
-        REFERENCES actors(id, actor_declared_id, deployment_definition_id, workspace_id)
+        FOREIGN KEY (session_id, entrypoint_declared_id, deployment_definition_id, workspace_id)
+        REFERENCES sessions(id, actor_declared_id, deployment_definition_id, workspace_id)
         ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, schedule_id)
         REFERENCES schedules(environment_id, id)
@@ -1489,15 +1492,15 @@ CREATE TABLE runs (
         ON DELETE RESTRICT,
     CHECK (
         (entrypoint_kind = 'task'
-         AND actor_id IS NULL
-         AND actor_start_input_sequence IS NULL
-         AND actor_start_input_high_watermark IS NULL)
+         AND session_id IS NULL
+         AND session_input_start_sequence IS NULL
+         AND session_input_high_watermark IS NULL)
         OR
         (entrypoint_kind = 'actor'
-         AND actor_id IS NOT NULL
-         AND actor_start_input_sequence IS NOT NULL
-         AND actor_start_input_high_watermark IS NOT NULL
-         AND actor_start_input_high_watermark >= actor_start_input_sequence
+         AND session_id IS NOT NULL
+         AND session_input_start_sequence IS NOT NULL
+         AND session_input_high_watermark IS NOT NULL
+         AND session_input_high_watermark >= session_input_start_sequence
          AND payload IS NULL)
     ),
     CHECK (
@@ -1564,8 +1567,8 @@ CREATE TABLE runs (
 
 ALTER TABLE workspaces
     ADD CONSTRAINT workspaces_owner_actor_fk
-    FOREIGN KEY (owner_actor_id, id)
-    REFERENCES actors(id, workspace_id)
+    FOREIGN KEY (owner_session_id, id)
+    REFERENCES sessions(id, workspace_id)
     ON DELETE RESTRICT
     DEFERRABLE INITIALLY DEFERRED;
 
@@ -1582,9 +1585,9 @@ CREATE TABLE run_attempts (
     entrypoint_kind TEXT NOT NULL CHECK (entrypoint_kind IN ('task', 'actor')),
     workspace_id UUID NOT NULL,
     entrypoint_entered_at TIMESTAMPTZ,
-    actor_start_input_sequence BIGINT CHECK (actor_start_input_sequence IS NULL OR actor_start_input_sequence >= 0),
+    session_input_start_sequence BIGINT CHECK (session_input_start_sequence IS NULL OR session_input_start_sequence >= 0),
     base_workspace_version_id UUID NOT NULL,
-    terminal_actor_input_sequence BIGINT CHECK (terminal_actor_input_sequence IS NULL OR terminal_actor_input_sequence >= 0),
+    terminal_session_input_sequence BIGINT CHECK (terminal_session_input_sequence IS NULL OR terminal_session_input_sequence >= 0),
     terminal_outcome TEXT CHECK (terminal_outcome IN ('succeeded', 'failed', 'cancelled')),
     terminal_reason_code TEXT,
     terminal_error JSONB,
@@ -1597,18 +1600,18 @@ CREATE TABLE run_attempts (
         ON DELETE RESTRICT,
     CHECK (
         (entrypoint_kind = 'task'
-         AND actor_start_input_sequence IS NULL
-         AND terminal_actor_input_sequence IS NULL)
+         AND session_input_start_sequence IS NULL
+         AND terminal_session_input_sequence IS NULL)
         OR
         (entrypoint_kind = 'actor'
-         AND actor_start_input_sequence IS NOT NULL)
+         AND session_input_start_sequence IS NOT NULL)
     ),
     CHECK (
         (terminal_outcome IS NULL
          AND terminal_at IS NULL
          AND terminal_reason_code IS NULL
          AND terminal_error IS NULL
-         AND terminal_actor_input_sequence IS NULL)
+         AND terminal_session_input_sequence IS NULL)
         OR
         (terminal_outcome IS NOT NULL
          AND terminal_at IS NOT NULL
@@ -1617,19 +1620,19 @@ CREATE TABLE run_attempts (
          AND octet_length(terminal_reason_code) <= 128
          AND (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object')
          AND (
-             (entrypoint_kind = 'task' AND terminal_actor_input_sequence IS NULL)
+             (entrypoint_kind = 'task' AND terminal_session_input_sequence IS NULL)
              OR
              (entrypoint_kind = 'actor'
               AND (terminal_outcome <> 'succeeded'
-                   OR terminal_actor_input_sequence IS NOT NULL))
+                   OR terminal_session_input_sequence IS NOT NULL))
          ))
     )
 );
 
-CREATE TABLE actor_records (
+CREATE TABLE session_records (
     id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
-    actor_id UUID NOT NULL,
+    session_id UUID NOT NULL,
     direction TEXT NOT NULL CHECK (direction IN ('input', 'output')),
     sequence BIGINT NOT NULL CHECK (sequence BETWEEN 1 AND 9007199254740991),
     data JSONB NOT NULL,
@@ -1642,10 +1645,10 @@ CREATE TABLE actor_records (
     producer_attempt_number INTEGER,
     claim_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (actor_id, direction, sequence),
-    UNIQUE (actor_id, id, direction),
-    FOREIGN KEY (environment_id, actor_id)
-        REFERENCES actors(environment_id, id)
+    UNIQUE (session_id, direction, sequence),
+    UNIQUE (session_id, id, direction),
+    FOREIGN KEY (environment_id, session_id)
+        REFERENCES sessions(environment_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, source_run_id)
         REFERENCES runs(environment_id, id)
@@ -1653,8 +1656,8 @@ CREATE TABLE actor_records (
     FOREIGN KEY (producer_run_id, producer_attempt_number)
         REFERENCES run_attempts(run_id, number)
         ON DELETE RESTRICT,
-    FOREIGN KEY (actor_id, producer_run_id)
-        REFERENCES runs(actor_id, id)
+    FOREIGN KEY (session_id, producer_run_id)
+        REFERENCES runs(session_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, claim_id)
         REFERENCES idempotency_claims(environment_id, id)
@@ -1679,20 +1682,20 @@ CREATE TABLE actor_records (
     )
 );
 
-CREATE UNIQUE INDEX actor_records_claim_uidx
-    ON actor_records (actor_id, direction, claim_id)
+CREATE UNIQUE INDEX session_records_claim_uidx
+    ON session_records (session_id, direction, claim_id)
     WHERE claim_id IS NOT NULL;
 
-CREATE INDEX actor_records_claim_idx
-    ON actor_records (claim_id)
+CREATE INDEX session_records_claim_idx
+    ON session_records (claim_id)
     WHERE claim_id IS NOT NULL;
 
-CREATE INDEX actor_records_input_sequence_idx
-    ON actor_records (actor_id, sequence, id)
+CREATE INDEX session_records_input_sequence_idx
+    ON session_records (session_id, sequence, id)
     WHERE direction = 'input';
 
-CREATE INDEX actor_records_output_sequence_idx
-    ON actor_records (actor_id, sequence, id)
+CREATE INDEX session_records_output_sequence_idx
+    ON session_records (session_id, sequence, id)
     WHERE direction = 'output';
 
 ALTER TABLE runs
@@ -1702,17 +1705,17 @@ ALTER TABLE runs
     ON DELETE RESTRICT
     DEFERRABLE INITIALLY DEFERRED;
 
-ALTER TABLE actors
-    ADD CONSTRAINT actors_current_run_fk
+ALTER TABLE sessions
+    ADD CONSTRAINT sessions_current_run_fk
     FOREIGN KEY (id, workspace_id, current_run_id)
-    REFERENCES runs(actor_id, workspace_id, id)
+    REFERENCES runs(session_id, workspace_id, id)
     ON DELETE RESTRICT
     DEFERRABLE INITIALLY DEFERRED;
 
-ALTER TABLE actors
-    ADD CONSTRAINT actors_failure_run_fk
+ALTER TABLE sessions
+    ADD CONSTRAINT sessions_failure_run_fk
     FOREIGN KEY (id, failure_run_id)
-    REFERENCES runs(actor_id, id)
+    REFERENCES runs(session_id, id)
     ON DELETE RESTRICT;
 
 CREATE INDEX runs_deployment_definition_idx
@@ -1729,8 +1732,8 @@ CREATE INDEX runs_claim_idx
     WHERE claim_id IS NOT NULL;
 
 CREATE UNIQUE INDEX runs_actor_live_uidx
-    ON runs (actor_id)
-    WHERE actor_id IS NOT NULL
+    ON runs (session_id)
+    WHERE session_id IS NOT NULL
       AND status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested');
 
 CREATE UNIQUE INDEX runs_schedule_instant_uidx
@@ -2864,7 +2867,7 @@ CREATE TABLE run_waits (
     child_target_declared_id TEXT,
     child_claim_id UUID,
     child_request JSONB,
-    actor_id UUID,
+    session_id UUID,
     after_input_sequence BIGINT CHECK (after_input_sequence IS NULL OR after_input_sequence >= 0),
     condition_result JSONB,
     condition_error JSONB,
@@ -2951,15 +2954,15 @@ CREATE TABLE run_waits (
     FOREIGN KEY (run_id, child_run_id, child_parent_owned)
         REFERENCES runs(parent_run_id, id, parent_owns_lifecycle)
         ON DELETE RESTRICT,
-    FOREIGN KEY (actor_id, workspace_id, run_id)
-        REFERENCES runs(actor_id, workspace_id, id)
+    FOREIGN KEY (session_id, workspace_id, run_id)
+        REFERENCES runs(session_id, workspace_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (
-        actor_id,
+        session_id,
         completed_actor_record_id,
         completed_actor_record_direction
     )
-        REFERENCES actor_records(actor_id, id, direction)
+        REFERENCES session_records(session_id, id, direction)
         ON DELETE RESTRICT,
     FOREIGN KEY (workspace_id, base_workspace_version_id)
         REFERENCES workspace_versions(workspace_id, id)
@@ -2981,7 +2984,7 @@ CREATE TABLE run_waits (
         OR
         (kind = 'actor_input'
          AND condition_state = 'completed'
-         AND actor_id IS NOT NULL
+         AND session_id IS NOT NULL
          AND completed_actor_record_id IS NOT NULL
          AND completed_actor_record_direction = 'input')
     ),
@@ -2996,7 +2999,7 @@ CREATE TABLE run_waits (
          AND child_target_declared_id IS NULL
          AND child_claim_id IS NULL
          AND child_request IS NULL
-         AND actor_id IS NULL
+         AND session_id IS NULL
          AND after_input_sequence IS NULL)
         OR
         (kind = 'token'
@@ -3008,7 +3011,7 @@ CREATE TABLE run_waits (
          AND child_target_declared_id IS NULL
          AND child_claim_id IS NULL
          AND child_request IS NULL
-         AND actor_id IS NULL
+         AND session_id IS NULL
          AND after_input_sequence IS NULL)
         OR
         (kind = 'child'
@@ -3021,7 +3024,7 @@ CREATE TABLE run_waits (
          AND btrim(child_target_declared_id) <> ''
          AND child_claim_id IS NOT NULL
          AND child_request IS NOT NULL
-         AND actor_id IS NULL
+         AND session_id IS NULL
          AND after_input_sequence IS NULL)
         OR
         (kind = 'actor_input'
@@ -3033,7 +3036,7 @@ CREATE TABLE run_waits (
          AND child_target_declared_id IS NULL
          AND child_claim_id IS NULL
          AND child_request IS NULL
-         AND actor_id IS NOT NULL
+         AND session_id IS NOT NULL
          AND after_input_sequence IS NOT NULL)
     ),
     CHECK (

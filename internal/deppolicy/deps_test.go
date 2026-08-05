@@ -19,14 +19,14 @@ const internalImportPrefix = "github.com/helmrdotdev/helmr/internal/"
 const moduleImportPrefix = "github.com/helmrdotdev/helmr/"
 
 func TestOperatorAPIDependencyBudget(t *testing.T) {
-	imports, err := packageImports(filepath.Join(repositoryRoot(t), "operatorapi"))
+	imports, err := packageImports(filepath.Join(repositoryRoot(t), "capacityapi"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, importPath := range imports {
 		first, _, _ := strings.Cut(importPath, "/")
 		if strings.Contains(first, ".") {
-			t.Fatalf("operatorapi must depend only on the standard library; imports %s", importPath)
+			t.Fatalf("capacityapi must depend only on the standard library; imports %s", importPath)
 		}
 	}
 }
@@ -104,7 +104,7 @@ func TestProgramBuildHostPackageIsWorkerOnly(t *testing.T) {
 func TestCLIStateIsCLIOnly(t *testing.T) {
 	root := repositoryRoot(t)
 	target := moduleImportPrefix + "internal/clistate"
-	for _, sourceRoot := range []string{"cmd", "internal", "operatorapi"} {
+	for _, sourceRoot := range []string{"cmd", "internal", "capacityapi"} {
 		err := filepath.WalkDir(filepath.Join(root, sourceRoot), func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -142,7 +142,7 @@ func TestCLIStateIsCLIOnly(t *testing.T) {
 
 func TestDomainPackagesUseNaturalImportNames(t *testing.T) {
 	root := repositoryRoot(t)
-	for _, sourceRoot := range []string{"cmd", "internal", "operatorapi"} {
+	for _, sourceRoot := range []string{"cmd", "internal", "capacityapi"} {
 		err := filepath.WalkDir(filepath.Join(root, sourceRoot), func(filename string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err

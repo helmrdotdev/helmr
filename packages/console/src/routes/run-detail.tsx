@@ -3,7 +3,7 @@ import { createQuery } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { formatRelative, StatusBadge } from "../features/runs/display";
 import { ApiError } from "../lib/api";
-import { actorRunConsolePath } from "../lib/actors";
+import { runSessionConsolePath } from "../lib/sessions";
 import {
   getRun,
   getRunEvents,
@@ -253,15 +253,15 @@ export function RunDetail() {
                     <dl class="m-0 grid gap-2.5 [&>div]:grid [&>div]:gap-0.75 [&_dt]:font-mono [&_dt]:text-[10px] [&_dt]:uppercase [&_dt]:text-console-subtle [&_dd]:m-0 [&_dd]:break-words [&_dd]:text-[12px]">
                       <div><dt>ID</dt><dd><code>{current().id}</code></dd></div>
                       <div><dt>Entrypoint</dt><dd>{current().entrypoint.kind} · {current().entrypoint.id}</dd></div>
-                      <Show when={actorRunConsolePath(current(), projectID(), environmentID())}>
-                        {(actorPath) => <div>
-                          <dt>Actor</dt>
+                      <Show when={runSessionConsolePath(current(), projectID(), environmentID())}>
+                        {(sessionPath) => <div>
+                          <dt>Session</dt>
                           <dd>
                             <A
                               class="text-console-accent"
-                              href={actorPath()}
+                              href={sessionPath()}
                             >
-                              {current().actor_id}
+                              {current().session_id}
                             </A>
                           </dd>
                         </div>}

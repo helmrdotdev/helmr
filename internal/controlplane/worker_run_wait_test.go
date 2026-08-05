@@ -178,10 +178,10 @@ func TestValidateRootRunWaitActorCursor(t *testing.T) {
 	actorID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	authority := runLeaseClaimAuthority{
-		run:       db.Run{ID: runID, EntrypointKind: "actor", ActorID: actorID},
-		actor:     db.Actor{ID: actorID, CurrentRunID: runID, State: "open", CommittedInputSequence: 4, NextInputSequence: 6},
-		attempt:   db.RunAttempt{ActorStartInputSequence: pgtype.Int8{Int64: 3, Valid: true}},
-		workspace: db.Workspace{OwnerActorID: actorID},
+		run:       db.Run{ID: runID, EntrypointKind: "actor", SessionID: actorID},
+		actor:     db.Session{ID: actorID, CurrentRunID: runID, State: "open", CommittedInputSequence: 4, NextInputSequence: 6},
+		attempt:   db.RunAttempt{SessionInputStartSequence: pgtype.Int8{Int64: 3, Valid: true}},
+		workspace: db.Workspace{OwnerSessionID: actorID},
 	}
 	for _, cursor := range []int64{4, 5} {
 		if err := validateRunWaitActorCursor(authority, db.RunWait{

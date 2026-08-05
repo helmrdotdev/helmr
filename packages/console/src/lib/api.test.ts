@@ -1,7 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
 import { ApiError, request } from "./api";
-import { HELMR_API_VERSION, HELMR_API_VERSION_HEADER } from "./version";
 
 const originalFetch = globalThis.fetch;
 
@@ -32,18 +31,6 @@ test("redirects unauthorized requests and rejects instead of hanging", async () 
   expect(error).toBeInstanceOf(ApiError);
   expect((error as ApiError).errorKind).toBe("unauthorized");
   expect(windowMock.location.href).toBe("/login");
-});
-
-test("sends pinned API version header", async () => {
-  let apiVersion: string | null | undefined;
-  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-    apiVersion = new Headers(init?.headers).get(HELMR_API_VERSION_HEADER);
-    return Response.json({ ok: true });
-  }) as typeof fetch;
-
-  await request("/api/projects");
-
-  expect(apiVersion).toBe(HELMR_API_VERSION);
 });
 
 test("maps status-only api errors to stable error kinds", async () => {

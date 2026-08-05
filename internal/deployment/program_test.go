@@ -36,8 +36,8 @@ func TestProgramIndexCanonicalRoundTrip(t *testing.T) {
 		t.Fatalf("reencoded Program index differs:\n%s\n%s", reencoded, raw)
 	}
 	if parsed.Declarations[0].Kind != DefinitionKindActor ||
-		parsed.Declarations[1].Kind != DefinitionKindTask ||
-		parsed.Declarations[2].Kind != DefinitionKindWorkspace {
+		parsed.Declarations[1].Kind != DefinitionKindSandbox ||
+		parsed.Declarations[2].Kind != DefinitionKindTask {
 		t.Fatalf("Program index declarations are not in unsigned UTF-8 kind order")
 	}
 }
@@ -85,9 +85,9 @@ func TestProgramIndexRejectsInvalidAuthority(t *testing.T) {
 			},
 		},
 		{
-			name: "Workspace locator",
+			name: "Sandbox locator",
 			change: func(index *ProgramIndex) {
-				index.Declarations[2].Locator = &ProgramLocator{
+				index.Declarations[1].Locator = &ProgramLocator{
 					ExportName: "repo",
 					ModulePath: ".helmr/modules/" + strings.Repeat("a", 64) + ".mjs",
 					Slot:       DeclarationSlotHandler,

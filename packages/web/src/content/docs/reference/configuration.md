@@ -43,7 +43,19 @@ except names ending in `.example`, `.sample`, or `.template`.
 | `image` | `from`, `run`, `copy`, `copyFrom`, `workdir`, `env`, `user` |
 | `source` | `file(path)`, `directory(path, { ignore })` |
 
-Workspace create requests use Secret placements:
+SDK Workspace creation uses inert Secret addresses rather than raw names:
+
+```ts
+secrets: [
+  { secret: secrets.fromName("TOKEN"), env: "TOKEN" },
+  {
+    secret: secrets.fromName("config-json"),
+    file: "/run/secrets/config.json",
+  },
+]
+```
+
+The corresponding REST request body uses the canonical wire form:
 
 ```ts
 secrets: [

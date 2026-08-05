@@ -189,7 +189,7 @@ func (s *Server) commitActorTurn(
 			authority.workspace, err = work.q.AdvanceActorWorkspaceHead(ctx, db.AdvanceActorWorkspaceHeadParams{
 				NewHeadVersionID: versionID, CompletedAt: committedAt, ID: authority.workspace.ID,
 				OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
-				EnvironmentID: authority.run.EnvironmentID, ActorID: authority.actor.ID,
+				EnvironmentID: authority.run.EnvironmentID, SessionID: authority.actor.ID,
 				OwnershipGeneration:   authority.workspace.OwnershipGeneration,
 				WriterGeneration:      authority.workspace.WriterGeneration,
 				ExpectedHeadVersionID: previousHeadVersionID,
@@ -218,7 +218,7 @@ func (s *Server) commitActorTurn(
 		}
 		authority.actor, err = work.q.AdvanceActorTurnCursor(ctx, db.AdvanceActorTurnCursorParams{
 			TargetInputSequence: commit.targetInputSequence, CommittedAt: committedAt,
-			EnvironmentID: authority.run.EnvironmentID, ActorID: authority.actor.ID,
+			EnvironmentID: authority.run.EnvironmentID, SessionID: authority.actor.ID,
 			WorkspaceID: authority.workspace.ID, RunID: authority.run.ID,
 			ExpectedRunGeneration: authority.actor.RunGeneration,
 			ExpectedInputSequence: commit.targetInputSequence - 1,
@@ -234,15 +234,15 @@ func (s *Server) commitActorTurn(
 
 func validateActorTurnAuthority(ctx context.Context, store db.Querier, authority runLeaseClaimAuthority) error {
 	actor := authority.actor
-	if authority.run.EntrypointKind != "actor" || !authority.run.ActorID.Valid ||
-		authority.run.ActorID != actor.ID || authority.run.ParentRunID.Valid ||
+	if authority.run.EntrypointKind != "actor" || !authority.run.SessionID.Valid ||
+		authority.run.SessionID != actor.ID || authority.run.ParentRunID.Valid ||
 		authority.run.ParentOwnsLifecycle.Valid || authority.runLease.State != db.RunLeaseStateRunning ||
 		!authority.run.ActiveStartedAt.Valid || !authority.attempt.EntrypointEnteredAt.Valid ||
-		authority.attempt.TerminalAt.Valid || !authority.attempt.ActorStartInputSequence.Valid ||
-		!authority.run.ActorStartInputSequence.Valid || !authority.run.ActorStartInputHighWatermark.Valid ||
+		authority.attempt.TerminalAt.Valid || !authority.attempt.SessionInputStartSequence.Valid ||
+		!authority.run.SessionInputStartSequence.Valid || !authority.run.SessionInputHighWatermark.Valid ||
 		!actor.CurrentRunID.Valid || actor.CurrentRunID != authority.run.ID ||
 		(actor.State != "open" && actor.State != "closing") ||
-		authority.workspace.OwnerActorID != actor.ID || authority.workspace.OwnerRunID.Valid ||
+		authority.workspace.OwnerSessionID != actor.ID || authority.workspace.OwnerRunID.Valid ||
 		!authority.workspace.HeadVersionID.Valid || authority.workspace.DirtyState != db.WorkspaceDirtyStateClean ||
 		authority.runLease.FinalizationOperationID.Valid || authority.runLease.FinalizationKind.Valid ||
 		authority.runLease.FinalizationStartedAt.Valid || authority.runLease.FinalizationRequestFingerprint.Valid {

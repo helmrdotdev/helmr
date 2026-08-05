@@ -16,10 +16,10 @@ const (
 	PermissionRunsCreate          Permission = "runs.create"
 	PermissionRunsRead            Permission = "runs.read"
 	PermissionRunsManage          Permission = "runs.manage"
-	PermissionActorsRead          Permission = "actors.read"
+	PermissionSessionsRead        Permission = "sessions.read"
 	PermissionActorsStart         Permission = "actors.start"
-	PermissionActorsInputSend     Permission = "actors.input.send"
-	PermissionActorsCloseManage   Permission = "actors.close"
+	PermissionSessionsInputSend   Permission = "sessions.input.send"
+	PermissionSessionsClose       Permission = "sessions.close"
 	PermissionTokensCreate        Permission = "tokens.create"
 	PermissionTokensRead          Permission = "tokens.read"
 	PermissionTokensComplete      Permission = "tokens.complete"
@@ -66,10 +66,10 @@ func RoleAllows(role Role, permission Permission) bool {
 		case PermissionRunsCreate,
 			PermissionRunsRead,
 			PermissionRunsManage,
-			PermissionActorsRead,
+			PermissionSessionsRead,
 			PermissionActorsStart,
-			PermissionActorsInputSend,
-			PermissionActorsCloseManage,
+			PermissionSessionsInputSend,
+			PermissionSessionsClose,
 			PermissionTokensCreate,
 			PermissionTokensRead,
 			PermissionTokensComplete,
@@ -87,7 +87,7 @@ func RoleAllows(role Role, permission Permission) bool {
 	case RoleViewer:
 		switch permission {
 		case PermissionRunsRead,
-			PermissionActorsRead,
+			PermissionSessionsRead,
 			PermissionTokensRead,
 			PermissionWorkspacesRead,
 			PermissionWorkspaceFilesRead:
@@ -106,10 +106,10 @@ func ParseAPIKeyGrant(value string) (Permission, bool) {
 	case PermissionRunsCreate,
 		PermissionRunsRead,
 		PermissionRunsManage,
-		PermissionActorsRead,
+		PermissionSessionsRead,
 		PermissionActorsStart,
-		PermissionActorsInputSend,
-		PermissionActorsCloseManage,
+		PermissionSessionsInputSend,
+		PermissionSessionsClose,
 		PermissionTokensCreate,
 		PermissionTokensRead,
 		PermissionTokensComplete,

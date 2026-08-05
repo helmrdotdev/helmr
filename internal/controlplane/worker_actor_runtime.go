@@ -59,15 +59,15 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("actor start input_present requires input")))
 		return
 	}
-	start := api.StartActorRequest{
-		Key: request.Key, Input: request.Input, IdempotencyKey: request.IdempotencyKey,
+	start := api.ActorStartOptions{
+		Key: request.Key, Input: request.Input,
 		Workspace: request.Workspace, Run: request.Run,
 	}
 	if err := api.ValidateActorDeclaredID(request.ActorDeclaredID); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	if err := api.ValidateStartActorRequest(start); err != nil {
+	if err := api.ValidateActorStartOptions(start); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -124,36 +124,35 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, workerapi.StartActorResponse{
 		CorrelationID: request.CorrelationID,
 		Completed: &api.StartActorResponse{
-			ActorID: result.ActorID.String(), RunID: result.BootRunID.String(),
+			SessionID: result.SessionID.String(), RunID: result.BootRunID.String(),
 		},
 	})
 }
 
-func (s *Server) workerGetActorStatus(w http.ResponseWriter, r *http.Request) {
+func (s *Server) workerGetSessionStatus(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request workerapi.ActorReferenceRequest
-	if err := decodeWorkerActorRequest(r, &request, "actor status"); err != nil {
+	var request workerapi.SessionReferenceRequest
+	if err := decodeWorkerActorRequest(r, &request, "session status"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	address, err := parseWorkerActorReference(request)
+	sessionID, err := parseWorkerSessionReference(request)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
 	worker := workerFromContext(r.Context())
-	var status api.ActorStatus
+	var status api.SessionStatusSnapshot
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		source, err := authorizeWorkerRunSource(r.Context(), work.q, worker, request.Lease)
 		if err != nil {
 			return err
 		}
 		status, err = getActorStatus(
-			r.Context(), work.q, source.EnvironmentID,
-			request.ActorDeclaredID, address,
+			r.Context(), work.q, source.EnvironmentID, sessionID,
 		)
 		return err
 	})
@@ -163,30 +162,30 @@ func (s *Server) workerGetActorStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeJSON(w, http.StatusOK, failedWorkerActorReference(
-				request.CorrelationID, "actor_not_found", "Actor was not found",
+			writeJSON(w, http.StatusOK, failedWorkerSessionReference(
+				request.CorrelationID, "session_not_found", "Session was not found",
 			))
 			return
 		}
-		writeError(w, errors.New("read run-sourced actor status"))
+		writeError(w, errors.New("read run-sourced session status"))
 		return
 	}
-	writeJSON(w, http.StatusOK, workerapi.ActorStatusResponse{
+	writeJSON(w, http.StatusOK, workerapi.SessionStatusResponse{
 		CorrelationID: request.CorrelationID, Completed: &status,
 	})
 }
 
-func (s *Server) workerCloseActor(w http.ResponseWriter, r *http.Request) {
+func (s *Server) workerCloseSession(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request workerapi.CloseActorRequest
-	if err := decodeWorkerActorRequest(r, &request, "actor close"); err != nil {
+	var request workerapi.CloseSessionRequest
+	if err := decodeWorkerActorRequest(r, &request, "session close"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	address, err := parseWorkerActorReference(request.ActorReferenceRequest)
+	sessionID, err := parseWorkerSessionReference(request.SessionReferenceRequest)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -198,16 +197,15 @@ func (s *Server) workerCloseActor(w http.ResponseWriter, r *http.Request) {
 	}
 	worker := workerFromContext(r.Context())
 	var source workerRunSourceAuthority
-	var actor db.Actor
+	var actor db.Session
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		source, err = authorizeWorkerRunSource(r.Context(), work.q, worker, request.Lease)
 		if err != nil {
 			return err
 		}
-		actor, err = resolveActorAddress(
-			r.Context(), work.q, source.EnvironmentID,
-			request.ActorDeclaredID, address,
-		)
+		actor, err = work.q.GetActor(r.Context(), db.GetActorParams{
+			EnvironmentID: source.EnvironmentID, ID: sessionID,
+		})
 		return err
 	})
 	if err != nil {
@@ -216,22 +214,22 @@ func (s *Server) workerCloseActor(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeJSON(w, http.StatusOK, workerapi.CloseActorResponse{
+			writeJSON(w, http.StatusOK, workerapi.CloseSessionResponse{
 				CorrelationID: request.CorrelationID,
 				Failed: &workerapi.RuntimeOperationFailure{
-					Code: "actor_not_found", Message: "Actor was not found",
+					Code: "session_not_found", Message: "Session was not found",
 				},
 			})
 			return
 		}
-		writeError(w, errors.New("resolve run-sourced actor close"))
+		writeError(w, errors.New("resolve run-sourced session close"))
 		return
 	}
 	environmentID, _ := pgvalue.UUIDValue(source.EnvironmentID)
 	actorID, _ := pgvalue.UUIDValue(actor.ID)
 	workspaceID, _ := pgvalue.UUIDValue(actor.WorkspaceID)
 	receipt, err := s.closeActor(r.Context(), actorCloseRequest{
-		EnvironmentID: environmentID, ActorID: actorID,
+		EnvironmentID: environmentID, SessionID: actorID,
 		WorkspaceID:    workspaceID,
 		IdempotencyKey: idempotencyKey,
 		Authorize: func(ctx context.Context, q db.Querier) error {
@@ -244,8 +242,8 @@ func (s *Server) workerCloseActor(w http.ResponseWriter, r *http.Request) {
 			s.writeWorkerActorSourceError(w, "close", request.Lease.ID, err)
 			return
 		}
-		if failure, ok := workerActorCloseFailure(err); ok {
-			writeJSON(w, http.StatusOK, workerapi.CloseActorResponse{
+		if failure, ok := workerSessionCloseFailure(err); ok {
+			writeJSON(w, http.StatusOK, workerapi.CloseSessionResponse{
 				CorrelationID: request.CorrelationID, Failed: &failure,
 			})
 			return
@@ -253,37 +251,36 @@ func (s *Server) workerCloseActor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("close run-sourced actor"))
 		return
 	}
-	writeJSON(w, http.StatusOK, workerapi.CloseActorResponse{
+	writeJSON(w, http.StatusOK, workerapi.CloseSessionResponse{
 		CorrelationID: request.CorrelationID, Completed: &receipt,
 	})
 }
 
-func (s *Server) workerReadActorOutputPage(w http.ResponseWriter, r *http.Request) {
+func (s *Server) workerReadSessionOutputPage(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
 		return
 	}
-	var request workerapi.ReadActorOutputPageRequest
-	if err := decodeWorkerActorRequest(r, &request, "actor output page"); err != nil {
+	var request workerapi.ReadSessionOutputPageRequest
+	if err := decodeWorkerActorRequest(r, &request, "session output page"); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	address, err := parseWorkerActorReference(request.ActorReferenceRequest)
-	if err != nil || request.Limit < 1 || request.Limit > actorOutputReadMaxLimit ||
-		(request.After != nil && (*request.After < 0 || *request.After > maxActorOutputSequence)) {
-		writeError(w, badRequest(errors.New("actor output page request is invalid")))
+	sessionID, err := parseWorkerSessionReference(request.SessionReferenceRequest)
+	if err != nil || request.Limit < 1 || request.Limit > sessionOutputMaxLimit ||
+		(request.After != nil && (*request.After < 0 || *request.After > maxSessionOutputSequence)) {
+		writeError(w, badRequest(errors.New("session output page request is invalid")))
 		return
 	}
 	worker := workerFromContext(r.Context())
-	var page api.ActorOutputPage
+	var page api.SessionOutputPage
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		source, err := authorizeWorkerRunSource(r.Context(), work.q, worker, request.Lease)
 		if err != nil {
 			return err
 		}
-		page, err = readActorOutputPage(
-			r.Context(), work.q, source.EnvironmentID, request.ActorDeclaredID,
-			address, request.After, request.Limit,
+		page, err = readSessionOutputPage(
+			r.Context(), work.q, source.EnvironmentID, sessionID, request.After, request.Limit,
 		)
 		return err
 	})
@@ -292,22 +289,22 @@ func (s *Server) workerReadActorOutputPage(w http.ResponseWriter, r *http.Reques
 			s.writeWorkerActorSourceError(w, "output-page", request.Lease.ID, err)
 			return
 		}
-		code, message := "actor_output_unavailable", "Actor output is unavailable"
+		code, message := "session_output_unavailable", "Actor output is unavailable"
 		if errors.Is(err, pgx.ErrNoRows) {
-			code, message = "actor_not_found", "Actor was not found"
-		} else if errors.Is(err, errActorOutputCursorExpired) {
-			code, message = "actor_output_cursor_expired", err.Error()
+			code, message = "session_not_found", "Session was not found"
+		} else if errors.Is(err, errSessionOutputCursorExpired) {
+			code, message = "session_output_cursor_expired", err.Error()
 		} else {
-			writeError(w, errors.New("read run-sourced actor output"))
+			writeError(w, errors.New("read run-sourced session output"))
 			return
 		}
-		writeJSON(w, http.StatusOK, workerapi.ReadActorOutputPageResponse{
+		writeJSON(w, http.StatusOK, workerapi.ReadSessionOutputPageResponse{
 			CorrelationID: request.CorrelationID,
 			Failed:        &workerapi.RuntimeOperationFailure{Code: code, Message: message},
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, workerapi.ReadActorOutputPageResponse{
+	writeJSON(w, http.StatusOK, workerapi.ReadSessionOutputPageResponse{
 		CorrelationID: request.CorrelationID, Completed: &page,
 	})
 }
@@ -326,48 +323,17 @@ func (s *Server) workerRunSource(
 	return source, err
 }
 
-func parseWorkerActorReference(
-	request workerapi.ActorReferenceRequest,
-) (actorReadAddress, error) {
+func parseWorkerSessionReference(
+	request workerapi.SessionReferenceRequest,
+) (pgtype.UUID, error) {
 	if _, err := parseCanonicalUUID("correlation_id", request.CorrelationID); err != nil {
-		return actorReadAddress{}, err
+		return pgtype.UUID{}, err
 	}
-	if err := api.ValidateActorDeclaredID(request.ActorDeclaredID); err != nil {
-		return actorReadAddress{}, err
+	id, err := ids.Parse(request.SessionID)
+	if err != nil {
+		return pgtype.UUID{}, err
 	}
-	if err := api.ValidateActorReference(api.ActorReference{
-		ActorID: request.ActorID, ActorKey: request.ActorKey,
-	}); err != nil {
-		return actorReadAddress{}, err
-	}
-	var actorID pgtype.UUID
-	if request.ActorID != "" {
-		id, err := ids.Parse(request.ActorID)
-		if err != nil {
-			return actorReadAddress{}, err
-		}
-		actorID = pgvalue.UUID(id)
-	}
-	return actorReadAddress{id: actorID, key: request.ActorKey}, nil
-}
-
-func resolveActorAddress(
-	ctx context.Context,
-	store db.Querier,
-	environmentID pgtype.UUID,
-	actorDeclaredID string,
-	address actorReadAddress,
-) (db.Actor, error) {
-	if address.id.Valid {
-		return store.GetActorByAddressID(ctx, db.GetActorByAddressIDParams{
-			EnvironmentID: environmentID, ActorDeclaredID: actorDeclaredID,
-			ID: address.id,
-		})
-	}
-	return store.GetActorByKey(ctx, db.GetActorByKeyParams{
-		EnvironmentID: environmentID, ActorDeclaredID: actorDeclaredID,
-		Key: pgvalue.Text(address.key),
-	})
+	return pgvalue.UUID(id), nil
 }
 
 func workerActorStartFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
@@ -375,39 +341,39 @@ func workerActorStartFailure(err error) (workerapi.RuntimeOperationFailure, bool
 	var keyConflict ActorKeyConflictError
 	switch {
 	case errors.As(err, &claimConflict):
-		return runtimeActorFailure("idempotency_conflict", "idempotency key conflicts with an earlier Actor start", false), true
+		return runtimeOperationFailure("idempotency_conflict", "idempotency key conflicts with an earlier Actor start", false), true
 	case errors.As(err, &keyConflict):
-		return runtimeActorFailure("actor_key_conflict", keyConflict.Error(), false), true
+		return runtimeOperationFailure("actor_key_conflict", keyConflict.Error(), false), true
 	case errors.Is(err, errActorStartNotDeployed):
-		return runtimeActorFailure("actor_not_deployed", err.Error(), false), true
+		return runtimeOperationFailure("actor_not_deployed", err.Error(), false), true
 	case errors.Is(err, errActorStartWorkspaceNotFound):
-		return runtimeActorFailure("workspace_not_found", err.Error(), false), true
+		return runtimeOperationFailure("workspace_not_found", err.Error(), false), true
 	case errors.Is(err, errActorStartWorkspaceConflict):
-		return runtimeActorFailure("workspace_unavailable", err.Error(), true), true
+		return runtimeOperationFailure("workspace_unavailable", err.Error(), true), true
 	case errors.Is(err, errActorStartSecretUnavailable):
-		return runtimeActorFailure("secret_unavailable", err.Error(), false), true
+		return runtimeOperationFailure("secret_unavailable", err.Error(), false), true
 	case errors.Is(err, errActorInputTooLarge), errors.Is(err, errActorStartInvalid):
-		return runtimeActorFailure("invalid_actor_start", err.Error(), false), true
+		return runtimeOperationFailure("invalid_actor_start", err.Error(), false), true
 	default:
 		return workerapi.RuntimeOperationFailure{}, false
 	}
 }
 
-func workerActorCloseFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
+func workerSessionCloseFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
 	var claimConflict idempotency.ConflictError
 	switch {
 	case errors.As(err, &claimConflict):
-		return runtimeActorFailure("idempotency_conflict", "idempotency key conflicts with an earlier Actor close", false), true
+		return runtimeOperationFailure("idempotency_conflict", "idempotency key conflicts with an earlier Actor close", false), true
 	case errors.Is(err, errActorCloseConflict):
-		return runtimeActorFailure("actor_close_conflict", err.Error(), false), true
+		return runtimeOperationFailure("actor_close_conflict", err.Error(), false), true
 	case errors.Is(err, errActorCloseAuthority):
-		return runtimeActorFailure("actor_not_found", "Actor was not found", false), true
+		return runtimeOperationFailure("session_not_found", "Session was not found", false), true
 	default:
 		return workerapi.RuntimeOperationFailure{}, false
 	}
 }
 
-func runtimeActorFailure(code, message string, retryable bool) workerapi.RuntimeOperationFailure {
+func runtimeOperationFailure(code, message string, retryable bool) workerapi.RuntimeOperationFailure {
 	return workerapi.RuntimeOperationFailure{
 		Code: strings.TrimSpace(code), Message: strings.TrimSpace(message),
 		Retryable: retryable,
@@ -418,17 +384,17 @@ func failedWorkerActorStart(
 	correlationID, code, message string,
 	retryable bool,
 ) workerapi.StartActorResponse {
-	failure := runtimeActorFailure(code, message, retryable)
+	failure := runtimeOperationFailure(code, message, retryable)
 	return workerapi.StartActorResponse{
 		CorrelationID: correlationID, Failed: &failure,
 	}
 }
 
-func failedWorkerActorReference(
+func failedWorkerSessionReference(
 	correlationID, code, message string,
-) workerapi.ActorStatusResponse {
-	failure := runtimeActorFailure(code, message, false)
-	return workerapi.ActorStatusResponse{
+) workerapi.SessionStatusResponse {
+	failure := runtimeOperationFailure(code, message, false)
+	return workerapi.SessionStatusResponse{
 		CorrelationID: correlationID, Failed: &failure,
 	}
 }

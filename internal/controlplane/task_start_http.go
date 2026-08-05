@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
@@ -33,11 +34,11 @@ func (s *Server) startTaskHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	taskDeclaredID := chi.URLParam(r, "taskDeclaredID")
-	if err := api.ValidateTaskID(taskDeclaredID); err != nil {
+	if err := api.ValidateDefinitionID(taskDeclaredID); err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_task_start", message: err.Error()}))
 		return
 	}
-	if err := api.ValidateWorkspaceTarget(request.Workspace); err != nil {
+	if err := api.ValidateWorkspaceIDTarget(request.Workspace); err != nil {
 		writeError(w, badRequest(codedError{
 			code: "invalid_workspace_reference", message: err.Error(),
 		}))
@@ -84,10 +85,15 @@ func (s *Server) startTaskHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_task_start", message: err.Error()}))
 		return
 	}
+	workspaceID, err := ids.Parse(request.Workspace.ID)
+	if err != nil {
+		writeError(w, badRequest(codedError{code: "invalid_task_start", message: err.Error()}))
+		return
+	}
 	result, err := s.startTask(r.Context(), taskStartRequest{
 		OrgID: principal.OrgID, ProjectID: projectUUID, EnvironmentID: environmentUUID,
 		TaskDeclaredID: taskDeclaredID, PayloadPresent: payloadPresent, Payload: request.Payload,
-		Workspace: request.Workspace, IdempotencyKey: idempotencyKey,
+		WorkspaceID: workspaceID, IdempotencyKey: idempotencyKey,
 		QueueName: request.Queue, ConcurrencyKey: request.ConcurrencyKey,
 		Priority: request.Priority, QueuedTTLMS: ttl, RetryPolicy: retry,
 		Metadata: request.Metadata, Tags: request.Tags,

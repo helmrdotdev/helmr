@@ -349,11 +349,11 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
    AND runs.current_run_lease_id IS NULL
    AND (
         (runs.entrypoint_kind = 'task'
-         AND runs.actor_id IS NULL
+         AND runs.session_id IS NULL
          AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
          AND (
              (workspaces.owner_run_id = runs.id
-              AND workspaces.owner_actor_id IS NULL
+              AND workspaces.owner_session_id IS NULL
               AND (NOT EXISTS (
                  SELECT 1
                    FROM run_waits
@@ -429,18 +429,18 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
          ))
        OR
        (runs.entrypoint_kind = 'actor'
-        AND runs.actor_id IS NOT NULL
+        AND runs.session_id IS NOT NULL
         AND runs.cause_kind IN ('actor_start', 'continuation')
         AND runs.parent_run_id IS NULL
-        AND workspaces.owner_actor_id = runs.actor_id
+        AND workspaces.owner_session_id = runs.session_id
         AND workspaces.owner_run_id IS NULL
         AND EXISTS (
             SELECT 1
-              FROM actors
-             WHERE actors.id = runs.actor_id
-               AND actors.workspace_id = runs.workspace_id
-               AND actors.current_run_id = runs.id
-               AND actors.state IN ('open', 'closing')
+              FROM sessions
+             WHERE sessions.id = runs.session_id
+               AND sessions.workspace_id = runs.workspace_id
+               AND sessions.current_run_id = runs.id
+               AND sessions.state IN ('open', 'closing')
         )
         AND EXISTS (
             SELECT 1
@@ -459,8 +459,8 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
                 ON workspace_versions.workspace_id = run_checkpoints.workspace_id
                AND workspace_versions.id = run_checkpoints.private_workspace_version_id
                AND workspace_versions.state = 'private'
-              JOIN actors AS restore_actor
-                ON restore_actor.id = runs.actor_id
+              JOIN sessions AS restore_actor
+                ON restore_actor.id = runs.session_id
                AND restore_actor.workspace_id = runs.workspace_id
                AND restore_actor.current_run_id = runs.id
                AND restore_actor.state IN ('open', 'closing')
@@ -469,15 +469,15 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
                AND restore_attempt.number = runs.current_attempt_number
                AND restore_attempt.workspace_id = runs.workspace_id
                AND restore_attempt.entrypoint_kind = 'actor'
-               AND restore_attempt.actor_start_input_sequence = runs.actor_start_input_sequence
+               AND restore_attempt.session_input_start_sequence = runs.session_input_start_sequence
                AND restore_attempt.terminal_at IS NULL
              WHERE run_waits.run_id = runs.id
                AND run_waits.suspension_state = 'resume_pending'
                AND run_waits.handoff_runtime_instance_id IS NULL
                AND run_waits.handoff_workspace_mount_id IS NULL
                AND run_waits.handoff_resume_checkpoint_id IS NULL
-               AND runs.actor_start_input_sequence <= runs.actor_start_input_high_watermark
-               AND restore_actor.committed_input_sequence >= runs.actor_start_input_sequence
+               AND runs.session_input_start_sequence <= runs.session_input_high_watermark
+               AND restore_actor.committed_input_sequence >= runs.session_input_start_sequence
                AND restore_actor.committed_input_sequence < restore_actor.next_input_sequence
                AND run_checkpoints.actor_speculative_input_sequence
                    BETWEEN restore_actor.committed_input_sequence
@@ -1017,11 +1017,11 @@ WITH candidate_scopes AS (
        AND runs.current_run_lease_id IS NULL
        AND (
            (runs.entrypoint_kind = 'task'
-            AND runs.actor_id IS NULL
+            AND runs.session_id IS NULL
             AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
             AND (
               (workspaces.owner_run_id = runs.id
-               AND workspaces.owner_actor_id IS NULL
+               AND workspaces.owner_session_id IS NULL
                AND (NOT EXISTS (
                SELECT 1
                  FROM run_waits
@@ -1090,17 +1090,17 @@ WITH candidate_scopes AS (
             ))
            OR
            (runs.entrypoint_kind = 'actor'
-            AND runs.actor_id IS NOT NULL
+            AND runs.session_id IS NOT NULL
             AND runs.cause_kind IN ('actor_start', 'continuation')
             AND runs.parent_run_id IS NULL
-            AND workspaces.owner_actor_id = runs.actor_id
+            AND workspaces.owner_session_id = runs.session_id
             AND workspaces.owner_run_id IS NULL
             AND EXISTS (
-                SELECT 1 FROM actors
-                 WHERE actors.id = runs.actor_id
-                   AND actors.workspace_id = runs.workspace_id
-                   AND actors.current_run_id = runs.id
-                   AND actors.state IN ('open', 'closing')
+                SELECT 1 FROM sessions
+                 WHERE sessions.id = runs.session_id
+                   AND sessions.workspace_id = runs.workspace_id
+                   AND sessions.current_run_id = runs.id
+                   AND sessions.state IN ('open', 'closing')
             )
             AND EXISTS (
                 SELECT 1
@@ -1119,8 +1119,8 @@ WITH candidate_scopes AS (
                     ON workspace_versions.workspace_id = run_checkpoints.workspace_id
                    AND workspace_versions.id = run_checkpoints.private_workspace_version_id
                    AND workspace_versions.state = 'private'
-                  JOIN actors AS restore_actor
-                    ON restore_actor.id = runs.actor_id
+                  JOIN sessions AS restore_actor
+                    ON restore_actor.id = runs.session_id
                    AND restore_actor.workspace_id = runs.workspace_id
                    AND restore_actor.current_run_id = runs.id
                    AND restore_actor.state IN ('open', 'closing')
@@ -1129,15 +1129,15 @@ WITH candidate_scopes AS (
                    AND restore_attempt.number = runs.current_attempt_number
                    AND restore_attempt.workspace_id = runs.workspace_id
                    AND restore_attempt.entrypoint_kind = 'actor'
-                   AND restore_attempt.actor_start_input_sequence = runs.actor_start_input_sequence
+                   AND restore_attempt.session_input_start_sequence = runs.session_input_start_sequence
                    AND restore_attempt.terminal_at IS NULL
                  WHERE run_waits.run_id = runs.id
                    AND run_waits.suspension_state = 'resume_pending'
                    AND run_waits.handoff_runtime_instance_id IS NULL
                    AND run_waits.handoff_workspace_mount_id IS NULL
                    AND run_waits.handoff_resume_checkpoint_id IS NULL
-                   AND runs.actor_start_input_sequence <= runs.actor_start_input_high_watermark
-                   AND restore_actor.committed_input_sequence >= runs.actor_start_input_sequence
+                   AND runs.session_input_start_sequence <= runs.session_input_high_watermark
+                   AND restore_actor.committed_input_sequence >= runs.session_input_start_sequence
                    AND restore_actor.committed_input_sequence < restore_actor.next_input_sequence
                    AND run_checkpoints.actor_speculative_input_sequence
                        BETWEEN restore_actor.committed_input_sequence
@@ -1234,11 +1234,11 @@ SELECT runs.org_id, runs.id AS run_id, runs.state_version
    AND runs.current_run_lease_id IS NULL
    AND (
        (runs.entrypoint_kind = 'task'
-        AND runs.actor_id IS NULL
+        AND runs.session_id IS NULL
         AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
         AND (
           (workspaces.owner_run_id = runs.id
-           AND workspaces.owner_actor_id IS NULL
+           AND workspaces.owner_session_id IS NULL
            AND (NOT EXISTS (
            SELECT 1
              FROM run_waits
@@ -1306,17 +1306,17 @@ SELECT runs.org_id, runs.id AS run_id, runs.state_version
         ))
        OR
        (runs.entrypoint_kind = 'actor'
-        AND runs.actor_id IS NOT NULL
+        AND runs.session_id IS NOT NULL
         AND runs.cause_kind IN ('actor_start', 'continuation')
         AND runs.parent_run_id IS NULL
-        AND workspaces.owner_actor_id = runs.actor_id
+        AND workspaces.owner_session_id = runs.session_id
         AND workspaces.owner_run_id IS NULL
         AND EXISTS (
-            SELECT 1 FROM actors
-             WHERE actors.id = runs.actor_id
-               AND actors.workspace_id = runs.workspace_id
-               AND actors.current_run_id = runs.id
-               AND actors.state IN ('open', 'closing')
+            SELECT 1 FROM sessions
+             WHERE sessions.id = runs.session_id
+               AND sessions.workspace_id = runs.workspace_id
+               AND sessions.current_run_id = runs.id
+               AND sessions.state IN ('open', 'closing')
         )
         AND EXISTS (
             SELECT 1
@@ -1335,8 +1335,8 @@ SELECT runs.org_id, runs.id AS run_id, runs.state_version
                 ON workspace_versions.workspace_id = run_checkpoints.workspace_id
                AND workspace_versions.id = run_checkpoints.private_workspace_version_id
                AND workspace_versions.state = 'private'
-              JOIN actors AS restore_actor
-                ON restore_actor.id = runs.actor_id
+              JOIN sessions AS restore_actor
+                ON restore_actor.id = runs.session_id
                AND restore_actor.workspace_id = runs.workspace_id
                AND restore_actor.current_run_id = runs.id
                AND restore_actor.state IN ('open', 'closing')
@@ -1345,15 +1345,15 @@ SELECT runs.org_id, runs.id AS run_id, runs.state_version
                AND restore_attempt.number = runs.current_attempt_number
                AND restore_attempt.workspace_id = runs.workspace_id
                AND restore_attempt.entrypoint_kind = 'actor'
-               AND restore_attempt.actor_start_input_sequence = runs.actor_start_input_sequence
+               AND restore_attempt.session_input_start_sequence = runs.session_input_start_sequence
                AND restore_attempt.terminal_at IS NULL
              WHERE run_waits.run_id = runs.id
                AND run_waits.suspension_state = 'resume_pending'
                AND run_waits.handoff_runtime_instance_id IS NULL
                AND run_waits.handoff_workspace_mount_id IS NULL
                AND run_waits.handoff_resume_checkpoint_id IS NULL
-               AND runs.actor_start_input_sequence <= runs.actor_start_input_high_watermark
-               AND restore_actor.committed_input_sequence >= runs.actor_start_input_sequence
+               AND runs.session_input_start_sequence <= runs.session_input_high_watermark
+               AND restore_actor.committed_input_sequence >= runs.session_input_start_sequence
                AND restore_actor.committed_input_sequence < restore_actor.next_input_sequence
                AND run_checkpoints.actor_speculative_input_sequence
                    BETWEEN restore_actor.committed_input_sequence

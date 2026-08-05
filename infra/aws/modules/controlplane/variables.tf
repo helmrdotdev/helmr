@@ -349,27 +349,27 @@ variable "create_controlplane_service" {
   default     = false
 }
 
-variable "operator_token_secret_arn" {
-  description = "Optional externally owned Secrets Manager ARN containing the provider-neutral deployment-operator credential."
+variable "capacity_token_secret_arn" {
+  description = "Optional externally owned Secrets Manager ARN containing the provider-neutral capacity credential."
   type        = string
   default     = null
   nullable    = true
 
   validation {
-    condition     = var.operator_token_secret_arn == null || can(regex("^arn:[^:]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$", var.operator_token_secret_arn))
-    error_message = "operator_token_secret_arn must be a Secrets Manager secret ARN."
+    condition     = var.capacity_token_secret_arn == null || can(regex("^arn:[^:]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$", var.capacity_token_secret_arn))
+    error_message = "capacity_token_secret_arn must be a Secrets Manager secret ARN."
   }
 }
 
-variable "operator_token_kms_key_arn" {
-  description = "Optional KMS key ARN required to decrypt operator_token_secret_arn."
+variable "capacity_token_kms_key_arn" {
+  description = "Optional KMS key ARN required to decrypt capacity_token_secret_arn."
   type        = string
   default     = null
   nullable    = true
 
   validation {
-    condition     = var.operator_token_kms_key_arn == null || can(regex("^arn:[^:]+:kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]+$", var.operator_token_kms_key_arn))
-    error_message = "operator_token_kms_key_arn must be a KMS key ARN."
+    condition     = var.capacity_token_kms_key_arn == null || can(regex("^arn:[^:]+:kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]+$", var.capacity_token_kms_key_arn))
+    error_message = "capacity_token_kms_key_arn must be a KMS key ARN."
   }
 }
 

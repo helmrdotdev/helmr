@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	helmrAPIURLEnv = "HELMR_API_URL"
-	helmrAPIKeyEnv = "HELMR_API_KEY"
+	helmrAPIURLEnv        = "HELMR_API_URL"
+	helmrAPIKeyEnv        = "HELMR_API_KEY"
+	managedCloudAPIOrigin = "https://api.helmr.dev"
 )
 
 type cliState interface {
@@ -37,14 +38,17 @@ func controlPlaneClient(cmd *cobra.Command) (*client.Client, error) {
 	}
 	sessionScopedRoutes := false
 	var state cliState
-	if rawURL == "" || bearer == "" {
+	if bearer == "" {
 		var err error
 		state, err = newCLIStateStore()
-		if err != nil && rawURL == "" {
+		if err != nil {
 			return nil, err
 		}
 	}
-	if rawURL == "" && state != nil {
+	if bearer != "" && rawURL == "" {
+		rawURL = managedCloudAPIOrigin
+	}
+	if bearer == "" && rawURL == "" {
 		cfg, err := state.Load()
 		if err == nil {
 			rawURL = cfg.DefaultHost
@@ -145,13 +149,15 @@ func parseControlPlaneURL(rawURL string) (*url.URL, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid %s %q: %w", helmrAPIURLEnv, rawURL, err)
 	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, fmt.Errorf("unsupported %s scheme %q; expected http or https", helmrAPIURLEnv, parsed.Scheme)
 	}
-	if parsed.RawQuery != "" || parsed.Fragment != "" {
-		return nil, fmt.Errorf("base URL must not include query or fragment")
+	if parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, fmt.Errorf("base URL must be an origin without credentials, path, query, or fragment")
 	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.Path = ""
 	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
 		return nil, fmt.Errorf("refusing to send %s over plaintext non-loopback URL %s", helmrAPIKeyEnv, parsed.Redacted())
 	}

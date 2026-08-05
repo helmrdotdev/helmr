@@ -9015,6 +9015,52 @@ function resourceID(value, label) {
   return value;
 }
 
+// sdk/typescript/src/session.ts
+function createRuntimeSessionRef(id) {
+  const sessionID = resourceID(id, "Session ID");
+  return Object.freeze({
+    id: sessionID,
+    input: Object.freeze({
+      send(input, options) {
+        return currentRuntimeOperations().actorInputSend(sessionID, input, options);
+      }
+    }),
+    output: Object.freeze({
+      async* read(options) {
+        let after = options?.after;
+        for (;; ) {
+          if (options?.signal?.aborted)
+            throw options.signal.reason;
+          const page = await currentRuntimeOperations().sessionOutputPage(sessionID, {
+            ...after === undefined ? {} : { after },
+            ...options?.limit === undefined ? {} : { limit: options.limit },
+            ...options?.signal === undefined ? {} : { signal: options.signal }
+          });
+          for (const record of page.records)
+            yield record;
+          if (!page.hasMore)
+            return;
+          after = page.nextAfter;
+        }
+      },
+      async list(options) {
+        return (await currentRuntimeOperations().sessionOutputPage(sessionID, options)).records;
+      }
+    }),
+    status() {
+      return currentRuntimeOperations().sessionStatus(sessionID);
+    },
+    close(options) {
+      return currentRuntimeOperations().sessionClose(sessionID, options);
+    }
+  });
+}
+var sessions = Object.freeze({
+  ref(id) {
+    return createRuntimeSessionRef(id);
+  }
+});
+
 // sdk/typescript/src/definitions.ts
 var privateDefinitionBrand = Symbol.for("helmr.sdk.v0.definition");
 var privateQueueBrand = Symbol.for("helmr.sdk.v0.queue");
@@ -9039,10 +9085,10 @@ function isQueueDefinition(value) {
     throw new Error("invalid private queue record");
   }
   const queue = value;
-  if (typeof queue.id !== "string") {
+  if (typeof queue.name !== "string") {
     throw new Error("invalid private queue record");
   }
-  validateQueueName(queue.id);
+  validateQueueName(queue.name);
   validateOptionalQueueConcurrencyLimit(queue.concurrencyLimit);
   return true;
 }
@@ -9071,21 +9117,21 @@ function isInternalDefinition(value) {
   }
 }
 // sdk/typescript/src/secret.ts
-var secretNameRefBrand = Symbol.for("helmr.sdk.v0.secret-name-ref");
+var secretAddressBrand = Symbol.for("helmr.sdk.v0.secret-address");
 var secretNamePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 
-class SecretName {
+class SecretNameAddress {
   name;
   constructor(name) {
     validateSecretName(name);
     this.name = name;
-    Object.defineProperty(this, secretNameRefBrand, { value: true });
+    Object.defineProperty(this, secretAddressBrand, { value: true });
     Object.freeze(this);
   }
 }
 var secrets = Object.freeze({
   fromName(name) {
-    return new SecretName(name);
+    return new SecretNameAddress(name);
   }
 });
 function validateSecretName(value) {
@@ -9128,68 +9174,77 @@ function inspectImage(value) {
     return;
   }
   const imageValue = value;
-  return { id: imageValue.id, steps: imageValue.steps };
+  return { key: imageValue.key, steps: imageValue.steps };
 }
 // sdk/typescript/src/workspace.ts
-var workspaceDefinitionBrand = Symbol.for("helmr.sdk.v0.workspace");
-function workspaceRef(address) {
-  validateWorkspaceAddress(address);
-  return createWorkspaceRef(address);
-}
+var sandboxDefinitionBrand = Symbol.for("helmr.sdk.v0.sandbox");
+var workspaceAddressBrand = Symbol.for("helmr.sdk.v0.workspace-address");
 var workspaces = Object.freeze({
-  ref: workspaceRef
+  ref: createWorkspaceRef,
+  fromId: createWorkspaceIdAddress,
+  fromKey: createWorkspaceKeyAddress
 });
-function inspectWorkspaceDefinition(value) {
+function inspectSandboxDefinition(value) {
   if (typeof value !== "object" || value === null)
     return;
-  if (!Object.hasOwn(value, workspaceDefinitionBrand))
+  if (!Object.hasOwn(value, sandboxDefinitionBrand))
     return;
-  if (value[workspaceDefinitionBrand] !== true) {
-    throw new Error("invalid private workspace record");
+  if (value[sandboxDefinitionBrand] !== true) {
+    throw new Error("invalid private Sandbox record");
   }
   const internal = value.internal;
-  if (typeof internal !== "object" || internal === null || internal.kind !== "workspace" || typeof internal.id !== "string" || typeof internal.image !== "object" || internal.image === null || typeof internal.resources !== "object" || internal.resources === null) {
-    throw new Error("invalid private workspace record");
+  if (typeof internal !== "object" || internal === null || internal.kind !== "sandbox" || typeof internal.id !== "string" || typeof internal.image !== "object" || internal.image === null || typeof internal.resources !== "object" || internal.resources === null) {
+    throw new Error("invalid private Sandbox record");
   }
   validateTaskId(internal.id);
   return internal;
 }
-function createWorkspaceRef(address) {
-  const immutableAddress = address.id !== undefined ? Object.freeze({ id: address.id }) : Object.freeze({ key: address.key });
+function createWorkspaceRef(id) {
+  const workspaceID = resourceID(id, "Workspace ID");
   const files = Object.freeze({
     read(path, options) {
-      return currentRuntimeOperations().workspaceFileRead(immutableAddress, path, options?.signal);
+      return currentRuntimeOperations().workspaceFileRead(workspaceID, path, options?.signal);
     },
     stat(path, options) {
-      return currentRuntimeOperations().workspaceFileStat(immutableAddress, path, options?.signal);
+      return currentRuntimeOperations().workspaceFileStat(workspaceID, path, options?.signal);
     },
     list(path, query, options) {
-      return currentRuntimeOperations().workspaceFileList(immutableAddress, path, query, options?.signal);
+      return currentRuntimeOperations().workspaceFileList(workspaceID, path, query, options?.signal);
     }
   });
   const operations = {
     files,
     retrieve(options) {
-      return currentRuntimeOperations().workspaceRetrieve(immutableAddress, options?.signal);
+      return currentRuntimeOperations().workspaceRetrieve(workspaceID, options?.signal);
     },
     exec(request, options) {
-      return currentRuntimeOperations().workspaceExec(immutableAddress, request, options?.signal);
+      return currentRuntimeOperations().workspaceExec(workspaceID, request, options?.signal);
     },
     delete(request, options) {
-      return currentRuntimeOperations().workspaceDelete(immutableAddress, request, options?.signal);
+      return currentRuntimeOperations().workspaceDelete(workspaceID, request, options?.signal);
     }
   };
-  return Object.freeze({ ...immutableAddress, ...operations });
+  return brandWorkspaceIdAddress({ id: workspaceID, ...operations });
 }
-function validateWorkspaceAddress(address) {
-  if ((("id" in address) && typeof address.id === "string") === (("key" in address) && typeof address.key === "string")) {
-    throw new Error("Workspace ref requires exactly one of id or key");
+function createWorkspaceIdAddress(id) {
+  return brandWorkspaceIdAddress({ id: resourceID(id, "Workspace ID") });
+}
+function createWorkspaceKeyAddress(key) {
+  if (typeof key !== "string" || new TextEncoder().encode(key).length < 1 || new TextEncoder().encode(key).length > 512) {
+    throw new Error("Workspace key must contain 1 to 512 UTF-8 bytes");
   }
-  if ("id" in address && address.id !== undefined) {
-    resourceID(address.id, "Workspace ID");
-  } else if (address.key.length === 0) {
-    throw new Error("Workspace key is required");
+  if (key.trim() !== key) {
+    throw new Error("Workspace key cannot begin or end with whitespace");
   }
+  return brandWorkspaceAddress({ key });
+}
+function brandWorkspaceIdAddress(value) {
+  resourceID(value.id, "Workspace ID");
+  return brandWorkspaceAddress(value);
+}
+function brandWorkspaceAddress(value) {
+  Object.defineProperty(value, workspaceAddressBrand, { value: true });
+  return Object.freeze(value);
 }
 // sdk/typescript/src/internal/jsoncanon.ts
 var textDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -10269,8 +10324,8 @@ function analyze(options) {
   located.sort(compareLocatedDefinitions);
   const queues = compileQueues(located, options.exports);
   const definitions = located.map(({ definition }) => compileDefinition(definition, options, queues));
-  const locatorEntries = located.flatMap((item) => item.definition.kind === "workspace" ? [] : [locatorEntry(item)]);
-  const programDeclarations = located.flatMap(({ definition }) => definition.kind === "workspace" ? [] : [programDeclaration(definition)]);
+  const locatorEntries = located.flatMap((item) => item.definition.kind === "sandbox" ? [] : [locatorEntry(item)]);
+  const programDeclarations = located.flatMap(({ definition }) => definition.kind === "sandbox" ? [] : [programDeclaration(definition)]);
   const buildPlan = Object.freeze({
     formatVersion: BUILD_PLAN_FORMAT_VERSION,
     definitions: Object.freeze(definitions),
@@ -10298,7 +10353,7 @@ function normalizeWorkspaceResources(resources) {
 function discoverDefinitions(exports) {
   const identities = new Map;
   for (const item of exports) {
-    const definition = inspectDefinition(item.value) ?? inspectWorkspaceDefinition(item.value);
+    const definition = inspectDefinition(item.value) ?? inspectSandboxDefinition(item.value);
     if (definition === undefined)
       continue;
     validateModulePath(item.modulePath);
@@ -10360,9 +10415,9 @@ function compileDefinition(definition, options, queues) {
           idleTimeoutMs: definition.idleTimeout === undefined ? 30000 : normalizeDuration(definition.idleTimeout, `actor ${JSON.stringify(definition.id)} idleTimeout`, 1, 3600000)
         }
       };
-    case "workspace":
+    case "sandbox":
       return {
-        kind: "workspace",
+        kind: "sandbox",
         declaredId: definition.id,
         manifest: {
           imageBuild: compileImageBuild(definition.image, options),
@@ -10385,7 +10440,7 @@ function compileQueues(located, exports) {
       addQueue(queues, definition.queue, definition.queue);
     } else if (definition.queue === undefined) {
       addQueue(queues, {
-        id: `${definition.kind}/${definition.id}`
+        name: `${definition.kind}/${definition.id}`
       }, definition);
     }
   }
@@ -10399,21 +10454,21 @@ function compileQueues(located, exports) {
   return new Map([...queues].map(([name, entry]) => [name, entry.queue]));
 }
 function addQueue(queues, queue, owner) {
-  validateQueueName(queue.id);
+  validateQueueName(queue.name);
   const next = {
-    name: queue.id,
+    name: queue.name,
     ...queue.concurrencyLimit === undefined || queue.concurrencyLimit === null ? {} : { concurrencyLimit: queue.concurrencyLimit }
   };
-  const existing = queues.get(queue.id);
+  const existing = queues.get(queue.name);
   if (existing !== undefined) {
     if (existing.owner === owner)
       return;
-    throw new Error(`duplicate queue declaration ${JSON.stringify(queue.id)}`);
+    throw new Error(`duplicate queue declaration ${JSON.stringify(queue.name)}`);
   }
-  queues.set(queue.id, { owner, queue: next });
+  queues.set(queue.name, { owner, queue: next });
 }
 function normalizeRun(definition, kind, queues) {
-  const queue = definition.queue === undefined ? `${kind}/${definition.id}` : typeof definition.queue === "string" ? definition.queue : definition.queue.id;
+  const queue = definition.queue === undefined ? `${kind}/${definition.id}` : typeof definition.queue === "string" ? definition.queue : definition.queue.name;
   if (!queues.has(queue)) {
     throw new Error(`${kind} ${JSON.stringify(definition.id)} queue is undefined`);
   }
@@ -10457,18 +10512,18 @@ function compileImageBuild(root, options) {
   const images = new Map;
   const visiting = new Set;
   const visit2 = (image) => {
-    if (visiting.has(image.id)) {
-      throw new Error(`image graph contains a cycle at ${JSON.stringify(image.id)}`);
+    if (visiting.has(image.key)) {
+      throw new Error(`image graph contains a cycle at ${JSON.stringify(image.key)}`);
     }
-    const existing = images.get(image.id);
+    const existing = images.get(image.key);
     if (existing !== undefined) {
       if (existing !== image) {
-        throw new Error(`image key ${JSON.stringify(image.id)} is not unique`);
+        throw new Error(`image key ${JSON.stringify(image.key)} is not unique`);
       }
       return;
     }
-    visiting.add(image.id);
-    images.set(image.id, image);
+    visiting.add(image.key);
+    images.set(image.key, image);
     for (const step of image.steps) {
       if (step.kind === "copy_from_image") {
         const source2 = inspectImage(step.source);
@@ -10477,11 +10532,11 @@ function compileImageBuild(root, options) {
         visit2(source2);
       }
     }
-    visiting.delete(image.id);
+    visiting.delete(image.key);
   };
   visit2(root);
-  const specs = [...images.values()].sort((left, right) => compareUtf82(left.id, right.id)).map((image) => ({
-    key: image.id,
+  const specs = [...images.values()].sort((left, right) => compareUtf82(left.key, right.key)).map((image) => ({
+    key: image.key,
     platform: {
       os: "linux",
       architecture: options.architecture
@@ -10493,7 +10548,7 @@ function compileImageBuild(root, options) {
     throw new Error("image build exceeds 10000 steps");
   return {
     formatVersion: 0,
-    root: root.id,
+    root: root.key,
     images: specs
   };
 }
@@ -10544,7 +10599,7 @@ function compileImageStep(step, options) {
       return {
         copyFromImage: {
           dst: step.destination,
-          imageKey: source2.id,
+          imageKey: source2.key,
           srcPath: step.sourcePath
         }
       };
@@ -10567,8 +10622,8 @@ function assertExactKeys(value, expected, label) {
   }
 }
 function locatorEntry(item) {
-  if (item.definition.kind === "workspace") {
-    throw new Error("workspace has no executable locator");
+  if (item.definition.kind === "sandbox") {
+    throw new Error("Sandbox has no executable locator");
   }
   return {
     declaredId: item.definition.id,
@@ -10691,7 +10746,7 @@ function compareLocatedDefinitions(left, right) {
   const order = {
     task: 0,
     actor: 1,
-    workspace: 2
+    sandbox: 2
   };
   return order[left.definition.kind] - order[right.definition.kind] || compareUtf82(left.definition.id, right.definition.id);
 }

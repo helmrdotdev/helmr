@@ -24,8 +24,9 @@ type ScheduleError struct {
 
 type ScheduleResponse struct {
 	ID            string            `json:"id"`
-	Task          string            `json:"task"`
+	TaskID        string            `json:"task_id"`
 	Workspace     ScheduleWorkspace `json:"workspace"`
+	WorkspaceID   string            `json:"workspace_id,omitempty"`
 	Cron          ScheduleCron      `json:"cron"`
 	Status        string            `json:"status"`
 	Generation    int64             `json:"generation"`

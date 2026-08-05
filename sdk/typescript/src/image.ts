@@ -1,6 +1,6 @@
 import {
-  inspectSecretNameRef,
-  type SecretNameRef,
+  inspectSecretAddress,
+  type SecretAddress,
 } from "./secret"
 
 const imageBrand = Symbol.for("helmr.sdk.v0.image")
@@ -19,7 +19,7 @@ export type ImageCopyInput = SourceFileRef | SourceDirectoryRef | ImageBuilder
 
 export interface ImageRegistryAuth {
   readonly username: string
-  readonly password: SecretNameRef
+  readonly password: SecretAddress
 }
 
 export interface ImageFromOptions {
@@ -27,7 +27,7 @@ export interface ImageFromOptions {
 }
 
 export interface ImageBuilder {
-  readonly id: string
+  readonly key: string
   from(ref: string, options?: ImageFromOptions): ImageBuilder
   run(argv: readonly string[]): ImageBuilder
   copy(destination: string, source: SourceFileRef | SourceDirectoryRef): ImageBuilder
@@ -75,19 +75,19 @@ export type InternalImageStep =
   | Readonly<{ kind: "user"; name: string }>
 
 export interface InternalImage {
-  readonly id: string
+  readonly key: string
   readonly steps: readonly InternalImageStep[]
 }
 
 class Image implements ImageBuilder {
-  readonly id: string
+  readonly key: string
   readonly steps: readonly InternalImageStep[]
 
-  constructor(id: string, steps: readonly InternalImageStep[] = []) {
-    if (id.length === 0) {
-      throw new Error("image id must be non-empty")
+  constructor(key: string, steps: readonly InternalImageStep[] = []) {
+    if (key.length === 0) {
+      throw new Error("image key must be non-empty")
     }
-    this.id = id
+    this.key = key
     this.steps = Object.freeze([...steps])
     Object.defineProperty(this, imageBrand, { value: true })
     Object.freeze(this)
@@ -95,7 +95,7 @@ class Image implements ImageBuilder {
 
   from(ref: string, options?: ImageFromOptions): ImageBuilder {
     if (options === undefined) {
-      return new Image(this.id, [...this.steps, { kind: "from", ref }])
+      return new Image(this.key, [...this.steps, { kind: "from", ref }])
     }
     assertExactMembers(options, ["auth"], "image.from() options")
     if (options.auth === undefined) {
@@ -107,11 +107,11 @@ class Image implements ImageBuilder {
       "image.from() auth",
     )
     validateRegistryUsername(options.auth.username)
-    const passwordSecret = inspectSecretNameRef(options.auth.password)
+    const passwordSecret = inspectSecretAddress(options.auth.password)
     if (passwordSecret === undefined) {
       throw new Error("image.from() auth.password requires secrets.fromName()")
     }
-    return new Image(this.id, [
+    return new Image(this.key, [
       ...this.steps,
       {
         kind: "from",
@@ -131,7 +131,7 @@ class Image implements ImageBuilder {
     if (unexpected.length !== 0) {
       throw new Error("image.run() accepts only argv")
     }
-    return new Image(this.id, [
+    return new Image(this.key, [
       ...this.steps,
       {
         kind: "run",
@@ -145,13 +145,13 @@ class Image implements ImageBuilder {
     source: SourceFileRef | SourceDirectoryRef,
   ): ImageBuilder {
     if (isSourceFileRef(source)) {
-      return new Image(this.id, [
+      return new Image(this.key, [
         ...this.steps,
         { kind: "copy_source_file", destination, source },
       ])
     }
     if (isSourceDirectoryRef(source)) {
-      return new Image(this.id, [
+      return new Image(this.key, [
         ...this.steps,
         { kind: "copy_source_directory", destination, source },
       ])
@@ -167,22 +167,22 @@ class Image implements ImageBuilder {
     if (inspectImage(source) === undefined) {
       throw new Error("image.copyFrom() requires an image() value")
     }
-    return new Image(this.id, [
+    return new Image(this.key, [
       ...this.steps,
       { kind: "copy_from_image", destination, source, sourcePath },
     ])
   }
 
   workdir(path: string): ImageBuilder {
-    return new Image(this.id, [...this.steps, { kind: "workdir", path }])
+    return new Image(this.key, [...this.steps, { kind: "workdir", path }])
   }
 
   env(key: string, value: string): ImageBuilder {
-    return new Image(this.id, [...this.steps, { kind: "env", key, value }])
+    return new Image(this.key, [...this.steps, { kind: "env", key, value }])
   }
 
   user(name: string): ImageBuilder {
-    return new Image(this.id, [...this.steps, { kind: "user", name }])
+    return new Image(this.key, [...this.steps, { kind: "user", name }])
   }
 }
 
@@ -204,8 +204,8 @@ class SourceDirectory implements SourceDirectoryRef {
   }
 }
 
-export function image(id: string): ImageBuilder {
-  return new Image(id)
+export function image(key: string): ImageBuilder {
+  return new Image(key)
 }
 
 export const source = Object.freeze({
@@ -226,7 +226,7 @@ export function inspectImage(value: unknown): InternalImage | undefined {
     return undefined
   }
   const imageValue = value as Image
-  return { id: imageValue.id, steps: imageValue.steps }
+  return { key: imageValue.key, steps: imageValue.steps }
 }
 
 function isSourceFileRef(value: unknown): value is SourceFileRef {

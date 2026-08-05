@@ -30,9 +30,9 @@ const (
 	operationSecretRevoke        operation = "secret.revoke"
 	operationRunMetadata         operation = "run.metadata"
 	operationActorStart          operation = "actor.start"
-	operationActorInputSend      operation = "actor.input.send"
-	operationActorOutputAppend   operation = "actor.output.append"
-	operationActorClose          operation = "actor.close"
+	operationActorInputSend      operation = "session.input.send"
+	operationActorOutputAppend   operation = "session.output.append"
+	operationActorClose          operation = "session.close"
 	operationTaskStart           operation = "task.start"
 	operationTaskChildInvoke     operation = "task.child.invoke"
 	operationTokenCreate         operation = "token.create"
@@ -699,8 +699,43 @@ func NewActorStartRequest(
 	}}, nil
 }
 
-func NewWorkspaceCreateRequest(
+func NewExternalWorkspaceCreateRequest(
 	environmentID uuid.UUID,
+	workspaceDeclaredID string,
+	key string,
+	input WorkspaceCreateFingerprint,
+) (Request, error) {
+	return newWorkspaceCreateRequest(
+		environmentID,
+		workspaceCreateScope("external", uuid.Nil, workspaceDeclaredID),
+		workspaceDeclaredID,
+		key,
+		input,
+	)
+}
+
+func NewRuntimeWorkspaceCreateRequest(
+	environmentID uuid.UUID,
+	runID uuid.UUID,
+	workspaceDeclaredID string,
+	key string,
+	input WorkspaceCreateFingerprint,
+) (Request, error) {
+	if runID == uuid.Nil {
+		return nil, errors.New("workspace creating run ID is required")
+	}
+	return newWorkspaceCreateRequest(
+		environmentID,
+		workspaceCreateScope("runtime", runID, workspaceDeclaredID),
+		workspaceDeclaredID,
+		key,
+		input,
+	)
+}
+
+func newWorkspaceCreateRequest(
+	environmentID uuid.UUID,
+	scope []byte,
 	workspaceDeclaredID string,
 	key string,
 	input WorkspaceCreateFingerprint,
@@ -734,12 +769,23 @@ func NewWorkspaceCreateRequest(
 	return sealedRequest{value: request{
 		environmentID: environmentID,
 		operation:     operationWorkspaceCreate,
-		scope:         []byte(workspaceDeclaredID),
+		scope:         scope,
 		key:           key,
 		fingerprint: func() ([sha256.Size]byte, error) {
 			return operationFingerprint(operationWorkspaceCreate, canonicalFields), nil
 		},
 	}}, nil
+}
+
+func workspaceCreateScope(kind string, runID uuid.UUID, declaredID string) []byte {
+	scope := make([]byte, 0, len(kind)+1+len(runID)+1+len(declaredID))
+	scope = append(scope, kind...)
+	scope = append(scope, 0)
+	if runID != uuid.Nil {
+		scope = append(scope, runID[:]...)
+		scope = append(scope, 0)
+	}
+	return append(scope, declaredID...)
 }
 
 func NewWorkspaceDeleteRequest(environmentID uuid.UUID, workspaceID uuid.UUID, key string) (Request, error) {

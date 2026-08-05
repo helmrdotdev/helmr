@@ -52,7 +52,7 @@ func taskStartCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := api.ValidateTaskID(args[0]); err != nil {
+			if err := api.ValidateDefinitionID(args[0]); err != nil {
 				return err
 			}
 			metadata, err := parseOptionalJSON(metadataFile, metadataJSON, "--metadata")
@@ -101,7 +101,7 @@ func taskStartCommand() *cobra.Command {
 			}
 			request := api.StartTaskRequest{
 				Payload: payload, IdempotencyKey: strings.TrimSpace(idempotencyKey),
-				Workspace: api.WorkspaceTarget{ID: &workspaceID},
+				Workspace: api.WorkspaceIDTarget{ID: workspaceID},
 				Queue:     strings.TrimSpace(queueName), Priority: priority,
 				TTL: strings.TrimSpace(ttl), Retry: retry,
 				Metadata: metadata, Tags: cleanTags(tags),
@@ -231,7 +231,7 @@ func taskListCommand() *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			for _, task := range response.Tasks {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", task.TaskID, task.FilePath, task.ExportName)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", task.ID, task.DeploymentID)
 			}
 			return nil
 		},
@@ -265,9 +265,8 @@ func taskGetCommand() *cobra.Command {
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), task)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Task:       %s\n", task.TaskID)
-			fmt.Fprintf(cmd.OutOrStdout(), "File:       %s\n", task.FilePath)
-			fmt.Fprintf(cmd.OutOrStdout(), "Export:     %s\n", task.ExportName)
+			fmt.Fprintf(cmd.OutOrStdout(), "Task:       %s\n", task.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "Deployment: %s\n", task.DeploymentID)
 			return nil
 		},
 	}

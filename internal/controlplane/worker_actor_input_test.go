@@ -10,11 +10,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func TestParseWorkerActorInputSendRequiresExactAddress(t *testing.T) {
+func TestParseWorkerActorInputSendRequiresSessionID(t *testing.T) {
 	lease := validRunLeaseAssignment(uuid.Must(uuid.NewV7()))
 	request := workerapi.SendActorInputRequest{
 		Lease: lease.Fence(), CorrelationID: uuid.Must(uuid.NewV7()).String(),
-		ActorDeclaredID: "mailbox", ActorKey: "primary",
+		SessionID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 		Input: json.RawMessage(`{"hello":"world"}`), IdempotencyKey: "send-1",
 	}
 	parsed, err := parseWorkerActorInputSend(request)
@@ -26,11 +26,11 @@ func TestParseWorkerActorInputSendRequiresExactAddress(t *testing.T) {
 		parsed.idempotencyKey != "send-1" {
 		t.Fatalf("parsed = %+v", parsed)
 	}
-	request.ActorID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
+	request.SessionID = ""
 	if _, err := parseWorkerActorInputSend(request); err == nil {
-		t.Fatal("both Actor address variants were accepted")
+		t.Fatal("missing Session ID was accepted")
 	}
-	request.ActorID = ""
+	request.SessionID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
 	request.IdempotencyKey = " send-1 "
 	if _, err := parseWorkerActorInputSend(request); err == nil {
 		t.Fatal("padded idempotency key was accepted")

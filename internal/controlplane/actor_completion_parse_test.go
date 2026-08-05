@@ -100,16 +100,16 @@ func TestActorCompletionRetryUsesPinnedPolicy(t *testing.T) {
 
 func actorTerminalAuthority(state string, start, highWatermark int64) runLeaseClaimAuthority {
 	return runLeaseClaimAuthority{
-		actor: db.Actor{State: state},
+		actor: db.Session{State: state},
 		run: db.Run{
-			ActorStartInputSequence:      pgtype.Int8{Int64: start, Valid: true},
-			ActorStartInputHighWatermark: pgtype.Int8{Int64: highWatermark, Valid: true},
+			SessionInputStartSequence: pgtype.Int8{Int64: start, Valid: true},
+			SessionInputHighWatermark: pgtype.Int8{Int64: highWatermark, Valid: true},
 		},
 	}
 }
 
 func TestActorNeedsContinuationHonorsManualCancellation(t *testing.T) {
-	actor := db.Actor{State: "open", CommittedInputSequence: 2, NextInputSequence: 5}
+	actor := db.Session{State: "open", CommittedInputSequence: 2, NextInputSequence: 5}
 	if !actorNeedsContinuation(actor) {
 		t.Fatal("backlogged open Actor should need a continuation")
 	}

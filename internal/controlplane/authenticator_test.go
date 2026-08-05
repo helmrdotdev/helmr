@@ -9,14 +9,14 @@ import (
 
 func TestPermissionsFromAPIKeyKeepsGrantablePermissions(t *testing.T) {
 	permissions, err := permissionsFromAPIKey([]byte(`[
-		{"permission":" actors.read "},
+		{"permission":" sessions.read "},
 		{"permission":"members.manage"},
 		{"permission":"unknown"}
 	]`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []auth.Permission{auth.PermissionActorsRead}
+	want := []auth.Permission{auth.PermissionSessionsRead}
 	if !reflect.DeepEqual(permissions, want) {
 		t.Fatalf("permissions = %v, want %v", permissions, want)
 	}

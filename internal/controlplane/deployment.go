@@ -37,7 +37,6 @@ type deploymentCreationReceipt struct {
 type currentDeploymentStore interface {
 	GetCurrentDeployment(context.Context, db.GetCurrentDeploymentParams) (db.Deployment, error)
 	ListArtifactsByIDs(context.Context, db.ListArtifactsByIDsParams) ([]db.Artifact, error)
-	ListDeploymentDefinitionsForDeployment(context.Context, db.ListDeploymentDefinitionsForDeploymentParams) ([]db.DeploymentDefinition, error)
 }
 
 type deploymentStatusStore interface {
@@ -45,7 +44,6 @@ type deploymentStatusStore interface {
 	GetDeploymentForOrg(context.Context, db.GetDeploymentForOrgParams) (db.Deployment, error)
 	ListArtifactsByIDs(context.Context, db.ListArtifactsByIDsParams) ([]db.Artifact, error)
 	ListScopedDeployments(context.Context, db.ListScopedDeploymentsParams) ([]db.Deployment, error)
-	ListDeploymentDefinitionsForDeployment(context.Context, db.ListDeploymentDefinitionsForDeploymentParams) ([]db.DeploymentDefinition, error)
 }
 
 func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
@@ -98,11 +96,6 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 		item, err := deploymentResponseWithArtifacts(r.Context(), store, row)
 		if err != nil {
 			s.log.Error("get deployment artifacts failed", "deployment_id", pgvalue.MustUUIDValue(row.ID).String(), "error", err)
-			writeError(w, errors.New("list deployments"))
-			return
-		}
-		if err := populateDeploymentDeclarations(r.Context(), store, row, &item); err != nil {
-			s.log.Error("list deployment declarations failed", "deployment_id", pgvalue.MustUUIDValue(row.ID).String(), "error", err)
 			writeError(w, errors.New("list deployments"))
 			return
 		}
@@ -165,11 +158,6 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("get deployment"))
 		return
 	}
-	if err := populateDeploymentDeclarations(r.Context(), store, deployment, &response); err != nil {
-		s.log.Error("list deployment declarations failed", "deployment_id", deploymentID.String(), "error", err)
-		writeError(w, errors.New("get deployment"))
-		return
-	}
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -216,11 +204,6 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 	response, err := deploymentResponseWithArtifacts(r.Context(), store, deployment)
 	if err != nil {
 		s.log.Error("get current deployment artifacts failed", "deployment_id", pgvalue.MustUUIDValue(deployment.ID).String(), "error", err)
-		writeError(w, errors.New("get current deployment"))
-		return
-	}
-	if err := populateDeploymentDeclarations(r.Context(), store, deployment, &response); err != nil {
-		s.log.Error("list current deployment declarations failed", "deployment_id", pgvalue.MustUUIDValue(deployment.ID).String(), "error", err)
 		writeError(w, errors.New("get current deployment"))
 		return
 	}
@@ -428,54 +411,12 @@ func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceA
 		DeploymentSource:      artifact,
 		Status:                string(deployment.Status),
 		Error:                 deploymentErrorResponse(deployment.Failure),
-		Tasks:                 []string{},
-		Actors:                []string{},
-		Workspaces:            []string{},
 		CreatedAt:             pgvalue.Time(deployment.CreatedAt),
 		BuildingAt:            pgvalue.Time(deployment.BuildingAt),
 		BuiltAt:               pgvalue.Time(deployment.BuiltAt),
 		DeployedAt:            pgvalue.Time(deployment.DeployedAt),
 		FailedAt:              pgvalue.Time(deployment.FailedAt),
 	}
-}
-
-func populateDeploymentDeclarations(
-	ctx context.Context,
-	store interface {
-		ListDeploymentDefinitionsForDeployment(context.Context, db.ListDeploymentDefinitionsForDeploymentParams) ([]db.DeploymentDefinition, error)
-	},
-	record db.Deployment,
-	response *api.DeploymentResponse,
-) error {
-	if response == nil {
-		return errors.New("deployment response is required")
-	}
-	if record.Status != db.DeploymentStatusDeployed {
-		return nil
-	}
-	rows, err := store.ListDeploymentDefinitionsForDeployment(
-		ctx,
-		db.ListDeploymentDefinitionsForDeploymentParams{
-			EnvironmentID: record.EnvironmentID,
-			DeploymentID:  record.ID,
-		},
-	)
-	if err != nil {
-		return err
-	}
-	for _, row := range rows {
-		switch row.Kind {
-		case string(deployment.DefinitionKindTask):
-			response.Tasks = append(response.Tasks, row.DeclaredID)
-		case string(deployment.DefinitionKindActor):
-			response.Actors = append(response.Actors, row.DeclaredID)
-		case string(deployment.DefinitionKindWorkspace):
-			response.Workspaces = append(response.Workspaces, row.DeclaredID)
-		default:
-			return fmt.Errorf("deployment definition kind %q is unsupported", row.Kind)
-		}
-	}
-	return nil
 }
 
 func deploymentErrorResponse(raw []byte) *api.DeploymentErrorResponse {

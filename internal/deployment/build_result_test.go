@@ -357,9 +357,9 @@ func TestValidateBuildResultAppliesPlanSizeBound(t *testing.T) {
 	for index := range plan.Definitions {
 		id := fmt.Sprintf("workspace-%02d", index)
 		plan.Definitions[index] = DefinitionInput{
-			Kind:       DefinitionKindWorkspace,
+			Kind:       DefinitionKindSandbox,
 			DeclaredID: id,
-			Workspace: &WorkspaceInputManifest{
+			Sandbox: &SandboxInputManifest{
 				ImageBuild: imagebuild.Build{
 					FormatVersion: imagebuild.FormatVersion,
 					Root:          id,
@@ -516,11 +516,11 @@ func testWorkspaceImageOperation(
 	definition DefinitionInput,
 ) WorkspaceImageOperationEvidence {
 	t.Helper()
-	if definition.Workspace == nil {
+	if definition.Sandbox == nil {
 		t.Fatal("test Workspace definition is missing")
 	}
 	planDigest, err := imagebuild.Digest(
-		definition.Workspace.ImageBuild,
+		definition.Sandbox.ImageBuild,
 		string(ArchitectureX8664),
 	)
 	if err != nil {

@@ -23,7 +23,7 @@ import { schedules, workspaces } from "@helmr/sdk"
 export const dailyReport = schedules.task({
   id: "daily-report",
   cron: { pattern: "0 9 * * *", timezone: "America/New_York" },
-  workspace: workspaces.ref({ key: "reporting" }),
+  workspace: workspaces.fromKey("reporting"),
   run: async (payload, ctx) => {
     console.log(payload.scheduledAt, ctx.run.cause)
     return { ok: true }
@@ -31,9 +31,15 @@ export const dailyReport = schedules.task({
 })
 ```
 
-The Workspace target is required. An ID target must exist when the Deployment
-is promoted. A missing key target leaves the Schedule in
+The Workspace Address is required. An ID Address must exist when the Deployment
+is promoted. A missing key Address leaves the Schedule in
 `pending-workspace`; the scheduler binds it when a matching Workspace appears.
+The Schedule has no Secret input. Create the matching Workspace separately with
+its key and Secret placements; later fires inherit that immutable Workspace
+baseline and resolve current active Secret versions at admission.
+Read responses preserve the declared Workspace Address and expose
+`workspaceId` after it has been bound to a canonical Workspace UUID. An
+unresolved `pending-workspace` response has no `workspaceId`.
 
 Scheduled Tasks receive a Helmr-generated payload:
 

@@ -1,15 +1,14 @@
 import { describe, expect, test } from "bun:test"
 
 import { image, secrets } from "./index"
-import { inspectImage, inspectSecretNameRef } from "./internal"
-import { createClientWorkspaces } from "./workspace"
+import { inspectImage, inspectSecretAddress } from "./internal"
 
-describe("Secret name references", () => {
+describe("Secret addresses", () => {
   test("preserves one locally validated name behind a private brand", () => {
     const reference = secrets.fromName("GHCR_TOKEN")
     expect(reference.name).toBe("GHCR_TOKEN")
-    expect(inspectSecretNameRef(reference)).toBe("GHCR_TOKEN")
-    expect(inspectSecretNameRef({ name: "GHCR_TOKEN" })).toBeUndefined()
+    expect(inspectSecretAddress(reference)).toBe("GHCR_TOKEN")
+    expect(inspectSecretAddress({ name: "GHCR_TOKEN" })).toBeUndefined()
     expect(Object.isFrozen(reference)).toBe(true)
   })
 
@@ -19,7 +18,7 @@ describe("Secret name references", () => {
     }
   })
 
-  test("binds image authentication only through a Secret name reference", () => {
+  test("binds image authentication only through a Secret address", () => {
     const declared = image("root").from("ghcr.io/acme/base:1", {
       auth: {
         username: "aktky",
@@ -47,22 +46,5 @@ describe("Secret name references", () => {
         extra: true,
       } as never,
     })).toThrow("unknown members")
-  })
-
-  test("rejects a forged Workspace Secret before transport", async () => {
-    let called = false
-    const workspaces = createClientWorkspaces({
-      async request() {
-        called = true
-        return { workspace_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" }
-      },
-    })
-    await expect(workspaces.create("machine", {
-      secrets: [{
-        secret: { name: "TOKEN" } as never,
-        env: "TOKEN",
-      }],
-    })).rejects.toThrow("requires secrets.fromName()")
-    expect(called).toBe(false)
   })
 })

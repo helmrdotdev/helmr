@@ -114,7 +114,7 @@ func (c *Client) environmentScopedPath(projectID string, environmentID string, s
 		if c.sessionScopedRoutes {
 			return "", false, fmt.Errorf("project and environment are required for session-scoped API routes")
 		}
-		return "/api" + suffix, false, nil
+		return "/v1" + suffix, false, nil
 	}
 	if !c.sessionScopedRoutes {
 		return "", false, errors.New("project and environment scope is only accepted on session-scoped API routes")
@@ -324,12 +324,34 @@ func writeDeploymentMultipart(writer *multipart.Writer, input api.CreateDeployme
 type SecretOptions struct {
 	ProjectID     string
 	EnvironmentID string
+	Cursor        string
+	Limit         int32
+	Name          string
 }
 
 func (c *Client) ListSecrets(ctx context.Context, opts ...SecretOptions) (api.ListSecretsResponse, error) {
 	path, err := c.secretCollectionPath(opts...)
 	if err != nil {
 		return api.ListSecretsResponse{}, err
+	}
+	if len(opts) > 0 {
+		values := url.Values{}
+		if opts[0].Name != "" {
+			if opts[0].Cursor != "" || opts[0].Limit != 0 {
+				return api.ListSecretsResponse{}, errors.New("cursor and limit are not accepted with Secret name")
+			}
+			values.Set("name", opts[0].Name)
+		} else {
+			if opts[0].Cursor != "" {
+				values.Set("cursor", opts[0].Cursor)
+			}
+			if opts[0].Limit > 0 {
+				values.Set("limit", strconv.FormatInt(int64(opts[0].Limit), 10))
+			}
+		}
+		if encoded := values.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
@@ -342,8 +364,8 @@ func (c *Client) ListSecrets(ctx context.Context, opts ...SecretOptions) (api.Li
 	return response, nil
 }
 
-func (c *Client) GetSecret(ctx context.Context, name string, opts ...SecretOptions) (api.SecretResponse, error) {
-	path, err := c.secretNamePath(name, opts...)
+func (c *Client) RetrieveSecret(ctx context.Context, id string, opts ...SecretOptions) (api.SecretResponse, error) {
+	path, err := c.secretItemPath(id, opts...)
 	if err != nil {
 		return api.SecretResponse{}, err
 	}
@@ -372,9 +394,9 @@ func (c *Client) CreateSecret(ctx context.Context, name string, value string, id
 	return response, nil
 }
 
-func (c *Client) RotateSecret(ctx context.Context, name string, value string, idempotencyKey string, opts ...SecretOptions) (api.SecretResponse, error) {
+func (c *Client) RotateSecret(ctx context.Context, id string, value string, idempotencyKey string, opts ...SecretOptions) (api.SecretResponse, error) {
 	var response api.SecretResponse
-	path, err := c.secretNamePath(name, opts...)
+	path, err := c.secretItemPath(id, opts...)
 	if err != nil {
 		return api.SecretResponse{}, err
 	}
@@ -386,9 +408,9 @@ func (c *Client) RotateSecret(ctx context.Context, name string, value string, id
 	return response, nil
 }
 
-func (c *Client) RevokeSecret(ctx context.Context, name string, idempotencyKey string, opts ...SecretOptions) (api.SecretResponse, error) {
+func (c *Client) RevokeSecret(ctx context.Context, id string, idempotencyKey string, opts ...SecretOptions) (api.SecretResponse, error) {
 	var response api.SecretResponse
-	path, err := c.secretNamePath(name, opts...)
+	path, err := c.secretItemPath(id, opts...)
 	if err != nil {
 		return api.SecretResponse{}, err
 	}
@@ -411,7 +433,7 @@ func (c *Client) secretCollectionPath(opts ...SecretOptions) (string, error) {
 	if c.sessionScopedRoutes {
 		return c.secretCollectionPathWithScope(SecretOptions{})
 	}
-	return "/api/secrets", nil
+	return "/v1/secrets", nil
 }
 
 func (c *Client) secretCollectionPathWithScope(opts SecretOptions) (string, error) {
@@ -419,7 +441,10 @@ func (c *Client) secretCollectionPathWithScope(opts SecretOptions) (string, erro
 	return path, err
 }
 
-func (c *Client) secretNamePath(name string, opts ...SecretOptions) (string, error) {
+func (c *Client) secretItemPath(id string, opts ...SecretOptions) (string, error) {
+	if err := ids.Validate(id); err != nil {
+		return "", err
+	}
 	hasScope := len(opts) > 0 && (strings.TrimSpace(opts[0].ProjectID) != "" || strings.TrimSpace(opts[0].EnvironmentID) != "")
 	if c.sessionScopedRoutes {
 		scope := SecretOptions{}
@@ -430,12 +455,12 @@ func (c *Client) secretNamePath(name string, opts ...SecretOptions) (string, err
 		if err != nil {
 			return "", err
 		}
-		return environmentScopedResourcePath(basePath+"/by-name", name, ""), nil
+		return environmentScopedResourcePath(basePath, id, ""), nil
 	}
 	if hasScope {
 		return "", errors.New("project and environment scope is only accepted on session-scoped API routes")
 	}
-	return "/api/secrets/by-name/" + url.PathEscape(name), nil
+	return "/v1/secrets/" + url.PathEscape(id), nil
 }
 
 type RunScopeOptions struct {

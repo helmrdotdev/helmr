@@ -573,7 +573,7 @@ func lockCancellationRun(
 		parentOwnsLifecycle:  row.ParentOwnsLifecycle,
 		environmentID:        uuid.UUID(row.EnvironmentID.Bytes),
 		workspaceID:          uuid.UUID(row.WorkspaceID.Bytes),
-		actorID:              row.ActorID,
+		actorID:              row.SessionID,
 		status:               row.Status,
 		currentAttemptNumber: row.CurrentAttemptNumber,
 		currentRunLeaseID:    row.CurrentRunLeaseID,
@@ -885,7 +885,7 @@ func terminateLockedRun(
 			affected, err = queries.DetachActorFromCancelledRun(
 				ctx,
 				db.DetachActorFromCancelledRunParams{
-					ActorID:     run.actorID,
+					SessionID:   run.actorID,
 					WorkspaceID: pgvalue.UUID(run.workspaceID),
 					RunID:       pgvalue.UUID(run.id),
 				},
@@ -896,7 +896,7 @@ func terminateLockedRun(
 				db.FailActorForRunTerminationParams{
 					FailureCode: termination.actorFailureCode,
 					RunID:       pgvalue.UUID(run.id),
-					ActorID:     run.actorID,
+					SessionID:   run.actorID,
 					WorkspaceID: pgvalue.UUID(run.workspaceID),
 				},
 			)
@@ -1008,7 +1008,7 @@ func terminateLockedRun(
 			ctx,
 			db.ReleaseActorWorkspaceParams{
 				WorkspaceID: pgvalue.UUID(run.workspaceID),
-				ActorID:     run.actorID,
+				SessionID:   run.actorID,
 			},
 		); err != nil {
 			return cancellationAuthority("release terminal actor workspace", err)

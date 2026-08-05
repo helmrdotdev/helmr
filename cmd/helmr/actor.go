@@ -11,30 +11,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type actorAddressFlags struct {
-	id  string
-	key string
-}
-
-func (a *actorAddressFlags) add(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&a.id, "id", "", "Actor ID.")
-	cmd.Flags().StringVar(&a.key, "key", "", "Actor key.")
-}
-
-func (a actorAddressFlags) reference() (api.ActorReference, error) {
-	reference := api.ActorReference{
-		ActorID:  a.id,
-		ActorKey: a.key,
-	}
-	if (reference.ActorID == "") == (reference.ActorKey == "") {
-		return api.ActorReference{}, errors.New("exactly one of --id or --key is required")
-	}
-	if err := api.ValidateActorReference(reference); err != nil {
-		return api.ActorReference{}, err
-	}
-	return reference, nil
-}
-
 func actorCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "actor",
@@ -126,7 +102,7 @@ func actorStartCommand() *cobra.Command {
 			response, err := controlPlane.StartActor(cmd.Context(), args[0], api.StartActorRequest{
 				Key: actorKey, Input: input,
 				IdempotencyKey: strings.TrimSpace(idempotencyKey),
-				Workspace:      api.WorkspaceTarget{ID: &workspaceID},
+				Workspace:      api.WorkspaceIDTarget{ID: workspaceID},
 				Run:            run,
 			}, scope)
 			if err != nil {
@@ -135,7 +111,7 @@ func actorStartCommand() *cobra.Command {
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), response)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "actor_id: %s\n", response.ActorID)
+			fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\n", response.SessionID)
 			fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", response.RunID)
 			return nil
 		},
@@ -163,40 +139,34 @@ func actorStartCommand() *cobra.Command {
 }
 
 func actorGetCommand() *cobra.Command {
-	var address actorAddressFlags
 	var projectID string
 	var environmentID string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "get ACTOR",
-		Short: "Show Actor status.",
+		Use:   "get SESSION_ID",
+		Short: "Show Session status.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			reference, err := address.reference()
-			if err != nil {
-				return err
-			}
 			controlPlane, scope, err := scopedActorClient(cmd, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			status, err := controlPlane.GetActorStatus(cmd.Context(), args[0], reference, scope)
+			session, err := controlPlane.RetrieveSession(cmd.Context(), args[0], scope)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
-				return writeJSON(cmd.OutOrStdout(), status)
+				return writeJSON(cmd.OutOrStdout(), session)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "actor_id: %s\n", status.ID)
-			fmt.Fprintf(cmd.OutOrStdout(), "actor_status: %s\n", status.Status)
-			if status.CurrentRunID != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", *status.CurrentRunID)
+			fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\n", session.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "session_status: %s\n", session.Status)
+			if session.CurrentRunID != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "run_id: %s\n", *session.CurrentRunID)
 			}
 			return nil
 		},
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
-	address.add(cmd)
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd
 }
@@ -208,7 +178,6 @@ func actorInputCommand() *cobra.Command {
 }
 
 func actorInputSendCommand() *cobra.Command {
-	var address actorAddressFlags
 	var projectID string
 	var environmentID string
 	var inputFile string
@@ -216,14 +185,10 @@ func actorInputSendCommand() *cobra.Command {
 	var idempotencyKey string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "send ACTOR",
-		Short: "Append an Actor input record.",
+		Use:   "send SESSION_ID",
+		Short: "Append a Session input record.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			reference, err := address.reference()
-			if err != nil {
-				return err
-			}
 			input, err := parseOptionalJSON(inputFile, inputJSON, "--input")
 			if err != nil {
 				return err
@@ -235,8 +200,7 @@ func actorInputSendCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			response, err := controlPlane.SendActorInput(cmd.Context(), args[0], api.SendActorInputRequest{
-				ActorID: reference.ActorID, ActorKey: reference.ActorKey,
+			response, err := controlPlane.SendSessionInput(cmd.Context(), args[0], api.SendSessionInputRequest{
 				Input: input, IdempotencyKey: strings.TrimSpace(idempotencyKey),
 			}, scope)
 			if err != nil {
@@ -250,7 +214,6 @@ func actorInputSendCommand() *cobra.Command {
 		},
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
-	address.add(cmd)
 	cmd.Flags().StringVar(&inputFile, "input-file", "", "Read input JSON from a file.")
 	cmd.Flags().StringVar(&inputJSON, "input-json", "", "Inline input JSON literal.")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for this input.")
@@ -266,7 +229,6 @@ func actorOutputCommand() *cobra.Command {
 }
 
 func actorOutputReadCommand() *cobra.Command {
-	var address actorAddressFlags
 	var projectID string
 	var environmentID string
 	var after int64
@@ -274,14 +236,10 @@ func actorOutputReadCommand() *cobra.Command {
 	var jsonOutput bool
 	var jsonLines bool
 	cmd := &cobra.Command{
-		Use:   "read ACTOR",
-		Short: "Read one finite Actor output page.",
+		Use:   "read SESSION_ID",
+		Short: "Read one finite Session output page.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			reference, err := address.reference()
-			if err != nil {
-				return err
-			}
 			if cmd.Flags().Changed("limit") && limit < 1 {
 				return errors.New("--limit must be in [1,100]")
 			}
@@ -293,7 +251,7 @@ func actorOutputReadCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			page, err := controlPlane.ReadActorOutput(cmd.Context(), args[0], reference, client.ActorOutputReadOptions{
+			page, err := controlPlane.ReadSessionOutputs(cmd.Context(), args[0], client.ActorOutputReadOptions{
 				After: afterPointer, Limit: limit, EnvironmentScopeOptions: scope,
 			})
 			if err != nil {
@@ -315,7 +273,6 @@ func actorOutputReadCommand() *cobra.Command {
 		},
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
-	address.add(cmd)
 	cmd.Flags().Int64Var(&after, "after", 0, "Return records after this durable sequence.")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum records (default 50, maximum 100).")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
@@ -325,26 +282,20 @@ func actorOutputReadCommand() *cobra.Command {
 }
 
 func actorCloseCommand() *cobra.Command {
-	var address actorAddressFlags
 	var projectID string
 	var environmentID string
 	var idempotencyKey string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "close ACTOR",
-		Short: "Close an Actor.",
+		Use:   "close SESSION_ID",
+		Short: "Close a Session.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			reference, err := address.reference()
-			if err != nil {
-				return err
-			}
 			controlPlane, scope, err := scopedActorClient(cmd, projectID, environmentID)
 			if err != nil {
 				return err
 			}
-			receipt, err := controlPlane.CloseActor(cmd.Context(), args[0], api.ActorOperationRequest{
-				ActorID: reference.ActorID, ActorKey: reference.ActorKey,
+			receipt, err := controlPlane.CloseSession(cmd.Context(), args[0], api.CloseSessionRequest{
 				IdempotencyKey: strings.TrimSpace(idempotencyKey),
 			}, scope)
 			if err != nil {
@@ -353,13 +304,12 @@ func actorCloseCommand() *cobra.Command {
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), receipt)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "actor_id: %s\n", receipt.ActorID)
+			fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\n", receipt.SessionID)
 			fmt.Fprintf(cmd.OutOrStdout(), "accepted_at: %s\n", receipt.AcceptedAt.UTC().Format("2006-01-02T15:04:05.999999999Z"))
 			return nil
 		},
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
-	address.add(cmd)
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for this close.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	return cmd

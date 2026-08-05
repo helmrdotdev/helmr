@@ -1,16 +1,9 @@
 import {
   type ActorConfig,
   type ActorDefinition,
-  type ActorIdRef,
-  type ActorInputRef,
-  type ActorKeyRef,
-  type ActorOutputRef,
-  type ActorRefBase,
   type ActorStartOptions,
-  type ActorOperationOptions,
   type JsonValue,
   type NoPayloadTaskDefinition,
-  type OutputReadOptions,
   type PayloadTaskDefinition,
   type QueueDefinition,
   type TaskCallOptions,
@@ -29,8 +22,7 @@ import {
   validateTaskId,
 } from "./schema/task"
 import { currentRuntimeOperations } from "./internal/runtime"
-import { resourceID } from "./internal/id"
-import { trimGoSpace } from "./internal/strings"
+import { createRuntimeSessionRef } from "./session"
 
 const privateDefinitionBrand = Symbol.for("helmr.sdk.v0.definition")
 const privateQueueBrand = Symbol.for("helmr.sdk.v0.queue")
@@ -48,7 +40,7 @@ export type InternalTaskDefinition = Readonly<{
   schedule?: Readonly<{
     cron: string
     timezone: string
-    workspace: import("./contract").WorkspaceTarget
+    workspace: import("./contract").WorkspaceAddress
   }>
 }>
 
@@ -98,10 +90,10 @@ export function isQueueDefinition(value: unknown): value is QueueDefinition {
     throw new Error("invalid private queue record")
   }
   const queue = value as Partial<QueueDefinition>
-  if (typeof queue.id !== "string") {
+  if (typeof queue.name !== "string") {
     throw new Error("invalid private queue record")
   }
-  validateQueueName(queue.id)
+  validateQueueName(queue.name)
   validateOptionalQueueConcurrencyLimit(queue.concurrencyLimit)
   return true
 }
@@ -142,15 +134,15 @@ function isInternalDefinition(
 }
 
 export function queue(config: {
-  readonly id: string
+  readonly name: string
   readonly concurrencyLimit?: number | null
 }): QueueDefinition {
-  validateQueueName(config.id)
+  validateQueueName(config.name)
   validateOptionalQueueConcurrencyLimit(config.concurrencyLimit)
   return Object.freeze(
     Object.defineProperty(
       {
-        id: config.id,
+        name: config.name,
         ...(config.concurrencyLimit === undefined
           ? {}
           : { concurrencyLimit: config.concurrencyLimit }),
@@ -218,12 +210,9 @@ export function actor(config: ActorConfig): ActorDefinition {
         options,
       )
       return Object.freeze({
-        ref: createActorRef(internal.id, { id: started.actorId }) as ActorIdRef,
+        session: createRuntimeSessionRef(started.sessionId),
         run: Object.freeze({ id: started.runId }),
       })
-    },
-    ref(address: { readonly id: string } | { readonly key: string }) {
-      return createActorRef(internal.id, address)
     },
   }
   return brandDefinition(value, internal) as ActorDefinition
@@ -325,106 +314,6 @@ function createTaskDefinition(
     },
     internal,
   ) as unknown as NoPayloadTaskDefinition<JsonValue>
-}
-
-function createActorRef(
-  declaredId: string,
-  address: { readonly id: string } | { readonly key: string },
-): ActorIdRef | ActorKeyRef {
-  const immutableAddress = validatedActorRefAddress(address)
-  const base: ActorRefBase = {
-    input: createActorInputRef(declaredId, immutableAddress),
-    output: createActorOutputRef(declaredId, immutableAddress),
-    status() {
-      return currentRuntimeOperations().actorStatus(
-        Object.freeze({ declaredId, address: immutableAddress }),
-      )
-    },
-    close(options?: ActorOperationOptions) {
-      return currentRuntimeOperations().actorClose(
-        Object.freeze({ declaredId, address: immutableAddress }),
-        options,
-      )
-    },
-  }
-  return Object.freeze({
-    ...base,
-    ...immutableAddress,
-  }) as ActorIdRef | ActorKeyRef
-}
-
-function validatedActorRefAddress(
-  address: { readonly id: string } | { readonly key: string },
-): Readonly<{ id: string }> | Readonly<{ key: string }> {
-  const value = address as Readonly<Record<string, unknown>>
-  const hasId = Object.prototype.hasOwnProperty.call(value, "id")
-  const hasKey = Object.prototype.hasOwnProperty.call(value, "key")
-  if (hasId === hasKey) {
-    throw new Error("actor ref requires exactly one of id or key")
-  }
-  if (hasId) {
-    return Object.freeze({ id: resourceID(value["id"], "Actor ref ID") })
-  }
-  if (typeof value["key"] !== "string") {
-    throw new Error("actor ref key must be a string")
-  }
-  const encoded = new TextEncoder().encode(value["key"])
-  if (
-    encoded.byteLength === 0 ||
-    encoded.byteLength > 512 ||
-    value["key"].includes("\0") ||
-    trimGoSpace(value["key"]) !== value["key"]
-  ) {
-    throw new Error(
-      "actor ref key must be 1-512 UTF-8 bytes without NUL or edge whitespace",
-    )
-  }
-  return Object.freeze({ key: value["key"] })
-}
-
-function createActorInputRef(
-  declaredId: string,
-  address: { readonly id: string } | { readonly key: string },
-): ActorInputRef {
-  return Object.freeze({
-    send(input: JsonValue, options?: import("./contract").SendOptions) {
-      return currentRuntimeOperations().actorInputSend(
-        Object.freeze({ declaredId, address }),
-        input,
-        options,
-      )
-    },
-  })
-}
-
-function createActorOutputRef(
-  declaredId: string,
-  address: { readonly id: string } | { readonly key: string },
-): ActorOutputRef {
-  const target = Object.freeze({ declaredId, address })
-  return Object.freeze({
-    async *read(options?: OutputReadOptions) {
-      let after = options?.after
-      for (;;) {
-        if (options?.signal?.aborted) throw options.signal.reason
-        const page = await currentRuntimeOperations().actorOutputPage(target, {
-          ...(after === undefined ? {} : { after }),
-          ...(options?.limit === undefined ? {} : { limit: options.limit }),
-          ...(options?.signal === undefined ? {} : { signal: options.signal }),
-        })
-        for (const record of page.records) yield record
-        if (!page.hasMore) return
-        after = page.nextAfter
-      }
-    },
-    async list(options?: OutputReadOptions) {
-      const page = await currentRuntimeOperations().actorOutputPage(
-        target,
-        options,
-      )
-      return page.records
-    },
-  })
 }
 
 function brandDefinition<T extends object>(

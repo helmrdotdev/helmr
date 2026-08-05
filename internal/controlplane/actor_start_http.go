@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
@@ -49,7 +50,7 @@ func (s *Server) startActorHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_actor_start", message: err.Error()}))
 		return
 	}
-	if err := api.ValidateWorkspaceTarget(request.Workspace); err != nil {
+	if err := api.ValidateWorkspaceIDTarget(request.Workspace); err != nil {
 		writeError(w, badRequest(codedError{
 			code:    "invalid_workspace_reference",
 			message: err.Error(),
@@ -133,8 +134,8 @@ func (s *Server) startActorHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, api.StartActorResponse{
-		ActorID: result.ActorID.String(),
-		RunID:   result.BootRunID.String(),
+		SessionID: result.SessionID.String(),
+		RunID:     result.BootRunID.String(),
 	})
 }
 
@@ -396,7 +397,10 @@ func actorStartRequestFromAPI(
 		environmentID,
 		actorDeclaredID,
 		idempotencyKey,
-		request,
+		api.ActorStartOptions{
+			Key: request.Key, Input: request.Input,
+			Workspace: request.Workspace, Run: request.Run,
+		},
 	)
 }
 
@@ -406,7 +410,7 @@ func actorStartRequestFromScope(
 	environmentID uuid.UUID,
 	actorDeclaredID string,
 	idempotencyKey string,
-	request api.StartActorRequest,
+	request api.ActorStartOptions,
 ) (actorStartRequest, error) {
 	run := api.StartActorRunOptions{}
 	if request.Run != nil {
@@ -434,12 +438,16 @@ func actorStartRequestFromScope(
 			return actorStartRequest{}, fmt.Errorf("normalize run.retry: %w", err)
 		}
 	}
+	workspaceID, err := ids.Parse(request.Workspace.ID)
+	if err != nil {
+		return actorStartRequest{}, err
+	}
 	return actorStartRequest{
 		OrgID:                 orgID,
 		ProjectID:             projectID,
 		EnvironmentID:         environmentID,
 		ActorDeclaredID:       actorDeclaredID,
-		Workspace:             request.Workspace,
+		WorkspaceID:           workspaceID,
 		Key:                   request.Key,
 		InputPresent:          len(request.Input) > 0,
 		Input:                 request.Input,

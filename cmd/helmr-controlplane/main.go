@@ -283,7 +283,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		RunLeaseTTL:           cfg.RunLeaseTTL,
 		RunFinalizationTTL:    cfg.RunFinalizationTTL,
 		WorkerEnrollment:      workerEnrollment,
-		OperatorToken:         cfg.OperatorToken,
+		CapacityToken:         cfg.CapacityToken,
 		SetupToken:            cfg.SetupToken,
 		AuthKey:               cfg.AuthKey,
 		PublicURL:             publicURL,

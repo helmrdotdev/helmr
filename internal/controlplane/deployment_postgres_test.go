@@ -117,7 +117,7 @@ func TestDeploymentCreateConvergesAcrossTransactions(t *testing.T) {
 					source.Digest,
 					source,
 					deploymentVersionMetadata{
-						APIVersion:            api.CurrentAPIVersion,
+						APIVersion:            deployment.APIVersion,
 						WorkerProtocolVersion: workerapi.CurrentProtocolVersion,
 						ImageCacheMode:        "prefer",
 					},

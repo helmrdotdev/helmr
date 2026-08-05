@@ -5,7 +5,7 @@ import {
   source,
   task,
   tokens,
-  workspace,
+  sandbox,
   type JsonValue,
 } from "@helmr/sdk"
 import { createHash, randomUUID } from "node:crypto"
@@ -17,7 +17,7 @@ const guideInputs = source.directory("guides")
 
 const base = image("helmr-runtime-smoke")
   .from("node:24-bookworm-slim")
-  .workdir("/workspace")
+  .workdir("/sandbox")
   .copy("/opt/helmr-dev-workflows/guides", guideInputs)
   .run([
     "sh",
@@ -29,9 +29,9 @@ const base = image("helmr-runtime-smoke")
     ].join(" && "),
   ])
   .run(["npm", "install", "-g", "bun@1.3.10"])
-  .workdir("/workspace")
+  .workdir("/sandbox")
 
-export const runtimeSmokeWorkspace = workspace("helmr-runtime-smoke")
+export const runtimeSmokeWorkspace = sandbox({ id: "helmr-runtime-smoke" })
   .image(base)
   .resources({ cpu: 2, memory: "2GiB" })
 
@@ -84,7 +84,7 @@ export const runtimeSmoke = task({
       },
     })
 
-    checks.push(await collectCheck("workspace-filesystem", () => checkWorkspace(marker, input.largeFileKiB, input.expectedWorkspaceMarker)))
+    checks.push(await collectCheck("sandbox-filesystem", () => checkWorkspace(marker, input.largeFileKiB, input.expectedWorkspaceMarker)))
     checks.push(await collectCheck("source-bundle", () => checkBundledGuides()))
     checks.push(await collectCheck("node-version", () => checkCommand("node-version", ["node", "--version"])))
     checks.push(await collectCheck("bun-version", () => checkCommand("bun-version", ["bun", "--version"])))
@@ -177,7 +177,7 @@ async function collectCheck(name: string, run: () => Promise<Check>): Promise<Ch
 }
 
 async function checkWorkspace(marker: string, largeFileKiB: number, expectedPreviousMarker?: string): Promise<Check> {
-  const nestedDir = "workspace-smoke/nested"
+  const nestedDir = "sandbox-smoke/nested"
   await mkdir(nestedDir, { recursive: true })
   const id = randomUUID()
   const smallPath = `${nestedDir}/marker.txt`
@@ -185,14 +185,14 @@ async function checkWorkspace(marker: string, largeFileKiB: number, expectedPrev
   if (expectedPreviousMarker !== undefined) {
     const previous = await readFile(smallPath, "utf8")
     if (!previous.includes(expectedPreviousMarker)) {
-      throw new Error(`workspace marker file did not contain expected previous marker ${expectedPreviousMarker}`)
+      throw new Error(`sandbox marker file did not contain expected previous marker ${expectedPreviousMarker}`)
     }
     previousMarkerMatched = true
   }
   await writeFile(smallPath, `marker=${marker}\nid=${id}\n`)
   const readBack = await readFile(smallPath, "utf8")
   if (!readBack.includes(marker) || !readBack.includes(id)) {
-    throw new Error("workspace marker file did not round-trip")
+    throw new Error("sandbox marker file did not round-trip")
   }
 
   const largePayload = "x".repeat(largeFileKiB * 1024)
@@ -203,11 +203,11 @@ async function checkWorkspace(marker: string, largeFileKiB: number, expectedPrev
   const largeReadBack = await readFile(largePath, "utf8")
   const readDigest = createHash("sha256").update(largeReadBack).digest("hex")
   if (readDigest !== digest) {
-    throw new Error("workspace large file digest mismatch")
+    throw new Error("sandbox large file digest mismatch")
   }
 
   return {
-    name: "workspace-filesystem",
+    name: "sandbox-filesystem",
     ok: true,
     detail: {
       cwd: process.cwd(),

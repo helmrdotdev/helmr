@@ -724,12 +724,12 @@ SELECT runs.status, run_waits.suspension_state, run_leases.state,
 		var authorityJSON []byte
 		if scanErr := fixture.pool.QueryRow(fixture.ctx, `
 SELECT jsonb_build_object(
-    'runActor', runs.actor_id,
+    'runActor', runs.session_id,
     'runAttempt', runs.current_attempt_number,
     'runLease', runs.current_run_lease_id,
     'runActive', runs.active_started_at,
     'workspaceOwnerRun', workspaces.owner_run_id,
-    'workspaceOwnerActor', workspaces.owner_actor_id,
+    'workspaceOwnerActor', workspaces.owner_session_id,
     'workspaceState', workspaces.state,
     'workspaceDesired', workspaces.desired_state,
     'workspaceDirty', workspaces.dirty_state,
@@ -1268,7 +1268,7 @@ INSERT INTO deployment_definitions (
 		fixture.deploymentID,
 	)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO actors (
+INSERT INTO sessions (
     id, environment_id,
     actor_declared_id, deployment_definition_id, workspace_id,
     current_run_id, next_input_sequence, committed_input_sequence,
@@ -1287,10 +1287,10 @@ UPDATE runs
    SET deployment_definition_id = $2,
        entrypoint_kind = 'actor',
        entrypoint_declared_id = 'test-actor',
-       actor_id = $3,
+       session_id = $3,
        cause_kind = 'actor_start',
-       actor_start_input_sequence = 1,
-       actor_start_input_high_watermark = 1,
+       session_input_start_sequence = 1,
+       session_input_high_watermark = 1,
        payload = NULL
  WHERE id = $1`,
 		runID,
@@ -1299,13 +1299,13 @@ UPDATE runs
 	)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_attempts
-   SET entrypoint_kind = 'actor', actor_start_input_sequence = 1
+   SET entrypoint_kind = 'actor', session_input_start_sequence = 1
  WHERE run_id = $1 AND number = 1`,
 		runID,
 	)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspaces
-   SET owner_run_id = NULL, owner_actor_id = $2
+   SET owner_run_id = NULL, owner_session_id = $2
  WHERE id = $1`,
 		fixture.workspaceID,
 		actorID,
@@ -2502,15 +2502,15 @@ UPDATE workspace_leases
 			var waitState, runStatus string
 			var terminalCursor pgtype.Int8
 			err = fixture.pool.QueryRow(fixture.ctx, `
-SELECT actors.state, actors.current_run_id, actors.run_generation, actors.state_version,
-       actors.failure_code, workspaces.owner_actor_id, workspaces.ownership_generation,
-       run_waits.suspension_state, runs.status, run_attempts.terminal_actor_input_sequence
-  FROM actors
-  JOIN workspaces ON workspaces.id = actors.workspace_id
+SELECT sessions.state, sessions.current_run_id, sessions.run_generation, sessions.state_version,
+       sessions.failure_code, workspaces.owner_session_id, workspaces.ownership_generation,
+       run_waits.suspension_state, runs.status, run_attempts.terminal_session_input_sequence
+  FROM sessions
+  JOIN workspaces ON workspaces.id = sessions.workspace_id
   JOIN runs ON runs.id = $2
   JOIN run_waits ON run_waits.id = $3
   JOIN run_attempts ON run_attempts.run_id = runs.id AND run_attempts.number = runs.current_attempt_number
- WHERE actors.id = $1`, actorID, fixture.runID, waitID).Scan(
+ WHERE sessions.id = $1`, actorID, fixture.runID, waitID).Scan(
 				&actorState, &currentRunID, &runGeneration, &actorStateVersion,
 				&actorReason, &ownerActorID, &ownershipGeneration, &waitState, &runStatus, &terminalCursor,
 			)
@@ -2585,7 +2585,7 @@ INSERT INTO deployment_definitions (
 ) VALUES ($1, $2, $3, 'actor', 'test-actor', 0, '{}'::jsonb, decode(repeat('06', 32), 'hex'))`,
 		actorDefinitionID, fixture.environmentID, fixture.deploymentID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO actors (
+INSERT INTO sessions (
     id, environment_id, actor_declared_id,
     deployment_definition_id, workspace_id, current_run_id,
     next_input_sequence, committed_input_sequence, run_queue_name,
@@ -2595,17 +2595,17 @@ INSERT INTO actors (
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE runs
    SET deployment_definition_id = $2, entrypoint_kind = 'actor',
-       entrypoint_declared_id = 'test-actor', actor_id = $3,
-       cause_kind = 'actor_start', actor_start_input_sequence = 1,
-       actor_start_input_high_watermark = 1, payload = NULL
+       entrypoint_declared_id = 'test-actor', session_id = $3,
+       cause_kind = 'actor_start', session_input_start_sequence = 1,
+       session_input_high_watermark = 1, payload = NULL
  WHERE id = $1`, fixture.runID, actorDefinitionID, actorID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_attempts
-   SET entrypoint_kind = 'actor', actor_start_input_sequence = 1,
+   SET entrypoint_kind = 'actor', session_input_start_sequence = 1,
        entrypoint_entered_at = transaction_timestamp()
  WHERE run_id = $1 AND number = 1`, fixture.runID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-UPDATE workspaces SET owner_run_id = NULL, owner_actor_id = $2 WHERE id = $1`, fixture.workspaceID, actorID)
+UPDATE workspaces SET owner_run_id = NULL, owner_session_id = $2 WHERE id = $1`, fixture.workspaceID, actorID)
 	dbtest.MustExec(t, fixture.ctx, tx, `INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES ($1, $2, 1, $3)`,
 		fixture.orgID, privateDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
@@ -2931,7 +2931,7 @@ INSERT INTO deployment_definitions (
 ) VALUES
     ($1, $3, $4, 'task', 'test-task', 0, '{}'::jsonb,
      decode(repeat('03', 32), 'hex'), NULL),
-    ($2, $3, $4, 'workspace', 'test-workspace', 0, $5::jsonb,
+    ($2, $3, $4, 'sandbox', 'test-workspace', 0, $5::jsonb,
      decode(repeat('04', 32), 'hex'), $6)`,
 		taskDefinitionID,
 		workspaceDefinitionID,
@@ -2996,7 +2996,7 @@ INSERT INTO worker_observations (
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO workspaces (
     id, environment_id, region_id,
-    workspace_declared_id, deployment_definition_id,
+    sandbox_declared_id, deployment_definition_id,
     owner_run_id, ownership_generation, writer_generation, head_version_id
 ) VALUES (
     $1, $2, 'us-east-1', 'test-workspace',

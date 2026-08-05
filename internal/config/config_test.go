@@ -179,6 +179,7 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("WORKSPACE_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 	t.Setenv("PUBLIC_URL", " https://helmr.example.test ")
+	t.Setenv("API_ORIGIN", " https://API.HELMR.EXAMPLE.TEST/ ")
 	t.Setenv("MAGIC_LINK_DEBUG_URLS", " true ")
 	t.Setenv("SMTP_ADDR", " smtp.example.test:587 ")
 	t.Setenv("SMTP_USERNAME", " smtp-user ")
@@ -193,7 +194,7 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerTokenSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.WorkerGroupsJSON != `[{"id":"run-workers"}]` || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.WorkspaceFencingKey, bytes.Repeat([]byte{2}, 32)) || !bytes.Equal(cfg.TokenCredentialKey, bytes.Repeat([]byte{3}, 32)) || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" || cfg.RunLeaseTTL != 4*time.Minute || cfg.RunFinalizationTTL != 45*time.Minute {
+	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerTokenSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.WorkerGroupsJSON != `[{"id":"run-workers"}]` || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.WorkspaceFencingKey, bytes.Repeat([]byte{2}, 32)) || !bytes.Equal(cfg.TokenCredentialKey, bytes.Repeat([]byte{3}, 32)) || cfg.PublicURL != "https://helmr.example.test" || cfg.APIOrigin != "https://api.helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" || cfg.RunLeaseTTL != 4*time.Minute || cfg.RunFinalizationTTL != 45*time.Minute {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -426,6 +427,37 @@ func TestLoadControlPlaneDefaultsPublicURL(t *testing.T) {
 	}
 	if cfg.PublicURL != DefaultPublicURL {
 		t.Fatalf("public URL = %q", cfg.PublicURL)
+	}
+	if cfg.APIOrigin != cfg.PublicURL {
+		t.Fatalf("API origin = %q, public URL = %q", cfg.APIOrigin, cfg.PublicURL)
+	}
+}
+
+func TestLoadControlPlaneRejectsNonOriginPublicAndAPIURLs(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		value string
+	}{
+		{"PUBLIC_URL", "https://helmr.example.test/console"},
+		{"API_ORIGIN", "https://api.helmr.example.test/v1"},
+		{"API_ORIGIN", "https://user@api.helmr.example.test"},
+	} {
+		t.Run(test.name+"="+test.value, func(t *testing.T) {
+			setControlPlaneWorkerGroupEnv(t)
+			t.Setenv("DATABASE_URL", "postgres://example")
+			t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+			t.Setenv("CAS_URI", "s3://helmr-cas")
+			t.Setenv("WORKER_TOKEN_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
+			t.Setenv("SETUP_TOKEN", "setup-token")
+			t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
+			t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+			t.Setenv("GITHUB_OAUTH_CLIENT_ID", "client-id")
+			t.Setenv("GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
+			t.Setenv(test.name, test.value)
+			if _, err := LoadControlPlane(); err == nil || !strings.Contains(err.Error(), "must be an origin") {
+				t.Fatalf("LoadControlPlane() error = %v", err)
+			}
+		})
 	}
 }
 

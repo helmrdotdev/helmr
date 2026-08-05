@@ -25,7 +25,7 @@ type runLeaseClaimProjection struct {
 type runLeaseClaimResponseAuthority struct {
 	mode           runLeaseClaimMode
 	restoreSource  runLeaseRestoreSource
-	actor          db.Actor
+	actor          db.Session
 	childRun       db.Run
 	run            db.Run
 	attempt        db.RunAttempt
@@ -121,7 +121,7 @@ func projectRunLeaseClaimResponse(
 		projection.program.EnvironmentID != authority.run.EnvironmentID {
 		return workerapi.RunLeaseClaimResponse{}, errors.New("run lease program authority is inconsistent")
 	}
-	var actor *db.Actor
+	var actor *db.Session
 	if authority.actor.ID.Valid {
 		actor = &authority.actor
 	}

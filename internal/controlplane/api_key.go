@@ -238,14 +238,14 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeRunsRead, true
 	case string(api.APIKeyScopeRunsManage):
 		return api.APIKeyScopeRunsManage, true
-	case string(api.APIKeyScopeActorsRead):
-		return api.APIKeyScopeActorsRead, true
+	case string(api.APIKeyScopeSessionsRead):
+		return api.APIKeyScopeSessionsRead, true
 	case string(api.APIKeyScopeActorsStart):
 		return api.APIKeyScopeActorsStart, true
-	case string(api.APIKeyScopeActorsInputSend):
-		return api.APIKeyScopeActorsInputSend, true
-	case string(api.APIKeyScopeActorsCloseManage):
-		return api.APIKeyScopeActorsCloseManage, true
+	case string(api.APIKeyScopeSessionsInputSend):
+		return api.APIKeyScopeSessionsInputSend, true
+	case string(api.APIKeyScopeSessionsClose):
+		return api.APIKeyScopeSessionsClose, true
 	case string(api.APIKeyScopeTokensCreate):
 		return api.APIKeyScopeTokensCreate, true
 	case string(api.APIKeyScopeTokensRead):
@@ -281,14 +281,14 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionRunsRead, true
 	case api.APIKeyScopeRunsManage:
 		return auth.PermissionRunsManage, true
-	case api.APIKeyScopeActorsRead:
-		return auth.PermissionActorsRead, true
+	case api.APIKeyScopeSessionsRead:
+		return auth.PermissionSessionsRead, true
 	case api.APIKeyScopeActorsStart:
 		return auth.PermissionActorsStart, true
-	case api.APIKeyScopeActorsInputSend:
-		return auth.PermissionActorsInputSend, true
-	case api.APIKeyScopeActorsCloseManage:
-		return auth.PermissionActorsCloseManage, true
+	case api.APIKeyScopeSessionsInputSend:
+		return auth.PermissionSessionsInputSend, true
+	case api.APIKeyScopeSessionsClose:
+		return auth.PermissionSessionsClose, true
 	case api.APIKeyScopeTokensCreate:
 		return auth.PermissionTokensCreate, true
 	case api.APIKeyScopeTokensRead:
@@ -324,14 +324,14 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeRunsRead, true
 	case string(auth.PermissionRunsManage):
 		return api.APIKeyScopeRunsManage, true
-	case string(auth.PermissionActorsRead):
-		return api.APIKeyScopeActorsRead, true
+	case string(auth.PermissionSessionsRead):
+		return api.APIKeyScopeSessionsRead, true
 	case string(auth.PermissionActorsStart):
 		return api.APIKeyScopeActorsStart, true
-	case string(auth.PermissionActorsInputSend):
-		return api.APIKeyScopeActorsInputSend, true
-	case string(auth.PermissionActorsCloseManage):
-		return api.APIKeyScopeActorsCloseManage, true
+	case string(auth.PermissionSessionsInputSend):
+		return api.APIKeyScopeSessionsInputSend, true
+	case string(auth.PermissionSessionsClose):
+		return api.APIKeyScopeSessionsClose, true
 	case string(auth.PermissionTokensCreate):
 		return api.APIKeyScopeTokensCreate, true
 	case string(auth.PermissionTokensRead):

@@ -122,7 +122,7 @@ UPDATE workspaces
    AND workspaces.state = 'active'
    AND workspaces.desired_state IN ('active', 'stopped')
    AND workspaces.dirty_state = 'clean'
-   AND workspaces.owner_actor_id IS NULL
+   AND workspaces.owner_session_id IS NULL
    AND workspaces.owner_run_id IS NULL
    AND NOT EXISTS (
        SELECT 1
@@ -130,7 +130,7 @@ UPDATE workspaces
         WHERE workspace_leases.workspace_id = workspaces.id
           AND workspace_leases.state IN ('active', 'releasing')
    )
-RETURNING environments.id, org_id, project_id, slug, name, color_hex, is_default, environments.created_at, environments.updated_at, current_deployment_id, workspaces.id, environment_id, region_id, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, workspaces.created_at, workspaces.updated_at, deleted_at
+RETURNING environments.id, org_id, project_id, slug, name, color_hex, is_default, environments.created_at, environments.updated_at, current_deployment_id, workspaces.id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, state_version, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, workspaces.created_at, workspaces.updated_at, deleted_at
 `
 
 type AdvanceWorkspaceExecWriterParams struct {
@@ -159,11 +159,11 @@ type AdvanceWorkspaceExecWriterRow struct {
 	ID_2                   pgtype.UUID        `json:"id_2"`
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
 	RegionID               string             `json:"region_id"`
-	WorkspaceDeclaredID    pgtype.Text        `json:"workspace_declared_id"`
+	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
 	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
 	Key                    pgtype.Text        `json:"key"`
 	StateVersion           int64              `json:"state_version"`
-	OwnerActorID           pgtype.UUID        `json:"owner_actor_id"`
+	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
 	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
 	OwnershipGeneration    int64              `json:"ownership_generation"`
 	WriterGeneration       int64              `json:"writer_generation"`
@@ -204,11 +204,11 @@ func (q *Queries) AdvanceWorkspaceExecWriter(ctx context.Context, arg AdvanceWor
 		&i.ID_2,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.WorkspaceDeclaredID,
+		&i.SandboxDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
 		&i.StateVersion,
-		&i.OwnerActorID,
+		&i.OwnerSessionID,
 		&i.OwnerRunID,
 		&i.OwnershipGeneration,
 		&i.WriterGeneration,
@@ -1097,7 +1097,7 @@ UPDATE workspaces
    AND head_version_id = $4
    AND ownership_generation = $5
    AND writer_generation = $6
-RETURNING id, environment_id, region_id, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+RETURNING id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, state_version, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
 `
 
 type FinalizeWorkspaceExecWorkspaceParams struct {
@@ -1123,11 +1123,11 @@ func (q *Queries) FinalizeWorkspaceExecWorkspace(ctx context.Context, arg Finali
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.WorkspaceDeclaredID,
+		&i.SandboxDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
 		&i.StateVersion,
-		&i.OwnerActorID,
+		&i.OwnerSessionID,
 		&i.OwnerRunID,
 		&i.OwnershipGeneration,
 		&i.WriterGeneration,
@@ -1722,7 +1722,7 @@ func (q *Queries) LockWorkspaceExecFailureAuthority(ctx context.Context, arg Loc
 }
 
 const lockWorkspaceExecFailureWorkspace = `-- name: LockWorkspaceExecFailureWorkspace :one
-SELECT workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.workspace_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_actor_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+SELECT workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
   FROM workspaces
   JOIN environments ON environments.id = workspaces.environment_id
  WHERE environments.org_id = $1
@@ -1742,11 +1742,11 @@ func (q *Queries) LockWorkspaceExecFailureWorkspace(ctx context.Context, arg Loc
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.WorkspaceDeclaredID,
+		&i.SandboxDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
 		&i.StateVersion,
-		&i.OwnerActorID,
+		&i.OwnerSessionID,
 		&i.OwnerRunID,
 		&i.OwnershipGeneration,
 		&i.WriterGeneration,
@@ -2334,7 +2334,7 @@ UPDATE workspaces
    AND head_version_id = $2
    AND ownership_generation = $3
    AND writer_generation = $4
-RETURNING id, environment_id, region_id, workspace_declared_id, deployment_definition_id, key, state_version, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+RETURNING id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, state_version, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
 `
 
 type MarkWorkspaceExecRecoveryRequiredParams struct {
@@ -2356,11 +2356,11 @@ func (q *Queries) MarkWorkspaceExecRecoveryRequired(ctx context.Context, arg Mar
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.WorkspaceDeclaredID,
+		&i.SandboxDeclaredID,
 		&i.DeploymentDefinitionID,
 		&i.Key,
 		&i.StateVersion,
-		&i.OwnerActorID,
+		&i.OwnerSessionID,
 		&i.OwnerRunID,
 		&i.OwnershipGeneration,
 		&i.WriterGeneration,

@@ -26,7 +26,7 @@ func TestRuntimeSubstrateRegistrationIsImmutableAndConcurrent(t *testing.T) {
 		INSERT INTO deployment_definitions (
 			id, environment_id, deployment_id, kind, declared_id,
 			manifest_version, manifest, manifest_digest, artifact_id
-		) VALUES ($1, $2, $3, 'workspace', 'substrate-test', 0, '{}'::jsonb,
+		) VALUES ($1, $2, $3, 'sandbox', 'substrate-test', 0, '{}'::jsonb,
 		          decode(repeat('01', 32), 'hex'), $4)
 	`, definitionID, ids.environmentID, ids.deploymentID, ids.workspaceImageArtifactID)
 
@@ -282,7 +282,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 			id, environment_id, deployment_id, kind, declared_id,
 			manifest_version, manifest, manifest_digest, artifact_id
 		) VALUES (
-			$1, $2, $3, 'workspace', 'authority-workspace', 0, '{}'::jsonb,
+			$1, $2, $3, 'sandbox', 'authority-workspace', 0, '{}'::jsonb,
 			decode(repeat('03', 32), 'hex'), $4
 		)
 	`, definitionID, environmentID, deploymentID, imageArtifactID)
@@ -300,7 +300,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO workspaces (
 			id, environment_id, region_id,
-			workspace_declared_id, deployment_definition_id, head_version_id
+			sandbox_declared_id, deployment_definition_id, head_version_id
 		) VALUES ($1, $2, $3, 'authority-workspace', $4, $5)
 	`, workspaceID, environmentID, dbtest.DefaultRegionID, definitionID, rootVersionID); err != nil {
 		t.Fatal(err)

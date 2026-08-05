@@ -234,7 +234,7 @@ func (s *Server) beginRunFinalization(
 }
 
 type runFinalizationOwner struct {
-	actor  db.Actor
+	actor  db.Session
 	parent db.Run
 }
 
@@ -246,16 +246,16 @@ func lockRunFinalizationOwner(
 	var owner runFinalizationOwner
 	var err error
 	switch {
-	case locators.ActorID.Valid && !locators.ParentRunID.Valid && !locators.ParentOwnsLifecycle.Valid:
+	case locators.SessionID.Valid && !locators.ParentRunID.Valid && !locators.ParentOwnsLifecycle.Valid:
 		owner.actor, err = q.LockRunLeaseClaimActor(ctx, db.LockRunLeaseClaimActorParams{
-			ID: locators.ActorID, WorkspaceID: locators.WorkspaceID,
+			ID: locators.SessionID, WorkspaceID: locators.WorkspaceID,
 		})
-	case !locators.ActorID.Valid && locators.ParentRunID.Valid && locators.ParentOwnsLifecycle.Valid && locators.ParentOwnsLifecycle.Bool:
+	case !locators.SessionID.Valid && locators.ParentRunID.Valid && locators.ParentOwnsLifecycle.Valid && locators.ParentOwnsLifecycle.Bool:
 		owner.parent, err = q.LockRunFinalizationParentRun(ctx, db.LockRunFinalizationParentRunParams{
 			ID: locators.ParentRunID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
 			EnvironmentID: locators.EnvironmentID,
 		})
-	case !locators.ActorID.Valid &&
+	case !locators.SessionID.Valid &&
 		((!locators.ParentRunID.Valid && !locators.ParentOwnsLifecycle.Valid) ||
 			(locators.ParentRunID.Valid && locators.ParentOwnsLifecycle.Valid && !locators.ParentOwnsLifecycle.Bool)):
 	default:
@@ -308,16 +308,16 @@ func lockLiveRunFinalizationAuthority(
 			authority.parentRun = owner.parent
 		} else if lineage[0].Run.EntrypointKind == "actor" {
 			root := lineage[0].Run
-			if !root.ActorID.Valid || root.ParentRunID.Valid || root.ParentOwnsLifecycle.Valid {
+			if !root.SessionID.Valid || root.ParentRunID.Valid || root.ParentOwnsLifecycle.Valid {
 				return authority, errStaleRunFinalization
 			}
 			authority.actor, err = q.LockRunLeaseClaimActor(ctx, db.LockRunLeaseClaimActorParams{
-				ID: root.ActorID, WorkspaceID: locators.WorkspaceID,
+				ID: root.SessionID, WorkspaceID: locators.WorkspaceID,
 			})
 			if err != nil {
 				return authority, staleRunFinalization(err)
 			}
-			if authority.actor.ID != root.ActorID ||
+			if authority.actor.ID != root.SessionID ||
 				authority.actor.CurrentRunID != root.ID ||
 				(authority.actor.State != "open" &&
 					authority.actor.State != "closing") {
@@ -406,14 +406,14 @@ func validateRunFinalizationOwner(
 ) error {
 	switch authority.run.EntrypointKind {
 	case "actor":
-		if !locators.ActorID.Valid || authority.run.ActorID != locators.ActorID ||
-			authority.actor.ID != locators.ActorID || authority.actor.CurrentRunID != authority.run.ID ||
+		if !locators.SessionID.Valid || authority.run.SessionID != locators.SessionID ||
+			authority.actor.ID != locators.SessionID || authority.actor.CurrentRunID != authority.run.ID ||
 			(authority.actor.State != "open" && authority.actor.State != "closing") ||
 			authority.run.ParentRunID.Valid || authority.run.ParentOwnsLifecycle.Valid {
 			return errStaleRunFinalization
 		}
 	case "task":
-		if authority.run.ActorID.Valid || authority.run.ParentRunID != locators.ParentRunID ||
+		if authority.run.SessionID.Valid || authority.run.ParentRunID != locators.ParentRunID ||
 			authority.run.ParentOwnsLifecycle != locators.ParentOwnsLifecycle {
 			return errStaleRunFinalization
 		}
@@ -570,7 +570,7 @@ func validateSameWorkspaceChildFinalization(authority runLeaseClaimAuthority) er
 		wait.ParentWriterGeneration.Int64 >= wait.ChildWriterGeneration.Int64 ||
 		wait.ChildWriterGeneration.Int64 != authority.workspace.WriterGeneration ||
 		wait.ChildWriterGeneration.Int64 != authority.workspaceLease.WriterGeneration ||
-		authority.workspace.OwnerRunID.Valid == authority.workspace.OwnerActorID.Valid ||
+		authority.workspace.OwnerRunID.Valid == authority.workspace.OwnerSessionID.Valid ||
 		authority.workspace.OwnerRunID == authority.run.ID {
 		return errStaleRunFinalization
 	}

@@ -57,7 +57,7 @@ type ProgramIndexDeclaration struct {
 	DeclaredID string         `json:"-"`
 	Task       *TaskManifest
 	Actor      *ActorManifest
-	Workspace  *WorkspaceManifest
+	Sandbox    *SandboxManifest
 	Locator    *ProgramLocator
 }
 

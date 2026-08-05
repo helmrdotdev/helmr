@@ -52,7 +52,7 @@ func secretListCommand() *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			for _, secret := range response.Secrets {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", secret.Name, secret.State, secret.CreatedAt.Format(apiTimeFormat))
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", secret.Name, secret.Status, secret.CreatedAt.Format(apiTimeFormat))
 			}
 			return nil
 		},
@@ -67,7 +67,7 @@ func secretGetCommand() *cobra.Command {
 	var environmentID string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "get NAME",
+		Use:   "get SECRET_ID",
 		Short: "Show remote secret metadata.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -75,7 +75,7 @@ func secretGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			secret, err := controlPlane.GetSecret(cmd.Context(), args[0], secretOptions(projectID, environmentID))
+			secret, err := controlPlane.RetrieveSecret(cmd.Context(), args[0], secretOptions(projectID, environmentID))
 			if err != nil {
 				return err
 			}
@@ -140,7 +140,7 @@ func secretRotateCommand() *cobra.Command {
 	var idempotencyKey string
 	var jsonOutput bool
 	cmd := &cobra.Command{
-		Use:   "rotate NAME [VALUE]",
+		Use:   "rotate SECRET_ID [VALUE]",
 		Short: "Rotate a remote secret.",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -202,7 +202,7 @@ func secretRevokeCommand() *cobra.Command {
 	var idempotencyKey string
 	var yes bool
 	cmd := &cobra.Command{
-		Use:   "revoke NAME --yes",
+		Use:   "revoke SECRET_ID --yes",
 		Short: "Revoke a remote secret.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -251,7 +251,7 @@ func secretOptions(projectID string, environmentID string) client.SecretOptions 
 
 func writeSecret(w io.Writer, secret api.SecretResponse) error {
 	fmt.Fprintf(w, "Name: %s\n", secret.Name)
-	fmt.Fprintf(w, "State: %s\n", secret.State)
+	fmt.Fprintf(w, "Status: %s\n", secret.Status)
 	fmt.Fprintf(w, "Created: %s\n", secret.CreatedAt.Format(apiTimeFormat))
 	if secret.RotatedAt != nil {
 		fmt.Fprintf(w, "Rotated: %s\n", secret.RotatedAt.Format(apiTimeFormat))

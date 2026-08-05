@@ -16,7 +16,7 @@ func TestScheduleReadsUseAPIKeyRoutes(t *testing.T) {
 	testScheduleReads(
 		t,
 		false,
-		"/api/schedules",
+		"/v1/schedules",
 		EnvironmentScopeOptions{},
 	)
 }
@@ -46,7 +46,7 @@ func testScheduleReads(
 				t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
 			}
 			_ = json.NewEncoder(w).Encode(api.ListSchedulesResponse{
-				Schedules:  []api.ScheduleResponse{{ID: testScheduleID, Task: "nightly", Status: "active"}},
+				Schedules:  []api.ScheduleResponse{{ID: testScheduleID, TaskID: "nightly", Status: "active"}},
 				NextCursor: "sc1.next",
 			})
 		case collectionPath + "/" + testScheduleID:
@@ -54,7 +54,7 @@ func testScheduleReads(
 				t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
 			}
 			_ = json.NewEncoder(w).Encode(api.ScheduleResponse{
-				ID: testScheduleID, Task: "nightly", Status: "active",
+				ID: testScheduleID, TaskID: "nightly", Status: "active",
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
@@ -83,7 +83,7 @@ func testScheduleReads(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if schedule.ID != testScheduleID || schedule.Task != "nightly" {
+	if schedule.ID != testScheduleID || schedule.TaskID != "nightly" {
 		t.Fatalf("schedule = %+v", schedule)
 	}
 }

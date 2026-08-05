@@ -2,7 +2,7 @@ import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { formatRelative } from "../features/runs/display";
 import { ApiError } from "../lib/api";
-import { listSecrets, revokeSecret, setSecret, type Secret } from "../lib/secrets";
+import { createSecret, listSecrets, revokeSecret, rotateSecret, type Secret } from "../lib/secrets";
 import { useScope } from "../lib/scope";
 import { ActionMenu } from "../ui/ActionMenu";
 import { Modal } from "../ui/Modal";
@@ -25,7 +25,7 @@ function shortScopeID(id: string): string {
 }
 
 function SecretModal(props: {
-  secretName: string | null;
+  secret: Secret | null;
   projectID: string;
   environmentID: string;
   projectName: string;
@@ -34,8 +34,8 @@ function SecretModal(props: {
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
-  const editing = createMemo(() => props.secretName !== null);
-  const [name, setName] = createSignal(props.secretName ?? "");
+  const editing = createMemo(() => props.secret !== null);
+  const [name, setName] = createSignal(props.secret?.name ?? "");
   const [value, setValue] = createSignal("");
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -45,7 +45,11 @@ function SecretModal(props: {
     setError(null);
     setSaving(true);
     try {
-      await setSecret(name().trim(), value(), props.projectID, props.environmentID);
+      if (props.secret) {
+        await rotateSecret(props.secret.id, value(), props.projectID, props.environmentID);
+      } else {
+        await createSecret(name().trim(), value(), props.projectID, props.environmentID);
+      }
       await props.onSaved();
       props.onClose();
     } catch (saveError) {
@@ -115,7 +119,7 @@ function SecretRow(props: {
   return (
     <tr>
       <td><code>{props.secret.name}</code></td>
-      <td>{props.secret.state}</td>
+      <td>{props.secret.status}</td>
       <td>{props.secret.rotated_at ? formatRelative(props.secret.rotated_at) : "Never"}</td>
       <td>{formatRelative(props.secret.created_at)}</td>
       <td class={ui.actionsCell}>
@@ -124,13 +128,13 @@ function SecretRow(props: {
           items={[
             {
               label: "Update",
-              disabled: props.revoking || props.secret.state === "revoked",
+              disabled: props.revoking || props.secret.status === "revoked",
               onSelect: () => props.onUpdate(props.secret),
             },
             {
               label: "Revoke",
               busyLabel: props.revoking ? "Revoking..." : undefined,
-              disabled: props.revoking || props.secret.state === "revoked",
+              disabled: props.revoking || props.secret.status === "revoked",
               tone: "danger",
               onSelect: () => props.onRevoke(props.secret),
             },
@@ -147,9 +151,9 @@ function SecretRow(props: {
 export function Secrets() {
   const scope = useScope();
   const queryClient = useQueryClient();
-  const [modalSecretName, setModalSecretName] = createSignal<string | null | undefined>(undefined);
-  const [revokingName, setRevokingName] = createSignal<string | null>(null);
-  const [revokeError, setRevokeError] = createSignal<{ name: string; message: string } | null>(null);
+  const [modalSecret, setModalSecret] = createSignal<Secret | null | undefined>(undefined);
+  const [revokingID, setRevokingID] = createSignal<string | null>(null);
+  const [revokeError, setRevokeError] = createSignal<{ id: string; message: string } | null>(null);
   const secrets = createQuery(() => ({
     queryKey: ["secrets", scope.selectedProjectID(), scope.selectedEnvironmentID()],
     queryFn: () => listSecrets(scope.selectedProjectID(), scope.selectedEnvironmentID()),
@@ -162,14 +166,14 @@ export function Secrets() {
   const revoke = async (secret: Secret) => {
     if (!window.confirm(`Revoke secret "${secret.name}"?`)) return;
     setRevokeError(null);
-    setRevokingName(secret.name);
+    setRevokingID(secret.id);
     try {
-      await revokeSecret(secret.name, scope.selectedProjectID(), scope.selectedEnvironmentID());
+      await revokeSecret(secret.id, scope.selectedProjectID(), scope.selectedEnvironmentID());
       await invalidateSecrets();
     } catch (error) {
-      setRevokeError({ name: secret.name, message: secretErrorMessage(error) });
+      setRevokeError({ id: secret.id, message: secretErrorMessage(error) });
     } finally {
-      setRevokingName(null);
+      setRevokingID(null);
     }
   };
 
@@ -180,7 +184,7 @@ export function Secrets() {
           <h1 class={ui.h1}>Secrets</h1>
           <p class={ui.pageSubtitle}>Environment-scoped secret names for tasks. Values are never displayed after saving.</p>
         </div>
-        <button class={ui.button} type="button" disabled={!scope.selectedEnvironmentID()} onClick={() => setModalSecretName(null)}>Set secret</button>
+        <button class={ui.button} type="button" disabled={!scope.selectedEnvironmentID()} onClick={() => setModalSecret(null)}>Set secret</button>
       </div>
 
       <Show when={secrets.isError}>
@@ -205,9 +209,9 @@ export function Secrets() {
                   {(secret) => (
                     <SecretRow
                       secret={secret}
-                      revoking={revokingName() === secret.name}
-                      error={revokeError()?.name === secret.name ? revokeError()?.message ?? null : null}
-                      onUpdate={(secret) => setModalSecretName(secret.name)}
+                      revoking={revokingID() === secret.id}
+                      error={revokeError()?.id === secret.id ? revokeError()?.message ?? null : null}
+                      onUpdate={setModalSecret}
                       onRevoke={revoke}
                     />
                   )}
@@ -218,15 +222,15 @@ export function Secrets() {
         </Show>
       </Show>
 
-      <Show when={modalSecretName() !== undefined}>
+      <Show when={modalSecret() !== undefined}>
         <SecretModal
-          secretName={modalSecretName() ?? null}
+          secret={modalSecret() ?? null}
           projectID={scope.selectedProjectID()}
           environmentID={scope.selectedEnvironmentID()}
           projectName={scope.selectedProject()?.name ?? "Project"}
           environmentName={scope.selectedEnvironment()?.name ?? "Environment"}
           environmentColorHex={scope.selectedEnvironment()?.color_hex ?? ""}
-          onClose={() => setModalSecretName(undefined)}
+          onClose={() => setModalSecret(undefined)}
           onSaved={invalidateSecrets}
         />
       </Show>

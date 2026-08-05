@@ -28,7 +28,7 @@ func TestBuildPlanCanonicalRoundTrip(t *testing.T) {
 	}
 	if parsed.Definitions[0].Task == nil ||
 		parsed.Definitions[1].Actor == nil ||
-		parsed.Definitions[2].Workspace == nil {
+		parsed.Definitions[2].Sandbox == nil {
 		t.Fatalf("typed definition union was not preserved: %+v", parsed.Definitions)
 	}
 }
@@ -219,14 +219,14 @@ func TestValidateBuildPlanDefinitions(t *testing.T) {
 		{
 			name: "image architecture",
 			change: func(plan *BuildPlan) {
-				plan.Definitions[2].Workspace.ImageBuild.Images[0].Platform.Architecture = "aarch64"
+				plan.Definitions[2].Sandbox.ImageBuild.Images[0].Platform.Architecture = "aarch64"
 			},
 			errMsg: "imageBuild",
 		},
 		{
 			name: "workspace resources",
 			change: func(plan *BuildPlan) {
-				plan.Definitions[2].Workspace.Resources.MemoryMiB = 0
+				plan.Definitions[2].Sandbox.Resources.MemoryMiB = 0
 			},
 			errMsg: "memoryMiB",
 		},
@@ -515,9 +515,9 @@ func testBuildPlan() BuildPlan {
 				},
 			},
 			{
-				Kind:       DefinitionKindWorkspace,
+				Kind:       DefinitionKindSandbox,
 				DeclaredID: "repo",
-				Workspace: &WorkspaceInputManifest{
+				Sandbox: &SandboxInputManifest{
 					ImageBuild: imagebuild.Build{
 						FormatVersion: imagebuild.FormatVersion,
 						Root:          "repo",

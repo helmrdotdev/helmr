@@ -35,7 +35,7 @@ func TestWriteRunDetails(t *testing.T) {
 		ID:                   "run-1",
 		Status:               "succeeded",
 		Entrypoint:           api.RunEntrypointResponse{Kind: "task", ID: "build"},
-		Deployment:           api.RunDeploymentResponse{ID: "dep-1", Version: "20260510-test"},
+		Deployment:           api.DeploymentReference{ID: "dep-1", Version: "20260510-test"},
 		WorkspaceID:          "ws-1",
 		CurrentAttemptNumber: 1,
 		Cause:                api.RunCauseResponse{Type: "direct"},

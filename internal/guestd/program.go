@@ -1057,17 +1057,17 @@ func relayProgram(
 				pendingRuntimeOperations[correlationID] = label
 				continue
 			}
-			if send := event.GetActorInputSendRequested(); send != nil {
+			if send := event.GetSessionInputSendRequested(); send != nil {
 				if outcomeSeen {
-					return errors.New("program emitted an actor input send after outcome")
+					return errors.New("program emitted a session input send after outcome")
 				}
 				correlationID := strings.TrimSpace(send.GetCorrelationId())
-				if correlationID == "" || strings.TrimSpace(send.GetDeclaredId()) == "" ||
+				if correlationID == "" || strings.TrimSpace(send.GetSessionId()) == "" ||
 					strings.TrimSpace(send.GetDataJson()) == "" {
-					return errors.New("actor input send identity is incomplete")
+					return errors.New("session input send identity is incomplete")
 				}
 				if _, exists := pendingRuntimeOperations[correlationID]; exists {
-					return errors.New("program emitted a duplicate actor input send correlation")
+					return errors.New("program emitted a duplicate session input send correlation")
 				}
 				if len(pendingRuntimeOperations) >= 128 {
 					return errors.New("program exceeded the pending runtime operation limit")
@@ -1075,7 +1075,7 @@ func relayProgram(
 				if err := stream.write(event); err != nil {
 					return err
 				}
-				pendingRuntimeOperations[correlationID] = "actor input send"
+				pendingRuntimeOperations[correlationID] = "session input send"
 				continue
 			}
 			if create := event.GetTokenCreateRequested(); create != nil {
@@ -1319,12 +1319,12 @@ func runtimeResourceOperationIdentity(event *runv0.RunEvent) (string, string, bo
 	switch value := event.GetEvent().(type) {
 	case *runv0.RunEvent_ActorStartRequested:
 		return strings.TrimSpace(value.ActorStartRequested.GetCorrelationId()), "actor start", true
-	case *runv0.RunEvent_ActorStatusRequested:
-		return strings.TrimSpace(value.ActorStatusRequested.GetCorrelationId()), "actor status read", true
-	case *runv0.RunEvent_ActorCloseRequested:
-		return strings.TrimSpace(value.ActorCloseRequested.GetCorrelationId()), "actor close", true
-	case *runv0.RunEvent_ActorOutputPageRequested:
-		return strings.TrimSpace(value.ActorOutputPageRequested.GetCorrelationId()), "actor output page read", true
+	case *runv0.RunEvent_SessionStatusRequested:
+		return strings.TrimSpace(value.SessionStatusRequested.GetCorrelationId()), "session status read", true
+	case *runv0.RunEvent_SessionCloseRequested:
+		return strings.TrimSpace(value.SessionCloseRequested.GetCorrelationId()), "session close", true
+	case *runv0.RunEvent_SessionOutputPageRequested:
+		return strings.TrimSpace(value.SessionOutputPageRequested.GetCorrelationId()), "session output page read", true
 	case *runv0.RunEvent_WorkspaceCreateRequested:
 		return strings.TrimSpace(value.WorkspaceCreateRequested.GetCorrelationId()), "workspace create", true
 	case *runv0.RunEvent_WorkspaceRetrieveRequested:

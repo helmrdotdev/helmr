@@ -1,14 +1,14 @@
-import { image, task, timers, workspace } from "@helmr/sdk"
+import { image, task, timers, sandbox } from "@helmr/sdk"
 import { readFile, writeFile } from "node:fs/promises"
 import { z } from "zod"
 
 const base = image("helmr-timer-smoke")
   .from("node:24-bookworm-slim")
-  .workdir("/workspace")
+  .workdir("/sandbox")
   .run(["npm", "install", "-g", "bun@1.3.10"])
-  .workdir("/workspace")
+  .workdir("/sandbox")
 
-export const timerSmokeWorkspace = workspace("helmr-timer-smoke")
+export const timerSmokeWorkspace = sandbox({ id: "helmr-timer-smoke" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 

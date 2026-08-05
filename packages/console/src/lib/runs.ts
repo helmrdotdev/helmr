@@ -27,7 +27,7 @@ export type Run = {
     version: string;
   };
   workspace_id: string;
-  actor_id?: string;
+  session_id?: string;
   parent_run_id?: string;
   parent_owns_lifecycle?: boolean;
   current_attempt_number: number;

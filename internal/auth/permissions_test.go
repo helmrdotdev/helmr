@@ -91,14 +91,14 @@ func TestGranularWorkspacePermissionsDoNotEscalate(t *testing.T) {
 }
 
 func TestActorInputPermissionIsWritableButNotReadableRoleAuthority(t *testing.T) {
-	if !RoleAllows(RoleDeveloper, PermissionActorsInputSend) {
+	if !RoleAllows(RoleDeveloper, PermissionSessionsInputSend) {
 		t.Fatal("developer should be allowed to send Actor input")
 	}
-	if RoleAllows(RoleViewer, PermissionActorsInputSend) {
+	if RoleAllows(RoleViewer, PermissionSessionsInputSend) {
 		t.Fatal("viewer should not be allowed to send Actor input")
 	}
-	normalized, ok := ParseAPIKeyGrant(string(PermissionActorsInputSend))
-	if !ok || normalized != PermissionActorsInputSend {
+	normalized, ok := ParseAPIKeyGrant(string(PermissionSessionsInputSend))
+	if !ok || normalized != PermissionSessionsInputSend {
 		t.Fatalf("normalized Actor input permission = %v", normalized)
 	}
 }
@@ -118,12 +118,12 @@ func TestActorStartPermissionIsWritableButNotReadableRoleAuthority(t *testing.T)
 
 func TestActorReadPermissionAllowsReadOnlyRoles(t *testing.T) {
 	for _, role := range []Role{RoleOwner, RoleAdmin, RoleDeveloper, RoleViewer} {
-		if !RoleAllows(role, PermissionActorsRead) {
+		if !RoleAllows(role, PermissionSessionsRead) {
 			t.Fatalf("%s should be allowed to read Actors", role)
 		}
 	}
-	normalized, ok := ParseAPIKeyGrant(string(PermissionActorsRead))
-	if !ok || normalized != PermissionActorsRead {
+	normalized, ok := ParseAPIKeyGrant(string(PermissionSessionsRead))
+	if !ok || normalized != PermissionSessionsRead {
 		t.Fatalf("normalized Actor read permission = %v", normalized)
 	}
 }

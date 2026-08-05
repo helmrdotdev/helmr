@@ -374,13 +374,13 @@ func validateBuildSucceeded(succeeded BuildSucceeded) error {
 		}
 	}
 
-	workspaces := buildPlanWorkspaces(succeeded.Plan)
-	if len(succeeded.WorkspaceImages) != len(workspaces) {
+	sandboxes := buildPlanSandboxes(succeeded.Plan)
+	if len(succeeded.WorkspaceImages) != len(sandboxes) {
 		return errors.New("build result workspaceImages do not match plan")
 	}
 	for index, image := range succeeded.WorkspaceImages {
-		workspace := workspaces[index]
-		if image.DeclaredID != workspace.DeclaredID {
+		sandbox := sandboxes[index]
+		if image.DeclaredID != sandbox.DeclaredID {
 			return fmt.Errorf("build result workspaceImages[%d] declaredId does not match plan", index)
 		}
 		if !sha256DigestPattern.MatchString(image.Artifact.Digest) {
@@ -407,7 +407,7 @@ func validateBuildSucceeded(succeeded BuildSucceeded) error {
 				index,
 			)
 		}
-		if err := validateWorkspaceImageOperationEvidence(image.Operation, workspace, image.Artifact); err != nil {
+		if err := validateWorkspaceImageOperationEvidence(image.Operation, sandbox, image.Artifact); err != nil {
 			return fmt.Errorf("build result workspaceImages[%d] operation: %w", index, err)
 		}
 	}
@@ -426,7 +426,7 @@ func validateBuildSucceeded(succeeded BuildSucceeded) error {
 
 func validateWorkspaceImageOperationEvidence(
 	evidence WorkspaceImageOperationEvidence,
-	workspace buildPlanWorkspace,
+	sandbox buildPlanSandbox,
 	artifact WorkspaceImageArtifact,
 ) error {
 	if ids.Validate(evidence.BuildLeaseID) != nil ||
@@ -437,8 +437,8 @@ func validateWorkspaceImageOperationEvidence(
 	if evidence.BuildLeaseGeneration < 1 {
 		return errors.New("build lease generation must be positive")
 	}
-	if evidence.DeclarationSlot != workspace.DeclaredID {
-		return errors.New("declaration slot does not match the workspace")
+	if evidence.DeclarationSlot != sandbox.DeclaredID {
+		return errors.New("declaration slot does not match the sandbox")
 	}
 	for label, digest := range map[string]string{
 		"request fingerprint": evidence.RequestFingerprint,
@@ -454,14 +454,14 @@ func validateWorkspaceImageOperationEvidence(
 		return errors.New("requested cache mode is invalid")
 	}
 	planDigest, err := imagebuild.Digest(
-		workspace.ImageBuild,
+		sandbox.ImageBuild,
 		string(artifact.Architecture),
 	)
 	if err != nil {
 		return fmt.Errorf("derive image plan digest: %w", err)
 	}
 	if evidence.PlanDigest != planDigest {
-		return errors.New("plan digest does not match the workspace image plan")
+		return errors.New("plan digest does not match the sandbox image plan")
 	}
 	return nil
 }
@@ -511,23 +511,23 @@ func validateBuildLogs(logs BuildLogs) error {
 	return nil
 }
 
-type buildPlanWorkspace struct {
+type buildPlanSandbox struct {
 	DeclaredID string
 	ImageBuild imagebuild.Build
 }
 
-func buildPlanWorkspaces(plan BuildPlan) []buildPlanWorkspace {
-	workspaces := make([]buildPlanWorkspace, 0)
+func buildPlanSandboxes(plan BuildPlan) []buildPlanSandbox {
+	sandboxes := make([]buildPlanSandbox, 0)
 	for _, definition := range plan.Definitions {
-		if definition.Workspace == nil {
+		if definition.Sandbox == nil {
 			continue
 		}
-		workspaces = append(workspaces, buildPlanWorkspace{
+		sandboxes = append(sandboxes, buildPlanSandbox{
 			DeclaredID: definition.DeclaredID,
-			ImageBuild: definition.Workspace.ImageBuild,
+			ImageBuild: definition.Sandbox.ImageBuild,
 		})
 	}
-	return workspaces
+	return sandboxes
 }
 
 func buildPlanProgramDeclarations(plan BuildPlan) []ProgramDeclaration {

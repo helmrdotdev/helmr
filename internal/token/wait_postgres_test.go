@@ -358,7 +358,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 	}
 	if mode.actor {
 		if _, err := fixture.queries.CompleteActorAttempt(ctx, db.CompleteActorAttemptParams{
-			TerminalActorInputSequence: pgtype.Int8{}, TerminalOutcome: pgvalue.Text("failed"),
+			TerminalSessionInputSequence: pgtype.Int8{}, TerminalOutcome: pgvalue.Text("failed"),
 			ReasonCode: pgvalue.Text("checkpoint_failed"), Error: failureError,
 			CompletedAt: failedAt, RunID: pgvalue.UUID(work.runID), Number: int32(1),
 			WorkspaceID: pgvalue.UUID(authority.workspaceID),
@@ -413,7 +413,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 				NextAttemptNumber: int32(1) + 1,
 				RetryAt:           pgvalue.Timestamptz(failedAt.Time.Add(time.Second)), FailedAt: failedAt,
 				ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
-				ActorID: pgvalue.UUID(actorID), PreviousAttemptNumber: int32(1),
+				SessionID: pgvalue.UUID(actorID), PreviousAttemptNumber: int32(1),
 				RunLeaseID: pgvalue.UUID(work.leaseID),
 			}); err != nil {
 				t.Fatal(err)
@@ -450,7 +450,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 			if _, err := fixture.queries.FinishCheckpointFailedActorRun(ctx, db.FinishCheckpointFailedActorRunParams{
 				Status: runStatus, ReasonCode: pgvalue.Text(reason), Error: failureError, FailedAt: failedAt,
 				ID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
-				ActorID: pgvalue.UUID(actorID), AttemptNumber: int32(1),
+				SessionID: pgvalue.UUID(actorID), AttemptNumber: int32(1),
 				RunLeaseID: pgvalue.UUID(work.leaseID),
 			}); err != nil {
 				t.Fatal(err)
@@ -466,7 +466,7 @@ func testFailedCreatingCheckpointFailsAttemptAndClosesSource(t *testing.T, mode 
 			if _, err := fixture.queries.ReleaseActorWorkspaceOwner(ctx, db.ReleaseActorWorkspaceOwnerParams{
 				CompletedAt: failedAt, ID: pgvalue.UUID(authority.workspaceID),
 				EnvironmentID: pgvalue.UUID(fixture.environmentID),
-				ActorID:       pgvalue.UUID(actorID), OwnershipGeneration: 1, WriterGeneration: 1,
+				SessionID:     pgvalue.UUID(actorID), OwnershipGeneration: 1, WriterGeneration: 1,
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -555,33 +555,33 @@ SELECT runs.status, run_leases.state, run_waits.condition_state, run_waits.suspe
 	}
 	if mode.actor {
 		var actorState string
-		var actorCurrentRunID, failureRunID, ownerActorID pgtype.UUID
+		var actorCurrentRunID, failureRunID, ownerSessionID pgtype.UUID
 		var failureCode pgtype.Text
 		var runGeneration int64
 		var nextStart, nextHigh pgtype.Int8
 		var nextBase, workspaceHead pgtype.UUID
 		if err := fixture.pool.QueryRow(ctx, `
-SELECT actors.state, actors.current_run_id, actors.run_generation,
-       actors.failure_code, actors.failure_run_id, workspaces.owner_actor_id,
-       next_attempt.actor_start_input_sequence, runs.actor_start_input_high_watermark,
+SELECT sessions.state, sessions.current_run_id, sessions.run_generation,
+       sessions.failure_code, sessions.failure_run_id, workspaces.owner_session_id,
+       next_attempt.session_input_start_sequence, runs.session_input_high_watermark,
        next_attempt.base_workspace_version_id, workspaces.head_version_id
-  FROM actors
-  JOIN workspaces ON workspaces.id = actors.workspace_id
-  JOIN runs ON runs.id = $2 AND runs.actor_id = actors.id
+  FROM sessions
+  JOIN workspaces ON workspaces.id = sessions.workspace_id
+  JOIN runs ON runs.id = $2 AND runs.session_id = sessions.id
   LEFT JOIN run_attempts AS next_attempt
     ON next_attempt.run_id = $2 AND next_attempt.number = 2
- WHERE actors.id = $1`, actorID, work.runID).Scan(
-			&actorState, &actorCurrentRunID, &runGeneration, &failureCode, &failureRunID, &ownerActorID,
+ WHERE sessions.id = $1`, actorID, work.runID).Scan(
+			&actorState, &actorCurrentRunID, &runGeneration, &failureCode, &failureRunID, &ownerSessionID,
 			&nextStart, &nextHigh, &nextBase, &workspaceHead,
 		); err != nil {
 			t.Fatal(err)
 		}
 		if mode.retry {
 			if actorState != "open" || actorCurrentRunID != pgvalue.UUID(work.runID) || runGeneration != 1 ||
-				failureCode.Valid || failureRunID.Valid || ownerActorID != pgvalue.UUID(actorID) ||
+				failureCode.Valid || failureRunID.Valid || ownerSessionID != pgvalue.UUID(actorID) ||
 				!nextStart.Valid || nextStart.Int64 != 1 || !nextHigh.Valid || nextHigh.Int64 != 2 || nextBase != workspaceHead {
 				t.Fatalf("Actor retry state = state=%s current=%v generation=%d failure=%v/%v owner=%v next=%v/%v base=%v head=%v",
-					actorState, actorCurrentRunID, runGeneration, failureCode, failureRunID, ownerActorID,
+					actorState, actorCurrentRunID, runGeneration, failureCode, failureRunID, ownerSessionID,
 					nextStart, nextHigh, nextBase, workspaceHead)
 			}
 		} else {
@@ -590,11 +590,11 @@ SELECT actors.state, actors.current_run_id, actors.run_generation,
 			if mode.maxDuration {
 				wantFailure = "run_expired"
 			}
-			if actorState != wantState || actorCurrentRunID.Valid || runGeneration != 2 || ownerActorID.Valid ||
+			if actorState != wantState || actorCurrentRunID.Valid || runGeneration != 2 || ownerSessionID.Valid ||
 				failureCode.String != wantFailure || failureCode.Valid != (wantFailure != "") ||
 				failureRunID.Valid != (wantFailure != "") {
 				t.Fatalf("terminal Actor state = state=%s current=%v generation=%d failure=%v/%v owner=%v",
-					actorState, actorCurrentRunID, runGeneration, failureCode, failureRunID, ownerActorID)
+					actorState, actorCurrentRunID, runGeneration, failureCode, failureRunID, ownerSessionID)
 			}
 		}
 	}

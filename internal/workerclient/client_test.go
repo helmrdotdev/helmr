@@ -30,7 +30,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
 		switch r.URL.Path {
-		case "/api/worker/auth/token":
+		case "/api/worker/v0/instance/token":
 			if got := r.Header.Get("authorization"); got != "" {
 				t.Fatalf("worker token request auth = %s", got)
 			}
@@ -45,7 +45,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				Token:            workerToken,
 				ExpiresInSeconds: int64(time.Hour / time.Second),
 			})
-		case "/api/worker/leases/discover":
+		case "/api/worker/v0/run/leases/discover":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
@@ -59,7 +59,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 					LeaseSequence: claim.LeaseSequence,
 				}},
 			})
-		case "/api/worker/activate":
+		case "/api/worker/v0/instance/activate":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
@@ -71,12 +71,12 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				t.Fatalf("activate capabilities = %+v", request.Capabilities)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerInstanceID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusActive})
-		case "/api/worker/drain":
+		case "/api/worker/v0/instance/drain":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerInstanceID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusDraining, ActiveExecutions: 1})
-		case "/api/worker/drain/complete":
+		case "/api/worker/v0/instance/drain/complete":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
@@ -88,12 +88,12 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				t.Fatalf("worker drain completion = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerInstanceID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusTerminationReady})
-		case "/api/worker/status":
+		case "/api/worker/v0/instance":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerInstanceID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusDraining, ActiveExecutions: 1})
-		case "/api/worker/fence":
+		case "/api/worker/v0/instance/fence":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
@@ -105,21 +105,6 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				t.Fatalf("fence reason = %q", request.ReasonCode)
 			}
 			w.WriteHeader(http.StatusNoContent)
-		case "/api/worker/leases/start":
-			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
-				t.Fatalf("worker auth = %s", got)
-			}
-			_ = json.NewEncoder(w).Encode(workerapi.StartResponse{RunID: claim.RunID, Status: "running"})
-		case "/api/worker/leases/renew":
-			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
-				t.Fatalf("worker auth = %s", got)
-			}
-			_ = json.NewEncoder(w).Encode(workerapi.RenewResponse{Lease: claim})
-		case "/api/worker/leases/release":
-			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
-				t.Fatalf("worker auth = %s", got)
-			}
-			_ = json.NewEncoder(w).Encode(workerapi.ReleaseResponse{RunID: claim.RunID, Status: "succeeded"})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -156,20 +141,10 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	}); err != nil || status.Status != workerapi.StatusTerminationReady {
 		t.Fatalf("complete worker drain status = %+v, err = %v", status, err)
 	}
-	if _, err := client.StartRun(context.Background(), claim); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.RenewRun(context.Background(), claim); err != nil {
-		t.Fatal(err)
-	}
-	exitCode := int32(0)
-	if _, err := client.ReleaseRun(context.Background(), claim, workerapi.ReleaseResult{Kind: "completed", ExitCode: &exitCode}); err != nil {
-		t.Fatal(err)
-	}
 	if err := client.FenceWorker(context.Background(), "termination_drain_failed"); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/leases/discover,/api/worker/activate,/api/worker/drain,/api/worker/status,/api/worker/drain/complete,/api/worker/leases/start,/api/worker/leases/renew,/api/worker/leases/release,/api/worker/fence" {
+	if got := strings.Join(paths, ","); got != "/api/worker/v0/instance/token,/api/worker/v0/run/leases/discover,/api/worker/v0/instance/activate,/api/worker/v0/instance/drain,/api/worker/v0/instance,/api/worker/v0/instance/drain/complete,/api/worker/v0/instance/fence" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -188,12 +163,12 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 		func(w http.ResponseWriter, r *http.Request) {
 			paths = append(paths, r.URL.Path)
 			switch r.URL.Path {
-			case "/api/worker/auth/token":
+			case "/api/worker/v0/instance/token":
 				_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{
 					Token:            "worker-token",
 					ExpiresInSeconds: 3600,
 				})
-			case "/api/worker/leases/claim":
+			case "/api/worker/v0/run/leases/claim":
 				var request workerapi.RunLeaseClaimRequest
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Fatal(err)
@@ -219,7 +194,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 						},
 					},
 				)
-			case "/api/worker/leases/start":
+			case "/api/worker/v0/run/leases/start":
 				var request workerapi.RunStartRequest
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Fatal(err)
@@ -231,7 +206,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(
 					workerapi.RunStartResponse{Lease: receipt.Fence()},
 				)
-			case "/api/worker/leases/entrypoint":
+			case "/api/worker/v0/run/leases/entrypoint":
 				var request workerapi.RunEntrypointRequest
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Fatal(err)
@@ -242,7 +217,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 					t.Fatalf("entrypoint request = %+v", request)
 				}
 				w.WriteHeader(http.StatusNoContent)
-			case "/api/worker/leases/run-renew":
+			case "/api/worker/v0/run/leases/renew":
 				var request workerapi.RunLeaseRenewRequest
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Fatal(err)
@@ -255,7 +230,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 					Lease: receipt.Fence(), ExpiresAt: receipt.ExpiresAt,
 					BaseWorkspaceVersionID: receipt.BaseWorkspaceVersionID,
 				})
-			case "/api/worker/leases/run-logs":
+			case "/api/worker/v0/run/logs/append":
 				var request workerapi.RunLogAppendRequest
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Fatal(err)
@@ -267,7 +242,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 					t.Fatalf("log request = %+v", request)
 				}
 				w.WriteHeader(http.StatusNoContent)
-			case "/api/worker/leases/finalization/begin":
+			case "/api/worker/v0/run/finalization/begin":
 				var request workerapi.BeginRunFinalizationRequest
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Fatal(err)
@@ -287,7 +262,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 						Kind: workerapi.RunFinalizationCapture,
 					},
 				)
-			case "/api/worker/leases/tasks/complete":
+			case "/api/worker/v0/run/tasks/complete":
 				var request workerapi.CompleteTaskRequest
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Fatal(err)
@@ -410,10 +385,10 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := strings.Join(paths, ","); got !=
-		"/api/worker/auth/token,/api/worker/leases/claim,"+
-			"/api/worker/leases/start,/api/worker/leases/entrypoint,/api/worker/leases/run-renew,"+
-			"/api/worker/leases/finalization/begin,/api/worker/leases/tasks/complete,"+
-			"/api/worker/leases/run-logs" {
+		"/api/worker/v0/instance/token,/api/worker/v0/run/leases/claim,"+
+			"/api/worker/v0/run/leases/start,/api/worker/v0/run/leases/entrypoint,/api/worker/v0/run/leases/renew,"+
+			"/api/worker/v0/run/finalization/begin,/api/worker/v0/run/tasks/complete,"+
+			"/api/worker/v0/run/logs/append" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -423,9 +398,9 @@ func TestCompleteWorkerDrainRetriesTheIdenticalProofAfterAmbiguousResponse(t *te
 	var bodies [][]byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/worker/auth/token":
+		case "/api/worker/v0/instance/token":
 			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: "worker-token", ExpiresInSeconds: 3600})
-		case "/api/worker/drain/complete":
+		case "/api/worker/v0/instance/drain/complete":
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				t.Fatal(err)
@@ -464,9 +439,9 @@ func TestFenceWorkerRetriesTheIdenticalRequestAfterAmbiguousResponse(t *testing.
 	var bodies [][]byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/worker/auth/token":
+		case "/api/worker/v0/instance/token":
 			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: "worker-token", ExpiresInSeconds: 3600})
-		case "/api/worker/fence":
+		case "/api/worker/v0/instance/fence":
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				t.Fatal(err)
@@ -501,12 +476,12 @@ func TestWorkerClientRefreshesTokenAndReplaysBufferedRequestAfterUnauthorized(t 
 	var statusRequests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/worker/auth/token":
+		case "/api/worker/v0/instance/token":
 			tokenRequests++
 			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{
 				Token: fmt.Sprintf("worker-token-%d", tokenRequests), ExpiresInSeconds: 3600,
 			})
-		case "/api/worker/activate":
+		case "/api/worker/v0/instance/activate":
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				t.Fatal(err)
@@ -517,7 +492,7 @@ func TestWorkerClientRefreshesTokenAndReplaysBufferedRequestAfterUnauthorized(t 
 				return
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{Status: workerapi.StatusActive})
-		case "/api/worker/status":
+		case "/api/worker/v0/instance":
 			statusRequests++
 			if statusRequests == 1 {
 				http.Error(w, `{"error":"stale group claims"}`, http.StatusUnauthorized)
@@ -575,7 +550,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 	paths := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
-		if r.URL.Path == "/api/worker/auth/token" {
+		if r.URL.Path == "/api/worker/v0/instance/token" {
 			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: "worker-token", ExpiresInSeconds: int64(time.Hour / time.Second)})
 			return
 		}
@@ -583,7 +558,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 			t.Fatalf("worker auth = %s", got)
 		}
 		switch r.URL.Path {
-		case "/api/worker/leases/run-waits":
+		case "/api/worker/v0/run/waits/create":
 			var request workerapi.CreateRunWaitRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
@@ -592,7 +567,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 				t.Fatalf("create run wait = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.CreateRunWaitResponse{RunID: claim.RunID, RunWaitID: "run-wait-id-1"})
-		case "/api/worker/leases/run-waits/poll":
+		case "/api/worker/v0/run/waits/poll":
 			var request workerapi.RunWaitPollRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
@@ -604,7 +579,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 				RunID: claim.RunID, RunWaitID: request.RunWaitID, Status: "resume_requested",
 				RequestVersion: 7, ResumeKind: "completed", ResumePayload: json.RawMessage(`{"approved":true}`),
 			})
-		case "/api/worker/leases/run-waits/resume-ack":
+		case "/api/worker/v0/run/waits/resume-ack":
 			var request workerapi.RunWaitResumeAckRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
@@ -615,7 +590,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(workerapi.RunWaitResumeAckResponse{
 				RunID: claim.RunID, RunWaitID: request.RunWaitID, ResumeRequestVersion: request.ResumeRequestVersion,
 			})
-		case "/api/worker/leases/checkpoints/ready":
+		case "/api/worker/v0/run/checkpoints/ready":
 			var request workerapi.CheckpointReadyRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
@@ -627,16 +602,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 				t.Fatalf("checkpoint manifest = %+v", request.Manifest)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.CheckpointResponse{RunID: claim.RunID, RunWaitID: "run-wait-id-1", CheckpointID: "checkpoint-1"})
-		case "/api/worker/leases/restores/ack":
-			var request workerapi.AcknowledgeRestoreRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
-			}
-			if request.Lease.ID != claim.ID || request.RunWaitID != "run-wait-id-1" || request.CheckpointID != "checkpoint-1" {
-				t.Fatalf("restore attach request = %+v", request)
-			}
-			_ = json.NewEncoder(w).Encode(workerapi.AcknowledgeRestoreResponse{RunID: claim.RunID, RunWaitID: "run-wait-id-1", CheckpointID: "checkpoint-1"})
-		case "/api/worker/leases/checkpoints/failed":
+		case "/api/worker/v0/run/checkpoints/failed":
 			var request workerapi.CheckpointFailedRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
@@ -690,22 +656,6 @@ func TestWorkerRunWaitClient(t *testing.T) {
 	if ready.CheckpointID != "checkpoint-1" {
 		t.Fatalf("ready = %+v", ready)
 	}
-	acknowledged, err := client.AcknowledgeRestore(context.Background(), workerapi.AcknowledgeRestoreRequest{
-		Lease: workerapi.RunLease{
-			ID: claim.ID, RunID: claim.RunID, AttemptNumber: claim.AttemptNumber,
-			LeaseSequence: claim.LeaseSequence, WorkerGroupID: claim.WorkerGroupID,
-			WorkerInstanceID: claim.WorkerInstanceID, WorkerEpoch: claim.WorkerEpoch,
-			ProtocolVersion: claim.WorkerProtocolVersion,
-		},
-		RunWaitID:    "run-wait-id-1",
-		CheckpointID: "checkpoint-1",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if acknowledged.CheckpointID != "checkpoint-1" {
-		t.Fatalf("acknowledged = %+v", acknowledged)
-	}
 	failed, err := client.MarkCheckpointFailed(context.Background(), workerapi.CheckpointFailedRequest{
 		Lease:          claim.Fence(),
 		RequestVersion: 43,
@@ -719,7 +669,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 	if failed.CheckpointID != "checkpoint-1" {
 		t.Fatalf("failed = %+v", failed)
 	}
-	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/leases/run-waits,/api/worker/leases/run-waits/poll,/api/worker/leases/run-waits/resume-ack,/api/worker/leases/checkpoints/ready,/api/worker/leases/restores/ack,/api/worker/leases/checkpoints/failed" {
+	if got := strings.Join(paths, ","); got != "/api/worker/v0/instance/token,/api/worker/v0/run/waits/create,/api/worker/v0/run/waits/poll,/api/worker/v0/run/waits/resume-ack,/api/worker/v0/run/checkpoints/ready,/api/worker/v0/run/checkpoints/failed" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -728,11 +678,11 @@ func TestAcknowledgeRunResumeRelease(t *testing.T) {
 	lease := workerapi.RunLeaseAssignment{ID: "lease-1", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", LeaseSequence: 3}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/worker/auth/token":
+		case "/api/worker/v0/instance/token":
 			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{
 				Token: "worker-token", ExpiresInSeconds: int64(time.Hour / time.Second),
 			})
-		case "/api/worker/leases/resume-release":
+		case "/api/worker/v0/run/leases/resume-release":
 			if got := r.Header.Get("authorization"); got != "Bearer worker-token" {
 				t.Fatalf("worker auth = %q", got)
 			}

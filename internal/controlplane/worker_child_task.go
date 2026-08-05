@@ -158,11 +158,15 @@ func normalizeWorkerChildTaskRequest(
 	request workerapi.InvokeChildTaskRequest,
 	locators db.GetLiveRunLeaseLocatorsRow,
 ) (normalizedTaskStart, error) {
-	if err := api.ValidateTaskID(request.TaskDeclaredID); err != nil {
+	if err := api.ValidateDefinitionID(request.TaskDeclaredID); err != nil {
 		return normalizedTaskStart{}, err
 	}
-	var workspace api.WorkspaceTarget
+	var workspace api.WorkspaceIDTarget
 	if err := decodeClosedJSON(request.Workspace, &workspace); err != nil {
+		return normalizedTaskStart{}, fmt.Errorf("invalid workspace: %w", err)
+	}
+	workspaceID, err := ids.Parse(workspace.ID)
+	if err != nil {
 		return normalizedTaskStart{}, fmt.Errorf("invalid workspace: %w", err)
 	}
 	var options childTaskOptions
@@ -179,7 +183,7 @@ func normalizeWorkerChildTaskRequest(
 		OrgID: pgvalue.MustUUIDValue(locators.OrgID), ProjectID: pgvalue.MustUUIDValue(locators.ProjectID),
 		EnvironmentID:  pgvalue.MustUUIDValue(locators.EnvironmentID),
 		TaskDeclaredID: request.TaskDeclaredID, PayloadPresent: request.PayloadPresent,
-		Payload: request.Payload, Workspace: workspace, IdempotencyKey: request.IdempotencyKey,
+		Payload: request.Payload, WorkspaceID: workspaceID, IdempotencyKey: request.IdempotencyKey,
 		QueueName: options.Queue, ConcurrencyKey: options.ConcurrencyKey, Priority: options.Priority,
 		QueuedTTLMS: ttl, RetryPolicy: retry, Metadata: options.Metadata, Tags: options.Tags,
 	})
@@ -248,27 +252,7 @@ func (s *Server) invokeChildTask(
 		if replay != nil {
 			targetWorkspaceID = uuid.MustParse(replay.WorkspaceID)
 		} else {
-			var workspaceID pgtype.UUID
-			if input.Normalized.Workspace.ID != nil {
-				id, err := ids.Parse(*input.Normalized.Workspace.ID)
-				if err != nil {
-					return errTaskWorkspaceNotFound
-				}
-				workspaceID = pgvalue.UUID(id)
-			}
-			resolved, err := work.q.ResolveWorkspaceTarget(ctx, db.ResolveWorkspaceTargetParams{
-				OrgID: pgvalue.UUID(input.Normalized.OrgID), ProjectID: pgvalue.UUID(input.Normalized.ProjectID),
-				EnvironmentID: pgvalue.UUID(environmentID),
-				ID:            workspaceID,
-				Key:           pgvalue.TextPtr(input.Normalized.Workspace.Key),
-			})
-			if errors.Is(err, pgx.ErrNoRows) {
-				return errTaskWorkspaceNotFound
-			}
-			if err != nil {
-				return fmt.Errorf("resolve child task workspace: %w", err)
-			}
-			targetWorkspaceID = pgvalue.MustUUIDValue(resolved)
+			targetWorkspaceID = input.Normalized.WorkspaceID
 		}
 		sameWorkspace := targetWorkspaceID == input.SourceWorkspaceID
 		if sameWorkspace && input.Request.Method != "call" {
@@ -427,7 +411,7 @@ func (s *Server) invokeChildTask(
 			(workspace.DesiredState != db.WorkspaceDesiredStateActive &&
 				workspace.DesiredState != db.WorkspaceDesiredStateStopped) ||
 			workspace.DirtyState != db.WorkspaceDirtyStateClean || !workspace.HeadVersionID.Valid ||
-			workspace.OwnerActorID.Valid || workspace.OwnerRunID.Valid ||
+			workspace.OwnerSessionID.Valid || workspace.OwnerRunID.Valid ||
 			workspace.HasActiveLease || workspace.HasActiveProcess {
 			return errTaskWorkspaceUnavailable
 		}

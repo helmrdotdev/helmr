@@ -9,13 +9,17 @@ order: 370
 # Actor starts
 
 Use an Actor for one stable identity with many managed Runs over time. The
-Actor declaration binds its implementation; callers supply a key or use the
-returned Actor ID, one explicit Workspace, and optional initial input.
+Actor declaration binds its implementation; callers supply an optional Session
+key and receive the Session UUID, one explicit Workspace, and optional initial
+input.
 
 ```ts
+const workspace = await reviewerSandbox.createWorkspace({
+  key: "github:OWNER/REPO#42",
+})
 const started = await reviewer.start({
   key: "github:OWNER/REPO#42",
-  workspace: { key: "github:OWNER/REPO#42" },
+  workspace,
   input: { type: "review", owner: "OWNER", repo: "REPO", prNumber: 42 },
   idempotencyKey: "github:OWNER/REPO#42:start",
 })
@@ -30,17 +34,19 @@ Actor code consumes input and publishes progressive durable output:
 ```ts
 export const reviewer = actor({
   id: "reviewer",
-  async run(self) {
-    const input = await self.input.receive({ idleTimeout: "30m" }).unwrap()
-    await self.output.append({ type: "progress", message: "Reviewing", input })
+  async run(session, ctx) {
+    console.log(ctx.actor.id, session.id, session.key)
+    const input = await session.input.receive({ idleTimeout: "30m" }).unwrap()
+    await session.output.append({ type: "progress", message: "Reviewing", input })
   },
 })
 ```
 
-Later messages use the same fixed input channel:
+The returned `started.session` identifies the durable runtime resource. Later
+messages use that Session's fixed input channel:
 
 ```ts
-const ref = reviewer.ref({ key: "github:OWNER/REPO#42" })
+const ref = sessions.ref(started.session.id)
 await ref.input.send(
   { type: "steer", instruction: "Please also update the tests." },
   { idempotencyKey: "slack:T123:C456:1712345678.000100" },

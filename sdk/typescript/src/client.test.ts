@@ -1,12 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import { HelmrClient, actor, secrets, task, workspaces } from "./index"
-import type { WorkspaceDefinition } from "./index"
 import { installRuntimeOperations } from "./internal"
-import {
-  HELMR_API_VERSION,
-  HELMR_API_VERSION_HEADER,
-} from "./version"
 
 describe("HelmrClient Tasks", () => {
   test("starts a typed Task by runtime declared ID", async () => {
@@ -38,9 +33,7 @@ describe("HelmrClient Tasks", () => {
 
     const run = await client.tasks.start<typeof resizeImage>("resize-image", {
       payload: { imageId: "image-1" },
-      workspace: workspaces.ref({
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-      }),
+      workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
       idempotencyKey: "image-1",
       concurrencyKey: "customer-1",
       retry: { maxAttempts: 3 },
@@ -50,7 +43,7 @@ describe("HelmrClient Tasks", () => {
 
     expect(run).toEqual({ id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" })
     expect(requests[0]!.url).toBe(
-      "https://api.example.test/api/tasks/resize-image/start",
+      "https://api.example.test/v1/tasks/resize-image/start",
     )
     expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
       payload: { imageId: "image-1" },
@@ -66,20 +59,22 @@ describe("HelmrClient Tasks", () => {
 })
 
 describe("HelmrClient Workspaces", () => {
-  test("uses declared IDs for typed create and key refs", async () => {
+  test("creates from a Sandbox and uses Workspace UUID refs", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
+    const workspaceSnapshot = {
+      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
+      key: "repository",
+      sandbox_id: "repository-agent",
+      deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
+      status: "available",
+      secrets: [],
+      last_activity_at: "2026-07-24T11:50:00Z",
+      created_at: "2026-07-24T11:50:00Z",
+      updated_at: "2026-07-24T11:50:00Z",
+    }
     const responses: unknown[] = [
-      { workspace_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" },
-      {
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-        key: "repository",
-        declared_id: "repository-agent",
-        status: "available",
-        secrets: [{ name: "github", env: "GITHUB_TOKEN" }],
-        last_activity_at: "2026-07-24T11:50:00Z",
-        created_at: "2026-07-24T11:50:00Z",
-        updated_at: "2026-07-24T11:50:00Z",
-      },
+      workspaceSnapshot,
+      { workspaces: [{ ...workspaceSnapshot, status: "recovery-required" }] },
       {
         exit_code: 0,
         stdout_base64: "b2sK",
@@ -95,37 +90,53 @@ describe("HelmrClient Workspaces", () => {
         return Response.json(responses.shift(), { status: 200 })
       }) as typeof fetch,
     })
-    const repositoryWorkspace = null as unknown as WorkspaceDefinition
     const signal = new AbortController().signal
 
-    const created = await client.workspaces.create<typeof repositoryWorkspace>(
+    await expect(client.sandboxes.createWorkspace("repository-agent", {
+      secrets: [{
+        secret: { name: "GITHUB_TOKEN" } as never,
+        env: "GITHUB_TOKEN",
+      }],
+    })).rejects.toThrow("secrets.fromName()")
+    expect(requests).toHaveLength(0)
+
+    const inertRef = client.workspaces.ref(
+      "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
+    )
+    expect(inertRef.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
+    expect(requests).toHaveLength(0)
+
+    const created = await client.sandboxes.createWorkspace(
       "repository-agent",
       {
         key: "repository",
-        secrets: [{ secret: secrets.fromName("github"), env: "GITHUB_TOKEN" }],
+        secrets: [
+          { secret: secrets.fromName("GITHUB_TOKEN"), env: "GITHUB_TOKEN" },
+          { secret: secrets.fromName("MODEL_CONFIG"), file: "/run/secrets/model.json" },
+        ],
         idempotencyKey: "create-repository",
       },
       { signal },
     )
     expect(created.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
     expect(requests[0]!.url).toBe(
-      "https://api.example.test/api/workspaces/repository-agent/create",
+      "https://api.example.test/v1/sandboxes/repository-agent/workspaces",
     )
     expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
       key: "repository",
-      secrets: [{ name: "github", env: "GITHUB_TOKEN" }],
+      secrets: [
+        { name: "GITHUB_TOKEN", env: "GITHUB_TOKEN" },
+        { name: "MODEL_CONFIG", file: "/run/secrets/model.json" },
+      ],
       idempotency_key: "create-repository",
     })
     expect(requests[0]!.init?.signal).toBe(signal)
 
-    const ref = client.workspaces.ref<typeof repositoryWorkspace>(
-      "repository-agent",
-      { key: "repository" },
-    )
-    const snapshot = await ref.retrieve()
-    expect(snapshot.declaredId).toBe("repository-agent")
+    const matches = await client.workspaces.list({ key: "repository" })
+    expect(matches.items[0]?.sandboxId).toBe("repository-agent")
+    expect(matches.items[0]?.status).toBe("recovery-required")
     expect(requests[1]!.url).toBe(
-      "https://api.example.test/api/workspaces/by-key/repository-agent?key=repository",
+      "https://api.example.test/v1/workspaces?key=repository",
     )
 
     const result = await created.exec({
@@ -141,6 +152,7 @@ describe("HelmrClient Workspaces", () => {
     })
 
     await created.delete({ idempotencyKey: "delete-1" }, { signal })
+    expect(requests[3]!.init?.method).toBe("DELETE")
     expect(JSON.parse(String(requests[3]!.init?.body))).toEqual({
       idempotency_key: "delete-1",
     })
@@ -148,16 +160,24 @@ describe("HelmrClient Workspaces", () => {
 })
 
 describe("HelmrClient Actors", () => {
-  test("uses declared IDs and client-bound refs for the complete Actor surface", async () => {
+  test("starts an Actor and addresses the resulting Session by UUID", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
     const responses: unknown[] = [
       {
-        actor_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+        session_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
         run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
       },
-      { sequence: 1 },
+      {
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
+        sequence: 1,
+        data: { type: "continue" },
+        source: { kind: "external" },
+        created_at: "2026-07-24T11:50:01Z",
+      },
       {
         id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+        actor_id: "operator",
+        deployment_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
         key: "thread:1",
         status: "open",
         current_run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
@@ -181,7 +201,7 @@ describe("HelmrClient Actors", () => {
         has_more: false,
       },
       {
-        actor_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+        session_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
         accepted_at: "2026-07-24T11:50:03Z",
       },
     ]
@@ -194,9 +214,7 @@ describe("HelmrClient Actors", () => {
       }) as typeof fetch,
     })
     const operator = actor({ id: "operator", run: async () => {} })
-    const workspace = workspaces.ref({
-      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-    })
+    const workspace = workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
     const signal = new AbortController().signal
 
     const started = await client.actors.start<typeof operator>(
@@ -230,18 +248,17 @@ describe("HelmrClient Actors", () => {
     })
     expect(requests[0]!.init?.signal).toBe(signal)
 
-    await started.ref.input.send(
+    await started.session.input.send(
       { type: "continue" },
       { idempotencyKey: "input-1" },
       { signal },
     )
     expect(JSON.parse(String(requests[1]!.init?.body))).toEqual({
-      actor_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
       input: { type: "continue" },
       idempotency_key: "input-1",
     })
 
-    const status = await started.ref.status({ signal })
+    const status = await client.sessions.retrieve(started.session.id, { signal })
     expect(status).toMatchObject({
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
       key: "thread:1",
@@ -249,10 +266,10 @@ describe("HelmrClient Actors", () => {
       currentRunId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
     })
     expect(requests[2]!.url).toContain(
-      "/api/actors/operator/status?actor_id=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+      "/v1/sessions/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
     )
 
-    const records = await started.ref.output.list(
+    const records = await started.session.output.list(
       { after: 0, limit: 10 },
       { signal },
     )
@@ -262,12 +279,11 @@ describe("HelmrClient Actors", () => {
       data: { stage: "started" },
     })])
     expect(requests[3]!.url).toContain(
-      "/api/actors/operator/output?actor_id=019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33&after=0&limit=10",
+      "/v1/sessions/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33/outputs?after=0&limit=10",
     )
 
-    await started.ref.close({ idempotencyKey: "close-1" }, { signal })
+    await started.session.close({ idempotencyKey: "close-1" }, { signal })
     expect(JSON.parse(String(requests[4]!.init?.body))).toEqual({
-      actor_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
       idempotency_key: "close-1",
     })
   })
@@ -284,7 +300,7 @@ describe("HelmrClient Tokens", () => {
         return Response.json({
           id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
           status: "pending",
-          callback_url: "https://api.example.test/api/token-callbacks/token/secret",
+          callback_url: "https://api.example.test/v1/token-callbacks/token/secret",
           public_access_token: "hlmr_pat_secret",
           timeout_at: "2026-07-24T12:00:00Z",
           metadata: { approval: true },
@@ -305,11 +321,10 @@ describe("HelmrClient Tokens", () => {
 
     expect(token.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37")
     expect(requests).toHaveLength(1)
-    expect(requests[0]!.url).toBe("https://api.example.test/api/tokens")
+    expect(requests[0]!.url).toBe("https://api.example.test/v1/tokens")
     expect(requests[0]!.init?.method).toBe("POST")
     expect(requests[0]!.init?.headers).toMatchObject({
       Authorization: "Bearer api-key",
-      [HELMR_API_VERSION_HEADER]: HELMR_API_VERSION,
     })
     expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
       timeout: "10m",
@@ -351,13 +366,13 @@ describe("HelmrClient Tokens", () => {
 })
 
 describe("HelmrClient Secrets", () => {
-  test("uses stable ID and name refs with flat mutation requests", async () => {
+  test("uses stable ID refs and exact name collection lookup", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = []
     const secretID = "019c8f1e-9b42-7b2c-8a4c-4b3a7f9f6d21"
     const active = {
       id: secretID,
       name: "github-token",
-      state: "active",
+      status: "active",
       created_at: "2026-07-25T01:00:00Z",
     }
     const responses: unknown[] = [
@@ -373,7 +388,7 @@ describe("HelmrClient Secrets", () => {
       },
       {
         ...active,
-        state: "revoked",
+        status: "revoked",
         revoked_at: "2026-07-25T01:02:00Z",
       },
     ]
@@ -400,19 +415,20 @@ describe("HelmrClient Secrets", () => {
     })
     expect(requests[0]!.init?.signal).toBe(signal)
 
-    await client.secrets.ref({ id: secretID }).retrieve({ signal })
+    await client.secrets.ref(secretID).retrieve({ signal })
     expect(requests[1]!.url).toBe(
-      `https://api.example.test/api/secrets/${secretID}`,
+      `https://api.example.test/v1/secrets/${secretID}`,
     )
 
-    const byName = client.secrets.ref({ name: "github-token" })
-    const rotated = await byName.rotate({
+    const secretRef = client.secrets.ref(secretID)
+    expect(secretRef.id).toBe(secretID)
+    const rotated = await secretRef.rotate({
       value: "second",
       idempotencyKey: "rotate-1",
     }, { signal })
     expect(rotated.rotatedAt?.toISOString()).toBe("2026-07-25T01:01:00.000Z")
     expect(requests[2]!.url).toBe(
-      "https://api.example.test/api/secrets/by-name/github-token/rotate",
+      `https://api.example.test/v1/secrets/${secretID}/rotate`,
     )
     expect(JSON.parse(String(requests[2]!.init?.body))).toEqual({
       value: "second",
@@ -425,14 +441,14 @@ describe("HelmrClient Secrets", () => {
     )
     expect(page.nextCursor).toBe("sec1.next")
     expect(requests[3]!.url).toBe(
-      "https://api.example.test/api/secrets?cursor=sec1.current&limit=10",
+      "https://api.example.test/v1/secrets?cursor=sec1.current&limit=10",
     )
 
-    const revoked = await byName.revoke(
+    const revoked = await secretRef.revoke(
       { idempotencyKey: "revoke-1" },
       { signal },
     )
-    expect(revoked.state).toBe("revoked")
+    expect(revoked.status).toBe("revoked")
     expect(JSON.parse(String(requests[4]!.init?.body))).toEqual({
       idempotency_key: "revoke-1",
     })
@@ -448,7 +464,7 @@ describe("HelmrClient Secrets", () => {
     })
 
     expect(() =>
-      client.secrets.ref({ id: "019c8f1e-9b42-4b2c-8a4c-4b3a7f9f6d21" })
+      client.secrets.ref("019c8f1e-9b42-4b2c-8a4c-4b3a7f9f6d21")
     ).toThrow("Secret ID must be a canonical UUIDv7")
   })
 })
@@ -460,9 +476,6 @@ describe("HelmrClient Deployments", () => {
       {
         id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
         version: "2026.07.25.1",
-        tasks: ["resize-image"],
-        actors: ["operator"],
-        workspaces: ["repository-agent"],
       },
     ]
     const client = new HelmrClient({
@@ -478,9 +491,6 @@ describe("HelmrClient Deployments", () => {
     ).resolves.toEqual({
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
       version: "2026.07.25.1",
-      tasks: ["resize-image"],
-      actors: ["operator"],
-      workspaces: ["repository-agent"],
     })
   })
 })
@@ -489,8 +499,9 @@ describe("HelmrClient Schedules", () => {
   test("retrieves and pages declarative Schedule status", async () => {
     const snapshot = {
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
-      task: "scheduled-maintenance",
+      task_id: "scheduled-maintenance",
       workspace: { key: "maintenance" },
+      workspace_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
       cron: { pattern: "0 * * * *", timezone: "UTC" },
       status: "active",
       generation: 1,
@@ -524,14 +535,15 @@ describe("HelmrClient Schedules", () => {
 
     expect(retrieved).toMatchObject({
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
-      task: "scheduled-maintenance",
+      taskId: "scheduled-maintenance",
       status: "active",
       workspace: { key: "maintenance" },
+      workspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
     })
     expect(listed.items).toHaveLength(1)
     expect(listed.nextCursor).toBe("sc1.next")
     expect(requests[1]).toBe(
-      "https://api.example.test/api/schedules?cursor=sc1.previous&limit=10",
+      "https://api.example.test/v1/schedules?cursor=sc1.previous&limit=10",
     )
   })
 
@@ -541,7 +553,7 @@ describe("HelmrClient Schedules", () => {
       apiKey: "api-key",
       fetch: (async () => Response.json({
         id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
-        task: "scheduled-maintenance",
+        task_id: "scheduled-maintenance",
         workspace: { id: "60af6067-a253-47b5-915c-2b889fb132c7" },
         cron: { pattern: "0 * * * *", timezone: "UTC" },
         status: "active",
@@ -553,6 +565,28 @@ describe("HelmrClient Schedules", () => {
     await expect(client.schedules.retrieve(
       "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
     )).rejects.toThrow("Schedule workspace.id")
+  })
+
+  test("keeps an unresolved key-addressed Schedule unbound", async () => {
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async () => Response.json({
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
+        task_id: "scheduled-maintenance",
+        workspace: { key: "maintenance" },
+        cron: { pattern: "0 * * * *", timezone: "UTC" },
+        status: "pending-workspace",
+        created_at: "2026-07-24T11:00:00Z",
+        updated_at: "2026-07-24T11:00:00Z",
+      })) as typeof fetch,
+    })
+
+    const schedule = await client.schedules.retrieve(
+      "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
+    )
+    expect(schedule.workspace).toMatchObject({ key: "maintenance" })
+    expect(schedule.workspaceId).toBeUndefined()
   })
 })
 
@@ -606,7 +640,7 @@ describe("HelmrClient Runs", () => {
     expect(listed.items).toHaveLength(1)
     expect(listed.nextCursor).toBe("rn1.next")
     expect(requests[1]).toBe(
-      "https://api.example.test/api/runs?status=running&status=waiting&cursor=rn1.previous&limit=10",
+      "https://api.example.test/v1/runs?status=running&status=waiting&cursor=rn1.previous&limit=10",
     )
   })
 
@@ -707,11 +741,11 @@ describe("HelmrClient Runs", () => {
       attributes: { code: "task_failed" },
     })
     expect(requests[0]!.url).toBe(
-      `https://api.example.test/api/runs/${runID}/logs?cursor=rt1.logs&limit=25&level=warn&level=error`,
+      `https://api.example.test/v1/runs/${runID}/logs?cursor=rt1.logs&limit=25&level=warn&level=error`,
     )
     expect(requests[0]!.init?.signal).toBe(signal)
     expect(requests[1]!.url).toBe(
-      `https://api.example.test/api/runs/${runID}/events?severity=error`,
+      `https://api.example.test/v1/runs/${runID}/events?severity=error`,
     )
   })
 
@@ -761,7 +795,7 @@ describe("HelmrClient Runs", () => {
     })
     expect(requests).toHaveLength(1)
     expect(requests[0]!.url).toBe(
-      `https://api.example.test/api/runs/${runID}/cancel`,
+      `https://api.example.test/v1/runs/${runID}/cancel`,
     )
     expect(requests[0]!.init?.method).toBe("POST")
     expect(requests[0]!.init?.body).toBeUndefined()

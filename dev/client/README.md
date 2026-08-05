@@ -3,7 +3,7 @@
 This directory contains the external-client smoke run immediately before the
 AWS/Firecracker validation. It uses only the v0 public contract:
 
-- typed Workspace create and ref by declared ID;
+- typed Workspace creation from a Sandbox ID and UUID-only Workspace refs;
 - exact create and BasicExec idempotency replay;
 - synchronous one-shot BasicExec with bounded stdin, stdout, and stderr;
 - normal nonzero exit capture into the Workspace head;
@@ -11,7 +11,7 @@ AWS/Firecracker validation. It uses only the v0 public contract:
 - typed Task start on the same Workspace and typed Run wait;
 - typed different-Workspace child Task calls from both a Task and an Actor;
 - successive Actor inputs, continuation Run placement, paginated durable output,
-  Actor close, and output retention after close;
+  Session close, and output retention after close;
 - attempt-scoped metadata mutation and all four structured logger levels;
 - finite, authenticated Run log and event page reads after projection;
 - current Deployment retrieve and declarative Schedule list/retrieve/fire;
@@ -40,10 +40,6 @@ The declared Schedule targets the stable Workspace key `release-gate`. The
 client creates that Workspace with a fixed idempotency key and intentionally
 keeps it until environment or campaign cleanup; deleting it after each smoke
 would invalidate the deployed Schedule between repetitions.
-
-Set `HELMR_SMOKE_SECRET_NAME` to an Environment Secret name to additionally
-verify immutable Secret delivery to BasicExec. The secret value is never
-printed; the smoke only reports that a non-empty value was present.
 
 Set `HELMR_CLIENT_SMOKE_RESULT_FILE` to produce the bounded machine result
 consumed by deployment validation. The result contains

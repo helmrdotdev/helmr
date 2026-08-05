@@ -385,7 +385,7 @@ func (s *Server) loadRunWaitRegistrationAuthority(
 	run, err := s.db.GetRun(ctx, db.GetRunParams{EnvironmentID: locators.EnvironmentID, ID: locators.RunID})
 	if err != nil || (run.Status != db.RunStatusRunning && run.Status != db.RunStatusWaiting) ||
 		(run.EntrypointKind != "task" && run.EntrypointKind != "actor") ||
-		(run.EntrypointKind == "task") != !run.ActorID.Valid || run.CurrentRunLeaseID != pgvalue.UUID(parsed.leaseID) {
+		(run.EntrypointKind == "task") != !run.SessionID.Valid || run.CurrentRunLeaseID != pgvalue.UUID(parsed.leaseID) {
 		if err == nil {
 			err = errors.New("run is not an active task or actor")
 		}
@@ -397,20 +397,20 @@ func (s *Server) loadRunWaitRegistrationAuthority(
 func validateRunWaitActorCursor(authority runLeaseClaimAuthority, wait db.RunWait) error {
 	switch authority.run.EntrypointKind {
 	case "task":
-		if authority.run.ActorID.Valid || wait.ActorSpeculativeInputSequence.Valid {
+		if authority.run.SessionID.Valid || wait.ActorSpeculativeInputSequence.Valid {
 			return errStaleRunLeaseClaim
 		}
 	case "actor":
 		cursor := wait.ActorSpeculativeInputSequence
-		if !authority.run.ActorID.Valid || authority.run.ActorID != authority.actor.ID ||
+		if !authority.run.SessionID.Valid || authority.run.SessionID != authority.actor.ID ||
 			!authority.actor.CurrentRunID.Valid || authority.actor.CurrentRunID != authority.run.ID ||
 			(authority.actor.State != "open" && authority.actor.State != "closing") ||
-			!authority.attempt.ActorStartInputSequence.Valid || !cursor.Valid ||
-			authority.attempt.ActorStartInputSequence.Int64 > authority.actor.CommittedInputSequence ||
+			!authority.attempt.SessionInputStartSequence.Valid || !cursor.Valid ||
+			authority.attempt.SessionInputStartSequence.Int64 > authority.actor.CommittedInputSequence ||
 			cursor.Int64 < authority.actor.CommittedInputSequence ||
 			cursor.Int64 > authority.actor.CommittedInputSequence+1 ||
 			cursor.Int64 >= authority.actor.NextInputSequence ||
-			authority.workspace.OwnerActorID != authority.actor.ID || authority.workspace.OwnerRunID.Valid {
+			authority.workspace.OwnerSessionID != authority.actor.ID || authority.workspace.OwnerRunID.Valid {
 			return errStaleRunLeaseClaim
 		}
 	default:

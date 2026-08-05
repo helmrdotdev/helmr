@@ -14,7 +14,7 @@ import (
 var taskIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 var queueNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$`)
 
-func ValidateTaskID(id string) error {
+func ValidateDefinitionID(id string) error {
 	if !taskIDPattern.MatchString(id) {
 		return fmt.Errorf("task_id %q must match %s", id, taskIDPattern.String())
 	}
@@ -82,7 +82,7 @@ type RevokeSecretRequest struct {
 type SecretResponse struct {
 	ID        string     `json:"id"`
 	Name      string     `json:"name"`
-	State     string     `json:"state"`
+	Status    string     `json:"status"`
 	CreatedAt time.Time  `json:"created_at"`
 	RotatedAt *time.Time `json:"rotated_at,omitempty"`
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`

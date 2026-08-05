@@ -36,11 +36,6 @@ type secretListCursor struct {
 	ID            string `json:"id"`
 }
 
-type secretAddress struct {
-	id   uuid.UUID
-	name string
-}
-
 func (s *Server) createSecret(w http.ResponseWriter, r *http.Request) {
 	if s.secrets == nil {
 		writeError(w, unavailable(errors.New("secret store is not configured")))
@@ -94,9 +89,26 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	limit, cursor, err := parseSecretListQuery(r, scope.ProjectID, scope.EnvironmentID)
+	limit, cursor, exactName, err := parseSecretListQuery(r, scope.ProjectID, scope.EnvironmentID)
 	if err != nil {
 		writeError(w, badRequest(err))
+		return
+	}
+	response := api.ListSecretsResponse{Secrets: []api.SecretResponse{}}
+	if exactName != "" {
+		row, err := s.db.GetSecretSnapshotByName(r.Context(), db.GetSecretSnapshotByNameParams{
+			EnvironmentID: environmentID, Name: exactName,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeJSON(w, http.StatusOK, response)
+			return
+		}
+		if err != nil {
+			writeError(w, errors.New("load secret"))
+			return
+		}
+		response.Secrets = append(response.Secrets, secretSnapshotResponse(db.GetSecretSnapshotRow(row)))
+		writeJSON(w, http.StatusOK, response)
 		return
 	}
 	var afterName pgtype.Text
@@ -119,9 +131,7 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		rows = rows[:limit]
 	}
-	response := api.ListSecretsResponse{
-		Secrets: make([]api.SecretResponse, 0, len(rows)),
-	}
+	response.Secrets = make([]api.SecretResponse, 0, len(rows))
 	for _, row := range rows {
 		response.Secrets = append(response.Secrets, secretResponse(
 			row.ID,
@@ -153,19 +163,10 @@ func (s *Server) getSecretByID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	s.getSecret(w, r, secretAddress{id: id})
+	s.getSecret(w, r, id)
 }
 
-func (s *Server) getSecretByName(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	if err := secret.ValidateName(name); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	s.getSecret(w, r, secretAddress{name: name})
-}
-
-func (s *Server) getSecret(w http.ResponseWriter, r *http.Request, address secretAddress) {
+func (s *Server) getSecret(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
 	if s.db == nil {
 		writeError(w, unavailable(errors.New("secret storage is not configured")))
 		return
@@ -180,7 +181,9 @@ func (s *Server) getSecret(w http.ResponseWriter, r *http.Request, address secre
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	record, err := s.loadSecretSnapshot(r, environmentID, address)
+	record, err := s.db.GetSecretSnapshot(r.Context(), db.GetSecretSnapshotParams{
+		EnvironmentID: environmentID, ID: pgvalue.UUID(id),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(errors.New("secret not found")))
 		return
@@ -198,19 +201,10 @@ func (s *Server) rotateSecretByID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	s.rotateSecret(w, r, secretAddress{id: id})
+	s.rotateSecret(w, r, id)
 }
 
-func (s *Server) rotateSecretByName(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	if err := secret.ValidateName(name); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	s.rotateSecret(w, r, secretAddress{name: name})
-}
-
-func (s *Server) rotateSecret(w http.ResponseWriter, r *http.Request, address secretAddress) {
+func (s *Server) rotateSecret(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
 	if s.secrets == nil || s.db == nil {
 		writeError(w, unavailable(errors.New("secret store is not configured")))
 		return
@@ -229,7 +223,9 @@ func (s *Server) rotateSecret(w http.ResponseWriter, r *http.Request, address se
 	if !ok {
 		return
 	}
-	record, err := s.loadSecretSnapshot(r, environmentID, address)
+	record, err := s.db.GetSecretSnapshot(r.Context(), db.GetSecretSnapshotParams{
+		EnvironmentID: environmentID, ID: pgvalue.UUID(id),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(errors.New("secret not found")))
 		return
@@ -259,19 +255,10 @@ func (s *Server) revokeSecretByID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	s.revokeSecret(w, r, secretAddress{id: id})
+	s.revokeSecret(w, r, id)
 }
 
-func (s *Server) revokeSecretByName(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	if err := secret.ValidateName(name); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	s.revokeSecret(w, r, secretAddress{name: name})
-}
-
-func (s *Server) revokeSecret(w http.ResponseWriter, r *http.Request, address secretAddress) {
+func (s *Server) revokeSecret(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
 	if s.secrets == nil || s.db == nil {
 		writeError(w, unavailable(errors.New("secret store is not configured")))
 		return
@@ -290,7 +277,9 @@ func (s *Server) revokeSecret(w http.ResponseWriter, r *http.Request, address se
 	if !ok {
 		return
 	}
-	record, err := s.loadSecretSnapshot(r, environmentID, address)
+	record, err := s.db.GetSecretSnapshot(r.Context(), db.GetSecretSnapshotParams{
+		EnvironmentID: environmentID, ID: pgvalue.UUID(id),
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(errors.New("secret not found")))
 		return
@@ -330,27 +319,6 @@ func (s *Server) secretMutationAuthority(
 	return actor, environmentID, true
 }
 
-func (s *Server) loadSecretSnapshot(
-	r *http.Request,
-	environmentID pgtype.UUID,
-	address secretAddress,
-) (db.GetSecretSnapshotRow, error) {
-	if address.id != uuid.Nil {
-		return s.db.GetSecretSnapshot(r.Context(), db.GetSecretSnapshotParams{
-			EnvironmentID: environmentID,
-			ID:            pgvalue.UUID(address.id),
-		})
-	}
-	byName, err := s.db.GetSecretSnapshotByName(r.Context(), db.GetSecretSnapshotByNameParams{
-		EnvironmentID: environmentID,
-		Name:          address.name,
-	})
-	if err != nil {
-		return db.GetSecretSnapshotRow{}, err
-	}
-	return db.GetSecretSnapshotRow(byName), nil
-}
-
 func (s *Server) writeSecretMutationError(
 	w http.ResponseWriter,
 	actor auth.Actor,
@@ -384,21 +352,30 @@ func parseSecretListQuery(
 	r *http.Request,
 	projectID string,
 	environmentID string,
-) (int32, *secretListCursor, error) {
+) (int32, *secretListCursor, string, error) {
 	values := r.URL.Query()
 	for name, entries := range values {
-		if name != "cursor" && name != "limit" {
-			return 0, nil, fmt.Errorf("query parameter %q is not supported", name)
+		if name != "cursor" && name != "limit" && name != "name" {
+			return 0, nil, "", fmt.Errorf("query parameter %q is not supported", name)
 		}
 		if len(entries) != 1 || strings.TrimSpace(entries[0]) == "" {
-			return 0, nil, fmt.Errorf("query parameter %q must appear once", name)
+			return 0, nil, "", fmt.Errorf("query parameter %q must appear once", name)
 		}
+	}
+	if name := values.Get("name"); name != "" {
+		if values.Has("cursor") || values.Has("limit") {
+			return 0, nil, "", errors.New("cursor and limit are not allowed with name")
+		}
+		if err := secret.ValidateName(name); err != nil {
+			return 0, nil, "", err
+		}
+		return 0, nil, name, nil
 	}
 	limit := secretListDefaultLimit
 	if raw := values.Get("limit"); raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 32)
 		if err != nil || parsed < 1 || parsed > int64(secretListMaxLimit) {
-			return 0, nil, fmt.Errorf(
+			return 0, nil, "", fmt.Errorf(
 				"limit must be an integer in [1,%d]",
 				secretListMaxLimit,
 			)
@@ -407,22 +384,22 @@ func parseSecretListQuery(
 	}
 	rawCursor := values.Get("cursor")
 	if rawCursor == "" {
-		return limit, nil, nil
+		return limit, nil, "", nil
 	}
 	cursor, err := decodeSecretListCursor(rawCursor)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, "", err
 	}
 	if cursor.ProjectID != projectID || cursor.EnvironmentID != environmentID {
-		return 0, nil, errors.New("secret cursor belongs to another scope")
+		return 0, nil, "", errors.New("secret cursor belongs to another scope")
 	}
 	if err := secret.ValidateName(cursor.Name); err != nil {
-		return 0, nil, errors.New("secret cursor is invalid")
+		return 0, nil, "", errors.New("secret cursor is invalid")
 	}
 	if _, err := parseSecretID(cursor.ID); err != nil {
-		return 0, nil, errors.New("secret cursor is invalid")
+		return 0, nil, "", errors.New("secret cursor is invalid")
 	}
-	return limit, &cursor, nil
+	return limit, &cursor, "", nil
 }
 
 func encodeSecretListCursor(cursor secretListCursor) (string, error) {
@@ -495,7 +472,7 @@ func secretResponse(
 	return api.SecretResponse{
 		ID:        pgvalue.MustUUIDValue(id).String(),
 		Name:      name,
-		State:     state,
+		Status:    state,
 		CreatedAt: pgvalue.Time(createdAt),
 		RotatedAt: pgvalue.TimePtr(rotatedAt),
 		RevokedAt: pgvalue.TimePtr(revokedAt),

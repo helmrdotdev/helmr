@@ -51,29 +51,29 @@ func TestCancelRunHTTPInstallsActorHoldAndInputClearsIt(t *testing.T) {
 	var actorState string
 	var currentRunID *uuid.UUID
 	var manualRunCancelled bool
-	var ownerActorID uuid.UUID
+	var ownerSessionID uuid.UUID
 	if err := fixture.pool.QueryRow(t.Context(), `
-SELECT actors.state,
-       actors.current_run_id,
-       actors.manual_run_cancelled,
-       workspaces.owner_actor_id
-  FROM actors
-  JOIN workspaces ON workspaces.id = actors.workspace_id
- WHERE actors.id = $1`, started.ActorID,
-	).Scan(&actorState, &currentRunID, &manualRunCancelled, &ownerActorID); err != nil {
+SELECT sessions.state,
+       sessions.current_run_id,
+       sessions.manual_run_cancelled,
+       workspaces.owner_session_id
+  FROM sessions
+  JOIN workspaces ON workspaces.id = sessions.workspace_id
+ WHERE sessions.id = $1`, started.SessionID,
+	).Scan(&actorState, &currentRunID, &manualRunCancelled, &ownerSessionID); err != nil {
 		t.Fatal(err)
 	}
 	if actorState != "open" || currentRunID != nil || !manualRunCancelled ||
-		ownerActorID != started.ActorID {
+		ownerSessionID != started.SessionID {
 		t.Fatalf(
 			"Actor after Run cancellation = state:%s current:%v hold:%v owner:%s",
-			actorState, currentRunID, manualRunCancelled, ownerActorID,
+			actorState, currentRunID, manualRunCancelled, ownerSessionID,
 		)
 	}
 
 	if _, err := fixture.server.appendActorInput(t.Context(), appendActorInputRequest{
 		EnvironmentID: fixture.environmentID,
-		ActorID:       started.ActorID,
+		SessionID:     started.SessionID,
 		RecordID:      uuid.Must(uuid.NewV7()),
 		Data:          json.RawMessage(`{"message":"continue"}`),
 		SourceKind:    "external",
@@ -82,8 +82,8 @@ SELECT actors.state,
 	}
 	if err := fixture.pool.QueryRow(t.Context(), `
 SELECT current_run_id, manual_run_cancelled
-  FROM actors
- WHERE id = $1`, started.ActorID,
+  FROM sessions
+ WHERE id = $1`, started.SessionID,
 	).Scan(&currentRunID, &manualRunCancelled); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ SELECT current_run_id, manual_run_cancelled
 }
 
 func TestCancelRunHTTPDeniesBeforeRunValidation(t *testing.T) {
-	request := httptest.NewRequest(http.MethodPost, "/api/runs/not-a-run/cancel", nil)
+	request := httptest.NewRequest(http.MethodPost, "/v1/runs/not-a-run/cancel", nil)
 	route := chi.NewRouteContext()
 	route.URLParams.Add("runID", "not-a-run")
 	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
@@ -134,7 +134,7 @@ func runCancellationRequest(
 	principal auth.Actor,
 ) *http.Request {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodPost, "/api/runs/"+runID+"/cancel", nil)
+	request := httptest.NewRequest(http.MethodPost, "/v1/runs/"+runID+"/cancel", nil)
 	route := chi.NewRouteContext()
 	route.URLParams.Add("runID", runID)
 	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)

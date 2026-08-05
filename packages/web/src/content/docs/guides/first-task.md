@@ -25,7 +25,7 @@ helmr init --dir ./my-helmr-tasks
 The starter shape is:
 
 ```ts
-import { image, source, task, workspace } from "@helmr/sdk"
+import { image, sandbox, source, task } from "@helmr/sdk"
 
 const runtime = image("hello")
   .from("node:24-bookworm-slim")
@@ -34,7 +34,7 @@ const runtime = image("hello")
   .copy("/app/package.json", source.file("package.json"))
   .run(["bun", "install"])
 
-export const helloWorkspace = workspace("hello")
+export const helloSandbox = sandbox({ id: "hello" })
   .image(runtime)
   .resources({ cpu: 1, memory: "1GiB" })
 
@@ -44,7 +44,7 @@ export const hello = task({
 })
 ```
 
-Workspace declarations own the image and resources. Tasks declare their payload,
+Sandbox definitions own the image and resources. Tasks declare their payload,
 duration, retry policy, Secrets, and return value.
 
 Use `ctx` for read-only execution context and module-level APIs for operations:

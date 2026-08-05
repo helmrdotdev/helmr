@@ -31,7 +31,7 @@ SELECT runtime_instances.*,
   JOIN deployment_definitions
     ON deployment_definitions.environment_id = runtime_instances.environment_id
    AND deployment_definitions.id = runtime_instances.deployment_definition_id
-   AND deployment_definitions.kind = 'workspace'
+   AND deployment_definitions.kind = 'sandbox'
   JOIN artifacts ON artifacts.environment_id = deployment_definitions.environment_id
                 AND artifacts.id = deployment_definitions.artifact_id
   LEFT JOIN workspace_versions AS reserved_workspace_versions
@@ -120,28 +120,28 @@ WITH restore_secret_authority AS MATERIALIZED (
      FOR UPDATE OF secrets
 ), restore_actor_authority AS MATERIALIZED (
     SELECT runtime_instances.id AS runtime_instance_id,
-           actors.id AS actor_id,
-           actors.committed_input_sequence,
-           actors.next_input_sequence
+           sessions.id AS session_id,
+           sessions.committed_input_sequence,
+           sessions.next_input_sequence
       FROM runtime_instances
       JOIN runs
         ON runs.id = runtime_instances.reserved_run_id
        AND runs.entrypoint_kind = 'actor'
-       AND runs.actor_id IS NOT NULL
-      JOIN actors
-        ON actors.id = runs.actor_id
-       AND actors.workspace_id = runtime_instances.workspace_id
-       AND actors.current_run_id = runs.id
-       AND actors.state IN ('open', 'closing')
+       AND runs.session_id IS NOT NULL
+      JOIN sessions
+        ON sessions.id = runs.session_id
+       AND sessions.workspace_id = runtime_instances.workspace_id
+       AND sessions.current_run_id = runs.id
+       AND sessions.state IN ('open', 'closing')
      WHERE runtime_instances.id = sqlc.arg(id)
        AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
        AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
        AND runtime_instances.restore_checkpoint_id IS NOT NULL
        AND (SELECT count(*) FROM restore_secret_authority) >= 0
-     FOR UPDATE OF actors
+     FOR UPDATE OF sessions
 ), restore_entrypoint_authority AS MATERIALIZED (
     SELECT runtime_instances.id AS runtime_instance_id,
-           NULL::uuid AS actor_id,
+           NULL::uuid AS session_id,
            NULL::bigint AS committed_input_sequence,
            NULL::bigint AS next_input_sequence
       FROM runtime_instances
@@ -151,18 +151,18 @@ WITH restore_secret_authority AS MATERIALIZED (
        AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
        AND runtime_instances.restore_checkpoint_id IS NOT NULL
        AND runs.entrypoint_kind = 'task'
-       AND runs.actor_id IS NULL
+       AND runs.session_id IS NULL
        AND (SELECT count(*) FROM restore_secret_authority) >= 0
     UNION ALL
     SELECT restore_actor_authority.* FROM restore_actor_authority
 ), restore_run_authority AS MATERIALIZED (
     SELECT runtime_instances.id AS runtime_instance_id,
-           restore_entrypoint_authority.actor_id,
+           restore_entrypoint_authority.session_id,
            restore_entrypoint_authority.committed_input_sequence,
            restore_entrypoint_authority.next_input_sequence,
            runs.entrypoint_kind,
-           runs.actor_start_input_sequence,
-           runs.actor_start_input_high_watermark
+           runs.session_input_start_sequence,
+           runs.session_input_high_watermark
       FROM restore_entrypoint_authority
       JOIN runtime_instances
         ON runtime_instances.id = restore_entrypoint_authority.runtime_instance_id
@@ -176,10 +176,10 @@ WITH restore_secret_authority AS MATERIALIZED (
        AND runs.status = 'queued'
        AND runs.current_run_lease_id IS NULL
        AND ((runs.entrypoint_kind = 'task'
-             AND runs.actor_id IS NULL
-             AND restore_entrypoint_authority.actor_id IS NULL)
+             AND runs.session_id IS NULL
+             AND restore_entrypoint_authority.session_id IS NULL)
             OR (runs.entrypoint_kind = 'actor'
-                AND runs.actor_id = restore_entrypoint_authority.actor_id
+                AND runs.session_id = restore_entrypoint_authority.session_id
                 AND runs.cause_kind IN ('actor_start', 'continuation')
                 AND runs.parent_run_id IS NULL))
      FOR UPDATE OF runs
@@ -193,9 +193,9 @@ WITH restore_secret_authority AS MATERIALIZED (
        AND workspaces.environment_id = runtime_instances.environment_id
        AND ((restore_run_authority.entrypoint_kind = 'task'
              AND workspaces.owner_run_id = runtime_instances.reserved_run_id
-             AND workspaces.owner_actor_id IS NULL)
+             AND workspaces.owner_session_id IS NULL)
             OR (restore_run_authority.entrypoint_kind = 'actor'
-                AND workspaces.owner_actor_id = restore_run_authority.actor_id
+                AND workspaces.owner_session_id = restore_run_authority.session_id
                 AND workspaces.owner_run_id IS NULL))
        AND workspaces.state = 'active'
        AND workspaces.desired_state = 'active'
@@ -213,11 +213,11 @@ WITH restore_secret_authority AS MATERIALIZED (
        AND run_attempts.entrypoint_kind = restore_workspace_authority.entrypoint_kind
        AND run_attempts.terminal_at IS NULL
        AND (restore_workspace_authority.entrypoint_kind = 'task'
-            OR (run_attempts.actor_start_input_sequence IS NOT NULL
-                AND run_attempts.actor_start_input_sequence = restore_workspace_authority.actor_start_input_sequence
-                AND restore_workspace_authority.actor_start_input_sequence
-                    <= restore_workspace_authority.actor_start_input_high_watermark
-                AND restore_workspace_authority.actor_start_input_sequence
+            OR (run_attempts.session_input_start_sequence IS NOT NULL
+                AND run_attempts.session_input_start_sequence = restore_workspace_authority.session_input_start_sequence
+                AND restore_workspace_authority.session_input_start_sequence
+                    <= restore_workspace_authority.session_input_high_watermark
+                AND restore_workspace_authority.session_input_start_sequence
                     <= restore_workspace_authority.committed_input_sequence
                 AND restore_workspace_authority.committed_input_sequence
                     < restore_workspace_authority.next_input_sequence))

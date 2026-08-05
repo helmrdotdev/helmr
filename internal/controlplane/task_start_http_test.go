@@ -14,7 +14,7 @@ func TestDecodeStartTaskRequestIsClosedAndPayloadPresenceAware(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/",
-		strings.NewReader(`{"payload":null,"workspace":{"key":"workspace:1"}}`),
+		strings.NewReader(`{"payload":null,"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}}`),
 	)
 	decoded, payloadPresent, err := decodeStartTaskRequest(request)
 	if err != nil {
@@ -29,16 +29,17 @@ func TestDecodeStartTaskRequestIsClosedAndPayloadPresenceAware(t *testing.T) {
 		`{}`,
 		`{"options":null}`,
 		`{"workspace":null}`,
+		`{"workspace":{"key":"workspace:1"}}`,
 		`{"workspace":{"key":null}}`,
-		`{"workspace":{"key":"workspace:1"},"unknown":true}`,
-		`{"workspace":{"key":"workspace:1"},"idempotency_key":null}`,
-		`{"workspace":{"key":"workspace:1"},"idempotency_key":""}`,
-		`{"workspace":{"key":"workspace:1"},"queue":""}`,
-		`{"workspace":{"key":"workspace:1"},"ttl":""}`,
-		`{"workspace":{"key":"workspace:1"},"metadata":null}`,
-		`{"workspace":{"key":"workspace:1"},"tags":[null]}`,
-		`{"workspace":{"key":"workspace:1"},"retry":{"enabled":null}}`,
-		`{"workspace":{"key":"workspace:1"},"retry":{"backoff":{"factor":null}}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"unknown":true}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":null}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":""}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"queue":""}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"ttl":""}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"metadata":null}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"tags":[null]}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"retry":{"enabled":null}}`,
+		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"retry":{"backoff":{"factor":null}}}`,
 	} {
 		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 		if _, _, err := decodeStartTaskRequest(request); err == nil {

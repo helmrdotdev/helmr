@@ -11,398 +11,226 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-func TestSendActorInputUsesAPIKeyRoute(t *testing.T) {
-	testSendActorInputRoute(t, false, "/api/actors/operator.v1/input", EnvironmentScopeOptions{})
-}
+const testSessionID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
 
-func TestSendActorInputUsesSessionRoute(t *testing.T) {
-	testSendActorInputRoute(
-		t,
-		true,
-		"/api/projects/project-1/environments/env-1/actors/operator.v1/input",
-		EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
-	)
-}
-
-func TestStartActorUsesAPIKeyRoute(t *testing.T) {
-	testStartActorRoute(t, false, "/api/actors/operator.v1/start", EnvironmentScopeOptions{})
-}
-
-func TestStartActorUsesSessionRoute(t *testing.T) {
-	testStartActorRoute(
-		t,
-		true,
-		"/api/projects/project-1/environments/env-1/actors/operator.v1/start",
-		EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
-	)
-}
-
-func TestCloseActorUsesAPIKeyRoute(t *testing.T) {
-	testCloseActorRoute(t, false, "/api/actors/operator.v1/close", EnvironmentScopeOptions{})
-}
-
-func TestCloseActorUsesSessionRoute(t *testing.T) {
-	testCloseActorRoute(
-		t,
-		true,
-		"/api/projects/project-1/environments/env-1/actors/operator.v1/close",
-		EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
-	)
-}
-
-func TestGetActorStatusUsesAPIKeyRoute(t *testing.T) {
-	testGetActorStatusRoute(
-		t,
-		false,
-		"/api/actors/operator.v1/status",
-		EnvironmentScopeOptions{},
-	)
-}
-
-func TestGetActorStatusUsesSessionRoute(t *testing.T) {
-	testGetActorStatusRoute(
-		t,
-		true,
-		"/api/projects/project-1/environments/env-1/actors/operator.v1/status",
-		EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
-	)
-}
-
-func TestReadActorOutputUsesAPIKeyRoute(t *testing.T) {
-	testReadActorOutputRoute(
-		t,
-		false,
-		"/api/actors/operator.v1/output",
-		EnvironmentScopeOptions{},
-	)
-}
-
-func TestReadActorOutputUsesSessionRoute(t *testing.T) {
-	testReadActorOutputRoute(
-		t,
-		true,
-		"/api/projects/project-1/environments/env-1/actors/operator.v1/output",
-		EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
-	)
-}
-
-func testReadActorOutputRoute(
-	t *testing.T,
-	session bool,
-	wantPath string,
-	scope EnvironmentScopeOptions,
-) {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.EscapedPath() != wantPath {
-			t.Fatalf("%s %s, want GET %s", r.Method, r.URL.EscapedPath(), wantPath)
-		}
-		query := r.URL.Query()
-		if query.Get("actor_key") != "thread:東京" ||
-			query.Get("after") != "7" ||
-			query.Get("limit") != "25" {
-			t.Fatalf("query = %q", r.URL.RawQuery)
-		}
-		_ = json.NewEncoder(w).Encode(api.ActorOutputPage{
-			Records: []api.ActorOutputRecord{{
-				ID:          "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
-				Sequence:    8,
-				Data:        json.RawMessage(`null`),
-				ContentType: "application/json",
-				CreatedAt:   time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
-				Provenance: api.ActorOutputProvenance{
-					RunID:         "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-					AttemptNumber: 1,
-					DeploymentID:  "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-				},
-			}},
-			NextAfter: 8,
-			HasMore:   true,
-		})
-	}))
-	defer server.Close()
-
-	options := []Option{WithHTTPClient(server.Client())}
-	if session {
-		options = append(options, WithSessionScopedRoutes())
-	}
-	client, err := New(server.URL, options...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	after := int64(7)
-	response, err := client.ReadActorOutput(
-		context.Background(),
-		"operator.v1",
-		api.ActorReference{ActorKey: "thread:東京"},
-		ActorOutputReadOptions{
-			After:                   &after,
-			Limit:                   25,
-			EnvironmentScopeOptions: scope,
+func TestSessionRoutes(t *testing.T) {
+	tests := []struct {
+		name    string
+		scoped  bool
+		path    string
+		scope   EnvironmentScopeOptions
+		request func(*testing.T, *Client, EnvironmentScopeOptions)
+	}{
+		{
+			name: "developer input", path: "/v1/sessions/" + testSessionID + "/inputs",
+			request: testSendSessionInput,
 		},
-	)
+		{
+			name: "management input", scoped: true,
+			path:    "/api/projects/project-1/environments/env-1/sessions/" + testSessionID + "/inputs",
+			scope:   EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
+			request: testSendSessionInput,
+		},
+		{
+			name: "developer close", path: "/v1/sessions/" + testSessionID + "/close",
+			request: testCloseSession,
+		},
+		{
+			name: "management close", scoped: true,
+			path:    "/api/projects/project-1/environments/env-1/sessions/" + testSessionID + "/close",
+			scope:   EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
+			request: testCloseSession,
+		},
+		{
+			name: "developer get", path: "/v1/sessions/" + testSessionID,
+			request: testGetSession,
+		},
+		{
+			name: "management get", scoped: true,
+			path:    "/api/projects/project-1/environments/env-1/sessions/" + testSessionID,
+			scope:   EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
+			request: testGetSession,
+		},
+		{
+			name: "developer outputs", path: "/v1/sessions/" + testSessionID + "/outputs",
+			request: testReadSessionOutputs,
+		},
+		{
+			name: "management outputs", scoped: true,
+			path:    "/api/projects/project-1/environments/env-1/sessions/" + testSessionID + "/outputs",
+			scope:   EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"},
+			request: testReadSessionOutputs,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.EscapedPath() != test.path {
+					t.Fatalf("path = %q, want %q", r.URL.EscapedPath(), test.path)
+				}
+				switch {
+				case r.Method == http.MethodPost && r.URL.Path[len(r.URL.Path)-7:] == "/inputs":
+					var request api.SendSessionInputRequest
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+						t.Fatal(err)
+					}
+					if string(request.Input) != `{"type":"continue"}` || request.IdempotencyKey != "input-1" {
+						t.Fatalf("request = %+v", request)
+					}
+					w.WriteHeader(http.StatusCreated)
+					_ = json.NewEncoder(w).Encode(api.SessionInput{ID: "input-1", Sequence: 7})
+				case r.Method == http.MethodPost:
+					var request api.CloseSessionRequest
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+						t.Fatal(err)
+					}
+					if request.IdempotencyKey != "close-1" {
+						t.Fatalf("request = %+v", request)
+					}
+					_ = json.NewEncoder(w).Encode(api.SessionCloseReceipt{SessionID: testSessionID})
+				case r.Method == http.MethodGet && r.URL.Path[len(r.URL.Path)-8:] == "/outputs":
+					if r.URL.Query().Get("after") != "7" || r.URL.Query().Get("limit") != "25" {
+						t.Fatalf("query = %q", r.URL.RawQuery)
+					}
+					_ = json.NewEncoder(w).Encode(api.SessionOutputPage{Records: []api.SessionOutput{{Sequence: 8}}, NextAfter: 8, HasMore: true})
+				case r.Method == http.MethodGet:
+					_ = json.NewEncoder(w).Encode(actorStatusFixture())
+				default:
+					t.Fatalf("method = %s", r.Method)
+				}
+			}))
+			defer server.Close()
+			options := []Option{WithHTTPClient(server.Client())}
+			if test.scoped {
+				options = append(options, WithSessionScopedRoutes())
+			}
+			client, err := New(server.URL, options...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.request(t, client, test.scope)
+		})
+	}
+}
+
+func testSendSessionInput(t *testing.T, client *Client, scope EnvironmentScopeOptions) {
+	t.Helper()
+	response, err := client.SendSessionInput(context.Background(), testSessionID, api.SendSessionInputRequest{
+		Input: json.RawMessage(`{"type":"continue"}`), IdempotencyKey: "input-1",
+	}, scope)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Records) != 1 ||
-		response.Records[0].Sequence != 8 ||
-		string(response.Records[0].Data) != "null" ||
-		response.NextAfter != 8 ||
-		!response.HasMore {
+	if response.ID != "input-1" || response.Sequence != 7 {
 		t.Fatalf("response = %+v", response)
 	}
 }
 
-func TestReadActorOutputValidatesCursorAndLimit(t *testing.T) {
-	client, err := New("http://127.0.0.1")
+func testCloseSession(t *testing.T, client *Client, scope EnvironmentScopeOptions) {
+	t.Helper()
+	response, err := client.CloseSession(context.Background(), testSessionID, api.CloseSessionRequest{IdempotencyKey: "close-1"}, scope)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if response.SessionID != testSessionID {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func testGetSession(t *testing.T, client *Client, scope EnvironmentScopeOptions) {
+	t.Helper()
+	response, err := client.RetrieveSession(context.Background(), testSessionID, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.ID != testSessionID || response.Status != api.SessionStatusOpen {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func testReadSessionOutputs(t *testing.T, client *Client, scope EnvironmentScopeOptions) {
+	t.Helper()
+	after := int64(7)
+	response, err := client.ReadSessionOutputs(context.Background(), testSessionID, ActorOutputReadOptions{
+		After: &after, Limit: 25, EnvironmentScopeOptions: scope,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Records) != 1 || response.Records[0].Sequence != 8 || response.NextAfter != 8 || !response.HasMore {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestStartActorRoutes(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		path   string
+		scoped bool
+		scope  EnvironmentScopeOptions
+	}{
+		{name: "developer", path: "/v1/actors/operator.v1/start"},
+		{name: "management", path: "/api/projects/project-1/environments/env-1/actors/operator.v1/start", scoped: true, scope: EnvironmentScopeOptions{ProjectID: "project-1", EnvironmentID: "env-1"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.EscapedPath() != test.path {
+					t.Fatalf("%s %s", r.Method, r.URL.EscapedPath())
+				}
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(api.StartActorResponse{SessionID: testSessionID, RunID: "run-1"})
+			}))
+			defer server.Close()
+			options := []Option{WithHTTPClient(server.Client())}
+			if test.scoped {
+				options = append(options, WithSessionScopedRoutes())
+			}
+			client, err := New(server.URL, options...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			workspaceID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
+			response, err := client.StartActor(context.Background(), "operator.v1", api.StartActorRequest{Workspace: api.WorkspaceIDTarget{ID: workspaceID}}, test.scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if response.SessionID != testSessionID {
+				t.Fatalf("response = %+v", response)
+			}
+		})
+	}
+}
+
+func TestSessionClientsValidateBeforeTransport(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
+	defer server.Close()
+	client, err := New(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.SendSessionInput(context.Background(), "invalid", api.SendSessionInputRequest{Input: json.RawMessage(`null`)}, EnvironmentScopeOptions{}); err == nil {
+		t.Fatal("invalid Session ID was accepted")
+	}
+	if _, err := client.SendSessionInput(context.Background(), testSessionID, api.SendSessionInputRequest{}, EnvironmentScopeOptions{}); err == nil {
+		t.Fatal("missing input was accepted")
 	}
 	tooLarge := int64(1 << 53)
-	if _, err := client.ReadActorOutput(
-		context.Background(),
-		"operator.v1",
-		api.ActorReference{ActorKey: "thread"},
-		ActorOutputReadOptions{After: &tooLarge},
-	); err == nil {
-		t.Fatal("ReadActorOutput() accepted an unsafe cursor")
+	if _, err := client.ReadSessionOutputs(context.Background(), testSessionID, ActorOutputReadOptions{After: &tooLarge}); err == nil {
+		t.Fatal("unsafe cursor was accepted")
 	}
-	if _, err := client.ReadActorOutput(
-		context.Background(),
-		"operator.v1",
-		api.ActorReference{ActorKey: "thread"},
-		ActorOutputReadOptions{Limit: 101},
-	); err == nil {
-		t.Fatal("ReadActorOutput() accepted an oversized limit")
+	if _, err := client.ReadSessionOutputs(context.Background(), testSessionID, ActorOutputReadOptions{Limit: 101}); err == nil {
+		t.Fatal("oversized limit was accepted")
+	}
+	if requests != 0 {
+		t.Fatalf("transport requests = %d", requests)
 	}
 }
 
-func testGetActorStatusRoute(
-	t *testing.T,
-	session bool,
-	wantPath string,
-	scope EnvironmentScopeOptions,
-) {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.EscapedPath() != wantPath {
-			t.Fatalf("%s %s, want GET %s", r.Method, r.URL.EscapedPath(), wantPath)
-		}
-		if got := r.URL.Query().Get("actor_key"); got != "thread:東京" {
-			t.Fatalf("actor_key = %q", got)
-		}
-		_ = json.NewEncoder(w).Encode(actorStatusFixture())
-	}))
-	defer server.Close()
-
-	options := []Option{WithHTTPClient(server.Client())}
-	if session {
-		options = append(options, WithSessionScopedRoutes())
-	}
-	client, err := New(server.URL, options...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := client.GetActorStatus(
-		context.Background(),
-		"operator.v1",
-		api.ActorReference{ActorKey: "thread:東京"},
-		scope,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" ||
-		response.Status != api.ActorPublicStatusOpen {
-		t.Fatalf("response = %+v", response)
-	}
-}
-
-func actorStatusFixture() api.ActorStatus {
-	return api.ActorStatus{
-		ID:        "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-		Status:    api.ActorPublicStatusOpen,
+func actorStatusFixture() api.Session {
+	return api.Session{
+		ID: testSessionID, ActorID: "operator.v1", DeploymentID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32", Status: api.SessionStatusOpen,
 		CreatedAt: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
 		UpdatedAt: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
-	}
-}
-
-func testCloseActorRoute(t *testing.T, session bool, wantPath string, scope EnvironmentScopeOptions) {
-	t.Helper()
-	acceptedAt := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.EscapedPath() != wantPath {
-			t.Fatalf("%s %s, want POST %s", r.Method, r.URL.EscapedPath(), wantPath)
-		}
-		var request api.ActorOperationRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		if request.ActorKey != "thread:1" || request.IdempotencyKey != "close-1" {
-			t.Fatalf("request = %+v", request)
-		}
-		_ = json.NewEncoder(w).Encode(api.ActorOperationReceipt{
-			ActorID:    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-			AcceptedAt: acceptedAt,
-		})
-	}))
-	defer server.Close()
-
-	options := []Option{WithHTTPClient(server.Client())}
-	if session {
-		options = append(options, WithSessionScopedRoutes())
-	}
-	client, err := New(server.URL, options...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := client.CloseActor(context.Background(), "operator.v1", api.ActorOperationRequest{
-		ActorKey: "thread:1", IdempotencyKey: "close-1",
-	}, scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.ActorID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" ||
-		!response.AcceptedAt.Equal(acceptedAt) {
-		t.Fatalf("response = %+v", response)
-	}
-}
-
-func testStartActorRoute(t *testing.T, session bool, wantPath string, scope EnvironmentScopeOptions) {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.EscapedPath() != wantPath {
-			t.Fatalf("%s %s, want POST %s", r.Method, r.URL.EscapedPath(), wantPath)
-		}
-		var request api.StartActorRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		if request.Workspace.Key == nil || *request.Workspace.Key != "workspace:1" ||
-			string(request.Input) != `null` {
-			t.Fatalf("request = %+v input=%s", request, request.Input)
-		}
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(api.StartActorResponse{
-			ActorID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-			RunID:   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-		})
-	}))
-	defer server.Close()
-
-	options := []Option{WithHTTPClient(server.Client())}
-	if session {
-		options = append(options, WithSessionScopedRoutes())
-	}
-	client, err := New(server.URL, options...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	workspaceKey := "workspace:1"
-	response, err := client.StartActor(context.Background(), "operator.v1", api.StartActorRequest{
-		Workspace: api.WorkspaceTarget{Key: &workspaceKey},
-		Input:     json.RawMessage(`null`),
-	}, scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.ActorID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33" ||
-		response.RunID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" {
-		t.Fatalf("response = %+v", response)
-	}
-}
-
-func testSendActorInputRoute(t *testing.T, session bool, wantPath string, scope EnvironmentScopeOptions) {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.EscapedPath() != wantPath {
-			t.Fatalf("%s %s, want POST %s", r.Method, r.URL.EscapedPath(), wantPath)
-		}
-		var request api.SendActorInputRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		if request.ActorKey != "thread:1" || string(request.Input) != `{"type":"continue"}` {
-			t.Fatalf("request = %+v input=%s", request, request.Input)
-		}
-		_ = json.NewEncoder(w).Encode(api.SendActorInputResponse{Sequence: 7})
-	}))
-	defer server.Close()
-
-	options := []Option{WithHTTPClient(server.Client())}
-	if session {
-		options = append(options, WithSessionScopedRoutes())
-	}
-	client, err := New(server.URL, options...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := client.SendActorInput(context.Background(), "operator.v1", api.SendActorInputRequest{
-		ActorKey: "thread:1",
-		Input:    json.RawMessage(`{"type":"continue"}`),
-	}, scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.Sequence != 7 {
-		t.Fatalf("sequence = %d, want 7", response.Sequence)
-	}
-}
-
-func TestSendActorInputRejectsInvalidReferenceBeforeTransport(t *testing.T) {
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		requests++
-	}))
-	defer server.Close()
-	client, err := New(server.URL, WithHTTPClient(server.Client()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, request := range []api.SendActorInputRequest{
-		{Input: json.RawMessage(`null`)},
-		{
-			ActorID:  "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-			ActorKey: "thread:1",
-			Input:    json.RawMessage(`null`),
-		},
-		{ActorKey: "thread:1"},
-		{ActorKey: "thread:1", Input: json.RawMessage(`{"value":1,"value":2}`)},
-		{ActorKey: "thread:1", Input: json.RawMessage(`"\ud800"`)},
-	} {
-		if _, err := client.SendActorInput(
-			context.Background(),
-			"operator.v1",
-			request,
-			EnvironmentScopeOptions{},
-		); err == nil {
-			t.Fatalf("SendActorInput(%+v) succeeded, want validation error", request)
-		}
-	}
-	if requests != 0 {
-		t.Fatalf("transport requests = %d, want 0", requests)
-	}
-}
-
-func TestActorReadsRejectInvalidOptionsBeforeTransport(t *testing.T) {
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		requests++
-	}))
-	defer server.Close()
-	client, err := New(server.URL, WithHTTPClient(server.Client()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.GetActorStatus(
-		context.Background(),
-		"operator.v1",
-		api.ActorReference{},
-		EnvironmentScopeOptions{},
-	); err == nil {
-		t.Fatal("GetActorStatus() succeeded")
-	}
-	if requests != 0 {
-		t.Fatalf("transport requests = %d, want 0", requests)
 	}
 }

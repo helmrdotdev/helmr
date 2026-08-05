@@ -49,7 +49,7 @@ func TestClientErrorUsesServerMessage(t *testing.T) {
 
 func TestNewRejectsBaseURLQueryAndFragment(t *testing.T) {
 	for _, raw := range []string{"https://helmr.example?x=1", "https://helmr.example/#fragment"} {
-		if _, err := New(raw); err == nil || !strings.Contains(err.Error(), "must not include query or fragment") {
+		if _, err := New(raw); err == nil || !strings.Contains(err.Error(), "must be an origin without credentials, path, query, or fragment") {
 			t.Fatalf("New(%q) err = %v", raw, err)
 		}
 	}
@@ -70,27 +70,9 @@ func TestNewAllowsPlainHTTPLoopback(t *testing.T) {
 	}
 }
 
-func TestClientSendsAPIVersionHeader(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get(api.APIVersionHeader); got != api.CurrentAPIVersion {
-			t.Fatalf("%s = %q", api.APIVersionHeader, got)
-		}
-		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
-	}))
-	defer server.Close()
-
-	client, err := New(server.URL, WithHTTPClient(server.Client()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.StartTask(context.Background(), "deploy", api.StartTaskRequest{}, EnvironmentScopeOptions{}); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestClientRejectsPlainHTTPNonLoopbackRedirect(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "http://helmr.example/api/tasks/deploy/start", http.StatusTemporaryRedirect)
+		http.Redirect(w, r, "http://helmr.example/v1/tasks/deploy/start", http.StatusTemporaryRedirect)
 	}))
 	defer server.Close()
 
@@ -106,7 +88,7 @@ func TestClientRejectsPlainHTTPNonLoopbackRedirect(t *testing.T) {
 
 func TestStartTask(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/tasks/deploy/start" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		body, err := io.ReadAll(r.Body)
@@ -121,7 +103,7 @@ func TestStartTask(t *testing.T) {
 		if err := json.Unmarshal(body, &request); err != nil {
 			t.Fatal(err)
 		}
-		if request.Workspace.ID == nil || *request.Workspace.ID != "ws_1" {
+		if request.Workspace.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" {
 			t.Fatalf("request = %+v", request)
 		}
 		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
@@ -132,10 +114,10 @@ func TestStartTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workspaceID := "ws_1"
+	workspaceID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
 	started, err := client.StartTask(context.Background(), "deploy", api.StartTaskRequest{
 		Payload:   json.RawMessage(`{"env":"prod"}`),
-		Workspace: api.WorkspaceTarget{ID: &workspaceID},
+		Workspace: api.WorkspaceIDTarget{ID: workspaceID},
 	}, EnvironmentScopeOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -149,7 +131,7 @@ func TestStartTaskReturnsHTTPError(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if r.Method != http.MethodPost || r.URL.Path != "/api/tasks/deploy/start" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/tasks/deploy/start" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		w.WriteHeader(http.StatusConflict)
@@ -204,7 +186,7 @@ func TestRunOperations(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.Method+" "+r.URL.Path)
 		switch r.URL.Path {
-		case "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/cancel":
+		case "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/cancel":
 			if r.ContentLength > 0 {
 				t.Fatalf("cancel request body length = %d", r.ContentLength)
 			}
@@ -228,7 +210,7 @@ func TestRunOperations(t *testing.T) {
 	if cancelled.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31" || cancelled.Status != "cancelled" {
 		t.Fatalf("cancelled = %+v", cancelled)
 	}
-	if got := strings.Join(paths, ","); got != "POST /api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/cancel" {
+	if got := strings.Join(paths, ","); got != "POST /v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/cancel" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -242,7 +224,7 @@ func TestCreateDeploymentSendsContentHash(t *testing.T) {
 	var metadata api.CreateDeploymentRequest
 	var uploaded []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/deployments" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/deployments" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		reader, err := r.MultipartReader()
@@ -419,7 +401,7 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.RequestURI())
 		switch r.URL.Path {
-		case "/api/runs":
+		case "/v1/runs":
 			if got := r.URL.Query()["status"]; !slices.Equal(got, []string{"running", "waiting"}) ||
 				r.URL.Query().Get("cursor") != "cursor-1" ||
 				r.URL.Query().Get("limit") != "25" {
@@ -434,7 +416,7 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 				}},
 				NextCursor: "cursor-2",
 			})
-		case "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs":
+		case "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs":
 			_ = json.NewEncoder(w).Encode(api.RunLogPage{
 				Logs: []api.RunLogRecord{{
 					ID: "rt1.log", Kind: "stdout", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
@@ -474,7 +456,7 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 		logs.NextCursor != "rt1.next" {
 		t.Fatalf("logs = %+v", logs)
 	}
-	if got := strings.Join(paths, ","); got != "/api/runs?cursor=cursor-1&limit=25&status=running&status=waiting,/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" {
+	if got := strings.Join(paths, ","); got != "/v1/runs?cursor=cursor-1&limit=25&status=running&status=waiting,/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" {
 		t.Fatalf("paths = %s", got)
 	}
 }
@@ -482,16 +464,16 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 func TestRevokeSecretUsesExplicitOperation(t *testing.T) {
 	var request api.RevokeSecretRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/secrets/by-name/API_TOKEN/revoke" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/secrets/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33/revoke" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
 		_ = json.NewEncoder(w).Encode(api.SecretResponse{
-			ID:    "secret-1",
-			Name:  "API_TOKEN",
-			State: "revoked",
+			ID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+			Name:   "API_TOKEN",
+			Status: "revoked",
 		})
 	}))
 	defer server.Close()
@@ -500,11 +482,11 @@ func TestRevokeSecretUsesExplicitOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := client.RevokeSecret(context.Background(), "API_TOKEN", "revoke-1")
+	snapshot, err := client.RevokeSecret(context.Background(), "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33", "revoke-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if request.IdempotencyKey != "revoke-1" || snapshot.State != "revoked" {
+	if request.IdempotencyKey != "revoke-1" || snapshot.Status != "revoked" {
 		t.Fatalf("request = %+v snapshot = %+v", request, snapshot)
 	}
 }
@@ -538,7 +520,7 @@ func TestSessionScopedClientRequiresEnvironmentScope(t *testing.T) {
 
 func TestListRunLogsSendsCursorAndFilters(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" ||
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" ||
 			r.URL.Query().Get("cursor") != "rt1.previous" ||
 			r.URL.Query().Get("limit") != "25" ||
 			strings.Join(r.URL.Query()["level"], ",") != "warn,error" {

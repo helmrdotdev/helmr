@@ -31,6 +31,10 @@ type WorkspaceTarget struct {
 	Key *string `json:"key,omitempty"`
 }
 
+type WorkspaceIDTarget struct {
+	ID string `json:"id"`
+}
+
 type StartActorRetryBackoff struct {
 	MinDelay string `json:"min_delay,omitempty"`
 	MaxDelay string `json:"max_delay,omitempty"`
@@ -58,121 +62,125 @@ type StartActorRequest struct {
 	Key            *string               `json:"key,omitempty"`
 	Input          json.RawMessage       `json:"input,omitempty"`
 	IdempotencyKey string                `json:"idempotency_key,omitempty"`
-	Workspace      WorkspaceTarget       `json:"workspace"`
+	Workspace      WorkspaceIDTarget     `json:"workspace"`
 	Run            *StartActorRunOptions `json:"run,omitempty"`
 }
 
-type StartActorResponse struct {
-	ActorID string `json:"actor_id"`
-	RunID   string `json:"run_id"`
+type ActorStartOptions struct {
+	Key       *string
+	Input     json.RawMessage
+	Workspace WorkspaceIDTarget
+	Run       *StartActorRunOptions
 }
 
-type SendActorInputRequest struct {
-	ActorID        string          `json:"actor_id,omitempty"`
-	ActorKey       string          `json:"actor_key,omitempty"`
+type StartActorResponse struct {
+	SessionID string `json:"session_id"`
+	RunID     string `json:"run_id"`
+}
+
+type SendSessionInputRequest struct {
 	Input          json.RawMessage `json:"input"`
 	IdempotencyKey string          `json:"idempotency_key,omitempty"`
 }
 
-type SendActorInputResponse struct {
-	Sequence int64 `json:"sequence"`
+type SessionInputSource struct {
+	Kind  string `json:"kind"`
+	RunID string `json:"run_id,omitempty"`
 }
 
-type ActorOperationRequest struct {
-	ActorID        string `json:"actor_id,omitempty"`
-	ActorKey       string `json:"actor_key,omitempty"`
+type SessionInput struct {
+	ID        string             `json:"id"`
+	Sequence  int64              `json:"sequence"`
+	Data      json.RawMessage    `json:"data"`
+	Source    SessionInputSource `json:"source"`
+	CreatedAt time.Time          `json:"created_at"`
+}
+
+type CloseSessionRequest struct {
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
-type ActorReference struct {
-	ActorID  string
-	ActorKey string
-}
-
-type ActorOperationReceipt struct {
-	ActorID    string    `json:"actor_id"`
+type SessionCloseReceipt struct {
+	SessionID  string    `json:"session_id"`
 	AcceptedAt time.Time `json:"accepted_at"`
 }
 
-type ActorPublicStatus string
+type SessionStatus string
 
 const (
-	ActorPublicStatusOpen      ActorPublicStatus = "open"
-	ActorPublicStatusClosed    ActorPublicStatus = "closed"
-	ActorPublicStatusCancelled ActorPublicStatus = "cancelled"
-	ActorPublicStatusFailed    ActorPublicStatus = "failed"
+	SessionStatusOpen      SessionStatus = "open"
+	SessionStatusClosed    SessionStatus = "closed"
+	SessionStatusCancelled SessionStatus = "cancelled"
+	SessionStatusFailed    SessionStatus = "failed"
 )
 
-type ActorFailure struct {
+type SessionFailure struct {
 	Code  string `json:"code"`
 	RunID string `json:"run_id"`
 }
 
-type ActorStatus struct {
-	ID           string            `json:"id"`
-	Key          *string           `json:"key,omitempty"`
-	Status       ActorPublicStatus `json:"status"`
-	CreatedAt    time.Time         `json:"created_at"`
-	UpdatedAt    time.Time         `json:"updated_at"`
-	CurrentRunID *string           `json:"current_run_id,omitempty"`
-	Failure      *ActorFailure     `json:"failure,omitempty"`
+type SessionStatusSnapshot struct {
+	ID           string          `json:"id"`
+	Key          *string         `json:"key,omitempty"`
+	Status       SessionStatus   `json:"status"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
+	CurrentRunID *string         `json:"current_run_id,omitempty"`
+	Failure      *SessionFailure `json:"failure,omitempty"`
 }
 
-type ActorOutputProvenance struct {
+type Session struct {
+	ID           string          `json:"id"`
+	ActorID      string          `json:"actor_id"`
+	DeploymentID string          `json:"deployment_id"`
+	Key          *string         `json:"key,omitempty"`
+	Status       SessionStatus   `json:"status"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
+	CurrentRunID *string         `json:"current_run_id,omitempty"`
+	Failure      *SessionFailure `json:"failure,omitempty"`
+}
+
+type ListSessionsResponse struct {
+	Sessions   []Session `json:"sessions"`
+	NextCursor string    `json:"next_cursor,omitempty"`
+}
+
+type SessionOutputProvenance struct {
 	RunID         string `json:"run_id"`
 	AttemptNumber int32  `json:"attempt_number"`
 	DeploymentID  string `json:"deployment_id"`
 }
 
-type ActorOutputRecord struct {
-	ID          string                `json:"id"`
-	Sequence    int64                 `json:"sequence"`
-	Data        json.RawMessage       `json:"data"`
-	ContentType string                `json:"content_type"`
-	CreatedAt   time.Time             `json:"created_at"`
-	Provenance  ActorOutputProvenance `json:"provenance"`
+type SessionOutput struct {
+	ID          string                  `json:"id"`
+	Sequence    int64                   `json:"sequence"`
+	Data        json.RawMessage         `json:"data"`
+	ContentType string                  `json:"content_type"`
+	CreatedAt   time.Time               `json:"created_at"`
+	Provenance  SessionOutputProvenance `json:"provenance"`
 }
 
-type ActorOutputPage struct {
-	Records   []ActorOutputRecord `json:"records"`
-	NextAfter int64               `json:"next_after"`
-	HasMore   bool                `json:"has_more"`
+type SessionOutputPage struct {
+	Records   []SessionOutput `json:"records"`
+	NextAfter int64           `json:"next_after"`
+	HasMore   bool            `json:"has_more"`
 }
 
-func ValidateActorPublicStatus(status string) error {
-	switch ActorPublicStatus(status) {
-	case ActorPublicStatusOpen,
-		ActorPublicStatusClosed,
-		ActorPublicStatusCancelled,
-		ActorPublicStatusFailed:
+func ValidateSessionStatus(status string) error {
+	switch SessionStatus(status) {
+	case SessionStatusOpen,
+		SessionStatusClosed,
+		SessionStatusCancelled,
+		SessionStatusFailed:
 		return nil
 	default:
-		return fmt.Errorf("invalid actor status %q", status)
+		return fmt.Errorf("invalid session status %q", status)
 	}
 }
 
-func ValidateActorOperationRequest(request ActorOperationRequest) error {
-	hasID := request.ActorID != ""
-	hasKey := request.ActorKey != ""
-	if hasID == hasKey {
-		return errors.New("exactly one of actor_id or actor_key is required")
-	}
-	if hasID {
-		return ValidateActorID(request.ActorID)
-	}
-	return ValidateActorKey(request.ActorKey)
-}
-
-func ValidateActorReference(reference ActorReference) error {
-	hasID := reference.ActorID != ""
-	hasKey := reference.ActorKey != ""
-	if hasID == hasKey {
-		return errors.New("exactly one of actor_id or actor_key is required")
-	}
-	if hasID {
-		return ValidateActorID(reference.ActorID)
-	}
-	return ValidateActorKey(reference.ActorKey)
+func ValidateCloseSessionRequest(request CloseSessionRequest) error {
+	return nil
 }
 
 func ValidateActorDeclaredID(id string) error {
@@ -225,19 +233,7 @@ func ValidateActorKey(key string) error {
 	return nil
 }
 
-func ValidateSendActorInputRequest(request SendActorInputRequest) error {
-	hasID := request.ActorID != ""
-	hasKey := request.ActorKey != ""
-	if hasID == hasKey {
-		return errors.New("exactly one of actor_id or actor_key is required")
-	}
-	if hasID {
-		if err := ValidateActorID(request.ActorID); err != nil {
-			return err
-		}
-	} else if err := ValidateActorKey(request.ActorKey); err != nil {
-		return err
-	}
+func ValidateSendSessionInputRequest(request SendSessionInputRequest) error {
 	if len(request.Input) == 0 {
 		return errors.New("input is required")
 	}
@@ -248,35 +244,50 @@ func ValidateSendActorInputRequest(request SendActorInputRequest) error {
 }
 
 func ValidateStartActorRequest(request StartActorRequest) error {
-	if err := ValidateWorkspaceTarget(request.Workspace); err != nil {
+	if err := ValidateWorkspaceIDTarget(request.Workspace); err != nil {
 		return err
 	}
-	if request.Key != nil {
-		if err := ValidateActorKey(*request.Key); err != nil {
+	return validateActorStartOptions(request.Key, request.Input, request.Run)
+}
+
+func ValidateActorStartOptions(request ActorStartOptions) error {
+	if err := ValidateWorkspaceIDTarget(request.Workspace); err != nil {
+		return err
+	}
+	return validateActorStartOptions(request.Key, request.Input, request.Run)
+}
+
+func validateActorStartOptions(
+	key *string,
+	input json.RawMessage,
+	run *StartActorRunOptions,
+) error {
+	if key != nil {
+		if err := ValidateActorKey(*key); err != nil {
 			return err
 		}
 	}
-	if len(request.Input) > 0 {
-		if _, err := jsoncanon.Transform(request.Input); err != nil {
+	if len(input) > 0 {
+		if _, err := jsoncanon.Transform(input); err != nil {
 			return fmt.Errorf("input must be unambiguous I-JSON: %w", err)
 		}
 	}
-	if request.Run == nil {
+	if run == nil {
 		return nil
 	}
-	if request.Run.Queue != "" {
-		if err := ValidateQueueName(request.Run.Queue); err != nil {
+	if run.Queue != "" {
+		if err := ValidateQueueName(run.Queue); err != nil {
 			return err
 		}
 	}
-	if request.Run.ConcurrencyKey != nil {
-		if err := ValidateConcurrencyKey(*request.Run.ConcurrencyKey); err != nil {
+	if run.ConcurrencyKey != nil {
+		if err := ValidateConcurrencyKey(*run.ConcurrencyKey); err != nil {
 			return err
 		}
 	}
-	if request.Run.TTL != "" {
+	if run.TTL != "" {
 		if _, err := ParseDurationMilliseconds(
-			request.Run.TTL,
+			run.TTL,
 			"run.ttl",
 			1,
 			MaxQueuedRunTTLMilliseconds,
@@ -284,15 +295,22 @@ func ValidateStartActorRequest(request StartActorRequest) error {
 			return err
 		}
 	}
-	if _, err := NormalizeStartActorRetry(request.Run.Retry); err != nil {
+	if _, err := NormalizeStartActorRetry(run.Retry); err != nil {
 		return err
 	}
-	if len(request.Run.Metadata) > 0 {
-		if err := validateJSONObject(request.Run.Metadata, "run.metadata"); err != nil {
+	if len(run.Metadata) > 0 {
+		if err := validateJSONObject(run.Metadata, "run.metadata"); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func ValidateWorkspaceIDTarget(workspace WorkspaceIDTarget) error {
+	if workspace.ID == "" {
+		return errors.New("workspace.id is required")
+	}
+	return ValidateWorkspaceID(workspace.ID)
 }
 
 func ValidateWorkspaceTarget(workspace WorkspaceTarget) error {

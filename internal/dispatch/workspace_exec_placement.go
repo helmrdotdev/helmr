@@ -328,8 +328,8 @@ SELECT workspace_processes.id,
   JOIN deployment_definitions AS definitions
     ON definitions.environment_id = workspaces.environment_id
    AND definitions.id = workspaces.deployment_definition_id
-   AND definitions.kind = 'workspace'
-   AND definitions.declared_id = workspaces.workspace_declared_id
+   AND definitions.kind = 'sandbox'
+   AND definitions.declared_id = workspaces.sandbox_declared_id
   JOIN workspace_versions
     ON workspace_versions.workspace_id = workspaces.id
    AND workspace_versions.id = workspace_processes.base_version_id
@@ -342,7 +342,7 @@ SELECT workspace_processes.id,
    AND workspaces.desired_state IN ('active', 'stopped')
    AND workspaces.dirty_state = 'clean'
    AND workspaces.head_version_id = workspace_processes.base_version_id
-   AND workspaces.owner_actor_id IS NULL
+   AND workspaces.owner_session_id IS NULL
    AND workspaces.owner_run_id IS NULL
    AND NOT EXISTS (
        SELECT 1
@@ -371,7 +371,7 @@ SELECT workspace_processes.id,
 	if err != nil {
 		return workspaceExecAuthority{}, err
 	}
-	var workspaceManifest deployment.WorkspaceManifest
+	var workspaceManifest deployment.SandboxManifest
 	decoder := json.NewDecoder(bytes.NewReader(manifest))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&workspaceManifest); err != nil {

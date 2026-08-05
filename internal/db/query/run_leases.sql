@@ -74,8 +74,8 @@ SELECT run_leases.org_id,
        run_leases.region_id,
        run_leases.runtime_instance_id,
        runtime_instances.restore_checkpoint_id AS runtime_restore_checkpoint_id,
-       runs.actor_id,
-       actors.run_generation AS actor_run_generation,
+       runs.session_id,
+       sessions.run_generation AS actor_run_generation,
        workspace_leases.id AS workspace_lease_id,
        workspace_leases.workspace_mount_id,
        run_waits.id AS run_wait_id,
@@ -86,8 +86,8 @@ SELECT run_leases.org_id,
        suspend_checkpoints.private_workspace_version_id AS checkpoint_private_workspace_version_id,
        runs.parent_run_id,
        runs.parent_owns_lifecycle,
-       parent_runs.actor_id AS parent_actor_id,
-       parent_actors.run_generation AS parent_actor_run_generation,
+       parent_runs.session_id AS parent_session_id,
+       parent_sessions.run_generation AS parent_actor_run_generation,
        coalesce(parent_runs.current_attempt_number, 0)::integer AS parent_attempt_number,
        enclosing_waits.id AS enclosing_wait_id,
        enclosing_waits.suspend_checkpoint_id AS enclosing_suspend_checkpoint_id,
@@ -120,9 +120,9 @@ SELECT run_leases.org_id,
    AND runs.current_attempt_number = run_leases.attempt_number
    AND runs.current_run_lease_id = run_leases.id
    AND runs.status = 'queued'
-  LEFT JOIN actors
-    ON actors.id = runs.actor_id
-   AND actors.workspace_id = runs.workspace_id
+  LEFT JOIN sessions
+    ON sessions.id = runs.session_id
+   AND sessions.workspace_id = runs.workspace_id
   JOIN worker_groups
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
@@ -170,9 +170,9 @@ SELECT run_leases.org_id,
     ON parent_runs.id = runs.parent_run_id
    AND parent_runs.environment_id = runs.environment_id
    AND parent_runs.workspace_id = runs.workspace_id
-  LEFT JOIN actors AS parent_actors
-    ON parent_actors.id = parent_runs.actor_id
-   AND parent_actors.workspace_id = parent_runs.workspace_id
+  LEFT JOIN sessions AS parent_sessions
+    ON parent_sessions.id = parent_runs.session_id
+   AND parent_sessions.workspace_id = parent_runs.workspace_id
   LEFT JOIN run_waits AS enclosing_waits
     ON enclosing_waits.run_id = parent_runs.id
    AND enclosing_waits.attempt_number = parent_runs.current_attempt_number
@@ -215,7 +215,7 @@ SELECT run_leases.org_id,
        run_leases.region_id,
        run_leases.runtime_instance_id,
        runtime_instances.restore_checkpoint_id AS runtime_restore_checkpoint_id,
-       runs.actor_id,
+       runs.session_id,
        runs.parent_run_id,
        workspace_leases.id AS workspace_lease_id,
        workspace_leases.workspace_mount_id,
@@ -392,7 +392,7 @@ SELECT run_leases.org_id,
        run_leases.run_id,
        run_leases.workspace_id,
        run_leases.attempt_number,
-       runs.actor_id,
+       runs.session_id,
        runs.parent_run_id,
        runs.parent_owns_lifecycle,
        run_leases.region_id,
@@ -454,7 +454,7 @@ SELECT *
 
 -- name: LockRunLeaseClaimActor :one
 SELECT *
-  FROM actors
+  FROM sessions
  WHERE id = sqlc.arg(id)
    AND workspace_id = sqlc.arg(workspace_id)
  FOR UPDATE;
@@ -870,7 +870,7 @@ WITH provided_outbox_ids AS MATERIALIZED (
 candidates AS MATERIALIZED (
     SELECT runs.id AS run_id,
            runs.entrypoint_kind,
-           runs.actor_id,
+           runs.session_id,
            run_leases.id AS run_lease_id,
            run_leases.worker_instance_id,
            run_leases.worker_epoch,
@@ -976,17 +976,17 @@ candidates AS MATERIALIZED (
      LIMIT sqlc.arg(limit_count)
 ), locked_actor_candidates AS MATERIALIZED (
     SELECT candidates.*,
-           actors.run_generation AS actor_run_generation,
-           actors.committed_input_sequence AS actor_committed_input_sequence,
-           actors.next_input_sequence AS actor_next_input_sequence
+           sessions.run_generation AS actor_run_generation,
+           sessions.committed_input_sequence AS actor_committed_input_sequence,
+           sessions.next_input_sequence AS actor_next_input_sequence
       FROM candidates
-      JOIN actors
-        ON actors.id = candidates.actor_id
-       AND actors.current_run_id = candidates.run_id
-       AND actors.state IN ('open', 'closing')
+      JOIN sessions
+        ON sessions.id = candidates.session_id
+       AND sessions.current_run_id = candidates.run_id
+       AND sessions.state IN ('open', 'closing')
      WHERE candidates.entrypoint_kind = 'actor'
-     ORDER BY actors.id
-     FOR UPDATE OF actors SKIP LOCKED
+     ORDER BY sessions.id
+     FOR UPDATE OF sessions SKIP LOCKED
 ), placement_candidates AS MATERIALIZED (
     SELECT candidates.*,
            NULL::bigint AS actor_run_generation,
@@ -994,7 +994,7 @@ candidates AS MATERIALIZED (
            NULL::bigint AS actor_next_input_sequence
       FROM candidates
      WHERE candidates.entrypoint_kind = 'task'
-       AND candidates.actor_id IS NULL
+       AND candidates.session_id IS NULL
     UNION ALL
     SELECT locked_actor_candidates.*
       FROM locked_actor_candidates
@@ -1006,13 +1006,13 @@ candidates AS MATERIALIZED (
            runs.id AS run_id,
            runs.state_version,
            runs.current_attempt_number,
-           runs.actor_start_input_sequence,
-           runs.actor_start_input_high_watermark,
+           runs.session_input_start_sequence,
+           runs.session_input_high_watermark,
            runs.max_active_duration_ms,
            runs.active_elapsed_ms,
            runs.active_started_at,
            placement_candidates.entrypoint_kind,
-           placement_candidates.actor_id,
+           placement_candidates.session_id,
            placement_candidates.actor_run_generation,
            placement_candidates.actor_committed_input_sequence,
            placement_candidates.actor_next_input_sequence,
@@ -1030,10 +1030,10 @@ candidates AS MATERIALIZED (
       FROM placement_candidates
       JOIN runs ON runs.id = placement_candidates.run_id
      WHERE ((runs.entrypoint_kind = 'task'
-             AND runs.actor_id IS NULL
+             AND runs.session_id IS NULL
              AND placement_candidates.entrypoint_kind = 'task')
             OR (runs.entrypoint_kind = 'actor'
-                AND runs.actor_id = placement_candidates.actor_id
+                AND runs.session_id = placement_candidates.session_id
                 AND runs.cause_kind IN ('actor_start', 'continuation')
                 AND placement_candidates.entrypoint_kind = 'actor'))
        AND ((runs.status = 'queued' AND runs.active_started_at IS NULL)
@@ -1050,9 +1050,9 @@ candidates AS MATERIALIZED (
      WHERE workspaces.environment_id = locked_runs.environment_id
        AND ((locked_runs.entrypoint_kind = 'task'
              AND workspaces.owner_run_id = locked_runs.run_id
-             AND workspaces.owner_actor_id IS NULL)
+             AND workspaces.owner_session_id IS NULL)
             OR (locked_runs.entrypoint_kind = 'actor'
-                AND workspaces.owner_actor_id = locked_runs.actor_id
+                AND workspaces.owner_session_id = locked_runs.session_id
                 AND workspaces.owner_run_id IS NULL))
        AND workspaces.state = 'active'
        AND workspaces.desired_state = 'active'
@@ -1069,12 +1069,12 @@ candidates AS MATERIALIZED (
        AND run_attempts.entrypoint_kind = locked_workspaces.entrypoint_kind
        AND run_attempts.terminal_at IS NULL
        AND (locked_workspaces.entrypoint_kind = 'task'
-            OR (run_attempts.actor_start_input_sequence IS NOT NULL
-                AND run_attempts.actor_start_input_sequence = locked_workspaces.actor_start_input_sequence
-                AND locked_workspaces.actor_start_input_sequence
-                    <= locked_workspaces.actor_start_input_high_watermark
+            OR (run_attempts.session_input_start_sequence IS NOT NULL
+                AND run_attempts.session_input_start_sequence = locked_workspaces.session_input_start_sequence
+                AND locked_workspaces.session_input_start_sequence
+                    <= locked_workspaces.session_input_high_watermark
                 AND locked_workspaces.actor_committed_input_sequence
-                    >= locked_workspaces.actor_start_input_sequence
+                    >= locked_workspaces.session_input_start_sequence
                 AND locked_workspaces.actor_committed_input_sequence
                     < locked_workspaces.actor_next_input_sequence))
      ORDER BY run_attempts.run_id, run_attempts.number
@@ -1476,12 +1476,12 @@ candidates AS MATERIALIZED (
        AND run_waits.suspension_state = 'resuming'
        AND run_waits.resume_request_version = locked_checkpoints.resume_request_version
     RETURNING run_waits.id, failed_runs.id AS run_id
-), failed_actors AS (
-    UPDATE actors
+), failed_sessions AS (
+    UPDATE sessions
        SET state = 'failed',
            current_run_id = NULL,
-           run_generation = actors.run_generation + 1,
-           state_version = actors.state_version + 1,
+           run_generation = sessions.run_generation + 1,
+           state_version = sessions.state_version + 1,
            manual_run_cancelled = false,
            failure_code = CASE
                WHEN locked_checkpoints.active_budget_exhausted THEN 'run_expired'
@@ -1492,21 +1492,21 @@ candidates AS MATERIALIZED (
            updated_at = transaction_timestamp()
       FROM locked_checkpoints, failed_runs, failed_waits
      WHERE locked_checkpoints.entrypoint_kind = 'actor'
-       AND actors.id = locked_checkpoints.actor_id
-       AND actors.current_run_id = failed_runs.id
-       AND actors.run_generation = locked_checkpoints.actor_run_generation
-       AND actors.state IN ('open', 'closing')
+       AND sessions.id = locked_checkpoints.session_id
+       AND sessions.current_run_id = failed_runs.id
+       AND sessions.run_generation = locked_checkpoints.actor_run_generation
+       AND sessions.state IN ('open', 'closing')
        AND failed_waits.run_id = failed_runs.id
-    RETURNING actors.id, failed_runs.id AS run_id
+    RETURNING sessions.id, failed_runs.id AS run_id
 ), released_owners AS (
     UPDATE workspaces
        SET owner_run_id = CASE
                WHEN locked_checkpoints.entrypoint_kind = 'task' THEN NULL
                ELSE workspaces.owner_run_id
            END,
-           owner_actor_id = CASE
+           owner_session_id = CASE
                WHEN locked_checkpoints.entrypoint_kind = 'actor' THEN NULL
-               ELSE workspaces.owner_actor_id
+               ELSE workspaces.owner_session_id
            END,
            ownership_generation = workspaces.ownership_generation + 1,
            state_version = workspaces.state_version + 1,
@@ -1514,16 +1514,16 @@ candidates AS MATERIALIZED (
            updated_at = transaction_timestamp()
       FROM locked_checkpoints
       JOIN failed_waits ON failed_waits.run_id = locked_checkpoints.run_id
-      LEFT JOIN failed_actors
-        ON failed_actors.run_id = locked_checkpoints.run_id
-       AND failed_actors.id = locked_checkpoints.actor_id
+      LEFT JOIN failed_sessions
+        ON failed_sessions.run_id = locked_checkpoints.run_id
+       AND failed_sessions.id = locked_checkpoints.session_id
      WHERE workspaces.id = locked_checkpoints.workspace_id
        AND ((locked_checkpoints.entrypoint_kind = 'task'
              AND workspaces.owner_run_id = failed_waits.run_id
-             AND workspaces.owner_actor_id IS NULL)
+             AND workspaces.owner_session_id IS NULL)
             OR (locked_checkpoints.entrypoint_kind = 'actor'
-                AND failed_actors.id IS NOT NULL
-                AND workspaces.owner_actor_id = failed_actors.id
+                AND failed_sessions.id IS NOT NULL
+                AND workspaces.owner_session_id = failed_sessions.id
                 AND workspaces.owner_run_id IS NULL))
        AND workspaces.ownership_generation = locked_checkpoints.ownership_generation
        AND workspaces.writer_generation = locked_checkpoints.writer_generation

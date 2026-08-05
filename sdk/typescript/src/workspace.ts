@@ -1,8 +1,9 @@
 import type {
   CursorPage,
   Duration,
-  WorkspaceIdTarget,
-  WorkspaceKeyTarget,
+  WorkspaceAddress,
+  WorkspaceIdAddress,
+  WorkspaceKeyAddress,
 } from "./contract"
 import {
   inspectImage,
@@ -10,15 +11,13 @@ import {
   type InternalImage,
 } from "./image"
 import type { RequestOptions } from "./request"
-import {
-  inspectSecretNameRef,
-  type SecretNameRef,
-} from "./secret"
+import { inspectSecretAddress, type SecretAddress } from "./secret"
 import { validateTaskId } from "./schema/task"
 import { resourceID } from "./internal/id"
 import { currentRuntimeOperations } from "./internal/runtime"
 
-const workspaceDefinitionBrand = Symbol.for("helmr.sdk.v0.workspace")
+const sandboxDefinitionBrand = Symbol.for("helmr.sdk.v0.sandbox")
+const workspaceAddressBrand = Symbol.for("helmr.sdk.v0.workspace-address")
 
 export type WorkspaceMemory = `${bigint}MiB` | `${bigint}GiB`
 
@@ -27,26 +26,26 @@ export interface WorkspaceResources {
   readonly memory: WorkspaceMemory
 }
 
-export interface WorkspaceBuilder {
+export interface SandboxBuilder {
   readonly id: string
-  image(value: ImageBuilder): WorkspaceResourceBuilder
+  image(value: ImageBuilder): SandboxResourceBuilder
 }
 
-export interface WorkspaceResourceBuilder {
+export interface SandboxResourceBuilder {
   readonly id: string
-  resources(value: WorkspaceResources): WorkspaceDefinition
+  resources(value: WorkspaceResources): SandboxDefinition
 }
 
 export type WorkspaceStatus =
   | "available"
-  | "recovery_required"
+  | "recovery-required"
   | "deleting"
 
 export type WorkspaceSecretPlacement =
   | Readonly<{ env: string; file?: never }>
   | Readonly<{ env?: never; file: string }>
 
-export type WorkspaceSecretInput = Readonly<{ secret: SecretNameRef }> &
+export type WorkspaceSecretInput = Readonly<{ secret: SecretAddress }> &
   WorkspaceSecretPlacement
 
 export type WorkspaceSecretSnapshot = Readonly<{ name: string }> &
@@ -58,6 +57,9 @@ export interface WorkspaceCreateRequest {
   readonly idempotencyKey?: string
 }
 
+export type EncodedWorkspaceSecret = Readonly<{ name: string }> &
+  WorkspaceSecretPlacement
+
 export interface RuntimeWorkspaceCreateOptions extends WorkspaceCreateRequest {
   readonly signal?: AbortSignal
 }
@@ -65,7 +67,8 @@ export interface RuntimeWorkspaceCreateOptions extends WorkspaceCreateRequest {
 export interface WorkspaceSnapshot {
   readonly id: string
   readonly key?: string
-  readonly declaredId: string
+  readonly sandboxId: string
+  readonly deploymentId: string
   readonly status: WorkspaceStatus
   readonly secrets: readonly WorkspaceSecretSnapshot[]
   readonly lastActivityAt: Date
@@ -146,58 +149,28 @@ export interface WorkspaceRefBase {
   ): Promise<WorkspaceDeleteReceipt>
 }
 
-export type WorkspaceIdRef = WorkspaceIdTarget & WorkspaceRefBase
-export type WorkspaceKeyRef = WorkspaceKeyTarget & WorkspaceRefBase
-export type WorkspaceRef = WorkspaceIdRef | WorkspaceKeyRef
+export type WorkspaceIdRef = WorkspaceIdAddress & WorkspaceRefBase
+export type WorkspaceRef = WorkspaceIdRef
 
-export interface WorkspaceDefinition {
+export interface SandboxDefinition {
   readonly id: string
-  create(options?: RuntimeWorkspaceCreateOptions): Promise<WorkspaceIdRef>
+  createWorkspace(options?: RuntimeWorkspaceCreateOptions): Promise<WorkspaceIdRef>
 }
 
 export interface Workspaces {
-  ref(address: {
-    readonly id: string
-    readonly key?: never
-  }): WorkspaceIdRef
-  ref(address: {
-    readonly key: string
-    readonly id?: never
-  }): WorkspaceKeyRef
+  ref(id: string): WorkspaceIdRef
+  fromId(id: string): WorkspaceIdAddress
+  fromKey(key: string): WorkspaceKeyAddress
 }
 
-export interface ClientWorkspacesApi {
-  create<TWorkspace extends WorkspaceDefinition>(
-    workspaceDeclaredId: string,
-    request?: WorkspaceCreateRequest,
-    options?: RequestOptions,
-  ): Promise<WorkspaceIdRef>
-  ref<TWorkspace extends WorkspaceDefinition>(
-    workspaceDeclaredId: string,
-    address: Readonly<{ id: string; key?: never }>,
-  ): WorkspaceIdRef
-  ref<TWorkspace extends WorkspaceDefinition>(
-    workspaceDeclaredId: string,
-    address: Readonly<{ key: string; id?: never }>,
-  ): WorkspaceKeyRef
-}
-
-interface WorkspaceTransport {
-  request(
-    method: "GET" | "POST",
-    path: string,
-    options?: Readonly<{ body?: unknown; signal?: AbortSignal }>,
-  ): Promise<unknown>
-}
-
-export interface InternalWorkspaceDefinition {
-  readonly kind: "workspace"
+export interface InternalSandboxDefinition {
+  readonly kind: "sandbox"
   readonly id: string
   readonly image: InternalImage
   readonly resources: WorkspaceResources
 }
 
-class Builder implements WorkspaceBuilder {
+class Builder implements SandboxBuilder {
   readonly id: string
   constructor(id: string) {
     validateTaskId(id)
@@ -205,16 +178,16 @@ class Builder implements WorkspaceBuilder {
     Object.freeze(this)
   }
 
-  image(value: ImageBuilder): WorkspaceResourceBuilder {
+  image(value: ImageBuilder): SandboxResourceBuilder {
     const inspected = inspectImage(value)
     if (inspected === undefined) {
-      throw new Error("workspace.image() requires an image() value")
+      throw new Error("sandbox.image() requires an image() value")
     }
     return new ResourceBuilder(this.id, inspected)
   }
 }
 
-class ResourceBuilder implements WorkspaceResourceBuilder {
+class ResourceBuilder implements SandboxResourceBuilder {
   readonly id: string
   readonly imageValue: InternalImage
 
@@ -224,7 +197,7 @@ class ResourceBuilder implements WorkspaceResourceBuilder {
     Object.freeze(this)
   }
 
-  resources(value: WorkspaceResources): WorkspaceDefinition {
+  resources(value: WorkspaceResources): SandboxDefinition {
     assertResourceMembers(value)
     return new Definition(
       this.id,
@@ -234,9 +207,9 @@ class ResourceBuilder implements WorkspaceResourceBuilder {
   }
 }
 
-class Definition implements WorkspaceDefinition {
+class Definition implements SandboxDefinition {
   readonly id: string
-  readonly internal: InternalWorkspaceDefinition
+  readonly internal: InternalSandboxDefinition
 
   constructor(
     id: string,
@@ -245,153 +218,143 @@ class Definition implements WorkspaceDefinition {
   ) {
     this.id = id
     this.internal = Object.freeze({
-      kind: "workspace" as const,
+      kind: "sandbox" as const,
       id,
       image: imageValue,
       resources,
     })
-    Object.defineProperty(this, workspaceDefinitionBrand, { value: true })
+    Object.defineProperty(this, sandboxDefinitionBrand, { value: true })
     Object.freeze(this)
   }
 
-  create(
+  createWorkspace(
     options?: RuntimeWorkspaceCreateOptions,
   ): Promise<WorkspaceIdRef> {
     return currentRuntimeOperations().workspaceCreate(this.id, options)
       .then(({ workspaceId }) =>
-        createWorkspaceRef({ id: workspaceId }) as WorkspaceIdRef
+        createWorkspaceRef(workspaceId)
       )
   }
 }
 
-export function workspace(id: string): WorkspaceBuilder {
-  return new Builder(id)
-}
-
-function workspaceRef(address: {
-  readonly id: string
-  readonly key?: never
-}): WorkspaceIdRef
-function workspaceRef(address: {
-  readonly key: string
-  readonly id?: never
-}): WorkspaceKeyRef
-function workspaceRef(
-  address:
-    | { readonly id: string; readonly key?: never }
-    | { readonly key: string; readonly id?: never },
-): WorkspaceIdRef | WorkspaceKeyRef {
-  validateWorkspaceAddress(address)
-  return createWorkspaceRef(address)
+export function sandbox(config: Readonly<{ id: string }>): SandboxBuilder {
+  return new Builder(config.id)
 }
 
 export const workspaces: Workspaces = Object.freeze({
-  ref: workspaceRef,
+  ref: createWorkspaceRef,
+  fromId: createWorkspaceIdAddress,
+  fromKey: createWorkspaceKeyAddress,
 })
 
-export function createClientWorkspaces(
-  transport: WorkspaceTransport,
-): ClientWorkspacesApi {
-  function ref<TWorkspace extends WorkspaceDefinition>(
-    workspaceDeclaredId: string,
-    address:
-      | Readonly<{ id: string; key?: never }>
-      | Readonly<{ key: string; id?: never }>,
-  ): WorkspaceIdRef | WorkspaceKeyRef {
-    validateTaskId(workspaceDeclaredId)
-    validateWorkspaceAddress(address)
-    return createAuthenticatedWorkspaceRef(workspaceDeclaredId, address, transport)
+export function inspectWorkspaceAddress(
+  value: unknown,
+): WorkspaceAddress | undefined {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    (value as Record<PropertyKey, unknown>)[workspaceAddressBrand] !== true
+  ) {
+    return undefined
   }
-  return Object.freeze({
-    async create<TWorkspace extends WorkspaceDefinition>(
-      workspaceDeclaredId: string,
-      request: WorkspaceCreateRequest = {},
-      options: RequestOptions = {},
-    ): Promise<WorkspaceIdRef> {
-      validateTaskId(workspaceDeclaredId)
-      const response = workspaceObject(
-        await transport.request(
-          "POST",
-          `/api/workspaces/${encodeURIComponent(workspaceDeclaredId)}/create`,
-          {
-            body: {
-              ...(request.key === undefined ? {} : { key: request.key }),
-              ...(request.secrets === undefined
-                ? {}
-                : {
-                    secrets: request.secrets.map((secret) => ({
-                      name: requireSecretName(secret.secret),
-                      ...("env" in secret
-                        ? { env: secret.env }
-                        : { file: secret.file }),
-                    })),
-                  }),
-              ...(request.idempotencyKey === undefined
-                ? {}
-                : { idempotency_key: request.idempotencyKey }),
-            },
-            ...(options.signal === undefined ? {} : { signal: options.signal }),
-          },
-        ),
-        "Workspace create response",
-      )
-      const id = resourceID(
-        response["workspace_id"],
-        "Workspace create response.workspace_id",
-      )
-      return createAuthenticatedWorkspaceRef(
-        workspaceDeclaredId,
-        { id },
-        transport,
-      ) as WorkspaceIdRef
-    },
-    ref,
-  }) as ClientWorkspacesApi
+  const address = value as { readonly id?: unknown; readonly key?: unknown }
+  const hasID = address.id !== undefined
+  const hasKey = address.key !== undefined
+  if (hasID === hasKey) throw new Error("private Workspace address is invalid")
+  if (hasID) return createWorkspaceIdAddress(address.id as string)
+  return createWorkspaceKeyAddress(address.key as string)
 }
 
-export function inspectWorkspaceDefinition(
+export function requireWorkspaceIDAddress(value: unknown): string {
+  const address = inspectWorkspaceAddress(value)
+  if (address === undefined || typeof address.id !== "string") {
+    throw new Error("Workspace requires workspaces.fromId() or a Workspace ref")
+  }
+  return address.id
+}
+
+export function encodeWorkspaceSecrets(
+  inputs: readonly WorkspaceSecretInput[] | undefined,
+): readonly EncodedWorkspaceSecret[] {
+  if (inputs === undefined) return Object.freeze([])
+  if (!Array.isArray(inputs)) {
+    throw new Error("Workspace secrets must be an array")
+  }
+  if (inputs.length > 64) {
+    throw new Error("at most 64 Workspace Secret placements are allowed")
+  }
+  return Object.freeze(inputs.map((input) => {
+    if (typeof input !== "object" || input === null || Array.isArray(input)) {
+      throw new Error("Workspace Secret placement must be an object")
+    }
+    if (!Object.hasOwn(input, "secret")) {
+      throw new Error("Workspace Secret placement.secret is required")
+    }
+    const name = inspectSecretAddress(input.secret)
+    if (name === undefined) {
+      throw new Error("Workspace Secret requires secrets.fromName()")
+    }
+    const hasEnv = Object.hasOwn(input, "env") && input.env !== undefined
+    const hasFile = Object.hasOwn(input, "file") && input.file !== undefined
+    if (hasEnv === hasFile) {
+      throw new Error("Workspace Secret requires exactly one of env or file")
+    }
+    const allowed = new Set(hasEnv ? ["secret", "env"] : ["secret", "file"])
+    const unknown = Object.keys(input).find((key) => !allowed.has(key))
+    if (unknown !== undefined) {
+      throw new Error(
+        `Workspace Secret placement has unknown member ${JSON.stringify(unknown)}`,
+      )
+    }
+    if (hasEnv) {
+      if (typeof input.env !== "string" || input.env.length === 0) {
+        throw new Error("Workspace Secret env target is required")
+      }
+      return Object.freeze({ name, env: input.env })
+    }
+    if (typeof input.file !== "string" || input.file.length === 0) {
+      throw new Error("Workspace Secret file target is required")
+    }
+    return Object.freeze({ name, file: input.file })
+  }))
+}
+
+export function inspectSandboxDefinition(
   value: unknown,
-): InternalWorkspaceDefinition | undefined {
+): InternalSandboxDefinition | undefined {
   if (typeof value !== "object" || value === null) return undefined
-  if (!Object.hasOwn(value, workspaceDefinitionBrand)) return undefined
+  if (!Object.hasOwn(value, sandboxDefinitionBrand)) return undefined
   if (
-    (value as Record<PropertyKey, unknown>)[workspaceDefinitionBrand] !== true
+    (value as Record<PropertyKey, unknown>)[sandboxDefinitionBrand] !== true
   ) {
-    throw new Error("invalid private workspace record")
+    throw new Error("invalid private Sandbox record")
   }
   const internal = (value as Partial<Definition>).internal
   if (
     typeof internal !== "object" ||
     internal === null ||
-    internal.kind !== "workspace" ||
+    internal.kind !== "sandbox" ||
     typeof internal.id !== "string" ||
     typeof internal.image !== "object" ||
     internal.image === null ||
     typeof internal.resources !== "object" ||
     internal.resources === null
   ) {
-    throw new Error("invalid private workspace record")
+    throw new Error("invalid private Sandbox record")
   }
   validateTaskId(internal.id)
   return internal
 }
 
-function createWorkspaceRef(
-  address:
-    | { readonly id: string; readonly key?: never }
-    | { readonly key: string; readonly id?: never },
-): WorkspaceIdRef | WorkspaceKeyRef {
-  const immutableAddress: Readonly<{ id: string } | { key: string }> =
-    address.id !== undefined
-      ? Object.freeze({ id: address.id })
-      : Object.freeze({ key: address.key })
+function createWorkspaceRef(id: string): WorkspaceIdRef {
+  const workspaceID = resourceID(id, "Workspace ID")
   const files: WorkspaceFiles = Object.freeze({
     read(
       path: string,
       options?: RequestOptions,
     ): Promise<Uint8Array> {
       return currentRuntimeOperations().workspaceFileRead(
-        immutableAddress, path, options?.signal,
+        workspaceID, path, options?.signal,
       )
     },
     stat(
@@ -399,7 +362,7 @@ function createWorkspaceRef(
       options?: RequestOptions,
     ): Promise<WorkspaceFileEntry> {
       return currentRuntimeOperations().workspaceFileStat(
-        immutableAddress, path, options?.signal,
+        workspaceID, path, options?.signal,
       )
     },
     list(
@@ -408,7 +371,7 @@ function createWorkspaceRef(
       options?: RequestOptions,
     ): Promise<CursorPage<WorkspaceFileEntry>> {
       return currentRuntimeOperations().workspaceFileList(
-        immutableAddress, path, query, options?.signal,
+        workspaceID, path, query, options?.signal,
       )
     },
   })
@@ -416,173 +379,51 @@ function createWorkspaceRef(
     files,
     retrieve(options) {
       return currentRuntimeOperations().workspaceRetrieve(
-        immutableAddress, options?.signal,
+        workspaceID, options?.signal,
       )
     },
     exec(request, options) {
       return currentRuntimeOperations().workspaceExec(
-        immutableAddress, request, options?.signal,
+        workspaceID, request, options?.signal,
       )
     },
     delete(request, options) {
       return currentRuntimeOperations().workspaceDelete(
-        immutableAddress, request, options?.signal,
+        workspaceID, request, options?.signal,
       )
     },
   }
-  return Object.freeze({ ...immutableAddress, ...operations }) as
-    | WorkspaceIdRef
-    | WorkspaceKeyRef
+  return brandWorkspaceIdAddress({ id: workspaceID, ...operations }) as WorkspaceIdRef
 }
 
-function createAuthenticatedWorkspaceRef(
-  declaredID: string,
-  address:
-    | Readonly<{ id: string; key?: never }>
-    | Readonly<{ key: string; id?: never }>,
-  transport: WorkspaceTransport,
-): WorkspaceIdRef | WorkspaceKeyRef {
-  const resolvePath = (): string => {
-    if ("id" in address && address.id !== undefined) {
-      return `/api/workspaces/${encodeURIComponent(resourceID(address.id, "Workspace ID"))}`
-    }
-    return `/api/workspaces/by-key/${encodeURIComponent(declaredID)}?${
-      new URLSearchParams({ key: address.key }).toString()
-    }`
-  }
-  const retrieve = async (
-    options: RequestOptions = {},
-  ): Promise<WorkspaceSnapshot> =>
-    parseWorkspaceSnapshot(
-      await transport.request(
-        "GET",
-        resolvePath(),
-        options.signal === undefined ? {} : { signal: options.signal },
-      ),
-    )
-  const resolveID = async (signal?: AbortSignal): Promise<string> => {
-    if ("id" in address && address.id !== undefined) {
-      return resourceID(address.id, "Workspace ID")
-    }
-    return (await retrieve(signal === undefined ? {} : { signal })).id
-  }
-  const files: WorkspaceFiles = Object.freeze({
-    async read(
-      path: string,
-      options: RequestOptions = {},
-    ): Promise<Uint8Array> {
-      const id = await resolveID(options.signal)
-      return parseWorkspaceFileContent(
-        await transport.request(
-          "GET",
-          `/api/workspaces/${encodeURIComponent(id)}/files/content?${
-            new URLSearchParams({ path }).toString()
-          }`,
-          options.signal === undefined ? {} : { signal: options.signal },
-        ),
-      )
-    },
-    async stat(
-      path: string,
-      options: RequestOptions = {},
-    ): Promise<WorkspaceFileEntry> {
-      const id = await resolveID(options.signal)
-      return parseWorkspaceFileEntry(
-        await transport.request(
-          "GET",
-          `/api/workspaces/${encodeURIComponent(id)}/files/stat?${
-            new URLSearchParams({ path }).toString()
-          }`,
-          options.signal === undefined ? {} : { signal: options.signal },
-        ),
-      )
-    },
-    async list(
-      path: string,
-      queryInput: WorkspaceFileListQuery = {},
-      options: RequestOptions = {},
-    ): Promise<CursorPage<WorkspaceFileEntry>> {
-      const id = await resolveID(options.signal)
-      const query = new URLSearchParams({ path })
-      if (queryInput.cursor !== undefined) query.set("cursor", queryInput.cursor)
-      if (queryInput.limit !== undefined) query.set("limit", String(queryInput.limit))
-      return parseWorkspaceFilePage(
-        await transport.request(
-          "GET",
-          `/api/workspaces/${encodeURIComponent(id)}/files?${query.toString()}`,
-          options.signal === undefined ? {} : { signal: options.signal },
-        ),
-      )
-    },
-  })
-  return Object.freeze({
-    ...address,
-    files,
-    retrieve,
-    async exec(
-      request: WorkspaceExecRequest,
-      options: RequestOptions = {},
-    ): Promise<WorkspaceExecResult> {
-      const id = await resolveID(options.signal)
-      return parseWorkspaceExecResult(
-        await transport.request(
-          "POST",
-          `/api/workspaces/${encodeURIComponent(id)}/exec`,
-          {
-            body: {
-              command: [...request.command],
-              ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
-              ...(request.env === undefined ? {} : { env: request.env }),
-              ...(request.stdin === undefined
-                ? {}
-                : { stdin_base64: encodeWorkspaceBase64(request.stdin) }),
-              ...(request.timeout === undefined
-                ? {}
-                : { timeout: request.timeout }),
-              idempotency_key: request.idempotencyKey,
-            },
-            ...(options.signal === undefined ? {} : { signal: options.signal }),
-          },
-        ),
-      )
-    },
-    async delete(
-      request: WorkspaceDeleteRequest = {},
-      options: RequestOptions = {},
-    ): Promise<WorkspaceDeleteReceipt> {
-      const id = await resolveID(options.signal)
-      return parseWorkspaceDeleteReceipt(
-        await transport.request(
-          "POST",
-          `/api/workspaces/${encodeURIComponent(id)}/delete`,
-          {
-            body: request.idempotencyKey === undefined
-              ? {}
-              : { idempotency_key: request.idempotencyKey },
-            ...(options.signal === undefined ? {} : { signal: options.signal }),
-          },
-        ),
-      )
-    },
-  }) as WorkspaceIdRef | WorkspaceKeyRef
+export function createWorkspaceIdAddress(id: string): WorkspaceIdAddress {
+  return brandWorkspaceIdAddress({ id: resourceID(id, "Workspace ID") })
 }
 
-function validateWorkspaceAddress(
-  address:
-    | Readonly<{ id: string; key?: never }>
-    | Readonly<{ key: string; id?: never }>,
-): void {
+function createWorkspaceKeyAddress(key: string): WorkspaceKeyAddress {
   if (
-    ("id" in address && typeof address.id === "string") ===
-    ("key" in address && typeof address.key === "string")
+    typeof key !== "string" ||
+    new TextEncoder().encode(key).length < 1 ||
+    new TextEncoder().encode(key).length > 512
   ) {
-    throw new Error("Workspace ref requires exactly one of id or key")
+    throw new Error("Workspace key must contain 1 to 512 UTF-8 bytes")
   }
-  if ("id" in address && address.id !== undefined) {
-    resourceID(address.id, "Workspace ID")
-  } else if (address.key.length === 0) {
-    throw new Error("Workspace key is required")
+  if (key.trim() !== key) {
+    throw new Error("Workspace key cannot begin or end with whitespace")
   }
+  return brandWorkspaceAddress({ key }) as WorkspaceKeyAddress
+}
+
+export function brandWorkspaceIdAddress<T extends { readonly id: string }>(
+  value: T,
+): T & WorkspaceIdAddress {
+  resourceID(value.id, "Workspace ID")
+  return brandWorkspaceAddress(value) as T & WorkspaceIdAddress
+}
+
+function brandWorkspaceAddress<T extends object>(value: T): T {
+  Object.defineProperty(value, workspaceAddressBrand, { value: true })
+  return Object.freeze(value)
 }
 
 export function parseWorkspaceSnapshot(value: unknown): WorkspaceSnapshot {
@@ -591,15 +432,15 @@ export function parseWorkspaceSnapshot(value: unknown): WorkspaceSnapshot {
   if (key !== undefined && typeof key !== "string") {
     throw new Error("Workspace response.key must be a string")
   }
-  const declaredId = input["declared_id"]
-  if (typeof declaredId !== "string") {
-    throw new Error("Workspace response.declared_id must be a string")
+  const sandboxId = input["sandbox_id"]
+  if (typeof sandboxId !== "string") {
+    throw new Error("Workspace response.sandbox_id must be a string")
   }
-  validateTaskId(declaredId)
+  validateTaskId(sandboxId)
   const status = input["status"]
   if (
     status !== "available" &&
-    status !== "recovery_required" &&
+    status !== "recovery-required" &&
     status !== "deleting"
   ) {
     throw new Error("Workspace response.status is invalid")
@@ -610,7 +451,8 @@ export function parseWorkspaceSnapshot(value: unknown): WorkspaceSnapshot {
   return Object.freeze({
     id: resourceID(input["id"], "Workspace response.id"),
     ...(key === undefined ? {} : { key }),
-    declaredId,
+    sandboxId,
+    deploymentId: resourceID(input["deployment_id"], "Workspace response.deployment_id"),
     status,
     secrets: Object.freeze(input["secrets"].map(parseWorkspaceSecret)),
     lastActivityAt: workspaceDate(input["last_activity_at"], "last_activity_at"),
@@ -633,14 +475,6 @@ function parseWorkspaceSecret(value: unknown): WorkspaceSecretSnapshot {
     name: input["name"],
     ...(hasEnv ? { env: input["env"] as string } : { file: input["file"] as string }),
   })
-}
-
-function requireSecretName(value: unknown): string {
-  const name = inspectSecretNameRef(value)
-  if (name === undefined) {
-    throw new Error("Workspace Secret requires secrets.fromName()")
-  }
-  return name
 }
 
 export function parseWorkspaceFileEntry(value: unknown): WorkspaceFileEntry {
@@ -761,15 +595,6 @@ function workspaceDate(value: unknown, field: string): Date {
     throw new Error(`Workspace response.${field} must be an RFC 3339 timestamp`)
   }
   return date
-}
-
-function encodeWorkspaceBase64(value: Uint8Array): string {
-  let binary = ""
-  const chunkSize = 32_768
-  for (let offset = 0; offset < value.length; offset += chunkSize) {
-    binary += String.fromCharCode(...value.subarray(offset, offset + chunkSize))
-  }
-  return btoa(binary)
 }
 
 function decodeWorkspaceBase64(value: unknown, label: string): Uint8Array {
