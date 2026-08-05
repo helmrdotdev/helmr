@@ -40,7 +40,7 @@ export function Invite() {
       setSentEmail(result.email ?? null);
       setDebugURL(result.debug_url ?? null);
     } catch (e) {
-      const kind = e instanceof ApiError ? e.errorKind : null;
+      const kind = e instanceof ApiError ? e.code : null;
       setError(errorMessage(kind, e instanceof Error ? e.message : "Invite failed."));
     } finally {
       setMagicBusy(false);
@@ -56,7 +56,7 @@ export function Invite() {
       const { redirect_url } = await startGitHubInvite(currentToken);
       window.location.href = redirect_url;
     } catch (e) {
-      const kind = e instanceof ApiError ? e.errorKind : null;
+      const kind = e instanceof ApiError ? e.code : null;
       setError(errorMessage(kind, e instanceof Error ? e.message : "Invite failed."));
       setGitHubBusy(false);
     }

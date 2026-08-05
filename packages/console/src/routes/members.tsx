@@ -1,4 +1,4 @@
-import { createQuery, useQueryClient } from "@tanstack/solid-query";
+import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { formatRelative } from "../features/runs/display";
 import { ApiError } from "../lib/api";
@@ -43,7 +43,6 @@ const ROLE_LABELS: Record<MemberRole, string> = {
 const MEMBER_STATUS_LABELS: Record<MemberStatus, string> = {
   active: "Active",
   disabled: "Disabled",
-  pending: "Pending",
 };
 
 const INVITATION_STATUS_LABELS: Record<InvitationStatus, string> = {
@@ -66,7 +65,7 @@ const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
 function membersErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
-    return MEMBERS_ERROR_MESSAGES[error.errorKind] ?? error.message ?? INTERNAL_ERROR_MESSAGE;
+    return MEMBERS_ERROR_MESSAGES[error.code] ?? error.message ?? INTERNAL_ERROR_MESSAGE;
   }
   return INTERNAL_ERROR_MESSAGE;
 }
@@ -122,9 +121,8 @@ function RoleBadge(props: { role: MemberRole }) {
 
 function MemberStatusBadge(props: { status?: MemberStatus | undefined }) {
   const status = () => props.status ?? "active";
-  const tone = (): "succeeded" | "waiting" | "revoked" => {
+  const tone = (): "succeeded" | "revoked" => {
     if (status() === "disabled") return "revoked";
-    if (status() === "pending") return "waiting";
     return "succeeded";
   };
   return <span class={statusBadgeClass(tone())}>{MEMBER_STATUS_LABELS[status()] ?? status()}</span>;
@@ -385,15 +383,17 @@ export function Members() {
     queryFn: listMembers,
     retry: false,
   }));
-  const invitations = createQuery(() => ({
+  const invitations = createInfiniteQuery(() => ({
     queryKey: ["invitations"],
-    queryFn: listInvitations,
+    queryFn: ({ pageParam }) => listInvitations(pageParam || undefined),
+    initialPageParam: "",
+    getNextPageParam: (page) => page.next_cursor,
     retry: false,
   }));
 
   const canManage = createMemo(() => canManageFromMe(me.data?.role, me.data?.permissions));
   const pendingInvitations = createMemo(() =>
-    invitations.data?.invitations ?? [],
+    invitations.data?.pages.flatMap((page) => page.invitations) ?? [],
   );
 
   const invalidateMembers = async () => {
@@ -568,6 +568,18 @@ export function Members() {
                 </tbody>
               </table>
             </div>
+            <Show when={invitations.hasNextPage}>
+              <div class={ui.actionRow}>
+                <button
+                  type="button"
+                  class={ui.secondaryButton}
+                  disabled={invitations.isFetchingNextPage}
+                  onClick={() => void invitations.fetchNextPage()}
+                >
+                  {invitations.isFetchingNextPage ? "Loading..." : "Load more invitations"}
+                </button>
+              </div>
+            </Show>
           </Show>
         </Show>
       </section>

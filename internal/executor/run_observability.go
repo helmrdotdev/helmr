@@ -6,11 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"strings"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/httpclient"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -222,42 +219,4 @@ func writeRuntimeOperationDecision(
 		return fmt.Errorf("write runtime operation decision: %w", err)
 	}
 	return nil
-}
-
-func runtimeOperationFailure(
-	err error,
-	fallbackCode string,
-	fallbackMessage string,
-) (workerapi.RuntimeOperationFailure, bool) {
-	var httpErr *httpclient.Error
-	if !errors.As(err, &httpErr) {
-		return workerapi.RuntimeOperationFailure{}, false
-	}
-	semantic := httpErr.StatusCode == http.StatusBadRequest ||
-		httpErr.StatusCode == http.StatusRequestEntityTooLarge ||
-		httpErr.StatusCode == http.StatusUnprocessableEntity ||
-		(httpErr.StatusCode == http.StatusConflict &&
-			strings.TrimSpace(httpErr.Code) != "")
-	if !semantic {
-		return workerapi.RuntimeOperationFailure{}, false
-	}
-	code := strings.TrimSpace(httpErr.Code)
-	if code == "" {
-		code = fallbackCode
-	}
-	message := strings.TrimSpace(httpErr.Message)
-	if message == "" {
-		message = fallbackMessage
-	}
-	return workerapi.RuntimeOperationFailure{
-		Code: code, Message: message, Retryable: httpErr.Retryable,
-	}, true
-}
-
-func isRuntimeOperationRejection(err error) bool {
-	if err == nil {
-		return false
-	}
-	_, ok := runtimeOperationFailure(err, "", "")
-	return ok
 }

@@ -255,16 +255,22 @@ SELECT id, org_id, project_id, environment_id, created_by_user_id, name, key_pre
            AND revoked_at IS NOT NULL
        )
    )
- ORDER BY created_at DESC
- LIMIT $5
+   AND (
+       $5::timestamptz IS NULL
+       OR (created_at, id) < ($5::timestamptz, $6::uuid)
+   )
+ ORDER BY created_at DESC, id DESC
+ LIMIT $7
 `
 
 type ListAPIKeysParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	StatusFilter  string      `json:"status_filter"`
-	RowLimit      int32       `json:"row_limit"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	StatusFilter   string             `json:"status_filter"`
+	AfterCreatedAt pgtype.Timestamptz `json:"after_created_at"`
+	AfterID        pgtype.UUID        `json:"after_id"`
+	RowLimit       int32              `json:"row_limit"`
 }
 
 type ListAPIKeysRow struct {
@@ -287,6 +293,8 @@ func (q *Queries) ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]Lis
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.StatusFilter,
+		arg.AfterCreatedAt,
+		arg.AfterID,
 		arg.RowLimit,
 	)
 	if err != nil {

@@ -239,7 +239,7 @@ func (s *Server) authorizeRunRequest(
 		writeError(w, err)
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, false
 	}
-	projectRef, environmentRef, err := environmentScopeRefsFromRequest(r, principal, "", "")
+	projectRef, environmentRef, err := environmentScopeRefsFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_run_scope", message: err.Error()}))
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, false
@@ -336,7 +336,7 @@ func parseRunStatusFilter(r *http.Request) ([]db.RunStatus, error) {
 }
 
 func runStatusFilter(raw string) (db.RunStatus, bool) {
-	switch raw {
+	switch api.RunStatus(raw) {
 	case api.RunStatusQueued:
 		return db.RunStatusQueued, true
 	case api.RunStatusRunning:
@@ -505,7 +505,7 @@ func projectRunSnapshot(record runSnapshotRecord) (api.RunSnapshotResponse, erro
 	return response, nil
 }
 
-func runPublicStatus(status db.RunStatus) (string, error) {
+func runPublicStatus(status db.RunStatus) (api.RunStatus, error) {
 	switch status {
 	case db.RunStatusQueued:
 		return api.RunStatusQueued, nil

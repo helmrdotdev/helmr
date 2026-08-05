@@ -52,7 +52,7 @@ func (s *Server) createWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	principal := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal, "", "")
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_workspace_create", message: err.Error()}))
 		return
@@ -102,7 +102,7 @@ func (s *Server) deleteWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	principal := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal, "", "")
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_workspace_reference", message: err.Error()}))
 		return
@@ -146,7 +146,7 @@ func (s *Server) deleteWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getWorkspaceByReferenceHTTP(w http.ResponseWriter, r *http.Request) {
 	principal := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal, "", "")
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_workspace_reference", message: err.Error()}))
 		return

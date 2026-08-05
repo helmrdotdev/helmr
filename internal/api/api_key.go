@@ -30,8 +30,8 @@ type APIKeyIssued struct {
 }
 
 type ListAPIKeysResponse struct {
-	Items   []APIKeySummary `json:"items"`
-	HasMore bool            `json:"has_more"`
+	APIKeys    []APIKeySummary `json:"api_keys"`
+	NextCursor string          `json:"next_cursor,omitempty"`
 }
 
 type IssueAPIKeyRequest struct {

@@ -2,15 +2,22 @@ package api
 
 import "time"
 
+type MemberStatus string
+
+const (
+	MemberStatusActive   MemberStatus = "active"
+	MemberStatusDisabled MemberStatus = "disabled"
+)
+
 type MemberSummary struct {
-	UserID      string     `json:"user_id"`
-	DisplayName string     `json:"display_name"`
-	Email       string     `json:"email,omitempty"`
-	Role        string     `json:"role"`
-	Status      string     `json:"status"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	DisabledAt  *time.Time `json:"disabled_at,omitempty"`
+	UserID      string       `json:"user_id"`
+	DisplayName string       `json:"display_name"`
+	Email       string       `json:"email,omitempty"`
+	Role        string       `json:"role"`
+	Status      MemberStatus `json:"status"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
+	DisabledAt  *time.Time   `json:"disabled_at,omitempty"`
 }
 
 type ListMembersResponse struct {
@@ -47,7 +54,7 @@ type InvitationSummary struct {
 
 type ListInvitationsResponse struct {
 	Invitations []InvitationSummary `json:"invitations"`
-	HasMore     bool                `json:"has_more"`
+	NextCursor  string              `json:"next_cursor,omitempty"`
 }
 
 type CreateInvitationRequest struct {

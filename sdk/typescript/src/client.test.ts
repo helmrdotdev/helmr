@@ -342,10 +342,11 @@ describe("HelmrClient Tokens", () => {
         url: "https://api.example.test",
         apiKey: "api-key",
         fetch: (async () => Response.json({
-          error: `request failed with ${status}`,
-          code: `token_error_${status}`,
-          retryable: status === 409,
-          requestId: `request-${status}`,
+          error: {
+            code: `token_error_${status}`,
+            message: `request failed with ${status}`,
+            details: { token_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" },
+          },
         }, { status })) as typeof fetch,
       })
 
@@ -357,8 +358,7 @@ describe("HelmrClient Tokens", () => {
           name: "HelmrError",
           message: `request failed with ${status}`,
           code: `token_error_${status}`,
-          retryable: status === 409,
-          requestId: `request-${status}`,
+          details: { token_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" },
         })
       }
     },

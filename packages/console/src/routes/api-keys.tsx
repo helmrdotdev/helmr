@@ -1,4 +1,4 @@
-import { createQuery, useQueryClient } from "@tanstack/solid-query";
+import { createInfiniteQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { Select, type SelectOption } from "../ui/Select";
 import { ApiError } from "../lib/api";
@@ -151,7 +151,7 @@ const DEFAULT_SCOPES: ApiKeyScope[] = ["runs:create", "runs:read"];
 
 function apiKeyErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
-    return API_KEY_ERROR_MESSAGES[error.errorKind] ?? error.message ?? INTERNAL_ERROR_MESSAGE;
+    return API_KEY_ERROR_MESSAGES[error.code] ?? error.message ?? INTERNAL_ERROR_MESSAGE;
   }
   return INTERNAL_ERROR_MESSAGE;
 }
@@ -451,11 +451,19 @@ export function ApiKeys() {
   const [revokingId, setRevokingId] = createSignal<string | null>(null);
   const [revokeError, setRevokeError] = createSignal<{ id: string; message: string } | null>(null);
 
-  const keys = createQuery(() => ({
+  const keys = createInfiniteQuery(() => ({
     queryKey: ["api-keys", scope.selectedProjectID(), scope.selectedEnvironmentID(), filter()],
-    queryFn: () => listApiKeys(scope.selectedProjectID(), scope.selectedEnvironmentID(), filter()),
+    queryFn: ({ pageParam }) => listApiKeys(
+      scope.selectedProjectID(),
+      scope.selectedEnvironmentID(),
+      filter(),
+      pageParam || undefined,
+    ),
+    initialPageParam: "",
+    getNextPageParam: (page) => page.next_cursor,
     retry: false,
   }));
+  const keyItems = createMemo(() => keys.data?.pages.flatMap((page) => page.api_keys) ?? []);
 
   const invalidateApiKeys = () => queryClient.invalidateQueries({ queryKey: ["api-keys", scope.selectedProjectID(), scope.selectedEnvironmentID()] });
 
@@ -510,14 +518,8 @@ export function ApiKeys() {
         <p class={ui.error} role="alert">{apiKeyErrorMessage(keys.error)}</p>
       </Show>
 
-      <Show when={keys.data?.has_more}>
-        <div class={ui.hasMoreBanner} role="status">
-          Showing the most recent 200 keys. Narrow the filter to find older keys.
-        </div>
-      </Show>
-
       <Show when={!keys.isPending} fallback={<p class={ui.muted}>Loading API keys...</p>}>
-        <Show when={(keys.data?.items.length ?? 0) > 0} fallback={<p class={ui.emptyState}>No API keys found.</p>}>
+        <Show when={keyItems().length > 0} fallback={<p class={ui.emptyState}>No API keys found.</p>}>
           <div class={ui.tableWrap}>
             <table class={ui.apiKeyTable}>
               <thead>
@@ -533,7 +535,7 @@ export function ApiKeys() {
                 </tr>
               </thead>
               <tbody>
-                <For each={keys.data?.items ?? []}>
+                <For each={keyItems()}>
                   {(keyItem) => (
                     <ApiKeyRow
                       keyItem={keyItem}
@@ -546,6 +548,18 @@ export function ApiKeys() {
               </tbody>
             </table>
           </div>
+          <Show when={keys.hasNextPage}>
+            <div class={ui.actionRow}>
+              <button
+                type="button"
+                class={ui.secondaryButton}
+                disabled={keys.isFetchingNextPage}
+                onClick={() => void keys.fetchNextPage()}
+              >
+                {keys.isFetchingNextPage ? "Loading..." : "Load more API keys"}
+              </button>
+            </div>
+          </Show>
         </Show>
       </Show>
 

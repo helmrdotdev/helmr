@@ -44,7 +44,7 @@ export type ApiKeyIssued = ApiKeySummary & { raw_key: string };
 
 export type ListFilter = "active" | "expired" | "revoked" | "all";
 
-export type ListResponse = { items: ApiKeySummary[]; has_more: boolean };
+export type ListResponse = { api_keys: ApiKeySummary[]; next_cursor?: string };
 
 export type IssueInput = {
   name: string;
@@ -52,8 +52,15 @@ export type IssueInput = {
   permissions: ApiKeyPermissionGrant[];
 };
 
-export async function listApiKeys(projectID: string, environmentID: string, filter: ListFilter): Promise<ListResponse> {
-  return request<ListResponse>(`${apiKeysPath(projectID, environmentID)}?filter=${encodeURIComponent(filter)}`);
+export async function listApiKeys(
+  projectID: string,
+  environmentID: string,
+  filter: ListFilter,
+  cursor?: string,
+): Promise<ListResponse> {
+  const query = new URLSearchParams({ filter });
+  if (cursor) query.set("cursor", cursor);
+  return request<ListResponse>(`${apiKeysPath(projectID, environmentID)}?${query.toString()}`);
 }
 
 export async function issueApiKey(projectID: string, environmentID: string, input: IssueInput): Promise<ApiKeyIssued> {
@@ -64,7 +71,7 @@ export async function revokeApiKey(projectID: string, environmentID: string, id:
   try {
     await del<Record<string, never>>(`${apiKeysPath(projectID, environmentID)}/${encodeURIComponent(id)}`);
   } catch (error) {
-    if (error instanceof ApiError && error.errorKind === "not_found") {
+    if (error instanceof ApiError && error.code === "not_found") {
       return;
     }
     throw error;

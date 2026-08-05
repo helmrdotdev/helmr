@@ -581,7 +581,7 @@ func (s *Server) completeToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("project token"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.CompleteTokenResponse{Status: "completed", Token: response})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) cancelToken(w http.ResponseWriter, r *http.Request) {
@@ -656,7 +656,7 @@ func (s *Server) completeTokenWithCallback(w http.ResponseWriter, r *http.Reques
 		writeError(w, errors.New("project token"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.CompleteTokenResponse{Status: "completed", Token: response})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) completeTokenWithBearer(w http.ResponseWriter, r *http.Request) {
@@ -709,7 +709,7 @@ func (s *Server) completeTokenWithBearer(w http.ResponseWriter, r *http.Request)
 		writeError(w, errors.New("project token"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.CompleteTokenResponse{Status: "completed", Token: response})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) completeTokenBearerPreflight(w http.ResponseWriter, _ *http.Request) {
@@ -966,7 +966,7 @@ func (s *Server) authorizeToken(
 		return db.Token{}, false
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return db.Token{}, false
@@ -1019,16 +1019,16 @@ func tokenResponse(row db.Token) (api.TokenResponse, error) {
 	return response, nil
 }
 
-func tokenPublicStatus(state db.TokenState) (string, error) {
+func tokenPublicStatus(state db.TokenState) (api.TokenStatus, error) {
 	switch state {
 	case db.TokenStatePending:
-		return db.TokenStatePending, nil
+		return api.TokenStatusPending, nil
 	case db.TokenStateCompleted:
-		return db.TokenStateCompleted, nil
+		return api.TokenStatusCompleted, nil
 	case db.TokenStateExpired:
-		return db.TokenStateExpired, nil
+		return api.TokenStatusExpired, nil
 	case db.TokenStateCancelled:
-		return db.TokenStateCancelled, nil
+		return api.TokenStatusCancelled, nil
 	default:
 		return "", fmt.Errorf("token state %q has no public projection", state)
 	}

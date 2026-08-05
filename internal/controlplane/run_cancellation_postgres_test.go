@@ -117,12 +117,7 @@ func TestCancelRunHTTPDeniesBeforeRunValidation(t *testing.T) {
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	var response struct {
-		Code string `json:"code"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
+	response := decodeHTTPError(t, recorder.Body.Bytes())
 	if response.Code != "permission_required" {
 		t.Fatalf("unexpected response: %s", recorder.Body.String())
 	}

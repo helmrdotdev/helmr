@@ -1,9 +1,11 @@
 package controlplane
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -14,6 +16,7 @@ const (
 	errUnauthorized
 	errForbidden
 	errNotFound
+	errMethodNotAllowed
 	errConflict
 	errGone
 	errUnprocessable
@@ -36,6 +39,10 @@ type errorCoder interface {
 
 type errorRetryer interface {
 	ErrorRetryable() bool
+}
+
+type errorDetailer interface {
+	ErrorDetails() map[string]json.RawMessage
 }
 
 type codedError struct {
@@ -126,6 +133,8 @@ func errorStatus(err error) int {
 		return http.StatusForbidden
 	case errNotFound:
 		return http.StatusNotFound
+	case errMethodNotAllowed:
+		return http.StatusMethodNotAllowed
 	case errConflict:
 		return http.StatusConflict
 	case errGone:
@@ -152,16 +161,75 @@ func writeError(w http.ResponseWriter, err error) {
 }
 
 func writeErrorStatus(w http.ResponseWriter, status int, err error) {
-	response := map[string]any{"error": err.Error()}
+	code := defaultErrorCode(status)
+	message := publicErrorMessage(status, err)
+	var details map[string]json.RawMessage
 	var coder errorCoder
 	if errors.As(err, &coder) && coder.ErrorCode() != "" {
-		response["code"] = coder.ErrorCode()
+		code = coder.ErrorCode()
 	}
-	var retryer errorRetryer
-	if errors.As(err, &retryer) {
-		response["retryable"] = retryer.ErrorRetryable()
+	var detailer errorDetailer
+	if errors.As(err, &detailer) {
+		details = detailer.ErrorDetails()
 	}
-	writeJSON(w, status, response)
+	writeJSON(w, status, api.HTTPErrorResponse{Error: api.HTTPError{
+		Code: code, Message: message, Details: details,
+	}})
+}
+
+func defaultErrorCode(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "bad_request"
+	case http.StatusUnauthorized:
+		return "unauthorized"
+	case http.StatusForbidden:
+		return "forbidden"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusMethodNotAllowed:
+		return "method_not_allowed"
+	case http.StatusConflict:
+		return "conflict"
+	case http.StatusGone:
+		return "gone"
+	case http.StatusUnprocessableEntity:
+		return "unprocessable_entity"
+	case http.StatusRequestEntityTooLarge:
+		return "request_too_large"
+	case http.StatusBadGateway:
+		return "bad_gateway"
+	case http.StatusNotImplemented:
+		return "not_implemented"
+	case http.StatusServiceUnavailable:
+		return "service_unavailable"
+	case http.StatusTooManyRequests:
+		return "rate_limited"
+	default:
+		return "internal_error"
+	}
+}
+
+func publicErrorMessage(status int, err error) string {
+	if status < http.StatusInternalServerError {
+		if message := err.Error(); message != "" {
+			return message
+		}
+	}
+	var coded codedError
+	if errors.As(err, &coded) && coded.message != "" {
+		return coded.message
+	}
+	switch status {
+	case http.StatusBadGateway:
+		return "upstream service is unavailable"
+	case http.StatusNotImplemented:
+		return "operation is not implemented"
+	case http.StatusServiceUnavailable:
+		return "service is unavailable"
+	default:
+		return "internal server error"
+	}
 }
 
 func isNoRows(err error) bool {

@@ -81,9 +81,7 @@ func tokenCompleteCommand() *cobra.Command {
 			if jsonOutput {
 				return writeJSON(cmd.OutOrStdout(), response)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "token_id: %s\n", response.Token.ID)
-			fmt.Fprintf(cmd.OutOrStdout(), "token_status: %s\n", response.Token.Status)
-			fmt.Fprintf(cmd.OutOrStdout(), "completion_status: %s\n", response.Status)
+			writeTokenSummary(cmd, response)
 			return nil
 		},
 	}

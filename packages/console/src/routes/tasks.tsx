@@ -9,7 +9,7 @@ import { listTasks, type Task } from "../lib/tasks";
 import { statusBadgeClass, ui } from "../ui/styles";
 
 function tasksErrorMessage(error: unknown): string {
-  if (error instanceof ApiError && error.errorKind === "forbidden") {
+  if (error instanceof ApiError && error.code === "forbidden") {
     return "You do not have permission to view deployment tasks.";
   }
   return "Could not load deployment tasks.";

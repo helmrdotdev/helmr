@@ -316,20 +316,20 @@ func (q *Queries) GetActorByKey(ctx context.Context, arg GetActorByKeyParams) (S
 	return i, err
 }
 
-const getActorRead = `-- name: GetActorRead :one
+const getSessionRead = `-- name: GetSessionRead :one
 SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.state_version, sessions.manual_run_cancelled, sessions.failure_code, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_output_sequence, sessions.input_retention_floor, sessions.output_retention_floor, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.state, sessions.close_sequence, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.cancelled_at, sessions.failed_at
   FROM sessions
  WHERE sessions.environment_id = $1
    AND sessions.id = $2
 `
 
-type GetActorReadParams struct {
+type GetSessionReadParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	SessionID     pgtype.UUID `json:"session_id"`
 }
 
-func (q *Queries) GetActorRead(ctx context.Context, arg GetActorReadParams) (Session, error) {
-	row := q.db.QueryRow(ctx, getActorRead, arg.EnvironmentID, arg.SessionID)
+func (q *Queries) GetSessionRead(ctx context.Context, arg GetSessionReadParams) (Session, error) {
+	row := q.db.QueryRow(ctx, getSessionRead, arg.EnvironmentID, arg.SessionID)
 	var i Session
 	err := row.Scan(
 		&i.ID,

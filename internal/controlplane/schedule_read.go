@@ -34,12 +34,7 @@ type scheduleListCursor struct {
 
 func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(
-		r,
-		actor,
-		"",
-		"",
-	)
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -189,12 +184,7 @@ func decodeScheduleListCursor(raw string) (scheduleListCursor, error) {
 
 func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(
-		r,
-		actor,
-		"",
-		"",
-	)
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return

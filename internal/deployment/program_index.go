@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+
+	"github.com/helmrdotdev/helmr/internal/sourceid"
 )
 
 func (declaration ProgramIndexDeclaration) MarshalJSON() ([]byte, error) {
@@ -117,7 +119,7 @@ func validateProgramIndexDeclaration(
 	declaration ProgramIndexDeclaration,
 	queues map[string]struct{},
 ) error {
-	if !declaredIDPattern.MatchString(declaration.DeclaredID) {
+	if !sourceid.Valid(declaration.DeclaredID) {
 		return fmt.Errorf(
 			"declaredId %q is outside the exact ASCII ID domain",
 			declaration.DeclaredID,

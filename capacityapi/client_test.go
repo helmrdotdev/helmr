@@ -84,7 +84,7 @@ func TestClientReadsCapacityObservationsAndFilteredWorkerInstances(t *testing.T)
 		context.Background(),
 		"run-us-east-1",
 		[]string{"host-a", "host-b"},
-		[]string{"active", "draining"},
+		[]WorkerInstanceStatus{WorkerInstanceStatusActive, WorkerInstanceStatusDraining},
 		25,
 	)
 	if err != nil {
@@ -97,7 +97,10 @@ func TestClientReadsCapacityObservationsAndFilteredWorkerInstances(t *testing.T)
 
 func TestClientReturnsTypedHTTPError(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "stale fence", http.StatusConflict)
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+			"code": "stale_fence", "message": "stale fence", "details": map[string]any{"claim_version": 7},
+		}})
 	}))
 	defer server.Close()
 	client, err := NewClient(server.URL, testCapacityToken, WithHTTPClient(server.Client()))
@@ -106,7 +109,8 @@ func TestClientReturnsTypedHTTPError(t *testing.T) {
 	}
 	_, err = client.WorkerInstance(context.Background(), "worker-1")
 	httpErr, ok := err.(*HTTPError)
-	if !ok || httpErr.StatusCode != http.StatusConflict || httpErr.Body != "stale fence" {
+	if !ok || httpErr.StatusCode != http.StatusConflict || httpErr.Code != "stale_fence" ||
+		httpErr.Message != "stale fence" || string(httpErr.Details["claim_version"]) != "7" {
 		t.Fatalf("error = %#v", err)
 	}
 }

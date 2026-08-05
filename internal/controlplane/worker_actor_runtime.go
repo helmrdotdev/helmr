@@ -151,7 +151,7 @@ func (s *Server) workerGetSessionStatus(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			return err
 		}
-		status, err = getActorStatus(
+		status, err = getSessionStatus(
 			r.Context(), work.q, source.EnvironmentID, sessionID,
 		)
 		return err

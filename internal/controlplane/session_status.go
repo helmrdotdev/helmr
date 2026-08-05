@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type actorReadRecord struct {
+type sessionReadRecord struct {
 	id           pgtype.UUID
 	key          pgtype.Text
 	state        string
@@ -25,26 +25,26 @@ type actorReadRecord struct {
 	failureRunID pgtype.UUID
 }
 
-func getActorStatus(
+func getSessionStatus(
 	ctx context.Context,
 	store db.Querier,
 	environmentID pgtype.UUID,
 	sessionID pgtype.UUID,
 ) (api.SessionStatusSnapshot, error) {
-	row, err := store.GetActorRead(ctx, db.GetActorReadParams{
+	row, err := store.GetSessionRead(ctx, db.GetSessionReadParams{
 		EnvironmentID: environmentID, SessionID: sessionID,
 	})
 	if err != nil {
 		return api.SessionStatusSnapshot{}, err
 	}
-	return projectSessionStatus(actorReadRecordFromGet(row))
+	return projectSessionStatus(sessionReadRecordFromGet(row))
 }
 
-func (s *Server) actorReadScope(
+func (s *Server) sessionReadScope(
 	r *http.Request,
 	principal auth.Actor,
 ) (auth.Scope, pgtype.UUID, error) {
-	projectRef, environmentRef, err := environmentScopeRefsFromRequest(r, principal, "", "")
+	projectRef, environmentRef, err := environmentScopeRefsFromRequest(r, principal)
 	if err != nil {
 		return auth.Scope{}, pgtype.UUID{}, err
 	}
@@ -52,7 +52,7 @@ func (s *Server) actorReadScope(
 	return scope, environmentID, err
 }
 
-func projectSessionStatus(record actorReadRecord) (api.SessionStatusSnapshot, error) {
+func projectSessionStatus(record sessionReadRecord) (api.SessionStatusSnapshot, error) {
 	id := pgvalue.UUIDString(record.id)
 	if err := ids.Validate(id); err != nil {
 		return api.SessionStatusSnapshot{}, err
@@ -62,30 +62,30 @@ func projectSessionStatus(record actorReadRecord) (api.SessionStatusSnapshot, er
 		return api.SessionStatusSnapshot{}, err
 	}
 	if !record.createdAt.Valid || !record.updatedAt.Valid {
-		return api.SessionStatusSnapshot{}, errors.New("actor timestamps are unavailable")
+		return api.SessionStatusSnapshot{}, errors.New("session timestamps are unavailable")
 	}
 	failed := status == api.SessionStatusFailed
 	if failed != (record.failureCode.Valid && record.failureRunID.Valid) {
-		return api.SessionStatusSnapshot{}, errors.New("actor failure projection is inconsistent")
+		return api.SessionStatusSnapshot{}, errors.New("session failure projection is inconsistent")
 	}
 	if !failed && (record.failureCode.Valid || record.failureRunID.Valid) {
-		return api.SessionStatusSnapshot{}, errors.New("actor failure projection is inconsistent")
+		return api.SessionStatusSnapshot{}, errors.New("session failure projection is inconsistent")
 	}
 	if record.currentRunID.Valid {
 		if err := ids.Validate(pgvalue.UUIDString(record.currentRunID)); err != nil {
-			return api.SessionStatusSnapshot{}, errors.New("actor current run ID is invalid")
+			return api.SessionStatusSnapshot{}, errors.New("session current run ID is invalid")
 		}
 	}
 	if record.failureRunID.Valid {
 		if err := ids.Validate(pgvalue.UUIDString(record.failureRunID)); err != nil {
-			return api.SessionStatusSnapshot{}, errors.New("actor failure run ID is invalid")
+			return api.SessionStatusSnapshot{}, errors.New("session failure run ID is invalid")
 		}
 	}
 	if record.failureCode.Valid {
 		switch record.failureCode.String {
 		case "no_progress", "run_failed", "run_expired", "platform_failure":
 		default:
-			return api.SessionStatusSnapshot{}, errors.New("actor failure code is invalid")
+			return api.SessionStatusSnapshot{}, errors.New("session failure code is invalid")
 		}
 	}
 	result := api.SessionStatusSnapshot{
@@ -120,12 +120,12 @@ func sessionStatus(state string) (api.SessionStatus, error) {
 	case "failed":
 		return api.SessionStatusFailed, nil
 	default:
-		return "", fmt.Errorf("actor state %q has no public status", state)
+		return "", fmt.Errorf("session state %q has no public status", state)
 	}
 }
 
-func actorReadRecordFromGet(row db.Session) actorReadRecord {
-	return actorReadRecord{
+func sessionReadRecordFromGet(row db.Session) sessionReadRecord {
+	return sessionReadRecord{
 		id: row.ID, key: row.Key, state: row.State,
 		createdAt: row.CreatedAt, updatedAt: row.UpdatedAt,
 		currentRunID: row.CurrentRunID,

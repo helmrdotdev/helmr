@@ -588,7 +588,7 @@ class ClientTokens implements ClientTokensApi {
     request: Readonly<{ result: JsonValue; idempotencyKey?: string }>,
     options: RequestOptions = {},
   ): Promise<TokenSnapshot> {
-    const response = objectValue(
+    return parseToken(
       await this.#transport.request(
         "POST",
         `/v1/tokens/${encodeURIComponent(resourceID(id, "Token ID"))}/complete`,
@@ -602,9 +602,8 @@ class ClientTokens implements ClientTokensApi {
           ...(options.signal === undefined ? {} : { signal: options.signal }),
         },
       ),
-      "Token completion response",
+      false,
     )
-    return parseToken(response["token"], false)
   }
 
   async cancel(
@@ -718,29 +717,27 @@ function clientRequestError(response: Response, value: unknown): Error {
   const body = value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {}
-  const message = typeof body["error"] === "string" && body["error"] !== ""
-    ? body["error"]
-    : typeof body["message"] === "string" && body["message"] !== ""
-    ? body["message"]
+  const payload = body["error"] !== null && typeof body["error"] === "object" &&
+      !Array.isArray(body["error"])
+    ? body["error"] as Record<string, unknown>
+    : {}
+  const message = typeof payload["message"] === "string" && payload["message"] !== ""
+    ? payload["message"]
     : `Helmr request failed with status ${response.status}`
-  const code = typeof body["code"] === "string" && body["code"] !== ""
-    ? body["code"]
+  const code = typeof payload["code"] === "string" && payload["code"] !== ""
+    ? payload["code"]
     : responseStatusCode(response.status)
-  const retryable = typeof body["retryable"] === "boolean"
-    ? body["retryable"]
-    : response.status === 429 || response.status >= 500
-  const requestId = typeof body["requestId"] === "string" && body["requestId"] !== ""
-    ? body["requestId"]
+  const details = payload["details"] !== null && typeof payload["details"] === "object" &&
+      !Array.isArray(payload["details"])
+    ? payload["details"] as Readonly<Record<string, JsonValue>>
     : undefined
   const error = new Error(message) as Error & {
     code: string
-    retryable: boolean
-    requestId?: string
+    details?: Readonly<Record<string, JsonValue>>
   }
   error.name = "HelmrError"
   error.code = code
-  error.retryable = retryable
-  if (requestId !== undefined) error.requestId = requestId
+  if (details !== undefined) error.details = details
   return error
 }
 
@@ -754,14 +751,24 @@ function responseStatusCode(status: number): string {
       return "forbidden"
     case 404:
       return "not_found"
+    case 405:
+      return "method_not_allowed"
     case 409:
       return "conflict"
     case 410:
       return "gone"
+    case 413:
+      return "request_too_large"
     case 422:
       return "unprocessable_entity"
     case 429:
       return "rate_limited"
+    case 501:
+      return "not_implemented"
+    case 502:
+      return "bad_gateway"
+    case 503:
+      return "service_unavailable"
     default:
       return status >= 500 ? "internal_error" : "request_failed"
   }

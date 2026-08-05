@@ -370,9 +370,9 @@ func (r *Runner) executeStartedBuild(ctx context.Context, lease workerapi.Deploy
 			}
 			return fmt.Errorf("report deployment build delivery failure %s: %w", lease.DeploymentID, err)
 		}
-		if strings.TrimSpace(response.Status) != "building" &&
-			strings.TrimSpace(response.Status) != "deployed" &&
-			strings.TrimSpace(response.Status) != "failed" {
+		if response.Status != workerapi.DeploymentBuildStatusBuilding &&
+			response.Status != workerapi.DeploymentBuildStatusDeployed &&
+			response.Status != workerapi.DeploymentBuildStatusFailed {
 			r.log.Warn("worker reported deployment build delivery failure with unexpected status", "deployment_id", lease.DeploymentID, "status", response.Status)
 		}
 		return nil
@@ -383,7 +383,7 @@ func (r *Runner) executeStartedBuild(ctx context.Context, lease workerapi.Deploy
 	if err != nil {
 		return fmt.Errorf("complete deployment build %s: %w", lease.DeploymentID, err)
 	}
-	if strings.TrimSpace(response.Status) != "deployed" {
+	if response.Status != workerapi.DeploymentBuildStatusDeployed {
 		r.log.Warn("worker completed deployment build with non-deployed status", "deployment_id", lease.DeploymentID, "status", response.Status)
 	}
 	return nil

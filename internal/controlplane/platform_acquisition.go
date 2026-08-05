@@ -115,7 +115,7 @@ func (s *Server) workerCompletePlatformAcquisition(w http.ResponseWriter, r *htt
 	}
 	writeJSON(w, http.StatusOK, workerapi.PlatformAcquisitionResult{
 		DeploymentID: request.Acquisition.DeploymentID,
-		Status:       "pinned",
+		Status:       workerapi.PlatformAcquisitionStatusPinned,
 	})
 }
 
@@ -172,7 +172,7 @@ func (s *Server) workerFailPlatformAcquisition(w http.ResponseWriter, r *http.Re
 	}
 	writeJSON(w, http.StatusOK, workerapi.PlatformAcquisitionResult{
 		DeploymentID: request.Acquisition.DeploymentID,
-		Status:       "failed",
+		Status:       workerapi.PlatformAcquisitionStatusFailed,
 	})
 }
 

@@ -85,7 +85,7 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
+	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -187,7 +187,7 @@ func (s *Server) getSecret(w http.ResponseWriter, r *http.Request, id uuid.UUID)
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
+	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -337,7 +337,7 @@ func (s *Server) secretMutationAuthority(
 	r *http.Request,
 ) (auth.Actor, pgtype.UUID, bool) {
 	actor := actorFromContext(r.Context())
-	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
+	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return auth.Actor{}, pgtype.UUID{}, false
@@ -513,10 +513,14 @@ func secretResponse(
 	}, nil
 }
 
-func secretPublicStatus(state string) (string, error) {
+func secretPublicStatus(state string) (api.SecretStatus, error) {
 	switch state {
-	case "active", "revoked", "deleted":
-		return state, nil
+	case "active":
+		return api.SecretStatusActive, nil
+	case "revoked":
+		return api.SecretStatusRevoked, nil
+	case "deleted":
+		return api.SecretStatusDeleted, nil
 	default:
 		return "", fmt.Errorf("secret state %q has no public projection", state)
 	}

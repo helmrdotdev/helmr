@@ -17,8 +17,7 @@ type Error struct {
 	Status     string
 	Message    string
 	Code       string
-	Retryable  bool
-	RequestID  string
+	Details    json.RawMessage
 }
 
 func (e *Error) HTTPStatusCode() int {
@@ -171,13 +170,22 @@ func decodeError(resp *http.Response) error {
 		return fmt.Errorf("read error response: %w", err)
 	}
 	var payload struct {
-		Error     string `json:"error"`
-		Code      string `json:"code"`
-		Retryable bool   `json:"retryable"`
-		RequestID string `json:"requestId"`
+		Error struct {
+			Code    string          `json:"code"`
+			Message string          `json:"message"`
+			Details json.RawMessage `json:"details"`
+		} `json:"error"`
 	}
-	if err := json.Unmarshal(body, &payload); err == nil && payload.Error != "" {
-		return &Error{StatusCode: resp.StatusCode, Status: resp.Status, Message: payload.Error, Code: payload.Code, Retryable: payload.Retryable, RequestID: payload.RequestID}
+	if err := json.Unmarshal(body, &payload); err == nil &&
+		strings.TrimSpace(payload.Error.Code) != "" &&
+		strings.TrimSpace(payload.Error.Message) != "" {
+		return &Error{
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Message:    payload.Error.Message,
+			Code:       payload.Error.Code,
+			Details:    payload.Error.Details,
+		}
 	}
 	return &Error{StatusCode: resp.StatusCode, Status: resp.Status}
 }

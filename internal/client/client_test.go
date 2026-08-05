@@ -25,7 +25,10 @@ import (
 func TestClientErrorUsesServerMessage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "bad source"})
+		_ = json.NewEncoder(w).Encode(api.HTTPErrorResponse{Error: api.HTTPError{
+			Code:    "bad_source",
+			Message: "bad source",
+		}})
 	}))
 	defer server.Close()
 
@@ -135,7 +138,10 @@ func TestStartTaskReturnsHTTPError(t *testing.T) {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		w.WriteHeader(http.StatusConflict)
-		_, _ = w.Write([]byte(`{"error":"already started differently"}`))
+		_ = json.NewEncoder(w).Encode(api.HTTPErrorResponse{Error: api.HTTPError{
+			Code:    "conflict",
+			Message: "already started differently",
+		}})
 	}))
 	defer server.Close()
 
@@ -266,6 +272,7 @@ func TestCreateDeploymentSendsContentHash(t *testing.T) {
 		context.Background(),
 		api.CreateDeploymentRequest{IdempotencyKey: "deploy-1"},
 		sourcePath,
+		EnvironmentScopeOptions{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -273,8 +280,7 @@ func TestCreateDeploymentSendsContentHash(t *testing.T) {
 	if response.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35" {
 		t.Fatalf("response = %+v", response)
 	}
-	if metadata.ProjectID != "" || metadata.EnvironmentID != "" ||
-		metadata.IdempotencyKey != "deploy-1" ||
+	if metadata.IdempotencyKey != "deploy-1" ||
 		metadata.ContentHash != sha256sum.DigestBytes(source) {
 		t.Fatalf("metadata = %+v", metadata)
 	}
@@ -323,6 +329,7 @@ func TestCreateDeploymentRetriesLostResponseWithSameKey(t *testing.T) {
 		context.Background(),
 		api.CreateDeploymentRequest{IdempotencyKey: "deploy-retry"},
 		sourcePath,
+		EnvironmentScopeOptions{},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -513,6 +520,7 @@ func TestSessionScopedClientRequiresEnvironmentScope(t *testing.T) {
 		context.Background(),
 		api.CreateDeploymentRequest{IdempotencyKey: "deploy-1"},
 		sourcePath,
+		EnvironmentScopeOptions{},
 	); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
 		t.Fatalf("CreateDeployment err = %v", err)
 	}

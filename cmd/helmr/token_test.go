@@ -52,9 +52,8 @@ func TestTokenCompleteSendsResultAndIdempotencyKey(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		_ = json.NewEncoder(w).Encode(api.CompleteTokenResponse{
-			Status: "completed",
-			Token:  api.TokenResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", Status: "completed"},
+		_ = json.NewEncoder(w).Encode(api.TokenResponse{
+			ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", Status: api.TokenStatusCompleted,
 		})
 	}))
 	defer server.Close()
@@ -77,9 +76,8 @@ func TestTokenCompleteSendsResultAndIdempotencyKey(t *testing.T) {
 		t.Fatalf("request = %+v", request)
 	}
 	for _, want := range []string{
-		"token_id: 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
-		"token_status: completed",
-		"completion_status: completed",
+		"Token:       019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
+		"Status:      completed",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output = %q, missing %q", out.String(), want)
@@ -92,9 +90,8 @@ func TestTokenCompleteJSONEmitsResponse(t *testing.T) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/tokens/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37/complete" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		_ = json.NewEncoder(w).Encode(api.CompleteTokenResponse{
-			Status: "completed",
-			Token:  api.TokenResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", Status: "completed"},
+		_ = json.NewEncoder(w).Encode(api.TokenResponse{
+			ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", Status: api.TokenStatusCompleted,
 		})
 	}))
 	defer server.Close()

@@ -79,7 +79,7 @@ func (s *Server) startActorHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	projectRef, environmentRef, err := environmentScopeRefsFromRequest(r, principal, "", "")
+	projectRef, environmentRef, err := environmentScopeRefsFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{
 			code:    "invalid_actor_start",

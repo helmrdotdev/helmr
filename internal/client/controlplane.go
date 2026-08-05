@@ -109,27 +109,32 @@ func projectEnvironmentPath(projectID string, environmentID string) string {
 	return "/api/projects/" + url.PathEscape(projectID) + "/environments/" + url.PathEscape(environmentID)
 }
 
-func (c *Client) environmentScopedPath(projectID string, environmentID string, suffix string) (string, bool, error) {
+func (c *Client) environmentScopedPath(projectID string, environmentID string, suffix string) (string, error) {
 	if projectID == "" && environmentID == "" {
 		if c.sessionScopedRoutes {
-			return "", false, fmt.Errorf("project and environment are required for session-scoped API routes")
+			return "", fmt.Errorf("project and environment are required for session-scoped API routes")
 		}
-		return "/v1" + suffix, false, nil
+		return "/v1" + suffix, nil
 	}
 	if !c.sessionScopedRoutes {
-		return "", false, errors.New("project and environment scope is only accepted on session-scoped API routes")
+		return "", errors.New("project and environment scope is only accepted on session-scoped API routes")
 	}
 	if projectID == "" || environmentID == "" {
-		return "", false, fmt.Errorf("project and environment are required for session-scoped API routes")
+		return "", fmt.Errorf("project and environment are required for session-scoped API routes")
 	}
-	return projectEnvironmentPath(projectID, environmentID) + suffix, true, nil
+	return projectEnvironmentPath(projectID, environmentID) + suffix, nil
 }
 
 func environmentScopedResourcePath(base string, id string, suffix string) string {
 	return base + "/" + url.PathEscape(id) + suffix
 }
 
-func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymentRequest, sourceTarPath string) (api.DeploymentResponse, error) {
+func (c *Client) CreateDeployment(
+	ctx context.Context,
+	input api.CreateDeploymentRequest,
+	sourceTarPath string,
+	scope EnvironmentScopeOptions,
+) (api.DeploymentResponse, error) {
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	if input.IdempotencyKey == "" {
 		return api.DeploymentResponse{}, errors.New("deployment idempotency key is required")
@@ -148,13 +153,9 @@ func (c *Client) CreateDeployment(ctx context.Context, input api.CreateDeploymen
 	} else if input.ContentHash != digest {
 		return api.DeploymentResponse{}, fmt.Errorf("deployment source archive digest %s does not match metadata content_hash %s", digest, input.ContentHash)
 	}
-	path, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/deployments")
+	path, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/deployments")
 	if err != nil {
 		return api.DeploymentResponse{}, err
-	}
-	if scoped {
-		input.ProjectID = ""
-		input.EnvironmentID = ""
 	}
 	var lastErr error
 	for range 2 {
@@ -208,11 +209,11 @@ func (c *Client) createDeploymentAttempt(
 	return response, nil
 }
 
-func (c *Client) GetDeployment(ctx context.Context, deploymentID string, input api.GetDeploymentRequest) (api.DeploymentResponse, error) {
+func (c *Client) GetDeployment(ctx context.Context, deploymentID string, scope EnvironmentScopeOptions) (api.DeploymentResponse, error) {
 	if err := ids.Validate(deploymentID); err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	basePath, _, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/deployments")
+	basePath, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/deployments")
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
@@ -228,11 +229,11 @@ func (c *Client) GetDeployment(ctx context.Context, deploymentID string, input a
 	return response, nil
 }
 
-func (c *Client) FollowDeploymentEvents(ctx context.Context, deploymentID string, input api.GetDeploymentRequest, cursor string, handle func(api.RunEvent) error) error {
+func (c *Client) FollowDeploymentEvents(ctx context.Context, deploymentID string, scope EnvironmentScopeOptions, cursor string, handle func(api.RunEvent) error) error {
 	if err := ids.Validate(deploymentID); err != nil {
 		return err
 	}
-	basePath, _, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/deployments")
+	basePath, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/deployments")
 	if err != nil {
 		return err
 	}
@@ -271,17 +272,13 @@ func (c *Client) FollowDeploymentEvents(ctx context.Context, deploymentID string
 	return scanner.Err()
 }
 
-func (c *Client) PromoteDeployment(ctx context.Context, deployment string, input api.PromoteDeploymentRequest) (api.DeploymentResponse, error) {
+func (c *Client) PromoteDeployment(ctx context.Context, deployment string, input api.PromoteDeploymentRequest, scope EnvironmentScopeOptions) (api.DeploymentResponse, error) {
 	if err := ids.Validate(deployment); err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	basePath, scoped, err := c.environmentScopedPath(input.ProjectID, input.EnvironmentID, "/deployments")
+	basePath, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/deployments")
 	if err != nil {
 		return api.DeploymentResponse{}, err
-	}
-	if scoped {
-		input.ProjectID = ""
-		input.EnvironmentID = ""
 	}
 	path := environmentScopedResourcePath(basePath, deployment, "/promote")
 	var response api.DeploymentResponse
@@ -437,7 +434,7 @@ func (c *Client) secretCollectionPath(opts ...SecretOptions) (string, error) {
 }
 
 func (c *Client) secretCollectionPathWithScope(opts SecretOptions) (string, error) {
-	path, _, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/secrets")
+	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/secrets")
 	return path, err
 }
 
@@ -451,7 +448,7 @@ func (c *Client) secretItemPath(id string, opts ...SecretOptions) (string, error
 		if len(opts) > 0 {
 			scope = opts[0]
 		}
-		basePath, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/secrets")
+		basePath, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/secrets")
 		if err != nil {
 			return "", err
 		}
@@ -530,7 +527,7 @@ func (c *Client) runItemPath(id string, suffix string, opts ...RunScopeOptions) 
 	if len(opts) > 0 {
 		scope = opts[0]
 	}
-	basePath, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/runs")
+	basePath, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/runs")
 	if err != nil {
 		return "", err
 	}
@@ -543,7 +540,7 @@ func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.Lis
 		scope.ProjectID = opts[0].ProjectID
 		scope.EnvironmentID = opts[0].EnvironmentID
 	}
-	path, _, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/runs")
+	path, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/runs")
 	if err != nil {
 		return api.ListRunSnapshotsResponse{}, err
 	}

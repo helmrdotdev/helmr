@@ -34,7 +34,7 @@ type workspaceListCursor struct {
 
 func (s *Server) listWorkspacesHTTP(w http.ResponseWriter, r *http.Request) {
 	principal := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal, "", "")
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_workspace_reference", message: err.Error()}))
 		return

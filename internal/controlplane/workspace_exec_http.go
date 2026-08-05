@@ -3,7 +3,6 @@ package controlplane
 import (
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -65,7 +64,7 @@ func (s *Server) executeWorkspaceHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	principal := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal, "", "")
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_workspace_reference", message: err.Error()}))
 		return
@@ -144,7 +143,7 @@ func (s *Server) writeWorkspaceExecError(w http.ResponseWriter, err error) {
 		s.log.Error("execute Workspace failed", "error", err)
 		writeError(w, unavailable(codedError{
 			code:      "workspace_authority_unavailable",
-			message:   fmt.Sprintf("%s: %v", errWorkspaceAuthorityUnavailable, err),
+			message:   errWorkspaceAuthorityUnavailable.Error(),
 			retryable: true,
 		}))
 	}

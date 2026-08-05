@@ -13,13 +13,13 @@ async function handleResponse<T>(
     throw new ApiError("unauthorized", "Authentication is required.", response.status);
   }
   if (!response.ok) {
-    const body = await response.json().catch((): Record<string, unknown> => ({
-      error: response.statusText,
-    }));
+    const body = await response.json().catch((): Record<string, unknown> => ({}));
+    const error = objectField(body, "error");
     throw new ApiError(
-      errorKind(response.status, body),
-      errorMessage(body, response.statusText),
+      stringField(error, "code") ?? statusCode(response.status),
+      stringField(error, "message") ?? response.statusText,
       response.status,
+      objectField(error, "details"),
     );
   }
   if (response.status === 204 || response.status === 205 || response.headers.get("content-length") === "0") {
@@ -32,21 +32,22 @@ async function handleResponse<T>(
   return JSON.parse(body) as T;
 }
 
-function errorKind(status: number, body: Record<string, unknown>): string {
-  const explicit = stringField(body, "error_kind") ?? stringField(body, "kind");
-  if (explicit) return explicit;
+function statusCode(status: number): string {
   if (status === 400) return "bad_request";
   if (status === 401) return "unauthorized";
   if (status === 403) return "forbidden";
   if (status === 404) return "not_found";
+  if (status === 405) return "method_not_allowed";
   if (status === 409) return "conflict";
+  if (status === 410) return "gone";
+  if (status === 413) return "request_too_large";
   if (status === 422) return "unprocessable_entity";
-  if (status >= 500) return "internal";
-  return "unknown";
-}
-
-function errorMessage(body: Record<string, unknown>, fallback: string): string {
-  return stringField(body, "message") ?? stringField(body, "error") ?? fallback;
+  if (status === 429) return "rate_limited";
+  if (status === 501) return "not_implemented";
+  if (status === 502) return "bad_gateway";
+  if (status === 503) return "service_unavailable";
+  if (status >= 500) return "internal_error";
+  return "http_error";
 }
 
 function stringField(body: Record<string, unknown>, field: string): string | undefined {
@@ -54,14 +55,28 @@ function stringField(body: Record<string, unknown>, field: string): string | und
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
-export class ApiError extends Error {
-  errorKind: string;
-  status: number;
+function objectField(body: Record<string, unknown>, field: string): Record<string, unknown> {
+  const value = body[field];
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
 
-  constructor(errorKind: string, message: string, status: number) {
+export class ApiError extends Error {
+  code: string;
+  status: number;
+  details?: Readonly<Record<string, unknown>>;
+
+  constructor(
+    code: string,
+    message: string,
+    status: number,
+    details: Readonly<Record<string, unknown>> = {},
+  ) {
     super(message);
-    this.errorKind = errorKind;
+    this.code = code;
     this.status = status;
+    if (Object.keys(details).length > 0) this.details = details;
   }
 }
 

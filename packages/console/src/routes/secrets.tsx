@@ -16,7 +16,7 @@ const SECRET_ERROR_MESSAGES: Record<string, string> = {
 const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
 function secretErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) return SECRET_ERROR_MESSAGES[error.errorKind] ?? error.message ?? INTERNAL_ERROR_MESSAGE;
+  if (error instanceof ApiError) return SECRET_ERROR_MESSAGES[error.code] ?? error.message ?? INTERNAL_ERROR_MESSAGE;
   return INTERNAL_ERROR_MESSAGE;
 }
 

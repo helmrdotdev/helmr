@@ -339,8 +339,7 @@ func TestActorCloseHTTPSessionPostgresRejectsInvalidScopeAsCallerError(t *testin
 		),
 	)
 	if recorder.Code != http.StatusBadRequest ||
-		!strings.Contains(recorder.Body.String(), `"code":"invalid_session_close"`) ||
-		!strings.Contains(recorder.Body.String(), `"retryable":false`) {
+		decodeHTTPError(t, recorder.Body.Bytes()).Code != "invalid_session_close" {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }

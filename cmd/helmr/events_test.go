@@ -28,7 +28,7 @@ func TestWaitCommandPollsUntilTerminal(t *testing.T) {
 			if requests > 1 {
 				status = "succeeded"
 			}
-			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: status})
+			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: api.RunStatus(status)})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}

@@ -24,7 +24,7 @@ const MESSAGES: Record<string, string> = {
   unauthenticated: "Please sign in.",
 };
 
-export function errorMessage(errorKind: string | null | undefined, fallback: string): string {
-  if (!errorKind) return fallback;
-  return MESSAGES[errorKind] ?? fallback;
+export function errorMessage(code: string | null | undefined, fallback: string): string {
+  if (!code) return fallback;
+  return MESSAGES[code] ?? fallback;
 }

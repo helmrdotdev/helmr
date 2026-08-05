@@ -46,7 +46,7 @@ func (c *Client) SendSessionInput(
 	if err := api.ValidateSendSessionInputRequest(input); err != nil {
 		return api.SessionInput{}, err
 	}
-	path, _, err := c.environmentScopedPath(
+	path, err := c.environmentScopedPath(
 		opts.ProjectID,
 		opts.EnvironmentID,
 		"/sessions/"+url.PathEscape(sessionID)+"/inputs",
@@ -73,7 +73,7 @@ func (c *Client) StartActor(
 	if err := api.ValidateStartActorRequest(input); err != nil {
 		return api.StartActorResponse{}, err
 	}
-	path, _, err := c.environmentScopedPath(
+	path, err := c.environmentScopedPath(
 		opts.ProjectID,
 		opts.EnvironmentID,
 		"/actors/"+url.PathEscape(actorDeclaredID)+"/start",
@@ -100,7 +100,7 @@ func (c *Client) CloseSession(
 	if err := api.ValidateCloseSessionRequest(input); err != nil {
 		return api.SessionCloseReceipt{}, err
 	}
-	path, _, err := c.environmentScopedPath(
+	path, err := c.environmentScopedPath(
 		opts.ProjectID,
 		opts.EnvironmentID,
 		"/sessions/"+url.PathEscape(sessionID)+"/close",
@@ -123,7 +123,7 @@ func (c *Client) RetrieveSession(
 	if err := ids.Validate(sessionID); err != nil {
 		return api.Session{}, err
 	}
-	path, _, err := c.environmentScopedPath(
+	path, err := c.environmentScopedPath(
 		opts.ProjectID,
 		opts.EnvironmentID,
 		"/sessions/"+url.PathEscape(sessionID),
@@ -169,7 +169,7 @@ func (c *Client) ListSessions(ctx context.Context, opts SessionListOptions) (api
 	} else if opts.Limit < 0 || opts.Limit > 100 {
 		return api.ListSessionsResponse{}, errors.New("session list limit must be in [1,100] when present")
 	}
-	path, _, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/sessions")
+	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/sessions")
 	if err != nil {
 		return api.ListSessionsResponse{}, err
 	}
@@ -227,7 +227,7 @@ func (c *Client) ReadSessionOutputs(
 			maxActorOutputReadLimit,
 		)
 	}
-	path, _, err := c.environmentScopedPath(
+	path, err := c.environmentScopedPath(
 		opts.ProjectID,
 		opts.EnvironmentID,
 		"/sessions/"+url.PathEscape(sessionID)+"/outputs",
@@ -263,7 +263,7 @@ type EnvironmentScopeOptions struct {
 }
 
 func (c *Client) ListDeployments(ctx context.Context, opts EnvironmentScopeOptions) (api.ListDeploymentsResponse, error) {
-	path, _, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/deployments")
+	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/deployments")
 	if err != nil {
 		return api.ListDeploymentsResponse{}, err
 	}
@@ -279,7 +279,7 @@ func (c *Client) ListDeployments(ctx context.Context, opts EnvironmentScopeOptio
 }
 
 func (c *Client) ListTasks(ctx context.Context, opts EnvironmentScopeOptions) (api.ListTasksResponse, error) {
-	path, _, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/tasks")
+	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/tasks")
 	if err != nil {
 		return api.ListTasksResponse{}, err
 	}
@@ -295,7 +295,7 @@ func (c *Client) ListTasks(ctx context.Context, opts EnvironmentScopeOptions) (a
 }
 
 func (c *Client) GetTask(ctx context.Context, taskID string, opts EnvironmentScopeOptions) (api.Task, error) {
-	path, _, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/tasks/"+url.PathEscape(taskID))
+	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/tasks/"+url.PathEscape(taskID))
 	if err != nil {
 		return api.Task{}, err
 	}
@@ -320,7 +320,7 @@ func (c *Client) StartTask(
 	if err := api.ValidateDefinitionID(taskID); err != nil {
 		return api.StartTaskResponse{}, err
 	}
-	path, _, err := c.environmentScopedPath(
+	path, err := c.environmentScopedPath(
 		opts.ProjectID,
 		opts.EnvironmentID,
 		"/tasks/"+url.PathEscape(taskID)+"/start",
@@ -341,7 +341,7 @@ type WorkspaceScopeOptions struct {
 }
 
 func (c *Client) workspaceCollectionPath(opts WorkspaceScopeOptions) (string, error) {
-	path, _, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/workspaces")
+	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/workspaces")
 	return path, err
 }
 
@@ -366,7 +366,7 @@ func (c *Client) CreateWorkspace(
 	input api.CreateWorkspaceRequest,
 	opts WorkspaceScopeOptions,
 ) (api.WorkspaceSnapshot, error) {
-	path, _, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/sandboxes/"+url.PathEscape(declaredID)+"/workspaces")
+	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/sandboxes/"+url.PathEscape(declaredID)+"/workspaces")
 	if err != nil {
 		return api.WorkspaceSnapshot{}, err
 	}
@@ -540,7 +540,7 @@ type TokenScopeOptions struct {
 }
 
 func (c *Client) tokenCollectionPath(opts TokenScopeOptions) (string, error) {
-	path, _, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/tokens")
+	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/tokens")
 	return path, err
 }
 
@@ -583,14 +583,14 @@ func (c *Client) GetToken(ctx context.Context, tokenID string, opts TokenScopeOp
 	return response, nil
 }
 
-func (c *Client) CompleteToken(ctx context.Context, tokenID string, input api.CompleteTokenRequest, opts TokenScopeOptions) (api.CompleteTokenResponse, error) {
+func (c *Client) CompleteToken(ctx context.Context, tokenID string, input api.CompleteTokenRequest, opts TokenScopeOptions) (api.TokenResponse, error) {
 	path, err := c.tokenItemPath(tokenID, "/complete", opts)
 	if err != nil {
-		return api.CompleteTokenResponse{}, err
+		return api.TokenResponse{}, err
 	}
-	var response api.CompleteTokenResponse
+	var response api.TokenResponse
 	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.CompleteTokenResponse{}, err
+		return api.TokenResponse{}, err
 	}
 	return response, nil
 }

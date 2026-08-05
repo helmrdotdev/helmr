@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -36,7 +35,7 @@ func isInvalidEnvironmentScopeReference(err error) bool {
 func (s *Server) requestEnvironmentScope(ctx context.Context, actor auth.Actor, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
 	if actor.Kind == auth.ActorKindAPIKey {
 		if projectID != "" || environmentID != "" {
-			return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, errors.New("project_id and environment_id are not accepted with API keys")
+			return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, invalidEnvironmentScopeReference("project_id and environment_id are not accepted with API keys")
 		}
 		scope, ok := actor.EnvironmentScope()
 		if !ok {
@@ -51,59 +50,41 @@ func (s *Server) requestEnvironmentScope(ctx context.Context, actor auth.Actor, 
 	return s.secretRequestScope(ctx, actor.OrgID, projectID, environmentID)
 }
 
-func (s *Server) requestEnvironmentScopeFromRequest(r *http.Request, actor auth.Actor, projectID string, environmentID string) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
-	projectID, environmentID, err := environmentScopeRefsFromRequest(r, actor, projectID, environmentID)
+func (s *Server) requestEnvironmentScopeFromRequest(r *http.Request, actor auth.Actor) (auth.Scope, pgtype.UUID, pgtype.UUID, error) {
+	projectID, environmentID, err := environmentScopeRefsFromRequest(r, actor)
 	if err != nil {
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
 	}
 	return s.requestEnvironmentScope(r.Context(), actor, projectID, environmentID)
 }
 
-func environmentScopeRefsFromRequest(r *http.Request, actor auth.Actor, projectID string, environmentID string) (string, string, error) {
+func environmentScopeRefsFromRequest(r *http.Request, actor auth.Actor) (string, string, error) {
 	pathProjectID := chi.URLParam(r, "projectID")
 	pathEnvironmentID := chi.URLParam(r, "environmentID")
 	hasPathScope := pathProjectID != "" || pathEnvironmentID != ""
 	if hasPathScope && (pathProjectID == "" || pathEnvironmentID == "") {
-		return "", "", errors.New("project_id and environment_id must be provided together")
+		return "", "", invalidEnvironmentScopeReference("project_id and environment_id must be provided together")
 	}
 	switch actor.Kind {
 	case auth.ActorKindSession:
 		if !hasPathScope {
-			return "", "", errors.New("session environment scoped requests must use the project environment path")
-		}
-		if projectID != "" || environmentID != "" {
-			return "", "", errors.New("project_id and environment_id are not accepted in session request payloads")
+			return "", "", invalidEnvironmentScopeReference("session environment scoped requests must use the project environment path")
 		}
 		return pathProjectID, pathEnvironmentID, nil
 	case auth.ActorKindAPIKey:
 		if hasPathScope {
-			return "", "", errors.New("API key requests must use API key routes")
+			return "", "", invalidEnvironmentScopeReference("API key requests must use API key routes")
 		}
-		if projectID != "" || environmentID != "" {
-			return "", "", errors.New("project_id and environment_id are not accepted with API keys")
-		}
+		return "", "", nil
 	}
 	if hasPathScope {
-		if projectID != "" || environmentID != "" {
-			return "", "", errors.New("project_id and environment_id are not accepted with project environment scoped routes")
-		}
 		return pathProjectID, pathEnvironmentID, nil
 	}
-	return projectID, environmentID, nil
-}
-
-func isScopeRequestError(err error) bool {
-	if err == nil {
-		return false
-	}
-	message := err.Error()
-	return strings.Contains(message, "project_id") || strings.Contains(message, "environment_id")
+	return "", "", invalidEnvironmentScopeReference("environment scoped requests require a project environment path or an environment-bound API key")
 }
 
 func (s *Server) requestedRunListScope(r *http.Request, actor auth.Actor) (auth.Scope, error) {
-	projectID := r.URL.Query().Get("project_id")
-	environmentID := r.URL.Query().Get("environment_id")
-	pathProjectID, pathEnvironmentID, err := environmentScopeRefsFromRequest(r, actor, projectID, environmentID)
+	pathProjectID, pathEnvironmentID, err := environmentScopeRefsFromRequest(r, actor)
 	if err != nil {
 		return auth.Scope{}, err
 	}
@@ -118,7 +99,7 @@ func (s *Server) requestedRunListScope(r *http.Request, actor auth.Actor) (auth.
 		}
 		return scope, nil
 	}
-	return auth.Scope{}, errors.New("session environment scoped requests must use the project environment path")
+	return auth.Scope{}, invalidEnvironmentScopeReference("session environment scoped requests must use the project environment path")
 }
 
 func runScopeIDs(scope auth.Scope) (pgtype.UUID, pgtype.UUID, error) {

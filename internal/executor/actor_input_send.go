@@ -84,7 +84,7 @@ func workerActorInputSendRequest(
 		Input:          json.RawMessage(requested.GetDataJson()),
 		IdempotencyKey: requested.GetIdempotencyKey(),
 	}
-	if err := api.ValidateActorID(request.SessionID); err != nil {
+	if err := api.ValidateSessionID(request.SessionID); err != nil {
 		return workerapi.SendActorInputRequest{}, err
 	}
 	if err := api.ValidateSendSessionInputRequest(api.SendSessionInputRequest{

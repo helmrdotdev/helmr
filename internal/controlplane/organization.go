@@ -105,14 +105,14 @@ func (s *Server) listRegions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func regionPublicStatus(state db.RegionState) (string, error) {
+func regionPublicStatus(state db.RegionState) (api.RegionStatus, error) {
 	switch state {
 	case db.RegionStateAvailable:
-		return db.RegionStateAvailable, nil
+		return api.RegionStatusAvailable, nil
 	case db.RegionStateDraining:
-		return db.RegionStateDraining, nil
+		return api.RegionStatusDraining, nil
 	case db.RegionStateDisabled:
-		return db.RegionStateDisabled, nil
+		return api.RegionStatusDisabled, nil
 	default:
 		return "", fmt.Errorf("region state %q has no public projection", state)
 	}

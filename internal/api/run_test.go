@@ -3,7 +3,7 @@ package api
 import "testing"
 
 func TestRunStatusIsTerminal(t *testing.T) {
-	for _, status := range []string{
+	for _, status := range []RunStatus{
 		RunStatusSucceeded,
 		RunStatusFailed,
 		RunStatusCancelled,
@@ -14,7 +14,7 @@ func TestRunStatusIsTerminal(t *testing.T) {
 			t.Fatalf("%q must be terminal", status)
 		}
 	}
-	for _, status := range []string{
+	for _, status := range []RunStatus{
 		RunStatusQueued,
 		RunStatusRunning,
 		RunStatusWaiting,

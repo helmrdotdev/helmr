@@ -1,6 +1,8 @@
 package controlplane
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -22,6 +25,12 @@ const (
 	invitationListLimit         = 200
 	defaultInvitationExpiryDays = 7
 )
+
+type invitationListCursor struct {
+	OrgID     string `json:"org_id"`
+	CreatedAt string `json:"created_at"`
+	ID        string `json:"id"`
+}
 
 var (
 	errSelfMemberManagementLoss = errors.New("cannot remove your own member management access")
@@ -52,9 +61,27 @@ func (s *Server) listMembers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listInvitations(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromContext(r.Context())
+	var afterCreatedAt pgtype.Timestamptz
+	var afterID pgtype.UUID
+	if rawCursor := r.URL.Query().Get("cursor"); rawCursor != "" {
+		cursor, err := decodeInvitationListCursor(rawCursor)
+		if err != nil || cursor.OrgID != actor.OrgID.String() {
+			writeError(w, badRequest(errors.New("invitation cursor is invalid")))
+			return
+		}
+		createdAt, err := time.Parse(time.RFC3339Nano, cursor.CreatedAt)
+		if err != nil {
+			writeError(w, badRequest(errors.New("invitation cursor is invalid")))
+			return
+		}
+		afterCreatedAt = pgvalue.Timestamptz(createdAt)
+		afterID = pgvalue.UUID(uuid.MustParse(cursor.ID))
+	}
 	rows, err := s.db.ListInvitations(r.Context(), db.ListInvitationsParams{
-		OrgID:    pgvalue.UUID(actor.OrgID),
-		RowLimit: invitationListLimit + 1,
+		OrgID:          pgvalue.UUID(actor.OrgID),
+		AfterCreatedAt: afterCreatedAt,
+		AfterID:        afterID,
+		RowLimit:       invitationListLimit + 1,
 	})
 	if err != nil {
 		writeError(w, errors.New("list invitations"))
@@ -73,7 +100,39 @@ func (s *Server) listInvitations(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, item)
 	}
-	writeJSON(w, http.StatusOK, api.ListInvitationsResponse{Invitations: items, HasMore: hasMore})
+	response := api.ListInvitationsResponse{Invitations: items}
+	if hasMore {
+		last := rows[len(rows)-1]
+		response.NextCursor, err = encodeInvitationListCursor(invitationListCursor{
+			OrgID: actor.OrgID.String(), CreatedAt: last.CreatedAt.Time.UTC().Format(time.RFC3339Nano),
+			ID: pgvalue.UUIDString(last.ID),
+		})
+		if err != nil {
+			writeError(w, errors.New("list invitations"))
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func encodeInvitationListCursor(cursor invitationListCursor) (string, error) {
+	raw, err := json.Marshal(cursor)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func decodeInvitationListCursor(raw string) (invitationListCursor, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return invitationListCursor{}, errors.New("invitation cursor is invalid")
+	}
+	var cursor invitationListCursor
+	if json.Unmarshal(decoded, &cursor) != nil || cursor.OrgID == "" || cursor.CreatedAt == "" || ids.Validate(cursor.ID) != nil {
+		return invitationListCursor{}, errors.New("invitation cursor is invalid")
+	}
+	return cursor, nil
 }
 
 func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request) {
@@ -418,13 +477,13 @@ func memberSummaryFromListRow(row db.ListOrgMembersRow) (api.MemberSummary, erro
 	if err != nil {
 		return api.MemberSummary{}, err
 	}
-	status := "active"
+	status := api.MemberStatusActive
 	disabledAt := row.DisabledAt
 	if row.UserDisabledAt.Valid && (!disabledAt.Valid || row.UserDisabledAt.Time.Before(disabledAt.Time)) {
 		disabledAt = row.UserDisabledAt
 	}
 	if disabledAt.Valid {
-		status = "disabled"
+		status = api.MemberStatusDisabled
 	}
 	email := ""
 	if row.PrimaryEmail.Valid {
@@ -455,9 +514,9 @@ func memberSummaryFromOrgMember(member db.OrgMember, displayName pgtype.Text, em
 	if userDisabledAt.Valid && (!disabledAt.Valid || userDisabledAt.Time.Before(disabledAt.Time)) {
 		disabledAt = userDisabledAt
 	}
-	status := "active"
+	status := api.MemberStatusActive
 	if disabledAt.Valid {
-		status = "disabled"
+		status = api.MemberStatusDisabled
 	}
 	emailValue := ""
 	if email.Valid {

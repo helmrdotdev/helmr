@@ -58,7 +58,7 @@ type sessionProjectionRow struct {
 
 func (s *Server) listSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 	principal := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal, "", "")
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_session_query", message: err.Error()}))
 		return
@@ -153,7 +153,7 @@ func (s *Server) getSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	principal := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal, "", "")
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_session_id", message: err.Error()}))
 		return
@@ -268,7 +268,7 @@ func decodeSessionListCursor(raw string) (sessionListCursor, error) {
 }
 
 func projectSession(row sessionProjectionRow) (api.Session, error) {
-	status, err := projectSessionStatus(actorReadRecord{
+	status, err := projectSessionStatus(sessionReadRecord{
 		id: row.id, key: row.key, state: row.state, createdAt: row.createdAt,
 		updatedAt: row.updatedAt, currentRunID: row.currentRunID,
 		failureCode: row.failureCode, failureRunID: row.failureRunID,

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/sourceid"
 )
 
 const (
@@ -33,7 +34,6 @@ const (
 	DeclarationSlotPayloadSchema          = DeclarationSlot("payloadSchema")
 )
 
-var declaredIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 var sha256DigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 type RuntimeArchitecture string
@@ -455,7 +455,7 @@ func hasNodeModulesComponent(value string) bool {
 }
 
 func validateDeclaration(declaration ProgramDeclaration) error {
-	if !declaredIDPattern.MatchString(declaration.DeclaredID) {
+	if !sourceid.Valid(declaration.DeclaredID) {
 		return fmt.Errorf("declaredId %q is outside the exact ASCII ID domain", declaration.DeclaredID)
 	}
 	switch declaration.Kind {

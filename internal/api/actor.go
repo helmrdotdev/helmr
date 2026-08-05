@@ -14,11 +14,11 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/sourceid"
 )
 
 var (
-	actorDeclaredIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
-	durationPattern        = regexp.MustCompile(`^([1-9][0-9]*)(ms|s|m|h|d)$`)
+	durationPattern = regexp.MustCompile(`^([1-9][0-9]*)(ms|s|m|h|d)$`)
 )
 
 const (
@@ -184,15 +184,15 @@ func ValidateCloseSessionRequest(request CloseSessionRequest) error {
 }
 
 func ValidateActorDeclaredID(id string) error {
-	if !actorDeclaredIDPattern.MatchString(id) {
-		return fmt.Errorf("actor declared ID %q must match %s", id, actorDeclaredIDPattern.String())
+	if !sourceid.Valid(id) {
+		return fmt.Errorf("actor declared ID %q must match %s", id, sourceid.Grammar)
 	}
 	return nil
 }
 
-func ValidateActorID(id string) error {
+func ValidateSessionID(id string) error {
 	if err := ids.Validate(id); err != nil {
-		return fmt.Errorf("invalid actor ID: %w", err)
+		return fmt.Errorf("invalid session ID: %w", err)
 	}
 	return nil
 }

@@ -447,7 +447,7 @@ func callbackStatus(err error) int {
 
 func writeAuthError(w http.ResponseWriter, status int, err error) {
 	if kind := authErrorKind(err); kind != "" {
-		writeJSON(w, status, map[string]string{"error": err.Error(), "error_kind": kind})
+		writeErrorStatus(w, status, codedError{code: kind, message: err.Error()})
 		return
 	}
 	writeErrorStatus(w, status, err)

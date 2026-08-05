@@ -118,7 +118,11 @@ SELECT id, org_id, project_id, environment_id, created_by_user_id, name, key_pre
            AND revoked_at IS NOT NULL
        )
    )
- ORDER BY created_at DESC
+   AND (
+       sqlc.narg(after_created_at)::timestamptz IS NULL
+       OR (created_at, id) < (sqlc.narg(after_created_at)::timestamptz, sqlc.narg(after_id)::uuid)
+   )
+ ORDER BY created_at DESC, id DESC
  LIMIT sqlc.arg(row_limit);
 
 -- name: RevokeAPIKey :execrows

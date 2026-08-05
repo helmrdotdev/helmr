@@ -250,13 +250,19 @@ SELECT id,
    AND accepted_at IS NULL
    AND revoked_at IS NULL
    AND expires_at > now()
- ORDER BY created_at DESC
- LIMIT $2
+   AND (
+       $2::timestamptz IS NULL
+       OR (created_at, id) < ($2::timestamptz, $3::uuid)
+   )
+ ORDER BY created_at DESC, id DESC
+ LIMIT $4
 `
 
 type ListInvitationsParams struct {
-	OrgID    pgtype.UUID `json:"org_id"`
-	RowLimit int32       `json:"row_limit"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	AfterCreatedAt pgtype.Timestamptz `json:"after_created_at"`
+	AfterID        pgtype.UUID        `json:"after_id"`
+	RowLimit       int32              `json:"row_limit"`
 }
 
 type ListInvitationsRow struct {
@@ -274,7 +280,12 @@ type ListInvitationsRow struct {
 }
 
 func (q *Queries) ListInvitations(ctx context.Context, arg ListInvitationsParams) ([]ListInvitationsRow, error) {
-	rows, err := q.db.Query(ctx, listInvitations, arg.OrgID, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listInvitations,
+		arg.OrgID,
+		arg.AfterCreatedAt,
+		arg.AfterID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -63,7 +63,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, request.ProjectID, request.EnvironmentID)
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return

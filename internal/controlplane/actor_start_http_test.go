@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -116,14 +115,8 @@ func TestWriteActorStartErrorUsesStableCodes(t *testing.T) {
 	} {
 		recorder := httptest.NewRecorder()
 		server.writeActorStartError(recorder, test.err)
-		var response struct {
-			Code      string `json:"code"`
-			Retryable *bool  `json:"retryable"`
-		}
-		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-			t.Fatal(err)
-		}
-		if recorder.Code != test.status || response.Code != test.code || response.Retryable == nil {
+		response := decodeHTTPError(t, recorder.Body.Bytes())
+		if recorder.Code != test.status || response.Code != test.code {
 			t.Fatalf("error=%v status=%d body=%s", test.err, recorder.Code, recorder.Body.String())
 		}
 	}
@@ -146,8 +139,7 @@ func TestActorStartPresenceErrorsUseContractSpecificCodes(t *testing.T) {
 		recorder := httptest.NewRecorder()
 		(&Server{}).startActorHTTP(recorder, request)
 		if recorder.Code != http.StatusBadRequest ||
-			!strings.Contains(recorder.Body.String(), `"code":"`+test.code+`"`) ||
-			!strings.Contains(recorder.Body.String(), `"retryable":false`) {
+			decodeHTTPError(t, recorder.Body.Bytes()).Code != test.code {
 			t.Fatalf("body=%s status=%d response=%s", test.body, recorder.Code, recorder.Body.String())
 		}
 	}
@@ -156,29 +148,25 @@ func TestActorStartPresenceErrorsUseContractSpecificCodes(t *testing.T) {
 func TestWriteActorStartScopeErrorDistinguishesReferencesFromAuthority(t *testing.T) {
 	server := &Server{}
 	for _, test := range []struct {
-		err       error
-		status    int
-		code      string
-		retryable string
+		err    error
+		status int
+		code   string
 	}{
 		{
-			err:       invalidEnvironmentScopeReference("project_id is invalid"),
-			status:    http.StatusBadRequest,
-			code:      "invalid_actor_start",
-			retryable: "false",
+			err:    invalidEnvironmentScopeReference("project_id is invalid"),
+			status: http.StatusBadRequest,
+			code:   "invalid_actor_start",
 		},
 		{
-			err:       errors.New("database unavailable"),
-			status:    http.StatusServiceUnavailable,
-			code:      "actor_start_authority_unavailable",
-			retryable: "true",
+			err:    errors.New("database unavailable"),
+			status: http.StatusServiceUnavailable,
+			code:   "actor_start_authority_unavailable",
 		},
 	} {
 		recorder := httptest.NewRecorder()
 		server.writeActorStartScopeError(recorder, test.err)
 		if recorder.Code != test.status ||
-			!strings.Contains(recorder.Body.String(), `"code":"`+test.code+`"`) ||
-			!strings.Contains(recorder.Body.String(), `"retryable":`+test.retryable) {
+			decodeHTTPError(t, recorder.Body.Bytes()).Code != test.code {
 			t.Fatalf("error=%v status=%d body=%s", test.err, recorder.Code, recorder.Body.String())
 		}
 	}
@@ -224,8 +212,7 @@ func TestActorStartAuthenticationErrorsUseMachineReadableEnvelope(t *testing.T) 
 			t.Fatal("unauthenticated request reached handler")
 		})).ServeHTTP(recorder, request)
 		if recorder.Code != http.StatusUnauthorized ||
-			!strings.Contains(recorder.Body.String(), `"code":"authentication_required"`) ||
-			!strings.Contains(recorder.Body.String(), `"retryable":false`) {
+			decodeHTTPError(t, recorder.Body.Bytes()).Code != "authentication_required" {
 			t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 		}
 	}

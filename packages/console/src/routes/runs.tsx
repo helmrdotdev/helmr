@@ -21,7 +21,7 @@ const FILTERS: SelectOption<RunFilter>[] = [
 ];
 
 function runsErrorMessage(error: unknown): string {
-  if (error instanceof ApiError && error.errorKind === "forbidden") {
+  if (error instanceof ApiError && error.code === "forbidden") {
     return "You do not have permission to view runs.";
   }
   return "Could not load runs.";

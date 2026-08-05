@@ -110,6 +110,7 @@ export type {
 
 export type {
   ActorClosedError,
+  APIError,
   ActorConfig,
   ActorDefinition,
   ActorExecutionContext,

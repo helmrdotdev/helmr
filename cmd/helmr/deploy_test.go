@@ -67,6 +67,7 @@ func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
 	})
 
 	var metadata api.CreateDeploymentRequest
+	var metadataFields map[string]json.RawMessage
 	var uploaded []byte
 	requests := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +80,11 @@ func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
 			if err := r.ParseMultipartForm(32 << 20); err != nil {
 				t.Fatal(err)
 			}
-			if err := json.Unmarshal([]byte(r.FormValue("metadata")), &metadata); err != nil {
+			encodedMetadata := []byte(r.FormValue("metadata"))
+			if err := json.Unmarshal(encodedMetadata, &metadata); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(encodedMetadata, &metadataFields); err != nil {
 				t.Fatal(err)
 			}
 			file, _, err := r.FormFile("deployment_source")
@@ -104,7 +109,7 @@ func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.ProjectID != "" || request.EnvironmentID != "" || request.Reason != "deploy" {
+			if request.Reason != "deploy" {
 				t.Fatalf("promotion request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Version: "20260101.1", Status: "deployed"})
@@ -136,8 +141,11 @@ func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
 	if got := strings.Join(requests, ","); got != "POST /v1/deployments,GET /v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events,GET /v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35,POST /v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote" {
 		t.Fatalf("requests = %s", got)
 	}
-	if metadata.ProjectID != "" || metadata.EnvironmentID != "" {
-		t.Fatalf("metadata = %+v", metadata)
+	if _, present := metadataFields["project_id"]; present {
+		t.Fatalf("metadata contains project_id: %s", metadataFields["project_id"])
+	}
+	if _, present := metadataFields["environment_id"]; present {
+		t.Fatalf("metadata contains environment_id: %s", metadataFields["environment_id"])
 	}
 	if metadata.ContentHash == "" || metadata.ContentHash != sha256sum.DigestBytes(uploaded) {
 		t.Fatalf("content hash = %q, uploaded digest = %q", metadata.ContentHash, sha256sum.DigestBytes(uploaded))
@@ -283,7 +291,7 @@ func TestDeployCommandReconnectsDeploymentEventsUntilTerminal(t *testing.T) {
 			if eventRequests >= 2 {
 				status = "deployed"
 			}
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: status})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: api.DeploymentStatus(status)})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "deployed"})
 		default:
@@ -418,6 +426,7 @@ func TestDeployCommandJSONUsesProjectAndEnv(t *testing.T) {
 	state := installTestCLIConfig(t)
 	root, _ := deployCommandFixture(t)
 	var metadata api.CreateDeploymentRequest
+	var metadataFields map[string]json.RawMessage
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/project-override/environments/prod/deployments" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
@@ -428,7 +437,11 @@ func TestDeployCommandJSONUsesProjectAndEnv(t *testing.T) {
 		if err := r.ParseMultipartForm(32 << 20); err != nil {
 			t.Fatal(err)
 		}
-		if err := json.Unmarshal([]byte(r.FormValue("metadata")), &metadata); err != nil {
+		encodedMetadata := []byte(r.FormValue("metadata"))
+		if err := json.Unmarshal(encodedMetadata, &metadata); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(encodedMetadata, &metadataFields); err != nil {
 			t.Fatal(err)
 		}
 		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", ProjectID: "project-override", EnvironmentID: "prod", Status: "queued"})
@@ -447,8 +460,11 @@ func TestDeployCommandJSONUsesProjectAndEnv(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if metadata.ProjectID != "" || metadata.EnvironmentID != "" {
-		t.Fatalf("metadata = %+v", metadata)
+	if _, present := metadataFields["project_id"]; present {
+		t.Fatalf("metadata contains project_id: %s", metadataFields["project_id"])
+	}
+	if _, present := metadataFields["environment_id"]; present {
+		t.Fatalf("metadata contains environment_id: %s", metadataFields["environment_id"])
 	}
 	if metadata.ImageCacheMode != "bypass" {
 		t.Fatalf("deployment image cache mode = %q", metadata.ImageCacheMode)

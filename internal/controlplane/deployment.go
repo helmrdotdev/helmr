@@ -414,16 +414,16 @@ func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceA
 	}, nil
 }
 
-func deploymentPublicStatus(status db.DeploymentStatus) (string, error) {
+func deploymentPublicStatus(status db.DeploymentStatus) (api.DeploymentStatus, error) {
 	switch status {
 	case db.DeploymentStatusQueued:
-		return db.DeploymentStatusQueued, nil
+		return api.DeploymentStatusQueued, nil
 	case db.DeploymentStatusBuilding:
-		return db.DeploymentStatusBuilding, nil
+		return api.DeploymentStatusBuilding, nil
 	case db.DeploymentStatusDeployed:
-		return db.DeploymentStatusDeployed, nil
+		return api.DeploymentStatusDeployed, nil
 	case db.DeploymentStatusFailed:
-		return db.DeploymentStatusFailed, nil
+		return api.DeploymentStatusFailed, nil
 	default:
 		return "", fmt.Errorf("deployment status %q has no public projection", status)
 	}
