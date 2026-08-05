@@ -213,8 +213,7 @@ func TestActorOutputReadPostgresPagesProvenanceAndRetention(t *testing.T) {
 	expiredRecorder := httptest.NewRecorder()
 	fixture.server.readSessionOutputHTTP(expiredRecorder, expiredRequest)
 	if expiredRecorder.Code != http.StatusGone ||
-		!strings.Contains(expiredRecorder.Body.String(), `"code":"session_output_cursor_expired"`) ||
-		!strings.Contains(expiredRecorder.Body.String(), `"retryable":false`) {
+		decodeHTTPError(t, expiredRecorder.Body.Bytes()).Code != "session_output_cursor_expired" {
 		t.Fatalf("expired response = %d %s", expiredRecorder.Code, expiredRecorder.Body.String())
 	}
 	retainedPage := readSessionOutputPostgresHTTP(t, fixture, principal, first.SessionID.String(), "/")

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net/http"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -67,26 +66,16 @@ func (task *guestRunLeaseTask) handleTokenCreate(
 
 func tokenCreateFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
 	var httpErr *httpclient.Error
-	if !errors.As(err, &httpErr) {
+	if !errors.As(err, &httpErr) || !semanticRuntimeHTTPError(httpErr) {
 		return workerapi.RuntimeOperationFailure{}, false
 	}
-	semantic := httpErr.StatusCode == http.StatusBadRequest ||
-		httpErr.StatusCode == http.StatusRequestEntityTooLarge ||
-		httpErr.StatusCode == http.StatusUnprocessableEntity ||
-		(httpErr.StatusCode == http.StatusConflict && strings.TrimSpace(httpErr.Code) != "")
-	if !semantic {
-		return workerapi.RuntimeOperationFailure{}, false
-	}
-	code := strings.TrimSpace(httpErr.Code)
-	if code == "" {
-		code = "token_create_rejected"
-	}
+	code := runtimeOperationCode(httpErr, "token_create_rejected")
 	message := strings.TrimSpace(httpErr.Message)
 	if message == "" {
 		message = "Token create request was rejected"
 	}
 	return workerapi.RuntimeOperationFailure{
-		Code: code, Message: message, Retryable: httpErr.Retryable,
+		Code: code, Message: message, Retryable: runtimeOperationRetryable(code),
 	}, true
 }
 

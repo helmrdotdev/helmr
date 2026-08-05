@@ -2,6 +2,25 @@ package capacityapi
 
 import "time"
 
+type WorkerGroupStatus string
+
+const (
+	WorkerGroupStatusActive   WorkerGroupStatus = "active"
+	WorkerGroupStatusPaused   WorkerGroupStatus = "paused"
+	WorkerGroupStatusDraining WorkerGroupStatus = "draining"
+	WorkerGroupStatusDisabled WorkerGroupStatus = "disabled"
+)
+
+type WorkerInstanceStatus string
+
+const (
+	WorkerInstanceStatusRegistering      WorkerInstanceStatus = "registering"
+	WorkerInstanceStatusActive           WorkerInstanceStatus = "active"
+	WorkerInstanceStatusDraining         WorkerInstanceStatus = "draining"
+	WorkerInstanceStatusTerminationReady WorkerInstanceStatus = "termination_ready"
+	WorkerInstanceStatusLost             WorkerInstanceStatus = "lost"
+)
+
 type ResourceVector struct {
 	CPUMillis               int64 `json:"cpu_millis"`
 	MemoryBytes             int64 `json:"memory_bytes"`
@@ -19,14 +38,14 @@ type RoleDemand struct {
 }
 
 type CapacityObservation struct {
-	WorkerGroupID      string      `json:"worker_group_id"`
-	RegionID           string      `json:"region_id"`
-	GroupStatus        string      `json:"group_status"`
-	Run                *RoleDemand `json:"run,omitempty"`
-	Build              *RoleDemand `json:"build,omitempty"`
-	RegisteringWorkers int64       `json:"registering_workers"`
-	DrainingWorkers    int64       `json:"draining_workers"`
-	ObservedAt         time.Time   `json:"observed_at"`
+	WorkerGroupID      string            `json:"worker_group_id"`
+	RegionID           string            `json:"region_id"`
+	GroupStatus        WorkerGroupStatus `json:"group_status"`
+	Run                *RoleDemand       `json:"run,omitempty"`
+	Build              *RoleDemand       `json:"build,omitempty"`
+	RegisteringWorkers int64             `json:"registering_workers"`
+	DrainingWorkers    int64             `json:"draining_workers"`
+	ObservedAt         time.Time         `json:"observed_at"`
 }
 
 type CapacityObservationsResponse struct {
@@ -34,19 +53,19 @@ type CapacityObservationsResponse struct {
 }
 
 type WorkerInstance struct {
-	ID                 string     `json:"id"`
-	ResourceID         string     `json:"resource_id"`
-	WorkerGroupID      string     `json:"worker_group_id"`
-	Status             string     `json:"status"`
-	ClaimVersion       int64      `json:"claim_version"`
-	CurrentEpoch       *int64     `json:"current_epoch,omitempty"`
-	SupportsRun        bool       `json:"supports_run"`
-	SupportsBuild      bool       `json:"supports_build"`
-	DrainingAt         *time.Time `json:"draining_at,omitempty"`
-	TerminationReadyAt *time.Time `json:"termination_ready_at,omitempty"`
-	LostAt             *time.Time `json:"lost_at,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
+	ID                 string               `json:"id"`
+	ResourceID         string               `json:"resource_id"`
+	WorkerGroupID      string               `json:"worker_group_id"`
+	Status             WorkerInstanceStatus `json:"status"`
+	ClaimVersion       int64                `json:"claim_version"`
+	CurrentEpoch       *int64               `json:"current_epoch,omitempty"`
+	SupportsRun        bool                 `json:"supports_run"`
+	SupportsBuild      bool                 `json:"supports_build"`
+	DrainingAt         *time.Time           `json:"draining_at,omitempty"`
+	TerminationReadyAt *time.Time           `json:"termination_ready_at,omitempty"`
+	LostAt             *time.Time           `json:"lost_at,omitempty"`
+	CreatedAt          time.Time            `json:"created_at"`
+	UpdatedAt          time.Time            `json:"updated_at"`
 }
 
 type WorkerInstancesResponse struct {

@@ -28,7 +28,7 @@ export function AuthMagicLinkCallback() {
       await finishMagicLink(token);
       navigate("/", { replace: true });
     } catch (e) {
-      const kind = e instanceof ApiError ? e.errorKind : null;
+      const kind = e instanceof ApiError ? e.code : null;
       setError(errorMessage(kind, e instanceof Error ? e.message : "Sign in failed."));
     }
   });

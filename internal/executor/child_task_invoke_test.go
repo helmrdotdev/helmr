@@ -301,10 +301,11 @@ func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 	}
 }
 
-func TestChildTaskInvokeFailureDoesNotClassifyUncodedConflict(t *testing.T) {
+func TestChildTaskInvokeFailureDoesNotClassifyGenericConflict(t *testing.T) {
 	failure, ok := childTaskInvokeFailure(&httpclient.Error{
 		StatusCode: 409,
 		Status:     "409 Conflict",
+		Code:       "conflict",
 		Message:    "child Task invocation authority is stale",
 	})
 	if ok || failure != (workerapi.RuntimeOperationFailure{}) {

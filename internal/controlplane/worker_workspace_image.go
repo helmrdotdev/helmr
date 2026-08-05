@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -25,13 +24,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	"github.com/helmrdotdev/helmr/internal/sourceid"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 )
 
 const maxImageBuildTreeBytes = int64(11 << 30)
-
-var workspaceImageDeclarationPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 type workspaceImageAdmission struct {
 	request               workerapi.WorkspaceImageAdmissionRequest
@@ -93,7 +91,7 @@ func normalizeWorkspaceImageAdmission(
 	if err != nil {
 		return workspaceImageAdmission{}, err
 	}
-	if !workspaceImageDeclarationPattern.MatchString(request.DeclarationSlot) {
+	if !sourceid.Valid(request.DeclarationSlot) {
 		return workspaceImageAdmission{}, errors.New("workspace image declaration_slot is invalid")
 	}
 	planDigest, err := imagebuild.Digest(request.Plan, request.Architecture)
@@ -746,7 +744,7 @@ func (s *Server) completeWorkspaceImage(
 	if err := ids.Validate(request.AttemptID); err != nil {
 		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("workspace image attempt_id is invalid"))
 	}
-	if !workspaceImageDeclarationPattern.MatchString(request.DeclarationSlot) {
+	if !sourceid.Valid(request.DeclarationSlot) {
 		return workerapi.WorkspaceImageOperationResultResponse{}, badRequest(errors.New("workspace image declaration_slot is invalid"))
 	}
 	if request.RequestedCacheMode != imagebuild.CachePrefer && request.RequestedCacheMode != imagebuild.CacheBypass {

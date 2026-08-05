@@ -12,8 +12,8 @@ func TestValidateActorAndSessionIdentifiers(t *testing.T) {
 	if err := ValidateActorDeclaredID("operator.v1"); err != nil {
 		t.Fatalf("ValidateActorDeclaredID() error = %v", err)
 	}
-	if err := ValidateActorID(uuid.Must(uuid.NewV7()).String()); err != nil {
-		t.Fatalf("ValidateActorID() error = %v", err)
+	if err := ValidateSessionID(uuid.Must(uuid.NewV7()).String()); err != nil {
+		t.Fatalf("ValidateSessionID() error = %v", err)
 	}
 	if err := ValidateActorKey("thread:東京"); err != nil {
 		t.Fatalf("ValidateActorKey() error = %v", err)

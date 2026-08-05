@@ -117,8 +117,10 @@ export interface ActorExecutionContext extends ExecutionContextBase {
 
 export interface HelmrError extends Error {
   readonly code: string
-  readonly retryable: boolean
-  readonly requestId?: string
+}
+
+export interface APIError extends HelmrError {
+  readonly details?: Readonly<Record<string, JsonValue>>
 }
 
 export type RunStatus =
@@ -138,6 +140,7 @@ export interface RunHandle {
 }
 
 export interface RunError extends HelmrError {
+  readonly retryable: boolean
   readonly details?: JsonValue
 }
 

@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"sort"
 	"strings"
@@ -231,5 +232,40 @@ POST /v1/workspaces/{workspaceID}/exec
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("Control Plane routes changed\nwant:\n%s\n\ngot:\n%s", strings.Join(want, "\n"), strings.Join(got, "\n"))
+	}
+}
+
+func TestRouterFallbacksUseHTTPErrorEnvelope(t *testing.T) {
+	server := &Server{}
+	router := chi.NewRouter()
+	server.mountRoutes(router)
+	router.NotFound(server.notFound)
+	router.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		server.methodNotAllowed(router, w, r)
+	})
+
+	for _, test := range []struct {
+		name   string
+		method string
+		path   string
+		status int
+		code   string
+	}{
+		{name: "not found", method: http.MethodGet, path: "/v1/missing", status: http.StatusNotFound, code: "not_found"},
+		{name: "method not allowed", method: http.MethodPost, path: "/healthz", status: http.StatusMethodNotAllowed, code: "method_not_allowed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(test.method, test.path, nil))
+			if response.Code != test.status {
+				t.Fatalf("status = %d, want %d", response.Code, test.status)
+			}
+			if got := decodeHTTPError(t, response.Body.Bytes()).Code; got != test.code {
+				t.Fatalf("code = %q, want %q", got, test.code)
+			}
+			if test.status == http.StatusMethodNotAllowed && response.Header().Get("Allow") != http.MethodGet {
+				t.Fatalf("Allow = %q, want %q", response.Header().Get("Allow"), http.MethodGet)
+			}
+		})
 	}
 }

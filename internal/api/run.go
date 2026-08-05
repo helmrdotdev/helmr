@@ -9,14 +9,15 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/helmrdotdev/helmr/internal/sourceid"
 )
 
-var taskIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 var queueNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$`)
 
 func ValidateDefinitionID(id string) error {
-	if !taskIDPattern.MatchString(id) {
-		return fmt.Errorf("task_id %q must match %s", id, taskIDPattern.String())
+	if !sourceid.Valid(id) {
+		return fmt.Errorf("task_id %q must match %s", id, sourceid.Grammar)
 	}
 	return nil
 }
@@ -80,30 +81,40 @@ type RevokeSecretRequest struct {
 }
 
 type SecretResponse struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	Status    string     `json:"status"`
-	CreatedAt time.Time  `json:"created_at"`
-	RotatedAt *time.Time `json:"rotated_at,omitempty"`
-	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+	ID        string       `json:"id"`
+	Name      string       `json:"name"`
+	Status    SecretStatus `json:"status"`
+	CreatedAt time.Time    `json:"created_at"`
+	RotatedAt *time.Time   `json:"rotated_at,omitempty"`
+	RevokedAt *time.Time   `json:"revoked_at,omitempty"`
 }
+
+type SecretStatus string
+
+const (
+	SecretStatusActive  SecretStatus = "active"
+	SecretStatusRevoked SecretStatus = "revoked"
+	SecretStatusDeleted SecretStatus = "deleted"
+)
 
 type ListSecretsResponse struct {
 	Secrets    []SecretResponse `json:"secrets"`
 	NextCursor string           `json:"next_cursor,omitempty"`
 }
 
+type RunStatus string
+
 const (
-	RunStatusQueued          = "queued"
-	RunStatusRunning         = "running"
-	RunStatusWaiting         = "waiting"
-	RunStatusRetryDelayed    = "retry_delayed"
-	RunStatusCancelRequested = "cancel_requested"
-	RunStatusSucceeded       = "succeeded"
-	RunStatusFailed          = "failed"
-	RunStatusCancelled       = "cancelled"
-	RunStatusExpired         = "expired"
-	RunStatusSystemFailed    = "system_failed"
+	RunStatusQueued          RunStatus = "queued"
+	RunStatusRunning         RunStatus = "running"
+	RunStatusWaiting         RunStatus = "waiting"
+	RunStatusRetryDelayed    RunStatus = "retry_delayed"
+	RunStatusCancelRequested RunStatus = "cancel_requested"
+	RunStatusSucceeded       RunStatus = "succeeded"
+	RunStatusFailed          RunStatus = "failed"
+	RunStatusCancelled       RunStatus = "cancelled"
+	RunStatusExpired         RunStatus = "expired"
+	RunStatusSystemFailed    RunStatus = "system_failed"
 
 	RunEventKindCompleted = "run.completed"
 	RunEventKindFailed    = "run.failed"
@@ -111,8 +122,8 @@ const (
 	RunEventKindExpired   = "run.expired"
 )
 
-func RunStatusIsTerminal(status string) bool {
-	switch strings.TrimSpace(status) {
+func RunStatusIsTerminal(status RunStatus) bool {
+	switch status {
 	case RunStatusSucceeded, RunStatusFailed, RunStatusCancelled, RunStatusExpired, RunStatusSystemFailed:
 		return true
 	default:

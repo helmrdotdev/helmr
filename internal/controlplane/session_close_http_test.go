@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -96,12 +95,7 @@ func TestActorCloseBodyLimitReturnsTypedError(t *testing.T) {
 		}
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, request)
-		var response struct {
-			Code string `json:"code"`
-		}
-		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-			t.Fatal(err)
-		}
+		response := decodeHTTPError(t, recorder.Body.Bytes())
 		if recorder.Code != http.StatusRequestEntityTooLarge ||
 			response.Code != "session_close_request_too_large" {
 			t.Fatalf("chunked=%t status=%d body=%s", chunked, recorder.Code, recorder.Body.String())
@@ -111,28 +105,20 @@ func TestActorCloseBodyLimitReturnsTypedError(t *testing.T) {
 
 func TestWriteActorCloseErrorUsesStableCodes(t *testing.T) {
 	for _, test := range []struct {
-		err       error
-		status    int
-		code      string
-		retryable bool
+		err    error
+		status int
+		code   string
 	}{
 		{err: errActorCloseConflict, status: http.StatusConflict, code: "session_close_conflict"},
 		{
 			err: errActorCloseAuthority, status: http.StatusServiceUnavailable,
-			code: "session_close_authority_unavailable", retryable: true,
+			code: "session_close_authority_unavailable",
 		},
 	} {
 		recorder := httptest.NewRecorder()
 		(&Server{}).writeSessionCloseError(recorder, test.err)
-		var response struct {
-			Code      string `json:"code"`
-			Retryable bool   `json:"retryable"`
-		}
-		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-			t.Fatal(err)
-		}
-		if recorder.Code != test.status || response.Code != test.code ||
-			response.Retryable != test.retryable {
+		response := decodeHTTPError(t, recorder.Body.Bytes())
+		if recorder.Code != test.status || response.Code != test.code {
 			t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 		}
 	}
@@ -140,10 +126,9 @@ func TestWriteActorCloseErrorUsesStableCodes(t *testing.T) {
 
 func TestWriteActorCloseScopeErrorDistinguishesReferencesFromAuthority(t *testing.T) {
 	for _, test := range []struct {
-		err       error
-		status    int
-		code      string
-		retryable bool
+		err    error
+		status int
+		code   string
 	}{
 		{
 			err:    invalidEnvironmentScopeReference("project_id is invalid"),
@@ -151,23 +136,15 @@ func TestWriteActorCloseScopeErrorDistinguishesReferencesFromAuthority(t *testin
 			code:   "invalid_session_close",
 		},
 		{
-			err:       errors.New("database unavailable"),
-			status:    http.StatusServiceUnavailable,
-			code:      "session_close_authority_unavailable",
-			retryable: true,
+			err:    errors.New("database unavailable"),
+			status: http.StatusServiceUnavailable,
+			code:   "session_close_authority_unavailable",
 		},
 	} {
 		recorder := httptest.NewRecorder()
 		(&Server{}).writeSessionCloseScopeError(recorder, test.err)
-		var response struct {
-			Code      string `json:"code"`
-			Retryable bool   `json:"retryable"`
-		}
-		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-			t.Fatal(err)
-		}
-		if recorder.Code != test.status || response.Code != test.code ||
-			response.Retryable != test.retryable {
+		response := decodeHTTPError(t, recorder.Body.Bytes())
+		if recorder.Code != test.status || response.Code != test.code {
 			t.Fatalf("error=%v status=%d body=%s", test.err, recorder.Code, recorder.Body.String())
 		}
 	}

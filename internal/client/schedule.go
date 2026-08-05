@@ -29,7 +29,7 @@ func (c *Client) ListSchedules(
 			maxScheduleListLimit,
 		)
 	}
-	path, _, err := c.environmentScopedPath(
+	path, err := c.environmentScopedPath(
 		opts.ProjectID,
 		opts.EnvironmentID,
 		"/schedules",
@@ -69,7 +69,7 @@ func (c *Client) GetSchedule(
 	if err := api.ValidateScheduleID(scheduleID); err != nil {
 		return api.ScheduleResponse{}, err
 	}
-	path, _, err := c.environmentScopedPath(
+	path, err := c.environmentScopedPath(
 		opts.ProjectID,
 		opts.EnvironmentID,
 		"/schedules/"+url.PathEscape(scheduleID),

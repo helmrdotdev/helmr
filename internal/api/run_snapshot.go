@@ -7,7 +7,7 @@ import (
 
 type RunSnapshotResponse struct {
 	ID                   string                `json:"id"`
-	Status               string                `json:"status"`
+	Status               RunStatus             `json:"status"`
 	Entrypoint           RunEntrypointResponse `json:"entrypoint"`
 	Deployment           DeploymentReference   `json:"deployment"`
 	WorkspaceID          string                `json:"workspace_id"`

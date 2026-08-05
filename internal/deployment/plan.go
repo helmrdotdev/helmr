@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/schedule"
+	"github.com/helmrdotdev/helmr/internal/sourceid"
 )
 
 const (
@@ -393,7 +394,7 @@ func (input DefinitionInput) manifestCount() int {
 }
 
 func validateDefinitionInput(input DefinitionInput, queues map[string]struct{}) error {
-	if !declaredIDPattern.MatchString(input.DeclaredID) {
+	if !sourceid.Valid(input.DeclaredID) {
 		return fmt.Errorf("declaredId %q is outside the exact ASCII ID domain", input.DeclaredID)
 	}
 	if input.manifestCount() != 1 {

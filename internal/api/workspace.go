@@ -3,11 +3,10 @@ package api
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"time"
-)
 
-var workspaceDeclaredIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+	"github.com/helmrdotdev/helmr/internal/sourceid"
+)
 
 type WorkspaceSecret struct {
 	Name string `json:"name"`
@@ -55,11 +54,11 @@ type DeleteWorkspaceReceipt struct {
 }
 
 func ValidateSandboxDeclaredID(id string) error {
-	if !workspaceDeclaredIDPattern.MatchString(id) {
+	if !sourceid.Valid(id) {
 		return fmt.Errorf(
 			"workspace declared ID %q must match %s",
 			id,
-			workspaceDeclaredIDPattern.String(),
+			sourceid.Grammar,
 		)
 	}
 	return nil

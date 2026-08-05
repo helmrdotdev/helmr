@@ -69,8 +69,6 @@ func NormalizeEnvironmentColorHex(colorHex string) (string, error) {
 }
 
 type CreateDeploymentRequest struct {
-	ProjectID             string `json:"project_id"`
-	EnvironmentID         string `json:"environment_id,omitempty"`
 	IdempotencyKey        string `json:"idempotency_key"`
 	ContentHash           string `json:"content_hash"`
 	ImageCacheMode        string `json:"image_cache_mode,omitempty"`
@@ -78,10 +76,14 @@ type CreateDeploymentRequest struct {
 	WorkerProtocolVersion string `json:"worker_protocol_version,omitempty"`
 }
 
-type GetDeploymentRequest struct {
-	ProjectID     string `json:"project_id"`
-	EnvironmentID string `json:"environment_id,omitempty"`
-}
+type DeploymentStatus string
+
+const (
+	DeploymentStatusQueued   DeploymentStatus = "queued"
+	DeploymentStatusBuilding DeploymentStatus = "building"
+	DeploymentStatusDeployed DeploymentStatus = "deployed"
+	DeploymentStatusFailed   DeploymentStatus = "failed"
+)
 
 type DeploymentResponse struct {
 	ID                    string                   `json:"id"`
@@ -92,7 +94,7 @@ type DeploymentResponse struct {
 	EnvironmentID         string                   `json:"environment_id"`
 	ContentHash           string                   `json:"content_hash"`
 	DeploymentSource      DeploymentSourceArtifact `json:"deployment_source"`
-	Status                string                   `json:"status"`
+	Status                DeploymentStatus         `json:"status"`
 	Error                 *DeploymentErrorResponse `json:"error,omitempty"`
 	CreatedAt             time.Time                `json:"created_at"`
 	BuildingAt            time.Time                `json:"building_at"`
@@ -102,9 +104,7 @@ type DeploymentResponse struct {
 }
 
 type PromoteDeploymentRequest struct {
-	ProjectID     string `json:"project_id,omitempty"`
-	EnvironmentID string `json:"environment_id,omitempty"`
-	Reason        string `json:"reason,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type DeploymentErrorResponse struct {

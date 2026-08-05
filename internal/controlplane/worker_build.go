@@ -520,9 +520,18 @@ func (s *Server) workerDeploymentBuildDeliveryFailed(w http.ResponseWriter, r *h
 		writeError(w, errors.New("invalid deployment build delivery failure result"))
 		return
 	}
+	var status workerapi.DeploymentBuildStatus
+	switch row.DeploymentStatus {
+	case db.DeploymentStatusBuilding:
+		status = workerapi.DeploymentBuildStatusBuilding
+	case db.DeploymentStatusDeployed:
+		status = workerapi.DeploymentBuildStatusDeployed
+	case db.DeploymentStatusFailed:
+		status = workerapi.DeploymentBuildStatusFailed
+	}
 	writeJSON(w, http.StatusOK, workerapi.DeploymentBuildResponse{
 		DeploymentID: lease.DeploymentID,
-		Status:       string(row.DeploymentStatus),
+		Status:       status,
 	})
 }
 
@@ -793,12 +802,12 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			writeError(w, conflict(errors.New("deployment build lease already has a different terminal result")))
 			return
 		}
-		var status string
+		var status workerapi.DeploymentBuildStatus
 		switch terminal.State {
 		case db.DeploymentBuildLeaseStateSucceeded:
-			status = string(db.DeploymentStatusDeployed)
+			status = workerapi.DeploymentBuildStatusDeployed
 		case db.DeploymentBuildLeaseStateFailed:
-			status = string(db.DeploymentStatusFailed)
+			status = workerapi.DeploymentBuildStatusFailed
 		default:
 			writeError(w, conflict(errors.New("deployment build lease was terminated by another operation")))
 			return
@@ -903,10 +912,10 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			}
 			switch locked.State {
 			case db.DeploymentBuildLeaseStateSucceeded:
-				response = workerapi.DeploymentBuildResponse{DeploymentID: request.Lease.DeploymentID, Status: string(db.DeploymentStatusDeployed)}
+				response = workerapi.DeploymentBuildResponse{DeploymentID: request.Lease.DeploymentID, Status: workerapi.DeploymentBuildStatusDeployed}
 				return nil
 			case db.DeploymentBuildLeaseStateFailed:
-				response = workerapi.DeploymentBuildResponse{DeploymentID: request.Lease.DeploymentID, Status: string(db.DeploymentStatusFailed)}
+				response = workerapi.DeploymentBuildResponse{DeploymentID: request.Lease.DeploymentID, Status: workerapi.DeploymentBuildStatusFailed}
 				return nil
 			default:
 				return conflict(errors.New("deployment build lease was terminated by another operation"))
@@ -961,7 +970,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			if err := appendDeploymentLifecycleEvent(r.Context(), work.q, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.failed", "error", "worker", "failed", message); err != nil {
 				return errors.New("record deployment event")
 			}
-			response = workerapi.DeploymentBuildResponse{DeploymentID: pgvalue.MustUUIDValue(row.ID).String(), Status: string(row.Status)}
+			response = workerapi.DeploymentBuildResponse{DeploymentID: pgvalue.MustUUIDValue(row.ID).String(), Status: workerapi.DeploymentBuildStatusFailed}
 			return nil
 		}
 		failInvalid := func(message string) error {
@@ -1163,7 +1172,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		if err := appendDeploymentLifecycleEvent(r.Context(), work.q, row.OrgID, row.ProjectID, row.EnvironmentID, row.ID, "deployment.deployed", "info", "worker", "deployed", "Deployment build completed"); err != nil {
 			return errors.New("record deployment event")
 		}
-		response = workerapi.DeploymentBuildResponse{DeploymentID: pgvalue.MustUUIDValue(row.ID).String(), Status: string(row.Status)}
+		response = workerapi.DeploymentBuildResponse{DeploymentID: pgvalue.MustUUIDValue(row.ID).String(), Status: workerapi.DeploymentBuildStatusDeployed}
 		return nil
 	})
 	if err != nil {

@@ -68,12 +68,7 @@ func TestActorInputSequenceExhaustionIsDistinctFromRetryableCapacity(t *testing.
 		db.Session{},
 		errActorSequenceExhausted,
 	)
-	var response struct {
-		Code string `json:"code"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
+	response := decodeHTTPError(t, recorder.Body.Bytes())
 	if recorder.Code != 409 || response.Code != "session_sequence_exhausted" {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -92,12 +87,7 @@ func TestActorInputBodyLimitReturnsTypedErrorForFixedAndChunkedBodies(t *testing
 		}
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, request)
-		var response struct {
-			Code string `json:"code"`
-		}
-		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-			t.Fatal(err)
-		}
+		response := decodeHTTPError(t, recorder.Body.Bytes())
 		if recorder.Code != http.StatusRequestEntityTooLarge ||
 			response.Code != "session_input_too_large" {
 			t.Fatalf("chunked=%t status=%d body=%s", chunked, recorder.Code, recorder.Body.String())

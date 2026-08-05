@@ -275,7 +275,7 @@ func validateWorkerSessionReference(
 	if err := validateRuntimeActorCorrelation(request.CorrelationID); err != nil {
 		return workerapi.SessionReferenceRequest{}, err
 	}
-	if err := api.ValidateActorID(request.SessionID); err != nil {
+	if err := api.ValidateSessionID(request.SessionID); err != nil {
 		return workerapi.SessionReferenceRequest{}, err
 	}
 	return request, nil

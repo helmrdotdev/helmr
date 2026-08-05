@@ -12,9 +12,18 @@ type CreateTokenRequest struct {
 	IdempotencyKey string          `json:"idempotency_key,omitempty"`
 }
 
+type TokenStatus string
+
+const (
+	TokenStatusPending   TokenStatus = "pending"
+	TokenStatusCompleted TokenStatus = "completed"
+	TokenStatusExpired   TokenStatus = "expired"
+	TokenStatusCancelled TokenStatus = "cancelled"
+)
+
 type TokenResponse struct {
 	ID                string          `json:"id"`
-	Status            string          `json:"status"`
+	Status            TokenStatus     `json:"status"`
 	CallbackURL       string          `json:"callback_url,omitempty"`
 	PublicAccessToken string          `json:"public_access_token,omitempty"`
 	TimeoutAt         *time.Time      `json:"timeout_at"`
@@ -38,9 +47,4 @@ type CompleteTokenRequest struct {
 
 type CancelTokenRequest struct {
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
-}
-
-type CompleteTokenResponse struct {
-	Status string        `json:"status"`
-	Token  TokenResponse `json:"token"`
 }

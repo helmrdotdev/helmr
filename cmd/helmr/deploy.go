@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/archive"
+	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/spf13/cobra"
@@ -111,11 +112,11 @@ func deployCommand() *cobra.Command {
 			if deployRequest.IdempotencyKey == "" {
 				deployRequest.IdempotencyKey = uuid.Must(uuid.NewV7()).String()
 			}
-			if controlPlane.UsesSessionScopedRoutes() {
-				deployRequest.ProjectID = projectRef
-				deployRequest.EnvironmentID = envRef
+			scope, err := environmentScopeForClient(controlPlane, projectRef, envRef)
+			if err != nil {
+				return err
 			}
-			response, err := controlPlane.CreateDeployment(cmd.Context(), deployRequest, tarArchive.Path)
+			response, err := controlPlane.CreateDeployment(cmd.Context(), deployRequest, tarArchive.Path, scope)
 			if err != nil {
 				return err
 			}
@@ -125,11 +126,11 @@ func deployCommand() *cobra.Command {
 			if detach {
 				return reporter.DeploymentResult(response, "queued")
 			}
-			scope, err := deploymentWaitScope(response, controlPlane.UsesSessionScopedRoutes())
+			resolvedScope, err := deploymentWaitScope(response, controlPlane.UsesSessionScopedRoutes())
 			if err != nil {
 				return err
 			}
-			deployed, err := waitForDeployment(cmd.Context(), controlPlane, response, scope, timeout, reporter)
+			deployed, err := waitForDeployment(cmd.Context(), controlPlane, response, resolvedScope, timeout, reporter)
 			if err != nil {
 				return err
 			}
@@ -140,11 +141,7 @@ func deployCommand() *cobra.Command {
 				return err
 			}
 			promoteRequest := api.PromoteDeploymentRequest{Reason: "deploy"}
-			if controlPlane.UsesSessionScopedRoutes() {
-				promoteRequest.ProjectID = scope.ProjectID
-				promoteRequest.EnvironmentID = scope.EnvironmentID
-			}
-			promoted, err := controlPlane.PromoteDeployment(cmd.Context(), deployed.ID, promoteRequest)
+			promoted, err := controlPlane.PromoteDeployment(cmd.Context(), deployed.ID, promoteRequest, resolvedScope)
 			if err != nil {
 				return err
 			}
@@ -163,8 +160,8 @@ func deployCommand() *cobra.Command {
 }
 
 type deploymentStatusClient interface {
-	GetDeployment(context.Context, string, api.GetDeploymentRequest) (api.DeploymentResponse, error)
-	FollowDeploymentEvents(context.Context, string, api.GetDeploymentRequest, string, func(api.RunEvent) error) error
+	GetDeployment(context.Context, string, client.EnvironmentScopeOptions) (api.DeploymentResponse, error)
+	FollowDeploymentEvents(context.Context, string, client.EnvironmentScopeOptions, string, func(api.RunEvent) error) error
 }
 
 type deployReporter interface {
@@ -248,11 +245,11 @@ func promoteCommand() *cobra.Command {
 				return errors.New("--project and --env require helmr login; API keys are already environment scoped")
 			}
 			request := api.PromoteDeploymentRequest{Reason: strings.TrimSpace(reason)}
-			if controlPlane.UsesSessionScopedRoutes() {
-				request.ProjectID = strings.TrimSpace(projectID)
-				request.EnvironmentID = strings.TrimSpace(environmentID)
+			scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
+			if err != nil {
+				return err
 			}
-			deployment, err := controlPlane.PromoteDeployment(cmd.Context(), args[0], request)
+			deployment, err := controlPlane.PromoteDeployment(cmd.Context(), args[0], request, scope)
 			if err != nil {
 				return err
 			}
@@ -273,19 +270,19 @@ func deploymentOutputRef(deployment api.DeploymentResponse) string {
 	return deployment.ID
 }
 
-func deploymentWaitScope(response api.DeploymentResponse, sessionScopedRoutes bool) (api.GetDeploymentRequest, error) {
+func deploymentWaitScope(response api.DeploymentResponse, sessionScopedRoutes bool) (client.EnvironmentScopeOptions, error) {
 	if !sessionScopedRoutes {
-		return api.GetDeploymentRequest{}, nil
+		return client.EnvironmentScopeOptions{}, nil
 	}
 	projectID := strings.TrimSpace(response.ProjectID)
 	environmentID := strings.TrimSpace(response.EnvironmentID)
 	if projectID == "" || environmentID == "" {
-		return api.GetDeploymentRequest{}, fmt.Errorf("deployment %s response did not include resolved project_id and environment_id", response.ID)
+		return client.EnvironmentScopeOptions{}, fmt.Errorf("deployment %s response did not include resolved project_id and environment_id", response.ID)
 	}
-	return api.GetDeploymentRequest{ProjectID: projectID, EnvironmentID: environmentID}, nil
+	return client.EnvironmentScopeOptions{ProjectID: projectID, EnvironmentID: environmentID}, nil
 }
 
-func waitForDeployment(ctx context.Context, controlPlane deploymentStatusClient, initial api.DeploymentResponse, scope api.GetDeploymentRequest, timeout time.Duration, reporter deployReporter) (api.DeploymentResponse, error) {
+func waitForDeployment(ctx context.Context, controlPlane deploymentStatusClient, initial api.DeploymentResponse, scope client.EnvironmentScopeOptions, timeout time.Duration, reporter deployReporter) (api.DeploymentResponse, error) {
 	if strings.TrimSpace(initial.ID) == "" {
 		return api.DeploymentResponse{}, errors.New("deployment response id is empty")
 	}
@@ -339,9 +336,9 @@ func waitForDeployment(ctx context.Context, controlPlane deploymentStatusClient,
 	}
 }
 
-func deploymentFinished(status string) bool {
-	switch strings.TrimSpace(status) {
-	case "deployed", "failed":
+func deploymentFinished(status api.DeploymentStatus) bool {
+	switch status {
+	case api.DeploymentStatusDeployed, api.DeploymentStatusFailed:
 		return true
 	default:
 		return false
@@ -349,10 +346,10 @@ func deploymentFinished(status string) bool {
 }
 
 func deploymentTerminalResult(deployment api.DeploymentResponse) (api.DeploymentResponse, error) {
-	switch strings.TrimSpace(deployment.Status) {
-	case "deployed":
+	switch deployment.Status {
+	case api.DeploymentStatusDeployed:
 		return deployment, nil
-	case "failed":
+	case api.DeploymentStatusFailed:
 		message := strings.TrimSpace(deploymentErrorMessage(deployment))
 		if message == "" {
 			message = "deployment build failed"

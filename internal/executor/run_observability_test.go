@@ -119,6 +119,36 @@ func TestRuntimeOperationFailureKeepsSemanticControlError(t *testing.T) {
 	}
 }
 
+func TestRuntimeOperationFailureDoesNotClassifyGenericConflict(t *testing.T) {
+	failure, ok := runtimeOperationFailure(
+		&httpclient.Error{
+			StatusCode: http.StatusConflict,
+			Code:       "conflict",
+			Message:    "worker run lease fence is stale",
+		},
+		"fallback",
+		"fallback",
+	)
+	if ok || failure != (workerapi.RuntimeOperationFailure{}) {
+		t.Fatalf("failure = %+v classified = %t", failure, ok)
+	}
+}
+
+func TestRuntimeOperationFailureUsesOwnerCodeForGenericValidationError(t *testing.T) {
+	failure, ok := runtimeOperationFailure(
+		&httpclient.Error{
+			StatusCode: http.StatusUnprocessableEntity,
+			Code:       "unprocessable_entity",
+			Message:    "metadata is invalid",
+		},
+		"run_metadata_rejected",
+		"metadata request was rejected",
+	)
+	if !ok || failure.Code != "run_metadata_rejected" || failure.Message != "metadata is invalid" {
+		t.Fatalf("failure = %+v classified = %t", failure, ok)
+	}
+}
+
 func TestTaskControlObservabilityRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	transient := func() error {
 		return &httpclient.Error{

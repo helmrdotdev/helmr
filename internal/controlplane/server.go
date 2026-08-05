@@ -282,7 +282,31 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	router.Use(otelhttp.NewMiddleware("helmr-controlplane"))
 	server.mountRoutes(router)
 	router.NotFound(server.notFound)
+	router.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		server.methodNotAllowed(router, w, r)
+	})
 	return router, nil
+}
+
+func (s *Server) methodNotAllowed(routes chi.Routes, w http.ResponseWriter, r *http.Request) {
+	for _, method := range []string{
+		http.MethodConnect,
+		http.MethodDelete,
+		http.MethodGet,
+		http.MethodHead,
+		http.MethodOptions,
+		http.MethodPatch,
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodTrace,
+	} {
+		if routes.Match(chi.NewRouteContext(), method, r.URL.Path) {
+			w.Header().Add("Allow", method)
+		}
+	}
+	writeError(w, apiError{kind: errMethodNotAllowed, err: codedError{
+		code: "method_not_allowed", message: "method is not allowed",
+	}})
 }
 
 func (s *Server) mountRoutes(router chi.Router) {

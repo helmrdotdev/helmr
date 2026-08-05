@@ -31,7 +31,11 @@ SELECT id,
    AND accepted_at IS NULL
    AND revoked_at IS NULL
    AND expires_at > now()
- ORDER BY created_at DESC
+   AND (
+       sqlc.narg(after_created_at)::timestamptz IS NULL
+       OR (created_at, id) < (sqlc.narg(after_created_at)::timestamptz, sqlc.narg(after_id)::uuid)
+   )
+ ORDER BY created_at DESC, id DESC
  LIMIT sqlc.arg(row_limit);
 
 -- name: GetPendingInvitationByEmail :one

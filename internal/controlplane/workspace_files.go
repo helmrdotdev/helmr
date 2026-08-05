@@ -322,7 +322,7 @@ func (s *Server) loadPublicWorkspace(w http.ResponseWriter, r *http.Request, per
 		}))
 		return db.Workspace{}, false
 	}
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal, "", "")
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_workspace_reference", message: err.Error()}))
 		return db.Workspace{}, false

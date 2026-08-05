@@ -1,6 +1,8 @@
 package controlplane
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,11 +13,20 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const apiKeyListLimit = 200
+
+type apiKeyListCursor struct {
+	ProjectID     string `json:"project_id"`
+	EnvironmentID string `json:"environment_id"`
+	Filter        string `json:"filter"`
+	CreatedAt     string `json:"created_at"`
+	ID            string `json:"id"`
+}
 
 func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 	filter := r.URL.Query().Get("filter")
@@ -27,17 +38,36 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	_, projectUUID, environmentUUID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
+	_, projectUUID, environmentUUID, err := s.requestEnvironmentScopeFromRequest(r, actor)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
+	var afterCreatedAt pgtype.Timestamptz
+	var afterID pgtype.UUID
+	if rawCursor := r.URL.Query().Get("cursor"); rawCursor != "" {
+		cursor, err := decodeAPIKeyListCursor(rawCursor)
+		if err != nil || cursor.ProjectID != pgvalue.UUIDString(projectUUID) ||
+			cursor.EnvironmentID != pgvalue.UUIDString(environmentUUID) || cursor.Filter != filter {
+			writeError(w, badRequest(errors.New("api key cursor is invalid")))
+			return
+		}
+		createdAt, err := time.Parse(time.RFC3339Nano, cursor.CreatedAt)
+		if err != nil {
+			writeError(w, badRequest(errors.New("api key cursor is invalid")))
+			return
+		}
+		afterCreatedAt = pgvalue.Timestamptz(createdAt)
+		afterID = pgvalue.UUID(uuid.MustParse(cursor.ID))
+	}
 	rows, err := s.db.ListAPIKeys(r.Context(), db.ListAPIKeysParams{
-		OrgID:         pgvalue.UUID(actor.OrgID),
-		ProjectID:     projectUUID,
-		EnvironmentID: environmentUUID,
-		StatusFilter:  filter,
-		RowLimit:      apiKeyListLimit + 1,
+		OrgID:          pgvalue.UUID(actor.OrgID),
+		ProjectID:      projectUUID,
+		EnvironmentID:  environmentUUID,
+		StatusFilter:   filter,
+		AfterCreatedAt: afterCreatedAt,
+		AfterID:        afterID,
+		RowLimit:       apiKeyListLimit + 1,
 	})
 	if err != nil {
 		writeError(w, errors.New("list api keys"))
@@ -65,7 +95,40 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 		item.Permissions = apiKeyPermissionGrantsFromRows(grants)
 		items = append(items, item)
 	}
-	writeJSON(w, http.StatusOK, api.ListAPIKeysResponse{Items: items, HasMore: hasMore})
+	response := api.ListAPIKeysResponse{APIKeys: items}
+	if hasMore {
+		last := rows[len(rows)-1]
+		response.NextCursor, err = encodeAPIKeyListCursor(apiKeyListCursor{
+			ProjectID: pgvalue.UUIDString(projectUUID), EnvironmentID: pgvalue.UUIDString(environmentUUID), Filter: filter,
+			CreatedAt: last.CreatedAt.Time.UTC().Format(time.RFC3339Nano), ID: pgvalue.UUIDString(last.ID),
+		})
+		if err != nil {
+			writeError(w, errors.New("list api keys"))
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func encodeAPIKeyListCursor(cursor apiKeyListCursor) (string, error) {
+	raw, err := json.Marshal(cursor)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func decodeAPIKeyListCursor(raw string) (apiKeyListCursor, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return apiKeyListCursor{}, errors.New("api key cursor is invalid")
+	}
+	var cursor apiKeyListCursor
+	if json.Unmarshal(decoded, &cursor) != nil || cursor.ProjectID == "" || cursor.EnvironmentID == "" ||
+		cursor.Filter == "" || cursor.CreatedAt == "" || ids.Validate(cursor.ID) != nil {
+		return apiKeyListCursor{}, errors.New("api key cursor is invalid")
+	}
+	return cursor, nil
 }
 
 func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +143,7 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectUUID, environmentUUID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
+	scope, projectUUID, environmentUUID, err := s.requestEnvironmentScopeFromRequest(r, actor)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -156,7 +219,7 @@ func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	_, projectUUID, environmentUUID, err := s.requestEnvironmentScopeFromRequest(r, actor, "", "")
+	_, projectUUID, environmentUUID, err := s.requestEnvironmentScopeFromRequest(r, actor)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return

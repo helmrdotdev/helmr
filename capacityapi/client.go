@@ -26,11 +26,16 @@ const (
 type HTTPError struct {
 	StatusCode int
 	Status     string
-	Body       string
+	Code       string
+	Message    string
+	Details    map[string]json.RawMessage
 }
 
 func (e *HTTPError) Error() string {
-	return fmt.Sprintf("capacity control plane returned %s: %s", e.Status, e.Body)
+	if e.Message == "" {
+		return fmt.Sprintf("capacity control plane returned %s", e.Status)
+	}
+	return fmt.Sprintf("capacity control plane returned %s: %s", e.Status, e.Message)
 }
 
 type Client struct {
@@ -80,13 +85,13 @@ func (c *Client) Observations(ctx context.Context) (CapacityObservationsResponse
 	return response, err
 }
 
-func (c *Client) WorkerInstances(ctx context.Context, workerGroupID string, resourceIDs, statuses []string, limit int32) (WorkerInstancesResponse, error) {
+func (c *Client) WorkerInstances(ctx context.Context, workerGroupID string, resourceIDs []string, statuses []WorkerInstanceStatus, limit int32) (WorkerInstancesResponse, error) {
 	query := url.Values{}
 	if workerGroupID = strings.TrimSpace(workerGroupID); workerGroupID != "" {
 		query.Set("worker_group_id", workerGroupID)
 	}
 	for _, status := range statuses {
-		query.Add("status", status)
+		query.Add("status", string(status))
 	}
 	for _, resourceID := range resourceIDs {
 		query.Add("resource_id", resourceID)
@@ -153,7 +158,20 @@ func (c *Client) do(ctx context.Context, method, path string, requestBody, respo
 		return errors.New("capacity control plane response exceeds the maximum size")
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return &HTTPError{StatusCode: response.StatusCode, Status: response.Status, Body: strings.TrimSpace(string(payload))}
+		var envelope struct {
+			Error struct {
+				Code    string                     `json:"code"`
+				Message string                     `json:"message"`
+				Details map[string]json.RawMessage `json:"details"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(payload, &envelope) != nil {
+			return &HTTPError{StatusCode: response.StatusCode, Status: response.Status}
+		}
+		return &HTTPError{
+			StatusCode: response.StatusCode, Status: response.Status,
+			Code: envelope.Error.Code, Message: envelope.Error.Message, Details: envelope.Error.Details,
+		}
 	}
 	if responseBody == nil {
 		return nil

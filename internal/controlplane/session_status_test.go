@@ -19,7 +19,7 @@ func TestProjectSessionStatusCollapsesInternalStates(t *testing.T) {
 		"cancelling": api.SessionStatusCancelled,
 		"cancelled":  api.SessionStatusCancelled,
 	} {
-		got, err := projectSessionStatus(actorReadRecord{
+		got, err := projectSessionStatus(sessionReadRecord{
 			id: pgvalue.UUID(actorID), state: state,
 			createdAt: pgvalue.Timestamptz(now), updatedAt: pgvalue.Timestamptz(now),
 		})
@@ -32,7 +32,7 @@ func TestProjectSessionStatusCollapsesInternalStates(t *testing.T) {
 	}
 
 	runID := uuid.Must(uuid.NewV7())
-	failed, err := projectSessionStatus(actorReadRecord{
+	failed, err := projectSessionStatus(sessionReadRecord{
 		id: pgvalue.UUID(actorID), state: "failed",
 		createdAt: pgvalue.Timestamptz(now), updatedAt: pgvalue.Timestamptz(now),
 		failureCode: pgvalue.Text("run_failed"), failureRunID: pgvalue.UUID(runID),

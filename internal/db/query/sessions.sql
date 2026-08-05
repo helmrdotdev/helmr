@@ -191,7 +191,7 @@ SELECT *
    AND actor_declared_id = sqlc.arg(actor_declared_id)
    AND key = sqlc.arg(key);
 
--- name: GetActorRead :one
+-- name: GetSessionRead :one
 SELECT sessions.*
   FROM sessions
  WHERE sessions.environment_id = sqlc.arg(environment_id)

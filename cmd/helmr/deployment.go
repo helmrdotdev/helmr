@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/spf13/cobra"
 )
 
@@ -67,10 +66,7 @@ func deploymentGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			deployment, err := controlPlane.GetDeployment(cmd.Context(), args[0], api.GetDeploymentRequest{
-				ProjectID:     scope.ProjectID,
-				EnvironmentID: scope.EnvironmentID,
-			})
+			deployment, err := controlPlane.GetDeployment(cmd.Context(), args[0], scope)
 			if err != nil {
 				return err
 			}

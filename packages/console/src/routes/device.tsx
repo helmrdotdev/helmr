@@ -36,7 +36,7 @@ function statusText(status: DeviceCodeStatus["status"]): string {
 }
 
 function deviceErrorMessage(error: unknown, fallback: string): string {
-  const kind = error instanceof ApiError ? error.errorKind : null;
+  const kind = error instanceof ApiError ? error.code : null;
   return errorMessage(kind, error instanceof Error ? error.message : fallback);
 }
 

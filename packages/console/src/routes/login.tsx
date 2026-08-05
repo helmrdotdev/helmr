@@ -38,7 +38,7 @@ export function Login() {
       setSentEmail(trimmedEmail);
       setDebugURL(result.debug_url ?? null);
     } catch (e) {
-      const kind = e instanceof ApiError ? e.errorKind : null;
+      const kind = e instanceof ApiError ? e.code : null;
       setError(errorMessage(kind, e instanceof Error ? e.message : "Sign in failed."));
     } finally {
       setBusy(false);
@@ -52,7 +52,7 @@ export function Login() {
       const { redirect_url } = await startGitHubLogin();
       window.location.href = redirect_url;
     } catch (e) {
-      const kind = e instanceof ApiError ? e.errorKind : null;
+      const kind = e instanceof ApiError ? e.code : null;
       setError(errorMessage(kind, e instanceof Error ? e.message : "Sign in failed."));
       setGitHubBusy(false);
     }

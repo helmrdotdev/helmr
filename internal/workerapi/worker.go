@@ -204,9 +204,16 @@ type PlatformAcquisitionFailRequest struct {
 	Error       json.RawMessage                  `json:"error"`
 }
 
+type PlatformAcquisitionStatus string
+
+const (
+	PlatformAcquisitionStatusPinned PlatformAcquisitionStatus = "pinned"
+	PlatformAcquisitionStatusFailed PlatformAcquisitionStatus = "failed"
+)
+
 type PlatformAcquisitionResult struct {
-	DeploymentID string `json:"deployment_id"`
-	Status       string `json:"status"`
+	DeploymentID string                    `json:"deployment_id"`
+	Status       PlatformAcquisitionStatus `json:"status"`
 }
 
 type DeploymentBuildLeaseResponse struct {
@@ -1224,9 +1231,17 @@ type CompleteDeploymentBuildRequest struct {
 	Result json.RawMessage      `json:"result"`
 }
 
+type DeploymentBuildStatus string
+
+const (
+	DeploymentBuildStatusBuilding DeploymentBuildStatus = "building"
+	DeploymentBuildStatusDeployed DeploymentBuildStatus = "deployed"
+	DeploymentBuildStatusFailed   DeploymentBuildStatus = "failed"
+)
+
 type DeploymentBuildResponse struct {
-	DeploymentID string `json:"deployment_id"`
-	Status       string `json:"status"`
+	DeploymentID string                `json:"deployment_id"`
+	Status       DeploymentBuildStatus `json:"status"`
 }
 
 type LogStream string

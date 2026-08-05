@@ -1,7 +1,7 @@
 import { ApiError, del, postJson, request } from "./api";
 
 export type MemberRole = "owner" | "admin" | "developer" | "viewer";
-export type MemberStatus = "active" | "disabled" | "pending";
+export type MemberStatus = "active" | "disabled";
 export type InvitationStatus = "pending" | "accepted" | "revoked" | "expired";
 
 export type OrganizationMember = {
@@ -30,6 +30,7 @@ export type ListMembersResponse = {
 
 export type ListInvitationsResponse = {
   invitations: OrganizationInvitation[];
+  next_cursor?: string;
 };
 
 export type CreateInvitationInput = {
@@ -54,8 +55,9 @@ export async function listMembers(): Promise<ListMembersResponse> {
   return request<ListMembersResponse>("/api/members");
 }
 
-export async function listInvitations(): Promise<ListInvitationsResponse> {
-  return request<ListInvitationsResponse>("/api/invitations");
+export async function listInvitations(cursor?: string): Promise<ListInvitationsResponse> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  return request<ListInvitationsResponse>(`/api/invitations${query}`);
 }
 
 export async function createInvitation(input: CreateInvitationInput): Promise<CreatedInvitation> {

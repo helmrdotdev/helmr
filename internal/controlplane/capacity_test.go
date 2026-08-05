@@ -103,7 +103,7 @@ func TestCapacityDrainUsesExactEpochAndClaimFence(t *testing.T) {
 	if store.params.ExpectedEpoch.Int64 != 4 || store.params.ExpectedClaimVersion != 7 || store.params.WorkerGroupID != "run-workers" {
 		t.Fatalf("drain params = %+v", store.params)
 	}
-	if result.Status != string(db.WorkerInstanceStateDraining) || result.ClaimVersion != 8 {
+	if result.Status != capacityapi.WorkerInstanceStatusDraining || result.ClaimVersion != 8 {
 		t.Fatalf("drain result = %+v", result)
 	}
 	replayed, err := client.DrainWorkerInstance(t.Context(), uuid.UUID(workerID.Bytes).String(), capacityapi.DrainWorkerInstanceRequest{

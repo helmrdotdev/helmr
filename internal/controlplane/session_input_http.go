@@ -58,7 +58,7 @@ func (s *Server) sendSessionInput(w http.ResponseWriter, r *http.Request) {
 	}
 
 	principal := actorFromContext(r.Context())
-	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal, "", "")
+	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return

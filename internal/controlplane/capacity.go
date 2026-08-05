@@ -284,16 +284,16 @@ func capacityCapacityObservation(observation workergroup.DemandObservation) (cap
 	return result, nil
 }
 
-func workerGroupPublicStatus(state string) (string, error) {
+func workerGroupPublicStatus(state string) (capacityapi.WorkerGroupStatus, error) {
 	switch state {
 	case db.WorkerGroupStateActive:
-		return db.WorkerGroupStateActive, nil
+		return capacityapi.WorkerGroupStatusActive, nil
 	case db.WorkerGroupStatePaused:
-		return db.WorkerGroupStatePaused, nil
+		return capacityapi.WorkerGroupStatusPaused, nil
 	case db.WorkerGroupStateDraining:
-		return db.WorkerGroupStateDraining, nil
+		return capacityapi.WorkerGroupStatusDraining, nil
 	case db.WorkerGroupStateDisabled:
-		return db.WorkerGroupStateDisabled, nil
+		return capacityapi.WorkerGroupStatusDisabled, nil
 	default:
 		return "", fmt.Errorf("worker group state %q has no public projection", state)
 	}
@@ -360,18 +360,18 @@ func capacityWorkerInstance(
 	return result, nil
 }
 
-func workerInstancePublicStatus(state string) (string, error) {
+func workerInstancePublicStatus(state string) (capacityapi.WorkerInstanceStatus, error) {
 	switch state {
 	case db.WorkerInstanceStateRegistering:
-		return db.WorkerInstanceStateRegistering, nil
+		return capacityapi.WorkerInstanceStatusRegistering, nil
 	case db.WorkerInstanceStateActive:
-		return db.WorkerInstanceStateActive, nil
+		return capacityapi.WorkerInstanceStatusActive, nil
 	case db.WorkerInstanceStateDraining:
-		return db.WorkerInstanceStateDraining, nil
+		return capacityapi.WorkerInstanceStatusDraining, nil
 	case db.WorkerInstanceStateTerminationReady:
-		return db.WorkerInstanceStateTerminationReady, nil
+		return capacityapi.WorkerInstanceStatusTerminationReady, nil
 	case db.WorkerInstanceStateLost:
-		return db.WorkerInstanceStateLost, nil
+		return capacityapi.WorkerInstanceStatusLost, nil
 	default:
 		return "", fmt.Errorf("worker instance state %q has no public projection", state)
 	}

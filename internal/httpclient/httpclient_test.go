@@ -13,8 +13,10 @@ func TestErrorPreservesMachineFields(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"error": "conflict", "code": "idempotency_conflict",
-			"retryable": true, "requestId": "req_1",
+			"error": map[string]any{
+				"code": "idempotency_conflict", "message": "conflict",
+				"details": map[string]string{"idempotency_key": "key-1"},
+			},
 		})
 	}))
 	defer server.Close()
@@ -30,7 +32,8 @@ func TestErrorPreservesMachineFields(t *testing.T) {
 	err = transport.DoJSON(req, nil)
 	var httpError *Error
 	if !errors.As(err, &httpError) || httpError.Code != "idempotency_conflict" ||
-		!httpError.Retryable || httpError.RequestID != "req_1" {
+		httpError.Message != "conflict" ||
+		string(httpError.Details) != `{"idempotency_key":"key-1"}` {
 		t.Fatalf("error = %#v", err)
 	}
 }

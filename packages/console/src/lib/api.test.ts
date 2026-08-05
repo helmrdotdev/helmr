@@ -19,7 +19,9 @@ test("redirects unauthorized requests and rejects instead of hanging", async () 
   };
   (globalThis as { window?: typeof windowMock }).window = windowMock;
   globalThis.fetch = (async () =>
-    Response.json({ error: "session authentication is required" }, { status: 401 })) as typeof fetch;
+    Response.json({
+      error: { code: "unauthorized", message: "session authentication is required" },
+    }, { status: 401 })) as typeof fetch;
 
   let error: unknown;
   try {
@@ -29,11 +31,11 @@ test("redirects unauthorized requests and rejects instead of hanging", async () 
   }
 
   expect(error).toBeInstanceOf(ApiError);
-  expect((error as ApiError).errorKind).toBe("unauthorized");
+  expect((error as ApiError).code).toBe("unauthorized");
   expect(windowMock.location.href).toBe("/login");
 });
 
-test("maps status-only api errors to stable error kinds", async () => {
+test("decodes the common api error envelope", async () => {
   (globalThis as { window?: unknown }).window = {
     location: {
       pathname: "/settings/projects",
@@ -42,11 +44,18 @@ test("maps status-only api errors to stable error kinds", async () => {
     },
   };
   globalThis.fetch = (async () =>
-    Response.json({ error: "access denied" }, { status: 403 })) as typeof fetch;
+    Response.json({
+      error: {
+        code: "forbidden",
+        message: "access denied",
+        details: { permission: "projects.read" },
+      },
+    }, { status: 403 })) as typeof fetch;
 
   await expect(request("/api/projects")).rejects.toMatchObject({
-    errorKind: "forbidden",
+    code: "forbidden",
     message: "access denied",
     status: 403,
+    details: { permission: "projects.read" },
   });
 });

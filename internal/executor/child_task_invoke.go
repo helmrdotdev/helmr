@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/httpclient"
@@ -156,24 +155,15 @@ func workerChildTaskInvokeRequest(
 
 func childTaskInvokeFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
 	var httpErr *httpclient.Error
-	if !errors.As(err, &httpErr) {
+	if !errors.As(err, &httpErr) || !semanticRuntimeHTTPError(httpErr) {
 		return workerapi.RuntimeOperationFailure{}, false
 	}
-	if httpErr.StatusCode != http.StatusBadRequest &&
-		httpErr.StatusCode != http.StatusUnprocessableEntity &&
-		httpErr.StatusCode != http.StatusRequestEntityTooLarge &&
-		(httpErr.StatusCode != http.StatusConflict || strings.TrimSpace(httpErr.Code) == "") {
-		return workerapi.RuntimeOperationFailure{}, false
-	}
-	code := strings.TrimSpace(httpErr.Code)
-	if code == "" {
-		code = "child_task_start_rejected"
-	}
+	code := runtimeOperationCode(httpErr, "child_task_start_rejected")
 	message := strings.TrimSpace(httpErr.Message)
 	if message == "" {
 		message = "child Task start request was rejected"
 	}
 	return workerapi.RuntimeOperationFailure{
-		Code: code, Message: message, Retryable: httpErr.Retryable,
+		Code: code, Message: message, Retryable: runtimeOperationRetryable(code),
 	}, true
 }

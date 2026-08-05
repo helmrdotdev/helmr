@@ -1,13 +1,32 @@
 package controlplane
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/jackc/pgx/v5"
 )
+
+type testDetailedError struct {
+	err     error
+	details map[string]json.RawMessage
+}
+
+func (e testDetailedError) Error() string {
+	return e.err.Error()
+}
+
+func (e testDetailedError) Unwrap() error {
+	return e.err
+}
+
+func (e testDetailedError) ErrorDetails() map[string]json.RawMessage {
+	return e.details
+}
 
 func TestErrorStatus(t *testing.T) {
 	baseErr := errors.New("boom")
@@ -20,6 +39,7 @@ func TestErrorStatus(t *testing.T) {
 		{name: "unauthorized", err: unauthorized(baseErr), want: http.StatusUnauthorized},
 		{name: "forbidden", err: forbidden(baseErr), want: http.StatusForbidden},
 		{name: "not found", err: notFound(baseErr), want: http.StatusNotFound},
+		{name: "method not allowed", err: apiError{kind: errMethodNotAllowed, err: baseErr}, want: http.StatusMethodNotAllowed},
 		{name: "conflict", err: conflict(baseErr), want: http.StatusConflict},
 		{name: "too large", err: tooLarge(baseErr), want: http.StatusRequestEntityTooLarge},
 		{name: "bad gateway", err: badGateway(baseErr), want: http.StatusBadGateway},
@@ -52,12 +72,25 @@ func TestWriteError(t *testing.T) {
 	if got := rec.Header().Get("content-type"); got != "application/json" {
 		t.Fatalf("content-type = %q", got)
 	}
-	if got, want := rec.Body.String(), "{\"error\":\"run already exists\"}\n"; got != want {
+	if got, want := rec.Body.String(), "{\"error\":{\"code\":\"conflict\",\"message\":\"run already exists\"}}\n"; got != want {
 		t.Fatalf("body = %q, want %q", got, want)
 	}
 }
 
-func TestWriteAuthErrorKeepsErrorKind(t *testing.T) {
+func TestWriteErrorIncludesCodeOwnedDetailsObject(t *testing.T) {
+	rec := httptest.NewRecorder()
+
+	writeError(rec, conflict(testDetailedError{
+		err:     codedError{code: "stale_claim", message: "worker claim is stale"},
+		details: map[string]json.RawMessage{"claim_version": json.RawMessage("7")},
+	}))
+
+	if got, want := rec.Body.String(), "{\"error\":{\"code\":\"stale_claim\",\"message\":\"worker claim is stale\",\"details\":{\"claim_version\":7}}}\n"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+}
+
+func TestWriteAuthErrorUsesHTTPErrorEnvelope(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	writeAuthError(rec, http.StatusBadRequest, errInvalidOrExpiredToken)
@@ -65,7 +98,33 @@ func TestWriteAuthErrorKeepsErrorKind(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
-	if got, want := rec.Body.String(), "{\"error\":\"token is invalid or expired\",\"error_kind\":\"invalid_token\"}\n"; got != want {
+	if got, want := rec.Body.String(), "{\"error\":{\"code\":\"invalid_token\",\"message\":\"token is invalid or expired\"}}\n"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+}
+
+func TestWriteErrorHidesUnclassifiedServerError(t *testing.T) {
+	rec := httptest.NewRecorder()
+
+	writeError(rec, errors.New("database password leaked"))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if got, want := rec.Body.String(), "{\"error\":{\"code\":\"internal_error\",\"message\":\"internal server error\"}}\n"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+}
+
+func TestWriteErrorHidesUnclassifiedUnavailableError(t *testing.T) {
+	rec := httptest.NewRecorder()
+
+	writeError(rec, unavailable(errors.New("database password leaked")))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	if got, want := rec.Body.String(), "{\"error\":{\"code\":\"service_unavailable\",\"message\":\"service is unavailable\"}}\n"; got != want {
 		t.Fatalf("body = %q, want %q", got, want)
 	}
 }
@@ -89,4 +148,13 @@ func TestIsNoRows(t *testing.T) {
 			}
 		})
 	}
+}
+
+func decodeHTTPError(t *testing.T, body []byte) api.HTTPError {
+	t.Helper()
+	var response api.HTTPErrorResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	return response.Error
 }

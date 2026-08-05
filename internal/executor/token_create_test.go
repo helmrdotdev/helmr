@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"net/http"
 	"testing"
 	"time"
 
@@ -86,6 +87,17 @@ func TestHandleTokenCreateReturnsSemanticFailureToRuntime(t *testing.T) {
 		decision.GetKind() != "failed" ||
 		decision.GetDataJson() != `{"code":"invalid_token_timeout","message":"Token timeout is invalid","retryable":false}` {
 		t.Fatalf("decision = %+v", decision)
+	}
+}
+
+func TestTokenCreateFailureDoesNotClassifyGenericConflict(t *testing.T) {
+	failure, ok := tokenCreateFailure(&httpclient.Error{
+		StatusCode: http.StatusConflict,
+		Code:       "conflict",
+		Message:    "token create source authority is stale",
+	})
+	if ok || failure != (workerapi.RuntimeOperationFailure{}) {
+		t.Fatalf("failure = %+v classified = %t", failure, ok)
 	}
 }
 

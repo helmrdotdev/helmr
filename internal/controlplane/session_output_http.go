@@ -52,7 +52,7 @@ func (s *Server) readSessionOutputHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	scope, environmentID, err := s.actorReadScope(r, principal)
+	scope, environmentID, err := s.sessionReadScope(r, principal)
 	if err != nil {
 		s.writeSessionOutputReadScopeError(w, err)
 		return
@@ -274,7 +274,7 @@ func authorizeSessionOutputReadBeforeLookup(principal auth.Actor) error {
 }
 
 func (s *Server) writeSessionOutputReadScopeError(w http.ResponseWriter, err error) {
-	if isInvalidEnvironmentScopeReference(err) || isScopeRequestError(err) {
+	if isInvalidEnvironmentScopeReference(err) {
 		writeError(w, badRequest(codedError{code: "invalid_session_id", message: err.Error()}))
 		return
 	}

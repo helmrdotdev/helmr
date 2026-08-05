@@ -67,8 +67,8 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "magic link mailer is not configured") {
-		t.Fatalf("body = %s", rec.Body.String())
+	if got, want := rec.Body.String(), "{\"error\":{\"code\":\"service_unavailable\",\"message\":\"service is unavailable\"}}\n"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
 	}
 }
 
