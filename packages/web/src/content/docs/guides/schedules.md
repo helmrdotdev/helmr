@@ -40,5 +40,5 @@ Deployment. To stop the Schedule, remove the scheduled Task declaration and
 promote. There is intentionally no imperative Schedule mutation path.
 
 If a key-addressed Workspace does not exist yet, the Schedule remains
-`pending-workspace`. Create the matching Workspace; bounded scheduler
+`pending_workspace`. Create the matching Workspace; bounded scheduler
 reconciliation pins it and activates a new Schedule generation.

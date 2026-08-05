@@ -355,7 +355,7 @@ const (
 
 type DeploymentBuildDeliveryFailureRequest struct {
 	Lease      DeploymentBuildLease                 `json:"lease"`
-	ReasonCode DeploymentBuildDeliveryFailureReason `json:"reasonCode"`
+	ReasonCode DeploymentBuildDeliveryFailureReason `json:"reason_code"`
 }
 
 type Status string

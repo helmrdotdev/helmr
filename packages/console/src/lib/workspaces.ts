@@ -11,7 +11,7 @@ export type Workspace = {
   key?: string;
   sandbox_id: string;
   deployment_id: string;
-  status: "available" | "recovery-required" | "deleting";
+  status: "available" | "recovery_required" | "deleting";
   secrets: WorkspaceSecret[];
   last_activity_at: string;
   created_at: string;

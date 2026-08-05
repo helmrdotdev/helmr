@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -266,7 +267,7 @@ func TestScheduleResponseLeavesPendingKeyUnbound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.Workspace.Key != "scheduler" || response.WorkspaceID != "" || response.Status != "pending-workspace" {
+	if response.Workspace.Key != "scheduler" || response.WorkspaceID != "" || response.Status != api.ScheduleStatusPendingWorkspace {
 		t.Fatalf("pending Schedule response = %+v", response)
 	}
 }

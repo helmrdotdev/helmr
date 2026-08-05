@@ -22,7 +22,7 @@ export interface ScheduleSnapshot {
   readonly workspace: WorkspaceAddress
   readonly workspaceId?: string
   readonly cron: Readonly<{ pattern: string; timezone: string }>
-  readonly status: "pending-workspace" | "active" | "errored" | "archived"
+  readonly status: "pending_workspace" | "active" | "errored" | "archived"
   readonly lastError?: ScheduleError
   readonly nextFireAt?: string
   readonly lastFireAt?: string
@@ -115,7 +115,7 @@ function parseSchedule(value: unknown): ScheduleSnapshot {
   const cron = scheduleObject(input["cron"], "Schedule cron")
   const status = input["status"]
   if (
-    status !== "pending-workspace" &&
+    status !== "pending_workspace" &&
     status !== "active" &&
     status !== "errored" &&
     status !== "archived"
@@ -128,7 +128,7 @@ function parseSchedule(value: unknown): ScheduleSnapshot {
   const workspaceId = input["workspace_id"] === undefined
     ? undefined
     : resourceID(input["workspace_id"], "Schedule response.workspace_id")
-  if (status === "pending-workspace" && workspaceId !== undefined) {
+  if (status === "pending_workspace" && workspaceId !== undefined) {
     throw new Error("pending Schedule response must not contain workspace_id")
   }
   if (

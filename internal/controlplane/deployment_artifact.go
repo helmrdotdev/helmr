@@ -372,7 +372,7 @@ func deploymentResponseWithArtifacts(ctx context.Context, store artifactLister, 
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	return deploymentResponse(deployment, sourceArtifact), nil
+	return deploymentResponse(deployment, sourceArtifact)
 }
 
 func deploymentSourceArtifact(artifacts map[pgtype.UUID]db.Artifact, artifactID pgtype.UUID) (api.DeploymentSourceArtifact, error) {

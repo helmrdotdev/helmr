@@ -74,7 +74,7 @@ describe("HelmrClient Workspaces", () => {
     }
     const responses: unknown[] = [
       workspaceSnapshot,
-      { workspaces: [{ ...workspaceSnapshot, status: "recovery-required" }] },
+      { workspaces: [{ ...workspaceSnapshot, status: "recovery_required" }] },
       {
         exit_code: 0,
         stdout_base64: "b2sK",
@@ -134,7 +134,7 @@ describe("HelmrClient Workspaces", () => {
 
     const matches = await client.workspaces.list({ key: "repository" })
     expect(matches.items[0]?.sandboxId).toBe("repository-agent")
-    expect(matches.items[0]?.status).toBe("recovery-required")
+    expect(matches.items[0]?.status).toBe("recovery_required")
     expect(requests[1]!.url).toBe(
       "https://api.example.test/v1/workspaces?key=repository",
     )
@@ -576,7 +576,7 @@ describe("HelmrClient Schedules", () => {
         task_id: "scheduled-maintenance",
         workspace: { key: "maintenance" },
         cron: { pattern: "0 * * * *", timezone: "UTC" },
-        status: "pending-workspace",
+        status: "pending_workspace",
         created_at: "2026-07-24T11:00:00Z",
         updated_at: "2026-07-24T11:00:00Z",
       })) as typeof fetch,

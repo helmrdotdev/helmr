@@ -25,7 +25,7 @@ type WorkspaceStatus string
 
 const (
 	WorkspaceStatusAvailable        WorkspaceStatus = "available"
-	WorkspaceStatusRecoveryRequired WorkspaceStatus = "recovery-required"
+	WorkspaceStatusRecoveryRequired WorkspaceStatus = "recovery_required"
 	WorkspaceStatusDeleting         WorkspaceStatus = "deleting"
 )
 

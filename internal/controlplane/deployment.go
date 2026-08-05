@@ -381,15 +381,6 @@ func deploymentVersion(id uuid.UUID) string {
 	return time.Unix(seconds, nanoseconds).UTC().Format("20060102") + "." + id.String()
 }
 
-func firstNonEmptyString(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
-}
-
 func firstPresentString(values ...string) string {
 	for _, value := range values {
 		if value != "" {
@@ -399,7 +390,11 @@ func firstPresentString(values ...string) string {
 	return ""
 }
 
-func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceArtifact) api.DeploymentResponse {
+func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceArtifact) (api.DeploymentResponse, error) {
+	status, err := deploymentPublicStatus(deployment.Status)
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
 	return api.DeploymentResponse{
 		ID:                    pgvalue.MustUUIDValue(deployment.ID).String(),
 		Version:               deployment.Version,
@@ -409,13 +404,28 @@ func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceA
 		EnvironmentID:         pgvalue.MustUUIDValue(deployment.EnvironmentID).String(),
 		ContentHash:           deployment.ContentHash,
 		DeploymentSource:      artifact,
-		Status:                string(deployment.Status),
+		Status:                status,
 		Error:                 deploymentErrorResponse(deployment.Failure),
 		CreatedAt:             pgvalue.Time(deployment.CreatedAt),
 		BuildingAt:            pgvalue.Time(deployment.BuildingAt),
 		BuiltAt:               pgvalue.Time(deployment.BuiltAt),
 		DeployedAt:            pgvalue.Time(deployment.DeployedAt),
 		FailedAt:              pgvalue.Time(deployment.FailedAt),
+	}, nil
+}
+
+func deploymentPublicStatus(status db.DeploymentStatus) (string, error) {
+	switch status {
+	case db.DeploymentStatusQueued:
+		return db.DeploymentStatusQueued, nil
+	case db.DeploymentStatusBuilding:
+		return db.DeploymentStatusBuilding, nil
+	case db.DeploymentStatusDeployed:
+		return db.DeploymentStatusDeployed, nil
+	case db.DeploymentStatusFailed:
+		return db.DeploymentStatusFailed, nil
+	default:
+		return "", fmt.Errorf("deployment status %q has no public projection", status)
 	}
 }
 

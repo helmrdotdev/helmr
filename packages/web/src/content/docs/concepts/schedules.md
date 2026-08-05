@@ -33,13 +33,13 @@ export const dailyReport = schedules.task({
 
 The Workspace Address is required. An ID Address must exist when the Deployment
 is promoted. A missing key Address leaves the Schedule in
-`pending-workspace`; the scheduler binds it when a matching Workspace appears.
+`pending_workspace`; the scheduler binds it when a matching Workspace appears.
 The Schedule has no Secret input. Create the matching Workspace separately with
 its key and Secret placements; later fires inherit that immutable Workspace
 baseline and resolve current active Secret versions at admission.
 Read responses preserve the declared Workspace Address and expose
 `workspaceId` after it has been bound to a canonical Workspace UUID. An
-unresolved `pending-workspace` response has no `workspaceId`.
+unresolved `pending_workspace` response has no `workspaceId`.
 
 Scheduled Tasks receive a Helmr-generated payload:
 
@@ -62,5 +62,5 @@ identifiers. Helmr stores the submitted cron expression without defining a
 second canonical grammar.
 
 The Console and authenticated APIs are observational. They expose
-`pending-workspace`, `active`, `errored`, and `archived` status but cannot
+`pending_workspace`, `active`, `errored`, and `archived` status but cannot
 mutate Schedule authority.

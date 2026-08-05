@@ -355,7 +355,11 @@ func (s *Server) createTokenInTransaction(
 	if err != nil {
 		return api.TokenResponse{}, nil, err
 	}
-	return s.tokenCreateResponse(tokenRow, credentials), receipt, nil
+	response, err := s.tokenCreateResponse(tokenRow, credentials)
+	if err != nil {
+		return api.TokenResponse{}, nil, err
+	}
+	return response, receipt, nil
 }
 
 func loadTokenCreateLocators(
@@ -432,7 +436,7 @@ func (s *Server) replayTokenCreate(
 		!hmac.Equal(credentials.PublicAccessHash, publicAccess.TokenHash) {
 		return api.TokenResponse{}, errTokenCreateReceipt
 	}
-	return s.tokenCreateResponse(tokenRow, credentials), nil
+	return s.tokenCreateResponse(tokenRow, credentials)
 }
 
 func normalizeTokenTimeout(raw *int64) (*int64, error) {
@@ -454,6 +458,11 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
+	query := r.URL.Query()
+	if err := validateTokenListQuery(query); err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
 	if !actor.HasPermission(auth.PermissionTokensRead, scope) {
 		writeError(w, forbidden(errPermissionRequired))
 		return
@@ -469,7 +478,7 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	afterID := pgtype.UUID{}
-	if raw := strings.TrimSpace(firstNonEmptyString(r.URL.Query().Get("after"), r.URL.Query().Get("cursor"))); raw != "" {
+	if raw := strings.TrimSpace(query.Get("cursor")); raw != "" {
 		cursor, err := ids.Parse(raw)
 		if err != nil {
 			writeError(w, badRequest(errors.New("cursor must be a token UUID")))
@@ -478,7 +487,7 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 		afterID = pgvalue.UUID(cursor)
 	}
 	state := pgtype.Text{}
-	if raw := strings.TrimSpace(firstNonEmptyString(r.URL.Query().Get("state"), r.URL.Query().Get("status"))); raw != "" {
+	if raw := strings.TrimSpace(query.Get("status")); raw != "" {
 		switch db.TokenState(raw) {
 		case db.TokenStatePending, db.TokenStateCompleted, db.TokenStateExpired, db.TokenStateCancelled:
 			state = pgvalue.Text(raw)
@@ -503,9 +512,29 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	tokens := make([]api.TokenResponse, 0, len(rows))
 	for _, row := range rows {
-		tokens = append(tokens, tokenResponse(row))
+		response, err := tokenResponse(row)
+		if err != nil {
+			writeError(w, errors.New("project token"))
+			return
+		}
+		tokens = append(tokens, response)
 	}
 	writeJSON(w, http.StatusOK, api.ListTokensResponse{Tokens: tokens, NextCursor: nextCursor})
+}
+
+func validateTokenListQuery(query url.Values) error {
+	for name := range query {
+		switch name {
+		case "project_id", "environment_id", "cursor", "status", "limit":
+		default:
+			return fmt.Errorf("query parameter %q is not supported", name)
+		}
+	}
+	if len(query["project_id"]) > 1 || len(query["environment_id"]) > 1 ||
+		len(query["cursor"]) > 1 || len(query["status"]) > 1 || len(query["limit"]) > 1 {
+		return errors.New("project_id, environment_id, cursor, status, and limit must not be repeated")
+	}
+	return nil
 }
 
 func (s *Server) getToken(w http.ResponseWriter, r *http.Request) {
@@ -513,7 +542,12 @@ func (s *Server) getToken(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, tokenResponse(tokenRow))
+	response, err := tokenResponse(tokenRow)
+	if err != nil {
+		writeError(w, errors.New("project token"))
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) completeToken(w http.ResponseWriter, r *http.Request) {
@@ -542,9 +576,12 @@ func (s *Server) completeToken(w http.ResponseWriter, r *http.Request) {
 		s.writeTokenError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.CompleteTokenResponse{
-		Status: "completed", Token: tokenResponse(completed),
-	})
+	response, err := tokenResponse(completed)
+	if err != nil {
+		writeError(w, errors.New("project token"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.CompleteTokenResponse{Status: "completed", Token: response})
 }
 
 func (s *Server) cancelToken(w http.ResponseWriter, r *http.Request) {
@@ -567,7 +604,12 @@ func (s *Server) cancelToken(w http.ResponseWriter, r *http.Request) {
 		s.writeTokenError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, tokenResponse(cancelled))
+	response, err := tokenResponse(cancelled)
+	if err != nil {
+		writeError(w, errors.New("project token"))
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) completeTokenWithCallback(w http.ResponseWriter, r *http.Request) {
@@ -609,9 +651,12 @@ func (s *Server) completeTokenWithCallback(w http.ResponseWriter, r *http.Reques
 		s.writePublicTokenError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.CompleteTokenResponse{
-		Status: "completed", Token: tokenResponse(completed),
-	})
+	response, err := tokenResponse(completed)
+	if err != nil {
+		writeError(w, errors.New("project token"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.CompleteTokenResponse{Status: "completed", Token: response})
 }
 
 func (s *Server) completeTokenWithBearer(w http.ResponseWriter, r *http.Request) {
@@ -659,9 +704,12 @@ func (s *Server) completeTokenWithBearer(w http.ResponseWriter, r *http.Request)
 		s.writePublicTokenError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.CompleteTokenResponse{
-		Status: "completed", Token: tokenResponse(completed),
-	})
+	response, err := tokenResponse(completed)
+	if err != nil {
+		writeError(w, errors.New("project token"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.CompleteTokenResponse{Status: "completed", Token: response})
 }
 
 func (s *Server) completeTokenBearerPreflight(w http.ResponseWriter, _ *http.Request) {
@@ -944,7 +992,11 @@ func (s *Server) authorizeToken(
 	return tokenRow, true
 }
 
-func tokenResponse(row db.Token) api.TokenResponse {
+func tokenResponse(row db.Token) (api.TokenResponse, error) {
+	status, err := tokenPublicStatus(row.State)
+	if err != nil {
+		return api.TokenResponse{}, err
+	}
 	var expiresAt *time.Time
 	if row.ExpiresAt.Valid {
 		value := row.ExpiresAt.Time.UTC()
@@ -956,7 +1008,7 @@ func tokenResponse(row db.Token) api.TokenResponse {
 		completedAt = &value
 	}
 	response := api.TokenResponse{
-		ID: pgvalue.UUIDString(row.ID), Status: string(row.State), TimeoutAt: expiresAt,
+		ID: pgvalue.UUIDString(row.ID), Status: status, TimeoutAt: expiresAt,
 		Tags: append([]string{}, row.Tags...), Metadata: json.RawMessage(row.Metadata),
 		CompletedAt: completedAt, CreatedAt: row.CreatedAt.Time.UTC(),
 		UpdatedAt: row.UpdatedAt.Time.UTC(),
@@ -964,13 +1016,28 @@ func tokenResponse(row db.Token) api.TokenResponse {
 	if len(row.Result) > 0 {
 		response.Result = json.RawMessage(row.Result)
 	}
-	return response
+	return response, nil
+}
+
+func tokenPublicStatus(state db.TokenState) (string, error) {
+	switch state {
+	case db.TokenStatePending:
+		return db.TokenStatePending, nil
+	case db.TokenStateCompleted:
+		return db.TokenStateCompleted, nil
+	case db.TokenStateExpired:
+		return db.TokenStateExpired, nil
+	case db.TokenStateCancelled:
+		return db.TokenStateCancelled, nil
+	default:
+		return "", fmt.Errorf("token state %q has no public projection", state)
+	}
 }
 
 func (s *Server) tokenCreateResponse(
 	row db.Token,
 	credentials auth.Credentials,
-) api.TokenResponse {
+) (api.TokenResponse, error) {
 	creation := row
 	creation.State = db.TokenStatePending
 	creation.Result = nil
@@ -980,12 +1047,15 @@ func (s *Server) tokenCreateResponse(
 	creation.ExpiredAt = pgtype.Timestamptz{}
 	creation.CancelledAt = pgtype.Timestamptz{}
 	creation.UpdatedAt = creation.CreatedAt
-	response := tokenResponse(creation)
+	response, err := tokenResponse(creation)
+	if err != nil {
+		return api.TokenResponse{}, err
+	}
 	response.PublicAccessToken = credentials.PublicAccessToken
 	response.CallbackURL = s.publicURL.ResolveReference(&url.URL{
 		Path: "/api/token-callbacks/" + pgvalue.UUIDString(row.ID) + "/" + credentials.CallbackSecret,
 	}).String()
-	return response
+	return response, nil
 }
 
 func tokenFromCompleteRow(row db.CompleteTokenRow) db.Token {

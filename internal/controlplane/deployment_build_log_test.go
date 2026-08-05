@@ -36,7 +36,7 @@ func TestAppendDeploymentBuildLogsPreservesRawStreamsInBoundedEvents(t *testing.
 		t.Fatalf("events = %d, want exit plus three log chunks", len(store.events))
 	}
 	var exit struct {
-		ExitStatus int32 `json:"exitStatus"`
+		ExitStatus int32 `json:"exit_status"`
 		Truncated  bool  `json:"truncated"`
 	}
 	if err := json.Unmarshal(store.events[0].Payload, &exit); err != nil {
@@ -54,7 +54,7 @@ func TestAppendDeploymentBuildLogsPreservesRawStreamsInBoundedEvents(t *testing.
 			t.Fatalf("log event = %+v", event)
 		}
 		var payload struct {
-			ContentBase64 string `json:"contentBase64"`
+			ContentBase64 string `json:"content_base64"`
 			Offset        int    `json:"offset"`
 			Stream        string `json:"stream"`
 		}

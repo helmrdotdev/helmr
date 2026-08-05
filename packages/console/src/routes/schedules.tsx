@@ -19,7 +19,7 @@ function statusTone(schedule: Schedule): "active" | "expired" | "revoked" {
 
 function statusLabel(status: Schedule["status"]): string {
   switch (status) {
-    case "pending-workspace":
+    case "pending_workspace":
       return "Pending workspace";
     case "active":
       return "Active";
@@ -55,7 +55,7 @@ export function Schedules() {
     items().filter((schedule) => schedule.status === "active").length
   );
   const pendingCount = createMemo(() =>
-    items().filter((schedule) => schedule.status === "pending-workspace").length
+    items().filter((schedule) => schedule.status === "pending_workspace").length
   );
   const issueCount = createMemo(() =>
     items().filter((schedule) => schedule.status === "errored").length

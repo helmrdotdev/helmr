@@ -71,7 +71,12 @@ func (s *Server) createSecret(w http.ResponseWriter, r *http.Request) {
 		s.writeSecretMutationError(w, actor, request.Name, "create", err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, secretSnapshotResponse(record))
+	response, err := secretSnapshotResponse(record)
+	if err != nil {
+		writeError(w, errors.New("project secret"))
+		return
+	}
+	writeJSON(w, http.StatusCreated, response)
 }
 
 func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +112,12 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 			writeError(w, errors.New("load secret"))
 			return
 		}
-		response.Secrets = append(response.Secrets, secretSnapshotResponse(db.GetSecretSnapshotRow(row)))
+		projected, err := secretSnapshotResponse(db.GetSecretSnapshotRow(row))
+		if err != nil {
+			writeError(w, errors.New("project secret"))
+			return
+		}
+		response.Secrets = append(response.Secrets, projected)
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
@@ -133,14 +143,19 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 	}
 	response.Secrets = make([]api.SecretResponse, 0, len(rows))
 	for _, row := range rows {
-		response.Secrets = append(response.Secrets, secretResponse(
+		projected, err := secretResponse(
 			row.ID,
 			row.Name,
 			row.State,
 			row.CreatedAt,
 			row.RotatedAt,
 			row.RevokedAt,
-		))
+		)
+		if err != nil {
+			writeError(w, errors.New("project secret"))
+			return
+		}
+		response.Secrets = append(response.Secrets, projected)
 	}
 	if hasMore {
 		last := rows[len(rows)-1]
@@ -192,7 +207,12 @@ func (s *Server) getSecret(w http.ResponseWriter, r *http.Request, id uuid.UUID)
 		writeError(w, errors.New("load secret"))
 		return
 	}
-	writeJSON(w, http.StatusOK, secretSnapshotResponse(record))
+	response, err := secretSnapshotResponse(record)
+	if err != nil {
+		writeError(w, errors.New("project secret"))
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) rotateSecretByID(w http.ResponseWriter, r *http.Request) {
@@ -246,7 +266,12 @@ func (s *Server) rotateSecret(w http.ResponseWriter, r *http.Request, id uuid.UU
 		s.writeSecretMutationError(w, actor, record.Name, "rotate", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, secretSnapshotResponse(rotated))
+	response, err := secretSnapshotResponse(rotated)
+	if err != nil {
+		writeError(w, errors.New("project secret"))
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) revokeSecretByID(w http.ResponseWriter, r *http.Request) {
@@ -299,7 +324,12 @@ func (s *Server) revokeSecret(w http.ResponseWriter, r *http.Request, id uuid.UU
 		s.writeSecretMutationError(w, actor, record.Name, "revoke", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, secretSnapshotResponse(revoked))
+	response, err := secretSnapshotResponse(revoked)
+	if err != nil {
+		writeError(w, errors.New("project secret"))
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) secretMutationAuthority(
@@ -450,7 +480,7 @@ func requiredIdempotencyKey(raw string) (string, error) {
 	return value, nil
 }
 
-func secretSnapshotResponse(record db.GetSecretSnapshotRow) api.SecretResponse {
+func secretSnapshotResponse(record db.GetSecretSnapshotRow) (api.SecretResponse, error) {
 	return secretResponse(
 		record.ID,
 		record.Name,
@@ -468,13 +498,26 @@ func secretResponse(
 	createdAt pgtype.Timestamptz,
 	rotatedAt pgtype.Timestamptz,
 	revokedAt pgtype.Timestamptz,
-) api.SecretResponse {
+) (api.SecretResponse, error) {
+	status, err := secretPublicStatus(state)
+	if err != nil {
+		return api.SecretResponse{}, err
+	}
 	return api.SecretResponse{
 		ID:        pgvalue.MustUUIDValue(id).String(),
 		Name:      name,
-		Status:    state,
+		Status:    status,
 		CreatedAt: pgvalue.Time(createdAt),
 		RotatedAt: pgvalue.TimePtr(rotatedAt),
 		RevokedAt: pgvalue.TimePtr(revokedAt),
+	}, nil
+}
+
+func secretPublicStatus(state string) (string, error) {
+	switch state {
+	case "active", "revoked", "deleted":
+		return state, nil
+	default:
+		return "", fmt.Errorf("secret state %q has no public projection", state)
 	}
 }

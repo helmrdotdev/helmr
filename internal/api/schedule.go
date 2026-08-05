@@ -22,13 +22,22 @@ type ScheduleError struct {
 	Message string `json:"message"`
 }
 
+type ScheduleStatus string
+
+const (
+	ScheduleStatusPendingWorkspace ScheduleStatus = "pending_workspace"
+	ScheduleStatusActive           ScheduleStatus = "active"
+	ScheduleStatusErrored          ScheduleStatus = "errored"
+	ScheduleStatusArchived         ScheduleStatus = "archived"
+)
+
 type ScheduleResponse struct {
 	ID            string            `json:"id"`
 	TaskID        string            `json:"task_id"`
 	Workspace     ScheduleWorkspace `json:"workspace"`
 	WorkspaceID   string            `json:"workspace_id,omitempty"`
 	Cron          ScheduleCron      `json:"cron"`
-	Status        string            `json:"status"`
+	Status        ScheduleStatus    `json:"status"`
 	Generation    int64             `json:"generation"`
 	EffectiveFrom time.Time         `json:"effective_from"`
 	NextFireAt    *time.Time        `json:"next_fire_at,omitempty"`

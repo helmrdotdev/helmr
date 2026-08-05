@@ -197,7 +197,7 @@ func appendDeploymentBuildLogs(
 	}
 	events := make([]buildEvent, 0, 65)
 	metadata, err := json.Marshal(struct {
-		ExitStatus int32 `json:"exitStatus"`
+		ExitStatus int32 `json:"exit_status"`
 		Truncated  bool  `json:"truncated"`
 	}{
 		ExitStatus: logs.ExitStatus,
@@ -223,7 +223,7 @@ func appendDeploymentBuildLogs(
 		for offset := 0; offset < len(content); offset += chunkBytes {
 			end := min(offset+chunkBytes, len(content))
 			payload, err := json.Marshal(struct {
-				ContentBase64 string `json:"contentBase64"`
+				ContentBase64 string `json:"content_base64"`
 				Offset        int    `json:"offset"`
 				Stream        string `json:"stream"`
 			}{

@@ -82,7 +82,13 @@ func (s *Server) capacityObservations(w http.ResponseWriter, r *http.Request) {
 		Observations: make([]capacityapi.CapacityObservation, 0, len(observations)),
 	}
 	for _, observation := range observations {
-		response.Observations = append(response.Observations, capacityCapacityObservation(observation))
+		projected, err := capacityCapacityObservation(observation)
+		if err != nil {
+			s.log.Error("project deployment capacity observation", "error", err)
+			writeError(w, errors.New("project deployment capacity observation"))
+			return
+		}
+		response.Observations = append(response.Observations, projected)
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -103,11 +109,17 @@ func (s *Server) capacityListWorkerInstances(w http.ResponseWriter, r *http.Requ
 		WorkerInstances: make([]capacityapi.WorkerInstance, 0, len(rows)),
 	}
 	for _, row := range rows {
-		response.WorkerInstances = append(response.WorkerInstances, capacityWorkerInstance(
+		projected, err := capacityWorkerInstance(
 			row.ID, row.ResourceID, row.WorkerGroupID, row.State, row.ClaimVersion,
 			row.CurrentEpoch, row.SupportsRun, row.SupportsBuild, row.DrainingAt,
 			row.TerminationReadyAt, row.LostAt, row.CreatedAt, row.UpdatedAt,
-		))
+		)
+		if err != nil {
+			s.log.Error("project capacity Worker instance", "error", err)
+			writeError(w, errors.New("project capacity worker instance"))
+			return
+		}
+		response.WorkerInstances = append(response.WorkerInstances, projected)
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -128,11 +140,17 @@ func (s *Server) capacityGetWorkerInstance(w http.ResponseWriter, r *http.Reques
 		writeError(w, errors.New("get capacity worker instance"))
 		return
 	}
-	writeJSON(w, http.StatusOK, capacityWorkerInstance(
+	response, err := capacityWorkerInstance(
 		row.ID, row.ResourceID, row.WorkerGroupID, row.State, row.ClaimVersion,
 		row.CurrentEpoch, row.SupportsRun, row.SupportsBuild, row.DrainingAt,
 		row.TerminationReadyAt, row.LostAt, row.CreatedAt, row.UpdatedAt,
-	))
+	)
+	if err != nil {
+		s.log.Error("project capacity Worker instance", "worker_instance_id", id.String(), "error", err)
+		writeError(w, errors.New("project capacity worker instance"))
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) capacityDrainWorkerInstance(w http.ResponseWriter, r *http.Request) {
@@ -175,11 +193,17 @@ func (s *Server) capacityDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 		writeError(w, errors.New("drain worker instance"))
 		return
 	}
-	writeJSON(w, http.StatusOK, capacityWorkerInstance(
+	response, err := capacityWorkerInstance(
 		draining.ID, draining.ResourceID, draining.WorkerGroupID, string(draining.State), draining.ClaimVersion,
 		draining.CurrentEpoch, draining.SupportsRun, draining.SupportsBuild, draining.DrainingAt,
 		draining.TerminationReadyAt, draining.LostAt, draining.CreatedAt, draining.UpdatedAt,
-	))
+	)
+	if err != nil {
+		s.log.Error("project drained capacity Worker instance", "worker_instance_id", id.String(), "error", err)
+		writeError(w, errors.New("project drained capacity worker instance"))
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func capacityWorkerInstanceID(r *http.Request) (uuid.UUID, error) {
@@ -242,18 +266,37 @@ func capacityWorkerInstanceListParams(r *http.Request) (db.ListCapacityWorkerIns
 	return params, nil
 }
 
-func capacityCapacityObservation(observation workergroup.DemandObservation) capacityapi.CapacityObservation {
+func capacityCapacityObservation(observation workergroup.DemandObservation) (capacityapi.CapacityObservation, error) {
+	groupStatus, err := workerGroupPublicStatus(observation.GroupState)
+	if err != nil {
+		return capacityapi.CapacityObservation{}, err
+	}
 	result := capacityapi.CapacityObservation{
 		WorkerGroupID:      observation.WorkerGroupID,
 		RegionID:           observation.RegionID,
-		GroupStatus:        observation.GroupState,
+		GroupStatus:        groupStatus,
 		RegisteringWorkers: observation.RegisteringWorkers,
 		DrainingWorkers:    observation.DrainingWorkers,
 		ObservedAt:         observation.ObservedAt,
 	}
 	result.Run = capacityRoleDemand(observation.Run)
 	result.Build = capacityRoleDemand(observation.Build)
-	return result
+	return result, nil
+}
+
+func workerGroupPublicStatus(state string) (string, error) {
+	switch state {
+	case db.WorkerGroupStateActive:
+		return db.WorkerGroupStateActive, nil
+	case db.WorkerGroupStatePaused:
+		return db.WorkerGroupStatePaused, nil
+	case db.WorkerGroupStateDraining:
+		return db.WorkerGroupStateDraining, nil
+	case db.WorkerGroupStateDisabled:
+		return db.WorkerGroupStateDisabled, nil
+	default:
+		return "", fmt.Errorf("worker group state %q has no public projection", state)
+	}
 }
 
 func capacityRoleDemand(role *workergroup.RoleDemand) *capacityapi.RoleDemand {
@@ -291,10 +334,14 @@ func capacityWorkerInstance(
 	lostAt pgtype.Timestamptz,
 	createdAt pgtype.Timestamptz,
 	updatedAt pgtype.Timestamptz,
-) capacityapi.WorkerInstance {
+) (capacityapi.WorkerInstance, error) {
+	publicStatus, err := workerInstancePublicStatus(status)
+	if err != nil {
+		return capacityapi.WorkerInstance{}, err
+	}
 	result := capacityapi.WorkerInstance{
 		ID: uuid.UUID(id.Bytes).String(), ResourceID: resourceID,
-		WorkerGroupID: workerGroupID, Status: status, ClaimVersion: claimVersion,
+		WorkerGroupID: workerGroupID, Status: publicStatus, ClaimVersion: claimVersion,
 		SupportsRun: supportsRun, SupportsBuild: supportsBuild,
 		CreatedAt: createdAt.Time, UpdatedAt: updatedAt.Time,
 	}
@@ -310,5 +357,22 @@ func capacityWorkerInstance(
 	if lostAt.Valid {
 		result.LostAt = &lostAt.Time
 	}
-	return result
+	return result, nil
+}
+
+func workerInstancePublicStatus(state string) (string, error) {
+	switch state {
+	case db.WorkerInstanceStateRegistering:
+		return db.WorkerInstanceStateRegistering, nil
+	case db.WorkerInstanceStateActive:
+		return db.WorkerInstanceStateActive, nil
+	case db.WorkerInstanceStateDraining:
+		return db.WorkerInstanceStateDraining, nil
+	case db.WorkerInstanceStateTerminationReady:
+		return db.WorkerInstanceStateTerminationReady, nil
+	case db.WorkerInstanceStateLost:
+		return db.WorkerInstanceStateLost, nil
+	default:
+		return "", fmt.Errorf("worker instance state %q has no public projection", state)
+	}
 }

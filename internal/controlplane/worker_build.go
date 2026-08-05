@@ -467,7 +467,7 @@ func (s *Server) workerDeploymentBuildDeliveryFailed(w http.ResponseWriter, r *h
 	}
 	if request.ReasonCode != workerapi.DeploymentBuildDeliveryBuildGuestFailed &&
 		request.ReasonCode != workerapi.DeploymentBuildDeliveryProgramVerifierFailed {
-		writeError(w, badRequest(errors.New("deployment build delivery failure reasonCode is invalid")))
+		writeError(w, badRequest(errors.New("deployment build delivery failure reason_code is invalid")))
 		return
 	}
 	lease := request.Lease

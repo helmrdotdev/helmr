@@ -788,13 +788,13 @@ function runStatus(value: string): RunStatus {
     case "queued":
     case "running":
     case "waiting":
-    case "retry-delayed":
-    case "cancel-requested":
+    case "retry_delayed":
+    case "cancel_requested":
     case "succeeded":
     case "failed":
     case "cancelled":
     case "expired":
-    case "system-failed":
+    case "system_failed":
       return value
     default:
       throw new Error(`Run status ${JSON.stringify(value)} is invalid`)
@@ -806,7 +806,7 @@ function runStatusIsTerminal(status: RunStatus): boolean {
     status === "failed" ||
     status === "cancelled" ||
     status === "expired" ||
-    status === "system-failed"
+    status === "system_failed"
 }
 
 function parseRunSnapshot<TOutput extends JsonValue = JsonValue>(
@@ -920,7 +920,7 @@ function parseRunCause(value: unknown): RunSnapshot["cause"] {
   switch (type) {
     case "api":
     case "manual":
-    case "actor-start":
+    case "actor_start":
     case "continuation":
       return Object.freeze({ type })
     case "child":

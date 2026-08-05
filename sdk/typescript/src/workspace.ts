@@ -38,7 +38,7 @@ export interface SandboxResourceBuilder {
 
 export type WorkspaceStatus =
   | "available"
-  | "recovery-required"
+  | "recovery_required"
   | "deleting"
 
 export type WorkspaceSecretPlacement =
@@ -440,7 +440,7 @@ export function parseWorkspaceSnapshot(value: unknown): WorkspaceSnapshot {
   const status = input["status"]
   if (
     status !== "available" &&
-    status !== "recovery-required" &&
+    status !== "recovery_required" &&
     status !== "deleting"
   ) {
     throw new Error("Workspace response.status is invalid")

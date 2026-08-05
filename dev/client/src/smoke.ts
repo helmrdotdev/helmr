@@ -465,7 +465,7 @@ async function waitForTerminalRun(runId: string): Promise<RunSnapshot> {
       run.status === "failed" ||
       run.status === "cancelled" ||
       run.status === "expired" ||
-      run.status === "system-failed"
+      run.status === "system_failed"
     ) {
       return run
     }

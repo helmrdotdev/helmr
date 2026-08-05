@@ -20,7 +20,7 @@ function workspaceErrorMessage(error: unknown): string {
 function statusBadge(status: Workspace["status"]): string {
   const tone = status === "available"
     ? "border-[#a8c3ad] bg-[#eef7f0] text-console-success"
-    : status === "recovery-required"
+    : status === "recovery_required"
       ? "border-[#e6aaa4] bg-[#fff1ef] text-console-danger"
       : "border-console-border bg-console-bg-panel text-console-muted";
   return cx(

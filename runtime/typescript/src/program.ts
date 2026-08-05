@@ -2730,7 +2730,7 @@ function runCause(cause: runProto.RunCause): RunCause {
         timezone: cause.kind.value.timezone,
       }
     case "actorStart":
-      return { type: "actor-start" }
+      return { type: "actor_start" }
     case "continuation":
       return { type: "continuation" }
     default:

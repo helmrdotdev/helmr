@@ -85,7 +85,7 @@ export type RunCause =
       lastScheduledAt?: Date
       timezone: string
     }>
-  | Readonly<{ type: "actor-start" | "continuation" }>
+  | Readonly<{ type: "actor_start" | "continuation" }>
 
 export interface ExecutionContextBase {
   readonly signal: AbortSignal
@@ -125,13 +125,13 @@ export type RunStatus =
   | "queued"
   | "running"
   | "waiting"
-  | "retry-delayed"
-  | "cancel-requested"
+  | "retry_delayed"
+  | "cancel_requested"
   | "succeeded"
   | "failed"
   | "cancelled"
   | "expired"
-  | "system-failed"
+  | "system_failed"
 
 export interface RunHandle {
   readonly id: string

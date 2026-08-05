@@ -164,6 +164,10 @@ func (s *Server) listRunSnapshotsHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if err := validateRunListQuery(r); err != nil {
+		writeError(w, badRequest(codedError{code: "invalid_run_list", message: err.Error()}))
+		return
+	}
 	statuses, err := parseRunStatusFilter(r)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_run_list", message: err.Error()}))
@@ -294,6 +298,21 @@ func (s *Server) writeRunCancellationAuthorityError(w http.ResponseWriter) {
 	}))
 }
 
+func validateRunListQuery(r *http.Request) error {
+	query := r.URL.Query()
+	for name := range query {
+		switch name {
+		case "status", "cursor", "limit":
+		default:
+			return fmt.Errorf("query parameter %q is not supported", name)
+		}
+	}
+	if len(query["cursor"]) > 1 || len(query["limit"]) > 1 {
+		return errors.New("cursor and limit must not be repeated")
+	}
+	return nil
+}
+
 func parseRunStatusFilter(r *http.Request) ([]db.RunStatus, error) {
 	var values []string
 	for _, raw := range r.URL.Query()["status"] {
@@ -302,13 +321,8 @@ func parseRunStatusFilter(r *http.Request) ([]db.RunStatus, error) {
 	seen := make(map[db.RunStatus]struct{}, len(values))
 	statuses := make([]db.RunStatus, 0, len(values))
 	for _, raw := range values {
-		status := db.RunStatus(strings.ReplaceAll(strings.TrimSpace(raw), "-", "_"))
-		switch status {
-		case db.RunStatusQueued, db.RunStatusRunning, db.RunStatusWaiting,
-			db.RunStatusRetryDelayed, db.RunStatusCancelRequested, db.RunStatusSucceeded,
-			db.RunStatusFailed, db.RunStatusCancelled, db.RunStatusExpired,
-			db.RunStatusSystemFailed:
-		default:
+		status, ok := runStatusFilter(strings.TrimSpace(raw))
+		if !ok {
 			return nil, fmt.Errorf("status %q is invalid", raw)
 		}
 		if _, ok := seen[status]; ok {
@@ -319,6 +333,33 @@ func parseRunStatusFilter(r *http.Request) ([]db.RunStatus, error) {
 	}
 	slices.Sort(statuses)
 	return statuses, nil
+}
+
+func runStatusFilter(raw string) (db.RunStatus, bool) {
+	switch raw {
+	case api.RunStatusQueued:
+		return db.RunStatusQueued, true
+	case api.RunStatusRunning:
+		return db.RunStatusRunning, true
+	case api.RunStatusWaiting:
+		return db.RunStatusWaiting, true
+	case api.RunStatusRetryDelayed:
+		return db.RunStatusRetryDelayed, true
+	case api.RunStatusCancelRequested:
+		return db.RunStatusCancelRequested, true
+	case api.RunStatusSucceeded:
+		return db.RunStatusSucceeded, true
+	case api.RunStatusFailed:
+		return db.RunStatusFailed, true
+	case api.RunStatusCancelled:
+		return db.RunStatusCancelled, true
+	case api.RunStatusExpired:
+		return db.RunStatusExpired, true
+	case api.RunStatusSystemFailed:
+		return db.RunStatusSystemFailed, true
+	default:
+		return "", false
+	}
 }
 
 func parseRunListLimit(r *http.Request) (int32, error) {
@@ -412,7 +453,10 @@ func projectRunSnapshot(record runSnapshotRecord) (api.RunSnapshotResponse, erro
 	if err := json.Unmarshal(record.metadata, &metadata); err != nil || metadata == nil {
 		return api.RunSnapshotResponse{}, errors.New("run metadata projection is invalid")
 	}
-	status := strings.ReplaceAll(string(record.status), "_", "-")
+	status, err := runPublicStatus(record.status)
+	if err != nil {
+		return api.RunSnapshotResponse{}, err
+	}
 	cause, err := projectRunCause(record)
 	if err != nil {
 		return api.RunSnapshotResponse{}, err
@@ -461,6 +505,33 @@ func projectRunSnapshot(record runSnapshotRecord) (api.RunSnapshotResponse, erro
 	return response, nil
 }
 
+func runPublicStatus(status db.RunStatus) (string, error) {
+	switch status {
+	case db.RunStatusQueued:
+		return api.RunStatusQueued, nil
+	case db.RunStatusRunning:
+		return api.RunStatusRunning, nil
+	case db.RunStatusWaiting:
+		return api.RunStatusWaiting, nil
+	case db.RunStatusRetryDelayed:
+		return api.RunStatusRetryDelayed, nil
+	case db.RunStatusCancelRequested:
+		return api.RunStatusCancelRequested, nil
+	case db.RunStatusSucceeded:
+		return api.RunStatusSucceeded, nil
+	case db.RunStatusFailed:
+		return api.RunStatusFailed, nil
+	case db.RunStatusCancelled:
+		return api.RunStatusCancelled, nil
+	case db.RunStatusExpired:
+		return api.RunStatusExpired, nil
+	case db.RunStatusSystemFailed:
+		return api.RunStatusSystemFailed, nil
+	default:
+		return "", fmt.Errorf("run status %q has no public projection", status)
+	}
+}
+
 func projectRunCause(record runSnapshotRecord) (api.RunCauseResponse, error) {
 	switch record.causeKind {
 	case "api", "manual":
@@ -492,7 +563,7 @@ func projectRunCause(record runSnapshotRecord) (api.RunCauseResponse, error) {
 		}
 		return cause, nil
 	case "actor_start":
-		return api.RunCauseResponse{Type: "actor-start"}, nil
+		return api.RunCauseResponse{Type: "actor_start"}, nil
 	case "continuation":
 		return api.RunCauseResponse{Type: "continuation"}, nil
 	default:

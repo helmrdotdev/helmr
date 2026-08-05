@@ -60,7 +60,7 @@ func TestWorkspacePublicStatusUsesPublicSpelling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status != api.WorkspaceStatusRecoveryRequired || string(status) != "recovery-required" {
+	if status != api.WorkspaceStatusRecoveryRequired || string(status) != "recovery_required" {
 		t.Fatalf("recovery status = %q", status)
 	}
 }

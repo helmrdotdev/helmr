@@ -87,7 +87,7 @@ export function Dashboard() {
     queryKey: ["runs", "dashboard", "failed", scope.selectedProjectID(), scope.selectedEnvironmentID()],
     queryFn: () => listRuns({
       ...runtimeScope(),
-      statuses: ["failed", "system-failed"],
+      statuses: ["failed", "system_failed"],
       limit: 6,
     }),
     enabled: enabled(),

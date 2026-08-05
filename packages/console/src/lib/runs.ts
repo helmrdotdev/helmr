@@ -4,13 +4,13 @@ export type RunStatus =
   | "queued"
   | "running"
   | "waiting"
-  | "retry-delayed"
-  | "cancel-requested"
+  | "retry_delayed"
+  | "cancel_requested"
   | "succeeded"
   | "failed"
   | "cancelled"
   | "expired"
-  | "system-failed";
+  | "system_failed";
 
 export type RunFilter = RunStatus | "live" | "all";
 export type TaskOutput = unknown;
@@ -116,8 +116,8 @@ const LIVE_STATUSES: RunStatus[] = [
   "queued",
   "running",
   "waiting",
-  "retry-delayed",
-  "cancel-requested",
+  "retry_delayed",
+  "cancel_requested",
 ];
 
 export async function listRuns(options: ListRunsOptions): Promise<ListRunsResponse> {

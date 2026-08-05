@@ -3763,7 +3763,7 @@ function parseWorkspaceSnapshot(value) {
   }
   validateTaskId(sandboxId);
   const status = input["status"];
-  if (status !== "available" && status !== "recovery-required" && status !== "deleting") {
+  if (status !== "available" && status !== "recovery_required" && status !== "deleting") {
     throw new Error("Workspace response.status is invalid");
   }
   if (!Array.isArray(input["secrets"])) {
@@ -5799,7 +5799,7 @@ function runCause(cause) {
         timezone: cause.kind.value.timezone
       };
     case "actorStart":
-      return { type: "actor-start" };
+      return { type: "actor_start" };
     case "continuation":
       return { type: "continuation" };
     default:

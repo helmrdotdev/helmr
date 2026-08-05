@@ -440,7 +440,7 @@ async function waitForRunStatus(
       run.status === "failed" ||
       run.status === "cancelled" ||
       run.status === "expired" ||
-      run.status === "system-failed"
+      run.status === "system_failed"
     ) {
       throw new Error(`Run ${runId} reached unexpected terminal status ${run.status}`)
     }

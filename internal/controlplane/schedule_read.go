@@ -237,11 +237,15 @@ func scheduleResponse(row db.Schedule) (api.ScheduleResponse, error) {
 	if ids.Validate(scheduleID) != nil {
 		return api.ScheduleResponse{}, errors.New("schedule identity is invalid")
 	}
+	status, err := schedulePublicStatus(row.State)
+	if err != nil {
+		return api.ScheduleResponse{}, err
+	}
 	response := api.ScheduleResponse{
 		ID:         scheduleID,
 		TaskID:     row.TaskDeclaredID,
 		Cron:       api.ScheduleCron{Pattern: row.CronPattern, Timezone: row.Timezone},
-		Status:     strings.ReplaceAll(row.State, "_", "-"),
+		Status:     status,
 		Generation: row.Generation,
 		NextFireAt: pgvalue.TimePtr(row.NextFireAt),
 		LastFireAt: pgvalue.TimePtr(row.LastFireAt),
@@ -281,4 +285,19 @@ func scheduleResponse(row db.Schedule) (api.ScheduleResponse, error) {
 		}
 	}
 	return response, nil
+}
+
+func schedulePublicStatus(state string) (api.ScheduleStatus, error) {
+	switch state {
+	case "pending_workspace":
+		return api.ScheduleStatusPendingWorkspace, nil
+	case "active":
+		return api.ScheduleStatusActive, nil
+	case "errored":
+		return api.ScheduleStatusErrored, nil
+	case "archived":
+		return api.ScheduleStatusArchived, nil
+	default:
+		return "", fmt.Errorf("schedule state %q has no public projection", state)
+	}
 }
