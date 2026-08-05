@@ -292,12 +292,12 @@ func TestActorInputSendSourceRequiresCurrentLeaseFence(t *testing.T) {
 	var params GetActorInputSendSourceParams
 	if err := fixture.pool.QueryRow(ctx, `
 		SELECT id, lease_sequence, worker_group_id, worker_instance_id,
-		       worker_epoch, worker_protocol_version
+		       worker_epoch
 		  FROM run_leases
 		 WHERE id = $1
 	`, work.leaseID).Scan(
 		&params.ID, &params.LeaseSequence, &params.WorkerGroupID,
-		&params.WorkerInstanceID, &params.WorkerEpoch, &params.WorkerProtocolVersion,
+		&params.WorkerInstanceID, &params.WorkerEpoch,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -477,7 +477,8 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE runs
 		   SET status = 'failed', current_run_lease_id = NULL,
-		       terminal_at = now(), terminal_reason_code = 'test_idle'
+		       terminal_at = now(),
+		       failure = '{"code":"test_idle","message":"Test run failed","details":{}}'::jsonb
 		 WHERE id = $1
 	`, work.runID)
 	dbtest.MustExec(t, ctx, fixture.pool, `

@@ -410,7 +410,7 @@ func testCheckpointWorkspaceCapture() *CheckpointWorkspaceCapture {
 func testRunCheckpointWaitManifest() workerapi.CheckpointManifest {
 	return workerapi.CheckpointManifest{
 		RecoveryPoint: workerapi.CheckpointRecoveryPoint{Runtime: workerapi.CheckpointRuntime{
-			Backend: "firecracker", ID: "sha256:runtime", Arch: "x86_64", ABI: "helmr.firecracker.snapshot.v0",
+			Backend: "firecracker", ID: "sha256:runtime", Arch: "x86_64", Contract: "helmr.vm-runtime.v0",
 			KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", ConfigDigest: "sha256:runtime-config",
 		}},
 		RuntimeState: workerapi.CheckpointRuntimeState{

@@ -335,7 +335,6 @@ CREATE TABLE worker_groups (
     required_vm_slots INTEGER NOT NULL DEFAULT 1 CHECK (required_vm_slots >= 0),
     required_build_executors INTEGER NOT NULL DEFAULT 1 CHECK (required_build_executors >= 0),
     observation_ttl_seconds INTEGER NOT NULL CHECK (observation_ttl_seconds > 0),
-    protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (protocol_version = 'helmr.worker.v0'),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (id, region_id),
@@ -360,11 +359,10 @@ CREATE UNIQUE INDEX worker_groups_one_active_build_per_region_idx
 CREATE TABLE runtime_identities (
     id TEXT PRIMARY KEY CHECK (btrim(id) <> ''),
     runtime_arch TEXT NOT NULL CHECK (runtime_arch = 'x86_64'),
-    runtime_abi TEXT NOT NULL CHECK (btrim(runtime_abi) <> ''),
+    vm_runtime_contract TEXT NOT NULL CHECK (btrim(vm_runtime_contract) <> ''),
     kernel_digest TEXT NOT NULL CHECK (btrim(kernel_digest) <> ''),
     initramfs_digest TEXT NOT NULL CHECK (btrim(initramfs_digest) <> ''),
     rootfs_digest TEXT NOT NULL CHECK (btrim(rootfs_digest) <> ''),
-    network_abi TEXT NOT NULL CHECK (btrim(network_abi) <> ''),
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -378,14 +376,12 @@ CREATE TABLE worker_instances (
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
     current_epoch BIGINT CHECK (current_epoch IS NULL OR current_epoch > 0),
     current_service_id UUID,
-    protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (protocol_version = 'helmr.worker.v0'),
     supervisor_version TEXT NOT NULL DEFAULT '',
     supports_run BOOLEAN NOT NULL DEFAULT false,
     supports_build BOOLEAN NOT NULL DEFAULT false,
     runtime_identity_id TEXT REFERENCES runtime_identities(id) ON DELETE RESTRICT,
     substrate_format TEXT NOT NULL DEFAULT '',
-    substrate_builder_abi TEXT NOT NULL DEFAULT '',
-    substrate_layout_abi TEXT NOT NULL DEFAULT '',
+    substrate_contract TEXT NOT NULL DEFAULT '',
     epoch_cpu_millis BIGINT NOT NULL DEFAULT 0 CHECK (epoch_cpu_millis >= 0),
     epoch_memory_bytes BIGINT NOT NULL DEFAULT 0 CHECK (epoch_memory_bytes >= 0),
     epoch_guest_ephemeral_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (epoch_guest_ephemeral_disk_bytes >= 0),
@@ -442,13 +438,11 @@ CREATE TABLE worker_instances (
     CHECK (
         (supports_run
          AND btrim(substrate_format) <> ''
-         AND btrim(substrate_builder_abi) <> ''
-         AND btrim(substrate_layout_abi) <> '')
+         AND btrim(substrate_contract) <> '')
         OR
         (NOT supports_run
          AND substrate_format = ''
-         AND substrate_builder_abi = ''
-         AND substrate_layout_abi = '')
+         AND substrate_contract = '')
     ),
     CHECK (state <> 'active' OR activated_at IS NOT NULL),
     CHECK (state NOT IN ('draining', 'termination_ready') OR draining_at IS NOT NULL),
@@ -498,7 +492,6 @@ CREATE TABLE worker_instance_credentials (
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
     allows_run BOOLEAN NOT NULL,
     allows_build BOOLEAN NOT NULL,
-    protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (protocol_version = 'helmr.worker.v0'),
     expires_at TIMESTAMPTZ,
     secret_hash BYTEA NOT NULL UNIQUE CHECK (octet_length(secret_hash) > 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -613,14 +606,10 @@ CREATE TABLE deployments (
     build_manager_digest BYTEA CHECK (
         build_manager_digest IS NULL OR octet_length(build_manager_digest) = 32
     ),
-    build_contract_version TEXT NOT NULL CHECK (build_contract_version = 'helmr.program-build.v0'),
+    build_contract TEXT NOT NULL CHECK (build_contract = 'helmr.program-build.v0'),
     image_cache_mode TEXT NOT NULL CHECK (image_cache_mode IN ('prefer', 'bypass')),
     version TEXT NOT NULL CHECK (btrim(version) <> ''),
     content_hash TEXT NOT NULL CHECK (content_hash ~ '^sha256:[0-9a-f]{64}$'),
-    api_version TEXT NOT NULL DEFAULT '2026-06-06' CHECK (
-        btrim(api_version) <> '' AND octet_length(api_version) <= 255
-    ),
-    worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (worker_protocol_version = 'helmr.worker.v0'),
     deployment_source_artifact_id UUID NOT NULL,
     program_artifact_id UUID,
     program_artifact_kind artifact_kind NOT NULL DEFAULT 'deployment_program'
@@ -631,7 +620,7 @@ CREATE TABLE deployments (
     queue_config JSONB,
     status TEXT NOT NULL DEFAULT 'queued'
         CHECK (status IN ('queued', 'building', 'deployed', 'failed')),
-    failure JSONB NOT NULL DEFAULT '{}'::jsonb,
+    failure JSONB,
     current_build_lease_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -704,6 +693,20 @@ CREATE TABLE deployments (
         (status = 'deployed' AND jsonb_typeof(queue_config) = 'object')
         OR
         (status <> 'deployed' AND queue_config IS NULL)
+    ),
+    CONSTRAINT deployments_failure_check CHECK (
+        (status = 'failed'
+         AND jsonb_typeof(failure) = 'object'
+         AND failure ?& ARRAY['code', 'message', 'details']
+         AND failure - ARRAY['code', 'message', 'details'] = '{}'::jsonb
+         AND failure->>'code' ~ '^[a-z][a-z0-9_]{0,127}$'
+         AND failure->>'code' = btrim(failure->>'code')
+         AND failure->>'message' = btrim(failure->>'message')
+         AND octet_length(failure->>'message') BETWEEN 1 AND 1024
+         AND jsonb_typeof(failure->'details') = 'object')
+        OR
+        (status <> 'failed'
+         AND failure IS NULL)
     )
 );
 
@@ -767,7 +770,6 @@ CREATE TABLE deployment_build_leases (
     worker_group_id TEXT NOT NULL,
     worker_instance_id UUID NOT NULL,
     worker_epoch BIGINT NOT NULL CHECK (worker_epoch > 0),
-    worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (worker_protocol_version = 'helmr.worker.v0'),
     requested_cpu_millis BIGINT NOT NULL CHECK (requested_cpu_millis = 3000),
     requested_memory_bytes BIGINT NOT NULL CHECK (requested_memory_bytes = 4294967296),
     requested_guest_ephemeral_disk_bytes BIGINT NOT NULL CHECK (requested_guest_ephemeral_disk_bytes = 34359738368),
@@ -917,8 +919,7 @@ CREATE TABLE runtime_substrates (
     deployment_definition_id UUID NOT NULL,
     substrate_digest TEXT NOT NULL CHECK (btrim(substrate_digest) <> ''),
     substrate_format TEXT NOT NULL CHECK (btrim(substrate_format) <> ''),
-    builder_abi TEXT NOT NULL CHECK (btrim(builder_abi) <> ''),
-    layout_abi TEXT NOT NULL CHECK (btrim(layout_abi) <> ''),
+    substrate_contract TEXT NOT NULL CHECK (btrim(substrate_contract) <> ''),
     substrate_size_bytes BIGINT NOT NULL CHECK (substrate_size_bytes >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
@@ -926,7 +927,7 @@ CREATE TABLE runtime_substrates (
     UNIQUE (org_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, deployment_definition_id, id),
     CONSTRAINT runtime_substrates_input_key
-        UNIQUE (org_id, project_id, environment_id, deployment_definition_id, substrate_format, builder_abi, layout_abi),
+        UNIQUE (org_id, project_id, environment_id, deployment_definition_id, substrate_format, substrate_contract),
     FOREIGN KEY (environment_id, deployment_definition_id)
         REFERENCES deployment_definitions(environment_id, id)
         ON DELETE RESTRICT
@@ -1050,8 +1051,7 @@ CREATE TABLE schedules (
     claim_expires_at TIMESTAMPTZ,
     retry_step SMALLINT CHECK (retry_step BETWEEN 1 AND 10),
     retry_after TIMESTAMPTZ,
-    last_error_code TEXT,
-    last_error_message TEXT,
+    last_failure JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (environment_id, id),
@@ -1087,8 +1087,7 @@ CREATE TABLE schedules (
          AND claim_expires_at IS NULL
          AND retry_step IS NULL
          AND retry_after IS NULL
-         AND last_error_code IS NULL
-         AND last_error_message IS NULL)
+         )
         OR
         (state <> 'archived'
          AND deployment_definition_id IS NOT NULL
@@ -1112,21 +1111,38 @@ CREATE TABLE schedules (
     CHECK (claimed_by IS NULL OR (state = 'active' AND next_fire_at IS NOT NULL)),
     CHECK (
         (state = 'errored'
-         AND last_error_code IS NOT NULL
-         AND last_error_code IN (
+         AND last_failure->>'code' IN (
              'task_authority_invalid',
              'workspace_unavailable',
              'architecture_incompatible',
              'generation_invalid',
              'input_invalid'
          )
-         AND last_error_message IS NOT NULL
-         AND btrim(last_error_message) <> ''
-         AND octet_length(last_error_message) <= 1024)
+         AND jsonb_typeof(last_failure) = 'object'
+         AND last_failure ?& ARRAY['code', 'message', 'details']
+         AND last_failure - ARRAY['code', 'message', 'details'] = '{}'::jsonb
+         AND last_failure->>'message' = btrim(last_failure->>'message')
+         AND octet_length(last_failure->>'message') BETWEEN 1 AND 1024
+         AND jsonb_typeof(last_failure->'details') = 'object')
         OR
         (state <> 'errored'
-         AND last_error_code IS NULL
-         AND last_error_message IS NULL)
+         AND (
+             last_failure IS NULL
+             OR
+             (last_failure->>'code' IN (
+                  'task_authority_invalid',
+                  'workspace_unavailable',
+                  'architecture_incompatible',
+                  'generation_invalid',
+                  'input_invalid'
+              )
+              AND jsonb_typeof(last_failure) = 'object'
+              AND last_failure ?& ARRAY['code', 'message', 'details']
+              AND last_failure - ARRAY['code', 'message', 'details'] = '{}'::jsonb
+              AND last_failure->>'message' = btrim(last_failure->>'message')
+              AND octet_length(last_failure->>'message') BETWEEN 1 AND 1024
+              AND jsonb_typeof(last_failure->'details') = 'object')
+         ))
     )
 );
 
@@ -1276,7 +1292,7 @@ CREATE TABLE sessions (
     run_generation BIGINT NOT NULL DEFAULT 1 CHECK (run_generation > 0),
     state_version BIGINT NOT NULL DEFAULT 1 CHECK (state_version > 0),
     manual_run_cancelled BOOLEAN NOT NULL DEFAULT false,
-    failure_code TEXT,
+    failure JSONB,
     failure_run_id UUID,
     next_input_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_input_sequence BETWEEN 1 AND 9007199254740992),
     committed_input_sequence BIGINT NOT NULL DEFAULT 0 CHECK (committed_input_sequence BETWEEN 0 AND 9007199254740991),
@@ -1304,7 +1320,7 @@ CREATE TABLE sessions (
     run_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     run_tags TEXT[] NOT NULL DEFAULT '{}'::text[],
     state TEXT NOT NULL DEFAULT 'open' CHECK (
-        state IN ('open', 'closing', 'closed', 'cancelling', 'cancelled', 'failed')
+        state IN ('open', 'closing', 'closed', 'cancelled', 'failed')
     ),
     close_sequence BIGINT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1339,9 +1355,27 @@ CREATE TABLE sessions (
     CONSTRAINT sessions_run_metadata_object
         CHECK (jsonb_typeof(run_metadata) = 'object'),
     CHECK (
-        (state = 'failed' AND failure_code IN ('no_progress', 'run_failed', 'run_expired', 'platform_failure') AND failure_run_id IS NOT NULL)
+        (state = 'failed'
+         AND failure->>'code' IN ('no_progress', 'run_failed', 'run_expired', 'platform_failure')
+         AND jsonb_typeof(failure) = 'object'
+         AND failure ?& ARRAY['code', 'message', 'details']
+         AND failure - ARRAY['code', 'message', 'details'] = '{}'::jsonb
+         AND failure->>'message' = btrim(failure->>'message')
+         AND octet_length(failure->>'message') BETWEEN 1 AND 1024
+         AND jsonb_typeof(failure->'details') = 'object')
         OR
-        (state <> 'failed' AND failure_code IS NULL AND failure_run_id IS NULL)
+        (state = 'cancelled'
+         AND failure->>'code' = 'cancelled'
+         AND jsonb_typeof(failure) = 'object'
+         AND failure ?& ARRAY['code', 'message', 'details']
+         AND failure - ARRAY['code', 'message', 'details'] = '{}'::jsonb
+         AND failure->>'message' = btrim(failure->>'message')
+         AND octet_length(failure->>'message') BETWEEN 1 AND 1024
+         AND jsonb_typeof(failure->'details') = 'object')
+        OR
+        (state NOT IN ('failed', 'cancelled')
+         AND failure IS NULL
+         AND failure_run_id IS NULL)
     )
 );
 
@@ -1388,8 +1422,7 @@ CREATE TABLE runs (
     session_input_high_watermark BIGINT,
     payload JSONB,
     output JSONB,
-    terminal_reason_code TEXT,
-    error JSONB,
+    failure JSONB,
     status TEXT NOT NULL DEFAULT 'queued'
         CHECK (status IN (
             'queued',
@@ -1547,19 +1580,24 @@ CREATE TABLE runs (
     CHECK (
         (status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested')
          AND terminal_at IS NULL
-         AND terminal_reason_code IS NULL
+         AND failure IS NULL
          AND output IS NULL
-         AND error IS NULL)
+         )
         OR
         (status = 'succeeded'
          AND terminal_at IS NOT NULL
-         AND terminal_reason_code IS NULL
-         AND error IS NULL)
+         AND failure IS NULL)
         OR
         (status IN ('failed', 'cancelled', 'expired', 'system_failed')
          AND terminal_at IS NOT NULL
-         AND terminal_reason_code IS NOT NULL
-         AND btrim(terminal_reason_code) <> ''
+         AND jsonb_typeof(failure) = 'object'
+         AND failure ?& ARRAY['code', 'message', 'details']
+         AND failure - ARRAY['code', 'message', 'details'] = '{}'::jsonb
+         AND failure->>'code' ~ '^[a-z][a-z0-9_]{0,127}$'
+         AND failure->>'code' = btrim(failure->>'code')
+         AND failure->>'message' = btrim(failure->>'message')
+         AND octet_length(failure->>'message') BETWEEN 1 AND 1024
+         AND jsonb_typeof(failure->'details') = 'object'
          AND output IS NULL)
     ),
     CHECK ((status = 'retry_delayed') = (retry_at IS NOT NULL))
@@ -2467,7 +2505,6 @@ CREATE TABLE run_leases (
     worker_epoch BIGINT NOT NULL CHECK (worker_epoch > 0),
     runtime_instance_id UUID NOT NULL,
     runtime_identity_id TEXT NOT NULL CHECK (btrim(runtime_identity_id) <> ''),
-    worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (worker_protocol_version = 'helmr.worker.v0'),
     requested_cpu_millis BIGINT NOT NULL CHECK (requested_cpu_millis > 0),
     requested_memory_bytes BIGINT NOT NULL CHECK (requested_memory_bytes > 0),
     requested_guest_ephemeral_disk_bytes BIGINT NOT NULL CHECK (requested_guest_ephemeral_disk_bytes >= 0),

@@ -137,7 +137,7 @@ func handleImageBuild(
 		return writeImageBuildFailure(conn, nil, errors.New("image-build OCI result exceeds the output contract"))
 	}
 	resultRaw, err := imagebuild.CanonicalGuestResult(imagebuild.GuestResult{
-		ExecutionABI: imagebuild.ExecutionABI,
+		Contract:     imagebuild.Contract,
 		Outcome:      imagebuild.GuestSucceeded,
 		OCIDigest:    digest,
 		OCISizeBytes: size,
@@ -292,7 +292,7 @@ func writeImageBuildFailure(
 		}
 	}
 	raw, err := imagebuild.CanonicalGuestResult(imagebuild.GuestResult{
-		ExecutionABI:  imagebuild.ExecutionABI,
+		Contract:      imagebuild.Contract,
 		Outcome:       imagebuild.GuestFailed,
 		FailureReason: reason,
 		Error:         message,

@@ -425,7 +425,6 @@ INSERT INTO run_leases (
     worker_epoch,
     runtime_instance_id,
     runtime_identity_id,
-    worker_protocol_version,
     requested_cpu_millis,
     requested_memory_bytes,
     requested_guest_ephemeral_disk_bytes,
@@ -460,10 +459,9 @@ INSERT INTO run_leases (
     $21,
     $22,
     $23,
-    $24,
-    $25
+    $24
 )
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type InsertAssignedRunLeaseParams struct {
@@ -481,7 +479,6 @@ type InsertAssignedRunLeaseParams struct {
 	WorkerEpoch                      int64              `json:"worker_epoch"`
 	RuntimeInstanceID                pgtype.UUID        `json:"runtime_instance_id"`
 	RuntimeIdentityID                string             `json:"runtime_identity_id"`
-	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
 	RequestedCPUMillis               int64              `json:"requested_cpu_millis"`
 	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
 	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
@@ -510,7 +507,6 @@ func (q *Queries) InsertAssignedRunLease(ctx context.Context, arg InsertAssigned
 		arg.WorkerEpoch,
 		arg.RuntimeInstanceID,
 		arg.RuntimeIdentityID,
-		arg.WorkerProtocolVersion,
 		arg.RequestedCPUMillis,
 		arg.RequestedMemoryBytes,
 		arg.RequestedGuestEphemeralDiskBytes,
@@ -538,7 +534,6 @@ func (q *Queries) InsertAssignedRunLease(ctx context.Context, arg InsertAssigned
 		&i.WorkerEpoch,
 		&i.RuntimeInstanceID,
 		&i.RuntimeIdentityID,
-		&i.WorkerProtocolVersion,
 		&i.RequestedCPUMillis,
 		&i.RequestedMemoryBytes,
 		&i.RequestedGuestEphemeralDiskBytes,
@@ -702,7 +697,7 @@ UPDATE runs
    AND current_attempt_number = $5
    AND current_run_lease_id IS NULL
    AND (first_lease_at IS NOT NULL OR queued_expires_at IS NULL OR queued_expires_at > transaction_timestamp())
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 `
 
 type SetRunCurrentLeaseParams struct {
@@ -746,8 +741,7 @@ func (q *Queries) SetRunCurrentLease(ctx context.Context, arg SetRunCurrentLease
 		&i.SessionInputHighWatermark,
 		&i.Payload,
 		&i.Output,
-		&i.TerminalReasonCode,
-		&i.Error,
+		&i.Failure,
 		&i.Status,
 		&i.StateVersion,
 		&i.CurrentAttemptNumber,

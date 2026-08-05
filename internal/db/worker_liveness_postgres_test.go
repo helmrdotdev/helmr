@@ -254,8 +254,8 @@ func insertActiveWorkerWithObservation(t *testing.T, ctx context.Context, pool *
 	runtimeIdentityID := "active-runtime-" + id.String()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runtime_identities (
-			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, network_abi
-		) VALUES ($1, 'x86_64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0')
+			id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest, rootfs_digest
+		) VALUES ($1, 'x86_64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs')
 	`, runtimeIdentityID); err != nil {
 		t.Fatal(err)
 	}

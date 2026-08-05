@@ -139,14 +139,10 @@ export interface RunHandle {
   readonly id: string
 }
 
-export interface RunError extends HelmrError {
-  readonly retryable: boolean
-  readonly details?: JsonValue
-}
-
-export interface TaskPayloadError extends RunError {
-  readonly code: "task_payload_invalid"
-  readonly retryable: false
+export interface RunFailure {
+  readonly code: string
+  readonly message: string
+  readonly details: Readonly<Record<string, JsonValue>>
 }
 
 export interface RunSnapshot<TOutput extends JsonValue = JsonValue>
@@ -160,14 +156,12 @@ export interface RunSnapshot<TOutput extends JsonValue = JsonValue>
   readonly workspaceId: string
   readonly sessionId?: string
   readonly parentRunId?: string
-  readonly parentOwnsLifecycle?: boolean
   readonly currentAttemptNumber: number
   readonly cause: RunCause
   readonly metadata: Metadata
   readonly tags: readonly string[]
   readonly output?: TOutput
-  readonly terminalReasonCode?: string
-  readonly error?: RunError
+  readonly failure?: RunFailure
   readonly createdAt: string
   readonly startedAt?: string
   readonly terminalAt?: string
@@ -175,7 +169,7 @@ export interface RunSnapshot<TOutput extends JsonValue = JsonValue>
 
 export type TaskResult<T extends JsonValue> =
   | Readonly<{ ok: true; output: T; run: RunHandle }>
-  | Readonly<{ ok: false; error: RunError; run: RunHandle }>
+  | Readonly<{ ok: false; failure: RunFailure; run: RunHandle }>
 
 export interface TaskWait<T extends JsonValue>
   extends PromiseLike<TaskResult<T>> {

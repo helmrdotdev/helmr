@@ -341,7 +341,7 @@ async function waitForActiveSchedule(client: HelmrClient) {
     const schedule = schedules.items.find((item) => item.taskId === "schedule-smoke")
     if (schedule?.status === "active") return schedule
     if (schedule?.status === "errored") {
-      throw new Error(`schedule-smoke admission failed: ${schedule.lastError?.code}`)
+      throw new Error(`schedule-smoke admission failed: ${schedule.lastFailure?.code}`)
     }
     if (Date.now() >= deadline) {
       throw new Error("timed out waiting for schedule-smoke to become active")
@@ -369,7 +369,7 @@ async function waitForScheduleFire(
     }
     if (schedule.status === "errored" || schedule.status === "archived") {
       throw new Error(
-        `schedule-smoke stopped before firing: ${schedule.status} ${schedule.lastError?.code ?? ""}`,
+        `schedule-smoke stopped before firing: ${schedule.status} ${schedule.lastFailure?.code ?? ""}`,
       )
     }
     if (Date.now() >= deadline) {

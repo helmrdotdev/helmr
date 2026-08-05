@@ -265,7 +265,6 @@ func workerRunLeaseFromAssignment(orgID string, assignment workerapi.RunLeaseAss
 		WorkerEpoch:       assignment.WorkerEpoch,
 		LeaseSequence:     assignment.LeaseSequence,
 		RuntimeInstanceID: assignment.RuntimeInstanceID,
-		ProtocolVersion:   assignment.WorkerProtocolVersion,
 		AttemptNumber:     assignment.AttemptNumber,
 		Trace:             assignment.Trace,
 		ExpiresAt:         assignment.ExpiresAt,

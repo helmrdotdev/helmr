@@ -102,8 +102,7 @@ func TestFreshRunStartQueriesCommitAndReplay(t *testing.T) {
 	if _, err := fixture.queries.GetRunLeaseStartLocators(ctx, GetRunLeaseStartLocatorsParams{
 		ID: workUUID(work.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: workUUID(fixture.workerID),
-		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
-	}); !errors.Is(err, pgx.ErrNoRows) {
+		WorkerEpoch: 1}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("expired replay error = %v, want no rows", err)
 	}
 }
@@ -327,8 +326,7 @@ func (fixture runLeaseClaimFixture) freshRunStartLocators(
 	locators, err := fixture.queries.GetRunLeaseStartLocators(ctx, GetRunLeaseStartLocatorsParams{
 		ID: workUUID(work.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: workUUID(fixture.workerID),
-		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
-	})
+		WorkerEpoch: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,8 +352,7 @@ func (fixture runLeaseClaimFixture) runEntrypointLocatorParams(
 	return GetRunEntrypointLocatorsParams{
 		ID: workUUID(work.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: workUUID(fixture.workerID),
-		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
-	}
+		WorkerEpoch: 1}
 }
 
 func (fixture runLeaseClaimFixture) freshRunLeaseRunningParams(
@@ -367,7 +364,7 @@ func (fixture runLeaseClaimFixture) freshRunLeaseRunningParams(
 		WorkspaceID: locators.WorkspaceID, AttemptNumber: locators.AttemptNumber,
 		LeaseSequence: 1, WorkerGroupID: runLeaseTestWorkerGroup,
 		WorkerInstanceID: workUUID(fixture.workerID), WorkerEpoch: 1,
-		WorkerProtocolVersion: runLeaseTestProtocol, RuntimeInstanceID: locators.RuntimeInstanceID,
+		RuntimeInstanceID: locators.RuntimeInstanceID,
 		RuntimeIdentityID: fixture.runtimeIdentityID,
 	}
 }

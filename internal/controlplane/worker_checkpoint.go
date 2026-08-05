@@ -128,8 +128,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 		locators, err := work.q.GetLiveRunLeaseLocators(r.Context(), db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(parsed.lease.leaseID), LeaseSequence: normalized.Lease.LeaseSequence,
 			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
-		})
+			WorkerEpoch: worker.WorkerEpoch})
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
@@ -345,7 +344,7 @@ func failCheckpointTaskAttempt(
 	if retry {
 		return scheduleCheckpointFailureRetry(ctx, store, authority, secrets, failedAt, retryAt)
 	}
-	return finishCheckpointFailedTask(ctx, store, authority, failedAt, failed.errorPayload, reason)
+	return finishCheckpointFailedTask(ctx, store, authority, failedAt, reason)
 }
 
 func failCheckpointActorAttempt(
@@ -445,7 +444,7 @@ func failCheckpointActorAttempt(
 		return scheduleActorCheckpointFailureRetry(ctx, store, authority, secrets, failedAt, decision.retryAt)
 	}
 	return finishCheckpointFailedActor(
-		ctx, store, authority, failedAt, failed.errorPayload, decision.reason,
+		ctx, store, authority, failedAt, decision.reason,
 	)
 }
 
@@ -518,7 +517,6 @@ func finishCheckpointFailedActor(
 	store db.Querier,
 	authority runLeaseClaimAuthority,
 	failedAt pgtype.Timestamptz,
-	errorPayload []byte,
 	reason string,
 ) error {
 	status := db.RunStatusSystemFailed
@@ -531,16 +529,27 @@ func finishCheckpointFailedActor(
 		failureCode = "run_expired"
 	}
 	failureRunID := authority.run.ID
-	actorFailureCode := pgvalue.Text(failureCode)
+	runFailureValue, err := runFailure(reason, "Run failed during checkpoint recovery")
+	if err != nil {
+		return err
+	}
+	actorFailure, err := sessionFailure(
+		failureCode,
+		"Session failed during checkpoint recovery",
+		pgvalue.UUIDString(authority.run.ID),
+	)
+	if err != nil {
+		return err
+	}
 	if _, err := store.FinishCheckpointFailedActorRun(ctx, db.FinishCheckpointFailedActorRunParams{
-		Status: status, ReasonCode: pgvalue.Text(reason), Error: errorPayload, FailedAt: failedAt,
+		Status: status, Failure: runFailureValue, FailedAt: failedAt,
 		ID: authority.run.ID, WorkspaceID: authority.workspace.ID, SessionID: authority.actor.ID,
 		AttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
 	}); err != nil {
 		return staleRunLeaseClaim(err)
 	}
 	actor, err := store.ReconcileActorTerminalRun(ctx, db.ReconcileActorTerminalRunParams{
-		State: actorState, CommittedInputSequence: pgtype.Int8{}, FailureCode: actorFailureCode,
+		State: actorState, CommittedInputSequence: pgtype.Int8{}, Failure: actorFailure,
 		FailureRunID: failureRunID, CompletedAt: failedAt,
 		EnvironmentID: authority.actor.EnvironmentID, ID: authority.actor.ID,
 		WorkspaceID: authority.workspace.ID, RunID: authority.run.ID,
@@ -610,7 +619,6 @@ func finishCheckpointFailedTask(
 	store db.Querier,
 	authority runLeaseClaimAuthority,
 	failedAt pgtype.Timestamptz,
-	errorPayload []byte,
 	reason string,
 ) error {
 	if _, err := store.ReleaseTaskWorkspaceOwner(ctx, db.ReleaseTaskWorkspaceOwnerParams{
@@ -628,8 +636,12 @@ func finishCheckpointFailedTask(
 		status = db.RunStatusExpired
 		eventKind = api.RunEventKindExpired
 	}
+	failure, err := runFailure(reason, "Run failed during checkpoint recovery")
+	if err != nil {
+		return err
+	}
 	if _, err := store.FinishCheckpointFailedTaskRun(ctx, db.FinishCheckpointFailedTaskRunParams{
-		Status: status, ReasonCode: pgvalue.Text(reason), Error: errorPayload,
+		Status: status, Failure: failure,
 		FailedAt: failedAt, ID: authority.run.ID, WorkspaceID: authority.workspace.ID,
 		AttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
 	}); err != nil {
@@ -650,8 +662,7 @@ func finishCheckpointFailedTask(
 		authority.run.ParentOwnsLifecycle.Bool && authority.enclosingWait.ID.Valid {
 		terminalRun := authority.run
 		terminalRun.Status = status
-		terminalRun.TerminalReasonCode = pgvalue.Text(reason)
-		terminalRun.Error = errorPayload
+		terminalRun.Failure = failure
 		if err := resolveParentOwnedChildWait(
 			ctx, store, authority, terminalRun, failedAt,
 		); err != nil {
@@ -766,7 +777,7 @@ func validateCheckpointManifest(
 	identity := recovery.Runtime
 	if identity.Backend != "firecracker" ||
 		deployment.ValidateRuntimeArchitecture(deployment.RuntimeArchitecture(identity.Arch)) != nil ||
-		identity.ID != runtimeIdentityID || strings.TrimSpace(identity.ABI) == "" ||
+		identity.ID != runtimeIdentityID || strings.TrimSpace(identity.Contract) == "" ||
 		!taskWorkspaceDigestPattern.MatchString(identity.KernelDigest) ||
 		!taskWorkspaceDigestPattern.MatchString(identity.InitramfsDigest) ||
 		!taskWorkspaceDigestPattern.MatchString(identity.RootfsDigest) ||
@@ -805,8 +816,7 @@ func validateCheckpointManifest(
 	if identity.Substrate != nil &&
 		(!taskWorkspaceDigestPattern.MatchString(identity.Substrate.Digest) ||
 			strings.TrimSpace(identity.Substrate.Format) == "" ||
-			strings.TrimSpace(identity.Substrate.BuilderABI) == "" ||
-			strings.TrimSpace(identity.Substrate.LayoutABI) == "") {
+			strings.TrimSpace(identity.Substrate.Contract) == "") {
 		return nil, nil, errors.New("manifest runtime substrate identity is invalid")
 	}
 	encoded, err := json.Marshal(manifest)
@@ -890,8 +900,7 @@ func (s *Server) commitCheckpointReady(
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(ready.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
 			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
-		})
+			WorkerEpoch: worker.WorkerEpoch})
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
@@ -946,7 +955,7 @@ func (s *Server) commitCheckpointReady(
 		}
 		identity, err := work.q.GetRuntimeIdentityForCheckpoint(ctx, authority.runtime.RuntimeIdentityID)
 		if err != nil || identity.ID != request.Manifest.RecoveryPoint.Runtime.ID ||
-			identity.RuntimeArch != request.Manifest.RecoveryPoint.Runtime.Arch || identity.RuntimeABI != request.Manifest.RecoveryPoint.Runtime.ABI ||
+			identity.RuntimeArch != request.Manifest.RecoveryPoint.Runtime.Arch || identity.VMRuntimeContract != request.Manifest.RecoveryPoint.Runtime.Contract ||
 			identity.KernelDigest != request.Manifest.RecoveryPoint.Runtime.KernelDigest ||
 			identity.InitramfsDigest != request.Manifest.RecoveryPoint.Runtime.InitramfsDigest ||
 			identity.RootfsDigest != request.Manifest.RecoveryPoint.Runtime.RootfsDigest {
@@ -1296,8 +1305,7 @@ func validateCheckpointSubstrateAuthority(
 		substrate.DeploymentDefinitionID != authority.runtime.DeploymentDefinitionID ||
 		substrate.SubstrateDigest != identity.Digest ||
 		substrate.SubstrateFormat != identity.Format ||
-		substrate.BuilderAbi != identity.BuilderABI ||
-		substrate.LayoutAbi != identity.LayoutABI {
+		substrate.SubstrateContract != identity.Contract {
 		return errStaleRunLeaseClaim
 	}
 	return nil

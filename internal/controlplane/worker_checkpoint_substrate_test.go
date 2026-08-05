@@ -37,18 +37,16 @@ func TestCheckpointSubstrateAuthorityMatchesRelationalIdentity(t *testing.T) {
 		DeploymentDefinitionID: definitionID,
 		SubstrateDigest:        "sha256:substrate",
 		SubstrateFormat:        "ext4",
-		BuilderAbi:             "builder-v0",
-		LayoutAbi:              "layout-v0",
+		SubstrateContract:      "builder-v0",
 		SubstrateSizeBytes:     4096,
 	}
 	manifest := workerapi.CheckpointManifest{
 		RecoveryPoint: workerapi.CheckpointRecoveryPoint{
 			Runtime: workerapi.CheckpointRuntime{
 				Substrate: &workerapi.CheckpointRuntimeSubstrate{
-					Digest:     row.SubstrateDigest,
-					Format:     row.SubstrateFormat,
-					BuilderABI: row.BuilderAbi,
-					LayoutABI:  row.LayoutAbi,
+					Digest:   row.SubstrateDigest,
+					Format:   row.SubstrateFormat,
+					Contract: row.SubstrateContract,
 				},
 			},
 		},
@@ -65,10 +63,9 @@ func TestCheckpointSubstrateAuthorityMatchesRelationalIdentity(t *testing.T) {
 
 	mismatched := manifest
 	mismatched.RecoveryPoint.Runtime.Substrate = &workerapi.CheckpointRuntimeSubstrate{
-		Digest:     "sha256:different",
-		Format:     row.SubstrateFormat,
-		BuilderABI: row.BuilderAbi,
-		LayoutABI:  row.LayoutAbi,
+		Digest:   "sha256:different",
+		Format:   row.SubstrateFormat,
+		Contract: row.SubstrateContract,
 	}
 	if err := validateCheckpointSubstrateAuthority(
 		context.Background(),

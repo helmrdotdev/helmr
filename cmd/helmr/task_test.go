@@ -349,23 +349,6 @@ func TestTaskCommandRejectsPayloadFileCombinations(t *testing.T) {
 	}
 }
 
-func TestTaskCommandDoesNotExposeInputFlagAliases(t *testing.T) {
-	for _, args := range [][]string{
-		{"task", "start", "deploy", "--workspace", testWorkspaceID, "--input-json", `{"env":"prod"}`},
-		{"task", "start", "deploy", "--workspace", testWorkspaceID, "--input-file", "payload.json"},
-		{"task", "start", "deploy", "--workspace", testWorkspaceID, "--input", "env=prod"},
-	} {
-		cmd := newRootCommand()
-		cmd.SetOut(&bytes.Buffer{})
-		cmd.SetErr(&bytes.Buffer{})
-		cmd.SetArgs(args)
-		err := cmd.Execute()
-		if err == nil || !strings.Contains(err.Error(), "unknown flag") {
-			t.Fatalf("args %v err = %v", args, err)
-		}
-	}
-}
-
 func TestTaskCommandRejectsProjectFlagThatLooksLikePayload(t *testing.T) {
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

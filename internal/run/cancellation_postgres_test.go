@@ -166,8 +166,8 @@ func TestOwnedFinalizationFailsSecretRevokedRun(t *testing.T) {
 	var runLeaseState, workspaceLeaseState string
 	if err := fixture.pool.QueryRow(ctx, `
 SELECT runs.status,
-       runs.terminal_reason_code,
-       runs.error,
+	   runs.failure->>'code',
+	   runs.failure,
        run_attempts.terminal_outcome,
        run_attempts.terminal_reason_code,
        run_leases.state,
@@ -208,13 +208,12 @@ SELECT runs.status,
 			workspaceLeaseState,
 		)
 	}
-	var errorPayload map[string]any
-	if err := json.Unmarshal(runError, &errorPayload); err != nil {
+	var failurePayload map[string]any
+	if err := json.Unmarshal(runError, &failurePayload); err != nil {
 		t.Fatal(err)
 	}
-	if errorPayload["code"] != "secret_revoked" ||
-		errorPayload["retryable"] != false {
-		t.Fatalf("Run error = %#v", errorPayload)
+	if failurePayload["code"] != "secret_revoked" {
+		t.Fatalf("Run failure = %#v", failurePayload)
 	}
 }
 
@@ -440,11 +439,9 @@ SELECT runs.status,
 				)
 			}
 			var payload struct {
-				OK    bool `json:"ok"`
-				Error struct {
-					Code string `json:"code"`
-				} `json:"error"`
-				Run struct {
+				OK      bool    `json:"ok"`
+				Failure Failure `json:"failure"`
+				Run     struct {
 					ID string `json:"id"`
 				} `json:"run"`
 			}
@@ -452,7 +449,9 @@ SELECT runs.status,
 				t.Fatal(err)
 			}
 			if payload.OK ||
-				payload.Error.Code != "child_run_cancelled" ||
+				payload.Failure.Code != "child_run_cancelled" ||
+				payload.Failure.Message != "Child Run was cancelled" ||
+				len(payload.Failure.Details) != 0 ||
 				payload.Run.ID != result.RunID.String() {
 				t.Fatalf("child cancellation result = %+v", payload)
 			}
@@ -679,12 +678,11 @@ SELECT count(*)
 	locators, err := fixture.queries.GetRunLeaseClaimLocators(
 		ctx,
 		db.GetRunLeaseClaimLocatorsParams{
-			ID:                    pgvalue.UUID(resumeLeaseID),
-			LeaseSequence:         2,
-			WorkerGroupID:         testWorkerGroup,
-			WorkerInstanceID:      pgvalue.UUID(fixture.workerID),
-			WorkerEpoch:           1,
-			WorkerProtocolVersion: testWorkerProtocol,
+			ID:               pgvalue.UUID(resumeLeaseID),
+			LeaseSequence:    2,
+			WorkerGroupID:    testWorkerGroup,
+			WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+			WorkerEpoch:      1,
 		},
 	)
 	if err != nil {
@@ -791,12 +789,11 @@ SELECT outer_run.status,
 	locators, err := fixture.queries.GetRunLeaseClaimLocators(
 		ctx,
 		db.GetRunLeaseClaimLocatorsParams{
-			ID:                    pgvalue.UUID(resumeLeaseID),
-			LeaseSequence:         2,
-			WorkerGroupID:         testWorkerGroup,
-			WorkerInstanceID:      pgvalue.UUID(fixture.workerID),
-			WorkerEpoch:           1,
-			WorkerProtocolVersion: testWorkerProtocol,
+			ID:               pgvalue.UUID(resumeLeaseID),
+			LeaseSequence:    2,
+			WorkerGroupID:    testWorkerGroup,
+			WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+			WorkerEpoch:      1,
 		},
 	)
 	if err != nil {
@@ -840,14 +837,14 @@ INSERT INTO run_leases (
     id, org_id, project_id, environment_id, run_id, workspace_id, region_id,
     lease_sequence, attempt_number, worker_group_id, worker_instance_id,
     worker_epoch, runtime_instance_id,
-    runtime_identity_id, worker_protocol_version, requested_cpu_millis,
+    runtime_identity_id, requested_cpu_millis,
     requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
     requested_execution_slots, state, assigned_at, start_deadline_at, expires_at
 )
 SELECT $1, org_id, project_id, environment_id, $2, workspace_id, region_id,
        2, attempt_number, worker_group_id, worker_instance_id,
        worker_epoch, runtime_instance_id,
-       runtime_identity_id, worker_protocol_version, requested_cpu_millis,
+       runtime_identity_id, requested_cpu_millis,
        requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
        requested_execution_slots, 'assigned', now(), now() + interval '5 minutes',
        now() + interval '10 minutes'

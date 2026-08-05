@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -24,12 +25,12 @@ type runtimeArtifact struct {
 }
 
 type runtimeArtifacts struct {
-	Schema     string          `json:"schema"`
-	Arch       string          `json:"arch"`
-	RuntimeABI string          `json:"runtime_abi"`
-	Kernel     runtimeArtifact `json:"kernel"`
-	Initramfs  runtimeArtifact `json:"initramfs"`
-	Rootfs     runtimeArtifact `json:"rootfs"`
+	Schema            string          `json:"schema"`
+	Arch              string          `json:"arch"`
+	VMRuntimeContract string          `json:"vm_runtime_contract"`
+	Kernel            runtimeArtifact `json:"kernel"`
+	Initramfs         runtimeArtifact `json:"initramfs"`
+	Rootfs            runtimeArtifact `json:"rootfs"`
 }
 
 func loadRuntimeArtifacts(cfg Config) (runtimeArtifacts, error) {
@@ -81,8 +82,8 @@ func validateRuntimeArtifactsManifest(cfg Config, artifacts runtimeArtifacts) er
 	if artifacts.Arch != runtime.GOARCH {
 		return fmt.Errorf("runtime artifacts arch %q does not match worker arch %q", artifacts.Arch, runtime.GOARCH)
 	}
-	if artifacts.RuntimeABI != runtimeABI {
-		return fmt.Errorf("runtime artifacts abi %q does not match worker abi %q", artifacts.RuntimeABI, runtimeABI)
+	if artifacts.VMRuntimeContract != runtimeid.Contract {
+		return fmt.Errorf("runtime artifacts contract %q does not match worker contract %q", artifacts.VMRuntimeContract, runtimeid.Contract)
 	}
 	for _, artifact := range []struct {
 		name string

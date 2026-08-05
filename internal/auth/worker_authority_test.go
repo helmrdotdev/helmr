@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestWorkerTokenAuthorityClaimsIntersectsRoles(t *testing.T) {
@@ -33,15 +32,10 @@ func TestWorkerTokenAuthorityClaimsIntersectsRoles(t *testing.T) {
 	}
 }
 
-func TestEpochExchangeInputRejectsNonCanonicalProtocolAndMissingServiceID(t *testing.T) {
+func TestEpochExchangeInputRejectsMissingServiceID(t *testing.T) {
 	input := validExchangeInput()
 	input.ServiceID = uuid.Nil
 	if err := input.Validate(); err == nil || !strings.Contains(err.Error(), "service_id") {
-		t.Fatalf("error = %v", err)
-	}
-	input = validExchangeInput()
-	input.ProtocolVersion = "helmr.worker.v1"
-	if err := input.Validate(); err == nil || !strings.Contains(err.Error(), workerapi.CurrentProtocolVersion) {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -68,6 +62,6 @@ func validAuthority() WorkerTokenAuthority {
 func validExchangeInput() EpochExchangeInput {
 	return EpochExchangeInput{
 		ServiceID:       uuid.MustParse("00000000-0000-0000-0000-000000000003"),
-		SupervisorRoles: WorkerRoles{Run: true, Build: true}, ProtocolVersion: workerapi.CurrentProtocolVersion,
+		SupervisorRoles: WorkerRoles{Run: true, Build: true},
 	}
 }

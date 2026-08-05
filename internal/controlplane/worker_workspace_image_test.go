@@ -23,7 +23,7 @@ func TestWorkspaceImageTerminalReplayExactMatchesDurableReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := imagebuild.GuestResult{
-		ExecutionABI: imagebuild.ExecutionABI, Outcome: imagebuild.GuestSucceeded,
+		Contract: imagebuild.Contract, Outcome: imagebuild.GuestSucceeded,
 		OCIDigest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		OCISizeBytes: 4096,
 	}

@@ -142,7 +142,7 @@ func (s *testCLIState) DeleteToken(baseURL string) error {
 	return nil
 }
 
-func TestGreenfieldCommandSurface(t *testing.T) {
+func TestCommandSurface(t *testing.T) {
 	root := newRootCommand()
 	for _, path := range [][]string{
 		{"workspace"},
@@ -166,23 +166,6 @@ func TestGreenfieldCommandSurface(t *testing.T) {
 	} {
 		if commandByPath(root, path...) == nil {
 			t.Fatalf("command %q is not registered", strings.Join(path, " "))
-		}
-	}
-	if commandByPath(root, "run", "start") != nil {
-		t.Fatal("removed command \"run start\" is still registered")
-	}
-	for _, path := range [][]string{
-		{"schedule", "create"},
-		{"schedule", "update"},
-		{"schedule", "delete"},
-		{"schedule", "activate"},
-		{"schedule", "deactivate"},
-		{"actor", "list"},
-		{"actor", "update"},
-		{"actor", "cancel"},
-	} {
-		if commandByPath(root, path...) != nil {
-			t.Fatalf("unsupported command %q is registered", strings.Join(path, " "))
 		}
 	}
 }

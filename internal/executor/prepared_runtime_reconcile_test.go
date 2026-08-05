@@ -388,11 +388,10 @@ func TestPreparedRuntimeBindsProgramIndexToDeploymentReceipt(t *testing.T) {
 				Slot:       deployment.DeclarationSlotHandler,
 			},
 		}},
-		FormatVersion: deployment.ProgramIndexFormatVersion,
 		Queues: []deployment.QueueInput{{
 			Name: "task/task",
 		}},
-		RuntimeAPIVersion: deployment.RuntimeAPIVersion,
+		RuntimeContract: deployment.RuntimeContract,
 	}
 	canonical, err := deployment.CanonicalProgramIndex(index)
 	if err != nil {

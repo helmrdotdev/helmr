@@ -11,7 +11,7 @@ import (
 
 func TestNetworkQuotaFailureIsHostOnlyTerminalEvidence(t *testing.T) {
 	result := GuestResult{
-		ExecutionABI:  ExecutionABI,
+		Contract:      Contract,
 		Outcome:       GuestFailed,
 		FailureReason: GuestFailureNetworkQuota,
 		Error:         "image-build public-egress limit was exceeded",

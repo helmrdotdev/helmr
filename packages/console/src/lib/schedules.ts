@@ -2,7 +2,7 @@ import { request } from "./api";
 
 export type Schedule = {
   id: string;
-	task_id: string;
+  task_id: string;
   workspace: { id?: string; key?: string };
   cron: { pattern: string; timezone: string };
   status: "pending_workspace" | "active" | "errored" | "archived";
@@ -10,7 +10,7 @@ export type Schedule = {
   effective_from: string;
   next_fire_at?: string;
   last_fire_at?: string;
-  last_error?: { code: string; message: string };
+  last_failure?: { code: string; message: string; details: Record<string, unknown> };
   created_at: string;
   updated_at: string;
 };

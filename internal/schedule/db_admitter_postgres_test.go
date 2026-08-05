@@ -144,7 +144,7 @@ func TestWorkerRetriesSameScheduleInstantWhenWorkspaceSecretIsRevoked(t *testing
 		t.Fatal(err)
 	}
 	if after.State != "active" || !after.RetryStep.Valid || !after.RetryAfter.Valid ||
-		after.LastErrorCode.Valid || after.LastErrorMessage.Valid ||
+		len(after.LastFailure) != 0 ||
 		after.ClaimedBy.Valid || after.ClaimExpiresAt.Valid {
 		t.Fatalf("retryable Schedule state = %+v", after)
 	}
@@ -204,8 +204,7 @@ func TestReconcileScheduleDoesNotReviveErroredAuthority(t *testing.T) {
 		       state_version = state_version + 1,
 		       claimed_by = NULL,
 		       claim_expires_at = NULL,
-		       last_error_code = 'task_authority_invalid',
-		       last_error_message = 'Task authority is invalid'
+		       last_failure = '{"code":"task_authority_invalid","message":"Task authority is invalid","details":{}}'::jsonb
 		 WHERE id = $1
 	`, value.ID)
 
@@ -246,20 +245,17 @@ func TestReconcileScheduleDoesNotReviveErroredAuthority(t *testing.T) {
 	if after.State != "errored" ||
 		after.Generation != before.Generation ||
 		after.StateVersion != before.StateVersion ||
-		after.LastErrorCode != before.LastErrorCode ||
-		after.LastErrorMessage != before.LastErrorMessage {
+		string(after.LastFailure) != string(before.LastFailure) {
 		t.Fatalf(
-			"reconciled errored Schedule = state %q, generation %d, state version %d, error %q/%q; want %q, %d, %d, %q/%q",
+			"reconciled errored Schedule = state %q, generation %d, state version %d, failure %s; want %q, %d, %d, %s",
 			after.State,
 			after.Generation,
 			after.StateVersion,
-			after.LastErrorCode.String,
-			after.LastErrorMessage.String,
+			after.LastFailure,
 			before.State,
 			before.Generation,
 			before.StateVersion,
-			before.LastErrorCode.String,
-			before.LastErrorMessage.String,
+			before.LastFailure,
 		)
 	}
 }
@@ -307,7 +303,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 			id, org_id, project_id, environment_id, build_region_id,
 			build_node_version, build_runtime_digest, build_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
-			build_contract_version, image_cache_mode, version, content_hash, deployment_source_artifact_id,
+			build_contract, image_cache_mode, version, content_hash, deployment_source_artifact_id,
 			program_artifact_id, program_index_digest, queue_config, status
 		)
 		VALUES (

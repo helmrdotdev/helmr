@@ -54,18 +54,17 @@ func (d *Authority) PlaceReadyBuild(ctx context.Context, candidate ReadyBuildCan
 			"deployment toolchain digest is invalid",
 		)
 	}
-	var groupID, protocolVersion string
+	var groupID string
 	var workerID pgtype.UUID
 	var workerEpoch int64
 	err = d.pool.QueryRow(ctx, `
-SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
-       worker_instances.protocol_version
+SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch
   FROM worker_groups
   JOIN worker_instances ON worker_instances.worker_group_id = worker_groups.id
   JOIN runtime_identities
     ON runtime_identities.id = worker_instances.runtime_identity_id
    AND runtime_identities.runtime_arch = 'x86_64'
-   AND runtime_identities.network_abi = 'helmr/v0'
+	   AND runtime_identities.vm_runtime_contract = 'helmr.vm-runtime.v0'
   JOIN worker_observations
     ON worker_observations.worker_instance_id = worker_instances.id
    AND worker_observations.worker_epoch = worker_instances.current_epoch
@@ -76,7 +75,6 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
 	 WHERE worker_groups.region_id = $1 AND worker_groups.state = 'active'
 	   AND worker_groups.allows_build
 	   AND worker_instances.state = 'active' AND worker_instances.supports_build
-   AND worker_instances.protocol_version = worker_groups.protocol_version
    AND worker_observations.observed_at >= transaction_timestamp()
        - worker_groups.observation_ttl_seconds * interval '1 second'
 	   AND worker_observations.build_paused_reason IS NULL
@@ -84,7 +82,7 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
 	   AND worker_instances.per_vm_memory_bytes >= $7
 	   AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $5
 	GROUP BY worker_groups.id, worker_instances.id, worker_instances.current_epoch,
-	         worker_instances.protocol_version, worker_instances.epoch_cpu_millis,
+	         worker_instances.epoch_cpu_millis,
 	         worker_instances.epoch_memory_bytes,
 	         worker_instances.epoch_guest_ephemeral_disk_bytes,
 		         worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes,
@@ -118,7 +116,7 @@ LIMIT 1`, candidate.BuildRegionID, requestedBuildExecutors,
 		requestedCPUMillis, requestedMemoryBytes,
 		requestedGuestEphemeralDiskBytes,
 		fixedBuildGuestCPUMillis, fixedBuildGuestMemoryBytes).Scan(
-		&groupID, &workerID, &workerEpoch, &protocolVersion)
+		&groupID, &workerID, &workerEpoch)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			eligible, checkErr := d.readyBuildCandidateExists(ctx, candidate)
@@ -142,8 +140,7 @@ LIMIT 1`, candidate.BuildRegionID, requestedBuildExecutors,
 			BuildRegionID: candidate.BuildRegionID,
 			BuildLeaseID:  pgvalue.UUID(uuid.Must(uuid.NewV7())), LeaseSequence: candidate.LeaseSequence,
 			WorkerGroupID: groupID, BuildWorkerInstanceID: workerID,
-			WorkerEpoch: workerEpoch, WorkerProtocolVersion: protocolVersion,
-			RequestedCPUMillis:               requestedCPUMillis,
+			WorkerEpoch: workerEpoch, RequestedCPUMillis: requestedCPUMillis,
 			RequestedMemoryBytes:             requestedMemoryBytes,
 			RequestedGuestEphemeralDiskBytes: requestedGuestEphemeralDiskBytes,
 			RequestedBuildExecutors:          requestedBuildExecutors, BuildSnapshot: snapshot,
@@ -229,8 +226,7 @@ LIMIT 1`, params.Lease.BuildRegionID, params.Lease.DeploymentID,
 	if err := lockWorkerFence(ctx, tx, workerFence{
 		GroupID: params.Lease.WorkerGroupID, RegionID: params.Lease.BuildRegionID,
 		WorkerInstanceID: params.Lease.BuildWorkerInstanceID, WorkerEpoch: params.Lease.WorkerEpoch,
-		WorkerProtocolVersion: params.Lease.WorkerProtocolVersion,
-		Role:                  "build",
+		Role: "build",
 	}); err != nil {
 		return db.LeaseQueuedDeploymentBuildRow{}, err
 	}

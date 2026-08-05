@@ -2115,11 +2115,10 @@ SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.p
        OR (
            worker_groups.state = 'active'
            AND worker_groups.allows_run
-           AND worker_groups.protocol_version = worker_instances.protocol_version
            AND worker_instances.state = 'active'
            AND worker_instances.supports_run
            AND worker_instances.runtime_identity_id = runtime_instances.runtime_identity_id
-           AND runtime_identities.network_abi = 'helmr/v0'
+		   AND runtime_identities.vm_runtime_contract = 'helmr.vm-runtime.v0'
            AND worker_observations.observed_at >= transaction_timestamp()
                - worker_groups.observation_ttl_seconds * interval '1 second'
            AND worker_observations.run_paused_reason IS NULL
@@ -2133,8 +2132,7 @@ SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.p
                runtime_instances.reserved_guest_ephemeral_disk_bytes
            AND runtime_instances.runtime_substrate_id IS NOT NULL
            AND runtime_substrates.substrate_format = worker_instances.substrate_format
-           AND runtime_substrates.builder_abi = worker_instances.substrate_builder_abi
-           AND runtime_substrates.layout_abi = worker_instances.substrate_layout_abi
+           AND runtime_substrates.substrate_contract = worker_instances.substrate_contract
        )
    )
  FOR UPDATE OF worker_groups, worker_instances, worker_observations,

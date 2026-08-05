@@ -417,7 +417,7 @@ func validateBuildPolicyDocument(document buildPolicyDocument) error {
 
 func validateCompilerInputs(input CompilerInputs) error {
 	if input.APIVersion != "helmr.compiler.v0" ||
-		input.ConfigEvaluator.APIVersion != ConfigEvaluatorAPIVersion ||
+		input.ConfigEvaluator.APIVersion != ConfigEvaluatorContract ||
 		input.ConfigEvaluator.Entrypoint != "/nix/helmr/config-evaluator.mjs" ||
 		input.ProgramCompiler.APIVersion != "helmr.compiler.v0" ||
 		input.ProgramCompiler.Entrypoint != "/nix/helmr/program-compiler.mjs" ||

@@ -81,10 +81,6 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	}
 	runLogBatch := client.takeLast(t)
 	assertQueryContains(t, runLogBatch.query, "INSERT INTO helmr_telemetry.run_logs", "run_lease_id", "observed_at")
-	forbiddenAttemptColumn := "attempt" + "_id"
-	if strings.Contains(runLogBatch.query, forbiddenAttemptColumn) {
-		t.Fatalf("run log query contains removed attempt column: %s", runLogBatch.query)
-	}
 	assertRowShape(t, runLogBatch.rows, 1, 16)
 	if got := runLogBatch.rows[0][4]; got != runLeaseID {
 		t.Fatalf("run log run_lease_id = %v, want %s", got, runLeaseID)

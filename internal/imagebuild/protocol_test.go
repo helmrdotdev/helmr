@@ -216,17 +216,15 @@ func TestGuestProtocolRejectsNonCanonicalAndUnknownShape(t *testing.T) {
 	if _, err := ParseGuestRequest(append([]byte(" "), raw...)); err == nil {
 		t.Fatal("non-canonical request was accepted")
 	}
-	unknown := bytes.Replace(raw, []byte(`"executionAbi":`), []byte(`"unknown":0,"executionAbi":`), 1)
+	unknown := bytes.Replace(raw, []byte(`"contract":`), []byte(`"unknown":0,"contract":`), 1)
 	if _, err := ParseGuestRequest(unknown); err == nil {
 		t.Fatal("unknown request member was accepted")
 	}
 }
 
-func TestGuestProtocolBindsPathSetAndABIs(t *testing.T) {
+func TestGuestProtocolBindsPathSetAndContract(t *testing.T) {
 	for name, mutate := range map[string]func(*GuestRequest){
-		"execution ABI": func(request *GuestRequest) { request.ExecutionABI = "helmr.image-build.v1" },
-		"LLB ABI":       func(request *GuestRequest) { request.LLBABI = "helmr.image-llb.v1" },
-		"cache ABI":     func(request *GuestRequest) { request.CacheABI = "helmr.image-cache.v1" },
+		"contract": func(request *GuestRequest) { request.Contract = "helmr.image-build.v1" },
 		"path digest": func(request *GuestRequest) {
 			request.AdmittedPaths = append(request.AdmittedPaths, SourcePath{Path: "other", Kind: SourcePathFile})
 		},
@@ -280,9 +278,7 @@ func validGuestRequest(t *testing.T) GuestRequest {
 	}
 	digest := "sha256:" + strings.Repeat("1", 64)
 	return GuestRequest{
-		ExecutionABI:           ExecutionABI,
-		LLBABI:                 LLBABI,
-		CacheABI:               CacheABI,
+		Contract:               Contract,
 		OperationID:            uuid.Must(uuid.NewV7()).String(),
 		AttemptID:              uuid.Must(uuid.NewV7()).String(),
 		BuildLeaseID:           uuid.Must(uuid.NewV7()).String(),

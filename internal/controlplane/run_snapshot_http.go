@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"strconv"
@@ -27,7 +28,6 @@ import (
 const (
 	runListDefaultLimit = int32(50)
 	runListMaxLimit     = int32(100)
-	runListCursorPrefix = "rn1."
 )
 
 type runListCursor struct {
@@ -48,7 +48,6 @@ type runSnapshotRecord struct {
 	workspaceID          pgtype.UUID
 	actorID              pgtype.UUID
 	parentRunID          pgtype.UUID
-	parentOwnsLifecycle  pgtype.Bool
 	currentAttemptNumber int32
 	causeKind            string
 	scheduleID           pgtype.UUID
@@ -58,8 +57,7 @@ type runSnapshotRecord struct {
 	metadata             []byte
 	tags                 []string
 	output               []byte
-	terminalReasonCode   pgtype.Text
-	runError             []byte
+	failure              []byte
 	createdAt            pgtype.Timestamptz
 	startedAt            pgtype.Timestamptz
 	terminalAt           pgtype.Timestamptz
@@ -384,7 +382,7 @@ func encodeRunListCursor(cursor runListCursor) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return runListCursorPrefix + base64.RawURLEncoding.EncodeToString(raw), nil
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 func parseRunListCursor(
@@ -393,10 +391,7 @@ func parseRunListCursor(
 	environmentID string,
 	statuses []db.RunStatus,
 ) (parsedRunListCursor, error) {
-	if !strings.HasPrefix(raw, runListCursorPrefix) {
-		return parsedRunListCursor{}, errors.New("run cursor has an unsupported version")
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(raw, runListCursorPrefix))
+	payload, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
 		return parsedRunListCursor{}, errors.New("run cursor is malformed")
 	}
@@ -479,10 +474,6 @@ func projectRunSnapshot(record runSnapshotRecord) (api.RunSnapshotResponse, erro
 	if record.parentRunID.Valid {
 		response.ParentRunID = parentRunID
 	}
-	if record.parentOwnsLifecycle.Valid {
-		value := record.parentOwnsLifecycle.Bool
-		response.ParentOwnsLifecycle = &value
-	}
 	if record.startedAt.Valid {
 		value := record.startedAt.Time.UTC()
 		response.StartedAt = &value
@@ -494,13 +485,19 @@ func projectRunSnapshot(record runSnapshotRecord) (api.RunSnapshotResponse, erro
 	if record.status == db.RunStatusSucceeded {
 		response.Output = json.RawMessage(record.output)
 	}
-	if record.terminalReasonCode.Valid {
-		response.TerminalReasonCode = record.terminalReasonCode.String
-		runError, err := projectRunError(record.terminalReasonCode.String, record.runError)
+	terminalFailure := record.status == db.RunStatusFailed ||
+		record.status == db.RunStatusCancelled ||
+		record.status == db.RunStatusExpired ||
+		record.status == db.RunStatusSystemFailed
+	if terminalFailure != (len(record.failure) > 0) {
+		return api.RunSnapshotResponse{}, errors.New("run failure projection is inconsistent")
+	}
+	if len(record.failure) > 0 {
+		failure, err := projectRunFailure(record.failure)
 		if err != nil {
 			return api.RunSnapshotResponse{}, err
 		}
-		response.Error = &runError
+		response.Failure = &failure
 	}
 	return response, nil
 }
@@ -571,33 +568,20 @@ func projectRunCause(record runSnapshotRecord) (api.RunCauseResponse, error) {
 	}
 }
 
-func projectRunError(reason string, raw []byte) (api.RunErrorResponse, error) {
-	response := api.RunErrorResponse{
-		Code: reason, Message: strings.ReplaceAll(reason, "_", " "), Retryable: false,
+func projectRunFailure(raw []byte) (api.RunFailureResponse, error) {
+	var response api.RunFailureResponse
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&response); err != nil || response.Code == "" ||
+		response.Message == "" || len(response.Details) == 0 {
+		return api.RunFailureResponse{}, errors.New("run failure projection is invalid")
 	}
-	if len(raw) == 0 {
-		return response, nil
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return api.RunFailureResponse{}, errors.New("run failure projection is invalid")
 	}
-	var stored struct {
-		Code      string          `json:"code"`
-		Message   string          `json:"message"`
-		Retryable *bool           `json:"retryable"`
-		Details   json.RawMessage `json:"details"`
-	}
-	if err := json.Unmarshal(raw, &stored); err != nil {
-		return api.RunErrorResponse{}, errors.New("run error projection is invalid")
-	}
-	if stored.Code != "" {
-		response.Code = stored.Code
-	}
-	if stored.Message != "" {
-		response.Message = stored.Message
-	}
-	if stored.Retryable != nil {
-		response.Retryable = *stored.Retryable
-	}
-	if len(stored.Details) > 0 && string(stored.Details) != "null" {
-		response.Details = stored.Details
+	var details map[string]json.RawMessage
+	if err := json.Unmarshal(response.Details, &details); err != nil || details == nil {
+		return api.RunFailureResponse{}, errors.New("run failure details are invalid")
 	}
 	return response, nil
 }
@@ -608,12 +592,12 @@ func runSnapshotRecordFromGet(row db.GetRunSnapshotRow) runSnapshotRecord {
 		entrypointKind: row.EntrypointKind, entrypointDeclaredID: row.EntrypointDeclaredID,
 		deploymentID: row.DeploymentID, deploymentVersion: row.DeploymentVersion,
 		workspaceID: row.WorkspaceID, actorID: row.SessionID,
-		parentRunID: row.ParentRunID, parentOwnsLifecycle: row.ParentOwnsLifecycle,
+		parentRunID:          row.ParentRunID,
 		currentAttemptNumber: row.CurrentAttemptNumber, causeKind: row.CauseKind,
 		scheduleID: row.ScheduleID, scheduledAt: row.ScheduledAt,
 		previousScheduledAt: row.PreviousScheduledAt, scheduleTimezone: row.ScheduleTimezone,
 		metadata: row.Metadata, tags: row.Tags, output: row.Output,
-		terminalReasonCode: row.TerminalReasonCode, runError: row.Error,
+		failure:   row.Failure,
 		createdAt: row.CreatedAt, startedAt: row.StartedAt, terminalAt: row.TerminalAt,
 	}
 }
@@ -624,12 +608,12 @@ func runSnapshotRecordFromList(row db.ListRunSnapshotsRow) runSnapshotRecord {
 		entrypointKind: row.EntrypointKind, entrypointDeclaredID: row.EntrypointDeclaredID,
 		deploymentID: row.DeploymentID, deploymentVersion: row.DeploymentVersion,
 		workspaceID: row.WorkspaceID, actorID: row.SessionID,
-		parentRunID: row.ParentRunID, parentOwnsLifecycle: row.ParentOwnsLifecycle,
+		parentRunID:          row.ParentRunID,
 		currentAttemptNumber: row.CurrentAttemptNumber, causeKind: row.CauseKind,
 		scheduleID: row.ScheduleID, scheduledAt: row.ScheduledAt,
 		previousScheduledAt: row.PreviousScheduledAt, scheduleTimezone: row.ScheduleTimezone,
 		metadata: row.Metadata, tags: row.Tags, output: row.Output,
-		terminalReasonCode: row.TerminalReasonCode, runError: row.Error,
+		failure:   row.Failure,
 		createdAt: row.CreatedAt, startedAt: row.StartedAt, terminalAt: row.TerminalAt,
 	}
 }

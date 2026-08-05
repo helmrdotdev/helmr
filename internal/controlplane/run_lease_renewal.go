@@ -21,12 +21,11 @@ func (s *Server) renewRunLease(
 	var renewed workerapi.RunLeaseRenewResponse
 	err := s.inTx(ctx, func(work *txWork) error {
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
-			ID:                    leaseID,
-			LeaseSequence:         fence.LeaseSequence,
-			WorkerGroupID:         worker.WorkerGroupID,
-			WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch:           worker.WorkerEpoch,
-			WorkerProtocolVersion: worker.ProtocolVersion,
+			ID:               leaseID,
+			LeaseSequence:    fence.LeaseSequence,
+			WorkerGroupID:    worker.WorkerGroupID,
+			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerEpoch:      worker.WorkerEpoch,
 		})
 		if err != nil {
 			return staleRunLeaseClaim(err)
@@ -286,8 +285,7 @@ func lockRunLeasePhysicalAuthority(
 	if (authority.workerGroup.State != db.WorkerGroupStateActive &&
 		authority.workerGroup.State != db.WorkerGroupStateDraining) ||
 		!authority.workerGroup.AllowsRun ||
-		authority.workerGroup.ClaimVersion != worker.GroupClaimVersion ||
-		authority.workerGroup.ProtocolVersion != worker.ProtocolVersion {
+		authority.workerGroup.ClaimVersion != worker.GroupClaimVersion {
 		return errStaleRunLeaseClaim
 	}
 

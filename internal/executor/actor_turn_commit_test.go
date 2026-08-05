@@ -37,7 +37,6 @@ func (controlPlane *actorTurnCommitControlPlane) CommitActorTurn(
 func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 	claim := testFreshProgramClaim(t)
 	claim.Lease.WorkerGroupID = "workers"
-	claim.Lease.WorkerProtocolVersion = workerapi.CurrentProtocolVersion
 	claim.Lease.RequestedCPUMillis = 1
 	claim.Lease.RequestedMemoryBytes = 1
 	claim.Lease.RequestedGuestEphemeralDiskBytes = 1

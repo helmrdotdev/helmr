@@ -26,7 +26,6 @@ import (
 const (
 	secretListDefaultLimit = int32(50)
 	secretListMaxLimit     = int32(100)
-	secretListCursorPrefix = "sec1."
 )
 
 type secretListCursor struct {
@@ -437,16 +436,11 @@ func encodeSecretListCursor(cursor secretListCursor) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return secretListCursorPrefix + base64.RawURLEncoding.EncodeToString(raw), nil
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 func decodeSecretListCursor(raw string) (secretListCursor, error) {
-	if !strings.HasPrefix(raw, secretListCursorPrefix) {
-		return secretListCursor{}, errors.New("secret cursor is invalid")
-	}
-	decoded, err := base64.RawURLEncoding.DecodeString(
-		strings.TrimPrefix(raw, secretListCursorPrefix),
-	)
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
 		return secretListCursor{}, errors.New("secret cursor is invalid")
 	}

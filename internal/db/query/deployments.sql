@@ -9,11 +9,9 @@ INSERT INTO deployments (
     build_manager_name,
     build_manager_version,
     build_manager_integrity,
-    build_contract_version,
+    build_contract,
     image_cache_mode,
     version,
-    api_version,
-    worker_protocol_version,
     content_hash,
     deployment_source_artifact_id,
     status
@@ -27,11 +25,9 @@ SELECT sqlc.arg(id),
        sqlc.arg(build_manager_name),
        sqlc.arg(build_manager_version),
        sqlc.narg(build_manager_integrity),
-       sqlc.arg(build_contract_version),
+       sqlc.arg(build_contract),
        sqlc.arg(image_cache_mode),
        sqlc.arg(version),
-       sqlc.arg(api_version),
-       sqlc.arg(worker_protocol_version),
        sqlc.arg(content_hash),
        sqlc.arg(deployment_source_artifact_id),
        sqlc.arg(status)::text
@@ -93,13 +89,12 @@ SELECT deployments.id,
        deployments.build_manager_name,
        deployments.build_manager_version,
        deployments.build_manager_integrity,
-       deployments.build_contract_version
+       deployments.build_contract
   FROM deployments
   JOIN worker_instances
     ON worker_instances.id = sqlc.arg(worker_instance_id)
    AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
-   AND worker_instances.protocol_version = sqlc.arg(worker_protocol_version)
    AND worker_instances.state = 'active'
    AND worker_instances.supports_build
   JOIN worker_groups
@@ -130,13 +125,12 @@ SELECT deployments.id,
        deployments.build_manager_name,
        deployments.build_manager_version,
        deployments.build_manager_integrity,
-       deployments.build_contract_version
+       deployments.build_contract
   FROM deployments
   JOIN worker_instances
     ON worker_instances.id = sqlc.arg(worker_instance_id)
    AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
-   AND worker_instances.protocol_version = sqlc.arg(worker_protocol_version)
    AND worker_instances.state IN ('active', 'draining')
    AND worker_instances.supports_build
   JOIN worker_groups
@@ -210,7 +204,7 @@ inserted AS (
     INSERT INTO deployment_build_leases (
         id, org_id, project_id, environment_id, deployment_id, build_region_id,
         lease_sequence, worker_group_id, worker_instance_id,
-        worker_epoch, worker_protocol_version, requested_cpu_millis,
+        worker_epoch, requested_cpu_millis,
         requested_memory_bytes, requested_guest_ephemeral_disk_bytes,
         requested_build_executors, build_snapshot, trace_id, span_id,
         parent_span_id, traceparent, start_deadline_at, expires_at
@@ -219,7 +213,7 @@ inserted AS (
            candidate.environment_id, candidate.id, candidate.build_region_id,
            sqlc.arg(lease_sequence), sqlc.arg(worker_group_id),
            sqlc.arg(build_worker_instance_id),
-           sqlc.arg(worker_epoch), sqlc.arg(worker_protocol_version),
+           sqlc.arg(worker_epoch),
            sqlc.arg(requested_cpu_millis), sqlc.arg(requested_memory_bytes),
            sqlc.arg(requested_guest_ephemeral_disk_bytes),
            sqlc.arg(requested_build_executors), sqlc.arg(build_snapshot),
@@ -240,12 +234,11 @@ advanced AS (
 )
 SELECT inserted.*,
        advanced.version,
-       advanced.api_version,
        advanced.content_hash,
        advanced.build_node_version,
        advanced.build_runtime_digest,
        advanced.build_toolchain_digest,
-       advanced.build_contract_version,
+       advanced.build_contract,
        advanced.image_cache_mode,
        source_artifacts.digest AS deployment_source_digest,
        source_artifacts.size_bytes AS source_size_bytes,
@@ -342,7 +335,11 @@ UPDATE deployments
        END,
        failure = CASE
            WHEN expired.lease_sequence < 3 THEN deployments.failure
-           ELSE jsonb_build_object('reason_code', 'build_delivery_exhausted')
+           ELSE jsonb_build_object(
+               'code', 'build_delivery_exhausted',
+               'message', 'Build delivery exhausted',
+               'details', jsonb_build_object()
+           )
        END,
        failed_at = CASE
            WHEN expired.lease_sequence < 3 THEN deployments.failed_at
@@ -436,11 +433,10 @@ WITH candidate AS (
        AND worker_groups.region_id = deployment_build_leases.build_region_id
        AND worker_groups.state = 'active'
        AND worker_groups.allows_build
-       AND worker_groups.protocol_version = deployment_build_leases.worker_protocol_version
       JOIN runtime_identities
         ON runtime_identities.id = worker_instances.runtime_identity_id
        AND runtime_identities.runtime_arch = 'x86_64'
-       AND runtime_identities.network_abi = 'helmr/v0'
+	       AND runtime_identities.vm_runtime_contract = 'helmr.vm-runtime.v0'
       JOIN worker_observations
         ON worker_observations.worker_instance_id = worker_instances.id
        AND worker_observations.worker_epoch = worker_instances.current_epoch
@@ -450,8 +446,6 @@ WITH candidate AS (
      WHERE deployment_build_leases.worker_group_id = sqlc.arg(worker_group_id)
        AND deployment_build_leases.worker_instance_id = sqlc.arg(worker_instance_id)
        AND deployment_build_leases.worker_epoch = sqlc.arg(worker_epoch)
-       AND deployment_build_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
-       AND worker_instances.protocol_version = deployment_build_leases.worker_protocol_version
        AND worker_instances.per_vm_cpu_millis >= deployment_build_leases.requested_cpu_millis
        AND worker_instances.per_vm_memory_bytes >= deployment_build_leases.requested_memory_bytes
        AND worker_instances.per_vm_guest_ephemeral_disk_bytes >=
@@ -472,13 +466,13 @@ WITH candidate AS (
      WHERE deployment_build_leases.id = candidate.id
     RETURNING deployment_build_leases.*
 )
-SELECT claimed.*, deployments.version, deployments.api_version,
+SELECT claimed.*, deployments.version,
        deployments.content_hash,
        deployments.build_node_version, deployments.build_runtime_digest,
        deployments.build_toolchain_digest,
        deployments.build_manager_name, deployments.build_manager_version,
        deployments.build_manager_integrity,
-       deployments.build_manager_digest, deployments.build_contract_version,
+       deployments.build_manager_digest, deployments.build_contract,
        deployments.image_cache_mode,
        source_artifacts.digest AS deployment_source_digest,
        source_artifacts.size_bytes AS source_size_bytes,
@@ -520,7 +514,6 @@ SELECT *
    AND worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instance_id = sqlc.arg(worker_instance_id)
    AND worker_epoch = sqlc.arg(worker_epoch)
-   AND worker_protocol_version = sqlc.arg(worker_protocol_version)
    AND requested_guest_ephemeral_disk_bytes = sqlc.arg(requested_guest_ephemeral_disk_bytes)
    AND requested_cpu_millis = sqlc.arg(requested_cpu_millis)
    AND requested_memory_bytes = sqlc.arg(requested_memory_bytes)
@@ -577,7 +570,11 @@ WITH target_deployment AS MATERIALIZED (
            END,
            failure = CASE
                WHEN rejected.lease_sequence < 3 THEN deployments.failure
-               ELSE jsonb_build_object('reason_code', 'build_delivery_exhausted')
+               ELSE jsonb_build_object(
+                   'code', 'build_delivery_exhausted',
+                   'message', 'Build delivery exhausted',
+                   'details', jsonb_build_object()
+               )
            END,
            failed_at = CASE
                WHEN rejected.lease_sequence < 3 THEN deployments.failed_at
@@ -702,7 +699,6 @@ WITH locked_deployment AS MATERIALIZED (
        AND deployment_build_leases.worker_group_id = sqlc.arg(worker_group_id)
        AND deployment_build_leases.worker_instance_id = sqlc.arg(worker_instance_id)
        AND deployment_build_leases.worker_epoch = sqlc.arg(worker_epoch)
-       AND deployment_build_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
      FOR UPDATE OF deployment_build_leases
 )
 SELECT locked_lease.*,
@@ -715,7 +711,7 @@ SELECT locked_lease.*,
        locked_deployment.build_manager_version,
        locked_deployment.build_manager_integrity,
        locked_deployment.build_manager_digest,
-       locked_deployment.build_contract_version,
+       locked_deployment.build_contract,
        locked_deployment.image_cache_mode,
        locked_deployment.deployment_source_artifact_id,
        source_artifacts.digest AS deployment_source_digest,
@@ -744,7 +740,7 @@ SELECT deployment_build_leases.state,
        deployments.build_manager_version,
        deployments.build_manager_integrity,
        deployments.build_manager_digest,
-       deployments.build_contract_version,
+       deployments.build_contract,
        deployments.image_cache_mode,
        deployments.deployment_source_artifact_id,
        source_artifacts.digest AS deployment_source_digest,
@@ -770,8 +766,7 @@ SELECT deployment_build_leases.state,
    AND deployment_build_leases.lease_sequence = sqlc.arg(lease_sequence)
    AND deployment_build_leases.worker_group_id = sqlc.arg(worker_group_id)
    AND deployment_build_leases.worker_instance_id = sqlc.arg(worker_instance_id)
-   AND deployment_build_leases.worker_epoch = sqlc.arg(worker_epoch)
-   AND deployment_build_leases.worker_protocol_version = sqlc.arg(worker_protocol_version);
+   AND deployment_build_leases.worker_epoch = sqlc.arg(worker_epoch);
 
 -- name: LockDeploymentBuildWorkerAuthority :one
 WITH locked_group AS MATERIALIZED (
@@ -784,7 +779,7 @@ WITH locked_group AS MATERIALIZED (
 )
 SELECT worker_instances.*,
        runtime_identities.rootfs_digest,
-       runtime_identities.runtime_abi,
+       runtime_identities.vm_runtime_contract,
        runtime_identities.runtime_arch
   FROM worker_instances
   JOIN locked_group
@@ -793,7 +788,6 @@ SELECT worker_instances.*,
     ON runtime_identities.id = worker_instances.runtime_identity_id
  WHERE worker_instances.id = sqlc.arg(worker_instance_id)
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch)::bigint
-   AND worker_instances.protocol_version = sqlc.arg(worker_protocol_version)
    AND worker_instances.state IN ('active', 'draining')
    AND worker_instances.supports_build
  FOR UPDATE OF worker_instances;
@@ -807,7 +801,6 @@ SELECT state, terminal_request_fingerprint
    AND worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instance_id = sqlc.arg(worker_instance_id)
    AND worker_epoch = sqlc.arg(worker_epoch)
-   AND worker_protocol_version = sqlc.arg(worker_protocol_version)
    AND state IN ('succeeded', 'failed', 'rejected');
 
 -- name: FailDeploymentBuild :one
@@ -906,7 +899,6 @@ WITH locked_deployment AS MATERIALIZED (
        AND deployment_build_leases.worker_group_id = sqlc.arg(worker_group_id)
        AND deployment_build_leases.worker_instance_id = sqlc.arg(worker_instance_id)
        AND deployment_build_leases.worker_epoch = sqlc.arg(worker_epoch)
-       AND deployment_build_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
        AND (
            (
                deployment_build_leases.state = 'running'
@@ -999,7 +991,11 @@ WITH locked_deployment AS MATERIALIZED (
            END,
            failure = CASE
                WHEN lost.lease_sequence < 3 THEN deployments.failure
-               ELSE jsonb_build_object('reason_code', 'build_delivery_exhausted')
+               ELSE jsonb_build_object(
+                   'code', 'build_delivery_exhausted',
+                   'message', 'Build delivery exhausted',
+                   'details', jsonb_build_object()
+               )
            END,
            failed_at = CASE
                WHEN lost.lease_sequence < 3 THEN deployments.failed_at

@@ -51,8 +51,6 @@ DO UPDATE
        claim_expires_at = NULL,
        retry_step = NULL,
        retry_after = NULL,
-       last_error_code = NULL,
-       last_error_message = NULL,
        updated_at = now()
  WHERE schedules.deployment_definition_id IS DISTINCT FROM excluded.deployment_definition_id
     OR schedules.deployment_id IS DISTINCT FROM excluded.deployment_id
@@ -76,8 +74,6 @@ UPDATE schedules
        claim_expires_at = NULL,
        retry_step = NULL,
        retry_after = NULL,
-       last_error_code = NULL,
-       last_error_message = NULL,
        updated_at = now()
  WHERE environment_id = sqlc.arg(environment_id)
    AND state <> 'archived'
@@ -205,8 +201,6 @@ UPDATE schedules
        claim_expires_at = NULL,
        retry_step = NULL,
        retry_after = NULL,
-       last_error_code = NULL,
-       last_error_message = NULL,
        state_version = state_version + 1,
        updated_at = now()
  WHERE environment_id = sqlc.arg(environment_id)
@@ -241,8 +235,7 @@ UPDATE schedules
        state_version = state_version + 1,
        retry_step = NULL,
        retry_after = NULL,
-       last_error_code = sqlc.arg(last_error_code),
-       last_error_message = sqlc.arg(last_error_message),
+       last_failure = sqlc.arg(last_failure),
        claimed_by = NULL,
        claim_expires_at = NULL,
        updated_at = now()

@@ -10,7 +10,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
@@ -22,8 +21,7 @@ func TestWorkerGroupObservationTTLIsPositiveClaimAuthority(t *testing.T) {
 	params := db.ReconcileWorkerGroupParams{
 		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
 		ObservationTtlSeconds: 120,
-		AllowsRun:             true, AllowsBuild: true, ProtocolVersion: workerapi.CurrentProtocolVersion,
-		RequiredCPUMillis: 1, RequiredMemoryBytes: 1,
+		AllowsRun:             true, AllowsBuild: true, RequiredCPUMillis: 1, RequiredMemoryBytes: 1,
 		RequiredGuestEphemeralDiskBytes: 1, RequiredVMSlots: 1, RequiredBuildExecutors: 1,
 	}
 	first, err := q.ReconcileWorkerGroup(ctx, params)
@@ -59,8 +57,7 @@ func TestWorkerGroupReconcileDoesNotReactivateDrainingGroup(t *testing.T) {
 	params := db.ReconcileWorkerGroupParams{
 		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
 		ObservationTtlSeconds: 120,
-		AllowsRun:             true, AllowsBuild: true, ProtocolVersion: workerapi.CurrentProtocolVersion,
-		RequiredCPUMillis: 1, RequiredMemoryBytes: 1,
+		AllowsRun:             true, AllowsBuild: true, RequiredCPUMillis: 1, RequiredMemoryBytes: 1,
 		RequiredGuestEphemeralDiskBytes: 1, RequiredVMSlots: 1, RequiredBuildExecutors: 1,
 	}
 	if _, err := q.ReconcileWorkerGroup(ctx, params); err != nil {
@@ -102,7 +99,6 @@ func TestWorkerGroupHasOneActiveGroupPerRoleAndRegion(t *testing.T) {
 				ObservationTtlSeconds: 120, AllowsRun: tc.allowsRun, AllowsBuild: tc.allowsBuild,
 				RequiredCPUMillis: 1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1,
 				RequiredVMSlots: tc.vmSlots, RequiredBuildExecutors: tc.buildSlots,
-				ProtocolVersion: workerapi.CurrentProtocolVersion,
 			})
 			if err == nil {
 				t.Fatalf("second active %s group unexpectedly reconciled", tc.name)
@@ -304,7 +300,7 @@ func TestDeploymentWorkerInstanceLossTerminallyFencesRegisteringIdentity(t *test
 	}
 	if _, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 		SupportsRun: true, WorkerInstanceID: credential.WorkerInstanceID, SecretHash: secretHash,
-		ProtocolVersion: workerapi.CurrentProtocolVersion, ServiceID: pgvalue.NewUUIDv7(),
+		ServiceID: pgvalue.NewUUIDv7(),
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("lost registering credential authentication error = %v, want pgx.ErrNoRows", err)
 	}

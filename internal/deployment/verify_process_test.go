@@ -236,11 +236,10 @@ func canonicalVerifierProgramIndex(t *testing.T) []byte {
 				Slot:       DeclarationSlotHandler,
 			},
 		}},
-		FormatVersion: ProgramIndexFormatVersion,
 		Queues: []QueueInput{{
 			Name: "task/verify",
 		}},
-		RuntimeAPIVersion: RuntimeAPIVersion,
+		RuntimeContract: RuntimeContract,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -267,9 +266,8 @@ func canonicalVerifierProgramVerification(t *testing.T) []byte {
 func canonicalVerifierRuntimeIndex(t *testing.T) []byte {
 	t.Helper()
 	canonical, err := CanonicalRuntimeIndex(RuntimeIndex{
-		Architecture:      ArchitectureX8664,
-		FormatVersion:     RuntimeIndexFormatVersion,
-		RuntimeAPIVersion: RuntimeAPIVersion,
+		Architecture:    ArchitectureX8664,
+		RuntimeContract: RuntimeContract,
 	})
 	if err != nil {
 		t.Fatal(err)

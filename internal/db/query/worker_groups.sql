@@ -1,13 +1,13 @@
 -- name: ReconcileWorkerGroup :one
 WITH desired_group AS (
     INSERT INTO worker_groups (
-        id, region_id, name, description, state, allows_run, allows_build, protocol_version,
+        id, region_id, name, description, state, allows_run, allows_build,
         required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes,
         required_build_cache_bytes, required_artifact_cache_bytes,
         required_vm_slots, required_build_executors, observation_ttl_seconds
     ) VALUES (
         sqlc.arg(id), sqlc.arg(region_id), sqlc.arg(name), sqlc.arg(description),
-        'active', sqlc.arg(allows_run), sqlc.arg(allows_build), sqlc.arg(protocol_version),
+        'active', sqlc.arg(allows_run), sqlc.arg(allows_build),
         sqlc.arg(required_cpu_millis), sqlc.arg(required_memory_bytes),
         sqlc.arg(required_guest_ephemeral_disk_bytes),
         sqlc.arg(required_build_cache_bytes), sqlc.arg(required_artifact_cache_bytes),
@@ -16,8 +16,7 @@ WITH desired_group AS (
     )
     ON CONFLICT (id) DO UPDATE
        SET claim_version = CASE
-               WHEN worker_groups.protocol_version IS DISTINCT FROM EXCLUDED.protocol_version
-                 OR worker_groups.allows_run IS DISTINCT FROM EXCLUDED.allows_run
+               WHEN worker_groups.allows_run IS DISTINCT FROM EXCLUDED.allows_run
                  OR worker_groups.allows_build IS DISTINCT FROM EXCLUDED.allows_build
                  OR worker_groups.required_cpu_millis IS DISTINCT FROM EXCLUDED.required_cpu_millis
                  OR worker_groups.required_memory_bytes IS DISTINCT FROM EXCLUDED.required_memory_bytes
@@ -39,7 +38,6 @@ WITH desired_group AS (
            required_vm_slots = EXCLUDED.required_vm_slots,
            required_build_executors = EXCLUDED.required_build_executors,
            observation_ttl_seconds = EXCLUDED.observation_ttl_seconds,
-           protocol_version = EXCLUDED.protocol_version,
            updated_at = now()
     RETURNING *
 ), lost_workers AS (
@@ -361,13 +359,11 @@ WITH activation AS (
            OR (
                worker_instances.state = 'active'
                AND worker_instances.runtime_identity_id = sqlc.arg(runtime_identity_id)::text
-               AND worker_instances.protocol_version = sqlc.arg(protocol_version)
                AND worker_instances.supervisor_version = sqlc.arg(supervisor_version)
                AND worker_instances.supports_run = sqlc.arg(supports_run)
                AND worker_instances.supports_build = sqlc.arg(supports_build)
                AND worker_instances.substrate_format = sqlc.arg(substrate_format)
-               AND worker_instances.substrate_builder_abi = sqlc.arg(substrate_builder_abi)
-               AND worker_instances.substrate_layout_abi = sqlc.arg(substrate_layout_abi)
+               AND worker_instances.substrate_contract = sqlc.arg(substrate_contract)
                AND worker_instances.epoch_cpu_millis = sqlc.arg(epoch_cpu_millis)
                AND worker_instances.epoch_memory_bytes = sqlc.arg(epoch_memory_bytes)
                AND worker_instances.epoch_guest_ephemeral_disk_bytes = sqlc.arg(epoch_guest_ephemeral_disk_bytes)
@@ -387,30 +383,27 @@ WITH activation AS (
      FOR UPDATE OF worker_instances
 ), runtime AS (
     INSERT INTO runtime_identities (
-        id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
-        rootfs_digest, network_abi, last_seen_at
+        id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest,
+		rootfs_digest, last_seen_at
     )
-    SELECT sqlc.arg(runtime_identity_id), sqlc.arg(runtime_arch), sqlc.arg(runtime_abi),
+    SELECT sqlc.arg(runtime_identity_id), sqlc.arg(runtime_arch), sqlc.arg(vm_runtime_contract),
            sqlc.arg(kernel_digest), sqlc.arg(initramfs_digest), sqlc.arg(rootfs_digest),
-           sqlc.arg(network_abi), now()
+		   now()
       FROM activation
     ON CONFLICT (id) DO UPDATE SET last_seen_at = now()
      WHERE runtime_identities.runtime_arch = EXCLUDED.runtime_arch
-       AND runtime_identities.runtime_abi = EXCLUDED.runtime_abi
+       AND runtime_identities.vm_runtime_contract = EXCLUDED.vm_runtime_contract
        AND runtime_identities.kernel_digest = EXCLUDED.kernel_digest
        AND runtime_identities.initramfs_digest = EXCLUDED.initramfs_digest
-       AND runtime_identities.rootfs_digest = EXCLUDED.rootfs_digest
-       AND runtime_identities.network_abi = EXCLUDED.network_abi
+	   AND runtime_identities.rootfs_digest = EXCLUDED.rootfs_digest
     RETURNING id
 ), activated AS (
     UPDATE worker_instances
-       SET state = 'active', protocol_version = sqlc.arg(protocol_version),
-           supervisor_version = sqlc.arg(supervisor_version),
+       SET state = 'active', supervisor_version = sqlc.arg(supervisor_version),
            supports_run = sqlc.arg(supports_run), supports_build = sqlc.arg(supports_build),
            runtime_identity_id = runtime.id,
            substrate_format = sqlc.arg(substrate_format),
-           substrate_builder_abi = sqlc.arg(substrate_builder_abi),
-           substrate_layout_abi = sqlc.arg(substrate_layout_abi),
+           substrate_contract = sqlc.arg(substrate_contract),
            epoch_cpu_millis = sqlc.arg(epoch_cpu_millis),
            epoch_memory_bytes = sqlc.arg(epoch_memory_bytes),
            epoch_guest_ephemeral_disk_bytes = sqlc.arg(epoch_guest_ephemeral_disk_bytes),

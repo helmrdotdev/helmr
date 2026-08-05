@@ -27,7 +27,6 @@ func (s *Server) workerDiscoverRunLeases(w http.ResponseWriter, r *http.Request)
 		worker.WorkerGroupID,
 		pgvalue.UUID(worker.WorkerInstanceID),
 		worker.WorkerEpoch,
-		worker.ProtocolVersion,
 	)
 	if err != nil {
 		s.log.Error("discover worker run leases failed",

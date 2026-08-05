@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -33,10 +34,9 @@ func (s *Server) workerNextPlatformAcquisition(w http.ResponseWriter, r *http.Re
 	row, err := s.db.GetNextDeploymentPlatformAcquisition(
 		r.Context(),
 		db.GetNextDeploymentPlatformAcquisitionParams{
-			WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerGroupID:         worker.WorkerGroupID,
-			WorkerEpoch:           pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
-			WorkerProtocolVersion: worker.ProtocolVersion,
+			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerGroupID:    worker.WorkerGroupID,
+			WorkerEpoch:      pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
 		},
 	)
 	if isNoRows(err) {
@@ -143,12 +143,9 @@ func (s *Server) workerFailPlatformAcquisition(w http.ResponseWriter, r *http.Re
 		writeError(w, err)
 		return
 	}
-	failure, err := json.Marshal(struct {
-		Reason workerapi.PlatformAcquisitionFailureReason `json:"reason_code"`
-		Error  json.RawMessage                            `json:"error"`
-	}{
-		Reason: request.Reason,
-		Error:  request.Error,
+	failure, err := json.Marshal(api.DeploymentFailure{
+		Code: string(request.Reason), Message: "Platform acquisition failed",
+		Details: request.Error,
 	})
 	if err != nil {
 		writeError(w, errors.New("encode platform acquisition failure"))
@@ -188,11 +185,10 @@ func (s *Server) platformAcquisitionRow(
 	row, err := s.db.GetDeploymentPlatformAcquisition(
 		ctx,
 		db.GetDeploymentPlatformAcquisitionParams{
-			WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerGroupID:         worker.WorkerGroupID,
-			WorkerEpoch:           pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
-			WorkerProtocolVersion: worker.ProtocolVersion,
-			ID:                    pgvalue.UUID(deploymentID),
+			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerGroupID:    worker.WorkerGroupID,
+			WorkerEpoch:      pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
+			ID:               pgvalue.UUID(deploymentID),
 		},
 	)
 	if isNoRows(err) {
@@ -231,7 +227,7 @@ func platformAcquisitionFromRow[T platformAcquisitionRow](
 			value.BuildManagerName,
 			value.BuildManagerVersion,
 			value.BuildManagerIntegrity,
-			value.BuildContractVersion,
+			value.BuildContract,
 			policyDigest,
 		)
 	case db.GetDeploymentPlatformAcquisitionRow:
@@ -244,7 +240,7 @@ func platformAcquisitionFromRow[T platformAcquisitionRow](
 			value.BuildManagerName,
 			value.BuildManagerVersion,
 			value.BuildManagerIntegrity,
-			value.BuildContractVersion,
+			value.BuildContract,
 			policyDigest,
 		)
 	default:

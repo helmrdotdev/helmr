@@ -105,7 +105,6 @@ interface ProgramIndexDeclaration {
 
 interface ProgramIndex {
   readonly declarations: readonly ProgramIndexDeclaration[]
-  readonly formatVersion: 0
 }
 
 class FrameReader {
@@ -459,9 +458,8 @@ async function loadProgramIndex(
   }
   const record = value as Record<string, unknown>
   if (
-    record["formatVersion"] !== 0 ||
     record["architecture"] !== "x86_64" ||
-    record["runtimeApiVersion"] !== "helmr.runtime.v0" ||
+    record["runtimeContract"] !== "helmr.runtime.v0" ||
     typeof record["configResultDigest"] !== "string" ||
     !Array.isArray(record["queues"]) ||
     !Array.isArray(record["declarations"]) ||
@@ -472,7 +470,7 @@ async function loadProgramIndex(
   const declarations = record["declarations"].map((entry, index) =>
     parseProgramIndexDeclaration(entry, index)
   )
-  return { declarations, formatVersion: 0 }
+  return { declarations }
 }
 
 function parseProgramIndexDeclaration(
@@ -688,9 +686,15 @@ async function runTask(
 
   const context = taskContext(start)
   const runOperations = new RunOperationState()
-	const uninstallRuntime = installRuntimeOperations(
-		programRuntimeOperations(start, io, decisions, new ConsumingWaitGate(), runOperations),
-	)
+  const uninstallRuntime = installRuntimeOperations(
+    programRuntimeOperations(
+      start,
+      io,
+      decisions,
+      new ConsumingWaitGate(),
+      runOperations,
+    ),
+  )
   let normalized: Uint8Array
   try {
     let output: unknown
@@ -707,15 +711,15 @@ async function runTask(
         `task output exceeds ${MAX_TASK_OUTPUT_BYTES} bytes`,
       )
     }
-	} catch (error) {
-		if (error instanceof RuntimeProtocolError) throw error
+  } catch (error) {
+    if (error instanceof RuntimeProtocolError) throw error
     await runOperations.drainForCompletion()
     runOperations.assertCanComplete()
-		await writeTaskFailure(io, "failed", errorMessage(error))
-		return
-	} finally {
-		uninstallRuntime()
-	}
+    await writeTaskFailure(io, "failed", errorMessage(error))
+    return
+  } finally {
+    uninstallRuntime()
+  }
   await writeRunEvent(io, {
     case: "taskOutcome",
     value: create(runProto.TaskOutcomeSchema, {
@@ -954,18 +958,18 @@ function programRuntimeOperations(
         "timer resume",
       )
       if (decision.requireConsumedAck) {
-			await writeRuntimeProtocolEvent(io, {
-				case: "resumeConsumed",
-				value: create(runProto.ResumeConsumedSchema, {
-					runWaitId: decision.runWaitId,
-					checkpointId: decision.checkpointId,
-					resumeAttachId: decision.resumeAttachId,
-					resumeRequestVersion: decision.resumeRequestVersion,
-					runLeaseId: decision.runLeaseId,
-					correlationId: decision.correlationId,
-				}),
-			})
-		}
+        await writeRuntimeProtocolEvent(io, {
+          case: "resumeConsumed",
+          value: create(runProto.ResumeConsumedSchema, {
+            runWaitId: decision.runWaitId,
+            checkpointId: decision.checkpointId,
+            resumeAttachId: decision.resumeAttachId,
+            resumeRequestVersion: decision.resumeRequestVersion,
+            runLeaseId: decision.runLeaseId,
+            correlationId: decision.correlationId,
+          }),
+        })
+      }
       if (decision.kind === "cancelled" && actorCursor !== undefined) {
         const failure = parseRuntimeProtocolValue(
           "Actor timer cancellation decision",
@@ -1845,48 +1849,32 @@ function parseTaskResult(dataJson: string): TaskResult<JsonValue> {
   }
   requireExactKeys(
     value,
-    ["error", "ok", "run"],
+    ["failure", "ok", "run"],
     "Task child call failure",
   )
-  const rawError = objectField(value, "error", "Task child call failure")
-  const errorKeys = Object.keys(rawError)
+  const rawFailure = objectField(value, "failure", "Task child call failure")
   requireExactKeys(
-    rawError,
-    errorKeys.includes("details")
-      ? ["code", "details", "message", "retryable"]
-      : ["code", "message", "retryable"],
-    "Task child call failure.error",
+    rawFailure,
+    ["code", "details", "message"],
+    "Task child call failure.failure",
   )
-  const retryable = rawError["retryable"]
-  if (typeof retryable !== "boolean") {
-    throw new Error(
-      "Task child call failure.error.retryable must be a boolean",
-    )
-  }
-  const error = new Error(
-    stringField(rawError, "message", "Task child call failure.error"),
-  ) as Error & {
-    code: string
-    retryable: boolean
-    details?: JsonValue
-  }
-  error.name = "HelmrError"
-  error.code = stringField(
-    rawError,
-    "code",
-    "Task child call failure.error",
+  const details = objectField(
+    rawFailure,
+    "details",
+    "Task child call failure.failure",
   )
-  error.retryable = retryable
-  if (errorKeys.includes("details")) {
-    error.details = jsonValueField(
-      rawError,
-      "details",
-      "Task child call failure.error",
-    )
-  }
+  const failure = Object.freeze({
+    code: stringField(
+      rawFailure,
+      "code",
+      "Task child call failure.failure",
+    ),
+    message: stringField(rawFailure, "message", "Task child call failure.failure"),
+    details: Object.freeze({ ...details }) as Readonly<Record<string, JsonValue>>,
+  })
   return Object.freeze({
     ok: false,
-    error: Object.freeze(error),
+    failure,
     run: parseTaskResultRun(value),
   })
 }
@@ -2652,10 +2640,7 @@ async function writeActorFailure(
   terminalInputSequence: bigint,
   message: string,
 ): Promise<void> {
-  const normalizedMessage = boundedUtf8(
-    message === "" ? "actor failed" : message,
-    MAX_TASK_ERROR_MESSAGE_BYTES,
-  )
+  const normalizedMessage = canonicalFailureMessage(message, "actor failed")
   await writeRunEvent(io, {
     case: "actorOutcome",
     value: create(runProto.ActorOutcomeSchema, {
@@ -2744,10 +2729,7 @@ async function writeTaskFailure(
   message: string,
   details?: JsonValue,
 ): Promise<void> {
-  const normalizedMessage = boundedUtf8(
-    message === "" ? "task failed" : message,
-    MAX_TASK_ERROR_MESSAGE_BYTES,
-  )
+  const normalizedMessage = canonicalFailureMessage(message, "task failed")
   let detailsJson: string | undefined
   if (details !== undefined) {
     detailsJson = new TextDecoder().decode(canonicalizeJsonValue(details))
@@ -2821,6 +2803,14 @@ function boundedUtf8(value: string, maxBytes: number): string {
     size += characterBytes
   }
   return result + suffix
+}
+
+function canonicalFailureMessage(message: string, fallback: string): string {
+  const canonical = trimGoSpace(message)
+  return boundedUtf8(
+    canonical === "" ? fallback : canonical,
+    MAX_TASK_ERROR_MESSAGE_BYTES,
+  )
 }
 
 async function writeRunEvent(

@@ -200,8 +200,7 @@ func TestScheduleResponseProjectsOnlyPublicAuthority(t *testing.T) {
 		State:                "errored",
 		EffectiveFrom:        pgvalue.Timestamptz(now),
 		NextFireAt:           pgvalue.Timestamptz(now.Add(time.Hour)),
-		LastErrorCode:        pgvalue.Text("workspace_unavailable"),
-		LastErrorMessage:     pgvalue.Text("Workspace is unavailable"),
+		LastFailure:          []byte(`{"code":"workspace_unavailable","message":"Workspace is unavailable","details":{}}`),
 		CreatedAt:            pgvalue.Timestamptz(now.Add(-time.Hour)),
 		UpdatedAt:            pgvalue.Timestamptz(now),
 	}
@@ -214,8 +213,8 @@ func TestScheduleResponseProjectsOnlyPublicAuthority(t *testing.T) {
 		response.Workspace.Key != "scheduler" ||
 		response.WorkspaceID != workspaceID.String() ||
 		response.Status != "errored" ||
-		response.LastError == nil ||
-		response.LastError.Code != "workspace_unavailable" {
+		response.LastFailure == nil ||
+		response.LastFailure.Code != "workspace_unavailable" {
 		t.Fatalf("response = %+v", response)
 	}
 }

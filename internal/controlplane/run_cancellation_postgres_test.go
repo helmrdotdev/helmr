@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 )
@@ -33,17 +34,12 @@ func TestCancelRunHTTPInstallsActorHoldAndInputClearsIt(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("cancel status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	var snapshot struct {
-		ID                   string `json:"id"`
-		Status               string `json:"status"`
-		TerminalReasonCode   string `json:"terminal_reason_code"`
-		CurrentAttemptNumber int32  `json:"current_attempt_number"`
-	}
+	var snapshot api.RunSnapshotResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &snapshot); err != nil {
 		t.Fatal(err)
 	}
 	if snapshot.ID != started.BootRunID.String() || snapshot.Status != "cancelled" ||
-		snapshot.TerminalReasonCode != "run_cancelled" ||
+		snapshot.Failure == nil || snapshot.Failure.Code != "run_cancelled" ||
 		snapshot.CurrentAttemptNumber != 1 {
 		t.Fatalf("cancel snapshot = %+v", snapshot)
 	}

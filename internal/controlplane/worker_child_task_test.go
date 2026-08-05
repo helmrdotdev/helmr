@@ -12,7 +12,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestNormalizeWorkerChildTaskRequestUsesParentScopeAndCallerOptions(t *testing.T) {
@@ -256,14 +255,13 @@ func TestChildTaskResultProjectsTerminalOutcome(t *testing.T) {
 		{
 			name: "failure",
 			run: db.Run{
-				ID:                 pgvalue.UUID(uuid.MustParse(runID)),
-				Status:             db.RunStatusFailed,
-				TerminalReasonCode: pgtype.Text{String: "dependency_failed", Valid: true},
-				Error: json.RawMessage(
-					`{"code":"upstream_failed","message":"upstream failed","retryable":true,"details":{"service":"images"}}`,
+				ID:     pgvalue.UUID(uuid.MustParse(runID)),
+				Status: db.RunStatusFailed,
+				Failure: json.RawMessage(
+					`{"code":"upstream_failed","message":"upstream failed","details":{"service":"images"}}`,
 				),
 			},
-			want: `{"ok":false,"error":{"code":"upstream_failed","message":"upstream failed","retryable":true,"details":{"service":"images"}},"run":{"id":"` + runID + `"}}`,
+			want: `{"ok":false,"failure":{"code":"upstream_failed","message":"upstream failed","details":{"service":"images"}},"run":{"id":"` + runID + `"}}`,
 		},
 	}
 

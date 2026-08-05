@@ -15,9 +15,6 @@ WITH credential AS (
        AND worker_instance_credentials.revoked_at IS NULL
        AND (worker_instance_credentials.expires_at IS NULL OR worker_instance_credentials.expires_at > now())
        AND worker_instance_credentials.claim_version = worker_instances.claim_version
-       AND worker_instance_credentials.protocol_version = sqlc.arg(protocol_version)
-       AND worker_instance_credentials.protocol_version = worker_instances.protocol_version
-       AND worker_instance_credentials.protocol_version = worker_groups.protocol_version
        AND worker_instances.state IN ('registering','active','draining')
        AND worker_groups.state IN ('active','paused','draining')
      FOR UPDATE OF worker_instance_credentials, worker_instances, worker_groups
@@ -59,14 +56,9 @@ WITH credential AS (
                THEN worker_instances.substrate_format
                ELSE ''
            END,
-           substrate_builder_abi = CASE
+           substrate_contract = CASE
                WHEN worker_instances.current_service_id = sqlc.arg(service_id)
-               THEN worker_instances.substrate_builder_abi
-               ELSE ''
-           END,
-           substrate_layout_abi = CASE
-               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
-               THEN worker_instances.substrate_layout_abi
+               THEN worker_instances.substrate_contract
                ELSE ''
            END,
            epoch_cpu_millis = CASE
@@ -134,7 +126,7 @@ WITH credential AS (
 )
 SELECT credential.id, credential.worker_group_id,
        credential.worker_instance_id, credential.key_prefix, credential.claim_version,
-       credential.protocol_version, credential.group_claim_version,
+       credential.group_claim_version,
        credential.allows_run AS credential_allows_run,
        credential.allows_build AS credential_allows_build,
        credential.group_allows_run, credential.group_allows_build,
@@ -155,9 +147,6 @@ UPDATE worker_instance_credentials
    AND worker_instance_credentials.claim_version = sqlc.arg(claim_version)
    AND worker_instance_credentials.claim_version = worker_instances.claim_version
    AND worker_groups.claim_version = sqlc.arg(group_claim_version)
-   AND worker_instance_credentials.protocol_version = sqlc.arg(protocol_version)
-   AND worker_instance_credentials.protocol_version = worker_instances.protocol_version
-   AND worker_instance_credentials.protocol_version = worker_groups.protocol_version
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
    AND worker_instances.state IN ('active','draining')
    AND (worker_instances.supports_run OR worker_instances.supports_build)
@@ -179,9 +168,6 @@ UPDATE worker_instance_credentials
    AND worker_instance_credentials.claim_version = sqlc.arg(claim_version)
    AND worker_instance_credentials.claim_version = worker_instances.claim_version
    AND worker_groups.claim_version = sqlc.arg(group_claim_version)
-   AND worker_instance_credentials.protocol_version = sqlc.arg(protocol_version)
-   AND worker_instance_credentials.protocol_version = worker_instances.protocol_version
-   AND worker_instance_credentials.protocol_version = worker_groups.protocol_version
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
    AND (
        worker_instances.state = 'registering'
@@ -218,9 +204,6 @@ UPDATE worker_instance_credentials
    AND worker_instance_credentials.claim_version = sqlc.arg(claim_version)
    AND worker_instance_credentials.claim_version = worker_instances.claim_version
    AND worker_groups.claim_version = sqlc.arg(group_claim_version)
-   AND worker_instance_credentials.protocol_version = sqlc.arg(protocol_version)
-   AND worker_instance_credentials.protocol_version = worker_instances.protocol_version
-   AND worker_instance_credentials.protocol_version = worker_groups.protocol_version
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
    AND (
        worker_instances.state = 'registering'
@@ -249,8 +232,6 @@ SELECT worker_instance_credentials.*, worker_instances.resource_id,
  WHERE worker_instance_credentials.id = sqlc.arg(credential_id)
    AND worker_instance_credentials.claim_version = sqlc.arg(claim_version)
    AND worker_instance_credentials.revoked_at IS NOT NULL
-   AND worker_instance_credentials.protocol_version = sqlc.arg(protocol_version)
-   AND worker_instances.protocol_version = worker_instance_credentials.protocol_version
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
    AND worker_instances.state = 'termination_ready'
    AND worker_instances.claim_version = worker_instance_credentials.claim_version + 1;
@@ -267,8 +248,6 @@ SELECT worker_instance_credentials.*, worker_instances.resource_id,
  WHERE worker_instance_credentials.id = sqlc.arg(credential_id)
    AND worker_instance_credentials.claim_version = sqlc.arg(claim_version)
    AND worker_instance_credentials.revoked_at IS NOT NULL
-   AND worker_instance_credentials.protocol_version = sqlc.arg(protocol_version)
-   AND worker_instances.protocol_version = worker_instance_credentials.protocol_version
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
    AND worker_instances.state = 'lost'
    AND worker_instances.claim_version = worker_instance_credentials.claim_version + 1;
@@ -300,7 +279,7 @@ SELECT worker_enrollment_nonces.*
 -- name: EnrollWorkerInstance :one
 WITH nonce AS (
     SELECT worker_enrollment_nonces.*, worker_groups.allows_run,
-           worker_groups.allows_build, worker_groups.protocol_version
+           worker_groups.allows_build
       FROM worker_enrollment_nonces
       JOIN worker_groups ON worker_groups.id = worker_enrollment_nonces.worker_group_id
      WHERE worker_enrollment_nonces.nonce_hash = sqlc.arg(nonce_hash)
@@ -310,26 +289,24 @@ WITH nonce AS (
        AND worker_groups.state IN ('active','paused')
        AND (NOT sqlc.arg(allows_run)::boolean OR worker_groups.allows_run)
        AND (NOT sqlc.arg(allows_build)::boolean OR worker_groups.allows_build)
-       AND worker_groups.protocol_version = sqlc.arg(protocol_version)
      FOR UPDATE OF worker_enrollment_nonces, worker_groups
 ), worker AS (
     INSERT INTO worker_instances (
         id, worker_group_id, resource_id, state, claim_version,
-        protocol_version, supports_run, supports_build
+        supports_run, supports_build
     )
     SELECT sqlc.arg(worker_instance_id), nonce.worker_group_id,
-           sqlc.arg(resource_id), 'registering', 1, nonce.protocol_version,
-           false, false
+           sqlc.arg(resource_id), 'registering', 1, false, false
       FROM nonce
     ON CONFLICT (worker_group_id, resource_id)
         WHERE state IN ('registering', 'active', 'draining')
     DO UPDATE
        SET claim_version = worker_instances.claim_version + 1,
-           state = 'registering', protocol_version = EXCLUDED.protocol_version,
+           state = 'registering',
            supervisor_version = '',
            supports_run = false, supports_build = false,
            runtime_identity_id = NULL,
-           substrate_format = '', substrate_builder_abi = '', substrate_layout_abi = '',
+           substrate_format = '', substrate_contract = '',
            epoch_cpu_millis = 0, epoch_memory_bytes = 0,
            epoch_guest_ephemeral_disk_bytes = 0,
            epoch_build_cache_bytes = 0, epoch_artifact_cache_bytes = 0,
@@ -354,12 +331,11 @@ WITH nonce AS (
 ), credential AS (
     INSERT INTO worker_instance_credentials (
         id, worker_group_id, worker_instance_id, key_prefix, secret_hash,
-        claim_version, allows_run, allows_build, protocol_version, expires_at
+        claim_version, allows_run, allows_build, expires_at
     )
     SELECT sqlc.arg(credential_id), worker.worker_group_id, worker.id,
            sqlc.arg(key_prefix), sqlc.arg(secret_hash), worker.claim_version,
-           sqlc.arg(allows_run), sqlc.arg(allows_build), worker.protocol_version,
-           sqlc.narg(credential_expires_at)
+           sqlc.arg(allows_run), sqlc.arg(allows_build), sqlc.narg(credential_expires_at)
       FROM worker WHERE (SELECT count(*) FROM revoked) >= 0
     RETURNING *
 ), consumed AS (

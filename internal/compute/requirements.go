@@ -32,11 +32,10 @@ type RunRuntimeRequirementFields struct {
 	RequestedExecutionSlots int32
 	RuntimeID               string
 	RuntimeArch             string
-	RuntimeABI              string
+	VMRuntimeContract       string
 	KernelDigest            string
 	InitramfsDigest         string
 	RootfsDigest            string
-	NetworkABI              string
 	PlacementJSON           []byte
 	PlacementLabel          string
 }
@@ -67,11 +66,10 @@ func RunRuntimeRequirementsFromFields(fields RunRuntimeRequirementFields) (RunRu
 		Runtime: runtimeid.Selector{
 			ID:              fields.RuntimeID,
 			Arch:            fields.RuntimeArch,
-			ABI:             fields.RuntimeABI,
+			Contract:        fields.VMRuntimeContract,
 			KernelDigest:    fields.KernelDigest,
 			InitramfsDigest: fields.InitramfsDigest,
 			RootfsDigest:    fields.RootfsDigest,
-			NetworkABI:      fields.NetworkABI,
 		},
 		Placement: placement,
 	}
@@ -89,8 +87,8 @@ func (r RunRuntimeRequirements) Validate() error {
 	if r.Runtime.Arch == "" {
 		problems = append(problems, errors.New("runtime arch is required"))
 	}
-	if r.Runtime.ABI == "" {
-		problems = append(problems, errors.New("runtime abi is required"))
+	if r.Runtime.Contract == "" {
+		problems = append(problems, errors.New("runtime contract is required"))
 	}
 	if r.Runtime.KernelDigest == "" {
 		problems = append(problems, errors.New("runtime kernel digest is required"))
@@ -100,9 +98,6 @@ func (r RunRuntimeRequirements) Validate() error {
 	}
 	if r.Runtime.RootfsDigest == "" {
 		problems = append(problems, errors.New("runtime rootfs digest is required"))
-	}
-	if r.Runtime.NetworkABI == "" {
-		problems = append(problems, errors.New("runtime network abi is required"))
 	}
 	if strings.TrimSpace(r.Placement.Region) != "" {
 		problems = append(problems, errors.New("placement region is not supported; use the environment region route"))

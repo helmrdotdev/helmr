@@ -16,6 +16,7 @@ import (
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/firecracker/datapath"
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/vishvananda/netlink"
 )
@@ -50,7 +51,7 @@ func TestRoutedNetworkLifecyclePrivileged(t *testing.T) {
 	}
 	binding, err := connector.prepareNetworkBinding(context.Background(), owner, vm.WorkloadBinding{
 		WorkerEpoch: 4, OwnerID: owner.ID, Generation: 1,
-		RuntimeInstanceID: owner.ID, RuntimeIdentityID: NetworkABIV0,
+		RuntimeInstanceID: owner.ID, RuntimeIdentityID: runtimeid.Contract,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -197,7 +198,7 @@ func TestNetworkAllocationLockIsStableOutsideOwnerStateRoot(t *testing.T) {
 	binding := func(owner vm.Owner) vm.WorkloadBinding {
 		return vm.WorkloadBinding{
 			WorkerEpoch: 1, OwnerID: owner.ID, Generation: 1,
-			RuntimeInstanceID: owner.ID, RuntimeIdentityID: NetworkABIV0,
+			RuntimeInstanceID: owner.ID, RuntimeIdentityID: runtimeid.Contract,
 		}
 	}
 	first, err := connector.allocateNetworkOwner(owners[0], binding(owners[0]))
@@ -257,7 +258,7 @@ func TestNetworkAllocationRejectsSymlinkLock(t *testing.T) {
 	}}
 	_, err := connector.allocateNetworkOwner(owner, vm.WorkloadBinding{
 		WorkerEpoch: 1, OwnerID: owner.ID, Generation: 1,
-		RuntimeInstanceID: owner.ID, RuntimeIdentityID: NetworkABIV0,
+		RuntimeInstanceID: owner.ID, RuntimeIdentityID: runtimeid.Contract,
 	})
 	if err == nil || !strings.Contains(err.Error(), "open network allocation lock") {
 		t.Fatalf("error = %v", err)

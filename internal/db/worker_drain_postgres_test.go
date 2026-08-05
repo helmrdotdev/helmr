@@ -23,8 +23,8 @@ func TestWorkerDrainPublishesExactTerminalReceiptAndReplays(t *testing.T) {
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instance_credentials (
 			id, worker_group_id, worker_instance_id, key_prefix, claim_version,
-			allows_run, allows_build, protocol_version, secret_hash
-		) VALUES ($1, $2, $3, $4, 1, false, true, 'helmr.worker.v0', $5)
+			allows_run, allows_build, secret_hash
+		) VALUES ($1, $2, $3, $4, 1, false, true, $5)
 	`, credentialID, dbtest.DefaultWorkerGroupID, workerID, uuid.NewString(), []byte("drain-secret"))
 
 	draining, err := q.DrainWorkerInstance(ctx, db.DrainWorkerInstanceParams{
@@ -88,8 +88,8 @@ func TestWorkerFencePublishesExactLostReceiptAndReplays(t *testing.T) {
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instance_credentials (
 			id, worker_group_id, worker_instance_id, key_prefix, claim_version,
-			allows_run, allows_build, protocol_version, secret_hash
-		) VALUES ($1, $2, $3, $4, 1, false, true, 'helmr.worker.v0', $5)
+			allows_run, allows_build, secret_hash
+		) VALUES ($1, $2, $3, $4, 1, false, true, $5)
 	`, credentialID, dbtest.DefaultWorkerGroupID, workerID, uuid.NewString(), []byte("fence-secret"))
 
 	params := db.FenceWorkerInstanceParams{
@@ -120,7 +120,7 @@ func TestWorkerFencePublishesExactLostReceiptAndReplays(t *testing.T) {
 
 	if _, err := q.AuthorizeWorkerFenceReplay(ctx, db.AuthorizeWorkerFenceReplayParams{
 		CredentialID: pgvalue.UUID(credentialID), ClaimVersion: 1,
-		ProtocolVersion: "helmr.worker.v0", WorkerEpoch: pgtype.Int8{Int64: 1, Valid: true},
+		WorkerEpoch: pgtype.Int8{Int64: 1, Valid: true},
 	}); err != nil {
 		t.Fatalf("authorize exact fence replay: %v", err)
 	}

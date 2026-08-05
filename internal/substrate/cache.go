@@ -17,22 +17,20 @@ import (
 )
 
 type cacheIdentity struct {
-	Source     Source `json:"source"`
-	Format     string `json:"format"`
-	BuilderABI string `json:"builder_abi"`
-	LayoutABI  string `json:"layout_abi"`
+	Source   Source `json:"source"`
+	Format   string `json:"format"`
+	Contract string `json:"contract"`
 }
 
 type cacheMetadata struct {
-	CacheKey   string        `json:"cache_key"`
-	Digest     string        `json:"digest"`
-	Format     string        `json:"format"`
-	BuilderABI string        `json:"builder_abi"`
-	LayoutABI  string        `json:"layout_abi"`
-	Source     Source        `json:"source"`
-	SizeBytes  int64         `json:"size_bytes"`
-	CreatedAt  time.Time     `json:"created_at"`
-	Identity   cacheIdentity `json:"identity"`
+	CacheKey  string        `json:"cache_key"`
+	Digest    string        `json:"digest"`
+	Format    string        `json:"format"`
+	Contract  string        `json:"contract"`
+	Source    Source        `json:"source"`
+	SizeBytes int64         `json:"size_bytes"`
+	CreatedAt time.Time     `json:"created_at"`
+	Identity  cacheIdentity `json:"identity"`
 }
 
 func readCachedResult(cacheDir string, key string, expected cacheIdentity) (Result, error) {
@@ -77,8 +75,8 @@ func resultFromMetadata(cacheDir string, metadata cacheMetadata) (Result, error)
 	if metadata.Format != Format {
 		return Result{}, fmt.Errorf("cached substrate format %q does not match %q", metadata.Format, Format)
 	}
-	if metadata.BuilderABI != BuilderABI || metadata.LayoutABI != LayoutABI {
-		return Result{}, errors.New("cached substrate builder identity mismatch")
+	if metadata.Contract != Contract {
+		return Result{}, errors.New("cached substrate contract mismatch")
 	}
 	path, err := digestPath(cacheDir, metadata.Digest)
 	if err != nil {
@@ -86,7 +84,7 @@ func resultFromMetadata(cacheDir string, metadata cacheMetadata) (Result, error)
 	}
 	return Result{
 		Path: path, Digest: strings.TrimSpace(metadata.Digest), Format: metadata.Format,
-		BuilderABI: metadata.BuilderABI, LayoutABI: metadata.LayoutABI,
+		Contract: metadata.Contract,
 		CacheKey: metadata.CacheKey, SizeBytes: metadata.SizeBytes,
 	}, nil
 }

@@ -26,10 +26,9 @@ func TestProjectRunSnapshotPreservesTerminalContract(t *testing.T) {
 		workspaceID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		currentAttemptNumber: 3, causeKind: "api",
 		metadata: []byte(`{"source":"backend"}`), tags: []string{"image"},
-		terminalReasonCode: pgvalue.Text("task_failed"),
-		runError:           []byte(`{"details":{"image_id":"image-1"},"message":"resize failed"}`),
-		createdAt:          pgvalue.Timestamptz(createdAt),
-		terminalAt:         pgvalue.Timestamptz(createdAt.Add(time.Minute)),
+		failure:    []byte(`{"code":"task_failed","message":"resize failed","details":{"image_id":"image-1"}}`),
+		createdAt:  pgvalue.Timestamptz(createdAt),
+		terminalAt: pgvalue.Timestamptz(createdAt.Add(time.Minute)),
 	}
 
 	snapshot, err := projectRunSnapshot(record)
@@ -37,13 +36,12 @@ func TestProjectRunSnapshotPreservesTerminalContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	if snapshot.ID != runID.String() || snapshot.Status != "failed" ||
-		snapshot.Error == nil || snapshot.Error.Code != "task_failed" ||
-		snapshot.Error.Message != "resize failed" || snapshot.Error.Retryable ||
-		snapshot.Output != nil || snapshot.TerminalReasonCode != "task_failed" {
+		snapshot.Failure == nil || snapshot.Failure.Code != "task_failed" ||
+		snapshot.Failure.Message != "resize failed" || snapshot.Output != nil {
 		t.Fatalf("unexpected snapshot: %+v", snapshot)
 	}
 	var details map[string]string
-	if err := json.Unmarshal(snapshot.Error.Details, &details); err != nil {
+	if err := json.Unmarshal(snapshot.Failure.Details, &details); err != nil {
 		t.Fatal(err)
 	}
 	if details["image_id"] != "image-1" {

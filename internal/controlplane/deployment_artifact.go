@@ -20,14 +20,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type deploymentVersionMetadata struct {
-	APIVersion            string
-	WorkerProtocolVersion string
-	ImageCacheMode        string
+	ImageCacheMode string
 }
 
 type casObjectLookupStore interface {
@@ -101,15 +98,15 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		pgvalue.MustUUIDValue(projectID),
 		idempotencyKey,
 		idempotency.DeploymentCreateFingerprint{
-			SourceDigest:         strings.TrimSpace(request.ContentHash),
-			LockfileDigest:       selection.LockfileDigest,
-			LockfileName:         selection.LockfileName,
-			NodeVersion:          selection.NodeVersion,
-			ManagerName:          string(selection.Manager.Name),
-			ManagerVersion:       selection.Manager.Version,
-			ManagerIntegrity:     selection.Manager.Integrity,
-			BuildContractVersion: deployment.ProgramBuildContractVersion,
-			ImageCacheMode:       metadata.ImageCacheMode,
+			SourceDigest:     strings.TrimSpace(request.ContentHash),
+			LockfileDigest:   selection.LockfileDigest,
+			LockfileName:     selection.LockfileName,
+			NodeVersion:      selection.NodeVersion,
+			ManagerName:      string(selection.Manager.Name),
+			ManagerVersion:   selection.Manager.Version,
+			ManagerIntegrity: selection.Manager.Integrity,
+			BuildContract:    deployment.ProgramBuildContract,
+			ImageCacheMode:   metadata.ImageCacheMode,
 		},
 	)
 	if err != nil {
@@ -206,22 +203,15 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 }
 
 func deploymentMetadataFromRequest(request api.CreateDeploymentRequest) (deploymentVersionMetadata, error) {
-	apiVersion := firstPresentString(request.APIVersion, deployment.APIVersion)
-	if apiVersion != deployment.APIVersion {
-		return deploymentVersionMetadata{}, fmt.Errorf("unsupported deployment api_version %q; current version is %s", apiVersion, deployment.APIVersion)
+	imageCacheMode := request.ImageCacheMode
+	if imageCacheMode == "" {
+		imageCacheMode = "prefer"
 	}
-	workerProtocolVersion := firstPresentString(request.WorkerProtocolVersion, workerapi.CurrentProtocolVersion)
-	if workerProtocolVersion != workerapi.CurrentProtocolVersion {
-		return deploymentVersionMetadata{}, fmt.Errorf("unsupported worker_protocol_version %q; current version is %s", workerProtocolVersion, workerapi.CurrentProtocolVersion)
-	}
-	imageCacheMode := firstPresentString(request.ImageCacheMode, "prefer")
 	if imageCacheMode != "prefer" && imageCacheMode != "bypass" {
 		return deploymentVersionMetadata{}, fmt.Errorf("unsupported image_cache_mode %q; expected prefer or bypass", imageCacheMode)
 	}
 	return deploymentVersionMetadata{
-		APIVersion:            apiVersion,
-		WorkerProtocolVersion: workerProtocolVersion,
-		ImageCacheMode:        imageCacheMode,
+		ImageCacheMode: imageCacheMode,
 	}, nil
 }
 

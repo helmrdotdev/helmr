@@ -26,8 +26,6 @@ const (
 	DefaultInitTimeout          = 30 * time.Second
 	DefaultHealthTimeout        = 30 * time.Second
 	DefaultHealthAttemptTimeout = 5 * time.Second
-	runtimeABI                  = "helmr.firecracker.snapshot.v0"
-	NetworkABIV0                = "helmr/v0"
 	GuestNetworkCIDRV0          = "192.168.127.2/30"
 	GuestGatewayIPv4V0          = "192.168.127.1"
 	GuestGatewayMACV0           = "02:fc:00:00:00:01"
@@ -72,11 +70,10 @@ type Config struct {
 type RuntimeCapabilities struct {
 	ID              string
 	Arch            string
-	ABI             string
+	Contract        string
 	KernelDigest    string
 	InitramfsDigest string
 	RootfsDigest    string
-	NetworkABI      string
 	VCPUCount       int64
 	MemoryMiB       int64
 }

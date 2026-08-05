@@ -857,12 +857,12 @@ func (p *PreparedRuntimePool) prepareProgram(
 		)
 	}
 	runtimeDescriptor := deployment.RuntimeDescriptor{
-		Architecture:      p.RuntimeArchitecture,
-		Digest:            program.Runtime.Digest,
-		FormatVersion:     deployment.RuntimeDescriptorFormatVersion,
-		MediaType:         program.Runtime.MediaType,
-		RuntimeAPIVersion: deployment.RuntimeAPIVersion,
-		SizeBytes:         program.Runtime.SizeBytes,
+		Architecture:    p.RuntimeArchitecture,
+		Digest:          program.Runtime.Digest,
+		FormatVersion:   deployment.RuntimeDescriptorFormatVersion,
+		MediaType:       program.Runtime.MediaType,
+		RuntimeContract: deployment.RuntimeContract,
+		SizeBytes:       program.Runtime.SizeBytes,
 	}
 	runtimeSnapshot, err := deployment.SnapshotRuntimeObject(
 		ctx,
@@ -887,9 +887,8 @@ func (p *PreparedRuntimePool) prepareProgram(
 		)
 	}
 	expectedRuntimeIndex := deployment.RuntimeIndex{
-		Architecture:      runtimeDescriptor.Architecture,
-		FormatVersion:     deployment.RuntimeIndexFormatVersion,
-		RuntimeAPIVersion: runtimeDescriptor.RuntimeAPIVersion,
+		Architecture:    runtimeDescriptor.Architecture,
+		RuntimeContract: runtimeDescriptor.RuntimeContract,
 	}
 	if runtimeIndex != expectedRuntimeIndex {
 		return nil, func() error { return nil }, errors.Join(
@@ -923,9 +922,9 @@ func (p *PreparedRuntimePool) prepareProgram(
 			closeSnapshots(),
 		)
 	}
-	if programIndex.RuntimeAPIVersion != runtimeDescriptor.RuntimeAPIVersion ||
+	if programIndex.RuntimeContract != runtimeDescriptor.RuntimeContract ||
 		programIndex.Architecture != runtimeDescriptor.Architecture ||
-		program.BuildContractVersion != deployment.ProgramBuildContractVersion {
+		program.BuildContract != deployment.ProgramBuildContract {
 		return nil, func() error { return nil }, errors.Join(
 			errors.New("program index does not match runtime reservation authority"),
 			closeSnapshots(),
@@ -1206,7 +1205,7 @@ func preparedRuntimeWorkspaceMountFromSource(source workerapi.RuntimeSource) wor
 		RequestedMemoryMiB:      int64(source.ReservedMemoryMiB),
 		RequestedDiskMiB:        source.ReservedDiskMiB,
 		RequestedExecutionSlots: source.ReservedExecutionSlots,
-		RuntimeABI:              strings.TrimSpace(source.RuntimeABI),
+		VMRuntimeContract:       strings.TrimSpace(source.VMRuntimeContract),
 	}
 }
 

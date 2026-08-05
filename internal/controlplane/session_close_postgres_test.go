@@ -170,8 +170,12 @@ func TestActorClosePostgresRejectsFailedActorWithoutClaimResidue(t *testing.T) {
 	if _, err := fixture.pool.Exec(t.Context(), `
 		UPDATE sessions
 		   SET state = 'failed',
-		       failure_code = 'run_failed',
-		       failure_run_id = $2,
+		       failure = jsonb_build_object(
+		           'code', 'run_failed',
+		           'message', 'Session run failed',
+		           'details', jsonb_build_object('run_id', ($2::uuid)::text)
+		       ),
+		       failure_run_id = $2::uuid,
 		       failed_at = now()
 		 WHERE id = $1
 	`, started.SessionID, started.BootRunID); err != nil {

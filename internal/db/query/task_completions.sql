@@ -148,8 +148,7 @@ RETURNING *;
 UPDATE runs
    SET status = sqlc.arg(status),
        output = sqlc.narg(output),
-       terminal_reason_code = sqlc.narg(reason_code),
-       error = sqlc.narg(error),
+       failure = sqlc.narg(failure),
        state_version = state_version + 1,
        current_run_lease_id = NULL,
        retry_at = NULL,
@@ -356,8 +355,7 @@ RETURNING *;
 -- name: FailNestedSameWorkspaceRun :one
 UPDATE runs
    SET status = 'system_failed',
-       terminal_reason_code = 'same_workspace_handoff_runtime_lost',
-       error = sqlc.arg(error)::jsonb,
+       failure = sqlc.arg(failure)::jsonb,
        state_version = state_version + 1,
        current_run_lease_id = NULL,
        retry_at = NULL,
@@ -418,8 +416,7 @@ RETURNING *;
 -- name: FinishCheckpointFailedTaskRun :one
 UPDATE runs
    SET status = sqlc.arg(status),
-       terminal_reason_code = sqlc.arg(reason_code),
-       error = sqlc.arg(error)::jsonb,
+       failure = sqlc.arg(failure)::jsonb,
        state_version = state_version + 1,
        current_run_lease_id = NULL,
        retry_at = NULL,

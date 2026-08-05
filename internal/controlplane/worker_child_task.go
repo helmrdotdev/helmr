@@ -763,8 +763,7 @@ func loadChildTaskInvokeLocators(
 	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 		ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence,
 		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
-	})
+		WorkerEpoch: worker.WorkerEpoch})
 	if err != nil {
 		return db.GetLiveRunLeaseLocatorsRow{}, errChildTaskInvokeStale
 	}
@@ -910,20 +909,20 @@ func childTaskResult(run db.Run) (json.RawMessage, error) {
 			ID string `json:"id"`
 		}{ID: runID}})
 	}
-	if !run.TerminalReasonCode.Valid {
-		return nil, errors.New("failed child task has no terminal reason")
+	if len(run.Failure) == 0 {
+		return nil, errors.New("failed child task has no failure")
 	}
-	runError, err := projectRunError(run.TerminalReasonCode.String, run.Error)
+	failure, err := projectRunFailure(run.Failure)
 	if err != nil {
 		return nil, err
 	}
 	return json.Marshal(struct {
-		OK    bool                 `json:"ok"`
-		Error api.RunErrorResponse `json:"error"`
-		Run   struct {
+		OK      bool                   `json:"ok"`
+		Failure api.RunFailureResponse `json:"failure"`
+		Run     struct {
 			ID string `json:"id"`
 		} `json:"run"`
-	}{OK: false, Error: runError, Run: struct {
+	}{OK: false, Failure: failure, Run: struct {
 		ID string `json:"id"`
 	}{ID: runID}})
 }

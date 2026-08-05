@@ -30,12 +30,11 @@ func runtimeSubstrateTopology(ctx context.Context, resolver RuntimeSubstrateReso
 		return vm.RuntimeTopology{}, err
 	}
 	return vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
-		Path:       result.Path,
-		Digest:     result.Digest,
-		Format:     result.Format,
-		BuilderABI: result.BuilderABI,
-		LayoutABI:  result.LayoutABI,
-		SizeBytes:  result.SizeBytes,
+		Path:      result.Path,
+		Digest:    result.Digest,
+		Format:    result.Format,
+		Contract:  result.Contract,
+		SizeBytes: result.SizeBytes,
 	}}, nil
 }
 
@@ -74,8 +73,7 @@ func registerRuntimeSubstrate(
 			DeploymentDefinitionID: strings.TrimSpace(deploymentDefinitionID),
 			SubstrateDigest:        strings.TrimSpace(substrate.Digest),
 			Format:                 strings.TrimSpace(substrate.Format),
-			BuilderABI:             strings.TrimSpace(substrate.BuilderABI),
-			LayoutABI:              strings.TrimSpace(substrate.LayoutABI),
+			Contract:               strings.TrimSpace(substrate.Contract),
 			SizeBytes:              substrate.SizeBytes,
 		},
 	)

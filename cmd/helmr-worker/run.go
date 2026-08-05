@@ -111,7 +111,7 @@ func run(log *slog.Logger) error {
 	workerCredential, err := resolveAuthenticatedWorkerCredential(ctx, cfg, workDir, func(credential workerCredentialFile) error {
 		candidate, candidateErr := workerclient.New(cfg.ControlPlaneURL,
 			workerclient.WithAuth(credential.WorkerInstanceID, credential.WorkerInstanceSecret),
-			workerclient.WithService(serviceID, workerapi.CurrentProtocolVersion, supportsRun, supportsBuild),
+			workerclient.WithService(serviceID, supportsRun, supportsBuild),
 		)
 		if candidateErr != nil {
 			return candidateErr
@@ -208,11 +208,10 @@ func run(log *slog.Logger) error {
 	}
 	runtimeIdentity := runtimeid.Selector{
 		Arch:            string(runtimeArchitecture),
-		ABI:             runtimeCapabilities.ABI,
+		Contract:        runtimeCapabilities.Contract,
 		KernelDigest:    runtimeCapabilities.KernelDigest,
 		InitramfsDigest: runtimeCapabilities.InitramfsDigest,
 		RootfsDigest:    runtimeCapabilities.RootfsDigest,
-		NetworkABI:      runtimeCapabilities.NetworkABI,
 	}
 	runtimeIdentity.ID, err = runtimeid.Digest(runtimeIdentity)
 	if err != nil {
@@ -353,15 +352,13 @@ func run(log *slog.Logger) error {
 		}
 	}
 	workerCapabilities := workerapi.Capabilities{
-		ProtocolVersion:           workerapi.CurrentProtocolVersion,
 		WorkerVersion:             version.Version,
 		RuntimeID:                 runtimeIdentity.ID,
 		RuntimeArch:               runtimeIdentity.Arch,
-		RuntimeABI:                runtimeCapabilities.ABI,
+		VMRuntimeContract:         runtimeCapabilities.Contract,
 		KernelDigest:              runtimeCapabilities.KernelDigest,
 		InitramfsDigest:           runtimeCapabilities.InitramfsDigest,
 		RootfsDigest:              runtimeCapabilities.RootfsDigest,
-		NetworkABI:                runtimeCapabilities.NetworkABI,
 		MaxVCPUs:                  allocatable.MilliCPU / 1000,
 		MaxMemoryMiB:              allocatable.MemoryMiB,
 		VMMilliCPU:                vmResources.MilliCPU,
@@ -378,8 +375,7 @@ func run(log *slog.Logger) error {
 	}
 	if supportsRun {
 		workerCapabilities.SubstrateFormat = substrate.Format
-		workerCapabilities.SubstrateBuilderABI = substrate.BuilderABI
-		workerCapabilities.SubstrateLayoutABI = substrate.LayoutABI
+		workerCapabilities.SubstrateContract = substrate.Contract
 	}
 	hostCapacity, err := capacity.New(capacity.Vector{
 		CPUMillis:               workerCapabilities.MaxVCPUs * 1000,

@@ -123,7 +123,7 @@ export function assertGreenfieldTypes(): void {
     if (result.ok) {
       result.output.value satisfies string
     } else {
-      result.error.code satisfies string
+      result.failure.code satisfies string
     }
   })
 

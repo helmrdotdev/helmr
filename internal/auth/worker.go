@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 const (
@@ -32,7 +31,6 @@ type WorkerClaims struct {
 	ClaimVersion      int64
 	GroupClaimVersion int64
 	Roles             []string
-	ProtocolVersion   string
 	IssuedAt          time.Time
 	ExpiresAt         time.Time
 }
@@ -45,7 +43,6 @@ type workerJWTClaims struct {
 	ClaimVersion      int64    `json:"claim_version"`
 	GroupClaimVersion int64    `json:"group_claim_version"`
 	Roles             []string `json:"roles"`
-	ProtocolVersion   string   `json:"protocol_version"`
 	jwt.RegisteredClaims
 }
 
@@ -60,7 +57,7 @@ func IssueWorkerToken(signingKey []byte, payload WorkerClaims) (string, error) {
 		WorkerGroupID: payload.WorkerGroupID, WorkerInstanceID: payload.WorkerInstanceID,
 		CredentialID: payload.CredentialID, WorkerEpoch: payload.WorkerEpoch,
 		ClaimVersion: payload.ClaimVersion, GroupClaimVersion: payload.GroupClaimVersion,
-		Roles: append([]string(nil), payload.Roles...), ProtocolVersion: payload.ProtocolVersion,
+		Roles: append([]string(nil), payload.Roles...),
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: WorkerTokenIssuer, Subject: payload.WorkerInstanceID,
 			Audience: jwt.ClaimStrings{WorkerTokenAudience},
@@ -117,7 +114,7 @@ func VerifyWorkerToken(signingKey []byte, rawToken string, now time.Time) (Worke
 		WorkerGroupID: claims.WorkerGroupID, WorkerInstanceID: claims.WorkerInstanceID,
 		CredentialID: claims.CredentialID, WorkerEpoch: claims.WorkerEpoch,
 		ClaimVersion: claims.ClaimVersion, GroupClaimVersion: claims.GroupClaimVersion,
-		Roles: append([]string(nil), claims.Roles...), ProtocolVersion: claims.ProtocolVersion,
+		Roles: append([]string(nil), claims.Roles...),
 	}
 	if claims.IssuedAt != nil {
 		payload.IssuedAt = claims.IssuedAt.Time.UTC()
@@ -175,9 +172,6 @@ func validateWorkerClaims(payload WorkerClaims) error {
 			return errors.New("roles must be sorted and unique")
 		}
 		previous = role
-	}
-	if payload.ProtocolVersion != workerapi.CurrentProtocolVersion {
-		return fmt.Errorf("protocol_version must be %q", workerapi.CurrentProtocolVersion)
 	}
 	if payload.IssuedAt.IsZero() {
 		return errors.New("issued_at is zero")

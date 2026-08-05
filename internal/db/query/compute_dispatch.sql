@@ -137,7 +137,7 @@ SELECT * FROM worker_instances
 -- name: GetWorkerInstanceState :one
 SELECT worker_instances.*,
        runtime_identities.rootfs_digest,
-       runtime_identities.runtime_abi,
+       runtime_identities.vm_runtime_contract,
        runtime_identities.runtime_arch,
        worker_observations.observed_at,
        worker_observations.run_paused_reason,

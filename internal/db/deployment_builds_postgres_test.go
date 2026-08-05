@@ -57,7 +57,7 @@ func newDeploymentBuildFixture(t *testing.T) (*deploymentBuildFixture, *pgxpool.
 			id, org_id, project_id, environment_id, build_region_id,
 			build_node_version, build_runtime_digest, build_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
-			build_contract_version, image_cache_mode,
+			build_contract, image_cache_mode,
 			version, content_hash, deployment_source_artifact_id, status
 		) VALUES (
 			$1, $2, $3, $4, $5,
@@ -212,11 +212,10 @@ func TestPlatformAcquisitionRequiresActiveBuildAuthority(t *testing.T) {
 	`, f.deploymentID)
 	f.activateBuildWorker(t)
 	params := db.GetDeploymentPlatformAcquisitionParams{
-		WorkerInstanceID:      pgvalue.UUID(f.workerID),
-		WorkerGroupID:         f.groupID,
-		WorkerEpoch:           pgtype.Int8{Int64: 1, Valid: true},
-		WorkerProtocolVersion: "helmr.worker.v0",
-		ID:                    pgvalue.UUID(f.deploymentID),
+		WorkerInstanceID: pgvalue.UUID(f.workerID),
+		WorkerGroupID:    f.groupID,
+		WorkerEpoch:      pgtype.Int8{Int64: 1, Valid: true},
+		ID:               pgvalue.UUID(f.deploymentID),
 	}
 	if _, err := f.queries.GetDeploymentPlatformAcquisition(f.ctx, params); err != nil {
 		t.Fatal(err)
@@ -334,7 +333,6 @@ func (f *deploymentBuildFixture) leaseParams(sequence int64) db.LeaseQueuedDeplo
 		WorkerGroupID:                    f.groupID,
 		BuildWorkerInstanceID:            pgvalue.UUID(f.workerID),
 		WorkerEpoch:                      1,
-		WorkerProtocolVersion:            "helmr.worker.v0",
 		BuildSnapshot:                    []byte(`{"source":"test"}`),
 		StartDeadlineAt:                  pgvalue.Timestamptz(now.Add(time.Minute)),
 		BuildLeaseExpiresAt:              pgvalue.Timestamptz(now.Add(5 * time.Minute)),
@@ -346,11 +344,11 @@ func (f *deploymentBuildFixture) activateBuildWorker(t *testing.T) {
 	runtimeIdentityID := "build-runtime-" + dbtest.ShortID(f.workerID)
 	dbtest.MustExec(t, f.ctx, f.pool, `
 		INSERT INTO runtime_identities (
-			id, runtime_arch, runtime_abi, kernel_digest,
-			initramfs_digest, rootfs_digest, network_abi
+			id, runtime_arch, vm_runtime_contract, kernel_digest,
+			initramfs_digest, rootfs_digest
 		) VALUES (
-			$1, 'x86_64', 'helmr.runtime.v0', 'sha256:test-kernel',
-			'sha256:test-initramfs', 'sha256:test-rootfs', 'helmr/v0'
+			$1, 'x86_64', 'helmr.vm-runtime.v0', 'sha256:test-kernel',
+			'sha256:test-initramfs', 'sha256:test-rootfs'
 		)
 	`, runtimeIdentityID)
 	dbtest.MustExec(t, f.ctx, f.pool, `
@@ -406,10 +404,9 @@ func TestClaimNextDeploymentBuildLeaseRechecksGroupAdmission(t *testing.T) {
 			claimed, err := f.queries.ClaimNextDeploymentBuildLease(
 				f.ctx,
 				db.ClaimNextDeploymentBuildLeaseParams{
-					WorkerGroupID:         f.groupID,
-					WorkerInstanceID:      pgvalue.UUID(f.workerID),
-					WorkerEpoch:           1,
-					WorkerProtocolVersion: "helmr.worker.v0",
+					WorkerGroupID:    f.groupID,
+					WorkerInstanceID: pgvalue.UUID(f.workerID),
+					WorkerEpoch:      1,
 					ExpiresAt: pgvalue.Timestamptz(
 						time.Now().UTC().Add(10 * time.Minute),
 					),
@@ -488,7 +485,6 @@ func (f *deploymentBuildFixture) failDelivery(t *testing.T, leaseID uuid.UUID, s
 		DeploymentID:  pgvalue.UUID(f.deploymentID), BuildLeaseID: pgvalue.UUID(leaseID),
 		LeaseSequence: sequence, WorkerGroupID: f.groupID,
 		WorkerInstanceID: pgvalue.UUID(f.workerID), WorkerEpoch: 1,
-		WorkerProtocolVersion: "helmr.worker.v0",
 		ReasonCode: pgtype.Text{
 			String: "program_verifier_failed",
 			Valid:  true,
@@ -573,11 +569,13 @@ func TestDeploymentBuildDeliveryRedrivesAndExhausts(t *testing.T) {
 	if status != db.DeploymentStatusFailed || pgvalue.MustUUIDValue(current) != thirdID {
 		t.Fatalf("exhausted deployment = status %s pointer %s", status, pgvalue.UUIDString(current))
 	}
-	var failureBody map[string]string
+	var failureBody struct {
+		Code string `json:"code"`
+	}
 	if err := json.Unmarshal(failure, &failureBody); err != nil {
 		t.Fatal(err)
 	}
-	if failureBody["reason_code"] != "build_delivery_exhausted" {
+	if failureBody.Code != "build_delivery_exhausted" {
 		t.Fatalf("exhaustion failure = %s", failure)
 	}
 
@@ -800,9 +798,8 @@ func TestDeploymentBuildLogicalFailureIsTerminal(t *testing.T) {
 		OrgID: pgvalue.UUID(f.orgID), DeploymentID: pgvalue.UUID(f.deploymentID),
 		BuildLeaseID: pgvalue.UUID(leaseID), LeaseSequence: 1,
 		WorkerGroupID: f.groupID, WorkerInstanceID: pgvalue.UUID(f.workerID),
-		WorkerEpoch: 1, WorkerProtocolVersion: "helmr.worker.v0",
-		RequestedGuestEphemeralDiskBytes: buildGuestDisk,
-		RequestedCPUMillis:               buildCPU, RequestedMemoryBytes: buildMemory,
+		WorkerEpoch: 1, RequestedGuestEphemeralDiskBytes: buildGuestDisk,
+		RequestedCPUMillis: buildCPU, RequestedMemoryBytes: buildMemory,
 		RequestedBuildExecutors: 1,
 	})
 	if err != nil || recovered.State != db.DeploymentBuildLeaseStateRunning ||
@@ -811,7 +808,7 @@ func TestDeploymentBuildLogicalFailureIsTerminal(t *testing.T) {
 	}
 
 	fingerprint := "sha256:cf597b648818c6c44c38b69b6198f7efee4c68f922d3a13398d64f9ff330c891"
-	failure := []byte(`{"message":"deterministic failure"}`)
+	failure := []byte(`{"code":"worker_reported_failure","message":"deterministic failure","details":{}}`)
 	failParams := db.FailDeploymentBuildParams{
 		Failure:                    failure,
 		ReasonCode:                 pgtype.Text{String: "worker_reported_failure", Valid: true},
@@ -828,8 +825,7 @@ func TestDeploymentBuildLogicalFailureIsTerminal(t *testing.T) {
 		OrgID: pgvalue.UUID(f.orgID), DeploymentID: pgvalue.UUID(f.deploymentID),
 		BuildLeaseID: pgvalue.UUID(leaseID), LeaseSequence: 1,
 		WorkerGroupID: f.groupID, WorkerInstanceID: pgvalue.UUID(f.workerID),
-		WorkerEpoch: 1, WorkerProtocolVersion: "helmr.worker.v0",
-	})
+		WorkerEpoch: 1})
 	if err != nil || terminal.State != db.DeploymentBuildLeaseStateFailed ||
 		!terminal.TerminalRequestFingerprint.Valid ||
 		terminal.TerminalRequestFingerprint.String != fingerprint {
@@ -862,7 +858,7 @@ func TestDeploymentBuildCannotFailBeforeRunning(t *testing.T) {
 		 WHERE id = $1
 	`, leaseID)
 	_, err := f.queries.FailDeploymentBuild(f.ctx, db.FailDeploymentBuildParams{
-		Failure:                    []byte(`{"message":"not started"}`),
+		Failure:                    []byte(`{"code":"worker_reported_failure","message":"not started","details":{}}`),
 		ReasonCode:                 pgtype.Text{String: "worker_reported_failure", Valid: true},
 		TerminalRequestFingerprint: "sha256:df597b648818c6c44c38b69b6198f7efee4c68f922d3a13398d64f9ff330c891",
 		OrgID:                      pgvalue.UUID(f.orgID),
@@ -907,8 +903,7 @@ func TestDeploymentBuildTerminalFenceSerializesDeliveryFailure(t *testing.T) {
 		EnvironmentID: pgvalue.UUID(f.environmentID), DeploymentID: pgvalue.UUID(f.deploymentID),
 		BuildLeaseID: pgvalue.UUID(leaseID), LeaseSequence: 1,
 		WorkerGroupID: f.groupID, WorkerInstanceID: pgvalue.UUID(f.workerID),
-		WorkerEpoch: 1, WorkerProtocolVersion: "helmr.worker.v0",
-	})
+		WorkerEpoch: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -922,15 +917,14 @@ func TestDeploymentBuildTerminalFenceSerializesDeliveryFailure(t *testing.T) {
 			EnvironmentID: pgvalue.UUID(f.environmentID), DeploymentID: pgvalue.UUID(f.deploymentID),
 			BuildLeaseID: pgvalue.UUID(leaseID), LeaseSequence: 1,
 			WorkerGroupID: f.groupID, WorkerInstanceID: pgvalue.UUID(f.workerID),
-			WorkerEpoch: 1, WorkerProtocolVersion: "helmr.worker.v0",
-		})
+			WorkerEpoch: 1})
 		deliveryDone <- err
 	}()
 	<-deliveryStarted
 	time.Sleep(50 * time.Millisecond)
 
 	_, err = txQueries.FailDeploymentBuild(f.ctx, db.FailDeploymentBuildParams{
-		Failure:                    []byte(`{"message":"deterministic failure"}`),
+		Failure:                    []byte(`{"code":"worker_reported_failure","message":"deterministic failure","details":{}}`),
 		ReasonCode:                 pgtype.Text{String: "worker_reported_failure", Valid: true},
 		TerminalRequestFingerprint: "sha256:ef597b648818c6c44c38b69b6198f7efee4c68f922d3a13398d64f9ff330c891",
 		OrgID:                      pgvalue.UUID(f.orgID),

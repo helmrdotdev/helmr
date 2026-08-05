@@ -97,7 +97,6 @@ func TestAppendRunLogChunkRequiresExactCurrentReceipt(t *testing.T) {
 		{"worker group", func(p *AppendRunLogChunkParams) { p.WorkerGroupID += "-stale" }},
 		{"worker", func(p *AppendRunLogChunkParams) { p.WorkerInstanceID = randomPGUUID() }},
 		{"worker epoch", func(p *AppendRunLogChunkParams) { p.WorkerEpoch++ }},
-		{"worker protocol", func(p *AppendRunLogChunkParams) { p.WorkerProtocolVersion += "-stale" }},
 	}
 	for index, mismatch := range mismatches {
 		t.Run(mismatch.name, func(t *testing.T) {
@@ -145,10 +144,9 @@ func TestGetRunMetadataClaimScopeUsesStableAttemptAuthority(t *testing.T) {
 	logParams := fixture.runningRunLogParams(t, ctx)
 	params := GetRunMetadataClaimScopeParams{
 		RunLeaseID: logParams.RunLeaseID, LeaseSequence: logParams.LeaseSequence,
-		WorkerGroupID:         logParams.WorkerGroupID,
-		WorkerInstanceID:      logParams.WorkerInstanceID,
-		WorkerEpoch:           logParams.WorkerEpoch,
-		WorkerProtocolVersion: logParams.WorkerProtocolVersion,
+		WorkerGroupID:    logParams.WorkerGroupID,
+		WorkerInstanceID: logParams.WorkerInstanceID,
+		WorkerEpoch:      logParams.WorkerEpoch,
 	}
 
 	scope, err := fixture.queries.GetRunMetadataClaimScope(ctx, params)
@@ -251,8 +249,7 @@ func (fixture runLeaseClaimFixture) runningRunLogParams(
 		RunLeaseID:            workUUID(work.leaseID),
 		LeaseSequence:         1, WorkerGroupID: runLeaseTestWorkerGroup,
 		WorkerInstanceID: workUUID(fixture.workerID), WorkerEpoch: 1,
-		WorkerProtocolVersion: runLeaseTestProtocol,
-		Stream:                "stdout", ObservedSeq: 1, Content: []byte("alpha"),
+		Stream: "stdout", ObservedSeq: 1, Content: []byte("alpha"),
 	}
 	return params
 }

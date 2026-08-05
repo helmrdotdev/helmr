@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -55,7 +56,7 @@ func (c *Connector) proveRoutedNetworkLifecycle(ctx context.Context) error {
 	}
 	binding, err := c.prepareNetworkBinding(ctx, owner, vm.WorkloadBinding{
 		WorkerEpoch: 1, OwnerID: owner.ID, Generation: 1,
-		RuntimeInstanceID: owner.ID, RuntimeIdentityID: NetworkABIV0,
+		RuntimeInstanceID: owner.ID, RuntimeIdentityID: runtimeid.Contract,
 	})
 	if err != nil {
 		cleanupErr := c.Cleanup(context.Background(), owner)

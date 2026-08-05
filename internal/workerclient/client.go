@@ -26,7 +26,6 @@ type authentication struct {
 	workerInstanceID string
 	secret           string
 	serviceID        string
-	protocolVersion  string
 	supportsRun      bool
 	supportsBuild    bool
 	token            string
@@ -40,7 +39,6 @@ type options struct {
 	workerInstanceID string
 	secret           string
 	serviceID        string
-	protocolVersion  string
 	supportsRun      bool
 	supportsBuild    bool
 }
@@ -58,10 +56,9 @@ func WithAuth(workerInstanceID string, secret string) Option {
 	}
 }
 
-func WithService(serviceID string, protocolVersion string, supportsRun bool, supportsBuild bool) Option {
+func WithService(serviceID string, supportsRun bool, supportsBuild bool) Option {
 	return func(options *options) {
 		options.serviceID = strings.TrimSpace(serviceID)
-		options.protocolVersion = strings.TrimSpace(protocolVersion)
 		options.supportsRun = supportsRun
 		options.supportsBuild = supportsBuild
 	}
@@ -80,7 +77,6 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 		workerInstanceID: config.workerInstanceID,
 		secret:           config.secret,
 		serviceID:        config.serviceID,
-		protocolVersion:  config.protocolVersion,
 		supportsRun:      config.supportsRun,
 		supportsBuild:    config.supportsBuild,
 	}}, nil
@@ -201,13 +197,13 @@ func (c *Client) token(ctx context.Context) (string, error) {
 }
 
 func (c *Client) requestToken(ctx context.Context) (string, time.Time, error) {
-	if c.auth.serviceID == "" || c.auth.protocolVersion == "" || !c.auth.supportsRun && !c.auth.supportsBuild {
-		return "", time.Time{}, errors.New("worker service id, protocol version, and at least one role are required")
+	if c.auth.serviceID == "" || !c.auth.supportsRun && !c.auth.supportsBuild {
+		return "", time.Time{}, errors.New("worker service id and at least one role are required")
 	}
 	var body bytes.Buffer
 	if err := json.NewEncoder(&body).Encode(workerapi.TokenRequest{
 		WorkerInstanceID: c.auth.workerInstanceID, WorkerInstanceSecret: c.auth.secret,
-		ServiceID: c.auth.serviceID, ProtocolVersion: c.auth.protocolVersion,
+		ServiceID:   c.auth.serviceID,
 		SupportsRun: c.auth.supportsRun, SupportsBuild: c.auth.supportsBuild,
 	}); err != nil {
 		return "", time.Time{}, fmt.Errorf("encode worker token request: %w", err)

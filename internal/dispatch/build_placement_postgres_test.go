@@ -70,7 +70,7 @@ INSERT INTO deployments (
     id, org_id, project_id, environment_id, build_region_id,
     build_node_version, build_runtime_digest, build_toolchain_digest,
     build_manager_name, build_manager_version, build_manager_digest,
-    build_contract_version, image_cache_mode, version, content_hash,
+    build_contract, image_cache_mode, version, content_hash,
     deployment_source_artifact_id, status
 ) VALUES (
     $1, $2, $3, $4, 'us-east-1', '24.16.0', $5,
@@ -97,33 +97,33 @@ func (f *buildPlacementFixture) addWorker(t *testing.T, ready bool) uuid.UUID {
 	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	dbtest.MustExec(t, f.ctx, f.pool, `
 INSERT INTO runtime_identities (
-    id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, network_abi
-) VALUES ($1, $2, 'helmr.runtime.v0', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0')`,
+    id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest, rootfs_digest
+) VALUES ($1, $2, 'helmr.vm-runtime.v0', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs')`,
 		runtimeID, platformArchitecture)
 	if ready {
 		dbtest.MustExec(t, f.ctx, f.pool, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, state,
-			current_epoch, current_service_id, protocol_version, supervisor_version, supports_build,
+			current_epoch, current_service_id, supervisor_version, supports_build,
 			runtime_identity_id,
 			epoch_cpu_millis, epoch_memory_bytes,
     epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis,
     per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes,
     max_build_executors, epoch_started_at, activated_at
-) VALUES (
+		) VALUES (
 			$1, $2, $3, 'active',
-			1, $4, 'helmr.worker.v0', 'test-worker', true, $5, 3000, 4294967296, 34359738368,
+			1, $4, 'test-worker', true, $5, 3000, 4294967296, 34359738368,
 			2000, 2147483648, 34359738368, 1, now(), now()
 )`, workerID, workerID.String(), f.groupID, serviceID, runtimeID)
 	} else {
 		dbtest.MustExec(t, f.ctx, f.pool, `
 INSERT INTO worker_instances (
     id, resource_id, worker_group_id, state,
-    current_epoch, current_service_id, protocol_version, supports_build,
+    current_epoch, current_service_id, supports_build,
     runtime_identity_id, epoch_started_at
 ) VALUES (
     $1, $2, $3, 'registering',
-    1, $4, 'helmr.worker.v0', true, $5, now()
+    1, $4, true, $5, now()
 )`, workerID, workerID.String(), f.groupID, serviceID, runtimeID)
 	}
 	dbtest.MustExec(t, f.ctx, f.pool, `

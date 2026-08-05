@@ -27,7 +27,6 @@ func TestDiscoverWorkerRunLeasesReturnsOnlyExactWorkTuples(t *testing.T) {
 		"run-workers",
 		pgvalue.UUID(workerID),
 		11,
-		"helmr.worker.v0",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +34,6 @@ func TestDiscoverWorkerRunLeasesReturnsOnlyExactWorkTuples(t *testing.T) {
 	if store.params.WorkerGroupID != "run-workers" ||
 		store.params.WorkerInstanceID != pgvalue.UUID(workerID) ||
 		store.params.WorkerEpoch != 11 ||
-		store.params.WorkerProtocolVersion != "helmr.worker.v0" ||
 		store.params.RowLimit != workerRunLeaseDiscoveryLimit {
 		t.Fatalf("discovery params = %+v", store.params)
 	}
@@ -55,7 +53,6 @@ func TestDiscoverWorkerRunLeasesReturnsAnEmptyList(t *testing.T) {
 		"run-workers",
 		pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		1,
-		"helmr.worker.v0",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +70,6 @@ func TestDiscoverWorkerRunLeasesPropagatesStorageFailure(t *testing.T) {
 		"run-workers",
 		pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		1,
-		"helmr.worker.v0",
 	)
 	if !errors.Is(err, expected) {
 		t.Fatalf("discovery error = %v, want %v", err, expected)

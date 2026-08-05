@@ -18,9 +18,8 @@ import (
 )
 
 const (
-	Format     = "ext4"
-	BuilderABI = "helmr-substrate-ext4-v0"
-	LayoutABI  = "helmr-overlay-lower-rootfs-v0"
+	Format   = "ext4"
+	Contract = "helmr.substrate.ext4.v0"
 )
 
 type Resolver struct {
@@ -37,13 +36,12 @@ type Source struct {
 }
 
 type Result struct {
-	Path       string
-	Digest     string
-	Format     string
-	BuilderABI string
-	LayoutABI  string
-	CacheKey   string
-	SizeBytes  int64
+	Path      string
+	Digest    string
+	Format    string
+	Contract  string
+	CacheKey  string
+	SizeBytes int64
 }
 
 func (r *Resolver) Resolve(ctx context.Context, imagePath string, source Source) (Result, error) {
@@ -84,10 +82,9 @@ func CacheKey(source Source) (string, error) {
 		return "", err
 	}
 	body, err := json.Marshal(cacheIdentity{
-		Source:     normalizeSource(source),
-		Format:     Format,
-		BuilderABI: BuilderABI,
-		LayoutABI:  LayoutABI,
+		Source:   normalizeSource(source),
+		Format:   Format,
+		Contract: Contract,
 	})
 	if err != nil {
 		return "", err
@@ -98,10 +95,9 @@ func CacheKey(source Source) (string, error) {
 
 func (r *Resolver) resolveLocked(ctx context.Context, imagePath string, source Source, key string, cacheDir string, mkfs string) (Result, error) {
 	identity := cacheIdentity{
-		Source:     normalizeSource(source),
-		Format:     Format,
-		BuilderABI: BuilderABI,
-		LayoutABI:  LayoutABI,
+		Source:   normalizeSource(source),
+		Format:   Format,
+		Contract: Contract,
 	}
 	if result, err := readCachedResult(cacheDir, key, identity); err == nil {
 		return result, nil
@@ -156,15 +152,14 @@ func (r *Resolver) resolveLocked(ctx context.Context, imagePath string, source S
 		return Result{}, err
 	}
 	metadata := cacheMetadata{
-		CacheKey:   key,
-		Digest:     digest,
-		Format:     Format,
-		BuilderABI: BuilderABI,
-		LayoutABI:  LayoutABI,
-		Source:     normalizeSource(source),
-		SizeBytes:  sizeBytes,
-		CreatedAt:  time.Now().UTC(),
-		Identity:   identity,
+		CacheKey:  key,
+		Digest:    digest,
+		Format:    Format,
+		Contract:  Contract,
+		Source:    normalizeSource(source),
+		SizeBytes: sizeBytes,
+		CreatedAt: time.Now().UTC(),
+		Identity:  identity,
 	}
 	if err := publishMetadata(cacheDir, key, metadata); err != nil {
 		return Result{}, err

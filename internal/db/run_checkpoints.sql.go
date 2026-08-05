@@ -66,7 +66,7 @@ UPDATE run_leases
    AND lease_sequence = $6
    AND state = 'checkpointing'
    AND expires_at > $1
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type CheckpointRunLeaseParams struct {
@@ -103,7 +103,6 @@ func (q *Queries) CheckpointRunLease(ctx context.Context, arg CheckpointRunLease
 		&i.WorkerEpoch,
 		&i.RuntimeInstanceID,
 		&i.RuntimeIdentityID,
-		&i.WorkerProtocolVersion,
 		&i.RequestedCPUMillis,
 		&i.RequestedMemoryBytes,
 		&i.RequestedGuestEphemeralDiskBytes,
@@ -733,7 +732,7 @@ UPDATE run_leases
    AND state = 'checkpointing'
    AND terminal_request_fingerprint IS NULL
    AND expires_at > $1
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type FailCheckpointRunLeaseParams struct {
@@ -774,7 +773,6 @@ func (q *Queries) FailCheckpointRunLease(ctx context.Context, arg FailCheckpoint
 		&i.WorkerEpoch,
 		&i.RuntimeInstanceID,
 		&i.RuntimeIdentityID,
-		&i.WorkerProtocolVersion,
 		&i.RequestedCPUMillis,
 		&i.RequestedMemoryBytes,
 		&i.RequestedGuestEphemeralDiskBytes,
@@ -1044,7 +1042,7 @@ func (q *Queries) GetReadyRunCheckpoint(ctx context.Context, arg GetReadyRunChec
 }
 
 const getRunCheckpointSource = `-- name: GetRunCheckpointSource :one
-SELECT run_leases.id, run_leases.org_id, run_leases.project_id, run_leases.environment_id, run_leases.run_id, run_leases.workspace_id, run_leases.region_id, run_leases.lease_sequence, run_leases.attempt_number, run_leases.worker_group_id, run_leases.worker_instance_id, run_leases.worker_epoch, run_leases.runtime_instance_id, run_leases.runtime_identity_id, run_leases.worker_protocol_version, run_leases.requested_cpu_millis, run_leases.requested_memory_bytes, run_leases.requested_guest_ephemeral_disk_bytes, run_leases.requested_execution_slots, run_leases.trace_id, run_leases.span_id, run_leases.parent_span_id, run_leases.traceparent, run_leases.state, run_leases.assigned_at, run_leases.start_deadline_at, run_leases.claimed_at, run_leases.started_at, run_leases.renewed_at, run_leases.expires_at, run_leases.previous_expires_at, run_leases.finalization_operation_id, run_leases.finalization_kind, run_leases.finalization_started_at, run_leases.finalization_request_fingerprint, run_leases.checkpointed_at, run_leases.terminal_at, run_leases.terminal_reason_code, run_leases.terminal_error, run_leases.terminal_request_fingerprint, run_leases.created_at, run_leases.updated_at,
+SELECT run_leases.id, run_leases.org_id, run_leases.project_id, run_leases.environment_id, run_leases.run_id, run_leases.workspace_id, run_leases.region_id, run_leases.lease_sequence, run_leases.attempt_number, run_leases.worker_group_id, run_leases.worker_instance_id, run_leases.worker_epoch, run_leases.runtime_instance_id, run_leases.runtime_identity_id, run_leases.requested_cpu_millis, run_leases.requested_memory_bytes, run_leases.requested_guest_ephemeral_disk_bytes, run_leases.requested_execution_slots, run_leases.trace_id, run_leases.span_id, run_leases.parent_span_id, run_leases.traceparent, run_leases.state, run_leases.assigned_at, run_leases.start_deadline_at, run_leases.claimed_at, run_leases.started_at, run_leases.renewed_at, run_leases.expires_at, run_leases.previous_expires_at, run_leases.finalization_operation_id, run_leases.finalization_kind, run_leases.finalization_started_at, run_leases.finalization_request_fingerprint, run_leases.checkpointed_at, run_leases.terminal_at, run_leases.terminal_reason_code, run_leases.terminal_error, run_leases.terminal_request_fingerprint, run_leases.created_at, run_leases.updated_at,
        workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error,
        runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
   FROM run_leases
@@ -1102,7 +1100,6 @@ func (q *Queries) GetRunCheckpointSource(ctx context.Context, arg GetRunCheckpoi
 		&i.RunLease.WorkerEpoch,
 		&i.RunLease.RuntimeInstanceID,
 		&i.RunLease.RuntimeIdentityID,
-		&i.RunLease.WorkerProtocolVersion,
 		&i.RunLease.RequestedCPUMillis,
 		&i.RunLease.RequestedMemoryBytes,
 		&i.RunLease.RequestedGuestEphemeralDiskBytes,
@@ -1208,7 +1205,7 @@ func (q *Queries) GetRunCheckpointSource(ctx context.Context, arg GetRunCheckpoi
 }
 
 const getRuntimeIdentityForCheckpoint = `-- name: GetRuntimeIdentityForCheckpoint :one
-SELECT id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, network_abi, first_seen_at, last_seen_at
+SELECT id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest, rootfs_digest, first_seen_at, last_seen_at
   FROM runtime_identities
  WHERE id = $1
 `
@@ -1219,11 +1216,10 @@ func (q *Queries) GetRuntimeIdentityForCheckpoint(ctx context.Context, id string
 	err := row.Scan(
 		&i.ID,
 		&i.RuntimeArch,
-		&i.RuntimeABI,
+		&i.VMRuntimeContract,
 		&i.KernelDigest,
 		&i.InitramfsDigest,
 		&i.RootfsDigest,
-		&i.NetworkAbi,
 		&i.FirstSeenAt,
 		&i.LastSeenAt,
 	)
@@ -1231,7 +1227,7 @@ func (q *Queries) GetRuntimeIdentityForCheckpoint(ctx context.Context, id string
 }
 
 const getRuntimeSubstrateForCheckpoint = `-- name: GetRuntimeSubstrateForCheckpoint :one
-SELECT id, org_id, project_id, environment_id, deployment_definition_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, created_at
+SELECT id, org_id, project_id, environment_id, deployment_definition_id, substrate_digest, substrate_format, substrate_contract, substrate_size_bytes, created_at
   FROM runtime_substrates
  WHERE id = $1
 `
@@ -1247,8 +1243,7 @@ func (q *Queries) GetRuntimeSubstrateForCheckpoint(ctx context.Context, id pgtyp
 		&i.DeploymentDefinitionID,
 		&i.SubstrateDigest,
 		&i.SubstrateFormat,
-		&i.BuilderAbi,
-		&i.LayoutAbi,
+		&i.SubstrateContract,
 		&i.SubstrateSizeBytes,
 		&i.CreatedAt,
 	)

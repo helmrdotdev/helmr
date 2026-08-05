@@ -82,11 +82,11 @@ func verifiedRuntimeResult(
 			descriptor.Architecture,
 		)
 	}
-	if index.RuntimeAPIVersion != descriptor.RuntimeAPIVersion {
+	if index.RuntimeContract != descriptor.RuntimeContract {
 		return RuntimeIndex{}, fmt.Errorf(
-			"runtime index runtimeApiVersion = %q, descriptor declares %q",
-			index.RuntimeAPIVersion,
-			descriptor.RuntimeAPIVersion,
+			"runtime index runtimeContract = %q, descriptor declares %q",
+			index.RuntimeContract,
+			descriptor.RuntimeContract,
 		)
 	}
 	return index, nil
@@ -195,9 +195,8 @@ func verifyRuntimeTopology(
 		return RuntimeIndex{}, err
 	}
 	return RuntimeIndex{
-		Architecture:      inspected.Runtime.Architecture,
-		FormatVersion:     RuntimeIndexFormatVersion,
-		RuntimeAPIVersion: inspected.Runtime.RuntimeAPIVersion,
+		Architecture:    inspected.Runtime.Architecture,
+		RuntimeContract: inspected.Runtime.RuntimeContract,
 	}, nil
 }
 

@@ -98,14 +98,14 @@ func TestEventsCommandFollowsRunEvents(t *testing.T) {
 		}
 		request := atomic.AddInt32(&requests, 1)
 		if request == 1 {
-			next := "rt1.next"
+			next := "cursor-next"
 			_ = json.NewEncoder(w).Encode(api.RunEventPage{
 				Events:     []api.RunEvent{{ID: "event-1", Kind: "run.created"}},
 				NextCursor: &next,
 			})
 			return
 		}
-		if r.URL.Query().Get("cursor") != "rt1.next" {
+		if r.URL.Query().Get("cursor") != "cursor-next" {
 			t.Fatalf("query = %s", r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(api.RunEventPage{
@@ -142,17 +142,17 @@ func TestLogsCommandFollowsRunLogs(t *testing.T) {
 				Logs: []api.RunLogRecord{{
 					Kind: "stdout", ContentBase64: base64.StdEncoding.EncodeToString([]byte("old\n")),
 				}},
-				NextCursor: "rt1.old",
+				NextCursor: "cursor-old",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" && r.URL.Query().Get("cursor") == "rt1.old":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" && r.URL.Query().Get("cursor") == "cursor-old":
 			_ = json.NewEncoder(w).Encode(api.RunLogPage{
 				Logs: []api.RunLogRecord{
 					{Kind: "stdout", ContentBase64: base64.StdEncoding.EncodeToString([]byte("new\n"))},
 					{Kind: "stderr", ContentBase64: base64.StdEncoding.EncodeToString([]byte("warn\n"))},
 				},
-				NextCursor: "rt1.new",
+				NextCursor: "cursor-new",
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" && r.URL.Query().Get("cursor") == "rt1.new":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs" && r.URL.Query().Get("cursor") == "cursor-new":
 			_ = json.NewEncoder(w).Encode(api.RunLogPage{})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31":
 			_ = json.NewEncoder(w).Encode(api.RunSnapshotResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: api.RunStatusSucceeded})
@@ -179,7 +179,7 @@ func TestLogsCommandFollowsRunLogs(t *testing.T) {
 	if errOut.String() != "warn\n" {
 		t.Fatalf("stderr = %q", errOut.String())
 	}
-	if got := strings.Join(requests, ","); got != "GET /v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs,GET /v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs?cursor=rt1.old,GET /v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31,GET /v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs?cursor=rt1.new" {
+	if got := strings.Join(requests, ","); got != "GET /v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs,GET /v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs?cursor=cursor-old,GET /v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31,GET /v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs?cursor=cursor-new" {
 		t.Fatalf("requests = %s", got)
 	}
 }
@@ -213,11 +213,11 @@ func TestLogsCommandPrintsStreams(t *testing.T) {
 
 func TestEventsCommandPrintsJSONLines(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/events" || r.URL.Query().Get("cursor") != "tc1.eyJzIjo0fQ" || r.URL.Query().Get("limit") != "2" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/events" || r.URL.Query().Get("cursor") != "cursor-current" || r.URL.Query().Get("limit") != "2" {
 			t.Fatalf("%s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(api.RunEventPage{
-			Events: []api.RunEvent{{ID: "tc1.eyJzIjo1fQ", Kind: "run.started"}},
+			Events: []api.RunEvent{{ID: "cursor-next", Kind: "run.started"}},
 		})
 	}))
 	defer server.Close()
@@ -228,7 +228,7 @@ func TestEventsCommandPrintsJSONLines(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run", "events", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", "--cursor", "tc1.eyJzIjo0fQ", "--limit", "2"})
+	cmd.SetArgs([]string{"run", "events", "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", "--cursor", "cursor-current", "--limit", "2"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}

@@ -28,12 +28,11 @@ func TestPreparedRuntimeRestoreRebuildsAndRegistersSubstrateWithoutSubstrateCAS(
 	}
 	resolver := &restoreSubstrateResolver{
 		result: substrate.Result{
-			Path:       substratePath,
-			Digest:     "sha256:" + strings.Repeat("a", 64),
-			Format:     substrate.Format,
-			BuilderABI: substrate.BuilderABI,
-			LayoutABI:  substrate.LayoutABI,
-			SizeBytes:  int64(len("rebuilt substrate")),
+			Path:      substratePath,
+			Digest:    "sha256:" + strings.Repeat("a", 64),
+			Format:    substrate.Format,
+			Contract:  substrate.Contract,
+			SizeBytes: int64(len("rebuilt substrate")),
 		},
 	}
 	pool := &PreparedRuntimePool{Substrates: resolver}
@@ -74,8 +73,7 @@ func TestPreparedRuntimeRestoreRebuildsAndRegistersSubstrateWithoutSubstrateCAS(
 	if registered.ID != registrar.id ||
 		registrar.request.SubstrateDigest != resolver.result.Digest ||
 		registrar.request.Format != substrate.Format ||
-		registrar.request.BuilderABI != substrate.BuilderABI ||
-		registrar.request.LayoutABI != substrate.LayoutABI ||
+		registrar.request.Contract != substrate.Contract ||
 		registrar.request.SizeBytes != resolver.result.SizeBytes {
 		t.Fatalf("registration = %+v, request = %+v", registered, registrar.request)
 	}
@@ -137,8 +135,7 @@ func (r *immutableSubstrateRegistrar) RegisterRuntimeSubstrate(
 		r.request = request
 	} else if request.DeploymentDefinitionID != r.request.DeploymentDefinitionID ||
 		request.Format != r.request.Format ||
-		request.BuilderABI != r.request.BuilderABI ||
-		request.LayoutABI != r.request.LayoutABI ||
+		request.Contract != r.request.Contract ||
 		request.SubstrateDigest != r.request.SubstrateDigest ||
 		request.SizeBytes != r.request.SizeBytes {
 		return workerapi.RuntimeSubstrateRegisterResponse{}, errRuntimeSubstrateConflict
@@ -149,8 +146,7 @@ func (r *immutableSubstrateRegistrar) RegisterRuntimeSubstrate(
 			DeploymentDefinitionID: request.DeploymentDefinitionID,
 			SubstrateDigest:        request.SubstrateDigest,
 			Format:                 request.Format,
-			BuilderABI:             request.BuilderABI,
-			LayoutABI:              request.LayoutABI,
+			Contract:               request.Contract,
 			SizeBytes:              request.SizeBytes,
 		},
 	}, nil

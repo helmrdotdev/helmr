@@ -38,8 +38,7 @@ func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.R
 			WorkerGroupID:          worker.WorkerGroupID,
 			WorkerEpoch:            worker.WorkerEpoch,
 			SubstrateFormat:        strings.TrimSpace(request.Format),
-			BuilderAbi:             strings.TrimSpace(request.BuilderABI),
-			LayoutAbi:              strings.TrimSpace(request.LayoutABI),
+			SubstrateContract:      strings.TrimSpace(request.Contract),
 		})
 		if isNoRows(err) {
 			return conflict(errors.New("runtime substrate authority is stale"))
@@ -55,8 +54,7 @@ func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.R
 			DeploymentDefinitionID: authority.DeploymentDefinitionID,
 			SubstrateDigest:        strings.TrimSpace(request.SubstrateDigest),
 			SubstrateFormat:        strings.TrimSpace(request.Format),
-			BuilderAbi:             strings.TrimSpace(request.BuilderABI),
-			LayoutAbi:              strings.TrimSpace(request.LayoutABI),
+			SubstrateContract:      strings.TrimSpace(request.Contract),
 			SubstrateSizeBytes:     request.SizeBytes,
 		}
 		if _, err = work.q.InsertRuntimeSubstrate(r.Context(), params); err != nil {
@@ -69,8 +67,7 @@ func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.R
 			DeploymentDefinitionID: params.DeploymentDefinitionID,
 			SubstrateDigest:        params.SubstrateDigest,
 			SubstrateFormat:        params.SubstrateFormat,
-			BuilderAbi:             params.BuilderAbi,
-			LayoutAbi:              params.LayoutAbi,
+			SubstrateContract:      params.SubstrateContract,
 			SubstrateSizeBytes:     params.SubstrateSizeBytes,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -96,8 +93,7 @@ func validateRuntimeSubstrateRegisterRequest(request workerapi.RuntimeSubstrateR
 		"deployment_definition_id": request.DeploymentDefinitionID,
 		"substrate_digest":         request.SubstrateDigest,
 		"format":                   request.Format,
-		"builder_abi":              request.BuilderABI,
-		"layout_abi":               request.LayoutABI,
+		"contract":                 request.Contract,
 	}
 	for field, value := range required {
 		if strings.TrimSpace(value) == "" {
@@ -119,8 +115,7 @@ func runtimeSubstrateResponse(row db.RuntimeSubstrate) workerapi.RuntimeSubstrat
 		DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID),
 		SubstrateDigest:        row.SubstrateDigest,
 		Format:                 row.SubstrateFormat,
-		BuilderABI:             row.BuilderAbi,
-		LayoutABI:              row.LayoutAbi,
+		Contract:               row.SubstrateContract,
 		SizeBytes:              row.SubstrateSizeBytes,
 	}
 }

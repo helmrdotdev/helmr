@@ -46,8 +46,7 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(completion.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
 			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
-		})
+			WorkerEpoch: worker.WorkerEpoch})
 		if err != nil {
 			return staleActorCompletion(err)
 		}
@@ -320,24 +319,39 @@ func scheduleActorRetry(ctx context.Context, store db.Querier, authority runLeas
 
 func finishActorRun(ctx context.Context, store db.Querier, authority runLeaseClaimAuthority, secrets []secret.DeliveryEnvelope, completion parsedActorCompletion, completedAt pgtype.Timestamptz) error {
 	decision := decideActorRunTerminal(authority, completion)
-	var terminalError []byte
+	var failure []byte
 	var failureRunID pgtype.UUID
 	if completion.kind == actorCompletionFailed {
-		terminalError = completion.errorObject
+		var err error
+		failure, err = runFailureFromCompletion(decision.runReason.String, completion.errorObject)
+		if err != nil {
+			return err
+		}
 	}
+	var actorFailure []byte
 	if decision.failureCode.Valid {
 		failureRunID = authority.run.ID
+		var err error
+		actorFailure, err = sessionFailure(
+			decision.failureCode.String,
+			"Session execution failed",
+			pgvalue.UUIDString(authority.run.ID),
+		)
+		if err != nil {
+			return err
+		}
 	}
 	commitCursor := pgtype.Int8{Int64: completion.terminalInputSequence, Valid: decision.commitCursor}
 	if _, err := store.FinishActorRun(ctx, db.FinishActorRunParams{
-		Status: decision.runStatus, ReasonCode: decision.runReason, Error: terminalError, CompletedAt: completedAt,
+		Status: decision.runStatus, Failure: failure, CompletedAt: completedAt,
 		ID: authority.run.ID, WorkspaceID: authority.workspace.ID, SessionID: authority.actor.ID,
 		AttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
 	}); err != nil {
 		return staleActorCompletion(err)
 	}
 	actor, err := store.ReconcileActorTerminalRun(ctx, db.ReconcileActorTerminalRunParams{
-		State: decision.actorState, CommittedInputSequence: commitCursor, FailureCode: decision.failureCode, FailureRunID: failureRunID,
+		State: decision.actorState, CommittedInputSequence: commitCursor,
+		Failure: actorFailure, FailureRunID: failureRunID,
 		CompletedAt: completedAt, EnvironmentID: authority.actor.EnvironmentID, ID: authority.actor.ID,
 		WorkspaceID: authority.workspace.ID, RunID: authority.run.ID, ExpectedRunGeneration: authority.actor.RunGeneration,
 	})

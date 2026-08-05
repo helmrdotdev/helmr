@@ -19,12 +19,11 @@ func enterRunEntrypoint(
 ) error {
 	return inTxWith(ctx, store, txb, func(work *txWork) error {
 		locators, err := work.q.GetRunEntrypointLocators(ctx, db.GetRunEntrypointLocatorsParams{
-			ID:                    leaseID,
-			LeaseSequence:         request.Lease.LeaseSequence,
-			WorkerGroupID:         worker.WorkerGroupID,
-			WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch:           worker.WorkerEpoch,
-			WorkerProtocolVersion: worker.ProtocolVersion,
+			ID:               leaseID,
+			LeaseSequence:    request.Lease.LeaseSequence,
+			WorkerGroupID:    worker.WorkerGroupID,
+			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerEpoch:      worker.WorkerEpoch,
 		})
 		if err != nil {
 			return staleRunLeaseClaim(err)
@@ -120,8 +119,7 @@ func lockRunEntrypointAuthority(
 	}
 	if authority.workerGroup.State != db.WorkerGroupStateActive ||
 		!authority.workerGroup.AllowsRun ||
-		authority.workerGroup.ClaimVersion != worker.GroupClaimVersion ||
-		authority.workerGroup.ProtocolVersion != worker.ProtocolVersion {
+		authority.workerGroup.ClaimVersion != worker.GroupClaimVersion {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 

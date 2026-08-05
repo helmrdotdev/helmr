@@ -74,16 +74,12 @@ func TestParseTaskCompletionFailureRequiresRollback(t *testing.T) {
 	}
 }
 
-func TestParseTaskCompletionAcceptsEmptyFailureMessage(t *testing.T) {
+func TestParseTaskCompletionRequiresFailureMessage(t *testing.T) {
 	request := validTaskCompletionRequest(t)
 	request.Outcome = workerapi.TaskOutcome{Failed: &workerapi.TaskFailure{}}
 	request.Workspace = workerapi.TaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, request.Workspace.Captured)}
-	parsed, err := parseTaskCompletionRequest(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(parsed.errorObject) != `{"message":""}` {
-		t.Fatalf("error object = %s", parsed.errorObject)
+	if _, err := parseTaskCompletionRequest(request); err == nil {
+		t.Fatal("failure without a message was accepted")
 	}
 }
 
@@ -111,6 +107,10 @@ func TestParseTaskCompletionRejectsOpenOrMismatchedShapes(t *testing.T) {
 		}},
 		{name: "oversized message", mutate: func(r *workerapi.CompleteTaskRequest) {
 			r.Outcome = workerapi.TaskOutcome{PayloadInvalid: &workerapi.TaskFailure{Message: strings.Repeat("x", maxTaskCompletionMessageBytes+1)}}
+			r.Workspace = workerapi.TaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, r.Workspace.Captured)}
+		}},
+		{name: "noncanonical message whitespace", mutate: func(r *workerapi.CompleteTaskRequest) {
+			r.Outcome = workerapi.TaskOutcome{Failed: &workerapi.TaskFailure{Message: " failed "}}
 			r.Workspace = workerapi.TaskWorkspaceProof{RolledBack: validTaskWorkspaceRollback(t, r.Workspace.Captured)}
 		}},
 		{name: "noncanonical digest", mutate: func(r *workerapi.CompleteTaskRequest) {

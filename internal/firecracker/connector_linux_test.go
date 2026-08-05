@@ -38,9 +38,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func TestSnapshotRuntimeConfigIncludesNetworkABI(t *testing.T) {
+func TestSnapshotRuntimeConfigIncludesNetworkTopology(t *testing.T) {
 	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
-	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", NetworkABI: NetworkABIV0})
+	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), Contract: runtimeid.Contract, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,11 +56,8 @@ func TestSnapshotRuntimeConfigIncludesNetworkABI(t *testing.T) {
 		t.Fatal(err)
 	}
 	network := manifest.RuntimeState.Network
-	if network.NetworkABI != NetworkABIV0 || network.GuestIPv4CIDR != GuestNetworkCIDRV0 || network.GuestMAC != GuestMACV0 || network.GatewayIPv4 != GuestGatewayIPv4V0 || network.GatewayMAC != GuestGatewayMACV0 || network.GuestInterfaceName != GuestInterfaceNameV0 || network.MTU != GuestMTUV0 || len(network.ResolverAddresses) != 1 || network.ResolverAddresses[0] != "10.0.0.2" {
+	if network.GuestIPv4CIDR != GuestNetworkCIDRV0 || network.GuestMAC != GuestMACV0 || network.GatewayIPv4 != GuestGatewayIPv4V0 || network.GatewayMAC != GuestGatewayMACV0 || network.GuestInterfaceName != GuestInterfaceNameV0 || network.MTU != GuestMTUV0 || len(network.ResolverAddresses) != 1 || network.ResolverAddresses[0] != "10.0.0.2" {
 		t.Fatalf("network = %+v", network)
-	}
-	if manifest.RecoveryPoint.Runtime.Network.NetworkABI != NetworkABIV0 {
-		t.Fatalf("network identity = %+v", manifest.RecoveryPoint.Runtime.Network)
 	}
 	if manifest.RecoveryPoint.Runtime.ID != runtimeID || manifest.RecoveryPoint.Runtime.InitramfsDigest != "sha256:initramfs" {
 		t.Fatalf("runtime = %+v", manifest.RecoveryPoint.Runtime)
@@ -111,9 +108,8 @@ func TestScratchUsableFloorMatchesBuildProfiles(t *testing.T) {
 func TestSnapshotRuntimeConfigBindsManagedProgramTopology(t *testing.T) {
 	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
 	runtimeID, err := runtimeid.Digest(runtimeid.Selector{
-		Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel",
+		Arch: testCheckpointArchitecture(t), Contract: runtimeid.Contract, KernelDigest: "sha256:kernel",
 		InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs",
-		NetworkABI: NetworkABIV0,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -206,13 +202,12 @@ func TestCleanupRemovesExactBuildOwnerAndMarkerLast(t *testing.T) {
 func TestSnapshotRuntimeConfigIncludesSubstrateIdentity(t *testing.T) {
 	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
 	topology := vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
-		Path:       filepath.Join(t.TempDir(), "substrate.ext4"),
-		Digest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Format:     "ext4",
-		BuilderABI: "builder-v1",
-		LayoutABI:  "layout-v1",
+		Path:     filepath.Join(t.TempDir(), "substrate.ext4"),
+		Digest:   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Format:   "ext4",
+		Contract: "builder-v1",
 	}}
-	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", NetworkABI: NetworkABIV0})
+	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), Contract: runtimeid.Contract, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,24 +223,22 @@ func TestSnapshotRuntimeConfigIncludesSubstrateIdentity(t *testing.T) {
 	if substrate == nil {
 		t.Fatal("substrate manifest is nil")
 	}
-	if substrate.Digest != topology.Substrate.Digest || substrate.Format != "ext4" || substrate.BuilderABI != "builder-v1" || substrate.LayoutABI != "layout-v1" {
+	if substrate.Digest != topology.Substrate.Digest || substrate.Format != "ext4" || substrate.Contract != "builder-v1" {
 		t.Fatalf("substrate = %+v", substrate)
 	}
 }
 
 func TestValidateRuntimeSubstrateManifestRequiresExactTopologyMatch(t *testing.T) {
 	manifest := &snapshotRuntimeSubstrate{
-		Digest:     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Format:     "ext4",
-		BuilderABI: "builder-v1",
-		LayoutABI:  "layout-v1",
+		Digest:   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Format:   "ext4",
+		Contract: "builder-v1",
 	}
 	expected := &vm.RuntimeSubstrate{
-		Path:       filepath.Join(t.TempDir(), "substrate.ext4"),
-		Digest:     manifest.Digest,
-		Format:     manifest.Format,
-		BuilderABI: manifest.BuilderABI,
-		LayoutABI:  manifest.LayoutABI,
+		Path:     filepath.Join(t.TempDir(), "substrate.ext4"),
+		Digest:   manifest.Digest,
+		Format:   manifest.Format,
+		Contract: manifest.Contract,
 	}
 	if err := validateRuntimeSubstrateManifest(manifest, expected); err != nil {
 		t.Fatal(err)
@@ -325,7 +318,7 @@ func (e testWrappedErrors) WrappedErrors() []error {
 
 func TestSnapshotRuntimeConfigRequiresResolver(t *testing.T) {
 	cfg := (Config{}).WithDefaults()
-	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", NetworkABI: NetworkABIV0})
+	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), Contract: runtimeid.Contract, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +328,7 @@ func TestSnapshotRuntimeConfigRequiresResolver(t *testing.T) {
 	}
 }
 
-func TestStaticNetworkInterfaceMatchesNetworkABI(t *testing.T) {
+func TestStaticNetworkInterfaceMatchesVMRuntimeContract(t *testing.T) {
 	iface := staticNetworkInterface("10.0.0.2")
 	if iface.StaticConfiguration == nil || iface.StaticConfiguration.IPConfiguration == nil {
 		t.Fatalf("interface = %+v", iface)
@@ -460,7 +453,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 	kernelDigest := testDigest([]byte("kernel"))
 	initramfsDigest := testDigest([]byte("initramfs"))
 	rootfsDigest := testDigest([]byte("rootfs"))
-	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, NetworkABI: NetworkABIV0})
+	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), Contract: runtimeid.Contract, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,7 +466,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 				Backend:         "firecracker",
 				ID:              runtimeID,
 				Arch:            testCheckpointArchitecture(t),
-				ABI:             runtimeABI,
+				Contract:        runtimeid.Contract,
 				VCPUCount:       cfg.VCPUCount,
 				MemoryMiB:       cfg.MemoryMiB,
 				ScratchDiskMiB:  cfg.ScratchDiskMiB,
@@ -483,7 +476,6 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 				RootfsDigest:    rootfsDigest,
 				GuestPort:       cfg.GuestPort,
 				HealthPort:      cfg.HealthPort,
-				Network:         snapshotNetworkIdentityManifest{NetworkABI: NetworkABIV0},
 			},
 		},
 		RuntimeState: snapshotRuntimeStateManifest{
@@ -505,7 +497,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 		{name: "checkpoint id", checkpointID: "other", want: `checkpoint manifest recovery point id "checkpoint-1" does not match restore id "other"`},
 		{name: "identity backend", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeBackend = "test" }, want: `checkpoint runtime backend "test" is not supported`},
 		{name: "identity arch", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeArch = "other" }, want: `checkpoint runtime arch "other" does not match`},
-		{name: "identity abi", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeABI = "other" }, want: `checkpoint runtime abi "other" does not match`},
+		{name: "identity contract", editIdentity: func(i *vm.CheckpointIdentity) { i.VMRuntimeContract = "other" }, want: `checkpoint runtime contract "other" does not match`},
 		{name: "identity runtime id", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeID = "sha256:other" }, want: "checkpoint runtime id sha256:other does not match"},
 		{name: "identity kernel digest", editIdentity: func(i *vm.CheckpointIdentity) { i.KernelDigest = "sha256:other" }, want: "checkpoint kernel digest sha256:other does not match"},
 		{name: "identity initramfs digest", editIdentity: func(i *vm.CheckpointIdentity) { i.InitramfsDigest = "sha256:other" }, want: "checkpoint initramfs digest sha256:other does not match"},
@@ -513,7 +505,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 		{name: "identity runtime config digest", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeConfigDigest = "sha256:other" }, want: "checkpoint runtime config digest sha256:other does not match"},
 		{name: "manifest backend", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Backend = "test" }, want: `checkpoint manifest runtime backend "test" is not supported`},
 		{name: "manifest arch", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Arch = "other" }, want: `checkpoint manifest runtime arch "other" does not match`},
-		{name: "manifest abi", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.ABI = "other" }, want: `checkpoint manifest runtime abi "other" does not match`},
+		{name: "manifest contract", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Contract = "other" }, want: `checkpoint manifest runtime contract "other" does not match`},
 		{name: "manifest runtime id", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.ID = "sha256:other" }, want: "checkpoint manifest runtime id sha256:other does not match"},
 		{name: "manifest kernel digest", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.KernelDigest = "sha256:other" }, want: "checkpoint manifest kernel digest sha256:other does not match"},
 		{name: "manifest initramfs digest", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.InitramfsDigest = "sha256:other" }, want: "checkpoint manifest initramfs digest sha256:other does not match"},
@@ -524,8 +516,6 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 		{name: "manifest kernel args", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.KernelArgs = "other" }, want: "checkpoint manifest runtime ports or kernel args do not match"},
 		{name: "manifest guest port", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.GuestPort++ }, want: "checkpoint manifest runtime ports or kernel args do not match"},
 		{name: "manifest health port", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.HealthPort++ }, want: "checkpoint manifest runtime ports or kernel args do not match"},
-		{name: "manifest network abi", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Network.NetworkABI = "other/v1" }, want: "checkpoint manifest network_abi"},
-		{name: "manifest state network abi", editManifest: func(m *snapshotManifest) { m.RuntimeState.Network.NetworkABI = "other/v1" }, want: "checkpoint manifest network_abi"},
 		{name: "manifest guest ip", editManifest: func(m *snapshotManifest) { m.RuntimeState.Network.GuestIPv4CIDR = "" }, want: "checkpoint manifest guest_ipv4_cidr"},
 	}
 
@@ -551,7 +541,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 				RuntimeBackend:      "firecracker",
 				RuntimeID:           runtimeID,
 				RuntimeArch:         testCheckpointArchitecture(t),
-				RuntimeABI:          runtimeABI,
+				VMRuntimeContract:   runtimeid.Contract,
 				KernelDigest:        kernelDigest,
 				InitramfsDigest:     initramfsDigest,
 				RootfsDigest:        rootfsDigest,
@@ -653,7 +643,7 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 		OwnerKind:         vm.OwnerRuntime,
 		Binding: vm.WorkloadBinding{
 			WorkerEpoch: 1, OwnerID: runtimeInstanceID, Generation: 1,
-			RuntimeInstanceID: runtimeInstanceID, RuntimeIdentityID: NetworkABIV0,
+			RuntimeInstanceID: runtimeInstanceID, RuntimeIdentityID: runtimeid.Contract,
 		},
 		VMState:              statePath,
 		VMStateMediaType:     cas.CheckpointVMStateMediaType,
@@ -1358,7 +1348,7 @@ func TestMaterializeAcceptsOnlyCompleteProgramDriveSet(t *testing.T) {
 		OwnerKind: vm.OwnerRuntime,
 		Binding: vm.WorkloadBinding{
 			WorkerEpoch: 1, OwnerID: runtimeInstanceID, Generation: 1,
-			RuntimeInstanceID: runtimeInstanceID, RuntimeIdentityID: NetworkABIV0,
+			RuntimeInstanceID: runtimeInstanceID, RuntimeIdentityID: runtimeid.Contract,
 		},
 		RootfsDigest:       rootfsDigest,
 		WorkspaceMountPath: "/workspace",
@@ -1858,12 +1848,12 @@ func testRestoreConfig(t *testing.T) Config {
 		MemoryMiB:           256,
 	}).WithDefaults()
 	manifest := runtimeArtifacts{
-		Schema:     runtimeArtifactsSchema,
-		Arch:       runtime.GOARCH,
-		RuntimeABI: runtimeABI,
-		Kernel:     runtimeArtifact{Path: filepath.Base(kernelPath), Digest: testDigest([]byte("kernel")), SizeBytes: int64(len("kernel"))},
-		Initramfs:  runtimeArtifact{Path: filepath.Base(initramfsPath), Digest: testDigest([]byte("initramfs")), SizeBytes: int64(len("initramfs"))},
-		Rootfs:     runtimeArtifact{Path: filepath.Base(rootfsPath), Digest: testDigest([]byte("rootfs")), SizeBytes: int64(len("rootfs"))},
+		Schema:            runtimeArtifactsSchema,
+		Arch:              runtime.GOARCH,
+		VMRuntimeContract: runtimeid.Contract,
+		Kernel:            runtimeArtifact{Path: filepath.Base(kernelPath), Digest: testDigest([]byte("kernel")), SizeBytes: int64(len("kernel"))},
+		Initramfs:         runtimeArtifact{Path: filepath.Base(initramfsPath), Digest: testDigest([]byte("initramfs")), SizeBytes: int64(len("initramfs"))},
+		Rootfs:            runtimeArtifact{Path: filepath.Base(rootfsPath), Digest: testDigest([]byte("rootfs")), SizeBytes: int64(len("rootfs"))},
 	}
 	body, err := json.Marshal(manifest)
 	if err != nil {
@@ -1898,7 +1888,7 @@ func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID strin
 	kernelDigest := testDigest([]byte("kernel"))
 	initramfsDigest := testDigest([]byte("initramfs"))
 	rootfsDigest := testDigest([]byte("rootfs"))
-	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, NetworkABI: NetworkABIV0})
+	runtimeID, err := runtimeid.Digest(runtimeid.Selector{Arch: testCheckpointArchitecture(t), Contract: runtimeid.Contract, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1909,7 +1899,7 @@ func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID strin
 				Backend:         "firecracker",
 				ID:              runtimeID,
 				Arch:            testCheckpointArchitecture(t),
-				ABI:             runtimeABI,
+				Contract:        runtimeid.Contract,
 				VCPUCount:       cfg.VCPUCount,
 				MemoryMiB:       cfg.MemoryMiB,
 				ScratchDiskMiB:  cfg.ScratchDiskMiB,
@@ -1919,7 +1909,6 @@ func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID strin
 				RootfsDigest:    rootfsDigest,
 				GuestPort:       cfg.GuestPort,
 				HealthPort:      cfg.HealthPort,
-				Network:         snapshotNetworkIdentityManifest{NetworkABI: NetworkABIV0},
 			},
 		},
 		RuntimeState: snapshotRuntimeStateManifest{
@@ -1934,7 +1923,7 @@ func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID strin
 		RuntimeBackend:      "firecracker",
 		RuntimeID:           runtimeID,
 		RuntimeArch:         testCheckpointArchitecture(t),
-		RuntimeABI:          runtimeABI,
+		VMRuntimeContract:   runtimeid.Contract,
 		KernelDigest:        kernelDigest,
 		InitramfsDigest:     initramfsDigest,
 		RootfsDigest:        rootfsDigest,

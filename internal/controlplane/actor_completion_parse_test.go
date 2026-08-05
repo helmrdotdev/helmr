@@ -29,6 +29,23 @@ func TestParseActorCompletionRequestBindsCursorAndWorkspaceProof(t *testing.T) {
 	}
 }
 
+func TestParseActorCompletionRejectsNoncanonicalFailureMessage(t *testing.T) {
+	taskRequest := validTaskCompletionRequest(t)
+	request := workerapi.CompleteActorRequest{
+		Lease: taskRequest.Lease,
+		Outcome: workerapi.ActorOutcome{
+			TerminalInputSequence: 0,
+			Failed:                &workerapi.TaskFailure{Message: " failed "},
+		},
+		Workspace: workerapi.TaskWorkspaceProof{
+			RolledBack: validTaskWorkspaceRollback(t, taskRequest.Workspace.Captured),
+		},
+	}
+	if _, err := parseActorCompletionRequest(request); err == nil {
+		t.Fatal("Actor completion with noncanonical failure message was accepted")
+	}
+}
+
 func TestDecideActorRunTerminal(t *testing.T) {
 	tests := []struct {
 		name       string

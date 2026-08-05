@@ -363,8 +363,9 @@ func parseTaskWorkspaceTree(label string, tree workerapi.WorkspaceTreeIdentity) 
 }
 
 func normalizeTaskFailure(label string, failure *workerapi.TaskFailure) (json.RawMessage, *workerapi.TaskFailure, error) {
-	if !utf8.ValidString(failure.Message) || len(failure.Message) > maxTaskCompletionMessageBytes {
-		return nil, nil, fmt.Errorf("%s.message must be valid UTF-8 no larger than %d bytes", label, maxTaskCompletionMessageBytes)
+	if failure.Message == "" || failure.Message != strings.TrimSpace(failure.Message) ||
+		!utf8.ValidString(failure.Message) || len(failure.Message) > maxTaskCompletionMessageBytes {
+		return nil, nil, fmt.Errorf("%s.message must be canonical nonempty valid UTF-8 no larger than %d bytes", label, maxTaskCompletionMessageBytes)
 	}
 	var details json.RawMessage
 	if len(failure.Details) != 0 {
@@ -376,10 +377,16 @@ func normalizeTaskFailure(label string, failure *workerapi.TaskFailure) (json.Ra
 			return nil, nil, fmt.Errorf("%s.details must be an unambiguous JSON value: %w", label, err)
 		}
 		details = canonical
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(details, &object); err != nil || object == nil {
+			return nil, nil, fmt.Errorf("%s.details must be a JSON object", label)
+		}
+	} else {
+		details = json.RawMessage("{}")
 	}
 	errorObject, err := json.Marshal(struct {
 		Message string          `json:"message"`
-		Details json.RawMessage `json:"details,omitempty"`
+		Details json.RawMessage `json:"details"`
 	}{Message: failure.Message, Details: details})
 	if err != nil {
 		return nil, nil, fmt.Errorf("encode %s: %w", label, err)

@@ -1455,7 +1455,7 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 	const (
 		workerGroupID  = "run-workers"
 		regionID       = "us-east-1"
-		protocol       = "helmr.worker.v0"
+		protocol       = "v0"
 		runtimeIDValue = "runtime-identity"
 	)
 	worker := workerActor{
@@ -1464,7 +1464,6 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 		WorkerEpoch:       7,
 		ClaimVersion:      3,
 		GroupClaimVersion: 1,
-		ProtocolVersion:   protocol,
 	}
 	locators := db.GetRunLeaseClaimLocatorsRow{
 		OrgID:             orgID,
@@ -1508,12 +1507,11 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 			BaseWorkspaceVersionID: versionID,
 		},
 		workerGroup: db.WorkerGroup{
-			ID:              workerGroupID,
-			RegionID:        regionID,
-			State:           db.WorkerGroupStateActive,
-			ClaimVersion:    1,
-			AllowsRun:       true,
-			ProtocolVersion: protocol,
+			ID:           workerGroupID,
+			RegionID:     regionID,
+			State:        db.WorkerGroupStateActive,
+			ClaimVersion: 1,
+			AllowsRun:    true,
 		},
 		worker: db.WorkerInstance{
 			ID:                           pgvalue.UUID(workerInstanceID),
@@ -1521,7 +1519,6 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 			State:                        db.WorkerInstanceStateActive,
 			ClaimVersion:                 3,
 			CurrentEpoch:                 pgtype.Int8{Int64: 7, Valid: true},
-			ProtocolVersion:              protocol,
 			SupportsRun:                  true,
 			RuntimeIdentityID:            pgtype.Text{String: runtimeIDValue, Valid: true},
 			PerVMCPUMillis:               1000,
@@ -1554,7 +1551,6 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 			WorkerEpoch:                      7,
 			RuntimeInstanceID:                runtimeID,
 			RuntimeIdentityID:                runtimeIDValue,
-			WorkerProtocolVersion:            protocol,
 			RequestedCPUMillis:               1000,
 			RequestedMemoryBytes:             2048,
 			RequestedGuestEphemeralDiskBytes: 4096,

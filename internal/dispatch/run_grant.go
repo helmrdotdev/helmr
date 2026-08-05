@@ -70,13 +70,12 @@ func (d *Authority) grantFreshRun(
 		return db.RunLease{}, ErrCapacityUnavailable
 	}
 	if err := lockWorkerFence(ctx, tx, workerFence{
-		GroupID:               runtime.groupID,
-		RegionID:              authority.regionID,
-		WorkerInstanceID:      runtime.workerID,
-		WorkerEpoch:           runtime.workerEpoch,
-		WorkerProtocolVersion: runtime.protocolVersion,
-		Role:                  "run",
-		RunArchitecture:       authority.architecture,
+		GroupID:          runtime.groupID,
+		RegionID:         authority.regionID,
+		WorkerInstanceID: runtime.workerID,
+		WorkerEpoch:      runtime.workerEpoch,
+		Role:             "run",
+		RunArchitecture:  authority.architecture,
 	}); err != nil {
 		return db.RunLease{}, ErrCapacityUnavailable
 	}
@@ -169,7 +168,6 @@ SELECT transaction_timestamp(),
 			WorkerEpoch:                      runtime.workerEpoch,
 			RuntimeInstanceID:                runtime.id,
 			RuntimeIdentityID:                runtime.runtimeIdentityID,
-			WorkerProtocolVersion:            runtime.protocolVersion,
 			RequestedCPUMillis:               authority.resources.cpuMillis,
 			RequestedMemoryBytes:             authority.resources.memoryBytes,
 			RequestedGuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes,

@@ -53,7 +53,7 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		RootfsDigest:           row.RootfsDigest,
 		ReservedCPUMillis:      int32(row.ReservedCPUMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
 		ReservedDiskMiB: row.ReservedGuestEphemeralDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
-		RuntimeABI: row.RuntimeABI,
+		VMRuntimeContract: row.VMRuntimeContract,
 	}
 	if action == workerapi.RuntimeReconcilePrepare {
 		if err := populateRuntimePrepareSource(r.Context(), s.db, s.platformStore, &source, row); err != nil {
@@ -112,7 +112,7 @@ func populateRuntimePrepareSource(
 	}
 	if !row.ProgramDeploymentAuthorityID.Valid ||
 		row.ProgramDeploymentAuthorityID != row.ProgramDeploymentID ||
-		!row.ProgramBuildContractVersion.Valid {
+		!row.ProgramBuildContract.Valid {
 		return errors.New("runtime reservation program authority is incomplete")
 	}
 	program, err := projectRuntimeProgram(
@@ -123,7 +123,7 @@ func populateRuntimePrepareSource(
 			row.ProgramArtifactDigest,
 			row.ProgramArtifactSizeBytes,
 			row.ProgramArtifactMediaType,
-			row.ProgramBuildContractVersion.String,
+			row.ProgramBuildContract.String,
 			row.ProgramIndexDigest,
 		),
 		row.WorkspaceArchitecture,

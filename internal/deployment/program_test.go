@@ -69,7 +69,7 @@ func TestProgramIndexRejectsInvalidAuthority(t *testing.T) {
 		{
 			name: "invalid runtime API",
 			change: func(index *ProgramIndex) {
-				index.RuntimeAPIVersion = "helmr.runtime.v1"
+				index.RuntimeContract = "helmr.runtime.v1"
 			},
 		},
 		{

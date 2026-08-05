@@ -25,6 +25,7 @@ export type {
   ClientSessionsApi,
   SessionCloseReceipt,
   SessionFailure,
+  SessionFailureCode,
   SessionInputRecord,
   SessionInputSource,
   SessionListQuery,
@@ -52,12 +53,14 @@ export type {
 
 export type {
   ClientDeploymentsApi,
+  DeploymentFailure,
   DeploymentSnapshot,
+  DeploymentStatus,
 } from "./client-deployment"
 
 export type {
   ClientSchedulesApi,
-  ScheduleError,
+  ScheduleFailure,
   ScheduleListQuery,
   ScheduleSnapshot,
 } from "./client-schedule"
@@ -151,7 +154,7 @@ export type {
   ReceiveOptions,
   RetryPolicy,
   RunCause,
-  RunError,
+  RunFailure,
   RunHandle,
   RunOptions,
   RunSnapshot,
@@ -168,7 +171,6 @@ export type {
   TaskHandlerPayload,
   TaskHasPayload,
   TaskOutput,
-  TaskPayloadError,
   TaskPayloadInput,
   TaskResult,
   TaskStartOptions,

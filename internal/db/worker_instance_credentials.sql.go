@@ -13,7 +13,7 @@ import (
 
 const authenticateWorkerInstanceCredential = `-- name: AuthenticateWorkerInstanceCredential :one
 WITH credential AS (
-    SELECT worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.protocol_version, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at,
+    SELECT worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at,
            worker_groups.claim_version AS group_claim_version,
            worker_groups.allows_run AS group_allows_run,
            worker_groups.allows_build AS group_allows_build,
@@ -28,126 +28,118 @@ WITH credential AS (
        AND worker_instance_credentials.revoked_at IS NULL
        AND (worker_instance_credentials.expires_at IS NULL OR worker_instance_credentials.expires_at > now())
        AND worker_instance_credentials.claim_version = worker_instances.claim_version
-       AND worker_instance_credentials.protocol_version = $5
-       AND worker_instance_credentials.protocol_version = worker_instances.protocol_version
-       AND worker_instance_credentials.protocol_version = worker_groups.protocol_version
        AND worker_instances.state IN ('registering','active','draining')
        AND worker_groups.state IN ('active','paused','draining')
      FOR UPDATE OF worker_instance_credentials, worker_instances, worker_groups
 ), advanced AS (
     UPDATE worker_instances
-       SET current_epoch = CASE WHEN worker_instances.current_service_id = $6
+       SET current_epoch = CASE WHEN worker_instances.current_service_id = $5
                                 THEN worker_instances.current_epoch
                                 ELSE COALESCE(worker_instances.current_epoch, 0) + 1 END,
-           current_service_id = $6,
-           epoch_started_at = CASE WHEN worker_instances.current_service_id = $6
+           current_service_id = $5,
+           epoch_started_at = CASE WHEN worker_instances.current_service_id = $5
                                    THEN worker_instances.epoch_started_at ELSE now() END,
            state = CASE
-               WHEN worker_instances.current_service_id = $6 THEN worker_instances.state
+               WHEN worker_instances.current_service_id = $5 THEN worker_instances.state
                WHEN worker_instances.state = 'active' THEN 'registering'
                ELSE worker_instances.state
            END,
            supervisor_version = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.supervisor_version
                ELSE ''
            END,
            supports_run = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.supports_run
                ELSE false
            END,
            supports_build = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.supports_build
                ELSE false
            END,
            runtime_identity_id = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.runtime_identity_id
                ELSE NULL
            END,
            substrate_format = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.substrate_format
                ELSE ''
            END,
-           substrate_builder_abi = CASE
-               WHEN worker_instances.current_service_id = $6
-               THEN worker_instances.substrate_builder_abi
-               ELSE ''
-           END,
-           substrate_layout_abi = CASE
-               WHEN worker_instances.current_service_id = $6
-               THEN worker_instances.substrate_layout_abi
+           substrate_contract = CASE
+               WHEN worker_instances.current_service_id = $5
+               THEN worker_instances.substrate_contract
                ELSE ''
            END,
            epoch_cpu_millis = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.epoch_cpu_millis ELSE 0
            END,
            epoch_memory_bytes = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.epoch_memory_bytes ELSE 0
            END,
            epoch_guest_ephemeral_disk_bytes = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.epoch_guest_ephemeral_disk_bytes ELSE 0
            END,
            epoch_build_cache_bytes = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.epoch_build_cache_bytes ELSE 0
            END,
            epoch_artifact_cache_bytes = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.epoch_artifact_cache_bytes ELSE 0
            END,
            epoch_hugepages_bytes = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.epoch_hugepages_bytes ELSE 0
            END,
            epoch_checkpoint_bytes = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.epoch_checkpoint_bytes ELSE 0
            END,
            per_vm_cpu_millis = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.per_vm_cpu_millis ELSE 0
            END,
            per_vm_memory_bytes = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.per_vm_memory_bytes ELSE 0
            END,
            per_vm_guest_ephemeral_disk_bytes = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.per_vm_guest_ephemeral_disk_bytes ELSE 0
            END,
            max_vm_slots = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.max_vm_slots ELSE 0
            END,
            max_run_consumers = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.max_run_consumers ELSE 0
            END,
            max_build_executors = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.max_build_executors ELSE 0
            END,
            max_runtime_starts = CASE
-               WHEN worker_instances.current_service_id = $6
+               WHEN worker_instances.current_service_id = $5
                THEN worker_instances.max_runtime_starts ELSE 0
            END,
-           activated_at = CASE WHEN worker_instances.current_service_id = $6
+           activated_at = CASE WHEN worker_instances.current_service_id = $5
                                THEN worker_instances.activated_at ELSE NULL END,
            updated_at = now()
       FROM credential
      WHERE worker_instances.id = credential.worker_instance_id
-    RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.epoch_build_cache_bytes, worker_instances.epoch_artifact_cache_bytes, worker_instances.epoch_hugepages_bytes, worker_instances.epoch_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
+    RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.epoch_build_cache_bytes, worker_instances.epoch_artifact_cache_bytes, worker_instances.epoch_hugepages_bytes, worker_instances.epoch_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
 )
 SELECT credential.id, credential.worker_group_id,
        credential.worker_instance_id, credential.key_prefix, credential.claim_version,
-       credential.protocol_version, credential.group_claim_version,
+       credential.group_claim_version,
        credential.allows_run AS credential_allows_run,
        credential.allows_build AS credential_allows_build,
        credential.group_allows_run, credential.group_allows_build,
@@ -162,7 +154,6 @@ type AuthenticateWorkerInstanceCredentialParams struct {
 	SupportsBuild    bool        `json:"supports_build"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	SecretHash       []byte      `json:"secret_hash"`
-	ProtocolVersion  string      `json:"protocol_version"`
 	ServiceID        pgtype.UUID `json:"service_id"`
 }
 
@@ -172,7 +163,6 @@ type AuthenticateWorkerInstanceCredentialRow struct {
 	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
 	KeyPrefix             string      `json:"key_prefix"`
 	ClaimVersion          int64       `json:"claim_version"`
-	ProtocolVersion       string      `json:"protocol_version"`
 	GroupClaimVersion     int64       `json:"group_claim_version"`
 	CredentialAllowsRun   bool        `json:"credential_allows_run"`
 	CredentialAllowsBuild bool        `json:"credential_allows_build"`
@@ -192,7 +182,6 @@ func (q *Queries) AuthenticateWorkerInstanceCredential(ctx context.Context, arg 
 		arg.SupportsBuild,
 		arg.WorkerInstanceID,
 		arg.SecretHash,
-		arg.ProtocolVersion,
 		arg.ServiceID,
 	)
 	var i AuthenticateWorkerInstanceCredentialRow
@@ -202,7 +191,6 @@ func (q *Queries) AuthenticateWorkerInstanceCredential(ctx context.Context, arg 
 		&i.WorkerInstanceID,
 		&i.KeyPrefix,
 		&i.ClaimVersion,
-		&i.ProtocolVersion,
 		&i.GroupClaimVersion,
 		&i.CredentialAllowsRun,
 		&i.CredentialAllowsBuild,
@@ -230,10 +218,7 @@ UPDATE worker_instance_credentials
    AND worker_instance_credentials.claim_version = $2
    AND worker_instance_credentials.claim_version = worker_instances.claim_version
    AND worker_groups.claim_version = $3
-   AND worker_instance_credentials.protocol_version = $4
-   AND worker_instance_credentials.protocol_version = worker_instances.protocol_version
-   AND worker_instance_credentials.protocol_version = worker_groups.protocol_version
-   AND worker_instances.current_epoch = $5
+   AND worker_instances.current_epoch = $4
    AND (
        worker_instances.state = 'registering'
        OR (
@@ -243,7 +228,7 @@ UPDATE worker_instance_credentials
        )
    )
    AND worker_groups.state IN ('active','paused','draining')
-RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.protocol_version, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
+RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
           worker_instances.current_epoch, worker_instances.state AS worker_state,
           worker_instances.supports_run, worker_instances.supports_build,
           worker_instances.epoch_started_at
@@ -253,7 +238,6 @@ type AuthorizeRecoveringWorkerInstanceCredentialParams struct {
 	CredentialID      pgtype.UUID `json:"credential_id"`
 	ClaimVersion      int64       `json:"claim_version"`
 	GroupClaimVersion int64       `json:"group_claim_version"`
-	ProtocolVersion   string      `json:"protocol_version"`
 	WorkerEpoch       pgtype.Int8 `json:"worker_epoch"`
 }
 
@@ -265,7 +249,6 @@ type AuthorizeRecoveringWorkerInstanceCredentialRow struct {
 	ClaimVersion     int64              `json:"claim_version"`
 	AllowsRun        bool               `json:"allows_run"`
 	AllowsBuild      bool               `json:"allows_build"`
-	ProtocolVersion  string             `json:"protocol_version"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 	SecretHash       []byte             `json:"secret_hash"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
@@ -284,7 +267,6 @@ func (q *Queries) AuthorizeRecoveringWorkerInstanceCredential(ctx context.Contex
 		arg.CredentialID,
 		arg.ClaimVersion,
 		arg.GroupClaimVersion,
-		arg.ProtocolVersion,
 		arg.WorkerEpoch,
 	)
 	var i AuthorizeRecoveringWorkerInstanceCredentialRow
@@ -296,7 +278,6 @@ func (q *Queries) AuthorizeRecoveringWorkerInstanceCredential(ctx context.Contex
 		&i.ClaimVersion,
 		&i.AllowsRun,
 		&i.AllowsBuild,
-		&i.ProtocolVersion,
 		&i.ExpiresAt,
 		&i.SecretHash,
 		&i.CreatedAt,
@@ -324,10 +305,7 @@ UPDATE worker_instance_credentials
    AND worker_instance_credentials.claim_version = $2
    AND worker_instance_credentials.claim_version = worker_instances.claim_version
    AND worker_groups.claim_version = $3
-   AND worker_instance_credentials.protocol_version = $4
-   AND worker_instance_credentials.protocol_version = worker_instances.protocol_version
-   AND worker_instance_credentials.protocol_version = worker_groups.protocol_version
-   AND worker_instances.current_epoch = $5
+   AND worker_instances.current_epoch = $4
    AND (
        worker_instances.state = 'registering'
        OR (
@@ -346,7 +324,7 @@ UPDATE worker_instance_credentials
        )
    )
    AND worker_groups.state IN ('active','paused','draining')
-RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.protocol_version, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
+RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
           worker_instances.current_epoch, worker_instances.state AS worker_state,
           worker_instances.supports_run, worker_instances.supports_build,
           worker_instances.epoch_started_at
@@ -356,7 +334,6 @@ type AuthorizeRegisteringWorkerInstanceCredentialParams struct {
 	CredentialID      pgtype.UUID `json:"credential_id"`
 	ClaimVersion      int64       `json:"claim_version"`
 	GroupClaimVersion int64       `json:"group_claim_version"`
-	ProtocolVersion   string      `json:"protocol_version"`
 	WorkerEpoch       pgtype.Int8 `json:"worker_epoch"`
 }
 
@@ -368,7 +345,6 @@ type AuthorizeRegisteringWorkerInstanceCredentialRow struct {
 	ClaimVersion     int64              `json:"claim_version"`
 	AllowsRun        bool               `json:"allows_run"`
 	AllowsBuild      bool               `json:"allows_build"`
-	ProtocolVersion  string             `json:"protocol_version"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 	SecretHash       []byte             `json:"secret_hash"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
@@ -387,7 +363,6 @@ func (q *Queries) AuthorizeRegisteringWorkerInstanceCredential(ctx context.Conte
 		arg.CredentialID,
 		arg.ClaimVersion,
 		arg.GroupClaimVersion,
-		arg.ProtocolVersion,
 		arg.WorkerEpoch,
 	)
 	var i AuthorizeRegisteringWorkerInstanceCredentialRow
@@ -399,7 +374,6 @@ func (q *Queries) AuthorizeRegisteringWorkerInstanceCredential(ctx context.Conte
 		&i.ClaimVersion,
 		&i.AllowsRun,
 		&i.AllowsBuild,
-		&i.ProtocolVersion,
 		&i.ExpiresAt,
 		&i.SecretHash,
 		&i.CreatedAt,
@@ -416,7 +390,7 @@ func (q *Queries) AuthorizeRegisteringWorkerInstanceCredential(ctx context.Conte
 }
 
 const authorizeWorkerDrainReplay = `-- name: AuthorizeWorkerDrainReplay :one
-SELECT worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.protocol_version, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
+SELECT worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
        worker_instances.current_epoch, worker_instances.state AS worker_state,
        worker_instances.supports_run, worker_instances.supports_build,
        worker_instances.epoch_started_at
@@ -428,18 +402,15 @@ SELECT worker_instance_credentials.id, worker_instance_credentials.worker_group_
  WHERE worker_instance_credentials.id = $1
    AND worker_instance_credentials.claim_version = $2
    AND worker_instance_credentials.revoked_at IS NOT NULL
-   AND worker_instance_credentials.protocol_version = $3
-   AND worker_instances.protocol_version = worker_instance_credentials.protocol_version
-   AND worker_instances.current_epoch = $4
+   AND worker_instances.current_epoch = $3
    AND worker_instances.state = 'termination_ready'
    AND worker_instances.claim_version = worker_instance_credentials.claim_version + 1
 `
 
 type AuthorizeWorkerDrainReplayParams struct {
-	CredentialID    pgtype.UUID `json:"credential_id"`
-	ClaimVersion    int64       `json:"claim_version"`
-	ProtocolVersion string      `json:"protocol_version"`
-	WorkerEpoch     pgtype.Int8 `json:"worker_epoch"`
+	CredentialID pgtype.UUID `json:"credential_id"`
+	ClaimVersion int64       `json:"claim_version"`
+	WorkerEpoch  pgtype.Int8 `json:"worker_epoch"`
 }
 
 type AuthorizeWorkerDrainReplayRow struct {
@@ -450,7 +421,6 @@ type AuthorizeWorkerDrainReplayRow struct {
 	ClaimVersion     int64              `json:"claim_version"`
 	AllowsRun        bool               `json:"allows_run"`
 	AllowsBuild      bool               `json:"allows_build"`
-	ProtocolVersion  string             `json:"protocol_version"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 	SecretHash       []byte             `json:"secret_hash"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
@@ -465,12 +435,7 @@ type AuthorizeWorkerDrainReplayRow struct {
 }
 
 func (q *Queries) AuthorizeWorkerDrainReplay(ctx context.Context, arg AuthorizeWorkerDrainReplayParams) (AuthorizeWorkerDrainReplayRow, error) {
-	row := q.db.QueryRow(ctx, authorizeWorkerDrainReplay,
-		arg.CredentialID,
-		arg.ClaimVersion,
-		arg.ProtocolVersion,
-		arg.WorkerEpoch,
-	)
+	row := q.db.QueryRow(ctx, authorizeWorkerDrainReplay, arg.CredentialID, arg.ClaimVersion, arg.WorkerEpoch)
 	var i AuthorizeWorkerDrainReplayRow
 	err := row.Scan(
 		&i.ID,
@@ -480,7 +445,6 @@ func (q *Queries) AuthorizeWorkerDrainReplay(ctx context.Context, arg AuthorizeW
 		&i.ClaimVersion,
 		&i.AllowsRun,
 		&i.AllowsBuild,
-		&i.ProtocolVersion,
 		&i.ExpiresAt,
 		&i.SecretHash,
 		&i.CreatedAt,
@@ -497,7 +461,7 @@ func (q *Queries) AuthorizeWorkerDrainReplay(ctx context.Context, arg AuthorizeW
 }
 
 const authorizeWorkerFenceReplay = `-- name: AuthorizeWorkerFenceReplay :one
-SELECT worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.protocol_version, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
+SELECT worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
        worker_instances.current_epoch, worker_instances.state AS worker_state,
        worker_instances.supports_run, worker_instances.supports_build,
        worker_instances.epoch_started_at
@@ -508,18 +472,15 @@ SELECT worker_instance_credentials.id, worker_instance_credentials.worker_group_
  WHERE worker_instance_credentials.id = $1
    AND worker_instance_credentials.claim_version = $2
    AND worker_instance_credentials.revoked_at IS NOT NULL
-   AND worker_instance_credentials.protocol_version = $3
-   AND worker_instances.protocol_version = worker_instance_credentials.protocol_version
-   AND worker_instances.current_epoch = $4
+   AND worker_instances.current_epoch = $3
    AND worker_instances.state = 'lost'
    AND worker_instances.claim_version = worker_instance_credentials.claim_version + 1
 `
 
 type AuthorizeWorkerFenceReplayParams struct {
-	CredentialID    pgtype.UUID `json:"credential_id"`
-	ClaimVersion    int64       `json:"claim_version"`
-	ProtocolVersion string      `json:"protocol_version"`
-	WorkerEpoch     pgtype.Int8 `json:"worker_epoch"`
+	CredentialID pgtype.UUID `json:"credential_id"`
+	ClaimVersion int64       `json:"claim_version"`
+	WorkerEpoch  pgtype.Int8 `json:"worker_epoch"`
 }
 
 type AuthorizeWorkerFenceReplayRow struct {
@@ -530,7 +491,6 @@ type AuthorizeWorkerFenceReplayRow struct {
 	ClaimVersion     int64              `json:"claim_version"`
 	AllowsRun        bool               `json:"allows_run"`
 	AllowsBuild      bool               `json:"allows_build"`
-	ProtocolVersion  string             `json:"protocol_version"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 	SecretHash       []byte             `json:"secret_hash"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
@@ -545,12 +505,7 @@ type AuthorizeWorkerFenceReplayRow struct {
 }
 
 func (q *Queries) AuthorizeWorkerFenceReplay(ctx context.Context, arg AuthorizeWorkerFenceReplayParams) (AuthorizeWorkerFenceReplayRow, error) {
-	row := q.db.QueryRow(ctx, authorizeWorkerFenceReplay,
-		arg.CredentialID,
-		arg.ClaimVersion,
-		arg.ProtocolVersion,
-		arg.WorkerEpoch,
-	)
+	row := q.db.QueryRow(ctx, authorizeWorkerFenceReplay, arg.CredentialID, arg.ClaimVersion, arg.WorkerEpoch)
 	var i AuthorizeWorkerFenceReplayRow
 	err := row.Scan(
 		&i.ID,
@@ -560,7 +515,6 @@ func (q *Queries) AuthorizeWorkerFenceReplay(ctx context.Context, arg AuthorizeW
 		&i.ClaimVersion,
 		&i.AllowsRun,
 		&i.AllowsBuild,
-		&i.ProtocolVersion,
 		&i.ExpiresAt,
 		&i.SecretHash,
 		&i.CreatedAt,
@@ -588,14 +542,11 @@ UPDATE worker_instance_credentials
    AND worker_instance_credentials.claim_version = $2
    AND worker_instance_credentials.claim_version = worker_instances.claim_version
    AND worker_groups.claim_version = $3
-   AND worker_instance_credentials.protocol_version = $4
-   AND worker_instance_credentials.protocol_version = worker_instances.protocol_version
-   AND worker_instance_credentials.protocol_version = worker_groups.protocol_version
-   AND worker_instances.current_epoch = $5
+   AND worker_instances.current_epoch = $4
    AND worker_instances.state IN ('active','draining')
    AND (worker_instances.supports_run OR worker_instances.supports_build)
    AND worker_groups.state IN ('active','paused','draining')
-RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.protocol_version, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
+RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
           worker_instances.current_epoch, worker_instances.state AS worker_state,
           worker_instances.supports_run, worker_instances.supports_build,
           worker_instances.epoch_started_at
@@ -605,7 +556,6 @@ type AuthorizeWorkerInstanceCredentialParams struct {
 	CredentialID      pgtype.UUID `json:"credential_id"`
 	ClaimVersion      int64       `json:"claim_version"`
 	GroupClaimVersion int64       `json:"group_claim_version"`
-	ProtocolVersion   string      `json:"protocol_version"`
 	WorkerEpoch       pgtype.Int8 `json:"worker_epoch"`
 }
 
@@ -617,7 +567,6 @@ type AuthorizeWorkerInstanceCredentialRow struct {
 	ClaimVersion     int64              `json:"claim_version"`
 	AllowsRun        bool               `json:"allows_run"`
 	AllowsBuild      bool               `json:"allows_build"`
-	ProtocolVersion  string             `json:"protocol_version"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 	SecretHash       []byte             `json:"secret_hash"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
@@ -636,7 +585,6 @@ func (q *Queries) AuthorizeWorkerInstanceCredential(ctx context.Context, arg Aut
 		arg.CredentialID,
 		arg.ClaimVersion,
 		arg.GroupClaimVersion,
-		arg.ProtocolVersion,
 		arg.WorkerEpoch,
 	)
 	var i AuthorizeWorkerInstanceCredentialRow
@@ -648,7 +596,6 @@ func (q *Queries) AuthorizeWorkerInstanceCredential(ctx context.Context, arg Aut
 		&i.ClaimVersion,
 		&i.AllowsRun,
 		&i.AllowsBuild,
-		&i.ProtocolVersion,
 		&i.ExpiresAt,
 		&i.SecretHash,
 		&i.CreatedAt,
@@ -709,7 +656,7 @@ func (q *Queries) CreateWorkerEnrollmentNonce(ctx context.Context, arg CreateWor
 const enrollWorkerInstance = `-- name: EnrollWorkerInstance :one
 WITH nonce AS (
     SELECT worker_enrollment_nonces.id, worker_enrollment_nonces.nonce_hash, worker_enrollment_nonces.worker_group_id, worker_enrollment_nonces.expires_at, worker_enrollment_nonces.consumed_at, worker_enrollment_nonces.consumed_by_worker_instance_id, worker_enrollment_nonces.created_at, worker_groups.allows_run,
-           worker_groups.allows_build, worker_groups.protocol_version
+           worker_groups.allows_build
       FROM worker_enrollment_nonces
       JOIN worker_groups ON worker_groups.id = worker_enrollment_nonces.worker_group_id
      WHERE worker_enrollment_nonces.nonce_hash = $1
@@ -719,26 +666,24 @@ WITH nonce AS (
        AND worker_groups.state IN ('active','paused')
        AND (NOT $3::boolean OR worker_groups.allows_run)
        AND (NOT $4::boolean OR worker_groups.allows_build)
-       AND worker_groups.protocol_version = $5
      FOR UPDATE OF worker_enrollment_nonces, worker_groups
 ), worker AS (
     INSERT INTO worker_instances (
         id, worker_group_id, resource_id, state, claim_version,
-        protocol_version, supports_run, supports_build
+        supports_run, supports_build
     )
-    SELECT $6, nonce.worker_group_id,
-           $7, 'registering', 1, nonce.protocol_version,
-           false, false
+    SELECT $5, nonce.worker_group_id,
+           $6, 'registering', 1, false, false
       FROM nonce
     ON CONFLICT (worker_group_id, resource_id)
         WHERE state IN ('registering', 'active', 'draining')
     DO UPDATE
        SET claim_version = worker_instances.claim_version + 1,
-           state = 'registering', protocol_version = EXCLUDED.protocol_version,
+           state = 'registering',
            supervisor_version = '',
            supports_run = false, supports_build = false,
            runtime_identity_id = NULL,
-           substrate_format = '', substrate_builder_abi = '', substrate_layout_abi = '',
+           substrate_format = '', substrate_contract = '',
            epoch_cpu_millis = 0, epoch_memory_bytes = 0,
            epoch_guest_ephemeral_disk_bytes = 0,
            epoch_build_cache_bytes = 0, epoch_artifact_cache_bytes = 0,
@@ -749,12 +694,12 @@ WITH nonce AS (
            max_build_executors = 0, max_runtime_starts = 0,
            current_service_id = CASE
                WHEN worker_instances.current_epoch IS NULL THEN NULL
-               ELSE $8::uuid
+               ELSE $7::uuid
            END,
            epoch_started_at = CASE WHEN worker_instances.current_epoch IS NULL THEN NULL ELSE now() END,
            activated_at = NULL, draining_at = NULL, updated_at = now()
      WHERE worker_instances.state = 'registering'
-    RETURNING id, resource_id, worker_group_id, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, epoch_build_cache_bytes, epoch_artifact_cache_bytes, epoch_hugepages_bytes, epoch_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
+    RETURNING id, resource_id, worker_group_id, state, claim_version, current_epoch, current_service_id, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_contract, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, epoch_build_cache_bytes, epoch_artifact_cache_bytes, epoch_hugepages_bytes, epoch_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
 ), revoked AS (
     UPDATE worker_instance_credentials SET revoked_at = now()
       FROM worker WHERE worker_instance_credentials.worker_instance_id = worker.id
@@ -763,14 +708,13 @@ WITH nonce AS (
 ), credential AS (
     INSERT INTO worker_instance_credentials (
         id, worker_group_id, worker_instance_id, key_prefix, secret_hash,
-        claim_version, allows_run, allows_build, protocol_version, expires_at
+        claim_version, allows_run, allows_build, expires_at
     )
-    SELECT $9, worker.worker_group_id, worker.id,
-           $10, $11, worker.claim_version,
-           $3, $4, worker.protocol_version,
-           $12
+    SELECT $8, worker.worker_group_id, worker.id,
+           $9, $10, worker.claim_version,
+           $3, $4, $11
       FROM worker WHERE (SELECT count(*) FROM revoked) >= 0
-    RETURNING id, worker_group_id, worker_instance_id, key_prefix, claim_version, allows_run, allows_build, protocol_version, expires_at, secret_hash, created_at, last_used_at, revoked_at
+    RETURNING id, worker_group_id, worker_instance_id, key_prefix, claim_version, allows_run, allows_build, expires_at, secret_hash, created_at, last_used_at, revoked_at
 ), consumed AS (
     UPDATE worker_enrollment_nonces
        SET consumed_at = now(), consumed_by_worker_instance_id = credential.worker_instance_id
@@ -778,7 +722,7 @@ WITH nonce AS (
      WHERE worker_enrollment_nonces.id = (SELECT id FROM nonce)
     RETURNING worker_enrollment_nonces.id
 )
-SELECT credential.id, credential.worker_group_id, credential.worker_instance_id, credential.key_prefix, credential.claim_version, credential.allows_run, credential.allows_build, credential.protocol_version, credential.expires_at, credential.secret_hash, credential.created_at, credential.last_used_at, credential.revoked_at FROM credential JOIN consumed ON true
+SELECT credential.id, credential.worker_group_id, credential.worker_instance_id, credential.key_prefix, credential.claim_version, credential.allows_run, credential.allows_build, credential.expires_at, credential.secret_hash, credential.created_at, credential.last_used_at, credential.revoked_at FROM credential JOIN consumed ON true
 `
 
 type EnrollWorkerInstanceParams struct {
@@ -786,7 +730,6 @@ type EnrollWorkerInstanceParams struct {
 	WorkerGroupID       string             `json:"worker_group_id"`
 	AllowsRun           bool               `json:"allows_run"`
 	AllowsBuild         bool               `json:"allows_build"`
-	ProtocolVersion     string             `json:"protocol_version"`
 	WorkerInstanceID    pgtype.UUID        `json:"worker_instance_id"`
 	ResourceID          string             `json:"resource_id"`
 	CurrentServiceID    pgtype.UUID        `json:"current_service_id"`
@@ -804,7 +747,6 @@ type EnrollWorkerInstanceRow struct {
 	ClaimVersion     int64              `json:"claim_version"`
 	AllowsRun        bool               `json:"allows_run"`
 	AllowsBuild      bool               `json:"allows_build"`
-	ProtocolVersion  string             `json:"protocol_version"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 	SecretHash       []byte             `json:"secret_hash"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
@@ -818,7 +760,6 @@ func (q *Queries) EnrollWorkerInstance(ctx context.Context, arg EnrollWorkerInst
 		arg.WorkerGroupID,
 		arg.AllowsRun,
 		arg.AllowsBuild,
-		arg.ProtocolVersion,
 		arg.WorkerInstanceID,
 		arg.ResourceID,
 		arg.CurrentServiceID,
@@ -836,7 +777,6 @@ func (q *Queries) EnrollWorkerInstance(ctx context.Context, arg EnrollWorkerInst
 		&i.ClaimVersion,
 		&i.AllowsRun,
 		&i.AllowsBuild,
-		&i.ProtocolVersion,
 		&i.ExpiresAt,
 		&i.SecretHash,
 		&i.CreatedAt,

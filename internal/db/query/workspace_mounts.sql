@@ -166,7 +166,7 @@ WITH candidate AS (
 SELECT claimed.*, runtime_instances.runtime_identity_id AS runtime_id,
        runtime_instances.deployment_definition_id,
        runtime_identities.rootfs_digest,
-       runtime_identities.runtime_abi,
+       runtime_identities.vm_runtime_contract,
        runtime_instances.reserved_cpu_millis,
        runtime_instances.reserved_memory_bytes,
        runtime_instances.reserved_guest_ephemeral_disk_bytes,

@@ -29,7 +29,7 @@ func projectDeploymentProgram(
 			row.ProgramArtifactDigest,
 			row.ProgramArtifactSizeBytes,
 			row.ProgramArtifactMediaType,
-			row.BuildContractVersion,
+			row.BuildContract,
 			row.ProgramIndexDigest,
 		),
 		"",
@@ -38,13 +38,13 @@ func projectDeploymentProgram(
 }
 
 type runtimeProgramAuthority struct {
-	deploymentID         pgtype.UUID
-	runtimeDigest        []byte
-	artifactDigest       string
-	artifactSizeBytes    int64
-	artifactMediaType    string
-	buildContractVersion string
-	indexDigest          []byte
+	deploymentID      pgtype.UUID
+	runtimeDigest     []byte
+	artifactDigest    string
+	artifactSizeBytes int64
+	artifactMediaType string
+	buildContract     string
+	indexDigest       []byte
 }
 
 func projectRuntimeProgram(
@@ -85,7 +85,7 @@ func projectRuntimeProgram(
 	if err != nil {
 		return workerapi.RuntimeProgram{}, err
 	}
-	if strings.TrimSpace(authority.buildContractVersion) == "" {
+	if strings.TrimSpace(authority.buildContract) == "" {
 		return workerapi.RuntimeProgram{}, errors.New("program build contract version is required")
 	}
 	indexDigest, err := deployment.RuntimeDigestString(authority.indexDigest)
@@ -102,9 +102,9 @@ func projectRuntimeProgram(
 			SizeBytes: runtimeObject.SizeBytes,
 			MediaType: runtimeObject.MediaType,
 		},
-		Artifact:             artifact,
-		BuildContractVersion: authority.buildContractVersion,
-		IndexDigest:          indexDigest,
+		Artifact:      artifact,
+		BuildContract: authority.buildContract,
+		IndexDigest:   indexDigest,
 	}, nil
 }
 
@@ -129,16 +129,16 @@ func runtimeProgramAuthorityFromDeployment(
 	artifactDigest string,
 	artifactSizeBytes int64,
 	artifactMediaType string,
-	buildContractVersion string,
+	buildContract string,
 	indexDigest []byte,
 ) runtimeProgramAuthority {
 	return runtimeProgramAuthority{
-		deploymentID:         deploymentID,
-		runtimeDigest:        runtimeDigest,
-		artifactDigest:       artifactDigest,
-		artifactSizeBytes:    artifactSizeBytes,
-		artifactMediaType:    artifactMediaType,
-		buildContractVersion: buildContractVersion,
-		indexDigest:          indexDigest,
+		deploymentID:      deploymentID,
+		runtimeDigest:     runtimeDigest,
+		artifactDigest:    artifactDigest,
+		artifactSizeBytes: artifactSizeBytes,
+		artifactMediaType: artifactMediaType,
+		buildContract:     buildContract,
+		indexDigest:       indexDigest,
 	}
 }

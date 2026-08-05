@@ -116,16 +116,14 @@ SELECT run_leases.environment_id,
    AND run_leases.worker_group_id = $3
    AND run_leases.worker_instance_id = $4
    AND run_leases.worker_epoch = $5
-   AND run_leases.worker_protocol_version = $6
 `
 
 type GetRunMetadataClaimScopeParams struct {
-	RunLeaseID            pgtype.UUID `json:"run_lease_id"`
-	LeaseSequence         int64       `json:"lease_sequence"`
-	WorkerGroupID         string      `json:"worker_group_id"`
-	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch           int64       `json:"worker_epoch"`
-	WorkerProtocolVersion string      `json:"worker_protocol_version"`
+	RunLeaseID       pgtype.UUID `json:"run_lease_id"`
+	LeaseSequence    int64       `json:"lease_sequence"`
+	WorkerGroupID    string      `json:"worker_group_id"`
+	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch      int64       `json:"worker_epoch"`
 }
 
 type GetRunMetadataClaimScopeRow struct {
@@ -141,7 +139,6 @@ func (q *Queries) GetRunMetadataClaimScope(ctx context.Context, arg GetRunMetada
 		arg.WorkerGroupID,
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
-		arg.WorkerProtocolVersion,
 	)
 	var i GetRunMetadataClaimScopeRow
 	err := row.Scan(&i.EnvironmentID, &i.RunID, &i.AttemptNumber)

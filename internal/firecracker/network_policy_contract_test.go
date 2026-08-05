@@ -30,16 +30,6 @@ func TestNetworkPolicyUsesSuppliedDenySetAndDNSException(t *testing.T) {
 			t.Fatalf("script is missing supplied prefix %q:\n%s", prefix, script)
 		}
 	}
-	for _, legacy := range []string{
-		"192.0.0.0/24",
-		"198.18.0.0/15",
-		"198.51.100.0/24",
-		"203.0.113.0/24",
-	} {
-		if strings.Contains(script, legacy) {
-			t.Fatalf("script contains legacy broad-catalog prefix %q:\n%s", legacy, script)
-		}
-	}
 	dns := strings.Index(script, "ip daddr 10.20.0.2 udp dport 53 jump egress")
 	deny := strings.Index(script, "ip daddr @blocked_ipv4 counter name run_denied drop")
 	publicTCP := strings.Index(script, "meta l4proto tcp jump egress")

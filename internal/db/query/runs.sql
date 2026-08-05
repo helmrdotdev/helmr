@@ -731,8 +731,7 @@ UPDATE run_attempts
 -- name: ExpireQueuedRun :execrows
 UPDATE runs
    SET status = 'expired',
-       terminal_reason_code = 'queued_ttl_expired',
-       error = sqlc.arg(error_payload)::jsonb,
+       failure = sqlc.arg(failure)::jsonb,
        state_version = state_version + 1,
        retry_at = NULL,
        terminal_at = transaction_timestamp(),

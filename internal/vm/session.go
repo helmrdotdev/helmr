@@ -102,12 +102,11 @@ type RuntimeTopology struct {
 }
 
 type RuntimeSubstrate struct {
-	Path       string
-	Digest     string
-	Format     string
-	BuilderABI string
-	LayoutABI  string
-	SizeBytes  int64
+	Path      string
+	Digest    string
+	Format    string
+	Contract  string
+	SizeBytes int64
 }
 
 type SnapshotRequest struct {
@@ -117,7 +116,7 @@ type SnapshotRequest struct {
 type SnapshotArtifact struct {
 	RuntimeBackend      string
 	RuntimeArch         string
-	RuntimeABI          string
+	VMRuntimeContract   string
 	RuntimeID           string
 	KernelDigest        string
 	InitramfsDigest     string
@@ -290,7 +289,7 @@ func (e *GuestError) Unwrap() error {
 type CheckpointIdentity struct {
 	RuntimeBackend      string
 	RuntimeArch         string
-	RuntimeABI          string
+	VMRuntimeContract   string
 	RuntimeID           string
 	KernelDigest        string
 	InitramfsDigest     string

@@ -29,7 +29,6 @@ export type Run = {
   workspace_id: string;
   session_id?: string;
   parent_run_id?: string;
-  parent_owns_lifecycle?: boolean;
   current_attempt_number: number;
   cause: {
     type: string;
@@ -42,12 +41,10 @@ export type Run = {
   metadata: unknown;
   tags: string[];
   output?: unknown;
-  terminal_reason_code?: string;
-  error?: {
+  failure?: {
     code: string;
     message: string;
-    retryable: boolean;
-    details?: unknown;
+    details: Record<string, unknown>;
   };
   created_at: string;
   started_at?: string;

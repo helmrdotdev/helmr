@@ -22,8 +22,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 		ID: "00000000-0000-0000-0000-000000000001", RunID: "00000000-0000-0000-0000-000000000002",
 		WorkerGroupID: "run-us-east-1", WorkerInstanceID: "00000000-0000-0000-0000-000000000401",
 		WorkerEpoch: 1, LeaseSequence: 1, RuntimeInstanceID: "00000000-0000-0000-0000-000000000501",
-		AttemptNumber: 1, ProtocolVersion: workerapi.CurrentProtocolVersion,
-		ExpiresAt: time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
+		AttemptNumber: 1, ExpiresAt: time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
 	}
 	paths := []string{}
 	workerToken := "worker-token"
@@ -38,7 +37,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.WorkerInstanceID != "00000000-0000-0000-0000-000000000401" || request.WorkerInstanceSecret != "worker-secret" || request.ServiceID != "00000000-0000-0000-0000-000000000901" || request.ProtocolVersion != workerapi.CurrentProtocolVersion || !request.SupportsRun || request.SupportsBuild {
+			if request.WorkerInstanceID != "00000000-0000-0000-0000-000000000401" || request.WorkerInstanceSecret != "worker-secret" || request.ServiceID != "00000000-0000-0000-0000-000000000901" || !request.SupportsRun || request.SupportsBuild {
 				t.Fatalf("worker token request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{
@@ -111,7 +110,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"), WithService("00000000-0000-0000-0000-000000000901", workerapi.CurrentProtocolVersion, true, false))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"), WithService("00000000-0000-0000-0000-000000000901", true, false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,9 +288,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 			"worker-secret",
 		),
 		WithService(
-			"00000000-0000-0000-0000-000000000901",
-			workerapi.CurrentProtocolVersion,
-			true,
+			"00000000-0000-0000-0000-000000000901", true,
 			false,
 		),
 	)
@@ -417,7 +414,7 @@ func TestCompleteWorkerDrainRetriesTheIdenticalProofAfterAmbiguousResponse(t *te
 		}
 	}))
 	defer server.Close()
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service", workerapi.CurrentProtocolVersion, true, false))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service", true, false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +455,7 @@ func TestFenceWorkerRetriesTheIdenticalRequestAfterAmbiguousResponse(t *testing.
 		}
 	}))
 	defer server.Close()
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service", workerapi.CurrentProtocolVersion, true, false))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service", true, false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,7 +507,7 @@ func TestWorkerClientRefreshesTokenAndReplaysBufferedRequestAfterUnauthorized(t 
 
 	client, err := New(server.URL, WithHTTPClient(server.Client()),
 		WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"),
-		WithService("00000000-0000-0000-0000-000000000901", workerapi.CurrentProtocolVersion, true, false))
+		WithService("00000000-0000-0000-0000-000000000901", true, false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -533,8 +530,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 		ID: "00000000-0000-0000-0000-000000000001", RunID: "00000000-0000-0000-0000-000000000002",
 		WorkerGroupID: "run-us-east-1", WorkerInstanceID: "00000000-0000-0000-0000-000000000401",
 		WorkerEpoch: 1, LeaseSequence: 1, RuntimeInstanceID: "00000000-0000-0000-0000-000000000501",
-		AttemptNumber: 1, WorkerProtocolVersion: workerapi.CurrentProtocolVersion,
-		WorkspaceID:            "00000000-0000-0000-0000-000000000701",
+		AttemptNumber: 1, WorkspaceID: "00000000-0000-0000-0000-000000000701",
 		WorkspaceMountID:       "00000000-0000-0000-0000-000000000702",
 		WorkspaceLeaseID:       "00000000-0000-0000-0000-000000000703",
 		BaseWorkspaceVersionID: "00000000-0000-0000-0000-000000000704",
@@ -617,7 +613,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"), WithService("00000000-0000-0000-0000-000000000901", workerapi.CurrentProtocolVersion, true, false))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"), WithService("00000000-0000-0000-0000-000000000901", true, false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -714,7 +710,7 @@ func TestAcknowledgeRunResumeRelease(t *testing.T) {
 		server.URL,
 		WithHTTPClient(server.Client()),
 		WithAuth("worker-1", "worker-secret"),
-		WithService("service-1", workerapi.CurrentProtocolVersion, true, false),
+		WithService("service-1", true, false),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -744,7 +740,7 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 			Backend:         "firecracker",
 			ID:              "sha256:runtime",
 			Arch:            "arm64",
-			ABI:             "helmr.firecracker.snapshot.v0",
+			Contract:        "helmr.vm-runtime.v0",
 			KernelDigest:    kernelDigest,
 			InitramfsDigest: "sha256:initramfs",
 			RootfsDigest:    rootfsDigest,
@@ -765,14 +761,12 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 
 func workerClientCapabilities() workerapi.Capabilities {
 	return workerapi.Capabilities{
-		ProtocolVersion:           workerapi.CurrentProtocolVersion,
 		RuntimeID:                 "sha256:runtime",
 		RuntimeArch:               "arm64",
-		RuntimeABI:                "helmr.firecracker.snapshot.v0",
+		VMRuntimeContract:         "helmr.vm-runtime.v0",
 		KernelDigest:              "sha256:kernel",
 		InitramfsDigest:           "sha256:initramfs",
 		RootfsDigest:              "sha256:rootfs",
-		NetworkABI:                "helmr/v0",
 		MaxVCPUs:                  2,
 		MaxMemoryMiB:              2048,
 		VMMilliCPU:                2000,

@@ -142,7 +142,6 @@ func (s *Server) appendRunLog(
 	input.WorkerGroupID = worker.WorkerGroupID
 	input.WorkerInstanceID = pgvalue.UUID(worker.WorkerInstanceID)
 	input.WorkerEpoch = worker.WorkerEpoch
-	input.WorkerProtocolVersion = worker.ProtocolVersion
 	input.LeaseFenceFingerprint = fenceFingerprint
 	return s.db.AppendRunLogChunk(ctx, input)
 }
@@ -154,10 +153,9 @@ func runMetadataClaimScopeParams(
 ) db.GetRunMetadataClaimScopeParams {
 	return db.GetRunMetadataClaimScopeParams{
 		RunLeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence,
-		WorkerGroupID:         worker.WorkerGroupID,
-		WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch:           worker.WorkerEpoch,
-		WorkerProtocolVersion: worker.ProtocolVersion,
+		WorkerGroupID:    worker.WorkerGroupID,
+		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch:      worker.WorkerEpoch,
 	}
 }
 

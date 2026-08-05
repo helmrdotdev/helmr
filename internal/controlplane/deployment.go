@@ -193,7 +193,9 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 		EnvironmentID: environmentID,
 	})
 	if isNoRows(err) {
-		writeJSON(w, http.StatusOK, api.GetCurrentDeploymentResponse{})
+		writeError(w, notFound(codedError{
+			code: "no_current_deployment", message: "no current deployment",
+		}))
 		return
 	}
 	if err != nil {
@@ -207,7 +209,7 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("get current deployment"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.GetCurrentDeploymentResponse{Deployment: &response})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func validateDeploymentContentHash(archivePath string, contentHash string) error {
@@ -356,13 +358,11 @@ func createQueuedDeployment(
 			String: selection.Manager.Integrity,
 			Valid:  selection.Manager.Integrity != "",
 		},
-		BuildContractVersion:       deployment.ProgramBuildContractVersion,
+		BuildContract:              deployment.ProgramBuildContract,
 		ImageCacheMode:             metadata.ImageCacheMode,
 		ProjectID:                  projectID,
 		EnvironmentID:              environmentID,
 		Version:                    deploymentVersion(deploymentID),
-		APIVersion:                 metadata.APIVersion,
-		WorkerProtocolVersion:      metadata.WorkerProtocolVersion,
 		ContentHash:                contentHash,
 		DeploymentSourceArtifactID: sourceArtifact.ID,
 		Status:                     db.DeploymentStatusQueued,
@@ -381,36 +381,32 @@ func deploymentVersion(id uuid.UUID) string {
 	return time.Unix(seconds, nanoseconds).UTC().Format("20060102") + "." + id.String()
 }
 
-func firstPresentString(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
 func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceArtifact) (api.DeploymentResponse, error) {
 	status, err := deploymentPublicStatus(deployment.Status)
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
+	failure, err := deploymentFailureResponse(deployment.Failure)
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	if (status == api.DeploymentStatusFailed) != (failure != nil) {
+		return api.DeploymentResponse{}, errors.New("deployment failure projection is inconsistent")
+	}
 	return api.DeploymentResponse{
-		ID:                    pgvalue.MustUUIDValue(deployment.ID).String(),
-		Version:               deployment.Version,
-		APIVersion:            deployment.APIVersion,
-		WorkerProtocolVersion: deployment.WorkerProtocolVersion,
-		ProjectID:             pgvalue.MustUUIDValue(deployment.ProjectID).String(),
-		EnvironmentID:         pgvalue.MustUUIDValue(deployment.EnvironmentID).String(),
-		ContentHash:           deployment.ContentHash,
-		DeploymentSource:      artifact,
-		Status:                status,
-		Error:                 deploymentErrorResponse(deployment.Failure),
-		CreatedAt:             pgvalue.Time(deployment.CreatedAt),
-		BuildingAt:            pgvalue.Time(deployment.BuildingAt),
-		BuiltAt:               pgvalue.Time(deployment.BuiltAt),
-		DeployedAt:            pgvalue.Time(deployment.DeployedAt),
-		FailedAt:              pgvalue.Time(deployment.FailedAt),
+		ID:               pgvalue.MustUUIDValue(deployment.ID).String(),
+		Version:          deployment.Version,
+		ProjectID:        pgvalue.MustUUIDValue(deployment.ProjectID).String(),
+		EnvironmentID:    pgvalue.MustUUIDValue(deployment.EnvironmentID).String(),
+		ContentHash:      deployment.ContentHash,
+		DeploymentSource: artifact,
+		Status:           status,
+		Failure:          failure,
+		CreatedAt:        pgvalue.Time(deployment.CreatedAt),
+		BuildingAt:       pgvalue.TimePtr(deployment.BuildingAt),
+		BuiltAt:          pgvalue.TimePtr(deployment.BuiltAt),
+		DeployedAt:       pgvalue.TimePtr(deployment.DeployedAt),
+		FailedAt:         pgvalue.TimePtr(deployment.FailedAt),
 	}, nil
 }
 
@@ -429,27 +425,20 @@ func deploymentPublicStatus(status db.DeploymentStatus) (api.DeploymentStatus, e
 	}
 }
 
-func deploymentErrorResponse(raw []byte) *api.DeploymentErrorResponse {
-	message := strings.TrimSpace(string(raw))
-	if message == "" || message == "null" {
-		return nil
+func deploymentFailureResponse(raw []byte) (*api.DeploymentFailure, error) {
+	if len(raw) == 0 {
+		return nil, nil
 	}
-	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return &api.DeploymentErrorResponse{Message: message}
+	var failure api.DeploymentFailure
+	if err := json.Unmarshal(raw, &failure); err != nil || failure.Code == "" ||
+		failure.Message == "" || len(failure.Details) == 0 {
+		return nil, errors.New("deployment failure is invalid")
 	}
-	if value, ok := payload["message"].(string); ok && strings.TrimSpace(value) != "" {
-		return &api.DeploymentErrorResponse{Message: strings.TrimSpace(value)}
+	var details map[string]json.RawMessage
+	if err := json.Unmarshal(failure.Details, &details); err != nil || details == nil {
+		return nil, errors.New("deployment failure details are invalid")
 	}
-	if value, ok := payload["error"].(string); ok && strings.TrimSpace(value) != "" {
-		return &api.DeploymentErrorResponse{Message: strings.TrimSpace(value)}
-	}
-	if nested, ok := payload["error"].(map[string]any); ok {
-		if value, ok := nested["message"].(string); ok && strings.TrimSpace(value) != "" {
-			return &api.DeploymentErrorResponse{Message: strings.TrimSpace(value)}
-		}
-	}
-	return nil
+	return &failure, nil
 }
 
 func writeDeploymentError(w http.ResponseWriter, s *Server, err error) {

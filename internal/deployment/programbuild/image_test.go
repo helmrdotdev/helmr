@@ -131,7 +131,7 @@ func TestImageEngineExecutesExactOneShotImageBuild(t *testing.T) {
 	if revocations.operationID != operationID || !revocations.unregistered {
 		t.Fatalf("revocation registration = %#v", revocations)
 	}
-	if assignmentRequest.ExecutionABI != imagebuild.ExecutionABI ||
+	if assignmentRequest.ImageBuildContract != imagebuild.Contract ||
 		assignmentRequest.SourceArchiveDigest != source.descriptor.ArchiveDigest {
 		t.Fatalf("admission request = %#v", assignmentRequest)
 	}
@@ -222,7 +222,7 @@ func TestImageEngineReplaysTerminalSuccessWithoutVMOrCredentials(t *testing.T) {
 			assignment := validWorkerAssignment(request, operationID)
 			attemptID := uuid.Must(uuid.NewV7()).String()
 			result := imagebuild.GuestResult{
-				ExecutionABI: imagebuild.ExecutionABI, Outcome: imagebuild.GuestSucceeded,
+				Contract: imagebuild.Contract, Outcome: imagebuild.GuestSucceeded,
 				OCIDigest: digestBytes(image), OCISizeBytes: int64(len(image)),
 			}
 			assignment.TerminalResult = &TerminalResult{
@@ -327,7 +327,7 @@ func TestImageEngineCompletesGuestFailureBeforeReturningIt(t *testing.T) {
 	}
 	operationID := uuid.Must(uuid.NewV7()).String()
 	failureRaw, err := imagebuild.CanonicalGuestResult(imagebuild.GuestResult{
-		ExecutionABI: imagebuild.ExecutionABI, Outcome: imagebuild.GuestFailed,
+		Contract: imagebuild.Contract, Outcome: imagebuild.GuestFailed,
 		FailureReason: imagebuild.GuestFailureImage, Error: "build failed",
 	})
 	if err != nil {
@@ -376,7 +376,7 @@ func TestImageEngineNetworkQuotaOverridesGuestFailure(t *testing.T) {
 		},
 	}
 	failureRaw, err := imagebuild.CanonicalGuestResult(imagebuild.GuestResult{
-		ExecutionABI: imagebuild.ExecutionABI, Outcome: imagebuild.GuestFailed,
+		Contract: imagebuild.Contract, Outcome: imagebuild.GuestFailed,
 		FailureReason: imagebuild.GuestFailureImage, Error: "ordinary image failure",
 	})
 	if err != nil {
@@ -686,8 +686,8 @@ func validBuildRequest(t *testing.T, plan imagebuild.Build, source SourceArchive
 			ProjectID: uuid.Must(uuid.NewV7()).String(), EnvironmentID: uuid.Must(uuid.NewV7()).String(),
 			DeploymentID: uuid.Must(uuid.NewV7()).String(), WorkerGroupID: "build",
 			WorkerInstanceID: uuid.Must(uuid.NewV7()).String(), WorkerEpoch: 1, Generation: 1,
-			WorkerProtocolVersion: "test", RequestedGuestEphemeralDiskBytes: 32 << 30,
-			RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30, RequestedBuildExecutors: 1,
+			RequestedGuestEphemeralDiskBytes: 32 << 30,
+			RequestedCPUMillis:               3000, RequestedMemoryBytes: 4 << 30, RequestedBuildExecutors: 1,
 		},
 		RuntimeIdentityID: digestBytes([]byte("runtime")),
 		DeclarationSlot:   "workspace", Architecture: "x86_64", Plan: plan,
@@ -786,7 +786,7 @@ func parseWorkerTestRequest(t *testing.T, raw []byte) (imagebuild.GuestRequest, 
 func workerTestGuestResponse(t *testing.T, image []byte) []byte {
 	t.Helper()
 	raw, err := imagebuild.CanonicalGuestResult(imagebuild.GuestResult{
-		ExecutionABI: imagebuild.ExecutionABI, Outcome: imagebuild.GuestSucceeded,
+		Contract: imagebuild.Contract, Outcome: imagebuild.GuestSucceeded,
 		OCIDigest: digestBytes(image), OCISizeBytes: int64(len(image)),
 	})
 	if err != nil {

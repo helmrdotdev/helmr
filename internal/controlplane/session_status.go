@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -21,7 +22,7 @@ type sessionReadRecord struct {
 	createdAt    pgtype.Timestamptz
 	updatedAt    pgtype.Timestamptz
 	currentRunID pgtype.UUID
-	failureCode  pgtype.Text
+	failure      []byte
 	failureRunID pgtype.UUID
 }
 
@@ -64,11 +65,8 @@ func projectSessionStatus(record sessionReadRecord) (api.SessionStatusSnapshot, 
 	if !record.createdAt.Valid || !record.updatedAt.Valid {
 		return api.SessionStatusSnapshot{}, errors.New("session timestamps are unavailable")
 	}
-	failed := status == api.SessionStatusFailed
-	if failed != (record.failureCode.Valid && record.failureRunID.Valid) {
-		return api.SessionStatusSnapshot{}, errors.New("session failure projection is inconsistent")
-	}
-	if !failed && (record.failureCode.Valid || record.failureRunID.Valid) {
+	terminalFailure := status == api.SessionStatusFailed || status == api.SessionStatusCancelled
+	if terminalFailure != (len(record.failure) > 0) {
 		return api.SessionStatusSnapshot{}, errors.New("session failure projection is inconsistent")
 	}
 	if record.currentRunID.Valid {
@@ -79,13 +77,6 @@ func projectSessionStatus(record sessionReadRecord) (api.SessionStatusSnapshot, 
 	if record.failureRunID.Valid {
 		if err := ids.Validate(pgvalue.UUIDString(record.failureRunID)); err != nil {
 			return api.SessionStatusSnapshot{}, errors.New("session failure run ID is invalid")
-		}
-	}
-	if record.failureCode.Valid {
-		switch record.failureCode.String {
-		case "no_progress", "run_failed", "run_expired", "platform_failure":
-		default:
-			return api.SessionStatusSnapshot{}, errors.New("session failure code is invalid")
 		}
 	}
 	result := api.SessionStatusSnapshot{
@@ -101,10 +92,16 @@ func projectSessionStatus(record sessionReadRecord) (api.SessionStatusSnapshot, 
 		value := pgvalue.UUIDString(record.currentRunID)
 		result.CurrentRunID = &value
 	}
-	if failed {
-		result.Failure = &api.SessionFailure{
-			Code: record.failureCode.String, RunID: pgvalue.UUIDString(record.failureRunID),
+	if terminalFailure {
+		var failure api.SessionFailure
+		if err := json.Unmarshal(record.failure, &failure); err != nil ||
+			failure.Code == "" || failure.Message == "" {
+			return api.SessionStatusSnapshot{}, errors.New("session failure is invalid")
 		}
+		if record.failureRunID.Valid && failure.Details.RunID != pgvalue.UUIDString(record.failureRunID) {
+			return api.SessionStatusSnapshot{}, errors.New("session failure run is inconsistent")
+		}
+		result.Failure = &failure
 	}
 	return result, nil
 }
@@ -115,7 +112,7 @@ func sessionStatus(state string) (api.SessionStatus, error) {
 		return api.SessionStatusOpen, nil
 	case "closed":
 		return api.SessionStatusClosed, nil
-	case "cancelling", "cancelled":
+	case "cancelled":
 		return api.SessionStatusCancelled, nil
 	case "failed":
 		return api.SessionStatusFailed, nil
@@ -129,6 +126,6 @@ func sessionReadRecordFromGet(row db.Session) sessionReadRecord {
 		id: row.ID, key: row.Key, state: row.State,
 		createdAt: row.CreatedAt, updatedAt: row.UpdatedAt,
 		currentRunID: row.CurrentRunID,
-		failureCode:  row.FailureCode, failureRunID: row.FailureRunID,
+		failure:      row.Failure, failureRunID: row.FailureRunID,
 	}
 }

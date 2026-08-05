@@ -11,7 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/region"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -48,11 +47,11 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 	`, ids.environmentID, ids.orgID, ids.projectID, environmentSlug)
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO runtime_identities (
-			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest,
-			rootfs_digest, network_abi
+			id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest,
+			rootfs_digest
 		) VALUES (
 			'test-runtime', 'x86_64', 'test', 'sha256:kernel',
-			'sha256:initramfs', 'sha256:rootfs', 'default'
+			'sha256:initramfs', 'sha256:rootfs'
 		)
 		ON CONFLICT DO NOTHING
 	`)
@@ -89,7 +88,7 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 			id, org_id, build_region_id, project_id, environment_id,
 			build_node_version, build_runtime_digest, build_toolchain_digest,
 			build_manager_name, build_manager_version, build_manager_digest,
-			build_contract_version, image_cache_mode, version, content_hash, deployment_source_artifact_id,
+			build_contract, image_cache_mode, version, content_hash, deployment_source_artifact_id,
 			program_artifact_id, program_index_digest, queue_config,
 			status, deployed_at
 		)
@@ -160,7 +159,6 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		RequiredGuestEphemeralDiskBytes: 1,
 		RequiredVMSlots:                 1,
 		RequiredBuildExecutors:          1,
-		ProtocolVersion:                 workerapi.CurrentProtocolVersion,
 	}); err != nil {
 		t.Fatal(err)
 	}

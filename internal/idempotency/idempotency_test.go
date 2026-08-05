@@ -84,15 +84,15 @@ func TestDeploymentCreateFingerprintBindsBuildAuthority(t *testing.T) {
 	environmentID := uuid.New()
 	projectID := uuid.New()
 	fingerprint := DeploymentCreateFingerprint{
-		SourceDigest:         "sha256:source",
-		LockfileDigest:       "sha256:lockfile",
-		LockfileName:         "pnpm-lock.yaml",
-		NodeVersion:          "24.16.0",
-		ManagerName:          "pnpm",
-		ManagerVersion:       "11.1.0",
-		ManagerIntegrity:     "sha256.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		BuildContractVersion: "helmr.program-build.v0",
-		ImageCacheMode:       "prefer",
+		SourceDigest:     "sha256:source",
+		LockfileDigest:   "sha256:lockfile",
+		LockfileName:     "pnpm-lock.yaml",
+		NodeVersion:      "24.16.0",
+		ManagerName:      "pnpm",
+		ManagerVersion:   "11.1.0",
+		ManagerIntegrity: "sha256.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		BuildContract:    "helmr.program-build.v0",
+		ImageCacheMode:   "prefer",
 	}
 	first, err := NewDeploymentCreateRequest(environmentID, projectID, "deploy-1", fingerprint)
 	if err != nil {
@@ -141,7 +141,7 @@ func TestDeploymentCreateFingerprintBindsImageCacheMode(t *testing.T) {
 		SourceDigest: "sha256:source", LockfileDigest: "sha256:lockfile",
 		LockfileName: "pnpm-lock.yaml", NodeVersion: "24.16.0",
 		ManagerName: "pnpm", ManagerVersion: "11.1.0",
-		BuildContractVersion: "helmr.program-build.v0", ImageCacheMode: "prefer",
+		BuildContract: "helmr.program-build.v0", ImageCacheMode: "prefer",
 	}
 	request, err := NewDeploymentCreateRequest(environmentID, projectID, "deploy-1", fingerprint)
 	if err != nil {
@@ -276,9 +276,7 @@ func testWorkspaceImageBuildFingerprint() WorkspaceImageBuildFingerprint {
 		SourceArchiveEntries:   1,
 		ImageCacheMode:         "prefer",
 		CacheScope:             "environment/workspace/base",
-		ExecutionABI:           "helmr.image-build.v0",
-		LLBABI:                 "helmr.image-llb.v0",
-		CacheABI:               "helmr.image-cache.v0",
+		ImageBuildContract:     "helmr.image-build.v0",
 		Quotas: WorkspaceImageBuildQuotas{
 			CPUMillis: 3000, MemoryBytes: 4 << 30, ScratchBytes: 32 << 30,
 			PIDs: 1024, MaxSourceArchiveBytes: 11 << 30,

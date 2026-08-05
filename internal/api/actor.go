@@ -26,11 +26,6 @@ const (
 	MaxRetryDelayMilliseconds   = int64(24 * 60 * 60 * 1000)
 )
 
-type WorkspaceTarget struct {
-	ID  *string `json:"id,omitempty"`
-	Key *string `json:"key,omitempty"`
-}
-
 type WorkspaceIDTarget struct {
 	ID string `json:"id"`
 }
@@ -115,8 +110,13 @@ const (
 )
 
 type SessionFailure struct {
-	Code  string `json:"code"`
-	RunID string `json:"run_id"`
+	Code    string                `json:"code"`
+	Message string                `json:"message"`
+	Details SessionFailureDetails `json:"details"`
+}
+
+type SessionFailureDetails struct {
+	RunID string `json:"run_id,omitempty"`
 }
 
 type SessionStatusSnapshot struct {
@@ -200,17 +200,6 @@ func ValidateSessionID(id string) error {
 func ValidateWorkspaceID(id string) error {
 	if err := ids.Validate(id); err != nil {
 		return fmt.Errorf("invalid workspace ID: %w", err)
-	}
-	return nil
-}
-
-func ValidateWorkspaceKey(key string) error {
-	if key == "" ||
-		!utf8.ValidString(key) ||
-		len(key) > 512 ||
-		strings.ContainsRune(key, '\x00') ||
-		strings.TrimSpace(key) != key {
-		return errors.New("workspace key is outside the exact workspace key domain")
 	}
 	return nil
 }
@@ -311,22 +300,6 @@ func ValidateWorkspaceIDTarget(workspace WorkspaceIDTarget) error {
 		return errors.New("workspace.id is required")
 	}
 	return ValidateWorkspaceID(workspace.ID)
-}
-
-func ValidateWorkspaceTarget(workspace WorkspaceTarget) error {
-	hasWorkspaceID := workspace.ID != nil
-	hasWorkspaceKey := workspace.Key != nil
-	if hasWorkspaceID == hasWorkspaceKey {
-		return errors.New("workspace must contain exactly one of id or key")
-	}
-	if hasWorkspaceID {
-		if err := ValidateWorkspaceID(*workspace.ID); err != nil {
-			return err
-		}
-	} else if err := ValidateWorkspaceKey(*workspace.Key); err != nil {
-		return err
-	}
-	return nil
 }
 
 func ParseDurationMilliseconds(raw string, label string, minValue int64, maxValue int64) (int64, error) {

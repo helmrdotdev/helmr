@@ -76,10 +76,9 @@ func (s *Server) workerEnrollmentChallenge(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusCreated, workerapi.EnrollmentChallengeResponse{
-		Nonce:           nonce,
-		WorkerGroupID:   created.WorkerGroupID,
-		ExpiresAt:       pgvalue.Time(created.ExpiresAt),
-		ProtocolVersion: workerapi.CurrentProtocolVersion,
+		Nonce:         nonce,
+		WorkerGroupID: created.WorkerGroupID,
+		ExpiresAt:     pgvalue.Time(created.ExpiresAt),
 	})
 }
 
@@ -95,8 +94,8 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid worker enrollment JSON: %w", err)))
 		return
 	}
-	if request.WorkerGroupID == "" || request.ProtocolVersion != workerapi.CurrentProtocolVersion || (!request.SupportsRun && !request.SupportsBuild) {
-		writeError(w, badRequest(errors.New("worker_group_id, protocol_version, and at least one supported role are required")))
+	if request.WorkerGroupID == "" || (!request.SupportsRun && !request.SupportsBuild) {
+		writeError(w, badRequest(errors.New("worker_group_id and at least one supported role are required")))
 		return
 	}
 	if request.Nonce == "" {
@@ -139,7 +138,6 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		WorkerGroupID:    request.WorkerGroupID,
 		AllowsRun:        request.SupportsRun,
 		AllowsBuild:      request.SupportsBuild,
-		ProtocolVersion:  request.ProtocolVersion,
 		WorkerInstanceID: pgvalue.UUID(workerInstanceID),
 		CurrentServiceID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		ResourceID:       request.ResourceID,
@@ -192,11 +190,6 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("service_id must be a canonical UUIDv7")))
 		return
 	}
-	protocolVersion := strings.TrimSpace(request.ProtocolVersion)
-	if protocolVersion != workerapi.CurrentProtocolVersion {
-		writeError(w, badRequest(fmt.Errorf("protocol_version must be %s", workerapi.CurrentProtocolVersion)))
-		return
-	}
 	if !request.SupportsRun && !request.SupportsBuild {
 		writeError(w, badRequest(errors.New("at least one supported worker role is required")))
 		return
@@ -205,7 +198,6 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		WorkerInstanceID: pgvalue.UUID(workerInstanceID),
 		SecretHash:       secretHash,
 		ServiceID:        pgvalue.UUID(serviceID),
-		ProtocolVersion:  protocolVersion,
 		SupportsRun:      request.SupportsRun,
 		SupportsBuild:    request.SupportsBuild,
 	})
@@ -242,7 +234,6 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		GroupRoles: auth.WorkerRoles{Run: credential.GroupAllowsRun, Build: credential.GroupAllowsBuild},
 	}).Claims(auth.EpochExchangeInput{
 		ServiceID: serviceID, SupervisorRoles: auth.WorkerRoles{Run: request.SupportsRun, Build: request.SupportsBuild},
-		ProtocolVersion: protocolVersion,
 	}, now, expiresAt)
 	if errors.Is(err, auth.ErrWorkerRoleIntersectionEmpty) {
 		writeError(w, forbidden(errors.New("worker has no allowed roles")))
@@ -264,7 +255,6 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		ExpiresInSeconds: int64(s.workerTokenTTL / time.Second),
 		WorkerEpoch:      credential.CurrentEpoch.Int64,
 		Roles:            claims.Roles,
-		ProtocolVersion:  credential.ProtocolVersion,
 	})
 }
 
@@ -658,11 +648,11 @@ func workerActivationParams(
 		maxRuntimeStarts = c.ExecutionSlotsAvailable
 	}
 	return db.ActivateWorkerInstanceParams{
-		RuntimeIdentityID: c.RuntimeID, RuntimeArch: c.RuntimeArch, RuntimeABI: c.RuntimeABI,
+		RuntimeIdentityID: c.RuntimeID, RuntimeArch: c.RuntimeArch, VMRuntimeContract: c.VMRuntimeContract,
 		KernelDigest: c.KernelDigest, InitramfsDigest: c.InitramfsDigest, RootfsDigest: c.RootfsDigest,
-		NetworkAbi: c.NetworkABI, ProtocolVersion: c.ProtocolVersion, SupervisorVersion: c.WorkerVersion,
-		SupportsRun: supportsRun, SupportsBuild: c.SupportsBuild,
-		SubstrateFormat: c.SubstrateFormat, SubstrateBuilderAbi: c.SubstrateBuilderABI, SubstrateLayoutAbi: c.SubstrateLayoutABI,
+		SupervisorVersion: c.WorkerVersion,
+		SupportsRun:       supportsRun, SupportsBuild: c.SupportsBuild,
+		SubstrateFormat: c.SubstrateFormat, SubstrateContract: c.SubstrateContract,
 		EpochCPUMillis: c.MaxVCPUs * 1000, EpochMemoryBytes: c.MaxMemoryMiB * 1024 * 1024,
 		EpochGuestEphemeralDiskBytes: c.GuestEphemeralDiskBytes,
 		EpochBuildCacheBytes:         c.BuildCacheBytes, EpochArtifactCacheBytes: c.ArtifactCacheBytes,
@@ -678,18 +668,15 @@ func workerActivationParams(
 
 func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabilities, error) {
 	capabilities := workerapi.Capabilities{
-		ProtocolVersion:           strings.TrimSpace(input.ProtocolVersion),
 		WorkerVersion:             strings.TrimSpace(input.WorkerVersion),
 		RuntimeID:                 strings.TrimSpace(input.RuntimeID),
 		RuntimeArch:               strings.TrimSpace(input.RuntimeArch),
-		RuntimeABI:                strings.TrimSpace(input.RuntimeABI),
+		VMRuntimeContract:         strings.TrimSpace(input.VMRuntimeContract),
 		KernelDigest:              strings.TrimSpace(input.KernelDigest),
 		InitramfsDigest:           strings.TrimSpace(input.InitramfsDigest),
 		RootfsDigest:              strings.TrimSpace(input.RootfsDigest),
-		NetworkABI:                strings.TrimSpace(input.NetworkABI),
 		SubstrateFormat:           strings.TrimSpace(input.SubstrateFormat),
-		SubstrateBuilderABI:       strings.TrimSpace(input.SubstrateBuilderABI),
-		SubstrateLayoutABI:        strings.TrimSpace(input.SubstrateLayoutABI),
+		SubstrateContract:         strings.TrimSpace(input.SubstrateContract),
 		MaxVCPUs:                  input.MaxVCPUs,
 		MaxMemoryMiB:              input.MaxMemoryMiB,
 		VMMilliCPU:                input.VMMilliCPU,
@@ -707,20 +694,14 @@ func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabi
 		CheckpointBytes:           input.CheckpointBytes,
 		Observation:               input.Observation,
 	}
-	if capabilities.ProtocolVersion == "" {
-		return workerapi.Capabilities{}, errors.New("worker protocol_version is required")
-	}
-	if capabilities.ProtocolVersion != workerapi.CurrentProtocolVersion {
-		return workerapi.Capabilities{}, fmt.Errorf("worker protocol_version %s is not supported; current protocol is %s", capabilities.ProtocolVersion, workerapi.CurrentProtocolVersion)
-	}
 	if capabilities.RuntimeID == "" {
 		return workerapi.Capabilities{}, errors.New("worker runtime_id is required")
 	}
 	if err := deployment.ValidateRuntimeArchitecture(deployment.RuntimeArchitecture(capabilities.RuntimeArch)); err != nil {
 		return workerapi.Capabilities{}, fmt.Errorf("worker runtime_arch: %w", err)
 	}
-	if capabilities.RuntimeABI == "" {
-		return workerapi.Capabilities{}, errors.New("worker runtime_abi is required")
+	if capabilities.VMRuntimeContract != runtimeid.Contract {
+		return workerapi.Capabilities{}, fmt.Errorf("worker vm_runtime_contract must be %s", runtimeid.Contract)
 	}
 	if capabilities.KernelDigest == "" {
 		return workerapi.Capabilities{}, errors.New("worker kernel_digest is required")
@@ -731,16 +712,12 @@ func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabi
 	if capabilities.RootfsDigest == "" {
 		return workerapi.Capabilities{}, errors.New("worker rootfs_digest is required")
 	}
-	if capabilities.NetworkABI != workerapi.NetworkABIV0 {
-		return workerapi.Capabilities{}, fmt.Errorf("worker network_abi must be %s", workerapi.NetworkABIV0)
-	}
 	expectedRuntimeID, err := runtimeid.Digest(runtimeid.Selector{
 		Arch:            capabilities.RuntimeArch,
-		ABI:             capabilities.RuntimeABI,
+		Contract:        capabilities.VMRuntimeContract,
 		KernelDigest:    capabilities.KernelDigest,
 		InitramfsDigest: capabilities.InitramfsDigest,
 		RootfsDigest:    capabilities.RootfsDigest,
-		NetworkABI:      capabilities.NetworkABI,
 	})
 	if err != nil {
 		return workerapi.Capabilities{}, fmt.Errorf("worker runtime identity: %w", err)
@@ -790,13 +767,10 @@ func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabi
 		if capabilities.SubstrateFormat == "" {
 			return workerapi.Capabilities{}, errors.New("worker substrate_format is required for run role")
 		}
-		if capabilities.SubstrateBuilderABI == "" {
-			return workerapi.Capabilities{}, errors.New("worker substrate_builder_abi is required for run role")
+		if capabilities.SubstrateContract == "" {
+			return workerapi.Capabilities{}, errors.New("worker substrate_contract is required for run role")
 		}
-		if capabilities.SubstrateLayoutABI == "" {
-			return workerapi.Capabilities{}, errors.New("worker substrate_layout_abi is required for run role")
-		}
-	} else if capabilities.SubstrateFormat != "" || capabilities.SubstrateBuilderABI != "" || capabilities.SubstrateLayoutABI != "" {
+	} else if capabilities.SubstrateFormat != "" || capabilities.SubstrateContract != "" {
 		return workerapi.Capabilities{}, errors.New("worker without run role must not report a substrate contract")
 	}
 	return capabilities, nil

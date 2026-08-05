@@ -86,8 +86,8 @@ func validateRestoreIdentity(
 	if runtimeInfo.Arch != string(workerArchitecture) {
 		return fmt.Errorf("restore checkpoint recovery_point.runtime.arch %q does not match worker arch %q", runtimeInfo.Arch, workerArchitecture)
 	}
-	if strings.TrimSpace(runtimeInfo.ABI) == "" {
-		return errors.New("restore checkpoint recovery_point.runtime.abi is required")
+	if strings.TrimSpace(runtimeInfo.Contract) == "" {
+		return errors.New("restore checkpoint recovery_point.runtime.contract is required")
 	}
 	if err := requireCheckpointDigest("recovery_point.runtime.id", runtimeInfo.ID); err != nil {
 		return err
@@ -111,11 +111,8 @@ func validateRestoreIdentity(
 		if strings.TrimSpace(runtimeInfo.Substrate.Format) == "" {
 			return errors.New("restore checkpoint recovery_point.runtime.substrate.format is required")
 		}
-		if strings.TrimSpace(runtimeInfo.Substrate.BuilderABI) == "" {
-			return errors.New("restore checkpoint recovery_point.runtime.substrate.builder_abi is required")
-		}
-		if strings.TrimSpace(runtimeInfo.Substrate.LayoutABI) == "" {
-			return errors.New("restore checkpoint recovery_point.runtime.substrate.layout_abi is required")
+		if strings.TrimSpace(runtimeInfo.Substrate.Contract) == "" {
+			return errors.New("restore checkpoint recovery_point.runtime.substrate.contract is required")
 		}
 	}
 	return requireCheckpointArtifact(checkpoint.RuntimeState.ConfigArtifact, "runtime_state.config_artifact")
@@ -500,7 +497,7 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 				Backend:         artifact.RuntimeBackend,
 				ID:              artifact.RuntimeID,
 				Arch:            artifact.RuntimeArch,
-				ABI:             artifact.RuntimeABI,
+				Contract:        artifact.VMRuntimeContract,
 				KernelDigest:    artifact.KernelDigest,
 				InitramfsDigest: artifact.InitramfsDigest,
 				RootfsDigest:    artifact.RootfsDigest,
@@ -526,10 +523,9 @@ func checkpointRuntimeSubstrate(substrate *vm.RuntimeSubstrate) *workerapi.Check
 		return nil
 	}
 	return &workerapi.CheckpointRuntimeSubstrate{
-		Digest:     strings.TrimSpace(substrate.Digest),
-		Format:     strings.TrimSpace(substrate.Format),
-		BuilderABI: strings.TrimSpace(substrate.BuilderABI),
-		LayoutABI:  strings.TrimSpace(substrate.LayoutABI),
+		Digest:   strings.TrimSpace(substrate.Digest),
+		Format:   strings.TrimSpace(substrate.Format),
+		Contract: strings.TrimSpace(substrate.Contract),
 	}
 }
 

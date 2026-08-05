@@ -17,7 +17,6 @@ import (
 const (
 	runLeaseTestRegion      = runtest.Region
 	runLeaseTestWorkerGroup = runtest.WorkerGroup
-	runLeaseTestProtocol    = runtest.WorkerProtocol
 )
 
 type runLeaseClaimFixture struct {
@@ -60,8 +59,7 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 	starting := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 
 	rows, err := fixture.queries.DiscoverWorkerRunLeaseWork(ctx, DiscoverWorkerRunLeaseWorkParams{
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerProtocolVersion: runLeaseTestProtocol,
-		RowLimit: 8, WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
+		WorkerGroupID: runLeaseTestWorkerGroup, RowLimit: 8, WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -84,8 +82,7 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 	secretLocators, err := fixture.queries.GetRunLeaseSecretDeliveryLocators(ctx, GetRunLeaseSecretDeliveryLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
-		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
-	})
+		WorkerEpoch: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,8 +95,7 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 	locators, err := fixture.queries.GetRunLeaseClaimLocators(ctx, GetRunLeaseClaimLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
-		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
-	})
+		WorkerEpoch: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,15 +183,13 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 	if _, err := fixture.queries.GetRunLeaseClaimLocators(ctx, GetRunLeaseClaimLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 2,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
-		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
-	}); !errors.Is(err, pgx.ErrNoRows) {
+		WorkerEpoch: 1}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("stale sequence locator error = %v, want no rows", err)
 	}
 	if _, err := fixture.queries.GetRunLeaseClaimLocators(ctx, GetRunLeaseClaimLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
-	}); !errors.Is(err, pgx.ErrNoRows) {
+		WorkerEpoch: 1}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("cross-worker locator error = %v, want no rows", err)
 	}
 
@@ -281,8 +275,7 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 	claimed, err := fixture.queries.MarkRunLeaseStarting(ctx, MarkRunLeaseStartingParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
-		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
-	})
+		WorkerEpoch: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,8 +286,7 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 	if _, err := fixture.queries.MarkRunLeaseStarting(ctx, MarkRunLeaseStartingParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
-		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
-	}); !errors.Is(err, pgx.ErrNoRows) {
+		WorkerEpoch: 1}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("second claim update error = %v, want no rows", err)
 	}
 	replayed, err := fixture.queries.GetRunLease(ctx, GetRunLeaseParams{
@@ -322,8 +314,7 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 		t.Fatal(err)
 	}
 	drainingRows, err := fixture.queries.DiscoverWorkerRunLeaseWork(ctx, DiscoverWorkerRunLeaseWorkParams{
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerProtocolVersion: runLeaseTestProtocol,
-		RowLimit: 8, WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
+		WorkerGroupID: runLeaseTestWorkerGroup, RowLimit: 8, WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -343,22 +334,19 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 	if _, err := fixture.queries.GetRunLeaseSecretDeliveryLocators(ctx, GetRunLeaseSecretDeliveryLocatorsParams{
 		ID: pgvalue.UUID(unclaimed.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
-		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
-	}); !errors.Is(err, pgx.ErrNoRows) {
+		WorkerEpoch: 1}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("draining assigned Secret locator error = %v, want no rows", err)
 	}
 	if _, err := fixture.queries.GetRunLeaseSecretDeliveryLocators(ctx, GetRunLeaseSecretDeliveryLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
-		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
-	}); err != nil {
+		WorkerEpoch: 1}); err != nil {
 		t.Fatalf("draining replay Secret locator: %v", err)
 	}
 	if _, err := fixture.queries.GetRunLeaseClaimLocators(ctx, GetRunLeaseClaimLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
-		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
-	}); err != nil {
+		WorkerEpoch: 1}); err != nil {
 		t.Fatalf("draining replay claim locator: %v", err)
 	}
 }
@@ -374,7 +362,6 @@ func TestRunLeaseClaimLocatesNestedHandoffAuthority(t *testing.T) {
 		runLeaseTestWorkerGroup,
 		pgvalue.UUID(fixture.workerID),
 		int64(1),
-		runLeaseTestProtocol,
 	}
 	var locatorCount int
 	if err := fixture.pool.QueryRow(
@@ -391,8 +378,7 @@ func TestRunLeaseClaimLocatesNestedHandoffAuthority(t *testing.T) {
 	locators, err := fixture.queries.GetRunLeaseClaimLocators(ctx, GetRunLeaseClaimLocatorsParams{
 		ID: pgvalue.UUID(work.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
-		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
-	})
+		WorkerEpoch: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

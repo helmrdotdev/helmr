@@ -546,12 +546,10 @@ type Deployment struct {
 	BuildManagerVersion        string             `json:"build_manager_version"`
 	BuildManagerIntegrity      pgtype.Text        `json:"build_manager_integrity"`
 	BuildManagerDigest         []byte             `json:"build_manager_digest"`
-	BuildContractVersion       string             `json:"build_contract_version"`
+	BuildContract              string             `json:"build_contract"`
 	ImageCacheMode             string             `json:"image_cache_mode"`
 	Version                    string             `json:"version"`
 	ContentHash                string             `json:"content_hash"`
-	APIVersion                 string             `json:"api_version"`
-	WorkerProtocolVersion      string             `json:"worker_protocol_version"`
 	DeploymentSourceArtifactID pgtype.UUID        `json:"deployment_source_artifact_id"`
 	ProgramArtifactID          pgtype.UUID        `json:"program_artifact_id"`
 	ProgramArtifactKind        ArtifactKind       `json:"program_artifact_kind"`
@@ -579,7 +577,6 @@ type DeploymentBuildLease struct {
 	WorkerGroupID                    string             `json:"worker_group_id"`
 	WorkerInstanceID                 pgtype.UUID        `json:"worker_instance_id"`
 	WorkerEpoch                      int64              `json:"worker_epoch"`
-	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
 	RequestedCPUMillis               int64              `json:"requested_cpu_millis"`
 	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
 	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
@@ -837,8 +834,7 @@ type Run struct {
 	SessionInputHighWatermark pgtype.Int8        `json:"session_input_high_watermark"`
 	Payload                   []byte             `json:"payload"`
 	Output                    []byte             `json:"output"`
-	TerminalReasonCode        pgtype.Text        `json:"terminal_reason_code"`
-	Error                     []byte             `json:"error"`
+	Failure                   []byte             `json:"failure"`
 	Status                    string             `json:"status"`
 	StateVersion              int64              `json:"state_version"`
 	CurrentAttemptNumber      int32              `json:"current_attempt_number"`
@@ -929,7 +925,6 @@ type RunLease struct {
 	WorkerEpoch                      int64              `json:"worker_epoch"`
 	RuntimeInstanceID                pgtype.UUID        `json:"runtime_instance_id"`
 	RuntimeIdentityID                string             `json:"runtime_identity_id"`
-	WorkerProtocolVersion            string             `json:"worker_protocol_version"`
 	RequestedCPUMillis               int64              `json:"requested_cpu_millis"`
 	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
 	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
@@ -1020,15 +1015,14 @@ type RunWait struct {
 }
 
 type RuntimeIdentity struct {
-	ID              string             `json:"id"`
-	RuntimeArch     string             `json:"runtime_arch"`
-	RuntimeABI      string             `json:"runtime_abi"`
-	KernelDigest    string             `json:"kernel_digest"`
-	InitramfsDigest string             `json:"initramfs_digest"`
-	RootfsDigest    string             `json:"rootfs_digest"`
-	NetworkAbi      string             `json:"network_abi"`
-	FirstSeenAt     pgtype.Timestamptz `json:"first_seen_at"`
-	LastSeenAt      pgtype.Timestamptz `json:"last_seen_at"`
+	ID                string             `json:"id"`
+	RuntimeArch       string             `json:"runtime_arch"`
+	VMRuntimeContract string             `json:"vm_runtime_contract"`
+	KernelDigest      string             `json:"kernel_digest"`
+	InitramfsDigest   string             `json:"initramfs_digest"`
+	RootfsDigest      string             `json:"rootfs_digest"`
+	FirstSeenAt       pgtype.Timestamptz `json:"first_seen_at"`
+	LastSeenAt        pgtype.Timestamptz `json:"last_seen_at"`
 }
 
 type RuntimeInstance struct {
@@ -1087,8 +1081,7 @@ type RuntimeSubstrate struct {
 	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
 	SubstrateDigest        string             `json:"substrate_digest"`
 	SubstrateFormat        string             `json:"substrate_format"`
-	BuilderAbi             string             `json:"builder_abi"`
-	LayoutAbi              string             `json:"layout_abi"`
+	SubstrateContract      string             `json:"substrate_contract"`
 	SubstrateSizeBytes     int64              `json:"substrate_size_bytes"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 }
@@ -1116,8 +1109,7 @@ type Schedule struct {
 	ClaimExpiresAt         pgtype.Timestamptz `json:"claim_expires_at"`
 	RetryStep              pgtype.Int2        `json:"retry_step"`
 	RetryAfter             pgtype.Timestamptz `json:"retry_after"`
-	LastErrorCode          pgtype.Text        `json:"last_error_code"`
-	LastErrorMessage       pgtype.Text        `json:"last_error_message"`
+	LastFailure            []byte             `json:"last_failure"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
@@ -1170,7 +1162,7 @@ type Session struct {
 	RunGeneration            int64              `json:"run_generation"`
 	StateVersion             int64              `json:"state_version"`
 	ManualRunCancelled       bool               `json:"manual_run_cancelled"`
-	FailureCode              pgtype.Text        `json:"failure_code"`
+	Failure                  []byte             `json:"failure"`
 	FailureRunID             pgtype.UUID        `json:"failure_run_id"`
 	NextInputSequence        int64              `json:"next_input_sequence"`
 	CommittedInputSequence   int64              `json:"committed_input_sequence"`
@@ -1317,7 +1309,6 @@ type WorkerGroup struct {
 	RequiredVMSlots                 int32              `json:"required_vm_slots"`
 	RequiredBuildExecutors          int32              `json:"required_build_executors"`
 	ObservationTtlSeconds           int32              `json:"observation_ttl_seconds"`
-	ProtocolVersion                 string             `json:"protocol_version"`
 	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
 }
@@ -1330,14 +1321,12 @@ type WorkerInstance struct {
 	ClaimVersion                 int64              `json:"claim_version"`
 	CurrentEpoch                 pgtype.Int8        `json:"current_epoch"`
 	CurrentServiceID             pgtype.UUID        `json:"current_service_id"`
-	ProtocolVersion              string             `json:"protocol_version"`
 	SupervisorVersion            string             `json:"supervisor_version"`
 	SupportsRun                  bool               `json:"supports_run"`
 	SupportsBuild                bool               `json:"supports_build"`
 	RuntimeIdentityID            pgtype.Text        `json:"runtime_identity_id"`
 	SubstrateFormat              string             `json:"substrate_format"`
-	SubstrateBuilderAbi          string             `json:"substrate_builder_abi"`
-	SubstrateLayoutAbi           string             `json:"substrate_layout_abi"`
+	SubstrateContract            string             `json:"substrate_contract"`
 	EpochCPUMillis               int64              `json:"epoch_cpu_millis"`
 	EpochMemoryBytes             int64              `json:"epoch_memory_bytes"`
 	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
@@ -1369,7 +1358,6 @@ type WorkerInstanceCredential struct {
 	ClaimVersion     int64              `json:"claim_version"`
 	AllowsRun        bool               `json:"allows_run"`
 	AllowsBuild      bool               `json:"allows_build"`
-	ProtocolVersion  string             `json:"protocol_version"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 	SecretHash       []byte             `json:"secret_hash"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`

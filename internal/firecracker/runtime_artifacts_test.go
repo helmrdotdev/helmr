@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -19,6 +20,36 @@ func TestLoadRuntimeArtifacts(t *testing.T) {
 	}
 	if artifacts != manifest {
 		t.Fatalf("artifacts = %+v, want %+v", artifacts, manifest)
+	}
+}
+
+func TestRuntimeArtifactProducersUseLoaderContract(t *testing.T) {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve runtime artifact test source")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(source), "..", ".."))
+	checks := []struct {
+		path string
+		want string
+	}{
+		{
+			path: filepath.Join(repoRoot, "images", "boot-artifacts.mk"),
+			want: `"vm_runtime_contract": "` + runtimeid.Contract + `"`,
+		},
+		{
+			path: filepath.Join(repoRoot, "infra", "aws", "modules", "worker-image", "main.tf"),
+			want: `.vm_runtime_contract == \"` + runtimeid.Contract + `\"`,
+		},
+	}
+	for _, check := range checks {
+		body, err := os.ReadFile(check.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), check.want) {
+			t.Fatalf("%s does not produce or validate %s", check.path, check.want)
+		}
 	}
 }
 
@@ -35,7 +66,7 @@ func TestLoadRuntimeArtifactsRejectsInvalidManifest(t *testing.T) {
 		{name: "unknown field", raw: `{"unknown":true}`, want: "unknown field"},
 		{name: "schema", edit: func(_ Config, m *runtimeArtifacts) { m.Schema = "other" }, want: "schema"},
 		{name: "arch", edit: func(_ Config, m *runtimeArtifacts) { m.Arch = "other" }, want: "arch"},
-		{name: "abi", edit: func(_ Config, m *runtimeArtifacts) { m.RuntimeABI = "other" }, want: "abi"},
+		{name: "contract", edit: func(_ Config, m *runtimeArtifacts) { m.VMRuntimeContract = "other" }, want: "contract"},
 		{name: "path", edit: func(_ Config, m *runtimeArtifacts) { m.Rootfs.Path = "other" }, want: "rootfs path"},
 		{name: "digest", edit: func(_ Config, m *runtimeArtifacts) { m.Rootfs.Digest = "sha256:not-a-digest" }, want: "canonical sha256"},
 		{name: "uppercase digest", edit: func(_ Config, m *runtimeArtifacts) { m.Rootfs.Digest = "sha256:" + strings.Repeat("A", 64) }, want: "canonical sha256"},
@@ -100,12 +131,12 @@ func writeRuntimeArtifactFixture(t *testing.T) (Config, runtimeArtifacts) {
 		return runtimeArtifact{Path: filepath.Base(path), Digest: sha256sum.DigestBytes([]byte(body)), SizeBytes: int64(len(body))}
 	}
 	manifest := runtimeArtifacts{
-		Schema:     runtimeArtifactsSchema,
-		Arch:       runtime.GOARCH,
-		RuntimeABI: runtimeABI,
-		Kernel:     write(cfg.KernelPath, "kernel"),
-		Initramfs:  write(cfg.InitramfsPath, "initramfs"),
-		Rootfs:     write(cfg.RootfsPath, "rootfs"),
+		Schema:            runtimeArtifactsSchema,
+		Arch:              runtime.GOARCH,
+		VMRuntimeContract: runtimeid.Contract,
+		Kernel:            write(cfg.KernelPath, "kernel"),
+		Initramfs:         write(cfg.InitramfsPath, "initramfs"),
+		Rootfs:            write(cfg.RootfsPath, "rootfs"),
 	}
 	body, err := json.Marshal(manifest)
 	if err != nil {

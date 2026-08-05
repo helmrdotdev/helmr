@@ -179,8 +179,8 @@ export function RunDetail() {
                   <Show when={current().output !== undefined}>
                     <JSONPanel title="Output" value={current().output} />
                   </Show>
-                  <Show when={current().error}>
-                    {(error) => <JSONPanel title="Run error" value={error()} />}
+                  <Show when={current().failure}>
+                    {(failure) => <JSONPanel title="Run failure" value={failure()} />}
                   </Show>
 
                   <section class="border border-console-border bg-console-surface p-4">

@@ -148,11 +148,10 @@ func newTestProgram(t *testing.T) *testProgram {
 				Slot:       DeclarationSlotHandler,
 			},
 		}},
-		FormatVersion: ProgramIndexFormatVersion,
 		Queues: []QueueInput{{
 			Name: "task/build",
 		}},
-		RuntimeAPIVersion: RuntimeAPIVersion,
+		RuntimeContract: RuntimeContract,
 	})
 	if err != nil {
 		t.Fatal(err)

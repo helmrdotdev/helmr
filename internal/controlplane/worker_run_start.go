@@ -71,7 +71,6 @@ func (s *Server) startRun(
 		locators, err := work.q.GetRunLeaseStartLocators(ctx, db.GetRunLeaseStartLocatorsParams{
 			ID: leaseID, LeaseSequence: expected.LeaseSequence, WorkerGroupID: worker.WorkerGroupID,
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
-			WorkerProtocolVersion: worker.ProtocolVersion,
 		})
 		if err != nil {
 			return staleRunLeaseClaim(err)
@@ -100,8 +99,7 @@ func (s *Server) startRun(
 				ID: authority.runLease.ID, RunID: authority.run.ID, WorkspaceID: authority.workspace.ID,
 				AttemptNumber: authority.attempt.Number, LeaseSequence: authority.runLease.LeaseSequence,
 				WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-				WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
-				RuntimeInstanceID: authority.runtime.ID, RuntimeIdentityID: authority.runtime.RuntimeIdentityID,
+				WorkerEpoch: worker.WorkerEpoch, RuntimeInstanceID: authority.runtime.ID, RuntimeIdentityID: authority.runtime.RuntimeIdentityID,
 			})
 			if err != nil {
 				return staleRunLeaseClaim(err)
@@ -208,8 +206,7 @@ func lockRunStartAuthority(
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
-	if !authority.workerGroup.AllowsRun || authority.workerGroup.ClaimVersion != worker.GroupClaimVersion ||
-		authority.workerGroup.ProtocolVersion != worker.ProtocolVersion {
+	if !authority.workerGroup.AllowsRun || authority.workerGroup.ClaimVersion != worker.GroupClaimVersion {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 	authority.worker, err = q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{

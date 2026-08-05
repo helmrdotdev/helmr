@@ -327,9 +327,8 @@ func buildProgramIndex(
 		Architecture:       ArchitectureX8664,
 		ConfigResultDigest: configResultDigest,
 		Declarations:       declarations,
-		FormatVersion:      ProgramIndexFormatVersion,
 		Queues:             cloneQueueInputs(plan.Queues),
-		RuntimeAPIVersion:  RuntimeAPIVersion,
+		RuntimeContract:    RuntimeContract,
 	}
 	if err := ValidateProgramIndex(index); err != nil {
 		return ProgramIndex{}, err

@@ -291,13 +291,11 @@ func CacheScope(
 		EnvironmentID   string `json:"environmentId"`
 		DeclarationSlot string `json:"declarationSlot"`
 		Architecture    string `json:"architecture"`
-		ExecutionABI    string `json:"executionAbi"`
-		LLBABI          string `json:"llbAbi"`
-		CacheABI        string `json:"cacheAbi"`
+		Contract        string `json:"contract"`
 	}{
 		Domain: "helmr.image-cache-scope.v0", EnvironmentID: environmentID.String(),
 		DeclarationSlot: declarationSlot, Architecture: architecture,
-		ExecutionABI: ExecutionABI, LLBABI: LLBABI, CacheABI: CacheABI,
+		Contract: Contract,
 	})
 	if err != nil {
 		return "", fmt.Errorf("encode image cache scope: %w", err)

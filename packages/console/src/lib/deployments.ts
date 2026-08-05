@@ -1,4 +1,4 @@
-import { request } from "./api";
+import { ApiError, request } from "./api";
 
 type DeploymentSourceArtifact = {
   digest: string;
@@ -13,8 +13,10 @@ export type Deployment = {
   version: string;
   project_id: string;
   environment_id: string;
+  content_hash: string;
   deployment_source: DeploymentSourceArtifact;
   status: DeploymentStatus;
+  failure?: { code: string; message: string; details: Record<string, unknown> };
   created_at: string;
   building_at?: string;
   built_at?: string;
@@ -22,18 +24,19 @@ export type Deployment = {
   failed_at?: string;
 };
 
-export type GetCurrentDeploymentResponse = {
-  deployment: Deployment | null;
-};
-
 export async function getCurrentDeployment(options: {
   projectID?: string;
   environmentID?: string;
-} = {}): Promise<GetCurrentDeploymentResponse> {
+} = {}): Promise<Deployment | null> {
   if (!options.projectID || !options.environmentID) {
     throw new Error("project and environment are required");
   }
-  return request<GetCurrentDeploymentResponse>(
-    `/api/projects/${encodeURIComponent(options.projectID)}/environments/${encodeURIComponent(options.environmentID)}/deployments/current`,
-  );
+  try {
+    return await request<Deployment>(
+      `/api/projects/${encodeURIComponent(options.projectID)}/environments/${encodeURIComponent(options.environmentID)}/deployments/current`,
+    );
+  } catch (error) {
+    if (error instanceof ApiError && error.code === "no_current_deployment") return null;
+    throw error;
+  }
 }

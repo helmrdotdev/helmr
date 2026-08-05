@@ -2,7 +2,7 @@ import type {
   CursorPage,
   JsonValue,
   Metadata,
-  RunError,
+  RunFailure,
   RunHandle,
   RunSnapshot,
   RunStatus,
@@ -17,6 +17,7 @@ import type {
 } from "./contract"
 import { runtimeOperationsInstalled } from "./internal/runtime"
 import { resourceID } from "./internal/id"
+import { runFailureError } from "./internal/run-failure"
 import { validateTaskId } from "./schema/task"
 import type {
   TokenCreateOptions,
@@ -477,7 +478,7 @@ class ClientRuns implements ClientRunsApi {
       },
       async unwrap(): Promise<TaskOutput<TTask>> {
         const settled = await result
-        if (!settled.ok) throw settled.error
+        if (!settled.ok) throw runFailureError(settled.failure)
         return settled.output
       },
     })
@@ -500,11 +501,11 @@ class ClientRuns implements ClientRunsApi {
         })
       }
       if (runStatusIsTerminal(snapshot.status)) {
-        if (snapshot.error === undefined) {
-          throw new Error("Non-success terminal Run response must include error")
+        if (snapshot.failure === undefined) {
+          throw new Error("Non-success terminal Run response must include failure")
         }
         return Object.freeze({
-          ok: false, error: snapshot.error, run: Object.freeze({ id: snapshot.id }),
+          ok: false, failure: snapshot.failure, run: Object.freeze({ id: snapshot.id }),
         })
       }
       await abortableDelay(delayMilliseconds, options.signal)
@@ -628,7 +629,7 @@ class ClientTokens implements ClientTokensApi {
 }
 
 function taskStartRequest(
-	request: ClientTaskRunRequest,
+  request: ClientTaskRunRequest,
 ): Record<string, unknown> {
   return {
     workspace: { id: requireWorkspaceIDAddress(request.workspace) },
@@ -867,9 +868,6 @@ function parseRunSnapshot<TOutput extends JsonValue = JsonValue>(
             "Run response.parent_run_id",
           ),
         }),
-    ...(run["parent_owns_lifecycle"] === undefined
-      ? {}
-      : { parentOwnsLifecycle: requiredBoolean(run, "parent_owns_lifecycle", "Run response") }),
     currentAttemptNumber: requiredPositiveInteger(
       run, "current_attempt_number", "Run response",
     ),
@@ -877,14 +875,7 @@ function parseRunSnapshot<TOutput extends JsonValue = JsonValue>(
     metadata: Object.freeze({ ...metadata }),
     tags: Object.freeze([...tags]) as readonly string[],
     ...(run["output"] === undefined ? {} : { output: run["output"] as TOutput }),
-    ...(run["terminal_reason_code"] === undefined
-      ? {}
-      : {
-          terminalReasonCode: requiredStringFrom(
-            run, "terminal_reason_code", "Run response",
-          ),
-        }),
-    ...(run["error"] === undefined ? {} : { error: parseRunError(run["error"]) }),
+    ...(run["failure"] === undefined ? {} : { failure: parseRunFailure(run["failure"]) }),
     createdAt: requiredTimestamp(run, "created_at", "Run response"),
     ...(run["started_at"] === undefined
       ? {}
@@ -895,8 +886,7 @@ function parseRunSnapshot<TOutput extends JsonValue = JsonValue>(
   }
   if (status === "succeeded") {
     if (
-      snapshot.error !== undefined ||
-      snapshot.terminalReasonCode !== undefined ||
+      snapshot.failure !== undefined ||
       snapshot.terminalAt === undefined
     ) {
       throw new Error("Succeeded Run response has an invalid terminal projection")
@@ -904,16 +894,14 @@ function parseRunSnapshot<TOutput extends JsonValue = JsonValue>(
   } else if (runStatusIsTerminal(status)) {
     if (
       snapshot.output !== undefined ||
-      snapshot.error === undefined ||
-      snapshot.terminalReasonCode === undefined ||
+      snapshot.failure === undefined ||
       snapshot.terminalAt === undefined
     ) {
       throw new Error("Terminal Run response has an invalid failure projection")
     }
   } else if (
     snapshot.output !== undefined ||
-    snapshot.error !== undefined ||
-    snapshot.terminalReasonCode !== undefined ||
+    snapshot.failure !== undefined ||
     snapshot.terminalAt !== undefined
   ) {
     throw new Error("Active Run response has terminal fields")
@@ -960,20 +948,14 @@ function parseRunCause(value: unknown): RunSnapshot["cause"] {
   }
 }
 
-function parseRunError(value: unknown): RunError {
-  const source = objectValue(value, "Run response.error")
-  const error = new Error(
-    requiredStringFrom(source, "message", "Run response.error"),
-  ) as Error & {
-    code: string
-    retryable: boolean
-    details?: JsonValue
-  }
-  error.name = "RunError"
-  error.code = requiredStringFrom(source, "code", "Run response.error")
-  error.retryable = requiredBoolean(source, "retryable", "Run response.error")
-  if (source["details"] !== undefined) error.details = source["details"] as JsonValue
-  return error
+function parseRunFailure(value: unknown): RunFailure {
+  const source = objectValue(value, "Run response.failure")
+  const details = objectValue(source["details"], "Run response.failure.details")
+  return Object.freeze({
+    code: requiredStringFrom(source, "code", "Run response.failure"),
+    message: requiredStringFrom(source, "message", "Run response.failure"),
+    details: Object.freeze({ ...details }) as Readonly<Record<string, JsonValue>>,
+  })
 }
 
 function runTelemetryQuery(
@@ -1198,18 +1180,6 @@ function stringValue(
   const result = value[field]
   if (typeof result !== "string") {
     throw new Error(`${label}.${field} must be a string`)
-  }
-  return result
-}
-
-function requiredBoolean(
-  value: Record<string, unknown>,
-  field: string,
-  label: string,
-): boolean {
-  const result = value[field]
-  if (typeof result !== "boolean") {
-    throw new Error(`${label}.${field} must be a boolean`)
   }
   return result
 }

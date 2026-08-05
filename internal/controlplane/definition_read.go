@@ -23,7 +23,6 @@ import (
 const (
 	definitionListDefaultLimit = int32(50)
 	definitionListMaxLimit     = int32(100)
-	definitionListCursorPrefix = "def1."
 )
 
 type definitionListCursor struct {
@@ -276,14 +275,11 @@ func encodeDefinitionListCursor(cursor definitionListCursor) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return definitionListCursorPrefix + base64.RawURLEncoding.EncodeToString(encoded), nil
+	return base64.RawURLEncoding.EncodeToString(encoded), nil
 }
 
 func decodeDefinitionListCursor(raw string) (definitionListCursor, error) {
-	if len(raw) <= len(definitionListCursorPrefix) || raw[:len(definitionListCursorPrefix)] != definitionListCursorPrefix {
-		return definitionListCursor{}, errors.New("definition cursor is invalid")
-	}
-	encoded, err := base64.RawURLEncoding.DecodeString(raw[len(definitionListCursorPrefix):])
+	encoded, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
 		return definitionListCursor{}, errors.New("definition cursor is invalid")
 	}

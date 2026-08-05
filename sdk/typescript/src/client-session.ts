@@ -4,14 +4,17 @@ import type { RequestOptions } from "./request"
 import { validateTaskId } from "./schema/task"
 
 export type SessionStatus = "open" | "closed" | "cancelled" | "failed"
+export type SessionFailureCode =
+  | "cancelled"
+  | "no_progress"
+  | "run_failed"
+  | "run_expired"
+  | "platform_failure"
 
 export interface SessionFailure {
-  readonly code:
-    | "no_progress"
-    | "run_failed"
-    | "run_expired"
-    | "platform_failure"
-  readonly runId: string
+  readonly code: SessionFailureCode
+  readonly message: string
+  readonly details: Readonly<{ runId?: string }>
 }
 
 export interface SessionSnapshot {
@@ -312,6 +315,16 @@ function parseSessionSnapshot(value: unknown): SessionSnapshot {
   const failure = input["failure"] === undefined
     ? undefined
     : parseSessionFailure(input["failure"])
+  const terminalFailure = status === "cancelled" || status === "failed"
+  if (terminalFailure !== (failure !== undefined)) {
+    throw new Error("Session response has an inconsistent failure projection")
+  }
+  if (
+    failure !== undefined &&
+    ((status === "cancelled") !== (failure.code === "cancelled"))
+  ) {
+    throw new Error("Session response failure code is inconsistent with status")
+  }
   return Object.freeze({
     id: resourceID(input["id"], "Session response.id"),
     actorId: requiredString(input, "actor_id", "Session response"),
@@ -354,12 +367,23 @@ function parseSessionInputRecord(value: unknown): SessionInputRecord {
 function parseSessionFailure(value: unknown): SessionFailure {
   const input = objectValue(value, "Session failure")
   const code = requiredString(input, "code", "Session failure")
-  if (code !== "no_progress" && code !== "run_failed" && code !== "run_expired" && code !== "platform_failure") {
+  if (
+    code !== "cancelled" &&
+    code !== "no_progress" &&
+    code !== "run_failed" &&
+    code !== "run_expired" &&
+    code !== "platform_failure"
+  ) {
     throw new Error("Session failure.code is invalid")
   }
+  const details = objectValue(input["details"], "Session failure.details")
+  const runId = details["run_id"] === undefined
+    ? undefined
+    : resourceID(details["run_id"], "Session failure.details.run_id")
   return Object.freeze({
     code,
-    runId: resourceID(input["run_id"], "Session failure.run_id"),
+    message: requiredString(input, "message", "Session failure"),
+    details: Object.freeze(runId === undefined ? {} : { runId }),
   })
 }
 

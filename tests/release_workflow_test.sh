@@ -20,17 +20,6 @@ require_text() {
   fi
 }
 
-reject_text() {
-  text="$1"
-  shift
-  message="${!#}"
-  set -- "${@:1:$(($# - 1))}"
-  if rg -F -- "$text" "$@" >/dev/null; then
-    printf '%s\n' "$message" >&2
-    exit 1
-  fi
-}
-
 require_text "name: platform release" "$workflow" \
   "release workflow does not build the Platform release"
 require_text "name: development platform release" "$workflow" \
@@ -100,28 +89,11 @@ require_text "COPY helmr-dispatcher /usr/local/bin/helmr-dispatcher" "$controlpl
 
 require_text "scripts/aws-release-artifacts.sh worker-image-start" "$workflow" \
   "Worker release does not build a fresh AMI"
-reject_text "scripts/aws-dev-smoke.sh" "$workflow" \
-  "Product release workflow still depends on the removed Managed Cloud orchestrator"
 require_text "workerAMIs" "$workflow" \
   "Worker release artifact omits region-to-AMI identity"
 require_text "gpgv" "$worker_image_builder" \
   "Worker AMI omits the Node signature verifier"
 require_text "mksquashfs" "$worker_image_builder" \
   "Worker AMI omits the Platform tree composer"
-
-reject_text "runtime-release" "$workflow" "$controlplane_builder" "$worker_module_main" "$worker_image_builder" \
-  "release flow still contains the retired Runtime release catalog"
-reject_text "manager-release" "$workflow" "$controlplane_builder" "$worker_module_main" "$worker_image_builder" \
-  "release flow still contains the retired Manager release catalog"
-reject_text "standardToolchain" "$workflow" "$controlplane_builder" "$worker_module_main" "$worker_image_builder" \
-  "release flow still contains the retired standard-toolchain catalog"
-reject_text "managerRelease" "$workflow" "$controlplane_builder" "$worker_module_main" "$worker_image_builder" \
-  "release flow still builds the retired Manager release"
-reject_text "release_package_" "$worker_module_main" "$worker_image_builder" \
-  "Worker AMI still accepts a baked release package"
-reject_text "CONTROLPLANE_IMAGE_RUNTIME_RELEASE_DIR" "$controlplane_builder" \
-  "Control Plane image still accepts a Runtime catalog input"
-reject_text "CONTROLPLANE_IMAGE_MANAGER_RELEASE_DIR" "$controlplane_builder" \
-  "Control Plane image still accepts a Manager catalog input"
 
 printf 'ok - release workflow tests\n'

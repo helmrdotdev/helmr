@@ -135,12 +135,11 @@ func (s *Server) appendActorOutput(
 		return api.SessionOutput{}, errActorOutputTooLarge
 	}
 	locatorParams := db.GetLiveRunLeaseLocatorsParams{
-		ID:                    pgvalue.UUID(parsed.lease.leaseID),
-		LeaseSequence:         request.Lease.LeaseSequence,
-		WorkerGroupID:         worker.WorkerGroupID,
-		WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch:           worker.WorkerEpoch,
-		WorkerProtocolVersion: worker.ProtocolVersion,
+		ID:               pgvalue.UUID(parsed.lease.leaseID),
+		LeaseSequence:    request.Lease.LeaseSequence,
+		WorkerGroupID:    worker.WorkerGroupID,
+		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch:      worker.WorkerEpoch,
 	}
 	discovered, err := s.db.GetLiveRunLeaseLocators(ctx, locatorParams)
 	if err != nil || !discovered.SessionID.Valid {

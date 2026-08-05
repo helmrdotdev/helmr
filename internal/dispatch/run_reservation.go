@@ -19,7 +19,6 @@ type runRuntime struct {
 	groupID                 string
 	workerID                pgtype.UUID
 	workerEpoch             int64
-	protocolVersion         string
 	runtimeIdentityID       string
 	runtimeSubstrateID      pgtype.UUID
 	deploymentDefinition    pgtype.UUID
@@ -114,13 +113,12 @@ func (d *Authority) prepareRunWorkspace(
 		return runWorkspaceMount{}, fmt.Errorf("select run worker: %w", err)
 	}
 	if err := lockWorkerFence(ctx, tx, workerFence{
-		GroupID:               worker.groupID,
-		RegionID:              authority.regionID,
-		WorkerInstanceID:      worker.workerID,
-		WorkerEpoch:           worker.workerEpoch,
-		WorkerProtocolVersion: worker.protocolVersion,
-		Role:                  "run",
-		RunArchitecture:       authority.architecture,
+		GroupID:          worker.groupID,
+		RegionID:         authority.regionID,
+		WorkerInstanceID: worker.workerID,
+		WorkerEpoch:      worker.workerEpoch,
+		Role:             "run",
+		RunArchitecture:  authority.architecture,
 	}); err != nil {
 		return runWorkspaceMount{}, ErrCapacityUnavailable
 	}
@@ -187,13 +185,12 @@ func (d *Authority) useRunRuntime(
 	runtime runRuntime,
 ) (runWorkspaceMount, error) {
 	if err := lockWorkerFence(ctx, tx, workerFence{
-		GroupID:               runtime.groupID,
-		RegionID:              authority.regionID,
-		WorkerInstanceID:      runtime.workerID,
-		WorkerEpoch:           runtime.workerEpoch,
-		WorkerProtocolVersion: runtime.protocolVersion,
-		Role:                  "run",
-		RunArchitecture:       authority.architecture,
+		GroupID:          runtime.groupID,
+		RegionID:         authority.regionID,
+		WorkerInstanceID: runtime.workerID,
+		WorkerEpoch:      runtime.workerEpoch,
+		Role:             "run",
+		RunArchitecture:  authority.architecture,
 	}); err != nil {
 		return runWorkspaceMount{}, ErrCapacityUnavailable
 	}
@@ -304,7 +301,6 @@ SELECT runtime_instances.id,
        runtime_instances.worker_group_id,
        runtime_instances.worker_instance_id,
        runtime_instances.worker_epoch,
-       worker_instances.protocol_version,
        runtime_instances.runtime_identity_id,
        runtime_instances.runtime_substrate_id,
        runtime_instances.deployment_definition_id,
@@ -339,7 +335,6 @@ SELECT runtime_instances.id,
        runtime_instances.worker_group_id,
        runtime_instances.worker_instance_id,
        runtime_instances.worker_epoch,
-       worker_instances.protocol_version,
        runtime_instances.runtime_identity_id,
        runtime_instances.runtime_substrate_id,
        runtime_instances.deployment_definition_id,
@@ -384,7 +379,6 @@ func scanRunRuntime(row rowScanner) (runRuntime, error) {
 		&runtime.groupID,
 		&runtime.workerID,
 		&runtime.workerEpoch,
-		&runtime.protocolVersion,
 		&runtime.runtimeIdentityID,
 		&runtime.runtimeSubstrateID,
 		&runtime.deploymentDefinition,
@@ -499,7 +493,6 @@ type runWorker struct {
 	groupID           string
 	workerID          pgtype.UUID
 	workerEpoch       int64
-	protocolVersion   string
 	runtimeIdentityID string
 }
 
@@ -513,18 +506,16 @@ func selectRunWorker(
 SELECT worker_groups.id,
        worker_instances.id,
        worker_instances.current_epoch,
-       worker_instances.protocol_version,
        worker_instances.runtime_identity_id
   FROM worker_groups
   JOIN worker_instances
-    ON worker_instances.worker_group_id = worker_groups.id
+   ON worker_instances.worker_group_id = worker_groups.id
    AND worker_instances.state = 'active'
    AND worker_instances.supports_run
-   AND worker_instances.protocol_version = worker_groups.protocol_version
   JOIN runtime_identities
     ON runtime_identities.id = worker_instances.runtime_identity_id
    AND runtime_identities.runtime_arch = $2
-   AND runtime_identities.network_abi = 'helmr/v0'
+	   AND runtime_identities.vm_runtime_contract = 'helmr.vm-runtime.v0'
    AND ($6::text = '' OR runtime_identities.id = $6)
   JOIN worker_observations
    ON worker_observations.worker_instance_id = worker_instances.id
@@ -584,8 +575,7 @@ SELECT worker_groups.id,
    AND worker_instances.epoch_memory_bytes - usage.memory_bytes >= $4
    AND worker_instances.epoch_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes >= $5
    AND ($7::text = '' OR worker_instances.substrate_format = $7)
-   AND ($8::text = '' OR worker_instances.substrate_builder_abi = $8)
-   AND ($9::text = '' OR worker_instances.substrate_layout_abi = $9)
+	   AND ($8::text = '' OR worker_instances.substrate_contract = $8)
    AND worker_instances.max_vm_slots > (
        SELECT count(*)
          FROM runtime_instances
@@ -615,13 +605,11 @@ SELECT worker_groups.id,
 		authority.resources.guestEphemeralDiskBytes,
 		authority.restoreRuntimeIdentityID,
 		authority.restoreSubstrateFormat,
-		authority.restoreSubstrateBuilder,
-		authority.restoreSubstrateLayout,
+		authority.restoreSubstrateContract,
 	).Scan(
 		&worker.groupID,
 		&worker.workerID,
 		&worker.workerEpoch,
-		&worker.protocolVersion,
 		&worker.runtimeIdentityID,
 	)
 	return worker, err

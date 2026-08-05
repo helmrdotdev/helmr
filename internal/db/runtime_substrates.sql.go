@@ -12,17 +12,16 @@ import (
 )
 
 const getRuntimeSubstrateRegistration = `-- name: GetRuntimeSubstrateRegistration :one
-SELECT id, org_id, project_id, environment_id, deployment_definition_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, created_at
+SELECT id, org_id, project_id, environment_id, deployment_definition_id, substrate_digest, substrate_format, substrate_contract, substrate_size_bytes, created_at
   FROM runtime_substrates
  WHERE org_id = $1
    AND project_id = $2
    AND environment_id = $3
    AND deployment_definition_id = $4
    AND substrate_format = $5
-   AND builder_abi = $6
-   AND layout_abi = $7
-   AND substrate_digest = $8
-   AND substrate_size_bytes = $9
+   AND substrate_contract = $6
+   AND substrate_digest = $7
+   AND substrate_size_bytes = $8
  LIMIT 1
 `
 
@@ -32,8 +31,7 @@ type GetRuntimeSubstrateRegistrationParams struct {
 	EnvironmentID          pgtype.UUID `json:"environment_id"`
 	DeploymentDefinitionID pgtype.UUID `json:"deployment_definition_id"`
 	SubstrateFormat        string      `json:"substrate_format"`
-	BuilderAbi             string      `json:"builder_abi"`
-	LayoutAbi              string      `json:"layout_abi"`
+	SubstrateContract      string      `json:"substrate_contract"`
 	SubstrateDigest        string      `json:"substrate_digest"`
 	SubstrateSizeBytes     int64       `json:"substrate_size_bytes"`
 }
@@ -45,8 +43,7 @@ func (q *Queries) GetRuntimeSubstrateRegistration(ctx context.Context, arg GetRu
 		arg.EnvironmentID,
 		arg.DeploymentDefinitionID,
 		arg.SubstrateFormat,
-		arg.BuilderAbi,
-		arg.LayoutAbi,
+		arg.SubstrateContract,
 		arg.SubstrateDigest,
 		arg.SubstrateSizeBytes,
 	)
@@ -59,8 +56,7 @@ func (q *Queries) GetRuntimeSubstrateRegistration(ctx context.Context, arg GetRu
 		&i.DeploymentDefinitionID,
 		&i.SubstrateDigest,
 		&i.SubstrateFormat,
-		&i.BuilderAbi,
-		&i.LayoutAbi,
+		&i.SubstrateContract,
 		&i.SubstrateSizeBytes,
 		&i.CreatedAt,
 	)
@@ -76,8 +72,7 @@ INSERT INTO runtime_substrates (
     deployment_definition_id,
     substrate_digest,
     substrate_format,
-    builder_abi,
-    layout_abi,
+    substrate_contract,
     substrate_size_bytes
 ) VALUES (
     $1,
@@ -88,8 +83,7 @@ INSERT INTO runtime_substrates (
     $6,
     $7,
     $8,
-    $9,
-    $10
+    $9
 )
 ON CONFLICT ON CONSTRAINT runtime_substrates_input_key DO NOTHING
 `
@@ -102,8 +96,7 @@ type InsertRuntimeSubstrateParams struct {
 	DeploymentDefinitionID pgtype.UUID `json:"deployment_definition_id"`
 	SubstrateDigest        string      `json:"substrate_digest"`
 	SubstrateFormat        string      `json:"substrate_format"`
-	BuilderAbi             string      `json:"builder_abi"`
-	LayoutAbi              string      `json:"layout_abi"`
+	SubstrateContract      string      `json:"substrate_contract"`
 	SubstrateSizeBytes     int64       `json:"substrate_size_bytes"`
 }
 
@@ -116,8 +109,7 @@ func (q *Queries) InsertRuntimeSubstrate(ctx context.Context, arg InsertRuntimeS
 		arg.DeploymentDefinitionID,
 		arg.SubstrateDigest,
 		arg.SubstrateFormat,
-		arg.BuilderAbi,
-		arg.LayoutAbi,
+		arg.SubstrateContract,
 		arg.SubstrateSizeBytes,
 	)
 	if err != nil {
@@ -152,8 +144,7 @@ SELECT deployments.org_id,
    AND worker_instances.state IN ('active', 'draining')
    AND worker_instances.supports_run
    AND worker_instances.substrate_format = $5
-   AND worker_instances.substrate_builder_abi = $6
-   AND worker_instances.substrate_layout_abi = $7
+   AND worker_instances.substrate_contract = $6
  LIMIT 1
  FOR SHARE OF runtime_instances, worker_instances
 `
@@ -164,8 +155,7 @@ type LockRuntimeSubstrateAuthorityParams struct {
 	WorkerGroupID          string      `json:"worker_group_id"`
 	WorkerEpoch            int64       `json:"worker_epoch"`
 	SubstrateFormat        string      `json:"substrate_format"`
-	BuilderAbi             string      `json:"builder_abi"`
-	LayoutAbi              string      `json:"layout_abi"`
+	SubstrateContract      string      `json:"substrate_contract"`
 }
 
 type LockRuntimeSubstrateAuthorityRow struct {
@@ -182,8 +172,7 @@ func (q *Queries) LockRuntimeSubstrateAuthority(ctx context.Context, arg LockRun
 		arg.WorkerGroupID,
 		arg.WorkerEpoch,
 		arg.SubstrateFormat,
-		arg.BuilderAbi,
-		arg.LayoutAbi,
+		arg.SubstrateContract,
 	)
 	var i LockRuntimeSubstrateAuthorityRow
 	err := row.Scan(

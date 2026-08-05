@@ -25,7 +25,6 @@ current_run_lease AS (
        AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
        AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
        AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
-       AND run_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
        AND runs.current_run_lease_id = run_leases.id
        AND runs.current_attempt_number = run_leases.attempt_number
        AND runs.status = 'running'

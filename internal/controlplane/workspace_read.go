@@ -22,7 +22,6 @@ import (
 const (
 	workspaceListDefaultLimit = int32(50)
 	workspaceListMaxLimit     = int32(100)
-	workspaceListCursorPrefix = "ws1."
 )
 
 type workspaceListCursor struct {
@@ -159,14 +158,11 @@ func encodeWorkspaceListCursor(cursor workspaceListCursor) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return workspaceListCursorPrefix + base64.RawURLEncoding.EncodeToString(encoded), nil
+	return base64.RawURLEncoding.EncodeToString(encoded), nil
 }
 
 func decodeWorkspaceListCursor(raw string) (workspaceListCursor, error) {
-	if len(raw) <= len(workspaceListCursorPrefix) || raw[:len(workspaceListCursorPrefix)] != workspaceListCursorPrefix {
-		return workspaceListCursor{}, errors.New("workspace cursor is invalid")
-	}
-	encoded, err := base64.RawURLEncoding.DecodeString(raw[len(workspaceListCursorPrefix):])
+	encoded, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
 		return workspaceListCursor{}, errors.New("workspace cursor is invalid")
 	}
