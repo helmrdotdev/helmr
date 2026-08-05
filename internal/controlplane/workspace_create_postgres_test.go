@@ -1,9 +1,10 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
-	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
@@ -96,8 +97,16 @@ func TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	createdSnapshot, err := json.Marshal(created.Snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayedSnapshot, err := json.Marshal(replayed.Snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !replayed.Replayed || replayed.WorkspaceID != created.WorkspaceID ||
-		!reflect.DeepEqual(replayed.Snapshot, created.Snapshot) {
+		!bytes.Equal(replayedSnapshot, createdSnapshot) {
 		t.Fatalf("replayed = %+v, created = %+v", replayed, created)
 	}
 	if _, err := fixture.pool.Exec(t.Context(), `
