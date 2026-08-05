@@ -103,7 +103,7 @@ export const childTaskSmoke = task({
         marker: input.marker,
         childRunId: child.id,
         childAttemptNumber: null,
-        childError: null,
+        childFailure: null,
         sameWorkspaceMarkerObserved: false,
       }
     }
@@ -127,7 +127,7 @@ export const childTaskSmoke = task({
         marker: input.marker,
         childRunId: output.childRunId,
         childAttemptNumber: output.attemptNumber,
-        childError: null,
+        childFailure: null,
         sameWorkspaceMarkerObserved: sharedMarker !== null,
       }
     }
@@ -142,10 +142,10 @@ export const childTaskSmoke = task({
       marker: input.marker,
       childRunId: result.run.id,
       childAttemptNumber: null,
-      childError: {
-        code: result.error.code,
-        message: result.error.message,
-        retryable: result.error.retryable,
+      childFailure: {
+        code: result.failure.code,
+        message: result.failure.message,
+        details: result.failure.details,
       },
       sameWorkspaceMarkerObserved: false,
     }
