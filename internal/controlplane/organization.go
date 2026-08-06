@@ -103,7 +103,6 @@ func (s *Server) listRegions(w http.ResponseWriter, r *http.Request) {
 			ProviderRegion: region.ProviderRegion,
 			DisplayName:    region.DisplayName,
 			Status:         status,
-			Visibility:     string(region.Visibility),
 			Location:       region.Location,
 		})
 	}

@@ -6,7 +6,6 @@ export type AdminRegion = {
   provider_region: string;
   display_name: string;
   location: string;
-  visibility: "public" | "allowlisted" | "hidden";
   state: "available" | "draining" | "disabled";
 };
 
@@ -43,7 +42,7 @@ export async function createAdminRegion(input: CreateAdminRegionInput): Promise<
 
 export async function updateAdminRegion(
   id: string,
-  input: Pick<AdminRegion, "display_name" | "location" | "visibility">,
+  input: Pick<AdminRegion, "display_name" | "location">,
 ): Promise<AdminRegion> {
   return request(`/admin/api/v1/regions/${encodeURIComponent(id)}`, {
     method: "PATCH",

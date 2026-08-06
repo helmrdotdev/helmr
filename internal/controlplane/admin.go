@@ -64,15 +64,10 @@ func (s *Server) adminCreateRegion(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("provider, provider_region, and display_name are required")))
 		return
 	}
-	visibility, err := adminRegionVisibility(request.Visibility)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
 	created, err := s.db.CreateRegion(r.Context(), db.CreateRegionParams{
 		ID: request.ID, Provider: request.Provider, ProviderRegion: request.ProviderRegion,
 		DisplayName: request.DisplayName, State: db.RegionStateAvailable,
-		Visibility: visibility, Location: request.Location,
+		Location: request.Location,
 	})
 	if isUniqueViolation(err) {
 		writeError(w, conflict(errors.New("region identity is already in use")))
@@ -101,26 +96,19 @@ func (s *Server) adminUpdateRegion(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid region request JSON: %w", err)))
 		return
 	}
-	displayName, location, visibility := current.DisplayName, current.Location, current.Visibility
+	displayName, location := current.DisplayName, current.Location
 	if request.DisplayName != nil {
 		displayName = strings.TrimSpace(*request.DisplayName)
 	}
 	if request.Location != nil {
 		location = strings.TrimSpace(*request.Location)
 	}
-	if request.Visibility != nil {
-		visibility, err = adminRegionVisibility(*request.Visibility)
-		if err != nil {
-			writeError(w, badRequest(err))
-			return
-		}
-	}
 	if displayName == "" {
 		writeError(w, badRequest(errors.New("display_name is required")))
 		return
 	}
 	updated, err := s.db.UpdateRegionMetadata(r.Context(), db.UpdateRegionMetadataParams{
-		ID: id, DisplayName: displayName, Location: location, Visibility: visibility,
+		ID: id, DisplayName: displayName, Location: location,
 	})
 	if err != nil {
 		writeError(w, errors.New("update region"))
@@ -343,7 +331,7 @@ func adminRegion(row db.Region) api.AdminRegion {
 	return api.AdminRegion{
 		ID: row.ID, Provider: row.Provider, ProviderRegion: row.ProviderRegion,
 		DisplayName: row.DisplayName, Location: row.Location,
-		Visibility: string(row.Visibility), State: row.State,
+		State: row.State,
 	}
 }
 
@@ -357,18 +345,6 @@ func adminWorkerGroup(row db.WorkerGroup) api.AdminWorkerGroup {
 		RequiredArtifactCacheBytes:      row.RequiredArtifactCacheBytes,
 		RequiredVMSlots:                 row.RequiredVMSlots, RequiredBuildExecutors: row.RequiredBuildExecutors,
 		ObservationTTLSeconds: row.ObservationTtlSeconds,
-	}
-}
-
-func adminRegionVisibility(raw string) (db.RegionVisibility, error) {
-	if raw == "" {
-		return db.RegionVisibilityPublic, nil
-	}
-	switch db.RegionVisibility(raw) {
-	case db.RegionVisibilityPublic, db.RegionVisibilityAllowlisted, db.RegionVisibilityHidden:
-		return db.RegionVisibility(raw), nil
-	default:
-		return "", errors.New("visibility must be public, allowlisted, or hidden")
 	}
 }
 

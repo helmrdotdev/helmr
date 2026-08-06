@@ -1,12 +1,11 @@
 -- name: CreateRegion :one
-INSERT INTO regions (id, provider, provider_region, display_name, state, visibility, location)
+INSERT INTO regions (id, provider, provider_region, display_name, state, location)
 VALUES (
     sqlc.arg(id),
     sqlc.arg(provider),
     sqlc.arg(provider_region),
     sqlc.arg(display_name),
     sqlc.arg(state)::text,
-    sqlc.arg(visibility)::region_visibility,
     sqlc.arg(location)::text
 )
 RETURNING *;
@@ -14,7 +13,6 @@ RETURNING *;
 -- name: UpdateRegionMetadata :one
 UPDATE regions
    SET display_name = sqlc.arg(display_name),
-       visibility = sqlc.arg(visibility)::region_visibility,
        location = sqlc.arg(location),
        updated_at = now()
  WHERE id = sqlc.arg(id)

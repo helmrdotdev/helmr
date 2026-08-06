@@ -8,12 +8,6 @@ CREATE TABLE organizations (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TYPE region_visibility AS ENUM (
-    'public',
-    'allowlisted',
-    'hidden'
-);
-
 CREATE TYPE telemetry_stream_kind AS ENUM (
     'run_log',
     'event',
@@ -33,7 +27,6 @@ CREATE TABLE regions (
     display_name TEXT NOT NULL CHECK (btrim(display_name) <> ''),
     state TEXT NOT NULL DEFAULT 'available'
         CHECK (state IN ('available', 'draining', 'disabled')),
-    visibility region_visibility NOT NULL DEFAULT 'public',
     location TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),

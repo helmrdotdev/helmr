@@ -66,7 +66,7 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, cfg Config) error {
 		if _, err := q.CreateRegion(ctx, db.CreateRegionParams{
 			ID: cfg.RegionID, Provider: cfg.RegionProvider, ProviderRegion: cfg.RegionProviderRegion,
 			DisplayName: cfg.RegionDisplayName, State: db.RegionStateAvailable,
-			Visibility: db.RegionVisibilityPublic, Location: cfg.RegionLocation,
+			Location: cfg.RegionLocation,
 		}); err != nil {
 			return fmt.Errorf("create bootstrap region: %w", err)
 		}

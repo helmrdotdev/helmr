@@ -250,7 +250,6 @@ func assertPrimitiveLifecycleSchema(
 		SELECT count(*)
 		  FROM pg_type
 		 WHERE typname = ANY(ARRAY[
-		     'region_visibility',
 		     'wait_kind',
 		     'run_checkpoint_kind',
 		     'artifact_kind',
@@ -259,8 +258,8 @@ func assertPrimitiveLifecycleSchema(
 	`).Scan(&categoricalEnums); err != nil {
 		t.Fatal(err)
 	}
-	if categoricalEnums != 5 {
-		t.Fatalf("categorical enum sentinels = %d, want 5", categoricalEnums)
+	if categoricalEnums != 4 {
+		t.Fatalf("categorical enum sentinels = %d, want 4", categoricalEnums)
 	}
 
 	queryFiles, err := filepath.Glob("../query/*.sql")

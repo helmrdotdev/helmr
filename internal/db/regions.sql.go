@@ -10,27 +10,25 @@ import (
 )
 
 const createRegion = `-- name: CreateRegion :one
-INSERT INTO regions (id, provider, provider_region, display_name, state, visibility, location)
+INSERT INTO regions (id, provider, provider_region, display_name, state, location)
 VALUES (
     $1,
     $2,
     $3,
     $4,
     $5::text,
-    $6::region_visibility,
-    $7::text
+    $6::text
 )
-RETURNING id, provider, provider_region, display_name, state, visibility, location, created_at, updated_at
+RETURNING id, provider, provider_region, display_name, state, location, created_at, updated_at
 `
 
 type CreateRegionParams struct {
-	ID             string           `json:"id"`
-	Provider       string           `json:"provider"`
-	ProviderRegion string           `json:"provider_region"`
-	DisplayName    string           `json:"display_name"`
-	State          string           `json:"state"`
-	Visibility     RegionVisibility `json:"visibility"`
-	Location       string           `json:"location"`
+	ID             string `json:"id"`
+	Provider       string `json:"provider"`
+	ProviderRegion string `json:"provider_region"`
+	DisplayName    string `json:"display_name"`
+	State          string `json:"state"`
+	Location       string `json:"location"`
 }
 
 func (q *Queries) CreateRegion(ctx context.Context, arg CreateRegionParams) (Region, error) {
@@ -40,7 +38,6 @@ func (q *Queries) CreateRegion(ctx context.Context, arg CreateRegionParams) (Reg
 		arg.ProviderRegion,
 		arg.DisplayName,
 		arg.State,
-		arg.Visibility,
 		arg.Location,
 	)
 	var i Region
@@ -50,7 +47,6 @@ func (q *Queries) CreateRegion(ctx context.Context, arg CreateRegionParams) (Reg
 		&i.ProviderRegion,
 		&i.DisplayName,
 		&i.State,
-		&i.Visibility,
 		&i.Location,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -59,7 +55,7 @@ func (q *Queries) CreateRegion(ctx context.Context, arg CreateRegionParams) (Reg
 }
 
 const getRegion = `-- name: GetRegion :one
-SELECT id, provider, provider_region, display_name, state, visibility, location, created_at, updated_at
+SELECT id, provider, provider_region, display_name, state, location, created_at, updated_at
   FROM regions
  WHERE id = $1
 `
@@ -73,7 +69,6 @@ func (q *Queries) GetRegion(ctx context.Context, id string) (Region, error) {
 		&i.ProviderRegion,
 		&i.DisplayName,
 		&i.State,
-		&i.Visibility,
 		&i.Location,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -82,7 +77,7 @@ func (q *Queries) GetRegion(ctx context.Context, id string) (Region, error) {
 }
 
 const getRegionByProviderRegion = `-- name: GetRegionByProviderRegion :one
-SELECT id, provider, provider_region, display_name, state, visibility, location, created_at, updated_at
+SELECT id, provider, provider_region, display_name, state, location, created_at, updated_at
   FROM regions
  WHERE provider = $1
    AND provider_region = $2
@@ -102,7 +97,6 @@ func (q *Queries) GetRegionByProviderRegion(ctx context.Context, arg GetRegionBy
 		&i.ProviderRegion,
 		&i.DisplayName,
 		&i.State,
-		&i.Visibility,
 		&i.Location,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -111,7 +105,7 @@ func (q *Queries) GetRegionByProviderRegion(ctx context.Context, arg GetRegionBy
 }
 
 const listRegions = `-- name: ListRegions :many
-SELECT id, provider, provider_region, display_name, state, visibility, location, created_at, updated_at
+SELECT id, provider, provider_region, display_name, state, location, created_at, updated_at
   FROM regions
  ORDER BY lower(display_name), id
 `
@@ -131,7 +125,6 @@ func (q *Queries) ListRegions(ctx context.Context) ([]Region, error) {
 			&i.ProviderRegion,
 			&i.DisplayName,
 			&i.State,
-			&i.Visibility,
 			&i.Location,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -149,27 +142,20 @@ func (q *Queries) ListRegions(ctx context.Context) ([]Region, error) {
 const updateRegionMetadata = `-- name: UpdateRegionMetadata :one
 UPDATE regions
    SET display_name = $1,
-       visibility = $2::region_visibility,
-       location = $3,
+       location = $2,
        updated_at = now()
- WHERE id = $4
-RETURNING id, provider, provider_region, display_name, state, visibility, location, created_at, updated_at
+ WHERE id = $3
+RETURNING id, provider, provider_region, display_name, state, location, created_at, updated_at
 `
 
 type UpdateRegionMetadataParams struct {
-	DisplayName string           `json:"display_name"`
-	Visibility  RegionVisibility `json:"visibility"`
-	Location    string           `json:"location"`
-	ID          string           `json:"id"`
+	DisplayName string `json:"display_name"`
+	Location    string `json:"location"`
+	ID          string `json:"id"`
 }
 
 func (q *Queries) UpdateRegionMetadata(ctx context.Context, arg UpdateRegionMetadataParams) (Region, error) {
-	row := q.db.QueryRow(ctx, updateRegionMetadata,
-		arg.DisplayName,
-		arg.Visibility,
-		arg.Location,
-		arg.ID,
-	)
+	row := q.db.QueryRow(ctx, updateRegionMetadata, arg.DisplayName, arg.Location, arg.ID)
 	var i Region
 	err := row.Scan(
 		&i.ID,
@@ -177,7 +163,6 @@ func (q *Queries) UpdateRegionMetadata(ctx context.Context, arg UpdateRegionMeta
 		&i.ProviderRegion,
 		&i.DisplayName,
 		&i.State,
-		&i.Visibility,
 		&i.Location,
 		&i.CreatedAt,
 		&i.UpdatedAt,

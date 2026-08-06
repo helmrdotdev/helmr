@@ -187,49 +187,6 @@ func (ns NullOrgMemberRole) Value() (driver.Value, error) {
 	return string(ns.OrgMemberRole), nil
 }
 
-type RegionVisibility string
-
-const (
-	RegionVisibilityPublic      RegionVisibility = "public"
-	RegionVisibilityAllowlisted RegionVisibility = "allowlisted"
-	RegionVisibilityHidden      RegionVisibility = "hidden"
-)
-
-func (e *RegionVisibility) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = RegionVisibility(s)
-	case string:
-		*e = RegionVisibility(s)
-	default:
-		return fmt.Errorf("unsupported scan type for RegionVisibility: %T", src)
-	}
-	return nil
-}
-
-type NullRegionVisibility struct {
-	RegionVisibility RegionVisibility `json:"region_visibility"`
-	Valid            bool             `json:"valid"` // Valid is true if RegionVisibility is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullRegionVisibility) Scan(value interface{}) error {
-	if value == nil {
-		ns.RegionVisibility, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.RegionVisibility.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullRegionVisibility) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.RegionVisibility), nil
-}
-
 type RunCheckpointArtifactRole string
 
 const (
@@ -789,7 +746,6 @@ type Region struct {
 	ProviderRegion string             `json:"provider_region"`
 	DisplayName    string             `json:"display_name"`
 	State          string             `json:"state"`
-	Visibility     RegionVisibility   `json:"visibility"`
 	Location       string             `json:"location"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`

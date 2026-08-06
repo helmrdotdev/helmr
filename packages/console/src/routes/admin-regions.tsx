@@ -31,7 +31,6 @@ export function AdminRegions() {
         provider_region: String(form.get("provider_region") ?? "").trim(),
         display_name: String(form.get("display_name") ?? "").trim(),
         location: String(form.get("location") ?? "").trim(),
-        visibility: String(form.get("visibility") ?? "public") as AdminRegion["visibility"],
       });
       await refresh();
       setCreating(false);
@@ -53,7 +52,6 @@ export function AdminRegions() {
       await updateAdminRegion(current.id, {
         display_name: String(form.get("display_name") ?? "").trim(),
         location: String(form.get("location") ?? "").trim(),
-        visibility: String(form.get("visibility") ?? current.visibility) as AdminRegion["visibility"],
       });
       await refresh();
       setEditing(null);
@@ -75,12 +73,12 @@ export function AdminRegions() {
           <Show when={(regions.data?.regions.length ?? 0) > 0} fallback={<div class={ui.emptyState}><strong class="text-console-text">No Regions configured.</strong><button type="button" class={ui.button} onClick={() => setCreating(true)}>Create Region</button></div>}>
             <div class={ui.tableWrap}>
               <table class={ui.dataTable}>
-                <thead><tr><th>Region</th><th>Provider</th><th>Location</th><th>Visibility</th><th>State</th><th></th></tr></thead>
+                <thead><tr><th>Region</th><th>Provider</th><th>Location</th><th>State</th><th></th></tr></thead>
                 <tbody><For each={regions.data?.regions ?? []}>{(region) => (
                   <tr>
                     <td><div class={ui.tableCellStack}><strong>{region.display_name}</strong><div><code>{region.id}</code></div></div></td>
                     <td>{region.provider} / <code>{region.provider_region}</code></td>
-                    <td>{region.location || "—"}</td><td>{region.visibility}</td><td>{region.state}</td>
+                    <td>{region.location || "—"}</td><td>{region.state}</td>
                     <td class={ui.actionsCell}><button type="button" class={ui.secondaryButton} onClick={() => { setError(null); setEditing(region); }}>Edit</button></td>
                   </tr>
                 )}</For></tbody>
@@ -98,7 +96,6 @@ export function AdminRegions() {
             <RegionField name="provider" label="Provider" placeholder="aws" />
             <RegionField name="provider_region" label="Provider Region" placeholder="us-east-1" />
             <RegionField name="location" label="Location" placeholder="Virginia, USA" />
-            <VisibilityField value="public" />
             <Show when={error()}><p class={ui.fieldError} role="alert">{error()}</p></Show>
             <div class={ui.modalActions}><button type="button" class={ui.secondaryButton} onClick={() => setCreating(false)}>Cancel</button><button class={ui.button} disabled={submitting()}>{submitting() ? "Creating..." : "Create"}</button></div>
           </form>
@@ -110,7 +107,6 @@ export function AdminRegions() {
           <form onSubmit={submitEdit}>
             <RegionField name="display_name" label="Display name" value={region().display_name} autofocus />
             <RegionField name="location" label="Location" value={region().location} />
-            <VisibilityField value={region().visibility} />
             <Show when={error()}><p class={ui.fieldError} role="alert">{error()}</p></Show>
             <div class={ui.modalActions}><button type="button" class={ui.secondaryButton} onClick={() => setEditing(null)}>Cancel</button><button class={ui.button} disabled={submitting()}>{submitting() ? "Saving..." : "Save"}</button></div>
           </form>
@@ -122,8 +118,4 @@ export function AdminRegions() {
 
 function RegionField(props: { name: string; label: string; value?: string; placeholder?: string; autofocus?: boolean }) {
   return <label class={ui.field}><span>{props.label}</span><input class={ui.input} name={props.name} value={props.value ?? ""} placeholder={props.placeholder} autofocus={props.autofocus} required={props.name !== "location"} /></label>;
-}
-
-function VisibilityField(props: { value: AdminRegion["visibility"] }) {
-  return <label class={ui.field}><span>Visibility</span><select class={ui.input} name="visibility"><option value="public" selected={props.value === "public"}>Public</option><option value="allowlisted" selected={props.value === "allowlisted"}>Allowlisted</option><option value="hidden" selected={props.value === "hidden"}>Hidden</option></select></label>;
 }

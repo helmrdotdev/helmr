@@ -32,7 +32,6 @@ export type Region = {
   provider_region: string;
   display_name: string;
 	status: string;
-  visibility: string;
   location?: string;
 };
 

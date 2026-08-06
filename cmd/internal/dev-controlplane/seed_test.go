@@ -28,7 +28,7 @@ func TestDevSeedWithFreshPostgres(t *testing.T) {
 	q := db.New(pool)
 	if _, err := q.CreateRegion(ctx, db.CreateRegionParams{
 		ID: "dev-local", Provider: "local", ProviderRegion: "local", DisplayName: "Local",
-		State: db.RegionStateAvailable, Visibility: db.RegionVisibilityPublic,
+		State: db.RegionStateAvailable,
 	}); err != nil {
 		t.Fatalf("bootstrap local region: %v", err)
 	}

@@ -6,7 +6,6 @@ type AdminRegion struct {
 	ProviderRegion string `json:"provider_region"`
 	DisplayName    string `json:"display_name"`
 	Location       string `json:"location"`
-	Visibility     string `json:"visibility"`
 	State          string `json:"state"`
 }
 
@@ -20,13 +19,11 @@ type CreateAdminRegionRequest struct {
 	ProviderRegion string `json:"provider_region"`
 	DisplayName    string `json:"display_name"`
 	Location       string `json:"location"`
-	Visibility     string `json:"visibility"`
 }
 
 type UpdateAdminRegionRequest struct {
 	DisplayName *string `json:"display_name,omitempty"`
 	Location    *string `json:"location,omitempty"`
-	Visibility  *string `json:"visibility,omitempty"`
 }
 
 type AdminWorkerGroup struct {
