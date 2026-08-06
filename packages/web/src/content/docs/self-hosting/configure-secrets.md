@@ -46,7 +46,9 @@ Set these environment variables to populate application secrets in the same run:
 - `HELMR_GITHUB_OAUTH_CLIENT_SECRET`
 
 The helper uses `tofu output -json secret_arns` by default. Set `TOFU=terraform` when using
-Terraform, and set `OVERWRITE_SECRETS=1` only when intentionally rotating existing values.
+Terraform. The helper initializes missing values only and never replaces an existing value.
+Rotate a Worker Group enrollment token from Admin and propagate it to Workers explicitly.
+Online rotation of root signing and encryption keys is not supported.
 
 Use the RDS endpoint output when building the database URL:
 

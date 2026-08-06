@@ -27,7 +27,8 @@ capacity commands and provider policy.
 
 `scripts/aws-bootstrap-helmr-secrets.sh` populates the empty Secrets Manager
 containers emitted by generic self-host AWS compositions. It writes values
-directly so Terraform state contains only secret ARNs.
+directly so Terraform state contains only secret ARNs. It initializes missing
+values only and never replaces an existing value.
 
 Managed Cloud environment operations, provider credentials, root stacks,
 capacity automation, and disposable AWS validation live in the private
