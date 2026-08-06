@@ -113,6 +113,10 @@ SELECT schedules.*
    AND environments.project_id = sqlc.arg(project_id)
    AND schedules.environment_id = sqlc.arg(environment_id)
    AND (
+       sqlc.narg(task_declared_id)::text IS NULL
+       OR schedules.task_declared_id = sqlc.narg(task_declared_id)::text
+   )
+   AND (
        sqlc.narg(after_task_declared_id)::text IS NULL
        OR (schedules.task_declared_id, schedules.id) >
           (sqlc.narg(after_task_declared_id)::text, sqlc.arg(after_id)::uuid)

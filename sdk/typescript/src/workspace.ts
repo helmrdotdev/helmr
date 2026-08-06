@@ -2,8 +2,6 @@ import type {
   CursorPage,
   Duration,
   WorkspaceAddress,
-  WorkspaceIdAddress,
-  WorkspaceKeyAddress,
 } from "./contract"
 import {
   inspectImage,
@@ -14,16 +12,23 @@ import type { RequestOptions } from "./request"
 import { inspectSecretAddress, type SecretAddress } from "./secret"
 import { validateTaskId } from "./schema/task"
 import { resourceID } from "./internal/id"
+import { timestampString } from "./internal/timestamp"
 import { currentRuntimeOperations } from "./internal/runtime"
 
 const sandboxDefinitionBrand = Symbol.for("helmr.sdk.v0.sandbox")
 const workspaceAddressBrand = Symbol.for("helmr.sdk.v0.workspace-address")
+
+declare const sandboxTypeBrand: unique symbol
 
 export type WorkspaceMemory = `${bigint}MiB` | `${bigint}GiB`
 
 export interface WorkspaceResources {
   readonly cpu: number
   readonly memory: WorkspaceMemory
+}
+
+export interface SandboxConfig {
+  readonly id: string
 }
 
 export interface SandboxBuilder {
@@ -33,7 +38,7 @@ export interface SandboxBuilder {
 
 export interface SandboxResourceBuilder {
   readonly id: string
-  resources(value: WorkspaceResources): SandboxDefinition
+  resources(value: WorkspaceResources): Sandbox
 }
 
 export type WorkspaceStatus =
@@ -48,7 +53,7 @@ export type WorkspaceSecretPlacement =
 export type WorkspaceSecretInput = Readonly<{ secret: SecretAddress }> &
   WorkspaceSecretPlacement
 
-export type WorkspaceSecretSnapshot = Readonly<{ name: string }> &
+export type WorkspaceSecretInfo = Readonly<{ name: string }> &
   WorkspaceSecretPlacement
 
 export interface WorkspaceCreateRequest {
@@ -60,20 +65,16 @@ export interface WorkspaceCreateRequest {
 export type EncodedWorkspaceSecret = Readonly<{ name: string }> &
   WorkspaceSecretPlacement
 
-export interface RuntimeWorkspaceCreateOptions extends WorkspaceCreateRequest {
-  readonly signal?: AbortSignal
-}
-
-export interface WorkspaceSnapshot {
+export interface Workspace {
   readonly id: string
   readonly key?: string
   readonly sandboxId: string
   readonly deploymentId: string
   readonly status: WorkspaceStatus
-  readonly secrets: readonly WorkspaceSecretSnapshot[]
-  readonly lastActivityAt: Date
-  readonly createdAt: Date
-  readonly updatedAt: Date
+  readonly secrets: readonly WorkspaceSecretInfo[]
+  readonly lastActivityAt: string
+  readonly createdAt: string
+  readonly updatedAt: string
 }
 
 export type WorkspaceFileEntry =
@@ -136,9 +137,9 @@ export interface WorkspaceDeleteReceipt {
   readonly workspaceId: string
 }
 
-export interface WorkspaceRefBase {
+export interface WorkspaceRef extends WorkspaceAddress {
   readonly files: WorkspaceFiles
-  retrieve(options?: RequestOptions): Promise<WorkspaceSnapshot>
+  retrieve(options?: RequestOptions): Promise<Workspace>
   exec(
     request: WorkspaceExecRequest,
     options?: RequestOptions,
@@ -149,18 +150,17 @@ export interface WorkspaceRefBase {
   ): Promise<WorkspaceDeleteReceipt>
 }
 
-export type WorkspaceIdRef = WorkspaceIdAddress & WorkspaceRefBase
-export type WorkspaceRef = WorkspaceIdRef
-
-export interface SandboxDefinition {
+export interface Sandbox {
+  readonly [sandboxTypeBrand]: true
   readonly id: string
-  createWorkspace(options?: RuntimeWorkspaceCreateOptions): Promise<WorkspaceIdRef>
+  createWorkspace(
+    request?: WorkspaceCreateRequest,
+    options?: RequestOptions,
+  ): Promise<WorkspaceRef>
 }
 
-export interface Workspaces {
-  ref(id: string): WorkspaceIdRef
-  fromId(id: string): WorkspaceIdAddress
-  fromKey(key: string): WorkspaceKeyAddress
+interface Workspaces {
+  ref(id: string): WorkspaceRef
 }
 
 export interface InternalSandboxDefinition {
@@ -197,7 +197,7 @@ class ResourceBuilder implements SandboxResourceBuilder {
     Object.freeze(this)
   }
 
-  resources(value: WorkspaceResources): SandboxDefinition {
+  resources(value: WorkspaceResources): Sandbox {
     assertResourceMembers(value)
     return new Definition(
       this.id,
@@ -207,7 +207,8 @@ class ResourceBuilder implements SandboxResourceBuilder {
   }
 }
 
-class Definition implements SandboxDefinition {
+class Definition implements Sandbox {
+  declare readonly [sandboxTypeBrand]: true
   readonly id: string
   readonly internal: InternalSandboxDefinition
 
@@ -228,23 +229,26 @@ class Definition implements SandboxDefinition {
   }
 
   createWorkspace(
-    options?: RuntimeWorkspaceCreateOptions,
-  ): Promise<WorkspaceIdRef> {
-    return currentRuntimeOperations().workspaceCreate(this.id, options)
+    request?: WorkspaceCreateRequest,
+    options?: RequestOptions,
+  ): Promise<WorkspaceRef> {
+    return currentRuntimeOperations().workspaceCreate(
+      this.id,
+      request,
+      options?.signal,
+    )
       .then(({ workspaceId }) =>
         createWorkspaceRef(workspaceId)
       )
   }
 }
 
-export function sandbox(config: Readonly<{ id: string }>): SandboxBuilder {
+export function sandbox(config: SandboxConfig): SandboxBuilder {
   return new Builder(config.id)
 }
 
 export const workspaces: Workspaces = Object.freeze({
   ref: createWorkspaceRef,
-  fromId: createWorkspaceIdAddress,
-  fromKey: createWorkspaceKeyAddress,
 })
 
 export function inspectWorkspaceAddress(
@@ -257,18 +261,17 @@ export function inspectWorkspaceAddress(
   ) {
     return undefined
   }
-  const address = value as { readonly id?: unknown; readonly key?: unknown }
-  const hasID = address.id !== undefined
-  const hasKey = address.key !== undefined
-  if (hasID === hasKey) throw new Error("private Workspace address is invalid")
-  if (hasID) return createWorkspaceIdAddress(address.id as string)
-  return createWorkspaceKeyAddress(address.key as string)
+  const address = value as { readonly id?: unknown }
+  if (address.id === undefined) {
+    throw new Error("private Workspace address is invalid")
+  }
+  return createWorkspaceAddress(address.id as string)
 }
 
-export function requireWorkspaceIDAddress(value: unknown): string {
+export function workspaceRefID(value: unknown): string {
   const address = inspectWorkspaceAddress(value)
   if (address === undefined || typeof address.id !== "string") {
-    throw new Error("Workspace requires workspaces.fromId() or a Workspace ref")
+    throw new Error("Workspace requires a Workspace ref")
   }
   return address.id
 }
@@ -346,7 +349,7 @@ export function inspectSandboxDefinition(
   return internal
 }
 
-function createWorkspaceRef(id: string): WorkspaceIdRef {
+export function createWorkspaceRef(id: string): WorkspaceRef {
   const workspaceID = resourceID(id, "Workspace ID")
   const files: WorkspaceFiles = Object.freeze({
     read(
@@ -375,7 +378,7 @@ function createWorkspaceRef(id: string): WorkspaceIdRef {
       )
     },
   })
-  const operations: WorkspaceRefBase = {
+  const operations: Omit<WorkspaceRef, keyof WorkspaceAddress> = {
     files,
     retrieve(options) {
       return currentRuntimeOperations().workspaceRetrieve(
@@ -393,40 +396,26 @@ function createWorkspaceRef(id: string): WorkspaceIdRef {
       )
     },
   }
-  return brandWorkspaceIdAddress({ id: workspaceID, ...operations }) as WorkspaceIdRef
+  return brandWorkspaceAddress({ id: workspaceID, ...operations }) as WorkspaceRef
 }
 
-export function createWorkspaceIdAddress(id: string): WorkspaceIdAddress {
-  return brandWorkspaceIdAddress({ id: resourceID(id, "Workspace ID") })
+function createWorkspaceAddress(id: string): WorkspaceAddress {
+  return brandWorkspaceAddress({ id: resourceID(id, "Workspace ID") })
 }
 
-function createWorkspaceKeyAddress(key: string): WorkspaceKeyAddress {
-  if (
-    typeof key !== "string" ||
-    new TextEncoder().encode(key).length < 1 ||
-    new TextEncoder().encode(key).length > 512
-  ) {
-    throw new Error("Workspace key must contain 1 to 512 UTF-8 bytes")
-  }
-  if (key.trim() !== key) {
-    throw new Error("Workspace key cannot begin or end with whitespace")
-  }
-  return brandWorkspaceAddress({ key }) as WorkspaceKeyAddress
-}
-
-export function brandWorkspaceIdAddress<T extends { readonly id: string }>(
+export function brandWorkspaceAddress<T extends { readonly id: string }>(
   value: T,
-): T & WorkspaceIdAddress {
+): T & WorkspaceAddress {
   resourceID(value.id, "Workspace ID")
-  return brandWorkspaceAddress(value) as T & WorkspaceIdAddress
+  return freezeWorkspaceAddress(value) as T & WorkspaceAddress
 }
 
-function brandWorkspaceAddress<T extends object>(value: T): T {
+function freezeWorkspaceAddress<T extends object>(value: T): T {
   Object.defineProperty(value, workspaceAddressBrand, { value: true })
   return Object.freeze(value)
 }
 
-export function parseWorkspaceSnapshot(value: unknown): WorkspaceSnapshot {
+export function parseWorkspace(value: unknown): Workspace {
   const input = workspaceObject(value, "Workspace response")
   const key = input["key"]
   if (key !== undefined && typeof key !== "string") {
@@ -455,13 +444,13 @@ export function parseWorkspaceSnapshot(value: unknown): WorkspaceSnapshot {
     deploymentId: resourceID(input["deployment_id"], "Workspace response.deployment_id"),
     status,
     secrets: Object.freeze(input["secrets"].map(parseWorkspaceSecret)),
-    lastActivityAt: workspaceDate(input["last_activity_at"], "last_activity_at"),
-    createdAt: workspaceDate(input["created_at"], "created_at"),
-    updatedAt: workspaceDate(input["updated_at"], "updated_at"),
+    lastActivityAt: workspaceTimestamp(input["last_activity_at"], "last_activity_at"),
+    createdAt: workspaceTimestamp(input["created_at"], "created_at"),
+    updatedAt: workspaceTimestamp(input["updated_at"], "updated_at"),
   })
 }
 
-function parseWorkspaceSecret(value: unknown): WorkspaceSecretSnapshot {
+function parseWorkspaceSecret(value: unknown): WorkspaceSecretInfo {
   const input = workspaceObject(value, "Workspace Secret")
   if (typeof input["name"] !== "string") {
     throw new Error("Workspace Secret.name must be a string")
@@ -586,15 +575,8 @@ function workspaceObject(
   return value as Record<string, unknown>
 }
 
-function workspaceDate(value: unknown, field: string): Date {
-  if (typeof value !== "string") {
-    throw new Error(`Workspace response.${field} must be an RFC 3339 timestamp`)
-  }
-  const date = new Date(value)
-  if (Number.isNaN(date.valueOf())) {
-    throw new Error(`Workspace response.${field} must be an RFC 3339 timestamp`)
-  }
-  return date
+function workspaceTimestamp(value: unknown, field: string): string {
+  return timestampString(value, `Workspace response.${field}`)
 }
 
 function decodeWorkspaceBase64(value: unknown, label: string): Uint8Array {

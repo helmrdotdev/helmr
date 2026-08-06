@@ -23,8 +23,8 @@ func TestRunListCommandUsesSnapshotPagination(t *testing.T) {
 			r.URL.Query().Get("limit") != "25" {
 			t.Fatalf("query = %s", r.URL.RawQuery)
 		}
-		_ = json.NewEncoder(w).Encode(api.ListRunSnapshotsResponse{
-			Runs: []api.RunSnapshotResponse{{
+		_ = json.NewEncoder(w).Encode(api.ListRunsResponse{
+			Runs: []api.RunListItem{{
 				ID:                   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 				Status:               api.RunStatusRunning,
 				Entrypoint:           api.RunEntrypointResponse{Kind: "task", ID: "deploy"},

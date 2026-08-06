@@ -1,15 +1,14 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -26,19 +25,14 @@ type sessionReadRecord struct {
 	failureRunID pgtype.UUID
 }
 
-func getSessionStatus(
-	ctx context.Context,
-	store db.Querier,
-	environmentID pgtype.UUID,
-	sessionID pgtype.UUID,
-) (api.SessionStatusSnapshot, error) {
-	row, err := store.GetSessionRead(ctx, db.GetSessionReadParams{
-		EnvironmentID: environmentID, SessionID: sessionID,
-	})
-	if err != nil {
-		return api.SessionStatusSnapshot{}, err
-	}
-	return projectSessionStatus(sessionReadRecordFromGet(row))
+type sessionStatusProjection struct {
+	id           string
+	key          *string
+	status       api.SessionStatus
+	createdAt    time.Time
+	updatedAt    time.Time
+	currentRunID *string
+	failure      *api.SessionFailure
 }
 
 func (s *Server) sessionReadScope(
@@ -53,55 +47,55 @@ func (s *Server) sessionReadScope(
 	return scope, environmentID, err
 }
 
-func projectSessionStatus(record sessionReadRecord) (api.SessionStatusSnapshot, error) {
+func projectSessionStatus(record sessionReadRecord) (sessionStatusProjection, error) {
 	id := pgvalue.UUIDString(record.id)
 	if err := ids.Validate(id); err != nil {
-		return api.SessionStatusSnapshot{}, err
+		return sessionStatusProjection{}, err
 	}
 	status, err := sessionStatus(record.state)
 	if err != nil {
-		return api.SessionStatusSnapshot{}, err
+		return sessionStatusProjection{}, err
 	}
 	if !record.createdAt.Valid || !record.updatedAt.Valid {
-		return api.SessionStatusSnapshot{}, errors.New("session timestamps are unavailable")
+		return sessionStatusProjection{}, errors.New("session timestamps are unavailable")
 	}
 	terminalFailure := status == api.SessionStatusFailed || status == api.SessionStatusCancelled
 	if terminalFailure != (len(record.failure) > 0) {
-		return api.SessionStatusSnapshot{}, errors.New("session failure projection is inconsistent")
+		return sessionStatusProjection{}, errors.New("session failure projection is inconsistent")
 	}
 	if record.currentRunID.Valid {
 		if err := ids.Validate(pgvalue.UUIDString(record.currentRunID)); err != nil {
-			return api.SessionStatusSnapshot{}, errors.New("session current run ID is invalid")
+			return sessionStatusProjection{}, errors.New("session current run ID is invalid")
 		}
 	}
 	if record.failureRunID.Valid {
 		if err := ids.Validate(pgvalue.UUIDString(record.failureRunID)); err != nil {
-			return api.SessionStatusSnapshot{}, errors.New("session failure run ID is invalid")
+			return sessionStatusProjection{}, errors.New("session failure run ID is invalid")
 		}
 	}
-	result := api.SessionStatusSnapshot{
-		ID:        id,
-		Status:    status,
-		CreatedAt: record.createdAt.Time.UTC(),
-		UpdatedAt: record.updatedAt.Time.UTC(),
+	result := sessionStatusProjection{
+		id:        id,
+		status:    status,
+		createdAt: record.createdAt.Time.UTC(),
+		updatedAt: record.updatedAt.Time.UTC(),
 	}
 	if record.key.Valid {
-		result.Key = &record.key.String
+		result.key = &record.key.String
 	}
 	if record.currentRunID.Valid {
 		value := pgvalue.UUIDString(record.currentRunID)
-		result.CurrentRunID = &value
+		result.currentRunID = &value
 	}
 	if terminalFailure {
 		var failure api.SessionFailure
 		if err := json.Unmarshal(record.failure, &failure); err != nil ||
 			failure.Code == "" || failure.Message == "" {
-			return api.SessionStatusSnapshot{}, errors.New("session failure is invalid")
+			return sessionStatusProjection{}, errors.New("session failure is invalid")
 		}
 		if record.failureRunID.Valid && failure.Details.RunID != pgvalue.UUIDString(record.failureRunID) {
-			return api.SessionStatusSnapshot{}, errors.New("session failure run is inconsistent")
+			return sessionStatusProjection{}, errors.New("session failure run is inconsistent")
 		}
-		result.Failure = &failure
+		result.failure = &failure
 	}
 	return result, nil
 }
@@ -118,14 +112,5 @@ func sessionStatus(state string) (api.SessionStatus, error) {
 		return api.SessionStatusFailed, nil
 	default:
 		return "", fmt.Errorf("session state %q has no public status", state)
-	}
-}
-
-func sessionReadRecordFromGet(row db.Session) sessionReadRecord {
-	return sessionReadRecord{
-		id: row.ID, key: row.Key, state: row.State,
-		createdAt: row.CreatedAt, updatedAt: row.UpdatedAt,
-		currentRunID: row.CurrentRunID,
-		failure:      row.Failure, failureRunID: row.FailureRunID,
 	}
 }

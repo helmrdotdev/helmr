@@ -1144,11 +1144,25 @@ SELECT *
  ORDER BY created_at ASC;
 
 -- name: ListScopedDeployments :many
-SELECT deployments.*
+SELECT deployments.id,
+       deployments.version,
+       deployments.status,
+       deployments.created_at,
+       deployments.building_at,
+       deployments.built_at,
+       deployments.deployed_at,
+       deployments.failed_at
   FROM deployments
  WHERE deployments.org_id = sqlc.arg(org_id)
    AND deployments.project_id = sqlc.arg(project_id)
    AND deployments.environment_id = sqlc.arg(environment_id)
+   AND (
+       NOT sqlc.arg(has_after)::boolean
+       OR (deployments.created_at, deployments.id) < (
+           sqlc.arg(after_created_at)::timestamptz,
+           sqlc.arg(after_id)::uuid
+       )
+   )
  ORDER BY deployments.created_at DESC, deployments.id DESC
  LIMIT sqlc.arg(row_limit);
 

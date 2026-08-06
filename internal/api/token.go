@@ -26,7 +26,7 @@ type TokenResponse struct {
 	Status            TokenStatus     `json:"status"`
 	CallbackURL       string          `json:"callback_url,omitempty"`
 	PublicAccessToken string          `json:"public_access_token,omitempty"`
-	TimeoutAt         *time.Time      `json:"timeout_at"`
+	TimeoutAt         time.Time       `json:"timeout_at"`
 	Result            json.RawMessage `json:"result,omitempty"`
 	Tags              []string        `json:"tags"`
 	Metadata          json.RawMessage `json:"metadata"`
@@ -35,9 +35,19 @@ type TokenResponse struct {
 	UpdatedAt         time.Time       `json:"updated_at"`
 }
 
+type TokenListItem struct {
+	ID          string      `json:"id"`
+	Status      TokenStatus `json:"status"`
+	Tags        []string    `json:"tags"`
+	TimeoutAt   time.Time   `json:"timeout_at"`
+	CompletedAt *time.Time  `json:"completed_at,omitempty"`
+	CreatedAt   time.Time   `json:"created_at"`
+	UpdatedAt   time.Time   `json:"updated_at"`
+}
+
 type ListTokensResponse struct {
-	Tokens     []TokenResponse `json:"tokens"`
-	NextCursor *string         `json:"next_cursor,omitempty"`
+	Tokens     []TokenListItem `json:"tokens"`
+	NextCursor string          `json:"next_cursor,omitempty"`
 }
 
 type CompleteTokenRequest struct {

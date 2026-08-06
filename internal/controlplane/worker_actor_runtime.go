@@ -145,15 +145,20 @@ func (s *Server) workerGetSessionStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	worker := workerFromContext(r.Context())
-	var status api.SessionStatusSnapshot
+	var status api.Session
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		source, err := authorizeWorkerRunSource(r.Context(), work.q, worker, request.Lease)
 		if err != nil {
 			return err
 		}
-		status, err = getSessionStatus(
-			r.Context(), work.q, source.EnvironmentID, sessionID,
-		)
+		row, err := work.q.GetSessionSnapshot(r.Context(), db.GetSessionSnapshotParams{
+			OrgID: source.OrgID, ProjectID: source.ProjectID,
+			EnvironmentID: source.EnvironmentID, ID: sessionID,
+		})
+		if err != nil {
+			return err
+		}
+		status, err = projectSession(sessionProjectionFromGetRow(row))
 		return err
 	})
 	if err != nil {

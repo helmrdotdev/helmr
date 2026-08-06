@@ -639,15 +639,13 @@ func (q *Queries) GetTokenForCallbackCompletion(ctx context.Context, arg GetToke
 }
 
 const listTokens = `-- name: ListTokens :many
-WITH cursor_token AS (
-    SELECT created_at, id
-     FROM tokens
-     WHERE org_id = $1
-       AND project_id = $2
-       AND environment_id = $3
-       AND id = $5::uuid
-)
-SELECT id, org_id, project_id, environment_id, state, expires_at, callback_secret_fingerprint, completion_fingerprint, result, error, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
+SELECT tokens.id,
+       tokens.state,
+       tokens.expires_at,
+       tokens.tags,
+       tokens.completed_at,
+       tokens.created_at,
+       tokens.updated_at
  FROM tokens
  WHERE tokens.org_id = $1
    AND tokens.project_id = $2
@@ -657,28 +655,45 @@ SELECT id, org_id, project_id, environment_id, state, expires_at, callback_secre
        OR tokens.state = $4::text
    )
    AND (
-       $5::uuid IS NULL
-       OR (tokens.created_at, tokens.id) > (SELECT cursor_token.created_at, cursor_token.id FROM cursor_token)
+       NOT $5::boolean
+       OR (tokens.created_at, tokens.id) < (
+           $6::timestamptz,
+           $7::uuid
+       )
    )
- ORDER BY tokens.created_at ASC, tokens.id ASC
- LIMIT $6
+ ORDER BY tokens.created_at DESC, tokens.id DESC
+ LIMIT $8
 `
 
 type ListTokensParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	State         pgtype.Text `json:"state"`
-	AfterID       pgtype.UUID `json:"after_id"`
-	LimitCount    int32       `json:"limit_count"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	State          pgtype.Text        `json:"state"`
+	HasAfter       bool               `json:"has_after"`
+	AfterCreatedAt pgtype.Timestamptz `json:"after_created_at"`
+	AfterID        pgtype.UUID        `json:"after_id"`
+	LimitCount     int32              `json:"limit_count"`
 }
 
-func (q *Queries) ListTokens(ctx context.Context, arg ListTokensParams) ([]Token, error) {
+type ListTokensRow struct {
+	ID          pgtype.UUID        `json:"id"`
+	State       string             `json:"state"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	Tags        []string           `json:"tags"`
+	CompletedAt pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ListTokens(ctx context.Context, arg ListTokensParams) ([]ListTokensRow, error) {
 	rows, err := q.db.Query(ctx, listTokens,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.State,
+		arg.HasAfter,
+		arg.AfterCreatedAt,
 		arg.AfterID,
 		arg.LimitCount,
 	)
@@ -686,27 +701,17 @@ func (q *Queries) ListTokens(ctx context.Context, arg ListTokensParams) ([]Token
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Token
+	var items []ListTokensRow
 	for rows.Next() {
-		var i Token
+		var i ListTokensRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.OrgID,
-			&i.ProjectID,
-			&i.EnvironmentID,
 			&i.State,
 			&i.ExpiresAt,
-			&i.CallbackSecretFingerprint,
-			&i.CompletionFingerprint,
-			&i.Result,
-			&i.Error,
-			&i.Metadata,
 			&i.Tags,
+			&i.CompletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.CompletedAt,
-			&i.ExpiredAt,
-			&i.CancelledAt,
 		); err != nil {
 			return nil, err
 		}

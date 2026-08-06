@@ -1,17 +1,13 @@
 export { queue, task } from "./definitions"
 export type {
-  NoPayloadTaskDefinition,
-  PayloadTaskDefinition,
-  QueueDefinition,
+  Queue,
+  QueueConfig,
   TaskCallOptions,
   TaskConfig,
-  TaskConfigBase,
   TaskConfigWithPayload,
   TaskConfigWithoutPayload,
-  TaskDefinition,
-  TaskHandlerPayload,
-  TaskHasPayload,
+  Task,
+  TaskInput,
   TaskOutput,
-  TaskPayloadInput,
   TaskStartOptions,
 } from "./contract"

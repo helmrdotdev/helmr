@@ -164,7 +164,7 @@ export const childTaskSmokeActor = actor({
   run: async (self, ctx) => {
     const received = await self.input.receive({ timeout: "2m" })
     if (!received.ok) {
-      if (received.error.code === "actor_closed") return
+      if (received.error.code === "session_closed") return
       throw received.error
     }
     const input = actorInput.parse(received.value)

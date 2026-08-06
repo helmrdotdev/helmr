@@ -463,13 +463,13 @@ func followRunEvents(cmd *cobra.Command, controlPlane *client.Client, runID stri
 				}
 				if writeErr := writeJSONLines(
 					cmd.OutOrStdout(),
-					[]api.RunEvent{event},
+					[]api.RunEventRecord{event},
 				); writeErr != nil {
 					return writeErr
 				}
 			}
-			if page.NextCursor != nil {
-				cursor = *page.NextCursor
+			if page.NextCursor != "" {
+				cursor = page.NextCursor
 			}
 		}
 		if errors.Is(err, context.Canceled) || errors.Is(cmd.Context().Err(), context.Canceled) {

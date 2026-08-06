@@ -1,5 +1,7 @@
-import type { CursorPage, WorkspaceIdAddress } from "./contract"
+import type { CursorPage } from "./contract"
 import { resourceID } from "./internal/id"
+import { timestampString } from "./internal/timestamp"
+import { validateTaskId } from "./schema/task"
 import type { RequestOptions } from "./request"
 import {
   parseWorkspaceDeleteReceipt,
@@ -7,51 +9,41 @@ import {
   parseWorkspaceFileContent,
   parseWorkspaceFileEntry,
   parseWorkspaceFilePage,
-  parseWorkspaceSnapshot,
-  brandWorkspaceIdAddress,
+  parseWorkspace,
+  brandWorkspaceAddress,
   type WorkspaceDeleteRequest,
   type WorkspaceDeleteReceipt,
   type WorkspaceExecRequest,
   type WorkspaceExecResult,
   type WorkspaceFileEntry,
   type WorkspaceFileListQuery,
-  type WorkspaceSnapshot,
+  type WorkspaceRef,
+  type Workspace,
+  type WorkspaceStatus,
 } from "./workspace"
 
-export interface ClientWorkspaceRef extends WorkspaceIdAddress {
+export interface WorkspaceListItem {
   readonly id: string
-  readonly files: Readonly<{
-    read(path: string, options?: RequestOptions): Promise<Uint8Array>
-    stat(path: string, options?: RequestOptions): Promise<WorkspaceFileEntry>
-    list(
-      path: string,
-      query?: WorkspaceFileListQuery,
-      options?: RequestOptions,
-    ): Promise<CursorPage<WorkspaceFileEntry>>
-  }>
-  exec(
-    request: WorkspaceExecRequest,
-    options?: RequestOptions,
-  ): Promise<WorkspaceExecResult>
-  delete(
-    request?: WorkspaceDeleteRequest,
-    options?: RequestOptions,
-  ): Promise<WorkspaceDeleteReceipt>
+  readonly key?: string
+  readonly sandboxId: string
+  readonly deploymentId: string
+  readonly status: WorkspaceStatus
+  readonly lastActivityAt: string
+  readonly createdAt: string
+  readonly updatedAt: string
 }
 
-export interface WorkspaceListQuery {
-  readonly cursor?: string
-  readonly limit?: number
-  readonly key?: string
-}
+export type WorkspaceListQuery =
+  | Readonly<{ key?: never; cursor?: string; limit?: number }>
+  | Readonly<{ key: string; cursor?: never; limit?: never }>
 
 export interface ClientWorkspacesApi {
-  retrieve(id: string, options?: RequestOptions): Promise<WorkspaceSnapshot>
+  retrieve(id: string, options?: RequestOptions): Promise<Workspace>
   list(
     query?: WorkspaceListQuery,
     options?: RequestOptions,
-  ): Promise<CursorPage<WorkspaceSnapshot>>
-  ref(id: string): ClientWorkspaceRef
+  ): Promise<CursorPage<WorkspaceListItem>>
+  ref(id: string): WorkspaceRef
 }
 
 export interface WorkspaceTransport {
@@ -66,9 +58,9 @@ export function createClientWorkspaces(
   transport: WorkspaceTransport,
 ): ClientWorkspacesApi {
   return Object.freeze({
-    async retrieve(id: string, options: RequestOptions = {}): Promise<WorkspaceSnapshot> {
+    async retrieve(id: string, options: RequestOptions = {}): Promise<Workspace> {
       const workspaceID = resourceID(id, "Workspace ID")
-      return parseWorkspaceSnapshot(await transport.request(
+      return parseWorkspace(await transport.request(
         "GET",
         `/v1/workspaces/${encodeURIComponent(workspaceID)}`,
         options.signal === undefined ? {} : { signal: options.signal },
@@ -77,7 +69,7 @@ export function createClientWorkspaces(
     async list(
       queryInput: WorkspaceListQuery = {},
       options: RequestOptions = {},
-    ): Promise<CursorPage<WorkspaceSnapshot>> {
+    ): Promise<CursorPage<WorkspaceListItem>> {
       const query = workspaceListQuery(queryInput)
       const response = objectValue(await transport.request(
         "GET",
@@ -92,23 +84,54 @@ export function createClientWorkspaces(
         throw new Error("Workspace list response.next_cursor must be a string")
       }
       return Object.freeze({
-        items: Object.freeze(response["workspaces"].map(parseWorkspaceSnapshot)),
+        items: Object.freeze(response["workspaces"].map(parseWorkspaceListItem)),
         ...(nextCursor === undefined ? {} : { nextCursor }),
       })
     },
-    ref(id: string): ClientWorkspaceRef {
+    ref(id: string): WorkspaceRef {
       return createClientWorkspaceRef(resourceID(id, "Workspace ID"), transport)
     },
   })
 }
 
+function parseWorkspaceListItem(value: unknown): WorkspaceListItem {
+  const input = objectValue(value, "Workspace list item")
+  const key = input["key"]
+  if (key !== undefined && typeof key !== "string") {
+    throw new Error("Workspace list item.key must be a string")
+  }
+  const sandboxId = input["sandbox_id"]
+  if (typeof sandboxId !== "string") {
+    throw new Error("Workspace list item.sandbox_id must be a string")
+  }
+  validateTaskId(sandboxId)
+  const status = input["status"]
+  if (status !== "available" && status !== "recovery_required" && status !== "deleting") {
+    throw new Error("Workspace list item.status is invalid")
+  }
+  return Object.freeze({
+    id: resourceID(input["id"], "Workspace list item.id"),
+    ...(key === undefined ? {} : { key }),
+    sandboxId,
+    deploymentId: resourceID(input["deployment_id"], "Workspace list item.deployment_id"),
+    status,
+    lastActivityAt: workspaceTimestamp(input["last_activity_at"], "last_activity_at"),
+    createdAt: workspaceTimestamp(input["created_at"], "created_at"),
+    updatedAt: workspaceTimestamp(input["updated_at"], "updated_at"),
+  })
+}
+
+function workspaceTimestamp(value: unknown, field: string): string {
+  return timestampString(value, `Workspace list item.${field}`)
+}
+
 export function createClientWorkspaceRef(
   id: string,
   transport: WorkspaceTransport,
-): ClientWorkspaceRef {
+): WorkspaceRef {
   const workspaceID = resourceID(id, "Workspace ID")
   const path = `/v1/workspaces/${encodeURIComponent(workspaceID)}`
-  const files: ClientWorkspaceRef["files"] = Object.freeze({
+  const files: WorkspaceRef["files"] = Object.freeze({
     async read(filePath: string, options: RequestOptions = {}): Promise<Uint8Array> {
       return parseWorkspaceFileContent(await transport.request(
         "GET",
@@ -129,8 +152,16 @@ export function createClientWorkspaceRef(
       options: RequestOptions = {},
     ): Promise<CursorPage<WorkspaceFileEntry>> {
       const query = new URLSearchParams({ path: filePath })
-      if (queryInput.cursor !== undefined) query.set("cursor", queryInput.cursor)
-      if (queryInput.limit !== undefined) query.set("limit", queryInput.limit.toString())
+      if (queryInput.cursor !== undefined) {
+        if (queryInput.cursor.length === 0) throw new Error("Workspace file cursor is required")
+        query.set("cursor", queryInput.cursor)
+      }
+      if (queryInput.limit !== undefined) {
+        if (!Number.isInteger(queryInput.limit) || queryInput.limit < 1 || queryInput.limit > 100) {
+          throw new Error("Workspace file limit must be an integer in [1,100]")
+        }
+        query.set("limit", queryInput.limit.toString())
+      }
       return parseWorkspaceFilePage(await transport.request(
         "GET",
         `${path}/files?${query.toString()}`,
@@ -141,6 +172,13 @@ export function createClientWorkspaceRef(
   const ref = {
     id: workspaceID,
     files,
+    async retrieve(options: RequestOptions = {}): Promise<Workspace> {
+      return parseWorkspace(await transport.request(
+        "GET",
+        path,
+        options.signal === undefined ? {} : { signal: options.signal },
+      ))
+    },
     async exec(
       request: WorkspaceExecRequest,
       options: RequestOptions = {},
@@ -167,7 +205,7 @@ export function createClientWorkspaceRef(
       }))
     },
   }
-  return brandWorkspaceIdAddress(ref)
+  return brandWorkspaceAddress(ref)
 }
 
 function workspaceListQuery(queryInput: WorkspaceListQuery): string {

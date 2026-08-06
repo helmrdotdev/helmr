@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,11 +27,19 @@ import (
 )
 
 const (
-	defaultTokenListLimit = int32(100)
+	defaultTokenListLimit = int32(50)
 	defaultTokenTimeout   = 10 * time.Minute
 	maxTokenTimeout       = 365 * 24 * time.Hour
 	tokenRequestBodyLimit = int64(1 << 20)
 )
+
+type tokenListCursor struct {
+	ProjectID     string    `json:"project_id"`
+	EnvironmentID string    `json:"environment_id"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"created_at"`
+	ID            string    `json:"id"`
+}
 
 var (
 	errTokenNotFound           = codedError{code: "token_not_found", message: "token was not found"}
@@ -476,42 +485,65 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	afterID := pgtype.UUID{}
-	if raw := strings.TrimSpace(query.Get("cursor")); raw != "" {
-		cursor, err := ids.Parse(raw)
-		if err != nil {
-			writeError(w, badRequest(errors.New("cursor must be a token UUID")))
-			return
-		}
-		afterID = pgvalue.UUID(cursor)
-	}
 	state := pgtype.Text{}
+	statusFilter := ""
 	if raw := strings.TrimSpace(query.Get("status")); raw != "" {
 		switch db.TokenState(raw) {
 		case db.TokenStatePending, db.TokenStateCompleted, db.TokenStateExpired, db.TokenStateCancelled:
 			state = pgvalue.Text(raw)
+			statusFilter = raw
 		default:
 			writeError(w, badRequest(errors.New("status must be pending, completed, expired, or cancelled")))
 			return
 		}
 	}
-	rows, err := s.db.ListTokens(r.Context(), db.ListTokensParams{
+	var cursor *tokenListCursor
+	if raw := strings.TrimSpace(query.Get("cursor")); raw != "" {
+		decoded, err := decodeTokenListCursor(raw)
+		if err != nil {
+			writeError(w, badRequest(err))
+			return
+		}
+		if decoded.ProjectID != scope.ProjectID || decoded.EnvironmentID != scope.EnvironmentID || decoded.Status != statusFilter {
+			writeError(w, badRequest(errors.New("token cursor does not match request scope or filter")))
+			return
+		}
+		cursor = &decoded
+	}
+	params := db.ListTokensParams{
 		OrgID: pgvalue.UUID(actor.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
-		State: state, AfterID: afterID, LimitCount: limit + 1,
+		State: state, LimitCount: limit + 1,
+	}
+	if cursor != nil {
+		params.HasAfter = true
+		params.AfterCreatedAt = pgvalue.Timestamptz(cursor.CreatedAt)
+		params.AfterID = pgvalue.UUID(uuid.MustParse(cursor.ID))
+	}
+	rows, err := s.db.ListTokens(r.Context(), db.ListTokensParams{
+		OrgID: params.OrgID, ProjectID: params.ProjectID, EnvironmentID: params.EnvironmentID,
+		State: params.State, HasAfter: params.HasAfter, AfterCreatedAt: params.AfterCreatedAt,
+		AfterID: params.AfterID, LimitCount: params.LimitCount,
 	})
 	if err != nil {
 		writeError(w, errors.New("list tokens"))
 		return
 	}
-	var nextCursor *string
+	var nextCursor string
 	if len(rows) > int(limit) {
-		cursor := pgvalue.MustUUIDValue(rows[limit-1].ID).String()
-		nextCursor = &cursor
 		rows = rows[:limit]
+		last := rows[len(rows)-1]
+		nextCursor, err = encodeTokenListCursor(tokenListCursor{
+			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Status: statusFilter,
+			CreatedAt: pgvalue.Time(last.CreatedAt), ID: pgvalue.UUIDString(last.ID),
+		})
+		if err != nil {
+			writeError(w, errors.New("list tokens"))
+			return
+		}
 	}
-	tokens := make([]api.TokenResponse, 0, len(rows))
+	tokens := make([]api.TokenListItem, 0, len(rows))
 	for _, row := range rows {
-		response, err := tokenResponse(row)
+		response, err := tokenListItem(row)
 		if err != nil {
 			writeError(w, errors.New("project token"))
 			return
@@ -524,16 +556,41 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 func validateTokenListQuery(query url.Values) error {
 	for name := range query {
 		switch name {
-		case "project_id", "environment_id", "cursor", "status", "limit":
+		case "cursor", "status", "limit":
 		default:
 			return fmt.Errorf("query parameter %q is not supported", name)
 		}
 	}
-	if len(query["project_id"]) > 1 || len(query["environment_id"]) > 1 ||
-		len(query["cursor"]) > 1 || len(query["status"]) > 1 || len(query["limit"]) > 1 {
-		return errors.New("project_id, environment_id, cursor, status, and limit must not be repeated")
+	for _, name := range []string{"cursor", "status", "limit"} {
+		if len(query[name]) > 1 {
+			return fmt.Errorf("%s must not be repeated", name)
+		}
+		if len(query[name]) == 1 && strings.TrimSpace(query[name][0]) == "" {
+			return fmt.Errorf("%s must not be empty", name)
+		}
 	}
 	return nil
+}
+
+func encodeTokenListCursor(cursor tokenListCursor) (string, error) {
+	raw, err := json.Marshal(cursor)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func decodeTokenListCursor(raw string) (tokenListCursor, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return tokenListCursor{}, errors.New("token cursor is invalid")
+	}
+	var cursor tokenListCursor
+	if json.Unmarshal(decoded, &cursor) != nil || cursor.ProjectID == "" ||
+		cursor.EnvironmentID == "" || cursor.CreatedAt.IsZero() || ids.Validate(cursor.ID) != nil {
+		return tokenListCursor{}, errors.New("token cursor is invalid")
+	}
+	return cursor, nil
 }
 
 func (s *Server) getToken(w http.ResponseWriter, r *http.Request) {
@@ -996,11 +1053,10 @@ func tokenResponse(row db.Token) (api.TokenResponse, error) {
 	if err != nil {
 		return api.TokenResponse{}, err
 	}
-	var expiresAt *time.Time
-	if row.ExpiresAt.Valid {
-		value := row.ExpiresAt.Time.UTC()
-		expiresAt = &value
+	if !row.ExpiresAt.Valid {
+		return api.TokenResponse{}, errors.New("token expiry is unavailable")
 	}
+	expiresAt := row.ExpiresAt.Time.UTC()
 	var completedAt *time.Time
 	if row.CompletedAt.Valid {
 		value := row.CompletedAt.Time.UTC()
@@ -1016,6 +1072,26 @@ func tokenResponse(row db.Token) (api.TokenResponse, error) {
 		response.Result = json.RawMessage(row.Result)
 	}
 	return response, nil
+}
+
+func tokenListItem(row db.ListTokensRow) (api.TokenListItem, error) {
+	status, err := tokenPublicStatus(row.State)
+	if err != nil {
+		return api.TokenListItem{}, err
+	}
+	if !row.ExpiresAt.Valid || !row.CreatedAt.Valid || !row.UpdatedAt.Valid {
+		return api.TokenListItem{}, errors.New("token list projection is invalid")
+	}
+	item := api.TokenListItem{
+		ID: pgvalue.UUIDString(row.ID), Status: status,
+		Tags: append([]string{}, row.Tags...), TimeoutAt: row.ExpiresAt.Time.UTC(),
+		CreatedAt: row.CreatedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC(),
+	}
+	if row.CompletedAt.Valid {
+		value := row.CompletedAt.Time.UTC()
+		item.CompletedAt = &value
+	}
+	return item, nil
 }
 
 func tokenPublicStatus(state db.TokenState) (api.TokenStatus, error) {

@@ -47,9 +47,9 @@ func (s *Server) listWorkspacesHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_workspace_reference", message: err.Error()}))
 		return
 	}
-	response := api.ListWorkspacesResponse{Workspaces: []api.WorkspaceSnapshot{}}
+	response := api.ListWorkspacesResponse{Workspaces: []api.WorkspaceListItem{}}
 	if exactKey != nil {
-		record, err := s.db.GetWorkspaceByKey(r.Context(), db.GetWorkspaceByKeyParams{
+		record, err := s.db.GetWorkspaceListItemByKey(r.Context(), db.GetWorkspaceListItemByKeyParams{
 			OrgID: pgvalue.UUID(principal.OrgID), ProjectID: projectID,
 			EnvironmentID: environmentID, Key: pgvalue.Text(*exactKey),
 		})
@@ -61,16 +61,19 @@ func (s *Server) listWorkspacesHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, unavailable(codedError{code: "workspace_authority_unavailable", message: "workspace authority is unavailable", retryable: true}))
 			return
 		}
-		snapshot, err := s.workspaceSnapshot(r.Context(), s.db, record)
+		item, err := workspaceListItem(
+			record.ID, record.Key, record.SandboxID, record.DeploymentID, record.State,
+			record.LastActivityAt, record.CreatedAt, record.UpdatedAt,
+		)
 		if err != nil {
 			writeError(w, unavailable(codedError{code: "workspace_authority_unavailable", message: "workspace authority is unavailable", retryable: true}))
 			return
 		}
-		response.Workspaces = append(response.Workspaces, snapshot)
+		response.Workspaces = append(response.Workspaces, item)
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
-	params := db.ListWorkspaceSnapshotsParams{
+	params := db.ListWorkspaceListItemsParams{
 		OrgID: pgvalue.UUID(principal.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
 		RowLimit: limit + 1,
 	}
@@ -79,7 +82,7 @@ func (s *Server) listWorkspacesHTTP(w http.ResponseWriter, r *http.Request) {
 		params.AfterCreatedAt = pgtype.Timestamptz{Time: cursor.CreatedAt, Valid: true}
 		params.AfterID = pgvalue.UUID(uuid.MustParse(cursor.ID))
 	}
-	rows, err := s.db.ListWorkspaceSnapshots(r.Context(), params)
+	rows, err := s.db.ListWorkspaceListItems(r.Context(), params)
 	if err != nil {
 		writeError(w, unavailable(codedError{code: "workspace_authority_unavailable", message: "workspace authority is unavailable", retryable: true}))
 		return
@@ -89,12 +92,15 @@ func (s *Server) listWorkspacesHTTP(w http.ResponseWriter, r *http.Request) {
 		rows = rows[:limit]
 	}
 	for _, row := range rows {
-		snapshot, err := s.workspaceSnapshot(r.Context(), s.db, row)
+		item, err := workspaceListItem(
+			row.ID, row.Key, row.SandboxID, row.DeploymentID, row.State,
+			row.LastActivityAt, row.CreatedAt, row.UpdatedAt,
+		)
 		if err != nil {
 			writeError(w, unavailable(codedError{code: "workspace_authority_unavailable", message: "workspace authority is unavailable", retryable: true}))
 			return
 		}
-		response.Workspaces = append(response.Workspaces, snapshot)
+		response.Workspaces = append(response.Workspaces, item)
 	}
 	if hasMore {
 		last := rows[len(rows)-1]
@@ -108,6 +114,31 @@ func (s *Server) listWorkspacesHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func workspaceListItem(
+	id pgtype.UUID,
+	keyValue pgtype.Text,
+	sandboxID string,
+	deploymentID pgtype.UUID,
+	state string,
+	lastActivityAt, createdAt, updatedAt pgtype.Timestamptz,
+) (api.WorkspaceListItem, error) {
+	status, err := workspacePublicStatus(state)
+	if err != nil {
+		return api.WorkspaceListItem{}, err
+	}
+	var key *string
+	if keyValue.Valid {
+		value := keyValue.String
+		key = &value
+	}
+	return api.WorkspaceListItem{
+		ID: pgvalue.UUIDString(id), Key: key, SandboxID: sandboxID,
+		DeploymentID: pgvalue.UUIDString(deploymentID), Status: status,
+		LastActivityAt: pgvalue.Time(lastActivityAt), CreatedAt: pgvalue.Time(createdAt),
+		UpdatedAt: pgvalue.Time(updatedAt),
+	}, nil
 }
 
 func parseWorkspaceListQuery(

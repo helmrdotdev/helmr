@@ -24,7 +24,7 @@ func TestTokenGetUsesCanonicalCommand(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/tokens/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		_ = json.NewEncoder(w).Encode(api.TokenResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", Status: "pending", TimeoutAt: &timeoutAt})
+		_ = json.NewEncoder(w).Encode(api.TokenResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37", Status: "pending", TimeoutAt: timeoutAt})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)

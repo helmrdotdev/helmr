@@ -1,6 +1,8 @@
 package controlplane
 
 import (
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -9,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 func TestControlPlaneRoutesMatchCurrentProtocol(t *testing.T) {
@@ -236,8 +239,9 @@ POST /v1/workspaces/{workspaceID}/exec
 }
 
 func TestRouterFallbacksUseHTTPErrorEnvelope(t *testing.T) {
-	server := &Server{}
+	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	router := chi.NewRouter()
+	router.Use(server.requestCorrelation)
 	server.mountRoutes(router)
 	router.NotFound(server.notFound)
 	router.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
@@ -262,6 +266,9 @@ func TestRouterFallbacksUseHTTPErrorEnvelope(t *testing.T) {
 			}
 			if got := decodeHTTPError(t, response.Body.Bytes()).Code; got != test.code {
 				t.Fatalf("code = %q, want %q", got, test.code)
+			}
+			if _, err := uuid.Parse(response.Header().Get(requestIDHeader)); err != nil {
+				t.Fatalf("%s is not a UUID: %v", requestIDHeader, err)
 			}
 			if test.status == http.StatusMethodNotAllowed && response.Header().Get("Allow") != http.MethodGet {
 				t.Fatalf("Allow = %q, want %q", response.Header().Get("Allow"), http.MethodGet)

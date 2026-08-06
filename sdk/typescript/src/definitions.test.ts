@@ -2,10 +2,11 @@ import { describe, expect, test } from "bun:test"
 
 import {
   inspectDefinition,
+  inspectImage,
   inspectSandboxDefinition,
   inspectWorkspaceAddress,
   installRuntimeOperations,
-  isQueueDefinition,
+  isQueue,
 } from "./internal"
 import {
   actor,
@@ -14,6 +15,7 @@ import {
   sandbox,
   schedules,
   sessions,
+  source,
   task,
   workspaces,
 } from "./index"
@@ -21,7 +23,7 @@ import {
 describe("private definition inspection", () => {
   test("distinguishes helpers from malformed branded values", () => {
     expect(inspectDefinition({ id: "helper" })).toBeUndefined()
-    expect(isQueueDefinition({ name: "helper" })).toBe(false)
+    expect(isQueue({ name: "helper" })).toBe(false)
     expect(inspectSandboxDefinition({ id: "helper" })).toBeUndefined()
 
     expect(() =>
@@ -30,7 +32,7 @@ describe("private definition inspection", () => {
       }),
     ).toThrow("private definition")
     expect(() =>
-      isQueueDefinition({
+      isQueue({
         [Symbol.for("helmr.sdk.v0.queue")]: true,
       }),
     ).toThrow("private queue")
@@ -50,22 +52,29 @@ describe("private definition inspection", () => {
       kind: "task",
       id: "resize",
     })
-    expect(isQueueDefinition(queue({ name: "images" }))).toBe(true)
+    expect(isQueue(queue({ name: "images" }))).toBe(true)
   })
 
-  test("constructs branded Workspace addresses without operations", () => {
-    const id = workspaces.fromId("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
-    const key = workspaces.fromKey("machine")
+  test("accepts only SDK-created source selectors", () => {
+    const copied = image("source-copy")
+      .copy("/app/package.json", source.file("./package.json"))
+      .copy("/app/src", source.directory("./src"))
+    expect(inspectImage(copied)?.steps).toHaveLength(2)
+    expect(() =>
+      image("forged-source").copy(
+        "/app/package.json",
+        { path: "./package.json" } as never,
+      )
+    ).toThrow("source.file() or source.directory()")
+  })
+
+  test("constructs branded Workspace refs", () => {
     const ref = workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
 
-    expect(inspectWorkspaceAddress(id)).toEqual({
+    expect(inspectWorkspaceAddress(ref)).toEqual({
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
     })
-    expect(inspectWorkspaceAddress(key)).toEqual({ key: "machine" })
-    expect(inspectWorkspaceAddress(ref)?.id).toBe(id.id)
     expect(inspectWorkspaceAddress({ key: "machine" })).toBeUndefined()
-    expect(Object.isFrozen(id)).toBe(true)
-    expect(Object.isFrozen(key)).toBe(true)
     expect(Object.isFrozen(ref)).toBe(true)
   })
 
@@ -140,9 +149,15 @@ describe("private definition inspection", () => {
     const uninstall = installRuntimeOperations({
       waitFor: async () => {},
       waitUntil: async () => {},
-      actorInputSend: async (sessionId, input, options) => {
-        calls.push({ sessionId, input, options })
-        return { sequence: 7 }
+      actorInputSend: async (sessionId, input, request, signal) => {
+        calls.push({ sessionId, input, request, signal })
+        return {
+          id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
+          sequence: 7,
+          data: input,
+          source: { type: "external" },
+          createdAt: "2026-07-26T00:00:00Z",
+        }
       },
     })
     try {
@@ -150,7 +165,13 @@ describe("private definition inspection", () => {
       await expect(ref.input.send(
         { message: "hello" },
         { idempotencyKey: "send-1" },
-      )).resolves.toEqual({ sequence: 7 })
+      )).resolves.toEqual({
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
+        sequence: 7,
+        data: { message: "hello" },
+        source: { type: "external" },
+        createdAt: "2026-07-26T00:00:00Z",
+      })
       expect(ref.id).toBe("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
     } finally {
       uninstall()
@@ -159,7 +180,8 @@ describe("private definition inspection", () => {
       {
         sessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
         input: { message: "hello" },
-        options: { idempotencyKey: "send-1" },
+        request: { idempotencyKey: "send-1" },
+        signal: undefined,
       },
     ])
   })
@@ -181,24 +203,26 @@ describe("private definition inspection", () => {
           runId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
         }
       },
-      sessionStatus: async (sessionId) => {
-        calls.push({ operation: "status", sessionId })
+      sessionRetrieve: async (sessionId, signal) => {
+        calls.push({ operation: "retrieve", sessionId, signal })
         return {
           id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+          actorId: "mailbox",
+          deploymentId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
           status: "open",
-          createdAt: new Date("2026-07-26T00:00:00Z"),
-          updatedAt: new Date("2026-07-26T00:00:01Z"),
+          createdAt: "2026-07-26T00:00:00Z",
+          updatedAt: "2026-07-26T00:00:01Z",
         }
       },
-      sessionClose: async (sessionId, options) => {
-        calls.push({ operation: "close", sessionId, options })
+      sessionClose: async (sessionId, request, signal) => {
+        calls.push({ operation: "close", sessionId, request, signal })
         return {
           sessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-          acceptedAt: new Date("2026-07-26T00:00:02Z"),
+          acceptedAt: "2026-07-26T00:00:02Z",
         }
       },
-      sessionOutputPage: async (sessionId, options) => {
-        calls.push({ operation: "output", sessionId, options })
+      sessionOutputPage: async (sessionId, query, signal) => {
+        calls.push({ operation: "output", sessionId, query, signal })
         page++
         return page === 1
           ? {
@@ -233,15 +257,13 @@ describe("private definition inspection", () => {
         input: null,
       })
       const ref = started.session
-      await ref.status()
+      const retrieveController = new AbortController()
+      await ref.retrieve({ signal: retrieveController.signal })
       await ref.close({ idempotencyKey: "close-1" })
-      expect(await ref.output.list({ limit: 1 })).toHaveLength(1)
-      page = 0
-      const records = []
-      for await (const record of ref.output.read({ limit: 1 })) {
-        records.push(record)
-      }
-      expect(records).toHaveLength(1)
+      const output = await ref.output.list({ limit: 1 })
+      expect(output.records).toHaveLength(1)
+      expect(output.nextAfter).toBe(1)
+      expect(output.hasMore).toBe(true)
       const starts = calls.filter((call) =>
         (call as { operation?: string }).operation === "start"
       ) as Array<{ options: Record<string, unknown> }>
@@ -253,7 +275,7 @@ describe("private definition inspection", () => {
     }
   })
 
-  test("aborts Actor output reads only at the caller boundary", async () => {
+  test("passes Actor output cancellation to the finite page read", async () => {
     let requests = 0
     const controller = new AbortController()
     const uninstall = installRuntimeOperations({
@@ -265,11 +287,8 @@ describe("private definition inspection", () => {
     try {
       const ref = sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")
       controller.abort(new Error("stop output"))
-      const iterator = ref.output.read({ signal: controller.signal })
-      await expect(iterator[Symbol.asyncIterator]().next()).rejects.toThrow(
-        "stop output",
-      )
-      expect(requests).toBe(0)
+      await ref.output.list({}, { signal: controller.signal })
+      expect(requests).toBe(1)
     } finally {
       uninstall()
     }

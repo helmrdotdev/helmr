@@ -38,15 +38,13 @@ SELECT *
  WHERE id = sqlc.arg(id);
 
 -- name: ListTokens :many
-WITH cursor_token AS (
-    SELECT created_at, id
-     FROM tokens
-     WHERE org_id = sqlc.arg(org_id)
-       AND project_id = sqlc.arg(project_id)
-       AND environment_id = sqlc.arg(environment_id)
-       AND id = sqlc.narg(after_id)::uuid
-)
-SELECT *
+SELECT tokens.id,
+       tokens.state,
+       tokens.expires_at,
+       tokens.tags,
+       tokens.completed_at,
+       tokens.created_at,
+       tokens.updated_at
  FROM tokens
  WHERE tokens.org_id = sqlc.arg(org_id)
    AND tokens.project_id = sqlc.arg(project_id)
@@ -56,10 +54,13 @@ SELECT *
        OR tokens.state = sqlc.narg(state)::text
    )
    AND (
-       sqlc.narg(after_id)::uuid IS NULL
-       OR (tokens.created_at, tokens.id) > (SELECT cursor_token.created_at, cursor_token.id FROM cursor_token)
+       NOT sqlc.arg(has_after)::boolean
+       OR (tokens.created_at, tokens.id) < (
+           sqlc.arg(after_created_at)::timestamptz,
+           sqlc.arg(after_id)::uuid
+       )
    )
- ORDER BY tokens.created_at ASC, tokens.id ASC
+ ORDER BY tokens.created_at DESC, tokens.id DESC
  LIMIT sqlc.arg(limit_count);
 
 -- name: GetTokenForCallbackCompletion :one

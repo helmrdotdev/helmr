@@ -26,9 +26,9 @@ The `helmr` CLI talks to the Control Plane over HTTP(S). Choose the endpoint wit
 | `helmr actor close ACTOR (--id ID \| --key KEY) [--idempotency-key KEY] [--json]` | Close an Actor. |
 | `helmr run list [-p PROJECT] [-e ENV] [--json]` | List Runs. |
 | `helmr run get RUN [-p PROJECT] [-e ENV] [--json]` | Show run details. |
-| `helmr run logs RUN [-p PROJECT] [-e ENV] [--follow]` | Print latest stdout/stderr snapshots and optionally stream new log chunks. |
+| `helmr run logs RUN [-p PROJECT] [-e ENV] [--follow]` | Print the latest stdout/stderr chunks and optionally stream new ones. |
 | `helmr run events RUN [-p PROJECT] [-e ENV] [--cursor CURSOR] [--limit N] [--follow]` | Print run events as JSON lines. |
-| `helmr run wait RUN [-p PROJECT] [-e ENV] [--timeout DURATION] [--json]` | Poll finite Run snapshots until terminal. |
+| `helmr run wait RUN [-p PROJECT] [-e ENV] [--timeout DURATION] [--json]` | Poll Run state until terminal. |
 | `helmr run cancel RUN [-p PROJECT] [-e ENV] [--json]` | Request Run cancellation. |
 | `helmr schedule list [-p PROJECT] [-e ENV] [--cursor CURSOR] [--limit N] [--json \| --jsonl]` | List source-declared Schedules. |
 | `helmr schedule get SCHEDULE [-p PROJECT] [-e ENV] [--json]` | Show read-only Schedule status. |
@@ -70,7 +70,7 @@ page; it has no follow mode.
 
 With saved login auth, environment-scoped commands require both `--project` and `--env`. With `HELMR_API_KEY`, the key is already bound to one environment and project/environment flags are rejected.
 
-`helmr run wait` polls finite Run snapshots and telemetry pages until the Run is terminal.
+`helmr run wait` polls Run state and finite telemetry pages until the Run is terminal.
 
 `helmr run logs --follow` prints finite log pages from the last opaque cursor and exits after the Run reaches a terminal state.
 

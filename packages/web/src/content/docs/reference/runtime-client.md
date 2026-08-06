@@ -45,7 +45,7 @@ const run = await client.tasks.start<typeof resizeImage>(
   },
 )
 
-const result = await client.runs.wait<typeof resizeImage>(run.id)
+const result = await client.runs.wait(run)
 ```
 
 The request shape is consistent across the client:
@@ -60,12 +60,12 @@ Main surfaces:
 | API | Purpose |
 | --- | --- |
 | `client.tasks.start<typeof task>(declaredId, request, options?)` | Start a Task Run in an existing Workspace. |
-| `client.runs.retrieve(runId, options?)` | Retrieve a Run snapshot. |
-| `client.runs.list(query?, options?)` | List Run snapshots. |
-| `client.runs.wait<typeof task>(runId, options?)` | Wait for a terminal Run result. |
+| `client.runs.retrieve(runOrId, options?)` | Retrieve a Run. A typed Run handle preserves Task output inference. |
+| `client.runs.list(query?, options?)` | List Runs. |
+| `client.runs.wait(runOrId, options?)` | Wait for a terminal Run result. A typed Run handle preserves Task output inference. |
 | `client.runs.logs(runId, query?, options?)` | Read one finite page of Run logs. |
 | `client.runs.events(runId, query?, options?)` | Read one finite page of Run events. |
-| `client.actors.start<typeof actor>(declaredId, request, options?)` | Start or address an Actor. |
+| `client.actors.start(declaredId, request, options?)` | Start an Actor Session. |
 | `client.sessions.ref(sessionId)` | Create a typed Session reference by UUID. |
 | `client.sandboxes.createWorkspace(declaredId, request?, options?)` | Create a Workspace from a deployed Sandbox declaration. |
 | `client.workspaces.ref(workspaceId)` | Create a typed Workspace reference by UUID. |
@@ -75,7 +75,7 @@ Main surfaces:
 | `workspace.delete(request?, options?)` | Delete the Workspace. |
 | `client.tokens.create(request?, options?)` | Create an externally completable Token. |
 | `client.tokens.retrieve/list/complete/cancel(...)` | Inspect or complete Token state. |
-| `client.secrets.create/retrieve/list/rotate/revoke(...)` | Manage versioned Secret values. |
+| `client.secrets.create/retrieve/list/ref(...)` | Manage Secret resources; rotate or revoke through the returned/ref-created `SecretRef`. |
 | `client.deployments.retrieve/current(...)` | Inspect Deployments. |
 | `client.schedules.retrieve/list(...)` | Inspect source-declared Schedules. |
 
@@ -84,7 +84,7 @@ the deployed declaration; disk size is an internal runtime fact, not a required
 public create input.
 
 Run log and event calls return finite cursor pages. Poll using `nextCursor` when
-following progress. A Run snapshot is the source of truth for terminal status.
+following progress. The Run resource is the source of truth for terminal status.
 Run records expose canonical resource UUIDv7 values; trace authority is not
 part of this client contract.
 

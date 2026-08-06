@@ -1,7 +1,9 @@
 import {
-  type ClientWorkspaceRef,
+  type WorkspaceRef,
   type HelmrClient,
-  type RunSnapshot,
+  type JsonValue,
+  type RunHandle,
+  type Run,
 } from "@helmr/sdk"
 import type {
   scheduleSmoke,
@@ -32,7 +34,7 @@ export async function runManagementSmoke(
   client: HelmrClient,
   marker: string,
 ): Promise<ManagementEvidence> {
-  const workspaces: Array<Readonly<{ ref: ClientWorkspaceRef; deleteKey: string }>> = []
+  const workspaces: Array<Readonly<{ ref: WorkspaceRef; deleteKey: string }>> = []
   let succeeded = false
   try {
     const deployment = await client.deployments.current({
@@ -82,10 +84,12 @@ export async function runManagementSmoke(
       schedule.id,
       firedSchedule.lastFireAt!,
     )
-    const scheduledOutput = await client.runs.wait<typeof scheduleSmoke>(
-      scheduledRun.id,
-      { signal: AbortSignal.timeout(10 * 60_000) },
-    ).unwrap()
+    const scheduledOutput = scheduledTaskOutput(
+      await client.runs.wait(
+        scheduledRun.id,
+        { signal: AbortSignal.timeout(10 * 60_000) },
+      ).unwrap(),
+    )
     assertEqual(
       scheduledOutput.scheduleId,
       schedule.id,
@@ -108,17 +112,17 @@ export async function runManagementSmoke(
       },
       { signal: AbortSignal.timeout(30_000) },
     )
-	const exactSecretPage = await client.secrets.list(
-		{ name: secretName },
-		{ signal: AbortSignal.timeout(30_000) },
-	)
-	assertEqual(exactSecretPage.items.length, 1, "Secret name lookup was not exact")
-	assertEqual(exactSecretPage.items[0]!.id, secret.id, "Secret name lookup changed the ID")
-	const secretRef = client.secrets.ref(secret.id)
-	const retrievedSecret = await secretRef.retrieve({
-		signal: AbortSignal.timeout(30_000),
-	})
-	assertEqual(retrievedSecret.id, secret.id, "Secret ID ref changed the ID")
+    const exactSecretPage = await client.secrets.list(
+      { name: secretName },
+      { signal: AbortSignal.timeout(30_000) },
+    )
+    assertEqual(exactSecretPage.items.length, 1, "Secret name lookup was not exact")
+    assertEqual(exactSecretPage.items[0]!.id, secret.id, "Secret name lookup changed the ID")
+    const retrievedSecret = await client.secrets.retrieve(secret.id, {
+      signal: AbortSignal.timeout(30_000),
+    })
+    assertEqual(retrievedSecret.id, secret.id, "Secret retrieval changed the ID")
+    const secretRef = client.secrets.ref(secret.id)
     const secretPage = await client.secrets.list(
       { limit: 100 },
       { signal: AbortSignal.timeout(30_000) },
@@ -150,7 +154,7 @@ export async function runManagementSmoke(
       },
       { signal: AbortSignal.timeout(30_000) },
     )
-    const externalTokenRuns: string[] = []
+    const externalTokenRuns: RunHandle<JsonValue>[] = []
     const externalTokenWorkspaces: string[] = []
     for (const suffix of ["fanout-a", "fanout-b"] as const) {
       const tokenWorkspace = await client.sandboxes.createWorkspace(
@@ -183,11 +187,11 @@ export async function runManagementSmoke(
         },
         { signal: AbortSignal.timeout(30_000) },
       )
-      externalTokenRuns.push(run.id)
+      externalTokenRuns.push(run)
     }
     await Promise.all(
-      externalTokenRuns.map((runID) =>
-        waitForRunStatus(client, runID, ["waiting"])
+      externalTokenRuns.map((run) =>
+        waitForRunStatus(client, run.id, ["waiting"]),
       ),
     )
     const completed = await client.tokens.complete(
@@ -200,11 +204,11 @@ export async function runManagementSmoke(
     )
     assertEqual(completed.status, "completed", "external Token did not complete")
     const fanoutResults = await Promise.all(
-      externalTokenRuns.map((runID) =>
-        client.runs.wait<typeof runtimeSmoke>(
-          runID,
+      externalTokenRuns.map((run) =>
+        client.runs.wait(
+          run,
           { signal: AbortSignal.timeout(10 * 60_000) },
-        ).unwrap()
+        ).unwrap(),
       ),
     )
     assert(
@@ -242,9 +246,9 @@ export async function runManagementSmoke(
       },
       { signal: AbortSignal.timeout(30_000) },
     )
-    externalTokenRuns.push(lateRun.id)
-    const lateResult = await client.runs.wait<typeof runtimeSmoke>(
-      lateRun.id,
+    externalTokenRuns.push(lateRun)
+    const lateResult = await client.runs.wait(
+      lateRun,
       { signal: AbortSignal.timeout(10 * 60_000) },
     ).unwrap()
     assert(
@@ -303,7 +307,7 @@ export async function runManagementSmoke(
       scheduledRunId: scheduledRun.id,
       secretId: secret.id,
       completedTokenId: completedToken.id,
-      externalTokenRunIds: externalTokenRuns,
+      externalTokenRunIds: externalTokenRuns.map((run) => run.id),
       externalTokenWorkspaceIds: externalTokenWorkspaces,
       cancelledRunId: cancellable.id,
     }
@@ -318,6 +322,29 @@ export async function runManagementSmoke(
       if (failure?.status === "rejected") throw failure.reason
     }
   }
+}
+
+function scheduledTaskOutput(value: JsonValue): Readonly<{
+  scheduleId: string
+  scheduledAt: string
+  timezone: string
+  causeType: string
+}> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("scheduled Task output must be an object")
+  }
+  const output = value as Readonly<Record<string, JsonValue>>
+  for (const field of ["scheduleId", "scheduledAt", "timezone", "causeType"] as const) {
+    if (typeof output[field] !== "string") {
+      throw new Error(`scheduled Task output.${field} must be a string`)
+    }
+  }
+  return output as Readonly<{
+    scheduleId: string
+    scheduledAt: string
+    timezone: string
+    causeType: string
+  }>
 }
 
 function approvedTokenOutput(value: import("@helmr/sdk").JsonValue): boolean {
@@ -383,11 +410,11 @@ async function waitForScheduledRun(
   client: HelmrClient,
   scheduleId: string,
   scheduledAt: string,
-): Promise<RunSnapshot> {
+): Promise<Run> {
   const deadline = Date.now() + 60_000
   for (;;) {
     let cursor: string | undefined
-    const matches: RunSnapshot[] = []
+    const matches: Run[] = []
     for (let pageNumber = 0; pageNumber < 10; pageNumber++) {
       const page = await client.runs.list(
         {
@@ -396,13 +423,18 @@ async function waitForScheduledRun(
         },
         { signal: AbortSignal.timeout(30_000) },
       )
-      matches.push(
-        ...page.items.filter((item) =>
-          item.cause.type === "schedule" &&
-          item.cause.scheduleId === scheduleId &&
-          item.cause.scheduledAt.toISOString() === scheduledAt
+      const runs = await Promise.all(
+        page.items.map((item) =>
+          client.runs.retrieve(item.id, {
+            signal: AbortSignal.timeout(30_000),
+          })
         ),
       )
+      matches.push(...runs.filter((run) =>
+        run.cause.type === "schedule" &&
+        run.cause.scheduleId === scheduleId &&
+        run.cause.scheduledAt === scheduledAt
+      ))
       if (page.nextCursor === undefined) break
       if (pageNumber === 9) {
         throw new Error("Run list exceeded the bounded Schedule receipt scan")
@@ -427,8 +459,8 @@ async function waitForScheduledRun(
 async function waitForRunStatus(
   client: HelmrClient,
   runId: string,
-  accepted: readonly RunSnapshot["status"][],
-): Promise<RunSnapshot> {
+  accepted: readonly Run["status"][],
+): Promise<Run> {
   const deadline = Date.now() + 5 * 60_000
   for (;;) {
     const run = await client.runs.retrieve(runId, {

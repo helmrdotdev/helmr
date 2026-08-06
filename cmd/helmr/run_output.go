@@ -9,7 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-func writeRunTable(w io.Writer, runs []api.RunSnapshotResponse) {
+func writeRunTable(w io.Writer, runs []api.RunListItem) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "RUN ID\tENTRYPOINT\tSTATUS\tATTEMPT")
 	for _, run := range runs {

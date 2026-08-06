@@ -173,7 +173,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		if errors.Is(err, pgx.ErrNoRows) {
 			if authority.actor.State == "closing" && authority.actor.CloseSequence.Valid &&
 				params.AfterInputSequence >= authority.actor.CloseSequence.Int64 {
-				registered, err = session.FailWait(r.Context(), work.q, registered, "actor_closed")
+				registered, err = session.FailWait(r.Context(), work.q, registered, "session_closed")
 				return err
 			}
 			return nil
@@ -228,7 +228,7 @@ func actorInputWaitDecision(wait db.RunWait) (string, json.RawMessage, error) {
 		return "completed", wait.ConditionResult, nil
 	case db.WaitStateFailed:
 		reason := pgvalue.TextValue(wait.ConditionReasonCode)
-		if reason != "wait_timeout" && reason != "actor_closed" {
+		if reason != "wait_timeout" && reason != "session_closed" {
 			return "", nil, errors.New("actor input wait failure reason is invalid")
 		}
 		payload, _ := json.Marshal(map[string]string{"reason_code": reason})

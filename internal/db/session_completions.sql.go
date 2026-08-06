@@ -701,7 +701,10 @@ func (q *Queries) DelayActorRunRetry(ctx context.Context, arg DelayActorRunRetry
 const finishActorRun = `-- name: FinishActorRun :one
 UPDATE runs
    SET status = $1,
-       output = NULL,
+       output = CASE
+           WHEN $1::text = 'succeeded' THEN 'null'::jsonb
+           ELSE NULL
+       END,
        failure = $2,
        state_version = state_version + 1,
        current_run_lease_id = NULL,
@@ -800,7 +803,10 @@ func (q *Queries) FinishActorRun(ctx context.Context, arg FinishActorRunParams) 
 const finishCheckpointFailedActorRun = `-- name: FinishCheckpointFailedActorRun :one
 UPDATE runs
    SET status = $1,
-       output = NULL,
+       output = CASE
+           WHEN $1::text = 'succeeded' THEN 'null'::jsonb
+           ELSE NULL
+       END,
        failure = $2,
        state_version = state_version + 1,
        current_run_lease_id = NULL,

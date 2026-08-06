@@ -9021,37 +9021,20 @@ function createRuntimeSessionRef(id) {
   return Object.freeze({
     id: sessionID,
     input: Object.freeze({
-      send(input, options) {
-        return currentRuntimeOperations().actorInputSend(sessionID, input, options);
+      send(input, request, options) {
+        return currentRuntimeOperations().actorInputSend(sessionID, input, request, options?.signal);
       }
     }),
     output: Object.freeze({
-      async* read(options) {
-        let after = options?.after;
-        for (;; ) {
-          if (options?.signal?.aborted)
-            throw options.signal.reason;
-          const page = await currentRuntimeOperations().sessionOutputPage(sessionID, {
-            ...after === undefined ? {} : { after },
-            ...options?.limit === undefined ? {} : { limit: options.limit },
-            ...options?.signal === undefined ? {} : { signal: options.signal }
-          });
-          for (const record of page.records)
-            yield record;
-          if (!page.hasMore)
-            return;
-          after = page.nextAfter;
-        }
-      },
-      async list(options) {
-        return (await currentRuntimeOperations().sessionOutputPage(sessionID, options)).records;
+      list(query, options) {
+        return currentRuntimeOperations().sessionOutputPage(sessionID, query, options?.signal);
       }
     }),
-    status() {
-      return currentRuntimeOperations().sessionStatus(sessionID);
+    retrieve(options = {}) {
+      return currentRuntimeOperations().sessionRetrieve(sessionID, options.signal);
     },
-    close(options) {
-      return currentRuntimeOperations().sessionClose(sessionID, options);
+    close(request, options) {
+      return currentRuntimeOperations().sessionClose(sessionID, request, options?.signal);
     }
   });
 }
@@ -9076,7 +9059,7 @@ function inspectDefinition(value) {
   }
   return definition;
 }
-function isQueueDefinition(value) {
+function isQueue(value) {
   if (typeof value !== "object" || value === null)
     return false;
   if (!Object.hasOwn(value, privateQueueBrand))
@@ -9144,7 +9127,7 @@ function validateSecretName(value) {
 var imageBrand = Symbol.for("helmr.sdk.v0.image");
 var sourceFileBrand = Symbol.for("helmr.sdk.v0.source-file");
 var sourceDirectoryBrand = Symbol.for("helmr.sdk.v0.source-directory");
-class SourceFile {
+class SourceFileValue {
   path;
   constructor(path) {
     this.path = path;
@@ -9153,7 +9136,7 @@ class SourceFile {
   }
 }
 
-class SourceDirectory {
+class SourceDirectoryValue {
   path;
   constructor(path) {
     this.path = path;
@@ -9163,10 +9146,10 @@ class SourceDirectory {
 }
 var source = Object.freeze({
   file(path) {
-    return new SourceFile(path);
+    return new SourceFileValue(path);
   },
   directory(path) {
-    return new SourceDirectory(path);
+    return new SourceDirectoryValue(path);
   }
 });
 function inspectImage(value) {
@@ -9180,9 +9163,7 @@ function inspectImage(value) {
 var sandboxDefinitionBrand = Symbol.for("helmr.sdk.v0.sandbox");
 var workspaceAddressBrand = Symbol.for("helmr.sdk.v0.workspace-address");
 var workspaces = Object.freeze({
-  ref: createWorkspaceRef,
-  fromId: createWorkspaceIdAddress,
-  fromKey: createWorkspaceKeyAddress
+  ref: createWorkspaceRef
 });
 function inspectSandboxDefinition(value) {
   if (typeof value !== "object" || value === null)
@@ -9224,25 +9205,13 @@ function createWorkspaceRef(id) {
       return currentRuntimeOperations().workspaceDelete(workspaceID, request, options?.signal);
     }
   };
-  return brandWorkspaceIdAddress({ id: workspaceID, ...operations });
-}
-function createWorkspaceIdAddress(id) {
-  return brandWorkspaceIdAddress({ id: resourceID(id, "Workspace ID") });
-}
-function createWorkspaceKeyAddress(key) {
-  if (typeof key !== "string" || new TextEncoder().encode(key).length < 1 || new TextEncoder().encode(key).length > 512) {
-    throw new Error("Workspace key must contain 1 to 512 UTF-8 bytes");
-  }
-  if (key.trim() !== key) {
-    throw new Error("Workspace key cannot begin or end with whitespace");
-  }
-  return brandWorkspaceAddress({ key });
-}
-function brandWorkspaceIdAddress(value) {
-  resourceID(value.id, "Workspace ID");
-  return brandWorkspaceAddress(value);
+  return brandWorkspaceAddress({ id: workspaceID, ...operations });
 }
 function brandWorkspaceAddress(value) {
+  resourceID(value.id, "Workspace ID");
+  return freezeWorkspaceAddress(value);
+}
+function freezeWorkspaceAddress(value) {
   Object.defineProperty(value, workspaceAddressBrand, { value: true });
   return Object.freeze(value);
 }
@@ -10474,7 +10443,7 @@ function compileSchedule(definition, sandboxExports) {
 function compileQueues(located, exports) {
   const queues = new Map;
   for (const item of exports) {
-    if (isQueueDefinition(item.value)) {
+    if (isQueue(item.value)) {
       addQueue(queues, item.value, item.value);
     }
   }

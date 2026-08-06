@@ -29,10 +29,28 @@ ln -s "${repo_root}/node_modules/@bufbuild/protobuf" \
 cat >"${consumer}/consumer.ts" <<'EOF'
 import {
   HelmrClient,
+  actor,
   image,
+  queue,
   sandbox,
+  source,
   task,
+  type Queue,
+  type QueueConfig,
+  type Actor,
+  type ActorStartResult,
+  type ImageBuilder,
+  type Sandbox,
+  type SandboxBuilder,
+  type SandboxResourceBuilder,
+  type SecretCreateRequest,
+  type SessionOutputWriter,
+  type SourceDirectory,
+  type SourceFile,
   type StandardSchemaV1,
+  type TaskConfigWithPayload,
+  type TokenCompleteRequest,
+  type WorkspaceFiles,
   workspaces,
 } from "@helmr/sdk"
 
@@ -48,15 +66,53 @@ const payloadSchema: StandardSchemaV1<string, string> = {
   },
 }
 
-const fixture = task({
+const queueConfig: QueueConfig = { name: "packed-consumer", concurrencyLimit: 1 }
+const fixtureQueue: Queue = queue(queueConfig)
+const fixtureImage: ImageBuilder = image("packed-consumer-image")
+  .from("node:24-bookworm-slim")
+const sourceFile: SourceFile = source.file("./package.json")
+const sourceDirectory: SourceDirectory = source.directory("./src")
+const copiedImage = image("copied-source")
+  .copy("/app/package.json", sourceFile)
+  .copy("/app/src", sourceDirectory)
+const stagedSandbox: SandboxBuilder = sandbox({ id: "packed-consumer" })
+const resourceSandbox: SandboxResourceBuilder = stagedSandbox.image(
+  image("packed-consumer").from("node:24-bookworm-slim"),
+)
+
+function outputHelper(writer: SessionOutputWriter): Promise<void> {
+  return writer.close()
+}
+
+function filesHelper(files: WorkspaceFiles) {
+  return files.list(".")
+}
+
+const secretRequest: SecretCreateRequest = { name: "TOKEN", value: "secret" }
+const tokenRequest: TokenCompleteRequest = { result: null }
+void outputHelper
+void filesHelper
+void secretRequest
+void tokenRequest
+void copiedImage
+
+const taskConfig = {
   id: "packed-consumer",
   payload: payloadSchema,
+  queue: fixtureQueue,
   run: (value) => value,
-})
+} satisfies TaskConfigWithPayload<"packed-consumer", string, string, string>
+const fixture = task(taskConfig)
 
-const fixtureSandbox = sandbox({ id: "packed-consumer" })
-  .image(image("packed-consumer").from("node:24-bookworm-slim"))
-  .resources({ cpu: 1, memory: "1GiB" })
+const fixtureSandbox = resourceSandbox.resources({ cpu: 1, memory: "1GiB" })
+fixtureSandbox satisfies Sandbox
+const fixtureActor: Actor = actor({ id: "packed-consumer-actor", run() {} })
+function actorStartResultHelper(value: ActorStartResult): string {
+  return value.session.id + value.run.id
+}
+void fixtureImage
+void fixtureActor
+void actorStartResultHelper
 
 const requests: Array<{ url: string; init?: RequestInit }> = []
 const client = new HelmrClient({

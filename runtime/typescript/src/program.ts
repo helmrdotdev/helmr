@@ -2,7 +2,8 @@ import { create, fromBinary, toBinary } from "@bufbuild/protobuf"
 import { runProto } from "@helmr/proto"
 import {
   canonicalizeJsonValue,
-  brandWorkspaceIdAddress,
+  createWorkspaceRef,
+  createRunHandle,
   inspectDefinition,
   encodeWorkspaceSecrets,
   installRuntimeOperations,
@@ -11,41 +12,44 @@ import {
   parseWorkspaceFileContent,
   parseWorkspaceFileEntry,
   parseWorkspaceFilePage,
-  parseWorkspaceSnapshot,
-  requireWorkspaceIDAddress,
+  parseWorkspace,
+  parseSession,
+  parseSessionInputRecord,
+  workspaceRefID,
   resourceID,
+  timestampString,
   trimGoSpace,
   type InternalActorDefinition,
   type InternalTaskDefinition,
   type RuntimeOperations,
 } from "@helmr/sdk/internal"
 import type {
-  ActorExecutionContext,
-  ExecutionContextBase,
-  ActorInputResult,
-  RuntimeSessionOperationOptions,
-  RuntimeSessionOperationReceipt,
-  ActorOutputRecord,
-  ActorReceive,
-  SessionSelf,
+  ActorContext,
+  ActorSession,
+  ActorSessionOutputAppendOptions,
+  ActorSessionOutputSequenceOptions,
+  ActorSessionReceiveOptions,
+  SessionCloseRequest,
+  ActorSessionInputResult,
+  SessionInputRecord,
+  SessionInputSendRequest,
+  SessionCloseReceipt,
+  SessionOutputRecord,
+  ActorSessionReceive,
   ActorStartOptions,
-  RuntimeSessionSnapshot,
+  Session,
   Duration,
   JsonValue,
   LogAttributes,
   Metadata,
-  OutputAppendOptions,
-  OutputSequenceOptions,
-  ReceiveOptions,
   RunCause,
   RunLogLevel,
   RetryPolicy,
-  SendOptions,
   Serializable,
   TaskCallOptions,
-  TaskExecutionContext,
+  TaskContext,
   TaskResult,
-  TokenCreateOptions,
+  TokenCreateRequest,
   TokenCreateResult,
   TokenWaitOptions,
   WorkspaceDeleteReceipt,
@@ -54,7 +58,8 @@ import type {
   WorkspaceExecResult,
   WorkspaceFileEntry,
   WorkspaceFileListQuery,
-  WorkspaceSnapshot,
+  Workspace,
+  WorkspaceCreateRequest,
 } from "@helmr/sdk"
 import { createWriteStream, promises as fs } from "node:fs"
 import { randomBytes } from "node:crypto"
@@ -65,6 +70,8 @@ const MAX_PROGRAM_FRAME_BYTES = 256 * 1024 * 1024
 const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024
 const MAX_TASK_ERROR_BYTES = 16 * 1024
 const MAX_RUN_LOG_MESSAGE_BYTES = 4 * 1024
+
+type ExecutionContext = Omit<TaskContext, "task" | "actor">
 const MAX_RUN_LOG_ATTRIBUTES_BYTES = 16 * 1024
 const MAX_TASK_ERROR_MESSAGE_BYTES = 1024
 const MAX_ACTOR_INPUT_BYTES = 1 * 1024 * 1024
@@ -763,7 +770,7 @@ function programRuntimeOperations(
       ? new TextDecoder().decode(canonicalizeJsonValue(payload as JsonValue))
       : undefined
     const workspaceJson = new TextDecoder().decode(
-      canonicalizeJsonValue({ id: requireWorkspaceIDAddress(options.workspace) }),
+      canonicalizeJsonValue({ id: workspaceRefID(options.workspace) }),
     )
     const requestOptions = {
       ...(options.queue === undefined ? {} : { queue: options.queue }),
@@ -812,7 +819,7 @@ function programRuntimeOperations(
           (value as Record<string, unknown>)["run_id"],
           "Task child start result.run_id",
         )
-        return Object.freeze({ id })
+        return createRunHandle(id)
       })
     })
     return await abortableRuntimeOperation(operation, options.signal)
@@ -837,7 +844,7 @@ function programRuntimeOperations(
             )
           : undefined
         const workspaceJson = new TextDecoder().decode(
-          canonicalizeJsonValue({ id: requireWorkspaceIDAddress(options.workspace) }),
+          canonicalizeJsonValue({ id: workspaceRefID(options.workspace) }),
         )
         const requestOptions = {
           ...(options.queue === undefined ? {} : { queue: options.queue }),
@@ -993,20 +1000,20 @@ function programRuntimeOperations(
   const performActorInputSend = async (
     sessionId: string,
     input: JsonValue,
-    options?: SendOptions,
-  ): Promise<{ sequence: number }> => {
-    if (options?.signal?.aborted) {
-      throw abortSignalReason(options.signal)
+    request?: SessionInputSendRequest,
+    signal?: AbortSignal,
+  ): Promise<SessionInputRecord> => {
+    if (signal?.aborted) {
+      throw abortSignalReason(signal)
     }
     const idempotencyKey = normalizeActorInputIdempotencyKey(
-      options?.idempotencyKey,
+      request?.idempotencyKey,
     )
     const normalized = canonicalizeJsonValue(input)
     if (normalized.byteLength > MAX_ACTOR_INPUT_BYTES) {
       throw actorInputSendError(
         "actor_input_too_large",
         `Actor input exceeds ${MAX_ACTOR_INPUT_BYTES} bytes`,
-        false,
       )
     }
     const correlationId = newUUIDv7()
@@ -1038,7 +1045,7 @@ function programRuntimeOperations(
         () => parseActorInputSendResult(decision.dataJson),
       )
     })
-    return await abortableRuntimeOperation(operation, options?.signal)
+    return await abortableRuntimeOperation(operation, signal)
   }
   const performActorStart = async (
     declaredId: string,
@@ -1067,7 +1074,7 @@ function programRuntimeOperations(
         value: create(runProto.ActorStartRequestedSchema, {
           correlationId,
           declaredId,
-          workspaceId: requireWorkspaceIDAddress(options.workspace),
+          workspaceId: workspaceRefID(options.workspace),
           ...(options.key === undefined ? {} : { key: options.key }),
           ...(inputPresent
             ? {
@@ -1106,28 +1113,34 @@ function programRuntimeOperations(
   }
   const performSessionStatus = async (
     sessionId: string,
-  ): Promise<RuntimeSessionSnapshot> => {
+    signal?: AbortSignal,
+  ): Promise<Session> => {
+    if (signal?.aborted) throw abortSignalReason(signal)
     const correlationId = newUUIDv7()
-    const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-      case: "sessionStatusRequested",
-      value: create(runProto.SessionStatusRequestedSchema, {
-        correlationId, sessionId,
-      }),
+    const operation = runOperations.trackDrainable(async () => {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "sessionStatusRequested",
+        value: create(runProto.SessionStatusRequestedSchema, {
+          correlationId, sessionId,
+        }),
+      })
+      requireRuntimeOperationDecision(decision, correlationId, "Session retrieve")
+      if (decision.kind === "failed") {
+        throw runtimeOperationFailure("Session retrieve", decision.dataJson)
+      }
+      return parseRuntimeProtocolValue(
+        "Session retrieve result",
+        () => parseRuntimeSession(decision.dataJson),
+      )
     })
-    requireRuntimeOperationDecision(decision, correlationId, "Actor status")
-    if (decision.kind === "failed") {
-      throw runtimeOperationFailure("Actor status", decision.dataJson)
-    }
-    return parseRuntimeProtocolValue(
-      "Actor status result",
-      () => parseRuntimeSessionSnapshot(decision.dataJson),
-    )
+    return abortableRuntimeOperation(operation, signal)
   }
   const performSessionClose = async (
     sessionId: string,
-    options?: RuntimeSessionOperationOptions,
-  ): Promise<RuntimeSessionOperationReceipt> => {
-    if (options?.signal?.aborted) throw abortSignalReason(options.signal)
+    request?: SessionCloseRequest,
+    signal?: AbortSignal,
+  ): Promise<SessionCloseReceipt> => {
+    if (signal?.aborted) throw abortSignalReason(signal)
     const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
@@ -1135,9 +1148,9 @@ function programRuntimeOperations(
         value: create(runProto.SessionCloseRequestedSchema, {
           correlationId,
           sessionId,
-          ...(options?.idempotencyKey === undefined
+          ...(request?.idempotencyKey === undefined
             ? {}
-            : { idempotencyKey: options.idempotencyKey }),
+            : { idempotencyKey: request.idempotencyKey }),
         }),
       })
       requireRuntimeOperationDecision(decision, correlationId, "Actor close")
@@ -1151,22 +1164,37 @@ function programRuntimeOperations(
           stringField(value, "session_id", "Actor close result"),
           "Actor close result.session_id",
         )
-        const acceptedAt = new Date(
-          stringField(value, "accepted_at", "Actor close result"),
+        const acceptedAt = stringField(
+          value,
+          "accepted_at",
+          "Actor close result",
         )
-        if (Number.isNaN(acceptedAt.getTime())) {
-          throw new Error("Actor close result is invalid")
-        }
-        return Object.freeze({ sessionId, acceptedAt })
+        return Object.freeze({
+          sessionId,
+          acceptedAt: timestampString(acceptedAt, "Session close result.accepted_at"),
+        })
       })
     })
-    return abortableRuntimeOperation(operation, options?.signal)
+    return abortableRuntimeOperation(operation, signal)
   }
   const performSessionOutputPage = async (
     sessionId: string,
-    options?: Readonly<{ after?: number; limit?: number; signal?: AbortSignal }>,
+    query?: Readonly<{ after?: number; limit?: number }>,
+    signal?: AbortSignal,
   ) => {
-    if (options?.signal?.aborted) throw abortSignalReason(options.signal)
+    if (signal?.aborted) throw abortSignalReason(signal)
+    if (
+      query?.after !== undefined &&
+      (!Number.isSafeInteger(query.after) || query.after < 0)
+    ) {
+      throw new Error("Session output after must be a non-negative safe integer")
+    }
+    if (
+      query?.limit !== undefined &&
+      (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 100)
+    ) {
+      throw new Error("Session output limit must be an integer in [1,100]")
+    }
     const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
@@ -1174,10 +1202,10 @@ function programRuntimeOperations(
         value: create(runProto.SessionOutputPageRequestedSchema, {
           correlationId,
           sessionId,
-          ...(options?.after === undefined
+          ...(query?.after === undefined
             ? {}
-            : { after: BigInt(options.after) }),
-          limit: options?.limit ?? 50,
+            : { after: BigInt(query.after) }),
+          limit: query?.limit ?? 50,
         }),
       })
       requireRuntimeOperationDecision(
@@ -1209,22 +1237,23 @@ function programRuntimeOperations(
         )
         return Object.freeze({
           records: Object.freeze(records.map((record) =>
-            parseActorOutputRecord(JSON.stringify(record))
+            parseSessionOutputRecord(JSON.stringify(record))
           )),
           nextAfter,
           hasMore,
         })
       })
     })
-    return abortableRuntimeOperation(operation, options?.signal)
+    return abortableRuntimeOperation(operation, signal)
   }
   const workspaceAddress = (workspaceId: string) =>
     create(runProto.WorkspaceAddressSchema, { workspaceId })
   const performWorkspaceCreate = async (
     declaredId: string,
-    options: import("@helmr/sdk").RuntimeWorkspaceCreateOptions = {},
+    request: WorkspaceCreateRequest = {},
+    signal?: AbortSignal,
   ): Promise<Readonly<{ workspaceId: string }>> => {
-    if (options.signal?.aborted) throw abortSignalReason(options.signal)
+    if (signal?.aborted) throw abortSignalReason(signal)
     const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
@@ -1232,8 +1261,8 @@ function programRuntimeOperations(
         value: create(runProto.WorkspaceCreateRequestedSchema, {
           correlationId,
           declaredId,
-          ...(options.key === undefined ? {} : { key: options.key }),
-          secrets: encodeWorkspaceSecrets(options.secrets).map((secret) =>
+          ...(request.key === undefined ? {} : { key: request.key }),
+          secrets: encodeWorkspaceSecrets(request.secrets).map((secret) =>
             create(runProto.WorkspaceSecretPlacementSchema, {
               name: secret.name,
               placement: "env" in secret
@@ -1241,9 +1270,9 @@ function programRuntimeOperations(
                 : { case: "file", value: secret.file },
             })
           ) ?? [],
-          ...(options.idempotencyKey === undefined
+          ...(request.idempotencyKey === undefined
             ? {}
-            : { idempotencyKey: options.idempotencyKey }),
+            : { idempotencyKey: request.idempotencyKey }),
         }),
       })
       requireRuntimeOperationDecision(decision, correlationId, "Workspace create")
@@ -1264,12 +1293,12 @@ function programRuntimeOperations(
         return Object.freeze({ workspaceId })
       })
     })
-    return abortableRuntimeOperation(operation, options.signal)
+    return abortableRuntimeOperation(operation, signal)
   }
   const performWorkspaceRetrieve = async (
     workspaceId: string,
     signal?: AbortSignal,
-  ): Promise<WorkspaceSnapshot> => {
+  ): Promise<Workspace> => {
     if (signal?.aborted) throw abortSignalReason(signal)
     const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
@@ -1286,7 +1315,7 @@ function programRuntimeOperations(
       }
       return parseRuntimeProtocolValue(
         "Workspace retrieve result",
-        () => parseWorkspaceSnapshot(JSON.parse(decision.dataJson)),
+        () => parseWorkspace(JSON.parse(decision.dataJson)),
       )
     })
     return abortableRuntimeOperation(operation, signal)
@@ -1449,16 +1478,16 @@ function programRuntimeOperations(
     return abortableRuntimeOperation(operation, signal)
   }
   const performTokenCreate = async (
-    options: TokenCreateOptions,
-  ): Promise<Omit<TokenCreateResult, "wait">> => {
+    request: TokenCreateRequest,
+  ): Promise<TokenCreateResult> => {
     const correlationId = newUUIDv7()
-    const timeoutMs = options.timeout === undefined
+    const timeoutMs = request.timeout === undefined
       ? undefined
-      : durationMilliseconds(options.timeout, "Token timeout")
-    const metadataJson = options.metadata === undefined
+      : durationMilliseconds(request.timeout, "Token timeout")
+    const metadataJson = request.metadata === undefined
       ? undefined
-      : new TextDecoder().decode(canonicalizeJsonValue(options.metadata))
-    const idempotencyKey = normalizeTokenIdempotencyKey(options.idempotencyKey)
+      : new TextDecoder().decode(canonicalizeJsonValue(request.metadata))
+    const idempotencyKey = normalizeTokenIdempotencyKey(request.idempotencyKey)
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "tokenCreateRequested",
@@ -1466,7 +1495,7 @@ function programRuntimeOperations(
           correlationId,
           ...(timeoutMs === undefined ? {} : { timeoutMs: BigInt(timeoutMs) }),
           ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
-          tags: options.tags === undefined ? [] : [...options.tags],
+          tags: request.tags === undefined ? [] : [...request.tags],
           ...(metadataJson === undefined ? {} : { metadataJson }),
         }),
       })
@@ -1652,23 +1681,23 @@ function programRuntimeOperations(
         boundedTimerMilliseconds(Math.ceil(remainingMs)),
       )
     },
-    actorInputSend(target, input, options) {
-      return performActorInputSend(target, input, options)
+    actorInputSend(target, input, request, signal) {
+      return performActorInputSend(target, input, request, signal)
     },
     actorStart(declaredId, options) {
       return performActorStart(declaredId, options)
     },
-    sessionStatus(sessionId) {
-      return runOperations.trackDrainable(() => performSessionStatus(sessionId))
+    sessionRetrieve(sessionId, signal) {
+      return performSessionStatus(sessionId, signal)
     },
-    sessionClose(sessionId, options) {
-      return performSessionClose(sessionId, options)
+    sessionClose(sessionId, request, signal) {
+      return performSessionClose(sessionId, request, signal)
     },
-    sessionOutputPage(sessionId, options) {
-      return performSessionOutputPage(sessionId, options)
+    sessionOutputPage(sessionId, query, signal) {
+      return performSessionOutputPage(sessionId, query, signal)
     },
-    workspaceCreate(declaredId, options) {
-      return performWorkspaceCreate(declaredId, options)
+    workspaceCreate(declaredId, request, signal) {
+      return performWorkspaceCreate(declaredId, request, signal)
     },
     workspaceRetrieve(address, signal) {
       return performWorkspaceRetrieve(address, signal)
@@ -1805,12 +1834,12 @@ function parseTokenCreateResult(dataJson: string): Omit<TokenCreateResult, "wait
     ),
     callbackUrl: stringField(value, "callback_url", "Token create result"),
     publicAccessToken: stringField(value, "public_access_token", "Token create result"),
-    timeoutAt: stringField(value, "timeout_at", "Token create result"),
+    timeoutAt: timestampString(value["timeout_at"], "Token create result.timeout_at"),
     status: "pending" as const,
     metadata,
     tags: Object.freeze([...tags]) as readonly string[],
-    createdAt: stringField(value, "created_at", "Token create result"),
-    updatedAt: stringField(value, "updated_at", "Token create result"),
+    createdAt: timestampString(value["created_at"], "Token create result.created_at"),
+    updatedAt: timestampString(value["updated_at"], "Token create result.updated_at"),
   })
 }
 
@@ -1822,10 +1851,9 @@ function runtimeOperationFailure(operation: string, dataJson: string): Error {
   if (typeof retryable !== "boolean") {
     throw new Error(`${operation} failure.retryable must be a boolean`)
   }
-  const error = new Error(message) as Error & { code: string; retryable: boolean }
+  const error = new Error(message) as Error & { code: string }
   error.name = "HelmrError"
   error.code = code
-  error.retryable = retryable
   return error
 }
 
@@ -1881,14 +1909,14 @@ function parseTaskResult(dataJson: string): TaskResult<JsonValue> {
 
 function parseTaskResultRun(
   value: Record<string, unknown>,
-): Readonly<{ id: string }> {
+): import("@helmr/sdk").RunHandle<JsonValue> {
   const run = objectField(value, "run", "Task child call result")
   requireExactKeys(run, ["id"], "Task child call result.run")
   const id = resourceID(
     stringField(run, "id", "Task child call result.run"),
     "Task child call result.run.id",
   )
-  return Object.freeze({ id })
+  return createRunHandle(id)
 }
 
 function tokenWaitFailure(kind: "failed" | "cancelled", dataJson: string): Error {
@@ -1905,10 +1933,9 @@ function tokenWaitFailure(kind: "failed" | "cancelled", dataJson: string): Error
       : code === "token_cancelled"
       ? "Token was cancelled"
       : `Token Wait ${kind}: ${code}`,
-  ) as Error & { code: string; retryable: false }
+  ) as Error & { code: string }
   error.name = code === "wait_timeout" ? "WaitTimeoutError" : "HelmrError"
   error.code = code
-  error.retryable = false
   return error
 }
 
@@ -1921,7 +1948,6 @@ function normalizeActorInputIdempotencyKey(
     throw actorInputSendError(
       "invalid_idempotency_key",
       "Actor input idempotency key must be at most 512 UTF-8 bytes",
-      false,
     )
   }
   return normalized === "" ? undefined : normalized
@@ -1951,17 +1977,18 @@ function requireRuntimeOperationDecision(
 
 function parseActorInputSendResult(
   dataJson: string,
-): { readonly sequence: number } {
+): SessionInputRecord {
   const value = parseObjectJSON(dataJson, "Actor input send result")
-  requireExactKeys(value, ["sequence"], "Actor input send result")
-  const sequence = safeJSONSequence(
-    value["sequence"],
-    "Actor input send result.sequence",
+  requireExactKeys(
+    value,
+    ["created_at", "data", "id", "sequence", "source"],
+    "Actor input send result",
   )
-  if (sequence === 0) {
+  const record = parseSessionInputRecord(value)
+  if (record.sequence === 0) {
     throw new Error("Actor input send result.sequence must be positive")
   }
-  return Object.freeze({ sequence })
+  return record
 }
 
 function parseActorInputSendFailure(dataJson: string): Error {
@@ -1985,22 +2012,16 @@ function parseActorInputSendFailure(dataJson: string): Error {
   return actorInputSendError(
     value["code"],
     value["message"],
-    value["retryable"],
   )
 }
 
 function actorInputSendError(
   code: string,
   message: string,
-  retryable: boolean,
 ): Error {
-  const error = new Error(message) as Error & {
-    code: string
-    retryable: boolean
-  }
+  const error = new Error(message) as Error & { code: string }
   error.name = "HelmrError"
   error.code = code
-  error.retryable = retryable
   return error
 }
 
@@ -2151,7 +2172,7 @@ function actorSelf(
   cursor: { value: bigint },
   waitGate: ConsumingWaitGate,
   actorOperations: RunOperationState,
-): SessionSelf {
+): ActorSession {
   if (start.entrypoint.case !== "actor") {
     throw new Error("Actor Program-start entrypoint is required")
   }
@@ -2173,9 +2194,9 @@ function actorSelf(
   }
 
   const performReceive = async (
-    options: ReceiveOptions | undefined,
+    options: ActorSessionReceiveOptions | undefined,
     releaseWait: () => void,
-  ): Promise<ActorInputResult> => {
+  ): Promise<ActorSessionInputResult> => {
     try {
       await commitPriorTurn()
       const correlationId = newUUIDv7()
@@ -2243,7 +2264,7 @@ function actorSelf(
           "Actor input Wait failure decision",
           () => resumeFailure(decision.dataJson),
         )
-        if (failure.reasonCode !== "wait_timeout" && failure.reasonCode !== "actor_closed") {
+        if (failure.reasonCode !== "wait_timeout" && failure.reasonCode !== "session_closed") {
           throw new RuntimeProtocolError(`Actor input Wait failed: ${failure.reasonCode}`)
         }
         return Object.freeze({
@@ -2264,20 +2285,20 @@ function actorSelf(
     }
   }
 
-  const receive = (options?: ReceiveOptions): ActorReceive => {
+  const receive = (options?: ActorSessionReceiveOptions): ActorSessionReceive => {
     let releaseWait: () => void
     try {
-      releaseWait = waitGate.acquire(concurrentActorReceiveError)
+      releaseWait = waitGate.acquire(concurrentSessionReceiveError)
     } catch (error) {
-      return actorReceive(Promise.reject(concurrentActorReceiveError()))
+      return actorReceive(Promise.reject(concurrentSessionReceiveError()))
     }
     return actorReceive(actorOperations.track(() => performReceive(options, releaseWait)))
   }
 
   const performAppend = async (
     value: Serializable,
-    options?: OutputAppendOptions,
-  ): Promise<ActorOutputRecord> => {
+    options?: ActorSessionOutputAppendOptions,
+  ): Promise<SessionOutputRecord> => {
     const normalized = canonicalizeJsonValue(value as JsonValue)
     const correlationId = newUUIDv7()
     const decision = await requestRuntimeDecision(io, decisions, correlationId, {
@@ -2297,33 +2318,33 @@ function actorSelf(
     }
     return parseRuntimeProtocolValue(
       "Actor output append result",
-      () => parseActorOutputRecord(decision.dataJson),
+      () => parseSessionOutputRecord(decision.dataJson),
     )
   }
 
   const append = (
     value: Serializable,
-    options?: OutputAppendOptions,
-  ): Promise<ActorOutputRecord> => actorOperations.track(
+    options?: ActorSessionOutputAppendOptions,
+  ): Promise<SessionOutputRecord> => actorOperations.track(
     () => performAppend(value, options),
   )
 
   const performPipe = async (
     source: AsyncIterable<Serializable> | Iterable<Serializable>,
-    options?: OutputSequenceOptions,
+    options?: ActorSessionOutputSequenceOptions,
   ): Promise<void> => {
     for await (const value of source) await performAppend(value, options)
   }
 
   const pipe = (
     source: AsyncIterable<Serializable> | Iterable<Serializable>,
-    options?: OutputSequenceOptions,
+    options?: ActorSessionOutputSequenceOptions,
   ): Promise<void> => actorOperations.track(() => performPipe(source, options))
 
-  const writer = (options?: OutputSequenceOptions) => {
+  const writer = (options?: ActorSessionOutputSequenceOptions) => {
     let closed = false
     return Object.freeze({
-      write(value: Serializable): Promise<ActorOutputRecord> {
+      write(value: Serializable): Promise<SessionOutputRecord> {
         if (closed) return Promise.reject(new Error("Actor output writer is closed"))
         return append(value, options)
       },
@@ -2343,7 +2364,7 @@ function actorSelf(
   })
 }
 
-function actorReceive(result: Promise<ActorInputResult>): ActorReceive {
+function actorReceive(result: Promise<ActorSessionInputResult>): ActorSessionReceive {
   return Object.freeze({
     then: result.then.bind(result),
     async unwrap(): Promise<JsonValue> {
@@ -2351,7 +2372,7 @@ function actorReceive(result: Promise<ActorInputResult>): ActorReceive {
       if (resolved.ok) return resolved.value
       throw resolved.error
     },
-  }) as ActorReceive
+  }) as ActorSessionReceive
 }
 
 function requireActorDecision(
@@ -2372,7 +2393,7 @@ function safeActorSequence(value: bigint): number {
   return Number(value)
 }
 
-function parseActorInputDelivery(dataJson: string): Extract<ActorInputResult, { ok: true }> {
+function parseActorInputDelivery(dataJson: string): Extract<ActorSessionInputResult, { ok: true }> {
   const value = parseObjectJSON(dataJson, "Actor input delivery")
   requireExactKeys(value, ["record", "value"], "Actor input delivery")
   const record = objectField(value, "record", "Actor input delivery")
@@ -2408,13 +2429,13 @@ function parseActorInputDelivery(dataJson: string): Extract<ActorInputResult, { 
         "Actor input record.id",
       ),
       sequence,
-      createdAt: stringField(record, "created_at", "Actor input record"),
+      createdAt: timestampString(record["created_at"], "Session input record.created_at"),
       source: parsedSource,
     }),
   })
 }
 
-function parseActorOutputRecord(dataJson: string): ActorOutputRecord {
+function parseSessionOutputRecord(dataJson: string): SessionOutputRecord {
   const value = parseObjectJSON(dataJson, "Actor output append result")
   requireExactKeys(
     value,
@@ -2435,7 +2456,7 @@ function parseActorOutputRecord(dataJson: string): ActorOutputRecord {
     sequence: safeJSONSequence(value["sequence"], "Actor output sequence"),
     data: jsonValueField(value, "data", "Actor output append result"),
     contentType: stringField(value, "content_type", "Actor output append result"),
-    createdAt: stringField(value, "created_at", "Actor output append result"),
+    createdAt: timestampString(value["created_at"], "Session output record.created_at"),
     provenance: Object.freeze({
       runId: resourceID(
         stringField(provenance, "run_id", "Actor output provenance"),
@@ -2457,79 +2478,25 @@ function parseActorOutputRecord(dataJson: string): ActorOutputRecord {
   })
 }
 
-function parseRuntimeSessionSnapshot(dataJson: string): RuntimeSessionSnapshot {
-  const value = parseObjectJSON(dataJson, "Actor status result")
+function parseRuntimeSession(dataJson: string): Session {
+  const value = parseObjectJSON(dataJson, "Session retrieve result")
+  const required = [
+    "actor_id",
+    "created_at",
+    "deployment_id",
+    "id",
+    "status",
+    "updated_at",
+  ]
   const optional = ["current_run_id", "failure", "key"]
-  const required = ["created_at", "id", "status", "updated_at"]
-  const actual = Object.keys(value).sort()
   const allowed = new Set([...required, ...optional])
   if (
     required.some((key) => !Object.hasOwn(value, key)) ||
-    actual.some((key) => !allowed.has(key))
+    Object.keys(value).some((key) => !allowed.has(key))
   ) {
-    throw new Error("Actor status result has unknown or missing fields")
+    throw new Error("Session retrieve result has unknown or missing fields")
   }
-  const id = resourceID(
-    stringField(value, "id", "Actor status result"),
-    "Actor status result.id",
-  )
-  const status = stringField(value, "status", "Actor status result")
-  if (
-    status !== "open" && status !== "closed" &&
-    status !== "cancelled" && status !== "failed"
-  ) {
-    throw new Error("Actor status result.status is invalid")
-  }
-  const createdAt = new Date(
-    stringField(value, "created_at", "Actor status result"),
-  )
-  const updatedAt = new Date(
-    stringField(value, "updated_at", "Actor status result"),
-  )
-  if (Number.isNaN(createdAt.getTime()) || Number.isNaN(updatedAt.getTime())) {
-    throw new Error("Actor status result timestamps are invalid")
-  }
-  let failure: RuntimeSessionSnapshot["failure"]
-  if (Object.hasOwn(value, "failure")) {
-    const raw = objectField(value, "failure", "Actor status result")
-    requireExactKeys(raw, ["code", "run_id"], "Actor status failure")
-    const code = stringField(raw, "code", "Actor status failure")
-    if (
-      code !== "no_progress" && code !== "run_failed" &&
-      code !== "run_expired" && code !== "platform_failure"
-    ) {
-      throw new Error("Actor status failure.code is invalid")
-    }
-    failure = Object.freeze({
-      code,
-      runId: resourceID(
-        stringField(raw, "run_id", "Actor status failure"),
-        "Actor status failure.run_id",
-      ),
-    })
-  }
-  return Object.freeze({
-    id,
-    status,
-    createdAt,
-    updatedAt,
-    ...(Object.hasOwn(value, "key")
-      ? { key: stringField(value, "key", "Actor status result") }
-      : {}),
-    ...(Object.hasOwn(value, "current_run_id")
-      ? {
-          currentRunId: resourceID(
-            stringField(
-              value,
-              "current_run_id",
-              "Actor status result",
-            ),
-            "Actor status result.current_run_id",
-          ),
-        }
-      : {}),
-    ...(failure === undefined ? {} : { failure }),
-  })
+  return parseSession(value)
 }
 
 function parseObjectJSON(value: string, label: string): Record<string, unknown> {
@@ -2602,28 +2569,26 @@ function safeJSONSequence(value: unknown, label: string): number {
 }
 
 function actorChannelError(
-  code: "wait_timeout" | "actor_closed",
-): Extract<ActorInputResult, { ok: false }>["error"] {
+  code: "wait_timeout" | "session_closed",
+): Extract<ActorSessionInputResult, { ok: false }>["error"] {
   const error = new Error(code === "wait_timeout" ? "Actor input receive timed out" : "Actor is closed") as Error & {
-    code: "wait_timeout" | "actor_closed"
-    retryable: false
+    code: "wait_timeout" | "session_closed"
   }
-  error.name = code === "wait_timeout" ? "WaitTimeoutError" : "ActorClosedError"
+  error.name = code === "wait_timeout" ? "WaitTimeoutError" : "SessionClosedError"
   error.code = code
-  error.retryable = false
-  return error as Extract<ActorInputResult, { ok: false }>["error"]
+  return error as Extract<ActorSessionInputResult, { ok: false }>["error"]
 }
 
-function concurrentActorReceiveError(): Error {
+function concurrentSessionReceiveError(): Error {
   const error = new Error("only one Actor input receive may be unresolved")
-  error.name = "ConcurrentActorReceiveError"
+  error.name = "ConcurrentSessionReceiveError"
   return error
 }
 
 function actorContext(
   start: runProto.ProgramStart,
   signal: AbortSignal,
-): ActorExecutionContext {
+): ActorContext {
   if (start.entrypoint.case !== "actor") {
     throw new Error("Actor Program-start entrypoint is required")
   }
@@ -2632,7 +2597,7 @@ function actorContext(
     actor: Object.freeze({
       id: start.entrypointDeclaredId,
     }),
-  }) as ActorExecutionContext
+  }) as ActorContext
 }
 
 async function writeActorFailure(
@@ -2658,17 +2623,17 @@ async function writeActorFailure(
 function taskContext(
   start: runProto.ProgramStart,
   signal = new AbortController().signal,
-): TaskExecutionContext {
+): TaskContext {
   return Object.freeze({
     ...executionContext(start, signal),
     task: Object.freeze({ id: start.entrypointDeclaredId }),
-  }) as TaskExecutionContext
+  }) as TaskContext
 }
 
 function executionContext(
   start: runProto.ProgramStart,
   signal: AbortSignal,
-): ExecutionContextBase {
+): ExecutionContext {
   return Object.freeze({
     signal,
     run: Object.freeze({
@@ -2680,11 +2645,8 @@ function executionContext(
       id: start.deploymentId,
       version: start.deploymentVersion,
     }),
-    workspace: brandWorkspaceIdAddress({
-      id: start.workspaceId,
-      attemptBaseVersionId: start.baseWorkspaceVersionId,
-    }),
-  }) as ExecutionContextBase
+    workspace: createWorkspaceRef(start.workspaceId),
+  }) as ExecutionContext
 }
 
 function runCause(cause: runProto.RunCause): RunCause {
@@ -2704,13 +2666,13 @@ function runCause(cause: runProto.RunCause): RunCause {
         scheduleId: cause.kind.value.scheduleId,
         scheduledAt: new Date(
           Number(cause.kind.value.scheduledAtUnixMs),
-        ),
+        ).toISOString(),
         ...(cause.kind.value.previousScheduledAtUnixMs === undefined
           ? {}
           : {
               lastScheduledAt: new Date(
                 Number(cause.kind.value.previousScheduledAtUnixMs),
-              ),
+              ).toISOString(),
             }),
         timezone: cause.kind.value.timezone,
       }

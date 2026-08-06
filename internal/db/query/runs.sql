@@ -631,13 +631,18 @@ SELECT runs.*,
    AND runs.environment_id = sqlc.arg(environment_id)
    AND runs.id = sqlc.arg(id);
 
--- name: ListRunSnapshots :many
-SELECT runs.*,
-       deployments.version AS deployment_version
+-- name: ListRunListItems :many
+SELECT runs.id,
+       runs.status,
+       runs.entrypoint_kind,
+       runs.entrypoint_declared_id,
+       runs.workspace_id,
+       runs.session_id,
+       runs.current_attempt_number,
+       runs.created_at,
+       runs.started_at,
+       runs.terminal_at
   FROM runs
-  JOIN deployments
-    ON deployments.environment_id = runs.environment_id
-   AND deployments.id = runs.deployment_id
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.project_id = sqlc.arg(project_id)
    AND runs.environment_id = sqlc.arg(environment_id)

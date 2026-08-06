@@ -2025,63 +2025,72 @@ func (q *Queries) ListQueuedDeploymentBuildRegions(ctx context.Context, limitCou
 }
 
 const listScopedDeployments = `-- name: ListScopedDeployments :many
-SELECT deployments.id, deployments.org_id, deployments.project_id, deployments.environment_id, deployments.build_region_id, deployments.build_node_version, deployments.build_runtime_digest, deployments.build_toolchain_digest, deployments.build_manager_name, deployments.build_manager_version, deployments.build_manager_integrity, deployments.build_manager_digest, deployments.build_contract, deployments.image_cache_mode, deployments.version, deployments.content_hash, deployments.deployment_source_artifact_id, deployments.program_artifact_id, deployments.program_artifact_kind, deployments.program_index_digest, deployments.queue_config, deployments.status, deployments.failure, deployments.current_build_lease_id, deployments.created_at, deployments.updated_at, deployments.building_at, deployments.built_at, deployments.deployed_at, deployments.failed_at
+SELECT deployments.id,
+       deployments.version,
+       deployments.status,
+       deployments.created_at,
+       deployments.building_at,
+       deployments.built_at,
+       deployments.deployed_at,
+       deployments.failed_at
   FROM deployments
  WHERE deployments.org_id = $1
    AND deployments.project_id = $2
    AND deployments.environment_id = $3
+   AND (
+       NOT $4::boolean
+       OR (deployments.created_at, deployments.id) < (
+           $5::timestamptz,
+           $6::uuid
+       )
+   )
  ORDER BY deployments.created_at DESC, deployments.id DESC
- LIMIT $4
+ LIMIT $7
 `
 
 type ListScopedDeploymentsParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	RowLimit      int32       `json:"row_limit"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	HasAfter       bool               `json:"has_after"`
+	AfterCreatedAt pgtype.Timestamptz `json:"after_created_at"`
+	AfterID        pgtype.UUID        `json:"after_id"`
+	RowLimit       int32              `json:"row_limit"`
 }
 
-func (q *Queries) ListScopedDeployments(ctx context.Context, arg ListScopedDeploymentsParams) ([]Deployment, error) {
+type ListScopedDeploymentsRow struct {
+	ID         pgtype.UUID        `json:"id"`
+	Version    string             `json:"version"`
+	Status     string             `json:"status"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	BuildingAt pgtype.Timestamptz `json:"building_at"`
+	BuiltAt    pgtype.Timestamptz `json:"built_at"`
+	DeployedAt pgtype.Timestamptz `json:"deployed_at"`
+	FailedAt   pgtype.Timestamptz `json:"failed_at"`
+}
+
+func (q *Queries) ListScopedDeployments(ctx context.Context, arg ListScopedDeploymentsParams) ([]ListScopedDeploymentsRow, error) {
 	rows, err := q.db.Query(ctx, listScopedDeployments,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
+		arg.HasAfter,
+		arg.AfterCreatedAt,
+		arg.AfterID,
 		arg.RowLimit,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Deployment
+	var items []ListScopedDeploymentsRow
 	for rows.Next() {
-		var i Deployment
+		var i ListScopedDeploymentsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.OrgID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.BuildRegionID,
-			&i.BuildNodeVersion,
-			&i.BuildRuntimeDigest,
-			&i.BuildToolchainDigest,
-			&i.BuildManagerName,
-			&i.BuildManagerVersion,
-			&i.BuildManagerIntegrity,
-			&i.BuildManagerDigest,
-			&i.BuildContract,
-			&i.ImageCacheMode,
 			&i.Version,
-			&i.ContentHash,
-			&i.DeploymentSourceArtifactID,
-			&i.ProgramArtifactID,
-			&i.ProgramArtifactKind,
-			&i.ProgramIndexDigest,
-			&i.QueueConfig,
 			&i.Status,
-			&i.Failure,
-			&i.CurrentBuildLeaseID,
 			&i.CreatedAt,
-			&i.UpdatedAt,
 			&i.BuildingAt,
 			&i.BuiltAt,
 			&i.DeployedAt,

@@ -151,7 +151,7 @@ describe("declaration analysis", () => {
     ).toThrow("duplicate task declaration")
   })
 
-  test("deduplicates one Queue object and rejects distinct objects with the same ID", () => {
+  test("deduplicates one Queue object and rejects distinct objects with the same name", () => {
     const shared = queue({ name: "shared", concurrencyLimit: 2 })
     expect(() =>
       analyze({

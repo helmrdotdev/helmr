@@ -33,7 +33,7 @@ export const cliToolingSandbox = sandbox({ id: "cli-tooling" })
 Image builders support:
 
 - `from(ref)` for the base image.
-- `run(argv, opts)` for build commands.
+- `run(argv)` for build commands.
 - `copy(dest, source.file(...))` and `copy(dest, source.directory(...))` for task project files.
 - `copyFrom(dest, image, srcPath)` for multi-image builds.
 - `workdir(path)`, `env(key, value)`, and `user(name)`.

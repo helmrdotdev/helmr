@@ -75,6 +75,25 @@ func TestRunTelemetryFilterIsNormalized(t *testing.T) {
 	}
 }
 
+func TestRunTelemetryQueryIsClosed(t *testing.T) {
+	for _, raw := range []string{
+		"unknown=value",
+		"cursor=one&cursor=two",
+		"limit=",
+		"level=",
+	} {
+		if err := validateRunTelemetryQuery(raw, "level"); err == nil {
+			t.Fatalf("validateRunTelemetryQuery(%q) succeeded", raw)
+		}
+	}
+	if err := validateRunTelemetryQuery(
+		"cursor=opaque&limit=100&level=warn&level=error",
+		"level",
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestProjectRunLogRecordDistinguishesStructuredAndStream(t *testing.T) {
 	at := time.Date(2026, 7, 25, 1, 2, 3, 0, time.UTC)
 	structuredBody, err := json.Marshal(map[string]any{
@@ -98,6 +117,27 @@ func TestProjectRunLogRecordDistinguishesStructuredAndStream(t *testing.T) {
 		structured.Message != "failed" ||
 		string(structured.Attributes) != `{"step":2}` {
 		t.Fatalf("structured = %+v", structured)
+	}
+	structured.Message = ""
+	wire, err := json.Marshal(structured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(wire, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{
+		"id", "kind", "run_id", "attempt_number", "level", "message", "attributes", "at",
+	} {
+		if _, ok := fields[field]; !ok {
+			t.Fatalf("structured wire field %q is absent: %s", field, wire)
+		}
+	}
+	for _, field := range []string{"observed_sequence", "content_base64", "bytes"} {
+		if _, ok := fields[field]; ok {
+			t.Fatalf("structured wire field %q is present: %s", field, wire)
+		}
 	}
 	stream, err := projectRunLogRecord(api.RunLogChunk{
 		ID: "stdout-cursor", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",

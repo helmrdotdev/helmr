@@ -167,7 +167,7 @@ describe("runProgram", () => {
       output,
       onWrite: () => { if (output.length === 2) waitWritten.resolve() },
     }))
-    expect(overlapError).toBe("ConcurrentActorReceiveError")
+    expect(overlapError).toBe("ConcurrentSessionReceiveError")
     expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
       "entrypointReady",
       "runWaitRequested",
@@ -594,8 +594,8 @@ describe("runProgram", () => {
       name: "HelmrError",
       code: "idempotency_conflict",
       message: "output key conflicts with an earlier append",
-      retryable: false,
     })
+    expect(Object.hasOwn(failure as object, "retryable")).toBe(false)
   })
 
   test("sends Actor input from a Task with concurrent correlation-safe decisions", async () => {
@@ -636,8 +636,26 @@ describe("runProgram", () => {
         "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
       )
       expect(second.value.dataJson).toBe("null")
-      yield actorDecision(second.value.correlationId, "completed", '{"sequence":2}')
-      yield actorDecision(first.value.correlationId, "completed", '{"sequence":1}')
+      yield actorDecision(second.value.correlationId, "completed", JSON.stringify({
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
+        sequence: 2,
+        data: null,
+        source: {
+          type: "run",
+          run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
+        },
+        created_at: "2026-07-26T00:00:01Z",
+      }))
+      yield actorDecision(first.value.correlationId, "completed", JSON.stringify({
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
+        sequence: 1,
+        data: { a: 2, z: 1 },
+        source: {
+          type: "run",
+          run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
+        },
+        created_at: "2026-07-26T00:00:00Z",
+      }))
     }
     await runProgram(locatorURL, programIO({
       input: input(),
@@ -645,7 +663,28 @@ describe("runProgram", () => {
       output,
       onWrite: () => { if (output.length === 3) sendsWritten.resolve() },
     }))
-    expect(sent).toEqual([{ sequence: 1 }, { sequence: 2 }])
+    expect(sent).toEqual([
+      {
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
+        sequence: 1,
+        data: { a: 2, z: 1 },
+        source: {
+          type: "run",
+          runId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
+        },
+        createdAt: "2026-07-26T00:00:00Z",
+      },
+      {
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
+        sequence: 2,
+        data: null,
+        source: {
+          type: "run",
+          runId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
+        },
+        createdAt: "2026-07-26T00:00:01Z",
+      },
+    ])
     expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
       "entrypointReady",
       "sessionInputSendRequested",
@@ -817,7 +856,7 @@ describe("runProgram", () => {
           secrets: [{ secret: secrets.fromName("TOKEN"), env: "TOKEN" }],
           idempotencyKey: "create:cache",
         })
-        const snapshot = await created.retrieve()
+        const workspace = await created.retrieve()
         const content = await created.files.read("result.txt")
         const entry = await created.files.stat("result.txt")
         const page = await created.files.list(".", { limit: 10 })
@@ -829,7 +868,7 @@ describe("runProgram", () => {
         })
         const deleted = await created.delete({ idempotencyKey: "delete:cache" })
         return {
-          id: snapshot.id,
+          id: workspace.id,
           content: new TextDecoder().decode(content),
           kind: entry.kind,
           count: page.items.length,
@@ -1126,6 +1165,65 @@ describe("runProgram", () => {
     ])
   })
 
+  test("does not expose generic retryability on Token Wait errors", async () => {
+    let failure: unknown
+    const definition = task({
+      id: "deploy",
+      async run() {
+        const token = await tokens.create()
+        const result = await token.wait()
+        if (!result.ok) failure = result.error
+        return null
+      },
+    })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+    const createWritten = deferred<void>()
+    const waitWritten = deferred<void>()
+    async function* input(): AsyncIterable<Uint8Array> {
+      yield frameMessage(runProto.ProgramStartSchema, start)
+      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      await createWritten.promise
+      const createEvent = readEvent(output[1]!).event
+      if (createEvent.case !== "tokenCreateRequested") return
+      yield actorDecision(createEvent.value.correlationId, "completed", JSON.stringify({
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
+        status: "pending",
+        callback_url: "https://api.example.test/callback",
+        public_access_token: "hlmr_pat_secret",
+        timeout_at: "2026-07-24T12:00:00Z",
+        metadata: {},
+        tags: [],
+        created_at: "2026-07-24T11:50:00Z",
+        updated_at: "2026-07-24T11:50:00Z",
+      }))
+      await waitWritten.promise
+      const waitEvent = readEvent(output[2]!).event
+      if (waitEvent.case !== "runWaitRequested") return
+      yield actorDecision(
+        waitEvent.value.correlationId,
+        "failed",
+        JSON.stringify({ reason_code: "token_expired" }),
+        waitEvent.value,
+      )
+    }
+    await runProgram(locatorURL, programIO({
+      input: input(),
+      definition,
+      output,
+      onWrite: () => {
+        if (output.length === 2) createWritten.resolve()
+        if (output.length === 3) waitWritten.resolve()
+      },
+    }))
+    expect(failure).toMatchObject({
+      name: "HelmrError",
+      code: "token_expired",
+      message: "Token expired",
+    })
+    expect(Object.hasOwn(failure as object, "retryable")).toBe(false)
+  })
+
   test("emits acknowledged metadata mutations and structured logs", async () => {
     const definition = task({
       id: "deploy",
@@ -1255,8 +1353,8 @@ describe("runProgram", () => {
     expect(failure).toMatchObject({
       name: "HelmrError",
       code: "invalid_idempotency_key",
-      retryable: false,
     })
+    expect(Object.hasOwn(failure as object, "retryable")).toBe(false)
     expect(output.map((frame) => readEvent(frame).event.case)).toEqual([
       "entrypointReady",
       "taskOutcome",
@@ -1300,9 +1398,9 @@ describe("runProgram", () => {
     expect(failure).toMatchObject({
       name: "HelmrError",
       code: "actor_not_open",
-      retryable: false,
       message: "Actor does not accept new input",
     })
+    expect(Object.hasOwn(failure as object, "retryable")).toBe(false)
     expect(readEvent(output[2]!).event.case).toBe("actorOutcome")
   })
 
@@ -1317,7 +1415,11 @@ describe("runProgram", () => {
       async run() {
         for (const signal of [preAborted.signal, postEmission.signal]) {
           try {
-            await sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").input.send(null, { signal })
+            await sessions.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33").input.send(
+              null,
+              {},
+              { signal },
+            )
           } catch (error) {
             failures.push(error)
           }
@@ -1334,7 +1436,16 @@ describe("runProgram", () => {
       await sendWritten.promise
       const send = readEvent(output[1]!).event
       if (send.case !== "sessionInputSendRequested") return
-      yield actorDecision(send.value.correlationId, "completed", '{"sequence":3}')
+      yield actorDecision(send.value.correlationId, "completed", JSON.stringify({
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
+        sequence: 3,
+        data: null,
+        source: {
+          type: "run",
+          run_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
+        },
+        created_at: "2026-07-26T00:00:00Z",
+      }))
     }
     await runProgram(locatorURL, programIO({
       input: input(),

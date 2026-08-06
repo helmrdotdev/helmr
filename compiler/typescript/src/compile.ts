@@ -1,7 +1,7 @@
 import {
   inspectDefinition,
   inspectImage,
-  isQueueDefinition,
+  isQueue,
   inspectSandboxDefinition,
   validateQueueName,
   type InternalImage,
@@ -419,7 +419,7 @@ function compileQueues(
 ): Map<string, BuildPlanQueue> {
   const queues = new Map<string, QueueEntry>()
   for (const item of exports) {
-    if (isQueueDefinition(item.value)) {
+    if (isQueue(item.value)) {
       addQueue(queues, item.value, item.value)
     }
   }

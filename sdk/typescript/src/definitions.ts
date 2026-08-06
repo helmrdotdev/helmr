@@ -1,11 +1,11 @@
 import {
   type ActorConfig,
-  type ActorDefinition,
+  type Actor,
   type ActorStartOptions,
   type JsonValue,
-  type NoPayloadTaskDefinition,
-  type PayloadTaskDefinition,
-  type QueueDefinition,
+  type Queue,
+  type QueueConfig,
+  type Task,
   type TaskCallOptions,
   type TaskConfigWithPayload,
   type TaskConfigWithoutPayload,
@@ -24,6 +24,7 @@ import {
 import { currentRuntimeOperations } from "./internal/runtime"
 import { runFailureError } from "./internal/run-failure"
 import { createRuntimeSessionRef } from "./session"
+import { createRunHandle } from "./internal/run-handle"
 
 const privateDefinitionBrand = Symbol.for("helmr.sdk.v0.definition")
 const privateQueueBrand = Symbol.for("helmr.sdk.v0.queue")
@@ -34,7 +35,7 @@ export type InternalTaskDefinition = Readonly<{
   hasPayload: boolean
   handler: (...args: readonly unknown[]) => unknown
   payloadSchema?: PayloadSchema
-  queue?: QueueDefinition | string
+  queue?: Queue | string
   maxDuration?: import("./contract").Duration
   ttl?: import("./contract").Duration
   retry?: ActorConfig["retry"]
@@ -42,7 +43,7 @@ export type InternalTaskDefinition = Readonly<{
     cron: string
     timezone: string
     workspace: Readonly<{
-      sandbox: import("./workspace").SandboxDefinition
+      sandbox: import("./workspace").Sandbox
       secrets: readonly import("./workspace").EncodedWorkspaceSecret[]
     }>
   }>
@@ -52,7 +53,7 @@ export type InternalActorDefinition = Readonly<{
   kind: "actor"
   id: string
   handler: ActorConfig["run"]
-  queue?: QueueDefinition | string
+  queue?: Queue | string
   maxDuration?: import("./contract").Duration
   ttl?: import("./contract").Duration
   retry?: ActorConfig["retry"]
@@ -87,13 +88,13 @@ export function inspectDefinition(value: unknown): InternalDefinition | undefine
   return definition
 }
 
-export function isQueueDefinition(value: unknown): value is QueueDefinition {
+export function isQueue(value: unknown): value is Queue {
   if (typeof value !== "object" || value === null) return false
   if (!Object.hasOwn(value, privateQueueBrand)) return false
   if ((value as Partial<BrandedQueue>)[privateQueueBrand] !== true) {
     throw new Error("invalid private queue record")
   }
-  const queue = value as Partial<QueueDefinition>
+  const queue = value as Partial<Queue>
   if (typeof queue.name !== "string") {
     throw new Error("invalid private queue record")
   }
@@ -137,10 +138,7 @@ function isInternalDefinition(
   }
 }
 
-export function queue(config: {
-  readonly name: string
-  readonly concurrencyLimit?: number | null
-}): QueueDefinition {
+export function queue(config: QueueConfig): Queue {
   validateQueueName(config.name)
   validateOptionalQueueConcurrencyLimit(config.concurrencyLimit)
   return Object.freeze(
@@ -154,26 +152,30 @@ export function queue(config: {
       privateQueueBrand,
       { value: true },
     ),
-  )
+  ) as Queue
 }
 
 export function task<
+  TIdentifier extends string,
   TInput extends JsonValue,
   TPayload,
   TOutput extends JsonValue,
 >(
-  config: TaskConfigWithPayload<TInput, TPayload, TOutput>,
-): PayloadTaskDefinition<TInput, TPayload, TOutput>
-export function task<TOutput extends JsonValue>(
-  config: TaskConfigWithoutPayload<TOutput>,
-): NoPayloadTaskDefinition<TOutput>
+  config: TaskConfigWithPayload<TIdentifier, TInput, TPayload, TOutput>,
+): Task<TIdentifier, TInput, TOutput>
+export function task<
+  TIdentifier extends string,
+  TOutput extends JsonValue,
+>(
+  config: TaskConfigWithoutPayload<TIdentifier, TOutput>,
+): Task<TIdentifier, never, TOutput>
 export function task(
   config:
-    | TaskConfigWithPayload<JsonValue, unknown, JsonValue>
-    | TaskConfigWithoutPayload<JsonValue>,
+    | TaskConfigWithPayload<string, JsonValue, unknown, JsonValue>
+    | TaskConfigWithoutPayload<string, JsonValue>,
 ):
-  | PayloadTaskDefinition<JsonValue, unknown, JsonValue>
-  | NoPayloadTaskDefinition<JsonValue> {
+  | Task<string, JsonValue, JsonValue>
+  | Task<string, never, JsonValue> {
   validateDefinitionDefaults(config, `task ${JSON.stringify(config.id)}`)
   const hasPayload = "payload" in config
   if (hasPayload) {
@@ -188,11 +190,11 @@ export function task(
     ...copyDefinitionDefaults(config),
   })
   return createTaskDefinition(internal) as
-    | PayloadTaskDefinition<JsonValue, unknown, JsonValue>
-    | NoPayloadTaskDefinition<JsonValue>
+    | Task<string, JsonValue, JsonValue>
+    | Task<string, never, JsonValue>
 }
 
-export function actor(config: ActorConfig): ActorDefinition {
+export function actor(config: ActorConfig): Actor {
   validateDefinitionDefaults(config, `actor ${JSON.stringify(config.id)}`)
   if (typeof config.run !== "function") {
     throw new Error(`actor ${JSON.stringify(config.id)} run must be a function`)
@@ -215,26 +217,27 @@ export function actor(config: ActorConfig): ActorDefinition {
       )
       return Object.freeze({
         session: createRuntimeSessionRef(started.sessionId),
-        run: Object.freeze({ id: started.runId }),
+        run: createRunHandle<null>(started.runId),
       })
     },
   }
-  return brandDefinition(value, internal) as ActorDefinition
+  return brandDefinition(value, internal) as Actor
 }
 
 export function createScheduledTask<
+  TIdentifier extends string,
   TInput extends JsonValue,
   TPayload,
   TOutput extends JsonValue,
 >(
   config: Omit<
-    TaskConfigWithPayload<TInput, TPayload, TOutput>,
+    TaskConfigWithPayload<TIdentifier, TInput, TPayload, TOutput>,
     "payload"
   > & {
     readonly payload: PayloadSchema<TInput, TPayload>
     readonly schedule: NonNullable<InternalTaskDefinition["schedule"]>
   },
-): PayloadTaskDefinition<TInput, TPayload, TOutput> {
+): Task<TIdentifier, TInput, TOutput> {
   const base = task({
     id: config.id,
     payload: config.payload,
@@ -262,14 +265,14 @@ export function createScheduledTask<
       call: base.call.bind(base),
     },
     internal,
-  ) as unknown as PayloadTaskDefinition<TInput, TPayload, TOutput>
+  ) as unknown as Task<TIdentifier, TInput, TOutput>
 }
 
 function createTaskDefinition(
   internal: InternalTaskDefinition,
 ):
-  | PayloadTaskDefinition<JsonValue, unknown, JsonValue>
-  | NoPayloadTaskDefinition<JsonValue> {
+  | Task<string, JsonValue, JsonValue>
+  | Task<string, never, JsonValue> {
   if (internal.hasPayload) {
     return brandDefinition(
       {
@@ -293,7 +296,7 @@ function createTaskDefinition(
         },
       },
       internal,
-    ) as unknown as PayloadTaskDefinition<JsonValue, unknown, JsonValue>
+    ) as unknown as Task<string, JsonValue, JsonValue>
   }
   return brandDefinition(
     {
@@ -317,7 +320,7 @@ function createTaskDefinition(
       },
     },
     internal,
-  ) as unknown as NoPayloadTaskDefinition<JsonValue>
+  ) as unknown as Task<string, never, JsonValue>
 }
 
 function brandDefinition<T extends object>(
@@ -332,7 +335,7 @@ function brandDefinition<T extends object>(
 }
 
 function validateDefinitionDefaults(
-  config: ActorConfig | TaskConfigWithPayload<JsonValue, unknown, JsonValue> | TaskConfigWithoutPayload<JsonValue>,
+  config: ActorConfig | TaskConfigWithPayload<string, JsonValue, unknown, JsonValue> | TaskConfigWithoutPayload<string, JsonValue>,
   label: string,
 ): void {
   validateTaskId(config.id)
@@ -344,7 +347,7 @@ function validateDefinitionDefaults(
   }
   if (typeof config.queue === "string") {
     validateQueueName(config.queue)
-  } else if (config.queue !== undefined && !isQueueDefinition(config.queue)) {
+  } else if (config.queue !== undefined && !isQueue(config.queue)) {
     throw new Error(`${label} queue must be a queue() definition or queue name`)
   }
   if (config.ttl !== undefined && typeof config.ttl !== "string") {
@@ -353,7 +356,7 @@ function validateDefinitionDefaults(
 }
 
 function copyDefinitionDefaults(
-  config: ActorConfig | TaskConfigWithPayload<JsonValue, unknown, JsonValue> | TaskConfigWithoutPayload<JsonValue>,
+  config: ActorConfig | TaskConfigWithPayload<string, JsonValue, unknown, JsonValue> | TaskConfigWithoutPayload<string, JsonValue>,
 ): Pick<
   InternalActorDefinition,
   "queue" | "maxDuration" | "ttl" | "retry"

@@ -280,6 +280,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	router := chi.NewRouter()
 	router.Use(server.recoverPanics)
 	router.Use(otelhttp.NewMiddleware("helmr-controlplane"))
+	router.Use(server.requestCorrelation)
 	server.mountRoutes(router)
 	router.NotFound(server.notFound)
 	router.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
@@ -347,7 +348,13 @@ func (s *Server) recoverPanics(next http.Handler) http.Handler {
 		})
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				s.log.Error("Control Plane handler panic", "panic", recovered, "stack", string(debug.Stack()))
+				s.log.ErrorContext(
+					r.Context(),
+					"Control Plane handler panic",
+					"request_id", wrapped.Header().Get(requestIDHeader),
+					"panic", recovered,
+					"stack", string(debug.Stack()),
+				)
 				if committed {
 					panic(recovered)
 				}

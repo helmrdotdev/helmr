@@ -602,17 +602,22 @@ SELECT schedules.id, schedules.environment_id, schedules.target_kind, schedules.
    AND schedules.environment_id = $3
    AND (
        $4::text IS NULL
+       OR schedules.task_declared_id = $4::text
+   )
+   AND (
+       $5::text IS NULL
        OR (schedules.task_declared_id, schedules.id) >
-          ($4::text, $5::uuid)
+          ($5::text, $6::uuid)
    )
  ORDER BY schedules.task_declared_id, schedules.id
- LIMIT $6::integer
+ LIMIT $7::integer
 `
 
 type ListSchedulesParams struct {
 	OrgID               pgtype.UUID `json:"org_id"`
 	ProjectID           pgtype.UUID `json:"project_id"`
 	EnvironmentID       pgtype.UUID `json:"environment_id"`
+	TaskDeclaredID      pgtype.Text `json:"task_declared_id"`
 	AfterTaskDeclaredID pgtype.Text `json:"after_task_declared_id"`
 	AfterID             pgtype.UUID `json:"after_id"`
 	LimitCount          int32       `json:"limit_count"`
@@ -623,6 +628,7 @@ func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
+		arg.TaskDeclaredID,
 		arg.AfterTaskDeclaredID,
 		arg.AfterID,
 		arg.LimitCount,

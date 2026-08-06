@@ -9,10 +9,14 @@ type Task struct {
 	DeploymentID string `json:"deployment_id"`
 }
 
+type DefinitionListItem struct {
+	ID string `json:"id"`
+}
+
 type ListTasksResponse struct {
-	DeploymentID string `json:"deployment_id"`
-	Tasks        []Task `json:"tasks"`
-	NextCursor   string `json:"next_cursor,omitempty"`
+	DeploymentID string               `json:"deployment_id"`
+	Tasks        []DefinitionListItem `json:"tasks"`
+	NextCursor   string               `json:"next_cursor,omitempty"`
 }
 
 type Actor struct {
@@ -21,9 +25,9 @@ type Actor struct {
 }
 
 type ListActorsResponse struct {
-	DeploymentID string  `json:"deployment_id"`
-	Actors       []Actor `json:"actors"`
-	NextCursor   string  `json:"next_cursor,omitempty"`
+	DeploymentID string               `json:"deployment_id"`
+	Actors       []DefinitionListItem `json:"actors"`
+	NextCursor   string               `json:"next_cursor,omitempty"`
 }
 
 type Sandbox struct {
@@ -32,9 +36,9 @@ type Sandbox struct {
 }
 
 type ListSandboxesResponse struct {
-	DeploymentID string    `json:"deployment_id"`
-	Sandboxes    []Sandbox `json:"sandboxes"`
-	NextCursor   string    `json:"next_cursor,omitempty"`
+	DeploymentID string               `json:"deployment_id"`
+	Sandboxes    []DefinitionListItem `json:"sandboxes"`
+	NextCursor   string               `json:"next_cursor,omitempty"`
 }
 
 type StartTaskRequest struct {

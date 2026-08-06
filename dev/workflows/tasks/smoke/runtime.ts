@@ -75,12 +75,7 @@ export const runtimeSmoke = task({
         attemptNumber: ctx.run.attemptNumber,
         deploymentId: ctx.deployment.id,
         deploymentVersion: ctx.deployment.version,
-        workspace: ctx.workspace === null
-          ? null
-          : {
-              id: ctx.workspace.id,
-              attemptBaseVersionId: ctx.workspace.attemptBaseVersionId,
-            },
+        workspace: { id: ctx.workspace.id },
       },
     })
 

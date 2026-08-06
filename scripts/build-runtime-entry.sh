@@ -19,4 +19,4 @@ if [ "${1:-}" = "--check" ]; then
   exit 0
 fi
 
-install -D -m0644 "$temporary/entry.mjs" "$entry_output"
+install -m 0644 "$temporary/entry.mjs" "$entry_output"

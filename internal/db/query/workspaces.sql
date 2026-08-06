@@ -119,10 +119,42 @@ SELECT workspaces.*
    AND workspaces.key = sqlc.arg(key)
    AND workspaces.deleted_at IS NULL;
 
--- name: ListWorkspaceSnapshots :many
-SELECT workspaces.*
+-- name: GetWorkspaceListItemByKey :one
+SELECT workspaces.id,
+       workspaces.key,
+       deployment_definitions.declared_id AS sandbox_id,
+       deployment_definitions.deployment_id,
+       workspaces.state,
+       workspaces.last_activity_at,
+       workspaces.created_at,
+       workspaces.updated_at
   FROM workspaces
   JOIN environments ON environments.id = workspaces.environment_id
+  JOIN deployment_definitions
+    ON deployment_definitions.environment_id = workspaces.environment_id
+   AND deployment_definitions.id = workspaces.deployment_definition_id
+   AND deployment_definitions.kind = 'sandbox'
+ WHERE environments.org_id = sqlc.arg(org_id)
+   AND environments.project_id = sqlc.arg(project_id)
+   AND workspaces.environment_id = sqlc.arg(environment_id)
+   AND workspaces.key = sqlc.arg(key)
+   AND workspaces.deleted_at IS NULL;
+
+-- name: ListWorkspaceListItems :many
+SELECT workspaces.id,
+       workspaces.key,
+       deployment_definitions.declared_id AS sandbox_id,
+       deployment_definitions.deployment_id,
+       workspaces.state,
+       workspaces.last_activity_at,
+       workspaces.created_at,
+       workspaces.updated_at
+  FROM workspaces
+  JOIN environments ON environments.id = workspaces.environment_id
+  JOIN deployment_definitions
+    ON deployment_definitions.environment_id = workspaces.environment_id
+   AND deployment_definitions.id = workspaces.deployment_definition_id
+   AND deployment_definitions.kind = 'sandbox'
  WHERE environments.org_id = sqlc.arg(org_id)
    AND environments.project_id = sqlc.arg(project_id)
    AND workspaces.environment_id = sqlc.arg(environment_id)

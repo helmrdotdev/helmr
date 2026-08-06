@@ -123,11 +123,7 @@ func deployCommand() *cobra.Command {
 			if detach {
 				return reporter.DeploymentResult(response, "queued")
 			}
-			resolvedScope, err := deploymentWaitScope(response, controlPlane.UsesSessionScopedRoutes())
-			if err != nil {
-				return err
-			}
-			deployed, err := waitForDeployment(cmd.Context(), controlPlane, response, resolvedScope, timeout, reporter)
+			deployed, err := waitForDeployment(cmd.Context(), controlPlane, response, scope, timeout, reporter)
 			if err != nil {
 				return err
 			}
@@ -138,7 +134,7 @@ func deployCommand() *cobra.Command {
 				return err
 			}
 			promoteRequest := api.PromoteDeploymentRequest{Reason: "deploy"}
-			promoted, err := controlPlane.PromoteDeployment(cmd.Context(), deployed.ID, promoteRequest, resolvedScope)
+			promoted, err := controlPlane.PromoteDeployment(cmd.Context(), deployed.ID, promoteRequest, scope)
 			if err != nil {
 				return err
 			}
@@ -265,18 +261,6 @@ func deploymentOutputRef(deployment api.DeploymentResponse) string {
 		return strings.TrimSpace(deployment.Version)
 	}
 	return deployment.ID
-}
-
-func deploymentWaitScope(response api.DeploymentResponse, sessionScopedRoutes bool) (client.EnvironmentScopeOptions, error) {
-	if !sessionScopedRoutes {
-		return client.EnvironmentScopeOptions{}, nil
-	}
-	projectID := strings.TrimSpace(response.ProjectID)
-	environmentID := strings.TrimSpace(response.EnvironmentID)
-	if projectID == "" || environmentID == "" {
-		return client.EnvironmentScopeOptions{}, fmt.Errorf("deployment %s response did not include resolved project_id and environment_id", response.ID)
-	}
-	return client.EnvironmentScopeOptions{ProjectID: projectID, EnvironmentID: environmentID}, nil
 }
 
 func waitForDeployment(ctx context.Context, controlPlane deploymentStatusClient, initial api.DeploymentResponse, scope client.EnvironmentScopeOptions, timeout time.Duration, reporter deployReporter) (api.DeploymentResponse, error) {

@@ -682,9 +682,9 @@ type SessionReferenceRequest struct {
 }
 
 type SessionStatusResponse struct {
-	CorrelationID string                     `json:"correlation_id"`
-	Completed     *api.SessionStatusSnapshot `json:"completed,omitempty"`
-	Failed        *RuntimeOperationFailure   `json:"failed,omitempty"`
+	CorrelationID string                   `json:"correlation_id"`
+	Completed     *api.Session             `json:"completed,omitempty"`
+	Failed        *RuntimeOperationFailure `json:"failed,omitempty"`
 }
 
 type CloseSessionRequest struct {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"sort"
 	"strconv"
@@ -54,7 +55,12 @@ func (s *Server) readWorkspaceFileHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	target, err := validateWorkspaceFilePath(r.URL.Query().Get("path"))
+	query, err := parseWorkspaceFileQuery(r.URL.RawQuery, false)
+	if err != nil {
+		writeError(w, badRequest(codedError{code: "invalid_workspace_file_request", message: err.Error()}))
+		return
+	}
+	target, err := validateWorkspaceFilePath(query.Get("path"))
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_workspace_file_request", message: err.Error()}))
 		return
@@ -72,7 +78,12 @@ func (s *Server) statWorkspaceFileHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	target, err := validateWorkspaceFilePath(r.URL.Query().Get("path"))
+	query, err := parseWorkspaceFileQuery(r.URL.RawQuery, false)
+	if err != nil {
+		writeError(w, badRequest(codedError{code: "invalid_workspace_file_request", message: err.Error()}))
+		return
+	}
+	target, err := validateWorkspaceFilePath(query.Get("path"))
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_workspace_file_request", message: err.Error()}))
 		return
@@ -90,18 +101,23 @@ func (s *Server) listWorkspaceFilesHTTP(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	target, err := validateWorkspaceFilePath(r.URL.Query().Get("path"))
+	query, err := parseWorkspaceFileQuery(r.URL.RawQuery, true)
 	if err != nil {
 		s.writeWorkspaceFileRequestError(w, err)
 		return
 	}
-	limit, err := workspaceFileLimit(r.URL.Query().Get("limit"))
+	target, err := validateWorkspaceFilePath(query.Get("path"))
+	if err != nil {
+		s.writeWorkspaceFileRequestError(w, err)
+		return
+	}
+	limit, err := workspaceFileLimit(query.Get("limit"))
 	if err != nil {
 		s.writeWorkspaceFileRequestError(w, err)
 		return
 	}
 	page, err := s.listWorkspaceFiles(
-		r.Context(), record, target, r.URL.Query().Get("cursor"), limit, time.Now(),
+		r.Context(), record, target, query.Get("cursor"), limit, time.Now(),
 	)
 	if err != nil {
 		if errors.Is(err, errWorkspaceFileCursorExpired) {
@@ -450,6 +466,26 @@ func validateWorkspaceFilePath(raw string) (string, error) {
 		return "", fmt.Errorf("workspace file path %q must be canonical and root-relative", raw)
 	}
 	return clean, nil
+}
+
+func parseWorkspaceFileQuery(rawQuery string, list bool) (url.Values, error) {
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return nil, errors.New("query string is malformed")
+	}
+	for name, entries := range values {
+		allowed := name == "path" || (list && (name == "cursor" || name == "limit"))
+		if !allowed {
+			return nil, fmt.Errorf("query parameter %q is not supported", name)
+		}
+		if len(entries) != 1 || entries[0] == "" {
+			return nil, fmt.Errorf("query parameter %q must appear once with a non-empty value", name)
+		}
+	}
+	if len(values["path"]) != 1 {
+		return nil, errors.New("query parameter \"path\" is required")
+	}
+	return values, nil
 }
 
 func workspaceFileLimit(raw string) (int32, error) {

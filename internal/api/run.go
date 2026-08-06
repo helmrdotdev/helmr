@@ -152,17 +152,105 @@ type RunLogChunk struct {
 }
 
 type RunLogRecord struct {
-	ID               string          `json:"id"`
-	Kind             string          `json:"kind"`
-	RunID            string          `json:"run_id"`
-	AttemptNumber    int32           `json:"attempt_number"`
-	Level            string          `json:"level,omitempty"`
-	Message          string          `json:"message,omitempty"`
-	Attributes       json.RawMessage `json:"attributes,omitempty"`
-	ObservedSequence *int64          `json:"observed_sequence,omitempty"`
-	ContentBase64    string          `json:"content_base64,omitempty"`
-	Bytes            *int64          `json:"bytes,omitempty"`
-	At               time.Time       `json:"at"`
+	ID               string
+	Kind             string
+	RunID            string
+	AttemptNumber    int32
+	Level            string
+	Message          string
+	Attributes       json.RawMessage
+	ObservedSequence *int64
+	ContentBase64    string
+	Bytes            *int64
+	At               time.Time
+}
+
+func (r RunLogRecord) MarshalJSON() ([]byte, error) {
+	common := struct {
+		ID            string    `json:"id"`
+		Kind          string    `json:"kind"`
+		RunID         string    `json:"run_id"`
+		AttemptNumber int32     `json:"attempt_number"`
+		At            time.Time `json:"at"`
+	}{r.ID, r.Kind, r.RunID, r.AttemptNumber, r.At}
+	switch r.Kind {
+	case "structured":
+		return json.Marshal(struct {
+			ID            string          `json:"id"`
+			Kind          string          `json:"kind"`
+			RunID         string          `json:"run_id"`
+			AttemptNumber int32           `json:"attempt_number"`
+			Level         string          `json:"level"`
+			Message       string          `json:"message"`
+			Attributes    json.RawMessage `json:"attributes"`
+			At            time.Time       `json:"at"`
+		}{common.ID, common.Kind, common.RunID, common.AttemptNumber, r.Level, r.Message, r.Attributes, common.At})
+	case "stdout", "stderr":
+		var observedSequence, bytes int64
+		if r.ObservedSequence != nil {
+			observedSequence = *r.ObservedSequence
+		}
+		if r.Bytes != nil {
+			bytes = *r.Bytes
+		}
+		return json.Marshal(struct {
+			ID               string    `json:"id"`
+			Kind             string    `json:"kind"`
+			RunID            string    `json:"run_id"`
+			AttemptNumber    int32     `json:"attempt_number"`
+			ObservedSequence int64     `json:"observed_sequence"`
+			ContentBase64    string    `json:"content_base64"`
+			Bytes            int64     `json:"bytes"`
+			At               time.Time `json:"at"`
+		}{common.ID, common.Kind, common.RunID, common.AttemptNumber, observedSequence, r.ContentBase64, bytes, common.At})
+	default:
+		return nil, fmt.Errorf("run log kind %q is invalid", r.Kind)
+	}
+}
+
+func (r *RunLogRecord) UnmarshalJSON(data []byte) error {
+	var header struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return err
+	}
+	switch header.Kind {
+	case "structured":
+		var value struct {
+			ID            string          `json:"id"`
+			Kind          string          `json:"kind"`
+			RunID         string          `json:"run_id"`
+			AttemptNumber int32           `json:"attempt_number"`
+			Level         string          `json:"level"`
+			Message       string          `json:"message"`
+			Attributes    json.RawMessage `json:"attributes"`
+			At            time.Time       `json:"at"`
+		}
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*r = RunLogRecord{ID: value.ID, Kind: value.Kind, RunID: value.RunID, AttemptNumber: value.AttemptNumber, Level: value.Level, Message: value.Message, Attributes: value.Attributes, At: value.At}
+		return nil
+	case "stdout", "stderr":
+		var value struct {
+			ID               string    `json:"id"`
+			Kind             string    `json:"kind"`
+			RunID            string    `json:"run_id"`
+			AttemptNumber    int32     `json:"attempt_number"`
+			ObservedSequence int64     `json:"observed_sequence"`
+			ContentBase64    string    `json:"content_base64"`
+			Bytes            int64     `json:"bytes"`
+			At               time.Time `json:"at"`
+		}
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*r = RunLogRecord{ID: value.ID, Kind: value.Kind, RunID: value.RunID, AttemptNumber: value.AttemptNumber, ObservedSequence: &value.ObservedSequence, ContentBase64: value.ContentBase64, Bytes: &value.Bytes, At: value.At}
+		return nil
+	default:
+		return fmt.Errorf("run log kind %q is invalid", header.Kind)
+	}
 }
 
 type RunLogPage struct {
@@ -190,4 +278,23 @@ type RunEvent struct {
 type RunEventPage struct {
 	Events     []RunEvent `json:"events"`
 	NextCursor *string    `json:"next_cursor,omitempty"`
+}
+
+type RunEventRecord struct {
+	ID            string          `json:"id"`
+	RunID         string          `json:"run_id"`
+	AttemptNumber *int32          `json:"attempt_number,omitempty"`
+	Category      string          `json:"category"`
+	Severity      string          `json:"severity"`
+	Source        string          `json:"source"`
+	Kind          string          `json:"kind"`
+	Message       string          `json:"message"`
+	Attributes    json.RawMessage `json:"attributes"`
+	OccurredAt    time.Time       `json:"occurred_at"`
+	At            time.Time       `json:"at"`
+}
+
+type RunEventRecordPage struct {
+	Events     []RunEventRecord `json:"events"`
+	NextCursor string           `json:"next_cursor,omitempty"`
 }

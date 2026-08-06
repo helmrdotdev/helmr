@@ -28,5 +28,5 @@ if [ "${1:-}" = "--check" ]; then
   exit 0
 fi
 
-install -D -m0644 "$temporary/config-evaluator.mjs" "$config_output"
-install -D -m0644 "$temporary/program-compiler.mjs" "$program_output"
+install -m 0644 "$temporary/config-evaluator.mjs" "$config_output"
+install -m 0644 "$temporary/program-compiler.mjs" "$program_output"

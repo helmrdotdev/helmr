@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -48,6 +49,10 @@ type runTelemetryTarget struct {
 func (s *Server) listRunLogsHTTP(w http.ResponseWriter, r *http.Request) {
 	target, ok := s.resolveRunTelemetryTarget(w, r)
 	if !ok {
+		return
+	}
+	if err := validateRunTelemetryQuery(r.URL.RawQuery, "level"); err != nil {
+		writeError(w, badRequest(codedError{code: "invalid_run_log_query", message: err.Error()}))
 		return
 	}
 	levels, err := parseRunTelemetryFilter(r, "level")
@@ -136,6 +141,10 @@ func (s *Server) listRunEventsHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if err := validateRunTelemetryQuery(r.URL.RawQuery, "severity"); err != nil {
+		writeError(w, badRequest(codedError{code: "invalid_run_event_query", message: err.Error()}))
+		return
+	}
 	severities, err := parseRunTelemetryFilter(r, "severity")
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_run_event_query", message: err.Error()}))
@@ -166,6 +175,7 @@ func (s *Server) listRunEventsHTTP(w http.ResponseWriter, r *http.Request) {
 		page.Events = page.Events[:limit]
 	}
 	last := after
+	records := make([]api.RunEventRecord, 0, len(page.Events))
 	for index := range page.Events {
 		event := &page.Events[index]
 		seq, err := telemetry.ParseCursor(event.ID)
@@ -174,9 +184,13 @@ func (s *Server) listRunEventsHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		last = seq
-		event.RunID = optionalString(target.runIDString)
-		event.DeploymentID = nil
-		event.Trace = api.TraceContext{}
+		records = append(records, api.RunEventRecord{
+			ID: event.ID, RunID: target.runIDString,
+			AttemptNumber: event.AttemptNumber, Category: event.Category,
+			Severity: event.Severity, Source: event.Source, Kind: event.Kind,
+			Message: event.Message, Attributes: event.Attributes,
+			OccurredAt: event.OccurredAt, At: event.At,
+		})
 	}
 	through := int64(0)
 	if hasNext {
@@ -207,8 +221,8 @@ func (s *Server) listRunEventsHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, api.RunEventPage{
-		Events: page.Events, NextCursor: optionalString(nextCursor),
+	writeJSON(w, http.StatusOK, api.RunEventRecordPage{
+		Events: records, NextCursor: nextCursor,
 	})
 }
 
@@ -372,6 +386,30 @@ func parseRunTelemetryFilter(r *http.Request, name string) ([]string, error) {
 	return values, nil
 }
 
+func validateRunTelemetryQuery(rawQuery, filterName string) error {
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return errors.New("query string is malformed")
+	}
+	for name, entries := range values {
+		switch name {
+		case "cursor", "limit":
+			if len(entries) != 1 || strings.TrimSpace(entries[0]) == "" {
+				return fmt.Errorf("query parameter %q must appear once with a non-empty value", name)
+			}
+		case filterName:
+			for _, entry := range entries {
+				if strings.TrimSpace(entry) == "" {
+					return fmt.Errorf("query parameter %q must not be empty", name)
+				}
+			}
+		default:
+			return fmt.Errorf("query parameter %q is not supported", name)
+		}
+	}
+	return nil
+}
+
 func validRunTelemetryLevel(value string) bool {
 	switch value {
 	case "debug", "info", "warn", "error":
@@ -448,11 +486,4 @@ func (s *Server) parseRunTelemetryCursor(raw string) (runTelemetryCursor, error)
 		}
 	}
 	return cursor, nil
-}
-
-func optionalString(value string) *string {
-	if value == "" {
-		return nil
-	}
-	return &value
 }

@@ -9,7 +9,13 @@ describe("Run observability", () => {
     const uninstall = installRuntimeOperations({
       waitFor: async () => {},
       waitUntil: async () => {},
-      actorInputSend: async () => ({ sequence: 1 }),
+      actorInputSend: async () => ({
+        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
+        sequence: 1,
+        data: null,
+        source: { type: "external" },
+        createdAt: "2026-07-24T11:50:00Z",
+      }),
       tokenCreate: async () => {
         throw new Error("unused")
       },
