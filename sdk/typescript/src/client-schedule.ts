@@ -4,6 +4,8 @@ import type {
 } from "./contract"
 import type { RequestOptions } from "./request"
 import { resourceID } from "./internal/id"
+import { timestampString } from "./internal/timestamp"
+import { validateTaskId } from "./schema/task"
 
 export interface ScheduleFailure {
   readonly code:
@@ -16,11 +18,15 @@ export interface ScheduleFailure {
   readonly details: Readonly<Record<string, JsonValue>>
 }
 
-export interface ScheduleSnapshot {
+export type ScheduleStatus = "active" | "errored" | "archived"
+
+export interface Schedule {
   readonly id: string
   readonly taskId: string
+  readonly generation: number
+  readonly effectiveFrom: string
   readonly cron: Readonly<{ pattern: string; timezone: string }>
-  readonly status: "active" | "errored" | "archived"
+  readonly status: ScheduleStatus
   readonly lastFailure?: ScheduleFailure
   readonly nextFireAt?: string
   readonly lastFireAt?: string
@@ -28,20 +34,19 @@ export interface ScheduleSnapshot {
   readonly updatedAt: string
 }
 
-export interface ScheduleListQuery {
-  readonly cursor?: string
-  readonly limit?: number
-}
+export type ScheduleListQuery =
+  | Readonly<{ taskId?: never; cursor?: string; limit?: number }>
+  | Readonly<{ taskId: string; cursor?: never; limit?: never }>
 
 export interface ClientSchedulesApi {
   retrieve(
     scheduleId: string,
     options?: RequestOptions,
-  ): Promise<ScheduleSnapshot>
+  ): Promise<Schedule>
   list(
     query?: ScheduleListQuery,
     options?: RequestOptions,
-  ): Promise<CursorPage<ScheduleSnapshot>>
+  ): Promise<CursorPage<Schedule>>
 }
 
 interface ScheduleTransport {
@@ -59,7 +64,7 @@ export function createClientSchedules(
     async retrieve(
       scheduleId: string,
       options: RequestOptions = {},
-    ): Promise<ScheduleSnapshot> {
+    ): Promise<Schedule> {
       return parseSchedule(
         await transport.request(
           "GET",
@@ -71,10 +76,25 @@ export function createClientSchedules(
     async list(
       query: ScheduleListQuery = {},
       options: RequestOptions = {},
-    ): Promise<CursorPage<ScheduleSnapshot>> {
+    ): Promise<CursorPage<Schedule>> {
       const values = new URLSearchParams()
-      if (query.cursor !== undefined) values.set("cursor", query.cursor)
-      if (query.limit !== undefined) values.set("limit", String(query.limit))
+      if (query.taskId !== undefined) {
+        if (query.cursor !== undefined || query.limit !== undefined) {
+          throw new Error("Schedule exact task lookup does not accept cursor or limit")
+        }
+        validateTaskId(query.taskId)
+        values.set("task_id", query.taskId)
+      }
+      if (query.cursor !== undefined) {
+        if (query.cursor.length === 0) throw new Error("Schedule cursor is required")
+        values.set("cursor", query.cursor)
+      }
+      if (query.limit !== undefined) {
+        if (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 100) {
+          throw new Error("Schedule limit must be an integer in [1,100]")
+        }
+        values.set("limit", String(query.limit))
+      }
       const suffix = values.size === 0 ? "" : `?${values}`
       const response = scheduleObject(
         await transport.request(
@@ -99,7 +119,7 @@ export function createClientSchedules(
   })
 }
 
-function parseSchedule(value: unknown): ScheduleSnapshot {
+function parseSchedule(value: unknown): Schedule {
   const input = scheduleObject(value, "Schedule response")
   const cron = scheduleObject(input["cron"], "Schedule cron")
   const status = input["status"]
@@ -119,6 +139,8 @@ function parseSchedule(value: unknown): ScheduleSnapshot {
   return Object.freeze({
     id: resourceID(input["id"], "Schedule response.id"),
     taskId: requiredString(input, "task_id", "Schedule response"),
+    generation: positiveInteger(input["generation"], "generation"),
+    effectiveFrom: timestamp(input["effective_from"], "effective_from"),
     cron: Object.freeze({
       pattern: requiredString(cron, "pattern", "Schedule cron"),
       timezone: requiredString(cron, "timezone", "Schedule cron"),
@@ -178,8 +200,12 @@ function requiredString(
 }
 
 function timestamp(value: unknown, field: string): string {
-  if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
-    throw new Error(`Schedule response.${field} must be a timestamp`)
+  return timestampString(value, `Schedule response.${field}`)
+}
+
+function positiveInteger(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
+    throw new Error(`Schedule response.${field} must be a positive integer`)
   }
-  return value
+  return value as number
 }

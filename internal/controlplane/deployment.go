@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,7 +44,19 @@ type deploymentStatusStore interface {
 	GetDeployment(context.Context, db.GetDeploymentParams) (db.Deployment, error)
 	GetDeploymentForOrg(context.Context, db.GetDeploymentForOrgParams) (db.Deployment, error)
 	ListArtifactsByIDs(context.Context, db.ListArtifactsByIDsParams) ([]db.Artifact, error)
-	ListScopedDeployments(context.Context, db.ListScopedDeploymentsParams) ([]db.Deployment, error)
+	ListScopedDeployments(context.Context, db.ListScopedDeploymentsParams) ([]db.ListScopedDeploymentsRow, error)
+}
+
+const (
+	deploymentListDefaultLimit = int32(50)
+	deploymentListMaxLimit     = int32(100)
+)
+
+type deploymentListCursor struct {
+	ProjectID     string    `json:"project_id"`
+	EnvironmentID string    `json:"environment_id"`
+	CreatedAt     time.Time `json:"created_at"`
+	ID            string    `json:"id"`
 }
 
 func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
@@ -71,37 +84,112 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("list deployments"))
 		return
 	}
-	limit := int32(50)
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		parsed, err := strconv.ParseInt(raw, 10, 32)
-		if err != nil || parsed <= 0 || parsed > 200 {
-			writeError(w, badRequest(errors.New("limit must be an integer between 1 and 200")))
-			return
-		}
-		limit = int32(parsed)
+	limit, cursor, err := parseDeploymentListQuery(r, scope.ProjectID, scope.EnvironmentID)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
 	}
-	rows, err := store.ListScopedDeployments(r.Context(), db.ListScopedDeploymentsParams{
+	params := db.ListScopedDeploymentsParams{
 		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
-		RowLimit:      limit,
-	})
+		RowLimit:      limit + 1,
+	}
+	if cursor != nil {
+		params.HasAfter = true
+		params.AfterCreatedAt = pgvalue.Timestamptz(cursor.CreatedAt)
+		params.AfterID = pgvalue.UUID(uuid.MustParse(cursor.ID))
+	}
+	rows, err := store.ListScopedDeployments(r.Context(), params)
 	if err != nil {
 		s.log.Error("list deployments failed", "error", err)
 		writeError(w, errors.New("list deployments"))
 		return
 	}
-	response := make([]api.DeploymentResponse, 0, len(rows))
+	hasMore := len(rows) > int(limit)
+	if hasMore {
+		rows = rows[:limit]
+	}
+	response := make([]api.DeploymentListItem, 0, len(rows))
 	for _, row := range rows {
-		item, err := deploymentResponseWithArtifacts(r.Context(), store, row)
+		status, err := deploymentPublicStatus(row.Status)
 		if err != nil {
-			s.log.Error("get deployment artifacts failed", "deployment_id", pgvalue.MustUUIDValue(row.ID).String(), "error", err)
+			s.log.Error("project deployment list item failed", "deployment_id", pgvalue.UUIDString(row.ID), "error", err)
 			writeError(w, errors.New("list deployments"))
 			return
 		}
-		response = append(response, item)
+		response = append(response, api.DeploymentListItem{
+			ID: pgvalue.UUIDString(row.ID), Version: row.Version, Status: status,
+			CreatedAt: pgvalue.Time(row.CreatedAt), BuildingAt: pgvalue.TimePtr(row.BuildingAt),
+			BuiltAt: pgvalue.TimePtr(row.BuiltAt), DeployedAt: pgvalue.TimePtr(row.DeployedAt),
+			FailedAt: pgvalue.TimePtr(row.FailedAt),
+		})
 	}
-	writeJSON(w, http.StatusOK, api.ListDeploymentsResponse{Deployments: response})
+	page := api.ListDeploymentsResponse{Deployments: response}
+	if hasMore {
+		last := rows[len(rows)-1]
+		page.NextCursor, err = encodeDeploymentListCursor(deploymentListCursor{
+			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
+			CreatedAt: pgvalue.Time(last.CreatedAt), ID: pgvalue.UUIDString(last.ID),
+		})
+		if err != nil {
+			writeError(w, errors.New("list deployments"))
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+
+func parseDeploymentListQuery(r *http.Request, projectID, environmentID string) (int32, *deploymentListCursor, error) {
+	values := r.URL.Query()
+	for name, entries := range values {
+		if name != "cursor" && name != "limit" {
+			return 0, nil, fmt.Errorf("query parameter %q is not supported", name)
+		}
+		if len(entries) != 1 || strings.TrimSpace(entries[0]) == "" {
+			return 0, nil, fmt.Errorf("query parameter %q must appear once", name)
+		}
+	}
+	limit := deploymentListDefaultLimit
+	if raw := values.Get("limit"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 32)
+		if err != nil || parsed < 1 || parsed > int64(deploymentListMaxLimit) {
+			return 0, nil, errors.New("limit must be an integer in [1,100]")
+		}
+		limit = int32(parsed)
+	}
+	if raw := values.Get("cursor"); raw != "" {
+		cursor, err := decodeDeploymentListCursor(raw)
+		if err != nil {
+			return 0, nil, err
+		}
+		if cursor.ProjectID != projectID || cursor.EnvironmentID != environmentID {
+			return 0, nil, errors.New("deployment cursor does not match request scope")
+		}
+		return limit, &cursor, nil
+	}
+	return limit, nil, nil
+}
+
+func encodeDeploymentListCursor(cursor deploymentListCursor) (string, error) {
+	raw, err := json.Marshal(cursor)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func decodeDeploymentListCursor(raw string) (deploymentListCursor, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return deploymentListCursor{}, errors.New("deployment cursor is invalid")
+	}
+	var cursor deploymentListCursor
+	if json.Unmarshal(decoded, &cursor) != nil || cursor.ProjectID == "" ||
+		cursor.EnvironmentID == "" || cursor.CreatedAt.IsZero() || ids.Validate(cursor.ID) != nil {
+		return deploymentListCursor{}, errors.New("deployment cursor is invalid")
+	}
+	return cursor, nil
 }
 
 func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
@@ -396,8 +484,6 @@ func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceA
 	return api.DeploymentResponse{
 		ID:               pgvalue.MustUUIDValue(deployment.ID).String(),
 		Version:          deployment.Version,
-		ProjectID:        pgvalue.MustUUIDValue(deployment.ProjectID).String(),
-		EnvironmentID:    pgvalue.MustUUIDValue(deployment.EnvironmentID).String(),
 		ContentHash:      deployment.ContentHash,
 		DeploymentSource: artifact,
 		Status:           status,

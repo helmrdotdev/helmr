@@ -1,107 +1,45 @@
-import type { CursorPage, JsonValue } from "./contract"
+import type {
+  CursorPage,
+  JsonValue,
+  SessionCloseRequest,
+  SessionCloseReceipt,
+  SessionInputRecord,
+  SessionInputSendRequest,
+  SessionOutputPage,
+  SessionOutputQuery,
+  SessionRef,
+  Session,
+} from "./contract"
 import { resourceID } from "./internal/id"
+import {
+  parseSession,
+  parseSessionInputRecord,
+  parseSessionOutputRecord,
+} from "./internal/session"
+import { timestampString } from "./internal/timestamp"
 import type { RequestOptions } from "./request"
 import { validateTaskId } from "./schema/task"
 
-export type SessionStatus = "open" | "closed" | "cancelled" | "failed"
-export type SessionFailureCode =
-  | "cancelled"
-  | "no_progress"
-  | "run_failed"
-  | "run_expired"
-  | "platform_failure"
-
-export interface SessionFailure {
-  readonly code: SessionFailureCode
-  readonly message: string
-  readonly details: Readonly<{ runId?: string }>
-}
-
-export interface SessionSnapshot {
-  readonly id: string
-  readonly actorId: string
-  readonly deploymentId: string
-  readonly key?: string
-  readonly status: SessionStatus
-  readonly createdAt: Date
-  readonly updatedAt: Date
-  readonly currentRunId?: string
-  readonly failure?: SessionFailure
-}
-
-export type SessionInputSource =
-  | Readonly<{ kind: "external" }>
-  | Readonly<{ kind: "run"; runId: string }>
-
-export interface SessionInputRecord {
-  readonly id: string
-  readonly sequence: number
-  readonly data: JsonValue
-  readonly source: SessionInputSource
-  readonly createdAt: Date
-}
-
-export interface SessionOutputRecord {
-  readonly id: string
-  readonly sequence: number
-  readonly data: unknown
-  readonly contentType: string
-  readonly createdAt: Date
-  readonly provenance: Readonly<{
-    runId: string
-    attemptNumber: number
-    deploymentId: string
-  }>
-}
-
-export interface SessionCloseReceipt {
-  readonly sessionId: string
-  readonly acceptedAt: Date
-}
-
-export interface SessionOutputQuery {
-  readonly after?: number
-  readonly limit?: number
-}
-
-export interface SessionRef {
-  readonly id: string
-  readonly input: Readonly<{
-    send(
-      input: JsonValue,
-      request?: Readonly<{ idempotencyKey?: string }>,
-      options?: RequestOptions,
-    ): Promise<SessionInputRecord>
-  }>
-  readonly output: Readonly<{
-    list(
-      query?: SessionOutputQuery,
-      options?: RequestOptions,
-    ): Promise<readonly SessionOutputRecord[]>
-    read(
-      query?: SessionOutputQuery,
-      options?: RequestOptions,
-    ): AsyncIterable<SessionOutputRecord>
-  }>
-  close(
-    request?: Readonly<{ idempotencyKey?: string }>,
-    options?: RequestOptions,
-  ): Promise<SessionCloseReceipt>
-}
-
-export interface SessionListQuery {
-  readonly cursor?: string
-  readonly limit?: number
-  readonly actorId?: string
-  readonly key?: string
-}
+export type SessionListQuery =
+  | Readonly<{
+      actorId?: never
+      key?: never
+      cursor?: string
+      limit?: number
+    }>
+  | Readonly<{
+      actorId: string
+      key: string
+      cursor?: never
+      limit?: never
+    }>
 
 export interface ClientSessionsApi {
-  retrieve(id: string, options?: RequestOptions): Promise<SessionSnapshot>
+  retrieve(id: string, options?: RequestOptions): Promise<Session>
   list(
     query?: SessionListQuery,
     options?: RequestOptions,
-  ): Promise<CursorPage<SessionSnapshot>>
+  ): Promise<CursorPage<Session>>
   ref(id: string): SessionRef
 }
 
@@ -120,9 +58,9 @@ export function createClientSessions(
     async retrieve(
       id: string,
       options: RequestOptions = {},
-    ): Promise<SessionSnapshot> {
+    ): Promise<Session> {
       const sessionID = resourceID(id, "Session ID")
-      return parseSessionSnapshot(await transport.request(
+      return parseSession(await transport.request(
         "GET",
         `/v1/sessions/${encodeURIComponent(sessionID)}`,
         options.signal === undefined ? {} : { signal: options.signal },
@@ -131,7 +69,7 @@ export function createClientSessions(
     async list(
       queryInput: SessionListQuery = {},
       options: RequestOptions = {},
-    ): Promise<CursorPage<SessionSnapshot>> {
+    ): Promise<CursorPage<Session>> {
       const query = sessionListQuery(queryInput)
       const response = objectValue(
         await transport.request("GET", `/v1/sessions${query}`, {
@@ -147,7 +85,7 @@ export function createClientSessions(
         throw new Error("Session list response.next_cursor must be a string")
       }
       return Object.freeze({
-        items: Object.freeze(response["sessions"].map(parseSessionSnapshot)),
+        items: Object.freeze(response["sessions"].map(parseSession)),
         ...(nextCursor === undefined ? {} : { nextCursor }),
       })
     },
@@ -166,11 +104,7 @@ export function createSessionRef(
   const readOutputPage = async (
     queryInput: SessionOutputQuery,
     options: RequestOptions,
-  ): Promise<{
-    records: readonly SessionOutputRecord[]
-    nextAfter: number
-    hasMore: boolean
-  }> => {
+  ): Promise<SessionOutputPage> => {
     const query = new URLSearchParams()
     if (queryInput.after !== undefined) {
       query.set("after", safeSequence(queryInput.after, "Session output after").toString())
@@ -193,41 +127,18 @@ export function createSessionRef(
     if (!Array.isArray(response["records"])) {
       throw new Error("Session output response.records must be an array")
     }
-    return {
+    return Object.freeze({
       records: Object.freeze(response["records"].map(parseSessionOutputRecord)),
       nextAfter: safeSequence(response["next_after"], "Session output next_after"),
       hasMore: requiredBoolean(response, "has_more", "Session output response"),
-    }
+    })
   }
   const output: SessionRef["output"] = Object.freeze({
     async list(
       query: SessionOutputQuery = {},
       options: RequestOptions = {},
-    ): Promise<readonly SessionOutputRecord[]> {
-      return (await readOutputPage(query, options)).records
-    },
-    read(
-      query: SessionOutputQuery = {},
-      options: RequestOptions = {},
-    ): AsyncIterable<SessionOutputRecord> {
-      return {
-        async *[Symbol.asyncIterator]() {
-          let after = query.after
-          while (true) {
-            options.signal?.throwIfAborted()
-            const page = await readOutputPage({
-              ...(after === undefined ? {} : { after }),
-              ...(query.limit === undefined ? {} : { limit: query.limit }),
-            }, options)
-            for (const record of page.records) {
-              options.signal?.throwIfAborted()
-              yield record
-            }
-            if (!page.hasMore) return
-            after = page.nextAfter
-          }
-        },
-      }
+    ): Promise<SessionOutputPage> {
+      return readOutputPage(query, options)
     },
   })
   return Object.freeze({
@@ -235,7 +146,7 @@ export function createSessionRef(
     input: Object.freeze({
       async send(
         input: JsonValue,
-        request: Readonly<{ idempotencyKey?: string }> = {},
+        request: SessionInputSendRequest = {},
         options: RequestOptions = {},
       ): Promise<SessionInputRecord> {
         return parseSessionInputRecord(await transport.request(
@@ -254,8 +165,15 @@ export function createSessionRef(
       },
     }),
     output,
+    async retrieve(options: RequestOptions = {}): Promise<Session> {
+      return parseSession(await transport.request(
+        "GET",
+        basePath,
+        options.signal === undefined ? {} : { signal: options.signal },
+      ))
+    },
     async close(
-      request: Readonly<{ idempotencyKey?: string }> = {},
+      request: SessionCloseRequest = {},
       options: RequestOptions = {},
     ): Promise<SessionCloseReceipt> {
       const response = objectValue(await transport.request(
@@ -270,7 +188,7 @@ export function createSessionRef(
       ), "Session close response")
       return Object.freeze({
         sessionId: resourceID(response["session_id"], "Session close response.session_id"),
-        acceptedAt: timestamp(response["accepted_at"], "Session close response.accepted_at"),
+        acceptedAt: timestampString(response["accepted_at"], "Session close response.accepted_at"),
       })
     },
   })
@@ -306,117 +224,11 @@ function sessionListQuery(queryInput: SessionListQuery): string {
   return query.size === 0 ? "" : `?${query.toString()}`
 }
 
-function parseSessionSnapshot(value: unknown): SessionSnapshot {
-  const input = objectValue(value, "Session response")
-  const status = input["status"]
-  if (status !== "open" && status !== "closed" && status !== "cancelled" && status !== "failed") {
-    throw new Error("Session response.status is invalid")
-  }
-  const failure = input["failure"] === undefined
-    ? undefined
-    : parseSessionFailure(input["failure"])
-  const terminalFailure = status === "cancelled" || status === "failed"
-  if (terminalFailure !== (failure !== undefined)) {
-    throw new Error("Session response has an inconsistent failure projection")
-  }
-  if (
-    failure !== undefined &&
-    ((status === "cancelled") !== (failure.code === "cancelled"))
-  ) {
-    throw new Error("Session response failure code is inconsistent with status")
-  }
-  return Object.freeze({
-    id: resourceID(input["id"], "Session response.id"),
-    actorId: requiredString(input, "actor_id", "Session response"),
-    deploymentId: resourceID(input["deployment_id"], "Session response.deployment_id"),
-    ...(input["key"] === undefined
-      ? {}
-      : { key: requiredString(input, "key", "Session response") }),
-    status,
-    createdAt: timestamp(input["created_at"], "Session response.created_at"),
-    updatedAt: timestamp(input["updated_at"], "Session response.updated_at"),
-    ...(input["current_run_id"] === undefined
-      ? {}
-      : { currentRunId: resourceID(input["current_run_id"], "Session response.current_run_id") }),
-    ...(failure === undefined ? {} : { failure }),
-  })
-}
-
-function parseSessionInputRecord(value: unknown): SessionInputRecord {
-  const input = objectValue(value, "Session Input response")
-  const source = objectValue(input["source"], "Session Input response.source")
-  const kind = source["kind"]
-  if (kind !== "external" && kind !== "run") {
-    throw new Error("Session Input response.source.kind is invalid")
-  }
-  const parsedSource: SessionInputSource = kind === "external"
-    ? Object.freeze({ kind })
-    : Object.freeze({
-        kind,
-        runId: resourceID(source["run_id"], "Session Input response.source.run_id"),
-      })
-  return Object.freeze({
-    id: resourceID(input["id"], "Session Input response.id"),
-    sequence: safeSequence(input["sequence"], "Session Input response.sequence"),
-    data: input["data"] as JsonValue,
-    source: parsedSource,
-    createdAt: timestamp(input["created_at"], "Session Input response.created_at"),
-  })
-}
-
-function parseSessionFailure(value: unknown): SessionFailure {
-  const input = objectValue(value, "Session failure")
-  const code = requiredString(input, "code", "Session failure")
-  if (
-    code !== "cancelled" &&
-    code !== "no_progress" &&
-    code !== "run_failed" &&
-    code !== "run_expired" &&
-    code !== "platform_failure"
-  ) {
-    throw new Error("Session failure.code is invalid")
-  }
-  const details = objectValue(input["details"], "Session failure.details")
-  const runId = details["run_id"] === undefined
-    ? undefined
-    : resourceID(details["run_id"], "Session failure.details.run_id")
-  return Object.freeze({
-    code,
-    message: requiredString(input, "message", "Session failure"),
-    details: Object.freeze(runId === undefined ? {} : { runId }),
-  })
-}
-
-function parseSessionOutputRecord(value: unknown): SessionOutputRecord {
-  const input = objectValue(value, "Session Output record")
-  const provenance = objectValue(input["provenance"], "Session Output provenance")
-  return Object.freeze({
-    id: resourceID(input["id"], "Session Output record.id"),
-    sequence: safeSequence(input["sequence"], "Session Output record.sequence"),
-    data: input["data"],
-    contentType: requiredString(input, "content_type", "Session Output record"),
-    createdAt: timestamp(input["created_at"], "Session Output record.created_at"),
-    provenance: Object.freeze({
-      runId: resourceID(provenance["run_id"], "Session Output provenance.run_id"),
-      attemptNumber: safeSequence(provenance["attempt_number"], "Session Output provenance.attempt_number"),
-      deploymentId: resourceID(provenance["deployment_id"], "Session Output provenance.deployment_id"),
-    }),
-  })
-}
-
 function objectValue(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object`)
   }
   return value as Record<string, unknown>
-}
-
-function requiredString(value: Record<string, unknown>, field: string, label: string): string {
-  const result = value[field]
-  if (typeof result !== "string" || result.length === 0) {
-    throw new Error(`${label}.${field} must be a non-empty string`)
-  }
-  return result
 }
 
 function requiredBoolean(value: Record<string, unknown>, field: string, label: string): boolean {
@@ -430,11 +242,4 @@ function safeSequence(value: unknown, label: string): number {
     throw new Error(`${label} must be a non-negative safe integer`)
   }
   return value as number
-}
-
-function timestamp(value: unknown, label: string): Date {
-  if (typeof value !== "string") throw new Error(`${label} must be a timestamp`)
-  const result = new Date(value)
-  if (Number.isNaN(result.valueOf())) throw new Error(`${label} must be a timestamp`)
-  return result
 }

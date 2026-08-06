@@ -42,7 +42,7 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	limit, cursor, err := parseScheduleListQuery(
+	limit, cursor, exactTaskID, err := parseScheduleListQuery(
 		r,
 		scope.ProjectID,
 		scope.EnvironmentID,
@@ -62,10 +62,15 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		}
 		afterID = pgvalue.UUID(id)
 	}
+	taskDeclaredID := pgtype.Text{}
+	if exactTaskID != nil {
+		taskDeclaredID = pgvalue.Text(*exactTaskID)
+	}
 	rows, err := s.db.ListSchedules(r.Context(), db.ListSchedulesParams{
 		OrgID:               pgvalue.UUID(actor.OrgID),
 		ProjectID:           projectID,
 		EnvironmentID:       environmentID,
+		TaskDeclaredID:      taskDeclaredID,
 		AfterTaskDeclaredID: afterTask,
 		AfterID:             afterID,
 		LimitCount:          limit + 1,
@@ -75,7 +80,7 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("list schedules"))
 		return
 	}
-	hasMore := len(rows) > int(limit)
+	hasMore := exactTaskID == nil && len(rows) > int(limit)
 	if hasMore {
 		rows = rows[:limit]
 	}
@@ -110,21 +115,30 @@ func parseScheduleListQuery(
 	r *http.Request,
 	projectID string,
 	environmentID string,
-) (int32, *scheduleListCursor, error) {
+) (int32, *scheduleListCursor, *string, error) {
 	values := r.URL.Query()
 	for name, entries := range values {
-		if name != "cursor" && name != "limit" {
-			return 0, nil, fmt.Errorf("query parameter %q is not supported", name)
+		if name != "task_id" && name != "cursor" && name != "limit" {
+			return 0, nil, nil, fmt.Errorf("query parameter %q is not supported", name)
 		}
 		if len(entries) != 1 || strings.TrimSpace(entries[0]) == "" {
-			return 0, nil, fmt.Errorf("query parameter %q must appear once", name)
+			return 0, nil, nil, fmt.Errorf("query parameter %q must appear once", name)
 		}
+	}
+	if raw := values.Get("task_id"); raw != "" {
+		if values.Get("cursor") != "" || values.Get("limit") != "" {
+			return 0, nil, nil, errors.New("schedule exact task lookup does not accept cursor or limit")
+		}
+		if err := api.ValidateDefinitionID(raw); err != nil {
+			return 0, nil, nil, err
+		}
+		return 1, nil, &raw, nil
 	}
 	limit := scheduleListDefaultLimit
 	if raw := values.Get("limit"); raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 32)
 		if err != nil || parsed < 1 || parsed > int64(scheduleListMaxLimit) {
-			return 0, nil, fmt.Errorf(
+			return 0, nil, nil, fmt.Errorf(
 				"limit must be an integer in [1,%d]",
 				scheduleListMaxLimit,
 			)
@@ -133,22 +147,22 @@ func parseScheduleListQuery(
 	}
 	rawCursor := values.Get("cursor")
 	if rawCursor == "" {
-		return limit, nil, nil
+		return limit, nil, nil, nil
 	}
 	cursor, err := decodeScheduleListCursor(rawCursor)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	if cursor.ProjectID != projectID || cursor.EnvironmentID != environmentID {
-		return 0, nil, errors.New("schedule cursor belongs to another scope")
+		return 0, nil, nil, errors.New("schedule cursor belongs to another scope")
 	}
 	if err := api.ValidateDefinitionID(cursor.TaskDeclaredID); err != nil {
-		return 0, nil, errors.New("schedule cursor is invalid")
+		return 0, nil, nil, errors.New("schedule cursor is invalid")
 	}
 	if ids.Validate(cursor.ScheduleID) != nil {
-		return 0, nil, errors.New("schedule cursor is invalid")
+		return 0, nil, nil, errors.New("schedule cursor is invalid")
 	}
-	return limit, &cursor, nil
+	return limit, &cursor, nil, nil
 }
 
 func encodeScheduleListCursor(cursor scheduleListCursor) (string, error) {

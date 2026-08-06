@@ -40,8 +40,19 @@ type WorkspaceSnapshot struct {
 	UpdatedAt      time.Time         `json:"updated_at"`
 }
 
+type WorkspaceListItem struct {
+	ID             string          `json:"id"`
+	Key            *string         `json:"key,omitempty"`
+	SandboxID      string          `json:"sandbox_id"`
+	DeploymentID   string          `json:"deployment_id"`
+	Status         WorkspaceStatus `json:"status"`
+	LastActivityAt time.Time       `json:"last_activity_at"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+}
+
 type ListWorkspacesResponse struct {
-	Workspaces []WorkspaceSnapshot `json:"workspaces"`
+	Workspaces []WorkspaceListItem `json:"workspaces"`
 	NextCursor string              `json:"next_cursor,omitempty"`
 }
 

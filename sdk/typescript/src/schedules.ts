@@ -1,17 +1,18 @@
 import type {
+  RunDefaults,
   JsonValue,
   MaybePromise,
-  PayloadTaskDefinition,
-  TaskConfigBase,
-  TaskExecutionContext,
+  Task,
+  TaskContext,
 } from "./contract"
 import { createScheduledTask } from "./definitions"
 import { resourceID } from "./internal/id"
+import { timestampString } from "./internal/timestamp"
 import type { PayloadSchema } from "./schema/payload"
 import {
   encodeWorkspaceSecrets,
   inspectSandboxDefinition,
-  type SandboxDefinition,
+  type Sandbox,
   type WorkspaceSecretInput,
 } from "./workspace"
 
@@ -36,27 +37,30 @@ export interface ScheduledTaskPayload {
   readonly upcoming: readonly Date[]
 }
 
-export type ScheduledTaskConfig<TOutput extends JsonValue> = Omit<
-  TaskConfigBase,
-  "id"
-> & Readonly<{
-    id: string
+export type ScheduledTaskConfig<
+  TIdentifier extends string,
+  TOutput extends JsonValue,
+> = RunDefaults & Readonly<{
+    id: TIdentifier
     cron: Cron
     workspace: Readonly<{
-      sandbox: SandboxDefinition
+      sandbox: Sandbox
       secrets?: readonly WorkspaceSecretInput[]
     }>
     run(
       payload: ScheduledTaskPayload,
-      ctx: TaskExecutionContext,
+      ctx: TaskContext,
     ): MaybePromise<TOutput>
   }>
 
-export function scheduledTask<TOutput extends JsonValue>(
-  config: ScheduledTaskConfig<TOutput>,
-): PayloadTaskDefinition<
+export function scheduledTask<
+  TIdentifier extends string,
+  TOutput extends JsonValue,
+>(
+  config: ScheduledTaskConfig<TIdentifier, TOutput>,
+): Task<
+  TIdentifier,
   ScheduledTaskInput,
-  ScheduledTaskPayload,
   TOutput
 > {
   validateScheduleMembers(config)
@@ -188,14 +192,11 @@ const scheduledTaskSchema: PayloadSchema<
 }
 
 function parseDate(value: unknown): Date | undefined {
-  if (typeof value !== "string") return undefined
-  if (
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(value)
-  ) {
+  try {
+    return new Date(timestampString(value, "Scheduled task timestamp"))
+  } catch {
     return undefined
   }
-  const date = new Date(value)
-  return Number.isNaN(date.valueOf()) ? undefined : date
 }
 
 function validateCron(cron: Cron): void {

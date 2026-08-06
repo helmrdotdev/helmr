@@ -4,25 +4,30 @@ import type {
   Metadata,
   RunFailure,
   RunHandle,
-  RunSnapshot,
+  Run,
   RunStatus,
-  TaskDefinition,
-  TaskHasPayload,
+  Task,
+  TaskInput,
   TaskOutput,
-  TaskPayloadInput,
   TaskResult,
   RunOptions,
-  WorkspaceIdAddress,
   TaskWait,
 } from "./contract"
 import { runtimeOperationsInstalled } from "./internal/runtime"
 import { resourceID } from "./internal/id"
+import { createRunHandle, runHandleID } from "./internal/run-handle"
+import { timestampString } from "./internal/timestamp"
 import { runFailureError } from "./internal/run-failure"
 import { validateTaskId } from "./schema/task"
 import type {
-  TokenCreateOptions,
-  TokenSnapshot,
+  TokenCreateRequest,
+  TokenCreateResult,
+  TokenListItem,
+  TokenListQuery,
+  Token,
+  TokenStatus,
 } from "./tokens"
+import type { WorkspaceRef } from "./workspace"
 import {
   createClientWorkspaces,
   type ClientWorkspacesApi,
@@ -53,7 +58,11 @@ import {
 } from "./client-secret"
 import type { RequestOptions } from "./request"
 import type { LogAttributes, RunLogLevel } from "./logger"
-import { requireWorkspaceIDAddress } from "./workspace"
+import { workspaceRefID } from "./workspace"
+import {
+  definitionItemQuery,
+  definitionListQuery,
+} from "./internal/definition-query"
 
 export interface HelmrClientOptions {
   readonly url?: string
@@ -61,84 +70,95 @@ export interface HelmrClientOptions {
   readonly fetch?: typeof fetch
 }
 
-export type ClientTokenCreateRequest = TokenCreateOptions
+export interface TokenCompleteRequest {
+  readonly result: JsonValue
+  readonly idempotencyKey?: string
+}
 
-export interface ClientTokenCreateResult extends TokenSnapshot {
-  readonly status: "pending"
-  readonly callbackUrl: string
-  readonly publicAccessToken: string
+export interface TokenCancelRequest {
+  readonly idempotencyKey?: string
 }
 
 export interface ClientTokensApi {
   create(
-    request?: ClientTokenCreateRequest,
+    request?: TokenCreateRequest,
     options?: RequestOptions,
-  ): Promise<ClientTokenCreateResult>
-  retrieve(id: string, options?: RequestOptions): Promise<TokenSnapshot>
-  list(query?: Readonly<{
-    cursor?: string
-    limit?: number
-  }>, options?: RequestOptions): Promise<CursorPage<TokenSnapshot>>
-  complete(id: string, request: Readonly<{
-    result: JsonValue
-    idempotencyKey?: string
-  }>, options?: RequestOptions): Promise<TokenSnapshot>
-  cancel(id: string, request?: Readonly<{
-    idempotencyKey?: string
-  }>, options?: RequestOptions): Promise<TokenSnapshot>
+  ): Promise<TokenCreateResult>
+  retrieve(id: string, options?: RequestOptions): Promise<Token>
+  list(
+    query?: TokenListQuery,
+    options?: RequestOptions,
+  ): Promise<CursorPage<TokenListItem>>
+  complete(id: string, request: TokenCompleteRequest, options?: RequestOptions): Promise<Token>
+  cancel(id: string, request?: TokenCancelRequest, options?: RequestOptions): Promise<Token>
 }
 
 type ClientTaskRunRequest = RunOptions & Readonly<{
   idempotencyKey?: string
-  workspace: WorkspaceIdAddress
+  workspace: WorkspaceRef
 }>
 
-export type ClientTaskStartRequest<TTask extends TaskDefinition> =
-  TaskHasPayload<TTask> extends true
-    ? ClientTaskRunRequest & Readonly<{ payload: TaskPayloadInput<TTask> }>
-    : ClientTaskRunRequest & Readonly<{ payload?: never }>
+export type TaskStartRequest<TTask extends Task> =
+  [TaskInput<TTask>] extends [never]
+    ? ClientTaskRunRequest & Readonly<{ payload?: never }>
+    : ClientTaskRunRequest & Readonly<{ payload: TaskInput<TTask> }>
 
 export interface ClientTasksApi {
-  retrieve(taskId: string, query?: ClientTaskReadQuery, options?: RequestOptions): Promise<TaskSnapshot>
-  list(query?: ClientTaskListQuery, options?: RequestOptions): Promise<TaskPage>
-  start<TTask extends TaskDefinition>(
-    taskDeclaredId: string,
-    request: ClientTaskStartRequest<TTask>,
+  retrieve(id: string, query?: TaskRetrieveQuery, options?: RequestOptions): Promise<TaskInfo>
+  list(query?: TaskListQuery, options?: RequestOptions): Promise<TaskPage>
+  start<TTask extends Task>(
+    taskId: TTask["id"],
+    request: TaskStartRequest<TTask>,
     options?: RequestOptions,
-  ): Promise<RunHandle>
+  ): Promise<RunHandle<TaskOutput<TTask>>>
 }
 
-export interface ClientTaskReadQuery {
+export interface TaskRetrieveQuery {
   readonly deploymentId?: string
 }
 
-export interface ClientTaskListQuery extends ClientTaskReadQuery {
+export interface TaskListQuery extends TaskRetrieveQuery {
   readonly cursor?: string
   readonly limit?: number
 }
 
-export interface TaskSnapshot {
+export interface TaskListItem {
   readonly id: string
+}
+
+export interface TaskInfo extends TaskListItem {
   readonly deploymentId: string
 }
 
-export interface TaskPage extends CursorPage<TaskSnapshot> {
+export interface TaskPage extends CursorPage<TaskListItem> {
   readonly deploymentId: string
 }
 
-export interface ClientRunListQuery {
+export interface RunListQuery {
   readonly status?: RunStatus | readonly RunStatus[]
   readonly cursor?: string
   readonly limit?: number
 }
 
-export interface ClientRunLogQuery {
+export interface RunListItem {
+  readonly id: string
+  readonly status: RunStatus
+  readonly entrypoint: Readonly<{ kind: "task" | "actor"; id: string }>
+  readonly workspaceId: string
+  readonly sessionId?: string
+  readonly currentAttemptNumber: number
+  readonly createdAt: string
+  readonly startedAt?: string
+  readonly terminalAt?: string
+}
+
+export interface RunLogQuery {
   readonly cursor?: string
   readonly limit?: number
   readonly level?: RunLogLevel | readonly RunLogLevel[]
 }
 
-export interface ClientRunEventQuery {
+export interface RunEventQuery {
   readonly cursor?: string
   readonly limit?: number
   readonly severity?: RunLogLevel | readonly RunLogLevel[]
@@ -183,30 +203,38 @@ export interface RunEventRecord {
 }
 
 export interface ClientRunsApi {
-  retrieve<TOutput extends JsonValue = JsonValue>(
+  retrieve<TOutput extends JsonValue>(
+    run: RunHandle<TOutput>,
+    options?: RequestOptions,
+  ): Promise<Run<TOutput>>
+  retrieve(
     runId: string,
     options?: RequestOptions,
-  ): Promise<RunSnapshot<TOutput>>
+  ): Promise<Run<JsonValue>>
   list(
-    query?: ClientRunListQuery,
+    query?: RunListQuery,
     options?: RequestOptions,
-  ): Promise<CursorPage<RunSnapshot<JsonValue>>>
+  ): Promise<CursorPage<RunListItem>>
   cancel(
     runId: string,
     options?: RequestOptions,
-  ): Promise<RunSnapshot<JsonValue>>
-  wait<TTask extends TaskDefinition>(
+  ): Promise<Run<JsonValue>>
+  wait<TOutput extends JsonValue>(
+    run: RunHandle<TOutput>,
+    options?: RequestOptions,
+  ): TaskWait<TOutput>
+  wait(
     runId: string,
     options?: RequestOptions,
-  ): TaskWait<TaskOutput<TTask>>
+  ): TaskWait<JsonValue>
   logs(
     runId: string,
-    query?: ClientRunLogQuery,
+    query?: RunLogQuery,
     options?: RequestOptions,
   ): Promise<CursorPage<RunLogRecord>>
   events(
     runId: string,
-    query?: ClientRunEventQuery,
+    query?: RunEventQuery,
     options?: RequestOptions,
   ): Promise<CursorPage<RunEventRecord>>
 }
@@ -246,25 +274,25 @@ class ClientTasks implements ClientTasksApi {
   }
 
   async retrieve(
-    taskId: string,
-    query: ClientTaskReadQuery = {},
+    id: string,
+    query: TaskRetrieveQuery = {},
     options: RequestOptions = {},
-  ): Promise<TaskSnapshot> {
-    validateTaskId(taskId)
+  ): Promise<TaskInfo> {
+    validateTaskId(id)
     return parseTask(await this.#transport.request(
       "GET",
-      `/v1/tasks/${encodeURIComponent(taskId)}${taskReadQuery(query)}`,
+      `/v1/tasks/${encodeURIComponent(id)}${definitionItemQuery(query, "Task")}`,
       options.signal === undefined ? {} : { signal: options.signal },
     ))
   }
 
   async list(
-    query: ClientTaskListQuery = {},
+    query: TaskListQuery = {},
     options: RequestOptions = {},
   ): Promise<TaskPage> {
     const response = objectValue(await this.#transport.request(
       "GET",
-      `/v1/tasks${taskReadQuery(query)}`,
+      `/v1/tasks${definitionListQuery(query, "Task")}`,
       options.signal === undefined ? {} : { signal: options.signal },
     ), "Task list response")
     if (!Array.isArray(response["tasks"])) {
@@ -276,21 +304,21 @@ class ClientTasks implements ClientTasksApi {
     }
     return Object.freeze({
       deploymentId: resourceID(response["deployment_id"], "Task list response.deployment_id"),
-      items: Object.freeze(response["tasks"].map(parseTask)),
+      items: Object.freeze(response["tasks"].map(parseTaskListItem)),
       ...(nextCursor === undefined ? {} : { nextCursor }),
     })
   }
 
-  async start<TTask extends TaskDefinition>(
-    taskDeclaredId: string,
-    request: ClientTaskStartRequest<TTask>,
+  async start<TTask extends Task>(
+    taskId: TTask["id"],
+    request: TaskStartRequest<TTask>,
     options: RequestOptions = {},
-  ): Promise<RunHandle> {
-    validateTaskId(taskDeclaredId)
+  ): Promise<RunHandle<TaskOutput<TTask>>> {
+    validateTaskId(taskId)
     const response = objectValue(
       await this.#transport.request(
         "POST",
-        `/v1/tasks/${encodeURIComponent(taskDeclaredId)}/start`,
+        `/v1/tasks/${encodeURIComponent(taskId)}/start`,
         {
           body: {
             ...("payload" in request ? { payload: request.payload } : {}),
@@ -304,34 +332,25 @@ class ClientTasks implements ClientTasksApi {
       "Task start response",
     )
     const runId = resourceID(response["run_id"], "Task start response.run_id")
-    return Object.freeze({ id: runId })
+    return createRunHandle<TaskOutput<TTask>>(runId)
   }
 }
 
-function taskReadQuery(queryInput: ClientTaskListQuery): string {
-  const query = new URLSearchParams()
-  if (queryInput.deploymentId !== undefined) {
-    query.set("deployment_id", resourceID(queryInput.deploymentId, "Deployment ID"))
-  }
-  if (queryInput.cursor !== undefined) {
-    if (queryInput.cursor.length === 0) throw new Error("Task cursor is required")
-    query.set("cursor", queryInput.cursor)
-  }
-  if (queryInput.limit !== undefined) {
-    if (!Number.isInteger(queryInput.limit) || queryInput.limit < 1 || queryInput.limit > 100) {
-      throw new Error("Task limit must be an integer in [1,100]")
-    }
-    query.set("limit", queryInput.limit.toString())
-  }
-  return query.size === 0 ? "" : `?${query.toString()}`
-}
-
-function parseTask(value: unknown): TaskSnapshot {
+function parseTask(value: unknown): TaskInfo {
   const input = objectValue(value, "Task response")
+  const id = requiredStringFrom(input, "id", "Task response")
+  validateTaskId(id)
   return Object.freeze({
-    id: requiredStringFrom(input, "id", "Task response"),
+    id,
     deploymentId: resourceID(input["deployment_id"], "Task response.deployment_id"),
   })
+}
+
+function parseTaskListItem(value: unknown): TaskListItem {
+  const input = objectValue(value, "Task list item")
+  const id = requiredStringFrom(input, "id", "Task list item")
+  validateTaskId(id)
+  return Object.freeze({ id })
 }
 
 class ClientRuns implements ClientRunsApi {
@@ -341,23 +360,32 @@ class ClientRuns implements ClientRunsApi {
     this.#transport = transport
   }
 
-  async retrieve<TOutput extends JsonValue = JsonValue>(
+  retrieve<TOutput extends JsonValue>(
+    run: RunHandle<TOutput>,
+    options?: RequestOptions,
+  ): Promise<Run<TOutput>>
+  retrieve(
     runId: string,
+    options?: RequestOptions,
+  ): Promise<Run<JsonValue>>
+  async retrieve<TOutput extends JsonValue>(
+    run: string | RunHandle<TOutput>,
     options: RequestOptions = {},
-  ): Promise<RunSnapshot<TOutput>> {
-    return parseRunSnapshot<TOutput>(
+  ): Promise<Run<TOutput>> {
+    const runId = runHandleID(run)
+    return parseRun<TOutput>(
       await this.#transport.request(
         "GET",
-        `/v1/runs/${encodeURIComponent(resourceID(runId, "Run ID"))}`,
+        `/v1/runs/${encodeURIComponent(runId)}`,
         options.signal === undefined ? {} : { signal: options.signal },
       ),
     )
   }
 
   async list(
-    queryInput: ClientRunListQuery = {},
+    queryInput: RunListQuery = {},
     options: RequestOptions = {},
-  ): Promise<CursorPage<RunSnapshot<JsonValue>>> {
+  ): Promise<CursorPage<RunListItem>> {
     const query = new URLSearchParams()
     const statuses = queryInput.status === undefined
       ? []
@@ -365,8 +393,16 @@ class ClientRuns implements ClientRunsApi {
       ? queryInput.status
       : [queryInput.status]
     for (const status of statuses) query.append("status", runStatus(status))
-    if (queryInput.cursor !== undefined) query.set("cursor", queryInput.cursor)
-    if (queryInput.limit !== undefined) query.set("limit", String(queryInput.limit))
+    if (queryInput.cursor !== undefined) {
+      if (queryInput.cursor.length === 0) throw new Error("Run cursor is required")
+      query.set("cursor", queryInput.cursor)
+    }
+    if (queryInput.limit !== undefined) {
+      if (!Number.isInteger(queryInput.limit) || queryInput.limit < 1 || queryInput.limit > 100) {
+        throw new Error("Run limit must be an integer in [1,100]")
+      }
+      query.set("limit", String(queryInput.limit))
+    }
     const suffix = query.size === 0 ? "" : `?${query.toString()}`
     const response = objectValue(
       await this.#transport.request("GET", `/v1/runs${suffix}`, {
@@ -382,7 +418,7 @@ class ClientRuns implements ClientRunsApi {
       throw new Error("Run list response.next_cursor must be a string")
     }
     return Object.freeze({
-      items: Object.freeze(response["runs"].map((run) => parseRunSnapshot(run))),
+      items: Object.freeze(response["runs"].map(parseRunListItem)),
       ...(nextCursor === undefined ? {} : { nextCursor }),
     })
   }
@@ -390,8 +426,8 @@ class ClientRuns implements ClientRunsApi {
   async cancel(
     runId: string,
     options: RequestOptions = {},
-  ): Promise<RunSnapshot<JsonValue>> {
-    return parseRunSnapshot(
+  ): Promise<Run<JsonValue>> {
+    return parseRun(
       await this.#transport.request(
         "POST",
         `/v1/runs/${encodeURIComponent(resourceID(runId, "Run ID"))}/cancel`,
@@ -402,7 +438,7 @@ class ClientRuns implements ClientRunsApi {
 
   async logs(
     runId: string,
-    queryInput: ClientRunLogQuery = {},
+    queryInput: RunLogQuery = {},
     options: RequestOptions = {},
   ): Promise<CursorPage<RunLogRecord>> {
     const query = runTelemetryQuery(
@@ -431,7 +467,7 @@ class ClientRuns implements ClientRunsApi {
 
   async events(
     runId: string,
-    queryInput: ClientRunEventQuery = {},
+    queryInput: RunEventQuery = {},
     options: RequestOptions = {},
   ): Promise<CursorPage<RunEventRecord>> {
     const query = runTelemetryQuery(
@@ -458,25 +494,33 @@ class ClientRuns implements ClientRunsApi {
     )
   }
 
-  wait<TTask extends TaskDefinition>(
+  wait<TOutput extends JsonValue>(
+    run: RunHandle<TOutput>,
+    options?: RequestOptions,
+  ): TaskWait<TOutput>
+  wait(
     runId: string,
+    options?: RequestOptions,
+  ): TaskWait<JsonValue>
+  wait<TOutput extends JsonValue>(
+    run: string | RunHandle<TOutput>,
     options: RequestOptions = {},
-  ): TaskWait<TaskOutput<TTask>> {
+  ): TaskWait<TOutput> {
     if (runtimeOperationsInstalled()) {
       throw new Error(
         "client.runs.wait() is unavailable inside an active Helmr Run; use task.call()",
       )
     }
-    const id = resourceID(runId, "Run ID")
-    const result = this.#waitForTerminal<TaskOutput<TTask>>(id, options)
+    const id = runHandleID(run)
+    const result = this.#waitForTerminal<TOutput>(id, options)
     return Object.freeze({
-      then<TResult1 = TaskResult<TaskOutput<TTask>>, TResult2 = never>(
-        onfulfilled?: ((value: TaskResult<TaskOutput<TTask>>) => TResult1 | PromiseLike<TResult1>) | null,
+      then<TResult1 = TaskResult<TOutput>, TResult2 = never>(
+        onfulfilled?: ((value: TaskResult<TOutput>) => TResult1 | PromiseLike<TResult1>) | null,
         onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
       ): PromiseLike<TResult1 | TResult2> {
         return result.then(onfulfilled, onrejected)
       },
-      async unwrap(): Promise<TaskOutput<TTask>> {
+      async unwrap(): Promise<TOutput> {
         const settled = await result
         if (!settled.ok) throw runFailureError(settled.failure)
         return settled.output
@@ -491,27 +535,74 @@ class ClientRuns implements ClientRunsApi {
     let delayMilliseconds = 250
     while (true) {
       options.signal?.throwIfAborted()
-      const snapshot = await this.retrieve<TOutput>(runId, options)
-      if (snapshot.status === "succeeded") {
-        if (snapshot.output === undefined) {
+      const run = await this.retrieve(
+        createRunHandle<TOutput>(runId),
+        options,
+      )
+      if (run.status === "succeeded") {
+        if (run.output === undefined) {
           throw new Error("Succeeded Run response must include output")
         }
         return Object.freeze({
-          ok: true, output: snapshot.output, run: Object.freeze({ id: snapshot.id }),
+          ok: true, output: run.output, run: createRunHandle<TOutput>(run.id),
         })
       }
-      if (runStatusIsTerminal(snapshot.status)) {
-        if (snapshot.failure === undefined) {
+      if (runStatusIsTerminal(run.status)) {
+        if (run.failure === undefined) {
           throw new Error("Non-success terminal Run response must include failure")
         }
         return Object.freeze({
-          ok: false, failure: snapshot.failure, run: Object.freeze({ id: snapshot.id }),
+          ok: false, failure: run.failure, run: createRunHandle<TOutput>(run.id),
         })
       }
       await abortableDelay(delayMilliseconds, options.signal)
       delayMilliseconds = Math.min(delayMilliseconds * 2, 2_000)
     }
   }
+}
+
+function parseRunListItem(value: unknown): RunListItem {
+  const run = objectValue(value, "Run list item")
+  const status = runStatus(requiredStringFrom(run, "status", "Run list item"))
+  const entrypoint = objectValue(run["entrypoint"], "Run list item.entrypoint")
+  const kind = requiredStringFrom(entrypoint, "kind", "Run list item.entrypoint")
+  if (kind !== "task" && kind !== "actor") {
+    throw new Error("Run list item.entrypoint.kind is invalid")
+  }
+  const item: RunListItem = {
+    id: resourceID(requiredStringFrom(run, "id", "Run list item"), "Run list item.id"),
+    status,
+    entrypoint: Object.freeze({
+      kind,
+      id: requiredStringFrom(entrypoint, "id", "Run list item.entrypoint"),
+    }),
+    workspaceId: resourceID(
+      requiredStringFrom(run, "workspace_id", "Run list item"),
+      "Run list item.workspace_id",
+    ),
+    ...(run["session_id"] === undefined
+      ? {}
+      : {
+          sessionId: resourceID(
+            requiredStringFrom(run, "session_id", "Run list item"),
+            "Run list item.session_id",
+          ),
+        }),
+    currentAttemptNumber: requiredPositiveInteger(
+      run, "current_attempt_number", "Run list item",
+    ),
+    createdAt: requiredTimestamp(run, "created_at", "Run list item"),
+    ...(run["started_at"] === undefined
+      ? {}
+      : { startedAt: requiredTimestamp(run, "started_at", "Run list item") }),
+    ...(run["terminal_at"] === undefined
+      ? {}
+      : { terminalAt: requiredTimestamp(run, "terminal_at", "Run list item") }),
+  }
+  if (runStatusIsTerminal(status) !== (item.terminalAt !== undefined)) {
+    throw new Error("Run list item.terminal_at is inconsistent with status")
+  }
+  return Object.freeze(item)
 }
 
 class ClientTokens implements ClientTokensApi {
@@ -522,9 +613,9 @@ class ClientTokens implements ClientTokensApi {
   }
 
   async create(
-    request: ClientTokenCreateRequest = {},
+    request: TokenCreateRequest = {},
     options: RequestOptions = {},
-  ): Promise<ClientTokenCreateResult> {
+  ): Promise<TokenCreateResult> {
     const response = await this.#transport.request("POST", "/v1/tokens", {
       body: {
         ...(request.timeout === undefined ? {} : { timeout: request.timeout }),
@@ -540,13 +631,13 @@ class ClientTokens implements ClientTokensApi {
     if (token.status !== "pending") {
       throw new Error("Token create response must be pending")
     }
-    return token as ClientTokenCreateResult
+    return token as TokenCreateResult
   }
 
   async retrieve(
     id: string,
     options: RequestOptions = {},
-  ): Promise<TokenSnapshot> {
+  ): Promise<Token> {
     return parseToken(
       await this.#transport.request(
         "GET",
@@ -557,13 +648,22 @@ class ClientTokens implements ClientTokensApi {
     )
   }
 
-  async list(queryInput: Readonly<{
-    cursor?: string
-    limit?: number
-  }> = {}, options: RequestOptions = {}): Promise<CursorPage<TokenSnapshot>> {
+  async list(
+    queryInput: TokenListQuery = {},
+    options: RequestOptions = {},
+  ): Promise<CursorPage<TokenListItem>> {
     const query = new URLSearchParams()
-    if (queryInput.cursor !== undefined) query.set("cursor", queryInput.cursor)
-    if (queryInput.limit !== undefined) query.set("limit", String(queryInput.limit))
+    if (queryInput.status !== undefined) query.set("status", tokenStatus(queryInput.status))
+    if (queryInput.cursor !== undefined) {
+      if (queryInput.cursor.length === 0) throw new Error("Token cursor is required")
+      query.set("cursor", queryInput.cursor)
+    }
+    if (queryInput.limit !== undefined) {
+      if (!Number.isInteger(queryInput.limit) || queryInput.limit < 1 || queryInput.limit > 100) {
+        throw new Error("Token limit must be an integer in [1,100]")
+      }
+      query.set("limit", String(queryInput.limit))
+    }
     const suffix = query.size === 0 ? "" : `?${query.toString()}`
     const response = objectValue(
       await this.#transport.request("GET", `/v1/tokens${suffix}`, {
@@ -579,16 +679,16 @@ class ClientTokens implements ClientTokensApi {
       throw new Error("Token list response.next_cursor must be a string")
     }
     return Object.freeze({
-      items: Object.freeze(response["tokens"].map((token) => parseToken(token, false))),
+      items: Object.freeze(response["tokens"].map(parseTokenListItem)),
       ...(nextCursor === undefined ? {} : { nextCursor }),
     })
   }
 
   async complete(
     id: string,
-    request: Readonly<{ result: JsonValue; idempotencyKey?: string }>,
+    request: TokenCompleteRequest,
     options: RequestOptions = {},
-  ): Promise<TokenSnapshot> {
+  ): Promise<Token> {
     return parseToken(
       await this.#transport.request(
         "POST",
@@ -609,9 +709,9 @@ class ClientTokens implements ClientTokensApi {
 
   async cancel(
     id: string,
-    request: Readonly<{ idempotencyKey?: string }> = {},
+    request: TokenCancelRequest = {},
     options: RequestOptions = {},
-  ): Promise<TokenSnapshot> {
+  ): Promise<Token> {
     return parseToken(
       await this.#transport.request(
         "POST",
@@ -632,7 +732,7 @@ function taskStartRequest(
   request: ClientTaskRunRequest,
 ): Record<string, unknown> {
   return {
-    workspace: { id: requireWorkspaceIDAddress(request.workspace) },
+    workspace: { id: workspaceRefID(request.workspace) },
     ...(request.idempotencyKey === undefined
       ? {}
       : { idempotency_key: request.idempotencyKey }),
@@ -732,13 +832,16 @@ function clientRequestError(response: Response, value: unknown): Error {
       !Array.isArray(payload["details"])
     ? payload["details"] as Readonly<Record<string, JsonValue>>
     : undefined
+  const requestId = response.headers.get("X-Request-ID")?.trim() || undefined
   const error = new Error(message) as Error & {
     code: string
     details?: Readonly<Record<string, JsonValue>>
+    requestId?: string
   }
   error.name = "HelmrError"
   error.code = code
   if (details !== undefined) error.details = details
+  if (requestId !== undefined) error.requestId = requestId
   return error
 }
 
@@ -817,9 +920,9 @@ function runStatusIsTerminal(status: RunStatus): boolean {
     status === "system_failed"
 }
 
-function parseRunSnapshot<TOutput extends JsonValue = JsonValue>(
+function parseRun<TOutput extends JsonValue = JsonValue>(
   value: unknown,
-): RunSnapshot<TOutput> {
+): Run<TOutput> {
   const run = objectValue(value, "Run response")
   const status = runStatus(requiredStringFrom(run, "status", "Run response"))
   const entrypoint = objectValue(run["entrypoint"], "Run response.entrypoint")
@@ -834,8 +937,10 @@ function parseRunSnapshot<TOutput extends JsonValue = JsonValue>(
     throw new Error("Run response.tags must be an array of strings")
   }
   const cause = parseRunCause(run["cause"])
-  const snapshot: RunSnapshot<TOutput> = {
-    id: resourceID(requiredStringFrom(run, "id", "Run response"), "Run response.id"),
+  const runResource: Run<TOutput> = {
+    ...createRunHandle<TOutput>(
+      resourceID(requiredStringFrom(run, "id", "Run response"), "Run response.id"),
+    ),
     status,
     entrypoint: Object.freeze({
       kind: entrypointKind,
@@ -886,30 +991,30 @@ function parseRunSnapshot<TOutput extends JsonValue = JsonValue>(
   }
   if (status === "succeeded") {
     if (
-      snapshot.failure !== undefined ||
-      snapshot.terminalAt === undefined
+      runResource.failure !== undefined ||
+      runResource.terminalAt === undefined
     ) {
       throw new Error("Succeeded Run response has an invalid terminal projection")
     }
   } else if (runStatusIsTerminal(status)) {
     if (
-      snapshot.output !== undefined ||
-      snapshot.failure === undefined ||
-      snapshot.terminalAt === undefined
+      runResource.output !== undefined ||
+      runResource.failure === undefined ||
+      runResource.terminalAt === undefined
     ) {
       throw new Error("Terminal Run response has an invalid failure projection")
     }
   } else if (
-    snapshot.output !== undefined ||
-    snapshot.failure !== undefined ||
-    snapshot.terminalAt !== undefined
+    runResource.output !== undefined ||
+    runResource.failure !== undefined ||
+    runResource.terminalAt !== undefined
   ) {
     throw new Error("Active Run response has terminal fields")
   }
-  return Object.freeze(snapshot)
+  return Object.freeze(runResource)
 }
 
-function parseRunCause(value: unknown): RunSnapshot["cause"] {
+function parseRunCause(value: unknown): Run["cause"] {
   const cause = objectValue(value, "Run response.cause")
   const type = requiredStringFrom(cause, "type", "Run response.cause")
   switch (type) {
@@ -933,11 +1038,11 @@ function parseRunCause(value: unknown): RunSnapshot["cause"] {
           requiredStringFrom(cause, "schedule_id", "Run response.cause"),
           "Run response.cause.schedule_id",
         ),
-        scheduledAt: requiredDate(cause, "scheduled_at", "Run response.cause"),
+        scheduledAt: requiredTimestamp(cause, "scheduled_at", "Run response.cause"),
         ...(cause["last_scheduled_at"] === undefined
           ? {}
           : {
-              lastScheduledAt: requiredDate(
+              lastScheduledAt: requiredTimestamp(
                 cause, "last_scheduled_at", "Run response.cause",
               ),
             }),
@@ -965,8 +1070,16 @@ function runTelemetryQuery(
   filter: RunLogLevel | readonly RunLogLevel[] | undefined,
 ): string {
   const query = new URLSearchParams()
-  if (cursor !== undefined) query.set("cursor", cursor)
-  if (limit !== undefined) query.set("limit", String(limit))
+  if (cursor !== undefined) {
+    if (cursor.length === 0) throw new Error("Run telemetry cursor is required")
+    query.set("cursor", cursor)
+  }
+  if (limit !== undefined) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+      throw new Error("Run telemetry limit must be an integer in [1,200]")
+    }
+    query.set("limit", String(limit))
+  }
   const values = filter === undefined
     ? []
     : Array.isArray(filter)
@@ -1112,41 +1225,59 @@ function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<voi
   })
 }
 
-function parseToken(value: unknown, credentials: boolean): TokenSnapshot | ClientTokenCreateResult {
-  const token = objectValue(value, "Token response")
-  const status = token["status"]
-  if (
-    status !== "pending" &&
-    status !== "completed" &&
-    status !== "cancelled" &&
-    status !== "expired"
-  ) {
-    throw new Error("Token response.status is invalid")
-  }
-  const metadata = objectValue(token["metadata"], "Token response.metadata") as Metadata
-  const tags = token["tags"]
+function parseToken(value: unknown, credentials: boolean): Token | TokenCreateResult {
+  const input = objectValue(value, "Token response")
+  const status = tokenStatus(input["status"])
+  const metadata = objectValue(input["metadata"], "Token response.metadata") as Metadata
+  const tags = input["tags"]
   if (!Array.isArray(tags) || tags.some((tag) => typeof tag !== "string")) {
     throw new Error("Token response.tags must be an array of strings")
   }
-  const snapshot: TokenSnapshot = {
-    id: resourceID(requiredString(token, "id"), "Token response.id"),
+  const token: Token = {
+    id: resourceID(requiredString(input, "id"), "Token response.id"),
     status,
-    ...(token["result"] === undefined ? {} : { result: token["result"] as JsonValue }),
+    ...(input["result"] === undefined ? {} : { result: input["result"] as JsonValue }),
     metadata,
     tags: Object.freeze([...tags]) as readonly string[],
-    timeoutAt: requiredString(token, "timeout_at"),
+    timeoutAt: requiredTimestamp(input, "timeout_at", "Token response"),
+    ...(input["completed_at"] === undefined
+      ? {}
+      : { completedAt: requiredTimestamp(input, "completed_at", "Token response") }),
+    createdAt: requiredTimestamp(input, "created_at", "Token response"),
+    updatedAt: requiredTimestamp(input, "updated_at", "Token response"),
+  }
+  if (!credentials) return Object.freeze(token)
+  return Object.freeze({
+    ...token,
+    callbackUrl: requiredString(input, "callback_url"),
+    publicAccessToken: requiredString(input, "public_access_token"),
+  }) as TokenCreateResult
+}
+
+function parseTokenListItem(value: unknown): TokenListItem {
+  const token = objectValue(value, "Token list item")
+  const tags = token["tags"]
+  if (!Array.isArray(tags) || tags.some((tag) => typeof tag !== "string")) {
+    throw new Error("Token list item.tags must be an array of strings")
+  }
+  return Object.freeze({
+    id: resourceID(requiredStringFrom(token, "id", "Token list item"), "Token list item.id"),
+    status: tokenStatus(token["status"]),
+    tags: Object.freeze([...tags]) as readonly string[],
+    timeoutAt: requiredTimestamp(token, "timeout_at", "Token list item"),
     ...(token["completed_at"] === undefined
       ? {}
-      : { completedAt: requiredString(token, "completed_at") }),
-    createdAt: requiredString(token, "created_at"),
-    updatedAt: requiredString(token, "updated_at"),
+      : { completedAt: requiredTimestamp(token, "completed_at", "Token list item") }),
+    createdAt: requiredTimestamp(token, "created_at", "Token list item"),
+    updatedAt: requiredTimestamp(token, "updated_at", "Token list item"),
+  })
+}
+
+function tokenStatus(value: unknown): TokenStatus {
+  if (value !== "pending" && value !== "completed" && value !== "cancelled" && value !== "expired") {
+    throw new Error("Token status is invalid")
   }
-  if (!credentials) return Object.freeze(snapshot)
-  return Object.freeze({
-    ...snapshot,
-    callbackUrl: requiredString(token, "callback_url"),
-    publicAccessToken: requiredString(token, "public_access_token"),
-  }) as ClientTokenCreateResult
+  return value
 }
 
 function objectValue(value: unknown, label: string): Record<string, unknown> {
@@ -1208,27 +1339,10 @@ function requiredNonnegativeInteger(
   return result as number
 }
 
-function requiredDate(
-  value: Record<string, unknown>,
-  field: string,
-  label: string,
-): Date {
-  const raw = requiredStringFrom(value, field, label)
-  const result = new Date(raw)
-  if (Number.isNaN(result.getTime())) {
-    throw new Error(`${label}.${field} must be an RFC 3339 timestamp`)
-  }
-  return result
-}
-
 function requiredTimestamp(
   value: Record<string, unknown>,
   field: string,
   label: string,
 ): string {
-  const raw = requiredStringFrom(value, field, label)
-  if (Number.isNaN(new Date(raw).getTime())) {
-    throw new Error(`${label}.${field} must be an RFC 3339 timestamp`)
-  }
-  return raw
+  return timestampString(value[field], `${label}.${field}`)
 }

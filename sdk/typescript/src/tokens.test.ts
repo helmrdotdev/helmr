@@ -3,6 +3,14 @@ import { describe, expect, test } from "bun:test"
 import { installRuntimeOperations } from "./internal"
 import { tokens } from "./index"
 
+const unusedSessionInputSend = async () => ({
+  id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34",
+  sequence: 1,
+  data: null,
+  source: { type: "external" as const },
+  createdAt: "2026-07-24T11:50:00Z",
+})
+
 describe("tokens", () => {
   test("creates a runtime handle and validates its completion", async () => {
     const calls: unknown[] = []
@@ -10,7 +18,7 @@ describe("tokens", () => {
     const uninstall = installRuntimeOperations({
       waitFor: async () => {},
       waitUntil: async () => {},
-      actorInputSend: async () => ({ sequence: 1 }),
+      actorInputSend: unusedSessionInputSend,
       tokenCreate: async (options) => {
         calls.push({ operation: "create", options })
         return {
@@ -56,13 +64,13 @@ describe("tokens", () => {
       }).unwrap()).resolves.toBe(true)
       waitResult = Object.assign(new Error("Token expired"), {
         code: "token_expired" as const,
-        retryable: false as const,
       })
       const expired = await token.wait()
       expect(expired).toMatchObject({
         ok: false,
-        error: { code: "token_expired", retryable: false },
+        error: { code: "token_expired" },
       })
+      expect(Object.hasOwn(expired.error, "retryable")).toBe(false)
       expect(() => expired.unwrap()).toThrow("Token expired")
       waitResult = new DOMException("cancelled locally", "AbortError")
       await expect(Promise.resolve(token.wait())).rejects.toThrow("cancelled locally")
@@ -109,7 +117,7 @@ describe("tokens", () => {
     const uninstall = installRuntimeOperations({
       waitFor: async () => {},
       waitUntil: async () => {},
-      actorInputSend: async () => ({ sequence: 1 }),
+      actorInputSend: unusedSessionInputSend,
       tokenCreate: async () => {
         throw new Error("unexpected Token create")
       },
@@ -138,7 +146,7 @@ describe("tokens", () => {
     const uninstall = installRuntimeOperations({
       waitFor: async () => {},
       waitUntil: async () => {},
-      actorInputSend: async () => ({ sequence: 1 }),
+      actorInputSend: unusedSessionInputSend,
       tokenCreate: async () => {
         throw new Error("unexpected Token create")
       },

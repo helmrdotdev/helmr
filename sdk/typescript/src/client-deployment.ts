@@ -1,6 +1,7 @@
-import type { JsonValue } from "./contract"
+import type { CursorPage, JsonValue } from "./contract"
 import type { RequestOptions } from "./request"
 import { resourceID } from "./internal/id"
+import { timestampString } from "./internal/timestamp"
 
 export type DeploymentStatus = "queued" | "building" | "deployed" | "failed"
 
@@ -10,11 +11,9 @@ export interface DeploymentFailure {
   readonly details: Readonly<Record<string, JsonValue>>
 }
 
-export interface DeploymentSnapshot {
+export interface Deployment {
   readonly id: string
   readonly version: string
-  readonly projectId: string
-  readonly environmentId: string
   readonly contentHash: string
   readonly deploymentSource: Readonly<{
     digest: string
@@ -30,12 +29,32 @@ export interface DeploymentSnapshot {
   readonly failedAt?: string
 }
 
+export interface DeploymentListItem {
+  readonly id: string
+  readonly version: string
+  readonly status: DeploymentStatus
+  readonly createdAt: string
+  readonly buildingAt?: string
+  readonly builtAt?: string
+  readonly deployedAt?: string
+  readonly failedAt?: string
+}
+
+export interface DeploymentListQuery {
+  readonly cursor?: string
+  readonly limit?: number
+}
+
 export interface ClientDeploymentsApi {
-  current(options?: RequestOptions): Promise<DeploymentSnapshot | null>
+  list(
+    query?: DeploymentListQuery,
+    options?: RequestOptions,
+  ): Promise<CursorPage<DeploymentListItem>>
+  current(options?: RequestOptions): Promise<Deployment | null>
   retrieve(
     deploymentId: string,
     options?: RequestOptions,
-  ): Promise<DeploymentSnapshot>
+  ): Promise<Deployment>
 }
 
 interface DeploymentTransport {
@@ -50,9 +69,42 @@ export function createClientDeployments(
   transport: DeploymentTransport,
 ): ClientDeploymentsApi {
   return Object.freeze({
+    async list(
+      queryInput: DeploymentListQuery = {},
+      options: RequestOptions = {},
+    ): Promise<CursorPage<DeploymentListItem>> {
+      const query = new URLSearchParams()
+      if (queryInput.cursor !== undefined) {
+        if (queryInput.cursor.length === 0) throw new Error("Deployment cursor is required")
+        query.set("cursor", queryInput.cursor)
+      }
+      if (queryInput.limit !== undefined) {
+        if (!Number.isInteger(queryInput.limit) || queryInput.limit < 1 || queryInput.limit > 100) {
+          throw new Error("Deployment limit must be an integer in [1,100]")
+        }
+        query.set("limit", String(queryInput.limit))
+      }
+      const suffix = query.size === 0 ? "" : `?${query.toString()}`
+      const response = deploymentObject(await transport.request(
+        "GET",
+        `/v1/deployments${suffix}`,
+        options.signal === undefined ? {} : { signal: options.signal },
+      ), "Deployment list response")
+      if (!Array.isArray(response["deployments"])) {
+        throw new Error("Deployment list response.deployments must be an array")
+      }
+      const nextCursor = response["next_cursor"]
+      if (nextCursor !== undefined && typeof nextCursor !== "string") {
+        throw new Error("Deployment list response.next_cursor must be a string")
+      }
+      return Object.freeze({
+        items: Object.freeze(response["deployments"].map(parseDeploymentListItem)),
+        ...(nextCursor === undefined ? {} : { nextCursor }),
+      })
+    },
     async current(
       options: RequestOptions = {},
-    ): Promise<DeploymentSnapshot | null> {
+    ): Promise<Deployment | null> {
       try {
         return parseDeployment(await transport.request(
           "GET",
@@ -67,7 +119,7 @@ export function createClientDeployments(
     async retrieve(
       deploymentId: string,
       options: RequestOptions = {},
-    ): Promise<DeploymentSnapshot> {
+    ): Promise<Deployment> {
       return parseDeployment(
         await transport.request(
           "GET",
@@ -79,18 +131,30 @@ export function createClientDeployments(
   })
 }
 
+function parseDeploymentListItem(value: unknown): DeploymentListItem {
+  const input = deploymentObject(value, "Deployment list item")
+  const status = deploymentStatus(input["status"], "Deployment list item")
+  return Object.freeze({
+    id: resourceID(input["id"], "Deployment list item.id"),
+    version: requiredString(input, "version", "Deployment list item"),
+    status,
+    createdAt: timestamp(input, "created_at", "Deployment list item"),
+    ...optionalTimestamp(input, "building_at", "buildingAt", "Deployment list item"),
+    ...optionalTimestamp(input, "built_at", "builtAt", "Deployment list item"),
+    ...optionalTimestamp(input, "deployed_at", "deployedAt", "Deployment list item"),
+    ...optionalTimestamp(input, "failed_at", "failedAt", "Deployment list item"),
+  })
+}
+
 function errorCode(value: unknown): string | undefined {
   if (value === null || typeof value !== "object") return undefined
   const code = (value as { code?: unknown }).code
   return typeof code === "string" ? code : undefined
 }
 
-function parseDeployment(value: unknown): DeploymentSnapshot {
+function parseDeployment(value: unknown): Deployment {
   const input = deploymentObject(value, "Deployment response")
-  const status = requiredString(input, "status")
-  if (status !== "queued" && status !== "building" && status !== "deployed" && status !== "failed") {
-    throw new Error("Deployment response.status is invalid")
-  }
+  const status = deploymentStatus(input["status"], "Deployment response")
   const source = deploymentObject(input["deployment_source"], "Deployment response.deployment_source")
   const sizeBytes = optionalPositiveInteger(source, "size_bytes", "Deployment response.deployment_source")
   const failure = input["failure"] === undefined
@@ -99,11 +163,9 @@ function parseDeployment(value: unknown): DeploymentSnapshot {
   if ((status === "failed") !== (failure !== undefined)) {
     throw new Error("Deployment response.failure is inconsistent with status")
   }
-  const snapshot: DeploymentSnapshot = {
+  const deployment: Deployment = {
     id: resourceID(input["id"], "Deployment response.id"),
     version: requiredString(input, "version"),
-    projectId: resourceID(input["project_id"], "Deployment response.project_id"),
-    environmentId: resourceID(input["environment_id"], "Deployment response.environment_id"),
     contentHash: requiredString(input, "content_hash"),
     deploymentSource: Object.freeze({
       digest: requiredString(source, "digest", "Deployment response.deployment_source"),
@@ -114,13 +176,13 @@ function parseDeployment(value: unknown): DeploymentSnapshot {
     }),
     status,
     ...(failure === undefined ? {} : { failure }),
-    createdAt: timestamp(input, "created_at"),
+    createdAt: timestamp(input, "created_at", "Deployment response"),
     ...optionalTimestamp(input, "building_at", "buildingAt"),
     ...optionalTimestamp(input, "built_at", "builtAt"),
     ...optionalTimestamp(input, "deployed_at", "deployedAt"),
     ...optionalTimestamp(input, "failed_at", "failedAt"),
   }
-  return Object.freeze(snapshot)
+  return Object.freeze(deployment)
 }
 
 function parseDeploymentFailure(value: unknown): DeploymentFailure {
@@ -155,20 +217,24 @@ function requiredString(
   return result
 }
 
-function timestamp(value: Record<string, unknown>, field: string): string {
-  const result = requiredString(value, field)
-  if (Number.isNaN(Date.parse(result))) {
-    throw new Error(`Deployment response.${field} must be a timestamp`)
-  }
-  return result
+function timestamp(value: Record<string, unknown>, field: string, label: string): string {
+  return timestampString(value[field], `${label}.${field}`)
 }
 
 function optionalTimestamp(
   value: Record<string, unknown>,
   field: string,
   key: string,
+  label = "Deployment response",
 ): Readonly<Record<string, string>> {
-  return value[field] === undefined ? {} : { [key]: timestamp(value, field) }
+  return value[field] === undefined ? {} : { [key]: timestamp(value, field, label) }
+}
+
+function deploymentStatus(value: unknown, label: string): DeploymentStatus {
+  if (value !== "queued" && value !== "building" && value !== "deployed" && value !== "failed") {
+    throw new Error(`${label}.status is invalid`)
+  }
+  return value
 }
 
 function optionalPositiveInteger(

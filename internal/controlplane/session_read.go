@@ -275,9 +275,9 @@ func projectSession(row sessionProjectionRow) (api.Session, error) {
 		return api.Session{}, errors.New("session Deployment ID is invalid")
 	}
 	return api.Session{
-		ID: status.ID, ActorID: row.actorID, DeploymentID: deploymentID,
-		Key: status.Key, Status: status.Status, CreatedAt: status.CreatedAt,
-		UpdatedAt: status.UpdatedAt, CurrentRunID: status.CurrentRunID, Failure: status.Failure,
+		ID: status.id, ActorID: row.actorID, DeploymentID: deploymentID,
+		Key: status.key, Status: status.status, CreatedAt: status.createdAt,
+		UpdatedAt: status.updatedAt, CurrentRunID: status.currentRunID, Failure: status.failure,
 	}, nil
 }
 

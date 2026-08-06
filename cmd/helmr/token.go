@@ -133,8 +133,5 @@ func writeTokenSummary(cmd *cobra.Command, token api.TokenResponse) {
 }
 
 func tokenTimeoutAt(token api.TokenResponse) string {
-	if token.TimeoutAt == nil {
-		return "-"
-	}
 	return token.TimeoutAt.Format("2006-01-02T15:04:05Z07:00")
 }

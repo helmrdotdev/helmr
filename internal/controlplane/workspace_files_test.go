@@ -26,6 +26,26 @@ func TestValidateWorkspaceFilePathRequiresCanonicalRootRelativeUTF8(t *testing.T
 	}
 }
 
+func TestWorkspaceFileQueryIsClosed(t *testing.T) {
+	for _, test := range []struct {
+		raw  string
+		list bool
+	}{
+		{raw: "", list: false},
+		{raw: "path=src&path=other", list: false},
+		{raw: "path=src&cursor=opaque", list: false},
+		{raw: "path=src&unknown=value", list: true},
+		{raw: "path=src&limit=", list: true},
+	} {
+		if _, err := parseWorkspaceFileQuery(test.raw, test.list); err == nil {
+			t.Fatalf("parseWorkspaceFileQuery(%q, %t) succeeded", test.raw, test.list)
+		}
+	}
+	if _, err := parseWorkspaceFileQuery("path=src&cursor=opaque&limit=50", true); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWorkspaceFileCursorPinsWorkspaceVersionAndPath(t *testing.T) {
 	server := &Server{authKeys: auth.Keys{WorkspaceFileCursor: make([]byte, auth.RootKeySize)}}
 	now := time.Unix(1_800_000_000, 0)

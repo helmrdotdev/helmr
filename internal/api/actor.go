@@ -79,7 +79,7 @@ type SendSessionInputRequest struct {
 }
 
 type SessionInputSource struct {
-	Kind  string `json:"kind"`
+	Type  string `json:"type"`
 	RunID string `json:"run_id,omitempty"`
 }
 
@@ -117,16 +117,6 @@ type SessionFailure struct {
 
 type SessionFailureDetails struct {
 	RunID string `json:"run_id,omitempty"`
-}
-
-type SessionStatusSnapshot struct {
-	ID           string          `json:"id"`
-	Key          *string         `json:"key,omitempty"`
-	Status       SessionStatus   `json:"status"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
-	CurrentRunID *string         `json:"current_run_id,omitempty"`
-	Failure      *SessionFailure `json:"failure,omitempty"`
 }
 
 type Session struct {

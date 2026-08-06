@@ -406,6 +406,8 @@ func TestDeviceCodeFlowClient(t *testing.T) {
 
 func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 	now := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
+	observedSequence := int64(1)
+	byteCount := int64(len("hello\n"))
 	paths := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.RequestURI())
@@ -416,8 +418,8 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 				r.URL.Query().Get("limit") != "25" {
 				t.Fatalf("query = %s", r.URL.RawQuery)
 			}
-			_ = json.NewEncoder(w).Encode(api.ListRunSnapshotsResponse{
-				Runs: []api.RunSnapshotResponse{{
+			_ = json.NewEncoder(w).Encode(api.ListRunsResponse{
+				Runs: []api.RunListItem{{
 					ID:         "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
 					Status:     "succeeded",
 					Entrypoint: api.RunEntrypointResponse{Kind: "task", ID: "deploy"},
@@ -429,7 +431,7 @@ func TestListRunsOptionsAndListRunLogs(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.RunLogPage{
 				Logs: []api.RunLogRecord{{
 					ID: "log-cursor", Kind: "stdout", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",
-					AttemptNumber: 1,
+					AttemptNumber: 1, ObservedSequence: &observedSequence, Bytes: &byteCount, At: now,
 					ContentBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
 				}},
 				NextCursor: "cursor-next",

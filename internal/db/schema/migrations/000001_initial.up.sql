@@ -713,6 +713,9 @@ CREATE TABLE deployments (
 CREATE INDEX deployments_program_artifact_idx
     ON deployments (environment_id, program_artifact_id);
 
+CREATE INDEX deployments_scope_created_idx
+    ON deployments (org_id, project_id, environment_id, created_at DESC, id DESC);
+
 CREATE TABLE deployment_definitions (
     id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
@@ -1245,6 +1248,10 @@ CREATE INDEX workspaces_deployment_definition_idx
         deployment_definition_id,
         sandbox_declared_id
     );
+
+CREATE INDEX workspaces_environment_created_idx
+    ON workspaces (environment_id, created_at DESC, id DESC)
+    WHERE deleted_at IS NULL;
 
 CREATE TABLE workspace_secrets (
     workspace_id UUID NOT NULL,
@@ -3460,8 +3467,8 @@ CREATE UNIQUE INDEX environments_org_project_slug_idx ON environments(org_id, pr
 CREATE INDEX deletion_jobs_org_status_requested_idx ON deletion_jobs(org_id, status, requested_at DESC);
 CREATE INDEX runs_org_created_idx ON runs(org_id, created_at DESC);
 CREATE INDEX runs_org_status_created_idx ON runs(org_id, status, created_at DESC);
-CREATE INDEX runs_scope_created_idx ON runs(org_id, project_id, environment_id, created_at DESC);
-CREATE INDEX runs_scope_status_created_idx ON runs(org_id, project_id, environment_id, status, created_at DESC);
+CREATE INDEX runs_scope_created_idx ON runs(org_id, project_id, environment_id, created_at DESC, id DESC);
+CREATE INDEX runs_scope_status_created_idx ON runs(org_id, project_id, environment_id, status, created_at DESC, id DESC);
 CREATE INDEX runs_schedule_idx
     ON runs (org_id, project_id, environment_id, schedule_id, created_at DESC)
     WHERE schedule_id IS NOT NULL;
@@ -3513,7 +3520,8 @@ CREATE INDEX telemetry_outbox_run_attempt_number_idx ON telemetry_outbox(org_id,
     WHERE attempt_number IS NOT NULL;
 CREATE INDEX run_checkpoints_run_state_idx ON run_checkpoints(run_id, state, created_at DESC);
 CREATE INDEX run_checkpoint_artifacts_role_idx ON run_checkpoint_artifacts(run_checkpoint_id, role, ordinal);
-CREATE INDEX tokens_scope_state_idx ON tokens(org_id, project_id, environment_id, state, created_at DESC);
+CREATE INDEX tokens_scope_created_idx ON tokens(org_id, project_id, environment_id, created_at DESC, id DESC);
+CREATE INDEX tokens_scope_state_idx ON tokens(org_id, project_id, environment_id, state, created_at DESC, id DESC);
 CREATE INDEX tokens_expiry_pending_idx ON tokens(expires_at, id)
     WHERE state = 'pending';
 CREATE INDEX tokens_callback_fingerprint_pending_idx ON tokens(callback_secret_fingerprint)

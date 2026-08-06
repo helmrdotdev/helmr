@@ -534,7 +534,7 @@ func (c *Client) runItemPath(id string, suffix string, opts ...RunScopeOptions) 
 	return environmentScopedResourcePath(basePath, id, suffix), nil
 }
 
-func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.ListRunSnapshotsResponse, error) {
+func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.ListRunsResponse, error) {
 	scope := RunScopeOptions{}
 	if len(opts) > 0 {
 		scope.ProjectID = opts[0].ProjectID
@@ -542,7 +542,7 @@ func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.Lis
 	}
 	path, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/runs")
 	if err != nil {
-		return api.ListRunSnapshotsResponse{}, err
+		return api.ListRunsResponse{}, err
 	}
 	if len(opts) > 0 {
 		values := url.Values{}
@@ -563,11 +563,11 @@ func (c *Client) ListRuns(ctx context.Context, opts ...ListRunsOptions) (api.Lis
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.ListRunSnapshotsResponse{}, err
+		return api.ListRunsResponse{}, err
 	}
-	var response api.ListRunSnapshotsResponse
+	var response api.ListRunsResponse
 	if err := c.doJSON(req, &response); err != nil {
-		return api.ListRunSnapshotsResponse{}, err
+		return api.ListRunsResponse{}, err
 	}
 	return response, nil
 }
@@ -607,14 +607,14 @@ func (c *Client) ListRunLogs(ctx context.Context, id string, opts ...ListRunLogs
 	return response, nil
 }
 
-func (c *Client) ListRunEvents(ctx context.Context, id string, opts ...ListRunEventsOptions) (api.RunEventPage, error) {
+func (c *Client) ListRunEvents(ctx context.Context, id string, opts ...ListRunEventsOptions) (api.RunEventRecordPage, error) {
 	scope := RunScopeOptions{}
 	if len(opts) > 0 {
 		scope = opts[0].RunScopeOptions
 	}
 	path, err := c.runItemPath(id, "/events", scope)
 	if err != nil {
-		return api.RunEventPage{}, err
+		return api.RunEventRecordPage{}, err
 	}
 	if len(opts) > 0 {
 		values := url.Values{}
@@ -633,11 +633,11 @@ func (c *Client) ListRunEvents(ctx context.Context, id string, opts ...ListRunEv
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.RunEventPage{}, err
+		return api.RunEventRecordPage{}, err
 	}
-	var response api.RunEventPage
+	var response api.RunEventRecordPage
 	if err := c.doJSON(req, &response); err != nil {
-		return api.RunEventPage{}, err
+		return api.RunEventRecordPage{}, err
 	}
 	return response, nil
 }

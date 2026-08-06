@@ -168,7 +168,10 @@ RETURNING *;
 -- name: FinishCheckpointFailedActorRun :one
 UPDATE runs
    SET status = sqlc.arg(status),
-       output = NULL,
+       output = CASE
+           WHEN sqlc.arg(status)::text = 'succeeded' THEN 'null'::jsonb
+           ELSE NULL
+       END,
        failure = sqlc.narg(failure),
        state_version = state_version + 1,
        current_run_lease_id = NULL,
@@ -188,7 +191,10 @@ RETURNING *;
 -- name: FinishActorRun :one
 UPDATE runs
    SET status = sqlc.arg(status),
-       output = NULL,
+       output = CASE
+           WHEN sqlc.arg(status)::text = 'succeeded' THEN 'null'::jsonb
+           ELSE NULL
+       END,
        failure = sqlc.narg(failure),
        state_version = state_version + 1,
        current_run_lease_id = NULL,

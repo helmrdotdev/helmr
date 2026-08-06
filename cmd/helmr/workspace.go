@@ -370,7 +370,7 @@ func (flags workspaceAddressFlags) retrieve(
 	if len(response.Workspaces) == 0 {
 		return api.WorkspaceSnapshot{}, errors.New("workspace not found")
 	}
-	return response.Workspaces[0], nil
+	return controlPlane.GetWorkspace(command.Context(), response.Workspaces[0].ID, scope)
 }
 
 func (flags workspaceAddressFlags) resolveID(

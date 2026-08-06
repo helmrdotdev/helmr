@@ -13,7 +13,7 @@ import {
   type StandardSchemaV1,
 } from "./schema/payload"
 
-export interface TokenCreateOptions {
+export interface TokenCreateRequest {
   readonly timeout?: Duration
   readonly metadata?: Metadata
   readonly tags?: readonly string[]
@@ -27,9 +27,11 @@ export interface TokenWaitOptions {
   readonly tags?: readonly string[]
 }
 
-export interface TokenSnapshot {
+export type TokenStatus = "pending" | "completed" | "cancelled" | "expired"
+
+export interface Token {
   readonly id: string
-  readonly status: "pending" | "completed" | "cancelled" | "expired"
+  readonly status: TokenStatus
   readonly result?: JsonValue
   readonly metadata: Metadata
   readonly tags: readonly string[]
@@ -39,14 +41,28 @@ export interface TokenSnapshot {
   readonly updatedAt: string
 }
 
+export interface TokenListItem {
+  readonly id: string
+  readonly status: TokenStatus
+  readonly tags: readonly string[]
+  readonly timeoutAt: string
+  readonly completedAt?: string
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
+export interface TokenListQuery {
+  readonly status?: TokenStatus
+  readonly cursor?: string
+  readonly limit?: number
+}
+
 export interface TokenCancelledError extends HelmrError {
   readonly code: "token_cancelled"
-  readonly retryable: false
 }
 
 export interface TokenExpiredError extends HelmrError {
   readonly code: "token_expired"
-  readonly retryable: false
 }
 
 export type TokenWaitError =
@@ -62,14 +78,10 @@ export interface TokenWait<T> extends PromiseLike<TokenWaitResult<T>> {
   unwrap(): Promise<T>
 }
 
-export interface TokenCreateResult extends TokenSnapshot {
+export interface TokenCreateResult extends Token {
   readonly status: "pending"
   readonly callbackUrl: string
   readonly publicAccessToken: string
-  wait(options?: TokenWaitOptions): TokenWait<JsonValue>
-  wait<TSchema extends StandardSchemaV1<any, any>>(
-    options: TokenWaitOptions & Readonly<{ schema: TSchema }>,
-  ): TokenWait<PayloadSchemaOutput<TSchema>>
 }
 
 export interface TokenRef {
@@ -80,18 +92,18 @@ export interface TokenRef {
   ): TokenWait<PayloadSchemaOutput<TSchema>>
 }
 
-export interface Tokens {
-  create(options?: TokenCreateOptions): Promise<TokenCreateResult>
+interface Tokens {
+  create(request?: TokenCreateRequest): Promise<TokenCreateResult & TokenRef>
   ref(id: string): TokenRef
 }
 
 export const tokens: Tokens = Object.freeze({
-  async create(options: TokenCreateOptions = {}): Promise<TokenCreateResult> {
-    const snapshot = await currentRuntimeOperations().tokenCreate(options)
+  async create(request: TokenCreateRequest = {}): Promise<TokenCreateResult & TokenRef> {
+    const token = await currentRuntimeOperations().tokenCreate(request)
     return Object.freeze({
-      ...snapshot,
-      wait: tokenWait(snapshot.id),
-    }) as TokenCreateResult
+      ...token,
+      wait: tokenWait(token.id),
+    }) as TokenCreateResult & TokenRef
   },
   ref(id: string): TokenRef {
     const normalized = resourceID(id, "Token ID")
@@ -154,9 +166,7 @@ function tokenWaitError(value: unknown): TokenWaitError {
     "code" in value &&
     (value.code === "wait_timeout" ||
       value.code === "token_cancelled" ||
-      value.code === "token_expired") &&
-    "retryable" in value &&
-    value.retryable === false
+      value.code === "token_expired")
   ) {
     return value as TokenWaitError
   }

@@ -302,21 +302,21 @@ func decodeDefinitionListCursor(raw string) (definitionListCursor, error) {
 func writeDefinitionList(w http.ResponseWriter, kind, deploymentID string, ids []string, nextCursor string) {
 	switch kind {
 	case "task":
-		items := make([]api.Task, 0, len(ids))
+		items := make([]api.DefinitionListItem, 0, len(ids))
 		for _, id := range ids {
-			items = append(items, api.Task{ID: id, DeploymentID: deploymentID})
+			items = append(items, api.DefinitionListItem{ID: id})
 		}
 		writeJSON(w, http.StatusOK, api.ListTasksResponse{DeploymentID: deploymentID, Tasks: items, NextCursor: nextCursor})
 	case "actor":
-		items := make([]api.Actor, 0, len(ids))
+		items := make([]api.DefinitionListItem, 0, len(ids))
 		for _, id := range ids {
-			items = append(items, api.Actor{ID: id, DeploymentID: deploymentID})
+			items = append(items, api.DefinitionListItem{ID: id})
 		}
 		writeJSON(w, http.StatusOK, api.ListActorsResponse{DeploymentID: deploymentID, Actors: items, NextCursor: nextCursor})
 	case "sandbox":
-		items := make([]api.Sandbox, 0, len(ids))
+		items := make([]api.DefinitionListItem, 0, len(ids))
 		for _, id := range ids {
-			items = append(items, api.Sandbox{ID: id, DeploymentID: deploymentID})
+			items = append(items, api.DefinitionListItem{ID: id})
 		}
 		writeJSON(w, http.StatusOK, api.ListSandboxesResponse{DeploymentID: deploymentID, Sandboxes: items, NextCursor: nextCursor})
 	}

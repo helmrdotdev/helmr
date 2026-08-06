@@ -1,48 +1,63 @@
 import type { CursorPage } from "./contract"
 import { resourceID } from "./internal/id"
+import { timestampString } from "./internal/timestamp"
 import type { RequestOptions } from "./request"
 import { validateSecretName } from "./secret"
 
-export type SecretValue = string
 export type SecretStatus = "active" | "revoked"
 
-export interface SecretSnapshot {
+export interface SecretCreateRequest {
+  readonly name: string
+  readonly value: string
+  readonly idempotencyKey?: string
+}
+
+export interface SecretRotateRequest {
+  readonly value: string
+  readonly idempotencyKey: string
+}
+
+export interface SecretRevokeRequest {
+  readonly idempotencyKey: string
+}
+
+export interface Secret {
   readonly id: string
   readonly name: string
   readonly status: SecretStatus
-  readonly createdAt: Date
-  readonly rotatedAt?: Date
-  readonly revokedAt?: Date
+  readonly createdAt: string
+  readonly rotatedAt?: string
+  readonly revokedAt?: string
 }
 
 export interface SecretRef {
   readonly id: string
-  retrieve(options?: RequestOptions): Promise<SecretSnapshot>
   rotate(
-    request: Readonly<{ value: SecretValue; idempotencyKey: string }>,
+    request: SecretRotateRequest,
     options?: RequestOptions,
-  ): Promise<SecretSnapshot>
+  ): Promise<Secret>
   revoke(
-    request: Readonly<{ idempotencyKey: string }>,
+    request: SecretRevokeRequest,
     options?: RequestOptions,
-  ): Promise<SecretSnapshot>
+  ): Promise<Secret>
 }
 
 export interface ClientSecretsApi {
   create(
-    request: Readonly<{
-      name: string
-      value: SecretValue
-      idempotencyKey?: string
-    }>,
+    request: SecretCreateRequest,
     options?: RequestOptions,
-  ): Promise<SecretSnapshot>
+  ): Promise<Secret>
+  retrieve(id: string, options?: RequestOptions): Promise<Secret>
   ref(id: string): SecretRef
   list(
-    query?: Readonly<{ cursor?: string; limit?: number; name?: string }>,
+    query?: SecretListQuery,
     options?: RequestOptions,
-  ): Promise<CursorPage<SecretSnapshot>>
+  ): Promise<CursorPage<Secret>>
 }
+
+export type SecretListQuery =
+  | Readonly<{ name?: never; cursor?: string; limit?: number }>
+  | Readonly<{ name: string; cursor?: never; limit?: never }>
 
 interface SecretTransport {
   request(
@@ -57,19 +72,15 @@ export function createClientSecrets(
 ): ClientSecretsApi {
   return Object.freeze({
     async create(
-      request: Readonly<{
-        name: string
-        value: SecretValue
-        idempotencyKey?: string
-      }>,
+      request: SecretCreateRequest,
       options: RequestOptions = {},
-    ): Promise<SecretSnapshot> {
+    ): Promise<Secret> {
       validateSecretName(request.name)
       if (typeof request.value !== "string") {
         throw new Error("Secret create request.value must be a string")
       }
       validateOptionalIdempotencyKey(request.idempotencyKey)
-      return parseSecretSnapshot(
+      return parseSecret(
         await transport.request("POST", "/v1/secrets", {
           body: {
             name: request.name,
@@ -82,13 +93,26 @@ export function createClientSecrets(
         }),
       )
     },
+    async retrieve(
+      id: string,
+      options: RequestOptions = {},
+    ): Promise<Secret> {
+      const secretID = resourceID(id, "Secret ID")
+      return parseSecret(
+        await transport.request(
+          "GET",
+          `/v1/secrets/${encodeURIComponent(secretID)}`,
+          options.signal === undefined ? {} : { signal: options.signal },
+        ),
+      )
+    },
     ref(id: string): SecretRef {
       return createSecretRef(id, transport)
     },
     async list(
-      queryInput: Readonly<{ cursor?: string; limit?: number; name?: string }> = {},
+      queryInput: SecretListQuery = {},
       options: RequestOptions = {},
-    ): Promise<CursorPage<SecretSnapshot>> {
+    ): Promise<CursorPage<Secret>> {
       const query = new URLSearchParams()
       if (queryInput.name !== undefined) {
         validateSecretName(queryInput.name)
@@ -129,7 +153,7 @@ export function createClientSecrets(
       }
       return Object.freeze({
         items: Object.freeze(
-          response["secrets"].map((value) => parseSecretSnapshot(value)),
+          response["secrets"].map((value) => parseSecret(value)),
         ),
         ...(nextCursor === undefined ? {} : { nextCursor }),
       })
@@ -145,24 +169,15 @@ function createSecretRef(
   const path = `/v1/secrets/${encodeURIComponent(secretID)}`
   return Object.freeze({
     id: secretID,
-    async retrieve(options: RequestOptions = {}): Promise<SecretSnapshot> {
-      return parseSecretSnapshot(
-        await transport.request(
-          "GET",
-          path,
-          options.signal === undefined ? {} : { signal: options.signal },
-        ),
-      )
-    },
     async rotate(
-      request: Readonly<{ value: SecretValue; idempotencyKey: string }>,
+      request: SecretRotateRequest,
       options: RequestOptions = {},
-    ): Promise<SecretSnapshot> {
+    ): Promise<Secret> {
       if (typeof request.value !== "string") {
         throw new Error("Secret rotate request.value must be a string")
       }
       validateIdempotencyKey(request.idempotencyKey)
-      return parseSecretSnapshot(
+      return parseSecret(
         await transport.request("POST", `${path}/rotate`, {
           body: {
             value: request.value,
@@ -173,11 +188,11 @@ function createSecretRef(
       )
     },
     async revoke(
-      request: Readonly<{ idempotencyKey: string }>,
+      request: SecretRevokeRequest,
       options: RequestOptions = {},
-    ): Promise<SecretSnapshot> {
+    ): Promise<Secret> {
       validateIdempotencyKey(request.idempotencyKey)
-      return parseSecretSnapshot(
+      return parseSecret(
         await transport.request("POST", `${path}/revoke`, {
           body: { idempotency_key: request.idempotencyKey },
           ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -187,7 +202,7 @@ function createSecretRef(
   })
 }
 
-function parseSecretSnapshot(value: unknown): SecretSnapshot {
+function parseSecret(value: unknown): Secret {
   const input = objectValue(value, "Secret response")
   const id = input["id"]
   const name = input["name"]
@@ -215,20 +230,15 @@ function optionalDate(
   input: Record<string, unknown>,
   wireName: string,
   fieldName: "rotatedAt" | "revokedAt",
-): Partial<Pick<SecretSnapshot, "rotatedAt" | "revokedAt">> {
+): Partial<Pick<Secret, "rotatedAt" | "revokedAt">> {
   const value = input[wireName]
-  return value === undefined || value === null
+  return value === undefined
     ? {}
     : { [fieldName]: dateValue(value, `Secret response.${wireName}`) }
 }
 
-function dateValue(value: unknown, label: string): Date {
-  if (typeof value !== "string") throw new Error(`${label} must be a string`)
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) {
-    throw new Error(`${label} must be an RFC 3339 timestamp`)
-  }
-  return parsed
+function dateValue(value: unknown, label: string): string {
+  return timestampString(value, label)
 }
 
 function validateOptionalIdempotencyKey(value: string | undefined): void {

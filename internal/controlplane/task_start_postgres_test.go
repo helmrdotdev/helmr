@@ -92,7 +92,7 @@ func TestTaskStartPostgresCommitsAndReplaysOneAdmission(t *testing.T) {
 		snapshot.ParentRunID.Valid {
 		t.Fatalf("snapshot = %+v", snapshot)
 	}
-	listed, err := queries.ListRunSnapshots(t.Context(), db.ListRunSnapshotsParams{
+	listed, err := queries.ListRunListItems(t.Context(), db.ListRunListItemsParams{
 		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), LimitCount: 10,
 	})

@@ -96,7 +96,7 @@ func TestDeployCommandUploadsCurrentDirectoryTaskArtifact(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", ProjectID: "project-resolved", EnvironmentID: "environment-resolved", Status: "queued"})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "queued"})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
 			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
@@ -220,10 +220,8 @@ func TestDeployCommandWaitsWithResolvedConfiguredScope(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-				ID:            "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-				ProjectID:     "project-resolved",
-				EnvironmentID: "environment-resolved",
-				Status:        "queued",
+				ID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
+				Status: "queued",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
 			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
@@ -266,10 +264,8 @@ func TestDeployCommandReconnectsDeploymentEventsUntilTerminal(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-				ID:            "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-				ProjectID:     "project-resolved",
-				EnvironmentID: "environment-resolved",
-				Status:        "queued",
+				ID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
+				Status: "queued",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
 			eventRequests++
@@ -386,10 +382,8 @@ func TestFailingBuildFixtureReachesDeploymentCreation(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-			ID:            "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-			ProjectID:     "project-resolved",
-			EnvironmentID: "environment-resolved",
-			Status:        "queued",
+			ID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
+			Status: "queued",
 		})
 	}))
 	defer server.Close()
@@ -444,7 +438,7 @@ func TestDeployCommandJSONUsesProjectAndEnv(t *testing.T) {
 		if err := json.Unmarshal(encodedMetadata, &metadataFields); err != nil {
 			t.Fatal(err)
 		}
-		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", ProjectID: "project-override", EnvironmentID: "prod", Status: "queued"})
+		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "queued"})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -505,10 +499,8 @@ func TestDeployCommandSkipPromotionDoesNotPromote(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-				ID:            "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-				ProjectID:     "project-resolved",
-				EnvironmentID: "environment-resolved",
-				Status:        "queued",
+				ID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
+				Status: "queued",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
 			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
@@ -544,10 +536,8 @@ func TestDeployCommandReturnsFailedDeploymentError(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
-				ID:            "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-				ProjectID:     "project-resolved",
-				EnvironmentID: "environment-resolved",
-				Status:        "queued",
+				ID:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
+				Status: "queued",
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
 			writeDeploymentEventSSE(t, w, r, "deployment.failed")
@@ -579,14 +569,22 @@ func TestDeployCommandReturnsFailedDeploymentError(t *testing.T) {
 	}
 }
 
-func TestDeployCommandRequiresResolvedDeploymentScopeWithSession(t *testing.T) {
+func TestDeployCommandReusesExplicitSessionScope(t *testing.T) {
 	state := installTestCLIConfig(t)
 	root, _ := deployCommandFixture(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/agents/environments/prod/deployments" {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/projects/agents/environments/prod/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "queued"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/agents/environments/prod/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
+			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/agents/environments/prod/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "deployed"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/projects/agents/environments/prod/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "deployed"})
+		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
-		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "queued"})
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -598,9 +596,8 @@ func TestDeployCommandRequiresResolvedDeploymentScopeWithSession(t *testing.T) {
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{"deploy", root, "--project", "agents", "--env", "prod"})
-	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "deployment 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35 response did not include resolved project_id and environment_id") {
-		t.Fatalf("err = %v", err)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
 	}
 }
 

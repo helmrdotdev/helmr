@@ -38,7 +38,7 @@ const run = await client.tasks.start<typeof issueTask>(
   },
 )
 
-const result = await client.runs.wait<typeof issueTask>(run.id)
+const result = await client.runs.wait(run)
 const logs = await client.runs.logs(run.id)
 const events = await client.runs.events(run.id)
 ```

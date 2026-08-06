@@ -1,59 +1,61 @@
+import { createClientWorkspaceRef, type WorkspaceTransport } from "./client-workspace"
 import type { CursorPage } from "./contract"
-import { createClientWorkspaceRef, type ClientWorkspaceRef, type WorkspaceTransport } from "./client-workspace"
 import { resourceID } from "./internal/id"
 import type { RequestOptions } from "./request"
 import { validateTaskId } from "./schema/task"
 import {
   encodeWorkspaceSecrets,
-  parseWorkspaceSnapshot,
-  type WorkspaceSecretInput,
+  parseWorkspace,
+  type WorkspaceCreateRequest,
+  type WorkspaceRef,
 } from "./workspace"
+import {
+  definitionItemQuery,
+  definitionListQuery,
+} from "./internal/definition-query"
 
-export interface SandboxSnapshot {
-  readonly id: string
-  readonly deploymentId: string
-}
-
-export interface SandboxReadQuery {
+export interface SandboxRetrieveQuery {
   readonly deploymentId?: string
 }
 
-export interface SandboxListQuery extends SandboxReadQuery {
+export interface SandboxListQuery extends SandboxRetrieveQuery {
   readonly cursor?: string
   readonly limit?: number
 }
 
-export interface SandboxPage extends CursorPage<SandboxSnapshot> {
+export interface SandboxListItem {
+  readonly id: string
+}
+
+export interface SandboxInfo extends SandboxListItem {
   readonly deploymentId: string
 }
 
-export interface SandboxWorkspaceCreateRequest {
-  readonly key?: string
-  readonly secrets?: readonly WorkspaceSecretInput[]
-  readonly idempotencyKey?: string
+export interface SandboxPage extends CursorPage<SandboxListItem> {
+  readonly deploymentId: string
 }
 
 export interface ClientSandboxesApi {
-  retrieve(id: string, query?: SandboxReadQuery, options?: RequestOptions): Promise<SandboxSnapshot>
+  retrieve(id: string, query?: SandboxRetrieveQuery, options?: RequestOptions): Promise<SandboxInfo>
   list(query?: SandboxListQuery, options?: RequestOptions): Promise<SandboxPage>
   createWorkspace(
     id: string,
-    request?: SandboxWorkspaceCreateRequest,
+    request?: WorkspaceCreateRequest,
     options?: RequestOptions,
-  ): Promise<ClientWorkspaceRef>
+  ): Promise<WorkspaceRef>
 }
 
 export function createClientSandboxes(transport: WorkspaceTransport): ClientSandboxesApi {
   return Object.freeze({
     async retrieve(
       id: string,
-      query: SandboxReadQuery = {},
+      query: SandboxRetrieveQuery = {},
       options: RequestOptions = {},
-    ): Promise<SandboxSnapshot> {
+    ): Promise<SandboxInfo> {
       validateTaskId(id)
-      return parseSandboxSnapshot(await transport.request(
+      return parseSandboxInfo(await transport.request(
         "GET",
-        `/v1/sandboxes/${encodeURIComponent(id)}${sandboxQuery(query)}`,
+        `/v1/sandboxes/${encodeURIComponent(id)}${definitionItemQuery(query, "Sandbox")}`,
         options.signal === undefined ? {} : { signal: options.signal },
       ))
     },
@@ -63,7 +65,7 @@ export function createClientSandboxes(transport: WorkspaceTransport): ClientSand
     ): Promise<SandboxPage> {
       const response = objectValue(await transport.request(
         "GET",
-        `/v1/sandboxes${sandboxQuery(queryInput)}`,
+        `/v1/sandboxes${definitionListQuery(queryInput, "Sandbox")}`,
         options.signal === undefined ? {} : { signal: options.signal },
       ), "Sandbox list response")
       if (!Array.isArray(response["sandboxes"])) {
@@ -75,18 +77,18 @@ export function createClientSandboxes(transport: WorkspaceTransport): ClientSand
       }
       return Object.freeze({
         deploymentId: resourceID(response["deployment_id"], "Sandbox list response.deployment_id"),
-        items: Object.freeze(response["sandboxes"].map(parseSandboxSnapshot)),
+        items: Object.freeze(response["sandboxes"].map(parseSandboxListItem)),
         ...(nextCursor === undefined ? {} : { nextCursor }),
       })
     },
     async createWorkspace(
       id: string,
-      request: SandboxWorkspaceCreateRequest = {},
+      request: WorkspaceCreateRequest = {},
       options: RequestOptions = {},
-    ): Promise<ClientWorkspaceRef> {
+    ): Promise<WorkspaceRef> {
       validateTaskId(id)
       const secrets = encodeWorkspaceSecrets(request.secrets)
-      const snapshot = parseWorkspaceSnapshot(await transport.request(
+      const workspace = parseWorkspace(await transport.request(
         "POST",
         `/v1/sandboxes/${encodeURIComponent(id)}/workspaces`,
         {
@@ -98,30 +100,12 @@ export function createClientSandboxes(transport: WorkspaceTransport): ClientSand
           ...(options.signal === undefined ? {} : { signal: options.signal }),
         },
       ))
-      return createClientWorkspaceRef(snapshot.id, transport)
+      return createClientWorkspaceRef(workspace.id, transport)
     },
   })
 }
 
-function sandboxQuery(queryInput: SandboxListQuery): string {
-  const query = new URLSearchParams()
-  if (queryInput.deploymentId !== undefined) {
-    query.set("deployment_id", resourceID(queryInput.deploymentId, "Deployment ID"))
-  }
-  if (queryInput.cursor !== undefined) {
-    if (queryInput.cursor.length === 0) throw new Error("Sandbox cursor is required")
-    query.set("cursor", queryInput.cursor)
-  }
-  if (queryInput.limit !== undefined) {
-    if (!Number.isInteger(queryInput.limit) || queryInput.limit < 1 || queryInput.limit > 100) {
-      throw new Error("Sandbox limit must be an integer in [1,100]")
-    }
-    query.set("limit", queryInput.limit.toString())
-  }
-  return query.size === 0 ? "" : `?${query.toString()}`
-}
-
-function parseSandboxSnapshot(value: unknown): SandboxSnapshot {
+function parseSandboxInfo(value: unknown): SandboxInfo {
   const input = objectValue(value, "Sandbox response")
   const id = input["id"]
   if (typeof id !== "string") throw new Error("Sandbox response.id must be a string")
@@ -130,6 +114,14 @@ function parseSandboxSnapshot(value: unknown): SandboxSnapshot {
     id,
     deploymentId: resourceID(input["deployment_id"], "Sandbox response.deployment_id"),
   })
+}
+
+function parseSandboxListItem(value: unknown): SandboxListItem {
+  const input = objectValue(value, "Sandbox list item")
+  const id = input["id"]
+  if (typeof id !== "string") throw new Error("Sandbox list item.id must be a string")
+  validateTaskId(id)
+  return Object.freeze({ id })
 }
 
 function objectValue(value: unknown, label: string): Record<string, unknown> {

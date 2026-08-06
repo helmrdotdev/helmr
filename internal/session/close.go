@@ -150,7 +150,7 @@ func reconcileCurrentRunClose(
 	if err != nil {
 		return db.Session{}, false, err
 	}
-	if _, err := FailWait(ctx, store, wait, "actor_closed"); err != nil {
+	if _, err := FailWait(ctx, store, wait, "session_closed"); err != nil {
 		return db.Session{}, false, fmt.Errorf("complete actor close input wait: %w", err)
 	}
 	return actor, false, nil

@@ -1,53 +1,57 @@
 import type {
-  ActorDefinition,
+  ActorStartResult,
   ActorStartOptions,
   CursorPage,
-  RunHandle,
-  WorkspaceIdAddress,
 } from "./contract"
 import { resourceID } from "./internal/id"
+import { createRunHandle } from "./internal/run-handle"
 import type { RequestOptions } from "./request"
 import { validateTaskId } from "./schema/task"
-import { createSessionRef, type SessionRef } from "./client-session"
-import { requireWorkspaceIDAddress } from "./workspace"
+import { createSessionRef } from "./client-session"
+import { workspaceRefID } from "./workspace"
+import {
+  definitionItemQuery,
+  definitionListQuery,
+} from "./internal/definition-query"
 
-export type ClientActorStartRequest = Omit<ActorStartOptions, "signal" | "workspace"> & Readonly<{
-  workspace: WorkspaceIdAddress
-}>
+export type ActorStartRequest = Omit<ActorStartOptions, "signal">
 
-export interface ActorSnapshot {
-  readonly id: string
-  readonly deploymentId: string
-}
-
-export interface ActorReadQuery {
+export interface ActorRetrieveQuery {
   readonly deploymentId?: string
 }
 
-export interface ActorListQuery extends ActorReadQuery {
+export interface ActorListQuery extends ActorRetrieveQuery {
   readonly cursor?: string
   readonly limit?: number
 }
 
-export interface ActorPage extends CursorPage<ActorSnapshot> {
+export interface ActorListItem {
+  readonly id: string
+}
+
+export interface ActorInfo extends ActorListItem {
+  readonly deploymentId: string
+}
+
+export interface ActorPage extends CursorPage<ActorListItem> {
   readonly deploymentId: string
 }
 
 export interface ClientActorsApi {
   retrieve(
     id: string,
-    query?: ActorReadQuery,
+    query?: ActorRetrieveQuery,
     options?: RequestOptions,
-  ): Promise<ActorSnapshot>
+  ): Promise<ActorInfo>
   list(
     query?: ActorListQuery,
     options?: RequestOptions,
   ): Promise<ActorPage>
-  start<TActor extends ActorDefinition>(
+  start(
     id: string,
-    request: ClientActorStartRequest,
+    request: ActorStartRequest,
     options?: RequestOptions,
-  ): Promise<{ session: SessionRef; run: RunHandle }>
+  ): Promise<ActorStartResult>
 }
 
 interface ActorTransport {
@@ -62,13 +66,13 @@ export function createClientActors(transport: ActorTransport): ClientActorsApi {
   return Object.freeze({
     async retrieve(
       id: string,
-      query: ActorReadQuery = {},
+      query: ActorRetrieveQuery = {},
       options: RequestOptions = {},
-    ): Promise<ActorSnapshot> {
+    ): Promise<ActorInfo> {
       validateTaskId(id)
-      return parseActorSnapshot(await transport.request(
+      return parseActorInfo(await transport.request(
         "GET",
-        `/v1/actors/${encodeURIComponent(id)}${definitionQuery(query)}`,
+        `/v1/actors/${encodeURIComponent(id)}${definitionItemQuery(query, "Actor")}`,
         options.signal === undefined ? {} : { signal: options.signal },
       ))
     },
@@ -78,7 +82,7 @@ export function createClientActors(transport: ActorTransport): ClientActorsApi {
     ): Promise<ActorPage> {
       const response = objectValue(await transport.request(
         "GET",
-        `/v1/actors${definitionQuery(queryInput)}`,
+        `/v1/actors${definitionListQuery(queryInput, "Actor")}`,
         options.signal === undefined ? {} : { signal: options.signal },
       ), "Actor list response")
       if (!Array.isArray(response["actors"])) {
@@ -90,15 +94,15 @@ export function createClientActors(transport: ActorTransport): ClientActorsApi {
       }
       return Object.freeze({
         deploymentId: resourceID(response["deployment_id"], "Actor list response.deployment_id"),
-        items: Object.freeze(response["actors"].map(parseActorSnapshot)),
+        items: Object.freeze(response["actors"].map(parseActorListItem)),
         ...(nextCursor === undefined ? {} : { nextCursor }),
       })
     },
-    async start<TActor extends ActorDefinition>(
+    async start(
       id: string,
-      request: ClientActorStartRequest,
+      request: ActorStartRequest,
       options: RequestOptions = {},
-    ): Promise<{ session: SessionRef; run: RunHandle }> {
+    ): Promise<ActorStartResult> {
       validateTaskId(id)
       const response = objectValue(await transport.request(
         "POST",
@@ -112,31 +116,13 @@ export function createClientActors(transport: ActorTransport): ClientActorsApi {
       const runID = resourceID(response["run_id"], "Actor start response.run_id")
       return Object.freeze({
         session: createSessionRef(sessionID, transport),
-        run: Object.freeze({ id: runID }),
+        run: createRunHandle<null>(runID),
       })
     },
   })
 }
 
-function definitionQuery(queryInput: ActorListQuery): string {
-  const query = new URLSearchParams()
-  if (queryInput.deploymentId !== undefined) {
-    query.set("deployment_id", resourceID(queryInput.deploymentId, "Deployment ID"))
-  }
-  if (queryInput.cursor !== undefined) {
-    if (queryInput.cursor.length === 0) throw new Error("Actor cursor is required")
-    query.set("cursor", queryInput.cursor)
-  }
-  if (queryInput.limit !== undefined) {
-    if (!Number.isInteger(queryInput.limit) || queryInput.limit < 1 || queryInput.limit > 100) {
-      throw new Error("Actor limit must be an integer in [1,100]")
-    }
-    query.set("limit", queryInput.limit.toString())
-  }
-  return query.size === 0 ? "" : `?${query.toString()}`
-}
-
-function parseActorSnapshot(value: unknown): ActorSnapshot {
+function parseActorInfo(value: unknown): ActorInfo {
   const input = objectValue(value, "Actor response")
   const id = requiredString(input, "id", "Actor response")
   validateTaskId(id)
@@ -146,14 +132,21 @@ function parseActorSnapshot(value: unknown): ActorSnapshot {
   })
 }
 
-function actorStartBody(request: ClientActorStartRequest): Record<string, unknown> {
+function parseActorListItem(value: unknown): ActorListItem {
+  const input = objectValue(value, "Actor list item")
+  const id = requiredString(input, "id", "Actor list item")
+  validateTaskId(id)
+  return Object.freeze({ id })
+}
+
+function actorStartBody(request: ActorStartRequest): Record<string, unknown> {
   return {
     ...(request.key === undefined ? {} : { key: request.key }),
     ...(request.input === undefined ? {} : { input: request.input }),
     ...(request.idempotencyKey === undefined
       ? {}
       : { idempotency_key: request.idempotencyKey }),
-    workspace: { id: requireWorkspaceIDAddress(request.workspace) },
+    workspace: { id: workspaceRefID(request.workspace) },
     ...(request.run === undefined ? {} : { run: runOptionsBody(request.run) }),
   }
 }

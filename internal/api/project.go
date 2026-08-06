@@ -87,8 +87,6 @@ const (
 type DeploymentResponse struct {
 	ID               string                   `json:"id"`
 	Version          string                   `json:"version"`
-	ProjectID        string                   `json:"project_id"`
-	EnvironmentID    string                   `json:"environment_id"`
 	ContentHash      string                   `json:"content_hash"`
 	DeploymentSource DeploymentSourceArtifact `json:"deployment_source"`
 	Status           DeploymentStatus         `json:"status"`
@@ -98,6 +96,17 @@ type DeploymentResponse struct {
 	BuiltAt          *time.Time               `json:"built_at,omitempty"`
 	DeployedAt       *time.Time               `json:"deployed_at,omitempty"`
 	FailedAt         *time.Time               `json:"failed_at,omitempty"`
+}
+
+type DeploymentListItem struct {
+	ID         string           `json:"id"`
+	Version    string           `json:"version"`
+	Status     DeploymentStatus `json:"status"`
+	CreatedAt  time.Time        `json:"created_at"`
+	BuildingAt *time.Time       `json:"building_at,omitempty"`
+	BuiltAt    *time.Time       `json:"built_at,omitempty"`
+	DeployedAt *time.Time       `json:"deployed_at,omitempty"`
+	FailedAt   *time.Time       `json:"failed_at,omitempty"`
 }
 
 type PromoteDeploymentRequest struct {
@@ -111,7 +120,8 @@ type DeploymentFailure struct {
 }
 
 type ListDeploymentsResponse struct {
-	Deployments []DeploymentResponse `json:"deployments"`
+	Deployments []DeploymentListItem `json:"deployments"`
+	NextCursor  string               `json:"next_cursor,omitempty"`
 }
 
 const DeploymentSourceArtifactMediaType = archive.SourceMediaType

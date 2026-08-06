@@ -7,15 +7,19 @@ const imageBrand = Symbol.for("helmr.sdk.v0.image")
 const sourceFileBrand = Symbol.for("helmr.sdk.v0.source-file")
 const sourceDirectoryBrand = Symbol.for("helmr.sdk.v0.source-directory")
 
-export interface SourceFileRef {
+declare const sourceFileTypeBrand: unique symbol
+declare const sourceDirectoryTypeBrand: unique symbol
+declare const imageBuilderTypeBrand: unique symbol
+
+export interface SourceFile {
+  readonly [sourceFileTypeBrand]: true
   readonly path: string
 }
 
-export interface SourceDirectoryRef {
+export interface SourceDirectory {
+  readonly [sourceDirectoryTypeBrand]: true
   readonly path: string
 }
-
-export type ImageCopyInput = SourceFileRef | SourceDirectoryRef | ImageBuilder
 
 export interface ImageRegistryAuth {
   readonly username: string
@@ -27,10 +31,11 @@ export interface ImageFromOptions {
 }
 
 export interface ImageBuilder {
+  readonly [imageBuilderTypeBrand]: true
   readonly key: string
   from(ref: string, options?: ImageFromOptions): ImageBuilder
   run(argv: readonly string[]): ImageBuilder
-  copy(destination: string, source: SourceFileRef | SourceDirectoryRef): ImageBuilder
+  copy(destination: string, source: SourceFile | SourceDirectory): ImageBuilder
   copyFrom(
     destination: string,
     source: ImageBuilder,
@@ -57,12 +62,12 @@ export type InternalImageStep =
   | Readonly<{
       kind: "copy_source_file"
       destination: string
-      source: SourceFileRef
+      source: SourceFile
     }>
   | Readonly<{
       kind: "copy_source_directory"
       destination: string
-      source: SourceDirectoryRef
+      source: SourceDirectory
     }>
   | Readonly<{
       kind: "copy_from_image"
@@ -80,6 +85,7 @@ export interface InternalImage {
 }
 
 class Image implements ImageBuilder {
+  declare readonly [imageBuilderTypeBrand]: true
   readonly key: string
   readonly steps: readonly InternalImageStep[]
 
@@ -142,15 +148,15 @@ class Image implements ImageBuilder {
 
   copy(
     destination: string,
-    source: SourceFileRef | SourceDirectoryRef,
+    source: SourceFile | SourceDirectory,
   ): ImageBuilder {
-    if (isSourceFileRef(source)) {
+    if (isSourceFile(source)) {
       return new Image(this.key, [
         ...this.steps,
         { kind: "copy_source_file", destination, source },
       ])
     }
-    if (isSourceDirectoryRef(source)) {
+    if (isSourceDirectory(source)) {
       return new Image(this.key, [
         ...this.steps,
         { kind: "copy_source_directory", destination, source },
@@ -186,7 +192,7 @@ class Image implements ImageBuilder {
   }
 }
 
-class SourceFile implements SourceFileRef {
+class SourceFileValue {
   readonly path: string
   constructor(path: string) {
     this.path = path
@@ -195,7 +201,7 @@ class SourceFile implements SourceFileRef {
   }
 }
 
-class SourceDirectory implements SourceDirectoryRef {
+class SourceDirectoryValue {
   readonly path: string
   constructor(path: string) {
     this.path = path
@@ -209,11 +215,11 @@ export function image(key: string): ImageBuilder {
 }
 
 export const source = Object.freeze({
-  file(path: string): SourceFileRef {
-    return new SourceFile(path)
+  file(path: string): SourceFile {
+    return new SourceFileValue(path) as SourceFile
   },
-  directory(path: string): SourceDirectoryRef {
-    return new SourceDirectory(path)
+  directory(path: string): SourceDirectory {
+    return new SourceDirectoryValue(path) as SourceDirectory
   },
 })
 
@@ -229,7 +235,7 @@ export function inspectImage(value: unknown): InternalImage | undefined {
   return { key: imageValue.key, steps: imageValue.steps }
 }
 
-function isSourceFileRef(value: unknown): value is SourceFileRef {
+function isSourceFile(value: unknown): value is SourceFile {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -237,7 +243,7 @@ function isSourceFileRef(value: unknown): value is SourceFileRef {
   )
 }
 
-function isSourceDirectoryRef(value: unknown): value is SourceDirectoryRef {
+function isSourceDirectory(value: unknown): value is SourceDirectory {
   return (
     typeof value === "object" &&
     value !== null &&

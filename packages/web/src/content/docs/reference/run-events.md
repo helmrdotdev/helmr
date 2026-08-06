@@ -31,6 +31,6 @@ as `run.execution_lost` when a worker Lease expires. Events are observation,
 not application-output authority: durable long-lived output is read from Actor
 records, while a one-shot Task returns its terminal result.
 
-Use Run snapshots as terminal-status authority. `helmr run wait` and
-`helmr run logs --follow` poll finite pages and snapshots from the last opaque
+Use Run resources as terminal-status authority. `helmr run wait` and
+`helmr run logs --follow` poll finite pages and Run state from the last opaque
 cursor. Run events are observation, not application-output authority.

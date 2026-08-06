@@ -187,7 +187,7 @@ func (s *Server) listRunSnapshotsHTTP(w http.ResponseWriter, r *http.Request) {
 		afterCreatedAt = pgvalue.Timestamptz(cursor.createdAt)
 		afterID = pgvalue.UUID(cursor.runID)
 	}
-	rows, err := s.db.ListRunSnapshots(r.Context(), db.ListRunSnapshotsParams{
+	rows, err := s.db.ListRunListItems(r.Context(), db.ListRunListItemsParams{
 		OrgID: pgvalue.UUID(scope.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
 		Statuses: statuses, AfterCreatedAt: afterCreatedAt, AfterID: afterID,
 		LimitCount: limit + 1,
@@ -200,14 +200,14 @@ func (s *Server) listRunSnapshotsHTTP(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		rows = rows[:limit]
 	}
-	snapshots := make([]api.RunSnapshotResponse, 0, len(rows))
+	items := make([]api.RunListItem, 0, len(rows))
 	for _, row := range rows {
-		snapshot, err := projectRunSnapshot(runSnapshotRecordFromList(row))
+		item, err := projectRunListItem(row)
 		if err != nil {
 			s.writeRunReadAuthorityError(w)
 			return
 		}
-		snapshots = append(snapshots, snapshot)
+		items = append(items, item)
 	}
 	var nextCursor string
 	if hasMore {
@@ -222,8 +222,8 @@ func (s *Server) listRunSnapshotsHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, api.ListRunSnapshotsResponse{
-		Runs: snapshots, NextCursor: nextCursor,
+	writeJSON(w, http.StatusOK, api.ListRunsResponse{
+		Runs: items, NextCursor: nextCursor,
 	})
 }
 
@@ -305,8 +305,13 @@ func validateRunListQuery(r *http.Request) error {
 			return fmt.Errorf("query parameter %q is not supported", name)
 		}
 	}
-	if len(query["cursor"]) > 1 || len(query["limit"]) > 1 {
-		return errors.New("cursor and limit must not be repeated")
+	for _, name := range []string{"cursor", "limit"} {
+		if len(query[name]) > 1 {
+			return fmt.Errorf("%s must not be repeated", name)
+		}
+		if len(query[name]) == 1 && strings.TrimSpace(query[name][0]) == "" {
+			return fmt.Errorf("%s must not be empty", name)
+		}
 	}
 	return nil
 }
@@ -602,18 +607,35 @@ func runSnapshotRecordFromGet(row db.GetRunSnapshotRow) runSnapshotRecord {
 	}
 }
 
-func runSnapshotRecordFromList(row db.ListRunSnapshotsRow) runSnapshotRecord {
-	return runSnapshotRecord{
-		id: row.ID, status: row.Status,
-		entrypointKind: row.EntrypointKind, entrypointDeclaredID: row.EntrypointDeclaredID,
-		deploymentID: row.DeploymentID, deploymentVersion: row.DeploymentVersion,
-		workspaceID: row.WorkspaceID, actorID: row.SessionID,
-		parentRunID:          row.ParentRunID,
-		currentAttemptNumber: row.CurrentAttemptNumber, causeKind: row.CauseKind,
-		scheduleID: row.ScheduleID, scheduledAt: row.ScheduledAt,
-		previousScheduledAt: row.PreviousScheduledAt, scheduleTimezone: row.ScheduleTimezone,
-		metadata: row.Metadata, tags: row.Tags, output: row.Output,
-		failure:   row.Failure,
-		createdAt: row.CreatedAt, startedAt: row.StartedAt, terminalAt: row.TerminalAt,
+func projectRunListItem(row db.ListRunListItemsRow) (api.RunListItem, error) {
+	status, err := runPublicStatus(row.Status)
+	if err != nil {
+		return api.RunListItem{}, err
 	}
+	runID := pgvalue.UUIDString(row.ID)
+	workspaceID := pgvalue.UUIDString(row.WorkspaceID)
+	if ids.Validate(runID) != nil || ids.Validate(workspaceID) != nil || !row.CreatedAt.Valid {
+		return api.RunListItem{}, errors.New("run list projection authority is invalid")
+	}
+	item := api.RunListItem{
+		ID: runID, Status: status,
+		Entrypoint:  api.RunEntrypointResponse{Kind: row.EntrypointKind, ID: row.EntrypointDeclaredID},
+		WorkspaceID: workspaceID, CurrentAttemptNumber: row.CurrentAttemptNumber,
+		CreatedAt: row.CreatedAt.Time.UTC(),
+	}
+	if row.SessionID.Valid {
+		item.SessionID = pgvalue.UUIDString(row.SessionID)
+		if ids.Validate(item.SessionID) != nil {
+			return api.RunListItem{}, errors.New("run Session list projection authority is invalid")
+		}
+	}
+	if row.StartedAt.Valid {
+		value := row.StartedAt.Time.UTC()
+		item.StartedAt = &value
+	}
+	if row.TerminalAt.Valid {
+		value := row.TerminalAt.Time.UTC()
+		item.TerminalAt = &value
+	}
+	return item, nil
 }

@@ -21,7 +21,7 @@ func TestScheduleListCursorRoundTripAndScope(t *testing.T) {
 		"/v1/schedules?limit=25&cursor="+raw,
 		nil,
 	)
-	limit, cursor, err := parseScheduleListQuery(
+	limit, cursor, taskID, err := parseScheduleListQuery(
 		request,
 		"project-1",
 		"environment-1",
@@ -29,12 +29,12 @@ func TestScheduleListCursorRoundTripAndScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if limit != 25 || cursor == nil ||
+	if limit != 25 || cursor == nil || taskID != nil ||
 		cursor.TaskDeclaredID != "scheduled-maintenance" ||
 		cursor.ScheduleID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36" {
 		t.Fatalf("limit=%d cursor=%+v", limit, cursor)
 	}
-	if _, _, err := parseScheduleListQuery(
+	if _, _, _, err := parseScheduleListQuery(
 		request,
 		"project-1",
 		"environment-2",
@@ -51,12 +51,23 @@ func TestScheduleListQueryRejectsUnknownAndInvalidValues(t *testing.T) {
 		"/v1/schedules?cursor=invalid",
 	} {
 		request := httptest.NewRequest(http.MethodGet, target, nil)
-		if _, _, err := parseScheduleListQuery(
+		if _, _, _, err := parseScheduleListQuery(
 			request,
 			"project-1",
 			"environment-1",
 		); err == nil {
 			t.Fatalf("parseScheduleListQuery(%q) succeeded", target)
 		}
+	}
+}
+
+func TestScheduleListQueryAcceptsExactTaskLookup(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/v1/schedules?task_id=scheduled-maintenance", nil)
+	limit, cursor, taskID, err := parseScheduleListQuery(request, "project-1", "environment-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if limit != 1 || cursor != nil || taskID == nil || *taskID != "scheduled-maintenance" {
+		t.Fatalf("limit=%d cursor=%+v taskID=%v", limit, cursor, taskID)
 	}
 }

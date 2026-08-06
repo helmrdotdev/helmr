@@ -367,10 +367,82 @@ func (q *Queries) GetWorkspaceDefinitionIdentity(ctx context.Context, arg GetWor
 	return i, err
 }
 
-const listWorkspaceSnapshots = `-- name: ListWorkspaceSnapshots :many
-SELECT workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.state_version, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+const getWorkspaceListItemByKey = `-- name: GetWorkspaceListItemByKey :one
+SELECT workspaces.id,
+       workspaces.key,
+       deployment_definitions.declared_id AS sandbox_id,
+       deployment_definitions.deployment_id,
+       workspaces.state,
+       workspaces.last_activity_at,
+       workspaces.created_at,
+       workspaces.updated_at
   FROM workspaces
   JOIN environments ON environments.id = workspaces.environment_id
+  JOIN deployment_definitions
+    ON deployment_definitions.environment_id = workspaces.environment_id
+   AND deployment_definitions.id = workspaces.deployment_definition_id
+   AND deployment_definitions.kind = 'sandbox'
+ WHERE environments.org_id = $1
+   AND environments.project_id = $2
+   AND workspaces.environment_id = $3
+   AND workspaces.key = $4
+   AND workspaces.deleted_at IS NULL
+`
+
+type GetWorkspaceListItemByKeyParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	Key           pgtype.Text `json:"key"`
+}
+
+type GetWorkspaceListItemByKeyRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	Key            pgtype.Text        `json:"key"`
+	SandboxID      string             `json:"sandbox_id"`
+	DeploymentID   pgtype.UUID        `json:"deployment_id"`
+	State          string             `json:"state"`
+	LastActivityAt pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetWorkspaceListItemByKey(ctx context.Context, arg GetWorkspaceListItemByKeyParams) (GetWorkspaceListItemByKeyRow, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceListItemByKey,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.Key,
+	)
+	var i GetWorkspaceListItemByKeyRow
+	err := row.Scan(
+		&i.ID,
+		&i.Key,
+		&i.SandboxID,
+		&i.DeploymentID,
+		&i.State,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const listWorkspaceListItems = `-- name: ListWorkspaceListItems :many
+SELECT workspaces.id,
+       workspaces.key,
+       deployment_definitions.declared_id AS sandbox_id,
+       deployment_definitions.deployment_id,
+       workspaces.state,
+       workspaces.last_activity_at,
+       workspaces.created_at,
+       workspaces.updated_at
+  FROM workspaces
+  JOIN environments ON environments.id = workspaces.environment_id
+  JOIN deployment_definitions
+    ON deployment_definitions.environment_id = workspaces.environment_id
+   AND deployment_definitions.id = workspaces.deployment_definition_id
+   AND deployment_definitions.kind = 'sandbox'
  WHERE environments.org_id = $1
    AND environments.project_id = $2
    AND workspaces.environment_id = $3
@@ -383,7 +455,7 @@ SELECT workspaces.id, workspaces.environment_id, workspaces.region_id, workspace
  LIMIT $7
 `
 
-type ListWorkspaceSnapshotsParams struct {
+type ListWorkspaceListItemsParams struct {
 	OrgID          pgtype.UUID        `json:"org_id"`
 	ProjectID      pgtype.UUID        `json:"project_id"`
 	EnvironmentID  pgtype.UUID        `json:"environment_id"`
@@ -393,8 +465,19 @@ type ListWorkspaceSnapshotsParams struct {
 	RowLimit       int32              `json:"row_limit"`
 }
 
-func (q *Queries) ListWorkspaceSnapshots(ctx context.Context, arg ListWorkspaceSnapshotsParams) ([]Workspace, error) {
-	rows, err := q.db.Query(ctx, listWorkspaceSnapshots,
+type ListWorkspaceListItemsRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	Key            pgtype.Text        `json:"key"`
+	SandboxID      string             `json:"sandbox_id"`
+	DeploymentID   pgtype.UUID        `json:"deployment_id"`
+	State          string             `json:"state"`
+	LastActivityAt pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ListWorkspaceListItems(ctx context.Context, arg ListWorkspaceListItemsParams) ([]ListWorkspaceListItemsRow, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceListItems,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
@@ -407,29 +490,18 @@ func (q *Queries) ListWorkspaceSnapshots(ctx context.Context, arg ListWorkspaceS
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Workspace
+	var items []ListWorkspaceListItemsRow
 	for rows.Next() {
-		var i Workspace
+		var i ListWorkspaceListItemsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.EnvironmentID,
-			&i.RegionID,
-			&i.SandboxDeclaredID,
-			&i.DeploymentDefinitionID,
 			&i.Key,
-			&i.StateVersion,
-			&i.OwnerSessionID,
-			&i.OwnerRunID,
-			&i.OwnershipGeneration,
-			&i.WriterGeneration,
-			&i.HeadVersionID,
+			&i.SandboxID,
+			&i.DeploymentID,
 			&i.State,
-			&i.DesiredState,
-			&i.DirtyState,
 			&i.LastActivityAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}

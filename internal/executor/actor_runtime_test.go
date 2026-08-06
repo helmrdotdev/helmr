@@ -54,7 +54,7 @@ func (controlPlane *actorRuntimeContractControlPlane) GetRunSessionStatus(
 	controlPlane.statusRequest = request
 	return workerapi.SessionStatusResponse{
 		CorrelationID: request.CorrelationID,
-		Completed:     &api.SessionStatusSnapshot{},
+		Completed:     &api.Session{},
 	}, nil
 }
 

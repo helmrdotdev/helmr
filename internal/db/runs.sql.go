@@ -1928,13 +1928,18 @@ func (q *Queries) ListQueuedRunsForQueue(ctx context.Context, arg ListQueuedRuns
 	return items, nil
 }
 
-const listRunSnapshots = `-- name: ListRunSnapshots :many
-SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.terminal_at,
-       deployments.version AS deployment_version
+const listRunListItems = `-- name: ListRunListItems :many
+SELECT runs.id,
+       runs.status,
+       runs.entrypoint_kind,
+       runs.entrypoint_declared_id,
+       runs.workspace_id,
+       runs.session_id,
+       runs.current_attempt_number,
+       runs.created_at,
+       runs.started_at,
+       runs.terminal_at
   FROM runs
-  JOIN deployments
-    ON deployments.environment_id = runs.environment_id
-   AND deployments.id = runs.deployment_id
  WHERE runs.org_id = $1
    AND runs.project_id = $2
    AND runs.environment_id = $3
@@ -1953,7 +1958,7 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployme
  LIMIT $7
 `
 
-type ListRunSnapshotsParams struct {
+type ListRunListItemsParams struct {
 	OrgID          pgtype.UUID        `json:"org_id"`
 	ProjectID      pgtype.UUID        `json:"project_id"`
 	EnvironmentID  pgtype.UUID        `json:"environment_id"`
@@ -1963,62 +1968,21 @@ type ListRunSnapshotsParams struct {
 	LimitCount     int32              `json:"limit_count"`
 }
 
-type ListRunSnapshotsRow struct {
-	ID                        pgtype.UUID        `json:"id"`
-	OrgID                     pgtype.UUID        `json:"org_id"`
-	ProjectID                 pgtype.UUID        `json:"project_id"`
-	EnvironmentID             pgtype.UUID        `json:"environment_id"`
-	DeploymentID              pgtype.UUID        `json:"deployment_id"`
-	DeploymentDefinitionID    pgtype.UUID        `json:"deployment_definition_id"`
-	EntrypointKind            string             `json:"entrypoint_kind"`
-	EntrypointDeclaredID      string             `json:"entrypoint_declared_id"`
-	SessionID                 pgtype.UUID        `json:"session_id"`
-	CauseKind                 string             `json:"cause_kind"`
-	ScheduleID                pgtype.UUID        `json:"schedule_id"`
-	ScheduleGeneration        pgtype.Int8        `json:"schedule_generation"`
-	ScheduledAt               pgtype.Timestamptz `json:"scheduled_at"`
-	PreviousScheduledAt       pgtype.Timestamptz `json:"previous_scheduled_at"`
-	ScheduleTimezone          pgtype.Text        `json:"schedule_timezone"`
-	ParentRunID               pgtype.UUID        `json:"parent_run_id"`
-	ParentOwnsLifecycle       pgtype.Bool        `json:"parent_owns_lifecycle"`
-	WorkspaceID               pgtype.UUID        `json:"workspace_id"`
-	BaseWorkspaceVersionID    pgtype.UUID        `json:"base_workspace_version_id"`
-	SessionInputStartSequence pgtype.Int8        `json:"session_input_start_sequence"`
-	SessionInputHighWatermark pgtype.Int8        `json:"session_input_high_watermark"`
-	Payload                   []byte             `json:"payload"`
-	Output                    []byte             `json:"output"`
-	Failure                   []byte             `json:"failure"`
-	Status                    string             `json:"status"`
-	StateVersion              int64              `json:"state_version"`
-	CurrentAttemptNumber      int32              `json:"current_attempt_number"`
-	CurrentRunLeaseID         pgtype.UUID        `json:"current_run_lease_id"`
-	Metadata                  []byte             `json:"metadata"`
-	Tags                      []string           `json:"tags"`
-	QueueName                 string             `json:"queue_name"`
-	ConcurrencyKey            pgtype.Text        `json:"concurrency_key"`
-	QueueConcurrencyLimit     pgtype.Int8        `json:"queue_concurrency_limit"`
-	Priority                  int32              `json:"priority"`
-	QueueOriginAt             pgtype.Timestamptz `json:"queue_origin_at"`
-	QueueScoreAt              pgtype.Timestamptz `json:"queue_score_at"`
-	QueuedExpiresAt           pgtype.Timestamptz `json:"queued_expires_at"`
-	MaxActiveDurationMs       int64              `json:"max_active_duration_ms"`
-	RetryPolicy               []byte             `json:"retry_policy"`
-	ActiveElapsedMs           int64              `json:"active_elapsed_ms"`
-	ActiveStartedAt           pgtype.Timestamptz `json:"active_started_at"`
-	TraceID                   pgtype.Text        `json:"trace_id"`
-	RootSpanID                string             `json:"root_span_id"`
-	ClaimID                   pgtype.UUID        `json:"claim_id"`
-	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
-	FirstLeaseAt              pgtype.Timestamptz `json:"first_lease_at"`
-	StartedAt                 pgtype.Timestamptz `json:"started_at"`
-	RetryAt                   pgtype.Timestamptz `json:"retry_at"`
-	TerminalAt                pgtype.Timestamptz `json:"terminal_at"`
-	DeploymentVersion         string             `json:"deployment_version"`
+type ListRunListItemsRow struct {
+	ID                   pgtype.UUID        `json:"id"`
+	Status               string             `json:"status"`
+	EntrypointKind       string             `json:"entrypoint_kind"`
+	EntrypointDeclaredID string             `json:"entrypoint_declared_id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	SessionID            pgtype.UUID        `json:"session_id"`
+	CurrentAttemptNumber int32              `json:"current_attempt_number"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	StartedAt            pgtype.Timestamptz `json:"started_at"`
+	TerminalAt           pgtype.Timestamptz `json:"terminal_at"`
 }
 
-func (q *Queries) ListRunSnapshots(ctx context.Context, arg ListRunSnapshotsParams) ([]ListRunSnapshotsRow, error) {
-	rows, err := q.db.Query(ctx, listRunSnapshots,
+func (q *Queries) ListRunListItems(ctx context.Context, arg ListRunListItemsParams) ([]ListRunListItemsRow, error) {
+	rows, err := q.db.Query(ctx, listRunListItems,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
@@ -2031,61 +1995,20 @@ func (q *Queries) ListRunSnapshots(ctx context.Context, arg ListRunSnapshotsPara
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListRunSnapshotsRow
+	var items []ListRunListItemsRow
 	for rows.Next() {
-		var i ListRunSnapshotsRow
+		var i ListRunListItemsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.OrgID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.DeploymentID,
-			&i.DeploymentDefinitionID,
+			&i.Status,
 			&i.EntrypointKind,
 			&i.EntrypointDeclaredID,
-			&i.SessionID,
-			&i.CauseKind,
-			&i.ScheduleID,
-			&i.ScheduleGeneration,
-			&i.ScheduledAt,
-			&i.PreviousScheduledAt,
-			&i.ScheduleTimezone,
-			&i.ParentRunID,
-			&i.ParentOwnsLifecycle,
 			&i.WorkspaceID,
-			&i.BaseWorkspaceVersionID,
-			&i.SessionInputStartSequence,
-			&i.SessionInputHighWatermark,
-			&i.Payload,
-			&i.Output,
-			&i.Failure,
-			&i.Status,
-			&i.StateVersion,
+			&i.SessionID,
 			&i.CurrentAttemptNumber,
-			&i.CurrentRunLeaseID,
-			&i.Metadata,
-			&i.Tags,
-			&i.QueueName,
-			&i.ConcurrencyKey,
-			&i.QueueConcurrencyLimit,
-			&i.Priority,
-			&i.QueueOriginAt,
-			&i.QueueScoreAt,
-			&i.QueuedExpiresAt,
-			&i.MaxActiveDurationMs,
-			&i.RetryPolicy,
-			&i.ActiveElapsedMs,
-			&i.ActiveStartedAt,
-			&i.TraceID,
-			&i.RootSpanID,
-			&i.ClaimID,
 			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.FirstLeaseAt,
 			&i.StartedAt,
-			&i.RetryAt,
 			&i.TerminalAt,
-			&i.DeploymentVersion,
 		); err != nil {
 			return nil, err
 		}

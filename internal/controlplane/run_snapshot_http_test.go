@@ -107,6 +107,21 @@ func TestRunListCursorIsBoundToScopeAndFilter(t *testing.T) {
 	}
 }
 
+func TestRunListQueryRejectsEmptyAndRepeatedPagination(t *testing.T) {
+	for _, target := range []string{
+		"/v1/runs?cursor=",
+		"/v1/runs?cursor=+",
+		"/v1/runs?cursor=one&cursor=two",
+		"/v1/runs?limit=",
+		"/v1/runs?limit=10&limit=20",
+	} {
+		request := httptest.NewRequest(http.MethodGet, target, nil)
+		if err := validateRunListQuery(request); err == nil {
+			t.Fatalf("%s was accepted", target)
+		}
+	}
+}
+
 func TestRunReadDeniesBeforeScopeLookup(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/v1/runs", nil)
 	route := chi.NewRouteContext()

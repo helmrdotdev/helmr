@@ -5,7 +5,7 @@ export {
 } from "./config"
 export {
   inspectDefinition,
-  isQueueDefinition,
+  isQueue,
   type InternalActorDefinition,
   type InternalDefinition,
   type InternalTaskDefinition,
@@ -18,15 +18,16 @@ export {
 export {
   inspectSandboxDefinition,
   inspectWorkspaceAddress,
-  requireWorkspaceIDAddress,
-  brandWorkspaceIdAddress,
+  workspaceRefID,
+  brandWorkspaceAddress,
+  createWorkspaceRef,
   encodeWorkspaceSecrets,
   parseWorkspaceDeleteReceipt,
   parseWorkspaceExecResult,
   parseWorkspaceFileContent,
   parseWorkspaceFileEntry,
   parseWorkspaceFilePage,
-  parseWorkspaceSnapshot,
+  parseWorkspace,
   type EncodedWorkspaceSecret,
   type WorkspaceResources,
   type InternalSandboxDefinition,
@@ -47,6 +48,13 @@ export {
   type RuntimeOperations,
 } from "./internal/runtime"
 export { resourceID } from "./internal/id"
+export { createRunHandle, runHandleID } from "./internal/run-handle"
+export {
+  parseSession,
+  parseSessionInputRecord,
+  parseSessionOutputRecord,
+} from "./internal/session"
 export { inspectSecretAddress } from "./secret"
 export { trimGoSpace } from "./internal/strings"
+export { timestampString } from "./internal/timestamp"
 export { validateQueueName } from "./schema/task"

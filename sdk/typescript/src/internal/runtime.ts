@@ -1,33 +1,35 @@
 import type {
-  RuntimeSessionOperationOptions,
-  RuntimeSessionOperationReceipt,
-  ActorOutputRecord,
+  SessionCloseRequest,
+  SessionCloseReceipt,
+  SessionInputRecord,
+  SessionInputSendRequest,
+  SessionOutputQuery,
+  SessionOutputRecord,
   ActorStartOptions,
-  RuntimeSessionSnapshot,
+  Session,
   Duration,
   JsonValue,
   Metadata,
   RunHandle,
-  SendOptions,
   TaskCallOptions,
   TaskResult,
   TaskStartOptions,
 } from "../contract"
 import type { LogAttributes, RunLogLevel } from "../logger"
 import type {
-  TokenCreateOptions,
+  TokenCreateRequest,
   TokenCreateResult,
   TokenWaitOptions,
 } from "../tokens"
 import type {
-  RuntimeWorkspaceCreateOptions,
+  WorkspaceCreateRequest,
   WorkspaceDeleteRequest,
   WorkspaceDeleteReceipt,
   WorkspaceExecRequest,
   WorkspaceExecResult,
   WorkspaceFileEntry,
   WorkspaceFileListQuery,
-  WorkspaceSnapshot,
+  Workspace,
 } from "../workspace"
 import type { CursorPage } from "../contract"
 
@@ -49,33 +51,40 @@ export interface RuntimeOperations {
   readonly actorInputSend: (
     sessionId: string,
     input: JsonValue,
-    options?: SendOptions,
-  ) => Promise<{ sequence: number }>
+    request?: SessionInputSendRequest,
+    signal?: AbortSignal,
+  ) => Promise<SessionInputRecord>
   readonly actorStart: (
     declaredId: string,
     options: ActorStartOptions,
   ) => Promise<Readonly<{ sessionId: string; runId: string }>>
-  readonly sessionStatus: (sessionId: string) => Promise<RuntimeSessionSnapshot>
+  readonly sessionRetrieve: (
+    sessionId: string,
+    signal?: AbortSignal,
+  ) => Promise<Session>
   readonly sessionClose: (
     sessionId: string,
-    options?: RuntimeSessionOperationOptions,
-  ) => Promise<RuntimeSessionOperationReceipt>
+    request?: SessionCloseRequest,
+    signal?: AbortSignal,
+  ) => Promise<SessionCloseReceipt>
   readonly sessionOutputPage: (
     sessionId: string,
-    options?: Readonly<{ after?: number; limit?: number; signal?: AbortSignal }>,
+    query?: SessionOutputQuery,
+    signal?: AbortSignal,
   ) => Promise<Readonly<{
-    records: readonly ActorOutputRecord[]
+    records: readonly SessionOutputRecord[]
     nextAfter: number
     hasMore: boolean
   }>>
   readonly workspaceCreate: (
     declaredId: string,
-    options?: RuntimeWorkspaceCreateOptions,
+    request?: WorkspaceCreateRequest,
+    signal?: AbortSignal,
   ) => Promise<Readonly<{ workspaceId: string }>>
   readonly workspaceRetrieve: (
     workspaceId: string,
     signal?: AbortSignal,
-  ) => Promise<WorkspaceSnapshot>
+  ) => Promise<Workspace>
   readonly workspaceFileRead: (
     workspaceId: string,
     path: string,
@@ -103,8 +112,8 @@ export interface RuntimeOperations {
     signal?: AbortSignal,
   ) => Promise<WorkspaceDeleteReceipt>
   readonly tokenCreate: (
-    options: TokenCreateOptions,
-  ) => Promise<Omit<TokenCreateResult, "wait">>
+    request: TokenCreateRequest,
+  ) => Promise<TokenCreateResult>
   readonly tokenWait: (
     tokenId: string,
     options: TokenWaitOptions,

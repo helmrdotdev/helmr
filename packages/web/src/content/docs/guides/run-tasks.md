@@ -26,7 +26,7 @@ Payload can come from `--payload-json`, `--payload-file`, or repeated
 `--payload KEY=VALUE` flags. Secret values are not payload fields; place
 declared Secrets when creating the Workspace.
 
-Use `--wait` for the terminal snapshot or `--follow` to print finite log pages
+Use `--wait` for the terminal Run result or `--follow` to print finite log pages
 until the Run becomes terminal:
 
 ```sh

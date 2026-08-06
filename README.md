@@ -81,7 +81,7 @@ Task can call any agent SDK or tool; Helmr owns the adapter protocol around it.
 Create a task project with `helmr.config.ts` and one or more task modules:
 
 ```ts
-import { image, source, task, tokens, workspace } from "@helmr/sdk"
+import { image, sandbox, source, task, tokens } from "@helmr/sdk"
 import { writeFile } from "node:fs/promises"
 import { z } from "zod"
 
@@ -101,7 +101,7 @@ const base = image("repo-agent")
     "apt-get update && apt-get install -y git ripgrep",
   ])
 
-export const repoWorkspace = workspace("github-pr-review")
+export const repoSandbox = sandbox({ id: "github-pr-review" })
   .image(base)
   .resources({ cpu: 2, memory: "4GiB" })
 

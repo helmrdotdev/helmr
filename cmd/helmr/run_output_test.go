@@ -11,7 +11,7 @@ import (
 
 func TestWriteRunTable(t *testing.T) {
 	var out bytes.Buffer
-	runs := []api.RunSnapshotResponse{{
+	runs := []api.RunListItem{{
 		ID:                   "1234567890abcdef",
 		Status:               "running",
 		Entrypoint:           api.RunEntrypointResponse{Kind: "task", ID: "build"},

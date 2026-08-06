@@ -24,6 +24,18 @@ type RunSnapshotResponse struct {
 	TerminalAt           *time.Time            `json:"terminal_at,omitempty"`
 }
 
+type RunListItem struct {
+	ID                   string                `json:"id"`
+	Status               RunStatus             `json:"status"`
+	Entrypoint           RunEntrypointResponse `json:"entrypoint"`
+	WorkspaceID          string                `json:"workspace_id"`
+	SessionID            string                `json:"session_id,omitempty"`
+	CurrentAttemptNumber int32                 `json:"current_attempt_number"`
+	CreatedAt            time.Time             `json:"created_at"`
+	StartedAt            *time.Time            `json:"started_at,omitempty"`
+	TerminalAt           *time.Time            `json:"terminal_at,omitempty"`
+}
+
 type RunEntrypointResponse struct {
 	Kind string `json:"kind"`
 	ID   string `json:"id"`
@@ -49,7 +61,7 @@ type RunFailureResponse struct {
 	Details json.RawMessage `json:"details"`
 }
 
-type ListRunSnapshotsResponse struct {
-	Runs       []RunSnapshotResponse `json:"runs"`
-	NextCursor string                `json:"next_cursor,omitempty"`
+type ListRunsResponse struct {
+	Runs       []RunListItem `json:"runs"`
+	NextCursor string        `json:"next_cursor,omitempty"`
 }

@@ -3,15 +3,15 @@ import { mkdir, rename, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import {
   HelmrClient,
-  type SessionSnapshot,
+  type Session,
   type SessionRef,
   type JsonValue,
   type RunEventRecord,
   type RunLogRecord,
-  type RunSnapshot,
+  type Run,
   type WorkspaceExecResult,
   type WorkspaceFileEntry,
-  type ClientWorkspaceRef,
+  type WorkspaceRef,
 } from "@helmr/sdk"
 import type {
   childTaskSmoke,
@@ -102,7 +102,7 @@ async function runSmoke(): Promise<Evidence> {
     workspaceCreateOptions,
   )
   assertEqual(replayedCreate.id, created.id, "workspace create replay changed the ID")
-  let unexpectedConflictWorkspace: ClientWorkspaceRef | undefined
+  let unexpectedConflictWorkspace: WorkspaceRef | undefined
   try {
     unexpectedConflictWorkspace = await client.sandboxes.createWorkspace(
       "helmr-runtime-smoke",
@@ -127,10 +127,10 @@ async function runSmoke(): Promise<Evidence> {
 
   const matches = await client.workspaces.list({ key: workspaceKey })
   assertEqual(matches.items.length, 1, "workspace key lookup was not exact")
-  const snapshot = matches.items[0]!
-  const byKey = client.workspaces.ref(snapshot.id)
-  assertEqual(snapshot.id, created.id, "workspace key resolved to a different Workspace")
-  assertEqual(snapshot.sandboxId, "helmr-runtime-smoke", "workspace Sandbox ID mismatch")
+  const workspace = matches.items[0]!
+  const byKey = client.workspaces.ref(workspace.id)
+  assertEqual(workspace.id, created.id, "workspace key resolved to a different Workspace")
+  assertEqual(workspace.sandboxId, "helmr-runtime-smoke", "workspace Sandbox ID mismatch")
 
   const markerPath = "workspace-smoke/nested/marker.txt"
   const stdin = `stdin:${config.marker}\n`
@@ -195,7 +195,7 @@ async function runSmoke(): Promise<Evidence> {
       metadata: { marker: config.marker },
     },
   )
-  const taskOutput = await client.runs.wait<typeof runtimeSmoke>(started.id, {
+  const taskOutput = await client.runs.wait(started, {
     signal: AbortSignal.timeout(20 * 60 * 1_000),
   }).unwrap()
   const taskLogs = await readTelemetry(() => client.runs.logs(started.id, { limit: 100 }))
@@ -267,7 +267,7 @@ async function runSmoke(): Promise<Evidence> {
 
 async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
   const workspaces: Array<Readonly<{
-    ref: ClientWorkspaceRef
+    ref: WorkspaceRef
     deleteKey: string
   }>> = []
   let actorRef: SessionRef | undefined
@@ -306,8 +306,8 @@ async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
         idempotencyKey: `child-task:start:${config.marker}`,
       },
     )
-    const taskOutput = await client.runs.wait<typeof childTaskSmoke>(
-      task.id,
+    const taskOutput = await client.runs.wait(
+      task,
       { signal: AbortSignal.timeout(20 * 60 * 1_000) },
     ).unwrap()
     assert(
@@ -327,7 +327,7 @@ async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
       ref: actorWorkspace,
       deleteKey: `child-actor-caller:delete:${config.marker}`,
     })
-    const actor = await client.actors.start<typeof childTaskSmokeActor>(
+    const actor = await client.actors.start(
       "child-task-smoke-actor",
       {
         key: `child-call:${config.marker}`,
@@ -413,13 +413,15 @@ async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
       "Actor output sequences were not strictly ordered",
     )
     const streamedOutputs = []
-    for await (
-      const record of actorByID.output.read(
-        { after: 0, limit: 1 },
+    let after = 0
+    for (;;) {
+      const page = await actorByID.output.list(
+        { after, limit: 1 },
         { signal: AbortSignal.timeout(30_000) },
       )
-    ) {
-      streamedOutputs.push(record)
+      streamedOutputs.push(...page.records)
+      if (!page.hasMore) break
+      after = page.nextAfter
     }
     assertEqual(
       streamedOutputs.length,
@@ -430,7 +432,7 @@ async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
     await closeSmokeActor(actorByID)
     const retainedOutputs = await actorByID.output.list({ after: 0, limit: 10 })
     assertEqual(
-      retainedOutputs.length,
+      retainedOutputs.records.length,
       actorOutputs.length,
       "Actor close discarded durable output",
     )
@@ -456,7 +458,7 @@ async function runChildTaskSmoke(): Promise<ChildTaskEvidence> {
   }
 }
 
-async function waitForTerminalRun(runId: string): Promise<RunSnapshot> {
+async function waitForTerminalRun(runId: string): Promise<Run> {
   const deadline = Date.now() + 20 * 60 * 1_000
   for (;;) {
     const run = await client.runs.retrieve(runId)
@@ -481,8 +483,8 @@ async function waitForActorOutput(
 ) {
   const deadline = Date.now() + 60_000
   for (;;) {
-    const records = await ref.output.list({ after: 0, limit: 10 })
-    if (records[0] !== undefined) return records[0]
+    const page = await ref.output.list({ after: 0, limit: 10 })
+    if (page.records[0] !== undefined) return page.records[0]
     if (Date.now() >= deadline) {
       throw new Error(`timed out waiting for Actor output ${ref.id}`)
     }
@@ -496,8 +498,8 @@ async function waitForActorOutputs(
 ) {
   const deadline = Date.now() + 60_000
   for (;;) {
-    const records = await ref.output.list({ after: 0, limit: 10 })
-    if (records.length >= count) return records
+    const page = await ref.output.list({ after: 0, limit: 10 })
+    if (page.records.length >= count) return page.records
     if (Date.now() >= deadline) {
       throw new Error(`timed out waiting for ${count} Actor outputs ${ref.id}`)
     }
@@ -513,7 +515,7 @@ async function closeSmokeActor(ref: SessionRef): Promise<void> {
   assertEqual(status.status, "closed", "Actor did not close after its smoke turn")
 }
 
-async function waitForActorClosed(ref: SessionRef): Promise<SessionSnapshot> {
+async function waitForActorClosed(ref: SessionRef): Promise<Session> {
   const deadline = Date.now() + 20 * 60 * 1_000
   for (;;) {
     const status = await client.sessions.retrieve(ref.id)
@@ -531,7 +533,7 @@ async function waitForActorClosed(ref: SessionRef): Promise<SessionSnapshot> {
 async function cleanupChildTaskSmoke(
   actorRef: SessionRef | undefined,
   workspaces: readonly Readonly<{
-    ref: ClientWorkspaceRef
+    ref: WorkspaceRef
     deleteKey: string
   }>[],
 ): Promise<void> {

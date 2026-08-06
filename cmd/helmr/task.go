@@ -231,7 +231,7 @@ func taskListCommand() *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			for _, task := range response.Tasks {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", task.ID, task.DeploymentID)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", task.ID, response.DeploymentID)
 			}
 			return nil
 		},

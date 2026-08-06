@@ -115,7 +115,7 @@ func projectSessionInput(record db.SessionRecord) (api.SessionInput, error) {
 		!record.CreatedAt.Valid || !record.SourceKind.Valid || len(record.Data) == 0 {
 		return api.SessionInput{}, errors.New("session input projection authority is invalid")
 	}
-	source := api.SessionInputSource{Kind: record.SourceKind.String}
+	source := api.SessionInputSource{Type: record.SourceKind.String}
 	if record.SourceRunID.Valid {
 		source.RunID = pgvalue.UUIDString(record.SourceRunID)
 		if ids.Validate(source.RunID) != nil {

@@ -60,7 +60,7 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 			CorrelationID: correlationID,
 			Completed: &api.SessionInput{
 				ID: "019c10d5-a6f7-7af1-8f5f-000000000112", Sequence: 7,
-				Data: []byte(`{"hello":"world"}`), Source: api.SessionInputSource{Kind: "external"},
+				Data: []byte(`{"hello":"world"}`), Source: api.SessionInputSource{Type: "external"},
 				CreatedAt: createdAt,
 			},
 		},
@@ -96,7 +96,7 @@ func TestHandleActorInputSendWritesCorrelatedDecision(t *testing.T) {
 	}
 	if decision.GetCorrelationId() != correlationID ||
 		decision.GetKind() != "completed" ||
-		decision.GetDataJson() != `{"id":"019c10d5-a6f7-7af1-8f5f-000000000112","sequence":7,"data":{"hello":"world"},"source":{"kind":"external"},"created_at":"2030-01-02T03:04:05Z"}` {
+		decision.GetDataJson() != `{"id":"019c10d5-a6f7-7af1-8f5f-000000000112","sequence":7,"data":{"hello":"world"},"source":{"type":"external"},"created_at":"2030-01-02T03:04:05Z"}` {
 		t.Fatalf("decision = %+v", decision)
 	}
 	if controlPlane.request.Lease != lease.Fence() ||

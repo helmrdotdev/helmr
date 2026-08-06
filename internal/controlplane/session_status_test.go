@@ -29,8 +29,8 @@ func TestProjectSessionStatusCollapsesInternalStates(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", state, err)
 		}
-		if got.Status != want {
-			t.Fatalf("%s: status = %q, want %q", state, got.Status, want)
+		if got.status != want {
+			t.Fatalf("%s: status = %q, want %q", state, got.status, want)
 		}
 	}
 
@@ -44,9 +44,9 @@ func TestProjectSessionStatusCollapsesInternalStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if failed.Status != api.SessionStatusFailed ||
-		failed.Failure == nil ||
-		failed.Failure.Details.RunID != runID.String() {
+	if failed.status != api.SessionStatusFailed ||
+		failed.failure == nil ||
+		failed.failure.Details.RunID != runID.String() {
 		t.Fatalf("failed status = %+v", failed)
 	}
 }
