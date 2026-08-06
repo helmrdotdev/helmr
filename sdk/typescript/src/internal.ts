@@ -27,6 +27,7 @@ export {
   parseWorkspaceFileEntry,
   parseWorkspaceFilePage,
   parseWorkspaceSnapshot,
+  type EncodedWorkspaceSecret,
   type WorkspaceResources,
   type InternalSandboxDefinition,
 } from "./workspace"

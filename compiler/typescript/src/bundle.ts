@@ -31,6 +31,7 @@ import {
 import { discoverModules } from "./analysis"
 import {
   analyze,
+  analyzeProgramExports,
   type AnalysisExport,
   type AnalysisResult,
   type DeclarationLocator,
@@ -479,7 +480,7 @@ async function verifyFinalModule(
       value: namespace[item.exportName],
     }
   })
-  const verified = analyze({ architecture, exports })
+  const verified = analyzeProgramExports({ architecture, exports })
   const actual = canonicalizeJsonValue({
     declarations: verified.declarationLocator.declarations,
     programDeclarations: verified.programDeclarations,

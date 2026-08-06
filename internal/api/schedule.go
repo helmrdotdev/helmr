@@ -8,11 +8,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
-type ScheduleWorkspace struct {
-	ID  string `json:"id,omitempty"`
-	Key string `json:"key,omitempty"`
-}
-
 type ScheduleCron struct {
 	Pattern  string `json:"pattern"`
 	Timezone string `json:"timezone"`
@@ -27,26 +22,23 @@ type ScheduleFailure struct {
 type ScheduleStatus string
 
 const (
-	ScheduleStatusPendingWorkspace ScheduleStatus = "pending_workspace"
-	ScheduleStatusActive           ScheduleStatus = "active"
-	ScheduleStatusErrored          ScheduleStatus = "errored"
-	ScheduleStatusArchived         ScheduleStatus = "archived"
+	ScheduleStatusActive   ScheduleStatus = "active"
+	ScheduleStatusErrored  ScheduleStatus = "errored"
+	ScheduleStatusArchived ScheduleStatus = "archived"
 )
 
 type ScheduleResponse struct {
-	ID            string            `json:"id"`
-	TaskID        string            `json:"task_id"`
-	Workspace     ScheduleWorkspace `json:"workspace"`
-	WorkspaceID   string            `json:"workspace_id,omitempty"`
-	Cron          ScheduleCron      `json:"cron"`
-	Status        ScheduleStatus    `json:"status"`
-	Generation    int64             `json:"generation"`
-	EffectiveFrom time.Time         `json:"effective_from"`
-	NextFireAt    *time.Time        `json:"next_fire_at,omitempty"`
-	LastFireAt    *time.Time        `json:"last_fire_at,omitempty"`
-	LastFailure   *ScheduleFailure  `json:"last_failure,omitempty"`
-	CreatedAt     time.Time         `json:"created_at"`
-	UpdatedAt     time.Time         `json:"updated_at"`
+	ID            string           `json:"id"`
+	TaskID        string           `json:"task_id"`
+	Cron          ScheduleCron     `json:"cron"`
+	Status        ScheduleStatus   `json:"status"`
+	Generation    int64            `json:"generation"`
+	EffectiveFrom time.Time        `json:"effective_from"`
+	NextFireAt    *time.Time       `json:"next_fire_at,omitempty"`
+	LastFireAt    *time.Time       `json:"last_fire_at,omitempty"`
+	LastFailure   *ScheduleFailure `json:"last_failure,omitempty"`
+	CreatedAt     time.Time        `json:"created_at"`
+	UpdatedAt     time.Time        `json:"updated_at"`
 }
 
 type ListSchedulesResponse struct {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/schedule"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 type ScheduleAuthority struct{}
@@ -89,12 +90,28 @@ func (a *ScheduleAuthority) ResolveScheduledTask(
 		value := *manifest.Run.TTLMs
 		queuedTTL = &value
 	}
+	secretPlacements := make([]workspace.SecretPlacement, 0, len(manifest.Schedule.Workspace.Secrets))
+	for _, placement := range manifest.Schedule.Workspace.Secrets {
+		item := workspace.SecretPlacement{Name: placement.Name}
+		if placement.Env != "" {
+			item.Kind, item.Target = "env", placement.Env
+		} else {
+			item.Kind, item.Target = "file", placement.File
+		}
+		secretPlacements = append(secretPlacements, item)
+	}
+	secretPlacements, err = workspace.NormalizeSecretPlacements(secretPlacements)
+	if err != nil {
+		return schedule.TaskRun{}, fmt.Errorf("normalize scheduled Workspace Secrets: %w", err)
+	}
 	return schedule.TaskRun{
 		QueueName:             manifest.Run.Queue,
 		QueueConcurrencyLimit: queueLimit,
 		QueuedTTLMS:           queuedTTL,
 		MaxActiveDurationMS:   manifest.Run.MaxDurationMs,
 		RetryPolicy:           retryPolicy,
+		SandboxDeclaredID:     manifest.Schedule.Workspace.SandboxDeclaredID,
+		SecretPlacements:      secretPlacements,
 	}, nil
 }
 

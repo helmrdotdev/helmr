@@ -23,7 +23,6 @@ import {
   task,
   timers,
   tokens,
-  workspaces,
 } from "@helmr/sdk"
 ```
 
@@ -63,7 +62,7 @@ Schedules are source-only:
 export const cleanup = schedules.task({
   id: "cleanup",
   cron: { pattern: "0 2 * * *", timezone: "UTC" },
-  workspace: workspaces.fromKey("maintenance"),
+  workspace: { sandbox: reviewSandbox },
   run: async (input) => {
     logger.info("scheduled", { scheduledAt: input.scheduledAt.toISOString() })
     return { ok: true }

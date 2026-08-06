@@ -10311,6 +10311,38 @@ var PROGRAM_ENTRYPOINT = `import { runProgram } from "file:///opt/helmr/runtime/
 await runProgram(new URL("./declarations.json", import.meta.url));
 `;
 function analyze(options) {
+  const located = locateDefinitions(options);
+  const queues = compileQueues(located, options.exports);
+  const sandboxExports = new Map;
+  for (const item of located) {
+    if (item.definition.kind === "sandbox") {
+      sandboxExports.set(item.definition.id, item.value);
+    }
+  }
+  const definitions = located.map(({ definition }) => compileDefinition(definition, options, queues, sandboxExports));
+  const programExports = compileProgramExports(located);
+  const buildPlan = Object.freeze({
+    formatVersion: BUILD_PLAN_FORMAT_VERSION,
+    definitions: Object.freeze(definitions),
+    queues: Object.freeze([...queues.values()].map((entry) => Object.freeze({ ...entry })).sort((left, right) => compareUtf82(left.name, right.name)))
+  });
+  const declarationLocator = Object.freeze({
+    declarations: programExports.declarationLocator.declarations,
+    formatVersion: DECLARATION_LOCATOR_FORMAT_VERSION
+  });
+  return {
+    buildPlan,
+    buildPlanBytes: canonicalizeJsonValue(buildPlan),
+    declarationLocator,
+    declarationLocatorBytes: canonicalizeJsonValue(declarationLocator),
+    programDeclarations: programExports.programDeclarations,
+    entrypointBytes: new TextEncoder().encode(PROGRAM_ENTRYPOINT)
+  };
+}
+function analyzeProgramExports(options) {
+  return compileProgramExports(locateDefinitions(options));
+}
+function locateDefinitions(options) {
   if (options.architecture !== "x86_64") {
     throw new Error(`unsupported architecture ${JSON.stringify(options.architecture)}`);
   }
@@ -10322,27 +10354,18 @@ function analyze(options) {
     throw new Error("BuildPlan definitions exceed 10000");
   }
   located.sort(compareLocatedDefinitions);
-  const queues = compileQueues(located, options.exports);
-  const definitions = located.map(({ definition }) => compileDefinition(definition, options, queues));
-  const locatorEntries = located.flatMap((item) => item.definition.kind === "sandbox" ? [] : [locatorEntry(item)]);
+  return located;
+}
+function compileProgramExports(located) {
+  const declarations = located.flatMap((item) => item.definition.kind === "sandbox" ? [] : [locatorEntry(item)]);
   const programDeclarations = located.flatMap(({ definition }) => definition.kind === "sandbox" ? [] : [programDeclaration(definition)]);
-  const buildPlan = Object.freeze({
-    formatVersion: BUILD_PLAN_FORMAT_VERSION,
-    definitions: Object.freeze(definitions),
-    queues: Object.freeze([...queues.values()].map((entry) => Object.freeze({ ...entry })).sort((left, right) => compareUtf82(left.name, right.name)))
+  return Object.freeze({
+    declarationLocator: Object.freeze({
+      declarations: Object.freeze(declarations),
+      formatVersion: DECLARATION_LOCATOR_FORMAT_VERSION
+    }),
+    programDeclarations: Object.freeze(programDeclarations)
   });
-  const declarationLocator = Object.freeze({
-    declarations: Object.freeze(locatorEntries),
-    formatVersion: DECLARATION_LOCATOR_FORMAT_VERSION
-  });
-  return {
-    buildPlan,
-    buildPlanBytes: canonicalizeJsonValue(buildPlan),
-    declarationLocator,
-    declarationLocatorBytes: canonicalizeJsonValue(declarationLocator),
-    programDeclarations: Object.freeze(programDeclarations),
-    entrypointBytes: new TextEncoder().encode(PROGRAM_ENTRYPOINT)
-  };
 }
 function normalizeWorkspaceResources(resources) {
   return Object.freeze({
@@ -10365,7 +10388,8 @@ function discoverDefinitions(exports) {
         const candidate = {
           definition,
           modulePath: item.modulePath,
-          exportName: item.exportName
+          exportName: item.exportName,
+          value: item.value
         };
         if (compareLocatorOccurrence(candidate, existing.located) < 0) {
           existing.located = candidate;
@@ -10377,7 +10401,8 @@ function discoverDefinitions(exports) {
     const located = {
       definition,
       modulePath: item.modulePath,
-      exportName: item.exportName
+      exportName: item.exportName,
+      value: item.value
     };
     identities.set(key, {
       value: item.value,
@@ -10386,7 +10411,7 @@ function discoverDefinitions(exports) {
   }
   return [...identities.values()].map((item) => item.located);
 }
-function compileDefinition(definition, options, queues) {
+function compileDefinition(definition, options, queues, sandboxExports) {
   switch (definition.kind) {
     case "task":
       return {
@@ -10398,11 +10423,7 @@ function compileDefinition(definition, options, queues) {
           },
           run: normalizeRun(definition, "task", queues),
           ...definition.schedule === undefined ? {} : {
-            schedule: {
-              cron: definition.schedule.cron,
-              timezone: definition.schedule.timezone,
-              workspace: "id" in definition.schedule.workspace ? { id: definition.schedule.workspace.id } : { key: definition.schedule.workspace.key }
-            }
+            schedule: compileSchedule(definition, sandboxExports)
           }
         }
       };
@@ -10425,6 +10446,30 @@ function compileDefinition(definition, options, queues) {
         }
       };
   }
+}
+function compileSchedule(definition, sandboxExports) {
+  const schedule = definition.schedule;
+  if (schedule === undefined)
+    throw new Error("Task schedule is undefined");
+  const sandbox = inspectSandboxDefinition(schedule.workspace.sandbox);
+  if (sandbox === undefined) {
+    throw new Error(`task ${JSON.stringify(definition.id)} schedule has an invalid Sandbox definition`);
+  }
+  const exported = sandboxExports.get(sandbox.id);
+  if (exported === undefined) {
+    throw new Error(`task ${JSON.stringify(definition.id)} schedule references unexported Sandbox ${JSON.stringify(sandbox.id)}`);
+  }
+  if (exported !== schedule.workspace.sandbox) {
+    throw new Error(`task ${JSON.stringify(definition.id)} schedule references a different Sandbox object than the exported definition ${JSON.stringify(sandbox.id)}`);
+  }
+  return {
+    cron: schedule.cron,
+    timezone: schedule.timezone,
+    workspace: {
+      sandboxId: sandbox.id,
+      secrets: schedule.workspace.secrets
+    }
+  };
 }
 function compileQueues(located, exports) {
   const queues = new Map;
@@ -12064,7 +12109,7 @@ async function verifyFinalModule(path, source2, aggregate, architecture) {
       value: namespace[item.exportName]
     };
   });
-  const verified = analyze({ architecture, exports });
+  const verified = analyzeProgramExports({ architecture, exports });
   const actual = canonicalizeJsonValue({
     declarations: verified.declarationLocator.declarations,
     programDeclarations: verified.programDeclarations

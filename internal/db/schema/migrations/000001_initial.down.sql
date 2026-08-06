@@ -43,6 +43,7 @@ ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_current_run_fk;
 ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_failure_run_fk;
 DROP TABLE IF EXISTS runs;
 DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS schedule_secrets;
 DROP TABLE IF EXISTS schedules;
 DROP TABLE IF EXISTS registry_credential_resolutions;
 DROP TABLE IF EXISTS idempotency_claims;

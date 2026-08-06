@@ -5,15 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/sourceid"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 const (
@@ -29,16 +27,15 @@ const (
 	RetryJitterNone = RetryJitter("none")
 	RetryJitterFull = RetryJitter("full")
 
-	maxBuildPlanBytes          = 16 << 20
-	maxBuildDefinitions        = 10000
-	maxBuildQueues             = 1000
-	maxBuildImageSteps         = 10000
-	maxWorkspaceKeyBytes       = 512
-	minRunDurationMs     int64 = 5000
-	maxRunDurationMs     int64 = 86400000
-	maxQueuedRunTTLMs    int64 = 31536000000
-	maxActorIdleMs       int64 = 3600000
-	maxRetryDelayMs      int64 = 86400000
+	maxBuildPlanBytes         = 16 << 20
+	maxBuildDefinitions       = 10000
+	maxBuildQueues            = 1000
+	maxBuildImageSteps        = 10000
+	minRunDurationMs    int64 = 5000
+	maxRunDurationMs    int64 = 86400000
+	maxQueuedRunTTLMs   int64 = 31536000000
+	maxActorIdleMs      int64 = 3600000
+	maxRetryDelayMs     int64 = 86400000
 )
 
 type DefinitionKind string
@@ -110,14 +107,14 @@ type RetryBackoff struct {
 }
 
 type ScheduleManifest struct {
-	Cron      string          `json:"cron"`
-	Timezone  string          `json:"timezone"`
-	Workspace WorkspaceTarget `json:"workspace"`
+	Cron      string                    `json:"cron"`
+	Timezone  string                    `json:"timezone"`
+	Workspace ScheduleWorkspaceManifest `json:"workspace"`
 }
 
-type WorkspaceTarget struct {
-	ID  *string `json:"id,omitempty"`
-	Key *string `json:"key,omitempty"`
+type ScheduleWorkspaceManifest struct {
+	SandboxDeclaredID string                `json:"sandboxId"`
+	Secrets           []api.WorkspaceSecret `json:"secrets"`
 }
 
 type ResourcesManifest struct {
@@ -543,26 +540,33 @@ func validateScheduleManifest(manifest ScheduleManifest) error {
 	if err := schedule.ValidateTimezone(manifest.Timezone); err != nil {
 		return err
 	}
-	return validateWorkspaceTarget(manifest.Workspace)
-}
-
-func validateWorkspaceTarget(target WorkspaceTarget) error {
-	if (target.ID == nil) == (target.Key == nil) {
-		return errors.New("workspace target must contain exactly one of id or key")
+	if err := api.ValidateSandboxDeclaredID(manifest.Workspace.SandboxDeclaredID); err != nil {
+		return fmt.Errorf("schedule workspace sandbox: %w", err)
 	}
-	if target.ID != nil {
-		if err := ids.Validate(*target.ID); err != nil {
-			return fmt.Errorf("workspace target id: %w", err)
+	if manifest.Workspace.Secrets == nil {
+		return errors.New("schedule workspace secrets must be an array")
+	}
+	if len(manifest.Workspace.Secrets) > workspace.MaxSecretPlacements {
+		return fmt.Errorf(
+			"schedule workspace cannot contain more than %d secret placements",
+			workspace.MaxSecretPlacements,
+		)
+	}
+	placements := make([]workspace.SecretPlacement, 0, len(manifest.Workspace.Secrets))
+	for index, placement := range manifest.Workspace.Secrets {
+		if err := api.ValidateWorkspaceSecret(placement); err != nil {
+			return fmt.Errorf("schedule workspace secret %d: %w", index, err)
 		}
-		return nil
+		item := workspace.SecretPlacement{Name: placement.Name}
+		if placement.Env != "" {
+			item.Kind, item.Target = "env", placement.Env
+		} else {
+			item.Kind, item.Target = "file", placement.File
+		}
+		placements = append(placements, item)
 	}
-	key := *target.Key
-	if key == "" ||
-		!utf8.ValidString(key) ||
-		len(key) > maxWorkspaceKeyBytes ||
-		strings.ContainsRune(key, '\x00') ||
-		strings.TrimSpace(key) != key {
-		return errors.New("workspace target key is outside the exact workspace key domain")
+	if _, err := workspace.NormalizeSecretPlacements(placements); err != nil {
+		return fmt.Errorf("schedule workspace secrets: %w", err)
 	}
 	return nil
 }

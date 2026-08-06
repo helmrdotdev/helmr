@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 func TestNormalizeWorkspaceSecretPlacementsCanonicalizesAndRejectsConflicts(t *testing.T) {
@@ -15,8 +16,8 @@ func TestNormalizeWorkspaceSecretPlacementsCanonicalizesAndRejectsConflicts(t *t
 		t.Fatal(err)
 	}
 	if len(placements) != 2 ||
-		placements[0] != (workspaceSecretPlacement{Name: "github", Kind: "env", Target: "GITHUB_TOKEN"}) ||
-		placements[1] != (workspaceSecretPlacement{Name: "config", Kind: "file", Target: "/run/helmr-secrets/config.json"}) {
+		placements[0] != (workspace.SecretPlacement{Name: "github", Kind: "env", Target: "GITHUB_TOKEN"}) ||
+		placements[1] != (workspace.SecretPlacement{Name: "config", Kind: "file", Target: "/run/helmr-secrets/config.json"}) {
 		t.Fatalf("placements = %#v", placements)
 	}
 

@@ -41,7 +41,10 @@ export type InternalTaskDefinition = Readonly<{
   schedule?: Readonly<{
     cron: string
     timezone: string
-    workspace: import("./contract").WorkspaceAddress
+    workspace: Readonly<{
+      sandbox: import("./workspace").SandboxDefinition
+      secrets: readonly import("./workspace").EncodedWorkspaceSecret[]
+    }>
   }>
 }>
 

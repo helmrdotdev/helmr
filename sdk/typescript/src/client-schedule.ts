@@ -1,16 +1,14 @@
 import type {
   CursorPage,
   JsonValue,
-  WorkspaceAddress,
 } from "./contract"
 import type { RequestOptions } from "./request"
 import { resourceID } from "./internal/id"
-import { workspaces } from "./workspace"
 
 export interface ScheduleFailure {
   readonly code:
     | "task_authority_invalid"
-    | "workspace_unavailable"
+    | "sandbox_authority_invalid"
     | "architecture_incompatible"
     | "generation_invalid"
     | "input_invalid"
@@ -21,10 +19,8 @@ export interface ScheduleFailure {
 export interface ScheduleSnapshot {
   readonly id: string
   readonly taskId: string
-  readonly workspace: WorkspaceAddress
-  readonly workspaceId?: string
   readonly cron: Readonly<{ pattern: string; timezone: string }>
-  readonly status: "pending_workspace" | "active" | "errored" | "archived"
+  readonly status: "active" | "errored" | "archived"
   readonly lastFailure?: ScheduleFailure
   readonly nextFireAt?: string
   readonly lastFireAt?: string
@@ -105,19 +101,9 @@ export function createClientSchedules(
 
 function parseSchedule(value: unknown): ScheduleSnapshot {
   const input = scheduleObject(value, "Schedule response")
-  const workspace = scheduleObject(input["workspace"], "Schedule workspace")
-  const hasID = typeof workspace["id"] === "string" && workspace["id"] !== ""
-  const hasKey = typeof workspace["key"] === "string" && workspace["key"] !== ""
-  if (hasID === hasKey) {
-    throw new Error("Schedule workspace must contain exactly one address")
-  }
-  const workspaceAddress = hasID
-    ? workspaces.fromId(resourceID(workspace["id"], "Schedule workspace.id"))
-    : workspaces.fromKey(workspace["key"] as string)
   const cron = scheduleObject(input["cron"], "Schedule cron")
   const status = input["status"]
   if (
-    status !== "pending_workspace" &&
     status !== "active" &&
     status !== "errored" &&
     status !== "archived"
@@ -130,30 +116,9 @@ function parseSchedule(value: unknown): ScheduleSnapshot {
   if (status === "errored" && lastFailure === undefined) {
     throw new Error("Errored Schedule response must contain last_failure")
   }
-  const workspaceId = input["workspace_id"] === undefined
-    ? undefined
-    : resourceID(input["workspace_id"], "Schedule response.workspace_id")
-  if (status === "pending_workspace" && workspaceId !== undefined) {
-    throw new Error("pending Schedule response must not contain workspace_id")
-  }
-  if (
-    (status === "active" || status === "errored") &&
-    workspaceId === undefined
-  ) {
-    throw new Error(`Schedule response with status ${status} requires workspace_id`)
-  }
-  if (
-    workspaceAddress.id !== undefined &&
-    workspaceId !== undefined &&
-    workspaceAddress.id !== workspaceId
-  ) {
-    throw new Error("Schedule response workspace_id must match its ID address")
-  }
   return Object.freeze({
     id: resourceID(input["id"], "Schedule response.id"),
     taskId: requiredString(input, "task_id", "Schedule response"),
-    workspace: workspaceAddress,
-    ...(workspaceId === undefined ? {} : { workspaceId }),
     cron: Object.freeze({
       pattern: requiredString(cron, "pattern", "Schedule cron"),
       timezone: requiredString(cron, "timezone", "Schedule cron"),
@@ -176,7 +141,7 @@ function parseScheduleFailure(value: unknown): ScheduleFailure {
   const code = requiredString(input, "code", "Schedule failure")
   if (
     code !== "task_authority_invalid" &&
-    code !== "workspace_unavailable" &&
+    code !== "sandbox_authority_invalid" &&
     code !== "architecture_incompatible" &&
     code !== "generation_invalid" &&
     code !== "input_invalid"

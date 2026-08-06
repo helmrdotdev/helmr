@@ -94,6 +94,69 @@ describe("v0 compiler contract", () => {
     }
   })
 
+  test("compiles a Schedule that references the exact exported Sandbox", async () => {
+    const root = await project()
+    await source(
+      root,
+      "tasks/sandbox.ts",
+      [
+        'import { sandbox } from "@helmr/sdk"',
+        'export const maintenance = sandbox({ id: "maintenance" })',
+      ].join("\n"),
+    )
+    await source(
+      root,
+      "tasks/index.ts",
+      'export { maintenance } from "./sandbox.ts"\n',
+    )
+    await source(
+      root,
+      "tasks/schedule.ts",
+      [
+        'import { schedules } from "@helmr/sdk"',
+        'import { maintenance } from "./index.ts"',
+        "export const nightly = schedules.task({",
+        '  id: "nightly",',
+        '  cron: { pattern: "0 3 * * *", timezone: "UTC" },',
+        "  workspace: { sandbox: maintenance },",
+        "  run: () => null,",
+        "})",
+      ].join("\n"),
+    )
+    const compiled = await compile(root)
+    expect(compiled.analysis.buildPlan.definitions).toContainEqual(
+      expect.objectContaining({
+        kind: "task",
+        manifest: expect.objectContaining({
+          schedule: expect.objectContaining({
+            workspace: { sandboxId: "maintenance", secrets: [] },
+          }),
+        }),
+      }),
+    )
+  })
+
+  test("rejects a Schedule whose Sandbox is not exported", async () => {
+    const root = await project()
+    await source(
+      root,
+      "tasks/schedule.ts",
+      [
+        'import { sandbox, schedules } from "@helmr/sdk"',
+        'const maintenance = sandbox({ id: "maintenance" })',
+        "export const nightly = schedules.task({",
+        '  id: "nightly",',
+        '  cron: { pattern: "0 3 * * *", timezone: "UTC" },',
+        "  workspace: { sandbox: maintenance },",
+        "  run: () => null,",
+        "})",
+      ].join("\n"),
+    )
+    await expect(compile(root)).rejects.toThrow(
+      'task "nightly" schedule references unexported Sandbox "maintenance"',
+    )
+  })
+
   test("uses pinned esbuild semantics for first-party imports", async () => {
     const root = await project()
     await source(root, "tasks/asset.json", '{"value":"json"}')
@@ -571,6 +634,10 @@ async function project(): Promise<string> {
     "node_modules/@helmr/sdk/index.mjs",
     [
       'const brand = Symbol.for("helmr.sdk.v0.definition")',
+      'const sandboxBrand = Symbol.for("helmr.sdk.v0.sandbox")',
+      "const scheduledPayload = Object.freeze({",
+      '  "~standard": Object.freeze({ version: 1, vendor: "fixture", validate: (value) => ({ value }) }),',
+      "})",
       "export function task(config) {",
       "  return Object.freeze({",
       "    [brand]: Object.freeze({",
@@ -581,6 +648,36 @@ async function project(): Promise<string> {
       "    }),",
       "  })",
       "}",
+      "export function sandbox(config) {",
+      "  return Object.freeze({",
+      "    id: config.id,",
+      "    internal: Object.freeze({",
+      '      kind: "sandbox",',
+      "      id: config.id,",
+      '      image: Object.freeze({ key: `sandbox/${config.id}`, steps: Object.freeze([{ kind: "from", ref: "debian:bookworm-slim" }]) }),',
+      '      resources: Object.freeze({ cpu: 1, memory: "1GiB" }),',
+      "    }),",
+      "    [sandboxBrand]: true,",
+      "  })",
+      "}",
+      "export const schedules = Object.freeze({",
+      "  task(config) {",
+      "    return Object.freeze({",
+      "      [brand]: Object.freeze({",
+      '        kind: "task",',
+      "        id: config.id,",
+      "        hasPayload: true,",
+      "        handler: config.run,",
+      "        payloadSchema: scheduledPayload,",
+      "        schedule: Object.freeze({",
+      "          cron: config.cron.pattern,",
+      "          timezone: config.cron.timezone,",
+      "          workspace: Object.freeze({ sandbox: config.workspace.sandbox, secrets: Object.freeze([]) }),",
+      "        }),",
+      "      }),",
+      "    })",
+      "  },",
+      "})",
     ].join("\n"),
   )
   await source(

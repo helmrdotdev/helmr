@@ -519,8 +519,6 @@ describe("HelmrClient Schedules", () => {
     const snapshot = {
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
       task_id: "scheduled-maintenance",
-      workspace: { key: "maintenance" },
-      workspace_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
       cron: { pattern: "0 * * * *", timezone: "UTC" },
       status: "active",
       generation: 1,
@@ -556,8 +554,6 @@ describe("HelmrClient Schedules", () => {
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
       taskId: "scheduled-maintenance",
       status: "active",
-      workspace: { key: "maintenance" },
-      workspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
     })
     expect(listed.items).toHaveLength(1)
     expect(listed.nextCursor).toBe("cursor-next")
@@ -566,14 +562,13 @@ describe("HelmrClient Schedules", () => {
     )
   })
 
-  test("rejects a non-v7 Workspace ID in a Schedule response", async () => {
+  test("rejects a non-v7 Schedule ID in a Schedule response", async () => {
     const client = new HelmrClient({
       url: "https://api.example.test",
       apiKey: "api-key",
       fetch: (async () => Response.json({
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
+        id: "60af6067-a253-47b5-915c-2b889fb132c7",
         task_id: "scheduled-maintenance",
-        workspace: { id: "60af6067-a253-47b5-915c-2b889fb132c7" },
         cron: { pattern: "0 * * * *", timezone: "UTC" },
         status: "active",
         created_at: "2026-07-24T11:00:00Z",
@@ -583,29 +578,7 @@ describe("HelmrClient Schedules", () => {
 
     await expect(client.schedules.retrieve(
       "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
-    )).rejects.toThrow("Schedule workspace.id")
-  })
-
-  test("keeps an unresolved key-addressed Schedule unbound", async () => {
-    const client = new HelmrClient({
-      url: "https://api.example.test",
-      apiKey: "api-key",
-      fetch: (async () => Response.json({
-        id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
-        task_id: "scheduled-maintenance",
-        workspace: { key: "maintenance" },
-        cron: { pattern: "0 * * * *", timezone: "UTC" },
-        status: "pending_workspace",
-        created_at: "2026-07-24T11:00:00Z",
-        updated_at: "2026-07-24T11:00:00Z",
-      })) as typeof fetch,
-    })
-
-    const schedule = await client.schedules.retrieve(
-      "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
-    )
-    expect(schedule.workspace).toMatchObject({ key: "maintenance" })
-    expect(schedule.workspaceId).toBeUndefined()
+    )).rejects.toThrow("Schedule response.id")
   })
 
   test("requires last_failure for an errored Schedule", async () => {
@@ -615,8 +588,6 @@ describe("HelmrClient Schedules", () => {
       fetch: (async () => Response.json({
         id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36",
         task_id: "scheduled-maintenance",
-        workspace: { key: "maintenance" },
-        workspace_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
         cron: { pattern: "0 * * * *", timezone: "UTC" },
         status: "errored",
         created_at: "2026-07-24T11:00:00Z",
