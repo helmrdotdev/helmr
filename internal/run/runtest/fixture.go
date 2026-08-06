@@ -62,10 +62,16 @@ func New(t *testing.T) Fixture {
 		VALUES ($1, 'aws', $1, 'Run Lease Test')
 	`, Region)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
+		WITH token AS (
+			INSERT INTO worker_group_tokens (id, token_hash)
+			VALUES ($3, $4)
+			RETURNING id
+		)
 		INSERT INTO worker_groups (
-			id, region_id, name, observation_ttl_seconds
-		) VALUES ($1, $2, $1, 120)
-	`, WorkerGroup, Region)
+			id, token_id, region_id, name, observation_ttl_seconds
+		)
+		SELECT $1, token.id, $2, $1, 120 FROM token
+	`, WorkerGroup, Region, uuid.Must(uuid.NewV7()), dbtest.Hash("run-test-worker-group"))
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO organizations (id, name, slug)
 		VALUES ($1, 'Run Lease Test', $2)

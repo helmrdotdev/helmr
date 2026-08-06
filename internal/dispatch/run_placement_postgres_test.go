@@ -2938,10 +2938,16 @@ INSERT INTO deployment_definitions (
 		imageID,
 	)
 	dbtest.MustExec(t, ctx, pool, `
+WITH token AS (
+    INSERT INTO worker_group_tokens (id, token_hash)
+    VALUES ($2, $3)
+    RETURNING id
+)
 INSERT INTO worker_groups (
-    id, region_id, name, allows_run, allows_build, observation_ttl_seconds
-) VALUES ($1, 'us-east-1', $1, true, false, 120)`,
-		fixture.groupID,
+    id, token_id, region_id, name, allows_run, allows_build, observation_ttl_seconds
+)
+SELECT $1, token.id, 'us-east-1', $1, true, false, 120 FROM token`,
+		fixture.groupID, uuid.Must(uuid.NewV7()), dbtest.Hash("run-placement-worker-group"),
 	)
 	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO runtime_identities (
