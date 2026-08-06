@@ -87,12 +87,12 @@ func (c *Client) AuthenticateWorker(ctx context.Context) error {
 	return err
 }
 
-func (c *Client) postJSON(ctx context.Context, path string, in any, out any) error {
+func (c *Client) postJSON(ctx context.Context, path string, bearer string, in any, out any) error {
 	var body bytes.Buffer
 	if err := json.NewEncoder(&body).Encode(in); err != nil {
 		return fmt.Errorf("encode request: %w", err)
 	}
-	req, err := c.transport.Request(ctx, http.MethodPost, path, &body, "")
+	req, err := c.transport.Request(ctx, http.MethodPost, path, &body, bearer)
 	if err != nil {
 		return err
 	}

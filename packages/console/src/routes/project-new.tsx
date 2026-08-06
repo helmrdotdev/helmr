@@ -1,4 +1,4 @@
-import { useNavigate } from "@solidjs/router";
+import { A, useNavigate } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, Show, type JSX } from "solid-js";
 import { ApiError } from "../lib/api";
@@ -121,6 +121,12 @@ export function ProjectNew() {
           autofocus
         />
       </label>
+      <Show when={!regions.isPending && availableRegions().length === 0}>
+        <div class={ui.warning} role="status">
+          A platform Region is required before a project can be created.
+          <Show when={me.data?.admin}> <A class="text-console-accent" href="/admin/regions">Create a Region</A>.</Show>
+        </div>
+      </Show>
       <label class={ui.field}>
         <span>Slug</span>
         <input

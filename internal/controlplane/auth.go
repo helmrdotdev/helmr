@@ -138,6 +138,16 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 	return s.requireSessionWithErrorWriter(next, writeSessionAuthError)
 }
 
+func (s *Server) requireAdmin(next http.Handler) http.Handler {
+	return s.requireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !actorFromContext(r.Context()).Admin {
+			writeError(w, forbidden(errors.New("administrator access is required")))
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
 func (s *Server) requireSessionWithErrorWriter(
 	next http.Handler,
 	writeAuthError actorAuthErrorWriter,
@@ -264,6 +274,7 @@ func (s *Server) sessionActorFromToken(r *http.Request, rawSession string) (auth
 		UserID:    userID,
 		SessionID: sessionID,
 		Kind:      auth.ActorKindSession,
+		Admin:     row.Admin,
 	}
 	if row.OrgID.Valid {
 		orgID, err := pgvalue.UUIDValue(row.OrgID)

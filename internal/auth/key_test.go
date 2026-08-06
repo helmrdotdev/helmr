@@ -24,7 +24,6 @@ func TestKeysAreStableAndDomainSeparated(t *testing.T) {
 	values := [][]byte{
 		first.Session,
 		first.Invitation,
-		first.WorkerEnrollment,
 		first.WorkerInstance,
 		first.MagicLink,
 		first.DeviceCode,
@@ -35,7 +34,6 @@ func TestKeysAreStableAndDomainSeparated(t *testing.T) {
 	replayed := [][]byte{
 		second.Session,
 		second.Invitation,
-		second.WorkerEnrollment,
 		second.WorkerInstance,
 		second.MagicLink,
 		second.DeviceCode,

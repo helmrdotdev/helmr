@@ -448,6 +448,7 @@ func (s *Server) upsertMagicLinkAuthIdentity(r *http.Request, queries db.Querier
 		DisplayName:      identity.DisplayName,
 		ProfileImageURL:  pgtype.Text{String: identity.ProfileImageURL, Valid: identity.ProfileImageURL != ""},
 		Email:            pgtype.Text{String: identity.Email, Valid: true},
+		Admin:            s.initialAdmin(identity.Email, true),
 		Claims:           claims,
 	})
 }

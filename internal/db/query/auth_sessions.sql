@@ -9,6 +9,7 @@ SELECT
     auth_sessions.user_id,
     users.display_name,
     users.profile_image_url,
+    users.admin,
     selected_member.org_id,
     COALESCE(selected_member.role::text, '')::text AS role,
     COALESCE(selected_member.display_name, users.display_name) AS member_display_name,

@@ -37,6 +37,7 @@ type Actor struct {
 	EnvironmentID string
 	Kind          ActorKind
 	Role          Role
+	Admin         bool
 	Permissions   []Permission
 }
 

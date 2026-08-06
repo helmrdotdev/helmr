@@ -2,8 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,67 +18,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const defaultWorkerTokenTTL = 15 * time.Minute
-
-const workerEnrollmentNonceTTL = 2 * time.Minute
-
-func (s *Server) workerEnrollmentChallenge(w http.ResponseWriter, r *http.Request) {
-	if !s.workerEnrollmentGuard.allowChallenge(workerEnrollmentSource(r), time.Now()) {
-		w.Header().Set("Retry-After", "60")
-		writeError(w, tooManyRequests(errors.New("worker enrollment challenge rate limit exceeded")))
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 2<<10)
-	var request workerapi.EnrollmentChallengeRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker enrollment challenge JSON: %w", err)))
-		return
-	}
-	request.WorkerGroupID = strings.TrimSpace(request.WorkerGroupID)
-	if request.WorkerGroupID == "" {
-		writeError(w, badRequest(errors.New("worker_group_id is required")))
-		return
-	}
-	if !s.workerEnrollment.HasGroup(request.WorkerGroupID) {
-		writeError(w, notFound(errors.New("worker group not found")))
-		return
-	}
-	rawNonce := make([]byte, 32)
-	if _, err := rand.Read(rawNonce); err != nil {
-		writeError(w, errors.New("generate worker enrollment challenge"))
-		return
-	}
-	nonce := base64.RawURLEncoding.EncodeToString(rawNonce)
-	nonceHash, err := auth.HashToken(s.authKeys.WorkerEnrollment, nonce)
-	if err != nil {
-		writeError(w, unavailable(errors.New("worker enrollment is not configured")))
-		return
-	}
-	expiresAt := time.Now().UTC().Add(workerEnrollmentNonceTTL)
-	created, err := s.db.CreateWorkerEnrollmentNonce(r.Context(), db.CreateWorkerEnrollmentNonceParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		NonceHash:     nonceHash,
-		WorkerGroupID: request.WorkerGroupID,
-		ExpiresAt:     pgtype.Timestamptz{Time: expiresAt, Valid: true},
-	})
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("worker group not found")))
-		return
-	}
-	if err != nil {
-		s.log.Error("create worker enrollment challenge failed", "worker_group_id", request.WorkerGroupID, "error", err)
-		writeError(w, errors.New("create worker enrollment challenge"))
-		return
-	}
-	writeJSON(w, http.StatusCreated, workerapi.EnrollmentChallengeResponse{
-		Nonce:         nonce,
-		WorkerGroupID: created.WorkerGroupID,
-		ExpiresAt:     pgvalue.Time(created.ExpiresAt),
-	})
-}
 
 func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 	if !s.workerEnrollmentGuard.allowEnrollment(workerEnrollmentSource(r), time.Now()) {
@@ -94,37 +36,17 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid worker enrollment JSON: %w", err)))
 		return
 	}
-	if request.WorkerGroupID == "" || (!request.SupportsRun && !request.SupportsBuild) {
-		writeError(w, badRequest(errors.New("worker_group_id and at least one supported role are required")))
+	if !request.SupportsRun && !request.SupportsBuild {
+		writeError(w, badRequest(errors.New("at least one supported role is required")))
 		return
 	}
-	if request.Nonce == "" {
-		writeError(w, badRequest(errors.New("nonce is required")))
+	if request.ResourceID == "" || strings.TrimSpace(request.ResourceID) != request.ResourceID || len(request.ResourceID) > 512 {
+		writeError(w, badRequest(errors.New("resource_id is required and must not exceed 512 bytes")))
 		return
 	}
-	nonceHash, err := auth.HashToken(s.authKeys.WorkerEnrollment, request.Nonce)
+	tokenHash, err := strictWorkerEnrollmentBearer(r.Header.Values("Authorization"))
 	if err != nil {
-		writeError(w, unauthorized(errors.New("worker enrollment challenge is invalid")))
-		return
-	}
-	if _, err := s.db.GetActiveWorkerEnrollmentNonce(r.Context(), db.GetActiveWorkerEnrollmentNonceParams{
-		NonceHash: nonceHash, WorkerGroupID: request.WorkerGroupID,
-	}); isNoRows(err) {
-		writeError(w, unauthorized(errors.New("worker enrollment challenge is invalid or expired")))
-		return
-	} else if err != nil {
-		s.log.Error("worker enrollment challenge lookup failed", "worker_group_id", request.WorkerGroupID, "error", err)
-		writeError(w, errors.New("verify worker enrollment challenge"))
-		return
-	}
-	if !s.workerEnrollmentGuard.beginVerification(r.Context()) {
-		writeError(w, unavailable(errors.New("worker enrollment verification was canceled")))
-		return
-	}
-	defer s.workerEnrollmentGuard.endVerification()
-	if err := s.workerEnrollment.Verify(request); err != nil {
-		s.log.Warn("worker enrollment evidence rejected", "worker_group_id", request.WorkerGroupID)
-		writeError(w, unauthorized(errors.New("worker enrollment evidence is invalid")))
+		writeError(w, unauthorized(errors.New("worker enrollment token is invalid")))
 		return
 	}
 	generated, err := auth.GenerateWorkerInstanceSecret(s.authKeys.WorkerInstance)
@@ -134,8 +56,7 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	workerInstanceID := uuid.Must(uuid.NewV7())
 	credential, err := s.db.EnrollWorkerInstance(r.Context(), db.EnrollWorkerInstanceParams{
-		NonceHash:        nonceHash,
-		WorkerGroupID:    request.WorkerGroupID,
+		TokenHash:        tokenHash,
 		AllowsRun:        request.SupportsRun,
 		AllowsBuild:      request.SupportsBuild,
 		WorkerInstanceID: pgvalue.UUID(workerInstanceID),
@@ -146,11 +67,11 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		SecretHash:       generated.TokenHash,
 	})
 	if isNoRows(err) {
-		writeError(w, unauthorized(errors.New("worker enrollment challenge is invalid or expired")))
+		writeError(w, unauthorized(errors.New("worker enrollment token is invalid")))
 		return
 	}
 	if err != nil {
-		s.log.Error("worker enrollment failed", "worker_group_id", request.WorkerGroupID, "resource_id", request.ResourceID, "error", err)
+		s.log.Error("worker enrollment failed", "resource_id", request.ResourceID, "error", err)
 		writeError(w, errors.New("enroll worker"))
 		return
 	}
@@ -159,6 +80,17 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		WorkerGroupID:        credential.WorkerGroupID,
 		WorkerInstanceSecret: generated.Raw,
 	})
+}
+
+func strictWorkerEnrollmentBearer(values []string) ([]byte, error) {
+	if len(values) != 1 || !strings.HasPrefix(values[0], "Bearer ") {
+		return nil, errors.New("worker enrollment bearer is required")
+	}
+	raw := values[0][len("Bearer "):]
+	if raw == "" || strings.ContainsAny(raw, " \t\r\n") {
+		return nil, errors.New("worker enrollment bearer is invalid")
+	}
+	return workergroup.ParseEnrollmentToken(raw)
 }
 
 func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {

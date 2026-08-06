@@ -140,9 +140,9 @@ output "secret_arns" {
   )
 }
 
-output "worker_enrollment_secret_arns" {
-  description = "Per-logical-group enrollment secrets populated and distributed by the deployment."
-  value       = { for group_id, secret in aws_secretsmanager_secret.worker_enrollment : group_id => secret.arn }
+output "worker_enrollment_secret_arn" {
+  description = "Enrollment token secret shared by the initial Worker Group and its Workers."
+  value       = var.bootstrap_enabled ? aws_secretsmanager_secret.worker_enrollment[0].arn : null
 }
 
 output "image_cache_registry_authority" {

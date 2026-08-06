@@ -273,6 +273,7 @@ func capacityCapacityObservation(observation workergroup.DemandObservation) (cap
 	}
 	result := capacityapi.CapacityObservation{
 		WorkerGroupID:      observation.WorkerGroupID,
+		WorkerGroupName:    observation.WorkerGroupName,
 		RegionID:           observation.RegionID,
 		GroupStatus:        groupStatus,
 		RegisteringWorkers: observation.RegisteringWorkers,

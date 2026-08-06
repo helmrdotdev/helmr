@@ -260,8 +260,17 @@ func (s *Server) upsertAuthIdentity(r *http.Request, queries db.Querier, identit
 		ProfileImageURL:  pgtype.Text{String: identity.ProfileImageURL, Valid: identity.ProfileImageURL != ""},
 		Email:            email,
 		EmailVerified:    identity.EmailVerified,
+		Admin:            s.initialAdmin(identity.Email, identity.EmailVerified),
 		Claims:           claims,
 	})
+}
+
+func (s *Server) initialAdmin(email string, verified bool) bool {
+	if !verified {
+		return false
+	}
+	_, ok := s.adminEmails[normalizeEmailAddress(email)]
+	return ok
 }
 
 func (s *Server) issueSession(r *http.Request, queries db.Querier, userID pgtype.UUID) (string, error) {

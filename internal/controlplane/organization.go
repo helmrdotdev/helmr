@@ -66,6 +66,11 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 		}); err != nil {
 			return errors.New("create organization owner")
 		}
+		if s.selfHostedMode() {
+			if err := work.q.GrantUserAdmin(r.Context(), pgvalue.UUID(actor.UserID)); err != nil {
+				return errors.New("grant initial administrator")
+			}
+		}
 		return nil
 	})
 	if err != nil {

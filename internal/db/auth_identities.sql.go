@@ -13,17 +13,18 @@ import (
 
 const upsertAuthIdentity = `-- name: UpsertAuthIdentity :one
 WITH upserted_user AS (
-    INSERT INTO users (id, display_name, profile_image_url, primary_email)
+    INSERT INTO users (id, display_name, profile_image_url, primary_email, admin)
     SELECT
         $1 AS id,
         $2 AS display_name,
         $3 AS profile_image_url,
-        CASE WHEN $4::bool THEN $5 ELSE NULL END AS primary_email
+        CASE WHEN $4::bool THEN $5 ELSE NULL END AS primary_email,
+        $6::bool AS admin
      WHERE NOT EXISTS (
          SELECT 1
            FROM auth_identities AS auth_identity
-          WHERE auth_identity.provider = $6
-            AND auth_identity.subject = $7
+          WHERE auth_identity.provider = $7
+            AND auth_identity.subject = $8
      )
     ON CONFLICT (lower(primary_email)) WHERE primary_email IS NOT NULL AND disabled_at IS NULL DO UPDATE
        SET primary_email = users.primary_email
@@ -33,8 +34,8 @@ WITH upserted_user AS (
 target_user AS (
     SELECT auth_identity.user_id AS id
       FROM auth_identities AS auth_identity
-     WHERE auth_identity.provider = $6
-       AND auth_identity.subject = $7
+     WHERE auth_identity.provider = $7
+       AND auth_identity.subject = $8
     UNION ALL
     SELECT id FROM upserted_user
 ),
@@ -49,12 +50,12 @@ upserted_identity AS (
         last_login_at
     )
     SELECT
-        $8 AS id,
+        $9 AS id,
         target_user.id AS user_id,
-        $6 AS provider,
-        $7 AS subject,
+        $7 AS provider,
+        $8 AS subject,
         $5 AS email,
-        $9 AS claims,
+        $10 AS claims,
         now() AS last_login_at
       FROM target_user
     ON CONFLICT (provider, subject) DO UPDATE
@@ -89,6 +90,7 @@ type UpsertAuthIdentityParams struct {
 	ProfileImageURL  pgtype.Text `json:"profile_image_url"`
 	EmailVerified    bool        `json:"email_verified"`
 	Email            pgtype.Text `json:"email"`
+	Admin            bool        `json:"admin"`
 	IdentityProvider string      `json:"identity_provider"`
 	IdentitySubject  string      `json:"identity_subject"`
 	IdentityID       pgtype.UUID `json:"identity_id"`
@@ -112,6 +114,7 @@ func (q *Queries) UpsertAuthIdentity(ctx context.Context, arg UpsertAuthIdentity
 		arg.ProfileImageURL,
 		arg.EmailVerified,
 		arg.Email,
+		arg.Admin,
 		arg.IdentityProvider,
 		arg.IdentitySubject,
 		arg.IdentityID,

@@ -1,50 +1,32 @@
 package controlplane
 
 import (
-	"context"
 	"net/http/httptest"
 	"testing"
 	"time"
 )
 
-func TestWorkerEnrollmentGuardBoundsRateAndConcurrency(t *testing.T) {
+func TestWorkerEnrollmentGuardBoundsEnrollmentRate(t *testing.T) {
 	guard := newWorkerEnrollmentGuard()
 	now := time.Now()
-	for range workerChallengePerSourceLimit {
-		if !guard.allowChallenge("192.0.2.1", now) {
-			t.Fatal("challenge was rejected before the source limit")
+	for range workerEnrollmentPerSourceLimit {
+		if !guard.allowEnrollment("192.0.2.1", now) {
+			t.Fatal("enrollment was rejected before the source limit")
 		}
 	}
-	if guard.allowChallenge("192.0.2.1", now) {
-		t.Fatal("challenge source limit was not enforced")
+	if guard.allowEnrollment("192.0.2.1", now) {
+		t.Fatal("enrollment source limit was not enforced")
 	}
-	if !guard.allowChallenge("192.0.2.2", now) {
+	if !guard.allowEnrollment("192.0.2.2", now) {
 		t.Fatal("one source exhausted another source's allowance")
 	}
-	for range workerEnrollmentVerificationMax {
-		if !guard.beginVerification(context.Background()) {
-			t.Fatal("verification was rejected before the concurrency limit")
-		}
-	}
-	canceled, cancel := context.WithCancel(context.Background())
-	cancel()
-	if guard.beginVerification(canceled) {
-		t.Fatal("verification concurrency limit was not enforced")
-	}
-	for range workerEnrollmentVerificationMax {
-		guard.endVerification()
-	}
-	if !guard.beginVerification(context.Background()) {
-		t.Fatal("verification capacity was not released")
-	}
-	guard.endVerification()
 }
 
 func TestWorkerEnrollmentGuardAllowsTargetFleetBurstFromOneSource(t *testing.T) {
 	guard := newWorkerEnrollmentGuard()
 	now := time.Now()
 	for index := range 200 {
-		if !guard.allowChallenge("192.0.2.1", now) || !guard.allowEnrollment("192.0.2.1", now) {
+		if !guard.allowEnrollment("192.0.2.1", now) {
 			t.Fatalf("target worker-group request %d was rate limited", index+1)
 		}
 	}

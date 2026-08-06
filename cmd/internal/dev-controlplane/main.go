@@ -20,19 +20,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/bootstrap"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"github.com/helmrdotdev/helmr/internal/eventstream"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -62,22 +60,6 @@ func main() {
 		log.Error("load dev config", "error", err)
 		os.Exit(1)
 	}
-	desiredWorkerGroups := make([]workergroup.Desired, 0, len(cfg.workerGroups))
-	enrollmentSecrets := make([]enrollment.GroupSecret, 0, len(cfg.workerGroups))
-	for _, group := range cfg.workerGroups {
-		desired, groupSecret, err := group.Prepare(os.LookupEnv)
-		if err != nil {
-			log.Error("prepare worker group", "worker_group_id", group.ID, "error", err)
-			os.Exit(1)
-		}
-		desiredWorkerGroups = append(desiredWorkerGroups, desired)
-		enrollmentSecrets = append(enrollmentSecrets, groupSecret)
-	}
-	workerEnrollment, err := enrollment.NewVerifier(enrollmentSecrets)
-	if err != nil {
-		log.Error("configure worker enrollment", "error", err)
-		os.Exit(1)
-	}
 	pool, err := pgxpool.New(ctx, cfg.databaseURL)
 	if err != nil {
 		log.Error("connect database", "error", err)
@@ -88,32 +70,16 @@ func main() {
 		log.Error("migrate database", "error", err)
 		os.Exit(1)
 	}
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		log.Error("begin worker group bootstrap", "error", err)
-		os.Exit(1)
-	}
-	queries := db.New(tx)
-	if err := region.Ensure(ctx, queries, region.BootstrapConfig{
-		RegionID:          cfg.regionID,
-		DefaultRegionID:   cfg.defaultRegionID,
-		Provider:          cfg.provider,
-		ProviderRegion:    cfg.providerRegion,
-		RegionDisplayName: cfg.regionDisplayName,
+	if err := bootstrap.Apply(ctx, pool, bootstrap.Config{
+		Enabled: cfg.bootstrapEnabled, RegionID: cfg.bootstrapRegionID,
+		RegionProvider: cfg.bootstrapProvider, RegionProviderRegion: cfg.bootstrapProviderRegion,
+		RegionDisplayName: cfg.bootstrapRegionDisplayName, RegionLocation: cfg.bootstrapRegionLocation,
+		WorkerGroupName: cfg.bootstrapWorkerGroupName, WorkerToken: cfg.bootstrapWorkerToken,
 	}); err != nil {
-		_ = tx.Rollback(ctx)
-		log.Error("bootstrap worker group", "error", err)
+		log.Error("bootstrap platform", "error", err)
 		os.Exit(1)
 	}
-	if err := workergroup.Reconcile(ctx, queries, cfg.regionID, desiredWorkerGroups); err != nil {
-		_ = tx.Rollback(ctx)
-		log.Error("reconcile worker groups", "error", err)
-		os.Exit(1)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		log.Error("commit worker group bootstrap", "error", err)
-		os.Exit(1)
-	}
+	queries := db.New(pool)
 	if cfg.seedData {
 		if err := seedDevData(ctx, pool, cfg); err != nil {
 			log.Error("seed dev data", "error", err)
@@ -227,7 +193,6 @@ func main() {
 		WorkspaceFencingKey:   workspaceFencingKey,
 		TokenCredentialKey:    tokenCredentialKey,
 		WorkerTokenSigningKey: cfg.workerTokenKey,
-		WorkerEnrollment:      workerEnrollment,
 		SetupToken:            cfg.setupToken,
 		AuthKey:               cfg.authKey,
 		PublicURL:             publicURL,
@@ -267,52 +232,59 @@ func main() {
 }
 
 type devConfig struct {
-	addr                string
-	deploymentMode      string
-	databaseURL         string
-	regionID            string
-	defaultRegionID     string
-	provider            string
-	providerRegion      string
-	regionDisplayName   string
-	workerGroups        []workergroup.Config
-	clickHouseURL       string
-	clickHouseUser      string
-	clickHousePassword  string
-	redisURL            string
-	casDir              string
-	buildPolicyPath     string
-	publicURL           string
-	authKey             []byte
-	setupToken          string
-	workerTokenKey      []byte
-	encryptionKey       []byte
-	workspaceFencingKey []byte
-	tokenCredentialKey  []byte
-	resetDatabase       bool
-	seedData            bool
+	addr                       string
+	deploymentMode             string
+	databaseURL                string
+	bootstrapEnabled           bool
+	bootstrapRegionID          string
+	bootstrapProvider          string
+	bootstrapProviderRegion    string
+	bootstrapRegionDisplayName string
+	bootstrapRegionLocation    string
+	bootstrapWorkerGroupName   string
+	bootstrapWorkerToken       string
+	clickHouseURL              string
+	clickHouseUser             string
+	clickHousePassword         string
+	redisURL                   string
+	casDir                     string
+	buildPolicyPath            string
+	publicURL                  string
+	authKey                    []byte
+	setupToken                 string
+	workerTokenKey             []byte
+	encryptionKey              []byte
+	workspaceFencingKey        []byte
+	tokenCredentialKey         []byte
+	resetDatabase              bool
+	seedData                   bool
 }
 
 func loadConfig() (devConfig, error) {
 	cfg := devConfig{
-		addr:               textEnv("CONTROL_PLANE_ADDR", defaultAddr),
-		deploymentMode:     textEnv("DEPLOYMENT_MODE", "self-hosted"),
-		databaseURL:        textEnv("DATABASE_URL", ""),
-		regionID:           textEnv("REGION_ID", ""),
-		defaultRegionID:    textEnv("DEFAULT_REGION_ID", ""),
-		provider:           textEnv("PROVIDER", ""),
-		providerRegion:     textEnv("PROVIDER_REGION", ""),
-		regionDisplayName:  textEnv("REGION_DISPLAY_NAME", ""),
-		clickHouseURL:      textEnv("CLICKHOUSE_URL", ""),
-		clickHouseUser:     textEnv("CLICKHOUSE_USER", ""),
-		clickHousePassword: secretEnv("CLICKHOUSE_PASSWORD", ""),
-		redisURL:           textEnv("REDIS_URL", defaultRedisURL),
-		casDir:             textEnv("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
-		buildPolicyPath:    textEnv("BUILD_POLICY_PATH", ""),
-		publicURL:          textEnv("PUBLIC_URL", defaultPublicURL),
-		setupToken:         secretEnv("SETUP_TOKEN", defaultSetupToken),
+		addr:                       textEnv("CONTROL_PLANE_ADDR", defaultAddr),
+		deploymentMode:             textEnv("DEPLOYMENT_MODE", "self-hosted"),
+		databaseURL:                textEnv("DATABASE_URL", ""),
+		bootstrapRegionID:          textEnv("BOOTSTRAP_REGION_ID", ""),
+		bootstrapProvider:          textEnv("BOOTSTRAP_REGION_PROVIDER", ""),
+		bootstrapProviderRegion:    textEnv("BOOTSTRAP_REGION_PROVIDER_REGION", ""),
+		bootstrapRegionDisplayName: textEnv("BOOTSTRAP_REGION_DISPLAY_NAME", ""),
+		bootstrapRegionLocation:    textEnv("BOOTSTRAP_REGION_LOCATION", ""),
+		bootstrapWorkerGroupName:   textEnv("BOOTSTRAP_WORKER_GROUP_NAME", ""),
+		bootstrapWorkerToken:       secretEnv("BOOTSTRAP_WORKER_TOKEN", ""),
+		clickHouseURL:              textEnv("CLICKHOUSE_URL", ""),
+		clickHouseUser:             textEnv("CLICKHOUSE_USER", ""),
+		clickHousePassword:         secretEnv("CLICKHOUSE_PASSWORD", ""),
+		redisURL:                   textEnv("REDIS_URL", defaultRedisURL),
+		casDir:                     textEnv("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
+		buildPolicyPath:            textEnv("BUILD_POLICY_PATH", ""),
+		publicURL:                  textEnv("PUBLIC_URL", defaultPublicURL),
+		setupToken:                 secretEnv("SETUP_TOKEN", defaultSetupToken),
 	}
 	var err error
+	if cfg.bootstrapEnabled, err = boolEnv("BOOTSTRAP_ENABLED", false); err != nil {
+		return cfg, err
+	}
 	if cfg.resetDatabase, err = boolEnv("HELMR_DEV_RESET_DATABASE", false); err != nil {
 		return cfg, err
 	}
@@ -343,25 +315,6 @@ func loadConfig() (devConfig, error) {
 	}
 	if cfg.buildPolicyPath == "" {
 		return cfg, errors.New("BUILD_POLICY_PATH is required")
-	}
-	if cfg.regionID == "" {
-		return cfg, errors.New("REGION_ID is required")
-	}
-	if cfg.defaultRegionID == "" {
-		return cfg, errors.New("DEFAULT_REGION_ID is required")
-	}
-	if cfg.provider == "" {
-		return cfg, errors.New("PROVIDER is required")
-	}
-	if cfg.providerRegion == "" {
-		return cfg, errors.New("PROVIDER_REGION is required")
-	}
-	if cfg.regionDisplayName == "" {
-		cfg.regionDisplayName = cfg.regionID
-	}
-	cfg.workerGroups, err = workergroup.DecodeConfig(strings.TrimSpace(os.Getenv("WORKER_GROUPS")))
-	if err != nil {
-		return cfg, fmt.Errorf("WORKER_GROUPS: %w", err)
 	}
 	if cfg.clickHouseURL == "" {
 		return cfg, errors.New("CLICKHOUSE_URL is required")

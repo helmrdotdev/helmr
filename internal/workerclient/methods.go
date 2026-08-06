@@ -14,17 +14,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func (c *Client) CreateWorkerEnrollmentChallenge(ctx context.Context, workerGroupID string) (workerapi.EnrollmentChallengeResponse, error) {
-	var response workerapi.EnrollmentChallengeResponse
-	if err := c.postJSON(ctx, "/api/worker/v0/enrollment/challenge", workerapi.EnrollmentChallengeRequest{WorkerGroupID: workerGroupID}, &response); err != nil {
-		return workerapi.EnrollmentChallengeResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) EnrollWorker(ctx context.Context, request workerapi.EnrollmentRequest) (workerapi.EnrollmentResponse, error) {
+func (c *Client) EnrollWorker(ctx context.Context, token string, request workerapi.EnrollmentRequest) (workerapi.EnrollmentResponse, error) {
 	var response workerapi.EnrollmentResponse
-	if err := c.postJSON(ctx, "/api/worker/v0/enrollment", request, &response); err != nil {
+	if err := c.postJSON(ctx, "/api/worker/v0/enrollment", token, request, &response); err != nil {
 		return workerapi.EnrollmentResponse{}, err
 	}
 	return response, nil

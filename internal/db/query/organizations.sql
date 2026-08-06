@@ -23,6 +23,7 @@ SELECT
     users.id AS user_id,
     users.display_name,
     users.profile_image_url,
+    users.admin,
     first_member.org_id,
     organizations.name AS org_name,
     organizations.slug AS org_slug,
@@ -58,6 +59,9 @@ SELECT
  WHERE projects.org_id = sqlc.arg(org_id)
    AND projects.is_default
  LIMIT 1;
+
+-- name: GrantUserAdmin :exec
+UPDATE users SET admin = true, updated_at = now() WHERE id = sqlc.arg(user_id);
 
 -- name: ListOrganizationIDs :many
 SELECT id

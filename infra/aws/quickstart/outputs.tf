@@ -113,9 +113,9 @@ output "secret_arns" {
   value       = module.controlplane.secret_arns
 }
 
-output "worker_enrollment_secret_arns" {
-  description = "Per-worker-group enrollment secret ARNs."
-  value       = module.controlplane.worker_enrollment_secret_arns
+output "worker_enrollment_secret_arn" {
+  description = "Initial Worker Group enrollment token secret ARN."
+  value       = module.controlplane.worker_enrollment_secret_arn
 }
 
 output "controlplane_nat_gateway_id" {

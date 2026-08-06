@@ -3,16 +3,6 @@ variable "name" {
   type        = string
 }
 
-variable "worker_group_id" {
-  description = "Worker group used for identity enrollment and scheduling policy."
-  type        = string
-
-  validation {
-    condition     = trimspace(var.worker_group_id) != ""
-    error_message = "worker_group_id must be non-empty."
-  }
-}
-
 variable "worker_roles" {
   description = "Roles this worker group is permitted to advertise."
   type        = set(string)
@@ -356,7 +346,7 @@ variable "secret_arns" {
   description = "Secret ARNs required by the worker."
   type = object({
     checkpoint_encryption_key = string
-    worker_enrollment         = string
+    worker_enrollment_token   = string
   })
 }
 

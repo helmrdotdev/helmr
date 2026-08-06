@@ -36,7 +36,6 @@ locals {
     CONTROL_PLANE_URL                 = var.worker_controlplane_url
     CAS_URI                           = var.cas_uri
     PLATFORM_STORE_URI                = var.platform_store_uri
-    WORKER_GROUP_ID                   = var.worker_group_id
     FIRECRACKER_PATH                  = "/usr/local/bin/firecracker"
     JAILER_PATH                       = "/usr/local/bin/jailer"
     JAILER_UID                        = tostring(var.jailer_uid)
@@ -123,7 +122,7 @@ locals {
         ]
         Resource = [
           var.secret_arns.checkpoint_encryption_key,
-          var.secret_arns.worker_enrollment,
+          var.secret_arns.worker_enrollment_token,
         ]
       },
       ], [
@@ -284,7 +283,7 @@ resource "aws_launch_template" "worker" {
   user_data = base64encode(templatefile("${path.module}/templates/user-data.sh.tftpl", {
     environment                          = local.base_worker_environment
     checkpoint_key_secret_arn            = var.secret_arns.checkpoint_encryption_key
-    worker_enrollment_secret_arn         = var.secret_arns.worker_enrollment
+    worker_enrollment_token_secret_arn   = var.secret_arns.worker_enrollment_token
     worker_supports_build                = contains(var.worker_roles, "build")
     worker_service_name                  = var.worker_service_name
     worker_binary_path                   = var.worker_binary_path

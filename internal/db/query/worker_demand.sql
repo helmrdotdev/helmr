@@ -2,7 +2,6 @@
 WITH logical_groups AS (
     SELECT *
       FROM worker_groups
-     WHERE state <> 'disabled'
 ), run_queue AS (
     SELECT logical_groups.id AS worker_group_id,
            count(*)::bigint AS queued_count,
@@ -141,6 +140,7 @@ WITH logical_groups AS (
      GROUP BY worker_instances.worker_group_id
 )
 SELECT logical_groups.id AS worker_group_id,
+       logical_groups.name AS worker_group_name,
        logical_groups.region_id,
        logical_groups.state,
        logical_groups.allows_run,
@@ -169,4 +169,4 @@ SELECT logical_groups.id AS worker_group_id,
   LEFT JOIN run_supply ON run_supply.worker_group_id = logical_groups.id
   LEFT JOIN build_supply ON build_supply.worker_group_id = logical_groups.id
   LEFT JOIN instance_counts ON instance_counts.worker_group_id = logical_groups.id
- ORDER BY logical_groups.region_id, logical_groups.id;
+ ORDER BY logical_groups.region_id, logical_groups.name, logical_groups.id;

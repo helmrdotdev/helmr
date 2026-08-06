@@ -32,7 +32,6 @@ mock_provider "aws" {
 
 variables {
   name                              = "helmr-test-run"
-  worker_group_id                   = "run-workers"
   worker_roles                      = ["run"]
   network_blocked_ipv4_cidrs        = ["10.0.0.0/8", "169.254.0.0/16"]
   network_link_pool                 = "169.254.64.0/18"
@@ -56,7 +55,7 @@ variables {
   max_size                          = 1
   secret_arns = {
     checkpoint_encryption_key = "arn:aws:secretsmanager:us-east-1:111122223333:secret:checkpoint"
-    worker_enrollment         = "arn:aws:secretsmanager:us-east-1:111122223333:secret:worker-enrollment"
+    worker_enrollment_token   = "arn:aws:secretsmanager:us-east-1:111122223333:secret:worker-enrollment"
   }
 }
 
@@ -134,18 +133,18 @@ run "deployment_owns_protected_capacity" {
 
   assert {
     condition = (
-      strcontains(base64decode(aws_launch_template.worker.user_data), var.secret_arns.worker_enrollment) &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_ENROLLMENT_SECRET_FILE=%s") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "/run/helmr/worker-enrollment-secret") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-worker-enrollment-secret.service") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "Wants=helmr-worker-enrollment-secret.service") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "After=helmr-worker-enrollment-secret.service") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), var.secret_arns.worker_enrollment_token) &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_ENROLLMENT_TOKEN_FILE=%s") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "/run/helmr/worker-enrollment-token") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-worker-enrollment-token.service") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "Wants=helmr-worker-enrollment-token.service") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "After=helmr-worker-enrollment-token.service") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "Restart=on-failure") &&
-      !strcontains(base64decode(aws_launch_template.worker.user_data), "Requires=helmr-worker-enrollment-secret.service") &&
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "Requires=helmr-worker-enrollment-token.service") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_RESOURCE_ID=%s") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "meta-data/instance-id")
     )
-    error_message = "worker bootstrap must refresh the volatile group secret without making an existing credential depend on the secret store, and report only an opaque host locator"
+    error_message = "worker bootstrap must refresh the volatile enrollment token without making an existing credential depend on the secret store, and report only an opaque host locator"
   }
 
   assert {
@@ -256,7 +255,6 @@ run "build_worker_installs_exact_policy_before_service" {
 
   variables {
     name                       = "helmr-test-build"
-    worker_group_id            = "build-workers"
     worker_roles               = ["build"]
     worker_capacity_vcpus      = 4
     worker_capacity_memory_mib = 8192
@@ -352,7 +350,6 @@ run "build_worker_rejects_scratch_below_large_vm_boundary" {
 
   variables {
     name                       = "helmr-test-build"
-    worker_group_id            = "build-workers"
     worker_roles               = ["build"]
     worker_capacity_vcpus      = 4
     worker_capacity_memory_mib = 8192

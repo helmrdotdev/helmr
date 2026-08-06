@@ -35,6 +35,7 @@ type RoleDemand struct {
 
 type DemandObservation struct {
 	WorkerGroupID      string      `json:"worker_group_id"`
+	WorkerGroupName    string      `json:"worker_group_name"`
 	RegionID           string      `json:"region_id"`
 	GroupState         string      `json:"group_state"`
 	Run                *RoleDemand `json:"run,omitempty"`
@@ -58,6 +59,7 @@ func ObserveDemand(ctx context.Context, store DemandStore) ([]DemandObservation,
 		}
 		observation := DemandObservation{
 			WorkerGroupID:      row.WorkerGroupID,
+			WorkerGroupName:    row.WorkerGroupName,
 			RegionID:           row.RegionID,
 			GroupState:         row.State,
 			RegisteringWorkers: row.RegisteringWorkers,

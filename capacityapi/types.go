@@ -39,6 +39,7 @@ type RoleDemand struct {
 
 type CapacityObservation struct {
 	WorkerGroupID      string            `json:"worker_group_id"`
+	WorkerGroupName    string            `json:"worker_group_name"`
 	RegionID           string            `json:"region_id"`
 	GroupStatus        WorkerGroupStatus `json:"group_status"`
 	Run                *RoleDemand       `json:"run,omitempty"`

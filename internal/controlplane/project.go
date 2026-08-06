@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -127,6 +128,19 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	actor := actorFromContext(r.Context())
 	defaultRegionID := request.DefaultRegionID
+	if defaultRegionID == "" {
+		regions, err := s.db.ListRegions(r.Context())
+		if err != nil {
+			writeError(w, errors.New("list regions"))
+			return
+		}
+		if !slices.ContainsFunc(regions, func(candidate db.Region) bool {
+			return candidate.State == db.RegionStateAvailable
+		}) {
+			writeError(w, badRequest(errors.New("no available region")))
+			return
+		}
+	}
 	if err := region.ValidateID(defaultRegionID); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid default_region_id: %w", err)))
 		return

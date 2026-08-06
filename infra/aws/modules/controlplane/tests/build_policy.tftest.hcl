@@ -132,31 +132,15 @@ override_resource {
 }
 
 variables {
-  name                = "helmr-test"
-  vpc_id              = "vpc-0123456789abcdef0"
-  private_subnet_ids  = ["subnet-0123456789abcdef0", "subnet-1123456789abcdef0"]
-  public_subnet_ids   = ["subnet-2123456789abcdef0", "subnet-3123456789abcdef0"]
-  public_url          = "http://controlplane.example.test"
-  allow_insecure_http = true
-  worker_groups = [{
-    id                      = "run-workers"
-    name                    = "Run workers"
-    allows_run              = true
-    allows_build            = true
-    observation_ttl_seconds = 120
-    instance_capacity = {
-      milli_cpu                  = 4000
-      memory_bytes               = 8589934592
-      guest_ephemeral_disk_bytes = 34359738368
-      build_cache_bytes          = 0
-      artifact_cache_bytes       = 0
-      vm_slots                   = 2
-      build_executors            = 1
-    }
-  }]
+  name                              = "helmr-test"
+  vpc_id                            = "vpc-0123456789abcdef0"
+  private_subnet_ids                = ["subnet-0123456789abcdef0", "subnet-1123456789abcdef0"]
+  public_subnet_ids                 = ["subnet-2123456789abcdef0", "subnet-3123456789abcdef0"]
+  public_url                        = "http://controlplane.example.test"
+  allow_insecure_http               = true
+  bootstrap_worker_group_name       = "default"
   image_cache_worker_role_arns      = ["arn:aws:iam::000000000000:role/helmr-run"]
-  region_id                         = "helmr-us-east"
-  default_region_id                 = "helmr-us-east"
+  bootstrap_region_id               = "helmr-us-east"
   controlplane_image                = "example.invalid/helmr@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   controlplane_image_repository_arn = "arn:aws:ecr:us-east-1:000000000000:repository/helmr-test/controlplane-releases"
   platform_store_uri                = "s3://helmr-test-runtime/objects"
@@ -215,19 +199,15 @@ run "controlplane_installs_exact_policy_before_start" {
 
   assert {
     condition = (
-      jsondecode({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.WORKER_GROUPS)[0].id == "run-workers" &&
-      jsondecode({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.WORKER_GROUPS)[0].enrollment_secret_env == "WORKER_GROUP_ENROLLMENT_SECRET_${upper(substr(sha256("run-workers"), 0, 16))}" &&
+      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.BOOTSTRAP_ENABLED == "1" &&
+      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.BOOTSTRAP_REGION_ID == "helmr-us-east" &&
+      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.BOOTSTRAP_WORKER_GROUP_NAME == "default" &&
       contains(
         [for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].secrets : item.name],
-        "WORKER_GROUP_ENROLLMENT_SECRET_${upper(substr(sha256("run-workers"), 0, 16))}"
-      ) &&
-      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.WORKER_GROUPS, "account_id") &&
-      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.WORKER_GROUPS, "region") &&
-      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.WORKER_GROUPS, "autoscaling_group") &&
-      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.WORKER_GROUPS, "ami") &&
-      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.WORKER_GROUPS, "instance_profile")
+        "BOOTSTRAP_WORKER_TOKEN"
+      )
     )
-    error_message = "Worker Group configuration must remain logical and resolve enrollment authority only through its deployment-injected secret."
+    error_message = "Control Plane must receive one explicit Region and Worker Group bootstrap plus its token secret."
   }
 
   assert {
@@ -335,7 +315,6 @@ run "workspace_image_cache_is_exact_and_controlplane_only" {
       { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.IMAGE_CACHE_REPOSITORY_PREFIX == "helmr-test/image-cache" &&
       { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.IMAGE_CACHE_ROLE_ARN == "arn:aws:iam::000000000000:role/helmr-test-image-cache" &&
       { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.IMAGE_CACHE_REPOSITORY_ARN_PREFIX == "arn:aws:ecr:us-east-1:000000000000:repository/helmr-test/image-cache/" &&
-      !strcontains({ for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.WORKER_GROUPS, "instance_role_arn") &&
       !contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name], "IMAGE_CACHE_ROLE_ARN") &&
       !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "IMAGE_CACHE_ROLE_ARN")
     )

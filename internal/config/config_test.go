@@ -173,7 +173,6 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	t.Setenv("BUILD_POLICY_PATH", " /etc/helmr/build-policy.json ")
 	t.Setenv("PLATFORM_STORE_URI", " s3://helmr-cas/runtimes ")
 	t.Setenv("WORKER_TOKEN_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
-	t.Setenv("WORKER_GROUPS", ` [{"id":"run-workers"}] `)
 	t.Setenv("SETUP_TOKEN", "setup-token")
 	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
@@ -194,30 +193,13 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerTokenSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.WorkerGroupsJSON != `[{"id":"run-workers"}]` || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.WorkspaceFencingKey, bytes.Repeat([]byte{2}, 32)) || !bytes.Equal(cfg.TokenCredentialKey, bytes.Repeat([]byte{3}, 32)) || cfg.PublicURL != "https://helmr.example.test" || cfg.APIOrigin != "https://api.helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" || cfg.RunLeaseTTL != 4*time.Minute || cfg.RunFinalizationTTL != 45*time.Minute {
-		t.Fatalf("config = %+v", cfg)
-	}
-}
-
-func TestLoadRegionBootstrap(t *testing.T) {
-	t.Setenv("REGION_ID", " logical-us-east ")
-	t.Setenv("DEFAULT_REGION_ID", " logical-us-east ")
-	t.Setenv("PROVIDER", " aws ")
-	t.Setenv("PROVIDER_REGION", " us-east-1 ")
-	t.Setenv("REGION_DISPLAY_NAME", " US East ")
-
-	cfg, err := LoadRegionBootstrap()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.RegionID != "logical-us-east" || cfg.DefaultRegionID != "logical-us-east" ||
-		cfg.Provider != "aws" || cfg.ProviderRegion != "us-east-1" || cfg.RegionDisplayName != "US East" {
+	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerTokenSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.WorkspaceFencingKey, bytes.Repeat([]byte{2}, 32)) || !bytes.Equal(cfg.TokenCredentialKey, bytes.Repeat([]byte{3}, 32)) || cfg.PublicURL != "https://helmr.example.test" || cfg.APIOrigin != "https://api.helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" || cfg.RunLeaseTTL != 4*time.Minute || cfg.RunFinalizationTTL != 45*time.Minute {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
 
 func TestLoadControlPlaneDefaultsToSelfHostedDeploymentMode(t *testing.T) {
-	setControlPlaneWorkerGroupEnv(t)
+	setControlPlaneRequiredEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("CAS_URI", "s3://helmr-cas")
@@ -274,7 +256,7 @@ func TestLoadControlPlaneRequiresManagedRuntimeConfig(t *testing.T) {
 		"PLATFORM_STORE_URI",
 	} {
 		t.Run(variable, func(t *testing.T) {
-			setControlPlaneWorkerGroupEnv(t)
+			setControlPlaneRequiredEnv(t)
 			t.Setenv("DEPLOYMENT_MODE", "managed-cloud")
 			t.Setenv("DATABASE_URL", "postgres://example")
 			t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
@@ -295,7 +277,7 @@ func TestLoadControlPlaneRequiresManagedRuntimeConfig(t *testing.T) {
 }
 
 func TestLoadControlPlaneRequiresSetupTokenForSelfHosted(t *testing.T) {
-	setControlPlaneWorkerGroupEnv(t)
+	setControlPlaneRequiredEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("CAS_URI", "s3://helmr-cas")
@@ -321,7 +303,7 @@ func TestLoadControlPlaneRequiresSetupTokenForSelfHosted(t *testing.T) {
 }
 
 func TestLoadControlPlaneRejectsInvalidDeploymentMode(t *testing.T) {
-	setControlPlaneWorkerGroupEnv(t)
+	setControlPlaneRequiredEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("DEPLOYMENT_MODE", "unknown")
@@ -343,7 +325,7 @@ func TestLoadControlPlaneRejectsInvalidDeploymentMode(t *testing.T) {
 }
 
 func TestLoadControlPlaneRejectsInvalidWorkerSigningKey(t *testing.T) {
-	setControlPlaneWorkerGroupEnv(t)
+	setControlPlaneRequiredEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("CAS_URI", "s3://helmr-cas")
@@ -363,7 +345,7 @@ func TestLoadControlPlaneRejectsInvalidWorkerSigningKey(t *testing.T) {
 }
 
 func TestLoadControlPlaneRejectsInvalidAuthKey(t *testing.T) {
-	setControlPlaneWorkerGroupEnv(t)
+	setControlPlaneRequiredEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("CAS_URI", "s3://helmr-cas")
@@ -383,7 +365,7 @@ func TestLoadControlPlaneRejectsInvalidAuthKey(t *testing.T) {
 }
 
 func TestLoadControlPlaneAllowsHTTPOnlyForLoopbackPublicURL(t *testing.T) {
-	setControlPlaneWorkerGroupEnv(t)
+	setControlPlaneRequiredEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("CAS_URI", "s3://helmr-cas")
@@ -410,7 +392,7 @@ func TestLoadControlPlaneAllowsHTTPOnlyForLoopbackPublicURL(t *testing.T) {
 }
 
 func TestLoadControlPlaneDefaultsPublicURL(t *testing.T) {
-	setControlPlaneWorkerGroupEnv(t)
+	setControlPlaneRequiredEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("CAS_URI", "s3://helmr-cas")
@@ -443,7 +425,7 @@ func TestLoadControlPlaneRejectsNonOriginPublicAndAPIURLs(t *testing.T) {
 		{"API_ORIGIN", "https://user@api.helmr.example.test"},
 	} {
 		t.Run(test.name+"="+test.value, func(t *testing.T) {
-			setControlPlaneWorkerGroupEnv(t)
+			setControlPlaneRequiredEnv(t)
 			t.Setenv("DATABASE_URL", "postgres://example")
 			t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 			t.Setenv("CAS_URI", "s3://helmr-cas")
@@ -474,7 +456,7 @@ func TestLoadControlPlaneRejectsInvalidMagicLinkDebugURLs(t *testing.T) {
 }
 
 func TestLoadControlPlaneRequiresCompleteSMTPConfig(t *testing.T) {
-	setControlPlaneWorkerGroupEnv(t)
+	setControlPlaneRequiredEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("CAS_URI", "s3://helmr-cas")
@@ -502,11 +484,10 @@ func TestLoadControlPlaneRequiresCompleteSMTPConfig(t *testing.T) {
 }
 
 func TestLoadControlPlaneReadsResendConfig(t *testing.T) {
-	setControlPlaneWorkerGroupEnv(t)
+	setControlPlaneRequiredEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("DEPLOYMENT_MODE", "managed-cloud")
-	t.Setenv("WORKER_GROUPS", `[{"id":"run-workers"}]`)
 	t.Setenv("CAS_URI", "s3://helmr-cas")
 	t.Setenv("WORKER_TOKEN_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
 	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
@@ -526,10 +507,9 @@ func TestLoadControlPlaneReadsResendConfig(t *testing.T) {
 	}
 }
 
-func setControlPlaneWorkerGroupEnv(t *testing.T) {
+func setControlPlaneRequiredEnv(t *testing.T) {
 	t.Helper()
 	setControlPlaneTokenCredentialEnv(t)
-	t.Setenv("WORKER_GROUPS", `[{"id":"run-workers"}]`)
 	t.Setenv("BUILD_POLICY_PATH", "/etc/helmr/build-policy.json")
 	t.Setenv("PLATFORM_STORE_URI", "s3://helmr-cas/runtimes")
 	t.Setenv("WORKSPACE_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
@@ -559,12 +539,12 @@ func setWorkerRuntimeEnv(t *testing.T, build bool) {
 
 func setWorkerEnrollmentEnv(t *testing.T) {
 	t.Helper()
-	secretFile := t.TempDir() + "/worker-enrollment-secret"
-	if err := os.WriteFile(secretFile, []byte("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"), 0o600); err != nil {
+	secretFile := t.TempDir() + "/worker-enrollment-token"
+	if err := os.WriteFile(secretFile, []byte("hlmr_wgt_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("WORKER_RESOURCE_ID", "host-1")
-	t.Setenv("WORKER_ENROLLMENT_SECRET_FILE", secretFile)
+	t.Setenv("WORKER_ENROLLMENT_TOKEN_FILE", secretFile)
 }
 
 func setValidWorkerEnv(t *testing.T, build bool) {
@@ -572,7 +552,6 @@ func setValidWorkerEnv(t *testing.T, build bool) {
 	setWorkerRuntimeEnv(t, build)
 	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
 	t.Setenv("CAS_URI", "s3://helmr-cas")
-	t.Setenv("WORKER_GROUP_ID", "run-workers")
 	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=")
 	t.Setenv("JAILER_UID", "1001")
 	t.Setenv("JAILER_GID", "1002")
@@ -628,7 +607,6 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	setWorkerRuntimeEnv(t, true)
 	t.Setenv("CONTROL_PLANE_URL", " https://api.example.test ")
 	t.Setenv("CAS_URI", "\ns3://helmr-cas")
-	t.Setenv("WORKER_GROUP_ID", " run-workers ")
 	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("WORKER_WORK_DIR", " /var/lib/helmr/scratch/worker ")
 	t.Setenv("WORKER_IMAGES_DIR", " /var/lib/helmr/images ")
@@ -677,20 +655,11 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if cfg.JailerPath != "/usr/bin/jailer" || cfg.JailerUID != 1001 || cfg.JailerGID != 1002 || cfg.JailerNumaNode != 1 || cfg.JailerChrootDir != "/var/lib/helmr/scratch/jailer" || cfg.CgroupVersion != "2" || cfg.IPPath != "/usr/sbin/ip" || cfg.NFTPath != "/usr/sbin/nft" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.WorkerGroupID != "run-workers" {
-		t.Fatalf("config = %+v", cfg)
-	}
 	if cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.PlatformStoreURI != "s3://helmr-runtime" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if !bytes.Equal(cfg.CheckpointKey, make([]byte, 32)) {
 		t.Fatalf("config = %+v", cfg)
-	}
-}
-
-func TestLoadWorkerRequiresGroup(t *testing.T) {
-	if _, err := LoadWorker(); err == nil || !strings.Contains(err.Error(), "WORKER_GROUP_ID") {
-		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -708,7 +677,6 @@ func TestLoadWorkerRequiresExplicitCanonicalBlockedIPv4CIDRs(t *testing.T) {
 
 func TestLoadWorkerReadsEnrollmentBoundary(t *testing.T) {
 	setWorkerRuntimeEnv(t, true)
-	t.Setenv("WORKER_GROUP_ID", "run-workers")
 	t.Setenv("CONTROL_PLANE_URL", "https://controlplane.example.test")
 	t.Setenv("CAS_URI", "s3://cas")
 	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=")
@@ -719,20 +687,20 @@ func TestLoadWorkerReadsEnrollmentBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.WorkerGroupID != "run-workers" || cfg.WorkerEnrollmentSecretFile != os.Getenv("WORKER_ENROLLMENT_SECRET_FILE") {
+	if cfg.WorkerEnrollmentTokenFile != os.Getenv("WORKER_ENROLLMENT_TOKEN_FILE") {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
 
-func TestLoadWorkerDoesNotRequireEnrollmentSecretFileToExistAtStartup(t *testing.T) {
+func TestLoadWorkerDoesNotRequireEnrollmentTokenFileToExistAtStartup(t *testing.T) {
 	setValidWorkerEnv(t, false)
 	secretFile := t.TempDir() + "/not-yet-materialized"
-	t.Setenv("WORKER_ENROLLMENT_SECRET_FILE", secretFile)
+	t.Setenv("WORKER_ENROLLMENT_TOKEN_FILE", secretFile)
 	cfg, err := LoadWorker()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.WorkerEnrollmentSecretFile != secretFile {
+	if cfg.WorkerEnrollmentTokenFile != secretFile {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -741,7 +709,6 @@ func TestLoadWorkerReadsExplicitRolesAndCapacities(t *testing.T) {
 	setWorkerRuntimeEnv(t, false)
 	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
 	t.Setenv("CAS_URI", "s3://helmr-cas")
-	t.Setenv("WORKER_GROUP_ID", "run-workers")
 	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=")
 	t.Setenv("JAILER_UID", "1001")
 	t.Setenv("JAILER_GID", "1002")
@@ -763,7 +730,6 @@ func TestLoadWorkerRejectsMultipleBuildExecutors(t *testing.T) {
 	for key, value := range map[string]string{
 		"CONTROL_PLANE_URL":                 "https://api.example.test",
 		"CAS_URI":                           "s3://helmr-cas",
-		"WORKER_GROUP_ID":                   "build-workers",
 		"CHECKPOINT_ENCRYPTION_KEY":         "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=",
 		"JAILER_UID":                        "1001",
 		"JAILER_GID":                        "1002",
@@ -784,7 +750,7 @@ func TestLoadWorkerRejectsMultipleBuildExecutors(t *testing.T) {
 
 func TestLoadWorkerRejectsRuntimePoolBelowRuntimeStarts(t *testing.T) {
 	setWorkerEnrollmentEnv(t)
-	for key, value := range map[string]string{"CONTROL_PLANE_URL": "https://api.example.test", "CAS_URI": "s3://helmr-cas", "WORKER_GROUP_ID": "run-workers", "CHECKPOINT_ENCRYPTION_KEY": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=", "JAILER_UID": "1001", "JAILER_GID": "1002", "WORKER_ROLES": "run", "WORKER_RUNTIME_STARTS": "2", "WORKER_PREPARED_RUNTIME_POOL_SIZE": "1"} {
+	for key, value := range map[string]string{"CONTROL_PLANE_URL": "https://api.example.test", "CAS_URI": "s3://helmr-cas", "CHECKPOINT_ENCRYPTION_KEY": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=", "JAILER_UID": "1001", "JAILER_GID": "1002", "WORKER_ROLES": "run", "WORKER_RUNTIME_STARTS": "2", "WORKER_PREPARED_RUNTIME_POOL_SIZE": "1"} {
 		t.Setenv(key, value)
 	}
 	if _, err := LoadWorker(); err == nil {
@@ -798,7 +764,6 @@ func TestLoadWorkerRejectsEmptyOrUnknownRoles(t *testing.T) {
 			setWorkerEnrollmentEnv(t)
 			t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
 			t.Setenv("CAS_URI", "s3://helmr-cas")
-			t.Setenv("WORKER_GROUP_ID", "run-workers")
 			t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=")
 			t.Setenv("JAILER_UID", "1001")
 			t.Setenv("JAILER_GID", "1002")
@@ -839,7 +804,6 @@ func TestLoadWorkerRejectsInvalidVMNumbers(t *testing.T) {
 	setWorkerEnrollmentEnv(t)
 	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
 	t.Setenv("CAS_URI", "s3://helmr-cas")
-	t.Setenv("WORKER_GROUP_ID", "run-workers")
 	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("JAILER_UID", "1001")
 	t.Setenv("JAILER_GID", "1002")
@@ -856,7 +820,6 @@ func TestLoadWorkerRejectsHealthAttemptLongerThanHealthTimeout(t *testing.T) {
 	t.Setenv("WORKER_NETWORK_BLOCKED_IPV4_CIDRS", "[]")
 	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
 	t.Setenv("CAS_URI", "s3://helmr-cas")
-	t.Setenv("WORKER_GROUP_ID", "run-workers")
 	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("JAILER_UID", "1001")
 	t.Setenv("JAILER_GID", "1002")
@@ -877,7 +840,6 @@ func TestLoadWorkerClampsDefaultHealthAttemptToShortHealthTimeout(t *testing.T) 
 	setWorkerRuntimeEnv(t, true)
 	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
 	t.Setenv("CAS_URI", "s3://helmr-cas")
-	t.Setenv("WORKER_GROUP_ID", "run-workers")
 	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("JAILER_UID", "1001")
 	t.Setenv("JAILER_GID", "1002")

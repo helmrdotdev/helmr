@@ -7,18 +7,10 @@ import (
 	"testing"
 )
 
-func TestLoadConfigAcceptsProviderNeutralWorkerGroup(t *testing.T) {
+func TestLoadConfigAcceptsEmptyBootstrap(t *testing.T) {
 	setDevRegionConfig(t)
 	if _, err := loadConfig(); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestLoadConfigRejectsWorkerGroupInfrastructureFields(t *testing.T) {
-	setDevRegionConfig(t)
-	t.Setenv("WORKER_GROUPS", `[{"id":"local-workers","region":"local"}]`)
-	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), `unknown field "region"`) {
-		t.Fatalf("infrastructure field error = %v", err)
 	}
 }
 
@@ -48,12 +40,6 @@ func setDevRegionConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("BUILD_POLICY_PATH", "/etc/helmr/build-policy.json")
-	t.Setenv("REGION_ID", "local")
-	t.Setenv("DEFAULT_REGION_ID", "local")
-	t.Setenv("PROVIDER", "local")
-	t.Setenv("PROVIDER_REGION", "local")
-	t.Setenv("WORKER_GROUPS", `[{"id":"local-workers","name":"local","enrollment_secret_env":"WORKER_GROUP_ENROLLMENT_SECRET_LOCAL","allows_run":true,"allows_build":true,"observation_ttl_seconds":120,"instance_capacity":{"milli_cpu":1000,"memory_bytes":1024,"guest_ephemeral_disk_bytes":2048,"vm_slots":1,"build_executors":1}}]`)
-	t.Setenv("WORKER_GROUP_ENROLLMENT_SECRET_LOCAL", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 }
 

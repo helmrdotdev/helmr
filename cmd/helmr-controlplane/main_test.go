@@ -23,7 +23,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -43,7 +42,6 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		DB:                    store,
 		TX:                    panicTxBeginner{},
 		Auth:                  controlplane.NewDBAuthenticator(store),
-		WorkerEnrollment:      controlplanetestWorkerEnrollmentVerifier(),
 		SecretDelivery:        controlplanetestSecretDeliveryOpener{},
 		RegistryCredentials:   controlplanetestRegistryCredentialOpener{},
 		WorkspaceFencingKey:   controlplanetestWorkspaceFencingKey(),
@@ -299,14 +297,8 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 		return deployment.ParseBuildPolicy([]byte(buildPolicy))
 	}
 	t.Cleanup(func() { loadControlPlaneBuildPolicy = originalBuildPolicyLoader })
-	t.Setenv("REGION_ID", "us-east-1")
-	t.Setenv("DEFAULT_REGION_ID", "us-east-1")
-	t.Setenv("PROVIDER", "aws")
-	t.Setenv("PROVIDER_REGION", "us-east-1")
 	t.Setenv("WORKER_TOKEN_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
 	t.Setenv("TOKEN_CREDENTIAL_KEY", "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=")
-	t.Setenv("WORKER_GROUPS", `[{"id":"us-east-1-worker-group-1","name":"run","enrollment_secret_env":"WORKER_GROUP_ENROLLMENT_SECRET_RUN","allows_run":true,"allows_build":false,"observation_ttl_seconds":3600,"instance_capacity":{"milli_cpu":1000,"memory_bytes":1024,"guest_ephemeral_disk_bytes":1024,"vm_slots":1}}]`)
-	t.Setenv("WORKER_GROUP_ENROLLMENT_SECRET_RUN", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
 	t.Setenv("SETUP_TOKEN", "setup-token")
 	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
@@ -359,17 +351,6 @@ func getControlPlane(addr string) (*http.Response, error) {
 
 type emptyStore struct {
 	db.Querier
-}
-
-func controlplanetestWorkerEnrollmentVerifier() *enrollment.Verifier {
-	verifier, err := enrollment.NewVerifier([]enrollment.GroupSecret{{
-		GroupID: "us-east-1-worker-group-1",
-		Secret:  "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
-	}})
-	if err != nil {
-		panic(err)
-	}
-	return verifier
 }
 
 type controlplanetestTelemetryReader struct {

@@ -32,6 +32,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		DisplayName:     state.DisplayName,
 		ProfileImageURL: state.ProfileImageURL.String,
 		PublicURL:       s.publicURL.String(),
+		Admin:           state.Admin,
 		Permissions:     []string{},
 		ProjectRequired: state.OrgID.Valid && !state.HasProjects,
 	}

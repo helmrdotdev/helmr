@@ -5,9 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/region"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func TestDevSeedWithFreshPostgres(t *testing.T) {
@@ -24,16 +25,22 @@ func TestDevSeedWithFreshPostgres(t *testing.T) {
 	if err := migrate(ctx, pool, false); err != nil {
 		t.Fatalf("migrate fresh database: %v", err)
 	}
-	if err := region.Ensure(ctx, db.New(pool), region.BootstrapConfig{
-		RegionID:          "dev-local",
-		DefaultRegionID:   "dev-local",
-		Provider:          "local",
-		ProviderRegion:    "local",
-		RegionDisplayName: "Local",
+	q := db.New(pool)
+	if _, err := q.CreateRegion(ctx, db.CreateRegionParams{
+		ID: "dev-local", Provider: "local", ProviderRegion: "local", DisplayName: "Local",
+		State: db.RegionStateAvailable, Visibility: db.RegionVisibilityPublic,
 	}); err != nil {
 		t.Fatalf("bootstrap local region: %v", err)
 	}
-	cfg := devConfig{defaultRegionID: "dev-local"}
+	if _, err := q.CreateWorkerGroup(ctx, db.CreateWorkerGroupParams{
+		ID: uuid.Must(uuid.NewV7()).String(), TokenID: pgvalue.NewUUIDv7(), TokenHash: make([]byte, 32),
+		RegionID: "dev-local", Name: "default", AllowsRun: true, AllowsBuild: true,
+		RequiredCPUMillis: 1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1,
+		RequiredVMSlots: 1, RequiredBuildExecutors: 1, ObservationTtlSeconds: 120,
+	}); err != nil {
+		t.Fatalf("bootstrap local worker group: %v", err)
+	}
+	cfg := devConfig{bootstrapRegionID: "dev-local"}
 	if err := seedDevData(ctx, pool, cfg); err != nil {
 		t.Fatalf("seed fresh database: %v", err)
 	}

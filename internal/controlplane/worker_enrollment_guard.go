@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"context"
 	"net"
 	"net/http"
 	"strings"
@@ -10,17 +9,13 @@ import (
 )
 
 const (
-	workerEnrollmentRateWindow      = time.Minute
-	workerChallengePerSourceLimit   = 256
-	workerEnrollmentPerSourceLimit  = 512
-	workerChallengeGlobalLimit      = 512
-	workerEnrollmentGlobalLimit     = 1024
-	workerEnrollmentVerificationMax = 16
+	workerEnrollmentRateWindow     = time.Minute
+	workerEnrollmentPerSourceLimit = 512
+	workerEnrollmentGlobalLimit    = 1024
 )
 
 type workerEnrollmentRate struct {
 	windowStart time.Time
-	challenges  int
 	enrollments int
 }
 
@@ -28,25 +23,15 @@ type workerEnrollmentGuard struct {
 	mu      sync.Mutex
 	sources map[string]workerEnrollmentRate
 	global  workerEnrollmentRate
-	verify  chan struct{}
 }
 
 func newWorkerEnrollmentGuard() *workerEnrollmentGuard {
 	return &workerEnrollmentGuard{
 		sources: make(map[string]workerEnrollmentRate),
-		verify:  make(chan struct{}, workerEnrollmentVerificationMax),
 	}
 }
 
-func (g *workerEnrollmentGuard) allowChallenge(source string, now time.Time) bool {
-	return g.allow(source, now, true)
-}
-
 func (g *workerEnrollmentGuard) allowEnrollment(source string, now time.Time) bool {
-	return g.allow(source, now, false)
-}
-
-func (g *workerEnrollmentGuard) allow(source string, now time.Time, challenge bool) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -62,34 +47,13 @@ func (g *workerEnrollmentGuard) allow(source string, now time.Time, challenge bo
 	if rate.windowStart.IsZero() || now.Sub(rate.windowStart) >= workerEnrollmentRateWindow {
 		rate = workerEnrollmentRate{windowStart: now}
 	}
-	if challenge {
-		if rate.challenges >= workerChallengePerSourceLimit || g.global.challenges >= workerChallengeGlobalLimit {
-			return false
-		}
-		rate.challenges++
-		g.global.challenges++
-	} else {
-		if rate.enrollments >= workerEnrollmentPerSourceLimit || g.global.enrollments >= workerEnrollmentGlobalLimit {
-			return false
-		}
-		rate.enrollments++
-		g.global.enrollments++
-	}
-	g.sources[source] = rate
-	return true
-}
-
-func (g *workerEnrollmentGuard) beginVerification(ctx context.Context) bool {
-	select {
-	case g.verify <- struct{}{}:
-		return true
-	case <-ctx.Done():
+	if rate.enrollments >= workerEnrollmentPerSourceLimit || g.global.enrollments >= workerEnrollmentGlobalLimit {
 		return false
 	}
-}
-
-func (g *workerEnrollmentGuard) endVerification() {
-	<-g.verify
+	rate.enrollments++
+	g.global.enrollments++
+	g.sources[source] = rate
+	return true
 }
 
 func workerEnrollmentSource(request *http.Request) string {

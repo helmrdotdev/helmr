@@ -12,7 +12,6 @@ locals {
   worker_pools = {
     run = {
       name         = "${lower(var.name)}-run"
-      group_id     = var.worker_group_id
       roles        = ["run"]
       allows_run   = true
       allows_build = false
@@ -21,7 +20,6 @@ locals {
     }
     build = {
       name         = "${lower(var.name)}-build"
-      group_id     = "${var.worker_group_id}-build"
       roles        = ["build"]
       allows_run   = false
       allows_build = true
@@ -29,35 +27,6 @@ locals {
       max_size     = var.build_worker_max_size
     }
   }
-  worker_groups = [for pool in values(local.worker_pools) : {
-    id                      = pool.group_id
-    name                    = one(pool.roles)
-    description             = "${title(one(pool.roles))} workers"
-    allows_run              = pool.allows_run
-    allows_build            = pool.allows_build
-    observation_ttl_seconds = var.worker_observation_ttl_seconds
-    instance_capacity = !var.create_worker ? {
-      milli_cpu         = 1, memory_bytes = 1, guest_ephemeral_disk_bytes = 1,
-      build_cache_bytes = 0, artifact_cache_bytes = 0,
-      vm_slots          = pool.allows_run ? 1 : 0, build_executors = pool.allows_build ? 1 : 0
-      } : pool.allows_run ? {
-      milli_cpu                  = coalesce(var.worker_capacity_vcpus, 0) * 1000
-      memory_bytes               = coalesce(var.worker_capacity_memory_mib, 0) * 1048576
-      guest_ephemeral_disk_bytes = local.run_worker_guest_ephemeral_disk_mib * 1048576
-      build_cache_bytes          = local.run_worker_build_cache_mib * 1048576
-      artifact_cache_bytes       = local.run_worker_artifact_cache_mib * 1048576
-      vm_slots                   = coalesce(var.worker_execution_slots, 0)
-      build_executors            = 0
-      } : {
-      milli_cpu                  = local.build_worker_cpu_millis
-      memory_bytes               = local.build_worker_memory_mib * 1048576
-      guest_ephemeral_disk_bytes = local.build_worker_guest_ephemeral_disk_mib * 1048576
-      build_cache_bytes          = local.build_worker_build_cache_mib * 1048576
-      artifact_cache_bytes       = local.build_worker_artifact_cache_mib * 1048576
-      vm_slots                   = 0
-      build_executors            = coalesce(var.build_worker_execution_slots, var.worker_execution_slots, 0)
-    }
-  }]
   run_worker_build_cache_mib            = coalesce(var.worker_substrate_cache_max_mib, 0)
   run_worker_artifact_cache_mib         = coalesce(var.worker_artifact_cache_max_mib, 0)
   run_worker_disk_reserve_mib           = var.worker_disk_reserve_mib
@@ -118,10 +87,9 @@ module "controlplane" {
   private_subnet_ids                         = module.controlplane_network.private_subnet_ids
   public_url                                 = var.public_url
   deployment_mode                            = var.deployment_mode
-  worker_groups                              = local.worker_groups
+  bootstrap_worker_group_name                = var.worker_group_name
   image_cache_worker_role_arns               = [for pool in values(local.worker_pools) : "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${pool.name}-worker" if pool.allows_build]
-  region_id                                  = var.region_id
-  default_region_id                          = var.default_region_id
+  bootstrap_region_id                        = var.region_id
   clickhouse_url                             = var.clickhouse_url
   clickhouse_user                            = var.clickhouse_user
   clickhouse_password_secret_arn             = var.clickhouse_password_secret_arn
@@ -169,7 +137,6 @@ module "worker_group" {
   source = "../modules/worker"
 
   name                                       = each.value.name
-  worker_group_id                            = each.value.group_id
   worker_roles                               = each.value.roles
   network_blocked_ipv4_cidrs                 = var.worker_network_blocked_ipv4_cidrs
   network_link_pool                          = var.worker_network_link_pool
@@ -214,7 +181,7 @@ module "worker_group" {
 
   secret_arns = {
     checkpoint_encryption_key = module.controlplane.secret_arns.checkpoint_encryption_key
-    worker_enrollment         = module.controlplane.worker_enrollment_secret_arns[each.value.group_id]
+    worker_enrollment_token   = module.controlplane.worker_enrollment_secret_arn
   }
 
   tags = local.tags

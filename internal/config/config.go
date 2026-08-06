@@ -38,7 +38,14 @@ type ControlPlane struct {
 	BuildPolicyPath         string
 	PlatformStoreURI        string
 	WorkerTokenSigningKey   []byte
-	WorkerGroupsJSON        string
+	BootstrapEnabled        bool
+	BootstrapRegionID       string
+	BootstrapRegionProvider string
+	BootstrapProviderRegion string
+	BootstrapRegionName     string
+	BootstrapRegionLocation string
+	BootstrapWorkerGroup    string
+	BootstrapWorkerToken    string
 	CapacityToken           string
 	SetupToken              string
 	AuthKey                 []byte
@@ -48,6 +55,7 @@ type ControlPlane struct {
 	PublicURL               string
 	APIOrigin               string
 	MagicLinkDebugURLs      bool
+	AdminEmails             []string
 	EmailProvider           string
 	ResendAPIKey            string
 	SMTPAddr                string
@@ -89,19 +97,10 @@ type ClickHouse struct {
 	Password string
 }
 
-type RegionBootstrap struct {
-	RegionID          string
-	DefaultRegionID   string
-	Provider          string
-	ProviderRegion    string
-	RegionDisplayName string
-}
-
 type Worker struct {
 	ControlPlaneURL              string
-	WorkerGroupID                string
 	WorkerResourceID             string
-	WorkerEnrollmentSecretFile   string
+	WorkerEnrollmentTokenFile    string
 	CASURI                       string
 	WorkerInstanceCredentialPath string
 	CheckpointKey                []byte
@@ -207,34 +206,6 @@ func loadImageCache() (*ImageCache, error) {
 		return nil, errors.New("IMAGE_CACHE_REGISTRY_AUTHORITY, IMAGE_CACHE_REPOSITORY_PREFIX, IMAGE_CACHE_ROLE_ARN, and IMAGE_CACHE_REPOSITORY_ARN_PREFIX must be configured together")
 	}
 	return &config, nil
-}
-
-func LoadRegionBootstrap() (RegionBootstrap, error) {
-	regionID := envText("REGION_ID")
-	defaultRegionID := envText("DEFAULT_REGION_ID")
-	cfg := RegionBootstrap{
-		RegionID:          regionID,
-		DefaultRegionID:   defaultRegionID,
-		Provider:          envText("PROVIDER"),
-		ProviderRegion:    envText("PROVIDER_REGION"),
-		RegionDisplayName: envText("REGION_DISPLAY_NAME"),
-	}
-	if cfg.RegionID == "" {
-		return cfg, errors.New("REGION_ID is required")
-	}
-	if cfg.DefaultRegionID == "" {
-		return cfg, errors.New("DEFAULT_REGION_ID is required")
-	}
-	if cfg.Provider == "" {
-		return cfg, errors.New("PROVIDER is required")
-	}
-	if cfg.ProviderRegion == "" {
-		return cfg, errors.New("PROVIDER_REGION is required")
-	}
-	if cfg.RegionDisplayName == "" {
-		cfg.RegionDisplayName = cfg.RegionID
-	}
-	return cfg, nil
 }
 
 func normalizeOrigin(name string, raw string) (string, error) {

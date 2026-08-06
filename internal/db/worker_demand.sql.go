@@ -13,9 +13,8 @@ import (
 
 const listWorkerDemandObservations = `-- name: ListWorkerDemandObservations :many
 WITH logical_groups AS (
-    SELECT id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, created_at, updated_at
+    SELECT id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, created_at, updated_at
       FROM worker_groups
-     WHERE state <> 'disabled'
 ), run_queue AS (
     SELECT logical_groups.id AS worker_group_id,
            count(*)::bigint AS queued_count,
@@ -154,6 +153,7 @@ WITH logical_groups AS (
      GROUP BY worker_instances.worker_group_id
 )
 SELECT logical_groups.id AS worker_group_id,
+       logical_groups.name AS worker_group_name,
        logical_groups.region_id,
        logical_groups.state,
        logical_groups.allows_run,
@@ -182,11 +182,12 @@ SELECT logical_groups.id AS worker_group_id,
   LEFT JOIN run_supply ON run_supply.worker_group_id = logical_groups.id
   LEFT JOIN build_supply ON build_supply.worker_group_id = logical_groups.id
   LEFT JOIN instance_counts ON instance_counts.worker_group_id = logical_groups.id
- ORDER BY logical_groups.region_id, logical_groups.id
+ ORDER BY logical_groups.region_id, logical_groups.name, logical_groups.id
 `
 
 type ListWorkerDemandObservationsRow struct {
 	WorkerGroupID                         string             `json:"worker_group_id"`
+	WorkerGroupName                       string             `json:"worker_group_name"`
 	RegionID                              string             `json:"region_id"`
 	State                                 string             `json:"state"`
 	AllowsRun                             bool               `json:"allows_run"`
@@ -222,6 +223,7 @@ func (q *Queries) ListWorkerDemandObservations(ctx context.Context) ([]ListWorke
 		var i ListWorkerDemandObservationsRow
 		if err := rows.Scan(
 			&i.WorkerGroupID,
+			&i.WorkerGroupName,
 			&i.RegionID,
 			&i.State,
 			&i.AllowsRun,

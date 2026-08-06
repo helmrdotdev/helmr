@@ -1283,23 +1283,15 @@ type User struct {
 	DisplayName     string             `json:"display_name"`
 	ProfileImageURL pgtype.Text        `json:"profile_image_url"`
 	PrimaryEmail    pgtype.Text        `json:"primary_email"`
+	Admin           bool               `json:"admin"`
 	DisabledAt      pgtype.Timestamptz `json:"disabled_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
-type WorkerEnrollmentNonce struct {
-	ID                         pgtype.UUID        `json:"id"`
-	NonceHash                  []byte             `json:"nonce_hash"`
-	WorkerGroupID              string             `json:"worker_group_id"`
-	ExpiresAt                  pgtype.Timestamptz `json:"expires_at"`
-	ConsumedAt                 pgtype.Timestamptz `json:"consumed_at"`
-	ConsumedByWorkerInstanceID pgtype.UUID        `json:"consumed_by_worker_instance_id"`
-	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
-}
-
 type WorkerGroup struct {
 	ID                              string             `json:"id"`
+	TokenID                         pgtype.UUID        `json:"token_id"`
 	RegionID                        string             `json:"region_id"`
 	Name                            string             `json:"name"`
 	Description                     string             `json:"description"`
@@ -1317,6 +1309,14 @@ type WorkerGroup struct {
 	ObservationTtlSeconds           int32              `json:"observation_ttl_seconds"`
 	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WorkerGroupToken struct {
+	ID         pgtype.UUID        `json:"id"`
+	TokenHash  []byte             `json:"token_hash"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkerInstance struct {

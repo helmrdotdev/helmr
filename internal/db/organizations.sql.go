@@ -101,6 +101,7 @@ SELECT
     users.id AS user_id,
     users.display_name,
     users.profile_image_url,
+    users.admin,
     first_member.org_id,
     organizations.name AS org_name,
     organizations.slug AS org_slug,
@@ -129,6 +130,7 @@ type GetUserOnboardingStateRow struct {
 	UserID          pgtype.UUID `json:"user_id"`
 	DisplayName     string      `json:"display_name"`
 	ProfileImageURL pgtype.Text `json:"profile_image_url"`
+	Admin           bool        `json:"admin"`
 	OrgID           pgtype.UUID `json:"org_id"`
 	OrgName         pgtype.Text `json:"org_name"`
 	OrgSlug         pgtype.Text `json:"org_slug"`
@@ -143,6 +145,7 @@ func (q *Queries) GetUserOnboardingState(ctx context.Context, userID pgtype.UUID
 		&i.UserID,
 		&i.DisplayName,
 		&i.ProfileImageURL,
+		&i.Admin,
 		&i.OrgID,
 		&i.OrgName,
 		&i.OrgSlug,
@@ -150,6 +153,15 @@ func (q *Queries) GetUserOnboardingState(ctx context.Context, userID pgtype.UUID
 		&i.HasProjects,
 	)
 	return i, err
+}
+
+const grantUserAdmin = `-- name: GrantUserAdmin :exec
+UPDATE users SET admin = true, updated_at = now() WHERE id = $1
+`
+
+func (q *Queries) GrantUserAdmin(ctx context.Context, userID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, grantUserAdmin, userID)
+	return err
 }
 
 const listOrganizationIDs = `-- name: ListOrganizationIDs :many
