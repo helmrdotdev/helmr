@@ -450,7 +450,7 @@ func lockWorkspaceExecPublicationSecrets(
 	if err != nil {
 		return false, err
 	}
-	if len(rows) > maxWorkspaceSecrets {
+	if len(rows) > workspace.MaxSecretPlacements {
 		return false, errors.New("workspace secret placements exceed their bound")
 	}
 	return workspaceExecPublicationSecretsValid(rows, processID), nil

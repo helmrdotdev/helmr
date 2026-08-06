@@ -4,12 +4,16 @@ import type {
   PayloadTaskDefinition,
   TaskConfigBase,
   TaskExecutionContext,
-  WorkspaceAddress,
 } from "./contract"
 import { createScheduledTask } from "./definitions"
 import { resourceID } from "./internal/id"
 import type { PayloadSchema } from "./schema/payload"
-import { inspectWorkspaceAddress } from "./workspace"
+import {
+  encodeWorkspaceSecrets,
+  inspectSandboxDefinition,
+  type SandboxDefinition,
+  type WorkspaceSecretInput,
+} from "./workspace"
 
 export type Cron = Readonly<{
   pattern: string
@@ -38,7 +42,10 @@ export type ScheduledTaskConfig<TOutput extends JsonValue> = Omit<
 > & Readonly<{
     id: string
     cron: Cron
-    workspace: WorkspaceAddress
+    workspace: Readonly<{
+      sandbox: SandboxDefinition
+      secrets?: readonly WorkspaceSecretInput[]
+    }>
     run(
       payload: ScheduledTaskPayload,
       ctx: TaskExecutionContext,
@@ -54,10 +61,26 @@ export function scheduledTask<TOutput extends JsonValue>(
 > {
   validateScheduleMembers(config)
   validateCron(config.cron)
-  const workspace = inspectWorkspaceAddress(config.workspace)
-  if (workspace === undefined) {
-    throw new Error("schedule workspace requires a Workspace address")
+  if (
+    typeof config.workspace !== "object" ||
+    config.workspace === null ||
+    Array.isArray(config.workspace)
+  ) {
+    throw new Error("schedule workspace must be an object")
   }
+  const unknownWorkspaceMember = Object.keys(config.workspace).find(
+    (key) => key !== "sandbox" && key !== "secrets",
+  )
+  if (unknownWorkspaceMember !== undefined) {
+    throw new Error(
+      `schedule workspace has unknown member ${JSON.stringify(unknownWorkspaceMember)}`,
+    )
+  }
+  const sandbox = config.workspace.sandbox
+  if (inspectSandboxDefinition(sandbox) === undefined) {
+    throw new Error("schedule workspace requires a Sandbox definition")
+  }
+  const secrets = encodeWorkspaceSecrets(config.workspace.secrets)
   return createScheduledTask({
     id: config.id,
     payload: scheduledTaskSchema,
@@ -71,7 +94,10 @@ export function scheduledTask<TOutput extends JsonValue>(
     schedule: {
       cron: config.cron.pattern,
       timezone: config.cron.timezone,
-      workspace,
+      workspace: {
+        sandbox,
+        secrets,
+      },
     },
   })
 }

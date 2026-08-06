@@ -373,10 +373,16 @@ describe("declaration analysis", () => {
   })
 
   test("normalizes scheduler-owned payload and declarative workspace", () => {
+    const maintenance = sandbox({ id: "maintenance" })
+      .image(image("maintenance").from("debian:bookworm-slim"))
+      .resources({ cpu: 1, memory: "1GiB" })
     const scheduled = schedules.task({
       id: "nightly",
       cron: { pattern: "0 3 * * *", timezone: "UTC" },
-      workspace: workspaces.fromKey("maintenance"),
+      workspace: {
+        sandbox: maintenance,
+        secrets: [{ secret: secrets.fromName("TOKEN"), env: "TOKEN" }],
+      },
       run: () => null,
     })
     const result = analyze({
@@ -387,6 +393,11 @@ describe("declaration analysis", () => {
           exportName: "nightly",
           value: scheduled,
         },
+        {
+          modulePath: "src/schedules.ts",
+          exportName: "maintenance",
+          value: maintenance,
+        },
       ],
     })
     const definition = result.buildPlan.definitions[0]
@@ -395,10 +406,104 @@ describe("declaration analysis", () => {
     expect(definition.manifest.schedule).toEqual({
       cron: "0 3 * * *",
       timezone: "UTC",
-      workspace: { key: "maintenance" },
+      workspace: {
+        sandboxId: "maintenance",
+        secrets: [{ name: "TOKEN", env: "TOKEN" }],
+      },
     })
     expect(definition.manifest.payload).toEqual({
       kind: "standard_schema",
+    })
+  })
+
+  test("rejects a Schedule whose Sandbox definition is not exported", () => {
+    const maintenance = sandbox({ id: "maintenance" })
+      .image(image("maintenance").from("debian:bookworm-slim"))
+      .resources({ cpu: 1, memory: "1GiB" })
+    const scheduled = schedules.task({
+      id: "nightly",
+      cron: { pattern: "0 3 * * *", timezone: "UTC" },
+      workspace: { sandbox: maintenance },
+      run: () => null,
+    })
+    expect(() => analyze({
+      architecture: "x86_64",
+      exports: [{
+        modulePath: "src/schedules.ts",
+        exportName: "nightly",
+        value: scheduled,
+      }],
+    })).toThrow('task "nightly" schedule references unexported Sandbox "maintenance"')
+  })
+
+  test("does not substitute an exported Sandbox with the same declared ID", () => {
+    const referenced = sandbox({ id: "maintenance" })
+      .image(image("referenced").from("debian:bookworm-slim"))
+      .resources({ cpu: 1, memory: "1GiB" })
+    const exported = sandbox({ id: "maintenance" })
+      .image(image("exported").from("debian:bookworm-slim"))
+      .resources({ cpu: 1, memory: "1GiB" })
+    const scheduled = schedules.task({
+      id: "nightly",
+      cron: { pattern: "0 3 * * *", timezone: "UTC" },
+      workspace: { sandbox: referenced },
+      run: () => null,
+    })
+    expect(() => analyze({
+      architecture: "x86_64",
+      exports: [
+        {
+          modulePath: "src/schedules.ts",
+          exportName: "nightly",
+          value: scheduled,
+        },
+        {
+          modulePath: "src/sandbox.ts",
+          exportName: "maintenance",
+          value: exported,
+        },
+      ],
+    })).toThrow(
+      'task "nightly" schedule references a different Sandbox object than the exported definition "maintenance"',
+    )
+  })
+
+  test("accepts re-exports of the exact Schedule Sandbox object", () => {
+    const maintenance = sandbox({ id: "maintenance" })
+      .image(image("maintenance").from("debian:bookworm-slim"))
+      .resources({ cpu: 1, memory: "1GiB" })
+    const scheduled = schedules.task({
+      id: "nightly",
+      cron: { pattern: "0 3 * * *", timezone: "UTC" },
+      workspace: { sandbox: maintenance },
+      run: () => null,
+    })
+    const result = analyze({
+      architecture: "x86_64",
+      exports: [
+        {
+          modulePath: "src/schedules.ts",
+          exportName: "nightly",
+          value: scheduled,
+        },
+        {
+          modulePath: "src/sandbox.ts",
+          exportName: "maintenance",
+          value: maintenance,
+        },
+        {
+          modulePath: "src/index.ts",
+          exportName: "workspace",
+          value: maintenance,
+        },
+      ],
+    })
+    expect(result.buildPlan.definitions.filter(
+      (definition) => definition.kind === "sandbox",
+    )).toHaveLength(1)
+    expect(result.buildPlan.definitions[0]).toMatchObject({
+      kind: "task",
+      manifest: { schedule: { workspace: { sandboxId: "maintenance" } } },
     })
   })
 
@@ -441,6 +546,9 @@ describe("declaration analysis", () => {
   })
 
   test("leaves cron grammar authority to Control", () => {
+    const maintenance = sandbox({ id: "maintenance" })
+      .image(image("maintenance").from("debian:bookworm-slim"))
+      .resources({ cpu: 1, memory: "1GiB" })
     for (const [index, pattern] of [
       "*/15 0-23/2 1,15 * 0-7",
       "0  3 * * *",
@@ -451,7 +559,7 @@ describe("declaration analysis", () => {
         schedules.task({
           id: `valid-${index}`,
           cron: { pattern, timezone: "UTC" },
-          workspace: workspaces.fromKey("maintenance"),
+          workspace: { sandbox: maintenance },
           run: () => null,
         }),
       ).not.toThrow()
@@ -460,7 +568,7 @@ describe("declaration analysis", () => {
       schedules.task({
         id: "timezone",
         cron: { pattern: "0 3 * * *", timezone: "utc" },
-        workspace: workspaces.fromKey("maintenance"),
+        workspace: { sandbox: maintenance },
         run: () => null,
       }),
     ).not.toThrow()
@@ -468,7 +576,7 @@ describe("declaration analysis", () => {
       schedules.task({
         id: "empty",
         cron: { pattern: "", timezone: "UTC" },
-        workspace: workspaces.fromKey("maintenance"),
+        workspace: { sandbox: maintenance },
         run: () => null,
       }),
     ).toThrow()

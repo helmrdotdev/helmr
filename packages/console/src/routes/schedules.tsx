@@ -19,8 +19,6 @@ function statusTone(schedule: Schedule): "active" | "expired" | "revoked" {
 
 function statusLabel(status: Schedule["status"]): string {
   switch (status) {
-    case "pending_workspace":
-      return "Pending workspace";
     case "active":
       return "Active";
     case "errored":
@@ -28,10 +26,6 @@ function statusLabel(status: Schedule["status"]): string {
     case "archived":
       return "Archived";
   }
-}
-
-function workspaceLabel(schedule: Schedule): string {
-  return schedule.workspace.id ?? schedule.workspace.key ?? "—";
 }
 
 function dateCell(value: string | undefined) {
@@ -54,8 +48,8 @@ export function Schedules() {
   const activeCount = createMemo(() =>
     items().filter((schedule) => schedule.status === "active").length
   );
-  const pendingCount = createMemo(() =>
-    items().filter((schedule) => schedule.status === "pending_workspace").length
+  const archivedCount = createMemo(() =>
+    items().filter((schedule) => schedule.status === "archived").length
   );
   const issueCount = createMemo(() =>
     items().filter((schedule) => schedule.status === "errored").length
@@ -82,8 +76,8 @@ export function Schedules() {
           <strong class="text-console-info">{activeCount()}</strong>
         </div>
         <div class={ui.metricCard}>
-          <span>Pending workspace</span>
-          <strong class="text-console-muted">{pendingCount()}</strong>
+          <span>Archived</span>
+          <strong class="text-console-muted">{archivedCount()}</strong>
         </div>
         <div class={ui.metricCard}>
           <span>Errored</span>
@@ -104,7 +98,6 @@ export function Schedules() {
                   <tr>
                     <th>Task</th>
                     <th>Status</th>
-                    <th>Workspace</th>
                     <th>Cron</th>
                     <th>Timezone</th>
                     <th>Next</th>
@@ -128,7 +121,6 @@ export function Schedules() {
                             </Show>
                           </div>
                         </td>
-                        <td><code>{workspaceLabel(schedule)}</code></td>
                         <td><code>{schedule.cron.pattern}</code></td>
                         <td><span class={ui.muted}>{schedule.cron.timezone}</span></td>
                         <td>{dateCell(schedule.next_fire_at)}</td>

@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -67,11 +68,103 @@ func TestDBAdmitterCommitsOneScheduleAdmissionTuple(t *testing.T) {
 	}
 	assertScheduleAdmissionCounts(t, pool, value, 1, 1, 1)
 	assertScheduleCursor(t, pool, value, admission.NextFireAt, admission.ScheduledAt)
+	receipt, err := db.New(pool).GetScheduledRunReceipt(t.Context(), db.GetScheduledRunReceiptParams{
+		EnvironmentID: value.EnvironmentID,
+		ScheduleID:    value.ID,
+		ScheduledAt:   value.NextFireAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if err := admitter.AdmitSchedule(t.Context(), value); err != nil {
 		t.Fatal(err)
 	}
 	assertScheduleAdmissionCounts(t, pool, value, 1, 1, 1)
+
+	dbtest.MustExec(t, t.Context(), pool, `
+		UPDATE schedules
+		   SET claimed_by = 'scheduler-test-2',
+		       claim_expires_at = now() + interval '5 minutes'
+		 WHERE id = $1
+	`, value.ID)
+	second, err := db.New(pool).GetSchedule(t.Context(), db.GetScheduleParams{
+		EnvironmentID: value.EnvironmentID, ID: value.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitter.now = func() time.Time { return second.NextFireAt.Time }
+	if err := admitter.AdmitSchedule(t.Context(), second); err != nil {
+		t.Fatal(err)
+	}
+	assertScheduleAdmissionCounts(t, pool, value, 2, 2, 2)
+	secondReceipt, err := db.New(pool).GetScheduledRunReceipt(t.Context(), db.GetScheduledRunReceiptParams{
+		EnvironmentID: value.EnvironmentID,
+		ScheduleID:    value.ID,
+		ScheduledAt:   second.NextFireAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondReceipt.ID == receipt.ID {
+		t.Fatalf("second scheduled Run = %s, want a new Run", secondReceipt.ID)
+	}
+	if secondReceipt.WorkspaceID == receipt.WorkspaceID {
+		t.Fatalf("second scheduled Workspace = %s, want a fresh Workspace", secondReceipt.WorkspaceID)
+	}
+	var distinctWorkspaces int
+	if err := pool.QueryRow(t.Context(), `
+		SELECT count(DISTINCT workspace_id) FROM runs WHERE schedule_id = $1
+	`, value.ID).Scan(&distinctWorkspaces); err != nil {
+		t.Fatal(err)
+	}
+	if distinctWorkspaces != 2 {
+		t.Fatalf("distinct scheduled Workspaces = %d, want 2", distinctWorkspaces)
+	}
+}
+
+func TestReconcileScheduleLocksAnUnchangedSchedule(t *testing.T) {
+	pool := openSchedulePostgres(t)
+	value, _ := seedScheduleAdmission(t, pool)
+
+	tx, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	if _, err := db.New(tx).ReconcileSchedule(t.Context(), db.ReconcileScheduleParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		EnvironmentID:          value.EnvironmentID,
+		TaskDeclaredID:         value.TaskDeclaredID,
+		DeploymentDefinitionID: value.DeploymentDefinitionID,
+		DeploymentID:           value.DeploymentID,
+		CronPattern:            value.CronPattern,
+		Timezone:               value.Timezone,
+		CronSemanticsVersion:   value.CronSemanticsVersion,
+		State:                  value.State,
+		EffectiveFrom:          value.EffectiveFrom,
+		NextFireAt:             value.NextFireAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	contender, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer contender.Rollback(t.Context())
+	if _, err := contender.Exec(t.Context(), `SET LOCAL lock_timeout = '100ms'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := contender.Exec(t.Context(), `
+		UPDATE schedules
+		   SET updated_at = updated_at
+		 WHERE environment_id = $1
+		   AND id = $2
+	`, value.EnvironmentID, value.ID); err == nil {
+		t.Fatal("unchanged Schedule reconciliation did not retain the row lock")
+	}
 }
 
 func TestDBAdmitterRejectsTaskWithoutScheduledPayloadAuthority(t *testing.T) {
@@ -112,11 +205,11 @@ func TestWorkerRetriesSameScheduleInstantWhenWorkspaceSecretIsRevoked(t *testing
 		       updated_at = now()
 		 WHERE id = (
 		       SELECT secret_id
-		         FROM workspace_secrets
-		        WHERE workspace_id = $1
+		         FROM schedule_secrets
+		        WHERE schedule_id = $1
 		        LIMIT 1
 		 )
-	`, value.WorkspaceID)
+	`, value.ID)
 	admitter, err := NewDBAdmitter(pool, fixedAuthority{digest: runtimeDigest})
 	if err != nil {
 		t.Fatal(err)
@@ -150,51 +243,6 @@ func TestWorkerRetriesSameScheduleInstantWhenWorkspaceSecretIsRevoked(t *testing
 	}
 }
 
-func TestPendingScheduleBindsMatchingWorkspaceWithGenerationFence(t *testing.T) {
-	pool := openSchedulePostgres(t)
-	value, _ := seedScheduleAdmission(t, pool)
-	dbtest.MustExec(t, t.Context(), pool, `
-		UPDATE schedules
-		   SET state = 'pending_workspace',
-		       workspace_id = NULL,
-		       next_fire_at = NULL,
-		       claimed_by = NULL,
-		       claim_expires_at = NULL
-		 WHERE id = $1
-	`, value.ID)
-	queries := db.New(pool)
-	pending, err := queries.ListPendingScheduleBindings(t.Context(), 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pending) != 1 || pending[0].ID != value.ID ||
-		pending[0].ResolvedWorkspaceID != value.WorkspaceID {
-		t.Fatalf("pending bindings = %+v", pending)
-	}
-	effectiveFrom := time.Date(2026, 7, 24, 3, 2, 0, 0, time.UTC)
-	nextFireAt := time.Date(2026, 7, 25, 9, 0, 0, 0, time.UTC)
-	activated, err := queries.ActivatePendingSchedule(
-		t.Context(),
-		db.ActivatePendingScheduleParams{
-			WorkspaceID:        pending[0].ResolvedWorkspaceID,
-			EffectiveFrom:      pgvalue.Timestamptz(effectiveFrom),
-			NextFireAt:         pgvalue.Timestamptz(nextFireAt),
-			EnvironmentID:      value.EnvironmentID,
-			ID:                 value.ID,
-			ExpectedGeneration: value.Generation,
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if activated.State != "active" ||
-		activated.Generation != value.Generation+1 ||
-		activated.WorkspaceID != value.WorkspaceID ||
-		!activated.NextFireAt.Time.Equal(nextFireAt) {
-		t.Fatalf("activated Schedule = %+v", activated)
-	}
-}
-
 func TestReconcileScheduleDoesNotReviveErroredAuthority(t *testing.T) {
 	pool := openSchedulePostgres(t)
 	value, _ := seedScheduleAdmission(t, pool)
@@ -216,15 +264,12 @@ func TestReconcileScheduleDoesNotReviveErroredAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := queries.ReconcileSchedule(t.Context(), db.ReconcileScheduleParams{
+	if _, err := queries.ReconcileSchedule(t.Context(), db.ReconcileScheduleParams{
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID:          before.EnvironmentID,
 		TaskDeclaredID:         before.TaskDeclaredID,
 		DeploymentDefinitionID: before.DeploymentDefinitionID,
 		DeploymentID:           before.DeploymentID,
-		WorkspaceRefID:         before.WorkspaceRefID,
-		WorkspaceRefKey:        before.WorkspaceRefKey,
-		WorkspaceID:            before.WorkspaceID,
 		CronPattern:            before.CronPattern,
 		Timezone:               before.Timezone,
 		CronSemanticsVersion:   before.CronSemanticsVersion,
@@ -268,8 +313,6 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	deploymentID := uuid.Must(uuid.NewV7())
 	taskDefinitionID := uuid.Must(uuid.NewV7())
 	workspaceDefinitionID := uuid.Must(uuid.NewV7())
-	workspaceID := uuid.Must(uuid.NewV7())
-	workspaceVersionID := uuid.Must(uuid.NewV7())
 	scheduleID := uuid.Must(uuid.NewV7())
 	secretID := uuid.Must(uuid.NewV7())
 	secretVersionID := uuid.Must(uuid.NewV7())
@@ -317,7 +360,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 		"sha256:"+strings.Repeat("03", 32), sourceArtifactID, programArtifactID,
 		queueConfig)
 	taskManifest := []byte(
-		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"key":"scheduler"}}}`,
+		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"scheduler","secrets":[{"env":"API_TOKEN","name":"API_TOKEN"}]}}}`,
 	)
 	taskManifestHash := sha256.New()
 	_, _ = taskManifestHash.Write([]byte("helmr.deployment-definition-manifest.v0\x00"))
@@ -350,40 +393,6 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(t.Context(), `
-		INSERT INTO workspaces (
-			id, environment_id, region_id,
-			sandbox_declared_id, deployment_definition_id,
-			head_version_id, key
-		)
-		VALUES ($1, $2, $3, 'scheduler', $4, $5, 'scheduler')
-	`, workspaceID, environmentID, regionID, workspaceDefinitionID, workspaceVersionID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(t.Context(), `
-		INSERT INTO workspace_versions (
-			id, environment_id, workspace_id,
-			kind, state, content_digest, size_bytes, entry_count,
-			ownership_generation, writer_generation, published_at
-		)
-		VALUES ($1, $2, $3, 'system', 'committed',
-		        'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
-		        0, 0, 0, 0, now())
-	`, workspaceVersionID, environmentID, workspaceID); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
-	tx, err = pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(t.Context())
-	if _, err := tx.Exec(t.Context(), `SET CONSTRAINTS ALL DEFERRED`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(t.Context(), `
 		INSERT INTO secrets (id, environment_id, name, current_version_id)
 		VALUES ($1, $2, 'API_TOKEN', $3)
 	`, secretID, environmentID, secretVersionID); err != nil {
@@ -401,32 +410,31 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), pool, `
-		INSERT INTO workspace_secrets (
-			workspace_id, environment_id, placement_kind, placement_target, secret_id
-		)
-		VALUES ($1, $2, 'env', 'API_TOKEN', $3)
-	`, workspaceID, environmentID, secretID)
-
 	scheduledAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
 	claimExpiresAt := time.Now().UTC().Add(5 * time.Minute)
 	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO schedules (
 			id, environment_id,
 			task_declared_id, deployment_definition_id, deployment_id,
-			workspace_ref_key, workspace_id, cron_pattern, timezone,
+			cron_pattern, timezone,
 			state, effective_from,
 			next_fire_at, claimed_by, claim_expires_at
 		)
 		VALUES (
 			$1, $2,
 			'daily-report', $3, $4,
-			'scheduler', $5, '0 9 * * *', 'UTC',
+			'0 9 * * *', 'UTC',
 			'active', now() - interval '1 hour',
-			$6, 'scheduler-test', $7
+			$5, 'scheduler-test', $6
 		)
-	`, scheduleID, environmentID, taskDefinitionID, deploymentID, workspaceID,
+	`, scheduleID, environmentID, taskDefinitionID, deploymentID,
 		scheduledAt, claimExpiresAt)
+	dbtest.MustExec(t, t.Context(), pool, `
+		INSERT INTO schedule_secrets (
+			schedule_id, environment_id, placement_kind, placement_target, secret_id
+		)
+		VALUES ($1, $2, 'env', 'API_TOKEN', $3)
+	`, scheduleID, environmentID, secretID)
 	value, err := db.New(pool).GetSchedule(t.Context(), db.GetScheduleParams{
 		EnvironmentID: pgvalue.UUID(environmentID),
 		ID:            pgvalue.UUID(scheduleID),
@@ -516,30 +524,37 @@ func assertScheduleAdmissionCounts(
 			outboxes,
 		)
 	}
-	var ownerRunID *uuid.UUID
-	var stateVersion, ownershipGeneration int64
+	var workspaceCount int
 	if err := pool.QueryRow(t.Context(), `
-		SELECT owner_run_id, state_version, ownership_generation
-		  FROM workspaces
-		 WHERE id = $1
-	`, value.WorkspaceID).Scan(&ownerRunID, &stateVersion, &ownershipGeneration); err != nil {
+		SELECT count(*) FROM workspaces WHERE environment_id = $1
+	`, value.EnvironmentID).Scan(&workspaceCount); err != nil {
 		t.Fatal(err)
 	}
-	if (runs == 0) != (ownerRunID == nil) {
-		t.Fatalf("Workspace owner_run_id = %v for %d Runs", ownerRunID, runs)
+	if workspaceCount != runs {
+		t.Fatalf("Workspaces = %d, want %d", workspaceCount, runs)
 	}
-	if runs == 0 && (stateVersion != 1 || ownershipGeneration != 0) {
-		t.Fatalf(
-			"rolled-back Workspace state/ownership generations = %d/%d, want 1/0",
-			stateVersion,
-			ownershipGeneration,
-		)
+	if runs == 0 {
+		return
 	}
-	if runs == 1 && (stateVersion != 2 || ownershipGeneration != 1) {
+	var owned, minStateVersion, maxStateVersion, minOwnershipGeneration, maxOwnershipGeneration int64
+	if err := pool.QueryRow(t.Context(), `
+		SELECT count(*) FILTER (WHERE owner_run_id IS NOT NULL),
+		       min(state_version), max(state_version),
+		       min(ownership_generation), max(ownership_generation)
+		  FROM workspaces
+		 WHERE environment_id = $1
+	`, value.EnvironmentID).Scan(
+		&owned, &minStateVersion, &maxStateVersion,
+		&minOwnershipGeneration, &maxOwnershipGeneration,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if owned != int64(runs) || minStateVersion != 2 || maxStateVersion != 2 ||
+		minOwnershipGeneration != 1 || maxOwnershipGeneration != 1 {
 		t.Fatalf(
-			"reserved Workspace state/ownership generations = %d/%d, want 2/1",
-			stateVersion,
-			ownershipGeneration,
+			"reserved Workspaces owned/state/ownership = %d/%d-%d/%d-%d, want %d/2-2/1-1",
+			owned, minStateVersion, maxStateVersion,
+			minOwnershipGeneration, maxOwnershipGeneration, runs,
 		)
 	}
 }
@@ -601,6 +616,10 @@ func (fixedAuthority) ResolveScheduledTask(
 		QueueName:           "default",
 		MaxActiveDurationMS: 300000,
 		RetryPolicy:         []byte(`{"enabled":false}`),
+		SandboxDeclaredID:   "scheduler",
+		SecretPlacements: []workspace.SecretPlacement{{
+			Name: "API_TOKEN", Kind: "env", Target: "API_TOKEN",
+		}},
 	}, nil
 }
 

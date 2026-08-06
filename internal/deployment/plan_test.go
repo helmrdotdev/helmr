@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
@@ -389,32 +390,34 @@ func TestValidateBuildPlanSchedule(t *testing.T) {
 			errMsg: "IANA timezone",
 		},
 		{
-			name: "workspace target missing",
+			name: "workspace sandbox missing",
 			change: func(manifest *ScheduleManifest) {
-				manifest.Workspace = WorkspaceTarget{}
+				manifest.Workspace.SandboxDeclaredID = ""
 			},
-			errMsg: "exactly one",
+			errMsg: "workspace declared ID",
 		},
 		{
-			name: "workspace target ambiguous",
+			name: "workspace sandbox invalid",
 			change: func(manifest *ScheduleManifest) {
-				manifest.Workspace.ID = new("wsp_" + strings.Repeat("a", 26))
+				manifest.Workspace.SandboxDeclaredID = "invalid sandbox"
 			},
-			errMsg: "exactly one",
+			errMsg: "workspace declared ID",
 		},
 		{
-			name: "workspace id",
+			name: "workspace secrets nil",
 			change: func(manifest *ScheduleManifest) {
-				manifest.Workspace = WorkspaceTarget{ID: new("workspace")}
+				manifest.Workspace.Secrets = nil
 			},
-			errMsg: "workspace target id",
+			errMsg: "secrets must be an array",
 		},
 		{
-			name: "workspace key",
+			name: "workspace secret target",
 			change: func(manifest *ScheduleManifest) {
-				manifest.Workspace = WorkspaceTarget{Key: new(" key ")}
+				manifest.Workspace.Secrets = []api.WorkspaceSecret{{
+					Name: "TOKEN", Env: "HELMR_TOKEN",
+				}}
 			},
-			errMsg: "workspace key domain",
+			errMsg: "reserved workspace secret environment target",
 		},
 	}
 
@@ -426,13 +429,6 @@ func TestValidateBuildPlanSchedule(t *testing.T) {
 		})
 	}
 
-	plan := testBuildPlan()
-	plan.Definitions[0].Task.Schedule.Workspace = WorkspaceTarget{
-		ID: new("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
-	}
-	if err := ValidateBuildPlan(plan); err != nil {
-		t.Fatalf("workspace ID schedule: %v", err)
-	}
 }
 
 func TestValidateBuildPlanQueues(t *testing.T) {
@@ -496,8 +492,9 @@ func testBuildPlan() BuildPlan {
 					Schedule: &ScheduleManifest{
 						Cron:     "0 9 * * *",
 						Timezone: "UTC",
-						Workspace: WorkspaceTarget{
-							Key: new("nightly-builder"),
+						Workspace: ScheduleWorkspaceManifest{
+							SandboxDeclaredID: "repo",
+							Secrets:           []api.WorkspaceSecret{},
 						},
 					},
 				},

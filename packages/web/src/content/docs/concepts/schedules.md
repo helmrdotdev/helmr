@@ -18,12 +18,19 @@ from source archives that Schedule; reintroducing it reuses the same identity
 with a new generation.
 
 ```ts
-import { schedules, workspaces } from "@helmr/sdk"
+import { image, sandbox, schedules, secrets } from "@helmr/sdk"
+
+export const reporting = sandbox({ id: "reporting" })
+  .image(image("reporting").from("debian:bookworm-slim"))
+  .resources({ cpu: 1, memory: "1GiB" })
 
 export const dailyReport = schedules.task({
   id: "daily-report",
   cron: { pattern: "0 9 * * *", timezone: "America/New_York" },
-  workspace: workspaces.fromKey("reporting"),
+  workspace: {
+    sandbox: reporting,
+    secrets: [{ secret: secrets.fromName("REPORT_TOKEN"), env: "REPORT_TOKEN" }],
+  },
   run: async (payload, ctx) => {
     console.log(payload.scheduledAt, ctx.run.cause)
     return { ok: true }
@@ -31,15 +38,13 @@ export const dailyReport = schedules.task({
 })
 ```
 
-The Workspace Address is required. An ID Address must exist when the Deployment
-is promoted. A missing key Address leaves the Schedule in
-`pending_workspace`; the scheduler binds it when a matching Workspace appears.
-The Schedule has no Secret input. Create the matching Workspace separately with
-its key and Secret placements; later fires inherit that immutable Workspace
-baseline and resolve current active Secret versions at admission.
-Read responses preserve the declared Workspace Address and expose
-`workspaceId` after it has been bound to a canonical Workspace UUID. An
-unresolved `pending_workspace` response has no `workspaceId`.
+The Workspace creation selection is required. Promotion validates that the
+Sandbox belongs to the candidate Deployment and resolves every Secret name to
+its stable identity. It does not create a Workspace. Each logical fire creates
+a fresh keyless Workspace with those immutable placements in the same
+transaction as its Run. Retries of that Run retain the same Workspace; the next
+logical fire receives another Workspace UUID. The Run response exposes that
+UUID for later retrieval or reuse.
 
 Scheduled Tasks receive a Helmr-generated payload:
 
@@ -62,5 +67,5 @@ identifiers. Helmr stores the submitted cron expression without defining a
 second canonical grammar.
 
 The Console and authenticated APIs are observational. They expose
-`pending_workspace`, `active`, `errored`, and `archived` status but cannot
+`active`, `errored`, and `archived` status but cannot
 mutate Schedule authority.

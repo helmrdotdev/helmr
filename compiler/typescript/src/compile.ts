@@ -10,6 +10,7 @@ import {
   type InternalDefinition,
   type InternalTaskDefinition,
   type InternalSandboxDefinition,
+  type EncodedWorkspaceSecret,
   type ProgramDeclaration,
   type RuntimeArchitecture,
 } from "@helmr/sdk/internal"
@@ -52,9 +53,10 @@ export type BuildPlanDefinition =
         schedule?: Readonly<{
           cron: string
           timezone: string
-          workspace:
-            | Readonly<{ id: string }>
-            | Readonly<{ key: string }>
+          workspace: Readonly<{
+            sandboxId: string
+            secrets: readonly EncodedWorkspaceSecret[]
+          }>
         }>
       }>
     }>
@@ -175,13 +177,63 @@ export interface AnalysisResult {
   readonly entrypointBytes: Uint8Array
 }
 
+export interface ProgramExportAnalysis {
+  readonly declarationLocator: DeclarationLocator
+  readonly programDeclarations: readonly ProgramDeclaration[]
+}
+
 interface LocatedDefinition {
   readonly definition: InternalDefinition | InternalSandboxDefinition
   readonly modulePath: string
   readonly exportName: string
+  readonly value: object
 }
 
 export function analyze(options: AnalyzeOptions): AnalysisResult {
+  const located = locateDefinitions(options)
+  const queues = compileQueues(located, options.exports)
+  const sandboxExports = new Map<string, object>()
+  for (const item of located) {
+    if (item.definition.kind === "sandbox") {
+      sandboxExports.set(item.definition.id, item.value)
+    }
+  }
+  const definitions = located.map(({ definition }) =>
+    compileDefinition(definition, options, queues, sandboxExports),
+  )
+  const programExports = compileProgramExports(located)
+  const buildPlan: BuildPlan = Object.freeze({
+    formatVersion: BUILD_PLAN_FORMAT_VERSION,
+    definitions: Object.freeze(definitions),
+    queues: Object.freeze(
+      [...queues.values()]
+        .map((entry) => Object.freeze({ ...entry }))
+        .sort((left, right) => compareUtf8(left.name, right.name)),
+    ),
+  })
+  const declarationLocator: DeclarationLocator = Object.freeze({
+    declarations: programExports.declarationLocator.declarations,
+    formatVersion: DECLARATION_LOCATOR_FORMAT_VERSION,
+  })
+  return {
+    buildPlan,
+    buildPlanBytes: canonicalizeJsonValue(buildPlan as unknown as JsonValue),
+    declarationLocator,
+    declarationLocatorBytes: canonicalizeJsonValue(
+      declarationLocator as unknown as JsonValue,
+    ),
+    programDeclarations: programExports.programDeclarations,
+    entrypointBytes: new TextEncoder().encode(PROGRAM_ENTRYPOINT),
+  }
+}
+
+export function analyzeProgramExports(
+  options: AnalyzeOptions,
+): ProgramExportAnalysis {
+  return compileProgramExports(locateDefinitions(options))
+}
+
+function locateDefinitions(options: AnalyzeOptions): LocatedDefinition[] {
   if (options.architecture !== "x86_64") {
     throw new Error(`unsupported architecture ${JSON.stringify(options.architecture)}`)
   }
@@ -193,11 +245,13 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
     throw new Error("BuildPlan definitions exceed 10000")
   }
   located.sort(compareLocatedDefinitions)
-  const queues = compileQueues(located, options.exports)
-  const definitions = located.map(({ definition }) =>
-    compileDefinition(definition, options, queues),
-  )
-  const locatorEntries = located.flatMap((item) =>
+  return located
+}
+
+function compileProgramExports(
+  located: readonly LocatedDefinition[],
+): ProgramExportAnalysis {
+  const declarations = located.flatMap((item) =>
     item.definition.kind === "sandbox" ? [] : [locatorEntry(item)],
   )
   const programDeclarations = located.flatMap(({ definition }) =>
@@ -205,29 +259,13 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
       ? []
       : [programDeclaration(definition)],
   )
-  const buildPlan: BuildPlan = Object.freeze({
-    formatVersion: BUILD_PLAN_FORMAT_VERSION,
-    definitions: Object.freeze(definitions),
-    queues: Object.freeze(
-      [...queues.values()]
-        .map((entry) => Object.freeze({ ...entry }))
-        .sort((left, right) => compareUtf8(left.name, right.name)),
-    ),
-  })
-  const declarationLocator: DeclarationLocator = Object.freeze({
-    declarations: Object.freeze(locatorEntries),
-    formatVersion: DECLARATION_LOCATOR_FORMAT_VERSION,
-  })
-  return {
-    buildPlan,
-    buildPlanBytes: canonicalizeJsonValue(buildPlan as unknown as JsonValue),
-    declarationLocator,
-    declarationLocatorBytes: canonicalizeJsonValue(
-      declarationLocator as unknown as JsonValue,
-    ),
+  return Object.freeze({
+    declarationLocator: Object.freeze({
+      declarations: Object.freeze(declarations),
+      formatVersion: DECLARATION_LOCATOR_FORMAT_VERSION,
+    }),
     programDeclarations: Object.freeze(programDeclarations),
-    entrypointBytes: new TextEncoder().encode(PROGRAM_ENTRYPOINT),
-  }
+  })
 }
 
 export function normalizeWorkspaceResources(
@@ -263,6 +301,7 @@ function discoverDefinitions(
           definition,
           modulePath: item.modulePath,
           exportName: item.exportName,
+          value: item.value as object,
         }
         if (compareLocatorOccurrence(candidate, existing.located) < 0) {
           existing.located = candidate
@@ -277,6 +316,7 @@ function discoverDefinitions(
       definition,
       modulePath: item.modulePath,
       exportName: item.exportName,
+      value: item.value as object,
     }
     identities.set(key, {
       value: item.value as object,
@@ -290,6 +330,7 @@ function compileDefinition(
   definition: InternalDefinition | InternalSandboxDefinition,
   options: AnalyzeOptions,
   queues: ReadonlyMap<string, BuildPlanQueue>,
+  sandboxExports: ReadonlyMap<string, object>,
 ): BuildPlanDefinition {
   switch (definition.kind) {
     case "task":
@@ -304,14 +345,7 @@ function compileDefinition(
           ...(definition.schedule === undefined
             ? {}
             : {
-                schedule: {
-                  cron: definition.schedule.cron,
-                  timezone: definition.schedule.timezone,
-                  workspace:
-                    "id" in definition.schedule.workspace
-                      ? { id: definition.schedule.workspace.id }
-                      : { key: definition.schedule.workspace.key },
-                },
+                schedule: compileSchedule(definition, sandboxExports),
               }),
         },
       }
@@ -332,15 +366,50 @@ function compileDefinition(
                 ),
         },
       }
-	case "sandbox":
-		return {
-			kind: "sandbox",
+    case "sandbox":
+      return {
+        kind: "sandbox",
         declaredId: definition.id,
         manifest: {
           imageBuild: compileImageBuild(definition.image, options),
           resources: normalizeWorkspaceResources(definition.resources),
         },
       }
+  }
+}
+
+function compileSchedule(
+  definition: InternalTaskDefinition,
+  sandboxExports: ReadonlyMap<string, object>,
+): NonNullable<
+  Extract<BuildPlanDefinition, { kind: "task" }>["manifest"]["schedule"]
+> {
+  const schedule = definition.schedule
+  if (schedule === undefined) throw new Error("Task schedule is undefined")
+  const sandbox = inspectSandboxDefinition(schedule.workspace.sandbox)
+  if (sandbox === undefined) {
+    throw new Error(
+      `task ${JSON.stringify(definition.id)} schedule has an invalid Sandbox definition`,
+    )
+  }
+  const exported = sandboxExports.get(sandbox.id)
+  if (exported === undefined) {
+    throw new Error(
+      `task ${JSON.stringify(definition.id)} schedule references unexported Sandbox ${JSON.stringify(sandbox.id)}`,
+    )
+  }
+  if (exported !== schedule.workspace.sandbox) {
+    throw new Error(
+      `task ${JSON.stringify(definition.id)} schedule references a different Sandbox object than the exported definition ${JSON.stringify(sandbox.id)}`,
+    )
+  }
+  return {
+    cron: schedule.cron,
+    timezone: schedule.timezone,
+    workspace: {
+      sandboxId: sandbox.id,
+      secrets: schedule.workspace.secrets,
+    },
   }
 }
 

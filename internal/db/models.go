@@ -1093,9 +1093,6 @@ type Schedule struct {
 	TaskDeclaredID         string             `json:"task_declared_id"`
 	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
 	DeploymentID           pgtype.UUID        `json:"deployment_id"`
-	WorkspaceRefID         pgtype.UUID        `json:"workspace_ref_id"`
-	WorkspaceRefKey        pgtype.Text        `json:"workspace_ref_key"`
-	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
 	CronPattern            string             `json:"cron_pattern"`
 	Timezone               string             `json:"timezone"`
 	CronSemanticsVersion   string             `json:"cron_semantics_version"`
@@ -1112,6 +1109,15 @@ type Schedule struct {
 	LastFailure            []byte             `json:"last_failure"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ScheduleSecret struct {
+	ScheduleID      pgtype.UUID        `json:"schedule_id"`
+	EnvironmentID   pgtype.UUID        `json:"environment_id"`
+	PlacementKind   string             `json:"placement_kind"`
+	PlacementTarget string             `json:"placement_target"`
+	SecretID        pgtype.UUID        `json:"secret_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 type Secret struct {

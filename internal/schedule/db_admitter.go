@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/tracing"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -29,6 +30,8 @@ type TaskRun struct {
 	QueuedTTLMS           *int64
 	MaxActiveDurationMS   int64
 	RetryPolicy           []byte
+	SandboxDeclaredID     string
+	SecretPlacements      []workspace.SecretPlacement
 }
 
 type DBAdmitter struct {
@@ -128,30 +131,47 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		return taskAuthorityError("scheduled task manifest authority is invalid")
 	}
 
-	workspace, err := queries.LockWorkspaceAdmissionAuthority(ctx, db.LockWorkspaceAdmissionAuthorityParams{
+	selectedSecrets, err := queries.ListScheduleSecrets(ctx, db.ListScheduleSecretsParams{
 		EnvironmentID: lockedSchedule.EnvironmentID,
-		ID:            lockedSchedule.WorkspaceID,
+		ScheduleID:    lockedSchedule.ID,
 	})
+	if err != nil {
+		return err
+	}
+	if !sameSecretPlacements(taskRun.SecretPlacements, selectedSecrets) {
+		return taskAuthorityError("schedule Secret selection does not match its generation")
+	}
+	runID := uuid.Must(uuid.NewV7())
+	workspaceID := uuid.Must(uuid.NewV7())
+	initialVersionID := uuid.Must(uuid.NewV7())
+	createdWorkspace, err := queries.CreateWorkspaceForScheduleFire(
+		ctx,
+		db.CreateWorkspaceForScheduleFireParams{
+			SandboxDeclaredID:  taskRun.SandboxDeclaredID,
+			EnvironmentID:      lockedSchedule.EnvironmentID,
+			ScheduleID:         lockedSchedule.ID,
+			ExpectedGeneration: lockedSchedule.Generation,
+			ID:                 pgvalue.UUID(workspaceID),
+			InitialVersionID:   pgvalue.UUID(initialVersionID),
+		},
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return workspaceError("schedule workspace is unavailable")
+		return sandboxAuthorityError("schedule Sandbox is absent from its pinned deployment")
 	}
 	if err != nil {
 		return err
 	}
-	if workspace.State != db.WorkspaceStateActive ||
-		(workspace.DesiredState != db.WorkspaceDesiredStateActive &&
-			workspace.DesiredState != db.WorkspaceDesiredStateStopped) ||
-		!workspace.HeadVersionID.Valid {
-		return workspaceError("schedule workspace cannot accept execution")
+	for _, selected := range selectedSecrets {
+		if _, err := queries.CreateWorkspaceSecret(ctx, db.CreateWorkspaceSecretParams{
+			WorkspaceID:     createdWorkspace.ID,
+			EnvironmentID:   lockedSchedule.EnvironmentID,
+			PlacementKind:   selected.PlacementKind,
+			PlacementTarget: selected.PlacementTarget,
+			SecretID:        selected.SecretID,
+		}); err != nil {
+			return err
+		}
 	}
-	if workspace.DirtyState != db.WorkspaceDirtyStateClean {
-		return run.ErrWorkspaceReservationConflict
-	}
-	if workspace.OwnerSessionID.Valid || workspace.OwnerRunID.Valid ||
-		workspace.HasActiveLease || workspace.HasActiveProcess {
-		return run.ErrWorkspaceReservationConflict
-	}
-	runID := uuid.Must(uuid.NewV7())
 	rootSpanID, err := tracing.NewSpanID()
 	if err != nil {
 		return err
@@ -171,8 +191,8 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 			ScheduledAt:            lockedSchedule.NextFireAt,
 			PreviousScheduledAt:    lockedSchedule.LastFireAt,
 			ScheduleTimezone:       pgtype.Text{String: lockedSchedule.Timezone, Valid: true},
-			WorkspaceID:            lockedSchedule.WorkspaceID,
-			BaseWorkspaceVersionID: workspace.HeadVersionID,
+			WorkspaceID:            createdWorkspace.ID,
+			BaseWorkspaceVersionID: createdWorkspace.HeadVersionID,
 			Payload:                admission.Payload,
 			Metadata:               []byte(`{}`),
 			Tags:                   []string{},
@@ -184,7 +204,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 			RetryPolicy:            taskRun.RetryPolicy,
 			RootSpanID:             rootSpanID,
 		},
-		WorkspaceStateVersion: workspace.StateVersion,
+		WorkspaceStateVersion: createdWorkspace.StateVersion,
 	}); err != nil {
 		if errors.Is(err, run.ErrSecretUnavailable) {
 			return fmt.Errorf("schedule workspace secret is unavailable: %w", err)
@@ -214,8 +234,27 @@ func taskAuthorityError(message string) error {
 	return &AdmissionError{Code: ErrorTaskAuthorityInvalid, Message: message}
 }
 
-func workspaceError(message string) error {
-	return &AdmissionError{Code: ErrorWorkspaceUnavailable, Message: message}
+func sandboxAuthorityError(message string) error {
+	return &AdmissionError{Code: ErrorSandboxAuthorityInvalid, Message: message}
+}
+
+func sameSecretPlacements(
+	expected []workspace.SecretPlacement,
+	selected []db.ScheduleSecret,
+) bool {
+	if len(expected) != len(selected) {
+		return false
+	}
+	actual := make(map[string]struct{}, len(selected))
+	for _, placement := range selected {
+		actual[placement.PlacementKind+"\x00"+placement.PlacementTarget] = struct{}{}
+	}
+	for _, placement := range expected {
+		if _, ok := actual[placement.Kind+"\x00"+placement.Target]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func optionalInt8(value *int64) pgtype.Int8 {

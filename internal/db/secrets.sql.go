@@ -779,38 +779,52 @@ func (q *Queries) ListWorkspaceSecrets(ctx context.Context, workspaceID pgtype.U
 	return items, nil
 }
 
-const lockActiveSecretByNameForWorkspaceCreate = `-- name: LockActiveSecretByNameForWorkspaceCreate :one
+const lockActiveSecretsByNameForWorkspaceCreate = `-- name: LockActiveSecretsByNameForWorkspaceCreate :many
 SELECT secrets.id, secrets.environment_id, secrets.name, secrets.state, secrets.state_version, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at, secrets.deleted_at
 FROM secrets
 WHERE environment_id = $1
-  AND name = $2
+  AND name = ANY($2::text[])
   AND state = 'active'
   AND current_version_id IS NOT NULL
+ORDER BY secrets.id
 FOR UPDATE
 `
 
-type LockActiveSecretByNameForWorkspaceCreateParams struct {
+type LockActiveSecretsByNameForWorkspaceCreateParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
-	Name          string      `json:"name"`
+	Names         []string    `json:"names"`
 }
 
-func (q *Queries) LockActiveSecretByNameForWorkspaceCreate(ctx context.Context, arg LockActiveSecretByNameForWorkspaceCreateParams) (Secret, error) {
-	row := q.db.QueryRow(ctx, lockActiveSecretByNameForWorkspaceCreate, arg.EnvironmentID, arg.Name)
-	var i Secret
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.Name,
-		&i.State,
-		&i.StateVersion,
-		&i.CurrentVersionID,
-		&i.RevocationGeneration,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.RevokedAt,
-		&i.DeletedAt,
-	)
-	return i, err
+func (q *Queries) LockActiveSecretsByNameForWorkspaceCreate(ctx context.Context, arg LockActiveSecretsByNameForWorkspaceCreateParams) ([]Secret, error) {
+	rows, err := q.db.Query(ctx, lockActiveSecretsByNameForWorkspaceCreate, arg.EnvironmentID, arg.Names)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Secret
+	for rows.Next() {
+		var i Secret
+		if err := rows.Scan(
+			&i.ID,
+			&i.EnvironmentID,
+			&i.Name,
+			&i.State,
+			&i.StateVersion,
+			&i.CurrentVersionID,
+			&i.RevocationGeneration,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RevokedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockAttemptSecretDelivery = `-- name: LockAttemptSecretDelivery :many

@@ -1034,15 +1034,12 @@ CREATE TABLE schedules (
     ),
     deployment_definition_id UUID,
     deployment_id UUID,
-    workspace_ref_id UUID,
-    workspace_ref_key TEXT,
-    workspace_id UUID,
     cron_pattern TEXT NOT NULL CHECK (octet_length(cron_pattern) BETWEEN 1 AND 1024),
     timezone TEXT NOT NULL CHECK (octet_length(timezone) BETWEEN 1 AND 255),
     cron_semantics_version TEXT NOT NULL DEFAULT 'robfig-cron-v3.0.1/standard-5-field'
         CHECK (cron_semantics_version = 'robfig-cron-v3.0.1/standard-5-field'),
     generation BIGINT NOT NULL DEFAULT 1 CHECK (generation > 0),
-    state TEXT NOT NULL CHECK (state IN ('pending_workspace', 'active', 'errored', 'archived')),
+    state TEXT NOT NULL CHECK (state IN ('active', 'errored', 'archived')),
     state_version BIGINT NOT NULL DEFAULT 1 CHECK (state_version > 0),
     effective_from TIMESTAMPTZ NOT NULL,
     next_fire_at TIMESTAMPTZ,
@@ -1076,8 +1073,6 @@ CREATE TABLE schedules (
             declared_id
         )
         ON DELETE RESTRICT,
-    CHECK ((workspace_ref_id IS NULL) <> (workspace_ref_key IS NULL)),
-    CHECK (workspace_ref_key IS NULL OR (btrim(workspace_ref_key) <> '' AND octet_length(workspace_ref_key) <= 512)),
     CHECK (
         (state = 'archived'
          AND deployment_definition_id IS NULL
@@ -1089,21 +1084,10 @@ CREATE TABLE schedules (
          AND retry_after IS NULL
          )
         OR
-        (state <> 'archived'
+        (state IN ('active', 'errored')
          AND deployment_definition_id IS NOT NULL
          AND deployment_id IS NOT NULL
-         AND (
-             (state = 'pending_workspace'
-              AND workspace_ref_key IS NOT NULL
-              AND workspace_id IS NULL
-              AND next_fire_at IS NULL
-              AND claimed_by IS NULL
-             AND claim_expires_at IS NULL)
-             OR
-             (state IN ('active', 'errored')
-              AND workspace_id IS NOT NULL
-              AND next_fire_at IS NOT NULL)
-         ))
+         AND next_fire_at IS NOT NULL)
     ),
     CHECK ((claimed_by IS NULL) = (claim_expires_at IS NULL)),
     CHECK ((retry_step IS NULL) = (retry_after IS NULL)),
@@ -1113,7 +1097,7 @@ CREATE TABLE schedules (
         (state = 'errored'
          AND last_failure->>'code' IN (
              'task_authority_invalid',
-             'workspace_unavailable',
+             'sandbox_authority_invalid',
              'architecture_incompatible',
              'generation_invalid',
              'input_invalid'
@@ -1131,7 +1115,7 @@ CREATE TABLE schedules (
              OR
              (last_failure->>'code' IN (
                   'task_authority_invalid',
-                  'workspace_unavailable',
+                  'sandbox_authority_invalid',
                   'architecture_incompatible',
                   'generation_invalid',
                   'input_invalid'
@@ -1146,10 +1130,6 @@ CREATE TABLE schedules (
     )
 );
 
-CREATE INDEX schedules_pending_workspace_idx
-    ON schedules (environment_id, workspace_ref_key, id)
-    WHERE state = 'pending_workspace';
-
 CREATE INDEX schedules_due_idx
     ON schedules (next_fire_at, id)
     WHERE state = 'active' AND next_fire_at IS NOT NULL;
@@ -1163,6 +1143,29 @@ CREATE INDEX schedules_definition_idx
         task_declared_id
     )
     WHERE state <> 'archived';
+
+CREATE TABLE schedule_secrets (
+    schedule_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
+    placement_kind TEXT NOT NULL CHECK (placement_kind IN ('env', 'file')),
+    placement_target TEXT NOT NULL CHECK (
+        btrim(placement_target) <> ''
+        AND octet_length(placement_target) <= 4096
+    ),
+    secret_id UUID NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (schedule_id, placement_kind, placement_target),
+    UNIQUE (schedule_id, placement_kind, placement_target, secret_id),
+    FOREIGN KEY (environment_id, schedule_id)
+        REFERENCES schedules(environment_id, id)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id, secret_id)
+        REFERENCES secrets(environment_id, id)
+        ON DELETE RESTRICT
+);
+
+CREATE INDEX schedule_secrets_secret_idx
+    ON schedule_secrets (secret_id, schedule_id);
 
 CREATE TABLE workspaces (
     id UUID PRIMARY KEY,
@@ -1242,18 +1245,6 @@ CREATE INDEX workspaces_deployment_definition_idx
         deployment_definition_id,
         sandbox_declared_id
     );
-
-ALTER TABLE schedules
-    ADD CONSTRAINT schedules_workspace_fk
-    FOREIGN KEY (environment_id, workspace_id)
-    REFERENCES workspaces(environment_id, id)
-    ON DELETE RESTRICT;
-
-ALTER TABLE schedules
-    ADD CONSTRAINT schedules_workspace_ref_id_fk
-    FOREIGN KEY (environment_id, workspace_ref_id)
-    REFERENCES workspaces(environment_id, id)
-    ON DELETE RESTRICT;
 
 CREATE TABLE workspace_secrets (
     workspace_id UUID NOT NULL,

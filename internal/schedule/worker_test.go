@@ -35,45 +35,6 @@ func TestWorkerClaimsAndAdmitsSchedule(t *testing.T) {
 	}
 }
 
-func TestWorkerBindsPendingWorkspaceBeforeClaiming(t *testing.T) {
-	now := time.Date(2026, 6, 2, 0, 2, 0, 0, time.UTC)
-	scheduleID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store := &workerStore{
-		pending: []db.ListPendingScheduleBindingsRow{{
-			ID:                  scheduleID,
-			EnvironmentID:       environmentID,
-			WorkspaceRefKey:     pgvalue.Text("scheduler"),
-			CronPattern:         "*/5 * * * *",
-			Timezone:            "UTC",
-			Generation:          3,
-			State:               "pending_workspace",
-			ResolvedWorkspaceID: workspaceID,
-		}},
-	}
-	worker, err := NewWorker(nil, store, &workerAdmitter{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	worker.now = func() time.Time { return now }
-
-	if err := worker.tick(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if len(store.activated) != 1 {
-		t.Fatalf("activations = %d, want 1", len(store.activated))
-	}
-	got := store.activated[0]
-	if got.ID != scheduleID ||
-		got.EnvironmentID != environmentID ||
-		got.WorkspaceID != workspaceID ||
-		got.ExpectedGeneration != 3 ||
-		!got.NextFireAt.Time.Equal(time.Date(2026, 6, 2, 0, 5, 0, 0, time.UTC)) {
-		t.Fatalf("activation = %+v", got)
-	}
-}
-
 func TestWorkerPersistsRetryStepAndSampledDelay(t *testing.T) {
 	now := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 	value := scheduleAt(now)
@@ -108,7 +69,7 @@ func TestWorkerPersistsBoundedPermanentError(t *testing.T) {
 	now := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 	store := &workerStore{claimed: []db.Schedule{scheduleAt(now)}}
 	admitter := &workerAdmitter{err: &AdmissionError{
-		Code:    ErrorWorkspaceUnavailable,
+		Code:    ErrorSandboxAuthorityInvalid,
 		Message: string(make([]byte, 2048)),
 	}}
 	worker, err := NewWorker(nil, store, admitter)
@@ -131,7 +92,7 @@ func TestWorkerPersistsBoundedPermanentError(t *testing.T) {
 	if err := json.Unmarshal(transition.LastFailure, &failure); err != nil {
 		t.Fatal(err)
 	}
-	if failure.Code != string(ErrorWorkspaceUnavailable) {
+	if failure.Code != string(ErrorSandboxAuthorityInvalid) {
 		t.Fatalf("last failure code = %q", failure.Code)
 	}
 	if len(failure.Message) > 1024 {
@@ -165,20 +126,9 @@ func scheduleAt(at time.Time) db.Schedule {
 }
 
 type workerStore struct {
-	pending   []db.ListPendingScheduleBindingsRow
-	activated []db.ActivatePendingScheduleParams
 	claimed   []db.Schedule
 	retryable []db.MarkScheduleAdmissionRetryableParams
 	errored   []db.MarkScheduleAdmissionErroredParams
-}
-
-func (s *workerStore) ListPendingScheduleBindings(context.Context, int32) ([]db.ListPendingScheduleBindingsRow, error) {
-	return s.pending, nil
-}
-
-func (s *workerStore) ActivatePendingSchedule(_ context.Context, value db.ActivatePendingScheduleParams) (db.Schedule, error) {
-	s.activated = append(s.activated, value)
-	return db.Schedule{}, nil
 }
 
 func (s *workerStore) ClaimDueSchedules(context.Context, db.ClaimDueSchedulesParams) ([]db.Schedule, error) {

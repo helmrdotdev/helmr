@@ -3,9 +3,8 @@ import { request } from "./api";
 export type Schedule = {
   id: string;
   task_id: string;
-  workspace: { id?: string; key?: string };
   cron: { pattern: string; timezone: string };
-  status: "pending_workspace" | "active" | "errored" | "archived";
+  status: "active" | "errored" | "archived";
   generation: number;
   effective_from: string;
   next_fire_at?: string;

@@ -69,13 +69,13 @@ describe("private definition inspection", () => {
     expect(Object.isFrozen(ref)).toBe(true)
   })
 
-  test("rejects a forged Schedule Workspace address", () => {
+  test("rejects a forged Schedule Sandbox definition", () => {
     expect(() => schedules.task({
       id: "maintenance",
       cron: { pattern: "0 3 * * *", timezone: "UTC" },
-      workspace: { key: "machine" } as never,
+      workspace: { sandbox: { id: "machine" } } as never,
       run: () => null,
-    })).toThrow("Workspace address")
+    })).toThrow("Sandbox definition")
   })
 
   test("rejects untyped Workspace resource extensions", () => {

@@ -5,9 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
-	"regexp"
-	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -18,15 +15,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
-
-const maxWorkspaceSecrets = 64
-
-var workspaceSecretEnvPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 var (
 	errWorkspaceCreateInvalid        = errors.New("workspace create request is invalid")
@@ -76,12 +69,6 @@ type workspaceCreateResult struct {
 
 type workspaceCreateReceipt struct {
 	Workspace api.WorkspaceSnapshot `json:"workspace"`
-}
-
-type workspaceSecretPlacement struct {
-	Name   string `json:"name"`
-	Kind   string `json:"kind"`
-	Target string `json:"target"`
 }
 
 func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateRequest) (workspaceCreateResult, error) {
@@ -198,21 +185,25 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 			}
 		}
 		sort.Strings(secretNames)
-		for _, name := range secretNames {
-			record, err := work.q.LockActiveSecretByNameForWorkspaceCreate(
+		if len(secretNames) > 0 {
+			records, err := work.q.LockActiveSecretsByNameForWorkspaceCreate(
 				ctx,
-				db.LockActiveSecretByNameForWorkspaceCreateParams{
+				db.LockActiveSecretsByNameForWorkspaceCreateParams{
 					EnvironmentID: pgvalue.UUID(request.EnvironmentID),
-					Name:          name,
+					Names:         secretNames,
 				},
 			)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return fmt.Errorf("%w: %s", errWorkspaceSecretUnavailable, name)
-			}
 			if err != nil {
-				return fmt.Errorf("lock workspace secret %q: %w", name, err)
+				return fmt.Errorf("lock workspace secrets: %w", err)
 			}
-			secretIDs[name] = record.ID
+			for _, record := range records {
+				secretIDs[record.Name] = record.ID
+			}
+			for _, name := range secretNames {
+				if !secretIDs[name].Valid {
+					return fmt.Errorf("%w: %s", errWorkspaceSecretUnavailable, name)
+				}
+			}
 		}
 
 		workspaceID := uuid.Must(uuid.NewV7())
@@ -346,74 +337,24 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 	return result, err
 }
 
-func normalizeWorkspaceSecretPlacements(input []api.WorkspaceSecret) ([]workspaceSecretPlacement, error) {
-	if len(input) > maxWorkspaceSecrets {
-		return nil, fmt.Errorf("at most %d workspace secret placements are allowed", maxWorkspaceSecrets)
-	}
-	placements := make([]workspaceSecretPlacement, 0, len(input))
-	envTargets := make(map[string]struct{}, len(input))
-	fileTargets := make([]string, 0, len(input))
+func normalizeWorkspaceSecretPlacements(input []api.WorkspaceSecret) ([]workspace.SecretPlacement, error) {
+	placements := make([]workspace.SecretPlacement, 0, len(input))
 	for _, value := range input {
 		if err := api.ValidateWorkspaceSecret(value); err != nil {
 			return nil, err
 		}
-		if err := secret.ValidateName(value.Name); err != nil {
-			return nil, err
-		}
-		placement := workspaceSecretPlacement{Name: value.Name}
+		placement := workspace.SecretPlacement{Name: value.Name}
 		switch {
 		case value.Env != "":
-			if !workspaceSecretEnvPattern.MatchString(value.Env) || strings.HasPrefix(value.Env, "HELMR_") {
-				return nil, fmt.Errorf("invalid or reserved workspace secret environment target %q", value.Env)
-			}
-			if _, exists := envTargets[value.Env]; exists {
-				return nil, fmt.Errorf("duplicate workspace secret environment target %q", value.Env)
-			}
-			envTargets[value.Env] = struct{}{}
 			placement.Kind = "env"
 			placement.Target = value.Env
 		case value.File != "":
-			if err := validateWorkspaceSecretFile(value.File); err != nil {
-				return nil, err
-			}
-			fileTargets = append(fileTargets, value.File)
 			placement.Kind = "file"
 			placement.Target = value.File
 		}
 		placements = append(placements, placement)
 	}
-	slices.Sort(fileTargets)
-	for index, target := range fileTargets {
-		if index > 0 {
-			previous := fileTargets[index-1]
-			if target == previous || strings.HasPrefix(target, previous+"/") {
-				return nil, fmt.Errorf("conflicting workspace secret file targets %q and %q", previous, target)
-			}
-		}
-	}
-	sort.Slice(placements, func(i, j int) bool {
-		if placements[i].Kind != placements[j].Kind {
-			return placements[i].Kind < placements[j].Kind
-		}
-		if placements[i].Target != placements[j].Target {
-			return placements[i].Target < placements[j].Target
-		}
-		return placements[i].Name < placements[j].Name
-	})
-	return placements, nil
-}
-
-func validateWorkspaceSecretFile(value string) error {
-	if !utf8.ValidString(value) || len(value) > 4096 || strings.IndexByte(value, 0) >= 0 {
-		return fmt.Errorf("invalid workspace secret file target %q", value)
-	}
-	if !strings.HasPrefix(value, "/") || path.Clean(value) != value || value == "/" {
-		return fmt.Errorf("workspace secret file target %q must be a canonical absolute path", value)
-	}
-	if value == "/workspace" || strings.HasPrefix(value, "/workspace/") {
-		return fmt.Errorf("workspace secret file target %q overlaps the durable workspace root", value)
-	}
-	return nil
+	return workspace.NormalizeSecretPlacements(placements)
 }
 
 func validateWorkspaceKey(value *string) error {

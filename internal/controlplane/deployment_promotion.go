@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,12 +14,20 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/schedule"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+type scheduleReconciliation struct {
+	definition db.DeploymentDefinition
+	manifest   deployment.ScheduleManifest
+	placements []workspace.SecretPlacement
+	nextFireAt time.Time
+	record     db.ReconcileScheduleRow
+}
 
 func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 	var request api.PromoteDeploymentRequest
@@ -145,14 +154,22 @@ func reconcileSchedules(
 		db.ListDeploymentDefinitionsForDeploymentParams{
 			EnvironmentID: target.EnvironmentID,
 			DeploymentID:  target.ID,
-			Kind:          pgvalue.Text(string(deployment.DefinitionKindTask)),
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("list scheduled task declarations: %w", err)
+		return fmt.Errorf("list deployment definitions for schedule reconciliation: %w", err)
 	}
-	scheduledIDs := make([]string, 0, len(definitions))
+	sandboxes := make(map[string]struct{})
 	for _, definition := range definitions {
+		if definition.Kind == string(deployment.DefinitionKindSandbox) {
+			sandboxes[definition.DeclaredID] = struct{}{}
+		}
+	}
+	plans := make([]scheduleReconciliation, 0, len(definitions))
+	for _, definition := range definitions {
+		if definition.Kind != string(deployment.DefinitionKindTask) {
+			continue
+		}
 		manifest, err := deployment.ParseTaskManifest(
 			definition.ManifestVersion,
 			definition.Manifest,
@@ -164,17 +181,38 @@ func reconcileSchedules(
 		if manifest.Schedule == nil {
 			continue
 		}
-		scheduledIDs = append(scheduledIDs, definition.DeclaredID)
-		if err := reconcileSchedule(
-			ctx,
-			store,
-			target,
-			definition,
-			*manifest.Schedule,
-			effectiveFrom,
-		); err != nil {
+		plan, err := prepareScheduleReconciliation(
+			definition, *manifest.Schedule, sandboxes, effectiveFrom,
+		)
+		if err != nil {
 			return err
 		}
+		plans = append(plans, plan)
+	}
+	sort.Slice(plans, func(i, j int) bool {
+		return plans[i].definition.DeclaredID < plans[j].definition.DeclaredID
+	})
+	scheduledIDs := make([]string, 0, len(plans))
+	for i := range plans {
+		plan := &plans[i]
+		scheduledIDs = append(scheduledIDs, plan.definition.DeclaredID)
+		record, err := store.ReconcileSchedule(ctx, db.ReconcileScheduleParams{
+			ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			EnvironmentID:          target.EnvironmentID,
+			TaskDeclaredID:         plan.definition.DeclaredID,
+			DeploymentDefinitionID: plan.definition.ID,
+			DeploymentID:           target.ID,
+			CronPattern:            plan.manifest.Cron,
+			Timezone:               plan.manifest.Timezone,
+			CronSemanticsVersion:   schedule.CronSemanticsVersion,
+			State:                  "active",
+			EffectiveFrom:          pgvalue.Timestamptz(effectiveFrom),
+			NextFireAt:             pgvalue.Timestamptz(plan.nextFireAt),
+		})
+		if err != nil {
+			return fmt.Errorf("reconcile schedule %q: %w", plan.definition.DeclaredID, err)
+		}
+		plan.record = record
 	}
 	if err := store.ArchiveOmittedSchedules(
 		ctx,
@@ -186,97 +224,90 @@ func reconcileSchedules(
 	); err != nil {
 		return fmt.Errorf("archive omitted schedules: %w", err)
 	}
-	return nil
-}
-
-func reconcileSchedule(
-	ctx context.Context,
-	store db.Querier,
-	target db.Deployment,
-	definition db.DeploymentDefinition,
-	manifest deployment.ScheduleManifest,
-	effectiveFrom time.Time,
-) error {
-	if err := schedule.ValidateCron(manifest.Cron); err != nil {
-		return badRequest(fmt.Errorf("schedule %q cron: %w", definition.DeclaredID, err))
+	secretIDs := make(map[string]pgtype.UUID)
+	for _, plan := range plans {
+		for _, placement := range plan.placements {
+			secretIDs[placement.Name] = pgtype.UUID{}
+		}
 	}
-	if err := schedule.ValidateTimezone(manifest.Timezone); err != nil {
-		return badRequest(fmt.Errorf("schedule %q timezone: %w", definition.DeclaredID, err))
+	secretNames := make([]string, 0, len(secretIDs))
+	for name := range secretIDs {
+		secretNames = append(secretNames, name)
 	}
-	workspaceRefID, workspaceRefKey, workspaceID, state, err := resolveScheduleWorkspace(
-		ctx,
-		store,
-		target,
-		manifest.Workspace,
-	)
-	if err != nil {
-		return fmt.Errorf("resolve schedule %q workspace: %w", definition.DeclaredID, err)
-	}
-	var nextFireAt pgtype.Timestamptz
-	if state == "active" {
-		next, err := schedule.NextCronTime(
-			manifest.Cron,
-			manifest.Timezone,
-			effectiveFrom,
+	sort.Strings(secretNames)
+	if len(secretNames) > 0 {
+		secretRecords, err := store.LockActiveSecretsByNameForWorkspaceCreate(
+			ctx,
+			db.LockActiveSecretsByNameForWorkspaceCreateParams{
+				EnvironmentID: target.EnvironmentID,
+				Names:         secretNames,
+			},
 		)
 		if err != nil {
-			return badRequest(fmt.Errorf("schedule %q next fire: %w", definition.DeclaredID, err))
+			return fmt.Errorf("lock scheduled Workspace Secrets: %w", err)
 		}
-		nextFireAt = pgvalue.Timestamptz(next)
+		for _, record := range secretRecords {
+			secretIDs[record.Name] = record.ID
+		}
+		for _, name := range secretNames {
+			if !secretIDs[name].Valid {
+				return badRequest(fmt.Errorf("scheduled Workspace Secret %q is unavailable", name))
+			}
+		}
 	}
-	if err := store.ReconcileSchedule(ctx, db.ReconcileScheduleParams{
-		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		EnvironmentID:          target.EnvironmentID,
-		TaskDeclaredID:         definition.DeclaredID,
-		DeploymentDefinitionID: definition.ID,
-		DeploymentID:           target.ID,
-		WorkspaceRefID:         workspaceRefID,
-		WorkspaceRefKey:        workspaceRefKey,
-		WorkspaceID:            workspaceID,
-		CronPattern:            manifest.Cron,
-		Timezone:               manifest.Timezone,
-		CronSemanticsVersion:   schedule.CronSemanticsVersion,
-		State:                  state,
-		EffectiveFrom:          pgvalue.Timestamptz(effectiveFrom),
-		NextFireAt:             nextFireAt,
-	}); err != nil {
-		return fmt.Errorf("reconcile schedule %q: %w", definition.DeclaredID, err)
+	for _, plan := range plans {
+		if err := store.DeleteScheduleSecrets(ctx, db.DeleteScheduleSecretsParams{
+			EnvironmentID: target.EnvironmentID,
+			ScheduleID:    plan.record.ID,
+		}); err != nil {
+			return fmt.Errorf("replace schedule %q Secret selection: %w", plan.definition.DeclaredID, err)
+		}
+		for _, placement := range plan.placements {
+			if _, err := store.CreateScheduleSecret(ctx, db.CreateScheduleSecretParams{
+				ScheduleID:      plan.record.ID,
+				EnvironmentID:   target.EnvironmentID,
+				PlacementKind:   placement.Kind,
+				PlacementTarget: placement.Target,
+				SecretID:        secretIDs[placement.Name],
+			}); err != nil {
+				return fmt.Errorf("install schedule %q Secret selection: %w", plan.definition.DeclaredID, err)
+			}
+		}
 	}
 	return nil
 }
 
-func resolveScheduleWorkspace(
-	ctx context.Context,
-	store db.Querier,
-	target db.Deployment,
-	address deployment.WorkspaceTarget,
-) (pgtype.UUID, pgtype.Text, pgtype.UUID, string, error) {
-	params := db.ResolveWorkspaceTargetParams{
-		OrgID:         target.OrgID,
-		ProjectID:     target.ProjectID,
-		EnvironmentID: target.EnvironmentID,
+func prepareScheduleReconciliation(
+	definition db.DeploymentDefinition,
+	manifest deployment.ScheduleManifest,
+	sandboxes map[string]struct{},
+	effectiveFrom time.Time,
+) (scheduleReconciliation, error) {
+	if err := schedule.ValidateCron(manifest.Cron); err != nil {
+		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q cron: %w", definition.DeclaredID, err))
 	}
-	if address.ID != nil {
-		id, err := ids.Parse(*address.ID)
-		if err != nil {
-			return pgtype.UUID{}, pgtype.Text{}, pgtype.UUID{}, "", badRequest(err)
-		}
-		params.ID = pgvalue.UUID(id)
-		workspaceID, err := store.ResolveWorkspaceTarget(ctx, params)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return pgtype.UUID{}, pgtype.Text{}, pgtype.UUID{}, "", badRequest(
-				fmt.Errorf("ID-addressed workspace %q does not exist", *address.ID),
-			)
-		}
-		return workspaceID, pgtype.Text{}, workspaceID, "active", err
+	if err := schedule.ValidateTimezone(manifest.Timezone); err != nil {
+		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q timezone: %w", definition.DeclaredID, err))
 	}
-	params.Key = pgvalue.Text(*address.Key)
-	workspaceID, err := store.ResolveWorkspaceTarget(ctx, params)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return pgtype.UUID{}, params.Key, pgtype.UUID{}, "pending_workspace", nil
+	if _, ok := sandboxes[manifest.Workspace.SandboxDeclaredID]; !ok {
+		return scheduleReconciliation{}, badRequest(fmt.Errorf(
+			"schedule %q sandbox %q is absent from the deployment",
+			definition.DeclaredID,
+			manifest.Workspace.SandboxDeclaredID,
+		))
 	}
+	placements, err := normalizeWorkspaceSecretPlacements(manifest.Workspace.Secrets)
 	if err != nil {
-		return pgtype.UUID{}, pgtype.Text{}, pgtype.UUID{}, "", err
+		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q workspace secrets: %w", definition.DeclaredID, err))
 	}
-	return pgtype.UUID{}, params.Key, workspaceID, "active", nil
+	next, err := schedule.NextCronTime(manifest.Cron, manifest.Timezone, effectiveFrom)
+	if err != nil {
+		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q next fire: %w", definition.DeclaredID, err))
+	}
+	return scheduleReconciliation{
+		definition: definition,
+		manifest:   manifest,
+		placements: placements,
+		nextFireAt: next,
+	}, nil
 }

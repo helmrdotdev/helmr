@@ -239,25 +239,6 @@ func scheduleResponse(row db.Schedule) (api.ScheduleResponse, error) {
 	response.EffectiveFrom = row.EffectiveFrom.Time.UTC()
 	response.CreatedAt = row.CreatedAt.Time.UTC()
 	response.UpdatedAt = row.UpdatedAt.Time.UTC()
-	switch {
-	case row.WorkspaceRefID.Valid:
-		workspaceID := pgvalue.UUIDString(row.WorkspaceRefID)
-		if ids.Validate(workspaceID) != nil {
-			return api.ScheduleResponse{}, errors.New("schedule workspace identity is invalid")
-		}
-		response.Workspace.ID = workspaceID
-	case row.WorkspaceRefKey.Valid:
-		response.Workspace.Key = row.WorkspaceRefKey.String
-	default:
-		return api.ScheduleResponse{}, errors.New("schedule workspace address is absent")
-	}
-	if row.WorkspaceID.Valid {
-		workspaceID := pgvalue.UUIDString(row.WorkspaceID)
-		if ids.Validate(workspaceID) != nil {
-			return api.ScheduleResponse{}, errors.New("bound schedule workspace identity is invalid")
-		}
-		response.WorkspaceID = workspaceID
-	}
 	if status == api.ScheduleStatusErrored && len(row.LastFailure) == 0 {
 		return api.ScheduleResponse{}, errors.New("errored schedule failure is unavailable")
 	}
@@ -278,8 +259,6 @@ func scheduleResponse(row db.Schedule) (api.ScheduleResponse, error) {
 
 func schedulePublicStatus(state string) (api.ScheduleStatus, error) {
 	switch state {
-	case "pending_workspace":
-		return api.ScheduleStatusPendingWorkspace, nil
 	case "active":
 		return api.ScheduleStatusActive, nil
 	case "errored":
