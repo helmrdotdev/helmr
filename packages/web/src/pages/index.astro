@@ -458,7 +458,12 @@ const renderedActor = {
           </p>
           <div class="hero-actions">
             <a class="btn btn-dark" href="/docs/start/quickstart">Start building</a>
-            <a class="hero-link" href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">View on GitHub <span aria-hidden="true">↗</span></a>
+            <a class="hero-link" href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">
+              View on GitHub
+              <svg class="hero-link-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+                <path d="M5 11L11 5M6 5H11V10" stroke="currentColor" stroke-width="1.25" stroke-linecap="square" stroke-linejoin="miter" />
+              </svg>
+            </a>
           </div>
           <button class="install-command" type="button" data-copy-install aria-label="Copy install command">
             <code data-install-command>curl -fsSL https://helmr.dev/install | bash</code>
@@ -851,6 +856,12 @@ const renderedActor = {
 
   .hero-link:hover { text-decoration: underline; }
 
+  .hero-link-icon {
+    flex: 0 0 auto;
+    width: 0.875rem;
+    height: 0.875rem;
+  }
+
   .install-command {
     appearance: none;
     display: flex;
@@ -1079,6 +1090,10 @@ const renderedActor = {
     font-family: inherit;
     font-size: inherit;
     min-width: max-content;
+  }
+
+  @media (max-width: 1100px) {
+    .code-frame pre { line-height: 1.7; }
   }
 
   .cl {
