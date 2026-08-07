@@ -53,21 +53,17 @@ type Capacity struct {
 	BuildCacheBytes         int64 `json:"build_cache_bytes"`
 	ArtifactCacheBytes      int64 `json:"artifact_cache_bytes"`
 	VMSlots                 int32 `json:"vm_slots"`
-	BuildExecutors          int32 `json:"build_executors"`
 }
 
 func (capacity Capacity) Validate(spec Spec) error {
 	if capacity.MilliCPU <= 0 || capacity.MemoryBytes <= 0 || capacity.GuestEphemeralDiskBytes <= 0 {
 		return errors.New("worker group cpu, memory, and guest ephemeral disk capacity must be positive")
 	}
-	if capacity.BuildCacheBytes < 0 || capacity.ArtifactCacheBytes < 0 || capacity.VMSlots < 0 || capacity.BuildExecutors < 0 {
+	if capacity.BuildCacheBytes < 0 || capacity.ArtifactCacheBytes < 0 || capacity.VMSlots < 0 {
 		return errors.New("worker group capacity must not be negative")
 	}
 	if spec.AllowsRun && capacity.VMSlots == 0 {
 		return errors.New("run worker group vm slots must be positive")
-	}
-	if spec.AllowsBuild && capacity.BuildExecutors == 0 {
-		return errors.New("build worker group executors must be positive")
 	}
 	return nil
 }

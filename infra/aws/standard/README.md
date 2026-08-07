@@ -43,18 +43,18 @@ The first apply should normally keep `create_controlplane_service=false`. That c
 RDS, CAS bucket, KMS key, empty Secrets Manager containers, and release-backed task definitions
 without starting tasks that need populated secrets.
 
-Populate the emitted Secrets Manager secrets out-of-band, run the database migration task, then set
-`create_controlplane_service=true` and apply again. The stack creates empty secret containers; it does
-not generate or store Helmr internal secret values in Terraform state. This starts separate
+Populate the emitted Secrets Manager secrets out-of-band, run the database bootstrap task followed
+by the migration task, then set `create_controlplane_service=true` and apply again. The stack creates
+empty secret containers; it does not generate or store Helmr internal secret values in Terraform
+state. This starts separate
 `helmr-controlplane` and `helmr-dispatcher` ECS services using `controlplane_desired_count` and
 `dispatcher_desired_count`. The official Control Plane image is resolved from `helmr_version`; set
 `controlplane_image` only for digest-pinned custom builds.
 
 Required secret value formats:
 
-- `database_url`: Postgres connection URL for the `helmr` database with SSL required
-- `setup_token`: high-entropy string
-- `setup_token`: read it from Secrets Manager for first organization setup
+- `database_url`: Postgres connection URL for the `helmr_app` application role and `helmr` database with SSL required
+- `setup_token`: high-entropy string used only in self-hosted mode; read it from Secrets Manager for first organization setup
 - `worker_token_signing_key`, `auth_key`, `encryption_key`, `checkpoint_encryption_key`, `workspace_fencing_key`, `token_credential_key`: base64-encoded 32-byte keys
 - `github_oauth_client_secret`: GitHub OAuth client secret
 
@@ -71,7 +71,21 @@ helper uses `tofu` by default; set `TOFU=terraform` when using Terraform. It ini
 values only and never replaces an existing value. Rotate a Worker Group enrollment token from
 Admin and propagate it to Workers explicitly. Online rotation of root keys is not supported.
 
-Run migrations after secrets are populated:
+After secrets are populated, run the database bootstrap task and wait for it to succeed:
+
+```sh
+aws ecs run-task \
+  --cluster "$(tofu output -raw controlplane_cluster_name)" \
+  --task-definition "$(tofu output -raw database_bootstrap_task_definition_arn)" \
+  --launch-type FARGATE \
+  --network-configuration "$(jq -cn \
+    --argjson subnets "$(tofu output -json controlplane_task_subnet_ids)" \
+    --argjson securityGroups "$(tofu output -json controlplane_task_security_group_ids)" \
+    '{awsvpcConfiguration:{subnets:$subnets,securityGroups:$securityGroups,assignPublicIp:"DISABLED"}}')"
+```
+
+The RDS master credential is used only by this task. Control Plane, Dispatcher, and migrations use
+the static application credential in `database_url`. Then run migrations:
 
 ```sh
 aws ecs run-task \

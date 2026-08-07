@@ -175,7 +175,7 @@ func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 		MilliCPU: request.RequiredCPUMillis, MemoryBytes: request.RequiredMemoryBytes,
 		GuestEphemeralDiskBytes: request.RequiredGuestEphemeralDiskBytes,
 		BuildCacheBytes:         request.RequiredBuildCacheBytes, ArtifactCacheBytes: request.RequiredArtifactCacheBytes,
-		VMSlots: request.RequiredVMSlots, BuildExecutors: request.RequiredBuildExecutors,
+		VMSlots: request.RequiredVMSlots,
 	}
 	if err := capacity.Validate(spec); err != nil || request.ObservationTTLSeconds <= 0 {
 		if err == nil {
@@ -212,8 +212,8 @@ func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 			RequiredGuestEphemeralDiskBytes: request.RequiredGuestEphemeralDiskBytes,
 			RequiredBuildCacheBytes:         request.RequiredBuildCacheBytes,
 			RequiredArtifactCacheBytes:      request.RequiredArtifactCacheBytes,
-			RequiredVMSlots:                 request.RequiredVMSlots, RequiredBuildExecutors: request.RequiredBuildExecutors,
-			ObservationTtlSeconds: request.ObservationTTLSeconds,
+			RequiredVMSlots:                 request.RequiredVMSlots,
+			ObservationTtlSeconds:           request.ObservationTTLSeconds,
 		})
 		if isUniqueViolation(err) {
 			return conflict(errors.New("worker group conflicts with an existing active role or name"))
@@ -352,8 +352,8 @@ func adminWorkerGroup(row db.WorkerGroup) api.AdminWorkerGroup {
 		RequiredGuestEphemeralDiskBytes: row.RequiredGuestEphemeralDiskBytes,
 		RequiredBuildCacheBytes:         row.RequiredBuildCacheBytes,
 		RequiredArtifactCacheBytes:      row.RequiredArtifactCacheBytes,
-		RequiredVMSlots:                 row.RequiredVMSlots, RequiredBuildExecutors: row.RequiredBuildExecutors,
-		ObservationTTLSeconds: row.ObservationTtlSeconds,
+		RequiredVMSlots:                 row.RequiredVMSlots,
+		ObservationTTLSeconds:           row.ObservationTtlSeconds,
 	}
 }
 

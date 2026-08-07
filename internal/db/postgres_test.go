@@ -158,7 +158,6 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		RequiredMemoryBytes:             1,
 		RequiredGuestEphemeralDiskBytes: 1,
 		RequiredVMSlots:                 1,
-		RequiredBuildExecutors:          1,
 	}); err != nil {
 		t.Fatal(err)
 	}

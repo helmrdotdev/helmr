@@ -93,6 +93,13 @@ override_resource {
 }
 
 override_resource {
+  target = aws_iam_role.database_bootstrap_execution
+  values = {
+    arn = "arn:aws:iam::000000000000:role/helmr-test-database-bootstrap-execution"
+  }
+}
+
+override_resource {
   target = aws_iam_role.controlplane_task
   values = {
     arn = "arn:aws:iam::000000000000:role/helmr-test-controlplane-task"
@@ -123,6 +130,8 @@ override_resource {
 override_resource {
   target = aws_db_instance.postgres
   values = {
+    address = "database.example.test"
+    port    = 5432
     master_user_secret = [{
       kms_key_id    = "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000"
       secret_arn    = "arn:aws:secretsmanager:us-east-1:000000000000:secret:database-master"
@@ -172,6 +181,28 @@ run "controlplane_installs_exact_policy_before_start" {
       ]
     )
     error_message = "Control Plane must use the exact digest-pinned release install command in a root init container."
+  }
+
+  assert {
+    condition = (
+      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.PUBLIC_URL == "http://controlplane.example.test" &&
+      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.API_ORIGIN == "http://controlplane.example.test" &&
+      aws_lb_target_group.controlplane.health_check[0].path == "/readyz" &&
+      contains([for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].secrets : item.name], "SETUP_TOKEN")
+    )
+    error_message = "Self-hosted Control Plane must default API_ORIGIN to PUBLIC_URL, use readiness for traffic, and receive the setup token."
+  }
+
+  assert {
+    condition = (
+      jsondecode(aws_ecs_task_definition.database_bootstrap.container_definitions)[0].command == ["database-bootstrap"] &&
+      toset([for item in jsondecode(aws_ecs_task_definition.database_bootstrap.container_definitions)[0].environment : item.name]) == toset(["DATABASE_ADMIN_HOST", "DATABASE_ADMIN_PORT", "DATABASE_NAME"]) &&
+      toset([for item in jsondecode(aws_ecs_task_definition.database_bootstrap.container_definitions)[0].secrets : item.name]) == toset(["DATABASE_ADMIN_USERNAME", "DATABASE_ADMIN_PASSWORD", "DATABASE_URL"]) &&
+      strcontains(aws_iam_role_policy.database_bootstrap_execution.policy, "database-master") &&
+      !strcontains(aws_iam_role_policy.controlplane_execution.policy, "database-master") &&
+      !strcontains(aws_iam_role_policy.dispatcher_execution.policy, "database-master")
+    )
+    error_message = "Only the one-shot database bootstrap task may receive the RDS master credential."
   }
 
   assert {
@@ -250,6 +281,24 @@ run "controlplane_installs_exact_policy_before_start" {
       aws_iam_role.migration_task.name == "helmr-test-migration-task"
     )
     error_message = "Control Plane IAM must read only runtime objects, exclude Manager storage, rollout lineage, and retained artifacts, and not leak to migration."
+  }
+}
+
+run "managed_controlplane_omits_setup_token" {
+  command = plan
+
+  variables {
+    deployment_mode = "managed-cloud"
+    api_origin      = "https://api.example.test"
+  }
+
+  assert {
+    condition = (
+      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].environment : item.name => item.value }.API_ORIGIN == "https://api.example.test" &&
+      !contains([for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[1].secrets : item.name], "SETUP_TOKEN") &&
+      !contains(keys(output.secret_arns), "setup_token")
+    )
+    error_message = "Managed Control Plane must use the explicit API origin without creating or injecting a setup token."
   }
 }
 

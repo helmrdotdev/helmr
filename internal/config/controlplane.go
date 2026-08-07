@@ -58,14 +58,10 @@ func LoadControlPlane() (ControlPlane, error) {
 		EmailFrom:               envText("EMAIL_FROM"),
 		GitHubOAuthClientID:     envText("GITHUB_OAUTH_CLIENT_ID"),
 		GitHubOAuthClientSecret: envSecret("GITHUB_OAUTH_CLIENT_SECRET"),
-		ScheduleJitter:          30 * time.Second,
 		RunLeaseTTL:             5 * time.Minute,
 		RunFinalizationTTL:      30 * time.Minute,
 	}
 	if cfg.BootstrapEnabled, err = envBool("BOOTSTRAP_ENABLED", false); err != nil {
-		return cfg, err
-	}
-	if cfg.ScheduleJitter, err = envDuration("SCHEDULE_JITTER", cfg.ScheduleJitter); err != nil {
 		return cfg, err
 	}
 	if cfg.RunLeaseTTL, err = envDuration("RUN_LEASE_TTL", cfg.RunLeaseTTL); err != nil {

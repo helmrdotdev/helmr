@@ -73,6 +73,11 @@ output "migration_task_definition_arn" {
   value       = module.controlplane.migration_task_definition_arn
 }
 
+output "database_bootstrap_task_definition_arn" {
+  description = "ECS task definition ARN for creating the application database role."
+  value       = module.controlplane.database_bootstrap_task_definition_arn
+}
+
 output "cas_uri" {
   description = "CAS URI for worker configuration."
   value       = module.controlplane.cas_uri

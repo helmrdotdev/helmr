@@ -41,7 +41,6 @@ type AdminWorkerGroup struct {
 	RequiredBuildCacheBytes         int64  `json:"required_build_cache_bytes"`
 	RequiredArtifactCacheBytes      int64  `json:"required_artifact_cache_bytes"`
 	RequiredVMSlots                 int32  `json:"required_vm_slots"`
-	RequiredBuildExecutors          int32  `json:"required_build_executors"`
 	ObservationTTLSeconds           int32  `json:"observation_ttl_seconds"`
 }
 
@@ -61,7 +60,6 @@ type CreateAdminWorkerGroupRequest struct {
 	RequiredBuildCacheBytes         int64  `json:"required_build_cache_bytes"`
 	RequiredArtifactCacheBytes      int64  `json:"required_artifact_cache_bytes"`
 	RequiredVMSlots                 int32  `json:"required_vm_slots"`
-	RequiredBuildExecutors          int32  `json:"required_build_executors"`
 	ObservationTTLSeconds           int32  `json:"observation_ttl_seconds"`
 }
 

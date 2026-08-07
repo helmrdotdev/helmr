@@ -12,15 +12,14 @@ cat >"${tmp}/bin/mock-tofu" <<'EOF'
 set -euo pipefail
 case "$*" in
   'output -json secret_arns')
-    jq -n '{
+    jq -n --arg setup "${MOCK_SETUP_TOKEN_PRESENT:-1}" '{
       worker_token_signing_key:"arn:worker-token-signing-key",
       auth_key:"arn:auth-key",
       encryption_key:"arn:encryption-key",
       workspace_fencing_key:"arn:workspace-fencing-key",
       token_credential_key:"arn:token-credential-key",
-      checkpoint_encryption_key:"arn:checkpoint-encryption-key",
-      setup_token:"arn:setup-token"
-    }'
+      checkpoint_encryption_key:"arn:checkpoint-encryption-key"
+    } + if $setup == "1" then {setup_token:"arn:setup-token"} else {} end'
     ;;
   'output -raw worker_enrollment_secret_arn') printf 'arn:worker-enrollment-token\n' ;;
   *) exit 90 ;;
@@ -66,6 +65,13 @@ run_helper present
 run_helper missing
 [ "$(wc -l <"${tmp}/puts" | tr -d ' ')" = 8 ] || {
   printf 'expected all eight missing secret values to be initialized\n' >&2
+  exit 1
+}
+
+: >"${tmp}/puts"
+MOCK_SETUP_TOKEN_PRESENT=0 run_helper missing
+[ "$(wc -l <"${tmp}/puts" | tr -d ' ')" = 7 ] || {
+  printf 'managed secret initialization required a setup token\n' >&2
   exit 1
 }
 

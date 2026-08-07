@@ -54,9 +54,8 @@ values in Terraform state.
 
 Required value formats:
 
-- `database_url`: `postgres://helmr:<password>@<postgres_endpoint>/helmr?sslmode=require`
-- `setup_token`: high-entropy string
-- `setup_token`: read it from Secrets Manager for first organization setup
+- `database_url`: `postgres://helmr_app:<application-password>@<postgres_endpoint>/helmr?sslmode=require`
+- `setup_token`: high-entropy string used only in self-hosted mode; read it from Secrets Manager for first organization setup
 - `worker_token_signing_key`, `auth_key`, `encryption_key`, `checkpoint_encryption_key`, `workspace_fencing_key`, `token_credential_key`: base64-encoded 32-byte keys
 - `github_oauth_client_secret`: GitHub OAuth client secret
 
@@ -73,7 +72,8 @@ helper uses `tofu` by default; set `TOFU=terraform` when using Terraform. It ini
 values only and never replaces an existing value. Rotate a Worker Group enrollment token from
 Admin and propagate it to Workers explicitly. Online rotation of root keys is not supported.
 
-The RDS-generated master password ARN is available as `database_master_user_secret_arn`.
+The RDS-generated master credential is used only by the database bootstrap task. Control Plane,
+Dispatcher, and migrations use the static application credential in `database_url`.
 
 ## Email
 
@@ -87,10 +87,25 @@ email_from     = "Helmr <noreply@example.com>"
 After applying, populate the emitted `secret_arns.resend_api_key` Secrets Manager secret with the
 Resend API key before starting the Control Plane service.
 
-## Run Migrations
+## Bootstrap the database and run migrations
 
-Run the migration task after secrets are populated and before enabling the Control Plane and dispatcher
-services:
+After secrets are populated, run the database bootstrap task once. It idempotently creates the
+non-administrative application role from `database_url` by using the RDS master credential inside
+the VPC:
+
+```sh
+aws ecs run-task \
+  --cluster "$(tofu output -raw controlplane_cluster_name)" \
+  --task-definition "$(tofu output -raw database_bootstrap_task_definition_arn)" \
+  --launch-type FARGATE \
+  --network-configuration "$(jq -cn \
+    --argjson subnets "$(tofu output -json controlplane_task_subnet_ids)" \
+    --argjson securityGroups "$(tofu output -json controlplane_task_security_group_ids)" \
+    --arg assignPublicIp "$([ "$(tofu output -raw controlplane_assign_public_ip)" = "true" ] && printf ENABLED || printf DISABLED)" \
+    '{awsvpcConfiguration:{subnets:$subnets,securityGroups:$securityGroups,assignPublicIp:$assignPublicIp}}')"
+```
+
+Wait for that task to succeed, then run the migration task before enabling the services:
 
 ```sh
 aws ecs run-task \

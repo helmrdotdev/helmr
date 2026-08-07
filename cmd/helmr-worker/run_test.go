@@ -12,6 +12,23 @@ import (
 	"github.com/helmrdotdev/helmr/internal/config"
 )
 
+func TestWorkerBuildExecutorsDeriveFromRoles(t *testing.T) {
+	for name, test := range map[string]struct {
+		roles []string
+		want  int32
+	}{
+		"run":       {roles: []string{"run"}, want: 0},
+		"build":     {roles: []string{"build"}, want: 1},
+		"run-build": {roles: []string{"run", "build"}, want: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := workerBuildExecutors(test.roles); got != test.want {
+				t.Fatalf("build executors = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
 func TestFitsBuildHostComputeUsesDiskIndependentHostPool(t *testing.T) {
 	if !fitsBuildHostCompute(compute.ResourceVector{
 		MilliCPU:  3000,

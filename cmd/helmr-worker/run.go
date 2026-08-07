@@ -43,6 +43,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	buildExecutors := workerBuildExecutors(cfg.WorkerRoles)
 	checkpointEncryptor, err := checkpoint.New(cfg.CheckpointKey)
 	if err != nil {
 		return fmt.Errorf("configure checkpoint encryption: %w", err)
@@ -59,7 +60,7 @@ func run(log *slog.Logger) error {
 		NetworkTranslationPool:  cfg.NetworkTranslationPool,
 		NetworkResolverIPv4:     cfg.NetworkResolverIPv4,
 		NetworkBlockedIPv4CIDRs: cfg.NetworkBlockedIPv4CIDRs,
-		NetworkCapacity:         int(cfg.WorkerExecutionSlots + cfg.WorkerBuildExecutors),
+		NetworkCapacity:         int(cfg.WorkerExecutionSlots + buildExecutors),
 		IPPath:                  cfg.IPPath,
 		NFTPath:                 cfg.NFTPath,
 	}
@@ -286,7 +287,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	runtimeStartLimit := max(int(cfg.WorkerRuntimeStarts), int(cfg.WorkerBuildExecutors))
+	runtimeStartLimit := max(int(cfg.WorkerRuntimeStarts), int(buildExecutors))
 	runtimeConnector, err := vm.NewStartLimiter(connector, runtimeStartLimit)
 	if err != nil {
 		return fmt.Errorf("configure host runtime start limit: %w", err)
@@ -368,7 +369,7 @@ func run(log *slog.Logger) error {
 		ExecutionSlotsAvailable:   cfg.WorkerExecutionSlots,
 		SupportsRun:               supportsRun,
 		SupportsBuild:             supportsBuild,
-		MaxBuildExecutors:         cfg.WorkerBuildExecutors,
+		MaxBuildExecutors:         buildExecutors,
 		MaxRuntimeStarts:          int32(runtimeStartLimit),
 		BuildCacheBytes:           substrateCacheMaxBytes,
 		ArtifactCacheBytes:        artifactCacheMaxBytes,
@@ -484,11 +485,11 @@ func run(log *slog.Logger) error {
 		)
 	}
 	if supportsBuild {
-		admission["build"] = int(cfg.WorkerBuildExecutors)
+		admission["build"] = int(buildExecutors)
 		consumerSpecs = append(
 			consumerSpecs,
-			worker.ConsumerSpec{Name: "platform-acquisition", Concurrency: int(cfg.WorkerBuildExecutors), Admission: "build", Consumer: worker.NewPlatformAcquisitionConsumer(runner)},
-			worker.ConsumerSpec{Name: "build", Concurrency: int(cfg.WorkerBuildExecutors), Admission: "build", Consumer: worker.NewBuildConsumer(runner)},
+			worker.ConsumerSpec{Name: "platform-acquisition", Concurrency: int(buildExecutors), Admission: "build", Consumer: worker.NewPlatformAcquisitionConsumer(runner)},
+			worker.ConsumerSpec{Name: "build", Concurrency: int(buildExecutors), Admission: "build", Consumer: worker.NewBuildConsumer(runner)},
 		)
 	}
 	background := make([]worker.BackgroundSpec, 0, 1)
@@ -579,6 +580,13 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+func workerBuildExecutors(roles []string) int32 {
+	if slices.Contains(roles, "build") {
+		return 1
+	}
+	return 0
 }
 
 func resolveVMResources(cfg config.Worker, supportsRun bool, supportsBuild bool) (compute.ResourceVector, error) {

@@ -608,7 +608,6 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("WORKER_WORK_DIR", " /var/lib/helmr/scratch/worker ")
 	t.Setenv("WORKER_IMAGES_DIR", " /var/lib/helmr/images ")
-	t.Setenv("GIT_PATH", " /usr/bin/git ")
 	t.Setenv("FIRECRACKER_PATH", " /usr/bin/firecracker ")
 	t.Setenv("JAILER_PATH", " /usr/bin/jailer ")
 	t.Setenv("JAILER_UID", " 1001 ")
@@ -641,7 +640,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.CASURI != "s3://helmr-cas" || cfg.WorkDir != "/var/lib/helmr/scratch/worker" || cfg.BuildCacheDir != "/var/lib/helmr/cache" || cfg.BuildScratchDir != "/var/lib/helmr/scratch" || cfg.ImagesDir != "/var/lib/helmr/images" || cfg.GitPath != "/usr/bin/git" {
+	if cfg.CASURI != "s3://helmr-cas" || cfg.WorkDir != "/var/lib/helmr/scratch/worker" || cfg.BuildCacheDir != "/var/lib/helmr/cache" || cfg.BuildScratchDir != "/var/lib/helmr/scratch" || cfg.ImagesDir != "/var/lib/helmr/images" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.NetworkLinkPool != "169.254.128.0/18" || cfg.NetworkTranslationPool != "100.97.0.0/16" || cfg.NetworkResolverIPv4 != "1.0.0.1" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerDiskReserveMiB != 2048 || cfg.SubstrateCacheMaxMiB != 32768 || cfg.ArtifactCacheMaxMiB != 16384 || cfg.WorkerExecutionSlots != 4 || cfg.VMInitTimeout != 45*time.Second || cfg.VMHealthTimeout != 90*time.Second || cfg.VMHealthAttemptTimeout != 7*time.Second || cfg.WorkspaceMountStartupTimeout != 3*time.Minute {
@@ -718,31 +717,8 @@ func TestLoadWorkerReadsExplicitRolesAndCapacities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !stringSlicesEqual(cfg.WorkerRoles, []string{"run"}) || cfg.WorkerBuildExecutors != 0 || cfg.WorkerRuntimeStarts != 2 || cfg.PreparedRuntimePoolSize != 2 {
+	if !stringSlicesEqual(cfg.WorkerRoles, []string{"run"}) || cfg.WorkerRuntimeStarts != 2 || cfg.PreparedRuntimePoolSize != 2 {
 		t.Fatalf("config = %+v", cfg)
-	}
-}
-
-func TestLoadWorkerRejectsMultipleBuildExecutors(t *testing.T) {
-	setWorkerEnrollmentEnv(t)
-	for key, value := range map[string]string{
-		"CONTROL_PLANE_URL":                 "https://api.example.test",
-		"CAS_URI":                           "s3://helmr-cas",
-		"CHECKPOINT_ENCRYPTION_KEY":         "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=",
-		"JAILER_UID":                        "1001",
-		"JAILER_GID":                        "1002",
-		"WORKER_ROLES":                      "build",
-		"WORKER_BUILD_EXECUTORS":            "2",
-		"WORKER_CAPACITY_VCPUS":             "4",
-		"WORKER_CAPACITY_MEMORY_MIB":        "8192",
-		"WORKER_SUBSTRATE_CACHE_MAX_MIB":    "4096",
-		"WORKER_ARTIFACT_CACHE_MAX_MIB":     "2048",
-		"WORKER_NETWORK_BLOCKED_IPV4_CIDRS": "[]",
-	} {
-		t.Setenv(key, value)
-	}
-	if _, err := LoadWorker(); err == nil || !strings.Contains(err.Error(), "zero or one") {
-		t.Fatalf("LoadWorker() error = %v", err)
 	}
 }
 

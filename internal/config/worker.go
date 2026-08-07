@@ -22,7 +22,6 @@ func LoadWorker() (Worker, error) {
 		BuildCacheDir:                envText("WORKER_BUILD_CACHE_DIR"),
 		BuildScratchDir:              envText("WORKER_BUILD_SCRATCH_DIR"),
 		ImagesDir:                    envText("WORKER_IMAGES_DIR"),
-		GitPath:                      env("GIT_PATH", "git"),
 		FirecrackerPath:              env("FIRECRACKER_PATH", "firecracker"),
 		JailerPath:                   env("JAILER_PATH", "jailer"),
 		JailerNumaNode:               0,
@@ -132,23 +131,6 @@ func LoadWorker() (Worker, error) {
 	if err != nil {
 		return cfg, err
 	}
-	var buildExecutors int
-	if buildExecutors, err = envInt("WORKER_BUILD_EXECUTORS", int(cfg.WorkerBuildExecutors)); err != nil {
-		return cfg, err
-	}
-	if buildExecutors == 0 && slices.Contains(cfg.WorkerRoles, "build") {
-		buildExecutors = 1
-	}
-	if buildExecutors < 0 || buildExecutors > 1 {
-		return cfg, errors.New("WORKER_BUILD_EXECUTORS must be zero or one")
-	}
-	if !slices.Contains(cfg.WorkerRoles, "build") && buildExecutors != 0 {
-		return cfg, errors.New("WORKER_BUILD_EXECUTORS must be zero when build role is disabled")
-	}
-	if slices.Contains(cfg.WorkerRoles, "build") && buildExecutors != 1 {
-		return cfg, errors.New("WORKER_BUILD_EXECUTORS must be one when build role is enabled")
-	}
-	cfg.WorkerBuildExecutors = int32(buildExecutors)
 	var runtimeStarts int
 	if runtimeStarts, err = envInt("WORKER_RUNTIME_STARTS", int(cfg.WorkerRuntimeStarts)); err != nil {
 		return cfg, err

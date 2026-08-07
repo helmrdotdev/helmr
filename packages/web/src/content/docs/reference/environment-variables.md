@@ -63,8 +63,10 @@ addresses that receive the platform-wide Admin flag when their user record is
 created. Admin differs from organization membership roles and controls the
 `/admin` Console and `/admin/api/v1` API surfaces.
 
-Optional: `CONTROL_PLANE_ADDR`, `PUBLIC_URL`, `REDIS_URL`, and
-`MAGIC_LINK_DEBUG_URLS`. `REDIS_URL` defaults to
+Optional: `CONTROL_PLANE_ADDR`, `PUBLIC_URL`, `API_ORIGIN`, `REDIS_URL`, and
+`MAGIC_LINK_DEBUG_URLS`. `PUBLIC_URL` is used for browser-facing links.
+`API_ORIGIN` is used for machine-facing token callback URLs and defaults to
+`PUBLIC_URL`. `REDIS_URL` defaults to
 `redis://127.0.0.1:6379/0`.
 
 ClickHouse telemetry: `CLICKHOUSE_URL` is required. Set `CLICKHOUSE_USER` when the service user is not `default`, and set `CLICKHOUSE_PASSWORD` when the service requires a password.
@@ -142,4 +144,4 @@ per-instance credential stored at `WORKER_INSTANCE_CREDENTIAL_PATH`.
 physical Worker. Provider identity and infrastructure inventory are deployment
 responsibilities rather than Control Plane authentication inputs.
 
-Runtime inputs include `WORKER_WORK_DIR`, `WORKER_IMAGES_DIR`, `GIT_PATH`, Firecracker paths and jailer settings, routed-network link and translation pools, resolver and blocked CIDRs, `VM_VCPUS`, `VM_MEMORY_MIB`, `WORKER_DISK_MIB`, and `VM_HEALTH_TIMEOUT`. `WORKER_DISK_MIB` overrides the filesystem capacity advertised by filesystem-first worker instances. Workspace-image builds start the pinned BuildKit daemon inside a fresh image-build guest; there is no host BuildKit address or service setting.
+Runtime inputs include `WORKER_WORK_DIR`, `WORKER_IMAGES_DIR`, Firecracker paths and jailer settings, routed-network link and translation pools, resolver and blocked CIDRs, `VM_VCPUS`, `VM_MEMORY_MIB`, `WORKER_DISK_MIB`, and `VM_HEALTH_TIMEOUT`. `WORKER_DISK_MIB` overrides the filesystem capacity advertised by filesystem-first worker instances. Workspace-image builds start the pinned BuildKit daemon inside a fresh image-build guest; there is no host BuildKit address or service setting.

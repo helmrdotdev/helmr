@@ -196,6 +196,7 @@ func main() {
 		SetupToken:            cfg.setupToken,
 		AuthKey:               cfg.authKey,
 		PublicURL:             publicURL,
+		APIOrigin:             publicURL,
 		EventStream:           eventStream,
 		TelemetryReader:       telemetryReader,
 	})
