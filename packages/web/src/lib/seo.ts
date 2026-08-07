@@ -8,6 +8,7 @@ export const SITE = {
   defaultDescription:
     "The code-first runtime for AI agents. Define agent workloads in TypeScript and run them in isolated Linux microVMs with durable workspaces, scoped secrets, human or external waitpoints, logs, and run history.",
   defaultImage: "/og/helmr.png",
+  logoImage: "/web-app-manifest-512x512.png",
   locale: "en_US",
 };
 
@@ -24,7 +25,7 @@ export const organizationJsonLd = (): JsonLdNode => ({
   "@id": organizationId,
   name: SITE.name,
   url: SITE.url,
-  logo: absoluteUrl(SITE.defaultImage),
+  logo: absoluteUrl(SITE.logoImage),
   sameAs: [SITE.githubUrl],
   description: "The code-first runtime for AI agents.",
 });
