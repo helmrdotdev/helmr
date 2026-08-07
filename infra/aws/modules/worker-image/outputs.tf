@@ -17,8 +17,3 @@ output "distribution_configuration_arn" {
   description = "EC2 Image Builder distribution configuration ARN."
   value       = aws_imagebuilder_distribution_configuration.worker.arn
 }
-
-output "instance_profile_name" {
-  description = "Image Builder instance profile name."
-  value       = local.instance_profile_name
-}

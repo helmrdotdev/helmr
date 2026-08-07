@@ -42,7 +42,7 @@ GET /admin/api/v1/regions/{regionID}
 GET /admin/api/v1/worker-groups
 GET /admin/api/v1/worker-groups/{groupID}
 GET /api/auth/device/status
-GET /api/capacity/v0/observations
+GET /api/capacity/v0/worker-groups/resolve
 GET /api/capacity/v0/worker-instances
 GET /api/capacity/v0/worker-instances/{workerInstanceID}
 GET /api/invitations
@@ -136,6 +136,7 @@ POST /api/auth/logout
 POST /api/auth/magic-link/finish
 POST /api/auth/magic-link/invite/start
 POST /api/auth/magic-link/start
+POST /api/capacity/v0/worker-groups/{workerGroupID}/plan
 POST /api/capacity/v0/worker-instances/{workerInstanceID}/drain
 POST /api/invitations
 POST /api/organizations

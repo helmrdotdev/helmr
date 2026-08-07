@@ -273,7 +273,6 @@ jobs:
       STATE_BUCKET: ${{ vars.RELEASE_AWS_STATE_BUCKET }}
       STATE_KEY_BASE: ${{ vars.RELEASE_AWS_STATE_KEY || 'helmr/stacks/release-worker-image/terraform.tfstate' }}
       WORKER_IMAGE_NAME_BASE: ${{ vars.RELEASE_WORKER_IMAGE_NAME || 'helmr-release-image' }}
-      WORKER_IMAGE_INSTANCE_PROFILE_NAME_OVERRIDE: ${{ vars.RELEASE_WORKER_IMAGE_INSTANCE_PROFILE_NAME }}
       RELEASE_WORKER_AMI_KEEP: ${{ vars.RELEASE_WORKER_AMI_KEEP || '4' }}
       IMAGE_WAIT_INTERVAL_SECONDS: ${{ vars.RELEASE_WORKER_IMAGE_WAIT_INTERVAL_SECONDS || '60' }}
       IMAGE_WAIT_TIMEOUT_SECONDS: ${{ vars.RELEASE_IMAGE_WAIT_TIMEOUT_SECONDS || '14400' }}
@@ -320,10 +319,6 @@ jobs:
               worker_image_version)
                 printf 'WORKER_IMAGE_VERSION=%s\n' "$value" >>"$GITHUB_ENV"
                 ;;
-              instance_profile_name)
-                printf 'WORKER_IMAGE_INSTANCE_PROFILE_NAME=%s\n' \
-                  "${WORKER_IMAGE_INSTANCE_PROFILE_NAME_OVERRIDE:-$value}" >>"$GITHUB_ENV"
-                ;;
               state_key)
                 printf 'STATE_KEY=%s\n' "$value" >>"$GITHUB_ENV"
                 ;;
@@ -350,18 +345,22 @@ jobs:
           scripts/aws-release-artifacts.sh worker-image-start
           scripts/aws-release-artifacts.sh worker-image-wait
           worker_amis_json="$(scripts/aws-release-artifacts.sh worker-image-amis)"
+          worker_image_provenance_json="$(scripts/aws-release-artifacts.sh worker-image-provenance)"
           printf 'worker_amis_json=%s\n' "$worker_amis_json" >>"$GITHUB_OUTPUT"
+          printf 'worker_image_provenance_json=%s\n' "$worker_image_provenance_json" >>"$GITHUB_OUTPUT"
           EOF
 
       - name: Write worker release artifact
         env:
           WORKER_AMIS_JSON: ${{ steps.build_worker_amis.outputs.worker_amis_json }}
+          WORKER_IMAGE_PROVENANCE_JSON: ${{ steps.build_worker_amis.outputs.worker_image_provenance_json }}
         run: |
           mkdir -p dist
           jq -cS \
             --arg sourceCommit "$(git rev-parse HEAD)" \
+            --argjson workerImageProvenance "$WORKER_IMAGE_PROVENANCE_JSON" \
             --argjson workerAMIs "$WORKER_AMIS_JSON" \
-            '{formatVersion: 0, sourceCommit: $sourceCommit, workerAMIs: $workerAMIs}' \
+            '{formatVersion: 1, sourceCommit: $sourceCommit, workerAMIs: $workerAMIs, workerImageProvenance: $workerImageProvenance}' \
             >dist/worker-artifacts.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -461,6 +460,7 @@ jobs:
           scripts/write-aws-release-manifest.sh \
             "$CONTROLPLANE_IMAGE" \
             "$(jq -c '.workerAMIs' dist/worker/worker-artifacts.json)" \
+            "$(jq -c '.workerImageProvenance' dist/worker/worker-artifacts.json)" \
             "$(cat dist/platform-release/platform-release-provenance.json)" \
             dist/aws-artifacts.json
 

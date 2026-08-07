@@ -33,6 +33,76 @@ type runtimeArtifacts struct {
 	Rootfs            runtimeArtifact `json:"rootfs"`
 }
 
+// InspectRuntimeArtifacts validates the exact boot artifacts used by Worker
+// startup and returns their runtime identity inputs without starting Firecracker.
+func InspectRuntimeArtifacts(directory string) (RuntimeCapabilities, error) {
+	cfg := Config{
+		KernelPath: filepath.Join(directory, "vmlinuz"), InitramfsPath: filepath.Join(directory, "initramfs"),
+		RootfsPath: filepath.Join(directory, "rootfs.ext4"), RuntimeArtifactsPath: filepath.Join(directory, "runtime-artifacts.json"),
+	}
+	file, err := os.Open(cfg.RuntimeArtifactsPath)
+	if err != nil {
+		return RuntimeCapabilities{}, fmt.Errorf("open runtime artifacts manifest: %w", err)
+	}
+	artifacts, decodeErr := decodeRuntimeArtifacts(file)
+	closeErr := file.Close()
+	if decodeErr != nil {
+		return RuntimeCapabilities{}, decodeErr
+	}
+	if closeErr != nil {
+		return RuntimeCapabilities{}, closeErr
+	}
+	if err := validateRuntimeArtifactsDeclaration(cfg, artifacts); err != nil {
+		return RuntimeCapabilities{}, err
+	}
+	for _, artifact := range []struct {
+		name string
+		path string
+		item runtimeArtifact
+	}{
+		{name: "kernel", path: cfg.KernelPath, item: artifacts.Kernel},
+		{name: "initramfs", path: cfg.InitramfsPath, item: artifacts.Initramfs},
+		{name: "rootfs", path: cfg.RootfsPath, item: artifacts.Rootfs},
+	} {
+		if err := validateRuntimeArtifact(artifact.name, artifact.path, artifact.item); err != nil {
+			return RuntimeCapabilities{}, err
+		}
+	}
+	return RuntimeCapabilities{
+		Arch: artifacts.Arch, Contract: artifacts.VMRuntimeContract,
+		KernelDigest: artifacts.Kernel.Digest, InitramfsDigest: artifacts.Initramfs.Digest,
+		RootfsDigest: artifacts.Rootfs.Digest,
+	}, nil
+}
+
+// InspectRuntimeArtifactsManifest derives runtime identity from a canonical
+// manifest. Callers must separately bind the manifest digest to validated bytes.
+func InspectRuntimeArtifactsManifest(path string) (RuntimeCapabilities, error) {
+	cfg := Config{
+		KernelPath: "vmlinuz", InitramfsPath: "initramfs", RootfsPath: "rootfs.ext4", RuntimeArtifactsPath: path,
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return RuntimeCapabilities{}, fmt.Errorf("open runtime artifacts manifest: %w", err)
+	}
+	artifacts, decodeErr := decodeRuntimeArtifacts(file)
+	closeErr := file.Close()
+	if decodeErr != nil {
+		return RuntimeCapabilities{}, decodeErr
+	}
+	if closeErr != nil {
+		return RuntimeCapabilities{}, closeErr
+	}
+	if err := validateRuntimeArtifactsDeclaration(cfg, artifacts); err != nil {
+		return RuntimeCapabilities{}, err
+	}
+	return RuntimeCapabilities{
+		Arch: artifacts.Arch, Contract: artifacts.VMRuntimeContract,
+		KernelDigest: artifacts.Kernel.Digest, InitramfsDigest: artifacts.Initramfs.Digest,
+		RootfsDigest: artifacts.Rootfs.Digest,
+	}, nil
+}
+
 func loadRuntimeArtifacts(cfg Config) (runtimeArtifacts, error) {
 	file, err := os.Open(cfg.RuntimeArtifactsPath)
 	if err != nil {
@@ -76,14 +146,24 @@ func decodeRuntimeArtifacts(source io.Reader) (runtimeArtifacts, error) {
 }
 
 func validateRuntimeArtifactsManifest(cfg Config, artifacts runtimeArtifacts) error {
-	if artifacts.Schema != runtimeArtifactsSchema {
-		return fmt.Errorf("runtime artifacts schema %q is not supported", artifacts.Schema)
+	if err := validateRuntimeArtifactsDeclaration(cfg, artifacts); err != nil {
+		return err
 	}
 	if artifacts.Arch != runtime.GOARCH {
 		return fmt.Errorf("runtime artifacts arch %q does not match worker arch %q", artifacts.Arch, runtime.GOARCH)
 	}
+	return nil
+}
+
+func validateRuntimeArtifactsDeclaration(cfg Config, artifacts runtimeArtifacts) error {
+	if artifacts.Schema != runtimeArtifactsSchema {
+		return fmt.Errorf("runtime artifacts schema %q is not supported", artifacts.Schema)
+	}
+	if strings.TrimSpace(artifacts.Arch) == "" {
+		return errors.New("runtime artifacts arch is required")
+	}
 	if artifacts.VMRuntimeContract != runtimeid.Contract {
-		return fmt.Errorf("runtime artifacts contract %q does not match worker contract %q", artifacts.VMRuntimeContract, runtimeid.Contract)
+		return fmt.Errorf("runtime artifacts contract %q is not supported", artifacts.VMRuntimeContract)
 	}
 	for _, artifact := range []struct {
 		name string

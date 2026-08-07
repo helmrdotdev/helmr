@@ -390,7 +390,7 @@ type Querier interface {
 	ListTimedOutTokenWaitCandidates(ctx context.Context, rowLimit int32) ([]ListTimedOutTokenWaitCandidatesRow, error)
 	ListTokenWaitCandidates(ctx context.Context, arg ListTokenWaitCandidatesParams) ([]ListTokenWaitCandidatesRow, error)
 	ListTokens(ctx context.Context, arg ListTokensParams) ([]ListTokensRow, error)
-	ListWorkerDemandObservations(ctx context.Context) ([]ListWorkerDemandObservationsRow, error)
+	ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapacityBinsParams) ([]ListWorkerCapacityBinsRow, error)
 	ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsParams) ([]WorkerGroup, error)
 	ListWorkerInstances(ctx context.Context, arg ListWorkerInstancesParams) ([]WorkerInstance, error)
 	ListWorkspaceListItems(ctx context.Context, arg ListWorkspaceListItemsParams) ([]ListWorkspaceListItemsRow, error)

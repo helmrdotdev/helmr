@@ -199,6 +199,110 @@ SELECT runs.current_run_lease_id,
 	}
 }
 
+func TestRunPreparationConcurrencyUsesOnlyFiniteQueueLimits(t *testing.T) {
+	fixture := newRunPlacementFixture(t)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runs
+   SET queue_concurrency_limit = 1
+ WHERE id = $1`,
+		fixture.runID,
+	)
+
+	reserved, err := fixture.authority.PlaceReadyRun(
+		fixture.ctx,
+		fixture.candidate(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reserved.LeaseCreated || !reserved.RuntimeInstanceID.Valid {
+		t.Fatalf("reservation placement = %+v", reserved)
+	}
+
+	queries := db.New(fixture.pool)
+	scopes, err := queries.ListQueuedRunCandidateScopes(
+		fixture.ctx,
+		db.ListQueuedRunCandidateScopesParams{
+			RowLimit: 10,
+			ScanSeed: "preparation-concurrency",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scopes) != 1 {
+		t.Fatalf("candidate scopes = %d, want 1", len(scopes))
+	}
+	if scopes[0].ActiveRuns != 0 || scopes[0].ActiveLimit != 0 ||
+		scopes[0].PreparedRuns != 1 || scopes[0].PreparedLimit != 1 {
+		t.Fatalf("queue usage = %+v", scopes[0])
+	}
+
+	candidates, err := queries.ListQueuedRunDispatchCandidatesForScope(
+		fixture.ctx,
+		db.ListQueuedRunDispatchCandidatesForScopeParams{
+			OrgID:          pgvalue.UUID(fixture.orgID),
+			ProjectID:      pgvalue.UUID(fixture.projectID),
+			EnvironmentID:  pgvalue.UUID(fixture.environmentID),
+			RegionID:       "us-east-1",
+			ConcurrencyKey: pgtype.Text{},
+			QueueName:      "default",
+			RowLimit:       10,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 ||
+		!candidates[0].QueueConcurrencyLimit.Valid ||
+		candidates[0].QueueConcurrencyLimit.Int64 != 1 {
+		t.Fatalf("dispatch candidates = %+v", candidates)
+	}
+
+	assertPreparationBlocked := func(authority runPlacementAuthority) {
+		t.Helper()
+		tx, err := fixture.pool.Begin(fixture.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(context.Background()) }()
+		if err := fixture.authority.checkRunQueuePreparationConcurrency(
+			fixture.ctx,
+			tx,
+			authority,
+		); !errors.Is(err, ErrCapacityUnavailable) {
+			t.Fatalf("preparation concurrency error = %v, want ErrCapacityUnavailable", err)
+		}
+	}
+	authority := runPlacementAuthority{
+		environmentID: pgvalue.UUID(fixture.environmentID),
+		queueName:     "default",
+		queueLimit:    pgtype.Int8{Int64: 1, Valid: true},
+	}
+	assertPreparationBlocked(authority)
+	authority.queueLimit = pgtype.Int8{}
+	assertPreparationBlocked(authority)
+
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runs
+   SET queue_concurrency_limit = NULL
+ WHERE id = $1`,
+		fixture.runID,
+	)
+	tx, err := fixture.pool.Begin(fixture.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := fixture.authority.checkRunQueuePreparationConcurrency(
+		fixture.ctx,
+		tx,
+		authority,
+	); err != nil {
+		t.Fatalf("unbounded queue preparation concurrency: %v", err)
+	}
+}
+
 func TestPlaceReadyRunGrantsSameWorkspaceChildOnRetainedRuntime(t *testing.T) {
 	fixture := newRunPlacementFixture(t)
 	parentCandidate := fixture.candidate()
@@ -448,6 +552,26 @@ UPDATE workspace_mounts
 		},
 	); err != nil {
 		t.Fatalf("same-Workspace child ready hint: %v", err)
+	}
+	dispatchCandidates, err := db.New(fixture.pool).ListQueuedRunDispatchCandidatesForScope(
+		fixture.ctx,
+		db.ListQueuedRunDispatchCandidatesForScopeParams{
+			OrgID:          pgvalue.UUID(fixture.orgID),
+			ProjectID:      pgvalue.UUID(fixture.projectID),
+			EnvironmentID:  pgvalue.UUID(fixture.environmentID),
+			RegionID:       "us-east-1",
+			ConcurrencyKey: pgtype.Text{},
+			QueueName:      "default",
+			RowLimit:       10,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dispatchCandidates) != 1 ||
+		dispatchCandidates[0].RunID != pgvalue.UUID(childID) ||
+		!dispatchCandidates[0].RequiresRetainedRuntime {
+		t.Fatalf("same-Workspace dispatch candidates = %+v", dispatchCandidates)
 	}
 	granted, err := fixture.authority.PlaceReadyRun(
 		fixture.ctx,
@@ -2821,10 +2945,9 @@ func newRunPlacementFixture(t *testing.T) runPlacementFixture {
 		pool,
 		fixture.fencingKey,
 		RunPlacementPolicy{
-			PreparationLimit: 8,
-			ReservationTTL:   5 * time.Minute,
-			StartDeadline:    time.Minute,
-			LeaseTTL:         5 * time.Minute,
+			ReservationTTL: 5 * time.Minute,
+			StartDeadline:  time.Minute,
+			LeaseTTL:       5 * time.Minute,
 		},
 	)
 	if err != nil {

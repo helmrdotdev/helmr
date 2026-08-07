@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/capacityapi"
+	capacityplanner "github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -98,7 +100,7 @@ func (d *Authority) prepareRunWorkspace(
 	if authority.handoffChildWaitID.Valid {
 		return runWorkspaceMount{}, ErrCapacityUnavailable
 	}
-	if err := d.checkRunPreparationBudget(ctx, tx, authority); err != nil {
+	if err := d.checkRunQueuePreparationConcurrency(ctx, tx, authority); err != nil {
 		return runWorkspaceMount{}, err
 	}
 	worker, err := selectRunWorker(
@@ -501,118 +503,25 @@ func selectRunWorker(
 	tx pgx.Tx,
 	authority runPlacementAuthority,
 ) (runWorker, error) {
-	var worker runWorker
-	err := tx.QueryRow(ctx, `
-SELECT worker_groups.id,
-       worker_instances.id,
-       worker_instances.current_epoch,
-       worker_instances.runtime_identity_id
-  FROM worker_groups
-  JOIN worker_instances
-   ON worker_instances.worker_group_id = worker_groups.id
-   AND worker_instances.state = 'active'
-   AND worker_instances.supports_run
-  JOIN runtime_identities
-    ON runtime_identities.id = worker_instances.runtime_identity_id
-   AND runtime_identities.runtime_arch = $2
-	   AND runtime_identities.vm_runtime_contract = 'helmr.vm-runtime.v0'
-   AND ($6::text = '' OR runtime_identities.id = $6)
-  JOIN worker_observations
-   ON worker_observations.worker_instance_id = worker_instances.id
-   AND worker_observations.worker_epoch = worker_instances.current_epoch
-   AND worker_observations.observed_at >= transaction_timestamp()
-       - worker_groups.observation_ttl_seconds * interval '1 second'
-   AND worker_observations.run_paused_reason IS NULL
- CROSS JOIN LATERAL (
-     SELECT
-         coalesce((
-             SELECT sum(reserved_cpu_millis)
-               FROM runtime_instances
-              WHERE worker_instance_id = worker_instances.id
-                AND worker_epoch = worker_instances.current_epoch
-                AND reclaimed_at IS NULL
-         ), 0) + coalesce((
-             SELECT sum(requested_cpu_millis)
-               FROM deployment_build_leases
-              WHERE worker_instance_id = worker_instances.id
-                AND worker_epoch = worker_instances.current_epoch
-                AND state IN ('assigned', 'starting', 'running')
-         ), 0) AS cpu_millis,
-         coalesce((
-             SELECT sum(reserved_memory_bytes)
-               FROM runtime_instances
-              WHERE worker_instance_id = worker_instances.id
-                AND worker_epoch = worker_instances.current_epoch
-                AND reclaimed_at IS NULL
-         ), 0) + coalesce((
-             SELECT sum(requested_memory_bytes)
-               FROM deployment_build_leases
-              WHERE worker_instance_id = worker_instances.id
-                AND worker_epoch = worker_instances.current_epoch
-                AND state IN ('assigned', 'starting', 'running')
-         ), 0) AS memory_bytes,
-         coalesce((
-             SELECT sum(reserved_guest_ephemeral_disk_bytes)
-               FROM runtime_instances
-              WHERE worker_instance_id = worker_instances.id
-                AND worker_epoch = worker_instances.current_epoch
-                AND reclaimed_at IS NULL
-         ), 0) + coalesce((
-             SELECT sum(requested_guest_ephemeral_disk_bytes)
-               FROM deployment_build_leases
-              WHERE worker_instance_id = worker_instances.id
-                AND worker_epoch = worker_instances.current_epoch
-                AND state IN ('assigned', 'starting', 'running')
-         ), 0) AS guest_ephemeral_disk_bytes
- ) AS usage
- WHERE worker_groups.region_id = $1
-   AND worker_groups.state = 'active'
-   AND worker_groups.allows_run
-   AND worker_instances.per_vm_cpu_millis >= $3
-   AND worker_instances.per_vm_memory_bytes >= $4
-   AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $5
-   AND worker_instances.epoch_cpu_millis - usage.cpu_millis >= $3
-   AND worker_instances.epoch_memory_bytes - usage.memory_bytes >= $4
-   AND worker_instances.epoch_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes >= $5
-   AND ($7::text = '' OR worker_instances.substrate_format = $7)
-	   AND ($8::text = '' OR worker_instances.substrate_contract = $8)
-   AND worker_instances.max_vm_slots > (
-       SELECT count(*)
-         FROM runtime_instances
-        WHERE runtime_instances.worker_instance_id = worker_instances.id
-          AND runtime_instances.worker_epoch = worker_instances.current_epoch
-          AND (
-              runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
-              OR (
-                  runtime_instances.observed_state IN ('failed', 'lost')
-                  AND runtime_instances.reclaimed_at IS NULL
-              )
-          )
-   )
-   AND worker_instances.max_runtime_starts > (
-       SELECT count(*)
-         FROM runtime_instances
-        WHERE runtime_instances.worker_instance_id = worker_instances.id
-          AND runtime_instances.worker_epoch = worker_instances.current_epoch
-          AND runtime_instances.observed_state IN ('allocated', 'preparing')
-   )
- ORDER BY worker_instances.updated_at, worker_instances.id
- LIMIT 1`,
-		authority.regionID,
-		authority.architecture,
-		authority.resources.cpuMillis,
-		authority.resources.memoryBytes,
-		authority.resources.guestEphemeralDiskBytes,
-		authority.restoreRuntimeIdentityID,
-		authority.restoreSubstrateFormat,
-		authority.restoreSubstrateContract,
-	).Scan(
-		&worker.groupID,
-		&worker.workerID,
-		&worker.workerEpoch,
-		&worker.runtimeIdentityID,
-	)
-	return worker, err
+	rows, err := db.New(tx).ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{RegionID: authority.regionID})
+	if err != nil {
+		return runWorker{}, err
+	}
+	selected, ok := capacityplanner.SelectRunWorker(rows, capacityplanner.RunRequirements{
+		Resources: capacityapi.ResourceVector{
+			CPUMillis: authority.resources.cpuMillis, MemoryBytes: authority.resources.memoryBytes,
+			GuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes, VMSlots: 1,
+		},
+		Architecture: authority.architecture, RuntimeIdentityID: authority.restoreRuntimeIdentityID,
+		SubstrateFormat: authority.restoreSubstrateFormat, SubstrateContract: authority.restoreSubstrateContract,
+	})
+	if !ok || !selected.WorkerEpoch.Valid || !selected.RuntimeIdentityID.Valid {
+		return runWorker{}, pgx.ErrNoRows
+	}
+	return runWorker{
+		groupID: selected.WorkerGroupID, workerID: selected.WorkerInstanceID,
+		workerEpoch: selected.WorkerEpoch.Int64, runtimeIdentityID: selected.RuntimeIdentityID.String,
+	}, nil
 }
 
 func lockRunWorkerCapacity(
@@ -715,7 +624,7 @@ SELECT worker_instances.per_vm_cpu_millis >= $4
 	return nil
 }
 
-func (d *Authority) checkRunPreparationBudget(
+func (d *Authority) checkRunQueuePreparationConcurrency(
 	ctx context.Context,
 	tx pgx.Tx,
 	authority runPlacementAuthority,
@@ -741,14 +650,11 @@ SELECT count(*),
 	if err != nil {
 		return fmt.Errorf("read run preparation budget: %w", err)
 	}
-	limit := d.runPolicy.PreparationLimit
-	if authority.queueLimit.Valid && authority.queueLimit.Int64 < limit {
-		limit = authority.queueLimit.Int64
+	limit := authority.queueLimit
+	if pinnedLimit.Valid && (!limit.Valid || pinnedLimit.Int64 < limit.Int64) {
+		limit = pinnedLimit
 	}
-	if pinnedLimit.Valid && pinnedLimit.Int64 < limit {
-		limit = pinnedLimit.Int64
-	}
-	if active >= limit {
+	if limit.Valid && active >= limit.Int64 {
 		return ErrCapacityUnavailable
 	}
 	return nil

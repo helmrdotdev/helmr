@@ -288,9 +288,9 @@ resource "aws_launch_template" "worker" {
     worker_service_name                  = var.worker_service_name
     worker_binary_path                   = var.worker_binary_path
     autoscaling_group_name               = local.asg_name
-    launch_lifecycle_hook_name           = var.enable_lifecycle_hooks ? local.launch_hook_name : ""
+    launch_lifecycle_hook_name           = local.launch_hook_name
     launch_readiness_timeout_seconds     = var.launch_lifecycle_heartbeat_timeout_seconds
-    termination_lifecycle_hook_name      = var.enable_lifecycle_hooks ? local.termination_hook_name : ""
+    termination_lifecycle_hook_name      = local.termination_hook_name
     termination_drain_timeout_seconds    = var.termination_drain_timeout_seconds
     lifecycle_heartbeat_interval_seconds = var.lifecycle_heartbeat_interval_seconds
     worker_work_dir                      = local.base_worker_environment.WORKER_WORK_DIR
@@ -448,26 +448,18 @@ resource "aws_autoscaling_group" "worker" {
     }
   }
 
-  dynamic "initial_lifecycle_hook" {
-    for_each = var.enable_lifecycle_hooks ? [1] : []
-
-    content {
-      name                 = local.launch_hook_name
-      lifecycle_transition = "autoscaling:EC2_INSTANCE_LAUNCHING"
-      heartbeat_timeout    = var.launch_lifecycle_heartbeat_timeout_seconds
-      default_result       = "ABANDON"
-    }
+  initial_lifecycle_hook {
+    name                 = local.launch_hook_name
+    lifecycle_transition = "autoscaling:EC2_INSTANCE_LAUNCHING"
+    heartbeat_timeout    = var.launch_lifecycle_heartbeat_timeout_seconds
+    default_result       = "ABANDON"
   }
 
-  dynamic "initial_lifecycle_hook" {
-    for_each = var.enable_lifecycle_hooks ? [1] : []
-
-    content {
-      name                 = local.termination_hook_name
-      lifecycle_transition = "autoscaling:EC2_INSTANCE_TERMINATING"
-      heartbeat_timeout    = var.termination_lifecycle_heartbeat_timeout_seconds
-      default_result       = "CONTINUE"
-    }
+  initial_lifecycle_hook {
+    name                 = local.termination_hook_name
+    lifecycle_transition = "autoscaling:EC2_INSTANCE_TERMINATING"
+    heartbeat_timeout    = var.termination_lifecycle_heartbeat_timeout_seconds
+    default_result       = "CONTINUE"
   }
 
   tag {
@@ -480,11 +472,6 @@ resource "aws_autoscaling_group" "worker" {
     precondition {
       condition     = var.min_size <= var.max_size
       error_message = "worker capacity must satisfy min_size <= max_size."
-    }
-
-    precondition {
-      condition     = var.enable_lifecycle_hooks
-      error_message = "worker groups require launch and termination lifecycle hooks."
     }
   }
 }

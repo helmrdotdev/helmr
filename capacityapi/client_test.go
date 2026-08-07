@@ -41,7 +41,8 @@ func TestClientUsesDedicatedBearerAndExactDrainFence(t *testing.T) {
 	}
 }
 
-func TestClientReadsCapacityObservationsAndFilteredWorkerInstances(t *testing.T) {
+func TestClientPlansCapacityAndReadsFilteredWorkerInstances(t *testing.T) {
+	manifest := validTestWorkerReleaseManifest(t)
 	requests := 0
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+testCapacityToken {
@@ -50,12 +51,17 @@ func TestClientReadsCapacityObservationsAndFilteredWorkerInstances(t *testing.T)
 		requests++
 		switch requests {
 		case 1:
-			if r.Method != http.MethodGet || r.URL.RequestURI() != "/api/capacity/v0/observations" {
+			if r.Method != http.MethodPost || r.URL.RequestURI() != "/api/capacity/v0/worker-groups/group-1/plan" {
 				t.Fatalf("request = %s %s", r.Method, r.URL.RequestURI())
 			}
-			_ = json.NewEncoder(w).Encode(CapacityObservationsResponse{
-				Observations: []CapacityObservation{{WorkerGroupID: "run-us-east-1"}},
-			})
+			var request CapacityPlanRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if request.Worker.ReleaseFingerprint != manifest.ReleaseFingerprint || request.MaxAdditionalWorkers != 4 {
+				t.Fatalf("request = %+v", request)
+			}
+			_ = json.NewEncoder(w).Encode(CapacityPlanResponse{WorkerGroupID: "group-1", RecommendedAdditionalWorkers: 2})
 		case 2:
 			want := "/api/capacity/v0/worker-instances?limit=25&resource_id=host-a&resource_id=host-b&status=active&status=draining&worker_group_id=run-us-east-1"
 			if r.Method != http.MethodGet || r.URL.RequestURI() != want {
@@ -73,12 +79,12 @@ func TestClientReadsCapacityObservationsAndFilteredWorkerInstances(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	observations, err := client.Observations(context.Background())
+	plan, err := client.Plan(context.Background(), "group-1", CapacityPlanRequest{Worker: manifest, MaxAdditionalWorkers: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(observations.Observations) != 1 || observations.Observations[0].WorkerGroupID != "run-us-east-1" {
-		t.Fatalf("observations = %+v", observations)
+	if plan.WorkerGroupID != "group-1" || plan.RecommendedAdditionalWorkers != 2 {
+		t.Fatalf("plan = %+v", plan)
 	}
 	workers, err := client.WorkerInstances(
 		context.Background(),
@@ -93,6 +99,24 @@ func TestClientReadsCapacityObservationsAndFilteredWorkerInstances(t *testing.T)
 	if len(workers.WorkerInstances) != 1 || workers.WorkerInstances[0].ID != "worker-1" {
 		t.Fatalf("workers = %+v", workers)
 	}
+}
+
+func validTestWorkerReleaseManifest(t *testing.T) WorkerReleaseManifest {
+	t.Helper()
+	manifest := WorkerReleaseManifest{
+		Schema: WorkerReleaseManifestSchema, WorkerVersion: "0123456789abcdef0123456789abcdef01234567", SupportsRun: true,
+		Runtime:          testRuntimeProfile(t),
+		Substrate:        SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v0"},
+		Capacity:         ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 64 << 30, VMSlots: 1, RunConsumers: 1},
+		PerVM:            ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 32 << 30},
+		MaxRuntimeStarts: 1,
+	}
+	fingerprint, err := manifest.ExpectedFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.ReleaseFingerprint = fingerprint
+	return manifest
 }
 
 func TestClientReturnsTypedHTTPError(t *testing.T) {

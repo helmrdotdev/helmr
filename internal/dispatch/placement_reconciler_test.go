@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type isolationQueue struct{}
@@ -139,4 +140,63 @@ func TestPlacementReconcilerBlockedBuildDatabaseWorkDoesNotStarveRunPlacement(t 
 	case <-time.After(time.Second):
 		t.Fatal("placement reconciler did not stop")
 	}
+}
+
+type fallbackRunPlacementDiscovery struct {
+	scopes     []db.ListQueuedRunCandidateScopesRow
+	candidates map[string][]db.ListQueuedRunDispatchCandidatesForScopeRow
+}
+
+func (f fallbackRunPlacementDiscovery) ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error) {
+	return f.scopes, nil
+}
+
+func (f fallbackRunPlacementDiscovery) ListQueuedRunDispatchCandidatesForScope(_ context.Context, arg db.ListQueuedRunDispatchCandidatesForScopeParams) ([]db.ListQueuedRunDispatchCandidatesForScopeRow, error) {
+	return f.candidates[arg.QueueName], nil
+}
+
+type recordingRunPlacementAuthority struct {
+	placed []byte
+}
+
+func (a *recordingRunPlacementAuthority) PlaceReadyRun(_ context.Context, candidate ReadyRunCandidate) (ReadyRunPlacement, error) {
+	a.placed = append(a.placed, candidate.RunID.Bytes[15])
+	return ReadyRunPlacement{}, nil
+}
+
+func TestPlacementReconcilerInterleavesPostgresFallbackScopes(t *testing.T) {
+	authority := &recordingRunPlacementAuthority{}
+	reconciler := &PlacementReconciler{
+		runDiscovery: fallbackRunPlacementDiscovery{
+			scopes: []db.ListQueuedRunCandidateScopesRow{
+				{OrgID: placementTestUUID(1), RegionID: "us-east-1", QueueName: "a"},
+				{OrgID: placementTestUUID(2), RegionID: "us-east-1", QueueName: "b"},
+			},
+			candidates: map[string][]db.ListQueuedRunDispatchCandidatesForScopeRow{
+				"a": {{OrgID: placementTestUUID(1), RunID: placementTestUUID(11)}, {OrgID: placementTestUUID(1), RunID: placementTestUUID(12)}},
+				"b": {{OrgID: placementTestUUID(2), RunID: placementTestUUID(21)}, {OrgID: placementTestUUID(2), RunID: placementTestUUID(22)}},
+			},
+		},
+		runAuthority: authority,
+		ready:        isolationQueue{},
+		runPolicy:    placementLoopPolicy{limit: 4},
+	}
+	if err := reconciler.ReconcileRuns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []byte{11, 21, 12, 22}
+	if len(authority.placed) != len(want) {
+		t.Fatalf("placed = %v, want %v", authority.placed, want)
+	}
+	for index := range want {
+		if authority.placed[index] != want[index] {
+			t.Fatalf("placed = %v, want %v", authority.placed, want)
+		}
+	}
+}
+
+func placementTestUUID(last byte) pgtype.UUID {
+	value := pgtype.UUID{Valid: true}
+	value.Bytes[15] = last
+	return value
 }

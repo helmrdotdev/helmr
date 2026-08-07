@@ -12,14 +12,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/helmrdotdev/helmr/capacityapi"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"golang.org/x/sync/singleflight"
 )
 
 const (
-	Format   = "ext4"
-	Contract = "helmr.substrate.ext4.v0"
+	Format   = capacityapi.SubstrateFormatExt4
+	Contract = capacityapi.SubstrateContractExt4
 )
 
 type Resolver struct {

@@ -77,7 +77,6 @@ type Dispatcher struct {
 	ClickHouseUser        string
 	ClickHousePassword    string
 	WorkspaceFencingKey   []byte
-	RunPreparationLimit   int
 	RunReservationTTL     time.Duration
 	RunLeaseStartDeadline time.Duration
 	RunLeaseTTL           time.Duration

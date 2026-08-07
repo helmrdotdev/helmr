@@ -102,7 +102,6 @@ Optional Run placement tuning:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `RUN_PREPARATION_LIMIT` | `32` | Maximum concurrent Run runtime preparations in one queue scope before applying any lower pinned queue limit. |
 | `RUN_RESERVATION_TTL` | `5m` | Lifetime of a cold runtime reservation before fenced cleanup is required. |
 | `RUN_LEASE_START_DEADLINE` | `1m` | Time allowed for a worker to claim a newly assigned Run Lease. |
 | `RUN_LEASE_TTL` | `5m` | Operational lifetime sampled when a Run and Workspace Lease are granted or renewed. Must be at least the start deadline. |

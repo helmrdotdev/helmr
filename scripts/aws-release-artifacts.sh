@@ -11,7 +11,6 @@ CURRENT_GIT_REF="$(git -C "${ROOT}" symbolic-ref --quiet --short HEAD || git -C 
 WORKER_IMAGE_SOURCE_REPOSITORY_URL="${WORKER_IMAGE_SOURCE_REPOSITORY_URL:-https://github.com/helmrdotdev/helmr.git}"
 WORKER_IMAGE_SOURCE_REF="${WORKER_IMAGE_SOURCE_REF:-${CURRENT_GIT_REF}}"
 WORKER_IMAGE_VERSION="${WORKER_IMAGE_VERSION:-}"
-WORKER_IMAGE_INSTANCE_PROFILE_NAME="${WORKER_IMAGE_INSTANCE_PROFILE_NAME:-}"
 WORKER_IMAGE_DISTRIBUTION_REGIONS="${WORKER_IMAGE_DISTRIBUTION_REGIONS:-}"
 WORKER_IMAGE_AMI_PUBLIC="${WORKER_IMAGE_AMI_PUBLIC:-}"
 WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED="${WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED:-}"
@@ -27,6 +26,8 @@ SOURCE_BUNDLE_URI_FILE="${STATE_DIR}/source-bundle-s3-uri"
 SOURCE_BUNDLE_REF_FILE="${STATE_DIR}/source-bundle-ref"
 BUILD_POLICY_DIGEST_FILE="${STATE_DIR}/build-policy-digest"
 WORKER_IMAGE_PROVENANCE_FILE="${STATE_DIR}/worker-image-provenance.json"
+WORKER_RUNTIME_ARTIFACTS_MANIFEST_FILE="${STATE_DIR}/worker-runtime-artifacts.json"
+WORKER_RUNTIME_BUNDLE_RECEIPT_FILE="${STATE_DIR}/worker-runtime-bundle.json"
 CONTROLPLANE_IMAGE_PROVENANCE_FILE="${STATE_DIR}/controlplane-image-provenance.json"
 CONTROLPLANE_IMAGE_URI_FILE="${STATE_DIR}/controlplane-image-uri"
 IMAGE_WAIT_INTERVAL_SECONDS="${IMAGE_WAIT_INTERVAL_SECONDS:-60}"
@@ -49,6 +50,7 @@ Commands:
   worker-image-start
   worker-image-wait
   worker-image-amis
+  worker-image-provenance
   controlplane-image-build
   controlplane-image-push
 
@@ -64,6 +66,17 @@ die() {
 
 info() {
   printf '==> %s\n' "$*" >&2
+}
+
+sha256_file() {
+  local path=$1
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${path}" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "${path}" | awk '{print $1}'
+  else
+    die "sha256sum or shasum is required"
+  fi
 }
 
 need_command() {
@@ -233,7 +246,7 @@ tf_bool() {
   esac
 }
 
-source_bundle_object_arn() {
+s3_object_arn() {
   uri=$1
   case "${uri}" in
     s3://*/*)
@@ -243,7 +256,7 @@ source_bundle_object_arn() {
       printf 'arn:aws:s3:::%s/%s\n' "${bucket}" "${key}"
       ;;
     *)
-      die "source bundle URI must be an s3:// URI: ${uri}"
+      die "artifact URI must be an s3:// URI: ${uri}"
       ;;
   esac
 }
@@ -355,15 +368,94 @@ worker_image_source_check() {
   resolve_remote_source_ref >/dev/null
 }
 
+worker_runtime_profile() {
+  local artifacts_manifest=$1
+  nix develop "${ROOT}#smoke-linux" -c \
+    go -C "${ROOT}" run ./cmd/helmr-worker runtime-profile \
+    --runtime-artifacts-manifest "${artifacts_manifest}"
+}
+
+validate_worker_runtime_bundle_receipt() {
+  jq -e '
+    (keys | sort) == ["bundle", "runtimeArtifactsManifest", "runtimeProfile", "schema", "sourceCommit"] and
+    .schema == "helmr.worker-runtime-bundle.v0" and
+    (.sourceCommit | test("^[0-9a-f]{40}$")) and
+    .bundle.path == "runtime-artifacts.tar" and
+    (.bundle.digest | test("^sha256:[0-9a-f]{64}$")) and
+    .runtimeArtifactsManifest.path == "runtime-artifacts.json" and
+    (.runtimeArtifactsManifest.digest | test("^sha256:[0-9a-f]{64}$")) and
+    (.runtimeProfile | keys | sort) == ["arch", "contract", "id", "initramfs_digest", "kernel_digest", "rootfs_digest"] and
+    .runtimeProfile.arch == "x86_64" and
+    .runtimeProfile.contract == "helmr.vm-runtime.v0" and
+    all(.runtimeProfile.id, .runtimeProfile.kernel_digest, .runtimeProfile.initramfs_digest, .runtimeProfile.rootfs_digest; test("^sha256:[0-9a-f]{64}$"))
+  ' "$1" >/dev/null
+}
+
+prepare_worker_runtime_bundle() (
+  local artifacts_dir bucket bundle_dir bundle_digest bundle_key bundle_uri kms_key_arn manifest_digest receipt work
+  mkdir -p "${STATE_DIR}"
+  artifacts_dir="${ROOT}/images/guest/out"
+  work="$(mktemp -d "${STATE_DIR}/worker-runtime-bundle.XXXXXX")"
+  trap 'rm -rf "${work}"' EXIT
+  bundle_dir="${work}/bundle"
+  info "building the canonical Worker runtime artifacts"
+  nix develop "${ROOT}#smoke-linux" -c make -C "${ROOT}" images
+  nix develop "${ROOT}#smoke-linux" -c \
+    "${ROOT}/scripts/materialize-worker-runtime-bundle.sh" "${bundle_dir}" "${artifacts_dir}" >/dev/null
+  receipt="${bundle_dir}/worker-runtime-bundle.json"
+  validate_worker_runtime_bundle_receipt "${receipt}" || die "Worker runtime bundle receipt is invalid"
+  [ "$(jq -r '.sourceCommit' "${receipt}")" = "$(git -C "${ROOT}" rev-parse HEAD)" ] ||
+    die "Worker runtime bundle was not produced from the current source commit"
+  bundle_digest="$(jq -r '.bundle.digest' "${receipt}")"
+  manifest_digest="$(jq -r '.runtimeArtifactsManifest.digest' "${receipt}")"
+  [ "${bundle_digest}" = "sha256:$(sha256_file "${bundle_dir}/runtime-artifacts.tar")" ] ||
+    die "Worker runtime bundle digest does not match its receipt"
+  [ "${manifest_digest}" = "sha256:$(sha256_file "${bundle_dir}/runtime-artifacts.json")" ] ||
+    die "Worker runtime artifact manifest digest does not match its receipt"
+
+  bucket="$(source_bundle_bucket)"
+  bundle_key="helmr/worker-runtime-bundles/${bundle_digest#sha256:}.tar"
+  bundle_uri="s3://${bucket}/${bundle_key}"
+  aws s3 cp --region "${AWS_REGION}" "${bundle_dir}/runtime-artifacts.tar" "${bundle_uri}"
+  install -m 0600 "${bundle_dir}/runtime-artifacts.json" "${WORKER_RUNTIME_ARTIFACTS_MANIFEST_FILE}"
+  install -m 0600 "${receipt}" "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}"
+  kms_key_arn="$(bucket_kms_key_arn "${bucket}")"
+  info "Worker runtime bundle uploaded: ${bundle_uri}"
+  jq -cn \
+    --arg bundle_digest "${bundle_digest}" \
+    --arg kms_key_arn "${kms_key_arn}" \
+    --arg manifest_digest "${manifest_digest}" \
+    --arg object_arn "$(s3_object_arn "${bundle_uri}")" \
+    --arg s3_uri "${bundle_uri}" \
+    '{
+      bundleDigest: $bundle_digest,
+      kmsKeyARN: $kms_key_arn,
+      manifestDigest: $manifest_digest,
+      objectARN: $object_arn,
+      s3URI: $s3_uri
+    }'
+)
+
 worker_image_apply() {
   require_clean_product_checkout
   worker_image_source_check
   nix develop "${ROOT}#images" -c "${ROOT}/scripts/check-apko-lock.sh"
+  runtime_bundle="$(prepare_worker_runtime_bundle)"
+  runtime_artifacts_bundle_digest="$(jq -er '.bundleDigest' <<<"${runtime_bundle}")"
+  runtime_artifacts_bundle_kms_key_arn="$(jq -er '.kmsKeyARN' <<<"${runtime_bundle}")"
+  runtime_artifacts_bundle_object_arn="$(jq -er '.objectARN' <<<"${runtime_bundle}")"
+  runtime_artifacts_bundle_s3_uri="$(jq -er '.s3URI' <<<"${runtime_bundle}")"
+  runtime_artifacts_manifest_digest="$(jq -er '.manifestDigest' <<<"${runtime_bundle}")"
   bundle_uri="$(source_bundle_uri)"
-  version_args=(-var="image_version=$(worker_image_version)")
-  instance_profile_args=()
-  if [ -n "${WORKER_IMAGE_INSTANCE_PROFILE_NAME}" ]; then
-    instance_profile_args=(-var="instance_profile_name=${WORKER_IMAGE_INSTANCE_PROFILE_NAME}")
+  version_args=(
+    -var="image_version=$(worker_image_version)"
+    -var="runtime_artifacts_bundle_digest=${runtime_artifacts_bundle_digest}"
+    -var="runtime_artifacts_bundle_object_arn=${runtime_artifacts_bundle_object_arn}"
+    -var="runtime_artifacts_bundle_s3_uri=${runtime_artifacts_bundle_s3_uri}"
+    -var="runtime_artifacts_manifest_digest=${runtime_artifacts_manifest_digest}"
+  )
+  if [ -n "${runtime_artifacts_bundle_kms_key_arn}" ]; then
+    version_args+=(-var="runtime_artifacts_bundle_kms_key_arn=${runtime_artifacts_bundle_kms_key_arn}")
   fi
   distribution_args=()
   if [ -n "${WORKER_IMAGE_DISTRIBUTION_REGIONS}" ]; then
@@ -383,6 +475,8 @@ worker_image_apply() {
   fi
   if [ -n "${bundle_uri}" ]; then
     source_ref="$(source_bundle_ref)"
+    [ "${source_ref}" = "$(git -C "${ROOT}" rev-parse HEAD)" ] ||
+      die "Worker image source bundle and runtime bundle must come from the same commit"
     bundle_bucket="${bundle_uri#s3://}"
     bundle_bucket="${bundle_bucket%%/*}"
     kms_key_arn="$(bucket_kms_key_arn "${bundle_bucket}")"
@@ -395,10 +489,9 @@ worker_image_apply() {
       -var="name=${WORKER_IMAGE_NAME}" \
       -var="source_ref=${source_ref}" \
       -var="source_bundle_s3_uri=${bundle_uri}" \
-      -var="source_bundle_object_arn=$(source_bundle_object_arn "${bundle_uri}")"
+      -var="source_bundle_object_arn=$(s3_object_arn "${bundle_uri}")"
     )
     if ((${#distribution_args[@]})); then apply_args+=("${distribution_args[@]}"); fi
-    if ((${#instance_profile_args[@]})); then apply_args+=("${instance_profile_args[@]}"); fi
     if ((${#public_args[@]})); then apply_args+=("${public_args[@]}"); fi
     if ((${#encryption_args[@]})); then apply_args+=("${encryption_args[@]}"); fi
     if ((${#kms_args[@]})); then apply_args+=("${kms_args[@]}"); fi
@@ -406,6 +499,8 @@ worker_image_apply() {
     tf_apply "${WORKER_IMAGE_STACK}" "${apply_args[@]}"
   else
     source_ref="$(resolve_remote_source_ref)"
+    [ "${source_ref}" = "$(git -C "${ROOT}" rev-parse HEAD)" ] ||
+      die "Worker image source ref and runtime bundle must resolve to the same commit"
     apply_args=(
       -var="aws_region=${AWS_REGION}" \
       -var="name=${WORKER_IMAGE_NAME}" \
@@ -413,7 +508,6 @@ worker_image_apply() {
       -var="source_ref=${source_ref}"
     )
     if ((${#distribution_args[@]})); then apply_args+=("${distribution_args[@]}"); fi
-    if ((${#instance_profile_args[@]})); then apply_args+=("${instance_profile_args[@]}"); fi
     if ((${#public_args[@]})); then apply_args+=("${public_args[@]}"); fi
     if ((${#encryption_args[@]})); then apply_args+=("${encryption_args[@]}"); fi
     if ((${#version_args[@]})); then apply_args+=("${version_args[@]}"); fi
@@ -440,13 +534,32 @@ worker_image_start() {
   printf '%s\n' "${image_arn}"
 }
 
-worker_image_wait() {
+worker_image_wait() (
   mkdir -p "${STATE_DIR}"
   image_arn="${1:-${WORKER_IMAGE_BUILD_VERSION_ARN:-}}"
   if [ -z "${image_arn}" ] && [ -f "${IMAGE_ARN_FILE}" ]; then
     image_arn="$(cat "${IMAGE_ARN_FILE}")"
   fi
   [ -n "${image_arn}" ] || die "image build version ARN is required; run worker-image-start first"
+  [ -f "${WORKER_RUNTIME_ARTIFACTS_MANIFEST_FILE}" ] ||
+    die "Worker runtime provenance is missing; run worker-image-apply before worker-image-wait"
+  [ -f "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}" ] ||
+    die "Worker runtime bundle receipt is missing; run worker-image-apply before worker-image-wait"
+  validate_worker_runtime_bundle_receipt "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}" ||
+    die "Worker runtime bundle receipt is invalid"
+  source_commit="$(git -C "${ROOT}" rev-parse HEAD)"
+  [ "$(jq -r '.sourceCommit' "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}")" = "${source_commit}" ] ||
+    die "Worker runtime bundle receipt does not match the current source commit"
+  runtime_artifacts_bundle_digest="$(jq -r '.bundle.digest' "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}")"
+  runtime_artifacts_manifest_digest="$(jq -r '.runtimeArtifactsManifest.digest' "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}")"
+  [ "${runtime_artifacts_manifest_digest}" = "sha256:$(sha256_file "${WORKER_RUNTIME_ARTIFACTS_MANIFEST_FILE}")" ] ||
+    die "Worker runtime artifact manifest does not match its bundle receipt"
+  runtime_profile_file="$(mktemp "${STATE_DIR}/worker-runtime-profile.XXXXXX")"
+  trap 'rm -f "${runtime_profile_file}"' EXIT
+  worker_runtime_profile "${WORKER_RUNTIME_ARTIFACTS_MANIFEST_FILE}" >"${runtime_profile_file}"
+  jq -e --slurpfile profile "${runtime_profile_file}" '.runtimeProfile == $profile[0]' \
+    "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}" >/dev/null ||
+    die "Worker runtime profile does not match its bundle receipt"
 
   deadline=$((SECONDS + IMAGE_WAIT_TIMEOUT_SECONDS))
   while :; do
@@ -472,7 +585,6 @@ worker_image_wait() {
         recipe_arn="$("${TF_BIN}" -chdir="${WORKER_IMAGE_STACK}" output -raw image_recipe_arn)"
         [ "$(printf '%s\n' "${image_json}" | jq -er '.image.imageRecipe.arn')" = "${recipe_arn}" ] ||
           die "available Worker image was not built from the applied image recipe"
-        source_commit="$(git -C "${ROOT}" rev-parse HEAD)"
         ami_json="$(
           aws ec2 describe-images \
             --region "${AWS_REGION}" \
@@ -482,26 +594,37 @@ worker_image_wait() {
         )"
         jq -e \
           --arg ami "${ami_id}" \
-          --arg commit "${source_commit}" '
+          --arg commit "${source_commit}" \
+          --arg runtime_artifacts_bundle_digest "${runtime_artifacts_bundle_digest}" \
+          --arg runtime_artifacts_manifest_digest "${runtime_artifacts_manifest_digest}" '
           (.Images // []) as $images |
           (($images[0].Tags // []) | map({key: .Key, value: .Value}) | from_entries) as $tags |
           ($images | length) == 1 and
           $images[0].ImageId == $ami and
-          $tags.HelmrSourceCommit == $commit
+          $tags.HelmrSourceCommit == $commit and
+          $tags.HelmrRuntimeBundleDigest == $runtime_artifacts_bundle_digest and
+          $tags.HelmrRuntimeArtifactsDigest == $runtime_artifacts_manifest_digest
         ' <<<"${ami_json}" >/dev/null ||
-          die "available Worker AMI is not bound to the exact source commit"
+          die "available Worker AMI is not bound to the exact source and runtime artifacts"
         jq -cn \
           --arg ami "${ami_id}" \
           --arg build_arn "${image_arn}" \
           --arg recipe_arn "${recipe_arn}" \
           --arg region "${AWS_REGION}" \
           --arg source_commit "${source_commit}" \
+          --arg runtime_artifacts_bundle_digest "${runtime_artifacts_bundle_digest}" \
+          --arg runtime_artifacts_manifest_digest "${runtime_artifacts_manifest_digest}" \
+          --slurpfile runtime_profile "${runtime_profile_file}" \
           '{
             ami: {id: $ami, region: $region},
-            formatVersion: 0,
+            formatVersion: 1,
             imageBuildVersionARN: $build_arn,
             imageRecipeARN: $recipe_arn,
-            sourceCommit: $source_commit
+            runtimeArtifactsBundleDigest: $runtime_artifacts_bundle_digest,
+            runtimeArtifactsManifestDigest: $runtime_artifacts_manifest_digest,
+            runtimeProfile: $runtime_profile[0],
+            sourceCommit: $source_commit,
+            workerVersion: $source_commit
           }' >"${WORKER_IMAGE_PROVENANCE_FILE}"
         chmod 0600 "${WORKER_IMAGE_PROVENANCE_FILE}"
         printf '%s\n' "${ami_id}" >"${AMI_ID_FILE}"
@@ -519,11 +642,16 @@ worker_image_wait() {
     [ "${SECONDS}" -lt "${deadline}" ] || die "timed out waiting for Image Builder after ${IMAGE_WAIT_TIMEOUT_SECONDS}s"
     sleep "${IMAGE_WAIT_INTERVAL_SECONDS}"
   done
-}
+)
 
 worker_image_amis() {
   [ -f "${AMI_IDS_FILE}" ] || die "worker AMI region map not found; run worker-image-wait first"
   jq -c . "${AMI_IDS_FILE}"
+}
+
+worker_image_provenance() {
+  [ -f "${WORKER_IMAGE_PROVENANCE_FILE}" ] || die "worker image provenance not found; run worker-image-wait first"
+  jq -c . "${WORKER_IMAGE_PROVENANCE_FILE}"
 }
 
 controlplane_image_repository() {
@@ -639,6 +767,7 @@ case "${command}" in
   worker-image-start) worker_image_start ;;
   worker-image-wait) shift; worker_image_wait "$@" ;;
   worker-image-amis) worker_image_amis ;;
+  worker-image-provenance) worker_image_provenance ;;
   controlplane-image-build) controlplane_image_build ;;
   controlplane-image-push) controlplane_image_push ;;
   -h|--help|help|"") usage ;;

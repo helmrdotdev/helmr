@@ -10,5 +10,5 @@ tofu -chdir=infra/aws/stacks/worker-image init
 tofu -chdir=infra/aws/stacks/worker-image apply \
   -var="aws_region=us-east-1" \
   -var="name=helmr-worker" \
-  -var="source_ref=<exact-tag-or-commit>"
+  -var="source_ref=<exact-40-character-commit>"
 ```

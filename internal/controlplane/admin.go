@@ -285,10 +285,19 @@ func (s *Server) adminTransitionWorkerGroup(w http.ResponseWriter, r *http.Reque
 		writeError(w, badRequest(fmt.Errorf("invalid lifecycle request JSON: %w", err)))
 		return
 	}
+	if request.ExpectedClaimVersion <= 0 {
+		writeError(w, badRequest(errors.New("expected_claim_version must be positive")))
+		return
+	}
 	var status workergroup.GroupStatus
 	err := s.inTx(r.Context(), func(work *txWork) error {
 		if err := work.q.LockWorkerGroupMutation(r.Context(), workergroup.StateMutationLockKey(groupID)); err != nil {
 			return errors.New("lock worker group lifecycle")
+		}
+		if _, err := work.q.GetWorkerGroupState(r.Context(), groupID); isNoRows(err) {
+			return notFound(errors.New("worker group not found"))
+		} else if err != nil {
+			return errors.New("read worker group lifecycle")
 		}
 		var err error
 		status, err = transition(r.Context(), work.q, groupID, request.ExpectedClaimVersion)

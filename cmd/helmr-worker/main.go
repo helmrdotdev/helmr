@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/version"
 )
 
 func main() {
@@ -55,6 +57,21 @@ func main() {
 				log.Error("install release", "error", err)
 				os.Exit(1)
 			}
+			return
+		case "manifest":
+			if err := runManifest(os.Args[2:], os.Stdout); err != nil {
+				log.Error("generate Worker release manifest", "error", err)
+				os.Exit(1)
+			}
+			return
+		case "runtime-profile":
+			if err := runRuntimeProfile(os.Args[2:], os.Stdout); err != nil {
+				log.Error("inspect Worker runtime artifacts", "error", err)
+				os.Exit(1)
+			}
+			return
+		case "version":
+			_, _ = fmt.Fprintln(os.Stdout, version.Version)
 			return
 		default:
 			log.Error("unknown command", "command", os.Args[1])

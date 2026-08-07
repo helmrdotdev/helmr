@@ -91,6 +91,10 @@ require_text "scripts/aws-release-artifacts.sh worker-image-start" "$workflow" \
   "Worker release does not build a fresh AMI"
 require_text "workerAMIs" "$workflow" \
   "Worker release artifact omits region-to-AMI identity"
+require_text "workerImageProvenance" "$workflow" \
+  "Worker release artifact omits exact AMI runtime provenance"
+require_text "jq -c '.workerImageProvenance' dist/worker/worker-artifacts.json" "$workflow" \
+  "final AWS release manifest drops Worker image provenance"
 require_text "gpgv" "$worker_image_builder" \
   "Worker AMI omits the Node signature verifier"
 require_text "mksquashfs" "$worker_image_builder" \

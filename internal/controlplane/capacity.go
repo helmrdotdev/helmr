@@ -8,15 +8,16 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/capacityapi"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	capacityplanner "github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -51,12 +52,44 @@ func hashCapacityToken(raw string) ([]byte, error) {
 func (s *Server) mountCapacityRoutes(r chi.Router) {
 	r.Route(capacityapi.RoutePrefix, func(r chi.Router) {
 		r.Use(s.requireCapacity)
-		r.Get(capacityapi.ObservationsPath, s.capacityObservations)
+		r.Get(capacityapi.WorkerGroupsPath+"/resolve", s.capacityResolveWorkerGroup)
+		r.With(limitRequestBody(capacityRequestBodyLimit)).
+			Post(capacityapi.WorkerGroupsPath+"/{workerGroupID}/plan", s.capacityPlan)
 		r.Get(capacityapi.WorkerInstancesPath, s.capacityListWorkerInstances)
 		r.Get(capacityapi.WorkerInstancesPath+"/{workerInstanceID}", s.capacityGetWorkerInstance)
 		r.With(limitRequestBody(capacityRequestBodyLimit)).
 			Post(capacityapi.WorkerInstancesPath+"/{workerInstanceID}/drain", s.capacityDrainWorkerInstance)
 	})
+}
+
+func (s *Server) capacityResolveWorkerGroup(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	if len(query) != 2 || len(query["region_id"]) != 1 || len(query["name"]) != 1 {
+		writeError(w, badRequest(errors.New("region_id and name are required exactly once")))
+		return
+	}
+	regionID := query.Get("region_id")
+	name := query.Get("name")
+	if strings.TrimSpace(regionID) == "" || strings.TrimSpace(regionID) != regionID || strings.TrimSpace(name) == "" || strings.TrimSpace(name) != name {
+		writeError(w, badRequest(errors.New("region_id and name must be non-empty and canonical")))
+		return
+	}
+	group, err := s.db.GetWorkerGroupByRegionName(r.Context(), db.GetWorkerGroupByRegionNameParams{RegionID: regionID, Name: name})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, notFound(errors.New("worker group was not found")))
+		return
+	}
+	if err != nil {
+		s.log.Error("resolve capacity Worker group", "region_id", regionID, "name", name, "error", err)
+		writeError(w, errors.New("resolve capacity worker group"))
+		return
+	}
+	status, err := workerGroupPublicStatus(group.State)
+	if err != nil {
+		writeError(w, errors.New("project capacity worker group"))
+		return
+	}
+	writeJSON(w, http.StatusOK, capacityapi.CapacityWorkerGroup{ID: group.ID, Name: group.Name, RegionID: group.RegionID, Status: status})
 }
 
 func (s *Server) requireCapacity(next http.Handler) http.Handler {
@@ -71,24 +104,30 @@ func (s *Server) requireCapacity(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) capacityObservations(w http.ResponseWriter, r *http.Request) {
-	observations, err := workergroup.ObserveDemand(r.Context(), s.db)
+func (s *Server) capacityPlan(w http.ResponseWriter, r *http.Request) {
+	workerGroupID, err := ids.Parse(chi.URLParam(r, "workerGroupID"))
 	if err != nil {
-		s.log.Error("observe deployment capacity demand", "error", err)
-		writeError(w, errors.New("observe deployment capacity demand"))
+		writeError(w, badRequest(errors.New("worker_group_id must be a canonical UUIDv7")))
 		return
 	}
-	response := capacityapi.CapacityObservationsResponse{
-		Observations: make([]capacityapi.CapacityObservation, 0, len(observations)),
+	var request capacityapi.CapacityPlanRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, badRequest(fmt.Errorf("invalid capacity plan JSON: %w", err)))
+		return
 	}
-	for _, observation := range observations {
-		projected, err := capacityCapacityObservation(observation)
-		if err != nil {
-			s.log.Error("project deployment capacity observation", "error", err)
-			writeError(w, errors.New("project deployment capacity observation"))
+	response, err := capacityplanner.Plan(r.Context(), s.db, workerGroupID.String(), request, time.Now())
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, notFound(errors.New("worker group was not found")))
+		return
+	}
+	if err != nil {
+		if errors.Is(err, capacityplanner.ErrInvalidPlanRequest) {
+			writeError(w, badRequest(err))
 			return
 		}
-		response.Observations = append(response.Observations, projected)
+		s.log.Error("plan deployment capacity", "worker_group_id", workerGroupID.String(), "error", err)
+		writeError(w, errors.New("plan deployment capacity"))
+		return
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -266,25 +305,6 @@ func capacityWorkerInstanceListParams(r *http.Request) (db.ListCapacityWorkerIns
 	return params, nil
 }
 
-func capacityCapacityObservation(observation workergroup.DemandObservation) (capacityapi.CapacityObservation, error) {
-	groupStatus, err := workerGroupPublicStatus(observation.GroupState)
-	if err != nil {
-		return capacityapi.CapacityObservation{}, err
-	}
-	result := capacityapi.CapacityObservation{
-		WorkerGroupID:      observation.WorkerGroupID,
-		WorkerGroupName:    observation.WorkerGroupName,
-		RegionID:           observation.RegionID,
-		GroupStatus:        groupStatus,
-		RegisteringWorkers: observation.RegisteringWorkers,
-		DrainingWorkers:    observation.DrainingWorkers,
-		ObservedAt:         observation.ObservedAt,
-	}
-	result.Run = capacityRoleDemand(observation.Run)
-	result.Build = capacityRoleDemand(observation.Build)
-	return result, nil
-}
-
 func workerGroupPublicStatus(state string) (capacityapi.WorkerGroupStatus, error) {
 	switch state {
 	case db.WorkerGroupStateActive:
@@ -297,27 +317,6 @@ func workerGroupPublicStatus(state string) (capacityapi.WorkerGroupStatus, error
 		return capacityapi.WorkerGroupStatusDisabled, nil
 	default:
 		return "", fmt.Errorf("worker group state %q has no public projection", state)
-	}
-}
-
-func capacityRoleDemand(role *workergroup.RoleDemand) *capacityapi.RoleDemand {
-	if role == nil {
-		return nil
-	}
-	return &capacityapi.RoleDemand{
-		QueuedItems:       role.QueuedItems,
-		QueuedResources:   capacityResourceVector(role.QueuedResources),
-		ReadyWorkers:      role.ReadyWorkers,
-		AvailableCapacity: capacityResourceVector(role.AvailableCapacity),
-	}
-}
-
-func capacityResourceVector(vector workergroup.ResourceVector) capacityapi.ResourceVector {
-	return capacityapi.ResourceVector{
-		CPUMillis: vector.CPUMillis, MemoryBytes: vector.MemoryBytes,
-		GuestEphemeralDiskBytes: vector.GuestEphemeralDiskBytes,
-		VMSlots:                 vector.VMSlots, RunConsumers: vector.RunConsumers,
-		BuildExecutors: vector.BuildExecutors,
 	}
 }
 

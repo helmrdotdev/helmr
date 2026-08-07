@@ -87,9 +87,37 @@ run "deployment_owns_protected_capacity" {
     condition = (
       toset(aws_autoscaling_group.worker.vpc_zone_identifier) == toset(var.subnet_ids) &&
       aws_autoscaling_group.worker.launch_template[0].id == aws_launch_template.worker.id &&
-      aws_autoscaling_group.worker.launch_template[0].version == tostring(aws_launch_template.worker.latest_version)
+      aws_autoscaling_group.worker.launch_template[0].version == tostring(aws_launch_template.worker.latest_version) &&
+      output.launch_template_id == aws_launch_template.worker.id &&
+      output.launch_template_version == tostring(aws_launch_template.worker.latest_version)
     )
     error_message = "the worker ASG must use only the supplied Execution subnets and exact launch template version"
+  }
+
+  assert {
+    condition = (
+      length(aws_autoscaling_group.worker.initial_lifecycle_hook) == 2 &&
+      one([
+        for hook in aws_autoscaling_group.worker.initial_lifecycle_hook : hook
+        if hook.lifecycle_transition == "autoscaling:EC2_INSTANCE_LAUNCHING"
+      ]).heartbeat_timeout == 321 &&
+      one([
+        for hook in aws_autoscaling_group.worker.initial_lifecycle_hook : hook
+        if hook.lifecycle_transition == "autoscaling:EC2_INSTANCE_LAUNCHING"
+      ]).default_result == "ABANDON" &&
+      one([
+        for hook in aws_autoscaling_group.worker.initial_lifecycle_hook : hook
+        if hook.lifecycle_transition == "autoscaling:EC2_INSTANCE_TERMINATING"
+      ]).heartbeat_timeout == var.termination_lifecycle_heartbeat_timeout_seconds &&
+      one([
+        for hook in aws_autoscaling_group.worker.initial_lifecycle_hook : hook
+        if hook.lifecycle_transition == "autoscaling:EC2_INSTANCE_TERMINATING"
+      ]).default_result == "CONTINUE" &&
+      output.termination_lifecycle_hook_name == "helmr-test-run-worker-terminate" &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-test-run-worker-launch") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-test-run-worker-terminate")
+    )
+    error_message = "every Worker ASG must install the launch-readiness and host-owned termination hooks"
   }
 
   assert {
@@ -193,6 +221,17 @@ run "deployment_owns_protected_capacity" {
       !contains(flatten([for statement in jsondecode(aws_iam_policy.worker_boundary.policy).Statement : tolist(statement.Action)]), "*")
     )
     error_message = "every worker role must have its exact permissions plus only explicit SSM core actions bounded by a mandatory permissions boundary"
+  }
+
+  assert {
+    condition = toset(one([
+      for statement in jsondecode(aws_iam_role_policy.worker.policy).Statement : statement.Action
+      if contains(statement.Action, "autoscaling:RecordLifecycleActionHeartbeat")
+      ])) == toset([
+      "autoscaling:CompleteLifecycleAction",
+      "autoscaling:RecordLifecycleActionHeartbeat",
+    ])
+    error_message = "the Worker host must own lifecycle heartbeat and completion for its exact ASG"
   }
 
   assert {
@@ -371,16 +410,6 @@ run "run_only_worker_rejects_current_policy" {
   }
 
   expect_failures = [terraform_data.network_preconditions]
-}
-
-run "deployment_requires_lifecycle_hooks" {
-  command = plan
-
-  variables {
-    enable_lifecycle_hooks = false
-  }
-
-  expect_failures = [aws_autoscaling_group.worker]
 }
 
 run "explicit_disk_must_exceed_reserve" {

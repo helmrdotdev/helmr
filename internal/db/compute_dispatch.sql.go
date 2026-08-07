@@ -1002,6 +1002,7 @@ WITH candidate_scopes AS (
       JOIN workspaces ON workspaces.environment_id = runs.environment_id
                      AND workspaces.id = runs.workspace_id
      WHERE runs.status = 'queued'
+       AND ($10::text = '' OR workspaces.region_id = $10)
        AND runs.current_run_lease_id IS NULL
        AND (
            (runs.entrypoint_kind = 'task'
@@ -1136,7 +1137,61 @@ WITH candidate_scopes AS (
      GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
               coalesce(runs.concurrency_key, ''), runs.queue_name
 )
-SELECT org_id, project_id, environment_id, region_id, concurrency_key, queue_name, sort_key FROM candidate_scopes
+SELECT candidate_scopes.org_id, candidate_scopes.project_id, candidate_scopes.environment_id, candidate_scopes.region_id, candidate_scopes.concurrency_key, candidate_scopes.queue_name, candidate_scopes.sort_key,
+       queue_usage.active_runs,
+       queue_usage.active_limit,
+       queue_usage.prepared_runs,
+       queue_usage.prepared_limit
+  FROM candidate_scopes
+ CROSS JOIN LATERAL (
+     SELECT
+         (SELECT count(*)
+            FROM run_leases
+            JOIN runs AS active_runs
+              ON active_runs.id = run_leases.run_id
+             AND active_runs.environment_id = run_leases.environment_id
+           WHERE active_runs.environment_id = candidate_scopes.environment_id
+             AND active_runs.queue_name = candidate_scopes.queue_name
+             AND active_runs.concurrency_key IS NOT DISTINCT FROM
+                 NULLIF(candidate_scopes.concurrency_key, '')::text
+             AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing'))::bigint
+             AS active_runs,
+         (SELECT COALESCE(min(active_runs.queue_concurrency_limit), 0)::bigint
+            FROM run_leases
+            JOIN runs AS active_runs
+              ON active_runs.id = run_leases.run_id
+             AND active_runs.environment_id = run_leases.environment_id
+           WHERE active_runs.environment_id = candidate_scopes.environment_id
+             AND active_runs.queue_name = candidate_scopes.queue_name
+             AND active_runs.concurrency_key IS NOT DISTINCT FROM
+                 NULLIF(candidate_scopes.concurrency_key, '')::text
+             AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing'))
+             AS active_limit,
+         (SELECT count(*)
+            FROM runtime_instances
+            JOIN runs AS prepared_runs
+              ON prepared_runs.environment_id = runtime_instances.environment_id
+             AND prepared_runs.id = runtime_instances.reserved_run_id
+           WHERE prepared_runs.environment_id = candidate_scopes.environment_id
+             AND prepared_runs.queue_name = candidate_scopes.queue_name
+             AND prepared_runs.concurrency_key IS NOT DISTINCT FROM
+                 NULLIF(candidate_scopes.concurrency_key, '')::text
+             AND runtime_instances.reserved_run_id IS NOT NULL
+             AND runtime_instances.reclaimed_at IS NULL)::bigint
+             AS prepared_runs,
+         (SELECT COALESCE(min(prepared_runs.queue_concurrency_limit), 0)::bigint
+            FROM runtime_instances
+            JOIN runs AS prepared_runs
+              ON prepared_runs.environment_id = runtime_instances.environment_id
+             AND prepared_runs.id = runtime_instances.reserved_run_id
+           WHERE prepared_runs.environment_id = candidate_scopes.environment_id
+             AND prepared_runs.queue_name = candidate_scopes.queue_name
+             AND prepared_runs.concurrency_key IS NOT DISTINCT FROM
+                 NULLIF(candidate_scopes.concurrency_key, '')::text
+             AND runtime_instances.reserved_run_id IS NOT NULL
+             AND runtime_instances.reclaimed_at IS NULL)
+             AS prepared_limit
+ ) AS queue_usage
  WHERE $1::text = ''
     OR (sort_key, org_id, project_id, environment_id, region_id, concurrency_key, queue_name)
        > ($1::text, $2::uuid,
@@ -1157,6 +1212,7 @@ type ListQueuedRunCandidateScopesParams struct {
 	AfterQueueName      string      `json:"after_queue_name"`
 	RowLimit            int32       `json:"row_limit"`
 	ScanSeed            string      `json:"scan_seed"`
+	RegionFilter        string      `json:"region_filter"`
 }
 
 type ListQueuedRunCandidateScopesRow struct {
@@ -1167,6 +1223,10 @@ type ListQueuedRunCandidateScopesRow struct {
 	ConcurrencyKey string      `json:"concurrency_key"`
 	QueueName      string      `json:"queue_name"`
 	SortKey        string      `json:"sort_key"`
+	ActiveRuns     int64       `json:"active_runs"`
+	ActiveLimit    int64       `json:"active_limit"`
+	PreparedRuns   int64       `json:"prepared_runs"`
+	PreparedLimit  int64       `json:"prepared_limit"`
 }
 
 func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueuedRunCandidateScopesParams) ([]ListQueuedRunCandidateScopesRow, error) {
@@ -1180,6 +1240,7 @@ func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueu
 		arg.AfterQueueName,
 		arg.RowLimit,
 		arg.ScanSeed,
+		arg.RegionFilter,
 	)
 	if err != nil {
 		return nil, err
@@ -1196,6 +1257,10 @@ func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueu
 			&i.ConcurrencyKey,
 			&i.QueueName,
 			&i.SortKey,
+			&i.ActiveRuns,
+			&i.ActiveLimit,
+			&i.PreparedRuns,
+			&i.PreparedLimit,
 		); err != nil {
 			return nil, err
 		}
@@ -1208,10 +1273,103 @@ func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueu
 }
 
 const listQueuedRunDispatchCandidatesForScope = `-- name: ListQueuedRunDispatchCandidatesForScope :many
-SELECT runs.org_id, runs.id AS run_id, runs.state_version
+SELECT runs.org_id,
+       runs.id AS run_id,
+       runs.state_version,
+       runs.queue_concurrency_limit,
+       workspace_definitions.manifest AS workspace_manifest,
+       (EXISTS (
+           SELECT 1
+             FROM run_waits
+            WHERE run_waits.run_id = runs.id
+              AND run_waits.attempt_number = runs.current_attempt_number
+              AND run_waits.workspace_id = runs.workspace_id
+              AND run_waits.suspension_state IN ('parked', 'resume_pending')
+              AND run_waits.handoff_runtime_instance_id IS NOT NULL
+       ) OR EXISTS (
+           SELECT 1
+             FROM run_waits AS handoff
+             JOIN runs AS parent
+               ON parent.environment_id = handoff.environment_id
+              AND parent.id = handoff.run_id
+              AND parent.workspace_id = handoff.workspace_id
+              AND parent.status = 'waiting'
+              AND parent.current_run_lease_id IS NULL
+             JOIN run_checkpoints AS checkpoint
+               ON checkpoint.id = handoff.suspend_checkpoint_id
+              AND checkpoint.kind = 'suspend'
+              AND checkpoint.run_id = handoff.run_id
+              AND checkpoint.attempt_number = handoff.attempt_number
+              AND checkpoint.run_wait_id = handoff.id
+              AND checkpoint.workspace_id = handoff.workspace_id
+              AND checkpoint.state = 'ready'
+             JOIN workspace_versions AS base
+               ON base.workspace_id = handoff.workspace_id
+              AND base.id = handoff.base_workspace_version_id
+              AND base.state = 'private'
+            WHERE handoff.child_run_id = runs.id
+              AND handoff.child_parent_owned IS TRUE
+              AND handoff.workspace_id = runs.workspace_id
+              AND handoff.condition_state = 'pending'
+              AND handoff.suspension_state = 'parked'
+              AND handoff.base_workspace_version_id = runs.base_workspace_version_id
+              AND handoff.handoff_runtime_instance_id IS NOT NULL
+              AND handoff.handoff_workspace_mount_id IS NOT NULL
+              AND handoff.handoff_mount_generation IS NOT NULL
+              AND handoff.ownership_generation IS NOT NULL
+              AND handoff.parent_writer_generation IS NOT NULL
+              AND handoff.child_writer_generation IS NULL
+       ))::boolean AS requires_retained_runtime,
+       COALESCE(capacity_restore.runtime_identity_id, '') AS required_runtime_identity_id,
+       COALESCE(capacity_restore.substrate_format, '') AS required_substrate_format,
+       COALESCE(capacity_restore.substrate_contract, '') AS required_substrate_contract
   FROM runs
   JOIN workspaces ON workspaces.environment_id = runs.environment_id
                  AND workspaces.id = runs.workspace_id
+  JOIN deployment_definitions AS workspace_definitions
+    ON workspace_definitions.environment_id = workspaces.environment_id
+   AND workspace_definitions.id = workspaces.deployment_definition_id
+   AND workspace_definitions.kind = 'sandbox'
+  LEFT JOIN LATERAL (
+      SELECT source_runtime.runtime_identity_id,
+             runtime_substrates.substrate_format,
+             runtime_substrates.substrate_contract
+        FROM run_waits
+        JOIN run_checkpoints
+          ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+         AND run_checkpoints.kind = 'suspend'
+         AND run_checkpoints.run_id = run_waits.run_id
+         AND run_checkpoints.attempt_number = run_waits.attempt_number
+         AND run_checkpoints.run_wait_id = run_waits.id
+         AND run_checkpoints.workspace_id = run_waits.workspace_id
+         AND run_checkpoints.state = 'ready'
+         AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+        JOIN run_leases AS source_lease
+          ON source_lease.id = run_checkpoints.source_run_lease_id
+         AND source_lease.run_id = run_checkpoints.run_id
+         AND source_lease.attempt_number = run_checkpoints.attempt_number
+         AND source_lease.workspace_id = run_checkpoints.workspace_id
+         AND source_lease.state = 'checkpointed'
+        JOIN runtime_instances AS source_runtime
+          ON source_runtime.id = source_lease.runtime_instance_id
+         AND source_runtime.workspace_id = run_checkpoints.workspace_id
+         AND source_runtime.runtime_identity_id = source_lease.runtime_identity_id
+        JOIN runtime_substrates
+          ON runtime_substrates.id = source_runtime.runtime_substrate_id
+         AND runtime_substrates.org_id = source_runtime.org_id
+         AND runtime_substrates.project_id = source_runtime.project_id
+         AND runtime_substrates.environment_id = source_runtime.environment_id
+         AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
+       WHERE run_waits.run_id = runs.id
+         AND run_waits.attempt_number = runs.current_attempt_number
+         AND run_waits.workspace_id = runs.workspace_id
+         AND run_waits.suspension_state = 'resume_pending'
+         AND run_waits.handoff_runtime_instance_id IS NULL
+         AND run_waits.handoff_workspace_mount_id IS NULL
+         AND run_waits.handoff_resume_checkpoint_id IS NULL
+       ORDER BY run_waits.id
+       LIMIT 1
+  ) AS capacity_restore ON true
  WHERE runs.org_id = $1
    AND runs.project_id = $2
    AND runs.environment_id = $3
@@ -1364,9 +1522,15 @@ type ListQueuedRunDispatchCandidatesForScopeParams struct {
 }
 
 type ListQueuedRunDispatchCandidatesForScopeRow struct {
-	OrgID        pgtype.UUID `json:"org_id"`
-	RunID        pgtype.UUID `json:"run_id"`
-	StateVersion int64       `json:"state_version"`
+	OrgID                     pgtype.UUID `json:"org_id"`
+	RunID                     pgtype.UUID `json:"run_id"`
+	StateVersion              int64       `json:"state_version"`
+	QueueConcurrencyLimit     pgtype.Int8 `json:"queue_concurrency_limit"`
+	WorkspaceManifest         []byte      `json:"workspace_manifest"`
+	RequiresRetainedRuntime   bool        `json:"requires_retained_runtime"`
+	RequiredRuntimeIdentityID string      `json:"required_runtime_identity_id"`
+	RequiredSubstrateFormat   string      `json:"required_substrate_format"`
+	RequiredSubstrateContract string      `json:"required_substrate_contract"`
 }
 
 func (q *Queries) ListQueuedRunDispatchCandidatesForScope(ctx context.Context, arg ListQueuedRunDispatchCandidatesForScopeParams) ([]ListQueuedRunDispatchCandidatesForScopeRow, error) {
@@ -1386,7 +1550,17 @@ func (q *Queries) ListQueuedRunDispatchCandidatesForScope(ctx context.Context, a
 	var items []ListQueuedRunDispatchCandidatesForScopeRow
 	for rows.Next() {
 		var i ListQueuedRunDispatchCandidatesForScopeRow
-		if err := rows.Scan(&i.OrgID, &i.RunID, &i.StateVersion); err != nil {
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.RunID,
+			&i.StateVersion,
+			&i.QueueConcurrencyLimit,
+			&i.WorkspaceManifest,
+			&i.RequiresRetainedRuntime,
+			&i.RequiredRuntimeIdentityID,
+			&i.RequiredSubstrateFormat,
+			&i.RequiredSubstrateContract,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

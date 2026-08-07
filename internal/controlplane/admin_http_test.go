@@ -27,6 +27,7 @@ type adminHTTPQuerier struct {
 	listCalls   int
 	rotateCalls int
 	conflict    bool
+	missing     bool
 }
 
 func (q *adminHTTPQuerier) GetAuthSessionByTokenHash(context.Context, []byte) (db.GetAuthSessionByTokenHashRow, error) {
@@ -58,6 +59,13 @@ func (q *adminHTTPQuerier) BeginQuerier(context.Context) (db.Querier, transactio
 
 func (q *adminHTTPQuerier) LockWorkerGroupMutation(context.Context, int64) error {
 	return nil
+}
+
+func (q *adminHTTPQuerier) GetWorkerGroupState(context.Context, string) (db.GetWorkerGroupStateRow, error) {
+	if q.missing {
+		return db.GetWorkerGroupStateRow{}, pgx.ErrNoRows
+	}
+	return db.GetWorkerGroupStateRow{State: db.WorkerGroupStateActive, ClaimVersion: 1}, nil
 }
 
 func (q *adminHTTPQuerier) TransitionWorkerGroupState(context.Context, db.TransitionWorkerGroupStateParams) (db.TransitionWorkerGroupStateRow, error) {
@@ -164,5 +172,33 @@ func TestAdminHTTPLifecycleConflictUsesConflictResponse(t *testing.T) {
 	}
 	if got := decodeHTTPError(t, response.Body.Bytes()).Code; got != "conflict" {
 		t.Fatalf("error code = %q, want conflict", got)
+	}
+}
+
+func TestAdminHTTPLifecycleRejectsInvalidVersion(t *testing.T) {
+	queries := &adminHTTPQuerier{admin: true}
+	groupID := uuid.Must(uuid.NewV7()).String()
+	response := httptest.NewRecorder()
+	adminHTTPRouter(t, queries).ServeHTTP(response, adminHTTPRequest(
+		http.MethodPost,
+		"/admin/api/v1/worker-groups/"+groupID+"/pause",
+		`{"expected_claim_version":0}`,
+	))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestAdminHTTPLifecycleMissingGroupUsesNotFoundResponse(t *testing.T) {
+	queries := &adminHTTPQuerier{admin: true, missing: true}
+	groupID := uuid.Must(uuid.NewV7()).String()
+	response := httptest.NewRecorder()
+	adminHTTPRouter(t, queries).ServeHTTP(response, adminHTTPRequest(
+		http.MethodPost,
+		"/admin/api/v1/worker-groups/"+groupID+"/pause",
+		`{"expected_claim_version":1}`,
+	))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404: %s", response.Code, response.Body.String())
 	}
 }

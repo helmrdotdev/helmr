@@ -65,7 +65,6 @@ func TestLoadDispatcherReadsScheduleClaimConfig(t *testing.T) {
 	t.Setenv("SCHEDULE_CLAIM_LIMIT", " 25 ")
 	t.Setenv("SCHEDULE_CONCURRENCY", " 4 ")
 	t.Setenv("SCHEDULE_CLAIM_LEASE", " 2m ")
-	t.Setenv("RUN_PREPARATION_LIMIT", " 12 ")
 	t.Setenv("RUN_RESERVATION_TTL", " 3m ")
 	t.Setenv("RUN_LEASE_START_DEADLINE", " 30s ")
 	t.Setenv("RUN_LEASE_TTL", " 4m ")
@@ -81,7 +80,6 @@ func TestLoadDispatcherReadsScheduleClaimConfig(t *testing.T) {
 		cfg.ScheduleClaimLimit != 25 ||
 		cfg.ScheduleConcurrency != 4 ||
 		cfg.ScheduleClaimLease != 2*time.Minute ||
-		cfg.RunPreparationLimit != 12 ||
 		cfg.RunReservationTTL != 3*time.Minute ||
 		cfg.RunLeaseStartDeadline != 30*time.Second ||
 		cfg.RunLeaseTTL != 4*time.Minute {
