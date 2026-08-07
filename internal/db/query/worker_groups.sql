@@ -20,14 +20,14 @@ INSERT INTO worker_groups (
     id, token_id, region_id, name, description, state, allows_run, allows_build,
     required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes,
     required_build_cache_bytes, required_artifact_cache_bytes,
-    required_vm_slots, required_build_executors, observation_ttl_seconds
+    required_vm_slots, observation_ttl_seconds
 )
 SELECT sqlc.arg(id), token.id, sqlc.arg(region_id), sqlc.arg(name),
        sqlc.arg(description), 'active', sqlc.arg(allows_run), sqlc.arg(allows_build),
        sqlc.arg(required_cpu_millis), sqlc.arg(required_memory_bytes),
        sqlc.arg(required_guest_ephemeral_disk_bytes),
        sqlc.arg(required_build_cache_bytes), sqlc.arg(required_artifact_cache_bytes),
-       sqlc.arg(required_vm_slots), sqlc.arg(required_build_executors),
+       sqlc.arg(required_vm_slots),
        sqlc.arg(observation_ttl_seconds)
   FROM token
 RETURNING *;
@@ -384,10 +384,6 @@ WITH activation AS (
        AND (
            NOT sqlc.arg(supports_run)::boolean
            OR sqlc.arg(max_vm_slots)::integer >= worker_groups.required_vm_slots
-       )
-       AND (
-           NOT sqlc.arg(supports_build)::boolean
-           OR sqlc.arg(max_build_executors)::integer >= worker_groups.required_build_executors
        )
        AND NOT EXISTS (
            SELECT 1 FROM runtime_instances

@@ -16,7 +16,10 @@ import (
 
 func TestTokenCreateResponseRemainsOriginalPendingProjection(t *testing.T) {
 	createdAt := time.Date(2026, time.July, 24, 12, 0, 0, 0, time.UTC)
-	server := &Server{publicURL: &url.URL{Scheme: "https", Host: "api.example.test"}}
+	server := &Server{
+		publicURL: &url.URL{Scheme: "https", Host: "console.example.test"},
+		apiOrigin: &url.URL{Scheme: "https", Host: "api.example.test"},
+	}
 	credentials := auth.Credentials{
 		CallbackSecret:    "callback-secret",
 		PublicAccessToken: "hlmr_pat_secret",
@@ -57,6 +60,9 @@ func TestTokenCreateResponseRemainsOriginalPendingProjection(t *testing.T) {
 				response.PublicAccessToken != credentials.PublicAccessToken ||
 				response.CallbackURL == "" {
 				t.Fatalf("create response = %+v", response)
+			}
+			if got, want := response.CallbackURL, "https://api.example.test/api/token-callbacks/"+pgvalue.UUIDString(row.ID)+"/callback-secret"; got != want {
+				t.Fatalf("callback URL = %q, want %q", got, want)
 			}
 		})
 	}

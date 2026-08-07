@@ -37,6 +37,13 @@ variable "public_url" {
   nullable    = true
 }
 
+variable "api_origin" {
+  description = "External HTTPS origin used for machine-facing Control Plane API URLs. Defaults to the effective public URL."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "deployment_mode" {
   description = "Helmr deployment mode passed to control-plane tasks."
   type        = string
@@ -290,32 +297,10 @@ variable "schedule_claim_lease" {
   }
 }
 
-variable "schedule_jitter" {
-  description = "Stable distribution window applied to schedule fire eligibility."
-  type        = string
-  default     = "30s"
-
-  validation {
-    condition     = can(regex("^[1-9]", var.schedule_jitter))
-    error_message = "schedule_jitter must be a positive duration."
-  }
-}
-
 variable "controlplane_assign_public_ip" {
   description = "Assign public IPs and run controlplane/migration Fargate tasks in public subnets. Useful for dev stacks without NAT Gateway."
   type        = bool
   default     = false
-}
-
-variable "controlplane_health_check_path" {
-  description = "HTTP path used by the control-plane target group health check. /readyz gates traffic on database schema readiness; /healthz is useful for staged rollouts from older images."
-  type        = string
-  default     = "/healthz"
-
-  validation {
-    condition     = startswith(var.controlplane_health_check_path, "/")
-    error_message = "controlplane_health_check_path must start with /."
-  }
 }
 
 variable "create_controlplane_service" {

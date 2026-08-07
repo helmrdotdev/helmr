@@ -52,6 +52,18 @@ locals {
 
   migration_environment = local.clickhouse_environment
 
+  database_bootstrap_environment = {
+    DATABASE_ADMIN_HOST = aws_db_instance.postgres.address
+    DATABASE_ADMIN_PORT = tostring(aws_db_instance.postgres.port)
+    DATABASE_NAME       = "helmr"
+  }
+
+  database_bootstrap_secrets = {
+    DATABASE_ADMIN_USERNAME = "${aws_db_instance.postgres.master_user_secret[0].secret_arn}:username::"
+    DATABASE_ADMIN_PASSWORD = "${aws_db_instance.postgres.master_user_secret[0].secret_arn}:password::"
+    DATABASE_URL            = aws_secretsmanager_secret.database_url.arn
+  }
+
   email_environment = merge(
     var.email_provider == "none" ? {} : {
       EMAIL_PROVIDER = var.email_provider
@@ -84,8 +96,8 @@ locals {
     BUILD_POLICY_PATH                 = "/release/build-policy.json"
     PLATFORM_STORE_URI                = var.platform_store_uri
     PUBLIC_URL                        = local.controlplane_url
+    API_ORIGIN                        = coalesce(var.api_origin, local.controlplane_url)
     REDIS_URL                         = local.redis_url
-    SCHEDULE_JITTER                   = var.schedule_jitter
     GITHUB_OAUTH_CLIENT_ID            = var.github_oauth_client_id
     IMAGE_CACHE_REGISTRY_AUTHORITY    = local.image_cache_registry_authority
     IMAGE_CACHE_REPOSITORY_PREFIX     = local.image_cache_repository_prefix
@@ -96,13 +108,15 @@ locals {
   controlplane_secret_defaults = merge({
     DATABASE_URL               = aws_secretsmanager_secret.database_url.arn
     WORKER_TOKEN_SIGNING_KEY   = aws_secretsmanager_secret.worker_token_signing_key.arn
-    SETUP_TOKEN                = aws_secretsmanager_secret.setup_token.arn
     AUTH_KEY                   = aws_secretsmanager_secret.auth_key.arn
     ENCRYPTION_KEY             = aws_secretsmanager_secret.encryption_key.arn
     WORKSPACE_FENCING_KEY      = aws_secretsmanager_secret.workspace_fencing_key.arn
     TOKEN_CREDENTIAL_KEY       = aws_secretsmanager_secret.token_credential_key.arn
     GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret.arn
     },
+    var.deployment_mode == "self-hosted" ? {
+      SETUP_TOKEN = aws_secretsmanager_secret.setup_token[0].arn
+    } : {},
     var.bootstrap_enabled ? {
       BOOTSTRAP_WORKER_TOKEN = aws_secretsmanager_secret.worker_enrollment[0].arn
     } : {},
@@ -130,6 +144,7 @@ locals {
     "CLICKHOUSE_URL",
     "CLICKHOUSE_USER",
     "CLICKHOUSE_PASSWORD",
+    "SETUP_TOKEN",
   ])
   reserved_controlplane_environment_keys = toset(keys(local.controlplane_environment_defaults))
   reserved_controlplane_secret_keys      = setunion(toset(keys(local.controlplane_secret_defaults)), toset(["CAPACITY_TOKEN"]))
@@ -537,7 +552,7 @@ resource "aws_lb_target_group" "controlplane" {
     healthy_threshold   = 2
     interval            = 30
     matcher             = "200"
-    path                = var.controlplane_health_check_path
+    path                = "/readyz"
     timeout             = 5
     unhealthy_threshold = 2
   }
@@ -692,6 +707,22 @@ resource "aws_iam_role" "dispatcher_execution" {
   })
 }
 
+resource "aws_iam_role" "database_bootstrap_execution" {
+  name = "${local.name}-database-bootstrap-execution"
+  tags = var.tags
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ecs-tasks.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
 resource "aws_iam_role_policy" "controlplane_execution" {
   name = "${local.name}-controlplane-execution"
   role = aws_iam_role.controlplane_execution.id
@@ -785,6 +816,59 @@ resource "aws_iam_role_policy" "dispatcher_execution" {
       },
       {
         Sid    = "PullControlPlaneReleaseImage"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer"
+        ]
+        Resource = var.controlplane_image_repository_arn
+      }
+    ])
+  })
+}
+
+resource "aws_iam_role_policy" "database_bootstrap_execution" {
+  name = "${local.name}-database-bootstrap-execution"
+  role = aws_iam_role.database_bootstrap_execution.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = concat([
+      {
+        Sid      = "WriteDatabaseBootstrapLogs"
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = "${aws_cloudwatch_log_group.controlplane.arn}:*"
+      },
+      {
+        Sid    = "ReadDatabaseBootstrapCredentials"
+        Effect = "Allow"
+        Action = ["secretsmanager:GetSecretValue"]
+        Resource = [
+          aws_db_instance.postgres.master_user_secret[0].secret_arn,
+          aws_secretsmanager_secret.database_url.arn
+        ]
+      },
+      {
+        Sid      = "DecryptDatabaseBootstrapCredentials"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = aws_kms_key.helmr.arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "secretsmanager.${data.aws_region.current.region}.amazonaws.com"
+          }
+        }
+      }
+      ], var.controlplane_image_repository_arn == null ? [] : [
+      {
+        Sid      = "AuthenticateDatabaseBootstrapRegistry"
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Sid    = "PullDatabaseBootstrapImage"
         Effect = "Allow"
         Action = [
           "ecr:BatchGetImage",
@@ -1158,6 +1242,49 @@ resource "aws_ecs_task_definition" "migration" {
   }])
 }
 
+resource "aws_ecs_task_definition" "database_bootstrap" {
+  family                   = "${local.name}-database-bootstrap"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = "256"
+  memory                   = "512"
+  execution_role_arn       = aws_iam_role.database_bootstrap_execution.arn
+  tags                     = var.tags
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = var.controlplane_architecture
+  }
+
+  container_definitions = jsonencode([{
+    name       = "database-bootstrap"
+    image      = var.controlplane_image
+    essential  = true
+    entryPoint = var.controlplane_entrypoint
+    command    = ["database-bootstrap"]
+    environment = [
+      for key, value in local.database_bootstrap_environment : {
+        name  = key
+        value = value
+      }
+    ]
+    secrets = [
+      for key, value in local.database_bootstrap_secrets : {
+        name      = key
+        valueFrom = value
+      }
+    ]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.controlplane.name
+        awslogs-region        = data.aws_region.current.region
+        awslogs-stream-prefix = "database-bootstrap"
+      }
+    }
+  }])
+}
+
 resource "aws_ecs_service" "controlplane" {
   count = var.create_controlplane_service ? 1 : 0
 
@@ -1246,6 +1373,7 @@ resource "aws_secretsmanager_secret" "auth_key" {
 }
 
 resource "aws_secretsmanager_secret" "setup_token" {
+  count                   = var.deployment_mode == "self-hosted" ? 1 : 0
   name                    = "${local.name}/controlplane/setup-token"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days

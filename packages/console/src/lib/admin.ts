@@ -26,7 +26,6 @@ export type AdminWorkerGroup = {
   required_build_cache_bytes: number;
   required_artifact_cache_bytes: number;
   required_vm_slots: number;
-  required_build_executors: number;
   observation_ttl_seconds: number;
 };
 

@@ -64,6 +64,13 @@ variable "public_url" {
   nullable    = true
 }
 
+variable "api_origin" {
+  description = "External origin used for machine-facing Control Plane API URLs. Defaults to the effective public URL."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "deployment_mode" {
   description = "Helmr deployment mode passed to control-plane tasks."
   type        = string
@@ -227,12 +234,6 @@ variable "dispatcher_desired_count" {
   default     = 1
 }
 
-variable "controlplane_health_check_path" {
-  description = "HTTP path used by the control-plane target group health check."
-  type        = string
-  default     = "/readyz"
-}
-
 variable "email_provider" {
   description = "Email delivery provider for magic links and run wait notifications."
   type        = string
@@ -367,17 +368,6 @@ variable "create_worker" {
   description = "Create worker EC2 Auto Scaling resources."
   type        = bool
   default     = false
-}
-
-variable "worker_observation_ttl_seconds" {
-  description = "Freshness window for provider-neutral Worker readiness observations."
-  type        = number
-  default     = 120
-
-  validation {
-    condition     = var.worker_observation_ttl_seconds > 0 && var.worker_observation_ttl_seconds <= 2592000
-    error_message = "worker_observation_ttl_seconds must be between 1 and 2592000."
-  }
 }
 
 variable "worker_launch_timeout_seconds" {

@@ -62,6 +62,12 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "database-bootstrap":
+			if err := runDatabaseBootstrap(context.Background(), os.Args[2:]); err != nil {
+				log.Error("bootstrap database", "error", err)
+				os.Exit(1)
+			}
+			return
 		case "release":
 			if err := runReleaseCommand(context.Background(), os.Args[2:]); err != nil {
 				log.Error("install release", "error", err)
@@ -124,6 +130,10 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	publicURL, err := url.Parse(cfg.PublicURL)
 	if err != nil {
 		return fmt.Errorf("parse public URL: %w", err)
+	}
+	apiOrigin, err := url.Parse(cfg.APIOrigin)
+	if err != nil {
+		return fmt.Errorf("parse API origin: %w", err)
 	}
 	buildPolicy, err := loadControlPlaneBuildPolicy(cfg.BuildPolicyPath)
 	if err != nil {
@@ -249,6 +259,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		SetupToken:            cfg.SetupToken,
 		AuthKey:               cfg.AuthKey,
 		PublicURL:             publicURL,
+		APIOrigin:             apiOrigin,
 		MagicLinkDebugURLs:    cfg.MagicLinkDebugURLs,
 		AdminEmails:           cfg.AdminEmails,
 	})

@@ -89,7 +89,7 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, cfg Config) error {
 		TokenHash: tokenHash, RegionID: cfg.RegionID, Name: cfg.WorkerGroupName, Description: "",
 		AllowsRun: true, AllowsBuild: true, RequiredCPUMillis: 1, RequiredMemoryBytes: 1,
 		RequiredGuestEphemeralDiskBytes: 1, RequiredBuildCacheBytes: 0,
-		RequiredArtifactCacheBytes: 0, RequiredVMSlots: 1, RequiredBuildExecutors: 1,
+		RequiredArtifactCacheBytes: 0, RequiredVMSlots: 1,
 		ObservationTtlSeconds: 120,
 	}); err != nil {
 		return fmt.Errorf("create bootstrap worker group: %w", err)

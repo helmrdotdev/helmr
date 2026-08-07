@@ -1127,7 +1127,7 @@ func (s *Server) tokenCreateResponse(
 		return api.TokenResponse{}, err
 	}
 	response.PublicAccessToken = credentials.PublicAccessToken
-	response.CallbackURL = s.publicURL.ResolveReference(&url.URL{
+	response.CallbackURL = s.apiOrigin.ResolveReference(&url.URL{
 		Path: "/api/token-callbacks/" + pgvalue.UUIDString(row.ID) + "/" + credentials.CallbackSecret,
 	}).String()
 	return response, nil

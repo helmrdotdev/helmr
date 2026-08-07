@@ -292,9 +292,6 @@ func validateTemplateForGroup(manifest capacityapi.WorkerReleaseManifest, group 
 	if manifest.SupportsRun && manifest.Capacity.VMSlots < int64(group.RequiredVMSlots) {
 		return errors.New("VM slots are below the Worker Group requirement")
 	}
-	if manifest.SupportsBuild && manifest.Capacity.BuildExecutors < int64(group.RequiredBuildExecutors) {
-		return errors.New("build executors are below the Worker Group requirement")
-	}
 	return nil
 }
 

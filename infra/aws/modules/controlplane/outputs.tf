@@ -113,6 +113,11 @@ output "migration_task_definition_arn" {
   value       = aws_ecs_task_definition.migration.arn
 }
 
+output "database_bootstrap_task_definition_arn" {
+  description = "ECS task definition ARN for creating the application database role."
+  value       = aws_ecs_task_definition.database_bootstrap.arn
+}
+
 output "database_master_user_secret_arn" {
   description = "RDS-managed master user secret ARN."
   value       = aws_db_instance.postgres.master_user_secret[0].secret_arn
@@ -123,7 +128,6 @@ output "secret_arns" {
   value = merge({
     database_url               = aws_secretsmanager_secret.database_url.arn
     worker_token_signing_key   = aws_secretsmanager_secret.worker_token_signing_key.arn
-    setup_token                = aws_secretsmanager_secret.setup_token.arn
     auth_key                   = aws_secretsmanager_secret.auth_key.arn
     encryption_key             = aws_secretsmanager_secret.encryption_key.arn
     workspace_fencing_key      = aws_secretsmanager_secret.workspace_fencing_key.arn
@@ -131,6 +135,9 @@ output "secret_arns" {
     github_oauth_client_secret = aws_secretsmanager_secret.github_oauth_client_secret.arn
     checkpoint_encryption_key  = aws_secretsmanager_secret.checkpoint_encryption_key.arn
     },
+    var.deployment_mode == "self-hosted" ? {
+      setup_token = aws_secretsmanager_secret.setup_token[0].arn
+    } : {},
     var.email_provider == "resend" ? {
       resend_api_key = aws_secretsmanager_secret.resend_api_key[0].arn
     } : {},

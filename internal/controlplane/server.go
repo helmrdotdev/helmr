@@ -97,6 +97,7 @@ type Server struct {
 	setupToken            string
 	authKeys              auth.Keys
 	publicURL             *url.URL
+	apiOrigin             *url.URL
 	authProvider          AuthProvider
 	mailer                email.Sender
 	magicLinkDebugURLs    bool
@@ -148,6 +149,7 @@ type ServerConfig struct {
 	SetupToken            string
 	AuthKey               []byte
 	PublicURL             *url.URL
+	APIOrigin             *url.URL
 
 	MagicLinkDebugURLs bool
 	AdminEmails        []string
@@ -244,6 +246,10 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 			adminEmails[address] = struct{}{}
 		}
 	}
+	apiOrigin := cfg.APIOrigin
+	if apiOrigin == nil {
+		apiOrigin = cfg.PublicURL
+	}
 	server := &Server{
 		log:                   log,
 		deploymentMode:        deploymentMode,
@@ -272,6 +278,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		setupToken:            cfg.SetupToken,
 		authKeys:              authKeys,
 		publicURL:             cfg.PublicURL,
+		apiOrigin:             apiOrigin,
 		authProvider:          cfg.AuthProvider,
 		mailer:                mailer,
 		magicLinkDebugURLs:    cfg.MagicLinkDebugURLs,

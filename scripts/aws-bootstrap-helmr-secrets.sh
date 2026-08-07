@@ -10,6 +10,10 @@ secret_arn() {
   jq -er --arg key "$1" '.[$key]' <<<"$secret_arns"
 }
 
+secret_arn_optional() {
+  jq -r --arg key "$1" '.[$key] // empty' <<<"$secret_arns"
+}
+
 secret_value_status() {
   local arn="$1"
   local error_file
@@ -76,7 +80,10 @@ put_secret encryption_key "$(random_base64_32)"
 put_secret workspace_fencing_key "$(random_base64_32)"
 put_secret token_credential_key "$(random_base64_32)"
 put_secret checkpoint_encryption_key "$(random_base64_32)"
-put_secret setup_token "$(openssl rand -hex 32)"
+setup_token_secret_arn="$(secret_arn_optional setup_token)"
+if [ -n "$setup_token_secret_arn" ]; then
+  put_secret_arn setup_token "$setup_token_secret_arn" "$(openssl rand -hex 32)"
+fi
 
 if [ -n "$worker_enrollment_secret_arn" ]; then
   put_secret_arn "worker_enrollment_token" "$worker_enrollment_secret_arn" "hlmr_wgt_$(random_base64url_32)"

@@ -86,6 +86,7 @@ module "controlplane" {
   public_subnet_ids                          = module.controlplane_network.public_subnet_ids
   private_subnet_ids                         = module.controlplane_network.private_subnet_ids
   public_url                                 = var.public_url
+  api_origin                                 = var.api_origin
   deployment_mode                            = var.deployment_mode
   bootstrap_worker_group_name                = var.worker_group_name
   image_cache_worker_role_arns               = [for pool in values(local.worker_pools) : "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${pool.name}-worker" if pool.allows_build]
@@ -106,7 +107,6 @@ module "controlplane" {
   controlplane_desired_count                 = var.controlplane_desired_count
   dispatcher_desired_count                   = var.dispatcher_desired_count
   controlplane_assign_public_ip              = false
-  controlplane_health_check_path             = var.controlplane_health_check_path
   email_provider                             = var.email_provider
   email_from                                 = var.email_from
   smtp_addr                                  = var.smtp_addr

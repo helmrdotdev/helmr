@@ -64,7 +64,6 @@ type ControlPlane struct {
 	EmailFrom               string
 	GitHubOAuthClientID     string
 	GitHubOAuthClientSecret string
-	ScheduleJitter          time.Duration
 	RunLeaseTTL             time.Duration
 	RunFinalizationTTL      time.Duration
 	ImageCache              *ImageCache
@@ -109,7 +108,6 @@ type Worker struct {
 	BuildCacheDir                string
 	BuildScratchDir              string
 	ImagesDir                    string
-	GitPath                      string
 	FirecrackerPath              string
 	JailerPath                   string
 	JailerUID                    int
@@ -134,7 +132,6 @@ type Worker struct {
 	ArtifactCacheMaxMiB          int64
 	WorkerExecutionSlots         int32
 	WorkerRoles                  []string
-	WorkerBuildExecutors         int32
 	WorkerRuntimeStarts          int32
 	VMInitTimeout                time.Duration
 	VMHealthTimeout              time.Duration
