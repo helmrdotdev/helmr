@@ -4,9 +4,9 @@ export const SITE = {
   name: "Helmr",
   url: "https://helmr.dev",
   githubUrl: "https://github.com/helmrdotdev/helmr",
-  defaultTitle: "Helmr — The durable runtime for AI agents",
+  defaultTitle: "Helmr — The code-first runtime for AI agents",
   defaultDescription:
-    "The durable runtime for AI agents. Define TypeScript Tasks and Actors, keep durable state in Workspaces, and preserve inputs, outputs, waits, logs, and events across Firecracker microVM Runs.",
+    "The code-first runtime for AI agents. Define agent workloads in TypeScript and run them in isolated Linux microVMs with durable workspaces, scoped secrets, human or external waitpoints, logs, and run history.",
   defaultImage: "/og/helmr.png",
   locale: "en_US",
 };
@@ -26,7 +26,7 @@ export const organizationJsonLd = (): JsonLdNode => ({
   url: SITE.url,
   logo: absoluteUrl(SITE.defaultImage),
   sameAs: [SITE.githubUrl],
-  description: "The durable runtime for AI agents.",
+  description: "The code-first runtime for AI agents.",
 });
 
 export const websiteJsonLd = (): JsonLdNode => ({
