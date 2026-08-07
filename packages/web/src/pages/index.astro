@@ -3,7 +3,7 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import { pixelsFromRows } from "../lib/pixels";
 import { breadcrumbJsonLd, softwareJsonLd } from "../lib/seo";
 
-const runtimeCode = `import { image, source, task, tokens, workspace } from "@helmr/sdk"
+const runtimeCode = `import { image, sandbox, source, task, tokens } from "@helmr/sdk"
 import { Codex } from "@openai/codex-sdk"
 import { z } from "zod"
 
@@ -14,17 +14,13 @@ const base = image("repo-agent")
   .copy("/workspace/package.json", source.file("package.json"))
   .run(["bun", "install"])
 
-export const repoWorkspace = workspace("repo-agent")
+export const repoSandbox = sandbox({ id: "repo-agent" })
   .image(base)
-  .resources({ cpu: 2, memory: "4Gi" })
-
-const reviewRequest = z.object({
-  prNumber: z.number().int().positive()
-})
+  .resources({ cpu: 2, memory: "4GiB" })
 
 export const reviewPr = task({
   id: "review-pr",
-  payload: reviewRequest,
+  payload: z.object({ prNumber: z.number().int().positive() }),
   run: async (event, ctx) => {
     const codex = new Codex()
     const thread = codex.startThread({ workingDirectory: process.cwd() })
@@ -87,16 +83,74 @@ const highlightTypeScript = (value: string) => {
   return html + escapeHtml(value.slice(cursor));
 };
 
+const runtimeLines = runtimeCode.split("\n");
+
+const runtimeLine = (anchor: string) => {
+  const matches = runtimeLines.flatMap((line, index) =>
+    line === anchor ? [index + 1] : [],
+  );
+  if (matches.length !== 1) {
+    throw new Error(`Runtime code anchor must match exactly once: ${anchor}`);
+  }
+  return matches[0]!;
+};
+
+const runtimeRegion = (start: string, end: string) => {
+  const from = runtimeLine(start);
+  const to = runtimeLine(end);
+  if (from > to) throw new Error(`Runtime code region is inverted: ${start}`);
+  return { from, to };
+};
+
 const codeRegions = [
-  { key: "image", label: "image", from: 5, to: 12, tone: "blue", strong: "#5079e4" },
-  { key: "workspace", label: "workspace", from: 14, to: 16, tone: "green", strong: "#3c8a59" },
-  { key: "task", label: "task", from: 18, to: 29, tone: "pink", strong: "#da5992" },
-  { key: "input", label: "human input", from: 30, to: 43, tone: "yellow", strong: "#dfa400" },
+  {
+    key: "image",
+    label: "image",
+    ...runtimeRegion('const base = image("repo-agent")', '  .run(["bun", "install"])'),
+    tone: "blue",
+    strong: "#5079e4",
+  },
+  {
+    key: "sandbox",
+    label: "sandbox",
+    ...runtimeRegion(
+      'export const repoSandbox = sandbox({ id: "repo-agent" })',
+      '  .resources({ cpu: 2, memory: "4GiB" })',
+    ),
+    tone: "green",
+    strong: "#5e8a70",
+  },
+  {
+    key: "task",
+    label: "task",
+    ...runtimeRegion(
+      "export const reviewPr = task({",
+      '    const turn = await thread.run("Review this PR and propose a patch.")',
+    ),
+    tone: "pink",
+    strong: "#a8618a",
+  },
+  {
+    key: "input",
+    label: "human input",
+    ...runtimeRegion(
+      '    const approval = await tokens.create({ timeout: "30m" })',
+      "    if (decision.approved) await postReview(event.prNumber, turn.finalResponse)",
+    ),
+    tone: "yellow",
+    strong: "#ad8226",
+  },
 ] as const;
 
-const codeLines = runtimeCode.split("\n").map((line, index) => ({
+const tints: Record<string, string> = {
+  yellow: "#f5eeda",
+  blue: "#e7eef7",
+  pink: "#f3e8ee",
+  green: "#eaf0e6",
+};
+
+const codeLines = runtimeLines.map((line, index) => ({
   html: highlightTypeScript(line) || "&nbsp;",
-  marked: line.includes("microVM freezes"),
   region: codeRegions.find((region) => index + 1 >= region.from && index + 1 <= region.to)?.key,
 }));
 
@@ -159,6 +213,18 @@ const pixelIcons = {
     "...####...",
     "..........",
   ],
+  steer: [
+    "..........",
+    "......##..",
+    ".########.",
+    "......##..",
+    "..........",
+    "..##......",
+    ".########.",
+    "..##......",
+    "..........",
+    "..........",
+  ],
   cloud: [
     "..........",
     "..........",
@@ -199,19 +265,6 @@ const pixelIcons = {
 
 const cloudPixels = pixelsFromRows(pixelIcons.cloud);
 const shieldPixels = pixelsFromRows(pixelIcons.shield);
-const hourglassPixels = pixelsFromRows(pixelIcons.hourglass);
-
-const heroChips = [
-  { icon: "pause", label: "pause", tone: "yellow" },
-  { icon: "clock", label: "schedule", tone: "blue" },
-  { icon: "bolt", label: "start", tone: "pink" },
-  { icon: "resume", label: "resume", tone: "green" },
-] as const;
-
-const renderedHeroChips = heroChips.map((chip) => ({
-  ...chip,
-  pixels: pixelsFromRows(pixelIcons[chip.icon]),
-}));
 
 const codeTags = codeRegions.map((region) => ({
   key: region.key,
@@ -221,14 +274,61 @@ const codeTags = codeRegions.map((region) => ({
   strong: region.strong,
 }));
 
-const features = [
+const taskFeatures = [
   {
-    label: "approval token",
+    label: "task()",
+    icon: "shield",
+    tone: "green",
+    title: "Write the Task",
+    caption:
+      "One exported const with a typed payload and a run function. That is the whole unit Helmr deploys.",
+    code: `export const reviewPr = task({
+  id: "review-pr",
+  payload: z.object({ prNumber: z.number() }),
+  run: async ({ prNumber }) => {
+    return draftReview(prNumber)
+  }
+})`,
+    lang: "ts",
+  },
+  {
+    label: "client.tasks.start()",
+    icon: "bolt",
+    tone: "pink",
+    title: "Start it from anywhere",
+    caption: "Your product, a webhook, or CI starts a deployed Task with a typed payload against an existing Workspace.",
+    code: `const run = await client.tasks.start<typeof reviewPr>(
+  "review-pr",
+  {
+    payload: { prNumber: 482 },
+    workspace
+  }
+)`,
+    lang: "ts",
+  },
+  {
+    label: "schedules.task()",
+    icon: "clock",
+    tone: "blue",
+    title: "Put it on a cron",
+    caption: "The schedule lives beside the code and ships with it. Every fire gets a fresh Workspace.",
+    code: `export const nightly = schedules.task({
+  id: "nightly-audit",
+  cron: {
+    pattern: "0 9 * * 1-5", timezone: "Asia/Tokyo"
+  },
+  workspace: { sandbox: repoSandbox },
+  run: async (_, ctx) => runAudit(ctx)
+})`,
+    lang: "ts",
+  },
+  {
+    label: "tokens.create()",
     icon: "pause",
     tone: "yellow",
-    title: "Pause for human input",
+    title: "Wait for a human",
     caption:
-      "The microVM freezes whole while it waits. A narrowly scoped callback completes one durable approval value.",
+      "The microVM freezes whole while it waits — filesystem, memory, process. A scoped callback completes one value.",
     code: `const approval = await tokens.create({ timeout: "30m" })
 
 const decision = await approval.wait({
@@ -238,75 +338,109 @@ const decision = await approval.wait({
 }).unwrap()`,
     lang: "ts",
   },
-  {
-    label: "schedules.task",
-    icon: "clock",
-    tone: "blue",
-    title: "Run on a schedule",
-    caption: "Cron lives in the task definition and deploys with it. One file owns the code and the schedule.",
-    code: `export const nightly = schedules.task({
-  id: "nightly-audit",
-  cron: {
-    pattern: "0 9 * * 1-5",
-    timezone: "Asia/Tokyo"
-  },
-  run: async (event, ctx) => {
-    return runAudit(ctx)
-  }
-})`,
-    lang: "ts",
-  },
-  {
-    label: "client.tasks.start",
-    icon: "bolt",
-    tone: "pink",
-    title: "Start from anywhere",
-    caption: "Your product, a webhook, or CI starts a declared Task in an existing durable Workspace.",
-    code: `const workspace = await client.sandboxes.createWorkspace(
-  "repo-agent",
-  {
-    key: \`github-pr:\${pr.id}\`,
-    secrets: [{ name: "OPENAI_API_KEY", env: "OPENAI_API_KEY" }]
-  }
-)
-
-const run = await client.tasks.start<typeof reviewPr>(
-  "review-pr",
-  {
-    payload: { prNumber: 482 },
-    workspace,
-    idempotencyKey: \`github-pr:\${pr.id}:\${pr.head.sha}\`
-  }
-)`,
-    lang: "ts",
-  },
-  {
-    label: "workspace.exec",
-    icon: "resume",
-    tone: "green",
-    title: "Reuse the workspace",
-    caption: "The Workspace outlives one Run and supports bounded follow-up file reads and commands.",
-    code: `const result = await workspace.exec({
-  command: ["bash", "-lc", "bun test"],
-  cwd: "/workspace",
-  idempotencyKey: "verify:482"
-})
-if (result.exitCode !== 0) throw new Error(result.stderr)`,
-    lang: "ts",
-  },
 ] as const;
 
-const renderedFeatures = features.map((feature) => ({
+const renderedTaskFeatures = taskFeatures.map((feature) => ({
   ...feature,
   html: feature.lang === "ts" ? highlightTypeScript(feature.code) : highlightShell(feature.code),
   pixels: pixelsFromRows(pixelIcons[feature.icon]),
 }));
+
+const workspaceFeatures = [
+  {
+    label: "image() + sandbox()",
+    icon: "cloud",
+    tone: "blue",
+    title: "Define the environment",
+    caption: "Choose the base image, install CLIs, and set the working directory and resources behind the Workspace.",
+    code: `const base = image("repo-agent")
+  .from("node:24-bookworm-slim")
+  .workdir("/workspace")
+  .run(["npm", "install", "-g", "@openai/codex"])
+
+export const repoSandbox = sandbox({
+  id: "repo-agent"
+})
+  .image(base)
+  .resources({
+    cpu: 2,
+    memory: "4GiB"
+  })`,
+  },
+  {
+    label: "client.sandboxes.createWorkspace()",
+    icon: "resume",
+    tone: "green",
+    title: "Create the Workspace",
+    caption: "Create it once, run bounded commands, and attach later Task and Actor Runs to the same files.",
+    code: `const workspace = await client.sandboxes.createWorkspace(
+  "repo-agent",
+  {
+    key: \`github-pr:\${pr.id}\`,
+    idempotencyKey: \`workspace:\${pr.id}\`
+  }
+)
+
+const result = await workspace.exec({
+  command: ["bash", "-lc", "bun test"],
+  cwd: "/workspace",
+  idempotencyKey: \`verify:\${pr.id}\`
+})`,
+  },
+] as const;
+
+const renderedWorkspaceFeatures = workspaceFeatures.map((feature) => ({
+  ...feature,
+  html: highlightTypeScript(feature.code),
+  pixels: pixelsFromRows(pixelIcons[feature.icon]),
+}));
+
+const actorFeature = {
+  title: "Steerable agent sessions.",
+  caption:
+    "Send a correction from Slack, your product, or the CLI. The Session history survives waits and continuation Runs.",
+  define: `export const reviewer = actor({
+  id: "reviewer",
+  async run(session) {
+    const input = await session.input
+      .receive({ idleTimeout: "30m" })
+      .unwrap()
+
+    await session.output.append({
+      type: "progress",
+      message: "Reviewing",
+      input
+    })
+  }
+})`,
+  send: `// From your product or webhook:
+const session = client.sessions.ref(sessionId)
+
+await session.input.send({
+  type: "steer",
+  instruction: "Please also update the tests."
+}, { idempotencyKey: "slack:thread-1:message-7" })
+
+const { records } = await session.output.list()
+
+for (const record of records) {
+  render(record.sequence, record.data)
+}`,
+};
+
+const renderedActor = {
+  ...actorFeature,
+  defineHtml: highlightTypeScript(actorFeature.define),
+  sendHtml: highlightTypeScript(actorFeature.send),
+  definePixels: pixelsFromRows(pixelIcons.hourglass),
+  sendPixels: pixelsFromRows(pixelIcons.steer),
+};
 ---
 
 <BaseLayout
-  title="Helmr — The durable runtime for AI agents"
-  socialTitle="The durable runtime for AI agents"
-  description="The durable runtime for AI agents. Define TypeScript Tasks, run them in durable Workspaces, and preserve waits, logs, events, and outputs across Firecracker microVM execution."
+  title="Helmr — The code-first runtime for AI agents"
+  socialTitle="The code-first runtime for AI agents"
+  description="The code-first runtime for AI agents. Define agent workloads in TypeScript and run them in isolated Linux microVMs with durable workspaces, scoped secrets, human or external waitpoints, logs, and run history."
   path="/"
   jsonLd={[softwareJsonLd(), breadcrumbJsonLd([{ name: "Home", path: "/" }])]}
 >
@@ -315,15 +449,16 @@ const renderedFeatures = features.map((feature) => ({
       <div class="hero-inner">
         <div class="hero-copy">
           <h1 class="headline hero-title">
-            The durable runtime <span class="faint">for AI agents.</span>
+            The code-first runtime <span class="faint">for AI agents.</span>
           </h1>
           <p class="hero-lede">
-            Define tasks in plain TypeScript. Each run gets its own microVM,
-            pauses whole for human input, callbacks, or timers, then resumes with every input and output attached.
+            Define agent workloads in TypeScript. Run them in isolated Linux microVMs
+            with durable workspaces, scoped secrets, human or external waitpoints,
+            logs, and run history.
           </p>
           <div class="hero-actions">
             <a class="btn btn-dark" href="/docs/start/quickstart">Start building</a>
-            <a class="btn btn-light" href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">View on GitHub</a>
+            <a class="hero-link" href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">View on GitHub <span aria-hidden="true">↗</span></a>
           </div>
           <button class="install-command" type="button" data-copy-install aria-label="Copy install command">
             <code data-install-command>curl -fsSL https://helmr.dev/install | bash</code>
@@ -336,65 +471,21 @@ const renderedFeatures = features.map((feature) => ({
               </svg>
             </span>
           </button>
-          <div class="hero-chips">
-            {renderedHeroChips.map((chip) => (
-              <a class="hero-chip" href="#primitives">
-                <svg viewBox="0 0 10 10" aria-hidden="true" style={`background: var(--wash-${chip.tone})`}>
-                  {chip.pixels.map((pixel) => (
-                    <rect x={pixel.x} y={pixel.y} width="1" height="1" />
-                  ))}
-                </svg>
-                {chip.label}
-              </a>
-            ))}
-          </div>
         </div>
-
-        <div class="term panel panel-screen">
-          <div class="code-cap">
-            <span class="cap-title">
-              <span class="cap-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-              helmr — deploy → run
-            </span>
-            <span class="cap-meta">bash</span>
+        <figure class="hero-figure" aria-hidden="true">
+          <div class="hero-print">
+            <canvas data-print></canvas>
           </div>
-          <div class="term-body" data-term>
-            <p class="t-line"><span class="t-prompt">$</span> <span class="t-cmd">helmr deploy</span></p>
-            <p class="t-line t-dim">Deployment 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35 queued</p>
-            <p class="t-line"><span class="t-ok">v12</span></p>
-            <p class="t-line t-gap"><span class="t-prompt">$</span> <span class="t-cmd">helmr task start review-pr --workspace 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32 --payload-json '&lbrace;&quot;prNumber&quot;:482&rbrace;'</span></p>
-            <p class="t-line">019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31</p>
-            <p class="t-line t-gap"><span class="t-prompt">$</span> <span class="t-cmd">helmr run list</span></p>
-            <p class="t-line t-dim">RUN ID    TASK       STATUS</p>
-            <p class="t-line">019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31  review-pr  <span class="t-wait">waiting</span>  <span class="t-accent">token</span></p>
-            <p class="t-line t-gap" data-cursor><span class="t-prompt">$</span> <span class="t-cursor"></span></p>
-          </div>
-          <div class="term-foot" data-term-foot>
-            <span class="term-foot-note">
-              <svg class="term-hour" viewBox="0 0 10 10" aria-hidden="true">
-                {hourglassPixels.map((pixel) => (
-                  <rect x={pixel.x} y={pixel.y} width="1" height="1" />
-                ))}
-              </svg>
-              019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31 waiting on approval input
-            </span>
-            <button
-              class="term-approve"
-              type="button"
-              data-approve
-              aria-label="Append approval input and resume the run"
-            >approve &amp; resume</button>
-          </div>
-        </div>
+          <figcaption>fig. 01 &mdash; steady at the helm</figcaption>
+        </figure>
       </div>
-      <div class="pixel-seam"></div>
     </section>
 
     <section id="runtime" class="code-section" aria-label="Runtime definition">
       <div class="section-head">
         <h2 class="headline section-title">
           One TypeScript file.
-          <span class="faint">Image, Workspace, Task, Secrets, human input.</span>
+          <span class="faint">Image, Sandbox, Task, human input.</span>
         </h2>
         <p class="section-note">
           Codex here &mdash; or Claude Code, the AI SDK, any agent SDK that runs on
@@ -408,31 +499,36 @@ const renderedFeatures = features.map((feature) => ({
           <span class="cap-meta">typescript</span>
         </div>
         <pre><code>{codeLines.map((line, i) => (
-          <span class={line.marked ? "cl cl-mark" : "cl"} data-region={line.region}><span class="ln">{String(i + 1).padStart(2, " ")}</span><span class="lc" set:html={line.html}></span></span>
+          <span class="cl" data-region={line.region}><span class="ln">{String(i + 1).padStart(2, " ")}</span><span class="lc" set:html={line.html}></span></span>
         ))}</code></pre>
         <div class="code-tags" aria-hidden="true">
           {codeTags.map((tag) => (
             <span
               class={`code-tag code-tag-${tag.key}`}
-              style={`--line: ${tag.line}; --tag-strong: ${tag.strong}; background: var(--wash-${tag.tone})`}
+              style={`--line: ${tag.line}; --tag-strong: ${tag.strong}; background: ${tints[tag.tone]}`}
             >{tag.label}</span>
           ))}
         </div>
       </div>
+      <nav class="proof-links" aria-label="Execution model sections">
+        <a href="#primitives"><span>01</span> Task</a>
+        <a href="#actor"><span>02</span> Actor</a>
+        <a href="#workspace"><span>03</span> Workspace</a>
+      </nav>
     </section>
 
-    <section id="primitives" class="features" aria-label="What it looks like in code">
+    <section id="primitives" class="features" aria-label="Task patterns">
       <div class="section-head">
         <h2 class="headline section-title">
-          Pause. Schedule. Start. Reuse.
-          <span class="faint">Each one is a few lines.</span>
+          Workflows as functions.{" "}
+          <span class="faint">Typed in, typed out, durable in between.</span>
         </h2>
       </div>
       <div class="feature-grid">
-        {renderedFeatures.map((feature) => (
+        {renderedTaskFeatures.map((feature) => (
           <div class="feature">
             <div class="feature-head">
-              <svg class="feature-icon" viewBox="0 0 10 10" aria-hidden="true" style={`background: var(--wash-${feature.tone})`}>
+              <svg class="feature-icon" viewBox="0 0 10 10" aria-hidden="true" style={`background: ${tints[feature.tone]}`}>
                 {feature.pixels.map((pixel) => (
                   <rect x={pixel.x} y={pixel.y} width="1" height="1" />
                 ))}
@@ -452,15 +548,99 @@ const renderedFeatures = features.map((feature) => ({
       </div>
     </section>
 
+    <section id="actor" class="actor-section" aria-label="Actor steering">
+      <div class="section-head">
+        <h2 class="headline section-title">
+          {renderedActor.title}{" "}
+          <span class="faint">Input and output, kept across Runs.</span>
+        </h2>
+      </div>
+      <div class="pair-panels">
+        <div class="paired-feature">
+          <div class="feature-head">
+            <svg class="feature-icon" viewBox="0 0 10 10" aria-hidden="true" style={`background: ${tints.yellow}`}>
+              {renderedActor.definePixels.map((pixel) => (
+                <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+              ))}
+            </svg>
+            <h3 class="feature-title">Define the Actor</h3>
+          </div>
+          <div class="feature-panel panel panel-screen">
+            <div class="code-cap">
+              <span>actor()</span>
+              <span class="cap-meta">typescript</span>
+            </div>
+            <pre><code set:html={renderedActor.defineHtml}></code></pre>
+          </div>
+        </div>
+        <div class="paired-feature">
+          <div class="feature-head">
+            <svg class="feature-icon" viewBox="0 0 10 10" aria-hidden="true" style={`background: ${tints.blue}`}>
+              {renderedActor.sendPixels.map((pixel) => (
+                <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+              ))}
+            </svg>
+            <h3 class="feature-title">Send input and read output</h3>
+          </div>
+          <div class="feature-panel panel panel-screen">
+            <div class="code-cap">
+              <span>client.sessions.ref()</span>
+              <span class="cap-meta">typescript</span>
+            </div>
+            <pre><code set:html={renderedActor.sendHtml}></code></pre>
+          </div>
+        </div>
+      </div>
+      <p class="feature-caption actor-caption">{renderedActor.caption}</p>
+    </section>
+
+    <section id="workspace" class="workspace-section" aria-label="Shared Workspace">
+      <div class="section-head">
+        <h2 class="headline section-title">
+          Persistent VM filesystems.{" "}
+          <span class="faint">The same /workspace, Run after Run.</span>
+        </h2>
+      </div>
+      <div class="pair-panels workspace-panels">
+        {renderedWorkspaceFeatures.map((feature) => (
+          <div class="paired-feature workspace-feature">
+            <div class="feature-head">
+              <svg class="feature-icon" viewBox="0 0 10 10" aria-hidden="true" style={`background: ${tints[feature.tone]}`}>
+                {feature.pixels.map((pixel) => (
+                  <rect x={pixel.x} y={pixel.y} width="1" height="1" />
+                ))}
+              </svg>
+              <h3 class="feature-title">{feature.title}</h3>
+            </div>
+            <div class="feature-panel panel panel-screen">
+              <div class="code-cap">
+                <span>{feature.label}</span>
+                <span class="cap-meta">typescript</span>
+              </div>
+              <pre><code set:html={feature.html}></code></pre>
+            </div>
+            <p class="feature-caption">{feature.caption}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+
     <section class="homes" aria-label="Deployment options">
       <div class="section-head">
         <h2 class="headline section-title">
-          Run on our cloud,
+          Run on our cloud,{" "}
           <span class="faint">or in your AWS.</span>
         </h2>
         <p class="section-note mono">
           Early, open, Apache 2.0. Read the source before you trust it with your repos.
         </p>
+        <div class="fact-row">
+          <span class="fact-chip">apache-2.0</span>
+          <span class="fact-chip">go control plane</span>
+          <span class="fact-chip">typescript sdk</span>
+          <span class="fact-chip">firecracker microVMs</span>
+          <span class="fact-chip">opentofu modules</span>
+        </div>
       </div>
       <div class="homes-grid">
         <div class="home-card home-card-cloud panel">
@@ -496,16 +676,22 @@ const renderedFeatures = features.map((feature) => ({
       </div>
     </section>
 
-    <div class="circuit" aria-hidden="true">
-      <i class="circuit-edge circuit-edge-out"></i>
-      <i class="circuit-edge circuit-edge-rail"></i>
-      <i class="circuit-edge circuit-edge-in"></i>
-      <i class="circuit-node circuit-node-a"></i>
-      <i class="circuit-node circuit-node-b"></i>
-    </div>
   </div>
 
   <script>
+    import { mountDitherScene } from "../lib/dither-scene";
+
+    const printCanvas = document.querySelector<HTMLCanvasElement>("[data-print]");
+    if (printCanvas) {
+      mountDitherScene(printCanvas, {
+        horizonPx: 124,
+        skyMax: 0.34,
+        sun: false,
+        frost: 1,
+        animate: false,
+      });
+    }
+
     const copyInstallButton = document.querySelector("[data-copy-install]");
     const installCommand = document.querySelector("[data-install-command]");
 
@@ -522,140 +708,6 @@ const renderedFeatures = features.map((feature) => ({
         copyInstallButton.removeAttribute("data-copied");
       }, 1600);
     });
-
-    const landing = document.querySelector<HTMLElement>(".landing");
-    const term = document.querySelector<HTMLElement>("[data-term]");
-    const termFoot = document.querySelector<HTMLElement>("[data-term-foot]");
-    const approveButton = document.querySelector<HTMLButtonElement>("[data-approve]");
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-    const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
-
-    const followScroll = () => {
-      if (term) term.scrollTop = term.scrollHeight;
-    };
-
-    const typeInto = async (target: Element, text: string) => {
-      for (const char of text) {
-        target.textContent = (target.textContent ?? "") + char;
-        followScroll();
-        if (!reduceMotion) await sleep(24);
-      }
-    };
-
-    const appendLine = (html: string, className: string) => {
-      if (!term) return null;
-      const line = document.createElement("p");
-      line.className = className;
-      line.innerHTML = html;
-      term.appendChild(line);
-      followScroll();
-      return line;
-    };
-
-    const resumeBoot = async () => {
-      if (!term) return;
-      const lines = Array.from(term.querySelectorAll<HTMLElement>(".t-line"));
-      term.style.minHeight = `${term.offsetHeight}px`;
-      for (const line of lines) line.hidden = true;
-      await sleep(450);
-      for (const line of lines) {
-        if (line.dataset.cursor !== undefined) continue;
-        const command = line.querySelector<HTMLElement>(".t-cmd");
-        if (command) {
-          const text = command.textContent ?? "";
-          command.textContent = "";
-          line.hidden = false;
-          await sleep(300);
-          await typeInto(command, text);
-          if (text.startsWith("helmr run")) {
-            runStarted = true;
-            void maybeSweep();
-          }
-          await sleep(240);
-        } else {
-          line.hidden = false;
-          await sleep(140);
-        }
-      }
-      const cursorLine = term.querySelector<HTMLElement>("[data-cursor]");
-      if (cursorLine) cursorLine.hidden = false;
-    };
-
-    const codeRows = Array.from(document.querySelectorAll<HTMLElement>(".code-frame .cl"));
-    const markIndex = codeRows.findIndex((row) => row.classList.contains("cl-mark"));
-    const waitIndex = markIndex >= 0 ? Math.min(markIndex + 1, codeRows.length - 1) : -1;
-    let waitResolved = false;
-    let runStarted = false;
-    let executedUntil = -1;
-    let sweepBusy = false;
-
-    const sweepTo = async (target: number) => {
-      sweepBusy = true;
-      for (let i = executedUntil + 1; i <= target; i++) {
-        const row = codeRows[i];
-        row.classList.add("cl-active");
-        if (!reduceMotion) await sleep(36);
-        if (!(i === waitIndex && !waitResolved)) row.classList.remove("cl-active");
-        row.classList.add("cl-done");
-        executedUntil = i;
-      }
-      sweepBusy = false;
-    };
-
-    const maybeSweep = async () => {
-      if (!runStarted || waitIndex < 0 || sweepBusy) return;
-      const target = waitResolved ? codeRows.length - 1 : waitIndex;
-      if (waitResolved) codeRows[waitIndex]?.classList.remove("cl-active");
-      if (target > executedUntil) {
-        await sweepTo(target);
-        void maybeSweep();
-      }
-    };
-
-    approveButton?.addEventListener("click", async () => {
-      if (!term || waitResolved) return;
-      waitResolved = true;
-      landing?.setAttribute("data-wait-completed", "");
-      term.setAttribute("data-completed", "");
-      termFoot?.removeAttribute("data-ready");
-      // Pin the height so the page doesn't shift; old lines scroll out like a real terminal.
-      term.style.height = `${term.offsetHeight}px`;
-      term.style.minHeight = "";
-      term.style.overflowY = "hidden";
-
-      const cursorLine = term.querySelector<HTMLElement>("[data-cursor]");
-      cursorLine?.querySelector(".t-cursor")?.remove();
-      cursorLine?.removeAttribute("data-cursor");
-      const respondCommand = document.createElement("span");
-      cursorLine?.appendChild(respondCommand);
-      await typeInto(respondCommand, "curl -sS -H 'authorization: Bearer $TOKEN_PUBLIC_ACCESS_TOKEN' -H 'content-type: application/json' -d '{\"result\":{\"approved\":true}}' $HELMR_API_URL/api/public/tokens/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37/complete");
-      await sleep(reduceMotion ? 0 : 500);
-
-      const psLine = appendLine('<span class="t-prompt">$</span> <span class="t-cmd"></span>', "t-line t-gap");
-      const psCommand = psLine?.querySelector(".t-cmd");
-      if (psCommand) await typeInto(psCommand, "helmr run list");
-      await sleep(reduceMotion ? 0 : 350);
-      appendLine("RUN ID    TASK       STATUS", "t-line t-dim");
-      appendLine('019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31  review-pr  <span class="t-ok">succeeded</span>', "t-line");
-      await sleep(reduceMotion ? 0 : 250);
-      appendLine('<span class="t-prompt">$</span> <span class="t-cursor"></span>', "t-line t-gap");
-      void maybeSweep();
-    });
-
-    const startDemo = async () => {
-      if (!term || !termFoot) return;
-      if (!reduceMotion) await resumeBoot();
-      landing?.setAttribute("data-circuit-ready", "");
-      termFoot.setAttribute("data-ready", "");
-      runStarted = true;
-      void maybeSweep();
-      // Preview hook for screenshot verification.
-      if (new URLSearchParams(window.location.search).has("autoapprove")) {
-        approveButton?.click();
-      }
-    };
-    startDemo();
   </script>
 </BaseLayout>
 
@@ -663,77 +715,45 @@ const renderedFeatures = features.map((feature) => ({
   .landing {
     position: relative;
     overflow-x: clip;
+    --editorial-bg: #fff;
+    --editorial-rule: #dedede;
+    background: var(--editorial-bg);
   }
 
-  /* CSS anchor positioning ties the input wire to the terminal and code row. */
-  .circuit { display: none; }
-
-  @supports (anchor-name: --wp) {
-    .term { anchor-name: --term; }
-    .term-body :global(.t-accent) { anchor-name: --wp-token; }
-    .code-frame { anchor-name: --code-frame; }
-    .cl-mark + :global(.cl) { anchor-name: --wp-line; }
-
-    .circuit {
-      display: block;
-      opacity: 0;
-      transition: opacity 0.5s ease-out;
-    }
-
-    .landing[data-circuit-ready] .circuit { opacity: 1; }
-    .landing[data-wait-completed] .circuit { opacity: 0; }
-
-    .circuit-edge-out {
-      position: absolute;
-      height: 0;
-      top: calc(anchor(--wp-token center) - 0.5px);
-      left: calc(anchor(--term right) + 7px);
-      right: calc(anchor(--code-frame right) - 32px);
-      border-top: 1px dotted var(--accent-border);
-    }
-
-    .circuit-edge-rail {
-      position: absolute;
-      width: 0;
-      top: calc(anchor(--wp-token center) - 0.5px);
-      bottom: calc(anchor(--wp-line center) - 0.5px);
-      right: calc(anchor(--code-frame right) - 32px);
-      border-left: 1px dotted var(--accent-border);
-    }
-
-    .circuit-edge-in {
-      position: absolute;
-      height: 0;
-      top: calc(anchor(--wp-line center) - 0.5px);
-      left: calc(anchor(--code-frame right) + 7px);
-      right: calc(anchor(--code-frame right) - 32px);
-      border-top: 1px dotted var(--accent-border);
-    }
-
-    .circuit-node {
-      position: absolute;
-      width: 5px;
-      height: 5px;
-      background: var(--accent);
-    }
-
-    .circuit-node-a {
-      top: calc(anchor(--wp-token center) - 2px);
-      left: calc(anchor(--term right) + 3px);
-    }
-
-    .circuit-node-b {
-      top: calc(anchor(--wp-line center) - 2px);
-      left: calc(anchor(--code-frame right) + 3px);
-    }
+  :global(body:has(.landing)),
+  :global(body:has(.landing) .site-header),
+  :global(body:has(.landing) .site-footer) {
+    background: #fff;
   }
 
-  @media (max-width: 1199px) {
-    .circuit { display: none !important; }
+  :global(body:has(.landing)) {
+    --landing-max-w: 80rem;
+  }
+
+  :global(body:has(.landing) .site-header) {
+    border-bottom-color: #dedede;
+  }
+
+  :global(body:has(.landing) .site-nav) {
+    max-width: var(--landing-max-w);
+  }
+
+  :global(body:has(.landing) .site-footer) {
+    border-top-color: #dedede;
+  }
+
+  :global(body:has(.landing) .footer-inner) {
+    max-width: var(--landing-max-w);
+  }
+
+  .landing :global(.panel-screen),
+  .landing :global(.code-cap) {
+    border-color: var(--editorial-rule);
+    background: #fff;
   }
 
   section {
-    max-width: var(--max-w);
+    max-width: var(--landing-max-w);
     margin: 0 auto;
     padding: 0 1.5rem;
   }
@@ -742,30 +762,73 @@ const renderedFeatures = features.map((feature) => ({
     position: relative;
     max-width: none;
     padding: 0;
+    border-bottom: 1px solid var(--editorial-rule);
   }
 
   .hero-inner {
     display: grid;
-    grid-template-columns: minmax(0, 1.18fr) minmax(0, 0.82fr);
+    grid-template-columns: minmax(0, 1fr) 26rem;
     align-items: center;
-    gap: 3rem;
-    max-width: var(--max-w);
+    gap: clamp(2.5rem, 4vw, 3.5rem);
+    max-width: var(--landing-max-w);
     margin: 0 auto;
-    padding: 4.25rem 1.5rem 4.75rem;
+    padding: clamp(3.25rem, 5vw, 4.5rem) 1.5rem 4.5rem;
+  }
+
+  .hero-copy {
+    min-width: 0;
+  }
+
+  .hero-figure {
+    margin: 0;
+    width: 100%;
+  }
+
+  .hero-print {
+    background: #ffffff;
+    border: 1px solid var(--editorial-rule);
+    padding: 10px;
+  }
+
+  .hero-print canvas {
+    display: block;
+    width: 100%;
+    height: 268px;
+  }
+
+  .hero-figure figcaption {
+    margin-top: 0.55rem;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.02em;
+    color: var(--text-subtle);
   }
 
   .hero-title {
-    font-size: clamp(2.4rem, 4.7vw, 3.5rem);
-    line-height: 1.1;
-    max-width: 20ch;
+    max-width: 18ch;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: clamp(3.6rem, 5.5vw, 4.85rem);
+    font-weight: 500;
+    line-height: 0.98;
+    letter-spacing: -0.05em;
+  }
+
+  .hero-title .faint {
+    display: block;
+    margin-top: 0.08em;
+    padding: 0;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    letter-spacing: inherit;
   }
 
   .hero-lede {
     margin-top: 1.2rem;
-    max-width: 33rem;
+    max-width: 38rem;
     color: var(--text-muted);
-    font-size: 1.0625rem;
-    line-height: 1.6;
+    font-size: clamp(1rem, 1.5vw, 1.2rem);
+    line-height: 1.55;
   }
 
   .hero-actions {
@@ -774,6 +837,19 @@ const renderedFeatures = features.map((feature) => ({
     gap: 0.75rem;
     margin-top: 1.5rem;
   }
+
+  .hero-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-height: 2.5rem;
+    color: var(--text);
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-decoration: none;
+  }
+
+  .hero-link:hover { text-decoration: underline; }
 
   .install-command {
     appearance: none;
@@ -839,201 +915,6 @@ const renderedFeatures = features.map((feature) => ({
   .install-command[data-copied="true"] .copy-icon { display: none; }
   .install-command[data-copied="true"] .check-icon { display: block; }
 
-  .hero-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-top: 1.4rem;
-  }
-
-  .hero-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.26rem 0.6rem 0.26rem 0.26rem;
-    border: 1px solid var(--border-strong);
-    background: var(--surface-raised);
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    color: var(--text-muted);
-    transition: border-color 0.12s ease-out, color 0.12s ease-out;
-  }
-
-  .hero-chip svg {
-    width: 20px;
-    height: 20px;
-    flex: 0 0 auto;
-    padding: 3px;
-    fill: var(--ink);
-    shape-rendering: crispEdges;
-  }
-
-  .hero-chip:hover {
-    border-color: var(--ink);
-    color: var(--text);
-  }
-
-  .term {
-    position: relative;
-  }
-
-  .cap-title {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    min-width: 0;
-  }
-
-  .cap-dots {
-    display: flex;
-    gap: 4px;
-    flex: 0 0 auto;
-  }
-
-  .cap-dots i {
-    width: 7px;
-    height: 7px;
-  }
-
-  .cap-dots i:nth-child(1) { background: #ffc700; }
-  .cap-dots i:nth-child(2) { background: #5079e4; }
-  .cap-dots i:nth-child(3) { background: #da5992; }
-
-  .term::before {
-    content: "";
-    position: absolute;
-    top: 12px;
-    left: 12px;
-    right: -12px;
-    bottom: -12px;
-    border: 1px dotted var(--accent-border);
-    z-index: -1;
-    pointer-events: none;
-  }
-
-  .term-body {
-    padding: 1rem 1.15rem 1.1rem;
-    font-family: var(--font-mono);
-    font-size: 0.8rem;
-    line-height: 1.8;
-    color: var(--frame-text);
-  }
-
-  /* Terminal lines are :global — the demo script appends new ones at runtime. */
-  .term-body :global(.t-line) { white-space: pre-wrap; }
-  .term-body :global(.t-gap) { margin-top: 0.7rem; }
-  .term-body :global(.t-dim) { color: var(--frame-subtle); }
-  .term-body :global(.t-prompt) { color: var(--frame-blue); }
-  .term-body :global(.t-accent) { color: var(--frame-cyan); }
-
-  .term-body :global(.t-wait) {
-    color: var(--frame-amber);
-    background: linear-gradient(90deg, currentColor 38%, #dfc173 50%, currentColor 62%);
-    background-size: 200% 100%;
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-    animation: wait-shimmer 2.2s linear infinite;
-  }
-
-  @keyframes wait-shimmer {
-    to { background-position: -200% 0; }
-  }
-
-  .term[data-completed] :global(.t-wait) {
-    animation: none;
-    background: none;
-    -webkit-text-fill-color: currentColor;
-  }
-
-  .term-body :global(.t-ok) { color: var(--frame-green); }
-
-  .term-body :global(.t-cursor) {
-    display: inline-block;
-    width: 7px;
-    height: 0.95em;
-    background: var(--frame-blue);
-    vertical-align: text-bottom;
-    animation: cursor-blink 1.1s steps(1) infinite;
-  }
-
-  @keyframes cursor-blink {
-    50% { opacity: 0; }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .term-body :global(.t-cursor) { animation: none; }
-
-    .term-body :global(.t-wait) {
-      animation: none;
-      background: none;
-      -webkit-text-fill-color: currentColor;
-    }
-  }
-
-  /* The row is always laid out so the panel never changes height;
-     only its content fades in once the boot sequence reaches the input wait. */
-  .term-foot > * {
-    visibility: hidden;
-    opacity: 0;
-    transition: opacity 0.25s ease-out;
-  }
-
-  .term-foot {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 0.55rem 1.15rem;
-    border-top: 1px solid var(--frame-line);
-    font-family: var(--font-mono);
-  }
-
-  .term-foot-note {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.45rem;
-    min-width: 0;
-    font-size: 0.71rem;
-    color: var(--frame-subtle);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .term-hour {
-    width: 13px;
-    height: 13px;
-    flex: 0 0 auto;
-    fill: var(--frame-amber);
-    shape-rendering: crispEdges;
-  }
-
-  .term-approve {
-    appearance: none;
-    flex: 0 0 auto;
-    border: 1px solid rgba(60, 138, 89, 0.45);
-    background: rgba(60, 138, 89, 0.08);
-    color: var(--frame-green);
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    font-weight: 500;
-    padding: 0.32rem 0.6rem;
-    cursor: pointer;
-    transition: background 0.1s ease-out, border-color 0.1s ease-out;
-  }
-
-  .term-approve:hover,
-  .term-approve:focus-visible {
-    background: rgba(60, 138, 89, 0.15);
-    border-color: var(--frame-green);
-  }
-
-  .term-foot[data-ready] > * {
-    visibility: visible;
-    opacity: 1;
-  }
-
   .section-head {
     display: flex;
     flex-direction: column;
@@ -1050,10 +931,26 @@ const renderedFeatures = features.map((feature) => ({
 
   .section-title .faint {
     display: block;
+    margin-top: 0.16em;
+    padding: 0;
+    background: none;
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-weight: 400;
+    letter-spacing: -0.025em;
   }
 
   .homes .section-title .faint {
     display: inline;
+  }
+
+  :global(body:has(.landing) .footer-headline .faint) {
+    padding: 0;
+    background: none;
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-weight: 400;
+    letter-spacing: -0.03em;
   }
 
   .section-note {
@@ -1070,11 +967,28 @@ const renderedFeatures = features.map((feature) => ({
   }
 
   .code-section {
-    padding-top: 6rem;
+    padding-top: 3.5rem;
     padding-bottom: 7rem;
   }
 
+  .code-section .section-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(18rem, 0.9fr);
+    align-items: end;
+    gap: 2rem;
+  }
+
+  .code-section .section-title {
+    max-width: none;
+  }
+
+  .code-section .section-title .faint {
+    display: inline;
+    margin-left: 0.2em;
+  }
+
   .code-frame {
+    --runtime-line-height: 1.4344rem;
     position: relative;
     margin: 2.5rem 0 0;
     overflow: visible;
@@ -1083,7 +997,7 @@ const renderedFeatures = features.map((feature) => ({
   .code-tag {
     position: absolute;
     right: -0.9rem;
-    top: calc(2.2rem + 1.3rem + (var(--line) - 1) * 1.4344rem - 0.2rem);
+    top: calc(2.2rem + 1.3rem + (var(--line) - 1) * var(--runtime-line-height) + 0.015rem);
     z-index: 2;
     border: 1px solid rgba(31, 31, 36, 0.18);
     padding: 0.16rem 0.5rem;
@@ -1106,34 +1020,34 @@ const renderedFeatures = features.map((feature) => ({
   }
 
   .cl[data-region="image"] .ln { box-shadow: inset -3px 0 0 #5079e4; }
-  .cl[data-region="workspace"] .ln { box-shadow: inset -3px 0 0 #3c8a59; }
-  .cl[data-region="task"] .ln { box-shadow: inset -3px 0 0 #da5992; }
-  .cl[data-region="input"] .ln { box-shadow: inset -3px 0 0 #dfa400; }
+  .cl[data-region="sandbox"] .ln { box-shadow: inset -3px 0 0 #5e8a70; }
+  .cl[data-region="task"] .ln { box-shadow: inset -3px 0 0 #a8618a; }
+  .cl[data-region="input"] .ln { box-shadow: inset -3px 0 0 #ad8226; }
 
   .code-frame:has(.code-tag-image:hover) .cl[data-region="image"],
   .code-frame:has(.cl[data-region="image"]:hover) .cl[data-region="image"] {
     background: rgba(80, 121, 228, 0.1);
   }
 
-  .code-frame:has(.code-tag-workspace:hover) .cl[data-region="workspace"],
-  .code-frame:has(.cl[data-region="workspace"]:hover) .cl[data-region="workspace"] {
-    background: rgba(60, 138, 89, 0.12);
+  .code-frame:has(.code-tag-sandbox:hover) .cl[data-region="sandbox"],
+  .code-frame:has(.cl[data-region="sandbox"]:hover) .cl[data-region="sandbox"] {
+    background: rgba(94, 138, 112, 0.12);
   }
 
   .code-frame:has(.code-tag-task:hover) .cl[data-region="task"],
   .code-frame:has(.cl[data-region="task"]:hover) .cl[data-region="task"] {
-    background: rgba(218, 89, 146, 0.1);
+    background: rgba(168, 97, 138, 0.1);
   }
 
   .code-frame:has(.code-tag-input:hover) .cl[data-region="input"],
   .code-frame:has(.cl[data-region="input"]:hover) .cl[data-region="input"] {
-    background: rgba(255, 199, 0, 0.16);
+    background: rgba(173, 130, 38, 0.12);
   }
 
   .code-frame:has(.code-tag-image:hover) .code-tag-image,
   .code-frame:has(.cl[data-region="image"]:hover) .code-tag-image,
-  .code-frame:has(.code-tag-workspace:hover) .code-tag-workspace,
-  .code-frame:has(.cl[data-region="workspace"]:hover) .code-tag-workspace,
+  .code-frame:has(.code-tag-sandbox:hover) .code-tag-sandbox,
+  .code-frame:has(.cl[data-region="sandbox"]:hover) .code-tag-sandbox,
   .code-frame:has(.code-tag-task:hover) .code-tag-task,
   .code-frame:has(.cl[data-region="task"]:hover) .code-tag-task,
   .code-frame:has(.code-tag-input:hover) .code-tag-input,
@@ -1141,7 +1055,7 @@ const renderedFeatures = features.map((feature) => ({
     border-color: var(--tag-strong);
   }
 
-  @media (max-width: 900px) {
+  @media (max-width: 1100px) {
     .code-tags { display: none; }
 
     .cl[data-region] .ln { box-shadow: none; }
@@ -1155,7 +1069,7 @@ const renderedFeatures = features.map((feature) => ({
     font-size: 0.84375rem;
     font-variant-ligatures: none;
     letter-spacing: 0;
-    line-height: 1.7;
+    line-height: var(--runtime-line-height);
     tab-size: 2;
     color: var(--frame-text);
   }
@@ -1184,38 +1098,62 @@ const renderedFeatures = features.map((feature) => ({
 
   .lc { white-space: pre; }
 
-  /* .cl-mark carries no permanent highlight — it marks the freeze line for
-     the execution sweep. */
-
-  .cl-active {
-    background: rgba(80, 121, 228, 0.08);
-  }
-
-  .cl-active .ln {
-    color: var(--frame-blue);
-    border-right-color: var(--accent-border);
-  }
-
-  .cl-done .ln {
-    color: #9c968a;
-  }
-
   :global(.code-frame .tok-keyword) { color: var(--frame-blue); font-weight: 500; }
-  :global(.code-frame .tok-string) { color: var(--frame-green); }
-  :global(.code-frame .tok-number) { color: var(--frame-amber); }
-  :global(.code-frame .tok-call) { color: var(--frame-pink); font-weight: 500; }
-  :global(.code-frame .tok-property) { color: var(--frame-cyan); }
+  :global(.code-frame .tok-string) { color: #4a8265; }
+  :global(.code-frame .tok-number) { color: #a07c2c; }
+  :global(.code-frame .tok-call) { color: #a8618a; font-weight: 500; }
+  :global(.code-frame .tok-property) { color: #4a86a3; }
   :global(.code-frame .tok-punct) { color: #8d8a93; }
   :global(.code-frame .tok-comment) { color: #a09d96; }
 
+  .proof-links {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-top: 2rem;
+    border-top: 1px solid var(--editorial-rule);
+    border-bottom: 1px solid var(--editorial-rule);
+  }
+
+  .proof-links a {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 1.15rem 0;
+    color: var(--text);
+    font-size: 0.875rem;
+    font-weight: 500;
+    text-decoration: none;
+  }
+
+  .proof-links a + a {
+    padding-left: 1.25rem;
+    border-left: 1px solid var(--editorial-rule);
+  }
+
+  .proof-links span {
+    color: var(--text-subtle);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 400;
+  }
+
+  .proof-links a:hover { text-decoration: underline; }
+
   .features {
-    padding-bottom: 7rem;
+    padding-bottom: 5rem;
+  }
+
+  .code-section,
+  .features,
+  .actor-section,
+  .workspace-section {
+    scroll-margin-top: 4.5rem;
   }
 
   .feature-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 2.75rem 2rem;
+    gap: 3rem 2.5rem;
     margin: 2.5rem 0 0;
   }
 
@@ -1249,13 +1187,10 @@ const renderedFeatures = features.map((feature) => ({
     overflow: hidden;
   }
 
-  /* The panel fills its track, so frames in one row match heights exactly. */
   .feature-panel pre {
     flex: 1 1 auto;
   }
 
-  /* Share the title / panel / caption rows across the pair of columns so
-     every row of the grid lines up, whatever each snippet's line count is. */
   @supports (grid-template-rows: subgrid) {
     .feature-grid {
       row-gap: 0.9rem;
@@ -1311,14 +1246,61 @@ const renderedFeatures = features.map((feature) => ({
     color: var(--text-muted);
     font-size: 0.875rem;
     line-height: 1.6;
-    max-width: 30rem;
+    max-width: 34rem;
+  }
+
+  .actor-section {
+    padding-bottom: 5rem;
+  }
+
+  .pair-panels {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+    gap: 2.5rem;
+    margin-top: 2.5rem;
+  }
+
+  .pair-panels .feature-panel {
+    margin-top: 0;
+  }
+
+  .paired-feature {
+    display: flex;
+    min-width: 0;
+    height: 100%;
+    flex-direction: column;
+  }
+
+  .paired-feature .feature-panel {
+    flex: 1 1 auto;
+    margin-top: 0.9rem;
+  }
+
+  .actor-caption {
+    max-width: 48rem;
+  }
+
+  .workspace-section {
+    padding-bottom: 7rem;
+  }
+
+  .workspace-feature {
+    min-width: 0;
+  }
+
+  @media (max-width: 900px) {
+    .pair-panels {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 1.25rem;
+    }
   }
 
   :global(.feature-panel .tok-keyword) { color: var(--frame-blue); font-weight: 500; }
-  :global(.feature-panel .tok-string) { color: var(--frame-green); }
-  :global(.feature-panel .tok-number) { color: var(--frame-amber); }
-  :global(.feature-panel .tok-call) { color: var(--frame-pink); font-weight: 500; }
-  :global(.feature-panel .tok-property) { color: var(--frame-cyan); }
+  :global(.feature-panel .tok-string) { color: #4a8265; }
+  :global(.feature-panel .tok-number) { color: #a07c2c; }
+  :global(.feature-panel .tok-call) { color: #a8618a; font-weight: 500; }
+  :global(.feature-panel .tok-property) { color: #4a86a3; }
   :global(.feature-panel .tok-punct) { color: #8d8a93; }
   :global(.feature-panel .tok-comment) { color: #a09d96; }
   :global(.feature-panel .tok-prompt) { color: var(--frame-blue); font-weight: 500; }
@@ -1329,7 +1311,23 @@ const renderedFeatures = features.map((feature) => ({
   }
 
   .homes {
+    padding-top: 2rem;
     padding-bottom: 6.5rem;
+  }
+
+  .fact-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
+  }
+
+  .fact-chip {
+    padding: 0.18rem 0.5rem;
+    background: var(--surface-dim);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--text-muted);
   }
 
   .homes-grid {
@@ -1378,12 +1376,12 @@ const renderedFeatures = features.map((feature) => ({
     font-size: 0.9063rem;
     line-height: 1.6;
     flex: 1 1 auto;
-    max-width: 26rem;
+    max-width: 30rem;
   }
 
   .home-card-cloud {
-    background: var(--wash-blue);
-    border-color: #cfe2f6;
+    background: #e7eef7;
+    border-color: #d3e0f0;
   }
 
   .home-card-dark {
@@ -1410,15 +1408,46 @@ const renderedFeatures = features.map((feature) => ({
     border-color: #e8e8ec;
   }
 
+  @media (max-width: 1100px) {
+    .hero-inner {
+      grid-template-columns: minmax(0, 1fr) 20rem;
+      gap: 2.5rem;
+    }
+
+    .hero-title {
+      font-size: clamp(3.25rem, 5.8vw, 4rem);
+    }
+
+    .hero-print canvas {
+      height: 220px;
+    }
+
+    .code-section .section-head {
+      display: flex;
+      align-items: flex-start;
+    }
+
+    .code-section .section-title .faint {
+      display: block;
+      margin-left: 0;
+    }
+  }
+
   @media (max-width: 900px) {
     .hero-inner {
       grid-template-columns: minmax(0, 1fr);
       gap: 2.5rem;
-      padding-top: 2.75rem;
-      padding-bottom: 3rem;
+      padding-top: 3rem;
+      padding-bottom: 4rem;
     }
 
-    .term { max-width: 30rem; }
+    .hero-figure {
+      width: min(100%, 26rem);
+    }
+
+    .hero-print canvas {
+      height: 240px;
+    }
 
     .homes-grid {
       grid-template-columns: minmax(0, 1fr);
@@ -1429,8 +1458,13 @@ const renderedFeatures = features.map((feature) => ({
     }
 
     .code-section,
-    .features {
+    .actor-section,
+    .workspace-section {
       padding-bottom: 5rem;
+    }
+
+    .features {
+      padding-bottom: 4rem;
     }
 
     .feature-grid {
@@ -1438,5 +1472,22 @@ const renderedFeatures = features.map((feature) => ({
       gap: 2.25rem;
     }
 
+    .proof-links {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .proof-links a + a {
+      padding-left: 0;
+      border-top: 1px solid var(--editorial-rule);
+      border-left: 0;
+    }
+
+  }
+
+  @media (max-width: 600px) {
+    .hero-title {
+      font-size: clamp(2.4rem, 12.5vw, 3.15rem);
+      letter-spacing: -0.035em;
+    }
   }
 </style>
