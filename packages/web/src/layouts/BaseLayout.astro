@@ -1,6 +1,7 @@
 ---
 import "../styles/global.css";
 import { ClientRouter } from "astro:transitions";
+import BrandMark from "../components/BrandMark.astro";
 import {
   SITE,
   absoluteUrl,
@@ -52,30 +53,6 @@ const serializeJsonLd = (data: JsonLdNode): string =>
     .replace(/\u2029/g, "\\u2029");
 const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
 
-const brandSpriteRows = [
-  "................",
-  "................",
-  "................",
-  "................",
-  ".......KK.......",
-  ".....KKKKKK.....",
-  "...KKKKKKKKKK...",
-  ".....KKKKKK.....",
-  ".......KK.......",
-  "................",
-  "...KK......KK...",
-  ".....KK..KK.....",
-  ".......KK.......",
-  "................",
-  "................",
-  "................",
-] as const;
-const brandSpriteColors: Record<string, string> = {
-  K: "#1f1f24",
-};
-const brandSpritePixels = brandSpriteRows.flatMap((row, y) =>
-  [...row].flatMap((ch, x) => (ch === "." ? [] : [{ x, y, fill: brandSpriteColors[ch] }])),
-);
 ---
 
 <!doctype html>
@@ -113,7 +90,7 @@ const brandSpritePixels = brandSpriteRows.flatMap((row, y) =>
     <link rel="preconnect" href="https://api.fontshare.com" />
     <link rel="preconnect" href="https://cdn.fontshare.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Geist+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Geist+Mono:wght@400;500&family=Instrument+Sans:wght@500&display=swap"
       rel="stylesheet"
     />
     <link
@@ -127,11 +104,7 @@ const brandSpritePixels = brandSpriteRows.flatMap((row, y) =>
       <nav class="site-nav">
         <slot name="header-start" />
         <a class="brand" href="/">
-          <svg class="brand-mark" viewBox="0 0 16 16" aria-hidden="true">
-            {brandSpritePixels.map((pixel) => (
-              <rect x={pixel.x} y={pixel.y} width="1" height="1" fill={pixel.fill} />
-            ))}
-          </svg>
+          <BrandMark />
           Helmr
         </a>
         <div class="nav-links">
@@ -161,11 +134,7 @@ const brandSpritePixels = brandSpriteRows.flatMap((row, y) =>
         <div class="footer-top">
           <div class="footer-brand">
             <a class="brand" href="/">
-              <svg class="brand-mark" viewBox="0 0 16 16" aria-hidden="true">
-                {brandSpritePixels.map((pixel) => (
-                  <rect x={pixel.x} y={pixel.y} width="1" height="1" fill={pixel.fill} />
-                ))}
-              </svg>
+              <BrandMark />
               Helmr
             </a>
             <p class="footer-tagline">
