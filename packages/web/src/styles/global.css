@@ -74,8 +74,6 @@ html {
   scroll-behavior: smooth;
   scrollbar-gutter: stable;
   scrollbar-color: #c9c9c7 #ffffff;
-  -webkit-text-size-adjust: 100%;
-  text-size-adjust: 100%;
 }
 
 body {
