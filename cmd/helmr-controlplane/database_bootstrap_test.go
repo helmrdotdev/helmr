@@ -100,6 +100,12 @@ func TestSCRAMPasswordVerifierDoesNotContainPassword(t *testing.T) {
 	}
 }
 
+func TestRunDatabaseBootstrapRejectsUnknownOperation(t *testing.T) {
+	if err := runDatabaseBootstrap(context.Background(), []string{"unknown"}); err == nil {
+		t.Fatal("expected usage error")
+	}
+}
+
 func TestBootstrapDatabasePostgres(t *testing.T) {
 	adminBaseURL := strings.TrimSpace(os.Getenv("HELMR_TEST_DATABASE_URL"))
 	if adminBaseURL == "" {
@@ -159,6 +165,21 @@ func TestBootstrapDatabasePostgres(t *testing.T) {
 	if err := dbschema.Up(ctx, applicationURL); err != nil {
 		t.Fatalf("application role cannot run the complete schema migration: %v", err)
 	}
+	markerPool, err := pgxpool.New(ctx, applicationURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := markerPool.Exec(ctx, "CREATE TABLE reset_probe (id bigint PRIMARY KEY)"); err != nil {
+		t.Fatalf("create reset probe: %v", err)
+	}
+	markerPool.Close()
+	cfg.resetSchema = true
+	if err := bootstrapDatabase(ctx, cfg); err != nil {
+		t.Fatalf("reset bootstrap: %v", err)
+	}
+	if err := dbschema.Up(ctx, applicationURL); err != nil {
+		t.Fatalf("application role cannot migrate after reset: %v", err)
+	}
 
 	applicationPool, err := pgxpool.New(ctx, applicationURL)
 	if err != nil {
@@ -167,6 +188,13 @@ func TestBootstrapDatabasePostgres(t *testing.T) {
 	defer applicationPool.Close()
 	if _, err := applicationPool.Exec(ctx, "CREATE TABLE bootstrap_probe (id bigint PRIMARY KEY)"); err != nil {
 		t.Fatalf("application role cannot create schema objects: %v", err)
+	}
+	var resetProbeExists bool
+	if err := applicationPool.QueryRow(ctx, "SELECT to_regclass('public.reset_probe') IS NOT NULL").Scan(&resetProbeExists); err != nil {
+		t.Fatal(err)
+	}
+	if resetProbeExists {
+		t.Fatal("database reset retained the previous application schema")
 	}
 	if _, err := applicationPool.Exec(ctx, "CREATE DATABASE forbidden"); err == nil {
 		t.Fatal("application role created a database")

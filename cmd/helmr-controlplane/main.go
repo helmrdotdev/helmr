@@ -63,7 +63,7 @@ func main() {
 			}
 			return
 		case "database-bootstrap":
-			if err := runDatabaseBootstrap(context.Background()); err != nil {
+			if err := runDatabaseBootstrap(context.Background(), os.Args[2:]); err != nil {
 				log.Error("bootstrap database", "error", err)
 				os.Exit(1)
 			}

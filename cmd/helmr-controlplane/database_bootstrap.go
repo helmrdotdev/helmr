@@ -25,13 +25,18 @@ type databaseBootstrapConfig struct {
 	application     *pgxpool.Config
 	applicationRole string
 	databaseName    string
+	resetSchema     bool
 }
 
-func runDatabaseBootstrap(ctx context.Context) error {
+func runDatabaseBootstrap(ctx context.Context, args []string) error {
+	if len(args) > 1 || len(args) == 1 && args[0] != "reset" {
+		return errors.New("usage: helmr-controlplane database-bootstrap [reset]")
+	}
 	cfg, err := loadDatabaseBootstrapConfig()
 	if err != nil {
 		return err
 	}
+	cfg.resetSchema = len(args) == 1
 	return bootstrapDatabase(ctx, cfg)
 }
 
@@ -145,6 +150,14 @@ func bootstrapDatabase(ctx context.Context, cfg databaseBootstrapConfig) error {
 		return fmt.Errorf("begin database bootstrap: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	if cfg.resetSchema {
+		if _, err := tx.Exec(ctx, "DROP SCHEMA IF EXISTS public CASCADE"); err != nil {
+			return fmt.Errorf("drop application database schema: %w", err)
+		}
+		if _, err := tx.Exec(ctx, "CREATE SCHEMA public"); err != nil {
+			return fmt.Errorf("create application database schema: %w", err)
+		}
+	}
 	if !exists {
 		passwordVerifier, err := scramPasswordVerifier(cfg.application.ConnConfig.Password)
 		if err != nil {
