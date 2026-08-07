@@ -17,6 +17,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awsecr "github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/bootstrap"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
@@ -27,15 +28,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
 	emailresend "github.com/helmrdotdev/helmr/internal/email/resend"
-	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"github.com/helmrdotdev/helmr/internal/eventstream"
 	"github.com/helmrdotdev/helmr/internal/imagecache"
 	imagecacheecr "github.com/helmrdotdev/helmr/internal/imagecache/ecr"
 	"github.com/helmrdotdev/helmr/internal/imagecache/retirement"
-	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -98,28 +96,6 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	bootstrapCfg, err := config.LoadRegionBootstrap()
-	if err != nil {
-		return fmt.Errorf("load region bootstrap config: %w", err)
-	}
-	groups, err := workergroup.DecodeConfig(cfg.WorkerGroupsJSON)
-	if err != nil {
-		return fmt.Errorf("decode WORKER_GROUPS: %w", err)
-	}
-	desiredGroups := make([]workergroup.Desired, 0, len(groups))
-	enrollmentSecrets := make([]enrollment.GroupSecret, 0, len(groups))
-	for _, configuredGroup := range groups {
-		desired, groupSecret, err := configuredGroup.Prepare(os.LookupEnv)
-		if err != nil {
-			return fmt.Errorf("prepare worker group %q: %w", configuredGroup.ID, err)
-		}
-		desiredGroups = append(desiredGroups, desired)
-		enrollmentSecrets = append(enrollmentSecrets, groupSecret)
-	}
-	workerEnrollment, err := enrollment.NewVerifier(enrollmentSecrets)
-	if err != nil {
-		return fmt.Errorf("configure worker enrollment: %w", err)
-	}
 	clickHouseConfig := clickhouse.Config{
 		URL:      cfg.ClickHouseURL,
 		User:     cfg.ClickHouseUser,
@@ -161,26 +137,13 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	}
 	defer pool.Close()
 	queries := db.New(pool)
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin worker group reconciliation: %w", err)
-	}
-	defer tx.Rollback(ctx)
-	txQueries := db.New(tx)
-	if err := region.Ensure(ctx, txQueries, region.BootstrapConfig{
-		RegionID:          bootstrapCfg.RegionID,
-		DefaultRegionID:   bootstrapCfg.DefaultRegionID,
-		Provider:          bootstrapCfg.Provider,
-		ProviderRegion:    bootstrapCfg.ProviderRegion,
-		RegionDisplayName: bootstrapCfg.RegionDisplayName,
+	if err := bootstrap.Apply(ctx, pool, bootstrap.Config{
+		Enabled: cfg.BootstrapEnabled, RegionID: cfg.BootstrapRegionID,
+		RegionProvider: cfg.BootstrapRegionProvider, RegionProviderRegion: cfg.BootstrapProviderRegion,
+		RegionDisplayName: cfg.BootstrapRegionName, RegionLocation: cfg.BootstrapRegionLocation,
+		WorkerGroupName: cfg.BootstrapWorkerGroup, WorkerToken: cfg.BootstrapWorkerToken,
 	}); err != nil {
-		return fmt.Errorf("bootstrap region: %w", err)
-	}
-	if err := workergroup.Reconcile(ctx, txQueries, bootstrapCfg.RegionID, desiredGroups); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit worker group reconciliation: %w", err)
+		return fmt.Errorf("bootstrap platform: %w", err)
 	}
 	clickHouseClient, err := clickhouse.New(clickHouseConfig)
 	if err != nil {
@@ -282,12 +245,12 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		WorkerTokenSigningKey: cfg.WorkerTokenSigningKey,
 		RunLeaseTTL:           cfg.RunLeaseTTL,
 		RunFinalizationTTL:    cfg.RunFinalizationTTL,
-		WorkerEnrollment:      workerEnrollment,
 		CapacityToken:         cfg.CapacityToken,
 		SetupToken:            cfg.SetupToken,
 		AuthKey:               cfg.AuthKey,
 		PublicURL:             publicURL,
 		MagicLinkDebugURLs:    cfg.MagicLinkDebugURLs,
+		AdminEmails:           cfg.AdminEmails,
 	})
 	if err != nil {
 		return fmt.Errorf("configure control plane server: %w", err)

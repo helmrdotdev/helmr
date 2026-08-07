@@ -29,27 +29,10 @@ type EnrollmentResponse struct {
 	WorkerInstanceSecret string `json:"worker_instance_secret"`
 }
 
-type EnrollmentChallengeRequest struct {
-	WorkerGroupID string `json:"worker_group_id"`
-}
-
-type EnrollmentChallengeResponse struct {
-	Nonce         string    `json:"nonce"`
-	WorkerGroupID string    `json:"worker_group_id"`
-	ExpiresAt     time.Time `json:"expires_at"`
-}
-
-type EnrollmentIntent struct {
-	WorkerGroupID string `json:"worker_group_id"`
-	Nonce         string `json:"nonce,omitempty"`
+type EnrollmentRequest struct {
+	ResourceID    string `json:"resource_id"`
 	SupportsRun   bool   `json:"supports_run"`
 	SupportsBuild bool   `json:"supports_build"`
-}
-
-type EnrollmentRequest struct {
-	EnrollmentIntent
-	ResourceID string `json:"resource_id"`
-	Proof      string `json:"proof"`
 }
 
 type RunLeaseDiscoveryRequest struct{}

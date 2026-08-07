@@ -10,145 +10,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
-
-func TestWorkerGroupObservationTTLIsPositiveClaimAuthority(t *testing.T) {
-	ctx := context.Background()
-	q := db.New(newPostgresDB(t, ctx))
-	groupID := dbtest.DefaultWorkerGroupID
-	params := db.ReconcileWorkerGroupParams{
-		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
-		ObservationTtlSeconds: 120,
-		AllowsRun:             true, AllowsBuild: true, RequiredCPUMillis: 1, RequiredMemoryBytes: 1,
-		RequiredGuestEphemeralDiskBytes: 1, RequiredVMSlots: 1, RequiredBuildExecutors: 1,
-	}
-	first, err := q.ReconcileWorkerGroup(ctx, params)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replayed, err := q.ReconcileWorkerGroup(ctx, params)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if replayed.ClaimVersion != first.ClaimVersion {
-		t.Fatalf("unchanged TTL advanced claim version: first=%d replay=%d", first.ClaimVersion, replayed.ClaimVersion)
-	}
-	params.ObservationTtlSeconds = 60
-	changed, err := q.ReconcileWorkerGroup(ctx, params)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if changed.ClaimVersion != first.ClaimVersion+1 {
-		t.Fatalf("changed TTL claim version=%d, want %d", changed.ClaimVersion, first.ClaimVersion+1)
-	}
-	params.ObservationTtlSeconds = 0
-	if _, err := q.ReconcileWorkerGroup(ctx, params); err == nil {
-		t.Fatal("zero observation TTL unexpectedly reconciled")
-	}
-}
-
-func TestWorkerGroupReconcileDoesNotReactivateDrainingGroup(t *testing.T) {
-	ctx := context.Background()
-	pool := newPostgresDB(t, ctx)
-	q := db.New(pool)
-	groupID := dbtest.DefaultWorkerGroupID
-	params := db.ReconcileWorkerGroupParams{
-		ID: groupID, RegionID: dbtest.DefaultRegionID, Name: groupID,
-		ObservationTtlSeconds: 120,
-		AllowsRun:             true, AllowsBuild: true, RequiredCPUMillis: 1, RequiredMemoryBytes: 1,
-		RequiredGuestEphemeralDiskBytes: 1, RequiredVMSlots: 1, RequiredBuildExecutors: 1,
-	}
-	if _, err := q.ReconcileWorkerGroup(ctx, params); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		UPDATE worker_groups
-		   SET state = 'draining', updated_at = now()
-		 WHERE id = $1
-	`, groupID); err != nil {
-		t.Fatal(err)
-	}
-	reconciled, err := q.ReconcileWorkerGroup(ctx, params)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reconciled.State != db.WorkerGroupStateDraining {
-		t.Fatalf("reconciled state = %s, want draining", reconciled.State)
-	}
-}
-
-func TestWorkerGroupHasOneActiveGroupPerRoleAndRegion(t *testing.T) {
-	for _, tc := range []struct {
-		name        string
-		allowsRun   bool
-		allowsBuild bool
-		vmSlots     int32
-		buildSlots  int32
-	}{
-		{name: "run", allowsRun: true, vmSlots: 1},
-		{name: "build", allowsBuild: true, buildSlots: 1},
-		{name: "dual-role", allowsRun: true, allowsBuild: true, vmSlots: 1, buildSlots: 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := context.Background()
-			pool := newPostgresDB(t, ctx)
-			_, err := db.New(pool).ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
-				ID: "second-" + tc.name, RegionID: dbtest.DefaultRegionID, Name: "second-" + tc.name,
-				ObservationTtlSeconds: 120, AllowsRun: tc.allowsRun, AllowsBuild: tc.allowsBuild,
-				RequiredCPUMillis: 1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1,
-				RequiredVMSlots: tc.vmSlots, RequiredBuildExecutors: tc.buildSlots,
-			})
-			if err == nil {
-				t.Fatalf("second active %s group unexpectedly reconciled", tc.name)
-			}
-		})
-	}
-}
-
-func TestWorkerGroupReplacementAllowsDrainingPredecessor(t *testing.T) {
-	ctx := context.Background()
-	pool := newPostgresDB(t, ctx)
-	workerID := uuid.Must(uuid.NewV7())
-	dbtest.MustExec(t, ctx, pool, `
-		INSERT INTO worker_instances (id, resource_id, worker_group_id, state)
-		VALUES ($1, $2, $3, 'registering')
-	`, workerID, "predecessor-"+workerID.String(), dbtest.DefaultWorkerGroupID)
-	dbtest.MustExec(t, ctx, pool, `UPDATE worker_groups SET state = 'draining' WHERE id = $1`, dbtest.DefaultWorkerGroupID)
-	replacementID := "replacement-" + dbtest.ShortID(uuid.Must(uuid.NewV7()))
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
-	if err := workergroup.Reconcile(ctx, db.New(tx), dbtest.DefaultRegionID, []workergroup.Desired{{
-		Spec: workergroup.Spec{ID: replacementID, Name: replacementID, AllowsRun: true, AllowsBuild: true},
-		Capacity: workergroup.Capacity{
-			MilliCPU: 1, MemoryBytes: 1, GuestEphemeralDiskBytes: 1,
-			VMSlots: 1, BuildExecutors: 1,
-		},
-		ObservationTTLSeconds: 120,
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	var predecessorState, replacementState string
-	if err := pool.QueryRow(ctx, `SELECT state FROM worker_groups WHERE id = $1`, dbtest.DefaultWorkerGroupID).Scan(&predecessorState); err != nil {
-		t.Fatal(err)
-	}
-	if err := pool.QueryRow(ctx, `SELECT state FROM worker_groups WHERE id = $1`, replacementID).Scan(&replacementState); err != nil {
-		t.Fatal(err)
-	}
-	if predecessorState != "draining" || replacementState != "active" {
-		t.Fatalf("replacement states = predecessor:%s replacement:%s", predecessorState, replacementState)
-	}
-	if _, err := pool.Exec(ctx, `UPDATE worker_groups SET state = 'active' WHERE id = $1`, dbtest.DefaultWorkerGroupID); err == nil {
-		t.Fatal("draining predecessor reactivated while replacement was active")
-	}
-}
 
 func TestWorkerGroupStateTransitionsAreFencedAndReplaySafe(t *testing.T) {
 	ctx := context.Background()
@@ -304,10 +167,9 @@ func TestDeploymentWorkerInstanceLossTerminallyFencesRegisteringIdentity(t *test
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("lost registering credential authentication error = %v, want pgx.ErrNoRows", err)
 	}
-	nonce := createTestEnrollmentNonce(t, ctx, q, dbtest.DefaultWorkerGroupID)
 	replacementID := uuid.Must(uuid.NewV7())
 	replacement, err := q.EnrollWorkerInstance(ctx, enrollmentParams(
-		nonce, replacementID, resourceID, true, false, []byte("replacement-secret"),
+		replacementID, resourceID, true, false, []byte("replacement-secret"),
 	))
 	if err != nil {
 		t.Fatalf("enroll replacement identity: %v", err)
@@ -326,5 +188,23 @@ func TestDeploymentWorkerInstanceLossTerminallyFencesRegisteringIdentity(t *test
 	}
 	if lostCount != 1 || registeringCount != 1 {
 		t.Fatalf("locator identities = lost %d registering %d, want 1 and 1", lostCount, registeringCount)
+	}
+}
+
+func enrollTestWorker(t *testing.T, ctx context.Context, q *db.Queries, workerID uuid.UUID, resourceID string, allowsRun bool, allowsBuild bool, secretHash []byte) db.EnrollWorkerInstanceRow {
+	t.Helper()
+	row, err := q.EnrollWorkerInstance(ctx, enrollmentParams(workerID, resourceID, allowsRun, allowsBuild, secretHash))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return row
+}
+
+func enrollmentParams(workerID uuid.UUID, resourceID string, allowsRun bool, allowsBuild bool, secretHash []byte) db.EnrollWorkerInstanceParams {
+	return db.EnrollWorkerInstanceParams{
+		TokenHash: make([]byte, 32), AllowsRun: allowsRun, AllowsBuild: allowsBuild,
+		WorkerInstanceID: pgvalue.UUID(workerID), ResourceID: resourceID,
+		CurrentServiceID: pgvalue.NewUUIDv7(), CredentialID: pgvalue.NewUUIDv7(),
+		KeyPrefix: uuid.NewString(), SecretHash: secretHash,
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	capacityplanner "github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -54,81 +55,20 @@ func (d *Authority) PlaceReadyBuild(ctx context.Context, candidate ReadyBuildCan
 			"deployment toolchain digest is invalid",
 		)
 	}
-	var groupID string
-	var workerID pgtype.UUID
-	var workerEpoch int64
-	err = d.pool.QueryRow(ctx, `
-SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch
-  FROM worker_groups
-  JOIN worker_instances ON worker_instances.worker_group_id = worker_groups.id
-  JOIN runtime_identities
-    ON runtime_identities.id = worker_instances.runtime_identity_id
-   AND runtime_identities.runtime_arch = 'x86_64'
-	   AND runtime_identities.vm_runtime_contract = 'helmr.vm-runtime.v0'
-  JOIN worker_observations
-    ON worker_observations.worker_instance_id = worker_instances.id
-   AND worker_observations.worker_epoch = worker_instances.current_epoch
-  LEFT JOIN deployment_build_leases
-    ON deployment_build_leases.worker_instance_id = worker_instances.id
-   AND deployment_build_leases.worker_epoch = worker_instances.current_epoch
-   AND deployment_build_leases.state IN ('assigned','starting','running')
-	 WHERE worker_groups.region_id = $1 AND worker_groups.state = 'active'
-	   AND worker_groups.allows_build
-	   AND worker_instances.state = 'active' AND worker_instances.supports_build
-   AND worker_observations.observed_at >= transaction_timestamp()
-       - worker_groups.observation_ttl_seconds * interval '1 second'
-	   AND worker_observations.build_paused_reason IS NULL
-	   AND worker_instances.per_vm_cpu_millis >= $6
-	   AND worker_instances.per_vm_memory_bytes >= $7
-	   AND worker_instances.per_vm_guest_ephemeral_disk_bytes >= $5
-	GROUP BY worker_groups.id, worker_instances.id, worker_instances.current_epoch,
-	         worker_instances.epoch_cpu_millis,
-	         worker_instances.epoch_memory_bytes,
-	         worker_instances.epoch_guest_ephemeral_disk_bytes,
-		         worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes,
-		         worker_instances.per_vm_guest_ephemeral_disk_bytes,
-	         worker_instances.max_build_executors
- HAVING COALESCE(sum(deployment_build_leases.requested_build_executors),0) + $2
-          <= worker_instances.max_build_executors
-    AND worker_instances.epoch_cpu_millis
-          - COALESCE(sum(deployment_build_leases.requested_cpu_millis),0)
-          - COALESCE((SELECT sum(reserved_cpu_millis) FROM runtime_instances
-                       WHERE worker_instance_id = worker_instances.id
-                         AND worker_epoch = worker_instances.current_epoch
-                         AND (observed_state IN ('allocated','preparing','ready','closing')
-                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))),0) >= $3
-    AND worker_instances.epoch_memory_bytes
-          - COALESCE(sum(deployment_build_leases.requested_memory_bytes),0)
-          - COALESCE((SELECT sum(reserved_memory_bytes) FROM runtime_instances
-                       WHERE worker_instance_id = worker_instances.id
-                         AND worker_epoch = worker_instances.current_epoch
-                         AND (observed_state IN ('allocated','preparing','ready','closing')
-                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))),0) >= $4
-    AND worker_instances.epoch_guest_ephemeral_disk_bytes
-          - COALESCE(sum(deployment_build_leases.requested_guest_ephemeral_disk_bytes),0)
-          - COALESCE((SELECT sum(reserved_guest_ephemeral_disk_bytes) FROM runtime_instances
-                       WHERE worker_instance_id = worker_instances.id
-                         AND worker_epoch = worker_instances.current_epoch
-                         AND (observed_state IN ('allocated','preparing','ready','closing')
-                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))),0) >= $5
- ORDER BY worker_instances.id
-LIMIT 1`, candidate.BuildRegionID, requestedBuildExecutors,
-		requestedCPUMillis, requestedMemoryBytes,
-		requestedGuestEphemeralDiskBytes,
-		fixedBuildGuestCPUMillis, fixedBuildGuestMemoryBytes).Scan(
-		&groupID, &workerID, &workerEpoch)
+	bins, err := db.New(d.pool).ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{RegionID: candidate.BuildRegionID})
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			eligible, checkErr := d.readyBuildCandidateExists(ctx, candidate)
-			if checkErr != nil {
-				return db.LeaseQueuedDeploymentBuildRow{}, checkErr
-			}
-			if !eligible {
-				return db.LeaseQueuedDeploymentBuildRow{}, ErrCandidateChanged
-			}
-			return db.LeaseQueuedDeploymentBuildRow{}, ErrCapacityUnavailable
+		return db.LeaseQueuedDeploymentBuildRow{}, fmt.Errorf("discover build worker capacity: %w", err)
+	}
+	worker, ok := capacityplanner.SelectBuildWorker(bins)
+	if !ok || !worker.WorkerEpoch.Valid {
+		eligible, checkErr := d.readyBuildCandidateExists(ctx, candidate)
+		if checkErr != nil {
+			return db.LeaseQueuedDeploymentBuildRow{}, checkErr
 		}
-		return db.LeaseQueuedDeploymentBuildRow{}, fmt.Errorf("discover build worker: %w", err)
+		if !eligible {
+			return db.LeaseQueuedDeploymentBuildRow{}, ErrCandidateChanged
+		}
+		return db.LeaseQueuedDeploymentBuildRow{}, ErrCapacityUnavailable
 	}
 	now := time.Now().UTC()
 	snapshot, _ := json.Marshal(map[string]any{"source": "dispatcher", "lease_sequence": candidate.LeaseSequence})
@@ -139,8 +79,8 @@ LIMIT 1`, candidate.BuildRegionID, requestedBuildExecutors,
 			OrgID: candidate.OrgID, DeploymentID: candidate.DeploymentID,
 			BuildRegionID: candidate.BuildRegionID,
 			BuildLeaseID:  pgvalue.UUID(uuid.Must(uuid.NewV7())), LeaseSequence: candidate.LeaseSequence,
-			WorkerGroupID: groupID, BuildWorkerInstanceID: workerID,
-			WorkerEpoch: workerEpoch, RequestedCPUMillis: requestedCPUMillis,
+			WorkerGroupID: worker.WorkerGroupID, BuildWorkerInstanceID: worker.WorkerInstanceID,
+			WorkerEpoch: worker.WorkerEpoch.Int64, RequestedCPUMillis: requestedCPUMillis,
 			RequestedMemoryBytes:             requestedMemoryBytes,
 			RequestedGuestEphemeralDiskBytes: requestedGuestEphemeralDiskBytes,
 			RequestedBuildExecutors:          requestedBuildExecutors, BuildSnapshot: snapshot,

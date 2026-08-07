@@ -29,7 +29,6 @@ type RegionSummary struct {
 	ProviderRegion string       `json:"provider_region"`
 	DisplayName    string       `json:"display_name"`
 	Status         RegionStatus `json:"status"`
-	Visibility     string       `json:"visibility"`
 	Location       string       `json:"location,omitempty"`
 }
 

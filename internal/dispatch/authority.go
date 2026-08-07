@@ -28,10 +28,9 @@ type Authority struct {
 }
 
 type RunPlacementPolicy struct {
-	PreparationLimit int64
-	ReservationTTL   time.Duration
-	StartDeadline    time.Duration
-	LeaseTTL         time.Duration
+	ReservationTTL time.Duration
+	StartDeadline  time.Duration
+	LeaseTTL       time.Duration
 }
 
 func NewRunAuthority(
@@ -46,8 +45,7 @@ func NewRunAuthority(
 	if !fencingKey.Valid() {
 		return nil, errors.New("run authority workspace fencing key is required")
 	}
-	if policy.PreparationLimit <= 0 ||
-		policy.ReservationTTL <= 0 ||
+	if policy.ReservationTTL <= 0 ||
 		policy.StartDeadline <= 0 ||
 		policy.LeaseTTL <= 0 ||
 		policy.StartDeadline > policy.LeaseTTL {

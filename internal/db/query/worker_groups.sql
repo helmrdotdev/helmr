@@ -1,144 +1,60 @@
--- name: ReconcileWorkerGroup :one
-WITH desired_group AS (
-    INSERT INTO worker_groups (
-        id, region_id, name, description, state, allows_run, allows_build,
-        required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes,
-        required_build_cache_bytes, required_artifact_cache_bytes,
-        required_vm_slots, required_build_executors, observation_ttl_seconds
-    ) VALUES (
-        sqlc.arg(id), sqlc.arg(region_id), sqlc.arg(name), sqlc.arg(description),
-        'active', sqlc.arg(allows_run), sqlc.arg(allows_build),
-        sqlc.arg(required_cpu_millis), sqlc.arg(required_memory_bytes),
-        sqlc.arg(required_guest_ephemeral_disk_bytes),
-        sqlc.arg(required_build_cache_bytes), sqlc.arg(required_artifact_cache_bytes),
-        sqlc.arg(required_vm_slots), sqlc.arg(required_build_executors),
-        sqlc.arg(observation_ttl_seconds)
-    )
-    ON CONFLICT (id) DO UPDATE
-       SET claim_version = CASE
-               WHEN worker_groups.allows_run IS DISTINCT FROM EXCLUDED.allows_run
-                 OR worker_groups.allows_build IS DISTINCT FROM EXCLUDED.allows_build
-                 OR worker_groups.required_cpu_millis IS DISTINCT FROM EXCLUDED.required_cpu_millis
-                 OR worker_groups.required_memory_bytes IS DISTINCT FROM EXCLUDED.required_memory_bytes
-                 OR worker_groups.required_guest_ephemeral_disk_bytes IS DISTINCT FROM EXCLUDED.required_guest_ephemeral_disk_bytes
-                 OR worker_groups.required_build_cache_bytes IS DISTINCT FROM EXCLUDED.required_build_cache_bytes
-                 OR worker_groups.required_artifact_cache_bytes IS DISTINCT FROM EXCLUDED.required_artifact_cache_bytes
-                 OR worker_groups.required_vm_slots IS DISTINCT FROM EXCLUDED.required_vm_slots
-                 OR worker_groups.required_build_executors IS DISTINCT FROM EXCLUDED.required_build_executors
-                 OR worker_groups.observation_ttl_seconds IS DISTINCT FROM EXCLUDED.observation_ttl_seconds
-               THEN worker_groups.claim_version + 1 ELSE worker_groups.claim_version END,
-           region_id = EXCLUDED.region_id, name = EXCLUDED.name,
-           description = EXCLUDED.description,
-           allows_run = EXCLUDED.allows_run, allows_build = EXCLUDED.allows_build,
-           required_cpu_millis = EXCLUDED.required_cpu_millis,
-           required_memory_bytes = EXCLUDED.required_memory_bytes,
-           required_guest_ephemeral_disk_bytes = EXCLUDED.required_guest_ephemeral_disk_bytes,
-           required_build_cache_bytes = EXCLUDED.required_build_cache_bytes,
-           required_artifact_cache_bytes = EXCLUDED.required_artifact_cache_bytes,
-           required_vm_slots = EXCLUDED.required_vm_slots,
-           required_build_executors = EXCLUDED.required_build_executors,
-           observation_ttl_seconds = EXCLUDED.observation_ttl_seconds,
-           updated_at = now()
-    RETURNING *
-), lost_workers AS (
-    UPDATE worker_instances
-       SET state = 'lost',
-           claim_version = worker_instances.claim_version + 1,
-           lost_at = COALESCE(lost_at, now()),
-           updated_at = now()
-     FROM desired_group
-     WHERE worker_instances.worker_group_id = desired_group.id
-       AND worker_instances.state IN ('registering', 'active', 'draining')
-       AND (
-           (worker_instances.supports_run AND NOT desired_group.allows_run)
-           OR (worker_instances.supports_build AND NOT desired_group.allows_build)
-           OR EXISTS (
-               SELECT 1
-                 FROM worker_instance_credentials
-                WHERE worker_instance_credentials.worker_instance_id = worker_instances.id
-                  AND worker_instance_credentials.revoked_at IS NULL
-                  AND (
-                      (worker_instance_credentials.allows_run AND NOT desired_group.allows_run)
-                      OR (worker_instance_credentials.allows_build AND NOT desired_group.allows_build)
-                  )
-           )
-           OR (worker_instances.state <> 'registering' AND (
-               worker_instances.epoch_cpu_millis < desired_group.required_cpu_millis
-               OR worker_instances.epoch_memory_bytes < desired_group.required_memory_bytes
-               OR worker_instances.epoch_guest_ephemeral_disk_bytes < desired_group.required_guest_ephemeral_disk_bytes
-               OR worker_instances.epoch_build_cache_bytes < desired_group.required_build_cache_bytes
-               OR worker_instances.epoch_artifact_cache_bytes < desired_group.required_artifact_cache_bytes
-               OR worker_instances.max_vm_slots < desired_group.required_vm_slots
-               OR worker_instances.max_build_executors < desired_group.required_build_executors
-           ))
-       )
-    RETURNING worker_instances.id, worker_instances.current_epoch
-), revoked AS (
-    UPDATE worker_instance_credentials
-       SET revoked_at = COALESCE(revoked_at, now())
-     WHERE worker_instance_credentials.worker_instance_id IN (SELECT id FROM lost_workers)
-       AND worker_instance_credentials.revoked_at IS NULL
-    RETURNING worker_instance_credentials.id
-), lost_mounts AS (
-    UPDATE workspace_mounts
-       SET state = 'lost', lost_at = now(), terminal_at = now(),
-           terminal_reason_code = 'worker_group_contract_changed', updated_at = now()
-     WHERE workspace_mounts.worker_instance_id IN (SELECT id FROM lost_workers)
-       AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
-    RETURNING workspace_mounts.id
-), lost_runtimes AS (
-    UPDATE runtime_instances
-       SET observed_state = 'lost', observed_version = observed_version + 1,
-           observed_at = now(), lost_at = now(), terminal_at = now(),
-           terminal_reason_code = 'worker_group_contract_changed',
-           reserved_run_id = NULL, reserved_attempt_number = NULL,
-           reserved_process_id = NULL, reserved_workspace_version_id = NULL,
-           reservation_expires_at = NULL, updated_at = now()
-     WHERE runtime_instances.worker_instance_id IN (SELECT id FROM lost_workers)
-       AND runtime_instances.reclaimed_at IS NULL
-       AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
-    RETURNING runtime_instances.id
-)
-SELECT desired_group.* FROM desired_group
- WHERE (SELECT count(*) FROM revoked) >= 0
-   AND (SELECT count(*) FROM lost_mounts) >= 0
-   AND (SELECT count(*) FROM lost_runtimes) >= 0;
+-- name: LockWorkerGroupCreationRegion :exec
+SELECT pg_advisory_xact_lock(sqlc.arg(lock_key)::bigint);
 
--- name: LockWorkerGroupsForReconciliation :many
-SELECT worker_groups.id
+-- name: LockWorkerGroupMutation :exec
+SELECT pg_advisory_xact_lock(sqlc.arg(lock_key)::bigint);
+
+-- name: GetWorkerGroupByRegionName :one
+SELECT *
   FROM worker_groups
- WHERE worker_groups.region_id = sqlc.arg(region_id)
-   AND worker_groups.id = ANY(sqlc.arg(desired_ids)::text[])
- ORDER BY worker_groups.id
- FOR UPDATE OF worker_groups;
+ WHERE region_id = sqlc.arg(region_id)
+   AND name = sqlc.arg(name);
 
--- name: LockAbsentWorkerGroups :many
-SELECT worker_groups.id
-  FROM worker_groups
- WHERE worker_groups.region_id = sqlc.arg(region_id)
-   AND worker_groups.state <> 'disabled'
-   AND NOT (worker_groups.id = ANY(sqlc.arg(desired_ids)::text[]))
- ORDER BY worker_groups.id
- FOR UPDATE OF worker_groups;
-
--- name: DrainAbsentWorkerGroups :many
-WITH draining_groups AS (
-    UPDATE worker_groups
-       SET state = 'draining', claim_version = claim_version + 1, updated_at = now()
-     WHERE worker_groups.region_id = sqlc.arg(region_id)
-       AND worker_groups.state IN ('active', 'paused')
-       AND NOT (worker_groups.id = ANY(sqlc.arg(desired_ids)::text[]))
-    RETURNING *
+-- name: CreateWorkerGroup :one
+WITH token AS (
+    INSERT INTO worker_group_tokens (id, token_hash)
+    VALUES (sqlc.arg(token_id), sqlc.arg(token_hash))
+    RETURNING id
 )
-SELECT draining_groups.* FROM draining_groups
- ORDER BY draining_groups.id;
+INSERT INTO worker_groups (
+    id, token_id, region_id, name, description, state, allows_run, allows_build,
+    required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes,
+    required_build_cache_bytes, required_artifact_cache_bytes,
+    required_vm_slots, required_build_executors, observation_ttl_seconds
+)
+SELECT sqlc.arg(id), token.id, sqlc.arg(region_id), sqlc.arg(name),
+       sqlc.arg(description), 'active', sqlc.arg(allows_run), sqlc.arg(allows_build),
+       sqlc.arg(required_cpu_millis), sqlc.arg(required_memory_bytes),
+       sqlc.arg(required_guest_ephemeral_disk_bytes),
+       sqlc.arg(required_build_cache_bytes), sqlc.arg(required_artifact_cache_bytes),
+       sqlc.arg(required_vm_slots), sqlc.arg(required_build_executors),
+       sqlc.arg(observation_ttl_seconds)
+  FROM token
+RETURNING *;
+
+-- name: UpdateWorkerGroupDescription :one
+UPDATE worker_groups
+   SET description = sqlc.arg(description), updated_at = now()
+ WHERE id = sqlc.arg(id)
+RETURNING *;
+
+-- name: RotateWorkerGroupToken :one
+UPDATE worker_group_tokens
+   SET token_hash = sqlc.arg(token_hash), updated_at = now()
+  FROM worker_groups
+ WHERE worker_groups.id = sqlc.arg(worker_group_id)
+   AND worker_groups.token_id = worker_group_tokens.id
+RETURNING worker_group_tokens.*;
 
 -- name: ListWorkerGroups :many
 SELECT *
   FROM worker_groups
- WHERE region_id = sqlc.arg(region_id)
- ORDER BY name ASC
+ WHERE sqlc.narg(region_id)::text IS NULL OR region_id = sqlc.narg(region_id)
+ ORDER BY region_id, name ASC
  LIMIT sqlc.arg(row_limit);
+
+-- name: GetWorkerGroup :one
+SELECT * FROM worker_groups WHERE id = sqlc.arg(id);
 
 -- name: GetControlPlaneWorkerGroupReadiness :one
 SELECT id AS worker_group_id,
@@ -257,6 +173,125 @@ SELECT *
  ORDER BY worker_group_id, resource_id
  LIMIT sqlc.arg(row_limit);
 
+-- name: ListWorkerCapacityBins :many
+WITH live_workers AS (
+    SELECT worker_groups.id AS worker_group_id,
+           worker_instances.id AS worker_instance_id,
+           worker_instances.current_epoch AS worker_epoch,
+           worker_instances.supports_run,
+           worker_instances.supports_build,
+           worker_instances.runtime_identity_id,
+           runtime_identities.runtime_arch,
+           runtime_identities.vm_runtime_contract,
+           worker_instances.substrate_format,
+           worker_instances.substrate_contract,
+           worker_instances.per_vm_cpu_millis,
+           worker_instances.per_vm_memory_bytes,
+           worker_instances.per_vm_guest_ephemeral_disk_bytes,
+           worker_instances.max_vm_slots,
+           worker_instances.max_run_consumers,
+           worker_instances.max_build_executors,
+           worker_instances.max_runtime_starts,
+           worker_observations.run_paused_reason,
+           worker_observations.build_paused_reason,
+           worker_observations.runtime_paused_reason,
+           worker_instances.epoch_cpu_millis,
+           worker_instances.epoch_memory_bytes,
+           worker_instances.epoch_guest_ephemeral_disk_bytes
+      FROM worker_groups
+      JOIN worker_instances
+        ON worker_instances.worker_group_id = worker_groups.id
+       AND worker_instances.state = 'active'
+       AND worker_instances.current_epoch IS NOT NULL
+      JOIN runtime_identities
+        ON runtime_identities.id = worker_instances.runtime_identity_id
+      JOIN worker_observations
+        ON worker_observations.worker_instance_id = worker_instances.id
+       AND worker_observations.worker_epoch = worker_instances.current_epoch
+       AND worker_observations.observed_at >= transaction_timestamp()
+           - worker_groups.observation_ttl_seconds * interval '1 second'
+     WHERE (sqlc.arg(worker_group_id)::text = '' OR worker_groups.id = sqlc.arg(worker_group_id))
+       AND (sqlc.arg(region_id)::text = '' OR worker_groups.region_id = sqlc.arg(region_id))
+       AND worker_groups.state = 'active'
+), usage AS (
+    SELECT live_workers.worker_instance_id,
+           COALESCE((SELECT sum(runtime_instances.reserved_cpu_millis)
+                      FROM runtime_instances
+                     WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
+                        AND runtime_instances.worker_epoch = live_workers.worker_epoch
+                        AND runtime_instances.reclaimed_at IS NULL), 0)
+           + COALESCE((SELECT sum(deployment_build_leases.requested_cpu_millis)
+                         FROM deployment_build_leases
+                        WHERE deployment_build_leases.worker_instance_id = live_workers.worker_instance_id
+                          AND deployment_build_leases.worker_epoch = live_workers.worker_epoch
+                          AND deployment_build_leases.state IN ('assigned', 'starting', 'running')), 0) AS cpu_millis,
+           COALESCE((SELECT sum(runtime_instances.reserved_memory_bytes)
+                      FROM runtime_instances
+                     WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
+                        AND runtime_instances.worker_epoch = live_workers.worker_epoch
+                        AND runtime_instances.reclaimed_at IS NULL), 0)
+           + COALESCE((SELECT sum(deployment_build_leases.requested_memory_bytes)
+                         FROM deployment_build_leases
+                        WHERE deployment_build_leases.worker_instance_id = live_workers.worker_instance_id
+                          AND deployment_build_leases.worker_epoch = live_workers.worker_epoch
+                          AND deployment_build_leases.state IN ('assigned', 'starting', 'running')), 0) AS memory_bytes,
+           COALESCE((SELECT sum(runtime_instances.reserved_guest_ephemeral_disk_bytes)
+                      FROM runtime_instances
+                     WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
+                        AND runtime_instances.worker_epoch = live_workers.worker_epoch
+                        AND runtime_instances.reclaimed_at IS NULL), 0)
+           + COALESCE((SELECT sum(deployment_build_leases.requested_guest_ephemeral_disk_bytes)
+                         FROM deployment_build_leases
+                        WHERE deployment_build_leases.worker_instance_id = live_workers.worker_instance_id
+                          AND deployment_build_leases.worker_epoch = live_workers.worker_epoch
+                          AND deployment_build_leases.state IN ('assigned', 'starting', 'running')), 0) AS guest_ephemeral_disk_bytes,
+           COALESCE((SELECT count(*) FROM runtime_instances
+                      WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
+                        AND runtime_instances.worker_epoch = live_workers.worker_epoch
+                        AND (runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
+                             OR (runtime_instances.observed_state IN ('failed', 'lost') AND runtime_instances.reclaimed_at IS NULL))), 0)::bigint AS vm_slots,
+           COALESCE((SELECT count(*) FROM run_leases
+                      WHERE run_leases.worker_instance_id = live_workers.worker_instance_id
+                        AND run_leases.worker_epoch = live_workers.worker_epoch
+                        AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')), 0)::bigint AS run_consumers,
+           COALESCE((SELECT sum(deployment_build_leases.requested_build_executors)
+                      FROM deployment_build_leases
+                     WHERE deployment_build_leases.worker_instance_id = live_workers.worker_instance_id
+                       AND deployment_build_leases.worker_epoch = live_workers.worker_epoch
+                       AND deployment_build_leases.state IN ('assigned', 'starting', 'running')), 0)::bigint AS build_executors,
+           COALESCE((SELECT count(*) FROM runtime_instances
+                      WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
+                        AND runtime_instances.worker_epoch = live_workers.worker_epoch
+                        AND runtime_instances.observed_state IN ('allocated', 'preparing')), 0)::bigint AS runtime_starts
+      FROM live_workers
+)
+SELECT live_workers.worker_group_id,
+       live_workers.worker_instance_id,
+       live_workers.worker_epoch,
+       live_workers.supports_run,
+       live_workers.supports_build,
+       live_workers.runtime_identity_id,
+       live_workers.runtime_arch,
+       live_workers.vm_runtime_contract,
+       live_workers.substrate_format,
+       live_workers.substrate_contract,
+       live_workers.per_vm_cpu_millis,
+       live_workers.per_vm_memory_bytes,
+       live_workers.per_vm_guest_ephemeral_disk_bytes,
+       GREATEST(live_workers.epoch_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
+       GREATEST(live_workers.epoch_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
+       GREATEST(live_workers.epoch_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
+       GREATEST(live_workers.max_vm_slots - usage.vm_slots, 0)::bigint AS available_vm_slots,
+       GREATEST(live_workers.max_run_consumers - usage.run_consumers, 0)::bigint AS available_run_consumers,
+       GREATEST(live_workers.max_build_executors - usage.build_executors, 0)::bigint AS available_build_executors,
+       GREATEST(live_workers.max_runtime_starts - usage.runtime_starts, 0)::bigint AS available_runtime_starts,
+       live_workers.run_paused_reason,
+       live_workers.build_paused_reason,
+       live_workers.runtime_paused_reason
+  FROM live_workers
+  JOIN usage USING (worker_instance_id)
+ ORDER BY live_workers.worker_instance_id;
+
 -- name: MarkWorkerInstanceLost :one
 WITH target AS (
     UPDATE worker_instances
@@ -346,8 +381,14 @@ WITH activation AS (
        AND sqlc.arg(epoch_guest_ephemeral_disk_bytes)::bigint >= worker_groups.required_guest_ephemeral_disk_bytes
        AND sqlc.arg(epoch_build_cache_bytes)::bigint >= worker_groups.required_build_cache_bytes
        AND sqlc.arg(epoch_artifact_cache_bytes)::bigint >= worker_groups.required_artifact_cache_bytes
-       AND sqlc.arg(max_vm_slots)::integer >= worker_groups.required_vm_slots
-       AND sqlc.arg(max_build_executors)::integer >= worker_groups.required_build_executors
+       AND (
+           NOT sqlc.arg(supports_run)::boolean
+           OR sqlc.arg(max_vm_slots)::integer >= worker_groups.required_vm_slots
+       )
+       AND (
+           NOT sqlc.arg(supports_build)::boolean
+           OR sqlc.arg(max_build_executors)::integer >= worker_groups.required_build_executors
+       )
        AND NOT EXISTS (
            SELECT 1 FROM runtime_instances
             WHERE runtime_instances.worker_instance_id = worker_instances.id

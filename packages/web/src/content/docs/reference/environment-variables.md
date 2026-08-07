@@ -11,7 +11,7 @@ order: 960
 Helmr names environment variables according to the environment that owns them:
 
 - A dedicated Helmr process uses direct configuration names such as
-  `DATABASE_URL`, `CONTROL_PLANE_ADDR`, and `WORKER_GROUP_ID`. Repeating
+  `DATABASE_URL`, `CONTROL_PLANE_ADDR`, and `WORKER_RESOURCE_ID`. Repeating
   `HELMR_` inside a process-specific environment adds no ownership information.
 - `HELMR_` is reserved for public client configuration and values that cross
   into an environment Helmr does not exclusively own, such as a user's shell
@@ -35,20 +35,33 @@ provided. Base64 root keys must be canonical without surrounding whitespace.
 ## Control Plane
 
 Required: `DATABASE_URL`, `CAS_URI`, `CLICKHOUSE_URL`, `BUILD_POLICY_PATH`,
-`PLATFORM_STORE_URI`, `WORKER_TOKEN_SIGNING_KEY`, `WORKER_GROUPS`, `REGION_ID`,
-`DEFAULT_REGION_ID`, `PROVIDER`, `PROVIDER_REGION`, `AUTH_KEY`,
-`ENCRYPTION_KEY`, `WORKSPACE_FENCING_KEY`, `TOKEN_CREDENTIAL_KEY`,
+`PLATFORM_STORE_URI`, `WORKER_TOKEN_SIGNING_KEY`, `AUTH_KEY`, `ENCRYPTION_KEY`,
+`WORKSPACE_FENCING_KEY`, `TOKEN_CREDENTIAL_KEY`,
 `GITHUB_OAUTH_CLIENT_ID`, and `GITHUB_OAUTH_CLIENT_SECRET`.
 
 Deployment mode: `DEPLOYMENT_MODE` defaults to `self-hosted`. In `self-hosted` mode, `SETUP_TOKEN` is required to create the first and only organization. In `managed-cloud` mode, authenticated users can create organizations without a setup token.
 
-`WORKER_GROUPS` is the authoritative JSON list of logical worker groups.
-Each group declares its ID, presentation fields, allowed run/build roles,
-observation TTL, instance-capacity vector, and the name of its distinct
-`WORKER_GROUP_ENROLLMENT_SECRET_*` environment variable. It contains no AWS
-account, Auto Scaling group, instance profile, AMI, or topology authority.
+Regions and Worker Groups are PostgreSQL resources managed through the Admin
+API and Console. Control Plane startup does not reconcile them from process
+configuration, and a deployment may start with neither resource.
 
-`REGION_ID` and `DEFAULT_REGION_ID` are opaque Helmr identifiers, not provider-region or DNS names. Their normalized UTF-8 values must be 1–255 bytes and contain no surrounding whitespace or control characters.
+An optional bootstrap creates at most one initial Region and one combined
+run/build Worker Group. Set `BOOTSTRAP_ENABLED=true` together with
+`BOOTSTRAP_REGION_ID`, `BOOTSTRAP_REGION_PROVIDER`,
+`BOOTSTRAP_REGION_PROVIDER_REGION`, `BOOTSTRAP_WORKER_GROUP_NAME`, and
+`BOOTSTRAP_WORKER_TOKEN`. `BOOTSTRAP_REGION_DISPLAY_NAME` and
+`BOOTSTRAP_REGION_LOCATION` are optional. Bootstrap creates missing resources
+and never updates an existing Region or Worker Group. The token must use the
+`hlmr_wgt_` format; only its SHA-256 hash is stored in PostgreSQL.
+
+`BOOTSTRAP_REGION_ID` is an opaque Helmr identifier, not a provider-region or
+DNS name. Its normalized UTF-8 value must be 1–255 bytes and contain no
+surrounding whitespace or control characters.
+
+`ADMIN_EMAILS` is an optional comma-separated list of normalized user email
+addresses that receive the platform-wide Admin flag when their user record is
+created. Admin differs from organization membership roles and controls the
+`/admin` Console and `/admin/api/v1` API surfaces.
 
 Optional: `CONTROL_PLANE_ADDR`, `PUBLIC_URL`, `REDIS_URL`, and
 `MAGIC_LINK_DEBUG_URLS`. `REDIS_URL` defaults to
@@ -89,7 +102,6 @@ Optional Run placement tuning:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `RUN_PREPARATION_LIMIT` | `32` | Maximum concurrent Run runtime preparations in one queue scope before applying any lower pinned queue limit. |
 | `RUN_RESERVATION_TTL` | `5m` | Lifetime of a cold runtime reservation before fenced cleanup is required. |
 | `RUN_LEASE_START_DEADLINE` | `1m` | Time allowed for a worker to claim a newly assigned Run Lease. |
 | `RUN_LEASE_TTL` | `5m` | Operational lifetime sampled when a Run and Workspace Lease are granted or renewed. Must be at least the start deadline. |
@@ -106,8 +118,8 @@ Optional Schedule worker tuning:
 ## Worker
 
 Required for every Worker: `CONTROL_PLANE_URL`, `CAS_URI`,
-`PLATFORM_STORE_URI`, `WORKER_GROUP_ID`, `WORKER_RESOURCE_ID`,
-`WORKER_ENROLLMENT_SECRET_FILE`, `WORKER_ROLES`,
+`PLATFORM_STORE_URI`, `WORKER_RESOURCE_ID`,
+`WORKER_ENROLLMENT_TOKEN_FILE`, `WORKER_ROLES`,
 `CHECKPOINT_ENCRYPTION_KEY`, `JAILER_UID`, `JAILER_GID`,
 `WORKER_NETWORK_LINK_POOL`, `WORKER_NETWORK_TRANSLATION_POOL`,
 `WORKER_NETWORK_RESOLVER_IPV4`, and
@@ -120,12 +132,14 @@ A Worker with the `build` role also requires `BUILD_POLICY_PATH`,
 `WORKER_SUBSTRATE_CACHE_MAX_MIB`, and positive
 `WORKER_ARTIFACT_CACHE_MAX_MIB`.
 
-The worker requests a one-time enrollment challenge and proves possession of
-its worker-group enrollment secret over the nonce, requested roles, and opaque
-operator resource locator. Control Plane verifies the proof and group roles, creates
-the authoritative worker-instance identity, and issues a renewable per-instance
-credential stored at `WORKER_INSTANCE_CREDENTIAL_PATH`. Provider identity
-and infrastructure inventory are deployment responsibilities rather than
-Control Plane authentication inputs.
+The Worker reads its Worker Group enrollment token from the strict-permission
+token file and presents it as a Bearer credential over TLS. The token selects
+the Worker Group; the Worker does not configure a group ID. Control Plane
+validates the requested roles against that group, records token use, creates
+the authoritative Worker-instance identity, and issues a renewable
+per-instance credential stored at `WORKER_INSTANCE_CREDENTIAL_PATH`.
+`WORKER_RESOURCE_ID` remains an opaque deployment-owned locator for the
+physical Worker. Provider identity and infrastructure inventory are deployment
+responsibilities rather than Control Plane authentication inputs.
 
 Runtime inputs include `WORKER_WORK_DIR`, `WORKER_IMAGES_DIR`, `GIT_PATH`, Firecracker paths and jailer settings, routed-network link and translation pools, resolver and blocked CIDRs, `VM_VCPUS`, `VM_MEMORY_MIB`, `WORKER_DISK_MIB`, and `VM_HEALTH_TIMEOUT`. `WORKER_DISK_MIB` overrides the filesystem capacity advertised by filesystem-first worker instances. Workspace-image builds start the pinned BuildKit daemon inside a fresh image-build guest; there is no host BuildKit address or service setting.

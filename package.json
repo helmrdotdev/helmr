@@ -18,7 +18,7 @@
     "@babel/core": "7.29.7",
     "esbuild": "0.28.1",
     "fast-uri": "3.1.5",
-    "js-yaml": "4.3.0",
+    "js-yaml": "4.3.1",
     "sharp": "0.35.0",
     "svgo": "4.0.2",
     "undici": "7.29.0",

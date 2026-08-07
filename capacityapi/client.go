@@ -17,7 +17,7 @@ import (
 
 const (
 	RoutePrefix               = "/capacity/v0"
-	ObservationsPath          = "/observations"
+	WorkerGroupsPath          = "/worker-groups"
 	WorkerInstancesPath       = "/worker-instances"
 	maximumResponseBytes      = int64(4 << 20)
 	capacityTokenDecodedBytes = 32
@@ -79,9 +79,18 @@ func NewClient(rawBaseURL, token string, options ...Option) (*Client, error) {
 	return client, nil
 }
 
-func (c *Client) Observations(ctx context.Context) (CapacityObservationsResponse, error) {
-	var response CapacityObservationsResponse
-	err := c.do(ctx, http.MethodGet, "/api"+RoutePrefix+ObservationsPath, nil, &response)
+func (c *Client) Plan(ctx context.Context, workerGroupID string, request CapacityPlanRequest) (CapacityPlanResponse, error) {
+	var response CapacityPlanResponse
+	path := "/api" + RoutePrefix + WorkerGroupsPath + "/" + url.PathEscape(workerGroupID) + "/plan"
+	err := c.do(ctx, http.MethodPost, path, request, &response)
+	return response, err
+}
+
+func (c *Client) ResolveWorkerGroup(ctx context.Context, regionID, name string) (CapacityWorkerGroup, error) {
+	query := url.Values{"region_id": []string{regionID}, "name": []string{name}}
+	path := "/api" + RoutePrefix + WorkerGroupsPath + "/resolve?" + query.Encode()
+	var response CapacityWorkerGroup
+	err := c.do(ctx, http.MethodGet, path, nil, &response)
 	return response, err
 }
 

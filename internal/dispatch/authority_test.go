@@ -39,10 +39,9 @@ func TestNewRunAuthorityRequiresFencingAuthorityAndValidPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	valid := RunPlacementPolicy{
-		PreparationLimit: 1,
-		ReservationTTL:   time.Minute,
-		StartDeadline:    time.Minute,
-		LeaseTTL:         2 * time.Minute,
+		ReservationTTL: time.Minute,
+		StartDeadline:  time.Minute,
+		LeaseTTL:       2 * time.Minute,
 	}
 	if authority, err := NewRunAuthority(pool, workspace.FencingKey{}, valid); authority != nil || err == nil {
 		t.Fatalf("NewRunAuthority() without keys = (%#v, %v), want error", authority, err)

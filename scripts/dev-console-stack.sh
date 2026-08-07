@@ -70,21 +70,14 @@ trap cleanup EXIT INT TERM
 
 export CONTROL_PLANE_ADDR="${CONTROL_PLANE_ADDR:-":8080"}"
 export PUBLIC_URL="${PUBLIC_URL:-"http://${CONSOLE_HOST}:${CONSOLE_PORT}"}"
-export REGION_ID="${REGION_ID:-"local"}"
-export DEFAULT_REGION_ID="${DEFAULT_REGION_ID:-"${REGION_ID}"}"
-export PROVIDER="${PROVIDER:-"local"}"
-export PROVIDER_REGION="${PROVIDER_REGION:-"${REGION_ID}"}"
-export REGION_DISPLAY_NAME="${REGION_DISPLAY_NAME:-"Local"}"
-export WORKER_GROUP_ID="${WORKER_GROUP_ID:-"${REGION_ID}-worker-group-1"}"
-export WORKER_GROUP_ENROLLMENT_SECRET_LOCAL="${WORKER_GROUP_ENROLLMENT_SECRET_LOCAL:-"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"}"
+export BOOTSTRAP_ENABLED="${BOOTSTRAP_ENABLED:-"1"}"
+export BOOTSTRAP_REGION_ID="${BOOTSTRAP_REGION_ID:-"local"}"
+export BOOTSTRAP_REGION_PROVIDER="${BOOTSTRAP_REGION_PROVIDER:-"local"}"
+export BOOTSTRAP_REGION_PROVIDER_REGION="${BOOTSTRAP_REGION_PROVIDER_REGION:-"local"}"
+export BOOTSTRAP_REGION_DISPLAY_NAME="${BOOTSTRAP_REGION_DISPLAY_NAME:-"Local"}"
+export BOOTSTRAP_WORKER_GROUP_NAME="${BOOTSTRAP_WORKER_GROUP_NAME:-"default"}"
+export BOOTSTRAP_WORKER_TOKEN="${BOOTSTRAP_WORKER_TOKEN:-"hlmr_wgt_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"}"
 export WORKER_RESOURCE_ID="${WORKER_RESOURCE_ID:-"local-worker"}"
-if [ -z "${WORKER_GROUPS:-}" ]; then
-  export WORKER_GROUPS="[{\"id\":\"${WORKER_GROUP_ID}\",\"name\":\"local\",\"enrollment_secret_env\":\"WORKER_GROUP_ENROLLMENT_SECRET_LOCAL\",\"allows_run\":true,\"allows_build\":true,\"observation_ttl_seconds\":120,\"instance_capacity\":{\"milli_cpu\":1000,\"memory_bytes\":1073741824,\"guest_ephemeral_disk_bytes\":1073741824,\"build_cache_bytes\":1073741824,\"artifact_cache_bytes\":1073741824,\"vm_slots\":1,\"build_executors\":1}}]"
-fi
-if ! bun -e 'const groups = JSON.parse(process.env.WORKER_GROUPS); if (!Array.isArray(groups) || groups.length === 0) process.exit(1)' >/dev/null; then
-  echo "WORKER_GROUPS must be a non-empty JSON array" >&2
-  exit 1
-fi
 case "${CONTROL_PLANE_ADDR}" in
   http://*|https://*) export HELMR_DEV_BACKEND_URL="${HELMR_DEV_BACKEND_URL:-"${CONTROL_PLANE_ADDR}"}" ;;
   :*) export HELMR_DEV_BACKEND_URL="${HELMR_DEV_BACKEND_URL:-"http://127.0.0.1${CONTROL_PLANE_ADDR}"}" ;;

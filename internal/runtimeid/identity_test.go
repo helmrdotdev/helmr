@@ -1,10 +1,9 @@
 package runtimeid
 
 import (
-	"encoding/json"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	"github.com/helmrdotdev/helmr/capacityapi"
 )
 
 func TestRuntimeIdentityDigestMatchesCASDigest(t *testing.T) {
@@ -19,27 +18,14 @@ func TestRuntimeIdentityDigestMatchesCASDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := json.Marshal(struct {
-		Domain          string `json:"domain"`
-		Backend         string `json:"backend"`
-		Arch            string `json:"arch"`
-		Contract        string `json:"contract"`
-		KernelDigest    string `json:"kernel_digest"`
-		InitramfsDigest string `json:"initramfs_digest"`
-		RootfsDigest    string `json:"rootfs_digest"`
-	}{
-		Domain:          digestDomain,
-		Backend:         "firecracker",
-		Arch:            runtime.Arch,
-		Contract:        runtime.Contract,
-		KernelDigest:    runtime.KernelDigest,
-		InitramfsDigest: runtime.InitramfsDigest,
-		RootfsDigest:    runtime.RootfsDigest,
-	})
+	want, err := (capacityapi.RuntimeProfile{
+		Arch: runtime.Arch, Contract: runtime.Contract, KernelDigest: runtime.KernelDigest,
+		InitramfsDigest: runtime.InitramfsDigest, RootfsDigest: runtime.RootfsDigest,
+	}).ExpectedID()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := sha256sum.DigestBytes(payload); got != want {
+	if got != want {
 		t.Fatalf("runtime identity digest = %q, want %q", got, want)
 	}
 }

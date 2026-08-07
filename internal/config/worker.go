@@ -12,9 +12,8 @@ import (
 func LoadWorker() (Worker, error) {
 	cfg := Worker{
 		ControlPlaneURL:              envText("CONTROL_PLANE_URL"),
-		WorkerGroupID:                envText("WORKER_GROUP_ID"),
 		WorkerResourceID:             envText("WORKER_RESOURCE_ID"),
-		WorkerEnrollmentSecretFile:   envText("WORKER_ENROLLMENT_SECRET_FILE"),
+		WorkerEnrollmentTokenFile:    envText("WORKER_ENROLLMENT_TOKEN_FILE"),
 		CASURI:                       envText("CAS_URI"),
 		WorkerInstanceCredentialPath: envText("WORKER_INSTANCE_CREDENTIAL_PATH"),
 		BuildPolicyPath:              envText("BUILD_POLICY_PATH"),
@@ -45,14 +44,11 @@ func LoadWorker() (Worker, error) {
 		PreparedRuntimePoolSize:      0,
 		PollEvery:                    2 * time.Second,
 	}
-	if cfg.WorkerGroupID == "" {
-		return cfg, errors.New("WORKER_GROUP_ID is required")
-	}
 	if cfg.WorkerResourceID == "" || len(cfg.WorkerResourceID) > 512 {
 		return cfg, errors.New("WORKER_RESOURCE_ID is required and must not exceed 512 bytes")
 	}
-	if cfg.WorkerEnrollmentSecretFile == "" {
-		return cfg, errors.New("WORKER_ENROLLMENT_SECRET_FILE is required")
+	if cfg.WorkerEnrollmentTokenFile == "" {
+		return cfg, errors.New("WORKER_ENROLLMENT_TOKEN_FILE is required")
 	}
 	var err error
 	if cfg.ImageCache, err = loadImageCache(); err != nil {

@@ -9,6 +9,7 @@ type MeResponse struct {
 	OrgName              string   `json:"org_name,omitempty"`
 	OrgSlug              string   `json:"org_slug,omitempty"`
 	Role                 string   `json:"role,omitempty"`
+	Admin                bool     `json:"admin"`
 	Permissions          []string `json:"permissions"`
 	OrganizationRequired bool     `json:"organization_required"`
 	ProjectRequired      bool     `json:"project_required"`

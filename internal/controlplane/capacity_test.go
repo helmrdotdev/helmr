@@ -147,6 +147,56 @@ func TestCapacityClientDecodesStaleDrainConflict(t *testing.T) {
 	}
 }
 
+func TestCapacityResolveAndPlanHandlers(t *testing.T) {
+	groupID := uuid.Must(uuid.NewV7()).String()
+	store := &capacityPlanStore{group: db.WorkerGroup{
+		ID: groupID, RegionID: "aws-us-east-1", Name: "default", State: "active", AllowsRun: true,
+	}}
+	hash, err := hashCapacityToken(capacityTestToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := chi.NewRouter()
+	router.Route("/api", (&Server{db: store, capacityTokenHash: hash}).mountCapacityRoutes)
+	httpServer := httptest.NewServer(router)
+	defer httpServer.Close()
+	client, err := capacityapi.NewClient(httpServer.URL, capacityTestToken())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := client.ResolveWorkerGroup(t.Context(), store.group.RegionID, store.group.Name)
+	if err != nil || resolved.ID != groupID || resolved.Status != capacityapi.WorkerGroupStatusActive {
+		t.Fatalf("resolved group = %+v, %v", resolved, err)
+	}
+	plan, err := client.Plan(t.Context(), groupID, capacityapi.CapacityPlanRequest{
+		Worker: capacityHTTPManifest(t), MaxAdditionalWorkers: 2,
+	})
+	if err != nil || plan.WorkerGroupID != groupID || !plan.Complete || plan.RecommendedAdditionalWorkers != 0 {
+		t.Fatalf("plan = %+v, %v", plan, err)
+	}
+
+	for _, test := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{method: http.MethodGet, path: "/api/capacity/v0/worker-groups/resolve?region_id=aws-us-east-1&region_id=other&name=default"},
+		{method: http.MethodPost, path: "/api/capacity/v0/worker-groups/not-a-group/plan", body: `{}`},
+		{method: http.MethodPost, path: "/api/capacity/v0/worker-groups/" + groupID + "/plan", body: `{}`},
+	} {
+		request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
+		request.Header.Set("Authorization", "Bearer "+capacityTestToken())
+		if test.body != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("%s %s status = %d, want 400: %s", test.method, test.path, response.Code, response.Body.String())
+		}
+	}
+}
+
 func TestCapacityWorkerInstanceListParamsAreBounded(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/?worker_group_id=run-workers&resource_id=host-1&resource_id=host-2&status=active&status=draining&limit=50", nil)
 	params, err := capacityWorkerInstanceListParams(request)
@@ -169,6 +219,53 @@ type capacityDrainStore struct {
 	draining db.DrainWorkerInstanceRow
 	params   db.DrainWorkerInstanceParams
 	drainErr error
+}
+
+type capacityPlanStore struct {
+	db.Querier
+	group db.WorkerGroup
+}
+
+func (s *capacityPlanStore) GetWorkerGroupByRegionName(context.Context, db.GetWorkerGroupByRegionNameParams) (db.WorkerGroup, error) {
+	return s.group, nil
+}
+
+func (s *capacityPlanStore) GetWorkerGroup(context.Context, string) (db.WorkerGroup, error) {
+	return s.group, nil
+}
+
+func (s *capacityPlanStore) ListWorkerCapacityBins(context.Context, db.ListWorkerCapacityBinsParams) ([]db.ListWorkerCapacityBinsRow, error) {
+	return nil, nil
+}
+
+func (s *capacityPlanStore) ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error) {
+	return nil, nil
+}
+
+func (s *capacityPlanStore) ListQueuedRunDispatchCandidatesForScope(context.Context, db.ListQueuedRunDispatchCandidatesForScopeParams) ([]db.ListQueuedRunDispatchCandidatesForScopeRow, error) {
+	return nil, nil
+}
+
+func (s *capacityPlanStore) ListQueuedDeploymentBuildCandidates(context.Context, db.ListQueuedDeploymentBuildCandidatesParams) ([]db.ListQueuedDeploymentBuildCandidatesRow, error) {
+	return nil, nil
+}
+
+func capacityHTTPManifest(t *testing.T) capacityapi.WorkerReleaseManifest {
+	t.Helper()
+	runtime := capacityapi.RuntimeProfile{
+		Arch: "x86_64", Contract: "helmr.vm-runtime.v0",
+		KernelDigest: "sha256:" + strings.Repeat("1", 64), InitramfsDigest: "sha256:" + strings.Repeat("2", 64),
+		RootfsDigest: "sha256:" + strings.Repeat("3", 64),
+	}
+	runtime.ID, _ = runtime.ExpectedID()
+	manifest := capacityapi.WorkerReleaseManifest{
+		Schema: capacityapi.WorkerReleaseManifestSchema, WorkerVersion: "0123456789abcdef0123456789abcdef01234567", SupportsRun: true,
+		Runtime: runtime, Substrate: capacityapi.SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v0"},
+		Capacity: capacityapi.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 64 << 30, VMSlots: 1, RunConsumers: 1},
+		PerVM:    capacityapi.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 32 << 30}, MaxRuntimeStarts: 1,
+	}
+	manifest.ReleaseFingerprint, _ = manifest.ExpectedFingerprint()
+	return manifest
 }
 
 func (s *capacityDrainStore) GetCapacityWorkerInstance(context.Context, pgtype.UUID) (db.GetCapacityWorkerInstanceRow, error) {

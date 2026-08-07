@@ -48,28 +48,20 @@ variable "deployment_mode" {
   }
 }
 
-variable "worker_groups" {
-  description = "Logical enrollment, role, and scheduling boundaries for worker groups."
-  type = list(object({
-    id                      = string
-    name                    = string
-    description             = optional(string, "")
-    allows_run              = bool
-    allows_build            = bool
-    observation_ttl_seconds = number
-    instance_capacity = object({
-      milli_cpu                  = number
-      memory_bytes               = number
-      guest_ephemeral_disk_bytes = number
-      build_cache_bytes          = number
-      artifact_cache_bytes       = number
-      vm_slots                   = number
-      build_executors            = number
-    })
-  }))
+variable "bootstrap_enabled" {
+  description = "Create the initial Region and Worker Group when they do not exist."
+  type        = bool
+  default     = true
+}
+
+variable "bootstrap_worker_group_name" {
+  description = "Immutable Region-scoped name of the initial Worker Group."
+  type        = string
+  default     = "default"
+
   validation {
-    condition     = length(var.worker_groups) > 0
-    error_message = "worker_groups must be non-empty."
+    condition     = can(regex("^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$", var.bootstrap_worker_group_name))
+    error_message = "bootstrap_worker_group_name must be a lowercase URL-safe identifier of 1-128 characters."
   }
 }
 
@@ -79,49 +71,32 @@ variable "image_cache_worker_role_arns" {
   default     = []
 }
 
-variable "region_id" {
-  description = "Helmr region primitive for this control-plane stack. Defaults to the AWS provider region."
+variable "bootstrap_region_id" {
+  description = "ID of the initial Region. Defaults to the AWS provider region."
   type        = string
   default     = null
   nullable    = true
 
   validation {
-    condition = var.region_id == null ? true : (
-      var.region_id != "" &&
-      var.region_id == trimspace(var.region_id) &&
-      length(base64encode(var.region_id)) <= 340 &&
-      length(regexall("[[:cntrl:]]", var.region_id)) == 0
+    condition = var.bootstrap_region_id == null ? true : (
+      var.bootstrap_region_id != "" &&
+      var.bootstrap_region_id == trimspace(var.bootstrap_region_id) &&
+      length(base64encode(var.bootstrap_region_id)) <= 340 &&
+      length(regexall("[[:cntrl:]]", var.bootstrap_region_id)) == 0
     )
-    error_message = "region_id must be null or normalized control-free UTF-8 of 1-255 bytes."
+    error_message = "bootstrap_region_id must be null or normalized control-free UTF-8 of 1-255 bytes."
   }
 }
 
-variable "default_region_id" {
-  description = "Default execution region for newly created projects and environments. Defaults to region_id."
+variable "bootstrap_region_display_name" {
+  description = "Display name of the initial Region. Defaults to bootstrap_region_id."
   type        = string
   default     = null
   nullable    = true
 
   validation {
-    condition = var.default_region_id == null ? true : (
-      var.default_region_id != "" &&
-      var.default_region_id == trimspace(var.default_region_id) &&
-      length(base64encode(var.default_region_id)) <= 340 &&
-      length(regexall("[[:cntrl:]]", var.default_region_id)) == 0
-    )
-    error_message = "default_region_id must be null or normalized control-free UTF-8 of 1-255 bytes."
-  }
-}
-
-variable "region_display_name" {
-  description = "Display name stored for the Helmr region. Defaults to region_id."
-  type        = string
-  default     = null
-  nullable    = true
-
-  validation {
-    condition     = var.region_display_name == null || trimspace(var.region_display_name) != ""
-    error_message = "region_display_name must be null or non-empty."
+    condition     = var.bootstrap_region_display_name == null || trimspace(var.bootstrap_region_display_name) != ""
+    error_message = "bootstrap_region_display_name must be null or non-empty."
   }
 }
 

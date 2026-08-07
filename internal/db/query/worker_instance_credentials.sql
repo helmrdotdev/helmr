@@ -252,52 +252,27 @@ SELECT worker_instance_credentials.*, worker_instances.resource_id,
    AND worker_instances.state = 'lost'
    AND worker_instances.claim_version = worker_instance_credentials.claim_version + 1;
 
--- name: CreateWorkerEnrollmentNonce :one
-WITH pruned AS (
-    DELETE FROM worker_enrollment_nonces
-     WHERE expires_at <= now() AND created_at < now() - interval '10 minutes'
-    RETURNING id
-)
-INSERT INTO worker_enrollment_nonces (id, nonce_hash, worker_group_id, expires_at)
-SELECT sqlc.arg(id), sqlc.arg(nonce_hash), worker_groups.id, sqlc.arg(expires_at)
-  FROM worker_groups
- WHERE worker_groups.id = sqlc.arg(worker_group_id)
-   AND worker_groups.state IN ('active','paused')
-   AND (SELECT count(*) FROM pruned) >= 0
-RETURNING *;
-
--- name: GetActiveWorkerEnrollmentNonce :one
-SELECT worker_enrollment_nonces.*
-  FROM worker_enrollment_nonces
-  JOIN worker_groups ON worker_groups.id = worker_enrollment_nonces.worker_group_id
- WHERE worker_enrollment_nonces.nonce_hash = sqlc.arg(nonce_hash)
-   AND worker_enrollment_nonces.worker_group_id = sqlc.arg(worker_group_id)
-   AND worker_enrollment_nonces.consumed_at IS NULL
-   AND worker_enrollment_nonces.expires_at > now()
-   AND worker_groups.state IN ('active','paused');
-
 -- name: EnrollWorkerInstance :one
-WITH nonce AS (
-    SELECT worker_enrollment_nonces.*, worker_groups.allows_run,
+WITH enrollment_token AS (
+    SELECT worker_group_tokens.id AS token_id,
+           worker_groups.id AS worker_group_id,
+           worker_groups.allows_run,
            worker_groups.allows_build
-      FROM worker_enrollment_nonces
-      JOIN worker_groups ON worker_groups.id = worker_enrollment_nonces.worker_group_id
-     WHERE worker_enrollment_nonces.nonce_hash = sqlc.arg(nonce_hash)
-       AND worker_enrollment_nonces.worker_group_id = sqlc.arg(worker_group_id)
-       AND worker_enrollment_nonces.consumed_at IS NULL
-       AND worker_enrollment_nonces.expires_at > now()
-       AND worker_groups.state IN ('active','paused')
+      FROM worker_group_tokens
+      JOIN worker_groups ON worker_groups.token_id = worker_group_tokens.id
+     WHERE worker_group_tokens.token_hash = sqlc.arg(token_hash)
+       AND worker_groups.state IN ('active', 'paused')
        AND (NOT sqlc.arg(allows_run)::boolean OR worker_groups.allows_run)
        AND (NOT sqlc.arg(allows_build)::boolean OR worker_groups.allows_build)
-     FOR UPDATE OF worker_enrollment_nonces, worker_groups
+     FOR UPDATE OF worker_group_tokens, worker_groups
 ), worker AS (
     INSERT INTO worker_instances (
         id, worker_group_id, resource_id, state, claim_version,
         supports_run, supports_build
     )
-    SELECT sqlc.arg(worker_instance_id), nonce.worker_group_id,
+    SELECT sqlc.arg(worker_instance_id), enrollment_token.worker_group_id,
            sqlc.arg(resource_id), 'registering', 1, false, false
-      FROM nonce
+      FROM enrollment_token
     ON CONFLICT (worker_group_id, resource_id)
         WHERE state IN ('registering', 'active', 'draining')
     DO UPDATE
@@ -338,11 +313,11 @@ WITH nonce AS (
            sqlc.arg(allows_run), sqlc.arg(allows_build), sqlc.narg(credential_expires_at)
       FROM worker WHERE (SELECT count(*) FROM revoked) >= 0
     RETURNING *
-), consumed AS (
-    UPDATE worker_enrollment_nonces
-       SET consumed_at = now(), consumed_by_worker_instance_id = credential.worker_instance_id
+), touched AS (
+    UPDATE worker_group_tokens
+       SET last_used_at = now()
       FROM credential
-     WHERE worker_enrollment_nonces.id = (SELECT id FROM nonce)
-    RETURNING worker_enrollment_nonces.id
+     WHERE worker_group_tokens.id = (SELECT token_id FROM enrollment_token)
+    RETURNING worker_group_tokens.id
 )
-SELECT credential.* FROM credential JOIN consumed ON true;
+SELECT credential.* FROM credential JOIN touched ON true;

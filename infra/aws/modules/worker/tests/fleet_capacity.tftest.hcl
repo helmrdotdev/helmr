@@ -32,7 +32,6 @@ mock_provider "aws" {
 
 variables {
   name                              = "helmr-test-run"
-  worker_group_id                   = "run-workers"
   worker_roles                      = ["run"]
   network_blocked_ipv4_cidrs        = ["10.0.0.0/8", "169.254.0.0/16"]
   network_link_pool                 = "169.254.64.0/18"
@@ -56,7 +55,7 @@ variables {
   max_size                          = 1
   secret_arns = {
     checkpoint_encryption_key = "arn:aws:secretsmanager:us-east-1:111122223333:secret:checkpoint"
-    worker_enrollment         = "arn:aws:secretsmanager:us-east-1:111122223333:secret:worker-enrollment"
+    worker_enrollment_token   = "arn:aws:secretsmanager:us-east-1:111122223333:secret:worker-enrollment"
   }
 }
 
@@ -88,9 +87,37 @@ run "deployment_owns_protected_capacity" {
     condition = (
       toset(aws_autoscaling_group.worker.vpc_zone_identifier) == toset(var.subnet_ids) &&
       aws_autoscaling_group.worker.launch_template[0].id == aws_launch_template.worker.id &&
-      aws_autoscaling_group.worker.launch_template[0].version == tostring(aws_launch_template.worker.latest_version)
+      aws_autoscaling_group.worker.launch_template[0].version == tostring(aws_launch_template.worker.latest_version) &&
+      output.launch_template_id == aws_launch_template.worker.id &&
+      output.launch_template_version == tostring(aws_launch_template.worker.latest_version)
     )
     error_message = "the worker ASG must use only the supplied Execution subnets and exact launch template version"
+  }
+
+  assert {
+    condition = (
+      length(aws_autoscaling_group.worker.initial_lifecycle_hook) == 2 &&
+      one([
+        for hook in aws_autoscaling_group.worker.initial_lifecycle_hook : hook
+        if hook.lifecycle_transition == "autoscaling:EC2_INSTANCE_LAUNCHING"
+      ]).heartbeat_timeout == 321 &&
+      one([
+        for hook in aws_autoscaling_group.worker.initial_lifecycle_hook : hook
+        if hook.lifecycle_transition == "autoscaling:EC2_INSTANCE_LAUNCHING"
+      ]).default_result == "ABANDON" &&
+      one([
+        for hook in aws_autoscaling_group.worker.initial_lifecycle_hook : hook
+        if hook.lifecycle_transition == "autoscaling:EC2_INSTANCE_TERMINATING"
+      ]).heartbeat_timeout == var.termination_lifecycle_heartbeat_timeout_seconds &&
+      one([
+        for hook in aws_autoscaling_group.worker.initial_lifecycle_hook : hook
+        if hook.lifecycle_transition == "autoscaling:EC2_INSTANCE_TERMINATING"
+      ]).default_result == "CONTINUE" &&
+      output.termination_lifecycle_hook_name == "helmr-test-run-worker-terminate" &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-test-run-worker-launch") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-test-run-worker-terminate")
+    )
+    error_message = "every Worker ASG must install the launch-readiness and host-owned termination hooks"
   }
 
   assert {
@@ -134,18 +161,18 @@ run "deployment_owns_protected_capacity" {
 
   assert {
     condition = (
-      strcontains(base64decode(aws_launch_template.worker.user_data), var.secret_arns.worker_enrollment) &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_ENROLLMENT_SECRET_FILE=%s") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "/run/helmr/worker-enrollment-secret") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-worker-enrollment-secret.service") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "Wants=helmr-worker-enrollment-secret.service") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "After=helmr-worker-enrollment-secret.service") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), var.secret_arns.worker_enrollment_token) &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_ENROLLMENT_TOKEN_FILE=%s") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "/run/helmr/worker-enrollment-token") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-worker-enrollment-token.service") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "Wants=helmr-worker-enrollment-token.service") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "After=helmr-worker-enrollment-token.service") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "Restart=on-failure") &&
-      !strcontains(base64decode(aws_launch_template.worker.user_data), "Requires=helmr-worker-enrollment-secret.service") &&
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "Requires=helmr-worker-enrollment-token.service") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_RESOURCE_ID=%s") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "meta-data/instance-id")
     )
-    error_message = "worker bootstrap must refresh the volatile group secret without making an existing credential depend on the secret store, and report only an opaque host locator"
+    error_message = "worker bootstrap must refresh the volatile enrollment token without making an existing credential depend on the secret store, and report only an opaque host locator"
   }
 
   assert {
@@ -194,6 +221,17 @@ run "deployment_owns_protected_capacity" {
       !contains(flatten([for statement in jsondecode(aws_iam_policy.worker_boundary.policy).Statement : tolist(statement.Action)]), "*")
     )
     error_message = "every worker role must have its exact permissions plus only explicit SSM core actions bounded by a mandatory permissions boundary"
+  }
+
+  assert {
+    condition = toset(one([
+      for statement in jsondecode(aws_iam_role_policy.worker.policy).Statement : statement.Action
+      if contains(statement.Action, "autoscaling:RecordLifecycleActionHeartbeat")
+      ])) == toset([
+      "autoscaling:CompleteLifecycleAction",
+      "autoscaling:RecordLifecycleActionHeartbeat",
+    ])
+    error_message = "the Worker host must own lifecycle heartbeat and completion for its exact ASG"
   }
 
   assert {
@@ -256,7 +294,6 @@ run "build_worker_installs_exact_policy_before_service" {
 
   variables {
     name                       = "helmr-test-build"
-    worker_group_id            = "build-workers"
     worker_roles               = ["build"]
     worker_capacity_vcpus      = 4
     worker_capacity_memory_mib = 8192
@@ -352,7 +389,6 @@ run "build_worker_rejects_scratch_below_large_vm_boundary" {
 
   variables {
     name                       = "helmr-test-build"
-    worker_group_id            = "build-workers"
     worker_roles               = ["build"]
     worker_capacity_vcpus      = 4
     worker_capacity_memory_mib = 8192
@@ -374,16 +410,6 @@ run "run_only_worker_rejects_current_policy" {
   }
 
   expect_failures = [terraform_data.network_preconditions]
-}
-
-run "deployment_requires_lifecycle_hooks" {
-  command = plan
-
-  variables {
-    enable_lifecycle_hooks = false
-  }
-
-  expect_failures = [aws_autoscaling_group.worker]
 }
 
 run "explicit_disk_must_exceed_reserve" {

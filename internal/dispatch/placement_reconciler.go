@@ -341,10 +341,11 @@ func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
 			ConcurrencyKey: scope.ConcurrencyKey, QueueName: scope.QueueName})
 	}
 	fairScopes = (RoundRobinQueueScopeSelector{}).Order(fairScopes)
+	type scopeCandidates struct {
+		rows []db.ListQueuedRunDispatchCandidatesForScopeRow
+	}
+	candidatesByScope := make([]scopeCandidates, 0, len(fairScopes))
 	for _, scope := range fairScopes {
-		if remaining <= 0 {
-			break
-		}
 		rows, err := r.runDiscovery.ListQueuedRunDispatchCandidatesForScope(ctx, db.ListQueuedRunDispatchCandidatesForScopeParams{
 			OrgID: scope.OrgID, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
 			RegionID: scope.RegionID,
@@ -359,7 +360,18 @@ func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
 			problems = append(problems, err)
 			continue
 		}
-		for _, candidate := range rows {
+		if len(rows) > 0 {
+			candidatesByScope = append(candidatesByScope, scopeCandidates{rows: rows})
+		}
+	}
+	for index := 0; remaining > 0; index++ {
+		madeProgress := false
+		for _, scope := range candidatesByScope {
+			if index >= len(scope.rows) {
+				continue
+			}
+			madeProgress = true
+			candidate := scope.rows[index]
 			runID := pgvalue.UUIDString(candidate.RunID)
 			if _, duplicate := attempted[runID]; duplicate {
 				continue
@@ -371,6 +383,12 @@ func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
 			}, runID); err != nil {
 				problems = append(problems, err)
 			}
+			if remaining <= 0 {
+				break
+			}
+		}
+		if !madeProgress {
+			break
 		}
 	}
 	return errors.Join(problems...)

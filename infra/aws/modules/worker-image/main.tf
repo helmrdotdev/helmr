@@ -17,21 +17,20 @@ data "aws_ami" "ubuntu" {
 data "aws_region" "current" {}
 
 locals {
-  name                    = lower(var.name)
-  parent_image            = var.parent_image == null ? data.aws_ami.ubuntu[0].id : var.parent_image
-  distribution_regions    = length(var.distribution_regions) == 0 ? [data.aws_region.current.region] : var.distribution_regions
-  create_instance_profile = var.instance_profile_name == null
-  instance_profile_name   = local.create_instance_profile ? aws_iam_instance_profile.image_builder[0].name : var.instance_profile_name
+  name                 = lower(var.name)
+  parent_image         = var.parent_image == null ? data.aws_ami.ubuntu[0].id : var.parent_image
+  distribution_regions = length(var.distribution_regions) == 0 ? [data.aws_region.current.region] : var.distribution_regions
   build_script = templatefile("${path.module}/templates/build-worker-image.sh.tftpl", {
-    source_repository_url = var.source_repository_url
-    source_ref            = var.source_ref
-    source_bundle_s3_uri  = var.source_bundle_s3_uri == null ? "" : var.source_bundle_s3_uri
+    source_repository_url           = var.source_repository_url
+    source_ref                      = var.source_ref
+    source_bundle_s3_uri            = var.source_bundle_s3_uri == null ? "" : var.source_bundle_s3_uri
+    runtime_artifacts_bundle_s3_uri = var.runtime_artifacts_bundle_s3_uri
+    runtime_artifacts_bundle_digest = trimprefix(var.runtime_artifacts_bundle_digest, "sha256:")
   })
+  runtime_artifacts_manifest_digest = trimprefix(var.runtime_artifacts_manifest_digest, "sha256:")
 }
 
 resource "aws_iam_role" "image_builder" {
-  count = local.create_instance_profile ? 1 : 0
-
   name = "${local.name}-worker-image-builder"
   tags = var.tags
 
@@ -48,38 +47,45 @@ resource "aws_iam_role" "image_builder" {
 }
 
 resource "aws_iam_role_policy_attachment" "image_builder" {
-  for_each = local.create_instance_profile ? toset([
+  for_each = toset([
     "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
     "arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilder",
     "arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilderECRContainerBuilds",
-  ]) : toset([])
+  ])
 
-  role       = aws_iam_role.image_builder[0].name
+  role       = aws_iam_role.image_builder.name
   policy_arn = each.value
 }
 
-resource "aws_iam_role_policy" "source_bundle" {
-  count = local.create_instance_profile && var.source_bundle_s3_uri != null ? 1 : 0
-
-  name = "${local.name}-worker-image-source-bundle"
-  role = aws_iam_role.image_builder[0].id
+resource "aws_iam_role_policy" "build_artifacts" {
+  name = "${local.name}-worker-image-build-artifacts"
+  role = aws_iam_role.image_builder.id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = concat([
       {
-        Effect   = "Allow"
-        Action   = "s3:GetObject"
-        Resource = var.source_bundle_object_arn
+        Effect = "Allow"
+        Action = "s3:GetObject"
+        Resource = concat(
+          [var.runtime_artifacts_bundle_object_arn],
+          var.source_bundle_s3_uri == null ? [] : [var.source_bundle_object_arn],
+        )
       }
       ],
-      var.source_bundle_kms_key_arn == null ? [] : [
+      length(compact([
+        var.runtime_artifacts_bundle_kms_key_arn,
+        var.source_bundle_kms_key_arn,
+        ])) == 0 ? [] : [
         {
           Effect = "Allow"
           Action = [
             "kms:Decrypt"
           ]
-          Resource = var.source_bundle_kms_key_arn
+          Resource = distinct(compact([
+            var.runtime_artifacts_bundle_kms_key_arn,
+            var.source_bundle_kms_key_arn,
+          ]))
         }
       ]
     )
@@ -87,17 +93,20 @@ resource "aws_iam_role_policy" "source_bundle" {
 
   lifecycle {
     precondition {
-      condition     = var.source_bundle_object_arn != null
-      error_message = "source_bundle_object_arn is required when source_bundle_s3_uri is set."
+      condition     = (var.source_bundle_s3_uri == null) == (var.source_bundle_object_arn == null)
+      error_message = "source_bundle_s3_uri and source_bundle_object_arn must either both be set or both be null."
+    }
+
+    precondition {
+      condition     = var.source_bundle_s3_uri != null || var.source_bundle_kms_key_arn == null
+      error_message = "source_bundle_kms_key_arn requires source_bundle_s3_uri."
     }
   }
 }
 
 resource "aws_iam_instance_profile" "image_builder" {
-  count = local.create_instance_profile ? 1 : 0
-
   name = "${local.name}-worker-image-builder"
-  role = aws_iam_role.image_builder[0].name
+  role = aws_iam_role.image_builder.name
   tags = var.tags
 }
 
@@ -130,12 +139,14 @@ resource "aws_imagebuilder_component" "worker" {
             inputs = {
               commands = [
                 "test -x /usr/local/bin/helmr-worker",
+                "test \"$(/usr/local/bin/helmr-worker version)\" = \"${var.source_ref}\"",
                 "test -x /usr/local/bin/firecracker",
                 "test -x /usr/local/bin/jailer",
                 "test -r /var/lib/helmr/images/guest/out/vmlinuz",
                 "test -r /var/lib/helmr/images/guest/out/initramfs",
                 "test -r /var/lib/helmr/images/guest/out/rootfs.ext4",
                 "test -r /var/lib/helmr/images/guest/out/runtime-artifacts.json",
+                "test \"$(sha256sum /var/lib/helmr/images/guest/out/runtime-artifacts.json | awk '{print $1}')\" = \"${local.runtime_artifacts_manifest_digest}\"",
                 "cd /var/lib/helmr/images/guest/out && jq -e '.schema == \"helmr.runtime-artifacts.v0\" and .arch == \"amd64\" and .vm_runtime_contract == \"helmr.vm-runtime.v0\"' runtime-artifacts.json >/dev/null && test \"$(sha256sum vmlinuz | awk '{print $1}')\" = \"$(jq -r .kernel.digest runtime-artifacts.json | sed 's/^sha256://')\" && test \"$(sha256sum initramfs | awk '{print $1}')\" = \"$(jq -r .initramfs.digest runtime-artifacts.json | sed 's/^sha256://')\" && test \"$(sha256sum rootfs.ext4 | awk '{print $1}')\" = \"$(jq -r .rootfs.digest runtime-artifacts.json | sed 's/^sha256://')\" && test \"$(stat -c %s vmlinuz)\" = \"$(jq -r .kernel.size_bytes runtime-artifacts.json)\" && test \"$(stat -c %s initramfs)\" = \"$(jq -r .initramfs.size_bytes runtime-artifacts.json)\" && test \"$(stat -c %s rootfs.ext4)\" = \"$(jq -r .rootfs.size_bytes runtime-artifacts.json)\"",
                 "command -v fallocate findmnt losetup mountpoint blkid mkfs.ext4 >/dev/null",
                 "systemctl cat helmr-worker.service >/dev/null",
@@ -189,7 +200,7 @@ resource "aws_imagebuilder_image_recipe" "worker" {
 
 resource "aws_imagebuilder_infrastructure_configuration" "worker" {
   name                          = "${local.name}-worker"
-  instance_profile_name         = local.instance_profile_name
+  instance_profile_name         = aws_iam_instance_profile.image_builder.name
   instance_types                = var.instance_types
   subnet_id                     = var.subnet_id
   security_group_ids            = var.security_group_ids
@@ -212,9 +223,11 @@ resource "aws_imagebuilder_distribution_configuration" "worker" {
         ami_tags = merge(
           var.tags,
           {
-            Name                 = "${local.name}-worker"
-            HelmrWorkerImageName = local.name
-            HelmrSourceCommit    = var.source_ref
+            Name                        = "${local.name}-worker"
+            HelmrWorkerImageName        = local.name
+            HelmrSourceCommit           = var.source_ref
+            HelmrRuntimeBundleDigest    = var.runtime_artifacts_bundle_digest
+            HelmrRuntimeArtifactsDigest = var.runtime_artifacts_manifest_digest
           },
         )
 

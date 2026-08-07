@@ -53,6 +53,7 @@ SELECT
     auth_sessions.user_id,
     users.display_name,
     users.profile_image_url,
+    users.admin,
     selected_member.org_id,
     COALESCE(selected_member.role::text, '')::text AS role,
     COALESCE(selected_member.display_name, users.display_name) AS member_display_name,
@@ -81,6 +82,7 @@ type GetAuthSessionByTokenHashRow struct {
 	UserID            pgtype.UUID        `json:"user_id"`
 	DisplayName       string             `json:"display_name"`
 	ProfileImageURL   pgtype.Text        `json:"profile_image_url"`
+	Admin             bool               `json:"admin"`
 	OrgID             pgtype.UUID        `json:"org_id"`
 	Role              string             `json:"role"`
 	MemberDisplayName string             `json:"member_display_name"`
@@ -95,6 +97,7 @@ func (q *Queries) GetAuthSessionByTokenHash(ctx context.Context, tokenHash []byt
 		&i.UserID,
 		&i.DisplayName,
 		&i.ProfileImageURL,
+		&i.Admin,
 		&i.OrgID,
 		&i.Role,
 		&i.MemberDisplayName,

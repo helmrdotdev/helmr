@@ -67,8 +67,9 @@ directly to Secrets Manager:
 ```
 
 Set `HELMR_DATABASE_URL` and `HELMR_GITHUB_OAUTH_CLIENT_SECRET` to populate external secrets in the same run. The
-helper uses `tofu` by default; set `TOFU=terraform` when using Terraform. Set
-`OVERWRITE_SECRETS=1` only during a planned drain/stop/offline-replace/restart.
+helper uses `tofu` by default; set `TOFU=terraform` when using Terraform. It initializes missing
+values only and never replaces an existing value. Rotate a Worker Group enrollment token from
+Admin and propagate it to Workers explicitly. Online rotation of root keys is not supported.
 
 Run migrations after secrets are populated:
 

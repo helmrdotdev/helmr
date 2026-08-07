@@ -8,12 +8,6 @@ CREATE TABLE organizations (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TYPE region_visibility AS ENUM (
-    'public',
-    'allowlisted',
-    'hidden'
-);
-
 CREATE TYPE telemetry_stream_kind AS ENUM (
     'run_log',
     'event',
@@ -33,7 +27,6 @@ CREATE TABLE regions (
     display_name TEXT NOT NULL CHECK (btrim(display_name) <> ''),
     state TEXT NOT NULL DEFAULT 'available'
         CHECK (state IN ('available', 'draining', 'disabled')),
-    visibility region_visibility NOT NULL DEFAULT 'public',
     location TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -45,6 +38,7 @@ CREATE TABLE users (
     display_name TEXT NOT NULL CHECK (btrim(display_name) <> ''),
     profile_image_url TEXT CHECK (profile_image_url IS NULL OR btrim(profile_image_url) <> ''),
     primary_email TEXT,
+    admin BOOLEAN NOT NULL DEFAULT false,
     disabled_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -317,8 +311,17 @@ CREATE TYPE artifact_kind AS ENUM (
     'workspace_version'
 );
 
+CREATE TABLE worker_group_tokens (
+    id UUID PRIMARY KEY,
+    token_hash BYTEA NOT NULL UNIQUE CHECK (octet_length(token_hash) = 32),
+    last_used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE worker_groups (
     id TEXT PRIMARY KEY CHECK (btrim(id) <> ''),
+    token_id UUID NOT NULL UNIQUE REFERENCES worker_group_tokens(id) ON DELETE RESTRICT,
     region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     description TEXT NOT NULL DEFAULT '',
@@ -461,28 +464,6 @@ CREATE INDEX worker_instances_active_placement_idx
 CREATE INDEX worker_instances_current_epoch_idx
     ON worker_instances (id, current_epoch)
     WHERE current_epoch IS NOT NULL;
-
-CREATE TABLE worker_enrollment_nonces (
-    id UUID PRIMARY KEY,
-    nonce_hash BYTEA NOT NULL UNIQUE CHECK (octet_length(nonce_hash) > 0),
-    worker_group_id TEXT NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
-    expires_at TIMESTAMPTZ NOT NULL,
-    consumed_at TIMESTAMPTZ,
-    consumed_by_worker_instance_id UUID,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CHECK (expires_at > created_at),
-    CHECK (
-        (consumed_at IS NULL AND consumed_by_worker_instance_id IS NULL)
-        OR (consumed_at IS NOT NULL AND consumed_by_worker_instance_id IS NOT NULL)
-    ),
-    FOREIGN KEY (consumed_by_worker_instance_id, worker_group_id)
-        REFERENCES worker_instances(id, worker_group_id)
-        ON DELETE RESTRICT
-);
-
-CREATE INDEX worker_enrollment_nonces_active_idx
-    ON worker_enrollment_nonces (expires_at, id)
-    WHERE consumed_at IS NULL;
 
 CREATE TABLE worker_instance_credentials (
     id UUID PRIMARY KEY,

@@ -18,6 +18,7 @@ apt-get install -y --no-install-recommends \
   nftables \
   python3-minimal \
   sudo \
+  tar \
   unzip \
   util-linux \
   uidmap \
@@ -46,10 +47,17 @@ rm -rf "$repo"
 %{ if source_bundle_s3_uri != "" ~}
 aws s3 cp '${source_bundle_s3_uri}' /tmp/helmr-source.bundle
 git clone /tmp/helmr-source.bundle "$repo"
+rm -f /tmp/helmr-source.bundle
 %{ else ~}
 git clone '${source_repository_url}' "$repo"
 %{ endif ~}
 git -C "$repo" checkout '${source_ref}'
+
+aws s3 cp '${runtime_artifacts_bundle_s3_uri}' /tmp/helmr-runtime-artifacts.tar
+printf '%s  %s\n' '${runtime_artifacts_bundle_digest}' /tmp/helmr-runtime-artifacts.tar | sha256sum -c -
+expected_runtime_artifacts="$(printf '%s\n' initramfs rootfs.ext4 runtime-artifacts.json vmlinuz)"
+actual_runtime_artifacts="$(tar -tf /tmp/helmr-runtime-artifacts.tar)"
+test "$actual_runtime_artifacts" = "$expected_runtime_artifacts"
 
 cd "$repo"
 nix develop .#smoke-linux -c bash -euo pipefail <<'EOF'
@@ -75,11 +83,12 @@ install -d -m 0755 /usr/local/bin
 bun install --frozen-lockfile --ignore-scripts
 make console-build
 retry 4 go mod download
-GOFLAGS='' CGO_ENABLED=0 go build -tags embed_console -o /usr/local/bin/helmr-worker ./cmd/helmr-worker
+GOFLAGS='' CGO_ENABLED=0 go build -tags embed_console \
+  -ldflags='-s -w -X github.com/helmrdotdev/helmr/internal/version.Version=${source_ref}' \
+  -o /usr/local/bin/helmr-worker ./cmd/helmr-worker
 GOFLAGS='' go build -tags embed_console -o /usr/local/bin/helmr ./cmd/helmr
 GOFLAGS='' go build -tags embed_console -o /usr/local/bin/helmr-controlplane ./cmd/helmr-controlplane
 GOFLAGS='' go build -tags embed_console -o /usr/local/bin/helmr-dispatcher ./cmd/helmr-dispatcher
-make images
 
 install -m 0755 "$(command -v firecracker)" /usr/local/bin/firecracker
 install -m 0755 "$(command -v jailer)" /usr/local/bin/jailer
@@ -91,7 +100,10 @@ EOF
 
 install -d -m 0755 /var/lib/helmr/images/guest
 rm -rf /var/lib/helmr/images/guest/out
-cp -R "$repo/images/guest/out" /var/lib/helmr/images/guest/out
+install -d -m 0755 /var/lib/helmr/images/guest/out
+tar --no-same-owner --no-same-permissions -C /var/lib/helmr/images/guest/out -xf /tmp/helmr-runtime-artifacts.tar
+rm -f /tmp/helmr-runtime-artifacts.tar
+rm -rf "$repo"
 
 groupadd --system --gid 1001 helmr-vmm 2>/dev/null || true
 useradd --system --uid 1001 --gid 1001 --groups kvm --no-create-home --shell /usr/sbin/nologin helmr-vmm 2>/dev/null || true

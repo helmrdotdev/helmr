@@ -82,10 +82,9 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		runDispatchPool,
 		workspaceFencingKey,
 		dispatch.RunPlacementPolicy{
-			PreparationLimit: int64(cfg.RunPreparationLimit),
-			ReservationTTL:   cfg.RunReservationTTL,
-			StartDeadline:    cfg.RunLeaseStartDeadline,
-			LeaseTTL:         cfg.RunLeaseTTL,
+			ReservationTTL: cfg.RunReservationTTL,
+			StartDeadline:  cfg.RunLeaseStartDeadline,
+			LeaseTTL:       cfg.RunLeaseTTL,
 		},
 	)
 	if err != nil {

@@ -7,6 +7,7 @@ export type Me = {
   org_id?: string | null;
   role?: string | null;
   permissions?: string[];
+  admin: boolean;
   organization_required: boolean;
   project_required: boolean;
   access_required?: boolean;

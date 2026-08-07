@@ -15,7 +15,7 @@ func seedDevData(ctx context.Context, pool *pgxpool.Pool, cfg devConfig) error {
 	if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `SELECT set_config('helmr.seed_region_id', $1, true)`, cfg.defaultRegionID); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT set_config('helmr.seed_region_id', $1, true)`, cfg.bootstrapRegionID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, devSeedSQL); err != nil {

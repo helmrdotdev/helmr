@@ -400,9 +400,6 @@ func (d *Authority) createWorkspaceExecRuntime(
 	authority workspaceExecAuthority,
 ) (WorkspaceExecPlacement, error) {
 	runAuthority := authority.runAuthority()
-	if err := d.checkWorkspaceExecPreparationBudget(ctx, tx, authority); err != nil {
-		return WorkspaceExecPlacement{}, err
-	}
 	worker, err := selectRunWorker(ctx, tx, runAuthority)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WorkspaceExecPlacement{}, ErrCapacityUnavailable
@@ -458,28 +455,6 @@ func (d *Authority) createWorkspaceExecRuntime(
 		WorkerEpoch:       runtime.WorkerEpoch,
 		RuntimeInstanceID: runtime.ID,
 	}, nil
-}
-
-func (d *Authority) checkWorkspaceExecPreparationBudget(
-	ctx context.Context,
-	tx pgx.Tx,
-	authority workspaceExecAuthority,
-) error {
-	var active int64
-	if err := tx.QueryRow(ctx, `
-SELECT count(*)
-  FROM runtime_instances
- WHERE environment_id = $1
-   AND reserved_process_id IS NOT NULL
-   AND reclaimed_at IS NULL`,
-		authority.environmentID,
-	).Scan(&active); err != nil {
-		return fmt.Errorf("read workspace exec preparation budget: %w", err)
-	}
-	if active >= d.runPolicy.PreparationLimit {
-		return ErrCapacityUnavailable
-	}
-	return nil
 }
 
 func validateWorkspaceExecRuntime(authority workspaceExecAuthority, runtime runRuntime) error {

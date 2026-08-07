@@ -187,49 +187,6 @@ func (ns NullOrgMemberRole) Value() (driver.Value, error) {
 	return string(ns.OrgMemberRole), nil
 }
 
-type RegionVisibility string
-
-const (
-	RegionVisibilityPublic      RegionVisibility = "public"
-	RegionVisibilityAllowlisted RegionVisibility = "allowlisted"
-	RegionVisibilityHidden      RegionVisibility = "hidden"
-)
-
-func (e *RegionVisibility) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = RegionVisibility(s)
-	case string:
-		*e = RegionVisibility(s)
-	default:
-		return fmt.Errorf("unsupported scan type for RegionVisibility: %T", src)
-	}
-	return nil
-}
-
-type NullRegionVisibility struct {
-	RegionVisibility RegionVisibility `json:"region_visibility"`
-	Valid            bool             `json:"valid"` // Valid is true if RegionVisibility is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullRegionVisibility) Scan(value interface{}) error {
-	if value == nil {
-		ns.RegionVisibility, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.RegionVisibility.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullRegionVisibility) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.RegionVisibility), nil
-}
-
 type RunCheckpointArtifactRole string
 
 const (
@@ -789,7 +746,6 @@ type Region struct {
 	ProviderRegion string             `json:"provider_region"`
 	DisplayName    string             `json:"display_name"`
 	State          string             `json:"state"`
-	Visibility     RegionVisibility   `json:"visibility"`
 	Location       string             `json:"location"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
@@ -1283,23 +1239,15 @@ type User struct {
 	DisplayName     string             `json:"display_name"`
 	ProfileImageURL pgtype.Text        `json:"profile_image_url"`
 	PrimaryEmail    pgtype.Text        `json:"primary_email"`
+	Admin           bool               `json:"admin"`
 	DisabledAt      pgtype.Timestamptz `json:"disabled_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
-type WorkerEnrollmentNonce struct {
-	ID                         pgtype.UUID        `json:"id"`
-	NonceHash                  []byte             `json:"nonce_hash"`
-	WorkerGroupID              string             `json:"worker_group_id"`
-	ExpiresAt                  pgtype.Timestamptz `json:"expires_at"`
-	ConsumedAt                 pgtype.Timestamptz `json:"consumed_at"`
-	ConsumedByWorkerInstanceID pgtype.UUID        `json:"consumed_by_worker_instance_id"`
-	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
-}
-
 type WorkerGroup struct {
 	ID                              string             `json:"id"`
+	TokenID                         pgtype.UUID        `json:"token_id"`
 	RegionID                        string             `json:"region_id"`
 	Name                            string             `json:"name"`
 	Description                     string             `json:"description"`
@@ -1317,6 +1265,14 @@ type WorkerGroup struct {
 	ObservationTtlSeconds           int32              `json:"observation_ttl_seconds"`
 	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WorkerGroupToken struct {
+	ID         pgtype.UUID        `json:"id"`
+	TokenHash  []byte             `json:"token_hash"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkerInstance struct {

@@ -113,12 +113,13 @@ SELECT users.*
 
 -- name: UpsertMagicLinkAuthIdentity :one
 WITH upserted_user AS (
-    INSERT INTO users (id, display_name, profile_image_url, primary_email)
+    INSERT INTO users (id, display_name, profile_image_url, primary_email, admin)
     SELECT
         sqlc.arg(user_id) AS id,
         sqlc.arg(display_name) AS display_name,
         sqlc.narg(profile_image_url) AS profile_image_url,
-        sqlc.arg(email) AS primary_email
+        sqlc.arg(email) AS primary_email,
+        sqlc.arg(admin)::bool AS admin
      WHERE NOT EXISTS (
          SELECT 1
            FROM auth_identities AS auth_identity

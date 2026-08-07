@@ -29,8 +29,14 @@ WITH activation AS (
        AND $9::bigint >= worker_groups.required_guest_ephemeral_disk_bytes
        AND $10::bigint >= worker_groups.required_build_cache_bytes
        AND $11::bigint >= worker_groups.required_artifact_cache_bytes
-       AND $12::integer >= worker_groups.required_vm_slots
-       AND $13::integer >= worker_groups.required_build_executors
+       AND (
+           NOT $5::boolean
+           OR $12::integer >= worker_groups.required_vm_slots
+       )
+       AND (
+           NOT $6::boolean
+           OR $13::integer >= worker_groups.required_build_executors
+       )
        AND NOT EXISTS (
            SELECT 1 FROM runtime_instances
             WHERE runtime_instances.worker_instance_id = worker_instances.id
@@ -387,82 +393,90 @@ func (q *Queries) CompleteWorkerStartupRecovery(ctx context.Context, arg Complet
 	return i, err
 }
 
-const drainAbsentWorkerGroups = `-- name: DrainAbsentWorkerGroups :many
-WITH draining_groups AS (
-    UPDATE worker_groups
-       SET state = 'draining', claim_version = claim_version + 1, updated_at = now()
-     WHERE worker_groups.region_id = $1
-       AND worker_groups.state IN ('active', 'paused')
-       AND NOT (worker_groups.id = ANY($2::text[]))
-    RETURNING id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, created_at, updated_at
+const createWorkerGroup = `-- name: CreateWorkerGroup :one
+WITH token AS (
+    INSERT INTO worker_group_tokens (id, token_hash)
+    VALUES ($15, $16)
+    RETURNING id
 )
-SELECT draining_groups.id, draining_groups.region_id, draining_groups.name, draining_groups.description, draining_groups.state, draining_groups.claim_version, draining_groups.allows_run, draining_groups.allows_build, draining_groups.required_cpu_millis, draining_groups.required_memory_bytes, draining_groups.required_guest_ephemeral_disk_bytes, draining_groups.required_build_cache_bytes, draining_groups.required_artifact_cache_bytes, draining_groups.required_vm_slots, draining_groups.required_build_executors, draining_groups.observation_ttl_seconds, draining_groups.created_at, draining_groups.updated_at FROM draining_groups
- ORDER BY draining_groups.id
+INSERT INTO worker_groups (
+    id, token_id, region_id, name, description, state, allows_run, allows_build,
+    required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes,
+    required_build_cache_bytes, required_artifact_cache_bytes,
+    required_vm_slots, required_build_executors, observation_ttl_seconds
+)
+SELECT $1, token.id, $2, $3,
+       $4, 'active', $5, $6,
+       $7, $8,
+       $9,
+       $10, $11,
+       $12, $13,
+       $14
+  FROM token
+RETURNING id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, created_at, updated_at
 `
 
-type DrainAbsentWorkerGroupsParams struct {
-	RegionID   string   `json:"region_id"`
-	DesiredIds []string `json:"desired_ids"`
+type CreateWorkerGroupParams struct {
+	ID                              string      `json:"id"`
+	RegionID                        string      `json:"region_id"`
+	Name                            string      `json:"name"`
+	Description                     string      `json:"description"`
+	AllowsRun                       bool        `json:"allows_run"`
+	AllowsBuild                     bool        `json:"allows_build"`
+	RequiredCPUMillis               int64       `json:"required_cpu_millis"`
+	RequiredMemoryBytes             int64       `json:"required_memory_bytes"`
+	RequiredGuestEphemeralDiskBytes int64       `json:"required_guest_ephemeral_disk_bytes"`
+	RequiredBuildCacheBytes         int64       `json:"required_build_cache_bytes"`
+	RequiredArtifactCacheBytes      int64       `json:"required_artifact_cache_bytes"`
+	RequiredVMSlots                 int32       `json:"required_vm_slots"`
+	RequiredBuildExecutors          int32       `json:"required_build_executors"`
+	ObservationTtlSeconds           int32       `json:"observation_ttl_seconds"`
+	TokenID                         pgtype.UUID `json:"token_id"`
+	TokenHash                       []byte      `json:"token_hash"`
 }
 
-type DrainAbsentWorkerGroupsRow struct {
-	ID                              string             `json:"id"`
-	RegionID                        string             `json:"region_id"`
-	Name                            string             `json:"name"`
-	Description                     string             `json:"description"`
-	State                           string             `json:"state"`
-	ClaimVersion                    int64              `json:"claim_version"`
-	AllowsRun                       bool               `json:"allows_run"`
-	AllowsBuild                     bool               `json:"allows_build"`
-	RequiredCPUMillis               int64              `json:"required_cpu_millis"`
-	RequiredMemoryBytes             int64              `json:"required_memory_bytes"`
-	RequiredGuestEphemeralDiskBytes int64              `json:"required_guest_ephemeral_disk_bytes"`
-	RequiredBuildCacheBytes         int64              `json:"required_build_cache_bytes"`
-	RequiredArtifactCacheBytes      int64              `json:"required_artifact_cache_bytes"`
-	RequiredVMSlots                 int32              `json:"required_vm_slots"`
-	RequiredBuildExecutors          int32              `json:"required_build_executors"`
-	ObservationTtlSeconds           int32              `json:"observation_ttl_seconds"`
-	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
-}
-
-func (q *Queries) DrainAbsentWorkerGroups(ctx context.Context, arg DrainAbsentWorkerGroupsParams) ([]DrainAbsentWorkerGroupsRow, error) {
-	rows, err := q.db.Query(ctx, drainAbsentWorkerGroups, arg.RegionID, arg.DesiredIds)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []DrainAbsentWorkerGroupsRow
-	for rows.Next() {
-		var i DrainAbsentWorkerGroupsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.RegionID,
-			&i.Name,
-			&i.Description,
-			&i.State,
-			&i.ClaimVersion,
-			&i.AllowsRun,
-			&i.AllowsBuild,
-			&i.RequiredCPUMillis,
-			&i.RequiredMemoryBytes,
-			&i.RequiredGuestEphemeralDiskBytes,
-			&i.RequiredBuildCacheBytes,
-			&i.RequiredArtifactCacheBytes,
-			&i.RequiredVMSlots,
-			&i.RequiredBuildExecutors,
-			&i.ObservationTtlSeconds,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+func (q *Queries) CreateWorkerGroup(ctx context.Context, arg CreateWorkerGroupParams) (WorkerGroup, error) {
+	row := q.db.QueryRow(ctx, createWorkerGroup,
+		arg.ID,
+		arg.RegionID,
+		arg.Name,
+		arg.Description,
+		arg.AllowsRun,
+		arg.AllowsBuild,
+		arg.RequiredCPUMillis,
+		arg.RequiredMemoryBytes,
+		arg.RequiredGuestEphemeralDiskBytes,
+		arg.RequiredBuildCacheBytes,
+		arg.RequiredArtifactCacheBytes,
+		arg.RequiredVMSlots,
+		arg.RequiredBuildExecutors,
+		arg.ObservationTtlSeconds,
+		arg.TokenID,
+		arg.TokenHash,
+	)
+	var i WorkerGroup
+	err := row.Scan(
+		&i.ID,
+		&i.TokenID,
+		&i.RegionID,
+		&i.Name,
+		&i.Description,
+		&i.State,
+		&i.ClaimVersion,
+		&i.AllowsRun,
+		&i.AllowsBuild,
+		&i.RequiredCPUMillis,
+		&i.RequiredMemoryBytes,
+		&i.RequiredGuestEphemeralDiskBytes,
+		&i.RequiredBuildCacheBytes,
+		&i.RequiredArtifactCacheBytes,
+		&i.RequiredVMSlots,
+		&i.RequiredBuildExecutors,
+		&i.ObservationTtlSeconds,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getCapacityWorkerInstance = `-- name: GetCapacityWorkerInstance :one
@@ -528,6 +542,76 @@ func (q *Queries) GetControlPlaneWorkerGroupReadiness(ctx context.Context, worke
 	row := q.db.QueryRow(ctx, getControlPlaneWorkerGroupReadiness, workerGroupID)
 	var i GetControlPlaneWorkerGroupReadinessRow
 	err := row.Scan(&i.WorkerGroupID, &i.State, &i.Routable)
+	return i, err
+}
+
+const getWorkerGroup = `-- name: GetWorkerGroup :one
+SELECT id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, created_at, updated_at FROM worker_groups WHERE id = $1
+`
+
+func (q *Queries) GetWorkerGroup(ctx context.Context, id string) (WorkerGroup, error) {
+	row := q.db.QueryRow(ctx, getWorkerGroup, id)
+	var i WorkerGroup
+	err := row.Scan(
+		&i.ID,
+		&i.TokenID,
+		&i.RegionID,
+		&i.Name,
+		&i.Description,
+		&i.State,
+		&i.ClaimVersion,
+		&i.AllowsRun,
+		&i.AllowsBuild,
+		&i.RequiredCPUMillis,
+		&i.RequiredMemoryBytes,
+		&i.RequiredGuestEphemeralDiskBytes,
+		&i.RequiredBuildCacheBytes,
+		&i.RequiredArtifactCacheBytes,
+		&i.RequiredVMSlots,
+		&i.RequiredBuildExecutors,
+		&i.ObservationTtlSeconds,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getWorkerGroupByRegionName = `-- name: GetWorkerGroupByRegionName :one
+SELECT id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, created_at, updated_at
+  FROM worker_groups
+ WHERE region_id = $1
+   AND name = $2
+`
+
+type GetWorkerGroupByRegionNameParams struct {
+	RegionID string `json:"region_id"`
+	Name     string `json:"name"`
+}
+
+func (q *Queries) GetWorkerGroupByRegionName(ctx context.Context, arg GetWorkerGroupByRegionNameParams) (WorkerGroup, error) {
+	row := q.db.QueryRow(ctx, getWorkerGroupByRegionName, arg.RegionID, arg.Name)
+	var i WorkerGroup
+	err := row.Scan(
+		&i.ID,
+		&i.TokenID,
+		&i.RegionID,
+		&i.Name,
+		&i.Description,
+		&i.State,
+		&i.ClaimVersion,
+		&i.AllowsRun,
+		&i.AllowsBuild,
+		&i.RequiredCPUMillis,
+		&i.RequiredMemoryBytes,
+		&i.RequiredGuestEphemeralDiskBytes,
+		&i.RequiredBuildCacheBytes,
+		&i.RequiredArtifactCacheBytes,
+		&i.RequiredVMSlots,
+		&i.RequiredBuildExecutors,
+		&i.ObservationTtlSeconds,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
@@ -675,17 +759,212 @@ func (q *Queries) ListCapacityWorkerInstances(ctx context.Context, arg ListCapac
 	return items, nil
 }
 
+const listWorkerCapacityBins = `-- name: ListWorkerCapacityBins :many
+WITH live_workers AS (
+    SELECT worker_groups.id AS worker_group_id,
+           worker_instances.id AS worker_instance_id,
+           worker_instances.current_epoch AS worker_epoch,
+           worker_instances.supports_run,
+           worker_instances.supports_build,
+           worker_instances.runtime_identity_id,
+           runtime_identities.runtime_arch,
+           runtime_identities.vm_runtime_contract,
+           worker_instances.substrate_format,
+           worker_instances.substrate_contract,
+           worker_instances.per_vm_cpu_millis,
+           worker_instances.per_vm_memory_bytes,
+           worker_instances.per_vm_guest_ephemeral_disk_bytes,
+           worker_instances.max_vm_slots,
+           worker_instances.max_run_consumers,
+           worker_instances.max_build_executors,
+           worker_instances.max_runtime_starts,
+           worker_observations.run_paused_reason,
+           worker_observations.build_paused_reason,
+           worker_observations.runtime_paused_reason,
+           worker_instances.epoch_cpu_millis,
+           worker_instances.epoch_memory_bytes,
+           worker_instances.epoch_guest_ephemeral_disk_bytes
+      FROM worker_groups
+      JOIN worker_instances
+        ON worker_instances.worker_group_id = worker_groups.id
+       AND worker_instances.state = 'active'
+       AND worker_instances.current_epoch IS NOT NULL
+      JOIN runtime_identities
+        ON runtime_identities.id = worker_instances.runtime_identity_id
+      JOIN worker_observations
+        ON worker_observations.worker_instance_id = worker_instances.id
+       AND worker_observations.worker_epoch = worker_instances.current_epoch
+       AND worker_observations.observed_at >= transaction_timestamp()
+           - worker_groups.observation_ttl_seconds * interval '1 second'
+     WHERE ($1::text = '' OR worker_groups.id = $1)
+       AND ($2::text = '' OR worker_groups.region_id = $2)
+       AND worker_groups.state = 'active'
+), usage AS (
+    SELECT live_workers.worker_instance_id,
+           COALESCE((SELECT sum(runtime_instances.reserved_cpu_millis)
+                      FROM runtime_instances
+                     WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
+                        AND runtime_instances.worker_epoch = live_workers.worker_epoch
+                        AND runtime_instances.reclaimed_at IS NULL), 0)
+           + COALESCE((SELECT sum(deployment_build_leases.requested_cpu_millis)
+                         FROM deployment_build_leases
+                        WHERE deployment_build_leases.worker_instance_id = live_workers.worker_instance_id
+                          AND deployment_build_leases.worker_epoch = live_workers.worker_epoch
+                          AND deployment_build_leases.state IN ('assigned', 'starting', 'running')), 0) AS cpu_millis,
+           COALESCE((SELECT sum(runtime_instances.reserved_memory_bytes)
+                      FROM runtime_instances
+                     WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
+                        AND runtime_instances.worker_epoch = live_workers.worker_epoch
+                        AND runtime_instances.reclaimed_at IS NULL), 0)
+           + COALESCE((SELECT sum(deployment_build_leases.requested_memory_bytes)
+                         FROM deployment_build_leases
+                        WHERE deployment_build_leases.worker_instance_id = live_workers.worker_instance_id
+                          AND deployment_build_leases.worker_epoch = live_workers.worker_epoch
+                          AND deployment_build_leases.state IN ('assigned', 'starting', 'running')), 0) AS memory_bytes,
+           COALESCE((SELECT sum(runtime_instances.reserved_guest_ephemeral_disk_bytes)
+                      FROM runtime_instances
+                     WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
+                        AND runtime_instances.worker_epoch = live_workers.worker_epoch
+                        AND runtime_instances.reclaimed_at IS NULL), 0)
+           + COALESCE((SELECT sum(deployment_build_leases.requested_guest_ephemeral_disk_bytes)
+                         FROM deployment_build_leases
+                        WHERE deployment_build_leases.worker_instance_id = live_workers.worker_instance_id
+                          AND deployment_build_leases.worker_epoch = live_workers.worker_epoch
+                          AND deployment_build_leases.state IN ('assigned', 'starting', 'running')), 0) AS guest_ephemeral_disk_bytes,
+           COALESCE((SELECT count(*) FROM runtime_instances
+                      WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
+                        AND runtime_instances.worker_epoch = live_workers.worker_epoch
+                        AND (runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
+                             OR (runtime_instances.observed_state IN ('failed', 'lost') AND runtime_instances.reclaimed_at IS NULL))), 0)::bigint AS vm_slots,
+           COALESCE((SELECT count(*) FROM run_leases
+                      WHERE run_leases.worker_instance_id = live_workers.worker_instance_id
+                        AND run_leases.worker_epoch = live_workers.worker_epoch
+                        AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')), 0)::bigint AS run_consumers,
+           COALESCE((SELECT sum(deployment_build_leases.requested_build_executors)
+                      FROM deployment_build_leases
+                     WHERE deployment_build_leases.worker_instance_id = live_workers.worker_instance_id
+                       AND deployment_build_leases.worker_epoch = live_workers.worker_epoch
+                       AND deployment_build_leases.state IN ('assigned', 'starting', 'running')), 0)::bigint AS build_executors,
+           COALESCE((SELECT count(*) FROM runtime_instances
+                      WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
+                        AND runtime_instances.worker_epoch = live_workers.worker_epoch
+                        AND runtime_instances.observed_state IN ('allocated', 'preparing')), 0)::bigint AS runtime_starts
+      FROM live_workers
+)
+SELECT live_workers.worker_group_id,
+       live_workers.worker_instance_id,
+       live_workers.worker_epoch,
+       live_workers.supports_run,
+       live_workers.supports_build,
+       live_workers.runtime_identity_id,
+       live_workers.runtime_arch,
+       live_workers.vm_runtime_contract,
+       live_workers.substrate_format,
+       live_workers.substrate_contract,
+       live_workers.per_vm_cpu_millis,
+       live_workers.per_vm_memory_bytes,
+       live_workers.per_vm_guest_ephemeral_disk_bytes,
+       GREATEST(live_workers.epoch_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
+       GREATEST(live_workers.epoch_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
+       GREATEST(live_workers.epoch_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
+       GREATEST(live_workers.max_vm_slots - usage.vm_slots, 0)::bigint AS available_vm_slots,
+       GREATEST(live_workers.max_run_consumers - usage.run_consumers, 0)::bigint AS available_run_consumers,
+       GREATEST(live_workers.max_build_executors - usage.build_executors, 0)::bigint AS available_build_executors,
+       GREATEST(live_workers.max_runtime_starts - usage.runtime_starts, 0)::bigint AS available_runtime_starts,
+       live_workers.run_paused_reason,
+       live_workers.build_paused_reason,
+       live_workers.runtime_paused_reason
+  FROM live_workers
+  JOIN usage USING (worker_instance_id)
+ ORDER BY live_workers.worker_instance_id
+`
+
+type ListWorkerCapacityBinsParams struct {
+	WorkerGroupID string `json:"worker_group_id"`
+	RegionID      string `json:"region_id"`
+}
+
+type ListWorkerCapacityBinsRow struct {
+	WorkerGroupID                    string      `json:"worker_group_id"`
+	WorkerInstanceID                 pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch                      pgtype.Int8 `json:"worker_epoch"`
+	SupportsRun                      bool        `json:"supports_run"`
+	SupportsBuild                    bool        `json:"supports_build"`
+	RuntimeIdentityID                pgtype.Text `json:"runtime_identity_id"`
+	RuntimeArch                      string      `json:"runtime_arch"`
+	VMRuntimeContract                string      `json:"vm_runtime_contract"`
+	SubstrateFormat                  string      `json:"substrate_format"`
+	SubstrateContract                string      `json:"substrate_contract"`
+	PerVMCPUMillis                   int64       `json:"per_vm_cpu_millis"`
+	PerVMMemoryBytes                 int64       `json:"per_vm_memory_bytes"`
+	PerVMGuestEphemeralDiskBytes     int64       `json:"per_vm_guest_ephemeral_disk_bytes"`
+	AvailableCPUMillis               int64       `json:"available_cpu_millis"`
+	AvailableMemoryBytes             int64       `json:"available_memory_bytes"`
+	AvailableGuestEphemeralDiskBytes int64       `json:"available_guest_ephemeral_disk_bytes"`
+	AvailableVMSlots                 int64       `json:"available_vm_slots"`
+	AvailableRunConsumers            int64       `json:"available_run_consumers"`
+	AvailableBuildExecutors          int64       `json:"available_build_executors"`
+	AvailableRuntimeStarts           int64       `json:"available_runtime_starts"`
+	RunPausedReason                  pgtype.Text `json:"run_paused_reason"`
+	BuildPausedReason                pgtype.Text `json:"build_paused_reason"`
+	RuntimePausedReason              pgtype.Text `json:"runtime_paused_reason"`
+}
+
+func (q *Queries) ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapacityBinsParams) ([]ListWorkerCapacityBinsRow, error) {
+	rows, err := q.db.Query(ctx, listWorkerCapacityBins, arg.WorkerGroupID, arg.RegionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListWorkerCapacityBinsRow
+	for rows.Next() {
+		var i ListWorkerCapacityBinsRow
+		if err := rows.Scan(
+			&i.WorkerGroupID,
+			&i.WorkerInstanceID,
+			&i.WorkerEpoch,
+			&i.SupportsRun,
+			&i.SupportsBuild,
+			&i.RuntimeIdentityID,
+			&i.RuntimeArch,
+			&i.VMRuntimeContract,
+			&i.SubstrateFormat,
+			&i.SubstrateContract,
+			&i.PerVMCPUMillis,
+			&i.PerVMMemoryBytes,
+			&i.PerVMGuestEphemeralDiskBytes,
+			&i.AvailableCPUMillis,
+			&i.AvailableMemoryBytes,
+			&i.AvailableGuestEphemeralDiskBytes,
+			&i.AvailableVMSlots,
+			&i.AvailableRunConsumers,
+			&i.AvailableBuildExecutors,
+			&i.AvailableRuntimeStarts,
+			&i.RunPausedReason,
+			&i.BuildPausedReason,
+			&i.RuntimePausedReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWorkerGroups = `-- name: ListWorkerGroups :many
-SELECT id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, created_at, updated_at
+SELECT id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, created_at, updated_at
   FROM worker_groups
- WHERE region_id = $1
- ORDER BY name ASC
+ WHERE $1::text IS NULL OR region_id = $1
+ ORDER BY region_id, name ASC
  LIMIT $2
 `
 
 type ListWorkerGroupsParams struct {
-	RegionID string `json:"region_id"`
-	RowLimit int32  `json:"row_limit"`
+	RegionID pgtype.Text `json:"region_id"`
+	RowLimit int32       `json:"row_limit"`
 }
 
 func (q *Queries) ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsParams) ([]WorkerGroup, error) {
@@ -699,6 +978,7 @@ func (q *Queries) ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsPara
 		var i WorkerGroup
 		if err := rows.Scan(
 			&i.ID,
+			&i.TokenID,
 			&i.RegionID,
 			&i.Name,
 			&i.Description,
@@ -727,73 +1007,22 @@ func (q *Queries) ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsPara
 	return items, nil
 }
 
-const lockAbsentWorkerGroups = `-- name: LockAbsentWorkerGroups :many
-SELECT worker_groups.id
-  FROM worker_groups
- WHERE worker_groups.region_id = $1
-   AND worker_groups.state <> 'disabled'
-   AND NOT (worker_groups.id = ANY($2::text[]))
- ORDER BY worker_groups.id
- FOR UPDATE OF worker_groups
+const lockWorkerGroupCreationRegion = `-- name: LockWorkerGroupCreationRegion :exec
+SELECT pg_advisory_xact_lock($1::bigint)
 `
 
-type LockAbsentWorkerGroupsParams struct {
-	RegionID   string   `json:"region_id"`
-	DesiredIds []string `json:"desired_ids"`
+func (q *Queries) LockWorkerGroupCreationRegion(ctx context.Context, lockKey int64) error {
+	_, err := q.db.Exec(ctx, lockWorkerGroupCreationRegion, lockKey)
+	return err
 }
 
-func (q *Queries) LockAbsentWorkerGroups(ctx context.Context, arg LockAbsentWorkerGroupsParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, lockAbsentWorkerGroups, arg.RegionID, arg.DesiredIds)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const lockWorkerGroupsForReconciliation = `-- name: LockWorkerGroupsForReconciliation :many
-SELECT worker_groups.id
-  FROM worker_groups
- WHERE worker_groups.region_id = $1
-   AND worker_groups.id = ANY($2::text[])
- ORDER BY worker_groups.id
- FOR UPDATE OF worker_groups
+const lockWorkerGroupMutation = `-- name: LockWorkerGroupMutation :exec
+SELECT pg_advisory_xact_lock($1::bigint)
 `
 
-type LockWorkerGroupsForReconciliationParams struct {
-	RegionID   string   `json:"region_id"`
-	DesiredIds []string `json:"desired_ids"`
-}
-
-func (q *Queries) LockWorkerGroupsForReconciliation(ctx context.Context, arg LockWorkerGroupsForReconciliationParams) ([]string, error) {
-	rows, err := q.db.Query(ctx, lockWorkerGroupsForReconciliation, arg.RegionID, arg.DesiredIds)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+func (q *Queries) LockWorkerGroupMutation(ctx context.Context, lockKey int64) error {
+	_, err := q.db.Exec(ctx, lockWorkerGroupMutation, lockKey)
+	return err
 }
 
 const markWorkerInstanceLost = `-- name: MarkWorkerInstanceLost :one
@@ -895,192 +1124,6 @@ func (q *Queries) MarkWorkerInstanceLost(ctx context.Context, arg MarkWorkerInst
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.TransitionApplied,
-	)
-	return i, err
-}
-
-const reconcileWorkerGroup = `-- name: ReconcileWorkerGroup :one
-WITH desired_group AS (
-    INSERT INTO worker_groups (
-        id, region_id, name, description, state, allows_run, allows_build,
-        required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes,
-        required_build_cache_bytes, required_artifact_cache_bytes,
-        required_vm_slots, required_build_executors, observation_ttl_seconds
-    ) VALUES (
-        $1, $2, $3, $4,
-        'active', $5, $6,
-        $7, $8,
-        $9,
-        $10, $11,
-        $12, $13,
-        $14
-    )
-    ON CONFLICT (id) DO UPDATE
-       SET claim_version = CASE
-               WHEN worker_groups.allows_run IS DISTINCT FROM EXCLUDED.allows_run
-                 OR worker_groups.allows_build IS DISTINCT FROM EXCLUDED.allows_build
-                 OR worker_groups.required_cpu_millis IS DISTINCT FROM EXCLUDED.required_cpu_millis
-                 OR worker_groups.required_memory_bytes IS DISTINCT FROM EXCLUDED.required_memory_bytes
-                 OR worker_groups.required_guest_ephemeral_disk_bytes IS DISTINCT FROM EXCLUDED.required_guest_ephemeral_disk_bytes
-                 OR worker_groups.required_build_cache_bytes IS DISTINCT FROM EXCLUDED.required_build_cache_bytes
-                 OR worker_groups.required_artifact_cache_bytes IS DISTINCT FROM EXCLUDED.required_artifact_cache_bytes
-                 OR worker_groups.required_vm_slots IS DISTINCT FROM EXCLUDED.required_vm_slots
-                 OR worker_groups.required_build_executors IS DISTINCT FROM EXCLUDED.required_build_executors
-                 OR worker_groups.observation_ttl_seconds IS DISTINCT FROM EXCLUDED.observation_ttl_seconds
-               THEN worker_groups.claim_version + 1 ELSE worker_groups.claim_version END,
-           region_id = EXCLUDED.region_id, name = EXCLUDED.name,
-           description = EXCLUDED.description,
-           allows_run = EXCLUDED.allows_run, allows_build = EXCLUDED.allows_build,
-           required_cpu_millis = EXCLUDED.required_cpu_millis,
-           required_memory_bytes = EXCLUDED.required_memory_bytes,
-           required_guest_ephemeral_disk_bytes = EXCLUDED.required_guest_ephemeral_disk_bytes,
-           required_build_cache_bytes = EXCLUDED.required_build_cache_bytes,
-           required_artifact_cache_bytes = EXCLUDED.required_artifact_cache_bytes,
-           required_vm_slots = EXCLUDED.required_vm_slots,
-           required_build_executors = EXCLUDED.required_build_executors,
-           observation_ttl_seconds = EXCLUDED.observation_ttl_seconds,
-           updated_at = now()
-    RETURNING id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, created_at, updated_at
-), lost_workers AS (
-    UPDATE worker_instances
-       SET state = 'lost',
-           claim_version = worker_instances.claim_version + 1,
-           lost_at = COALESCE(lost_at, now()),
-           updated_at = now()
-     FROM desired_group
-     WHERE worker_instances.worker_group_id = desired_group.id
-       AND worker_instances.state IN ('registering', 'active', 'draining')
-       AND (
-           (worker_instances.supports_run AND NOT desired_group.allows_run)
-           OR (worker_instances.supports_build AND NOT desired_group.allows_build)
-           OR EXISTS (
-               SELECT 1
-                 FROM worker_instance_credentials
-                WHERE worker_instance_credentials.worker_instance_id = worker_instances.id
-                  AND worker_instance_credentials.revoked_at IS NULL
-                  AND (
-                      (worker_instance_credentials.allows_run AND NOT desired_group.allows_run)
-                      OR (worker_instance_credentials.allows_build AND NOT desired_group.allows_build)
-                  )
-           )
-           OR (worker_instances.state <> 'registering' AND (
-               worker_instances.epoch_cpu_millis < desired_group.required_cpu_millis
-               OR worker_instances.epoch_memory_bytes < desired_group.required_memory_bytes
-               OR worker_instances.epoch_guest_ephemeral_disk_bytes < desired_group.required_guest_ephemeral_disk_bytes
-               OR worker_instances.epoch_build_cache_bytes < desired_group.required_build_cache_bytes
-               OR worker_instances.epoch_artifact_cache_bytes < desired_group.required_artifact_cache_bytes
-               OR worker_instances.max_vm_slots < desired_group.required_vm_slots
-               OR worker_instances.max_build_executors < desired_group.required_build_executors
-           ))
-       )
-    RETURNING worker_instances.id, worker_instances.current_epoch
-), revoked AS (
-    UPDATE worker_instance_credentials
-       SET revoked_at = COALESCE(revoked_at, now())
-     WHERE worker_instance_credentials.worker_instance_id IN (SELECT id FROM lost_workers)
-       AND worker_instance_credentials.revoked_at IS NULL
-    RETURNING worker_instance_credentials.id
-), lost_mounts AS (
-    UPDATE workspace_mounts
-       SET state = 'lost', lost_at = now(), terminal_at = now(),
-           terminal_reason_code = 'worker_group_contract_changed', updated_at = now()
-     WHERE workspace_mounts.worker_instance_id IN (SELECT id FROM lost_workers)
-       AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
-    RETURNING workspace_mounts.id
-), lost_runtimes AS (
-    UPDATE runtime_instances
-       SET observed_state = 'lost', observed_version = observed_version + 1,
-           observed_at = now(), lost_at = now(), terminal_at = now(),
-           terminal_reason_code = 'worker_group_contract_changed',
-           reserved_run_id = NULL, reserved_attempt_number = NULL,
-           reserved_process_id = NULL, reserved_workspace_version_id = NULL,
-           reservation_expires_at = NULL, updated_at = now()
-     WHERE runtime_instances.worker_instance_id IN (SELECT id FROM lost_workers)
-       AND runtime_instances.reclaimed_at IS NULL
-       AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
-    RETURNING runtime_instances.id
-)
-SELECT desired_group.id, desired_group.region_id, desired_group.name, desired_group.description, desired_group.state, desired_group.claim_version, desired_group.allows_run, desired_group.allows_build, desired_group.required_cpu_millis, desired_group.required_memory_bytes, desired_group.required_guest_ephemeral_disk_bytes, desired_group.required_build_cache_bytes, desired_group.required_artifact_cache_bytes, desired_group.required_vm_slots, desired_group.required_build_executors, desired_group.observation_ttl_seconds, desired_group.created_at, desired_group.updated_at FROM desired_group
- WHERE (SELECT count(*) FROM revoked) >= 0
-   AND (SELECT count(*) FROM lost_mounts) >= 0
-   AND (SELECT count(*) FROM lost_runtimes) >= 0
-`
-
-type ReconcileWorkerGroupParams struct {
-	ID                              string `json:"id"`
-	RegionID                        string `json:"region_id"`
-	Name                            string `json:"name"`
-	Description                     string `json:"description"`
-	AllowsRun                       bool   `json:"allows_run"`
-	AllowsBuild                     bool   `json:"allows_build"`
-	RequiredCPUMillis               int64  `json:"required_cpu_millis"`
-	RequiredMemoryBytes             int64  `json:"required_memory_bytes"`
-	RequiredGuestEphemeralDiskBytes int64  `json:"required_guest_ephemeral_disk_bytes"`
-	RequiredBuildCacheBytes         int64  `json:"required_build_cache_bytes"`
-	RequiredArtifactCacheBytes      int64  `json:"required_artifact_cache_bytes"`
-	RequiredVMSlots                 int32  `json:"required_vm_slots"`
-	RequiredBuildExecutors          int32  `json:"required_build_executors"`
-	ObservationTtlSeconds           int32  `json:"observation_ttl_seconds"`
-}
-
-type ReconcileWorkerGroupRow struct {
-	ID                              string             `json:"id"`
-	RegionID                        string             `json:"region_id"`
-	Name                            string             `json:"name"`
-	Description                     string             `json:"description"`
-	State                           string             `json:"state"`
-	ClaimVersion                    int64              `json:"claim_version"`
-	AllowsRun                       bool               `json:"allows_run"`
-	AllowsBuild                     bool               `json:"allows_build"`
-	RequiredCPUMillis               int64              `json:"required_cpu_millis"`
-	RequiredMemoryBytes             int64              `json:"required_memory_bytes"`
-	RequiredGuestEphemeralDiskBytes int64              `json:"required_guest_ephemeral_disk_bytes"`
-	RequiredBuildCacheBytes         int64              `json:"required_build_cache_bytes"`
-	RequiredArtifactCacheBytes      int64              `json:"required_artifact_cache_bytes"`
-	RequiredVMSlots                 int32              `json:"required_vm_slots"`
-	RequiredBuildExecutors          int32              `json:"required_build_executors"`
-	ObservationTtlSeconds           int32              `json:"observation_ttl_seconds"`
-	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
-}
-
-func (q *Queries) ReconcileWorkerGroup(ctx context.Context, arg ReconcileWorkerGroupParams) (ReconcileWorkerGroupRow, error) {
-	row := q.db.QueryRow(ctx, reconcileWorkerGroup,
-		arg.ID,
-		arg.RegionID,
-		arg.Name,
-		arg.Description,
-		arg.AllowsRun,
-		arg.AllowsBuild,
-		arg.RequiredCPUMillis,
-		arg.RequiredMemoryBytes,
-		arg.RequiredGuestEphemeralDiskBytes,
-		arg.RequiredBuildCacheBytes,
-		arg.RequiredArtifactCacheBytes,
-		arg.RequiredVMSlots,
-		arg.RequiredBuildExecutors,
-		arg.ObservationTtlSeconds,
-	)
-	var i ReconcileWorkerGroupRow
-	err := row.Scan(
-		&i.ID,
-		&i.RegionID,
-		&i.Name,
-		&i.Description,
-		&i.State,
-		&i.ClaimVersion,
-		&i.AllowsRun,
-		&i.AllowsBuild,
-		&i.RequiredCPUMillis,
-		&i.RequiredMemoryBytes,
-		&i.RequiredGuestEphemeralDiskBytes,
-		&i.RequiredBuildCacheBytes,
-		&i.RequiredArtifactCacheBytes,
-		&i.RequiredVMSlots,
-		&i.RequiredBuildExecutors,
-		&i.ObservationTtlSeconds,
-		&i.CreatedAt,
-		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1199,6 +1242,33 @@ func (q *Queries) RecordWorkerObservation(ctx context.Context, arg RecordWorkerO
 	return i, err
 }
 
+const rotateWorkerGroupToken = `-- name: RotateWorkerGroupToken :one
+UPDATE worker_group_tokens
+   SET token_hash = $1, updated_at = now()
+  FROM worker_groups
+ WHERE worker_groups.id = $2
+   AND worker_groups.token_id = worker_group_tokens.id
+RETURNING worker_group_tokens.id, worker_group_tokens.token_hash, worker_group_tokens.last_used_at, worker_group_tokens.created_at, worker_group_tokens.updated_at
+`
+
+type RotateWorkerGroupTokenParams struct {
+	TokenHash     []byte `json:"token_hash"`
+	WorkerGroupID string `json:"worker_group_id"`
+}
+
+func (q *Queries) RotateWorkerGroupToken(ctx context.Context, arg RotateWorkerGroupTokenParams) (WorkerGroupToken, error) {
+	row := q.db.QueryRow(ctx, rotateWorkerGroupToken, arg.TokenHash, arg.WorkerGroupID)
+	var i WorkerGroupToken
+	err := row.Scan(
+		&i.ID,
+		&i.TokenHash,
+		&i.LastUsedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const transitionWorkerGroupState = `-- name: TransitionWorkerGroupState :one
 WITH transitioned AS (
     UPDATE worker_groups
@@ -1286,6 +1356,45 @@ func (q *Queries) TransitionWorkerGroupState(ctx context.Context, arg Transition
 		&i.State,
 		&i.ClaimVersion,
 		&i.TransitionApplied,
+	)
+	return i, err
+}
+
+const updateWorkerGroupDescription = `-- name: UpdateWorkerGroupDescription :one
+UPDATE worker_groups
+   SET description = $1, updated_at = now()
+ WHERE id = $2
+RETURNING id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, observation_ttl_seconds, created_at, updated_at
+`
+
+type UpdateWorkerGroupDescriptionParams struct {
+	Description string `json:"description"`
+	ID          string `json:"id"`
+}
+
+func (q *Queries) UpdateWorkerGroupDescription(ctx context.Context, arg UpdateWorkerGroupDescriptionParams) (WorkerGroup, error) {
+	row := q.db.QueryRow(ctx, updateWorkerGroupDescription, arg.Description, arg.ID)
+	var i WorkerGroup
+	err := row.Scan(
+		&i.ID,
+		&i.TokenID,
+		&i.RegionID,
+		&i.Name,
+		&i.Description,
+		&i.State,
+		&i.ClaimVersion,
+		&i.AllowsRun,
+		&i.AllowsBuild,
+		&i.RequiredCPUMillis,
+		&i.RequiredMemoryBytes,
+		&i.RequiredGuestEphemeralDiskBytes,
+		&i.RequiredBuildCacheBytes,
+		&i.RequiredArtifactCacheBytes,
+		&i.RequiredVMSlots,
+		&i.RequiredBuildExecutors,
+		&i.ObservationTtlSeconds,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

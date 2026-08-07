@@ -39,12 +39,11 @@ SSM Session Manager access is enabled by default through `AmazonSSMManagedInstan
 inbound SSH rules for bootstrap and smoke debugging. Set `enable_ssm = false` only if the AMI role is
 managed elsewhere.
 
-`worker_group_id` and `worker_roles` select the logical enrollment and
-scheduling boundary in every deployment. During boot, the module fetches the
-group-specific enrollment secret into a root-only volatile file and binds the
-nonce proof to the requested roles and EC2 instance ID as an opaque operator
-locator. Control Plane authenticates the logical group proof; AWS identity and fleet
-configuration remain operator and infrastructure responsibilities.
+`worker_roles` advertises the subset of roles this fleet serves. During boot,
+the module fetches the enrollment token into a root-only volatile file. The
+token selects the Worker Group; the EC2 instance ID remains an opaque operator
+locator. AWS identity and fleet configuration remain infrastructure
+responsibilities.
 
 ## Lifecycle
 

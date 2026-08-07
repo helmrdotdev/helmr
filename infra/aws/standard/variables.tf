@@ -70,13 +70,13 @@ variable "deployment_mode" {
   default     = "self-hosted"
 }
 
-variable "worker_group_id" {
-  description = "Default run-worker group ID for this stack."
+variable "worker_group_name" {
+  description = "Name of the initial Worker Group."
   type        = string
 
   validation {
-    condition     = trimspace(var.worker_group_id) != ""
-    error_message = "worker_group_id must be non-empty."
+    condition     = can(regex("^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$", var.worker_group_name))
+    error_message = "worker_group_name must be a lowercase URL-safe identifier of 1-128 characters."
   }
 }
 
@@ -93,13 +93,6 @@ variable "region_id" {
     )
     error_message = "region_id must be normalized control-free UTF-8 of 1-255 bytes."
   }
-}
-
-variable "default_region_id" {
-  description = "Default execution region for newly created projects and environments. Defaults to region_id."
-  type        = string
-  default     = null
-  nullable    = true
 }
 
 variable "platform_store_uri" {

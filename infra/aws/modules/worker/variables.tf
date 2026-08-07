@@ -3,16 +3,6 @@ variable "name" {
   type        = string
 }
 
-variable "worker_group_id" {
-  description = "Worker group used for identity enrollment and scheduling policy."
-  type        = string
-
-  validation {
-    condition     = trimspace(var.worker_group_id) != ""
-    error_message = "worker_group_id must be non-empty."
-  }
-}
-
 variable "worker_roles" {
   description = "Roles this worker group is permitted to advertise."
   type        = set(string)
@@ -75,12 +65,6 @@ variable "health_check_grace_period_seconds" {
   default     = 900
 }
 
-variable "enable_lifecycle_hooks" {
-  description = "Enable launch readiness and termination drain lifecycle hooks."
-  type        = bool
-  default     = true
-}
-
 variable "launch_lifecycle_heartbeat_timeout_seconds" {
   description = "Seconds to wait for worker instance bootstrap before the launch lifecycle hook times out."
   type        = number
@@ -95,11 +79,11 @@ variable "launch_lifecycle_heartbeat_timeout_seconds" {
 variable "termination_lifecycle_heartbeat_timeout_seconds" {
   description = "Seconds to wait for worker drain before the termination lifecycle hook times out."
   type        = number
-  default     = 120
+  default     = 180
 
   validation {
-    condition     = var.termination_lifecycle_heartbeat_timeout_seconds > var.lifecycle_heartbeat_interval_seconds
-    error_message = "termination lifecycle timeout must exceed the heartbeat interval."
+    condition     = var.termination_lifecycle_heartbeat_timeout_seconds >= var.lifecycle_heartbeat_interval_seconds * 3
+    error_message = "termination lifecycle timeout must be at least three heartbeat intervals."
   }
 }
 
@@ -356,7 +340,7 @@ variable "secret_arns" {
   description = "Secret ARNs required by the worker."
   type = object({
     checkpoint_encryption_key = string
-    worker_enrollment         = string
+    worker_enrollment_token   = string
   })
 }
 

@@ -15,15 +15,14 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/config"
-	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"golang.org/x/sys/unix"
 )
 
 const workerCredentialFileName = "worker-credential.json"
-
-var buildWorkerEnrollmentRequest = enrollment.BuildRequest
 
 type workerCredentialFile struct {
 	WorkerInstanceID     string    `json:"worker_instance_id"`
@@ -46,7 +45,7 @@ func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, wor
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		enrollmentSecret, err := readWorkerEnrollmentSecret(cfg.WorkerEnrollmentSecretFile)
+		enrollmentToken, err := readWorkerEnrollmentToken(cfg.WorkerEnrollmentTokenFile)
 		if err != nil {
 			return err
 		}
@@ -56,25 +55,9 @@ func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, wor
 		}
 		supportsRun := slices.Contains(cfg.WorkerRoles, auth.WorkerRoleRun)
 		supportsBuild := slices.Contains(cfg.WorkerRoles, auth.WorkerRoleBuild)
-		challenge, err := controlPlaneClient.CreateWorkerEnrollmentChallenge(ctx, cfg.WorkerGroupID)
-		if err != nil {
-			return fmt.Errorf("create worker enrollment challenge: %w", err)
-		}
-		if strings.TrimSpace(challenge.WorkerGroupID) != cfg.WorkerGroupID || strings.TrimSpace(challenge.Nonce) == "" {
-			return errors.New("worker enrollment challenge is invalid")
-		}
-		evidence, err := buildWorkerEnrollmentRequest(
-			cfg.WorkerGroupID,
-			challenge.Nonce,
-			supportsRun,
-			supportsBuild,
-			cfg.WorkerResourceID,
-			enrollmentSecret,
-		)
-		if err != nil {
-			return err
-		}
-		registered, err := controlPlaneClient.EnrollWorker(ctx, evidence)
+		registered, err := controlPlaneClient.EnrollWorker(ctx, enrollmentToken, workerapi.EnrollmentRequest{
+			ResourceID: cfg.WorkerResourceID, SupportsRun: supportsRun, SupportsBuild: supportsBuild,
+		})
 		if err != nil {
 			return fmt.Errorf("enroll worker: %w", err)
 		}
@@ -164,41 +147,45 @@ func workerCredentialPath(workDir string, configured string) string {
 	return filepath.Join(workDir, workerCredentialFileName)
 }
 
-func readWorkerEnrollmentSecret(path string) (string, error) {
+func readWorkerEnrollmentToken(path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return "", errors.New("WORKER_ENROLLMENT_SECRET_FILE is required for worker enrollment")
+		return "", errors.New("WORKER_ENROLLMENT_TOKEN_FILE is required for worker enrollment")
 	}
 	info, err := os.Lstat(path)
 	if err != nil {
-		return "", fmt.Errorf("read WORKER_ENROLLMENT_SECRET_FILE: %w", err)
+		return "", fmt.Errorf("read WORKER_ENROLLMENT_TOKEN_FILE: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", errors.New("WORKER_ENROLLMENT_SECRET_FILE must be a regular file")
+		return "", errors.New("WORKER_ENROLLMENT_TOKEN_FILE must be a regular file")
 	}
 	if permissions := info.Mode().Perm(); permissions != 0o400 && permissions != 0o600 {
-		return "", errors.New("WORKER_ENROLLMENT_SECRET_FILE must have mode 0400 or 0600")
+		return "", errors.New("WORKER_ENROLLMENT_TOKEN_FILE must have mode 0400 or 0600")
 	}
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
-		return "", fmt.Errorf("open WORKER_ENROLLMENT_SECRET_FILE without following links: %w", err)
+		return "", fmt.Errorf("open WORKER_ENROLLMENT_TOKEN_FILE without following links: %w", err)
 	}
 	file := os.NewFile(uintptr(fd), path)
 	defer file.Close()
 	opened, err := file.Stat()
 	if err != nil {
-		return "", fmt.Errorf("inspect WORKER_ENROLLMENT_SECRET_FILE: %w", err)
+		return "", fmt.Errorf("inspect WORKER_ENROLLMENT_TOKEN_FILE: %w", err)
 	}
 	if !opened.Mode().IsRegular() || opened.Mode().Perm() != info.Mode().Perm() {
-		return "", errors.New("WORKER_ENROLLMENT_SECRET_FILE changed type or permissions while opening")
+		return "", errors.New("WORKER_ENROLLMENT_TOKEN_FILE changed type or permissions while opening")
 	}
-	secretBytes, err := io.ReadAll(file)
+	const maximumTokenFileBytes = int64(128)
+	secretBytes, err := io.ReadAll(io.LimitReader(file, maximumTokenFileBytes+1))
 	if err != nil {
-		return "", fmt.Errorf("read WORKER_ENROLLMENT_SECRET_FILE: %w", err)
+		return "", fmt.Errorf("read WORKER_ENROLLMENT_TOKEN_FILE: %w", err)
+	}
+	if len(secretBytes) > int(maximumTokenFileBytes) {
+		return "", errors.New("WORKER_ENROLLMENT_TOKEN_FILE is too large")
 	}
 	secret := string(secretBytes)
-	if err := enrollment.ValidateSecret(secret); err != nil {
-		return "", fmt.Errorf("WORKER_ENROLLMENT_SECRET_FILE: %w", err)
+	if _, err := workergroup.ParseEnrollmentToken(secret); err != nil {
+		return "", fmt.Errorf("WORKER_ENROLLMENT_TOKEN_FILE: %w", err)
 	}
 	return secret, nil
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/region"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -138,17 +138,17 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	}
 	pool := database.Pool
 	queries := db.New(pool)
-	if err := region.Ensure(ctx, queries, region.BootstrapConfig{
-		RegionID:          dbtest.DefaultRegionID,
-		DefaultRegionID:   dbtest.DefaultRegionID,
-		Provider:          dbtest.DefaultProvider,
-		ProviderRegion:    dbtest.DefaultProviderRegion,
-		RegionDisplayName: dbtest.DefaultRegionDisplay,
+	if _, err := queries.CreateRegion(ctx, db.CreateRegionParams{
+		ID: dbtest.DefaultRegionID, Provider: dbtest.DefaultProvider,
+		ProviderRegion: dbtest.DefaultProviderRegion, DisplayName: dbtest.DefaultRegionDisplay,
+		State: db.RegionStateAvailable,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
+	if _, err := queries.CreateWorkerGroup(ctx, db.CreateWorkerGroupParams{
 		ID:                              dbtest.DefaultWorkerGroupID,
+		TokenID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		TokenHash:                       make([]byte, 32),
 		RegionID:                        dbtest.DefaultRegionID,
 		Name:                            dbtest.DefaultWorkerGroupID,
 		ObservationTtlSeconds:           120,

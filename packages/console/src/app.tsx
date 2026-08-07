@@ -3,6 +3,8 @@ import { createQuery } from "@tanstack/solid-query";
 import type { JSX } from "solid-js";
 import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { RequireAuth } from "./components/RequireAuth";
+import { RequireAdmin } from "./components/RequireAdmin";
+import { AdminLayout } from "./components/AdminLayout";
 import { ScopeSwitcher } from "./components/ScopeSwitcher";
 import { SettingsLayout } from "./components/SettingsLayout";
 import { getMe, logout } from "./lib/auth";
@@ -28,6 +30,8 @@ import { AccessRequired } from "./routes/access-required";
 import { Device } from "./routes/device";
 import { WorkspaceDetail } from "./routes/workspace-detail";
 import { SessionDetail } from "./routes/session-detail";
+import { AdminRegions } from "./routes/admin-regions";
+import { AdminWorkerGroups } from "./routes/admin-worker-groups";
 
 function TabLink(props: {
   href: string;
@@ -136,6 +140,16 @@ function ProfileMenu() {
             <div class={"mt-0.75 font-mono text-[10.5px] font-medium uppercase tracking-[0.06em] text-console-subtle"}>{role()}</div>
           </div>
           <div class={"p-1"}>
+            <Show when={me.data?.admin}>
+              <A
+                href="/admin"
+                class={ui.scopeAction}
+                role="menuitem"
+                onClick={() => setOpen(false)}
+              >
+                Admin
+              </A>
+            </Show>
             <button
               type="button"
               class={cx(ui.scopeAction, "text-console-danger hover:text-console-danger")}
@@ -202,6 +216,14 @@ const wrapSettings = (Inner: () => JSX.Element) => () => (
   </RequireAuth>
 );
 
+const wrapAdmin = (Inner: () => JSX.Element) => () => (
+  <RequireAdmin>
+    <AdminLayout>
+      <Inner />
+    </AdminLayout>
+  </RequireAdmin>
+);
+
 export function App() {
   return (
     <Router>
@@ -221,6 +243,10 @@ export function App() {
       <Route path="/tasks" component={wrap(Tasks)} />
       <Route path="/workspaces/:workspace_id" component={wrap(WorkspaceDetail)} />
       <Route path="/projects/new" component={() => <RequireAuth allowOnboarding><ProjectNew /></RequireAuth>} />
+
+      <Route path="/admin" component={() => <Navigate href="/admin/worker-groups" />} />
+      <Route path="/admin/regions" component={wrapAdmin(AdminRegions)} />
+      <Route path="/admin/worker-groups" component={wrapAdmin(AdminWorkerGroups)} />
 
       <Route path="/settings" component={() => <Navigate href="/settings/projects" />} />
       <Route path="/settings/projects" component={wrapSettings(Projects)} />

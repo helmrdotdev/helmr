@@ -611,70 +611,27 @@ func (q *Queries) AuthorizeWorkerInstanceCredential(ctx context.Context, arg Aut
 	return i, err
 }
 
-const createWorkerEnrollmentNonce = `-- name: CreateWorkerEnrollmentNonce :one
-WITH pruned AS (
-    DELETE FROM worker_enrollment_nonces
-     WHERE expires_at <= now() AND created_at < now() - interval '10 minutes'
-    RETURNING id
-)
-INSERT INTO worker_enrollment_nonces (id, nonce_hash, worker_group_id, expires_at)
-SELECT $1, $2, worker_groups.id, $3
-  FROM worker_groups
- WHERE worker_groups.id = $4
-   AND worker_groups.state IN ('active','paused')
-   AND (SELECT count(*) FROM pruned) >= 0
-RETURNING id, nonce_hash, worker_group_id, expires_at, consumed_at, consumed_by_worker_instance_id, created_at
-`
-
-type CreateWorkerEnrollmentNonceParams struct {
-	ID            pgtype.UUID        `json:"id"`
-	NonceHash     []byte             `json:"nonce_hash"`
-	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
-	WorkerGroupID string             `json:"worker_group_id"`
-}
-
-func (q *Queries) CreateWorkerEnrollmentNonce(ctx context.Context, arg CreateWorkerEnrollmentNonceParams) (WorkerEnrollmentNonce, error) {
-	row := q.db.QueryRow(ctx, createWorkerEnrollmentNonce,
-		arg.ID,
-		arg.NonceHash,
-		arg.ExpiresAt,
-		arg.WorkerGroupID,
-	)
-	var i WorkerEnrollmentNonce
-	err := row.Scan(
-		&i.ID,
-		&i.NonceHash,
-		&i.WorkerGroupID,
-		&i.ExpiresAt,
-		&i.ConsumedAt,
-		&i.ConsumedByWorkerInstanceID,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const enrollWorkerInstance = `-- name: EnrollWorkerInstance :one
-WITH nonce AS (
-    SELECT worker_enrollment_nonces.id, worker_enrollment_nonces.nonce_hash, worker_enrollment_nonces.worker_group_id, worker_enrollment_nonces.expires_at, worker_enrollment_nonces.consumed_at, worker_enrollment_nonces.consumed_by_worker_instance_id, worker_enrollment_nonces.created_at, worker_groups.allows_run,
+WITH enrollment_token AS (
+    SELECT worker_group_tokens.id AS token_id,
+           worker_groups.id AS worker_group_id,
+           worker_groups.allows_run,
            worker_groups.allows_build
-      FROM worker_enrollment_nonces
-      JOIN worker_groups ON worker_groups.id = worker_enrollment_nonces.worker_group_id
-     WHERE worker_enrollment_nonces.nonce_hash = $1
-       AND worker_enrollment_nonces.worker_group_id = $2
-       AND worker_enrollment_nonces.consumed_at IS NULL
-       AND worker_enrollment_nonces.expires_at > now()
-       AND worker_groups.state IN ('active','paused')
-       AND (NOT $3::boolean OR worker_groups.allows_run)
-       AND (NOT $4::boolean OR worker_groups.allows_build)
-     FOR UPDATE OF worker_enrollment_nonces, worker_groups
+      FROM worker_group_tokens
+      JOIN worker_groups ON worker_groups.token_id = worker_group_tokens.id
+     WHERE worker_group_tokens.token_hash = $1
+       AND worker_groups.state IN ('active', 'paused')
+       AND (NOT $2::boolean OR worker_groups.allows_run)
+       AND (NOT $3::boolean OR worker_groups.allows_build)
+     FOR UPDATE OF worker_group_tokens, worker_groups
 ), worker AS (
     INSERT INTO worker_instances (
         id, worker_group_id, resource_id, state, claim_version,
         supports_run, supports_build
     )
-    SELECT $5, nonce.worker_group_id,
-           $6, 'registering', 1, false, false
-      FROM nonce
+    SELECT $4, enrollment_token.worker_group_id,
+           $5, 'registering', 1, false, false
+      FROM enrollment_token
     ON CONFLICT (worker_group_id, resource_id)
         WHERE state IN ('registering', 'active', 'draining')
     DO UPDATE
@@ -694,7 +651,7 @@ WITH nonce AS (
            max_build_executors = 0, max_runtime_starts = 0,
            current_service_id = CASE
                WHEN worker_instances.current_epoch IS NULL THEN NULL
-               ELSE $7::uuid
+               ELSE $6::uuid
            END,
            epoch_started_at = CASE WHEN worker_instances.current_epoch IS NULL THEN NULL ELSE now() END,
            activated_at = NULL, draining_at = NULL, updated_at = now()
@@ -710,24 +667,23 @@ WITH nonce AS (
         id, worker_group_id, worker_instance_id, key_prefix, secret_hash,
         claim_version, allows_run, allows_build, expires_at
     )
-    SELECT $8, worker.worker_group_id, worker.id,
-           $9, $10, worker.claim_version,
-           $3, $4, $11
+    SELECT $7, worker.worker_group_id, worker.id,
+           $8, $9, worker.claim_version,
+           $2, $3, $10
       FROM worker WHERE (SELECT count(*) FROM revoked) >= 0
     RETURNING id, worker_group_id, worker_instance_id, key_prefix, claim_version, allows_run, allows_build, expires_at, secret_hash, created_at, last_used_at, revoked_at
-), consumed AS (
-    UPDATE worker_enrollment_nonces
-       SET consumed_at = now(), consumed_by_worker_instance_id = credential.worker_instance_id
+), touched AS (
+    UPDATE worker_group_tokens
+       SET last_used_at = now()
       FROM credential
-     WHERE worker_enrollment_nonces.id = (SELECT id FROM nonce)
-    RETURNING worker_enrollment_nonces.id
+     WHERE worker_group_tokens.id = (SELECT token_id FROM enrollment_token)
+    RETURNING worker_group_tokens.id
 )
-SELECT credential.id, credential.worker_group_id, credential.worker_instance_id, credential.key_prefix, credential.claim_version, credential.allows_run, credential.allows_build, credential.expires_at, credential.secret_hash, credential.created_at, credential.last_used_at, credential.revoked_at FROM credential JOIN consumed ON true
+SELECT credential.id, credential.worker_group_id, credential.worker_instance_id, credential.key_prefix, credential.claim_version, credential.allows_run, credential.allows_build, credential.expires_at, credential.secret_hash, credential.created_at, credential.last_used_at, credential.revoked_at FROM credential JOIN touched ON true
 `
 
 type EnrollWorkerInstanceParams struct {
-	NonceHash           []byte             `json:"nonce_hash"`
-	WorkerGroupID       string             `json:"worker_group_id"`
+	TokenHash           []byte             `json:"token_hash"`
 	AllowsRun           bool               `json:"allows_run"`
 	AllowsBuild         bool               `json:"allows_build"`
 	WorkerInstanceID    pgtype.UUID        `json:"worker_instance_id"`
@@ -756,8 +712,7 @@ type EnrollWorkerInstanceRow struct {
 
 func (q *Queries) EnrollWorkerInstance(ctx context.Context, arg EnrollWorkerInstanceParams) (EnrollWorkerInstanceRow, error) {
 	row := q.db.QueryRow(ctx, enrollWorkerInstance,
-		arg.NonceHash,
-		arg.WorkerGroupID,
+		arg.TokenHash,
 		arg.AllowsRun,
 		arg.AllowsBuild,
 		arg.WorkerInstanceID,
@@ -782,37 +737,6 @@ func (q *Queries) EnrollWorkerInstance(ctx context.Context, arg EnrollWorkerInst
 		&i.CreatedAt,
 		&i.LastUsedAt,
 		&i.RevokedAt,
-	)
-	return i, err
-}
-
-const getActiveWorkerEnrollmentNonce = `-- name: GetActiveWorkerEnrollmentNonce :one
-SELECT worker_enrollment_nonces.id, worker_enrollment_nonces.nonce_hash, worker_enrollment_nonces.worker_group_id, worker_enrollment_nonces.expires_at, worker_enrollment_nonces.consumed_at, worker_enrollment_nonces.consumed_by_worker_instance_id, worker_enrollment_nonces.created_at
-  FROM worker_enrollment_nonces
-  JOIN worker_groups ON worker_groups.id = worker_enrollment_nonces.worker_group_id
- WHERE worker_enrollment_nonces.nonce_hash = $1
-   AND worker_enrollment_nonces.worker_group_id = $2
-   AND worker_enrollment_nonces.consumed_at IS NULL
-   AND worker_enrollment_nonces.expires_at > now()
-   AND worker_groups.state IN ('active','paused')
-`
-
-type GetActiveWorkerEnrollmentNonceParams struct {
-	NonceHash     []byte `json:"nonce_hash"`
-	WorkerGroupID string `json:"worker_group_id"`
-}
-
-func (q *Queries) GetActiveWorkerEnrollmentNonce(ctx context.Context, arg GetActiveWorkerEnrollmentNonceParams) (WorkerEnrollmentNonce, error) {
-	row := q.db.QueryRow(ctx, getActiveWorkerEnrollmentNonce, arg.NonceHash, arg.WorkerGroupID)
-	var i WorkerEnrollmentNonce
-	err := row.Scan(
-		&i.ID,
-		&i.NonceHash,
-		&i.WorkerGroupID,
-		&i.ExpiresAt,
-		&i.ConsumedAt,
-		&i.ConsumedByWorkerInstanceID,
-		&i.CreatedAt,
 	)
 	return i, err
 }

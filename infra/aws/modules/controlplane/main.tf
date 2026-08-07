@@ -1,41 +1,20 @@
 locals {
-  name                    = lower(var.name)
-  controlplane_port       = 8080
-  bucket_prefix           = lower(coalesce(var.bucket_name_prefix, "${local.name}-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}"))
-  controlplane_url        = var.enable_cloudfront ? "https://${aws_cloudfront_distribution.controlplane[0].domain_name}" : var.public_url
-  controlplane_subnet_ids = var.controlplane_assign_public_ip ? var.public_subnet_ids : var.private_subnet_ids
-  email_from              = var.email_from == null ? "" : var.email_from
-  smtp_addr               = var.smtp_addr == null ? "" : var.smtp_addr
-  smtp_username           = var.smtp_username == null ? "" : var.smtp_username
-  clickhouse_url          = trimspace(var.clickhouse_url)
-  clickhouse_user         = var.clickhouse_user == null ? "" : var.clickhouse_user
-  region_id               = trimspace(coalesce(var.region_id, data.aws_region.current.region))
-  default_region_id       = trimspace(coalesce(var.default_region_id, local.region_id))
-  region_display_name     = trimspace(coalesce(var.region_display_name, local.region_id))
-  worker_groups_by_id = {
-    for group in var.worker_groups : group.id => group
-  }
-  worker_enrollment_secret_env_by_group = {
-    for group in var.worker_groups : group.id => "WORKER_GROUP_ENROLLMENT_SECRET_${upper(substr(sha256(group.id), 0, 16))}"
-  }
-  worker_groups_config = [for group in var.worker_groups : {
-    id                      = group.id
-    name                    = group.name
-    description             = group.description
-    enrollment_secret_env   = local.worker_enrollment_secret_env_by_group[group.id]
-    allows_run              = group.allows_run
-    allows_build            = group.allows_build
-    observation_ttl_seconds = group.observation_ttl_seconds
-    instance_capacity       = group.instance_capacity
-  }]
+  name                              = lower(var.name)
+  controlplane_port                 = 8080
+  bucket_prefix                     = lower(coalesce(var.bucket_name_prefix, "${local.name}-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}"))
+  controlplane_url                  = var.enable_cloudfront ? "https://${aws_cloudfront_distribution.controlplane[0].domain_name}" : var.public_url
+  controlplane_subnet_ids           = var.controlplane_assign_public_ip ? var.public_subnet_ids : var.private_subnet_ids
+  email_from                        = var.email_from == null ? "" : var.email_from
+  smtp_addr                         = var.smtp_addr == null ? "" : var.smtp_addr
+  smtp_username                     = var.smtp_username == null ? "" : var.smtp_username
+  clickhouse_url                    = trimspace(var.clickhouse_url)
+  clickhouse_user                   = var.clickhouse_user == null ? "" : var.clickhouse_user
+  bootstrap_region_id               = trimspace(coalesce(var.bootstrap_region_id, data.aws_region.current.region))
+  bootstrap_region_display_name     = trimspace(coalesce(var.bootstrap_region_display_name, local.bootstrap_region_id))
   image_cache_repository_prefix     = "${local.name}/image-cache"
   image_cache_repository_arn_prefix = "arn:${data.aws_partition.current.partition}:ecr:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:repository/${local.image_cache_repository_prefix}/"
   image_cache_registry_authority    = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${data.aws_region.current.region}.${data.aws_partition.current.dns_suffix}"
   image_cache_worker_role_arns      = sort(distinct(var.image_cache_worker_role_arns))
-  worker_enrollment_secrets = {
-    for group_id, environment_name in local.worker_enrollment_secret_env_by_group :
-    environment_name => aws_secretsmanager_secret.worker_enrollment[group_id].arn
-  }
   secret_kms_key_arns = distinct(concat(
     [aws_kms_key.helmr.arn],
     var.clickhouse_password_kms_key_arns,
@@ -55,13 +34,14 @@ locals {
     }, local.clickhouse_user == "" ? {} : {
     CLICKHOUSE_USER = local.clickhouse_user
   })
-  region_environment = {
-    REGION_ID           = local.region_id
-    DEFAULT_REGION_ID   = local.default_region_id
-    PROVIDER            = "aws"
-    PROVIDER_REGION     = data.aws_region.current.region
-    REGION_DISPLAY_NAME = local.region_display_name
-  }
+  bootstrap_environment = var.bootstrap_enabled ? {
+    BOOTSTRAP_ENABLED                = "1"
+    BOOTSTRAP_REGION_ID              = local.bootstrap_region_id
+    BOOTSTRAP_REGION_PROVIDER        = "aws"
+    BOOTSTRAP_REGION_PROVIDER_REGION = data.aws_region.current.region
+    BOOTSTRAP_REGION_DISPLAY_NAME    = local.bootstrap_region_display_name
+    BOOTSTRAP_WORKER_GROUP_NAME      = var.bootstrap_worker_group_name
+  } : {}
 
   telemetry_secrets = var.clickhouse_password_secret_arn == null ? {} : {
     CLICKHOUSE_PASSWORD = var.clickhouse_password_secret_arn
@@ -107,12 +87,11 @@ locals {
     REDIS_URL                         = local.redis_url
     SCHEDULE_JITTER                   = var.schedule_jitter
     GITHUB_OAUTH_CLIENT_ID            = var.github_oauth_client_id
-    WORKER_GROUPS                     = jsonencode(local.worker_groups_config)
     IMAGE_CACHE_REGISTRY_AUTHORITY    = local.image_cache_registry_authority
     IMAGE_CACHE_REPOSITORY_PREFIX     = local.image_cache_repository_prefix
     IMAGE_CACHE_ROLE_ARN              = aws_iam_role.image_cache.arn
     IMAGE_CACHE_REPOSITORY_ARN_PREFIX = local.image_cache_repository_arn_prefix
-  }, local.region_environment, local.clickhouse_environment, local.email_environment)
+  }, local.bootstrap_environment, local.clickhouse_environment, local.email_environment)
 
   controlplane_secret_defaults = merge({
     DATABASE_URL               = aws_secretsmanager_secret.database_url.arn
@@ -124,10 +103,12 @@ locals {
     TOKEN_CREDENTIAL_KEY       = aws_secretsmanager_secret.token_credential_key.arn
     GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret.arn
     },
+    var.bootstrap_enabled ? {
+      BOOTSTRAP_WORKER_TOKEN = aws_secretsmanager_secret.worker_enrollment[0].arn
+    } : {},
     var.capacity_token_secret_arn == null ? {} : {
       CAPACITY_TOKEN = var.capacity_token_secret_arn
     },
-    local.worker_enrollment_secrets,
     local.telemetry_secrets,
     local.email_secrets
   )
@@ -139,11 +120,13 @@ locals {
     "SMTP_ADDR",
     "SMTP_USERNAME",
     "SMTP_PASSWORD",
-    "REGION_ID",
-    "DEFAULT_REGION_ID",
-    "PROVIDER",
-    "PROVIDER_REGION",
-    "REGION_DISPLAY_NAME",
+    "BOOTSTRAP_ENABLED",
+    "BOOTSTRAP_REGION_ID",
+    "BOOTSTRAP_REGION_PROVIDER",
+    "BOOTSTRAP_REGION_PROVIDER_REGION",
+    "BOOTSTRAP_REGION_DISPLAY_NAME",
+    "BOOTSTRAP_WORKER_GROUP_NAME",
+    "BOOTSTRAP_WORKER_TOKEN",
     "CLICKHOUSE_URL",
     "CLICKHOUSE_USER",
     "CLICKHOUSE_PASSWORD",
@@ -214,22 +197,6 @@ resource "terraform_data" "bootstrap_preconditions" {
     precondition {
       condition     = var.platform_store_bucket_arn != aws_s3_bucket.cas.arn
       error_message = "platform_store_bucket_arn must identify the dedicated bootstrap store, not the mutable Control Plane CAS bucket."
-    }
-
-    precondition {
-      condition = alltrue([
-        for group in var.worker_groups :
-        trimspace(group.id) != "" && trimspace(group.name) != "" &&
-        (group.allows_run || group.allows_build) &&
-        group.observation_ttl_seconds > 0 && group.observation_ttl_seconds <= 2592000 &&
-        group.instance_capacity.milli_cpu > 0 && group.instance_capacity.memory_bytes > 0 &&
-        group.instance_capacity.guest_ephemeral_disk_bytes > 0 &&
-        group.instance_capacity.build_cache_bytes >= 0 && group.instance_capacity.artifact_cache_bytes >= 0 &&
-        group.instance_capacity.vm_slots >= 0 && group.instance_capacity.build_executors >= 0 &&
-        (!group.allows_run || group.instance_capacity.vm_slots > 0) &&
-        (!group.allows_build || group.instance_capacity.build_executors > 0)
-      ])
-      error_message = "worker_groups must define a complete logical role boundary and a positive role-compatible capacity floor."
     }
 
     precondition {
@@ -1337,9 +1304,9 @@ resource "aws_secretsmanager_secret" "checkpoint_encryption_key" {
 }
 
 resource "aws_secretsmanager_secret" "worker_enrollment" {
-  for_each = local.worker_groups_by_id
+  count = var.bootstrap_enabled ? 1 : 0
 
-  name                    = "${local.name}/worker-enrollment/${substr(sha256(each.key), 0, 16)}"
+  name                    = "${local.name}/worker-enrollment"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

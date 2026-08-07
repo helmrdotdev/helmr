@@ -3,13 +3,14 @@ set -euo pipefail
 
 controlplane_image="${1:-}"
 worker_amis_json="${2:-}"
-platform_release_json="${3:-}"
-output="${4:-aws-artifacts.json}"
+worker_image_provenance_json="${3:-}"
+platform_release_json="${4:-}"
+output="${5:-aws-artifacts.json}"
 required_worker_ami_regions="${REQUIRED_WORKER_AMI_REGIONS:-us-east-1,us-west-2,ap-northeast-1}"
 verify_release_artifacts="${VERIFY_RELEASE_ARTIFACTS:-0}"
 
-if [ -z "$controlplane_image" ] || [ -z "$worker_amis_json" ] || [ -z "$platform_release_json" ]; then
-  echo "usage: scripts/write-aws-release-manifest.sh <controlplane-image> <worker-amis-json> <platform-release-json> [output]" >&2
+if [ -z "$controlplane_image" ] || [ -z "$worker_amis_json" ] || [ -z "$worker_image_provenance_json" ] || [ -z "$platform_release_json" ]; then
+  echo "usage: scripts/write-aws-release-manifest.sh <controlplane-image> <worker-amis-json> <worker-image-provenance-json> <platform-release-json> [output]" >&2
   echo "set VERIFY_RELEASE_ARTIFACTS=1 to verify image and AMI visibility before writing" >&2
   exit 1
 fi
@@ -57,6 +58,28 @@ jq -e '
   and (.sourceRef | test("^refs/(tags|heads)/[^[:space:]]+$"))
 ' >/dev/null <<<"$platform_release_json"
 
+jq -e --argjson worker_amis "$worker_amis_json" --argjson platform_release "$platform_release_json" '
+  keys == ["ami", "formatVersion", "imageBuildVersionARN", "imageRecipeARN", "runtimeArtifactsBundleDigest", "runtimeArtifactsManifestDigest", "runtimeProfile", "sourceCommit", "workerVersion"]
+  and .formatVersion == 1
+  and (.ami | keys == ["id", "region"])
+  and (.ami.id | test("^ami-[0-9a-f]{8,}$"))
+  and (.ami.region | test("^[a-z]{2}-[a-z-]+-[0-9]+$"))
+  and ($worker_amis[.ami.region] == .ami.id)
+  and (.imageBuildVersionARN | type == "string" and length > 0)
+  and (.imageRecipeARN | type == "string" and length > 0)
+  and (.runtimeArtifactsBundleDigest | test("^sha256:[0-9a-f]{64}$"))
+  and (.runtimeArtifactsManifestDigest | test("^sha256:[0-9a-f]{64}$"))
+  and (.runtimeProfile | keys == ["arch", "contract", "id", "initramfs_digest", "kernel_digest", "rootfs_digest"])
+  and .runtimeProfile.arch == "x86_64"
+  and .runtimeProfile.contract == "helmr.vm-runtime.v0"
+  and (.runtimeProfile.id | test("^sha256:[0-9a-f]{64}$"))
+  and (.runtimeProfile.kernel_digest | test("^sha256:[0-9a-f]{64}$"))
+  and (.runtimeProfile.initramfs_digest | test("^sha256:[0-9a-f]{64}$"))
+  and (.runtimeProfile.rootfs_digest | test("^sha256:[0-9a-f]{64}$"))
+  and .sourceCommit == $platform_release.sourceCommit
+  and .workerVersion == .sourceCommit
+' >/dev/null <<<"$worker_image_provenance_json"
+
 verify_controlplane_image() {
   if command -v docker >/dev/null 2>&1; then
     if docker buildx imagetools inspect "$controlplane_image" >/dev/null 2>&1; then
@@ -98,9 +121,12 @@ fi
 jq -n \
   --arg controlplane_image "$controlplane_image" \
   --argjson worker_amis "$worker_amis_json" \
+  --argjson worker_image_provenance "$worker_image_provenance_json" \
   --argjson platform_release "$platform_release_json" \
   '{
     controlplane_image: $controlplane_image,
+    format_version: 1,
     platform_release: $platform_release,
-    worker_amis: $worker_amis
+    worker_amis: $worker_amis,
+    worker_image_provenance: $worker_image_provenance
   }' >"$output"

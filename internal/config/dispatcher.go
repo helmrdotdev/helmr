@@ -16,7 +16,6 @@ func LoadDispatcher() (Dispatcher, error) {
 		ClickHouseURL:         envText("CLICKHOUSE_URL"),
 		ClickHouseUser:        envText("CLICKHOUSE_USER"),
 		ClickHousePassword:    envSecret("CLICKHOUSE_PASSWORD"),
-		RunPreparationLimit:   32,
 		RunReservationTTL:     5 * time.Minute,
 		RunLeaseStartDeadline: time.Minute,
 		RunLeaseTTL:           5 * time.Minute,
@@ -37,9 +36,6 @@ func LoadDispatcher() (Dispatcher, error) {
 	if cfg.ScheduleClaimLease, err = envDuration("SCHEDULE_CLAIM_LEASE", cfg.ScheduleClaimLease); err != nil {
 		return cfg, err
 	}
-	if cfg.RunPreparationLimit, err = envInt("RUN_PREPARATION_LIMIT", cfg.RunPreparationLimit); err != nil {
-		return cfg, err
-	}
 	if cfg.RunReservationTTL, err = envDuration("RUN_RESERVATION_TTL", cfg.RunReservationTTL); err != nil {
 		return cfg, err
 	}
@@ -55,7 +51,7 @@ func LoadDispatcher() (Dispatcher, error) {
 	if cfg.ScheduleClaimLimit > maxInt32 || cfg.ScheduleConcurrency > maxInt32 {
 		return cfg, errors.New("schedule claim and concurrency settings must not exceed 2147483647")
 	}
-	if cfg.RunPreparationLimit <= 0 || cfg.RunReservationTTL <= 0 || cfg.RunLeaseStartDeadline <= 0 ||
+	if cfg.RunReservationTTL <= 0 || cfg.RunLeaseStartDeadline <= 0 ||
 		cfg.RunLeaseTTL < workerapi.RunLeaseMinTTL || cfg.RunLeaseStartDeadline > cfg.RunLeaseTTL {
 		return cfg, errors.New("run preparation and lease settings are invalid")
 	}

@@ -25,7 +25,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
-	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/imagecache"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -44,6 +43,7 @@ const (
 	taskCompletionBodyLimit    = int64(17 << 20)
 	workspaceExecResultLimit   = int64(10 << 20)
 	secretRequestBodyLimit     = int64(1 << 20)
+	adminRequestBodyLimit      = int64(64 << 10)
 	maxPageSize                = int32(500)
 	defaultRunLeaseTTL         = 5 * time.Minute
 )
@@ -92,7 +92,6 @@ type Server struct {
 	workerTokenTTL        time.Duration
 	runLeaseTTL           time.Duration
 	runFinalizationTTL    time.Duration
-	workerEnrollment      *enrollment.Verifier
 	workerEnrollmentGuard *workerEnrollmentGuard
 	capacityTokenHash     []byte
 	setupToken            string
@@ -101,6 +100,7 @@ type Server struct {
 	authProvider          AuthProvider
 	mailer                email.Sender
 	magicLinkDebugURLs    bool
+	adminEmails           map[string]struct{}
 	sessionTTL            time.Duration
 	magicLinkTTL          time.Duration
 	deviceCodeTTL         time.Duration
@@ -144,13 +144,13 @@ type ServerConfig struct {
 	WorkerTokenTTL        time.Duration
 	RunLeaseTTL           time.Duration
 	RunFinalizationTTL    time.Duration
-	WorkerEnrollment      *enrollment.Verifier
 	CapacityToken         string
 	SetupToken            string
 	AuthKey               []byte
 	PublicURL             *url.URL
 
 	MagicLinkDebugURLs bool
+	AdminEmails        []string
 	SessionTTL         time.Duration
 	MagicLinkTTL       time.Duration
 	DeviceCodeTTL      time.Duration
@@ -180,9 +180,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	if deploymentMode != deploymentModeSelfHosted && deploymentMode != deploymentModeManagedCloud {
 		return nil, errors.New("deployment mode must be self-hosted or managed-cloud")
-	}
-	if cfg.WorkerEnrollment == nil {
-		return nil, errors.New("worker enrollment configuration is required")
 	}
 	capacityTokenHash, err := hashCapacityToken(cfg.CapacityToken)
 	if err != nil {
@@ -240,6 +237,13 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 			workerapi.RunFinalizationMinTTL,
 		)
 	}
+	adminEmails := make(map[string]struct{}, len(cfg.AdminEmails))
+	for _, address := range cfg.AdminEmails {
+		address = normalizeEmailAddress(address)
+		if address != "" {
+			adminEmails[address] = struct{}{}
+		}
+	}
 	server := &Server{
 		log:                   log,
 		deploymentMode:        deploymentMode,
@@ -263,7 +267,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		workerTokenTTL:        workerTokenTTL,
 		runLeaseTTL:           runLeaseTTL,
 		runFinalizationTTL:    runFinalizationTTL,
-		workerEnrollment:      cfg.WorkerEnrollment,
 		workerEnrollmentGuard: newWorkerEnrollmentGuard(),
 		capacityTokenHash:     capacityTokenHash,
 		setupToken:            cfg.SetupToken,
@@ -272,6 +275,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		authProvider:          cfg.AuthProvider,
 		mailer:                mailer,
 		magicLinkDebugURLs:    cfg.MagicLinkDebugURLs,
+		adminEmails:           adminEmails,
 		sessionTTL:            cfg.SessionTTL,
 		magicLinkTTL:          cfg.MagicLinkTTL,
 		deviceCodeTTL:         cfg.DeviceCodeTTL,
@@ -314,7 +318,26 @@ func (s *Server) mountRoutes(router chi.Router) {
 	router.Get("/healthz", s.healthz)
 	router.Get("/readyz", s.readyz)
 	router.Route("/api", s.mountManagementRoutes)
+	router.Route("/admin/api/v1", s.mountAdminRoutes)
 	router.Route("/v1", s.mountDeveloperRoutes)
+}
+
+func (s *Server) mountAdminRoutes(r chi.Router) {
+	r.Use(limitRequestBody(adminRequestBodyLimit))
+	r.Use(s.requireAdmin)
+	r.Get("/regions", s.adminListRegions)
+	r.Post("/regions", s.adminCreateRegion)
+	r.Get("/regions/{regionID}", s.adminGetRegion)
+	r.Patch("/regions/{regionID}", s.adminUpdateRegion)
+	r.Get("/worker-groups", s.adminListWorkerGroups)
+	r.Post("/worker-groups", s.adminCreateWorkerGroup)
+	r.Get("/worker-groups/{groupID}", s.adminGetWorkerGroup)
+	r.Patch("/worker-groups/{groupID}", s.adminUpdateWorkerGroup)
+	r.Post("/worker-groups/{groupID}/pause", s.adminPauseWorkerGroup)
+	r.Post("/worker-groups/{groupID}/activate", s.adminActivateWorkerGroup)
+	r.Post("/worker-groups/{groupID}/drain", s.adminDrainWorkerGroup)
+	r.Post("/worker-groups/{groupID}/disable", s.adminDisableWorkerGroup)
+	r.Post("/worker-groups/{groupID}/token/rotate", s.adminRotateWorkerGroupToken)
 }
 
 func (s *Server) recoverPanics(next http.Handler) http.Handler {
@@ -598,7 +621,6 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 
 func (s *Server) mountWorkerRoutes(r chi.Router) {
 	r.Route("/worker/v0", func(r chi.Router) {
-		r.Post("/enrollment/challenge", s.workerEnrollmentChallenge)
 		r.Post("/enrollment", s.workerEnroll)
 		r.Post("/instance/token", s.workerAuthToken)
 		r.With(s.requireRecoveringWorker).Post("/instance/recover", s.workerStartupRecovery)
