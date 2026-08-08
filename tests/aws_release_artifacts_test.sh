@@ -46,6 +46,7 @@ for source_mode in bundle remote; do
     else
       unset WORKER_IMAGE_SOURCE_BUNDLE_S3_URI
     fi
+    # shellcheck disable=SC2030
     export STATE_DIR="${tmp}/worker-image-apply-${source_mode}"
     export SKIP_SOURCE_REF_CHECK=1
     # shellcheck source=/dev/null
@@ -74,6 +75,83 @@ for source_mode in bundle remote; do
   assert_contains "${apply_args_file}" '-var=runtime_artifacts_bundle_digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
     "${source_mode} source runtime bundle digest"
 done
+
+bundle_state="${tmp}/runtime-bundle-state"
+bundle_stdout="${tmp}/runtime-bundle-stdout"
+bundle_stderr="${tmp}/runtime-bundle-stderr"
+mkdir -p "${bundle_state}"
+(
+  set -- help
+  export SOURCE_BUNDLE_BUCKET=test-artifacts
+  # shellcheck disable=SC2031
+  export STATE_DIR="${bundle_state}"
+  # shellcheck source=/dev/null
+  source "${script}" >/dev/null
+  nix() {
+    case "${4:-}" in
+      make)
+        printf 'runtime build progress\n'
+        ;;
+      */materialize-worker-runtime-bundle.sh)
+        local bundle_dir=$5 bundle_digest manifest_digest source_commit
+        mkdir -p "${bundle_dir}"
+        printf 'runtime bundle\n' >"${bundle_dir}/runtime-artifacts.tar"
+        printf '{"schema":"helmr.runtime-artifacts.v0"}\n' >"${bundle_dir}/runtime-artifacts.json"
+        bundle_digest="sha256:$(sha256_file "${bundle_dir}/runtime-artifacts.tar")"
+        manifest_digest="sha256:$(sha256_file "${bundle_dir}/runtime-artifacts.json")"
+        source_commit="$(git -C "${repo_root}" rev-parse HEAD)"
+        jq -cn \
+          --arg bundle_digest "${bundle_digest}" \
+          --arg manifest_digest "${manifest_digest}" \
+          --arg source_commit "${source_commit}" '
+          {
+            schema: "helmr.worker-runtime-bundle.v0",
+            sourceCommit: $source_commit,
+            bundle: {path: "runtime-artifacts.tar", digest: $bundle_digest},
+            runtimeArtifactsManifest: {path: "runtime-artifacts.json", digest: $manifest_digest},
+            runtimeProfile: {
+              id: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+              arch: "x86_64",
+              contract: "helmr.vm-runtime.v0",
+              kernel_digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              initramfs_digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              rootfs_digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            }
+          }
+        ' >"${bundle_dir}/worker-runtime-bundle.json"
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+  aws() {
+    case "${1:-}:${2:-}" in
+      s3:cp)
+        printf 'runtime upload progress\n'
+        ;;
+      s3api:get-bucket-encryption)
+        printf 'arn:aws:kms:us-east-1:123456789012:key/test\n'
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+  prepare_worker_runtime_bundle
+) >"${bundle_stdout}" 2>"${bundle_stderr}"
+runtime_bundle="$(cat "${bundle_stdout}")"
+jq -e -s '
+  length == 1 and
+  (.[0] | keys | sort) == ["bundleDigest", "kmsKeyARN", "manifestDigest", "objectARN", "s3URI"] and
+  (.[0].bundleDigest | test("^sha256:[0-9a-f]{64}$")) and
+  (.[0].manifestDigest | test("^sha256:[0-9a-f]{64}$")) and
+  .[0].kmsKeyARN == "arn:aws:kms:us-east-1:123456789012:key/test" and
+  .[0].objectARN == ("arn:aws:s3:::test-artifacts/helmr/worker-runtime-bundles/" + (.[0].bundleDigest | sub("^sha256:"; "")) + ".tar") and
+  .[0].s3URI == ("s3://test-artifacts/helmr/worker-runtime-bundles/" + (.[0].bundleDigest | sub("^sha256:"; "")) + ".tar")
+' <<<"${runtime_bundle}" >/dev/null || fail "Worker runtime bundle must return one exact JSON object"
+assert_contains "${bundle_stderr}" "runtime build progress" "Worker runtime build progress stream"
+assert_contains "${bundle_stderr}" "runtime upload progress" "Worker runtime upload progress stream"
 
 platform_release="${tmp}/platform-release"
 platform_bin="${tmp}/platform-bin"
