@@ -34,6 +34,39 @@ func TestEnvSecretPreservesValue(t *testing.T) {
 	}
 }
 
+func TestLoadBootstrapUsesSingleSeedDefaults(t *testing.T) {
+	t.Setenv("BOOTSTRAP_ENABLED", "true")
+	t.Setenv("BOOTSTRAP_REGION_ID", "")
+	t.Setenv("BOOTSTRAP_WORKER_GROUP_NAME", "")
+	t.Setenv("BOOTSTRAP_WORKER_TOKEN", "token")
+	cfg, err := LoadBootstrap()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Enabled || cfg.RegionID != "default" || cfg.WorkerGroupName != "default" || cfg.WorkerToken != "token" {
+		t.Fatalf("bootstrap config = %+v", cfg)
+	}
+}
+
+func TestLoadBootstrapRejectsInvalidEnabledValue(t *testing.T) {
+	t.Setenv("BOOTSTRAP_ENABLED", "sometimes")
+	if _, err := LoadBootstrap(); err == nil {
+		t.Fatal("invalid BOOTSTRAP_ENABLED accepted")
+	}
+}
+
+func TestLoadBootstrapIgnoresSeedInputsWhenDisabled(t *testing.T) {
+	t.Setenv("BOOTSTRAP_ENABLED", "false")
+	t.Setenv("BOOTSTRAP_WORKER_TOKEN", " invalid ")
+	cfg, err := LoadBootstrap()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg != (Bootstrap{}) {
+		t.Fatalf("bootstrap config = %+v, want disabled zero value", cfg)
+	}
+}
+
 func TestLoadImageCacheIsAbsentOrCompletelyConfigured(t *testing.T) {
 	config, err := loadImageCache()
 	if err != nil || config != nil {

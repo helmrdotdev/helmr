@@ -125,8 +125,8 @@ func seedSecretEnvironment(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(t.Context(), `
-		INSERT INTO regions (id, provider, provider_region, display_name)
-		VALUES ($1, 'test', $1, 'Secrets')
+		INSERT INTO regions (id, display_name)
+		VALUES ($1, 'Secrets')
 	`, regionID); err != nil {
 		t.Fatal(err)
 	}

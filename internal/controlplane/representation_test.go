@@ -28,7 +28,6 @@ func TestPublicLifecycleProjectionsRejectUnknownInternalValues(t *testing.T) {
 		{name: "secret", project: func() error { _, err := secretPublicStatus("future"); return err }},
 		{name: "token", project: func() error { _, err := tokenPublicStatus("future"); return err }},
 		{name: "deployment", project: func() error { _, err := deploymentPublicStatus("future"); return err }},
-		{name: "region", project: func() error { _, err := regionPublicStatus("future"); return err }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

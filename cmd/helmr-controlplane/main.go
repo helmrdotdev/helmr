@@ -148,10 +148,9 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	defer pool.Close()
 	queries := db.New(pool)
 	if err := bootstrap.Apply(ctx, pool, bootstrap.Config{
-		Enabled: cfg.BootstrapEnabled, RegionID: cfg.BootstrapRegionID,
-		RegionProvider: cfg.BootstrapRegionProvider, RegionProviderRegion: cfg.BootstrapProviderRegion,
-		RegionDisplayName: cfg.BootstrapRegionName, RegionLocation: cfg.BootstrapRegionLocation,
-		WorkerGroupName: cfg.BootstrapWorkerGroup, WorkerToken: cfg.BootstrapWorkerToken,
+		Enabled: cfg.Bootstrap.Enabled, RegionID: cfg.Bootstrap.RegionID,
+		RegionDisplayName: cfg.Bootstrap.RegionDisplayName, RegionLocation: cfg.Bootstrap.RegionLocation,
+		WorkerGroupName: cfg.Bootstrap.WorkerGroupName, WorkerToken: cfg.Bootstrap.WorkerToken,
 	}); err != nil {
 		return fmt.Errorf("bootstrap platform: %w", err)
 	}

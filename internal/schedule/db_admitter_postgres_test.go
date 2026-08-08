@@ -323,8 +323,8 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 		VALUES ($1, 'Schedules', $2)
 	`, orgID, "schedules-"+orgID.String())
 	dbtest.MustExec(t, t.Context(), pool, `
-		INSERT INTO regions (id, provider, provider_region, display_name)
-		VALUES ($1, 'test', $1, 'Schedules')
+		INSERT INTO regions (id, display_name)
+		VALUES ($1, 'Schedules')
 	`, regionID)
 	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO projects (id, org_id, default_region_id, slug, name)

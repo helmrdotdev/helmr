@@ -2967,8 +2967,8 @@ func newRunPlacementFixture(t *testing.T) runPlacementFixture {
 	imageDigest := "sha256:" + strings.Repeat("4", 64)
 
 	dbtest.MustExec(t, ctx, pool, `
-INSERT INTO regions (id, provider, provider_region, display_name)
-VALUES ('us-east-1', 'aws', 'us-east-1', 'US East')`)
+INSERT INTO regions (id, display_name)
+VALUES ('us-east-1', 'US East')`)
 	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO organizations (id, name, slug)
 VALUES ($1, 'Org', $2)`,

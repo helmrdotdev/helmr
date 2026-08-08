@@ -17,14 +17,12 @@ import (
 )
 
 type Config struct {
-	Enabled              bool
-	RegionID             string
-	RegionProvider       string
-	RegionProviderRegion string
-	RegionDisplayName    string
-	RegionLocation       string
-	WorkerGroupName      string
-	WorkerToken          string
+	Enabled           bool
+	RegionID          string
+	RegionDisplayName string
+	RegionLocation    string
+	WorkerGroupName   string
+	WorkerToken       string
 }
 
 func Apply(ctx context.Context, pool *pgxpool.Pool, cfg Config) error {
@@ -35,16 +33,11 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, cfg Config) error {
 		return errors.New("bootstrap database is required")
 	}
 	cfg.RegionID = strings.TrimSpace(cfg.RegionID)
-	cfg.RegionProvider = strings.TrimSpace(cfg.RegionProvider)
-	cfg.RegionProviderRegion = strings.TrimSpace(cfg.RegionProviderRegion)
 	cfg.RegionDisplayName = strings.TrimSpace(cfg.RegionDisplayName)
 	cfg.RegionLocation = strings.TrimSpace(cfg.RegionLocation)
 	cfg.WorkerGroupName = strings.TrimSpace(cfg.WorkerGroupName)
 	if err := region.ValidateID(cfg.RegionID); err != nil {
 		return fmt.Errorf("bootstrap region ID: %w", err)
-	}
-	if cfg.RegionProvider == "" || cfg.RegionProviderRegion == "" {
-		return errors.New("bootstrap region provider and provider region are required")
 	}
 	if cfg.RegionDisplayName == "" {
 		cfg.RegionDisplayName = cfg.RegionID
@@ -64,9 +57,7 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, cfg Config) error {
 	}
 	if _, err := q.GetRegion(ctx, cfg.RegionID); errors.Is(err, pgx.ErrNoRows) {
 		if _, err := q.CreateRegion(ctx, db.CreateRegionParams{
-			ID: cfg.RegionID, Provider: cfg.RegionProvider, ProviderRegion: cfg.RegionProviderRegion,
-			DisplayName: cfg.RegionDisplayName, State: db.RegionStateAvailable,
-			Location: cfg.RegionLocation,
+			ID: cfg.RegionID, DisplayName: cfg.RegionDisplayName, Location: cfg.RegionLocation,
 		}); err != nil {
 			return fmt.Errorf("create bootstrap region: %w", err)
 		}

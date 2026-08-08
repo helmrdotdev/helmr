@@ -259,7 +259,6 @@ type Querier interface {
 	GetQueuedRunResumeHint(ctx context.Context, arg GetQueuedRunResumeHintParams) (GetQueuedRunResumeHintRow, error)
 	GetReadyRunCheckpoint(ctx context.Context, arg GetReadyRunCheckpointParams) (RunCheckpoint, error)
 	GetRegion(ctx context.Context, id string) (Region, error)
-	GetRegionByProviderRegion(ctx context.Context, arg GetRegionByProviderRegionParams) (Region, error)
 	GetRevocableInvitation(ctx context.Context, arg GetRevocableInvitationParams) (GetRevocableInvitationRow, error)
 	GetRun(ctx context.Context, arg GetRunParams) (Run, error)
 	GetRunAdmissionTime(ctx context.Context) (pgtype.Timestamptz, error)

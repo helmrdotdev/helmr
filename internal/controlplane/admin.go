@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -52,22 +51,18 @@ func (s *Server) adminCreateRegion(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid region request JSON: %w", err)))
 		return
 	}
-	request.Provider = strings.TrimSpace(request.Provider)
-	request.ProviderRegion = strings.TrimSpace(request.ProviderRegion)
 	request.DisplayName = strings.TrimSpace(request.DisplayName)
 	request.Location = strings.TrimSpace(request.Location)
 	if err := region.ValidateID(request.ID); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	if request.Provider == "" || request.ProviderRegion == "" || request.DisplayName == "" {
-		writeError(w, badRequest(errors.New("provider, provider_region, and display_name are required")))
+	if request.DisplayName == "" {
+		writeError(w, badRequest(errors.New("display_name is required")))
 		return
 	}
 	created, err := s.db.CreateRegion(r.Context(), db.CreateRegionParams{
-		ID: request.ID, Provider: request.Provider, ProviderRegion: request.ProviderRegion,
-		DisplayName: request.DisplayName, State: db.RegionStateAvailable,
-		Location: request.Location,
+		ID: request.ID, DisplayName: request.DisplayName, Location: request.Location,
 	})
 	if isUniqueViolation(err) {
 		writeError(w, conflict(errors.New("region identity is already in use")))
@@ -194,15 +189,12 @@ func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 		if err := work.q.LockWorkerGroupCreationRegion(r.Context(), pglock.Key("helmr:worker-group-create:"+request.RegionID)); err != nil {
 			return errors.New("lock worker group creation")
 		}
-		regionRow, err := work.q.GetRegion(r.Context(), request.RegionID)
-		if errors.Is(err, pgx.ErrNoRows) {
+		_, err := work.q.GetRegion(r.Context(), request.RegionID)
+		if isNoRows(err) {
 			return notFound(errors.New("region not found"))
 		}
 		if err != nil {
 			return errors.New("get worker group region")
-		}
-		if regionRow.State != db.RegionStateAvailable {
-			return conflict(errors.New("region is not available"))
 		}
 		created, err = work.q.CreateWorkerGroup(r.Context(), db.CreateWorkerGroupParams{
 			ID: uuid.Must(uuid.NewV7()).String(), TokenID: pgvalue.UUID(uuid.Must(uuid.NewV7())), TokenHash: token.Hash,
@@ -338,9 +330,7 @@ func (s *Server) adminRotateWorkerGroupToken(w http.ResponseWriter, r *http.Requ
 
 func adminRegion(row db.Region) api.AdminRegion {
 	return api.AdminRegion{
-		ID: row.ID, Provider: row.Provider, ProviderRegion: row.ProviderRegion,
-		DisplayName: row.DisplayName, Location: row.Location,
-		State: row.State,
+		ID: row.ID, DisplayName: row.DisplayName, Location: row.Location,
 	}
 }
 

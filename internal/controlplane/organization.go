@@ -92,34 +92,11 @@ func (s *Server) listRegions(w http.ResponseWriter, r *http.Request) {
 	}
 	response := api.ListRegionsResponse{Regions: make([]api.RegionSummary, 0, len(regions))}
 	for _, region := range regions {
-		status, err := regionPublicStatus(region.State)
-		if err != nil {
-			writeError(w, errors.New("project region"))
-			return
-		}
 		response.Regions = append(response.Regions, api.RegionSummary{
-			ID:             region.ID,
-			Provider:       region.Provider,
-			ProviderRegion: region.ProviderRegion,
-			DisplayName:    region.DisplayName,
-			Status:         status,
-			Location:       region.Location,
+			ID: region.ID, DisplayName: region.DisplayName, Location: region.Location,
 		})
 	}
 	writeJSON(w, http.StatusOK, response)
-}
-
-func regionPublicStatus(state db.RegionState) (api.RegionStatus, error) {
-	switch state {
-	case db.RegionStateAvailable:
-		return api.RegionStatusAvailable, nil
-	case db.RegionStateDraining:
-		return api.RegionStatusDraining, nil
-	case db.RegionStateDisabled:
-		return api.RegionStatusDisabled, nil
-	default:
-		return "", fmt.Errorf("region state %q has no public projection", state)
-	}
 }
 
 func (s *Server) initialSetupTokenMatches(token string) bool {

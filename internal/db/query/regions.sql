@@ -1,11 +1,8 @@
 -- name: CreateRegion :one
-INSERT INTO regions (id, provider, provider_region, display_name, state, location)
+INSERT INTO regions (id, display_name, location)
 VALUES (
     sqlc.arg(id),
-    sqlc.arg(provider),
-    sqlc.arg(provider_region),
     sqlc.arg(display_name),
-    sqlc.arg(state)::text,
     sqlc.arg(location)::text
 )
 RETURNING *;
@@ -22,12 +19,6 @@ RETURNING *;
 SELECT *
   FROM regions
  WHERE id = sqlc.arg(id);
-
--- name: GetRegionByProviderRegion :one
-SELECT *
-  FROM regions
- WHERE provider = sqlc.arg(provider)
-   AND provider_region = sqlc.arg(provider_region);
 
 -- name: ListRegions :many
 SELECT *

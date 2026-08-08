@@ -23,11 +23,13 @@ const adminTestSession = "admin-session-token-with-more-than-forty-characters"
 
 type adminHTTPQuerier struct {
 	db.Querier
-	admin       bool
-	listCalls   int
-	rotateCalls int
-	conflict    bool
-	missing     bool
+	admin              bool
+	listCalls          int
+	rotateCalls        int
+	createRegionCalls  int
+	createRegionParams db.CreateRegionParams
+	conflict           bool
+	missing            bool
 }
 
 func (q *adminHTTPQuerier) GetAuthSessionByTokenHash(context.Context, []byte) (db.GetAuthSessionByTokenHashRow, error) {
@@ -46,6 +48,12 @@ func (q *adminHTTPQuerier) RefreshAuthSession(context.Context, db.RefreshAuthSes
 func (q *adminHTTPQuerier) ListRegions(context.Context) ([]db.Region, error) {
 	q.listCalls++
 	return []db.Region{}, nil
+}
+
+func (q *adminHTTPQuerier) CreateRegion(_ context.Context, params db.CreateRegionParams) (db.Region, error) {
+	q.createRegionCalls++
+	q.createRegionParams = params
+	return db.Region{ID: params.ID, DisplayName: params.DisplayName, Location: params.Location}, nil
 }
 
 func (q *adminHTTPQuerier) RotateWorkerGroupToken(context.Context, db.RotateWorkerGroupTokenParams) (db.WorkerGroupToken, error) {
@@ -155,6 +163,27 @@ func TestAdminHTTPWorkerGroupTokenRotationIsNeverCached(t *testing.T) {
 	}
 	if queries.rotateCalls != 1 || !strings.Contains(response.Body.String(), `"enrollment_token":"hlmr_wgt_`) {
 		t.Fatalf("rotation response = %s, calls = %d", response.Body.String(), queries.rotateCalls)
+	}
+}
+
+func TestAdminHTTPCreatesLogicalRegion(t *testing.T) {
+	queries := &adminHTTPQuerier{admin: true}
+	response := httptest.NewRecorder()
+	adminHTTPRouter(t, queries).ServeHTTP(response, adminHTTPRequest(
+		http.MethodPost,
+		"/admin/api/v1/regions",
+		`{"id":"us-east","display_name":"US East","location":"Virginia, USA"}`,
+	))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", response.Code, response.Body.String())
+	}
+	if queries.createRegionCalls != 1 || queries.createRegionParams.ID != "us-east" ||
+		queries.createRegionParams.DisplayName != "US East" || queries.createRegionParams.Location != "Virginia, USA" {
+		t.Fatalf("create region params = %+v, calls = %d", queries.createRegionParams, queries.createRegionCalls)
+	}
+	wantBody := `{"id":"us-east","display_name":"US East","location":"Virginia, USA"}`
+	if strings.TrimSpace(response.Body.String()) != wantBody {
+		t.Fatalf("response = %s, want %s", response.Body.String(), wantBody)
 	}
 }
 
