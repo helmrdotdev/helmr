@@ -8,24 +8,30 @@ export const GET: APIRoute = async ({ site }) => {
   const groups = groupDocs(docs);
 
   const docLines = groups
-    .map((group) => {
-      const links = group.docs
-        .map((doc) => `- [${doc.data.title}](${absoluteUrl(getDocUrl(doc), base)}): ${doc.data.description}`)
-        .join("\n");
-      return `## ${group.section}\n${links}`;
+    .map((section) => {
+      const links = section.groups
+        .map((group) => {
+          const heading = group.label ? `### ${group.label}\n` : "";
+          const items = group.docs
+            .map((doc) => `- [${doc.data.title}](${absoluteUrl(getDocUrl(doc), base)}): ${doc.data.description}`)
+            .join("\n");
+          return `${heading}${items}`;
+        })
+        .join("\n\n");
+      return `## ${section.label}\n${links}`;
     })
     .join("\n\n");
 
   const body = `# Helmr
 
-> Build your own coding agent runtime. Helmr runs TypeScript Tasks and Actors in writable Workspaces inside isolated Firecracker-backed Linux guests, with declared Secrets, logs, durable Actor input/output, Run history, and waits before side effects.
+> The code-first runtime for AI agents. Define Tasks and Actors in TypeScript, run them in isolated Linux microVMs, and carry work across durable Workspaces.
 
 Official site: ${absoluteUrl("/", base)}
 Documentation: ${absoluteUrl("/docs", base)}
 Source code: ${SITE.githubUrl}
 
 ## Product Context
-- The public website and documentation describe the self-hosted runtime and developer workflows.
+- The public website and documentation describe the runtime, developer workflows, public interfaces, and AWS self-hosting path.
 - Use current docs pages as the source of truth for setup, concepts, self-hosting, and reference material.
 
 ## Core Pages

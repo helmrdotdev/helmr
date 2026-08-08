@@ -1,36 +1,44 @@
 ---
 title: Run events
-description: Run event records and SDK event types.
-section: Reference
+description: The checked-in public Run event record and terminal event kinds.
 sidebarLabel: Run events
-order: 950
 ---
 
 # Run events
 
-Run event records are ordered by an opaque cursor exposed through the REST API,
-CLI, and SDK. Each request returns one finite page.
+`GET /v1/runs/{runID}/events`, `client.runs.events()`, and `helmr run events`
+expose finite pages ordered by an opaque cursor. The public SDK record is:
 
-Each raw event record includes `run_id`. Events that originate from worker execution can also include `attempt_number`. Run-level events that happen before a worker starts, such as queued expiry, can omit attempt metadata.
+```ts
+interface RunEventRecord {
+  id: string
+  runId: string
+  attemptNumber?: number
+  category: string
+  severity: "debug" | "info" | "warn" | "error"
+  source: string
+  kind: string
+  message: string
+  attributes: JsonValue
+  occurredAt: string
+  at: string
+}
+```
 
-SDK event types:
+The REST wire uses snake case (`run_id`, `attempt_number`, `occurred_at`). Its
+page shape is `{ "events": [...], "next_cursor"?: string }`. An event that is
+not tied to an execution attempt may omit `attempt_number`.
 
-| Type | Meaning |
+Only these event-kind identifiers are exported as checked-in terminal
+contracts:
+
+| Kind | Terminal Run status |
 | --- | --- |
-| `log` | stdout/stderr bytes were observed. The event is a lightweight notification, not the log body. |
-| `actor_input_wait` / `token_wait` / `timer_wait` | A Run parked on Actor input, Token completion, or time. |
-| wait completion or timeout | A parked Wait reached a terminal condition. |
-| `task_result` | Guest task completed with an exit code. |
-| `run_failed` | Run failed before success, including non-zero task exits and active duration limits. |
-| `run_cancelled` | Run was cancelled. |
-| `run_expired` | Queued run TTL expired before a worker started it. |
+| `run.completed` | `succeeded` |
+| `run.failed` | `failed` or `system_failed`, according to the Run resource |
+| `run.cancelled` | `cancelled` |
+| `run.expired` | `expired` |
 
-Raw protocol events include log notifications, Task completion, waits, Task
-result JSON, Run metadata updates, and platform execution lifecycle events such
-as `run.execution_lost` when a worker Lease expires. Events are observation,
-not application-output authority: durable long-lived output is read from Actor
-records, while a one-shot Task returns its terminal result.
-
-Use Run resources as terminal-status authority. `helmr run wait` and
-`helmr run logs --follow` poll finite pages and Run state from the last opaque
-cursor. Run events are observation, not application-output authority.
+Other `category`, `source`, and `kind` strings are observational values, not a
+closed public enum. Use the Run resource as status and output authority; do not
+infer a complete lifecycle from event names.

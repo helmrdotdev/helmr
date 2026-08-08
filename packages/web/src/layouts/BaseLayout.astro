@@ -21,6 +21,7 @@ type Props = {
   noindex?: boolean;
   jsonLd?: JsonLdNode | JsonLdNode[];
   enableClientRouter?: boolean;
+  minimalHeader?: boolean;
 };
 
 const {
@@ -33,6 +34,7 @@ const {
   noindex = false,
   jsonLd = [],
   enableClientRouter = false,
+  minimalHeader = false,
 } = Astro.props;
 
 const canonicalUrl = absoluteUrl(path, Astro.site?.toString() ?? SITE.url);
@@ -109,12 +111,20 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
           Helmr
         </a>
         <div class="nav-links">
-          <a href="/docs/start/quickstart" data-astro-prefetch="viewport">Quickstart</a>
-          <a href="/docs" data-astro-prefetch="viewport">Docs</a>
-          <a href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">GitHub</a>
+          {
+            !minimalHeader && (
+              <slot name="header-links">
+                <a href="/docs/quickstart" data-astro-prefetch="viewport">Quickstart</a>
+                <a href="/docs" data-astro-prefetch="viewport">Docs</a>
+                <a href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">GitHub</a>
+              </slot>
+            )
+          }
         </div>
         <div class="nav-actions">
-          <a class="btn btn-dark btn-sm" href="/docs/start/quickstart" data-astro-prefetch="viewport">Start building</a>
+          <slot name="header-actions">
+            <a class="btn btn-dark btn-sm" href="/docs/quickstart" data-astro-prefetch="viewport">Start building</a>
+          </slot>
         </div>
       </nav>
     </header>
@@ -129,7 +139,7 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
             <span class="faint">We&rsquo;re the runtime.</span>
           </h2>
           <div class="footer-cta">
-            <a class="btn btn-dark" href="/docs/start/quickstart" data-astro-prefetch="viewport">Start building</a>
+            <a class="btn btn-dark" href="/docs/quickstart" data-astro-prefetch="viewport">Start building</a>
           </div>
         </div>
         <div class="footer-top">
@@ -147,14 +157,14 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
             <div class="footer-col">
               <h3>Product</h3>
               <a href="/#runtime">Runtime</a>
-              <a href="/docs/start/quickstart" data-astro-prefetch="viewport">Quickstart</a>
+              <a href="/docs/quickstart" data-astro-prefetch="viewport">Quickstart</a>
               <a href="/docs" data-astro-prefetch="viewport">Documentation</a>
             </div>
             <div class="footer-col">
               <h3>Resources</h3>
               <a href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">GitHub</a>
               <a href="/docs/self-hosting/overview" data-astro-prefetch="viewport">Self-hosting</a>
-              <a href="/docs/reference/sdk-authoring" data-astro-prefetch="viewport">SDK reference</a>
+              <a href="/docs/reference/sdk/overview" data-astro-prefetch="viewport">SDK reference</a>
             </div>
           </div>
         </div>

@@ -152,7 +152,7 @@ const starterTSConfig = `{
 }
 `
 
-const starterHelloTask = `import { image, source, task, workspace } from "@helmr/sdk"
+const starterHelloTask = `import { image, sandbox, source, task } from "@helmr/sdk"
 
 const runtime = image("hello")
   .from("node:24-bookworm-slim")
@@ -161,9 +161,9 @@ const runtime = image("hello")
   .copy("/app/package.json", source.file("package.json"))
   .run(["bun", "install"])
 
-export const helloWorkspace = workspace("hello")
+export const helloSandbox = sandbox({ id: "hello" })
   .image(runtime)
-  .resources({ cpu: 1, memory: "1Gi" })
+  .resources({ cpu: 1, memory: "1GiB" })
 
 export const hello = task({
   id: "hello",

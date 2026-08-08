@@ -1,4 +1,4 @@
-import type { DocEntry } from "./docs";
+import { getDocNavigation, type DocEntry } from "./docs";
 
 export const SITE = {
   name: "Helmr",
@@ -74,6 +74,7 @@ export const docsCollectionJsonLd = (): JsonLdNode => ({
 
 export const docArticleJsonLd = (doc: DocEntry, path: string): JsonLdNode => {
   const url = absoluteUrl(path);
+  const navigation = getDocNavigation(doc);
 
   return {
     "@type": "TechArticle",
@@ -88,7 +89,7 @@ export const docArticleJsonLd = (doc: DocEntry, path: string): JsonLdNode => {
     isPartOf: { "@id": `${absoluteUrl("/docs")}#webpage` },
     author: { "@id": organizationId },
     publisher: { "@id": organizationId },
-    about: doc.data.section,
+    about: [navigation.section, navigation.group].filter(Boolean).join(" / "),
     inLanguage: "en",
   };
 };

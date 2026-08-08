@@ -1,47 +1,56 @@
 ---
 title: Security
-description: The security boundaries and data handling rules in Helmr.
-section: Concepts
-sidebarLabel: Security
-order: 190
+description: Isolation, credentials, data handling, and public capability boundaries.
 ---
 
 # Security
 
-Helmr is designed around explicit runtime boundaries: your Control Plane, your workers, declared secrets, scoped permissions, and isolated Linux guests.
+Helmr separates control authority, execution, and application data through
+scoped credentials and isolated runtime resources.
 
-## Isolation
+## Runtime isolation
 
-Workers execute task code and direct workspace operations in
-Firecracker-backed Linux guests. A run receives an attached writable workspace,
-deployment task source, task-declared secrets, and a bounded duration. Worker
-capabilities include runtime architecture, kernel and rootfs digests, network
-ABI, vCPU, memory, and execution slots.
+Task and Actor code, plus bounded Workspace exec, run in Firecracker-backed
+Linux guests on workers. The Sandbox selects the image, CPU, and memory. Helmr
+attaches the approved Workspace and materializes its fixed Secret placements.
+Application code should rely on normal guest behavior, not host paths, worker
+credentials, guest-control protocols, or networking implementation details.
 
-## Credentials
+The remote Deployment build is also isolated from runtime Secrets. Submitted
+source and package lifecycle scripts are executable build input, so review
+dependencies and `.helmrignore` contents before deployment.
 
-Secrets are stored encrypted and scoped to a project environment. API keys are stored by hash, can expire or be revoked, and are bound to one project environment. API key grants describe allowed actions inside that environment.
+## Credentials and capabilities
 
-API-key capabilities are explicit and Environment-scoped. Actor definition
-start uses `actors.start`. Session input, read, and close use
-`sessions.input.send`, `sessions.read`, and `sessions.close`. Token, Secret,
-Run, Workspace, and deployment permissions remain separate. Secret API
-responses never return Secret values.
+Environment API keys are stored by hash, may expire or be revoked, and carry
+explicit actions within one Project Environment. Permissions for Task starts,
+Actor starts, Session input/read/close, Runs, Workspaces, Tokens, Secrets, and
+Deployments are distinct.
 
-## Payloads Are Plaintext
+Token creation returns a callback URL and public access token for completing
+that one Token. Treat them as bearer credentials and prefer this narrow
+capability for public approval links. A Session input capability grants access
+to a continuing Actor channel and should remain in trusted integrations.
 
-Run payload is audit data. Helmr persists it in plaintext in the database and
-telemetry. Do not put tokens, API keys, credentials, or sensitive personal data
-in payloads.
+## Data handling
 
-## Workspaces
+Run payload, metadata, tags, logs, events, Actor input and output, Token
+completion results, and committed Workspace files are durable data surfaces.
+Do not place API keys, tokens, passwords, private keys, or unnecessary personal
+data in them.
 
-Workspaces are durable project-environment objects. A task run attaches to a
-workspace; if none is supplied, Helmr creates one from the task's deployed
-sandbox. If a task needs a repository or external data, pass the reference in
-payload and a scoped credential as a task secret so the task can fetch it inside
-the guest.
+Secrets are encrypted, versioned, environment-scoped values. Public responses
+do not return plaintext. Bind them during Workspace creation and read them only
+from the declared runtime placement. Avoid printing values or passing them to
+child processes in visible command lines.
 
-## Checkpoint Encryption
+Use idempotency keys derived from stable upstream operations. They protect
+retries from duplicating starts or messages, but they are not authentication
+credentials and should not contain sensitive data.
 
-Checkpoint artifacts are encrypted before leaving the worker staging directory. Workers require `CHECKPOINT_ENCRYPTION_KEY`, a base64-encoded 32-byte key, and workers that must restore the same checkpoint state need the same key.
+## Durable state
+
+Workspaces outlive Runs unless deleted. Session output and input histories are
+durable. Cancellation requests may take time to converge. Plan retention and
+cleanup around the resources that actually hold application state rather than
+assuming a terminal Run removes them.

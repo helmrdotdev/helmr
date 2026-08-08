@@ -1,9 +1,7 @@
 ---
 title: Configuration reference
 description: Task project, Workspace, image, and Run configuration.
-section: Reference
 sidebarLabel: Configuration
-order: 930
 ---
 
 # Configuration reference
@@ -38,10 +36,10 @@ except names ending in `.example`, `.sample`, or `.template`.
 | Surface | Fields |
 | --- | --- |
 | `task` | `id`, `payload`, `queue`, `maxDuration`, `ttl`, `retry`, `run` |
-| `actor` | `id`, `input`, `output`, Run defaults, `run` |
-| `workspace` | `image(img)`, `resources({ cpu, memory })`, `network(...)` |
+| `actor` | `id`, `idleTimeout`, `queue`, `maxDuration`, `ttl`, `retry`, `run` |
+| `sandbox` | `sandbox({ id }).image(img).resources({ cpu, memory })` |
 | `image` | `from`, `run`, `copy`, `copyFrom`, `workdir`, `env`, `user` |
-| `source` | `file(path)`, `directory(path, { ignore })` |
+| `source` | `file(path)`, `directory(path)` |
 
 SDK Workspace creation uses inert Secret addresses rather than raw names:
 
@@ -60,7 +58,10 @@ The corresponding REST request body uses the canonical wire form:
 ```ts
 secrets: [
   { name: "TOKEN", env: "TOKEN" },
-  { name: "config-json", file: "/run/secrets/config.json" },
+  {
+    name: "config-json",
+    file: "/run/secrets/config.json",
+  },
 ]
 ```
 

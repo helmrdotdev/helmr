@@ -1,53 +1,39 @@
 ---
-title: Overview
-description: The self-hosted Helmr deployment path and the services you operate.
-section: Self-hosting
+title: Self-hosting overview
+description: Understand the AWS self-hosting architecture, operator responsibilities, and deployment path.
 sidebarLabel: Overview
-order: 700
 ---
 
-# Overview
+# Self-hosting overview
 
-Self-hosted Helmr runs in your AWS account with your own database, dispatch queue, object storage, secrets, OAuth login, Control Plane, dispatcher, and workers.
+Self-hosted Helmr runs in your AWS account. The public repository supplies reusable Terraform/OpenTofu modules, two example compositions, and release-artifact resolution. You operate the environment around them.
 
-Self-hosted deployments use the same organization, project, environment,
-deployment, worker, runtime, and run model as managed cloud. The self-hosted
-path is operated as a single organization: initial setup requires a setup token
-and creates the only organization for that environment. After setup, the Control Plane,
-dispatcher, Workers, API, and database model follow the same architecture.
-Run and build workers are separate groups in both deployment modes and each group
-can be scaled independently with minimum, desired, and maximum instance counts.
-
-The deployment has these runtime components:
+The runtime has three main parts:
 
 | Component | Responsibility |
 | --- | --- |
-| Control Plane | Serves the web UI and API, stores run state in PostgreSQL, authenticates users, coordinates workers, and writes historical telemetry to ClickHouse Cloud. |
-| Dispatcher | Reconciles runnable work into the Redis/Valkey dispatch path and sweeps expired executions. |
-| Workers | Poll the Control Plane, materialize writable workspaces, build task images, run tasks in Firecracker guests, stream events, and create or restore checkpoints. |
+| Control Plane | Serves the web UI and API, authenticates users, coordinates workers, stores run state in PostgreSQL, and writes historical telemetry to ClickHouse. |
+| Dispatcher | Reconciles runnable and scheduled work through the Redis/Valkey dispatch path. |
+| Workers | Build task images and execute tasks in Firecracker guests. Run and build capacity are separate logical groups. |
 
-AWS infrastructure provides the shared dependencies:
+The AWS examples compose RDS PostgreSQL, ElastiCache Valkey/Redis, S3, KMS, Secrets Manager, ECS Fargate, an HTTPS load balancer, and optional EC2 Auto Scaling worker groups. A separate bootstrap foundation supplies the immutable Platform Artifact store and build-policy digest. ClickHouse is an external, operator-provisioned dependency.
 
-- Amazon RDS for PostgreSQL stores organizations, auth state, Projects,
-  Deployments, Workspaces, Actors, Runs, Waits, Tokens, metadata, checkpoints,
-  and telemetry outbox state.
-- ClickHouse Cloud stores historical run logs, events, traces, terminal output, and telemetry analytics.
-- Cluster-mode disabled ElastiCache Valkey/Redis backs the dispatch queue used by
-  `REDIS_URL`.
-- S3 stores source bundles, runtime artifacts, and encrypted checkpoint objects.
-- AWS Secrets Manager stores database, auth, OAuth, worker, and encryption secrets.
-- ECS Fargate runs the Control Plane, dispatcher, and migration tasks.
-- EC2 Auto Scaling runs worker instances when task execution is enabled.
+## Choose a deployment path
 
-Use this sequence for a new environment:
+Use [AWS evaluation](/docs/self-hosting/aws-evaluation/) for a disposable evaluation or proof of concept. Its defaults deliberately trade resilience and retention for lower cost.
 
-1. Choose the AWS deployment profile.
-2. Create the OAuth app and collect the non-secret client ID.
-3. Configure non-secret values and create the base infrastructure.
-4. Populate Secrets Manager.
-5. Run database migrations.
-6. Start the Control Plane and dispatcher services.
-7. Add workers when you need actual run execution.
-8. Verify a run from the CLI or UI.
+Use [AWS production](/docs/self-hosting/aws-production/) as the starting baseline for a customer environment. It strengthens the defaults, but it is not a complete production operating model: remote state, ClickHouse provisioning and networking, credentials, capacity policy, monitoring, backup testing, drift management, and multi-region design remain yours.
 
-The Control Plane can run without workers for login, deployments, API keys, and run inspection. Workers are required once runs need to execute code.
+Do not promote an evaluation stack in place. Build a production environment from the production baseline and migrate deliberately.
+
+## Deployment sequence
+
+1. Satisfy the [requirements](/docs/self-hosting/requirements/), including bootstrap outputs and external ClickHouse.
+2. Configure and apply either the evaluation or production AWS composition with `create_controlplane_service = false`.
+3. Configure [authentication](/docs/self-hosting/authentication/) and populate [secrets and data services](/docs/self-hosting/secrets-and-data/).
+4. Run the database bootstrap task, then migrations, before enabling services.
+5. Start and verify the [Control Plane](/docs/self-hosting/control-plane/).
+6. Add [workers](/docs/self-hosting/workers/) when you need task execution.
+7. Adopt the checked-in [upgrade procedure](/docs/self-hosting/upgrades/) before changing releases.
+
+The Control Plane can be brought up without workers. Workers are required to build or run tasks.

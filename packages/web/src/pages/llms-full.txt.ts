@@ -1,5 +1,5 @@
 import type { APIRoute } from "astro";
-import { getDocs, getDocUrl } from "../lib/docs";
+import { getDocs, getDocNavigation, getDocUrl } from "../lib/docs";
 import { SITE, absoluteUrl } from "../lib/seo";
 
 export const GET: APIRoute = async ({ site }) => {
@@ -8,10 +8,11 @@ export const GET: APIRoute = async ({ site }) => {
   const sections = docs
     .map((doc) => {
       const body = (doc as { body?: string }).body?.trim() ?? "";
+      const navigation = getDocNavigation(doc);
       return `# ${doc.data.title}
 
 URL: ${absoluteUrl(getDocUrl(doc), base)}
-Section: ${doc.data.section}
+Section: ${navigation.section}${navigation.group ? ` / ${navigation.group}` : ""}
 Description: ${doc.data.description}
 
 ${body}`;

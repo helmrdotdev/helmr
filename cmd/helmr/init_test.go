@@ -49,6 +49,14 @@ func TestInitCommandCreatesStarterProject(t *testing.T) {
 	if string(task) != starterHelloTask {
 		t.Fatalf("task = %q", task)
 	}
+	for _, expected := range []string{`sandbox({ id: "hello" })`, `memory: "1GiB"`} {
+		if !strings.Contains(string(task), expected) {
+			t.Fatalf("starter task is missing current SDK syntax %q", expected)
+		}
+	}
+	if strings.Contains(string(task), "workspace(") {
+		t.Fatal("starter task uses the removed workspace() declaration")
+	}
 	if string(ignore) != starterHelmrIgnore {
 		t.Fatalf("ignore = %q", ignore)
 	}

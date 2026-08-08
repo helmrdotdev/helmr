@@ -1,9 +1,7 @@
 ---
 title: Environment variables
-description: Environment variables read by the Helmr Control Plane, Worker, CLI, and SDK client.
-section: Reference
+description: Environment variables read by Helmr services and the CLI.
 sidebarLabel: Environment variables
-order: 960
 ---
 
 # Environment variables
@@ -24,13 +22,16 @@ not read legacy aliases. Text, numeric, boolean, and duration settings ignore
 surrounding whitespace. Passwords and tokens are opaque and are read exactly as
 provided. Base64 root keys must be canonical without surrounding whitespace.
 
-## CLI and SDK
+## CLI
 
 | Variable | Purpose |
 | --- | --- |
 | `HELMR_API_URL` | Control-plane base URL. |
 | `HELMR_API_KEY` | Bearer token for CLI or `HelmrClient`. |
 | `HELMR_CONFIG_DIR` | CLI state directory override. |
+
+`HelmrClient` does not read these variables automatically. Pass the URL and API
+key from your application's configuration to its constructor.
 
 ## Control Plane
 

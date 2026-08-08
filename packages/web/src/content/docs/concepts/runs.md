@@ -1,68 +1,42 @@
 ---
 title: Runs
-description: Task and Actor execution, attempts, telemetry, waits, and results.
-section: Concepts
-sidebarLabel: Runs
-order: 160
+description: Execution records for Tasks and Actors, including attempts and telemetry.
 ---
 
 # Runs
 
-A Run is one Task or Actor execution. It records the pinned Deployment and
-entrypoint, attached Workspace, payload or Actor input boundary, duration,
-status, output, logs, events, metadata, and pending Wait.
-
-A Run does not own its Workspace. The Workspace can outlive the Run.
-
-## Statuses
+A Run is one execution of a Task or Actor. It records the pinned Deployment and
+entrypoint, attached Workspace, cause, metadata, tags, attempt state, telemetry,
+and terminal output or failure. Actor Runs also identify their Session.
 
 | Status | Meaning |
 | --- | --- |
-| `queued` | The run is waiting for a worker. |
-| `running` | A worker has started or is executing the run, including workspace preparation. |
-| `waiting` | The task is paused for stream input, token completion, or a timer. |
-| `retry_delayed` | A retry is scheduled after backoff. |
-| `cancel_requested` | Cancellation is admitted and waiting for terminal convergence. |
-| `succeeded` | The task completed successfully. |
-| `failed` | The task failed or exceeded a limit. |
-| `cancelled` | The run was cancelled. |
-| `expired` | The queued run TTL expired before execution started. |
-| `system_failed` | Helmr could not safely continue the Run. |
+| `queued` | Waiting for execution capacity. |
+| `running` | Preparing or executing an attempt. |
+| `waiting` | Durably parked on input, a Token, or a timer. |
+| `retry_delayed` | Waiting for retry backoff. |
+| `cancel_requested` | Cancellation was accepted but has not converged. |
+| `succeeded` | Finished with an output. |
+| `failed` | Application execution failed. |
+| `cancelled` | Cancellation reached a terminal state. |
+| `expired` | Queued TTL elapsed before execution. |
+| `system_failed` | Helmr could not safely continue execution. |
 
-## Workspace Attachment
+A Run is pinned to the Deployment chosen at start. Promoting newer code does
+not rewrite the existing Run's authority. Its Workspace is a separate durable
+resource and can survive the Run.
 
-Every external Task start supplies an existing Workspace. Helmr validates the
-deployed Task and Workspace authority before creating the Run.
+An attempt number begins when a worker leases execution. Retries may increment
+the task attempt while dispatch redelivery remains a separate internal
+mechanism. Log and event records include attempt provenance so repeated
+execution is observable.
 
-Direct Workspace exec is not a Run. It is one bounded operation with a
-terminal result.
+Run logs contain stdout, stderr, and structured log records. Run events capture
+lifecycle and wait decisions. Actor output is not telemetry and belongs to the
+Session output log.
 
-## Duration
-
-Run duration is limited by the deployed Task declaration. External starts do
-not override that execution boundary.
-
-## Attempts
-
-A run has no attempt number while it is only queued. When a worker leases the
-run, Helmr assigns the current task attempt number, starting at `1`. Worker
-lease retries and queue redelivery use a separate dispatch attempt counter and
-do not change the task attempt number.
-
-The attempt number is the task execution attempt identity used by run logs,
-events, and worker execution records.
-
-## Inspecting Runs
-
-```sh
-helmr run list
-helmr run get RUN_ID
-helmr run logs RUN_ID
-helmr run events RUN_ID
-```
-
-The SDK client can retrieve, list, wait for, and page through Run logs and
-events. Logs contain stdout, stderr, and structured records. Events contain
-wait decisions, metadata updates, completion, failures, queued expiry, and
-cancellation. Actor progressive output is read from the Actor output channel,
-not Run telemetry.
+The client can retrieve and list Runs, request cancellation, wait for a typed
+handle, and page logs or events. Waiting returns a success/failure result;
+`.unwrap()` returns output or throws the Run failure. Cancellation is a request
+for convergence, not proof that the workload stopped at the instant of the API
+response.
