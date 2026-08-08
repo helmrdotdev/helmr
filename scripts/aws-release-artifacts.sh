@@ -401,7 +401,7 @@ prepare_worker_runtime_bundle() (
   trap 'rm -rf "${work}"' EXIT
   bundle_dir="${work}/bundle"
   info "building the canonical Worker runtime artifacts"
-  nix develop "${ROOT}#smoke-linux" -c make -C "${ROOT}" images
+  nix develop "${ROOT}#smoke-linux" -c make -C "${ROOT}" images >&2
   nix develop "${ROOT}#smoke-linux" -c \
     "${ROOT}/scripts/materialize-worker-runtime-bundle.sh" "${bundle_dir}" "${artifacts_dir}" >/dev/null
   receipt="${bundle_dir}/worker-runtime-bundle.json"
@@ -418,7 +418,7 @@ prepare_worker_runtime_bundle() (
   bucket="$(source_bundle_bucket)"
   bundle_key="helmr/worker-runtime-bundles/${bundle_digest#sha256:}.tar"
   bundle_uri="s3://${bucket}/${bundle_key}"
-  aws s3 cp --region "${AWS_REGION}" "${bundle_dir}/runtime-artifacts.tar" "${bundle_uri}"
+  aws s3 cp --region "${AWS_REGION}" "${bundle_dir}/runtime-artifacts.tar" "${bundle_uri}" >&2
   install -m 0600 "${bundle_dir}/runtime-artifacts.json" "${WORKER_RUNTIME_ARTIFACTS_MANIFEST_FILE}"
   install -m 0600 "${receipt}" "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}"
   kms_key_arn="$(bucket_kms_key_arn "${bucket}")"
