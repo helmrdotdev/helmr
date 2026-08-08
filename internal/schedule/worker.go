@@ -21,10 +21,10 @@ import (
 )
 
 const (
-	DefaultPollInterval = time.Second
-	DefaultClaimLimit   = int32(100)
-	DefaultConcurrency  = int32(10)
-	DefaultClaimLease   = 5 * time.Minute
+	pollInterval     = time.Second
+	claimLimit       = int32(100)
+	claimConcurrency = int32(10)
+	claimLease       = 5 * time.Minute
 )
 
 var ErrClaimSuperseded = errors.New("schedule claim was superseded")
@@ -71,33 +71,7 @@ type Worker struct {
 	jitter      func(time.Duration) (time.Duration, error)
 }
 
-type WorkerOption func(*Worker)
-
-func WithPollInterval(value time.Duration) WorkerOption {
-	return func(worker *Worker) {
-		worker.interval = value
-	}
-}
-
-func WithClaimLimit(value int32) WorkerOption {
-	return func(worker *Worker) {
-		worker.limit = value
-	}
-}
-
-func WithConcurrency(value int32) WorkerOption {
-	return func(worker *Worker) {
-		worker.concurrency = value
-	}
-}
-
-func WithClaimLease(value time.Duration) WorkerOption {
-	return func(worker *Worker) {
-		worker.lease = value
-	}
-}
-
-func NewWorker(log *slog.Logger, store Store, admitter Admitter, opts ...WorkerOption) (*Worker, error) {
+func NewWorker(log *slog.Logger, store Store, admitter Admitter) (*Worker, error) {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -112,18 +86,12 @@ func NewWorker(log *slog.Logger, store Store, admitter Admitter, opts ...WorkerO
 		store:       store,
 		admitter:    admitter,
 		workerID:    uuid.Must(uuid.NewV7()).String(),
-		interval:    DefaultPollInterval,
-		limit:       DefaultClaimLimit,
-		concurrency: DefaultConcurrency,
-		lease:       DefaultClaimLease,
+		interval:    pollInterval,
+		limit:       claimLimit,
+		concurrency: claimConcurrency,
+		lease:       claimLease,
 		now:         func() time.Time { return time.Now().UTC() },
 		jitter:      randomJitter,
-	}
-	for _, option := range opts {
-		option(worker)
-	}
-	if worker.interval <= 0 || worker.limit <= 0 || worker.concurrency <= 0 || worker.lease <= 0 {
-		return nil, errors.New("invalid schedule worker configuration")
 	}
 	return worker, nil
 }

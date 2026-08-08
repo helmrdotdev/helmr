@@ -38,9 +38,6 @@ func LoadWorker() (Worker, error) {
 		WorkerDiskReserveMiB:         1024,
 		VMInitTimeout:                30 * time.Second,
 		VMHealthTimeout:              30 * time.Second,
-		VMHealthAttemptTimeout:       5 * time.Second,
-		WorkspaceMountStartupTimeout: 20 * time.Minute,
-		PreparedRuntimePoolSize:      0,
 		PollEvery:                    2 * time.Second,
 	}
 	if cfg.WorkerResourceID == "" || len(cfg.WorkerResourceID) > 512 {
@@ -131,20 +128,6 @@ func LoadWorker() (Worker, error) {
 	if err != nil {
 		return cfg, err
 	}
-	var runtimeStarts int
-	if runtimeStarts, err = envInt("WORKER_RUNTIME_STARTS", int(cfg.WorkerRuntimeStarts)); err != nil {
-		return cfg, err
-	}
-	if runtimeStarts == 0 && slices.Contains(cfg.WorkerRoles, "run") {
-		runtimeStarts = int(cfg.WorkerExecutionSlots)
-	}
-	if runtimeStarts < 0 || runtimeStarts > 1<<31-1 {
-		return cfg, errors.New("WORKER_RUNTIME_STARTS must be non-negative and fit in int32")
-	}
-	if !slices.Contains(cfg.WorkerRoles, "run") && runtimeStarts != 0 {
-		return cfg, errors.New("WORKER_RUNTIME_STARTS must be zero when run role is disabled")
-	}
-	cfg.WorkerRuntimeStarts = int32(runtimeStarts)
 	if cfg.VMInitTimeout, err = envDuration("VM_INIT_TIMEOUT", cfg.VMInitTimeout); err != nil {
 		return cfg, err
 	}
@@ -156,37 +139,6 @@ func LoadWorker() (Worker, error) {
 	}
 	if cfg.VMHealthTimeout <= 0 {
 		return cfg, errors.New("VM_HEALTH_TIMEOUT must be positive")
-	}
-	healthAttemptTimeoutExplicit := envText("VM_HEALTH_ATTEMPT_TIMEOUT") != ""
-	if cfg.VMHealthAttemptTimeout, err = envDuration("VM_HEALTH_ATTEMPT_TIMEOUT", cfg.VMHealthAttemptTimeout); err != nil {
-		return cfg, err
-	}
-	if !healthAttemptTimeoutExplicit && cfg.VMHealthAttemptTimeout > cfg.VMHealthTimeout {
-		cfg.VMHealthAttemptTimeout = cfg.VMHealthTimeout
-	}
-	if cfg.VMHealthAttemptTimeout <= 0 {
-		return cfg, errors.New("VM_HEALTH_ATTEMPT_TIMEOUT must be positive")
-	}
-	if cfg.VMHealthAttemptTimeout > cfg.VMHealthTimeout {
-		return cfg, errors.New("VM_HEALTH_ATTEMPT_TIMEOUT must be less than or equal to VM_HEALTH_TIMEOUT")
-	}
-	if cfg.WorkspaceMountStartupTimeout, err = envDuration("WORKSPACE_MOUNT_STARTUP_TIMEOUT", cfg.WorkspaceMountStartupTimeout); err != nil {
-		return cfg, err
-	}
-	if cfg.WorkspaceMountStartupTimeout <= 0 {
-		return cfg, errors.New("WORKSPACE_MOUNT_STARTUP_TIMEOUT must be positive")
-	}
-	if cfg.PreparedRuntimePoolSize, err = envInt("WORKER_PREPARED_RUNTIME_POOL_SIZE", cfg.PreparedRuntimePoolSize); err != nil {
-		return cfg, err
-	}
-	if cfg.PreparedRuntimePoolSize < 0 {
-		return cfg, errors.New("WORKER_PREPARED_RUNTIME_POOL_SIZE must be non-negative")
-	}
-	if slices.Contains(cfg.WorkerRoles, "run") && cfg.PreparedRuntimePoolSize == 0 {
-		cfg.PreparedRuntimePoolSize = int(cfg.WorkerRuntimeStarts)
-	}
-	if slices.Contains(cfg.WorkerRoles, "run") && cfg.PreparedRuntimePoolSize < int(cfg.WorkerRuntimeStarts) {
-		return cfg, errors.New("WORKER_PREPARED_RUNTIME_POOL_SIZE must cover WORKER_RUNTIME_STARTS")
 	}
 	if cfg.JailerUID, err = envInt("JAILER_UID", cfg.JailerUID); err != nil {
 		return cfg, err

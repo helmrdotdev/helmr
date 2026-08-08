@@ -401,7 +401,7 @@ func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 
 func templateBin(manifest capacityapi.WorkerReleaseManifest) bin {
 	return bin{
-		resources: manifest.Capacity, runConsumers: manifest.Capacity.VMSlots, runtimeStarts: manifest.MaxRuntimeStarts,
+		resources: manifest.Capacity, runConsumers: manifest.Capacity.VMSlots, runtimeStarts: manifest.Capacity.VMSlots,
 		supportsRun: manifest.SupportsRun, supportsBuild: manifest.SupportsBuild,
 		runtimeArch: manifest.Runtime.Arch, runtimeContract: manifest.Runtime.Contract,
 		runtimeIdentityID: manifest.Runtime.ID, substrateFormat: manifest.Substrate.Format,

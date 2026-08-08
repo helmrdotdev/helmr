@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -170,7 +171,7 @@ func (d *Authority) PlaceWorkspaceExec(
 			db.ReserveReadyRuntimeForWorkspaceExecParams{
 				ProcessID:              candidate.ProcessID,
 				BaseWorkspaceVersionID: authority.baseVersionID,
-				ReservationExpiresAt:   pgvalue.Timestamptz(time.Now().Add(d.runPolicy.ReservationTTL)),
+				ReservationExpiresAt:   pgvalue.Timestamptz(time.Now().Add(run.ReservationTTL)),
 				ID:                     runtime.id,
 				WorkspaceID:            authority.workspaceID,
 				DeploymentDefinitionID: authority.workspaceDefinitionID,
@@ -441,7 +442,7 @@ func (d *Authority) createWorkspaceExecRuntime(
 			WorkspaceID:                     authority.workspaceID,
 			ProcessID:                       authority.processID,
 			BaseWorkspaceVersionID:          authority.baseVersionID,
-			ReservationExpiresAt:            pgvalue.Timestamptz(time.Now().Add(d.runPolicy.ReservationTTL)),
+			ReservationExpiresAt:            pgvalue.Timestamptz(time.Now().Add(run.ReservationTTL)),
 		},
 	)
 	if err != nil {

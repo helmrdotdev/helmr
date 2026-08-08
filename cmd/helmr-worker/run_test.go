@@ -29,6 +29,33 @@ func TestWorkerBuildExecutorsDeriveFromRoles(t *testing.T) {
 	}
 }
 
+func TestWorkerRuntimeCapacityDerivesFromRoles(t *testing.T) {
+	for name, test := range map[string]struct {
+		supportsRun    bool
+		buildExecutors int32
+		want           workerRuntimeCapacity
+	}{
+		"run": {
+			supportsRun: true,
+			want:        workerRuntimeCapacity{preparedPoolSize: 4, hostStartLimit: 4},
+		},
+		"build": {
+			buildExecutors: 1,
+			want:           workerRuntimeCapacity{hostStartLimit: 1},
+		},
+		"run-build": {
+			supportsRun: true, buildExecutors: 1,
+			want: workerRuntimeCapacity{preparedPoolSize: 4, hostStartLimit: 4},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := deriveWorkerRuntimeCapacity(test.supportsRun, 4, test.buildExecutors); got != test.want {
+				t.Fatalf("runtime capacity = %+v, want %+v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestFitsBuildHostComputeUsesDiskIndependentHostPool(t *testing.T) {
 	if !fitsBuildHostCompute(compute.ResourceVector{
 		MilliCPU:  3000,

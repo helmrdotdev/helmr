@@ -65,7 +65,7 @@ func TestRuntimeProfileAndManifestPreserveValidatedArtifactIdentity(t *testing.T
 		"--capacity-cpu-millis", "8000", "--capacity-memory-bytes", "17179869184",
 		"--capacity-guest-disk-bytes", "137438953472", "--per-vm-cpu-millis", "4000",
 		"--per-vm-memory-bytes", "8589934592", "--per-vm-guest-disk-bytes", "34359738368",
-		"--vm-slots", "2", "--build-executors", "1", "--runtime-starts", "2",
+		"--vm-slots", "2", "--build-executors", "1",
 	}
 	var output bytes.Buffer
 	if err := runManifest(arguments, &output); err != nil {

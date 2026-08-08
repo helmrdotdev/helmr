@@ -14,6 +14,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+func TestNewWorkerUsesScheduleSettings(t *testing.T) {
+	worker, err := NewWorker(nil, &workerStore{}, &workerAdmitter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if worker.interval != pollInterval || worker.limit != claimLimit ||
+		worker.concurrency != claimConcurrency || worker.lease != claimLease {
+		t.Fatalf("schedule settings = interval %s, limit %d, concurrency %d, lease %s",
+			worker.interval, worker.limit, worker.concurrency, worker.lease)
+	}
+}
+
 func TestWorkerClaimsAndAdmitsSchedule(t *testing.T) {
 	now := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 	store := &workerStore{claimed: []db.Schedule{scheduleAt(now)}}

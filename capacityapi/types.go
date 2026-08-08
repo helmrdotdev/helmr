@@ -92,7 +92,6 @@ type WorkerReleaseManifest struct {
 	Substrate          SubstrateProfile `json:"substrate"`
 	Capacity           ResourceVector   `json:"capacity"`
 	PerVM              ResourceVector   `json:"per_vm"`
-	MaxRuntimeStarts   int64            `json:"max_runtime_starts"`
 	BuildCacheBytes    int64            `json:"build_cache_bytes"`
 	ArtifactCacheBytes int64            `json:"artifact_cache_bytes"`
 }
@@ -161,13 +160,10 @@ func (m WorkerReleaseManifest) Validate() error {
 		m.PerVM.GuestEphemeralDiskBytes > m.Capacity.GuestEphemeralDiskBytes {
 		problems = append(problems, errors.New("per_vm resources must fit within aggregate capacity"))
 	}
-	if m.SupportsRun && (m.Capacity.VMSlots <= 0 || m.MaxRuntimeStarts <= 0) {
-		problems = append(problems, errors.New("run Workers require positive VM slots and runtime starts"))
+	if m.SupportsRun && m.Capacity.VMSlots <= 0 {
+		problems = append(problems, errors.New("run Workers require positive VM slots"))
 	}
-	if m.SupportsRun && m.MaxRuntimeStarts > m.Capacity.VMSlots {
-		problems = append(problems, errors.New("runtime starts must not exceed VM slots"))
-	}
-	if !m.SupportsRun && (m.Capacity.VMSlots != 0 || m.MaxRuntimeStarts != 0) {
+	if !m.SupportsRun && m.Capacity.VMSlots != 0 {
 		problems = append(problems, errors.New("build-only Workers must not declare run capacity"))
 	}
 	if m.SupportsBuild && m.Capacity.BuildExecutors != 1 {

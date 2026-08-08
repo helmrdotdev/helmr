@@ -57,8 +57,6 @@ type ControlPlane struct {
 	EmailFrom               string
 	GitHubOAuthClientID     string
 	GitHubOAuthClientSecret string
-	RunLeaseTTL             time.Duration
-	RunFinalizationTTL      time.Duration
 	ImageCache              *ImageCache
 }
 
@@ -72,19 +70,12 @@ type Bootstrap struct {
 }
 
 type Dispatcher struct {
-	DatabaseURL           string
-	RedisURL              string
-	ClickHouseURL         string
-	ClickHouseUser        string
-	ClickHousePassword    string
-	WorkspaceFencingKey   []byte
-	RunReservationTTL     time.Duration
-	RunLeaseStartDeadline time.Duration
-	RunLeaseTTL           time.Duration
-	SchedulePollInterval  time.Duration
-	ScheduleClaimLimit    int
-	ScheduleConcurrency   int
-	ScheduleClaimLease    time.Duration
+	DatabaseURL         string
+	RedisURL            string
+	ClickHouseURL       string
+	ClickHouseUser      string
+	ClickHousePassword  string
+	WorkspaceFencingKey []byte
 }
 
 type Database struct {
@@ -134,12 +125,8 @@ type Worker struct {
 	ArtifactCacheMaxMiB          int64
 	WorkerExecutionSlots         int32
 	WorkerRoles                  []string
-	WorkerRuntimeStarts          int32
 	VMInitTimeout                time.Duration
 	VMHealthTimeout              time.Duration
-	VMHealthAttemptTimeout       time.Duration
-	WorkspaceMountStartupTimeout time.Duration
-	PreparedRuntimePoolSize      int
 	PollEvery                    time.Duration
 	ImageCache                   *ImageCache
 }

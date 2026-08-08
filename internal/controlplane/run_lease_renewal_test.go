@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -138,7 +139,7 @@ func TestRenewRunLeaseUsesRestoredPhysicalFrontier(t *testing.T) {
 
 func TestRenewRunLeaseReturnsCurrentExpiryWhenOperationalHorizonDoesNotAdvance(t *testing.T) {
 	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
-	store.authority.runLease.ExpiresAt.Time = store.renewalTime.Time.Add(server.runLeaseTTL)
+	store.authority.runLease.ExpiresAt.Time = store.renewalTime.Time.Add(run.LeaseTTL)
 	store.authority.workspaceLease.ExpiresAt = store.authority.runLease.ExpiresAt
 	assignment.ExpiresAt = store.authority.runLease.ExpiresAt.Time
 
@@ -157,9 +158,8 @@ func TestRenewRunLeaseReturnsCurrentExpiryWhenOperationalHorizonDoesNotAdvance(t
 	}
 }
 
-func TestRenewRunLeaseUsesConfiguredOperationalHorizon(t *testing.T) {
+func TestRenewRunLeaseUsesOperationalHorizon(t *testing.T) {
 	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
-	server.runLeaseTTL = 2 * time.Minute
 
 	renewed, err := server.renewRunLease(
 		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
@@ -167,7 +167,7 @@ func TestRenewRunLeaseUsesConfiguredOperationalHorizon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := store.renewalTime.Time.Add(server.runLeaseTTL)
+	want := store.renewalTime.Time.Add(run.LeaseTTL)
 	if !renewed.ExpiresAt.Equal(want) {
 		t.Fatalf("expiry = %s, want %s", renewed.ExpiresAt, want)
 	}
@@ -244,7 +244,7 @@ func validRunLeaseRenewalFixture(
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Server{db: store, runLeaseTTL: 5 * time.Minute}, store, worker, assignment
+	return &Server{db: store}, store, worker, assignment
 }
 
 func (s *runLeaseClaimStore) GetLiveRunLeaseLocators(

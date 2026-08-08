@@ -11,6 +11,7 @@ import (
 	capacityplanner "github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -160,7 +161,7 @@ func (d *Authority) prepareRunWorkspace(
 			},
 			BaseWorkspaceVersionID: authority.baseVersionID,
 			ReservationExpiresAt: pgtype.Timestamptz{
-				Time:  reservedAt.Add(d.runPolicy.ReservationTTL),
+				Time:  reservedAt.Add(run.ReservationTTL),
 				Valid: true,
 			},
 		},

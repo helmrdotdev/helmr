@@ -253,50 +253,6 @@ variable "dispatcher_desired_count" {
   default     = 1
 }
 
-variable "schedule_poll_interval" {
-  description = "PostgreSQL Schedule claim polling interval."
-  type        = string
-  default     = "1s"
-
-  validation {
-    condition     = can(regex("^[1-9]", var.schedule_poll_interval))
-    error_message = "schedule_poll_interval must be a positive duration."
-  }
-}
-
-variable "schedule_claim_limit" {
-  description = "Maximum due Schedule rows claimed per dispatcher poll."
-  type        = number
-  default     = 100
-
-  validation {
-    condition     = var.schedule_claim_limit > 0 && floor(var.schedule_claim_limit) == var.schedule_claim_limit && var.schedule_claim_limit <= 2147483647
-    error_message = "schedule_claim_limit must be an integer between 1 and 2147483647."
-  }
-}
-
-variable "schedule_concurrency" {
-  description = "Maximum concurrent Schedule admission transactions per dispatcher task."
-  type        = number
-  default     = 10
-
-  validation {
-    condition     = var.schedule_concurrency > 0 && floor(var.schedule_concurrency) == var.schedule_concurrency && var.schedule_concurrency <= 2147483647
-    error_message = "schedule_concurrency must be an integer between 1 and 2147483647."
-  }
-}
-
-variable "schedule_claim_lease" {
-  description = "PostgreSQL Schedule claim lease duration."
-  type        = string
-  default     = "5m"
-
-  validation {
-    condition     = can(regex("^[1-9]", var.schedule_claim_lease))
-    error_message = "schedule_claim_lease must be a positive duration."
-  }
-}
-
 variable "controlplane_assign_public_ip" {
   description = "Assign public IPs and run controlplane/migration Fargate tasks in public subnets. Useful for dev stacks without NAT Gateway."
   type        = bool

@@ -154,11 +154,7 @@ locals {
   controlplane_secrets               = local.controlplane_secret_defaults
 
   dispatcher_environment_defaults = merge({
-    REDIS_URL              = local.redis_url
-    SCHEDULE_POLL_INTERVAL = var.schedule_poll_interval
-    SCHEDULE_CLAIM_LIMIT   = tostring(var.schedule_claim_limit)
-    SCHEDULE_CONCURRENCY   = tostring(var.schedule_concurrency)
-    SCHEDULE_CLAIM_LEASE   = var.schedule_claim_lease
+    REDIS_URL = local.redis_url
   }, local.clickhouse_environment)
   dispatcher_environment = merge(var.dispatcher_environment, local.dispatcher_environment_defaults)
 

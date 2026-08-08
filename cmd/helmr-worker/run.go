@@ -70,6 +70,7 @@ func run(log *slog.Logger) error {
 	}
 	supportsRun := slices.Contains(cfg.WorkerRoles, "run")
 	supportsBuild := slices.Contains(cfg.WorkerRoles, "build")
+	runtimeCapacity := deriveWorkerRuntimeCapacity(supportsRun, cfg.WorkerExecutionSlots, buildExecutors)
 	var buildPolicy *deployment.BuildPolicy
 	var platformStore cas.ImmutableStore
 	var squashfsEncoder string
@@ -191,7 +192,6 @@ func run(log *slog.Logger) error {
 	connectorConfig.ScratchDiskMiB = cfg.VMScratchDiskMiB
 	connectorConfig.InitTimeout = cfg.VMInitTimeout
 	connectorConfig.HealthTimeout = cfg.VMHealthTimeout
-	connectorConfig.HealthAttemptTimeout = cfg.VMHealthAttemptTimeout
 	connector, err := firecracker.NewConnector(connectorConfig)
 	if err != nil {
 		return fmt.Errorf("configure Firecracker connector: %w", err)
@@ -287,8 +287,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	runtimeStartLimit := max(int(cfg.WorkerRuntimeStarts), int(buildExecutors))
-	runtimeConnector, err := vm.NewStartLimiter(connector, runtimeStartLimit)
+	runtimeConnector, err := vm.NewStartLimiter(connector, runtimeCapacity.hostStartLimit)
 	if err != nil {
 		return fmt.Errorf("configure host runtime start limit: %w", err)
 	}
@@ -370,7 +369,6 @@ func run(log *slog.Logger) error {
 		SupportsRun:               supportsRun,
 		SupportsBuild:             supportsBuild,
 		MaxBuildExecutors:         buildExecutors,
-		MaxRuntimeStarts:          int32(runtimeStartLimit),
 		BuildCacheBytes:           substrateCacheMaxBytes,
 		ArtifactCacheBytes:        artifactCacheMaxBytes,
 	}
@@ -409,8 +407,8 @@ func run(log *slog.Logger) error {
 			log.Warn("prepared runtime pool close failed", "error", err)
 		}
 	}()
-	if cfg.PreparedRuntimePoolSize > 0 {
-		preparedRuntimePool = executor.NewPreparedRuntimePool(workspaceMountConnector, store, cfg.PreparedRuntimePoolSize, log)
+	if runtimeCapacity.preparedPoolSize > 0 {
+		preparedRuntimePool = executor.NewPreparedRuntimePool(workspaceMountConnector, store, runtimeCapacity.preparedPoolSize, log)
 		preparedRuntimePool.TempDir = filepath.Join(workDir, "tmp")
 		preparedRuntimePool.ArtifactCacheDir = artifactCacheDir
 		preparedRuntimePool.ArtifactCacheMaxBytes = artifactCacheMaxBytes
@@ -423,7 +421,7 @@ func run(log *slog.Logger) error {
 		preparedRuntimePool.PlatformStore = platformStore
 		preparedRuntimePool.RuntimeArchitecture = runtimeArchitecture
 		preparedRuntimePool.VerifierCgroupRoot = verifierCgroupRoot
-		log.Info("prepared runtime pool enabled", "pool_size", cfg.PreparedRuntimePoolSize)
+		log.Info("prepared runtime pool enabled", "pool_size", runtimeCapacity.preparedPoolSize)
 	}
 	runLeaseTasks := executor.ProgramRunner{
 		CAS:                 store,
@@ -464,7 +462,6 @@ func run(log *slog.Logger) error {
 			ArtifactCacheDir:      artifactCacheDir,
 			ArtifactCacheMaxBytes: artifactCacheMaxBytes,
 			Substrates:            substrateResolver,
-			StartupTimeout:        cfg.WorkspaceMountStartupTimeout,
 			Log:                   log,
 			RuntimePool:           preparedRuntimePool,
 			BackgroundGate:        backgroundGate,
@@ -580,6 +577,22 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+type workerRuntimeCapacity struct {
+	preparedPoolSize int
+	hostStartLimit   int
+}
+
+func deriveWorkerRuntimeCapacity(supportsRun bool, executionSlots, buildExecutors int32) workerRuntimeCapacity {
+	runStarts := int32(0)
+	if supportsRun {
+		runStarts = executionSlots
+	}
+	return workerRuntimeCapacity{
+		preparedPoolSize: int(runStarts),
+		hostStartLimit:   max(int(runStarts), int(buildExecutors)),
+	}
 }
 
 func workerBuildExecutors(roles []string) int32 {

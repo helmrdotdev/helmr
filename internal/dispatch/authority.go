@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -24,20 +23,12 @@ const platformArchitecture = "x86_64"
 type Authority struct {
 	pool          *pgxpool.Pool
 	fencingKey    workspace.FencingKey
-	runPolicy     RunPlacementPolicy
 	nestedResumes nestedResumeCursor
-}
-
-type RunPlacementPolicy struct {
-	ReservationTTL time.Duration
-	StartDeadline  time.Duration
-	LeaseTTL       time.Duration
 }
 
 func NewRunAuthority(
 	pool *pgxpool.Pool,
 	fencingKey workspace.FencingKey,
-	policy RunPlacementPolicy,
 ) (*Authority, error) {
 	authority, err := newAuthority(pool)
 	if err != nil {
@@ -46,14 +37,7 @@ func NewRunAuthority(
 	if !fencingKey.Valid() {
 		return nil, errors.New("run authority workspace fencing key is required")
 	}
-	if policy.ReservationTTL <= 0 ||
-		policy.StartDeadline <= 0 ||
-		policy.LeaseTTL <= 0 ||
-		policy.StartDeadline > policy.LeaseTTL {
-		return nil, errors.New("run authority placement policy is invalid")
-	}
 	authority.fencingKey = fencingKey
-	authority.runPolicy = policy
 	return authority, nil
 }
 

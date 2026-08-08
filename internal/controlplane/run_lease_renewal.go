@@ -7,6 +7,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -77,7 +78,7 @@ func (s *Server) renewRunLease(
 			renewed = current
 			return nil
 		}
-		candidate := now.Time.Add(s.runLeaseTTL)
+		candidate := now.Time.Add(run.LeaseTTL)
 		if candidate.After(hardDeadline) {
 			candidate = hardDeadline
 		}

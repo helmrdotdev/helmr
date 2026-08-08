@@ -105,11 +105,10 @@ func validTestWorkerReleaseManifest(t *testing.T) WorkerReleaseManifest {
 	t.Helper()
 	manifest := WorkerReleaseManifest{
 		Schema: WorkerReleaseManifestSchema, WorkerVersion: "0123456789abcdef0123456789abcdef01234567", SupportsRun: true,
-		Runtime:          testRuntimeProfile(t),
-		Substrate:        SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v0"},
-		Capacity:         ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 64 << 30, VMSlots: 1},
-		PerVM:            ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 32 << 30},
-		MaxRuntimeStarts: 1,
+		Runtime:   testRuntimeProfile(t),
+		Substrate: SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v0"},
+		Capacity:  ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 64 << 30, VMSlots: 1},
+		PerVM:     ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 32 << 30},
 	}
 	fingerprint, err := manifest.ExpectedFingerprint()
 	if err != nil {
