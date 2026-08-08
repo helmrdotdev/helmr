@@ -946,8 +946,10 @@ const renderedActor = {
     background: none;
     color: var(--text-muted);
     font-family: var(--font-sans);
+    font-size: min(0.95em, 4.95vw);
     font-weight: 400;
     letter-spacing: -0.025em;
+    white-space: nowrap;
   }
 
   .homes .section-title .faint {
@@ -990,11 +992,6 @@ const renderedActor = {
 
   .code-section .section-title {
     max-width: none;
-  }
-
-  .code-section .section-title .faint {
-    display: inline;
-    margin-left: 0.2em;
   }
 
   .code-frame {
@@ -1441,10 +1438,6 @@ const renderedActor = {
       align-items: flex-start;
     }
 
-    .code-section .section-title .faint {
-      display: block;
-      margin-left: 0;
-    }
   }
 
   @media (max-width: 900px) {
