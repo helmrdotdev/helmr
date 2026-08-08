@@ -58,52 +58,63 @@ const entryIcons = {
 
 const entryPoints = [
   {
-    section: "Start",
-    title: "Start with Helmr",
-    description: "Install the CLI, connect to a control plane, and run a small task in a durable workspace.",
-    href: "/docs/start/overview",
+    section: "Quickstart",
+    title: "Run your first Task",
+    description: "Install Helmr, deploy a TypeScript project, and complete a Run in a durable Workspace.",
+    href: "/docs/quickstart",
     icon: pixelsFromRows(entryIcons.bolt),
     tone: "yellow",
     links: [
-      { label: "Quickstart", href: "/docs/start/quickstart" },
-      { label: "First task", href: "/docs/guides/first-task" },
+      { label: "Quickstart", href: "/docs/quickstart" },
+      { label: "First Task tutorial", href: "/docs/guides/tutorials/first-task" },
+    ],
+  },
+  {
+    section: "Guides",
+    title: "Build with Helmr",
+    description: "Follow complete tutorials or solve one deployment, Task, Actor, Workspace, or wait workflow.",
+    href: "/docs/guides/tutorials/first-task",
+    icon: pixelsFromRows(entryIcons.layers),
+    tone: "blue",
+    links: [
+      { label: "Durable agent", href: "/docs/guides/tutorials/durable-agent" },
+      { label: "All how-to guides", href: "/docs/guides/how-to/deploy-a-project" },
     ],
   },
   {
     section: "Concepts",
     title: "Understand the runtime",
-    description: "See how Tasks, Actors, Workspaces, Runs, waits, durable Actor I/O, and secrets fit together.",
-    href: "/docs/concepts/product-model",
+    description: "See how Deployments, Sandboxes, Workspaces, Tasks, Actors, Sessions, and Runs fit together.",
+    href: "/docs/concepts/how-helmr-works",
     icon: pixelsFromRows(entryIcons.layers),
-    tone: "blue",
-    links: [
-      { label: "Workspaces", href: "/docs/concepts/workspaces" },
-      { label: "Actors", href: "/docs/guides/actor-starts" },
-      { label: "Waits and I/O", href: "/docs/concepts/waits-and-io" },
-    ],
-  },
-  {
-    section: "Self-hosting",
-    title: "Self-host in AWS",
-    description: "Create the control plane, configure OAuth and Secrets Manager, then add Firecracker workers.",
-    href: "/docs/self-hosting/overview",
-    icon: pixelsFromRows(entryIcons.cloud),
     tone: "green",
     links: [
-      { label: "Deploy on AWS", href: "/docs/self-hosting/deploy-on-aws" },
-      { label: "Verify a run", href: "/docs/self-hosting/verify-run" },
+      { label: "Workspaces", href: "/docs/concepts/workspaces" },
+      { label: "Actors", href: "/docs/concepts/actors" },
     ],
   },
   {
     section: "Reference",
-    title: "Check commands and APIs",
-    description: "Look up CLI commands, SDK authoring, runtime APIs, run events, and environment variables.",
-    href: "/docs/reference/cli",
+    title: "Look up an interface",
+    description: "Check the SDK, CLI, REST API, configuration, environment variables, and Run events.",
+    href: "/docs/reference/sdk/overview",
     icon: pixelsFromRows(entryIcons.terminal),
     tone: "pink",
     links: [
-      { label: "REST API", href: "/docs/reference/rest-api" },
-      { label: "Environment variables", href: "/docs/reference/environment-variables" },
+      { label: "CLI", href: "/docs/reference/cli/overview" },
+      { label: "REST API", href: "/docs/reference/rest-api/overview" },
+    ],
+  },
+  {
+    section: "Self-hosting",
+    title: "Run Helmr in AWS",
+    description: "Choose the evaluation or production stack, then operate the control plane and workers.",
+    href: "/docs/self-hosting/overview",
+    icon: pixelsFromRows(entryIcons.cloud),
+    tone: "blue",
+    links: [
+      { label: "AWS evaluation", href: "/docs/self-hosting/aws-evaluation" },
+      { label: "AWS production", href: "/docs/self-hosting/aws-production" },
     ],
   },
 ];
@@ -112,7 +123,7 @@ const entryPoints = [
 <DocsLayout title="Helmr Docs" description="Documentation for installing, operating, and extending Helmr." docs={docs}>
   <h1>Docs</h1>
   <p>
-    Set up Helmr, define TypeScript tasks, attach them to durable workspaces, and operate the self-hosted runtime in your AWS account.
+    Learn the runtime, build with its public interfaces, and operate Helmr in your AWS account.
   </p>
   <div class="docs-index-grid">
     {entryPoints.map((entry) => (
@@ -153,6 +164,10 @@ const entryPoints = [
     border-right: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
     background: var(--surface-raised);
+  }
+
+  .docs-index-grid section:first-child {
+    grid-column: 1 / -1;
   }
 
   .entry-main {
@@ -238,6 +253,10 @@ const entryPoints = [
   @media (max-width: 640px) {
     .docs-index-grid {
       grid-template-columns: 1fr;
+    }
+
+    .docs-index-grid section:first-child {
+      grid-column: auto;
     }
 
     .entry-links {

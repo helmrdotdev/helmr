@@ -1,45 +1,51 @@
 ---
 title: Secrets
-description: Declaring, storing, and binding run-time secret values.
-section: Concepts
-sidebarLabel: Secrets
-order: 180
+description: Encrypted environment-scoped values placed into Workspaces.
 ---
 
 # Secrets
 
-Secrets are encrypted values stored by name and scoped to a project
-environment. Workspace creation declares where each Secret appears in the
-guest:
+A Secret is a named, encrypted value scoped to one Project Environment. Its
+value is write-only through create or rotation; list, retrieve, and Workspace
+responses expose metadata and placement names, not plaintext.
 
-```sh
-helmr workspace create app-workspace \
-  --key app \
-  --secret-env API_TOKEN=API_TOKEN \
-  --secret-file config-json=/run/secrets/config.json \
-  --idempotency-key app-workspace
+Secret names must match `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`. SDK declarations
+and Workspace requests use a typed address:
+
+```ts
+const token = secrets.fromName("GITHUB_TOKEN")
 ```
 
-## Store Values
+Workspace creation places that Secret in exactly one environment variable or
+file path:
 
-```sh
-printf '%s' "$API_TOKEN" | helmr secret create API_TOKEN
+```ts
+const workspace = await client.sandboxes.createWorkspace(
+  "reviewer",
+  {
+    secrets: [
+      {
+        secret: secrets.fromName("GITHUB_TOKEN"),
+        env: "GITHUB_TOKEN",
+      },
+      {
+        secret: secrets.fromName("SSH_KEY"),
+        file: "/run/secrets/ssh-key",
+      },
+    ],
+  },
+)
 ```
 
-The web UI lists secret names and timestamps, but it does not display saved values.
+The placement belongs to the Workspace. A later Task or Actor start supplies
+the Workspace and does not accept literal Secret values or a replacement
+binding map. Scheduled Task declarations similarly select Secret addresses for
+each newly created fire Workspace.
 
-## Run With Secrets
+Rotation creates a new stored version under the same stable Secret identity.
+Revocation blocks the Secret rather than revealing or deleting its encrypted
+history. Treat revoke as an operational security action and use idempotency
+keys for create, rotate, and revoke retries.
 
-```sh
-helmr task start use-secret --workspace WORKSPACE_ID
-```
-
-Runs do not accept secret values or binding maps. They use the placements fixed
-when their Workspace was created. Secret values should never be sent through
-payload.
-
-## Names And Placement
-
-Secret names must match `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`. The `name` is the
-Helmr project-environment Secret name. A Workspace placement selects one
-environment variable or one absolute file path.
+Payload, metadata, tags, logs, Actor input and output, Token results, image
+environment literals, and source archives are not secret channels.

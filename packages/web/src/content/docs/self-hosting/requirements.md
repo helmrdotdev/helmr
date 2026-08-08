@@ -1,34 +1,58 @@
 ---
 title: Requirements
-description: Accounts, tools, network, and release artifacts required before deployment.
-section: Self-hosting
-sidebarLabel: Requirements
-order: 710
+description: Prepare the accounts, tools, release inputs, data services, and network policy required for self-hosting.
 ---
 
 # Requirements
 
-Prepare these before creating the AWS stack.
+Prepare these inputs before applying either AWS composition.
 
-| Requirement | Notes |
+## Accounts and tools
+
+- An AWS account and one primary AWS region.
+- AWS credentials allowed to create the VPC, load balancer, ECS, RDS, ElastiCache, S3, KMS, Secrets Manager, IAM, EC2, Auto Scaling, and optional CloudFront resources in the composition you select.
+- OpenTofu or Terraform, plus the AWS CLI, `jq`, OpenSSL, and curl. The repository's Nix development shell provides the pinned project toolchain.
+- A GitHub OAuth app for browser login.
+- A customer-owned ClickHouse service reachable from Control Plane, dispatcher, and migration tasks over HTTPS.
+
+## Required deployment inputs
+
+Both `infra/aws/quickstart` and `infra/aws/standard` require:
+
+| Input | Purpose |
 | --- | --- |
-| AWS account and region | Use one primary region for the Control Plane, database, object store, and workers. |
-| AWS credentials | The deploying principal needs permission to create VPC, ECS, RDS, ElastiCache, S3, Secrets Manager, IAM, ALB, CloudFront, Auto Scaling, and EC2 resources. |
-| OpenTofu or Terraform | The AWS profiles are OpenTofu-compatible. Use the infra shell if you want the repo-pinned toolchain. |
-| AWS CLI and `jq` | Needed for reading outputs, writing secret values, and running the migration task. |
-| GitHub OAuth app | Required for browser login. |
-| ClickHouse Cloud service | Required for production historical telemetry. Use a customer-owned ClickHouse Cloud organization. |
-| Helmr release version | AWS examples read Control Plane image and worker AMI metadata from the release artifact manifest. |
-| Public URL | Use HTTPS for customer environments. Quickstart can use the generated CloudFront URL; production usually uses your own domain and ACM certificate. |
+| `aws_region` | Selects regional infrastructure and the release's worker AMI. |
+| `helmr_version` | Resolves the official AWS release manifest. |
+| `region_id` | Identifies this Helmr region. |
+| `worker_group_name` | Names the initial logical worker group. |
+| `platform_store_uri` | Points to immutable Platform Artifact objects. |
+| `platform_store_bucket_arn` | Authorizes access to the Platform Artifact bucket. |
+| `platform_store_kms_key_arn` | Authorizes decryption of Platform Artifacts. |
+| `build_policy_digest` | Pins the committed build policy as `sha256:<64 lowercase hex characters>`. |
+| `clickhouse_url` | HTTPS endpoint for historical telemetry. |
+| `github_oauth_client_id` | Non-secret OAuth application client ID. |
+| `worker_network_blocked_ipv4_cidrs` | Deployment-owned deny set that must wholly cover the execution VPC prefix. |
 
-Workers have additional requirements because they run Firecracker guests:
+The Platform Artifact values come from an operator-managed foundation built with `infra/aws/modules/bootstrap` or an equivalent deployment. The example compositions do not create that foundation for you.
 
-- EC2 instance type with KVM support.
-- Worker AMI that includes `helmr-worker`, Firecracker, jailer, `ip`, `nft`, AWS CLI v2, curl, kernel, initramfs, and a certified guest rootfs containing the pinned BuildKit daemon.
-- Root EBS volume sized for filesystem-first build/cache/runtime data; `worker_disk_mib` can cap advertised capacity when needed.
-- Outbound access to the Control Plane, S3, ECR, AWS APIs, and any external services your tasks call.
-- SSM access for maintenance. Do not expose SSH by default.
+## Release artifacts
 
-You can deploy the Control Plane first and add workers later.
+By default, `helmr_version` resolves:
 
-Schedules require both database and Redis/Valkey availability. The database stores schedule definitions, instances, and exact next fire times; Redis/Valkey stores replaceable next-fire entries and leases used by the dispatcher.
+```text
+https://github.com/helmrdotdev/helmr/releases/download/<helmr_version>/aws-artifacts.json
+```
+
+The manifest must contain a digest-pinned Control Plane image and, when workers are enabled, an AMI for `aws_region`. Custom Control Plane images must also use `@sha256:<digest>`; custom worker overrides must be a valid AMI ID.
+
+## Worker prerequisites
+
+Workers additionally need:
+
+- Private-subnet outbound access to the Control Plane, S3, ECR, AWS APIs, registries, and any external services tasks call.
+- KVM-capable EC2 capacity. The evaluation profile supports explicitly enabled nested virtualization on supported families; the production profile defaults to a metal instance.
+- A worker AMI containing `helmr-worker`, Firecracker, jailer, `ip`, `nft`, AWS CLI v2, curl, the systemd unit, and certified guest boot artifacts.
+- Explicit host, VM, cache, disk, and execution-slot capacity sized for the workload.
+- SSM access for maintenance unless you supply an alternative. The module does not open SSH by default.
+
+Review [workers](/docs/self-hosting/workers/) before creating capacity.

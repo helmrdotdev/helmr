@@ -1,38 +1,30 @@
 ---
 title: Workspaces
-description: Durable workspace state, committed files, and bounded exec.
-section: Concepts
-sidebarLabel: Workspaces
-order: 150
+description: Durable filesystem state created from deployed Sandbox definitions.
 ---
 
 # Workspaces
 
-A Workspace is a durable filesystem and execution-state object. It is scoped
-to one project and environment and is created from a deployed Workspace
-declaration.
+A Workspace is a durable project-and-environment resource created from a
+deployed Sandbox. The Sandbox fixes its image, CPU, and memory; Workspace
+creation may add an immutable key and Secret placements.
 
-The v0 public lifecycle is deliberately narrow:
+The public lifecycle is deliberately bounded:
 
-| Action | Meaning |
+| Operation | Contract |
 | --- | --- |
-| Create | Create a Workspace from a deployed declaration, optionally with a stable key and Secret placements. |
-| Retrieve/ref | Address it by resource UUID. A key is a collection lookup filter. |
-| Read files | Read, list, or stat the current committed filesystem. |
-| Exec | Run one bounded command and receive its terminal stdout, stderr, and exit code. |
+| Create | Create from a Sandbox declared ID, optionally with key, Secrets, and idempotency key. |
+| Retrieve/list | Address by UUID, page the collection, or look up one exact key. |
+| Files | Read, stat, or page a committed directory without running a shell. |
+| Exec | Run one bounded command and receive exit code, stdout, and stderr. |
 | Delete | Remove the Workspace from normal use. |
 
-Task start always names an existing Workspace. The Workspace can outlive a Run
-and can be reused by later Task or Actor work.
-
-Sandbox definitions expose CPU and memory. Helmr chooses the v0 ephemeral
-disk default internally and retains the concrete disk allocation for placement
-and capacity enforcement. Persistent Workspace state is a separate storage
-contract.
+Every external Task or Actor start supplies a Workspace reference. The
+Workspace does not belong to that Run and can outlive it. Reusing a Workspace
+lets later work observe committed files; using separate Workspaces isolates
+state and Secret placement.
 
 ```ts
-import { HelmrClient } from "@helmr/sdk"
-
 const workspace = await client.sandboxes.createWorkspace(
   "repository-agent",
   {
@@ -44,17 +36,17 @@ const workspace = await client.sandboxes.createWorkspace(
 const result = await workspace.exec({
   command: ["git", "status", "--short"],
   cwd: "/workspace",
+  timeout: "5m",
   idempotencyKey: "workspace:status:1",
 })
 
-const bytes = await workspace.files.read("README.md")
+const readme = await workspace.files.read("README.md")
 ```
 
-Committed file reads do not start a VM or run a shell command. Basic exec is
-write-capable and bounded by request size, output size, and timeout limits.
-Process handles, PTYs, materialization controls, version management, and live
-filesystem management are not v0 public resources.
+Direct exec is not a Run: it has one terminal response and no Task result,
+Run logs, or events. It accepts explicit argv, optional cwd, environment,
+stdin, timeout, and a required idempotency key.
 
-Secrets are placed when the Workspace is created. Repository identifiers and
-other ordinary input belong in Task payloads or exec requests; secret values do
-not.
+Workspace state and the image root are distinct. Use relative paths for files
+that should live in the mounted Workspace. Secret values never belong in exec
+arguments, environment overrides, or task payload.

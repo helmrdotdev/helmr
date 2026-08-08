@@ -7,9 +7,7 @@ const docs = defineCollection({
   schema: z.object({
     title: z.string(),
     description: z.string(),
-    section: z.string().default("Guides"),
     sidebarLabel: z.string().optional(),
-    order: z.number().int().nonnegative().default(999),
     draft: z.boolean().default(false),
   }),
 });
