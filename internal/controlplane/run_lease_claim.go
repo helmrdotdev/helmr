@@ -7,6 +7,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -24,7 +25,7 @@ type runLeaseClaimAuthority struct {
 	attempt              db.RunAttempt
 	workerGroup          db.WorkerGroup
 	worker               db.WorkerInstance
-	workerObservation    db.LockRunLeaseClaimObservationRow
+	workerRunReady       bool
 	runtime              db.RuntimeInstance
 	runLease             db.RunLease
 	workspaceMount       db.WorkspaceMount
@@ -1177,26 +1178,18 @@ func claimRunLeasePhysicalInTx(
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
-	authority.worker, err = q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{
-		ID:            pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerGroupID: worker.WorkerGroupID,
+	readyWorker, err := q.LockRunLeaseClaimReadyWorker(ctx, db.LockRunLeaseClaimReadyWorkerParams{
+		ID:                          pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerGroupID:               worker.WorkerGroupID,
+		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
 	})
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
+	authority.worker = readyWorker.WorkerInstance
+	authority.workerRunReady = readyWorker.RunReady
 	if err := validateClaimWorker(worker, authority.worker); err != nil {
 		return runLeaseClaimAuthority{}, err
-	}
-	authority.workerObservation, err = q.LockRunLeaseClaimObservation(
-		ctx,
-		db.LockRunLeaseClaimObservationParams{
-			WorkerGroupID:    worker.WorkerGroupID,
-			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch:      worker.WorkerEpoch,
-		},
-	)
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
 
 	authority.runtime, err = q.LockRunLeaseClaimRuntime(ctx, db.LockRunLeaseClaimRuntimeParams{
@@ -1335,7 +1328,7 @@ func validateClaimPhysicalAuthority(worker workerActor, authority runLeaseClaimA
 			!authority.workerGroup.AllowsRun) {
 		return errStaleRunLeaseClaim
 	}
-	if lease.State == db.RunLeaseStateAssigned && !authority.workerObservation.RunReady {
+	if lease.State == db.RunLeaseStateAssigned && !authority.workerRunReady {
 		return errStaleRunLeaseClaim
 	}
 	if runtime.DesiredState != db.RuntimeDesiredStateReady ||

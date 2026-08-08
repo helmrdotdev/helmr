@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -148,37 +147,10 @@ func (a *HardAdmission) Observation() workerapi.Observation {
 	maps.Copy(decisions, a.last)
 	a.mu.RUnlock()
 	observation := workerapi.Observation{}
-	decision := decisions["run"]
-	if decision.Health.DiskCapacityBytes == 0 {
-		decision = decisions["runtime"]
-	}
-	if decision.Health.DiskCapacityBytes == 0 {
-		decision = decisions["build"]
-	}
-	if decision.Health.DiskCapacityBytes == 0 {
-		for _, current := range decisions {
-			decision = current
-			break
-		}
-	}
-	if decision.Health.DiskCapacityBytes > 0 {
-		used := decision.Health.DiskCapacityBytes - decision.Health.AvailableDiskBytes
-		used = min(max(used, 0), decision.Health.DiskCapacityBytes)
-		observation.GuestEphemeralDiskPressureBPS = int32(used * 10_000 / decision.Health.DiskCapacityBytes)
-	}
 	var datapathErr error
 	if a.cfg.DatapathHealth != nil {
 		datapathErr = a.cfg.DatapathHealth()
 	}
-	detailsValue := any(decisions)
-	if datapathErr != nil {
-		detailsValue = map[string]any{
-			"hard_admission": decisions,
-			"datapath":       map[string]bool{"healthy": false},
-		}
-	}
-	details, _ := json.Marshal(detailsValue)
-	observation.HealthDetails = details
 	if datapathErr != nil {
 		reason := string(AdmissionDatapathUnverified)
 		observation.RunPausedReason = reason

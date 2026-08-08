@@ -37,9 +37,6 @@ func (c *testControlPlane) ActivateWorker(_ context.Context, capabilities worker
 	if !c.recovered.Load() {
 		return workerapi.StatusResponse{}, errors.New("activation before startup recovery proof")
 	}
-	if len(capabilities.Observation.HealthDetails) == 0 {
-		return workerapi.StatusResponse{}, errors.New("recovery evidence missing")
-	}
 	c.activated.Store(true)
 	if status, ok := c.activateStatus.Load().(workerapi.StatusResponse); ok {
 		return status, nil

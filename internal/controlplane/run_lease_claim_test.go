@@ -48,7 +48,7 @@ func TestClaimRunLeaseLocksSecretsBeforeExecutionAuthority(t *testing.T) {
 	if !slices.Equal(store.calls, []string{
 		"secret_locators", "secrets", "secret_version", "locators",
 		"run", "workspace", "attempt",
-		"worker_group", "worker", "observation", "runtime", "run_lease",
+		"worker_group", "worker", "runtime", "run_lease",
 		"workspace_mount", "workspace_lease", "mark_starting", "commit",
 	}) {
 		t.Fatalf("claim order = %v", store.calls)
@@ -110,7 +110,6 @@ func TestClaimFreshTaskRunLeaseInTxLocksCanonicalOrderAndTransitionsOnce(t *test
 		"attempt",
 		"worker_group",
 		"worker",
-		"observation",
 		"runtime",
 		"run_lease",
 		"workspace_mount",
@@ -128,7 +127,7 @@ func TestClaimFreshTaskRunLeaseInTxLocksCanonicalOrderAndTransitionsOnce(t *test
 	store.authority.runLease = claimed.runLease
 	store.authority.workerGroup.State = db.WorkerGroupStateDraining
 	store.authority.workerGroup.AllowsRun = false
-	store.authority.workerObservation.RunReady = false
+	store.authority.workerRunReady = false
 	replayed, err := claimFreshTaskRunLeaseInTx(
 		context.Background(),
 		store,
@@ -171,7 +170,7 @@ func TestClaimFreshTaskRunLeaseInTxRejectsAssignedWorkFromDrainingWorker(t *test
 
 func TestClaimFreshTaskRunLeaseInTxRejectsAssignedWorkWithoutFreshReadiness(t *testing.T) {
 	worker, locators, authority := validRunLeaseClaimFixture()
-	authority.workerObservation.RunReady = false
+	authority.workerRunReady = false
 	store := &runLeaseClaimStore{authority: authority}
 
 	_, err := claimFreshTaskRunLeaseInTx(
@@ -358,7 +357,6 @@ func TestClaimActorRunLeaseInTxLocksActorBeforeRun(t *testing.T) {
 		"attempt",
 		"worker_group",
 		"worker",
-		"observation",
 		"runtime",
 		"run_lease",
 		"workspace_mount",
@@ -491,7 +489,6 @@ func TestClaimCheckpointRestoreRunLeaseInTxUsesCheckpointBase(t *testing.T) {
 		"attempt",
 		"worker_group",
 		"worker",
-		"observation",
 		"runtime",
 		"run_lease",
 		"workspace_mount",
@@ -714,7 +711,6 @@ func TestClaimSameWorkspaceChildRunLeaseInTxLocksParentBeforeChild(t *testing.T)
 			"attempt",
 			"worker_group",
 			"worker",
-			"observation",
 			"runtime",
 			"run_lease",
 			"workspace_mount",
@@ -861,7 +857,7 @@ func TestClaimSameWorkspaceChildRunLeaseInTxExtendsEnclosingHandoff(t *testing.T
 	}
 	if !slices.Equal(store.calls, []string{
 		"parent_run", "run", "workspace", "parent_attempt", "attempt",
-		"worker_group", "worker", "observation", "runtime", "run_lease",
+		"worker_group", "worker", "runtime", "run_lease",
 		"workspace_mount", "workspace_lease", "enclosing_wait", "handoff_wait",
 		"checkpoint", "checkpoint_source", "mark_starting",
 	}) {
@@ -926,7 +922,6 @@ func TestClaimSameWorkspaceParentResumeRunLeaseInTxUsesHandoffCheckpoint(t *test
 			"child_attempt",
 			"worker_group",
 			"worker",
-			"observation",
 			"runtime",
 			"run_lease",
 			"workspace_mount",
@@ -988,7 +983,7 @@ func TestClaimSameWorkspaceParentResumeRunLeaseInTxUpdatesEnclosingAuthority(t *
 	}
 	if !slices.Equal(store.calls, []string{
 		"parent_run", "run", "child_run", "workspace", "attempt", "child_attempt",
-		"worker_group", "worker", "observation", "runtime", "run_lease",
+		"worker_group", "worker", "runtime", "run_lease",
 		"workspace_mount", "workspace_lease", "enclosing_wait", "run_wait",
 		"checkpoint", "checkpoint_source", "mark_starting",
 	}) {
@@ -1118,7 +1113,7 @@ func TestClaimCheckpointRestoreRunLeaseInTxPreservesEnclosingHandoff(t *testing.
 	}
 	if !slices.Equal(store.calls, []string{
 		"parent_run", "run", "workspace", "attempt",
-		"worker_group", "worker", "observation", "runtime", "run_lease",
+		"worker_group", "worker", "runtime", "run_lease",
 		"workspace_mount", "workspace_lease", "enclosing_wait", "run_wait",
 		"checkpoint", "checkpoint_source", "mark_starting",
 	}) {
@@ -1318,12 +1313,15 @@ func (s *runLeaseClaimStore) LockRunLeaseClaimWorker(context.Context, db.LockRun
 	return s.authority.worker, nil
 }
 
-func (s *runLeaseClaimStore) LockRunLeaseClaimObservation(
+func (s *runLeaseClaimStore) LockRunLeaseClaimReadyWorker(
 	context.Context,
-	db.LockRunLeaseClaimObservationParams,
-) (db.LockRunLeaseClaimObservationRow, error) {
-	s.calls = append(s.calls, "observation")
-	return s.authority.workerObservation, nil
+	db.LockRunLeaseClaimReadyWorkerParams,
+) (db.LockRunLeaseClaimReadyWorkerRow, error) {
+	s.calls = append(s.calls, "worker")
+	return db.LockRunLeaseClaimReadyWorkerRow{
+		WorkerInstance: s.authority.worker,
+		RunReady:       s.authority.workerRunReady,
+	}, nil
 }
 
 func (s *runLeaseClaimStore) LockRunLeaseClaimRuntime(context.Context, db.LockRunLeaseClaimRuntimeParams) (db.RuntimeInstance, error) {
@@ -1525,7 +1523,7 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 			PerVMMemoryBytes:             2048,
 			PerVMGuestEphemeralDiskBytes: 4096,
 		},
-		workerObservation: db.LockRunLeaseClaimObservationRow{RunReady: true},
+		workerRunReady: true,
 		runtime: db.RuntimeInstance{
 			ID:                              runtimeID,
 			RuntimeIdentityID:               runtimeIDValue,

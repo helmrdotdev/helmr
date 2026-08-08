@@ -331,7 +331,6 @@ CREATE TABLE worker_groups (
     required_build_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (required_build_cache_bytes >= 0),
     required_artifact_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (required_artifact_cache_bytes >= 0),
     required_vm_slots INTEGER NOT NULL DEFAULT 1 CHECK (required_vm_slots >= 0),
-    observation_ttl_seconds INTEGER NOT NULL CHECK (observation_ttl_seconds > 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (id, region_id),
@@ -383,15 +382,16 @@ CREATE TABLE worker_instances (
     epoch_guest_ephemeral_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (epoch_guest_ephemeral_disk_bytes >= 0),
     epoch_build_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (epoch_build_cache_bytes >= 0),
     epoch_artifact_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (epoch_artifact_cache_bytes >= 0),
-    epoch_hugepages_bytes BIGINT NOT NULL DEFAULT 0 CHECK (epoch_hugepages_bytes >= 0),
-    epoch_checkpoint_bytes BIGINT NOT NULL DEFAULT 0 CHECK (epoch_checkpoint_bytes >= 0),
     per_vm_cpu_millis BIGINT NOT NULL DEFAULT 0 CHECK (per_vm_cpu_millis >= 0),
     per_vm_memory_bytes BIGINT NOT NULL DEFAULT 0 CHECK (per_vm_memory_bytes >= 0),
     per_vm_guest_ephemeral_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (per_vm_guest_ephemeral_disk_bytes >= 0),
     max_vm_slots INTEGER NOT NULL DEFAULT 0 CHECK (max_vm_slots >= 0),
-    max_run_consumers INTEGER NOT NULL DEFAULT 0 CHECK (max_run_consumers >= 0),
     max_build_executors INTEGER NOT NULL DEFAULT 0 CHECK (max_build_executors >= 0),
     max_runtime_starts INTEGER NOT NULL DEFAULT 0 CHECK (max_runtime_starts >= 0),
+    observed_at TIMESTAMPTZ,
+    run_paused_reason TEXT,
+    build_paused_reason TEXT,
+    runtime_paused_reason TEXT,
     epoch_started_at TIMESTAMPTZ,
     activated_at TIMESTAMPTZ,
     draining_at TIMESTAMPTZ,
@@ -425,7 +425,6 @@ CREATE TABLE worker_instances (
         OR (
             runtime_identity_id IS NOT NULL
             AND max_vm_slots > 0
-            AND max_run_consumers > 0
             AND max_runtime_starts > 0
         )
     ),
@@ -481,33 +480,6 @@ CREATE TABLE worker_instance_credentials (
 CREATE UNIQUE INDEX worker_instance_credentials_one_active_idx
     ON worker_instance_credentials (worker_instance_id)
     WHERE revoked_at IS NULL;
-
-CREATE TABLE worker_observations (
-    worker_instance_id UUID NOT NULL,
-    worker_epoch BIGINT NOT NULL CHECK (worker_epoch > 0),
-    cpu_pressure_bps INTEGER NOT NULL CHECK (cpu_pressure_bps BETWEEN 0 AND 10000),
-    memory_pressure_bps INTEGER NOT NULL CHECK (memory_pressure_bps BETWEEN 0 AND 10000),
-    guest_ephemeral_disk_pressure_bps INTEGER NOT NULL CHECK (guest_ephemeral_disk_pressure_bps BETWEEN 0 AND 10000),
-    build_cache_pressure_bps INTEGER NOT NULL CHECK (build_cache_pressure_bps BETWEEN 0 AND 10000),
-    artifact_cache_pressure_bps INTEGER NOT NULL CHECK (artifact_cache_pressure_bps BETWEEN 0 AND 10000),
-    checkpoint_pressure_bps INTEGER NOT NULL CHECK (checkpoint_pressure_bps BETWEEN 0 AND 10000),
-    quarantined_resource_count INTEGER NOT NULL CHECK (quarantined_resource_count >= 0),
-    run_queue_depth INTEGER NOT NULL CHECK (run_queue_depth >= 0),
-    build_queue_depth INTEGER NOT NULL CHECK (build_queue_depth >= 0),
-    runtime_start_queue_depth INTEGER NOT NULL CHECK (runtime_start_queue_depth >= 0),
-    run_paused_reason TEXT,
-    build_paused_reason TEXT,
-    runtime_paused_reason TEXT,
-    health_details JSONB NOT NULL DEFAULT '{}'::jsonb,
-    observed_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (worker_instance_id, worker_epoch),
-    FOREIGN KEY (worker_instance_id) REFERENCES worker_instances(id) ON DELETE CASCADE,
-    CHECK (jsonb_typeof(health_details) = 'object')
-);
-
-CREATE INDEX worker_observations_freshness_idx
-    ON worker_observations (observed_at, worker_instance_id, worker_epoch);
 
 CREATE TABLE artifacts (
     id UUID PRIMARY KEY,

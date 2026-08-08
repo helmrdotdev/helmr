@@ -22,7 +22,7 @@ WITH worker AS (
     SELECT worker_instances.id,
            worker_instances.current_epoch,
            worker_instances.state,
-           worker_instances.max_run_consumers,
+           worker_instances.max_vm_slots,
            worker_groups.state AS group_state,
            worker_groups.allows_run
       FROM worker_instances
@@ -59,7 +59,7 @@ SELECT run_leases.id,
           END,
           run_leases.assigned_at,
           run_leases.id
- LIMIT LEAST(sqlc.arg(row_limit)::int, (SELECT max_run_consumers FROM worker));
+ LIMIT LEAST(sqlc.arg(row_limit)::int, (SELECT max_vm_slots FROM worker));
 
 -- name: GetRunLeaseClaimLocators :one
 SELECT run_leases.org_id,
@@ -474,19 +474,15 @@ SELECT *
    AND worker_group_id = sqlc.arg(worker_group_id)
  FOR UPDATE;
 
--- name: LockRunLeaseClaimObservation :one
-SELECT worker_observations.*,
-       (
-           worker_observations.observed_at >= transaction_timestamp()
-               - worker_groups.observation_ttl_seconds * interval '1 second'
-           AND worker_observations.run_paused_reason IS NULL
-       )::boolean AS run_ready
-  FROM worker_observations
-  JOIN worker_groups
-    ON worker_groups.id = sqlc.arg(worker_group_id)
- WHERE worker_observations.worker_instance_id = sqlc.arg(worker_instance_id)
-   AND worker_observations.worker_epoch = sqlc.arg(worker_epoch)
- FOR UPDATE OF worker_observations;
+-- name: LockRunLeaseClaimReadyWorker :one
+SELECT sqlc.embed(worker_instances),
+       COALESCE((worker_instances.observed_at >= transaction_timestamp()
+            - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
+        AND worker_instances.run_paused_reason IS NULL), false)::boolean AS run_ready
+  FROM worker_instances
+ WHERE id = sqlc.arg(id)
+   AND worker_group_id = sqlc.arg(worker_group_id)
+ FOR UPDATE;
 
 -- name: LockRunLeaseClaimRuntime :one
 SELECT *

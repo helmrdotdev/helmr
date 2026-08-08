@@ -10,8 +10,134 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
+	ctx := context.Background()
+	pool := newPostgresDB(t, ctx)
+	q := db.New(pool)
+	workerID := uuid.Must(uuid.NewV7())
+	serviceID := uuid.Must(uuid.NewV7())
+	secretHash := []byte("epoch-liveness-secret")
+	enrollTestWorker(t, ctx, q, workerID, "epoch-liveness-worker", true, true, secretHash)
+
+	authenticate := func(service uuid.UUID) db.AuthenticateWorkerInstanceCredentialRow {
+		t.Helper()
+		row, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
+			WorkerInstanceID: pgvalue.UUID(workerID), SecretHash: secretHash,
+			ServiceID: pgvalue.UUID(service), SupportsRun: true, SupportsBuild: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return row
+	}
+
+	firstEpoch := authenticate(serviceID)
+	activationParams := testWorkerActivationParams(workerID, firstEpoch.CurrentEpoch)
+	activated, err := q.ActivateWorkerInstance(ctx, activationParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activated.ObservedAt.Valid || activated.RunPausedReason.Valid ||
+		activated.BuildPausedReason.Valid || activated.RuntimePausedReason.Valid {
+		t.Fatalf("initial activation liveness = observed:%+v run:%+v build:%+v runtime:%+v", activated.ObservedAt, activated.RunPausedReason, activated.BuildPausedReason, activated.RuntimePausedReason)
+	}
+	bins, err := q.ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
+		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
+		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bin := range bins {
+		if bin.WorkerInstanceID == pgvalue.UUID(workerID) {
+			t.Fatalf("unobserved active worker appeared in capacity bins: %+v", bin)
+		}
+	}
+	authorization := db.AuthorizeWorkerActivationCredentialParams{
+		CredentialID: firstEpoch.ID, ClaimVersion: firstEpoch.ClaimVersion,
+		GroupClaimVersion: firstEpoch.GroupClaimVersion, WorkerEpoch: firstEpoch.CurrentEpoch,
+	}
+	if authorized, err := q.AuthorizeWorkerActivationCredential(ctx, authorization); err != nil {
+		t.Fatal(err)
+	} else if authorized.WorkerState != db.WorkerInstanceStateActive {
+		t.Fatalf("activation replay authorization state = %q, want active", authorized.WorkerState)
+	}
+	staleAuthorization := authorization
+	staleAuthorization.WorkerEpoch.Int64++
+	if _, err := q.AuthorizeWorkerActivationCredential(ctx, staleAuthorization); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("stale activation authorization error = %v, want pgx.ErrNoRows", err)
+	}
+	changed := activationParams
+	changed.SupervisorVersion = "different-worker"
+	if _, err := q.ActivateWorkerInstance(ctx, changed); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("changed activation replay error = %v, want pgx.ErrNoRows", err)
+	}
+
+	sentinel := time.Now().UTC().Add(-30 * time.Second).Truncate(time.Microsecond)
+	if _, err := pool.Exec(ctx, `
+		UPDATE worker_instances
+		   SET observed_at = $2,
+		       run_paused_reason = NULL,
+		       build_paused_reason = 'startup_recovery_leak',
+		       runtime_paused_reason = NULL
+		 WHERE id = $1
+	`, workerID, sentinel); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := q.ActivateWorkerInstance(ctx, activationParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replayed.ObservedAt.Valid || !replayed.ObservedAt.Time.Equal(sentinel) || replayed.RunPausedReason.Valid ||
+		!replayed.BuildPausedReason.Valid || replayed.BuildPausedReason.String != "startup_recovery_leak" || replayed.RuntimePausedReason.Valid {
+		t.Fatalf("activation replay changed liveness = observed:%+v run:%+v build:%+v runtime:%+v", replayed.ObservedAt, replayed.RunPausedReason, replayed.BuildPausedReason, replayed.RuntimePausedReason)
+	}
+
+	sameEpoch := authenticate(serviceID)
+	if sameEpoch.CurrentEpoch != firstEpoch.CurrentEpoch {
+		t.Fatalf("same service epoch = %+v, want %+v", sameEpoch.CurrentEpoch, firstEpoch.CurrentEpoch)
+	}
+	var preservedObservedAt pgtype.Timestamptz
+	var preservedBuildPause pgtype.Text
+	if err := pool.QueryRow(ctx, `SELECT observed_at, build_paused_reason FROM worker_instances WHERE id = $1`, workerID).Scan(&preservedObservedAt, &preservedBuildPause); err != nil {
+		t.Fatal(err)
+	}
+	if !preservedObservedAt.Valid || !preservedObservedAt.Time.Equal(sentinel) || preservedBuildPause.String != "startup_recovery_leak" {
+		t.Fatalf("same service changed liveness = observed:%+v build:%+v", preservedObservedAt, preservedBuildPause)
+	}
+
+	nextEpoch := authenticate(uuid.Must(uuid.NewV7()))
+	if !nextEpoch.CurrentEpoch.Valid || nextEpoch.CurrentEpoch.Int64 != firstEpoch.CurrentEpoch.Int64+1 || nextEpoch.State != db.WorkerInstanceStateRegistering {
+		t.Fatalf("new service epoch = %+v", nextEpoch)
+	}
+	var observedAt pgtype.Timestamptz
+	var runPause, buildPause, runtimePause pgtype.Text
+	if err := pool.QueryRow(ctx, `SELECT observed_at, run_paused_reason, build_paused_reason, runtime_paused_reason FROM worker_instances WHERE id = $1`, workerID).Scan(&observedAt, &runPause, &buildPause, &runtimePause); err != nil {
+		t.Fatal(err)
+	}
+	if observedAt.Valid || runPause.Valid || buildPause.Valid || runtimePause.Valid {
+		t.Fatalf("new epoch retained liveness = observed:%+v run:%+v build:%+v runtime:%+v", observedAt, runPause, buildPause, runtimePause)
+	}
+}
+
+func testWorkerActivationParams(workerID uuid.UUID, epoch pgtype.Int8) db.ActivateWorkerInstanceParams {
+	return db.ActivateWorkerInstanceParams{
+		WorkerInstanceID: pgvalue.UUID(workerID), WorkerGroupID: dbtest.DefaultWorkerGroupID, WorkerEpoch: epoch,
+		SupervisorVersion: "test-worker", SupportsRun: true, SupportsBuild: true,
+		EpochCPUMillis: 2000, EpochMemoryBytes: 2 << 30, EpochGuestEphemeralDiskBytes: 64 << 30,
+		EpochBuildCacheBytes: 1, EpochArtifactCacheBytes: 1,
+		MaxVMSlots: 1, RuntimeIdentityID: "epoch-liveness-runtime", RuntimeArch: "x86_64",
+		VMRuntimeContract: "helmr.vm-runtime.v0", KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs",
+		SubstrateFormat: "squashfs", SubstrateContract: "builder-v0",
+		PerVMCPUMillis: 1000, PerVMMemoryBytes: 1 << 30, PerVMGuestEphemeralDiskBytes: 32 << 30,
+		MaxBuildExecutors: 1, MaxRuntimeStarts: 1,
+	}
+}
 
 func TestWorkerGroupStateTransitionsAreFencedAndReplaySafe(t *testing.T) {
 	ctx := context.Background()

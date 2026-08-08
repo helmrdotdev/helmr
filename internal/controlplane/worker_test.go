@@ -5,8 +5,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func TestWorkerRoleReadinessReportsMissingObservation(t *testing.T) {
+	readiness := workerRoleReadiness(db.GetWorkerInstanceStateRow{
+		State: db.WorkerInstanceStateActive,
+	}, false, pgtype.Text{})
+	if readiness.Ready || readiness.PausedReason != "observation_missing" {
+		t.Fatalf("readiness = %+v, want observation_missing", readiness)
+	}
+}
 
 func TestValidateWorkerStartupRecoveryRequiresCanonicalUUIDv7(t *testing.T) {
 	now := time.Now().UTC()

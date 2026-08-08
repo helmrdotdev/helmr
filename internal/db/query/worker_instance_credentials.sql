@@ -81,14 +81,6 @@ WITH credential AS (
                WHEN worker_instances.current_service_id = sqlc.arg(service_id)
                THEN worker_instances.epoch_artifact_cache_bytes ELSE 0
            END,
-           epoch_hugepages_bytes = CASE
-               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
-               THEN worker_instances.epoch_hugepages_bytes ELSE 0
-           END,
-           epoch_checkpoint_bytes = CASE
-               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
-               THEN worker_instances.epoch_checkpoint_bytes ELSE 0
-           END,
            per_vm_cpu_millis = CASE
                WHEN worker_instances.current_service_id = sqlc.arg(service_id)
                THEN worker_instances.per_vm_cpu_millis ELSE 0
@@ -105,10 +97,6 @@ WITH credential AS (
                WHEN worker_instances.current_service_id = sqlc.arg(service_id)
                THEN worker_instances.max_vm_slots ELSE 0
            END,
-           max_run_consumers = CASE
-               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
-               THEN worker_instances.max_run_consumers ELSE 0
-           END,
            max_build_executors = CASE
                WHEN worker_instances.current_service_id = sqlc.arg(service_id)
                THEN worker_instances.max_build_executors ELSE 0
@@ -119,6 +107,14 @@ WITH credential AS (
            END,
            activated_at = CASE WHEN worker_instances.current_service_id = sqlc.arg(service_id)
                                THEN worker_instances.activated_at ELSE NULL END,
+           observed_at = CASE WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+                              THEN worker_instances.observed_at ELSE NULL END,
+           run_paused_reason = CASE WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+                                    THEN worker_instances.run_paused_reason ELSE NULL END,
+           build_paused_reason = CASE WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+                                      THEN worker_instances.build_paused_reason ELSE NULL END,
+           runtime_paused_reason = CASE WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+                                        THEN worker_instances.runtime_paused_reason ELSE NULL END,
            updated_at = now()
       FROM credential
      WHERE worker_instances.id = credential.worker_instance_id
@@ -156,7 +152,7 @@ RETURNING worker_instance_credentials.*, worker_instances.resource_id,
           worker_instances.supports_run, worker_instances.supports_build,
           worker_instances.epoch_started_at;
 
--- name: AuthorizeRegisteringWorkerInstanceCredential :one
+-- name: AuthorizeWorkerActivationCredential :one
 UPDATE worker_instance_credentials
    SET last_used_at = now()
   FROM worker_instances, worker_groups
@@ -169,23 +165,7 @@ UPDATE worker_instance_credentials
    AND worker_instance_credentials.claim_version = worker_instances.claim_version
    AND worker_groups.claim_version = sqlc.arg(group_claim_version)
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
-   AND (
-       worker_instances.state = 'registering'
-       OR (
-           worker_instances.state = 'active'
-           AND EXISTS (
-               SELECT 1
-                 FROM worker_observations
-                WHERE worker_observations.worker_instance_id = worker_instances.id
-                  AND worker_observations.worker_epoch = worker_instances.current_epoch
-                  AND (
-                      worker_observations.run_paused_reason = 'datapath_unverified'
-                      OR worker_observations.build_paused_reason = 'datapath_unverified'
-                      OR worker_observations.runtime_paused_reason = 'datapath_unverified'
-                  )
-           )
-       )
-   )
+   AND worker_instances.state IN ('registering', 'active')
    AND worker_groups.state IN ('active','paused','draining')
 RETURNING worker_instance_credentials.*, worker_instances.resource_id,
           worker_instances.current_epoch, worker_instances.state AS worker_state,
@@ -285,17 +265,21 @@ WITH enrollment_token AS (
            epoch_cpu_millis = 0, epoch_memory_bytes = 0,
            epoch_guest_ephemeral_disk_bytes = 0,
            epoch_build_cache_bytes = 0, epoch_artifact_cache_bytes = 0,
-           epoch_hugepages_bytes = 0, epoch_checkpoint_bytes = 0,
            per_vm_cpu_millis = 0, per_vm_memory_bytes = 0,
            per_vm_guest_ephemeral_disk_bytes = 0,
-           max_vm_slots = 0, max_run_consumers = 0,
+           max_vm_slots = 0,
            max_build_executors = 0, max_runtime_starts = 0,
            current_service_id = CASE
                WHEN worker_instances.current_epoch IS NULL THEN NULL
                ELSE sqlc.arg(current_service_id)::uuid
            END,
            epoch_started_at = CASE WHEN worker_instances.current_epoch IS NULL THEN NULL ELSE now() END,
-           activated_at = NULL, draining_at = NULL, updated_at = now()
+           activated_at = NULL, draining_at = NULL,
+           observed_at = NULL,
+           run_paused_reason = NULL,
+           build_paused_reason = NULL,
+           runtime_paused_reason = NULL,
+           updated_at = now()
      WHERE worker_instances.state = 'registering'
     RETURNING *
 ), revoked AS (

@@ -102,13 +102,10 @@ SELECT deployments.id,
    AND worker_groups.state = 'active'
    AND worker_groups.allows_build
    AND worker_groups.region_id = deployments.build_region_id
-  JOIN worker_observations
-    ON worker_observations.worker_instance_id = worker_instances.id
-   AND worker_observations.worker_epoch = worker_instances.current_epoch
-   AND worker_observations.observed_at >= transaction_timestamp()
-       - worker_groups.observation_ttl_seconds * interval '1 second'
-   AND worker_observations.build_paused_reason IS NULL
  WHERE deployments.status = 'queued'
+   AND worker_instances.observed_at >= transaction_timestamp()
+       - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
+   AND worker_instances.build_paused_reason IS NULL
    AND deployments.current_build_lease_id IS NULL
    AND deployments.build_runtime_digest IS NULL
    AND deployments.build_toolchain_digest IS NULL
@@ -437,13 +434,10 @@ WITH candidate AS (
         ON runtime_identities.id = worker_instances.runtime_identity_id
        AND runtime_identities.runtime_arch = 'x86_64'
 	       AND runtime_identities.vm_runtime_contract = 'helmr.vm-runtime.v0'
-      JOIN worker_observations
-        ON worker_observations.worker_instance_id = worker_instances.id
-       AND worker_observations.worker_epoch = worker_instances.current_epoch
-       AND worker_observations.observed_at >= transaction_timestamp()
-           - worker_groups.observation_ttl_seconds * interval '1 second'
-       AND worker_observations.build_paused_reason IS NULL
      WHERE deployment_build_leases.worker_group_id = sqlc.arg(worker_group_id)
+       AND worker_instances.observed_at >= transaction_timestamp()
+           - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
+       AND worker_instances.build_paused_reason IS NULL
        AND deployment_build_leases.worker_instance_id = sqlc.arg(worker_instance_id)
        AND deployment_build_leases.worker_epoch = sqlc.arg(worker_epoch)
        AND worker_instances.per_vm_cpu_millis >= deployment_build_leases.requested_cpu_millis

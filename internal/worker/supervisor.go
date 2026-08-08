@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -138,7 +137,7 @@ func New(cfg Config) (*Supervisor, error) {
 		return nil, errors.New("supervisor control plane client is required")
 	}
 	if cfg.ObservationEvery <= 0 {
-		cfg.ObservationEvery = 30 * time.Second
+		cfg.ObservationEvery = workerapi.WorkerObservationInterval
 	}
 	if cfg.PollEvery <= 0 {
 		cfg.PollEvery = 2 * time.Second
@@ -212,7 +211,6 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			return errors.New("all runtime execution slots remain quarantined after startup recovery")
 		}
 	}
-	capabilities.Observation = s.observation(StateStarting, evidence)
 	status, err := s.cfg.ControlPlane.ActivateWorker(ctx, capabilities)
 	if err != nil {
 		return fmt.Errorf("activate worker: %w", err)
@@ -655,26 +653,14 @@ func (s *Supervisor) observation(state State, evidence RecoveryEvidence) workera
 	if s.cfg.Observation != nil {
 		return s.cfg.Observation(state, s.registry.snapshot(), evidence)
 	}
-	observation := workerapi.Observation{HealthDetails: evidence.HealthDetails(), QuarantinedResourceCount: int32(len(evidence.Quarantined))}
+	observation := workerapi.Observation{}
 	if s.cfg.AdmissionEvaluator != nil {
 		admissionObservation := s.cfg.AdmissionEvaluator.Observation()
-		observation.CPUPressureBPS = admissionObservation.CPUPressureBPS
-		observation.MemoryPressureBPS = admissionObservation.MemoryPressureBPS
-		observation.GuestEphemeralDiskPressureBPS = admissionObservation.GuestEphemeralDiskPressureBPS
-		if len(admissionObservation.HealthDetails) != 0 {
-			combined, err := json.Marshal(map[string]json.RawMessage{
-				"startup_recovery": evidence.HealthDetails(),
-				"hard_admission":   admissionObservation.HealthDetails,
-			})
-			if err == nil {
-				observation.HealthDetails = combined
-			}
-		}
 		observation.RunPausedReason = admissionObservation.RunPausedReason
 		observation.BuildPausedReason = admissionObservation.BuildPausedReason
 		observation.RuntimePausedReason = admissionObservation.RuntimePausedReason
 	}
-	if observation.QuarantinedResourceCount > 0 {
+	if len(evidence.Quarantined) > 0 {
 		observation.RunPausedReason = "startup_recovery_leak"
 		observation.BuildPausedReason = "startup_recovery_leak"
 		observation.RuntimePausedReason = "startup_recovery_leak"

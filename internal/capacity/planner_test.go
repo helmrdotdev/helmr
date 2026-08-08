@@ -374,7 +374,7 @@ func plannerTestManifest(t *testing.T) capacityapi.WorkerReleaseManifest {
 		Schema: capacityapi.WorkerReleaseManifestSchema, WorkerVersion: "0123456789abcdef0123456789abcdef01234567", SupportsRun: true,
 		Runtime:          runtime,
 		Substrate:        capacityapi.SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v0"},
-		Capacity:         capacityapi.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 64 << 30, VMSlots: 2, RunConsumers: 2},
+		Capacity:         capacityapi.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 64 << 30, VMSlots: 2},
 		PerVM:            capacityapi.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 32 << 30},
 		MaxRuntimeStarts: 2,
 	}

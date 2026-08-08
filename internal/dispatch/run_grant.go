@@ -458,7 +458,7 @@ func checkRunConsumerCapacity(
 	var available bool
 	err := tx.QueryRow(ctx, `
 SELECT coalesce(sum(run_leases.requested_execution_slots), 0) + $3
-       <= worker_instances.max_run_consumers
+       <= worker_instances.max_vm_slots
   FROM worker_instances
   LEFT JOIN run_leases
     ON run_leases.worker_instance_id = worker_instances.id
@@ -466,7 +466,7 @@ SELECT coalesce(sum(run_leases.requested_execution_slots), 0) + $3
    AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
  WHERE worker_instances.id = $1
    AND worker_instances.current_epoch = $2
- GROUP BY worker_instances.max_run_consumers`,
+ GROUP BY worker_instances.max_vm_slots`,
 		runtime.workerID,
 		runtime.workerEpoch,
 		runtime.executionSlots,

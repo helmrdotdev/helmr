@@ -631,7 +631,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 		r.Post("/enrollment", s.workerEnroll)
 		r.Post("/instance/token", s.workerAuthToken)
 		r.With(s.requireRecoveringWorker).Post("/instance/recover", s.workerStartupRecovery)
-		r.With(s.requireRegisteringWorker).Post("/instance/activate", s.workerActivate)
+		r.With(s.requireWorkerActivation).Post("/instance/activate", s.workerActivate)
 		r.With(s.requireWorker).Get("/instance", s.workerStatus)
 		r.With(s.requireWorkerDrainCompletion).Post("/instance/drain/complete", s.workerCompleteDrain)
 		r.With(s.requireWorkerFence).Post("/instance/fence", s.workerFence)

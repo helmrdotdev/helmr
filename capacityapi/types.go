@@ -35,7 +35,6 @@ type ResourceVector struct {
 	MemoryBytes             int64 `json:"memory_bytes"`
 	GuestEphemeralDiskBytes int64 `json:"guest_ephemeral_disk_bytes"`
 	VMSlots                 int64 `json:"vm_slots,omitempty"`
-	RunConsumers            int64 `json:"run_consumers,omitempty"`
 	BuildExecutors          int64 `json:"build_executors,omitempty"`
 }
 
@@ -148,7 +147,7 @@ func (m WorkerReleaseManifest) Validate() error {
 		vector ResourceVector
 	}{{name: "capacity", vector: m.Capacity}, {name: "per_vm", vector: m.PerVM}} {
 		if resources.vector.CPUMillis < 0 || resources.vector.MemoryBytes < 0 || resources.vector.GuestEphemeralDiskBytes < 0 ||
-			resources.vector.VMSlots < 0 || resources.vector.RunConsumers < 0 || resources.vector.BuildExecutors < 0 {
+			resources.vector.VMSlots < 0 || resources.vector.BuildExecutors < 0 {
 			problems = append(problems, fmt.Errorf("%s resource dimensions must not be negative", resources.name))
 		}
 	}
@@ -162,13 +161,13 @@ func (m WorkerReleaseManifest) Validate() error {
 		m.PerVM.GuestEphemeralDiskBytes > m.Capacity.GuestEphemeralDiskBytes {
 		problems = append(problems, errors.New("per_vm resources must fit within aggregate capacity"))
 	}
-	if m.SupportsRun && (m.Capacity.VMSlots <= 0 || m.Capacity.RunConsumers <= 0 || m.MaxRuntimeStarts <= 0) {
-		problems = append(problems, errors.New("run Workers require positive VM slots, run consumers, and runtime starts"))
+	if m.SupportsRun && (m.Capacity.VMSlots <= 0 || m.MaxRuntimeStarts <= 0) {
+		problems = append(problems, errors.New("run Workers require positive VM slots and runtime starts"))
 	}
-	if m.SupportsRun && (m.Capacity.RunConsumers > m.Capacity.VMSlots || m.MaxRuntimeStarts > m.Capacity.VMSlots) {
-		problems = append(problems, errors.New("run consumers and runtime starts must not exceed VM slots"))
+	if m.SupportsRun && m.MaxRuntimeStarts > m.Capacity.VMSlots {
+		problems = append(problems, errors.New("runtime starts must not exceed VM slots"))
 	}
-	if !m.SupportsRun && (m.Capacity.VMSlots != 0 || m.Capacity.RunConsumers != 0 || m.MaxRuntimeStarts != 0) {
+	if !m.SupportsRun && (m.Capacity.VMSlots != 0 || m.MaxRuntimeStarts != 0) {
 		problems = append(problems, errors.New("build-only Workers must not declare run capacity"))
 	}
 	if m.SupportsBuild && m.Capacity.BuildExecutors != 1 {

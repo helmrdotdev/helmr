@@ -15,7 +15,7 @@ func TestWorkerReleaseManifestFingerprintAndValidation(t *testing.T) {
 		Substrate:     SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v0"},
 		Capacity: ResourceVector{
 			CPUMillis: 8000, MemoryBytes: 16 << 30, GuestEphemeralDiskBytes: 128 << 30,
-			VMSlots: 2, RunConsumers: 2, BuildExecutors: 1,
+			VMSlots: 2, BuildExecutors: 1,
 		},
 		PerVM: ResourceVector{
 			CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 32 << 30,

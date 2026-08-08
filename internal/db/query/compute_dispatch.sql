@@ -128,55 +128,45 @@ SELECT worker_instances.*
    AND NOT EXISTS (SELECT 1 FROM target)
 LIMIT 1;
 
--- name: ListWorkerInstances :many
-SELECT * FROM worker_instances
- WHERE sqlc.arg(state_filter)::text = 'all' OR state::text = sqlc.arg(state_filter)::text
- ORDER BY updated_at DESC, created_at ASC
- LIMIT sqlc.arg(row_limit);
-
 -- name: GetWorkerInstanceState :one
 SELECT worker_instances.*,
        runtime_identities.rootfs_digest,
        runtime_identities.vm_runtime_contract,
        runtime_identities.runtime_arch,
-       worker_observations.observed_at,
-       worker_observations.run_paused_reason,
-       worker_observations.build_paused_reason,
-       worker_observations.runtime_paused_reason,
        COALESCE((
            worker_instances.state = 'active'
            AND worker_groups.state = 'active'
            AND worker_instances.supports_run
-           AND worker_observations.observed_at >= transaction_timestamp()
-               - worker_groups.observation_ttl_seconds * interval '1 second'
-           AND worker_observations.run_paused_reason IS NULL
+           AND worker_instances.observed_at >= transaction_timestamp()
+               - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
+           AND worker_instances.run_paused_reason IS NULL
        ), false)::boolean AS run_ready,
        COALESCE((
            worker_instances.state = 'active'
            AND worker_groups.state = 'active'
            AND worker_instances.supports_build
-           AND worker_observations.observed_at >= transaction_timestamp()
-               - worker_groups.observation_ttl_seconds * interval '1 second'
-           AND worker_observations.build_paused_reason IS NULL
+           AND worker_instances.observed_at >= transaction_timestamp()
+               - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
+           AND worker_instances.build_paused_reason IS NULL
        ), false)::boolean AS build_ready,
        COALESCE((
            worker_instances.state = 'active'
            AND worker_groups.state = 'active'
            AND worker_instances.supports_run
-           AND worker_observations.observed_at >= transaction_timestamp()
-               - worker_groups.observation_ttl_seconds * interval '1 second'
-           AND worker_observations.runtime_paused_reason IS NULL
+           AND worker_instances.observed_at >= transaction_timestamp()
+               - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
+           AND worker_instances.runtime_paused_reason IS NULL
        ), false)::boolean AS runtime_ready,
        COALESCE((
            worker_instances.state = 'active'
            AND worker_groups.state = 'active'
-           AND worker_observations.observed_at >= transaction_timestamp()
-               - worker_groups.observation_ttl_seconds * interval '1 second'
+           AND worker_instances.observed_at >= transaction_timestamp()
+               - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
            AND (NOT worker_instances.supports_run OR (
-               worker_observations.run_paused_reason IS NULL
-               AND worker_observations.runtime_paused_reason IS NULL
+               worker_instances.run_paused_reason IS NULL
+               AND worker_instances.runtime_paused_reason IS NULL
            ))
-           AND (NOT worker_instances.supports_build OR worker_observations.build_paused_reason IS NULL)
+           AND (NOT worker_instances.supports_build OR worker_instances.build_paused_reason IS NULL)
        ), false)::boolean AS all_configured_roles_ready,
        ((SELECT count(*) FROM run_leases
          WHERE run_leases.worker_instance_id = worker_instances.id
@@ -197,117 +187,8 @@ SELECT worker_instances.*,
   FROM worker_instances
   JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
   LEFT JOIN runtime_identities ON runtime_identities.id = worker_instances.runtime_identity_id
-  LEFT JOIN worker_observations
-    ON worker_observations.worker_instance_id = worker_instances.id
-   AND worker_observations.worker_epoch = worker_instances.current_epoch
  WHERE worker_instances.id = sqlc.arg(id)
    AND worker_instances.worker_group_id = sqlc.arg(worker_group_id);
-
--- name: GetWorkerInstanceRunDispatchCapacity :one
-SELECT GREATEST(worker_instances.epoch_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
-       GREATEST(worker_instances.epoch_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
-       GREATEST(worker_instances.epoch_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
-       GREATEST(worker_instances.max_vm_slots - usage.vm_slots, 0)::int AS available_vm_slots,
-       GREATEST(worker_instances.max_run_consumers - usage.run_consumers, 0)::int AS available_run_consumers,
-       GREATEST(worker_instances.max_build_executors - usage.build_executors, 0)::int AS available_build_executors
-  FROM worker_instances
-  CROSS JOIN LATERAL (
-      SELECT
-        COALESCE((SELECT sum(reserved_cpu_millis) FROM runtime_instances
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND (observed_state IN ('allocated','preparing','ready','closing')
-                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_cpu_millis) FROM deployment_build_leases
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS cpu_millis,
-        COALESCE((SELECT sum(reserved_memory_bytes) FROM runtime_instances
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND (observed_state IN ('allocated','preparing','ready','closing')
-                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_memory_bytes) FROM deployment_build_leases
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS memory_bytes,
-        COALESCE((SELECT sum(reserved_guest_ephemeral_disk_bytes) FROM runtime_instances
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND (observed_state IN ('allocated','preparing','ready','closing')
-                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_guest_ephemeral_disk_bytes) FROM deployment_build_leases
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS guest_ephemeral_disk_bytes,
-        COALESCE((SELECT count(*) FROM runtime_instances
-                   WHERE worker_instance_id = worker_instances.id
-                     AND worker_epoch = worker_instances.current_epoch
-                     AND (observed_state IN ('allocated','preparing','ready','closing')
-                          OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)::int AS vm_slots,
-        COALESCE((SELECT sum(requested_execution_slots) FROM run_leases
-                   WHERE worker_instance_id = worker_instances.id
-                     AND worker_epoch = worker_instances.current_epoch
-                     AND state IN ('assigned','starting','running','checkpointing','finalizing')), 0)::int AS run_consumers,
-        COALESCE((SELECT sum(requested_build_executors) FROM deployment_build_leases
-                   WHERE worker_instance_id = worker_instances.id
-                     AND worker_epoch = worker_instances.current_epoch
-                     AND state IN ('assigned','starting','running')), 0)::int AS build_executors
-  ) usage
- WHERE worker_instances.id = sqlc.arg(id)
-   AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
-   AND worker_instances.state = 'active'
-   AND worker_instances.current_epoch = sqlc.arg(worker_epoch);
-
--- name: GetWorkerInstanceQueueCapacity :one
-SELECT GREATEST(worker_instances.epoch_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
-       GREATEST(worker_instances.epoch_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
-       GREATEST(worker_instances.epoch_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
-       GREATEST(worker_instances.max_run_consumers - usage.run_consumers, 0)::int AS available_run_consumers,
-       GREATEST(worker_instances.max_build_executors - usage.build_executors, 0)::int AS available_build_executors
-  FROM worker_instances
-  CROSS JOIN LATERAL (
-      SELECT
-        COALESCE((SELECT sum(reserved_cpu_millis) FROM runtime_instances
-                   WHERE worker_instance_id = worker_instances.id
-                     AND worker_epoch = worker_instances.current_epoch
-                     AND (observed_state IN ('allocated','preparing','ready','closing')
-                          OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_cpu_millis) FROM deployment_build_leases
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS cpu_millis,
-        COALESCE((SELECT sum(reserved_memory_bytes) FROM runtime_instances
-                   WHERE worker_instance_id = worker_instances.id
-                     AND worker_epoch = worker_instances.current_epoch
-                     AND (observed_state IN ('allocated','preparing','ready','closing')
-                          OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_memory_bytes) FROM deployment_build_leases
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS memory_bytes,
-        COALESCE((SELECT sum(reserved_guest_ephemeral_disk_bytes) FROM runtime_instances
-                   WHERE worker_instance_id = worker_instances.id
-                     AND worker_epoch = worker_instances.current_epoch
-                     AND (observed_state IN ('allocated','preparing','ready','closing')
-                          OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
-        + COALESCE((SELECT sum(requested_guest_ephemeral_disk_bytes) FROM deployment_build_leases
-                    WHERE worker_instance_id = worker_instances.id
-                      AND worker_epoch = worker_instances.current_epoch
-                      AND state IN ('assigned','starting','running')), 0) AS guest_ephemeral_disk_bytes,
-        COALESCE((SELECT sum(requested_execution_slots) FROM run_leases
-                   WHERE worker_instance_id = worker_instances.id
-                     AND worker_epoch = worker_instances.current_epoch
-                     AND state IN ('assigned','starting','running','checkpointing','finalizing')), 0)::int AS run_consumers,
-        COALESCE((SELECT sum(requested_build_executors) FROM deployment_build_leases
-                   WHERE worker_instance_id = worker_instances.id
-                     AND worker_epoch = worker_instances.current_epoch
-                     AND state IN ('assigned','starting','running')), 0)::int AS build_executors
-  ) usage
- WHERE worker_instances.id = sqlc.arg(id)
-   AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
-   AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
-   AND worker_instances.state = 'active';
 
 -- name: GetQueuedRunReadyHint :one
 SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,

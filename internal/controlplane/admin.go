@@ -172,10 +172,7 @@ func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 		BuildCacheBytes:         request.RequiredBuildCacheBytes, ArtifactCacheBytes: request.RequiredArtifactCacheBytes,
 		VMSlots: request.RequiredVMSlots,
 	}
-	if err := capacity.Validate(spec); err != nil || request.ObservationTTLSeconds <= 0 {
-		if err == nil {
-			err = errors.New("observation_ttl_seconds must be positive")
-		}
+	if err := capacity.Validate(spec); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -205,7 +202,6 @@ func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 			RequiredBuildCacheBytes:         request.RequiredBuildCacheBytes,
 			RequiredArtifactCacheBytes:      request.RequiredArtifactCacheBytes,
 			RequiredVMSlots:                 request.RequiredVMSlots,
-			ObservationTtlSeconds:           request.ObservationTTLSeconds,
 		})
 		if isUniqueViolation(err) {
 			return conflict(errors.New("worker group conflicts with an existing active role or name"))
@@ -343,7 +339,6 @@ func adminWorkerGroup(row db.WorkerGroup) api.AdminWorkerGroup {
 		RequiredBuildCacheBytes:         row.RequiredBuildCacheBytes,
 		RequiredArtifactCacheBytes:      row.RequiredArtifactCacheBytes,
 		RequiredVMSlots:                 row.RequiredVMSlots,
-		ObservationTTLSeconds:           row.ObservationTtlSeconds,
 	}
 }
 

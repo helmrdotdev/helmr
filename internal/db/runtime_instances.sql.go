@@ -38,9 +38,6 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
   JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
 	JOIN runtime_identities ON runtime_identities.id = runtime_instances.runtime_identity_id
 	                       AND runtime_identities.vm_runtime_contract = 'helmr.vm-runtime.v0'
-  LEFT JOIN worker_observations
-    ON worker_observations.worker_instance_id = worker_instances.id
-   AND worker_observations.worker_epoch = worker_instances.current_epoch
   JOIN deployment_definitions
     ON deployment_definitions.environment_id = runtime_instances.environment_id
    AND deployment_definitions.id = runtime_instances.deployment_definition_id
@@ -77,9 +74,9 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
        AND runtime_instances.observed_state IN ('allocated', 'preparing')
        AND runtime_instances.observed_desired_version < runtime_instances.desired_version
         AND worker_instances.state = 'active'
-        AND worker_observations.observed_at >= transaction_timestamp()
-            - worker_groups.observation_ttl_seconds * interval '1 second'
-        AND worker_observations.runtime_paused_reason IS NULL
+        AND worker_instances.observed_at >= transaction_timestamp()
+            - $4::bigint * interval '1 second'
+        AND worker_instances.runtime_paused_reason IS NULL
        )
        OR
        (runtime_instances.desired_state = 'closed'
@@ -99,9 +96,10 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
 `
 
 type GetNextRuntimeReconcileTargetParams struct {
-	WorkerGroupID    string      `json:"worker_group_id"`
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch      int64       `json:"worker_epoch"`
+	WorkerGroupID               string      `json:"worker_group_id"`
+	WorkerInstanceID            pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch                 int64       `json:"worker_epoch"`
+	ObservationFreshnessSeconds int64       `json:"observation_freshness_seconds"`
 }
 
 type GetNextRuntimeReconcileTargetRow struct {
@@ -172,7 +170,12 @@ type GetNextRuntimeReconcileTargetRow struct {
 }
 
 func (q *Queries) GetNextRuntimeReconcileTarget(ctx context.Context, arg GetNextRuntimeReconcileTargetParams) (GetNextRuntimeReconcileTargetRow, error) {
-	row := q.db.QueryRow(ctx, getNextRuntimeReconcileTarget, arg.WorkerGroupID, arg.WorkerInstanceID, arg.WorkerEpoch)
+	row := q.db.QueryRow(ctx, getNextRuntimeReconcileTarget,
+		arg.WorkerGroupID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.ObservationFreshnessSeconds,
+	)
 	var i GetNextRuntimeReconcileTargetRow
 	err := row.Scan(
 		&i.ID,

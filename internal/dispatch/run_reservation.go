@@ -11,6 +11,7 @@ import (
 	capacityplanner "github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -503,7 +504,9 @@ func selectRunWorker(
 	tx pgx.Tx,
 	authority runPlacementAuthority,
 ) (runWorker, error) {
-	rows, err := db.New(tx).ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{RegionID: authority.regionID})
+	rows, err := db.New(tx).ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
+		RegionID: authority.regionID, ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+	})
 	if err != nil {
 		return runWorker{}, err
 	}

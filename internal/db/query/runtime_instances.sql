@@ -25,9 +25,6 @@ SELECT runtime_instances.*,
   JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
 	JOIN runtime_identities ON runtime_identities.id = runtime_instances.runtime_identity_id
 	                       AND runtime_identities.vm_runtime_contract = 'helmr.vm-runtime.v0'
-  LEFT JOIN worker_observations
-    ON worker_observations.worker_instance_id = worker_instances.id
-   AND worker_observations.worker_epoch = worker_instances.current_epoch
   JOIN deployment_definitions
     ON deployment_definitions.environment_id = runtime_instances.environment_id
    AND deployment_definitions.id = runtime_instances.deployment_definition_id
@@ -64,9 +61,9 @@ SELECT runtime_instances.*,
        AND runtime_instances.observed_state IN ('allocated', 'preparing')
        AND runtime_instances.observed_desired_version < runtime_instances.desired_version
         AND worker_instances.state = 'active'
-        AND worker_observations.observed_at >= transaction_timestamp()
-            - worker_groups.observation_ttl_seconds * interval '1 second'
-        AND worker_observations.runtime_paused_reason IS NULL
+        AND worker_instances.observed_at >= transaction_timestamp()
+            - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
+        AND worker_instances.runtime_paused_reason IS NULL
        )
        OR
        (runtime_instances.desired_state = 'closed'

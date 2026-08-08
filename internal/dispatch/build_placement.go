@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -55,7 +56,9 @@ func (d *Authority) PlaceReadyBuild(ctx context.Context, candidate ReadyBuildCan
 			"deployment toolchain digest is invalid",
 		)
 	}
-	bins, err := db.New(d.pool).ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{RegionID: candidate.BuildRegionID})
+	bins, err := db.New(d.pool).ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
+		RegionID: candidate.BuildRegionID, ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+	})
 	if err != nil {
 		return db.LeaseQueuedDeploymentBuildRow{}, fmt.Errorf("discover build worker capacity: %w", err)
 	}

@@ -68,9 +68,9 @@ func New(t *testing.T) Fixture {
 			RETURNING id
 		)
 		INSERT INTO worker_groups (
-			id, token_id, region_id, name, observation_ttl_seconds
+			id, token_id, region_id, name
 		)
-		SELECT $1, token.id, $2, $1, 120 FROM token
+		SELECT $1, token.id, $2, $1 FROM token
 	`, WorkerGroup, Region, uuid.Must(uuid.NewV7()), dbtest.Hash("run-test-worker-group"))
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO organizations (id, name, slug)
@@ -146,14 +146,14 @@ func New(t *testing.T) Fixture {
 			epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
 			per_vm_cpu_millis, per_vm_memory_bytes,
 			per_vm_guest_ephemeral_disk_bytes,
-			max_vm_slots, max_run_consumers, max_runtime_starts,
-			epoch_started_at, activated_at
+			max_vm_slots, max_runtime_starts,
+			observed_at, epoch_started_at, activated_at
 		) VALUES (
 			$1, $2, $3, 'active', 1, $4, 'test',
 			true, $5, 'squashfs', 'builder-v0',
 			8000, 8589934592, 17179869184,
 			1000, 1073741824, 2147483648,
-			8, 8, 8, now(), now()
+			8, 8, now(), now(), now()
 		)
 	`, fixture.WorkerID, fixture.WorkerID.String(), WorkerGroup,
 		uuid.Must(uuid.NewV7()), fixture.RuntimeIdentityID)

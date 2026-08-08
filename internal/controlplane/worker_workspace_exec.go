@@ -63,11 +63,12 @@ func (s *Server) workerClaimWorkspaceExec(w http.ResponseWriter, r *http.Request
 		authority, err = work.q.LockWorkspaceExecWorkerAuthority(
 			r.Context(),
 			db.LockWorkspaceExecWorkerAuthorityParams{
-				OrgID:            orgID,
-				ProcessID:        locator.ID,
-				WorkspaceMountID: mountID,
-				WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-				WorkerEpoch:      worker.WorkerEpoch,
+				OrgID:                       orgID,
+				ProcessID:                   locator.ID,
+				WorkspaceMountID:            mountID,
+				WorkerInstanceID:            pgvalue.UUID(worker.WorkerInstanceID),
+				WorkerEpoch:                 worker.WorkerEpoch,
+				ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
 			},
 		)
 		if err != nil {
@@ -215,11 +216,12 @@ func (s *Server) workerCompleteWorkspaceExec(w http.ResponseWriter, r *http.Requ
 		authority, err := work.q.LockWorkspaceExecWorkerAuthority(
 			r.Context(),
 			db.LockWorkspaceExecWorkerAuthorityParams{
-				OrgID:            pgvalue.UUID(orgID),
-				ProcessID:        pgvalue.UUID(processID),
-				WorkspaceMountID: locator.WorkspaceMountID,
-				WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-				WorkerEpoch:      worker.WorkerEpoch,
+				OrgID:                       pgvalue.UUID(orgID),
+				ProcessID:                   pgvalue.UUID(processID),
+				WorkspaceMountID:            locator.WorkspaceMountID,
+				WorkerInstanceID:            pgvalue.UUID(worker.WorkerInstanceID),
+				WorkerEpoch:                 worker.WorkerEpoch,
+				ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
 			},
 		)
 		if err != nil {

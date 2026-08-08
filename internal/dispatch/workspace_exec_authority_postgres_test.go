@@ -8,6 +8,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -53,11 +54,12 @@ UPDATE worker_groups
 			authority, err := db.New(fixture.pool).LockWorkspaceExecWorkerAuthority(
 				fixture.ctx,
 				db.LockWorkspaceExecWorkerAuthorityParams{
-					OrgID:            pgvalue.UUID(fixture.orgID),
-					ProcessID:        pgvalue.UUID(processID),
-					WorkspaceMountID: pgvalue.UUID(mountID),
-					WorkerInstanceID: pgvalue.UUID(fixture.workerID),
-					WorkerEpoch:      1,
+					OrgID:                       pgvalue.UUID(fixture.orgID),
+					ProcessID:                   pgvalue.UUID(processID),
+					WorkspaceMountID:            pgvalue.UUID(mountID),
+					WorkerInstanceID:            pgvalue.UUID(fixture.workerID),
+					WorkerEpoch:                 1,
+					ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
 				},
 			)
 			if test.wantLock {
