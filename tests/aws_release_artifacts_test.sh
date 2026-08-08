@@ -77,9 +77,7 @@ done
 
 platform_release="${tmp}/platform-release"
 platform_bin="${tmp}/platform-bin"
-platform_state="${tmp}/platform-state"
-platform_input_marker="${tmp}/platform-input"
-mkdir -p "${platform_release}/objects/sha256" "${platform_bin}" "${platform_state}"
+mkdir -p "${platform_release}/objects/sha256" "${platform_bin}"
 printf '{}' >"${platform_release}/platform-release.json"
 printf 'object' >"${platform_release}/objects/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 printf 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' >"${platform_release}/build-policy.digest"
@@ -108,6 +106,12 @@ case "${1:-}" in
     printf '%s\n' "${MOCK_PLATFORM_RELEASE}"
     ;;
   develop)
+    [ "${AWS_REGION:-}" = us-east-1 ]
+    [ "${AWS_DEFAULT_REGION:-}" = us-east-1 ]
+    [ -z "${AWS_PROFILE+x}" ]
+    [ "${AWS_ACCESS_KEY_ID:-}" = test ]
+    [ "${AWS_SECRET_ACCESS_KEY:-}" = test ]
+    [ "${AWS_SESSION_TOKEN:-}" = test ]
     while [ "$#" -gt 0 ]; do
       if [ "$1" = "--input" ]; then
         input=${2:-}
@@ -131,15 +135,26 @@ esac
 EOF
 chmod 0755 "${platform_bin}"/*
 
-if STATE_DIR="${platform_state}" TF_BIN="${platform_bin}/tofu" \
-  MOCK_PLATFORM_RELEASE="${platform_release}" \
-  MOCK_PLATFORM_RELEASE_INPUT_MARKER="${platform_input_marker}" \
-  PATH="${platform_bin}:${PATH}" \
-  "${script}" platform-release-publish >"${stdout}" 2>"${stderr}"; then
-  fail "platform-release-publish should surface publisher failure"
-fi
-[ -s "${platform_input_marker}" ] || fail "publisher must receive the sealed release tree"
-[ ! -e "$(cat "${platform_input_marker}")" ] || fail "failed publisher must remove its sealed release tree"
+for default_region in unset us-west-2; do
+  platform_state="${tmp}/platform-state-${default_region}"
+  platform_input_marker="${tmp}/platform-input-${default_region}"
+  mkdir -p "${platform_state}"
+  if [ "${default_region}" = unset ]; then
+    region_env=(-u AWS_REGION -u AWS_DEFAULT_REGION)
+  else
+    region_env=(-u AWS_REGION AWS_DEFAULT_REGION="${default_region}")
+  fi
+  if env "${region_env[@]}" \
+    STATE_DIR="${platform_state}" TF_BIN="${platform_bin}/tofu" \
+    MOCK_PLATFORM_RELEASE="${platform_release}" \
+    MOCK_PLATFORM_RELEASE_INPUT_MARKER="${platform_input_marker}" \
+    PATH="${platform_bin}:${PATH}" \
+    "${script}" platform-release-publish >"${stdout}" 2>"${stderr}"; then
+    fail "platform-release-publish should surface publisher failure"
+  fi
+  [ -s "${platform_input_marker}" ] || fail "publisher must receive the sealed release tree"
+  [ ! -e "$(cat "${platform_input_marker}")" ] || fail "failed publisher must remove its sealed release tree"
+done
 
 controlplane_bin="${tmp}/controlplane-bin"
 controlplane_context="${tmp}/controlplane-context"
