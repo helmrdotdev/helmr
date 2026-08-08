@@ -291,8 +291,8 @@ func (s *Server) requireWorker(next http.Handler) http.Handler {
 	return s.requireWorkerState(workerAuthActive, next)
 }
 
-func (s *Server) requireRegisteringWorker(next http.Handler) http.Handler {
-	return s.requireWorkerState(workerAuthRegistering, next)
+func (s *Server) requireWorkerActivation(next http.Handler) http.Handler {
+	return s.requireWorkerState(workerAuthActivation, next)
 }
 
 func (s *Server) requireRecoveringWorker(next http.Handler) http.Handler {
@@ -311,7 +311,7 @@ type workerAuthState uint8
 
 const (
 	workerAuthActive workerAuthState = iota
-	workerAuthRegistering
+	workerAuthActivation
 	workerAuthRecovering
 	workerAuthDrainCompletion
 	workerAuthFence
@@ -352,9 +352,9 @@ func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) ht
 		var row db.AuthorizeWorkerInstanceCredentialRow
 		var authorizationErr error
 		switch state {
-		case workerAuthRegistering:
-			startupRow, startupErr := s.db.AuthorizeRegisteringWorkerInstanceCredential(r.Context(), db.AuthorizeRegisteringWorkerInstanceCredentialParams(params))
-			row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(startupRow), startupErr
+		case workerAuthActivation:
+			activationRow, activationErr := s.db.AuthorizeWorkerActivationCredential(r.Context(), db.AuthorizeWorkerActivationCredentialParams(params))
+			row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(activationRow), activationErr
 		case workerAuthRecovering:
 			recoveryRow, recoveryErr := s.db.AuthorizeRecoveringWorkerInstanceCredential(r.Context(), db.AuthorizeRecoveringWorkerInstanceCredentialParams(params))
 			row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(recoveryRow), recoveryErr

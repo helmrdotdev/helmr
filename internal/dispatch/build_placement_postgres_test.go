@@ -89,9 +89,9 @@ WITH token AS (
     RETURNING id
 )
 INSERT INTO worker_groups (
-    id, token_id, region_id, name, observation_ttl_seconds
+    id, token_id, region_id, name
 )
-SELECT $1, token.id, 'us-east-1', $1, 120 FROM token`,
+SELECT $1, token.id, 'us-east-1', $1 FROM token`,
 		fixture.groupID, uuid.Must(uuid.NewV7()), dbtest.Hash("build-placement-worker-group"))
 	return fixture
 }
@@ -115,11 +115,11 @@ INSERT INTO runtime_identities (
 			epoch_cpu_millis, epoch_memory_bytes,
     epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis,
     per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes,
-    max_build_executors, epoch_started_at, activated_at
+    max_build_executors, observed_at, epoch_started_at, activated_at
 		) VALUES (
 			$1, $2, $3, 'active',
 			1, $4, 'test-worker', true, $5, 3000, 4294967296, 34359738368,
-			2000, 2147483648, 34359738368, 1, now(), now()
+			2000, 2147483648, 34359738368, 1, now(), now(), now()
 )`, workerID, workerID.String(), f.groupID, serviceID, runtimeID)
 	} else {
 		dbtest.MustExec(t, f.ctx, f.pool, `
@@ -132,13 +132,6 @@ INSERT INTO worker_instances (
     1, $4, true, $5, now()
 )`, workerID, workerID.String(), f.groupID, serviceID, runtimeID)
 	}
-	dbtest.MustExec(t, f.ctx, f.pool, `
-INSERT INTO worker_observations (
-    worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bps,
-    guest_ephemeral_disk_pressure_bps, build_cache_pressure_bps,
-    artifact_cache_pressure_bps, checkpoint_pressure_bps, quarantined_resource_count,
-    run_queue_depth, build_queue_depth, runtime_start_queue_depth, observed_at
-) VALUES ($1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, now())`, workerID)
 	return workerID
 }
 

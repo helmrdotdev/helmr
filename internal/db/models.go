@@ -1258,7 +1258,6 @@ type WorkerGroup struct {
 	RequiredBuildCacheBytes         int64              `json:"required_build_cache_bytes"`
 	RequiredArtifactCacheBytes      int64              `json:"required_artifact_cache_bytes"`
 	RequiredVMSlots                 int32              `json:"required_vm_slots"`
-	ObservationTtlSeconds           int32              `json:"observation_ttl_seconds"`
 	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
 }
@@ -1290,15 +1289,16 @@ type WorkerInstance struct {
 	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
 	EpochBuildCacheBytes         int64              `json:"epoch_build_cache_bytes"`
 	EpochArtifactCacheBytes      int64              `json:"epoch_artifact_cache_bytes"`
-	EpochHugepagesBytes          int64              `json:"epoch_hugepages_bytes"`
-	EpochCheckpointBytes         int64              `json:"epoch_checkpoint_bytes"`
 	PerVMCPUMillis               int64              `json:"per_vm_cpu_millis"`
 	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
 	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
 	MaxVMSlots                   int32              `json:"max_vm_slots"`
-	MaxRunConsumers              int32              `json:"max_run_consumers"`
 	MaxBuildExecutors            int32              `json:"max_build_executors"`
 	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
+	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
+	RunPausedReason              pgtype.Text        `json:"run_paused_reason"`
+	BuildPausedReason            pgtype.Text        `json:"build_paused_reason"`
+	RuntimePausedReason          pgtype.Text        `json:"runtime_paused_reason"`
 	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
 	ActivatedAt                  pgtype.Timestamptz `json:"activated_at"`
 	DrainingAt                   pgtype.Timestamptz `json:"draining_at"`
@@ -1321,27 +1321,6 @@ type WorkerInstanceCredential struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	LastUsedAt       pgtype.Timestamptz `json:"last_used_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
-}
-
-type WorkerObservation struct {
-	WorkerInstanceID              pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch                   int64              `json:"worker_epoch"`
-	CPUPressureBPS                int32              `json:"cpu_pressure_bps"`
-	MemoryPressureBPS             int32              `json:"memory_pressure_bps"`
-	GuestEphemeralDiskPressureBPS int32              `json:"guest_ephemeral_disk_pressure_bps"`
-	BuildCachePressureBPS         int32              `json:"build_cache_pressure_bps"`
-	ArtifactCachePressureBPS      int32              `json:"artifact_cache_pressure_bps"`
-	CheckpointPressureBPS         int32              `json:"checkpoint_pressure_bps"`
-	QuarantinedResourceCount      int32              `json:"quarantined_resource_count"`
-	RunQueueDepth                 int32              `json:"run_queue_depth"`
-	BuildQueueDepth               int32              `json:"build_queue_depth"`
-	RuntimeStartQueueDepth        int32              `json:"runtime_start_queue_depth"`
-	RunPausedReason               pgtype.Text        `json:"run_paused_reason"`
-	BuildPausedReason             pgtype.Text        `json:"build_paused_reason"`
-	RuntimePausedReason           pgtype.Text        `json:"runtime_paused_reason"`
-	HealthDetails                 []byte             `json:"health_details"`
-	ObservedAt                    pgtype.Timestamptz `json:"observed_at"`
-	UpdatedAt                     pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Workspace struct {

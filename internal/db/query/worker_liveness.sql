@@ -3,32 +3,27 @@ SELECT workers.id,
        workers.worker_group_id,
        workers.current_epoch,
        workers.state,
-       COALESCE(observations.observed_at, workers.epoch_started_at, workers.updated_at) AS freshness_at,
+       COALESCE(workers.observed_at, workers.activated_at, workers.epoch_started_at, workers.updated_at) AS freshness_at,
        CASE
-           WHEN workers.state = 'registering' AND observations.worker_instance_id IS NULL
+           WHEN workers.state = 'registering' AND workers.observed_at IS NULL
                THEN 'registering_observation_missing'
            ELSE 'worker_observation_stale'
        END::text AS reason
   FROM worker_instances AS workers
-  JOIN worker_groups AS groups
-    ON groups.id = workers.worker_group_id
-  LEFT JOIN worker_observations AS observations
-    ON observations.worker_instance_id = workers.id
-   AND observations.worker_epoch = workers.current_epoch
  WHERE workers.state IN ('registering', 'active', 'draining')
    AND (sqlc.arg(worker_group_id)::text = '' OR workers.worker_group_id = sqlc.arg(worker_group_id)::text)
    AND (
        (workers.state = 'registering'
-        AND observations.worker_instance_id IS NULL
+        AND workers.observed_at IS NULL
         AND COALESCE(workers.epoch_started_at, workers.updated_at)
             < sqlc.arg(registration_stale_before))
        OR
        (workers.state IN ('active', 'draining')
-        AND COALESCE(observations.observed_at, workers.epoch_started_at, workers.updated_at)
+        AND COALESCE(workers.observed_at, workers.activated_at, workers.epoch_started_at, workers.updated_at)
             < transaction_timestamp()
-              - groups.observation_ttl_seconds * interval '1 second')
+                - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second')
    )
- ORDER BY COALESCE(observations.observed_at, workers.epoch_started_at, workers.updated_at),
+ ORDER BY COALESCE(workers.observed_at, workers.activated_at, workers.epoch_started_at, workers.updated_at),
           workers.id
  LIMIT sqlc.arg(row_limit)
  FOR UPDATE OF workers SKIP LOCKED;
@@ -40,33 +35,20 @@ WITH target AS (
            claim_version = workers.claim_version + 1,
            lost_at = COALESCE(workers.lost_at, now()),
            updated_at = now()
-      FROM worker_groups AS groups
      WHERE workers.id = sqlc.arg(id)
-       AND groups.id = workers.worker_group_id
        AND workers.worker_group_id = sqlc.arg(worker_group_id)
        AND workers.current_epoch IS NOT DISTINCT FROM sqlc.arg(expected_epoch)
        AND workers.state IN ('registering', 'active', 'draining')
        AND (
            (workers.state = 'registering'
-            AND NOT EXISTS (
-                SELECT 1
-                  FROM worker_observations AS observations
-                 WHERE observations.worker_instance_id = workers.id
-                   AND observations.worker_epoch = workers.current_epoch
-            )
+            AND workers.observed_at IS NULL
             AND COALESCE(workers.epoch_started_at, workers.updated_at)
                 < sqlc.arg(registration_stale_before))
            OR
            (workers.state IN ('active', 'draining')
-            AND COALESCE(
-                    (SELECT observations.observed_at
-                       FROM worker_observations AS observations
-                      WHERE observations.worker_instance_id = workers.id
-                        AND observations.worker_epoch = workers.current_epoch),
-                    workers.epoch_started_at,
-                    workers.updated_at
-                ) < transaction_timestamp()
-                  - groups.observation_ttl_seconds * interval '1 second')
+            AND COALESCE(workers.observed_at, workers.activated_at, workers.epoch_started_at, workers.updated_at)
+                < transaction_timestamp()
+                    - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second')
        )
     RETURNING workers.*
 ), revoked_credentials AS (

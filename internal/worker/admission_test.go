@@ -181,25 +181,6 @@ func TestHardAdmissionAllowsRunInsideActiveWorkspaceSlot(t *testing.T) {
 	}
 }
 
-func TestHardAdmissionPressureObservation(t *testing.T) {
-	now := time.Now()
-	probe := &staticHealthProbe{health: healthyHost(now)}
-	evaluator, err := NewHardAdmission(HardAdmissionConfig{
-		Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	evaluator.Evaluate(context.Background(), AdmissionCheck{State: StateActive})
-	observation := evaluator.Observation()
-	if observation.GuestEphemeralDiskPressureBPS != 5000 {
-		t.Fatalf("disk pressure = %d, want 5000", observation.GuestEphemeralDiskPressureBPS)
-	}
-	if len(observation.HealthDetails) == 0 {
-		t.Fatal("typed hard admission health details are missing")
-	}
-}
-
 func TestBuildLeaseValidatesFixedGuestIndependentlyFromHostEnvelope(t *testing.T) {
 	capabilities := workerapi.Capabilities{
 		VMMilliCPU: 2000, VMMemoryMiB: 2048,

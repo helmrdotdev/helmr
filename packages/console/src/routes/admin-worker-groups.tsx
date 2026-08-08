@@ -54,7 +54,6 @@ export function AdminWorkerGroups() {
       required_build_cache_bytes: numberValue(form, "required_build_cache_bytes"),
       required_artifact_cache_bytes: numberValue(form, "required_artifact_cache_bytes"),
       required_vm_slots: numberValue(form, "required_vm_slots"),
-      observation_ttl_seconds: numberValue(form, "observation_ttl_seconds"),
     };
     setSubmitting(true);
     setError(null);
@@ -167,7 +166,6 @@ export function AdminWorkerGroups() {
               <NumberField name="required_build_cache_bytes" label="Build cache (bytes)" value={0} min={0} />
               <NumberField name="required_artifact_cache_bytes" label="Artifact cache (bytes)" value={0} min={0} />
               <NumberField name="required_vm_slots" label="VM slots" value={1} min={0} />
-              <NumberField name="observation_ttl_seconds" label="Observation TTL (seconds)" value={120} min={1} />
             </div>
             <Show when={error()}><p class={ui.fieldError} role="alert">{error()}</p></Show>
             <div class={ui.modalActions}><button type="button" class={ui.secondaryButton} onClick={() => setCreating(false)}>Cancel</button><button class={ui.button} disabled={submitting()}>{submitting() ? "Creating..." : "Create"}</button></div>

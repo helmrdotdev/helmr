@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -25,14 +24,6 @@ type RecoveryEvidence struct {
 	Quarantined       []string   `json:"quarantined,omitempty"`
 	QuarantinedOwners []vm.Owner `json:"quarantined_owners,omitempty"`
 	QuarantineErrors  []string   `json:"quarantine_errors,omitempty"`
-}
-
-func (e RecoveryEvidence) HealthDetails() json.RawMessage {
-	payload, err := json.Marshal(map[string]any{"startup_recovery": e})
-	if err != nil {
-		return json.RawMessage(`{"startup_recovery":{"error":"encode evidence"}}`)
-	}
-	return payload
 }
 
 type vmRecoveryOps struct {

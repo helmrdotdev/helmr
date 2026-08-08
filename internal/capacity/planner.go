@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -59,6 +60,7 @@ type item struct {
 
 type bin struct {
 	resources         capacityapi.ResourceVector
+	runConsumers      int64
 	runtimeStarts     int64
 	supportsRun       bool
 	supportsBuild     bool
@@ -350,7 +352,7 @@ func runItem(row db.ListQueuedRunDispatchCandidatesForScopeRow) item {
 	result.resources = capacityapi.ResourceVector{
 		CPUMillis: manifest.Resources.MilliCPU, MemoryBytes: manifest.Resources.MemoryMiB * mebibyte,
 		GuestEphemeralDiskBytes: compute.WorkspaceGuestEphemeralDiskMiB * mebibyte,
-		VMSlots:                 1, RunConsumers: 1,
+		VMSlots:                 1,
 	}
 	result.runtimeIdentityID = row.RequiredRuntimeIdentityID
 	result.substrateFormat = row.RequiredSubstrateFormat
@@ -359,7 +361,9 @@ func runItem(row db.ListQueuedRunDispatchCandidatesForScopeRow) item {
 }
 
 func currentBins(ctx context.Context, store Store, workerGroupID string) ([]bin, bool, error) {
-	rows, err := store.ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{WorkerGroupID: workerGroupID})
+	rows, err := store.ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
+		WorkerGroupID: workerGroupID, ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+	})
 	if err != nil {
 		return nil, false, fmt.Errorf("list current Worker capacity bins: %w", err)
 	}
@@ -379,10 +383,10 @@ func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 		resources: capacityapi.ResourceVector{
 			CPUMillis: row.AvailableCPUMillis, MemoryBytes: row.AvailableMemoryBytes,
 			GuestEphemeralDiskBytes: row.AvailableGuestEphemeralDiskBytes,
-			VMSlots:                 row.AvailableVMSlots, RunConsumers: row.AvailableRunConsumers,
-			BuildExecutors: row.AvailableBuildExecutors,
+			VMSlots:                 row.AvailableVMSlots,
+			BuildExecutors:          row.AvailableBuildExecutors,
 		},
-		runtimeStarts: row.AvailableRuntimeStarts, supportsRun: row.SupportsRun,
+		runConsumers: row.AvailableRunConsumers, runtimeStarts: row.AvailableRuntimeStarts, supportsRun: row.SupportsRun,
 		supportsBuild: row.SupportsBuild, runtimeArch: row.RuntimeArch,
 		runtimeContract: row.VMRuntimeContract, runtimeIdentityID: row.RuntimeIdentityID.String,
 		substrateFormat: row.SubstrateFormat, substrateContract: row.SubstrateContract,
@@ -397,7 +401,7 @@ func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 
 func templateBin(manifest capacityapi.WorkerReleaseManifest) bin {
 	return bin{
-		resources: manifest.Capacity, runtimeStarts: manifest.MaxRuntimeStarts,
+		resources: manifest.Capacity, runConsumers: manifest.Capacity.VMSlots, runtimeStarts: manifest.MaxRuntimeStarts,
 		supportsRun: manifest.SupportsRun, supportsBuild: manifest.SupportsBuild,
 		runtimeArch: manifest.Runtime.Arch, runtimeContract: manifest.Runtime.Contract,
 		runtimeIdentityID: manifest.Runtime.ID, substrateFormat: manifest.Substrate.Format,
@@ -483,6 +487,9 @@ func incompatibility(candidate item, target bin) string {
 	if !fitsResources(target.resources, candidate.resources) {
 		return reasonPerInstanceResources
 	}
+	if candidate.role == "run" && target.runConsumers <= 0 {
+		return reasonPerInstanceResources
+	}
 	if candidate.role == "run" && !fitsPhysical(target.perVM, candidate.resources) {
 		return reasonPerInstanceResources
 	}
@@ -513,7 +520,7 @@ func place(target *bin, candidate item) bool {
 	target.resources.GuestEphemeralDiskBytes -= candidate.resources.GuestEphemeralDiskBytes
 	if candidate.role == "run" {
 		target.resources.VMSlots--
-		target.resources.RunConsumers--
+		target.runConsumers--
 		target.runtimeStarts--
 	} else {
 		target.resources.BuildExecutors--
@@ -526,7 +533,6 @@ func fitsResources(available, required capacityapi.ResourceVector) bool {
 		available.MemoryBytes >= required.MemoryBytes &&
 		available.GuestEphemeralDiskBytes >= required.GuestEphemeralDiskBytes &&
 		available.VMSlots >= required.VMSlots &&
-		available.RunConsumers >= required.RunConsumers &&
 		available.BuildExecutors >= required.BuildExecutors
 }
 

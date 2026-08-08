@@ -40,12 +40,6 @@ func Normalize(spec Spec) (Spec, error) {
 	return spec, nil
 }
 
-type Desired struct {
-	Spec                  Spec
-	Capacity              Capacity
-	ObservationTTLSeconds int32
-}
-
 type Capacity struct {
 	MilliCPU                int64 `json:"milli_cpu"`
 	MemoryBytes             int64 `json:"memory_bytes"`

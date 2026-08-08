@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,10 +27,8 @@ const (
 	staleWorkerReasonCode    = "worker_observation_stale"
 )
 
-// StaleWorkerFenceQueries is the query surface used while candidate worker
-// rows remain locked. The second query deliberately executes as a separate
-// statement so READ COMMITTED sees an observation that won the worker-row
-// lock immediately before this transaction.
+// StaleWorkerFenceQueries selects candidates while locking their worker rows.
+// The transition rechecks freshness defensively under the retained lock.
 type StaleWorkerFenceQueries interface {
 	ListStaleWorkerFenceCandidates(context.Context, db.ListStaleWorkerFenceCandidatesParams) ([]db.ListStaleWorkerFenceCandidatesRow, error)
 	RecheckAndFenceStaleWorkerInstance(context.Context, db.RecheckAndFenceStaleWorkerInstanceParams) (db.RecheckAndFenceStaleWorkerInstanceRow, error)
@@ -261,9 +260,10 @@ func (f *StaleWorkerFencer) ReconcileOnce(ctx context.Context) (StaleWorkerFence
 		for _, scope := range scopes {
 			registrationStaleBefore := now.Add(-scope.registration)
 			candidates, err := queries.ListStaleWorkerFenceCandidates(ctx, db.ListStaleWorkerFenceCandidatesParams{
-				WorkerGroupID:           scope.groupID,
-				RegistrationStaleBefore: pgtype.Timestamptz{Time: registrationStaleBefore, Valid: true},
-				RowLimit:                f.batch,
+				WorkerGroupID:               scope.groupID,
+				RegistrationStaleBefore:     pgtype.Timestamptz{Time: registrationStaleBefore, Valid: true},
+				ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+				RowLimit:                    f.batch,
 			})
 			if err != nil {
 				return fmt.Errorf("select stale worker fence candidates for group %q: %w", scope.groupID, err)
@@ -279,11 +279,12 @@ func (f *StaleWorkerFencer) ReconcileOnce(ctx context.Context) (StaleWorkerFence
 					Reason:           candidate.Reason,
 				}
 				_, err := queries.RecheckAndFenceStaleWorkerInstance(ctx, db.RecheckAndFenceStaleWorkerInstanceParams{
-					ID:                      candidate.ID,
-					WorkerGroupID:           candidate.WorkerGroupID,
-					ExpectedEpoch:           candidate.CurrentEpoch,
-					RegistrationStaleBefore: pgtype.Timestamptz{Time: registrationStaleBefore, Valid: true},
-					ReasonCode:              pgtype.Text{String: staleWorkerReasonCode, Valid: true},
+					ID:                          candidate.ID,
+					WorkerGroupID:               candidate.WorkerGroupID,
+					ExpectedEpoch:               candidate.CurrentEpoch,
+					RegistrationStaleBefore:     pgtype.Timestamptz{Time: registrationStaleBefore, Valid: true},
+					ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+					ReasonCode:                  pgtype.Text{String: staleWorkerReasonCode, Valid: true},
 				})
 				switch {
 				case err == nil:

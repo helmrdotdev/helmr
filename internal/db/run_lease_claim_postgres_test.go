@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -50,6 +51,29 @@ type nestedHandoffChain struct {
 	runtimeID           uuid.UUID
 	mountID             uuid.UUID
 	versionID           uuid.UUID
+}
+
+func TestRunLeaseClaimReadinessFailsClosedWithoutObservation(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	if _, err := fixture.pool.Exec(ctx,
+		`UPDATE worker_instances SET observed_at = NULL WHERE id = $1`,
+		fixture.workerID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	worker, err := fixture.queries.LockRunLeaseClaimReadyWorker(ctx, LockRunLeaseClaimReadyWorkerParams{
+		ID:                          pgvalue.UUID(fixture.workerID),
+		WorkerGroupID:               runLeaseTestWorkerGroup,
+		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if worker.RunReady {
+		t.Fatal("unobserved worker is ready to claim a run lease")
+	}
 }
 
 func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {

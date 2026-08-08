@@ -16,18 +16,12 @@ sql:
           api_key_grant: APIKeyGrant
           api_key_id: APIKeyID
           artifact_kind_run_checkpoint_vm_state: ArtifactKindRunCheckpointVMState
-          artifact_cache_pressure_bps: ArtifactCachePressureBPS
           available_cpu_millis: AvailableCPUMillis
           available_vm_slots: AvailableVMSlots
           build_available_cpu_millis: BuildAvailableCPUMillis
-          build_cache_pressure_bps: BuildCachePressureBPS
-          checkpoint_pressure_bps: CheckpointPressureBPS
-          cpu_pressure_bps: CPUPressureBPS
           cancel_ids: CancelIDs
           epoch_cpu_millis: EpochCPUMillis
-          guest_ephemeral_disk_pressure_bps: GuestEphemeralDiskPressureBPS
           max_vm_slots: MaxVMSlots
-          memory_pressure_bps: MemoryPressureBPS
           per_vm_cpu_millis: PerVMCPUMillis
           per_vm_guest_ephemeral_disk_bytes: PerVMGuestEphemeralDiskBytes
           per_vm_memory_bytes: PerVMMemoryBytes

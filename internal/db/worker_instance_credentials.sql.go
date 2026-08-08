@@ -94,14 +94,6 @@ WITH credential AS (
                WHEN worker_instances.current_service_id = $5
                THEN worker_instances.epoch_artifact_cache_bytes ELSE 0
            END,
-           epoch_hugepages_bytes = CASE
-               WHEN worker_instances.current_service_id = $5
-               THEN worker_instances.epoch_hugepages_bytes ELSE 0
-           END,
-           epoch_checkpoint_bytes = CASE
-               WHEN worker_instances.current_service_id = $5
-               THEN worker_instances.epoch_checkpoint_bytes ELSE 0
-           END,
            per_vm_cpu_millis = CASE
                WHEN worker_instances.current_service_id = $5
                THEN worker_instances.per_vm_cpu_millis ELSE 0
@@ -118,10 +110,6 @@ WITH credential AS (
                WHEN worker_instances.current_service_id = $5
                THEN worker_instances.max_vm_slots ELSE 0
            END,
-           max_run_consumers = CASE
-               WHEN worker_instances.current_service_id = $5
-               THEN worker_instances.max_run_consumers ELSE 0
-           END,
            max_build_executors = CASE
                WHEN worker_instances.current_service_id = $5
                THEN worker_instances.max_build_executors ELSE 0
@@ -132,10 +120,18 @@ WITH credential AS (
            END,
            activated_at = CASE WHEN worker_instances.current_service_id = $5
                                THEN worker_instances.activated_at ELSE NULL END,
+           observed_at = CASE WHEN worker_instances.current_service_id = $5
+                              THEN worker_instances.observed_at ELSE NULL END,
+           run_paused_reason = CASE WHEN worker_instances.current_service_id = $5
+                                    THEN worker_instances.run_paused_reason ELSE NULL END,
+           build_paused_reason = CASE WHEN worker_instances.current_service_id = $5
+                                      THEN worker_instances.build_paused_reason ELSE NULL END,
+           runtime_paused_reason = CASE WHEN worker_instances.current_service_id = $5
+                                        THEN worker_instances.runtime_paused_reason ELSE NULL END,
            updated_at = now()
       FROM credential
      WHERE worker_instances.id = credential.worker_instance_id
-    RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.epoch_build_cache_bytes, worker_instances.epoch_artifact_cache_bytes, worker_instances.epoch_hugepages_bytes, worker_instances.epoch_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
+    RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.epoch_build_cache_bytes, worker_instances.epoch_artifact_cache_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.build_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
 )
 SELECT credential.id, credential.worker_group_id,
        credential.worker_instance_id, credential.key_prefix, credential.claim_version,
@@ -293,7 +289,7 @@ func (q *Queries) AuthorizeRecoveringWorkerInstanceCredential(ctx context.Contex
 	return i, err
 }
 
-const authorizeRegisteringWorkerInstanceCredential = `-- name: AuthorizeRegisteringWorkerInstanceCredential :one
+const authorizeWorkerActivationCredential = `-- name: AuthorizeWorkerActivationCredential :one
 UPDATE worker_instance_credentials
    SET last_used_at = now()
   FROM worker_instances, worker_groups
@@ -306,23 +302,7 @@ UPDATE worker_instance_credentials
    AND worker_instance_credentials.claim_version = worker_instances.claim_version
    AND worker_groups.claim_version = $3
    AND worker_instances.current_epoch = $4
-   AND (
-       worker_instances.state = 'registering'
-       OR (
-           worker_instances.state = 'active'
-           AND EXISTS (
-               SELECT 1
-                 FROM worker_observations
-                WHERE worker_observations.worker_instance_id = worker_instances.id
-                  AND worker_observations.worker_epoch = worker_instances.current_epoch
-                  AND (
-                      worker_observations.run_paused_reason = 'datapath_unverified'
-                      OR worker_observations.build_paused_reason = 'datapath_unverified'
-                      OR worker_observations.runtime_paused_reason = 'datapath_unverified'
-                  )
-           )
-       )
-   )
+   AND worker_instances.state IN ('registering', 'active')
    AND worker_groups.state IN ('active','paused','draining')
 RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
           worker_instances.current_epoch, worker_instances.state AS worker_state,
@@ -330,14 +310,14 @@ RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_gro
           worker_instances.epoch_started_at
 `
 
-type AuthorizeRegisteringWorkerInstanceCredentialParams struct {
+type AuthorizeWorkerActivationCredentialParams struct {
 	CredentialID      pgtype.UUID `json:"credential_id"`
 	ClaimVersion      int64       `json:"claim_version"`
 	GroupClaimVersion int64       `json:"group_claim_version"`
 	WorkerEpoch       pgtype.Int8 `json:"worker_epoch"`
 }
 
-type AuthorizeRegisteringWorkerInstanceCredentialRow struct {
+type AuthorizeWorkerActivationCredentialRow struct {
 	ID               pgtype.UUID        `json:"id"`
 	WorkerGroupID    string             `json:"worker_group_id"`
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
@@ -358,14 +338,14 @@ type AuthorizeRegisteringWorkerInstanceCredentialRow struct {
 	EpochStartedAt   pgtype.Timestamptz `json:"epoch_started_at"`
 }
 
-func (q *Queries) AuthorizeRegisteringWorkerInstanceCredential(ctx context.Context, arg AuthorizeRegisteringWorkerInstanceCredentialParams) (AuthorizeRegisteringWorkerInstanceCredentialRow, error) {
-	row := q.db.QueryRow(ctx, authorizeRegisteringWorkerInstanceCredential,
+func (q *Queries) AuthorizeWorkerActivationCredential(ctx context.Context, arg AuthorizeWorkerActivationCredentialParams) (AuthorizeWorkerActivationCredentialRow, error) {
+	row := q.db.QueryRow(ctx, authorizeWorkerActivationCredential,
 		arg.CredentialID,
 		arg.ClaimVersion,
 		arg.GroupClaimVersion,
 		arg.WorkerEpoch,
 	)
-	var i AuthorizeRegisteringWorkerInstanceCredentialRow
+	var i AuthorizeWorkerActivationCredentialRow
 	err := row.Scan(
 		&i.ID,
 		&i.WorkerGroupID,
@@ -644,19 +624,23 @@ WITH enrollment_token AS (
            epoch_cpu_millis = 0, epoch_memory_bytes = 0,
            epoch_guest_ephemeral_disk_bytes = 0,
            epoch_build_cache_bytes = 0, epoch_artifact_cache_bytes = 0,
-           epoch_hugepages_bytes = 0, epoch_checkpoint_bytes = 0,
            per_vm_cpu_millis = 0, per_vm_memory_bytes = 0,
            per_vm_guest_ephemeral_disk_bytes = 0,
-           max_vm_slots = 0, max_run_consumers = 0,
+           max_vm_slots = 0,
            max_build_executors = 0, max_runtime_starts = 0,
            current_service_id = CASE
                WHEN worker_instances.current_epoch IS NULL THEN NULL
                ELSE $6::uuid
            END,
            epoch_started_at = CASE WHEN worker_instances.current_epoch IS NULL THEN NULL ELSE now() END,
-           activated_at = NULL, draining_at = NULL, updated_at = now()
+           activated_at = NULL, draining_at = NULL,
+           observed_at = NULL,
+           run_paused_reason = NULL,
+           build_paused_reason = NULL,
+           runtime_paused_reason = NULL,
+           updated_at = now()
      WHERE worker_instances.state = 'registering'
-    RETURNING id, resource_id, worker_group_id, state, claim_version, current_epoch, current_service_id, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_contract, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, epoch_build_cache_bytes, epoch_artifact_cache_bytes, epoch_hugepages_bytes, epoch_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
+    RETURNING id, resource_id, worker_group_id, state, claim_version, current_epoch, current_service_id, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_contract, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, epoch_build_cache_bytes, epoch_artifact_cache_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_build_executors, max_runtime_starts, observed_at, run_paused_reason, build_paused_reason, runtime_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
 ), revoked AS (
     UPDATE worker_instance_credentials SET revoked_at = now()
       FROM worker WHERE worker_instance_credentials.worker_instance_id = worker.id

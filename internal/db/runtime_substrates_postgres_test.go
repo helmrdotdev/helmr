@@ -195,13 +195,10 @@ func TestLockRuntimeSubstrateAuthorityFencesWorkerAndContract(t *testing.T) {
 		       epoch_guest_ephemeral_disk_bytes = 0,
 		       epoch_build_cache_bytes = 0,
 		       epoch_artifact_cache_bytes = 0,
-		       epoch_hugepages_bytes = 0,
-		       epoch_checkpoint_bytes = 0,
 		       per_vm_cpu_millis = 0,
 		       per_vm_memory_bytes = 0,
 		       per_vm_guest_ephemeral_disk_bytes = 0,
 		       max_vm_slots = 0,
-		       max_run_consumers = 0,
 		       max_build_executors = 0,
 		       max_runtime_starts = 0,
 		       activated_at = NULL
@@ -330,15 +327,15 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 			epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
 			per_vm_cpu_millis, per_vm_memory_bytes,
 			per_vm_guest_ephemeral_disk_bytes,
-			max_vm_slots, max_run_consumers, max_runtime_starts,
-			epoch_started_at, activated_at
+			max_vm_slots, max_runtime_starts,
+			observed_at, epoch_started_at, activated_at
 		) VALUES (
 			$1, $2, $3, 'active',
 			1, $4, 'test-worker',
 			true, $5, $6, $7,
 			2000, 2147483648, 4294967296,
 			1000, 1073741824, 2147483648,
-			1, 1, 1, now(), now()
+			1, 1, now(), now(), now()
 		)
 	`, workerID, "authority-"+workerID.String(), dbtest.DefaultWorkerGroupID,
 		uuid.Must(uuid.NewV7()), runtimeIdentityID, substrate.Format, substrate.Contract)

@@ -467,8 +467,9 @@ func (s *Server) workerStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worker workerActor) {
 	state, err := s.db.GetWorkerInstanceState(r.Context(), db.GetWorkerInstanceStateParams{
-		ID:            pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerGroupID: worker.WorkerGroupID,
+		ID:                          pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerGroupID:               worker.WorkerGroupID,
+		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("worker is not registered")))
@@ -550,22 +551,11 @@ func (s *Server) recordWorkerObservation(ctx context.Context, worker workerActor
 }
 
 func workerObservationParams(worker workerActor, observation workerapi.Observation) db.RecordWorkerObservationParams {
-	health := observation.HealthDetails
-	if len(health) == 0 {
-		health = json.RawMessage(`{}`)
-	}
 	return db.RecordWorkerObservationParams{
-		CPUPressureBPS: observation.CPUPressureBPS, MemoryPressureBPS: observation.MemoryPressureBPS,
-		GuestEphemeralDiskPressureBPS: observation.GuestEphemeralDiskPressureBPS,
-		BuildCachePressureBPS:         observation.BuildCachePressureBPS, ArtifactCachePressureBPS: observation.ArtifactCachePressureBPS,
-		CheckpointPressureBPS: observation.CheckpointPressureBPS, QuarantinedResourceCount: observation.QuarantinedResourceCount,
-		RunQueueDepth: observation.RunQueueDepth, BuildQueueDepth: observation.BuildQueueDepth,
-		RuntimeStartQueueDepth: observation.RuntimeStartQueueDepth,
-		RunPausedReason:        pgtype.Text{String: observation.RunPausedReason, Valid: observation.RunPausedReason != ""},
-		BuildPausedReason:      pgtype.Text{String: observation.BuildPausedReason, Valid: observation.BuildPausedReason != ""},
-		RuntimePausedReason:    pgtype.Text{String: observation.RuntimePausedReason, Valid: observation.RuntimePausedReason != ""},
-		HealthDetails:          health, ObservedAt: pgvalue.Timestamptz(time.Now()),
-		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
+		RunPausedReason:     pgtype.Text{String: observation.RunPausedReason, Valid: observation.RunPausedReason != ""},
+		BuildPausedReason:   pgtype.Text{String: observation.BuildPausedReason, Valid: observation.BuildPausedReason != ""},
+		RuntimePausedReason: pgtype.Text{String: observation.RuntimePausedReason, Valid: observation.RuntimePausedReason != ""},
+		WorkerInstanceID:    pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
 		WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
 	}
 }
@@ -588,11 +578,10 @@ func workerActivationParams(
 		EpochCPUMillis: c.MaxVCPUs * 1000, EpochMemoryBytes: c.MaxMemoryMiB * 1024 * 1024,
 		EpochGuestEphemeralDiskBytes: c.GuestEphemeralDiskBytes,
 		EpochBuildCacheBytes:         c.BuildCacheBytes, EpochArtifactCacheBytes: c.ArtifactCacheBytes,
-		EpochHugepagesBytes: c.HugepagesBytes, EpochCheckpointBytes: c.CheckpointBytes,
 		PerVMCPUMillis: c.VMMilliCPU, PerVMMemoryBytes: c.VMMemoryMiB * 1024 * 1024,
 		PerVMGuestEphemeralDiskBytes: c.VMGuestEphemeralDiskBytes,
-		MaxVMSlots:                   c.ExecutionSlotsAvailable, MaxRunConsumers: c.ExecutionSlotsAvailable,
-		MaxBuildExecutors: c.MaxBuildExecutors, MaxRuntimeStarts: maxRuntimeStarts,
+		MaxVMSlots:                   c.ExecutionSlotsAvailable,
+		MaxBuildExecutors:            c.MaxBuildExecutors, MaxRuntimeStarts: maxRuntimeStarts,
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
 		WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
 	}
@@ -622,9 +611,6 @@ func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabi
 		MaxRuntimeStarts:          input.MaxRuntimeStarts,
 		BuildCacheBytes:           input.BuildCacheBytes,
 		ArtifactCacheBytes:        input.ArtifactCacheBytes,
-		HugepagesBytes:            input.HugepagesBytes,
-		CheckpointBytes:           input.CheckpointBytes,
-		Observation:               input.Observation,
 	}
 	if capabilities.RuntimeID == "" {
 		return workerapi.Capabilities{}, errors.New("worker runtime_id is required")

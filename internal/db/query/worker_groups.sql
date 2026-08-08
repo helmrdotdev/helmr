@@ -20,15 +20,14 @@ INSERT INTO worker_groups (
     id, token_id, region_id, name, description, state, allows_run, allows_build,
     required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes,
     required_build_cache_bytes, required_artifact_cache_bytes,
-    required_vm_slots, observation_ttl_seconds
+    required_vm_slots
 )
 SELECT sqlc.arg(id), token.id, sqlc.arg(region_id), sqlc.arg(name),
        sqlc.arg(description), 'active', sqlc.arg(allows_run), sqlc.arg(allows_build),
        sqlc.arg(required_cpu_millis), sqlc.arg(required_memory_bytes),
        sqlc.arg(required_guest_ephemeral_disk_bytes),
        sqlc.arg(required_build_cache_bytes), sqlc.arg(required_artifact_cache_bytes),
-       sqlc.arg(required_vm_slots),
-       sqlc.arg(observation_ttl_seconds)
+       sqlc.arg(required_vm_slots)
   FROM token
 RETURNING *;
 
@@ -55,13 +54,6 @@ SELECT *
 
 -- name: GetWorkerGroup :one
 SELECT * FROM worker_groups WHERE id = sqlc.arg(id);
-
--- name: GetControlPlaneWorkerGroupReadiness :one
-SELECT id AS worker_group_id,
-       state,
-       state = 'active' AS routable
-  FROM worker_groups
- WHERE id = sqlc.arg(worker_group_id);
 
 -- name: GetWorkerGroupState :one
 SELECT id, state, claim_version
@@ -189,12 +181,11 @@ WITH live_workers AS (
            worker_instances.per_vm_memory_bytes,
            worker_instances.per_vm_guest_ephemeral_disk_bytes,
            worker_instances.max_vm_slots,
-           worker_instances.max_run_consumers,
            worker_instances.max_build_executors,
            worker_instances.max_runtime_starts,
-           worker_observations.run_paused_reason,
-           worker_observations.build_paused_reason,
-           worker_observations.runtime_paused_reason,
+           worker_instances.run_paused_reason,
+           worker_instances.build_paused_reason,
+           worker_instances.runtime_paused_reason,
            worker_instances.epoch_cpu_millis,
            worker_instances.epoch_memory_bytes,
            worker_instances.epoch_guest_ephemeral_disk_bytes
@@ -205,14 +196,11 @@ WITH live_workers AS (
        AND worker_instances.current_epoch IS NOT NULL
       JOIN runtime_identities
         ON runtime_identities.id = worker_instances.runtime_identity_id
-      JOIN worker_observations
-        ON worker_observations.worker_instance_id = worker_instances.id
-       AND worker_observations.worker_epoch = worker_instances.current_epoch
-       AND worker_observations.observed_at >= transaction_timestamp()
-           - worker_groups.observation_ttl_seconds * interval '1 second'
      WHERE (sqlc.arg(worker_group_id)::text = '' OR worker_groups.id = sqlc.arg(worker_group_id))
        AND (sqlc.arg(region_id)::text = '' OR worker_groups.region_id = sqlc.arg(region_id))
        AND worker_groups.state = 'active'
+       AND worker_instances.observed_at >= transaction_timestamp()
+           - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
 ), usage AS (
     SELECT live_workers.worker_instance_id,
            COALESCE((SELECT sum(runtime_instances.reserved_cpu_millis)
@@ -282,7 +270,7 @@ SELECT live_workers.worker_group_id,
        GREATEST(live_workers.epoch_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
        GREATEST(live_workers.epoch_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
        GREATEST(live_workers.max_vm_slots - usage.vm_slots, 0)::bigint AS available_vm_slots,
-       GREATEST(live_workers.max_run_consumers - usage.run_consumers, 0)::bigint AS available_run_consumers,
+       GREATEST(live_workers.max_vm_slots - usage.run_consumers, 0)::bigint AS available_run_consumers,
        GREATEST(live_workers.max_build_executors - usage.build_executors, 0)::bigint AS available_build_executors,
        GREATEST(live_workers.max_runtime_starts - usage.runtime_starts, 0)::bigint AS available_runtime_starts,
        live_workers.run_paused_reason,
@@ -365,8 +353,7 @@ LIMIT 1;
 
 -- name: ActivateWorkerInstance :one
 WITH activation AS (
-    SELECT worker_instances.*,
-           worker_instances.state AS prior_state
+    SELECT worker_instances.*
       FROM worker_instances
       JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
      WHERE worker_instances.id = sqlc.arg(worker_instance_id)
@@ -406,13 +393,10 @@ WITH activation AS (
                AND worker_instances.epoch_guest_ephemeral_disk_bytes = sqlc.arg(epoch_guest_ephemeral_disk_bytes)
                AND worker_instances.epoch_build_cache_bytes = sqlc.arg(epoch_build_cache_bytes)
                AND worker_instances.epoch_artifact_cache_bytes = sqlc.arg(epoch_artifact_cache_bytes)
-               AND worker_instances.epoch_hugepages_bytes = sqlc.arg(epoch_hugepages_bytes)
-               AND worker_instances.epoch_checkpoint_bytes = sqlc.arg(epoch_checkpoint_bytes)
                AND worker_instances.per_vm_cpu_millis = sqlc.arg(per_vm_cpu_millis)
                AND worker_instances.per_vm_memory_bytes = sqlc.arg(per_vm_memory_bytes)
                AND worker_instances.per_vm_guest_ephemeral_disk_bytes = sqlc.arg(per_vm_guest_ephemeral_disk_bytes)
                AND worker_instances.max_vm_slots = sqlc.arg(max_vm_slots)
-               AND worker_instances.max_run_consumers = sqlc.arg(max_run_consumers)
                AND worker_instances.max_build_executors = sqlc.arg(max_build_executors)
                AND worker_instances.max_runtime_starts = sqlc.arg(max_runtime_starts)
            )
@@ -446,12 +430,10 @@ WITH activation AS (
            epoch_guest_ephemeral_disk_bytes = sqlc.arg(epoch_guest_ephemeral_disk_bytes),
            epoch_build_cache_bytes = sqlc.arg(epoch_build_cache_bytes),
            epoch_artifact_cache_bytes = sqlc.arg(epoch_artifact_cache_bytes),
-           epoch_hugepages_bytes = sqlc.arg(epoch_hugepages_bytes),
-           epoch_checkpoint_bytes = sqlc.arg(epoch_checkpoint_bytes),
            per_vm_cpu_millis = sqlc.arg(per_vm_cpu_millis),
            per_vm_memory_bytes = sqlc.arg(per_vm_memory_bytes),
            per_vm_guest_ephemeral_disk_bytes = sqlc.arg(per_vm_guest_ephemeral_disk_bytes),
-           max_vm_slots = sqlc.arg(max_vm_slots), max_run_consumers = sqlc.arg(max_run_consumers),
+           max_vm_slots = sqlc.arg(max_vm_slots),
            max_build_executors = sqlc.arg(max_build_executors),
            max_runtime_starts = sqlc.arg(max_runtime_starts),
            activated_at = COALESCE(worker_instances.activated_at, now()),
@@ -459,75 +441,21 @@ WITH activation AS (
       FROM runtime, activation
      WHERE worker_instances.id = activation.id
     RETURNING worker_instances.*
-), observation AS (
-    INSERT INTO worker_observations (
-        worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bps,
-        guest_ephemeral_disk_pressure_bps, build_cache_pressure_bps,
-        artifact_cache_pressure_bps, checkpoint_pressure_bps, quarantined_resource_count,
-        run_queue_depth, build_queue_depth, runtime_start_queue_depth, health_details,
-        run_paused_reason, build_paused_reason, runtime_paused_reason, observed_at
-    )
-    SELECT activated.id, activated.current_epoch, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-           '{}'::jsonb,
-           CASE WHEN activated.supports_run THEN 'datapath_unverified' END,
-           CASE WHEN activated.supports_build THEN 'datapath_unverified' END,
-           CASE WHEN activated.supports_run THEN 'datapath_unverified' END,
-           now()
-      FROM activated
-    ON CONFLICT (worker_instance_id, worker_epoch) DO NOTHING
-    RETURNING worker_instance_id
 )
-SELECT activated.*
-  FROM activated
- WHERE EXISTS (SELECT 1 FROM observation)
-    OR EXISTS (SELECT 1 FROM activation WHERE activation.prior_state = 'active');
+SELECT activated.* FROM activated;
 
 -- name: RecordWorkerObservation :one
-WITH target AS (
-    SELECT worker_instances.id, worker_instances.current_epoch
-      FROM worker_instances
-     WHERE worker_instances.id = sqlc.arg(worker_instance_id)
-       AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
-       AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
-       AND worker_instances.state IN ('active','draining')
-     FOR UPDATE OF worker_instances
-)
-INSERT INTO worker_observations (
-    worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bps,
-    guest_ephemeral_disk_pressure_bps, build_cache_pressure_bps,
-    artifact_cache_pressure_bps, checkpoint_pressure_bps, quarantined_resource_count,
-    run_queue_depth, build_queue_depth, runtime_start_queue_depth,
-    run_paused_reason, build_paused_reason, runtime_paused_reason,
-    health_details, observed_at
-)
-SELECT target.id, target.current_epoch,
-       sqlc.arg(cpu_pressure_bps), sqlc.arg(memory_pressure_bps),
-       sqlc.arg(guest_ephemeral_disk_pressure_bps),
-       sqlc.arg(build_cache_pressure_bps), sqlc.arg(artifact_cache_pressure_bps),
-       sqlc.arg(checkpoint_pressure_bps), sqlc.arg(quarantined_resource_count),
-       sqlc.arg(run_queue_depth), sqlc.arg(build_queue_depth),
-       sqlc.arg(runtime_start_queue_depth), sqlc.narg(run_paused_reason),
-       sqlc.narg(build_paused_reason), sqlc.narg(runtime_paused_reason),
-       sqlc.arg(health_details), sqlc.arg(observed_at)
-  FROM target
-ON CONFLICT (worker_instance_id, worker_epoch) DO UPDATE
-   SET cpu_pressure_bps = EXCLUDED.cpu_pressure_bps,
-       memory_pressure_bps = EXCLUDED.memory_pressure_bps,
-       guest_ephemeral_disk_pressure_bps = EXCLUDED.guest_ephemeral_disk_pressure_bps,
-       build_cache_pressure_bps = EXCLUDED.build_cache_pressure_bps,
-       artifact_cache_pressure_bps = EXCLUDED.artifact_cache_pressure_bps,
-       checkpoint_pressure_bps = EXCLUDED.checkpoint_pressure_bps,
-       quarantined_resource_count = EXCLUDED.quarantined_resource_count,
-       run_queue_depth = EXCLUDED.run_queue_depth,
-       build_queue_depth = EXCLUDED.build_queue_depth,
-       runtime_start_queue_depth = EXCLUDED.runtime_start_queue_depth,
-       run_paused_reason = EXCLUDED.run_paused_reason,
-       build_paused_reason = EXCLUDED.build_paused_reason,
-       runtime_paused_reason = EXCLUDED.runtime_paused_reason,
-       health_details = EXCLUDED.health_details,
-       observed_at = EXCLUDED.observed_at,
+UPDATE worker_instances
+   SET observed_at = transaction_timestamp(),
+       run_paused_reason = sqlc.narg(run_paused_reason),
+       build_paused_reason = sqlc.narg(build_paused_reason),
+       runtime_paused_reason = sqlc.narg(runtime_paused_reason),
        updated_at = now()
-RETURNING *;
+ WHERE worker_instances.id = sqlc.arg(worker_instance_id)
+   AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
+   AND worker_instances.state IN ('active', 'draining')
+RETURNING worker_instances.*;
 
 -- name: CompleteWorkerStartupRecovery :one
 WITH target AS (

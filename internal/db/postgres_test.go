@@ -149,7 +149,6 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		TokenHash:                       make([]byte, 32),
 		RegionID:                        dbtest.DefaultRegionID,
 		Name:                            dbtest.DefaultWorkerGroupID,
-		ObservationTtlSeconds:           120,
 		AllowsRun:                       true,
 		AllowsBuild:                     true,
 		RequiredCPUMillis:               1,

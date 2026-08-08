@@ -38,10 +38,12 @@ type EnrollmentRequest struct {
 type RunLeaseDiscoveryRequest struct{}
 
 const (
-	RunLeaseMinTTL              = 30 * time.Second
-	RunFinalizationMinTTL       = 20 * time.Minute
-	RunFinalizationTerminalTail = 10 * time.Minute
-	RunFinalizationReplayTail   = 30 * time.Second
+	WorkerObservationInterval         = 30 * time.Second
+	WorkerObservationFreshnessSeconds = int64(120)
+	RunLeaseMinTTL                    = 30 * time.Second
+	RunFinalizationMinTTL             = 20 * time.Minute
+	RunFinalizationTerminalTail       = 10 * time.Minute
+	RunFinalizationReplayTail         = 30 * time.Second
 )
 
 type RunLeaseWork struct {
@@ -85,48 +87,34 @@ type DrainCompletionRequest struct {
 }
 
 type Observation struct {
-	CPUPressureBPS                int32           `json:"cpu_pressure_bps"`
-	MemoryPressureBPS             int32           `json:"memory_pressure_bps"`
-	GuestEphemeralDiskPressureBPS int32           `json:"guest_ephemeral_disk_pressure_bps"`
-	BuildCachePressureBPS         int32           `json:"build_cache_pressure_bps"`
-	ArtifactCachePressureBPS      int32           `json:"artifact_cache_pressure_bps"`
-	CheckpointPressureBPS         int32           `json:"checkpoint_pressure_bps"`
-	QuarantinedResourceCount      int32           `json:"quarantined_resource_count"`
-	RunQueueDepth                 int32           `json:"run_queue_depth"`
-	BuildQueueDepth               int32           `json:"build_queue_depth"`
-	RuntimeStartQueueDepth        int32           `json:"runtime_start_queue_depth"`
-	RunPausedReason               string          `json:"run_paused_reason,omitempty"`
-	BuildPausedReason             string          `json:"build_paused_reason,omitempty"`
-	RuntimePausedReason           string          `json:"runtime_paused_reason,omitempty"`
-	HealthDetails                 json.RawMessage `json:"health_details,omitempty"`
+	RunPausedReason     string `json:"run_paused_reason,omitempty"`
+	BuildPausedReason   string `json:"build_paused_reason,omitempty"`
+	RuntimePausedReason string `json:"runtime_paused_reason,omitempty"`
 }
 
 type Capabilities struct {
-	WorkerVersion             string      `json:"worker_version,omitempty"`
-	RuntimeID                 string      `json:"runtime_id"`
-	RuntimeArch               string      `json:"runtime_arch"`
-	VMRuntimeContract         string      `json:"vm_runtime_contract"`
-	KernelDigest              string      `json:"kernel_digest"`
-	InitramfsDigest           string      `json:"initramfs_digest"`
-	RootfsDigest              string      `json:"rootfs_digest"`
-	SubstrateFormat           string      `json:"substrate_format,omitempty"`
-	SubstrateContract         string      `json:"substrate_contract,omitempty"`
-	MaxVCPUs                  int64       `json:"max_vcpus"`
-	MaxMemoryMiB              int64       `json:"max_memory_mib"`
-	VMMilliCPU                int64       `json:"vm_milli_cpu"`
-	VMMemoryMiB               int64       `json:"vm_memory_mib"`
-	GuestEphemeralDiskBytes   int64       `json:"guest_ephemeral_disk_bytes"`
-	VMGuestEphemeralDiskBytes int64       `json:"vm_guest_ephemeral_disk_bytes"`
-	ExecutionSlotsAvailable   int32       `json:"execution_slots_available"`
-	SupportsRun               bool        `json:"supports_run"`
-	SupportsBuild             bool        `json:"supports_build"`
-	MaxBuildExecutors         int32       `json:"max_build_executors"`
-	MaxRuntimeStarts          int32       `json:"max_runtime_starts"`
-	BuildCacheBytes           int64       `json:"build_cache_bytes"`
-	ArtifactCacheBytes        int64       `json:"artifact_cache_bytes"`
-	HugepagesBytes            int64       `json:"hugepages_bytes"`
-	CheckpointBytes           int64       `json:"checkpoint_bytes"`
-	Observation               Observation `json:"observation"`
+	WorkerVersion             string `json:"worker_version,omitempty"`
+	RuntimeID                 string `json:"runtime_id"`
+	RuntimeArch               string `json:"runtime_arch"`
+	VMRuntimeContract         string `json:"vm_runtime_contract"`
+	KernelDigest              string `json:"kernel_digest"`
+	InitramfsDigest           string `json:"initramfs_digest"`
+	RootfsDigest              string `json:"rootfs_digest"`
+	SubstrateFormat           string `json:"substrate_format,omitempty"`
+	SubstrateContract         string `json:"substrate_contract,omitempty"`
+	MaxVCPUs                  int64  `json:"max_vcpus"`
+	MaxMemoryMiB              int64  `json:"max_memory_mib"`
+	VMMilliCPU                int64  `json:"vm_milli_cpu"`
+	VMMemoryMiB               int64  `json:"vm_memory_mib"`
+	GuestEphemeralDiskBytes   int64  `json:"guest_ephemeral_disk_bytes"`
+	VMGuestEphemeralDiskBytes int64  `json:"vm_guest_ephemeral_disk_bytes"`
+	ExecutionSlotsAvailable   int32  `json:"execution_slots_available"`
+	SupportsRun               bool   `json:"supports_run"`
+	SupportsBuild             bool   `json:"supports_build"`
+	MaxBuildExecutors         int32  `json:"max_build_executors"`
+	MaxRuntimeStarts          int32  `json:"max_runtime_starts"`
+	BuildCacheBytes           int64  `json:"build_cache_bytes"`
+	ArtifactCacheBytes        int64  `json:"artifact_cache_bytes"`
 }
 
 type DeploymentBuildLeaseRequest struct{}

@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,14 +21,14 @@ func TestStaleWorkerFenceUsesStateAppropriateStrictBoundaries(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	observationCutoff := now.Add(-120 * time.Second)
+	observationCutoff := now.Add(-time.Duration(workerapi.WorkerObservationFreshnessSeconds) * time.Second)
 	registrationCutoff := now.Add(-dispatch.DefaultWorkerRegistrationReadinessGrace)
 	exactID := insertRegisteringWorker(t, ctx, pool, registrationCutoff, false)
 	freshUnderActiveCutoffID := insertRegisteringWorker(t, ctx, pool, observationCutoff.Add(-time.Minute), false)
 	staleID := insertRegisteringWorker(t, ctx, pool, registrationCutoff.Add(-time.Microsecond), false)
 	staleEpochID := insertRegisteringWorker(t, ctx, pool, registrationCutoff.Add(-2*time.Microsecond), true)
-	activeExactID := insertActiveWorkerWithObservation(t, ctx, pool, observationCutoff.Add(time.Second))
-	activeStaleID := insertActiveWorkerWithObservation(t, ctx, pool, observationCutoff.Add(-time.Microsecond))
+	activeExactID := insertActiveWorkerWithObservation(t, ctx, pool, now)
+	activeStaleID := insertActiveWorkerWithObservation(t, ctx, pool, now)
 
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
@@ -35,9 +36,20 @@ func TestStaleWorkerFenceUsesStateAppropriateStrictBoundaries(t *testing.T) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	txQueries := db.New(tx)
+	if _, err := tx.Exec(ctx, `
+		UPDATE worker_instances
+		   SET observed_at = CASE id
+		       WHEN $1 THEN transaction_timestamp() - $3::bigint * interval '1 second'
+		       WHEN $2 THEN transaction_timestamp() - $3::bigint * interval '1 second' - interval '1 microsecond'
+		       END
+		 WHERE id IN ($1, $2)
+	`, activeExactID, activeStaleID, workerapi.WorkerObservationFreshnessSeconds); err != nil {
+		t.Fatal(err)
+	}
 	candidates, err := txQueries.ListStaleWorkerFenceCandidates(ctx, db.ListStaleWorkerFenceCandidatesParams{
-		RegistrationStaleBefore: pgvalue.Timestamptz(registrationCutoff),
-		RowLimit:                10,
+		RegistrationStaleBefore:     pgvalue.Timestamptz(registrationCutoff),
+		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		RowLimit:                    10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -60,9 +72,10 @@ func TestStaleWorkerFenceUsesStateAppropriateStrictBoundaries(t *testing.T) {
 	}
 	fenced, err := txQueries.RecheckAndFenceStaleWorkerInstance(ctx, db.RecheckAndFenceStaleWorkerInstanceParams{
 		ID: pgvalue.UUID(staleID), WorkerGroupID: dbtest.DefaultWorkerGroupID,
-		ExpectedEpoch:           pgtype.Int8{},
-		RegistrationStaleBefore: pgvalue.Timestamptz(registrationCutoff),
-		ReasonCode:              pgtype.Text{String: "worker_observation_stale", Valid: true},
+		ExpectedEpoch:               pgtype.Int8{},
+		RegistrationStaleBefore:     pgvalue.Timestamptz(registrationCutoff),
+		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		ReasonCode:                  pgtype.Text{String: "worker_observation_stale", Valid: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -72,9 +85,10 @@ func TestStaleWorkerFenceUsesStateAppropriateStrictBoundaries(t *testing.T) {
 	}
 	fencedWithEpoch, err := txQueries.RecheckAndFenceStaleWorkerInstance(ctx, db.RecheckAndFenceStaleWorkerInstanceParams{
 		ID: pgvalue.UUID(staleEpochID), WorkerGroupID: dbtest.DefaultWorkerGroupID,
-		ExpectedEpoch:           pgtype.Int8{Int64: 1, Valid: true},
-		RegistrationStaleBefore: pgvalue.Timestamptz(registrationCutoff),
-		ReasonCode:              pgtype.Text{String: "worker_observation_stale", Valid: true},
+		ExpectedEpoch:               pgtype.Int8{Int64: 1, Valid: true},
+		RegistrationStaleBefore:     pgvalue.Timestamptz(registrationCutoff),
+		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		ReasonCode:                  pgtype.Text{String: "worker_observation_stale", Valid: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -84,9 +98,10 @@ func TestStaleWorkerFenceUsesStateAppropriateStrictBoundaries(t *testing.T) {
 	}
 	fencedActive, err := txQueries.RecheckAndFenceStaleWorkerInstance(ctx, db.RecheckAndFenceStaleWorkerInstanceParams{
 		ID: pgvalue.UUID(activeStaleID), WorkerGroupID: dbtest.DefaultWorkerGroupID,
-		ExpectedEpoch:           pgtype.Int8{Int64: 1, Valid: true},
-		RegistrationStaleBefore: pgvalue.Timestamptz(registrationCutoff),
-		ReasonCode:              pgtype.Text{String: "worker_observation_stale", Valid: true},
+		ExpectedEpoch:               pgtype.Int8{Int64: 1, Valid: true},
+		RegistrationStaleBefore:     pgvalue.Timestamptz(registrationCutoff),
+		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		ReasonCode:                  pgtype.Text{String: "worker_observation_stale", Valid: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -127,6 +142,66 @@ func TestStaleWorkerFenceUsesStateAppropriateStrictBoundaries(t *testing.T) {
 	}
 }
 
+func TestUnobservedActiveWorkerFreshnessStartsAtActivation(t *testing.T) {
+	ctx := context.Background()
+	pool := newPostgresDB(t, ctx)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	exactID := insertActiveWorkerWithObservation(t, ctx, pool, now)
+	staleID := insertActiveWorkerWithObservation(t, ctx, pool, now)
+
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	queries := db.New(tx)
+	if _, err := tx.Exec(ctx, `
+		UPDATE worker_instances
+		   SET observed_at = NULL,
+		       epoch_started_at = transaction_timestamp() - interval '10 minutes',
+		       activated_at = CASE id
+		           WHEN $1 THEN transaction_timestamp() - $3::bigint * interval '1 second'
+		           WHEN $2 THEN transaction_timestamp() - $3::bigint * interval '1 second' - interval '1 microsecond'
+		       END
+		 WHERE id IN ($1, $2)
+	`, exactID, staleID, workerapi.WorkerObservationFreshnessSeconds); err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := queries.ListStaleWorkerFenceCandidates(ctx, db.ListStaleWorkerFenceCandidatesParams{
+		RegistrationStaleBefore:     pgvalue.Timestamptz(now.Add(-dispatch.DefaultWorkerRegistrationReadinessGrace)),
+		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		RowLimit:                    10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0].ID != pgvalue.UUID(staleID) {
+		t.Fatalf("unobserved active candidates = %+v, want only activation older than the strict boundary", candidates)
+	}
+	if _, err := queries.RecheckAndFenceStaleWorkerInstance(ctx, db.RecheckAndFenceStaleWorkerInstanceParams{
+		ID: pgvalue.UUID(staleID), WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		ExpectedEpoch:               pgtype.Int8{Int64: 1, Valid: true},
+		RegistrationStaleBefore:     pgvalue.Timestamptz(now.Add(-dispatch.DefaultWorkerRegistrationReadinessGrace)),
+		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		ReasonCode:                  pgtype.Text{String: "worker_observation_stale", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var exactState, staleState db.WorkerInstanceState
+	if err := pool.QueryRow(ctx, `SELECT state FROM worker_instances WHERE id = $1`, exactID).Scan(&exactState); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT state FROM worker_instances WHERE id = $1`, staleID).Scan(&staleState); err != nil {
+		t.Fatal(err)
+	}
+	if exactState != db.WorkerInstanceStateActive || staleState != db.WorkerInstanceStateLost {
+		t.Fatalf("states exact=%q stale=%q, want active and lost", exactState, staleState)
+	}
+}
+
 func TestFreshWorkerObservationWinsAgainstStaleFenceRecheck(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
@@ -139,7 +214,7 @@ func TestFreshWorkerObservationWinsAgainstStaleFenceRecheck(t *testing.T) {
 	}
 	defer func() { _ = observationTx.Rollback(ctx) }()
 	observationQueries := db.New(observationTx)
-	if _, err := observationQueries.RecordWorkerObservation(ctx, workerObservation(workerID, now)); err != nil {
+	if _, err := observationQueries.RecordWorkerObservation(ctx, workerObservation(workerID)); err != nil {
 		_ = observationTx.Rollback(ctx)
 		t.Fatal(err)
 	}
@@ -186,8 +261,9 @@ func TestStaleFenceWinsBeforeLateWorkerObservation(t *testing.T) {
 	defer func() { _ = fenceTx.Rollback(ctx) }()
 	fenceQueries := db.New(fenceTx)
 	candidates, err := fenceQueries.ListStaleWorkerFenceCandidates(ctx, db.ListStaleWorkerFenceCandidatesParams{
-		RegistrationStaleBefore: pgvalue.Timestamptz(now.Add(-dispatch.DefaultWorkerRegistrationReadinessGrace)),
-		RowLimit:                10,
+		RegistrationStaleBefore:     pgvalue.Timestamptz(now.Add(-dispatch.DefaultWorkerRegistrationReadinessGrace)),
+		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		RowLimit:                    10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -198,15 +274,16 @@ func TestStaleFenceWinsBeforeLateWorkerObservation(t *testing.T) {
 
 	observationDone := make(chan error, 1)
 	go func() {
-		_, observeErr := db.New(pool).RecordWorkerObservation(ctx, workerObservation(workerID, now))
+		_, observeErr := db.New(pool).RecordWorkerObservation(ctx, workerObservation(workerID))
 		observationDone <- observeErr
 	}()
 	assertBlocked(t, observationDone)
 	if _, err := fenceQueries.RecheckAndFenceStaleWorkerInstance(ctx, db.RecheckAndFenceStaleWorkerInstanceParams{
 		ID: pgvalue.UUID(workerID), WorkerGroupID: dbtest.DefaultWorkerGroupID,
-		ExpectedEpoch:           pgtype.Int8{Int64: 1, Valid: true},
-		RegistrationStaleBefore: pgvalue.Timestamptz(now.Add(-dispatch.DefaultWorkerRegistrationReadinessGrace)),
-		ReasonCode:              pgtype.Text{String: "worker_observation_stale", Valid: true},
+		ExpectedEpoch:               pgtype.Int8{Int64: 1, Valid: true},
+		RegistrationStaleBefore:     pgvalue.Timestamptz(now.Add(-dispatch.DefaultWorkerRegistrationReadinessGrace)),
+		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		ReasonCode:                  pgtype.Text{String: "worker_observation_stale", Valid: true},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -222,6 +299,45 @@ func TestStaleFenceWinsBeforeLateWorkerObservation(t *testing.T) {
 	}
 	if state != db.WorkerInstanceStateLost {
 		t.Fatalf("worker state = %q, want lost", state)
+	}
+}
+
+func TestWorkerObservationFollowsTheLiveEpochThroughDrain(t *testing.T) {
+	ctx := context.Background()
+	pool := newPostgresDB(t, ctx)
+	workerID := insertActiveWorkerWithObservation(t, ctx, pool, time.Now())
+	if _, err := pool.Exec(ctx, `
+		UPDATE worker_instances
+		   SET state = 'draining', draining_at = now()
+		 WHERE id = $1
+	`, workerID); err != nil {
+		t.Fatal(err)
+	}
+	observed, err := db.New(pool).RecordWorkerObservation(ctx, db.RecordWorkerObservationParams{
+		WorkerInstanceID: pgvalue.UUID(workerID), WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		WorkerEpoch:     pgtype.Int8{Int64: 1, Valid: true},
+		RunPausedReason: pgtype.Text{String: "startup_recovery_leak", Valid: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observed.State != db.WorkerInstanceStateDraining || !observed.ObservedAt.Valid || observed.RunPausedReason.String != "startup_recovery_leak" {
+		t.Fatalf("draining observation = %+v", observed)
+	}
+	staleEpoch := workerObservation(workerID)
+	staleEpoch.WorkerEpoch = pgtype.Int8{Int64: 2, Valid: true}
+	if _, err := db.New(pool).RecordWorkerObservation(ctx, staleEpoch); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("stale epoch observation error = %v, want pgx.ErrNoRows", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE worker_instances
+		   SET state = 'termination_ready', termination_ready_at = now()
+		 WHERE id = $1
+	`, workerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.New(pool).RecordWorkerObservation(ctx, workerObservation(workerID)); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("terminal observation error = %v, want pgx.ErrNoRows", err)
 	}
 }
 
@@ -266,28 +382,23 @@ func insertActiveWorkerWithObservation(t *testing.T, ctx context.Context, pool *
 			epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
 			per_vm_cpu_millis, per_vm_memory_bytes,
 			per_vm_guest_ephemeral_disk_bytes, max_build_executors,
-			epoch_started_at, activated_at
+			observed_at, epoch_started_at, activated_at
 		) VALUES (
 			$1, $2, $3, 'active',
 			1, $4, 'test-worker', true, $6,
 			1000, 1073741824, 1073741824,
 			1000, 1073741824,
 			1073741824, 1,
-			$5, $5
+			$5, $5, $5
 		)
 	`, id, "active-"+id.String(), dbtest.DefaultWorkerGroupID, serviceID, observedAt, runtimeIdentityID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.New(pool).RecordWorkerObservation(ctx, workerObservation(id, observedAt)); err != nil {
 		t.Fatal(err)
 	}
 	return id
 }
 
-func workerObservation(workerID uuid.UUID, observedAt time.Time) db.RecordWorkerObservationParams {
+func workerObservation(workerID uuid.UUID) db.RecordWorkerObservationParams {
 	return db.RecordWorkerObservationParams{
-		HealthDetails:    []byte(`{}`),
-		ObservedAt:       pgvalue.Timestamptz(observedAt),
 		WorkerInstanceID: pgvalue.UUID(workerID),
 		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
 		WorkerEpoch:      pgtype.Int8{Int64: 1, Valid: true},

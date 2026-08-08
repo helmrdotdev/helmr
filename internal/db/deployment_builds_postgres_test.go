@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -364,21 +365,10 @@ func (f *deploymentBuildFixture) activateBuildWorker(t *testing.T) {
 		       per_vm_memory_bytes = $4,
 		       per_vm_guest_ephemeral_disk_bytes = $5,
 		       max_build_executors = 1,
+		       observed_at = now(),
 		       activated_at = now()
 		 WHERE id = $1
 	`, f.workerID, runtimeIdentityID, buildCPU, buildMemory, buildGuestDisk)
-	dbtest.MustExec(t, f.ctx, f.pool, `
-		INSERT INTO worker_observations (
-			worker_instance_id, worker_epoch,
-			cpu_pressure_bps, memory_pressure_bps,
-			guest_ephemeral_disk_pressure_bps,
-			build_cache_pressure_bps, artifact_cache_pressure_bps,
-			checkpoint_pressure_bps, quarantined_resource_count, run_queue_depth,
-			build_queue_depth, runtime_start_queue_depth, observed_at
-		) VALUES (
-			$1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, now()
-		)
-	`, f.workerID)
 }
 
 func TestClaimNextDeploymentBuildLeaseRechecksGroupAdmission(t *testing.T) {
@@ -404,9 +394,10 @@ func TestClaimNextDeploymentBuildLeaseRechecksGroupAdmission(t *testing.T) {
 			claimed, err := f.queries.ClaimNextDeploymentBuildLease(
 				f.ctx,
 				db.ClaimNextDeploymentBuildLeaseParams{
-					WorkerGroupID:    f.groupID,
-					WorkerInstanceID: pgvalue.UUID(f.workerID),
-					WorkerEpoch:      1,
+					WorkerGroupID:               f.groupID,
+					WorkerInstanceID:            pgvalue.UUID(f.workerID),
+					WorkerEpoch:                 1,
+					ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
 					ExpiresAt: pgvalue.Timestamptz(
 						time.Now().UTC().Add(10 * time.Minute),
 					),

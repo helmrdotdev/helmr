@@ -422,13 +422,12 @@ INSERT INTO worker_group_tokens (
     decode(repeat('06', 32), 'hex')
 );
 INSERT INTO worker_groups (
-    id, token_id, region_id, name, observation_ttl_seconds
+    id, token_id, region_id, name
 ) VALUES (
     'artifact-test-workers',
     '00000000-0000-7000-8000-000000000906',
     'artifact-test-region',
-    'Artifact test',
-    120
+    'Artifact test'
 );
 INSERT INTO worker_instances (
     id, resource_id, worker_group_id
@@ -1028,8 +1027,8 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		INSERT INTO regions (id, display_name) VALUES ('shape-region', 'Shape Region');
 		INSERT INTO worker_group_tokens (id, token_hash)
 		VALUES ('00000000-0000-7000-8000-000000000097', decode(repeat('07', 32), 'hex'));
-		INSERT INTO worker_groups (id, token_id, region_id, name, observation_ttl_seconds)
-		VALUES ('shape-test', '00000000-0000-7000-8000-000000000097', 'shape-region', 'shape-test', 120);
+		INSERT INTO worker_groups (id, token_id, region_id, name)
+		VALUES ('shape-test', '00000000-0000-7000-8000-000000000097', 'shape-region', 'shape-test');
 		INSERT INTO worker_instances (id, resource_id, worker_group_id, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes)
 		VALUES ('00000000-0000-0000-0000-000000000099', 'shape-test', 'shape-test', 2000, 2147483648, 8589934592);
 	`); err != nil {

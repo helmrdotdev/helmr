@@ -96,6 +96,7 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		row, err := work.q.ClaimNextDeploymentBuildLease(r.Context(), db.ClaimNextDeploymentBuildLeaseParams{
 			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch: worker.WorkerEpoch, ExpiresAt: pgvalue.Timestamptz(leaseExpiresAt),
+			ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
 		})
 		if isNoRows(err) {
 			return nil

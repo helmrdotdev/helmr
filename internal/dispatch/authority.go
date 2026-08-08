@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -111,23 +112,20 @@ SELECT worker_instances.id
     ON worker_groups.id = worker_instances.worker_group_id
   LEFT JOIN runtime_identities
     ON runtime_identities.id = worker_instances.runtime_identity_id
-  JOIN worker_observations
-    ON worker_observations.worker_instance_id = worker_instances.id
-   AND worker_observations.worker_epoch = worker_instances.current_epoch
  WHERE worker_instances.id = $1
    AND worker_instances.worker_group_id = $2
    AND worker_instances.current_epoch = $3
    AND worker_instances.state = 'active'
-   AND worker_observations.observed_at >= transaction_timestamp()
-       - worker_groups.observation_ttl_seconds * interval '1 second'
+   AND worker_instances.observed_at >= transaction_timestamp() - $6 * interval '1 second'
 	AND (($4 = 'run' AND worker_instances.supports_run)
 	     OR ($4 = 'build' AND worker_instances.supports_build))
-	AND (($4 = 'run' AND worker_observations.run_paused_reason IS NULL)
-	     OR ($4 = 'build' AND worker_observations.build_paused_reason IS NULL))
+	AND (($4 = 'run' AND worker_instances.run_paused_reason IS NULL)
+	     OR ($4 = 'build' AND worker_instances.build_paused_reason IS NULL))
 	AND runtime_identities.runtime_arch = $5
 	   AND runtime_identities.vm_runtime_contract = 'helmr.vm-runtime.v0'
- FOR UPDATE OF worker_instances`, fence.WorkerInstanceID, fence.GroupID,
+	FOR UPDATE OF worker_instances`, fence.WorkerInstanceID, fence.GroupID,
 		fence.WorkerEpoch, fence.Role, architecture,
+		workerapi.WorkerObservationFreshnessSeconds,
 	).Scan(&workerID)
 	if err != nil {
 		return fmt.Errorf("lock eligible worker epoch: %w", err)

@@ -36,7 +36,6 @@ ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_current_attempt_fk;
 DROP TABLE IF EXISTS session_records;
 DROP TABLE IF EXISTS run_attempts;
 DROP TABLE IF EXISTS telemetry_outbox;
-DROP TABLE IF EXISTS worker_observations;
 DROP TABLE IF EXISTS worker_instance_credentials;
 ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_current_run_fk;
 ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_failure_run_fk;

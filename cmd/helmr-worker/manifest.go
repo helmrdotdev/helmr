@@ -21,7 +21,7 @@ func runManifest(arguments []string, output io.Writer) error {
 	var runtimeProfileFile, roles, workerVersion string
 	var capacityCPU, capacityMemory, capacityDisk int64
 	var perVMCPU, perVMMemory, perVMDisk int64
-	var vmSlots, runConsumers, buildExecutors, runtimeStarts int64
+	var vmSlots, buildExecutors, runtimeStarts int64
 	var buildCache, artifactCache int64
 	flags.StringVar(&runtimeProfileFile, "runtime-profile-file", "", "attested runtime profile JSON from Worker image production")
 	flags.StringVar(&workerVersion, "worker-version", "", "exact source commit injected into the Worker binary")
@@ -33,7 +33,6 @@ func runManifest(arguments []string, output io.Writer) error {
 	flags.Int64Var(&perVMMemory, "per-vm-memory-bytes", 0, "per-VM memory ceiling")
 	flags.Int64Var(&perVMDisk, "per-vm-guest-disk-bytes", 0, "per-VM guest disk ceiling")
 	flags.Int64Var(&vmSlots, "vm-slots", 0, "VM slots")
-	flags.Int64Var(&runConsumers, "run-consumers", 0, "run consumers")
 	flags.Int64Var(&buildExecutors, "build-executors", 0, "build executors")
 	flags.Int64Var(&runtimeStarts, "runtime-starts", 0, "concurrent runtime starts")
 	flags.Int64Var(&buildCache, "build-cache-bytes", 0, "build/substrate cache")
@@ -64,7 +63,7 @@ func runManifest(arguments []string, output io.Writer) error {
 		SupportsRun: roleSet["run"], SupportsBuild: roleSet["build"], Runtime: runtimeProfile,
 		Capacity: capacityapi.ResourceVector{
 			CPUMillis: capacityCPU, MemoryBytes: capacityMemory, GuestEphemeralDiskBytes: capacityDisk,
-			VMSlots: vmSlots, RunConsumers: runConsumers, BuildExecutors: buildExecutors,
+			VMSlots: vmSlots, BuildExecutors: buildExecutors,
 		},
 		PerVM:            capacityapi.ResourceVector{CPUMillis: perVMCPU, MemoryBytes: perVMMemory, GuestEphemeralDiskBytes: perVMDisk},
 		MaxRuntimeStarts: runtimeStarts, BuildCacheBytes: buildCache, ArtifactCacheBytes: artifactCache,

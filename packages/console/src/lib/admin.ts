@@ -23,7 +23,6 @@ export type AdminWorkerGroup = {
   required_build_cache_bytes: number;
   required_artifact_cache_bytes: number;
   required_vm_slots: number;
-  observation_ttl_seconds: number;
 };
 
 export type CreateAdminWorkerGroupInput = Omit<AdminWorkerGroup, "id" | "state" | "claim_version">;

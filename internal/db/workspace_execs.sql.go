@@ -2072,9 +2072,6 @@ SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.p
     ON worker_instances.id = workspace_processes.worker_instance_id
    AND worker_instances.worker_group_id = workspace_processes.worker_group_id
    AND worker_instances.current_epoch = workspace_processes.worker_epoch
-  JOIN worker_observations
-    ON worker_observations.worker_instance_id = worker_instances.id
-   AND worker_observations.worker_epoch = worker_instances.current_epoch
   JOIN runtime_instances
     ON runtime_instances.id = workspace_processes.runtime_instance_id
    AND runtime_instances.org_id = workspace_processes.org_id
@@ -2119,9 +2116,9 @@ SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.p
            AND worker_instances.supports_run
            AND worker_instances.runtime_identity_id = runtime_instances.runtime_identity_id
 		   AND runtime_identities.vm_runtime_contract = 'helmr.vm-runtime.v0'
-           AND worker_observations.observed_at >= transaction_timestamp()
-               - worker_groups.observation_ttl_seconds * interval '1 second'
-           AND worker_observations.run_paused_reason IS NULL
+           AND worker_instances.observed_at >= transaction_timestamp()
+               - $6::bigint * interval '1 second'
+           AND worker_instances.run_paused_reason IS NULL
            AND runtime_instances.desired_state = 'ready'
            AND runtime_instances.observed_state = 'ready'
            AND runtime_instances.observed_desired_version = runtime_instances.desired_version
@@ -2135,17 +2132,18 @@ SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.p
            AND runtime_substrates.substrate_contract = worker_instances.substrate_contract
        )
    )
- FOR UPDATE OF worker_groups, worker_instances, worker_observations,
+ FOR UPDATE OF worker_groups, worker_instances,
                runtime_instances, workspace_processes, workspace_mounts,
                workspace_leases
 `
 
 type LockWorkspaceExecWorkerAuthorityParams struct {
-	OrgID            pgtype.UUID `json:"org_id"`
-	ProcessID        pgtype.UUID `json:"process_id"`
-	WorkspaceMountID pgtype.UUID `json:"workspace_mount_id"`
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch      int64       `json:"worker_epoch"`
+	OrgID                       pgtype.UUID `json:"org_id"`
+	ProcessID                   pgtype.UUID `json:"process_id"`
+	WorkspaceMountID            pgtype.UUID `json:"workspace_mount_id"`
+	WorkerInstanceID            pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch                 int64       `json:"worker_epoch"`
+	ObservationFreshnessSeconds int64       `json:"observation_freshness_seconds"`
 }
 
 type LockWorkspaceExecWorkerAuthorityRow struct {
@@ -2162,6 +2160,7 @@ func (q *Queries) LockWorkspaceExecWorkerAuthority(ctx context.Context, arg Lock
 		arg.WorkspaceMountID,
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
+		arg.ObservationFreshnessSeconds,
 	)
 	var i LockWorkspaceExecWorkerAuthorityRow
 	err := row.Scan(

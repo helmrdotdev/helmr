@@ -16,41 +16,37 @@ SELECT workers.id,
        workers.worker_group_id,
        workers.current_epoch,
        workers.state,
-       COALESCE(observations.observed_at, workers.epoch_started_at, workers.updated_at) AS freshness_at,
+       COALESCE(workers.observed_at, workers.activated_at, workers.epoch_started_at, workers.updated_at) AS freshness_at,
        CASE
-           WHEN workers.state = 'registering' AND observations.worker_instance_id IS NULL
+           WHEN workers.state = 'registering' AND workers.observed_at IS NULL
                THEN 'registering_observation_missing'
            ELSE 'worker_observation_stale'
        END::text AS reason
   FROM worker_instances AS workers
-  JOIN worker_groups AS groups
-    ON groups.id = workers.worker_group_id
-  LEFT JOIN worker_observations AS observations
-    ON observations.worker_instance_id = workers.id
-   AND observations.worker_epoch = workers.current_epoch
  WHERE workers.state IN ('registering', 'active', 'draining')
    AND ($1::text = '' OR workers.worker_group_id = $1::text)
    AND (
        (workers.state = 'registering'
-        AND observations.worker_instance_id IS NULL
+        AND workers.observed_at IS NULL
         AND COALESCE(workers.epoch_started_at, workers.updated_at)
             < $2)
        OR
        (workers.state IN ('active', 'draining')
-        AND COALESCE(observations.observed_at, workers.epoch_started_at, workers.updated_at)
+        AND COALESCE(workers.observed_at, workers.activated_at, workers.epoch_started_at, workers.updated_at)
             < transaction_timestamp()
-              - groups.observation_ttl_seconds * interval '1 second')
+                - $3::bigint * interval '1 second')
    )
- ORDER BY COALESCE(observations.observed_at, workers.epoch_started_at, workers.updated_at),
+ ORDER BY COALESCE(workers.observed_at, workers.activated_at, workers.epoch_started_at, workers.updated_at),
           workers.id
- LIMIT $3
+ LIMIT $4
  FOR UPDATE OF workers SKIP LOCKED
 `
 
 type ListStaleWorkerFenceCandidatesParams struct {
-	WorkerGroupID           string             `json:"worker_group_id"`
-	RegistrationStaleBefore pgtype.Timestamptz `json:"registration_stale_before"`
-	RowLimit                int32              `json:"row_limit"`
+	WorkerGroupID               string             `json:"worker_group_id"`
+	RegistrationStaleBefore     pgtype.Timestamptz `json:"registration_stale_before"`
+	ObservationFreshnessSeconds int64              `json:"observation_freshness_seconds"`
+	RowLimit                    int32              `json:"row_limit"`
 }
 
 type ListStaleWorkerFenceCandidatesRow struct {
@@ -63,7 +59,12 @@ type ListStaleWorkerFenceCandidatesRow struct {
 }
 
 func (q *Queries) ListStaleWorkerFenceCandidates(ctx context.Context, arg ListStaleWorkerFenceCandidatesParams) ([]ListStaleWorkerFenceCandidatesRow, error) {
-	rows, err := q.db.Query(ctx, listStaleWorkerFenceCandidates, arg.WorkerGroupID, arg.RegistrationStaleBefore, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listStaleWorkerFenceCandidates,
+		arg.WorkerGroupID,
+		arg.RegistrationStaleBefore,
+		arg.ObservationFreshnessSeconds,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -96,35 +97,22 @@ WITH target AS (
            claim_version = workers.claim_version + 1,
            lost_at = COALESCE(workers.lost_at, now()),
            updated_at = now()
-      FROM worker_groups AS groups
      WHERE workers.id = $1
-       AND groups.id = workers.worker_group_id
        AND workers.worker_group_id = $2
        AND workers.current_epoch IS NOT DISTINCT FROM $3
        AND workers.state IN ('registering', 'active', 'draining')
        AND (
            (workers.state = 'registering'
-            AND NOT EXISTS (
-                SELECT 1
-                  FROM worker_observations AS observations
-                 WHERE observations.worker_instance_id = workers.id
-                   AND observations.worker_epoch = workers.current_epoch
-            )
+            AND workers.observed_at IS NULL
             AND COALESCE(workers.epoch_started_at, workers.updated_at)
                 < $4)
            OR
            (workers.state IN ('active', 'draining')
-            AND COALESCE(
-                    (SELECT observations.observed_at
-                       FROM worker_observations AS observations
-                      WHERE observations.worker_instance_id = workers.id
-                        AND observations.worker_epoch = workers.current_epoch),
-                    workers.epoch_started_at,
-                    workers.updated_at
-                ) < transaction_timestamp()
-                  - groups.observation_ttl_seconds * interval '1 second')
+            AND COALESCE(workers.observed_at, workers.activated_at, workers.epoch_started_at, workers.updated_at)
+                < transaction_timestamp()
+                    - $5::bigint * interval '1 second')
        )
-    RETURNING workers.id, workers.resource_id, workers.worker_group_id, workers.state, workers.claim_version, workers.current_epoch, workers.current_service_id, workers.supervisor_version, workers.supports_run, workers.supports_build, workers.runtime_identity_id, workers.substrate_format, workers.substrate_contract, workers.epoch_cpu_millis, workers.epoch_memory_bytes, workers.epoch_guest_ephemeral_disk_bytes, workers.epoch_build_cache_bytes, workers.epoch_artifact_cache_bytes, workers.epoch_hugepages_bytes, workers.epoch_checkpoint_bytes, workers.per_vm_cpu_millis, workers.per_vm_memory_bytes, workers.per_vm_guest_ephemeral_disk_bytes, workers.max_vm_slots, workers.max_run_consumers, workers.max_build_executors, workers.max_runtime_starts, workers.epoch_started_at, workers.activated_at, workers.draining_at, workers.termination_ready_at, workers.lost_at, workers.created_at, workers.updated_at
+    RETURNING workers.id, workers.resource_id, workers.worker_group_id, workers.state, workers.claim_version, workers.current_epoch, workers.current_service_id, workers.supervisor_version, workers.supports_run, workers.supports_build, workers.runtime_identity_id, workers.substrate_format, workers.substrate_contract, workers.epoch_cpu_millis, workers.epoch_memory_bytes, workers.epoch_guest_ephemeral_disk_bytes, workers.epoch_build_cache_bytes, workers.epoch_artifact_cache_bytes, workers.per_vm_cpu_millis, workers.per_vm_memory_bytes, workers.per_vm_guest_ephemeral_disk_bytes, workers.max_vm_slots, workers.max_build_executors, workers.max_runtime_starts, workers.observed_at, workers.run_paused_reason, workers.build_paused_reason, workers.runtime_paused_reason, workers.epoch_started_at, workers.activated_at, workers.draining_at, workers.termination_ready_at, workers.lost_at, workers.created_at, workers.updated_at
 ), revoked_credentials AS (
     UPDATE worker_instance_credentials AS credentials
        SET revoked_at = COALESCE(credentials.revoked_at, now())
@@ -135,7 +123,7 @@ WITH target AS (
 ), lost_mounts AS (
     UPDATE workspace_mounts AS mounts
        SET state = 'lost', lost_at = now(), terminal_at = now(),
-           terminal_reason_code = $5, updated_at = now()
+           terminal_reason_code = $6, updated_at = now()
       FROM target
      WHERE mounts.worker_instance_id = target.id
        AND mounts.worker_epoch = target.current_epoch
@@ -145,7 +133,7 @@ WITH target AS (
     UPDATE runtime_instances AS runtimes
        SET observed_state = 'lost', observed_version = runtimes.observed_version + 1,
            observed_at = now(), lost_at = now(), terminal_at = now(),
-           terminal_reason_code = $5,
+           terminal_reason_code = $6,
            reserved_run_id = NULL, reserved_attempt_number = NULL,
            reserved_process_id = NULL, reserved_workspace_version_id = NULL,
            reservation_expires_at = NULL, updated_at = now()
@@ -164,11 +152,12 @@ SELECT target.id, target.worker_group_id, target.current_epoch, target.state
 `
 
 type RecheckAndFenceStaleWorkerInstanceParams struct {
-	ID                      pgtype.UUID        `json:"id"`
-	WorkerGroupID           string             `json:"worker_group_id"`
-	ExpectedEpoch           pgtype.Int8        `json:"expected_epoch"`
-	RegistrationStaleBefore pgtype.Timestamptz `json:"registration_stale_before"`
-	ReasonCode              pgtype.Text        `json:"reason_code"`
+	ID                          pgtype.UUID        `json:"id"`
+	WorkerGroupID               string             `json:"worker_group_id"`
+	ExpectedEpoch               pgtype.Int8        `json:"expected_epoch"`
+	RegistrationStaleBefore     pgtype.Timestamptz `json:"registration_stale_before"`
+	ObservationFreshnessSeconds int64              `json:"observation_freshness_seconds"`
+	ReasonCode                  pgtype.Text        `json:"reason_code"`
 }
 
 type RecheckAndFenceStaleWorkerInstanceRow struct {
@@ -187,6 +176,7 @@ func (q *Queries) RecheckAndFenceStaleWorkerInstance(ctx context.Context, arg Re
 		arg.WorkerGroupID,
 		arg.ExpectedEpoch,
 		arg.RegistrationStaleBefore,
+		arg.ObservationFreshnessSeconds,
 		arg.ReasonCode,
 	)
 	var i RecheckAndFenceStaleWorkerInstanceRow

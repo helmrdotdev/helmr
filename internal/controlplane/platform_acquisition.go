@@ -34,9 +34,10 @@ func (s *Server) workerNextPlatformAcquisition(w http.ResponseWriter, r *http.Re
 	row, err := s.db.GetNextDeploymentPlatformAcquisition(
 		r.Context(),
 		db.GetNextDeploymentPlatformAcquisitionParams{
-			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerGroupID:    worker.WorkerGroupID,
-			WorkerEpoch:      pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
+			WorkerInstanceID:            pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerGroupID:               worker.WorkerGroupID,
+			WorkerEpoch:                 pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
+			ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
 		},
 	)
 	if isNoRows(err) {

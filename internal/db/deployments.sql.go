@@ -34,15 +34,12 @@ WITH candidate AS (
         ON runtime_identities.id = worker_instances.runtime_identity_id
        AND runtime_identities.runtime_arch = 'x86_64'
 	       AND runtime_identities.vm_runtime_contract = 'helmr.vm-runtime.v0'
-      JOIN worker_observations
-        ON worker_observations.worker_instance_id = worker_instances.id
-       AND worker_observations.worker_epoch = worker_instances.current_epoch
-       AND worker_observations.observed_at >= transaction_timestamp()
-           - worker_groups.observation_ttl_seconds * interval '1 second'
-       AND worker_observations.build_paused_reason IS NULL
      WHERE deployment_build_leases.worker_group_id = $1
-       AND deployment_build_leases.worker_instance_id = $2
-       AND deployment_build_leases.worker_epoch = $3
+       AND worker_instances.observed_at >= transaction_timestamp()
+           - $2::bigint * interval '1 second'
+       AND worker_instances.build_paused_reason IS NULL
+       AND deployment_build_leases.worker_instance_id = $3
+       AND deployment_build_leases.worker_epoch = $4
        AND worker_instances.per_vm_cpu_millis >= deployment_build_leases.requested_cpu_millis
        AND worker_instances.per_vm_memory_bytes >= deployment_build_leases.requested_memory_bytes
        AND worker_instances.per_vm_guest_ephemeral_disk_bytes >=
@@ -58,7 +55,7 @@ WITH candidate AS (
 ), claimed AS (
     UPDATE deployment_build_leases
        SET state = 'starting', claimed_at = now(), renewed_at = now(),
-           expires_at = $4, updated_at = now()
+           expires_at = $5, updated_at = now()
       FROM candidate
      WHERE deployment_build_leases.id = candidate.id
     RETURNING deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_guest_ephemeral_disk_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at
@@ -87,10 +84,11 @@ SELECT claimed.id, claimed.org_id, claimed.project_id, claimed.environment_id, c
 `
 
 type ClaimNextDeploymentBuildLeaseParams struct {
-	WorkerGroupID    string             `json:"worker_group_id"`
-	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch      int64              `json:"worker_epoch"`
-	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	WorkerGroupID               string             `json:"worker_group_id"`
+	ObservationFreshnessSeconds int64              `json:"observation_freshness_seconds"`
+	WorkerInstanceID            pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                 int64              `json:"worker_epoch"`
+	ExpiresAt                   pgtype.Timestamptz `json:"expires_at"`
 }
 
 type ClaimNextDeploymentBuildLeaseRow struct {
@@ -146,6 +144,7 @@ type ClaimNextDeploymentBuildLeaseRow struct {
 func (q *Queries) ClaimNextDeploymentBuildLease(ctx context.Context, arg ClaimNextDeploymentBuildLeaseParams) (ClaimNextDeploymentBuildLeaseRow, error) {
 	row := q.db.QueryRow(ctx, claimNextDeploymentBuildLease,
 		arg.WorkerGroupID,
+		arg.ObservationFreshnessSeconds,
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
 		arg.ExpiresAt,
@@ -1489,13 +1488,10 @@ SELECT deployments.id,
    AND worker_groups.state = 'active'
    AND worker_groups.allows_build
    AND worker_groups.region_id = deployments.build_region_id
-  JOIN worker_observations
-    ON worker_observations.worker_instance_id = worker_instances.id
-   AND worker_observations.worker_epoch = worker_instances.current_epoch
-   AND worker_observations.observed_at >= transaction_timestamp()
-       - worker_groups.observation_ttl_seconds * interval '1 second'
-   AND worker_observations.build_paused_reason IS NULL
  WHERE deployments.status = 'queued'
+   AND worker_instances.observed_at >= transaction_timestamp()
+       - $4::bigint * interval '1 second'
+   AND worker_instances.build_paused_reason IS NULL
    AND deployments.current_build_lease_id IS NULL
    AND deployments.build_runtime_digest IS NULL
    AND deployments.build_toolchain_digest IS NULL
@@ -1505,9 +1501,10 @@ SELECT deployments.id,
 `
 
 type GetNextDeploymentPlatformAcquisitionParams struct {
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WorkerGroupID    string      `json:"worker_group_id"`
-	WorkerEpoch      pgtype.Int8 `json:"worker_epoch"`
+	WorkerInstanceID            pgtype.UUID `json:"worker_instance_id"`
+	WorkerGroupID               string      `json:"worker_group_id"`
+	WorkerEpoch                 pgtype.Int8 `json:"worker_epoch"`
+	ObservationFreshnessSeconds int64       `json:"observation_freshness_seconds"`
 }
 
 type GetNextDeploymentPlatformAcquisitionRow struct {
@@ -1523,7 +1520,12 @@ type GetNextDeploymentPlatformAcquisitionRow struct {
 }
 
 func (q *Queries) GetNextDeploymentPlatformAcquisition(ctx context.Context, arg GetNextDeploymentPlatformAcquisitionParams) (GetNextDeploymentPlatformAcquisitionRow, error) {
-	row := q.db.QueryRow(ctx, getNextDeploymentPlatformAcquisition, arg.WorkerInstanceID, arg.WorkerGroupID, arg.WorkerEpoch)
+	row := q.db.QueryRow(ctx, getNextDeploymentPlatformAcquisition,
+		arg.WorkerInstanceID,
+		arg.WorkerGroupID,
+		arg.WorkerEpoch,
+		arg.ObservationFreshnessSeconds,
+	)
 	var i GetNextDeploymentPlatformAcquisitionRow
 	err := row.Scan(
 		&i.ID,
@@ -2294,7 +2296,7 @@ WITH locked_group AS MATERIALIZED (
        AND worker_groups.allows_build
      FOR UPDATE
 )
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.epoch_build_cache_bytes, worker_instances.epoch_artifact_cache_bytes, worker_instances.epoch_hugepages_bytes, worker_instances.epoch_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at,
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.epoch_build_cache_bytes, worker_instances.epoch_artifact_cache_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.build_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at,
        runtime_identities.rootfs_digest,
        runtime_identities.vm_runtime_contract,
        runtime_identities.runtime_arch
@@ -2335,15 +2337,16 @@ type LockDeploymentBuildWorkerAuthorityRow struct {
 	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
 	EpochBuildCacheBytes         int64              `json:"epoch_build_cache_bytes"`
 	EpochArtifactCacheBytes      int64              `json:"epoch_artifact_cache_bytes"`
-	EpochHugepagesBytes          int64              `json:"epoch_hugepages_bytes"`
-	EpochCheckpointBytes         int64              `json:"epoch_checkpoint_bytes"`
 	PerVMCPUMillis               int64              `json:"per_vm_cpu_millis"`
 	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
 	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
 	MaxVMSlots                   int32              `json:"max_vm_slots"`
-	MaxRunConsumers              int32              `json:"max_run_consumers"`
 	MaxBuildExecutors            int32              `json:"max_build_executors"`
 	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
+	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
+	RunPausedReason              pgtype.Text        `json:"run_paused_reason"`
+	BuildPausedReason            pgtype.Text        `json:"build_paused_reason"`
+	RuntimePausedReason          pgtype.Text        `json:"runtime_paused_reason"`
 	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
 	ActivatedAt                  pgtype.Timestamptz `json:"activated_at"`
 	DrainingAt                   pgtype.Timestamptz `json:"draining_at"`
@@ -2378,15 +2381,16 @@ func (q *Queries) LockDeploymentBuildWorkerAuthority(ctx context.Context, arg Lo
 		&i.EpochGuestEphemeralDiskBytes,
 		&i.EpochBuildCacheBytes,
 		&i.EpochArtifactCacheBytes,
-		&i.EpochHugepagesBytes,
-		&i.EpochCheckpointBytes,
 		&i.PerVMCPUMillis,
 		&i.PerVMMemoryBytes,
 		&i.PerVMGuestEphemeralDiskBytes,
 		&i.MaxVMSlots,
-		&i.MaxRunConsumers,
 		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
+		&i.ObservedAt,
+		&i.RunPausedReason,
+		&i.BuildPausedReason,
+		&i.RuntimePausedReason,
 		&i.EpochStartedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,

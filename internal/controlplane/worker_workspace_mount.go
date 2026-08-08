@@ -272,6 +272,7 @@ func (s *Server) workerStopWorkspaceMount(w http.ResponseWriter, r *http.Request
 					OrgID: params.orgID, ProcessID: locator.ID,
 					WorkspaceMountID: params.mount.ID,
 					WorkerInstanceID: params.workerID, WorkerEpoch: params.epoch,
+					ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
 				},
 			)
 			if err != nil {
