@@ -222,6 +222,8 @@ with_platform_publisher() {
     AWS_ACCESS_KEY_ID="${access_key_id}" \
     AWS_SECRET_ACCESS_KEY="${secret_access_key}" \
     AWS_SESSION_TOKEN="${session_token}" \
+    AWS_REGION="${AWS_REGION}" \
+    AWS_DEFAULT_REGION="${AWS_REGION}" \
     "$@"
 }
 
