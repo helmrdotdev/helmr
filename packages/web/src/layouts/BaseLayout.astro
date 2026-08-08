@@ -21,6 +21,7 @@ type Props = {
   noindex?: boolean;
   jsonLd?: JsonLdNode | JsonLdNode[];
   enableClientRouter?: boolean;
+  minimalHeader?: boolean;
 };
 
 const {
@@ -33,6 +34,7 @@ const {
   noindex = false,
   jsonLd = [],
   enableClientRouter = false,
+  minimalHeader = false,
 } = Astro.props;
 
 const canonicalUrl = absoluteUrl(path, Astro.site?.toString() ?? SITE.url);
@@ -109,12 +111,20 @@ const structuredData = serializeJsonLd(jsonLdGraph(graphNodes));
           Helmr
         </a>
         <div class="nav-links">
-          <a href="/docs/quickstart" data-astro-prefetch="viewport">Quickstart</a>
-          <a href="/docs" data-astro-prefetch="viewport">Docs</a>
-          <a href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">GitHub</a>
+          {
+            !minimalHeader && (
+              <slot name="header-links">
+                <a href="/docs/quickstart" data-astro-prefetch="viewport">Quickstart</a>
+                <a href="/docs" data-astro-prefetch="viewport">Docs</a>
+                <a href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">GitHub</a>
+              </slot>
+            )
+          }
         </div>
         <div class="nav-actions">
-          <a class="btn btn-dark btn-sm" href="/docs/quickstart" data-astro-prefetch="viewport">Start building</a>
+          <slot name="header-actions">
+            <a class="btn btn-dark btn-sm" href="/docs/quickstart" data-astro-prefetch="viewport">Start building</a>
+          </slot>
         </div>
       </nav>
     </header>
