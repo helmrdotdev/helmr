@@ -29,6 +29,16 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
+func TestWorkspaceMaterializerUsesStartupTimeout(t *testing.T) {
+	if got := (WorkspaceMaterializer{}).startupTimeout(); got != workspaceStartupTimeout {
+		t.Fatalf("startup timeout = %s, want %s", got, workspaceStartupTimeout)
+	}
+	custom := time.Second
+	if got := (WorkspaceMaterializer{StartupTimeout: custom}).startupTimeout(); got != custom {
+		t.Fatalf("custom startup timeout = %s, want %s", got, custom)
+	}
+}
+
 func testWorkspaceMountArtifacts(t *testing.T) (*fakeCAS, workerapi.WorkspaceMount) {
 	t.Helper()
 	store := &fakeCAS{objects: map[string][]byte{}}

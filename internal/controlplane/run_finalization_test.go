@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -81,7 +82,7 @@ func TestBeginRunFinalizationFreezesAuthorityAndReplays(t *testing.T) {
 		store.authority.run.ActiveStartedAt.Valid {
 		t.Fatalf("finalization state = %+v, writes = %d", store.authority, store.finalizationWrites)
 	}
-	wantExpiry := store.finalizationTime.Time.Add(server.runFinalizationTTL)
+	wantExpiry := store.finalizationTime.Time.Add(run.FinalizationTTL)
 	if !first.ExpiresAt.Equal(wantExpiry) ||
 		!store.authority.workspaceLease.ExpiresAt.Time.Equal(wantExpiry) ||
 		first.OperationID != request.OperationID || first.Kind != request.Kind ||
@@ -332,7 +333,6 @@ func validRunFinalizationFixture(
 	t.Helper()
 	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
 	now := store.renewalTime.Time
-	server.runFinalizationTTL = 30 * time.Minute
 	store.authority.attempt.EntrypointEnteredAt = pgvalue.Timestamptz(now.Add(-30 * time.Second))
 	store.finalizationTime = pgvalue.Timestamptz(now)
 	store.finalizationClear = pgtype.Bool{Bool: true, Valid: true}

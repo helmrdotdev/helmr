@@ -29,7 +29,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/imagecache"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -45,7 +44,6 @@ const (
 	secretRequestBodyLimit     = int64(1 << 20)
 	adminRequestBodyLimit      = int64(64 << 10)
 	maxPageSize                = int32(500)
-	defaultRunLeaseTTL         = 5 * time.Minute
 )
 
 type SecretManager interface {
@@ -90,8 +88,6 @@ type Server struct {
 	telemetryReader       telemetry.Reader
 	workerTokenSigningKey []byte
 	workerTokenTTL        time.Duration
-	runLeaseTTL           time.Duration
-	runFinalizationTTL    time.Duration
 	workerEnrollmentGuard *workerEnrollmentGuard
 	capacityTokenHash     []byte
 	setupToken            string
@@ -143,8 +139,6 @@ type ServerConfig struct {
 
 	WorkerTokenSigningKey []byte
 	WorkerTokenTTL        time.Duration
-	RunLeaseTTL           time.Duration
-	RunFinalizationTTL    time.Duration
 	CapacityToken         string
 	SetupToken            string
 	AuthKey               []byte
@@ -222,23 +216,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if workerTokenTTL <= 0 {
 		workerTokenTTL = defaultWorkerTokenTTL
 	}
-	runLeaseTTL := cfg.RunLeaseTTL
-	if runLeaseTTL <= 0 {
-		runLeaseTTL = defaultRunLeaseTTL
-	}
-	if runLeaseTTL < workerapi.RunLeaseMinTTL {
-		return nil, fmt.Errorf("run lease TTL must be at least %s", workerapi.RunLeaseMinTTL)
-	}
-	runFinalizationTTL := cfg.RunFinalizationTTL
-	if runFinalizationTTL <= 0 {
-		runFinalizationTTL = 30 * time.Minute
-	}
-	if runFinalizationTTL < workerapi.RunFinalizationMinTTL {
-		return nil, fmt.Errorf(
-			"run finalization TTL must be at least %s",
-			workerapi.RunFinalizationMinTTL,
-		)
-	}
 	adminEmails := make(map[string]struct{}, len(cfg.AdminEmails))
 	for _, address := range cfg.AdminEmails {
 		address = normalizeEmailAddress(address)
@@ -271,8 +248,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		telemetryReader:       telemetryReader,
 		workerTokenSigningKey: cfg.WorkerTokenSigningKey,
 		workerTokenTTL:        workerTokenTTL,
-		runLeaseTTL:           runLeaseTTL,
-		runFinalizationTTL:    runFinalizationTTL,
 		workerEnrollmentGuard: newWorkerEnrollmentGuard(),
 		capacityTokenHash:     capacityTokenHash,
 		setupToken:            cfg.SetupToken,

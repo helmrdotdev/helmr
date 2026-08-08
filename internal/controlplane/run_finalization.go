@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -174,7 +175,7 @@ func (s *Server) beginRunFinalization(
 		if !now.Time.Before(hardDeadline) {
 			return errStaleRunFinalization
 		}
-		expiresAt := now.Time.Add(s.runFinalizationTTL)
+		expiresAt := now.Time.Add(run.FinalizationTTL)
 		minimum := authority.runLease.ExpiresAt.Time.Add(time.Microsecond)
 		if expiresAt.Before(minimum) {
 			expiresAt = minimum

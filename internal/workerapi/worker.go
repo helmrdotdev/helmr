@@ -40,8 +40,6 @@ type RunLeaseDiscoveryRequest struct{}
 const (
 	WorkerObservationInterval         = 30 * time.Second
 	WorkerObservationFreshnessSeconds = int64(120)
-	RunLeaseMinTTL                    = 30 * time.Second
-	RunFinalizationMinTTL             = 20 * time.Minute
 	RunFinalizationTerminalTail       = 10 * time.Minute
 	RunFinalizationReplayTail         = 30 * time.Second
 )
@@ -112,7 +110,6 @@ type Capabilities struct {
 	SupportsRun               bool   `json:"supports_run"`
 	SupportsBuild             bool   `json:"supports_build"`
 	MaxBuildExecutors         int32  `json:"max_build_executors"`
-	MaxRuntimeStarts          int32  `json:"max_runtime_starts"`
 	BuildCacheBytes           int64  `json:"build_cache_bytes"`
 	ArtifactCacheBytes        int64  `json:"artifact_cache_bytes"`
 }

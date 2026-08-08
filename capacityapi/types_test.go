@@ -20,7 +20,6 @@ func TestWorkerReleaseManifestFingerprintAndValidation(t *testing.T) {
 		PerVM: ResourceVector{
 			CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 32 << 30,
 		},
-		MaxRuntimeStarts: 2,
 	}
 	fingerprint, err := manifest.ExpectedFingerprint()
 	if err != nil {

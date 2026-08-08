@@ -564,16 +564,15 @@ func workerActivationParams(
 	worker workerActor,
 	c workerapi.Capabilities,
 ) db.ActivateWorkerInstanceParams {
-	supportsRun := c.SupportsRun
-	maxRuntimeStarts := c.MaxRuntimeStarts
-	if supportsRun && maxRuntimeStarts == 0 {
-		maxRuntimeStarts = c.ExecutionSlotsAvailable
+	runStarts := int32(0)
+	if c.SupportsRun {
+		runStarts = c.ExecutionSlotsAvailable
 	}
 	return db.ActivateWorkerInstanceParams{
 		RuntimeIdentityID: c.RuntimeID, RuntimeArch: c.RuntimeArch, VMRuntimeContract: c.VMRuntimeContract,
 		KernelDigest: c.KernelDigest, InitramfsDigest: c.InitramfsDigest, RootfsDigest: c.RootfsDigest,
 		SupervisorVersion: c.WorkerVersion,
-		SupportsRun:       supportsRun, SupportsBuild: c.SupportsBuild,
+		SupportsRun:       c.SupportsRun, SupportsBuild: c.SupportsBuild,
 		SubstrateFormat: c.SubstrateFormat, SubstrateContract: c.SubstrateContract,
 		EpochCPUMillis: c.MaxVCPUs * 1000, EpochMemoryBytes: c.MaxMemoryMiB * 1024 * 1024,
 		EpochGuestEphemeralDiskBytes: c.GuestEphemeralDiskBytes,
@@ -581,7 +580,7 @@ func workerActivationParams(
 		PerVMCPUMillis: c.VMMilliCPU, PerVMMemoryBytes: c.VMMemoryMiB * 1024 * 1024,
 		PerVMGuestEphemeralDiskBytes: c.VMGuestEphemeralDiskBytes,
 		MaxVMSlots:                   c.ExecutionSlotsAvailable,
-		MaxBuildExecutors:            c.MaxBuildExecutors, MaxRuntimeStarts: maxRuntimeStarts,
+		MaxBuildExecutors:            c.MaxBuildExecutors, MaxRuntimeStarts: runStarts,
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
 		WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
 	}
@@ -608,7 +607,6 @@ func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabi
 		SupportsRun:               input.SupportsRun,
 		SupportsBuild:             input.SupportsBuild,
 		MaxBuildExecutors:         input.MaxBuildExecutors,
-		MaxRuntimeStarts:          input.MaxRuntimeStarts,
 		BuildCacheBytes:           input.BuildCacheBytes,
 		ArtifactCacheBytes:        input.ArtifactCacheBytes,
 	}
@@ -677,9 +675,6 @@ func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabi
 	}
 	if !capabilities.SupportsBuild && capabilities.MaxBuildExecutors != 0 {
 		return workerapi.Capabilities{}, errors.New("worker max_build_executors must be zero without build role")
-	}
-	if capabilities.SupportsRun && capabilities.MaxRuntimeStarts <= 0 {
-		return workerapi.Capabilities{}, errors.New("worker max_runtime_starts must be positive for run role")
 	}
 	if capabilities.SupportsRun {
 		if capabilities.SubstrateFormat == "" {

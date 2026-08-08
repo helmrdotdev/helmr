@@ -6,9 +6,54 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func TestWorkerActivationDerivesRuntimeStartsFromRunSlots(t *testing.T) {
+	worker := workerActor{WorkerGroupID: "group", WorkerEpoch: 1}
+	runWorker := validWorkerCapabilities(t)
+	if got := workerActivationParams(worker, runWorker).MaxRuntimeStarts; got != runWorker.ExecutionSlotsAvailable {
+		t.Fatalf("run max runtime starts = %d, want %d", got, runWorker.ExecutionSlotsAvailable)
+	}
+	buildWorker := runWorker
+	buildWorker.SupportsRun = false
+	if got := workerActivationParams(worker, buildWorker).MaxRuntimeStarts; got != 0 {
+		t.Fatalf("build max runtime starts = %d, want zero", got)
+	}
+}
+
+func validWorkerCapabilities(t *testing.T) workerapi.Capabilities {
+	t.Helper()
+	c := workerapi.Capabilities{
+		WorkerVersion:             "dev",
+		RuntimeArch:               "x86_64",
+		VMRuntimeContract:         runtimeid.Contract,
+		KernelDigest:              "sha256:kernel",
+		InitramfsDigest:           "sha256:initramfs",
+		RootfsDigest:              "sha256:rootfs",
+		SubstrateFormat:           "ext4",
+		SubstrateContract:         "helmr.substrate.v0",
+		MaxVCPUs:                  8,
+		MaxMemoryMiB:              16 << 10,
+		VMMilliCPU:                2_000,
+		VMMemoryMiB:               2 << 10,
+		GuestEphemeralDiskBytes:   64 << 30,
+		VMGuestEphemeralDiskBytes: 8 << 30,
+		ExecutionSlotsAvailable:   4,
+		SupportsRun:               true,
+	}
+	id, err := runtimeid.Digest(runtimeid.Selector{
+		Arch: c.RuntimeArch, Contract: c.VMRuntimeContract,
+		KernelDigest: c.KernelDigest, InitramfsDigest: c.InitramfsDigest, RootfsDigest: c.RootfsDigest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.RuntimeID = id
+	return c
+}
 
 func TestWorkerRoleReadinessReportsMissingObservation(t *testing.T) {
 	readiness := workerRoleReadiness(db.GetWorkerInstanceStateRow{

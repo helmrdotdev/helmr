@@ -2941,11 +2941,6 @@ func newRunPlacementFixture(t *testing.T) runPlacementFixture {
 	fixture.authority, err = NewRunAuthority(
 		pool,
 		fixture.fencingKey,
-		RunPlacementPolicy{
-			ReservationTTL: 5 * time.Minute,
-			StartDeadline:  time.Minute,
-			LeaseTTL:       5 * time.Minute,
-		},
 	)
 	if err != nil {
 		t.Fatal(err)

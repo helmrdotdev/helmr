@@ -81,11 +81,6 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	runDispatchAuthority, err := dispatch.NewRunAuthority(
 		runDispatchPool,
 		workspaceFencingKey,
-		dispatch.RunPlacementPolicy{
-			ReservationTTL: cfg.RunReservationTTL,
-			StartDeadline:  cfg.RunLeaseStartDeadline,
-			LeaseTTL:       cfg.RunLeaseTTL,
-		},
 	)
 	if err != nil {
 		return fmt.Errorf("configure run dispatch authority: %w", err)
@@ -193,15 +188,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure schedule admission: %w", err)
 	}
-	scheduleWorker, err := schedule.NewWorker(
-		log,
-		queries,
-		scheduleAdmitter,
-		schedule.WithPollInterval(cfg.SchedulePollInterval),
-		schedule.WithClaimLimit(int32(cfg.ScheduleClaimLimit)),
-		schedule.WithConcurrency(int32(cfg.ScheduleConcurrency)),
-		schedule.WithClaimLease(cfg.ScheduleClaimLease),
-	)
+	scheduleWorker, err := schedule.NewWorker(log, queries, scheduleAdmitter)
 	if err != nil {
 		return fmt.Errorf("configure schedule worker: %w", err)
 	}

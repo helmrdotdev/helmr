@@ -24,8 +24,6 @@ func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
 	t.Setenv("DATABASE_URL", databaseURL)
 	t.Setenv("REDIS_URL", "redis://"+redisServer.Addr()+"/0")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:1")
-	t.Setenv("SCHEDULE_POLL_INTERVAL", "50ms")
-	t.Setenv("SCHEDULE_CLAIM_LEASE", "100ms")
 	t.Setenv("WORKSPACE_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 
 	runCtx, cancel := context.WithCancel(context.Background())

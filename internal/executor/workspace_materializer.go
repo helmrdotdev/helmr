@@ -29,6 +29,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const workspaceStartupTimeout = 20 * time.Minute
+
 type WorkspaceMaterializer struct {
 	Connector             vm.Connector
 	CAS                   cas.Store
@@ -1436,7 +1438,7 @@ func (m WorkspaceMaterializer) startupTimeout() time.Duration {
 	if m.StartupTimeout > 0 {
 		return m.StartupTimeout
 	}
-	return 20 * time.Minute
+	return workspaceStartupTimeout
 }
 
 func (m WorkspaceMaterializer) failureTimeout() time.Duration {

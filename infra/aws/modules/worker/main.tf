@@ -54,7 +54,8 @@ locals {
     VM_MEMORY_MIB                     = tostring(var.vm_memory_mib)
     VM_SCRATCH_DISK_MIB               = tostring(var.vm_scratch_disk_mib)
     VM_INIT_TIMEOUT                   = "30s"
-    VM_HEALTH_TIMEOUT                 = "300s"
+    # EC2 workers allow extra time for first-boot guest health convergence.
+    VM_HEALTH_TIMEOUT = "300s"
     }, contains(var.worker_roles, "build") ? {
     BUILD_POLICY_PATH                 = "/etc/helmr/build-policy.json"
     WORKER_BUILD_CACHE_DIR            = "/var/lib/helmr/cache"

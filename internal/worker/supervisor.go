@@ -204,9 +204,6 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	}
 	if capabilities.SupportsRun && runtimeQuarantines != 0 {
 		capabilities.ExecutionSlotsAvailable -= int32(runtimeQuarantines)
-		if capabilities.MaxRuntimeStarts > capabilities.ExecutionSlotsAvailable {
-			capabilities.MaxRuntimeStarts = capabilities.ExecutionSlotsAvailable
-		}
 		if capabilities.ExecutionSlotsAvailable <= 0 {
 			return errors.New("all runtime execution slots remain quarantined after startup recovery")
 		}

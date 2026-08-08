@@ -252,8 +252,6 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		Mailer:                mailer,
 		AuthProvider:          authProvider,
 		WorkerTokenSigningKey: cfg.WorkerTokenSigningKey,
-		RunLeaseTTL:           cfg.RunLeaseTTL,
-		RunFinalizationTTL:    cfg.RunFinalizationTTL,
 		CapacityToken:         cfg.CapacityToken,
 		SetupToken:            cfg.SetupToken,
 		AuthKey:               cfg.AuthKey,

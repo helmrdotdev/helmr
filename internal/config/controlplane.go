@@ -4,9 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
-
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func LoadControlPlane() (ControlPlane, error) {
@@ -56,30 +53,9 @@ func LoadControlPlane() (ControlPlane, error) {
 		EmailFrom:               envText("EMAIL_FROM"),
 		GitHubOAuthClientID:     envText("GITHUB_OAUTH_CLIENT_ID"),
 		GitHubOAuthClientSecret: envSecret("GITHUB_OAUTH_CLIENT_SECRET"),
-		RunLeaseTTL:             5 * time.Minute,
-		RunFinalizationTTL:      30 * time.Minute,
-	}
-	if cfg.RunLeaseTTL, err = envDuration("RUN_LEASE_TTL", cfg.RunLeaseTTL); err != nil {
-		return cfg, err
-	}
-	if cfg.RunFinalizationTTL, err = envDuration("RUN_FINALIZATION_TTL", cfg.RunFinalizationTTL); err != nil {
-		return cfg, err
 	}
 	if cfg.ImageCache, err = loadImageCache(); err != nil {
 		return cfg, err
-	}
-	if cfg.RunLeaseTTL < workerapi.RunLeaseMinTTL {
-		return cfg, fmt.Errorf(
-			"RUN_LEASE_TTL must be at least %s",
-			workerapi.RunLeaseMinTTL,
-		)
-	}
-	if cfg.RunFinalizationTTL < workerapi.RunFinalizationMinTTL ||
-		cfg.RunFinalizationTTL > 24*time.Hour {
-		return cfg, fmt.Errorf(
-			"RUN_FINALIZATION_TTL must be between %s and 24h",
-			workerapi.RunFinalizationMinTTL,
-		)
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("DATABASE_URL is required")

@@ -104,23 +104,6 @@ The dispatcher uses the same single base64-encoded 32-byte
 The AWS Control Plane module provisions cluster-mode disabled ElastiCache Valkey/Redis and injects
 `REDIS_URL` into both `helmr-controlplane` and `helmr-dispatcher`.
 
-Optional Run placement tuning:
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `RUN_RESERVATION_TTL` | `5m` | Lifetime of a cold runtime reservation before fenced cleanup is required. |
-| `RUN_LEASE_START_DEADLINE` | `1m` | Time allowed for a worker to claim a newly assigned Run Lease. |
-| `RUN_LEASE_TTL` | `5m` | Operational lifetime sampled when a Run and Workspace Lease are granted or renewed. Must be at least the start deadline. |
-
-Optional Schedule worker tuning:
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `SCHEDULE_POLL_INTERVAL` | `1s` | How often the dispatcher claims due Schedule cursors from PostgreSQL. |
-| `SCHEDULE_CLAIM_LIMIT` | `100` | Maximum due Schedule rows claimed per poll; must be an integer from 1 through 2147483647. |
-| `SCHEDULE_CONCURRENCY` | `10` | Maximum concurrent Schedule admission transactions per dispatcher; must be an integer from 1 through 2147483647. |
-| `SCHEDULE_CLAIM_LEASE` | `5m` | PostgreSQL claim lease held while one Schedule cursor is admitted. |
-
 ## Worker
 
 Required for every Worker: `CONTROL_PLANE_URL`, `CAS_URI`,
@@ -148,4 +131,4 @@ per-instance credential stored at `WORKER_INSTANCE_CREDENTIAL_PATH`.
 physical Worker. Provider identity and infrastructure inventory are deployment
 responsibilities rather than Control Plane authentication inputs.
 
-Runtime inputs include `WORKER_WORK_DIR`, `WORKER_IMAGES_DIR`, Firecracker paths and jailer settings, routed-network link and translation pools, resolver and blocked CIDRs, `VM_VCPUS`, `VM_MEMORY_MIB`, `WORKER_DISK_MIB`, and `VM_HEALTH_TIMEOUT`. `WORKER_DISK_MIB` overrides the filesystem capacity advertised by filesystem-first worker instances. Workspace-image builds start the pinned BuildKit daemon inside a fresh image-build guest; there is no host BuildKit address or service setting.
+Runtime inputs include `WORKER_WORK_DIR`, `WORKER_IMAGES_DIR`, Firecracker paths and jailer settings, routed-network link and translation pools, resolver and blocked CIDRs, `VM_VCPUS`, `VM_MEMORY_MIB`, `WORKER_DISK_MIB`, and `VM_HEALTH_TIMEOUT`. `WORKER_DISK_MIB` overrides the filesystem capacity advertised by filesystem-first worker instances. The AWS Worker profile sets `VM_HEALTH_TIMEOUT=300s` to allow extra time for first-boot guest health convergence on EC2; other deployments use the Worker default unless they have the same provider-level requirement. Workspace-image builds start the pinned BuildKit daemon inside a fresh image-build guest; there is no host BuildKit address or service setting.

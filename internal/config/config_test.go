@@ -89,18 +89,11 @@ func TestLoadImageCacheIsAbsentOrCompletelyConfigured(t *testing.T) {
 	}
 }
 
-func TestLoadDispatcherReadsScheduleClaimConfig(t *testing.T) {
+func TestLoadDispatcherReadsConnectionConfig(t *testing.T) {
 	setDispatcherFencing(t)
 	t.Setenv("DATABASE_URL", " postgres://example ")
 	t.Setenv("REDIS_URL", " redis://redis.example.test:6379/0 ")
 	t.Setenv("CLICKHOUSE_URL", " https://clickhouse.example.test ")
-	t.Setenv("SCHEDULE_POLL_INTERVAL", " 250ms ")
-	t.Setenv("SCHEDULE_CLAIM_LIMIT", " 25 ")
-	t.Setenv("SCHEDULE_CONCURRENCY", " 4 ")
-	t.Setenv("SCHEDULE_CLAIM_LEASE", " 2m ")
-	t.Setenv("RUN_RESERVATION_TTL", " 3m ")
-	t.Setenv("RUN_LEASE_START_DEADLINE", " 30s ")
-	t.Setenv("RUN_LEASE_TTL", " 4m ")
 
 	cfg, err := LoadDispatcher()
 	if err != nil {
@@ -108,70 +101,8 @@ func TestLoadDispatcherReadsScheduleClaimConfig(t *testing.T) {
 	}
 	if cfg.DatabaseURL != "postgres://example" ||
 		cfg.RedisURL != "redis://redis.example.test:6379/0" ||
-		cfg.ClickHouseURL != "https://clickhouse.example.test" ||
-		cfg.SchedulePollInterval != 250*time.Millisecond ||
-		cfg.ScheduleClaimLimit != 25 ||
-		cfg.ScheduleConcurrency != 4 ||
-		cfg.ScheduleClaimLease != 2*time.Minute ||
-		cfg.RunReservationTTL != 3*time.Minute ||
-		cfg.RunLeaseStartDeadline != 30*time.Second ||
-		cfg.RunLeaseTTL != 4*time.Minute {
+		cfg.ClickHouseURL != "https://clickhouse.example.test" {
 		t.Fatalf("config = %+v", cfg)
-	}
-}
-
-func TestLoadDispatcherRejectsNonPositiveScheduleClaimConfig(t *testing.T) {
-	for _, variable := range []string{
-		"SCHEDULE_POLL_INTERVAL",
-		"SCHEDULE_CLAIM_LIMIT",
-		"SCHEDULE_CONCURRENCY",
-		"SCHEDULE_CLAIM_LEASE",
-	} {
-		t.Run(variable, func(t *testing.T) {
-			setDispatcherFencing(t)
-			t.Setenv("DATABASE_URL", "postgres://example")
-			t.Setenv("CLICKHOUSE_URL", "https://clickhouse.example.test")
-			t.Setenv(variable, "0")
-
-			_, err := LoadDispatcher()
-			if err == nil {
-				t.Fatalf("expected %s validation error", variable)
-			}
-		})
-	}
-}
-
-func TestLoadDispatcherRejectsScheduleClaimConfigAboveInt32(t *testing.T) {
-	setDispatcherFencing(t)
-	t.Setenv("DATABASE_URL", "postgres://example")
-	t.Setenv("CLICKHOUSE_URL", "https://clickhouse.example.test")
-	t.Setenv("SCHEDULE_CLAIM_LIMIT", "2147483648")
-
-	if _, err := LoadDispatcher(); err == nil {
-		t.Fatal("expected Schedule claim limit error")
-	}
-}
-
-func TestLoadDispatcherRejectsInvalidRunLeasePolicy(t *testing.T) {
-	setDispatcherFencing(t)
-	t.Setenv("DATABASE_URL", "postgres://example")
-	t.Setenv("CLICKHOUSE_URL", "https://clickhouse.example.test")
-	t.Setenv("RUN_LEASE_START_DEADLINE", "6m")
-	t.Setenv("RUN_LEASE_TTL", "5m")
-
-	if _, err := LoadDispatcher(); err == nil {
-		t.Fatal("expected Run Lease policy error")
-	}
-}
-
-func TestLoadDispatcherRejectsRunLeaseTTLBelowWorkerContract(t *testing.T) {
-	setDispatcherFencing(t)
-	t.Setenv("DATABASE_URL", "postgres://example")
-	t.Setenv("CLICKHOUSE_URL", "https://clickhouse.example.test")
-	t.Setenv("RUN_LEASE_START_DEADLINE", "10s")
-	t.Setenv("RUN_LEASE_TTL", "29s")
-	if _, err := LoadDispatcher(); err == nil {
-		t.Fatal("LoadDispatcher() accepted a Run Lease TTL below the worker contract")
 	}
 }
 
@@ -217,14 +148,12 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	t.Setenv("EMAIL_FROM", " Helmr <noreply@example.test> ")
 	t.Setenv("GITHUB_OAUTH_CLIENT_ID", " client-id ")
 	t.Setenv("GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
-	t.Setenv("RUN_LEASE_TTL", " 4m ")
-	t.Setenv("RUN_FINALIZATION_TTL", " 45m ")
 
 	cfg, err := LoadControlPlane()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerTokenSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.WorkspaceFencingKey, bytes.Repeat([]byte{2}, 32)) || !bytes.Equal(cfg.TokenCredentialKey, bytes.Repeat([]byte{3}, 32)) || cfg.PublicURL != "https://helmr.example.test" || cfg.APIOrigin != "https://api.helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" || cfg.RunLeaseTTL != 4*time.Minute || cfg.RunFinalizationTTL != 45*time.Minute {
+	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerTokenSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.WorkspaceFencingKey, bytes.Repeat([]byte{2}, 32)) || !bytes.Equal(cfg.TokenCredentialKey, bytes.Repeat([]byte{3}, 32)) || cfg.PublicURL != "https://helmr.example.test" || cfg.APIOrigin != "https://api.helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -245,39 +174,8 @@ func TestLoadControlPlaneDefaultsToSelfHostedDeploymentMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.RunLeaseTTL != 5*time.Minute {
-		t.Fatalf("Run Lease TTL = %s", cfg.RunLeaseTTL)
-	}
-	if cfg.RunFinalizationTTL != 30*time.Minute {
-		t.Fatalf("Run finalization TTL = %s", cfg.RunFinalizationTTL)
-	}
-}
-
-func TestLoadControlPlaneRejectsNonPositiveRunLeaseTTL(t *testing.T) {
-	t.Setenv("RUN_LEASE_TTL", "0")
-	if _, err := LoadControlPlane(); err == nil || !strings.Contains(err.Error(), "RUN_LEASE_TTL") {
-		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestLoadControlPlaneRejectsRunLeaseTTLBelowWorkerContract(t *testing.T) {
-	t.Setenv("RUN_LEASE_TTL", "29s")
-	if _, err := LoadControlPlane(); err == nil || !strings.Contains(err.Error(), "RUN_LEASE_TTL") {
-		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestLoadControlPlaneRejectsNonPositiveRunFinalizationTTL(t *testing.T) {
-	t.Setenv("RUN_FINALIZATION_TTL", "0")
-	if _, err := LoadControlPlane(); err == nil || !strings.Contains(err.Error(), "RUN_FINALIZATION_TTL") {
-		t.Fatalf("error = %v", err)
-	}
-}
-
-func TestLoadControlPlaneRejectsFinalizationTTLBelowWorkerContract(t *testing.T) {
-	t.Setenv("RUN_FINALIZATION_TTL", "19m")
-	if _, err := LoadControlPlane(); err == nil || !strings.Contains(err.Error(), "RUN_FINALIZATION_TTL") {
-		t.Fatalf("error = %v", err)
+	if cfg.DeploymentMode != DeploymentModeSelfHosted {
+		t.Fatalf("DeploymentMode = %q", cfg.DeploymentMode)
 	}
 }
 
@@ -666,8 +564,6 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("WORKER_ROLES", " build,run ")
 	t.Setenv("VM_INIT_TIMEOUT", " 45s ")
 	t.Setenv("VM_HEALTH_TIMEOUT", " 90s ")
-	t.Setenv("VM_HEALTH_ATTEMPT_TIMEOUT", " 7s ")
-	t.Setenv("WORKSPACE_MOUNT_STARTUP_TIMEOUT", " 3m ")
 
 	cfg, err := LoadWorker()
 	if err != nil {
@@ -676,7 +572,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if cfg.CASURI != "s3://helmr-cas" || cfg.WorkDir != "/var/lib/helmr/scratch/worker" || cfg.BuildCacheDir != "/var/lib/helmr/cache" || cfg.BuildScratchDir != "/var/lib/helmr/scratch" || cfg.ImagesDir != "/var/lib/helmr/images" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.NetworkLinkPool != "169.254.128.0/18" || cfg.NetworkTranslationPool != "100.97.0.0/16" || cfg.NetworkResolverIPv4 != "1.0.0.1" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerDiskReserveMiB != 2048 || cfg.SubstrateCacheMaxMiB != 32768 || cfg.ArtifactCacheMaxMiB != 16384 || cfg.WorkerExecutionSlots != 4 || cfg.VMInitTimeout != 45*time.Second || cfg.VMHealthTimeout != 90*time.Second || cfg.VMHealthAttemptTimeout != 7*time.Second || cfg.WorkspaceMountStartupTimeout != 3*time.Minute {
+	if cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.NetworkLinkPool != "169.254.128.0/18" || cfg.NetworkTranslationPool != "100.97.0.0/16" || cfg.NetworkResolverIPv4 != "1.0.0.1" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerDiskReserveMiB != 2048 || cfg.SubstrateCacheMaxMiB != 32768 || cfg.ArtifactCacheMaxMiB != 16384 || cfg.WorkerExecutionSlots != 4 || cfg.VMInitTimeout != 45*time.Second || cfg.VMHealthTimeout != 90*time.Second {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if len(cfg.NetworkBlockedIPv4CIDRs) != 2 || cfg.NetworkBlockedIPv4CIDRs[1].String() != "169.254.0.0/16" {
@@ -735,7 +631,7 @@ func TestLoadWorkerDoesNotRequireEnrollmentTokenFileToExistAtStartup(t *testing.
 	}
 }
 
-func TestLoadWorkerReadsExplicitRolesAndCapacities(t *testing.T) {
+func TestLoadWorkerReadsExplicitRolesAndExecutionSlots(t *testing.T) {
 	setWorkerRuntimeEnv(t, false)
 	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
 	t.Setenv("CAS_URI", "s3://helmr-cas")
@@ -744,24 +640,13 @@ func TestLoadWorkerReadsExplicitRolesAndCapacities(t *testing.T) {
 	t.Setenv("JAILER_GID", "1002")
 	t.Setenv("WORKER_ROLES", "run")
 	t.Setenv("WORKER_EXECUTION_SLOTS", "4")
-	t.Setenv("WORKER_RUNTIME_STARTS", "2")
 
 	cfg, err := LoadWorker()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !stringSlicesEqual(cfg.WorkerRoles, []string{"run"}) || cfg.WorkerRuntimeStarts != 2 || cfg.PreparedRuntimePoolSize != 2 {
+	if !stringSlicesEqual(cfg.WorkerRoles, []string{"run"}) || cfg.WorkerExecutionSlots != 4 {
 		t.Fatalf("config = %+v", cfg)
-	}
-}
-
-func TestLoadWorkerRejectsRuntimePoolBelowRuntimeStarts(t *testing.T) {
-	setWorkerEnrollmentEnv(t)
-	for key, value := range map[string]string{"CONTROL_PLANE_URL": "https://api.example.test", "CAS_URI": "s3://helmr-cas", "CHECKPOINT_ENCRYPTION_KEY": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=", "JAILER_UID": "1001", "JAILER_GID": "1002", "WORKER_ROLES": "run", "WORKER_RUNTIME_STARTS": "2", "WORKER_PREPARED_RUNTIME_POOL_SIZE": "1"} {
-		t.Setenv(key, value)
-	}
-	if _, err := LoadWorker(); err == nil {
-		t.Fatal("undersized runtime pool accepted")
 	}
 }
 
@@ -819,45 +704,5 @@ func TestLoadWorkerRejectsInvalidVMNumbers(t *testing.T) {
 	_, err := LoadWorker()
 	if err == nil {
 		t.Fatal("expected invalid memory error")
-	}
-}
-
-func TestLoadWorkerRejectsHealthAttemptLongerThanHealthTimeout(t *testing.T) {
-	setWorkerEnrollmentEnv(t)
-	t.Setenv("WORKER_NETWORK_BLOCKED_IPV4_CIDRS", "[]")
-	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
-	t.Setenv("CAS_URI", "s3://helmr-cas")
-	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("JAILER_UID", "1001")
-	t.Setenv("JAILER_GID", "1002")
-	t.Setenv("WORKER_ROLES", "build,run")
-	t.Setenv("VM_HEALTH_TIMEOUT", "5s")
-	t.Setenv("VM_HEALTH_ATTEMPT_TIMEOUT", "6s")
-
-	_, err := LoadWorker()
-	if err == nil {
-		t.Fatal("expected health attempt timeout error")
-	}
-	if got, want := err.Error(), "VM_HEALTH_ATTEMPT_TIMEOUT"; !strings.HasPrefix(got, want) {
-		t.Fatalf("error = %q", got)
-	}
-}
-
-func TestLoadWorkerClampsDefaultHealthAttemptToShortHealthTimeout(t *testing.T) {
-	setWorkerRuntimeEnv(t, true)
-	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
-	t.Setenv("CAS_URI", "s3://helmr-cas")
-	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("JAILER_UID", "1001")
-	t.Setenv("JAILER_GID", "1002")
-	t.Setenv("WORKER_ROLES", "build,run")
-	t.Setenv("VM_HEALTH_TIMEOUT", "1s")
-
-	cfg, err := LoadWorker()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.VMHealthAttemptTimeout != time.Second {
-		t.Fatalf("VMHealthAttemptTimeout = %s, want 1s", cfg.VMHealthAttemptTimeout)
 	}
 }

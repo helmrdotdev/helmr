@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -148,7 +149,7 @@ SELECT transaction_timestamp(),
 	}
 	q := db.New(tx)
 	leaseExpiresAt := pgtype.Timestamptz{
-		Time:  grantedAt.Add(d.runPolicy.LeaseTTL),
+		Time:  grantedAt.Add(run.LeaseTTL),
 		Valid: true,
 	}
 	lease, err := q.InsertAssignedRunLease(
@@ -178,7 +179,7 @@ SELECT transaction_timestamp(),
 				Valid:  authority.rootSpanID != "",
 			},
 			StartDeadlineAt: pgtype.Timestamptz{
-				Time:  grantedAt.Add(d.runPolicy.StartDeadline),
+				Time:  grantedAt.Add(run.StartDeadline),
 				Valid: true,
 			},
 			ExpiresAt: leaseExpiresAt,

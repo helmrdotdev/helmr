@@ -21,7 +21,7 @@ func runManifest(arguments []string, output io.Writer) error {
 	var runtimeProfileFile, roles, workerVersion string
 	var capacityCPU, capacityMemory, capacityDisk int64
 	var perVMCPU, perVMMemory, perVMDisk int64
-	var vmSlots, buildExecutors, runtimeStarts int64
+	var vmSlots, buildExecutors int64
 	var buildCache, artifactCache int64
 	flags.StringVar(&runtimeProfileFile, "runtime-profile-file", "", "attested runtime profile JSON from Worker image production")
 	flags.StringVar(&workerVersion, "worker-version", "", "exact source commit injected into the Worker binary")
@@ -34,7 +34,6 @@ func runManifest(arguments []string, output io.Writer) error {
 	flags.Int64Var(&perVMDisk, "per-vm-guest-disk-bytes", 0, "per-VM guest disk ceiling")
 	flags.Int64Var(&vmSlots, "vm-slots", 0, "VM slots")
 	flags.Int64Var(&buildExecutors, "build-executors", 0, "build executors")
-	flags.Int64Var(&runtimeStarts, "runtime-starts", 0, "concurrent runtime starts")
 	flags.Int64Var(&buildCache, "build-cache-bytes", 0, "build/substrate cache")
 	flags.Int64Var(&artifactCache, "artifact-cache-bytes", 0, "artifact cache")
 	if err := flags.Parse(arguments); err != nil {
@@ -65,8 +64,8 @@ func runManifest(arguments []string, output io.Writer) error {
 			CPUMillis: capacityCPU, MemoryBytes: capacityMemory, GuestEphemeralDiskBytes: capacityDisk,
 			VMSlots: vmSlots, BuildExecutors: buildExecutors,
 		},
-		PerVM:            capacityapi.ResourceVector{CPUMillis: perVMCPU, MemoryBytes: perVMMemory, GuestEphemeralDiskBytes: perVMDisk},
-		MaxRuntimeStarts: runtimeStarts, BuildCacheBytes: buildCache, ArtifactCacheBytes: artifactCache,
+		PerVM:           capacityapi.ResourceVector{CPUMillis: perVMCPU, MemoryBytes: perVMMemory, GuestEphemeralDiskBytes: perVMDisk},
+		BuildCacheBytes: buildCache, ArtifactCacheBytes: artifactCache,
 	}
 	if manifest.SupportsRun {
 		manifest.Substrate = capacityapi.SubstrateProfile{Format: capacityapi.SubstrateFormatExt4, Contract: capacityapi.SubstrateContractExt4}
