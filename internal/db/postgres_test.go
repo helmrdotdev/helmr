@@ -139,9 +139,7 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	pool := database.Pool
 	queries := db.New(pool)
 	if _, err := queries.CreateRegion(ctx, db.CreateRegionParams{
-		ID: dbtest.DefaultRegionID, Provider: dbtest.DefaultProvider,
-		ProviderRegion: dbtest.DefaultProviderRegion, DisplayName: dbtest.DefaultRegionDisplay,
-		State: db.RegionStateAvailable,
+		ID: dbtest.DefaultRegionID, DisplayName: dbtest.DefaultRegionDisplay,
 	}); err != nil {
 		t.Fatal(err)
 	}

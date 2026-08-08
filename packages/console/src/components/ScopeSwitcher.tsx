@@ -55,9 +55,7 @@ export function ScopeSwitcher() {
     retry: false,
     staleTime: 60_000,
   }));
-  const availableRegions = createMemo(() =>
-	(regions.data?.regions ?? []).filter((region) => region.status === "available"),
-  );
+  const regionOptions = createMemo(() => regions.data?.regions ?? []);
 
   const filteredProjects = createMemo(() => {
     const q = projectQuery().trim().toLowerCase();
@@ -126,7 +124,7 @@ export function ScopeSwitcher() {
 
   createEffect(() => {
     if (creating() !== "project") return;
-    if (!selectedRegionID()) setSelectedRegionID(availableRegions()[0]?.id ?? "");
+    if (!selectedRegionID()) setSelectedRegionID(regionOptions()[0]?.id ?? "");
   });
 
   function closeAll() {
@@ -489,9 +487,9 @@ export function ScopeSwitcher() {
                 class={ui.input}
                 value={selectedRegionID()}
                 onChange={(event) => setSelectedRegionID(event.currentTarget.value)}
-                disabled={regions.isPending || availableRegions().length === 0}
+                disabled={regions.isPending || regionOptions().length === 0}
               >
-                <For each={availableRegions()}>
+                <For each={regionOptions()}>
                   {(region) => (
                     <option value={region.id}>
                       {region.display_name || region.id}

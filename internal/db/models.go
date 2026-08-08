@@ -741,14 +741,11 @@ type PublicAccessToken struct {
 }
 
 type Region struct {
-	ID             string             `json:"id"`
-	Provider       string             `json:"provider"`
-	ProviderRegion string             `json:"provider_region"`
-	DisplayName    string             `json:"display_name"`
-	State          string             `json:"state"`
-	Location       string             `json:"location"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	ID          string             `json:"id"`
+	DisplayName string             `json:"display_name"`
+	Location    string             `json:"location"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type RegistryCredentialResolution struct {

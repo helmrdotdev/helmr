@@ -15,21 +15,10 @@ type CreateOrganizationRequest struct {
 	SetupToken string `json:"setup_token"`
 }
 
-type RegionStatus string
-
-const (
-	RegionStatusAvailable RegionStatus = "available"
-	RegionStatusDraining  RegionStatus = "draining"
-	RegionStatusDisabled  RegionStatus = "disabled"
-)
-
 type RegionSummary struct {
-	ID             string       `json:"id"`
-	Provider       string       `json:"provider"`
-	ProviderRegion string       `json:"provider_region"`
-	DisplayName    string       `json:"display_name"`
-	Status         RegionStatus `json:"status"`
-	Location       string       `json:"location,omitempty"`
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	Location    string `json:"location,omitempty"`
 }
 
 type ListRegionsResponse struct {

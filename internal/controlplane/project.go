@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 
@@ -134,12 +133,11 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 			writeError(w, errors.New("list regions"))
 			return
 		}
-		if !slices.ContainsFunc(regions, func(candidate db.Region) bool {
-			return candidate.State == db.RegionStateAvailable
-		}) {
-			writeError(w, badRequest(errors.New("no available region")))
+		if len(regions) == 0 {
+			writeError(w, badRequest(errors.New("no region configured")))
 			return
 		}
+		defaultRegionID = regions[0].ID
 	}
 	if err := region.ValidateID(defaultRegionID); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid default_region_id: %w", err)))
@@ -154,9 +152,6 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			return errors.New("load default region")
-		}
-		if region.State != db.RegionStateAvailable {
-			return badRequest(errors.New("default region is not available"))
 		}
 		project, err = work.q.CreateProjectWithDefaultEnvironment(r.Context(), db.CreateProjectWithDefaultEnvironmentParams{
 			ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),

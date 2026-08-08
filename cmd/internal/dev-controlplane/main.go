@@ -24,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
+	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -71,10 +72,9 @@ func main() {
 		os.Exit(1)
 	}
 	if err := bootstrap.Apply(ctx, pool, bootstrap.Config{
-		Enabled: cfg.bootstrapEnabled, RegionID: cfg.bootstrapRegionID,
-		RegionProvider: cfg.bootstrapProvider, RegionProviderRegion: cfg.bootstrapProviderRegion,
-		RegionDisplayName: cfg.bootstrapRegionDisplayName, RegionLocation: cfg.bootstrapRegionLocation,
-		WorkerGroupName: cfg.bootstrapWorkerGroupName, WorkerToken: cfg.bootstrapWorkerToken,
+		Enabled: cfg.bootstrap.Enabled, RegionID: cfg.bootstrap.RegionID,
+		RegionDisplayName: cfg.bootstrap.RegionDisplayName, RegionLocation: cfg.bootstrap.RegionLocation,
+		WorkerGroupName: cfg.bootstrap.WorkerGroupName, WorkerToken: cfg.bootstrap.WorkerToken,
 	}); err != nil {
 		log.Error("bootstrap platform", "error", err)
 		os.Exit(1)
@@ -233,58 +233,45 @@ func main() {
 }
 
 type devConfig struct {
-	addr                       string
-	deploymentMode             string
-	databaseURL                string
-	bootstrapEnabled           bool
-	bootstrapRegionID          string
-	bootstrapProvider          string
-	bootstrapProviderRegion    string
-	bootstrapRegionDisplayName string
-	bootstrapRegionLocation    string
-	bootstrapWorkerGroupName   string
-	bootstrapWorkerToken       string
-	clickHouseURL              string
-	clickHouseUser             string
-	clickHousePassword         string
-	redisURL                   string
-	casDir                     string
-	buildPolicyPath            string
-	publicURL                  string
-	authKey                    []byte
-	setupToken                 string
-	workerTokenKey             []byte
-	encryptionKey              []byte
-	workspaceFencingKey        []byte
-	tokenCredentialKey         []byte
-	resetDatabase              bool
-	seedData                   bool
+	addr                string
+	deploymentMode      string
+	databaseURL         string
+	bootstrap           config.Bootstrap
+	clickHouseURL       string
+	clickHouseUser      string
+	clickHousePassword  string
+	redisURL            string
+	casDir              string
+	buildPolicyPath     string
+	publicURL           string
+	authKey             []byte
+	setupToken          string
+	workerTokenKey      []byte
+	encryptionKey       []byte
+	workspaceFencingKey []byte
+	tokenCredentialKey  []byte
+	resetDatabase       bool
+	seedData            bool
 }
 
 func loadConfig() (devConfig, error) {
-	cfg := devConfig{
-		addr:                       textEnv("CONTROL_PLANE_ADDR", defaultAddr),
-		deploymentMode:             textEnv("DEPLOYMENT_MODE", "self-hosted"),
-		databaseURL:                textEnv("DATABASE_URL", ""),
-		bootstrapRegionID:          textEnv("BOOTSTRAP_REGION_ID", ""),
-		bootstrapProvider:          textEnv("BOOTSTRAP_REGION_PROVIDER", ""),
-		bootstrapProviderRegion:    textEnv("BOOTSTRAP_REGION_PROVIDER_REGION", ""),
-		bootstrapRegionDisplayName: textEnv("BOOTSTRAP_REGION_DISPLAY_NAME", ""),
-		bootstrapRegionLocation:    textEnv("BOOTSTRAP_REGION_LOCATION", ""),
-		bootstrapWorkerGroupName:   textEnv("BOOTSTRAP_WORKER_GROUP_NAME", ""),
-		bootstrapWorkerToken:       secretEnv("BOOTSTRAP_WORKER_TOKEN", ""),
-		clickHouseURL:              textEnv("CLICKHOUSE_URL", ""),
-		clickHouseUser:             textEnv("CLICKHOUSE_USER", ""),
-		clickHousePassword:         secretEnv("CLICKHOUSE_PASSWORD", ""),
-		redisURL:                   textEnv("REDIS_URL", defaultRedisURL),
-		casDir:                     textEnv("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
-		buildPolicyPath:            textEnv("BUILD_POLICY_PATH", ""),
-		publicURL:                  textEnv("PUBLIC_URL", defaultPublicURL),
-		setupToken:                 secretEnv("SETUP_TOKEN", defaultSetupToken),
+	bootstrapConfig, err := config.LoadBootstrap()
+	if err != nil {
+		return devConfig{}, err
 	}
-	var err error
-	if cfg.bootstrapEnabled, err = boolEnv("BOOTSTRAP_ENABLED", false); err != nil {
-		return cfg, err
+	cfg := devConfig{
+		addr:               textEnv("CONTROL_PLANE_ADDR", defaultAddr),
+		deploymentMode:     textEnv("DEPLOYMENT_MODE", "self-hosted"),
+		databaseURL:        textEnv("DATABASE_URL", ""),
+		bootstrap:          bootstrapConfig,
+		clickHouseURL:      textEnv("CLICKHOUSE_URL", ""),
+		clickHouseUser:     textEnv("CLICKHOUSE_USER", ""),
+		clickHousePassword: secretEnv("CLICKHOUSE_PASSWORD", ""),
+		redisURL:           textEnv("REDIS_URL", defaultRedisURL),
+		casDir:             textEnv("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
+		buildPolicyPath:    textEnv("BUILD_POLICY_PATH", ""),
+		publicURL:          textEnv("PUBLIC_URL", defaultPublicURL),
+		setupToken:         secretEnv("SETUP_TOKEN", defaultSetupToken),
 	}
 	if cfg.resetDatabase, err = boolEnv("HELMR_DEV_RESET_DATABASE", false); err != nil {
 		return cfg, err

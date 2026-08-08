@@ -58,8 +58,8 @@ func New(t *testing.T) Fixture {
 	programDigest := dbtest.Digest("program")
 	imageDigest := dbtest.Digest("image")
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
-		INSERT INTO regions (id, provider, provider_region, display_name)
-		VALUES ($1, 'aws', $1, 'Run Lease Test')
+		INSERT INTO regions (id, display_name)
+		VALUES ($1, 'Run Lease Test')
 	`, Region)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		WITH token AS (

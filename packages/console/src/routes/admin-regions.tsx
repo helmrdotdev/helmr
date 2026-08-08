@@ -27,8 +27,6 @@ export function AdminRegions() {
     try {
       await createAdminRegion({
         id: String(form.get("id") ?? "").trim(),
-        provider: String(form.get("provider") ?? "").trim(),
-        provider_region: String(form.get("provider_region") ?? "").trim(),
         display_name: String(form.get("display_name") ?? "").trim(),
         location: String(form.get("location") ?? "").trim(),
       });
@@ -65,7 +63,7 @@ export function AdminRegions() {
   return (
     <div class={ui.page}>
       <div class={ui.pageHeader}>
-        <div><h1 class={ui.h1}>Regions</h1><p class={ui.pageSubtitle}>Placement and provider metadata available to projects and Worker Groups.</p></div>
+        <div><h1 class={ui.h1}>Regions</h1><p class={ui.pageSubtitle}>Logical placement domains available to projects and Worker Groups.</p></div>
         <button type="button" class={ui.button} onClick={() => { setError(null); setCreating(true); }}>New Region</button>
       </div>
       <Show when={!regions.isPending} fallback={<p class={ui.muted}>Loading Regions...</p>}>
@@ -73,12 +71,11 @@ export function AdminRegions() {
           <Show when={(regions.data?.regions.length ?? 0) > 0} fallback={<div class={ui.emptyState}><strong class="text-console-text">No Regions configured.</strong><button type="button" class={ui.button} onClick={() => setCreating(true)}>Create Region</button></div>}>
             <div class={ui.tableWrap}>
               <table class={ui.dataTable}>
-                <thead><tr><th>Region</th><th>Provider</th><th>Location</th><th>State</th><th></th></tr></thead>
+                <thead><tr><th>Region</th><th>Location</th><th></th></tr></thead>
                 <tbody><For each={regions.data?.regions ?? []}>{(region) => (
                   <tr>
                     <td><div class={ui.tableCellStack}><strong>{region.display_name}</strong><div><code>{region.id}</code></div></div></td>
-                    <td>{region.provider} / <code>{region.provider_region}</code></td>
-                    <td>{region.location || "—"}</td><td>{region.state}</td>
+                    <td>{region.location || "—"}</td>
                     <td class={ui.actionsCell}><button type="button" class={ui.secondaryButton} onClick={() => { setError(null); setEditing(region); }}>Edit</button></td>
                   </tr>
                 )}</For></tbody>
@@ -93,8 +90,6 @@ export function AdminRegions() {
           <form onSubmit={submitCreate}>
             <RegionField name="id" label="ID" placeholder="us-east-1" autofocus />
             <RegionField name="display_name" label="Display name" placeholder="US East" />
-            <RegionField name="provider" label="Provider" placeholder="aws" />
-            <RegionField name="provider_region" label="Provider Region" placeholder="us-east-1" />
             <RegionField name="location" label="Location" placeholder="Virginia, USA" />
             <Show when={error()}><p class={ui.fieldError} role="alert">{error()}</p></Show>
             <div class={ui.modalActions}><button type="button" class={ui.secondaryButton} onClick={() => setCreating(false)}>Cancel</button><button class={ui.button} disabled={submitting()}>{submitting() ? "Creating..." : "Create"}</button></div>

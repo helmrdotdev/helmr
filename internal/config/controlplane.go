@@ -10,6 +10,10 @@ import (
 )
 
 func LoadControlPlane() (ControlPlane, error) {
+	bootstrapConfig, err := LoadBootstrap()
+	if err != nil {
+		return ControlPlane{}, err
+	}
 	publicURL, err := normalizeOrigin("PUBLIC_URL", env("PUBLIC_URL", DefaultPublicURL))
 	if err != nil {
 		return ControlPlane{}, err
@@ -37,13 +41,7 @@ func LoadControlPlane() (ControlPlane, error) {
 		CASURI:                  envText("CAS_URI"),
 		BuildPolicyPath:         envText("BUILD_POLICY_PATH"),
 		PlatformStoreURI:        envText("PLATFORM_STORE_URI"),
-		BootstrapRegionID:       envText("BOOTSTRAP_REGION_ID"),
-		BootstrapRegionProvider: envText("BOOTSTRAP_REGION_PROVIDER"),
-		BootstrapProviderRegion: envText("BOOTSTRAP_REGION_PROVIDER_REGION"),
-		BootstrapRegionName:     envText("BOOTSTRAP_REGION_DISPLAY_NAME"),
-		BootstrapRegionLocation: envText("BOOTSTRAP_REGION_LOCATION"),
-		BootstrapWorkerGroup:    envText("BOOTSTRAP_WORKER_GROUP_NAME"),
-		BootstrapWorkerToken:    envSecret("BOOTSTRAP_WORKER_TOKEN"),
+		Bootstrap:               bootstrapConfig,
 		CapacityToken:           envSecret("CAPACITY_TOKEN"),
 		SetupToken:              envSecret("SETUP_TOKEN"),
 		PublicURL:               publicURL,
@@ -60,9 +58,6 @@ func LoadControlPlane() (ControlPlane, error) {
 		GitHubOAuthClientSecret: envSecret("GITHUB_OAUTH_CLIENT_SECRET"),
 		RunLeaseTTL:             5 * time.Minute,
 		RunFinalizationTTL:      30 * time.Minute,
-	}
-	if cfg.BootstrapEnabled, err = envBool("BOOTSTRAP_ENABLED", false); err != nil {
-		return cfg, err
 	}
 	if cfg.RunLeaseTTL, err = envDuration("RUN_LEASE_TTL", cfg.RunLeaseTTL); err != nil {
 		return cfg, err
@@ -134,7 +129,6 @@ func LoadControlPlane() (ControlPlane, error) {
 	}{
 		{"CAPACITY_TOKEN", cfg.CapacityToken},
 		{"SETUP_TOKEN", cfg.SetupToken},
-		{"BOOTSTRAP_WORKER_TOKEN", cfg.BootstrapWorkerToken},
 	} {
 		if strings.TrimSpace(token.value) != token.value {
 			return cfg, fmt.Errorf("%s must not have surrounding whitespace", token.name)
@@ -142,6 +136,25 @@ func LoadControlPlane() (ControlPlane, error) {
 	}
 	if cfg.DeploymentMode == DeploymentModeSelfHosted && cfg.SetupToken == "" {
 		return cfg, errors.New("SETUP_TOKEN is required when DEPLOYMENT_MODE is self-hosted")
+	}
+	return cfg, nil
+}
+
+func LoadBootstrap() (Bootstrap, error) {
+	enabled, err := envBool("BOOTSTRAP_ENABLED", false)
+	if err != nil {
+		return Bootstrap{}, err
+	}
+	if !enabled {
+		return Bootstrap{}, nil
+	}
+	cfg := Bootstrap{
+		Enabled:           true,
+		RegionID:          env("BOOTSTRAP_REGION_ID", "default"),
+		RegionDisplayName: envText("BOOTSTRAP_REGION_DISPLAY_NAME"),
+		RegionLocation:    envText("BOOTSTRAP_REGION_LOCATION"),
+		WorkerGroupName:   env("BOOTSTRAP_WORKER_GROUP_NAME", "default"),
+		WorkerToken:       envSecret("BOOTSTRAP_WORKER_TOKEN"),
 	}
 	return cfg, nil
 }

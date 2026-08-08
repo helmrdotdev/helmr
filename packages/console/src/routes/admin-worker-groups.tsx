@@ -156,7 +156,7 @@ export function AdminWorkerGroups() {
       <Show when={creating()}>
         <Modal title="New Worker Group" onClose={() => setCreating(false)} closeDisabled={submitting()}>
           <form onSubmit={submitCreate}>
-            <label class={ui.field}><span>Region</span><select name="region_id" class={ui.input} required autofocus><For each={(regions.data?.regions ?? []).filter((region) => region.state === "available")}>{(region) => <option value={region.id}>{region.display_name} ({region.id})</option>}</For></select></label>
+            <label class={ui.field}><span>Region</span><select name="region_id" class={ui.input} required autofocus><For each={regions.data?.regions ?? []}>{(region) => <option value={region.id}>{region.display_name} ({region.id})</option>}</For></select></label>
             <TextField name="name" label="Name" placeholder="default" required />
             <label class={ui.field}><span>Description</span><textarea class={ui.textarea} name="description" /></label>
             <fieldset class={ui.fieldSet}><legend class={ui.fieldLegend}>Roles</legend><label class="mr-4"><input type="checkbox" name="allows_run" checked /> Run</label><label><input type="checkbox" name="allows_build" checked /> Build</label></fieldset>

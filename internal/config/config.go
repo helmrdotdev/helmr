@@ -38,14 +38,7 @@ type ControlPlane struct {
 	BuildPolicyPath         string
 	PlatformStoreURI        string
 	WorkerTokenSigningKey   []byte
-	BootstrapEnabled        bool
-	BootstrapRegionID       string
-	BootstrapRegionProvider string
-	BootstrapProviderRegion string
-	BootstrapRegionName     string
-	BootstrapRegionLocation string
-	BootstrapWorkerGroup    string
-	BootstrapWorkerToken    string
+	Bootstrap               Bootstrap
 	CapacityToken           string
 	SetupToken              string
 	AuthKey                 []byte
@@ -67,6 +60,15 @@ type ControlPlane struct {
 	RunLeaseTTL             time.Duration
 	RunFinalizationTTL      time.Duration
 	ImageCache              *ImageCache
+}
+
+type Bootstrap struct {
+	Enabled           bool
+	RegionID          string
+	RegionDisplayName string
+	RegionLocation    string
+	WorkerGroupName   string
+	WorkerToken       string
 }
 
 type Dispatcher struct {

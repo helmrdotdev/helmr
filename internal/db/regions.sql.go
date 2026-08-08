@@ -10,43 +10,27 @@ import (
 )
 
 const createRegion = `-- name: CreateRegion :one
-INSERT INTO regions (id, provider, provider_region, display_name, state, location)
+INSERT INTO regions (id, display_name, location)
 VALUES (
     $1,
     $2,
-    $3,
-    $4,
-    $5::text,
-    $6::text
+    $3::text
 )
-RETURNING id, provider, provider_region, display_name, state, location, created_at, updated_at
+RETURNING id, display_name, location, created_at, updated_at
 `
 
 type CreateRegionParams struct {
-	ID             string `json:"id"`
-	Provider       string `json:"provider"`
-	ProviderRegion string `json:"provider_region"`
-	DisplayName    string `json:"display_name"`
-	State          string `json:"state"`
-	Location       string `json:"location"`
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	Location    string `json:"location"`
 }
 
 func (q *Queries) CreateRegion(ctx context.Context, arg CreateRegionParams) (Region, error) {
-	row := q.db.QueryRow(ctx, createRegion,
-		arg.ID,
-		arg.Provider,
-		arg.ProviderRegion,
-		arg.DisplayName,
-		arg.State,
-		arg.Location,
-	)
+	row := q.db.QueryRow(ctx, createRegion, arg.ID, arg.DisplayName, arg.Location)
 	var i Region
 	err := row.Scan(
 		&i.ID,
-		&i.Provider,
-		&i.ProviderRegion,
 		&i.DisplayName,
-		&i.State,
 		&i.Location,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -55,7 +39,7 @@ func (q *Queries) CreateRegion(ctx context.Context, arg CreateRegionParams) (Reg
 }
 
 const getRegion = `-- name: GetRegion :one
-SELECT id, provider, provider_region, display_name, state, location, created_at, updated_at
+SELECT id, display_name, location, created_at, updated_at
   FROM regions
  WHERE id = $1
 `
@@ -65,38 +49,7 @@ func (q *Queries) GetRegion(ctx context.Context, id string) (Region, error) {
 	var i Region
 	err := row.Scan(
 		&i.ID,
-		&i.Provider,
-		&i.ProviderRegion,
 		&i.DisplayName,
-		&i.State,
-		&i.Location,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const getRegionByProviderRegion = `-- name: GetRegionByProviderRegion :one
-SELECT id, provider, provider_region, display_name, state, location, created_at, updated_at
-  FROM regions
- WHERE provider = $1
-   AND provider_region = $2
-`
-
-type GetRegionByProviderRegionParams struct {
-	Provider       string `json:"provider"`
-	ProviderRegion string `json:"provider_region"`
-}
-
-func (q *Queries) GetRegionByProviderRegion(ctx context.Context, arg GetRegionByProviderRegionParams) (Region, error) {
-	row := q.db.QueryRow(ctx, getRegionByProviderRegion, arg.Provider, arg.ProviderRegion)
-	var i Region
-	err := row.Scan(
-		&i.ID,
-		&i.Provider,
-		&i.ProviderRegion,
-		&i.DisplayName,
-		&i.State,
 		&i.Location,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -105,7 +58,7 @@ func (q *Queries) GetRegionByProviderRegion(ctx context.Context, arg GetRegionBy
 }
 
 const listRegions = `-- name: ListRegions :many
-SELECT id, provider, provider_region, display_name, state, location, created_at, updated_at
+SELECT id, display_name, location, created_at, updated_at
   FROM regions
  ORDER BY lower(display_name), id
 `
@@ -121,10 +74,7 @@ func (q *Queries) ListRegions(ctx context.Context) ([]Region, error) {
 		var i Region
 		if err := rows.Scan(
 			&i.ID,
-			&i.Provider,
-			&i.ProviderRegion,
 			&i.DisplayName,
-			&i.State,
 			&i.Location,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -145,7 +95,7 @@ UPDATE regions
        location = $2,
        updated_at = now()
  WHERE id = $3
-RETURNING id, provider, provider_region, display_name, state, location, created_at, updated_at
+RETURNING id, display_name, location, created_at, updated_at
 `
 
 type UpdateRegionMetadataParams struct {
@@ -159,10 +109,7 @@ func (q *Queries) UpdateRegionMetadata(ctx context.Context, arg UpdateRegionMeta
 	var i Region
 	err := row.Scan(
 		&i.ID,
-		&i.Provider,
-		&i.ProviderRegion,
 		&i.DisplayName,
-		&i.State,
 		&i.Location,
 		&i.CreatedAt,
 		&i.UpdatedAt,

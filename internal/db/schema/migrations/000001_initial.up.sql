@@ -22,15 +22,10 @@ CREATE TABLE regions (
         AND id !~ '[[:cntrl:]]'
         AND id !~ '(^[[:space:]])|([[:space:]]$)'
     ),
-    provider TEXT NOT NULL CHECK (btrim(provider) <> ''),
-    provider_region TEXT NOT NULL CHECK (btrim(provider_region) <> ''),
     display_name TEXT NOT NULL CHECK (btrim(display_name) <> ''),
-    state TEXT NOT NULL DEFAULT 'available'
-        CHECK (state IN ('available', 'draining', 'disabled')),
     location TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (provider, provider_region)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE users (

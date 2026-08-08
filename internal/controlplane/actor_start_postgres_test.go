@@ -545,8 +545,8 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 	sourceID, programID, imageID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()),
 		uuid.Must(uuid.NewV7())
 	dbtest.MustExec(t, t.Context(), pool, `
-		INSERT INTO regions (id, provider, provider_region, display_name)
-		VALUES ('us-east-1', 'aws', 'us-east-1', 'Actor Start Test')
+		INSERT INTO regions (id, display_name)
+		VALUES ('us-east-1', 'Actor Start Test')
 	`)
 	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO organizations (id, name, slug)

@@ -46,16 +46,19 @@ Regions and Worker Groups are PostgreSQL resources managed through the Admin
 API and Console. Control Plane startup does not reconcile them from process
 configuration, and a deployment may start with neither resource.
 
-An optional bootstrap creates at most one initial Region and one combined
-run/build Worker Group. Set `BOOTSTRAP_ENABLED=true` together with
-`BOOTSTRAP_REGION_ID`, `BOOTSTRAP_REGION_PROVIDER`,
-`BOOTSTRAP_REGION_PROVIDER_REGION`, `BOOTSTRAP_WORKER_GROUP_NAME`, and
-`BOOTSTRAP_WORKER_TOKEN`. `BOOTSTRAP_REGION_DISPLAY_NAME` and
-`BOOTSTRAP_REGION_LOCATION` are optional. Bootstrap creates missing resources
-and never updates an existing Region or Worker Group. The token must use the
-`hlmr_wgt_` format; only its SHA-256 hash is stored in PostgreSQL.
+An optional startup bootstrap seeds one Region and one combined run/build
+Worker Group. Set `BOOTSTRAP_ENABLED=true`. When the named Worker
+Group does not exist, `BOOTSTRAP_WORKER_TOKEN` is also required.
+`BOOTSTRAP_REGION_ID` and
+`BOOTSTRAP_WORKER_GROUP_NAME` default to `default`.
+`BOOTSTRAP_REGION_DISPLAY_NAME` and `BOOTSTRAP_REGION_LOCATION` are optional.
+Bootstrap creates missing resources and never updates an existing Region or
+Worker Group. Changing either bootstrap identity can therefore create another
+missing seed; it does not rename or delete an existing resource. When needed,
+the token must use the `hlmr_wgt_` format; only its SHA-256 hash is stored in
+PostgreSQL.
 
-`BOOTSTRAP_REGION_ID` is an opaque Helmr identifier, not a provider-region or
+`BOOTSTRAP_REGION_ID` is an opaque Helmr identifier, not a provider Region or
 DNS name. Its normalized UTF-8 value must be 1–255 bytes and contain no
 surrounding whitespace or control characters.
 

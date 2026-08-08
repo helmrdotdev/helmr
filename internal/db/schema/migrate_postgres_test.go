@@ -131,7 +131,6 @@ func assertPrimitiveLifecycleSchema(
 	}
 
 	tableNames := []string{
-		"regions",
 		"worker_groups",
 		"telemetry_outbox",
 		"deletion_jobs",
@@ -158,7 +157,6 @@ func assertPrimitiveLifecycleSchema(
 		"workspace_processes",
 	}
 	columnNames := []string{
-		"state",
 		"state",
 		"state",
 		"status",
@@ -387,9 +385,9 @@ func assertArtifactCreatorAuthority(
 	}()
 	if _, err := tx.Exec(ctx, `
 INSERT INTO regions (
-    id, provider, provider_region, display_name
+    id, display_name
 ) VALUES (
-    'artifact-test-region', 'test', 'test-1', 'Artifact test'
+    'artifact-test-region', 'Artifact test'
 );
 INSERT INTO organizations (
     id, name, slug
@@ -1027,7 +1025,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		t.Fatalf("per-VM shape columns = %d, want 3", shapeColumns)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO regions (id, provider, provider_region, display_name) VALUES ('shape-region', 'test', 'shape-region', 'Shape Region');
+		INSERT INTO regions (id, display_name) VALUES ('shape-region', 'Shape Region');
 		INSERT INTO worker_group_tokens (id, token_hash)
 		VALUES ('00000000-0000-7000-8000-000000000097', decode(repeat('07', 32), 'hex'));
 		INSERT INTO worker_groups (id, token_id, region_id, name, observation_ttl_seconds)

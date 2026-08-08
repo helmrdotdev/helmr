@@ -1,12 +1,9 @@
 package api
 
 type AdminRegion struct {
-	ID             string `json:"id"`
-	Provider       string `json:"provider"`
-	ProviderRegion string `json:"provider_region"`
-	DisplayName    string `json:"display_name"`
-	Location       string `json:"location"`
-	State          string `json:"state"`
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	Location    string `json:"location"`
 }
 
 type AdminRegionsResponse struct {
@@ -14,11 +11,9 @@ type AdminRegionsResponse struct {
 }
 
 type CreateAdminRegionRequest struct {
-	ID             string `json:"id"`
-	Provider       string `json:"provider"`
-	ProviderRegion string `json:"provider_region"`
-	DisplayName    string `json:"display_name"`
-	Location       string `json:"location"`
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	Location    string `json:"location"`
 }
 
 type UpdateAdminRegionRequest struct {

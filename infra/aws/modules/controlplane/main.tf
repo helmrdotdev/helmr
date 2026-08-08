@@ -35,12 +35,10 @@ locals {
     CLICKHOUSE_USER = local.clickhouse_user
   })
   bootstrap_environment = var.bootstrap_enabled ? {
-    BOOTSTRAP_ENABLED                = "1"
-    BOOTSTRAP_REGION_ID              = local.bootstrap_region_id
-    BOOTSTRAP_REGION_PROVIDER        = "aws"
-    BOOTSTRAP_REGION_PROVIDER_REGION = data.aws_region.current.region
-    BOOTSTRAP_REGION_DISPLAY_NAME    = local.bootstrap_region_display_name
-    BOOTSTRAP_WORKER_GROUP_NAME      = var.bootstrap_worker_group_name
+    BOOTSTRAP_ENABLED             = "1"
+    BOOTSTRAP_REGION_ID           = local.bootstrap_region_id
+    BOOTSTRAP_REGION_DISPLAY_NAME = local.bootstrap_region_display_name
+    BOOTSTRAP_WORKER_GROUP_NAME   = var.bootstrap_worker_group_name
   } : {}
 
   telemetry_secrets = var.clickhouse_password_secret_arn == null ? {} : {
@@ -136,8 +134,6 @@ locals {
     "SMTP_PASSWORD",
     "BOOTSTRAP_ENABLED",
     "BOOTSTRAP_REGION_ID",
-    "BOOTSTRAP_REGION_PROVIDER",
-    "BOOTSTRAP_REGION_PROVIDER_REGION",
     "BOOTSTRAP_REGION_DISPLAY_NAME",
     "BOOTSTRAP_WORKER_GROUP_NAME",
     "BOOTSTRAP_WORKER_TOKEN",

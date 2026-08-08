@@ -1,16 +1,5 @@
 package db
 
-// RegionState and the other lifecycle aliases in this file are stored as
-// constrained TEXT in Postgres, keeping transitions independent of database
-// enum types.
-type RegionState = string
-
-const (
-	RegionStateAvailable RegionState = "available"
-	RegionStateDraining  RegionState = "draining"
-	RegionStateDisabled  RegionState = "disabled"
-)
-
 type WorkerGroupState = string
 
 const (

@@ -54,15 +54,13 @@ export function ProjectNew() {
     retry: false,
     staleTime: 60_000,
   }));
-  const availableRegions = createMemo(() =>
-	(regions.data?.regions ?? []).filter((region) => region.status === "available"),
-  );
+  const regionOptions = createMemo(() => regions.data?.regions ?? []);
   const firstProject = createMemo(() =>
     !projects.isPending && !projects.isError && (projects.data?.projects.length ?? 0) === 0,
   );
 
   createEffect(() => {
-    if (!selectedRegionID()) setSelectedRegionID(availableRegions()[0]?.id ?? "");
+    if (!selectedRegionID()) setSelectedRegionID(regionOptions()[0]?.id ?? "");
   });
 
   createEffect(() => {
@@ -121,7 +119,7 @@ export function ProjectNew() {
           autofocus
         />
       </label>
-      <Show when={!regions.isPending && availableRegions().length === 0}>
+      <Show when={!regions.isPending && regionOptions().length === 0}>
         <div class={ui.warning} role="status">
           A platform Region is required before a project can be created.
           <Show when={me.data?.admin}> <A class="text-console-accent" href="/admin/regions">Create a Region</A>.</Show>
@@ -148,9 +146,9 @@ export function ProjectNew() {
           class={ui.input}
           value={selectedRegionID()}
           onChange={(event) => setSelectedRegionID(event.currentTarget.value)}
-          disabled={regions.isPending || availableRegions().length === 0}
+          disabled={regions.isPending || regionOptions().length === 0}
         >
-          <For each={availableRegions()}>
+          <For each={regionOptions()}>
             {(region) => (
               <option value={region.id}>
                 {region.display_name || region.id}

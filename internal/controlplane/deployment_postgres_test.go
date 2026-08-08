@@ -30,8 +30,8 @@ func TestDeploymentCreateConvergesAcrossTransactions(t *testing.T) {
 		VALUES ($1, 'Deployment create', $2)
 	`, orgID, "org-"+orgID.String())
 	dbtest.MustExec(t, t.Context(), database.Pool, `
-		INSERT INTO regions (id, provider, provider_region, display_name)
-		VALUES ($1, 'test', $1, 'Deployment create')
+		INSERT INTO regions (id, display_name)
+		VALUES ($1, 'Deployment create')
 	`, regionID)
 	dbtest.MustExec(t, t.Context(), database.Pool, `
 		INSERT INTO projects (id, org_id, default_region_id, slug, name)

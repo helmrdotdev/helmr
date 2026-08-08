@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -26,10 +27,7 @@ func TestDevSeedWithFreshPostgres(t *testing.T) {
 		t.Fatalf("migrate fresh database: %v", err)
 	}
 	q := db.New(pool)
-	if _, err := q.CreateRegion(ctx, db.CreateRegionParams{
-		ID: "dev-local", Provider: "local", ProviderRegion: "local", DisplayName: "Local",
-		State: db.RegionStateAvailable,
-	}); err != nil {
+	if _, err := q.CreateRegion(ctx, db.CreateRegionParams{ID: "dev-local", DisplayName: "Local"}); err != nil {
 		t.Fatalf("bootstrap local region: %v", err)
 	}
 	if _, err := q.CreateWorkerGroup(ctx, db.CreateWorkerGroupParams{
@@ -40,7 +38,7 @@ func TestDevSeedWithFreshPostgres(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("bootstrap local worker group: %v", err)
 	}
-	cfg := devConfig{bootstrapRegionID: "dev-local"}
+	cfg := devConfig{bootstrap: config.Bootstrap{RegionID: "dev-local"}}
 	if err := seedDevData(ctx, pool, cfg); err != nil {
 		t.Fatalf("seed fresh database: %v", err)
 	}

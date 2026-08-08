@@ -28,10 +28,7 @@ export type ListProjectsResponse = {
 
 export type Region = {
   id: string;
-  provider: string;
-  provider_region: string;
   display_name: string;
-	status: string;
   location?: string;
 };
 
@@ -42,7 +39,7 @@ export type ListRegionsResponse = {
 export type CreateProjectInput = {
   slug: string;
   name: string;
-  default_region_id: string;
+  default_region_id?: string;
 };
 
 export type UpdateProjectInput = {

@@ -2,14 +2,11 @@ import { postJson, request } from "./api";
 
 export type AdminRegion = {
   id: string;
-  provider: string;
-  provider_region: string;
   display_name: string;
   location: string;
-  state: "available" | "draining" | "disabled";
 };
 
-export type CreateAdminRegionInput = Omit<AdminRegion, "state">;
+export type CreateAdminRegionInput = AdminRegion;
 
 export type AdminWorkerGroup = {
   id: string;
