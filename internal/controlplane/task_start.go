@@ -239,12 +239,6 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 		); err != nil {
 			return fmt.Errorf("record task run secret resolutions: %w", err)
 		}
-		if _, err := work.q.CreateRunAdmissionOutbox(ctx, db.CreateRunAdmissionOutboxParams{
-			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: workspace.ID,
-			EnvironmentID: run.EnvironmentID, RunID: run.ID,
-		}); err != nil {
-			return fmt.Errorf("create task run admission outbox: %w", err)
-		}
 		result = taskStartResult{RunID: runID}
 		if claim != nil {
 			receipt, err := json.Marshal(taskStartReceipt{

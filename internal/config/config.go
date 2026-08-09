@@ -71,7 +71,6 @@ type Bootstrap struct {
 
 type Dispatcher struct {
 	DatabaseURL         string
-	RedisURL            string
 	ClickHouseURL       string
 	ClickHouseUser      string
 	ClickHousePassword  string

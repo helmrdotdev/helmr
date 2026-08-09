@@ -42,20 +42,92 @@ func TestRunRuntimeReadyRequiresConvergedReadyIntent(t *testing.T) {
 	}
 }
 
-func recoverExpiredRunResumesParams(limit int32) db.RecoverExpiredRunResumesParams {
-	return db.RecoverExpiredRunResumesParams{
-		OutboxMessageIds: pgvalue.NewUUIDv7Batch(limit),
-		LimitCount:       limit,
-	}
+func recoverExpiredRunResumesParams(limit int32) int32 {
+	return limit
 }
 
-func mustRunCandidateParams(t *testing.T, scope QueueScope, limit int32) db.ListQueuedRunDispatchCandidatesForScopesParams {
+type planningScope struct {
+	OrgID          pgtype.UUID
+	ProjectID      pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	RegionID       string
+	ConcurrencyKey string
+	QueueName      string
+}
+
+func mustRunCandidateParams(t *testing.T, scope planningScope, limit int32) db.ListQueuedRunPlanningCandidatesForScopesParams {
 	t.Helper()
-	params, err := runCandidateParams([]QueueScope{scope}, limit)
+	params, err := planningCandidateParams([]planningScope{scope}, limit)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return params
+}
+
+func planningCandidateParams(scopes []planningScope, limit int32) (db.ListQueuedRunPlanningCandidatesForScopesParams, error) {
+	if len(scopes) == 0 || len(scopes) > 32 {
+		return db.ListQueuedRunPlanningCandidatesForScopesParams{}, fmt.Errorf("planning candidate scope count must be between 1 and 32: %d", len(scopes))
+	}
+	params := db.ListQueuedRunPlanningCandidatesForScopesParams{
+		PerScopeLimit: limit,
+		OrgIds:        make([]pgtype.UUID, 0, len(scopes)), ProjectIds: make([]pgtype.UUID, 0, len(scopes)),
+		EnvironmentIds: make([]pgtype.UUID, 0, len(scopes)), RegionIds: make([]string, 0, len(scopes)),
+		ConcurrencyKeys: make([]string, 0, len(scopes)), QueueNames: make([]string, 0, len(scopes)),
+	}
+	for _, scope := range scopes {
+		params.OrgIds = append(params.OrgIds, scope.OrgID)
+		params.ProjectIds = append(params.ProjectIds, scope.ProjectID)
+		params.EnvironmentIds = append(params.EnvironmentIds, scope.EnvironmentID)
+		params.RegionIds = append(params.RegionIds, scope.RegionID)
+		params.ConcurrencyKeys = append(params.ConcurrencyKeys, scope.ConcurrencyKey)
+		params.QueueNames = append(params.QueueNames, scope.QueueName)
+	}
+	return params, nil
+}
+
+func listRunPlacementCandidates(
+	t *testing.T,
+	fixture runPlacementFixture,
+	limit int32,
+) []db.ListQueuedRunPlacementCandidatesRow {
+	t.Helper()
+	store, err := NewRunPlacementStore(fixture.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	organizations, err := store.ListOrganizations(
+		fixture.ctx,
+		runPlacementLaneBytes(fixture.orgID),
+		pgtype.UUID{},
+		limit,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := make([]runPlacementScopeCursor, len(organizations))
+	rows, err := store.ListScopes(fixture.ctx, runPlacementScopeParams{
+		organizations: organizations, after: after, limit: limit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopes := make([]runPlacementScope, 0, len(rows))
+	for _, row := range rows {
+		scopes = append(scopes, row.scope)
+	}
+	if len(scopes) == 0 {
+		return nil
+	}
+	var cursor runPlacementCursor
+	limits := make([]int32, len(scopes))
+	for i := range limits {
+		limits[i] = limit
+	}
+	candidates, err := store.ListCandidates(fixture.ctx, cursor.candidateParams(scopes, limits))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return candidates
 }
 
 type runPlacementFixture struct {
@@ -258,9 +330,9 @@ UPDATE runs
 		t.Fatalf("queue usage = %+v", usage)
 	}
 
-	candidates, err := queries.ListQueuedRunDispatchCandidatesForScopes(
+	candidates, err := queries.ListQueuedRunPlanningCandidatesForScopes(
 		fixture.ctx,
-		mustRunCandidateParams(t, QueueScope{
+		mustRunCandidateParams(t, planningScope{
 			OrgID:          pgvalue.UUID(fixture.orgID),
 			ProjectID:      pgvalue.UUID(fixture.projectID),
 			EnvironmentID:  pgvalue.UUID(fixture.environmentID),
@@ -380,7 +452,7 @@ UPDATE workspace_mounts SET state = 'mounted', mounted_at = transaction_timestam
 func TestQueuedRunCandidateBatchPreservesScopeAndQueueOrder(t *testing.T) {
 	fixture := newRunPlacementFixture(t)
 	seedDispatchMeasurement(t, fixture, 7, 2, 0, false)
-	scopes := []QueueScope{
+	scopes := []planningScope{
 		{
 			OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 			EnvironmentID: pgvalue.UUID(fixture.environmentID), RegionID: "us-east-1",
@@ -392,11 +464,11 @@ func TestQueuedRunCandidateBatchPreservesScopeAndQueueOrder(t *testing.T) {
 			QueueName: "measure-0000",
 		},
 	}
-	params, err := runCandidateParams(scopes, 3)
+	params, err := planningCandidateParams(scopes, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, err := db.New(fixture.pool).ListQueuedRunDispatchCandidatesForScopes(fixture.ctx, params)
+	rows, err := db.New(fixture.pool).ListQueuedRunPlanningCandidatesForScopes(fixture.ctx, params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,17 +515,304 @@ SELECT id
 		}
 	}
 
-	isolationParams, err := runCandidateParams(scopes[:1], 3)
+	isolationParams, err := planningCandidateParams(scopes[:1], 3)
 	if err != nil {
 		t.Fatal(err)
 	}
 	isolationParams.ProjectIds[0] = pgtype.UUID{Bytes: [16]byte{15: 99}, Valid: true}
-	isolated, err := db.New(fixture.pool).ListQueuedRunDispatchCandidatesForScopes(fixture.ctx, isolationParams)
+	isolated, err := db.New(fixture.pool).ListQueuedRunPlanningCandidatesForScopes(fixture.ctx, isolationParams)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(isolated) != 0 {
 		t.Fatalf("mismatched project returned %d candidates", len(isolated))
+	}
+}
+
+func TestRunPlanningExcludesQueuedRunWithoutPlacementOwnership(t *testing.T) {
+	fixture := newRunPlacementFixture(t)
+	queries := db.New(fixture.pool)
+	scope := planningScope{
+		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
+		EnvironmentID: pgvalue.UUID(fixture.environmentID), RegionID: "us-east-1",
+		QueueName: "default",
+	}
+	eligible, err := queries.ListQueuedRunEligibleScopes(fixture.ctx, db.ListQueuedRunEligibleScopesParams{
+		RowLimit: 10, ScanSeed: "ownership",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eligible) != 1 {
+		t.Fatalf("eligible scopes before ownership change = %d, want 1", len(eligible))
+	}
+
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE workspaces
+   SET owner_run_id = NULL
+ WHERE id = $1`, fixture.workspaceID)
+
+	if candidates := listRunPlacementCandidates(t, fixture, 1); len(candidates) != 1 {
+		t.Fatalf("raw placement candidates = %d, want 1", len(candidates))
+	}
+	eligible, err = queries.ListQueuedRunEligibleScopes(fixture.ctx, db.ListQueuedRunEligibleScopesParams{
+		RowLimit: 10, ScanSeed: "ownership",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eligible) != 0 {
+		t.Fatalf("eligible planning scopes after ownership change = %d, want 0", len(eligible))
+	}
+	params := mustRunCandidateParams(t, scope, 1)
+	planning, err := queries.ListQueuedRunPlanningCandidatesForScopes(fixture.ctx, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(planning) != 0 {
+		t.Fatalf("planning candidates after ownership change = %d, want 0", len(planning))
+	}
+}
+
+func TestRunPlanningExcludesActorWithInvalidRestore(t *testing.T) {
+	fixture := newRunPlacementFixture(t)
+	_, _, checkpointID := prepareActorSuspendedRestore(t, fixture)
+	queries := db.New(fixture.pool)
+	scope := planningScope{
+		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
+		EnvironmentID: pgvalue.UUID(fixture.environmentID), RegionID: "us-east-1",
+		QueueName: "default",
+	}
+	params := mustRunCandidateParams(t, scope, 1)
+	planning, err := queries.ListQueuedRunPlanningCandidatesForScopes(fixture.ctx, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(planning) != 1 {
+		t.Fatalf("planning candidates before restore invalidation = %d, want 1", len(planning))
+	}
+
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE run_checkpoints
+   SET state = 'invalid',
+       ready_at = NULL,
+       invalidated_at = transaction_timestamp(),
+       invalidation_reason_code = 'test_invalid_restore'
+ WHERE id = $1`, checkpointID)
+
+	if candidates := listRunPlacementCandidates(t, fixture, 1); len(candidates) != 1 {
+		t.Fatalf("raw placement candidates = %d, want 1", len(candidates))
+	}
+	eligible, err := queries.ListQueuedRunEligibleScopes(fixture.ctx, db.ListQueuedRunEligibleScopesParams{
+		RowLimit: 10, ScanSeed: "invalid-actor-restore",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eligible) != 0 {
+		t.Fatalf("eligible planning scopes with invalid Actor restore = %d, want 0", len(eligible))
+	}
+	planning, err = queries.ListQueuedRunPlanningCandidatesForScopes(fixture.ctx, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(planning) != 0 {
+		t.Fatalf("planning candidates with invalid Actor restore = %d, want 0", len(planning))
+	}
+}
+
+func TestRunPlacementAdvancesPastUnplaceableRunsInOneScope(t *testing.T) {
+	fixture := newRunPlacementFixture(t)
+	seedDispatchMeasurement(t, fixture, 40, 1, 0, false)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+INSERT INTO regions (id, display_name)
+VALUES ('blocked-region', 'Blocked region')`)
+
+	base := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	for index := 0; index < 40; index++ {
+		runID := measurementUUID("run", index)
+		workspaceID := measurementUUID("workspace", index)
+		if index == 0 {
+			runID = fixture.runID
+			workspaceID = fixture.workspaceID
+		}
+		dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runs
+   SET priority = 0,
+       queue_score_at = $2
+ WHERE id = $1`, runID, base.Add(time.Duration(index)*time.Millisecond))
+		if index < 35 {
+			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE workspaces
+   SET region_id = 'blocked-region'
+ WHERE id = $1`, workspaceID)
+		}
+	}
+
+	store, err := NewRunPlacementStore(fixture.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciler := &PlacementReconciler{
+		runDiscovery: store,
+		runAuthority: fixture.authority,
+		runPolicy:    testRunPlacementPolicy(32),
+	}
+	lane := runPlacementLaneBytes(fixture.orgID)
+	if _, err := reconciler.reconcileRunLane(fixture.ctx, lane, store); err != nil {
+		t.Fatal(err)
+	}
+	eligibleRunID := measurementUUID("run", 35)
+	var reserved int
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT count(*)
+  FROM runtime_instances
+ WHERE reserved_run_id = $1
+   AND reclaimed_at IS NULL`, eligibleRunID).Scan(&reserved); err != nil {
+		t.Fatal(err)
+	}
+	if reserved != 0 {
+		t.Fatal("later placeable Run was reached before the first bounded candidate window completed")
+	}
+	if _, err := reconciler.reconcileRunLane(fixture.ctx, lane, store); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT count(*)
+  FROM runtime_instances
+ WHERE reserved_run_id = $1
+   AND reclaimed_at IS NULL`, eligibleRunID).Scan(&reserved); err != nil {
+		t.Fatal(err)
+	}
+	if reserved != 1 {
+		t.Fatalf("later placeable Run reservations = %d, want 1", reserved)
+	}
+}
+
+func TestRunPlacementRetriesPreparedScopeHeadBeforeDeepBacklog(t *testing.T) {
+	fixture := newRunPlacementFixture(t)
+	seedDispatchMeasurement(t, fixture, 40, 1, 0, false)
+	base := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	for index := 0; index < 40; index++ {
+		runID := measurementUUID("run", index)
+		if index == 0 {
+			runID = fixture.runID
+		}
+		dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runs
+   SET priority = 0,
+       queue_score_at = $2
+ WHERE id = $1`, runID, base.Add(time.Duration(index)*time.Millisecond))
+	}
+	store, err := NewRunPlacementStore(fixture.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := testRunPlacementPolicy(32)
+	policy.pendingInterval = 0
+	reconciler := &PlacementReconciler{
+		runDiscovery: store,
+		runAuthority: fixture.authority,
+		runPolicy:    policy,
+	}
+	lane := runPlacementLaneBytes(fixture.orgID)
+
+	if _, err := reconciler.reconcileRunLane(fixture.ctx, lane, store); err != nil {
+		t.Fatal(err)
+	}
+	var runtimeID pgtype.UUID
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT id
+  FROM runtime_instances
+ WHERE reserved_run_id = $1
+   AND reclaimed_at IS NULL`, fixture.runID).Scan(&runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	markRunPlacementRuntimeReady(t, fixture, runtimeID)
+
+	if _, err := reconciler.reconcileRunLane(fixture.ctx, lane, store); err != nil {
+		t.Fatal(err)
+	}
+	var mountID pgtype.UUID
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT id
+  FROM workspace_mounts
+ WHERE workspace_id = $1
+   AND runtime_instance_id = $2
+   AND state = 'mounting'`, fixture.workspaceID, runtimeID).Scan(&mountID); err != nil {
+		t.Fatal(err)
+	}
+	markRunPlacementMountReady(t, fixture, mountID)
+
+	if _, err := reconciler.reconcileRunLane(fixture.ctx, lane, store); err != nil {
+		t.Fatal(err)
+	}
+	var leaseID pgtype.UUID
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT current_run_lease_id
+  FROM runs
+ WHERE id = $1`, fixture.runID).Scan(&leaseID); err != nil {
+		t.Fatal(err)
+	}
+	if !leaseID.Valid {
+		t.Fatal("prepared scope-head Run was not granted before scanning the deep backlog")
+	}
+}
+
+func TestRunPlacementAdvancesPastUnplaceableScopes(t *testing.T) {
+	fixture := newRunPlacementFixture(t)
+	seedDispatchMeasurement(t, fixture, 33, 33, 0, false)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+INSERT INTO regions (id, display_name)
+VALUES ('blocked-region', 'Blocked region')`)
+	for index := 0; index < 32; index++ {
+		workspaceID := measurementUUID("workspace", index)
+		if index == 0 {
+			workspaceID = fixture.workspaceID
+		}
+		dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE workspaces
+   SET region_id = 'blocked-region'
+ WHERE id = $1`, workspaceID)
+	}
+
+	store, err := NewRunPlacementStore(fixture.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciler := &PlacementReconciler{
+		runDiscovery: store,
+		runAuthority: fixture.authority,
+		runPolicy:    testRunPlacementPolicy(32),
+	}
+	lane := runPlacementLaneBytes(fixture.orgID)
+	if _, err := reconciler.reconcileRunLane(fixture.ctx, lane, store); err != nil {
+		t.Fatal(err)
+	}
+	eligibleRunID := measurementUUID("run", 32)
+	var reserved int
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT count(*)
+  FROM runtime_instances
+ WHERE reserved_run_id = $1
+   AND reclaimed_at IS NULL`, eligibleRunID).Scan(&reserved); err != nil {
+		t.Fatal(err)
+	}
+	if reserved != 0 {
+		t.Fatal("later placeable scope was reached before the first bounded scope window completed")
+	}
+	if _, err := reconciler.reconcileRunLane(fixture.ctx, lane, store); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT count(*)
+  FROM runtime_instances
+ WHERE reserved_run_id = $1
+   AND reclaimed_at IS NULL`, eligibleRunID).Scan(&reserved); err != nil {
+		t.Fatal(err)
+	}
+	if reserved != 1 {
+		t.Fatalf("later placeable scope reservations = %d, want 1", reserved)
 	}
 }
 
@@ -705,18 +1064,9 @@ UPDATE workspace_mounts
 		RunID:                   pgvalue.UUID(childID),
 		ExpectedRunStateVersion: 1,
 	}
-	if _, err := db.New(fixture.pool).GetQueuedRunReadyHint(
+	dispatchCandidates, err := db.New(fixture.pool).ListQueuedRunPlanningCandidatesForScopes(
 		fixture.ctx,
-		db.GetQueuedRunReadyHintParams{
-			OrgID: pgvalue.UUID(fixture.orgID),
-			RunID: pgvalue.UUID(childID),
-		},
-	); err != nil {
-		t.Fatalf("same-Workspace child ready hint: %v", err)
-	}
-	dispatchCandidates, err := db.New(fixture.pool).ListQueuedRunDispatchCandidatesForScopes(
-		fixture.ctx,
-		mustRunCandidateParams(t, QueueScope{
+		mustRunCandidateParams(t, planningScope{
 			OrgID:          pgvalue.UUID(fixture.orgID),
 			ProjectID:      pgvalue.UUID(fixture.projectID),
 			EnvironmentID:  pgvalue.UUID(fixture.environmentID),
@@ -1598,6 +1948,56 @@ UPDATE workspaces
 	}
 }
 
+func TestPlaceReadyActorStartWithoutCheckpoint(t *testing.T) {
+	fixture := newRunPlacementFixture(t)
+	convertNestedResumeRootToActor(t, fixture, fixture.runID)
+	queries := db.New(fixture.pool)
+	eligible, err := queries.ListQueuedRunEligibleScopes(fixture.ctx, db.ListQueuedRunEligibleScopesParams{
+		RowLimit: 10, ScanSeed: "fresh-actor-start",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eligible) != 1 {
+		t.Fatalf("fresh Actor planning scopes = %d, want 1", len(eligible))
+	}
+	planning, err := queries.ListQueuedRunPlanningCandidatesForScopes(
+		fixture.ctx,
+		mustRunCandidateParams(t, planningScope{
+			OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
+			EnvironmentID: pgvalue.UUID(fixture.environmentID), RegionID: "us-east-1",
+			QueueName: "default",
+		}, 1),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(planning) != 1 || planning[0].RunID != pgvalue.UUID(fixture.runID) {
+		t.Fatalf("fresh Actor planning candidates = %+v, want current Run", planning)
+	}
+
+	candidates := listRunPlacementCandidates(t, fixture, 10)
+	if len(candidates) != 1 || candidates[0].RunID != pgvalue.UUID(fixture.runID) {
+		t.Fatalf("Actor start candidates = %+v", candidates)
+	}
+
+	placement, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !placement.RuntimeInstanceID.Valid || placement.LeaseCreated {
+		t.Fatalf("Actor start placement = %+v", placement)
+	}
+	var restoreCheckpointID pgtype.UUID
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT restore_checkpoint_id FROM runtime_instances WHERE id = $1`, placement.RuntimeInstanceID).Scan(&restoreCheckpointID); err != nil {
+		t.Fatal(err)
+	}
+	if restoreCheckpointID.Valid {
+		t.Fatalf("Actor start restore checkpoint = %s", pgvalue.UUIDString(restoreCheckpointID))
+	}
+}
+
 type nestedResumeRecoveryState struct {
 	parentRunID                  uuid.UUID
 	enclosingWaitID              uuid.UUID
@@ -2339,18 +2739,6 @@ SELECT run_waits.suspension_state,
 	if !recoveredQueueScore.Equal(originalQueueScore) {
 		t.Fatalf("recovery changed immutable queue score from %s to %s", originalQueueScore, recoveredQueueScore)
 	}
-	var resumeAdmissionCount int
-	if err := fixture.pool.QueryRow(fixture.ctx, `
-SELECT count(*)
-  FROM outbox_messages
- WHERE topic = 'run.admit'
-   AND payload ->> 'runId' = $1`, fixture.runID.String()).Scan(&resumeAdmissionCount); err != nil {
-		t.Fatal(err)
-	}
-	if resumeAdmissionCount != 1 {
-		t.Fatalf("resume admission outbox count = %d, want 1", resumeAdmissionCount)
-	}
-
 	// Reclaim the first recreated runtime and grant once more. The final branch
 	// proves that physical loss discovered after the Lease deadline still
 	// closes the retained runtime; cleanup remains blocked until recovery fences
@@ -2614,17 +3002,7 @@ SELECT runs.status, run_waits.suspension_state, run_waits.current_run_lease_id,
 			lostRunLeaseState, lostRunLeaseReason, lostWorkspaceLeaseState,
 			lostWorkspaceLeaseReason, lostMountState)
 	}
-	var secondResumeAdmissionCount, terminalEventCount int
-	if err := fixture.pool.QueryRow(fixture.ctx, `
-SELECT count(*)
-  FROM outbox_messages
- WHERE topic = 'run.admit'
-   AND payload ->> 'runId' = $1`, fixture.runID.String()).Scan(&secondResumeAdmissionCount); err != nil {
-		t.Fatal(err)
-	}
-	if secondResumeAdmissionCount != 2 {
-		t.Fatalf("worker-loss resume admission outbox count = %d, want 2", secondResumeAdmissionCount)
-	}
+	var terminalEventCount int
 	if err := fixture.pool.QueryRow(fixture.ctx, `
 SELECT count(*)
   FROM telemetry_outbox
@@ -2667,47 +3045,16 @@ func TestActorCurrentRunRecreatedRestoreAndRecovery(t *testing.T) {
 				OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(fixture.runID),
 				ExpectedRunStateVersion: 3,
 			}
-			if _, err := db.New(fixture.pool).GetQueuedRunReadyHint(fixture.ctx, db.GetQueuedRunReadyHintParams{
-				OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(fixture.runID),
-			}); err != nil {
-				t.Fatalf("Actor restore ready hint: %v", err)
-			}
-			queued, err := db.New(fixture.pool).ListQueuedRunDispatchCandidatesForScopes(
-				fixture.ctx,
-				mustRunCandidateParams(t, QueueScope{
-					OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
-					EnvironmentID: pgvalue.UUID(fixture.environmentID), RegionID: "us-east-1",
-					QueueName: "default",
-				}, 10),
-			)
-			if err != nil || len(queued) != 1 || queued[0].RunID != pgvalue.UUID(fixture.runID) {
-				t.Fatalf("Actor restore dispatch candidates = %+v, error = %v", queued, err)
-			}
-			scopes, err := db.New(fixture.pool).ListQueuedRunEligibleScopes(
-				fixture.ctx,
-				db.ListQueuedRunEligibleScopesParams{RowLimit: 10, ScanSeed: "actor-restore"},
-			)
-			if err != nil || len(scopes) != 1 || scopes[0].EnvironmentID != pgvalue.UUID(fixture.environmentID) {
-				t.Fatalf("Actor restore candidate scopes = %+v, error = %v", scopes, err)
+			queued := listRunPlacementCandidates(t, fixture, 10)
+			if len(queued) != 1 || queued[0].RunID != pgvalue.UUID(fixture.runID) {
+				t.Fatalf("Actor restore candidates = %+v", queued)
 			}
 			if tc.invalidCursor {
 				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_checkpoints SET actor_speculative_input_sequence = 2 WHERE id = $1`, checkpointID)
-				if _, err := db.New(fixture.pool).GetQueuedRunReadyHint(fixture.ctx, db.GetQueuedRunReadyHintParams{
-					OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(fixture.runID),
-				}); !errors.Is(err, pgx.ErrNoRows) {
-					t.Fatalf("out-of-bounds Actor restore ready hint error = %v, want pgx.ErrNoRows", err)
-				}
-				queued, err := db.New(fixture.pool).ListQueuedRunDispatchCandidatesForScopes(
-					fixture.ctx,
-					mustRunCandidateParams(t, QueueScope{
-						OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
-						EnvironmentID: pgvalue.UUID(fixture.environmentID), RegionID: "us-east-1",
-						QueueName: "default",
-					}, 10),
-				)
-				if err != nil || len(queued) != 0 {
-					t.Fatalf("out-of-bounds Actor dispatch candidates = %+v, error = %v", queued, err)
+				queued = listRunPlacementCandidates(t, fixture, 10)
+				if len(queued) != 1 || queued[0].RunID != pgvalue.UUID(fixture.runID) {
+					t.Fatalf("out-of-bounds Actor candidates = %+v", queued)
 				}
 				if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate); !errors.Is(err, ErrCandidateChanged) {
 					t.Fatalf("Actor restore with out-of-bounds cursor error = %v, want ErrCandidateChanged", err)

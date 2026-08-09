@@ -140,12 +140,9 @@ in
   ci-postgres = app "ci-postgres" "run Postgres-backed CI tests" toolsets.appRuntime ''
     exec ./scripts/ci-postgres.sh "$@"
   '';
-  measure-dispatch =
-    app "measure-dispatch" "measure PostgreSQL and Valkey dispatch discovery"
-      toolsets.dispatchMeasurement
-      ''
-        exec ./scripts/measure-dispatch.sh "$@"
-      '';
+  measure-dispatch = app "measure-dispatch" "measure PostgreSQL dispatch discovery" toolsets.base ''
+    exec ./scripts/measure-dispatch.sh "$@"
+  '';
   ci-boot-artifacts =
     app "ci-boot-artifacts" "build and stage guest boot artifacts for CI" toolsets.appRuntime
       ''

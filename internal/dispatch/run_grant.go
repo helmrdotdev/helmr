@@ -26,7 +26,8 @@ func (d *Authority) grantFreshRun(
 	}
 	defer rollback(ctx, tx)
 
-	if err := lockRunQueueScope(ctx, tx, candidate); err != nil {
+	environmentID, queueName, concurrencyKey, err := lockRunQueueScope(ctx, tx, candidate)
+	if err != nil {
 		return db.RunLease{}, classifyRunCandidateError(err)
 	}
 	if err := lockRunSecrets(ctx, tx, candidate); err != nil {
@@ -35,6 +36,11 @@ func (d *Authority) grantFreshRun(
 	authority, err := lockRunPlacementAuthority(ctx, tx, candidate)
 	if err != nil {
 		return db.RunLease{}, classifyRunCandidateError(err)
+	}
+	if authority.environmentID != environmentID ||
+		authority.queueName != queueName ||
+		authority.concurrencyKey != concurrencyKey {
+		return db.RunLease{}, ErrCandidateChanged
 	}
 	retainedRuntimeID, hasRetainedHandoff := authority.retainedHandoffRuntimeID()
 	retainedHandoff := hasRetainedHandoff &&

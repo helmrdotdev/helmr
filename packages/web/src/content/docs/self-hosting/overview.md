@@ -13,7 +13,7 @@ The runtime has three main parts:
 | Component | Responsibility |
 | --- | --- |
 | Control Plane | Serves the web UI and API, authenticates users, coordinates workers, stores run state in PostgreSQL, and writes historical telemetry to ClickHouse. |
-| Dispatcher | Reconciles runnable and scheduled work through the Redis/Valkey dispatch path. |
+| Dispatcher | Reconciles runnable and scheduled work from PostgreSQL authority. |
 | Workers | Build task images and execute tasks in Firecracker guests. Run and build capacity are separate logical groups. |
 
 The AWS examples compose RDS PostgreSQL, ElastiCache Valkey/Redis, S3, KMS, Secrets Manager, ECS Fargate, an HTTPS load balancer, and optional EC2 Auto Scaling worker groups. A separate bootstrap foundation supplies the immutable Platform Artifact store and build-policy digest. ClickHouse is an external, operator-provisioned dependency.

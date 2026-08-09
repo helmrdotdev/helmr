@@ -296,7 +296,7 @@ variable "controlplane_environment" {
 }
 
 variable "dispatcher_environment" {
-  description = "Additional non-secret environment variables for helmr-dispatcher. Managed Helmr variables such as REDIS_URL are owned by this module."
+  description = "Additional non-secret environment variables for helmr-dispatcher. Managed Helmr variables are owned by this module."
   type        = map(string)
   default     = {}
 }
@@ -340,7 +340,7 @@ variable "smtp_password_enabled" {
 }
 
 variable "redis_engine" {
-  description = "ElastiCache engine for the Helmr dispatch queue."
+  description = "ElastiCache engine for the Helmr Control Plane event stream."
   type        = string
   default     = "valkey"
 
@@ -351,13 +351,13 @@ variable "redis_engine" {
 }
 
 variable "redis_node_type" {
-  description = "ElastiCache node type for the Helmr dispatch queue."
+  description = "ElastiCache node type for the Helmr Control Plane event stream."
   type        = string
   default     = "cache.t4g.micro"
 }
 
 variable "redis_node_count" {
-  description = "Number of ElastiCache nodes for the Helmr dispatch queue. Values greater than 1 enable automatic failover and Multi-AZ."
+  description = "Number of ElastiCache nodes for the Helmr Control Plane event stream. Values greater than 1 enable automatic failover and Multi-AZ."
   type        = number
   default     = 1
 }

@@ -710,7 +710,7 @@ func finishTask(
 		terminalRun.Output = output
 		terminalRun.Failure = failure
 		if err := resolveParentOwnedChildWait(
-			ctx, store, authority, terminalRun, completedAt,
+			ctx, store, authority, terminalRun,
 		); err != nil {
 			return err
 		}
@@ -827,14 +827,13 @@ func finishSameWorkspaceChild(
 		}
 	}
 
-	var completed db.RunWait
 	if completion.kind == taskCompletionSucceeded {
 		var result []byte
 		result, err = childTaskResult(child)
 		if err != nil {
 			return err
 		}
-		completed, err = store.CompleteSameWorkspaceChildSuccess(
+		_, err = store.CompleteSameWorkspaceChildSuccess(
 			ctx,
 			db.CompleteSameWorkspaceChildSuccessParams{
 				CompletedAt: completedAt, ConditionResult: result,
@@ -852,14 +851,14 @@ func finishSameWorkspaceChild(
 		)
 	} else {
 		if len(authority.handoffAncestors) != 0 {
-			completed, err = cascadeSameWorkspaceChildFailure(
+			_, err = cascadeSameWorkspaceChildFailure(
 				ctx,
 				store,
 				authority,
 				completedAt,
 			)
 		} else {
-			completed, err = store.CompleteSameWorkspaceChildFailure(
+			_, err = store.CompleteSameWorkspaceChildFailure(
 				ctx,
 				db.CompleteSameWorkspaceChildFailureParams{
 					CompletedAt: completedAt, ConditionState: db.WaitStateFailed,
@@ -893,7 +892,7 @@ func finishSameWorkspaceChild(
 	if err != nil {
 		return staleTaskCompletion(err)
 	}
-	return enqueueRunResume(ctx, store, authority.parentRun.WorkspaceID, completed, completedAt)
+	return nil
 }
 
 func cascadeSameWorkspaceChildFailure(
@@ -1007,31 +1006,6 @@ func cascadeSameWorkspaceChildFailure(
 	)
 }
 
-func enqueueRunResume(
-	ctx context.Context,
-	store db.Querier,
-	workspaceID pgtype.UUID,
-	wait db.RunWait,
-	availableAt pgtype.Timestamptz,
-) error {
-	payload, err := json.Marshal(map[string]any{
-		"environmentId":        pgvalue.UUIDString(wait.EnvironmentID),
-		"runId":                pgvalue.UUIDString(wait.RunID),
-		"runWaitId":            pgvalue.UUIDString(wait.ID),
-		"resumeRequestVersion": wait.ResumeRequestVersion,
-	})
-	if err != nil {
-		return err
-	}
-	if _, err := store.CreateOutboxMessage(ctx, db.CreateOutboxMessageParams{
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Lane: "control", Topic: "run.resume",
-		PartitionKey: pgvalue.UUIDString(workspaceID), Payload: payload, AvailableAt: availableAt,
-	}); err != nil {
-		return fmt.Errorf("enqueue run resume: %w", err)
-	}
-	return nil
-}
-
 func lockParentOwnedChildWaitIfActive(
 	ctx context.Context,
 	store db.Querier,
@@ -1059,7 +1033,6 @@ func resolveParentOwnedChildWait(
 	store db.Querier,
 	authority runLeaseClaimAuthority,
 	child db.Run,
-	completedAt pgtype.Timestamptz,
 ) error {
 	wait := authority.enclosingWait
 	result, err := childTaskResult(child)
@@ -1084,8 +1057,7 @@ func resolveParentOwnedChildWait(
 			},
 		)
 	case db.RunWaitStateParked:
-		var completed db.RunWait
-		completed, err = store.CompleteParkedChildRunWait(
+		_, err = store.CompleteParkedChildRunWait(
 			ctx,
 			db.CompleteParkedChildRunWaitParams{
 				RunID: wait.RunID, EnvironmentID: wait.EnvironmentID,
@@ -1095,22 +1067,6 @@ func resolveParentOwnedChildWait(
 				SuspendCheckpointID: wait.SuspendCheckpointID,
 			},
 		)
-		if err == nil {
-			payload, marshalErr := json.Marshal(map[string]any{
-				"environmentId":        pgvalue.UUIDString(wait.EnvironmentID),
-				"runId":                pgvalue.UUIDString(wait.RunID),
-				"runWaitId":            pgvalue.UUIDString(wait.ID),
-				"resumeRequestVersion": completed.ResumeRequestVersion,
-			})
-			if marshalErr != nil {
-				return marshalErr
-			}
-			_, err = store.CreateOutboxMessage(ctx, db.CreateOutboxMessageParams{
-				ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Lane: "control", Topic: "run.resume",
-				PartitionKey: pgvalue.UUIDString(authority.parentRun.WorkspaceID),
-				Payload:      payload, AvailableAt: completedAt,
-			})
-		}
 	default:
 		return errStaleTaskCompletion
 	}

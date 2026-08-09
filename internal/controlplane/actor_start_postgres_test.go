@@ -259,51 +259,6 @@ func TestActorStartHTTPSessionPostgresCreates(t *testing.T) {
 	}
 }
 
-func TestActorStartPostgresRollbackLeavesNoResidue(t *testing.T) {
-	fixture := newActorStartPostgresFixture(t, 1)
-	if _, err := fixture.pool.Exec(t.Context(), `
-		CREATE FUNCTION reject_actor_start_admission() RETURNS trigger
-		LANGUAGE plpgsql
-		AS $$
-		BEGIN
-			IF NEW.topic = 'run.admit' THEN
-				RAISE EXCEPTION 'reject Actor start admission';
-			END IF;
-			RETURN NEW;
-		END;
-		$$;
-		CREATE TRIGGER reject_actor_start_admission
-		BEFORE INSERT ON outbox_messages
-		FOR EACH ROW EXECUTE FUNCTION reject_actor_start_admission();
-	`); err != nil {
-		t.Fatal(err)
-	}
-	key := "rollback"
-	if _, err := fixture.server.startActor(t.Context(), fixture.request(0, &key, "rollback-1")); err == nil {
-		t.Fatal("expected rejected outbox")
-	}
-	var claims, sessions, records, runs, attempts, resolutions, outboxes, owned int
-	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT
-		    (SELECT count(*) FROM idempotency_claims WHERE operation = 'actor.start'),
-		    (SELECT count(*) FROM sessions),
-		    (SELECT count(*) FROM session_records),
-		    (SELECT count(*) FROM runs WHERE cause_kind = 'actor_start'),
-		    (SELECT count(*) FROM run_attempts),
-		    (SELECT count(*) FROM secret_resolutions),
-		    (SELECT count(*) FROM outbox_messages WHERE topic = 'run.admit'),
-		    (SELECT count(*) FROM workspaces WHERE owner_session_id IS NOT NULL OR owner_run_id IS NOT NULL)
-	`).Scan(&claims, &sessions, &records, &runs, &attempts, &resolutions, &outboxes, &owned); err != nil {
-		t.Fatal(err)
-	}
-	if claims+sessions+records+runs+attempts+resolutions+outboxes+owned != 0 {
-		t.Fatalf(
-			"rollback residue = claims %d sessions %d records %d runs %d attempts %d resolutions %d outboxes %d owned %d",
-			claims, sessions, records, runs, attempts, resolutions, outboxes, owned,
-		)
-	}
-}
-
 func TestActorStartPostgresNoInputBootsAtZeroHighWatermark(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
 	key := "no-input"
@@ -451,7 +406,7 @@ func assertActorStartTupleWithQueue(
 	var recordSequence int64
 	var recordSource string
 	var claimState string
-	var resolutionCount, outboxCount int
+	var resolutionCount int
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT current_run_id, next_input_sequence, committed_input_sequence,
 		       run_queue_name, run_queue_concurrency_limit,
@@ -501,10 +456,8 @@ func assertActorStartTupleWithQueue(
 		t.Fatal(err)
 	}
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT
-		    (SELECT count(*) FROM secret_resolutions WHERE run_id = $1 AND attempt_number = 1),
-		    (SELECT count(*) FROM outbox_messages WHERE topic = 'run.admit' AND payload->>'runId' = $1::text)
-	`, result.BootRunID).Scan(&resolutionCount, &outboxCount); err != nil {
+		SELECT count(*) FROM secret_resolutions WHERE run_id = $1 AND attempt_number = 1
+	`, result.BootRunID).Scan(&resolutionCount); err != nil {
 		t.Fatal(err)
 	}
 	recordValid := (highWatermark == 0 && recordSequence == 0 && recordSource == "") ||
@@ -518,13 +471,13 @@ func assertActorStartTupleWithQueue(
 		actorQueue != wantQueue || !queueLimitValid || actorMaxDuration != 300_000 ||
 		string(actorRetry) != `{"enabled": false}` ||
 		!recordValid ||
-		claimState != "completed" || resolutionCount != 1 || outboxCount != 1 {
+		claimState != "completed" || resolutionCount != 1 {
 		t.Fatalf(
-			"Actor start tuple actorRun=%s next=%d committed=%d queue=%s/%v max=%d retry=%s owner=%s runActor=%s cause=%s cursor=%d high=%d attempt=%d record=%d/%s claim=%s resolutions=%d outboxes=%d",
+			"Actor start tuple actorRun=%s next=%d committed=%d queue=%s/%v max=%d retry=%s owner=%s runActor=%s cause=%s cursor=%d high=%d attempt=%d record=%d/%s claim=%s resolutions=%d",
 			actorCurrentRun, actorNextInput, actorCommitted,
 			actorQueue, actorQueueLimit, actorMaxDuration, actorRetry,
 			workspaceOwner, runActor, runCause,
-			runStart, runHigh, attemptStart, recordSequence, recordSource, claimState, resolutionCount, outboxCount,
+			runStart, runHigh, attemptStart, recordSequence, recordSource, claimState, resolutionCount,
 		)
 	}
 }

@@ -128,7 +128,6 @@ type Querier interface {
 	CreateRegion(ctx context.Context, arg CreateRegionParams) (Region, error)
 	CreateRegistryCredentialResolution(ctx context.Context, arg CreateRegistryCredentialResolutionParams) (RegistryCredentialResolution, error)
 	CreateRootRunFromCurrentDeployment(ctx context.Context, arg CreateRootRunFromCurrentDeploymentParams) (CreateRootRunFromCurrentDeploymentRow, error)
-	CreateRunAdmissionOutbox(ctx context.Context, arg CreateRunAdmissionOutboxParams) (OutboxMessage, error)
 	CreateRunCheckpoint(ctx context.Context, arg CreateRunCheckpointParams) (RunCheckpoint, error)
 	CreateRunMetadataEvent(ctx context.Context, arg CreateRunMetadataEventParams) (int64, error)
 	CreateRunRuntimeReservation(ctx context.Context, arg CreateRunRuntimeReservationParams) (CreateRunRuntimeReservationRow, error)
@@ -254,8 +253,6 @@ type Querier interface {
 	GetProject(ctx context.Context, arg GetProjectParams) (Project, error)
 	GetProjectBySlug(ctx context.Context, arg GetProjectBySlugParams) (Project, error)
 	GetPublicAccessTokenForToken(ctx context.Context, tokenID pgtype.UUID) (PublicAccessToken, error)
-	GetQueuedRunReadyHint(ctx context.Context, arg GetQueuedRunReadyHintParams) (GetQueuedRunReadyHintRow, error)
-	GetQueuedRunResumeHint(ctx context.Context, arg GetQueuedRunResumeHintParams) (GetQueuedRunResumeHintRow, error)
 	GetReadyRunCheckpoint(ctx context.Context, arg GetReadyRunCheckpointParams) (RunCheckpoint, error)
 	GetRegion(ctx context.Context, id string) (Region, error)
 	GetRevocableInvitation(ctx context.Context, arg GetRevocableInvitationParams) (GetRevocableInvitationRow, error)
@@ -272,7 +269,6 @@ type Querier interface {
 	GetRunLogChunkReplay(ctx context.Context, arg GetRunLogChunkReplayParams) (GetRunLogChunkReplayRow, error)
 	GetRunMetadataClaimScope(ctx context.Context, arg GetRunMetadataClaimScopeParams) (GetRunMetadataClaimScopeRow, error)
 	GetRunOwnedWorkspaceLease(ctx context.Context, arg GetRunOwnedWorkspaceLeaseParams) (WorkspaceLease, error)
-	GetRunResumeHintAuthority(ctx context.Context, arg GetRunResumeHintAuthorityParams) (GetRunResumeHintAuthorityRow, error)
 	GetRunSnapshot(ctx context.Context, arg GetRunSnapshotParams) (GetRunSnapshotRow, error)
 	GetRunTelemetryFrontier(ctx context.Context, arg GetRunTelemetryFrontierParams) (GetRunTelemetryFrontierRow, error)
 	GetRunWait(ctx context.Context, arg GetRunWaitParams) (RunWait, error)
@@ -364,8 +360,9 @@ type Querier interface {
 	ListProjectsForUpdate(ctx context.Context, orgID pgtype.UUID) ([]Project, error)
 	ListQueuedDeploymentBuildCandidates(ctx context.Context, arg ListQueuedDeploymentBuildCandidatesParams) ([]ListQueuedDeploymentBuildCandidatesRow, error)
 	ListQueuedDeploymentBuildRegions(ctx context.Context, limitCount int32) ([]string, error)
-	ListQueuedRunDispatchCandidatesForScopes(ctx context.Context, arg ListQueuedRunDispatchCandidatesForScopesParams) ([]ListQueuedRunDispatchCandidatesForScopesRow, error)
 	ListQueuedRunEligibleScopes(ctx context.Context, arg ListQueuedRunEligibleScopesParams) ([]ListQueuedRunEligibleScopesRow, error)
+	ListQueuedRunPlacementCandidates(ctx context.Context, arg ListQueuedRunPlacementCandidatesParams) ([]ListQueuedRunPlacementCandidatesRow, error)
+	ListQueuedRunPlanningCandidatesForScopes(ctx context.Context, arg ListQueuedRunPlanningCandidatesForScopesParams) ([]ListQueuedRunPlanningCandidatesForScopesRow, error)
 	ListQueuedRunPlanningUsage(ctx context.Context, arg ListQueuedRunPlanningUsageParams) ([]ListQueuedRunPlanningUsageRow, error)
 	ListQueuedRunsForQueue(ctx context.Context, arg ListQueuedRunsForQueueParams) ([]Run, error)
 	ListRecoverableWorkspaceExecCandidates(ctx context.Context, rowLimit int32) ([]ListRecoverableWorkspaceExecCandidatesRow, error)
@@ -507,9 +504,8 @@ type Querier interface {
 	PruneTelemetryOutboxWritten(ctx context.Context, retainFor pgtype.Interval) ([]int64, error)
 	PublishRestoredActorCheckpointWorkspaceVersion(ctx context.Context, arg PublishRestoredActorCheckpointWorkspaceVersionParams) (WorkspaceVersion, error)
 	PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTaskWorkspaceVersionParams) (WorkspaceVersion, error)
-	PublishTerminalChildResume(ctx context.Context, arg PublishTerminalChildResumeParams) (int64, error)
 	ReadPublicActorOutputPage(ctx context.Context, arg ReadPublicActorOutputPageParams) ([]ReadPublicActorOutputPageRow, error)
-	ReadyRunRetries(ctx context.Context, arg ReadyRunRetriesParams) ([]ReadyRunRetriesRow, error)
+	ReadyRunRetries(ctx context.Context, rowLimit int32) ([]ReadyRunRetriesRow, error)
 	// Immediate fencing revokes credentials and terminalizes mount/runtime
 	// observations. Run/build/workspace authority is recovered by its canonical
 	// expiry and recovery loops; this transition does not imply zero authority.
@@ -519,7 +515,7 @@ type Querier interface {
 	ReconcileSchedule(ctx context.Context, arg ReconcileScheduleParams) (ReconcileScheduleRow, error)
 	RecordRunTerminalEvent(ctx context.Context, arg RecordRunTerminalEventParams) error
 	RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (WorkerInstance, error)
-	RecoverExpiredRunResumes(ctx context.Context, arg RecoverExpiredRunResumesParams) ([]RecoverExpiredRunResumesRow, error)
+	RecoverExpiredRunResumes(ctx context.Context, limitCount int32) ([]RecoverExpiredRunResumesRow, error)
 	RefreshAuthSession(ctx context.Context, arg RefreshAuthSessionParams) error
 	RegisterActorInputRunWait(ctx context.Context, arg RegisterActorInputRunWaitParams) (RunWait, error)
 	RegisterDifferentWorkspaceChildCall(ctx context.Context, arg RegisterDifferentWorkspaceChildCallParams) (RunWait, error)

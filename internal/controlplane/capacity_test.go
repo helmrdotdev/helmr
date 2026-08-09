@@ -246,7 +246,7 @@ func (s *capacityPlanStore) ListQueuedRunPlanningUsage(context.Context, db.ListQ
 	return nil, nil
 }
 
-func (s *capacityPlanStore) ListQueuedRunDispatchCandidatesForScopes(context.Context, db.ListQueuedRunDispatchCandidatesForScopesParams) ([]db.ListQueuedRunDispatchCandidatesForScopesRow, error) {
+func (s *capacityPlanStore) ListQueuedRunPlanningCandidatesForScopes(context.Context, db.ListQueuedRunPlanningCandidatesForScopesParams) ([]db.ListQueuedRunPlanningCandidatesForScopesRow, error) {
 	return nil, nil
 }
 

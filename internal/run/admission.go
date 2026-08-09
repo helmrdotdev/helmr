@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -28,7 +26,6 @@ type Store interface {
 	CreateAdmittedRootTaskRun(context.Context, db.CreateAdmittedRootTaskRunParams) (db.CreateAdmittedRootTaskRunRow, error)
 	ReserveWorkspaceForRun(context.Context, db.ReserveWorkspaceForRunParams) (db.Workspace, error)
 	secret.AttemptResolutionStore
-	CreateRunAdmissionOutbox(context.Context, db.CreateRunAdmissionOutboxParams) (db.OutboxMessage, error)
 }
 
 func CreateTask(ctx context.Context, store Store, request TaskRequest) (db.CreateAdmittedRootTaskRunRow, error) {
@@ -72,14 +69,6 @@ func CreateTask(ctx context.Context, store Store, request TaskRequest) (db.Creat
 	}
 	if err := secret.CreateAttemptResolutions(ctx, store, request.Run.WorkspaceID, run.ID, 1, resolutions); err != nil {
 		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("record run secret resolutions: %w", err)
-	}
-	if _, err := store.CreateRunAdmissionOutbox(ctx, db.CreateRunAdmissionOutboxParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		WorkspaceID:   request.Run.WorkspaceID,
-		EnvironmentID: request.Run.EnvironmentID,
-		RunID:         run.ID,
-	}); err != nil {
-		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("create run admission outbox: %w", err)
 	}
 	return run, nil
 }

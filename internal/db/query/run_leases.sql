@@ -837,12 +837,7 @@ UPDATE run_attempts
    AND terminal_at IS NULL
 RETURNING *;
 -- name: RecoverExpiredRunResumes :many
-WITH provided_outbox_ids AS MATERIALIZED (
-    SELECT id, ordinality
-      FROM unnest(sqlc.arg(outbox_message_ids)::uuid[])
-           WITH ORDINALITY AS supplied(id, ordinality)
-),
-candidates AS MATERIALIZED (
+WITH candidates AS MATERIALIZED (
     SELECT runs.id AS run_id,
            runs.entrypoint_kind,
            runs.session_id,
@@ -1267,8 +1262,6 @@ candidates AS MATERIALIZED (
        AND source_run_leases.run_id = run_checkpoints.run_id
        AND source_run_leases.attempt_number = run_checkpoints.attempt_number
        AND source_run_leases.workspace_id = run_checkpoints.workspace_id
-     WHERE cardinality(sqlc.arg(outbox_message_ids)::uuid[])
-           >= (SELECT count(*) FROM candidates)
      ORDER BY run_checkpoints.id
      FOR UPDATE OF run_checkpoints, workspace_versions
 ), expired_run_leases AS (
@@ -1354,33 +1347,6 @@ candidates AS MATERIALIZED (
        AND run_waits.suspension_state = 'resuming'
        AND run_waits.resume_request_version = locked_checkpoints.resume_request_version
     RETURNING run_waits.id, requeued_runs.org_id, requeued_runs.id AS run_id
-), ordered_requeued_waits AS MATERIALIZED (
-    SELECT requeued_waits.id,
-           row_number() OVER (ORDER BY requeued_waits.id) AS ordinality
-      FROM requeued_waits
-), admission_outbox AS (
-    INSERT INTO outbox_messages (
-        id,
-        lane,
-        topic,
-        partition_key,
-        payload,
-        available_at
-    )
-    SELECT provided_outbox_ids.id,
-           'control',
-           'run.admit',
-           locked_checkpoints.workspace_id::text,
-           jsonb_build_object(
-               'environmentId', locked_checkpoints.environment_id::text,
-               'runId', requeued_waits.run_id::text
-           ),
-           transaction_timestamp()
-      FROM requeued_waits
-      JOIN locked_checkpoints ON locked_checkpoints.run_wait_id = requeued_waits.id
-      JOIN ordered_requeued_waits USING (id)
-      JOIN provided_outbox_ids USING (ordinality)
-    RETURNING payload
 ), failed_attempts AS (
     UPDATE run_attempts
        SET terminal_outcome = 'failed',
@@ -1603,8 +1569,6 @@ candidates AS MATERIALIZED (
 SELECT requeued_waits.id, requeued_waits.org_id, requeued_waits.run_id
   FROM requeued_waits
   JOIN locked_checkpoints ON locked_checkpoints.run_wait_id = requeued_waits.id
-  JOIN admission_outbox
-    ON admission_outbox.payload ->> 'runId' = requeued_waits.run_id::text
   LEFT JOIN closing_runtimes ON closing_runtimes.id = locked_checkpoints.runtime_instance_id
   LEFT JOIN unmounting ON unmounting.id = locked_checkpoints.workspace_mount_id
  ORDER BY requeued_waits.id;

@@ -25,7 +25,7 @@ func TestPlanPacksExactShapesIntoCurrentAndTemplateBins(t *testing.T) {
 	store := plannerStore{
 		group:  db.WorkerGroup{ID: "group-1", Name: "default", RegionID: "us-east-1", State: "active", AllowsRun: true},
 		scopes: []db.ListQueuedRunEligibleScopesRow{{RegionID: "us-east-1", QueueName: "run"}},
-		runs: []db.ListQueuedRunDispatchCandidatesForScopesRow{
+		runs: []db.ListQueuedRunPlanningCandidatesForScopesRow{
 			{RunID: testUUID(1), WorkspaceManifest: workspace},
 			{RunID: testUUID(2), WorkspaceManifest: workspace},
 			{RunID: testUUID(3), WorkspaceManifest: workspace},
@@ -55,7 +55,7 @@ func TestPlanReportsRetainedRuntimeAndSaturation(t *testing.T) {
 	store := plannerStore{
 		group:  db.WorkerGroup{ID: "group-1", Name: "default", RegionID: "us-east-1", State: "active", AllowsRun: true},
 		scopes: []db.ListQueuedRunEligibleScopesRow{{RegionID: "us-east-1", QueueName: "run"}},
-		runs: []db.ListQueuedRunDispatchCandidatesForScopesRow{
+		runs: []db.ListQueuedRunPlanningCandidatesForScopesRow{
 			{RunID: testUUID(1), WorkspaceManifest: workspace},
 			{RunID: testUUID(2), WorkspaceManifest: workspace},
 			{RunID: testUUID(3), WorkspaceManifest: workspace},
@@ -81,7 +81,7 @@ func TestPlanRejectsRestoreWithDifferentRuntimeIdentity(t *testing.T) {
 	store := plannerStore{
 		group:  db.WorkerGroup{ID: "group-1", Name: "default", RegionID: "us-east-1", State: "active", AllowsRun: true},
 		scopes: []db.ListQueuedRunEligibleScopesRow{{RegionID: "us-east-1", QueueName: "run"}},
-		runs: []db.ListQueuedRunDispatchCandidatesForScopesRow{{
+		runs: []db.ListQueuedRunPlanningCandidatesForScopesRow{{
 			RunID: testUUID(1), WorkspaceManifest: workspace,
 			RequiredRuntimeIdentityID: "another-runtime", RequiredSubstrateFormat: "ext4", RequiredSubstrateContract: "substrate",
 		}},
@@ -120,7 +120,7 @@ func TestPlanClassifiesDemandBeyondQueueConcurrencyHeadroom(t *testing.T) {
 		group:  db.WorkerGroup{ID: "group-1", Name: "default", RegionID: "us-east-1", State: "active", AllowsRun: true},
 		scopes: []db.ListQueuedRunEligibleScopesRow{{RegionID: "us-east-1", QueueName: "run"}},
 		usage:  []db.ListQueuedRunPlanningUsageRow{{ScopeOrdinal: 1, ActiveRuns: 1}},
-		runs: []db.ListQueuedRunDispatchCandidatesForScopesRow{
+		runs: []db.ListQueuedRunPlanningCandidatesForScopesRow{
 			{RunID: testUUID(1), WorkspaceManifest: workspace, QueueConcurrencyLimit: pgtype.Int8{Int64: 2, Valid: true}},
 			{RunID: testUUID(2), WorkspaceManifest: workspace, QueueConcurrencyLimit: pgtype.Int8{Int64: 2, Valid: true}},
 			{RunID: testUUID(3), WorkspaceManifest: workspace, QueueConcurrencyLimit: pgtype.Int8{Int64: 2, Valid: true}},
@@ -142,7 +142,7 @@ func TestPlanEvaluatesMixedCandidateQueueLimitsIndividually(t *testing.T) {
 		group:  db.WorkerGroup{ID: "group-1", Name: "default", RegionID: "us-east-1", State: "active", AllowsRun: true},
 		scopes: []db.ListQueuedRunEligibleScopesRow{{RegionID: "us-east-1", QueueName: "run"}},
 		usage:  []db.ListQueuedRunPlanningUsageRow{{ScopeOrdinal: 1, ActiveRuns: 1}},
-		runs: []db.ListQueuedRunDispatchCandidatesForScopesRow{
+		runs: []db.ListQueuedRunPlanningCandidatesForScopesRow{
 			{RunID: testUUID(1), WorkspaceManifest: workspace, QueueConcurrencyLimit: pgtype.Int8{Int64: 4, Valid: true}},
 			{RunID: testUUID(2), WorkspaceManifest: workspace, QueueConcurrencyLimit: pgtype.Int8{Int64: 2, Valid: true}},
 			{RunID: testUUID(3), WorkspaceManifest: workspace},
@@ -164,7 +164,7 @@ func TestPlanHonorsPinnedPreparedQueueLimit(t *testing.T) {
 		group:  db.WorkerGroup{ID: "group-1", Name: "default", RegionID: "us-east-1", State: "active", AllowsRun: true},
 		scopes: []db.ListQueuedRunEligibleScopesRow{{RegionID: "us-east-1", QueueName: "run"}},
 		usage:  []db.ListQueuedRunPlanningUsageRow{{ScopeOrdinal: 1, PreparedRuns: 1, PreparedLimit: 1}},
-		runs:   []db.ListQueuedRunDispatchCandidatesForScopesRow{{RunID: testUUID(1), WorkspaceManifest: workspace}},
+		runs:   []db.ListQueuedRunPlanningCandidatesForScopesRow{{RunID: testUUID(1), WorkspaceManifest: workspace}},
 	}
 	plan, err := Plan(context.Background(), store, "group-1", capacityapi.CapacityPlanRequest{Worker: manifest, MaxAdditionalWorkers: 4}, time.Unix(100, 0))
 	if err != nil {
@@ -186,7 +186,7 @@ func TestPlanPagesRunScopesBeforeConcludingDemandIsEmpty(t *testing.T) {
 	store := &pagingPlannerStore{plannerStore: plannerStore{
 		group:  db.WorkerGroup{ID: "group-1", Name: "default", RegionID: "us-east-1", State: "active", AllowsRun: true},
 		scopes: scopes,
-		runs:   []db.ListQueuedRunDispatchCandidatesForScopesRow{{RunID: testUUID(1), WorkspaceManifest: workspace}},
+		runs:   []db.ListQueuedRunPlanningCandidatesForScopesRow{{RunID: testUUID(1), WorkspaceManifest: workspace}},
 	}}
 	plan, err := Plan(context.Background(), store, "group-1", capacityapi.CapacityPlanRequest{Worker: manifest, MaxAdditionalWorkers: 4}, time.Unix(100, 0))
 	if err != nil {
@@ -207,9 +207,9 @@ func TestPlanRunDiagnosticsDoNotConsumeBuildSamplingBudget(t *testing.T) {
 	manifest.PerVM.MemoryBytes = 4 << 30
 	manifest.ReleaseFingerprint, _ = manifest.ExpectedFingerprint()
 	workspace, _ := json.Marshal(deployment.SandboxManifest{Resources: deployment.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 1024}})
-	runs := make([]db.ListQueuedRunDispatchCandidatesForScopesRow, maximumPlanningCandidates)
+	runs := make([]db.ListQueuedRunPlanningCandidatesForScopesRow, maximumPlanningCandidates)
 	for index := range runs {
-		runs[index] = db.ListQueuedRunDispatchCandidatesForScopesRow{
+		runs[index] = db.ListQueuedRunPlanningCandidatesForScopesRow{
 			RunID: testUUID(byte(index)), WorkspaceManifest: workspace,
 			QueueConcurrencyLimit: pgtype.Int8{Int64: 1, Valid: true},
 		}
@@ -237,7 +237,7 @@ func TestPlanClassifiesOverflowingRunMemoryAsInvalid(t *testing.T) {
 	store := plannerStore{
 		group:  db.WorkerGroup{ID: "group-1", Name: "default", RegionID: "us-east-1", State: "active", AllowsRun: true},
 		scopes: []db.ListQueuedRunEligibleScopesRow{{RegionID: "us-east-1", QueueName: "run"}},
-		runs:   []db.ListQueuedRunDispatchCandidatesForScopesRow{{RunID: testUUID(1), WorkspaceManifest: workspace}},
+		runs:   []db.ListQueuedRunPlanningCandidatesForScopesRow{{RunID: testUUID(1), WorkspaceManifest: workspace}},
 	}
 	plan, err := Plan(context.Background(), store, "group-1", capacityapi.CapacityPlanRequest{Worker: manifest, MaxAdditionalWorkers: 1}, time.Unix(100, 0))
 	if err != nil {
@@ -257,7 +257,7 @@ func TestPlanDoesNotPinFleetForOversizedDemand(t *testing.T) {
 	store := plannerStore{
 		group:  db.WorkerGroup{ID: "group-1", Name: "default", RegionID: "us-east-1", State: "active", AllowsRun: true},
 		scopes: []db.ListQueuedRunEligibleScopesRow{{RegionID: "us-east-1", QueueName: "run"}},
-		runs:   []db.ListQueuedRunDispatchCandidatesForScopesRow{{RunID: testUUID(1), WorkspaceManifest: workspace}},
+		runs:   []db.ListQueuedRunPlanningCandidatesForScopesRow{{RunID: testUUID(1), WorkspaceManifest: workspace}},
 	}
 	plan, err := Plan(context.Background(), store, "group-1", capacityapi.CapacityPlanRequest{Worker: manifest, MaxAdditionalWorkers: 1}, time.Unix(100, 0))
 	if err != nil {
@@ -317,7 +317,7 @@ func TestPlanSuppressesScaleOutWhenCurrentSupplyIsIncomplete(t *testing.T) {
 	store := plannerStore{
 		group:  db.WorkerGroup{ID: "group-1", Name: "default", RegionID: "us-east-1", State: "active", AllowsRun: true},
 		scopes: []db.ListQueuedRunEligibleScopesRow{{RegionID: "us-east-1", QueueName: "run"}},
-		runs:   []db.ListQueuedRunDispatchCandidatesForScopesRow{{RunID: testUUID(1), WorkspaceManifest: workspace}},
+		runs:   []db.ListQueuedRunPlanningCandidatesForScopesRow{{RunID: testUUID(1), WorkspaceManifest: workspace}},
 		bins:   bins,
 	}
 	plan, err := Plan(context.Background(), store, "group-1", capacityapi.CapacityPlanRequest{Worker: manifest, MaxAdditionalWorkers: 4}, time.Unix(100, 0))
@@ -342,7 +342,7 @@ func TestPlanPreservesMixedRunAndBuildShapes(t *testing.T) {
 	store := plannerStore{
 		group:  db.WorkerGroup{ID: "group-1", Name: "default", RegionID: "us-east-1", State: "active", AllowsRun: true, AllowsBuild: true},
 		scopes: []db.ListQueuedRunEligibleScopesRow{{RegionID: "us-east-1", QueueName: "run"}},
-		runs:   []db.ListQueuedRunDispatchCandidatesForScopesRow{{RunID: testUUID(1), WorkspaceManifest: workspace}},
+		runs:   []db.ListQueuedRunPlanningCandidatesForScopesRow{{RunID: testUUID(1), WorkspaceManifest: workspace}},
 		builds: []db.ListQueuedDeploymentBuildCandidatesRow{{DeploymentID: testUUID(2)}, {DeploymentID: testUUID(3)}},
 	}
 	plan, err := Plan(context.Background(), store, "group-1", capacityapi.CapacityPlanRequest{Worker: manifest, MaxAdditionalWorkers: 4}, time.Unix(100, 0))
@@ -379,7 +379,7 @@ type plannerStore struct {
 	bins   []db.ListWorkerCapacityBinsRow
 	scopes []db.ListQueuedRunEligibleScopesRow
 	usage  []db.ListQueuedRunPlanningUsageRow
-	runs   []db.ListQueuedRunDispatchCandidatesForScopesRow
+	runs   []db.ListQueuedRunPlanningCandidatesForScopesRow
 	builds []db.ListQueuedDeploymentBuildCandidatesRow
 }
 
@@ -393,7 +393,7 @@ func (s *pagingPlannerStore) ListQueuedRunEligibleScopes(ctx context.Context, ar
 	return s.plannerStore.ListQueuedRunEligibleScopes(ctx, arg)
 }
 
-func (s *pagingPlannerStore) ListQueuedRunDispatchCandidatesForScopes(_ context.Context, arg db.ListQueuedRunDispatchCandidatesForScopesParams) ([]db.ListQueuedRunDispatchCandidatesForScopesRow, error) {
+func (s *pagingPlannerStore) ListQueuedRunPlanningCandidatesForScopes(_ context.Context, arg db.ListQueuedRunPlanningCandidatesForScopesParams) ([]db.ListQueuedRunPlanningCandidatesForScopesRow, error) {
 	if len(arg.QueueNames) != 1 || arg.QueueNames[0] != "target" {
 		return nil, nil
 	}
@@ -432,8 +432,8 @@ func (s plannerStore) ListQueuedRunPlanningUsage(_ context.Context, arg db.ListQ
 	}
 	return result, nil
 }
-func (s plannerStore) ListQueuedRunDispatchCandidatesForScopes(context.Context, db.ListQueuedRunDispatchCandidatesForScopesParams) ([]db.ListQueuedRunDispatchCandidatesForScopesRow, error) {
-	result := make([]db.ListQueuedRunDispatchCandidatesForScopesRow, len(s.runs))
+func (s plannerStore) ListQueuedRunPlanningCandidatesForScopes(context.Context, db.ListQueuedRunPlanningCandidatesForScopesParams) ([]db.ListQueuedRunPlanningCandidatesForScopesRow, error) {
+	result := make([]db.ListQueuedRunPlanningCandidatesForScopesRow, len(s.runs))
 	copy(result, s.runs)
 	for index := range result {
 		result[index].ScopeOrdinal = 1

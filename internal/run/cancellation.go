@@ -1161,7 +1161,7 @@ func resolveTerminalChildWait(
 			parent.currentRunLeaseID.Valid {
 			return cancellationAuthority("parked terminal child wait fence does not match", nil)
 		}
-		resolved, err := queries.ResolveParkedTerminalChildWait(
+		_, err := queries.ResolveParkedTerminalChildWait(
 			ctx,
 			db.ResolveParkedTerminalChildWaitParams{
 				ConditionState:             string(resolution.conditionState),
@@ -1177,20 +1177,6 @@ func resolveTerminalChildWait(
 		)
 		if err != nil {
 			return cancellationAuthority("resolve parked terminal child wait", err)
-		}
-		affected, err := queries.PublishTerminalChildResume(
-			ctx,
-			db.PublishTerminalChildResumeParams{
-				OutboxMessageID:      pgvalue.NewUUIDv7(),
-				WorkspaceID:          resolved.WorkspaceID,
-				EnvironmentID:        resolved.EnvironmentID,
-				RunID:                resolved.RunID,
-				WaitID:               resolved.ID,
-				ResumeRequestVersion: resolved.ResumeRequestVersion,
-			},
-		)
-		if err != nil || affected != 1 {
-			return cancellationAuthority("publish terminal child resume", err)
 		}
 	default:
 		return cancellationAuthority("terminal child wait suspension is ineligible", nil)

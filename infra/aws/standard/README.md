@@ -16,7 +16,7 @@ secret values out of state.
   want the module-provided distribution. When enabled, CloudFront connects to the ALB over HTTPS
   using a separate origin DNS name and ACM certificate.
 - `helmr-controlplane` desired count defaults to 2; `helmr-dispatcher` desired count defaults to 1
-- Cluster-mode disabled ElastiCache Valkey/Redis provides `REDIS_URL` for dispatch; two
+- Cluster-mode disabled ElastiCache Valkey/Redis provides the Control Plane event stream; two
   nodes are used by default for automatic failover
 - Worker Auto Scaling resources are optional and private-subnet ready, with zero default capacity
 - RDS defaults to deletion protection, automated backups, final snapshots, encrypted storage, and

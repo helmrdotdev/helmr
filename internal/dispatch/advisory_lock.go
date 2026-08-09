@@ -8,20 +8,36 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const (
-	runQueueReconcileLockName   = "helmr.dispatcher.run_queue_reconciler"
-	buildQueueReconcileLockName = "helmr.dispatcher.build_queue_reconciler"
-)
+const runResumeRecoveryLockName = "helmr.dispatcher.run_resume_recovery"
 
 type advisoryLock struct {
 	pool *pgxpool.Pool
 	key  int64
+}
+
+type RunResumeRecoveryAdvisoryLock struct {
+	lock *advisoryLock
+}
+
+func NewRunResumeRecoveryAdvisoryLock(pool *pgxpool.Pool) (*RunResumeRecoveryAdvisoryLock, error) {
+	lock, err := newAdvisoryLock(pool, runResumeRecoveryLockName)
+	if err != nil {
+		return nil, err
+	}
+	return &RunResumeRecoveryAdvisoryLock{lock: lock}, nil
+}
+
+func (l *RunResumeRecoveryAdvisoryLock) TryLock(ctx context.Context) (RunResumeRecoveryLockGuard, bool, error) {
+	guard, locked, err := l.lock.tryLock(ctx)
+	if err != nil || !locked {
+		return nil, locked, err
+	}
+	return guard, true, nil
 }
 
 func newAdvisoryLock(pool *pgxpool.Pool, name string) (*advisoryLock, error) {
@@ -34,37 +50,6 @@ func newAdvisoryLock(pool *pgxpool.Pool, name string) (*advisoryLock, error) {
 	}, nil
 }
 
-type QueueReconcileAdvisoryLock struct {
-	lock *advisoryLock
-}
-
-func NewQueueReconcileAdvisoryLock(pool *pgxpool.Pool) (*QueueReconcileAdvisoryLock, error) {
-	return newQueueReconcileAdvisoryLock(pool, runQueueReconcileLockName)
-}
-
-func NewBuildQueueReconcileAdvisoryLock(pool *pgxpool.Pool) (*QueueReconcileAdvisoryLock, error) {
-	return newQueueReconcileAdvisoryLock(pool, buildQueueReconcileLockName)
-}
-
-func newQueueReconcileAdvisoryLock(pool *pgxpool.Pool, name string) (*QueueReconcileAdvisoryLock, error) {
-	if pool == nil {
-		return nil, fmt.Errorf("database pool is required")
-	}
-	lock, err := newAdvisoryLock(pool, name)
-	if err != nil {
-		return nil, err
-	}
-	return &QueueReconcileAdvisoryLock{lock: lock}, nil
-}
-
-func (l *QueueReconcileAdvisoryLock) TryLock(ctx context.Context) (QueueReconcileLockGuard, bool, error) {
-	guard, locked, err := l.lock.tryLock(ctx)
-	if err != nil || !locked {
-		return nil, locked, err
-	}
-	return queueReconcileAdvisoryLockGuard{guard: guard}, true, nil
-}
-
 func (l *advisoryLock) tryLock(ctx context.Context) (*advisoryLockGuard, bool, error) {
 	guard, locked, err := pglock.TryAcquire(ctx, l.pool, l.key)
 	if err != nil || !locked {
@@ -75,18 +60,6 @@ func (l *advisoryLock) tryLock(ctx context.Context) (*advisoryLockGuard, bool, e
 
 type advisoryLockGuard struct {
 	guard *pglock.Guard
-}
-
-type queueReconcileAdvisoryLockGuard struct {
-	guard *advisoryLockGuard
-}
-
-func (g queueReconcileAdvisoryLockGuard) Store(QueueReconcilerStore) QueueReconcilerStore {
-	return db.New(g.guard.guard.Conn())
-}
-
-func (g queueReconcileAdvisoryLockGuard) Unlock(ctx context.Context) error {
-	return g.guard.Unlock(ctx)
 }
 
 func (g *advisoryLockGuard) Unlock(context.Context) error {

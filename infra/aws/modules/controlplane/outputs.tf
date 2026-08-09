@@ -34,12 +34,12 @@ output "postgres_security_group_id" {
 }
 
 output "redis_endpoint" {
-  description = "ElastiCache dispatch primary endpoint."
-  value       = aws_elasticache_replication_group.dispatch.primary_endpoint_address
+  description = "ElastiCache event stream primary endpoint."
+  value       = aws_elasticache_replication_group.event_stream.primary_endpoint_address
 }
 
 output "redis_url" {
-  description = "Redis/Valkey URL used by helmr-controlplane and helmr-dispatcher."
+  description = "Redis/Valkey URL used by helmr-controlplane."
   value       = local.redis_url
 }
 

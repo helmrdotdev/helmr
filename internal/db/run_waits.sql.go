@@ -4280,65 +4280,44 @@ WITH moved_run AS (
        SET status = 'queued',
            state_version = state_version + 1,
            updated_at = transaction_timestamp()
-     WHERE runs.id = $2
+     WHERE runs.id = $1
        AND runs.status = 'waiting'
-       AND runs.state_version = $3
-       AND runs.current_attempt_number = $4
+       AND runs.state_version = $2
+       AND runs.current_attempt_number = $3
        AND runs.current_run_lease_id IS NULL
     RETURNING runs.state_version
 ),
 resolved_wait AS (
     UPDATE run_waits
-       SET condition_state = $5::text,
-           condition_result = $6::jsonb,
-           condition_reason_code = $7::text,
-           condition_error = $8::jsonb,
+       SET condition_state = $4::text,
+           condition_result = $5::jsonb,
+           condition_reason_code = $6::text,
+           condition_error = $7::jsonb,
            condition_terminal_at = transaction_timestamp(),
            suspension_state = 'resume_pending',
            resume_request_version = run_waits.resume_request_version + 1,
            expected_run_state_version = moved_run.state_version,
            updated_at = transaction_timestamp()
       FROM moved_run
-     WHERE run_waits.id = $9
-       AND run_waits.run_id = $2
+     WHERE run_waits.id = $8
+       AND run_waits.run_id = $1
        AND run_waits.condition_state = 'pending'
        AND run_waits.suspension_state = 'parked'
        AND run_waits.expected_run_state_version
-           = $3
+           = $2
        AND run_waits.current_run_lease_id IS NULL
-       AND run_waits.prior_run_lease_id = $10
-       AND run_waits.suspend_checkpoint_id = $11
+       AND run_waits.prior_run_lease_id = $9
+       AND run_waits.suspend_checkpoint_id = $10
     RETURNING run_waits.id,
               run_waits.environment_id,
               run_waits.run_id,
               run_waits.workspace_id,
               run_waits.resume_request_version
 )
-INSERT INTO outbox_messages (
-    id,
-    lane,
-    topic,
-    partition_key,
-    payload,
-    available_at
-)
-SELECT $1,
-       'control',
-       'run.resume',
-       resolved_wait.workspace_id::text,
-       jsonb_build_object(
-           'environmentId', resolved_wait.environment_id::text,
-           'runId', resolved_wait.run_id::text,
-           'runWaitId', resolved_wait.id::text,
-           'resumeRequestVersion', resolved_wait.resume_request_version
-       ),
-       transaction_timestamp()
-  FROM resolved_wait
-RETURNING id
+SELECT id FROM resolved_wait
 `
 
 type ResolveParkedTokenWaitParams struct {
-	OutboxMessageID         pgtype.UUID `json:"outbox_message_id"`
 	RunID                   pgtype.UUID `json:"run_id"`
 	ExpectedRunStateVersion int64       `json:"expected_run_state_version"`
 	AttemptNumber           int32       `json:"attempt_number"`
@@ -4353,7 +4332,6 @@ type ResolveParkedTokenWaitParams struct {
 
 func (q *Queries) ResolveParkedTokenWait(ctx context.Context, arg ResolveParkedTokenWaitParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, resolveParkedTokenWait,
-		arg.OutboxMessageID,
 		arg.RunID,
 		arg.ExpectedRunStateVersion,
 		arg.AttemptNumber,

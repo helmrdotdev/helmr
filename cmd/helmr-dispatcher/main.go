@@ -15,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
-	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -24,14 +23,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 )
 
 const (
 	baseMaxConns          = int32(12)
-	runDispatchMaxConns   = int32(4)
+	runDispatchMaxConns   = int32(32)
 	buildDispatchMaxConns = int32(2)
 )
 
@@ -73,6 +70,14 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		"base", baseMaxConns, "run_dispatch", runDispatchMaxConns, "build_dispatch", buildDispatchMaxConns)
 	queries := db.New(pool)
 	runDispatchQueries := db.New(runDispatchPool)
+	runPlacementStore, err := dispatch.NewRunPlacementStore(runDispatchPool)
+	if err != nil {
+		return fmt.Errorf("configure run placement store: %w", err)
+	}
+	runPlacementLaneLock, err := dispatch.NewRunPlacementLaneLock(runDispatchPool)
+	if err != nil {
+		return fmt.Errorf("configure run placement lane lock: %w", err)
+	}
 	buildDispatchQueries := db.New(buildDispatchPool)
 	workspaceFencingKey, err := workspace.NewFencingKey(cfg.WorkspaceFencingKey)
 	if err != nil {
@@ -98,39 +103,14 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure clickhouse: %w", err)
 	}
 	defer clickHouseClient.Close()
-	redisOptions, err := redis.ParseURL(cfg.RedisURL)
-	if err != nil {
-		return fmt.Errorf("parse redis url: %w", err)
-	}
-	redisClient := redis.NewClient(redisOptions)
-	defer redisClient.Close()
-	if err := redisClient.Ping(ctx).Err(); err != nil {
-		return fmt.Errorf("ping redis: %w", err)
-	}
-	queue, err := dispatchredis.New(redisClient)
-	if err != nil {
-		return fmt.Errorf("configure dispatch queue: %w", err)
-	}
-	wakePublisher, err := dispatchredis.NewWakePublisher(redisClient)
-	if err != nil {
-		return fmt.Errorf("configure worker wake publisher: %w", err)
-	}
 	placementReconciler, err := dispatch.NewPlacementReconciler(
-		runDispatchQueries, runDispatchAuthority,
+		runPlacementStore, runPlacementLaneLock, runDispatchAuthority,
 		buildDispatchQueries, buildDispatchAuthority,
 		runDispatchQueries, runDispatchAuthority,
-		queue, wakePublisher, log,
+		log,
 	)
 	if err != nil {
 		return fmt.Errorf("configure placement reconciler: %w", err)
-	}
-	runEnqueuer, err := dispatch.NewEnqueuer(runDispatchQueries, queue)
-	if err != nil {
-		return fmt.Errorf("configure run dispatch enqueuer: %w", err)
-	}
-	buildEnqueuer, err := dispatch.NewEnqueuer(buildDispatchQueries, queue)
-	if err != nil {
-		return fmt.Errorf("configure build dispatch enqueuer: %w", err)
 	}
 	telemetryIngestor, err := telemetry.NewIngestor(log, queries, clickhouse.NewWriter(clickHouseClient))
 	if err != nil {
@@ -163,25 +143,13 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure stale worker fencer: %w", err)
 	}
-	queueReconcileLock, err := dispatch.NewQueueReconcileAdvisoryLock(runDispatchPool)
+	runResumeRecoveryLock, err := dispatch.NewRunResumeRecoveryAdvisoryLock(runDispatchPool)
 	if err != nil {
-		return fmt.Errorf("configure queue reconcile lock: %w", err)
+		return fmt.Errorf("configure run resume recovery lock: %w", err)
 	}
-	buildQueueReconcileLock, err := dispatch.NewBuildQueueReconcileAdvisoryLock(buildDispatchPool)
+	runResumeReconciler, err := dispatch.NewRunResumeReconciler(runDispatchAuthority, runResumeRecoveryLock, log)
 	if err != nil {
-		return fmt.Errorf("configure build queue reconcile lock: %w", err)
-	}
-	queueReconciler, err := dispatch.NewQueueReconciler(
-		runDispatchQueries,
-		runEnqueuer,
-		buildEnqueuer,
-		dispatch.WithQueueReconcileLogger(log),
-		dispatch.WithQueueReconcileLock(queueReconcileLock),
-		dispatch.WithBuildQueueReconcileLock(buildQueueReconcileLock),
-		dispatch.WithRunResumeRecoverer(runDispatchAuthority),
-	)
-	if err != nil {
-		return fmt.Errorf("configure queue reconciler: %w", err)
+		return fmt.Errorf("configure run resume reconciler: %w", err)
 	}
 	scheduleAuthority := deployment.NewScheduleAuthority()
 	scheduleAdmitter, err := schedule.NewDBAdmitter(pool, scheduleAuthority)
@@ -191,27 +159,6 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	scheduleWorker, err := schedule.NewWorker(log, queries, scheduleAdmitter)
 	if err != nil {
 		return fmt.Errorf("configure schedule worker: %w", err)
-	}
-	runAdmissionDelivery, err := run.NewDeliveryWorker(
-		log,
-		queries,
-		func(ctx context.Context, orgID, runID pgtype.UUID) error {
-			_, err := runEnqueuer.EnqueueRun(ctx, orgID, runID)
-			if errors.Is(err, dispatch.ErrNoEnqueueCandidate) {
-				return nil
-			}
-			return err
-		},
-		func(ctx context.Context, environmentID, runID, runWaitID pgtype.UUID, resumeRequestVersion int64) error {
-			_, err := runEnqueuer.EnqueueRunResume(ctx, environmentID, runID, runWaitID, resumeRequestVersion)
-			if errors.Is(err, dispatch.ErrStaleEnqueueHint) {
-				return nil
-			}
-			return err
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("configure run admission delivery: %w", err)
 	}
 	tokenWaitReconciler, err := token.NewWaitReconciler(pool)
 	if err != nil {
@@ -311,10 +258,9 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	runners := []func() error{
 		func() error { return buildSweeper.Run(runCtx) },
 		func() error { return staleWorkerFencer.Run(runCtx) },
-		func() error { return queueReconciler.Run(runCtx) },
+		func() error { return runResumeReconciler.Run(runCtx) },
 		func() error { return placementReconciler.Run(runCtx) },
 		func() error { return scheduleWorker.Run(runCtx) },
-		func() error { return runAdmissionDelivery.Run(runCtx) },
 		func() error { return tokenReconcileDelivery.Run(runCtx) },
 		func() error { return secretRevocationDelivery.Run(runCtx) },
 		func() error { return runWaitDeadlineDelivery.Run(runCtx) },

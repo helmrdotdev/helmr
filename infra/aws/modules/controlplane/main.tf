@@ -153,10 +153,8 @@ locals {
   controlplane_environment           = merge(var.controlplane_environment, local.controlplane_environment_defaults)
   controlplane_secrets               = local.controlplane_secret_defaults
 
-  dispatcher_environment_defaults = merge({
-    REDIS_URL = local.redis_url
-  }, local.clickhouse_environment)
-  dispatcher_environment = merge(var.dispatcher_environment, local.dispatcher_environment_defaults)
+  dispatcher_environment_defaults = local.clickhouse_environment
+  dispatcher_environment          = merge(var.dispatcher_environment, local.dispatcher_environment_defaults)
 
   dispatcher_secrets = merge({
     DATABASE_URL          = aws_secretsmanager_secret.database_url.arn
@@ -164,7 +162,7 @@ locals {
     }, local.telemetry_secrets
   )
 
-  redis_url = "rediss://${aws_elasticache_replication_group.dispatch.primary_endpoint_address}:${aws_elasticache_replication_group.dispatch.port}/0"
+  redis_url = "rediss://${aws_elasticache_replication_group.event_stream.primary_endpoint_address}:${aws_elasticache_replication_group.event_stream.port}/0"
 }
 
 resource "terraform_data" "bootstrap_preconditions" {
@@ -359,8 +357,8 @@ resource "aws_vpc_security_group_egress_rule" "postgres" {
 }
 
 resource "aws_security_group" "redis" {
-  name        = "${local.name}-dispatch"
-  description = "Helmr Redis/Valkey dispatch access"
+  name        = "${local.name}-events"
+  description = "Helmr Redis/Valkey event stream access"
   vpc_id      = var.vpc_id
   tags        = var.tags
 }
@@ -379,15 +377,15 @@ resource "aws_vpc_security_group_egress_rule" "redis" {
   ip_protocol       = "-1"
 }
 
-resource "aws_elasticache_subnet_group" "dispatch" {
-  name       = "${local.name}-dispatch"
+resource "aws_elasticache_subnet_group" "event_stream" {
+  name       = "${local.name}-events"
   subnet_ids = var.private_subnet_ids
   tags       = var.tags
 }
 
-resource "aws_elasticache_replication_group" "dispatch" {
-  replication_group_id       = "${local.name}-dispatch"
-  description                = "Helmr dispatch queue and worker lease hot path"
+resource "aws_elasticache_replication_group" "event_stream" {
+  replication_group_id       = "${local.name}-events"
+  description                = "Helmr Control Plane event stream"
   engine                     = var.redis_engine
   node_type                  = var.redis_node_type
   num_cache_clusters         = var.redis_node_count
@@ -396,7 +394,7 @@ resource "aws_elasticache_replication_group" "dispatch" {
   transit_encryption_enabled = true
   kms_key_id                 = aws_kms_key.helmr.arn
   security_group_ids         = [aws_security_group.redis.id]
-  subnet_group_name          = aws_elasticache_subnet_group.dispatch.name
+  subnet_group_name          = aws_elasticache_subnet_group.event_stream.name
   automatic_failover_enabled = var.redis_node_count > 1
   multi_az_enabled           = var.redis_node_count > 1
   tags                       = var.tags

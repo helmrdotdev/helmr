@@ -1715,8 +1715,21 @@ CREATE UNIQUE INDEX runs_schedule_instant_uidx
     ON runs (schedule_id, scheduled_at)
     WHERE cause_kind = 'schedule';
 
-CREATE INDEX runs_queue_candidate_idx
-    ON runs (environment_id, queue_name, concurrency_key, queue_score_at, id)
+CREATE INDEX runs_dispatch_fair_idx
+    ON runs (
+        (get_byte(uuid_send(org_id), 15) & 63),
+        org_id,
+        environment_id,
+        queue_name,
+        (coalesce(concurrency_key, '')),
+        queue_score_at,
+        id
+    )
+    INCLUDE (
+        state_version,
+        first_lease_at,
+        queued_expires_at
+    )
     WHERE status = 'queued' AND current_run_lease_id IS NULL;
 
 CREATE INDEX runs_initial_expiry_idx

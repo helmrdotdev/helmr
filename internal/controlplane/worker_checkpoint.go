@@ -664,7 +664,7 @@ func finishCheckpointFailedTask(
 		terminalRun.Status = status
 		terminalRun.Failure = failure
 		if err := resolveParentOwnedChildWait(
-			ctx, store, authority, terminalRun, failedAt,
+			ctx, store, authority, terminalRun,
 		); err != nil {
 			return err
 		}
@@ -1041,7 +1041,7 @@ func (s *Server) commitCheckpointReady(
 				return staleRunLeaseClaim(err)
 			}
 		} else {
-			committed, err := work.q.CommitTerminalCheckpointReady(ctx, db.CommitTerminalCheckpointReadyParams{
+			_, err := work.q.CommitTerminalCheckpointReady(ctx, db.CommitTerminalCheckpointReadyParams{
 				CheckpointedAt: checkpointedAt, RunID: authority.run.ID, WorkspaceID: authority.workspace.ID,
 				AttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
 				ExpectedRunStateVersion: wait.ExpectedRunStateVersion, CheckpointRequestVersion: request.RequestVersion,
@@ -1049,16 +1049,6 @@ func (s *Server) commitCheckpointReady(
 			})
 			if err != nil {
 				return staleRunLeaseClaim(err)
-			}
-			payload, _ := json.Marshal(map[string]any{
-				"environmentId": pgvalue.UUIDString(authority.run.EnvironmentID), "runId": pgvalue.UUIDString(authority.run.ID),
-				"runWaitId": request.RunWaitID, "resumeRequestVersion": committed.ResumeRequestVersion,
-			})
-			if _, err := work.q.CreateOutboxMessage(ctx, db.CreateOutboxMessageParams{
-				ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Lane: "control", Topic: "run.resume",
-				PartitionKey: pgvalue.UUIDString(authority.workspace.ID), Payload: payload, AvailableAt: checkpointedAt,
-			}); err != nil {
-				return fmt.Errorf("publish checkpoint-ready resume: %w", err)
 			}
 		}
 		response = workerapi.CheckpointResponse{
@@ -1255,20 +1245,6 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 	}
 	if _, err := claims.Complete(ctx, claim, receipt); err != nil {
 		return err
-	}
-	if _, err := store.CreateRunAdmissionOutbox(
-		ctx,
-		db.CreateRunAdmissionOutboxParams{
-			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			WorkspaceID:   authority.workspace.ID,
-			EnvironmentID: authority.run.EnvironmentID,
-			RunID:         child.ID,
-		},
-	); err != nil {
-		return fmt.Errorf(
-			"create same-workspace child task admission outbox: %w",
-			err,
-		)
 	}
 	return nil
 }

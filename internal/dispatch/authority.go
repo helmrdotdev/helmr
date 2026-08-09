@@ -53,7 +53,11 @@ func newAuthority(pool *pgxpool.Pool) (*Authority, error) {
 }
 
 func (d *Authority) begin(ctx context.Context) (pgx.Tx, error) {
-	return d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	// Dispatch authority transactions lock each mutable scope explicitly. READ
+	// COMMITTED lets a statement that follows a blocking scope or Worker lock
+	// re-read the state committed by the previous owner before it applies new
+	// authority.
+	return d.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 }
 
 func rollback(ctx context.Context, tx pgx.Tx) {
@@ -69,9 +73,11 @@ type workerFence struct {
 	RunArchitecture  string
 }
 
-// lockWorkerFence takes the worker-group lock before the worker lock, matching
-// the global execution lock order. Observation freshness is rechecked while
-// those authority rows remain locked.
+// lockWorkerFence takes a shared worker-group lock before the worker lock,
+// matching the global execution lock order. Placements in the same group may
+// proceed on independent Workers, while a group lifecycle change waits for all
+// in-flight placements. Observation freshness is rechecked while those
+// authority rows remain locked.
 func lockWorkerFence(ctx context.Context, tx pgx.Tx, fence workerFence) error {
 	var groupID string
 	err := tx.QueryRow(ctx, `
@@ -79,7 +85,7 @@ SELECT id
   FROM worker_groups
  WHERE id = $1 AND region_id = $2 AND state = 'active'
    AND (($3 = 'run' AND allows_run) OR ($3 = 'build' AND allows_build))
- FOR UPDATE`, fence.GroupID, fence.RegionID, fence.Role).Scan(&groupID)
+ FOR SHARE`, fence.GroupID, fence.RegionID, fence.Role).Scan(&groupID)
 	if err != nil {
 		return fmt.Errorf("lock eligible worker group: %w", err)
 	}

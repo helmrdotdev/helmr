@@ -94,15 +94,14 @@ Email delivery is disabled by default. Set `EMAIL_PROVIDER` to choose a sender:
 ## Dispatcher
 
 Required: `DATABASE_URL`, `CLICKHOUSE_URL`, and `WORKSPACE_FENCING_KEY`.
-`REDIS_URL` defaults to `redis://127.0.0.1:6379/0`.
 
 `ENCRYPTION_KEY` is control-plane authority and is not provided to the dispatcher.
 
 The dispatcher uses the same single base64-encoded 32-byte
 `WORKSPACE_FENCING_KEY` as the Control Plane service.
 
-The AWS Control Plane module provisions cluster-mode disabled ElastiCache Valkey/Redis and injects
-`REDIS_URL` into both `helmr-controlplane` and `helmr-dispatcher`.
+The AWS Control Plane module provisions cluster-mode disabled ElastiCache Valkey/Redis for the
+Control Plane event stream and injects `REDIS_URL` into `helmr-controlplane`.
 
 ## Worker
 

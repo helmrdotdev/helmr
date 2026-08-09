@@ -959,7 +959,6 @@ func reconcileParkedTokenWait(
 	resolution tokenWaitResolution,
 ) error {
 	_, err := q.ResolveParkedTokenWait(ctx, db.ResolveParkedTokenWaitParams{
-		OutboxMessageID:         pgvalue.NewUUIDv7(),
 		RunID:                   pgvalue.UUID(run.id),
 		ExpectedRunStateVersion: run.stateVersion,
 		AttemptNumber:           run.currentAttempt,
