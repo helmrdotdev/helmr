@@ -25,9 +25,11 @@ starts `helmr-worker` and a small lifecycle watcher. Build-capable workers addit
 and mount fixed Worker-cache and image-build scratch ext4 filesystems; all untrusted BuildKit
 execution stays inside the fresh image-build VM.
 
-`worker_environment` is only for additional non-secret worker variables. It cannot override
-infra-owned routing, storage, enrollment, Firecracker, image-cache, or network policy
-settings; use the module inputs for those values.
+`worker_environment` is only for additional non-secret Worker variables. Keys managed by the
+module through typed inputs, Secrets Manager, or EC2 metadata are reserved even when a conditional
+value is absent from the rendered environment. Conflicts fail during planning. Remove conflicting
+entries and use the corresponding typed input where one exists; other values are fixed or derived
+by the module.
 
 Size `root_volume_size_gb`, `root_volume_iops`, and `root_volume_throughput` for expected
 build/cache/runtime load. Leave `worker_disk_mib` null to let `helmr-worker` detect local
