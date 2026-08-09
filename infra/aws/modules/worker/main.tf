@@ -7,32 +7,7 @@ locals {
   build_scratch_min_mib   = max(32768, var.vm_scratch_disk_mib) + local.boot_corpus_reserve_mib
   network_resolver_ipv4   = coalesce(var.network_resolver_ipv4, cidrhost(data.aws_vpc.selected.cidr_block, 2))
 
-  disk_environment = merge({
-    WORKER_DISK_RESERVE_MIB = tostring(var.worker_disk_reserve_mib)
-    }, var.worker_disk_mib == null ? {} : {
-    WORKER_DISK_MIB = tostring(var.worker_disk_mib)
-  })
-  capacity_environment = merge(
-    var.worker_capacity_vcpus == null ? {} : {
-      WORKER_CAPACITY_VCPUS = tostring(var.worker_capacity_vcpus)
-    },
-    var.worker_capacity_memory_mib == null ? {} : {
-      WORKER_CAPACITY_MEMORY_MIB = tostring(var.worker_capacity_memory_mib)
-    },
-    var.worker_execution_slots == null ? {} : {
-      WORKER_EXECUTION_SLOTS = tostring(var.worker_execution_slots)
-    },
-  )
-  cache_environment = merge(
-    var.substrate_cache_max_mib == null ? {} : {
-      WORKER_SUBSTRATE_CACHE_MAX_MIB = tostring(var.substrate_cache_max_mib)
-    },
-    var.artifact_cache_max_mib == null ? {} : {
-      WORKER_ARTIFACT_CACHE_MAX_MIB = tostring(var.artifact_cache_max_mib)
-    },
-  )
-
-  worker_environment = merge({
+  worker_environment_values = {
     CONTROL_PLANE_URL                 = var.worker_controlplane_url
     CAS_URI                           = var.cas_uri
     PLATFORM_STORE_URI                = var.platform_store_uri
@@ -55,24 +30,35 @@ locals {
     VM_SCRATCH_DISK_MIB               = tostring(var.vm_scratch_disk_mib)
     VM_INIT_TIMEOUT                   = "30s"
     # EC2 workers allow extra time for first-boot guest health convergence.
-    VM_HEALTH_TIMEOUT = "300s"
-    }, contains(var.worker_roles, "build") ? {
-    BUILD_POLICY_PATH                 = "/etc/helmr/build-policy.json"
-    WORKER_BUILD_CACHE_DIR            = "/var/lib/helmr/cache"
-    WORKER_BUILD_SCRATCH_DIR          = "/var/lib/helmr/scratch"
-    IMAGE_CACHE_REGISTRY_AUTHORITY    = var.image_cache_registry_authority
-    IMAGE_CACHE_REPOSITORY_PREFIX     = var.image_cache_repository_prefix
-    IMAGE_CACHE_ROLE_ARN              = var.image_cache_role_arn
-    IMAGE_CACHE_REPOSITORY_ARN_PREFIX = var.image_cache_repository_arn_prefix
-  } : {}, local.disk_environment, local.capacity_environment, local.cache_environment)
+    VM_HEALTH_TIMEOUT                 = "300s"
+    BUILD_POLICY_PATH                 = contains(var.worker_roles, "build") ? "/etc/helmr/build-policy.json" : null
+    WORKER_BUILD_CACHE_DIR            = contains(var.worker_roles, "build") ? "/var/lib/helmr/cache" : null
+    WORKER_BUILD_SCRATCH_DIR          = contains(var.worker_roles, "build") ? "/var/lib/helmr/scratch" : null
+    IMAGE_CACHE_REGISTRY_AUTHORITY    = contains(var.worker_roles, "build") ? var.image_cache_registry_authority : null
+    IMAGE_CACHE_REPOSITORY_PREFIX     = contains(var.worker_roles, "build") ? var.image_cache_repository_prefix : null
+    IMAGE_CACHE_ROLE_ARN              = contains(var.worker_roles, "build") ? var.image_cache_role_arn : null
+    IMAGE_CACHE_REPOSITORY_ARN_PREFIX = contains(var.worker_roles, "build") ? var.image_cache_repository_arn_prefix : null
+    WORKER_DISK_RESERVE_MIB           = tostring(var.worker_disk_reserve_mib)
+    WORKER_DISK_MIB                   = var.worker_disk_mib == null ? null : tostring(var.worker_disk_mib)
+    WORKER_CAPACITY_VCPUS             = var.worker_capacity_vcpus == null ? null : tostring(var.worker_capacity_vcpus)
+    WORKER_CAPACITY_MEMORY_MIB        = var.worker_capacity_memory_mib == null ? null : tostring(var.worker_capacity_memory_mib)
+    WORKER_EXECUTION_SLOTS            = var.worker_execution_slots == null ? null : tostring(var.worker_execution_slots)
+    WORKER_SUBSTRATE_CACHE_MAX_MIB    = var.substrate_cache_max_mib == null ? null : tostring(var.substrate_cache_max_mib)
+    WORKER_ARTIFACT_CACHE_MAX_MIB     = var.artifact_cache_max_mib == null ? null : tostring(var.artifact_cache_max_mib)
+  }
+  worker_environment = {
+    for key, value in local.worker_environment_values : key => value if value != null
+  }
 
-  reserved_worker_environment_keys = toset(concat(keys(local.worker_environment), [
+  reserved_worker_environment_keys = setunion(toset(keys(local.worker_environment_values)), toset([
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
     "CHECKPOINT_ENCRYPTION_KEY",
-    "BUILD_POLICY_PATH",
-    "PLATFORM_STORE_URI",
+    "WORKER_ENROLLMENT_TOKEN_FILE",
+    "WORKER_RESOURCE_ID",
   ]))
   worker_environment_conflicts = setintersection(keys(var.worker_environment), local.reserved_worker_environment_keys)
-  base_worker_environment      = merge(local.worker_environment, var.worker_environment)
+  base_worker_environment      = merge(var.worker_environment, local.worker_environment)
 
   worker_permission_policy = {
     Version = "2012-10-17"
@@ -360,7 +346,7 @@ resource "terraform_data" "network_preconditions" {
   lifecycle {
     precondition {
       condition     = length(local.worker_environment_conflicts) == 0
-      error_message = "worker_environment must not set infra-owned routing or security variables. Use explicit worker module inputs instead."
+      error_message = "worker_environment must not set module-managed Worker variables. Remove conflicting entries and use typed inputs where available."
     }
 
     precondition {

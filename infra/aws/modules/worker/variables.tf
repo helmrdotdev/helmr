@@ -363,7 +363,7 @@ variable "worker_service_name" {
 }
 
 variable "worker_environment" {
-  description = "Additional non-secret environment variables written to the worker env file."
+  description = "Additional non-secret environment variables written to the Worker env file. Keys managed by this module remain reserved even when their values are conditionally absent."
   type        = map(string)
   default     = {}
 }

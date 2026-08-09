@@ -422,3 +422,43 @@ run "explicit_disk_must_exceed_reserve" {
 
   expect_failures = [terraform_data.network_preconditions]
 }
+
+run "conditionally_absent_module_environment_key_is_reserved" {
+  command = plan
+
+  variables {
+    worker_disk_mib = null
+    worker_environment = {
+      WORKER_DISK_MIB = "2048"
+    }
+  }
+
+  expect_failures = [terraform_data.network_preconditions]
+}
+
+run "generated_environment_key_is_reserved" {
+  command = plan
+
+  variables {
+    worker_environment = {
+      AWS_REGION = "us-west-2"
+    }
+  }
+
+  expect_failures = [terraform_data.network_preconditions]
+}
+
+run "additional_worker_environment_is_rendered" {
+  command = plan
+
+  variables {
+    worker_environment = {
+      HTTPS_PROXY = "http://proxy.example.test:8080"
+    }
+  }
+
+  assert {
+    condition     = strcontains(base64decode(aws_launch_template.worker.user_data), "HTTPS_PROXY=http://proxy.example.test:8080")
+    error_message = "worker_environment must remain available for additional non-secret Worker variables"
+  }
+}
