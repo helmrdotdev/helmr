@@ -18,10 +18,6 @@ function errorMessage(error: unknown): string {
   return error instanceof ApiError ? error.message : "Something went wrong.";
 }
 
-function numberValue(form: FormData, name: string): number {
-  return Number(String(form.get(name) ?? "0"));
-}
-
 export function AdminWorkerGroups() {
   const queryClient = useQueryClient();
   const [regionFilter, setRegionFilter] = createSignal("");
@@ -48,12 +44,6 @@ export function AdminWorkerGroups() {
       description: String(form.get("description") ?? "").trim(),
       allows_run: form.has("allows_run"),
       allows_build: form.has("allows_build"),
-      required_cpu_millis: numberValue(form, "required_cpu_millis"),
-      required_memory_bytes: numberValue(form, "required_memory_bytes"),
-      required_guest_ephemeral_disk_bytes: numberValue(form, "required_guest_ephemeral_disk_bytes"),
-      required_build_cache_bytes: numberValue(form, "required_build_cache_bytes"),
-      required_artifact_cache_bytes: numberValue(form, "required_artifact_cache_bytes"),
-      required_vm_slots: numberValue(form, "required_vm_slots"),
     };
     setSubmitting(true);
     setError(null);
@@ -116,7 +106,7 @@ export function AdminWorkerGroups() {
   return (
     <div class={ui.page}>
       <div class={ui.pageHeader}>
-        <div><h1 class={ui.h1}>Worker Groups</h1><p class={ui.pageSubtitle}>Execution fleets, capacity contracts, and Worker enrollment.</p></div>
+        <div><h1 class={ui.h1}>Worker Groups</h1><p class={ui.pageSubtitle}>Execution fleets, routing, and Worker enrollment.</p></div>
         <button type="button" class={ui.button} disabled={(regions.data?.regions.length ?? 0) === 0} onClick={() => { setError(null); setCreating(true); }}>New Worker Group</button>
       </div>
       <div class={ui.toolbar}>
@@ -127,15 +117,14 @@ export function AdminWorkerGroups() {
         <Show when={!groups.isError} fallback={<p class={ui.error}>Could not load Worker Groups.</p>}>
           <Show when={(groups.data?.worker_groups.length ?? 0) > 0} fallback={<div class={ui.emptyState}><strong class="text-console-text">No Worker Groups configured.</strong><Show when={(regions.data?.regions.length ?? 0) > 0} fallback={<a href="/admin/regions" class="text-console-accent">Create a Region first</a>}><button type="button" class={ui.button} onClick={() => setCreating(true)}>Create Worker Group</button></Show></div>}>
             <div class={ui.tableWrap}>
-              <table class="min-w-270">
-                <thead><tr><th>Worker Group</th><th>Region</th><th>Roles</th><th>State</th><th>Version</th><th>Capacity contract</th><th></th></tr></thead>
+              <table class="min-w-220">
+                <thead><tr><th>Worker Group</th><th>Region</th><th>Roles</th><th>State</th><th>Version</th><th></th></tr></thead>
                 <tbody><For each={groups.data?.worker_groups ?? []}>{(group) => (
                   <tr>
                     <td><div class={ui.tableCellStack}><strong>{group.name}</strong><div><code>{group.id}</code></div></div></td>
                     <td><code>{group.region_id}</code></td>
                     <td>{[group.allows_run && "run", group.allows_build && "build"].filter(Boolean).join(", ")}</td>
                     <td>{group.state}</td><td>{group.claim_version}</td>
-                    <td><code>{group.required_cpu_millis}m / {Math.round(group.required_memory_bytes / 1048576)} MiB</code></td>
                     <td class={ui.actionsCell}><div class="flex items-center justify-end gap-1.5">
                       <button type="button" class={ui.secondaryButton} onClick={() => { setError(null); setEditing(group); }}>Edit</button>
                       <Show when={group.state === "active"}><button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={() => void transition(group, "pause")}>Pause</button></Show>
@@ -159,14 +148,6 @@ export function AdminWorkerGroups() {
             <TextField name="name" label="Name" placeholder="default" required />
             <label class={ui.field}><span>Description</span><textarea class={ui.textarea} name="description" /></label>
             <fieldset class={ui.fieldSet}><legend class={ui.fieldLegend}>Roles</legend><label class="mr-4"><input type="checkbox" name="allows_run" checked /> Run</label><label><input type="checkbox" name="allows_build" checked /> Build</label></fieldset>
-            <div class="grid grid-cols-2 gap-x-3 max-sm:grid-cols-1">
-              <NumberField name="required_cpu_millis" label="CPU (millicores)" value={1000} min={1} />
-              <NumberField name="required_memory_bytes" label="Memory (bytes)" value={1073741824} min={1} />
-              <NumberField name="required_guest_ephemeral_disk_bytes" label="Guest disk (bytes)" value={34359738368} min={1} />
-              <NumberField name="required_build_cache_bytes" label="Build cache (bytes)" value={0} min={0} />
-              <NumberField name="required_artifact_cache_bytes" label="Artifact cache (bytes)" value={0} min={0} />
-              <NumberField name="required_vm_slots" label="VM slots" value={1} min={0} />
-            </div>
             <Show when={error()}><p class={ui.fieldError} role="alert">{error()}</p></Show>
             <div class={ui.modalActions}><button type="button" class={ui.secondaryButton} onClick={() => setCreating(false)}>Cancel</button><button class={ui.button} disabled={submitting()}>{submitting() ? "Creating..." : "Create"}</button></div>
           </form>
@@ -182,8 +163,4 @@ export function AdminWorkerGroups() {
 
 function TextField(props: { name: string; label: string; placeholder?: string; required?: boolean }) {
   return <label class={ui.field}><span>{props.label}</span><input class={ui.input} name={props.name} placeholder={props.placeholder} required={props.required} /></label>;
-}
-
-function NumberField(props: { name: string; label: string; value: number; min: number }) {
-  return <label class={ui.field}><span>{props.label}</span><input class={ui.input} type="number" name={props.name} value={props.value} min={props.min} step="1" required /></label>;
 }

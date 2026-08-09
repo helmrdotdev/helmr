@@ -17,12 +17,6 @@ export type AdminWorkerGroup = {
   claim_version: number;
   allows_run: boolean;
   allows_build: boolean;
-  required_cpu_millis: number;
-  required_memory_bytes: number;
-  required_guest_ephemeral_disk_bytes: number;
-  required_build_cache_bytes: number;
-  required_artifact_cache_bytes: number;
-  required_vm_slots: number;
 };
 
 export type CreateAdminWorkerGroupInput = Omit<AdminWorkerGroup, "id" | "state" | "claim_version">;

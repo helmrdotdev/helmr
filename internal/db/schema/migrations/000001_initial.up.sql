@@ -325,18 +325,11 @@ CREATE TABLE worker_groups (
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
     allows_run BOOLEAN NOT NULL DEFAULT true,
     allows_build BOOLEAN NOT NULL DEFAULT true,
-    required_cpu_millis BIGINT NOT NULL DEFAULT 1 CHECK (required_cpu_millis > 0),
-    required_memory_bytes BIGINT NOT NULL DEFAULT 1 CHECK (required_memory_bytes > 0),
-    required_guest_ephemeral_disk_bytes BIGINT NOT NULL DEFAULT 1 CHECK (required_guest_ephemeral_disk_bytes > 0),
-    required_build_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (required_build_cache_bytes >= 0),
-    required_artifact_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (required_artifact_cache_bytes >= 0),
-    required_vm_slots INTEGER NOT NULL DEFAULT 1 CHECK (required_vm_slots >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (id, region_id),
     UNIQUE (region_id, name),
-    CHECK (allows_run OR allows_build),
-    CHECK (NOT allows_run OR required_vm_slots > 0)
+    CHECK (allows_run OR allows_build)
 );
 
 CREATE INDEX worker_groups_active_placement_idx

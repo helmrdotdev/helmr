@@ -22,20 +22,14 @@ type UpdateAdminRegionRequest struct {
 }
 
 type AdminWorkerGroup struct {
-	ID                              string `json:"id"`
-	RegionID                        string `json:"region_id"`
-	Name                            string `json:"name"`
-	Description                     string `json:"description"`
-	State                           string `json:"state"`
-	ClaimVersion                    int64  `json:"claim_version"`
-	AllowsRun                       bool   `json:"allows_run"`
-	AllowsBuild                     bool   `json:"allows_build"`
-	RequiredCPUMillis               int64  `json:"required_cpu_millis"`
-	RequiredMemoryBytes             int64  `json:"required_memory_bytes"`
-	RequiredGuestEphemeralDiskBytes int64  `json:"required_guest_ephemeral_disk_bytes"`
-	RequiredBuildCacheBytes         int64  `json:"required_build_cache_bytes"`
-	RequiredArtifactCacheBytes      int64  `json:"required_artifact_cache_bytes"`
-	RequiredVMSlots                 int32  `json:"required_vm_slots"`
+	ID           string `json:"id"`
+	RegionID     string `json:"region_id"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	State        string `json:"state"`
+	ClaimVersion int64  `json:"claim_version"`
+	AllowsRun    bool   `json:"allows_run"`
+	AllowsBuild  bool   `json:"allows_build"`
 }
 
 type AdminWorkerGroupsResponse struct {
@@ -43,17 +37,11 @@ type AdminWorkerGroupsResponse struct {
 }
 
 type CreateAdminWorkerGroupRequest struct {
-	RegionID                        string `json:"region_id"`
-	Name                            string `json:"name"`
-	Description                     string `json:"description"`
-	AllowsRun                       bool   `json:"allows_run"`
-	AllowsBuild                     bool   `json:"allows_build"`
-	RequiredCPUMillis               int64  `json:"required_cpu_millis"`
-	RequiredMemoryBytes             int64  `json:"required_memory_bytes"`
-	RequiredGuestEphemeralDiskBytes int64  `json:"required_guest_ephemeral_disk_bytes"`
-	RequiredBuildCacheBytes         int64  `json:"required_build_cache_bytes"`
-	RequiredArtifactCacheBytes      int64  `json:"required_artifact_cache_bytes"`
-	RequiredVMSlots                 int32  `json:"required_vm_slots"`
+	RegionID    string `json:"region_id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	AllowsRun   bool   `json:"allows_run"`
+	AllowsBuild bool   `json:"allows_build"`
 }
 
 type CreateAdminWorkerGroupResponse struct {

@@ -17,17 +17,10 @@ WITH token AS (
     RETURNING id
 )
 INSERT INTO worker_groups (
-    id, token_id, region_id, name, description, state, allows_run, allows_build,
-    required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes,
-    required_build_cache_bytes, required_artifact_cache_bytes,
-    required_vm_slots
+    id, token_id, region_id, name, description, state, allows_run, allows_build
 )
 SELECT sqlc.arg(id), token.id, sqlc.arg(region_id), sqlc.arg(name),
-       sqlc.arg(description), 'active', sqlc.arg(allows_run), sqlc.arg(allows_build),
-       sqlc.arg(required_cpu_millis), sqlc.arg(required_memory_bytes),
-       sqlc.arg(required_guest_ephemeral_disk_bytes),
-       sqlc.arg(required_build_cache_bytes), sqlc.arg(required_artifact_cache_bytes),
-       sqlc.arg(required_vm_slots)
+       sqlc.arg(description), 'active', sqlc.arg(allows_run), sqlc.arg(allows_build)
   FROM token
 RETURNING *;
 
@@ -363,15 +356,6 @@ WITH activation AS (
        AND worker_groups.state IN ('active', 'paused')
        AND (NOT sqlc.arg(supports_run)::boolean OR worker_groups.allows_run)
        AND (NOT sqlc.arg(supports_build)::boolean OR worker_groups.allows_build)
-       AND sqlc.arg(epoch_cpu_millis)::bigint >= worker_groups.required_cpu_millis
-       AND sqlc.arg(epoch_memory_bytes)::bigint >= worker_groups.required_memory_bytes
-       AND sqlc.arg(epoch_guest_ephemeral_disk_bytes)::bigint >= worker_groups.required_guest_ephemeral_disk_bytes
-       AND sqlc.arg(epoch_build_cache_bytes)::bigint >= worker_groups.required_build_cache_bytes
-       AND sqlc.arg(epoch_artifact_cache_bytes)::bigint >= worker_groups.required_artifact_cache_bytes
-       AND (
-           NOT sqlc.arg(supports_run)::boolean
-           OR sqlc.arg(max_vm_slots)::integer >= worker_groups.required_vm_slots
-       )
        AND NOT EXISTS (
            SELECT 1 FROM runtime_instances
             WHERE runtime_instances.worker_instance_id = worker_instances.id

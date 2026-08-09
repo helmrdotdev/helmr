@@ -33,8 +33,6 @@ func TestDevSeedWithFreshPostgres(t *testing.T) {
 	if _, err := q.CreateWorkerGroup(ctx, db.CreateWorkerGroupParams{
 		ID: uuid.Must(uuid.NewV7()).String(), TokenID: pgvalue.NewUUIDv7(), TokenHash: make([]byte, 32),
 		RegionID: "dev-local", Name: "default", AllowsRun: true, AllowsBuild: true,
-		RequiredCPUMillis: 1, RequiredMemoryBytes: 1, RequiredGuestEphemeralDiskBytes: 1,
-		RequiredVMSlots: 1,
 	}); err != nil {
 		t.Fatalf("bootstrap local worker group: %v", err)
 	}
