@@ -49,6 +49,15 @@ func recoverExpiredRunResumesParams(limit int32) db.RecoverExpiredRunResumesPara
 	}
 }
 
+func mustRunCandidateParams(t *testing.T, scope QueueScope, limit int32) db.ListQueuedRunDispatchCandidatesForScopesParams {
+	t.Helper()
+	params, err := runCandidateParams([]QueueScope{scope}, limit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return params
+}
+
 type runPlacementFixture struct {
 	ctx           context.Context
 	pool          *pgxpool.Pool
@@ -220,9 +229,9 @@ UPDATE runs
 	}
 
 	queries := db.New(fixture.pool)
-	scopes, err := queries.ListQueuedRunCandidateScopes(
+	scopes, err := queries.ListQueuedRunEligibleScopes(
 		fixture.ctx,
-		db.ListQueuedRunCandidateScopesParams{
+		db.ListQueuedRunEligibleScopesParams{
 			RowLimit: 10,
 			ScanSeed: "preparation-concurrency",
 		},
@@ -233,22 +242,32 @@ UPDATE runs
 	if len(scopes) != 1 {
 		t.Fatalf("candidate scopes = %d, want 1", len(scopes))
 	}
-	if scopes[0].ActiveRuns != 0 || scopes[0].ActiveLimit != 0 ||
-		scopes[0].PreparedRuns != 1 || scopes[0].PreparedLimit != 1 {
-		t.Fatalf("queue usage = %+v", scopes[0])
+	usage, err := queries.ListQueuedRunPlanningUsage(
+		fixture.ctx,
+		db.ListQueuedRunPlanningUsageParams{
+			EnvironmentIds:  []pgtype.UUID{scopes[0].EnvironmentID},
+			ConcurrencyKeys: []string{scopes[0].ConcurrencyKey},
+			QueueNames:      []string{scopes[0].QueueName},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(usage) != 1 || usage[0].ActiveRuns != 0 || usage[0].ActiveLimit != 0 ||
+		usage[0].PreparedRuns != 1 || usage[0].PreparedLimit != 1 {
+		t.Fatalf("queue usage = %+v", usage)
 	}
 
-	candidates, err := queries.ListQueuedRunDispatchCandidatesForScope(
+	candidates, err := queries.ListQueuedRunDispatchCandidatesForScopes(
 		fixture.ctx,
-		db.ListQueuedRunDispatchCandidatesForScopeParams{
+		mustRunCandidateParams(t, QueueScope{
 			OrgID:          pgvalue.UUID(fixture.orgID),
 			ProjectID:      pgvalue.UUID(fixture.projectID),
 			EnvironmentID:  pgvalue.UUID(fixture.environmentID),
 			RegionID:       "us-east-1",
-			ConcurrencyKey: pgtype.Text{},
+			ConcurrencyKey: "",
 			QueueName:      "default",
-			RowLimit:       10,
-		},
+		}, 10),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -301,6 +320,148 @@ UPDATE runs
 	); err != nil {
 		t.Fatalf("unbounded queue preparation concurrency: %v", err)
 	}
+}
+
+func TestRunPlanningUsageCountsActiveQueueState(t *testing.T) {
+	fixture := newRunPlacementFixture(t)
+	seedDispatchMeasurement(t, fixture, 2, 1, 0, false)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runs SET queue_concurrency_limit = 4 WHERE id = $1`, fixture.runID)
+
+	reserved, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runtime_instances
+   SET observed_state = 'ready', observed_version = 1,
+       observed_desired_version = desired_version,
+       preparing_at = transaction_timestamp(), ready_at = transaction_timestamp(),
+       observed_at = transaction_timestamp()
+ WHERE id = $1`, reserved.RuntimeInstanceID)
+	mounting, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE workspace_mounts SET state = 'mounted', mounted_at = transaction_timestamp() WHERE id = $1`, mounting.WorkspaceMountID)
+	granted, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !granted.LeaseCreated {
+		t.Fatalf("run lease was not created: %+v", granted)
+	}
+
+	queries := db.New(fixture.pool)
+	scopes, err := queries.ListQueuedRunEligibleScopes(fixture.ctx, db.ListQueuedRunEligibleScopesParams{
+		RowLimit: 10, ScanSeed: "active-queue-usage",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scopes) != 1 {
+		t.Fatalf("eligible scopes = %d, want 1", len(scopes))
+	}
+	usage, err := queries.ListQueuedRunPlanningUsage(fixture.ctx, db.ListQueuedRunPlanningUsageParams{
+		EnvironmentIds:  []pgtype.UUID{scopes[0].EnvironmentID},
+		ConcurrencyKeys: []string{scopes[0].ConcurrencyKey},
+		QueueNames:      []string{scopes[0].QueueName},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(usage) != 1 || usage[0].ScopeOrdinal != 1 || usage[0].ActiveRuns != 1 || usage[0].ActiveLimit != 4 ||
+		usage[0].PreparedRuns != 0 || usage[0].PreparedLimit != 0 {
+		t.Fatalf("queue usage = %+v", usage)
+	}
+}
+
+func TestQueuedRunCandidateBatchPreservesScopeAndQueueOrder(t *testing.T) {
+	fixture := newRunPlacementFixture(t)
+	seedDispatchMeasurement(t, fixture, 7, 2, 0, false)
+	scopes := []QueueScope{
+		{
+			OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
+			EnvironmentID: pgvalue.UUID(fixture.environmentID), RegionID: "us-east-1",
+			ConcurrencyKey: "key-0001", QueueName: "measure-0001",
+		},
+		{
+			OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
+			EnvironmentID: pgvalue.UUID(fixture.environmentID), RegionID: "us-east-1",
+			QueueName: "measure-0000",
+		},
+	}
+	params, err := runCandidateParams(scopes, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.New(fixture.pool).ListQueuedRunDispatchCandidatesForScopes(fixture.ctx, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 6 {
+		t.Fatalf("candidate rows = %d, want 6", len(rows))
+	}
+	for index, row := range rows {
+		wantOrdinal := int64(index/3 + 1)
+		if row.ScopeOrdinal != wantOrdinal {
+			t.Fatalf("row %d scope ordinal = %d, want %d", index, row.ScopeOrdinal, wantOrdinal)
+		}
+	}
+	for scopeIndex, scope := range scopes {
+		queryRows, err := fixture.pool.Query(fixture.ctx, `
+SELECT id
+  FROM runs
+ WHERE environment_id = $1
+   AND queue_name = $2
+   AND concurrency_key IS NOT DISTINCT FROM $3::text
+   AND status = 'queued'
+ ORDER BY queue_score_at, id
+ LIMIT 3`, scope.EnvironmentID, scope.QueueName, optionalString(scope.ConcurrencyKey))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var expected []pgtype.UUID
+		for queryRows.Next() {
+			var id pgtype.UUID
+			if err := queryRows.Scan(&id); err != nil {
+				queryRows.Close()
+				t.Fatal(err)
+			}
+			expected = append(expected, id)
+		}
+		queryRows.Close()
+		if err := queryRows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		for index, id := range expected {
+			if rows[scopeIndex*3+index].RunID != id {
+				t.Fatalf("scope %d candidate %d = %s, want %s", scopeIndex, index,
+					pgvalue.UUIDString(rows[scopeIndex*3+index].RunID), pgvalue.UUIDString(id))
+			}
+		}
+	}
+
+	isolationParams, err := runCandidateParams(scopes[:1], 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	isolationParams.ProjectIds[0] = pgtype.UUID{Bytes: [16]byte{15: 99}, Valid: true}
+	isolated, err := db.New(fixture.pool).ListQueuedRunDispatchCandidatesForScopes(fixture.ctx, isolationParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(isolated) != 0 {
+		t.Fatalf("mismatched project returned %d candidates", len(isolated))
+	}
+}
+
+func optionalString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func TestPlaceReadyRunGrantsSameWorkspaceChildOnRetainedRuntime(t *testing.T) {
@@ -553,17 +714,16 @@ UPDATE workspace_mounts
 	); err != nil {
 		t.Fatalf("same-Workspace child ready hint: %v", err)
 	}
-	dispatchCandidates, err := db.New(fixture.pool).ListQueuedRunDispatchCandidatesForScope(
+	dispatchCandidates, err := db.New(fixture.pool).ListQueuedRunDispatchCandidatesForScopes(
 		fixture.ctx,
-		db.ListQueuedRunDispatchCandidatesForScopeParams{
+		mustRunCandidateParams(t, QueueScope{
 			OrgID:          pgvalue.UUID(fixture.orgID),
 			ProjectID:      pgvalue.UUID(fixture.projectID),
 			EnvironmentID:  pgvalue.UUID(fixture.environmentID),
 			RegionID:       "us-east-1",
-			ConcurrencyKey: pgtype.Text{},
+			ConcurrencyKey: "",
 			QueueName:      "default",
-			RowLimit:       10,
-		},
+		}, 10),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -2512,20 +2672,20 @@ func TestActorCurrentRunRecreatedRestoreAndRecovery(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("Actor restore ready hint: %v", err)
 			}
-			queued, err := db.New(fixture.pool).ListQueuedRunDispatchCandidatesForScope(
+			queued, err := db.New(fixture.pool).ListQueuedRunDispatchCandidatesForScopes(
 				fixture.ctx,
-				db.ListQueuedRunDispatchCandidatesForScopeParams{
+				mustRunCandidateParams(t, QueueScope{
 					OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 					EnvironmentID: pgvalue.UUID(fixture.environmentID), RegionID: "us-east-1",
-					QueueName: "default", RowLimit: 10,
-				},
+					QueueName: "default",
+				}, 10),
 			)
 			if err != nil || len(queued) != 1 || queued[0].RunID != pgvalue.UUID(fixture.runID) {
 				t.Fatalf("Actor restore dispatch candidates = %+v, error = %v", queued, err)
 			}
-			scopes, err := db.New(fixture.pool).ListQueuedRunCandidateScopes(
+			scopes, err := db.New(fixture.pool).ListQueuedRunEligibleScopes(
 				fixture.ctx,
-				db.ListQueuedRunCandidateScopesParams{RowLimit: 10, ScanSeed: "actor-restore"},
+				db.ListQueuedRunEligibleScopesParams{RowLimit: 10, ScanSeed: "actor-restore"},
 			)
 			if err != nil || len(scopes) != 1 || scopes[0].EnvironmentID != pgvalue.UUID(fixture.environmentID) {
 				t.Fatalf("Actor restore candidate scopes = %+v, error = %v", scopes, err)
@@ -2538,13 +2698,13 @@ UPDATE run_checkpoints SET actor_speculative_input_sequence = 2 WHERE id = $1`, 
 				}); !errors.Is(err, pgx.ErrNoRows) {
 					t.Fatalf("out-of-bounds Actor restore ready hint error = %v, want pgx.ErrNoRows", err)
 				}
-				queued, err := db.New(fixture.pool).ListQueuedRunDispatchCandidatesForScope(
+				queued, err := db.New(fixture.pool).ListQueuedRunDispatchCandidatesForScopes(
 					fixture.ctx,
-					db.ListQueuedRunDispatchCandidatesForScopeParams{
+					mustRunCandidateParams(t, QueueScope{
 						OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 						EnvironmentID: pgvalue.UUID(fixture.environmentID), RegionID: "us-east-1",
-						QueueName: "default", RowLimit: 10,
-					},
+						QueueName: "default",
+					}, 10),
 				)
 				if err != nil || len(queued) != 0 {
 					t.Fatalf("out-of-bounds Actor dispatch candidates = %+v, error = %v", queued, err)
@@ -2918,19 +3078,26 @@ func (fixture runPlacementFixture) candidate() ReadyRunCandidate {
 }
 
 func newRunPlacementFixture(t *testing.T) runPlacementFixture {
+	return newRunPlacementFixtureWithSeed(t, uuid.NewString())
+}
+
+func newRunPlacementFixtureWithSeed(t *testing.T, seed string) runPlacementFixture {
 	t.Helper()
 	ctx := context.Background()
 	pool := newDispatchIntegrationDB(t, ctx)
+	id := func(kind string) uuid.UUID {
+		return uuid.NewSHA1(uuid.NameSpaceOID, []byte(seed+":"+kind))
+	}
 	fixture := runPlacementFixture{
 		ctx:           ctx,
 		pool:          pool,
-		orgID:         uuid.Must(uuid.NewV7()),
-		projectID:     uuid.Must(uuid.NewV7()),
-		environmentID: uuid.Must(uuid.NewV7()),
-		runID:         uuid.Must(uuid.NewV7()),
-		workspaceID:   uuid.Must(uuid.NewV7()),
-		workerID:      uuid.Must(uuid.NewV7()),
-		groupID:       "run-placement-" + strings.ReplaceAll(uuid.NewString(), "-", ""),
+		orgID:         id("organization"),
+		projectID:     id("project"),
+		environmentID: id("environment"),
+		runID:         id("run"),
+		workspaceID:   id("workspace"),
+		workerID:      id("worker"),
+		groupID:       "run-placement-" + strings.ReplaceAll(id("group").String(), "-", ""),
 	}
 	key := bytes.Repeat([]byte{7}, workspace.FencingKeySize)
 	var err error
@@ -2945,15 +3112,15 @@ func newRunPlacementFixture(t *testing.T) runPlacementFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deploymentID := uuid.Must(uuid.NewV7())
+	deploymentID := id("deployment")
 	fixture.deploymentID = deploymentID
-	taskDefinitionID := uuid.Must(uuid.NewV7())
-	workspaceDefinitionID := uuid.Must(uuid.NewV7())
-	versionID := uuid.Must(uuid.NewV7())
-	sourceID := uuid.Must(uuid.NewV7())
-	programID := uuid.Must(uuid.NewV7())
-	imageID := uuid.Must(uuid.NewV7())
-	runtimeIdentityID := "run-runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	taskDefinitionID := id("task-definition")
+	workspaceDefinitionID := id("workspace-definition")
+	versionID := id("workspace-version")
+	sourceID := id("source-artifact")
+	programID := id("program-artifact")
+	imageID := id("image-artifact")
+	runtimeIdentityID := "run-runtime-" + strings.ReplaceAll(id("runtime-identity").String(), "-", "")
 	sourceDigest := "sha256:" + strings.Repeat("1", 64)
 	programDigest := "sha256:" + strings.Repeat("2", 64)
 	imageDigest := "sha256:" + strings.Repeat("4", 64)
@@ -3062,7 +3229,7 @@ INSERT INTO worker_groups (
     id, token_id, region_id, name, allows_run, allows_build
 )
 SELECT $1, token.id, 'us-east-1', $1, true, false FROM token`,
-		fixture.groupID, uuid.Must(uuid.NewV7()), dbtest.Hash("run-placement-worker-group"),
+		fixture.groupID, id("worker-group-token"), dbtest.Hash("run-placement-worker-group"),
 	)
 	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO runtime_identities (
@@ -3091,7 +3258,7 @@ INSERT INTO worker_instances (
 		fixture.workerID,
 		fixture.workerID.String(),
 		fixture.groupID,
-		uuid.Must(uuid.NewV7()),
+		id("worker-service"),
 		runtimeIdentityID,
 	)
 	tx, err := pool.Begin(ctx)

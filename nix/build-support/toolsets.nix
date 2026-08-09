@@ -97,4 +97,6 @@ rec {
     pkgsUnstable._1password-cli
     pkgs.ssm-session-manager-plugin
   ];
+
+  dispatchMeasurement = base ++ [ pkgs.valkey ];
 }

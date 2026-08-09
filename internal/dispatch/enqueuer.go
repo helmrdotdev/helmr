@@ -21,7 +21,7 @@ type EnqueuerStore interface {
 	GetQueuedRunReadyHint(context.Context, db.GetQueuedRunReadyHintParams) (db.GetQueuedRunReadyHintRow, error)
 	GetQueuedRunResumeHint(context.Context, db.GetQueuedRunResumeHintParams) (db.GetQueuedRunResumeHintRow, error)
 	GetRunResumeHintAuthority(context.Context, db.GetRunResumeHintAuthorityParams) (db.GetRunResumeHintAuthorityRow, error)
-	ListQueuedRunDispatchCandidatesForScope(context.Context, db.ListQueuedRunDispatchCandidatesForScopeParams) ([]db.ListQueuedRunDispatchCandidatesForScopeRow, error)
+	ListQueuedRunDispatchCandidatesForScopes(context.Context, db.ListQueuedRunDispatchCandidatesForScopesParams) ([]db.ListQueuedRunDispatchCandidatesForScopesRow, error)
 	ListQueuedDeploymentBuildCandidates(context.Context, db.ListQueuedDeploymentBuildCandidatesParams) ([]db.ListQueuedDeploymentBuildCandidatesRow, error)
 	ListQueuedDeploymentBuildRegions(context.Context, int32) ([]string, error)
 }
@@ -198,15 +198,11 @@ func (e *Enqueuer) ReconcileQueueScope(ctx context.Context, scope QueueScope, li
 	if limit <= 0 {
 		limit = 100
 	}
-	candidates, err := e.store.ListQueuedRunDispatchCandidatesForScope(ctx, db.ListQueuedRunDispatchCandidatesForScopeParams{
-		OrgID:          scope.OrgID,
-		RegionID:       scope.RegionID,
-		ProjectID:      scope.ProjectID,
-		EnvironmentID:  scope.EnvironmentID,
-		ConcurrencyKey: pgtype.Text{String: scope.ConcurrencyKey, Valid: scope.ConcurrencyKey != ""},
-		QueueName:      scope.QueueName,
-		RowLimit:       limit,
-	})
+	params, err := runCandidateParams([]QueueScope{scope}, limit)
+	if err != nil {
+		return QueueReconcileStats{}, err
+	}
+	candidates, err := e.store.ListQueuedRunDispatchCandidatesForScopes(ctx, params)
 	if err != nil {
 		return QueueReconcileStats{}, err
 	}

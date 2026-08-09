@@ -43,8 +43,9 @@ const (
 type Store interface {
 	GetWorkerGroup(context.Context, string) (db.WorkerGroup, error)
 	ListWorkerCapacityBins(context.Context, db.ListWorkerCapacityBinsParams) ([]db.ListWorkerCapacityBinsRow, error)
-	ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error)
-	ListQueuedRunDispatchCandidatesForScope(context.Context, db.ListQueuedRunDispatchCandidatesForScopeParams) ([]db.ListQueuedRunDispatchCandidatesForScopeRow, error)
+	ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error)
+	ListQueuedRunPlanningUsage(context.Context, db.ListQueuedRunPlanningUsageParams) ([]db.ListQueuedRunPlanningUsageRow, error)
+	ListQueuedRunDispatchCandidatesForScopes(context.Context, db.ListQueuedRunDispatchCandidatesForScopesParams) ([]db.ListQueuedRunDispatchCandidatesForScopesRow, error)
 	ListQueuedDeploymentBuildCandidates(context.Context, db.ListQueuedDeploymentBuildCandidatesParams) ([]db.ListQueuedDeploymentBuildCandidatesRow, error)
 }
 
@@ -200,11 +201,11 @@ func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanS
 	complete := true
 	if group.AllowsRun {
 		remaining := maximumPlanningCandidates
-		var after db.ListQueuedRunCandidateScopesRow
+		var after db.ListQueuedRunEligibleScopesRow
 		var visited int32
 		for remaining > 0 && visited < maximumPlanningScopes {
 			pageLimit := min(planningScopePageSize, maximumPlanningScopes-visited)
-			scopes, err := store.ListQueuedRunCandidateScopes(ctx, db.ListQueuedRunCandidateScopesParams{
+			scopes, err := store.ListQueuedRunEligibleScopes(ctx, db.ListQueuedRunEligibleScopesParams{
 				AfterSortKey: after.SortKey, AfterOrgID: after.OrgID, AfterProjectID: after.ProjectID,
 				AfterEnvironmentID: after.EnvironmentID, AfterRegionID: after.RegionID,
 				AfterConcurrencyKey: after.ConcurrencyKey, AfterQueueName: after.QueueName,
@@ -216,17 +217,23 @@ func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanS
 			if len(scopes) == 0 {
 				break
 			}
+			usage, err := store.ListQueuedRunPlanningUsage(ctx, planningUsageParams(scopes))
+			if err != nil {
+				return nil, false, fmt.Errorf("list capacity planning run usage: %w", err)
+			}
+			if len(usage) != len(scopes) {
+				return nil, false, fmt.Errorf("list capacity planning run usage: got %d rows for %d scopes", len(usage), len(scopes))
+			}
 			visited += int32(len(scopes))
-			for _, scope := range scopes {
+			for index, scope := range scopes {
+				if usage[index].ScopeOrdinal != int64(index+1) {
+					return nil, false, fmt.Errorf("list capacity planning run usage: ordinal %d at index %d", usage[index].ScopeOrdinal, index)
+				}
 				if remaining <= 0 {
 					complete = false
 					break
 				}
-				rows, err := store.ListQueuedRunDispatchCandidatesForScope(ctx, db.ListQueuedRunDispatchCandidatesForScopeParams{
-					OrgID: scope.OrgID, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
-					RegionID: scope.RegionID, ConcurrencyKey: optionalText(scope.ConcurrencyKey), QueueName: scope.QueueName,
-					RowLimit: remaining + 1,
-				})
+				rows, err := store.ListQueuedRunDispatchCandidatesForScopes(ctx, planningCandidateParams(scope, remaining+1))
 				if err != nil {
 					return nil, false, fmt.Errorf("list capacity planning run candidates: %w", err)
 				}
@@ -234,7 +241,7 @@ func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanS
 					complete = false
 					rows = rows[:remaining]
 				}
-				admission := queueAdmissionStateFromScope(scope)
+				admission := queueAdmissionStateFromUsage(usage[index])
 				for _, row := range rows {
 					candidate := runItem(row)
 					if candidate.reason == "" && !admission.admit(row.QueueConcurrencyLimit) {
@@ -293,10 +300,33 @@ type queueAdmissionState struct {
 	admitted                    int64
 }
 
-func queueAdmissionStateFromScope(scope db.ListQueuedRunCandidateScopesRow) queueAdmissionState {
+func planningUsageParams(scopes []db.ListQueuedRunEligibleScopesRow) db.ListQueuedRunPlanningUsageParams {
+	params := db.ListQueuedRunPlanningUsageParams{
+		EnvironmentIds:  make([]pgtype.UUID, 0, len(scopes)),
+		ConcurrencyKeys: make([]string, 0, len(scopes)),
+		QueueNames:      make([]string, 0, len(scopes)),
+	}
+	for _, scope := range scopes {
+		params.EnvironmentIds = append(params.EnvironmentIds, scope.EnvironmentID)
+		params.ConcurrencyKeys = append(params.ConcurrencyKeys, scope.ConcurrencyKey)
+		params.QueueNames = append(params.QueueNames, scope.QueueName)
+	}
+	return params
+}
+
+func planningCandidateParams(scope db.ListQueuedRunEligibleScopesRow, limit int32) db.ListQueuedRunDispatchCandidatesForScopesParams {
+	return db.ListQueuedRunDispatchCandidatesForScopesParams{
+		PerScopeLimit: limit,
+		OrgIds:        []pgtype.UUID{scope.OrgID}, ProjectIds: []pgtype.UUID{scope.ProjectID},
+		EnvironmentIds: []pgtype.UUID{scope.EnvironmentID}, RegionIds: []string{scope.RegionID},
+		ConcurrencyKeys: []string{scope.ConcurrencyKey}, QueueNames: []string{scope.QueueName},
+	}
+}
+
+func queueAdmissionStateFromUsage(usage db.ListQueuedRunPlanningUsageRow) queueAdmissionState {
 	return queueAdmissionState{
-		activeRuns: scope.ActiveRuns, activeLimit: scope.ActiveLimit,
-		preparedRuns: scope.PreparedRuns, preparedLimit: scope.PreparedLimit,
+		activeRuns: usage.ActiveRuns, activeLimit: usage.ActiveLimit,
+		preparedRuns: usage.PreparedRuns, preparedLimit: usage.PreparedLimit,
 	}
 }
 
@@ -317,7 +347,7 @@ func exceedsQueueLimit(used int64, candidateLimit pgtype.Int8, pinnedLimit int64
 	return limit.Valid && used >= limit.Int64
 }
 
-func runItem(row db.ListQueuedRunDispatchCandidatesForScopeRow) item {
+func runItem(row db.ListQueuedRunDispatchCandidatesForScopesRow) item {
 	result := item{role: "run", key: fmt.Sprintf("%x", row.RunID.Bytes)}
 	if row.RequiresRetainedRuntime {
 		result.reason = reasonRetainedRuntime
@@ -530,8 +560,4 @@ func fitsPhysical(available, required capacityapi.ResourceVector) bool {
 	return available.CPUMillis >= required.CPUMillis &&
 		available.MemoryBytes >= required.MemoryBytes &&
 		available.GuestEphemeralDiskBytes >= required.GuestEphemeralDiskBytes
-}
-
-func optionalText(value string) pgtype.Text {
-	return pgtype.Text{String: value, Valid: value != ""}
 }

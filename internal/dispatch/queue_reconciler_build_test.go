@@ -18,7 +18,7 @@ func (buildReconcileStoreFake) RecoverExpiredRunResumes(context.Context, db.Reco
 	return nil, nil
 }
 
-func (buildReconcileStoreFake) ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error) {
+func (buildReconcileStoreFake) ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error) {
 	return nil, nil
 }
 
@@ -83,8 +83,8 @@ func (isolatedQueueStoreFake) RecoverExpiredRunResumes(context.Context, db.Recov
 	return nil, nil
 }
 
-func (isolatedQueueStoreFake) ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error) {
-	return []db.ListQueuedRunCandidateScopesRow{{QueueName: "run"}}, nil
+func (isolatedQueueStoreFake) ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error) {
+	return []db.ListQueuedRunEligibleScopesRow{{QueueName: "run"}}, nil
 }
 
 type countingRunEnqueuer struct {
