@@ -165,14 +165,7 @@ func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	description := strings.TrimSpace(request.Description)
-	spec := workergroup.Spec{ID: "new", Name: request.Name, AllowsRun: request.AllowsRun, AllowsBuild: request.AllowsBuild}
-	capacity := workergroup.Capacity{
-		MilliCPU: request.RequiredCPUMillis, MemoryBytes: request.RequiredMemoryBytes,
-		GuestEphemeralDiskBytes: request.RequiredGuestEphemeralDiskBytes,
-		BuildCacheBytes:         request.RequiredBuildCacheBytes, ArtifactCacheBytes: request.RequiredArtifactCacheBytes,
-		VMSlots: request.RequiredVMSlots,
-	}
-	if err := capacity.Validate(spec); err != nil {
+	if err := workergroup.ValidateRoles(request.AllowsRun, request.AllowsBuild); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -197,11 +190,6 @@ func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 			ID: uuid.Must(uuid.NewV7()).String(), TokenID: pgvalue.UUID(uuid.Must(uuid.NewV7())), TokenHash: token.Hash,
 			RegionID: request.RegionID, Name: request.Name, Description: description,
 			AllowsRun: request.AllowsRun, AllowsBuild: request.AllowsBuild,
-			RequiredCPUMillis: request.RequiredCPUMillis, RequiredMemoryBytes: request.RequiredMemoryBytes,
-			RequiredGuestEphemeralDiskBytes: request.RequiredGuestEphemeralDiskBytes,
-			RequiredBuildCacheBytes:         request.RequiredBuildCacheBytes,
-			RequiredArtifactCacheBytes:      request.RequiredArtifactCacheBytes,
-			RequiredVMSlots:                 request.RequiredVMSlots,
 		})
 		if isUniqueViolation(err) {
 			return conflict(errors.New("worker group conflicts with an existing active role or name"))
@@ -334,11 +322,6 @@ func adminWorkerGroup(row db.WorkerGroup) api.AdminWorkerGroup {
 	return api.AdminWorkerGroup{
 		ID: row.ID, RegionID: row.RegionID, Name: row.Name, Description: row.Description,
 		State: row.State, ClaimVersion: row.ClaimVersion, AllowsRun: row.AllowsRun, AllowsBuild: row.AllowsBuild,
-		RequiredCPUMillis: row.RequiredCPUMillis, RequiredMemoryBytes: row.RequiredMemoryBytes,
-		RequiredGuestEphemeralDiskBytes: row.RequiredGuestEphemeralDiskBytes,
-		RequiredBuildCacheBytes:         row.RequiredBuildCacheBytes,
-		RequiredArtifactCacheBytes:      row.RequiredArtifactCacheBytes,
-		RequiredVMSlots:                 row.RequiredVMSlots,
 	}
 }
 

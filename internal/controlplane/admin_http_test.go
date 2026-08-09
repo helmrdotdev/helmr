@@ -28,6 +28,8 @@ type adminHTTPQuerier struct {
 	rotateCalls        int
 	createRegionCalls  int
 	createRegionParams db.CreateRegionParams
+	createGroupCalls   int
+	createGroupParams  db.CreateWorkerGroupParams
 	conflict           bool
 	missing            bool
 }
@@ -54,6 +56,24 @@ func (q *adminHTTPQuerier) CreateRegion(_ context.Context, params db.CreateRegio
 	q.createRegionCalls++
 	q.createRegionParams = params
 	return db.Region{ID: params.ID, DisplayName: params.DisplayName, Location: params.Location}, nil
+}
+
+func (q *adminHTTPQuerier) GetRegion(_ context.Context, id string) (db.Region, error) {
+	return db.Region{ID: id, DisplayName: "Default", Location: "Local"}, nil
+}
+
+func (q *adminHTTPQuerier) LockWorkerGroupCreationRegion(context.Context, int64) error {
+	return nil
+}
+
+func (q *adminHTTPQuerier) CreateWorkerGroup(_ context.Context, params db.CreateWorkerGroupParams) (db.WorkerGroup, error) {
+	q.createGroupCalls++
+	q.createGroupParams = params
+	return db.WorkerGroup{
+		ID: params.ID, RegionID: params.RegionID, Name: params.Name, Description: params.Description,
+		State: db.WorkerGroupStateActive, ClaimVersion: 1,
+		AllowsRun: params.AllowsRun, AllowsBuild: params.AllowsBuild,
+	}, nil
 }
 
 func (q *adminHTTPQuerier) RotateWorkerGroupToken(context.Context, db.RotateWorkerGroupTokenParams) (db.WorkerGroupToken, error) {
@@ -184,6 +204,30 @@ func TestAdminHTTPCreatesLogicalRegion(t *testing.T) {
 	wantBody := `{"id":"us-east","display_name":"US East","location":"Virginia, USA"}`
 	if strings.TrimSpace(response.Body.String()) != wantBody {
 		t.Fatalf("response = %s, want %s", response.Body.String(), wantBody)
+	}
+}
+
+func TestAdminHTTPCreatesLogicalWorkerGroup(t *testing.T) {
+	queries := &adminHTTPQuerier{admin: true}
+	response := httptest.NewRecorder()
+	adminHTTPRouter(t, queries).ServeHTTP(response, adminHTTPRequest(
+		http.MethodPost,
+		"/admin/api/v1/worker-groups",
+		`{"region_id":"default","name":"default","description":"Primary fleet","allows_run":true,"allows_build":true}`,
+	))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", response.Code, response.Body.String())
+	}
+	if queries.createGroupCalls != 1 || queries.createGroupParams.RegionID != "default" ||
+		queries.createGroupParams.Name != "default" || queries.createGroupParams.Description != "Primary fleet" ||
+		!queries.createGroupParams.AllowsRun || !queries.createGroupParams.AllowsBuild {
+		t.Fatalf("create worker group params = %+v, calls = %d", queries.createGroupParams, queries.createGroupCalls)
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", response.Header().Get("Cache-Control"))
+	}
+	if body := response.Body.String(); !strings.Contains(body, `"enrollment_token":"hlmr_wgt_`) {
+		t.Fatalf("response = %s", body)
 	}
 }
 

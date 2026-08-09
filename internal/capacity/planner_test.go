@@ -98,23 +98,14 @@ func TestPlanRejectsRestoreWithDifferentRuntimeIdentity(t *testing.T) {
 	}
 }
 
-func TestPlanRejectsTemplateBelowWorkerGroupContract(t *testing.T) {
+func TestPlanRejectsTemplateWithDisallowedRole(t *testing.T) {
 	manifest := plannerTestManifest(t)
 	store := plannerStore{group: db.WorkerGroup{
 		ID: "group-1", Name: "default", RegionID: "us-east-1", State: "active", AllowsRun: true,
-		RequiredCPUMillis: manifest.Capacity.CPUMillis + 1,
 	}}
-	_, err := Plan(context.Background(), store, "group-1", capacityapi.CapacityPlanRequest{
-		Worker: manifest, MaxAdditionalWorkers: 1,
-	}, time.Unix(100, 0))
-	if !errors.Is(err, ErrInvalidPlanRequest) {
-		t.Fatalf("Plan() error = %v, want ErrInvalidPlanRequest", err)
-	}
-
-	store.group.RequiredCPUMillis = 0
 	store.group.AllowsRun = false
 	store.group.AllowsBuild = true
-	_, err = Plan(context.Background(), store, "group-1", capacityapi.CapacityPlanRequest{
+	_, err := Plan(context.Background(), store, "group-1", capacityapi.CapacityPlanRequest{
 		Worker: manifest, MaxAdditionalWorkers: 1,
 	}, time.Unix(100, 0))
 	if !errors.Is(err, ErrInvalidPlanRequest) {

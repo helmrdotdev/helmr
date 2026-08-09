@@ -284,16 +284,6 @@ func validateTemplateForGroup(manifest capacityapi.WorkerReleaseManifest, group 
 	if manifest.SupportsBuild && !group.AllowsBuild {
 		return errors.New("build role is not allowed")
 	}
-	if manifest.Capacity.CPUMillis < group.RequiredCPUMillis ||
-		manifest.Capacity.MemoryBytes < group.RequiredMemoryBytes ||
-		manifest.Capacity.GuestEphemeralDiskBytes < group.RequiredGuestEphemeralDiskBytes ||
-		manifest.BuildCacheBytes < group.RequiredBuildCacheBytes ||
-		manifest.ArtifactCacheBytes < group.RequiredArtifactCacheBytes {
-		return errors.New("shared capacity is below the Worker Group requirement")
-	}
-	if manifest.SupportsRun && manifest.Capacity.VMSlots < int64(group.RequiredVMSlots) {
-		return errors.New("VM slots are below the Worker Group requirement")
-	}
 	return nil
 }
 

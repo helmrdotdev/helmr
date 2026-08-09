@@ -1243,23 +1243,17 @@ type User struct {
 }
 
 type WorkerGroup struct {
-	ID                              string             `json:"id"`
-	TokenID                         pgtype.UUID        `json:"token_id"`
-	RegionID                        string             `json:"region_id"`
-	Name                            string             `json:"name"`
-	Description                     string             `json:"description"`
-	State                           string             `json:"state"`
-	ClaimVersion                    int64              `json:"claim_version"`
-	AllowsRun                       bool               `json:"allows_run"`
-	AllowsBuild                     bool               `json:"allows_build"`
-	RequiredCPUMillis               int64              `json:"required_cpu_millis"`
-	RequiredMemoryBytes             int64              `json:"required_memory_bytes"`
-	RequiredGuestEphemeralDiskBytes int64              `json:"required_guest_ephemeral_disk_bytes"`
-	RequiredBuildCacheBytes         int64              `json:"required_build_cache_bytes"`
-	RequiredArtifactCacheBytes      int64              `json:"required_artifact_cache_bytes"`
-	RequiredVMSlots                 int32              `json:"required_vm_slots"`
-	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
+	ID           string             `json:"id"`
+	TokenID      pgtype.UUID        `json:"token_id"`
+	RegionID     string             `json:"region_id"`
+	Name         string             `json:"name"`
+	Description  string             `json:"description"`
+	State        string             `json:"state"`
+	ClaimVersion int64              `json:"claim_version"`
+	AllowsRun    bool               `json:"allows_run"`
+	AllowsBuild  bool               `json:"allows_build"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkerGroupToken struct {

@@ -23,15 +23,6 @@ WITH activation AS (
        AND worker_groups.state IN ('active', 'paused')
        AND (NOT $5::boolean OR worker_groups.allows_run)
        AND (NOT $6::boolean OR worker_groups.allows_build)
-       AND $7::bigint >= worker_groups.required_cpu_millis
-       AND $8::bigint >= worker_groups.required_memory_bytes
-       AND $9::bigint >= worker_groups.required_guest_ephemeral_disk_bytes
-       AND $10::bigint >= worker_groups.required_build_cache_bytes
-       AND $11::bigint >= worker_groups.required_artifact_cache_bytes
-       AND (
-           NOT $5::boolean
-           OR $12::integer >= worker_groups.required_vm_slots
-       )
        AND NOT EXISTS (
            SELECT 1 FROM runtime_instances
             WHERE runtime_instances.worker_instance_id = worker_instances.id
@@ -42,21 +33,21 @@ WITH activation AS (
            worker_instances.state = 'registering'
            OR (
                worker_instances.state = 'active'
-               AND worker_instances.runtime_identity_id = $13::text
+               AND worker_instances.runtime_identity_id = $7::text
                AND worker_instances.supervisor_version = $4
                AND worker_instances.supports_run = $5
                AND worker_instances.supports_build = $6
-               AND worker_instances.substrate_format = $14
-               AND worker_instances.substrate_contract = $15
-               AND worker_instances.epoch_cpu_millis = $7
-               AND worker_instances.epoch_memory_bytes = $8
-               AND worker_instances.epoch_guest_ephemeral_disk_bytes = $9
-               AND worker_instances.epoch_build_cache_bytes = $10
-               AND worker_instances.epoch_artifact_cache_bytes = $11
-               AND worker_instances.per_vm_cpu_millis = $16
-               AND worker_instances.per_vm_memory_bytes = $17
-               AND worker_instances.per_vm_guest_ephemeral_disk_bytes = $18
-               AND worker_instances.max_vm_slots = $12
+               AND worker_instances.substrate_format = $8
+               AND worker_instances.substrate_contract = $9
+               AND worker_instances.epoch_cpu_millis = $10
+               AND worker_instances.epoch_memory_bytes = $11
+               AND worker_instances.epoch_guest_ephemeral_disk_bytes = $12
+               AND worker_instances.epoch_build_cache_bytes = $13
+               AND worker_instances.epoch_artifact_cache_bytes = $14
+               AND worker_instances.per_vm_cpu_millis = $15
+               AND worker_instances.per_vm_memory_bytes = $16
+               AND worker_instances.per_vm_guest_ephemeral_disk_bytes = $17
+               AND worker_instances.max_vm_slots = $18
                AND worker_instances.max_build_executors = $19
                AND worker_instances.max_runtime_starts = $20
            )
@@ -67,7 +58,7 @@ WITH activation AS (
         id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest,
 		rootfs_digest, last_seen_at
     )
-    SELECT $13, $21, $22,
+    SELECT $7, $21, $22,
            $23, $24, $25,
 		   now()
       FROM activation
@@ -83,17 +74,17 @@ WITH activation AS (
        SET state = 'active', supervisor_version = $4,
            supports_run = $5, supports_build = $6,
            runtime_identity_id = runtime.id,
-           substrate_format = $14,
-           substrate_contract = $15,
-           epoch_cpu_millis = $7,
-           epoch_memory_bytes = $8,
-           epoch_guest_ephemeral_disk_bytes = $9,
-           epoch_build_cache_bytes = $10,
-           epoch_artifact_cache_bytes = $11,
-           per_vm_cpu_millis = $16,
-           per_vm_memory_bytes = $17,
-           per_vm_guest_ephemeral_disk_bytes = $18,
-           max_vm_slots = $12,
+           substrate_format = $8,
+           substrate_contract = $9,
+           epoch_cpu_millis = $10,
+           epoch_memory_bytes = $11,
+           epoch_guest_ephemeral_disk_bytes = $12,
+           epoch_build_cache_bytes = $13,
+           epoch_artifact_cache_bytes = $14,
+           per_vm_cpu_millis = $15,
+           per_vm_memory_bytes = $16,
+           per_vm_guest_ephemeral_disk_bytes = $17,
+           max_vm_slots = $18,
            max_build_executors = $19,
            max_runtime_starts = $20,
            activated_at = COALESCE(worker_instances.activated_at, now()),
@@ -112,18 +103,18 @@ type ActivateWorkerInstanceParams struct {
 	SupervisorVersion            string      `json:"supervisor_version"`
 	SupportsRun                  bool        `json:"supports_run"`
 	SupportsBuild                bool        `json:"supports_build"`
+	RuntimeIdentityID            string      `json:"runtime_identity_id"`
+	SubstrateFormat              string      `json:"substrate_format"`
+	SubstrateContract            string      `json:"substrate_contract"`
 	EpochCPUMillis               int64       `json:"epoch_cpu_millis"`
 	EpochMemoryBytes             int64       `json:"epoch_memory_bytes"`
 	EpochGuestEphemeralDiskBytes int64       `json:"epoch_guest_ephemeral_disk_bytes"`
 	EpochBuildCacheBytes         int64       `json:"epoch_build_cache_bytes"`
 	EpochArtifactCacheBytes      int64       `json:"epoch_artifact_cache_bytes"`
-	MaxVMSlots                   int32       `json:"max_vm_slots"`
-	RuntimeIdentityID            string      `json:"runtime_identity_id"`
-	SubstrateFormat              string      `json:"substrate_format"`
-	SubstrateContract            string      `json:"substrate_contract"`
 	PerVMCPUMillis               int64       `json:"per_vm_cpu_millis"`
 	PerVMMemoryBytes             int64       `json:"per_vm_memory_bytes"`
 	PerVMGuestEphemeralDiskBytes int64       `json:"per_vm_guest_ephemeral_disk_bytes"`
+	MaxVMSlots                   int32       `json:"max_vm_slots"`
 	MaxBuildExecutors            int32       `json:"max_build_executors"`
 	MaxRuntimeStarts             int32       `json:"max_runtime_starts"`
 	RuntimeArch                  string      `json:"runtime_arch"`
@@ -179,18 +170,18 @@ func (q *Queries) ActivateWorkerInstance(ctx context.Context, arg ActivateWorker
 		arg.SupervisorVersion,
 		arg.SupportsRun,
 		arg.SupportsBuild,
+		arg.RuntimeIdentityID,
+		arg.SubstrateFormat,
+		arg.SubstrateContract,
 		arg.EpochCPUMillis,
 		arg.EpochMemoryBytes,
 		arg.EpochGuestEphemeralDiskBytes,
 		arg.EpochBuildCacheBytes,
 		arg.EpochArtifactCacheBytes,
-		arg.MaxVMSlots,
-		arg.RuntimeIdentityID,
-		arg.SubstrateFormat,
-		arg.SubstrateContract,
 		arg.PerVMCPUMillis,
 		arg.PerVMMemoryBytes,
 		arg.PerVMGuestEphemeralDiskBytes,
+		arg.MaxVMSlots,
 		arg.MaxBuildExecutors,
 		arg.MaxRuntimeStarts,
 		arg.RuntimeArch,
@@ -363,40 +354,27 @@ func (q *Queries) CompleteWorkerStartupRecovery(ctx context.Context, arg Complet
 const createWorkerGroup = `-- name: CreateWorkerGroup :one
 WITH token AS (
     INSERT INTO worker_group_tokens (id, token_hash)
-    VALUES ($13, $14)
+    VALUES ($7, $8)
     RETURNING id
 )
 INSERT INTO worker_groups (
-    id, token_id, region_id, name, description, state, allows_run, allows_build,
-    required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes,
-    required_build_cache_bytes, required_artifact_cache_bytes,
-    required_vm_slots
+    id, token_id, region_id, name, description, state, allows_run, allows_build
 )
 SELECT $1, token.id, $2, $3,
-       $4, 'active', $5, $6,
-       $7, $8,
-       $9,
-       $10, $11,
-       $12
+       $4, 'active', $5, $6
   FROM token
-RETURNING id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, created_at, updated_at
+RETURNING id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, created_at, updated_at
 `
 
 type CreateWorkerGroupParams struct {
-	ID                              string      `json:"id"`
-	RegionID                        string      `json:"region_id"`
-	Name                            string      `json:"name"`
-	Description                     string      `json:"description"`
-	AllowsRun                       bool        `json:"allows_run"`
-	AllowsBuild                     bool        `json:"allows_build"`
-	RequiredCPUMillis               int64       `json:"required_cpu_millis"`
-	RequiredMemoryBytes             int64       `json:"required_memory_bytes"`
-	RequiredGuestEphemeralDiskBytes int64       `json:"required_guest_ephemeral_disk_bytes"`
-	RequiredBuildCacheBytes         int64       `json:"required_build_cache_bytes"`
-	RequiredArtifactCacheBytes      int64       `json:"required_artifact_cache_bytes"`
-	RequiredVMSlots                 int32       `json:"required_vm_slots"`
-	TokenID                         pgtype.UUID `json:"token_id"`
-	TokenHash                       []byte      `json:"token_hash"`
+	ID          string      `json:"id"`
+	RegionID    string      `json:"region_id"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	AllowsRun   bool        `json:"allows_run"`
+	AllowsBuild bool        `json:"allows_build"`
+	TokenID     pgtype.UUID `json:"token_id"`
+	TokenHash   []byte      `json:"token_hash"`
 }
 
 func (q *Queries) CreateWorkerGroup(ctx context.Context, arg CreateWorkerGroupParams) (WorkerGroup, error) {
@@ -407,12 +385,6 @@ func (q *Queries) CreateWorkerGroup(ctx context.Context, arg CreateWorkerGroupPa
 		arg.Description,
 		arg.AllowsRun,
 		arg.AllowsBuild,
-		arg.RequiredCPUMillis,
-		arg.RequiredMemoryBytes,
-		arg.RequiredGuestEphemeralDiskBytes,
-		arg.RequiredBuildCacheBytes,
-		arg.RequiredArtifactCacheBytes,
-		arg.RequiredVMSlots,
 		arg.TokenID,
 		arg.TokenHash,
 	)
@@ -427,12 +399,6 @@ func (q *Queries) CreateWorkerGroup(ctx context.Context, arg CreateWorkerGroupPa
 		&i.ClaimVersion,
 		&i.AllowsRun,
 		&i.AllowsBuild,
-		&i.RequiredCPUMillis,
-		&i.RequiredMemoryBytes,
-		&i.RequiredGuestEphemeralDiskBytes,
-		&i.RequiredBuildCacheBytes,
-		&i.RequiredArtifactCacheBytes,
-		&i.RequiredVMSlots,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -485,7 +451,7 @@ func (q *Queries) GetCapacityWorkerInstance(ctx context.Context, workerInstanceI
 }
 
 const getWorkerGroup = `-- name: GetWorkerGroup :one
-SELECT id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, created_at, updated_at FROM worker_groups WHERE id = $1
+SELECT id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, created_at, updated_at FROM worker_groups WHERE id = $1
 `
 
 func (q *Queries) GetWorkerGroup(ctx context.Context, id string) (WorkerGroup, error) {
@@ -501,12 +467,6 @@ func (q *Queries) GetWorkerGroup(ctx context.Context, id string) (WorkerGroup, e
 		&i.ClaimVersion,
 		&i.AllowsRun,
 		&i.AllowsBuild,
-		&i.RequiredCPUMillis,
-		&i.RequiredMemoryBytes,
-		&i.RequiredGuestEphemeralDiskBytes,
-		&i.RequiredBuildCacheBytes,
-		&i.RequiredArtifactCacheBytes,
-		&i.RequiredVMSlots,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -514,7 +474,7 @@ func (q *Queries) GetWorkerGroup(ctx context.Context, id string) (WorkerGroup, e
 }
 
 const getWorkerGroupByRegionName = `-- name: GetWorkerGroupByRegionName :one
-SELECT id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, created_at, updated_at
+SELECT id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, created_at, updated_at
   FROM worker_groups
  WHERE region_id = $1
    AND name = $2
@@ -538,12 +498,6 @@ func (q *Queries) GetWorkerGroupByRegionName(ctx context.Context, arg GetWorkerG
 		&i.ClaimVersion,
 		&i.AllowsRun,
 		&i.AllowsBuild,
-		&i.RequiredCPUMillis,
-		&i.RequiredMemoryBytes,
-		&i.RequiredGuestEphemeralDiskBytes,
-		&i.RequiredBuildCacheBytes,
-		&i.RequiredArtifactCacheBytes,
-		&i.RequiredVMSlots,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -887,7 +841,7 @@ func (q *Queries) ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapa
 }
 
 const listWorkerGroups = `-- name: ListWorkerGroups :many
-SELECT id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, created_at, updated_at
+SELECT id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, created_at, updated_at
   FROM worker_groups
  WHERE $1::text IS NULL OR region_id = $1
  ORDER BY region_id, name ASC
@@ -918,12 +872,6 @@ func (q *Queries) ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsPara
 			&i.ClaimVersion,
 			&i.AllowsRun,
 			&i.AllowsBuild,
-			&i.RequiredCPUMillis,
-			&i.RequiredMemoryBytes,
-			&i.RequiredGuestEphemeralDiskBytes,
-			&i.RequiredBuildCacheBytes,
-			&i.RequiredArtifactCacheBytes,
-			&i.RequiredVMSlots,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -1253,7 +1201,7 @@ const updateWorkerGroupDescription = `-- name: UpdateWorkerGroupDescription :one
 UPDATE worker_groups
    SET description = $1, updated_at = now()
  WHERE id = $2
-RETURNING id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_guest_ephemeral_disk_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, created_at, updated_at
+RETURNING id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, created_at, updated_at
 `
 
 type UpdateWorkerGroupDescriptionParams struct {
@@ -1274,12 +1222,6 @@ func (q *Queries) UpdateWorkerGroupDescription(ctx context.Context, arg UpdateWo
 		&i.ClaimVersion,
 		&i.AllowsRun,
 		&i.AllowsBuild,
-		&i.RequiredCPUMillis,
-		&i.RequiredMemoryBytes,
-		&i.RequiredGuestEphemeralDiskBytes,
-		&i.RequiredBuildCacheBytes,
-		&i.RequiredArtifactCacheBytes,
-		&i.RequiredVMSlots,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
