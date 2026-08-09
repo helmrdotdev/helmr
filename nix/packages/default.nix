@@ -102,7 +102,7 @@ in
             ../../capacityapi
           ];
         };
-        vendorHash = "sha256-H1tGYmaOree6IBkfqIBNcx8HapUqEvtjUUeHxVEKcYk=";
+        vendorHash = "sha256-Ut+2gtqmnDMy8Zwq4sHbsxYh65AHMohe1SyIxTjzDtA=";
         subPackages = [ "cmd/internal/platform-policy" ];
       };
     in
