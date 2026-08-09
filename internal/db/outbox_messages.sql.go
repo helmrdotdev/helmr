@@ -141,62 +141,6 @@ func (q *Queries) CreateOutboxMessage(ctx context.Context, arg CreateOutboxMessa
 	return i, err
 }
 
-const createRunAdmissionOutbox = `-- name: CreateRunAdmissionOutbox :one
-INSERT INTO outbox_messages (
-    id,
-    lane,
-    topic,
-    partition_key,
-    payload,
-    available_at
-)
-VALUES (
-    $1,
-    'control',
-    'run.admit',
-    $2::uuid::text,
-    jsonb_build_object(
-        'environmentId', $3::uuid::text,
-        'runId', $4::uuid::text
-    ),
-    now()
-)
-RETURNING id, lane, topic, partition_key, payload, state, attempts, available_at, claimed_by, claim_expires_at, last_error, created_at, delivered_at
-`
-
-type CreateRunAdmissionOutboxParams struct {
-	ID            pgtype.UUID `json:"id"`
-	WorkspaceID   pgtype.UUID `json:"workspace_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	RunID         pgtype.UUID `json:"run_id"`
-}
-
-func (q *Queries) CreateRunAdmissionOutbox(ctx context.Context, arg CreateRunAdmissionOutboxParams) (OutboxMessage, error) {
-	row := q.db.QueryRow(ctx, createRunAdmissionOutbox,
-		arg.ID,
-		arg.WorkspaceID,
-		arg.EnvironmentID,
-		arg.RunID,
-	)
-	var i OutboxMessage
-	err := row.Scan(
-		&i.ID,
-		&i.Lane,
-		&i.Topic,
-		&i.PartitionKey,
-		&i.Payload,
-		&i.State,
-		&i.Attempts,
-		&i.AvailableAt,
-		&i.ClaimedBy,
-		&i.ClaimExpiresAt,
-		&i.LastError,
-		&i.CreatedAt,
-		&i.DeliveredAt,
-	)
-	return i, err
-}
-
 const deadLetterOutboxMessage = `-- name: DeadLetterOutboxMessage :one
 UPDATE outbox_messages
 SET state = 'dead_lettered',

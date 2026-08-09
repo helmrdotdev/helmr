@@ -348,27 +348,7 @@ resolved_wait AS (
               run_waits.workspace_id,
               run_waits.resume_request_version
 )
-INSERT INTO outbox_messages (
-    id,
-    lane,
-    topic,
-    partition_key,
-    payload,
-    available_at
-)
-SELECT sqlc.arg(outbox_message_id),
-       'control',
-       'run.resume',
-       resolved_wait.workspace_id::text,
-       jsonb_build_object(
-           'environmentId', resolved_wait.environment_id::text,
-           'runId', resolved_wait.run_id::text,
-           'runWaitId', resolved_wait.id::text,
-           'resumeRequestVersion', resolved_wait.resume_request_version
-       ),
-       transaction_timestamp()
-  FROM resolved_wait
-RETURNING id;
+SELECT id FROM resolved_wait;
 
 -- name: ListTokenWaitCandidates :many
 SELECT id AS wait_id, run_id

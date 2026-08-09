@@ -308,15 +308,6 @@ SELECT count(*)
 	if activeWaits != 0 {
 		t.Fatalf("active waits after cascade = %d", activeWaits)
 	}
-	var resumeMessages int
-	if err := fixture.pool.QueryRow(ctx,
-		`SELECT count(*) FROM outbox_messages WHERE topic = 'run.resume'`,
-	).Scan(&resumeMessages); err != nil {
-		t.Fatal(err)
-	}
-	if resumeMessages != 0 {
-		t.Fatalf("parent cascade published %d resume messages", resumeMessages)
-	}
 }
 
 func TestCancelerResolvesDifferentWorkspaceChildWait(t *testing.T) {
@@ -652,18 +643,6 @@ SELECT runtime_instances.desired_state,
 			parentRuntimeID,
 			parentMountID,
 		)
-	}
-	var resumeMessages int
-	if err := fixture.pool.QueryRow(ctx, `
-SELECT count(*)
-  FROM outbox_messages
- WHERE topic = 'run.resume'
-   AND (payload->>'runId')::uuid = $1`, chain.parentRunID,
-	).Scan(&resumeMessages); err != nil {
-		t.Fatal(err)
-	}
-	if resumeMessages != 1 {
-		t.Fatalf("parent resume messages = %d, want 1", resumeMessages)
 	}
 	resumeLeaseID := grantCancelledChildParentResume(
 		t,

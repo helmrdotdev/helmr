@@ -1507,12 +1507,7 @@ func (q *Queries) PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTa
 }
 
 const readyRunRetries = `-- name: ReadyRunRetries :many
-WITH provided_outbox_ids AS MATERIALIZED (
-    SELECT id, ordinality
-      FROM unnest($1::uuid[])
-           WITH ORDINALITY AS supplied(id, ordinality)
-),
-candidates AS (
+WITH candidates AS (
     SELECT runs.id,
            runs.environment_id,
            runs.workspace_id,
@@ -1537,7 +1532,7 @@ candidates AS (
                AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
        )
      ORDER BY runs.retry_at, runs.id
-     LIMIT $2
+     LIMIT $1
      FOR UPDATE OF runs, run_attempts SKIP LOCKED
 ), readied AS (
     UPDATE runs
@@ -1553,39 +1548,11 @@ candidates AS (
        AND runs.state_version = candidates.state_version
        AND runs.status = 'retry_delayed'
        AND runs.current_run_lease_id IS NULL
-       AND cardinality($1::uuid[])
-           >= (SELECT count(*) FROM candidates)
     RETURNING runs.id,
               runs.environment_id,
               runs.workspace_id,
               runs.current_attempt_number,
               runs.state_version
-), ordered_readied AS MATERIALIZED (
-    SELECT readied.id,
-           row_number() OVER (ORDER BY readied.id) AS ordinality
-      FROM readied
-), admission_outbox AS (
-    INSERT INTO outbox_messages (
-        id,
-        lane,
-        topic,
-        partition_key,
-        payload,
-        available_at
-    )
-    SELECT provided_outbox_ids.id,
-           'control',
-           'run.admit',
-           readied.workspace_id::text,
-           jsonb_build_object(
-               'environmentId', readied.environment_id::text,
-               'runId', readied.id::text
-           ),
-           now()
-      FROM readied
-      JOIN ordered_readied USING (id)
-      JOIN provided_outbox_ids USING (ordinality)
-    RETURNING id
 )
 SELECT readied.id,
        readied.environment_id,
@@ -1593,13 +1560,7 @@ SELECT readied.id,
        readied.current_attempt_number,
        readied.state_version
   FROM readied
- WHERE EXISTS (SELECT 1 FROM admission_outbox)
 `
-
-type ReadyRunRetriesParams struct {
-	OutboxMessageIds []pgtype.UUID `json:"outbox_message_ids"`
-	RowLimit         int32         `json:"row_limit"`
-}
 
 type ReadyRunRetriesRow struct {
 	ID                   pgtype.UUID `json:"id"`
@@ -1609,8 +1570,8 @@ type ReadyRunRetriesRow struct {
 	StateVersion         int64       `json:"state_version"`
 }
 
-func (q *Queries) ReadyRunRetries(ctx context.Context, arg ReadyRunRetriesParams) ([]ReadyRunRetriesRow, error) {
-	rows, err := q.db.Query(ctx, readyRunRetries, arg.OutboxMessageIds, arg.RowLimit)
+func (q *Queries) ReadyRunRetries(ctx context.Context, rowLimit int32) ([]ReadyRunRetriesRow, error) {
+	rows, err := q.db.Query(ctx, readyRunRetries, rowLimit)
 	if err != nil {
 		return nil, err
 	}

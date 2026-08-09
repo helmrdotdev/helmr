@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 const (
@@ -16,7 +15,7 @@ const (
 )
 
 type RetryReadyStore interface {
-	ReadyRunRetries(context.Context, db.ReadyRunRetriesParams) ([]db.ReadyRunRetriesRow, error)
+	ReadyRunRetries(context.Context, int32) ([]db.ReadyRunRetriesRow, error)
 }
 
 type RetryReadyWorker struct {
@@ -55,9 +54,6 @@ func (w *RetryReadyWorker) Run(ctx context.Context) error {
 }
 
 func (w *RetryReadyWorker) ready(ctx context.Context, limit int32) error {
-	_, err := w.store.ReadyRunRetries(ctx, db.ReadyRunRetriesParams{
-		OutboxMessageIds: pgvalue.NewUUIDv7Batch(limit),
-		RowLimit:         limit,
-	})
+	_, err := w.store.ReadyRunRetries(ctx, limit)
 	return err
 }

@@ -14,7 +14,7 @@ Start with the narrowest failing layer and use ECS service events, CloudWatch lo
 | `/healthz` fails | Confirm the Control Plane service has running tasks and the ALB target and public DNS route to the service. Inspect ECS events and task logs. |
 | `/readyz` fails while `/healthz` passes | Check `DATABASE_URL`, `REDIS_URL`, RDS and Redis/Valkey reachability, and whether migrations for the deployed image completed successfully. |
 | GitHub login fails | The callback must be exactly `<controlplane_url>/auth/github/callback`; verify the client ID and that the secret matches the same OAuth app. |
-| Run stays queued | Confirm a dispatcher task is running, Redis/Valkey is reachable, desired worker capacity is nonzero, and at least one worker with the required role is active. |
+| Run stays queued | Confirm a dispatcher task is running, desired worker capacity is nonzero, and at least one worker with the required role is active. |
 | Worker does not become active | Run `helmr-worker status`; inspect its systemd journal through SSM. Check KVM, Firecracker, jailer, `ip`, `nft`, certified guest artifacts, the enrollment-token file, requested roles, capacity settings, and Control Plane reachability. |
 | Worker launch or drain stalls | Check the Auto Scaling lifecycle hook, worker unit status, active executions, launch timeout, and whether provider scaling attempted to bypass protected, claim-fenced draining. |
 | Task cannot reach a repository or API | Check the task secret and its scope, task configuration, worker NAT or egress, DNS, and blocked network policy. |

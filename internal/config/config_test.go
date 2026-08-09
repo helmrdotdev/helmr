@@ -92,7 +92,6 @@ func TestLoadImageCacheIsAbsentOrCompletelyConfigured(t *testing.T) {
 func TestLoadDispatcherReadsConnectionConfig(t *testing.T) {
 	setDispatcherFencing(t)
 	t.Setenv("DATABASE_URL", " postgres://example ")
-	t.Setenv("REDIS_URL", " redis://redis.example.test:6379/0 ")
 	t.Setenv("CLICKHOUSE_URL", " https://clickhouse.example.test ")
 
 	cfg, err := LoadDispatcher()
@@ -100,7 +99,6 @@ func TestLoadDispatcherReadsConnectionConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.DatabaseURL != "postgres://example" ||
-		cfg.RedisURL != "redis://redis.example.test:6379/0" ||
 		cfg.ClickHouseURL != "https://clickhouse.example.test" {
 		t.Fatalf("config = %+v", cfg)
 	}

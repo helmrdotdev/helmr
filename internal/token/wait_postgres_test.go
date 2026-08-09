@@ -1081,7 +1081,6 @@ func TestTokenWaitReconcilerTransitionsHotCheckpointingAndParkedWaits(t *testing
 			currentLeaseID: pgvalue.UUID(setup.leaseID), priorLeaseID: pgtype.UUID{},
 			result: `{"approved": true}`, reasonCode: "", resumeVersion: 0,
 		})
-		assertTokenWaitResumeIntents(t, ctx, fixture, setup, 0)
 
 		batch = reconcileTokenWaitBatch(t, ctx, fixture, setup.tokenID)
 		if batch.Examined != 0 || batch.Resolved != 0 {
@@ -1110,7 +1109,6 @@ func TestTokenWaitReconcilerTransitionsHotCheckpointingAndParkedWaits(t *testing
 			currentLeaseID: pgvalue.UUID(setup.leaseID), priorLeaseID: pgtype.UUID{},
 			reasonCode: "token_expired", resumeVersion: 0,
 		})
-		assertTokenWaitResumeIntents(t, ctx, fixture, setup, 0)
 
 		batch = reconcileTokenWaitBatch(t, ctx, fixture, setup.tokenID)
 		if batch.Examined != 1 || batch.Resolved != 0 || batch.Deferred != 1 {
@@ -1118,7 +1116,7 @@ func TestTokenWaitReconcilerTransitionsHotCheckpointingAndParkedWaits(t *testing
 		}
 	})
 
-	t.Run("parked cancellation queues exactly one resume", func(t *testing.T) {
+	t.Run("parked cancellation makes the Run dispatchable", func(t *testing.T) {
 		fixture := newRunLeaseClaimFixture(t, ctx)
 		setup := newTokenWaitReconcileSetup(t, ctx, fixture, db.RunWaitStateParked, time.Now().Add(time.Hour))
 		if _, err := fixture.queries.CancelToken(ctx, tokenCancellationParams(fixture, setup.tokenID)); err != nil {
@@ -1135,28 +1133,25 @@ func TestTokenWaitReconcilerTransitionsHotCheckpointingAndParkedWaits(t *testing
 			currentLeaseID: pgtype.UUID{}, priorLeaseID: pgvalue.UUID(setup.leaseID),
 			reasonCode: "token_cancelled", resumeVersion: 1,
 		})
-		assertTokenWaitResumeIntents(t, ctx, fixture, setup, 1)
 
 		batch = reconcileTokenWaitBatch(t, ctx, fixture, setup.tokenID)
 		if batch.Examined != 0 || batch.Resolved != 0 {
 			t.Fatalf("replay batch = %+v", batch)
 		}
-		assertTokenWaitResumeIntents(t, ctx, fixture, setup, 1)
 	})
 }
 
 func TestTokenWaitReconcilerAppliesWaitTimeoutAcrossSuspensionStates(t *testing.T) {
 	ctx := context.Background()
 	for _, test := range []struct {
-		name              string
-		suspension        db.RunWaitState
-		runStatus         db.RunStatus
-		runVersion        int64
-		resultState       db.RunWaitState
-		currentLeaseID    func(tokenWaitReconcileSetup) pgtype.UUID
-		priorLeaseID      func(tokenWaitReconcileSetup) pgtype.UUID
-		resumeVersion     int64
-		resumeIntentCount int
+		name           string
+		suspension     db.RunWaitState
+		runStatus      db.RunStatus
+		runVersion     int64
+		resultState    db.RunWaitState
+		currentLeaseID func(tokenWaitReconcileSetup) pgtype.UUID
+		priorLeaseID   func(tokenWaitReconcileSetup) pgtype.UUID
+		resumeVersion  int64
 	}{
 		{
 			name: "hot", suspension: db.RunWaitStateHot,
@@ -1184,7 +1179,7 @@ func TestTokenWaitReconcilerAppliesWaitTimeoutAcrossSuspensionStates(t *testing.
 			priorLeaseID: func(setup tokenWaitReconcileSetup) pgtype.UUID {
 				return pgvalue.UUID(setup.leaseID)
 			},
-			resumeVersion: 1, resumeIntentCount: 1,
+			resumeVersion: 1,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1215,58 +1210,12 @@ func TestTokenWaitReconcilerAppliesWaitTimeoutAcrossSuspensionStates(t *testing.
 				priorLeaseID:   test.priorLeaseID(setup),
 				reasonCode:     "wait_timeout", resumeVersion: test.resumeVersion,
 			})
-			assertTokenWaitResumeIntents(t, ctx, fixture, setup, test.resumeIntentCount)
 			resolved, err = reconciler.ReconcileTimeouts(ctx, 100)
 			if err != nil || resolved != 0 {
 				t.Fatalf("replay resolved = %d error=%v", resolved, err)
 			}
 		})
 	}
-}
-
-func TestTokenWaitReconcilerRollsBackParkedTransitionWhenResumeIntentFails(t *testing.T) {
-	ctx := context.Background()
-	fixture := newRunLeaseClaimFixture(t, ctx)
-	setup := newTokenWaitReconcileSetup(t, ctx, fixture, db.RunWaitStateParked, time.Now().Add(time.Hour))
-	if _, err := fixture.queries.CompleteToken(ctx, tokenCompletionParams(
-		fixture,
-		setup.tokenID,
-		"sha256:rollback",
-		`{"approved":true}`,
-	)); err != nil {
-		t.Fatal(err)
-	}
-	dbtest.MustExec(t, ctx, fixture.pool, `
-		CREATE FUNCTION reject_run_resume_intent() RETURNS trigger
-		LANGUAGE plpgsql AS $$
-		BEGIN
-			IF NEW.topic = 'run.resume' THEN
-				RAISE EXCEPTION 'injected Run resume failure';
-			END IF;
-			RETURN NEW;
-		END
-		$$
-	`)
-	dbtest.MustExec(t, ctx, fixture.pool, `
-		CREATE TRIGGER reject_run_resume_intent
-		BEFORE INSERT ON outbox_messages
-		FOR EACH ROW EXECUTE FUNCTION reject_run_resume_intent()
-	`)
-
-	reconciler, err := NewWaitReconciler(fixture.pool)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := reconciler.ReconcileBatch(ctx, fixture.environmentID, setup.tokenID, 100); err == nil {
-		t.Fatal("parked reconciliation succeeded despite injected outbox failure")
-	}
-	assertTokenWaitReconcileState(t, ctx, fixture, setup, tokenWaitReconcileWant{
-		runStatus: db.RunStatusWaiting, runVersion: 2,
-		conditionState: db.WaitStatePending, suspensionState: db.RunWaitStateParked,
-		currentLeaseID: pgtype.UUID{}, priorLeaseID: pgvalue.UUID(setup.leaseID),
-		resumeVersion: 0,
-	})
-	assertTokenWaitResumeIntents(t, ctx, fixture, setup, 0)
 }
 
 type tokenWaitReconcileSetup struct {
@@ -1478,38 +1427,6 @@ func assertTokenWaitReconcileState(
 		t.Fatalf("state = run %s/v%d/lease %v wait %s/%s/current %v/prior %v/result %s/reason %q/resume v%d; want %+v",
 			runStatus, runVersion, runLeaseID, conditionState, suspensionState,
 			currentLeaseID, priorLeaseID, result, reasonCode.String, resumeVersion, want)
-	}
-}
-
-func assertTokenWaitResumeIntents(
-	t *testing.T,
-	ctx context.Context,
-	fixture runLeaseClaimFixture,
-	setup tokenWaitReconcileSetup,
-	want int,
-) {
-	t.Helper()
-	var count int
-	var payloadMatches bool
-	if err := fixture.pool.QueryRow(ctx, `
-		SELECT count(*)::integer,
-		       coalesce(bool_and(
-		           partition_key = $1::uuid::text
-		           AND payload = jsonb_build_object(
-		               'environmentId', $2::uuid::text,
-		               'runId', $3::uuid::text,
-		               'runWaitId', $4::uuid::text,
-		               'resumeRequestVersion', 1
-		           )
-		       ), true)
-		  FROM outbox_messages
-		 WHERE topic = 'run.resume'
-		   AND payload ->> 'runId' = $3::uuid::text
-	`, setup.workspaceID, fixture.environmentID, setup.runID, setup.waitID).Scan(&count, &payloadMatches); err != nil {
-		t.Fatal(err)
-	}
-	if count != want || !payloadMatches {
-		t.Fatalf("Run resume intents = count %d payload_matches %v, want %d/true", count, payloadMatches, want)
 	}
 }
 

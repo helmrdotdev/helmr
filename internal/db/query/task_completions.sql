@@ -469,12 +469,7 @@ UPDATE workspaces
 RETURNING *;
 
 -- name: ReadyRunRetries :many
-WITH provided_outbox_ids AS MATERIALIZED (
-    SELECT id, ordinality
-      FROM unnest(sqlc.arg(outbox_message_ids)::uuid[])
-           WITH ORDINALITY AS supplied(id, ordinality)
-),
-candidates AS (
+WITH candidates AS (
     SELECT runs.id,
            runs.environment_id,
            runs.workspace_id,
@@ -515,44 +510,15 @@ candidates AS (
        AND runs.state_version = candidates.state_version
        AND runs.status = 'retry_delayed'
        AND runs.current_run_lease_id IS NULL
-       AND cardinality(sqlc.arg(outbox_message_ids)::uuid[])
-           >= (SELECT count(*) FROM candidates)
     RETURNING runs.id,
               runs.environment_id,
               runs.workspace_id,
               runs.current_attempt_number,
               runs.state_version
-), ordered_readied AS MATERIALIZED (
-    SELECT readied.id,
-           row_number() OVER (ORDER BY readied.id) AS ordinality
-      FROM readied
-), admission_outbox AS (
-    INSERT INTO outbox_messages (
-        id,
-        lane,
-        topic,
-        partition_key,
-        payload,
-        available_at
-    )
-    SELECT provided_outbox_ids.id,
-           'control',
-           'run.admit',
-           readied.workspace_id::text,
-           jsonb_build_object(
-               'environmentId', readied.environment_id::text,
-               'runId', readied.id::text
-           ),
-           now()
-      FROM readied
-      JOIN ordered_readied USING (id)
-      JOIN provided_outbox_ids USING (ordinality)
-    RETURNING id
 )
 SELECT readied.id,
        readied.environment_id,
        readied.workspace_id,
        readied.current_attempt_number,
        readied.state_version
-  FROM readied
- WHERE EXISTS (SELECT 1 FROM admission_outbox);
+  FROM readied;

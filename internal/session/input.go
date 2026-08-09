@@ -109,11 +109,5 @@ func CreateContinuation(
 	if err := secret.CreateAttemptResolutions(ctx, store, workspace.ID, run.ID, 1, resolutions); err != nil {
 		return pgtype.UUID{}, err
 	}
-	if _, err := store.CreateRunAdmissionOutbox(ctx, db.CreateRunAdmissionOutboxParams{
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: workspace.ID,
-		EnvironmentID: actor.EnvironmentID, RunID: run.ID,
-	}); err != nil {
-		return pgtype.UUID{}, err
-	}
 	return run.ID, nil
 }

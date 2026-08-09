@@ -54,7 +54,8 @@ func (d *Authority) prepareRunWorkspace(
 	}
 	defer rollback(ctx, tx)
 
-	if err := lockRunQueueScope(ctx, tx, candidate); err != nil {
+	environmentID, queueName, concurrencyKey, err := lockRunQueueScope(ctx, tx, candidate)
+	if err != nil {
 		return runWorkspaceMount{}, classifyRunCandidateError(err)
 	}
 	if err := lockRunSecrets(ctx, tx, candidate); err != nil {
@@ -63,6 +64,11 @@ func (d *Authority) prepareRunWorkspace(
 	authority, err := lockRunPlacementAuthority(ctx, tx, candidate)
 	if err != nil {
 		return runWorkspaceMount{}, classifyRunCandidateError(err)
+	}
+	if authority.environmentID != environmentID ||
+		authority.queueName != queueName ||
+		authority.concurrencyKey != concurrencyKey {
+		return runWorkspaceMount{}, ErrCandidateChanged
 	}
 	var runtime runRuntime
 	retainedRuntimeID, preferHandoffRuntime := authority.retainedHandoffRuntimeID()

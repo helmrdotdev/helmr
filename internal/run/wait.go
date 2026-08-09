@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -54,7 +51,7 @@ func Complete(
 	if err != nil {
 		return db.RunWait{}, err
 	}
-	return publishResumeIfParked(ctx, store, wait, completed)
+	return completed, nil
 }
 
 func Fail(
@@ -100,36 +97,5 @@ func Fail(
 	if err != nil {
 		return db.RunWait{}, err
 	}
-	return publishResumeIfParked(ctx, store, wait, failed)
-}
-
-func publishResumeIfParked(
-	ctx context.Context,
-	store db.Querier,
-	wait db.RunWait,
-	terminal db.RunWait,
-) (db.RunWait, error) {
-	if terminal.SuspensionState != db.RunWaitStateResumePending {
-		return terminal, nil
-	}
-	now, err := store.GetRunLeaseRenewalTime(ctx)
-	if err != nil || !now.Valid {
-		return db.RunWait{}, fmt.Errorf("load durable wait resume time: %w", err)
-	}
-	payload, err := json.Marshal(map[string]any{
-		"environmentId":        pgvalue.UUIDString(wait.EnvironmentID),
-		"runId":                pgvalue.UUIDString(wait.RunID),
-		"runWaitId":            pgvalue.UUIDString(wait.ID),
-		"resumeRequestVersion": terminal.ResumeRequestVersion,
-	})
-	if err != nil {
-		return db.RunWait{}, err
-	}
-	_, err = store.CreateOutboxMessage(ctx, db.CreateOutboxMessageParams{
-		ID:   pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		Lane: "control", Topic: "run.resume",
-		PartitionKey: pgvalue.UUIDString(wait.WorkspaceID),
-		Payload:      payload, AvailableAt: now,
-	})
-	return terminal, err
+	return failed, nil
 }

@@ -88,7 +88,7 @@ type normalizedActorStart struct {
 
 // startActor is the durable Actor creation primitive. Claim replay, promoted
 // declaration and Workspace authority, Actor/input/boot-Run creation,
-// Workspace ownership, Secret resolution, and run.admit intent commit as one
+// Workspace ownership, Secret resolution, and the queued Run commit as one
 // primary-database transaction.
 func (s *Server) startActor(ctx context.Context, request actorStartRequest) (actorStartResult, error) {
 	normalized, err := normalizeActorStart(request)
@@ -313,12 +313,6 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			ctx, work.q, authority.ID, run.ID, 1, workspaceSecretResolutions(bindings),
 		); err != nil {
 			return fmt.Errorf("record actor boot run secret resolutions: %w", err)
-		}
-		if _, err := work.q.CreateRunAdmissionOutbox(ctx, db.CreateRunAdmissionOutboxParams{
-			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: authority.ID,
-			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), RunID: run.ID,
-		}); err != nil {
-			return fmt.Errorf("create actor boot run admission outbox: %w", err)
 		}
 		result = actorStartResult{
 			SessionID: actorID, InitialRecordID: initialRecordID,

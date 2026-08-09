@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/jackc/pgx/v5"
@@ -19,10 +18,7 @@ import (
 func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := newSmokeDatabase(t, ctx)
-	redisServer := miniredis.RunT(t)
-
 	t.Setenv("DATABASE_URL", databaseURL)
-	t.Setenv("REDIS_URL", "redis://"+redisServer.Addr()+"/0")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:1")
 	t.Setenv("WORKSPACE_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 

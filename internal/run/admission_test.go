@@ -50,9 +50,6 @@ func TestCreateTaskBuildsCompleteAdmissionTuple(t *testing.T) {
 	if resolution.RunID != runID || resolution.SecretVersionIds[0] != secretVersionID || resolution.RevocationGenerations[0] != 3 {
 		t.Fatalf("Secret resolution = %+v", resolution)
 	}
-	if len(store.outboxes) != 1 || store.outboxes[0].RunID != runID {
-		t.Fatalf("outboxes = %+v", store.outboxes)
-	}
 	if store.reserve.ExpectedStateVersion != 7 || store.reserve.ExpectedHeadVersionID != versionID {
 		t.Fatalf("Workspace reservation = %+v", store.reserve)
 	}
@@ -63,7 +60,6 @@ type taskStore struct {
 	run         db.CreateAdmittedRootTaskRunRow
 	reserve     db.ReserveWorkspaceForRunParams
 	resolutions []db.CreateAttemptSecretResolutionsParams
-	outboxes    []db.CreateRunAdmissionOutboxParams
 }
 
 func (s *taskStore) LockWorkspaceSecretsForAdmission(context.Context, pgtype.UUID) ([]db.LockWorkspaceSecretsForAdmissionRow, error) {
@@ -82,9 +78,4 @@ func (s *taskStore) ReserveWorkspaceForRun(_ context.Context, value db.ReserveWo
 func (s *taskStore) CreateAttemptSecretResolutions(_ context.Context, value db.CreateAttemptSecretResolutionsParams) (int64, error) {
 	s.resolutions = append(s.resolutions, value)
 	return int64(len(value.Ids)), nil
-}
-
-func (s *taskStore) CreateRunAdmissionOutbox(_ context.Context, value db.CreateRunAdmissionOutboxParams) (db.OutboxMessage, error) {
-	s.outboxes = append(s.outboxes, value)
-	return db.OutboxMessage{}, nil
 }

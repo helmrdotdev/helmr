@@ -56,7 +56,7 @@ in
   };
 
   dispatch-measure = pkgs.mkShell {
-    packages = toolsets.dispatchMeasurement;
+    packages = toolsets.base;
     inherit shellHook;
   };
 

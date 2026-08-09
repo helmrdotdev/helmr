@@ -340,7 +340,7 @@ SELECT runs.id,
    AND runs.current_run_lease_id IS NULL
    AND child_handoff.id IS NOT DISTINCT FROM $6::uuid
    AND (
-       ($4 = 'task' AND child_handoff.id IS NULL AND
+       ($4 IN ('task', 'actor') AND child_handoff.id IS NULL AND
            restore_wait.id IS NULL
            AND NOT EXISTS (
                SELECT 1
@@ -1312,23 +1312,23 @@ func lockRunQueueScope(
 	ctx context.Context,
 	tx pgx.Tx,
 	candidate ReadyRunCandidate,
-) error {
+) (pgtype.UUID, string, pgtype.Text, error) {
 	environmentID, queueName, concurrencyKey, err := discoverRunQueueScope(
 		ctx,
 		tx,
 		candidate,
 	)
 	if err != nil {
-		return err
+		return pgtype.UUID{}, "", pgtype.Text{}, err
 	}
 	key, err := queueScopeLockKey(environmentID, queueName, concurrencyKey)
 	if err != nil {
-		return err
+		return pgtype.UUID{}, "", pgtype.Text{}, err
 	}
 	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", key); err != nil {
-		return fmt.Errorf("lock run queue scope: %w", err)
+		return pgtype.UUID{}, "", pgtype.Text{}, fmt.Errorf("lock run queue scope: %w", err)
 	}
-	return nil
+	return environmentID, queueName, concurrencyKey, nil
 }
 
 func requireJSONEOF(decoder *json.Decoder) error {

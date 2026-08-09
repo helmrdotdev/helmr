@@ -30,43 +30,10 @@ func TestDBAdmitterCommitsOneScheduleAdmissionTuple(t *testing.T) {
 	}
 	admitter.now = func() time.Time { return value.NextFireAt.Time }
 
-	if _, err := pool.Exec(t.Context(), `
-		CREATE FUNCTION reject_run_admission_outbox() RETURNS trigger
-		LANGUAGE plpgsql
-		AS $$
-		BEGIN
-			IF NEW.topic = 'run.admit' THEN
-				RAISE EXCEPTION 'reject Run admission outbox';
-			END IF;
-			RETURN NEW;
-		END;
-		$$;
-	`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(t.Context(), `
-		CREATE TRIGGER reject_run_admission_outbox
-		BEFORE INSERT ON outbox_messages
-		FOR EACH ROW EXECUTE FUNCTION reject_run_admission_outbox();
-	`); err != nil {
-		t.Fatal(err)
-	}
-	if err := admitter.AdmitSchedule(t.Context(), value); err == nil {
-		t.Fatal("expected rejected outbox to roll admission back")
-	}
-	assertScheduleAdmissionCounts(t, pool, value, 0, 0, 0)
-	assertScheduleCursor(t, pool, value, value.NextFireAt.Time, time.Time{})
-
-	if _, err := pool.Exec(t.Context(), `DROP TRIGGER reject_run_admission_outbox ON outbox_messages`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(t.Context(), `DROP FUNCTION reject_run_admission_outbox()`); err != nil {
-		t.Fatal(err)
-	}
 	if err := admitter.AdmitSchedule(t.Context(), value); err != nil {
 		t.Fatal(err)
 	}
-	assertScheduleAdmissionCounts(t, pool, value, 1, 1, 1)
+	assertScheduleAdmissionCounts(t, pool, value, 1, 1)
 	assertScheduleCursor(t, pool, value, admission.NextFireAt, admission.ScheduledAt)
 	receipt, err := db.New(pool).GetScheduledRunReceipt(t.Context(), db.GetScheduledRunReceiptParams{
 		EnvironmentID: value.EnvironmentID,
@@ -80,7 +47,7 @@ func TestDBAdmitterCommitsOneScheduleAdmissionTuple(t *testing.T) {
 	if err := admitter.AdmitSchedule(t.Context(), value); err != nil {
 		t.Fatal(err)
 	}
-	assertScheduleAdmissionCounts(t, pool, value, 1, 1, 1)
+	assertScheduleAdmissionCounts(t, pool, value, 1, 1)
 
 	dbtest.MustExec(t, t.Context(), pool, `
 		UPDATE schedules
@@ -98,7 +65,7 @@ func TestDBAdmitterCommitsOneScheduleAdmissionTuple(t *testing.T) {
 	if err := admitter.AdmitSchedule(t.Context(), second); err != nil {
 		t.Fatal(err)
 	}
-	assertScheduleAdmissionCounts(t, pool, value, 2, 2, 2)
+	assertScheduleAdmissionCounts(t, pool, value, 2, 2)
 	secondReceipt, err := db.New(pool).GetScheduledRunReceipt(t.Context(), db.GetScheduledRunReceiptParams{
 		EnvironmentID: value.EnvironmentID,
 		ScheduleID:    value.ID,
@@ -189,7 +156,7 @@ func TestDBAdmitterRejectsTaskWithoutScheduledPayloadAuthority(t *testing.T) {
 		admissionErr.Code != ErrorTaskAuthorityInvalid {
 		t.Fatalf("admission error = %v, want task_authority_invalid", err)
 	}
-	assertScheduleAdmissionCounts(t, pool, value, 0, 0, 0)
+	assertScheduleAdmissionCounts(t, pool, value, 0, 0)
 	assertScheduleCursor(t, pool, value, value.NextFireAt.Time, time.Time{})
 }
 
@@ -227,7 +194,7 @@ func TestWorkerRetriesSameScheduleInstantWhenWorkspaceSecretIsRevoked(t *testing
 	if err == nil || errors.As(err, &permanent) {
 		t.Fatalf("Secret-unavailable admission error = %v, want retryable non-AdmissionError", err)
 	}
-	assertScheduleAdmissionCounts(t, pool, value, 0, 0, 0)
+	assertScheduleAdmissionCounts(t, pool, value, 0, 0)
 	assertScheduleCursor(t, pool, value, value.NextFireAt.Time, time.Time{})
 	after, err := db.New(pool).GetSchedule(t.Context(), db.GetScheduleParams{
 		EnvironmentID: value.EnvironmentID,
@@ -483,10 +450,9 @@ func assertScheduleAdmissionCounts(
 	value db.Schedule,
 	runs int,
 	resolutions int,
-	outboxes int,
 ) {
 	t.Helper()
-	var runCount, attemptCount, resolutionCount, outboxCount int
+	var runCount, attemptCount, resolutionCount int
 	if err := pool.QueryRow(t.Context(), `
 		SELECT count(*) FROM runs WHERE schedule_id = $1
 	`, value.ID).Scan(&runCount); err != nil {
@@ -506,22 +472,15 @@ func assertScheduleAdmissionCounts(
 	`, value.ID).Scan(&resolutionCount); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(t.Context(), `
-		SELECT count(*) FROM outbox_messages WHERE topic = 'run.admit'
-	`).Scan(&outboxCount); err != nil {
-		t.Fatal(err)
-	}
-	if runCount != runs || attemptCount != runs || resolutionCount != resolutions || outboxCount != outboxes {
+	if runCount != runs || attemptCount != runs || resolutionCount != resolutions {
 		t.Fatalf(
-			"runs/attempts/resolutions/outboxes = %d/%d/%d/%d, want %d/%d/%d/%d",
+			"runs/attempts/resolutions = %d/%d/%d, want %d/%d/%d",
 			runCount,
 			attemptCount,
 			resolutionCount,
-			outboxCount,
 			runs,
 			runs,
 			resolutions,
-			outboxes,
 		)
 	}
 	var workspaceCount int

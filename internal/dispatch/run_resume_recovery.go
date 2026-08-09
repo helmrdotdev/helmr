@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -199,10 +198,7 @@ func (d *Authority) RecoverExpiredRunResumes(
 	if remaining <= 0 {
 		return recovered, nil
 	}
-	roots, err := db.New(d.pool).RecoverExpiredRunResumes(ctx, db.RecoverExpiredRunResumesParams{
-		OutboxMessageIds: pgvalue.NewUUIDv7Batch(remaining),
-		LimitCount:       remaining,
-	})
+	roots, err := db.New(d.pool).RecoverExpiredRunResumes(ctx, remaining)
 	if err != nil {
 		return nil, err
 	}
@@ -735,7 +731,6 @@ SELECT source_run_lease_id,
 			current,
 			wait,
 			edges[len(edges)-1],
-			now,
 		); err != nil {
 			return db.RecoverExpiredRunResumesRow{}, false, err
 		}
@@ -1387,7 +1382,6 @@ func requeueNestedResume(
 	run nestedResumeRun,
 	wait nestedResumeWait,
 	enclosing nestedResumeEdge,
-	now time.Time,
 ) error {
 	var stateVersion int64
 	err := tx.QueryRow(ctx, `
@@ -1451,22 +1445,7 @@ UPDATE run_waits
 	if command.RowsAffected() != 1 {
 		return pgx.ErrNoRows
 	}
-	payload, err := json.Marshal(map[string]string{
-		"environmentId": pgvalue.UUIDString(run.environmentID),
-		"runId":         pgvalue.UUIDString(run.id),
-	})
-	if err != nil {
-		return err
-	}
-	_, err = db.New(tx).CreateOutboxMessage(ctx, db.CreateOutboxMessageParams{
-		ID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		Lane:         "control",
-		Topic:        "run.admit",
-		PartitionKey: pgvalue.UUIDString(run.workspaceID),
-		Payload:      payload,
-		AvailableAt:  pgvalue.Timestamptz(now),
-	})
-	return err
+	return nil
 }
 
 func failNestedResumeLineage(
@@ -1611,7 +1590,7 @@ UPDATE runs
 
 	rootEdge := edges[0]
 	root := lineage[0]
-	completed, err := q.CompleteSameWorkspaceChildFailure(
+	_, err = q.CompleteSameWorkspaceChildFailure(
 		ctx,
 		db.CompleteSameWorkspaceChildFailureParams{
 			CompletedAt: failedAt, ConditionState: db.WaitStateFailed,
@@ -1628,22 +1607,6 @@ UPDATE runs
 		},
 	)
 	if err != nil {
-		return err
-	}
-	payload, err := json.Marshal(map[string]any{
-		"environmentId":        pgvalue.UUIDString(completed.EnvironmentID),
-		"runId":                pgvalue.UUIDString(completed.RunID),
-		"runWaitId":            pgvalue.UUIDString(completed.ID),
-		"resumeRequestVersion": completed.ResumeRequestVersion,
-	})
-	if err != nil {
-		return err
-	}
-	if _, err := q.CreateOutboxMessage(ctx, db.CreateOutboxMessageParams{
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Lane: "control",
-		Topic: "run.resume", PartitionKey: pgvalue.UUIDString(root.workspaceID),
-		Payload: payload, AvailableAt: failedAt,
-	}); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `

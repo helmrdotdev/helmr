@@ -190,211 +190,6 @@ SELECT worker_instances.*,
  WHERE worker_instances.id = sqlc.arg(id)
    AND worker_instances.worker_group_id = sqlc.arg(worker_group_id);
 
--- name: GetQueuedRunReadyHint :one
-SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
-       runs.queue_name, runs.concurrency_key, runs.state_version, runs.priority,
-       runs.queue_origin_at, runs.queue_score_at, workspaces.region_id
-  FROM runs
-  JOIN workspaces
-    ON workspaces.environment_id = runs.environment_id
-   AND workspaces.id = runs.workspace_id
- WHERE runs.org_id = sqlc.arg(org_id)
-   AND runs.id = sqlc.arg(run_id)
-   AND runs.status = 'queued'
-   AND runs.current_run_lease_id IS NULL
-   AND (
-        (runs.entrypoint_kind = 'task'
-         AND runs.session_id IS NULL
-         AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
-         AND (
-             (workspaces.owner_run_id = runs.id
-              AND workspaces.owner_session_id IS NULL
-              AND (NOT EXISTS (
-                 SELECT 1
-                   FROM run_waits
-                  WHERE run_waits.run_id = runs.id
-                    AND run_waits.suspension_state IN (
-                        'hot', 'checkpointing', 'parked',
-                        'resume_pending', 'resuming'
-                    )
-              ) OR EXISTS (
-                 SELECT 1
-                   FROM run_waits
-                   JOIN run_checkpoints
-                     ON run_checkpoints.id =
-                        run_waits.suspend_checkpoint_id
-                    AND run_checkpoints.kind = 'suspend'
-                    AND run_checkpoints.run_id = run_waits.run_id
-                    AND run_checkpoints.attempt_number =
-                        run_waits.attempt_number
-                    AND run_checkpoints.run_wait_id = run_waits.id
-                    AND run_checkpoints.workspace_id =
-                        run_waits.workspace_id
-                    AND run_checkpoints.state = 'ready'
-                    AND (run_checkpoints.expires_at IS NULL
-                         OR run_checkpoints.expires_at > now())
-                   JOIN workspace_versions
-                     ON workspace_versions.workspace_id =
-                        run_checkpoints.workspace_id
-                    AND workspace_versions.id =
-                        run_checkpoints.private_workspace_version_id
-                    AND workspace_versions.state = 'private'
-                  WHERE run_waits.run_id = runs.id
-                    AND run_waits.suspension_state = 'resume_pending'
-                    AND run_waits.handoff_runtime_instance_id IS NULL
-                    AND run_waits.handoff_workspace_mount_id IS NULL
-                    AND run_waits.handoff_resume_checkpoint_id IS NULL
-              )))
-             OR EXISTS (
-                 SELECT 1
-                   FROM run_waits AS handoff
-                   JOIN runs AS parent
-                     ON parent.environment_id = handoff.environment_id
-                    AND parent.id = handoff.run_id
-                    AND parent.workspace_id = handoff.workspace_id
-                    AND parent.status = 'waiting'
-                    AND parent.current_run_lease_id IS NULL
-                   JOIN run_checkpoints AS checkpoint
-                     ON checkpoint.id = handoff.suspend_checkpoint_id
-                    AND checkpoint.kind = 'suspend'
-                    AND checkpoint.run_id = handoff.run_id
-                    AND checkpoint.attempt_number =
-                        handoff.attempt_number
-                    AND checkpoint.run_wait_id = handoff.id
-                    AND checkpoint.workspace_id = handoff.workspace_id
-                    AND checkpoint.state = 'ready'
-                   JOIN workspace_versions AS base
-                     ON base.workspace_id = handoff.workspace_id
-                    AND base.id = handoff.base_workspace_version_id
-                    AND base.state = 'private'
-                  WHERE handoff.child_run_id = runs.id
-                    AND handoff.child_parent_owned IS TRUE
-                    AND handoff.workspace_id = runs.workspace_id
-                    AND handoff.condition_state = 'pending'
-                    AND handoff.suspension_state = 'parked'
-                    AND handoff.base_workspace_version_id =
-                        runs.base_workspace_version_id
-                    AND handoff.handoff_runtime_instance_id IS NOT NULL
-                    AND handoff.handoff_workspace_mount_id IS NOT NULL
-                    AND handoff.handoff_mount_generation IS NOT NULL
-                    AND handoff.ownership_generation IS NOT NULL
-                    AND handoff.parent_writer_generation IS NOT NULL
-                    AND handoff.child_writer_generation IS NULL
-             )
-         ))
-       OR
-       (runs.entrypoint_kind = 'actor'
-        AND runs.session_id IS NOT NULL
-        AND runs.cause_kind IN ('actor_start', 'continuation')
-        AND runs.parent_run_id IS NULL
-        AND workspaces.owner_session_id = runs.session_id
-        AND workspaces.owner_run_id IS NULL
-        AND EXISTS (
-            SELECT 1
-              FROM sessions
-             WHERE sessions.id = runs.session_id
-               AND sessions.workspace_id = runs.workspace_id
-               AND sessions.current_run_id = runs.id
-               AND sessions.state IN ('open', 'closing')
-        )
-        AND EXISTS (
-            SELECT 1
-              FROM run_waits
-              JOIN run_checkpoints
-                ON run_checkpoints.id = run_waits.suspend_checkpoint_id
-               AND run_checkpoints.kind = 'suspend'
-               AND run_checkpoints.run_id = run_waits.run_id
-               AND run_checkpoints.attempt_number = run_waits.attempt_number
-               AND run_checkpoints.run_wait_id = run_waits.id
-               AND run_checkpoints.workspace_id = run_waits.workspace_id
-               AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
-               AND run_checkpoints.state = 'ready'
-               AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-              JOIN workspace_versions
-                ON workspace_versions.workspace_id = run_checkpoints.workspace_id
-               AND workspace_versions.id = run_checkpoints.private_workspace_version_id
-               AND workspace_versions.state = 'private'
-              JOIN sessions AS restore_actor
-                ON restore_actor.id = runs.session_id
-               AND restore_actor.workspace_id = runs.workspace_id
-               AND restore_actor.current_run_id = runs.id
-               AND restore_actor.state IN ('open', 'closing')
-              JOIN run_attempts AS restore_attempt
-                ON restore_attempt.run_id = runs.id
-               AND restore_attempt.number = runs.current_attempt_number
-               AND restore_attempt.workspace_id = runs.workspace_id
-               AND restore_attempt.entrypoint_kind = 'actor'
-               AND restore_attempt.session_input_start_sequence = runs.session_input_start_sequence
-               AND restore_attempt.terminal_at IS NULL
-             WHERE run_waits.run_id = runs.id
-               AND run_waits.suspension_state = 'resume_pending'
-               AND run_waits.handoff_runtime_instance_id IS NULL
-               AND run_waits.handoff_workspace_mount_id IS NULL
-               AND run_waits.handoff_resume_checkpoint_id IS NULL
-               AND runs.session_input_start_sequence <= runs.session_input_high_watermark
-               AND restore_actor.committed_input_sequence >= runs.session_input_start_sequence
-               AND restore_actor.committed_input_sequence < restore_actor.next_input_sequence
-               AND run_checkpoints.actor_speculative_input_sequence
-                   BETWEEN restore_actor.committed_input_sequence
-                       AND restore_actor.next_input_sequence - 1
-        ))
-   )
-   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now());
-
--- name: GetQueuedRunResumeHint :one
-SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
-       runs.queue_name, runs.concurrency_key, runs.state_version, runs.priority,
-       runs.queue_origin_at, runs.queue_score_at, workspaces.region_id
-  FROM runs
-  JOIN workspaces
-    ON workspaces.environment_id = runs.environment_id
-   AND workspaces.id = runs.workspace_id
-  JOIN run_waits
-    ON run_waits.environment_id = runs.environment_id
-   AND run_waits.run_id = runs.id
-   AND run_waits.workspace_id = runs.workspace_id
-   AND run_waits.attempt_number = runs.current_attempt_number
-  JOIN run_checkpoints
-    ON run_checkpoints.id = run_waits.suspend_checkpoint_id
-   AND run_checkpoints.kind = 'suspend'
-   AND run_checkpoints.run_id = run_waits.run_id
-   AND run_checkpoints.attempt_number = run_waits.attempt_number
-   AND run_checkpoints.run_wait_id = run_waits.id
-   AND run_checkpoints.workspace_id = run_waits.workspace_id
-   AND run_checkpoints.state = 'ready'
-   AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-  JOIN workspace_versions
-    ON workspace_versions.workspace_id = run_checkpoints.workspace_id
-   AND workspace_versions.id = run_checkpoints.private_workspace_version_id
-   AND workspace_versions.state = 'private'
- WHERE runs.environment_id = sqlc.arg(environment_id)
-   AND runs.id = sqlc.arg(run_id)
-   AND runs.status = 'queued'
-   AND runs.current_run_lease_id IS NULL
-   AND run_waits.id = sqlc.arg(run_wait_id)
-   AND run_waits.condition_state <> 'pending'
-   AND run_waits.suspension_state = 'resume_pending'
-   AND run_waits.expected_run_state_version = runs.state_version
-   AND run_waits.resume_request_version = sqlc.arg(resume_request_version)
-   AND run_waits.resume_ack_version < run_waits.resume_request_version
-   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now());
-
--- name: GetRunResumeHintAuthority :one
-SELECT runs.status,
-       runs.state_version,
-       runs.current_run_lease_id,
-       run_waits.condition_state,
-       run_waits.suspension_state,
-       run_waits.expected_run_state_version,
-       run_waits.resume_request_version
-  FROM runs
-  JOIN run_waits
-    ON run_waits.environment_id = runs.environment_id
-   AND run_waits.run_id = runs.id
- WHERE runs.environment_id = sqlc.arg(environment_id)
-   AND runs.id = sqlc.arg(run_id)
-   AND run_waits.id = sqlc.arg(run_wait_id);
-
 -- name: ListQueuedRunEligibleScopes :many
 WITH candidate_scopes AS (
     SELECT runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
@@ -497,6 +292,25 @@ WITH candidate_scopes AS (
             )
             AND EXISTS (
                 SELECT 1
+                  FROM run_attempts
+                 WHERE run_attempts.run_id = runs.id
+                   AND run_attempts.number = runs.current_attempt_number
+                   AND run_attempts.workspace_id = runs.workspace_id
+                   AND run_attempts.entrypoint_kind = 'actor'
+                   AND run_attempts.session_input_start_sequence = runs.session_input_start_sequence
+                   AND run_attempts.terminal_at IS NULL
+            )
+            AND (
+                NOT EXISTS (
+                    SELECT 1
+                      FROM run_waits
+                     WHERE run_waits.run_id = runs.id
+                       AND run_waits.suspension_state IN (
+                           'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
+                       )
+                )
+                OR EXISTS (
+                SELECT 1
                   FROM run_waits
                   JOIN run_checkpoints
                     ON run_checkpoints.id = run_waits.suspend_checkpoint_id
@@ -535,7 +349,7 @@ WITH candidate_scopes AS (
                    AND run_checkpoints.actor_speculative_input_sequence
                        BETWEEN restore_actor.committed_input_sequence
                            AND restore_actor.next_input_sequence - 1
-            ))
+            )))
        )
        AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
      GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
@@ -611,7 +425,83 @@ SELECT input_scopes.scope_ordinal,
   LEFT JOIN prepared_usage USING (scope_ordinal)
  ORDER BY input_scopes.scope_ordinal;
 
--- name: ListQueuedRunDispatchCandidatesForScopes :many
+-- name: ListQueuedRunPlacementCandidates :many
+WITH input_scopes AS (
+    SELECT input_orgs.position::bigint AS scope_ordinal,
+           input_orgs.org_id,
+           input_environments.environment_id,
+           input_concurrency_keys.concurrency_key,
+           input_queues.queue_name,
+           input_candidate_limits.candidate_limit,
+           input_after_set.after_set,
+           input_after_scores.queue_score_at AS after_queue_score_at,
+           input_after_run_ids.run_id AS after_run_id
+      FROM unnest(sqlc.arg(org_ids)::uuid[])
+           WITH ORDINALITY AS input_orgs(org_id, position)
+      JOIN unnest(sqlc.arg(environment_ids)::uuid[])
+           WITH ORDINALITY AS input_environments(environment_id, position)
+        ON input_environments.position = input_orgs.position
+      JOIN unnest(sqlc.arg(concurrency_keys)::text[])
+           WITH ORDINALITY AS input_concurrency_keys(concurrency_key, position)
+        ON input_concurrency_keys.position = input_orgs.position
+      JOIN unnest(sqlc.arg(queue_names)::text[])
+           WITH ORDINALITY AS input_queues(queue_name, position)
+        ON input_queues.position = input_orgs.position
+      JOIN unnest(sqlc.arg(candidate_limits)::integer[])
+           WITH ORDINALITY AS input_candidate_limits(candidate_limit, position)
+        ON input_candidate_limits.position = input_orgs.position
+      JOIN unnest(sqlc.arg(after_set)::boolean[])
+           WITH ORDINALITY AS input_after_set(after_set, position)
+        ON input_after_set.position = input_orgs.position
+      JOIN unnest(sqlc.arg(after_queue_score_at)::timestamptz[])
+           WITH ORDINALITY AS input_after_scores(queue_score_at, position)
+        ON input_after_scores.position = input_orgs.position
+      JOIN unnest(sqlc.arg(after_run_ids)::uuid[])
+           WITH ORDINALITY AS input_after_run_ids(run_id, position)
+        ON input_after_run_ids.position = input_orgs.position
+     WHERE cardinality(sqlc.arg(org_ids)::uuid[]) > 0
+       AND cardinality(sqlc.arg(environment_ids)::uuid[]) = cardinality(sqlc.arg(org_ids)::uuid[])
+       AND cardinality(sqlc.arg(concurrency_keys)::text[]) = cardinality(sqlc.arg(org_ids)::uuid[])
+       AND cardinality(sqlc.arg(queue_names)::text[]) = cardinality(sqlc.arg(org_ids)::uuid[])
+       AND cardinality(sqlc.arg(candidate_limits)::integer[]) = cardinality(sqlc.arg(org_ids)::uuid[])
+       AND NOT EXISTS (
+           SELECT 1 FROM unnest(sqlc.arg(candidate_limits)::integer[]) AS candidate_limit
+            WHERE candidate_limit <= 0
+       )
+       AND cardinality(sqlc.arg(after_set)::boolean[]) = cardinality(sqlc.arg(org_ids)::uuid[])
+       AND cardinality(sqlc.arg(after_queue_score_at)::timestamptz[]) = cardinality(sqlc.arg(org_ids)::uuid[])
+       AND cardinality(sqlc.arg(after_run_ids)::uuid[]) = cardinality(sqlc.arg(org_ids)::uuid[])
+)
+SELECT input_scopes.scope_ordinal,
+       candidates.org_id,
+       candidates.run_id,
+       candidates.state_version,
+       candidates.queue_score_at
+  FROM input_scopes
+ CROSS JOIN LATERAL (
+      SELECT runs.org_id,
+             runs.id AS run_id,
+             runs.state_version,
+             runs.queue_score_at
+        FROM runs
+       WHERE runs.org_id = input_scopes.org_id
+         AND runs.environment_id = input_scopes.environment_id
+         AND coalesce(runs.concurrency_key, '') = input_scopes.concurrency_key
+         AND runs.queue_name = input_scopes.queue_name
+         AND runs.status = 'queued'
+         AND runs.current_run_lease_id IS NULL
+         AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+         AND (
+             NOT input_scopes.after_set
+             OR (runs.queue_score_at, runs.id)
+                > (input_scopes.after_queue_score_at, input_scopes.after_run_id)
+         )
+       ORDER BY runs.queue_score_at, runs.id
+       LIMIT input_scopes.candidate_limit
+  ) AS candidates
+ ORDER BY input_scopes.scope_ordinal, candidates.queue_score_at, candidates.run_id;
+
+-- name: ListQueuedRunPlanningCandidatesForScopes :many
 WITH input_scopes AS (
     SELECT input_orgs.position::bigint AS scope_ordinal,
            input_orgs.org_id,
@@ -850,6 +740,25 @@ SELECT runs.org_id,
         )
         AND EXISTS (
             SELECT 1
+              FROM run_attempts
+             WHERE run_attempts.run_id = runs.id
+               AND run_attempts.number = runs.current_attempt_number
+               AND run_attempts.workspace_id = runs.workspace_id
+               AND run_attempts.entrypoint_kind = 'actor'
+               AND run_attempts.session_input_start_sequence = runs.session_input_start_sequence
+               AND run_attempts.terminal_at IS NULL
+        )
+        AND (
+            NOT EXISTS (
+                SELECT 1
+                  FROM run_waits
+                 WHERE run_waits.run_id = runs.id
+                   AND run_waits.suspension_state IN (
+                       'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
+                   )
+            )
+            OR EXISTS (
+            SELECT 1
               FROM run_waits
               JOIN run_checkpoints
                 ON run_checkpoints.id = run_waits.suspend_checkpoint_id
@@ -888,7 +797,7 @@ SELECT runs.org_id,
                AND run_checkpoints.actor_speculative_input_sequence
                    BETWEEN restore_actor.committed_input_sequence
                        AND restore_actor.next_input_sequence - 1
-        ))
+        )))
  )
    AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
  ORDER BY runs.queue_score_at, runs.id

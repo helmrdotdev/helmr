@@ -45,7 +45,7 @@ type Store interface {
 	ListWorkerCapacityBins(context.Context, db.ListWorkerCapacityBinsParams) ([]db.ListWorkerCapacityBinsRow, error)
 	ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error)
 	ListQueuedRunPlanningUsage(context.Context, db.ListQueuedRunPlanningUsageParams) ([]db.ListQueuedRunPlanningUsageRow, error)
-	ListQueuedRunDispatchCandidatesForScopes(context.Context, db.ListQueuedRunDispatchCandidatesForScopesParams) ([]db.ListQueuedRunDispatchCandidatesForScopesRow, error)
+	ListQueuedRunPlanningCandidatesForScopes(context.Context, db.ListQueuedRunPlanningCandidatesForScopesParams) ([]db.ListQueuedRunPlanningCandidatesForScopesRow, error)
 	ListQueuedDeploymentBuildCandidates(context.Context, db.ListQueuedDeploymentBuildCandidatesParams) ([]db.ListQueuedDeploymentBuildCandidatesRow, error)
 }
 
@@ -233,7 +233,7 @@ func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanS
 					complete = false
 					break
 				}
-				rows, err := store.ListQueuedRunDispatchCandidatesForScopes(ctx, planningCandidateParams(scope, remaining+1))
+				rows, err := store.ListQueuedRunPlanningCandidatesForScopes(ctx, planningCandidateParams(scope, remaining+1))
 				if err != nil {
 					return nil, false, fmt.Errorf("list capacity planning run candidates: %w", err)
 				}
@@ -314,8 +314,8 @@ func planningUsageParams(scopes []db.ListQueuedRunEligibleScopesRow) db.ListQueu
 	return params
 }
 
-func planningCandidateParams(scope db.ListQueuedRunEligibleScopesRow, limit int32) db.ListQueuedRunDispatchCandidatesForScopesParams {
-	return db.ListQueuedRunDispatchCandidatesForScopesParams{
+func planningCandidateParams(scope db.ListQueuedRunEligibleScopesRow, limit int32) db.ListQueuedRunPlanningCandidatesForScopesParams {
+	return db.ListQueuedRunPlanningCandidatesForScopesParams{
 		PerScopeLimit: limit,
 		OrgIds:        []pgtype.UUID{scope.OrgID}, ProjectIds: []pgtype.UUID{scope.ProjectID},
 		EnvironmentIds: []pgtype.UUID{scope.EnvironmentID}, RegionIds: []string{scope.RegionID},
@@ -347,7 +347,7 @@ func exceedsQueueLimit(used int64, candidateLimit pgtype.Int8, pinnedLimit int64
 	return limit.Valid && used >= limit.Int64
 }
 
-func runItem(row db.ListQueuedRunDispatchCandidatesForScopesRow) item {
+func runItem(row db.ListQueuedRunPlanningCandidatesForScopesRow) item {
 	result := item{role: "run", key: fmt.Sprintf("%x", row.RunID.Bytes)}
 	if row.RequiresRetainedRuntime {
 		result.reason = reasonRetainedRuntime

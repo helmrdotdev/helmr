@@ -438,29 +438,25 @@ func assertActorCloseContinuation(
 	`, actorID).Scan(&state, &closeSequence, &manualRunCancelled, &currentRunID); err != nil {
 		t.Fatal(err)
 	}
-	var continuations, admissionIntents, closeIntents int
+	var continuations, closeIntents int
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT
 		    (SELECT count(*) FROM runs WHERE session_id = $1 AND cause_kind = 'continuation'),
 		    (SELECT count(*) FROM outbox_messages
-		      WHERE topic = 'run.admit' AND payload->>'runId' = $2::text),
-		    (SELECT count(*) FROM outbox_messages
 		      WHERE topic = 'session.close.reconcile'
 		        AND payload->>'sessionId' = $1::text)
-	`, actorID, currentRunID).Scan(
+	`, actorID).Scan(
 		&continuations,
-		&admissionIntents,
 		&closeIntents,
 	); err != nil {
 		t.Fatal(err)
 	}
 	if state != "closing" || closeSequence != 1 || manualRunCancelled ||
-		currentRunID == uuid.Nil || continuations != 1 ||
-		admissionIntents != 1 || closeIntents != 1 {
+		currentRunID == uuid.Nil || continuations != 1 || closeIntents != 1 {
 		t.Fatalf(
-			"closing state=%s boundary=%d manual=%v current=%s continuations=%d admission=%d close=%d",
+			"closing state=%s boundary=%d manual=%v current=%s continuations=%d close=%d",
 			state, closeSequence, manualRunCancelled, currentRunID,
-			continuations, admissionIntents, closeIntents,
+			continuations, closeIntents,
 		)
 	}
 }

@@ -475,12 +475,6 @@ func (s *Server) invokeChildTask(
 		); err != nil {
 			return fmt.Errorf("record child task secret resolutions: %w", err)
 		}
-		if _, err := work.q.CreateRunAdmissionOutbox(ctx, db.CreateRunAdmissionOutboxParams{
-			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: workspace.ID,
-			EnvironmentID: run.EnvironmentID, RunID: run.ID,
-		}); err != nil {
-			return fmt.Errorf("create child task admission outbox: %w", err)
-		}
 		result.taskStartResult = taskStartResult{RunID: runID}
 		if input.Request.Method == "call" {
 			if edgeClaim == nil {

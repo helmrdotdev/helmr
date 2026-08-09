@@ -94,12 +94,12 @@ output "postgres_endpoint" {
 }
 
 output "redis_endpoint" {
-  description = "ElastiCache dispatch primary endpoint."
+  description = "ElastiCache event stream primary endpoint."
   value       = module.controlplane.redis_endpoint
 }
 
 output "redis_url" {
-  description = "Redis/Valkey URL used by controlplane and dispatcher."
+  description = "Redis/Valkey URL used by controlplane."
   value       = module.controlplane.redis_url
 }
 

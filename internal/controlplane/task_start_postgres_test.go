@@ -58,26 +58,24 @@ func TestTaskStartPostgresCommitsAndReplaysOneAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	var workspaceOwner pgtype.UUID
-	var attempts, resolutions, outboxes int
+	var attempts, resolutions int
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT w.owner_run_id,
 		       (SELECT count(*) FROM run_attempts WHERE run_id = r.id),
-		       (SELECT count(*) FROM secret_resolutions WHERE run_id = r.id),
-		       (SELECT count(*) FROM outbox_messages
-		         WHERE topic = 'run.admit' AND payload->>'runId' = r.id::text)
+		       (SELECT count(*) FROM secret_resolutions WHERE run_id = r.id)
 		  FROM runs r
 		  JOIN workspaces w ON w.id = r.workspace_id
 		 WHERE r.id = $1
-	`, created.RunID).Scan(&workspaceOwner, &attempts, &resolutions, &outboxes); err != nil {
+	`, created.RunID).Scan(&workspaceOwner, &attempts, &resolutions); err != nil {
 		t.Fatal(err)
 	}
 	if run.ID != pgvalue.UUID(created.RunID) || run.EntrypointKind != "task" ||
 		run.EntrypointDeclaredID != "resize-image" || run.CauseKind != "api" ||
 		run.Status != db.RunStatusQueued || workspaceOwner != run.ID ||
-		attempts != 1 || resolutions != 1 || outboxes != 1 {
+		attempts != 1 || resolutions != 1 {
 		t.Fatalf(
-			"run=%+v owner=%v attempts=%d resolutions=%d outboxes=%d",
-			run, workspaceOwner, attempts, resolutions, outboxes,
+			"run=%+v owner=%v attempts=%d resolutions=%d",
+			run, workspaceOwner, attempts, resolutions,
 		)
 	}
 	snapshot, err := queries.GetRunSnapshot(t.Context(), db.GetRunSnapshotParams{

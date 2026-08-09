@@ -279,10 +279,7 @@ func TestReadyRunRetriesAdmitsOnceUnderConcurrency(t *testing.T) {
 	for range 2 {
 		wait.Go(func() {
 			<-start
-			rows, err := fixture.queries.ReadyRunRetries(ctx, ReadyRunRetriesParams{
-				OutboxMessageIds: pgvalue.NewUUIDv7Batch(1),
-				RowLimit:         1,
-			})
+			rows, err := fixture.queries.ReadyRunRetries(ctx, 1)
 			results <- result{rows: rows, err: err}
 		})
 	}
@@ -299,10 +296,7 @@ func TestReadyRunRetriesAdmitsOnceUnderConcurrency(t *testing.T) {
 	if admissions != 1 {
 		t.Fatalf("concurrent admissions = %d, want 1", admissions)
 	}
-	if rows, err := fixture.queries.ReadyRunRetries(ctx, ReadyRunRetriesParams{
-		OutboxMessageIds: pgvalue.NewUUIDv7Batch(1),
-		RowLimit:         1,
-	}); err != nil || len(rows) != 0 {
+	if rows, err := fixture.queries.ReadyRunRetries(ctx, 1); err != nil || len(rows) != 0 {
 		t.Fatalf("replayed readiness = %d rows, %v, want no rows", len(rows), err)
 	}
 
@@ -310,18 +304,15 @@ func TestReadyRunRetriesAdmitsOnceUnderConcurrency(t *testing.T) {
 	var attemptNumber int32
 	var stateVersion int64
 	var retryAt pgtype.Timestamptz
-	var outboxCount int
 	if err := fixture.pool.QueryRow(ctx, `
-		SELECT runs.status, runs.current_attempt_number, runs.state_version, runs.retry_at,
-		       (SELECT count(*) FROM outbox_messages
-		         WHERE topic = 'run.admit' AND payload->>'runId' = runs.id::text)
+		SELECT runs.status, runs.current_attempt_number, runs.state_version, runs.retry_at
 		  FROM runs
 		 WHERE runs.id = $1
-	`, work.runID).Scan(&status, &attemptNumber, &stateVersion, &retryAt, &outboxCount); err != nil {
+	`, work.runID).Scan(&status, &attemptNumber, &stateVersion, &retryAt); err != nil {
 		t.Fatal(err)
 	}
-	if status != RunStatusQueued || attemptNumber != 2 || stateVersion != delayedStateVersion+1 || retryAt.Valid || outboxCount != 1 {
-		t.Fatalf("ready retry = status %s attempt %d version %d retry_at %v outbox %d", status, attemptNumber, stateVersion, retryAt, outboxCount)
+	if status != RunStatusQueued || attemptNumber != 2 || stateVersion != delayedStateVersion+1 || retryAt.Valid {
+		t.Fatalf("ready retry = status %s attempt %d version %d retry_at %v", status, attemptNumber, stateVersion, retryAt)
 	}
 }
 

@@ -780,54 +780,6 @@ func (q *Queries) LockCancellationWorkspaces(ctx context.Context, runIds []pgtyp
 	return items, nil
 }
 
-const publishTerminalChildResume = `-- name: PublishTerminalChildResume :execrows
-INSERT INTO outbox_messages (
-    id,
-    lane,
-    topic,
-    partition_key,
-    payload,
-    available_at
-)
-VALUES (
-    $1,
-    'control',
-    'run.resume',
-    $2::uuid::text,
-    jsonb_build_object(
-        'environmentId', $3::uuid::text,
-        'runId', $4::uuid::text,
-        'runWaitId', $5::uuid::text,
-        'resumeRequestVersion', $6::bigint
-    ),
-    transaction_timestamp()
-)
-`
-
-type PublishTerminalChildResumeParams struct {
-	OutboxMessageID      pgtype.UUID `json:"outbox_message_id"`
-	WorkspaceID          pgtype.UUID `json:"workspace_id"`
-	EnvironmentID        pgtype.UUID `json:"environment_id"`
-	RunID                pgtype.UUID `json:"run_id"`
-	WaitID               pgtype.UUID `json:"wait_id"`
-	ResumeRequestVersion int64       `json:"resume_request_version"`
-}
-
-func (q *Queries) PublishTerminalChildResume(ctx context.Context, arg PublishTerminalChildResumeParams) (int64, error) {
-	result, err := q.db.Exec(ctx, publishTerminalChildResume,
-		arg.OutboxMessageID,
-		arg.WorkspaceID,
-		arg.EnvironmentID,
-		arg.RunID,
-		arg.WaitID,
-		arg.ResumeRequestVersion,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const recordRunTerminalEvent = `-- name: RecordRunTerminalEvent :exec
 INSERT INTO telemetry_outbox (
     org_id,

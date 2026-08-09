@@ -8,7 +8,7 @@ sidebarLabel: AWS evaluation
 
 `infra/aws/quickstart` is a low-cost evaluation and proof-of-concept composition. It is not the production baseline.
 
-Its defaults include one Control Plane task, one dispatcher task, a single-node Valkey/Redis queue, a small RDS instance, short retention windows, no database deletion protection, no final snapshot, and no workers. NAT is disabled, while Control Plane and one-off Fargate tasks receive public IPs; their inbound traffic is still restricted to the load balancer security group.
+Its defaults include one Control Plane task, one dispatcher task, a single-node Valkey/Redis event stream, a small RDS instance, short retention windows, no database deletion protection, no final snapshot, and no workers. NAT is disabled, while Control Plane and one-off Fargate tasks receive public IPs; their inbound traffic is still restricted to the load balancer security group.
 
 ## Configure the profile
 

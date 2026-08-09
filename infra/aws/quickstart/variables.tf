@@ -312,13 +312,13 @@ variable "smtp_password_enabled" {
 }
 
 variable "redis_node_type" {
-  description = "ElastiCache node type for the dispatch queue."
+  description = "ElastiCache node type for the Control Plane event stream."
   type        = string
   default     = "cache.t4g.micro"
 }
 
 variable "redis_node_count" {
-  description = "Number of ElastiCache nodes for the dispatch queue."
+  description = "Number of ElastiCache nodes for the Control Plane event stream."
   type        = number
   default     = 1
 }

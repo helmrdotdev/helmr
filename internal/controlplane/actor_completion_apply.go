@@ -414,11 +414,6 @@ func createActorContinuation(ctx context.Context, store db.Querier, actor db.Ses
 	if err := createActorAttemptSecretResolutions(ctx, store, ws.ID, run.ID, 1, secrets); err != nil {
 		return err
 	}
-	if _, err := store.CreateRunAdmissionOutbox(ctx, db.CreateRunAdmissionOutboxParams{
-		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceID: ws.ID, EnvironmentID: actor.EnvironmentID, RunID: run.ID,
-	}); err != nil {
-		return fmt.Errorf("enqueue actor continuation: %w", err)
-	}
 	return nil
 }
 
