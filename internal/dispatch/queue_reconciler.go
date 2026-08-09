@@ -27,7 +27,7 @@ const (
 
 type QueueReconcilerStore interface {
 	runResumeRecoveryStore
-	ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error)
+	ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error)
 }
 
 type RunResumeRecoverer interface {
@@ -298,10 +298,10 @@ func (r *QueueReconciler) ReconcileRunsOnce(ctx context.Context) error {
 	}
 	scanSeed := time.Now().UTC().Format(time.RFC3339Nano)
 	var afterSortKey string
-	var afterRow db.ListQueuedRunCandidateScopesRow
+	var afterRow db.ListQueuedRunEligibleScopesRow
 	for {
 		queryCtx, cancel := context.WithTimeout(ctx, r.runQueryTimeout)
-		rows, err := store.ListQueuedRunCandidateScopes(queryCtx, db.ListQueuedRunCandidateScopesParams{
+		rows, err := store.ListQueuedRunEligibleScopes(queryCtx, db.ListQueuedRunEligibleScopesParams{
 			AfterSortKey:        afterSortKey,
 			AfterOrgID:          afterRow.OrgID,
 			AfterProjectID:      afterRow.ProjectID,

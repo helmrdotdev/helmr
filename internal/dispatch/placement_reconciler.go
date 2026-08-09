@@ -28,8 +28,8 @@ const (
 )
 
 type RunPlacementDiscovery interface {
-	ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error)
-	ListQueuedRunDispatchCandidatesForScope(context.Context, db.ListQueuedRunDispatchCandidatesForScopeParams) ([]db.ListQueuedRunDispatchCandidatesForScopeRow, error)
+	ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error)
+	ListQueuedRunDispatchCandidatesForScopes(context.Context, db.ListQueuedRunDispatchCandidatesForScopesParams) ([]db.ListQueuedRunDispatchCandidatesForScopesRow, error)
 }
 
 type BuildPlacementDiscovery interface {
@@ -328,7 +328,7 @@ func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
 	if remaining <= 0 {
 		return errors.Join(problems...)
 	}
-	scopes, err := r.runDiscovery.ListQueuedRunCandidateScopes(ctx, db.ListQueuedRunCandidateScopesParams{
+	scopes, err := r.runDiscovery.ListQueuedRunEligibleScopes(ctx, db.ListQueuedRunEligibleScopesParams{
 		RowLimit: remaining, ScanSeed: time.Now().UTC().Format(time.RFC3339Nano),
 	})
 	if err != nil {
@@ -341,28 +341,27 @@ func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
 			ConcurrencyKey: scope.ConcurrencyKey, QueueName: scope.QueueName})
 	}
 	fairScopes = (RoundRobinQueueScopeSelector{}).Order(fairScopes)
-	type scopeCandidates struct {
-		rows []db.ListQueuedRunDispatchCandidatesForScopeRow
+	if len(fairScopes) == 0 {
+		return errors.Join(problems...)
 	}
-	candidatesByScope := make([]scopeCandidates, 0, len(fairScopes))
-	for _, scope := range fairScopes {
-		rows, err := r.runDiscovery.ListQueuedRunDispatchCandidatesForScope(ctx, db.ListQueuedRunDispatchCandidatesForScopeParams{
-			OrgID: scope.OrgID, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
-			RegionID: scope.RegionID,
-			ConcurrencyKey: pgtype.Text{
-				String: scope.ConcurrencyKey,
-				Valid:  scope.ConcurrencyKey != "",
-			},
-			QueueName: scope.QueueName,
-			RowLimit:  remaining,
-		})
-		if err != nil {
-			problems = append(problems, err)
-			continue
+	type scopeCandidates struct {
+		rows []db.ListQueuedRunDispatchCandidatesForScopesRow
+	}
+	params, err := runCandidateParams(fairScopes, remaining)
+	if err != nil {
+		return errors.Join(append(problems, err)...)
+	}
+	rows, err := r.runDiscovery.ListQueuedRunDispatchCandidatesForScopes(ctx, params)
+	if err != nil {
+		return errors.Join(append(problems, err)...)
+	}
+	candidatesByScope := make([]scopeCandidates, len(fairScopes))
+	for _, row := range rows {
+		if row.ScopeOrdinal < 1 || row.ScopeOrdinal > int64(len(candidatesByScope)) {
+			return errors.Join(append(problems, fmt.Errorf("run candidate scope ordinal out of range: %d", row.ScopeOrdinal))...)
 		}
-		if len(rows) > 0 {
-			candidatesByScope = append(candidatesByScope, scopeCandidates{rows: rows})
-		}
+		index := int(row.ScopeOrdinal - 1)
+		candidatesByScope[index].rows = append(candidatesByScope[index].rows, row)
 	}
 	for index := 0; remaining > 0; index++ {
 		madeProgress := false

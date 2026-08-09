@@ -29,7 +29,7 @@ type countingRunPlacementDiscovery struct {
 	wake  chan struct{}
 }
 
-func (f *countingRunPlacementDiscovery) ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error) {
+func (f *countingRunPlacementDiscovery) ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error) {
 	f.calls.Add(1)
 	select {
 	case f.wake <- struct{}{}:
@@ -37,7 +37,7 @@ func (f *countingRunPlacementDiscovery) ListQueuedRunCandidateScopes(context.Con
 	}
 	return nil, nil
 }
-func (*countingRunPlacementDiscovery) ListQueuedRunDispatchCandidatesForScope(context.Context, db.ListQueuedRunDispatchCandidatesForScopeParams) ([]db.ListQueuedRunDispatchCandidatesForScopeRow, error) {
+func (*countingRunPlacementDiscovery) ListQueuedRunDispatchCandidatesForScopes(context.Context, db.ListQueuedRunDispatchCandidatesForScopesParams) ([]db.ListQueuedRunDispatchCandidatesForScopesRow, error) {
 	return nil, nil
 }
 
@@ -143,16 +143,23 @@ func TestPlacementReconcilerBlockedBuildDatabaseWorkDoesNotStarveRunPlacement(t 
 }
 
 type fallbackRunPlacementDiscovery struct {
-	scopes     []db.ListQueuedRunCandidateScopesRow
-	candidates map[string][]db.ListQueuedRunDispatchCandidatesForScopeRow
+	scopes     []db.ListQueuedRunEligibleScopesRow
+	candidates map[string][]db.ListQueuedRunDispatchCandidatesForScopesRow
 }
 
-func (f fallbackRunPlacementDiscovery) ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error) {
+func (f fallbackRunPlacementDiscovery) ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error) {
 	return f.scopes, nil
 }
 
-func (f fallbackRunPlacementDiscovery) ListQueuedRunDispatchCandidatesForScope(_ context.Context, arg db.ListQueuedRunDispatchCandidatesForScopeParams) ([]db.ListQueuedRunDispatchCandidatesForScopeRow, error) {
-	return f.candidates[arg.QueueName], nil
+func (f fallbackRunPlacementDiscovery) ListQueuedRunDispatchCandidatesForScopes(_ context.Context, arg db.ListQueuedRunDispatchCandidatesForScopesParams) ([]db.ListQueuedRunDispatchCandidatesForScopesRow, error) {
+	var result []db.ListQueuedRunDispatchCandidatesForScopesRow
+	for index, queue := range arg.QueueNames {
+		for _, row := range f.candidates[queue] {
+			row.ScopeOrdinal = int64(index + 1)
+			result = append(result, row)
+		}
+	}
+	return result, nil
 }
 
 type recordingRunPlacementAuthority struct {
@@ -164,15 +171,27 @@ func (a *recordingRunPlacementAuthority) PlaceReadyRun(_ context.Context, candid
 	return ReadyRunPlacement{}, nil
 }
 
+func TestPlacementReconcilerAcceptsNoEligiblePostgresScopes(t *testing.T) {
+	reconciler := &PlacementReconciler{
+		runDiscovery: fallbackRunPlacementDiscovery{},
+		runAuthority: &recordingRunPlacementAuthority{},
+		ready:        isolationQueue{},
+		runPolicy:    placementLoopPolicy{limit: 32},
+	}
+	if err := reconciler.ReconcileRuns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPlacementReconcilerInterleavesPostgresFallbackScopes(t *testing.T) {
 	authority := &recordingRunPlacementAuthority{}
 	reconciler := &PlacementReconciler{
 		runDiscovery: fallbackRunPlacementDiscovery{
-			scopes: []db.ListQueuedRunCandidateScopesRow{
+			scopes: []db.ListQueuedRunEligibleScopesRow{
 				{OrgID: placementTestUUID(1), RegionID: "us-east-1", QueueName: "a"},
 				{OrgID: placementTestUUID(2), RegionID: "us-east-1", QueueName: "b"},
 			},
-			candidates: map[string][]db.ListQueuedRunDispatchCandidatesForScopeRow{
+			candidates: map[string][]db.ListQueuedRunDispatchCandidatesForScopesRow{
 				"a": {{OrgID: placementTestUUID(1), RunID: placementTestUUID(11)}, {OrgID: placementTestUUID(1), RunID: placementTestUUID(12)}},
 				"b": {{OrgID: placementTestUUID(2), RunID: placementTestUUID(21)}, {OrgID: placementTestUUID(2), RunID: placementTestUUID(22)}},
 			},

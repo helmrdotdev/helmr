@@ -238,11 +238,15 @@ func (s *capacityPlanStore) ListWorkerCapacityBins(context.Context, db.ListWorke
 	return nil, nil
 }
 
-func (s *capacityPlanStore) ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error) {
+func (s *capacityPlanStore) ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error) {
 	return nil, nil
 }
 
-func (s *capacityPlanStore) ListQueuedRunDispatchCandidatesForScope(context.Context, db.ListQueuedRunDispatchCandidatesForScopeParams) ([]db.ListQueuedRunDispatchCandidatesForScopeRow, error) {
+func (s *capacityPlanStore) ListQueuedRunPlanningUsage(context.Context, db.ListQueuedRunPlanningUsageParams) ([]db.ListQueuedRunPlanningUsageRow, error) {
+	return nil, nil
+}
+
+func (s *capacityPlanStore) ListQueuedRunDispatchCandidatesForScopes(context.Context, db.ListQueuedRunDispatchCandidatesForScopesParams) ([]db.ListQueuedRunDispatchCandidatesForScopesRow, error) {
 	return nil, nil
 }
 

@@ -55,6 +55,11 @@ in
     inherit shellHook;
   };
 
+  dispatch-measure = pkgs.mkShell {
+    packages = toolsets.dispatchMeasurement;
+    inherit shellHook;
+  };
+
   smoke-linux = pkgs.mkShell {
     packages = toolsets.base ++ toolsets.image ++ toolsets.smokeLinux;
     shellHook = shellHook + ''

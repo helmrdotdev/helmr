@@ -395,7 +395,7 @@ SELECT runs.status,
    AND runs.id = sqlc.arg(run_id)
    AND run_waits.id = sqlc.arg(run_wait_id);
 
--- name: ListQueuedRunCandidateScopes :many
+-- name: ListQueuedRunEligibleScopes :many
 WITH candidate_scopes AS (
     SELECT runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
            coalesce(runs.concurrency_key, '') AS concurrency_key, runs.queue_name,
@@ -541,61 +541,8 @@ WITH candidate_scopes AS (
      GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
               coalesce(runs.concurrency_key, ''), runs.queue_name
 )
-SELECT candidate_scopes.*,
-       queue_usage.active_runs,
-       queue_usage.active_limit,
-       queue_usage.prepared_runs,
-       queue_usage.prepared_limit
+SELECT candidate_scopes.*
   FROM candidate_scopes
- CROSS JOIN LATERAL (
-     SELECT
-         (SELECT count(*)
-            FROM run_leases
-            JOIN runs AS active_runs
-              ON active_runs.id = run_leases.run_id
-             AND active_runs.environment_id = run_leases.environment_id
-           WHERE active_runs.environment_id = candidate_scopes.environment_id
-             AND active_runs.queue_name = candidate_scopes.queue_name
-             AND active_runs.concurrency_key IS NOT DISTINCT FROM
-                 NULLIF(candidate_scopes.concurrency_key, '')::text
-             AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing'))::bigint
-             AS active_runs,
-         (SELECT COALESCE(min(active_runs.queue_concurrency_limit), 0)::bigint
-            FROM run_leases
-            JOIN runs AS active_runs
-              ON active_runs.id = run_leases.run_id
-             AND active_runs.environment_id = run_leases.environment_id
-           WHERE active_runs.environment_id = candidate_scopes.environment_id
-             AND active_runs.queue_name = candidate_scopes.queue_name
-             AND active_runs.concurrency_key IS NOT DISTINCT FROM
-                 NULLIF(candidate_scopes.concurrency_key, '')::text
-             AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing'))
-             AS active_limit,
-         (SELECT count(*)
-            FROM runtime_instances
-            JOIN runs AS prepared_runs
-              ON prepared_runs.environment_id = runtime_instances.environment_id
-             AND prepared_runs.id = runtime_instances.reserved_run_id
-           WHERE prepared_runs.environment_id = candidate_scopes.environment_id
-             AND prepared_runs.queue_name = candidate_scopes.queue_name
-             AND prepared_runs.concurrency_key IS NOT DISTINCT FROM
-                 NULLIF(candidate_scopes.concurrency_key, '')::text
-             AND runtime_instances.reserved_run_id IS NOT NULL
-             AND runtime_instances.reclaimed_at IS NULL)::bigint
-             AS prepared_runs,
-         (SELECT COALESCE(min(prepared_runs.queue_concurrency_limit), 0)::bigint
-            FROM runtime_instances
-            JOIN runs AS prepared_runs
-              ON prepared_runs.environment_id = runtime_instances.environment_id
-             AND prepared_runs.id = runtime_instances.reserved_run_id
-           WHERE prepared_runs.environment_id = candidate_scopes.environment_id
-             AND prepared_runs.queue_name = candidate_scopes.queue_name
-             AND prepared_runs.concurrency_key IS NOT DISTINCT FROM
-                 NULLIF(candidate_scopes.concurrency_key, '')::text
-             AND runtime_instances.reserved_run_id IS NOT NULL
-             AND runtime_instances.reclaimed_at IS NULL)
-             AS prepared_limit
- ) AS queue_usage
  WHERE sqlc.arg(after_sort_key)::text = ''
     OR (sort_key, org_id, project_id, environment_id, region_id, concurrency_key, queue_name)
        > (sqlc.arg(after_sort_key)::text, sqlc.arg(after_org_id)::uuid,
@@ -605,7 +552,110 @@ SELECT candidate_scopes.*,
  ORDER BY sort_key, org_id, project_id, environment_id, region_id, concurrency_key, queue_name
  LIMIT sqlc.arg(row_limit);
 
--- name: ListQueuedRunDispatchCandidatesForScope :many
+-- name: ListQueuedRunPlanningUsage :many
+WITH input_scopes AS (
+    SELECT input_environments.position::bigint AS scope_ordinal,
+           input_environments.environment_id,
+           input_concurrency_keys.concurrency_key,
+           input_queues.queue_name
+      FROM unnest(sqlc.arg(environment_ids)::uuid[])
+           WITH ORDINALITY AS input_environments(environment_id, position)
+      JOIN unnest(sqlc.arg(concurrency_keys)::text[])
+           WITH ORDINALITY AS input_concurrency_keys(concurrency_key, position)
+        ON input_concurrency_keys.position = input_environments.position
+      JOIN unnest(sqlc.arg(queue_names)::text[])
+           WITH ORDINALITY AS input_queues(queue_name, position)
+        ON input_queues.position = input_environments.position
+     WHERE cardinality(sqlc.arg(environment_ids)::uuid[]) BETWEEN 1 AND 128
+       AND cardinality(sqlc.arg(concurrency_keys)::text[]) = cardinality(sqlc.arg(environment_ids)::uuid[])
+       AND cardinality(sqlc.arg(queue_names)::text[]) = cardinality(sqlc.arg(environment_ids)::uuid[])
+), active_usage AS (
+    SELECT input_scopes.scope_ordinal,
+           count(*)::bigint AS active_runs,
+           COALESCE(min(active_runs.queue_concurrency_limit), 0)::bigint AS active_limit
+      FROM run_leases
+      JOIN runs AS active_runs
+        ON active_runs.id = run_leases.run_id
+       AND active_runs.environment_id = run_leases.environment_id
+      JOIN input_scopes
+        ON input_scopes.environment_id = active_runs.environment_id
+       AND input_scopes.queue_name = active_runs.queue_name
+       AND active_runs.concurrency_key IS NOT DISTINCT FROM
+           NULLIF(input_scopes.concurrency_key, '')::text
+     WHERE run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+     GROUP BY input_scopes.scope_ordinal
+), prepared_usage AS (
+    SELECT input_scopes.scope_ordinal,
+           count(*)::bigint AS prepared_runs,
+           COALESCE(min(prepared_runs.queue_concurrency_limit), 0)::bigint AS prepared_limit
+      FROM runtime_instances
+      JOIN runs AS prepared_runs
+        ON prepared_runs.environment_id = runtime_instances.environment_id
+       AND prepared_runs.id = runtime_instances.reserved_run_id
+      JOIN input_scopes
+        ON input_scopes.environment_id = prepared_runs.environment_id
+       AND input_scopes.queue_name = prepared_runs.queue_name
+       AND prepared_runs.concurrency_key IS NOT DISTINCT FROM
+           NULLIF(input_scopes.concurrency_key, '')::text
+     WHERE runtime_instances.reserved_run_id IS NOT NULL
+       AND runtime_instances.reclaimed_at IS NULL
+     GROUP BY input_scopes.scope_ordinal
+)
+SELECT input_scopes.scope_ordinal,
+       COALESCE(active_usage.active_runs, 0)::bigint AS active_runs,
+       COALESCE(active_usage.active_limit, 0)::bigint AS active_limit,
+       COALESCE(prepared_usage.prepared_runs, 0)::bigint AS prepared_runs,
+       COALESCE(prepared_usage.prepared_limit, 0)::bigint AS prepared_limit
+  FROM input_scopes
+  LEFT JOIN active_usage USING (scope_ordinal)
+  LEFT JOIN prepared_usage USING (scope_ordinal)
+ ORDER BY input_scopes.scope_ordinal;
+
+-- name: ListQueuedRunDispatchCandidatesForScopes :many
+WITH input_scopes AS (
+    SELECT input_orgs.position::bigint AS scope_ordinal,
+           input_orgs.org_id,
+           input_projects.project_id,
+           input_environments.environment_id,
+           input_regions.region_id,
+           input_concurrency_keys.concurrency_key,
+           input_queues.queue_name
+      FROM unnest(sqlc.arg(org_ids)::uuid[])
+           WITH ORDINALITY AS input_orgs(org_id, position)
+      JOIN unnest(sqlc.arg(project_ids)::uuid[])
+           WITH ORDINALITY AS input_projects(project_id, position)
+        ON input_projects.position = input_orgs.position
+      JOIN unnest(sqlc.arg(environment_ids)::uuid[])
+           WITH ORDINALITY AS input_environments(environment_id, position)
+        ON input_environments.position = input_orgs.position
+      JOIN unnest(sqlc.arg(region_ids)::text[])
+           WITH ORDINALITY AS input_regions(region_id, position)
+        ON input_regions.position = input_orgs.position
+      JOIN unnest(sqlc.arg(concurrency_keys)::text[])
+           WITH ORDINALITY AS input_concurrency_keys(concurrency_key, position)
+        ON input_concurrency_keys.position = input_orgs.position
+      JOIN unnest(sqlc.arg(queue_names)::text[])
+           WITH ORDINALITY AS input_queues(queue_name, position)
+        ON input_queues.position = input_orgs.position
+     WHERE cardinality(sqlc.arg(org_ids)::uuid[]) BETWEEN 1 AND 32
+       AND cardinality(sqlc.arg(project_ids)::uuid[]) = cardinality(sqlc.arg(org_ids)::uuid[])
+       AND cardinality(sqlc.arg(environment_ids)::uuid[]) = cardinality(sqlc.arg(org_ids)::uuid[])
+       AND cardinality(sqlc.arg(region_ids)::text[]) = cardinality(sqlc.arg(org_ids)::uuid[])
+       AND cardinality(sqlc.arg(concurrency_keys)::text[]) = cardinality(sqlc.arg(org_ids)::uuid[])
+       AND cardinality(sqlc.arg(queue_names)::text[]) = cardinality(sqlc.arg(org_ids)::uuid[])
+)
+SELECT input_scopes.scope_ordinal,
+       candidates.org_id,
+       candidates.run_id,
+       candidates.state_version,
+       candidates.queue_concurrency_limit,
+       candidates.workspace_manifest,
+       candidates.requires_retained_runtime,
+       candidates.required_runtime_identity_id,
+       candidates.required_substrate_format,
+       candidates.required_substrate_contract
+  FROM input_scopes
+ CROSS JOIN LATERAL (
 SELECT runs.org_id,
        runs.id AS run_id,
        runs.state_version,
@@ -655,7 +705,8 @@ SELECT runs.org_id,
        ))::boolean AS requires_retained_runtime,
        COALESCE(capacity_restore.runtime_identity_id, '') AS required_runtime_identity_id,
        COALESCE(capacity_restore.substrate_format, '') AS required_substrate_format,
-       COALESCE(capacity_restore.substrate_contract, '') AS required_substrate_contract
+       COALESCE(capacity_restore.substrate_contract, '') AS required_substrate_contract,
+       runs.queue_score_at AS candidate_score_at
   FROM runs
   JOIN workspaces ON workspaces.environment_id = runs.environment_id
                  AND workspaces.id = runs.workspace_id
@@ -703,12 +754,12 @@ SELECT runs.org_id,
        ORDER BY run_waits.id
        LIMIT 1
   ) AS capacity_restore ON true
- WHERE runs.org_id = sqlc.arg(org_id)
-   AND runs.project_id = sqlc.arg(project_id)
-   AND runs.environment_id = sqlc.arg(environment_id)
-   AND workspaces.region_id = sqlc.arg(region_id)
-   AND runs.concurrency_key IS NOT DISTINCT FROM sqlc.narg(concurrency_key)::text
-   AND runs.queue_name = sqlc.arg(queue_name)
+ WHERE runs.org_id = input_scopes.org_id
+   AND runs.project_id = input_scopes.project_id
+   AND runs.environment_id = input_scopes.environment_id
+   AND workspaces.region_id = input_scopes.region_id
+   AND runs.concurrency_key IS NOT DISTINCT FROM NULLIF(input_scopes.concurrency_key, '')::text
+   AND runs.queue_name = input_scopes.queue_name
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
    AND (
@@ -838,7 +889,9 @@ SELECT runs.org_id,
                    BETWEEN restore_actor.committed_input_sequence
                        AND restore_actor.next_input_sequence - 1
         ))
-   )
+ )
    AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
  ORDER BY runs.queue_score_at, runs.id
- LIMIT sqlc.arg(row_limit);
+ LIMIT sqlc.arg(per_scope_limit)
+ ) AS candidates
+ ORDER BY input_scopes.scope_ordinal, candidates.candidate_score_at, candidates.run_id;

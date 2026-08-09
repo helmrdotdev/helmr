@@ -819,7 +819,355 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, arg GetWorkerInsta
 	return i, err
 }
 
-const listQueuedRunCandidateScopes = `-- name: ListQueuedRunCandidateScopes :many
+const listQueuedRunDispatchCandidatesForScopes = `-- name: ListQueuedRunDispatchCandidatesForScopes :many
+WITH input_scopes AS (
+    SELECT input_orgs.position::bigint AS scope_ordinal,
+           input_orgs.org_id,
+           input_projects.project_id,
+           input_environments.environment_id,
+           input_regions.region_id,
+           input_concurrency_keys.concurrency_key,
+           input_queues.queue_name
+      FROM unnest($2::uuid[])
+           WITH ORDINALITY AS input_orgs(org_id, position)
+      JOIN unnest($3::uuid[])
+           WITH ORDINALITY AS input_projects(project_id, position)
+        ON input_projects.position = input_orgs.position
+      JOIN unnest($4::uuid[])
+           WITH ORDINALITY AS input_environments(environment_id, position)
+        ON input_environments.position = input_orgs.position
+      JOIN unnest($5::text[])
+           WITH ORDINALITY AS input_regions(region_id, position)
+        ON input_regions.position = input_orgs.position
+      JOIN unnest($6::text[])
+           WITH ORDINALITY AS input_concurrency_keys(concurrency_key, position)
+        ON input_concurrency_keys.position = input_orgs.position
+      JOIN unnest($7::text[])
+           WITH ORDINALITY AS input_queues(queue_name, position)
+        ON input_queues.position = input_orgs.position
+     WHERE cardinality($2::uuid[]) BETWEEN 1 AND 32
+       AND cardinality($3::uuid[]) = cardinality($2::uuid[])
+       AND cardinality($4::uuid[]) = cardinality($2::uuid[])
+       AND cardinality($5::text[]) = cardinality($2::uuid[])
+       AND cardinality($6::text[]) = cardinality($2::uuid[])
+       AND cardinality($7::text[]) = cardinality($2::uuid[])
+)
+SELECT input_scopes.scope_ordinal,
+       candidates.org_id,
+       candidates.run_id,
+       candidates.state_version,
+       candidates.queue_concurrency_limit,
+       candidates.workspace_manifest,
+       candidates.requires_retained_runtime,
+       candidates.required_runtime_identity_id,
+       candidates.required_substrate_format,
+       candidates.required_substrate_contract
+  FROM input_scopes
+ CROSS JOIN LATERAL (
+SELECT runs.org_id,
+       runs.id AS run_id,
+       runs.state_version,
+       runs.queue_concurrency_limit,
+       workspace_definitions.manifest AS workspace_manifest,
+       (EXISTS (
+           SELECT 1
+             FROM run_waits
+            WHERE run_waits.run_id = runs.id
+              AND run_waits.attempt_number = runs.current_attempt_number
+              AND run_waits.workspace_id = runs.workspace_id
+              AND run_waits.suspension_state IN ('parked', 'resume_pending')
+              AND run_waits.handoff_runtime_instance_id IS NOT NULL
+       ) OR EXISTS (
+           SELECT 1
+             FROM run_waits AS handoff
+             JOIN runs AS parent
+               ON parent.environment_id = handoff.environment_id
+              AND parent.id = handoff.run_id
+              AND parent.workspace_id = handoff.workspace_id
+              AND parent.status = 'waiting'
+              AND parent.current_run_lease_id IS NULL
+             JOIN run_checkpoints AS checkpoint
+               ON checkpoint.id = handoff.suspend_checkpoint_id
+              AND checkpoint.kind = 'suspend'
+              AND checkpoint.run_id = handoff.run_id
+              AND checkpoint.attempt_number = handoff.attempt_number
+              AND checkpoint.run_wait_id = handoff.id
+              AND checkpoint.workspace_id = handoff.workspace_id
+              AND checkpoint.state = 'ready'
+             JOIN workspace_versions AS base
+               ON base.workspace_id = handoff.workspace_id
+              AND base.id = handoff.base_workspace_version_id
+              AND base.state = 'private'
+            WHERE handoff.child_run_id = runs.id
+              AND handoff.child_parent_owned IS TRUE
+              AND handoff.workspace_id = runs.workspace_id
+              AND handoff.condition_state = 'pending'
+              AND handoff.suspension_state = 'parked'
+              AND handoff.base_workspace_version_id = runs.base_workspace_version_id
+              AND handoff.handoff_runtime_instance_id IS NOT NULL
+              AND handoff.handoff_workspace_mount_id IS NOT NULL
+              AND handoff.handoff_mount_generation IS NOT NULL
+              AND handoff.ownership_generation IS NOT NULL
+              AND handoff.parent_writer_generation IS NOT NULL
+              AND handoff.child_writer_generation IS NULL
+       ))::boolean AS requires_retained_runtime,
+       COALESCE(capacity_restore.runtime_identity_id, '') AS required_runtime_identity_id,
+       COALESCE(capacity_restore.substrate_format, '') AS required_substrate_format,
+       COALESCE(capacity_restore.substrate_contract, '') AS required_substrate_contract,
+       runs.queue_score_at AS candidate_score_at
+  FROM runs
+  JOIN workspaces ON workspaces.environment_id = runs.environment_id
+                 AND workspaces.id = runs.workspace_id
+  JOIN deployment_definitions AS workspace_definitions
+    ON workspace_definitions.environment_id = workspaces.environment_id
+   AND workspace_definitions.id = workspaces.deployment_definition_id
+   AND workspace_definitions.kind = 'sandbox'
+  LEFT JOIN LATERAL (
+      SELECT source_runtime.runtime_identity_id,
+             runtime_substrates.substrate_format,
+             runtime_substrates.substrate_contract
+        FROM run_waits
+        JOIN run_checkpoints
+          ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+         AND run_checkpoints.kind = 'suspend'
+         AND run_checkpoints.run_id = run_waits.run_id
+         AND run_checkpoints.attempt_number = run_waits.attempt_number
+         AND run_checkpoints.run_wait_id = run_waits.id
+         AND run_checkpoints.workspace_id = run_waits.workspace_id
+         AND run_checkpoints.state = 'ready'
+         AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+        JOIN run_leases AS source_lease
+          ON source_lease.id = run_checkpoints.source_run_lease_id
+         AND source_lease.run_id = run_checkpoints.run_id
+         AND source_lease.attempt_number = run_checkpoints.attempt_number
+         AND source_lease.workspace_id = run_checkpoints.workspace_id
+         AND source_lease.state = 'checkpointed'
+        JOIN runtime_instances AS source_runtime
+          ON source_runtime.id = source_lease.runtime_instance_id
+         AND source_runtime.workspace_id = run_checkpoints.workspace_id
+         AND source_runtime.runtime_identity_id = source_lease.runtime_identity_id
+        JOIN runtime_substrates
+          ON runtime_substrates.id = source_runtime.runtime_substrate_id
+         AND runtime_substrates.org_id = source_runtime.org_id
+         AND runtime_substrates.project_id = source_runtime.project_id
+         AND runtime_substrates.environment_id = source_runtime.environment_id
+         AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
+       WHERE run_waits.run_id = runs.id
+         AND run_waits.attempt_number = runs.current_attempt_number
+         AND run_waits.workspace_id = runs.workspace_id
+         AND run_waits.suspension_state = 'resume_pending'
+         AND run_waits.handoff_runtime_instance_id IS NULL
+         AND run_waits.handoff_workspace_mount_id IS NULL
+         AND run_waits.handoff_resume_checkpoint_id IS NULL
+       ORDER BY run_waits.id
+       LIMIT 1
+  ) AS capacity_restore ON true
+ WHERE runs.org_id = input_scopes.org_id
+   AND runs.project_id = input_scopes.project_id
+   AND runs.environment_id = input_scopes.environment_id
+   AND workspaces.region_id = input_scopes.region_id
+   AND runs.concurrency_key IS NOT DISTINCT FROM NULLIF(input_scopes.concurrency_key, '')::text
+   AND runs.queue_name = input_scopes.queue_name
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+   AND (
+       (runs.entrypoint_kind = 'task'
+        AND runs.session_id IS NULL
+        AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
+        AND (
+          (workspaces.owner_run_id = runs.id
+           AND workspaces.owner_session_id IS NULL
+           AND (NOT EXISTS (
+           SELECT 1
+             FROM run_waits
+            WHERE run_waits.run_id = runs.id
+              AND run_waits.suspension_state IN (
+                  'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
+              )
+        ) OR EXISTS (
+           SELECT 1
+             FROM run_waits
+             JOIN run_checkpoints
+               ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+              AND run_checkpoints.kind = 'suspend'
+              AND run_checkpoints.run_id = run_waits.run_id
+              AND run_checkpoints.attempt_number = run_waits.attempt_number
+              AND run_checkpoints.run_wait_id = run_waits.id
+              AND run_checkpoints.workspace_id = run_waits.workspace_id
+              AND run_checkpoints.state = 'ready'
+              AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+             JOIN workspace_versions
+               ON workspace_versions.workspace_id = run_checkpoints.workspace_id
+              AND workspace_versions.id = run_checkpoints.private_workspace_version_id
+              AND workspace_versions.state = 'private'
+            WHERE run_waits.run_id = runs.id
+              AND run_waits.suspension_state = 'resume_pending'
+              AND run_waits.handoff_runtime_instance_id IS NULL
+              AND run_waits.handoff_workspace_mount_id IS NULL
+              AND run_waits.handoff_resume_checkpoint_id IS NULL
+          )))
+          OR EXISTS (
+              SELECT 1
+                FROM run_waits AS handoff
+                JOIN runs AS parent
+                  ON parent.environment_id = handoff.environment_id
+                 AND parent.id = handoff.run_id
+                 AND parent.workspace_id = handoff.workspace_id
+                 AND parent.status = 'waiting'
+                 AND parent.current_run_lease_id IS NULL
+                JOIN run_checkpoints AS checkpoint
+                  ON checkpoint.id = handoff.suspend_checkpoint_id
+                 AND checkpoint.kind = 'suspend'
+                 AND checkpoint.run_id = handoff.run_id
+                 AND checkpoint.attempt_number = handoff.attempt_number
+                 AND checkpoint.run_wait_id = handoff.id
+                 AND checkpoint.workspace_id = handoff.workspace_id
+                 AND checkpoint.state = 'ready'
+                JOIN workspace_versions AS base
+                  ON base.workspace_id = handoff.workspace_id
+                 AND base.id = handoff.base_workspace_version_id
+                 AND base.state = 'private'
+               WHERE handoff.child_run_id = runs.id
+                 AND handoff.child_parent_owned IS TRUE
+                 AND handoff.workspace_id = runs.workspace_id
+                 AND handoff.condition_state = 'pending'
+                 AND handoff.suspension_state = 'parked'
+                 AND handoff.base_workspace_version_id =
+                     runs.base_workspace_version_id
+                 AND handoff.handoff_runtime_instance_id IS NOT NULL
+                 AND handoff.handoff_workspace_mount_id IS NOT NULL
+                 AND handoff.handoff_mount_generation IS NOT NULL
+                 AND handoff.ownership_generation IS NOT NULL
+                 AND handoff.parent_writer_generation IS NOT NULL
+                 AND handoff.child_writer_generation IS NULL
+          )
+        ))
+       OR
+       (runs.entrypoint_kind = 'actor'
+        AND runs.session_id IS NOT NULL
+        AND runs.cause_kind IN ('actor_start', 'continuation')
+        AND runs.parent_run_id IS NULL
+        AND workspaces.owner_session_id = runs.session_id
+        AND workspaces.owner_run_id IS NULL
+        AND EXISTS (
+            SELECT 1 FROM sessions
+             WHERE sessions.id = runs.session_id
+               AND sessions.workspace_id = runs.workspace_id
+               AND sessions.current_run_id = runs.id
+               AND sessions.state IN ('open', 'closing')
+        )
+        AND EXISTS (
+            SELECT 1
+              FROM run_waits
+              JOIN run_checkpoints
+                ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+               AND run_checkpoints.kind = 'suspend'
+               AND run_checkpoints.run_id = run_waits.run_id
+               AND run_checkpoints.attempt_number = run_waits.attempt_number
+               AND run_checkpoints.run_wait_id = run_waits.id
+               AND run_checkpoints.workspace_id = run_waits.workspace_id
+               AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
+               AND run_checkpoints.state = 'ready'
+               AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+              JOIN workspace_versions
+                ON workspace_versions.workspace_id = run_checkpoints.workspace_id
+               AND workspace_versions.id = run_checkpoints.private_workspace_version_id
+               AND workspace_versions.state = 'private'
+              JOIN sessions AS restore_actor
+                ON restore_actor.id = runs.session_id
+               AND restore_actor.workspace_id = runs.workspace_id
+               AND restore_actor.current_run_id = runs.id
+               AND restore_actor.state IN ('open', 'closing')
+              JOIN run_attempts AS restore_attempt
+                ON restore_attempt.run_id = runs.id
+               AND restore_attempt.number = runs.current_attempt_number
+               AND restore_attempt.workspace_id = runs.workspace_id
+               AND restore_attempt.entrypoint_kind = 'actor'
+               AND restore_attempt.session_input_start_sequence = runs.session_input_start_sequence
+               AND restore_attempt.terminal_at IS NULL
+             WHERE run_waits.run_id = runs.id
+               AND run_waits.suspension_state = 'resume_pending'
+               AND run_waits.handoff_runtime_instance_id IS NULL
+               AND run_waits.handoff_workspace_mount_id IS NULL
+               AND run_waits.handoff_resume_checkpoint_id IS NULL
+               AND runs.session_input_start_sequence <= runs.session_input_high_watermark
+               AND restore_actor.committed_input_sequence >= runs.session_input_start_sequence
+               AND restore_actor.committed_input_sequence < restore_actor.next_input_sequence
+               AND run_checkpoints.actor_speculative_input_sequence
+                   BETWEEN restore_actor.committed_input_sequence
+                       AND restore_actor.next_input_sequence - 1
+        ))
+ )
+   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+ ORDER BY runs.queue_score_at, runs.id
+ LIMIT $1
+ ) AS candidates
+ ORDER BY input_scopes.scope_ordinal, candidates.candidate_score_at, candidates.run_id
+`
+
+type ListQueuedRunDispatchCandidatesForScopesParams struct {
+	PerScopeLimit   int32         `json:"per_scope_limit"`
+	OrgIds          []pgtype.UUID `json:"org_ids"`
+	ProjectIds      []pgtype.UUID `json:"project_ids"`
+	EnvironmentIds  []pgtype.UUID `json:"environment_ids"`
+	RegionIds       []string      `json:"region_ids"`
+	ConcurrencyKeys []string      `json:"concurrency_keys"`
+	QueueNames      []string      `json:"queue_names"`
+}
+
+type ListQueuedRunDispatchCandidatesForScopesRow struct {
+	ScopeOrdinal              int64       `json:"scope_ordinal"`
+	OrgID                     pgtype.UUID `json:"org_id"`
+	RunID                     pgtype.UUID `json:"run_id"`
+	StateVersion              int64       `json:"state_version"`
+	QueueConcurrencyLimit     pgtype.Int8 `json:"queue_concurrency_limit"`
+	WorkspaceManifest         []byte      `json:"workspace_manifest"`
+	RequiresRetainedRuntime   bool        `json:"requires_retained_runtime"`
+	RequiredRuntimeIdentityID string      `json:"required_runtime_identity_id"`
+	RequiredSubstrateFormat   string      `json:"required_substrate_format"`
+	RequiredSubstrateContract string      `json:"required_substrate_contract"`
+}
+
+func (q *Queries) ListQueuedRunDispatchCandidatesForScopes(ctx context.Context, arg ListQueuedRunDispatchCandidatesForScopesParams) ([]ListQueuedRunDispatchCandidatesForScopesRow, error) {
+	rows, err := q.db.Query(ctx, listQueuedRunDispatchCandidatesForScopes,
+		arg.PerScopeLimit,
+		arg.OrgIds,
+		arg.ProjectIds,
+		arg.EnvironmentIds,
+		arg.RegionIds,
+		arg.ConcurrencyKeys,
+		arg.QueueNames,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListQueuedRunDispatchCandidatesForScopesRow
+	for rows.Next() {
+		var i ListQueuedRunDispatchCandidatesForScopesRow
+		if err := rows.Scan(
+			&i.ScopeOrdinal,
+			&i.OrgID,
+			&i.RunID,
+			&i.StateVersion,
+			&i.QueueConcurrencyLimit,
+			&i.WorkspaceManifest,
+			&i.RequiresRetainedRuntime,
+			&i.RequiredRuntimeIdentityID,
+			&i.RequiredSubstrateFormat,
+			&i.RequiredSubstrateContract,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listQueuedRunEligibleScopes = `-- name: ListQueuedRunEligibleScopes :many
 WITH candidate_scopes AS (
     SELECT runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
            coalesce(runs.concurrency_key, '') AS concurrency_key, runs.queue_name,
@@ -965,61 +1313,8 @@ WITH candidate_scopes AS (
      GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
               coalesce(runs.concurrency_key, ''), runs.queue_name
 )
-SELECT candidate_scopes.org_id, candidate_scopes.project_id, candidate_scopes.environment_id, candidate_scopes.region_id, candidate_scopes.concurrency_key, candidate_scopes.queue_name, candidate_scopes.sort_key,
-       queue_usage.active_runs,
-       queue_usage.active_limit,
-       queue_usage.prepared_runs,
-       queue_usage.prepared_limit
+SELECT candidate_scopes.org_id, candidate_scopes.project_id, candidate_scopes.environment_id, candidate_scopes.region_id, candidate_scopes.concurrency_key, candidate_scopes.queue_name, candidate_scopes.sort_key
   FROM candidate_scopes
- CROSS JOIN LATERAL (
-     SELECT
-         (SELECT count(*)
-            FROM run_leases
-            JOIN runs AS active_runs
-              ON active_runs.id = run_leases.run_id
-             AND active_runs.environment_id = run_leases.environment_id
-           WHERE active_runs.environment_id = candidate_scopes.environment_id
-             AND active_runs.queue_name = candidate_scopes.queue_name
-             AND active_runs.concurrency_key IS NOT DISTINCT FROM
-                 NULLIF(candidate_scopes.concurrency_key, '')::text
-             AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing'))::bigint
-             AS active_runs,
-         (SELECT COALESCE(min(active_runs.queue_concurrency_limit), 0)::bigint
-            FROM run_leases
-            JOIN runs AS active_runs
-              ON active_runs.id = run_leases.run_id
-             AND active_runs.environment_id = run_leases.environment_id
-           WHERE active_runs.environment_id = candidate_scopes.environment_id
-             AND active_runs.queue_name = candidate_scopes.queue_name
-             AND active_runs.concurrency_key IS NOT DISTINCT FROM
-                 NULLIF(candidate_scopes.concurrency_key, '')::text
-             AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing'))
-             AS active_limit,
-         (SELECT count(*)
-            FROM runtime_instances
-            JOIN runs AS prepared_runs
-              ON prepared_runs.environment_id = runtime_instances.environment_id
-             AND prepared_runs.id = runtime_instances.reserved_run_id
-           WHERE prepared_runs.environment_id = candidate_scopes.environment_id
-             AND prepared_runs.queue_name = candidate_scopes.queue_name
-             AND prepared_runs.concurrency_key IS NOT DISTINCT FROM
-                 NULLIF(candidate_scopes.concurrency_key, '')::text
-             AND runtime_instances.reserved_run_id IS NOT NULL
-             AND runtime_instances.reclaimed_at IS NULL)::bigint
-             AS prepared_runs,
-         (SELECT COALESCE(min(prepared_runs.queue_concurrency_limit), 0)::bigint
-            FROM runtime_instances
-            JOIN runs AS prepared_runs
-              ON prepared_runs.environment_id = runtime_instances.environment_id
-             AND prepared_runs.id = runtime_instances.reserved_run_id
-           WHERE prepared_runs.environment_id = candidate_scopes.environment_id
-             AND prepared_runs.queue_name = candidate_scopes.queue_name
-             AND prepared_runs.concurrency_key IS NOT DISTINCT FROM
-                 NULLIF(candidate_scopes.concurrency_key, '')::text
-             AND runtime_instances.reserved_run_id IS NOT NULL
-             AND runtime_instances.reclaimed_at IS NULL)
-             AS prepared_limit
- ) AS queue_usage
  WHERE $1::text = ''
     OR (sort_key, org_id, project_id, environment_id, region_id, concurrency_key, queue_name)
        > ($1::text, $2::uuid,
@@ -1030,7 +1325,7 @@ SELECT candidate_scopes.org_id, candidate_scopes.project_id, candidate_scopes.en
  LIMIT $8
 `
 
-type ListQueuedRunCandidateScopesParams struct {
+type ListQueuedRunEligibleScopesParams struct {
 	AfterSortKey        string      `json:"after_sort_key"`
 	AfterOrgID          pgtype.UUID `json:"after_org_id"`
 	AfterProjectID      pgtype.UUID `json:"after_project_id"`
@@ -1043,7 +1338,7 @@ type ListQueuedRunCandidateScopesParams struct {
 	RegionFilter        string      `json:"region_filter"`
 }
 
-type ListQueuedRunCandidateScopesRow struct {
+type ListQueuedRunEligibleScopesRow struct {
 	OrgID          pgtype.UUID `json:"org_id"`
 	ProjectID      pgtype.UUID `json:"project_id"`
 	EnvironmentID  pgtype.UUID `json:"environment_id"`
@@ -1051,14 +1346,10 @@ type ListQueuedRunCandidateScopesRow struct {
 	ConcurrencyKey string      `json:"concurrency_key"`
 	QueueName      string      `json:"queue_name"`
 	SortKey        string      `json:"sort_key"`
-	ActiveRuns     int64       `json:"active_runs"`
-	ActiveLimit    int64       `json:"active_limit"`
-	PreparedRuns   int64       `json:"prepared_runs"`
-	PreparedLimit  int64       `json:"prepared_limit"`
 }
 
-func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueuedRunCandidateScopesParams) ([]ListQueuedRunCandidateScopesRow, error) {
-	rows, err := q.db.Query(ctx, listQueuedRunCandidateScopes,
+func (q *Queries) ListQueuedRunEligibleScopes(ctx context.Context, arg ListQueuedRunEligibleScopesParams) ([]ListQueuedRunEligibleScopesRow, error) {
+	rows, err := q.db.Query(ctx, listQueuedRunEligibleScopes,
 		arg.AfterSortKey,
 		arg.AfterOrgID,
 		arg.AfterProjectID,
@@ -1074,9 +1365,9 @@ func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueu
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListQueuedRunCandidateScopesRow
+	var items []ListQueuedRunEligibleScopesRow
 	for rows.Next() {
-		var i ListQueuedRunCandidateScopesRow
+		var i ListQueuedRunEligibleScopesRow
 		if err := rows.Scan(
 			&i.OrgID,
 			&i.ProjectID,
@@ -1085,10 +1376,6 @@ func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueu
 			&i.ConcurrencyKey,
 			&i.QueueName,
 			&i.SortKey,
-			&i.ActiveRuns,
-			&i.ActiveLimit,
-			&i.PreparedRuns,
-			&i.PreparedLimit,
 		); err != nil {
 			return nil, err
 		}
@@ -1100,294 +1387,95 @@ func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueu
 	return items, nil
 }
 
-const listQueuedRunDispatchCandidatesForScope = `-- name: ListQueuedRunDispatchCandidatesForScope :many
-SELECT runs.org_id,
-       runs.id AS run_id,
-       runs.state_version,
-       runs.queue_concurrency_limit,
-       workspace_definitions.manifest AS workspace_manifest,
-       (EXISTS (
-           SELECT 1
-             FROM run_waits
-            WHERE run_waits.run_id = runs.id
-              AND run_waits.attempt_number = runs.current_attempt_number
-              AND run_waits.workspace_id = runs.workspace_id
-              AND run_waits.suspension_state IN ('parked', 'resume_pending')
-              AND run_waits.handoff_runtime_instance_id IS NOT NULL
-       ) OR EXISTS (
-           SELECT 1
-             FROM run_waits AS handoff
-             JOIN runs AS parent
-               ON parent.environment_id = handoff.environment_id
-              AND parent.id = handoff.run_id
-              AND parent.workspace_id = handoff.workspace_id
-              AND parent.status = 'waiting'
-              AND parent.current_run_lease_id IS NULL
-             JOIN run_checkpoints AS checkpoint
-               ON checkpoint.id = handoff.suspend_checkpoint_id
-              AND checkpoint.kind = 'suspend'
-              AND checkpoint.run_id = handoff.run_id
-              AND checkpoint.attempt_number = handoff.attempt_number
-              AND checkpoint.run_wait_id = handoff.id
-              AND checkpoint.workspace_id = handoff.workspace_id
-              AND checkpoint.state = 'ready'
-             JOIN workspace_versions AS base
-               ON base.workspace_id = handoff.workspace_id
-              AND base.id = handoff.base_workspace_version_id
-              AND base.state = 'private'
-            WHERE handoff.child_run_id = runs.id
-              AND handoff.child_parent_owned IS TRUE
-              AND handoff.workspace_id = runs.workspace_id
-              AND handoff.condition_state = 'pending'
-              AND handoff.suspension_state = 'parked'
-              AND handoff.base_workspace_version_id = runs.base_workspace_version_id
-              AND handoff.handoff_runtime_instance_id IS NOT NULL
-              AND handoff.handoff_workspace_mount_id IS NOT NULL
-              AND handoff.handoff_mount_generation IS NOT NULL
-              AND handoff.ownership_generation IS NOT NULL
-              AND handoff.parent_writer_generation IS NOT NULL
-              AND handoff.child_writer_generation IS NULL
-       ))::boolean AS requires_retained_runtime,
-       COALESCE(capacity_restore.runtime_identity_id, '') AS required_runtime_identity_id,
-       COALESCE(capacity_restore.substrate_format, '') AS required_substrate_format,
-       COALESCE(capacity_restore.substrate_contract, '') AS required_substrate_contract
-  FROM runs
-  JOIN workspaces ON workspaces.environment_id = runs.environment_id
-                 AND workspaces.id = runs.workspace_id
-  JOIN deployment_definitions AS workspace_definitions
-    ON workspace_definitions.environment_id = workspaces.environment_id
-   AND workspace_definitions.id = workspaces.deployment_definition_id
-   AND workspace_definitions.kind = 'sandbox'
-  LEFT JOIN LATERAL (
-      SELECT source_runtime.runtime_identity_id,
-             runtime_substrates.substrate_format,
-             runtime_substrates.substrate_contract
-        FROM run_waits
-        JOIN run_checkpoints
-          ON run_checkpoints.id = run_waits.suspend_checkpoint_id
-         AND run_checkpoints.kind = 'suspend'
-         AND run_checkpoints.run_id = run_waits.run_id
-         AND run_checkpoints.attempt_number = run_waits.attempt_number
-         AND run_checkpoints.run_wait_id = run_waits.id
-         AND run_checkpoints.workspace_id = run_waits.workspace_id
-         AND run_checkpoints.state = 'ready'
-         AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-        JOIN run_leases AS source_lease
-          ON source_lease.id = run_checkpoints.source_run_lease_id
-         AND source_lease.run_id = run_checkpoints.run_id
-         AND source_lease.attempt_number = run_checkpoints.attempt_number
-         AND source_lease.workspace_id = run_checkpoints.workspace_id
-         AND source_lease.state = 'checkpointed'
-        JOIN runtime_instances AS source_runtime
-          ON source_runtime.id = source_lease.runtime_instance_id
-         AND source_runtime.workspace_id = run_checkpoints.workspace_id
-         AND source_runtime.runtime_identity_id = source_lease.runtime_identity_id
-        JOIN runtime_substrates
-          ON runtime_substrates.id = source_runtime.runtime_substrate_id
-         AND runtime_substrates.org_id = source_runtime.org_id
-         AND runtime_substrates.project_id = source_runtime.project_id
-         AND runtime_substrates.environment_id = source_runtime.environment_id
-         AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
-       WHERE run_waits.run_id = runs.id
-         AND run_waits.attempt_number = runs.current_attempt_number
-         AND run_waits.workspace_id = runs.workspace_id
-         AND run_waits.suspension_state = 'resume_pending'
-         AND run_waits.handoff_runtime_instance_id IS NULL
-         AND run_waits.handoff_workspace_mount_id IS NULL
-         AND run_waits.handoff_resume_checkpoint_id IS NULL
-       ORDER BY run_waits.id
-       LIMIT 1
-  ) AS capacity_restore ON true
- WHERE runs.org_id = $1
-   AND runs.project_id = $2
-   AND runs.environment_id = $3
-   AND workspaces.region_id = $4
-   AND runs.concurrency_key IS NOT DISTINCT FROM $5::text
-   AND runs.queue_name = $6
-   AND runs.status = 'queued'
-   AND runs.current_run_lease_id IS NULL
-   AND (
-       (runs.entrypoint_kind = 'task'
-        AND runs.session_id IS NULL
-        AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
-        AND (
-          (workspaces.owner_run_id = runs.id
-           AND workspaces.owner_session_id IS NULL
-           AND (NOT EXISTS (
-           SELECT 1
-             FROM run_waits
-            WHERE run_waits.run_id = runs.id
-              AND run_waits.suspension_state IN (
-                  'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
-              )
-        ) OR EXISTS (
-           SELECT 1
-             FROM run_waits
-             JOIN run_checkpoints
-               ON run_checkpoints.id = run_waits.suspend_checkpoint_id
-              AND run_checkpoints.kind = 'suspend'
-              AND run_checkpoints.run_id = run_waits.run_id
-              AND run_checkpoints.attempt_number = run_waits.attempt_number
-              AND run_checkpoints.run_wait_id = run_waits.id
-              AND run_checkpoints.workspace_id = run_waits.workspace_id
-              AND run_checkpoints.state = 'ready'
-              AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-             JOIN workspace_versions
-               ON workspace_versions.workspace_id = run_checkpoints.workspace_id
-              AND workspace_versions.id = run_checkpoints.private_workspace_version_id
-              AND workspace_versions.state = 'private'
-            WHERE run_waits.run_id = runs.id
-              AND run_waits.suspension_state = 'resume_pending'
-              AND run_waits.handoff_runtime_instance_id IS NULL
-              AND run_waits.handoff_workspace_mount_id IS NULL
-              AND run_waits.handoff_resume_checkpoint_id IS NULL
-          )))
-          OR EXISTS (
-              SELECT 1
-                FROM run_waits AS handoff
-                JOIN runs AS parent
-                  ON parent.environment_id = handoff.environment_id
-                 AND parent.id = handoff.run_id
-                 AND parent.workspace_id = handoff.workspace_id
-                 AND parent.status = 'waiting'
-                 AND parent.current_run_lease_id IS NULL
-                JOIN run_checkpoints AS checkpoint
-                  ON checkpoint.id = handoff.suspend_checkpoint_id
-                 AND checkpoint.kind = 'suspend'
-                 AND checkpoint.run_id = handoff.run_id
-                 AND checkpoint.attempt_number = handoff.attempt_number
-                 AND checkpoint.run_wait_id = handoff.id
-                 AND checkpoint.workspace_id = handoff.workspace_id
-                 AND checkpoint.state = 'ready'
-                JOIN workspace_versions AS base
-                  ON base.workspace_id = handoff.workspace_id
-                 AND base.id = handoff.base_workspace_version_id
-                 AND base.state = 'private'
-               WHERE handoff.child_run_id = runs.id
-                 AND handoff.child_parent_owned IS TRUE
-                 AND handoff.workspace_id = runs.workspace_id
-                 AND handoff.condition_state = 'pending'
-                 AND handoff.suspension_state = 'parked'
-                 AND handoff.base_workspace_version_id =
-                     runs.base_workspace_version_id
-                 AND handoff.handoff_runtime_instance_id IS NOT NULL
-                 AND handoff.handoff_workspace_mount_id IS NOT NULL
-                 AND handoff.handoff_mount_generation IS NOT NULL
-                 AND handoff.ownership_generation IS NOT NULL
-                 AND handoff.parent_writer_generation IS NOT NULL
-                 AND handoff.child_writer_generation IS NULL
-          )
-        ))
-       OR
-       (runs.entrypoint_kind = 'actor'
-        AND runs.session_id IS NOT NULL
-        AND runs.cause_kind IN ('actor_start', 'continuation')
-        AND runs.parent_run_id IS NULL
-        AND workspaces.owner_session_id = runs.session_id
-        AND workspaces.owner_run_id IS NULL
-        AND EXISTS (
-            SELECT 1 FROM sessions
-             WHERE sessions.id = runs.session_id
-               AND sessions.workspace_id = runs.workspace_id
-               AND sessions.current_run_id = runs.id
-               AND sessions.state IN ('open', 'closing')
-        )
-        AND EXISTS (
-            SELECT 1
-              FROM run_waits
-              JOIN run_checkpoints
-                ON run_checkpoints.id = run_waits.suspend_checkpoint_id
-               AND run_checkpoints.kind = 'suspend'
-               AND run_checkpoints.run_id = run_waits.run_id
-               AND run_checkpoints.attempt_number = run_waits.attempt_number
-               AND run_checkpoints.run_wait_id = run_waits.id
-               AND run_checkpoints.workspace_id = run_waits.workspace_id
-               AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
-               AND run_checkpoints.state = 'ready'
-               AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-              JOIN workspace_versions
-                ON workspace_versions.workspace_id = run_checkpoints.workspace_id
-               AND workspace_versions.id = run_checkpoints.private_workspace_version_id
-               AND workspace_versions.state = 'private'
-              JOIN sessions AS restore_actor
-                ON restore_actor.id = runs.session_id
-               AND restore_actor.workspace_id = runs.workspace_id
-               AND restore_actor.current_run_id = runs.id
-               AND restore_actor.state IN ('open', 'closing')
-              JOIN run_attempts AS restore_attempt
-                ON restore_attempt.run_id = runs.id
-               AND restore_attempt.number = runs.current_attempt_number
-               AND restore_attempt.workspace_id = runs.workspace_id
-               AND restore_attempt.entrypoint_kind = 'actor'
-               AND restore_attempt.session_input_start_sequence = runs.session_input_start_sequence
-               AND restore_attempt.terminal_at IS NULL
-             WHERE run_waits.run_id = runs.id
-               AND run_waits.suspension_state = 'resume_pending'
-               AND run_waits.handoff_runtime_instance_id IS NULL
-               AND run_waits.handoff_workspace_mount_id IS NULL
-               AND run_waits.handoff_resume_checkpoint_id IS NULL
-               AND runs.session_input_start_sequence <= runs.session_input_high_watermark
-               AND restore_actor.committed_input_sequence >= runs.session_input_start_sequence
-               AND restore_actor.committed_input_sequence < restore_actor.next_input_sequence
-               AND run_checkpoints.actor_speculative_input_sequence
-                   BETWEEN restore_actor.committed_input_sequence
-                       AND restore_actor.next_input_sequence - 1
-        ))
-   )
-   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
- ORDER BY runs.queue_score_at, runs.id
- LIMIT $7
+const listQueuedRunPlanningUsage = `-- name: ListQueuedRunPlanningUsage :many
+WITH input_scopes AS (
+    SELECT input_environments.position::bigint AS scope_ordinal,
+           input_environments.environment_id,
+           input_concurrency_keys.concurrency_key,
+           input_queues.queue_name
+      FROM unnest($1::uuid[])
+           WITH ORDINALITY AS input_environments(environment_id, position)
+      JOIN unnest($2::text[])
+           WITH ORDINALITY AS input_concurrency_keys(concurrency_key, position)
+        ON input_concurrency_keys.position = input_environments.position
+      JOIN unnest($3::text[])
+           WITH ORDINALITY AS input_queues(queue_name, position)
+        ON input_queues.position = input_environments.position
+     WHERE cardinality($1::uuid[]) BETWEEN 1 AND 128
+       AND cardinality($2::text[]) = cardinality($1::uuid[])
+       AND cardinality($3::text[]) = cardinality($1::uuid[])
+), active_usage AS (
+    SELECT input_scopes.scope_ordinal,
+           count(*)::bigint AS active_runs,
+           COALESCE(min(active_runs.queue_concurrency_limit), 0)::bigint AS active_limit
+      FROM run_leases
+      JOIN runs AS active_runs
+        ON active_runs.id = run_leases.run_id
+       AND active_runs.environment_id = run_leases.environment_id
+      JOIN input_scopes
+        ON input_scopes.environment_id = active_runs.environment_id
+       AND input_scopes.queue_name = active_runs.queue_name
+       AND active_runs.concurrency_key IS NOT DISTINCT FROM
+           NULLIF(input_scopes.concurrency_key, '')::text
+     WHERE run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+     GROUP BY input_scopes.scope_ordinal
+), prepared_usage AS (
+    SELECT input_scopes.scope_ordinal,
+           count(*)::bigint AS prepared_runs,
+           COALESCE(min(prepared_runs.queue_concurrency_limit), 0)::bigint AS prepared_limit
+      FROM runtime_instances
+      JOIN runs AS prepared_runs
+        ON prepared_runs.environment_id = runtime_instances.environment_id
+       AND prepared_runs.id = runtime_instances.reserved_run_id
+      JOIN input_scopes
+        ON input_scopes.environment_id = prepared_runs.environment_id
+       AND input_scopes.queue_name = prepared_runs.queue_name
+       AND prepared_runs.concurrency_key IS NOT DISTINCT FROM
+           NULLIF(input_scopes.concurrency_key, '')::text
+     WHERE runtime_instances.reserved_run_id IS NOT NULL
+       AND runtime_instances.reclaimed_at IS NULL
+     GROUP BY input_scopes.scope_ordinal
+)
+SELECT input_scopes.scope_ordinal,
+       COALESCE(active_usage.active_runs, 0)::bigint AS active_runs,
+       COALESCE(active_usage.active_limit, 0)::bigint AS active_limit,
+       COALESCE(prepared_usage.prepared_runs, 0)::bigint AS prepared_runs,
+       COALESCE(prepared_usage.prepared_limit, 0)::bigint AS prepared_limit
+  FROM input_scopes
+  LEFT JOIN active_usage USING (scope_ordinal)
+  LEFT JOIN prepared_usage USING (scope_ordinal)
+ ORDER BY input_scopes.scope_ordinal
 `
 
-type ListQueuedRunDispatchCandidatesForScopeParams struct {
-	OrgID          pgtype.UUID `json:"org_id"`
-	ProjectID      pgtype.UUID `json:"project_id"`
-	EnvironmentID  pgtype.UUID `json:"environment_id"`
-	RegionID       string      `json:"region_id"`
-	ConcurrencyKey pgtype.Text `json:"concurrency_key"`
-	QueueName      string      `json:"queue_name"`
-	RowLimit       int32       `json:"row_limit"`
+type ListQueuedRunPlanningUsageParams struct {
+	EnvironmentIds  []pgtype.UUID `json:"environment_ids"`
+	ConcurrencyKeys []string      `json:"concurrency_keys"`
+	QueueNames      []string      `json:"queue_names"`
 }
 
-type ListQueuedRunDispatchCandidatesForScopeRow struct {
-	OrgID                     pgtype.UUID `json:"org_id"`
-	RunID                     pgtype.UUID `json:"run_id"`
-	StateVersion              int64       `json:"state_version"`
-	QueueConcurrencyLimit     pgtype.Int8 `json:"queue_concurrency_limit"`
-	WorkspaceManifest         []byte      `json:"workspace_manifest"`
-	RequiresRetainedRuntime   bool        `json:"requires_retained_runtime"`
-	RequiredRuntimeIdentityID string      `json:"required_runtime_identity_id"`
-	RequiredSubstrateFormat   string      `json:"required_substrate_format"`
-	RequiredSubstrateContract string      `json:"required_substrate_contract"`
+type ListQueuedRunPlanningUsageRow struct {
+	ScopeOrdinal  int64 `json:"scope_ordinal"`
+	ActiveRuns    int64 `json:"active_runs"`
+	ActiveLimit   int64 `json:"active_limit"`
+	PreparedRuns  int64 `json:"prepared_runs"`
+	PreparedLimit int64 `json:"prepared_limit"`
 }
 
-func (q *Queries) ListQueuedRunDispatchCandidatesForScope(ctx context.Context, arg ListQueuedRunDispatchCandidatesForScopeParams) ([]ListQueuedRunDispatchCandidatesForScopeRow, error) {
-	rows, err := q.db.Query(ctx, listQueuedRunDispatchCandidatesForScope,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.RegionID,
-		arg.ConcurrencyKey,
-		arg.QueueName,
-		arg.RowLimit,
-	)
+func (q *Queries) ListQueuedRunPlanningUsage(ctx context.Context, arg ListQueuedRunPlanningUsageParams) ([]ListQueuedRunPlanningUsageRow, error) {
+	rows, err := q.db.Query(ctx, listQueuedRunPlanningUsage, arg.EnvironmentIds, arg.ConcurrencyKeys, arg.QueueNames)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListQueuedRunDispatchCandidatesForScopeRow
+	var items []ListQueuedRunPlanningUsageRow
 	for rows.Next() {
-		var i ListQueuedRunDispatchCandidatesForScopeRow
+		var i ListQueuedRunPlanningUsageRow
 		if err := rows.Scan(
-			&i.OrgID,
-			&i.RunID,
-			&i.StateVersion,
-			&i.QueueConcurrencyLimit,
-			&i.WorkspaceManifest,
-			&i.RequiresRetainedRuntime,
-			&i.RequiredRuntimeIdentityID,
-			&i.RequiredSubstrateFormat,
-			&i.RequiredSubstrateContract,
+			&i.ScopeOrdinal,
+			&i.ActiveRuns,
+			&i.ActiveLimit,
+			&i.PreparedRuns,
+			&i.PreparedLimit,
 		); err != nil {
 			return nil, err
 		}
