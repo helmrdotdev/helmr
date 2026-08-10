@@ -583,7 +583,7 @@ func parseSnapshotFormatVersion(output []byte) (string, error) {
 func firecrackerProbePrimaryOutput(output []byte) ([]byte, error) {
 	lastNewline := bytes.LastIndexByte(output, '\n')
 	if lastNewline != len(output)-1 {
-		return nil, errors.New("Firecracker probe output is not newline terminated")
+		return nil, errors.New("firecracker probe output is not newline terminated")
 	}
 	previousNewline := bytes.LastIndexByte(output[:lastNewline], '\n')
 	if previousNewline < 0 {
