@@ -11,6 +11,8 @@ The AMI must provide:
 - `helmr-worker` at `worker_binary_path`
 - the worker unit named by `worker_service_name`
 - AWS CLI v2 and `curl`
+- an Ubuntu ext4 root partition with `growpart`, `resize2fs`, `blockdev`,
+  `findmnt`, `lsblk`, and GNU `readlink`
 - Firecracker and jailer binaries
 - `/dev/kvm` capable instance support
 - `ip` and `nft` for the Worker-owned routed-TAP datapath
@@ -24,6 +26,11 @@ The module writes `/etc/helmr/worker.env` from Terraform inputs and Secrets Mana
 starts `helmr-worker` and a small lifecycle watcher. Build-capable workers additionally allocate
 and mount fixed Worker-cache and image-build scratch ext4 filesystems; all untrusted BuildKit
 execution stays inside the fresh image-build VM.
+
+Before reading secrets or allocating runtime storage, launch user data verifies the configured
+root device, grows its partition, and resizes the ext4 filesystem. The preparation is idempotent
+when the parent Ubuntu image has already completed the resize. Unsupported root layouts fail
+before Worker enrollment; the module does not support XFS, LVM, or an unpartitioned root device.
 
 `worker_environment` is only for additional non-secret Worker variables. Keys managed by the
 module through typed inputs, Secrets Manager, or EC2 metadata are reserved even when a conditional
