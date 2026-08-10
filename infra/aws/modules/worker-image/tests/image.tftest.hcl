@@ -53,6 +53,9 @@ run "image_installs_verified_worker_artifacts" {
       strcontains(aws_imagebuilder_component.worker.data, "/usr/local/bin/firecracker") &&
       strcontains(aws_imagebuilder_component.worker.data, "gpgv") &&
       strcontains(aws_imagebuilder_component.worker.data, "mksquashfs") &&
+      strcontains(aws_imagebuilder_component.worker.data, "cloud-guest-utils") &&
+      strcontains(aws_imagebuilder_component.worker.data, "command -v blockdev fallocate findmnt growpart losetup lsblk mountpoint blkid") &&
+      strcontains(aws_imagebuilder_component.worker.data, "mkfs.ext4 readlink resize2fs >/dev/null") &&
       strcontains(aws_imagebuilder_component.worker.data, "aws_cli_version=2.31.39") &&
       strcontains(aws_imagebuilder_component.worker.data, "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-") &&
       strcontains(aws_imagebuilder_component.worker.data, "5a2ad4e63f8f687d735f8e7a132b3622a1cf08fa884c53e3423c9b83a3c0d663")

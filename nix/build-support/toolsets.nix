@@ -89,7 +89,12 @@ rec {
 
   appRuntime = base ++ image ++ smokeLinux ++ lib.optionals stdenv.isLinux [ pkgs.kmod ];
 
-  infraTest = [ pkgs.opentofu ];
+  infraTest = [
+    pkgs.bash
+    pkgs.coreutils
+    pkgs.gnugrep
+    pkgs.opentofu
+  ];
 
   infra = base ++ [
     pkgs.opentofu

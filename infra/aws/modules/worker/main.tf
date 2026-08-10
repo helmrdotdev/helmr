@@ -287,7 +287,8 @@ resource "aws_launch_template" "worker" {
     build_cache_mib                      = var.build_cache_mib == null ? 0 : var.build_cache_mib
     build_scratch_mib                    = var.build_scratch_mib == null ? 0 : var.build_scratch_mib
     worker_disk_reserve_mib              = var.worker_disk_reserve_mib
-    root_volume_size_gb                  = var.root_volume_size_gb
+    expected_root_bytes                  = format("%.0f", var.root_volume_size_gb * 1073741824)
+    prepare_root_script                  = file("${path.module}/templates/prepare-root.sh")
   }))
 
   iam_instance_profile {

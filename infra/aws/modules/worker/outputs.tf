@@ -33,6 +33,11 @@ output "launch_template_version" {
   value       = tostring(aws_launch_template.worker.latest_version)
 }
 
+output "launch_lifecycle_hook_name" {
+  description = "Exact launch hook completed after Worker readiness."
+  value       = local.launch_hook_name
+}
+
 output "protect_from_scale_in" {
   description = "Whether new worker instances start protected from scale in."
   value       = aws_autoscaling_group.worker.protect_from_scale_in

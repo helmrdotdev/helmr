@@ -53,6 +53,7 @@ variables {
   build_policy_digest               = null
   min_size                          = 0
   max_size                          = 1
+  root_volume_size_gb               = 120
   secret_arns = {
     checkpoint_encryption_key = "arn:aws:secretsmanager:us-east-1:111122223333:secret:checkpoint"
     worker_enrollment_token   = "arn:aws:secretsmanager:us-east-1:111122223333:secret:worker-enrollment"
@@ -69,6 +70,15 @@ run "deployment_owns_protected_capacity" {
   assert {
     condition     = aws_autoscaling_group.worker.protect_from_scale_in
     error_message = "deployment-owned capacity must start protected from scale in"
+  }
+
+  assert {
+    condition = (
+      strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-prepare-root") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "/usr/local/sbin/helmr-prepare-root '128849018880'") &&
+      can(regex("(?s)helmr-prepare-root '128849018880'.*aws secretsmanager get-secret-value", base64decode(aws_launch_template.worker.user_data)))
+    )
+    error_message = "Worker root preparation must run with the exact Launch Template size before secret access."
   }
 
   assert {

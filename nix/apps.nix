@@ -122,6 +122,9 @@ in
         for module in bootstrap controlplane network worker worker-image; do
           (
             cd "infra/aws/modules/$module"
+            if [ "$module" = worker ]; then
+              bash tests/prepare_root_test.sh
+            fi
             tofu init -backend=false -input=false
             tofu fmt -check -recursive
             tofu test
