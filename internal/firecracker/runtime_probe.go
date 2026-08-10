@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/helmrdotdev/helmr/capacityapi"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -24,14 +25,16 @@ import (
 )
 
 const (
-	maxCPUFingerprintBytes     = int64(16 << 20)
+	maxCPUConfigBytes          = int64(16 << 20)
 	maxRuntimeProbeOutputBytes = 64 << 10
 )
 
 var (
-	firecrackerVersionOutputPattern = regexp.MustCompile(`\AFirecracker v((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))\n\n\z`)
-	snapshotVersionOutputPattern    = regexp.MustCompile(`\Av((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))\n\z`)
-	firecrackerSuccessLogPattern    = regexp.MustCompile(`\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{9} \[anonymous-instance:main\] Firecracker exiting successfully\. exit_code=0\n\z`)
+	firecrackerVersionOutputPattern       = regexp.MustCompile(`\AFirecracker v((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))\n\n\z`)
+	cpuTemplateHelperVersionOutputPattern = regexp.MustCompile(`\Acpu-template-helper v((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))\n\z`)
+	snapshotVersionOutputPattern          = regexp.MustCompile(`\Av((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))\n\z`)
+	firecrackerSuccessLogPattern          = regexp.MustCompile(`\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{9} \[anonymous-instance:main\] Firecracker exiting successfully\. exit_code=0\n\z`)
+	microcodeVersionPattern               = regexp.MustCompile(`\A0x[0-9a-f]+\z`)
 )
 
 // HostRuntimeEvidence is the focused, measured input for the full runtime
@@ -241,6 +244,7 @@ type runtimeProbeDependencies struct {
 	run          func(context.Context, string, ...string) ([]byte, error)
 	lookPath     func(string) (string, error)
 	unameRelease func() (string, error)
+	readFile     func(string) ([]byte, error)
 }
 
 func runRuntimeProbeCommand(ctx context.Context, path string, args ...string) ([]byte, error) {
@@ -314,7 +318,7 @@ func inspectHostRuntime(
 	if err := ctx.Err(); err != nil {
 		return HostRuntimeEvidence{}, err
 	}
-	if dependencies.run == nil || dependencies.lookPath == nil || dependencies.unameRelease == nil {
+	if dependencies.run == nil || dependencies.lookPath == nil || dependencies.unameRelease == nil || dependencies.readFile == nil {
 		return HostRuntimeEvidence{}, errors.New("host runtime inspection dependencies are incomplete")
 	}
 	cfg = cfg.WithDefaults()
@@ -346,6 +350,20 @@ func inspectHostRuntime(
 	if err != nil {
 		return HostRuntimeEvidence{}, err
 	}
+	helperVersionOutput, err := dependencies.run(ctx, helperPath, "--version")
+	if err != nil {
+		return HostRuntimeEvidence{}, fmt.Errorf("inspect CPU template helper version: %w", err)
+	}
+	helperVersion, err := parseCPUTemplateHelperVersion(helperVersionOutput)
+	if err != nil {
+		return HostRuntimeEvidence{}, err
+	}
+	if helperVersion != firecrackerVersion {
+		return HostRuntimeEvidence{}, fmt.Errorf(
+			"cpu-template-helper version %q does not match executed Firecracker version %q",
+			helperVersion, firecrackerVersion,
+		)
+	}
 	snapshotOutput, err := dependencies.run(ctx, firecrackerPath, "--snapshot-version")
 	if err != nil {
 		return HostRuntimeEvidence{}, fmt.Errorf("inspect Firecracker snapshot format version: %w", err)
@@ -360,6 +378,12 @@ func inspectHostRuntime(
 	}
 	if hostKernelRelease == "" || hostKernelRelease != strings.TrimSpace(hostKernelRelease) {
 		return HostRuntimeEvidence{}, errors.New("host kernel release is not canonical")
+	}
+	environment, err := inspectRuntimeEnvironment(
+		dependencies.readFile, firecrackerVersion, hostKernelRelease,
+	)
+	if err != nil {
+		return HostRuntimeEvidence{}, err
 	}
 	descriptorDigest, err := CanonicalVMRuntimeDescriptor().Digest()
 	if err != nil {
@@ -394,7 +418,6 @@ func inspectHostRuntime(
 	defer os.RemoveAll(directory)
 
 	shapes := make([]CPUShapeEvidence, 0, cfg.VCPUCount)
-	var environment RuntimeEnvironmentEvidence
 	for vcpuCount := int64(1); vcpuCount <= cfg.VCPUCount; vcpuCount++ {
 		if err := ctx.Err(); err != nil {
 			return HostRuntimeEvidence{}, err
@@ -419,45 +442,28 @@ func inspectHostRuntime(
 			}
 		}
 
-		fingerprintPath := filepath.Join(directory, fmt.Sprintf("fingerprint-%02d.json", vcpuCount))
-		arguments := []string{"fingerprint", "dump", "--output", fingerprintPath, "--config", configPath}
+		cpuConfigPath := filepath.Join(directory, fmt.Sprintf("cpu-config-%02d.json", vcpuCount))
+		arguments := []string{"template", "dump", "--output", cpuConfigPath, "--config", configPath}
 		if selector.Kind == CPUTemplateCustom {
 			arguments = append(arguments, "--template", templatePath)
 		}
 		output, err := dependencies.run(ctx, helperPath, arguments...)
 		if err != nil {
-			return HostRuntimeEvidence{}, fmt.Errorf("dump CPU fingerprint for %d vCPUs: %w", vcpuCount, err)
+			return HostRuntimeEvidence{}, fmt.Errorf("dump guest CPU configuration for %d vCPUs: %w", vcpuCount, err)
 		}
 		if len(output) != 0 {
-			return HostRuntimeEvidence{}, fmt.Errorf("dump CPU fingerprint for %d vCPUs produced unexpected output", vcpuCount)
+			return HostRuntimeEvidence{}, fmt.Errorf("dump guest CPU configuration for %d vCPUs produced unexpected output", vcpuCount)
 		}
-		fingerprintBytes, err := readBoundedFile(fingerprintPath, maxCPUFingerprintBytes)
+		cpuConfigBytes, err := readBoundedFile(cpuConfigPath, maxCPUConfigBytes)
 		if err != nil {
-			return HostRuntimeEvidence{}, fmt.Errorf("read CPU fingerprint for %d vCPUs: %w", vcpuCount, err)
+			return HostRuntimeEvidence{}, fmt.Errorf("read guest CPU configuration for %d vCPUs: %w", vcpuCount, err)
 		}
-		fingerprint, err := decodeCPUFingerprint(fingerprintBytes)
+		guestCPUConfig, err := decodeGuestCPUConfig(cpuConfigBytes)
 		if err != nil {
-			return HostRuntimeEvidence{}, fmt.Errorf("decode CPU fingerprint for %d vCPUs: %w", vcpuCount, err)
-		}
-		if fingerprint.Environment.FirecrackerVersion != firecrackerVersion {
-			return HostRuntimeEvidence{}, fmt.Errorf(
-				"CPU template helper Firecracker version %q does not match executed Firecracker version %q",
-				fingerprint.Environment.FirecrackerVersion, firecrackerVersion,
-			)
-		}
-		if fingerprint.Environment.KernelVersion != hostKernelRelease {
-			return HostRuntimeEvidence{}, fmt.Errorf(
-				"CPU template helper kernel version %q does not match uname release %q",
-				fingerprint.Environment.KernelVersion, hostKernelRelease,
-			)
-		}
-		if vcpuCount == 1 {
-			environment = fingerprint.Environment
-		} else if !reflect.DeepEqual(environment, fingerprint.Environment) {
-			return HostRuntimeEvidence{}, fmt.Errorf("CPU template helper environment changed while probing %d vCPUs", vcpuCount)
+			return HostRuntimeEvidence{}, fmt.Errorf("decode guest CPU configuration for %d vCPUs: %w", vcpuCount, err)
 		}
 		shapes = append(shapes, CPUShapeEvidence{
-			VCPUCount: vcpuCount, CPUConfigDigest: sha256sum.DigestBytes(fingerprint.GuestCPUConfig),
+			VCPUCount: vcpuCount, CPUConfigDigest: sha256sum.DigestBytes(guestCPUConfig),
 		})
 	}
 	if err := ValidateCPUShapeEvidence(shapes, cfg.VCPUCount); err != nil {
@@ -568,6 +574,14 @@ func parseFirecrackerVersion(output []byte) (string, error) {
 	return string(matches[1]), nil
 }
 
+func parseCPUTemplateHelperVersion(output []byte) (string, error) {
+	matches := cpuTemplateHelperVersionOutputPattern.FindSubmatch(output)
+	if len(matches) != 2 {
+		return "", fmt.Errorf("cpu-template-helper --version output %q is not canonical", output)
+	}
+	return string(matches[1]), nil
+}
+
 func parseSnapshotFormatVersion(output []byte) (string, error) {
 	primary, err := firecrackerProbePrimaryOutput(output)
 	if err != nil {
@@ -596,73 +610,91 @@ func firecrackerProbePrimaryOutput(output []byte) ([]byte, error) {
 	return output[:previousNewline+1], nil
 }
 
-type decodedCPUFingerprint struct {
-	Environment    RuntimeEnvironmentEvidence
-	GuestCPUConfig []byte
-}
-
-func decodeCPUFingerprint(raw []byte) (decodedCPUFingerprint, error) {
+func decodeGuestCPUConfig(raw []byte) ([]byte, error) {
 	canonical, err := jsoncanon.Transform(raw)
 	if err != nil {
-		return decodedCPUFingerprint{}, err
+		return nil, err
 	}
-	var document struct {
-		FirecrackerVersion *string          `json:"firecracker_version"`
-		KernelVersion      *string          `json:"kernel_version"`
-		MicrocodeVersion   *string          `json:"microcode_version"`
-		BIOSVersion        *string          `json:"bios_version"`
-		BIOSRevision       *string          `json:"bios_revision"`
-		GuestCPUConfig     *json.RawMessage `json:"guest_cpu_config"`
+	if len(canonical) == 0 || canonical[0] != '{' {
+		return nil, errors.New("guest CPU configuration must be a JSON object")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(canonical))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&document); err != nil {
-		return decodedCPUFingerprint{}, err
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return decodedCPUFingerprint{}, errors.New("CPU fingerprint has trailing data")
-		}
-		return decodedCPUFingerprint{}, fmt.Errorf("decode CPU fingerprint trailing data: %w", err)
-	}
-	fields := []struct {
-		name  string
-		value *string
-	}{
-		{name: "firecracker_version", value: document.FirecrackerVersion},
-		{name: "kernel_version", value: document.KernelVersion},
-		{name: "microcode_version", value: document.MicrocodeVersion},
-		{name: "bios_version", value: document.BIOSVersion},
-		{name: "bios_revision", value: document.BIOSRevision},
-	}
-	for _, field := range fields {
-		if field.value == nil {
-			return decodedCPUFingerprint{}, fmt.Errorf("CPU fingerprint field %s is missing", field.name)
-		}
-		if *field.value == "" {
-			return decodedCPUFingerprint{}, fmt.Errorf("CPU fingerprint field %s is empty", field.name)
-		}
-	}
-	if document.GuestCPUConfig == nil {
-		return decodedCPUFingerprint{}, errors.New("CPU fingerprint field guest_cpu_config is missing")
-	}
-	guestCPUConfig, err := jsoncanon.Transform(*document.GuestCPUConfig)
+	return canonical, nil
+}
+
+func inspectRuntimeEnvironment(
+	readFile func(string) ([]byte, error),
+	firecrackerVersion string,
+	hostKernelRelease string,
+) (RuntimeEnvironmentEvidence, error) {
+	microcodeVersion, err := readMicrocodeVersion(readFile)
 	if err != nil {
-		return decodedCPUFingerprint{}, fmt.Errorf("canonicalize guest_cpu_config: %w", err)
+		return RuntimeEnvironmentEvidence{}, err
 	}
-	if len(guestCPUConfig) == 0 || guestCPUConfig[0] != '{' {
-		return decodedCPUFingerprint{}, errors.New("CPU fingerprint guest_cpu_config must be a JSON object")
+	biosVersion, err := readRuntimeEnvironmentValue(
+		readFile, "/sys/devices/virtual/dmi/id/bios_version", "bios version",
+	)
+	if err != nil {
+		return RuntimeEnvironmentEvidence{}, err
 	}
-	return decodedCPUFingerprint{
-		Environment: RuntimeEnvironmentEvidence{
-			FirecrackerVersion: *document.FirecrackerVersion,
-			KernelVersion:      *document.KernelVersion,
-			MicrocodeVersion:   *document.MicrocodeVersion,
-			BIOSVersion:        *document.BIOSVersion,
-			BIOSRevision:       *document.BIOSRevision,
-		},
-		GuestCPUConfig: guestCPUConfig,
+	biosRevision, err := readRuntimeEnvironmentValue(
+		readFile, "/sys/devices/virtual/dmi/id/bios_release", "bios revision",
+	)
+	if err != nil {
+		return RuntimeEnvironmentEvidence{}, err
+	}
+	return RuntimeEnvironmentEvidence{
+		FirecrackerVersion: firecrackerVersion,
+		KernelVersion:      hostKernelRelease,
+		MicrocodeVersion:   microcodeVersion,
+		BIOSVersion:        biosVersion,
+		BIOSRevision:       biosRevision,
 	}, nil
+}
+
+func readMicrocodeVersion(readFile func(string) ([]byte, error)) (string, error) {
+	const path = "/proc/cpuinfo"
+	raw, err := readFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read cpu microcode evidence from %s: %w", path, err)
+	}
+	if len(raw) == 0 || len(raw) > 4<<20 || !utf8.Valid(raw) {
+		return "", fmt.Errorf("cpu microcode evidence from %s is not bounded non-empty UTF-8", path)
+	}
+	var version string
+	for _, line := range strings.Split(string(raw), "\n") {
+		name, value, found := strings.Cut(line, ":")
+		if !found || strings.TrimSpace(name) != "microcode" {
+			continue
+		}
+		candidate := strings.ToLower(strings.TrimSpace(value))
+		if !microcodeVersionPattern.MatchString(candidate) {
+			return "", fmt.Errorf("cpu microcode evidence %q is not canonical hexadecimal", candidate)
+		}
+		if version != "" && version != candidate {
+			return "", fmt.Errorf("cpu microcode evidence changed across logical processors: %s != %s", version, candidate)
+		}
+		version = candidate
+	}
+	if version == "" {
+		return "", fmt.Errorf("cpu microcode evidence is missing from %s", path)
+	}
+	return version, nil
+}
+
+func readRuntimeEnvironmentValue(
+	readFile func(string) ([]byte, error),
+	path string,
+	name string,
+) (string, error) {
+	raw, err := readFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s from %s: %w", name, path, err)
+	}
+	value := strings.TrimSuffix(string(raw), "\n")
+	if value == "" || !utf8.ValidString(value) || strings.TrimSpace(value) != value || strings.ContainsAny(value, "\r\n\x00") {
+		return "", fmt.Errorf("runtime environment %s from %s is not canonical non-empty UTF-8", name, path)
+	}
+	return value, nil
 }
 
 func digestRuntimeEnvironment(environment RuntimeEnvironmentEvidence) (string, error) {

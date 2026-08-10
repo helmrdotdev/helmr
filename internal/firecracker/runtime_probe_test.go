@@ -28,6 +28,7 @@ func TestInspectHostRuntimeReturnsOrderedCanonicalEvidence(t *testing.T) {
 	dependencies := runtimeProbeDependencies{
 		lookPath:     func(path string) (string, error) { return path, nil },
 		unameRelease: func() (string, error) { return "6.12.31-amzn2023", nil },
+		readFile:     testRuntimeEnvironmentReadFile,
 		run: func(_ context.Context, path string, arguments ...string) ([]byte, error) {
 			switch path {
 			case firecrackerPath:
@@ -40,7 +41,10 @@ func TestInspectHostRuntimeReturnsOrderedCanonicalEvidence(t *testing.T) {
 					return nil, fmt.Errorf("unexpected Firecracker arguments %v", arguments)
 				}
 			case helperPath:
-				if len(arguments) != 6 || !slices.Equal(arguments[:2], []string{"fingerprint", "dump"}) {
+				if slices.Equal(arguments, []string{"--version"}) {
+					return []byte("cpu-template-helper v1.16.1\n"), nil
+				}
+				if len(arguments) != 6 || !slices.Equal(arguments[:2], []string{"template", "dump"}) {
 					return nil, fmt.Errorf("unexpected helper arguments %v", arguments)
 				}
 				outputPath := flagValue(t, arguments, "--output")
@@ -58,15 +62,7 @@ func TestInspectHostRuntimeReturnsOrderedCanonicalEvidence(t *testing.T) {
 				}
 				probedVCPUs = append(probedVCPUs, config.MachineConfig.VCPUCount)
 				guestConfig := fmt.Sprintf(`{"cpuid_modifiers":[{"leaf":"0x%x"}],"msr_modifiers":[]}`, config.MachineConfig.VCPUCount)
-				fingerprint := fmt.Sprintf(`{
-  "guest_cpu_config": %s,
-  "bios_revision": "3.5",
-  "microcode_version": "0x2b000643",
-  "firecracker_version": "1.16.1",
-  "bios_version": "1.0",
-  "kernel_version": "6.12.31-amzn2023"
-}`, guestConfig)
-				return nil, os.WriteFile(outputPath, []byte(fingerprint), 0o600)
+				return nil, os.WriteFile(outputPath, []byte(guestConfig), 0o600)
 			default:
 				return nil, fmt.Errorf("unexpected command %q", path)
 			}
@@ -149,6 +145,7 @@ func TestInspectHostRuntimeVerifiesCustomTemplateForEveryShape(t *testing.T) {
 	dependencies := runtimeProbeDependencies{
 		lookPath:     func(path string) (string, error) { return path, nil },
 		unameRelease: func() (string, error) { return "6.12.31", nil },
+		readFile:     testRuntimeEnvironmentReadFile,
 		run: func(_ context.Context, path string, arguments ...string) ([]byte, error) {
 			if path == firecrackerPath {
 				if slices.Equal(arguments, []string{"--version"}) {
@@ -158,6 +155,9 @@ func TestInspectHostRuntimeVerifiesCustomTemplateForEveryShape(t *testing.T) {
 			}
 			if path != helperPath {
 				return nil, fmt.Errorf("unexpected command %q", path)
+			}
+			if slices.Equal(arguments, []string{"--version"}) {
+				return []byte("cpu-template-helper v1.16.1\n"), nil
 			}
 			if slices.Equal(arguments[:2], []string{"template", "verify"}) {
 				verified++
@@ -171,11 +171,7 @@ func TestInspectHostRuntimeVerifiesCustomTemplateForEveryShape(t *testing.T) {
 			if flagValue(t, arguments, "--template") != templatePath {
 				return nil, errors.New("wrong template path")
 			}
-			return nil, os.WriteFile(outputPath, []byte(`{
-  "firecracker_version":"1.16.1","kernel_version":"6.12.31",
-  "microcode_version":"0x1","bios_version":"1.0","bios_revision":"1.0",
-  "guest_cpu_config":{"cpuid_modifiers":[]}
-}`), 0o600)
+			return nil, os.WriteFile(outputPath, []byte(`{"cpuid_modifiers":[]}`), 0o600)
 		},
 	}
 	_, err = inspectHostRuntime(context.Background(), Config{
@@ -194,44 +190,67 @@ func TestInspectHostRuntimeVerifiesCustomTemplateForEveryShape(t *testing.T) {
 	}
 }
 
-func TestDecodeCPUFingerprintIsStrictAndCanonical(t *testing.T) {
-	base := `{
-  "firecracker_version":"1.16.1","kernel_version":"6.12.31",
-  "microcode_version":"0x1","bios_version":"1.0","bios_revision":"1.0",
-  "guest_cpu_config":{"b":2,"a":1}
-}`
-	fingerprint, err := decodeCPUFingerprint([]byte(base))
+func TestInspectHostRuntimeRejectsMismatchedHelperVersion(t *testing.T) {
+	directory := t.TempDir()
+	firecrackerPath := writeProbeTestFile(t, directory, "firecracker", "firecracker")
+	helperPath := writeProbeTestFile(t, directory, "cpu-template-helper", "helper")
+	_, err := inspectHostRuntime(context.Background(), Config{
+		FirecrackerPath: firecrackerPath, CPUTemplateHelperPath: helperPath,
+		KernelPath:    writeProbeTestFile(t, directory, "kernel", "kernel"),
+		InitramfsPath: writeProbeTestFile(t, directory, "initramfs", "initramfs"),
+		RootfsPath:    writeProbeTestFile(t, directory, "rootfs", "rootfs"),
+		VCPUCount:     1, MemoryMiB: 128,
+	}, testProbeRuntimeArtifacts(), runtimeProbeDependencies{
+		lookPath:     func(path string) (string, error) { return path, nil },
+		unameRelease: func() (string, error) { return "6.12.31", nil },
+		readFile:     testRuntimeEnvironmentReadFile,
+		run: func(_ context.Context, path string, arguments ...string) ([]byte, error) {
+			if path == firecrackerPath && slices.Equal(arguments, []string{"--version"}) {
+				return []byte("Firecracker v1.16.1\n\n"), nil
+			}
+			if path == helperPath && slices.Equal(arguments, []string{"--version"}) {
+				return []byte("cpu-template-helper v1.16.0\n"), nil
+			}
+			return nil, fmt.Errorf("unexpected command %q %v", path, arguments)
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestDecodeGuestCPUConfigIsStrictAndCanonical(t *testing.T) {
+	base := `{"b":2,"a":1}`
+	config, err := decodeGuestCPUConfig([]byte(base))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(fingerprint.GuestCPUConfig) != `{"a":1,"b":2}` {
-		t.Fatalf("guest CPU config = %s", fingerprint.GuestCPUConfig)
+	if string(config) != `{"a":1,"b":2}` {
+		t.Fatalf("guest CPU config = %s", config)
 	}
 	for name, raw := range map[string]string{
-		"unknown":          strings.Replace(base, `"guest_cpu_config"`, `"unknown":true,"guest_cpu_config"`, 1),
-		"duplicate":        strings.Replace(base, `"kernel_version":"6.12.31"`, `"kernel_version":"6.12.31","kernel_version":"6.12.31"`, 1),
-		"nested duplicate": strings.Replace(base, `{"b":2,"a":1}`, `{"b":2,"a":1,"a":1}`, 1),
-		"missing":          strings.Replace(base, `"bios_revision":"1.0",`, "", 1),
-		"null":             strings.Replace(base, `"bios_version":"1.0"`, `"bios_version":null`, 1),
-		"wrong type":       strings.Replace(base, `"microcode_version":"0x1"`, `"microcode_version":1`, 1),
-		"non-object guest": strings.Replace(base, `{"b":2,"a":1}`, `[]`, 1),
-		"trailing":         base + `{}`,
+		"duplicate":  `{"a":1,"a":1}`,
+		"non-object": `[]`,
+		"trailing":   base + `{}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := decodeCPUFingerprint([]byte(raw)); err == nil {
+			if _, err := decodeGuestCPUConfig([]byte(raw)); err == nil {
 				t.Fatal("decode succeeded")
 			}
 		})
 	}
 	invalidUTF8 := append([]byte(base[:len(base)-2]), 0xff, '}')
-	if _, err := decodeCPUFingerprint(invalidUTF8); err == nil {
-		t.Fatal("invalid UTF-8 fingerprint decoded")
+	if _, err := decodeGuestCPUConfig(invalidUTF8); err == nil {
+		t.Fatal("invalid UTF-8 guest CPU configuration decoded")
 	}
 }
 
 func TestRuntimeProbeVersionParsingIsStrict(t *testing.T) {
 	if got, err := parseFirecrackerVersion([]byte("Firecracker v1.16.1\n\n")); err != nil || got != "1.16.1" {
 		t.Fatalf("version=%q error=%v", got, err)
+	}
+	if got, err := parseCPUTemplateHelperVersion([]byte("cpu-template-helper v1.16.1\n")); err != nil || got != "1.16.1" {
+		t.Fatalf("helper version=%q error=%v", got, err)
 	}
 	if got, err := parseFirecrackerVersion([]byte("Firecracker v1.16.1\n\n2026-08-10T22:41:48.709727839 [anonymous-instance:main] Firecracker exiting successfully. exit_code=0\n")); err != nil || got != "1.16.1" {
 		t.Fatalf("version with exit diagnostic=%q error=%v", got, err)
@@ -250,6 +269,14 @@ func TestRuntimeProbeVersionParsingIsStrict(t *testing.T) {
 	} {
 		if _, err := parseFirecrackerVersion(invalid); err == nil {
 			t.Fatalf("invalid Firecracker output %q was accepted", invalid)
+		}
+	}
+	for _, invalid := range [][]byte{
+		[]byte("cpu-template-helper v1.16.1"), []byte("cpu-template-helper v01.16.1\n"),
+		[]byte("prefix cpu-template-helper v1.16.1\n"), []byte("cpu-template-helper v1.16.1\nsuffix"),
+	} {
+		if _, err := parseCPUTemplateHelperVersion(invalid); err == nil {
+			t.Fatalf("invalid CPU template helper output %q was accepted", invalid)
 		}
 	}
 	for _, invalid := range [][]byte{
@@ -293,6 +320,7 @@ func TestInspectHostRuntimeRejectsIdentityMutation(t *testing.T) {
 			dependencies := runtimeProbeDependencies{
 				lookPath:     func(path string) (string, error) { return path, nil },
 				unameRelease: func() (string, error) { return "6.12.31", nil },
+				readFile:     testRuntimeEnvironmentReadFile,
 				run: func(_ context.Context, path string, arguments ...string) ([]byte, error) {
 					if path == firecrackerPath {
 						if slices.Equal(arguments, []string{"--version"}) {
@@ -308,6 +336,9 @@ func TestInspectHostRuntimeRejectsIdentityMutation(t *testing.T) {
 					if path != helperPath {
 						return nil, fmt.Errorf("unexpected command %q", path)
 					}
+					if slices.Equal(arguments, []string{"--version"}) {
+						return []byte("cpu-template-helper v1.16.1\n"), nil
+					}
 					if slices.Equal(arguments[:2], []string{"template", "verify"}) {
 						return nil, nil
 					}
@@ -321,12 +352,9 @@ func TestInspectHostRuntimeRejectsIdentityMutation(t *testing.T) {
 							return nil, err
 						}
 					}
-					fingerprint := `{
-  "firecracker_version":"1.16.1","kernel_version":"6.12.31",
-  "microcode_version":"0x1","bios_version":"1.0","bios_revision":"1.0",
-  "guest_cpu_config":{"cpuid_modifiers":[]}
-}`
-					return nil, os.WriteFile(flagValue(t, arguments, "--output"), []byte(fingerprint), 0o600)
+					return nil, os.WriteFile(
+						flagValue(t, arguments, "--output"), []byte(`{"cpuid_modifiers":[]}`), 0o600,
+					)
 				},
 			}
 			_, err = inspectHostRuntime(context.Background(), Config{
@@ -339,6 +367,65 @@ func TestInspectHostRuntimeRejectsIdentityMutation(t *testing.T) {
 			}, testProbeRuntimeArtifacts(), dependencies)
 			if err == nil || !strings.Contains(err.Error(), target) || !strings.Contains(err.Error(), "changed") {
 				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestInspectRuntimeEnvironmentReadsVirtualizedHostEvidence(t *testing.T) {
+	environment, err := inspectRuntimeEnvironment(
+		testRuntimeEnvironmentReadFile, "1.16.1", "6.12.31-amzn2023",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := RuntimeEnvironmentEvidence{
+		FirecrackerVersion: "1.16.1",
+		KernelVersion:      "6.12.31-amzn2023",
+		MicrocodeVersion:   "0x2b000643",
+		BIOSVersion:        "1.0",
+		BIOSRevision:       "3.5",
+	}
+	if environment != expected {
+		t.Fatalf("environment = %+v, want %+v", environment, expected)
+	}
+}
+
+func TestReadMicrocodeVersionRejectsAmbiguousEvidence(t *testing.T) {
+	for name, contents := range map[string]string{
+		"missing":     "processor : 0\n",
+		"malformed":   "processor : 0\nmicrocode : 2b000643\n",
+		"conflicting": "processor : 0\nmicrocode : 0x1\nprocessor : 1\nmicrocode : 0x2\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := readMicrocodeVersion(func(string) ([]byte, error) {
+				return []byte(contents), nil
+			})
+			if err == nil {
+				t.Fatal("microcode evidence was accepted")
+			}
+		})
+	}
+	if _, err := readMicrocodeVersion(func(string) ([]byte, error) {
+		return nil, errors.New("read failed")
+	}); err == nil || !strings.Contains(err.Error(), "read failed") {
+		t.Fatalf("read error = %v", err)
+	}
+}
+
+func TestReadRuntimeEnvironmentValueIsStrict(t *testing.T) {
+	for name, contents := range map[string][]byte{
+		"empty":         nil,
+		"leading space": []byte(" value\n"),
+		"two lines":     []byte("value\nextra\n"),
+		"invalid UTF-8": {0xff},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := readRuntimeEnvironmentValue(
+				func(string) ([]byte, error) { return contents, nil }, "/evidence", "test evidence",
+			)
+			if err == nil {
+				t.Fatal("environment evidence was accepted")
 			}
 		})
 	}
@@ -495,6 +582,19 @@ func writeProbeTestFile(t *testing.T, directory string, name string, body string
 		t.Fatal(err)
 	}
 	return canonical
+}
+
+func testRuntimeEnvironmentReadFile(path string) ([]byte, error) {
+	switch path {
+	case "/proc/cpuinfo":
+		return []byte("processor : 0\nmicrocode : 0x2b000643\nprocessor : 1\nmicrocode : 0x2B000643\n"), nil
+	case "/sys/devices/virtual/dmi/id/bios_version":
+		return []byte("1.0\n"), nil
+	case "/sys/devices/virtual/dmi/id/bios_release":
+		return []byte("3.5\n"), nil
+	default:
+		return nil, fmt.Errorf("unexpected runtime environment path %q", path)
+	}
 }
 
 func testCanonicalDigest(character string) string {
