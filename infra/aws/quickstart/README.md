@@ -145,8 +145,9 @@ inside the VPC.
 
 The official worker AMI is resolved from `helmr_version` and `aws_region`. Set `worker_ami_id` only
 for custom builds; custom AMIs must satisfy the `modules/worker` contract: Firecracker, jailer,
-`ip`, `nft`, certified guest boot artifacts containing the pinned BuildKit daemon, AWS CLI, and
-`helmr-worker` installed. Keep NAT enabled
+`ip`, `nft`, certified guest boot artifacts containing the pinned BuildKit daemon, AWS CLI,
+`helmr-worker`, and the executable `/usr/local/sbin/helmr-prepare-root` matching
+`modules/worker-image/templates/prepare-root.sh` installed. Keep NAT enabled
 while a worker is running or draining because workers run in private subnets. Workers are
 filesystem-first: the root EBS volume carries build/cache/runtime data, and `worker_disk_mib` can
 override the disk capacity advertised to the Control Plane.

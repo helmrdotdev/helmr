@@ -65,6 +65,20 @@ run "image_installs_verified_worker_artifacts" {
 
   assert {
     condition = (
+      strcontains(aws_imagebuilder_component.worker.data, "/usr/local/sbin/helmr-prepare-root") &&
+      strcontains(aws_imagebuilder_component.worker.data, "usage: helmr-prepare-root EXPECTED_DEVICE_BYTES") &&
+      strcontains(aws_imagebuilder_component.worker.data, filesha256("${path.module}/templates/prepare-root.sh")) &&
+      strcontains(aws_imagebuilder_component.worker.data, "stat -c %a /usr/local/sbin/helmr-prepare-root") &&
+      strcontains(local.build_script, "<<'HELMR_PREPARE_ROOT'\n${file("${path.module}/templates/prepare-root.sh")}HELMR_PREPARE_ROOT") &&
+      one(
+        one(aws_imagebuilder_distribution_configuration.worker.distribution).ami_distribution_configuration
+      ).ami_tags.HelmrPrepareRootDigest == "sha256:${filesha256("${path.module}/templates/prepare-root.sh")}"
+    )
+    error_message = "Worker AMIs must install the exact checked-in root preparation helper as an executable, source-bound image artifact."
+  }
+
+  assert {
+    condition = (
       strcontains(aws_imagebuilder_component.worker.data, "s3://helmr-test/runtime/worker-runtime.tar") &&
       strcontains(aws_imagebuilder_component.worker.data, "s3://helmr-test/host/worker-host.tar") &&
       strcontains(aws_imagebuilder_component.worker.data, "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd") &&

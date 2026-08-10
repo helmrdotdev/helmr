@@ -22,6 +22,8 @@ locals {
   distribution_regions = length(var.distribution_regions) == 0 ? [data.aws_region.current.region] : var.distribution_regions
   build_script = templatefile("${path.module}/templates/build-worker-image.sh.tftpl", {
     source_ref                        = var.source_ref
+    prepare_root_script               = trimsuffix(file("${path.module}/templates/prepare-root.sh"), "\n")
+    prepare_root_digest               = filesha256("${path.module}/templates/prepare-root.sh")
     host_artifacts_bundle_s3_uri      = var.host_artifacts_bundle_s3_uri
     host_artifacts_bundle_digest      = trimprefix(var.host_artifacts_bundle_digest, "sha256:")
     host_artifacts_manifest_digest    = trimprefix(var.host_artifacts_manifest_digest, "sha256:")
@@ -29,6 +31,7 @@ locals {
     runtime_artifacts_bundle_digest   = trimprefix(var.runtime_artifacts_bundle_digest, "sha256:")
     runtime_artifacts_manifest_digest = trimprefix(var.runtime_artifacts_manifest_digest, "sha256:")
   })
+  prepare_root_digest               = filesha256("${path.module}/templates/prepare-root.sh")
   host_artifacts_manifest_digest    = trimprefix(var.host_artifacts_manifest_digest, "sha256:")
   runtime_artifacts_manifest_digest = trimprefix(var.runtime_artifacts_manifest_digest, "sha256:")
 }
@@ -131,6 +134,9 @@ resource "aws_imagebuilder_component" "worker" {
               commands = [
                 "test -x /usr/local/bin/helmr-worker",
                 "test \"$(/usr/local/bin/helmr-worker version)\" = \"${var.source_ref}\"",
+                "test -f /usr/local/sbin/helmr-prepare-root && test ! -L /usr/local/sbin/helmr-prepare-root && test -x /usr/local/sbin/helmr-prepare-root",
+                "test \"$(stat -c %a /usr/local/sbin/helmr-prepare-root)\" = 755",
+                "test \"$(sha256sum /usr/local/sbin/helmr-prepare-root | awk '{print $1}')\" = \"${local.prepare_root_digest}\"",
                 "test -x /usr/local/bin/firecracker",
                 "test -x /usr/local/bin/jailer",
                 "test \"$(sha256sum /usr/share/helmr/worker-host-artifacts.json | awk '{print $1}')\" = \"${local.host_artifacts_manifest_digest}\"",
@@ -227,6 +233,7 @@ resource "aws_imagebuilder_distribution_configuration" "worker" {
             Name                        = "${local.name}-worker"
             HelmrWorkerImageName        = local.name
             HelmrSourceCommit           = var.source_ref
+            HelmrPrepareRootDigest      = "sha256:${local.prepare_root_digest}"
             HelmrHostBundleDigest       = var.host_artifacts_bundle_digest
             HelmrHostArtifactsDigest    = var.host_artifacts_manifest_digest
             HelmrRuntimeBundleDigest    = var.runtime_artifacts_bundle_digest
