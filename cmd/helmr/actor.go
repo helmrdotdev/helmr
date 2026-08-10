@@ -324,6 +324,6 @@ func scopedActorClient(
 	if err != nil {
 		return nil, client.EnvironmentScopeOptions{}, err
 	}
-	scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
+	scope, err := environmentScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
 	return controlPlane, scope, err
 }

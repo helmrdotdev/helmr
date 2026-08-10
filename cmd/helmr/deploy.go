@@ -109,7 +109,7 @@ func deployCommand() *cobra.Command {
 			if deployRequest.IdempotencyKey == "" {
 				deployRequest.IdempotencyKey = uuid.Must(uuid.NewV7()).String()
 			}
-			scope, err := environmentScopeForClient(controlPlane, projectRef, envRef)
+			scope, err := environmentScopeForClient(cmd.Context(), controlPlane, projectRef, envRef)
 			if err != nil {
 				return err
 			}
@@ -238,7 +238,7 @@ func promoteCommand() *cobra.Command {
 				return errors.New("--project and --env require helmr login; API keys are already environment scoped")
 			}
 			request := api.PromoteDeploymentRequest{Reason: strings.TrimSpace(reason)}
-			scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
+			scope, err := environmentScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}

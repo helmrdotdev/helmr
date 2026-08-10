@@ -422,7 +422,11 @@ func TestDeployCommandJSONUsesProjectAndEnv(t *testing.T) {
 	var metadata api.CreateDeploymentRequest
 	var metadataFields map[string]json.RawMessage
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/project-override/environments/prod/deployments" {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/projects" {
+			writeSessionScopeProjects(t, w, "project-override", "prod")
+			return
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30/environments/019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32/deployments" {
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("authorization"); got != "Bearer session-test" {
@@ -574,13 +578,15 @@ func TestDeployCommandReusesExplicitSessionScope(t *testing.T) {
 	root, _ := deployCommandFixture(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/projects/agents/environments/prod/deployments":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects":
+			writeSessionScopeProjects(t, w, "agents", "prod")
+		case r.Method == http.MethodPost && r.URL.Path == "/api/projects/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30/environments/019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32/deployments":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "queued"})
-		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/agents/environments/prod/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30/environments/019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/events":
 			writeDeploymentEventSSE(t, w, r, "deployment.deployed")
-		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/agents/environments/prod/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30/environments/019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "deployed"})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/projects/agents/environments/prod/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/projects/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30/environments/019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35/promote":
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "deployed"})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.Path)
@@ -597,6 +603,20 @@ func TestDeployCommandReusesExplicitSessionScope(t *testing.T) {
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{"deploy", root, "--project", "agents", "--env", "prod"})
 	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeSessionScopeProjects(t *testing.T, w http.ResponseWriter, projectSlug, environmentSlug string) {
+	t.Helper()
+	if err := json.NewEncoder(w).Encode(api.ListProjectsResponse{Projects: []api.ProjectSummary{{
+		ID:   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30",
+		Slug: projectSlug,
+		Environments: []api.EnvironmentSummary{{
+			ID:   "019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32",
+			Slug: environmentSlug,
+		}},
+	}}}); err != nil {
 		t.Fatal(err)
 	}
 }
