@@ -254,6 +254,21 @@ func TestRuntimeProbeVersionParsingIsStrict(t *testing.T) {
 	}
 }
 
+func TestRunRuntimeProbeCommandSeparatesDiagnosticStderr(t *testing.T) {
+	output, err := runRuntimeProbeCommand(
+		t.Context(),
+		"/bin/sh",
+		"-c",
+		`printf 'Firecracker v1.16.1\n\n'; printf 'Firecracker exiting successfully. exit_code=0\n' >&2`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := parseFirecrackerVersion(output); err != nil || got != "1.16.1" {
+		t.Fatalf("version=%q output=%q error=%v", got, output, err)
+	}
+}
+
 func TestInspectHostRuntimeRejectsIdentityMutation(t *testing.T) {
 	for _, target := range []string{"Firecracker", "CPU template helper", "custom CPU template"} {
 		t.Run(target, func(t *testing.T) {
