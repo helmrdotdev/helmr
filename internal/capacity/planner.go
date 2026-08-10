@@ -46,7 +46,7 @@ type Store interface {
 	ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error)
 	ListQueuedRunPlanningUsage(context.Context, db.ListQueuedRunPlanningUsageParams) ([]db.ListQueuedRunPlanningUsageRow, error)
 	ListQueuedRunPlanningCandidatesForScopes(context.Context, db.ListQueuedRunPlanningCandidatesForScopesParams) ([]db.ListQueuedRunPlanningCandidatesForScopesRow, error)
-	ListQueuedDeploymentBuildCandidates(context.Context, db.ListQueuedDeploymentBuildCandidatesParams) ([]db.ListQueuedDeploymentBuildCandidatesRow, error)
+	ListQueuedDeploymentBuildDemand(context.Context, db.ListQueuedDeploymentBuildDemandParams) ([]pgtype.UUID, error)
 }
 
 type item struct {
@@ -263,7 +263,7 @@ func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanS
 	}
 	if group.AllowsBuild {
 		remaining := maximumPlanningCandidates
-		rows, err := store.ListQueuedDeploymentBuildCandidates(ctx, db.ListQueuedDeploymentBuildCandidatesParams{
+		rows, err := store.ListQueuedDeploymentBuildDemand(ctx, db.ListQueuedDeploymentBuildDemandParams{
 			BuildRegionID: group.RegionID, LimitCount: remaining + 1,
 		})
 		if err != nil {
@@ -274,8 +274,8 @@ func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanS
 			rows = rows[:remaining]
 		}
 		resources := compute.BuildEnvelopeResources()
-		for _, row := range rows {
-			result = append(result, item{role: "build", key: fmt.Sprintf("%x", row.DeploymentID.Bytes), resources: capacityapi.ResourceVector{
+		for _, deploymentID := range rows {
+			result = append(result, item{role: "build", key: fmt.Sprintf("%x", deploymentID.Bytes), resources: capacityapi.ResourceVector{
 				CPUMillis: resources.MilliCPU, MemoryBytes: resources.MemoryMiB * mebibyte,
 				GuestEphemeralDiskBytes: resources.DiskMiB * mebibyte, BuildExecutors: 1,
 			}})

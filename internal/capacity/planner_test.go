@@ -218,7 +218,7 @@ func TestPlanRunDiagnosticsDoNotConsumeBuildSamplingBudget(t *testing.T) {
 		group:  db.WorkerGroup{ID: "group-1", Name: "default", RegionID: "us-east-1", State: "active", AllowsRun: true, AllowsBuild: true},
 		scopes: []db.ListQueuedRunEligibleScopesRow{{RegionID: "us-east-1", QueueName: "run"}},
 		usage:  []db.ListQueuedRunPlanningUsageRow{{ScopeOrdinal: 1, ActiveRuns: 1}},
-		runs:   runs, builds: []db.ListQueuedDeploymentBuildCandidatesRow{{DeploymentID: testUUID(1)}},
+		runs:   runs, builds: []pgtype.UUID{testUUID(1)},
 	}
 	plan, err := Plan(context.Background(), store, "group-1", capacityapi.CapacityPlanRequest{Worker: manifest, MaxAdditionalWorkers: 1}, time.Unix(100, 0))
 	if err != nil {
@@ -279,10 +279,8 @@ func TestPlanPacksBuildDemandIntoCurrentAndTemplateBins(t *testing.T) {
 	manifest.PerVM.MemoryBytes = 4 << 30
 	manifest.ReleaseFingerprint, _ = manifest.ExpectedFingerprint()
 	store := plannerStore{
-		group: db.WorkerGroup{ID: "group-1", Name: "default", RegionID: "us-east-1", State: "active", AllowsRun: true, AllowsBuild: true},
-		builds: []db.ListQueuedDeploymentBuildCandidatesRow{
-			{DeploymentID: testUUID(1)}, {DeploymentID: testUUID(2)}, {DeploymentID: testUUID(3)},
-		},
+		group:  db.WorkerGroup{ID: "group-1", Name: "default", RegionID: "us-east-1", State: "active", AllowsRun: true, AllowsBuild: true},
+		builds: []pgtype.UUID{testUUID(1), testUUID(2), testUUID(3)},
 		bins: []db.ListWorkerCapacityBinsRow{{
 			SupportsBuild: true, RuntimeArch: "x86_64", VMRuntimeContract: "helmr.vm-runtime.v0",
 			PerVMCPUMillis: 3000, PerVMMemoryBytes: 4 << 30, PerVMGuestEphemeralDiskBytes: 32 << 30,
@@ -296,6 +294,51 @@ func TestPlanPacksBuildDemandIntoCurrentAndTemplateBins(t *testing.T) {
 	}
 	if plan.RecommendedAdditionalWorkers != 2 || plan.CompatibleQueuedItems != 3 || plan.IncompatibleQueuedItems != 0 {
 		t.Fatalf("plan = %+v", plan)
+	}
+}
+
+func TestPlanScalesBuildDemandFromZero(t *testing.T) {
+	manifest := plannerTestManifest(t)
+	manifest.SupportsBuild = true
+	manifest.Capacity.CPUMillis = 3000
+	manifest.Capacity.MemoryBytes = 4 << 30
+	manifest.Capacity.BuildExecutors = 1
+	manifest.PerVM.CPUMillis = 3000
+	manifest.PerVM.MemoryBytes = 4 << 30
+	manifest.ReleaseFingerprint, _ = manifest.ExpectedFingerprint()
+
+	for _, test := range []struct {
+		name string
+		bins []db.ListWorkerCapacityBinsRow
+		want int32
+	}{
+		{name: "no active worker", want: 1},
+		{
+			name: "free active build worker",
+			bins: []db.ListWorkerCapacityBinsRow{{
+				SupportsBuild: true, RuntimeArch: "x86_64", VMRuntimeContract: "helmr.vm-runtime.v0",
+				PerVMCPUMillis: 3000, PerVMMemoryBytes: 4 << 30, PerVMGuestEphemeralDiskBytes: 32 << 30,
+				AvailableCPUMillis: 3000, AvailableMemoryBytes: 4 << 30, AvailableGuestEphemeralDiskBytes: 32 << 30,
+				AvailableBuildExecutors: 1,
+			}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := plannerStore{
+				group:  db.WorkerGroup{ID: "group-1", Name: "default", RegionID: "us-east-1", State: "active", AllowsRun: true, AllowsBuild: true},
+				builds: []pgtype.UUID{testUUID(1)},
+				bins:   test.bins,
+			}
+			plan, err := Plan(context.Background(), store, "group-1", capacityapi.CapacityPlanRequest{
+				Worker: manifest, MaxAdditionalWorkers: 1,
+			}, time.Unix(100, 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.RecommendedAdditionalWorkers != test.want || plan.CompatibleQueuedItems != 1 || !plan.Complete {
+				t.Fatalf("plan = %+v", plan)
+			}
+		})
 	}
 }
 
@@ -343,7 +386,7 @@ func TestPlanPreservesMixedRunAndBuildShapes(t *testing.T) {
 		group:  db.WorkerGroup{ID: "group-1", Name: "default", RegionID: "us-east-1", State: "active", AllowsRun: true, AllowsBuild: true},
 		scopes: []db.ListQueuedRunEligibleScopesRow{{RegionID: "us-east-1", QueueName: "run"}},
 		runs:   []db.ListQueuedRunPlanningCandidatesForScopesRow{{RunID: testUUID(1), WorkspaceManifest: workspace}},
-		builds: []db.ListQueuedDeploymentBuildCandidatesRow{{DeploymentID: testUUID(2)}, {DeploymentID: testUUID(3)}},
+		builds: []pgtype.UUID{testUUID(2), testUUID(3)},
 	}
 	plan, err := Plan(context.Background(), store, "group-1", capacityapi.CapacityPlanRequest{Worker: manifest, MaxAdditionalWorkers: 4}, time.Unix(100, 0))
 	if err != nil {
@@ -380,7 +423,7 @@ type plannerStore struct {
 	scopes []db.ListQueuedRunEligibleScopesRow
 	usage  []db.ListQueuedRunPlanningUsageRow
 	runs   []db.ListQueuedRunPlanningCandidatesForScopesRow
-	builds []db.ListQueuedDeploymentBuildCandidatesRow
+	builds []pgtype.UUID
 }
 
 type pagingPlannerStore struct {
@@ -440,7 +483,7 @@ func (s plannerStore) ListQueuedRunPlanningCandidatesForScopes(context.Context, 
 	}
 	return result, nil
 }
-func (s plannerStore) ListQueuedDeploymentBuildCandidates(context.Context, db.ListQueuedDeploymentBuildCandidatesParams) ([]db.ListQueuedDeploymentBuildCandidatesRow, error) {
+func (s plannerStore) ListQueuedDeploymentBuildDemand(context.Context, db.ListQueuedDeploymentBuildDemandParams) ([]pgtype.UUID, error) {
 	return s.builds, nil
 }
 

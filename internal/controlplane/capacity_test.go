@@ -250,7 +250,7 @@ func (s *capacityPlanStore) ListQueuedRunPlanningCandidatesForScopes(context.Con
 	return nil, nil
 }
 
-func (s *capacityPlanStore) ListQueuedDeploymentBuildCandidates(context.Context, db.ListQueuedDeploymentBuildCandidatesParams) ([]db.ListQueuedDeploymentBuildCandidatesRow, error) {
+func (s *capacityPlanStore) ListQueuedDeploymentBuildDemand(context.Context, db.ListQueuedDeploymentBuildDemandParams) ([]pgtype.UUID, error) {
 	return nil, nil
 }
 

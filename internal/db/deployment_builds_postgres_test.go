@@ -202,6 +202,60 @@ func TestPinDeploymentPlatformArtifactsReplaysExactTuple(t *testing.T) {
 	}
 }
 
+func TestPlatformAcquisitionTerminalMutationIsFirstWriter(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		firstFails bool
+	}{
+		{name: "pin wins"},
+		{name: "deterministic failure wins", firstFails: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f, _ := newDeploymentBuildFixture(t)
+			dbtest.MustExec(t, f.ctx, f.pool, `
+				UPDATE deployments
+				   SET build_runtime_digest = NULL,
+				       build_toolchain_digest = NULL,
+				       build_manager_digest = NULL
+				 WHERE id = $1
+			`, f.deploymentID)
+			pins := db.PinDeploymentPlatformArtifactsParams{
+				BuildRuntimeDigest:   bytes.Repeat([]byte{1}, 32),
+				BuildToolchainDigest: bytes.Repeat([]byte{2}, 32),
+				BuildManagerDigest:   bytes.Repeat([]byte{3}, 32),
+				OrgID:                pgvalue.UUID(f.orgID),
+				ProjectID:            pgvalue.UUID(f.projectID),
+				EnvironmentID:        pgvalue.UUID(f.environmentID),
+				ID:                   pgvalue.UUID(f.deploymentID),
+			}
+			failure := db.FailDeploymentPlatformAcquisitionParams{
+				Failure:       []byte(`{"code":"platform_invalid","message":"invalid platform","details":{}}`),
+				ID:            pgvalue.UUID(f.deploymentID),
+				OrgID:         pgvalue.UUID(f.orgID),
+				ProjectID:     pgvalue.UUID(f.projectID),
+				EnvironmentID: pgvalue.UUID(f.environmentID),
+			}
+
+			if test.firstFails {
+				if _, err := f.queries.FailDeploymentPlatformAcquisition(f.ctx, failure); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := f.queries.PinDeploymentPlatformArtifacts(f.ctx, pins); !errors.Is(err, pgx.ErrNoRows) {
+					t.Fatalf("pin after failure error = %v, want pgx.ErrNoRows", err)
+				}
+				return
+			}
+
+			if _, err := f.queries.PinDeploymentPlatformArtifacts(f.ctx, pins); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.queries.FailDeploymentPlatformAcquisition(f.ctx, failure); !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("failure after pin error = %v, want pgx.ErrNoRows", err)
+			}
+		})
+	}
+}
+
 func TestPlatformAcquisitionRequiresActiveBuildAuthority(t *testing.T) {
 	f, _ := newDeploymentBuildFixture(t)
 	dbtest.MustExec(t, f.ctx, f.pool, `
@@ -234,6 +288,91 @@ func TestPlatformAcquisitionRequiresActiveBuildAuthority(t *testing.T) {
 		t.Fatalf("disabled worker group error = %v", err)
 	}
 
+}
+
+func TestQueuedDeploymentBuildDemandPrecedesPlatformAcquisition(t *testing.T) {
+	f, _ := newDeploymentBuildFixture(t)
+	dbtest.MustExec(t, f.ctx, f.pool, `
+		UPDATE deployments
+		   SET build_runtime_digest = NULL,
+		       build_toolchain_digest = NULL,
+		       build_manager_digest = NULL
+		 WHERE id = $1
+	`, f.deploymentID)
+
+	f.requireBuildDemand(t, true)
+	f.requireBuildPlacementCandidate(t, false)
+
+	pins := db.PinDeploymentPlatformArtifactsParams{
+		BuildRuntimeDigest:   bytes.Repeat([]byte{1}, 32),
+		BuildToolchainDigest: bytes.Repeat([]byte{2}, 32),
+		BuildManagerDigest:   bytes.Repeat([]byte{3}, 32),
+		OrgID:                pgvalue.UUID(f.orgID),
+		ProjectID:            pgvalue.UUID(f.projectID),
+		EnvironmentID:        pgvalue.UUID(f.environmentID),
+		ID:                   pgvalue.UUID(f.deploymentID),
+	}
+	if _, err := f.queries.PinDeploymentPlatformArtifacts(f.ctx, pins); err != nil {
+		t.Fatal(err)
+	}
+	f.requireBuildDemand(t, true)
+	f.requireBuildPlacementCandidate(t, true)
+
+	f.activateBuildWorker(t)
+	first := f.lease(t, 1)
+	f.requireBuildDemand(t, false)
+	f.reject(t, pgvalue.MustUUIDValue(first.ID), 1)
+	f.requireBuildDemand(t, true)
+
+	second := f.lease(t, 2)
+	f.reject(t, pgvalue.MustUUIDValue(second.ID), 2)
+	f.requireBuildDemand(t, true)
+
+	third := f.lease(t, 3)
+	f.reject(t, pgvalue.MustUUIDValue(third.ID), 3)
+	f.requireBuildDemand(t, false)
+}
+
+func (f *deploymentBuildFixture) requireBuildDemand(t *testing.T, want bool) {
+	t.Helper()
+	rows, err := f.queries.ListQueuedDeploymentBuildDemand(f.ctx, db.ListQueuedDeploymentBuildDemandParams{
+		BuildRegionID: dbtest.DefaultRegionID,
+		LimitCount:    100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, id := range rows {
+		if pgvalue.MustUUIDValue(id) == f.deploymentID {
+			found = true
+			break
+		}
+	}
+	if found != want {
+		t.Fatalf("build demand contains deployment = %v, want %v", found, want)
+	}
+}
+
+func (f *deploymentBuildFixture) requireBuildPlacementCandidate(t *testing.T, want bool) {
+	t.Helper()
+	rows, err := f.queries.ListQueuedDeploymentBuildCandidates(f.ctx, db.ListQueuedDeploymentBuildCandidatesParams{
+		BuildRegionID: dbtest.DefaultRegionID,
+		LimitCount:    100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, row := range rows {
+		if pgvalue.MustUUIDValue(row.DeploymentID) == f.deploymentID {
+			found = true
+			break
+		}
+	}
+	if found != want {
+		t.Fatalf("build placement candidates contain deployment = %v, want %v", found, want)
+	}
 }
 
 func TestDeploymentLeaseRejectsUntilPinCommits(t *testing.T) {

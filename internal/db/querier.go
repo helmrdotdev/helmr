@@ -359,6 +359,7 @@ type Querier interface {
 	ListProjects(ctx context.Context, orgID pgtype.UUID) ([]Project, error)
 	ListProjectsForUpdate(ctx context.Context, orgID pgtype.UUID) ([]Project, error)
 	ListQueuedDeploymentBuildCandidates(ctx context.Context, arg ListQueuedDeploymentBuildCandidatesParams) ([]ListQueuedDeploymentBuildCandidatesRow, error)
+	ListQueuedDeploymentBuildDemand(ctx context.Context, arg ListQueuedDeploymentBuildDemandParams) ([]pgtype.UUID, error)
 	ListQueuedDeploymentBuildRegions(ctx context.Context, limitCount int32) ([]string, error)
 	ListQueuedRunEligibleScopes(ctx context.Context, arg ListQueuedRunEligibleScopesParams) ([]ListQueuedRunEligibleScopesRow, error)
 	ListQueuedRunPlacementCandidates(ctx context.Context, arg ListQueuedRunPlacementCandidatesParams) ([]ListQueuedRunPlacementCandidatesRow, error)

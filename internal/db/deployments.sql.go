@@ -1984,6 +1984,69 @@ func (q *Queries) ListQueuedDeploymentBuildCandidates(ctx context.Context, arg L
 	return items, nil
 }
 
+const listQueuedDeploymentBuildDemand = `-- name: ListQueuedDeploymentBuildDemand :many
+SELECT deployments.id AS deployment_id
+  FROM deployments
+ WHERE deployments.build_region_id = $1
+   AND deployments.current_build_lease_id IS NULL
+   AND (
+       (
+           deployments.status = 'queued'
+           AND deployments.build_runtime_digest IS NULL
+           AND deployments.build_toolchain_digest IS NULL
+           AND deployments.build_manager_digest IS NULL
+       )
+       OR
+       (
+           deployments.status IN ('queued', 'building')
+           AND deployments.build_runtime_digest IS NOT NULL
+           AND deployments.build_toolchain_digest IS NOT NULL
+           AND deployments.build_manager_digest IS NOT NULL
+       )
+   )
+   AND COALESCE((
+       SELECT max(deployment_build_leases.lease_sequence)
+         FROM deployment_build_leases
+        WHERE deployment_build_leases.deployment_id = deployments.id
+   ), 0) < 3
+   AND NOT EXISTS (
+       SELECT 1 FROM deployment_build_leases
+        WHERE deployment_build_leases.deployment_id = deployments.id
+          AND deployment_build_leases.state IN ('assigned', 'starting', 'running')
+   )
+ ORDER BY row_number() OVER (
+              PARTITION BY deployments.org_id
+              ORDER BY deployments.created_at, deployments.id
+          ),
+          deployments.created_at, deployments.id
+ LIMIT $2
+`
+
+type ListQueuedDeploymentBuildDemandParams struct {
+	BuildRegionID string `json:"build_region_id"`
+	LimitCount    int32  `json:"limit_count"`
+}
+
+func (q *Queries) ListQueuedDeploymentBuildDemand(ctx context.Context, arg ListQueuedDeploymentBuildDemandParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listQueuedDeploymentBuildDemand, arg.BuildRegionID, arg.LimitCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var deployment_id pgtype.UUID
+		if err := rows.Scan(&deployment_id); err != nil {
+			return nil, err
+		}
+		items = append(items, deployment_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listQueuedDeploymentBuildRegions = `-- name: ListQueuedDeploymentBuildRegions :many
 SELECT DISTINCT deployments.build_region_id
   FROM deployments
