@@ -517,6 +517,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 		{name: "identity rootfs digest", editIdentity: func(i *vm.CheckpointIdentity) { i.RootfsDigest = "sha256:other" }, want: "checkpoint rootfs digest sha256:other does not match"},
 		{name: "identity runtime config digest", editIdentity: func(i *vm.CheckpointIdentity) { i.RuntimeConfigDigest = "sha256:other" }, want: "checkpoint runtime config digest sha256:other does not match"},
 		{name: "identity vcpu count", editIdentity: func(i *vm.CheckpointIdentity) { i.VMVCPUCount = 0 }, want: "checkpoint VM vCPU count 0 is invalid"},
+		{name: "identity vcpu count does not match manifest", editIdentity: func(i *vm.CheckpointIdentity) { i.VMVCPUCount-- }, want: "does not match checkpoint manifest vCPU count"},
 		{name: "identity cpu config digest", editIdentity: func(i *vm.CheckpointIdentity) { i.CPUConfigDigest = "sha256:other" }, want: "checkpoint guest CPU configuration digest is not canonical"},
 		{name: "manifest backend", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.Backend = "test" }, want: `checkpoint manifest runtime backend "test" is not supported`},
 		{name: "manifest descriptor", editManifest: func(m *snapshotManifest) { m.RecoveryPoint.Runtime.DescriptorDigest = "sha256:other" }, want: "checkpoint manifest VM runtime descriptor digest sha256:other does not match"},
@@ -612,6 +613,7 @@ func TestValidateRestoreIdentityUsesManifestRuntimeShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest.RecoveryPoint.Runtime.VCPUCount = 1
+	manifest.RecoveryPoint.Runtime.CPUConfigDigest = testCPUConfigDigest(1)
 	manifest.RecoveryPoint.Runtime.MemoryMiB = cfg.MemoryMiB / 2
 	manifest.RecoveryPoint.Runtime.ScratchDiskMiB = cfg.ScratchDiskMiB / 2
 	manifestBytes, err := json.Marshal(manifest)
@@ -619,6 +621,8 @@ func TestValidateRestoreIdentityUsesManifestRuntimeShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	identity.RuntimeConfigDigest = sha256sum.DigestBytes(manifestBytes)
+	identity.VMVCPUCount = 1
+	identity.CPUConfigDigest = testCPUConfigDigest(1)
 
 	_, restoreCfg, err := connector.validateRestoreIdentity(
 		"checkpoint-1",
