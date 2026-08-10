@@ -23,6 +23,7 @@ rec {
     pkgs.coreutils
     pkgs.diffutils
     pkgs.findutils
+    pkgs.file
     pkgs.gawk
     pkgs.gnugrep
     pkgs.gnused

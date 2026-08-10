@@ -15,6 +15,7 @@ bash tests/install_test.sh
 bash tests/release_manifest_test.sh
 bash tests/release_workflow_test.sh
 bash tests/aws_release_artifacts_test.sh
+bash tests/worker_host_bundle_test.sh
 bash tests/worker_runtime_bundle_test.sh
 bash tests/aws_bootstrap_helmr_secrets_test.sh
 bash tests/release_smoke_selector_test.sh

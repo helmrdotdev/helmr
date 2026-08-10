@@ -23,6 +23,8 @@ assert_equal() {
 }
 
 # shellcheck disable=SC2016
+assert_contains "${script}" 'host_bundle="$(prepare_worker_host_bundle)"' \
+  "Worker image apply host bundle binding"
 assert_contains "${script}" 'runtime_bundle="$(prepare_worker_runtime_bundle)"' \
   "Worker image apply runtime bundle binding"
 assert_contains "${script}" 'runtime_artifacts_bundle_s3_uri=' \
@@ -31,50 +33,53 @@ assert_contains "${script}" 'HelmrRuntimeBundleDigest' \
   "Worker AMI runtime bundle provenance"
 assert_contains "${script}" 'HelmrRuntimeArtifactsDigest' \
   "Worker AMI runtime artifact provenance"
+assert_contains "${script}" 'HelmrHostBundleDigest' \
+  "Worker AMI host bundle provenance"
+assert_contains "${script}" 'HelmrHostArtifactsDigest' \
+  "Worker AMI host artifact provenance"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 stdout="${tmp}/stdout"
 stderr="${tmp}/stderr"
 
-for source_mode in bundle remote; do
-  apply_args_file="${tmp}/worker-image-apply-${source_mode}.args"
-  (
-    set -- help
-    if [ "${source_mode}" = bundle ]; then
-      export WORKER_IMAGE_SOURCE_BUNDLE_S3_URI=s3://test-artifacts/helmr/source-bundles/source.bundle
-    else
-      unset WORKER_IMAGE_SOURCE_BUNDLE_S3_URI
-    fi
-    # shellcheck disable=SC2030
-    export STATE_DIR="${tmp}/worker-image-apply-${source_mode}"
-    export SKIP_SOURCE_REF_CHECK=1
-    # shellcheck source=/dev/null
-    source "${script}" >/dev/null
-    require_clean_product_checkout() { :; }
-    worker_image_source_check() { :; }
-    nix() { :; }
-    bucket_kms_key_arn() { :; }
-    resolve_remote_source_ref() { git -C "${repo_root}" rev-parse HEAD; }
-    prepare_worker_runtime_bundle() {
-      jq -cn '{
-        bundleDigest:"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        kmsKeyARN:"",
-        manifestDigest:"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        objectARN:"arn:aws:s3:::test-artifacts/helmr/worker-runtime-bundles/bundle.tar",
-        s3URI:"s3://test-artifacts/helmr/worker-runtime-bundles/bundle.tar"
-      }'
-    }
-    tf_apply() { printf '%s\n' "$@" >"${apply_args_file}"; }
-    worker_image_apply
-  )
-  assert_contains "${apply_args_file}" '-var=runtime_artifacts_bundle_s3_uri=s3://test-artifacts/helmr/worker-runtime-bundles/bundle.tar' \
-    "${source_mode} source runtime bundle URI"
-  assert_contains "${apply_args_file}" '-var=runtime_artifacts_bundle_object_arn=arn:aws:s3:::test-artifacts/helmr/worker-runtime-bundles/bundle.tar' \
-    "${source_mode} source runtime bundle object"
-  assert_contains "${apply_args_file}" '-var=runtime_artifacts_bundle_digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
-    "${source_mode} source runtime bundle digest"
-done
+apply_args_file="${tmp}/worker-image-apply.args"
+(
+  set -- help
+  export STATE_DIR="${tmp}/worker-image-apply"
+  # shellcheck source=/dev/null
+  source "${script}" >/dev/null
+  require_clean_product_checkout() { :; }
+  nix() { :; }
+  prepare_worker_host_bundle() {
+    jq -cn '{
+      bundleDigest:"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      kmsKeyARN:"",
+      manifestDigest:"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      objectARN:"arn:aws:s3:::test-artifacts/helmr/worker-host-bundles/bundle.tar",
+      s3URI:"s3://test-artifacts/helmr/worker-host-bundles/bundle.tar"
+    }'
+  }
+  prepare_worker_runtime_bundle() {
+    jq -cn '{
+      bundleDigest:"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      kmsKeyARN:"",
+      manifestDigest:"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      objectARN:"arn:aws:s3:::test-artifacts/helmr/worker-runtime-bundles/bundle.tar",
+      s3URI:"s3://test-artifacts/helmr/worker-runtime-bundles/bundle.tar"
+    }'
+  }
+  tf_apply() { printf '%s\n' "$@" >"${apply_args_file}"; }
+  worker_image_apply
+)
+assert_contains "${apply_args_file}" '-var=host_artifacts_bundle_s3_uri=s3://test-artifacts/helmr/worker-host-bundles/bundle.tar' \
+  "host bundle URI"
+assert_contains "${apply_args_file}" '-var=host_artifacts_bundle_object_arn=arn:aws:s3:::test-artifacts/helmr/worker-host-bundles/bundle.tar' \
+  "host bundle object"
+assert_contains "${apply_args_file}" '-var=runtime_artifacts_bundle_s3_uri=s3://test-artifacts/helmr/worker-runtime-bundles/bundle.tar' \
+  "runtime bundle URI"
+assert_contains "${apply_args_file}" '-var=runtime_artifacts_bundle_object_arn=arn:aws:s3:::test-artifacts/helmr/worker-runtime-bundles/bundle.tar' \
+  "runtime bundle object"
 
 bundle_state="${tmp}/runtime-bundle-state"
 bundle_stdout="${tmp}/runtime-bundle-stdout"
@@ -82,7 +87,7 @@ bundle_stderr="${tmp}/runtime-bundle-stderr"
 mkdir -p "${bundle_state}"
 (
   set -- help
-  export SOURCE_BUNDLE_BUCKET=test-artifacts
+  export WORKER_IMAGE_ARTIFACT_BUCKET=test-artifacts
   # shellcheck disable=SC2031
   export STATE_DIR="${bundle_state}"
   # shellcheck source=/dev/null
@@ -127,6 +132,10 @@ mkdir -p "${bundle_state}"
   }
   aws() {
     case "${1:-}:${2:-}" in
+      s3api:head-object)
+        printf 'An error occurred (404) when calling the HeadObject operation: Not Found\n' >&2
+        return 254
+        ;;
       s3:cp)
         printf 'runtime upload progress\n'
         ;;
@@ -301,13 +310,29 @@ printf '%s\n' '{
 EOF
 chmod 0755 "${worker_bin}"/*
 source_commit="$(git -C "${repo_root}" rev-parse HEAD)"
+printf '%s\n' '{"schema":"helmr.worker-host-artifacts.v0"}' >"${worker_state}/worker-host-artifacts.json"
 printf '%s\n' '{"schema":"helmr.runtime-artifacts.v0"}' >"${worker_state}/worker-runtime-artifacts.json"
 if command -v sha256sum >/dev/null 2>&1; then
+  host_artifacts_manifest_digest="sha256:$(sha256sum "${worker_state}/worker-host-artifacts.json" | awk '{print $1}')"
   runtime_artifacts_manifest_digest="sha256:$(sha256sum "${worker_state}/worker-runtime-artifacts.json" | awk '{print $1}')"
 else
+  host_artifacts_manifest_digest="sha256:$(shasum -a 256 "${worker_state}/worker-host-artifacts.json" | awk '{print $1}')"
   runtime_artifacts_manifest_digest="sha256:$(shasum -a 256 "${worker_state}/worker-runtime-artifacts.json" | awk '{print $1}')"
 fi
+host_artifacts_bundle_digest="sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 runtime_artifacts_bundle_digest="sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+jq -cn \
+  --arg bundle_digest "${host_artifacts_bundle_digest}" \
+  --arg commit "${source_commit}" \
+  --arg manifest_digest "${host_artifacts_manifest_digest}" '
+  {
+    schema: "helmr.worker-host-bundle.v0",
+    sourceCommit: $commit,
+    workerVersion: $commit,
+    bundle: {path: "worker-host-artifacts.tar", digest: $bundle_digest},
+    manifest: {path: "worker-host-artifacts.json", digest: $manifest_digest}
+  }
+' >"${worker_state}/worker-host-bundle.json"
 jq -cn \
   --arg bundle_digest "${runtime_artifacts_bundle_digest}" \
   --arg commit "${source_commit}" \
@@ -328,8 +353,20 @@ jq -cn \
   }
 ' >"${worker_state}/worker-runtime-bundle.json"
 ami_json="${tmp}/worker-ami.json"
-jq -cn --arg bundle_digest "${runtime_artifacts_bundle_digest}" --arg commit "${source_commit}" --arg runtime_digest "${runtime_artifacts_manifest_digest}" \
-  '{Images:[{ImageId:"ami-0bbbbbbbbbbbbbbbb",Tags:[{Key:"HelmrSourceCommit",Value:$commit},{Key:"HelmrRuntimeBundleDigest",Value:$bundle_digest},{Key:"HelmrRuntimeArtifactsDigest",Value:$runtime_digest}]}]}' >"${ami_json}"
+jq -cn \
+  --arg commit "${source_commit}" \
+  --arg host_bundle_digest "${host_artifacts_bundle_digest}" \
+  --arg host_digest "${host_artifacts_manifest_digest}" \
+  --arg runtime_bundle_digest "${runtime_artifacts_bundle_digest}" \
+  --arg runtime_digest "${runtime_artifacts_manifest_digest}" '
+  {Images:[{ImageId:"ami-0bbbbbbbbbbbbbbbb",Tags:[
+    {Key:"HelmrSourceCommit",Value:$commit},
+    {Key:"HelmrHostBundleDigest",Value:$host_bundle_digest},
+    {Key:"HelmrHostArtifactsDigest",Value:$host_digest},
+    {Key:"HelmrRuntimeBundleDigest",Value:$runtime_bundle_digest},
+    {Key:"HelmrRuntimeArtifactsDigest",Value:$runtime_digest}
+  ]}]}
+' >"${ami_json}"
 image_json="${tmp}/worker-image.json"
 cat >"${image_json}" <<'JSON'
 {"image":{"state":{"status":"AVAILABLE"},"imageRecipe":{"arn":"arn:aws:imagebuilder:us-west-2:123456789012:image-recipe/example/1.0.0"},"outputResources":{"amis":[{"region":"us-east-1","image":"ami-0aaaaaaaaaaaaaaaa"},{"region":"us-west-2","image":"ami-0bbbbbbbbbbbbbbbb"}]}}}
@@ -339,13 +376,20 @@ AWS_REGION=us-west-2 STATE_DIR="${worker_state}" MOCK_IMAGE_JSON="${image_json}"
   "${script}" worker-image-wait arn:aws:imagebuilder:us-west-2:123456789012:image/example/1.0.0/1 >"${stdout}" 2>"${stderr}"
 assert_equal "ami-0bbbbbbbbbbbbbbbb" "$(cat "${stdout}")" "current-region Worker AMI"
 [ -s "${worker_state}/worker-image-provenance.json" ] || fail "Worker AMI provenance receipt"
-jq -e --arg bundle_digest "${runtime_artifacts_bundle_digest}" --arg digest "${runtime_artifacts_manifest_digest}" --arg commit "${source_commit}" '
+jq -e \
+  --arg host_bundle_digest "${host_artifacts_bundle_digest}" \
+  --arg host_digest "${host_artifacts_manifest_digest}" \
+  --arg runtime_bundle_digest "${runtime_artifacts_bundle_digest}" \
+  --arg runtime_digest "${runtime_artifacts_manifest_digest}" \
+  --arg commit "${source_commit}" '
   .formatVersion == 1 and
-  .runtimeArtifactsBundleDigest == $bundle_digest and
-  .runtimeArtifactsManifestDigest == $digest and
+  .hostArtifactsBundleDigest == $host_bundle_digest and
+  .hostArtifactsManifestDigest == $host_digest and
+  .runtimeArtifactsBundleDigest == $runtime_bundle_digest and
+  .runtimeArtifactsManifestDigest == $runtime_digest and
   .runtimeProfile.arch == "x86_64" and
   .sourceCommit == $commit and
   .workerVersion == $commit
-' "${worker_state}/worker-image-provenance.json" >/dev/null || fail "Worker AMI runtime provenance receipt"
+' "${worker_state}/worker-image-provenance.json" >/dev/null || fail "Worker AMI provenance receipt"
 
 printf 'ok - Product AWS release artifact tests\n'

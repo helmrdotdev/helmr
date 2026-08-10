@@ -3,6 +3,14 @@ set -eu
 umask 077
 date +%s >/run/helmr-launch-started-at
 
+expected_root_bytes=$((${root_volume_size_gb} * 1073741824))
+minimum_root_bytes=$((expected_root_bytes - 1073741824))
+actual_root_bytes="$(df -B1 --output=size / | tail -n 1 | tr -d ' ')"
+[ "$actual_root_bytes" -ge "$minimum_root_bytes" ] || {
+  echo "the root filesystem was not expanded to the configured ${root_volume_size_gb} GiB Worker volume" >&2
+  exit 1
+}
+
 install -d -m 0750 -o root -g root /etc/helmr
 install -d -m 0700 -o root -g root /run/helmr
 

@@ -3,20 +3,61 @@ variable "name" {
   type        = string
 }
 
-variable "source_repository_url" {
-  description = "Git repository URL used to build the worker AMI."
-  type        = string
-  default     = "https://github.com/helmrdotdev/helmr.git"
-}
-
 variable "source_ref" {
-  description = "Exact Git commit checked out and injected as the Worker binary identity."
+  description = "Exact Git commit embedded in the prebuilt Worker host artifact."
   type        = string
 
   validation {
     condition     = can(regex("^[0-9a-f]{40}$", var.source_ref))
     error_message = "source_ref must be an exact lowercase 40-character Git commit."
   }
+}
+
+variable "host_artifacts_manifest_digest" {
+  description = "Canonical SHA-256 digest of worker-host-artifacts.json."
+  type        = string
+
+  validation {
+    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.host_artifacts_manifest_digest))
+    error_message = "host_artifacts_manifest_digest must be a canonical SHA-256 digest."
+  }
+}
+
+variable "host_artifacts_bundle_s3_uri" {
+  description = "S3 URI of the exact Worker host artifact bundle."
+  type        = string
+
+  validation {
+    condition     = can(regex("^s3://[^/]+/.+$", var.host_artifacts_bundle_s3_uri))
+    error_message = "host_artifacts_bundle_s3_uri must be an S3 object URI."
+  }
+}
+
+variable "host_artifacts_bundle_object_arn" {
+  description = "Exact S3 object ARN for host_artifacts_bundle_s3_uri."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:[^:]+:s3:::[^/]+/.+$", var.host_artifacts_bundle_object_arn))
+    error_message = "host_artifacts_bundle_object_arn must be an S3 object ARN."
+  }
+}
+
+variable "host_artifacts_bundle_digest" {
+  description = "Canonical SHA-256 digest of the exact Worker host artifact bundle."
+  type        = string
+
+  validation {
+    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.host_artifacts_bundle_digest))
+    error_message = "host_artifacts_bundle_digest must be a canonical SHA-256 digest."
+  }
+}
+
+variable "host_artifacts_bundle_kms_key_arn" {
+  description = "Optional KMS key ARN used to encrypt host_artifacts_bundle_s3_uri."
+  type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "runtime_artifacts_manifest_digest" {
@@ -61,27 +102,6 @@ variable "runtime_artifacts_bundle_digest" {
 
 variable "runtime_artifacts_bundle_kms_key_arn" {
   description = "Optional KMS key ARN used to encrypt runtime_artifacts_bundle_s3_uri."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "source_bundle_s3_uri" {
-  description = "Optional S3 URI for a git bundle used as the worker AMI source. When set, Image Builder clones from the bundle instead of source_repository_url."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "source_bundle_object_arn" {
-  description = "Exact S3 object ARN for source_bundle_s3_uri. Required when source_bundle_s3_uri is set for least-privilege access."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "source_bundle_kms_key_arn" {
-  description = "Optional KMS key ARN used to encrypt source_bundle_s3_uri."
   type        = string
   default     = null
   nullable    = true
@@ -137,9 +157,9 @@ variable "security_group_ids" {
 }
 
 variable "root_volume_size_gb" {
-  description = "Root volume size for the AMI build instance and resulting worker AMI."
+  description = "Root volume size for the install-only AMI build and resulting snapshot. Worker launch templates independently choose their runtime volume size."
   type        = number
-  default     = 120
+  default     = 24
 }
 
 variable "image_version" {

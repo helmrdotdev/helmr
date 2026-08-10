@@ -119,6 +119,7 @@ in
   in
   {
     firecracker-host-module = firecrackerHostModuleCheck;
+    worker-host = helmrPackages.workerHost;
     platform-acquisition-cgroup = pkgs.testers.runNixOSTest {
       name = "platform-acquisition-cgroup";
       nodes.machine =
