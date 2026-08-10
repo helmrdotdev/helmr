@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"unicode/utf8"
 
@@ -30,6 +31,7 @@ func defaultRuntimeProbeDependencies(unameRelease func() (string, error)) runtim
 		run:          runRuntimeProbeCommand,
 		lookPath:     exec.LookPath,
 		unameRelease: unameRelease,
+		readFile:     os.ReadFile,
 	}
 }
 
