@@ -141,10 +141,8 @@ func writeDeployTestBundle(t *testing.T) (string, []byte, string, string) {
 		Kind: deployment.DefinitionKindTask, DeclaredID: "hello",
 		Task: &deployment.TaskManifest{
 			Payload: deployment.SchemaManifest{Kind: deployment.SchemaKindNone},
-			Run: deployment.RunManifest{
-				Queue: "default", MaxDurationMs: 5000,
-				Retry: deployment.RetryManifest{Enabled: false},
-			},
+			Run: deployment.RunManifest{Queue: "default", MaxDurationMs: 5000,
+				Retry: deployment.RetryManifest{Enabled: false}},
 		},
 		Locator: &deployment.ProgramLocator{
 			ExportName: "hello", ModulePath: ".helmr/modules/" + strings.Repeat("d", 64) + ".mjs",
@@ -152,37 +150,27 @@ func writeDeployTestBundle(t *testing.T) (string, []byte, string, string) {
 		},
 	}
 	queues := []deployment.QueueInput{{Name: "default"}}
-	plan := deployment.DeploymentPlan{
-		FormatVersion: deployment.DeploymentPlanFormatVersion,
-		Definitions:   []deployment.ProgramIndexDeclaration{declaration}, Queues: queues,
-	}
+	plan := deployment.DeploymentPlan{FormatVersion: deployment.DeploymentPlanFormatVersion,
+		Definitions: []deployment.ProgramIndexDeclaration{declaration}, Queues: queues}
 	bundle := deployment.DeploymentBundle{
 		Contract: deployment.DeploymentBundleContract,
-		Platform: deployment.DeploymentBundlePlatform{
-			Architecture: deployment.ArchitectureX8664, OS: deployment.DeploymentBundleTargetOS,
-		},
+		Platform: deployment.DeploymentBundlePlatform{Architecture: deployment.ArchitectureX8664,
+			OS: deployment.DeploymentBundleTargetOS},
 		Plan: plan,
-		Runtime: deployment.DeploymentBundleRuntime{
-			Contract: deployment.RuntimeContract,
-			Artifact: deployment.BundleObject{
-				Digest: runtimeDigest, SizeBytes: 4096, MediaType: deployment.RuntimeArtifactMediaType,
-			},
-		},
+		Runtime: deployment.DeploymentBundleRuntime{Contract: deployment.RuntimeContract,
+			Artifact: deployment.BundleObject{Digest: runtimeDigest, SizeBytes: 4096,
+				MediaType: deployment.RuntimeArtifactMediaType}},
 		Program: deployment.ProgramOutput{
-			Artifact: deployment.ProgramDescriptor{
-				Digest: programDigest, SizeBytes: int64(len(program)), MediaType: deployment.ProgramArtifactMediaType,
-			},
-			Index: deployment.ProgramIndex{
-				Architecture:       deployment.ArchitectureX8664,
+			Artifact: deployment.ProgramDescriptor{Digest: programDigest, SizeBytes: int64(len(program)),
+				MediaType: deployment.ProgramArtifactMediaType},
+			Index: deployment.ProgramIndex{Architecture: deployment.ArchitectureX8664,
 				ConfigResultDigest: "sha256:" + strings.Repeat("c", 64),
 				Declarations:       []deployment.ProgramIndexDeclaration{declaration}, Queues: queues,
-				RuntimeContract: deployment.RuntimeContract, RuntimeDigest: runtimeDigest,
-			},
+				RuntimeContract: deployment.RuntimeContract, RuntimeDigest: runtimeDigest},
 		},
 		WorkspaceImages: []deployment.BundleWorkspaceImage{},
-		Objects: []deployment.BundleObject{{
-			Digest: programDigest, SizeBytes: int64(len(program)), MediaType: deployment.ProgramArtifactMediaType,
-		}},
+		Objects: []deployment.BundleObject{{Digest: programDigest, SizeBytes: int64(len(program)),
+			MediaType: deployment.ProgramArtifactMediaType}},
 	}
 	raw, err := deployment.CanonicalDeploymentBundle(bundle)
 	if err != nil {

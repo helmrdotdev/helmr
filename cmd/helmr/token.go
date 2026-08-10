@@ -37,7 +37,11 @@ func tokenGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			token, err := controlPlane.GetToken(cmd.Context(), args[0], client.TokenScopeOptions{ProjectID: projectID, EnvironmentID: environmentID})
+			scope, err := environmentScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
+			if err != nil {
+				return err
+			}
+			token, err := controlPlane.GetToken(cmd.Context(), args[0], client.TokenScopeOptions(scope))
 			if err != nil {
 				return err
 			}
@@ -72,9 +76,13 @@ func tokenCompleteCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			scope, err := environmentScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
+			if err != nil {
+				return err
+			}
 			response, err := controlPlane.CompleteToken(cmd.Context(), args[0], api.CompleteTokenRequest{
 				Result: data, IdempotencyKey: strings.TrimSpace(idempotencyKey),
-			}, client.TokenScopeOptions{ProjectID: projectID, EnvironmentID: environmentID})
+			}, client.TokenScopeOptions(scope))
 			if err != nil {
 				return err
 			}
@@ -107,9 +115,13 @@ func tokenCancelCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			scope, err := environmentScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
+			if err != nil {
+				return err
+			}
 			token, err := controlPlane.CancelToken(cmd.Context(), args[0], api.CancelTokenRequest{
 				IdempotencyKey: strings.TrimSpace(idempotencyKey),
-			}, client.TokenScopeOptions{ProjectID: projectID, EnvironmentID: environmentID})
+			}, client.TokenScopeOptions(scope))
 			if err != nil {
 				return err
 			}

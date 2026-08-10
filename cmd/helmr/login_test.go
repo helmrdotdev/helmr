@@ -128,7 +128,14 @@ func TestCommandUsesSavedLoginWhenEnvIsUnset(t *testing.T) {
 			t.Fatalf("auth = %s", got)
 		}
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/project-1/environments/env-1/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects":
+			_ = json.NewEncoder(w).Encode(api.ListProjectsResponse{Projects: []api.ProjectSummary{{
+				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30", Slug: "project-1",
+				Environments: []api.EnvironmentSummary{{
+					ID: "019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32", Slug: "env-1",
+				}},
+			}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/projects/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30/environments/019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32/runs/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31/logs":
 			_ = json.NewEncoder(w).Encode(api.RunLogPage{Logs: []api.RunLogRecord{{
 				Kind: "stdout", ContentBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),
 			}}})

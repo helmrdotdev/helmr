@@ -27,7 +27,7 @@ func deploymentListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
+			scope, err := environmentScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -62,7 +62,7 @@ func deploymentGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
+			scope, err := environmentScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}

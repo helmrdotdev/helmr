@@ -44,7 +44,11 @@ func secretListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			response, err := controlPlane.ListSecrets(cmd.Context(), secretOptions(projectID, environmentID))
+			scope, err := environmentScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
+			if err != nil {
+				return err
+			}
+			response, err := controlPlane.ListSecrets(cmd.Context(), secretScope(scope))
 			if err != nil {
 				return err
 			}
@@ -75,7 +79,11 @@ func secretGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			secret, err := controlPlane.RetrieveSecret(cmd.Context(), args[0], secretOptions(projectID, environmentID))
+			scope, err := environmentScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
+			if err != nil {
+				return err
+			}
+			secret, err := controlPlane.RetrieveSecret(cmd.Context(), args[0], secretScope(scope))
 			if err != nil {
 				return err
 			}
@@ -109,12 +117,16 @@ func secretCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			scope, err := environmentScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
+			if err != nil {
+				return err
+			}
 			secret, err := controlPlane.CreateSecret(
 				cmd.Context(),
 				args[0],
 				value,
 				idempotencyKey,
-				client.SecretOptions(secretOptions(projectID, environmentID)),
+				secretScope(scope),
 			)
 			if err != nil {
 				return err
@@ -152,6 +164,10 @@ func secretRotateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			scope, err := environmentScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
+			if err != nil {
+				return err
+			}
 			if strings.TrimSpace(idempotencyKey) == "" {
 				idempotencyKey = uuid.Must(uuid.NewV7()).String()
 			}
@@ -160,7 +176,7 @@ func secretRotateCommand() *cobra.Command {
 				args[0],
 				value,
 				idempotencyKey,
-				client.SecretOptions(secretOptions(projectID, environmentID)),
+				secretScope(scope),
 			)
 			if err != nil {
 				return err
@@ -213,6 +229,10 @@ func secretRevokeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			scope, err := environmentScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
+			if err != nil {
+				return err
+			}
 			if strings.TrimSpace(idempotencyKey) == "" {
 				idempotencyKey = uuid.Must(uuid.NewV7()).String()
 			}
@@ -220,7 +240,7 @@ func secretRevokeCommand() *cobra.Command {
 				cmd.Context(),
 				args[0],
 				idempotencyKey,
-				secretOptions(projectID, environmentID),
+				secretScope(scope),
 			)
 			if err != nil {
 				return err
@@ -242,11 +262,8 @@ func addSecretScopeFlags(cmd *cobra.Command, projectID *string, environmentID *s
 	cmd.Flags().StringVarP(environmentID, "env", "e", "", "Environment slug or ID for this secret.")
 }
 
-func secretOptions(projectID string, environmentID string) client.SecretOptions {
-	return client.SecretOptions{
-		ProjectID:     strings.TrimSpace(projectID),
-		EnvironmentID: strings.TrimSpace(environmentID),
-	}
+func secretScope(scope client.EnvironmentScopeOptions) client.SecretOptions {
+	return client.SecretOptions{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID}
 }
 
 func writeSecret(w io.Writer, secret api.SecretResponse) error {
