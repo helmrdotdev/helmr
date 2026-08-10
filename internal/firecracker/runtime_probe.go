@@ -31,6 +31,7 @@ const (
 var (
 	firecrackerVersionOutputPattern = regexp.MustCompile(`\AFirecracker v((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))\n\n\z`)
 	snapshotVersionOutputPattern    = regexp.MustCompile(`\Av((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))\n\z`)
+	firecrackerSuccessLogPattern    = regexp.MustCompile(`\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{9} \[anonymous-instance:main\] Firecracker exiting successfully\. exit_code=0\n\z`)
 )
 
 // HostRuntimeEvidence is the focused, measured input for the full runtime
@@ -556,7 +557,11 @@ func resolveRuntimeProbeFile(path string) (string, error) {
 }
 
 func parseFirecrackerVersion(output []byte) (string, error) {
-	matches := firecrackerVersionOutputPattern.FindSubmatch(output)
+	primary, err := firecrackerProbePrimaryOutput(output)
+	if err != nil {
+		return "", fmt.Errorf("firecracker --version output %q is not canonical", output)
+	}
+	matches := firecrackerVersionOutputPattern.FindSubmatch(primary)
 	if len(matches) != 2 {
 		return "", fmt.Errorf("firecracker --version output %q is not canonical", output)
 	}
@@ -564,11 +569,31 @@ func parseFirecrackerVersion(output []byte) (string, error) {
 }
 
 func parseSnapshotFormatVersion(output []byte) (string, error) {
-	matches := snapshotVersionOutputPattern.FindSubmatch(output)
+	primary, err := firecrackerProbePrimaryOutput(output)
+	if err != nil {
+		return "", fmt.Errorf("firecracker --snapshot-version output %q is not canonical", output)
+	}
+	matches := snapshotVersionOutputPattern.FindSubmatch(primary)
 	if len(matches) != 2 {
 		return "", fmt.Errorf("firecracker --snapshot-version output %q is not canonical", output)
 	}
 	return string(matches[1]), nil
+}
+
+func firecrackerProbePrimaryOutput(output []byte) ([]byte, error) {
+	lastNewline := bytes.LastIndexByte(output, '\n')
+	if lastNewline != len(output)-1 {
+		return nil, errors.New("Firecracker probe output is not newline terminated")
+	}
+	previousNewline := bytes.LastIndexByte(output[:lastNewline], '\n')
+	if previousNewline < 0 {
+		return output, nil
+	}
+	diagnostic := output[previousNewline+1:]
+	if !firecrackerSuccessLogPattern.Match(diagnostic) {
+		return output, nil
+	}
+	return output[:previousNewline+1], nil
 }
 
 type decodedCPUFingerprint struct {

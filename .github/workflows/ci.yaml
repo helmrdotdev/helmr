@@ -52,6 +52,8 @@ jobs:
             app: ci-go-race
           - name: linux compile
             app: ci-linux-compile
+          - name: Firecracker probe
+            app: ci-firecracker-probe
           - name: linux lint
             app: ci-linux-lint
           - name: infrastructure
