@@ -233,12 +233,20 @@ func TestRuntimeProbeVersionParsingIsStrict(t *testing.T) {
 	if got, err := parseFirecrackerVersion([]byte("Firecracker v1.16.1\n\n")); err != nil || got != "1.16.1" {
 		t.Fatalf("version=%q error=%v", got, err)
 	}
+	if got, err := parseFirecrackerVersion([]byte("Firecracker v1.16.1\n\n2026-08-10T22:41:48.709727839 [anonymous-instance:main] Firecracker exiting successfully. exit_code=0\n")); err != nil || got != "1.16.1" {
+		t.Fatalf("version with exit diagnostic=%q error=%v", got, err)
+	}
 	if got, err := parseSnapshotFormatVersion([]byte("v5.0.0\n")); err != nil || got != "5.0.0" {
 		t.Fatalf("snapshot version=%q error=%v", got, err)
+	}
+	if got, err := parseSnapshotFormatVersion([]byte("v10.0.0\n2026-08-10T22:46:48.310385047 [anonymous-instance:main] Firecracker exiting successfully. exit_code=0\n")); err != nil || got != "10.0.0" {
+		t.Fatalf("snapshot version with exit diagnostic=%q error=%v", got, err)
 	}
 	for _, invalid := range [][]byte{
 		[]byte("Firecracker v1.16.1\n"), []byte("Firecracker v01.16.1\n\n"),
 		[]byte("prefix Firecracker v1.16.1\n\n"), []byte("Firecracker v1.16.1\n\nsuffix"),
+		[]byte("Firecracker v1.16.1\n\n2026-08-10T22:41:48.709727839 [anonymous-instance:main] Firecracker exiting successfully. exit_code=1\n"),
+		[]byte("Firecracker v1.16.1\n\n2026-08-10T22:41:48.709727839 [other:main] Firecracker exiting successfully. exit_code=0\n"),
 	} {
 		if _, err := parseFirecrackerVersion(invalid); err == nil {
 			t.Fatalf("invalid Firecracker output %q was accepted", invalid)
@@ -247,6 +255,7 @@ func TestRuntimeProbeVersionParsingIsStrict(t *testing.T) {
 	for _, invalid := range [][]byte{
 		[]byte("v5.0.0\n\n"), []byte("v5.0\n"), []byte("v05.0.0\n"),
 		[]byte("prefix v5.0.0\n"), []byte("v5.0.0\nsuffix"),
+		[]byte("v10.0.0\n2026-08-10T22:46:48.310385047 [anonymous-instance:main] unexpected\n"),
 	} {
 		if _, err := parseSnapshotFormatVersion(invalid); err == nil {
 			t.Fatalf("invalid snapshot output %q was accepted", invalid)

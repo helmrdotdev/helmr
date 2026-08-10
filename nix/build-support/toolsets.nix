@@ -87,6 +87,12 @@ rec {
 
   ciChecks = repoChecks ++ [ pkgs.gnutar ] ++ image;
 
+  runtimeProbe =
+    repoChecks
+    ++ lib.optionals (stdenv.isLinux && stdenv.isx86_64) [
+      helmrPackages.firecrackerRuntime
+    ];
+
   appRuntime = base ++ image ++ smokeLinux ++ lib.optionals stdenv.isLinux [ pkgs.kmod ];
 
   infraTest = [

@@ -111,6 +111,18 @@ in
       ''
         make test-linux-compile
       '';
+  ci-firecracker-probe =
+    app "ci-firecracker-probe" "validate the pinned Firecracker probe output on Linux"
+      toolsets.runtimeProbe
+      ''
+        if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
+          echo "ci-firecracker-probe requires an x86_64 Linux host." >&2
+          exit 1
+        fi
+        FIRECRACKER_PATH="$(command -v firecracker)"
+        export FIRECRACKER_PATH
+        go test ./internal/firecracker -run '^TestPackagedFirecrackerProbeOutputIsAccepted$' -count=1
+      '';
   ci-linux-lint =
     app "ci-linux-lint" "run Linux-targeted Go static analysis for CI" toolsets.ciChecks
       ''
