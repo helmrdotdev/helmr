@@ -244,17 +244,22 @@ type runtimeProbeDependencies struct {
 
 func runRuntimeProbeCommand(ctx context.Context, path string, args ...string) ([]byte, error) {
 	command := exec.CommandContext(ctx, path, args...)
-	output := &boundedCommandOutput{maximum: maxRuntimeProbeOutputBytes}
-	command.Stdout = output
-	command.Stderr = output
+	stdout := &boundedCommandOutput{maximum: maxRuntimeProbeOutputBytes}
+	stderr := &boundedCommandOutput{maximum: maxRuntimeProbeOutputBytes}
+	command.Stdout = stdout
+	command.Stderr = stderr
 	err := command.Run()
-	if output.exceeded {
+	if stdout.exceeded || stderr.exceeded || stdout.Len()+stderr.Len() > maxRuntimeProbeOutputBytes {
 		return nil, fmt.Errorf("run %s: output exceeds %d bytes", filepath.Base(path), maxRuntimeProbeOutputBytes)
 	}
 	if err != nil {
-		return output.Bytes(), fmt.Errorf("run %s: %w: %s", filepath.Base(path), err, strings.TrimSpace(output.String()))
+		details := strings.TrimSpace(stderr.String())
+		if details == "" {
+			details = strings.TrimSpace(stdout.String())
+		}
+		return stdout.Bytes(), fmt.Errorf("run %s: %w: %s", filepath.Base(path), err, details)
 	}
-	return output.Bytes(), nil
+	return stdout.Bytes(), nil
 }
 
 type boundedCommandOutput struct {
@@ -291,6 +296,12 @@ func (output *boundedCommandOutput) String() string {
 	output.mu.Lock()
 	defer output.mu.Unlock()
 	return output.buffer.String()
+}
+
+func (output *boundedCommandOutput) Len() int {
+	output.mu.Lock()
+	defer output.mu.Unlock()
+	return output.buffer.Len()
 }
 
 func inspectHostRuntime(
