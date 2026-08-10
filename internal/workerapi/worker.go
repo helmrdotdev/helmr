@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/helmrdotdev/helmr/capacityapi"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 )
@@ -26,11 +27,13 @@ type TokenResponse struct {
 type EnrollmentResponse struct {
 	WorkerInstanceID     string `json:"worker_instance_id"`
 	WorkerGroupID        string `json:"worker_group_id"`
+	WorkerPoolID         string `json:"worker_pool_id"`
 	WorkerInstanceSecret string `json:"worker_instance_secret"`
 }
 
 type EnrollmentRequest struct {
 	ResourceID    string `json:"resource_id"`
+	PoolName      string `json:"pool_name"`
 	SupportsRun   bool   `json:"supports_run"`
 	SupportsBuild bool   `json:"supports_build"`
 }
@@ -91,27 +94,30 @@ type Observation struct {
 }
 
 type Capabilities struct {
-	WorkerVersion             string `json:"worker_version,omitempty"`
-	RuntimeID                 string `json:"runtime_id"`
-	RuntimeArch               string `json:"runtime_arch"`
-	VMRuntimeContract         string `json:"vm_runtime_contract"`
-	KernelDigest              string `json:"kernel_digest"`
-	InitramfsDigest           string `json:"initramfs_digest"`
-	RootfsDigest              string `json:"rootfs_digest"`
-	SubstrateFormat           string `json:"substrate_format,omitempty"`
-	SubstrateContract         string `json:"substrate_contract,omitempty"`
-	MaxVCPUs                  int64  `json:"max_vcpus"`
-	MaxMemoryMiB              int64  `json:"max_memory_mib"`
-	VMMilliCPU                int64  `json:"vm_milli_cpu"`
-	VMMemoryMiB               int64  `json:"vm_memory_mib"`
-	GuestEphemeralDiskBytes   int64  `json:"guest_ephemeral_disk_bytes"`
-	VMGuestEphemeralDiskBytes int64  `json:"vm_guest_ephemeral_disk_bytes"`
-	ExecutionSlotsAvailable   int32  `json:"execution_slots_available"`
-	SupportsRun               bool   `json:"supports_run"`
-	SupportsBuild             bool   `json:"supports_build"`
-	MaxBuildExecutors         int32  `json:"max_build_executors"`
-	BuildCacheBytes           int64  `json:"build_cache_bytes"`
-	ArtifactCacheBytes        int64  `json:"artifact_cache_bytes"`
+	Runtime                   capacityapi.RuntimeProfile `json:"runtime"`
+	CPUShapes                 []capacityapi.CPUShape     `json:"cpu_shapes"`
+	CPUEnvironment            CPUEnvironment             `json:"cpu_environment"`
+	SubstrateFormat           string                     `json:"substrate_format,omitempty"`
+	SubstrateContract         string                     `json:"substrate_contract,omitempty"`
+	MaxVCPUs                  int64                      `json:"max_vcpus"`
+	MaxMemoryMiB              int64                      `json:"max_memory_mib"`
+	VMMilliCPU                int64                      `json:"vm_milli_cpu"`
+	VMMemoryMiB               int64                      `json:"vm_memory_mib"`
+	GuestEphemeralDiskBytes   int64                      `json:"guest_ephemeral_disk_bytes"`
+	VMGuestEphemeralDiskBytes int64                      `json:"vm_guest_ephemeral_disk_bytes"`
+	ExecutionSlotsAvailable   int32                      `json:"execution_slots_available"`
+	SupportsRun               bool                       `json:"supports_run"`
+	SupportsBuild             bool                       `json:"supports_build"`
+	MaxBuildExecutors         int32                      `json:"max_build_executors"`
+}
+
+type CPUEnvironment struct {
+	Digest             string `json:"digest"`
+	FirecrackerVersion string `json:"firecracker_version"`
+	HostKernelRelease  string `json:"host_kernel_release"`
+	MicrocodeVersion   string `json:"microcode_version"`
+	BIOSVersion        string `json:"bios_version"`
+	BIOSRevision       string `json:"bios_revision"`
 }
 
 type DeploymentBuildLeaseRequest struct{}
@@ -361,6 +367,8 @@ type RuntimeInstance struct {
 	WorkerInstanceID       string     `json:"worker_instance_id"`
 	RuntimeEpoch           int64      `json:"runtime_epoch"`
 	RuntimeID              string     `json:"runtime_id"`
+	VMVCPUCount            int32      `json:"vm_vcpu_count"`
+	CPUConfigDigest        string     `json:"cpu_config_digest"`
 	DeploymentDefinitionID string     `json:"deployment_definition_id"`
 	State                  string     `json:"state"`
 	ReservedCPUMillis      int32      `json:"reserved_cpu_millis"`
@@ -375,6 +383,8 @@ type RuntimeSource struct {
 	DeploymentDefinitionID string            `json:"deployment_definition_id"`
 	WorkspaceID            string            `json:"workspace_id"`
 	RuntimeIdentityID      string            `json:"runtime_identity_id"`
+	VMVCPUCount            int32             `json:"vm_vcpu_count"`
+	CPUConfigDigest        string            `json:"cpu_config_digest"`
 	WorkspaceImage         CASObject         `json:"workspace_image"`
 	WorkspaceArchitecture  string            `json:"workspace_architecture"`
 	BaseVersionID          string            `json:"base_version_id"`
@@ -412,6 +422,8 @@ type RuntimeInstanceStateRequest struct {
 	WorkerEpoch             int64                `json:"worker_epoch"`
 	DesiredVersion          int64                `json:"desired_version"`
 	ExpectedObservedVersion int64                `json:"expected_observed_version"`
+	VMVCPUCount             int32                `json:"vm_vcpu_count,omitempty"`
+	CPUConfigDigest         string               `json:"cpu_config_digest,omitempty"`
 	RuntimeSubstrateID      string               `json:"runtime_substrate_id,omitempty"`
 	ReasonCode              string               `json:"reason_code,omitempty"`
 	Error                   json.RawMessage      `json:"error,omitempty"`
@@ -1341,6 +1353,8 @@ type CheckpointRuntime struct {
 	InitramfsDigest string                      `json:"initramfs_digest"`
 	RootfsDigest    string                      `json:"rootfs_digest"`
 	ConfigDigest    string                      `json:"config_digest"`
+	VMVCPUCount     int32                       `json:"vm_vcpu_count"`
+	CPUConfigDigest string                      `json:"cpu_config_digest"`
 	Substrate       *CheckpointRuntimeSubstrate `json:"substrate,omitempty"`
 }
 

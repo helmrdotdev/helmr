@@ -565,7 +565,28 @@ func (q *Queries) CreateWorkspaceExec(ctx context.Context, arg CreateWorkspaceEx
 }
 
 const createWorkspaceExecRuntimeReservation = `-- name: CreateWorkspaceExecRuntimeReservation :one
-WITH created_runtime AS (
+WITH selected_shape AS MATERIALIZED (
+    SELECT worker_pool_cpu_shapes.vcpu_count,
+           worker_pool_cpu_shapes.cpu_config_digest
+      FROM worker_instances
+      JOIN worker_groups
+        ON worker_groups.id = worker_instances.worker_group_id
+       AND worker_groups.state = 'active'
+      JOIN worker_pools
+        ON worker_pools.id = worker_instances.worker_pool_id
+       AND worker_pools.worker_group_id = worker_instances.worker_group_id
+       AND worker_pools.state = 'active'
+       AND worker_pools.allows_run
+      JOIN worker_pool_cpu_shapes
+        ON worker_pool_cpu_shapes.worker_pool_id = worker_pools.id
+       AND worker_pool_cpu_shapes.vcpu_count = (($1::bigint - 1) / 1000 + 1)::integer
+     WHERE worker_instances.id = $2
+       AND worker_instances.worker_group_id = $3
+       AND worker_instances.current_epoch = $4
+       AND worker_instances.state = 'active'
+       AND worker_instances.supports_run
+       AND worker_groups.primary_run_pool_id = worker_pools.id
+), created_runtime AS (
     INSERT INTO runtime_instances (
         id,
         org_id,
@@ -577,6 +598,8 @@ WITH created_runtime AS (
         runtime_identity_id,
         deployment_definition_id,
         worker_epoch,
+        vm_vcpu_count,
+        cpu_config_digest,
         reserved_cpu_millis,
         reserved_memory_bytes,
         reserved_guest_ephemeral_disk_bytes,
@@ -586,18 +609,20 @@ WITH created_runtime AS (
         reserved_workspace_version_id,
         reservation_expires_at,
         desired_reason
-    ) VALUES (
-        $1,
-        $2,
-        $3,
-        $4,
+    ) SELECT
         $5,
         $6,
+        $3,
         $7,
         $8,
         $9,
+        $2,
         $10,
         $11,
+        $4,
+        selected_shape.vcpu_count,
+        selected_shape.cpu_config_digest,
+        $1,
         $12,
         $13,
         $14,
@@ -606,25 +631,25 @@ WITH created_runtime AS (
         $17,
         $18,
         'workspace_exec_reservation'
-    )
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, reclaim_evidence, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+      FROM selected_shape
+    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, reclaim_evidence, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 )
-SELECT created_runtime.id, created_runtime.org_id, created_runtime.worker_group_id, created_runtime.project_id, created_runtime.environment_id, created_runtime.region_id, created_runtime.worker_instance_id, created_runtime.runtime_identity_id, created_runtime.deployment_definition_id, created_runtime.runtime_substrate_id, created_runtime.worker_epoch, created_runtime.reserved_cpu_millis, created_runtime.reserved_memory_bytes, created_runtime.reserved_guest_ephemeral_disk_bytes, created_runtime.reserved_execution_slots, created_runtime.workspace_id, created_runtime.program_deployment_id, created_runtime.restore_checkpoint_id, created_runtime.reserved_run_id, created_runtime.reserved_attempt_number, created_runtime.reserved_process_id, created_runtime.reserved_workspace_version_id, created_runtime.reservation_expires_at, created_runtime.desired_state, created_runtime.desired_version, created_runtime.desired_at, created_runtime.desired_reason, created_runtime.observed_state, created_runtime.observed_version, created_runtime.observed_desired_version, created_runtime.observed_at, created_runtime.allocated_at, created_runtime.preparing_at, created_runtime.ready_at, created_runtime.closing_at, created_runtime.closed_at, created_runtime.lost_at, created_runtime.failed_at, created_runtime.reclaimed_at, created_runtime.reclaim_evidence, created_runtime.terminal_at, created_runtime.terminal_reason_code, created_runtime.terminal_error, created_runtime.created_at, created_runtime.updated_at
+SELECT created_runtime.id, created_runtime.org_id, created_runtime.worker_group_id, created_runtime.project_id, created_runtime.environment_id, created_runtime.region_id, created_runtime.worker_instance_id, created_runtime.runtime_identity_id, created_runtime.deployment_definition_id, created_runtime.runtime_substrate_id, created_runtime.worker_epoch, created_runtime.vm_vcpu_count, created_runtime.cpu_config_digest, created_runtime.reserved_cpu_millis, created_runtime.reserved_memory_bytes, created_runtime.reserved_guest_ephemeral_disk_bytes, created_runtime.reserved_execution_slots, created_runtime.workspace_id, created_runtime.program_deployment_id, created_runtime.restore_checkpoint_id, created_runtime.reserved_run_id, created_runtime.reserved_attempt_number, created_runtime.reserved_process_id, created_runtime.reserved_workspace_version_id, created_runtime.reservation_expires_at, created_runtime.desired_state, created_runtime.desired_version, created_runtime.desired_at, created_runtime.desired_reason, created_runtime.observed_state, created_runtime.observed_version, created_runtime.observed_desired_version, created_runtime.observed_at, created_runtime.allocated_at, created_runtime.preparing_at, created_runtime.ready_at, created_runtime.closing_at, created_runtime.closed_at, created_runtime.lost_at, created_runtime.failed_at, created_runtime.reclaimed_at, created_runtime.reclaim_evidence, created_runtime.terminal_at, created_runtime.terminal_reason_code, created_runtime.terminal_error, created_runtime.created_at, created_runtime.updated_at
   FROM created_runtime
 `
 
 type CreateWorkspaceExecRuntimeReservationParams struct {
+	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
+	WorkerInstanceID                pgtype.UUID        `json:"worker_instance_id"`
+	WorkerGroupID                   string             `json:"worker_group_id"`
+	WorkerEpoch                     pgtype.Int8        `json:"worker_epoch"`
 	ID                              pgtype.UUID        `json:"id"`
 	OrgID                           pgtype.UUID        `json:"org_id"`
-	WorkerGroupID                   string             `json:"worker_group_id"`
 	ProjectID                       pgtype.UUID        `json:"project_id"`
 	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
 	RegionID                        string             `json:"region_id"`
-	WorkerInstanceID                pgtype.UUID        `json:"worker_instance_id"`
 	RuntimeIdentityID               string             `json:"runtime_identity_id"`
 	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
-	WorkerEpoch                     int64              `json:"worker_epoch"`
-	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
 	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
 	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
 	ReservedExecutionSlots          int32              `json:"reserved_execution_slots"`
@@ -646,6 +671,8 @@ type CreateWorkspaceExecRuntimeReservationRow struct {
 	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
 	RuntimeSubstrateID              pgtype.UUID        `json:"runtime_substrate_id"`
 	WorkerEpoch                     int64              `json:"worker_epoch"`
+	VMVCPUCount                     int32              `json:"vm_vcpu_count"`
+	CPUConfigDigest                 string             `json:"cpu_config_digest"`
 	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
 	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
 	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
@@ -684,17 +711,17 @@ type CreateWorkspaceExecRuntimeReservationRow struct {
 
 func (q *Queries) CreateWorkspaceExecRuntimeReservation(ctx context.Context, arg CreateWorkspaceExecRuntimeReservationParams) (CreateWorkspaceExecRuntimeReservationRow, error) {
 	row := q.db.QueryRow(ctx, createWorkspaceExecRuntimeReservation,
+		arg.ReservedCPUMillis,
+		arg.WorkerInstanceID,
+		arg.WorkerGroupID,
+		arg.WorkerEpoch,
 		arg.ID,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.RegionID,
-		arg.WorkerInstanceID,
 		arg.RuntimeIdentityID,
 		arg.DeploymentDefinitionID,
-		arg.WorkerEpoch,
-		arg.ReservedCPUMillis,
 		arg.ReservedMemoryBytes,
 		arg.ReservedGuestEphemeralDiskBytes,
 		arg.ReservedExecutionSlots,
@@ -716,6 +743,8 @@ func (q *Queries) CreateWorkspaceExecRuntimeReservation(ctx context.Context, arg
 		&i.DeploymentDefinitionID,
 		&i.RuntimeSubstrateID,
 		&i.WorkerEpoch,
+		&i.VMVCPUCount,
+		&i.CPUConfigDigest,
 		&i.ReservedCPUMillis,
 		&i.ReservedMemoryBytes,
 		&i.ReservedGuestEphemeralDiskBytes,
@@ -2597,7 +2626,7 @@ UPDATE runtime_instances
    AND reserved_process_id IS NULL
    AND reserved_workspace_version_id IS NULL
    AND reservation_expires_at IS NULL
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, reclaim_evidence, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, reclaim_evidence, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 `
 
 type ReserveReadyRuntimeForWorkspaceExecParams struct {
@@ -2631,6 +2660,8 @@ func (q *Queries) ReserveReadyRuntimeForWorkspaceExec(ctx context.Context, arg R
 		&i.DeploymentDefinitionID,
 		&i.RuntimeSubstrateID,
 		&i.WorkerEpoch,
+		&i.VMVCPUCount,
+		&i.CPUConfigDigest,
 		&i.ReservedCPUMillis,
 		&i.ReservedMemoryBytes,
 		&i.ReservedGuestEphemeralDiskBytes,

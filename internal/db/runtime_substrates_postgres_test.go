@@ -185,16 +185,13 @@ func TestLockRuntimeSubstrateAuthorityFencesWorkerAndContract(t *testing.T) {
 	}
 	dbtest.MustExec(t, ctx, pool, `
 		UPDATE worker_instances
-		   SET supervisor_version = '',
-		       supports_run = false,
+		   SET supports_run = false,
 		       runtime_identity_id = NULL,
 		       substrate_format = '',
 		       substrate_contract = '',
 		       epoch_cpu_millis = 0,
 		       epoch_memory_bytes = 0,
 		       epoch_guest_ephemeral_disk_bytes = 0,
-		       epoch_build_cache_bytes = 0,
-		       epoch_artifact_cache_bytes = 0,
 		       per_vm_cpu_millis = 0,
 		       per_vm_memory_bytes = 0,
 		       per_vm_guest_ephemeral_disk_bytes = 0,
@@ -311,50 +308,48 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 		t.Fatal(err)
 	}
 
-	runtimeIdentityID := "authority-" + dbtest.ShortID(uuid.Must(uuid.NewV7()))
-	dbtest.MustExec(t, ctx, pool, `
-		INSERT INTO runtime_identities (
-			id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest, rootfs_digest
-		) VALUES ($1, 'x86_64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs')
-	`, runtimeIdentityID)
 	workerID := uuid.Must(uuid.NewV7())
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, state,
-			current_epoch, current_service_id, supervisor_version,
-			supports_run, runtime_identity_id,
+			id, resource_id, worker_group_id, worker_pool_id, state,
+			current_epoch, current_service_id,
+			supports_run, supports_build, runtime_identity_id,
 			substrate_format, substrate_contract,
 			epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
 			per_vm_cpu_millis, per_vm_memory_bytes,
 			per_vm_guest_ephemeral_disk_bytes,
-			max_vm_slots, max_runtime_starts,
+			max_vm_slots, max_build_executors, max_runtime_starts,
+			cpu_environment, cpu_environment_digest,
 			observed_at, epoch_started_at, activated_at
 		) VALUES (
-			$1, $2, $3, 'active',
-			1, $4, 'test-worker',
-			true, $5, $6, $7,
-			2000, 2147483648, 4294967296,
-			1000, 1073741824, 2147483648,
-			1, 1, now(), now(), now()
+			$1, $2, $3, $4, 'active',
+			1, $5,
+			true, true, $6, 'ext4', 'helmr.substrate.ext4.v0',
+			8000, 17179869184, 274877906944,
+			4000, 8589934592, 34359738368,
+			8, 1, 1, '{}'::jsonb, $7, now(), now(), now()
 		)
 	`, workerID, "authority-"+workerID.String(), dbtest.DefaultWorkerGroupID,
-		uuid.Must(uuid.NewV7()), runtimeIdentityID, substrate.Format, substrate.Contract)
+		dbtest.DefaultWorkerPoolID, uuid.Must(uuid.NewV7()), dbtest.DefaultRuntimeID,
+		dbtest.DefaultCPUConfigID)
 	runtimeID := uuid.Must(uuid.NewV7())
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO runtime_instances (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, runtime_identity_id, deployment_definition_id, worker_epoch,
+			vm_vcpu_count, cpu_config_digest,
 			reserved_cpu_millis, reserved_memory_bytes,
 			reserved_guest_ephemeral_disk_bytes,
 			reserved_execution_slots, workspace_id, desired_reason
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, 1,
+			1, $11,
 			1000, 1073741824, 2147483648,
 			1, $10, 'authority-test'
 		)
 	`, runtimeID, orgID, dbtest.DefaultWorkerGroupID, projectID, environmentID,
-		dbtest.DefaultRegionID, workerID, runtimeIdentityID, definitionID,
-		workspaceID)
+		dbtest.DefaultRegionID, workerID, dbtest.DefaultRuntimeID, definitionID,
+		workspaceID, dbtest.DefaultCPUConfigID)
 	return runtimeSubstrateAuthorityFixture{definitionID: definitionID, workerID: workerID}
 }
 

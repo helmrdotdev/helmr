@@ -781,7 +781,9 @@ func validateCheckpointManifest(
 		!taskWorkspaceDigestPattern.MatchString(identity.KernelDigest) ||
 		!taskWorkspaceDigestPattern.MatchString(identity.InitramfsDigest) ||
 		!taskWorkspaceDigestPattern.MatchString(identity.RootfsDigest) ||
-		!taskWorkspaceDigestPattern.MatchString(identity.ConfigDigest) {
+		!taskWorkspaceDigestPattern.MatchString(identity.ConfigDigest) ||
+		identity.VMVCPUCount <= 0 ||
+		!taskWorkspaceDigestPattern.MatchString(identity.CPUConfigDigest) {
 		return nil, nil, errors.New("manifest runtime identity is invalid")
 	}
 	proofs := []checkpointArtifactProof{
@@ -921,6 +923,18 @@ func (s *Server) commitCheckpointReady(
 		if err != nil {
 			return err
 		}
+		sourcePoolID := authority.worker.WorkerPoolID
+		sourcePool, err := work.q.LockWorkerPool(ctx, db.LockWorkerPoolParams{
+			WorkerGroupID: worker.WorkerGroupID,
+			WorkerPoolID:  sourcePoolID,
+		})
+		if err != nil {
+			return staleRunLeaseClaim(err)
+		}
+		if !sourcePool.AllowsRun ||
+			(sourcePool.State != "active" && sourcePool.State != "draining") {
+			return errStaleRunLeaseClaim
+		}
 		authority.actor = owner.actor
 		authority.parentRun = owner.parent
 		if err := validateRunFinalizationOwner(authority, locators); err != nil {
@@ -961,6 +975,9 @@ func (s *Server) commitCheckpointReady(
 			identity.RootfsDigest != request.Manifest.RecoveryPoint.Runtime.RootfsDigest {
 			return staleRunLeaseClaim(err)
 		}
+		if err := validateCheckpointRuntimeShapeAuthority(authority.runtime, request.Manifest); err != nil {
+			return err
+		}
 		if err := validateCheckpointSubstrateAuthority(
 			ctx,
 			work.q,
@@ -968,6 +985,15 @@ func (s *Server) commitCheckpointReady(
 			request.Manifest,
 		); err != nil {
 			return err
+		}
+		if _, err := work.q.RequireCheckpointRestoreSupplier(ctx, db.RequireCheckpointRestoreSupplierParams{
+			SourceRunLeaseID:   authority.runLease.ID,
+			WorkerGroupID:      worker.WorkerGroupID,
+			WorkerInstanceID:   pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerEpoch:        worker.WorkerEpoch,
+			SourceWorkerPoolID: sourcePoolID,
+		}); err != nil {
+			return staleRunLeaseClaim(err)
 		}
 		checkpointedAt, err := work.q.GetRunLeaseRenewalTime(ctx)
 		if err != nil || !checkpointedAt.Valid || !checkpointedAt.Time.Before(authority.runLease.ExpiresAt.Time) {
@@ -1282,6 +1308,18 @@ func validateCheckpointSubstrateAuthority(
 		substrate.SubstrateDigest != identity.Digest ||
 		substrate.SubstrateFormat != identity.Format ||
 		substrate.SubstrateContract != identity.Contract {
+		return errStaleRunLeaseClaim
+	}
+	return nil
+}
+
+func validateCheckpointRuntimeShapeAuthority(
+	runtime db.RuntimeInstance,
+	manifest workerapi.CheckpointManifest,
+) error {
+	shape := manifest.RecoveryPoint.Runtime
+	if shape.VMVCPUCount != runtime.VMVCPUCount ||
+		shape.CPUConfigDigest != runtime.CPUConfigDigest {
 		return errStaleRunLeaseClaim
 	}
 	return nil

@@ -60,7 +60,6 @@ trap 'rm -rf "$tmp"' EXIT
 rc2_slug="v0-1-1-rc-2-$(tag_hash v0.1.1-rc.2)"
 assert_equal "$rc2_slug" "$(identity_value release_slug "$tmp/rc2.env")" "rc release slug"
 assert_equal "helmr-release-image-${rc2_slug}" "$(identity_value worker_image_name "$tmp/rc2.env")" "rc worker image name"
-assert_equal "0.1.1" "$(identity_value worker_image_version "$tmp/rc2.env")" "rc image builder version"
 assert_equal "helmr/stacks/release-worker-image/releases/${rc2_slug}.tfstate" "$(identity_value state_key "$tmp/rc2.env")" "rc state key"
 assert_length_at_most "$(identity_value worker_image_name "$tmp/rc2.env")" 43 "rc worker image name should fit IAM role prefix"
 
@@ -72,7 +71,6 @@ assert_length_at_most "$(identity_value worker_image_name "$tmp/rc2.env")" 43 "r
 stable_slug="v1-2-3-$(tag_hash v1.2.3)"
 assert_equal "$stable_slug" "$(identity_value release_slug "$tmp/stable.env")" "stable release slug"
 assert_equal "helmr-release-image-${stable_slug}" "$(identity_value worker_image_name "$tmp/stable.env")" "stable worker image name"
-assert_equal "1.2.3" "$(identity_value worker_image_version "$tmp/stable.env")" "stable image builder version"
 assert_equal "custom/releases/${stable_slug}.tfstate" "$(identity_value state_key "$tmp/stable.env")" "stable state key"
 
 "$repo_root/scripts/release-worker-image-identity.sh" \

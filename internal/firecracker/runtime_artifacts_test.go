@@ -121,7 +121,7 @@ func writeRuntimeArtifactFixture(t *testing.T) (Config, runtimeArtifacts) {
 	cfg := (Config{
 		KernelPath:    filepath.Join(dir, "vmlinuz"),
 		InitramfsPath: filepath.Join(dir, "initramfs"),
-		RootfsPath:    filepath.Join(dir, "rootfs.ext4"),
+		RootfsPath:    filepath.Join(dir, "rootfs.squashfs"),
 	}).WithDefaults()
 	write := func(path string, body string) runtimeArtifact {
 		t.Helper()

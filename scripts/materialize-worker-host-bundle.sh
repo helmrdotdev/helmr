@@ -32,7 +32,7 @@ host_dir=$2
 [ ! -e "${output}" ] || die "output already exists: ${output}"
 [ -d "${host_dir}/bin" ] || die "Worker host bin directory does not exist: ${host_dir}/bin"
 
-files=(firecracker helmr-worker jailer)
+files=(cpu-template-helper firecracker helmr-worker jailer)
 for name in "${files[@]}"; do
   path="${host_dir}/bin/${name}"
   [ ! -L "${path}" ] && [ -f "${path}" ] && [ -x "${path}" ] ||
@@ -47,12 +47,6 @@ if command -v file >/dev/null 2>&1; then
 fi
 
 source_commit="$(git -C "${root}" rev-parse HEAD)"
-version_file="${host_dir}/share/helmr-worker/source-commit"
-[ ! -L "${version_file}" ] && [ -f "${version_file}" ] ||
-  die "Worker host source commit must be a regular non-symlink file: ${version_file}"
-worker_version="$(tr -d '\n' <"${version_file}")"
-[ "${worker_version}" = "${source_commit}" ] ||
-  die "Worker host source commit ${worker_version} does not match ${source_commit}"
 
 parent="$(dirname "${output}")"
 mkdir -p "${parent}"
@@ -76,20 +70,16 @@ for name in "${files[@]}"; do
 done
 
 jq -cn \
-  --arg source_commit "${source_commit}" \
-  --arg worker_version "${worker_version}" \
   --argjson files "${file_entries}" '
   {
     schema: "helmr.worker-host-artifacts.v0",
     arch: "amd64",
-    sourceCommit: $source_commit,
-    workerVersion: $worker_version,
     files: $files
   }
 ' >"${payload}/worker-host-artifacts.json"
 chmod 0644 "${payload}/worker-host-artifacts.json"
 
-members=(firecracker helmr-worker jailer worker-host-artifacts.json)
+members=(cpu-template-helper firecracker helmr-worker jailer worker-host-artifacts.json)
 tar \
   --sort=name \
   --mtime='@0' \
@@ -106,12 +96,10 @@ install -m 0600 "${payload}/worker-host-artifacts.json" "${result}/worker-host-a
 jq -cn \
   --arg bundle_digest "${bundle_digest}" \
   --arg manifest_digest "${manifest_digest}" \
-  --arg source_commit "${source_commit}" \
-  --arg worker_version "${worker_version}" '
+  --arg source_commit "${source_commit}" '
   {
     schema: "helmr.worker-host-bundle.v0",
     sourceCommit: $source_commit,
-    workerVersion: $worker_version,
     bundle: {path: "worker-host-artifacts.tar", digest: $bundle_digest},
     manifest: {path: "worker-host-artifacts.json", digest: $manifest_digest}
   }

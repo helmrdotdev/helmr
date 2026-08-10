@@ -415,6 +415,7 @@ func (d *Authority) createWorkspaceExecRuntime(
 		WorkerEpoch:      worker.workerEpoch,
 		Role:             "run",
 		RunArchitecture:  authority.architecture,
+		RequirePrimary:   true,
 	}); err != nil {
 		return WorkspaceExecPlacement{}, ErrCapacityUnavailable
 	}
@@ -434,7 +435,7 @@ func (d *Authority) createWorkspaceExecRuntime(
 			WorkerInstanceID:                worker.workerID,
 			RuntimeIdentityID:               worker.runtimeIdentityID,
 			DeploymentDefinitionID:          authority.workspaceDefinitionID,
-			WorkerEpoch:                     worker.workerEpoch,
+			WorkerEpoch:                     pgtype.Int8{Int64: worker.workerEpoch, Valid: true},
 			ReservedCPUMillis:               authority.resources.cpuMillis,
 			ReservedMemoryBytes:             authority.resources.memoryBytes,
 			ReservedGuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes,

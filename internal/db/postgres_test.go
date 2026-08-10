@@ -45,17 +45,6 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
 		VALUES ($1, $2, $3, $4, 'Environment', '#3366ff')
 	`, ids.environmentID, ids.orgID, ids.projectID, environmentSlug)
-	dbtest.MustExec(t, ctx, pool, `
-		INSERT INTO runtime_identities (
-			id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest,
-			rootfs_digest
-		) VALUES (
-			'test-runtime', 'x86_64', 'test', 'sha256:kernel',
-			'sha256:initramfs', 'sha256:rootfs'
-		)
-		ON CONFLICT DO NOTHING
-	`)
-
 	sourceArtifactID := seedPostgresArtifact(
 		t,
 		ctx,
@@ -150,5 +139,45 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	dbtest.MustExec(t, ctx, pool, `
+		INSERT INTO runtime_identities (
+			id, runtime_arch, vm_runtime_contract, vm_runtime_descriptor_digest,
+			firecracker_digest, firecracker_version, snapshot_format_version,
+			host_kernel_release, cpu_template_kind,
+			kernel_digest, initramfs_digest, rootfs_digest
+		) VALUES (
+			$1, 'x86_64', 'helmr.vm-runtime.v0', $2,
+			$3, '1.16.1', '6.0.0', '6.8.0-test', 'none',
+			$4, $5, $6
+		)
+	`, dbtest.DefaultRuntimeID, dbtest.Digest("default-vm-runtime-descriptor"),
+		dbtest.Digest("default-firecracker"), dbtest.Digest("default-kernel"),
+		dbtest.Digest("default-initramfs"), dbtest.Digest("default-rootfs"))
+	dbtest.MustExec(t, ctx, pool, `
+		INSERT INTO worker_pools (
+			id, worker_group_id, name, state, allows_run, allows_build,
+			runtime_identity_id, substrate_format, substrate_contract,
+			capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes,
+			per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes,
+			max_vm_slots, max_build_executors, sealed_at
+		) VALUES (
+			$1, $2, 'default', 'active', true, true,
+			$3, 'ext4', 'helmr.substrate.ext4.v0',
+			8000, 17179869184, 274877906944,
+			4000, 8589934592, 34359738368,
+			8, 1, now()
+		)
+	`, dbtest.DefaultWorkerPoolID, dbtest.DefaultWorkerGroupID, dbtest.DefaultRuntimeID)
+	for vcpu := int32(1); vcpu <= 4; vcpu++ {
+		dbtest.MustExec(t, ctx, pool, `
+			INSERT INTO worker_pool_cpu_shapes (worker_pool_id, vcpu_count, cpu_config_digest)
+			VALUES ($1, $2, $3)
+		`, dbtest.DefaultWorkerPoolID, vcpu, dbtest.DefaultCPUConfigID)
+	}
+	dbtest.MustExec(t, ctx, pool, `
+		UPDATE worker_groups
+		   SET primary_run_pool_id = $2, primary_build_pool_id = $2
+		 WHERE id = $1
+	`, dbtest.DefaultWorkerGroupID, dbtest.DefaultWorkerPoolID)
 	return pool
 }

@@ -44,7 +44,7 @@ func TestPrepareRuntimePublishesVerifiedCorpus(t *testing.T) {
 	if info.Mode().Perm() != 0o500 {
 		t.Fatalf("stage mode = %o, want 500", info.Mode().Perm())
 	}
-	for _, name := range []string{"vmlinuz", "initramfs", "rootfs.ext4", "runtime-artifacts.json"} {
+	for _, name := range []string{"vmlinuz", "initramfs", "rootfs.squashfs", "runtime-artifacts.json"} {
 		info, err := os.Stat(filepath.Join(stage, name))
 		if err != nil {
 			t.Fatal(err)
@@ -160,7 +160,7 @@ func TestCheckHardLinkLayout(t *testing.T) {
 	cfg := Config{
 		KernelPath:          filepath.Join(root, "vmlinuz"),
 		InitramfsPath:       filepath.Join(root, "initramfs"),
-		RootfsPath:          filepath.Join(root, "rootfs.ext4"),
+		RootfsPath:          filepath.Join(root, "rootfs.squashfs"),
 		StateDir:            state,
 		JailerChrootBaseDir: jailer,
 	}

@@ -53,11 +53,15 @@ SSM Session Manager access is enabled by default through `AmazonSSMManagedInstan
 inbound SSH rules for bootstrap and smoke debugging. Set `enable_ssm = false` only if the AMI role is
 managed elsewhere.
 
-`worker_roles` advertises the subset of roles this fleet serves. During boot,
-the module fetches the enrollment token into a root-only volatile file. The
-token selects the Worker Group; the EC2 instance ID remains an opaque operator
-locator. AWS identity and fleet configuration remain infrastructure
-responsibilities.
+`worker_roles` advertises the subset of roles this fleet serves, while the
+required `worker_pool_name` identifies this exact immutable supply generation.
+The caller must allocate a new canonical Pool name before changing the AMI or
+another sealed runtime/capacity input; role names are not generation
+identifiers. During boot, the module fetches the enrollment token into a
+root-only volatile file. The token selects the Worker Group, the Pool name
+binds the instance to one logical generation, and the EC2 instance ID remains
+an opaque operator locator. AWS identity and fleet configuration remain
+infrastructure responsibilities.
 
 ## Lifecycle
 

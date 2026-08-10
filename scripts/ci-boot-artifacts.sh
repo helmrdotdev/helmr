@@ -14,13 +14,7 @@ fi
 cd "$repo_root"
 
 ./scripts/check-apko-lock.sh
-bun install --frozen-lockfile --ignore-scripts
 ARCH="$arch" ./scripts/build-guestd-linux.sh
-
-mkdir -p out
-apko build "images/${role}/apko.yaml" "helmr-${role}:ci" "out/${role}.oci.tar" \
-	--arch "$arch" \
-	--lockfile "images/${role}/apko.${arch}.lock.json"
 
 ARCH="$arch" HELMR_GUESTD_BUILT=1 make -C "images/${role}" all
 
@@ -45,22 +39,17 @@ if [ "$role" = "guest" ]; then
 		exit 1
 	fi
 
-	guest_buildkit_binary="$(mktemp)"
-	trap 'rm -f "$guest_buildkit_binary"' EXIT
-	debugfs -R "dump -p /usr/bin/buildkitd $guest_buildkit_binary" \
-		"images/${role}/out/rootfs.ext4" >/dev/null 2>&1
-	if [ ! -s "$guest_buildkit_binary" ] || [ ! -x "$guest_buildkit_binary" ]; then
+	if ! unsquashfs -lln "images/${role}/out/rootfs.squashfs" |
+		awk '$1 == "-rwxr-xr-x" && $6 == "squashfs-root/usr/bin/buildkitd" { found = 1 } END { exit !found }'; then
 		echo "guest rootfs does not contain an executable /usr/bin/buildkitd" >&2
 		exit 1
 	fi
-	rm -f "$guest_buildkit_binary"
-	trap - EXIT
 fi
 
 mkdir -p dist
 cp "images/${role}/out/vmlinuz" "dist/${prefix}-vmlinuz"
 cp "images/${role}/out/initramfs" "dist/${prefix}-initramfs"
-cp "images/${role}/out/rootfs.ext4" "dist/${prefix}-rootfs.ext4"
+cp "images/${role}/out/rootfs.squashfs" "dist/${prefix}-rootfs.squashfs"
 
-sha256sum "dist/${prefix}-vmlinuz" "dist/${prefix}-initramfs" "dist/${prefix}-rootfs.ext4"
+sha256sum "dist/${prefix}-vmlinuz" "dist/${prefix}-initramfs" "dist/${prefix}-rootfs.squashfs"
 ls -lh dist

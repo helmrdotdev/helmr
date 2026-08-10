@@ -10,7 +10,6 @@ module "worker_image" {
   source = "../../modules/worker-image"
 
   name                                 = var.name
-  source_ref                           = var.source_ref
   host_artifacts_bundle_s3_uri         = var.host_artifacts_bundle_s3_uri
   host_artifacts_bundle_object_arn     = var.host_artifacts_bundle_object_arn
   host_artifacts_bundle_digest         = var.host_artifacts_bundle_digest
@@ -29,6 +28,5 @@ module "worker_image" {
   subnet_id                            = var.subnet_id
   security_group_ids                   = var.security_group_ids
   root_volume_size_gb                  = var.root_volume_size_gb
-  image_version                        = var.image_version
   tags                                 = local.tags
 }

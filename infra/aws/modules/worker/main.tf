@@ -12,6 +12,7 @@ locals {
     CAS_URI                           = var.cas_uri
     PLATFORM_STORE_URI                = var.platform_store_uri
     FIRECRACKER_PATH                  = "/usr/local/bin/firecracker"
+    CPU_TEMPLATE_HELPER_PATH          = "/usr/local/bin/cpu-template-helper"
     JAILER_PATH                       = "/usr/local/bin/jailer"
     JAILER_UID                        = tostring(var.jailer_uid)
     JAILER_GID                        = tostring(var.jailer_gid)
@@ -22,6 +23,7 @@ locals {
     WORKER_NETWORK_TRANSLATION_POOL   = var.network_translation_pool
     WORKER_WORK_DIR                   = contains(var.worker_roles, "build") ? "/var/lib/helmr/scratch/worker" : "/var/lib/helmr"
     WORKER_INSTANCE_CREDENTIAL_PATH   = "/var/lib/helmr/worker-credential.json"
+    WORKER_POOL_NAME                  = var.worker_pool_name
     WORKER_ROLES                      = join(",", sort(tolist(var.worker_roles)))
     WORKER_IMAGES_DIR                 = "/var/lib/helmr/images"
     JAILER_CHROOT_DIR                 = contains(var.worker_roles, "build") ? "/var/lib/helmr/scratch/jailer" : "/var/lib/helmr/jailer"

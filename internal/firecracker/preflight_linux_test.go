@@ -64,14 +64,14 @@ func TestCheckHardLinkLayoutRejectsSeparateBindMount(t *testing.T) {
 	cfg := Config{
 		KernelPath:          filepath.Join(bind, "vmlinuz"),
 		InitramfsPath:       filepath.Join(bind, "initramfs"),
-		RootfsPath:          filepath.Join(bind, "rootfs.ext4"),
+		RootfsPath:          filepath.Join(bind, "rootfs.squashfs"),
 		StateDir:            state,
 		JailerChrootBaseDir: jailer,
 	}
 	for _, path := range []string{
 		filepath.Join(source, "vmlinuz"),
 		filepath.Join(source, "initramfs"),
-		filepath.Join(source, "rootfs.ext4"),
+		filepath.Join(source, "rootfs.squashfs"),
 	} {
 		if err := os.WriteFile(path, []byte("artifact"), 0o444); err != nil {
 			t.Fatal(err)

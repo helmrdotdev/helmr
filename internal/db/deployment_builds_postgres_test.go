@@ -76,10 +76,10 @@ func newDeploymentBuildFixture(t *testing.T) (*deploymentBuildFixture, *pgxpool.
 	serviceID := uuid.Must(uuid.NewV7())
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, state,
+			id, resource_id, worker_group_id, worker_pool_id, state,
 			current_epoch, current_service_id, epoch_started_at
-		) VALUES ($1, $2, $3, 'registering', 1, $4, now())
-	`, workerID, workerID.String(), groupID, serviceID)
+		) VALUES ($1, $2, $3, $5, 'registering', 1, $4, now())
+	`, workerID, workerID.String(), groupID, serviceID, dbtest.DefaultWorkerPoolID)
 
 	return &deploymentBuildFixture{
 		ctx:           ctx,
@@ -481,33 +481,29 @@ func (f *deploymentBuildFixture) leaseParams(sequence int64) db.LeaseQueuedDeplo
 
 func (f *deploymentBuildFixture) activateBuildWorker(t *testing.T) {
 	t.Helper()
-	runtimeIdentityID := "build-runtime-" + dbtest.ShortID(f.workerID)
-	dbtest.MustExec(t, f.ctx, f.pool, `
-		INSERT INTO runtime_identities (
-			id, runtime_arch, vm_runtime_contract, kernel_digest,
-			initramfs_digest, rootfs_digest
-		) VALUES (
-			$1, 'x86_64', 'helmr.vm-runtime.v0', 'sha256:test-kernel',
-			'sha256:test-initramfs', 'sha256:test-rootfs'
-		)
-	`, runtimeIdentityID)
 	dbtest.MustExec(t, f.ctx, f.pool, `
 		UPDATE worker_instances
 		   SET state = 'active',
+		       supports_run = true,
 		       supports_build = true,
 		       runtime_identity_id = $2,
-		       supervisor_version = 'test-worker',
-		       epoch_cpu_millis = $3,
-		       epoch_memory_bytes = $4,
-		       epoch_guest_ephemeral_disk_bytes = $5,
-		       per_vm_cpu_millis = $3,
-		       per_vm_memory_bytes = $4,
-		       per_vm_guest_ephemeral_disk_bytes = $5,
+		       substrate_format = 'ext4',
+		       substrate_contract = 'helmr.substrate.ext4.v0',
+		       epoch_cpu_millis = 8000,
+		       epoch_memory_bytes = 17179869184,
+		       epoch_guest_ephemeral_disk_bytes = 274877906944,
+		       per_vm_cpu_millis = 4000,
+		       per_vm_memory_bytes = 8589934592,
+		       per_vm_guest_ephemeral_disk_bytes = 34359738368,
+		       max_vm_slots = 8,
 		       max_build_executors = 1,
+		       max_runtime_starts = 1,
+		       cpu_environment = '{}'::jsonb,
+		       cpu_environment_digest = $3,
 		       observed_at = now(),
 		       activated_at = now()
 		 WHERE id = $1
-	`, f.workerID, runtimeIdentityID, buildCPU, buildMemory, buildGuestDisk)
+	`, f.workerID, dbtest.DefaultRuntimeID, dbtest.DefaultCPUConfigID)
 }
 
 func TestClaimNextDeploymentBuildLeaseRechecksGroupAdmission(t *testing.T) {

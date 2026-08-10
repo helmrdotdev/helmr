@@ -335,7 +335,7 @@ func TestBuildPreStartRejectionsReturnSuccessfulNilWork(t *testing.T) {
 		{
 			name: "runtime architecture mismatch", reason: "requirements_unsupported", withBuilder: true,
 			mutate: func(capabilities *workerapi.Capabilities, _ *workerapi.DeploymentBuildLease, _ *workerapi.DeploymentBuild) {
-				capabilities.RuntimeArch = "aarch64"
+				capabilities.Runtime.Arch = "aarch64"
 			},
 		},
 		{

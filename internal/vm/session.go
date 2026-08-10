@@ -122,6 +122,8 @@ type SnapshotArtifact struct {
 	InitramfsDigest     string
 	RootfsDigest        string
 	RuntimeConfigDigest string
+	VMVCPUCount         int32
+	CPUConfigDigest     string
 	Substrate           *RuntimeSubstrate
 	VMState             SnapshotFile
 	ScratchDisk         SnapshotFile
@@ -162,6 +164,8 @@ type MaterializeRequest struct {
 	WorkspaceMountPath string
 	BaseVersionID      string
 	Resources          compute.ResourceVector
+	VMVCPUCount        int32
+	CPUConfigDigest    string
 	Topology           RuntimeTopology
 	ReadOnlyDrives     []ReadOnlyDrive
 }
@@ -295,6 +299,8 @@ type CheckpointIdentity struct {
 	InitramfsDigest     string
 	RootfsDigest        string
 	RuntimeConfigDigest string
+	VMVCPUCount         int32
+	CPUConfigDigest     string
 }
 
 type RuntimePhase struct {

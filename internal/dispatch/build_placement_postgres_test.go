@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/capacityapi"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -89,10 +90,20 @@ WITH token AS (
     RETURNING id
 )
 INSERT INTO worker_groups (
-    id, token_id, region_id, name
+    id, token_id, region_id, name, allows_run, allows_build
 )
-SELECT $1, token.id, 'us-east-1', $1 FROM token`,
+SELECT $1, token.id, 'us-east-1', $1, false, true FROM token`,
 		fixture.groupID, uuid.Must(uuid.NewV7()), dbtest.Hash("build-placement-worker-group"))
+	seedDispatchWorkerPool(t, ctx, pool, fixture.groupID, dispatchWorkerPoolFixture{
+		allowsBuild:                     true,
+		capacityCPUMillis:               3000,
+		capacityMemoryBytes:             4294967296,
+		capacityGuestEphemeralDiskBytes: 34359738368,
+		perVMCPUMillis:                  2000,
+		perVMMemoryBytes:                2147483648,
+		perVMGuestEphemeralDiskBytes:    34359738368,
+		maxBuildExecutors:               1,
+	})
 	return fixture
 }
 
@@ -100,37 +111,32 @@ func (f *buildPlacementFixture) addWorker(t *testing.T, ready bool) uuid.UUID {
 	t.Helper()
 	workerID := uuid.Must(uuid.NewV7())
 	serviceID := uuid.Must(uuid.NewV7())
-	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	dbtest.MustExec(t, f.ctx, f.pool, `
-INSERT INTO runtime_identities (
-    id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest, rootfs_digest
-) VALUES ($1, $2, 'helmr.vm-runtime.v0', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs')`,
-		runtimeID, platformArchitecture)
 	if ready {
+		cpuEnvironment, cpuEnvironmentDigest := dispatchCPUEnvironment(t)
 		dbtest.MustExec(t, f.ctx, f.pool, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, state,
-			current_epoch, current_service_id, supervisor_version, supports_build,
+			id, resource_id, worker_group_id, worker_pool_id, state,
+			current_epoch, current_service_id, supports_build,
 			runtime_identity_id,
 			epoch_cpu_millis, epoch_memory_bytes,
     epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis,
     per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes,
-    max_build_executors, observed_at, epoch_started_at, activated_at
+    max_build_executors, cpu_environment, cpu_environment_digest,
+    observed_at, epoch_started_at, activated_at
 		) VALUES (
-			$1, $2, $3, 'active',
-			1, $4, 'test-worker', true, $5, 3000, 4294967296, 34359738368,
-			2000, 2147483648, 34359738368, 1, now(), now(), now()
-)`, workerID, workerID.String(), f.groupID, serviceID, runtimeID)
+			$1, $2, $3, $4, 'active',
+			1, $5, true, $6, 3000, 4294967296, 34359738368,
+			2000, 2147483648, 34359738368, 1, $7::jsonb, $8,
+			now(), now(), now()
+)`, workerID, workerID.String(), f.groupID, dbtest.DefaultWorkerPoolID,
+			serviceID, dbtest.DefaultRuntimeID, cpuEnvironment, cpuEnvironmentDigest)
 	} else {
 		dbtest.MustExec(t, f.ctx, f.pool, `
 INSERT INTO worker_instances (
-    id, resource_id, worker_group_id, state,
-    current_epoch, current_service_id, supports_build,
-    runtime_identity_id, epoch_started_at
+    id, resource_id, worker_group_id, worker_pool_id, state
 ) VALUES (
-    $1, $2, $3, 'registering',
-    1, $4, true, $5, now()
-)`, workerID, workerID.String(), f.groupID, serviceID, runtimeID)
+    $1, $2, $3, $4, 'registering'
+)`, workerID, workerID.String(), f.groupID, dbtest.DefaultWorkerPoolID)
 	}
 	return workerID
 }
@@ -179,7 +185,7 @@ UPDATE worker_instances
 	}
 }
 
-func TestPlaceReadyBuildRequiresV0WorkerRuntimeIdentity(t *testing.T) {
+func TestPlaceReadyBuildRequiresSupportedWorkerRuntimeIdentity(t *testing.T) {
 	fixture := newBuildPlacementFixture(t)
 	workerID := fixture.addWorker(t, true)
 	lease, err := fixture.authority.PlaceReadyBuild(
@@ -191,17 +197,20 @@ func TestPlaceReadyBuildRequiresV0WorkerRuntimeIdentity(t *testing.T) {
 	if lease.WorkerInstanceID != pgvalue.UUID(workerID) {
 		t.Fatalf("placed worker = %v, want %s", lease.WorkerInstanceID, workerID)
 	}
-	var architecture string
+	var architecture, contract string
 	if err := fixture.pool.QueryRow(fixture.ctx, `
-SELECT runtime_identities.runtime_arch
+SELECT runtime_identities.runtime_arch, runtime_identities.vm_runtime_contract
   FROM deployment_build_leases
   JOIN worker_instances ON worker_instances.id = deployment_build_leases.worker_instance_id
   JOIN runtime_identities ON runtime_identities.id = worker_instances.runtime_identity_id
- WHERE deployment_build_leases.id = $1`, lease.ID).Scan(&architecture); err != nil {
+ WHERE deployment_build_leases.id = $1`, lease.ID).Scan(&architecture, &contract); err != nil {
 		t.Fatal(err)
 	}
 	if architecture != platformArchitecture {
 		t.Fatalf("leased worker architecture = %q, want %s", architecture, platformArchitecture)
+	}
+	if contract != capacityapi.RuntimeContract {
+		t.Fatalf("leased worker runtime contract = %q, want %s", contract, capacityapi.RuntimeContract)
 	}
 }
 

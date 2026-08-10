@@ -169,7 +169,7 @@ LIMIT 1`, params.Lease.BuildRegionID, params.Lease.DeploymentID,
 	if err := lockWorkerFence(ctx, tx, workerFence{
 		GroupID: params.Lease.WorkerGroupID, RegionID: params.Lease.BuildRegionID,
 		WorkerInstanceID: params.Lease.BuildWorkerInstanceID, WorkerEpoch: params.Lease.WorkerEpoch,
-		Role: "build",
+		Role: "build", RequirePrimary: true,
 	}); err != nil {
 		return db.LeaseQueuedDeploymentBuildRow{}, err
 	}

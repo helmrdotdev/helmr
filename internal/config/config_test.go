@@ -471,6 +471,7 @@ func setWorkerEnrollmentEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("WORKER_RESOURCE_ID", "host-1")
+	t.Setenv("WORKER_POOL_NAME", "default")
 	t.Setenv("WORKER_ENROLLMENT_TOKEN_FILE", secretFile)
 }
 
@@ -537,7 +538,9 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("WORKER_WORK_DIR", " /var/lib/helmr/scratch/worker ")
 	t.Setenv("WORKER_IMAGES_DIR", " /var/lib/helmr/images ")
+	t.Setenv("WORKER_POOL_NAME", "run-build")
 	t.Setenv("FIRECRACKER_PATH", " /usr/bin/firecracker ")
+	t.Setenv("CPU_TEMPLATE_HELPER_PATH", " /usr/bin/cpu-template-helper ")
 	t.Setenv("JAILER_PATH", " /usr/bin/jailer ")
 	t.Setenv("JAILER_UID", " 1001 ")
 	t.Setenv("JAILER_GID", " 1002 ")
@@ -570,7 +573,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if cfg.CASURI != "s3://helmr-cas" || cfg.WorkDir != "/var/lib/helmr/scratch/worker" || cfg.BuildCacheDir != "/var/lib/helmr/cache" || cfg.BuildScratchDir != "/var/lib/helmr/scratch" || cfg.ImagesDir != "/var/lib/helmr/images" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.NetworkLinkPool != "169.254.128.0/18" || cfg.NetworkTranslationPool != "100.97.0.0/16" || cfg.NetworkResolverIPv4 != "1.0.0.1" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerDiskReserveMiB != 2048 || cfg.SubstrateCacheMaxMiB != 32768 || cfg.ArtifactCacheMaxMiB != 16384 || cfg.WorkerExecutionSlots != 4 || cfg.VMInitTimeout != 45*time.Second || cfg.VMHealthTimeout != 90*time.Second {
+	if cfg.WorkerPoolName != "run-build" || cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.CPUTemplateHelperPath != "/usr/bin/cpu-template-helper" || cfg.NetworkLinkPool != "169.254.128.0/18" || cfg.NetworkTranslationPool != "100.97.0.0/16" || cfg.NetworkResolverIPv4 != "1.0.0.1" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerDiskReserveMiB != 2048 || cfg.SubstrateCacheMaxMiB != 32768 || cfg.ArtifactCacheMaxMiB != 16384 || cfg.WorkerExecutionSlots != 4 || cfg.VMInitTimeout != 45*time.Second || cfg.VMHealthTimeout != 90*time.Second {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if len(cfg.NetworkBlockedIPv4CIDRs) != 2 || cfg.NetworkBlockedIPv4CIDRs[1].String() != "169.254.0.0/16" {
@@ -584,6 +587,35 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	}
 	if !bytes.Equal(cfg.CheckpointKey, make([]byte, 32)) {
 		t.Fatalf("config = %+v", cfg)
+	}
+}
+
+func TestLoadWorkerDefaultsCPUTemplateHelperPath(t *testing.T) {
+	for _, value := range []string{"", " \n"} {
+		t.Run(value, func(t *testing.T) {
+			setValidWorkerEnv(t, false)
+			t.Setenv("CPU_TEMPLATE_HELPER_PATH", value)
+			cfg, err := LoadWorker()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.CPUTemplateHelperPath != "cpu-template-helper" {
+				t.Fatalf("CPUTemplateHelperPath = %q", cfg.CPUTemplateHelperPath)
+			}
+		})
+	}
+}
+
+func TestLoadWorkerRequiresCanonicalPoolName(t *testing.T) {
+	for _, value := range []string{"", " run", "run ", "Run", "-run", "run-", "run_pool"} {
+		t.Run(value, func(t *testing.T) {
+			setValidWorkerEnv(t, false)
+			t.Setenv("WORKER_POOL_NAME", value)
+			_, err := LoadWorker()
+			if err == nil || !strings.Contains(err.Error(), "WORKER_POOL_NAME") {
+				t.Fatalf("error = %v", err)
+			}
+		})
 	}
 }
 

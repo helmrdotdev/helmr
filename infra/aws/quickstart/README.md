@@ -152,10 +152,13 @@ while a worker is running or draining because workers run in private subnets. Wo
 filesystem-first: the root EBS volume carries build/cache/runtime data, and `worker_disk_mib` can
 override the disk capacity advertised to the Control Plane.
 
-For an AMI rollout, change `worker_ami_id`, apply the launch template, and
-coordinate the Auto Scaling instance refresh through the deployment's exact
-drain-to-`termination_ready` path. Control Plane does not authenticate or allowlist
-the AMI.
+The stack derives each Worker Pool generation name from the resolved AMI,
+instance/runtime class, roles, and advertised capacity shape. Changing one of
+those sealed inputs creates a new Pool name; changing only ASG minimum or
+maximum size does not. Apply the launch-template change, then coordinate the
+Auto Scaling instance refresh through the deployment's exact
+drain-to-`termination_ready` path. Control Plane does not authenticate or
+allowlist the AMI.
 
 Deployment infrastructure owns desired capacity for run and build groups.
 Terraform retains the ASG min/max guardrails, and equal min/max values provide

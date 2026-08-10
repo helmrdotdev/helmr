@@ -2359,7 +2359,7 @@ WITH locked_group AS MATERIALIZED (
        AND worker_groups.allows_build
      FOR UPDATE
 )
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.epoch_build_cache_bytes, worker_instances.epoch_artifact_cache_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.build_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at,
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.build_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at,
        runtime_identities.rootfs_digest,
        runtime_identities.vm_runtime_contract,
        runtime_identities.runtime_arch
@@ -2385,11 +2385,11 @@ type LockDeploymentBuildWorkerAuthorityRow struct {
 	ID                           pgtype.UUID        `json:"id"`
 	ResourceID                   string             `json:"resource_id"`
 	WorkerGroupID                string             `json:"worker_group_id"`
+	WorkerPoolID                 pgtype.UUID        `json:"worker_pool_id"`
 	State                        string             `json:"state"`
 	ClaimVersion                 int64              `json:"claim_version"`
 	CurrentEpoch                 pgtype.Int8        `json:"current_epoch"`
 	CurrentServiceID             pgtype.UUID        `json:"current_service_id"`
-	SupervisorVersion            string             `json:"supervisor_version"`
 	SupportsRun                  bool               `json:"supports_run"`
 	SupportsBuild                bool               `json:"supports_build"`
 	RuntimeIdentityID            pgtype.Text        `json:"runtime_identity_id"`
@@ -2398,14 +2398,14 @@ type LockDeploymentBuildWorkerAuthorityRow struct {
 	EpochCPUMillis               int64              `json:"epoch_cpu_millis"`
 	EpochMemoryBytes             int64              `json:"epoch_memory_bytes"`
 	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
-	EpochBuildCacheBytes         int64              `json:"epoch_build_cache_bytes"`
-	EpochArtifactCacheBytes      int64              `json:"epoch_artifact_cache_bytes"`
 	PerVMCPUMillis               int64              `json:"per_vm_cpu_millis"`
 	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
 	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
 	MaxVMSlots                   int32              `json:"max_vm_slots"`
 	MaxBuildExecutors            int32              `json:"max_build_executors"`
 	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
+	CPUEnvironment               []byte             `json:"cpu_environment"`
+	CPUEnvironmentDigest         pgtype.Text        `json:"cpu_environment_digest"`
 	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
 	RunPausedReason              pgtype.Text        `json:"run_paused_reason"`
 	BuildPausedReason            pgtype.Text        `json:"build_paused_reason"`
@@ -2429,11 +2429,11 @@ func (q *Queries) LockDeploymentBuildWorkerAuthority(ctx context.Context, arg Lo
 		&i.ID,
 		&i.ResourceID,
 		&i.WorkerGroupID,
+		&i.WorkerPoolID,
 		&i.State,
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.CurrentServiceID,
-		&i.SupervisorVersion,
 		&i.SupportsRun,
 		&i.SupportsBuild,
 		&i.RuntimeIdentityID,
@@ -2442,14 +2442,14 @@ func (q *Queries) LockDeploymentBuildWorkerAuthority(ctx context.Context, arg Lo
 		&i.EpochCPUMillis,
 		&i.EpochMemoryBytes,
 		&i.EpochGuestEphemeralDiskBytes,
-		&i.EpochBuildCacheBytes,
-		&i.EpochArtifactCacheBytes,
 		&i.PerVMCPUMillis,
 		&i.PerVMMemoryBytes,
 		&i.PerVMGuestEphemeralDiskBytes,
 		&i.MaxVMSlots,
 		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
+		&i.CPUEnvironment,
+		&i.CPUEnvironmentDigest,
 		&i.ObservedAt,
 		&i.RunPausedReason,
 		&i.BuildPausedReason,

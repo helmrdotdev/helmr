@@ -129,6 +129,7 @@ func (d *Authority) prepareRunWorkspace(
 		WorkerEpoch:      worker.workerEpoch,
 		Role:             "run",
 		RunArchitecture:  authority.architecture,
+		RequirePrimary:   !authority.restoreCheckpointID.Valid,
 	}); err != nil {
 		return runWorkspaceMount{}, ErrCapacityUnavailable
 	}
@@ -152,7 +153,7 @@ func (d *Authority) prepareRunWorkspace(
 			WorkerInstanceID:                worker.workerID,
 			RuntimeIdentityID:               worker.runtimeIdentityID,
 			DeploymentDefinitionID:          authority.workspaceDefinitionID,
-			WorkerEpoch:                     worker.workerEpoch,
+			WorkerEpoch:                     pgtype.Int8{Int64: worker.workerEpoch, Valid: true},
 			ReservedCPUMillis:               authority.resources.cpuMillis,
 			ReservedMemoryBytes:             authority.resources.memoryBytes,
 			ReservedGuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes,
@@ -160,7 +161,11 @@ func (d *Authority) prepareRunWorkspace(
 			WorkspaceID:                     authority.workspaceID,
 			ProgramDeploymentID:             authority.deploymentID,
 			RestoreCheckpointID:             authority.restoreCheckpointID,
-			RunID:                           authority.runID,
+			RequiredCPUConfigDigest: pgtype.Text{
+				String: authority.restoreCPUConfigDigest,
+				Valid:  authority.restoreCheckpointID.Valid,
+			},
+			RunID: authority.runID,
 			AttemptNumber: pgtype.Int4{
 				Int32: authority.attemptNumber,
 				Valid: true,
@@ -522,7 +527,9 @@ func selectRunWorker(
 			CPUMillis: authority.resources.cpuMillis, MemoryBytes: authority.resources.memoryBytes,
 			GuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes, VMSlots: 1,
 		},
-		Architecture: authority.architecture, RuntimeIdentityID: authority.restoreRuntimeIdentityID,
+		Architecture: authority.architecture, WorkerGroupID: authority.restoreWorkerGroupID,
+		RuntimeIdentityID: authority.restoreRuntimeIdentityID, VCPUCount: authority.restoreVMVCPUCount,
+		CPUConfigDigest: authority.restoreCPUConfigDigest,
 		SubstrateFormat: authority.restoreSubstrateFormat, SubstrateContract: authority.restoreSubstrateContract,
 	})
 	if !ok || !selected.WorkerEpoch.Valid || !selected.RuntimeIdentityID.Valid {

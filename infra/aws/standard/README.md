@@ -134,10 +134,13 @@ virtualization remains available for supported instance families when explicitly
 are filesystem-first: size the root EBS volume for build/cache/runtime data, and set
 `worker_disk_mib` only when the advertised filesystem capacity should differ from auto-detection.
 
-For an AMI rollout, change `worker_ami_id`, apply the launch template, and
-coordinate the Auto Scaling instance refresh through the deployment's exact
-drain-to-`termination_ready` path. Control Plane does not authenticate or allowlist
-the AMI.
+The stack derives each Worker Pool generation name from the resolved AMI,
+instance/runtime class, roles, and advertised capacity shape. Changing one of
+those sealed inputs creates a new Pool name; changing only ASG minimum or
+maximum size does not. Apply the launch-template change, then coordinate the
+Auto Scaling instance refresh through the deployment's exact
+drain-to-`termination_ready` path. Control Plane does not authenticate or
+allowlist the AMI.
 
 Deployment infrastructure owns desired capacity independently for run and
 build groups. Terraform continues enforcing ASG min/max; `max_size` is the hard

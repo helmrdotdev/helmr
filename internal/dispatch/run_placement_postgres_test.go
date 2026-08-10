@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/capacityapi"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -160,6 +161,17 @@ func TestPlaceReadyRunPreparesMountAndGrantsFencedLeases(t *testing.T) {
 		!reserved.RuntimeInstanceID.Valid ||
 		reserved.WorkspaceMountID.Valid {
 		t.Fatalf("reservation placement = %+v", reserved)
+	}
+	var vmVCPUCount int32
+	var cpuConfigDigest string
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT vm_vcpu_count, cpu_config_digest
+  FROM runtime_instances
+ WHERE id = $1`, reserved.RuntimeInstanceID).Scan(&vmVCPUCount, &cpuConfigDigest); err != nil {
+		t.Fatal(err)
+	}
+	if vmVCPUCount != 1 || cpuConfigDigest != dbtest.DefaultCPUConfigID {
+		t.Fatalf("runtime CPU shape = %d/%q, want 1/%q", vmVCPUCount, cpuConfigDigest, dbtest.DefaultCPUConfigID)
 	}
 
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -2589,7 +2601,8 @@ UPDATE worker_instances SET substrate_contract = 'incompatible-contract' WHERE i
 		t.Fatalf("restore placement with incompatible substrate contract error = %v, want ErrCapacityUnavailable", err)
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_instances SET substrate_contract = 'builder-v0' WHERE id = $1`, fixture.workerID)
+UPDATE worker_instances SET substrate_contract = $2 WHERE id = $1`,
+		fixture.workerID, capacityapi.SubstrateContractExt4)
 	restored, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate)
 	if err != nil {
 		t.Fatal(err)
@@ -2849,7 +2862,6 @@ UPDATE runs
 	if _, err := startupTx.Exec(fixture.ctx, `
 UPDATE worker_instances
 	   SET state = 'registering', current_epoch = 2,
-       supervisor_version = '',
        supports_run = false,
        supports_build = false,
 	       runtime_identity_id = NULL,
@@ -2858,14 +2870,14 @@ UPDATE worker_instances
        epoch_cpu_millis = 0,
        epoch_memory_bytes = 0,
        epoch_guest_ephemeral_disk_bytes = 0,
-       epoch_build_cache_bytes = 0,
-       epoch_artifact_cache_bytes = 0,
        per_vm_cpu_millis = 0,
        per_vm_memory_bytes = 0,
        per_vm_guest_ephemeral_disk_bytes = 0,
        max_vm_slots = 0,
        max_build_executors = 0,
        max_runtime_starts = 0,
+	   cpu_environment = NULL,
+	   cpu_environment_digest = NULL,
        activated_at = NULL,
        epoch_started_at = transaction_timestamp(), updated_at = transaction_timestamp()
  WHERE id = $1`, fixture.workerID); err != nil {
@@ -3288,6 +3300,8 @@ UPDATE runtime_instances SET desired_state = 'closed', desired_version = desired
 func markRunPlacementRuntimeReadyQuery(t *testing.T, fixture runPlacementFixture, runtimeID pgtype.UUID) error {
 	t.Helper()
 	var desiredVersion, observedVersion, workerEpoch int64
+	var vmVCPUCount int32
+	var cpuConfigDigest string
 	var workerID, runtimeSubstrateID pgtype.UUID
 	err := fixture.pool.QueryRow(fixture.ctx, `
 WITH runtime AS (
@@ -3305,7 +3319,7 @@ inserted AS (
 		substrate_size_bytes
 	)
 	SELECT $2, org_id, project_id, environment_id, deployment_definition_id,
-		   'sha256:test-runtime-substrate', 'squashfs', 'builder-v0', 1
+		   'sha256:test-runtime-substrate', $3, $4, 1
       FROM runtime
     ON CONFLICT ON CONSTRAINT runtime_substrates_input_key DO NOTHING
     RETURNING id
@@ -3315,9 +3329,10 @@ UNION ALL
 SELECT runtime_substrates.id
   FROM runtime_substrates
   JOIN runtime USING (org_id, project_id, environment_id, deployment_definition_id)
- WHERE substrate_format = 'squashfs'
-   AND substrate_contract = 'builder-v0'
-LIMIT 1`, runtimeID, pgvalue.NewUUIDv7()).Scan(&runtimeSubstrateID)
+ WHERE substrate_format = $3
+   AND substrate_contract = $4
+LIMIT 1`, runtimeID, pgvalue.NewUUIDv7(),
+		capacityapi.SubstrateFormatExt4, capacityapi.SubstrateContractExt4).Scan(&runtimeSubstrateID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3325,10 +3340,13 @@ LIMIT 1`, runtimeID, pgvalue.NewUUIDv7()).Scan(&runtimeSubstrateID)
 SELECT runtime_instances.desired_version,
        runtime_instances.observed_version,
        runtime_instances.worker_instance_id,
-       runtime_instances.worker_epoch
+       runtime_instances.worker_epoch,
+       runtime_instances.vm_vcpu_count,
+       runtime_instances.cpu_config_digest
   FROM runtime_instances
  WHERE runtime_instances.id = $1`, runtimeID).Scan(
 		&desiredVersion, &observedVersion, &workerID, &workerEpoch,
+		&vmVCPUCount, &cpuConfigDigest,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -3337,6 +3355,7 @@ SELECT runtime_instances.desired_version,
 		RuntimeSubstrateID: runtimeSubstrateID,
 		DesiredVersion:     desiredVersion, ID: runtimeID, WorkerInstanceID: workerID,
 		WorkerEpoch: workerEpoch, ExpectedObservedVersion: observedVersion,
+		VMVCPUCount: vmVCPUCount, CPUConfigDigest: cpuConfigDigest,
 	})
 	return err
 }
@@ -3377,15 +3396,7 @@ UPDATE worker_instances
 }
 
 func TestPlaceReadyRunAccountsForActiveBuildResources(t *testing.T) {
-	fixture := newRunPlacementFixture(t)
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_instances
-   SET epoch_memory_bytes = 4294967296,
-       epoch_guest_ephemeral_disk_bytes = 68719476736,
-       per_vm_guest_ephemeral_disk_bytes = 68719476736
- WHERE id = $1`,
-		fixture.workerID,
-	)
+	fixture := newDualRoleRunPlacementFixture(t)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO deployment_build_leases (
     id, org_id, project_id, environment_id, deployment_id, build_region_id,
@@ -3425,10 +3436,14 @@ func (fixture runPlacementFixture) candidate() ReadyRunCandidate {
 }
 
 func newRunPlacementFixture(t *testing.T) runPlacementFixture {
-	return newRunPlacementFixtureWithSeed(t, uuid.NewString())
+	return newRunPlacementFixtureWithSeedAndRoles(t, uuid.NewString(), false)
 }
 
-func newRunPlacementFixtureWithSeed(t *testing.T, seed string) runPlacementFixture {
+func newDualRoleRunPlacementFixture(t *testing.T) runPlacementFixture {
+	return newRunPlacementFixtureWithSeedAndRoles(t, uuid.NewString(), true)
+}
+
+func newRunPlacementFixtureWithSeedAndRoles(t *testing.T, seed string, allowsBuild bool) runPlacementFixture {
 	t.Helper()
 	ctx := context.Background()
 	pool := newDispatchIntegrationDB(t, ctx)
@@ -3467,7 +3482,6 @@ func newRunPlacementFixtureWithSeed(t *testing.T, seed string) runPlacementFixtu
 	sourceID := id("source-artifact")
 	programID := id("program-artifact")
 	imageID := id("image-artifact")
-	runtimeIdentityID := "run-runtime-" + strings.ReplaceAll(id("runtime-identity").String(), "-", "")
 	sourceDigest := "sha256:" + strings.Repeat("1", 64)
 	programDigest := "sha256:" + strings.Repeat("2", 64)
 	imageDigest := "sha256:" + strings.Repeat("4", 64)
@@ -3575,38 +3589,72 @@ WITH token AS (
 INSERT INTO worker_groups (
     id, token_id, region_id, name, allows_run, allows_build
 )
-SELECT $1, token.id, 'us-east-1', $1, true, false FROM token`,
-		fixture.groupID, id("worker-group-token"), dbtest.Hash("run-placement-worker-group"),
+SELECT $1, token.id, 'us-east-1', $1, true, $4 FROM token`,
+		fixture.groupID, id("worker-group-token"), dbtest.Hash("run-placement-worker-group"), allowsBuild,
 	)
-	dbtest.MustExec(t, ctx, pool, `
-INSERT INTO runtime_identities (
-    id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest,
-    rootfs_digest
-) VALUES ($1, 'x86_64', 'helmr.vm-runtime.v0', 'kernel', 'initramfs', 'rootfs')`,
-		runtimeIdentityID,
-	)
+	poolSpec := dispatchWorkerPoolFixture{
+		allowsRun:                       true,
+		allowsBuild:                     allowsBuild,
+		substrateFormat:                 capacityapi.SubstrateFormatExt4,
+		substrateContract:               capacityapi.SubstrateContractExt4,
+		capacityCPUMillis:               8000,
+		capacityMemoryBytes:             8589934592,
+		capacityGuestEphemeralDiskBytes: 274877906944,
+		perVMCPUMillis:                  1000,
+		perVMMemoryBytes:                1073741824,
+		perVMGuestEphemeralDiskBytes:    34359738368,
+		maxVMSlots:                      8,
+	}
+	if allowsBuild {
+		poolSpec.capacityCPUMillis = 3000
+		poolSpec.capacityMemoryBytes = 4294967296
+		poolSpec.capacityGuestEphemeralDiskBytes = 34359738368
+		poolSpec.perVMCPUMillis = 2000
+		poolSpec.perVMMemoryBytes = 2147483648
+		poolSpec.maxVMSlots = 1
+		poolSpec.maxBuildExecutors = 1
+	}
+	seedDispatchWorkerPool(t, ctx, pool, fixture.groupID, poolSpec)
+	cpuEnvironment, cpuEnvironmentDigest := dispatchCPUEnvironment(t)
 	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO worker_instances (
-    id, resource_id, worker_group_id, state,
-	current_epoch, current_service_id, supervisor_version,
-    supports_run, runtime_identity_id,
+	id, resource_id, worker_group_id, worker_pool_id, state,
+	current_epoch, current_service_id,
+	supports_run, supports_build, runtime_identity_id,
 	substrate_format, substrate_contract,
     epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
     per_vm_cpu_millis, per_vm_memory_bytes,
     per_vm_guest_ephemeral_disk_bytes, max_vm_slots,
-    max_runtime_starts, observed_at, epoch_started_at, activated_at
+    max_build_executors, max_runtime_starts,
+    cpu_environment, cpu_environment_digest,
+    observed_at, epoch_started_at, activated_at
 ) VALUES (
-	$1, $2, $3, 'active', 1, $4,
-	'test-worker', true, $5, 'squashfs', 'builder-v0',
-    8000, 8589934592, 274877906944,
-    1000, 1073741824, 34359738368,
-    8, 8, now(), now(), now()
+	$1, $2, $3, $4, 'active', 1, $5,
+	true, $17, $6, $18, $19,
+	$7, $8, $9,
+	$10, $11, $12,
+	$13, $14, $13,
+	$15::jsonb, $16, now(), now(), now()
 )`,
 		fixture.workerID,
 		fixture.workerID.String(),
 		fixture.groupID,
+		dbtest.DefaultWorkerPoolID,
 		id("worker-service"),
-		runtimeIdentityID,
+		dbtest.DefaultRuntimeID,
+		poolSpec.capacityCPUMillis,
+		poolSpec.capacityMemoryBytes,
+		poolSpec.capacityGuestEphemeralDiskBytes,
+		poolSpec.perVMCPUMillis,
+		poolSpec.perVMMemoryBytes,
+		poolSpec.perVMGuestEphemeralDiskBytes,
+		poolSpec.maxVMSlots,
+		poolSpec.maxBuildExecutors,
+		cpuEnvironment,
+		cpuEnvironmentDigest,
+		allowsBuild,
+		poolSpec.substrateFormat,
+		poolSpec.substrateContract,
 	)
 	tx, err := pool.Begin(ctx)
 	if err != nil {

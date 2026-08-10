@@ -1,7 +1,6 @@
 {
   lib,
   buildGoModule,
-  version,
 }:
 
 let
@@ -22,7 +21,7 @@ let
 in
 buildGoModule {
   pname = "helmr-worker";
-  inherit version;
+  version = "0.0.0";
 
   src = lib.fileset.toSource {
     root = ../..;
@@ -51,7 +50,6 @@ buildGoModule {
   ldflags = [
     "-s"
     "-w"
-    "-X github.com/helmrdotdev/helmr/internal/version.Version=${version}"
   ];
 
   meta = {

@@ -968,14 +968,21 @@ type RunWait struct {
 }
 
 type RuntimeIdentity struct {
-	ID                string             `json:"id"`
-	RuntimeArch       string             `json:"runtime_arch"`
-	VMRuntimeContract string             `json:"vm_runtime_contract"`
-	KernelDigest      string             `json:"kernel_digest"`
-	InitramfsDigest   string             `json:"initramfs_digest"`
-	RootfsDigest      string             `json:"rootfs_digest"`
-	FirstSeenAt       pgtype.Timestamptz `json:"first_seen_at"`
-	LastSeenAt        pgtype.Timestamptz `json:"last_seen_at"`
+	ID                        string             `json:"id"`
+	RuntimeArch               string             `json:"runtime_arch"`
+	VMRuntimeContract         string             `json:"vm_runtime_contract"`
+	VMRuntimeDescriptorDigest string             `json:"vm_runtime_descriptor_digest"`
+	FirecrackerDigest         string             `json:"firecracker_digest"`
+	FirecrackerVersion        string             `json:"firecracker_version"`
+	SnapshotFormatVersion     string             `json:"snapshot_format_version"`
+	HostKernelRelease         string             `json:"host_kernel_release"`
+	CPUTemplateKind           string             `json:"cpu_template_kind"`
+	CPUTemplateDigest         pgtype.Text        `json:"cpu_template_digest"`
+	KernelDigest              string             `json:"kernel_digest"`
+	InitramfsDigest           string             `json:"initramfs_digest"`
+	RootfsDigest              string             `json:"rootfs_digest"`
+	FirstSeenAt               pgtype.Timestamptz `json:"first_seen_at"`
+	LastSeenAt                pgtype.Timestamptz `json:"last_seen_at"`
 }
 
 type RuntimeInstance struct {
@@ -990,6 +997,8 @@ type RuntimeInstance struct {
 	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
 	RuntimeSubstrateID              pgtype.UUID        `json:"runtime_substrate_id"`
 	WorkerEpoch                     int64              `json:"worker_epoch"`
+	VMVCPUCount                     int32              `json:"vm_vcpu_count"`
+	CPUConfigDigest                 string             `json:"cpu_config_digest"`
 	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
 	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
 	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
@@ -1243,17 +1252,19 @@ type User struct {
 }
 
 type WorkerGroup struct {
-	ID           string             `json:"id"`
-	TokenID      pgtype.UUID        `json:"token_id"`
-	RegionID     string             `json:"region_id"`
-	Name         string             `json:"name"`
-	Description  string             `json:"description"`
-	State        string             `json:"state"`
-	ClaimVersion int64              `json:"claim_version"`
-	AllowsRun    bool               `json:"allows_run"`
-	AllowsBuild  bool               `json:"allows_build"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	ID                 string             `json:"id"`
+	TokenID            pgtype.UUID        `json:"token_id"`
+	RegionID           string             `json:"region_id"`
+	Name               string             `json:"name"`
+	Description        string             `json:"description"`
+	State              string             `json:"state"`
+	ClaimVersion       int64              `json:"claim_version"`
+	AllowsRun          bool               `json:"allows_run"`
+	AllowsBuild        bool               `json:"allows_build"`
+	PrimaryRunPoolID   pgtype.UUID        `json:"primary_run_pool_id"`
+	PrimaryBuildPoolID pgtype.UUID        `json:"primary_build_pool_id"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkerGroupToken struct {
@@ -1268,11 +1279,11 @@ type WorkerInstance struct {
 	ID                           pgtype.UUID        `json:"id"`
 	ResourceID                   string             `json:"resource_id"`
 	WorkerGroupID                string             `json:"worker_group_id"`
+	WorkerPoolID                 pgtype.UUID        `json:"worker_pool_id"`
 	State                        string             `json:"state"`
 	ClaimVersion                 int64              `json:"claim_version"`
 	CurrentEpoch                 pgtype.Int8        `json:"current_epoch"`
 	CurrentServiceID             pgtype.UUID        `json:"current_service_id"`
-	SupervisorVersion            string             `json:"supervisor_version"`
 	SupportsRun                  bool               `json:"supports_run"`
 	SupportsBuild                bool               `json:"supports_build"`
 	RuntimeIdentityID            pgtype.Text        `json:"runtime_identity_id"`
@@ -1281,14 +1292,14 @@ type WorkerInstance struct {
 	EpochCPUMillis               int64              `json:"epoch_cpu_millis"`
 	EpochMemoryBytes             int64              `json:"epoch_memory_bytes"`
 	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
-	EpochBuildCacheBytes         int64              `json:"epoch_build_cache_bytes"`
-	EpochArtifactCacheBytes      int64              `json:"epoch_artifact_cache_bytes"`
 	PerVMCPUMillis               int64              `json:"per_vm_cpu_millis"`
 	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
 	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
 	MaxVMSlots                   int32              `json:"max_vm_slots"`
 	MaxBuildExecutors            int32              `json:"max_build_executors"`
 	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
+	CPUEnvironment               []byte             `json:"cpu_environment"`
+	CPUEnvironmentDigest         pgtype.Text        `json:"cpu_environment_digest"`
 	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
 	RunPausedReason              pgtype.Text        `json:"run_paused_reason"`
 	BuildPausedReason            pgtype.Text        `json:"build_paused_reason"`
@@ -1315,6 +1326,36 @@ type WorkerInstanceCredential struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	LastUsedAt       pgtype.Timestamptz `json:"last_used_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+}
+
+type WorkerPool struct {
+	ID                              pgtype.UUID        `json:"id"`
+	WorkerGroupID                   string             `json:"worker_group_id"`
+	Name                            string             `json:"name"`
+	State                           string             `json:"state"`
+	ClaimVersion                    int64              `json:"claim_version"`
+	AllowsRun                       bool               `json:"allows_run"`
+	AllowsBuild                     bool               `json:"allows_build"`
+	RuntimeIdentityID               pgtype.Text        `json:"runtime_identity_id"`
+	SubstrateFormat                 pgtype.Text        `json:"substrate_format"`
+	SubstrateContract               pgtype.Text        `json:"substrate_contract"`
+	CapacityCPUMillis               pgtype.Int8        `json:"capacity_cpu_millis"`
+	CapacityMemoryBytes             pgtype.Int8        `json:"capacity_memory_bytes"`
+	CapacityGuestEphemeralDiskBytes pgtype.Int8        `json:"capacity_guest_ephemeral_disk_bytes"`
+	PerVMCPUMillis                  pgtype.Int8        `json:"per_vm_cpu_millis"`
+	PerVMMemoryBytes                pgtype.Int8        `json:"per_vm_memory_bytes"`
+	PerVMGuestEphemeralDiskBytes    pgtype.Int8        `json:"per_vm_guest_ephemeral_disk_bytes"`
+	MaxVMSlots                      pgtype.Int4        `json:"max_vm_slots"`
+	MaxBuildExecutors               pgtype.Int4        `json:"max_build_executors"`
+	SealedAt                        pgtype.Timestamptz `json:"sealed_at"`
+	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WorkerPoolCpuShape struct {
+	WorkerPoolID    pgtype.UUID `json:"worker_pool_id"`
+	VCPUCount       int32       `json:"vcpu_count"`
+	CPUConfigDigest string      `json:"cpu_config_digest"`
 }
 
 type Workspace struct {
