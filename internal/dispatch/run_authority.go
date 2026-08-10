@@ -34,7 +34,10 @@ type runPlacementAuthority struct {
 	resumeRunWaitID           pgtype.UUID
 	resumeRequestVersion      int64
 	restoreRuntimeID          pgtype.UUID
+	restoreWorkerGroupID      string
 	restoreRuntimeIdentityID  string
+	restoreVMVCPUCount        int32
+	restoreCPUConfigDigest    string
 	restoreSubstrateID        pgtype.UUID
 	restoreSubstrateFormat    string
 	restoreSubstrateContract  string
@@ -566,7 +569,10 @@ SELECT run_attempts.base_workspace_version_id,
 	if authority.restoreCheckpointID.Valid {
 		err = tx.QueryRow(ctx, `
 SELECT source_runtime.id,
+       source_lease.worker_group_id,
        source_runtime.runtime_identity_id,
+       source_runtime.vm_vcpu_count,
+       source_runtime.cpu_config_digest,
        source_runtime.runtime_substrate_id,
 	       runtime_substrates.substrate_format,
 	       runtime_substrates.substrate_contract
@@ -671,7 +677,10 @@ SELECT source_runtime.id,
 			authority.sameWorkspaceResume,
 		).Scan(
 			&authority.restoreRuntimeID,
+			&authority.restoreWorkerGroupID,
 			&authority.restoreRuntimeIdentityID,
+			&authority.restoreVMVCPUCount,
+			&authority.restoreCPUConfigDigest,
 			&authority.restoreSubstrateID,
 			&authority.restoreSubstrateFormat,
 			&authority.restoreSubstrateContract,

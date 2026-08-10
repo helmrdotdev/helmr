@@ -15,9 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/localcache"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
@@ -26,13 +24,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
-	"golang.org/x/sync/errgroup"
 )
 
 const workspaceStartupTimeout = 20 * time.Minute
 
 type WorkspaceMaterializer struct {
-	Connector             vm.Connector
 	CAS                   cas.Store
 	Sessions              WorkspaceMountSessionRegistry
 	TempDir               string
@@ -45,16 +41,11 @@ type WorkspaceMaterializer struct {
 	Log                   *slog.Logger
 	ArtifactCacheDir      string
 	ArtifactCacheMaxBytes int64
-	Substrates            RuntimeSubstrateResolver
 	RuntimePool           *PreparedRuntimePool
 	BackgroundGate        *BackgroundWorkGate
-	Capacity              *capacity.Ledger
 }
 
 func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount workerapi.WorkspaceMount, client workerapi.WorkspaceMaterializerControlPlaneClient) (runErr error) {
-	if m.Connector == nil {
-		return errors.New("workspace materializer connector is required")
-	}
 	endForeground := m.beginForegroundWorkspaceMount()
 	foregroundActive := true
 	defer func() {
@@ -71,17 +62,12 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount work
 	startupCtx, cancelStartup := context.WithTimeout(ctx, m.startupTimeout())
 	defer cancelStartup()
 	phaseStarted := time.Now()
-	rawSession, workspaceImagePath, workspaceArtifactPath, cleanup, runtimeInstanceID, usePreparedRuntime, resourceKey, err := m.materializeSession(startupCtx, &mount)
+	rawSession, workspaceArtifactPath, cleanup, runtimeInstanceID, err := m.materializeSession(startupCtx, &mount)
 	m.logWorkspaceMountPhase(mount, "workspace mount session materialized", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
 	if err != nil {
 		cleanup()
 		_ = m.failWorkspaceMount(client, mount, err)
-		return fmt.Errorf("connect workspace mount guest: %w", err)
-	}
-	if usePreparedRuntime && m.RuntimePool != nil {
-		mount.RestoreCheckpointID = m.RuntimePool.checkedOutRestoreCheckpoint(
-			mount.RuntimeInstanceID, mount.RuntimeEpoch,
-		)
+		return fmt.Errorf("checkout workspace mount runtime: %w", err)
 	}
 	renewal := m.startRenewalLoop(ctx, workerapi.WorkspaceMountRenewRequest{
 		OrgID: mount.OrgID, WorkspaceMountID: mount.ID,
@@ -100,21 +86,12 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount work
 			runErr = errors.Join(runErr, failure)
 			return
 		}
-		if usePreparedRuntime && m.RuntimePool != nil {
-			if releaseErr := m.RuntimePool.ReleaseCheckout(mount.RuntimeInstanceID, mount.RuntimeEpoch); releaseErr != nil {
-				runErr = errors.Join(runErr, fmt.Errorf("release workspace mount runtime checkout: %w", releaseErr))
-			}
-			return
-		}
-		if m.Capacity != nil && resourceKey.ID != "" {
-			if releaseErr := m.Capacity.Release(resourceKey); releaseErr != nil {
-				m.logWorkspaceMountPhase(mount, "workspace mount capacity release failed", "error", releaseErr.Error())
-				runErr = errors.Join(runErr, fmt.Errorf("release workspace mount capacity: %w", releaseErr))
-			}
+		if releaseErr := m.RuntimePool.ReleaseCheckout(mount.RuntimeInstanceID, mount.RuntimeEpoch); releaseErr != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("release workspace mount runtime checkout: %w", releaseErr))
 		}
 	}()
 	phaseStarted = time.Now()
-	if err := m.registerWorkspaceMountContext(startupCtx, session, mount, workspaceImagePath, workspaceArtifactPath, runtimeInstanceID, usePreparedRuntime); err != nil {
+	if err := m.registerWorkspaceMountContext(startupCtx, session, mount, workspaceArtifactPath, runtimeInstanceID); err != nil {
 		m.logWorkspaceMountPhase(mount, "workspace mount guest registered", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
 		if renewalErr := renewal.stopAndWait(); renewalErr != nil {
 			err = renewalErr
@@ -598,243 +575,88 @@ func (e workspaceMountFailure) Unwrap() error {
 	return e.err
 }
 
-func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *workerapi.WorkspaceMount) (vm.Session, string, string, func(), string, bool, capacity.Key, error) {
+func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *workerapi.WorkspaceMount) (vm.Session, string, func(), string, error) {
+	cleanup := func() {}
 	if mount == nil {
-		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "workspace_mount_missing", err: errors.New("workspace mount is required")}
+		return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_mount_missing", err: errors.New("workspace mount is required")}
 	}
 	if m.CAS == nil {
-		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "workspace_mount_cas_unconfigured", err: errors.New("workspace materializer CAS is required")}
+		return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_mount_cas_unconfigured", err: errors.New("workspace materializer CAS is required")}
 	}
-	connector, ok := m.Connector.(vm.MaterializingConnector)
-	if !ok {
-		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "workspace_mount_connector_unsupported", err: errors.New("workspace materializer connector does not support artifact mount")}
+	if m.RuntimePool == nil {
+		return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_runtime_pool_unconfigured", err: errors.New("workspace prepared runtime pool is required")}
+	}
+	mount.RuntimeInstanceID = strings.TrimSpace(mount.RuntimeInstanceID)
+	if mount.RuntimeInstanceID == "" {
+		return nil, "", cleanup, "", workspaceMountFailure{code: "runtime_instance_missing", err: errors.New("workspace mount claim must include a runtime instance id")}
+	}
+	if mount.RuntimeEpoch <= 0 {
+		return nil, "", cleanup, "", workspaceMountFailure{code: "runtime_instance_fence_missing", err: errors.New("workspace mount claim must include the runtime epoch")}
+	}
+	if strings.TrimSpace(mount.BaseVersionID) == "" {
+		return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_version_missing", err: errors.New("workspace mount base_version_id is required")}
+	}
+	if strings.TrimSpace(mount.WorkspaceMountPath) == "" {
+		return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_mount_path_missing", err: errors.New("workspace mount mount path is required")}
+	}
+	if strings.TrimSpace(mount.WorkspaceArtifact.Encoding) != workspace.ArtifactEncoding {
+		return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_version_artifact_incompatible", err: fmt.Errorf("workspace artifact encoding %q is not supported", mount.WorkspaceArtifact.Encoding)}
+	}
+	if err := validateWorkspaceArtifactShape(mount.WorkspaceArtifact); err != nil {
+		return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_version_artifact_incompatible", err: err}
 	}
 	tempDir := strings.TrimSpace(m.TempDir)
 	if tempDir == "" {
 		tempDir = os.TempDir()
 	}
 	if err := os.MkdirAll(tempDir, 0o755); err != nil {
-		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "workspace_mount_temp_unavailable", err: fmt.Errorf("create mount temp dir: %w", err)}
+		return nil, "", cleanup, "", workspaceMountFailure{code: "workspace_mount_temp_unavailable", err: fmt.Errorf("create mount temp dir: %w", err)}
 	}
-	if m.RuntimePool != nil {
-		if session, key, ok := m.RuntimePool.Checkout(ctx, *mount); ok {
-			workspaceArtifact := workerapi.CASObject{
-				Digest:    strings.TrimSpace(mount.WorkspaceArtifact.Digest),
-				SizeBytes: mount.WorkspaceArtifact.SizeBytes,
-				MediaType: strings.TrimSpace(mount.WorkspaceArtifact.MediaType),
-			}
-			workspacePath := ""
-			cleanupWorkspace := func() {}
-			if !workspaceArtifactIsEmpty(mount.WorkspaceArtifact) {
-				phaseStarted := time.Now()
-				var err error
-				workspacePath, cleanupWorkspace, err = m.restoreCASObject(ctx, tempDir, "workspace-version", workspaceArtifact)
-				m.logWorkspaceMountPhase(*mount, "workspace mount workspace artifact restored", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", workspaceArtifact.SizeBytes, "error", errorString(err), "prepared_runtime_hit", true)
-				if err != nil {
-					if closeErr := m.closeSession(session); closeErr != nil {
-						err = errors.Join(err, workspaceMountFailure{
-							code: "workspace_mount_runtime_close_failed",
-							err:  fmt.Errorf("close prepared workspace runtime: %w", closeErr),
-						})
-					} else if releaseErr := m.RuntimePool.ReleaseCheckout(mount.RuntimeInstanceID, mount.RuntimeEpoch); releaseErr != nil {
-						err = errors.Join(err, fmt.Errorf("release prepared workspace runtime checkout: %w", releaseErr))
-					}
-					return nil, "", "", cleanupWorkspace, key, true, capacity.Key{}, err
-				}
-			}
-			m.logWorkspaceMountPhase(*mount, "workspace mount prepared runtime checked out", "runtime_instance_id", key)
-			return session, "", workspacePath, cleanupWorkspace, key, true, capacity.Key{}, nil
+	session, key, ok := m.RuntimePool.Checkout(ctx, *mount)
+	if !ok {
+		if err := ctx.Err(); err != nil {
+			return nil, "", cleanup, key, err
+		}
+		return nil, "", cleanup, key, workspaceMountFailure{
+			code: "workspace_runtime_not_prepared",
+			err:  fmt.Errorf("workspace runtime %q at epoch %d is not prepared", mount.RuntimeInstanceID, mount.RuntimeEpoch),
 		}
 	}
-	mount.RuntimeInstanceID = strings.TrimSpace(mount.RuntimeInstanceID)
-	if mount.RuntimeInstanceID == "" {
-		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "runtime_instance_missing", err: errors.New("workspace mount claim must include a runtime instance id")}
+	if session == nil {
+		err := errors.New("prepared workspace runtime session is unavailable")
+		if releaseErr := m.RuntimePool.ReleaseCheckout(mount.RuntimeInstanceID, mount.RuntimeEpoch); releaseErr != nil {
+			err = errors.Join(err, fmt.Errorf("release prepared workspace runtime checkout: %w", releaseErr))
+		}
+		return nil, "", cleanup, key, workspaceMountFailure{code: "workspace_runtime_not_prepared", err: err}
 	}
-	if mount.RuntimeEpoch <= 0 {
-		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "runtime_instance_fence_missing", err: errors.New("workspace mount claim must include the runtime epoch")}
-	}
-	runtimeInstanceID := runtimeInstanceIDFromWorkspaceMount(*mount)
-	m.logWorkspaceMountPhase(*mount, "workspace mount runtime instance claimed", "runtime_instance_id", runtimeInstanceID)
+	mount.RestoreCheckpointID = m.RuntimePool.checkedOutRestoreCheckpoint(
+		mount.RuntimeInstanceID, mount.RuntimeEpoch,
+	)
 	workspaceArtifact := workerapi.CASObject{
 		Digest:    strings.TrimSpace(mount.WorkspaceArtifact.Digest),
 		SizeBytes: mount.WorkspaceArtifact.SizeBytes,
 		MediaType: strings.TrimSpace(mount.WorkspaceArtifact.MediaType),
 	}
-	if strings.TrimSpace(mount.BaseVersionID) == "" {
-		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "workspace_version_missing", err: errors.New("workspace mount base_version_id is required")}
-	}
-	if strings.TrimSpace(mount.WorkspaceMountPath) == "" {
-		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "workspace_mount_path_missing", err: errors.New("workspace mount mount path is required")}
-	}
-	if strings.TrimSpace(mount.WorkspaceArtifact.Encoding) != workspace.ArtifactEncoding {
-		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "workspace_version_artifact_incompatible", err: fmt.Errorf("workspace artifact encoding %q is not supported", mount.WorkspaceArtifact.Encoding)}
-	}
-	if err := validateWorkspaceArtifactShape(mount.WorkspaceArtifact); err != nil {
-		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "workspace_version_artifact_incompatible", err: err}
-	}
-	if m.Capacity == nil {
-		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "workspace_capacity_unavailable", err: errors.New("workspace materializer capacity ledger is required")}
-	}
-	resourceVector, err := runtimeCapacityVector(mount.RequestedMilliCPU, mount.RequestedMemoryMiB, mount.RequestedDiskMiB)
-	if err != nil {
-		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "workspace_capacity_unavailable", err: err}
-	}
-	resourceKey := runtimeCapacityKey(mount.RuntimeInstanceID, mount.RuntimeEpoch)
-	created, err := m.Capacity.Reserve(resourceKey, resourceVector)
-	if err != nil {
-		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "workspace_capacity_unavailable", err: err}
-	}
-	if !created {
-		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "workspace_capacity_unavailable", err: errors.New("workspace runtime is already reserved locally")}
-	}
-	var (
-		workspaceImagePath    string
-		workspacePath         string
-		session               vm.Session
-		cleanupWorkspaceImage = func() {}
-		cleanupWorkspace      = func() {}
-		materializeAttempted  bool
-	)
-	releaseCapacity := func() error {
-		return m.Capacity.Release(resourceKey)
-	}
-	cleanupMaterializeFailure := func() error {
-		if session != nil {
+	workspacePath := ""
+	if !workspaceArtifactIsEmpty(mount.WorkspaceArtifact) && mount.RestoreCheckpointID == "" {
+		phaseStarted := time.Now()
+		var err error
+		workspacePath, cleanup, err = m.restoreCASObject(ctx, tempDir, "workspace-version", workspaceArtifact)
+		m.logWorkspaceMountPhase(*mount, "workspace mount workspace artifact restored", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", workspaceArtifact.SizeBytes, "error", errorString(err), "prepared_runtime_hit", true)
+		if err != nil {
 			if closeErr := m.closeSession(session); closeErr != nil {
-				return workspaceMountFailure{
+				err = errors.Join(err, workspaceMountFailure{
 					code: "workspace_mount_runtime_close_failed",
-					err:  fmt.Errorf("close failed workspace runtime: %w", closeErr),
-				}
+					err:  fmt.Errorf("close prepared workspace runtime: %w", closeErr),
+				})
+			} else if releaseErr := m.RuntimePool.ReleaseCheckout(mount.RuntimeInstanceID, mount.RuntimeEpoch); releaseErr != nil {
+				err = errors.Join(err, fmt.Errorf("release prepared workspace runtime checkout: %w", releaseErr))
 			}
-			return releaseCapacity()
-		}
-		if !materializeAttempted {
-			return releaseCapacity()
-		}
-		if cleaner, ok := m.Connector.(vm.Cleaner); ok {
-			cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), m.failureTimeout())
-			err := cleaner.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerRuntime, ID: mount.RuntimeInstanceID})
-			cancelCleanup()
-			if err != nil {
-				return workspaceMountFailure{
-					code: "workspace_mount_runtime_cleanup_failed",
-					err:  fmt.Errorf("cleanup failed workspace runtime: %w", err),
-				}
-			}
-			return releaseCapacity()
-		}
-		return workspaceMountFailure{
-			code: "workspace_mount_runtime_cleanup_failed",
-			err:  errors.New("workspace runtime cleanup connector is required after materialization"),
+			return nil, "", cleanup, key, err
 		}
 	}
-	cleanup := func() {
-		cleanupWorkspace()
-		cleanupWorkspaceImage()
-	}
-	var group errgroup.Group
-	group.Go(func() error {
-		phaseStarted := time.Now()
-		path, cleanupFn, err := m.restoreCASObject(ctx, tempDir, "workspace-image", mount.WorkspaceImage)
-		cleanupWorkspaceImage = cleanupFn
-		workspaceImagePath = path
-		m.logWorkspaceMountPhase(*mount, "workspace image restored", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", mount.WorkspaceImage.SizeBytes, "error", errorString(err))
-		return err
-	})
-	if !workspaceArtifactIsEmpty(mount.WorkspaceArtifact) && strings.TrimSpace(mount.RestoreCheckpointID) == "" {
-		group.Go(func() error {
-			phaseStarted := time.Now()
-			path, cleanupFn, err := m.restoreCASObject(ctx, tempDir, "workspace-version", workspaceArtifact)
-			cleanupWorkspace = cleanupFn
-			workspacePath = path
-			m.logWorkspaceMountPhase(*mount, "workspace mount workspace artifact restored", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", workspaceArtifact.SizeBytes, "error", errorString(err))
-			return err
-		})
-	}
-	if m.Substrates == nil {
-		group.Go(func() error {
-			phaseStarted := time.Now()
-			materializeAttempted = true
-			materialized, err := connector.Materialize(ctx, vm.MaterializeRequest{
-				ID:                 mount.RuntimeInstanceID,
-				OwnerKind:          vm.OwnerRuntime,
-				Binding:            workspaceMountWorkloadBinding(*mount),
-				RootfsDigest:       mount.RootfsDigest,
-				WorkspaceMountPath: mount.WorkspaceMountPath,
-				BaseVersionID:      mount.BaseVersionID,
-				Resources: compute.ResourceVector{
-					MilliCPU:  mount.RequestedMilliCPU,
-					MemoryMiB: mount.RequestedMemoryMiB,
-					DiskMiB:   mount.RequestedDiskMiB,
-					Slots:     mount.RequestedExecutionSlots,
-				},
-			})
-			session = materialized
-			m.logWorkspaceMountPhase(*mount, "workspace mount connector materialized", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
-			if err != nil {
-				return workspaceMountFailure{code: "workspace_sandbox_abi_incompatible", err: err}
-			}
-			return nil
-		})
-	}
-	if err := group.Wait(); err != nil {
-		err = errors.Join(err, cleanupMaterializeFailure())
-		cleanup()
-		return nil, "", "", func() {}, "", false, capacity.Key{}, err
-	}
-	if m.Substrates != nil {
-		phaseStarted := time.Now()
-		topology, err := runtimeSubstrateTopology(ctx, m.Substrates, workspaceImagePath, *mount)
-		m.logWorkspaceMountPhase(*mount, "workspace mount substrate resolved", "duration_ms", time.Since(phaseStarted).Milliseconds(), "substrate_digest", runtimeSubstrateDigest(topology), "error", errorString(err))
-		if err != nil {
-			err = errors.Join(err, releaseCapacity())
-			cleanup()
-			return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "workspace_sandbox_substrate_unavailable", err: err}
-		}
-		phaseStarted = time.Now()
-		materializeAttempted = true
-		materialized, err := connector.Materialize(ctx, vm.MaterializeRequest{
-			ID:                 mount.RuntimeInstanceID,
-			OwnerKind:          vm.OwnerRuntime,
-			Binding:            workspaceMountWorkloadBinding(*mount),
-			RootfsDigest:       mount.RootfsDigest,
-			WorkspaceMountPath: mount.WorkspaceMountPath,
-			BaseVersionID:      mount.BaseVersionID,
-			Resources: compute.ResourceVector{
-				MilliCPU:  mount.RequestedMilliCPU,
-				MemoryMiB: mount.RequestedMemoryMiB,
-				DiskMiB:   mount.RequestedDiskMiB,
-				Slots:     mount.RequestedExecutionSlots,
-			},
-			Topology: topology,
-		})
-		session = materialized
-		m.logWorkspaceMountPhase(*mount, "workspace mount connector materialized", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
-		if err != nil {
-			err = errors.Join(err, cleanupMaterializeFailure())
-			cleanup()
-			return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{code: "workspace_sandbox_abi_incompatible", err: err}
-		}
-	}
-	if session == nil {
-		cleanupErr := cleanupMaterializeFailure()
-		cleanup()
-		return nil, "", "", func() {}, "", false, capacity.Key{}, workspaceMountFailure{
-			code: "workspace_sandbox_abi_incompatible",
-			err:  errors.Join(errors.New("workspace mount connector returned nil session"), cleanupErr),
-		}
-	}
-	return session, workspaceImagePath, workspacePath, cleanup, runtimeInstanceID, false, resourceKey, nil
-}
-
-func workspaceMountWorkloadBinding(mount workerapi.WorkspaceMount) vm.WorkloadBinding {
-	return vm.WorkloadBinding{
-		WorkerEpoch:       mount.RuntimeEpoch,
-		OwnerID:           mount.RuntimeInstanceID,
-		Generation:        1,
-		RuntimeInstanceID: mount.RuntimeInstanceID,
-		RuntimeIdentityID: mount.RuntimeIdentityID,
-	}
+	m.logWorkspaceMountPhase(*mount, "workspace mount prepared runtime checked out", "runtime_instance_id", key)
+	return session, workspacePath, cleanup, key, nil
 }
 
 func (m WorkspaceMaterializer) restoreCASObject(ctx context.Context, tempDir string, label string, artifact workerapi.CASObject) (string, func(), error) {
@@ -1105,7 +927,7 @@ func linkCachedArtifact(tempDir string, label string, cachePath string) (string,
 	return path, func() { _ = os.Remove(path) }, nil
 }
 
-func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, session vm.Session, mount workerapi.WorkspaceMount, workspaceImagePath string, workspaceArtifactPath string, runtimeInstanceID string, usePreparedRuntime bool) error {
+func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, session vm.Session, mount workerapi.WorkspaceMount, workspaceArtifactPath string, runtimeInstanceID string) error {
 	channelToken := m.channelToken(mount)
 	if channelToken == "" {
 		return errors.New("workspace mount guest channel token is required")
@@ -1113,17 +935,11 @@ func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, sessi
 	if strings.TrimSpace(mount.GuestdChannelTokenHash) == "" {
 		return errors.New("workspace mount guest channel token hash is required")
 	}
-	stream := session.Stream()
-	closeStream := func() {}
-	if usePreparedRuntime {
-		preparedStream, err := session.OpenStream(ctx)
-		if err != nil {
-			return fmt.Errorf("open prepared runtime materialize stream: %w", err)
-		}
-		stream = preparedStream
-		closeStream = func() { _ = preparedStream.Close() }
+	stream, err := session.OpenStream(ctx)
+	if err != nil {
+		return fmt.Errorf("open prepared runtime materialize stream: %w", err)
 	}
-	defer closeStream()
+	defer stream.Close()
 	phaseStarted := time.Now()
 	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
 		Type:        wire.StreamTypeWorkspaceMaterialize,
@@ -1148,7 +964,7 @@ func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, sessi
 			Encoding:  "oci-tar",
 			SizeBytes: uint64(mount.WorkspaceImage.SizeBytes),
 		},
-		UsePreparedRuntime:   usePreparedRuntime,
+		UsePreparedRuntime:   true,
 		RuntimeInstanceId:    strings.TrimSpace(runtimeInstanceID),
 		RestoredCheckpointId: strings.TrimSpace(mount.RestoreCheckpointID),
 	}
@@ -1167,19 +983,7 @@ func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, sessi
 		return fmt.Errorf("write workspace materialize request: %w", err)
 	}
 	m.logWorkspaceMountPhase(mount, "workspace mount request written", "duration_ms", time.Since(phaseStarted).Milliseconds())
-	if !usePreparedRuntime {
-		phaseStarted = time.Now()
-		if err := wire.WriteFileFrameWithMetadata(stream, wire.StreamHeader{
-			Type:        wire.StreamTypeRunImage,
-			WorkspaceID: mount.WorkspaceID,
-		}, workspaceImagePath, strings.TrimSpace(mount.WorkspaceImage.Digest), mount.WorkspaceImage.SizeBytes); err != nil {
-			m.logWorkspaceMountPhase(mount, "workspace image sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", mount.WorkspaceImage.SizeBytes, "error", err.Error())
-			return fmt.Errorf("write workspace image: %w", err)
-		}
-		m.logWorkspaceMountPhase(mount, "workspace image sent", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", mount.WorkspaceImage.SizeBytes)
-	} else {
-		m.logWorkspaceMountPhase(mount, "workspace image transfer skipped", "prepared_runtime_hit", true, "runtime_instance_id", runtimeInstanceID, "size_bytes", mount.WorkspaceImage.SizeBytes)
-	}
+	m.logWorkspaceMountPhase(mount, "workspace image transfer skipped", "prepared_runtime_hit", true, "runtime_instance_id", runtimeInstanceID, "size_bytes", mount.WorkspaceImage.SizeBytes)
 	if !workspaceArtifactIsEmpty(mount.WorkspaceArtifact) && strings.TrimSpace(mount.RestoreCheckpointID) == "" {
 		phaseStarted = time.Now()
 		if err := wire.WriteFileFrameWithMetadata(stream, wire.StreamHeader{
@@ -1242,10 +1046,10 @@ func workspaceMountPhaseError(phases []*workspacev0.WorkspaceMountPhase) string 
 	return ""
 }
 
-func (m WorkspaceMaterializer) registerWorkspaceMountContext(ctx context.Context, session vm.Session, mount workerapi.WorkspaceMount, workspaceImagePath string, workspaceArtifactPath string, runtimeInstanceID string, usePreparedRuntime bool) error {
+func (m WorkspaceMaterializer) registerWorkspaceMountContext(ctx context.Context, session vm.Session, mount workerapi.WorkspaceMount, workspaceArtifactPath string, runtimeInstanceID string) error {
 	result := make(chan error, 1)
 	go func() {
-		result <- m.registerWorkspaceMount(ctx, session, mount, workspaceImagePath, workspaceArtifactPath, runtimeInstanceID, usePreparedRuntime)
+		result <- m.registerWorkspaceMount(ctx, session, mount, workspaceArtifactPath, runtimeInstanceID)
 	}()
 	select {
 	case err := <-result:

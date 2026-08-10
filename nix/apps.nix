@@ -55,6 +55,8 @@ in
         bash tests/release_worker_ami_cleanup_test.sh
         bash tests/release_worker_image_identity_test.sh
         bash tests/pre_aws_release_gate_test.sh
+        bash tests/netboot_inputs_test.sh
+        bash tests/boot_artifacts_make_test.sh
       '';
   ci-generated =
     app "ci-generated" "check generated artifacts and formatting for CI" toolsets.ciChecks
@@ -150,6 +152,20 @@ in
     app "ci-boot-artifacts" "build and stage guest boot artifacts for CI" toolsets.appRuntime
       ''
         exec ./scripts/ci-boot-artifacts.sh "$@"
+      '';
+  ci-boot-artifacts-repro =
+    app "ci-boot-artifacts-repro" "prove guest boot artifact reproducibility for CI"
+      (
+        toolsets.appRuntime
+        ++ [
+          pkgs.gnutar
+          pkgs.nix
+        ]
+      )
+      ''
+        bash ./tests/netboot_inputs_test.sh
+        bash ./tests/boot_artifacts_make_test.sh
+        exec ./tests/boot_artifacts_reproducibility_test.sh "$@"
       '';
   fmt-check = app "fmt-check" "check Go formatting" toolsets.appRuntime ''
     unformatted="$(find . -name '*.go' -not -path './.git/*' -exec gofmt -l {} +)"

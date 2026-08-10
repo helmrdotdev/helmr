@@ -26,7 +26,9 @@ type Fixture struct {
 	TaskDefinitionID      uuid.UUID
 	WorkspaceDefinitionID uuid.UUID
 	WorkerID              uuid.UUID
+	WorkerPoolID          uuid.UUID
 	RuntimeIdentityID     string
+	CPUConfigDigest       string
 }
 
 type RunLease struct {
@@ -49,7 +51,9 @@ func New(t *testing.T) Fixture {
 		TaskDefinitionID:      uuid.Must(uuid.NewV7()),
 		WorkspaceDefinitionID: uuid.Must(uuid.NewV7()),
 		WorkerID:              uuid.Must(uuid.NewV7()),
-		RuntimeIdentityID:     "run-lease-test-runtime",
+		WorkerPoolID:          uuid.Must(uuid.NewV7()),
+		RuntimeIdentityID:     dbtest.Digest("run-lease-test-runtime"),
+		CPUConfigDigest:       dbtest.Digest("run-lease-test-cpu-config"),
 	}
 	sourceID := uuid.Must(uuid.NewV7())
 	programID := uuid.Must(uuid.NewV7())
@@ -133,30 +137,64 @@ func New(t *testing.T) Fixture {
 		fixture.EnvironmentID, fixture.DeploymentID, imageID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO runtime_identities (
-			id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest,
-			rootfs_digest
-		) VALUES ($1, 'x86_64', 'test', 'kernel', 'initramfs', 'rootfs')
-	`, fixture.RuntimeIdentityID)
+			id, runtime_arch, vm_runtime_contract, vm_runtime_descriptor_digest,
+			firecracker_digest, firecracker_version, snapshot_format_version,
+			host_kernel_release, cpu_template_kind,
+			kernel_digest, initramfs_digest, rootfs_digest
+		) VALUES (
+			$1, 'x86_64', 'helmr.vm-runtime.v0', $2,
+			$3, '1.16.1', '6.0.0', '6.8.0-test', 'none',
+			$4, $5, $6
+		)
+	`, fixture.RuntimeIdentityID, dbtest.Digest("run-lease-vm-runtime-descriptor"),
+		dbtest.Digest("run-lease-firecracker"), dbtest.Digest("run-lease-kernel"),
+		dbtest.Digest("run-lease-initramfs"), dbtest.Digest("run-lease-rootfs"))
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `
+		INSERT INTO worker_pools (
+			id, worker_group_id, name, state, allows_run, allows_build,
+			runtime_identity_id, substrate_format, substrate_contract,
+			capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes,
+			per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes,
+			max_vm_slots, max_build_executors, sealed_at
+		) VALUES (
+			$1, $2, 'default', 'active', true, false,
+			$3, 'squashfs', 'builder-v0',
+			8000, 8589934592, 17179869184,
+			1000, 1073741824, 2147483648,
+			8, 0, now()
+		)
+	`, fixture.WorkerPoolID, WorkerGroup, fixture.RuntimeIdentityID)
+	for vcpu := int32(1); vcpu <= 1; vcpu++ {
+		dbtest.MustExec(t, t.Context(), fixture.Pool, `
+			INSERT INTO worker_pool_cpu_shapes (worker_pool_id, vcpu_count, cpu_config_digest)
+			VALUES ($1, $2, $3)
+		`, fixture.WorkerPoolID, vcpu, fixture.CPUConfigDigest)
+	}
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `
+		UPDATE worker_groups SET primary_run_pool_id = $2 WHERE id = $1
+	`, WorkerGroup, fixture.WorkerPoolID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, state,
-			current_epoch, current_service_id, supervisor_version,
+			id, resource_id, worker_group_id, worker_pool_id, state,
+			current_epoch, current_service_id,
 			supports_run, runtime_identity_id,
 			substrate_format, substrate_contract,
 			epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
 			per_vm_cpu_millis, per_vm_memory_bytes,
 			per_vm_guest_ephemeral_disk_bytes,
 			max_vm_slots, max_runtime_starts,
+			cpu_environment, cpu_environment_digest,
 			observed_at, epoch_started_at, activated_at
 		) VALUES (
-			$1, $2, $3, 'active', 1, $4, 'test',
-			true, $5, 'squashfs', 'builder-v0',
+			$1, $2, $3, $4, 'active', 1, $5,
+			true, $6, 'squashfs', 'builder-v0',
 			8000, 8589934592, 17179869184,
 			1000, 1073741824, 2147483648,
-			8, 8, now(), now(), now()
+			8, 8, '{}'::jsonb, $7, now(), now(), now()
 		)
 	`, fixture.WorkerID, fixture.WorkerID.String(), WorkerGroup,
-		uuid.Must(uuid.NewV7()), fixture.RuntimeIdentityID)
+		fixture.WorkerPoolID, uuid.Must(uuid.NewV7()), fixture.RuntimeIdentityID,
+		fixture.CPUConfigDigest)
 	return fixture
 }
 
@@ -224,19 +262,20 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, assignedAt time.T
 		INSERT INTO runtime_instances (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, runtime_identity_id, deployment_definition_id,
-			worker_epoch, reserved_cpu_millis, reserved_memory_bytes,
+			worker_epoch, vm_vcpu_count, cpu_config_digest,
+			reserved_cpu_millis, reserved_memory_bytes,
 			reserved_guest_ephemeral_disk_bytes, reserved_execution_slots,
 			workspace_id, program_deployment_id, desired_reason, observed_state,
 			observed_version, observed_desired_version, preparing_at, ready_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, 1,
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, 1, 1, $12,
 			1000, 1073741824, 2147483648, 1,
 			$10, $11, 'test', 'ready', 1, 1, now(), now()
 		)
 	`, runtimeID, fixture.OrgID, WorkerGroup, fixture.ProjectID,
 		fixture.EnvironmentID, Region, fixture.WorkerID,
 		fixture.RuntimeIdentityID, fixture.WorkspaceDefinitionID, workspaceID,
-		fixture.DeploymentID)
+		fixture.DeploymentID, fixture.CPUConfigDigest)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO workspace_mounts (
 			id, org_id, worker_group_id, project_id, environment_id, region_id,

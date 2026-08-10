@@ -8,16 +8,6 @@ variable "name" {
   type        = string
 }
 
-variable "source_ref" {
-  description = "Exact Git commit embedded in the prebuilt Worker host artifact."
-  type        = string
-
-  validation {
-    condition     = can(regex("^[0-9a-f]{40}$", var.source_ref))
-    error_message = "source_ref must be an exact lowercase 40-character Git commit."
-  }
-}
-
 variable "host_artifacts_manifest_digest" {
   description = "Canonical SHA-256 digest of worker-host-artifacts.json."
   type        = string
@@ -93,16 +83,26 @@ variable "runtime_artifacts_bundle_kms_key_arn" {
 }
 
 variable "parent_image" {
-  description = "Optional parent AMI or Image Builder image ARN."
+  description = "Optional concrete parent AMI ID."
   type        = string
   default     = null
   nullable    = true
+
+  validation {
+    condition     = var.parent_image == null || can(regex("^ami-([0-9a-f]{8}|[0-9a-f]{17})$", var.parent_image))
+    error_message = "parent_image must be a concrete AMI ID."
+  }
 }
 
 variable "distribution_regions" {
   description = "AWS regions where Image Builder should distribute the worker AMI. Defaults to the provider region."
   type        = list(string)
   default     = []
+
+  validation {
+    condition     = alltrue([for region in var.distribution_regions : can(regex("^[a-z]{2}-[a-z-]+-[0-9]+$", region))])
+    error_message = "distribution_regions must contain AWS Region names."
+  }
 }
 
 variable "ami_public" {
@@ -140,10 +140,4 @@ variable "root_volume_size_gb" {
   description = "Root volume size for the install-only AMI build and resulting snapshot."
   type        = number
   default     = 24
-}
-
-variable "image_version" {
-  description = "Semantic version used by EC2 Image Builder resources."
-  type        = string
-  default     = "0.1.0"
 }

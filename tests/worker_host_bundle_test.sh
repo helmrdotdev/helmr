@@ -6,14 +6,14 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 host="${tmp}/host"
 test_bin="${tmp}/bin"
-mkdir -p "${host}/bin" "${host}/share/helmr-worker" "${test_bin}"
+mkdir -p "${host}/bin" "${test_bin}"
 
 source_commit="$(git -C "${repo_root}" rev-parse HEAD)"
-cat >"${host}/bin/helmr-worker" <<EOF
+cat >"${host}/bin/helmr-worker" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' '${source_commit}'
+exit 0
 EOF
-printf '%s\n' "${source_commit}" >"${host}/share/helmr-worker/source-commit"
+printf '#!/usr/bin/env bash\nexit 0\n' >"${host}/bin/cpu-template-helper"
 printf '#!/usr/bin/env bash\nexit 0\n' >"${host}/bin/firecracker"
 printf '#!/usr/bin/env bash\nexit 0\n' >"${host}/bin/jailer"
 chmod 0755 "${host}/bin/"*
@@ -30,31 +30,33 @@ cmp "${tmp}/bundle-a/worker-host-artifacts.tar" "${tmp}/bundle-b/worker-host-art
 cmp "${tmp}/bundle-a/worker-host-artifacts.json" "${tmp}/bundle-b/worker-host-artifacts.json"
 jq -e \
   --arg source_commit "${source_commit}" '
+  (keys | sort) == ["bundle", "manifest", "schema", "sourceCommit"] and
   .schema == "helmr.worker-host-bundle.v0" and
   .sourceCommit == $source_commit and
-  .workerVersion == $source_commit and
+  (.bundle | keys | sort) == ["digest", "path"] and
+  .bundle.path == "worker-host-artifacts.tar" and
   (.bundle.digest | test("^sha256:[0-9a-f]{64}$")) and
+  (.manifest | keys | sort) == ["digest", "path"] and
+  .manifest.path == "worker-host-artifacts.json" and
   (.manifest.digest | test("^sha256:[0-9a-f]{64}$"))
 ' "${tmp}/bundle-a/worker-host-bundle.json" >/dev/null
-jq -e \
-  --arg source_commit "${source_commit}" '
+jq -e '
+  (keys | sort) == ["arch", "files", "schema"] and
   .schema == "helmr.worker-host-artifacts.v0" and
   .arch == "amd64" and
-  .sourceCommit == $source_commit and
-  .workerVersion == $source_commit and
-  [.files[].path] == ["firecracker", "helmr-worker", "jailer"] and
+  [.files[].path] == ["cpu-template-helper", "firecracker", "helmr-worker", "jailer"] and
   all(.files[];
     .mode == "0755" and
     (.size_bytes | type == "number" and . > 0) and
     (.digest | test("^sha256:[0-9a-f]{64}$")))
 ' "${tmp}/bundle-a/worker-host-artifacts.json" >/dev/null
 
-expected_entries="$(printf '%s\n' firecracker helmr-worker jailer worker-host-artifacts.json)"
+expected_entries="$(printf '%s\n' cpu-template-helper firecracker helmr-worker jailer worker-host-artifacts.json)"
 [ "$(tar -tf "${tmp}/bundle-a/worker-host-artifacts.tar")" = "${expected_entries}" ]
 
 mkdir "${tmp}/unpacked"
 tar -C "${tmp}/unpacked" -xf "${tmp}/bundle-a/worker-host-artifacts.tar"
-for name in firecracker helmr-worker jailer; do
+for name in cpu-template-helper firecracker helmr-worker jailer; do
   cmp "${host}/bin/${name}" "${tmp}/unpacked/${name}"
 done
 cmp "${tmp}/bundle-a/worker-host-artifacts.json" "${tmp}/unpacked/worker-host-artifacts.json"

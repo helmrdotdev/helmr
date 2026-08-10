@@ -603,12 +603,10 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		return nil
 	}
 	materializer := WorkspaceMaterializer{
-		Connector:             p.Connector,
 		CAS:                   p.CAS,
 		TempDir:               p.TempDir,
 		ArtifactCacheDir:      p.ArtifactCacheDir,
 		ArtifactCacheMaxBytes: p.ArtifactCacheMaxBytes,
-		Substrates:            p.Substrates,
 		Log:                   p.Log,
 	}
 	tempDir := strings.TrimSpace(p.TempDir)
@@ -688,6 +686,7 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 			WorkspaceMountPath: mount.WorkspaceMountPath, BaseVersionID: mount.BaseVersionID,
 			Resources: compute.ResourceVector{MilliCPU: mount.RequestedMilliCPU, MemoryMiB: mount.RequestedMemoryMiB,
 				DiskMiB: mount.RequestedDiskMiB, Slots: mount.RequestedExecutionSlots},
+			VMVCPUCount: target.Source.VMVCPUCount, CPUConfigDigest: target.Source.CPUConfigDigest,
 			Topology: topology, ReadOnlyDrives: readOnlyDrives,
 		})
 	}
@@ -761,6 +760,8 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 	}
 	readyRequest := runtimeTargetStateRequest(target, nil)
 	readyRequest.RuntimeSubstrateID = runtimeSubstrateIDValue
+	readyRequest.VMVCPUCount = target.Source.VMVCPUCount
+	readyRequest.CPUConfigDigest = target.Source.CPUConfigDigest
 	if _, err := p.RuntimeInstances.MarkRuntimeInstanceReady(ctx, readyRequest); err != nil {
 		entry.ready.finish(err)
 		p.logInfo("prepared runtime pool instance ready transition failed", "runtime_instance_id", runtimeInstanceID, "error", err.Error())

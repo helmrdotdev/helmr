@@ -77,6 +77,10 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	if manifest.RecoveryPoint.Runtime.ConfigDigest != "sha256:runtime-config" {
 		t.Fatalf("runtime config digest = %+v", manifest.RecoveryPoint.Runtime.ConfigDigest)
 	}
+	if manifest.RecoveryPoint.Runtime.VMVCPUCount != 2 ||
+		manifest.RecoveryPoint.Runtime.CPUConfigDigest != sha256sum.DigestBytes([]byte("cpu-config")) {
+		t.Fatalf("runtime CPU shape = %+v", manifest.RecoveryPoint.Runtime)
+	}
 	if manifest.RecoveryPoint.Runtime.Substrate == nil || manifest.RecoveryPoint.Runtime.Substrate.Digest != sha256sum.DigestBytes([]byte("substrate")) {
 		t.Fatalf("runtime substrate = %+v", manifest.RecoveryPoint.Runtime.Substrate)
 	}
@@ -700,6 +704,8 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 		InitramfsDigest:     "sha256:initramfs",
 		RootfsDigest:        "sha256:rootfs",
 		RuntimeConfigDigest: "sha256:runtime-config",
+		VMVCPUCount:         2,
+		CPUConfigDigest:     sha256sum.DigestBytes([]byte("cpu-config")),
 		VMState:             vm.SnapshotFile{Path: state, MediaType: cas.CheckpointVMStateMediaType},
 		ScratchDisk: vm.SnapshotFile{Path: scratch, MediaType: cas.CheckpointScratchDiskMediaType, Filepack: &vm.FilepackStats{
 			LogicalBytes:      1024,

@@ -7,13 +7,13 @@ mock_provider "aws" {
 
   mock_resource "aws_imagebuilder_component" {
     defaults = {
-      arn = "arn:aws:imagebuilder:us-east-1:000000000000:component/helmr-test-worker/0.1.0/1"
+      arn = "arn:aws:imagebuilder:us-east-1:000000000000:component/helmr-test-worker/1.0.0/1"
     }
   }
 
   mock_resource "aws_imagebuilder_image_recipe" {
     defaults = {
-      arn = "arn:aws:imagebuilder:us-east-1:000000000000:image-recipe/helmr-test-worker/0.1.0"
+      arn = "arn:aws:imagebuilder:us-east-1:000000000000:image-recipe/helmr-test-worker/1.0.0"
     }
   }
 
@@ -33,7 +33,7 @@ mock_provider "aws" {
 variables {
   name                                = "helmr-test"
   parent_image                        = "ami-00000000000000000"
-  source_ref                          = "0123456789abcdef0123456789abcdef01234567"
+  root_volume_encrypted               = false
   host_artifacts_bundle_s3_uri        = "s3://helmr-test/host/worker-host.tar"
   host_artifacts_bundle_object_arn    = "arn:aws:s3:::helmr-test/host/worker-host.tar"
   host_artifacts_bundle_digest        = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
@@ -50,6 +50,7 @@ run "image_installs_verified_worker_artifacts" {
   assert {
     condition = (
       strcontains(aws_imagebuilder_component.worker.data, "/usr/local/bin/helmr-worker") &&
+      strcontains(aws_imagebuilder_component.worker.data, "/usr/local/bin/cpu-template-helper") &&
       strcontains(aws_imagebuilder_component.worker.data, "/usr/local/bin/firecracker") &&
       strcontains(aws_imagebuilder_component.worker.data, "gpgv") &&
       strcontains(aws_imagebuilder_component.worker.data, "mksquashfs") &&
@@ -91,10 +92,50 @@ run "image_installs_verified_worker_artifacts" {
 
   assert {
     condition = (
-      strcontains(aws_imagebuilder_component.worker.data, "source_commit '0123456789abcdef0123456789abcdef01234567'") &&
-      strcontains(aws_imagebuilder_component.worker.data, "/usr/local/bin/helmr-worker version")
+      local.component_definition == {
+        schema   = "helmr.worker-image-component-definition.v0"
+        document = aws_imagebuilder_component.worker.data
+      } &&
+      local.component_definition_digest == "sha256:${sha256(jsonencode(local.component_definition))}" &&
+      aws_imagebuilder_component.worker.name == "helmr-test-worker-component-${trimprefix(local.component_definition_digest, "sha256:")}" &&
+      aws_imagebuilder_component.worker.version == "1.0.0" &&
+      length(aws_imagebuilder_component.worker.name) <= 128
     )
-    error_message = "Worker image build must inject and verify the exact source commit as the Worker binary identity."
+    error_message = "The complete rendered component definition must have a full-digest resource name and fixed incidental version."
+  }
+
+  assert {
+    condition = (
+      aws_imagebuilder_image_recipe.worker.name == "helmr-test-worker-recipe-${trimprefix(local.image_definition_digest, "sha256:")}" &&
+      aws_imagebuilder_image_recipe.worker.version == "1.0.0" &&
+      length(aws_imagebuilder_image_recipe.worker.name) <= 128 &&
+      output.resolved_parent_image_id == "ami-00000000000000000" &&
+      output.root_block_device_mapping == {
+        deviceName = "/dev/sda1"
+        ebs = {
+          deleteOnTermination = true
+          encrypted           = false
+          volumeSize          = 24
+          volumeType          = "gp3"
+        }
+      }
+    )
+    error_message = "The exact parent, component digest, and complete root mapping must identify the image recipe."
+  }
+
+  assert {
+    condition = (
+      one(
+        one(aws_imagebuilder_distribution_configuration.worker.distribution).ami_distribution_configuration
+      ).ami_tags.HelmrComponentDefinitionDigest == local.component_definition_digest &&
+      one(
+        one(aws_imagebuilder_distribution_configuration.worker.distribution).ami_distribution_configuration
+      ).ami_tags.HelmrImageDefinitionDigest == local.image_definition_digest &&
+      one(
+        one(aws_imagebuilder_distribution_configuration.worker.distribution).ami_distribution_configuration
+      ).ami_tags.HelmrResolvedParentImageID == local.parent_image
+    )
+    error_message = "Worker AMI tags must bind the exact component, recipe, and resolved parent definitions."
   }
 
   assert {
@@ -131,5 +172,69 @@ run "image_installs_verified_worker_artifacts" {
       strcontains(aws_iam_role_policy.build_artifacts.policy, "arn:aws:s3:::helmr-test/runtime/worker-runtime.tar")
     )
     error_message = "Image Builder must only receive access to the exact host and runtime artifact bundle objects."
+  }
+}
+
+run "changed_host_artifact_changes_definitions" {
+  command = plan
+
+  variables {
+    host_artifacts_bundle_digest = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  }
+
+  assert {
+    condition = (
+      local.component_definition_digest != "sha256:${sha256(jsonencode({
+        schema = "helmr.worker-image-component-definition.v0"
+        document = replace(
+          local.component_document,
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        )
+      }))}" &&
+      local.image_definition.componentDefinitionDigest == local.component_definition_digest
+    )
+    error_message = "A changed component input must change both definition digests."
+  }
+}
+
+run "changed_parent_changes_only_image_definition" {
+  command = plan
+
+  variables {
+    parent_image = "ami-11111111111111111"
+  }
+
+  assert {
+    condition = (
+      local.image_definition_digest != "sha256:${sha256(jsonencode(merge(
+        local.image_definition,
+        { parentImage = "ami-00000000000000000" }
+      )))}" &&
+      local.image_definition.parentImage == "ami-11111111111111111"
+    )
+    error_message = "A changed resolved parent AMI must change only the image definition."
+  }
+}
+
+run "distribution_policy_does_not_change_image_definition" {
+  command = plan
+
+  variables {
+    ami_public           = true
+    distribution_regions = ["us-east-1", "us-west-2"]
+  }
+
+  assert {
+    condition = (
+      keys(local.image_definition) == ["blockDeviceMappings", "componentDefinitionDigest", "parentImage", "schema"] &&
+      local.image_definition.schema == "helmr.worker-image-definition.v0" &&
+      local.image_definition.componentDefinitionDigest == local.component_definition_digest &&
+      local.image_definition.parentImage == local.parent_image &&
+      local.image_definition.blockDeviceMappings == [local.root_block_device_mapping] &&
+      toset(output.distribution_regions) == toset(["us-east-1", "us-west-2"]) &&
+      output.ami_public
+    )
+    error_message = "Region and visibility policy must not be artifact or image-definition identity."
   }
 }

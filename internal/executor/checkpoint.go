@@ -104,6 +104,12 @@ func validateRestoreIdentity(
 	if err := requireCheckpointDigest("recovery_point.runtime.config_digest", runtimeInfo.ConfigDigest); err != nil {
 		return err
 	}
+	if runtimeInfo.VMVCPUCount <= 0 {
+		return errors.New("restore checkpoint recovery_point.runtime.vm_vcpu_count must be positive")
+	}
+	if !sha256sum.ValidDigest(runtimeInfo.CPUConfigDigest) {
+		return errors.New("restore checkpoint recovery_point.runtime.cpu_config_digest must be canonical")
+	}
 	if runtimeInfo.Substrate != nil {
 		if err := requireCheckpointDigest("recovery_point.runtime.substrate.digest", runtimeInfo.Substrate.Digest); err != nil {
 			return err
@@ -438,6 +444,12 @@ func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.R
 }
 
 func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request CheckpointRequest, artifact vm.SnapshotArtifact) (workerapi.CheckpointManifest, error) {
+	if artifact.VMVCPUCount <= 0 {
+		return workerapi.CheckpointManifest{}, errors.New("checkpoint snapshot VM vCPU count must be positive")
+	}
+	if !sha256sum.ValidDigest(artifact.CPUConfigDigest) {
+		return workerapi.CheckpointManifest{}, errors.New("checkpoint snapshot CPU configuration digest must be canonical")
+	}
 	var manifest storedCheckpointArtifact
 	var state storedCheckpointArtifact
 	var scratchDisk storedCheckpointArtifact
@@ -502,6 +514,8 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 				InitramfsDigest: artifact.InitramfsDigest,
 				RootfsDigest:    artifact.RootfsDigest,
 				ConfigDigest:    artifact.RuntimeConfigDigest,
+				VMVCPUCount:     artifact.VMVCPUCount,
+				CPUConfigDigest: artifact.CPUConfigDigest,
 				Substrate:       checkpointRuntimeSubstrate(artifact.Substrate),
 			},
 		},

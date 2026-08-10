@@ -4,12 +4,14 @@ WITH credential AS (
            worker_groups.claim_version AS group_claim_version,
            worker_groups.allows_run AS group_allows_run,
            worker_groups.allows_build AS group_allows_build,
-           (worker_instance_credentials.allows_run AND worker_groups.allows_run AND sqlc.arg(supports_run)::boolean) AS effective_allows_run,
-           (worker_instance_credentials.allows_build AND worker_groups.allows_build AND sqlc.arg(supports_build)::boolean) AS effective_allows_build
+           (worker_instance_credentials.allows_run AND worker_groups.allows_run AND worker_pools.allows_run AND sqlc.arg(supports_run)::boolean) AS effective_allows_run,
+           (worker_instance_credentials.allows_build AND worker_groups.allows_build AND worker_pools.allows_build AND sqlc.arg(supports_build)::boolean) AS effective_allows_build
       FROM worker_instance_credentials
       JOIN worker_instances ON worker_instances.id = worker_instance_credentials.worker_instance_id
                            AND worker_instances.worker_group_id = worker_instance_credentials.worker_group_id
       JOIN worker_groups ON worker_groups.id = worker_instance_credentials.worker_group_id
+      JOIN worker_pools ON worker_pools.id = worker_instances.worker_pool_id
+                       AND worker_pools.worker_group_id = worker_instances.worker_group_id
      WHERE worker_instance_credentials.worker_instance_id = sqlc.arg(worker_instance_id)
        AND worker_instance_credentials.secret_hash = sqlc.arg(secret_hash)
        AND worker_instance_credentials.revoked_at IS NULL
@@ -17,7 +19,8 @@ WITH credential AS (
        AND worker_instance_credentials.claim_version = worker_instances.claim_version
        AND worker_instances.state IN ('registering','active','draining')
        AND worker_groups.state IN ('active','paused','draining')
-     FOR UPDATE OF worker_instance_credentials, worker_instances, worker_groups
+       AND worker_pools.state IN ('pending','active','draining')
+     FOR UPDATE OF worker_instance_credentials, worker_instances, worker_groups, worker_pools
 ), advanced AS (
     UPDATE worker_instances
        SET current_epoch = CASE WHEN worker_instances.current_service_id = sqlc.arg(service_id)
@@ -30,11 +33,6 @@ WITH credential AS (
                WHEN worker_instances.current_service_id = sqlc.arg(service_id) THEN worker_instances.state
                WHEN worker_instances.state = 'active' THEN 'registering'
                ELSE worker_instances.state
-           END,
-           supervisor_version = CASE
-               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
-               THEN worker_instances.supervisor_version
-               ELSE ''
            END,
            supports_run = CASE
                WHEN worker_instances.current_service_id = sqlc.arg(service_id)
@@ -73,14 +71,6 @@ WITH credential AS (
                WHEN worker_instances.current_service_id = sqlc.arg(service_id)
                THEN worker_instances.epoch_guest_ephemeral_disk_bytes ELSE 0
            END,
-           epoch_build_cache_bytes = CASE
-               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
-               THEN worker_instances.epoch_build_cache_bytes ELSE 0
-           END,
-           epoch_artifact_cache_bytes = CASE
-               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
-               THEN worker_instances.epoch_artifact_cache_bytes ELSE 0
-           END,
            per_vm_cpu_millis = CASE
                WHEN worker_instances.current_service_id = sqlc.arg(service_id)
                THEN worker_instances.per_vm_cpu_millis ELSE 0
@@ -104,6 +94,14 @@ WITH credential AS (
            max_runtime_starts = CASE
                WHEN worker_instances.current_service_id = sqlc.arg(service_id)
                THEN worker_instances.max_runtime_starts ELSE 0
+           END,
+           cpu_environment = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.cpu_environment ELSE NULL
+           END,
+           cpu_environment_digest = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.cpu_environment_digest ELSE NULL
            END,
            activated_at = CASE WHEN worker_instances.current_service_id = sqlc.arg(service_id)
                                THEN worker_instances.activated_at ELSE NULL END,
@@ -134,11 +132,13 @@ SELECT credential.id, credential.worker_group_id,
 -- name: AuthorizeWorkerInstanceCredential :one
 UPDATE worker_instance_credentials
    SET last_used_at = now()
-  FROM worker_instances, worker_groups
+  FROM worker_instances, worker_groups, worker_pools
  WHERE worker_instance_credentials.id = sqlc.arg(credential_id)
    AND worker_instances.id = worker_instance_credentials.worker_instance_id
    AND worker_instances.worker_group_id = worker_instance_credentials.worker_group_id
    AND worker_groups.id = worker_instance_credentials.worker_group_id
+   AND worker_pools.id = worker_instances.worker_pool_id
+   AND worker_pools.worker_group_id = worker_instances.worker_group_id
    AND worker_instance_credentials.revoked_at IS NULL
    AND worker_instance_credentials.claim_version = sqlc.arg(claim_version)
    AND worker_instance_credentials.claim_version = worker_instances.claim_version
@@ -147,6 +147,7 @@ UPDATE worker_instance_credentials
    AND worker_instances.state IN ('active','draining')
    AND (worker_instances.supports_run OR worker_instances.supports_build)
    AND worker_groups.state IN ('active','paused','draining')
+   AND worker_pools.state IN ('active','draining')
 RETURNING worker_instance_credentials.*, worker_instances.resource_id,
           worker_instances.current_epoch, worker_instances.state AS worker_state,
           worker_instances.supports_run, worker_instances.supports_build,
@@ -155,18 +156,21 @@ RETURNING worker_instance_credentials.*, worker_instances.resource_id,
 -- name: AuthorizeWorkerActivationCredential :one
 UPDATE worker_instance_credentials
    SET last_used_at = now()
-  FROM worker_instances, worker_groups
+  FROM worker_instances, worker_groups, worker_pools
  WHERE worker_instance_credentials.id = sqlc.arg(credential_id)
    AND worker_instances.id = worker_instance_credentials.worker_instance_id
    AND worker_instances.worker_group_id = worker_instance_credentials.worker_group_id
    AND worker_groups.id = worker_instance_credentials.worker_group_id
+   AND worker_pools.id = worker_instances.worker_pool_id
+   AND worker_pools.worker_group_id = worker_instances.worker_group_id
    AND worker_instance_credentials.revoked_at IS NULL
    AND worker_instance_credentials.claim_version = sqlc.arg(claim_version)
    AND worker_instance_credentials.claim_version = worker_instances.claim_version
    AND worker_groups.claim_version = sqlc.arg(group_claim_version)
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
-   AND worker_instances.state IN ('registering', 'active')
+   AND worker_instances.state IN ('registering', 'active', 'draining')
    AND worker_groups.state IN ('active','paused','draining')
+   AND worker_pools.state IN ('pending','active','draining')
 RETURNING worker_instance_credentials.*, worker_instances.resource_id,
           worker_instances.current_epoch, worker_instances.state AS worker_state,
           worker_instances.supports_run, worker_instances.supports_build,
@@ -175,11 +179,13 @@ RETURNING worker_instance_credentials.*, worker_instances.resource_id,
 -- name: AuthorizeRecoveringWorkerInstanceCredential :one
 UPDATE worker_instance_credentials
    SET last_used_at = now()
-  FROM worker_instances, worker_groups
+  FROM worker_instances, worker_groups, worker_pools
  WHERE worker_instance_credentials.id = sqlc.arg(credential_id)
    AND worker_instances.id = worker_instance_credentials.worker_instance_id
    AND worker_instances.worker_group_id = worker_instance_credentials.worker_group_id
    AND worker_groups.id = worker_instance_credentials.worker_group_id
+   AND worker_pools.id = worker_instances.worker_pool_id
+   AND worker_pools.worker_group_id = worker_instances.worker_group_id
    AND worker_instance_credentials.revoked_at IS NULL
    AND worker_instance_credentials.claim_version = sqlc.arg(claim_version)
    AND worker_instance_credentials.claim_version = worker_instances.claim_version
@@ -194,6 +200,7 @@ UPDATE worker_instance_credentials
        )
    )
    AND worker_groups.state IN ('active','paused','draining')
+   AND worker_pools.state IN ('pending','active','draining')
 RETURNING worker_instance_credentials.*, worker_instances.resource_id,
           worker_instances.current_epoch, worker_instances.state AS worker_state,
           worker_instances.supports_run, worker_instances.supports_build,
@@ -245,30 +252,43 @@ WITH enrollment_token AS (
        AND (NOT sqlc.arg(allows_run)::boolean OR worker_groups.allows_run)
        AND (NOT sqlc.arg(allows_build)::boolean OR worker_groups.allows_build)
      FOR UPDATE OF worker_group_tokens, worker_groups
+), pool AS (
+    INSERT INTO worker_pools (
+        id, worker_group_id, name, state, claim_version, allows_run, allows_build
+    )
+    SELECT sqlc.arg(worker_pool_id), enrollment_token.worker_group_id,
+           sqlc.arg(pool_name), 'pending', 1,
+           sqlc.arg(allows_run), sqlc.arg(allows_build)
+      FROM enrollment_token
+    ON CONFLICT (worker_group_id, name)
+    DO UPDATE SET updated_at = worker_pools.updated_at
+     WHERE worker_pools.state IN ('pending', 'active')
+       AND worker_pools.allows_run = EXCLUDED.allows_run
+       AND worker_pools.allows_build = EXCLUDED.allows_build
+    RETURNING worker_pools.*
 ), worker AS (
     INSERT INTO worker_instances (
-        id, worker_group_id, resource_id, state, claim_version,
+        id, worker_group_id, worker_pool_id, resource_id, state, claim_version,
         supports_run, supports_build
     )
-    SELECT sqlc.arg(worker_instance_id), enrollment_token.worker_group_id,
+    SELECT sqlc.arg(worker_instance_id), enrollment_token.worker_group_id, pool.id,
            sqlc.arg(resource_id), 'registering', 1, false, false
-      FROM enrollment_token
+      FROM enrollment_token JOIN pool ON pool.worker_group_id = enrollment_token.worker_group_id
     ON CONFLICT (worker_group_id, resource_id)
         WHERE state IN ('registering', 'active', 'draining')
     DO UPDATE
        SET claim_version = worker_instances.claim_version + 1,
            state = 'registering',
-           supervisor_version = '',
            supports_run = false, supports_build = false,
            runtime_identity_id = NULL,
            substrate_format = '', substrate_contract = '',
            epoch_cpu_millis = 0, epoch_memory_bytes = 0,
            epoch_guest_ephemeral_disk_bytes = 0,
-           epoch_build_cache_bytes = 0, epoch_artifact_cache_bytes = 0,
            per_vm_cpu_millis = 0, per_vm_memory_bytes = 0,
            per_vm_guest_ephemeral_disk_bytes = 0,
            max_vm_slots = 0,
            max_build_executors = 0, max_runtime_starts = 0,
+           cpu_environment = NULL, cpu_environment_digest = NULL,
            current_service_id = CASE
                WHEN worker_instances.current_epoch IS NULL THEN NULL
                ELSE sqlc.arg(current_service_id)::uuid
@@ -281,6 +301,7 @@ WITH enrollment_token AS (
            runtime_paused_reason = NULL,
            updated_at = now()
      WHERE worker_instances.state = 'registering'
+       AND worker_instances.worker_pool_id = (SELECT id FROM pool)
     RETURNING *
 ), revoked AS (
     UPDATE worker_instance_credentials SET revoked_at = now()
@@ -304,4 +325,5 @@ WITH enrollment_token AS (
      WHERE worker_group_tokens.id = (SELECT token_id FROM enrollment_token)
     RETURNING worker_group_tokens.id
 )
-SELECT credential.* FROM credential JOIN touched ON true;
+SELECT credential.*, pool.id AS worker_pool_id
+  FROM credential JOIN touched ON true JOIN pool ON pool.worker_group_id = credential.worker_group_id;

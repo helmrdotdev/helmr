@@ -83,6 +83,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 			RuntimeArch: runtimeInfo.Arch, VMRuntimeContract: runtimeInfo.Contract,
 			KernelDigest: runtimeInfo.KernelDigest, InitramfsDigest: runtimeInfo.InitramfsDigest,
 			RootfsDigest: runtimeInfo.RootfsDigest, RuntimeConfigDigest: runtimeInfo.ConfigDigest,
+			VMVCPUCount: runtimeInfo.VMVCPUCount, CPUConfigDigest: runtimeInfo.CPUConfigDigest,
 		},
 		Topology: topology, ReadOnlyDrives: readOnlyDrives,
 		RecordPhase: record,
@@ -116,6 +117,10 @@ func validatePreparedRuntimeRestore(
 	}
 	if err := validateRestoreIdentity(checkpoint, workerArchitecture); err != nil {
 		return workerapi.CheckpointManifest{}, err
+	}
+	if checkpoint.RecoveryPoint.Runtime.VMVCPUCount != target.Source.VMVCPUCount ||
+		checkpoint.RecoveryPoint.Runtime.CPUConfigDigest != target.Source.CPUConfigDigest {
+		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore manifest CPU shape does not match its reservation")
 	}
 	if checkpoint.RecoveryPoint.ID != restore.CheckpointID || checkpoint.RecoveryPoint.RunID != restore.RunID ||
 		checkpoint.RecoveryPoint.AttemptNumber != restore.AttemptNumber ||

@@ -332,6 +332,8 @@ WITH restore_secret_authority AS MATERIALIZED (
       JOIN runtime_instances AS source_runtime
         ON source_runtime.id = source_lease.runtime_instance_id
        AND source_runtime.runtime_identity_id = runtime_instances.runtime_identity_id
+       AND source_runtime.vm_vcpu_count = runtime_instances.vm_vcpu_count
+       AND source_runtime.cpu_config_digest = runtime_instances.cpu_config_digest
        AND source_runtime.runtime_substrate_id = sqlc.arg(runtime_substrate_id)
       JOIN workspace_versions
         ON workspace_versions.workspace_id = runtime_instances.workspace_id
@@ -358,6 +360,8 @@ UPDATE runtime_instances
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch) AND runtime_instances.desired_version = sqlc.arg(desired_version)
    AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
    AND runtime_instances.observed_state IN ('allocated', 'preparing')
+   AND runtime_instances.vm_vcpu_count = sqlc.arg(vm_vcpu_count)
+   AND runtime_instances.cpu_config_digest = sqlc.arg(cpu_config_digest)
    AND (runtime_instances.runtime_substrate_id IS NULL
         OR runtime_instances.runtime_substrate_id = sqlc.arg(runtime_substrate_id))
    AND (runtime_instances.restore_checkpoint_id IS NULL

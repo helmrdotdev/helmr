@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
@@ -49,6 +50,8 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID),
 		WorkspaceID:            pgvalue.UUIDString(row.WorkspaceID),
 		RuntimeIdentityID:      row.RuntimeIdentityID,
+		VMVCPUCount:            row.VMVCPUCount,
+		CPUConfigDigest:        row.CPUConfigDigest,
 		WorkspaceImage:         workerapi.CASObject{Digest: row.WorkspaceImageDigest, SizeBytes: row.WorkspaceImageSizeBytes, MediaType: row.WorkspaceImageMediaType},
 		WorkspaceArchitecture:  row.WorkspaceArchitecture,
 		RootfsDigest:           row.RootfsDigest,
@@ -195,6 +198,14 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 	var row db.RuntimeInstance
 	switch state {
 	case "ready":
+		if request.VMVCPUCount <= 0 {
+			writeError(w, badRequest(errors.New("vm_vcpu_count must be positive")))
+			return
+		}
+		if !sha256sum.ValidDigest(request.CPUConfigDigest) {
+			writeError(w, badRequest(errors.New("cpu_config_digest must be a canonical SHA-256 digest")))
+			return
+		}
 		runtimeSubstrateID, substrateErr := ids.Parse(request.RuntimeSubstrateID)
 		if substrateErr != nil {
 			writeError(w, badRequest(errors.New("runtime_substrate_id must be a canonical UUIDv7")))
@@ -204,6 +215,7 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 			DesiredVersion: request.DesiredVersion, ID: pgvalue.UUID(id), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch:             worker.WorkerEpoch,
 			ExpectedObservedVersion: request.ExpectedObservedVersion, RuntimeSubstrateID: pgvalue.UUID(runtimeSubstrateID),
+			VMVCPUCount: request.VMVCPUCount, CPUConfigDigest: request.CPUConfigDigest,
 		})
 	case "closed":
 		if request.CleanupProof == nil {
@@ -322,6 +334,8 @@ func runtimeInstanceResponse(row db.RuntimeInstance) workerapi.RuntimeInstance {
 		WorkerInstanceID:       pgvalue.UUIDString(row.WorkerInstanceID),
 		RuntimeEpoch:           row.WorkerEpoch,
 		RuntimeID:              row.RuntimeIdentityID,
+		VMVCPUCount:            row.VMVCPUCount,
+		CPUConfigDigest:        row.CPUConfigDigest,
 		DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID),
 		State:                  string(row.ObservedState),
 		ReservedCPUMillis:      int32(row.ReservedCPUMillis),

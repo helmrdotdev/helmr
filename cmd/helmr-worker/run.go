@@ -21,9 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/substrate"
-	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/worker"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -103,9 +101,10 @@ func run(log *slog.Logger) error {
 		imagesDir = filepath.Join(workDir, "images")
 	}
 	guestImageDir := filepath.Join(imagesDir, "guest", "out")
-	rootfsPath := filepath.Join(guestImageDir, "rootfs.ext4")
+	rootfsPath := filepath.Join(guestImageDir, "rootfs.squashfs")
 	connectorConfig := networkConfig
 	connectorConfig.FirecrackerPath = cfg.FirecrackerPath
+	connectorConfig.CPUTemplateHelperPath = cfg.CPUTemplateHelperPath
 	connectorConfig.JailerPath = cfg.JailerPath
 	connectorConfig.JailerNumaNode = cfg.JailerNumaNode
 	connectorConfig.JailerChrootBaseDir = cfg.JailerChrootDir
@@ -126,24 +125,23 @@ func run(log *slog.Logger) error {
 	if err := connector.Preflight(ctx); err != nil {
 		return fmt.Errorf("the Firecracker worker preflight: %w", err)
 	}
+	hostRuntimeEvidence, err := connector.HostRuntimeEvidence(ctx)
+	if err != nil {
+		return fmt.Errorf("inspect Firecracker host runtime: %w", err)
+	}
 	runtimeCapabilities, err := connector.RuntimeCapabilities()
 	if err != nil {
 		return fmt.Errorf("inspect Firecracker runtime: %w", err)
 	}
-	runtimeArchitecture, err := deployment.RuntimeArchitectureFromGo(runtimeCapabilities.Arch)
-	if err != nil {
-		return fmt.Errorf("normalize Firecracker runtime architecture: %w", err)
+	runtimeArchitecture := deployment.RuntimeArchitecture(runtimeCapabilities.Arch)
+	if err := deployment.ValidateRuntimeArchitecture(runtimeArchitecture); err != nil {
+		return fmt.Errorf("validate Firecracker runtime architecture: %w", err)
 	}
-	runtimeIdentity := runtimeid.Selector{
-		Arch:            string(runtimeArchitecture),
-		Contract:        runtimeCapabilities.Contract,
-		KernelDigest:    runtimeCapabilities.KernelDigest,
-		InitramfsDigest: runtimeCapabilities.InitramfsDigest,
-		RootfsDigest:    runtimeCapabilities.RootfsDigest,
-	}
-	runtimeIdentity.ID, err = runtimeid.Digest(runtimeIdentity)
+	runtimeProfile, cpuShapes, cpuEnvironment, err := workerRuntimeProfile(
+		string(runtimeArchitecture), runtimeCapabilities, hostRuntimeEvidence,
+	)
 	if err != nil {
-		return fmt.Errorf("derive normalized Firecracker runtime identity: %w", err)
+		return fmt.Errorf("construct Worker runtime profile: %w", err)
 	}
 	runtimeScratch := filepath.Join(workDir, "tmp", "runtime")
 	if err := os.MkdirAll(runtimeScratch, 0o700); err != nil {
@@ -181,25 +179,22 @@ func run(log *slog.Logger) error {
 	allocatable := compute.ResourceVector{
 		MilliCPU:  cfg.WorkerCapacityVCPUs * 1000,
 		MemoryMiB: cfg.WorkerCapacityMemoryMiB,
-		Slots:     cfg.WorkerExecutionSlots,
+	}
+	if supportsRun {
+		allocatable.Slots = cfg.WorkerExecutionSlots
 	}
 	workerCapabilities := workerapi.Capabilities{
-		WorkerVersion:             version.Version,
-		RuntimeID:                 runtimeIdentity.ID,
-		RuntimeArch:               runtimeIdentity.Arch,
-		VMRuntimeContract:         runtimeCapabilities.Contract,
-		KernelDigest:              runtimeCapabilities.KernelDigest,
-		InitramfsDigest:           runtimeCapabilities.InitramfsDigest,
-		RootfsDigest:              runtimeCapabilities.RootfsDigest,
+		Runtime:                   runtimeProfile,
+		CPUShapes:                 cpuShapes,
+		CPUEnvironment:            cpuEnvironment,
 		MaxVCPUs:                  allocatable.MilliCPU / 1000,
 		MaxMemoryMiB:              allocatable.MemoryMiB,
 		VMMilliCPU:                vmResources.MilliCPU,
 		VMMemoryMiB:               vmResources.MemoryMiB,
 		GuestEphemeralDiskBytes:   diskCapacity.HostGuestEphemeralDiskBytes,
 		VMGuestEphemeralDiskBytes: diskCapacity.VMGuestEphemeralDiskBytes,
-		ExecutionSlotsAvailable:   cfg.WorkerExecutionSlots,
+		ExecutionSlotsAvailable:   int32(allocatable.Slots),
 		SupportsRun:               supportsRun,
-		ArtifactCacheBytes:        artifactCacheMaxBytes,
 	}
 	if supportsRun {
 		workerCapabilities.SubstrateFormat = substrate.Format
@@ -268,17 +263,14 @@ func run(log *slog.Logger) error {
 		worker.WithPollEvery(cfg.PollEvery),
 		worker.WithLogger(log),
 		worker.WithMaterializer(executor.WorkspaceMaterializer{
-			Connector:             workspaceMountConnector,
 			CAS:                   store,
 			Sessions:              workspaceMountSessions,
 			TempDir:               filepath.Join(workDir, "tmp"),
 			ArtifactCacheDir:      artifactCacheDir,
 			ArtifactCacheMaxBytes: artifactCacheMaxBytes,
-			Substrates:            substrateResolver,
 			Log:                   log,
 			RuntimePool:           preparedRuntimePool,
 			BackgroundGate:        backgroundGate,
-			Capacity:              hostCapacity,
 		}),
 	)
 	if err != nil {

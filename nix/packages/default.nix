@@ -75,25 +75,21 @@ let
     vendorHash = "sha256-TzyN1epeEmIuAorNO3X6xBQSANDnPeJ4mbWPNjB0mrk=";
   };
   revision = self.shortRev or self.dirtyShortRev or "dirty";
-  sourceCommit = self.rev or self.dirtyRev or "dirty";
   helmrVersion = "0.0.0-dev+${revision}";
   helmr = pkgs.callPackage ./helmr.nix {
     buildGoModule = buildGo126Module;
     version = helmrVersion;
     bun = pkgsBun.bun;
   };
-  firecrackerReleaseVersion = "1.13.2";
-  worker = pkgs.callPackage ./worker.nix {
-    buildGoModule = buildGo126Module;
-    version = sourceCommit;
-  };
+  firecrackerReleaseVersion = "1.16.1";
+  worker = pkgs.callPackage ./worker.nix { buildGoModule = buildGo126Module; };
   firecrackerRuntime = pkgs.stdenvNoCC.mkDerivation {
     pname = "firecracker-runtime";
     version = firecrackerReleaseVersion;
 
     src = pkgs.fetchurl {
       url = "https://github.com/firecracker-microvm/firecracker/releases/download/v${firecrackerReleaseVersion}/firecracker-v${firecrackerReleaseVersion}-x86_64.tgz";
-      hash = "sha256-pts7RR9QDf2CmJRH/r9Utci7iSnk7nx/hKlpXxMNpUc=";
+      hash = "sha256-OCoCqGnk1tXLFMQFd/lUXoRYAh6osLLT/BDsFNnCQuY=";
     };
 
     installPhase = ''
@@ -101,6 +97,7 @@ let
 
       release_dir=.
       install -d "$out/bin" "$out/share/firecracker"
+      install -m 0755 "$release_dir/cpu-template-helper-v${firecrackerReleaseVersion}-x86_64" "$out/bin/cpu-template-helper"
       install -m 0755 "$release_dir/firecracker-v${firecrackerReleaseVersion}-x86_64" "$out/bin/firecracker"
       install -m 0755 "$release_dir/jailer-v${firecrackerReleaseVersion}-x86_64" "$out/bin/jailer"
       install -m 0644 "$release_dir/LICENSE" "$release_dir/NOTICE" "$release_dir/THIRD-PARTY" "$out/share/firecracker/"
@@ -108,12 +105,12 @@ let
       runHook postInstall
     '';
   };
-  workerHost = pkgs.runCommand "helmr-worker-host-${sourceCommit}" { } ''
-    install -d "$out/bin" "$out/share/helmr-worker"
+  workerHost = pkgs.runCommand "helmr-worker-host" { } ''
+    install -d "$out/bin"
+    install -m 0755 "${firecrackerRuntime}/bin/cpu-template-helper" "$out/bin/cpu-template-helper"
     install -m 0755 "${worker}/bin/helmr-worker" "$out/bin/helmr-worker"
     install -m 0755 "${firecrackerRuntime}/bin/firecracker" "$out/bin/firecracker"
     install -m 0755 "${firecrackerRuntime}/bin/jailer" "$out/bin/jailer"
-    printf '%s\n' '${sourceCommit}' >"$out/share/helmr-worker/source-commit"
   '';
 in
 {

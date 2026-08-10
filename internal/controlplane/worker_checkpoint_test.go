@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -150,6 +151,7 @@ func validCheckpointReadyRequest() workerapi.CheckpointReadyRequest {
 					Backend: "firecracker", ID: runtimeIdentity, Arch: string(deployment.ArchitectureX8664),
 					Contract: "helmr.vm-runtime.v0", KernelDigest: digestWith("4"),
 					InitramfsDigest: digestWith("5"), RootfsDigest: digestWith("6"), ConfigDigest: digestWith("7"),
+					VMVCPUCount: 2, CPUConfigDigest: digestWith("8"),
 				},
 			},
 			RuntimeState: workerapi.CheckpointRuntimeState{
@@ -160,6 +162,21 @@ func validCheckpointReadyRequest() workerapi.CheckpointReadyRequest {
 				Config:              json.RawMessage(`{"machine-config":{"vcpu_count":1}}`),
 			},
 		},
+	}
+}
+
+func TestCheckpointRuntimeShapeAuthorityMatchesLockedRuntime(t *testing.T) {
+	manifest := validCheckpointReadyRequest().Manifest
+	runtime := db.RuntimeInstance{
+		VMVCPUCount:     manifest.RecoveryPoint.Runtime.VMVCPUCount,
+		CPUConfigDigest: manifest.RecoveryPoint.Runtime.CPUConfigDigest,
+	}
+	if err := validateCheckpointRuntimeShapeAuthority(runtime, manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.RecoveryPoint.Runtime.CPUConfigDigest = digestWith("9")
+	if err := validateCheckpointRuntimeShapeAuthority(runtime, manifest); !errors.Is(err, errStaleRunLeaseClaim) {
+		t.Fatalf("error = %v, want stale runtime shape", err)
 	}
 }
 

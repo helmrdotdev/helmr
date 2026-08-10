@@ -41,8 +41,10 @@ GET /admin/api/v1/regions
 GET /admin/api/v1/regions/{regionID}
 GET /admin/api/v1/worker-groups
 GET /admin/api/v1/worker-groups/{groupID}
+GET /admin/api/v1/worker-groups/{groupID}/pools
 GET /api/auth/device/status
 GET /api/capacity/v0/worker-groups/resolve
+GET /api/capacity/v0/worker-groups/{workerGroupID}/pools/resolve
 GET /api/capacity/v0/worker-instances
 GET /api/capacity/v0/worker-instances/{workerInstanceID}
 GET /api/invitations
@@ -124,6 +126,10 @@ POST /admin/api/v1/worker-groups/{groupID}/activate
 POST /admin/api/v1/worker-groups/{groupID}/disable
 POST /admin/api/v1/worker-groups/{groupID}/drain
 POST /admin/api/v1/worker-groups/{groupID}/pause
+POST /admin/api/v1/worker-groups/{groupID}/pools
+POST /admin/api/v1/worker-groups/{groupID}/pools/{poolID}/disable
+POST /admin/api/v1/worker-groups/{groupID}/pools/{poolID}/drain
+POST /admin/api/v1/worker-groups/{groupID}/pools/{poolID}/primary
 POST /admin/api/v1/worker-groups/{groupID}/token/rotate
 POST /api/auth/device/approve
 POST /api/auth/device/deny
@@ -232,6 +238,7 @@ POST /v1/tokens
 POST /v1/tokens/{tokenID}/cancel
 POST /v1/tokens/{tokenID}/complete
 POST /v1/workspaces/{workspaceID}/exec
+PUT /api/capacity/v0/worker-groups/{workerGroupID}/primary-pools
 `), "\n")
 	if !slices.IsSorted(want) {
 		t.Fatal("Control Plane route snapshot must stay sorted")

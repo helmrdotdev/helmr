@@ -19,6 +19,7 @@ func TestWorkerEnrollmentTokenSelectsGroupAndRecordsUse(t *testing.T) {
 	q := db.New(pool)
 	params := db.EnrollWorkerInstanceParams{
 		TokenHash: make([]byte, 32), AllowsRun: true, AllowsBuild: true,
+		WorkerPoolID: pgvalue.UUID(uuid.MustParse(dbtest.DefaultWorkerPoolID)), PoolName: "default",
 		WorkerInstanceID: pgvalue.NewUUIDv7(), ResourceID: "enrollment-host",
 		CurrentServiceID: pgvalue.NewUUIDv7(), CredentialID: pgvalue.NewUUIDv7(),
 		KeyPrefix: uuid.NewString(), SecretHash: []byte("instance-secret"),
@@ -50,6 +51,7 @@ func TestWorkerEnrollmentRejectsUnknownTokenAndUnallowedRole(t *testing.T) {
 	q := db.New(pool)
 	base := db.EnrollWorkerInstanceParams{
 		TokenHash: make([]byte, 32), AllowsRun: true, AllowsBuild: true,
+		WorkerPoolID: pgvalue.UUID(uuid.MustParse(dbtest.DefaultWorkerPoolID)), PoolName: "default",
 		WorkerInstanceID: pgvalue.NewUUIDv7(), ResourceID: "unknown-token-host",
 		CurrentServiceID: pgvalue.NewUUIDv7(), CredentialID: pgvalue.NewUUIDv7(),
 		KeyPrefix: uuid.NewString(), SecretHash: []byte("instance-secret"),

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/capacityapi"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -66,7 +67,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Capabilities.RuntimeArch != "arm64" {
+			if request.Capabilities.Runtime.Arch != "arm64" {
 				t.Fatalf("activate capabilities = %+v", request.Capabilities)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerInstanceID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusActive})
@@ -740,7 +741,7 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 			Backend:         "firecracker",
 			ID:              "sha256:runtime",
 			Arch:            "arm64",
-			Contract:        "helmr.vm-runtime.v0",
+			Contract:        capacityapi.RuntimeContract,
 			KernelDigest:    kernelDigest,
 			InitramfsDigest: "sha256:initramfs",
 			RootfsDigest:    rootfsDigest,
@@ -761,12 +762,10 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 
 func workerClientCapabilities() workerapi.Capabilities {
 	return workerapi.Capabilities{
-		RuntimeID:                 "sha256:runtime",
-		RuntimeArch:               "arm64",
-		VMRuntimeContract:         "helmr.vm-runtime.v0",
-		KernelDigest:              "sha256:kernel",
-		InitramfsDigest:           "sha256:initramfs",
-		RootfsDigest:              "sha256:rootfs",
+		Runtime: capacityapi.RuntimeProfile{
+			ID: "sha256:runtime", Arch: "arm64", Contract: capacityapi.RuntimeContract,
+			KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs",
+		},
 		MaxVCPUs:                  2,
 		MaxMemoryMiB:              2048,
 		VMMilliCPU:                2000,

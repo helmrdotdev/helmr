@@ -38,6 +38,51 @@ locals {
   build_worker_shared_disk_mib          = coalesce(var.build_worker_disk_mib, var.worker_disk_mib, 0) - local.build_worker_disk_reserve_mib - local.build_worker_build_cache_mib - local.build_worker_artifact_cache_mib
   build_worker_guest_ephemeral_disk_mib = local.build_worker_scratch_mib - local.boot_corpus_reserve_mib
   build_worker_scratch_mib              = local.build_worker_shared_disk_mib
+  # Pool names identify immutable first-activation supply generations. Raw
+  # disk/cache knobs and mutable ASG scale policy stay outside this canonical
+  # object after they collapse into the effective advertised template.
+  worker_pool_generation_inputs = {
+    run = {
+      ami_id                = local.worker_ami_id
+      instance_type         = var.worker_instance_type
+      nested_virtualization = var.worker_enable_nested_virtualization
+      roles                 = sort(local.worker_pools.run.roles)
+      capacity = {
+        cpu_millis               = coalesce(var.worker_capacity_vcpus, 0) * 1000
+        memory_mib               = coalesce(var.worker_capacity_memory_mib, 0)
+        guest_ephemeral_disk_mib = local.run_worker_guest_ephemeral_disk_mib
+        vm_slots                 = coalesce(var.worker_execution_slots, 0)
+        build_executors          = 0
+      }
+      per_vm = {
+        cpu_millis               = var.worker_vm_vcpus * 1000
+        memory_mib               = var.worker_vm_memory_mib
+        guest_ephemeral_disk_mib = var.worker_vm_scratch_disk_mib
+      }
+    }
+    build = {
+      ami_id                = local.worker_ami_id
+      instance_type         = coalesce(var.build_worker_instance_type, var.worker_instance_type)
+      nested_virtualization = coalesce(var.build_worker_enable_nested_virtualization, var.worker_enable_nested_virtualization)
+      roles                 = sort(local.worker_pools.build.roles)
+      capacity = {
+        cpu_millis               = coalesce(var.build_worker_capacity_vcpus, var.worker_capacity_vcpus, 0) * 1000
+        memory_mib               = coalesce(var.build_worker_capacity_memory_mib, var.worker_capacity_memory_mib, 0)
+        guest_ephemeral_disk_mib = local.build_worker_guest_ephemeral_disk_mib
+        vm_slots                 = 0
+        build_executors          = 1
+      }
+      per_vm = {
+        cpu_millis               = coalesce(var.build_worker_vm_vcpus, var.worker_vm_vcpus) * 1000
+        memory_mib               = coalesce(var.build_worker_vm_memory_mib, var.worker_vm_memory_mib)
+        guest_ephemeral_disk_mib = coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib)
+      }
+    }
+  }
+  worker_pool_names = {
+    for pool_name, inputs in local.worker_pool_generation_inputs :
+    pool_name => "${pool_name}-${sha256(jsonencode(inputs))}"
+  }
   tags = merge(var.tags, {
     Project     = "helmr"
     Environment = var.environment
@@ -138,6 +183,7 @@ module "worker_group" {
 
   name                                       = each.value.name
   worker_roles                               = each.value.roles
+  worker_pool_name                           = local.worker_pool_names[each.key]
   network_blocked_ipv4_cidrs                 = var.worker_network_blocked_ipv4_cidrs
   network_link_pool                          = var.worker_network_link_pool
   network_translation_pool                   = var.worker_network_translation_pool

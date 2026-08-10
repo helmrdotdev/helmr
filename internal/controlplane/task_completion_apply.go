@@ -126,6 +126,9 @@ func (s *Server) completeTask(
 				identity.RootfsDigest != manifestIdentity.RootfsDigest {
 				return staleTaskCompletion(err)
 			}
+			if err := validateCheckpointRuntimeShapeAuthority(authority.runtime, request.Handoff.Manifest); err != nil {
+				return staleTaskCompletion(err)
+			}
 			if err := validateCheckpointSubstrateAuthority(
 				ctx,
 				work.q,

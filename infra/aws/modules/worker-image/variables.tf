@@ -1,15 +1,13 @@
 variable "name" {
   description = "Name prefix for worker image resources."
   type        = string
-}
-
-variable "source_ref" {
-  description = "Exact Git commit embedded in the prebuilt Worker host artifact."
-  type        = string
 
   validation {
-    condition     = can(regex("^[0-9a-f]{40}$", var.source_ref))
-    error_message = "source_ref must be an exact lowercase 40-character Git commit."
+    condition = (
+      length(var.name) <= 43 &&
+      can(regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$", var.name))
+    )
+    error_message = "name must be a lowercase AWS name prefix no longer than 43 characters so every derived resource name, including full definition digests, fits its service limit."
   }
 }
 
@@ -108,10 +106,15 @@ variable "runtime_artifacts_bundle_kms_key_arn" {
 }
 
 variable "parent_image" {
-  description = "Parent AMI or Image Builder image ARN. Defaults to the latest Ubuntu 24.04 amd64 server AMI."
+  description = "Concrete parent AMI ID. Defaults to the latest Ubuntu 24.04 amd64 server AMI resolved during apply."
   type        = string
   default     = null
   nullable    = true
+
+  validation {
+    condition     = var.parent_image == null || can(regex("^ami-([0-9a-f]{8}|[0-9a-f]{17})$", var.parent_image))
+    error_message = "parent_image must be a concrete AMI ID."
+  }
 }
 
 variable "distribution_regions" {
@@ -120,8 +123,8 @@ variable "distribution_regions" {
   default     = []
 
   validation {
-    condition     = alltrue([for region in var.distribution_regions : trimspace(region) != ""])
-    error_message = "distribution_regions must contain non-empty region names."
+    condition     = alltrue([for region in var.distribution_regions : can(regex("^[a-z]{2}-[a-z-]+-[0-9]+$", region))])
+    error_message = "distribution_regions must contain AWS Region names."
   }
 }
 
@@ -160,12 +163,6 @@ variable "root_volume_size_gb" {
   description = "Root volume size for the install-only AMI build and resulting snapshot. Worker launch templates independently choose their runtime volume size."
   type        = number
   default     = 24
-}
-
-variable "image_version" {
-  description = "Semantic version used by EC2 Image Builder resources."
-  type        = string
-  default     = "0.1.0"
 }
 
 variable "tags" {

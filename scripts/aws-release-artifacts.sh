@@ -7,7 +7,6 @@ AWS_REGION="${AWS_REGION:-us-east-1}"
 STATE_REGION="${STATE_REGION:-${AWS_REGION}}"
 STATE_KEY="${STATE_KEY:-}"
 WORKER_IMAGE_NAME="${WORKER_IMAGE_NAME:-helmr-worker-image}"
-WORKER_IMAGE_VERSION="${WORKER_IMAGE_VERSION:-}"
 WORKER_IMAGE_DISTRIBUTION_REGIONS="${WORKER_IMAGE_DISTRIBUTION_REGIONS:-}"
 WORKER_IMAGE_AMI_PUBLIC="${WORKER_IMAGE_AMI_PUBLIC:-}"
 WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED="${WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED:-}"
@@ -16,10 +15,9 @@ BOOTSTRAP_STACK="${BOOTSTRAP_STACK:-${ROOT}/infra/aws/modules/bootstrap}"
 WORKER_IMAGE_STACK="${WORKER_IMAGE_STACK:-${ROOT}/infra/aws/stacks/worker-image}"
 STATE_DIR="${STATE_DIR:-${ROOT}/.helmr-release-artifacts}"
 IMAGE_ARN_FILE="${STATE_DIR}/worker-image-build-version-arn"
-AMI_ID_FILE="${STATE_DIR}/worker-ami-id"
-AMI_IDS_FILE="${STATE_DIR}/worker-ami-ids.json"
 BUILD_POLICY_DIGEST_FILE="${STATE_DIR}/build-policy-digest"
-WORKER_IMAGE_PROVENANCE_FILE="${STATE_DIR}/worker-image-provenance.json"
+WORKER_IMAGE_DEFINITION_FILE="${STATE_DIR}/worker-image-definition.json"
+WORKER_IMAGE_RECEIPT_FILE="${STATE_DIR}/worker-image.json"
 WORKER_HOST_ARTIFACTS_MANIFEST_FILE="${STATE_DIR}/worker-host-artifacts.json"
 WORKER_HOST_BUNDLE_RECEIPT_FILE="${STATE_DIR}/worker-host-bundle.json"
 WORKER_RUNTIME_ARTIFACTS_MANIFEST_FILE="${STATE_DIR}/worker-runtime-artifacts.json"
@@ -43,8 +41,7 @@ Commands:
   worker-image-apply
   worker-image-start
   worker-image-wait
-  worker-image-amis
-  worker-image-provenance
+  worker-image-receipt
   controlplane-image-build
   controlplane-image-push
 
@@ -257,15 +254,6 @@ s3_object_arn() {
   esac
 }
 
-worker_image_version() {
-  if [ -n "${WORKER_IMAGE_VERSION}" ]; then
-    printf '%s\n' "${WORKER_IMAGE_VERSION}"
-    return 0
-  fi
-  revision="$(git -C "${ROOT}" rev-parse --short=8 HEAD)"
-  printf '0.1.%d\n' "$((16#${revision} % 1000000))"
-}
-
 bucket_kms_key_arn() {
   bucket=$1
   aws s3api get-bucket-encryption \
@@ -298,19 +286,11 @@ platform_release_publish() (
   printf '%s\n' "${build_policy_digest}"
 )
 
-worker_runtime_profile() {
-  local artifacts_manifest=$1
-  nix develop "${ROOT}#smoke-linux" -c \
-    go -C "${ROOT}" run ./cmd/helmr-worker runtime-profile \
-    --runtime-artifacts-manifest "${artifacts_manifest}"
-}
-
 validate_worker_host_bundle_receipt() {
   jq -e '
-    (keys | sort) == ["bundle", "manifest", "schema", "sourceCommit", "workerVersion"] and
+    (keys | sort) == ["bundle", "manifest", "schema", "sourceCommit"] and
     .schema == "helmr.worker-host-bundle.v0" and
     (.sourceCommit | test("^[0-9a-f]{40}$")) and
-    .workerVersion == .sourceCommit and
     .bundle.path == "worker-host-artifacts.tar" and
     (.bundle.digest | test("^sha256:[0-9a-f]{64}$")) and
     .manifest.path == "worker-host-artifacts.json" and
@@ -397,18 +377,153 @@ prepare_worker_host_bundle() (
 
 validate_worker_runtime_bundle_receipt() {
   jq -e '
-    (keys | sort) == ["bundle", "runtimeArtifactsManifest", "runtimeProfile", "schema", "sourceCommit"] and
+    (keys | sort) == ["bundle", "runtimeArtifactsManifest", "schema", "sourceCommit"] and
     .schema == "helmr.worker-runtime-bundle.v0" and
     (.sourceCommit | test("^[0-9a-f]{40}$")) and
     .bundle.path == "runtime-artifacts.tar" and
     (.bundle.digest | test("^sha256:[0-9a-f]{64}$")) and
     .runtimeArtifactsManifest.path == "runtime-artifacts.json" and
-    (.runtimeArtifactsManifest.digest | test("^sha256:[0-9a-f]{64}$")) and
-    (.runtimeProfile | keys | sort) == ["arch", "contract", "id", "initramfs_digest", "kernel_digest", "rootfs_digest"] and
-    .runtimeProfile.arch == "x86_64" and
-    .runtimeProfile.contract == "helmr.vm-runtime.v0" and
-    all(.runtimeProfile.id, .runtimeProfile.kernel_digest, .runtimeProfile.initramfs_digest, .runtimeProfile.rootfs_digest; test("^sha256:[0-9a-f]{64}$"))
+    (.runtimeArtifactsManifest.digest | test("^sha256:[0-9a-f]{64}$"))
   ' "$1" >/dev/null
+}
+
+validate_worker_image_definition() {
+  local definition_file=$1
+  jq -e '
+    (keys | sort) == [
+      "componentARN",
+      "componentDefinitionDigest",
+      "distributionConfigurationARN",
+      "distributionRegions",
+      "hostArtifacts",
+      "imageDefinitionDigest",
+      "imagePipelineARN",
+      "imageRecipeARN",
+      "prepareRootDigest",
+      "resolvedParentImageID",
+      "rootBlockDeviceMapping",
+      "runtimeArtifacts",
+      "schema",
+      "visibility"
+    ] and
+    .schema == "helmr.worker-image-definition-state.v0" and
+    (.componentARN | test("^arn:[^:]+:imagebuilder:[^:]+:[0-9]{12}:component/.+/1[.]0[.]0/[0-9]+$")) and
+    (.componentDefinitionDigest | test("^sha256:[0-9a-f]{64}$")) and
+    (.distributionConfigurationARN | test("^arn:[^:]+:imagebuilder:[^:]+:[0-9]{12}:distribution-configuration/.+$")) and
+    (.distributionRegions | type == "array" and length > 0 and . == (sort | unique) and all(.[]; test("^[a-z]{2}-[a-z-]+-[0-9]+$"))) and
+    (.imageDefinitionDigest | test("^sha256:[0-9a-f]{64}$")) and
+    (.imagePipelineARN | test("^arn:[^:]+:imagebuilder:[^:]+:[0-9]{12}:image-pipeline/.+$")) and
+    (.imageRecipeARN | test("^arn:[^:]+:imagebuilder:[^:]+:[0-9]{12}:image-recipe/.+/1[.]0[.]0$")) and
+    (.prepareRootDigest | test("^sha256:[0-9a-f]{64}$")) and
+    (.resolvedParentImageID | test("^ami-([0-9a-f]{8}|[0-9a-f]{17})$")) and
+    .rootBlockDeviceMapping == {
+      deviceName: "/dev/sda1",
+      ebs: {
+        deleteOnTermination: true,
+        encrypted: .rootBlockDeviceMapping.ebs.encrypted,
+        volumeSize: .rootBlockDeviceMapping.ebs.volumeSize,
+        volumeType: "gp3"
+      }
+    } and
+    (.rootBlockDeviceMapping.ebs.encrypted | type == "boolean") and
+    (.rootBlockDeviceMapping.ebs.volumeSize | type == "number" and floor == . and . > 0) and
+    (.visibility == "public" or .visibility == "private") and
+    (.hostArtifacts | keys == ["bundleDigest", "manifestDigest", "sourceCommit"]) and
+    (.hostArtifacts.sourceCommit | test("^[0-9a-f]{40}$")) and
+    all(.hostArtifacts.bundleDigest, .hostArtifacts.manifestDigest; test("^sha256:[0-9a-f]{64}$")) and
+    (.runtimeArtifacts | keys == ["bundleDigest", "manifestDigest", "sourceCommit"]) and
+    (.runtimeArtifacts.sourceCommit | test("^[0-9a-f]{40}$")) and
+    all(.runtimeArtifacts.bundleDigest, .runtimeArtifacts.manifestDigest; test("^sha256:[0-9a-f]{64}$"))
+  ' "${definition_file}" >/dev/null
+}
+
+current_worker_image_definition() {
+  local source_commit host_source_commit host_bundle_digest host_manifest_digest
+  local runtime_source_commit runtime_bundle_digest runtime_manifest_digest
+  local component_arn component_definition_digest distribution_configuration_arn distribution_regions
+  local image_definition_digest image_pipeline_arn image_recipe_arn prepare_root_digest
+  local resolved_parent_image_id root_block_device_mapping ami_public visibility
+
+  validate_worker_host_bundle_receipt "${WORKER_HOST_BUNDLE_RECEIPT_FILE}" ||
+    die "Worker host bundle receipt is invalid"
+  validate_worker_runtime_bundle_receipt "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}" ||
+    die "Worker runtime bundle receipt is invalid"
+  source_commit="$(git -C "${ROOT}" rev-parse HEAD)"
+  host_source_commit="$(jq -r '.sourceCommit' "${WORKER_HOST_BUNDLE_RECEIPT_FILE}")"
+  runtime_source_commit="$(jq -r '.sourceCommit' "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}")"
+  [ "${host_source_commit}" = "${source_commit}" ] ||
+    die "Worker host bundle was not produced by the current checkout; run worker-image-apply"
+  [ "${runtime_source_commit}" = "${source_commit}" ] ||
+    die "Worker runtime bundle was not produced by the current checkout; run worker-image-apply"
+
+  host_bundle_digest="$(jq -r '.bundle.digest' "${WORKER_HOST_BUNDLE_RECEIPT_FILE}")"
+  host_manifest_digest="$(jq -r '.manifest.digest' "${WORKER_HOST_BUNDLE_RECEIPT_FILE}")"
+  runtime_bundle_digest="$(jq -r '.bundle.digest' "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}")"
+  runtime_manifest_digest="$(jq -r '.runtimeArtifactsManifest.digest' "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}")"
+  [ "${host_manifest_digest}" = "sha256:$(sha256_file "${WORKER_HOST_ARTIFACTS_MANIFEST_FILE}")" ] ||
+    die "Worker host artifact manifest does not match its bundle receipt"
+  [ "${runtime_manifest_digest}" = "sha256:$(sha256_file "${WORKER_RUNTIME_ARTIFACTS_MANIFEST_FILE}")" ] ||
+    die "Worker runtime artifact manifest does not match its bundle receipt"
+
+  component_arn="$("${TF_BIN}" -chdir="${WORKER_IMAGE_STACK}" output -raw component_arn)"
+  component_definition_digest="$("${TF_BIN}" -chdir="${WORKER_IMAGE_STACK}" output -raw component_definition_digest)"
+  distribution_configuration_arn="$("${TF_BIN}" -chdir="${WORKER_IMAGE_STACK}" output -raw distribution_configuration_arn)"
+  distribution_regions="$("${TF_BIN}" -chdir="${WORKER_IMAGE_STACK}" output -json distribution_regions | jq -c 'sort | unique')"
+  image_definition_digest="$("${TF_BIN}" -chdir="${WORKER_IMAGE_STACK}" output -raw image_definition_digest)"
+  image_pipeline_arn="$("${TF_BIN}" -chdir="${WORKER_IMAGE_STACK}" output -raw image_pipeline_arn)"
+  image_recipe_arn="$("${TF_BIN}" -chdir="${WORKER_IMAGE_STACK}" output -raw image_recipe_arn)"
+  prepare_root_digest="$("${TF_BIN}" -chdir="${WORKER_IMAGE_STACK}" output -raw prepare_root_digest)"
+  resolved_parent_image_id="$("${TF_BIN}" -chdir="${WORKER_IMAGE_STACK}" output -raw resolved_parent_image_id)"
+  root_block_device_mapping="$("${TF_BIN}" -chdir="${WORKER_IMAGE_STACK}" output -json root_block_device_mapping | jq -cS .)"
+  ami_public="$("${TF_BIN}" -chdir="${WORKER_IMAGE_STACK}" output -raw ami_public)"
+  case "${ami_public}" in
+    true) visibility=public ;;
+    false) visibility=private ;;
+    *) die "ami_public output must be true or false" ;;
+  esac
+
+  jq -cnS \
+    --arg component_arn "${component_arn}" \
+    --arg component_definition_digest "${component_definition_digest}" \
+    --arg distribution_configuration_arn "${distribution_configuration_arn}" \
+    --argjson distribution_regions "${distribution_regions}" \
+    --arg host_bundle_digest "${host_bundle_digest}" \
+    --arg host_manifest_digest "${host_manifest_digest}" \
+    --arg host_source_commit "${host_source_commit}" \
+    --arg image_definition_digest "${image_definition_digest}" \
+    --arg image_pipeline_arn "${image_pipeline_arn}" \
+    --arg image_recipe_arn "${image_recipe_arn}" \
+    --arg prepare_root_digest "${prepare_root_digest}" \
+    --arg resolved_parent_image_id "${resolved_parent_image_id}" \
+    --argjson root_block_device_mapping "${root_block_device_mapping}" \
+    --arg runtime_bundle_digest "${runtime_bundle_digest}" \
+    --arg runtime_manifest_digest "${runtime_manifest_digest}" \
+    --arg runtime_source_commit "${runtime_source_commit}" \
+    --arg visibility "${visibility}" '
+    {
+      schema: "helmr.worker-image-definition-state.v0",
+      componentARN: $component_arn,
+      componentDefinitionDigest: $component_definition_digest,
+      distributionConfigurationARN: $distribution_configuration_arn,
+      distributionRegions: $distribution_regions,
+      imageDefinitionDigest: $image_definition_digest,
+      imagePipelineARN: $image_pipeline_arn,
+      imageRecipeARN: $image_recipe_arn,
+      prepareRootDigest: $prepare_root_digest,
+      resolvedParentImageID: $resolved_parent_image_id,
+      rootBlockDeviceMapping: $root_block_device_mapping,
+      visibility: $visibility,
+      hostArtifacts: {
+        sourceCommit: $host_source_commit,
+        bundleDigest: $host_bundle_digest,
+        manifestDigest: $host_manifest_digest
+      },
+      runtimeArtifacts: {
+        sourceCommit: $runtime_source_commit,
+        bundleDigest: $runtime_bundle_digest,
+        manifestDigest: $runtime_manifest_digest
+      }
+    }'
 }
 
 prepare_worker_runtime_bundle() (
@@ -469,7 +584,10 @@ prepare_worker_runtime_bundle() (
 )
 
 worker_image_apply() {
+  local definition marker
   require_clean_product_checkout
+  mkdir -p "${STATE_DIR}"
+  rm -f "${WORKER_IMAGE_DEFINITION_FILE}"
   nix develop "${ROOT}#images" -c "${ROOT}/scripts/check-apko-lock.sh"
   host_bundle="$(prepare_worker_host_bundle)"
   host_artifacts_bundle_digest="$(jq -er '.bundleDigest' <<<"${host_bundle}")"
@@ -483,10 +601,7 @@ worker_image_apply() {
   runtime_artifacts_bundle_object_arn="$(jq -er '.objectARN' <<<"${runtime_bundle}")"
   runtime_artifacts_bundle_s3_uri="$(jq -er '.s3URI' <<<"${runtime_bundle}")"
   runtime_artifacts_manifest_digest="$(jq -er '.manifestDigest' <<<"${runtime_bundle}")"
-  source_ref="$(git -C "${ROOT}" rev-parse HEAD)"
-  version_args=(
-    -var="image_version=$(worker_image_version)"
-    -var="source_ref=${source_ref}"
+  definition_args=(
     -var="host_artifacts_bundle_digest=${host_artifacts_bundle_digest}"
     -var="host_artifacts_bundle_object_arn=${host_artifacts_bundle_object_arn}"
     -var="host_artifacts_bundle_s3_uri=${host_artifacts_bundle_s3_uri}"
@@ -497,10 +612,10 @@ worker_image_apply() {
     -var="runtime_artifacts_manifest_digest=${runtime_artifacts_manifest_digest}"
   )
   if [ -n "${host_artifacts_bundle_kms_key_arn}" ]; then
-    version_args+=(-var="host_artifacts_bundle_kms_key_arn=${host_artifacts_bundle_kms_key_arn}")
+    definition_args+=(-var="host_artifacts_bundle_kms_key_arn=${host_artifacts_bundle_kms_key_arn}")
   fi
   if [ -n "${runtime_artifacts_bundle_kms_key_arn}" ]; then
-    version_args+=(-var="runtime_artifacts_bundle_kms_key_arn=${runtime_artifacts_bundle_kms_key_arn}")
+    definition_args+=(-var="runtime_artifacts_bundle_kms_key_arn=${runtime_artifacts_bundle_kms_key_arn}")
   fi
   distribution_args=()
   if [ -n "${WORKER_IMAGE_DISTRIBUTION_REGIONS}" ]; then
@@ -525,13 +640,243 @@ worker_image_apply() {
   if ((${#distribution_args[@]})); then apply_args+=("${distribution_args[@]}"); fi
   if ((${#public_args[@]})); then apply_args+=("${public_args[@]}"); fi
   if ((${#encryption_args[@]})); then apply_args+=("${encryption_args[@]}"); fi
-  if ((${#version_args[@]})); then apply_args+=("${version_args[@]}"); fi
+  if ((${#definition_args[@]})); then apply_args+=("${definition_args[@]}"); fi
   tf_apply "${WORKER_IMAGE_STACK}" "${apply_args[@]}"
+  definition="$(current_worker_image_definition)"
+  marker="$(mktemp "${STATE_DIR}/worker-image-definition.XXXXXX")"
+  printf '%s\n' "${definition}" >"${marker}"
+  validate_worker_image_definition "${marker}" || {
+    rm -f "${marker}"
+    die "applied Worker image definition is invalid"
+  }
+  chmod 0600 "${marker}"
+  mv "${marker}" "${WORKER_IMAGE_DEFINITION_FILE}"
+  info "Worker image definition recorded at ${WORKER_IMAGE_DEFINITION_FILE}"
+}
+
+validate_worker_image_receipt() {
+  local receipt_file=$1
+  jq -e '
+    (keys | sort) == [
+      "amis",
+      "componentDefinitionDigest",
+      "hostArtifacts",
+      "imageBuildVersionARN",
+      "imageDefinitionDigest",
+      "imageRecipeARN",
+      "prepareRootDigest",
+      "resolvedParentImageID",
+      "runtimeArtifacts",
+      "schema",
+      "visibility"
+    ] and
+    .schema == "helmr.worker-image.v0" and
+    (.amis | type == "object" and length > 0) and
+    all(.amis | keys[]; test("^[a-z]{2}-[a-z-]+-[0-9]+$")) and
+    all(.amis[]; test("^ami-([0-9a-f]{8}|[0-9a-f]{17})$")) and
+    (.visibility == "public" or .visibility == "private") and
+    (.imageBuildVersionARN | test("^arn:[^:]+:imagebuilder:[^:]+:[0-9]{12}:image/.+/1[.]0[.]0/[0-9]+$")) and
+    (.imageRecipeARN | test("^arn:[^:]+:imagebuilder:[^:]+:[0-9]{12}:image-recipe/.+/1[.]0[.]0$")) and
+    (.componentDefinitionDigest | test("^sha256:[0-9a-f]{64}$")) and
+    (.imageDefinitionDigest | test("^sha256:[0-9a-f]{64}$")) and
+    (.prepareRootDigest | test("^sha256:[0-9a-f]{64}$")) and
+    (.resolvedParentImageID | test("^ami-([0-9a-f]{8}|[0-9a-f]{17})$")) and
+    (.hostArtifacts | keys == ["bundleDigest", "manifestDigest", "sourceCommit"]) and
+    (.hostArtifacts.sourceCommit | test("^[0-9a-f]{40}$")) and
+    all(.hostArtifacts.bundleDigest, .hostArtifacts.manifestDigest; test("^sha256:[0-9a-f]{64}$")) and
+    (.runtimeArtifacts | keys == ["bundleDigest", "manifestDigest", "sourceCommit"]) and
+    (.runtimeArtifacts.sourceCommit | test("^[0-9a-f]{40}$")) and
+    all(.runtimeArtifacts.bundleDigest, .runtimeArtifacts.manifestDigest; test("^sha256:[0-9a-f]{64}$"))
+  ' "${receipt_file}" >/dev/null
+}
+
+worker_image_receipt_matches_definition() {
+  local receipt_file=$1 definition_file=$2
+  jq -e --slurpfile definition "${definition_file}" '
+    .componentDefinitionDigest == $definition[0].componentDefinitionDigest and
+    .imageDefinitionDigest == $definition[0].imageDefinitionDigest and
+    .imageRecipeARN == $definition[0].imageRecipeARN and
+    .prepareRootDigest == $definition[0].prepareRootDigest and
+    .resolvedParentImageID == $definition[0].resolvedParentImageID and
+    .hostArtifacts.bundleDigest == $definition[0].hostArtifacts.bundleDigest and
+    .hostArtifacts.manifestDigest == $definition[0].hostArtifacts.manifestDigest and
+    .runtimeArtifacts.bundleDigest == $definition[0].runtimeArtifacts.bundleDigest and
+    .runtimeArtifacts.manifestDigest == $definition[0].runtimeArtifacts.manifestDigest
+  ' "${receipt_file}" >/dev/null
+}
+
+worker_image_receipt_matches_distribution() {
+  local receipt_file=$1 definition_file=$2
+  jq -e --slurpfile definition "${definition_file}" '
+    .visibility == $definition[0].visibility and
+    (.amis | keys) == $definition[0].distributionRegions
+  ' "${receipt_file}" >/dev/null
+}
+
+require_current_worker_image_definition() {
+  local current
+  [ -f "${WORKER_IMAGE_DEFINITION_FILE}" ] ||
+    die "Worker image definition is missing; run worker-image-apply first"
+  validate_worker_image_definition "${WORKER_IMAGE_DEFINITION_FILE}" ||
+    die "Worker image definition is malformed; run worker-image-apply"
+  current="$(current_worker_image_definition)"
+  [ "$(jq -cS . <<<"${current}")" = "$(jq -cS . "${WORKER_IMAGE_DEFINITION_FILE}")" ] ||
+    die "Worker image definition is stale; run worker-image-apply"
+}
+
+validate_worker_image_receipt_live() {
+  local receipt_file=$1 definition_file=$2
+  local image_arn image_json recipe_arn recipe_json component_json distribution_arn distribution_json
+  local component_arn parent_image root_mapping visibility expected_public expected_regions
+  local region ami_id ami_json
+
+  validate_worker_image_receipt "${receipt_file}" || return 1
+  worker_image_receipt_matches_definition "${receipt_file}" "${definition_file}" || return 1
+  worker_image_receipt_matches_distribution "${receipt_file}" "${definition_file}" || return 1
+
+  image_arn="$(jq -r '.imageBuildVersionARN' "${receipt_file}")"
+  recipe_arn="$(jq -r '.imageRecipeARN' "${receipt_file}")"
+  component_arn="$(jq -r '.componentARN' "${definition_file}")"
+  distribution_arn="$(jq -r '.distributionConfigurationARN' "${definition_file}")"
+  parent_image="$(jq -r '.resolvedParentImageID' "${receipt_file}")"
+  root_mapping="$(jq -c '.rootBlockDeviceMapping' "${definition_file}")"
+  visibility="$(jq -r '.visibility' "${receipt_file}")"
+  expected_regions="$(jq -c '.distributionRegions' "${definition_file}")"
+  case "${visibility}" in
+    public) expected_public=true ;;
+    private) expected_public=false ;;
+    *) return 1 ;;
+  esac
+
+  image_json="$(aws imagebuilder get-image \
+    --region "${AWS_REGION}" \
+    --image-build-version-arn "${image_arn}" \
+    --output json)" || return 1
+  jq -e \
+    --arg build_arn "${image_arn}" \
+    --arg recipe_arn "${recipe_arn}" \
+    --argjson expected_amis "$(jq -c '.amis' "${receipt_file}")" '
+      ([.image.outputResources.amis[]? | select(.region != null and .image != null) | {key: .region, value: .image}]) as $outputs |
+      .image.arn == $build_arn and
+      .image.state.status == "AVAILABLE" and
+      .image.imageRecipe.arn == $recipe_arn and
+      ($outputs | length) == ($expected_amis | length) and
+      ($outputs | from_entries) == $expected_amis
+    ' >/dev/null <<<"${image_json}" || return 1
+
+  recipe_json="$(aws imagebuilder get-image-recipe \
+    --region "${AWS_REGION}" \
+    --image-recipe-arn "${recipe_arn}" \
+    --output json)" || return 1
+  jq -e \
+    --arg component_arn "${component_arn}" \
+    --arg component_definition_digest "$(jq -r '.componentDefinitionDigest' "${receipt_file}")" \
+    --arg image_definition_digest "$(jq -r '.imageDefinitionDigest' "${receipt_file}")" \
+    --arg parent_image "${parent_image}" \
+    --arg recipe_arn "${recipe_arn}" \
+    --argjson root_mapping "${root_mapping}" '
+      .imageRecipe.arn == $recipe_arn and
+      .imageRecipe.parentImage == $parent_image and
+      .imageRecipe.tags.HelmrComponentDefinitionDigest == $component_definition_digest and
+      .imageRecipe.tags.HelmrImageDefinitionDigest == $image_definition_digest and
+      .imageRecipe.tags.HelmrResolvedParentImageID == $parent_image and
+      [.imageRecipe.components[]?.componentArn] == [$component_arn] and
+      [.imageRecipe.blockDeviceMappings[]? | {
+        deviceName,
+        ebs: {
+          deleteOnTermination: .ebs.deleteOnTermination,
+          encrypted: .ebs.encrypted,
+          volumeSize: .ebs.volumeSize,
+          volumeType: .ebs.volumeType
+        }
+      }] == [$root_mapping]
+    ' >/dev/null <<<"${recipe_json}" || return 1
+
+  component_json="$(aws imagebuilder get-component \
+    --region "${AWS_REGION}" \
+    --component-build-version-arn "${component_arn}" \
+    --output json)" || return 1
+  jq -e \
+    --arg component_arn "${component_arn}" \
+    --arg component_definition_digest "$(jq -r '.componentDefinitionDigest' "${receipt_file}")" '
+      .component.arn == $component_arn and
+      .component.tags.HelmrComponentDefinitionDigest == $component_definition_digest
+    ' >/dev/null <<<"${component_json}" || return 1
+
+  distribution_json="$(aws imagebuilder get-distribution-configuration \
+    --region "${AWS_REGION}" \
+    --distribution-configuration-arn "${distribution_arn}" \
+    --output json)" || return 1
+  jq -e \
+    --arg distribution_arn "${distribution_arn}" \
+    --argjson expected_public "${expected_public}" \
+    --argjson expected_regions "${expected_regions}" '
+      .distributionConfiguration.arn == $distribution_arn and
+      ([.distributionConfiguration.distributions[]?.region] | sort | unique) == $expected_regions and
+      all(.distributionConfiguration.distributions[]?;
+        (((.amiDistributionConfiguration.launchPermission.userGroups // []) | index("all")) != null) == $expected_public)
+    ' >/dev/null <<<"${distribution_json}" || return 1
+
+  while IFS=$'\t' read -r region ami_id; do
+    ami_json="$(aws ec2 describe-images \
+      --region "${region}" \
+      --owners self \
+      --image-ids "${ami_id}" \
+      --output json)" || return 1
+    jq -e \
+      --arg ami_id "${ami_id}" \
+      --arg component_definition_digest "$(jq -r '.componentDefinitionDigest' "${receipt_file}")" \
+      --arg host_bundle_digest "$(jq -r '.hostArtifacts.bundleDigest' "${receipt_file}")" \
+      --arg host_manifest_digest "$(jq -r '.hostArtifacts.manifestDigest' "${receipt_file}")" \
+      --arg image_definition_digest "$(jq -r '.imageDefinitionDigest' "${receipt_file}")" \
+      --arg parent_image "${parent_image}" \
+      --arg prepare_root_digest "$(jq -r '.prepareRootDigest' "${receipt_file}")" \
+      --arg runtime_bundle_digest "$(jq -r '.runtimeArtifacts.bundleDigest' "${receipt_file}")" \
+      --arg runtime_manifest_digest "$(jq -r '.runtimeArtifacts.manifestDigest' "${receipt_file}")" \
+      --argjson expected_public "${expected_public}" '
+        (.Images // []) as $images |
+        (($images[0].Tags // []) | map({key: .Key, value: .Value}) | from_entries) as $tags |
+        ($images | length) == 1 and
+        $images[0].ImageId == $ami_id and
+        $images[0].State == "available" and
+        $images[0].ImageType == "machine" and
+        $images[0].Public == $expected_public and
+        $tags.HelmrComponentDefinitionDigest == $component_definition_digest and
+        $tags.HelmrImageDefinitionDigest == $image_definition_digest and
+        $tags.HelmrResolvedParentImageID == $parent_image and
+        $tags.HelmrPrepareRootDigest == $prepare_root_digest and
+        $tags.HelmrHostBundleDigest == $host_bundle_digest and
+        $tags.HelmrHostArtifactsDigest == $host_manifest_digest and
+        $tags.HelmrRuntimeBundleDigest == $runtime_bundle_digest and
+        $tags.HelmrRuntimeArtifactsDigest == $runtime_manifest_digest
+      ' >/dev/null <<<"${ami_json}" || return 1
+  done < <(jq -r '.amis | to_entries[] | [.key, .value] | @tsv' "${receipt_file}")
 }
 
 worker_image_start() {
+  local pipeline_arn token image_arn
+  require_clean_product_checkout
+  require_current_worker_image_definition
   mkdir -p "${STATE_DIR}"
-  pipeline_arn="$("${TF_BIN}" -chdir="${WORKER_IMAGE_STACK}" output -raw image_pipeline_arn)"
+  if [ -f "${WORKER_IMAGE_RECEIPT_FILE}" ]; then
+    validate_worker_image_receipt "${WORKER_IMAGE_RECEIPT_FILE}" ||
+      die "existing Worker image receipt is malformed; remove it explicitly before rebuilding"
+    if worker_image_receipt_matches_definition "${WORKER_IMAGE_RECEIPT_FILE}" "${WORKER_IMAGE_DEFINITION_FILE}"; then
+      if worker_image_receipt_matches_distribution "${WORKER_IMAGE_RECEIPT_FILE}" "${WORKER_IMAGE_DEFINITION_FILE}"; then
+        validate_worker_image_receipt_live "${WORKER_IMAGE_RECEIPT_FILE}" "${WORKER_IMAGE_DEFINITION_FILE}" ||
+          die "existing Worker image matches the current definition but its live AWS state is invalid"
+        image_arn="$(jq -r '.imageBuildVersionARN' "${WORKER_IMAGE_RECEIPT_FILE}")"
+        printf '%s\n' "${image_arn}" >"${IMAGE_ARN_FILE}"
+        info "reusing fully validated Worker image: ${image_arn}"
+        printf '%s\n' "${image_arn}"
+        return 0
+      fi
+      info "Worker image distribution policy changed; starting a new pipeline output"
+    else
+      info "Worker image definition changed; starting a new pipeline output"
+    fi
+  fi
+  pipeline_arn="$(jq -r '.imagePipelineARN' "${WORKER_IMAGE_DEFINITION_FILE}")"
   token="helmr-$(date -u +%Y%m%d%H%M%S)-$$"
   info "starting Image Builder pipeline: ${pipeline_arn}"
   image_arn="$(
@@ -549,43 +894,30 @@ worker_image_start() {
 }
 
 worker_image_wait() (
+  local image_arn definition image_json status reason deadline ami_ids_json receipt
   mkdir -p "${STATE_DIR}"
+  require_clean_product_checkout
+  require_current_worker_image_definition
   image_arn="${1:-${WORKER_IMAGE_BUILD_VERSION_ARN:-}}"
   if [ -z "${image_arn}" ] && [ -f "${IMAGE_ARN_FILE}" ]; then
     image_arn="$(cat "${IMAGE_ARN_FILE}")"
   fi
   [ -n "${image_arn}" ] || die "image build version ARN is required; run worker-image-start first"
-  [ -f "${WORKER_HOST_ARTIFACTS_MANIFEST_FILE}" ] ||
-    die "Worker host provenance is missing; run worker-image-apply before worker-image-wait"
-  [ -f "${WORKER_HOST_BUNDLE_RECEIPT_FILE}" ] ||
-    die "Worker host bundle receipt is missing; run worker-image-apply before worker-image-wait"
-  [ -f "${WORKER_RUNTIME_ARTIFACTS_MANIFEST_FILE}" ] ||
-    die "Worker runtime provenance is missing; run worker-image-apply before worker-image-wait"
-  [ -f "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}" ] ||
-    die "Worker runtime bundle receipt is missing; run worker-image-apply before worker-image-wait"
-  validate_worker_runtime_bundle_receipt "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}" ||
-    die "Worker runtime bundle receipt is invalid"
-  validate_worker_host_bundle_receipt "${WORKER_HOST_BUNDLE_RECEIPT_FILE}" ||
-    die "Worker host bundle receipt is invalid"
-  source_commit="$(git -C "${ROOT}" rev-parse HEAD)"
-  [ "$(jq -r '.sourceCommit' "${WORKER_HOST_BUNDLE_RECEIPT_FILE}")" = "${source_commit}" ] ||
-    die "Worker host bundle receipt does not match the current source commit"
-  [ "$(jq -r '.sourceCommit' "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}")" = "${source_commit}" ] ||
-    die "Worker runtime bundle receipt does not match the current source commit"
-  host_artifacts_bundle_digest="$(jq -r '.bundle.digest' "${WORKER_HOST_BUNDLE_RECEIPT_FILE}")"
-  host_artifacts_manifest_digest="$(jq -r '.manifest.digest' "${WORKER_HOST_BUNDLE_RECEIPT_FILE}")"
-  [ "${host_artifacts_manifest_digest}" = "sha256:$(sha256_file "${WORKER_HOST_ARTIFACTS_MANIFEST_FILE}")" ] ||
-    die "Worker host artifact manifest does not match its bundle receipt"
-  runtime_artifacts_bundle_digest="$(jq -r '.bundle.digest' "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}")"
-  runtime_artifacts_manifest_digest="$(jq -r '.runtimeArtifactsManifest.digest' "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}")"
-  [ "${runtime_artifacts_manifest_digest}" = "sha256:$(sha256_file "${WORKER_RUNTIME_ARTIFACTS_MANIFEST_FILE}")" ] ||
-    die "Worker runtime artifact manifest does not match its bundle receipt"
-  runtime_profile_file="$(mktemp "${STATE_DIR}/worker-runtime-profile.XXXXXX")"
-  trap 'rm -f "${runtime_profile_file}"' EXIT
-  worker_runtime_profile "${WORKER_RUNTIME_ARTIFACTS_MANIFEST_FILE}" >"${runtime_profile_file}"
-  jq -e --slurpfile profile "${runtime_profile_file}" '.runtimeProfile == $profile[0]' \
-    "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}" >/dev/null ||
-    die "Worker runtime profile does not match its bundle receipt"
+  definition="$(jq -c . "${WORKER_IMAGE_DEFINITION_FILE}")"
+
+  if [ -f "${WORKER_IMAGE_RECEIPT_FILE}" ]; then
+    validate_worker_image_receipt "${WORKER_IMAGE_RECEIPT_FILE}" ||
+      die "existing Worker image receipt is malformed"
+    if [ "$(jq -r '.imageBuildVersionARN' "${WORKER_IMAGE_RECEIPT_FILE}")" = "${image_arn}" ] &&
+      worker_image_receipt_matches_definition "${WORKER_IMAGE_RECEIPT_FILE}" "${WORKER_IMAGE_DEFINITION_FILE}" &&
+      worker_image_receipt_matches_distribution "${WORKER_IMAGE_RECEIPT_FILE}" "${WORKER_IMAGE_DEFINITION_FILE}"; then
+      validate_worker_image_receipt_live "${WORKER_IMAGE_RECEIPT_FILE}" "${WORKER_IMAGE_DEFINITION_FILE}" ||
+        die "reused Worker image no longer matches its live AWS state"
+      info "Worker image receipt remains valid: ${WORKER_IMAGE_RECEIPT_FILE}"
+      printf '%s\n' "${image_arn}"
+      return 0
+    fi
+  fi
 
   deadline=$((SECONDS + IMAGE_WAIT_TIMEOUT_SECONDS))
   while :; do
@@ -603,69 +935,43 @@ worker_image_wait() (
       AVAILABLE)
         ami_ids_json="$(
           printf '%s\n' "${image_json}" |
-            jq -c '[.image.outputResources.amis[]? | select(.region != null and .image != null) | {key: .region, value: .image}] | from_entries'
+            jq -cS '[.image.outputResources.amis[]? | select(.region != null and .image != null) | {key: .region, value: .image}] | from_entries'
         )"
         [ "$(printf '%s\n' "${ami_ids_json}" | jq 'length')" -gt 0 ] || die "image is AVAILABLE but no AMIs were returned"
-        ami_id="$(printf '%s\n' "${ami_ids_json}" | jq -r --arg region "${AWS_REGION}" '.[$region] // empty')"
-        [ -n "${ami_id}" ] || die "image is AVAILABLE but does not include an AMI for AWS_REGION=${AWS_REGION}"
-        recipe_arn="$("${TF_BIN}" -chdir="${WORKER_IMAGE_STACK}" output -raw image_recipe_arn)"
-        [ "$(printf '%s\n' "${image_json}" | jq -er '.image.imageRecipe.arn')" = "${recipe_arn}" ] ||
-          die "available Worker image was not built from the applied image recipe"
-        ami_json="$(
-          aws ec2 describe-images \
-            --region "${AWS_REGION}" \
-            --owners self \
-            --image-ids "${ami_id}" \
-            --output json
-        )"
-        jq -e \
-          --arg ami "${ami_id}" \
-          --arg commit "${source_commit}" \
-          --arg host_artifacts_bundle_digest "${host_artifacts_bundle_digest}" \
-          --arg host_artifacts_manifest_digest "${host_artifacts_manifest_digest}" \
-          --arg runtime_artifacts_bundle_digest "${runtime_artifacts_bundle_digest}" \
-          --arg runtime_artifacts_manifest_digest "${runtime_artifacts_manifest_digest}" '
-          (.Images // []) as $images |
-          (($images[0].Tags // []) | map({key: .Key, value: .Value}) | from_entries) as $tags |
-          ($images | length) == 1 and
-          $images[0].ImageId == $ami and
-          $tags.HelmrSourceCommit == $commit and
-          $tags.HelmrHostBundleDigest == $host_artifacts_bundle_digest and
-          $tags.HelmrHostArtifactsDigest == $host_artifacts_manifest_digest and
-          $tags.HelmrRuntimeBundleDigest == $runtime_artifacts_bundle_digest and
-          $tags.HelmrRuntimeArtifactsDigest == $runtime_artifacts_manifest_digest
-        ' <<<"${ami_json}" >/dev/null ||
-          die "available Worker AMI is not bound to the exact source and runtime artifacts"
-        jq -cn \
-          --arg ami "${ami_id}" \
+        [ "$(printf '%s\n' "${image_json}" | jq '[.image.outputResources.amis[]? | select(.region != null and .image != null)] | length')" = "$(jq 'length' <<<"${ami_ids_json}")" ] ||
+          die "image is AVAILABLE but contains duplicate regional AMI outputs"
+        [ "$(jq -c 'keys' <<<"${ami_ids_json}")" = "$(jq -c '.distributionRegions' <<<"${definition}")" ] ||
+          die "available Worker image regions do not match the applied distribution policy"
+        receipt="$(mktemp "${STATE_DIR}/worker-image.XXXXXX")"
+        jq -cnS \
+          --argjson amis "${ami_ids_json}" \
           --arg build_arn "${image_arn}" \
-          --arg recipe_arn "${recipe_arn}" \
-          --arg region "${AWS_REGION}" \
-          --arg source_commit "${source_commit}" \
-          --arg host_artifacts_bundle_digest "${host_artifacts_bundle_digest}" \
-          --arg host_artifacts_manifest_digest "${host_artifacts_manifest_digest}" \
-          --arg runtime_artifacts_bundle_digest "${runtime_artifacts_bundle_digest}" \
-          --arg runtime_artifacts_manifest_digest "${runtime_artifacts_manifest_digest}" \
-          --slurpfile runtime_profile "${runtime_profile_file}" \
-          '{
-            ami: {id: $ami, region: $region},
-            formatVersion: 1,
-            hostArtifactsBundleDigest: $host_artifacts_bundle_digest,
-            hostArtifactsManifestDigest: $host_artifacts_manifest_digest,
+          --argjson definition "${definition}" '
+          {
+            schema: "helmr.worker-image.v0",
+            amis: $amis,
+            visibility: $definition.visibility,
             imageBuildVersionARN: $build_arn,
-            imageRecipeARN: $recipe_arn,
-            runtimeArtifactsBundleDigest: $runtime_artifacts_bundle_digest,
-            runtimeArtifactsManifestDigest: $runtime_artifacts_manifest_digest,
-            runtimeProfile: $runtime_profile[0],
-            sourceCommit: $source_commit,
-            workerVersion: $source_commit
-          }' >"${WORKER_IMAGE_PROVENANCE_FILE}"
-        chmod 0600 "${WORKER_IMAGE_PROVENANCE_FILE}"
-        printf '%s\n' "${ami_id}" >"${AMI_ID_FILE}"
-        printf '%s\n' "${ami_ids_json}" >"${AMI_IDS_FILE}"
-        info "worker AMI ID recorded at ${AMI_ID_FILE}"
-        info "worker AMI region map recorded at ${AMI_IDS_FILE}"
-        printf '%s\n' "${ami_id}"
+            imageRecipeARN: $definition.imageRecipeARN,
+            componentDefinitionDigest: $definition.componentDefinitionDigest,
+            imageDefinitionDigest: $definition.imageDefinitionDigest,
+            prepareRootDigest: $definition.prepareRootDigest,
+            resolvedParentImageID: $definition.resolvedParentImageID,
+            hostArtifacts: $definition.hostArtifacts,
+            runtimeArtifacts: $definition.runtimeArtifacts
+          }' >"${receipt}"
+        validate_worker_image_receipt "${receipt}" || {
+          rm -f "${receipt}"
+          die "Image Builder produced an invalid Worker image receipt"
+        }
+        validate_worker_image_receipt_live "${receipt}" "${WORKER_IMAGE_DEFINITION_FILE}" || {
+          rm -f "${receipt}"
+          die "Image Builder output does not close to the applied Worker image definition"
+        }
+        chmod 0600 "${receipt}"
+        mv "${receipt}" "${WORKER_IMAGE_RECEIPT_FILE}"
+        info "Worker image receipt recorded at ${WORKER_IMAGE_RECEIPT_FILE}"
+        printf '%s\n' "${image_arn}"
         return 0
         ;;
       FAILED|CANCELLED)
@@ -678,14 +984,10 @@ worker_image_wait() (
   done
 )
 
-worker_image_amis() {
-  [ -f "${AMI_IDS_FILE}" ] || die "worker AMI region map not found; run worker-image-wait first"
-  jq -c . "${AMI_IDS_FILE}"
-}
-
-worker_image_provenance() {
-  [ -f "${WORKER_IMAGE_PROVENANCE_FILE}" ] || die "worker image provenance not found; run worker-image-wait first"
-  jq -c . "${WORKER_IMAGE_PROVENANCE_FILE}"
+worker_image_receipt() {
+  [ -f "${WORKER_IMAGE_RECEIPT_FILE}" ] || die "Worker image receipt not found; run worker-image-wait first"
+  validate_worker_image_receipt "${WORKER_IMAGE_RECEIPT_FILE}" || die "Worker image receipt is invalid"
+  jq -c . "${WORKER_IMAGE_RECEIPT_FILE}"
 }
 
 controlplane_image_repository() {
@@ -798,8 +1100,7 @@ case "${command}" in
   worker-image-apply) worker_image_apply ;;
   worker-image-start) worker_image_start ;;
   worker-image-wait) shift; worker_image_wait "$@" ;;
-  worker-image-amis) worker_image_amis ;;
-  worker-image-provenance) worker_image_provenance ;;
+  worker-image-receipt) worker_image_receipt ;;
   controlplane-image-build) controlplane_image_build ;;
   controlplane-image-push) controlplane_image_push ;;
   -h|--help|help|"") usage ;;

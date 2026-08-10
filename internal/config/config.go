@@ -89,6 +89,7 @@ type ClickHouse struct {
 type Worker struct {
 	ControlPlaneURL              string
 	WorkerResourceID             string
+	WorkerPoolName               string
 	WorkerEnrollmentTokenFile    string
 	CASURI                       string
 	WorkerInstanceCredentialPath string
@@ -100,6 +101,7 @@ type Worker struct {
 	BuildScratchDir              string
 	ImagesDir                    string
 	FirecrackerPath              string
+	CPUTemplateHelperPath        string
 	JailerPath                   string
 	JailerUID                    int
 	JailerGID                    int
