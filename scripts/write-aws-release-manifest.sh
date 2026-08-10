@@ -59,7 +59,7 @@ jq -e '
 ' >/dev/null <<<"$platform_release_json"
 
 jq -e --argjson worker_amis "$worker_amis_json" --argjson platform_release "$platform_release_json" '
-  keys == ["ami", "formatVersion", "imageBuildVersionARN", "imageRecipeARN", "runtimeArtifactsBundleDigest", "runtimeArtifactsManifestDigest", "runtimeProfile", "sourceCommit", "workerVersion"]
+  keys == ["ami", "formatVersion", "hostArtifactsBundleDigest", "hostArtifactsManifestDigest", "imageBuildVersionARN", "imageRecipeARN", "runtimeArtifactsBundleDigest", "runtimeArtifactsManifestDigest", "runtimeProfile", "sourceCommit", "workerVersion"]
   and .formatVersion == 1
   and (.ami | keys == ["id", "region"])
   and (.ami.id | test("^ami-[0-9a-f]{8,}$"))
@@ -67,6 +67,8 @@ jq -e --argjson worker_amis "$worker_amis_json" --argjson platform_release "$pla
   and ($worker_amis[.ami.region] == .ami.id)
   and (.imageBuildVersionARN | type == "string" and length > 0)
   and (.imageRecipeARN | type == "string" and length > 0)
+  and (.hostArtifactsBundleDigest | test("^sha256:[0-9a-f]{64}$"))
+  and (.hostArtifactsManifestDigest | test("^sha256:[0-9a-f]{64}$"))
   and (.runtimeArtifactsBundleDigest | test("^sha256:[0-9a-f]{64}$"))
   and (.runtimeArtifactsManifestDigest | test("^sha256:[0-9a-f]{64}$"))
   and (.runtimeProfile | keys == ["arch", "contract", "id", "initramfs_digest", "kernel_digest", "rootfs_digest"])

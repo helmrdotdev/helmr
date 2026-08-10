@@ -7,9 +7,6 @@ AWS_REGION="${AWS_REGION:-us-east-1}"
 STATE_REGION="${STATE_REGION:-${AWS_REGION}}"
 STATE_KEY="${STATE_KEY:-}"
 WORKER_IMAGE_NAME="${WORKER_IMAGE_NAME:-helmr-worker-image}"
-CURRENT_GIT_REF="$(git -C "${ROOT}" symbolic-ref --quiet --short HEAD || git -C "${ROOT}" rev-parse HEAD)"
-WORKER_IMAGE_SOURCE_REPOSITORY_URL="${WORKER_IMAGE_SOURCE_REPOSITORY_URL:-https://github.com/helmrdotdev/helmr.git}"
-WORKER_IMAGE_SOURCE_REF="${WORKER_IMAGE_SOURCE_REF:-${CURRENT_GIT_REF}}"
 WORKER_IMAGE_VERSION="${WORKER_IMAGE_VERSION:-}"
 WORKER_IMAGE_DISTRIBUTION_REGIONS="${WORKER_IMAGE_DISTRIBUTION_REGIONS:-}"
 WORKER_IMAGE_AMI_PUBLIC="${WORKER_IMAGE_AMI_PUBLIC:-}"
@@ -21,11 +18,10 @@ STATE_DIR="${STATE_DIR:-${ROOT}/.helmr-release-artifacts}"
 IMAGE_ARN_FILE="${STATE_DIR}/worker-image-build-version-arn"
 AMI_ID_FILE="${STATE_DIR}/worker-ami-id"
 AMI_IDS_FILE="${STATE_DIR}/worker-ami-ids.json"
-SOURCE_BUNDLE_FILE="${STATE_DIR}/source.bundle"
-SOURCE_BUNDLE_URI_FILE="${STATE_DIR}/source-bundle-s3-uri"
-SOURCE_BUNDLE_REF_FILE="${STATE_DIR}/source-bundle-ref"
 BUILD_POLICY_DIGEST_FILE="${STATE_DIR}/build-policy-digest"
 WORKER_IMAGE_PROVENANCE_FILE="${STATE_DIR}/worker-image-provenance.json"
+WORKER_HOST_ARTIFACTS_MANIFEST_FILE="${STATE_DIR}/worker-host-artifacts.json"
+WORKER_HOST_BUNDLE_RECEIPT_FILE="${STATE_DIR}/worker-host-bundle.json"
 WORKER_RUNTIME_ARTIFACTS_MANIFEST_FILE="${STATE_DIR}/worker-runtime-artifacts.json"
 WORKER_RUNTIME_BUNDLE_RECEIPT_FILE="${STATE_DIR}/worker-runtime-bundle.json"
 CONTROLPLANE_IMAGE_PROVENANCE_FILE="${STATE_DIR}/controlplane-image-provenance.json"
@@ -43,8 +39,6 @@ Commands:
   bootstrap-apply
   bootstrap-output
   platform-release-publish
-  source-bundle
-  worker-image-source-check
   worker-image-init
   worker-image-apply
   worker-image-start
@@ -174,7 +168,7 @@ bootstrap_output() {
   artifact_bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw source_artifact_bucket_name)"
   printf 'export STATE_BUCKET=%q\n' "${bucket}"
   printf 'export STATE_REGION=%q\n' "${STATE_REGION}"
-  printf 'export SOURCE_BUNDLE_BUCKET=%q\n' "${artifact_bucket}"
+  printf 'export WORKER_IMAGE_ARTIFACT_BUCKET=%q\n' "${artifact_bucket}"
   for output_name in \
     controlplane_release_repository_url \
     controlplane_release_repository_arn \
@@ -227,16 +221,16 @@ with_platform_publisher() {
     "$@"
 }
 
-source_bundle_bucket() {
-  if [ -n "${SOURCE_BUNDLE_BUCKET:-}" ]; then
-    printf '%s\n' "${SOURCE_BUNDLE_BUCKET}"
+worker_image_artifact_bucket() {
+  if [ -n "${WORKER_IMAGE_ARTIFACT_BUCKET:-}" ]; then
+    printf '%s\n' "${WORKER_IMAGE_ARTIFACT_BUCKET}"
     return 0
   fi
   if artifact_bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw source_artifact_bucket_name 2>/dev/null)"; then
     printf '%s\n' "${artifact_bucket}"
     return 0
   fi
-  die "SOURCE_BUNDLE_BUCKET is required; run bootstrap-apply after this branch and export bootstrap-output"
+  die "WORKER_IMAGE_ARTIFACT_BUCKET is required; run bootstrap-apply and export bootstrap-output"
 }
 
 tf_bool() {
@@ -281,63 +275,6 @@ bucket_kms_key_arn() {
     --output text 2>/dev/null | awk '$0 != "None" { print }'
 }
 
-source_bundle_uri() {
-  if [ -n "${WORKER_IMAGE_SOURCE_BUNDLE_S3_URI:-}" ]; then
-    printf '%s\n' "${WORKER_IMAGE_SOURCE_BUNDLE_S3_URI}"
-  elif [ -f "${SOURCE_BUNDLE_URI_FILE}" ]; then
-    cat "${SOURCE_BUNDLE_URI_FILE}"
-  fi
-}
-
-source_bundle_ref() {
-  if [ -n "${WORKER_IMAGE_SOURCE_BUNDLE_S3_URI:-}" ]; then
-    git -C "${ROOT}" rev-parse HEAD
-  elif [ -f "${SOURCE_BUNDLE_REF_FILE}" ]; then
-    cat "${SOURCE_BUNDLE_REF_FILE}"
-  else
-    printf '%s\n' "${WORKER_IMAGE_SOURCE_REF}"
-  fi
-}
-
-resolve_remote_source_ref() {
-  info "checking source ref ${WORKER_IMAGE_SOURCE_REF} in ${WORKER_IMAGE_SOURCE_REPOSITORY_URL}"
-  refs="$(git ls-remote --exit-code --heads --tags "${WORKER_IMAGE_SOURCE_REPOSITORY_URL}" "${WORKER_IMAGE_SOURCE_REF}" 2>/dev/null || true)"
-  if [ -n "${refs}" ]; then
-    printf '%s\n' "${refs}" | awk '
-      $2 ~ /\^\{\}$/ { print $1; found = 1; exit }
-      first == "" { first = $1 }
-      END { if (!found && first != "") print first }
-    '
-    return 0
-  fi
-
-  refs="$(git ls-remote "${WORKER_IMAGE_SOURCE_REPOSITORY_URL}" "${WORKER_IMAGE_SOURCE_REF}" 2>/dev/null || true)"
-  if [ -n "${refs}" ]; then
-    printf '%s\n' "${refs}" | awk 'NR == 1 { print $1 }'
-    return 0
-  fi
-
-  if git ls-remote "${WORKER_IMAGE_SOURCE_REPOSITORY_URL}" 2>/dev/null | awk -v rev="${WORKER_IMAGE_SOURCE_REF}" '$1 == rev { found = 1 } END { exit found ? 0 : 1 }'; then
-    printf '%s\n' "${WORKER_IMAGE_SOURCE_REF}"
-    return 0
-  fi
-
-  die "source ref is not visible to Image Builder; push the branch/tag or set WORKER_IMAGE_SOURCE_REF"
-}
-
-source_bundle() {
-  mkdir -p "${STATE_DIR}"
-  source_ref="$(git -C "${ROOT}" rev-parse HEAD)"
-  bucket="$(source_bundle_bucket)"
-  s3_uri="s3://${bucket}/helmr/source-bundles/${source_ref}.bundle"
-  git -C "${ROOT}" bundle create "${SOURCE_BUNDLE_FILE}" HEAD
-  aws s3 cp --region "${AWS_REGION}" "${SOURCE_BUNDLE_FILE}" "${s3_uri}"
-  printf '%s\n' "${s3_uri}" >"${SOURCE_BUNDLE_URI_FILE}"
-  printf '%s\n' "${source_ref}" >"${SOURCE_BUNDLE_REF_FILE}"
-  info "source bundle uploaded: ${s3_uri}"
-  printf '%s\n' "${s3_uri}"
-}
-
 platform_release_publish() (
   local release publish_input object
   require_clean_product_checkout
@@ -361,21 +298,102 @@ platform_release_publish() (
   printf '%s\n' "${build_policy_digest}"
 )
 
-worker_image_source_check() {
-  if [ -n "$(source_bundle_uri)" ]; then
-    info "using source bundle: $(source_bundle_uri)"
-    return 0
-  fi
-  [ "${SKIP_SOURCE_REF_CHECK:-}" != "1" ] || return 0
-  resolve_remote_source_ref >/dev/null
-}
-
 worker_runtime_profile() {
   local artifacts_manifest=$1
   nix develop "${ROOT}#smoke-linux" -c \
     go -C "${ROOT}" run ./cmd/helmr-worker runtime-profile \
     --runtime-artifacts-manifest "${artifacts_manifest}"
 }
+
+validate_worker_host_bundle_receipt() {
+  jq -e '
+    (keys | sort) == ["bundle", "manifest", "schema", "sourceCommit", "workerVersion"] and
+    .schema == "helmr.worker-host-bundle.v0" and
+    (.sourceCommit | test("^[0-9a-f]{40}$")) and
+    .workerVersion == .sourceCommit and
+    .bundle.path == "worker-host-artifacts.tar" and
+    (.bundle.digest | test("^sha256:[0-9a-f]{64}$")) and
+    .manifest.path == "worker-host-artifacts.json" and
+    (.manifest.digest | test("^sha256:[0-9a-f]{64}$"))
+  ' "$1" >/dev/null
+}
+
+worker_image_artifact_exists() {
+  local bucket=$1 key=$2 error status
+  error="$(mktemp "${STATE_DIR}/worker-image-head.XXXXXX")"
+  if aws s3api head-object \
+    --region "${AWS_REGION}" \
+    --bucket "${bucket}" \
+    --key "${key}" >/dev/null 2>"${error}"; then
+    rm -f "${error}"
+    return 0
+  else
+    status=$?
+  fi
+  if grep -Fq '(404)' "${error}" && grep -Fq 'HeadObject' "${error}"; then
+    rm -f "${error}"
+    return 10
+  fi
+  cat "${error}" >&2
+  rm -f "${error}"
+  return "${status}"
+}
+
+prepare_worker_host_bundle() (
+  local bucket bundle_dir bundle_digest bundle_key bundle_status bundle_uri host_dir kms_key_arn manifest_digest receipt work
+  mkdir -p "${STATE_DIR}"
+  work="$(mktemp -d "${STATE_DIR}/worker-host-bundle.XXXXXX")"
+  trap 'rm -rf "${work}"' EXIT
+  bundle_dir="${work}/bundle"
+  info "building the canonical Worker host artifacts"
+  host_dir="$(nix build -L --no-link --print-out-paths "${ROOT}#workerHost")"
+  nix develop "${ROOT}" -c \
+    "${ROOT}/scripts/materialize-worker-host-bundle.sh" "${bundle_dir}" "${host_dir}" >/dev/null
+  receipt="${bundle_dir}/worker-host-bundle.json"
+  validate_worker_host_bundle_receipt "${receipt}" || die "Worker host bundle receipt is invalid"
+  [ "$(jq -r '.sourceCommit' "${receipt}")" = "$(git -C "${ROOT}" rev-parse HEAD)" ] ||
+    die "Worker host bundle was not produced from the current source commit"
+  bundle_digest="$(jq -r '.bundle.digest' "${receipt}")"
+  manifest_digest="$(jq -r '.manifest.digest' "${receipt}")"
+  [ "${bundle_digest}" = "sha256:$(sha256_file "${bundle_dir}/worker-host-artifacts.tar")" ] ||
+    die "Worker host bundle digest does not match its receipt"
+  [ "${manifest_digest}" = "sha256:$(sha256_file "${bundle_dir}/worker-host-artifacts.json")" ] ||
+    die "Worker host artifact manifest digest does not match its receipt"
+
+  bucket="$(worker_image_artifact_bucket)"
+  bundle_key="helmr/worker-host-bundles/${bundle_digest#sha256:}.tar"
+  bundle_uri="s3://${bucket}/${bundle_key}"
+  bundle_status=0
+  worker_image_artifact_exists "${bucket}" "${bundle_key}" || bundle_status=$?
+  case "${bundle_status}" in
+    0)
+      info "Worker host bundle reused: ${bundle_uri}"
+      ;;
+    10)
+      aws s3 cp --region "${AWS_REGION}" "${bundle_dir}/worker-host-artifacts.tar" "${bundle_uri}" >&2
+      info "Worker host bundle uploaded: ${bundle_uri}"
+      ;;
+    *)
+      return "${bundle_status}"
+      ;;
+  esac
+  install -m 0600 "${bundle_dir}/worker-host-artifacts.json" "${WORKER_HOST_ARTIFACTS_MANIFEST_FILE}"
+  install -m 0600 "${receipt}" "${WORKER_HOST_BUNDLE_RECEIPT_FILE}"
+  kms_key_arn="$(bucket_kms_key_arn "${bucket}")"
+  jq -cn \
+    --arg bundle_digest "${bundle_digest}" \
+    --arg kms_key_arn "${kms_key_arn}" \
+    --arg manifest_digest "${manifest_digest}" \
+    --arg object_arn "$(s3_object_arn "${bundle_uri}")" \
+    --arg s3_uri "${bundle_uri}" \
+    '{
+      bundleDigest: $bundle_digest,
+      kmsKeyARN: $kms_key_arn,
+      manifestDigest: $manifest_digest,
+      objectARN: $object_arn,
+      s3URI: $s3_uri
+    }'
+)
 
 validate_worker_runtime_bundle_receipt() {
   jq -e '
@@ -394,7 +412,7 @@ validate_worker_runtime_bundle_receipt() {
 }
 
 prepare_worker_runtime_bundle() (
-  local artifacts_dir bucket bundle_dir bundle_digest bundle_key bundle_uri kms_key_arn manifest_digest receipt work
+  local artifacts_dir bucket bundle_dir bundle_digest bundle_key bundle_status bundle_uri kms_key_arn manifest_digest receipt work
   mkdir -p "${STATE_DIR}"
   artifacts_dir="${ROOT}/images/guest/out"
   work="$(mktemp -d "${STATE_DIR}/worker-runtime-bundle.XXXXXX")"
@@ -415,14 +433,26 @@ prepare_worker_runtime_bundle() (
   [ "${manifest_digest}" = "sha256:$(sha256_file "${bundle_dir}/runtime-artifacts.json")" ] ||
     die "Worker runtime artifact manifest digest does not match its receipt"
 
-  bucket="$(source_bundle_bucket)"
+  bucket="$(worker_image_artifact_bucket)"
   bundle_key="helmr/worker-runtime-bundles/${bundle_digest#sha256:}.tar"
   bundle_uri="s3://${bucket}/${bundle_key}"
-  aws s3 cp --region "${AWS_REGION}" "${bundle_dir}/runtime-artifacts.tar" "${bundle_uri}" >&2
+  bundle_status=0
+  worker_image_artifact_exists "${bucket}" "${bundle_key}" || bundle_status=$?
+  case "${bundle_status}" in
+    0)
+      info "Worker runtime bundle reused: ${bundle_uri}"
+      ;;
+    10)
+      aws s3 cp --region "${AWS_REGION}" "${bundle_dir}/runtime-artifacts.tar" "${bundle_uri}" >&2
+      info "Worker runtime bundle uploaded: ${bundle_uri}"
+      ;;
+    *)
+      return "${bundle_status}"
+      ;;
+  esac
   install -m 0600 "${bundle_dir}/runtime-artifacts.json" "${WORKER_RUNTIME_ARTIFACTS_MANIFEST_FILE}"
   install -m 0600 "${receipt}" "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}"
   kms_key_arn="$(bucket_kms_key_arn "${bucket}")"
-  info "Worker runtime bundle uploaded: ${bundle_uri}"
   jq -cn \
     --arg bundle_digest "${bundle_digest}" \
     --arg kms_key_arn "${kms_key_arn}" \
@@ -440,22 +470,35 @@ prepare_worker_runtime_bundle() (
 
 worker_image_apply() {
   require_clean_product_checkout
-  worker_image_source_check
   nix develop "${ROOT}#images" -c "${ROOT}/scripts/check-apko-lock.sh"
+  host_bundle="$(prepare_worker_host_bundle)"
+  host_artifacts_bundle_digest="$(jq -er '.bundleDigest' <<<"${host_bundle}")"
+  host_artifacts_bundle_kms_key_arn="$(jq -er '.kmsKeyARN' <<<"${host_bundle}")"
+  host_artifacts_bundle_object_arn="$(jq -er '.objectARN' <<<"${host_bundle}")"
+  host_artifacts_bundle_s3_uri="$(jq -er '.s3URI' <<<"${host_bundle}")"
+  host_artifacts_manifest_digest="$(jq -er '.manifestDigest' <<<"${host_bundle}")"
   runtime_bundle="$(prepare_worker_runtime_bundle)"
   runtime_artifacts_bundle_digest="$(jq -er '.bundleDigest' <<<"${runtime_bundle}")"
   runtime_artifacts_bundle_kms_key_arn="$(jq -er '.kmsKeyARN' <<<"${runtime_bundle}")"
   runtime_artifacts_bundle_object_arn="$(jq -er '.objectARN' <<<"${runtime_bundle}")"
   runtime_artifacts_bundle_s3_uri="$(jq -er '.s3URI' <<<"${runtime_bundle}")"
   runtime_artifacts_manifest_digest="$(jq -er '.manifestDigest' <<<"${runtime_bundle}")"
-  bundle_uri="$(source_bundle_uri)"
+  source_ref="$(git -C "${ROOT}" rev-parse HEAD)"
   version_args=(
     -var="image_version=$(worker_image_version)"
+    -var="source_ref=${source_ref}"
+    -var="host_artifacts_bundle_digest=${host_artifacts_bundle_digest}"
+    -var="host_artifacts_bundle_object_arn=${host_artifacts_bundle_object_arn}"
+    -var="host_artifacts_bundle_s3_uri=${host_artifacts_bundle_s3_uri}"
+    -var="host_artifacts_manifest_digest=${host_artifacts_manifest_digest}"
     -var="runtime_artifacts_bundle_digest=${runtime_artifacts_bundle_digest}"
     -var="runtime_artifacts_bundle_object_arn=${runtime_artifacts_bundle_object_arn}"
     -var="runtime_artifacts_bundle_s3_uri=${runtime_artifacts_bundle_s3_uri}"
     -var="runtime_artifacts_manifest_digest=${runtime_artifacts_manifest_digest}"
   )
+  if [ -n "${host_artifacts_bundle_kms_key_arn}" ]; then
+    version_args+=(-var="host_artifacts_bundle_kms_key_arn=${host_artifacts_bundle_kms_key_arn}")
+  fi
   if [ -n "${runtime_artifacts_bundle_kms_key_arn}" ]; then
     version_args+=(-var="runtime_artifacts_bundle_kms_key_arn=${runtime_artifacts_bundle_kms_key_arn}")
   fi
@@ -475,46 +518,15 @@ worker_image_apply() {
   if [ -n "${WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED}" ]; then
     encryption_args=(-var="root_volume_encrypted=$(tf_bool "${WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED}")")
   fi
-  if [ -n "${bundle_uri}" ]; then
-    source_ref="$(source_bundle_ref)"
-    [ "${source_ref}" = "$(git -C "${ROOT}" rev-parse HEAD)" ] ||
-      die "Worker image source bundle and runtime bundle must come from the same commit"
-    bundle_bucket="${bundle_uri#s3://}"
-    bundle_bucket="${bundle_bucket%%/*}"
-    kms_key_arn="$(bucket_kms_key_arn "${bundle_bucket}")"
-    kms_args=()
-    if [ -n "${kms_key_arn}" ]; then
-      kms_args=(-var="source_bundle_kms_key_arn=${kms_key_arn}")
-    fi
-    apply_args=(
-      -var="aws_region=${AWS_REGION}" \
-      -var="name=${WORKER_IMAGE_NAME}" \
-      -var="source_ref=${source_ref}" \
-      -var="source_bundle_s3_uri=${bundle_uri}" \
-      -var="source_bundle_object_arn=$(s3_object_arn "${bundle_uri}")"
-    )
-    if ((${#distribution_args[@]})); then apply_args+=("${distribution_args[@]}"); fi
-    if ((${#public_args[@]})); then apply_args+=("${public_args[@]}"); fi
-    if ((${#encryption_args[@]})); then apply_args+=("${encryption_args[@]}"); fi
-    if ((${#kms_args[@]})); then apply_args+=("${kms_args[@]}"); fi
-    if ((${#version_args[@]})); then apply_args+=("${version_args[@]}"); fi
-    tf_apply "${WORKER_IMAGE_STACK}" "${apply_args[@]}"
-  else
-    source_ref="$(resolve_remote_source_ref)"
-    [ "${source_ref}" = "$(git -C "${ROOT}" rev-parse HEAD)" ] ||
-      die "Worker image source ref and runtime bundle must resolve to the same commit"
-    apply_args=(
-      -var="aws_region=${AWS_REGION}" \
-      -var="name=${WORKER_IMAGE_NAME}" \
-      -var="source_repository_url=${WORKER_IMAGE_SOURCE_REPOSITORY_URL}" \
-      -var="source_ref=${source_ref}"
-    )
-    if ((${#distribution_args[@]})); then apply_args+=("${distribution_args[@]}"); fi
-    if ((${#public_args[@]})); then apply_args+=("${public_args[@]}"); fi
-    if ((${#encryption_args[@]})); then apply_args+=("${encryption_args[@]}"); fi
-    if ((${#version_args[@]})); then apply_args+=("${version_args[@]}"); fi
-    tf_apply "${WORKER_IMAGE_STACK}" "${apply_args[@]}"
-  fi
+  apply_args=(
+    -var="aws_region=${AWS_REGION}"
+    -var="name=${WORKER_IMAGE_NAME}"
+  )
+  if ((${#distribution_args[@]})); then apply_args+=("${distribution_args[@]}"); fi
+  if ((${#public_args[@]})); then apply_args+=("${public_args[@]}"); fi
+  if ((${#encryption_args[@]})); then apply_args+=("${encryption_args[@]}"); fi
+  if ((${#version_args[@]})); then apply_args+=("${version_args[@]}"); fi
+  tf_apply "${WORKER_IMAGE_STACK}" "${apply_args[@]}"
 }
 
 worker_image_start() {
@@ -543,15 +555,27 @@ worker_image_wait() (
     image_arn="$(cat "${IMAGE_ARN_FILE}")"
   fi
   [ -n "${image_arn}" ] || die "image build version ARN is required; run worker-image-start first"
+  [ -f "${WORKER_HOST_ARTIFACTS_MANIFEST_FILE}" ] ||
+    die "Worker host provenance is missing; run worker-image-apply before worker-image-wait"
+  [ -f "${WORKER_HOST_BUNDLE_RECEIPT_FILE}" ] ||
+    die "Worker host bundle receipt is missing; run worker-image-apply before worker-image-wait"
   [ -f "${WORKER_RUNTIME_ARTIFACTS_MANIFEST_FILE}" ] ||
     die "Worker runtime provenance is missing; run worker-image-apply before worker-image-wait"
   [ -f "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}" ] ||
     die "Worker runtime bundle receipt is missing; run worker-image-apply before worker-image-wait"
   validate_worker_runtime_bundle_receipt "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}" ||
     die "Worker runtime bundle receipt is invalid"
+  validate_worker_host_bundle_receipt "${WORKER_HOST_BUNDLE_RECEIPT_FILE}" ||
+    die "Worker host bundle receipt is invalid"
   source_commit="$(git -C "${ROOT}" rev-parse HEAD)"
+  [ "$(jq -r '.sourceCommit' "${WORKER_HOST_BUNDLE_RECEIPT_FILE}")" = "${source_commit}" ] ||
+    die "Worker host bundle receipt does not match the current source commit"
   [ "$(jq -r '.sourceCommit' "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}")" = "${source_commit}" ] ||
     die "Worker runtime bundle receipt does not match the current source commit"
+  host_artifacts_bundle_digest="$(jq -r '.bundle.digest' "${WORKER_HOST_BUNDLE_RECEIPT_FILE}")"
+  host_artifacts_manifest_digest="$(jq -r '.manifest.digest' "${WORKER_HOST_BUNDLE_RECEIPT_FILE}")"
+  [ "${host_artifacts_manifest_digest}" = "sha256:$(sha256_file "${WORKER_HOST_ARTIFACTS_MANIFEST_FILE}")" ] ||
+    die "Worker host artifact manifest does not match its bundle receipt"
   runtime_artifacts_bundle_digest="$(jq -r '.bundle.digest' "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}")"
   runtime_artifacts_manifest_digest="$(jq -r '.runtimeArtifactsManifest.digest' "${WORKER_RUNTIME_BUNDLE_RECEIPT_FILE}")"
   [ "${runtime_artifacts_manifest_digest}" = "sha256:$(sha256_file "${WORKER_RUNTIME_ARTIFACTS_MANIFEST_FILE}")" ] ||
@@ -597,6 +621,8 @@ worker_image_wait() (
         jq -e \
           --arg ami "${ami_id}" \
           --arg commit "${source_commit}" \
+          --arg host_artifacts_bundle_digest "${host_artifacts_bundle_digest}" \
+          --arg host_artifacts_manifest_digest "${host_artifacts_manifest_digest}" \
           --arg runtime_artifacts_bundle_digest "${runtime_artifacts_bundle_digest}" \
           --arg runtime_artifacts_manifest_digest "${runtime_artifacts_manifest_digest}" '
           (.Images // []) as $images |
@@ -604,6 +630,8 @@ worker_image_wait() (
           ($images | length) == 1 and
           $images[0].ImageId == $ami and
           $tags.HelmrSourceCommit == $commit and
+          $tags.HelmrHostBundleDigest == $host_artifacts_bundle_digest and
+          $tags.HelmrHostArtifactsDigest == $host_artifacts_manifest_digest and
           $tags.HelmrRuntimeBundleDigest == $runtime_artifacts_bundle_digest and
           $tags.HelmrRuntimeArtifactsDigest == $runtime_artifacts_manifest_digest
         ' <<<"${ami_json}" >/dev/null ||
@@ -614,12 +642,16 @@ worker_image_wait() (
           --arg recipe_arn "${recipe_arn}" \
           --arg region "${AWS_REGION}" \
           --arg source_commit "${source_commit}" \
+          --arg host_artifacts_bundle_digest "${host_artifacts_bundle_digest}" \
+          --arg host_artifacts_manifest_digest "${host_artifacts_manifest_digest}" \
           --arg runtime_artifacts_bundle_digest "${runtime_artifacts_bundle_digest}" \
           --arg runtime_artifacts_manifest_digest "${runtime_artifacts_manifest_digest}" \
           --slurpfile runtime_profile "${runtime_profile_file}" \
           '{
             ami: {id: $ami, region: $region},
             formatVersion: 1,
+            hostArtifactsBundleDigest: $host_artifacts_bundle_digest,
+            hostArtifactsManifestDigest: $host_artifacts_manifest_digest,
             imageBuildVersionARN: $build_arn,
             imageRecipeARN: $recipe_arn,
             runtimeArtifactsBundleDigest: $runtime_artifacts_bundle_digest,
@@ -762,8 +794,6 @@ case "${command}" in
   bootstrap-apply) bootstrap_apply ;;
   bootstrap-output) bootstrap_output ;;
   platform-release-publish) platform_release_publish ;;
-  source-bundle) source_bundle ;;
-  worker-image-source-check) worker_image_source_check ;;
   worker-image-init) tf_init "${WORKER_IMAGE_STACK}" ;;
   worker-image-apply) worker_image_apply ;;
   worker-image-start) worker_image_start ;;

@@ -239,6 +239,7 @@ in
           diff -r "$TMPDIR/first/bundle" "$TMPDIR/second/bundle"
                     touch "$out"
         '';
+    worker-host = helmrPackages.workerHost;
     platform-acquisition-cgroup = pkgs.testers.runNixOSTest {
       name = "platform-acquisition-cgroup";
       nodes.machine =

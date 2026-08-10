@@ -99,6 +99,10 @@ require_text "COPY helmr-dispatcher /usr/local/bin/helmr-dispatcher" "$controlpl
 
 require_text "scripts/aws-release-artifacts.sh worker-image-start" "$workflow" \
   "Worker release does not build a fresh AMI"
+require_text 'WORKER_IMAGE_ARTIFACT_BUCKET: ${{ vars.RELEASE_WORKER_IMAGE_ARTIFACT_BUCKET }}' "$workflow" \
+  "Worker release does not receive the immutable artifact bucket"
+require_text 'RELEASE_WORKER_IMAGE_ARTIFACT_BUCKET is required' "$workflow" \
+  "Worker release does not reject a missing immutable artifact bucket"
 require_text "workerAMIs" "$workflow" \
   "Worker release artifact omits region-to-AMI identity"
 require_text "workerImageProvenance" "$workflow" \
@@ -107,7 +111,9 @@ require_text "jq -c '.workerImageProvenance' dist/worker/worker-artifacts.json" 
   "final AWS release manifest drops Worker image provenance"
 require_text "gpgv" "$worker_image_builder" \
   "Worker AMI omits the Node signature verifier"
-require_text "mksquashfs" "$worker_image_builder" \
-  "Worker AMI omits the Platform tree composer"
+require_text "squashfs-tools" "$worker_image_builder" \
+  "Worker AMI omits the Platform tree composer package"
+require_text "mksquashfs version 4.6.1" "$worker_module_main" \
+  "Worker AMI does not validate the exact Platform tree composer contract"
 
 printf 'ok - release workflow tests\n'

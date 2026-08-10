@@ -341,6 +341,7 @@ jobs:
       AWS_REGION: ${{ vars.RELEASE_AWS_REGION || 'us-east-1' }}
       STATE_REGION: ${{ vars.RELEASE_AWS_STATE_REGION || vars.RELEASE_AWS_REGION || 'us-east-1' }}
       STATE_BUCKET: ${{ vars.RELEASE_AWS_STATE_BUCKET }}
+      WORKER_IMAGE_ARTIFACT_BUCKET: ${{ vars.RELEASE_WORKER_IMAGE_ARTIFACT_BUCKET }}
       STATE_KEY_BASE: ${{ vars.RELEASE_AWS_STATE_KEY || 'helmr/stacks/release-worker-image/terraform.tfstate' }}
       WORKER_IMAGE_NAME_BASE: ${{ vars.RELEASE_WORKER_IMAGE_NAME || 'helmr-release-image' }}
       RELEASE_WORKER_AMI_KEEP: ${{ vars.RELEASE_WORKER_AMI_KEEP || '4' }}
@@ -363,6 +364,10 @@ jobs:
           }
           [ -n "$STATE_BUCKET" ] || {
             echo "RELEASE_AWS_STATE_BUCKET is required" >&2
+            exit 1
+          }
+          [ -n "$WORKER_IMAGE_ARTIFACT_BUCKET" ] || {
+            echo "RELEASE_WORKER_IMAGE_ARTIFACT_BUCKET is required" >&2
             exit 1
           }
 
@@ -398,14 +403,12 @@ jobs:
       - name: Build worker AMIs
         id: build_worker_amis
         env:
-          WORKER_IMAGE_SOURCE_REF: ${{ env.RELEASE_TAG }}
           WORKER_IMAGE_DISTRIBUTION_REGIONS: ${{ env.WORKER_AMI_REGIONS }}
           WORKER_IMAGE_AMI_PUBLIC: "true"
           WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED: "false"
         run: |
           nix develop .#infra --command bash -euo pipefail <<'EOF'
           scripts/aws-release-artifacts.sh check
-          scripts/aws-release-artifacts.sh worker-image-source-check
           scripts/aws-release-artifacts.sh worker-image-init
           scripts/aws-release-artifacts.sh worker-image-apply
           scripts/release-worker-ami-cleanup.sh \
