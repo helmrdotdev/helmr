@@ -74,11 +74,13 @@ run "deployment_owns_protected_capacity" {
 
   assert {
     condition = (
-      strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-prepare-root") &&
+      length(aws_launch_template.worker.user_data) * 3 / 4 - length(regexall("=", aws_launch_template.worker.user_data)) <= 15360 &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "/usr/local/sbin/helmr-prepare-root '128849018880'") &&
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_PREPARE_ROOT") &&
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "usage: helmr-prepare-root EXPECTED_DEVICE_BYTES") &&
       can(regex("(?s)helmr-prepare-root '128849018880'.*aws secretsmanager get-secret-value", base64decode(aws_launch_template.worker.user_data)))
     )
-    error_message = "Worker root preparation must run with the exact Launch Template size before secret access."
+    error_message = "Run Worker user data must remain within its decoded-size budget and invoke the AMI-owned root preparation helper before secret access."
   }
 
   assert {
@@ -314,6 +316,17 @@ run "build_worker_installs_exact_policy_before_service" {
     build_policy_digest        = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     build_cache_mib            = 8192
     build_scratch_mib          = 34816
+  }
+
+  assert {
+    condition = (
+      length(aws_launch_template.worker.user_data) * 3 / 4 - length(regexall("=", aws_launch_template.worker.user_data)) <= 15360 &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "/usr/local/sbin/helmr-prepare-root '128849018880'") &&
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_PREPARE_ROOT") &&
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "usage: helmr-prepare-root EXPECTED_DEVICE_BYTES") &&
+      can(regex("(?s)helmr-prepare-root '128849018880'.*aws secretsmanager get-secret-value", base64decode(aws_launch_template.worker.user_data)))
+    )
+    error_message = "Build Worker user data must remain within its decoded-size budget and invoke the AMI-owned root preparation helper before secret access."
   }
 
   assert {

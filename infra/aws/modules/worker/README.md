@@ -11,6 +11,9 @@ The AMI must provide:
 - `helmr-worker` at `worker_binary_path`
 - the worker unit named by `worker_service_name`
 - AWS CLI v2 and `curl`
+- `/usr/local/sbin/helmr-prepare-root`, matching the checked-in
+  [`prepare-root.sh`](../worker-image/templates/prepare-root.sh) for this Product version and
+  installed with mode `0755`
 - an Ubuntu ext4 root partition with `growpart`, `resize2fs`, `blockdev`,
   `findmnt`, `lsblk`, and GNU `readlink`
 - Firecracker and jailer binaries
@@ -27,10 +30,12 @@ starts `helmr-worker` and a small lifecycle watcher. Build-capable workers addit
 and mount fixed Worker-cache and image-build scratch ext4 filesystems; all untrusted BuildKit
 execution stays inside the fresh image-build VM.
 
-Before reading secrets or allocating runtime storage, launch user data verifies the configured
-root device, grows its partition, and resizes the ext4 filesystem. The preparation is idempotent
-when the parent Ubuntu image has already completed the resize. Unsupported root layouts fail
-before Worker enrollment; the module does not support XFS, LVM, or an unpartitioned root device.
+Before reading secrets or allocating runtime storage, launch user data invokes the AMI-owned root
+preparation helper with the configured EBS size. The helper verifies the root device, grows its
+partition, and resizes the ext4 filesystem. The preparation is idempotent when the parent Ubuntu
+image has already completed the resize. Unsupported root layouts fail before Worker enrollment;
+the module does not support XFS, LVM, or an unpartitioned root device. Worker user data is kept
+below a 15 KiB internal budget so it retains headroom under the EC2 decoded user-data limit.
 
 `worker_environment` is only for additional non-secret Worker variables. Keys managed by the
 module through typed inputs, Secrets Manager, or EC2 metadata are reserved even when a conditional

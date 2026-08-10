@@ -25,6 +25,13 @@ work=/dev/shm/helmr-worker-image
 rm -rf "$work"
 install -d -m 0700 "$work/host" "$work/runtime"
 
+cat >"$work/helmr-prepare-root" <<'HELMR_PREPARE_ROOT'
+${prepare_root_script}
+HELMR_PREPARE_ROOT
+printf '%s  %s\n' '${prepare_root_digest}' "$work/helmr-prepare-root" | sha256sum -c -
+install -d -m 0755 /usr/local/sbin
+install -m 0755 "$work/helmr-prepare-root" /usr/local/sbin/helmr-prepare-root
+
 aws_cli_version=2.31.39
 aws_cli_digest=5a2ad4e63f8f687d735f8e7a132b3622a1cf08fa884c53e3423c9b83a3c0d663
 curl -fsSL --retry 3 \

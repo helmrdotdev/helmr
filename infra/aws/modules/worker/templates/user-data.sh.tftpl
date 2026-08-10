@@ -3,10 +3,6 @@ set -eu
 umask 077
 date +%s >/run/helmr-launch-started-at
 
-cat >/usr/local/sbin/helmr-prepare-root <<'HELMR_PREPARE_ROOT'
-${prepare_root_script}
-HELMR_PREPARE_ROOT
-chmod 0755 /usr/local/sbin/helmr-prepare-root
 /usr/local/sbin/helmr-prepare-root '${expected_root_bytes}'
 
 install -d -m 0750 -o root -g root /etc/helmr
