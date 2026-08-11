@@ -217,12 +217,17 @@ func ComposeBuildPolicy(
 		FormatVersion:           BuildPolicyFormatVersion,
 		Managers: []ManagerPolicy{
 			{
-				AdapterVersion:       ManagerAdapterVersion,
-				AllowedOrigin:        BunReleaseOrigin,
-				AllowedRedirectHosts: []string{"api.github.com", "github.com", "objects.githubusercontent.com"},
-				Domain:               VersionDomain{Major: 1, Minimum: "1.3.10"},
-				MetadataOrigin:       BunMetadataOrigin,
-				Name:                 PackageManagerBun,
+				AdapterVersion: ManagerAdapterVersion,
+				AllowedOrigin:  BunReleaseOrigin,
+				AllowedRedirectHosts: []string{
+					"api.github.com",
+					"github.com",
+					"objects.githubusercontent.com",
+					"release-assets.githubusercontent.com",
+				},
+				Domain:         VersionDomain{Major: 1, Minimum: "1.3.10"},
+				MetadataOrigin: BunMetadataOrigin,
+				Name:           PackageManagerBun,
 			},
 			{
 				AdapterVersion:       ManagerAdapterVersion,
