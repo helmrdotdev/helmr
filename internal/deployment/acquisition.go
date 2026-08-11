@@ -65,7 +65,6 @@ type PlatformAcquirer struct {
 	Encoder   string
 	GPGV      string
 	HTTP      *http.Client
-	Patchelf  string
 	Policy    *BuildPolicy
 	Store     cas.ImmutableStore
 	Validator PlatformConformanceValidator
@@ -261,7 +260,6 @@ func (acquirer PlatformAcquirer) validate() error {
 	}
 	for name, executable := range map[string]string{
 		"GPG verifier":     acquirer.GPGV,
-		"ELF patcher":      acquirer.Patchelf,
 		"SquashFS encoder": acquirer.Encoder,
 		"XZ decoder":       acquirer.XZ,
 	} {

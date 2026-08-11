@@ -15,7 +15,6 @@ type PlatformAcquisitionProcess struct {
 	Encoder          string
 	Executable       string
 	GPGV             string
-	Patchelf         string
 	PlatformStoreURI string
 	UnitCgroupRoot   string
 	WorkDir          string

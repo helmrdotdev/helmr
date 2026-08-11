@@ -72,7 +72,7 @@ locals {
                 "test \"$(sha256sum /var/lib/helmr/images/guest/out/runtime-artifacts.json | awk '{print $1}')\" = \"${local.runtime_artifacts_manifest_digest}\"",
                 "cd /var/lib/helmr/images/guest/out && jq -e '.schema == \"helmr.runtime-artifacts.v0\" and .arch == \"amd64\" and .vm_runtime_contract == \"helmr.vm-runtime.v0\"' runtime-artifacts.json >/dev/null && test \"$(sha256sum vmlinuz | awk '{print $1}')\" = \"$(jq -r .kernel.digest runtime-artifacts.json | sed 's/^sha256://')\" && test \"$(sha256sum initramfs | awk '{print $1}')\" = \"$(jq -r .initramfs.digest runtime-artifacts.json | sed 's/^sha256://')\" && test \"$(sha256sum rootfs.squashfs | awk '{print $1}')\" = \"$(jq -r .rootfs.digest runtime-artifacts.json | sed 's/^sha256://')\" && test \"$(stat -c %s vmlinuz)\" = \"$(jq -r .kernel.size_bytes runtime-artifacts.json)\" && test \"$(stat -c %s initramfs)\" = \"$(jq -r .initramfs.size_bytes runtime-artifacts.json)\" && test \"$(stat -c %s rootfs.squashfs)\" = \"$(jq -r .rootfs.size_bytes runtime-artifacts.json)\"",
                 "command -v blockdev fallocate findmnt growpart losetup lsblk mountpoint blkid mkfs.ext4 readlink resize2fs >/dev/null",
-                "command -v aws curl gpgv ip mksquashfs nft patchelf xz >/dev/null",
+                "command -v aws curl gpgv ip mksquashfs nft xz >/dev/null",
                 "mksquashfs -version 2>&1 | head -n 1 | grep -F 'mksquashfs version 4.6.1 '",
                 "aws --version 2>&1 | grep -F 'aws-cli/2.'",
                 "! command -v bun >/dev/null",

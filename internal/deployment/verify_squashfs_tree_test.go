@@ -47,6 +47,36 @@ func TestReadSquashFSTreeEnumeratesRootReachableFacts(t *testing.T) {
 	}
 }
 
+func TestReadSquashFSTreeAcceptsBasicDirectoryFormForExtendedInode(t *testing.T) {
+	root := squashFSTestDirectoryInode(1, 2, 27, 0)
+	file := squashFSTestExtendedRegularBody(
+		squashFSTestInodeBase(squashFSExtendedRegularForm, 2),
+	)
+	directory := squashFSTestDirectoryRecord([]squashFSTestDirectoryEntry{{
+		name:        "file",
+		form:        squashFSBasicRegularForm,
+		reference:   uint64(len(root)),
+		inodeNumber: 2,
+	}})
+	decoder, superblock := squashFSTestTreeDecoder(t, append(root, file...), directory, 2)
+
+	facts, err := readSquashFSTree(
+		context.Background(),
+		decoder,
+		superblock,
+		[]uint32{0, 0},
+		uint64(maxProgramLogicalBytes),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts.Edges) != 1 ||
+		facts.Edges[0].DeclaredForm != squashFSBasicRegularForm ||
+		facts.Edges[0].ActualForm != squashFSExtendedRegularForm {
+		t.Fatalf("edges = %#v", facts.Edges)
+	}
+}
+
 func TestReadSquashFSTreeAcceptsEmptyDirectoryWithoutDirectoryTable(t *testing.T) {
 	root := squashFSTestDirectoryInode(1, 1, 3, 0)
 	decoder, superblock := squashFSTestTreeDecoder(t, root, nil, 1)

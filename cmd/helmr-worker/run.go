@@ -254,10 +254,6 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("resolve XZ decoder: %w", err)
 		}
-		patchelf, err := requireExecutable("patchelf")
-		if err != nil {
-			return fmt.Errorf("resolve ELF patcher: %w", err)
-		}
 		workerExecutable, err := os.Executable()
 		if err != nil {
 			return fmt.Errorf("resolve worker executable: %w", err)
@@ -267,7 +263,6 @@ func run(log *slog.Logger) error {
 			Encoder:          squashfsEncoder,
 			Executable:       workerExecutable,
 			GPGV:             gpgv,
-			Patchelf:         patchelf,
 			PlatformStoreURI: cfg.PlatformStoreURI,
 			UnitCgroupRoot:   verifierCgroupRoot,
 			WorkDir:          acquisitionWorkDir,

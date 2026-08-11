@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"debug/elf"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 
@@ -32,7 +32,7 @@ func (acquirer PlatformAcquirer) runtimeTree(
 	}
 	if err := copyRegularFile(
 		filepath.Join(node.root, "bin", "node"),
-		filepath.Join(root, "bin", "node"),
+		filepath.Join(root, "bin", "node.real"),
 		0755,
 	); err != nil {
 		return nil, deterministicAcquisitionFailure(workerapi.PlatformAcquisitionTopologyFailed, err)
@@ -51,13 +51,7 @@ func (acquirer PlatformAcquirer) runtimeTree(
 			errors.New("runtime harness loader is missing"),
 		)
 	}
-	if err := runBoundedCommand(
-		ctx,
-		acquirer.Patchelf,
-		"--set-interpreter", "/opt/helmr/runtime/lib/ld-linux-x86-64.so.2",
-		"--set-rpath", "/opt/helmr/runtime/lib",
-		filepath.Join(root, "bin", "node"),
-	); err != nil {
+	if err := rewriteRuntimeNodeInterpreter(filepath.Join(root, "bin", "node.real")); err != nil {
 		return nil, deterministicAcquisitionFailure(
 			workerapi.PlatformAcquisitionTopologyFailed,
 			fmt.Errorf("patch runtime Node.js: %w", err),
@@ -146,6 +140,58 @@ func (acquirer PlatformAcquirer) runtimeTree(
 	result := final
 	final = nil
 	return result, nil
+}
+
+func rewriteRuntimeNodeInterpreter(path string) error {
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	object, err := elf.NewFile(file)
+	if err != nil {
+		return fmt.Errorf("parse node executable ELF: %w", err)
+	}
+	defer object.Close()
+	if object.Class != elf.ELFCLASS64 ||
+		object.Data != elf.ELFDATA2LSB ||
+		object.Machine != elf.EM_X86_64 {
+		return errors.New("node executable ELF identity is unsupported")
+	}
+	var interpreter *elf.Prog
+	for _, program := range object.Progs {
+		if program.Type != elf.PT_INTERP {
+			continue
+		}
+		if interpreter != nil {
+			return errors.New("node executable ELF declares multiple interpreters")
+		}
+		interpreter = program
+	}
+	if interpreter == nil || interpreter.Filesz == 0 || interpreter.Filesz > maxMountedArtifactPathBytes {
+		return errors.New("node executable ELF interpreter is invalid")
+	}
+	raw := make([]byte, int(interpreter.Filesz))
+	if _, err := file.ReadAt(raw, int64(interpreter.Off)); err != nil {
+		return fmt.Errorf("read node executable ELF interpreter: %w", err)
+	}
+	if string(bytes.TrimRight(raw, "\x00")) != upstreamNodeInterpreter ||
+		len(upstreamNodeInterpreter)+1 != len(raw) {
+		return fmt.Errorf("node executable ELF interpreter is not %q", upstreamNodeInterpreter)
+	}
+	if len(runtimeNodeInterpreter)+1 > len(raw) {
+		return errors.New("managed Node.js ELF interpreter does not fit in-place")
+	}
+	replacement := make([]byte, len(raw))
+	copy(replacement, runtimeNodeInterpreter)
+	if _, err := file.WriteAt(replacement, int64(interpreter.Off)); err != nil {
+		return fmt.Errorf("write node executable ELF interpreter: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync node executable ELF interpreter: %w", err)
+	}
+	return nil
 }
 
 func (acquirer PlatformAcquirer) managerTree(
@@ -426,11 +472,28 @@ func (acquirer PlatformAcquirer) extractPlatformInput(
 	}); err != nil {
 		return err
 	}
+	// archive/tar stops at the logical end-of-archive marker. GNU tar may pad
+	// the containing record with additional zero blocks, so consume the rest of
+	// the content-addressed object before checking its byte-exact identity.
+	if _, err := io.Copy(zeroPaddingWriter{}, counting); err != nil {
+		return fmt.Errorf("verify complete platform input: %w", err)
+	}
 	if counting.read != descriptor.SizeBytes ||
 		"sha256:"+hex.EncodeToString(hash.Sum(nil)) != descriptor.Digest {
 		return errors.New("platform input bytes do not match policy")
 	}
 	return nil
+}
+
+type zeroPaddingWriter struct{}
+
+func (zeroPaddingWriter) Write(buffer []byte) (int, error) {
+	for index, value := range buffer {
+		if value != 0 {
+			return index, errors.New("platform input contains non-zero data after tar end")
+		}
+	}
+	return len(buffer), nil
 }
 
 type limitedReader struct {
@@ -636,18 +699,4 @@ func digestDirectory(ctx context.Context, root string) (string, error) {
 		return "", err
 	}
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
-}
-
-func runBoundedCommand(ctx context.Context, executable string, arguments ...string) error {
-	var stdout, stderr limitedEncoderOutput
-	stdout.remaining = maxEncoderDiagnosticBytes
-	stderr.remaining = maxEncoderDiagnosticBytes
-	command := exec.CommandContext(ctx, executable, arguments...)
-	command.Env = []string{"LC_ALL=C", "TZ=UTC"}
-	command.Stdout = &stdout
-	command.Stderr = &stderr
-	if err := command.Run(); err != nil {
-		return fmt.Errorf("%w%s", err, encoderDiagnostic(&stdout, &stderr))
-	}
-	return nil
 }

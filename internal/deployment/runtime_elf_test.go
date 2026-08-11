@@ -25,6 +25,24 @@ func TestRuntimeELFFixturesAcceptSupportedArchitectures(t *testing.T) {
 	}
 }
 
+func TestRuntimeELFRequiresLauncherSearchPath(t *testing.T) {
+	artifact := newValidRuntimeELFArtifact(t, ArchitectureX8664)
+	machine, loader := testRuntimeELFTarget(t, ArchitectureX8664)
+	replaceMemoryArtifactFile(t, artifact, runtimeNodeLauncherPath, buildTestELF64(t, testELF64Spec{
+		machine:      machine,
+		fileType:     elf.ET_DYN,
+		interpreters: []string{loader},
+		needed:       []string{"libc.so.6"},
+	}))
+	if err := verifyRuntimeExecutables(
+		context.Background(),
+		inspectRuntimeELFArtifact(t, artifact),
+		ArchitectureX8664,
+	); err == nil {
+		t.Fatal("runtime verifier accepted a launcher without a confined search path")
+	}
+}
+
 func TestRuntimeELFRequiresExactRUNPATH(t *testing.T) {
 	machine, loader := testRuntimeELFTarget(t, ArchitectureX8664)
 	tests := map[string]testELF64Spec{
@@ -143,7 +161,6 @@ func TestRuntimeELFResolvesDirectorySymlinkComponents(t *testing.T) {
 		fileType:     elf.ET_DYN,
 		interpreters: []string{loader},
 		needed:       []string{"libnode.so"},
-		runpath:      []string{runtimeMountPath + "/lib"},
 	}))
 
 	if err := verifyRuntimeExecutables(
@@ -563,17 +580,25 @@ func newValidRuntimeELFArtifact(
 	artifact.addDirectory("bin")
 	artifact.addDirectory("helmr")
 	artifact.addDirectory("lib")
+	artifact.addFile(runtimeNodeLauncherPath, buildTestELF64(t, testELF64Spec{
+		machine:      machine,
+		fileType:     elf.ET_DYN,
+		interpreters: []string{loader},
+		needed:       []string{"libc.so.6"},
+		runpath:      []string{runtimeLibraryPath},
+	}), 0755)
 	artifact.addFile(runtimeNodePath, buildTestELF64(t, testELF64Spec{
 		machine:      machine,
 		fileType:     elf.ET_DYN,
 		interpreters: []string{loader},
 		needed:       []string{"libnode.so"},
-		runpath:      []string{runtimeMountPath + "/lib"},
 	}), 0755)
-	artifact.addFile(loaderPath, buildTestELF64(t, testELF64Spec{
+	loaderRaw := buildTestELF64(t, testELF64Spec{
 		machine:  machine,
 		fileType: elf.ET_DYN,
-	}), 0755)
+	})
+	artifact.addFile(loaderPath, loaderRaw, 0755)
+	artifact.addFile(runtimeLoaderAliasPath, loaderRaw, 0755)
 	artifact.addFile("lib/libnode.so", buildTestELF64(t, testELF64Spec{
 		machine:  machine,
 		fileType: elf.ET_DYN,

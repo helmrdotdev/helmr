@@ -1,7 +1,6 @@
 {
   lib,
   stdenv,
-  stdenvNoCC,
   glibc,
   patchelf,
   coreutils,
@@ -16,7 +15,7 @@ let
   compilerLib = lib.getLib stdenv.cc.cc;
 in
 assert lib.assertMsg stdenv.hostPlatform.isx86_64 "Runtime harness supports only x86_64-linux";
-stdenvNoCC.mkDerivation {
+stdenv.mkDerivation {
   pname = "helmr-runtime-harness-${architecture}";
   version = "0";
   dontUnpack = true;
@@ -35,8 +34,11 @@ stdenvNoCC.mkDerivation {
     set -euo pipefail
 
     tree="$TMPDIR/tree"
-    install -d -m0755 "$tree/helmr" "$tree/lib"
+    install -d -m0755 "$tree/bin" "$tree/helmr" "$tree/lib"
     install -m0644 ${../../internal/runtime/entry.mjs} "$tree/helmr/entry.mjs"
+    install -m0644 ${../../internal/runtime/loader_env.cjs} "$tree/helmr/loader_env.cjs"
+    "$CC" -Os -fPIE -pie -fno-ident -Wl,--build-id=none \
+      -o "$tree/bin/node" ${../../internal/runtime/node_launcher.c}
     copy_library() {
       name="$1"
       shift
@@ -53,6 +55,7 @@ stdenvNoCC.mkDerivation {
     }
 
     copy_library ${loader} ${glibcLib}/lib
+    install -m0755 "$tree/lib/${loader}" "$tree/ld.so"
     copy_library libc.so.6 ${glibcLib}/lib
     copy_library libdl.so.2 ${glibcLib}/lib
     copy_library libm.so.6 ${glibcLib}/lib
@@ -62,9 +65,20 @@ stdenvNoCC.mkDerivation {
     copy_library libstdc++.so.6 ${compilerLib}/lib
 
     chmod 0755 "$tree/lib/${loader}"
+    patchelf \
+      --set-interpreter /opt/helmr/runtime/ld.so \
+      --set-rpath /opt/helmr/runtime/lib \
+      "$tree/bin/node"
     while IFS= read -r elf; do
       [ "$elf" != "$tree/lib/${loader}" ] || continue
-      patchelf --set-rpath /opt/helmr/runtime/lib "$elf"
+      if [ "$elf" = "$tree/lib/libc.so.6" ]; then
+        patchelf \
+          --set-interpreter /opt/helmr/runtime/ld.so \
+          --set-rpath /opt/helmr/runtime/lib \
+          "$elf"
+      else
+        patchelf --set-rpath /opt/helmr/runtime/lib "$elf"
+      fi
     done < <(find "$tree/lib" -type f -print | LC_ALL=C sort)
 
     find "$tree" -type d -exec chmod 0755 {} +

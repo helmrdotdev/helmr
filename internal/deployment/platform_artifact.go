@@ -213,6 +213,7 @@ func runtimeConformanceNames() []string {
 		"node-module-abi",
 		"node-reported-version",
 		"runtime-entrypoint",
+		"runtime-loader-environment",
 	}
 }
 
@@ -309,7 +310,7 @@ func inspectPlatformArtifact(
 		}
 		switch entry.Path {
 		case PlatformDescriptorPath, PlatformIntegrityPath, PlatformConformancePath, "helmr/upstream":
-		case runtimeEntryPath:
+		case runtimeEntryPath, runtimeLoaderEnvPath:
 			if object.MediaType != RuntimeArtifactMediaType {
 				return InspectedPlatformArtifact{}, fmt.Errorf("unknown platform-owned path %q", entry.Path)
 			}
