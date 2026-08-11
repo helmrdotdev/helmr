@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	internalclient "github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -570,6 +572,99 @@ func TestDeployCommandReturnsFailedDeploymentError(t *testing.T) {
 	}
 	if strings.TrimSpace(out.String()) != "" {
 		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestDeployCommandPollsTerminalStatusWhileEventStreamRemainsOpen(t *testing.T) {
+	root, _ := deployCommandFixture(t)
+	oldStatusInterval := deployEventStatusInterval
+	deployEventStatusInterval = 20 * time.Millisecond
+	t.Cleanup(func() { deployEventStatusInterval = oldStatusInterval })
+	statusRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "queued",
+			})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/events"):
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			<-r.Context().Done()
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35":
+			statusRequests++
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+				ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "failed",
+				Failure: &api.DeploymentFailure{Code: "topology_failed", Message: "Platform acquisition failed", Details: json.RawMessage(`{}`)},
+			})
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	cmd := newRootCommand()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"deploy", root})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "failed: Platform acquisition failed") {
+		t.Fatalf("err = %v", err)
+	}
+	if statusRequests != 1 {
+		t.Fatalf("status requests = %d, want 1", statusRequests)
+	}
+}
+
+type deploymentEventErrorClient struct {
+	streamContextErr error
+}
+
+func (c *deploymentEventErrorClient) GetDeployment(context.Context, string, internalclient.EnvironmentScopeOptions) (api.DeploymentResponse, error) {
+	panic("GetDeployment must not be called after a live-stream callback error")
+}
+
+func (c *deploymentEventErrorClient) FollowDeploymentEvents(
+	ctx context.Context,
+	_ string,
+	_ internalclient.EnvironmentScopeOptions,
+	_ string,
+	handle func(api.RunEvent) error,
+) error {
+	err := handle(api.RunEvent{ID: "evt-1", Kind: "deployment.progress"})
+	c.streamContextErr = ctx.Err()
+	return err
+}
+
+type deploymentEventErrorReporter struct{ err error }
+
+func (r deploymentEventErrorReporter) Step(string) error                              { return nil }
+func (r deploymentEventErrorReporter) DeploymentCreated(api.DeploymentResponse) error { return nil }
+func (r deploymentEventErrorReporter) Event(api.RunEvent) error                       { return r.err }
+func (r deploymentEventErrorReporter) DeploymentResult(api.DeploymentResponse, string) error {
+	return nil
+}
+
+func TestWaitForDeploymentDoesNotSwallowUnrelatedDeadlineError(t *testing.T) {
+	statusClient := &deploymentEventErrorClient{}
+	_, err := waitForDeployment(
+		context.Background(),
+		statusClient,
+		api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35", Status: "queued"},
+		internalclient.EnvironmentScopeOptions{},
+		time.Second,
+		deploymentEventErrorReporter{err: context.DeadlineExceeded},
+	)
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "follow deployment") {
+		t.Fatalf("err = %v, want wrapped unrelated deadline", err)
+	}
+	if statusClient.streamContextErr != nil {
+		t.Fatalf("stream context error = %v, want live context", statusClient.streamContextErr)
 	}
 }
 

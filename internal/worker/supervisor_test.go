@@ -24,6 +24,7 @@ type testControlPlane struct {
 	activateStatus atomic.Value
 	observeStatus  atomic.Value
 	completeErr    error
+	observations   atomic.Int32
 }
 
 func (c *testControlPlane) AuthenticateWorker(context.Context) error {
@@ -77,6 +78,7 @@ func (c *testControlPlane) returnedStatus() workerapi.StatusResponse {
 	return workerapi.StatusResponse{Status: workerapi.StatusActive}
 }
 func (c *testControlPlane) ObserveWorker(_ context.Context, observation workerapi.Observation) (workerapi.StatusResponse, error) {
+	c.observations.Add(1)
 	if observation.RunPausedReason == string(StateDraining) {
 		return c.returnedStatus(), nil
 	}
@@ -84,6 +86,32 @@ func (c *testControlPlane) ObserveWorker(_ context.Context, observation workerap
 		return status, nil
 	}
 	return c.returnedStatus(), nil
+}
+
+func TestSupervisorPublishesInitialObservationWithoutWaitingForPeriodicCadence(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	controlPlane := &testControlPlane{}
+	s, err := New(Config{
+		ControlPlane: controlPlane, PollEvery: time.Millisecond,
+		ObservationEvery: time.Hour, DrainTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	deadline := time.Now().Add(time.Second)
+	for controlPlane.observations.Load() == 0 {
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatal("initial observation waited for the periodic cadence")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
 }
 
 type queuedConsumer struct {
@@ -697,7 +725,10 @@ func TestActivationCanResumePreviouslyRequestedDrain(t *testing.T) {
 func TestDurableDrainLatchWinsWhenShutdownIsAlsoReady(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	controlPlane := &testControlPlane{}
-	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
+	// Keep the new immediate observation active so this test can establish the
+	// specific select race below instead of entering a real server-directed
+	// drain before Run reaches its active wait.
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusActive})
 	s, err := New(Config{
 		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Hour, DrainTimeout: time.Second,
 		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
@@ -719,6 +750,7 @@ func TestDurableDrainLatchWinsWhenShutdownIsAlsoReady(t *testing.T) {
 	// Model the observation callback's ordering: it stores the durable latch
 	// before publishing its wakeup. Cancellation is already ready when Run
 	// resumes its select branch.
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining})
 	s.state.Store(StateDraining)
 	cancel()
 	if err := <-done; err != nil {

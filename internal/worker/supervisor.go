@@ -616,13 +616,13 @@ func (s *Supervisor) acquireAdmission(ctx context.Context, name string) (func(),
 }
 
 func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, statusReturned func(workerapi.StatusResponse)) {
-	ticker := time.NewTicker(s.cfg.ObservationEvery)
-	defer ticker.Stop()
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 		state := s.state.Load().(State)
 		if status, err := s.cfg.ControlPlane.ObserveWorker(ctx, s.observation(state, evidence)); err != nil && ctx.Err() == nil {
@@ -630,6 +630,7 @@ func (s *Supervisor) observe(ctx context.Context, evidence RecoveryEvidence, sta
 		} else if err == nil {
 			statusReturned(status)
 		}
+		timer.Reset(s.cfg.ObservationEvery)
 	}
 }
 

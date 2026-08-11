@@ -533,19 +533,37 @@ func nodeModuleABI(headerPath string) (string, error) {
 		return "", err
 	}
 	defer file.Close()
+	var numericVersion string
+	foundDefinition := false
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		if len(fields) == 3 && fields[0] == "#define" &&
+		if len(fields) >= 3 && fields[0] == "#define" &&
 			fields[1] == "NODE_MODULE_VERSION" {
-			if _, err := strconv.Atoi(fields[2]); err != nil {
-				return "", errors.New("the Node.js module ABI is not numeric")
+			foundDefinition = true
+			parsed, err := strconv.ParseUint(fields[2], 10, 32)
+			if err != nil || strconv.FormatUint(parsed, 10) != fields[2] {
+				// Official Node headers may first define this macro to the
+				// symbolic NODE_EMBEDDER_MODULE_VERSION in one conditional branch
+				// and then publish the numeric distribution default in the other.
+				// Scan the complete header instead of treating the symbolic branch
+				// as the acquired distribution's ABI.
+				continue
 			}
-			return fields[2], nil
+			if numericVersion != "" && numericVersion != fields[2] {
+				return "", errors.New("the Node.js module ABI has conflicting numeric definitions")
+			}
+			numericVersion = fields[2]
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return "", err
+	}
+	if numericVersion != "" {
+		return numericVersion, nil
+	}
+	if foundDefinition {
+		return "", errors.New("the Node.js module ABI is not numeric")
 	}
 	return "", errors.New("the Node.js module ABI is missing")
 }

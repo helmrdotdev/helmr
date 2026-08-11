@@ -22,6 +22,7 @@ var deployArchiveTempDir string
 const deployDefaultWaitTimeout = 20 * time.Minute
 
 var deployEventReconnectDelay = time.Second
+var deployEventStatusInterval = 5 * time.Second
 
 func deployCommand() *cobra.Command {
 	var projectRef string
@@ -277,7 +278,7 @@ func waitForDeployment(ctx context.Context, controlPlane deploymentStatusClient,
 	}
 	var cursor string
 	for {
-		streamCtx, cancel := context.WithCancel(ctx)
+		streamCtx, cancel := context.WithTimeout(ctx, deployEventStatusInterval)
 		terminal := false
 		err := controlPlane.FollowDeploymentEvents(streamCtx, initial.ID, scope, cursor, func(event api.RunEvent) error {
 			if event.ID != "" {
@@ -293,8 +294,9 @@ func waitForDeployment(ctx context.Context, controlPlane deploymentStatusClient,
 			}
 			return nil
 		})
+		streamContextErr := streamCtx.Err()
 		cancel()
-		if err != nil && !errors.Is(err, context.Canceled) {
+		if err != nil && (streamContextErr == nil || !errors.Is(err, streamContextErr)) {
 			return api.DeploymentResponse{}, fmt.Errorf("follow deployment %s events: %w", initial.ID, err)
 		}
 		if ctx.Err() != nil {
