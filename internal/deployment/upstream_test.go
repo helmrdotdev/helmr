@@ -2,6 +2,8 @@ package deployment
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -16,6 +18,50 @@ func (roundTrip upstreamRoundTripper) RoundTrip(
 	request *http.Request,
 ) (*http.Response, error) {
 	return roundTrip(request)
+}
+
+func TestFetchUpstreamRejectsRedirectLimit(t *testing.T) {
+	requests := 0
+	client := &http.Client{Transport: upstreamRoundTripper(
+		func(request *http.Request) (*http.Response, error) {
+			requests++
+			return &http.Response{
+				Body: io.NopCloser(strings.NewReader("")),
+				Header: http.Header{
+					"Location": []string{fmt.Sprintf(
+						"https://release-assets.githubusercontent.com/fixture/hop-%d?sig=fixture",
+						requests,
+					)},
+				},
+				Request:    request,
+				StatusCode: http.StatusFound,
+			}, nil
+		},
+	)}
+	_, err := fetchUpstream(
+		context.Background(),
+		client,
+		t.TempDir(),
+		"https://github.com/oven-sh/bun/releases/download/bun-v1.3.10/bun-linux-x64-baseline.zip",
+		[]string{"github.com", "release-assets.githubusercontent.com"},
+		1024,
+	)
+	if err == nil {
+		t.Fatal("redirect chain beyond the limit succeeded")
+	}
+	if requests != maxUpstreamRedirects+1 {
+		t.Fatalf("redirect-limit transport requests = %d, want %d", requests, maxUpstreamRedirects+1)
+	}
+	if !strings.Contains(err.Error(), "upstream redirect limit exceeded") {
+		t.Fatalf("redirect-limit error = %v", err)
+	}
+	var deterministic interface {
+		PlatformAcquisitionFailureReason() workerapi.PlatformAcquisitionFailureReason
+	}
+	if !errors.As(err, &deterministic) ||
+		deterministic.PlatformAcquisitionFailureReason() != workerapi.PlatformAcquisitionOriginRejected {
+		t.Fatalf("redirect-limit error = %v", err)
+	}
 }
 
 func TestFetchUpstreamClassifiesPermanentAndTransientStatus(t *testing.T) {

@@ -121,6 +121,19 @@ func TestComposeBuildPolicyProducesClosedPolicy(t *testing.T) {
 	if _, err := policy.Manager(PackageManager{Name: PackageManagerPNPM, Version: "11.1.0"}); err != nil {
 		t.Fatal(err)
 	}
+	bun, err := policy.Manager(PackageManager{Name: PackageManagerBun, Version: "1.3.10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBunRedirectHosts := []string{
+		"api.github.com",
+		"github.com",
+		"objects.githubusercontent.com",
+		"release-assets.githubusercontent.com",
+	}
+	if !slices.Equal(bun.AllowedRedirectHosts, wantBunRedirectHosts) {
+		t.Fatalf("Bun redirect hosts = %v, want %v", bun.AllowedRedirectHosts, wantBunRedirectHosts)
+	}
 }
 
 func TestBuildPolicyRejectsKeyringFingerprintMismatch(t *testing.T) {
@@ -224,9 +237,14 @@ func testBuildPolicy(t *testing.T) []byte {
 		Managers: []ManagerPolicy{
 			{
 				AdapterVersion: ManagerAdapterVersion, AllowedOrigin: BunReleaseOrigin,
-				AllowedRedirectHosts: []string{"api.github.com", "github.com", "objects.githubusercontent.com"},
-				Domain:               VersionDomain{Major: 1, Minimum: "1.3.10"},
-				MetadataOrigin:       BunMetadataOrigin, Name: PackageManagerBun,
+				AllowedRedirectHosts: []string{
+					"api.github.com",
+					"github.com",
+					"objects.githubusercontent.com",
+					"release-assets.githubusercontent.com",
+				},
+				Domain:         VersionDomain{Major: 1, Minimum: "1.3.10"},
+				MetadataOrigin: BunMetadataOrigin, Name: PackageManagerBun,
 			},
 			{
 				AdapterVersion: ManagerAdapterVersion, AllowedOrigin: NPMReleaseOrigin,

@@ -190,6 +190,36 @@ func TestValidateRetainedSourceEvidenceBindsSourceDescriptor(t *testing.T) {
 	}
 }
 
+func TestValidatePlatformIntegrityUsesExactBunRedirectHosts(t *testing.T) {
+	expectation := PlatformArtifactExpectation{
+		AllowedRedirectHosts: []string{
+			"api.github.com",
+			"github.com",
+			"objects.githubusercontent.com",
+			"release-assets.githubusercontent.com",
+		},
+		IntegrityIdentities: []string{"github-releases"},
+		IntegrityKind:       "github-sha256",
+		SourceOrigin:        "https://github.com/oven-sh/bun/releases/download/bun-v1.3.10/bun-linux-x64-baseline.zip",
+	}
+	integrity := PlatformIntegrity{
+		Identity:      "github-releases",
+		IntegrityKind: "github-sha256",
+		Redirects: []string{
+			"https://release-assets.githubusercontent.com/github-production-release-asset/fixture?sp=r&sig=fixture",
+		},
+		Source: PlatformSource{Origin: expectation.SourceOrigin},
+	}
+	if err := validatePlatformIntegrity(&inspectedArtifact{}, integrity, expectation); err != nil {
+		t.Fatal(err)
+	}
+	integrity.Redirects[0] = "https://media.githubusercontent.com/oven-sh/bun/fixture.zip?sig=fixture"
+	if err := validatePlatformIntegrity(&inspectedArtifact{}, integrity, expectation); err == nil ||
+		err.Error() != "platform redirect escaped its policy hosts" {
+		t.Fatalf("sibling redirect error = %v", err)
+	}
+}
+
 func TestVerifyToolchainCompilerBindsExecutableInputs(t *testing.T) {
 	memory := newMemoryArtifact()
 	for _, path := range []string{
