@@ -144,6 +144,40 @@ in
       '';
     };
     platform-release = helmrPackages.platformRelease;
+    node-release-keyring =
+      pkgs.runCommand "node-release-keyring-check"
+        {
+          nativeBuildInputs = [
+            pkgs.gnupg
+            pkgs.go_1_26
+            pkgs.libfaketime
+          ];
+          src = ../.;
+        }
+        ''
+                  cp -R "$src" source
+                  chmod -R u+w source
+                  cd source
+                  export HOME="$TMPDIR/home"
+                  mkdir -p "$HOME"
+                  cp -R ${helmrPackages.helmr.goModules} vendor
+                  export GOFLAGS=-mod=vendor
+                  export GOPROXY=off
+                  export GOSUMDB=off
+                  export GOTOOLCHAIN=local
+                  export CGO_ENABLED=0
+                  export HELMR_NODE_RELEASE_KEYRING=${helmrPackages.nodeReleaseKeys}/node-release-keyring.gpg
+                  export HELMR_NODE_RELEASE_FINGERPRINTS=${helmrPackages.nodeReleaseKeys}/fingerprints
+              go test ./internal/deployment -run '^TestPinnedNodeReleaseKeyringVerifiesSubkeySignature$'
+          TZ=UTC faketime '2025-12-10 16:45:57' gpgv \
+                --keyring "$HELMR_NODE_RELEASE_KEYRING" \
+                    --status-fd=1 \
+                    --output "$TMPDIR/SHASUMS256.txt" \
+                    internal/deployment/testdata/node-shasums-v24.12.0.asc \
+                    >"$TMPDIR/gpgv.status"
+                  grep -Fx '[GNUPG:] VALIDSIG 86C8D74642E67846F8E120284DAA80D1E737BC9F 2025-12-10 1765385097 0 4 0 22 8 01 8FCCA13FEF1D0C2E91008E09770F7A9A5AE15600' "$TMPDIR/gpgv.status"
+                  touch "$out"
+        '';
     program-archive-contract =
       pkgs.runCommand "program-archive-contract-check"
         {

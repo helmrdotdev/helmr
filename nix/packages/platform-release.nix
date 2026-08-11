@@ -27,7 +27,7 @@ stdenvNoCC.mkDerivation {
     platform-policy \
       --runtime ${runtimeHarness}/harness.descriptor.json \
       --toolchain ${toolchainBase}/base.descriptor.json \
-      --node-keyring ${nodeReleaseKeys}/pubring.kbx \
+      --node-keyring ${nodeReleaseKeys}/node-release-keyring.gpg \
       --node-fingerprints ${nodeReleaseKeys}/fingerprints \
       --output "$TMPDIR/build-policy.json"
 

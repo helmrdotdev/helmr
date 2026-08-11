@@ -101,6 +101,7 @@ func (store *releasePublishStore) Publish(
 
 func platformReleaseFixture(t *testing.T) (string, platformReleaseManifest) {
 	t.Helper()
+	keyring, fingerprints := testNodeReleaseKeyring(t)
 	directory := t.TempDir()
 	runtimeHarness := []byte("runtime harness")
 	toolchainBase := []byte("toolchain base")
@@ -118,8 +119,8 @@ func platformReleaseFixture(t *testing.T) (string, platformReleaseManifest) {
 			Base:     toolchainDescriptor,
 			Compiler: testCompilerInputs(),
 		},
-		[]byte("node release keyring"),
-		[]string{"00112233445566778899AABBCCDDEEFF00112233"},
+		keyring,
+		fingerprints,
 	)
 	if err != nil {
 		t.Fatal(err)

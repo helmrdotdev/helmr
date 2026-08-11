@@ -22,18 +22,37 @@ stdenvNoCC.mkDerivation {
     runHook preInstall
 
     install -d "$out"
-    install -m0444 gpg-only-active-keys/pubring.kbx "$out/pubring.kbx"
     export GNUPGHOME="$TMPDIR/gnupg"
     install -d -m0700 "$GNUPGHOME"
+
     gpg \
       --batch \
+      --no-options \
       --no-default-keyring \
-      --keyring "$out/pubring.kbx" \
+      --keyring gpg-only-active-keys/pubring.kbx \
+      --export >"$TMPDIR/node-release-keyring-a.gpg"
+    gpg \
+      --batch \
+      --no-options \
+      --no-default-keyring \
+      --keyring gpg-only-active-keys/pubring.kbx \
+      --export >"$TMPDIR/node-release-keyring-b.gpg"
+    test -s "$TMPDIR/node-release-keyring-a.gpg"
+    cmp "$TMPDIR/node-release-keyring-a.gpg" "$TMPDIR/node-release-keyring-b.gpg"
+    install -m0444 "$TMPDIR/node-release-keyring-a.gpg" "$out/node-release-keyring.gpg"
+
+    gpg \
+      --batch \
+      --no-options \
+      --no-default-keyring \
+      --keyring "$out/node-release-keyring.gpg" \
       --with-colons \
+      --with-subkey-fingerprint \
       --fingerprint |
       awk -F: '$1 == "fpr" { print $10 }' |
-      LC_ALL=C sort -u >"$out/fingerprints"
-    test -s "$out/fingerprints"
+      LC_ALL=C sort -u >"$TMPDIR/fingerprints"
+    cmp "$TMPDIR/fingerprints" ${./node-release-key-fingerprints.txt}
+    install -m0444 "$TMPDIR/fingerprints" "$out/fingerprints"
 
     runHook postInstall
   '';

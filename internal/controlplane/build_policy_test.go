@@ -1,14 +1,20 @@
 package controlplane
 
 import (
+	"bytes"
+	"encoding/hex"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
 func controlPlaneBuildPolicy(t *testing.T) *deployment.BuildPolicy {
 	t.Helper()
+	keyring, fingerprints := controlPlaneNodeReleaseKeyring(t)
 	raw, err := deployment.ComposeBuildPolicy(
 		deployment.RuntimeInputs{
 			Harness: platformInput("runtime", 4096),
@@ -17,8 +23,8 @@ func controlPlaneBuildPolicy(t *testing.T) *deployment.BuildPolicy {
 			Base:     platformInput("toolchain", 4096),
 			Compiler: controlPlaneCompilerInputs(),
 		},
-		[]byte("node release keyring"),
-		[]string{"00112233445566778899AABBCCDDEEFF00112233"},
+		keyring,
+		fingerprints,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -28,6 +34,45 @@ func controlPlaneBuildPolicy(t *testing.T) *deployment.BuildPolicy {
 		t.Fatal(err)
 	}
 	return policy
+}
+
+var controlPlaneNodeReleaseKeys struct {
+	sync.Once
+	keyring      []byte
+	fingerprints []string
+	err          error
+}
+
+func controlPlaneNodeReleaseKeyring(t *testing.T) ([]byte, []string) {
+	t.Helper()
+	controlPlaneNodeReleaseKeys.Do(func() {
+		entity, err := openpgp.NewEntity("Helmr Test", "", "test@helmr.dev", nil)
+		if err != nil {
+			controlPlaneNodeReleaseKeys.err = err
+			return
+		}
+		var keyring bytes.Buffer
+		if err := entity.Serialize(&keyring); err != nil {
+			controlPlaneNodeReleaseKeys.err = err
+			return
+		}
+		controlPlaneNodeReleaseKeys.keyring = keyring.Bytes()
+		controlPlaneNodeReleaseKeys.fingerprints = append(
+			controlPlaneNodeReleaseKeys.fingerprints,
+			strings.ToUpper(hex.EncodeToString(entity.PrimaryKey.Fingerprint)),
+		)
+		for _, subkey := range entity.Subkeys {
+			controlPlaneNodeReleaseKeys.fingerprints = append(
+				controlPlaneNodeReleaseKeys.fingerprints,
+				strings.ToUpper(hex.EncodeToString(subkey.PublicKey.Fingerprint)),
+			)
+		}
+		slices.Sort(controlPlaneNodeReleaseKeys.fingerprints)
+	})
+	if controlPlaneNodeReleaseKeys.err != nil {
+		t.Fatal(controlPlaneNodeReleaseKeys.err)
+	}
+	return slices.Clone(controlPlaneNodeReleaseKeys.keyring), slices.Clone(controlPlaneNodeReleaseKeys.fingerprints)
 }
 
 func platformInput(label string, size int64) deployment.ArtifactDescriptor {
