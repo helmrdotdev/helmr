@@ -596,9 +596,11 @@ func verifyRetainedNodeSource(
 	}
 	block, rest := clearsign.Decode(signed)
 	if block == nil || len(bytes.TrimSpace(rest)) != 0 ||
-		block.ArmoredSignature == nil ||
-		!bytes.Equal(block.Plaintext, plain) {
+		block.ArmoredSignature == nil {
 		return errors.New("retained Node.js checksum signature is invalid")
+	}
+	if !bytes.Equal(block.Plaintext, plain) {
+		return errors.New("retained Node.js checksum document does not match its signed cleartext")
 	}
 	signature, signer, err := openpgp.VerifyDetachedSignature(
 		keyring,

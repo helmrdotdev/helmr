@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ProtonMail/go-crypto/openpgp/clearsign"
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -436,11 +437,19 @@ func (acquirer PlatformAcquirer) verifyNodeChecksums(
 	if signer == "" {
 		return nil, "", errors.New("the Node.js release signature has no allowed valid signer")
 	}
-	plain, err := os.ReadFile(output)
-	if err != nil || len(plain) == 0 || len(plain) > maxUpstreamMetadataBytes {
+	if _, err := signed.Seek(0, io.SeekStart); err != nil {
 		return nil, "", errors.New("verified Node.js checksum document is invalid")
 	}
-	return plain, signer, nil
+	signedRaw, err := io.ReadAll(io.LimitReader(signed, maxUpstreamMetadataBytes+1))
+	if err != nil || len(signedRaw) == 0 || len(signedRaw) > maxUpstreamMetadataBytes {
+		return nil, "", errors.New("verified Node.js checksum document is invalid")
+	}
+	block, rest := clearsign.Decode(signedRaw)
+	if block == nil || block.ArmoredSignature == nil || len(bytes.TrimSpace(rest)) != 0 ||
+		len(block.Plaintext) == 0 || len(block.Plaintext) > maxUpstreamMetadataBytes {
+		return nil, "", errors.New("verified Node.js checksum document is invalid")
+	}
+	return bytes.Clone(block.Plaintext), signer, nil
 }
 
 func nodeChecksum(raw []byte, filename string) (string, error) {

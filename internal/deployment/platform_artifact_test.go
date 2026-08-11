@@ -140,6 +140,19 @@ func TestVerifyRetainedNodeSourceUsesPinnedReleaseKey(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+	plainPath := "helmr/upstream/SHASUMS256.txt"
+	memory.files[plainPath][0] ^= 1
+	err = verifyRetainedNodeSource(
+		context.Background(),
+		artifact,
+		bytes.NewReader(source),
+		integrity,
+		expectation,
+	)
+	memory.files[plainPath][0] ^= 1
+	if err == nil || err.Error() != "retained Node.js checksum document does not match its signed cleartext" {
+		t.Fatalf("mismatched retained checksum error = %v", err)
+	}
 	if err := verifyRetainedNodeSource(
 		context.Background(),
 		artifact,

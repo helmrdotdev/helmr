@@ -6,6 +6,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"debug/elf"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +19,72 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
+
+func TestVerifyNodeChecksumsIgnoresGPGVOutputRepresentation(t *testing.T) {
+	const signer = "86C8D74642E67846F8E120284DAA80D1E737BC9F"
+	gpgv := filepath.Join(t.TempDir(), "gpgv")
+	script := `#!/bin/sh
+set -eu
+output=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --status-fd|--keyring)
+      shift 2
+      ;;
+    --output)
+      output="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+test -n "$output"
+printf 'version-dependent gpgv cleartext\n\n' >"$output"
+printf '[GNUPG:] VALIDSIG ` + signer + ` 0 0 0 0 0 0 0 0 0 0\n'
+`
+	if err := os.WriteFile(gpgv, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	signedRaw, err := os.ReadFile("testdata/node-shasums-v24.12.0.asc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	signedPath := filepath.Join(t.TempDir(), "SHASUMS256.txt.asc")
+	if err := os.WriteFile(signedPath, signedRaw, 0400); err != nil {
+		t.Fatal(err)
+	}
+	signed, err := os.Open(signedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer signed.Close()
+	acquirer := PlatformAcquirer{GPGV: gpgv}
+	plain, actualSigner, err := acquirer.verifyNodeChecksums(
+		context.Background(),
+		t.TempDir(),
+		signed,
+		NodePolicy{
+			ReleaseKeyFingerprints: []string{signer},
+			ReleaseKeyring:         base64.StdEncoding.EncodeToString([]byte("keyring")),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actualSigner != signer {
+		t.Fatalf("signer = %q, want %q", actualSigner, signer)
+	}
+	wantDigest := "9e5c96d6a01e1a5e265f4f594b5e118c2e8a8108578c789136b40fc6dc02bc95"
+	actualDigest := sha256.Sum256(plain)
+	if hex.EncodeToString(actualDigest[:]) != wantDigest {
+		t.Fatalf("verified cleartext digest = %x, want %s", actualDigest, wantDigest)
+	}
+	if bytes.HasSuffix(plain, []byte("\n")) {
+		t.Fatal("verified cleartext retained a gpgv-specific structural LF")
+	}
+}
 
 type platformInputStore struct {
 	descriptor ArtifactDescriptor
