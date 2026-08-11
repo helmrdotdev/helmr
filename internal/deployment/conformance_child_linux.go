@@ -387,16 +387,7 @@ if (child.status !== 0 || child.stdout.trim() !== "clean") process.exit(3);
 	if _, err := runConformanceCommand(ctx, nil, node, "--check", descriptor.Entrypoint); err != nil {
 		return nil, errors.New("runtime entrypoint is not valid JavaScript")
 	}
-	return passedConformanceResults(
-		"network-denied",
-		"node-architecture",
-		"node-disable-types",
-		"node-module-abi",
-		"node-reported-version",
-		"node-source-maps",
-		"runtime-entrypoint",
-		"runtime-loader-environment",
-	), nil
+	return passedConformanceResults(runtimeConformanceNames()...), nil
 }
 
 func managerConformance(
@@ -625,18 +616,7 @@ NAPI_MODULE(NODE_GYP_MODULE_NAME, init)
 	if err != nil || strings.TrimSpace(output) != descriptor.NodeModuleABI {
 		return nil, errors.New("toolchain native addon ABI validation failed")
 	}
-	return passedConformanceResults(
-		"compiler-aggregate",
-		"compiler-config",
-		"compiler-final-modules",
-		"compiler-options",
-		"esbuild-api",
-		"esbuild-binary",
-		"native-addon",
-		"network-denied",
-		"node-headers",
-		"runtime-binding",
-	), nil
+	return passedConformanceResults(toolchainConformanceNames()...), nil
 }
 
 func compilerConformance(

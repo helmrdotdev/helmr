@@ -54,6 +54,22 @@ func TestManagerConformanceNamesAreFamilySpecific(t *testing.T) {
 	}
 }
 
+func TestRuntimeConformanceNamesIncludeExecutedChecks(t *testing.T) {
+	want := []string{
+		"network-denied",
+		"node-architecture",
+		"node-disable-types",
+		"node-module-abi",
+		"node-reported-version",
+		"node-source-maps",
+		"runtime-entrypoint",
+		"runtime-loader-environment",
+	}
+	if actual := runtimeConformanceNames(); !slices.Equal(actual, want) {
+		t.Fatalf("runtime conformance = %v, want %v", actual, want)
+	}
+}
+
 func TestVerifyRetainedNodeSourceUsesPinnedReleaseKey(t *testing.T) {
 	source := []byte("node distribution")
 	sourceDigest := sha256.Sum256(source)

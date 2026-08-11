@@ -212,6 +212,7 @@ func runtimeConformanceNames() []string {
 		"node-disable-types",
 		"node-module-abi",
 		"node-reported-version",
+		"node-source-maps",
 		"runtime-entrypoint",
 		"runtime-loader-environment",
 	}
