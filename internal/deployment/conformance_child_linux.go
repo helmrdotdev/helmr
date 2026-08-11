@@ -690,7 +690,7 @@ func compilerConformance(
 		output,
 		"npm",
 	)
-	if _, err := runConformanceCommandFD3(
+	if err := runConformanceCommandFD3(
 		ctx,
 		[]string{
 			"HOME=/work",
@@ -719,7 +719,7 @@ func compilerConformance(
 		output,
 		"npm",
 	)
-	if _, err := runConformanceCommandFD3(
+	if err := runConformanceCommandFD3(
 		ctx,
 		[]string{
 			"HOME=/work",
@@ -834,15 +834,15 @@ func runConformanceCommandFD3(
 	outputPath string,
 	executable string,
 	arguments ...string,
-) (string, error) {
+) error {
 	output, err := os.OpenFile(outputPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
 	if err != nil {
-		return "", err
+		return err
 	}
-	result, runErr := runConformanceCommandInWithFiles(
+	_, runErr := runConformanceCommandInWithFiles(
 		ctx, environment, "/work", []*os.File{output}, executable, arguments...,
 	)
-	return result, errors.Join(runErr, output.Close())
+	return errors.Join(runErr, output.Close())
 }
 
 func runConformanceCommandInWithFiles(
