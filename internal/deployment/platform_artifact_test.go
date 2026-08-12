@@ -16,10 +16,12 @@ import (
 
 func TestManagerConformanceNamesAreFamilySpecific(t *testing.T) {
 	common := []string{"entrypoint", "reported-version", "required-options"}
-	for _, name := range []PackageManagerName{PackageManagerNPM, PackageManagerBun} {
-		if actual := managerConformanceNames(name); !slices.Equal(actual, common) {
-			t.Fatalf("%s conformance = %v, want %v", name, actual, common)
-		}
+	if actual := managerConformanceNames(PackageManagerNPM); !slices.Equal(actual, common) {
+		t.Fatalf("npm conformance = %v, want %v", actual, common)
+	}
+	bun := append([]string{"bun-path-reentry"}, common...)
+	if actual := managerConformanceNames(PackageManagerBun); !slices.Equal(actual, bun) {
+		t.Fatalf("bun conformance = %v, want %v", actual, bun)
 	}
 	pnpm := []string{
 		"entrypoint",

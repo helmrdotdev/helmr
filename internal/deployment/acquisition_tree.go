@@ -212,24 +212,8 @@ func (acquirer PlatformAcquirer) managerTree(
 	if err != nil {
 		return nil, err
 	}
-	switch manager.Name {
-	case PackageManagerBun:
-		if err := copyRegularFile(
-			filepath.Join(source.root, "bun"),
-			filepath.Join(root, "bin", "bun"),
-			0755,
-		); err != nil {
-			return nil, err
-		}
-	case PackageManagerNPM, PackageManagerPNPM:
-		if err := copyDirectory(
-			source.root,
-			filepath.Join(root, "lib", string(manager.Name)),
-		); err != nil {
-			return nil, err
-		}
-	default:
-		return nil, errors.New("manager family is unsupported")
+	if err := materializeManagerPayload(root, manager, source.root); err != nil {
+		return nil, err
 	}
 	evidence := platformEvidenceSet{
 		documents: cloneEvidence(source.evidence),
@@ -315,6 +299,39 @@ func (acquirer PlatformAcquirer) managerTree(
 	result := final
 	final = nil
 	return result, nil
+}
+
+func materializeManagerPayload(root string, manager PackageManager, sourceRoot string) error {
+	switch manager.Name {
+	case PackageManagerBun:
+		if err := os.MkdirAll(filepath.Join(root, "libexec"), 0755); err != nil {
+			return err
+		}
+		if err := copyRegularFile(
+			filepath.Join(sourceRoot, "bun"),
+			filepath.Join(root, "libexec", "bun"),
+			0755,
+		); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Join(root, "bin"), 0755); err != nil {
+			return err
+		}
+		return os.Symlink(
+			managerNativeLauncherTarget,
+			filepath.Join(root, "bin", "bun"),
+		)
+	case PackageManagerNPM, PackageManagerPNPM:
+		if err := copyDirectory(
+			sourceRoot,
+			filepath.Join(root, "lib", string(manager.Name)),
+		); err != nil {
+			return err
+		}
+		return nil
+	default:
+		return errors.New("manager family is unsupported")
+	}
 }
 
 func (acquirer PlatformAcquirer) toolchainTree(

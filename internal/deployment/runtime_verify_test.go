@@ -244,6 +244,7 @@ func newRuntimeTopology(t *testing.T) (RuntimeDescriptor, *memoryArtifact) {
 	artifact.addDirectory("share/licenses")
 	artifact.addDirectory("share/licenses/node")
 	artifact.addFile(runtimeNodeLauncherPath, []byte("node-launcher"), 0755)
+	artifact.addFile(runtimeNativeManagerLauncherPath, []byte("native-manager-launcher"), 0755)
 	artifact.addFile(runtimeNodePath, []byte("node"), 0755)
 	artifact.addFile(runtimeEntryPath, []byte("entry"), 0644)
 	artifact.addFile(runtimeLoaderEnvPath, []byte("loader-env"), 0644)

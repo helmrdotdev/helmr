@@ -59,12 +59,15 @@ func TestBuildInstallCommandUsesManagerFrozenSemantics(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(string(test.name), func(t *testing.T) {
-			command := buildInstallCommand(deployment.BuildManager{
+			command, err := buildInstallCommand(deployment.BuildManager{
 				Entrypoint: test.entrypoint,
 				PackageManager: deployment.PackageManager{
-					Name: test.name,
+					Name: test.name, Version: "1.0.0",
 				},
 			})
+			if err != nil {
+				t.Fatal(err)
+			}
 			if !slices.Equal(command.Argv, test.want) {
 				t.Fatalf("install command = %q, want %q", command.Argv, test.want)
 			}
@@ -87,5 +90,15 @@ func TestBuildProcessEnvironmentDoesNotOverrideManagerConfig(t *testing.T) {
 	}
 	if environment := buildProcessEnvironment(); !slices.Equal(environment, want) {
 		t.Fatalf("build environment = %+v, want %+v", environment, want)
+	}
+}
+
+func TestBuildAliasesDoNotExposeHostOrManagerLoader(t *testing.T) {
+	want := []buildAlias{
+		{Path: "/bin/sh", Target: "/nix/bin/sh"},
+		{Path: "/usr/bin/env", Target: "/nix/bin/env"},
+	}
+	if aliases := buildAliases(); !slices.Equal(aliases, want) {
+		t.Fatalf("build aliases = %+v, want %+v", aliases, want)
 	}
 }

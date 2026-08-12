@@ -134,9 +134,13 @@ func handleBuild(
 		)
 	}
 
+	installCommand, err := buildInstallCommand(request.Manager)
+	if err != nil {
+		return err
+	}
 	installConfig := buildProcessConfig{
 		Aliases:     plan.Aliases,
-		Command:     buildInstallCommand(request.Manager),
+		Command:     installCommand,
 		Environment: buildProcessEnvironment(),
 		Identity:    plan.Identity,
 		Manager:     manager,
@@ -514,10 +518,6 @@ func generatedOutputDirectory(name string) (string, bool) {
 func buildAliases() []buildAlias {
 	return []buildAlias{
 		{Path: "/bin/sh", Target: "/nix/bin/sh"},
-		{
-			Path:   "/lib64/ld-linux-x86-64.so.2",
-			Target: "/nix/helmr/manager/lib/ld-linux-x86-64.so.2",
-		},
 		{Path: "/usr/bin/env", Target: "/nix/bin/env"},
 	}
 }
@@ -525,19 +525,19 @@ func buildAliases() []buildAlias {
 func managerCommand(
 	manager deployment.BuildManager,
 	arguments ...string,
-) buildCommand {
-	argv := []string{
-		"/opt/helmr/runtime/bin/node",
-		manager.Entrypoint.Path,
+) (buildCommand, error) {
+	argv, err := deployment.ManagerInvocation(
+		manager.PackageManager,
+		manager.Entrypoint,
+		arguments...,
+	)
+	if err != nil {
+		return buildCommand{}, err
 	}
-	if manager.PackageManager.Name == deployment.PackageManagerBun {
-		argv = argv[1:]
-	}
-	argv = append(argv, arguments...)
-	return buildCommand{Argv: argv, CWD: "/work/project"}
+	return buildCommand{Argv: argv, CWD: "/work/project"}, nil
 }
 
-func buildInstallCommand(manager deployment.BuildManager) buildCommand {
+func buildInstallCommand(manager deployment.BuildManager) (buildCommand, error) {
 	switch manager.PackageManager.Name {
 	case deployment.PackageManagerNPM:
 		return managerCommand(
@@ -561,7 +561,7 @@ func buildInstallCommand(manager deployment.BuildManager) buildCommand {
 			"--frozen-lockfile",
 		)
 	default:
-		panic("validated Manager family is unsupported")
+		return buildCommand{}, errors.New("validated Manager family is unsupported")
 	}
 }
 
