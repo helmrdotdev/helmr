@@ -394,20 +394,37 @@ func managerConformance(
 	ctx context.Context,
 	descriptor ManagerArtifactDescriptor,
 ) ([]PlatformConformanceResult, error) {
-	entrypoint := descriptor.Entrypoint.Path
-	executable := entrypoint
-	var command []string
-	if descriptor.Entrypoint.Kind == ManagerEntrypointNode {
-		executable = "/opt/helmr/runtime/bin/node"
-		command = []string{entrypoint, "--version"}
-	} else {
-		command = []string{"--version"}
+	versionInvocation, err := ManagerInvocation(
+		descriptor.PackageManager,
+		descriptor.Entrypoint,
+		"--version",
+	)
+	if err != nil {
+		return nil, err
 	}
-	version, err := runConformanceCommand(ctx, managerEnvironment(descriptor), executable, command...)
+	version, err := runConformanceCommand(
+		ctx,
+		managerEnvironment(descriptor),
+		versionInvocation[0],
+		versionInvocation[1:]...,
+	)
 	if err != nil || strings.TrimSpace(version) != descriptor.PackageManager.Version {
 		return nil, errors.New("manager reported the wrong version")
 	}
-	help, err := runConformanceCommand(ctx, managerEnvironment(descriptor), executable, managerHelpArguments(descriptor)...)
+	helpInvocation, err := ManagerInvocation(
+		descriptor.PackageManager,
+		descriptor.Entrypoint,
+		managerHelpArguments(descriptor)...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	help, err := runConformanceCommand(
+		ctx,
+		managerEnvironment(descriptor),
+		helpInvocation[0],
+		helpInvocation[1:]...,
+	)
 	if err != nil {
 		return nil, errors.New("manager help failed")
 	}
@@ -417,13 +434,52 @@ func managerConformance(
 		}
 	}
 	if descriptor.PackageManager.Name == PackageManagerPNPM {
-		if err := pnpmReplacementConformance(ctx, descriptor, executable); err != nil {
+		if err := pnpmReplacementConformance(ctx, descriptor, versionInvocation[0]); err != nil {
+			return nil, err
+		}
+	}
+	if descriptor.PackageManager.Name == PackageManagerBun {
+		if err := bunPathReentryConformance(ctx, descriptor); err != nil {
 			return nil, err
 		}
 	}
 	return passedConformanceResults(
 		managerConformanceNames(descriptor.PackageManager.Name)...,
 	), nil
+}
+
+func bunPathReentryConformance(
+	ctx context.Context,
+	descriptor ManagerArtifactDescriptor,
+) error {
+	const program = `
+const child = Bun.spawnSync(["bun", "--version"], {
+  env: process.env,
+  stdout: "pipe",
+  stderr: "pipe",
+});
+if (child.exitCode !== 0 || new TextDecoder().decode(child.stdout).trim() !== Bun.version) {
+  process.exit(1);
+}
+`
+	invocation, err := ManagerInvocation(
+		descriptor.PackageManager,
+		descriptor.Entrypoint,
+		"-e",
+		program,
+	)
+	if err != nil {
+		return err
+	}
+	if _, err := runConformanceCommand(
+		ctx,
+		managerEnvironment(descriptor),
+		invocation[0],
+		invocation[1:]...,
+	); err != nil {
+		return errors.New("bun PATH re-entry failed")
+	}
+	return nil
 }
 
 func pnpmReplacementConformance(
@@ -776,14 +832,11 @@ func managerEnvironment(descriptor ManagerArtifactDescriptor) []string {
 }
 
 func managerHelpArguments(descriptor ManagerArtifactDescriptor) []string {
-	if descriptor.Entrypoint.Kind == ManagerEntrypointNode {
-		command := "install"
-		if descriptor.PackageManager.Name == PackageManagerNPM {
-			command = "ci"
-		}
-		return []string{descriptor.Entrypoint.Path, command, "--help"}
+	command := "install"
+	if descriptor.PackageManager.Name == PackageManagerNPM {
+		command = "ci"
 	}
-	return []string{"install", "--help"}
+	return []string{command, "--help"}
 }
 
 func managerRequiredOptions(name PackageManagerName) []string {

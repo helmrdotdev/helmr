@@ -220,8 +220,15 @@ func runtimeConformanceNames() []string {
 
 func managerConformanceNames(name PackageManagerName) []string {
 	switch name {
-	case PackageManagerNPM, PackageManagerBun:
+	case PackageManagerNPM:
 		return []string{
+			"entrypoint",
+			"reported-version",
+			"required-options",
+		}
+	case PackageManagerBun:
+		return []string{
+			"bun-path-reentry",
 			"entrypoint",
 			"reported-version",
 			"required-options",

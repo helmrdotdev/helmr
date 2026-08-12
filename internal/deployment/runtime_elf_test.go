@@ -587,6 +587,13 @@ func newValidRuntimeELFArtifact(
 		needed:       []string{"libc.so.6"},
 		runpath:      []string{runtimeLibraryPath},
 	}), 0755)
+	artifact.addFile(runtimeNativeManagerLauncherPath, buildTestELF64(t, testELF64Spec{
+		machine:      machine,
+		fileType:     elf.ET_DYN,
+		interpreters: []string{loader},
+		needed:       []string{"libc.so.6"},
+		runpath:      []string{runtimeLibraryPath},
+	}), 0755)
 	artifact.addFile(runtimeNodePath, buildTestELF64(t, testELF64Spec{
 		machine:      machine,
 		fileType:     elf.ET_DYN,

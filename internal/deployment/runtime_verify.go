@@ -15,14 +15,15 @@ import (
 )
 
 const (
-	runtimeNodeLauncherPath = "bin/node"
-	runtimeNodePath         = "bin/node.real"
-	runtimeEntryPath        = "helmr/entry.mjs"
-	runtimeLoaderEnvPath    = "helmr/loader_env.cjs"
-	runtimeLibcPath         = "lib/libc.so.6"
-	runtimeLoaderAliasPath  = "lib/ld-linux-x86-64.so.2"
-	runtimeLoaderPath       = "ld.so"
-	runtimeLicensePath      = "share/licenses/node/LICENSE"
+	runtimeNodeLauncherPath          = "bin/node"
+	runtimeNativeManagerLauncherPath = "bin/native-manager"
+	runtimeNodePath                  = "bin/node.real"
+	runtimeEntryPath                 = "helmr/entry.mjs"
+	runtimeLoaderEnvPath             = "helmr/loader_env.cjs"
+	runtimeLibcPath                  = "lib/libc.so.6"
+	runtimeLoaderAliasPath           = "lib/ld-linux-x86-64.so.2"
+	runtimeLoaderPath                = "ld.so"
+	runtimeLicensePath               = "share/licenses/node/LICENSE"
 )
 
 func VerifyRuntimeArtifact(
@@ -117,16 +118,17 @@ func verifyRuntimeTopology(
 		}
 	}
 	requiredFiles := map[string]uint32{
-		runtimeNodeLauncherPath: 0755,
-		runtimeNodePath:         0755,
-		runtimeEntryPath:        0644,
-		runtimeLoaderEnvPath:    0644,
-		runtimeLoaderPath:       0755,
-		PlatformDescriptorPath:  0644,
-		PlatformIntegrityPath:   0644,
-		PlatformConformancePath: 0644,
-		runtimeLibcPath:         0644,
-		runtimeLicensePath:      0644,
+		runtimeNodeLauncherPath:          0755,
+		runtimeNativeManagerLauncherPath: 0755,
+		runtimeNodePath:                  0755,
+		runtimeEntryPath:                 0644,
+		runtimeLoaderEnvPath:             0644,
+		runtimeLoaderPath:                0755,
+		PlatformDescriptorPath:           0644,
+		PlatformIntegrityPath:            0644,
+		PlatformConformancePath:          0644,
+		runtimeLibcPath:                  0644,
+		runtimeLicensePath:               0644,
 	}
 	for required, mode := range requiredFiles {
 		entry, err := artifact.require(required, artifactEntryRegular)
@@ -251,6 +253,18 @@ func verifyRuntimeExecutables(
 		true,
 	); err != nil {
 		return fmt.Errorf("runtime Node.js launcher: %w", err)
+	}
+	if err := verifyRuntimeExecutable(
+		ctx,
+		artifact,
+		runtimeNativeManagerLauncherPath,
+		machine,
+		loader,
+		loader,
+		"",
+		true,
+	); err != nil {
+		return fmt.Errorf("runtime native Manager launcher: %w", err)
 	}
 	if err := verifyRuntimeExecutable(
 		ctx,

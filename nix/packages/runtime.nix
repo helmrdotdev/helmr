@@ -39,6 +39,8 @@ stdenv.mkDerivation {
     install -m0644 ${../../internal/runtime/loader_env.cjs} "$tree/helmr/loader_env.cjs"
     "$CC" -Os -fPIE -pie -fno-ident -Wl,--build-id=none \
       -o "$tree/bin/node" ${../../internal/runtime/node_launcher.c}
+    "$CC" -Os -fPIE -pie -fno-ident -Wl,--build-id=none \
+      -o "$tree/bin/native-manager" ${../../internal/runtime/native_manager_launcher.c}
     copy_library() {
       name="$1"
       shift
@@ -69,6 +71,10 @@ stdenv.mkDerivation {
       --set-interpreter /opt/helmr/runtime/ld.so \
       --set-rpath /opt/helmr/runtime/lib \
       "$tree/bin/node"
+    patchelf \
+      --set-interpreter /opt/helmr/runtime/ld.so \
+      --set-rpath /opt/helmr/runtime/lib \
+      "$tree/bin/native-manager"
     while IFS= read -r elf; do
       [ "$elf" != "$tree/lib/${loader}" ] || continue
       if [ "$elf" = "$tree/lib/libc.so.6" ]; then
