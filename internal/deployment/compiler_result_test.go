@@ -21,51 +21,23 @@ func TestProgramVerificationRoundTrip(t *testing.T) {
 	}
 }
 
-func TestProgramBuildManifestBindsProtectedInputs(t *testing.T) {
-	manifest := testProgramBuildManifest(t)
-	canonical, err := canonicalProgramBuildManifest(manifest)
+func TestProgramCompilerResultRoundTrip(t *testing.T) {
+	result := testProgramCompilerResult(t)
+	canonical, err := canonicalProgramCompilerResult(result)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := ParseProgramBuildManifest(canonical)
+	parsed, err := ParseProgramCompilerResult(canonical)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(parsed, manifest) {
-		t.Fatalf("parsed manifest = %#v, want %#v", parsed, manifest)
-	}
-
-	tests := map[string]func(*ProgramBuildManifest){
-		"config source path": func(value *ProgramBuildManifest) {
-			value.ConfigSource.Path = "config.ts"
-		},
-		"config source digest": func(value *ProgramBuildManifest) {
-			value.ConfigSource.Digest = "invalid"
-		},
-		"lockfile path": func(value *ProgramBuildManifest) {
-			value.Lockfile.Path = "lock.json"
-		},
-		"lockfile digest": func(value *ProgramBuildManifest) {
-			value.Lockfile.Digest = "invalid"
-		},
-	}
-	for name, mutate := range tests {
-		t.Run(name, func(t *testing.T) {
-			value := manifest
-			mutate(&value)
-			if err := validateProgramBuildManifest(value); err == nil {
-				t.Fatal("validateProgramBuildManifest returned nil error")
-			}
-		})
+	if !reflect.DeepEqual(parsed, result) {
+		t.Fatalf("parsed result = %#v, want %#v", parsed, result)
 	}
 }
 
-func testProgramBuildManifest(t *testing.T) ProgramBuildManifest {
+func testProgramCompilerResult(t *testing.T) ProgramCompilerResult {
 	t.Helper()
-	indexRaw, err := CanonicalProgramIndex(testProgramIndex(t))
-	if err != nil {
-		t.Fatal(err)
-	}
 	compiler := testCompilerInputs()
 	optionsDigest, err := compilerOptionsDigest(compiler, "24.16.0")
 	if err != nil {
@@ -73,7 +45,7 @@ func testProgramBuildManifest(t *testing.T) ProgramBuildManifest {
 	}
 	sourcePath := "tasks/build.ts"
 	modulePath := generatedDeclarationModulePath(sourcePath)
-	return ProgramBuildManifest{
+	return ProgramCompilerResult{
 		AggregateResultDigest: "sha256:" + strings.Repeat("a", 64),
 		Compiler: ProgramCompilerContract{
 			APIVersion:            compiler.APIVersion,
@@ -82,45 +54,36 @@ func testProgramBuildManifest(t *testing.T) ProgramBuildManifest {
 			Output:                compiler.Output,
 			Source:                compiler.Source,
 		},
-		Config: ProgramBuildFile{
+		Config: ProgramPathDigest{
 			Digest: "sha256:" + strings.Repeat("4", 64),
 			Path:   "helmr/config.json",
 		},
-		ConfigSource: ProgramBuildFile{
-			Digest: "sha256:" + strings.Repeat("5", 64),
-			Path:   "helmr.config.ts",
-		},
 		DiscoveryCandidates: []string{sourcePath},
-		Execution: ProgramBuildExecution{
+		Execution: ProgramCompilerExecution{
 			NodeVersion:   "24.16.0",
 			OptionsDigest: optionsDigest,
 		},
-		ExternalEdges: []ProgramBuildExternalEdge{},
-		Inputs: []ProgramBuildFile{{
+		ExternalEdges: []ProgramExternalEdge{},
+		Inputs: []ProgramPathDigest{{
 			Digest: "sha256:" + strings.Repeat("9", 64),
 			Path:   sourcePath,
 		}},
-		LocalPackages: []ProgramBuildLocalPackage{},
-		Lockfile: ProgramBuildFile{
-			Digest: "sha256:" + strings.Repeat("6", 64),
-			Path:   "bun.lock",
-		},
-		Outputs: []ProgramBuildOutput{{
+		LocalPackages: []ProgramLocalPackage{},
+		Outputs: []ProgramModule{{
 			ModuleDigest:    "sha256:" + strings.Repeat("b", 64),
 			ModulePath:      modulePath,
 			SourceMapDigest: "sha256:" + strings.Repeat("c", 64),
 			SourceMapPath:   modulePath + ".map",
 			SourcePath:      sourcePath,
 		}},
-		ProgramIndexDigest: testDigest(string(indexRaw)),
-		Selections: []ProgramBuildSelection{{
+		Selections: []ProgramCompilerSelection{{
 			DeclaredID: "build",
 			ExportName: "build",
 			Kind:       DeclarationKindTask,
 			SourcePath: sourcePath,
 			Slot:       DeclarationSlotHandler,
 		}},
-		TSConfigs: []ProgramBuildFile{},
+		TSConfigs: []ProgramPathDigest{},
 	}
 }
 

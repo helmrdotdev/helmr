@@ -3,8 +3,6 @@ package deployment
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"iter"
@@ -24,7 +22,8 @@ func EncodeProgram(
 	encoder string,
 	tree *BuildTree,
 	verification VerificationResult,
-	provenance BuildProvenance,
+	configResultDigest string,
+	runtimeDigest string,
 	workspaceImages []WorkspaceImage,
 	compiler CompilerInputs,
 	nodeVersion string,
@@ -35,8 +34,11 @@ func EncodeProgram(
 	if tree == nil || tree.content == nil || tree.inspected == nil {
 		return nil, errors.New("build tree is closed")
 	}
-	if err := validateBuildProvenance("program encoding provenance", provenance); err != nil {
-		return nil, err
+	if !sha256DigestPattern.MatchString(configResultDigest) {
+		return nil, errors.New("program encoding config result digest is invalid")
+	}
+	if !sha256DigestPattern.MatchString(runtimeDigest) {
+		return nil, errors.New("program encoding runtime digest is invalid")
 	}
 	if err := ValidateVerificationResult(verification); err != nil {
 		return nil, err
@@ -65,7 +67,7 @@ func EncodeProgram(
 	if err != nil {
 		return nil, err
 	}
-	if err := validateProgramBuildAuthority(
+	if err := validateProgramCompilerAuthority(
 		compilerResult,
 		compiler,
 		nodeVersion,
@@ -75,12 +77,12 @@ func EncodeProgram(
 	if err := validateProgramAggregateResult(compilerResult, plan); err != nil {
 		return nil, err
 	}
-	if compilerResult.Config.Digest != provenance.Config.ResultDigest {
+	if compilerResult.Config.Digest != configResultDigest {
 		return nil, errors.New(
-			"program build manifest config digest does not match build provenance",
+			"program compiler result config digest does not match evaluated config",
 		)
 	}
-	if err := verifyProgramBuildFiles(ctx, tree.inspected, compilerResult); err != nil {
+	if err := verifyProgramCompilerFiles(ctx, tree.inspected, compilerResult); err != nil {
 		return nil, err
 	}
 	locator, err := ParseDeclarationLocator(
@@ -89,15 +91,15 @@ func EncodeProgram(
 	if err != nil {
 		return nil, err
 	}
-	if err := validateProgramBuildLocators(compilerResult, locator); err != nil {
+	if err := validateProgramCompilerLocators(compilerResult, locator); err != nil {
 		return nil, err
 	}
 	index, err := buildProgramIndex(
 		plan,
 		locator,
 		workspaceImages,
-		provenance.Config.ResultDigest,
-		provenance.RuntimeDigest,
+		configResultDigest,
+		runtimeDigest,
 	)
 	if err != nil {
 		return nil, err
@@ -106,37 +108,18 @@ func EncodeProgram(
 	if err != nil {
 		return nil, err
 	}
-	indexHash := sha256.Sum256(indexRaw)
-	manifest := buildManifestFromCompilerResult(
+	manifest := programManifestFromCompilerResult(
 		compilerResult,
-		"sha256:"+hex.EncodeToString(indexHash[:]),
-		ProgramBuildFile{
-			Digest: provenance.Config.SourceDigest,
-			Path:   "helmr.config.ts",
-		},
-		ProgramBuildFile{
-			Digest: provenance.Submitted.LockfileDigest,
-			Path:   provenance.Submitted.LockfileName,
-		},
+		programIndexDigest(indexRaw),
 	)
-	if err := verifyProgramBuildFile(
-		ctx,
-		tree.inspected,
-		manifest.ConfigSource,
-	); err != nil {
-		return nil, err
-	}
-	if err := verifyProgramBuildFile(ctx, tree.inspected, manifest.Lockfile); err != nil {
-		return nil, err
-	}
-	manifestRaw, err := canonicalProgramBuildManifest(manifest)
+	manifestRaw, err := canonicalProgramManifest(manifest)
 	if err != nil {
 		return nil, err
 	}
 	generated := map[string][]byte{
-		"helmr/build-manifest.json": manifestRaw,
-		"helmr/declarations.json":   indexRaw,
-		"helmr/entry.mjs":           []byte(ProgramEntry),
+		"helmr/program-manifest.json": manifestRaw,
+		"helmr/declarations.json":     indexRaw,
+		"helmr/entry.mjs":             []byte(ProgramEntry),
 	}
 	artifact, err := encodeProgramTree(
 		ctx,

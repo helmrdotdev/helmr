@@ -154,7 +154,7 @@ func validateCompilerBuildTree(
 			entry.Path,
 		)
 	}
-	if err := verifyProgramBuildFiles(ctx, tree, result); err != nil {
+	if err := verifyProgramCompilerFiles(ctx, tree, result); err != nil {
 		return fmt.Errorf("compiler build tree: %w", err)
 	}
 	return nil
