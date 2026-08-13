@@ -146,6 +146,47 @@ func TestDeploymentBundleRejectsMutableOrManagedImageInputs(t *testing.T) {
 	}
 }
 
+func TestDeploymentBundleAdmissionRequiresExactProductRelease(t *testing.T) {
+	bundle := testDeploymentBundle(t)
+	admission := DeploymentBundleAdmission{
+		BuildPolicyDigest: bundle.BuildPolicyDigest,
+		Runtime: RuntimeDescriptor{
+			Architecture:    bundle.Platform.Architecture,
+			Digest:          bundle.Runtime.Artifact.Digest,
+			FormatVersion:   RuntimeDescriptorFormatVersion,
+			MediaType:       bundle.Runtime.Artifact.MediaType,
+			RuntimeContract: bundle.Runtime.Contract,
+			SizeBytes:       bundle.Runtime.Artifact.SizeBytes,
+		},
+	}
+	if err := admission.Admit(bundle); err != nil {
+		t.Fatalf("Admit: %v", err)
+	}
+
+	for name, mutate := range map[string]func(*DeploymentBundle){
+		"policy": func(value *DeploymentBundle) {
+			value.BuildPolicyDigest = "sha256:" + strings.Repeat("1", 64)
+		},
+		"Runtime digest": func(value *DeploymentBundle) {
+			value.Runtime.Artifact.Digest = "sha256:" + strings.Repeat("2", 64)
+			value.Program.Index.RuntimeContract = value.Runtime.Contract
+			for index := range value.Objects {
+				if value.Objects[index].MediaType == RuntimeArtifactMediaType {
+					value.Objects[index].Digest = value.Runtime.Artifact.Digest
+				}
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := bundle
+			mutate(&changed)
+			if err := admission.Admit(changed); err == nil {
+				t.Fatal("Admit returned nil error")
+			}
+		})
+	}
+}
+
 func testDeploymentBundle(t *testing.T) DeploymentBundle {
 	t.Helper()
 	plan := testBuildPlan()

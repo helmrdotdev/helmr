@@ -144,6 +144,7 @@ POST /api/projects
 POST /api/projects/{projectID}/environments
 POST /api/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/start
 POST /api/projects/{projectID}/environments/{environmentID}/api-keys
+POST /api/projects/{projectID}/environments/{environmentID}/deployment-bundles/upload-plan
 POST /api/projects/{projectID}/environments/{environmentID}/deployments
 POST /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/promote
 POST /api/projects/{projectID}/environments/{environmentID}/runs/{runID}/cancel
@@ -228,6 +229,7 @@ POST /api/worker/v0/run/workspaces/files/read
 POST /api/worker/v0/run/workspaces/files/stat
 POST /api/worker/v0/run/workspaces/retrieve
 POST /v1/actors/{actorDeclaredID}/start
+POST /v1/deployment-bundles/upload-plan
 POST /v1/deployments
 POST /v1/deployments/{deploymentID}/promote
 POST /v1/runs/{runID}/cancel

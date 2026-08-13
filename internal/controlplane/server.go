@@ -75,6 +75,7 @@ type Server struct {
 	readinessDB           db.DBTX
 	auth                  auth.Authenticator
 	cas                   cas.Store
+	bundleAdmission       *deployment.DeploymentBundleAdmission
 	buildPolicy           *deployment.BuildPolicy
 	platformStore         cas.Reader
 	platformArtifactLocks PlatformArtifactLocker
@@ -123,6 +124,7 @@ type ServerConfig struct {
 
 	Auth                  auth.Authenticator
 	CAS                   cas.Store
+	BundleAdmission       *deployment.DeploymentBundleAdmission
 	BuildPolicy           *deployment.BuildPolicy
 	PlatformStore         cas.Reader
 	PlatformArtifactLocks PlatformArtifactLocker
@@ -169,6 +171,14 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	if cfg.PlatformArtifactLocks == nil {
 		return nil, errors.New("platform artifact locks are required")
+	}
+	var bundleAdmission *deployment.DeploymentBundleAdmission
+	if cfg.BundleAdmission != nil {
+		admission := *cfg.BundleAdmission
+		if err := admission.Validate(); err != nil {
+			return nil, err
+		}
+		bundleAdmission = &admission
 	}
 	deploymentMode := strings.TrimSpace(cfg.DeploymentMode)
 	if deploymentMode == "" {
@@ -235,6 +245,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		readinessDB:           cfg.ReadinessDB,
 		auth:                  cfg.Auth,
 		cas:                   cfg.CAS,
+		bundleAdmission:       bundleAdmission,
 		buildPolicy:           cfg.BuildPolicy,
 		platformStore:         cfg.PlatformStore,
 		platformArtifactLocks: cfg.PlatformArtifactLocks,
@@ -439,6 +450,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Get("/projects", s.listProjects)
 		r.Get("/projects/{projectID}", s.getProject)
 		r.Get("/projects/{projectID}/environments/{environmentID}", s.getEnvironment)
+		r.Post("/projects/{projectID}/environments/{environmentID}/deployment-bundles/upload-plan", s.planDeploymentBundleUpload)
 		r.Post("/projects/{projectID}/environments/{environmentID}/deployments", s.createDeployment)
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments", s.listDeployments)
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/current", s.getCurrentDeployment)
@@ -537,6 +549,7 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 		r.Get("/deployments/current", s.getCurrentDeployment)
 		r.Get("/deployments/{deploymentID}", s.getDeployment)
 		r.Get("/deployments/{deploymentID}/events", s.getDeploymentEvents)
+		r.Post("/deployment-bundles/upload-plan", s.planDeploymentBundleUpload)
 		r.Post("/deployments", s.createDeployment)
 		r.Post("/deployments/{deploymentID}/promote", s.promoteDeployment)
 		r.Get("/schedules", s.listSchedules)

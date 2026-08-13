@@ -36,6 +36,44 @@ type DeploymentBundle struct {
 	Objects           []BundleObject           `json:"objects"`
 }
 
+// DeploymentBundleAdmission is the exact Product release authority accepted by
+// Control. Builder selection remains a CLI/release concern; Control only needs
+// the policy and Runtime descriptors committed by the bundle.
+type DeploymentBundleAdmission struct {
+	BuildPolicyDigest string
+	Runtime           RuntimeDescriptor
+}
+
+func (admission DeploymentBundleAdmission) Validate() error {
+	if !sha256DigestPattern.MatchString(admission.BuildPolicyDigest) {
+		return errors.New("deployment bundle admission build policy digest is invalid")
+	}
+	if err := ValidateRuntimeDescriptor(admission.Runtime); err != nil {
+		return fmt.Errorf("deployment bundle admission runtime: %w", err)
+	}
+	return nil
+}
+
+func (admission DeploymentBundleAdmission) Admit(bundle DeploymentBundle) error {
+	if err := admission.Validate(); err != nil {
+		return err
+	}
+	if err := ValidateDeploymentBundle(bundle); err != nil {
+		return err
+	}
+	if bundle.BuildPolicyDigest != admission.BuildPolicyDigest {
+		return errors.New("deployment bundle build policy is not supported")
+	}
+	if bundle.Platform.Architecture != admission.Runtime.Architecture ||
+		bundle.Runtime.Contract != admission.Runtime.RuntimeContract ||
+		bundle.Runtime.Artifact.Digest != admission.Runtime.Digest ||
+		bundle.Runtime.Artifact.SizeBytes != admission.Runtime.SizeBytes ||
+		bundle.Runtime.Artifact.MediaType != admission.Runtime.MediaType {
+		return errors.New("deployment bundle Runtime is not supported")
+	}
+	return nil
+}
+
 type DeploymentBundlePlatform struct {
 	Architecture RuntimeArchitecture `json:"architecture"`
 	OS           string              `json:"os"`

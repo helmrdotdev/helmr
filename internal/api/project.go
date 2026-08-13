@@ -75,6 +75,23 @@ type CreateDeploymentRequest struct {
 	ImageCacheMode string `json:"image_cache_mode,omitempty"`
 }
 
+type DeploymentBundleUpload struct {
+	Digest  string            `json:"digest"`
+	Method  string            `json:"method"`
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers"`
+}
+
+type DeploymentBundleUploadPlanResponse struct {
+	BundleDigest string                   `json:"bundle_digest"`
+	Uploads      []DeploymentBundleUpload `json:"uploads"`
+}
+
+type FinalizeDeploymentBundleRequest struct {
+	IdempotencyKey string `json:"idempotency_key"`
+	BundleDigest   string `json:"bundle_digest"`
+}
+
 type DeploymentStatus string
 
 const (
