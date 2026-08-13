@@ -240,6 +240,7 @@ func canonicalVerifierProgramIndex(t *testing.T) []byte {
 			Name: "task/verify",
 		}},
 		RuntimeContract: RuntimeContract,
+		RuntimeDigest:   "sha256:" + strings.Repeat("f", 64),
 	})
 	if err != nil {
 		t.Fatal(err)

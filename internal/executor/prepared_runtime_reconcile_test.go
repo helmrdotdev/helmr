@@ -392,6 +392,7 @@ func TestPreparedRuntimeBindsProgramIndexToDeploymentReceipt(t *testing.T) {
 			Name: "task/task",
 		}},
 		RuntimeContract: deployment.RuntimeContract,
+		RuntimeDigest:   "sha256:" + strings.Repeat("f", 64),
 	}
 	canonical, err := deployment.CanonicalProgramIndex(index)
 	if err != nil {

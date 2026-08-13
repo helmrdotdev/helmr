@@ -489,6 +489,7 @@ func testSucceededBuildResult(t *testing.T) BuildResult {
 		testAnalysisDeclarationLocator(),
 		images,
 		"sha256:"+strings.Repeat("4", 64),
+		"sha256:"+strings.Repeat("f", 64),
 	)
 	if err != nil {
 		t.Fatal(err)

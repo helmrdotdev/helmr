@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -152,6 +153,7 @@ func newTestProgram(t *testing.T) *testProgram {
 			Name: "task/build",
 		}},
 		RuntimeContract: RuntimeContract,
+		RuntimeDigest:   "sha256:" + strings.Repeat("f", 64),
 	})
 	if err != nil {
 		t.Fatal(err)

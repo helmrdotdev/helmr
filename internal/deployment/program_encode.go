@@ -97,6 +97,7 @@ func EncodeProgram(
 		locator,
 		workspaceImages,
 		provenance.Config.ResultDigest,
+		provenance.RuntimeDigest,
 	)
 	if err != nil {
 		return nil, err

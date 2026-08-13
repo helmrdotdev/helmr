@@ -105,6 +105,7 @@ type ProgramIndex struct {
 	Declarations       []ProgramIndexDeclaration `json:"declarations"`
 	Queues             []QueueInput              `json:"queues"`
 	RuntimeContract    string                    `json:"runtimeContract"`
+	RuntimeDigest      string                    `json:"runtimeDigest"`
 }
 
 // ProgramOutput is the build worker's verified Program publication result.
@@ -310,6 +311,9 @@ func CanonicalProgramIndex(index ProgramIndex) ([]byte, error) {
 func ValidateProgramIndex(index ProgramIndex) error {
 	if index.RuntimeContract != RuntimeContract {
 		return fmt.Errorf("program index runtimeContract = %q, want %q", index.RuntimeContract, RuntimeContract)
+	}
+	if !sha256DigestPattern.MatchString(index.RuntimeDigest) {
+		return errors.New("program index runtimeDigest is not a lowercase SHA-256 digest")
 	}
 	if !validArchitecture(index.Architecture) {
 		return fmt.Errorf("program index architecture %q is unsupported", index.Architecture)

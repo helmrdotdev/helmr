@@ -247,6 +247,7 @@ func buildProgramIndex(
 	locator DeclarationLocator,
 	images []WorkspaceImage,
 	configResultDigest string,
+	runtimeDigest string,
 ) (ProgramIndex, error) {
 	if err := ValidateBuildPlan(plan); err != nil {
 		return ProgramIndex{}, err
@@ -329,6 +330,7 @@ func buildProgramIndex(
 		Declarations:       declarations,
 		Queues:             cloneQueueInputs(plan.Queues),
 		RuntimeContract:    RuntimeContract,
+		RuntimeDigest:      runtimeDigest,
 	}
 	if err := ValidateProgramIndex(index); err != nil {
 		return ProgramIndex{}, err
@@ -364,7 +366,7 @@ func validateProgramIndexBuild(
 			locatedDeclarationProjection(locator.Declarations[right]),
 		) < 0
 	})
-	expected, err := buildProgramIndex(plan, locator, images, configResultDigest)
+	expected, err := buildProgramIndex(plan, locator, images, configResultDigest, index.RuntimeDigest)
 	if err != nil {
 		return err
 	}

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/distribution/reference"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -26,28 +25,23 @@ const (
 )
 
 type DeploymentBundle struct {
-	Contract          string                   `json:"contract"`
-	Platform          DeploymentBundlePlatform `json:"platform"`
-	BuildPolicyDigest string                   `json:"buildPolicyDigest"`
-	Plan              BuildPlan                `json:"plan"`
-	Runtime           DeploymentBundleRuntime  `json:"runtime"`
-	Program           ProgramOutput            `json:"program"`
-	WorkspaceImages   []BundleWorkspaceImage   `json:"workspaceImages"`
-	Objects           []BundleObject           `json:"objects"`
+	Contract        string                   `json:"contract"`
+	Platform        DeploymentBundlePlatform `json:"platform"`
+	Plan            DeploymentPlan           `json:"plan"`
+	Runtime         DeploymentBundleRuntime  `json:"runtime"`
+	Program         ProgramOutput            `json:"program"`
+	WorkspaceImages []BundleWorkspaceImage   `json:"workspaceImages"`
+	Objects         []BundleObject           `json:"objects"`
 }
 
 // DeploymentBundleAdmission is the exact Product release authority accepted by
-// Control. Builder selection remains a CLI/release concern; Control only needs
-// the policy and Runtime descriptors committed by the bundle.
+// Control. Builder selection and dependency installation remain producer
+// concerns; Control admits only the supported Runtime committed by the bundle.
 type DeploymentBundleAdmission struct {
-	BuildPolicyDigest string
-	Runtime           RuntimeDescriptor
+	Runtime RuntimeDescriptor
 }
 
 func (admission DeploymentBundleAdmission) Validate() error {
-	if !sha256DigestPattern.MatchString(admission.BuildPolicyDigest) {
-		return errors.New("deployment bundle admission build policy digest is invalid")
-	}
 	if err := ValidateRuntimeDescriptor(admission.Runtime); err != nil {
 		return fmt.Errorf("deployment bundle admission runtime: %w", err)
 	}
@@ -60,9 +54,6 @@ func (admission DeploymentBundleAdmission) Admit(bundle DeploymentBundle) error 
 	}
 	if err := ValidateDeploymentBundle(bundle); err != nil {
 		return err
-	}
-	if bundle.BuildPolicyDigest != admission.BuildPolicyDigest {
-		return errors.New("deployment bundle build policy is not supported")
 	}
 	if bundle.Platform.Architecture != admission.Runtime.Architecture ||
 		bundle.Runtime.Contract != admission.Runtime.RuntimeContract ||
@@ -192,14 +183,8 @@ func ValidateDeploymentBundle(bundle DeploymentBundle) error {
 			ArchitectureX8664,
 		)
 	}
-	if !sha256DigestPattern.MatchString(bundle.BuildPolicyDigest) {
-		return errors.New("deployment bundle buildPolicyDigest is not a lowercase SHA-256 digest")
-	}
-	if err := ValidateBuildPlan(bundle.Plan); err != nil {
+	if err := ValidateDeploymentPlan(bundle.Plan); err != nil {
 		return fmt.Errorf("deployment bundle plan: %w", err)
-	}
-	if err := validateBundleImageInputs(bundle.Plan); err != nil {
-		return err
 	}
 	if err := validateBundleRuntime(bundle.Runtime); err != nil {
 		return err
@@ -213,60 +198,17 @@ func ValidateDeploymentBundle(bundle DeploymentBundle) error {
 	if bundle.Program.Index.RuntimeContract != bundle.Runtime.Contract {
 		return errors.New("deployment bundle program runtime contract does not match runtime")
 	}
+	if bundle.Program.Index.RuntimeDigest != bundle.Runtime.Artifact.Digest {
+		return errors.New("deployment bundle program Runtime digest does not match runtime")
+	}
 
-	workspaceImages, err := validateBundleWorkspaceImages(bundle)
-	if err != nil {
+	if _, err := validateBundleWorkspaceImages(bundle); err != nil {
 		return err
 	}
-	if err := validateProgramIndexBuild(
-		bundle.Program.Index,
-		bundle.Plan,
-		workspaceImages,
-		bundle.Program.Index.ConfigResultDigest,
-	); err != nil {
+	if err := validateProgramIndexDeployment(bundle.Program.Index, bundle.Plan); err != nil {
 		return fmt.Errorf("deployment bundle program index: %w", err)
 	}
 	return validateBundleObjectClosure(bundle)
-}
-
-func validateBundleImageInputs(plan BuildPlan) error {
-	for _, definition := range plan.Definitions {
-		if definition.Sandbox == nil {
-			continue
-		}
-		for _, image := range definition.Sandbox.ImageBuild.Images {
-			for _, step := range image.Steps {
-				if step.From == nil {
-					continue
-				}
-				if step.From.Auth != nil {
-					return fmt.Errorf(
-						"deployment bundle sandbox %q image %q retains managed registry authentication",
-						definition.DeclaredID,
-						image.Key,
-					)
-				}
-				named, err := reference.ParseNormalizedNamed(step.From.Ref)
-				if err != nil {
-					return fmt.Errorf(
-						"deployment bundle sandbox %q image %q base image: %w",
-						definition.DeclaredID,
-						image.Key,
-						err,
-					)
-				}
-				digested, ok := named.(reference.Digested)
-				if !ok || !sha256DigestPattern.MatchString(digested.Digest().String()) {
-					return fmt.Errorf(
-						"deployment bundle sandbox %q image %q base image must use a lowercase SHA-256 digest",
-						definition.DeclaredID,
-						image.Key,
-					)
-				}
-			}
-		}
-	}
-	return nil
 }
 
 func validateBundleRuntime(runtime DeploymentBundleRuntime) error {
@@ -300,7 +242,7 @@ func validateBundleWorkspaceImages(bundle DeploymentBundle) ([]WorkspaceImage, e
 			MaxDeploymentBundleWorkspaceImages,
 		)
 	}
-	sandboxes := buildPlanSandboxes(bundle.Plan)
+	sandboxes := deploymentPlanSandboxes(bundle.Plan)
 	if len(bundle.WorkspaceImages) != len(sandboxes) {
 		return nil, errors.New("deployment bundle workspaceImages do not match plan")
 	}
@@ -315,6 +257,14 @@ func validateBundleWorkspaceImages(bundle DeploymentBundle) ([]WorkspaceImage, e
 		if image.DeclaredID != sandboxes[index].DeclaredID {
 			return nil, fmt.Errorf(
 				"deployment bundle workspaceImages[%d] declaredId does not match plan",
+				index,
+			)
+		}
+		if sandboxes[index].Sandbox == nil ||
+			sandboxes[index].Sandbox.Image.ArtifactDigest != image.Artifact.Digest ||
+			sandboxes[index].Sandbox.Image.MediaType != image.Artifact.MediaType {
+			return nil, fmt.Errorf(
+				"deployment bundle workspaceImages[%d] artifact does not match plan",
 				index,
 			)
 		}

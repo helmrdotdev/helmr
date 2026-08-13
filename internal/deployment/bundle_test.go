@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -55,6 +54,78 @@ func TestParseDeploymentBundleRequiresClosedCanonicalShape(t *testing.T) {
 				})
 			},
 			errMsg: "unknown field",
+		},
+		{
+			name: "producer build policy",
+			raw: func() []byte {
+				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
+					root["buildPolicyDigest"] = "sha256:" + strings.Repeat("b", 64)
+				})
+			},
+			errMsg: "unknown field",
+		},
+		{
+			name: "producer sandbox build instructions",
+			raw: func() []byte {
+				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
+					definitions := root["plan"].(map[string]any)["definitions"].([]any)
+					deploymentBundleJSONDefinition(t, definitions, "sandbox")["manifest"].(map[string]any)["imageBuild"] = map[string]any{}
+				})
+			},
+			errMsg: "unknown field",
+		},
+		{
+			name: "program Runtime digest mismatch",
+			raw: func() []byte {
+				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
+					program := root["program"].(map[string]any)
+					program["index"].(map[string]any)["runtimeDigest"] =
+						"sha256:" + strings.Repeat("e", 64)
+				})
+			},
+			errMsg: "Runtime digest does not match runtime",
+		},
+		{
+			name: "deployment plan queue differs from Program Index",
+			raw: func() []byte {
+				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
+					queues := root["plan"].(map[string]any)["queues"].([]any)
+					queues[0].(map[string]any)["concurrencyLimit"] = float64(2)
+				})
+			},
+			errMsg: "program index does not match deployment plan",
+		},
+		{
+			name: "deployment plan locator differs from Program Index",
+			raw: func() []byte {
+				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
+					definitions := root["plan"].(map[string]any)["definitions"].([]any)
+					definitions[0].(map[string]any)["locator"].(map[string]any)["exportName"] = "other"
+				})
+			},
+			errMsg: "program index does not match deployment plan",
+		},
+		{
+			name: "deployment plan sandbox digest differs from Workspace Image",
+			raw: func() []byte {
+				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
+					definitions := root["plan"].(map[string]any)["definitions"].([]any)
+					deploymentBundleJSONDefinition(t, definitions, "sandbox")["manifest"].(map[string]any)["image"].(map[string]any)["artifactDigest"] =
+						"sha256:" + strings.Repeat("e", 64)
+				})
+			},
+			errMsg: "artifact does not match plan",
+		},
+		{
+			name: "deployment plan sandbox media type is not final",
+			raw: func() []byte {
+				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
+					definitions := root["plan"].(map[string]any)["definitions"].([]any)
+					deploymentBundleJSONDefinition(t, definitions, "sandbox")["manifest"].(map[string]any)["image"].(map[string]any)["mediaType"] =
+						"application/octet-stream"
+				})
+			},
+			errMsg: "sandbox image mediaType",
 		},
 		{
 			name: "missing object",
@@ -114,42 +185,9 @@ func TestParseDeploymentBundleRequiresClosedCanonicalShape(t *testing.T) {
 	}
 }
 
-func TestDeploymentBundleRejectsMutableOrManagedImageInputs(t *testing.T) {
-	tests := []struct {
-		name   string
-		change func(*DeploymentBundle)
-		want   string
-	}{
-		{
-			name: "mutable tag",
-			change: func(bundle *DeploymentBundle) {
-				bundle.Plan.Definitions[2].Sandbox.ImageBuild.Images[0].Steps[0].From.Ref = "debian:bookworm-slim"
-			},
-			want: "must use a lowercase SHA-256 digest",
-		},
-		{
-			name: "managed registry authentication",
-			change: func(bundle *DeploymentBundle) {
-				bundle.Plan.Definitions[2].Sandbox.ImageBuild.Images[0].Steps[0].From.Auth = testRegistryAuth()
-			},
-			want: "retains managed registry authentication",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			bundle := testDeploymentBundle(t)
-			test.change(&bundle)
-			if err := ValidateDeploymentBundle(bundle); err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("ValidateDeploymentBundle error = %v, want %q", err, test.want)
-			}
-		})
-	}
-}
-
-func TestDeploymentBundleAdmissionRequiresExactProductRelease(t *testing.T) {
+func TestDeploymentBundleAdmissionRequiresExactRuntimeRelease(t *testing.T) {
 	bundle := testDeploymentBundle(t)
 	admission := DeploymentBundleAdmission{
-		BuildPolicyDigest: bundle.BuildPolicyDigest,
 		Runtime: RuntimeDescriptor{
 			Architecture:    bundle.Platform.Architecture,
 			Digest:          bundle.Runtime.Artifact.Digest,
@@ -163,35 +201,20 @@ func TestDeploymentBundleAdmissionRequiresExactProductRelease(t *testing.T) {
 		t.Fatalf("Admit: %v", err)
 	}
 
-	for name, mutate := range map[string]func(*DeploymentBundle){
-		"policy": func(value *DeploymentBundle) {
-			value.BuildPolicyDigest = "sha256:" + strings.Repeat("1", 64)
-		},
-		"Runtime digest": func(value *DeploymentBundle) {
-			value.Runtime.Artifact.Digest = "sha256:" + strings.Repeat("2", 64)
-			value.Program.Index.RuntimeContract = value.Runtime.Contract
-			for index := range value.Objects {
-				if value.Objects[index].MediaType == RuntimeArtifactMediaType {
-					value.Objects[index].Digest = value.Runtime.Artifact.Digest
-				}
-			}
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			changed := bundle
-			mutate(&changed)
-			if err := admission.Admit(changed); err == nil {
-				t.Fatal("Admit returned nil error")
-			}
-		})
+	changed := bundle
+	changed.Runtime.Artifact.Digest = "sha256:" + strings.Repeat("2", 64)
+	changed.Program.Index.RuntimeDigest = changed.Runtime.Artifact.Digest
+	if err := ValidateDeploymentBundle(changed); err != nil {
+		t.Fatalf("ValidateDeploymentBundle: %v", err)
+	}
+	if err := admission.Admit(changed); err == nil ||
+		err.Error() != "deployment bundle Runtime is not supported" {
+		t.Fatalf("Admit error = %v", err)
 	}
 }
 
 func testDeploymentBundle(t *testing.T) DeploymentBundle {
 	t.Helper()
-	plan := testBuildPlan()
-	plan.Definitions[2].Sandbox.ImageBuild.Images[0].Steps[0].From.Ref =
-		"docker.io/library/debian@sha256:" + strings.Repeat("1", 64)
 	program := ProgramOutput{
 		Artifact: ProgramDescriptor{
 			Digest:    "sha256:" + strings.Repeat("a", 64),
@@ -199,6 +222,12 @@ func testDeploymentBundle(t *testing.T) DeploymentBundle {
 			MediaType: ProgramArtifactMediaType,
 		},
 		Index: testProgramIndex(t),
+	}
+	program.Index.RuntimeDigest = "sha256:" + strings.Repeat("f", 64)
+	plan := DeploymentPlan{
+		FormatVersion: DeploymentPlanFormatVersion,
+		Definitions:   append([]ProgramIndexDeclaration(nil), program.Index.Declarations...),
+		Queues:        cloneQueueInputs(program.Index.Queues),
 	}
 	workspaceImage := BundleWorkspaceImage{
 		DeclaredID: "repo",
@@ -215,8 +244,7 @@ func testDeploymentBundle(t *testing.T) DeploymentBundle {
 			Architecture: ArchitectureX8664,
 			OS:           DeploymentBundleTargetOS,
 		},
-		BuildPolicyDigest: "sha256:" + strings.Repeat("b", 64),
-		Plan:              plan,
+		Plan: plan,
 		Runtime: DeploymentBundleRuntime{
 			Contract: RuntimeContract,
 			Artifact: BundleObject{
@@ -267,9 +295,18 @@ func mutateDeploymentBundleJSON(
 	return canonical
 }
 
-func testRegistryAuth() *imagebuild.RegistryAuth {
-	return &imagebuild.RegistryAuth{
-		Username:       "builder",
-		PasswordSecret: "registry-password",
+func deploymentBundleJSONDefinition(
+	t *testing.T,
+	definitions []any,
+	kind string,
+) map[string]any {
+	t.Helper()
+	for _, raw := range definitions {
+		definition := raw.(map[string]any)
+		if definition["kind"] == kind {
+			return definition
+		}
 	}
+	t.Fatalf("deployment bundle has no %s definition", kind)
+	return nil
 }

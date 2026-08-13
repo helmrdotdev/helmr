@@ -159,12 +159,18 @@ func controlPlaneDeploymentBundle(t *testing.T) ([]byte, deployment.DeploymentBu
 	task := deployment.TaskManifest{
 		Payload: deployment.SchemaManifest{Kind: deployment.SchemaKindNone}, Run: run,
 	}
-	plan := deployment.BuildPlan{
-		FormatVersion: deployment.BuildPlanFormatVersion,
-		Definitions: []deployment.DefinitionInput{{
-			Kind: deployment.DefinitionKindTask, DeclaredID: "hello", Task: &task,
-		}},
-		Queues: []deployment.QueueInput{{Name: "default"}},
+	declaration := deployment.ProgramIndexDeclaration{
+		Kind: deployment.DefinitionKindTask, DeclaredID: "hello", Task: &task,
+		Locator: &deployment.ProgramLocator{
+			ExportName: "hello",
+			ModulePath: ".helmr/modules/" + strings.Repeat("d", 64) + ".mjs",
+			Slot:       deployment.DeclarationSlotHandler,
+		},
+	}
+	plan := deployment.DeploymentPlan{
+		FormatVersion: deployment.DeploymentPlanFormatVersion,
+		Definitions:   []deployment.ProgramIndexDeclaration{declaration},
+		Queues:        []deployment.QueueInput{{Name: "default"}},
 	}
 	programDigest := "sha256:" + strings.Repeat("a", 64)
 	bundle := deployment.DeploymentBundle{
@@ -172,8 +178,7 @@ func controlPlaneDeploymentBundle(t *testing.T) ([]byte, deployment.DeploymentBu
 		Platform: deployment.DeploymentBundlePlatform{
 			Architecture: deployment.ArchitectureX8664, OS: deployment.DeploymentBundleTargetOS,
 		},
-		BuildPolicyDigest: "sha256:" + strings.Repeat("b", 64),
-		Plan:              plan,
+		Plan: plan,
 		Runtime: deployment.DeploymentBundleRuntime{
 			Contract: deployment.RuntimeContract,
 			Artifact: deployment.BundleObject{
@@ -188,15 +193,10 @@ func controlPlaneDeploymentBundle(t *testing.T) ([]byte, deployment.DeploymentBu
 			Index: deployment.ProgramIndex{
 				Architecture:       deployment.ArchitectureX8664,
 				ConfigResultDigest: "sha256:" + strings.Repeat("c", 64),
-				Declarations: []deployment.ProgramIndexDeclaration{{
-					Kind: deployment.DefinitionKindTask, DeclaredID: "hello", Task: &task,
-					Locator: &deployment.ProgramLocator{
-						ExportName: "hello",
-						ModulePath: ".helmr/modules/" + strings.Repeat("d", 64) + ".mjs",
-						Slot:       deployment.DeclarationSlotHandler,
-					},
-				}},
-				Queues: plan.Queues, RuntimeContract: deployment.RuntimeContract,
+				Declarations:       []deployment.ProgramIndexDeclaration{declaration},
+				Queues:             plan.Queues,
+				RuntimeContract:    deployment.RuntimeContract,
+				RuntimeDigest:      "sha256:" + strings.Repeat("f", 64),
 			},
 		},
 		WorkspaceImages: []deployment.BundleWorkspaceImage{},
