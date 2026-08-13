@@ -412,10 +412,22 @@ func validateBuildSucceeded(succeeded BuildSucceeded) error {
 		}
 	}
 	if succeeded.Program != nil {
+		bundleImages := make([]BundleWorkspaceImage, len(succeeded.WorkspaceImages))
+		for index, image := range succeeded.WorkspaceImages {
+			bundleImages[index] = BundleWorkspaceImage{
+				DeclaredID: image.DeclaredID,
+				Artifact: BundleWorkspaceImageArtifact{
+					Architecture: image.Artifact.Architecture,
+					Digest:       image.Artifact.Digest,
+					MediaType:    image.Artifact.MediaType,
+					SizeBytes:    image.Artifact.SizeBytes,
+				},
+			}
+		}
 		if err := validateProgramIndexBuild(
 			succeeded.Program.Index,
 			succeeded.Plan,
-			succeeded.WorkspaceImages,
+			bundleImages,
 			succeeded.Provenance.Config.ResultDigest,
 		); err != nil {
 			return fmt.Errorf("build result program index: %w", err)

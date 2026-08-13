@@ -188,6 +188,18 @@ func (executor Executor) build(
 
 	var programOutput *deployment.ProgramOutput
 	if deployment.BuildPlanHasProgram(plan) {
+		bundleImages := make([]deployment.BundleWorkspaceImage, len(images))
+		for index, image := range images {
+			bundleImages[index] = deployment.BundleWorkspaceImage{
+				DeclaredID: image.DeclaredID,
+				Artifact: deployment.BundleWorkspaceImageArtifact{
+					Architecture: image.Artifact.Architecture,
+					Digest:       image.Artifact.Digest,
+					MediaType:    image.Artifact.MediaType,
+					SizeBytes:    image.Artifact.SizeBytes,
+				},
+			}
+		}
 		program, err := deployment.EncodeProgram(
 			ctx,
 			executor.WorkDir,
@@ -196,7 +208,7 @@ func (executor Executor) build(
 			verification,
 			configResultDigest,
 			runtime.Artifact.Digest,
-			images,
+			bundleImages,
 			inputs.ToolchainDescriptor().Compiler,
 			runtime.NodeVersion,
 		)

@@ -17,11 +17,11 @@ func TestSelectInstallPlanRespectsProducerChoiceWithoutVersionAdmission(t *testi
 	}{
 		{
 			name: "npm future", selector: "npm@99.4.0", lockfile: "package-lock.json",
-			want: []string{"npx", "--yes", "npm@99.4.0", "ci", "--no-audit", "--no-fund"},
+			want: []string{"corepack", "npm@99.4.0", "ci", "--no-audit", "--no-fund"},
 		},
 		{
 			name: "pnpm integrity", selector: "pnpm@42.1.0+sha256.deadbeef", lockfile: "pnpm-lock.yaml",
-			want: []string{"corepack", "pnpm@42.1.0", "install", "--frozen-lockfile"},
+			want: []string{"corepack", "pnpm@42.1.0+sha256.deadbeef", "install", "--frozen-lockfile"},
 		},
 		{
 			name: "bun", selector: "bun@7.0.0-beta.2", lockfile: "bun.lock",
@@ -30,6 +30,14 @@ func TestSelectInstallPlanRespectsProducerChoiceWithoutVersionAdmission(t *testi
 		{
 			name: "yarn", selector: "yarn@8.0.0", lockfile: "yarn.lock",
 			want: []string{"corepack", "yarn@8.0.0", "install", "--immutable"},
+		},
+		{
+			name: "corepack owns selector grammar", selector: "pnpm@https://packages.example/pnpm.tgz", lockfile: "pnpm-lock.yaml",
+			want: []string{"corepack", "pnpm@https://packages.example/pnpm.tgz", "install", "--frozen-lockfile"},
+		},
+		{
+			name: "bun integrity metadata", selector: "bun@1.3.10+sha256.deadbeef", lockfile: "bun.lock",
+			want: []string{"npx", "--yes", "bun@1.3.10", "install", "--frozen-lockfile"},
 		},
 	}
 	for _, test := range tests {
@@ -66,7 +74,7 @@ func TestSelectInstallPlanRejectsOnlyAmbiguousOrUnsafeProducerMetadata(t *testin
 		t.Fatalf("ambiguous lockfile error = %v", err)
 	}
 
-	root = writeInstallProject(t, "npm@git+https://example.invalid/repo", "")
+	root = writeInstallProject(t, "npm@"+strings.Repeat("a", 513), "")
 	if _, err := SelectInstallPlan(root, ""); err == nil || !strings.Contains(err.Error(), "version is invalid") {
 		t.Fatalf("unsafe selector error = %v", err)
 	}

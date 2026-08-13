@@ -33,6 +33,10 @@ const (
 	programMountPath                    = "/opt/helmr/program"
 )
 
+// MaxProgramTreeEntries bounds producer-side tree materialization before the
+// same entries are inspected through the Program artifact verifier.
+const MaxProgramTreeEntries = maxArtifactEntries
+
 type artifactEntryKind string
 
 const (

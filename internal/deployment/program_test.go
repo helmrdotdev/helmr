@@ -183,10 +183,9 @@ func testProgramIndex(t *testing.T) ProgramIndex {
 	index, err := buildProgramIndex(
 		plan,
 		testAnalysisDeclarationLocator(),
-		[]WorkspaceImage{{
+		[]BundleWorkspaceImage{{
 			DeclaredID: "repo",
-			Operation:  testWorkspaceImageOperation(t, plan.Definitions[2]),
-			Artifact: WorkspaceImageArtifact{
+			Artifact: BundleWorkspaceImageArtifact{
 				Digest:       "sha256:" + strings.Repeat("d", 64),
 				SizeBytes:    4096,
 				MediaType:    WorkspaceImageArtifactMediaType,

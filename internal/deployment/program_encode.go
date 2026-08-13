@@ -29,7 +29,7 @@ func EncodeProgram(
 	verification VerificationResult,
 	configResultDigest string,
 	runtimeDigest string,
-	workspaceImages []WorkspaceImage,
+	workspaceImages []BundleWorkspaceImage,
 	compiler CompilerInputs,
 	nodeVersion string,
 ) (_ *EncodedProgram, returnErr error) {

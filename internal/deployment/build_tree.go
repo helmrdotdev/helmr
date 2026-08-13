@@ -14,6 +14,10 @@ const buildTreeSnapshotMediaType = "application/vnd.helmr.internal-build-tree.v0
 
 const maxBuildTreeStreamBytes int64 = 11 << 30
 
+// MaxBuildTreeStreamBytes is the producer-side bound for the installed Program
+// tree before it is encoded and deeply verified as a Program artifact.
+const MaxBuildTreeStreamBytes = maxBuildTreeStreamBytes
+
 // BuildTree is the one lease-private, read-only post-lifecycle tree used by
 // analysis, Workspace image construction, and Program encoding.
 type BuildTree struct {

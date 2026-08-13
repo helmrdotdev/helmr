@@ -157,6 +157,74 @@ jobs:
           retention-days: 7
           path: dist/platform-release
 
+  bundle-builder-image:
+    name: bundle builder image
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.mode == 'repair' &&
+       github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    environment: release-production
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      BUILDER_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-bundle-builder
+    steps:
+      - name: Validate release tag
+        run: |
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq "$PLATFORM_RELEASE_TAG_PATTERN"; then
+            echo "release tag must match vX.Y.Z or vX.Y.Z-prerelease" >&2
+            exit 1
+          fi
+          git check-ref-format --allow-onelevel "$RELEASE_TAG"
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-nix
+
+      - name: Build and publish canonical bundle builder
+        id: publish
+        env:
+          GHCR_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          nix build .#bundleBuilderImage --out-link result-bundle-builder
+          nix build .#runtimeRelease --out-link result-runtime-release
+          docker load -i result-bundle-builder
+          image_tag="$BUILDER_IMAGE_REPOSITORY:$RELEASE_TAG"
+          docker tag helmr/bundle-builder:0 "$image_tag"
+          printf '%s' "$GHCR_TOKEN" |
+            docker login ghcr.io --username "$GHCR_ACTOR" --password-stdin
+          docker push "$image_tag"
+          digest="$(docker buildx imagetools inspect "$image_tag" --format '{{json .Manifest.Digest}}' | jq -er '.')"
+          image="$BUILDER_IMAGE_REPOSITORY@$digest"
+          docker logout ghcr.io
+          public_digest="$(docker buildx imagetools inspect "$image" --format '{{json .Manifest.Digest}}' | jq -er '.')"
+          [ "$public_digest" = "$digest" ]
+          printf 'image=%s\n' "$image" >>"$GITHUB_OUTPUT"
+          mkdir -p dist
+          jq -cS -n \
+            --arg image "$image" \
+            --arg sourceCommit "$(git rev-parse HEAD)" \
+            --argjson runtime "$(cat result-runtime-release/runtime.descriptor.json)" \
+            '{formatVersion:0,image:$image,runtime:$runtime,sourceCommit:$sourceCommit}' \
+            >dist/bundle-builder.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: bundle-builder-release
+          if-no-files-found: error
+          retention-days: 30
+          path: dist/bundle-builder.json
+
   cli:
     name: cli
     if: >-
@@ -165,8 +233,10 @@ jobs:
        inputs.mode == 'repair' &&
        github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
+    needs: bundle-builder-image
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      BUNDLE_BUILDER_IMAGE: ${{ needs.bundle-builder-image.outputs.image }}
     steps:
       - name: Validate release tag
         run: |
@@ -196,7 +266,7 @@ jobs:
             mkdir -p "$out_dir"
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
               -trimpath \
-              -ldflags="-s -w -X github.com/helmrdotdev/helmr/internal/version.Version=${RELEASE_TAG}" \
+              -ldflags="-s -w -X github.com/helmrdotdev/helmr/internal/version.Version=${RELEASE_TAG} -X github.com/helmrdotdev/helmr/cmd/helmr.deploymentBundleBuilderImage=${BUNDLE_BUILDER_IMAGE}" \
               -o "$out_dir/helmr" \
               ./cmd/helmr
             tar -C "$out_dir" -czf "dist/helmr-${os}-${arch}.tar.gz" helmr
@@ -379,6 +449,7 @@ jobs:
         inputs.mode == 'repair' &&
         github.ref == 'refs/heads/main')) &&
       needs.cli.result == 'success' &&
+      needs.bundle-builder-image.result == 'success' &&
       needs.controlplane-image.result == 'success' &&
       needs.worker-ami.result == 'success' &&
       (needs.platform-release.result == 'success' ||
@@ -386,6 +457,7 @@ jobs:
     needs:
       - platform-release
       - platform-release-repair
+      - bundle-builder-image
       - cli
       - controlplane-image
       - worker-ami
@@ -414,6 +486,11 @@ jobs:
         with:
           name: platform-release-assets
           path: dist/platform-release
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: bundle-builder-release
+          path: dist/bundle-builder
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -475,6 +552,7 @@ jobs:
             dist/helmr-darwin-amd64.tar.gz
             dist/helmr-darwin-arm64.tar.gz
             dist/checksums.txt
+            dist/bundle-builder/bundle-builder.json
             dist/platform-release/platform-release.tar
             dist/platform-release/platform-release.sigstore.json
             dist/platform-release/platform-release-provenance.json

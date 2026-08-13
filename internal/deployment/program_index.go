@@ -273,7 +273,7 @@ func cloneRunManifest(run RunManifest) RunManifest {
 func buildProgramIndex(
 	plan BuildPlan,
 	locator DeclarationLocator,
-	images []WorkspaceImage,
+	images []BundleWorkspaceImage,
 	configResultDigest string,
 	runtimeDigest string,
 ) (ProgramIndex, error) {
@@ -287,7 +287,7 @@ func buildProgramIndex(
 	for _, located := range locator.Declarations {
 		locators[string(located.Kind)+"\x00"+located.DeclaredID] = located
 	}
-	workspaceImages := make(map[string]WorkspaceImageArtifact, len(images))
+	workspaceImages := make(map[string]BundleWorkspaceImageArtifact, len(images))
 	for _, image := range images {
 		workspaceImages[image.DeclaredID] = image.Artifact
 	}
@@ -369,7 +369,7 @@ func buildProgramIndex(
 func validateProgramIndexBuild(
 	index ProgramIndex,
 	plan BuildPlan,
-	images []WorkspaceImage,
+	images []BundleWorkspaceImage,
 	configResultDigest string,
 ) error {
 	locator := DeclarationLocator{

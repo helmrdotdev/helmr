@@ -487,7 +487,13 @@ func testSucceededBuildResult(t *testing.T) BuildResult {
 	index, err := buildProgramIndex(
 		plan,
 		testAnalysisDeclarationLocator(),
-		images,
+		[]BundleWorkspaceImage{{
+			DeclaredID: images[0].DeclaredID,
+			Artifact: BundleWorkspaceImageArtifact{
+				Digest: images[0].Artifact.Digest, SizeBytes: images[0].Artifact.SizeBytes,
+				MediaType: images[0].Artifact.MediaType, Architecture: images[0].Artifact.Architecture,
+			},
+		}},
 		"sha256:"+strings.Repeat("4", 64),
 		"sha256:"+strings.Repeat("f", 64),
 	)

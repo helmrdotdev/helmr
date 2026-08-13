@@ -193,12 +193,14 @@ in
                     for build in first second; do
                       project="$TMPDIR/$build/project"
                       work="$TMPDIR/$build/work"
-                      mkdir -p "$work"
+                      images="$TMPDIR/$build/images"
+                      mkdir -p "$work" "$images"
+                      printf '[]' >"$images/images.json"
                       make_project "$project"
                       ${helmrPackages.bundleBuilder}/bin/bundle-builder \
                         --project "$project" \
                         --work "$work" \
-                        --bundle-output "$TMPDIR/$build/bundle" \
+                        --analysis-output "$images/build-plan.json" \
                         --runtime-descriptor ${helmrPackages.runtimeRelease}/runtime.descriptor.json \
                         --runtime-metadata ${helmrPackages.runtimeRelease}/runtime.metadata.json \
                         --compiler-descriptor ${helmrPackages.compiler}/compiler.descriptor.json \
@@ -207,6 +209,31 @@ in
                         --node-library-path ${helmrPackages.runtimeRelease}/tree/lib \
                         --config-evaluator ${helmrPackages.compiler}/tree/helmr/config-evaluator.mjs \
                         --program-compiler ${helmrPackages.compiler}/tree/helmr/program-compiler.mjs \
+                        --encoder ${helmrPackages.squashfsTools}/bin/mksquashfs
+                      ${helmrPackages.bundleBuilder}/bin/bundle-builder \
+                        --project "$project" \
+                        --work "$work" \
+                        --prepare-output "$TMPDIR/$build/prepared" \
+                        --runtime-descriptor ${helmrPackages.runtimeRelease}/runtime.descriptor.json \
+                        --runtime-metadata ${helmrPackages.runtimeRelease}/runtime.metadata.json \
+                        --compiler-descriptor ${helmrPackages.compiler}/compiler.descriptor.json \
+                        --node ${helmrPackages.runtimeRelease}/tree/bin/node \
+                        --node-loader ${helmrPackages.runtimeRelease}/tree/lib/ld-linux-x86-64.so.2 \
+                        --node-library-path ${helmrPackages.runtimeRelease}/tree/lib \
+                        --config-evaluator ${helmrPackages.compiler}/tree/helmr/config-evaluator.mjs \
+                        --program-compiler ${helmrPackages.compiler}/tree/helmr/program-compiler.mjs \
+                        --encoder ${helmrPackages.squashfsTools}/bin/mksquashfs
+                      cp -a "$project" "$TMPDIR/$build/program-project"
+                      ${helmrPackages.bundleBuilder}/bin/bundle-builder \
+                        --prepared "$TMPDIR/$build/prepared" \
+                        --program-project "$TMPDIR/$build/program-project" \
+                        --work "$work" \
+                        --bundle-output "$TMPDIR/$build/bundle" \
+                        --workspace-images "$images/images.json" \
+                        --expected-plan "$images/build-plan.json" \
+                        --runtime-descriptor ${helmrPackages.runtimeRelease}/runtime.descriptor.json \
+                        --runtime-metadata ${helmrPackages.runtimeRelease}/runtime.metadata.json \
+                        --compiler-descriptor ${helmrPackages.compiler}/compiler.descriptor.json \
                         --encoder ${helmrPackages.squashfsTools}/bin/mksquashfs
                     done
           diff -r "$TMPDIR/first/bundle" "$TMPDIR/second/bundle"

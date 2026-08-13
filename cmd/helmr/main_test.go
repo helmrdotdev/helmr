@@ -145,6 +145,7 @@ func (s *testCLIState) DeleteToken(baseURL string) error {
 func TestCommandSurface(t *testing.T) {
 	root := newRootCommand()
 	for _, path := range [][]string{
+		{"build"},
 		{"workspace"},
 		{"task"},
 		{"actor"},

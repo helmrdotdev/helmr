@@ -10,18 +10,33 @@ import (
 )
 
 type ProgramInput struct {
-	ProjectDirectory  string
+	ProjectDirectory string
+	WorkDirectory    string
+	NodePath         string
+	NodeLoader       string
+	NodeLibraryPath  string
+	ConfigEvaluator  string
+	ProgramCompiler  string
+	SquashFSEncoder  string
+	Compiler         deployment.CompilerInputs
+	Runtime          deployment.RuntimeDescriptor
+	RuntimeMetadata  deployment.RuntimeMetadata
+}
+
+type PreparedProgramInput struct {
+	PreparedDirectory string
+	ProgramDirectory  string
 	WorkDirectory     string
 	ProgramObjectPath string
-	NodePath          string
-	NodeLoader        string
-	NodeLibraryPath   string
-	ConfigEvaluator   string
-	ProgramCompiler   string
 	SquashFSEncoder   string
 	Compiler          deployment.CompilerInputs
 	Runtime           deployment.RuntimeDescriptor
 	RuntimeMetadata   deployment.RuntimeMetadata
+	WorkspaceImages   []deployment.BundleWorkspaceImage
+}
+
+type ProgramAnalysis struct {
+	Plan deployment.BuildPlan
 }
 
 type ProgramResult struct {
@@ -31,6 +46,14 @@ type ProgramResult struct {
 	ObjectPath   string
 }
 
-func BuildProgram(context.Context, ProgramInput) (ProgramResult, error) {
-	return ProgramResult{}, errors.New("canonical Program builds require linux/amd64 BuildKit")
+func PrepareProgram(context.Context, ProgramInput, string) (ProgramAnalysis, error) {
+	return ProgramAnalysis{}, errors.New("canonical Program preparation requires linux/amd64 BuildKit")
+}
+
+func BuildPreparedProgram(context.Context, PreparedProgramInput) (ProgramResult, error) {
+	return ProgramResult{}, errors.New("canonical prepared Program builds require linux/amd64 BuildKit")
+}
+
+func AnalyzeProgram(context.Context, ProgramInput) (ProgramAnalysis, error) {
+	return ProgramAnalysis{}, errors.New("canonical Program analysis requires linux/amd64 BuildKit")
 }

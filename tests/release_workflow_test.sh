@@ -46,6 +46,16 @@ require_text "platform-release/platform-release.sigstore.json" "$workflow" \
   "GitHub release omits Platform release signature evidence"
 require_text "platform-release/platform-release-provenance.json" "$workflow" \
   "GitHub release omits Platform release provenance"
+require_text "name: bundle builder image" "$workflow" \
+  "release workflow does not publish the canonical bundle builder"
+require_text "nix build .#bundleBuilderImage" "$workflow" \
+  "bundle builder is not sourced from the pinned Product derivation"
+require_text "docker buildx imagetools inspect" "$workflow" \
+  "bundle builder publication does not resolve the registry digest"
+require_text "deploymentBundleBuilderImage=\${BUNDLE_BUILDER_IMAGE}" "$workflow" \
+  "CLI release is not bound to the exact bundle builder digest"
+require_text "dist/bundle-builder/bundle-builder.json" "$workflow" \
+  "GitHub release omits the bundle builder release identity"
 require_text 'VERIFY_RELEASE_ARTIFACTS: "1"' "$workflow" \
   "AWS release manifest does not verify published image and AMI visibility"
 # shellcheck disable=SC2016

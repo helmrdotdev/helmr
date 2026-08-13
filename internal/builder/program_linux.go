@@ -31,18 +31,33 @@ const (
 // bounded BuildKit execution container. Package-manager identity, lockfile
 // identity, install commands, and source provenance are intentionally absent.
 type ProgramInput struct {
-	ProjectDirectory  string
+	ProjectDirectory string
+	WorkDirectory    string
+	NodePath         string
+	NodeLoader       string
+	NodeLibraryPath  string
+	ConfigEvaluator  string
+	ProgramCompiler  string
+	SquashFSEncoder  string
+	Compiler         deployment.CompilerInputs
+	Runtime          deployment.RuntimeDescriptor
+	RuntimeMetadata  deployment.RuntimeMetadata
+}
+
+type ProgramAnalysis struct {
+	Plan deployment.BuildPlan
+}
+
+type PreparedProgramInput struct {
+	PreparedDirectory string
+	ProgramDirectory  string
 	WorkDirectory     string
 	ProgramObjectPath string
-	NodePath          string
-	NodeLoader        string
-	NodeLibraryPath   string
-	ConfigEvaluator   string
-	ProgramCompiler   string
 	SquashFSEncoder   string
 	Compiler          deployment.CompilerInputs
 	Runtime           deployment.RuntimeDescriptor
 	RuntimeMetadata   deployment.RuntimeMetadata
+	WorkspaceImages   []deployment.BundleWorkspaceImage
 }
 
 type ProgramResult struct {
@@ -52,101 +67,102 @@ type ProgramResult struct {
 	ObjectPath   string
 }
 
-// BuildProgram performs only Helmr-owned finalization of an installed project
-// tree. BuildKit, not this function, owns dependency-install isolation and
-// networking. This function never invokes a package manager or a user command.
-func BuildProgram(
+// PrepareProgram executes the trusted compiler while tenant modules are still
+// present, then publishes only its closed producer-private output. A later
+// BuildKit stage assembles the Program without executing tenant code.
+func PrepareProgram(
 	ctx context.Context,
 	input ProgramInput,
-) (_ ProgramResult, returnErr error) {
+	output string,
+) (_ ProgramAnalysis, returnErr error) {
 	if ctx == nil {
-		return ProgramResult{}, errors.New("Program build context is nil")
+		return ProgramAnalysis{}, errors.New("Program preparation context is nil")
 	}
 	if err := validateProgramInput(input); err != nil {
-		return ProgramResult{}, err
+		return ProgramAnalysis{}, err
 	}
-	if err := ctx.Err(); err != nil {
+	if output == "" || !filepath.IsAbs(output) || filepath.Clean(output) != output {
+		return ProgramAnalysis{}, errors.New("prepared Program output must be an absolute clean path")
+	}
+	if _, err := os.Lstat(output); !errors.Is(err, os.ErrNotExist) {
+		if err == nil {
+			return ProgramAnalysis{}, errors.New("prepared Program output already exists")
+		}
+		return ProgramAnalysis{}, fmt.Errorf("inspect prepared Program output: %w", err)
+	}
+	work, err := os.MkdirTemp(input.WorkDirectory, ".helmr-program-")
+	if err != nil {
+		return ProgramAnalysis{}, fmt.Errorf("create Program preparation directory: %w", err)
+	}
+	defer func() { returnErr = errors.Join(returnErr, os.RemoveAll(work)) }()
+	stage, err := os.MkdirTemp(filepath.Dir(output), ".helmr-prepared-program-")
+	if err != nil {
+		return ProgramAnalysis{}, err
+	}
+	defer func() { returnErr = errors.Join(returnErr, os.RemoveAll(stage)) }()
+	compilerOutput := filepath.Join(stage, "compiler-output")
+	if err := os.Mkdir(compilerOutput, 0o700); err != nil {
+		return ProgramAnalysis{}, fmt.Errorf("create compiler output: %w", err)
+	}
+	config, verification, err := compileInstalledProgram(ctx, input, work, compilerOutput)
+	if err != nil {
+		return ProgramAnalysis{}, err
+	}
+	configRaw, err := deployment.CanonicalBuildConfig(config)
+	if err != nil {
+		return ProgramAnalysis{}, err
+	}
+	verificationRaw, err := deployment.CanonicalVerificationResult(verification)
+	if err != nil {
+		return ProgramAnalysis{}, err
+	}
+	if err := writeExclusiveFile(filepath.Join(stage, "config.json"), configRaw); err != nil {
+		return ProgramAnalysis{}, err
+	}
+	if err := writeExclusiveFile(filepath.Join(stage, "verification.json"), verificationRaw); err != nil {
+		return ProgramAnalysis{}, err
+	}
+	if _, _, err := readPreparedProgram(stage); err != nil {
+		return ProgramAnalysis{}, err
+	}
+	if err := os.Rename(stage, output); err != nil {
+		return ProgramAnalysis{}, fmt.Errorf("publish prepared Program: %w", err)
+	}
+	stage = ""
+	plan, err := deployment.ParseBuildPlan([]byte(verification.Succeeded.Files[0].Content))
+	if err != nil {
+		return ProgramAnalysis{}, err
+	}
+	return ProgramAnalysis{Plan: plan}, nil
+}
+
+// BuildPreparedProgram assembles a Program from one installed-tree copy and
+// closed preparation output. It never launches tenant config or task modules.
+func BuildPreparedProgram(
+	ctx context.Context,
+	input PreparedProgramInput,
+) (_ ProgramResult, returnErr error) {
+	if ctx == nil {
+		return ProgramResult{}, errors.New("prepared Program build context is nil")
+	}
+	if err := validatePreparedProgramInput(input); err != nil {
 		return ProgramResult{}, err
 	}
 	work, err := os.MkdirTemp(input.WorkDirectory, ".helmr-program-")
 	if err != nil {
-		return ProgramResult{}, fmt.Errorf("create Program work directory: %w", err)
+		return ProgramResult{}, fmt.Errorf("create Program assembly directory: %w", err)
 	}
 	defer func() { returnErr = errors.Join(returnErr, os.RemoveAll(work)) }()
-	compilerOutput := filepath.Join(work, "compiler-output")
-	if err := os.Mkdir(compilerOutput, 0o700); err != nil {
-		return ProgramResult{}, fmt.Errorf("create compiler output: %w", err)
+	config, verification, err := readPreparedProgram(input.PreparedDirectory)
+	if err != nil {
+		return ProgramResult{}, err
 	}
-
-	flags := append([]string(nil), input.RuntimeMetadata.ProgramNodeFlags...)
-	configFrame, err := runFinalizerCommand(ctx, finalizerCommand{
-		NodePath:        input.NodePath,
-		NodeLoader:      input.NodeLoader,
-		NodeLibraryPath: input.NodeLibraryPath,
-		Arguments: append(append([]string{}, flags...),
-			input.ConfigEvaluator,
-			input.ProjectDirectory,
-			input.RuntimeMetadata.NodeVersion,
-			work,
-		),
-		Directory: input.ProjectDirectory,
-		WorkDir:   work,
+	if err := ingestCompilerOutput(input.ProgramDirectory, filepath.Join(input.PreparedDirectory, "compiler-output")); err != nil {
+		return ProgramResult{}, err
+	}
+	treeArchive, cleanupArchive, err := archive.CreateTarWithOptionsContext(ctx, input.ProgramDirectory, input.WorkDirectory, archive.TarOptions{
+		MaxBytes: deployment.MaxBuildTreeStreamBytes, MaxEntries: deployment.MaxProgramTreeEntries,
 	})
-	if err != nil {
-		return ProgramResult{}, fmt.Errorf("evaluate Helmr config: %w", err)
-	}
-	config, err := deployment.ReadBuildConfigFrame(bytes.NewReader(configFrame))
-	if err != nil {
-		return ProgramResult{}, err
-	}
-	canonicalConfig, err := deployment.CanonicalBuildConfig(config)
-	if err != nil {
-		return ProgramResult{}, err
-	}
-	configPath := filepath.Join(work, "config.json")
-	if err := os.WriteFile(configPath, canonicalConfig, 0o600); err != nil {
-		return ProgramResult{}, fmt.Errorf("write canonical Helmr config: %w", err)
-	}
-
-	verificationFrame, err := runFinalizerCommand(ctx, finalizerCommand{
-		NodePath:        input.NodePath,
-		NodeLoader:      input.NodeLoader,
-		NodeLibraryPath: input.NodeLibraryPath,
-		Arguments: append(append([]string{}, flags...),
-			input.ProgramCompiler,
-			input.ProjectDirectory,
-			configPath,
-			input.RuntimeMetadata.NodeVersion,
-			compilerOutput,
-		),
-		Directory: input.ProjectDirectory,
-		WorkDir:   work,
-	})
-	if err != nil {
-		return ProgramResult{}, fmt.Errorf("compile Helmr Program: %w", err)
-	}
-	verification, err := deployment.ReadVerificationResultFrame(
-		bytes.NewReader(verificationFrame),
-	)
-	if err != nil {
-		return ProgramResult{}, err
-	}
-	if verification.Outcome != deployment.VerificationOutcomeSucceeded {
-		return ProgramResult{}, fmt.Errorf(
-			"compile Helmr Program: %s",
-			verification.Failed.Error.Message,
-		)
-	}
-	if err := ingestCompilerOutput(input.ProjectDirectory, compilerOutput); err != nil {
-		return ProgramResult{}, err
-	}
-
-	treeArchive, cleanupArchive, err := archive.CreateTarWithOptionsContext(
-		ctx,
-		input.ProjectDirectory,
-		work,
-		archive.TarOptions{},
-	)
 	if err != nil {
 		return ProgramResult{}, fmt.Errorf("freeze installed Program tree: %w", err)
 	}
@@ -175,13 +191,13 @@ func BuildProgram(
 	}
 	program, err := deployment.EncodeProgram(
 		ctx,
-		work,
+		input.WorkDirectory,
 		input.SquashFSEncoder,
 		tree,
 		verification,
 		configDigest,
 		input.Runtime.Digest,
-		nil,
+		input.WorkspaceImages,
 		input.Compiler,
 		input.RuntimeMetadata.NodeVersion,
 	)
@@ -203,17 +219,97 @@ func BuildProgram(
 	}, nil
 }
 
+// AnalyzeProgram returns the canonical sandbox build plan without producing a
+// Program object. The CLI runs it in a disposable installed BuildKit stage,
+// then builds every declared Workspace Image before a fresh finalizer stage
+// repeats compilation and exact-matches those results.
+func AnalyzeProgram(ctx context.Context, input ProgramInput) (_ ProgramAnalysis, returnErr error) {
+	if ctx == nil {
+		return ProgramAnalysis{}, errors.New("Program analysis context is nil")
+	}
+	if err := validateProgramInput(input); err != nil {
+		return ProgramAnalysis{}, err
+	}
+	work, err := os.MkdirTemp(input.WorkDirectory, ".helmr-analysis-")
+	if err != nil {
+		return ProgramAnalysis{}, err
+	}
+	defer func() { returnErr = errors.Join(returnErr, os.RemoveAll(work)) }()
+	compilerOutput := filepath.Join(work, "compiler-output")
+	if err := os.Mkdir(compilerOutput, 0o700); err != nil {
+		return ProgramAnalysis{}, err
+	}
+	_, verification, err := compileInstalledProgram(ctx, input, work, compilerOutput)
+	if err != nil {
+		return ProgramAnalysis{}, err
+	}
+	plan, err := deployment.ParseBuildPlan([]byte(verification.Succeeded.Files[0].Content))
+	if err != nil {
+		return ProgramAnalysis{}, err
+	}
+	return ProgramAnalysis{Plan: plan}, nil
+}
+
+func compileInstalledProgram(
+	ctx context.Context,
+	input ProgramInput,
+	work string,
+	compilerOutput string,
+) (deployment.BuildConfig, deployment.VerificationResult, error) {
+	flags := append([]string(nil), input.RuntimeMetadata.ProgramNodeFlags...)
+	configFrame, err := runFinalizerCommand(ctx, finalizerCommand{
+		NodePath: input.NodePath, NodeLoader: input.NodeLoader,
+		NodeLibraryPath: input.NodeLibraryPath,
+		Arguments: append(append([]string{}, flags...), input.ConfigEvaluator,
+			input.ProjectDirectory, input.RuntimeMetadata.NodeVersion, work),
+		Directory: input.ProjectDirectory, WorkDir: work,
+	})
+	if err != nil {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf("evaluate Helmr config: %w", err)
+	}
+	config, err := deployment.ReadBuildConfigFrame(bytes.NewReader(configFrame))
+	if err != nil {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, err
+	}
+	canonicalConfig, err := deployment.CanonicalBuildConfig(config)
+	if err != nil {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, err
+	}
+	configPath := filepath.Join(work, "config.json")
+	if err := os.WriteFile(configPath, canonicalConfig, 0o600); err != nil {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf("write canonical Helmr config: %w", err)
+	}
+	verificationFrame, err := runFinalizerCommand(ctx, finalizerCommand{
+		NodePath: input.NodePath, NodeLoader: input.NodeLoader,
+		NodeLibraryPath: input.NodeLibraryPath,
+		Arguments: append(append([]string{}, flags...), input.ProgramCompiler,
+			input.ProjectDirectory, configPath, input.RuntimeMetadata.NodeVersion, compilerOutput),
+		Directory: input.ProjectDirectory, WorkDir: work,
+	})
+	if err != nil {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf("compile Helmr Program: %w", err)
+	}
+	verification, err := deployment.ReadVerificationResultFrame(bytes.NewReader(verificationFrame))
+	if err != nil {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, err
+	}
+	if verification.Outcome != deployment.VerificationOutcomeSucceeded {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf(
+			"compile Helmr Program: %s", verification.Failed.Error.Message)
+	}
+	return config, verification, nil
+}
+
 func validateProgramInput(input ProgramInput) error {
 	for name, value := range map[string]string{
-		"project directory":   input.ProjectDirectory,
-		"work directory":      input.WorkDirectory,
-		"Program object path": input.ProgramObjectPath,
-		"Node executable":     input.NodePath,
-		"Node loader":         input.NodeLoader,
-		"Node library path":   input.NodeLibraryPath,
-		"Config Evaluator":    input.ConfigEvaluator,
-		"Program Compiler":    input.ProgramCompiler,
-		"SquashFS encoder":    input.SquashFSEncoder,
+		"project directory": input.ProjectDirectory,
+		"work directory":    input.WorkDirectory,
+		"Node executable":   input.NodePath,
+		"Node loader":       input.NodeLoader,
+		"Node library path": input.NodeLibraryPath,
+		"Config Evaluator":  input.ConfigEvaluator,
+		"Program Compiler":  input.ProgramCompiler,
+		"SquashFS encoder":  input.SquashFSEncoder,
 	} {
 		if value == "" || !filepath.IsAbs(value) || filepath.Clean(value) != value {
 			return fmt.Errorf("%s must be an absolute clean path", name)
@@ -222,6 +318,46 @@ func validateProgramInput(input ProgramInput) error {
 	project, err := os.Stat(input.ProjectDirectory)
 	if err != nil || !project.IsDir() {
 		return errors.New("project directory is not a directory")
+	}
+	work, err := os.Stat(input.WorkDirectory)
+	if err != nil || !work.IsDir() {
+		return errors.New("work directory is not a directory")
+	}
+	if err := deployment.ValidateCompilerInputs(input.Compiler); err != nil {
+		return err
+	}
+	if err := deployment.ValidateRuntimeDescriptor(input.Runtime); err != nil {
+		return err
+	}
+	if err := deployment.ValidateRuntimeMetadata(input.RuntimeMetadata); err != nil {
+		return err
+	}
+	if input.Runtime.Architecture != input.RuntimeMetadata.Architecture ||
+		input.Runtime.RuntimeContract != input.RuntimeMetadata.RuntimeContract {
+		return errors.New("Runtime descriptor and metadata do not match")
+	}
+	return nil
+}
+
+func validatePreparedProgramInput(input PreparedProgramInput) error {
+	for name, value := range map[string]string{
+		"prepared Program directory": input.PreparedDirectory,
+		"Program project directory":  input.ProgramDirectory,
+		"work directory":             input.WorkDirectory,
+		"Program object path":        input.ProgramObjectPath,
+		"SquashFS encoder":           input.SquashFSEncoder,
+	} {
+		if value == "" || !filepath.IsAbs(value) || filepath.Clean(value) != value {
+			return fmt.Errorf("%s must be an absolute clean path", name)
+		}
+	}
+	prepared, err := os.Stat(input.PreparedDirectory)
+	if err != nil || !prepared.IsDir() {
+		return errors.New("prepared Program directory is not a directory")
+	}
+	program, err := os.Stat(input.ProgramDirectory)
+	if err != nil || !program.IsDir() {
+		return errors.New("Program project directory is not a directory")
 	}
 	work, err := os.Stat(input.WorkDirectory)
 	if err != nil || !work.IsDir() {
@@ -247,6 +383,65 @@ func validateProgramInput(input ProgramInput) error {
 		return errors.New("Runtime descriptor and metadata do not match")
 	}
 	return nil
+}
+
+func readPreparedProgram(directory string) (deployment.BuildConfig, deployment.VerificationResult, error) {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf("read prepared Program: %w", err)
+	}
+	want := map[string]bool{"compiler-output": false, "config.json": false, "verification.json": false}
+	for _, entry := range entries {
+		if _, ok := want[entry.Name()]; !ok {
+			return deployment.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf("prepared Program contains unexpected path %q", entry.Name())
+		}
+		want[entry.Name()] = true
+	}
+	for name, present := range want {
+		if !present {
+			return deployment.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf("prepared Program is missing %q", name)
+		}
+	}
+	compilerOutput, err := os.Lstat(filepath.Join(directory, "compiler-output"))
+	if err != nil || compilerOutput.Mode()&os.ModeSymlink != 0 || !compilerOutput.IsDir() {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, errors.New("prepared compiler output is not a directory")
+	}
+	configRaw, err := readBoundedRegularFile(filepath.Join(directory, "config.json"), compilerDocumentLimit)
+	if err != nil {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf("read prepared config: %w", err)
+	}
+	config, err := deployment.ParseBuildConfig(configRaw)
+	if err != nil {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, err
+	}
+	verificationRaw, err := readBoundedRegularFile(filepath.Join(directory, "verification.json"), compilerResultChannelLimit)
+	if err != nil {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf("read prepared verification: %w", err)
+	}
+	verification, err := deployment.ParseVerificationResult(verificationRaw)
+	if err != nil {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, err
+	}
+	if verification.Outcome != deployment.VerificationOutcomeSucceeded || verification.Succeeded == nil || len(verification.Succeeded.Files) == 0 {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, errors.New("prepared verification did not succeed")
+	}
+	return config, verification, nil
+}
+
+func writeExclusiveFile(path string, body []byte) (returnErr error) {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() { returnErr = errors.Join(returnErr, file.Close()) }()
+	written, err := file.Write(body)
+	if err != nil {
+		return err
+	}
+	if written != len(body) {
+		return io.ErrShortWrite
+	}
+	return file.Sync()
 }
 
 type finalizerCommand struct {
@@ -530,13 +725,17 @@ func copyCompilerFile(source, target string) (returnErr error) {
 }
 
 func readBoundedRegularFile(path string, limit int64) (_ []byte, returnErr error) {
+	entry, err := os.Lstat(path)
+	if err != nil || !entry.Mode().IsRegular() || entry.Size() < 1 || entry.Size() > limit {
+		return nil, errors.New("compiler output file is not a bounded regular file")
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { returnErr = errors.Join(returnErr, file.Close()) }()
 	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Size() < 1 || info.Size() > limit {
+	if err != nil || !os.SameFile(entry, info) || !info.Mode().IsRegular() || info.Size() < 1 || info.Size() > limit {
 		return nil, errors.New("compiler output file is not a bounded regular file")
 	}
 	return io.ReadAll(file)

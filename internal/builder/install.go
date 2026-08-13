@@ -58,10 +58,7 @@ func selectedManager(project, selector string) (string, string, error) {
 				continue
 			}
 			version := strings.TrimSpace(strings.TrimPrefix(selector, prefix))
-			if integrity := strings.Index(version, "+sha"); integrity >= 0 {
-				version = version[:integrity]
-			}
-			if !validManagerVersion(version) {
+			if version == "" || len(version) > 512 || strings.ContainsAny(version, "\x00\r\n") {
 				return "", "", errors.New("packageManager selector version is invalid")
 			}
 			return manager, manager + "@" + version, nil
@@ -98,33 +95,17 @@ func selectedManager(project, selector string) (string, string, error) {
 	return "npm", "", nil
 }
 
-func validManagerVersion(version string) bool {
-	if version == "" || len(version) > 128 {
-		return false
-	}
-	for _, character := range version {
-		if character >= '0' && character <= '9' ||
-			character >= 'a' && character <= 'z' ||
-			character >= 'A' && character <= 'Z' ||
-			strings.ContainsRune(".-_+", character) {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
 func installArgv(project, manager, selector string) InstallPlan {
 	executable := manager
 	arguments := []string{}
 	if selector != "" {
 		switch manager {
-		case "pnpm", "yarn":
+		case "npm", "pnpm", "yarn":
 			executable = "corepack"
 			arguments = append(arguments, selector)
 		default:
 			executable = "npx"
-			arguments = append(arguments, "--yes", selector)
+			arguments = append(arguments, "--yes", bunPackageSelector(selector))
 		}
 	}
 	switch manager {
@@ -152,6 +133,22 @@ func installArgv(project, manager, selector string) InstallPlan {
 		}
 	}
 	return InstallPlan{Argv: append([]string{executable}, arguments...)}
+}
+
+func bunPackageSelector(selector string) string {
+	for _, algorithm := range []string{"+sha224.", "+sha256.", "+sha384.", "+sha512."} {
+		index := strings.LastIndex(selector, algorithm)
+		if index < 0 {
+			continue
+		}
+		digest := selector[index+len(algorithm):]
+		if digest != "" && strings.IndexFunc(digest, func(character rune) bool {
+			return character < '0' || character > '9' && character < 'a' || character > 'f'
+		}) == -1 {
+			return selector[:index]
+		}
+	}
+	return selector
 }
 
 func regularInstallFile(project, name string) bool {
