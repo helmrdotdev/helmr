@@ -10,6 +10,7 @@ import (
 	"io"
 	"iter"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -374,6 +375,70 @@ func (program *EncodedProgram) Publish(
 	output := program.Output
 	output.Index = cloneProgramIndex(output.Index)
 	return output, nil
+}
+
+// Materialize writes the exact verified Program object to a new local file.
+// It is the producer-side counterpart to Publish: local/CI builders retain the
+// object for bundle finalization instead of publishing it to a service CAS.
+func (program *EncodedProgram) Materialize(
+	ctx context.Context,
+	path string,
+) (returnErr error) {
+	if program == nil || program.artifact == nil {
+		return errors.New("encoded program is closed")
+	}
+	if ctx == nil {
+		return errors.New("program materialization context is nil")
+	}
+	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return errors.New("program materialization path must be an absolute clean path")
+	}
+	reader, err := program.artifact.uploadReader(ctx)
+	if err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create Program object: %w", err)
+	}
+	open := true
+	defer func() {
+		if open {
+			returnErr = errors.Join(returnErr, file.Close())
+		}
+		if returnErr != nil {
+			returnErr = errors.Join(returnErr, os.Remove(path))
+		}
+	}()
+	written, err := io.Copy(file, reader)
+	if err != nil {
+		return fmt.Errorf("write Program object: %w", err)
+	}
+	if written != program.Output.Artifact.SizeBytes {
+		return fmt.Errorf(
+			"materialized Program size = %d, want %d",
+			written,
+			program.Output.Artifact.SizeBytes,
+		)
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync Program object: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close Program object: %w", err)
+	}
+	open = false
+
+	verified, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("reopen Program object: %w", err)
+	}
+	verifyErr := VerifyProgramOutputFile(ctx, verified, program.Output)
+	closeErr := verified.Close()
+	if err := errors.Join(verifyErr, closeErr); err != nil {
+		return fmt.Errorf("verify materialized Program object: %w", err)
+	}
+	return nil
 }
 
 func publishProgramArtifact(

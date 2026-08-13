@@ -145,6 +145,73 @@ in
   in
   {
     firecracker-host-module = firecrackerHostModuleCheck;
+    bundle-builder-program =
+      pkgs.runCommand "bundle-builder-program-check"
+        {
+          nativeBuildInputs = [
+            helmrPackages.squashfsTools
+          ];
+        }
+        ''
+                    set -euo pipefail
+                    export HOME="$TMPDIR/home"
+                    mkdir -p "$HOME"
+
+                    make_project() {
+                      project="$1"
+                      mkdir -p "$project/node_modules/@helmr/sdk" "$project/tasks"
+                      cat >"$project/package.json" <<'JSON'
+                    {"name":"builder-fixture","private":true,"type":"module"}
+                    JSON
+                      cat >"$project/node_modules/@helmr/sdk/package.json" <<'JSON'
+                    {"name":"@helmr/sdk","type":"module","exports":"./index.js"}
+                    JSON
+                      cat >"$project/node_modules/@helmr/sdk/index.js" <<'JS'
+                    const brand = Symbol.for("helmr.sdk.v0.definition")
+                    export function defineConfig(config) { return config }
+                    export function task(config) {
+                      return Object.freeze({
+                        [brand]: Object.freeze({
+                          kind: "task",
+                          id: config.id,
+                          hasPayload: false,
+                          handler: config.run,
+                        }),
+                      })
+                    }
+                    JS
+                      cat >"$project/helmr.config.ts" <<'TS'
+                    import { defineConfig } from "@helmr/sdk"
+                    export default defineConfig({ dirs: ["tasks"], ignorePatterns: [] })
+                    TS
+                      cat >"$project/tasks/hello.ts" <<'TS'
+                    import { task } from "@helmr/sdk"
+                    export const hello = task({ id: "hello", run: () => "hello" })
+                    TS
+                    }
+
+                    for build in first second; do
+                      project="$TMPDIR/$build/project"
+                      work="$TMPDIR/$build/work"
+                      mkdir -p "$work"
+                      make_project "$project"
+                      ${helmrPackages.bundleBuilder}/bin/bundle-builder \
+                        --project "$project" \
+                        --work "$work" \
+                        --bundle-output "$TMPDIR/$build/bundle" \
+                        --runtime-descriptor ${helmrPackages.runtimeRelease}/runtime.descriptor.json \
+                        --runtime-metadata ${helmrPackages.runtimeRelease}/runtime.metadata.json \
+                        --compiler-descriptor ${helmrPackages.compiler}/compiler.descriptor.json \
+                        --node ${helmrPackages.runtimeRelease}/tree/bin/node \
+                        --node-loader ${helmrPackages.runtimeRelease}/tree/lib/ld-linux-x86-64.so.2 \
+                        --node-library-path ${helmrPackages.runtimeRelease}/tree/lib \
+                        --config-evaluator ${helmrPackages.compiler}/tree/helmr/config-evaluator.mjs \
+                        --program-compiler ${helmrPackages.compiler}/tree/helmr/program-compiler.mjs \
+                        --encoder ${helmrPackages.squashfsTools}/bin/mksquashfs
+                    done
+          diff -r "$TMPDIR/first/bundle" "$TMPDIR/second/bundle"
+                    touch "$out"
+        '';
     platform-acquisition-cgroup = pkgs.testers.runNixOSTest {
       name = "platform-acquisition-cgroup";
       nodes.machine =

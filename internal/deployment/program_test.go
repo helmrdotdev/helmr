@@ -42,6 +42,32 @@ func TestProgramIndexCanonicalRoundTrip(t *testing.T) {
 	}
 }
 
+func TestProgramOutputCanonicalRoundTrip(t *testing.T) {
+	output := ProgramOutput{
+		Artifact: ProgramDescriptor{
+			Digest:    "sha256:" + strings.Repeat("a", 64),
+			SizeBytes: 1024,
+			MediaType: ProgramArtifactMediaType,
+		},
+		Index: testProgramIndex(t),
+	}
+	raw, err := CanonicalProgramOutput(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseProgramOutput(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reencoded, err := CanonicalProgramOutput(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != string(reencoded) {
+		t.Fatalf("Program output changed:\n%s\n%s", raw, reencoded)
+	}
+}
+
 func TestProgramIndexRejectsInvalidAuthority(t *testing.T) {
 	tests := []struct {
 		name   string

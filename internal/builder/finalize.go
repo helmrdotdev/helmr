@@ -170,6 +170,26 @@ func FinalizeBundle(
 	return staged, nil
 }
 
+// PublishBundleDirectory validates and atomically installs a complete BuildKit
+// local output at its final user-visible path. The destination must not exist.
+func PublishBundleDirectory(sourceDirectory, outputDirectory string) error {
+	for name, value := range map[string]string{
+		"bundle source directory": sourceDirectory,
+		"bundle output directory": outputDirectory,
+	} {
+		if value == "" || !filepath.IsAbs(value) || filepath.Clean(value) != value {
+			return fmt.Errorf("%s must be an absolute clean path", name)
+		}
+	}
+	if _, err := deployment.ReadDeploymentBundleDirectory(sourceDirectory); err != nil {
+		return fmt.Errorf("validate BuildKit bundle output: %w", err)
+	}
+	if err := publishBundleDirectory(sourceDirectory, outputDirectory); err != nil {
+		return fmt.Errorf("publish BuildKit bundle output: %w", err)
+	}
+	return nil
+}
+
 func verifyFinalObject(
 	ctx context.Context,
 	path string,

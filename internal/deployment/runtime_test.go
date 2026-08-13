@@ -50,6 +50,37 @@ func TestRuntimeDescriptorRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRuntimeMetadataRoundTrip(t *testing.T) {
+	metadata := RuntimeMetadata{
+		Architecture:     ArchitectureX8664,
+		FormatVersion:    RuntimeMetadataFormatVersion,
+		NodeVersion:      "24.16.0",
+		ProgramNodeFlags: []string{NodeNoStripTypes, "--enable-source-maps"},
+		RuntimeContract:  RuntimeContract,
+	}
+	raw, err := CanonicalRuntimeMetadata(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"architecture":"x86_64","formatVersion":0,"nodeVersion":"24.16.0","programNodeFlags":["--no-strip-types","--enable-source-maps"],"runtimeContract":"helmr.runtime.v0"}`
+	if string(raw) != want {
+		t.Fatalf("canonical runtime metadata = %q, want %q", raw, want)
+	}
+	parsed, err := ParseRuntimeMetadata(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(parsed, metadata) {
+		t.Fatalf("parsed runtime metadata = %#v, want %#v", parsed, metadata)
+	}
+
+	invalid := metadata
+	invalid.ProgramNodeFlags = []string{NodeNoExperimentalStripTypes, "--enable-source-maps"}
+	if err := ValidateRuntimeMetadata(invalid); err == nil {
+		t.Fatal("runtime metadata accepted flags that do not match its Node ABI")
+	}
+}
+
 func TestRuntimeArchitectureGoBoundary(t *testing.T) {
 	tests := map[string]RuntimeArchitecture{
 		"amd64": ArchitectureX8664,

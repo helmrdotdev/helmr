@@ -36,7 +36,7 @@ const (
 	managedProgramSecretRoot       = "/var/lib/helmr/run-secrets"
 	managedProgramNode             = "/opt/helmr/runtime/bin/node"
 	managedProgramEntry            = "/opt/helmr/program/helmr/entry.mjs"
-	managedRuntimeDescriptor       = "/var/lib/helmr/program/runtime/helmr/descriptor.json"
+	managedRuntimeMetadata         = "/var/lib/helmr/program/runtime/helmr/runtime.json"
 	maxProgramSecretPlacements     = 64
 	maxProgramSecretPlaintextBytes = 128 << 20
 	maxProgramSecretFrameBytes     = maxProgramSecretPlaintextBytes + 64<<10
@@ -612,9 +612,9 @@ func newProgramProcess(
 }
 
 func managedProgramNodeFlags() ([]string, error) {
-	file, err := os.Open(managedRuntimeDescriptor)
+	file, err := os.Open(managedRuntimeMetadata)
 	if err != nil {
-		return nil, fmt.Errorf("open managed runtime descriptor: %w", err)
+		return nil, fmt.Errorf("open managed Runtime metadata: %w", err)
 	}
 	raw, readErr := io.ReadAll(io.LimitReader(
 		file,
@@ -624,11 +624,11 @@ func managedProgramNodeFlags() ([]string, error) {
 	if readErr != nil || closeErr != nil {
 		return nil, errors.Join(readErr, closeErr)
 	}
-	descriptor, err := deployment.ParseRuntimeArtifactDescriptor(raw)
+	metadata, err := deployment.ParseRuntimeMetadata(raw)
 	if err != nil {
-		return nil, fmt.Errorf("parse managed runtime descriptor: %w", err)
+		return nil, fmt.Errorf("parse managed Runtime metadata: %w", err)
 	}
-	return append([]string(nil), descriptor.ProgramNodeFlags...), nil
+	return append([]string(nil), metadata.ProgramNodeFlags...), nil
 }
 
 func programWorkspaceSecretPaths(workspaceRoot string, secrets []*runv0.ProgramSecret) []string {

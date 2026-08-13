@@ -22,19 +22,14 @@ func verifyRuntimeArtifact(
 	if err != nil {
 		return RuntimeIndex{}, fmt.Errorf("runtime artifact: %w", err)
 	}
-	return verifyRuntimeLayout(ctx, inspected, ArtifactDescriptor{
-		Digest:    artifact.Digest,
-		MediaType: artifact.MediaType,
-		SizeBytes: artifact.SizeBytes,
-	})
+	return verifyRuntimeLayout(ctx, inspected)
 }
 
 func verifyRuntimeLayout(
 	ctx context.Context,
 	artifact *inspectedArtifact,
-	object ArtifactDescriptor,
 ) (RuntimeIndex, error) {
-	index, err := verifyRuntimeTopology(ctx, artifact, object)
+	index, err := verifyRuntimeTopology(ctx, artifact)
 	if err != nil {
 		return RuntimeIndex{}, err
 	}

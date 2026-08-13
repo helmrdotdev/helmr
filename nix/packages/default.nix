@@ -12,9 +12,22 @@ let
   pkgsUnstable = import nixpkgs-unstable { inherit system; };
   pkgsBun = import nixpkgs-bun { inherit system; };
   squashfsTools = pkgs.callPackage ./squashfs-tools.nix { };
+  runtimeRelease = pkgs.callPackage ./runtime-release.nix { inherit squashfsTools; };
   runtimeHarness = pkgs.callPackage ./runtime.nix { };
   compiler = pkgs.callPackage ./compiler.nix { };
+  bundleBuilder = pkgs.callPackage ./bundle-builder.nix {
+    buildGoModule = buildGo126Module;
+  };
   toolchainBase = pkgs.callPackage ./toolchain.nix { inherit compiler; };
+  bundleBuilderImage = pkgs.callPackage ./bundle-builder-image.nix {
+    inherit
+      bundleBuilder
+      compiler
+      runtimeRelease
+      squashfsTools
+      ;
+    bun = pkgsBun.bun;
+  };
   nodeReleaseKeys = pkgs.callPackage ./node-keys.nix { };
   buildGo126Module = pkgs.callPackage "${nixpkgs}/pkgs/build-support/go/module.nix" {
     go = pkgs.go_1_26;
@@ -83,6 +96,9 @@ in
 // lib.optionalAttrs (system == "x86_64-linux") {
   inherit
     compiler
+    bundleBuilder
+    bundleBuilderImage
+    runtimeRelease
     runtimeHarness
     toolchainBase
     nodeReleaseKeys

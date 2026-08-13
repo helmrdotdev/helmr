@@ -115,6 +115,64 @@ type ProgramOutput struct {
 	Index    ProgramIndex      `json:"index"`
 }
 
+func ParseProgramOutput(raw []byte) (ProgramOutput, error) {
+	if len(raw) == 0 || len(raw) > maxProgramVerificationSizeBytes {
+		return ProgramOutput{}, fmt.Errorf(
+			"program output size is outside [1,%d]",
+			maxProgramVerificationSizeBytes,
+		)
+	}
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil {
+		return ProgramOutput{}, fmt.Errorf("canonicalize program output: %w", err)
+	}
+	if !bytes.Equal(raw, canonical) {
+		return ProgramOutput{}, errors.New("program output is not RFC 8785 canonical JSON")
+	}
+	var output ProgramOutput
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&output); err != nil {
+		return ProgramOutput{}, fmt.Errorf("decode program output: %w", err)
+	}
+	if err := ensureEOF(decoder, "program output"); err != nil {
+		return ProgramOutput{}, err
+	}
+	if err := ValidateProgramOutput(output); err != nil {
+		return ProgramOutput{}, err
+	}
+	complete, err := CanonicalProgramOutput(output)
+	if err != nil {
+		return ProgramOutput{}, err
+	}
+	if !bytes.Equal(raw, complete) {
+		return ProgramOutput{}, errors.New("program output does not match the complete canonical v0 shape")
+	}
+	output.Index = cloneProgramIndex(output.Index)
+	return output, nil
+}
+
+func CanonicalProgramOutput(output ProgramOutput) ([]byte, error) {
+	if err := ValidateProgramOutput(output); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(output)
+	if err != nil {
+		return nil, fmt.Errorf("encode program output: %w", err)
+	}
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize program output: %w", err)
+	}
+	if len(canonical) == 0 || len(canonical) > maxProgramVerificationSizeBytes {
+		return nil, fmt.Errorf(
+			"program output size is outside [1,%d]",
+			maxProgramVerificationSizeBytes,
+		)
+	}
+	return canonical, nil
+}
+
 type programVerification struct {
 	FormatVersion int          `json:"formatVersion"`
 	Index         ProgramIndex `json:"index"`

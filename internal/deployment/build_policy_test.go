@@ -9,6 +9,34 @@ import (
 	"testing"
 )
 
+func TestCompilerInputsRoundTrip(t *testing.T) {
+	inputs := testCompilerInputs()
+	raw, err := CanonicalCompilerInputs(inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseCompilerInputs(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reencoded, err := CanonicalCompilerInputs(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(raw, reencoded) {
+		t.Fatalf("compiler inputs changed:\n%s\n%s", raw, reencoded)
+	}
+	unknown := bytes.Replace(
+		raw,
+		[]byte(`"apiVersion":`),
+		[]byte(`"unknown":true,"apiVersion":`),
+		1,
+	)
+	if _, err := ParseCompilerInputs(unknown); err == nil {
+		t.Fatal("ParseCompilerInputs accepted an unknown field")
+	}
+}
+
 func TestBuildPolicyAdmitsDomainsWithoutReleaseCatalog(t *testing.T) {
 	raw := testBuildPolicy(t)
 	policy, err := ParseBuildPolicy(raw)
