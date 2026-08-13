@@ -37,10 +37,18 @@ container_id="$("${docker_bin}" create "${image_uri}")"
 "${docker_bin}" cp \
   "${container_id}:/usr/local/share/helmr/runtime.descriptor.json" \
   "${descriptor_tmp}/runtime.descriptor.json"
+"${docker_bin}" cp \
+  "${container_id}:/usr/local/share/helmr/tzdb_names.txt" \
+  "${descriptor_tmp}/tzdb_names.txt"
 if command -v sha256sum >/dev/null 2>&1; then
   image_runtime_descriptor="$(sha256sum "${descriptor_tmp}/runtime.descriptor.json" | awk '{print $1}')"
 else
   image_runtime_descriptor="$(shasum -a 256 "${descriptor_tmp}/runtime.descriptor.json" | awk '{print $1}')"
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  image_timezone_manifest="$(sha256sum "${descriptor_tmp}/tzdb_names.txt" | awk '{print $1}')"
+else
+  image_timezone_manifest="$(shasum -a 256 "${descriptor_tmp}/tzdb_names.txt" | awk '{print $1}')"
 fi
 "${docker_bin}" rm -f "${container_id}" >/dev/null
 container_id=""
@@ -61,7 +69,8 @@ jq -e \
   --arg local_image_id "${local_image_id}" \
   --arg platform "${platform}" \
   --arg runtime_descriptor_sha256 "${image_runtime_descriptor}" \
-  --arg source_commit "${source_commit}" '
+  --arg source_commit "${source_commit}" \
+  --arg timezone_manifest_sha256 "${image_timezone_manifest}" '
   . == {
     baseImage: $base_image,
     buildVersion: $build_version,
@@ -70,6 +79,7 @@ jq -e \
     platform: $platform,
     runtimeDescriptorSha256: $runtime_descriptor_sha256,
     sourceCommit: $source_commit,
+    timezoneManifestSha256: $timezone_manifest_sha256,
     toolchain: {
       kind: "nix-flake-lock",
       sha256: $flake_lock_sha256

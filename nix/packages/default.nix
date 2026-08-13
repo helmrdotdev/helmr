@@ -12,6 +12,7 @@ let
   pkgsUnstable = import nixpkgs-unstable { inherit system; };
   pkgsBun = import nixpkgs-bun { inherit system; };
   squashfsTools = pkgs.callPackage ./squashfs-tools.nix { };
+  timezoneData = pkgs.callPackage ./timezone-data.nix { };
   runtimeRelease = pkgs.callPackage ./runtime-release.nix { inherit squashfsTools; };
   compiler = pkgs.callPackage ./compiler.nix { };
   bundleBuilder = pkgs.callPackage ./bundle-builder.nix {
@@ -23,6 +24,7 @@ let
       compiler
       runtimeRelease
       squashfsTools
+      timezoneData
       ;
     bun = pkgsBun.bun;
   };
@@ -121,6 +123,7 @@ in
   inherit deadcode;
   inherit unparam;
   inherit squashfsTools;
+  inherit timezoneData;
   default = helmr;
   bun = pkgsBun.bun;
   apko = if pkgsUnstable ? apko then pkgsUnstable.apko else pkgs.apko;

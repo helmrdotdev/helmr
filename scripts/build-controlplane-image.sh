@@ -53,9 +53,19 @@ docker run --rm \
       --option sandbox false \
       --option filter-syscalls false \
       /work#packages.x86_64-linux.runtimeRelease)"
-    cat "$release/runtime.descriptor.json"
-  ' >"$context/runtime.descriptor.json"
-chmod 0444 "$context/runtime.descriptor.json"
+    timezone_data="$(nix --extra-experimental-features "nix-command flakes" \
+      build --no-link --print-out-paths \
+      --option sandbox false \
+      --option filter-syscalls false \
+      /work#packages.x86_64-linux.timezoneData)"
+    stage="$(mktemp -d)"
+    cp "$release/runtime.descriptor.json" "$stage/runtime.descriptor.json"
+    cp -a "$timezone_data/zoneinfo" "$stage/zoneinfo"
+    cp "$timezone_data/tzdb_names.txt" "$stage/tzdb_names.txt"
+    tar -C "$stage" -cf - runtime.descriptor.json zoneinfo tzdb_names.txt
+  ' | tar -C "$context" -xf -
+chmod 0444 "$context/runtime.descriptor.json" "$context/tzdb_names.txt"
+chmod -R u+rwX,go+rX,go-w "$context/zoneinfo"
 
 for command in helmr-controlplane helmr-dispatcher; do
   GOFLAGS='' GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build \
@@ -71,6 +81,8 @@ FROM ${base_image}
 COPY helmr-controlplane /usr/local/bin/helmr-controlplane
 COPY helmr-dispatcher /usr/local/bin/helmr-dispatcher
 COPY runtime.descriptor.json /usr/local/share/helmr/runtime.descriptor.json
+COPY zoneinfo/ /usr/share/zoneinfo/
+COPY tzdb_names.txt /usr/local/share/helmr/tzdb_names.txt
 ENTRYPOINT ["/usr/local/bin/helmr-controlplane"]
 EOF
 
@@ -85,7 +97,13 @@ printf '%s\n' "$local_image_id" | grep -Eq '^sha256:[0-9a-f]{64}$' || {
   exit 1
 }
 source_commit="$(git -C "$repo_root" rev-parse HEAD)"
-runtime_descriptor_sha256="$(sha256sum "$context/runtime.descriptor.json" | awk '{print $1}')"
+if command -v sha256sum >/dev/null 2>&1; then
+  runtime_descriptor_sha256="$(sha256sum "$context/runtime.descriptor.json" | awk '{print $1}')"
+  timezone_manifest_sha256="$(sha256sum "$context/tzdb_names.txt" | awk '{print $1}')"
+else
+  runtime_descriptor_sha256="$(shasum -a 256 "$context/runtime.descriptor.json" | awk '{print $1}')"
+  timezone_manifest_sha256="$(shasum -a 256 "$context/tzdb_names.txt" | awk '{print $1}')"
+fi
 if command -v sha256sum >/dev/null 2>&1; then
   flake_lock_sha256="$(sha256sum "$repo_root/flake.lock" | awk '{print $1}')"
 else
@@ -99,6 +117,7 @@ jq -cn \
   --arg platform "$platform" \
   --arg runtime_descriptor_sha256 "$runtime_descriptor_sha256" \
   --arg source_commit "$source_commit" \
+  --arg timezone_manifest_sha256 "$timezone_manifest_sha256" \
   '{
     baseImage: $base_image,
     buildVersion: $build_version,
@@ -107,6 +126,7 @@ jq -cn \
     platform: $platform,
     runtimeDescriptorSha256: $runtime_descriptor_sha256,
     sourceCommit: $source_commit,
+    timezoneManifestSha256: $timezone_manifest_sha256,
     toolchain: {
       kind: "nix-flake-lock",
       sha256: $flake_lock_sha256

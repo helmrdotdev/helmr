@@ -95,6 +95,10 @@ require_text "COPY helmr-dispatcher /usr/local/bin/helmr-dispatcher" "$controlpl
   "Control Plane image omits the Dispatcher binary"
 require_text "COPY runtime.descriptor.json /usr/local/share/helmr/runtime.descriptor.json" "$controlplane_builder" \
   "Control Plane image omits the canonical Runtime descriptor"
+require_text "COPY zoneinfo/ /usr/share/zoneinfo/" "$controlplane_builder" \
+  "Control Plane image omits the pinned timezone rules"
+require_text "COPY tzdb_names.txt /usr/local/share/helmr/tzdb_names.txt" "$controlplane_builder" \
+  "Control Plane image omits the canonical timezone manifest"
 require_text 'DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH = "/usr/local/share/helmr/runtime.descriptor.json"' \
   "$repo_root/infra/aws/modules/controlplane/main.tf" \
   "Control Plane task does not select the packaged Runtime descriptor"

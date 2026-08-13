@@ -119,6 +119,12 @@ in
             -run '^(TestFinalizeBundleWritesExactAtomicDirectory|TestFinalizeBundlePublishesExactlyOneConcurrentWriter)$'
         touch "$out"
       '';
+  timezone-manifest = pkgs.runCommand "timezone-manifest-check" { src = ../internal/schedule/tzdb_names.txt; } ''
+    LC_ALL=C sort -u "$src" > normalized
+    cmp normalized "$src"
+    diff -u ${helmrPackages.timezoneData}/tzdb_names.txt "$src"
+    touch "$out"
+  '';
 }
 // lib.optionalAttrs (system == "x86_64-linux") {
   firecracker-host-module = firecrackerHostModuleCheck;

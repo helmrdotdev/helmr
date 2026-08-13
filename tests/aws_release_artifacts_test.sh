@@ -239,9 +239,13 @@ done
 controlplane_bin="${tmp}/controlplane-bin"
 controlplane_context="${tmp}/controlplane-context"
 controlplane_runtime_release="${tmp}/controlplane-runtime-release"
+controlplane_timezone_data="${tmp}/controlplane-timezone-data"
 mkdir -p "${controlplane_bin}"
 mkdir -p "${controlplane_runtime_release}"
+mkdir -p "${controlplane_timezone_data}/zoneinfo"
 printf '{"formatVersion":0}\n' >"${controlplane_runtime_release}/runtime.descriptor.json"
+printf 'UTC\n' >"${controlplane_timezone_data}/tzdb_names.txt"
+printf 'mock timezone rule\n' >"${controlplane_timezone_data}/zoneinfo/UTC"
 for command in bun make go; do
   printf '#!/usr/bin/env bash\nexit 0\n' >"${controlplane_bin}/${command}"
 done
@@ -256,13 +260,22 @@ case "${1:-}" in
     ;;
   run)
     printf '%s\n' "$*" | grep -F 'target=/work,readonly' >/dev/null
-    cat "${MOCK_RUNTIME_DESCRIPTOR_PATH:?}"
+    stage="$(mktemp -d)"
+    cp "${MOCK_RUNTIME_DESCRIPTOR_PATH:?}" "$stage/runtime.descriptor.json"
+    cp -a "${MOCK_TIMEZONE_DATA_PATH:?}/zoneinfo" "$stage/zoneinfo"
+    cp "${MOCK_TIMEZONE_DATA_PATH:?}/tzdb_names.txt" "$stage/tzdb_names.txt"
+    tar -C "$stage" -cf - runtime.descriptor.json zoneinfo tzdb_names.txt
+    rm -rf "$stage"
     ;;
   create)
     printf 'mock-controlplane-container\n'
     ;;
   cp)
-    cp "${MOCK_RUNTIME_DESCRIPTOR_PATH:?}" "${3:?}"
+    case "${2:?}" in
+      *runtime.descriptor.json) cp "${MOCK_RUNTIME_DESCRIPTOR_PATH:?}" "${3:?}" ;;
+      *tzdb_names.txt) cp "${MOCK_TIMEZONE_DATA_PATH:?}/tzdb_names.txt" "${3:?}" ;;
+      *) exit 1 ;;
+    esac
     ;;
   rm)
     ;;
@@ -270,17 +283,17 @@ case "${1:-}" in
 esac
 EOF
 chmod 0755 "${controlplane_bin}"/*
-PATH="${controlplane_bin}:${PATH}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" CONTROLPLANE_IMAGE_CONTEXT="${controlplane_context}" CONTROLPLANE_IMAGE_PLATFORM=linux/amd64 \
+PATH="${controlplane_bin}:${PATH}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" MOCK_TIMEZONE_DATA_PATH="${controlplane_timezone_data}" CONTROLPLANE_IMAGE_CONTEXT="${controlplane_context}" CONTROLPLANE_IMAGE_PLATFORM=linux/amd64 \
   "${controlplane_build_script}" example.invalid/helmr-controlplane:test
 base_image="$(jq -r '.baseImage' "${controlplane_build_contract}")"
 assert_contains "${controlplane_context}/Dockerfile" "FROM ${base_image}" "digest-pinned Control Plane base"
-PATH="${controlplane_bin}:${PATH}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
+PATH="${controlplane_bin}:${PATH}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" MOCK_TIMEZONE_DATA_PATH="${controlplane_timezone_data}" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
   "${controlplane_context}/build-inputs.json" example.invalid/helmr-controlplane:test
 
 drifted="${tmp}/drifted-build-inputs.json"
 jq '.sourceCommit = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
   "${controlplane_context}/build-inputs.json" >"${drifted}"
-if PATH="${controlplane_bin}:${PATH}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
+if PATH="${controlplane_bin}:${PATH}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" MOCK_TIMEZONE_DATA_PATH="${controlplane_timezone_data}" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
   "${drifted}" example.invalid/helmr-controlplane:test >/dev/null 2>&1; then
   fail "Control Plane image verification must reject source-commit drift"
 fi

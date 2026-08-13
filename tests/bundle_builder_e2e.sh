@@ -145,7 +145,11 @@ build_fixture bun bun@1.3.10
 build_fixture yarn yarn@4.9.2
 build_fixture custom "" --install-command ./prepare.sh
 export HELMR_E2E_BUILD_TOKEN="bundle-e2e-secret-sentinel"
-build_secret_digest=$(printf '%s' "$HELMR_E2E_BUILD_TOKEN" | shasum -a 256 | awk '{print $1}')
+if command -v sha256sum >/dev/null 2>&1; then
+  build_secret_digest=$(printf '%s' "$HELMR_E2E_BUILD_TOKEN" | sha256sum | awk '{print $1}')
+else
+  build_secret_digest=$(printf '%s' "$HELMR_E2E_BUILD_TOKEN" | shasum -a 256 | awk '{print $1}')
+fi
 build_fixture secret "" \
   --build-secret HELMR_E2E_BUILD_TOKEN \
   --install-command "test \"\$(sha256sum /run/secrets/HELMR_E2E_BUILD_TOKEN | cut -d' ' -f1)\" = '$build_secret_digest' && ./prepare.sh"

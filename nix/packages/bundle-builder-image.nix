@@ -16,7 +16,7 @@
   compiler,
   runtimeRelease,
   squashfsTools,
-  tzdata,
+  timezoneData,
 }:
 
 let
@@ -83,7 +83,7 @@ let
     ln -s ${bun}/bin/bun "$out/usr/local/bin/bun"
     ln -s ${bunForVersion}/bin/bun-for-version "$out/usr/local/bin/bun-for-version"
     ln -s ${gitMinimal}/bin/git "$out/usr/local/bin/git"
-    ln -s ${tzdata}/share/zoneinfo "$out/usr/share/zoneinfo"
+    ln -s ${timezoneData}/zoneinfo "$out/usr/share/zoneinfo"
   '';
 in
 dockerTools.buildLayeredImage {
@@ -106,7 +106,7 @@ dockerTools.buildLayeredImage {
     bunForVersion
     bundleBuilder
     squashfsTools
-    tzdata
+    timezoneData
   ];
 
   config = {
