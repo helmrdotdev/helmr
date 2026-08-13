@@ -6,13 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -44,6 +48,108 @@ func TestValidateDisjointS3Stores(t *testing.T) {
 				t.Fatal("expected overlapping namespace error")
 			}
 		})
+	}
+}
+
+func TestS3PresignQuarantineBindsDescriptorAndOwner(t *testing.T) {
+	descriptor := cas.Descriptor{
+		Digest:    sha256sum.DigestBytes([]byte("bundle object")),
+		SizeBytes: int64(len("bundle object")),
+		MediaType: "application/vnd.helmr.deployment-program.v0+squashfs",
+	}
+	presigner := &fakeS3Presigner{}
+	store := &Store{
+		client:    &fakeS3Client{},
+		presigner: presigner,
+		bucket:    "bucket",
+		prefix:    "cas",
+	}
+	upload, err := store.PresignQuarantine(t.Context(), "019abcde-1234", descriptor, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upload.Method != http.MethodPut || upload.URL != "https://upload.example.test/object" {
+		t.Fatalf("upload = %+v", upload)
+	}
+	if presigner.input == nil || aws.ToString(presigner.input.Key) !=
+		"cas/quarantine/019abcde-1234/sha256/"+descriptor.Digest[len("sha256:"):] {
+		t.Fatalf("presigned input = %+v", presigner.input)
+	}
+	checksum, _ := descriptorChecksum(descriptor.Digest)
+	if aws.ToString(presigner.input.ChecksumSHA256) != checksum ||
+		presigner.input.ChecksumAlgorithm != types.ChecksumAlgorithmSha256 ||
+		aws.ToInt64(presigner.input.ContentLength) != descriptor.SizeBytes ||
+		aws.ToString(presigner.input.ContentType) != descriptor.MediaType ||
+		aws.ToString(presigner.input.IfNoneMatch) != "*" ||
+		presigner.expires != 5*time.Minute {
+		t.Fatalf("presigned descriptor was not exact: %+v expires=%s", presigner.input, presigner.expires)
+	}
+	if upload.Headers["Content-Length"] != "13" || upload.Headers["Content-Type"] != descriptor.MediaType {
+		t.Fatalf("upload headers = %+v", upload.Headers)
+	}
+}
+
+func TestS3PutAndPromoteQuarantineVerifiesChecksums(t *testing.T) {
+	body := []byte("bundle root")
+	descriptor := cas.Descriptor{
+		Digest:    sha256sum.DigestBytes(body),
+		SizeBytes: int64(len(body)),
+		MediaType: "application/vnd.helmr.deployment-bundle.v0+json",
+	}
+	checksum, _ := descriptorChecksum(descriptor.Digest)
+	client := &fakeS3Client{}
+	store := &Store{client: client, bucket: "bucket", prefix: "cas"}
+	if err := store.PutQuarantine(t.Context(), "019abcde-1234", descriptor, bytes.NewReader(body)); err != nil {
+		t.Fatal(err)
+	}
+	quarantineKey := "cas/quarantine/019abcde-1234/sha256/" + descriptor.Digest[len("sha256:"):]
+	if aws.ToString(client.putObject.Key) != quarantineKey ||
+		aws.ToString(client.putObject.ChecksumSHA256) != checksum ||
+		string(client.putObjectBody) != string(body) {
+		t.Fatalf("quarantine put = %+v body=%q", client.putObject, client.putObjectBody)
+	}
+
+	verified := &awss3.HeadObjectOutput{
+		ChecksumSHA256: aws.String(checksum),
+		ContentLength:  aws.Int64(descriptor.SizeBytes),
+		ContentType:    aws.String(descriptor.MediaType),
+	}
+	client.headObjectOutputs = []*awss3.HeadObjectOutput{verified, nil, verified}
+	client.headObjectErrors = []error{
+		nil,
+		&smithy.GenericAPIError{Code: "NotFound", Message: "missing"},
+		nil,
+	}
+	object, err := store.PromoteQuarantine(t.Context(), "019abcde-1234", descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if object.Digest != descriptor.Digest || object.SizeBytes != descriptor.SizeBytes || object.MediaType != descriptor.MediaType {
+		t.Fatalf("object = %+v", object)
+	}
+	if client.copyObject == nil || aws.ToString(client.copyObject.Key) !=
+		"cas/sha256/"+descriptor.Digest[len("sha256:"):] ||
+		aws.ToString(client.copyObject.CopySource) != "bucket%2Fcas%2Fquarantine%2F019abcde-1234%2Fsha256%2F"+descriptor.Digest[len("sha256:"):] ||
+		aws.ToString(client.copyObject.IfNoneMatch) != "*" {
+		t.Fatalf("copy object = %+v", client.copyObject)
+	}
+}
+
+func TestS3QuarantineFailsClosed(t *testing.T) {
+	descriptor := cas.Descriptor{
+		Digest:    sha256sum.DigestBytes([]byte("expected")),
+		SizeBytes: int64(len("expected")),
+		MediaType: "application/vnd.helmr.deployment-program.v0+squashfs",
+	}
+	store := &Store{client: &fakeS3Client{}, presigner: &fakeS3Presigner{}, bucket: "bucket"}
+	if err := store.PutQuarantine(t.Context(), "../other", descriptor, bytes.NewReader([]byte("expected"))); err == nil {
+		t.Fatal("PutQuarantine accepted an invalid owner")
+	}
+	if err := store.PutQuarantine(t.Context(), "019abcde-1234", descriptor, bytes.NewReader([]byte("wrong"))); !errors.Is(err, cas.ErrDigestMismatch) {
+		t.Fatalf("PutQuarantine digest error = %v", err)
+	}
+	if _, err := store.PresignQuarantine(t.Context(), "019abcde-1234", descriptor, 16*time.Minute); err == nil {
+		t.Fatal("PresignQuarantine accepted an excessive expiry")
 	}
 }
 
@@ -714,6 +820,11 @@ type fakeS3Client struct {
 	putObjectHook           func()
 	headObject              *awss3.HeadObjectOutput
 	headObjectErr           error
+	headObjectOutputs       []*awss3.HeadObjectOutput
+	headObjectErrors        []error
+	headObjectCalls         int
+	copyObject              *awss3.CopyObjectInput
+	copyObjectErr           error
 	createMultipartCalls    int
 	completeMultipartCalls  int
 	completeMultipartErrors []error
@@ -739,6 +850,18 @@ func (f *fakeS3Client) PutObject(_ context.Context, input *awss3.PutObjectInput,
 }
 
 func (f *fakeS3Client) HeadObject(context.Context, *awss3.HeadObjectInput, ...func(*awss3.Options)) (*awss3.HeadObjectOutput, error) {
+	f.headObjectCalls++
+	if f.headObjectCalls <= len(f.headObjectOutputs) || f.headObjectCalls <= len(f.headObjectErrors) {
+		var output *awss3.HeadObjectOutput
+		var err error
+		if f.headObjectCalls <= len(f.headObjectOutputs) {
+			output = f.headObjectOutputs[f.headObjectCalls-1]
+		}
+		if f.headObjectCalls <= len(f.headObjectErrors) {
+			err = f.headObjectErrors[f.headObjectCalls-1]
+		}
+		return output, err
+	}
 	if f.headObject == nil && f.headObjectErr == nil {
 		return nil, fmt.Errorf("not implemented")
 	}
@@ -751,6 +874,11 @@ func (f *fakeS3Client) GetObject(context.Context, *awss3.GetObjectInput, ...func
 
 func (f *fakeS3Client) DeleteObject(context.Context, *awss3.DeleteObjectInput, ...func(*awss3.Options)) (*awss3.DeleteObjectOutput, error) {
 	return nil, fmt.Errorf("not implemented")
+}
+
+func (f *fakeS3Client) CopyObject(_ context.Context, input *awss3.CopyObjectInput, _ ...func(*awss3.Options)) (*awss3.CopyObjectOutput, error) {
+	f.copyObject = input
+	return &awss3.CopyObjectOutput{}, f.copyObjectErr
 }
 
 func (f *fakeS3Client) CreateMultipartUpload(_ context.Context, input *awss3.CreateMultipartUploadInput, _ ...func(*awss3.Options)) (*awss3.CreateMultipartUploadOutput, error) {
@@ -797,6 +925,33 @@ func (f *fakeS3Client) AbortMultipartUpload(context.Context, *awss3.AbortMultipa
 }
 
 var _ s3Client = (*fakeS3Client)(nil)
+
+type fakeS3Presigner struct {
+	input   *awss3.PutObjectInput
+	expires time.Duration
+}
+
+func (f *fakeS3Presigner) PresignPutObject(
+	_ context.Context,
+	input *awss3.PutObjectInput,
+	options ...func(*awss3.PresignOptions),
+) (*awsv4.PresignedHTTPRequest, error) {
+	f.input = input
+	var resolved awss3.PresignOptions
+	for _, option := range options {
+		option(&resolved)
+	}
+	f.expires = resolved.Expires
+	return &awsv4.PresignedHTTPRequest{
+		Method: http.MethodPut,
+		URL:    "https://upload.example.test/object",
+		SignedHeader: http.Header{
+			"X-Amz-Checksum-Sha256": []string{aws.ToString(input.ChecksumSHA256)},
+		},
+	}, nil
+}
+
+var _ s3Presigner = (*fakeS3Presigner)(nil)
 
 func uploadedPartBody(t *testing.T, client *fakeS3Client, number int32) []byte {
 	t.Helper()

@@ -2,15 +2,20 @@ package s3
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/config"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -34,18 +39,24 @@ type s3Client interface {
 	HeadObject(context.Context, *awss3.HeadObjectInput, ...func(*awss3.Options)) (*awss3.HeadObjectOutput, error)
 	GetObject(context.Context, *awss3.GetObjectInput, ...func(*awss3.Options)) (*awss3.GetObjectOutput, error)
 	DeleteObject(context.Context, *awss3.DeleteObjectInput, ...func(*awss3.Options)) (*awss3.DeleteObjectOutput, error)
+	CopyObject(context.Context, *awss3.CopyObjectInput, ...func(*awss3.Options)) (*awss3.CopyObjectOutput, error)
 	CreateMultipartUpload(context.Context, *awss3.CreateMultipartUploadInput, ...func(*awss3.Options)) (*awss3.CreateMultipartUploadOutput, error)
 	UploadPart(context.Context, *awss3.UploadPartInput, ...func(*awss3.Options)) (*awss3.UploadPartOutput, error)
 	CompleteMultipartUpload(context.Context, *awss3.CompleteMultipartUploadInput, ...func(*awss3.Options)) (*awss3.CompleteMultipartUploadOutput, error)
 	AbortMultipartUpload(context.Context, *awss3.AbortMultipartUploadInput, ...func(*awss3.Options)) (*awss3.AbortMultipartUploadOutput, error)
 }
 
+type s3Presigner interface {
+	PresignPutObject(context.Context, *awss3.PutObjectInput, ...func(*awss3.PresignOptions)) (*awsv4.PresignedHTTPRequest, error)
+}
+
 type Store struct {
-	client  s3Client
-	bucket  string
-	prefix  string
-	tempDir string
-	sharded bool
+	client    s3Client
+	bucket    string
+	prefix    string
+	tempDir   string
+	sharded   bool
+	presigner s3Presigner
 
 	multipartThresholdBytes int64
 	multipartPartSizeBytes  int64
@@ -56,6 +67,8 @@ type ImmutableStore struct {
 }
 
 type Option func(*Store)
+
+var quarantineOwnerPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,127}$`)
 
 func WithTempDir(path string) Option {
 	return func(store *Store) {
@@ -88,14 +101,159 @@ func New(ctx context.Context, rawURI string, opts ...Option) (*Store, error) {
 		}
 	})
 	store := &Store{
-		client: client,
-		bucket: uri.Host,
-		prefix: strings.Trim(uri.Path, "/"),
+		client:    client,
+		presigner: awss3.NewPresignClient(client),
+		bucket:    uri.Host,
+		prefix:    strings.Trim(uri.Path, "/"),
 	}
 	for _, opt := range opts {
 		opt(store)
 	}
 	return store, nil
+}
+
+func (c *Store) PutQuarantine(
+	ctx context.Context,
+	owner string,
+	expected cas.Descriptor,
+	body io.Reader,
+) error {
+	if err := cas.ValidateDescriptor(expected); err != nil {
+		return err
+	}
+	key, err := c.quarantineKey(owner, expected.Digest)
+	if err != nil {
+		return err
+	}
+	if c.tempDir != "" {
+		if err := os.MkdirAll(c.tempDir, 0o700); err != nil {
+			return err
+		}
+	}
+	tmp, err := os.CreateTemp(c.tempDir, "helmr-quarantine-*")
+	if err != nil {
+		return err
+	}
+	path := tmp.Name()
+	defer os.Remove(path)
+	stage := cas.NewFileStage(expected.MediaType, tmp)
+	if _, err := io.Copy(stage, io.LimitReader(body, expected.SizeBytes+1)); err != nil {
+		_ = stage.Abort(context.Background())
+		return err
+	}
+	digest, err := stage.BeginCommit(ctx, false)
+	if err != nil {
+		return err
+	}
+	if digest != expected.Digest || stage.Size() != expected.SizeBytes {
+		return cas.ErrDigestMismatch
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if err := c.putQuarantineDescriptor(ctx, key, expected, file); err != nil {
+		if !errors.Is(err, errImmutableObjectExists) {
+			return err
+		}
+		return c.verifyKey(ctx, key, expected)
+	}
+	return nil
+}
+
+func (c *Store) PresignQuarantine(
+	ctx context.Context,
+	owner string,
+	expected cas.Descriptor,
+	expires time.Duration,
+) (cas.PresignedUpload, error) {
+	if err := cas.ValidateDescriptor(expected); err != nil {
+		return cas.PresignedUpload{}, err
+	}
+	if expires <= 0 || expires > 15*time.Minute {
+		return cas.PresignedUpload{}, errors.New("quarantine upload expiry must be in (0,15m]")
+	}
+	if c.presigner == nil {
+		return cas.PresignedUpload{}, errors.New("S3 quarantine presigner is not configured")
+	}
+	key, err := c.quarantineKey(owner, expected.Digest)
+	if err != nil {
+		return cas.PresignedUpload{}, err
+	}
+	checksum, err := descriptorChecksum(expected.Digest)
+	if err != nil {
+		return cas.PresignedUpload{}, err
+	}
+	request, err := c.presigner.PresignPutObject(ctx, &awss3.PutObjectInput{
+		Bucket:            aws.String(c.bucket),
+		Key:               aws.String(key),
+		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
+		ChecksumSHA256:    aws.String(checksum),
+		ContentLength:     aws.Int64(expected.SizeBytes),
+		ContentType:       aws.String(expected.MediaType),
+		IfNoneMatch:       aws.String("*"),
+		Tagging:           aws.String(objectTagging(expected.MediaType)),
+	}, func(options *awss3.PresignOptions) {
+		options.Expires = expires
+	})
+	if err != nil {
+		return cas.PresignedUpload{}, err
+	}
+	headers := make(map[string]string, len(request.SignedHeader)+2)
+	for key, values := range request.SignedHeader {
+		if len(values) != 1 {
+			return cas.PresignedUpload{}, fmt.Errorf("presigned header %q is not singular", key)
+		}
+		headers[key] = values[0]
+	}
+	headers["Content-Length"] = fmt.Sprintf("%d", expected.SizeBytes)
+	headers["Content-Type"] = expected.MediaType
+	return cas.PresignedUpload{Method: request.Method, URL: request.URL, Headers: headers}, nil
+}
+
+func (c *Store) PromoteQuarantine(
+	ctx context.Context,
+	owner string,
+	expected cas.Descriptor,
+) (cas.Object, error) {
+	if err := cas.ValidateDescriptor(expected); err != nil {
+		return cas.Object{}, err
+	}
+	quarantineKey, err := c.quarantineKey(owner, expected.Digest)
+	if err != nil {
+		return cas.Object{}, err
+	}
+	if err := c.verifyKey(ctx, quarantineKey, expected); err != nil {
+		return cas.Object{}, fmt.Errorf("verify quarantine object: %w", err)
+	}
+	key, err := c.objectKey(expected.Digest)
+	if err != nil {
+		return cas.Object{}, err
+	}
+	if err := c.verifyKey(ctx, key, expected); err == nil {
+		return cas.Object{Digest: expected.Digest, SizeBytes: expected.SizeBytes, Key: key, MediaType: expected.MediaType}, nil
+	} else if !isObjectNotFound(err) {
+		return cas.Object{}, fmt.Errorf("verify existing immutable object: %w", err)
+	}
+	_, err = c.client.CopyObject(ctx, &awss3.CopyObjectInput{
+		Bucket:            aws.String(c.bucket),
+		Key:               aws.String(key),
+		CopySource:        aws.String(url.PathEscape(c.bucket + "/" + quarantineKey)),
+		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
+		ContentType:       aws.String(expected.MediaType),
+		IfNoneMatch:       aws.String("*"),
+		MetadataDirective: types.MetadataDirectiveReplace,
+		Tagging:           aws.String(objectTagging(expected.MediaType)),
+		TaggingDirective:  types.TaggingDirectiveReplace,
+	})
+	if err != nil && conditionalWriteError(err) != conditionalWriteExists {
+		return cas.Object{}, err
+	}
+	if err := c.verifyKey(ctx, key, expected); err != nil {
+		return cas.Object{}, fmt.Errorf("verify promoted immutable object: %w", err)
+	}
+	return cas.Object{Digest: expected.Digest, SizeBytes: expected.SizeBytes, Key: key, MediaType: expected.MediaType}, nil
 }
 
 func NewImmutable(ctx context.Context, rawURI string, opts ...Option) (*ImmutableStore, error) {
@@ -214,13 +372,19 @@ func (c *Store) putDescriptor(
 	expected cas.Descriptor,
 	file *os.File,
 ) error {
-	_, err := c.client.PutObject(ctx, &awss3.PutObjectInput{
-		Bucket:        aws.String(c.bucket),
-		Key:           aws.String(key),
-		Body:          io.NewSectionReader(file, 0, expected.SizeBytes),
-		ContentLength: aws.Int64(expected.SizeBytes),
-		ContentType:   aws.String(expected.MediaType),
-		IfNoneMatch:   aws.String("*"),
+	checksum, err := descriptorChecksum(expected.Digest)
+	if err != nil {
+		return err
+	}
+	_, err = c.client.PutObject(ctx, &awss3.PutObjectInput{
+		Bucket:            aws.String(c.bucket),
+		Key:               aws.String(key),
+		Body:              io.NewSectionReader(file, 0, expected.SizeBytes),
+		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
+		ChecksumSHA256:    aws.String(checksum),
+		ContentLength:     aws.Int64(expected.SizeBytes),
+		ContentType:       aws.String(expected.MediaType),
+		IfNoneMatch:       aws.String("*"),
 	})
 	switch conditionalWriteError(err) {
 	case conditionalWriteExists:
@@ -637,3 +801,92 @@ func (c *Store) objectKey(digest string) (string, error) {
 	}
 	return cas.ObjectKey(c.prefix, digest)
 }
+
+func (c *Store) quarantineKey(owner, digest string) (string, error) {
+	if !quarantineOwnerPattern.MatchString(owner) {
+		return "", errors.New("quarantine owner is outside the canonical lowercase identifier domain")
+	}
+	hash, ok := strings.CutPrefix(digest, "sha256:")
+	if !ok || len(hash) != sha256.Size*2 {
+		return "", fmt.Errorf("unsupported digest %q", digest)
+	}
+	if _, err := hex.DecodeString(hash); err != nil || strings.ToLower(hash) != hash {
+		return "", fmt.Errorf("unsupported digest %q", digest)
+	}
+	prefix := strings.Trim(c.prefix, "/")
+	key := "quarantine/" + owner + "/sha256/" + hash
+	if prefix != "" {
+		key = prefix + "/" + key
+	}
+	return key, nil
+}
+
+func descriptorChecksum(digest string) (string, error) {
+	hash, ok := strings.CutPrefix(digest, "sha256:")
+	if !ok || len(hash) != sha256.Size*2 || strings.ToLower(hash) != hash {
+		return "", fmt.Errorf("unsupported digest %q", digest)
+	}
+	raw, err := hex.DecodeString(hash)
+	if err != nil {
+		return "", fmt.Errorf("unsupported digest %q", digest)
+	}
+	return base64.StdEncoding.EncodeToString(raw), nil
+}
+
+func (c *Store) putQuarantineDescriptor(
+	ctx context.Context,
+	key string,
+	expected cas.Descriptor,
+	file *os.File,
+) error {
+	checksum, err := descriptorChecksum(expected.Digest)
+	if err != nil {
+		return err
+	}
+	_, err = c.client.PutObject(ctx, &awss3.PutObjectInput{
+		Bucket:            aws.String(c.bucket),
+		Key:               aws.String(key),
+		Body:              io.NewSectionReader(file, 0, expected.SizeBytes),
+		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
+		ChecksumSHA256:    aws.String(checksum),
+		ContentLength:     aws.Int64(expected.SizeBytes),
+		ContentType:       aws.String(expected.MediaType),
+		IfNoneMatch:       aws.String("*"),
+		Tagging:           aws.String(objectTagging(expected.MediaType)),
+	})
+	if conditionalWriteError(err) == conditionalWriteExists {
+		return errImmutableObjectExists
+	}
+	return err
+}
+
+func (c *Store) verifyKey(ctx context.Context, key string, expected cas.Descriptor) error {
+	output, err := c.client.HeadObject(ctx, &awss3.HeadObjectInput{
+		Bucket:       aws.String(c.bucket),
+		Key:          aws.String(key),
+		ChecksumMode: types.ChecksumModeEnabled,
+	})
+	if err != nil {
+		return err
+	}
+	checksum, err := descriptorChecksum(expected.Digest)
+	if err != nil {
+		return err
+	}
+	if aws.ToInt64(output.ContentLength) != expected.SizeBytes ||
+		aws.ToString(output.ContentType) != expected.MediaType ||
+		aws.ToString(output.ChecksumSHA256) != checksum {
+		return cas.ErrDigestMismatch
+	}
+	return nil
+}
+
+func isObjectNotFound(err error) bool {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.ErrorCode() == "NotFound" || apiErr.ErrorCode() == "NoSuchKey"
+}
+
+var _ cas.UploadStore = (*Store)(nil)

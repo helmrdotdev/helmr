@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 )
 
 const CheckpointVMStateMediaType = "application/vnd.helmr.firecracker.vm-state.v0"
@@ -26,6 +27,15 @@ type Store interface {
 	Put(ctx context.Context, mediaType string, body io.Reader) (Object, error)
 	Stage(ctx context.Context, mediaType string) (Stage, error)
 	Delete(ctx context.Context, digest string) error
+}
+
+// UploadStore admits untrusted client objects through owner-scoped quarantine
+// before publishing them to the immutable digest namespace.
+type UploadStore interface {
+	Store
+	PutQuarantine(ctx context.Context, owner string, expected Descriptor, body io.Reader) error
+	PresignQuarantine(ctx context.Context, owner string, expected Descriptor, expires time.Duration) (PresignedUpload, error)
+	PromoteQuarantine(ctx context.Context, owner string, expected Descriptor) (Object, error)
 }
 
 type ImmutableStore interface {
@@ -51,6 +61,12 @@ type Descriptor struct {
 	Digest    string
 	SizeBytes int64
 	MediaType string
+}
+
+type PresignedUpload struct {
+	Method  string
+	URL     string
+	Headers map[string]string
 }
 
 var (
