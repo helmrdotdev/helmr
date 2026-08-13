@@ -129,9 +129,6 @@ func WorkspaceImageDockerfile(
 }
 
 func validateWorkspaceBase(from imagebuild.From) error {
-	if from.Auth != nil {
-		return errors.New("managed workspace image registry credentials are not supported; authenticate the local Docker/BuildKit session")
-	}
 	named, err := reference.ParseNormalizedNamed(from.Ref)
 	if err != nil || named.String() != from.Ref {
 		return errors.New("workspace image base must be a canonical fully qualified reference")

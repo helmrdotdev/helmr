@@ -98,15 +98,3 @@ func testProgramCompilerResult(t *testing.T) ProgramCompilerResult {
 		TSConfigs: []ProgramPathDigest{},
 	}
 }
-
-func testProgramOutput(t *testing.T) ProgramOutput {
-	t.Helper()
-	return ProgramOutput{
-		Artifact: ProgramDescriptor{
-			Digest:    "sha256:" + strings.Repeat("c", 64),
-			SizeBytes: squashFSPhysicalAlign,
-			MediaType: ProgramArtifactMediaType,
-		},
-		Index: testProgramIndex(t),
-	}
-}

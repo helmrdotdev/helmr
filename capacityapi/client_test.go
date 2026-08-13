@@ -53,13 +53,13 @@ func TestClientReconcilesCompleteWorkerGroupPrimarySelection(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		if request.ExpectedGroupClaimVersion != 7 || request.RunPoolID != "run-pool" || request.BuildPoolID != "build-pool" {
+		if request.ExpectedGroupClaimVersion != 7 || request.PoolID != "run-pool" {
 			t.Fatalf("request = %+v", request)
 		}
 		_ = json.NewEncoder(w).Encode(ReconcileWorkerGroupPrimaryPoolsResponse{
 			Applied: true,
 			WorkerGroup: CapacityWorkerGroup{
-				ID: "group-1", ClaimVersion: 8, PrimaryRunPoolID: "run-pool", PrimaryBuildPoolID: "build-pool",
+				ID: "group-1", ClaimVersion: 8, PrimaryPoolID: "run-pool",
 			},
 		})
 	}))
@@ -69,12 +69,12 @@ func TestClientReconcilesCompleteWorkerGroupPrimarySelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := client.ReconcileWorkerGroupPrimaryPools(context.Background(), "group-1", ReconcileWorkerGroupPrimaryPoolsRequest{
-		ExpectedGroupClaimVersion: 7, RunPoolID: "run-pool", BuildPoolID: "build-pool",
+		ExpectedGroupClaimVersion: 7, PoolID: "run-pool",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Applied || result.WorkerGroup.ClaimVersion != 8 || result.WorkerGroup.PrimaryRunPoolID != "run-pool" {
+	if !result.Applied || result.WorkerGroup.ClaimVersion != 8 || result.WorkerGroup.PrimaryPoolID != "run-pool" {
 		t.Fatalf("result = %+v", result)
 	}
 }
@@ -141,7 +141,7 @@ func TestClientPlansCapacityAndReadsFilteredWorkerInstances(t *testing.T) {
 func validTestWorkerTemplate(t *testing.T) WorkerTemplate {
 	t.Helper()
 	template := WorkerTemplate{
-		Schema: WorkerTemplateSchema, SupportsRun: true,
+		Schema:    WorkerTemplateSchema,
 		Runtime:   testRuntimeProfile(t),
 		CPUShapes: testCPUShapes(4),
 		Substrate: SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v0"},

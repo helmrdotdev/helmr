@@ -1,6 +1,7 @@
 {
   lib,
   runCommand,
+  writeShellApplication,
   dockerTools,
   bash,
   cacert,
@@ -15,21 +16,58 @@
   compiler,
   runtimeRelease,
   squashfsTools,
+  tzdata,
 }:
 
 let
+  bunForVersion = writeShellApplication {
+    name = "bun-for-version";
+    runtimeInputs = [ nodejs_24 ];
+    text = ''
+      if [ "$#" -lt 2 ]; then
+        printf 'usage: bun-for-version VERSION ARGS...\n' >&2
+        exit 2
+      fi
+      version="$1"
+      shift
+      case "$version" in
+        *[!0-9A-Za-z.-]* | "")
+          printf 'bun-for-version: invalid version\n' >&2
+          exit 2
+          ;;
+      esac
+      root="''${XDG_CACHE_HOME:?}/helmr-bun/$version"
+      binary="$root/node_modules/@oven/bun-linux-x64-baseline/bin/bun"
+      if [ ! -x "$binary" ]; then
+        mkdir -p "$root"
+        npm install \
+          --prefix "$root" \
+          --ignore-scripts \
+          --no-audit \
+          --no-fund \
+          --no-save \
+          "@oven/bun-linux-x64-baseline@$version"
+      fi
+      exec /opt/helmr/runtime/lib/ld-linux-x86-64.so.2 \
+        --library-path /opt/helmr/runtime/lib \
+        "$binary" "$@"
+    '';
+  };
   root = runCommand "helmr-bundle-builder-root" { } ''
     mkdir -p \
       "$out/bin" \
-      "$out/nix" \
+      "$out/nix/helmr" \
       "$out/opt/helmr/release" \
       "$out/usr/bin" \
-      "$out/usr/local/bin"
+      "$out/usr/local/bin" \
+      "$out/usr/share"
 
     cp -a ${runtimeRelease}/tree "$out/opt/helmr/runtime"
-    cp -a ${compiler}/tree/helmr "$out/nix/helmr"
+    cp -a ${compiler}/tree/helmr/. "$out/nix/helmr/"
     cp -a ${compiler}/tree/node_modules "$out/nix/node_modules"
+    chmod u+w "$out/nix/helmr"
     cp ${compiler}/compiler.descriptor.json "$out/nix/helmr/compiler.descriptor.json"
+    chmod u-w "$out/nix/helmr"
     cp ${runtimeRelease}/runtime.descriptor.json "$out/opt/helmr/release/runtime.descriptor.json"
 
     ln -s ${bash}/bin/bash "$out/bin/bash"
@@ -43,7 +81,9 @@ let
     ln -s ${pnpm}/bin/pnpm "$out/usr/local/bin/pnpm"
     ln -s ${yarn}/bin/yarn "$out/usr/local/bin/yarn"
     ln -s ${bun}/bin/bun "$out/usr/local/bin/bun"
+    ln -s ${bunForVersion}/bin/bun-for-version "$out/usr/local/bin/bun-for-version"
     ln -s ${gitMinimal}/bin/git "$out/usr/local/bin/git"
+    ln -s ${tzdata}/share/zoneinfo "$out/usr/share/zoneinfo"
   '';
 in
 dockerTools.buildLayeredImage {
@@ -63,8 +103,10 @@ dockerTools.buildLayeredImage {
     pnpm
     yarn
     bun
+    bunForVersion
     bundleBuilder
     squashfsTools
+    tzdata
   ];
 
   config = {

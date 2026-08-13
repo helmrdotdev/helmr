@@ -237,6 +237,11 @@ describe("v0 compiler contract", () => {
     const required = new TextDecoder().decode(
       compiled.files.get(bySource.get("tasks/require.cjs")),
     )
+    expect(
+      manifest.externalEdges.every(
+        (edge: { runtimePath: string }) => edge.runtimePath.startsWith(`${root}/`),
+      ),
+    ).toBe(true)
     expect(imported).toContain(
       resolve(root, "node_modules/conditional-package/import.mjs"),
     )

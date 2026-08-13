@@ -98,7 +98,7 @@ jobs:
           cache-name: ${{ vars.CACHIX_CACHE_NAME }}
           cachix-auth-token: ${{ github.event_name != 'pull_request' && secrets.CACHIX_AUTH_TOKEN || '' }}
 
-      - run: nix develop --command bash tests/bundle_builder_e2e.sh
+      - run: nix develop .#images --command bash tests/bundle_builder_e2e.sh
 
   ci-complete:
     name: ci complete

@@ -12,9 +12,6 @@ import (
 )
 
 type dispatchWorkerPoolFixture struct {
-	allowsRun   bool
-	allowsBuild bool
-
 	substrateFormat   string
 	substrateContract string
 
@@ -25,7 +22,6 @@ type dispatchWorkerPoolFixture struct {
 	perVMMemoryBytes                int64
 	perVMGuestEphemeralDiskBytes    int64
 	maxVMSlots                      int32
-	maxBuildExecutors               int32
 }
 
 func seedDispatchWorkerPool(
@@ -57,22 +53,20 @@ INSERT INTO runtime_identities (
 	)
 	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO worker_pools (
-    id, worker_group_id, name, state, allows_run, allows_build,
+    id, worker_group_id, name, state,
     runtime_identity_id, substrate_format, substrate_contract,
     capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes,
     per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes,
-    max_vm_slots, max_build_executors, sealed_at
+    max_vm_slots, sealed_at
 ) VALUES (
-    $1, $2, 'dispatch-test', 'active', $3, $4,
-    $5, $6, $7,
-    $8, $9, $10,
-    $11, $12, $13,
-    $14, $15, now()
+    $1, $2, 'dispatch-test', 'active',
+    $3, $4, $5,
+    $6, $7, $8,
+    $9, $10, $11,
+    $12, now()
 )`,
 		dbtest.DefaultWorkerPoolID,
 		workerGroupID,
-		spec.allowsRun,
-		spec.allowsBuild,
 		dbtest.DefaultRuntimeID,
 		spec.substrateFormat,
 		spec.substrateContract,
@@ -83,7 +77,6 @@ INSERT INTO worker_pools (
 		spec.perVMMemoryBytes,
 		spec.perVMGuestEphemeralDiskBytes,
 		spec.maxVMSlots,
-		spec.maxBuildExecutors,
 	)
 	maxVCPUs := int32((spec.perVMCPUMillis-1)/1000 + 1)
 	for vcpu := int32(1); vcpu <= maxVCPUs; vcpu++ {
@@ -97,13 +90,10 @@ VALUES ($1, $2, $3)`,
 	}
 	dbtest.MustExec(t, ctx, pool, `
 UPDATE worker_groups
-   SET primary_run_pool_id = CASE WHEN $3::boolean THEN $2::uuid ELSE NULL END,
-       primary_build_pool_id = CASE WHEN $4::boolean THEN $2::uuid ELSE NULL END
+   SET primary_pool_id = $2
  WHERE id = $1`,
 		workerGroupID,
 		dbtest.DefaultWorkerPoolID,
-		spec.allowsRun,
-		spec.allowsBuild,
 	)
 }
 

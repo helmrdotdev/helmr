@@ -85,14 +85,8 @@ func runVerifierChild(job verifierJob) (returnErr error) {
 	if err := validateVerifierDescriptors(job, nil); err != nil {
 		return err
 	}
-	if job.conformance() {
-		if err := isolateConformanceRoot(job, uid, gid); err != nil {
-			return err
-		}
-	} else {
-		if err := isolateVerifierRoot(); err != nil {
-			return err
-		}
+	if err := isolateVerifierRoot(); err != nil {
+		return err
 	}
 	if err := applyVerifierIdentity(uid, gid); err != nil {
 		return err
@@ -140,8 +134,6 @@ func verifyVerifierJob(ctx context.Context, job verifierJob) ([]byte, error) {
 		return verifyProgramDescriptor(ctx, verifierArtifactBaseFD)
 	case runtimeVerifierJob:
 		return verifyRuntimeDescriptor(ctx, verifierArtifactBaseFD)
-	case runtimeConformanceJob, managerConformanceJob, toolchainConformanceJob:
-		return verifyPlatformConformance(ctx, job)
 	default:
 		return nil, &artifactInfrastructureError{
 			cause: fmt.Errorf("artifact verifier job = %q", job),

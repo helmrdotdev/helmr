@@ -42,8 +42,8 @@ result.
 helmr deploy . --project PROJECT --env ENVIRONMENT
 ```
 
-Deployment uploads the source, builds and discovers its declarations, and
-promotes the completed Deployment by default.
+The CLI builds a content-addressed bundle in the official local builder,
+uploads it, and promotes the verified Deployment by default.
 
 ## Create a Workspace
 

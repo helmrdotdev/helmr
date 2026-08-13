@@ -23,8 +23,8 @@ func TestWorkerDrainPublishesExactTerminalReceiptAndReplays(t *testing.T) {
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instance_credentials (
 			id, worker_group_id, worker_instance_id, key_prefix, claim_version,
-			allows_run, allows_build, secret_hash
-		) VALUES ($1, $2, $3, $4, 1, false, true, $5)
+			secret_hash
+		) VALUES ($1, $2, $3, $4, 1, $5)
 	`, credentialID, dbtest.DefaultWorkerGroupID, workerID, uuid.NewString(), []byte("drain-secret"))
 
 	draining, err := q.DrainWorkerInstance(ctx, db.DrainWorkerInstanceParams{
@@ -88,8 +88,8 @@ func TestWorkerFencePublishesExactLostReceiptAndReplays(t *testing.T) {
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instance_credentials (
 			id, worker_group_id, worker_instance_id, key_prefix, claim_version,
-			allows_run, allows_build, secret_hash
-		) VALUES ($1, $2, $3, $4, 1, false, true, $5)
+			secret_hash
+		) VALUES ($1, $2, $3, $4, 1, $5)
 	`, credentialID, dbtest.DefaultWorkerGroupID, workerID, uuid.NewString(), []byte("fence-secret"))
 
 	params := db.FenceWorkerInstanceParams{

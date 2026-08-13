@@ -296,20 +296,18 @@ func (q *Queries) CloseRunActiveIntervalForFinalization(ctx context.Context, arg
 const discoverWorkerRunLeaseWork = `-- name: DiscoverWorkerRunLeaseWork :many
 WITH worker AS (
     SELECT worker_instances.id,
-           worker_instances.current_epoch,
-           worker_instances.state,
-           worker_instances.max_vm_slots,
-           worker_groups.state AS group_state,
-           worker_groups.allows_run
+	       worker_instances.current_epoch,
+	       worker_instances.state,
+	       worker_instances.max_vm_slots,
+	       worker_groups.state AS group_state
       FROM worker_instances
       JOIN worker_groups
         ON worker_groups.id = worker_instances.worker_group_id
        AND worker_groups.state IN ('active', 'draining')
      WHERE worker_instances.id = $3
-       AND worker_instances.worker_group_id = $1
-       AND worker_instances.current_epoch = $4::bigint
-       AND worker_instances.state IN ('active', 'draining')
-       AND worker_instances.supports_run
+	   AND worker_instances.worker_group_id = $1
+	   AND worker_instances.current_epoch = $4::bigint
+	   AND worker_instances.state IN ('active', 'draining')
 )
 SELECT run_leases.id,
        run_leases.lease_sequence
@@ -323,10 +321,9 @@ SELECT run_leases.id,
    AND run_leases.expires_at > transaction_timestamp()
    AND (
        run_leases.state = 'starting'
-       OR (
-           worker.group_state = 'active'
-           AND worker.allows_run
-           AND worker.state = 'active'
+	       OR (
+	           worker.group_state = 'active'
+	           AND worker.state = 'active'
        )
    )
  ORDER BY CASE run_leases.state
@@ -504,13 +501,11 @@ SELECT run_leases.org_id,
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
    AND worker_groups.state IN ('active', 'draining')
-   AND worker_groups.allows_run
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
    AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.supports_run
   JOIN workspace_leases
     ON workspace_leases.owner_run_lease_id = run_leases.id
    AND workspace_leases.workspace_id = run_leases.workspace_id
@@ -598,13 +593,11 @@ SELECT run_leases.org_id,
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
    AND worker_groups.state = 'active'
-   AND worker_groups.allows_run
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
    AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.supports_run
   JOIN workspace_leases
     ON workspace_leases.owner_run_lease_id = run_leases.id
    AND workspace_leases.workspace_id = run_leases.workspace_id
@@ -821,7 +814,6 @@ SELECT run_leases.org_id,
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
    AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.supports_run
   JOIN runtime_instances
     ON runtime_instances.id = run_leases.runtime_instance_id
    AND runtime_instances.workspace_id = run_leases.workspace_id
@@ -886,7 +878,6 @@ SELECT run_leases.org_id,
        run_leases.state = 'starting'
        OR (
            worker_groups.state = 'active'
-           AND worker_groups.allows_run
            AND worker_instances.state = 'active'
        )
    )
@@ -1039,7 +1030,6 @@ SELECT run_leases.environment_id,
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
    AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.supports_run
  WHERE run_leases.id = $1
    AND run_leases.lease_sequence = $2
    AND run_leases.worker_group_id = $3
@@ -1052,7 +1042,6 @@ SELECT run_leases.environment_id,
        run_leases.state = 'starting'
        OR (
            worker_groups.state = 'active'
-           AND worker_groups.allows_run
            AND worker_instances.state = 'active'
        )
    )
@@ -1132,13 +1121,11 @@ SELECT run_leases.org_id,
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
    AND worker_groups.state IN ('active', 'draining')
-   AND worker_groups.allows_run
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
    AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.supports_run
   JOIN runtime_instances
     ON runtime_instances.id = run_leases.runtime_instance_id
    AND runtime_instances.workspace_id = run_leases.workspace_id
@@ -1788,7 +1775,7 @@ func (q *Queries) LockRunLeaseClaimMount(ctx context.Context, arg LockRunLeaseCl
 }
 
 const lockRunLeaseClaimReadyWorker = `-- name: LockRunLeaseClaimReadyWorker :one
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.build_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at,
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at,
        COALESCE((worker_instances.observed_at >= transaction_timestamp()
             - $1::bigint * interval '1 second'
         AND worker_instances.run_paused_reason IS NULL), false)::boolean AS run_ready
@@ -1821,8 +1808,6 @@ func (q *Queries) LockRunLeaseClaimReadyWorker(ctx context.Context, arg LockRunL
 		&i.WorkerInstance.ClaimVersion,
 		&i.WorkerInstance.CurrentEpoch,
 		&i.WorkerInstance.CurrentServiceID,
-		&i.WorkerInstance.SupportsRun,
-		&i.WorkerInstance.SupportsBuild,
 		&i.WorkerInstance.RuntimeIdentityID,
 		&i.WorkerInstance.SubstrateFormat,
 		&i.WorkerInstance.SubstrateContract,
@@ -1833,13 +1818,11 @@ func (q *Queries) LockRunLeaseClaimReadyWorker(ctx context.Context, arg LockRunL
 		&i.WorkerInstance.PerVMMemoryBytes,
 		&i.WorkerInstance.PerVMGuestEphemeralDiskBytes,
 		&i.WorkerInstance.MaxVMSlots,
-		&i.WorkerInstance.MaxBuildExecutors,
 		&i.WorkerInstance.MaxRuntimeStarts,
 		&i.WorkerInstance.CPUEnvironment,
 		&i.WorkerInstance.CPUEnvironmentDigest,
 		&i.WorkerInstance.ObservedAt,
 		&i.WorkerInstance.RunPausedReason,
-		&i.WorkerInstance.BuildPausedReason,
 		&i.WorkerInstance.RuntimePausedReason,
 		&i.WorkerInstance.EpochStartedAt,
 		&i.WorkerInstance.ActivatedAt,
@@ -2122,7 +2105,7 @@ func (q *Queries) LockRunLeaseClaimWait(ctx context.Context, arg LockRunLeaseCla
 }
 
 const lockRunLeaseClaimWorker = `-- name: LockRunLeaseClaimWorker :one
-SELECT id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch, current_service_id, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_contract, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_build_executors, max_runtime_starts, cpu_environment, cpu_environment_digest, observed_at, run_paused_reason, build_paused_reason, runtime_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
+SELECT id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch, current_service_id, runtime_identity_id, substrate_format, substrate_contract, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_runtime_starts, cpu_environment, cpu_environment_digest, observed_at, run_paused_reason, runtime_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
   FROM worker_instances
  WHERE id = $1
    AND worker_group_id = $2
@@ -2146,8 +2129,6 @@ func (q *Queries) LockRunLeaseClaimWorker(ctx context.Context, arg LockRunLeaseC
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.CurrentServiceID,
-		&i.SupportsRun,
-		&i.SupportsBuild,
 		&i.RuntimeIdentityID,
 		&i.SubstrateFormat,
 		&i.SubstrateContract,
@@ -2158,13 +2139,11 @@ func (q *Queries) LockRunLeaseClaimWorker(ctx context.Context, arg LockRunLeaseC
 		&i.PerVMMemoryBytes,
 		&i.PerVMGuestEphemeralDiskBytes,
 		&i.MaxVMSlots,
-		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
 		&i.CPUEnvironment,
 		&i.CPUEnvironmentDigest,
 		&i.ObservedAt,
 		&i.RunPausedReason,
-		&i.BuildPausedReason,
 		&i.RuntimePausedReason,
 		&i.EpochStartedAt,
 		&i.ActivatedAt,
@@ -2178,7 +2157,7 @@ func (q *Queries) LockRunLeaseClaimWorker(ctx context.Context, arg LockRunLeaseC
 }
 
 const lockRunLeaseClaimWorkerGroup = `-- name: LockRunLeaseClaimWorkerGroup :one
-SELECT id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, primary_run_pool_id, primary_build_pool_id, created_at, updated_at
+SELECT id, token_id, region_id, name, description, state, claim_version, primary_pool_id, created_at, updated_at
   FROM worker_groups
  WHERE id = $1
    AND region_id = $2
@@ -2201,10 +2180,7 @@ func (q *Queries) LockRunLeaseClaimWorkerGroup(ctx context.Context, arg LockRunL
 		&i.Description,
 		&i.State,
 		&i.ClaimVersion,
-		&i.AllowsRun,
-		&i.AllowsBuild,
-		&i.PrimaryRunPoolID,
-		&i.PrimaryBuildPoolID,
+		&i.PrimaryPoolID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

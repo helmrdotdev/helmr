@@ -46,7 +46,6 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertWorkspaceExecSchema(t, dbctx, pool)
 	assertTelemetrySchema(t, dbctx, pool)
 	assertWorkerSchema(t, dbctx, pool)
-	assertDeploymentBuildCapacitySchema(t, dbctx, pool)
 	assertDeploymentDefinitionAuthority(t, dbctx, pool)
 	assertWorkspaceVersionAuthority(t, dbctx, pool)
 	assertArtifactCreatorAuthority(t, dbctx, pool)
@@ -424,13 +423,11 @@ INSERT INTO worker_groups (
     'Artifact test'
 );
 INSERT INTO worker_pools (
-    id, worker_group_id, name, allows_run, allows_build
+    id, worker_group_id, name
 ) VALUES (
     '00000000-0000-7000-8000-000000000907',
     'artifact-test-workers',
-    'artifact-test-pool',
-    true,
-    true
+    'artifact-test-pool'
 );
 INSERT INTO worker_instances (
     id, resource_id, worker_group_id, worker_pool_id
@@ -908,39 +905,6 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 	}
 }
 
-func assertDeploymentBuildCapacitySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
-	t.Helper()
-	var legacyRelations int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*) FROM pg_class
-		 WHERE relnamespace = 'public'::regnamespace
-		   AND relname = ANY($1::text[])
-	`, []string{"deployment_build_leases", "registry_credential_resolutions"}).Scan(&legacyRelations); err != nil {
-		t.Fatal(err)
-	}
-	if legacyRelations != 0 {
-		t.Fatalf("legacy deployment build relations = %d, want 0", legacyRelations)
-	}
-	var legacyColumns int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM information_schema.columns
-		 WHERE table_schema = 'public'
-		   AND table_name = 'deployments'
-		   AND column_name = ANY($1::text[])
-	`, []string{
-		"status", "build_region_id", "build_node_version", "build_runtime_digest",
-		"build_toolchain_digest", "build_manager_name", "build_manager_version",
-		"build_manager_digest", "build_contract", "image_cache_mode",
-		"deployment_source_artifact_id", "failure",
-	}).Scan(&legacyColumns); err != nil {
-		t.Fatal(err)
-	}
-	if legacyColumns != 0 {
-		t.Fatalf("legacy deployment build columns = %d, want 0", legacyColumns)
-	}
-}
-
 func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	var deploymentColumns int
@@ -1017,8 +981,8 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		VALUES ('00000000-0000-7000-8000-000000000097', decode(repeat('07', 32), 'hex'));
 		INSERT INTO worker_groups (id, token_id, region_id, name)
 		VALUES ('shape-test', '00000000-0000-7000-8000-000000000097', 'shape-region', 'shape-test');
-		INSERT INTO worker_pools (id, worker_group_id, name, allows_run, allows_build)
-		VALUES ('00000000-0000-7000-8000-000000000098', 'shape-test', 'shape-pool', true, true);
+		INSERT INTO worker_pools (id, worker_group_id, name)
+		VALUES ('00000000-0000-7000-8000-000000000098', 'shape-test', 'shape-pool');
 		INSERT INTO worker_instances (id, resource_id, worker_group_id, worker_pool_id, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes)
 		VALUES ('00000000-0000-0000-0000-000000000099', 'shape-test', 'shape-test', '00000000-0000-7000-8000-000000000098', 2000, 2147483648, 8589934592);
 	`); err != nil {
@@ -1036,7 +1000,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 	if !exactFit || overShape {
-		t.Fatalf("fixed build guest exact/over shape fence = %t/%t", exactFit, overShape)
+		t.Fatalf("fixed guest exact/over shape fence = %t/%t", exactFit, overShape)
 	}
 	logicalTables := []string{"idempotency_claims", "schedules", "workspaces", "sessions", "session_records", "runs", "run_attempts", "run_waits", "run_checkpoints", "run_checkpoint_artifacts", "meter_events", "telemetry_outbox"}
 	var placementLeaks int

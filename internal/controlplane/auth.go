@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -26,7 +25,6 @@ type workerActor struct {
 	WorkerEpoch       int64
 	ClaimVersion      int64
 	GroupClaimVersion int64
-	Roles             []string
 	ResourceID        string
 	State             db.WorkerInstanceState
 	EpochStartedAt    time.Time
@@ -395,7 +393,6 @@ func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) ht
 			GroupClaimVersion: payload.GroupClaimVersion,
 			ResourceID:        strings.TrimSpace(row.ResourceID),
 			WorkerEpoch:       payload.WorkerEpoch,
-			Roles:             append([]string(nil), payload.Roles...),
 			State:             row.WorkerState,
 			EpochStartedAt:    pgvalue.Time(row.EpochStartedAt),
 		}
@@ -407,45 +404,7 @@ func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) ht
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
-		if row.SupportsRun || row.SupportsBuild {
-			expectedRoles := make([]string, 0, 2)
-			if row.SupportsBuild {
-				expectedRoles = append(expectedRoles, auth.WorkerRoleBuild)
-			}
-			if row.SupportsRun {
-				expectedRoles = append(expectedRoles, auth.WorkerRoleRun)
-			}
-			if !slices.Equal(payload.Roles, expectedRoles) {
-				writeError(w, unauthorized(errors.New("worker authentication is required")))
-				return
-			}
-		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), workerContextKey{}, worker)))
-	})
-}
-
-func requireActiveWorkerRole(role string, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		worker := workerFromContext(r.Context())
-		if worker.State != db.WorkerInstanceStateActive || !slices.Contains(worker.Roles, role) {
-			writeError(w, forbidden(errors.New("active worker role is required")))
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// requireWorkerRole authorizes an already authenticated worker for one
-// execution domain without imposing lifecycle state. In-flight work must be
-// able to renew and complete while the worker is draining; only new claims use
-// requireActiveWorkerRole.
-func requireWorkerRole(role string, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !slices.Contains(workerFromContext(r.Context()).Roles, role) {
-			writeError(w, forbidden(errors.New("worker role is required")))
-			return
-		}
-		next.ServeHTTP(w, r)
 	})
 }
 

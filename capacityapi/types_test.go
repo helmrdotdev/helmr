@@ -8,15 +8,13 @@ import (
 
 func TestWorkerTemplateValidation(t *testing.T) {
 	template := WorkerTemplate{
-		Schema:        WorkerTemplateSchema,
-		SupportsRun:   true,
-		SupportsBuild: true,
-		Runtime:       testRuntimeProfile(t),
-		CPUShapes:     testCPUShapes(4),
-		Substrate:     SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v0"},
+		Schema:    WorkerTemplateSchema,
+		Runtime:   testRuntimeProfile(t),
+		CPUShapes: testCPUShapes(4),
+		Substrate: SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v0"},
 		Capacity: ResourceVector{
 			CPUMillis: 8000, MemoryBytes: 16 << 30, GuestEphemeralDiskBytes: 128 << 30,
-			VMSlots: 2, BuildExecutors: 1,
+			VMSlots: 2,
 		},
 		PerVM: ResourceVector{
 			CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 32 << 30,
@@ -73,15 +71,6 @@ func TestWorkerTemplateRejectsCPUShapeOverflow(t *testing.T) {
 	template.PerVM.CPUMillis = math.MaxInt64
 	if err := template.Validate(); err == nil {
 		t.Fatal("template with an unrepresentable vCPU range was accepted")
-	}
-}
-
-func TestWorkerTemplateRejectsMultipleBuildExecutors(t *testing.T) {
-	template := validTestWorkerTemplate(t)
-	template.SupportsBuild = true
-	template.Capacity.BuildExecutors = 2
-	if err := template.Validate(); err == nil {
-		t.Fatal("template with multiple build executors was accepted")
 	}
 }
 

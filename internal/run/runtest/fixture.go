@@ -55,10 +55,10 @@ func New(t *testing.T) Fixture {
 		RuntimeIdentityID:     dbtest.Digest("run-lease-test-runtime"),
 		CPUConfigDigest:       dbtest.Digest("run-lease-test-cpu-config"),
 	}
-	sourceID := uuid.Must(uuid.NewV7())
 	programID := uuid.Must(uuid.NewV7())
 	imageID := uuid.Must(uuid.NewV7())
-	sourceDigest := dbtest.Digest("source")
+	bundleDigest := dbtest.Digest("bundle")
+	runtimeArtifactDigest := dbtest.Digest("runtime-artifact")
 	programDigest := dbtest.Digest("program")
 	imageDigest := dbtest.Digest("image")
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
@@ -92,36 +92,27 @@ func New(t *testing.T) Fixture {
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES
-			($1, $2, 1, 'application/vnd.helmr.deployment-source.v0+tar'),
-			($1, $3, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-			($1, $4, 1, 'application/octet-stream')
-	`, fixture.OrgID, sourceDigest, programDigest, imageDigest)
+			($1, $2, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+			($1, $3, 1, 'application/octet-stream')
+	`, fixture.OrgID, programDigest, imageDigest)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO artifacts (
 			id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type
 		) VALUES
-			($1, $4, $5, $6, $7, 'deployment_source', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
-			($2, $4, $5, $6, $8, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-			($3, $4, $5, $6, $9, 'workspace_image', 1, 'application/octet-stream')
-	`, sourceID, programID, imageID, fixture.OrgID, fixture.ProjectID,
-		fixture.EnvironmentID, sourceDigest, programDigest, imageDigest)
+			($1, $3, $4, $5, $6, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+			($2, $3, $4, $5, $7, 'workspace_image', 1, 'application/octet-stream')
+	`, programID, imageID, fixture.OrgID, fixture.ProjectID,
+		fixture.EnvironmentID, programDigest, imageDigest)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO deployments (
-			id, org_id, project_id, environment_id, build_region_id,
-			build_node_version, build_runtime_digest, build_toolchain_digest,
-			build_manager_name, build_manager_version, build_manager_digest,
-			build_contract, image_cache_mode, version, content_hash, deployment_source_artifact_id,
-			program_artifact_id, program_index_digest, queue_config, status
+			id, org_id, project_id, environment_id, version, bundle_digest,
+			runtime_artifact_digest, program_artifact_id, program_index_digest, queue_config
 		) VALUES (
-			$1, $2, $3, $4, $5, '24.16.0',
-			decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
-			'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
-			'helmr.program-build.v0', 'prefer', 'run-lease-test', $6, $7, $8,
-			decode(repeat('03', 32), 'hex'), '{}'::jsonb, 'deployed'
+			$1, $2, $3, $4, 'run-lease-test', $5, $6, $7,
+			decode(repeat('03', 32), 'hex'), '{}'::jsonb
 		)
 	`, fixture.DeploymentID, fixture.OrgID, fixture.ProjectID,
-		fixture.EnvironmentID, Region, sourceDigest,
-		sourceID, programID)
+		fixture.EnvironmentID, bundleDigest, runtimeArtifactDigest, programID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO deployment_definitions (
 			id, environment_id, deployment_id, kind, declared_id,
@@ -151,17 +142,17 @@ func New(t *testing.T) Fixture {
 		dbtest.Digest("run-lease-initramfs"), dbtest.Digest("run-lease-rootfs"))
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO worker_pools (
-			id, worker_group_id, name, state, allows_run, allows_build,
+			id, worker_group_id, name, state,
 			runtime_identity_id, substrate_format, substrate_contract,
 			capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes,
 			per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes,
-			max_vm_slots, max_build_executors, sealed_at
+			max_vm_slots, sealed_at
 		) VALUES (
-			$1, $2, 'default', 'active', true, false,
+			$1, $2, 'default', 'active',
 			$3, 'squashfs', 'builder-v0',
 			8000, 8589934592, 17179869184,
 			1000, 1073741824, 2147483648,
-			8, 0, now()
+			8, now()
 		)
 	`, fixture.WorkerPoolID, WorkerGroup, fixture.RuntimeIdentityID)
 	for vcpu := int32(1); vcpu <= 1; vcpu++ {
@@ -171,13 +162,13 @@ func New(t *testing.T) Fixture {
 		`, fixture.WorkerPoolID, vcpu, fixture.CPUConfigDigest)
 	}
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
-		UPDATE worker_groups SET primary_run_pool_id = $2 WHERE id = $1
+		UPDATE worker_groups SET primary_pool_id = $2 WHERE id = $1
 	`, WorkerGroup, fixture.WorkerPoolID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, worker_pool_id, state,
 			current_epoch, current_service_id,
-			supports_run, runtime_identity_id,
+			runtime_identity_id,
 			substrate_format, substrate_contract,
 			epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
 			per_vm_cpu_millis, per_vm_memory_bytes,
@@ -187,7 +178,7 @@ func New(t *testing.T) Fixture {
 			observed_at, epoch_started_at, activated_at
 		) VALUES (
 			$1, $2, $3, $4, 'active', 1, $5,
-			true, $6, 'squashfs', 'builder-v0',
+			$6, 'squashfs', 'builder-v0',
 			8000, 8589934592, 17179869184,
 			1000, 1073741824, 2147483648,
 			8, 8, '{}'::jsonb, $7, now(), now(), now()

@@ -127,7 +127,6 @@ func (d *Authority) prepareRunWorkspace(
 		RegionID:         authority.regionID,
 		WorkerInstanceID: worker.workerID,
 		WorkerEpoch:      worker.workerEpoch,
-		Role:             "run",
 		RunArchitecture:  authority.architecture,
 		RequirePrimary:   !authority.restoreCheckpointID.Valid,
 	}); err != nil {
@@ -204,7 +203,6 @@ func (d *Authority) useRunRuntime(
 		RegionID:         authority.regionID,
 		WorkerInstanceID: runtime.workerID,
 		WorkerEpoch:      runtime.workerEpoch,
-		Role:             "run",
 		RunArchitecture:  authority.architecture,
 	}); err != nil {
 		return runWorkspaceMount{}, ErrCapacityUnavailable
@@ -584,39 +582,21 @@ SELECT worker_instances.per_vm_cpu_millis >= $4
               WHERE worker_instance_id = worker_instances.id
                 AND worker_epoch = worker_instances.current_epoch
                 AND reclaimed_at IS NULL
-         ), 0) + coalesce((
-             SELECT sum(requested_cpu_millis)
-               FROM deployment_build_leases
-              WHERE worker_instance_id = worker_instances.id
-                AND worker_epoch = worker_instances.current_epoch
-                AND state IN ('assigned', 'starting', 'running')
-         ), 0) AS cpu_millis,
+	         ), 0) AS cpu_millis,
          coalesce((
              SELECT sum(reserved_memory_bytes)
                FROM runtime_instances
               WHERE worker_instance_id = worker_instances.id
                 AND worker_epoch = worker_instances.current_epoch
                 AND reclaimed_at IS NULL
-         ), 0) + coalesce((
-             SELECT sum(requested_memory_bytes)
-               FROM deployment_build_leases
-              WHERE worker_instance_id = worker_instances.id
-                AND worker_epoch = worker_instances.current_epoch
-                AND state IN ('assigned', 'starting', 'running')
-         ), 0) AS memory_bytes,
+	         ), 0) AS memory_bytes,
          coalesce((
              SELECT sum(reserved_guest_ephemeral_disk_bytes)
                FROM runtime_instances
               WHERE worker_instance_id = worker_instances.id
                 AND worker_epoch = worker_instances.current_epoch
                 AND reclaimed_at IS NULL
-         ), 0) + coalesce((
-             SELECT sum(requested_guest_ephemeral_disk_bytes)
-               FROM deployment_build_leases
-              WHERE worker_instance_id = worker_instances.id
-                AND worker_epoch = worker_instances.current_epoch
-                AND state IN ('assigned', 'starting', 'running')
-         ), 0) AS guest_ephemeral_disk_bytes
+	         ), 0) AS guest_ephemeral_disk_bytes
  ) AS usage
  WHERE worker_instances.id = $1
    AND worker_instances.worker_group_id = $2

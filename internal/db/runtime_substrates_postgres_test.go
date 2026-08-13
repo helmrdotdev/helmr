@@ -185,8 +185,7 @@ func TestLockRuntimeSubstrateAuthorityFencesWorkerAndContract(t *testing.T) {
 	}
 	dbtest.MustExec(t, ctx, pool, `
 		UPDATE worker_instances
-		   SET supports_run = false,
-		       runtime_identity_id = NULL,
+		   SET runtime_identity_id = NULL,
 		       substrate_format = '',
 		       substrate_contract = '',
 		       epoch_cpu_millis = 0,
@@ -196,7 +195,6 @@ func TestLockRuntimeSubstrateAuthorityFencesWorkerAndContract(t *testing.T) {
 		       per_vm_memory_bytes = 0,
 		       per_vm_guest_ephemeral_disk_bytes = 0,
 		       max_vm_slots = 0,
-		       max_build_executors = 0,
 		       max_runtime_starts = 0,
 		       activated_at = NULL
 		 WHERE id = $1
@@ -221,9 +219,11 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	projectID := uuid.Must(uuid.NewV7())
 	environmentID := uuid.Must(uuid.NewV7())
 	deploymentID := uuid.Must(uuid.NewV7())
-	sourceArtifactID := uuid.Must(uuid.NewV7())
+	programArtifactID := uuid.Must(uuid.NewV7())
 	imageArtifactID := uuid.Must(uuid.NewV7())
-	sourceDigest := dbtest.Digest("authority-source-" + deploymentID.String())
+	bundleDigest := dbtest.Digest("authority-bundle-" + deploymentID.String())
+	runtimeDigest := dbtest.Digest("authority-runtime-" + deploymentID.String())
+	programDigest := dbtest.Digest("authority-program-" + deploymentID.String())
 	imageDigest := dbtest.Digest("authority-image-" + deploymentID.String())
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO organizations (id, name, slug)
@@ -240,29 +240,24 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	`, environmentID, orgID, projectID, "authority-"+dbtest.ShortID(environmentID))
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, 1, 'application/octet-stream'), ($1, $3, 1, 'application/octet-stream')
-	`, orgID, sourceDigest, imageDigest)
+		VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'), ($1, $3, 1, 'application/octet-stream')
+	`, orgID, programDigest, imageDigest)
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
 		VALUES
-			($1, $3, $4, $5, $6, 'deployment_source', 1, 'application/octet-stream'),
+			($1, $3, $4, $5, $6, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
 			($2, $3, $4, $5, $7, 'workspace_image', 1, 'application/octet-stream')
-	`, sourceArtifactID, imageArtifactID, orgID, projectID, environmentID, sourceDigest, imageDigest)
+	`, programArtifactID, imageArtifactID, orgID, projectID, environmentID, programDigest, imageDigest)
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO deployments (
-			id, org_id, build_region_id, project_id, environment_id,
-			build_node_version, build_runtime_digest, build_toolchain_digest,
-			build_manager_name, build_manager_version, build_manager_digest,
-			build_contract, image_cache_mode, version, content_hash, deployment_source_artifact_id,
-			queue_config, status
+			id, org_id, project_id, environment_id, version, bundle_digest,
+			runtime_artifact_digest, program_artifact_id, program_index_digest, queue_config
 		) VALUES (
-			$1, $2, $3, $4, $5, '24.16.0',
-			decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
-			'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
-			'helmr.program-build.v0', 'prefer', 'authority', $6, $7, '{}'::jsonb, 'deployed'
+			$1, $2, $3, $4, 'authority', $5, $6, $7,
+			decode(repeat('03', 32), 'hex'), '{}'::jsonb
 		)
-	`, deploymentID, orgID, dbtest.DefaultRegionID,
-		projectID, environmentID, sourceDigest, sourceArtifactID)
+	`, deploymentID, orgID, projectID, environmentID,
+		bundleDigest, runtimeDigest, programArtifactID)
 	definitionID := uuid.Must(uuid.NewV7())
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO deployment_definitions (
@@ -313,21 +308,21 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, worker_pool_id, state,
 			current_epoch, current_service_id,
-			supports_run, supports_build, runtime_identity_id,
+			runtime_identity_id,
 			substrate_format, substrate_contract,
 			epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
 			per_vm_cpu_millis, per_vm_memory_bytes,
 			per_vm_guest_ephemeral_disk_bytes,
-			max_vm_slots, max_build_executors, max_runtime_starts,
+			max_vm_slots, max_runtime_starts,
 			cpu_environment, cpu_environment_digest,
 			observed_at, epoch_started_at, activated_at
 		) VALUES (
 			$1, $2, $3, $4, 'active',
 			1, $5,
-			true, true, $6, 'ext4', 'helmr.substrate.ext4.v0',
+			$6, 'ext4', 'helmr.substrate.ext4.v0',
 			8000, 17179869184, 274877906944,
 			4000, 8589934592, 34359738368,
-			8, 1, 1, '{}'::jsonb, $7, now(), now(), now()
+			8, 1, '{}'::jsonb, $7, now(), now(), now()
 		)
 	`, workerID, "authority-"+workerID.String(), dbtest.DefaultWorkerGroupID,
 		dbtest.DefaultWorkerPoolID, uuid.Must(uuid.NewV7()), dbtest.DefaultRuntimeID,

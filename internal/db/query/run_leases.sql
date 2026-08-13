@@ -20,20 +20,18 @@ SELECT run_leases.*
 -- name: DiscoverWorkerRunLeaseWork :many
 WITH worker AS (
     SELECT worker_instances.id,
-           worker_instances.current_epoch,
-           worker_instances.state,
-           worker_instances.max_vm_slots,
-           worker_groups.state AS group_state,
-           worker_groups.allows_run
+	       worker_instances.current_epoch,
+	       worker_instances.state,
+	       worker_instances.max_vm_slots,
+	       worker_groups.state AS group_state
       FROM worker_instances
       JOIN worker_groups
         ON worker_groups.id = worker_instances.worker_group_id
        AND worker_groups.state IN ('active', 'draining')
      WHERE worker_instances.id = sqlc.arg(worker_instance_id)
-       AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
-       AND worker_instances.current_epoch = sqlc.arg(worker_epoch)::bigint
-       AND worker_instances.state IN ('active', 'draining')
-       AND worker_instances.supports_run
+	   AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
+	   AND worker_instances.current_epoch = sqlc.arg(worker_epoch)::bigint
+	   AND worker_instances.state IN ('active', 'draining')
 )
 SELECT run_leases.id,
        run_leases.lease_sequence
@@ -47,10 +45,9 @@ SELECT run_leases.id,
    AND run_leases.expires_at > transaction_timestamp()
    AND (
        run_leases.state = 'starting'
-       OR (
-           worker.group_state = 'active'
-           AND worker.allows_run
-           AND worker.state = 'active'
+	       OR (
+	           worker.group_state = 'active'
+	           AND worker.state = 'active'
        )
    )
  ORDER BY CASE run_leases.state
@@ -129,7 +126,6 @@ SELECT run_leases.org_id,
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
    AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.supports_run
   JOIN runtime_instances
     ON runtime_instances.id = run_leases.runtime_instance_id
    AND runtime_instances.workspace_id = run_leases.workspace_id
@@ -194,7 +190,6 @@ SELECT run_leases.org_id,
        run_leases.state = 'starting'
        OR (
            worker_groups.state = 'active'
-           AND worker_groups.allows_run
            AND worker_instances.state = 'active'
        )
    );
@@ -240,13 +235,11 @@ SELECT run_leases.org_id,
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
    AND worker_groups.state IN ('active', 'draining')
-   AND worker_groups.allows_run
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
    AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.supports_run
   JOIN runtime_instances
     ON runtime_instances.id = run_leases.runtime_instance_id
    AND runtime_instances.workspace_id = run_leases.workspace_id
@@ -302,7 +295,6 @@ SELECT run_leases.environment_id,
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
    AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.supports_run
  WHERE run_leases.id = sqlc.arg(id)
    AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
    AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
@@ -315,7 +307,6 @@ SELECT run_leases.environment_id,
        run_leases.state = 'starting'
        OR (
            worker_groups.state = 'active'
-           AND worker_groups.allows_run
            AND worker_instances.state = 'active'
        )
    );
@@ -342,13 +333,11 @@ SELECT run_leases.org_id,
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
    AND worker_groups.state = 'active'
-   AND worker_groups.allows_run
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
    AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.supports_run
   JOIN workspace_leases
     ON workspace_leases.owner_run_lease_id = run_leases.id
    AND workspace_leases.workspace_id = run_leases.workspace_id
@@ -395,13 +384,11 @@ SELECT run_leases.org_id,
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
    AND worker_groups.state IN ('active', 'draining')
-   AND worker_groups.allows_run
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
    AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.supports_run
   JOIN workspace_leases
     ON workspace_leases.owner_run_lease_id = run_leases.id
    AND workspace_leases.workspace_id = run_leases.workspace_id

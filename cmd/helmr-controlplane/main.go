@@ -55,6 +55,12 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "release":
+			if err := runReleaseCommand(context.Background(), os.Args[2:]); err != nil {
+				log.Error("publish platform release", "error", err)
+				os.Exit(1)
+			}
+			return
 		case "worker-group":
 			if err := runWorkerGroupStateCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
 				log.Error("manage worker group state", "error", err)

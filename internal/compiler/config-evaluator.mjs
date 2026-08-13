@@ -1936,30 +1936,6 @@ var sessions = Object.freeze({
 // sdk/typescript/src/definitions.ts
 var privateDefinitionBrand = Symbol.for("helmr.sdk.v0.definition");
 var privateQueueBrand = Symbol.for("helmr.sdk.v0.queue");
-// sdk/typescript/src/secret.ts
-var secretAddressBrand = Symbol.for("helmr.sdk.v0.secret-address");
-var secretNamePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
-
-class SecretNameAddress {
-  name;
-  constructor(name) {
-    validateSecretName(name);
-    this.name = name;
-    Object.defineProperty(this, secretAddressBrand, { value: true });
-    Object.freeze(this);
-  }
-}
-var secrets = Object.freeze({
-  fromName(name) {
-    return new SecretNameAddress(name);
-  }
-});
-function validateSecretName(value) {
-  if (!secretNamePattern.test(value)) {
-    throw new Error("Secret name is invalid");
-  }
-}
-
 // sdk/typescript/src/image.ts
 var imageBrand = Symbol.for("helmr.sdk.v0.image");
 var sourceFileBrand = Symbol.for("helmr.sdk.v0.source-file");
@@ -1989,6 +1965,30 @@ var source = Object.freeze({
     return new SourceDirectoryValue(path);
   }
 });
+// sdk/typescript/src/secret.ts
+var secretAddressBrand = Symbol.for("helmr.sdk.v0.secret-address");
+var secretNamePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+
+class SecretNameAddress {
+  name;
+  constructor(name) {
+    validateSecretName(name);
+    this.name = name;
+    Object.defineProperty(this, secretAddressBrand, { value: true });
+    Object.freeze(this);
+  }
+}
+var secrets = Object.freeze({
+  fromName(name) {
+    return new SecretNameAddress(name);
+  }
+});
+function validateSecretName(value) {
+  if (!secretNamePattern.test(value)) {
+    throw new Error("Secret name is invalid");
+  }
+}
+
 // sdk/typescript/src/workspace.ts
 var sandboxDefinitionBrand = Symbol.for("helmr.sdk.v0.sandbox");
 var workspaceAddressBrand = Symbol.for("helmr.sdk.v0.workspace-address");

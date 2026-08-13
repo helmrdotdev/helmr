@@ -212,85 +212,22 @@ func (c *Connector) connectorForRequest(
 	request vm.ConnectRequest,
 ) (*Connector, error) {
 	cfg := c.cfg
-	var kernelArgs string
-	switch request.OwnerKind {
-	case vm.OwnerBuild, vm.OwnerImageBuild:
-		if err := validateReadOnlyDrives(request.ReadOnlyDrives); err != nil {
-			return nil, err
-		}
-		var err error
-		kernelArgs, err = buildGuestProfile(request)
-		if err != nil {
-			return nil, err
-		}
-		cfg, err = c.configForResources(request.Resources, string(request.OwnerKind)+" guest")
-		if err != nil {
-			return nil, err
-		}
-	case vm.OwnerRuntime:
-		if len(request.ReadOnlyDrives) != 0 {
-			return nil, errors.New("runtime attachment cannot add read-only drives")
-		}
-		if request.Resources != (compute.ResourceVector{}) {
-			return nil, errors.New("runtime attachment cannot change resources")
-		}
-		if request.PIDsMax != 0 {
-			return nil, errors.New("runtime attachment cannot change physical isolation")
-		}
-		kernelArgs = runtimeKernelArgs(request.Topology, nil)
-	default:
+	if request.OwnerKind != vm.OwnerRuntime {
 		return nil, errors.New("the Firecracker owner kind is invalid")
+	}
+	if len(request.ReadOnlyDrives) != 0 {
+		return nil, errors.New("runtime attachment cannot add read-only drives")
+	}
+	if request.Resources != (compute.ResourceVector{}) {
+		return nil, errors.New("runtime attachment cannot change resources")
+	}
+	if request.PIDsMax != 0 {
+		return nil, errors.New("runtime attachment cannot change physical isolation")
 	}
 	child := *c
 	child.cfg = cfg
-	child.kernelArgs = kernelArgs
+	child.kernelArgs = runtimeKernelArgs(request.Topology, nil)
 	return &child, nil
-}
-
-func buildGuestProfile(request vm.ConnectRequest) (string, error) {
-	noSubstrate := request.Topology.Substrate == nil
-	switch {
-	case request.Resources == compute.BuildGuestResources() &&
-		request.PIDsMax == compute.BuildGuestPIDsMax &&
-		request.OwnerKind == vm.OwnerBuild &&
-		noSubstrate &&
-		isBuildInstallDriveSet(request.ReadOnlyDrives):
-		return buildKernelArgs, nil
-	case request.Resources == compute.ImageBuildGuestResources() &&
-		request.PIDsMax == compute.ImageBuildGuestPIDsMax &&
-		request.OwnerKind == vm.OwnerImageBuild &&
-		noSubstrate &&
-		len(request.ReadOnlyDrives) == 0:
-		return imageBuildKernelArgs, nil
-	default:
-		return "", errors.New("build guest resources do not match the platform profile")
-	}
-}
-
-func isBuildInstallDriveSet(drives []vm.ReadOnlyDrive) bool {
-	return exactDriveSet(
-		drives,
-		vm.ManagerDrive,
-		vm.ManagedRuntimeDrive,
-		vm.ToolchainDrive,
-	)
-}
-
-func exactDriveSet(drives []vm.ReadOnlyDrive, expected ...string) bool {
-	if len(drives) != len(expected) {
-		return false
-	}
-	present := make(map[string]bool, len(drives))
-	for _, drive := range drives {
-		present[drive.ID] = true
-	}
-	for _, id := range expected {
-		if !present[id] {
-			return false
-		}
-		delete(present, id)
-	}
-	return len(present) == 0
 }
 
 func isProgramDriveSet(drives []vm.ReadOnlyDrive) bool {
@@ -1175,7 +1112,6 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 		readOnlyDrives:  append([]vm.ReadOnlyDrive(nil), readOnlyDrives...),
 		owner:           owner,
 		cleaner:         connectorCleaner{connector: c},
-		buildNetwork:    isBuildGuestKernelArgs(c.kernelArgsValue()),
 		networkBinding:  networkBinding,
 	}
 	session.watchNetworkFailure()
@@ -1262,14 +1198,7 @@ func (c *Connector) createScratchDisk(ctx context.Context, scratchDiskPath strin
 }
 
 func (c *Connector) scratchUsableFloor() uint64 {
-	if isBuildGuestKernelArgs(c.kernelArgsValue()) {
-		return 19 * 1024 * 1024 * 1024
-	}
 	return 0
-}
-
-func isBuildGuestKernelArgs(value string) bool {
-	return value == buildKernelArgs || value == imageBuildKernelArgs
 }
 
 func ext4FreeBytes(path string) (uint64, error) {
@@ -1363,11 +1292,7 @@ func validateReadOnlyDrives(drives []vm.ReadOnlyDrive) error {
 	for index, drive := range drives {
 		switch drive.ID {
 		case vm.ProgramRuntimeDrive,
-			vm.ProgramDrive,
-			vm.ManagerDrive,
-			vm.ManagedRuntimeDrive,
-			vm.ToolchainDrive,
-			vm.BuildTreeDrive:
+			vm.ProgramDrive:
 		default:
 			return fmt.Errorf(
 				"read-only drive %d ID %q is invalid",
@@ -1623,7 +1548,7 @@ type healthResponse struct {
 func readHealth(conn io.ReadWriter) (healthResponse, error) {
 	req, err := http.NewRequest(http.MethodGet, "http://guestd/", nil)
 	if err != nil {
-		return healthResponse{}, fmt.Errorf("build guest health request: %w", err)
+		return healthResponse{}, fmt.Errorf("guest health request: %w", err)
 	}
 	req.Close = true
 	if err := req.Write(conn); err != nil {
@@ -1835,7 +1760,6 @@ type guestSession struct {
 	readOnlyDrives  []vm.ReadOnlyDrive
 	owner           vm.Owner
 	cleaner         vm.Cleaner
-	buildNetwork    bool
 	networkBinding  *installedNetworkBinding
 	paused          atomic.Bool
 	once            sync.Once
@@ -1892,28 +1816,9 @@ func (s *guestSession) OpenStream(ctx context.Context) (vm.Stream, error) {
 	return (&Connector{cfg: s.cfg}).connectGuestPort(ctx, s.vsockHostPath, s.machineExit)
 }
 
-func (s *guestSession) BuildNetworkStatus(
-	ctx context.Context,
-) (vm.BuildNetworkStatus, error) {
-	if !s.buildNetwork {
-		return vm.BuildNetworkStatus{}, errors.New(
-			"the Firecracker session is not a build guest",
-		)
-	}
-	return (&Connector{cfg: s.cfg}).readBuildNetworkStatus(
-		ctx,
-		s.owner.ID,
-	)
-}
-
 func (s *guestSession) RunNetworkStatus(
 	ctx context.Context,
 ) (vm.RunNetworkStatus, error) {
-	if s.buildNetwork {
-		return vm.RunNetworkStatus{}, errors.New(
-			"the Firecracker session is a build guest",
-		)
-	}
 	return (&Connector{cfg: s.cfg}).readRunNetworkStatus(
 		ctx,
 		s.owner.ID,

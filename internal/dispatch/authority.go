@@ -19,7 +19,7 @@ var (
 	ErrCandidateChanged    = errors.New("dispatch: placement candidate changed while locking")
 )
 
-const platformArchitecture = "x86_64"
+const runtimeArchitecture = "x86_64"
 
 type Authority struct {
 	pool          *pgxpool.Pool
@@ -40,10 +40,6 @@ func NewRunAuthority(
 	}
 	authority.fencingKey = fencingKey
 	return authority, nil
-}
-
-func NewBuildAuthority(pool *pgxpool.Pool) (*Authority, error) {
-	return newAuthority(pool)
 }
 
 func newAuthority(pool *pgxpool.Pool) (*Authority, error) {
@@ -70,7 +66,6 @@ type workerFence struct {
 	RegionID         string
 	WorkerInstanceID pgtype.UUID
 	WorkerEpoch      int64
-	Role             string
 	RunArchitecture  string
 	RequirePrimary   bool
 }
@@ -86,8 +81,7 @@ func lockWorkerFence(ctx context.Context, tx pgx.Tx, fence workerFence) error {
 SELECT id
   FROM worker_groups
  WHERE id = $1 AND region_id = $2 AND state = 'active'
-   AND (($3 = 'run' AND allows_run) OR ($3 = 'build' AND allows_build))
- FOR SHARE`, fence.GroupID, fence.RegionID, fence.Role).Scan(&groupID)
+ FOR SHARE`, fence.GroupID, fence.RegionID).Scan(&groupID)
 	if err != nil {
 		return fmt.Errorf("lock eligible worker group: %w", err)
 	}
@@ -103,22 +97,12 @@ SELECT worker_pools.id
  WHERE worker_instances.id = $1
    AND worker_instances.worker_group_id = $2
    AND worker_pools.state = 'active'
-   AND (($3 = 'run' AND worker_pools.allows_run)
-        OR ($3 = 'build' AND worker_pools.allows_build))
-	AND (
-	    NOT $4::boolean
-	    OR ($3 = 'run' AND worker_groups.primary_run_pool_id = worker_pools.id)
-	    OR ($3 = 'build' AND worker_groups.primary_build_pool_id = worker_pools.id)
-	)
-	FOR SHARE OF worker_pools`, fence.WorkerInstanceID, fence.GroupID, fence.Role, fence.RequirePrimary).Scan(&poolID)
+	AND (NOT $3::boolean OR worker_groups.primary_pool_id = worker_pools.id)
+	FOR SHARE OF worker_pools`, fence.WorkerInstanceID, fence.GroupID, fence.RequirePrimary).Scan(&poolID)
 	if err != nil {
 		return fmt.Errorf("lock eligible worker pool: %w", err)
 	}
 
-	architecture := fence.RunArchitecture
-	if fence.Role == "build" {
-		architecture = platformArchitecture
-	}
 	var workerID pgtype.UUID
 	err = tx.QueryRow(ctx, `
 SELECT worker_instances.id
@@ -135,27 +119,16 @@ SELECT worker_instances.id
    AND worker_instances.current_epoch = $3
    AND worker_instances.state = 'active'
    AND worker_pools.state = 'active'
-   AND worker_instances.observed_at >= transaction_timestamp() - $6 * interval '1 second'
-	AND (($4 = 'run' AND worker_instances.supports_run)
-	     OR ($4 = 'build' AND worker_instances.supports_build))
-	AND (($4 = 'run' AND worker_instances.run_paused_reason IS NULL)
-	     OR ($4 = 'build' AND worker_instances.build_paused_reason IS NULL))
-	AND runtime_identities.runtime_arch = $5
-	   AND runtime_identities.vm_runtime_contract = $7
+	AND worker_instances.observed_at >= transaction_timestamp() - $5 * interval '1 second'
+	AND worker_instances.run_paused_reason IS NULL
+	AND runtime_identities.runtime_arch = $4
+	   AND runtime_identities.vm_runtime_contract = $6
 	FOR UPDATE OF worker_instances`, fence.WorkerInstanceID, fence.GroupID,
-		fence.WorkerEpoch, fence.Role, architecture,
+		fence.WorkerEpoch, fence.RunArchitecture,
 		workerapi.WorkerObservationFreshnessSeconds, capacityapi.RuntimeContract,
 	).Scan(&workerID)
 	if err != nil {
 		return fmt.Errorf("lock eligible worker epoch: %w", err)
-	}
-	return nil
-}
-
-func lockSource(ctx context.Context, tx pgx.Tx, kind string, id pgtype.UUID) error {
-	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(concat_ws(':', $1::text, $2::uuid::text), 0))`, kind, id)
-	if err != nil {
-		return fmt.Errorf("lock %s source: %w", kind, err)
 	}
 	return nil
 }

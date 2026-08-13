@@ -72,12 +72,6 @@ variable "bootstrap_worker_group_name" {
   }
 }
 
-variable "image_cache_worker_role_arns" {
-  description = "Deployment-owned IAM roles permitted to assume the Execution image-cache role."
-  type        = list(string)
-  default     = []
-}
-
 variable "bootstrap_region_id" {
   description = "ID of the initial Region. Defaults to the AWS provider region."
   type        = string
@@ -199,16 +193,6 @@ variable "platform_store_kms_key_arn" {
   validation {
     condition     = can(regex("^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[0-9a-fA-F-]+$", var.platform_store_kms_key_arn))
     error_message = "platform_store_kms_key_arn must be a KMS key ARN."
-  }
-}
-
-variable "build_policy_digest" {
-  description = "Exact immutable build-policy object digest installed before Control Plane starts."
-  type        = string
-
-  validation {
-    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.build_policy_digest))
-    error_message = "build_policy_digest must be lowercase sha256:<64 hexadecimal digits>."
   }
 }
 

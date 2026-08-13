@@ -199,8 +199,7 @@ func (r *WaitReconciler) RegisterWait(
 		ID: request.WorkerGroupID, RegionID: locators.RegionID,
 	})
 	if err != nil ||
-		(workerGroup.State != db.WorkerGroupStateActive && workerGroup.State != db.WorkerGroupStateDraining) ||
-		!workerGroup.AllowsRun {
+		(workerGroup.State != db.WorkerGroupStateActive && workerGroup.State != db.WorkerGroupStateDraining) {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock active worker group", err)
 	}
 	worker, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{
@@ -210,7 +209,6 @@ func (r *WaitReconciler) RegisterWait(
 		(worker.State != db.WorkerInstanceStateActive && worker.State != db.WorkerInstanceStateDraining) ||
 		!worker.CurrentEpoch.Valid ||
 		worker.CurrentEpoch.Int64 != request.WorkerEpoch ||
-		!worker.SupportsRun ||
 		!worker.RuntimeIdentityID.Valid {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current worker epoch", err)
 	}

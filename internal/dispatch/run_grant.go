@@ -81,7 +81,6 @@ func (d *Authority) grantFreshRun(
 		RegionID:         authority.regionID,
 		WorkerInstanceID: runtime.workerID,
 		WorkerEpoch:      runtime.workerEpoch,
-		Role:             "run",
 		RunArchitecture:  authority.architecture,
 	}); err != nil {
 		return db.RunLease{}, ErrCapacityUnavailable

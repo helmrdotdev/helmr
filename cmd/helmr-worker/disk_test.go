@@ -44,14 +44,8 @@ func TestAdvertisedWorkerDiskCapacityFitsNButNotNPlusOne(t *testing.T) {
 }
 
 func TestAdmissionDiskFloorMatchesWorkerFilesystemContract(t *testing.T) {
-	if got := admissionDiskFloorMiB(false, 8192, 1024); got != 9216 {
+	if got := admissionDiskFloorMiB(8192, 1024); got != 9216 {
 		t.Fatalf("run disk floor = %d, want 9216", got)
-	}
-	if got := admissionDiskFloorMiB(true, 32768, 1024); got != 32768 {
-		t.Fatalf("build disk floor = %d, want 32768", got)
-	}
-	if got := admissionDiskFloorMiB(true, 65536, 1024); got != 65536 {
-		t.Fatalf("mixed worker disk floor = %d, want 65536", got)
 	}
 }
 

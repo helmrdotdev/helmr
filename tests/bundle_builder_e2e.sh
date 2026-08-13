@@ -4,9 +4,15 @@ set -euo pipefail
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 tmp=$(mktemp -d)
 registry_name="helmr-bundle-builder-registry-$$"
+buildx_name="helmr-bundle-builder-$$"
 cleanup() {
+  docker buildx rm "$buildx_name" >/dev/null 2>&1 || true
   docker rm -f "$registry_name" >/dev/null 2>&1 || true
-  rm -rf "$tmp"
+  if [ "${KEEP_BUNDLE_E2E_TMP:-0}" = 1 ]; then
+    printf 'bundle builder e2e artifacts: %s\n' "$tmp" >&2
+  else
+    rm -rf "$tmp"
+  fi
 }
 trap cleanup EXIT
 
@@ -17,7 +23,12 @@ docker run --detach --rm \
   >/dev/null
 registry_port="$(docker port "$registry_name" 5000/tcp | sed -n 's/^127\.0\.0\.1://p')"
 [ -n "$registry_port" ]
-registry_endpoint="localhost:$registry_port"
+registry_endpoint="127.0.0.1:$registry_port"
+if [ "$(uname -s)" = "Darwin" ]; then
+  builder_registry_endpoint="host.docker.internal:$registry_port"
+else
+  builder_registry_endpoint="$registry_endpoint"
+fi
 for _ in $(seq 1 50); do
   if curl --fail --silent "http://$registry_endpoint/v2/" >/dev/null; then
     break
@@ -26,20 +37,45 @@ for _ in $(seq 1 50); do
 done
 curl --fail --silent "http://$registry_endpoint/v2/" >/dev/null
 
-nix build "$repo_root#bundleBuilderImage" --out-link "$tmp/builder-image"
-docker load -i "$tmp/builder-image" >/dev/null
-docker tag helmr/bundle-builder:0 "$registry_endpoint/helmr/bundle-builder:test"
-docker push "$registry_endpoint/helmr/bundle-builder:test" >/dev/null
-builder_digest=$(
-  docker buildx imagetools inspect \
-    "$registry_endpoint/helmr/bundle-builder:test" \
-    --format '{{json .Manifest.Digest}}' | jq -er '.'
-)
-builder_image="$registry_endpoint/helmr/bundle-builder@$builder_digest"
+if [ -n "${BUNDLE_BUILDER_IMAGE_ARCHIVE:-}" ]; then
+  [ -f "$BUNDLE_BUILDER_IMAGE_ARCHIVE" ]
+  builder_archive="$BUNDLE_BUILDER_IMAGE_ARCHIVE"
+else
+  nix build "$repo_root#bundleBuilderImage" --out-link "$tmp/builder-image"
+  builder_archive="$tmp/builder-image"
+fi
+docker load -i "$builder_archive" >/dev/null
+printf '%s\n' '{"default":[{"type":"insecureAcceptAnything"}]}' >"$tmp/containers-policy.json"
+skopeo --policy "$tmp/containers-policy.json" copy \
+  --dest-tls-verify=false \
+  docker-daemon:helmr/bundle-builder:0 \
+  "docker://$registry_endpoint/helmr/bundle-builder:test" \
+  >/dev/null
+builder_digest="$(
+  skopeo --policy "$tmp/containers-policy.json" inspect \
+    --tls-verify=false \
+    --format '{{.Digest}}' \
+    "docker://$registry_endpoint/helmr/bundle-builder:test"
+)"
+[[ "$builder_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+cat >"$tmp/buildkitd.toml" <<EOF
+[registry."$builder_registry_endpoint"]
+  http = true
+  insecure = true
+EOF
+docker buildx create \
+  --name "$buildx_name" \
+  --driver docker-container \
+  --driver-opt network=host \
+  --buildkitd-config "$tmp/buildkitd.toml" \
+  >/dev/null
+export BUILDX_BUILDER="$buildx_name"
+docker buildx inspect --bootstrap >/dev/null
+builder_image="$builder_registry_endpoint/helmr/bundle-builder@$builder_digest"
 
 go -C "$repo_root" build \
   -trimpath \
-  -ldflags="-X github.com/helmrdotdev/helmr/cmd/helmr.deploymentBundleBuilderImage=$builder_image" \
+  -ldflags="-X main.deploymentBundleBuilderImage=$builder_image" \
   -o "$tmp/helmr" \
   ./cmd/helmr
 
@@ -108,6 +144,16 @@ build_fixture pnpm pnpm@10.14.0
 build_fixture bun bun@1.3.10
 build_fixture yarn yarn@4.9.2
 build_fixture custom "" --install-command ./prepare.sh
+export HELMR_E2E_BUILD_TOKEN="bundle-e2e-secret-sentinel"
+build_secret_digest=$(printf '%s' "$HELMR_E2E_BUILD_TOKEN" | shasum -a 256 | awk '{print $1}')
+build_fixture secret "" \
+  --build-secret HELMR_E2E_BUILD_TOKEN \
+  --install-command "test \"\$(sha256sum /run/secrets/HELMR_E2E_BUILD_TOKEN | cut -d' ' -f1)\" = '$build_secret_digest' && ./prepare.sh"
+if rg -a -F "$HELMR_E2E_BUILD_TOKEN" "$tmp/secret"; then
+  echo "build secret leaked into the deployment bundle" >&2
+  exit 1
+fi
+unset HELMR_E2E_BUILD_TOKEN
 build_fixture npm-repeat npm@11.5.1
 diff -r "$tmp/npm" "$tmp/npm-repeat"
 
@@ -130,7 +176,7 @@ try {
   }
 }
 try {
-  writeFileSync(new URL("./mutation.txt", import.meta.url), "must-not-be-written")
+  writeFileSync("/workspace/project/mutation.txt", "must-not-be-written")
   throw new Error("installed tree was writable")
 } catch (error) {
   const code = error && typeof error === "object" && "code" in error ? error.code : ""
@@ -195,7 +241,7 @@ export const schedules = Object.freeze({
       [brand]: Object.freeze({
         kind: "task",
         id: config.id,
-        hasPayload: false,
+        hasPayload: true,
         handler: config.run,
         schedule: Object.freeze({
           cron: config.cron.pattern,

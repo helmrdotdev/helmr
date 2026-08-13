@@ -56,15 +56,6 @@ func TestParseDeploymentBundleRequiresClosedCanonicalShape(t *testing.T) {
 			errMsg: "unknown field",
 		},
 		{
-			name: "producer build policy",
-			raw: func() []byte {
-				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
-					root["buildPolicyDigest"] = "sha256:" + strings.Repeat("b", 64)
-				})
-			},
-			errMsg: "unknown field",
-		},
-		{
 			name: "producer sandbox build instructions",
 			raw: func() []byte {
 				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {

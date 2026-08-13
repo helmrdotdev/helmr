@@ -44,7 +44,6 @@ type ResourceVector struct {
 	MemoryBytes             int64 `json:"memory_bytes"`
 	GuestEphemeralDiskBytes int64 `json:"guest_ephemeral_disk_bytes"`
 	VMSlots                 int64 `json:"vm_slots,omitempty"`
-	BuildExecutors          int64 `json:"build_executors,omitempty"`
 }
 
 const WorkerTemplateSchema = "helmr.worker-template.v0"
@@ -177,14 +176,12 @@ type SubstrateProfile struct {
 }
 
 type WorkerTemplate struct {
-	Schema        string           `json:"schema"`
-	SupportsRun   bool             `json:"supports_run"`
-	SupportsBuild bool             `json:"supports_build"`
-	Runtime       RuntimeProfile   `json:"runtime"`
-	CPUShapes     []CPUShape       `json:"cpu_shapes"`
-	Substrate     SubstrateProfile `json:"substrate"`
-	Capacity      ResourceVector   `json:"capacity"`
-	PerVM         ResourceVector   `json:"per_vm"`
+	Schema    string           `json:"schema"`
+	Runtime   RuntimeProfile   `json:"runtime"`
+	CPUShapes []CPUShape       `json:"cpu_shapes"`
+	Substrate SubstrateProfile `json:"substrate"`
+	Capacity  ResourceVector   `json:"capacity"`
+	PerVM     ResourceVector   `json:"per_vm"`
 }
 
 func (t WorkerTemplate) Validate() error {
@@ -192,24 +189,18 @@ func (t WorkerTemplate) Validate() error {
 	if t.Schema != WorkerTemplateSchema {
 		problems = append(problems, fmt.Errorf("schema must be %q", WorkerTemplateSchema))
 	}
-	if !t.SupportsRun && !t.SupportsBuild {
-		problems = append(problems, errors.New("at least one Worker role is required"))
-	}
 	if err := t.Runtime.Validate(); err != nil {
 		problems = append(problems, err)
 	}
-	if t.SupportsRun && (t.Substrate.Format != SubstrateFormatExt4 || t.Substrate.Contract != SubstrateContractExt4) {
+	if t.Substrate.Format != SubstrateFormatExt4 || t.Substrate.Contract != SubstrateContractExt4 {
 		problems = append(problems, errors.New("run Worker substrate format or contract is not supported"))
-	}
-	if !t.SupportsRun && (t.Substrate.Format != "" || t.Substrate.Contract != "") {
-		problems = append(problems, errors.New("build-only Workers must not declare a run substrate"))
 	}
 	for _, resources := range []struct {
 		name   string
 		vector ResourceVector
 	}{{name: "capacity", vector: t.Capacity}, {name: "per_vm", vector: t.PerVM}} {
 		if resources.vector.CPUMillis < 0 || resources.vector.MemoryBytes < 0 || resources.vector.GuestEphemeralDiskBytes < 0 ||
-			resources.vector.VMSlots < 0 || resources.vector.BuildExecutors < 0 {
+			resources.vector.VMSlots < 0 {
 			problems = append(problems, fmt.Errorf("%s resource dimensions must not be negative", resources.name))
 		}
 	}
@@ -242,17 +233,8 @@ func (t WorkerTemplate) Validate() error {
 			}
 		}
 	}
-	if t.SupportsRun && t.Capacity.VMSlots <= 0 {
+	if t.Capacity.VMSlots <= 0 {
 		problems = append(problems, errors.New("run Workers require positive VM slots"))
-	}
-	if !t.SupportsRun && t.Capacity.VMSlots != 0 {
-		problems = append(problems, errors.New("build-only Workers must not declare run capacity"))
-	}
-	if t.SupportsBuild && t.Capacity.BuildExecutors != 1 {
-		problems = append(problems, errors.New("build Workers require exactly one build executor"))
-	}
-	if !t.SupportsBuild && t.Capacity.BuildExecutors != 0 {
-		problems = append(problems, errors.New("run-only Workers must not declare build executors"))
 	}
 	return errors.Join(problems...)
 }
@@ -300,21 +282,17 @@ type CapacityPoolRequest struct {
 }
 
 type CapacityWorkerGroup struct {
-	ID                 string            `json:"id"`
-	Name               string            `json:"name"`
-	RegionID           string            `json:"region_id"`
-	Status             WorkerGroupStatus `json:"status"`
-	ClaimVersion       int64             `json:"claim_version"`
-	AllowsRun          bool              `json:"allows_run"`
-	AllowsBuild        bool              `json:"allows_build"`
-	PrimaryRunPoolID   string            `json:"primary_run_pool_id,omitempty"`
-	PrimaryBuildPoolID string            `json:"primary_build_pool_id,omitempty"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	RegionID      string            `json:"region_id"`
+	Status        WorkerGroupStatus `json:"status"`
+	ClaimVersion  int64             `json:"claim_version"`
+	PrimaryPoolID string            `json:"primary_pool_id,omitempty"`
 }
 
 type ReconcileWorkerGroupPrimaryPoolsRequest struct {
 	ExpectedGroupClaimVersion int64  `json:"expected_group_claim_version"`
-	RunPoolID                 string `json:"run_pool_id,omitempty"`
-	BuildPoolID               string `json:"build_pool_id,omitempty"`
+	PoolID                    string `json:"pool_id"`
 }
 
 type ReconcileWorkerGroupPrimaryPoolsResponse struct {
@@ -327,8 +305,6 @@ type CapacityWorkerPool struct {
 	WorkerGroupID string           `json:"worker_group_id"`
 	Name          string           `json:"name"`
 	Status        WorkerPoolStatus `json:"status"`
-	AllowsRun     bool             `json:"allows_run"`
-	AllowsBuild   bool             `json:"allows_build"`
 }
 
 type CapacityIncompatibility struct {
@@ -367,8 +343,6 @@ type WorkerInstance struct {
 	Status             WorkerInstanceStatus `json:"status"`
 	ClaimVersion       int64                `json:"claim_version"`
 	CurrentEpoch       *int64               `json:"current_epoch,omitempty"`
-	SupportsRun        bool                 `json:"supports_run"`
-	SupportsBuild      bool                 `json:"supports_build"`
 	DrainingAt         *time.Time           `json:"draining_at,omitempty"`
 	TerminationReadyAt *time.Time           `json:"termination_ready_at,omitempty"`
 	LostAt             *time.Time           `json:"lost_at,omitempty"`

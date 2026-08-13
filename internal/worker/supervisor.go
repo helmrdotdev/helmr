@@ -199,10 +199,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if runtimeQuarantines != 0 && !capabilities.SupportsRun {
-		return errors.New("runtime residue cannot be quarantined on a worker without runtime capacity")
-	}
-	if capabilities.SupportsRun && runtimeQuarantines != 0 {
+	if runtimeQuarantines != 0 {
 		capabilities.ExecutionSlotsAvailable -= int32(runtimeQuarantines)
 		if capabilities.ExecutionSlotsAvailable <= 0 {
 			return errors.New("all runtime execution slots remain quarantined after startup recovery")
@@ -470,14 +467,10 @@ func activationQuarantines(evidence RecoveryEvidence) (int, error) {
 	}
 	runtimeCount := 0
 	for _, owner := range evidence.QuarantinedOwners {
-		switch owner.Kind {
-		case vm.OwnerRuntime:
-			runtimeCount++
-		case vm.OwnerBuild, vm.OwnerImageBuild:
-			return 0, errors.New("worker activation is blocked by quarantined build residue")
-		default:
+		if owner.Kind != vm.OwnerRuntime {
 			return 0, errors.New("worker activation is blocked by unknown VM owner kind")
 		}
+		runtimeCount++
 	}
 	return runtimeCount, nil
 }
@@ -654,18 +647,15 @@ func (s *Supervisor) observation(state State, evidence RecoveryEvidence) workera
 	if s.cfg.AdmissionEvaluator != nil {
 		admissionObservation := s.cfg.AdmissionEvaluator.Observation()
 		observation.RunPausedReason = admissionObservation.RunPausedReason
-		observation.BuildPausedReason = admissionObservation.BuildPausedReason
 		observation.RuntimePausedReason = admissionObservation.RuntimePausedReason
 	}
 	if len(evidence.Quarantined) > 0 {
 		observation.RunPausedReason = "startup_recovery_leak"
-		observation.BuildPausedReason = "startup_recovery_leak"
 		observation.RuntimePausedReason = "startup_recovery_leak"
 		return observation
 	}
 	if state != StateActive {
 		observation.RunPausedReason = string(state)
-		observation.BuildPausedReason = string(state)
 		observation.RuntimePausedReason = string(state)
 	}
 	return observation

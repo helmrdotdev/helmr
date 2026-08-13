@@ -19,9 +19,9 @@ bun add zod
 
 The generated project includes `helmr.config.ts`, a `tasks` directory,
 `.helmrignore`, `package.json`, and TypeScript configuration. `bun install`
-creates the exact lockfile required for deployment; this tutorial also adds Zod
+creates a frozen lockfile for reproducible builds; this tutorial also adds Zod
 for payload validation. The generated config selects the declaration directories
-that the remote build discovers:
+that the local Helmr builder discovers:
 
 ```ts
 import { defineConfig } from "@helmr/sdk"
@@ -69,8 +69,8 @@ helmr login
 helmr deploy . --project demo --env development
 ```
 
-Deployment builds immutable task and Sandbox declarations and promotes the
-completed Deployment by default. Create a durable Workspace from the promoted
+The CLI builds an immutable bundle containing the task and Sandbox declarations,
+then promotes the verified Deployment by default. Create a durable Workspace from the promoted
 Sandbox:
 
 ```sh

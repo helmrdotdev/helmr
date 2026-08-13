@@ -139,10 +139,9 @@ SELECT deployments.org_id,
    AND runtime_instances.worker_instance_id = $2
    AND runtime_instances.worker_group_id = $3
    AND runtime_instances.worker_epoch = $4
-   AND runtime_instances.reclaimed_at IS NULL
-   AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready')
-   AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.supports_run
+	AND runtime_instances.reclaimed_at IS NULL
+	AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready')
+	AND worker_instances.state IN ('active', 'draining')
    AND worker_instances.substrate_format = $5
    AND worker_instances.substrate_contract = $6
  LIMIT 1

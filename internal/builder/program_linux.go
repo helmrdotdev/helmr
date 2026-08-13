@@ -161,7 +161,9 @@ func BuildPreparedProgram(
 		return ProgramResult{}, err
 	}
 	treeArchive, cleanupArchive, err := archive.CreateTarWithOptionsContext(ctx, input.ProgramDirectory, input.WorkDirectory, archive.TarOptions{
-		MaxBytes: deployment.MaxBuildTreeStreamBytes, MaxEntries: deployment.MaxProgramTreeEntries,
+		CanonicalMetadata: true,
+		MaxBytes:          deployment.MaxBuildTreeStreamBytes,
+		MaxEntries:        deployment.MaxProgramTreeEntries,
 	})
 	if err != nil {
 		return ProgramResult{}, fmt.Errorf("freeze installed Program tree: %w", err)

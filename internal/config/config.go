@@ -94,11 +94,8 @@ type Worker struct {
 	CASURI                       string
 	WorkerInstanceCredentialPath string
 	CheckpointKey                []byte
-	BuildPolicyPath              string
 	PlatformStoreURI             string
 	WorkDir                      string
-	BuildCacheDir                string
-	BuildScratchDir              string
 	ImagesDir                    string
 	FirecrackerPath              string
 	CPUTemplateHelperPath        string
@@ -124,20 +121,9 @@ type Worker struct {
 	SubstrateCacheMaxMiB         int64
 	ArtifactCacheMaxMiB          int64
 	WorkerExecutionSlots         int32
-	WorkerRoles                  []string
 	VMInitTimeout                time.Duration
 	VMHealthTimeout              time.Duration
 	PollEvery                    time.Duration
-	ImageCache                   *ImageCache
-}
-
-// ImageCache is shared entry configuration for the Control Plane provisioner and
-// Worker credential adapter. It is either completely configured or absent.
-type ImageCache struct {
-	RegistryAuthority   string
-	RepositoryPrefix    string
-	CacheRoleARN        string
-	RepositoryARNPrefix string
 }
 
 type WorkerControlPlane struct {
@@ -165,32 +151,6 @@ func LoadClickHouse() (ClickHouse, error) {
 		return cfg, errors.New("CLICKHOUSE_URL is required")
 	}
 	return cfg, nil
-}
-
-func loadImageCache() (*ImageCache, error) {
-	config := ImageCache{
-		RegistryAuthority:   envText("IMAGE_CACHE_REGISTRY_AUTHORITY"),
-		RepositoryPrefix:    envText("IMAGE_CACHE_REPOSITORY_PREFIX"),
-		CacheRoleARN:        envText("IMAGE_CACHE_ROLE_ARN"),
-		RepositoryARNPrefix: envText("IMAGE_CACHE_REPOSITORY_ARN_PREFIX"),
-	}
-	values := []string{
-		config.RegistryAuthority, config.RepositoryPrefix,
-		config.CacheRoleARN, config.RepositoryARNPrefix,
-	}
-	configured := 0
-	for _, value := range values {
-		if value != "" {
-			configured++
-		}
-	}
-	if configured == 0 {
-		return nil, nil
-	}
-	if configured != len(values) {
-		return nil, errors.New("IMAGE_CACHE_REGISTRY_AUTHORITY, IMAGE_CACHE_REPOSITORY_PREFIX, IMAGE_CACHE_ROLE_ARN, and IMAGE_CACHE_REPOSITORY_ARN_PREFIX must be configured together")
-	}
-	return &config, nil
 }
 
 func normalizeOrigin(name string, raw string) (string, error) {

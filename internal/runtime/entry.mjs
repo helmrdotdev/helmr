@@ -3560,6 +3560,35 @@ function isInternalDefinition(value) {
       return false;
   }
 }
+// sdk/typescript/src/image.ts
+var imageBrand = Symbol.for("helmr.sdk.v0.image");
+var sourceFileBrand = Symbol.for("helmr.sdk.v0.source-file");
+var sourceDirectoryBrand = Symbol.for("helmr.sdk.v0.source-directory");
+class SourceFileValue {
+  path;
+  constructor(path) {
+    this.path = path;
+    Object.defineProperty(this, sourceFileBrand, { value: true });
+    Object.freeze(this);
+  }
+}
+
+class SourceDirectoryValue {
+  path;
+  constructor(path) {
+    this.path = path;
+    Object.defineProperty(this, sourceDirectoryBrand, { value: true });
+    Object.freeze(this);
+  }
+}
+var source = Object.freeze({
+  file(path) {
+    return new SourceFileValue(path);
+  },
+  directory(path) {
+    return new SourceDirectoryValue(path);
+  }
+});
 // sdk/typescript/src/secret.ts
 var secretAddressBrand = Symbol.for("helmr.sdk.v0.secret-address");
 var secretNamePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
@@ -3595,35 +3624,6 @@ function validateSecretName(value) {
   }
 }
 
-// sdk/typescript/src/image.ts
-var imageBrand = Symbol.for("helmr.sdk.v0.image");
-var sourceFileBrand = Symbol.for("helmr.sdk.v0.source-file");
-var sourceDirectoryBrand = Symbol.for("helmr.sdk.v0.source-directory");
-class SourceFileValue {
-  path;
-  constructor(path) {
-    this.path = path;
-    Object.defineProperty(this, sourceFileBrand, { value: true });
-    Object.freeze(this);
-  }
-}
-
-class SourceDirectoryValue {
-  path;
-  constructor(path) {
-    this.path = path;
-    Object.defineProperty(this, sourceDirectoryBrand, { value: true });
-    Object.freeze(this);
-  }
-}
-var source = Object.freeze({
-  file(path) {
-    return new SourceFileValue(path);
-  },
-  directory(path) {
-    return new SourceDirectoryValue(path);
-  }
-});
 // sdk/typescript/src/internal/timestamp.ts
 var utcRFC3339 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/;
 function timestampString(value, label) {

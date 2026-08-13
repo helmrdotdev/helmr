@@ -30,8 +30,7 @@ func runStatus(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	supportsRun, supportsBuild := identityRoles(identity.Roles)
-	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID, supportsRun, supportsBuild))
+	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
@@ -44,13 +43,11 @@ func runStatus(log *slog.Logger) error {
 	if status.Status != workerapi.StatusActive {
 		return fmt.Errorf("worker status is %s", status.Status)
 	}
-	if supportsRun {
-		if status.Readiness.Run == nil || !status.Readiness.Run.Ready {
-			return fmt.Errorf("worker run role is not ready: %s", workerPauseReason(status.Readiness.Run))
-		}
-		if status.Readiness.Runtime == nil || !status.Readiness.Runtime.Ready {
-			return fmt.Errorf("worker runtime role is not ready: %s", workerPauseReason(status.Readiness.Runtime))
-		}
+	if status.Readiness.Run == nil || !status.Readiness.Run.Ready {
+		return fmt.Errorf("worker run role is not ready: %s", workerPauseReason(status.Readiness.Run))
+	}
+	if status.Readiness.Runtime == nil || !status.Readiness.Runtime.Ready {
+		return fmt.Errorf("worker runtime role is not ready: %s", workerPauseReason(status.Readiness.Runtime))
 	}
 	log.Info("worker ready", "worker_instance_id", status.WorkerInstanceID, "active_executions", status.ActiveExecutions)
 	return nil

@@ -24,42 +24,39 @@ func TestAdminWorkerPoolPostgresGroupDrainClearsPrimariesAtomically(t *testing.T
 		t.Fatal(err)
 	}
 	fixture := newAdminPoolPostgresFixture(t, database.Pool, "us-east-1")
-	pool := fixture.addActivePool(t, "current", true, true)
+	pool := fixture.addActivePool(t, "current")
 
-	group, err := fixture.q.SetInitialWorkerGroupPrimaryPools(t.Context(), db.SetInitialWorkerGroupPrimaryPoolsParams{
+	group, err := fixture.q.SetInitialWorkerGroupPrimaryPool(t.Context(), db.SetInitialWorkerGroupPrimaryPoolParams{
 		WorkerGroupID: fixture.group.ID,
 		WorkerPoolID:  pool.ID,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if group.PrimaryRunPoolID != pool.ID || group.PrimaryBuildPoolID != pool.ID ||
-		group.ClaimVersion != fixture.group.ClaimVersion+1 {
-		t.Fatalf("initial primaries = run:%v build:%v claim:%d, want %v/%d",
-			group.PrimaryRunPoolID, group.PrimaryBuildPoolID, group.ClaimVersion,
+	if group.PrimaryPoolID != pool.ID || group.ClaimVersion != fixture.group.ClaimVersion+1 {
+		t.Fatalf("initial primary = pool:%v claim:%d, want %v/%d",
+			group.PrimaryPoolID, group.ClaimVersion,
 			pool.ID, fixture.group.ClaimVersion+1)
 	}
-	activationReplay, err := fixture.q.SetInitialWorkerGroupPrimaryPools(t.Context(), db.SetInitialWorkerGroupPrimaryPoolsParams{
+	activationReplay, err := fixture.q.SetInitialWorkerGroupPrimaryPool(t.Context(), db.SetInitialWorkerGroupPrimaryPoolParams{
 		WorkerGroupID: fixture.group.ID,
 		WorkerPoolID:  pool.ID,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if activationReplay.PrimaryRunPoolID != pool.ID || activationReplay.PrimaryBuildPoolID != pool.ID ||
-		activationReplay.ClaimVersion != group.ClaimVersion {
+	if activationReplay.PrimaryPoolID != pool.ID || activationReplay.ClaimVersion != group.ClaimVersion {
 		t.Fatalf("initial primary activation replay = %+v", activationReplay)
 	}
-	replacement := fixture.addActivePool(t, "replacement", true, true)
-	afterReplacementSeal, err := fixture.q.SetInitialWorkerGroupPrimaryPools(t.Context(), db.SetInitialWorkerGroupPrimaryPoolsParams{
+	replacement := fixture.addActivePool(t, "replacement")
+	afterReplacementSeal, err := fixture.q.SetInitialWorkerGroupPrimaryPool(t.Context(), db.SetInitialWorkerGroupPrimaryPoolParams{
 		WorkerGroupID: fixture.group.ID,
 		WorkerPoolID:  replacement.ID,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if afterReplacementSeal.PrimaryRunPoolID != pool.ID || afterReplacementSeal.PrimaryBuildPoolID != pool.ID ||
-		afterReplacementSeal.ClaimVersion != group.ClaimVersion {
+	if afterReplacementSeal.PrimaryPoolID != pool.ID || afterReplacementSeal.ClaimVersion != group.ClaimVersion {
 		t.Fatalf("primaries after replacement seal = %+v", afterReplacementSeal)
 	}
 
@@ -75,7 +72,7 @@ func TestAdminWorkerPoolPostgresGroupDrainClearsPrimariesAtomically(t *testing.T
 		t.Fatal(err)
 	}
 	if draining.State != db.WorkerGroupStateDraining || draining.ClaimVersion != group.ClaimVersion+1 ||
-		draining.PrimaryRunPoolID.Valid || draining.PrimaryBuildPoolID.Valid {
+		draining.PrimaryPoolID.Valid {
 		t.Fatalf("draining group = %+v", draining)
 	}
 
@@ -107,15 +104,13 @@ func TestWorkerGroupPrimarySelectionPostgresIsAtomicAndReplaySafe(t *testing.T) 
 		t.Fatal(err)
 	}
 	fixture := newAdminPoolPostgresFixture(t, database.Pool, "us-east-1")
-	runPool := fixture.addActivePool(t, "run-current", true, true)
-	buildPool := fixture.addActivePool(t, "build-current", true, true)
+	pool := fixture.addActivePool(t, "current")
 	server := &Server{db: fixture.q, tx: fixture.pool}
 	command := workerGroupPrimarySelectionCommand{
 		workerGroupID:             fixture.group.ID,
 		expectedGroupClaimVersion: fixture.group.ClaimVersion,
-		requireCompleteSelection:  true,
-		desired: func(db.WorkerGroup) (workerGroupPrimarySelection, error) {
-			return workerGroupPrimarySelection{runPoolID: runPool.ID, buildPoolID: buildPool.ID}, nil
+		desired: func(db.WorkerGroup) (pgtype.UUID, error) {
+			return pool.ID, nil
 		},
 	}
 	result, err := server.reconcileWorkerGroupPrimarySelection(t.Context(), command)
@@ -123,14 +118,14 @@ func TestWorkerGroupPrimarySelectionPostgresIsAtomicAndReplaySafe(t *testing.T) 
 		t.Fatal(err)
 	}
 	if !result.applied || result.group.ClaimVersion != fixture.group.ClaimVersion+1 ||
-		result.group.PrimaryRunPoolID != runPool.ID || result.group.PrimaryBuildPoolID != buildPool.ID {
+		result.group.PrimaryPoolID != pool.ID {
 		t.Fatalf("primary result = %+v", result)
 	}
 	stored, err := fixture.q.GetWorkerGroup(t.Context(), fixture.group.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.ClaimVersion != result.group.ClaimVersion || stored.PrimaryRunPoolID != runPool.ID || stored.PrimaryBuildPoolID != buildPool.ID {
+	if stored.ClaimVersion != result.group.ClaimVersion || stored.PrimaryPoolID != pool.ID {
 		t.Fatalf("stored primary selection = %+v", stored)
 	}
 
@@ -153,24 +148,20 @@ func TestWorkerGroupPrimarySelectionPostgresSerializesCompetingControllers(t *te
 		t.Fatal(err)
 	}
 	fixture := newAdminPoolPostgresFixture(t, database.Pool, "us-east-1")
-	firstRun := fixture.addActivePool(t, "first-run", true, true)
-	firstBuild := fixture.addActivePool(t, "first-build", true, true)
-	secondRun := fixture.addActivePool(t, "second-run", true, true)
-	secondBuild := fixture.addActivePool(t, "second-build", true, true)
+	first := fixture.addActivePool(t, "first")
+	second := fixture.addActivePool(t, "second")
 	server := &Server{db: fixture.q, tx: fixture.pool}
 	commands := []workerGroupPrimarySelectionCommand{
 		{
 			workerGroupID: fixture.group.ID, expectedGroupClaimVersion: fixture.group.ClaimVersion,
-			requireCompleteSelection: true,
-			desired: func(db.WorkerGroup) (workerGroupPrimarySelection, error) {
-				return workerGroupPrimarySelection{runPoolID: firstRun.ID, buildPoolID: firstBuild.ID}, nil
+			desired: func(db.WorkerGroup) (pgtype.UUID, error) {
+				return first.ID, nil
 			},
 		},
 		{
 			workerGroupID: fixture.group.ID, expectedGroupClaimVersion: fixture.group.ClaimVersion,
-			requireCompleteSelection: true,
-			desired: func(db.WorkerGroup) (workerGroupPrimarySelection, error) {
-				return workerGroupPrimarySelection{runPoolID: secondRun.ID, buildPoolID: secondBuild.ID}, nil
+			desired: func(db.WorkerGroup) (pgtype.UUID, error) {
+				return second.ID, nil
 			},
 		},
 	}
@@ -200,8 +191,8 @@ func TestWorkerGroupPrimarySelectionPostgresSerializesCompetingControllers(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstWon := stored.PrimaryRunPoolID == firstRun.ID && stored.PrimaryBuildPoolID == firstBuild.ID
-	secondWon := stored.PrimaryRunPoolID == secondRun.ID && stored.PrimaryBuildPoolID == secondBuild.ID
+	firstWon := stored.PrimaryPoolID == first.ID
+	secondWon := stored.PrimaryPoolID == second.ID
 	if stored.ClaimVersion != fixture.group.ClaimVersion+1 || firstWon == secondWon {
 		t.Fatalf("stored competing primary selection = %+v", stored)
 	}
@@ -216,8 +207,6 @@ func TestAdminWorkerPoolPostgresDisablesUnreferencedPendingPool(t *testing.T) {
 	pending, err := fixture.q.CreatePendingWorkerPool(t.Context(), db.CreatePendingWorkerPoolParams{
 		WorkerPoolID:              pgvalue.NewUUIDv7(),
 		Name:                      "unused",
-		AllowsRun:                 true,
-		AllowsBuild:               false,
 		WorkerGroupID:             fixture.group.ID,
 		ExpectedGroupClaimVersion: fixture.group.ClaimVersion,
 	})
@@ -247,8 +236,6 @@ func TestAdminWorkerPoolPostgresDisablesPendingPoolWithOnlyLostWorker(t *testing
 	pending, err := fixture.q.CreatePendingWorkerPool(t.Context(), db.CreatePendingWorkerPoolParams{
 		WorkerPoolID:              pgvalue.NewUUIDv7(),
 		Name:                      "lost-before-activation",
-		AllowsRun:                 true,
-		AllowsBuild:               false,
 		WorkerGroupID:             fixture.group.ID,
 		ExpectedGroupClaimVersion: fixture.group.ClaimVersion,
 	})
@@ -291,7 +278,7 @@ UPDATE worker_instances
 func TestAdminWorkerPoolPostgresCheckpointReadySerializesWithPoolDrain(t *testing.T) {
 	product := newActorStartPostgresFixture(t, 1)
 	fixture := newAdminPoolPostgresFixture(t, product.pool, "us-east-1")
-	target := fixture.addActivePool(t, "checkpoint-source", true, false)
+	target := fixture.addActivePool(t, "checkpoint-source")
 	checkpoint := seedRetainedCheckpointForWorkerPool(t, product, fixture, target)
 	serviceID := uuid.Must(uuid.NewV7())
 	dbtest.MustExec(t, t.Context(), product.pool, `
@@ -479,7 +466,7 @@ SELECT cardinality(pg_blocking_pids($1)) > 0`, backendPID).Scan(&blocked); err !
 func TestAdminWorkerPoolPostgresRetainedCheckpointRequiresAnotherCompatibleSupplier(t *testing.T) {
 	product := newActorStartPostgresFixture(t, 1)
 	fixture := newAdminPoolPostgresFixture(t, product.pool, "us-east-1")
-	target := fixture.addActivePool(t, "current", true, false)
+	target := fixture.addActivePool(t, "current")
 	_ = seedRetainedCheckpointForWorkerPool(t, product, fixture, target)
 
 	_, err := fixture.q.TransitionWorkerPoolLifecycle(t.Context(), db.TransitionWorkerPoolLifecycleParams{
@@ -492,7 +479,7 @@ func TestAdminWorkerPoolPostgresRetainedCheckpointRequiresAnotherCompatibleSuppl
 		t.Fatalf("drain sole compatible supplier error = %v, want no rows", err)
 	}
 
-	fixture.addActivePool(t, "replacement", true, false)
+	fixture.addActivePool(t, "replacement")
 	live := seedLiveRuntimeForWorkerPool(t, product, fixture, target)
 	bins, err := fixture.q.ListWorkerCapacityBins(t.Context(), db.ListWorkerCapacityBinsParams{
 		WorkerGroupID:               fixture.group.ID,
@@ -575,8 +562,6 @@ ON CONFLICT (id) DO NOTHING`, regionID)
 		RegionID:    regionID,
 		Name:        "worker-pool-test",
 		Description: "",
-		AllowsRun:   true,
-		AllowsBuild: true,
 		TokenID:     pgvalue.NewUUIDv7(),
 		TokenHash:   dbtest.Hash(uuid.NewString()),
 	})
@@ -610,7 +595,7 @@ ON CONFLICT (id) DO NOTHING`, regionID)
 	return fixture
 }
 
-func (fixture adminPoolPostgresFixture) addActivePool(t *testing.T, name string, allowsRun, allowsBuild bool) db.WorkerPool {
+func (fixture adminPoolPostgresFixture) addActivePool(t *testing.T, name string) db.WorkerPool {
 	t.Helper()
 	group, err := fixture.q.GetWorkerGroup(t.Context(), fixture.group.ID)
 	if err != nil {
@@ -619,55 +604,34 @@ func (fixture adminPoolPostgresFixture) addActivePool(t *testing.T, name string,
 	pending, err := fixture.q.CreatePendingWorkerPool(t.Context(), db.CreatePendingWorkerPoolParams{
 		WorkerPoolID:              pgvalue.NewUUIDv7(),
 		Name:                      name,
-		AllowsRun:                 allowsRun,
-		AllowsBuild:               allowsBuild,
 		WorkerGroupID:             fixture.group.ID,
 		ExpectedGroupClaimVersion: group.ClaimVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if allowsRun {
-		rows, err := fixture.q.InsertWorkerPoolCPUShape(t.Context(), db.InsertWorkerPoolCPUShapeParams{
-			VCPUCount: 1, CPUConfigDigest: fixture.cpuConfigDigest, WorkerPoolID: pending.ID,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if rows != 1 {
-			t.Fatalf("inserted CPU shape rows = %d, want 1", rows)
-		}
+	rows, err := fixture.q.InsertWorkerPoolCPUShape(t.Context(), db.InsertWorkerPoolCPUShapeParams{
+		VCPUCount: 1, CPUConfigDigest: fixture.cpuConfigDigest, WorkerPoolID: pending.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	maxVMSlots := int32(0)
-	if allowsRun {
-		maxVMSlots = 4
-	}
-	maxBuildExecutors := int32(0)
-	if allowsBuild {
-		maxBuildExecutors = 1
-	}
-	substrateFormat := ""
-	substrateContract := ""
-	if allowsRun {
-		substrateFormat = fixture.substrateFormat
-		substrateContract = fixture.substrateContract
+	if rows != 1 {
+		t.Fatalf("inserted CPU shape rows = %d, want 1", rows)
 	}
 	sealed, err := fixture.q.SealWorkerPool(t.Context(), db.SealWorkerPoolParams{
 		RuntimeIdentityID:               pgvalue.Text(fixture.runtimeIdentityID),
-		SubstrateFormat:                 pgvalue.Text(substrateFormat),
-		SubstrateContract:               pgvalue.Text(substrateContract),
+		SubstrateFormat:                 pgvalue.Text(fixture.substrateFormat),
+		SubstrateContract:               pgvalue.Text(fixture.substrateContract),
 		CapacityCPUMillis:               pgtype.Int8{Int64: 4_000, Valid: true},
 		CapacityMemoryBytes:             pgtype.Int8{Int64: 8 << 30, Valid: true},
 		CapacityGuestEphemeralDiskBytes: pgtype.Int8{Int64: 32 << 30, Valid: true},
 		PerVMCPUMillis:                  pgtype.Int8{Int64: 1_000, Valid: true},
 		PerVMMemoryBytes:                pgtype.Int8{Int64: 1 << 30, Valid: true},
 		PerVMGuestEphemeralDiskBytes:    pgtype.Int8{Int64: 4 << 30, Valid: true},
-		MaxVMSlots:                      pgtype.Int4{Int32: maxVMSlots, Valid: true},
-		MaxBuildExecutors:               pgtype.Int4{Int32: maxBuildExecutors, Valid: true},
+		MaxVMSlots:                      pgtype.Int4{Int32: 4, Valid: true},
 		WorkerPoolID:                    pending.ID,
 		WorkerGroupID:                   fixture.group.ID,
-		AllowsRun:                       allowsRun,
-		AllowsBuild:                     allowsBuild,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -705,19 +669,18 @@ SELECT id, deployment_definition_id
 	dbtest.MustExec(t, t.Context(), product.pool, `
 INSERT INTO worker_instances (
     id, resource_id, worker_group_id, worker_pool_id, state,
-    current_epoch, current_service_id, supports_run, supports_build,
-    runtime_identity_id, substrate_format, substrate_contract,
+    current_epoch, current_service_id, runtime_identity_id, substrate_format, substrate_contract,
     epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
     per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes,
-    max_vm_slots, max_build_executors, max_runtime_starts,
+    max_vm_slots, max_runtime_starts,
     cpu_environment, cpu_environment_digest, observed_at,
     epoch_started_at, activated_at
 ) VALUES (
     $1, 'live-runtime-worker', $2, $3, 'active',
-    1, $4, true, false, $5, $6, $7,
+    1, $4, $5, $6, $7,
     4000, 8589934592, 34359738368,
     1000, 1073741824, 4294967296,
-    4, 0, 4, '{"vendor":"test"}'::jsonb, $8, now(), now(), now()
+    4, 4, '{"vendor":"test"}'::jsonb, $8, now(), now(), now()
 )`, live.workerID, fixture.group.ID, pool.ID, uuid.Must(uuid.NewV7()),
 		fixture.runtimeIdentityID, fixture.substrateFormat, fixture.substrateContract,
 		dbtest.Digest("live-runtime-cpu-environment"))

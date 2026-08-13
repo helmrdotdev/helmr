@@ -70,6 +70,7 @@ rec {
     pkgs.cpio
     pkgs.gzip
     pkgs.ruby
+    pkgs.skopeo
     pkgs.binutils
   ]
   ++ lib.optionals stdenv.isLinux [ pkgs.kmod ];

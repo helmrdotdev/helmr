@@ -61,7 +61,7 @@ run "image_installs_verified_worker_artifacts" {
       strcontains(aws_imagebuilder_component.worker.data, "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-") &&
       strcontains(aws_imagebuilder_component.worker.data, "5a2ad4e63f8f687d735f8e7a132b3622a1cf08fa884c53e3423c9b83a3c0d663")
     )
-    error_message = "Worker AMI must contain the host executables and Platform acquisition tools."
+    error_message = "Worker AMI must contain the execution host and runtime verification tools."
   }
 
   assert {

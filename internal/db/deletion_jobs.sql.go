@@ -157,43 +157,6 @@ func (q *Queries) FailDeletionJob(ctx context.Context, arg FailDeletionJobParams
 	return i, err
 }
 
-const listDueEnvironmentImageCacheRetirements = `-- name: ListDueEnvironmentImageCacheRetirements :many
-SELECT id, target_id
-  FROM deletion_jobs
- WHERE target_type = 'environment'
-   AND status = 'completed'
-   AND completed_at IS NOT NULL
-   AND completed_at <= transaction_timestamp() - INTERVAL '7 days'
-   AND deleted_counts -> 'image_cache_repositories' IS DISTINCT FROM '1'::jsonb
- ORDER BY completed_at, id
- LIMIT $1
-`
-
-type ListDueEnvironmentImageCacheRetirementsRow struct {
-	ID       pgtype.UUID `json:"id"`
-	TargetID pgtype.UUID `json:"target_id"`
-}
-
-func (q *Queries) ListDueEnvironmentImageCacheRetirements(ctx context.Context, resultLimit int32) ([]ListDueEnvironmentImageCacheRetirementsRow, error) {
-	rows, err := q.db.Query(ctx, listDueEnvironmentImageCacheRetirements, resultLimit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListDueEnvironmentImageCacheRetirementsRow
-	for rows.Next() {
-		var i ListDueEnvironmentImageCacheRetirementsRow
-		if err := rows.Scan(&i.ID, &i.TargetID); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const markDeletionJobRunning = `-- name: MarkDeletionJobRunning :one
 UPDATE deletion_jobs
    SET status = 'running',
@@ -231,33 +194,4 @@ func (q *Queries) MarkDeletionJobRunning(ctx context.Context, arg MarkDeletionJo
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const markEnvironmentImageCacheRetired = `-- name: MarkEnvironmentImageCacheRetired :execrows
-UPDATE deletion_jobs
-   SET deleted_counts = jsonb_set(
-           deleted_counts,
-           '{image_cache_repositories}',
-           '1'::jsonb,
-           true
-       ),
-       updated_at = now()
- WHERE id = $1
-   AND target_type = 'environment'
-   AND target_id = $2
-   AND status = 'completed'
-   AND deleted_counts -> 'image_cache_repositories' IS DISTINCT FROM '1'::jsonb
-`
-
-type MarkEnvironmentImageCacheRetiredParams struct {
-	ID            pgtype.UUID `json:"id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-}
-
-func (q *Queries) MarkEnvironmentImageCacheRetired(ctx context.Context, arg MarkEnvironmentImageCacheRetiredParams) (int64, error) {
-	result, err := q.db.Exec(ctx, markEnvironmentImageCacheRetired, arg.ID, arg.EnvironmentID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }

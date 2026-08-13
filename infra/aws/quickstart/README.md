@@ -145,7 +145,7 @@ inside the VPC.
 
 The official worker AMI is resolved from `helmr_version` and `aws_region`. Set `worker_ami_id` only
 for custom builds; custom AMIs must satisfy the `modules/worker` contract: Firecracker, jailer,
-`ip`, `nft`, certified guest boot artifacts containing the pinned BuildKit daemon, AWS CLI,
+`ip`, `nft`, certified guest boot artifacts, AWS CLI,
 `helmr-worker`, and the executable `/usr/local/sbin/helmr-prepare-root` matching
 `modules/worker-image/templates/prepare-root.sh` installed. Keep NAT enabled
 while a worker is running or draining because workers run in private subnets. Workers are
@@ -154,8 +154,8 @@ override the disk capacity advertised to the Control Plane.
 
 The stack derives each Worker Pool generation name from the complete immutable
 supply definition: Worker module/user-data contract, resolved AMI,
-instance/runtime class, network/build/store/cache policy, root-volume shape,
-roles, and advertised capacity shape. Changing one of those sealed inputs
+instance/runtime class, network/store/cache policy, root-volume shape, and
+advertised capacity shape. Changing one of those sealed inputs
 creates a new Pool name; changing only ASG minimum or maximum size does not.
 Each Pool name keys a distinct Auto Scaling Group and launch template. Before
 changing an immutable input, copy the old entry from
@@ -168,7 +168,7 @@ restore authority no longer references that Pool and its exact drain-to-
 authenticate or allowlist the AMI; `worker_generation_bindings` records the
 exact Product Pool to provider binding.
 
-Deployment infrastructure owns desired capacity for run and build groups.
+Deployment infrastructure owns desired capacity for execution groups.
 Terraform retains the ASG min/max guardrails, and equal min/max values provide
 fixed capacity. Worker capacity and disk/cache partitions must be explicit when
 workers are created. Demand observations may guide scale-out, but scale-in must

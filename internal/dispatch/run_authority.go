@@ -726,7 +726,7 @@ SELECT deployments.id
 		return runPlacementAuthority{}, err
 	}
 	authority.resources = resources
-	authority.architecture = platformArchitecture
+	authority.architecture = runtimeArchitecture
 	return authority, nil
 }
 

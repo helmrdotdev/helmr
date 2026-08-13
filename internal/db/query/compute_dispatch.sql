@@ -133,18 +133,16 @@ SELECT worker_instances.*,
        runtime_identities.rootfs_digest,
        runtime_identities.vm_runtime_contract,
        runtime_identities.runtime_arch,
-       COALESCE((
-           worker_instances.state = 'active'
-           AND worker_groups.state = 'active'
-           AND worker_instances.supports_run
+	       COALESCE((
+	           worker_instances.state = 'active'
+	           AND worker_groups.state = 'active'
            AND worker_instances.observed_at >= transaction_timestamp()
                - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
            AND worker_instances.run_paused_reason IS NULL
        ), false)::boolean AS run_ready,
-       COALESCE((
-           worker_instances.state = 'active'
-           AND worker_groups.state = 'active'
-           AND worker_instances.supports_run
+	       COALESCE((
+	           worker_instances.state = 'active'
+	           AND worker_groups.state = 'active'
            AND worker_instances.observed_at >= transaction_timestamp()
                - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
            AND worker_instances.runtime_paused_reason IS NULL
@@ -154,10 +152,8 @@ SELECT worker_instances.*,
            AND worker_groups.state = 'active'
            AND worker_instances.observed_at >= transaction_timestamp()
                - sqlc.arg(observation_freshness_seconds)::bigint * interval '1 second'
-           AND (NOT worker_instances.supports_run OR (
-               worker_instances.run_paused_reason IS NULL
-               AND worker_instances.runtime_paused_reason IS NULL
-           ))
+	           AND worker_instances.run_paused_reason IS NULL
+	           AND worker_instances.runtime_paused_reason IS NULL
        ), false)::boolean AS all_configured_roles_ready,
        ((SELECT count(*) FROM run_leases
          WHERE run_leases.worker_instance_id = worker_instances.id

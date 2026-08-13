@@ -36,7 +36,7 @@ APKO_CONFIG ?= apko.yaml
 APKO_LOCK ?= apko.$(APKO_ARCH).lock.json
 GUESTD_INPUT_PATHS := go.mod go.sum cmd/guestd internal scripts/build-guestd-linux.sh
 GUESTD_GO_IDENTITY := $(shell command -v go; go version)
-GUESTD_INPUT_HASH := $(shell cd "$(REPO_ROOT)" && { git ls-files -z --cached --others --exclude-standard -- $(GUESTD_INPUT_PATHS) | xargs -0 $(SHA256_COMMAND); printf '%s\n' "$(ARCH)" "$(GUESTD_GO_IDENTITY)"; } | $(SHA256_COMMAND) | awk '{print $$1}')
+GUESTD_INPUT_HASH := $(shell cd "$(REPO_ROOT)" && { git ls-files -z --cached --others --exclude-standard -- $(GUESTD_INPUT_PATHS) | while IFS= read -r -d '' path; do [ ! -f "$$path" ] || $(SHA256_COMMAND) "$$path"; done; printf '%s\n' "$(ARCH)" "$(GUESTD_GO_IDENTITY)"; } | $(SHA256_COMMAND) | awk '{print $$1}')
 GUESTD_INPUT_STAMP := $(dir $(GUESTD)).guestd-inputs.$(ARCH).sha256
 
 .PHONY: all clean guestd guestd-check guestd-stamp-current apko-lock boot-tools-image netboot-inputs

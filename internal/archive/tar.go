@@ -27,10 +27,11 @@ const (
 )
 
 type TarOptions struct {
-	CanonicalSource bool
-	ExcludePatterns []string
-	MaxBytes        int64
-	MaxEntries      int
+	CanonicalSource   bool
+	CanonicalMetadata bool
+	ExcludePatterns   []string
+	MaxBytes          int64
+	MaxEntries        int
 }
 
 type ExtractOptions struct {
@@ -401,7 +402,7 @@ func appendTree(
 		if err != nil {
 			return err
 		}
-		normalizeHeader(header, entry.name, options.CanonicalSource)
+		normalizeHeader(header, entry.name, options.CanonicalSource || options.CanonicalMetadata)
 		if err := writer.WriteHeader(header); err != nil {
 			return err
 		}
@@ -454,13 +455,13 @@ func validateAppendSize(name string, size int64, maxBytes int64, stats *tarStats
 	return nil
 }
 
-func normalizeHeader(header *tar.Header, name string, canonicalSource bool) {
+func normalizeHeader(header *tar.Header, name string, canonicalMetadata bool) {
 	header.Name = filepath.ToSlash(name)
 	header.Mode &= 0o777
 	if header.Typeflag == tar.TypeSymlink {
 		header.Mode = 0o777
 	}
-	if canonicalSource {
+	if canonicalMetadata {
 		executable := header.Mode&0o111 != 0
 		switch header.Typeflag {
 		case tar.TypeReg:

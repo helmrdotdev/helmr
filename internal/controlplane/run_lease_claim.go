@@ -1303,7 +1303,6 @@ func validateClaimWorker(authenticated workerActor, worker db.WorkerInstance) er
 	if !worker.CurrentEpoch.Valid ||
 		worker.CurrentEpoch.Int64 != authenticated.WorkerEpoch ||
 		worker.ClaimVersion != authenticated.ClaimVersion ||
-		!worker.SupportsRun ||
 		(worker.State != db.WorkerInstanceStateActive && worker.State != db.WorkerInstanceStateDraining) {
 		return errStaleRunLeaseClaim
 	}
@@ -1324,8 +1323,7 @@ func validateClaimPhysicalAuthority(worker workerActor, authority runLeaseClaimA
 		return errStaleRunLeaseClaim
 	}
 	if lease.State == db.RunLeaseStateAssigned &&
-		(authority.workerGroup.State != db.WorkerGroupStateActive ||
-			!authority.workerGroup.AllowsRun) {
+		authority.workerGroup.State != db.WorkerGroupStateActive {
 		return errStaleRunLeaseClaim
 	}
 	if lease.State == db.RunLeaseStateAssigned && !authority.workerRunReady {

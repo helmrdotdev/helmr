@@ -128,6 +128,7 @@ stdenvNoCC.mkDerivation {
       .
 
     mkdir -p "$out"
+    unset SOURCE_DATE_EPOCH
     mksquashfs \
       - "$out/runtime.squashfs" \
       -tar \

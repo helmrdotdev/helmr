@@ -18,7 +18,7 @@ func TestWorkerEnrollmentTokenSelectsGroupAndRecordsUse(t *testing.T) {
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
 	params := db.EnrollWorkerInstanceParams{
-		TokenHash: make([]byte, 32), AllowsRun: true, AllowsBuild: true,
+		TokenHash:    make([]byte, 32),
 		WorkerPoolID: pgvalue.UUID(uuid.MustParse(dbtest.DefaultWorkerPoolID)), PoolName: "default",
 		WorkerInstanceID: pgvalue.NewUUIDv7(), ResourceID: "enrollment-host",
 		CurrentServiceID: pgvalue.NewUUIDv7(), CredentialID: pgvalue.NewUUIDv7(),
@@ -28,7 +28,7 @@ func TestWorkerEnrollmentTokenSelectsGroupAndRecordsUse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if credential.WorkerGroupID != dbtest.DefaultWorkerGroupID || !credential.AllowsRun || !credential.AllowsBuild {
+	if credential.WorkerGroupID != dbtest.DefaultWorkerGroupID {
 		t.Fatalf("credential = %+v", credential)
 	}
 	var used bool
@@ -45,12 +45,12 @@ func TestWorkerEnrollmentTokenSelectsGroupAndRecordsUse(t *testing.T) {
 	}
 }
 
-func TestWorkerEnrollmentRejectsUnknownTokenAndUnallowedRole(t *testing.T) {
+func TestWorkerEnrollmentRejectsUnknownTokenAndDrainingGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
 	base := db.EnrollWorkerInstanceParams{
-		TokenHash: make([]byte, 32), AllowsRun: true, AllowsBuild: true,
+		TokenHash:    make([]byte, 32),
 		WorkerPoolID: pgvalue.UUID(uuid.MustParse(dbtest.DefaultWorkerPoolID)), PoolName: "default",
 		WorkerInstanceID: pgvalue.NewUUIDv7(), ResourceID: "unknown-token-host",
 		CurrentServiceID: pgvalue.NewUUIDv7(), CredentialID: pgvalue.NewUUIDv7(),
@@ -60,19 +60,6 @@ func TestWorkerEnrollmentRejectsUnknownTokenAndUnallowedRole(t *testing.T) {
 	unknown.TokenHash = bytes.Repeat([]byte{1}, 32)
 	if _, err := q.EnrollWorkerInstance(ctx, unknown); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("unknown token error = %v", err)
-	}
-	if _, err := pool.Exec(ctx, `UPDATE worker_groups SET allows_build = false WHERE id = $1`, dbtest.DefaultWorkerGroupID); err != nil {
-		t.Fatal(err)
-	}
-	wrongRole := base
-	wrongRole.WorkerInstanceID = pgvalue.NewUUIDv7()
-	wrongRole.CredentialID = pgvalue.NewUUIDv7()
-	wrongRole.ResourceID = "wrong-role-host"
-	if _, err := q.EnrollWorkerInstance(ctx, wrongRole); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("unallowed role error = %v", err)
-	}
-	if _, err := pool.Exec(ctx, `UPDATE worker_groups SET allows_build = true WHERE id = $1`, dbtest.DefaultWorkerGroupID); err != nil {
-		t.Fatal(err)
 	}
 	if _, err := q.TransitionWorkerGroupState(ctx, db.TransitionWorkerGroupStateParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, TargetState: string(db.WorkerGroupStatePaused), ExpectedClaimVersion: 1,

@@ -1181,19 +1181,16 @@ type User struct {
 }
 
 type WorkerGroup struct {
-	ID                 string             `json:"id"`
-	TokenID            pgtype.UUID        `json:"token_id"`
-	RegionID           string             `json:"region_id"`
-	Name               string             `json:"name"`
-	Description        string             `json:"description"`
-	State              string             `json:"state"`
-	ClaimVersion       int64              `json:"claim_version"`
-	AllowsRun          bool               `json:"allows_run"`
-	AllowsBuild        bool               `json:"allows_build"`
-	PrimaryRunPoolID   pgtype.UUID        `json:"primary_run_pool_id"`
-	PrimaryBuildPoolID pgtype.UUID        `json:"primary_build_pool_id"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	ID            string             `json:"id"`
+	TokenID       pgtype.UUID        `json:"token_id"`
+	RegionID      string             `json:"region_id"`
+	Name          string             `json:"name"`
+	Description   string             `json:"description"`
+	State         string             `json:"state"`
+	ClaimVersion  int64              `json:"claim_version"`
+	PrimaryPoolID pgtype.UUID        `json:"primary_pool_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkerGroupToken struct {
@@ -1213,8 +1210,6 @@ type WorkerInstance struct {
 	ClaimVersion                 int64              `json:"claim_version"`
 	CurrentEpoch                 pgtype.Int8        `json:"current_epoch"`
 	CurrentServiceID             pgtype.UUID        `json:"current_service_id"`
-	SupportsRun                  bool               `json:"supports_run"`
-	SupportsBuild                bool               `json:"supports_build"`
 	RuntimeIdentityID            pgtype.Text        `json:"runtime_identity_id"`
 	SubstrateFormat              string             `json:"substrate_format"`
 	SubstrateContract            string             `json:"substrate_contract"`
@@ -1225,13 +1220,11 @@ type WorkerInstance struct {
 	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
 	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
 	MaxVMSlots                   int32              `json:"max_vm_slots"`
-	MaxBuildExecutors            int32              `json:"max_build_executors"`
 	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
 	CPUEnvironment               []byte             `json:"cpu_environment"`
 	CPUEnvironmentDigest         pgtype.Text        `json:"cpu_environment_digest"`
 	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
 	RunPausedReason              pgtype.Text        `json:"run_paused_reason"`
-	BuildPausedReason            pgtype.Text        `json:"build_paused_reason"`
 	RuntimePausedReason          pgtype.Text        `json:"runtime_paused_reason"`
 	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
 	ActivatedAt                  pgtype.Timestamptz `json:"activated_at"`
@@ -1248,8 +1241,6 @@ type WorkerInstanceCredential struct {
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
 	KeyPrefix        string             `json:"key_prefix"`
 	ClaimVersion     int64              `json:"claim_version"`
-	AllowsRun        bool               `json:"allows_run"`
-	AllowsBuild      bool               `json:"allows_build"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 	SecretHash       []byte             `json:"secret_hash"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
@@ -1263,8 +1254,6 @@ type WorkerPool struct {
 	Name                            string             `json:"name"`
 	State                           string             `json:"state"`
 	ClaimVersion                    int64              `json:"claim_version"`
-	AllowsRun                       bool               `json:"allows_run"`
-	AllowsBuild                     bool               `json:"allows_build"`
 	RuntimeIdentityID               pgtype.Text        `json:"runtime_identity_id"`
 	SubstrateFormat                 pgtype.Text        `json:"substrate_format"`
 	SubstrateContract               pgtype.Text        `json:"substrate_contract"`
@@ -1275,7 +1264,6 @@ type WorkerPool struct {
 	PerVMMemoryBytes                pgtype.Int8        `json:"per_vm_memory_bytes"`
 	PerVMGuestEphemeralDiskBytes    pgtype.Int8        `json:"per_vm_guest_ephemeral_disk_bytes"`
 	MaxVMSlots                      pgtype.Int4        `json:"max_vm_slots"`
-	MaxBuildExecutors               pgtype.Int4        `json:"max_build_executors"`
 	SealedAt                        pgtype.Timestamptz `json:"sealed_at"`
 	CreatedAt                       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`

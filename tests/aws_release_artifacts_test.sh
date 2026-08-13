@@ -159,9 +159,8 @@ assert_contains "${bundle_stderr}" "runtime upload progress" "Worker runtime upl
 platform_release="${tmp}/platform-release"
 platform_bin="${tmp}/platform-bin"
 mkdir -p "${platform_release}/objects/sha256" "${platform_bin}"
-printf '{}' >"${platform_release}/platform-release.json"
+printf '{"formatVersion":0,"runtime":{"architecture":"x86_64","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","formatVersion":0,"mediaType":"application/vnd.helmr.runtime.v0+squashfs","runtimeContract":"helmr.runtime.v0","sizeBytes":6}}' >"${platform_release}/platform-release.json"
 printf 'object' >"${platform_release}/objects/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-printf 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' >"${platform_release}/build-policy.digest"
 
 cat >"${platform_bin}/git" <<'EOF'
 #!/usr/bin/env bash
@@ -239,7 +238,10 @@ done
 
 controlplane_bin="${tmp}/controlplane-bin"
 controlplane_context="${tmp}/controlplane-context"
+controlplane_runtime_release="${tmp}/controlplane-runtime-release"
 mkdir -p "${controlplane_bin}"
+mkdir -p "${controlplane_runtime_release}"
+printf '{"formatVersion":0}\n' >"${controlplane_runtime_release}/runtime.descriptor.json"
 for command in bun make go; do
   printf '#!/usr/bin/env bash\nexit 0\n' >"${controlplane_bin}/${command}"
 done
@@ -252,21 +254,33 @@ case "${1:-}" in
     [ "${2:-}" = inspect ]
     printf '%s\n' "${MOCK_LOCAL_IMAGE_ID:-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
     ;;
+  run)
+    printf '%s\n' "$*" | grep -F 'target=/work,readonly' >/dev/null
+    cat "${MOCK_RUNTIME_DESCRIPTOR_PATH:?}"
+    ;;
+  create)
+    printf 'mock-controlplane-container\n'
+    ;;
+  cp)
+    cp "${MOCK_RUNTIME_DESCRIPTOR_PATH:?}" "${3:?}"
+    ;;
+  rm)
+    ;;
   *) exit 1 ;;
 esac
 EOF
 chmod 0755 "${controlplane_bin}"/*
-PATH="${controlplane_bin}:${PATH}" CONTROLPLANE_IMAGE_CONTEXT="${controlplane_context}" CONTROLPLANE_IMAGE_PLATFORM=linux/amd64 \
+PATH="${controlplane_bin}:${PATH}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" CONTROLPLANE_IMAGE_CONTEXT="${controlplane_context}" CONTROLPLANE_IMAGE_PLATFORM=linux/amd64 \
   "${controlplane_build_script}" example.invalid/helmr-controlplane:test
 base_image="$(jq -r '.baseImage' "${controlplane_build_contract}")"
 assert_contains "${controlplane_context}/Dockerfile" "FROM ${base_image}" "digest-pinned Control Plane base"
-PATH="${controlplane_bin}:${PATH}" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
+PATH="${controlplane_bin}:${PATH}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
   "${controlplane_context}/build-inputs.json" example.invalid/helmr-controlplane:test
 
 drifted="${tmp}/drifted-build-inputs.json"
 jq '.sourceCommit = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
   "${controlplane_context}/build-inputs.json" >"${drifted}"
-if PATH="${controlplane_bin}:${PATH}" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
+if PATH="${controlplane_bin}:${PATH}" MOCK_RUNTIME_DESCRIPTOR_PATH="${controlplane_runtime_release}/runtime.descriptor.json" "${repo_root}/scripts/verify-controlplane-image-build.sh" \
   "${drifted}" example.invalid/helmr-controlplane:test >/dev/null 2>&1; then
   fail "Control Plane image verification must reject source-commit drift"
 fi

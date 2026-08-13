@@ -128,7 +128,7 @@ stdenvNoCC.mkDerivation {
       cut -d' ' -f1)"
     program_digest="$(sha256sum "$tree/helmr/program-compiler.mjs" |
       cut -d' ' -f1)"
-    jq -cS \
+    jq -cSj \
       --arg apiPackageDigest "sha256:$api_digest" \
       --arg binaryDigest "sha256:$binary_digest" \
       --arg configEvaluatorDigest "sha256:$config_digest" \

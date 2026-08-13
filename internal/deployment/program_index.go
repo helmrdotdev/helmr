@@ -366,52 +366,6 @@ func buildProgramIndex(
 	return cloneProgramIndex(index), nil
 }
 
-func validateProgramIndexBuild(
-	index ProgramIndex,
-	plan BuildPlan,
-	images []BundleWorkspaceImage,
-	configResultDigest string,
-) error {
-	locator := DeclarationLocator{
-		FormatVersion: DeclarationLocatorFormatVersion,
-		Declarations:  make([]LocatedDeclaration, 0),
-	}
-	for _, declaration := range index.Declarations {
-		if declaration.Locator == nil {
-			continue
-		}
-		locator.Declarations = append(locator.Declarations, LocatedDeclaration{
-			DeclaredID: declaration.DeclaredID,
-			ExportName: declaration.Locator.ExportName,
-			Kind:       DeclarationKind(declaration.Kind),
-			ModulePath: declaration.Locator.ModulePath,
-			Slot:       declaration.Locator.Slot,
-		})
-	}
-	sort.Slice(locator.Declarations, func(left, right int) bool {
-		return compareDeclarations(
-			locatedDeclarationProjection(locator.Declarations[left]),
-			locatedDeclarationProjection(locator.Declarations[right]),
-		) < 0
-	})
-	expected, err := buildProgramIndex(plan, locator, images, configResultDigest, index.RuntimeDigest)
-	if err != nil {
-		return err
-	}
-	actualRaw, err := CanonicalProgramIndex(index)
-	if err != nil {
-		return err
-	}
-	expectedRaw, err := CanonicalProgramIndex(expected)
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(actualRaw, expectedRaw) {
-		return errors.New("program index does not match build plan and workspace images")
-	}
-	return nil
-}
-
 func programIndexExecutionDeclarations(index ProgramIndex) []ProgramDeclaration {
 	declarations := make([]ProgramDeclaration, 0)
 	for _, declaration := range index.Declarations {

@@ -213,7 +213,7 @@ func Plan(ctx context.Context, store Store, workerGroupID string, request capaci
 		if items[index].reason != "" || items[index].retainedPoolID.Valid || items[index].restore != nil {
 			continue
 		}
-		items[index].targetPoolID = group.PrimaryRunPoolID
+		items[index].targetPoolID = group.PrimaryPoolID
 		if !items[index].targetPoolID.Valid {
 			items[index].reason = reasonPrimaryPool
 		}
@@ -358,7 +358,7 @@ func capacityPoolPlan(row db.ListCapacityWorkerPoolsRow, max int32) (poolPlan, e
 	template := bin{
 		workerGroupID: row.WorkerGroupID, workerPoolID: row.ID,
 		resources: resources, runConsumers: resources.VMSlots, runtimeStarts: resources.VMSlots,
-		supportsRun: row.AllowsRun,
+		supportsRun: true,
 		runtimeArch: "x86_64", runtimeContract: capacityapi.RuntimeContract,
 		runtimeIdentityID: row.RuntimeIdentityID.String,
 		substrateFormat:   row.SubstrateFormat.String, substrateContract: row.SubstrateContract.String,
@@ -413,7 +413,7 @@ func requestedPoolsForCandidate(plans []poolPlan, candidate item) []*poolPlan {
 func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanSeed string) ([]item, bool, error) {
 	result := make([]item, 0)
 	complete := true
-	if group.AllowsRun {
+	{
 		remaining := maximumPlanningCandidates
 		var after db.ListQueuedRunEligibleScopesRow
 		var visited int32
@@ -615,7 +615,7 @@ func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 			GuestEphemeralDiskBytes: row.AvailableGuestEphemeralDiskBytes,
 			VMSlots:                 row.AvailableVMSlots,
 		},
-		runConsumers: row.AvailableRunConsumers, runtimeStarts: row.AvailableRuntimeStarts, supportsRun: row.SupportsRun,
+		runConsumers: row.AvailableRunConsumers, runtimeStarts: row.AvailableRuntimeStarts, supportsRun: true,
 		runtimeArch:     row.RuntimeArch,
 		runtimeContract: row.VMRuntimeContract, runtimeIdentityID: row.RuntimeIdentityID.String,
 		substrateFormat: row.SubstrateFormat, substrateContract: row.SubstrateContract,
@@ -659,7 +659,7 @@ func SelectRunWorker(rows []db.ListWorkerCapacityBinsRow, request RunRequirement
 			continue
 		}
 		if request.RuntimeIdentityID == "" {
-			if !row.PrimaryRunPoolID.Valid || row.WorkerPoolID != row.PrimaryRunPoolID {
+			if !row.PrimaryPoolID.Valid || row.WorkerPoolID != row.PrimaryPoolID {
 				continue
 			}
 		} else {

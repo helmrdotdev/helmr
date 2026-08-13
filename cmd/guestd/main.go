@@ -20,7 +20,6 @@ func main() {
 
 func parseFlags() guestd.Config {
 	var cfg guestd.Config
-	flag.StringVar(&cfg.Profile, "profile", "", "guest execution profile")
 	flag.UintVar(&cfg.VsockPort, "vsock-port", 5000, "guest task vsock port")
 	flag.UintVar(&cfg.HealthPort, "health-port", 5001, "health check vsock port")
 	flag.Parse()

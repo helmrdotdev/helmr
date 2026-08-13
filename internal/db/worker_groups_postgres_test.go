@@ -22,13 +22,13 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
 	serviceID := uuid.Must(uuid.NewV7())
 	secretHash := []byte("epoch-liveness-secret")
-	enrollTestWorker(t, ctx, q, workerID, "epoch-liveness-worker", true, true, secretHash)
+	enrollTestWorker(t, ctx, q, workerID, "epoch-liveness-worker", secretHash)
 
 	authenticate := func(service uuid.UUID) db.AuthenticateWorkerInstanceCredentialRow {
 		t.Helper()
 		row, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 			WorkerInstanceID: pgvalue.UUID(workerID), SecretHash: secretHash,
-			ServiceID: pgvalue.UUID(service), SupportsRun: true, SupportsBuild: true,
+			ServiceID: pgvalue.UUID(service),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -42,9 +42,8 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if activated.ObservedAt.Valid || activated.RunPausedReason.Valid ||
-		activated.BuildPausedReason.Valid || activated.RuntimePausedReason.Valid {
-		t.Fatalf("initial activation liveness = observed:%+v run:%+v build:%+v runtime:%+v", activated.ObservedAt, activated.RunPausedReason, activated.BuildPausedReason, activated.RuntimePausedReason)
+	if activated.ObservedAt.Valid || activated.RunPausedReason.Valid || activated.RuntimePausedReason.Valid {
+		t.Fatalf("initial activation liveness = observed:%+v run:%+v runtime:%+v", activated.ObservedAt, activated.RunPausedReason, activated.RuntimePausedReason)
 	}
 	bins, err := q.ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
@@ -83,8 +82,7 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 		UPDATE worker_instances
 		   SET observed_at = $2,
 		       run_paused_reason = NULL,
-		       build_paused_reason = 'startup_recovery_leak',
-		       runtime_paused_reason = NULL
+		       runtime_paused_reason = 'startup_recovery_leak'
 		 WHERE id = $1
 	`, workerID, sentinel); err != nil {
 		t.Fatal(err)
@@ -94,8 +92,8 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !replayed.ObservedAt.Valid || !replayed.ObservedAt.Time.Equal(sentinel) || replayed.RunPausedReason.Valid ||
-		!replayed.BuildPausedReason.Valid || replayed.BuildPausedReason.String != "startup_recovery_leak" || replayed.RuntimePausedReason.Valid {
-		t.Fatalf("activation replay changed liveness = observed:%+v run:%+v build:%+v runtime:%+v", replayed.ObservedAt, replayed.RunPausedReason, replayed.BuildPausedReason, replayed.RuntimePausedReason)
+		!replayed.RuntimePausedReason.Valid || replayed.RuntimePausedReason.String != "startup_recovery_leak" {
+		t.Fatalf("activation replay changed liveness = observed:%+v run:%+v runtime:%+v", replayed.ObservedAt, replayed.RunPausedReason, replayed.RuntimePausedReason)
 	}
 
 	sameEpoch := authenticate(serviceID)
@@ -103,12 +101,12 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 		t.Fatalf("same service epoch = %+v, want %+v", sameEpoch.CurrentEpoch, firstEpoch.CurrentEpoch)
 	}
 	var preservedObservedAt pgtype.Timestamptz
-	var preservedBuildPause pgtype.Text
-	if err := pool.QueryRow(ctx, `SELECT observed_at, build_paused_reason FROM worker_instances WHERE id = $1`, workerID).Scan(&preservedObservedAt, &preservedBuildPause); err != nil {
+	var preservedRuntimePause pgtype.Text
+	if err := pool.QueryRow(ctx, `SELECT observed_at, runtime_paused_reason FROM worker_instances WHERE id = $1`, workerID).Scan(&preservedObservedAt, &preservedRuntimePause); err != nil {
 		t.Fatal(err)
 	}
-	if !preservedObservedAt.Valid || !preservedObservedAt.Time.Equal(sentinel) || preservedBuildPause.String != "startup_recovery_leak" {
-		t.Fatalf("same service changed liveness = observed:%+v build:%+v", preservedObservedAt, preservedBuildPause)
+	if !preservedObservedAt.Valid || !preservedObservedAt.Time.Equal(sentinel) || preservedRuntimePause.String != "startup_recovery_leak" {
+		t.Fatalf("same service changed liveness = observed:%+v runtime:%+v", preservedObservedAt, preservedRuntimePause)
 	}
 
 	nextEpoch := authenticate(uuid.Must(uuid.NewV7()))
@@ -116,12 +114,12 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 		t.Fatalf("new service epoch = %+v", nextEpoch)
 	}
 	var observedAt pgtype.Timestamptz
-	var runPause, buildPause, runtimePause pgtype.Text
-	if err := pool.QueryRow(ctx, `SELECT observed_at, run_paused_reason, build_paused_reason, runtime_paused_reason FROM worker_instances WHERE id = $1`, workerID).Scan(&observedAt, &runPause, &buildPause, &runtimePause); err != nil {
+	var runPause, runtimePause pgtype.Text
+	if err := pool.QueryRow(ctx, `SELECT observed_at, run_paused_reason, runtime_paused_reason FROM worker_instances WHERE id = $1`, workerID).Scan(&observedAt, &runPause, &runtimePause); err != nil {
 		t.Fatal(err)
 	}
-	if observedAt.Valid || runPause.Valid || buildPause.Valid || runtimePause.Valid {
-		t.Fatalf("new epoch retained liveness = observed:%+v run:%+v build:%+v runtime:%+v", observedAt, runPause, buildPause, runtimePause)
+	if observedAt.Valid || runPause.Valid || runtimePause.Valid {
+		t.Fatalf("new epoch retained liveness = observed:%+v run:%+v runtime:%+v", observedAt, runPause, runtimePause)
 	}
 }
 
@@ -131,15 +129,13 @@ func TestDrainingWorkerActivationSurvivesRestartAndLostResponse(t *testing.T) {
 	q := db.New(pool)
 	workerID := uuid.Must(uuid.NewV7())
 	secretHash := []byte("draining-restart-secret")
-	enrollTestWorker(t, ctx, q, workerID, "draining-restart-worker", true, true, secretHash)
+	enrollTestWorker(t, ctx, q, workerID, "draining-restart-worker", secretHash)
 	authenticate := func(serviceID uuid.UUID) db.AuthenticateWorkerInstanceCredentialRow {
 		t.Helper()
 		row, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
 			WorkerInstanceID: pgvalue.UUID(workerID),
 			SecretHash:       secretHash,
 			ServiceID:        pgvalue.UUID(serviceID),
-			SupportsRun:      true,
-			SupportsBuild:    true,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -181,8 +177,7 @@ func TestDrainingWorkerActivationSurvivesRestartAndLostResponse(t *testing.T) {
 	}
 
 	sameEpoch := authenticate(firstServiceID)
-	if authorized := authorizeActivation(sameEpoch); authorized.WorkerState != db.WorkerInstanceStateDraining ||
-		!authorized.SupportsRun || !authorized.SupportsBuild {
+	if authorized := authorizeActivation(sameEpoch); authorized.WorkerState != db.WorkerInstanceStateDraining {
 		t.Fatalf("draining activation replay authorization = %+v", authorized)
 	}
 	replayedDraining, err := q.ActivateWorkerInstance(ctx, firstActivation)
@@ -212,7 +207,7 @@ func TestDrainingWorkerActivationSurvivesRestartAndLostResponse(t *testing.T) {
 		t.Fatalf("restarted draining epoch = %+v", nextEpoch)
 	}
 	cleared := authorizeActivation(nextEpoch)
-	if cleared.WorkerState != db.WorkerInstanceStateDraining || cleared.SupportsRun || cleared.SupportsBuild {
+	if cleared.WorkerState != db.WorkerInstanceStateDraining {
 		t.Fatalf("restarted draining authorization = %+v", cleared)
 	}
 	staleAuthorization := db.AuthorizeWorkerActivationCredentialParams{
@@ -230,8 +225,7 @@ func TestDrainingWorkerActivationSurvivesRestartAndLostResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restarted.State != db.WorkerInstanceStateDraining || !restarted.SupportsRun || !restarted.SupportsBuild ||
-		restarted.DrainingAt != draining.DrainingAt {
+	if restarted.State != db.WorkerInstanceStateDraining || restarted.DrainingAt != draining.DrainingAt {
 		t.Fatalf("restarted draining activation = %+v", restarted)
 	}
 	lostResponseReplay, err := q.ActivateWorkerInstance(ctx, restartedActivation)
@@ -248,12 +242,11 @@ func TestDrainingWorkerActivationSurvivesRestartAndLostResponse(t *testing.T) {
 func testWorkerActivationParams(workerID uuid.UUID, epoch pgtype.Int8) db.ActivateWorkerInstanceParams {
 	return db.ActivateWorkerInstanceParams{
 		WorkerInstanceID: pgvalue.UUID(workerID), WorkerGroupID: dbtest.DefaultWorkerGroupID, WorkerEpoch: epoch,
-		SupportsRun: true, SupportsBuild: true,
 		EpochCPUMillis: 2000, EpochMemoryBytes: 2 << 30, EpochGuestEphemeralDiskBytes: 64 << 30,
 		MaxVMSlots: 1, RuntimeIdentityID: pgtype.Text{String: dbtest.DefaultRuntimeID, Valid: true},
 		SubstrateFormat: "ext4", SubstrateContract: "helmr.substrate.ext4.v0",
 		PerVMCPUMillis: 1000, PerVMMemoryBytes: 1 << 30, PerVMGuestEphemeralDiskBytes: 32 << 30,
-		MaxBuildExecutors: 1, MaxRuntimeStarts: 1,
+		MaxRuntimeStarts:     1,
 		CPUEnvironment:       []byte(`{}`),
 		CPUEnvironmentDigest: pgtype.Text{String: dbtest.DefaultCPUConfigID, Valid: true},
 	}
@@ -364,8 +357,8 @@ func TestDeploymentWorkerInstanceLossIsFencedAndReplaySafe(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instance_credentials (
 			id, worker_group_id, worker_instance_id, key_prefix, claim_version,
-			allows_run, allows_build, secret_hash
-		) VALUES ($1, $2, $3, $4, $5, false, true, $6)
+			secret_hash
+		) VALUES ($1, $2, $3, $4, $5, $6)
 	`, credentialID, dbtest.DefaultWorkerGroupID, workerID, uuid.NewString(), initial.ClaimVersion, []byte("loss-secret")); err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +404,7 @@ func TestDeploymentWorkerInstanceLossTerminallyFencesRegisteringIdentity(t *test
 	workerID := uuid.Must(uuid.NewV7())
 	resourceID := "registering-lost-" + workerID.String()
 	secretHash := []byte("registering-lost-secret")
-	credential := enrollTestWorker(t, ctx, q, workerID, resourceID, true, false, secretHash)
+	credential := enrollTestWorker(t, ctx, q, workerID, resourceID, secretHash)
 	initial, err := q.GetWorkerInstanceStateByResource(ctx, db.GetWorkerInstanceStateByResourceParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, ResourceID: resourceID,
 	})
@@ -432,14 +425,14 @@ func TestDeploymentWorkerInstanceLossTerminallyFencesRegisteringIdentity(t *test
 		t.Fatalf("lost lifecycle = %+v, want terminal pre-epoch fence", lost)
 	}
 	if _, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
-		SupportsRun: true, WorkerInstanceID: credential.WorkerInstanceID, SecretHash: secretHash,
+		WorkerInstanceID: credential.WorkerInstanceID, SecretHash: secretHash,
 		ServiceID: pgvalue.NewUUIDv7(),
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("lost registering credential authentication error = %v, want pgx.ErrNoRows", err)
 	}
 	replacementID := uuid.Must(uuid.NewV7())
 	replacement, err := q.EnrollWorkerInstance(ctx, enrollmentParams(
-		replacementID, resourceID, true, false, []byte("replacement-secret"),
+		replacementID, resourceID, []byte("replacement-secret"),
 	))
 	if err != nil {
 		t.Fatalf("enroll replacement identity: %v", err)
@@ -461,27 +454,19 @@ func TestDeploymentWorkerInstanceLossTerminallyFencesRegisteringIdentity(t *test
 	}
 }
 
-func enrollTestWorker(t *testing.T, ctx context.Context, q *db.Queries, workerID uuid.UUID, resourceID string, allowsRun bool, allowsBuild bool, secretHash []byte) db.EnrollWorkerInstanceRow {
+func enrollTestWorker(t *testing.T, ctx context.Context, q *db.Queries, workerID uuid.UUID, resourceID string, secretHash []byte) db.EnrollWorkerInstanceRow {
 	t.Helper()
-	row, err := q.EnrollWorkerInstance(ctx, enrollmentParams(workerID, resourceID, allowsRun, allowsBuild, secretHash))
+	row, err := q.EnrollWorkerInstance(ctx, enrollmentParams(workerID, resourceID, secretHash))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return row
 }
 
-func enrollmentParams(workerID uuid.UUID, resourceID string, allowsRun bool, allowsBuild bool, secretHash []byte) db.EnrollWorkerInstanceParams {
-	poolID := pgvalue.NewUUIDv7()
-	poolName := "run"
-	if allowsRun && allowsBuild {
-		poolID = pgvalue.UUID(uuid.MustParse(dbtest.DefaultWorkerPoolID))
-		poolName = "default"
-	} else if allowsBuild {
-		poolName = "build"
-	}
+func enrollmentParams(workerID uuid.UUID, resourceID string, secretHash []byte) db.EnrollWorkerInstanceParams {
 	return db.EnrollWorkerInstanceParams{
-		TokenHash: make([]byte, 32), AllowsRun: allowsRun, AllowsBuild: allowsBuild,
-		WorkerPoolID: poolID, PoolName: poolName,
+		TokenHash:    make([]byte, 32),
+		WorkerPoolID: pgvalue.UUID(uuid.MustParse(dbtest.DefaultWorkerPoolID)), PoolName: "default",
 		WorkerInstanceID: pgvalue.UUID(workerID), ResourceID: resourceID,
 		CurrentServiceID: pgvalue.NewUUIDv7(), CredentialID: pgvalue.NewUUIDv7(),
 		KeyPrefix: uuid.NewString(), SecretHash: secretHash,

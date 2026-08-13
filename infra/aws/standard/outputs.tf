@@ -119,33 +119,18 @@ output "execution_nat_gateway_id" {
 }
 
 output "worker_autoscaling_group_name" {
-  description = "Run-worker Auto Scaling group name."
-  value       = try(module.worker_group[local.worker_pool_names.run].autoscaling_group_name, null)
+  description = "Current execution Worker Auto Scaling group name."
+  value       = try(module.worker_group[local.worker_pool_name].autoscaling_group_name, null)
 }
 
 output "worker_autoscaling_group_arn" {
-  description = "Exact run-worker Auto Scaling group ARN."
-  value       = try(module.worker_group[local.worker_pool_names.run].autoscaling_group_arn, null)
+  description = "Exact current execution Worker Auto Scaling group ARN."
+  value       = try(module.worker_group[local.worker_pool_name].autoscaling_group_arn, null)
 }
 
 output "worker_protect_from_scale_in" {
-  description = "Whether new run-worker instances start protected from scale in."
-  value       = try(module.worker_group[local.worker_pool_names.run].protect_from_scale_in, null)
-}
-
-output "build_worker_autoscaling_group_name" {
-  description = "Build-worker Auto Scaling group name."
-  value       = try(module.worker_group[local.worker_pool_names.build].autoscaling_group_name, null)
-}
-
-output "build_worker_autoscaling_group_arn" {
-  description = "Exact build-worker Auto Scaling group ARN."
-  value       = try(module.worker_group[local.worker_pool_names.build].autoscaling_group_arn, null)
-}
-
-output "build_worker_protect_from_scale_in" {
-  description = "Whether new build-worker instances start protected from scale in."
-  value       = try(module.worker_group[local.worker_pool_names.build].protect_from_scale_in, null)
+  description = "Whether new execution Worker instances start protected from scale in."
+  value       = try(module.worker_group[local.worker_pool_name].protect_from_scale_in, null)
 }
 
 output "worker_generation_definitions" {
@@ -169,7 +154,6 @@ output "worker_generation_bindings" {
   value = {
     for pool_name, generation in local.worker_generations :
     pool_name => {
-      role                    = generation.role
       provider_name           = generation.provider_name
       autoscaling_group_name  = try(module.worker_group[pool_name].autoscaling_group_name, null)
       autoscaling_group_arn   = try(module.worker_group[pool_name].autoscaling_group_arn, null)

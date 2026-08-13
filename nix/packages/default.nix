@@ -13,12 +13,10 @@ let
   pkgsBun = import nixpkgs-bun { inherit system; };
   squashfsTools = pkgs.callPackage ./squashfs-tools.nix { };
   runtimeRelease = pkgs.callPackage ./runtime-release.nix { inherit squashfsTools; };
-  runtimeHarness = pkgs.callPackage ./runtime.nix { };
   compiler = pkgs.callPackage ./compiler.nix { };
   bundleBuilder = pkgs.callPackage ./bundle-builder.nix {
     buildGoModule = buildGo126Module;
   };
-  toolchainBase = pkgs.callPackage ./toolchain.nix { inherit compiler; };
   bundleBuilderImage = pkgs.callPackage ./bundle-builder-image.nix {
     inherit
       bundleBuilder
@@ -28,7 +26,6 @@ let
       ;
     bun = pkgsBun.bun;
   };
-  nodeReleaseKeys = pkgs.callPackage ./node-keys.nix { };
   buildGo126Module = pkgs.callPackage "${nixpkgs}/pkgs/build-support/go/module.nix" {
     go = pkgs.go_1_26;
   };
@@ -134,35 +131,8 @@ in
     bundleBuilder
     bundleBuilderImage
     runtimeRelease
-    runtimeHarness
-    toolchainBase
-    nodeReleaseKeys
     ;
-  platformRelease =
-    let
-      policyTool = buildGo126Module {
-        pname = "helmr-platform-policy";
-        version = "0";
-        src = lib.fileset.toSource {
-          root = ../..;
-          fileset = lib.fileset.unions [
-            ../../cmd/internal/platform-policy
-            ../../go.mod
-            ../../go.sum
-            ../../internal
-            ../../capacityapi
-          ];
-        };
-        vendorHash = "sha256-Ut+2gtqmnDMy8Zwq4sHbsxYh65AHMohe1SyIxTjzDtA=";
-        subPackages = [ "cmd/internal/platform-policy" ];
-      };
-    in
-    pkgs.callPackage ./platform-release.nix {
-      inherit
-        nodeReleaseKeys
-        policyTool
-        runtimeHarness
-        toolchainBase
-        ;
-    };
+  platformRelease = pkgs.callPackage ./platform-release.nix {
+    inherit runtimeRelease;
+  };
 })

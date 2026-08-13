@@ -17,6 +17,20 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
+func writeSessionScopeProjects(t *testing.T, w http.ResponseWriter, projectSlug, environmentSlug string) {
+	t.Helper()
+	if err := json.NewEncoder(w).Encode(api.ListProjectsResponse{Projects: []api.ProjectSummary{{
+		ID:   "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30",
+		Slug: projectSlug,
+		Environments: []api.EnvironmentSummary{{
+			ID:   "019c10d5-a6f7-7af2-8f5f-bb97bcc0dc32",
+			Slug: environmentSlug,
+		}},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDeployBundleUsesUploadFinalizePromoteFlow(t *testing.T) {
 	directory, raw, digest, objectDigest := writeDeployTestBundle(t)
 	const deploymentID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
@@ -94,15 +108,6 @@ func TestDeployBundleUsesUploadFinalizePromoteFlow(t *testing.T) {
 	}
 	if strings.Join(requests, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("requests = %v", requests)
-	}
-}
-
-func TestDeployBundleRejectsLegacyRemoteBuildFlags(t *testing.T) {
-	command := deployCommand()
-	for _, name := range []string{"detach", "timeout", "no-image-cache"} {
-		if command.Flags().Lookup(name) != nil {
-			t.Fatalf("legacy remote-build flag %q remains", name)
-		}
 	}
 }
 

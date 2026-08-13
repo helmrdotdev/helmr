@@ -1,7 +1,7 @@
 # Helmr AWS Worker Module
 
 This module provisions EC2 Auto Scaling capacity for Linux Firecracker workers. Workers are
-filesystem-first hosts: build cache, runtime state, and guest artifacts live on the instance root
+filesystem-first hosts: runtime caches, VM state, and guest artifacts live on the instance root
 volume. The module does not build the worker AMI.
 
 ## Worker AMI Contract
@@ -26,9 +26,9 @@ instance family that supports EC2 nested virtualization, such as C8i/M8i/R8i. Le
 metal worker instances and for instance families that do not support the option.
 
 The module writes `/etc/helmr/worker.env` from Terraform inputs and Secrets Manager values, then
-starts `helmr-worker` and a small lifecycle watcher. Build-capable workers additionally allocate
-and mount fixed Worker-cache and image-build scratch ext4 filesystems; all untrusted BuildKit
-execution stays inside the fresh image-build VM.
+starts `helmr-worker` and a small lifecycle watcher. Every execution Worker allocates
+and mounts fixed runtime-cache and VM-arena ext4 filesystems. Deployment builds run in the
+user-owned local or CI builder, never on a managed Worker.
 
 Before reading secrets or allocating runtime storage, launch user data invokes the AMI-owned root
 preparation helper with the configured EBS size. The helper verifies the root device, grows its
@@ -44,7 +44,7 @@ entries and use the corresponding typed input where one exists; other values are
 by the module.
 
 Size `root_volume_size_gb`, `root_volume_iops`, and `root_volume_throughput` for expected
-build/cache/runtime load. Leave `worker_disk_mib` null to let `helmr-worker` detect local
+runtime/cache load. Leave `worker_disk_mib` null to let `helmr-worker` detect local
 filesystem capacity, or set it when the capacity advertised to the Control Plane should be capped.
 `worker_disk_reserve_mib` is always passed explicitly (default `1024`) and is withheld before
 workload, scratch, and cache partitions are certified.
@@ -53,11 +53,10 @@ SSM Session Manager access is enabled by default through `AmazonSSMManagedInstan
 inbound SSH rules for bootstrap and smoke debugging. Set `enable_ssm = false` only if the AMI role is
 managed elsewhere.
 
-`worker_roles` advertises the subset of roles this fleet serves, while the
-required `worker_pool_name` identifies this exact immutable supply generation.
+Each fleet is one immutable execution Pool generation. The required
+`worker_pool_name` identifies this exact immutable supply generation.
 The caller must allocate a new canonical Pool name before changing the AMI or
-another sealed runtime/capacity input; role names are not generation
-identifiers. During boot, the module fetches the enrollment token into a
+another sealed runtime/capacity input. During boot, the module fetches the enrollment token into a
 root-only volatile file. The token selects the Worker Group, the Pool name
 binds the instance to one logical generation, and the EC2 instance ID remains
 an opaque operator locator. AWS identity and fleet configuration remain

@@ -48,16 +48,3 @@ func main() {
 		}
 	}
 }
-
-func identityRoles(roles []string) (bool, bool) {
-	var run, build bool
-	for _, role := range roles {
-		switch role {
-		case "run":
-			run = true
-		case "build":
-			build = true
-		}
-	}
-	return run, build
-}

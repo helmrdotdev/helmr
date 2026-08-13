@@ -23,26 +23,7 @@ type connectionStart struct {
 	attach       *runv0.ResumeAttach
 }
 
-type guestProfile uint8
-
-const (
-	ordinaryGuestProfile guestProfile = iota
-)
-
-func parseGuestProfile(value string) (guestProfile, error) {
-	switch value {
-	case "":
-		return ordinaryGuestProfile, nil
-	default:
-		return 0, fmt.Errorf("unsupported guest profile %q", value)
-	}
-}
-
-func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, workspaceRegistry *workspaceOperationRegistry) (bool, error) {
-	_, err := parseGuestProfile(cfg.Profile)
-	if err != nil {
-		return false, err
-	}
+func handleConnection(ctx context.Context, conn io.ReadWriteCloser, logger *slog.Logger, registry *waitingRunRegistry, workspaceRegistry *workspaceOperationRegistry) (bool, error) {
 	start, err := readConnectionStart(conn)
 	if err != nil {
 		return false, err

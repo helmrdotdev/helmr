@@ -347,22 +347,8 @@ func verifierCgroupLeaf(job verifierJob, leaseIdentity string) (string, error) {
 	return "verifier-" + string(job) + "-" + leaseIdentity, nil
 }
 
-func configureVerifierCgroup(cgroupFD int, job verifierJob) error {
+func configureVerifierCgroup(cgroupFD int, _ verifierJob) error {
 	limits := verifierCgroupLimits
-	if job.conformance() {
-		limits = append([]struct {
-			file  string
-			value string
-		}(nil), verifierCgroupLimits...)
-		for index := range limits {
-			switch limits[index].file {
-			case "memory.max":
-				limits[index].value = "4294967296"
-			case "pids.max":
-				limits[index].value = "64"
-			}
-		}
-	}
 	for _, limit := range limits {
 		controlFD, err := unix.Openat(
 			cgroupFD,

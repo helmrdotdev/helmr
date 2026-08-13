@@ -59,8 +59,6 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure routed network reclaimer: %w", err)
 	}
-	supportsRun := true
-	supportsBuild := false
 	runtimeCapacity := deriveWorkerRuntimeCapacity(cfg.WorkerExecutionSlots)
 	var platformStore cas.ImmutableStore
 	verifierCgroupRoot, err := worker.PrepareVerifierHost()
@@ -68,7 +66,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("prepare verifier host: %w", err)
 	}
 	serviceID := uuid.Must(uuid.NewV7()).String()
-	process, err := worker.Acquire(workDir, worker.ProcessIdentity{ServiceID: serviceID, Roles: cfg.WorkerRoles})
+	process, err := worker.Acquire(workDir, worker.ProcessIdentity{ServiceID: serviceID})
 	if err != nil {
 		return fmt.Errorf("acquire worker supervisor singleton: %w", err)
 	}
@@ -82,7 +80,7 @@ func run(log *slog.Logger) error {
 	workerCredential, err := resolveAuthenticatedWorkerCredential(ctx, cfg, workDir, func(credential workerCredentialFile) error {
 		candidate, candidateErr := workerclient.New(cfg.ControlPlaneURL,
 			workerclient.WithAuth(credential.WorkerInstanceID, credential.WorkerInstanceSecret),
-			workerclient.WithService(serviceID, supportsRun, supportsBuild),
+			workerclient.WithService(serviceID),
 		)
 		if candidateErr != nil {
 			return candidateErr
@@ -154,10 +152,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
-	vmResources, err := resolveVMResources(cfg)
-	if err != nil {
-		return err
-	}
+	vmResources := resolveVMResources(cfg)
 	runtimeConnector, err := vm.NewStartLimiter(connector, runtimeCapacity.hostStartLimit)
 	if err != nil {
 		return fmt.Errorf("configure host runtime start limit: %w", err)
@@ -168,13 +163,6 @@ func run(log *slog.Logger) error {
 	}
 	substrateCacheMaxBytes, artifactCacheMaxBytes := workerCacheBudgetsBytes(cfg.SubstrateCacheMaxMiB, cfg.ArtifactCacheMaxMiB, hostDiskMiB)
 	cacheBytesOnWorkerDisk := substrateCacheMaxBytes + artifactCacheMaxBytes
-	if supportsBuild {
-		// Managed build hosts put cache and the trusted VM arena on separate
-		// proven filesystems. Cache budgets must not be subtracted from arena
-		// capacity; live substrate projections are charged by the runtime
-		// capacity ledger instead.
-		cacheBytesOnWorkerDisk = 0
-	}
 	diskCapacity, err := compute.PartitionWorkerDiskCapacity(hostDiskMiB, vmResources.DiskMiB, cacheBytesOnWorkerDisk)
 	if err != nil {
 		return fmt.Errorf("partition worker physical disk capacity: %w", err)
@@ -183,9 +171,7 @@ func run(log *slog.Logger) error {
 		MilliCPU:  cfg.WorkerCapacityVCPUs * 1000,
 		MemoryMiB: cfg.WorkerCapacityMemoryMiB,
 	}
-	if supportsRun {
-		allocatable.Slots = cfg.WorkerExecutionSlots
-	}
+	allocatable.Slots = cfg.WorkerExecutionSlots
 	workerCapabilities := workerapi.Capabilities{
 		Runtime:                   runtimeProfile,
 		CPUShapes:                 cpuShapes,
@@ -197,12 +183,9 @@ func run(log *slog.Logger) error {
 		GuestEphemeralDiskBytes:   diskCapacity.HostGuestEphemeralDiskBytes,
 		VMGuestEphemeralDiskBytes: diskCapacity.VMGuestEphemeralDiskBytes,
 		ExecutionSlotsAvailable:   int32(allocatable.Slots),
-		SupportsRun:               supportsRun,
 	}
-	if supportsRun {
-		workerCapabilities.SubstrateFormat = substrate.Format
-		workerCapabilities.SubstrateContract = substrate.Contract
-	}
+	workerCapabilities.SubstrateFormat = substrate.Format
+	workerCapabilities.SubstrateContract = substrate.Contract
 	hostCapacity, err := capacity.New(capacity.Vector{
 		CPUMillis:               workerCapabilities.MaxVCPUs * 1000,
 		MemoryBytes:             workerCapabilities.MaxMemoryMiB * 1024 * 1024,
@@ -281,16 +264,14 @@ func run(log *slog.Logger) error {
 	}
 	consumerSpecs := make([]worker.ConsumerSpec, 0, 4)
 	admission := map[string]int{}
-	if supportsRun {
-		admission["run"] = int(cfg.WorkerExecutionSlots)
-		admission["workspace"] = int(cfg.WorkerExecutionSlots)
-		consumerSpecs = append(consumerSpecs,
-			worker.ConsumerSpec{Name: "run", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "run", Consumer: worker.NewRunConsumer(runner)},
-			worker.ConsumerSpec{Name: "workspace", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "workspace", DrainEligible: true, Consumer: worker.NewWorkspaceConsumer(runner)},
-		)
-	}
+	admission["run"] = int(cfg.WorkerExecutionSlots)
+	admission["workspace"] = int(cfg.WorkerExecutionSlots)
+	consumerSpecs = append(consumerSpecs,
+		worker.ConsumerSpec{Name: "run", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "run", Consumer: worker.NewRunConsumer(runner)},
+		worker.ConsumerSpec{Name: "workspace", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "workspace", DrainEligible: true, Consumer: worker.NewWorkspaceConsumer(runner)},
+	)
 	background := make([]worker.BackgroundSpec, 0, 1)
-	if supportsRun && preparedRuntimePool != nil {
+	if preparedRuntimePool != nil {
 		background = append(background, worker.BackgroundSpec{Name: "runtime-controller", DrainEligible: true, Run: func(runCtx context.Context) error {
 			return preparedRuntimePool.ReconcileDesiredRuntimes(runCtx, controlPlaneClient)
 		}})
@@ -299,7 +280,7 @@ func run(log *slog.Logger) error {
 		Probe: worker.SystemHostHealthProbe{
 			WorkDir: workDir, CgroupVersion: cfg.CgroupVersion, FirecrackerPath: cfg.FirecrackerPath,
 		},
-		DiskFloorBytes:   admissionDiskFloorMiB(false, cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB) * 1024 * 1024,
+		DiskFloorBytes:   admissionDiskFloorMiB(cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB) * 1024 * 1024,
 		FDHeadroom:       256,
 		RuntimeSlotCount: cfg.WorkerExecutionSlots,
 		DatapathHealth:   connector.DatapathHealth,
@@ -387,14 +368,13 @@ func deriveWorkerRuntimeCapacity(executionSlots int32) workerRuntimeCapacity {
 	}
 }
 
-func resolveVMResources(cfg config.Worker) (compute.ResourceVector, error) {
-	resources := compute.ResourceVector{
+func resolveVMResources(cfg config.Worker) compute.ResourceVector {
+	return compute.ResourceVector{
 		MilliCPU:  cfg.VMVCPUCount * 1000,
 		MemoryMiB: cfg.VMMemoryMiB,
 		DiskMiB:   cfg.VMScratchDiskMiB,
 		Slots:     1,
 	}
-	return resources, nil
 }
 
 type retryableWorkerCloser struct {

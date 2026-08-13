@@ -9,12 +9,12 @@ func TestInstalledDockerfileIsTheOnlyGraphThatRunsUserInstall(t *testing.T) {
 	image := "ghcr.io/helmrdotdev/helmr-bundle-builder@sha256:" + strings.Repeat("a", 64)
 	raw, err := InstalledDockerfile(image, InstallPlan{Argv: []string{
 		"npx", "--yes", "yarn@8.0.0", "install", "--immutable",
-	}})
+	}, SecretIDs: []string{"NPM_TOKEN"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	document := string(raw)
-	install := `RUN ["npx","--yes","yarn@8.0.0","install","--immutable"]`
+	install := `RUN --mount=type=secret,id=NPM_TOKEN,uid=65532,gid=65532,mode=0400,required=true ["npx","--yes","yarn@8.0.0","install","--immutable"]`
 	if !strings.Contains(document, "FROM "+image+" AS installed") ||
 		!strings.Contains(document, install) ||
 		!strings.Contains(document, "FROM scratch AS installed-tree") ||
@@ -22,7 +22,7 @@ func TestInstalledDockerfileIsTheOnlyGraphThatRunsUserInstall(t *testing.T) {
 		t.Fatalf("Dockerfile boundary is invalid:\n%s", document)
 	}
 	for _, forbidden := range []string{
-		"docker.sock", "--privileged", "security.insecure", "--network=host", "--mount=type=ssh",
+		"docker.sock", "--privileged", "security.insecure", "--network=host", "--mount=type=ssh", "secret-value",
 	} {
 		if strings.Contains(document, forbidden) {
 			t.Fatalf("Dockerfile contains forbidden surface %q", forbidden)
@@ -46,7 +46,7 @@ func TestFinalGraphsUseOnlyTheInstalledOCIContext(t *testing.T) {
 				"FROM helmr_installed AS installed-tree",
 				"FROM " + image + " AS materialized",
 				"COPY --from=installed-tree --chown=0:0 /workspace/project/ /workspace/project/",
-				`RUN ["/bin/bash","-euo","pipefail","-c","chown -R 0:0 /workspace/project && chmod -R a-w /workspace/project"]`,
+				`RUN ["/bin/bash","-euo","pipefail","-c","chown -R 0:0 /workspace/project && chmod -R a-w /workspace/project && ln -s /workspace/project /opt/helmr/program"]`,
 				"RUN --network=none",
 			} {
 				if !strings.Contains(document, required) {

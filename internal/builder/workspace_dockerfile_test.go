@@ -46,25 +46,15 @@ func TestWorkspaceImageDockerfileUsesInstalledTreeAndPinnedBases(t *testing.T) {
 	}
 }
 
-func TestWorkspaceImageDockerfileRejectsMutableOrAuthenticatedBase(t *testing.T) {
-	for name, from := range map[string]imagebuild.From{
-		"tag": {Ref: "docker.io/library/alpine:3.22"},
-		"auth": {
-			Ref:  "registry.example/app@sha256:" + strings.Repeat("b", 64),
-			Auth: &imagebuild.RegistryAuth{Username: "user", PasswordSecret: "registry-password"},
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			build := imagebuild.Build{
-				FormatVersion: imagebuild.FormatVersion, Root: "root",
-				Images: []imagebuild.Spec{{
-					Key: "root", Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
-					Steps: []imagebuild.Step{{From: &from}},
-				}},
-			}
-			if _, _, err := WorkspaceImageDockerfile(build); err == nil {
-				t.Fatal("WorkspaceImageDockerfile accepted unsupported base authority")
-			}
-		})
+func TestWorkspaceImageDockerfileRejectsMutableBase(t *testing.T) {
+	build := imagebuild.Build{
+		FormatVersion: imagebuild.FormatVersion, Root: "root",
+		Images: []imagebuild.Spec{{
+			Key: "root", Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
+			Steps: []imagebuild.Step{{From: &imagebuild.From{Ref: "docker.io/library/alpine:3.22"}}},
+		}},
+	}
+	if _, _, err := WorkspaceImageDockerfile(build); err == nil {
+		t.Fatal("WorkspaceImageDockerfile accepted a mutable base")
 	}
 }

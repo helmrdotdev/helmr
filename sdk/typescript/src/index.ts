@@ -163,8 +163,6 @@ export type {
 
 export type {
   ImageBuilder,
-  ImageFromOptions,
-  ImageRegistryAuth,
   SourceDirectory,
   SourceFile,
 } from "./image"

@@ -931,8 +931,7 @@ func (s *Server) commitCheckpointReady(
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		if !sourcePool.AllowsRun ||
-			(sourcePool.State != "active" && sourcePool.State != "draining") {
+		if sourcePool.State != "active" && sourcePool.State != "draining" {
 			return errStaleRunLeaseClaim
 		}
 		authority.actor = owner.actor

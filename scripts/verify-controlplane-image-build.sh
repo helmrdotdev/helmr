@@ -24,6 +24,30 @@ printf '%s\n' "${local_image_id}" | grep -Eq '^sha256:[0-9a-f]{64}$' || {
   printf 'Control Plane image does not have a content-addressed local identity\n' >&2
   exit 1
 }
+descriptor_tmp="$(mktemp -d)"
+container_id=""
+cleanup() {
+  if [ -n "${container_id}" ]; then
+    "${docker_bin}" rm -f "${container_id}" >/dev/null 2>&1 || true
+  fi
+  rm -rf "${descriptor_tmp}"
+}
+trap cleanup EXIT
+container_id="$("${docker_bin}" create "${image_uri}")"
+"${docker_bin}" cp \
+  "${container_id}:/usr/local/share/helmr/runtime.descriptor.json" \
+  "${descriptor_tmp}/runtime.descriptor.json"
+if command -v sha256sum >/dev/null 2>&1; then
+  image_runtime_descriptor="$(sha256sum "${descriptor_tmp}/runtime.descriptor.json" | awk '{print $1}')"
+else
+  image_runtime_descriptor="$(shasum -a 256 "${descriptor_tmp}/runtime.descriptor.json" | awk '{print $1}')"
+fi
+"${docker_bin}" rm -f "${container_id}" >/dev/null
+container_id=""
+printf '%s\n' "${image_runtime_descriptor}" | grep -Eq '^[0-9a-f]{64}$' || {
+  printf 'Control Plane image does not contain the canonical Runtime descriptor\n' >&2
+  exit 1
+}
 if command -v sha256sum >/dev/null 2>&1; then
   flake_lock_sha256="$(sha256sum "${repo_root}/flake.lock" | awk '{print $1}')"
 else
@@ -36,6 +60,7 @@ jq -e \
   --arg flake_lock_sha256 "${flake_lock_sha256}" \
   --arg local_image_id "${local_image_id}" \
   --arg platform "${platform}" \
+  --arg runtime_descriptor_sha256 "${image_runtime_descriptor}" \
   --arg source_commit "${source_commit}" '
   . == {
     baseImage: $base_image,
@@ -43,6 +68,7 @@ jq -e \
     formatVersion: 1,
     localImageId: $local_image_id,
     platform: $platform,
+    runtimeDescriptorSha256: $runtime_descriptor_sha256,
     sourceCommit: $source_commit,
     toolchain: {
       kind: "nix-flake-lock",
@@ -53,3 +79,5 @@ jq -e \
   printf 'Control Plane image build-input receipt does not match the selected local image and checkout\n' >&2
   exit 1
 }
+trap - EXIT
+cleanup

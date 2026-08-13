@@ -393,15 +393,6 @@ func ValidateProgramIndex(index ProgramIndex) error {
 	return nil
 }
 
-func validateProgramConfig(config ProgramConfig) error {
-	if config.EvaluatorContract != ConfigEvaluatorContract ||
-		!sha256DigestPattern.MatchString(config.SourceDigest) ||
-		!sha256DigestPattern.MatchString(config.ResultDigest) {
-		return errors.New("config provenance is invalid")
-	}
-	return nil
-}
-
 func buildPlanProgramDeclarations(plan BuildPlan) []ProgramDeclaration {
 	declarations := make([]ProgramDeclaration, 0)
 	for _, definition := range plan.Definitions {

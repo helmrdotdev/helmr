@@ -16,9 +16,7 @@ const (
 	VMRuntimeDescriptorContract = "helmr.vm-runtime-descriptor.v0"
 	MaxVMVCPUCount              = int64(32)
 
-	defaultKernelArgs    = "console=ttyS0 reboot=k panic=1 root=/dev/vda rootfstype=squashfs ro init=/init"
-	buildKernelArgs      = defaultKernelArgs + " helmr.profile=build helmr.pids_max=1024"
-	imageBuildKernelArgs = defaultKernelArgs + " helmr.profile=image-build helmr.pids_max=1024"
+	defaultKernelArgs = "console=ttyS0 reboot=k panic=1 root=/dev/vda rootfstype=squashfs ro init=/init"
 
 	apiSocketName              = "api.sock"
 	vsockSocketName            = "vsock.sock"
@@ -36,8 +34,6 @@ const (
 	guestVsockID               = "guest-vsock"
 	guestNetworkInterfaceID    = "1"
 	defaultRuntimeProfileName  = "default"
-	buildRuntimeProfileName    = "build"
-	imageBuildProfileName      = "image-build"
 	runtimeSubstrateKernelFlag = "helmr.substrate=1"
 	runtimeProgramKernelFlag   = "helmr.program=1"
 	snapshotBackend            = "firecracker"
@@ -57,10 +53,6 @@ const (
 var readOnlyDriveOrder = [...]string{
 	vm.ProgramRuntimeDrive,
 	vm.ProgramDrive,
-	vm.ManagerDrive,
-	vm.ManagedRuntimeDrive,
-	vm.ToolchainDrive,
-	vm.BuildTreeDrive,
 }
 
 // VMRuntimeDescriptor is the shape-independent Firecracker restore contract.
@@ -181,8 +173,6 @@ func CanonicalVMRuntimeDescriptor() VMRuntimeDescriptor {
 		Boot: VMRuntimeBootDescriptor{
 			Profiles: []VMRuntimeBootProfile{
 				{Name: defaultRuntimeProfileName, KernelArgs: defaultKernelArgs},
-				{Name: buildRuntimeProfileName, KernelArgs: buildKernelArgs},
-				{Name: imageBuildProfileName, KernelArgs: imageBuildKernelArgs},
 			},
 			DynamicFlags: []string{runtimeSubstrateKernelFlag, runtimeProgramKernelFlag},
 		},

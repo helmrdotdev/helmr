@@ -322,28 +322,20 @@ CREATE TABLE worker_groups (
     state TEXT NOT NULL DEFAULT 'active'
         CHECK (state IN ('active', 'paused', 'draining', 'disabled')),
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
-    allows_run BOOLEAN NOT NULL DEFAULT true,
-    allows_build BOOLEAN NOT NULL DEFAULT true,
-    primary_run_pool_id UUID,
-    primary_build_pool_id UUID,
+	primary_pool_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (id, region_id),
-    UNIQUE (region_id, name),
-    CHECK (allows_run OR allows_build)
+	UNIQUE (region_id, name)
 );
 
 CREATE INDEX worker_groups_active_placement_idx
     ON worker_groups (region_id, id)
     WHERE state = 'active';
 
-CREATE UNIQUE INDEX worker_groups_one_active_run_per_region_idx
-    ON worker_groups (region_id)
-    WHERE state IN ('active', 'paused') AND allows_run;
-
-CREATE UNIQUE INDEX worker_groups_one_active_build_per_region_idx
-    ON worker_groups (region_id)
-    WHERE state IN ('active', 'paused') AND allows_build;
+CREATE UNIQUE INDEX worker_groups_one_active_per_region_idx
+	ON worker_groups (region_id)
+	WHERE state IN ('active', 'paused');
 
 CREATE TABLE runtime_identities (
     id TEXT PRIMARY KEY CHECK (id ~ '^sha256:[0-9a-f]{64}$'),
@@ -372,9 +364,7 @@ CREATE TABLE worker_pools (
     state TEXT NOT NULL DEFAULT 'pending'
         CHECK (state IN ('pending', 'active', 'draining', 'disabled')),
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
-    allows_run BOOLEAN NOT NULL,
-    allows_build BOOLEAN NOT NULL,
-    runtime_identity_id TEXT REFERENCES runtime_identities(id) ON DELETE RESTRICT,
+	runtime_identity_id TEXT REFERENCES runtime_identities(id) ON DELETE RESTRICT,
     substrate_format TEXT,
     substrate_contract TEXT,
     capacity_cpu_millis BIGINT CHECK (capacity_cpu_millis IS NULL OR capacity_cpu_millis > 0),
@@ -383,14 +373,12 @@ CREATE TABLE worker_pools (
     per_vm_cpu_millis BIGINT CHECK (per_vm_cpu_millis IS NULL OR per_vm_cpu_millis > 0),
     per_vm_memory_bytes BIGINT CHECK (per_vm_memory_bytes IS NULL OR per_vm_memory_bytes > 0),
     per_vm_guest_ephemeral_disk_bytes BIGINT CHECK (per_vm_guest_ephemeral_disk_bytes IS NULL OR per_vm_guest_ephemeral_disk_bytes > 0),
-    max_vm_slots INTEGER CHECK (max_vm_slots IS NULL OR max_vm_slots >= 0),
-    max_build_executors INTEGER CHECK (max_build_executors IS NULL OR max_build_executors >= 0),
+	max_vm_slots INTEGER CHECK (max_vm_slots IS NULL OR max_vm_slots >= 0),
     sealed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (worker_group_id, id),
-    UNIQUE (worker_group_id, name),
-    CHECK (allows_run OR allows_build),
+	UNIQUE (worker_group_id, name),
     CHECK (
         (state IN ('pending', 'disabled')
          AND sealed_at IS NULL
@@ -403,8 +391,7 @@ CREATE TABLE worker_pools (
          AND per_vm_cpu_millis IS NULL
          AND per_vm_memory_bytes IS NULL
          AND per_vm_guest_ephemeral_disk_bytes IS NULL
-         AND max_vm_slots IS NULL
-         AND max_build_executors IS NULL)
+		 AND max_vm_slots IS NULL)
         OR
         (state IN ('active', 'draining', 'disabled')
          AND sealed_at IS NOT NULL
@@ -416,20 +403,14 @@ CREATE TABLE worker_pools (
          AND capacity_guest_ephemeral_disk_bytes IS NOT NULL
          AND per_vm_cpu_millis IS NOT NULL
          AND per_vm_memory_bytes IS NOT NULL
-         AND per_vm_guest_ephemeral_disk_bytes IS NOT NULL
-         AND max_vm_slots IS NOT NULL
-         AND max_build_executors IS NOT NULL)
+		 AND per_vm_guest_ephemeral_disk_bytes IS NOT NULL
+		 AND max_vm_slots IS NOT NULL)
     ),
     CHECK (sealed_at IS NULL OR per_vm_cpu_millis <= capacity_cpu_millis),
     CHECK (sealed_at IS NULL OR per_vm_memory_bytes <= capacity_memory_bytes),
     CHECK (sealed_at IS NULL OR per_vm_guest_ephemeral_disk_bytes <= capacity_guest_ephemeral_disk_bytes),
-    CHECK (sealed_at IS NULL OR (allows_run AND max_vm_slots > 0) OR (NOT allows_run AND max_vm_slots = 0)),
-    CHECK (sealed_at IS NULL OR (allows_build AND max_build_executors = 1) OR (NOT allows_build AND max_build_executors = 0)),
-    CHECK (
-        sealed_at IS NULL
-        OR (allows_run AND btrim(substrate_format) <> '' AND btrim(substrate_contract) <> '')
-        OR (NOT allows_run AND substrate_format = '' AND substrate_contract = '')
-    )
+	CHECK (sealed_at IS NULL OR max_vm_slots > 0),
+	CHECK (sealed_at IS NULL OR (btrim(substrate_format) <> '' AND btrim(substrate_contract) <> ''))
 );
 
 CREATE INDEX worker_pools_active_placement_idx
@@ -444,14 +425,10 @@ CREATE TABLE worker_pool_cpu_shapes (
 );
 
 ALTER TABLE worker_groups
-    ADD CONSTRAINT worker_groups_primary_run_pool_fkey
-    FOREIGN KEY (id, primary_run_pool_id)
-    REFERENCES worker_pools(worker_group_id, id)
-    ON DELETE RESTRICT,
-    ADD CONSTRAINT worker_groups_primary_build_pool_fkey
-    FOREIGN KEY (id, primary_build_pool_id)
-    REFERENCES worker_pools(worker_group_id, id)
-    ON DELETE RESTRICT;
+	ADD CONSTRAINT worker_groups_primary_pool_fkey
+	FOREIGN KEY (id, primary_pool_id)
+	REFERENCES worker_pools(worker_group_id, id)
+	ON DELETE RESTRICT;
 
 CREATE TABLE worker_instances (
     id UUID PRIMARY KEY,
@@ -463,9 +440,7 @@ CREATE TABLE worker_instances (
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
     current_epoch BIGINT CHECK (current_epoch IS NULL OR current_epoch > 0),
     current_service_id UUID,
-    supports_run BOOLEAN NOT NULL DEFAULT false,
-    supports_build BOOLEAN NOT NULL DEFAULT false,
-    runtime_identity_id TEXT REFERENCES runtime_identities(id) ON DELETE RESTRICT,
+	runtime_identity_id TEXT REFERENCES runtime_identities(id) ON DELETE RESTRICT,
     substrate_format TEXT NOT NULL DEFAULT '',
     substrate_contract TEXT NOT NULL DEFAULT '',
     epoch_cpu_millis BIGINT NOT NULL DEFAULT 0 CHECK (epoch_cpu_millis >= 0),
@@ -474,14 +449,12 @@ CREATE TABLE worker_instances (
     per_vm_cpu_millis BIGINT NOT NULL DEFAULT 0 CHECK (per_vm_cpu_millis >= 0),
     per_vm_memory_bytes BIGINT NOT NULL DEFAULT 0 CHECK (per_vm_memory_bytes >= 0),
     per_vm_guest_ephemeral_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (per_vm_guest_ephemeral_disk_bytes >= 0),
-    max_vm_slots INTEGER NOT NULL DEFAULT 0 CHECK (max_vm_slots >= 0),
-    max_build_executors INTEGER NOT NULL DEFAULT 0 CHECK (max_build_executors >= 0),
+	max_vm_slots INTEGER NOT NULL DEFAULT 0 CHECK (max_vm_slots >= 0),
     max_runtime_starts INTEGER NOT NULL DEFAULT 0 CHECK (max_runtime_starts >= 0),
     cpu_environment JSONB,
     cpu_environment_digest TEXT CHECK (cpu_environment_digest IS NULL OR cpu_environment_digest ~ '^sha256:[0-9a-f]{64}$'),
     observed_at TIMESTAMPTZ,
-    run_paused_reason TEXT,
-    build_paused_reason TEXT,
+	run_paused_reason TEXT,
     runtime_paused_reason TEXT,
     epoch_started_at TIMESTAMPTZ,
     activated_at TIMESTAMPTZ,
@@ -506,30 +479,11 @@ CREATE TABLE worker_instances (
             AND epoch_memory_bytes > 0
             AND per_vm_cpu_millis > 0
             AND per_vm_memory_bytes > 0
-            AND per_vm_guest_ephemeral_disk_bytes > 0
-            AND (supports_run OR supports_build)
+			AND per_vm_guest_ephemeral_disk_bytes > 0
         )
     ),
-    CHECK (
-        state <> 'active'
-        OR NOT supports_run
-        OR (
-            runtime_identity_id IS NOT NULL
-            AND max_vm_slots > 0
-            AND max_runtime_starts > 0
-        )
-    ),
-    CHECK (state <> 'active' OR NOT supports_build OR max_build_executors > 0),
-    CHECK (state <> 'active' OR runtime_identity_id IS NOT NULL),
-    CHECK (
-        (supports_run
-         AND btrim(substrate_format) <> ''
-         AND btrim(substrate_contract) <> '')
-        OR
-        (NOT supports_run
-         AND substrate_format = ''
-         AND substrate_contract = '')
-    ),
+	CHECK (state <> 'active' OR (runtime_identity_id IS NOT NULL AND max_vm_slots > 0 AND max_runtime_starts > 0)),
+	CHECK (state <> 'active' OR (btrim(substrate_format) <> '' AND btrim(substrate_contract) <> '')),
     CHECK (state <> 'active' OR activated_at IS NOT NULL),
     CHECK (
         state <> 'active'
@@ -567,15 +521,12 @@ CREATE TABLE worker_instance_credentials (
     worker_instance_id UUID NOT NULL,
     key_prefix TEXT NOT NULL UNIQUE CHECK (btrim(key_prefix) <> ''),
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
-    allows_run BOOLEAN NOT NULL,
-    allows_build BOOLEAN NOT NULL,
-    expires_at TIMESTAMPTZ,
+	expires_at TIMESTAMPTZ,
     secret_hash BYTEA NOT NULL UNIQUE CHECK (octet_length(secret_hash) > 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_used_at TIMESTAMPTZ,
     revoked_at TIMESTAMPTZ,
-    UNIQUE (worker_instance_id, id),
-    CHECK (allows_run OR allows_build),
+	UNIQUE (worker_instance_id, id),
     FOREIGN KEY (worker_instance_id, worker_group_id)
         REFERENCES worker_instances(id, worker_group_id)
         ON DELETE RESTRICT

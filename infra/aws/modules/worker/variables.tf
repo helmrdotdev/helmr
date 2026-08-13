@@ -3,17 +3,6 @@ variable "name" {
   type        = string
 }
 
-variable "worker_roles" {
-  description = "Roles this worker group is permitted to advertise."
-  type        = set(string)
-  default     = ["run", "build"]
-
-  validation {
-    condition     = length(var.worker_roles) > 0 && length(setsubtract(var.worker_roles, ["run", "build"])) == 0
-    error_message = "worker_roles must contain run, build, or both."
-  }
-}
-
 variable "worker_pool_name" {
   description = "Canonical logical Worker Pool generation name advertised during enrollment."
   type        = string
@@ -286,7 +275,7 @@ variable "worker_capacity_memory_mib" {
 }
 
 variable "worker_execution_slots" {
-  description = "Maximum concurrent Firecracker VM slots. Build execution has an independent fixed single-executor limit."
+  description = "Maximum concurrent Firecracker VM execution slots."
   type        = number
   default     = null
   nullable    = true
@@ -318,30 +307,6 @@ variable "artifact_cache_max_mib" {
   validation {
     condition     = var.artifact_cache_max_mib == null || var.artifact_cache_max_mib > 0
     error_message = "artifact_cache_max_mib must be null or positive."
-  }
-}
-
-variable "build_cache_mib" {
-  description = "Usable MiB allocated to the physically isolated build-cache filesystem."
-  type        = number
-  default     = null
-  nullable    = true
-
-  validation {
-    condition     = var.build_cache_mib == null || var.build_cache_mib > 0
-    error_message = "build_cache_mib must be null or positive."
-  }
-}
-
-variable "build_scratch_mib" {
-  description = "Usable MiB allocated to the physically isolated build-scratch filesystem."
-  type        = number
-  default     = null
-  nullable    = true
-
-  validation {
-    condition     = var.build_scratch_mib == null || var.build_scratch_mib > 0
-    error_message = "build_scratch_mib must be null or positive."
   }
 }
 
@@ -392,17 +357,6 @@ variable "platform_store_kms_key_arn" {
   validation {
     condition     = can(regex("^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[0-9a-fA-F-]+$", var.platform_store_kms_key_arn))
     error_message = "platform_store_kms_key_arn must be a KMS key ARN."
-  }
-}
-
-variable "build_policy_digest" {
-  description = "Exact build-policy digest installed by build-capable workers; must be null for run-only workers."
-  type        = string
-  nullable    = true
-
-  validation {
-    condition     = var.build_policy_digest == null || can(regex("^sha256:[0-9a-f]{64}$", var.build_policy_digest))
-    error_message = "build_policy_digest must be null or lowercase sha256:<64 hexadecimal digits>."
   }
 }
 
@@ -483,31 +437,6 @@ variable "network_resolver_ipv4" {
     )
     error_message = "network_resolver_ipv4 must be an IPv4 address when set."
   }
-}
-
-variable "image_cache_registry_authority" {
-  description = "Canonical regional ECR registry authority for the Platform image cache."
-  type        = string
-
-  validation {
-    condition     = can(regex("^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com(\\.cn)?$", var.image_cache_registry_authority))
-    error_message = "image_cache_registry_authority must be a canonical private ECR registry authority."
-  }
-}
-
-variable "image_cache_repository_prefix" {
-  description = "Bounded ECR repository namespace for Environment image caches."
-  type        = string
-}
-
-variable "image_cache_role_arn" {
-  description = "Exact regional Execution image-cache role ARN."
-  type        = string
-}
-
-variable "image_cache_repository_arn_prefix" {
-  description = "Exact ECR repository ARN prefix matching image_cache_repository_prefix."
-  type        = string
 }
 
 variable "tags" {

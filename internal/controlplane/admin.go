@@ -165,10 +165,6 @@ func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	description := strings.TrimSpace(request.Description)
-	if err := workergroup.ValidateRoles(request.AllowsRun, request.AllowsBuild); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
 	token, err := workergroup.GenerateEnrollmentToken()
 	if err != nil {
 		writeError(w, errors.New("generate worker group token"))
@@ -189,7 +185,6 @@ func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 		created, err = work.q.CreateWorkerGroup(r.Context(), db.CreateWorkerGroupParams{
 			ID: uuid.Must(uuid.NewV7()).String(), TokenID: pgvalue.UUID(uuid.Must(uuid.NewV7())), TokenHash: token.Hash,
 			RegionID: request.RegionID, Name: request.Name, Description: description,
-			AllowsRun: request.AllowsRun, AllowsBuild: request.AllowsBuild,
 		})
 		if isUniqueViolation(err) {
 			return conflict(errors.New("worker group conflicts with an existing active role or name"))
@@ -352,10 +347,6 @@ func (s *Server) adminCreateWorkerPool(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !request.AllowsRun && !request.AllowsBuild {
-		writeError(w, badRequest(errors.New("worker pool must allow run, build, or both")))
-		return
-	}
 	if request.ExpectedGroupClaimVersion <= 0 {
 		writeError(w, badRequest(errors.New("expected_group_claim_version must be positive")))
 		return
@@ -376,12 +367,8 @@ func (s *Server) adminCreateWorkerPool(w http.ResponseWriter, r *http.Request) {
 			(group.State != db.WorkerGroupStateActive && group.State != db.WorkerGroupStatePaused) {
 			return conflict(errors.New("worker group state or claim version changed"))
 		}
-		if request.AllowsRun && !group.AllowsRun || request.AllowsBuild && !group.AllowsBuild {
-			return badRequest(errors.New("worker pool roles must be a subset of worker group roles"))
-		}
 		created, err = work.q.CreatePendingWorkerPool(r.Context(), db.CreatePendingWorkerPoolParams{
 			WorkerPoolID: pgvalue.UUID(uuid.Must(uuid.NewV7())), Name: request.Name,
-			AllowsRun: request.AllowsRun, AllowsBuild: request.AllowsBuild,
 			WorkerGroupID: groupID, ExpectedGroupClaimVersion: request.ExpectedGroupClaimVersion,
 		})
 		if isUniqueViolation(err) {
@@ -416,26 +403,12 @@ func (s *Server) adminSwitchWorkerPoolPrimary(w http.ResponseWriter, r *http.Req
 		writeError(w, badRequest(errors.New("expected_group_claim_version must be positive")))
 		return
 	}
-	if !request.SetRunPrimary && !request.SetBuildPrimary {
-		writeError(w, badRequest(errors.New("set_run_primary or set_build_primary is required")))
-		return
-	}
-
 	targetPoolID := pgvalue.UUID(poolID)
 	result, err := s.reconcileWorkerGroupPrimarySelection(r.Context(), workerGroupPrimarySelectionCommand{
 		workerGroupID:             groupID,
 		expectedGroupClaimVersion: request.ExpectedGroupClaimVersion,
-		desired: func(group db.WorkerGroup) (workerGroupPrimarySelection, error) {
-			desired := workerGroupPrimarySelection{
-				runPoolID: group.PrimaryRunPoolID, buildPoolID: group.PrimaryBuildPoolID,
-			}
-			if request.SetRunPrimary {
-				desired.runPoolID = targetPoolID
-			}
-			if request.SetBuildPrimary {
-				desired.buildPoolID = targetPoolID
-			}
-			return desired, nil
+		desired: func(db.WorkerGroup) (pgtype.UUID, error) {
+			return targetPoolID, nil
 		},
 	})
 	if err != nil {
@@ -536,8 +509,8 @@ func adminRegion(row db.Region) api.AdminRegion {
 func adminWorkerGroup(row db.WorkerGroup) api.AdminWorkerGroup {
 	return api.AdminWorkerGroup{
 		ID: row.ID, RegionID: row.RegionID, Name: row.Name, Description: row.Description,
-		State: row.State, ClaimVersion: row.ClaimVersion, AllowsRun: row.AllowsRun, AllowsBuild: row.AllowsBuild,
-		PrimaryRunPoolID: adminOptionalUUID(row.PrimaryRunPoolID), PrimaryBuildPoolID: adminOptionalUUID(row.PrimaryBuildPoolID),
+		State: row.State, ClaimVersion: row.ClaimVersion,
+		PrimaryPoolID: adminOptionalUUID(row.PrimaryPoolID),
 	}
 }
 
@@ -545,9 +518,7 @@ func adminWorkerPool(pool db.WorkerPool, group db.WorkerGroup) api.AdminWorkerPo
 	return api.AdminWorkerPool{
 		ID: uuid.UUID(pool.ID.Bytes).String(), WorkerGroupID: pool.WorkerGroupID,
 		Name: pool.Name, State: pool.State, ClaimVersion: pool.ClaimVersion,
-		AllowsRun: pool.AllowsRun, AllowsBuild: pool.AllowsBuild,
-		PrimaryForRun:   group.PrimaryRunPoolID.Valid && group.PrimaryRunPoolID.Bytes == pool.ID.Bytes,
-		PrimaryForBuild: group.PrimaryBuildPoolID.Valid && group.PrimaryBuildPoolID.Bytes == pool.ID.Bytes,
+		Primary: group.PrimaryPoolID.Valid && group.PrimaryPoolID.Bytes == pool.ID.Bytes,
 	}
 }
 

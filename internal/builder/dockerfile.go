@@ -144,7 +144,7 @@ func materializedDockerfileLines(builderImage string) ([]string, error) {
 		"RUN [\"/bin/bash\",\"-euo\",\"pipefail\",\"-c\",\"install -d -o 65532 -g 65532 /workspace/home /workspace/output /workspace/project /workspace/tmp /workspace/work\"]",
 		"WORKDIR /workspace/project",
 		"COPY --from=installed-tree --chown=0:0 /workspace/project/ /workspace/project/",
-		"RUN [\"/bin/bash\",\"-euo\",\"pipefail\",\"-c\",\"chown -R 0:0 /workspace/project && chmod -R a-w /workspace/project\"]",
+		"RUN [\"/bin/bash\",\"-euo\",\"pipefail\",\"-c\",\"chown -R 0:0 /workspace/project && chmod -R a-w /workspace/project && ln -s /workspace/project /opt/helmr/program\"]",
 		"USER 65532:65532",
 	}, nil
 }
@@ -170,6 +170,14 @@ func installedDockerfileLines(builderImage string, install InstallPlan) ([]strin
 }
 
 func installRunInstruction(plan InstallPlan) (string, error) {
+	secretIDs, err := NormalizeSecretIDs(plan.SecretIDs)
+	if err != nil {
+		return "", err
+	}
+	mounts := ""
+	for _, id := range secretIDs {
+		mounts += "--mount=type=secret,id=" + id + ",uid=65532,gid=65532,mode=0400,required=true "
+	}
 	if plan.CustomCommand != "" {
 		if len(plan.CustomCommand) > 16<<10 || strings.IndexByte(plan.CustomCommand, 0) >= 0 {
 			return "", errors.New("custom install command is invalid")
@@ -180,7 +188,7 @@ func installRunInstruction(plan InstallPlan) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return "RUN " + command, nil
+		return "RUN " + mounts + command, nil
 	}
 	if len(plan.Argv) == 0 {
 		return "", errors.New("install plan is empty")
@@ -189,7 +197,7 @@ func installRunInstruction(plan InstallPlan) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "RUN " + command, nil
+	return "RUN " + mounts + command, nil
 }
 
 func dockerRunJSON(argv []string) (string, error) {

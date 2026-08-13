@@ -20,10 +20,3 @@ func ValidatePoolName(name string) error {
 	}
 	return nil
 }
-
-func ValidateRoles(allowsRun, allowsBuild bool) error {
-	if !allowsRun && !allowsBuild {
-		return errors.New("worker group must allow run, build, or both")
-	}
-	return nil
-}

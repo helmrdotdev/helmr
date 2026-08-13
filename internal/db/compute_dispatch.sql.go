@@ -22,11 +22,11 @@ WITH transitioned AS (
        AND worker_instances.current_epoch = $3
        AND worker_instances.claim_version = $4
        AND worker_instances.state = 'active'
-    RETURNING id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch, current_service_id, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_contract, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_build_executors, max_runtime_starts, cpu_environment, cpu_environment_digest, observed_at, run_paused_reason, build_paused_reason, runtime_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
+    RETURNING id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch, current_service_id, runtime_identity_id, substrate_format, substrate_contract, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_runtime_starts, cpu_environment, cpu_environment_digest, observed_at, run_paused_reason, runtime_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
 ), target AS (
-    SELECT transitioned.id, transitioned.resource_id, transitioned.worker_group_id, transitioned.worker_pool_id, transitioned.state, transitioned.claim_version, transitioned.current_epoch, transitioned.current_service_id, transitioned.supports_run, transitioned.supports_build, transitioned.runtime_identity_id, transitioned.substrate_format, transitioned.substrate_contract, transitioned.epoch_cpu_millis, transitioned.epoch_memory_bytes, transitioned.epoch_guest_ephemeral_disk_bytes, transitioned.per_vm_cpu_millis, transitioned.per_vm_memory_bytes, transitioned.per_vm_guest_ephemeral_disk_bytes, transitioned.max_vm_slots, transitioned.max_build_executors, transitioned.max_runtime_starts, transitioned.cpu_environment, transitioned.cpu_environment_digest, transitioned.observed_at, transitioned.run_paused_reason, transitioned.build_paused_reason, transitioned.runtime_paused_reason, transitioned.epoch_started_at, transitioned.activated_at, transitioned.draining_at, transitioned.termination_ready_at, transitioned.lost_at, transitioned.created_at, transitioned.updated_at FROM transitioned
+    SELECT transitioned.id, transitioned.resource_id, transitioned.worker_group_id, transitioned.worker_pool_id, transitioned.state, transitioned.claim_version, transitioned.current_epoch, transitioned.current_service_id, transitioned.runtime_identity_id, transitioned.substrate_format, transitioned.substrate_contract, transitioned.epoch_cpu_millis, transitioned.epoch_memory_bytes, transitioned.epoch_guest_ephemeral_disk_bytes, transitioned.per_vm_cpu_millis, transitioned.per_vm_memory_bytes, transitioned.per_vm_guest_ephemeral_disk_bytes, transitioned.max_vm_slots, transitioned.max_runtime_starts, transitioned.cpu_environment, transitioned.cpu_environment_digest, transitioned.observed_at, transitioned.run_paused_reason, transitioned.runtime_paused_reason, transitioned.epoch_started_at, transitioned.activated_at, transitioned.draining_at, transitioned.termination_ready_at, transitioned.lost_at, transitioned.created_at, transitioned.updated_at FROM transitioned
     UNION ALL
-    SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.build_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
+    SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
       FROM worker_instances
      WHERE worker_instances.id = $1
        AND worker_instances.worker_group_id = $2
@@ -77,7 +77,7 @@ WITH transitioned AS (
        AND worker_instance_credentials.claim_version < target.claim_version
     RETURNING worker_instance_credentials.id
 )
-SELECT target.id, target.resource_id, target.worker_group_id, target.worker_pool_id, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.supports_run, target.supports_build, target.runtime_identity_id, target.substrate_format, target.substrate_contract, target.epoch_cpu_millis, target.epoch_memory_bytes, target.epoch_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_build_executors, target.max_runtime_starts, target.cpu_environment, target.cpu_environment_digest, target.observed_at, target.run_paused_reason, target.build_paused_reason, target.runtime_paused_reason, target.epoch_started_at, target.activated_at, target.draining_at, target.termination_ready_at, target.lost_at, target.created_at, target.updated_at
+SELECT target.id, target.resource_id, target.worker_group_id, target.worker_pool_id, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.runtime_identity_id, target.substrate_format, target.substrate_contract, target.epoch_cpu_millis, target.epoch_memory_bytes, target.epoch_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_runtime_starts, target.cpu_environment, target.cpu_environment_digest, target.observed_at, target.run_paused_reason, target.runtime_paused_reason, target.epoch_started_at, target.activated_at, target.draining_at, target.termination_ready_at, target.lost_at, target.created_at, target.updated_at
   FROM target
  WHERE (SELECT count(*) FROM idle_mounts) >= 0
    AND (SELECT count(*) FROM idle_runtimes) >= 0
@@ -100,8 +100,6 @@ type DrainWorkerInstanceRow struct {
 	ClaimVersion                 int64              `json:"claim_version"`
 	CurrentEpoch                 pgtype.Int8        `json:"current_epoch"`
 	CurrentServiceID             pgtype.UUID        `json:"current_service_id"`
-	SupportsRun                  bool               `json:"supports_run"`
-	SupportsBuild                bool               `json:"supports_build"`
 	RuntimeIdentityID            pgtype.Text        `json:"runtime_identity_id"`
 	SubstrateFormat              string             `json:"substrate_format"`
 	SubstrateContract            string             `json:"substrate_contract"`
@@ -112,13 +110,11 @@ type DrainWorkerInstanceRow struct {
 	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
 	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
 	MaxVMSlots                   int32              `json:"max_vm_slots"`
-	MaxBuildExecutors            int32              `json:"max_build_executors"`
 	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
 	CPUEnvironment               []byte             `json:"cpu_environment"`
 	CPUEnvironmentDigest         pgtype.Text        `json:"cpu_environment_digest"`
 	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
 	RunPausedReason              pgtype.Text        `json:"run_paused_reason"`
-	BuildPausedReason            pgtype.Text        `json:"build_paused_reason"`
 	RuntimePausedReason          pgtype.Text        `json:"runtime_paused_reason"`
 	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
 	ActivatedAt                  pgtype.Timestamptz `json:"activated_at"`
@@ -146,8 +142,6 @@ func (q *Queries) DrainWorkerInstance(ctx context.Context, arg DrainWorkerInstan
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.CurrentServiceID,
-		&i.SupportsRun,
-		&i.SupportsBuild,
 		&i.RuntimeIdentityID,
 		&i.SubstrateFormat,
 		&i.SubstrateContract,
@@ -158,13 +152,11 @@ func (q *Queries) DrainWorkerInstance(ctx context.Context, arg DrainWorkerInstan
 		&i.PerVMMemoryBytes,
 		&i.PerVMGuestEphemeralDiskBytes,
 		&i.MaxVMSlots,
-		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
 		&i.CPUEnvironment,
 		&i.CPUEnvironmentDigest,
 		&i.ObservedAt,
 		&i.RunPausedReason,
-		&i.BuildPausedReason,
 		&i.RuntimePausedReason,
 		&i.EpochStartedAt,
 		&i.ActivatedAt,
@@ -187,7 +179,7 @@ WITH target AS (
        AND worker_instances.current_epoch = $3
        AND worker_instances.claim_version = $4
        AND worker_instances.state IN ('active', 'draining')
-    RETURNING id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch, current_service_id, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_contract, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_build_executors, max_runtime_starts, cpu_environment, cpu_environment_digest, observed_at, run_paused_reason, build_paused_reason, runtime_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
+    RETURNING id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch, current_service_id, runtime_identity_id, substrate_format, substrate_contract, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_runtime_starts, cpu_environment, cpu_environment_digest, observed_at, run_paused_reason, runtime_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
 ), revoked_credentials AS (
     UPDATE worker_instance_credentials
        SET revoked_at = COALESCE(revoked_at, now())
@@ -219,13 +211,13 @@ WITH target AS (
        AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
     RETURNING runtime_instances.id
 )
-SELECT target.id, target.resource_id, target.worker_group_id, target.worker_pool_id, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.supports_run, target.supports_build, target.runtime_identity_id, target.substrate_format, target.substrate_contract, target.epoch_cpu_millis, target.epoch_memory_bytes, target.epoch_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_build_executors, target.max_runtime_starts, target.cpu_environment, target.cpu_environment_digest, target.observed_at, target.run_paused_reason, target.build_paused_reason, target.runtime_paused_reason, target.epoch_started_at, target.activated_at, target.draining_at, target.termination_ready_at, target.lost_at, target.created_at, target.updated_at
+SELECT target.id, target.resource_id, target.worker_group_id, target.worker_pool_id, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.runtime_identity_id, target.substrate_format, target.substrate_contract, target.epoch_cpu_millis, target.epoch_memory_bytes, target.epoch_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_runtime_starts, target.cpu_environment, target.cpu_environment_digest, target.observed_at, target.run_paused_reason, target.runtime_paused_reason, target.epoch_started_at, target.activated_at, target.draining_at, target.termination_ready_at, target.lost_at, target.created_at, target.updated_at
   FROM target
  WHERE (SELECT count(*) FROM revoked_credentials) >= 0
    AND (SELECT count(*) FROM lost_mounts) >= 0
    AND (SELECT count(*) FROM lost_runtimes) >= 0
 UNION ALL
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.build_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
   FROM worker_instances
  WHERE worker_instances.id = $1
    AND worker_instances.worker_group_id = $2
@@ -253,8 +245,6 @@ type FenceWorkerInstanceRow struct {
 	ClaimVersion                 int64              `json:"claim_version"`
 	CurrentEpoch                 pgtype.Int8        `json:"current_epoch"`
 	CurrentServiceID             pgtype.UUID        `json:"current_service_id"`
-	SupportsRun                  bool               `json:"supports_run"`
-	SupportsBuild                bool               `json:"supports_build"`
 	RuntimeIdentityID            pgtype.Text        `json:"runtime_identity_id"`
 	SubstrateFormat              string             `json:"substrate_format"`
 	SubstrateContract            string             `json:"substrate_contract"`
@@ -265,13 +255,11 @@ type FenceWorkerInstanceRow struct {
 	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
 	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
 	MaxVMSlots                   int32              `json:"max_vm_slots"`
-	MaxBuildExecutors            int32              `json:"max_build_executors"`
 	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
 	CPUEnvironment               []byte             `json:"cpu_environment"`
 	CPUEnvironmentDigest         pgtype.Text        `json:"cpu_environment_digest"`
 	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
 	RunPausedReason              pgtype.Text        `json:"run_paused_reason"`
-	BuildPausedReason            pgtype.Text        `json:"build_paused_reason"`
 	RuntimePausedReason          pgtype.Text        `json:"runtime_paused_reason"`
 	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
 	ActivatedAt                  pgtype.Timestamptz `json:"activated_at"`
@@ -300,8 +288,6 @@ func (q *Queries) FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstan
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.CurrentServiceID,
-		&i.SupportsRun,
-		&i.SupportsBuild,
 		&i.RuntimeIdentityID,
 		&i.SubstrateFormat,
 		&i.SubstrateContract,
@@ -312,13 +298,11 @@ func (q *Queries) FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstan
 		&i.PerVMMemoryBytes,
 		&i.PerVMGuestEphemeralDiskBytes,
 		&i.MaxVMSlots,
-		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
 		&i.CPUEnvironment,
 		&i.CPUEnvironmentDigest,
 		&i.ObservedAt,
 		&i.RunPausedReason,
-		&i.BuildPausedReason,
 		&i.RuntimePausedReason,
 		&i.EpochStartedAt,
 		&i.ActivatedAt,
@@ -332,22 +316,20 @@ func (q *Queries) FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstan
 }
 
 const getWorkerInstanceState = `-- name: GetWorkerInstanceState :one
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.build_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at,
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at,
        runtime_identities.rootfs_digest,
        runtime_identities.vm_runtime_contract,
        runtime_identities.runtime_arch,
-       COALESCE((
-           worker_instances.state = 'active'
-           AND worker_groups.state = 'active'
-           AND worker_instances.supports_run
+	       COALESCE((
+	           worker_instances.state = 'active'
+	           AND worker_groups.state = 'active'
            AND worker_instances.observed_at >= transaction_timestamp()
                - $1::bigint * interval '1 second'
            AND worker_instances.run_paused_reason IS NULL
        ), false)::boolean AS run_ready,
-       COALESCE((
-           worker_instances.state = 'active'
-           AND worker_groups.state = 'active'
-           AND worker_instances.supports_run
+	       COALESCE((
+	           worker_instances.state = 'active'
+	           AND worker_groups.state = 'active'
            AND worker_instances.observed_at >= transaction_timestamp()
                - $1::bigint * interval '1 second'
            AND worker_instances.runtime_paused_reason IS NULL
@@ -357,10 +339,8 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worke
            AND worker_groups.state = 'active'
            AND worker_instances.observed_at >= transaction_timestamp()
                - $1::bigint * interval '1 second'
-           AND (NOT worker_instances.supports_run OR (
-               worker_instances.run_paused_reason IS NULL
-               AND worker_instances.runtime_paused_reason IS NULL
-           ))
+	           AND worker_instances.run_paused_reason IS NULL
+	           AND worker_instances.runtime_paused_reason IS NULL
        ), false)::boolean AS all_configured_roles_ready,
        ((SELECT count(*) FROM run_leases
          WHERE run_leases.worker_instance_id = worker_instances.id
@@ -396,8 +376,6 @@ type GetWorkerInstanceStateRow struct {
 	ClaimVersion                 int64              `json:"claim_version"`
 	CurrentEpoch                 pgtype.Int8        `json:"current_epoch"`
 	CurrentServiceID             pgtype.UUID        `json:"current_service_id"`
-	SupportsRun                  bool               `json:"supports_run"`
-	SupportsBuild                bool               `json:"supports_build"`
 	RuntimeIdentityID            pgtype.Text        `json:"runtime_identity_id"`
 	SubstrateFormat              string             `json:"substrate_format"`
 	SubstrateContract            string             `json:"substrate_contract"`
@@ -408,13 +386,11 @@ type GetWorkerInstanceStateRow struct {
 	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
 	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
 	MaxVMSlots                   int32              `json:"max_vm_slots"`
-	MaxBuildExecutors            int32              `json:"max_build_executors"`
 	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
 	CPUEnvironment               []byte             `json:"cpu_environment"`
 	CPUEnvironmentDigest         pgtype.Text        `json:"cpu_environment_digest"`
 	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
 	RunPausedReason              pgtype.Text        `json:"run_paused_reason"`
-	BuildPausedReason            pgtype.Text        `json:"build_paused_reason"`
 	RuntimePausedReason          pgtype.Text        `json:"runtime_paused_reason"`
 	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
 	ActivatedAt                  pgtype.Timestamptz `json:"activated_at"`
@@ -444,8 +420,6 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, arg GetWorkerInsta
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.CurrentServiceID,
-		&i.SupportsRun,
-		&i.SupportsBuild,
 		&i.RuntimeIdentityID,
 		&i.SubstrateFormat,
 		&i.SubstrateContract,
@@ -456,13 +430,11 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, arg GetWorkerInsta
 		&i.PerVMMemoryBytes,
 		&i.PerVMGuestEphemeralDiskBytes,
 		&i.MaxVMSlots,
-		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
 		&i.CPUEnvironment,
 		&i.CPUEnvironmentDigest,
 		&i.ObservedAt,
 		&i.RunPausedReason,
-		&i.BuildPausedReason,
 		&i.RuntimePausedReason,
 		&i.EpochStartedAt,
 		&i.ActivatedAt,

@@ -5,7 +5,10 @@ description: Configure Firecracker worker groups, capacity, networking, enrollme
 
 # Workers
 
-Workers are optional during Control Plane setup, but task builds and runs need active worker capacity. The AWS compositions create separate logical run and build groups from the same module so their host capacity can be sized independently.
+Workers are optional during Control Plane setup and are used only to execute
+verified Deployment bundles. The AWS compositions create immutable execution
+Pool generations so old restore-compatible capacity can remain available at
+scale zero during a rollout.
 
 ## Evaluation worker
 
@@ -26,9 +29,12 @@ Use only an EC2 family that supports nested virtualization. Keep NAT enabled whi
 
 ## Production capacity
 
-The standard profile defaults to a metal worker instance type, nested virtualization off, and zero minimum capacity. Set explicit run and build minimums, maximums, instance types, root-volume performance, VM sizing, cache limits, and execution slots for your workload. `max_size` is the infrastructure spend guardrail; equal minimum and maximum values express fixed capacity.
+The standard profile defaults to a metal worker instance type, nested virtualization off, and zero minimum capacity. Set explicit minimums, maximums, instance types, root-volume performance, VM sizing, cache limits, and execution slots for your workload. `max_size` is the infrastructure spend guardrail; equal minimum and maximum values express fixed capacity.
 
-Workers are filesystem-first. Their root EBS volume holds runtime data and guest artifacts, and build-capable workers use dedicated cache and scratch filesystems on that host storage. Leave `worker_disk_mib = null` to advertise detected filesystem capacity, or set it to cap the advertised value. The worker always withholds `worker_disk_reserve_mib` before certifying usable capacity.
+Workers are filesystem-first. Their root EBS volume holds runtime data, staged
+artifacts, and cache. Leave `worker_disk_mib = null` to advertise detected
+filesystem capacity, or set it to cap the advertised value. The worker always
+withholds `worker_disk_reserve_mib` before certifying usable capacity.
 
 ## AMI and enrollment contract
 
@@ -36,7 +42,10 @@ The official AMI is selected from the release manifest by `helmr_version` and `a
 
 At boot, the module fetches the worker-group enrollment token into a root-only volatile file. The token selects the logical group. AWS identity, AMI provenance, instance profile, Auto Scaling membership, and fleet policy remain infrastructure responsibilities; the Control Plane does not authenticate or allowlist the AMI.
 
-Workers need outbound access to the Control Plane, S3, ECR, AWS APIs, registries, and task dependencies. The deployment-owned blocked-CIDR set must cover the full execution VPC prefix. SSM Session Manager is enabled by default, and no inbound SSH rule is required.
+Workers need outbound access to the Control Plane, S3, AWS APIs, and task
+destinations. They do not install dependencies or build Deployment artifacts.
+The deployment-owned blocked-CIDR set must include the exact execution VPC
+prefix. SSM Session Manager is enabled by default, and no inbound SSH rule is required.
 
 ## Drain and replace
 

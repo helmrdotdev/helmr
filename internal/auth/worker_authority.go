@@ -8,16 +8,8 @@ import (
 	"github.com/google/uuid"
 )
 
-var ErrWorkerRoleIntersectionEmpty = errors.New("worker role intersection is empty")
-
-type WorkerRoles struct {
-	Run   bool
-	Build bool
-}
-
 type EpochExchangeInput struct {
-	ServiceID       uuid.UUID
-	SupervisorRoles WorkerRoles
+	ServiceID uuid.UUID
 }
 
 // WorkerTokenAuthority is loaded by the epoch-exchange transaction. It keeps
@@ -29,23 +21,18 @@ type WorkerTokenAuthority struct {
 	WorkerEpoch       int64
 	ClaimVersion      int64
 	GroupClaimVersion int64
-	CredentialRoles   WorkerRoles
-	GroupRoles        WorkerRoles
 }
 
 func (input EpochExchangeInput) Validate() error {
 	if input.ServiceID == uuid.Nil {
 		return errors.New("service_id is required")
 	}
-	if !input.SupervisorRoles.Run && !input.SupervisorRoles.Build {
-		return errors.New("supervisor must support at least one worker role")
-	}
 	return nil
 }
 
-// Claims intersects credential, group, and supervisor roles. ServiceID is
-// deliberately validated but not copied into the JWT: it is the idempotency
-// key for the transaction that returned authority.WorkerEpoch.
+// Claims validates the authority returned by the epoch-exchange transaction.
+// ServiceID is deliberately not copied into the JWT: it is the idempotency key
+// for the transaction that returned authority.WorkerEpoch.
 func (authority WorkerTokenAuthority) Claims(input EpochExchangeInput, issuedAt, expiresAt time.Time) (WorkerClaims, error) {
 	if err := input.Validate(); err != nil {
 		return WorkerClaims{}, err
@@ -63,21 +50,10 @@ func (authority WorkerTokenAuthority) Claims(input EpochExchangeInput, issuedAt,
 		return WorkerClaims{}, errors.New("worker epoch and claim versions must be positive")
 	}
 
-	roles := make([]string, 0, 2)
-	if authority.CredentialRoles.Build && authority.GroupRoles.Build && input.SupervisorRoles.Build {
-		roles = append(roles, WorkerRoleBuild)
-	}
-	if authority.CredentialRoles.Run && authority.GroupRoles.Run && input.SupervisorRoles.Run {
-		roles = append(roles, WorkerRoleRun)
-	}
-	if len(roles) == 0 {
-		return WorkerClaims{}, ErrWorkerRoleIntersectionEmpty
-	}
-
 	return WorkerClaims{
 		WorkerGroupID: authority.WorkerGroupID, WorkerInstanceID: authority.WorkerInstanceID.String(),
 		CredentialID: authority.CredentialID.String(), WorkerEpoch: authority.WorkerEpoch,
 		ClaimVersion: authority.ClaimVersion, GroupClaimVersion: authority.GroupClaimVersion,
-		Roles: roles, IssuedAt: issuedAt, ExpiresAt: expiresAt,
+		IssuedAt: issuedAt, ExpiresAt: expiresAt,
 	}, nil
 }

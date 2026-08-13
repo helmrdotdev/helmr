@@ -100,7 +100,7 @@ func (s *Server) capacityResolveWorkerPool(w http.ResponseWriter, r *http.Reques
 	}
 	writeJSON(w, http.StatusOK, capacityapi.CapacityWorkerPool{
 		ID: pgvalue.MustUUIDValue(pool.ID).String(), WorkerGroupID: pool.WorkerGroupID,
-		Name: pool.Name, Status: status, AllowsRun: pool.AllowsRun, AllowsBuild: pool.AllowsBuild,
+		Name: pool.Name, Status: status,
 	})
 }
 
@@ -149,22 +149,16 @@ func (s *Server) capacityReconcileWorkerGroupPrimaryPools(w http.ResponseWriter,
 		writeError(w, badRequest(errors.New("expected_group_claim_version must be positive")))
 		return
 	}
-	runPoolID, err := capacityOptionalPoolID(request.RunPoolID)
+	poolID, err := capacityOptionalPoolID(request.PoolID)
 	if err != nil {
-		writeError(w, badRequest(fmt.Errorf("run_pool_id: %w", err)))
-		return
-	}
-	buildPoolID, err := capacityOptionalPoolID(request.BuildPoolID)
-	if err != nil {
-		writeError(w, badRequest(fmt.Errorf("build_pool_id: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("pool_id: %w", err)))
 		return
 	}
 	result, err := s.reconcileWorkerGroupPrimarySelection(r.Context(), workerGroupPrimarySelectionCommand{
 		workerGroupID:             workerGroupID.String(),
 		expectedGroupClaimVersion: request.ExpectedGroupClaimVersion,
-		requireCompleteSelection:  true,
-		desired: func(db.WorkerGroup) (workerGroupPrimarySelection, error) {
-			return workerGroupPrimarySelection{runPoolID: runPoolID, buildPoolID: buildPoolID}, nil
+		desired: func(db.WorkerGroup) (pgtype.UUID, error) {
+			return poolID, nil
 		},
 	})
 	if err != nil {
@@ -196,9 +190,8 @@ func capacityOptionalPoolID(raw string) (pgtype.UUID, error) {
 func capacityWorkerGroup(group db.WorkerGroup, status capacityapi.WorkerGroupStatus) capacityapi.CapacityWorkerGroup {
 	return capacityapi.CapacityWorkerGroup{
 		ID: group.ID, Name: group.Name, RegionID: group.RegionID, Status: status,
-		ClaimVersion: group.ClaimVersion, AllowsRun: group.AllowsRun, AllowsBuild: group.AllowsBuild,
-		PrimaryRunPoolID:   pgvalue.UUIDString(group.PrimaryRunPoolID),
-		PrimaryBuildPoolID: pgvalue.UUIDString(group.PrimaryBuildPoolID),
+		ClaimVersion:  group.ClaimVersion,
+		PrimaryPoolID: pgvalue.UUIDString(group.PrimaryPoolID),
 	}
 }
 
@@ -260,7 +253,7 @@ func (s *Server) capacityListWorkerInstances(w http.ResponseWriter, r *http.Requ
 	for _, row := range rows {
 		projected, err := capacityWorkerInstance(
 			row.ID, row.ResourceID, row.WorkerGroupID, row.WorkerPoolID, row.State, row.ClaimVersion,
-			row.CurrentEpoch, row.SupportsRun, row.SupportsBuild, row.DrainingAt,
+			row.CurrentEpoch, row.DrainingAt,
 			row.TerminationReadyAt, row.LostAt, row.CreatedAt, row.UpdatedAt,
 		)
 		if err != nil {
@@ -291,7 +284,7 @@ func (s *Server) capacityGetWorkerInstance(w http.ResponseWriter, r *http.Reques
 	}
 	response, err := capacityWorkerInstance(
 		row.ID, row.ResourceID, row.WorkerGroupID, row.WorkerPoolID, row.State, row.ClaimVersion,
-		row.CurrentEpoch, row.SupportsRun, row.SupportsBuild, row.DrainingAt,
+		row.CurrentEpoch, row.DrainingAt,
 		row.TerminationReadyAt, row.LostAt, row.CreatedAt, row.UpdatedAt,
 	)
 	if err != nil {
@@ -345,7 +338,7 @@ func (s *Server) capacityDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 	response, err := capacityWorkerInstance(
 		draining.ID, draining.ResourceID, draining.WorkerGroupID, draining.WorkerPoolID,
 		string(draining.State), draining.ClaimVersion,
-		draining.CurrentEpoch, draining.SupportsRun, draining.SupportsBuild, draining.DrainingAt,
+		draining.CurrentEpoch, draining.DrainingAt,
 		draining.TerminationReadyAt, draining.LostAt, draining.CreatedAt, draining.UpdatedAt,
 	)
 	if err != nil {
@@ -454,8 +447,6 @@ func capacityWorkerInstance(
 	status string,
 	claimVersion int64,
 	currentEpoch pgtype.Int8,
-	supportsRun bool,
-	supportsBuild bool,
 	drainingAt pgtype.Timestamptz,
 	terminationReadyAt pgtype.Timestamptz,
 	lostAt pgtype.Timestamptz,
@@ -470,7 +461,6 @@ func capacityWorkerInstance(
 		ID: uuid.UUID(id.Bytes).String(), ResourceID: resourceID,
 		WorkerGroupID: workerGroupID, WorkerPoolID: uuid.UUID(workerPoolID.Bytes).String(),
 		Status: publicStatus, ClaimVersion: claimVersion,
-		SupportsRun: supportsRun, SupportsBuild: supportsBuild,
 		CreatedAt: createdAt.Time, UpdatedAt: updatedAt.Time,
 	}
 	if currentEpoch.Valid {

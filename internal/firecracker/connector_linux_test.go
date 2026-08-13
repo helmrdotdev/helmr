@@ -132,26 +132,6 @@ func TestExt4FreeBytesReadsFreshFilesystemCapacity(t *testing.T) {
 	}
 }
 
-func TestScratchUsableFloorMatchesBuildProfiles(t *testing.T) {
-	tests := []struct {
-		name       string
-		kernelArgs string
-		want       uint64
-	}{
-		{name: "staged build", kernelArgs: buildKernelArgs, want: 19 * 1024 * 1024 * 1024},
-		{name: "image build", kernelArgs: imageBuildKernelArgs, want: 19 * 1024 * 1024 * 1024},
-		{name: "runtime", kernelArgs: defaultKernelArgs},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			connector := &Connector{kernelArgs: test.kernelArgs}
-			if got := connector.scratchUsableFloor(); got != test.want {
-				t.Fatalf("usable floor = %d, want %d", got, test.want)
-			}
-		})
-	}
-}
-
 func TestSnapshotRuntimeConfigBindsManagedProgramTopology(t *testing.T) {
 	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
 	runtimeID := testRuntimeIdentity(t, "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333").ID
@@ -194,7 +174,7 @@ func TestCleanupRequiresCanonicalExactOwnership(t *testing.T) {
 	if err := os.MkdirAll(statePath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(vm.OwnerBuild)+"\n"+id+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(vm.OwnerRuntime)+"\n"+id+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	connector := &Connector{cfg: Config{StateDir: stateDir, JailerChrootBaseDir: jailerDir, IPPath: "/bin/true"}}
@@ -230,7 +210,7 @@ func TestCleanupRemovesExactBuildOwnerAndMarkerLast(t *testing.T) {
 		t.Fatal(err)
 	}
 	connector := &Connector{cfg: Config{StateDir: stateDir, JailerChrootBaseDir: jailerDir, IPPath: "/bin/true"}}
-	if err := connector.cleanup(context.Background(), vm.Owner{Kind: vm.OwnerBuild, ID: id}); err != nil {
+	if err := connector.cleanup(context.Background(), vm.Owner{Kind: vm.OwnerRuntime, ID: id}); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{statePath, jailerPath} {
@@ -1556,128 +1536,6 @@ func TestSessionEntryPointsRejectWorkloadRuntimeIdentityMismatch(t *testing.T) {
 	}
 }
 
-func TestBuildGuestProfilesUseExactDriveSets(t *testing.T) {
-	source := &recordingReadOnlyDriveSource{}
-	tests := map[string]struct {
-		request    vm.ConnectRequest
-		kernelArgs string
-	}{
-		"build": {
-			request: vm.ConnectRequest{
-				OwnerKind: vm.OwnerBuild,
-				Resources: compute.BuildGuestResources(),
-				PIDsMax:   compute.BuildGuestPIDsMax,
-				ReadOnlyDrives: []vm.ReadOnlyDrive{
-					{ID: vm.ToolchainDrive, Source: source},
-					{ID: vm.ManagerDrive, Source: source},
-					{ID: vm.ManagedRuntimeDrive, Source: source},
-				},
-			},
-			kernelArgs: buildKernelArgs,
-		},
-		"image build": {
-			request: vm.ConnectRequest{
-				OwnerKind: vm.OwnerImageBuild,
-				Resources: compute.ImageBuildGuestResources(),
-				PIDsMax:   compute.ImageBuildGuestPIDsMax,
-			},
-			kernelArgs: imageBuildKernelArgs,
-		},
-	}
-	for name, test := range tests {
-		t.Run(name, func(t *testing.T) {
-			kernelArgs, err := buildGuestProfile(test.request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if kernelArgs != test.kernelArgs {
-				t.Fatalf("profile = %q, want %q", kernelArgs, test.kernelArgs)
-			}
-		})
-	}
-}
-
-func TestBuildGuestProfileRejectsOpenProfiles(t *testing.T) {
-	source := &recordingReadOnlyDriveSource{}
-	required := []vm.ReadOnlyDrive{
-		{ID: vm.ManagerDrive, Source: source},
-		{ID: vm.ManagedRuntimeDrive, Source: source},
-		{ID: vm.ToolchainDrive, Source: source},
-	}
-	tests := map[string]vm.ConnectRequest{
-		"missing component": {
-			OwnerKind:      vm.OwnerBuild,
-			Resources:      compute.BuildGuestResources(),
-			PIDsMax:        compute.BuildGuestPIDsMax,
-			ReadOnlyDrives: required[:2],
-		},
-		"wrong process limit": {
-			OwnerKind:      vm.OwnerBuild,
-			Resources:      compute.BuildGuestResources(),
-			PIDsMax:        compute.BuildGuestPIDsMax - 1,
-			ReadOnlyDrives: required,
-		},
-		"workspace substrate": {
-			OwnerKind: vm.OwnerBuild,
-			Resources: compute.BuildGuestResources(),
-			PIDsMax:   compute.BuildGuestPIDsMax,
-			Topology: vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
-				Path: "workspace.ext4",
-			}},
-			ReadOnlyDrives: required,
-		},
-		"build drives on standard build": {
-			OwnerKind:      vm.OwnerBuild,
-			Resources:      compute.BuildGuestResources(),
-			ReadOnlyDrives: required,
-		},
-		"image build with drive": {
-			OwnerKind:      vm.OwnerImageBuild,
-			Resources:      compute.ImageBuildGuestResources(),
-			PIDsMax:        compute.ImageBuildGuestPIDsMax,
-			ReadOnlyDrives: required[:1],
-		},
-	}
-	for name, request := range tests {
-		t.Run(name, func(t *testing.T) {
-			if _, err := buildGuestProfile(request); err == nil {
-				t.Fatal("buildGuestProfile error = nil")
-			}
-		})
-	}
-}
-
-func TestRuntimeDrivesUseFixedBuildOrder(t *testing.T) {
-	source := &recordingReadOnlyDriveSource{}
-	drives := runtimeDrives(
-		"/rootfs.squashfs",
-		"/scratch.ext4",
-		"",
-		[]vm.ReadOnlyDrive{
-			{ID: vm.BuildTreeDrive, Source: source},
-			{ID: vm.ToolchainDrive, Source: source},
-			{ID: vm.ManagedRuntimeDrive, Source: source},
-			{ID: vm.ManagerDrive, Source: source},
-		},
-	)
-	want := []string{
-		"rootfs",
-		"scratch",
-		vm.ManagerDrive,
-		vm.ManagedRuntimeDrive,
-		vm.ToolchainDrive,
-		vm.BuildTreeDrive,
-	}
-	if len(drives) != len(want) {
-		t.Fatalf("drive count = %d, want %d", len(drives), len(want))
-	}
-	for index, drive := range drives {
-		if got := firecracker.StringValue(drive.DriveID); got != want[index] {
-			t.Fatalf("drive %d ID = %q, want %q", index, got, want[index])
-		}
-	}
-}
-
 func TestSealedDriveChrootStrategySeparatesSourceCapabilities(t *testing.T) {
 	chrootBase := t.TempDir()
 	vmID := "vm-1"
@@ -1757,91 +1615,6 @@ func TestSealedDriveChrootStrategySeparatesSourceCapabilities(t *testing.T) {
 	} {
 		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
 			t.Fatalf("ordinary jail link %q: %v", name, err)
-		}
-	}
-}
-
-func TestSealedDriveChrootStrategyPreservesBuildDriveOrder(t *testing.T) {
-	chrootBase := t.TempDir()
-	vmID := "vm-build"
-	root := filepath.Join(chrootBase, "firecracker", vmID, "root")
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	sourceDirectory := t.TempDir()
-	kernelPath := filepath.Join(sourceDirectory, "vmlinux")
-	rootfsPath := filepath.Join(sourceDirectory, "rootfs.squashfs")
-	scratchPath := filepath.Join(sourceDirectory, "scratch.ext4")
-	for _, path := range []string{kernelPath, rootfsPath, scratchPath} {
-		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	sources := map[string]*recordingReadOnlyDriveSource{
-		vm.ManagerDrive:        {},
-		vm.ManagedRuntimeDrive: {},
-		vm.ToolchainDrive:      {},
-		vm.BuildTreeDrive:      {},
-	}
-	declared := []vm.ReadOnlyDrive{
-		{ID: vm.BuildTreeDrive, Source: sources[vm.BuildTreeDrive]},
-		{ID: vm.ToolchainDrive, Source: sources[vm.ToolchainDrive]},
-		{ID: vm.ManagedRuntimeDrive, Source: sources[vm.ManagedRuntimeDrive]},
-		{ID: vm.ManagerDrive, Source: sources[vm.ManagerDrive]},
-	}
-	machine := &firecracker.Machine{
-		Cfg: firecracker.Config{
-			KernelImagePath: kernelPath,
-			JailerCfg: &firecracker.JailerConfig{
-				ExecFile:      "/usr/bin/firecracker",
-				ChrootBaseDir: chrootBase,
-				ID:            vmID,
-				UID:           firecracker.Int(os.Getuid()),
-				GID:           firecracker.Int(os.Getgid()),
-			},
-			Drives: runtimeDrives(rootfsPath, scratchPath, "", declared),
-		},
-		Handlers: firecracker.Handlers{
-			FcInit: firecracker.HandlerList{}.Append(firecracker.Handler{
-				Name: firecracker.CreateLogFilesHandlerName,
-				Fn: func(context.Context, *firecracker.Machine) error {
-					return nil
-				},
-			}),
-		},
-	}
-	firecracker.WithLogger(logrus.NewEntry(logrus.New()))(machine)
-	strategy := sealedDriveChrootStrategy{kernelImagePath: kernelPath, drives: declared}
-	if err := strategy.AdaptHandlers(&machine.Handlers); err != nil {
-		t.Fatal(err)
-	}
-	if err := machine.Handlers.FcInit.Run(context.Background(), machine); err != nil {
-		t.Fatal(err)
-	}
-
-	want := []string{
-		"rootfs",
-		"scratch",
-		vm.ManagerDrive,
-		vm.ManagedRuntimeDrive,
-		vm.ToolchainDrive,
-		vm.BuildTreeDrive,
-	}
-	if len(machine.Cfg.Drives) != len(want) {
-		t.Fatalf("drive count = %d, want %d", len(machine.Cfg.Drives), len(want))
-	}
-	for index, drive := range machine.Cfg.Drives {
-		id := firecracker.StringValue(drive.DriveID)
-		if id != want[index] {
-			t.Fatalf("drive %d ID = %q, want %q", index, id, want[index])
-		}
-		if source := sources[id]; source != nil {
-			if source.directory != root ||
-				source.name != readOnlyDriveName(id) ||
-				source.uid != os.Getuid() ||
-				source.gid != os.Getgid() {
-				t.Fatalf("drive %q link request = %+v", id, source)
-			}
 		}
 	}
 }

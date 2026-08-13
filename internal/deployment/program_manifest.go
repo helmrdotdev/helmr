@@ -157,19 +157,30 @@ func validateProgramManifest(manifest ProgramManifest) error {
 }
 
 func validateProgramExternalEdge(edge ProgramExternalEdge) error {
-	if edge.Importer == "" || edge.Kind == "" || edge.Specifier == "" ||
-		validateArtifactPath(edge.Importer, programArtifact) != nil ||
-		validateArtifactPath(edge.LogicalPath, programArtifact) != nil ||
-		validateArtifactPath(edge.ResolvedPath, programArtifact) != nil ||
-		!strings.HasPrefix(edge.RuntimePath, "/opt/helmr/program/") ||
+	if edge.Importer == "" || validateArtifactPath(edge.Importer, programArtifact) != nil {
+		return errors.New("importer is invalid")
+	}
+	if edge.Kind == "" {
+		return errors.New("kind is required")
+	}
+	if edge.Specifier == "" {
+		return errors.New("specifier is required")
+	}
+	if validateArtifactPath(edge.LogicalPath, programArtifact) != nil ||
+		!hasNodeModulesComponent(edge.LogicalPath) {
+		return errors.New("logical path is invalid")
+	}
+	if validateArtifactPath(edge.ResolvedPath, programArtifact) != nil ||
+		!hasNodeModulesComponent(edge.ResolvedPath) {
+		return errors.New("resolved path is invalid")
+	}
+	if !strings.HasPrefix(edge.RuntimePath, "/opt/helmr/program/") ||
 		validateArtifactPath(
 			strings.TrimPrefix(edge.RuntimePath, "/opt/helmr/program/"),
 			programArtifact,
 		) != nil ||
-		!hasNodeModulesComponent(edge.LogicalPath) ||
-		!hasNodeModulesComponent(edge.ResolvedPath) ||
 		!hasNodeModulesComponent(edge.RuntimePath) {
-		return errors.New("shape is invalid")
+		return errors.New("runtime path is invalid")
 	}
 	if strings.TrimPrefix(edge.RuntimePath, "/opt/helmr/program/") !=
 		edge.LogicalPath {

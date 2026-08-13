@@ -36,10 +36,6 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid worker enrollment JSON: %w", err)))
 		return
 	}
-	if !request.SupportsRun && !request.SupportsBuild {
-		writeError(w, badRequest(errors.New("at least one supported role is required")))
-		return
-	}
 	if request.ResourceID == "" || strings.TrimSpace(request.ResourceID) != request.ResourceID || len(request.ResourceID) > 512 {
 		writeError(w, badRequest(errors.New("resource_id is required and must not exceed 512 bytes")))
 		return
@@ -63,8 +59,6 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		TokenHash:        tokenHash,
 		WorkerPoolID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		PoolName:         request.PoolName,
-		AllowsRun:        request.SupportsRun,
-		AllowsBuild:      request.SupportsBuild,
 		WorkerInstanceID: pgvalue.UUID(workerInstanceID),
 		CurrentServiceID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		ResourceID:       request.ResourceID,
@@ -129,16 +123,10 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("service_id must be a canonical UUIDv7")))
 		return
 	}
-	if !request.SupportsRun && !request.SupportsBuild {
-		writeError(w, badRequest(errors.New("at least one supported worker role is required")))
-		return
-	}
 	credential, err := s.db.AuthenticateWorkerInstanceCredential(r.Context(), db.AuthenticateWorkerInstanceCredentialParams{
 		WorkerInstanceID: pgvalue.UUID(workerInstanceID),
 		SecretHash:       secretHash,
 		ServiceID:        pgvalue.UUID(serviceID),
-		SupportsRun:      request.SupportsRun,
-		SupportsBuild:    request.SupportsBuild,
 	})
 	if isNoRows(err) {
 		writeError(w, unauthorized(errors.New("worker authentication is required")))
@@ -167,17 +155,9 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		ClaimVersion:      credential.ClaimVersion,
 		GroupClaimVersion: credential.GroupClaimVersion,
 		WorkerEpoch:       credential.CurrentEpoch.Int64,
-		CredentialRoles: auth.WorkerRoles{
-			Run: credential.CredentialAllowsRun, Build: credential.CredentialAllowsBuild,
-		},
-		GroupRoles: auth.WorkerRoles{Run: credential.GroupAllowsRun, Build: credential.GroupAllowsBuild},
 	}).Claims(auth.EpochExchangeInput{
-		ServiceID: serviceID, SupervisorRoles: auth.WorkerRoles{Run: request.SupportsRun, Build: request.SupportsBuild},
+		ServiceID: serviceID,
 	}, now, expiresAt)
-	if errors.Is(err, auth.ErrWorkerRoleIntersectionEmpty) {
-		writeError(w, forbidden(errors.New("worker has no allowed roles")))
-		return
-	}
 	if err != nil {
 		s.log.Error("derive worker token claims failed", "worker_instance_id", request.WorkerInstanceID, "error", err)
 		writeError(w, errors.New("mint worker token"))
@@ -193,7 +173,6 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		Token:            signed,
 		ExpiresInSeconds: int64(s.workerTokenTTL / time.Second),
 		WorkerEpoch:      credential.CurrentEpoch.Int64,
-		Roles:            claims.Roles,
 	})
 }
 
@@ -481,10 +460,9 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 		writeError(w, errors.New("get worker status"))
 		return
 	}
-	readiness := workerapi.Readiness{}
-	if state.SupportsRun {
-		readiness.Run = workerRoleReadiness(state, state.RunReady, state.RunPausedReason)
-		readiness.Runtime = workerRoleReadiness(state, state.RuntimeReady, state.RuntimePausedReason)
+	readiness := workerapi.Readiness{
+		Run:     workerRoleReadiness(state, state.RunReady, state.RunPausedReason),
+		Runtime: workerRoleReadiness(state, state.RuntimeReady, state.RuntimePausedReason),
 	}
 	status, err := workerPublicStatus(state.State)
 	if err != nil {
@@ -551,7 +529,6 @@ func (s *Server) recordWorkerObservation(ctx context.Context, worker workerActor
 func workerObservationParams(worker workerActor, observation workerapi.Observation) db.RecordWorkerObservationParams {
 	return db.RecordWorkerObservationParams{
 		RunPausedReason:     pgtype.Text{String: observation.RunPausedReason, Valid: observation.RunPausedReason != ""},
-		BuildPausedReason:   pgtype.Text{String: observation.BuildPausedReason, Valid: observation.BuildPausedReason != ""},
 		RuntimePausedReason: pgtype.Text{String: observation.RuntimePausedReason, Valid: observation.RuntimePausedReason != ""},
 		WorkerInstanceID:    pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
 		WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
@@ -563,21 +540,16 @@ func workerActivationParams(
 	c workerapi.Capabilities,
 	cpuEnvironment []byte,
 ) db.ActivateWorkerInstanceParams {
-	runSlots := int32(0)
-	if c.SupportsRun {
-		runSlots = c.ExecutionSlotsAvailable
-	}
 	return db.ActivateWorkerInstanceParams{
 		RuntimeIdentityID: pgtype.Text{String: c.Runtime.ID, Valid: true},
-		SupportsRun:       c.SupportsRun, SupportsBuild: false,
-		SubstrateFormat: c.SubstrateFormat, SubstrateContract: c.SubstrateContract,
+		SubstrateFormat:   c.SubstrateFormat, SubstrateContract: c.SubstrateContract,
 		EpochCPUMillis: c.MaxVCPUs * 1000, EpochMemoryBytes: c.MaxMemoryMiB * 1024 * 1024,
 		EpochGuestEphemeralDiskBytes: c.GuestEphemeralDiskBytes,
 		PerVMCPUMillis:               c.VMMilliCPU, PerVMMemoryBytes: c.VMMemoryMiB * 1024 * 1024,
 		PerVMGuestEphemeralDiskBytes: c.VMGuestEphemeralDiskBytes,
-		MaxVMSlots:                   runSlots,
-		MaxBuildExecutors:            0, MaxRuntimeStarts: runSlots,
-		CPUEnvironment: cpuEnvironment, CPUEnvironmentDigest: pgtype.Text{String: c.CPUEnvironment.Digest, Valid: true},
+		MaxVMSlots:                   c.ExecutionSlotsAvailable,
+		MaxRuntimeStarts:             c.ExecutionSlotsAvailable,
+		CPUEnvironment:               cpuEnvironment, CPUEnvironmentDigest: pgtype.Text{String: c.CPUEnvironment.Digest, Valid: true},
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
 		WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
 	}
@@ -597,9 +569,6 @@ func (s *Server) activateWorker(ctx context.Context, worker workerActor, capabil
 		if group.State != db.WorkerGroupStateActive && group.State != db.WorkerGroupStatePaused && group.State != db.WorkerGroupStateDraining {
 			return pgx.ErrNoRows
 		}
-		if capabilities.SupportsRun && !group.AllowsRun || capabilities.SupportsBuild && !group.AllowsBuild {
-			return pgx.ErrNoRows
-		}
 		epoch := pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true}
 		poolID, err := work.q.GetWorkerInstancePoolID(ctx, db.GetWorkerInstancePoolIDParams{
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
@@ -613,9 +582,6 @@ func (s *Server) activateWorker(ctx context.Context, worker workerActor, capabil
 		})
 		if err != nil {
 			return err
-		}
-		if pool.AllowsRun != capabilities.SupportsRun || pool.AllowsBuild != capabilities.SupportsBuild {
-			return pgx.ErrNoRows
 		}
 		if _, err := work.q.LockWorkerInstanceForActivation(ctx, db.LockWorkerInstanceForActivationParams{
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
@@ -646,7 +612,7 @@ func (s *Server) activateWorker(ctx context.Context, worker workerActor, capabil
 			if err != nil {
 				return err
 			}
-			if _, err := work.q.SetInitialWorkerGroupPrimaryPools(ctx, db.SetInitialWorkerGroupPrimaryPoolsParams{
+			if _, err := work.q.SetInitialWorkerGroupPrimaryPool(ctx, db.SetInitialWorkerGroupPrimaryPoolParams{
 				WorkerGroupID: worker.WorkerGroupID, WorkerPoolID: poolID,
 			}); err != nil {
 				return err
@@ -691,14 +657,12 @@ func sealWorkerPoolParams(groupID string, poolID pgtype.UUID, template capacitya
 		PerVMMemoryBytes:                pgtype.Int8{Int64: template.PerVM.MemoryBytes, Valid: true},
 		PerVMGuestEphemeralDiskBytes:    pgtype.Int8{Int64: template.PerVM.GuestEphemeralDiskBytes, Valid: true},
 		MaxVMSlots:                      pgtype.Int4{Int32: int32(template.Capacity.VMSlots), Valid: true},
-		MaxBuildExecutors:               pgtype.Int4{Int32: int32(template.Capacity.BuildExecutors), Valid: true},
 		WorkerPoolID:                    poolID, WorkerGroupID: groupID,
-		AllowsRun: template.SupportsRun, AllowsBuild: template.SupportsBuild,
 	}
 }
 
 func workerPoolMatches(pool db.WorkerPool, shapes []db.WorkerPoolCpuShape, template capacityapi.WorkerTemplate) bool {
-	if !pool.SealedAt.Valid || pool.AllowsRun != template.SupportsRun || pool.AllowsBuild != template.SupportsBuild ||
+	if !pool.SealedAt.Valid ||
 		!pool.RuntimeIdentityID.Valid || pool.RuntimeIdentityID.String != template.Runtime.ID ||
 		!pool.SubstrateFormat.Valid || pool.SubstrateFormat.String != template.Substrate.Format ||
 		!pool.SubstrateContract.Valid || pool.SubstrateContract.String != template.Substrate.Contract ||
@@ -709,7 +673,6 @@ func workerPoolMatches(pool db.WorkerPool, shapes []db.WorkerPoolCpuShape, templ
 		!pool.PerVMMemoryBytes.Valid || pool.PerVMMemoryBytes.Int64 != template.PerVM.MemoryBytes ||
 		!pool.PerVMGuestEphemeralDiskBytes.Valid || pool.PerVMGuestEphemeralDiskBytes.Int64 != template.PerVM.GuestEphemeralDiskBytes ||
 		!pool.MaxVMSlots.Valid || int64(pool.MaxVMSlots.Int32) != template.Capacity.VMSlots ||
-		!pool.MaxBuildExecutors.Valid || int64(pool.MaxBuildExecutors.Int32) != template.Capacity.BuildExecutors ||
 		len(shapes) != len(template.CPUShapes) {
 		return false
 	}
@@ -723,13 +686,8 @@ func workerPoolMatches(pool db.WorkerPool, shapes []db.WorkerPoolCpuShape, templ
 }
 
 func workerTemplate(capabilities workerapi.Capabilities) capacityapi.WorkerTemplate {
-	vmSlots := int64(0)
-	if capabilities.SupportsRun {
-		vmSlots = int64(capabilities.ExecutionSlotsAvailable)
-	}
 	return capacityapi.WorkerTemplate{
-		Schema: capacityapi.WorkerTemplateSchema, SupportsRun: capabilities.SupportsRun,
-		SupportsBuild: capabilities.SupportsBuild, Runtime: capabilities.Runtime,
+		Schema: capacityapi.WorkerTemplateSchema, Runtime: capabilities.Runtime,
 		CPUShapes: append([]capacityapi.CPUShape(nil), capabilities.CPUShapes...),
 		Substrate: capacityapi.SubstrateProfile{
 			Format: capabilities.SubstrateFormat, Contract: capabilities.SubstrateContract,
@@ -737,7 +695,7 @@ func workerTemplate(capabilities workerapi.Capabilities) capacityapi.WorkerTempl
 		Capacity: capacityapi.ResourceVector{
 			CPUMillis: capabilities.MaxVCPUs * 1000, MemoryBytes: capabilities.MaxMemoryMiB * 1024 * 1024,
 			GuestEphemeralDiskBytes: capabilities.GuestEphemeralDiskBytes,
-			VMSlots:                 vmSlots, BuildExecutors: int64(capabilities.MaxBuildExecutors),
+			VMSlots:                 int64(capabilities.ExecutionSlotsAvailable),
 		},
 		PerVM: capacityapi.ResourceVector{
 			CPUMillis: capabilities.VMMilliCPU, MemoryBytes: capabilities.VMMemoryMiB * 1024 * 1024,
@@ -784,7 +742,6 @@ func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabi
 		GuestEphemeralDiskBytes:   input.GuestEphemeralDiskBytes,
 		VMGuestEphemeralDiskBytes: input.VMGuestEphemeralDiskBytes,
 		ExecutionSlotsAvailable:   input.ExecutionSlotsAvailable,
-		SupportsRun:               input.SupportsRun,
 	}
 	if err := capabilities.Runtime.Validate(); err != nil {
 		return workerapi.Capabilities{}, fmt.Errorf("worker runtime profile: %w", err)
@@ -819,24 +776,14 @@ func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabi
 		capabilities.VMGuestEphemeralDiskBytes > capabilities.GuestEphemeralDiskBytes {
 		return workerapi.Capabilities{}, errors.New("worker VM guest ephemeral disk must be positive and not exceed aggregate capacity")
 	}
-	if capabilities.SupportsRun && capabilities.ExecutionSlotsAvailable <= 0 {
-		return workerapi.Capabilities{}, errors.New("run worker execution_slots_available must be positive")
+	if capabilities.ExecutionSlotsAvailable <= 0 {
+		return workerapi.Capabilities{}, errors.New("worker execution_slots_available must be positive")
 	}
-	if !capabilities.SupportsRun && capabilities.ExecutionSlotsAvailable != 0 {
-		return workerapi.Capabilities{}, errors.New("worker without run role must report zero execution_slots_available")
+	if capabilities.SubstrateFormat == "" {
+		return workerapi.Capabilities{}, errors.New("worker substrate_format is required")
 	}
-	if !capabilities.SupportsRun {
-		return workerapi.Capabilities{}, errors.New("worker must support run")
-	}
-	if capabilities.SupportsRun {
-		if capabilities.SubstrateFormat == "" {
-			return workerapi.Capabilities{}, errors.New("worker substrate_format is required for run role")
-		}
-		if capabilities.SubstrateContract == "" {
-			return workerapi.Capabilities{}, errors.New("worker substrate_contract is required for run role")
-		}
-	} else if capabilities.SubstrateFormat != "" || capabilities.SubstrateContract != "" {
-		return workerapi.Capabilities{}, errors.New("worker without run role must not report a substrate contract")
+	if capabilities.SubstrateContract == "" {
+		return workerapi.Capabilities{}, errors.New("worker substrate_contract is required")
 	}
 	template := workerTemplate(capabilities)
 	if err := template.Validate(); err != nil {

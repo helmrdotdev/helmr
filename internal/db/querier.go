@@ -339,7 +339,6 @@ type Querier interface {
 	ListDefinitionSnapshots(ctx context.Context, arg ListDefinitionSnapshotsParams) ([]string, error)
 	ListDeploymentDefinitionsForDeployment(ctx context.Context, arg ListDeploymentDefinitionsForDeploymentParams) ([]DeploymentDefinition, error)
 	ListDeploymentsByVersionForOrg(ctx context.Context, arg ListDeploymentsByVersionForOrgParams) ([]Deployment, error)
-	ListDueEnvironmentImageCacheRetirements(ctx context.Context, resultLimit int32) ([]ListDueEnvironmentImageCacheRetirementsRow, error)
 	ListDueTimerRunWaits(ctx context.Context, limitCount int32) ([]RunWait, error)
 	ListEnvironments(ctx context.Context, arg ListEnvironmentsParams) ([]Environment, error)
 	ListExpiredParentOwnedChildRuns(ctx context.Context, limitCount int32) ([]ListExpiredParentOwnedChildRunsRow, error)
@@ -461,7 +460,6 @@ type Querier interface {
 	LockWorkspaceSecretsForAdmission(ctx context.Context, workspaceID pgtype.UUID) ([]LockWorkspaceSecretsForAdmissionRow, error)
 	LoseWorkspaceExecMount(ctx context.Context, arg LoseWorkspaceExecMountParams) (WorkspaceMount, error)
 	MarkDeletionJobRunning(ctx context.Context, arg MarkDeletionJobRunningParams) (DeletionJob, error)
-	MarkEnvironmentImageCacheRetired(ctx context.Context, arg MarkEnvironmentImageCacheRetiredParams) (int64, error)
 	MarkLiveTelemetryOutboxFailed(ctx context.Context, arg MarkLiveTelemetryOutboxFailedParams) error
 	MarkLiveTelemetryOutboxPublished(ctx context.Context, id int64) error
 	MarkMagicLinkDeliveryFailed(ctx context.Context, id pgtype.UUID) (int64, error)
@@ -561,9 +559,9 @@ type Querier interface {
 	SealWorkerPool(ctx context.Context, arg SealWorkerPoolParams) (WorkerPool, error)
 	SetActorCurrentRun(ctx context.Context, arg SetActorCurrentRunParams) (Session, error)
 	SetDefaultProject(ctx context.Context, arg SetDefaultProjectParams) (int64, error)
-	SetInitialWorkerGroupPrimaryPools(ctx context.Context, arg SetInitialWorkerGroupPrimaryPoolsParams) (WorkerGroup, error)
+	SetInitialWorkerGroupPrimaryPool(ctx context.Context, arg SetInitialWorkerGroupPrimaryPoolParams) (WorkerGroup, error)
 	SetRunCurrentLease(ctx context.Context, arg SetRunCurrentLeaseParams) (Run, error)
-	SetWorkerGroupPrimaryPools(ctx context.Context, arg SetWorkerGroupPrimaryPoolsParams) (WorkerGroup, error)
+	SetWorkerGroupPrimaryPool(ctx context.Context, arg SetWorkerGroupPrimaryPoolParams) (WorkerGroup, error)
 	SetWorkspaceExecResult(ctx context.Context, arg SetWorkspaceExecResultParams) (WorkspaceProcess, error)
 	StageWorkspaceExecCapture(ctx context.Context, arg StageWorkspaceExecCaptureParams) (StageWorkspaceExecCaptureRow, error)
 	StartWorkspaceExec(ctx context.Context, arg StartWorkspaceExecParams) (WorkspaceProcess, error)

@@ -2,10 +2,7 @@
   stdenvNoCC,
   coreutils,
   jq,
-  runtimeHarness,
-  toolchainBase,
-  nodeReleaseKeys,
-  policyTool,
+  runtimeRelease,
 }:
 
 stdenvNoCC.mkDerivation {
@@ -17,20 +14,12 @@ stdenvNoCC.mkDerivation {
   nativeBuildInputs = [
     coreutils
     jq
-    policyTool
   ];
 
   buildCommand = ''
     set -euo pipefail
 
     install -d "$out/objects/sha256"
-    platform-policy \
-      --runtime ${runtimeHarness}/harness.descriptor.json \
-      --toolchain ${toolchainBase}/base.descriptor.json \
-      --node-keyring ${nodeReleaseKeys}/pubring.kbx \
-      --node-fingerprints ${nodeReleaseKeys}/fingerprints \
-      --output "$TMPDIR/build-policy.json"
-
     install_object() {
       source="$1"
       descriptor="$2"
@@ -50,37 +39,14 @@ stdenvNoCC.mkDerivation {
     }
 
     runtime_object="$(install_object \
-      ${runtimeHarness}/harness.tar \
-      ${runtimeHarness}/harness.descriptor.json)"
-    jq -cS '.base' \
-      ${toolchainBase}/base.descriptor.json \
-      >"$TMPDIR/toolchain-base-object.json"
-    toolchain_object="$(install_object \
-      ${toolchainBase}/base.tar \
-      "$TMPDIR/toolchain-base-object.json")"
-
-    policy_digest="sha256:$(sha256sum "$TMPDIR/build-policy.json" | cut -d' ' -f1)"
-    policy_size="$(stat -c %s "$TMPDIR/build-policy.json")"
-    install -m0444 \
-      "$TMPDIR/build-policy.json" \
-      "$out/objects/sha256/''${policy_digest#sha256:}"
-    policy_object="$(jq -cn \
-      --arg digest "$policy_digest" \
-      --arg mediaType 'application/vnd.helmr.build-policy.v0+json' \
-      --argjson sizeBytes "$policy_size" \
-      '{digest:$digest,mediaType:$mediaType,sizeBytes:$sizeBytes}')"
-
+      ${runtimeRelease}/runtime.squashfs \
+      ${runtimeRelease}/runtime.descriptor.json)"
     jq -cSj -n \
       --argjson formatVersion 0 \
-      --argjson policy "$policy_object" \
-      --argjson runtimeHarness "$runtime_object" \
-      --argjson toolchainBase "$toolchain_object" \
+      --argjson runtime "$runtime_object" \
       '{
         formatVersion:$formatVersion,
-        policy:$policy,
-        runtimeHarness:$runtimeHarness,
-        toolchainBase:$toolchainBase
+        runtime:$runtime
       }' >"$out/platform-release.json"
-    printf '%s' "$policy_digest" >"$out/build-policy.digest"
   '';
 }

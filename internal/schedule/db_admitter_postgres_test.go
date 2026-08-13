@@ -302,7 +302,6 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 		VALUES ($1, $2, $3, 'production', 'Production', '#000000')
 	`, environmentID, orgID, projectID)
 
-	sourceArtifactID := seedScheduleArtifact(t, pool, orgID, projectID, environmentID, "deployment_source", "source")
 	programArtifactID := seedScheduleArtifact(t, pool, orgID, projectID, environmentID, "deployment_program", "program")
 	imageArtifactID := seedScheduleArtifact(t, pool, orgID, projectID, environmentID, "workspace_image", "image")
 	runtimeBytes := strings.Repeat("01", 32)
@@ -310,22 +309,15 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	queueConfig := `{"formatVersion":0,"queues":[{"name":"default"}]}`
 	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO deployments (
-			id, org_id, project_id, environment_id, build_region_id,
-			build_node_version, build_runtime_digest, build_toolchain_digest,
-			build_manager_name, build_manager_version, build_manager_digest,
-			build_contract, image_cache_mode, version, content_hash, deployment_source_artifact_id,
-			program_artifact_id, program_index_digest, queue_config, status
+			id, org_id, project_id, environment_id, version, bundle_digest,
+			runtime_artifact_digest, program_artifact_id, program_index_digest, queue_config
 		)
 		VALUES (
-			$1, $2, $3, $4, $5,
-			'24.16.0', decode($6, 'hex'), decode(repeat('02', 32), 'hex'),
-			'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
-			'helmr.program-build.v0', 'prefer', 'v0', $7, $8,
-			$9, decode(repeat('03', 32), 'hex'), $10, 'deployed'
+			$1, $2, $3, $4, 'v0', $5, $6, $7,
+			decode(repeat('03', 32), 'hex'), $8
 		)
-	`, deploymentID, orgID, projectID, environmentID, regionID, runtimeBytes,
-		"sha256:"+strings.Repeat("03", 32), sourceArtifactID, programArtifactID,
-		queueConfig)
+	`, deploymentID, orgID, projectID, environmentID,
+		"sha256:"+strings.Repeat("03", 32), runtimeDigest, programArtifactID, queueConfig)
 	taskManifest := []byte(
 		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"scheduler","secrets":[{"env":"API_TOKEN","name":"API_TOKEN"}]}}}`,
 	)

@@ -27,7 +27,7 @@ type BuildTreeSource struct {
 
 // SelectImageSource expands every source-copy root in plan against the exact
 // verified post-lifecycle BuildTree and computes the canonical archive facts
-// required before image-build admission.
+// required before a local producer accepts the source tree.
 func (tree *BuildTree) SelectImageSource(
 	ctx context.Context,
 	plan imagebuild.Build,

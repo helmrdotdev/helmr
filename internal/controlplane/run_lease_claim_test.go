@@ -126,7 +126,6 @@ func TestClaimFreshTaskRunLeaseInTxLocksCanonicalOrderAndTransitionsOnce(t *test
 	store.calls = nil
 	store.authority.runLease = claimed.runLease
 	store.authority.workerGroup.State = db.WorkerGroupStateDraining
-	store.authority.workerGroup.AllowsRun = false
 	store.authority.workerRunReady = false
 	replayed, err := claimFreshTaskRunLeaseInTx(
 		context.Background(),
@@ -1509,7 +1508,6 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 			RegionID:     regionID,
 			State:        db.WorkerGroupStateActive,
 			ClaimVersion: 1,
-			AllowsRun:    true,
 		},
 		worker: db.WorkerInstance{
 			ID:                           pgvalue.UUID(workerInstanceID),
@@ -1517,7 +1515,6 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 			State:                        db.WorkerInstanceStateActive,
 			ClaimVersion:                 3,
 			CurrentEpoch:                 pgtype.Int8{Int64: 7, Valid: true},
-			SupportsRun:                  true,
 			RuntimeIdentityID:            pgtype.Text{String: runtimeIDValue, Valid: true},
 			PerVMCPUMillis:               1000,
 			PerVMMemoryBytes:             2048,

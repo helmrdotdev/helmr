@@ -1,27 +1,10 @@
 import { ApiError, request } from "./api";
 
-type DeploymentSourceArtifact = {
-  digest: string;
-  size_bytes?: number;
-  media_type?: string;
-};
-
-export type DeploymentStatus = "queued" | "building" | "deployed" | "failed";
-
 export type Deployment = {
   id: string;
   version: string;
-  project_id: string;
-  environment_id: string;
-  content_hash: string;
-  deployment_source: DeploymentSourceArtifact;
-  status: DeploymentStatus;
-  failure?: { code: string; message: string; details: Record<string, unknown> };
+  bundle_digest: string;
   created_at: string;
-  building_at?: string;
-  built_at?: string;
-  deployed_at?: string;
-  failed_at?: string;
 };
 
 export async function getCurrentDeployment(options: {

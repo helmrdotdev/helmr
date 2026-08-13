@@ -18,6 +18,7 @@ func deployCommand() *cobra.Command {
 	var envRef string
 	var bundlePath string
 	var installCommand string
+	var secretIDs []string
 	var skipPromotion bool
 	var jsonOutput bool
 	var idempotencyKey string
@@ -69,12 +70,12 @@ func deployCommand() *cobra.Command {
 					return err
 				}
 				if err := buildDeploymentBundleAt(
-					cmd.Context(), cmd, source, bundlePath, installCommand, false,
+					cmd.Context(), cmd, source, bundlePath, installCommand, secretIDs, false,
 				); err != nil {
 					return err
 				}
-			} else if strings.TrimSpace(installCommand) != "" {
-				return errors.New("--install-command cannot be used with --bundle")
+			} else if strings.TrimSpace(installCommand) != "" || len(secretIDs) != 0 {
+				return errors.New("--install-command and --build-secret cannot be used with --bundle")
 			}
 			bundle, err := deployment.ReadDeploymentBundleDirectory(bundlePath)
 			if err != nil {
@@ -140,6 +141,7 @@ func deployCommand() *cobra.Command {
 	cmd.Flags().StringVarP(&envRef, "env", "e", "", "Environment slug or ID for this deployment.")
 	cmd.Flags().StringVar(&bundlePath, "bundle", "", "Existing verified deployment bundle directory.")
 	cmd.Flags().StringVar(&installCommand, "install-command", "", "Custom dependency installation/preparation command inside BuildKit.")
+	cmd.Flags().StringSliceVar(&secretIDs, "build-secret", nil, "Environment variable to mount as /run/secrets/NAME during dependency installation (repeatable).")
 	cmd.Flags().BoolVar(&skipPromotion, "skip-promotion", false, "Finalize the deployment without promoting it current.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit JSON lines for deployment progress.")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for retrying deployment finalization.")

@@ -42,8 +42,6 @@ export function AdminWorkerGroups() {
       region_id: String(form.get("region_id") ?? ""),
       name: String(form.get("name") ?? "").trim(),
       description: String(form.get("description") ?? "").trim(),
-      allows_run: form.has("allows_run"),
-      allows_build: form.has("allows_build"),
     };
     setSubmitting(true);
     setError(null);
@@ -118,12 +116,11 @@ export function AdminWorkerGroups() {
           <Show when={(groups.data?.worker_groups.length ?? 0) > 0} fallback={<div class={ui.emptyState}><strong class="text-console-text">No Worker Groups configured.</strong><Show when={(regions.data?.regions.length ?? 0) > 0} fallback={<a href="/admin/regions" class="text-console-accent">Create a Region first</a>}><button type="button" class={ui.button} onClick={() => setCreating(true)}>Create Worker Group</button></Show></div>}>
             <div class={ui.tableWrap}>
               <table class="min-w-220">
-                <thead><tr><th>Worker Group</th><th>Region</th><th>Roles</th><th>State</th><th>Version</th><th></th></tr></thead>
+                <thead><tr><th>Worker Group</th><th>Region</th><th>State</th><th>Version</th><th></th></tr></thead>
                 <tbody><For each={groups.data?.worker_groups ?? []}>{(group) => (
                   <tr>
                     <td><div class={ui.tableCellStack}><strong>{group.name}</strong><div><code>{group.id}</code></div></div></td>
                     <td><code>{group.region_id}</code></td>
-                    <td>{[group.allows_run && "run", group.allows_build && "build"].filter(Boolean).join(", ")}</td>
                     <td>{group.state}</td><td>{group.claim_version}</td>
                     <td class={ui.actionsCell}><div class="flex items-center justify-end gap-1.5">
                       <button type="button" class={ui.secondaryButton} onClick={() => { setError(null); setEditing(group); }}>Edit</button>
@@ -147,7 +144,6 @@ export function AdminWorkerGroups() {
             <label class={ui.field}><span>Region</span><select name="region_id" class={ui.input} required autofocus><For each={regions.data?.regions ?? []}>{(region) => <option value={region.id}>{region.display_name} ({region.id})</option>}</For></select></label>
             <TextField name="name" label="Name" placeholder="default" required />
             <label class={ui.field}><span>Description</span><textarea class={ui.textarea} name="description" /></label>
-            <fieldset class={ui.fieldSet}><legend class={ui.fieldLegend}>Roles</legend><label class="mr-4"><input type="checkbox" name="allows_run" checked /> Run</label><label><input type="checkbox" name="allows_build" checked /> Build</label></fieldset>
             <Show when={error()}><p class={ui.fieldError} role="alert">{error()}</p></Show>
             <div class={ui.modalActions}><button type="button" class={ui.secondaryButton} onClick={() => setCreating(false)}>Cancel</button><button class={ui.button} disabled={submitting()}>{submitting() ? "Creating..." : "Create"}</button></div>
           </form>

@@ -26,7 +26,7 @@ type adminPoolStore struct {
 	switched           db.WorkerGroup
 	transitioned       db.WorkerPool
 	createParams       db.CreatePendingWorkerPoolParams
-	switchParams       db.SetWorkerGroupPrimaryPoolsParams
+	switchParams       db.SetWorkerGroupPrimaryPoolParams
 	transitionParams   db.TransitionWorkerPoolLifecycleParams
 	createCalls        int
 	switchCalls        int
@@ -74,13 +74,13 @@ func (s *adminPoolStore) CreatePendingWorkerPool(_ context.Context, params db.Cr
 	if !created.ID.Valid {
 		created = db.WorkerPool{
 			ID: params.WorkerPoolID, WorkerGroupID: params.WorkerGroupID, Name: params.Name,
-			State: "pending", ClaimVersion: 1, AllowsRun: params.AllowsRun, AllowsBuild: params.AllowsBuild,
+			State: "pending", ClaimVersion: 1,
 		}
 	}
 	return created, nil
 }
 
-func (s *adminPoolStore) SetWorkerGroupPrimaryPools(_ context.Context, params db.SetWorkerGroupPrimaryPoolsParams) (db.WorkerGroup, error) {
+func (s *adminPoolStore) SetWorkerGroupPrimaryPool(_ context.Context, params db.SetWorkerGroupPrimaryPoolParams) (db.WorkerGroup, error) {
 	s.transactionActions = append(s.transactionActions, "switch")
 	s.switchCalls++
 	s.switchParams = params
@@ -99,7 +99,7 @@ func (s *adminPoolStore) TransitionWorkerPoolLifecycle(_ context.Context, params
 
 func TestAdminWorkerPoolListReturnsCurrentPrimaryRepresentation(t *testing.T) {
 	group, pool := adminPoolFixture()
-	group.PrimaryRunPoolID = pool.ID
+	group.PrimaryPoolID = pool.ID
 	store := newAdminPoolStore(group, pool)
 	response := httptest.NewRecorder()
 	adminHTTPRouter(t, store).ServeHTTP(response, adminHTTPRequest(
@@ -115,25 +115,25 @@ func TestAdminWorkerPoolListReturnsCurrentPrimaryRepresentation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(body.WorkerPools) != 1 || body.WorkerPools[0].ID != uuid.UUID(pool.ID.Bytes).String() ||
-		!body.WorkerPools[0].PrimaryForRun || body.WorkerPools[0].PrimaryForBuild {
+		!body.WorkerPools[0].Primary {
 		t.Fatalf("Worker Pools = %+v", body.WorkerPools)
 	}
 }
 
-func TestAdminWorkerPoolCreateLocksGroupAndCreatesPendingRoles(t *testing.T) {
+func TestAdminWorkerPoolCreateLocksGroupAndCreatesPendingPool(t *testing.T) {
 	group, pool := adminPoolFixture()
 	store := newAdminPoolStore(group, pool)
 	response := httptest.NewRecorder()
 	adminHTTPRouter(t, store).ServeHTTP(response, adminHTTPRequest(
 		http.MethodPost,
 		"/admin/api/v1/worker-groups/"+group.ID+"/pools",
-		`{"name":"run-next","allows_run":true,"allows_build":false,"expected_group_claim_version":4}`,
+		`{"name":"run-next","expected_group_claim_version":4}`,
 	))
 	if response.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201: %s", response.Code, response.Body.String())
 	}
 	if store.createCalls != 1 || store.createParams.WorkerGroupID != group.ID || store.createParams.Name != "run-next" ||
-		!store.createParams.AllowsRun || store.createParams.AllowsBuild || store.createParams.ExpectedGroupClaimVersion != 4 {
+		store.createParams.ExpectedGroupClaimVersion != 4 {
 		t.Fatalf("create params = %+v, calls = %d", store.createParams, store.createCalls)
 	}
 	if _, err := pgvalue.UUIDValue(store.createParams.WorkerPoolID); err != nil {
@@ -144,25 +144,9 @@ func TestAdminWorkerPoolCreateLocksGroupAndCreatesPendingRoles(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Name != "run-next" || body.State != "pending" || body.ClaimVersion != 1 || !body.AllowsRun {
+	if body.Name != "run-next" || body.State != "pending" || body.ClaimVersion != 1 {
 		t.Fatalf("created Worker Pool = %+v", body)
 	}
-}
-
-func TestAdminWorkerPoolCreateRequiresRoleSubset(t *testing.T) {
-	group, pool := adminPoolFixture()
-	group.AllowsBuild = false
-	store := newAdminPoolStore(group, pool)
-	response := httptest.NewRecorder()
-	adminHTTPRouter(t, store).ServeHTTP(response, adminHTTPRequest(
-		http.MethodPost,
-		"/admin/api/v1/worker-groups/"+group.ID+"/pools",
-		`{"name":"build","allows_run":false,"allows_build":true,"expected_group_claim_version":4}`,
-	))
-	if response.Code != http.StatusBadRequest || store.createCalls != 0 {
-		t.Fatalf("status = %d, create calls = %d: %s", response.Code, store.createCalls, response.Body.String())
-	}
-	assertAdminPoolActions(t, store, "group")
 }
 
 func TestAdminWorkerPoolPrimarySwitchIsFencedAndReplaySafe(t *testing.T) {
@@ -171,18 +155,18 @@ func TestAdminWorkerPoolPrimarySwitchIsFencedAndReplaySafe(t *testing.T) {
 		store := newAdminPoolStore(group, pool)
 		store.switched = group
 		store.switched.ClaimVersion++
-		store.switched.PrimaryRunPoolID = pool.ID
+		store.switched.PrimaryPoolID = pool.ID
 
 		response := httptest.NewRecorder()
 		adminHTTPRouter(t, store).ServeHTTP(response, adminHTTPRequest(
 			http.MethodPost,
 			"/admin/api/v1/worker-groups/"+group.ID+"/pools/"+uuid.UUID(pool.ID.Bytes).String()+"/primary",
-			`{"expected_group_claim_version":4,"set_run_primary":true,"set_build_primary":false}`,
+			`{"expected_group_claim_version":4}`,
 		))
 		if response.Code != http.StatusOK {
 			t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
 		}
-		if store.switchCalls != 1 || store.switchParams.RunPoolID != pool.ID || store.switchParams.BuildPoolID.Valid ||
+		if store.switchCalls != 1 || store.switchParams.PoolID != pool.ID ||
 			store.switchParams.ExpectedGroupClaimVersion != 4 {
 			t.Fatalf("switch params = %+v, calls = %d", store.switchParams, store.switchCalls)
 		}
@@ -191,8 +175,8 @@ func TestAdminWorkerPoolPrimarySwitchIsFencedAndReplaySafe(t *testing.T) {
 		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 			t.Fatal(err)
 		}
-		if body.WorkerGroup.ClaimVersion != 5 || body.WorkerGroup.PrimaryRunPoolID != uuid.UUID(pool.ID.Bytes).String() ||
-			!body.WorkerPool.PrimaryForRun {
+		if body.WorkerGroup.ClaimVersion != 5 || body.WorkerGroup.PrimaryPoolID != uuid.UUID(pool.ID.Bytes).String() ||
+			!body.WorkerPool.Primary {
 			t.Fatalf("primary switch response = %+v", body)
 		}
 	})
@@ -200,14 +184,14 @@ func TestAdminWorkerPoolPrimarySwitchIsFencedAndReplaySafe(t *testing.T) {
 	t.Run("exact replay", func(t *testing.T) {
 		group, pool := adminPoolFixture()
 		group.ClaimVersion = 5
-		group.PrimaryRunPoolID = pool.ID
+		group.PrimaryPoolID = pool.ID
 		store := newAdminPoolStore(group, pool)
 
 		response := httptest.NewRecorder()
 		adminHTTPRouter(t, store).ServeHTTP(response, adminHTTPRequest(
 			http.MethodPost,
 			"/admin/api/v1/worker-groups/"+group.ID+"/pools/"+uuid.UUID(pool.ID.Bytes).String()+"/primary",
-			`{"expected_group_claim_version":4,"set_run_primary":true,"set_build_primary":false}`,
+			`{"expected_group_claim_version":4}`,
 		))
 		if response.Code != http.StatusOK || store.switchCalls != 0 {
 			t.Fatalf("status = %d, switch calls = %d: %s", response.Code, store.switchCalls, response.Body.String())
@@ -302,11 +286,11 @@ func adminPoolFixture() (db.WorkerGroup, db.WorkerPool) {
 	poolID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	return db.WorkerGroup{
 			ID: groupID, RegionID: "default", Name: "default", State: db.WorkerGroupStateActive,
-			ClaimVersion: 4, AllowsRun: true, AllowsBuild: true,
+			ClaimVersion: 4,
 		}, db.WorkerPool{
 			ID: poolID, WorkerGroupID: groupID, Name: "run-next", State: "active",
-			ClaimVersion: 4, AllowsRun: true, AllowsBuild: true,
-			SealedAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+			ClaimVersion: 4,
+			SealedAt:     pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
 		}
 }
 

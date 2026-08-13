@@ -31,11 +31,13 @@ type dockerBuildxRequest struct {
 	OutputType       string
 	OutputAttributes map[string]string
 	BuildContexts    map[string]string
+	SecretIDs        []string
 }
 
 func bundleBuildCommand() *cobra.Command {
 	var output string
 	var installCommand string
+	var secretIDs []string
 	command := &cobra.Command{
 		Use:   "build [path]",
 		Short: "Build a verified deployment bundle locally.",
@@ -51,6 +53,7 @@ func bundleBuildCommand() *cobra.Command {
 				source,
 				output,
 				installCommand,
+				secretIDs,
 			)
 		},
 	}
@@ -67,6 +70,7 @@ func bundleBuildCommand() *cobra.Command {
 		"",
 		"Custom dependency installation/preparation command inside BuildKit.",
 	)
+	command.Flags().StringSliceVar(&secretIDs, "build-secret", nil, "Environment variable to mount as /run/secrets/NAME during dependency installation (repeatable).")
 	return command
 }
 
@@ -76,8 +80,9 @@ func buildDeploymentBundle(
 	source string,
 	output string,
 	installCommand string,
+	secretIDs []string,
 ) error {
-	return buildDeploymentBundleAt(ctx, command, source, output, installCommand, true)
+	return buildDeploymentBundleAt(ctx, command, source, output, installCommand, secretIDs, true)
 }
 
 func buildDeploymentBundleAt(
@@ -86,6 +91,7 @@ func buildDeploymentBundleAt(
 	source string,
 	output string,
 	installCommand string,
+	secretIDs []string,
 	printOutput bool,
 ) (returnErr error) {
 	if err := builder.ValidateBuilderImage(deploymentBundleBuilderImage); err != nil {
@@ -143,6 +149,10 @@ func buildDeploymentBundleAt(
 	if err != nil {
 		return err
 	}
+	install.SecretIDs, err = builder.NormalizeSecretIDs(secretIDs)
+	if err != nil {
+		return err
+	}
 	emptyContext := filepath.Join(stage, "empty-context")
 	if err := os.Mkdir(emptyContext, 0o755); err != nil {
 		return err
@@ -160,6 +170,7 @@ func buildDeploymentBundleAt(
 		Dockerfile: installedDockerfilePath, ContextDirectory: contextDirectory,
 		Target: "installed-tree", Output: installedLayout, OutputType: "oci",
 		OutputAttributes: map[string]string{"rewrite-timestamp": "true", "tar": "false"},
+		SecretIDs:        install.SecretIDs,
 	}); err != nil {
 		return fmt.Errorf("install project dependencies: %w", err)
 	}
@@ -300,6 +311,12 @@ func executeDockerBuildx(
 	slices.Sort(contextNames)
 	for _, name := range contextNames {
 		arguments = append(arguments, "--build-context", name+"="+request.BuildContexts[name])
+	}
+	for _, id := range request.SecretIDs {
+		if _, ok := os.LookupEnv(id); !ok {
+			return fmt.Errorf("build secret environment variable %s is not set", id)
+		}
+		arguments = append(arguments, "--secret", "id="+id+",env="+id)
 	}
 	arguments = append(arguments, request.ContextDirectory)
 	process := exec.CommandContext(ctx, docker, arguments...)

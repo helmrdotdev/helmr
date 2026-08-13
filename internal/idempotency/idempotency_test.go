@@ -122,66 +122,6 @@ func TestDeploymentFinalizeFingerprintBindsBundleDigest(t *testing.T) {
 	}
 }
 
-func TestWorkspaceImageBuildRequestBindsLeaseGenerationSlotAndFingerprint(t *testing.T) {
-	store := &claimMemory{}
-	transaction := &Transaction{store: store}
-	environmentID := uuid.New()
-	buildLeaseID := uuid.New()
-	fingerprint := testWorkspaceImageBuildFingerprint()
-	request, err := NewWorkspaceImageBuildRequest(
-		environmentID, buildLeaseID, 1, "workspace/base", fingerprint,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	created, err := transaction.Acquire(t.Context(), request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replay, err := NewWorkspaceImageBuildRequest(
-		environmentID, buildLeaseID, 1, "workspace/base", fingerprint,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replayed, err := transaction.Acquire(t.Context(), replay)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if replayed.New || replayed.Claim.ID != created.Claim.ID {
-		t.Fatalf("replayed claim = %+v", replayed)
-	}
-	fingerprint.PlanDigest = "sha256:changed"
-	changed, err := NewWorkspaceImageBuildRequest(
-		environmentID, buildLeaseID, 1, "workspace/base", fingerprint,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := transaction.Acquire(t.Context(), changed); err == nil {
-		t.Fatal("changed image operation fingerprint did not conflict")
-	}
-	nextGeneration, err := NewWorkspaceImageBuildRequest(
-		environmentID, buildLeaseID, 2, "workspace/base", fingerprint,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if idempotencySlotHash(nextGeneration.idempotencyRequest()) ==
-		idempotencySlotHash(request.idempotencyRequest()) {
-		t.Fatal("Build Lease generation did not change the image operation slot")
-	}
-	publicSlot, err := WorkspaceImageBuildSlotHash(
-		environmentID, buildLeaseID, 1, "workspace/base",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if publicSlot != idempotencySlotHash(request.idempotencyRequest()) {
-		t.Fatal("public Workspace image slot authority diverged from claim framing")
-	}
-}
-
 func TestWorkspaceCreateSlotsBindSourceAuthority(t *testing.T) {
 	environmentID := uuid.New()
 	firstRunID := uuid.New()
@@ -222,33 +162,6 @@ func TestWorkspaceCreateSlotsBindSourceAuthority(t *testing.T) {
 	}
 	if firstRunSlot == idempotencySlotHash(secondRun.idempotencyRequest()) {
 		t.Fatal("different source Runs shared a Workspace creation slot")
-	}
-}
-
-func testWorkspaceImageBuildFingerprint() WorkspaceImageBuildFingerprint {
-	return WorkspaceImageBuildFingerprint{
-		Architecture:           "x86_64",
-		PlanDigest:             "sha256:plan",
-		SubmittedSourceDigest:  "sha256:source",
-		BuildTreeDigest:        "sha256:tree",
-		BuildTreeSizeBytes:     4096,
-		AdmittedPathSetDigest:  "sha256:paths",
-		SourceArchiveDigest:    "sha256:archive",
-		SourceArchiveSizeBytes: 1024,
-		SourceArchiveEntries:   1,
-		ImageCacheMode:         "prefer",
-		CacheScope:             "environment/workspace/base",
-		ImageBuildContract:     "helmr.image-build.v0",
-		Quotas: WorkspaceImageBuildQuotas{
-			CPUMillis: 3000, MemoryBytes: 4 << 30, ScratchBytes: 32 << 30,
-			PIDs: 1024, MaxSourceArchiveBytes: 11 << 30,
-			MaxSourceArchiveEntries: 100000, MaxOCIArchiveBytes: 16 << 30,
-		},
-		Output: WorkspaceImageBuildOutputContract{
-			Architecture: "x86_64",
-			MediaType:    "application/vnd.helmr.workspace-image.v0.oci-tar",
-			MaxSizeBytes: 16 << 30,
-		},
 	}
 }
 

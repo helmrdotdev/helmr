@@ -23,7 +23,6 @@ type Vector struct {
 	MemoryBytes             int64
 	GuestEphemeralDiskBytes int64
 	VMSlots                 int64
-	BuildSlots              int64
 }
 
 type Key struct {
@@ -48,7 +47,7 @@ type Ledger struct {
 func New(capacity Vector) (*Ledger, error) {
 	if capacity.CPUMillis <= 0 || capacity.MemoryBytes <= 0 ||
 		capacity.GuestEphemeralDiskBytes < 0 ||
-		capacity.VMSlots < 0 || capacity.BuildSlots < 0 {
+		capacity.VMSlots < 0 {
 		return nil, ErrInvalidCapacity
 	}
 
@@ -135,7 +134,6 @@ func validateRequest(request Vector) error {
 		request.MemoryBytes,
 		request.GuestEphemeralDiskBytes,
 		request.VMSlots,
-		request.BuildSlots,
 	}
 	positive := false
 	for _, value := range values {
@@ -160,7 +158,6 @@ func add(left, right Vector) (Vector, error) {
 		{"memory", left.MemoryBytes, right.MemoryBytes},
 		{"guest ephemeral disk", left.GuestEphemeralDiskBytes, right.GuestEphemeralDiskBytes},
 		{"VM slots", left.VMSlots, right.VMSlots},
-		{"build slots", left.BuildSlots, right.BuildSlots},
 	}
 	sums := [len(fields)]int64{}
 	for index, field := range fields {
@@ -174,7 +171,6 @@ func add(left, right Vector) (Vector, error) {
 		MemoryBytes:             sums[1],
 		GuestEphemeralDiskBytes: sums[2],
 		VMSlots:                 sums[3],
-		BuildSlots:              sums[4],
 	}, nil
 }
 
@@ -184,7 +180,6 @@ func subtract(left, right Vector) Vector {
 		MemoryBytes:             left.MemoryBytes - right.MemoryBytes,
 		GuestEphemeralDiskBytes: left.GuestEphemeralDiskBytes - right.GuestEphemeralDiskBytes,
 		VMSlots:                 left.VMSlots - right.VMSlots,
-		BuildSlots:              left.BuildSlots - right.BuildSlots,
 	}
 }
 
@@ -192,6 +187,5 @@ func fits(used, capacity Vector) bool {
 	return used.CPUMillis <= capacity.CPUMillis &&
 		used.MemoryBytes <= capacity.MemoryBytes &&
 		used.GuestEphemeralDiskBytes <= capacity.GuestEphemeralDiskBytes &&
-		used.VMSlots <= capacity.VMSlots &&
-		used.BuildSlots <= capacity.BuildSlots
+		used.VMSlots <= capacity.VMSlots
 }

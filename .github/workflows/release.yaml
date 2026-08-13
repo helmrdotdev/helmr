@@ -132,20 +132,15 @@ jobs:
             dist/platform-release/platform-release.tar
           archive_sha256="sha256:$(sha256sum dist/platform-release/platform-release.tar | awk '{print $1}')"
           archive_size="$(stat -c '%s' dist/platform-release/platform-release.tar)"
-          build_policy_digest="$(tar -xOf dist/platform-release/platform-release.tar ./build-policy.digest)"
           source_commit="$(git rev-parse HEAD)"
-          printf '%s' "$build_policy_digest" |
-            grep -Eq '^sha256:[0-9a-f]{64}$'
           jq -e \
             --arg digest "$archive_sha256" \
             --argjson size "$archive_size" \
-            --arg buildPolicyDigest "$build_policy_digest" \
             --arg sourceCommit "$source_commit" \
             --arg sourceRef "refs/tags/$RELEASE_TAG" \
             '.formatVersion == 0 and
              .archive.digest == $digest and
              .archive.sizeBytes == $size and
-             .buildPolicyDigest == $buildPolicyDigest and
              .sourceCommit == $sourceCommit and
              .sourceRef == $sourceRef' \
             dist/platform-release/platform-release-provenance.json >/dev/null
@@ -266,7 +261,7 @@ jobs:
             mkdir -p "$out_dir"
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
               -trimpath \
-              -ldflags="-s -w -X github.com/helmrdotdev/helmr/internal/version.Version=${RELEASE_TAG} -X github.com/helmrdotdev/helmr/cmd/helmr.deploymentBundleBuilderImage=${BUNDLE_BUILDER_IMAGE}" \
+              -ldflags="-s -w -X github.com/helmrdotdev/helmr/internal/version.Version=${RELEASE_TAG} -X main.deploymentBundleBuilderImage=${BUNDLE_BUILDER_IMAGE}" \
               -o "$out_dir/helmr" \
               ./cmd/helmr
             tar -C "$out_dir" -czf "dist/helmr-${os}-${arch}.tar.gz" helmr

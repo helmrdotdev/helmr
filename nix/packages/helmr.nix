@@ -32,7 +32,7 @@ buildGoModule {
     fileset = runtimeFiles;
   };
 
-  vendorHash = "sha256-bQKk+qP1RR9hCAAdEPjM1UzZtAPaAQpTnjAPrnLOw9M=";
+  vendorHash = "sha256-lsXUyZ0eE1fjIdh5MkkY9r5NIjJCFQJtfUiquqqEpCo=";
   overrideModAttrs = _: {
     # Contract checks reuse goModules while compiling package tests. Resolve
     # dependencies from the complete module source even though the shipped CLI

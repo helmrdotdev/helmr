@@ -7,7 +7,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "${tmp}"' EXIT
 
 controlplane_image="ghcr.io/helmrdotdev/helmr-controlplane@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-platform_release='{"archive":{"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","mediaType":"application/vnd.helmr.platform-release.v0+tar","sizeBytes":4096},"buildPolicyDigest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","formatVersion":0,"sourceCommit":"dddddddddddddddddddddddddddddddddddddddd","sourceRef":"refs/tags/v0.1.0"}'
+platform_release='{"archive":{"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","mediaType":"application/vnd.helmr.platform-release.v0+tar","sizeBytes":4096},"formatVersion":0,"sourceCommit":"dddddddddddddddddddddddddddddddddddddddd","sourceRef":"refs/tags/v0.1.0"}'
 component_digest="sha256:1111111111111111111111111111111111111111111111111111111111111111"
 image_digest="sha256:2222222222222222222222222222222222222222222222222222222222222222"
 prepare_root_digest="sha256:3333333333333333333333333333333333333333333333333333333333333333"

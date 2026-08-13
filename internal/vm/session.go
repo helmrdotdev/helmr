@@ -41,16 +41,6 @@ type Session interface {
 	Close(context.Context) error
 }
 
-type BuildNetworkStatus struct {
-	DeniedPackets uint64
-	LimitPackets  uint64
-}
-
-type BuildNetworkSession interface {
-	Session
-	BuildNetworkStatus(context.Context) (BuildNetworkStatus, error)
-}
-
 type RunNetworkStatus struct {
 	DeniedPackets uint64
 }
@@ -87,10 +77,6 @@ type ReadOnlyDrive struct {
 const (
 	ProgramRuntimeDrive = "program_runtime"
 	ProgramDrive        = "program"
-	ManagerDrive        = "manager"
-	ManagedRuntimeDrive = "managed_runtime"
-	ToolchainDrive      = "toolchain"
-	BuildTreeDrive      = "build_tree"
 )
 
 type ReadOnlyDriveSource interface {
@@ -184,8 +170,7 @@ type MaterializeRequest struct {
 // WorkloadBinding is the closed logical authority that a connector binds to
 // its locally owned network attachment before a guest can receive input or
 // network access. Runtime workloads use their immutable Runtime Instance ID
-// with generation 1; Program builds use the current Build Lease sequence; each
-// physical image-build attempt uses its fresh owner UUID and generation 1.
+// with generation 1.
 type WorkloadBinding struct {
 	WorkerEpoch       int64
 	OwnerID           string
@@ -207,22 +192,11 @@ func (binding WorkloadBinding) Validate(owner Owner) error {
 	if strings.TrimSpace(binding.RuntimeIdentityID) == "" {
 		return errors.New("workload binding runtime identity is required")
 	}
-	switch owner.Kind {
-	case OwnerRuntime:
-		if binding.RuntimeInstanceID != owner.ID ||
-			binding.Generation != 1 {
-			return errors.New("runtime workload binding is incomplete")
-		}
-	case OwnerBuild:
-		if binding.RuntimeInstanceID != "" {
-			return errors.New("build workload binding contains runtime authority")
-		}
-	case OwnerImageBuild:
-		if binding.RuntimeInstanceID != "" || binding.Generation != 1 {
-			return errors.New("image-build workload binding is incomplete")
-		}
-	default:
+	if owner.Kind != OwnerRuntime {
 		return errors.New("workload binding owner kind is invalid")
+	}
+	if binding.RuntimeInstanceID != owner.ID || binding.Generation != 1 {
+		return errors.New("runtime workload binding is incomplete")
 	}
 	return nil
 }
@@ -230,9 +204,7 @@ func (binding WorkloadBinding) Validate(owner Owner) error {
 type OwnerKind string
 
 const (
-	OwnerRuntime    OwnerKind = "runtime"
-	OwnerBuild      OwnerKind = "build"
-	OwnerImageBuild OwnerKind = "image_build"
+	OwnerRuntime OwnerKind = "runtime"
 )
 
 type Owner struct {
@@ -241,8 +213,8 @@ type Owner struct {
 }
 
 func (o Owner) Validate() error {
-	if o.Kind != OwnerRuntime && o.Kind != OwnerBuild && o.Kind != OwnerImageBuild {
-		return errors.New("VM owner kind must be runtime, build, or image_build")
+	if o.Kind != OwnerRuntime {
+		return errors.New("VM owner kind must be runtime")
 	}
 	if err := ids.Validate(o.ID); err != nil {
 		return errors.New("VM owner id must be a canonical UUIDv7")

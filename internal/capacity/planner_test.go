@@ -343,13 +343,13 @@ func TestRestoreCompatibilityParityBetweenPlannerAndImmediateSelection(t *testin
 func plannerTestGroup(primaryRunPoolID pgtype.UUID) db.WorkerGroup {
 	return db.WorkerGroup{
 		ID: plannerTestGroupID, Name: "default", RegionID: "us-east-1", State: string(capacityapi.WorkerGroupStatusActive),
-		AllowsRun: true, PrimaryRunPoolID: primaryRunPoolID,
+		PrimaryPoolID: primaryRunPoolID,
 	}
 }
 
 func plannerTestPool(id pgtype.UUID, name string) db.ListCapacityWorkerPoolsRow {
 	return db.ListCapacityWorkerPoolsRow{
-		ID: id, WorkerGroupID: plannerTestGroupID, Name: name, AllowsRun: true,
+		ID: id, WorkerGroupID: plannerTestGroupID, Name: name,
 		RuntimeIdentityID:               pgtype.Text{String: plannerTestRuntimeIdentityID, Valid: true},
 		SubstrateFormat:                 pgtype.Text{String: plannerTestSubstrateFormat, Valid: true},
 		SubstrateContract:               pgtype.Text{String: plannerTestSubstrateContract, Valid: true},
@@ -360,7 +360,6 @@ func plannerTestPool(id pgtype.UUID, name string) db.ListCapacityWorkerPoolsRow 
 		PerVMMemoryBytes:                pgtype.Int8{Int64: 2 << 30, Valid: true},
 		PerVMGuestEphemeralDiskBytes:    pgtype.Int8{Int64: 64 << 30, Valid: true},
 		MaxVMSlots:                      pgtype.Int4{Int32: 1, Valid: true},
-		MaxBuildExecutors:               pgtype.Int4{Int32: 0, Valid: true},
 		CPUShapeVCPUCounts:              []int32{1},
 		CPUShapeConfigDigests:           []string{plannerTestCPUConfigDigest},
 	}
@@ -386,8 +385,8 @@ func plannerPool(row db.ListCapacityWorkerPoolsRow) Pool {
 
 func plannerBin(row db.ListCapacityWorkerPoolsRow, primaryRunPoolID pgtype.UUID) db.ListWorkerCapacityBinsRow {
 	return db.ListWorkerCapacityBinsRow{
-		WorkerGroupID: plannerTestGroupID, PrimaryRunPoolID: primaryRunPoolID, WorkerPoolID: row.ID,
-		WorkerInstanceID: plannerTestUUID(row.ID.Bytes[15] + 100), SupportsRun: row.AllowsRun, SupportsBuild: row.AllowsBuild,
+		WorkerGroupID: plannerTestGroupID, PrimaryPoolID: primaryRunPoolID, WorkerPoolID: row.ID,
+		WorkerInstanceID:  plannerTestUUID(row.ID.Bytes[15] + 100),
 		RuntimeIdentityID: row.RuntimeIdentityID, RuntimeArch: "x86_64", VMRuntimeContract: capacityapi.RuntimeContract,
 		SubstrateFormat: row.SubstrateFormat.String, SubstrateContract: row.SubstrateContract.String,
 		PerVMCPUMillis: row.PerVMCPUMillis.Int64, PerVMMemoryBytes: row.PerVMMemoryBytes.Int64,
@@ -395,9 +394,9 @@ func plannerBin(row db.ListCapacityWorkerPoolsRow, primaryRunPoolID pgtype.UUID)
 		AvailableCPUMillis:           row.CapacityCPUMillis.Int64, AvailableMemoryBytes: row.CapacityMemoryBytes.Int64,
 		AvailableGuestEphemeralDiskBytes: row.CapacityGuestEphemeralDiskBytes.Int64,
 		AvailableVMSlots:                 int64(row.MaxVMSlots.Int32), AvailableRunConsumers: int64(row.MaxVMSlots.Int32),
-		AvailableBuildExecutors: int64(row.MaxBuildExecutors.Int32), AvailableRuntimeStarts: int64(row.MaxVMSlots.Int32),
-		CPUShapeVCPUCounts:    append([]int32(nil), row.CPUShapeVCPUCounts...),
-		CPUShapeConfigDigests: append([]string(nil), row.CPUShapeConfigDigests...),
+		AvailableRuntimeStarts: int64(row.MaxVMSlots.Int32),
+		CPUShapeVCPUCounts:     append([]int32(nil), row.CPUShapeVCPUCounts...),
+		CPUShapeConfigDigests:  append([]string(nil), row.CPUShapeConfigDigests...),
 	}
 }
 
@@ -486,7 +485,6 @@ type plannerStore struct {
 	scopes []db.ListQueuedRunEligibleScopesRow
 	usage  []db.ListQueuedRunPlanningUsageRow
 	runs   []db.ListQueuedRunPlanningCandidatesForScopesRow
-	builds []pgtype.UUID
 }
 
 func (s plannerStore) GetWorkerGroup(context.Context, string) (db.WorkerGroup, error) {
@@ -553,8 +551,4 @@ func (s plannerStore) ListQueuedRunPlanningCandidatesForScopes(context.Context, 
 		result[index].ScopeOrdinal = 1
 	}
 	return result, nil
-}
-
-func (s plannerStore) ListQueuedDeploymentBuildDemand(context.Context, db.ListQueuedDeploymentBuildDemandParams) ([]pgtype.UUID, error) {
-	return s.builds, nil
 }

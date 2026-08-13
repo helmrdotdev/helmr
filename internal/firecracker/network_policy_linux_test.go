@@ -265,29 +265,6 @@ func TestNetworkAllocationRejectsSymlinkLock(t *testing.T) {
 	}
 }
 
-func TestParseBuildNetworkStatusRequiresBothCounters(t *testing.T) {
-	status, err := parseBuildNetworkStatus([]byte(`{
-		"nftables": [
-			{"metainfo": {"json_schema_version": 1}},
-			{"counter": {"family": "inet", "name": "build_denied", "table": "helmr_network_policy", "packets": 2, "bytes": 120}},
-			{"counter": {"family": "inet", "name": "build_limit", "table": "helmr_network_policy", "packets": 3, "bytes": 180}}
-		]
-	}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status.DeniedPackets != 2 || status.LimitPackets != 3 {
-		t.Fatalf("build network status = %+v", status)
-	}
-	if _, err := parseBuildNetworkStatus([]byte(`{
-		"nftables": [
-			{"counter": {"name": "build_denied", "packets": 1}}
-		]
-	}`)); err == nil {
-		t.Fatal("incomplete build network counters were accepted")
-	}
-}
-
 func TestWithNetworkBindingSurvivesSnapshotHandlerReplacement(t *testing.T) {
 	connector := &Connector{
 		cfg:      (Config{}).WithDefaults(),

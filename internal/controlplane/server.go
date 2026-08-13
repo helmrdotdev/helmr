@@ -606,7 +606,6 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.Post("/instance/observations", s.workerObserve)
 			r.Post("/instance/drain", s.workerDrain)
 			r.Group(func(r chi.Router) {
-				r.Use(func(next http.Handler) http.Handler { return requireWorkerRole(auth.WorkerRoleRun, next) })
 				r.Post("/run/runtime-instances/reconcile", s.workerNextRuntimeReconcileTarget)
 				r.Post("/run/runtime-instances/ready", s.workerMarkRuntimeInstanceReady)
 				r.Post("/run/runtime-instances/closed", s.workerMarkRuntimeInstanceClosed)

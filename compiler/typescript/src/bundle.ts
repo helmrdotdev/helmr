@@ -158,10 +158,10 @@ export async function compileProgram(options: {
       aggregate.localPackages,
     ]
     const metafiles = [aggregate.metafile]
-    const externalEdgeGroups: Array<readonly ExternalEdge[]> = [
-      aggregate.externalEdges,
-    ]
-    const runtimeRoot = options.runtimeRoot ?? RUNTIME_PROGRAM_ROOT
+    // Aggregate execution is producer-only analysis. Only final declaration
+    // modules contribute dependencies to the executable Program closure.
+    const externalEdgeGroups: Array<readonly ExternalEdge[]> = []
+    const runtimeRoot = resolve(options.runtimeRoot ?? RUNTIME_PROGRAM_ROOT)
     for (const source of canonicalSources) {
       const selected = analyzed.declarationLocator.declarations.filter(
         (item) => item.modulePath === source,

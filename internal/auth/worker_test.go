@@ -50,7 +50,6 @@ func TestWorkerTokenUsesCanonicalClaims(t *testing.T) {
 		"worker_group_id": "group-1", "worker_instance_id": "worker-1",
 		"credential_id": "credential-1", "worker_epoch": float64(7),
 		"claim_version": float64(2), "group_claim_version": float64(4),
-		"roles": []any{"build", "run"},
 	}
 	for key, want := range wants {
 		if !reflect.DeepEqual(claims[key], want) {
@@ -72,10 +71,6 @@ func TestWorkerTokenValidation(t *testing.T) {
 		{"epoch", func(c *WorkerClaims) { c.WorkerEpoch = 0 }, "worker_epoch must be positive"},
 		{"claim version", func(c *WorkerClaims) { c.ClaimVersion = 0 }, "claim_version must be positive"},
 		{"group version", func(c *WorkerClaims) { c.GroupClaimVersion = 0 }, "group_claim_version must be positive"},
-		{"roles", func(c *WorkerClaims) { c.Roles = nil }, "roles is empty"},
-		{"duplicate roles", func(c *WorkerClaims) { c.Roles = []string{WorkerRoleRun, WorkerRoleRun} }, "roles must be sorted and unique"},
-		{"unsorted roles", func(c *WorkerClaims) { c.Roles = []string{WorkerRoleRun, WorkerRoleBuild} }, "roles must be sorted and unique"},
-		{"unknown role", func(c *WorkerClaims) { c.Roles = []string{"admin"} }, `unsupported worker role "admin"`},
 		{"issued at", func(c *WorkerClaims) { c.IssuedAt = time.Time{} }, "issued_at is zero"},
 		{"expiry", func(c *WorkerClaims) { c.ExpiresAt = c.IssuedAt }, "expires_at must be after issued_at"},
 	}
@@ -120,9 +115,6 @@ func TestVerifyWorkerTokenRejectsInvalidTokens(t *testing.T) {
 		{"bad signature", func() string { return valid }, now.Add(time.Minute), ErrInvalidWorkerToken},
 		{"expired", func() string { return valid }, now.Add(time.Hour), ErrExpiredWorkerToken},
 		{"tampered", func() string { return mutateJWTClaim(t, valid, "worker_epoch", float64(8)) }, now.Add(time.Minute), ErrInvalidWorkerToken},
-		{"unknown role", func() string {
-			return signWorkerClaims(t, workerSigningKey(), now, func(c *workerJWTClaims) { c.Roles = []string{"admin"} })
-		}, now.Add(time.Minute), ErrInvalidWorkerToken},
 		{"wrong subject", func() string {
 			return signWorkerClaims(t, workerSigningKey(), now, func(c *workerJWTClaims) { c.Subject = "worker-2" })
 		}, now.Add(time.Minute), ErrInvalidWorkerToken},
@@ -155,7 +147,7 @@ func validWorkerClaims(now time.Time) WorkerClaims {
 	return WorkerClaims{
 		WorkerGroupID: "group-1", WorkerInstanceID: "worker-1", CredentialID: "credential-1", WorkerEpoch: 7,
 		ClaimVersion: 2, GroupClaimVersion: 4,
-		Roles: []string{WorkerRoleBuild, WorkerRoleRun}, IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+		IssuedAt: now, ExpiresAt: now.Add(time.Hour),
 	}
 }
 
@@ -165,8 +157,8 @@ func signWorkerClaims(t *testing.T, secret []byte, now time.Time, edit func(*wor
 	claims := workerJWTClaims{
 		WorkerGroupID: c.WorkerGroupID, WorkerInstanceID: c.WorkerInstanceID, CredentialID: c.CredentialID,
 		WorkerEpoch: c.WorkerEpoch, ClaimVersion: c.ClaimVersion,
-		GroupClaimVersion: c.GroupClaimVersion, Roles: c.Roles,
-		RegisteredClaims: jwt.RegisteredClaims{Issuer: WorkerTokenIssuer, Subject: c.WorkerInstanceID, Audience: jwt.ClaimStrings{WorkerTokenAudience}, IssuedAt: jwt.NewNumericDate(c.IssuedAt), ExpiresAt: jwt.NewNumericDate(c.ExpiresAt)},
+		GroupClaimVersion: c.GroupClaimVersion,
+		RegisteredClaims:  jwt.RegisteredClaims{Issuer: WorkerTokenIssuer, Subject: c.WorkerInstanceID, Audience: jwt.ClaimStrings{WorkerTokenAudience}, IssuedAt: jwt.NewNumericDate(c.IssuedAt), ExpiresAt: jwt.NewNumericDate(c.ExpiresAt)},
 	}
 	edit(&claims)
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)

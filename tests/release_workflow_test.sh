@@ -37,8 +37,6 @@ require_text "--pattern 'platform-release*'" "$workflow" \
   "repair does not consume the published Platform release"
 require_text "cosign verify-blob" "$workflow" \
   "repair does not verify the published Platform release"
-require_text "tar -xOf dist/platform-release/platform-release.tar ./build-policy.digest" "$workflow" \
-  "repair trusts unsigned build-policy provenance instead of the signed archive"
 require_text "refs/tags/\$RELEASE_TAG" "$workflow" \
   "repair verification is not bound to the exact tag workflow identity"
 require_text "platform-release/platform-release.tar" "$workflow" \
@@ -53,7 +51,7 @@ require_text "nix build .#bundleBuilderImage" "$workflow" \
   "bundle builder is not sourced from the pinned Product derivation"
 require_text "docker buildx imagetools inspect" "$workflow" \
   "bundle builder publication does not resolve the registry digest"
-require_text "deploymentBundleBuilderImage=\${BUNDLE_BUILDER_IMAGE}" "$workflow" \
+require_text "main.deploymentBundleBuilderImage=\${BUNDLE_BUILDER_IMAGE}" "$workflow" \
   "CLI release is not bound to the exact bundle builder digest"
 require_text "dist/bundle-builder/bundle-builder.json" "$workflow" \
   "GitHub release omits the bundle builder release identity"
@@ -71,8 +69,6 @@ require_text "--mtime='@0'" "$platform_builder" \
   "Platform release archive timestamps are not normalized"
 require_text "cosign sign-blob" "$platform_builder" \
   "Platform release archive is not signed"
-require_text "build-policy.digest" "$platform_builder" \
-  "Platform release provenance omits the exact Build Policy digest"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -97,6 +93,15 @@ require_text "COPY helmr-controlplane /usr/local/bin/helmr-controlplane" "$contr
   "Control Plane image omits the Control Plane binary"
 require_text "COPY helmr-dispatcher /usr/local/bin/helmr-dispatcher" "$controlplane_builder" \
   "Control Plane image omits the Dispatcher binary"
+require_text "COPY runtime.descriptor.json /usr/local/share/helmr/runtime.descriptor.json" "$controlplane_builder" \
+  "Control Plane image omits the canonical Runtime descriptor"
+require_text 'DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH = "/usr/local/share/helmr/runtime.descriptor.json"' \
+  "$repo_root/infra/aws/modules/controlplane/main.tf" \
+  "Control Plane task does not select the packaged Runtime descriptor"
+require_text '"${docker_bin}" create "${image_uri}"' "$repo_root/scripts/verify-controlplane-image-build.sh" \
+  "Control Plane image verifier does not inspect the distroless filesystem"
+require_text '"${docker_bin}" cp' "$repo_root/scripts/verify-controlplane-image-build.sh" \
+  "Control Plane image verifier does not extract the Runtime descriptor"
 
 require_text "scripts/aws-release-artifacts.sh worker-image-start" "$workflow" \
   "Worker release does not select or build a fully validated AMI"

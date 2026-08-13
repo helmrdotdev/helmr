@@ -38,7 +38,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.WorkerInstanceID != "00000000-0000-0000-0000-000000000401" || request.WorkerInstanceSecret != "worker-secret" || request.ServiceID != "00000000-0000-0000-0000-000000000901" || !request.SupportsRun || request.SupportsBuild {
+			if request.WorkerInstanceID != "00000000-0000-0000-0000-000000000401" || request.WorkerInstanceSecret != "worker-secret" || request.ServiceID != "00000000-0000-0000-0000-000000000901" {
 				t.Fatalf("worker token request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{
@@ -111,7 +111,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"), WithService("00000000-0000-0000-0000-000000000901", true, false))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"), WithService("00000000-0000-0000-0000-000000000901"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,8 +289,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 			"worker-secret",
 		),
 		WithService(
-			"00000000-0000-0000-0000-000000000901", true,
-			false,
+			"00000000-0000-0000-0000-000000000901",
 		),
 	)
 	if err != nil {
@@ -415,7 +414,7 @@ func TestCompleteWorkerDrainRetriesTheIdenticalProofAfterAmbiguousResponse(t *te
 		}
 	}))
 	defer server.Close()
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service", true, false))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +455,7 @@ func TestFenceWorkerRetriesTheIdenticalRequestAfterAmbiguousResponse(t *testing.
 		}
 	}))
 	defer server.Close()
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service", true, false))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -508,7 +507,7 @@ func TestWorkerClientRefreshesTokenAndReplaysBufferedRequestAfterUnauthorized(t 
 
 	client, err := New(server.URL, WithHTTPClient(server.Client()),
 		WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"),
-		WithService("00000000-0000-0000-0000-000000000901", true, false))
+		WithService("00000000-0000-0000-0000-000000000901"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -614,7 +613,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"), WithService("00000000-0000-0000-0000-000000000901", true, false))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"), WithService("00000000-0000-0000-0000-000000000901"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -711,7 +710,7 @@ func TestAcknowledgeRunResumeRelease(t *testing.T) {
 		server.URL,
 		WithHTTPClient(server.Client()),
 		WithAuth("worker-1", "worker-secret"),
-		WithService("service-1", true, false),
+		WithService("service-1"),
 	)
 	if err != nil {
 		t.Fatal(err)

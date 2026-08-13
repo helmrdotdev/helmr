@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -15,6 +16,31 @@ import (
 type InstallPlan struct {
 	Argv          []string
 	CustomCommand string
+	SecretIDs     []string
+}
+
+var secretIDPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,127}$`)
+var exactPackageManagerVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+(sha(?:224|256|384|512)\.[0-9a-fA-F]+))?$`)
+
+// NormalizeSecretIDs accepts names only. Values remain in the caller's
+// environment and are exposed to the install step through BuildKit secret
+// mounts; they never enter a Dockerfile or deployment bundle.
+func NormalizeSecretIDs(values []string) ([]string, error) {
+	result := make([]string, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for index, value := range values {
+		value = strings.TrimSpace(value)
+		if !secretIDPattern.MatchString(value) {
+			return nil, fmt.Errorf("build secret name %q is invalid", value)
+		}
+		if _, ok := seen[value]; ok {
+			return nil, fmt.Errorf("build secret name %q is duplicated", value)
+		}
+		seen[value] = struct{}{}
+		result[index] = value
+	}
+	sort.Strings(result)
+	return result, nil
 }
 
 // SelectInstallPlan is producer convenience, not deployment admission. It
@@ -58,8 +84,11 @@ func selectedManager(project, selector string) (string, string, error) {
 				continue
 			}
 			version := strings.TrimSpace(strings.TrimPrefix(selector, prefix))
-			if version == "" || len(version) > 512 || strings.ContainsAny(version, "\x00\r\n") {
-				return "", "", errors.New("packageManager selector version is invalid")
+			if version == "" || len(version) > 512 || strings.ContainsAny(version, "\x00\r\n") || !isExactPackageManagerVersion(version) {
+				return "", "", errors.New("packageManager must select an exact SemVer with optional Corepack integrity metadata")
+			}
+			if manager == "bun" && strings.Contains(version, "+") {
+				return "", "", errors.New("bun packageManager does not support Corepack integrity metadata")
 			}
 			return manager, manager + "@" + version, nil
 		}
@@ -95,6 +124,28 @@ func selectedManager(project, selector string) (string, string, error) {
 	return "npm", "", nil
 }
 
+func isExactPackageManagerVersion(version string) bool {
+	matches := exactPackageManagerVersionPattern.FindStringSubmatch(version)
+	if matches == nil {
+		return false
+	}
+	for _, identifier := range strings.Split(matches[4], ".") {
+		if len(identifier) > 1 && identifier[0] == '0' && identifier[0] >= '0' && identifier[0] <= '9' {
+			numeric := true
+			for _, char := range identifier {
+				if char < '0' || char > '9' {
+					numeric = false
+					break
+				}
+			}
+			if numeric {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func installArgv(project, manager, selector string) InstallPlan {
 	executable := manager
 	arguments := []string{}
@@ -103,9 +154,10 @@ func installArgv(project, manager, selector string) InstallPlan {
 		case "npm", "pnpm", "yarn":
 			executable = "corepack"
 			arguments = append(arguments, selector)
-		default:
-			executable = "npx"
-			arguments = append(arguments, "--yes", bunPackageSelector(selector))
+		case "bun":
+			version := strings.TrimPrefix(bunPackageSelector(selector), "bun@")
+			executable = "/usr/local/bin/bun-for-version"
+			arguments = append(arguments, version)
 		}
 	}
 	switch manager {

@@ -2156,30 +2156,6 @@ function isInternalDefinition(value) {
       return false;
   }
 }
-// sdk/typescript/src/secret.ts
-var secretAddressBrand = Symbol.for("helmr.sdk.v0.secret-address");
-var secretNamePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
-
-class SecretNameAddress {
-  name;
-  constructor(name) {
-    validateSecretName(name);
-    this.name = name;
-    Object.defineProperty(this, secretAddressBrand, { value: true });
-    Object.freeze(this);
-  }
-}
-var secrets = Object.freeze({
-  fromName(name) {
-    return new SecretNameAddress(name);
-  }
-});
-function validateSecretName(value) {
-  if (!secretNamePattern.test(value)) {
-    throw new Error("Secret name is invalid");
-  }
-}
-
 // sdk/typescript/src/image.ts
 var imageBrand = Symbol.for("helmr.sdk.v0.image");
 var sourceFileBrand = Symbol.for("helmr.sdk.v0.source-file");
@@ -2216,6 +2192,30 @@ function inspectImage(value) {
   const imageValue = value;
   return { key: imageValue.key, steps: imageValue.steps };
 }
+// sdk/typescript/src/secret.ts
+var secretAddressBrand = Symbol.for("helmr.sdk.v0.secret-address");
+var secretNamePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+
+class SecretNameAddress {
+  name;
+  constructor(name) {
+    validateSecretName(name);
+    this.name = name;
+    Object.defineProperty(this, secretAddressBrand, { value: true });
+    Object.freeze(this);
+  }
+}
+var secrets = Object.freeze({
+  fromName(name) {
+    return new SecretNameAddress(name);
+  }
+});
+function validateSecretName(value) {
+  if (!secretNamePattern.test(value)) {
+    throw new Error("Secret name is invalid");
+  }
+}
+
 // sdk/typescript/src/workspace.ts
 var sandboxDefinitionBrand = Symbol.for("helmr.sdk.v0.sandbox");
 var workspaceAddressBrand = Symbol.for("helmr.sdk.v0.workspace-address");
@@ -3626,19 +3626,8 @@ function compileImageBuild(root, options) {
 function compileImageStep(step, options) {
   switch (step.kind) {
     case "from":
-      assertExactKeys(step, step.auth === undefined ? ["kind", "ref"] : ["auth", "kind", "ref"], "image from step");
-      if (step.auth === undefined)
-        return { from: { ref: step.ref } };
-      assertExactKeys(step.auth, ["passwordSecret", "username"], "image from auth");
-      return {
-        from: {
-          ref: step.ref,
-          auth: {
-            username: step.auth.username,
-            passwordSecret: step.auth.passwordSecret
-          }
-        }
-      };
+      assertExactKeys(step, ["kind", "ref"], "image from step");
+      return { from: { ref: step.ref } };
     case "run":
       assertExactKeys(step, ["argv", "kind"], "image run step");
       return {
@@ -4927,10 +4916,8 @@ async function compileProgram(options) {
       aggregate.localPackages
     ];
     const metafiles = [aggregate.metafile];
-    const externalEdgeGroups = [
-      aggregate.externalEdges
-    ];
-    const runtimeRoot = options.runtimeRoot ?? RUNTIME_PROGRAM_ROOT;
+    const externalEdgeGroups = [];
+    const runtimeRoot = resolve5(options.runtimeRoot ?? RUNTIME_PROGRAM_ROOT);
     for (const source2 of canonicalSources) {
       const selected = analyzed.declarationLocator.declarations.filter((item) => item.modulePath === source2);
       const path = generatedModulePath(source2);

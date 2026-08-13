@@ -15,13 +15,9 @@ import (
 
 func TestWorkerActivationDerivesRuntimeStartsFromRunSlots(t *testing.T) {
 	worker := workerActor{WorkerGroupID: "group", WorkerEpoch: 1}
-	runWorker := validWorkerCapabilities(t)
-	if got := workerActivationParams(worker, runWorker, []byte(`{}`)).MaxRuntimeStarts; got != runWorker.ExecutionSlotsAvailable {
-		t.Fatalf("run max runtime starts = %d, want %d", got, runWorker.ExecutionSlotsAvailable)
-	}
-	buildWorker := validBuildOnlyWorkerCapabilities(t)
-	if got := workerActivationParams(worker, buildWorker, []byte(`{}`)).MaxRuntimeStarts; got != 0 {
-		t.Fatalf("build max runtime starts = %d, want zero", got)
+	capabilities := validWorkerCapabilities(t)
+	if got := workerActivationParams(worker, capabilities, []byte(`{}`)).MaxRuntimeStarts; got != capabilities.ExecutionSlotsAvailable {
+		t.Fatalf("max runtime starts = %d, want %d", got, capabilities.ExecutionSlotsAvailable)
 	}
 }
 
@@ -57,7 +53,6 @@ func validWorkerCapabilities(t *testing.T) workerapi.Capabilities {
 		GuestEphemeralDiskBytes:   64 << 30,
 		VMGuestEphemeralDiskBytes: 8 << 30,
 		ExecutionSlotsAvailable:   4,
-		SupportsRun:               true,
 	}
 	id, err := c.Runtime.ExpectedID()
 	if err != nil {
@@ -68,18 +63,6 @@ func validWorkerCapabilities(t *testing.T) workerapi.Capabilities {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return c
-}
-
-func validBuildOnlyWorkerCapabilities(t *testing.T) workerapi.Capabilities {
-	t.Helper()
-	c := validWorkerCapabilities(t)
-	c.SubstrateFormat = ""
-	c.SubstrateContract = ""
-	c.ExecutionSlotsAvailable = 0
-	c.SupportsRun = false
-	c.SupportsBuild = true
-	c.MaxBuildExecutors = 1
 	return c
 }
 
@@ -135,21 +118,17 @@ func TestNormalizeWorkerCapabilitiesReturnsCanonicalCompleteEvidence(t *testing.
 
 func TestWorkerTemplateDerivesImmutablePoolContract(t *testing.T) {
 	capabilities := validWorkerCapabilities(t)
-	capabilities.SupportsBuild = true
-	capabilities.MaxBuildExecutors = 1
 
 	want := capacityapi.WorkerTemplate{
-		Schema:        capacityapi.WorkerTemplateSchema,
-		SupportsRun:   true,
-		SupportsBuild: true,
-		Runtime:       capabilities.Runtime,
-		CPUShapes:     append([]capacityapi.CPUShape(nil), capabilities.CPUShapes...),
+		Schema:    capacityapi.WorkerTemplateSchema,
+		Runtime:   capabilities.Runtime,
+		CPUShapes: append([]capacityapi.CPUShape(nil), capabilities.CPUShapes...),
 		Substrate: capacityapi.SubstrateProfile{
 			Format: capacityapi.SubstrateFormatExt4, Contract: capacityapi.SubstrateContractExt4,
 		},
 		Capacity: capacityapi.ResourceVector{
 			CPUMillis: 8_000, MemoryBytes: 16 << 30, GuestEphemeralDiskBytes: 64 << 30,
-			VMSlots: 4, BuildExecutors: 1,
+			VMSlots: 4,
 		},
 		PerVM: capacityapi.ResourceVector{
 			CPUMillis: 2_000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 8 << 30,
@@ -171,8 +150,6 @@ func TestWorkerTemplateDerivesImmutablePoolContract(t *testing.T) {
 
 func TestSealWorkerPoolParamsDerivePendingPoolContract(t *testing.T) {
 	capabilities := validWorkerCapabilities(t)
-	capabilities.SupportsBuild = true
-	capabilities.MaxBuildExecutors = 1
 	template := workerTemplate(capabilities)
 	poolID := pgvalue.NewUUIDv7()
 
@@ -188,11 +165,8 @@ func TestSealWorkerPoolParamsDerivePendingPoolContract(t *testing.T) {
 		PerVMMemoryBytes:                pgtype.Int8{Int64: template.PerVM.MemoryBytes, Valid: true},
 		PerVMGuestEphemeralDiskBytes:    pgtype.Int8{Int64: template.PerVM.GuestEphemeralDiskBytes, Valid: true},
 		MaxVMSlots:                      pgtype.Int4{Int32: int32(template.Capacity.VMSlots), Valid: true},
-		MaxBuildExecutors:               pgtype.Int4{Int32: int32(template.Capacity.BuildExecutors), Valid: true},
 		WorkerPoolID:                    poolID,
 		WorkerGroupID:                   "workers",
-		AllowsRun:                       true,
-		AllowsBuild:                     true,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("seal params = %#v, want %#v", got, want)
@@ -272,68 +246,24 @@ func TestWorkerPoolMatchesRejectsCPUShapeOrTemplateMismatch(t *testing.T) {
 	})
 }
 
-func TestNormalizeWorkerCapabilitiesEnforcesRunBuildRoles(t *testing.T) {
-	dual := validWorkerCapabilities(t)
-	dual.SupportsBuild = true
-	dual.MaxBuildExecutors = 1
-
-	for _, test := range []struct {
-		name         string
-		capabilities workerapi.Capabilities
-	}{
-		{name: "run", capabilities: validWorkerCapabilities(t)},
-		{name: "build", capabilities: validBuildOnlyWorkerCapabilities(t)},
-		{name: "run and build", capabilities: dual},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			got, err := normalizeWorkerCapabilities(test.capabilities)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got.SupportsRun != test.capabilities.SupportsRun || got.SupportsBuild != test.capabilities.SupportsBuild {
-				t.Fatalf("roles = run:%t build:%t", got.SupportsRun, got.SupportsBuild)
-			}
-			if err := workerTemplate(got).Validate(); err != nil {
-				t.Fatalf("normalized role template is invalid: %v", err)
-			}
-		})
-	}
-
+func TestNormalizeWorkerCapabilitiesEnforcesExecutionContract(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		mutate func(*workerapi.Capabilities)
 	}{
-		{name: "role required", mutate: func(c *workerapi.Capabilities) {
-			c.SupportsRun = false
-		}},
-		{name: "run substrate required", mutate: func(c *workerapi.Capabilities) {
+		{name: "substrate required", mutate: func(c *workerapi.Capabilities) {
 			c.SubstrateFormat = ""
 			c.SubstrateContract = ""
 		}},
-		{name: "run slots required", mutate: func(c *workerapi.Capabilities) {
+		{name: "execution slots required", mutate: func(c *workerapi.Capabilities) {
 			c.ExecutionSlotsAvailable = 0
-		}},
-		{name: "build only has no run substrate", mutate: func(c *workerapi.Capabilities) {
-			*c = validBuildOnlyWorkerCapabilities(t)
-			c.SubstrateFormat = capacityapi.SubstrateFormatExt4
-			c.SubstrateContract = capacityapi.SubstrateContractExt4
-		}},
-		{name: "build only has no run slots", mutate: func(c *workerapi.Capabilities) {
-			*c = validBuildOnlyWorkerCapabilities(t)
-			c.ExecutionSlotsAvailable = 1
-		}},
-		{name: "build executor required", mutate: func(c *workerapi.Capabilities) {
-			c.SupportsBuild = true
-		}},
-		{name: "run only has no build executor", mutate: func(c *workerapi.Capabilities) {
-			c.MaxBuildExecutors = 1
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			capabilities := validWorkerCapabilities(t)
 			test.mutate(&capabilities)
 			if _, err := normalizeWorkerCapabilities(capabilities); err == nil {
-				t.Fatal("invalid Worker role contract was accepted")
+				t.Fatal("invalid execution Worker contract was accepted")
 			}
 		})
 	}
@@ -371,8 +301,6 @@ func sealedWorkerPool(
 		WorkerGroupID:                   groupID,
 		Name:                            name,
 		State:                           "active",
-		AllowsRun:                       template.SupportsRun,
-		AllowsBuild:                     template.SupportsBuild,
 		RuntimeIdentityID:               pgtype.Text{String: template.Runtime.ID, Valid: true},
 		SubstrateFormat:                 pgtype.Text{String: template.Substrate.Format, Valid: true},
 		SubstrateContract:               pgtype.Text{String: template.Substrate.Contract, Valid: true},
@@ -383,7 +311,6 @@ func sealedWorkerPool(
 		PerVMMemoryBytes:                pgtype.Int8{Int64: template.PerVM.MemoryBytes, Valid: true},
 		PerVMGuestEphemeralDiskBytes:    pgtype.Int8{Int64: template.PerVM.GuestEphemeralDiskBytes, Valid: true},
 		MaxVMSlots:                      pgtype.Int4{Int32: int32(template.Capacity.VMSlots), Valid: true},
-		MaxBuildExecutors:               pgtype.Int4{Int32: int32(template.Capacity.BuildExecutors), Valid: true},
 		SealedAt:                        pgtype.Timestamptz{Time: time.Unix(1, 0).UTC(), Valid: true},
 	}
 	shapes := make([]db.WorkerPoolCpuShape, len(template.CPUShapes))

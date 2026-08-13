@@ -17,21 +17,23 @@ func TestWorkerFenceCoordinatesAtWorkerGranularity(t *testing.T) {
 	serviceID := uuid.New()
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO worker_instances (
-    id, resource_id, worker_group_id, state,
-    current_epoch, current_service_id, supervisor_version,
-    supports_run, runtime_identity_id, substrate_format, substrate_contract,
+    id, resource_id, worker_group_id, worker_pool_id, state,
+    current_epoch, current_service_id,
+    runtime_identity_id, substrate_format, substrate_contract,
     epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
     per_vm_cpu_millis, per_vm_memory_bytes,
     per_vm_guest_ephemeral_disk_bytes, max_vm_slots,
-    max_runtime_starts, observed_at, epoch_started_at, activated_at
+    max_runtime_starts, cpu_environment, cpu_environment_digest,
+    observed_at, epoch_started_at, activated_at
 )
-SELECT $2, $3, worker_group_id, state,
-       current_epoch, $4, supervisor_version,
-       supports_run, runtime_identity_id, substrate_format, substrate_contract,
+SELECT $2, $3, worker_group_id, worker_pool_id, state,
+       current_epoch, $4,
+       runtime_identity_id, substrate_format, substrate_contract,
        epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
        per_vm_cpu_millis, per_vm_memory_bytes,
        per_vm_guest_ephemeral_disk_bytes, max_vm_slots,
-       max_runtime_starts, observed_at, epoch_started_at, activated_at
+       max_runtime_starts, cpu_environment, cpu_environment_digest,
+       observed_at, epoch_started_at, activated_at
   FROM worker_instances
  WHERE id = $1`, fixture.workerID, workerID, workerID.String(), serviceID)
 
@@ -50,7 +52,7 @@ SELECT $2, $3, worker_group_id, state,
 	if err := lockWorkerFence(fixture.ctx, first, workerFence{
 		GroupID: fixture.groupID, RegionID: "us-east-1",
 		WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
-		Role: "run", RunArchitecture: platformArchitecture,
+		RunArchitecture: runtimeArchitecture,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +67,7 @@ SELECT $2, $3, worker_group_id, state,
 	if err := lockWorkerFence(secondCtx, second, workerFence{
 		GroupID: fixture.groupID, RegionID: "us-east-1",
 		WorkerInstanceID: pgvalue.UUID(workerID), WorkerEpoch: 1,
-		Role: "run", RunArchitecture: platformArchitecture,
+		RunArchitecture: runtimeArchitecture,
 	}); err != nil {
 		t.Fatalf("independent Worker fence blocked: %v", err)
 	}
@@ -99,7 +101,7 @@ UPDATE worker_groups SET state = 'paused' WHERE id = $1`, fixture.groupID)
 	err = lockWorkerFence(fixture.ctx, recheck, workerFence{
 		GroupID: fixture.groupID, RegionID: "us-east-1",
 		WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
-		Role: "run", RunArchitecture: platformArchitecture,
+		RunArchitecture: runtimeArchitecture,
 	})
 	if err == nil {
 		t.Fatal("paused Worker Group remained eligible for placement")

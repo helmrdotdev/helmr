@@ -216,21 +216,19 @@ WITH selected_shape AS MATERIALIZED (
         ON worker_groups.id = worker_instances.worker_group_id
        AND worker_groups.state = 'active'
       JOIN worker_pools
-        ON worker_pools.id = worker_instances.worker_pool_id
-       AND worker_pools.worker_group_id = worker_instances.worker_group_id
-       AND worker_pools.state = 'active'
-       AND worker_pools.allows_run
+	    ON worker_pools.id = worker_instances.worker_pool_id
+	   AND worker_pools.worker_group_id = worker_instances.worker_group_id
+	   AND worker_pools.state = 'active'
       JOIN worker_pool_cpu_shapes
         ON worker_pool_cpu_shapes.worker_pool_id = worker_pools.id
        AND worker_pool_cpu_shapes.vcpu_count = (($1::bigint - 1) / 1000 + 1)::integer
      WHERE worker_instances.id = $2
        AND worker_instances.worker_group_id = $3
-       AND worker_instances.current_epoch = $4
-       AND worker_instances.state = 'active'
-       AND worker_instances.supports_run
+	   AND worker_instances.current_epoch = $4
+	   AND worker_instances.state = 'active'
        AND (
            $5::uuid IS NOT NULL
-           OR worker_groups.primary_run_pool_id = worker_pools.id
+           OR worker_groups.primary_pool_id = worker_pools.id
        )
        AND (
            $6::text IS NULL

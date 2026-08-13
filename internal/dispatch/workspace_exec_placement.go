@@ -122,7 +122,6 @@ func (d *Authority) PlaceWorkspaceExec(
 		RegionID:         authority.regionID,
 		WorkerInstanceID: runtime.workerID,
 		WorkerEpoch:      runtime.workerEpoch,
-		Role:             "run",
 		RunArchitecture:  authority.architecture,
 	}); err != nil {
 		return WorkspaceExecPlacement{}, ErrCapacityUnavailable
@@ -391,7 +390,7 @@ SELECT workspace_processes.id,
 		return workspaceExecAuthority{}, err
 	}
 	authority.resources = resources
-	authority.architecture = platformArchitecture
+	authority.architecture = runtimeArchitecture
 	return authority, nil
 }
 
@@ -413,7 +412,6 @@ func (d *Authority) createWorkspaceExecRuntime(
 		RegionID:         authority.regionID,
 		WorkerInstanceID: worker.workerID,
 		WorkerEpoch:      worker.workerEpoch,
-		Role:             "run",
 		RunArchitecture:  authority.architecture,
 		RequirePrimary:   true,
 	}); err != nil {

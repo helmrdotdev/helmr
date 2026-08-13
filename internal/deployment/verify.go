@@ -148,8 +148,6 @@ type artifactRole uint8
 const (
 	programArtifact artifactRole = iota
 	runtimeArtifact
-	toolchainArtifact
-	managerArtifact
 	buildTreeArtifact
 )
 
@@ -175,14 +173,6 @@ func validateArtifactDescriptor(
 		label = "runtime"
 		mediaType = RuntimeArtifactMediaType
 		maxPhysicalBytes = maxRuntimePhysicalBytes
-	case managerArtifact:
-		label = "manager"
-		mediaType = ManagerTreeMediaType
-		maxPhysicalBytes = maxManagerTreeBytes
-	case toolchainArtifact:
-		label = "toolchain"
-		mediaType = ToolchainMediaType
-		maxPhysicalBytes = maxToolArtifactBytes
 	default:
 		return fmt.Errorf("artifact role = %d", role)
 	}

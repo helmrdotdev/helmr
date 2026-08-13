@@ -52,7 +52,7 @@ Before serving customer traffic, at minimum:
 - Validate the single-NAT tradeoff or replace it in your deployment composition.
 - Configure monitoring for ECS service health, `/readyz`, RDS, Redis/Valkey, ClickHouse, queues, and worker capacity.
 - Populate secrets, run database bootstrap and migrations, and verify [authentication](/docs/self-hosting/authentication/).
-- Size and test separate run and build [worker](/docs/self-hosting/workers/) groups.
+- Size and test immutable execution [Worker](/docs/self-hosting/workers/) Pool generations.
 - Rehearse the [upgrade](/docs/self-hosting/upgrades/) and worker-drain sequence in a non-production environment.
 
 Only then enable the services using the [Control Plane](/docs/self-hosting/control-plane/) procedure.

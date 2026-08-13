@@ -28,7 +28,6 @@ Both `infra/aws/quickstart` and `infra/aws/standard` require:
 | `platform_store_uri` | Points to immutable Platform Artifact objects. |
 | `platform_store_bucket_arn` | Authorizes access to the Platform Artifact bucket. |
 | `platform_store_kms_key_arn` | Authorizes decryption of Platform Artifacts. |
-| `build_policy_digest` | Pins the committed build policy as `sha256:<64 lowercase hex characters>`. |
 | `clickhouse_url` | HTTPS endpoint for historical telemetry. |
 | `github_oauth_client_id` | Non-secret OAuth application client ID. |
 | `worker_network_blocked_ipv4_cidrs` | Deployment-owned deny set that must wholly cover the execution VPC prefix. |

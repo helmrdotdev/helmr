@@ -53,8 +53,7 @@ func runDrain(log *slog.Logger, args []string) error {
 	if err != nil {
 		return err
 	}
-	supportsRun, supportsBuild := identityRoles(identity.Roles)
-	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID, supportsRun, supportsBuild))
+	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
@@ -155,8 +154,7 @@ func workerControlPlaneClient() (*workerclient.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	supportsRun, supportsBuild := identityRoles(identity.Roles)
-	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID, supportsRun, supportsBuild))
+	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID))
 	if err != nil {
 		return nil, fmt.Errorf("configure control client: %w", err)
 	}

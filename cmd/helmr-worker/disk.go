@@ -40,10 +40,7 @@ func advertisedWorkerDiskMiB(workDir string, configuredMiB int64, reserveMiB int
 	return advertisedMiB, nil
 }
 
-func admissionDiskFloorMiB(supportsBuild bool, vmScratchMiB, reserveMiB int64) int64 {
-	if supportsBuild {
-		return max(vmScratchMiB, compute.BuildEnvelopeResources().DiskMiB)
-	}
+func admissionDiskFloorMiB(vmScratchMiB, reserveMiB int64) int64 {
 	return reserveMiB + vmScratchMiB
 }
 

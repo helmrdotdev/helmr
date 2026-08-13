@@ -1,11 +1,9 @@
 locals {
-  name                    = lower(var.name)
-  asg_name                = "${local.name}-worker"
-  launch_hook_name        = "${local.name}-worker-launch"
-  termination_hook_name   = "${local.name}-worker-terminate"
-  boot_corpus_reserve_mib = 2048
-  build_scratch_min_mib   = max(32768, var.vm_scratch_disk_mib) + local.boot_corpus_reserve_mib
-  network_resolver_ipv4   = coalesce(var.network_resolver_ipv4, cidrhost(data.aws_vpc.selected.cidr_block, 2))
+  name                  = lower(var.name)
+  asg_name              = "${local.name}-worker"
+  launch_hook_name      = "${local.name}-worker-launch"
+  termination_hook_name = "${local.name}-worker-terminate"
+  network_resolver_ipv4 = coalesce(var.network_resolver_ipv4, cidrhost(data.aws_vpc.selected.cidr_block, 2))
 
   worker_environment_values = {
     CONTROL_PLANE_URL                 = var.worker_controlplane_url
@@ -21,32 +19,24 @@ locals {
     WORKER_NETWORK_LINK_POOL          = var.network_link_pool
     WORKER_NETWORK_RESOLVER_IPV4      = local.network_resolver_ipv4
     WORKER_NETWORK_TRANSLATION_POOL   = var.network_translation_pool
-    WORKER_WORK_DIR                   = contains(var.worker_roles, "build") ? "/var/lib/helmr/scratch/worker" : "/var/lib/helmr"
+    WORKER_WORK_DIR                   = "/var/lib/helmr"
     WORKER_INSTANCE_CREDENTIAL_PATH   = "/var/lib/helmr/worker-credential.json"
     WORKER_POOL_NAME                  = var.worker_pool_name
-    WORKER_ROLES                      = join(",", sort(tolist(var.worker_roles)))
     WORKER_IMAGES_DIR                 = "/var/lib/helmr/images"
-    JAILER_CHROOT_DIR                 = contains(var.worker_roles, "build") ? "/var/lib/helmr/scratch/jailer" : "/var/lib/helmr/jailer"
+    JAILER_CHROOT_DIR                 = "/var/lib/helmr/jailer"
     VM_VCPUS                          = tostring(var.vm_vcpus)
     VM_MEMORY_MIB                     = tostring(var.vm_memory_mib)
     VM_SCRATCH_DISK_MIB               = tostring(var.vm_scratch_disk_mib)
     VM_INIT_TIMEOUT                   = "30s"
     # EC2 workers allow extra time for first-boot guest health convergence.
-    VM_HEALTH_TIMEOUT                 = "300s"
-    BUILD_POLICY_PATH                 = contains(var.worker_roles, "build") ? "/etc/helmr/build-policy.json" : null
-    WORKER_BUILD_CACHE_DIR            = contains(var.worker_roles, "build") ? "/var/lib/helmr/cache" : null
-    WORKER_BUILD_SCRATCH_DIR          = contains(var.worker_roles, "build") ? "/var/lib/helmr/scratch" : null
-    IMAGE_CACHE_REGISTRY_AUTHORITY    = contains(var.worker_roles, "build") ? var.image_cache_registry_authority : null
-    IMAGE_CACHE_REPOSITORY_PREFIX     = contains(var.worker_roles, "build") ? var.image_cache_repository_prefix : null
-    IMAGE_CACHE_ROLE_ARN              = contains(var.worker_roles, "build") ? var.image_cache_role_arn : null
-    IMAGE_CACHE_REPOSITORY_ARN_PREFIX = contains(var.worker_roles, "build") ? var.image_cache_repository_arn_prefix : null
-    WORKER_DISK_RESERVE_MIB           = tostring(var.worker_disk_reserve_mib)
-    WORKER_DISK_MIB                   = var.worker_disk_mib == null ? null : tostring(var.worker_disk_mib)
-    WORKER_CAPACITY_VCPUS             = var.worker_capacity_vcpus == null ? null : tostring(var.worker_capacity_vcpus)
-    WORKER_CAPACITY_MEMORY_MIB        = var.worker_capacity_memory_mib == null ? null : tostring(var.worker_capacity_memory_mib)
-    WORKER_EXECUTION_SLOTS            = var.worker_execution_slots == null ? null : tostring(var.worker_execution_slots)
-    WORKER_SUBSTRATE_CACHE_MAX_MIB    = var.substrate_cache_max_mib == null ? null : tostring(var.substrate_cache_max_mib)
-    WORKER_ARTIFACT_CACHE_MAX_MIB     = var.artifact_cache_max_mib == null ? null : tostring(var.artifact_cache_max_mib)
+    VM_HEALTH_TIMEOUT              = "300s"
+    WORKER_DISK_RESERVE_MIB        = tostring(var.worker_disk_reserve_mib)
+    WORKER_DISK_MIB                = var.worker_disk_mib == null ? null : tostring(var.worker_disk_mib)
+    WORKER_CAPACITY_VCPUS          = var.worker_capacity_vcpus == null ? null : tostring(var.worker_capacity_vcpus)
+    WORKER_CAPACITY_MEMORY_MIB     = var.worker_capacity_memory_mib == null ? null : tostring(var.worker_capacity_memory_mib)
+    WORKER_EXECUTION_SLOTS         = var.worker_execution_slots == null ? null : tostring(var.worker_execution_slots)
+    WORKER_SUBSTRATE_CACHE_MAX_MIB = var.substrate_cache_max_mib == null ? null : tostring(var.substrate_cache_max_mib)
+    WORKER_ARTIFACT_CACHE_MAX_MIB  = var.artifact_cache_max_mib == null ? null : tostring(var.artifact_cache_max_mib)
   }
   worker_environment = {
     for key, value in local.worker_environment_values : key => value if value != null
@@ -66,7 +56,6 @@ locals {
     environment                          = local.base_worker_environment
     checkpoint_key_secret_arn            = var.secret_arns.checkpoint_encryption_key
     worker_enrollment_token_secret_arn   = var.secret_arns.worker_enrollment_token
-    worker_supports_build                = contains(var.worker_roles, "build")
     worker_service_name                  = var.worker_service_name
     worker_binary_path                   = var.worker_binary_path
     autoscaling_group_name               = local.asg_name
@@ -77,11 +66,6 @@ locals {
     lifecycle_heartbeat_interval_seconds = var.lifecycle_heartbeat_interval_seconds
     worker_work_dir                      = local.base_worker_environment.WORKER_WORK_DIR
     aws_region                           = data.aws_region.current.region
-    platform_store_uri                   = var.platform_store_uri
-    build_policy_digest                  = var.build_policy_digest == null ? "" : var.build_policy_digest
-    build_cache_mib                      = var.build_cache_mib == null ? 0 : var.build_cache_mib
-    build_scratch_mib                    = var.build_scratch_mib == null ? 0 : var.build_scratch_mib
-    worker_disk_reserve_mib              = var.worker_disk_reserve_mib
     expected_root_bytes                  = format("%.0f", var.root_volume_size_gb * 1073741824)
   })
   rendered_worker_user_data_base64 = base64encode(local.worker_user_data)
@@ -167,39 +151,6 @@ locals {
           }
         }
       },
-      ], [
-      for statement in [
-        {
-          Sid      = "AssumeExecutionImageCacheRole"
-          Effect   = "Allow"
-          Action   = ["sts:AssumeRole"]
-          Resource = var.image_cache_role_arn
-        },
-        {
-          Sid    = "CreatePlatformObjects"
-          Effect = "Allow"
-          Action = [
-            "s3:PutObject",
-            "s3:AbortMultipartUpload",
-            "s3:ListMultipartUploadParts"
-          ]
-          Resource = "${var.platform_store_bucket_arn}/objects/sha256/*"
-        },
-        {
-          Sid    = "EncryptPlatformObjects"
-          Effect = "Allow"
-          Action = [
-            "kms:Encrypt",
-            "kms:GenerateDataKey"
-          ]
-          Resource = var.platform_store_kms_key_arn
-          Condition = {
-            StringEquals = {
-              "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
-            }
-          }
-        },
-      ] : statement if contains(var.worker_roles, "build")
     ])
   }
   worker_boundary_policy = {
@@ -385,9 +336,6 @@ resource "terraform_data" "network_preconditions" {
     })
     reserved_env_conflicts = local.worker_environment_conflicts
     platform_store_uri     = var.platform_store_uri
-    build_policy_digest    = var.build_policy_digest
-    build_cache_mib        = var.build_cache_mib
-    build_scratch_mib      = var.build_scratch_mib
   }
 
   lifecycle {
@@ -406,50 +354,9 @@ resource "terraform_data" "network_preconditions" {
       error_message = "platform_store_bucket_arn must identify the dedicated bootstrap store, not the mutable Artifact CAS bucket."
     }
 
-
-    precondition {
-      condition     = contains(var.worker_roles, "build") == (var.build_policy_digest != null)
-      error_message = "build-capable workers require build_policy_digest; run-only workers must not receive the current build policy."
-    }
-
-    precondition {
-      condition = contains(var.worker_roles, "build") == (
-        var.build_cache_mib != null &&
-        var.build_scratch_mib != null
-      )
-      error_message = "build-capable workers require build_cache_mib and build_scratch_mib; run-only workers must not allocate build filesystems."
-    }
-
-    precondition {
-      condition = !contains(var.worker_roles, "build") || (
-        var.worker_disk_reserve_mib >= 1024 &&
-        coalesce(var.build_scratch_mib, 0) >= local.build_scratch_min_mib
-      )
-      error_message = "build workers require at least 1024 MiB of unadvertised root reserve and a two-GiB boot-corpus reserve beyond the larger of the fixed build envelope and configured VM scratch."
-    }
-
     precondition {
       condition     = var.worker_disk_mib == null || var.worker_disk_mib > var.worker_disk_reserve_mib
       error_message = "worker_disk_mib must exceed worker_disk_reserve_mib when an explicit filesystem capacity is configured."
-    }
-
-    precondition {
-      condition = !contains(var.worker_roles, "build") || (
-        var.vm_vcpus >= 3 &&
-        var.vm_memory_mib >= 4096 &&
-        var.vm_scratch_disk_mib >= 32768
-      )
-      error_message = "build workers require a VM shape that fits the fixed 3000 milli-CPU, 4096 MiB, and 32768 MiB image-build guest."
-    }
-
-    precondition {
-      condition = !contains(var.worker_roles, "build") || (
-        var.worker_capacity_vcpus != null &&
-        var.worker_capacity_memory_mib != null &&
-        var.worker_capacity_vcpus >= (contains(var.worker_roles, "run") ? max(3, var.vm_vcpus + 1) : 3) &&
-        var.worker_capacity_memory_mib >= (contains(var.worker_roles, "run") ? max(4096, var.vm_memory_mib + 2048) : 4096)
-      )
-      error_message = "build workers require a host pool that fits the fixed image-build guest and any configured run VM shape."
     }
   }
 }

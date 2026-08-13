@@ -49,7 +49,6 @@ find "${output}" -type d -exec chmod u+rwx {} +
 find "${output}" -type f -exec chmod u+rw {} +
 
 [ -f "${output}/platform-release.json" ] || { printf 'platform release manifest is missing\n' >&2; exit 1; }
-[ -f "${output}/build-policy.digest" ] || { printf 'platform release build policy digest is missing\n' >&2; exit 1; }
 "${ROOT}/scripts/check-canonical-json.sh" "${output}/platform-release.json"
 trap - EXIT
 printf '%s\n' "${output}"

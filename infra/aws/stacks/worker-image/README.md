@@ -1,8 +1,8 @@
 # Worker image stack
 
 This stack builds and distributes the Worker AMI from exact content-addressed
-host and runtime bundles. It does not stage or embed Managed Runtime,
-Manager, toolchain, or build-policy artifacts.
+host and runtime bundles. Deployment bundles are produced independently on the
+developer or CI runner and are not Worker-image inputs.
 
 ```sh
 nix develop .#infra

@@ -206,7 +206,7 @@ func lockRunStartAuthority(
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
-	if !authority.workerGroup.AllowsRun || authority.workerGroup.ClaimVersion != worker.GroupClaimVersion {
+	if authority.workerGroup.ClaimVersion != worker.GroupClaimVersion {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 	authority.worker, err = q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{

@@ -15,7 +15,6 @@ BOOTSTRAP_STACK="${BOOTSTRAP_STACK:-${ROOT}/infra/aws/modules/bootstrap}"
 WORKER_IMAGE_STACK="${WORKER_IMAGE_STACK:-${ROOT}/infra/aws/stacks/worker-image}"
 STATE_DIR="${STATE_DIR:-${ROOT}/.helmr-release-artifacts}"
 IMAGE_ARN_FILE="${STATE_DIR}/worker-image-build-version-arn"
-BUILD_POLICY_DIGEST_FILE="${STATE_DIR}/build-policy-digest"
 WORKER_IMAGE_DEFINITION_FILE="${STATE_DIR}/worker-image-definition.json"
 WORKER_IMAGE_RECEIPT_FILE="${STATE_DIR}/worker-image.json"
 WORKER_HOST_ARTIFACTS_MANIFEST_FILE="${STATE_DIR}/worker-host-artifacts.json"
@@ -162,7 +161,7 @@ bootstrap_apply() {
 
 bootstrap_output() {
   bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw bucket_name)"
-  artifact_bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw source_artifact_bucket_name)"
+  artifact_bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw release_artifact_bucket_name)"
   printf 'export STATE_BUCKET=%q\n' "${bucket}"
   printf 'export STATE_REGION=%q\n' "${STATE_REGION}"
   printf 'export WORKER_IMAGE_ARTIFACT_BUCKET=%q\n' "${artifact_bucket}"
@@ -223,7 +222,7 @@ worker_image_artifact_bucket() {
     printf '%s\n' "${WORKER_IMAGE_ARTIFACT_BUCKET}"
     return 0
   fi
-  if artifact_bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw source_artifact_bucket_name 2>/dev/null)"; then
+  if artifact_bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw release_artifact_bucket_name 2>/dev/null)"; then
     printf '%s\n' "${artifact_bucket}"
     return 0
   fi
@@ -280,10 +279,9 @@ platform_release_publish() (
   with_platform_publisher nix develop "${ROOT}" -c go run ./cmd/helmr-controlplane release publish \
     --store "${platform_store_uri}" \
     --input "${publish_input}"
-  build_policy_digest="$(cat "${release}/build-policy.digest")"
-  printf '%s\n' "${build_policy_digest}" >"${BUILD_POLICY_DIGEST_FILE}"
-  info "Platform release published: ${build_policy_digest}"
-  printf '%s\n' "${build_policy_digest}"
+  runtime_digest="$(jq -er '.runtime.digest' "${release}/platform-release.json")"
+  info "Platform runtime published: ${runtime_digest}"
+  printf '%s\n' "${runtime_digest}"
 )
 
 validate_worker_host_bundle_receipt() {

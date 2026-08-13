@@ -25,19 +25,11 @@ func TestSelectInstallPlanRespectsProducerChoiceWithoutVersionAdmission(t *testi
 		},
 		{
 			name: "bun", selector: "bun@7.0.0-beta.2", lockfile: "bun.lock",
-			want: []string{"npx", "--yes", "bun@7.0.0-beta.2", "install", "--frozen-lockfile"},
+			want: []string{"/usr/local/bin/bun-for-version", "7.0.0-beta.2", "install", "--frozen-lockfile"},
 		},
 		{
 			name: "yarn", selector: "yarn@8.0.0", lockfile: "yarn.lock",
 			want: []string{"corepack", "yarn@8.0.0", "install", "--immutable"},
-		},
-		{
-			name: "corepack owns selector grammar", selector: "pnpm@https://packages.example/pnpm.tgz", lockfile: "pnpm-lock.yaml",
-			want: []string{"corepack", "pnpm@https://packages.example/pnpm.tgz", "install", "--frozen-lockfile"},
-		},
-		{
-			name: "bun integrity metadata", selector: "bun@1.3.10+sha256.deadbeef", lockfile: "bun.lock",
-			want: []string{"npx", "--yes", "bun@1.3.10", "install", "--frozen-lockfile"},
 		},
 	}
 	for _, test := range tests {
@@ -75,8 +67,42 @@ func TestSelectInstallPlanRejectsOnlyAmbiguousOrUnsafeProducerMetadata(t *testin
 	}
 
 	root = writeInstallProject(t, "npm@"+strings.Repeat("a", 513), "")
-	if _, err := SelectInstallPlan(root, ""); err == nil || !strings.Contains(err.Error(), "version is invalid") {
+	if _, err := SelectInstallPlan(root, ""); err == nil || !strings.Contains(err.Error(), "exact SemVer") {
 		t.Fatalf("unsafe selector error = %v", err)
+	}
+
+	root = writeInstallProject(t, "bun@latest", "")
+	if _, err := SelectInstallPlan(root, ""); err == nil || !strings.Contains(err.Error(), "exact SemVer") {
+		t.Fatalf("non-exact Bun selector error = %v", err)
+	}
+
+	for _, selector := range []string{
+		"npm@latest",
+		"pnpm@^10.0.0",
+		"pnpm@https://packages.example/pnpm.tgz",
+		"yarn@4.x",
+		"npm@1.0.0-01",
+		"bun@1.3.10+sha256.deadbeef",
+	} {
+		root = writeInstallProject(t, selector, "")
+		if _, err := SelectInstallPlan(root, ""); err == nil {
+			t.Fatalf("mutable or unsupported selector %q was accepted", selector)
+		}
+	}
+}
+
+func TestNormalizeSecretIDsKeepsOnlyCanonicalNames(t *testing.T) {
+	got, err := NormalizeSecretIDs([]string{"NPM_TOKEN", "GITHUB_TOKEN"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []string{"GITHUB_TOKEN", "NPM_TOKEN"}) {
+		t.Fatalf("secret IDs = %q", got)
+	}
+	for _, values := range [][]string{{"npm-token"}, {"TOKEN", "TOKEN"}, {""}} {
+		if _, err := NormalizeSecretIDs(values); err == nil {
+			t.Fatalf("invalid secret IDs were accepted: %q", values)
+		}
 	}
 }
 

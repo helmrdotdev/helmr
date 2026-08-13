@@ -7,21 +7,19 @@ WITH selected_shape AS MATERIALIZED (
         ON worker_groups.id = worker_instances.worker_group_id
        AND worker_groups.state = 'active'
       JOIN worker_pools
-        ON worker_pools.id = worker_instances.worker_pool_id
-       AND worker_pools.worker_group_id = worker_instances.worker_group_id
-       AND worker_pools.state = 'active'
-       AND worker_pools.allows_run
+	    ON worker_pools.id = worker_instances.worker_pool_id
+	   AND worker_pools.worker_group_id = worker_instances.worker_group_id
+	   AND worker_pools.state = 'active'
       JOIN worker_pool_cpu_shapes
         ON worker_pool_cpu_shapes.worker_pool_id = worker_pools.id
        AND worker_pool_cpu_shapes.vcpu_count = ((sqlc.arg(reserved_cpu_millis)::bigint - 1) / 1000 + 1)::integer
      WHERE worker_instances.id = sqlc.arg(worker_instance_id)
        AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
-       AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
-       AND worker_instances.state = 'active'
-       AND worker_instances.supports_run
+	   AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
+	   AND worker_instances.state = 'active'
        AND (
            sqlc.narg(restore_checkpoint_id)::uuid IS NOT NULL
-           OR worker_groups.primary_run_pool_id = worker_pools.id
+           OR worker_groups.primary_pool_id = worker_pools.id
        )
        AND (
            sqlc.narg(required_cpu_config_digest)::text IS NULL

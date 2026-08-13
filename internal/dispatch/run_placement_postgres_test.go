@@ -2862,8 +2862,6 @@ UPDATE runs
 	if _, err := startupTx.Exec(fixture.ctx, `
 UPDATE worker_instances
 	   SET state = 'registering', current_epoch = 2,
-       supports_run = false,
-       supports_build = false,
 	       runtime_identity_id = NULL,
 	       substrate_format = '',
 	       substrate_contract = '',
@@ -2874,7 +2872,6 @@ UPDATE worker_instances
        per_vm_memory_bytes = 0,
        per_vm_guest_ephemeral_disk_bytes = 0,
        max_vm_slots = 0,
-       max_build_executors = 0,
        max_runtime_starts = 0,
 	   cpu_environment = NULL,
 	   cpu_environment_digest = NULL,
@@ -3395,38 +3392,6 @@ UPDATE worker_instances
 	}
 }
 
-func TestPlaceReadyRunAccountsForActiveBuildResources(t *testing.T) {
-	fixture := newDualRoleRunPlacementFixture(t)
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-INSERT INTO deployment_build_leases (
-    id, org_id, project_id, environment_id, deployment_id, build_region_id,
-    lease_sequence, worker_group_id, worker_instance_id, worker_epoch,
-    requested_cpu_millis, requested_memory_bytes,
-    requested_guest_ephemeral_disk_bytes, requested_build_executors,
-    build_snapshot, start_deadline_at, expires_at
-) VALUES (
-    $1, $2, $3, $4, $5, 'us-east-1', 1, $6, $7, 1,
-    3000, 4294967296, 34359738368,
-    1, '{}'::jsonb, now() + interval '1 minute', now() + interval '5 minutes'
-)`,
-		uuid.Must(uuid.NewV7()),
-		fixture.orgID,
-		fixture.projectID,
-		fixture.environmentID,
-		fixture.deploymentID,
-		fixture.groupID,
-		fixture.workerID,
-	)
-
-	_, err := fixture.authority.PlaceReadyRun(
-		fixture.ctx,
-		fixture.candidate(),
-	)
-	if err != ErrCapacityUnavailable {
-		t.Fatalf("PlaceReadyRun() error = %v, want ErrCapacityUnavailable", err)
-	}
-}
-
 func (fixture runPlacementFixture) candidate() ReadyRunCandidate {
 	return ReadyRunCandidate{
 		OrgID:                   pgvalue.UUID(fixture.orgID),
@@ -3436,14 +3401,10 @@ func (fixture runPlacementFixture) candidate() ReadyRunCandidate {
 }
 
 func newRunPlacementFixture(t *testing.T) runPlacementFixture {
-	return newRunPlacementFixtureWithSeedAndRoles(t, uuid.NewString(), false)
+	return newRunPlacementFixtureWithSeed(t, uuid.NewString())
 }
 
-func newDualRoleRunPlacementFixture(t *testing.T) runPlacementFixture {
-	return newRunPlacementFixtureWithSeedAndRoles(t, uuid.NewString(), true)
-}
-
-func newRunPlacementFixtureWithSeedAndRoles(t *testing.T, seed string, allowsBuild bool) runPlacementFixture {
+func newRunPlacementFixtureWithSeed(t *testing.T, seed string) runPlacementFixture {
 	t.Helper()
 	ctx := context.Background()
 	pool := newDispatchIntegrationDB(t, ctx)
@@ -3479,10 +3440,10 @@ func newRunPlacementFixtureWithSeedAndRoles(t *testing.T, seed string, allowsBui
 	taskDefinitionID := id("task-definition")
 	workspaceDefinitionID := id("workspace-definition")
 	versionID := id("workspace-version")
-	sourceID := id("source-artifact")
 	programID := id("program-artifact")
 	imageID := id("image-artifact")
-	sourceDigest := "sha256:" + strings.Repeat("1", 64)
+	bundleDigest := "sha256:" + strings.Repeat("1", 64)
+	runtimeDigest := "sha256:" + strings.Repeat("3", 64)
 	programDigest := "sha256:" + strings.Repeat("2", 64)
 	imageDigest := "sha256:" + strings.Repeat("4", 64)
 
@@ -3513,11 +3474,9 @@ VALUES ($1, $2, $3, $4, 'Environment', '#3366ff')`,
 	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES
-    ($1, $2, 1, 'application/vnd.helmr.deployment-source.v0+tar'),
-    ($1, $3, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-    ($1, $4, 1, 'application/octet-stream')`,
+    ($1, $2, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+    ($1, $3, 1, 'application/octet-stream')`,
 		fixture.orgID,
-		sourceDigest,
 		programDigest,
 		imageDigest,
 	)
@@ -3525,39 +3484,30 @@ VALUES
 INSERT INTO artifacts (
     id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type
 ) VALUES
-    ($1, $4, $5, $6, $7, 'deployment_source', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
-    ($2, $4, $5, $6, $8, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-    ($3, $4, $5, $6, $9, 'workspace_image', 1, 'application/octet-stream')`,
-		sourceID,
+    ($1, $3, $4, $5, $6, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+    ($2, $3, $4, $5, $7, 'workspace_image', 1, 'application/octet-stream')`,
 		programID,
 		imageID,
 		fixture.orgID,
 		fixture.projectID,
 		fixture.environmentID,
-		sourceDigest,
 		programDigest,
 		imageDigest,
 	)
 	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO deployments (
-    id, org_id, project_id, environment_id, build_region_id,
-    build_node_version, build_runtime_digest, build_toolchain_digest,
-    build_manager_name, build_manager_version, build_manager_digest,
-    build_contract, image_cache_mode, version, content_hash, deployment_source_artifact_id,
-    program_artifact_id, program_index_digest, queue_config, status
+    id, org_id, project_id, environment_id, version, bundle_digest,
+    runtime_artifact_digest, program_artifact_id, program_index_digest, queue_config
 ) VALUES (
-    $1, $2, $3, $4, 'us-east-1', '24.16.0',
-    decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
-    'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
-    'helmr.program-build.v0', 'prefer', 'v1', $5, $6, $7,
-    decode(repeat('03', 32), 'hex'), '{}'::jsonb, 'deployed'
+    $1, $2, $3, $4, 'v1', $5, $6, $7,
+    decode(repeat('03', 32), 'hex'), '{}'::jsonb
 )`,
 		deploymentID,
 		fixture.orgID,
 		fixture.projectID,
 		fixture.environmentID,
-		sourceDigest,
-		sourceID,
+		bundleDigest,
+		runtimeDigest,
 		programID,
 	)
 	workspaceManifest := fmt.Sprintf(
@@ -3587,14 +3537,12 @@ WITH token AS (
     RETURNING id
 )
 INSERT INTO worker_groups (
-    id, token_id, region_id, name, allows_run, allows_build
+    id, token_id, region_id, name
 )
-SELECT $1, token.id, 'us-east-1', $1, true, $4 FROM token`,
-		fixture.groupID, id("worker-group-token"), dbtest.Hash("run-placement-worker-group"), allowsBuild,
+SELECT $1, token.id, 'us-east-1', $1 FROM token`,
+		fixture.groupID, id("worker-group-token"), dbtest.Hash("run-placement-worker-group"),
 	)
 	poolSpec := dispatchWorkerPoolFixture{
-		allowsRun:                       true,
-		allowsBuild:                     allowsBuild,
 		substrateFormat:                 capacityapi.SubstrateFormatExt4,
 		substrateContract:               capacityapi.SubstrateContractExt4,
 		capacityCPUMillis:               8000,
@@ -3605,36 +3553,26 @@ SELECT $1, token.id, 'us-east-1', $1, true, $4 FROM token`,
 		perVMGuestEphemeralDiskBytes:    34359738368,
 		maxVMSlots:                      8,
 	}
-	if allowsBuild {
-		poolSpec.capacityCPUMillis = 3000
-		poolSpec.capacityMemoryBytes = 4294967296
-		poolSpec.capacityGuestEphemeralDiskBytes = 34359738368
-		poolSpec.perVMCPUMillis = 2000
-		poolSpec.perVMMemoryBytes = 2147483648
-		poolSpec.maxVMSlots = 1
-		poolSpec.maxBuildExecutors = 1
-	}
 	seedDispatchWorkerPool(t, ctx, pool, fixture.groupID, poolSpec)
 	cpuEnvironment, cpuEnvironmentDigest := dispatchCPUEnvironment(t)
 	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO worker_instances (
 	id, resource_id, worker_group_id, worker_pool_id, state,
 	current_epoch, current_service_id,
-	supports_run, supports_build, runtime_identity_id,
+	runtime_identity_id,
 	substrate_format, substrate_contract,
     epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
     per_vm_cpu_millis, per_vm_memory_bytes,
-    per_vm_guest_ephemeral_disk_bytes, max_vm_slots,
-    max_build_executors, max_runtime_starts,
+    per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_runtime_starts,
     cpu_environment, cpu_environment_digest,
     observed_at, epoch_started_at, activated_at
 ) VALUES (
 	$1, $2, $3, $4, 'active', 1, $5,
-	true, $17, $6, $18, $19,
+	$6, $16, $17,
 	$7, $8, $9,
 	$10, $11, $12,
-	$13, $14, $13,
-	$15::jsonb, $16, now(), now(), now()
+	$13, $13,
+	$14::jsonb, $15, now(), now(), now()
 )`,
 		fixture.workerID,
 		fixture.workerID.String(),
@@ -3649,10 +3587,8 @@ INSERT INTO worker_instances (
 		poolSpec.perVMMemoryBytes,
 		poolSpec.perVMGuestEphemeralDiskBytes,
 		poolSpec.maxVMSlots,
-		poolSpec.maxBuildExecutors,
 		cpuEnvironment,
 		cpuEnvironmentDigest,
-		allowsBuild,
 		poolSpec.substrateFormat,
 		poolSpec.substrateContract,
 	)

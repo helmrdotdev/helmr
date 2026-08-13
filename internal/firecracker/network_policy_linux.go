@@ -145,7 +145,7 @@ func (c *Connector) prepareNetworkBinding(
 	if err := c.createRoutedAttachment(ctx, binding); err != nil {
 		return nil, err
 	}
-	if err := c.installRoutedPolicy(ctx, binding, owner.Kind != vm.OwnerRuntime); err != nil {
+	if err := c.installRoutedPolicy(ctx, binding); err != nil {
 		return nil, err
 	}
 	if err := c.persistInstalledNetworkOwner(binding); err != nil {
@@ -615,7 +615,7 @@ func linkAsTuntap(handle *netlink.Handle, name string) (*netlink.Tuntap, error) 
 	return tap, nil
 }
 
-func (c *Connector) installRoutedPolicy(ctx context.Context, binding *installedNetworkBinding, build bool) error {
+func (c *Connector) installRoutedPolicy(ctx context.Context, binding *installedNetworkBinding) error {
 	m := binding.manifest
 	guestIP := strings.Split(GuestNetworkCIDRV0, "/")[0]
 	hostIPv4, err := hostIPv4Prefixes(netip.MustParsePrefix(GuestNetworkCIDRV0).Masked())
@@ -650,8 +650,8 @@ func (c *Connector) installRoutedPolicy(ctx context.Context, binding *installedN
 	script, err := renderNetworkPolicy(networkPolicyInput{
 		Tap: m.TapName, Peer: m.NamespaceVethName, Mark: packet.Mark(),
 		BlockedIPv4CIDRs: blocked,
-		ResolverIPv4:     c.cfg.NetworkResolverIPv4, Build: build,
-		GuestIPv4: guestIP, TranslationIPv4: netip.MustParsePrefix(m.TranslationIPv4CIDR).Addr().String(),
+		ResolverIPv4:     c.cfg.NetworkResolverIPv4,
+		GuestIPv4:        guestIP, TranslationIPv4: netip.MustParsePrefix(m.TranslationIPv4CIDR).Addr().String(),
 	})
 	if err != nil {
 		return err
@@ -1331,27 +1331,6 @@ func (c *Connector) readRunNetworkStatus(ctx context.Context, netnsName string) 
 		return vm.RunNetworkStatus{}, err
 	}
 	return parseRunNetworkStatus(raw)
-}
-
-func (c *Connector) readBuildNetworkStatus(ctx context.Context, netnsName string) (vm.BuildNetworkStatus, error) {
-	raw, err := c.readNetworkCounters(ctx, netnsName, "build")
-	if err != nil {
-		return vm.BuildNetworkStatus{}, err
-	}
-	return parseBuildNetworkStatus(raw)
-}
-
-func parseBuildNetworkStatus(raw []byte) (vm.BuildNetworkStatus, error) {
-	counters, err := parseNetworkCounters(raw, "build")
-	if err != nil {
-		return vm.BuildNetworkStatus{}, err
-	}
-	denied, foundDenied := counters[buildNetworkDeniedCounterName]
-	limit, foundLimit := counters[buildNetworkLimitCounterName]
-	if !foundDenied || !foundLimit {
-		return vm.BuildNetworkStatus{}, errors.New("build network counters are incomplete")
-	}
-	return vm.BuildNetworkStatus{DeniedPackets: denied, LimitPackets: limit}, nil
 }
 
 func hostIPv4Prefixes(excluded ...netip.Prefix) ([]netip.Prefix, error) {

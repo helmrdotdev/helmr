@@ -144,6 +144,14 @@ in
             tofu test
           )
         done
+        for stack in quickstart standard; do
+          (
+            cd "infra/aws/$stack"
+            tofu init -backend=false -input=false
+            tofu fmt -check -recursive
+            tofu test
+          )
+        done
       '';
   test = app "test" "run the full Helmr test recipe" toolsets.appRuntime "make test";
   lint = app "lint" "run Go vet with repository lint settings" toolsets.appRuntime "make lint";

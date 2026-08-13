@@ -18,7 +18,7 @@ buildGoModule {
     ];
   };
 
-  vendorHash = "sha256-bQKk+qP1RR9hCAAdEPjM1UzZtAPaAQpTnjAPrnLOw9M=";
+  vendorHash = "sha256-lsXUyZ0eE1fjIdh5MkkY9r5NIjJCFQJtfUiquqqEpCo=";
   subPackages = [ "cmd/internal/bundle-builder" ];
 
   ldflags = [

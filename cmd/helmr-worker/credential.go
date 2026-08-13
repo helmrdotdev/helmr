@@ -9,11 +9,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -54,11 +52,8 @@ func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, wor
 		if err != nil {
 			return fmt.Errorf("configure worker enrollment client: %w", err)
 		}
-		supportsRun := slices.Contains(cfg.WorkerRoles, auth.WorkerRoleRun)
-		supportsBuild := slices.Contains(cfg.WorkerRoles, auth.WorkerRoleBuild)
 		registered, err := controlPlaneClient.EnrollWorker(ctx, enrollmentToken, workerapi.EnrollmentRequest{
 			ResourceID: cfg.WorkerResourceID, PoolName: cfg.WorkerPoolName,
-			SupportsRun: supportsRun, SupportsBuild: supportsBuild,
 		})
 		if err != nil {
 			return fmt.Errorf("enroll worker: %w", err)

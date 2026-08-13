@@ -70,13 +70,12 @@ jq -e --arg required_worker_ami_regions "${required_worker_ami_regions}" '
 ' >/dev/null <<<"${worker_image_json}" || die "Worker image receipt is invalid"
 
 jq -e '
-  keys == ["archive", "buildPolicyDigest", "formatVersion", "sourceCommit", "sourceRef"] and
+  keys == ["archive", "formatVersion", "sourceCommit", "sourceRef"] and
   .formatVersion == 0 and
   (.archive | keys == ["digest", "mediaType", "sizeBytes"]) and
   (.archive.digest | test("^sha256:[0-9a-f]{64}$")) and
   .archive.mediaType == "application/vnd.helmr.platform-release.v0+tar" and
   (.archive.sizeBytes | type == "number" and . > 0 and floor == .) and
-  (.buildPolicyDigest | test("^sha256:[0-9a-f]{64}$")) and
   (.sourceCommit | test("^[0-9a-f]{40}$")) and
   (.sourceRef | test("^refs/(tags|heads)/[^[:space:]]+$"))
 ' >/dev/null <<<"${platform_release_json}" || die "Platform release receipt is invalid"

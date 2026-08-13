@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func renderNetworkPolicyForTest(t *testing.T, build bool) string {
+func renderNetworkPolicyForTest(t *testing.T) string {
 	t.Helper()
 	script, err := renderNetworkPolicy(networkPolicyInput{
 		Tap: "tap0", Peer: "veth0", Mark: 71,
@@ -15,7 +15,7 @@ func renderNetworkPolicyForTest(t *testing.T, build bool) string {
 			netip.MustParsePrefix("192.0.2.0/30"),
 			netip.MustParsePrefix("192.0.2.4/32"),
 		},
-		ResolverIPv4: "10.20.0.2", Build: build,
+		ResolverIPv4: "10.20.0.2",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -24,7 +24,7 @@ func renderNetworkPolicyForTest(t *testing.T, build bool) string {
 }
 
 func TestNetworkPolicyUsesSuppliedDenySetAndDNSException(t *testing.T) {
-	script := renderNetworkPolicyForTest(t, false)
+	script := renderNetworkPolicyForTest(t)
 	for _, prefix := range []string{"192.0.2.0/30", "192.0.2.4/32"} {
 		if !strings.Contains(script, prefix) {
 			t.Fatalf("script is missing supplied prefix %q:\n%s", prefix, script)
@@ -39,7 +39,7 @@ func TestNetworkPolicyUsesSuppliedDenySetAndDNSException(t *testing.T) {
 }
 
 func TestRunNetworkPolicyIsClosedAroundBinding(t *testing.T) {
-	script := renderNetworkPolicyForTest(t, false)
+	script := renderNetworkPolicyForTest(t)
 	for _, want := range []string{
 		"policy drop",
 		"meta nfproto ipv6 counter name run_denied drop",
@@ -59,24 +59,6 @@ func TestRunNetworkPolicyIsClosedAroundBinding(t *testing.T) {
 	returnAccept := strings.Index(script, "ct state established,related accept")
 	if ipv6Drop < 0 || returnAccept < 0 || ipv6Drop > returnAccept {
 		t.Fatalf("IPv6 deny must precede established return acceptance:\n%s", script)
-	}
-}
-
-func TestBuildNetworkPolicyAddsOnlyBuildQuotas(t *testing.T) {
-	build := renderNetworkPolicyForTest(t, true)
-	run := renderNetworkPolicyForTest(t, false)
-	for _, want := range []string{
-		"add counter inet helmr_network_policy build_limit",
-		"add quota inet helmr_network_policy build_received",
-		"add quota inet helmr_network_policy build_sent",
-		"ct count over 256",
-	} {
-		if !strings.Contains(build, want) {
-			t.Fatalf("build script is missing %q:\n%s", want, build)
-		}
-		if strings.Contains(run, want) {
-			t.Fatalf("run script contains build-only policy %q:\n%s", want, run)
-		}
 	}
 }
 

@@ -275,7 +275,7 @@ func TestSupervisorDelaysRetryAfterNonfatalWorkFailure(t *testing.T) {
 	consumer := &queuedConsumer{work: []Work{
 		func(context.Context) error {
 			started <- time.Now()
-			return errors.New("temporary acquisition failure")
+			return errors.New("temporary execution failure")
 		},
 		func(context.Context) error {
 			started <- time.Now()
@@ -285,7 +285,7 @@ func TestSupervisorDelaysRetryAfterNonfatalWorkFailure(t *testing.T) {
 	pollEvery := 50 * time.Millisecond
 	s, err := New(Config{
 		ControlPlane: controlPlane, PollEvery: pollEvery,
-		Consumers: []ConsumerSpec{{Name: "platform-acquisition", Concurrency: 1, Consumer: consumer}},
+		Consumers: []ConsumerSpec{{Name: "run", Concurrency: 1, Consumer: consumer}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -410,7 +410,6 @@ func TestSupervisorRefusesActivationWithUnownedResidue(t *testing.T) {
 	s, err := New(Config{
 		ControlPlane: controlPlane,
 		Capabilities: workerapi.Capabilities{
-			SupportsRun:             true,
 			ExecutionSlotsAvailable: 1,
 		},
 		Recover: func(context.Context) (RecoveryEvidence, error) {
@@ -812,12 +811,12 @@ func TestServerDirectedDrainDoesNotCompleteOnTimeoutOrDirtyInventory(t *testing.
 
 func TestSingletonRejectsSecondOwner(t *testing.T) {
 	dir := t.TempDir()
-	first, err := Acquire(dir, ProcessIdentity{ServiceID: "one", Roles: []string{"run"}})
+	first, err := Acquire(dir, ProcessIdentity{ServiceID: "one"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer first.Close()
-	if _, err := Acquire(dir, ProcessIdentity{ServiceID: "two", Roles: []string{"run"}}); err == nil {
+	if _, err := Acquire(dir, ProcessIdentity{ServiceID: "two"}); err == nil {
 		t.Fatal("second singleton acquisition succeeded")
 	}
 	identity, err := ReadProcessIdentity(dir)
