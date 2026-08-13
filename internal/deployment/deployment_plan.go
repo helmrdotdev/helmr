@@ -16,6 +16,27 @@ type DeploymentPlan struct {
 	Queues        []QueueInput              `json:"queues"`
 }
 
+// DeploymentPlanFromProgramIndex derives the final scheduler projection from
+// the verified Program index. Producer build instructions and provenance are
+// intentionally absent from both sides of this boundary.
+func DeploymentPlanFromProgramIndex(index ProgramIndex) (DeploymentPlan, error) {
+	if err := ValidateProgramIndex(index); err != nil {
+		return DeploymentPlan{}, fmt.Errorf("deployment plan program index: %w", err)
+	}
+	plan := DeploymentPlan{
+		FormatVersion: DeploymentPlanFormatVersion,
+		Definitions:   make([]ProgramIndexDeclaration, len(index.Declarations)),
+		Queues:        cloneQueueInputs(index.Queues),
+	}
+	for position, definition := range index.Declarations {
+		plan.Definitions[position] = cloneProgramIndexDeclaration(definition)
+	}
+	if err := ValidateDeploymentPlan(plan); err != nil {
+		return DeploymentPlan{}, err
+	}
+	return plan, nil
+}
+
 func ValidateDeploymentPlan(plan DeploymentPlan) error {
 	if plan.FormatVersion != DeploymentPlanFormatVersion {
 		return fmt.Errorf(

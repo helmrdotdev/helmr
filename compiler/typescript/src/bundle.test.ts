@@ -40,7 +40,6 @@ describe("v0 compiler contract", () => {
       ].join("\n"),
     )
     const compiled = await compileConfig({
-      manager: "npm",
       nodeVersion: "24.16.0",
       outputRoot: await output(),
       root,
@@ -306,7 +305,7 @@ describe("v0 compiler contract", () => {
     )
   })
 
-  test("bundles copied file dependencies from the Manager-resolved local map", async () => {
+  test("bundles copied file dependencies from the installed-tree local map", async () => {
     const root = await project()
     await source(
       root,
@@ -556,7 +555,6 @@ describe("v0 compiler contract", () => {
     const first = await compileProgram({
       architecture: "x86_64",
       config: { dirs: ["tasks"], ignorePatterns: [] },
-      manager: "npm",
       nodeVersion: "22.22.0",
       outputRoot: await output(),
       root: firstRoot,
@@ -568,7 +566,6 @@ describe("v0 compiler contract", () => {
     const second = await compileProgram({
       architecture: "x86_64",
       config: { dirs: ["tasks"], ignorePatterns: [] },
-      manager: "npm",
       nodeVersion: "24.16.0",
       outputRoot: await output(),
       root: secondRoot,
@@ -581,7 +578,6 @@ describe("v0 compiler contract", () => {
     await expect(compileProgram({
       architecture: "x86_64",
       config: { dirs: ["tasks"], ignorePatterns: [] },
-      manager: "npm",
       nodeVersion: "24",
       outputRoot: await output(),
       root: invalidRoot,
@@ -593,7 +589,6 @@ async function compile(root: string) {
   return compileProgram({
     architecture: "x86_64",
     config: { dirs: ["tasks"], ignorePatterns: [] },
-    manager: "npm",
     nodeVersion: "24.16.0",
     outputRoot: await output(),
     root,

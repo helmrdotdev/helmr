@@ -39,7 +39,6 @@ import {
 import {
   deriveLocalPackages,
   type LocalPackage,
-  type ManagerFamily,
 } from "./local-packages"
 
 export const COMPILER_API_VERSION = "helmr.compiler.v0" as const
@@ -110,7 +109,6 @@ export function compilerContract(): JsonValue {
 export async function compileProgram(options: {
   readonly architecture: RuntimeArchitecture
   readonly config: HelmrConfig
-  readonly manager: ManagerFamily
   readonly nodeVersion: string
   readonly outputRoot: string
   readonly root: string
@@ -118,7 +116,7 @@ export async function compileProgram(options: {
 }): Promise<ProgramCompilation> {
   const root = await realpath(options.root)
   const outputRoot = resolve(options.outputRoot)
-  const canonicalLocalPackages = await deriveLocalPackages(root, options.manager)
+  const canonicalLocalPackages = await deriveLocalPackages(root)
   const modules = await discoverModules(root, options.config)
   if (modules.length === 0) {
     throw new Error("configured dirs contain no declaration source modules")
@@ -284,7 +282,6 @@ export async function compileProgram(options: {
 
 export async function compileConfig(options: {
   readonly nodeVersion: string
-  readonly manager: ManagerFamily
   readonly outputRoot: string
   readonly root: string
 }): Promise<{
@@ -293,7 +290,7 @@ export async function compileConfig(options: {
 }> {
   const root = await realpath(options.root)
   const entry = resolve(root, "helmr.config.ts")
-  const localPackages = await deriveLocalPackages(root, options.manager)
+  const localPackages = await deriveLocalPackages(root)
   const outputRoot = resolve(options.outputRoot, "config")
   await mkdir(outputRoot, { recursive: false })
   try {

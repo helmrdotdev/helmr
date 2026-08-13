@@ -1,11 +1,7 @@
-import { readFile, realpath, stat } from "node:fs/promises"
+import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises"
 import { dirname, relative, resolve, sep } from "node:path"
 
 import { glob } from "tinyglobby"
-import { parse as parseYAML } from "yaml"
-
-export type ManagerFamily = "bun" | "npm" | "pnpm"
-
 export interface LocalPackage {
   readonly installedRoot: string
   readonly name: string
@@ -14,15 +10,11 @@ export interface LocalPackage {
 
 export async function deriveLocalPackages(
   root: string,
-  manager: ManagerFamily,
 ): Promise<readonly LocalPackage[]> {
   const canonicalRoot = await realpath(root)
   const sourceRoots = new Set<string>([""])
   const rootManifest = await packageManifest(canonicalRoot)
   const patterns = workspacePatterns(rootManifest)
-  if (manager === "pnpm") {
-    patterns.push(...await pnpmWorkspacePatterns(canonicalRoot))
-  }
   if (patterns.length !== 0) {
     const manifests = await glob(
       patterns.map((pattern) => `${stripTrailingSlash(pattern)}/package.json`),
@@ -45,14 +37,19 @@ export async function deriveLocalPackages(
     if (inspected.has(sourceRoot)) continue
     inspected.add(sourceRoot)
     const manifest = await packageManifest(resolve(canonicalRoot, sourceRoot))
-    for (const dependency of localDependencyTargets(manifest)) {
-      const target = await realpath(resolve(canonicalRoot, sourceRoot, dependency))
+    const targets = localDependencyTargets(manifest).map((dependency) => ({
+      label: dependency,
+      path: resolve(canonicalRoot, sourceRoot, dependency),
+    }))
+    targets.push(...await linkedLocalPackageTargets(canonicalRoot, sourceRoot))
+    for (const targetInput of targets) {
+      const target = await realpath(targetInput.path)
       if (!(await stat(target)).isDirectory()) {
-        throw new Error(`local package target ${JSON.stringify(dependency)} is not a directory`)
+        throw new Error(`local package target ${JSON.stringify(targetInput.label)} is not a directory`)
       }
       const path = projectPath(canonicalRoot, target)
       if (!inside(path) || hasNodeModules(path) || path.startsWith("helmr/")) {
-        throw new Error(`local package target ${JSON.stringify(dependency)} escapes project source`)
+        throw new Error(`local package target ${JSON.stringify(targetInput.label)} escapes project source`)
       }
       if (!sourceRoots.has(path)) {
         sourceRoots.add(path)
@@ -109,20 +106,53 @@ export async function deriveLocalPackages(
   )
 }
 
-async function pnpmWorkspacePatterns(root: string): Promise<string[]> {
-  let raw: string
+async function linkedLocalPackageTargets(
+  root: string,
+  importerRoot: string,
+): Promise<Array<{ readonly label: string; readonly path: string }>> {
+  const modules = resolve(root, importerRoot, "node_modules")
+  let entries
   try {
-    raw = await readFile(resolve(root, "pnpm-workspace.yaml"), "utf8")
+    entries = await readdir(modules, { withFileTypes: true })
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
     throw error
   }
-  const value: unknown = parseYAML(raw)
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("pnpm-workspace.yaml must contain an object")
+  const candidates: Array<{ readonly label: string; readonly path: string }> = []
+  for (const entry of entries.sort((left, right) => compareUTF8(left.name, right.name))) {
+    const path = resolve(modules, entry.name)
+    if (entry.name.startsWith("@") && entry.isDirectory()) {
+      const scoped = await readdir(path, { withFileTypes: true })
+      for (const child of scoped.sort((left, right) => compareUTF8(left.name, right.name))) {
+        const childPath = resolve(path, child.name)
+        if ((await lstat(childPath)).isSymbolicLink()) {
+          await addLinkedLocalPackageTarget(
+            candidates,
+            root,
+            `${entry.name}/${child.name}`,
+            childPath,
+          )
+        }
+      }
+      continue
+    }
+    if ((await lstat(path)).isSymbolicLink()) {
+      await addLinkedLocalPackageTarget(candidates, root, entry.name, path)
+    }
   }
-  const packages = (value as Record<string, unknown>)["packages"]
-  return stringArray(packages, "pnpm-workspace.yaml packages")
+  return candidates
+}
+
+async function addLinkedLocalPackageTarget(
+  candidates: Array<{ readonly label: string; readonly path: string }>,
+  root: string,
+  label: string,
+  path: string,
+): Promise<void> {
+  const target = projectPath(root, await realpath(path))
+  if (inside(target) && !hasNodeModules(target) && !target.startsWith("helmr/")) {
+    candidates.push({ label, path })
+  }
 }
 
 function workspacePatterns(manifest: Record<string, unknown>): string[] {

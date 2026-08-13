@@ -3,9 +3,13 @@ package deployment
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
+	"os"
 	"sort"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -166,6 +170,48 @@ func verifyEncodedProgram(
 	if err != nil {
 		return err
 	}
+	if err := VerifyProgramOutputFile(ctx, file, output); err != nil {
+		return fmt.Errorf("verify encoded program: %w", err)
+	}
+	return nil
+}
+
+// VerifyProgramOutputFile proves that a finalized Program object has the exact
+// bytes and executable closure described by output. It is the shared admission
+// boundary for producer output; callers do not infer validity from a successful
+// build process or from producer metadata.
+func VerifyProgramOutputFile(
+	ctx context.Context,
+	file *os.File,
+	output ProgramOutput,
+) error {
+	if ctx == nil {
+		return errors.New("program verification context is nil")
+	}
+	if file == nil {
+		return errors.New("program verification file is nil")
+	}
+	if err := ValidateProgramOutput(output); err != nil {
+		return err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect Program object: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() != output.Artifact.SizeBytes {
+		return errors.New("program object does not exact-match its descriptor")
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(
+		hash,
+		io.NewSectionReader(file, 0, output.Artifact.SizeBytes),
+	); err != nil {
+		return fmt.Errorf("hash Program object: %w", err)
+	}
+	actualDigest := "sha256:" + hex.EncodeToString(hash.Sum(nil))
+	if actualDigest != output.Artifact.Digest {
+		return errors.New("program object digest does not match its descriptor")
+	}
 	reader, err := newSquashFSArtifactReader(
 		ctx,
 		file,
@@ -173,7 +219,7 @@ func verifyEncodedProgram(
 		programArtifact,
 	)
 	if err != nil {
-		return fmt.Errorf("open encoded program: %w", err)
+		return fmt.Errorf("open Program object: %w", err)
 	}
 	verified, err := verifyProgramArtifact(ctx, artifactInput{
 		Digest:    output.Artifact.Digest,
@@ -182,7 +228,7 @@ func verifyEncodedProgram(
 		Reader:    reader,
 	})
 	if err != nil {
-		return fmt.Errorf("verify encoded program: %w", err)
+		return fmt.Errorf("verify Program object: %w", err)
 	}
 	verifiedIndex, err := CanonicalProgramIndex(verified.Index())
 	if err != nil {
@@ -193,7 +239,7 @@ func verifyEncodedProgram(
 		return err
 	}
 	if !bytes.Equal(verifiedIndex, expectedIndex) {
-		return errors.New("encoded program index changed during verification")
+		return errors.New("program object index does not match its descriptor")
 	}
 	return nil
 }

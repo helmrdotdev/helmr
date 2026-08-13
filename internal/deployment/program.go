@@ -240,13 +240,17 @@ func validateProgramVerification(verified programVerification) error {
 }
 
 func cloneProgramIndex(index ProgramIndex) ProgramIndex {
-	index.Declarations = append([]ProgramIndexDeclaration(nil), index.Declarations...)
+	declarations := make([]ProgramIndexDeclaration, len(index.Declarations))
+	copy(declarations, index.Declarations)
+	index.Declarations = declarations
 	for position := range index.Declarations {
 		index.Declarations[position] = cloneProgramIndexDeclaration(
 			index.Declarations[position],
 		)
 	}
-	index.Queues = append([]QueueInput(nil), index.Queues...)
+	queues := make([]QueueInput, len(index.Queues))
+	copy(queues, index.Queues)
+	index.Queues = queues
 	for position := range index.Queues {
 		if index.Queues[position].ConcurrencyLimit != nil {
 			value := *index.Queues[position].ConcurrencyLimit
@@ -421,12 +425,6 @@ func validProgramLockfile(manager PackageManagerName, lockfile string) bool {
 	default:
 		return false
 	}
-}
-
-func validProgramLockfileName(lockfile string) bool {
-	return validProgramLockfile(PackageManagerNPM, lockfile) ||
-		validProgramLockfile(PackageManagerPNPM, lockfile) ||
-		validProgramLockfile(PackageManagerBun, lockfile)
 }
 
 func CanonicalManifestAndDigest(raw []byte) ([]byte, [sha256.Size]byte, error) {

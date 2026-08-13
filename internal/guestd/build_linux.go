@@ -203,7 +203,6 @@ func handleBuild(
 				"/opt/helmr/program",
 				request.Runtime.NodeVersion,
 				"/opt/helmr/output",
-				string(request.Manager.PackageManager.Name),
 			}...)...),
 			CWD: "/opt/helmr/program",
 		},
@@ -268,7 +267,6 @@ func handleBuild(
 			"/work/config.json",
 			request.Runtime.NodeVersion,
 			"/opt/helmr/output",
-			string(request.Manager.PackageManager.Name),
 		}...)...),
 		CWD: "/opt/helmr/program",
 	}

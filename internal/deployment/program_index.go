@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/sourceid"
 )
 
@@ -225,10 +226,21 @@ func cloneProgramIndexDeclaration(
 ) ProgramIndexDeclaration {
 	if declaration.Task != nil {
 		value := *declaration.Task
+		value.Run = cloneRunManifest(value.Run)
+		if value.Schedule != nil {
+			schedule := *value.Schedule
+			schedule.Workspace.Secrets = make(
+				[]api.WorkspaceSecret,
+				len(value.Schedule.Workspace.Secrets),
+			)
+			copy(schedule.Workspace.Secrets, value.Schedule.Workspace.Secrets)
+			value.Schedule = &schedule
+		}
 		declaration.Task = &value
 	}
 	if declaration.Actor != nil {
 		value := *declaration.Actor
+		value.Run = cloneRunManifest(value.Run)
 		declaration.Actor = &value
 	}
 	if declaration.Sandbox != nil {
@@ -240,6 +252,22 @@ func cloneProgramIndexDeclaration(
 		declaration.Locator = &value
 	}
 	return declaration
+}
+
+func cloneRunManifest(run RunManifest) RunManifest {
+	if run.TTLMs != nil {
+		value := *run.TTLMs
+		run.TTLMs = &value
+	}
+	if run.Retry.MaxAttempts != nil {
+		value := *run.Retry.MaxAttempts
+		run.Retry.MaxAttempts = &value
+	}
+	if run.Retry.Backoff != nil {
+		value := *run.Retry.Backoff
+		run.Retry.Backoff = &value
+	}
+	return run
 }
 
 func buildProgramIndex(
@@ -413,7 +441,8 @@ func programIndexExecutionDeclarations(index ProgramIndex) []ProgramDeclaration 
 }
 
 func cloneQueueInputs(source []QueueInput) []QueueInput {
-	cloned := append([]QueueInput(nil), source...)
+	cloned := make([]QueueInput, len(source))
+	copy(cloned, source)
 	for index := range cloned {
 		if cloned[index].ConcurrencyLimit != nil {
 			value := *cloned[index].ConcurrencyLimit

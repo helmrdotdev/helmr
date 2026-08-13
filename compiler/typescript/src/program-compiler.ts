@@ -21,15 +21,14 @@ async function main(): Promise<void> {
     return
   }
   if (
-    process.argv.length !== 7 ||
+    process.argv.length !== 6 ||
     process.argv[2] === undefined ||
     process.argv[3] === undefined ||
     process.argv[4] === undefined ||
-    process.argv[5] === undefined ||
-    !isManager(process.argv[6])
+    process.argv[5] === undefined
   ) {
     throw new Error(
-      "Program Compiler requires a Program root, canonical config path, exact Node version, output root, and Manager family",
+      "Program Compiler requires a Program root, canonical config path, exact Node version, and output root",
     )
   }
   const root = resolve(process.argv[2])
@@ -39,7 +38,6 @@ async function main(): Promise<void> {
   const compiled = await compileProgram({
     architecture: "x86_64",
     config,
-    manager: process.argv[6],
     nodeVersion: process.argv[4],
     outputRoot: process.argv[5],
     root,
@@ -50,10 +48,6 @@ async function main(): Promise<void> {
     await writeFile(target, contents)
   }
   await writeResult(successfulVerificationResult(compiled.analysis))
-}
-
-function isManager(value: unknown): value is "bun" | "npm" | "pnpm" {
-  return value === "bun" || value === "npm" || value === "pnpm"
 }
 
 async function writeResult(result: VerificationResultFrame): Promise<void> {
