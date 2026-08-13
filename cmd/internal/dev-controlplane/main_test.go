@@ -39,7 +39,7 @@ func TestLoadConfigRejectsSetupTokenWhitespace(t *testing.T) {
 func setDevRegionConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("DATABASE_URL", "postgres://example")
-	t.Setenv("BUILD_POLICY_PATH", "/etc/helmr/build-policy.json")
+	t.Setenv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", "/etc/helmr/runtime.descriptor.json")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 }
 

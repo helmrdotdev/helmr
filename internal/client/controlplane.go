@@ -1,14 +1,11 @@
 package client
 
 import (
-	"bufio"
+	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,9 +13,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 func (c *Client) ListProjects(ctx context.Context) (api.ListProjectsResponse, error) {
@@ -129,81 +124,81 @@ func environmentScopedResourcePath(base string, id string, suffix string) string
 	return base + "/" + url.PathEscape(id) + suffix
 }
 
-func (c *Client) CreateDeployment(
+func (c *Client) PlanDeploymentBundleUploads(
 	ctx context.Context,
-	input api.CreateDeploymentRequest,
-	sourceTarPath string,
+	bundleJSON []byte,
+	scope EnvironmentScopeOptions,
+) (api.DeploymentBundleUploadPlanResponse, error) {
+	path, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/deployment-bundles/upload-plan")
+	if err != nil {
+		return api.DeploymentBundleUploadPlanResponse{}, err
+	}
+	req, err := c.newRequest(ctx, http.MethodPost, path, bytes.NewReader(bundleJSON))
+	if err != nil {
+		return api.DeploymentBundleUploadPlanResponse{}, err
+	}
+	req.Header.Set("content-type", "application/vnd.helmr.deployment-bundle.v0+json")
+	var response api.DeploymentBundleUploadPlanResponse
+	if err := c.doJSON(req, &response); err != nil {
+		return api.DeploymentBundleUploadPlanResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) UploadDeploymentBundleObject(
+	ctx context.Context,
+	upload api.DeploymentBundleUpload,
+	objectPath string,
+) error {
+	if upload.Method != http.MethodPut || strings.TrimSpace(upload.URL) == "" {
+		return errors.New("deployment object upload plan is invalid")
+	}
+	file, err := os.Open(objectPath)
+	if err != nil {
+		return fmt.Errorf("open deployment object: %w", err)
+	}
+	defer file.Close()
+	req, err := http.NewRequestWithContext(ctx, upload.Method, upload.URL, file)
+	if err != nil {
+		return err
+	}
+	for name, value := range upload.Headers {
+		if strings.EqualFold(name, "authorization") {
+			return errors.New("deployment object upload plan contains a credential header")
+		}
+		req.Header.Set(name, value)
+	}
+	response, err := c.transport.Do(req)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	_, copyErr := io.Copy(io.Discard, response.Body)
+	if copyErr != nil {
+		return copyErr
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("deployment object upload returned %s", response.Status)
+	}
+	return nil
+}
+
+func (c *Client) FinalizeDeploymentBundle(
+	ctx context.Context,
+	input api.FinalizeDeploymentBundleRequest,
 	scope EnvironmentScopeOptions,
 ) (api.DeploymentResponse, error) {
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
-	if input.IdempotencyKey == "" {
-		return api.DeploymentResponse{}, errors.New("deployment idempotency key is required")
+	input.BundleDigest = strings.TrimSpace(input.BundleDigest)
+	if input.IdempotencyKey == "" || input.BundleDigest == "" {
+		return api.DeploymentResponse{}, errors.New("deployment idempotency key and bundle digest are required")
 	}
-	file, err := os.Open(sourceTarPath)
-	if err != nil {
-		return api.DeploymentResponse{}, fmt.Errorf("open deployment source archive: %w", err)
-	}
-	defer file.Close()
-	digest, err := deploymentSourceDigest(file)
-	if err != nil {
-		return api.DeploymentResponse{}, fmt.Errorf("hash deployment source archive: %w", err)
-	}
-	if input.ContentHash = strings.TrimSpace(input.ContentHash); input.ContentHash == "" {
-		input.ContentHash = digest
-	} else if input.ContentHash != digest {
-		return api.DeploymentResponse{}, fmt.Errorf("deployment source archive digest %s does not match metadata content_hash %s", digest, input.ContentHash)
-	}
-	path, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/deployments")
+	path, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/deployment-bundles/finalize")
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	var lastErr error
-	for range 2 {
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return api.DeploymentResponse{}, fmt.Errorf("rewind deployment source archive: %w", err)
-		}
-		response, err := c.createDeploymentAttempt(ctx, path, input, file)
-		if err == nil {
-			return response, nil
-		}
-		lastErr = err
-		var httpErr *httpclient.Error
-		if errors.As(err, &httpErr) || ctx.Err() != nil {
-			return api.DeploymentResponse{}, err
-		}
-	}
-	return api.DeploymentResponse{}, lastErr
-}
-
-func (c *Client) createDeploymentAttempt(
-	ctx context.Context,
-	path string,
-	input api.CreateDeploymentRequest,
-	source io.Reader,
-) (api.DeploymentResponse, error) {
-	reader, pipeWriter := io.Pipe()
-	multipartWriter := multipart.NewWriter(pipeWriter)
-	writeDone := make(chan error, 1)
-	go func() {
-		writeErr := writeDeploymentMultipart(multipartWriter, input, source)
-		_ = pipeWriter.CloseWithError(writeErr)
-		writeDone <- writeErr
-	}()
-	req, err := c.newRequest(ctx, http.MethodPost, path, reader)
-	if err != nil {
-		_ = reader.Close()
-		<-writeDone
-		return api.DeploymentResponse{}, err
-	}
-	req.Header.Set("content-type", multipartWriter.FormDataContentType())
 	var response api.DeploymentResponse
-	if err := c.doJSON(req, &response); err != nil {
-		_ = reader.Close()
-		<-writeDone
-		return api.DeploymentResponse{}, err
-	}
-	_ = reader.Close()
-	if err := <-writeDone; err != nil {
+	if err := c.postJSON(ctx, path, input, &response); err != nil {
 		return api.DeploymentResponse{}, err
 	}
 	return response, nil
@@ -229,49 +224,6 @@ func (c *Client) GetDeployment(ctx context.Context, deploymentID string, scope E
 	return response, nil
 }
 
-func (c *Client) FollowDeploymentEvents(ctx context.Context, deploymentID string, scope EnvironmentScopeOptions, cursor string, handle func(api.RunEvent) error) error {
-	if err := ids.Validate(deploymentID); err != nil {
-		return err
-	}
-	basePath, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/deployments")
-	if err != nil {
-		return err
-	}
-	values := url.Values{}
-	values.Set("follow", "1")
-	path := environmentScopedResourcePath(basePath, deploymentID, "/events") + "?" + values.Encode()
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("accept", "text/event-stream")
-	if cursor != "" {
-		req.Header.Set("Last-Event-ID", cursor)
-	}
-	res, err := c.transport.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	scanner := bufio.NewScanner(res.Body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		data, ok := strings.CutPrefix(line, "data: ")
-		if !ok {
-			continue
-		}
-		var event api.RunEvent
-		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			return err
-		}
-		if err := handle(event); err != nil {
-			return err
-		}
-	}
-	return scanner.Err()
-}
-
 func (c *Client) PromoteDeployment(ctx context.Context, deployment string, input api.PromoteDeploymentRequest, scope EnvironmentScopeOptions) (api.DeploymentResponse, error) {
 	if err := ids.Validate(deployment); err != nil {
 		return api.DeploymentResponse{}, err
@@ -286,36 +238,6 @@ func (c *Client) PromoteDeployment(ctx context.Context, deployment string, input
 		return api.DeploymentResponse{}, err
 	}
 	return response, nil
-}
-
-func deploymentSourceDigest(source io.Reader) (string, error) {
-	hash := sha256.New()
-	if _, err := io.Copy(hash, source); err != nil {
-		return "", err
-	}
-	return sha256sum.DigestHash(hash), nil
-}
-
-func writeDeploymentMultipart(writer *multipart.Writer, input api.CreateDeploymentRequest, source io.Reader) error {
-	metadata, err := json.Marshal(input)
-	if err != nil {
-		_ = writer.Close()
-		return fmt.Errorf("encode deployment metadata: %w", err)
-	}
-	if err := writer.WriteField("metadata", string(metadata)); err != nil {
-		_ = writer.Close()
-		return err
-	}
-	part, err := writer.CreateFormFile("deployment_source", "deployment-source.tar")
-	if err != nil {
-		_ = writer.Close()
-		return err
-	}
-	if _, err := io.Copy(part, source); err != nil {
-		_ = writer.Close()
-		return err
-	}
-	return writer.Close()
 }
 
 type SecretOptions struct {

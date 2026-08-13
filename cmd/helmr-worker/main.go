@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,13 +12,6 @@ import (
 func main() {
 	if handled, err := deployment.RunVerifierChild(os.Args); handled {
 		if err != nil {
-			os.Exit(1)
-		}
-		return
-	}
-	if handled, err := runPlatformAcquisitionChild(context.Background(), os.Args); handled {
-		if err != nil {
-			_, _ = os.Stderr.WriteString(err.Error() + "\n")
 			os.Exit(1)
 		}
 		return
@@ -49,12 +41,6 @@ func main() {
 		case "status":
 			if err := runStatus(log); err != nil {
 				log.Error("get worker status", "error", err)
-				os.Exit(1)
-			}
-			return
-		case "release":
-			if err := runReleaseCommand(context.Background(), os.Args[2:]); err != nil {
-				log.Error("install release", "error", err)
 				os.Exit(1)
 			}
 			return

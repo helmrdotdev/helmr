@@ -22,7 +22,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/controlplane"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -43,14 +42,12 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		TX:                    panicTxBeginner{},
 		Auth:                  controlplane.NewDBAuthenticator(store),
 		SecretDelivery:        controlplanetestSecretDeliveryOpener{},
-		RegistryCredentials:   controlplanetestRegistryCredentialOpener{},
 		WorkspaceFencingKey:   controlplanetestWorkspaceFencingKey(),
 		TokenCredentialKey:    controlplanetestTokenCredentialKey(),
 		AuthKey:               make([]byte, auth.RootKeySize),
 		WorkerTokenSigningKey: make([]byte, auth.WorkerTokenSigningKeySize),
 		PublicURL:             publicURL,
 		TelemetryReader:       controlplanetestTelemetryReader{store: store},
-		PlatformArtifactLocks: controlplanetestPlatformArtifactLocker{},
 		MagicLinkDebugURLs:    true,
 		Mailer:                configuredEmailSender(log, config.ControlPlane{EmailProvider: config.EmailProviderNone}),
 	})
@@ -225,16 +222,6 @@ func TestServeControlPlaneForceClosesAfterDrainTimeout(t *testing.T) {
 	}
 }
 
-type controlplanetestPlatformArtifactLocker struct{}
-
-func (controlplanetestPlatformArtifactLocker) With(
-	_ context.Context,
-	_ []string,
-	fn func() error,
-) error {
-	return fn()
-}
-
 type controlplanetestSecretDeliveryOpener struct{}
 
 func (controlplanetestSecretDeliveryOpener) OpenDeliveries(
@@ -242,16 +229,6 @@ func (controlplanetestSecretDeliveryOpener) OpenDeliveries(
 	[]secret.DeliveryEnvelope,
 ) ([]secret.DeliveryMaterial, error) {
 	return nil, nil
-}
-
-type controlplanetestRegistryCredentialOpener struct{}
-
-func (controlplanetestRegistryCredentialOpener) OpenRegistryCredential(
-	uuid.UUID,
-	db.Secret,
-	db.SecretVersion,
-) ([]byte, error) {
-	return []byte("registry-password"), nil
 }
 
 func controlplanetestWorkspaceFencingKey() workspace.FencingKey {
@@ -285,18 +262,7 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("REDIS_URL", "redis://"+redisServer.Addr()+"/0")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:1")
 	t.Setenv("CAS_URI", "s3://helmr-smoke")
-	buildPolicyPath := t.TempDir() + "/build-policy.json"
-	buildPolicy := smokeBuildPolicy(t)
-	if err := os.WriteFile(buildPolicyPath, []byte(buildPolicy), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("BUILD_POLICY_PATH", buildPolicyPath)
 	t.Setenv("PLATFORM_STORE_URI", "s3://helmr-smoke-runtime")
-	originalBuildPolicyLoader := loadControlPlaneBuildPolicy
-	loadControlPlaneBuildPolicy = func(string) (*deployment.BuildPolicy, error) {
-		return deployment.ParseBuildPolicy([]byte(buildPolicy))
-	}
-	t.Cleanup(func() { loadControlPlaneBuildPolicy = originalBuildPolicyLoader })
 	t.Setenv("WORKER_TOKEN_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
 	t.Setenv("TOKEN_CREDENTIAL_KEY", "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=")
 	t.Setenv("SETUP_TOKEN", "setup-token")
@@ -427,57 +393,6 @@ func newSmokeDatabase(t *testing.T, ctx context.Context) string {
 		t.Fatal(err)
 	}
 	return databaseURL
-}
-
-func smokeBuildPolicy(t *testing.T) string {
-	t.Helper()
-	digest := func(character string) string {
-		return "sha256:" + strings.Repeat(character, 64)
-	}
-	raw, err := deployment.ComposeBuildPolicy(
-		deployment.RuntimeInputs{
-			Harness: deployment.ArtifactDescriptor{
-				Digest: digest("1"), MediaType: deployment.PlatformTreeInputMediaType, SizeBytes: 4096,
-			},
-		},
-		deployment.ToolchainInputs{
-			Base: deployment.ArtifactDescriptor{
-				Digest: digest("2"), MediaType: deployment.PlatformTreeInputMediaType, SizeBytes: 4096,
-			},
-			Compiler: deployment.CompilerInputs{
-				APIVersion: "helmr.compiler.v0",
-				ConfigEvaluator: deployment.CompilerEntrypoint{
-					APIVersion: deployment.ConfigEvaluatorContract,
-					Digest:     digest("3"), Entrypoint: "/nix/helmr/config-evaluator.mjs",
-				},
-				Esbuild: deployment.EsbuildInputs{
-					APIPackageDigest: digest("4"), BinaryDigest: digest("5"),
-					BinaryPath: "/nix/helmr/esbuild", PackagePath: "/nix/node_modules/esbuild",
-					Version: "0.28.1",
-				},
-				OptionsContractDigest: digest("6"),
-				Output: deployment.CompilerOutputContract{
-					Aggregate: "analysis-only", FinalModules: "independent", SourceMaps: "external",
-				},
-				ProgramCompiler: deployment.CompilerEntrypoint{
-					APIVersion: "helmr.compiler.v0",
-					Digest:     digest("7"), Entrypoint: "/nix/helmr/program-compiler.mjs",
-				},
-				Source: deployment.CompilerSourceContract{
-					DeclarationExtensions: []string{".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"},
-					PackageDependencies:   "external",
-					Semantics:             "pinned-esbuild",
-					WorkspaceDependencies: "bundled",
-				},
-			},
-		},
-		[]byte("node release keyring"),
-		[]string{"00112233445566778899AABBCCDDEEFF00112233"},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(raw)
 }
 
 func freeSmokeAddr(t *testing.T) string {

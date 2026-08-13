@@ -207,10 +207,6 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if err := s.validateWorkerBuildPolicy(capabilities); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
 	worker := workerFromContext(r.Context())
 	_, err = s.db.ActivateWorkerInstance(
 		r.Context(), workerActivationParams(worker, capabilities),
@@ -485,9 +481,6 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 		readiness.Run = workerRoleReadiness(state, state.RunReady, state.RunPausedReason)
 		readiness.Runtime = workerRoleReadiness(state, state.RuntimeReady, state.RuntimePausedReason)
 	}
-	if state.SupportsBuild {
-		readiness.Build = workerRoleReadiness(state, state.BuildReady, state.BuildPausedReason)
-	}
 	status, err := workerPublicStatus(state.State)
 	if err != nil {
 		s.log.Error("project worker status", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
@@ -572,15 +565,15 @@ func workerActivationParams(
 		RuntimeIdentityID: c.RuntimeID, RuntimeArch: c.RuntimeArch, VMRuntimeContract: c.VMRuntimeContract,
 		KernelDigest: c.KernelDigest, InitramfsDigest: c.InitramfsDigest, RootfsDigest: c.RootfsDigest,
 		SupervisorVersion: c.WorkerVersion,
-		SupportsRun:       c.SupportsRun, SupportsBuild: c.SupportsBuild,
+		SupportsRun:       c.SupportsRun, SupportsBuild: false,
 		SubstrateFormat: c.SubstrateFormat, SubstrateContract: c.SubstrateContract,
 		EpochCPUMillis: c.MaxVCPUs * 1000, EpochMemoryBytes: c.MaxMemoryMiB * 1024 * 1024,
 		EpochGuestEphemeralDiskBytes: c.GuestEphemeralDiskBytes,
-		EpochBuildCacheBytes:         c.BuildCacheBytes, EpochArtifactCacheBytes: c.ArtifactCacheBytes,
+		EpochBuildCacheBytes:         0, EpochArtifactCacheBytes: c.ArtifactCacheBytes,
 		PerVMCPUMillis: c.VMMilliCPU, PerVMMemoryBytes: c.VMMemoryMiB * 1024 * 1024,
 		PerVMGuestEphemeralDiskBytes: c.VMGuestEphemeralDiskBytes,
 		MaxVMSlots:                   c.ExecutionSlotsAvailable,
-		MaxBuildExecutors:            c.MaxBuildExecutors, MaxRuntimeStarts: runStarts,
+		MaxBuildExecutors:            0, MaxRuntimeStarts: runStarts,
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
 		WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
 	}
@@ -605,9 +598,6 @@ func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabi
 		VMGuestEphemeralDiskBytes: input.VMGuestEphemeralDiskBytes,
 		ExecutionSlotsAvailable:   input.ExecutionSlotsAvailable,
 		SupportsRun:               input.SupportsRun,
-		SupportsBuild:             input.SupportsBuild,
-		MaxBuildExecutors:         input.MaxBuildExecutors,
-		BuildCacheBytes:           input.BuildCacheBytes,
 		ArtifactCacheBytes:        input.ArtifactCacheBytes,
 	}
 	if capabilities.RuntimeID == "" {
@@ -667,14 +657,8 @@ func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabi
 	if capabilities.ExecutionSlotsAvailable <= 0 {
 		return workerapi.Capabilities{}, errors.New("worker execution_slots_available must be positive")
 	}
-	if !capabilities.SupportsRun && !capabilities.SupportsBuild {
-		return workerapi.Capabilities{}, errors.New("worker must support run, build, or both")
-	}
-	if capabilities.SupportsBuild && capabilities.MaxBuildExecutors != 1 {
-		return workerapi.Capabilities{}, errors.New("worker max_build_executors must be one for build role")
-	}
-	if !capabilities.SupportsBuild && capabilities.MaxBuildExecutors != 0 {
-		return workerapi.Capabilities{}, errors.New("worker max_build_executors must be zero without build role")
+	if !capabilities.SupportsRun {
+		return workerapi.Capabilities{}, errors.New("worker must support run")
 	}
 	if capabilities.SupportsRun {
 		if capabilities.SubstrateFormat == "" {
@@ -687,14 +671,4 @@ func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabi
 		return workerapi.Capabilities{}, errors.New("worker without run role must not report a substrate contract")
 	}
 	return capabilities, nil
-}
-
-func (s *Server) validateWorkerBuildPolicy(capabilities workerapi.Capabilities) error {
-	if !capabilities.SupportsBuild {
-		return nil
-	}
-	if s.buildPolicy == nil {
-		return errors.New("build policy is not configured")
-	}
-	return nil
 }

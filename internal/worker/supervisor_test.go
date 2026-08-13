@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -406,35 +405,6 @@ func TestSupervisorTerminatesEpochOnFatalWorkError(t *testing.T) {
 	}
 }
 
-func TestSupervisorRefusesActivationWithBuildResidue(t *testing.T) {
-	controlPlane := &testControlPlane{}
-	owner := vm.Owner{Kind: vm.OwnerBuild, ID: "019c10d5-a6f7-7af1-8f5f-000000000701"}
-	s, err := New(Config{
-		ControlPlane: controlPlane,
-		Capabilities: workerapi.Capabilities{
-			SupportsBuild:     true,
-			MaxBuildExecutors: 1,
-		},
-		Recover: func(context.Context) (RecoveryEvidence, error) {
-			return RecoveryEvidence{
-				ObservedAt:        time.Now().UTC(),
-				Quarantined:       []string{owner.String()},
-				QuarantinedOwners: []vm.Owner{owner},
-			}, nil
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = s.Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "quarantined build residue") {
-		t.Fatalf("error = %v, want build residue rejection", err)
-	}
-	if controlPlane.activated.Load() {
-		t.Fatal("worker activated with build residue")
-	}
-}
-
 func TestSupervisorRefusesActivationWithUnownedResidue(t *testing.T) {
 	controlPlane := &testControlPlane{}
 	s, err := New(Config{
@@ -556,40 +526,6 @@ func TestSupervisorHardAdmissionPausesClaimsButNotShutdown(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("paused supervisor did not drain")
-	}
-}
-
-func TestSupervisorObservationKeepsBuildOnlyAdmissionPause(t *testing.T) {
-	now := time.Now()
-	health := healthyHost(now)
-	health.ProgramVerifierHealthy = false
-	evaluator, err := NewHardAdmission(HardAdmissionConfig{
-		Probe:          &staticHealthProbe{health: health},
-		DiskFloorBytes: 1, FDHeadroom: 1, RuntimeSlotCount: 1,
-		Now: func() time.Time { return now },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	evaluator.Evaluate(context.Background(), AdmissionCheck{
-		Consumer: "build", State: StateActive,
-	})
-	supervisor, err := New(Config{
-		ControlPlane: &testControlPlane{}, AdmissionEvaluator: evaluator,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	observation := supervisor.observation(StateActive, RecoveryEvidence{})
-	if observation.RunPausedReason != "" ||
-		observation.RuntimePausedReason != "" ||
-		observation.BuildPausedReason != string(AdmissionProgramVerifierUnavailable) {
-		t.Fatalf(
-			"domain pauses = run:%q runtime:%q build:%q",
-			observation.RunPausedReason,
-			observation.RuntimePausedReason,
-			observation.BuildPausedReason,
-		)
 	}
 }
 

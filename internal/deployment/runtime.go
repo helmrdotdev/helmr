@@ -15,6 +15,11 @@ import (
 )
 
 const (
+	NodeNoStripTypes             = "--no-strip-types"
+	NodeNoExperimentalStripTypes = "--no-experimental-strip-types"
+)
+
+const (
 	RuntimeDescriptorFormatVersion = 0
 	RuntimeMetadataFormatVersion   = 0
 	RuntimeArtifactMediaType       = "application/vnd.helmr.runtime.v0+squashfs"
@@ -96,6 +101,20 @@ func ValidateRuntimeMetadata(metadata RuntimeMetadata) error {
 		return errors.New("runtime metadata Program Node flags do not match the Node ABI contract")
 	}
 	return nil
+}
+
+func NodeProgramFlags(version string) ([]string, error) {
+	major, minor, patch, ok := parseReleaseVersion(version)
+	if !ok {
+		return nil, fmt.Errorf("the Node.js version %q is not an exact release", version)
+	}
+	if major == 24 && compareReleaseVersion(major, minor, patch, "24.12.0") >= 0 {
+		return []string{NodeNoStripTypes, "--enable-source-maps"}, nil
+	}
+	if major == 22 || major == 24 {
+		return []string{NodeNoExperimentalStripTypes, "--enable-source-maps"}, nil
+	}
+	return nil, fmt.Errorf("the Node.js version %q has no program launch contract", version)
 }
 
 func RuntimeArchitectureFromGo(value string) (RuntimeArchitecture, error) {

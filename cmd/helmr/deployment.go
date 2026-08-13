@@ -39,7 +39,7 @@ func deploymentListCommand() *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			for _, deployment := range response.Deployments {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", deployment.ID, deployment.Version, deployment.Status)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", deployment.ID, deployment.Version, deployment.BundleDigest)
 			}
 			return nil
 		},
@@ -75,7 +75,7 @@ func deploymentGetCommand() *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Deployment: %s\n", deployment.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "Version:    %s\n", deployment.Version)
-			fmt.Fprintf(cmd.OutOrStdout(), "Status:     %s\n", deployment.Status)
+			fmt.Fprintf(cmd.OutOrStdout(), "Bundle:     %s\n", deployment.BundleDigest)
 			return nil
 		},
 	}

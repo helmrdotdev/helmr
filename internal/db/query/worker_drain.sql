@@ -44,11 +44,6 @@ WITH target AS MATERIALIZED (
               AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
        )
        AND NOT EXISTS (
-           SELECT 1 FROM deployment_build_leases
-            WHERE deployment_build_leases.worker_instance_id = drain_target.id
-              AND deployment_build_leases.state IN ('assigned', 'starting', 'running')
-       )
-       AND NOT EXISTS (
            SELECT 1 FROM runtime_instances
             WHERE runtime_instances.worker_instance_id = drain_target.id
               AND runtime_instances.reclaimed_at IS NULL

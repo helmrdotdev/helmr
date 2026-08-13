@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -24,7 +26,7 @@ const (
 type operation string
 
 const (
-	operationDeploymentCreate    operation = "deployment.create"
+	operationDeploymentFinalize  operation = "deployment.finalize"
 	operationSecretCreate        operation = "secret.create"
 	operationSecretRotate        operation = "secret.rotate"
 	operationSecretRevoke        operation = "secret.revoke"
@@ -88,16 +90,8 @@ type ActorStartFingerprint struct {
 	ManagedRunTags        []string
 }
 
-type DeploymentCreateFingerprint struct {
-	SourceDigest     string `json:"sourceDigest"`
-	LockfileDigest   string `json:"lockfileDigest"`
-	LockfileName     string `json:"lockfileName"`
-	NodeVersion      string `json:"nodeVersion"`
-	ManagerName      string `json:"managerName"`
-	ManagerVersion   string `json:"managerVersion"`
-	ManagerIntegrity string `json:"managerIntegrity,omitempty"`
-	BuildContract    string `json:"buildContract"`
-	ImageCacheMode   string `json:"imageCacheMode"`
+type DeploymentFinalizeFingerprint struct {
+	BundleDigest string `json:"bundleDigest"`
 }
 
 type TokenCreateFingerprint struct {
@@ -183,15 +177,27 @@ type ConflictError struct {
 	ClaimID uuid.UUID
 }
 
+func deploymentDigestBytes(value string) ([]byte, error) {
+	hexValue, ok := strings.CutPrefix(value, "sha256:")
+	if !ok || len(hexValue) != sha256.Size*2 || strings.ToLower(hexValue) != hexValue {
+		return nil, errors.New("deployment bundle digest must be a lowercase SHA-256 digest")
+	}
+	decoded, err := hex.DecodeString(hexValue)
+	if err != nil {
+		return nil, errors.New("deployment bundle digest must be a lowercase SHA-256 digest")
+	}
+	return decoded, nil
+}
+
 func (e ConflictError) Error() string {
 	return fmt.Sprintf("idempotency key conflicts with claim %s", e.ClaimID)
 }
 
-func NewDeploymentCreateRequest(
+func NewDeploymentFinalizeRequest(
 	environmentID uuid.UUID,
 	projectID uuid.UUID,
 	key string,
-	fingerprint DeploymentCreateFingerprint,
+	fingerprint DeploymentFinalizeFingerprint,
 ) (Request, error) {
 	if environmentID == uuid.Nil {
 		return nil, errors.New("idempotency environment is required")
@@ -199,24 +205,24 @@ func NewDeploymentCreateRequest(
 	if projectID == uuid.Nil {
 		return nil, errors.New("project ID is required")
 	}
-	if fingerprint.ImageCacheMode != "prefer" && fingerprint.ImageCacheMode != "bypass" {
-		return nil, errors.New("deployment image cache mode is invalid")
+	if _, err := deploymentDigestBytes(fingerprint.BundleDigest); err != nil {
+		return nil, err
 	}
 	encoded, err := json.Marshal(fingerprint)
 	if err != nil {
-		return nil, fmt.Errorf("encode deployment creation fingerprint: %w", err)
+		return nil, fmt.Errorf("encode deployment finalization fingerprint: %w", err)
 	}
 	canonical, err := jsoncanon.Transform(encoded)
 	if err != nil {
-		return nil, fmt.Errorf("canonicalize deployment creation fingerprint: %w", err)
+		return nil, fmt.Errorf("canonicalize deployment finalization fingerprint: %w", err)
 	}
 	return sealedRequest{value: request{
 		environmentID: environmentID,
-		operation:     operationDeploymentCreate,
+		operation:     operationDeploymentFinalize,
 		scope:         bytes.Clone(projectID[:]),
 		key:           key,
 		fingerprint: func() ([sha256.Size]byte, error) {
-			return operationFingerprint(operationDeploymentCreate, canonical), nil
+			return operationFingerprint(operationDeploymentFinalize, canonical), nil
 		},
 	}}, nil
 }
@@ -1093,7 +1099,7 @@ func (t *Transaction) Acquire(ctx context.Context, input Request) (Result, error
 
 func supportedOperation(value operation) bool {
 	switch value {
-	case operationDeploymentCreate, operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationRunMetadata,
+	case operationDeploymentFinalize, operationSecretCreate, operationSecretRotate, operationSecretRevoke, operationRunMetadata,
 		operationActorStart, operationActorInputSend, operationActorOutputAppend, operationActorClose,
 		operationTaskStart, operationTaskChildInvoke, operationTokenCreate, operationTokenComplete, operationTokenCancel,
 		operationWorkspaceCreate, operationWorkspaceExec, operationWorkspaceDelete, operationWorkspaceImageBuild:

@@ -6,6 +6,18 @@ import (
 	"testing"
 )
 
+func testCompilerInputs() CompilerInputs {
+	return CompilerInputs{
+		APIVersion:            "helmr.compiler.v0",
+		ConfigEvaluator:       CompilerEntrypoint{APIVersion: ConfigEvaluatorContract, Digest: testDigest("config evaluator"), Entrypoint: "/nix/helmr/config-evaluator.mjs"},
+		Esbuild:               EsbuildInputs{APIPackageDigest: testDigest("esbuild api"), BinaryDigest: testDigest("esbuild binary"), BinaryPath: "/nix/helmr/esbuild", PackagePath: "/nix/node_modules/esbuild", Version: "0.28.1"},
+		OptionsContractDigest: testDigest("compiler options contract"),
+		Output:                CompilerOutputContract{Aggregate: "analysis-only", FinalModules: "independent", SourceMaps: "external"},
+		ProgramCompiler:       CompilerEntrypoint{APIVersion: "helmr.compiler.v0", Digest: testDigest("program compiler"), Entrypoint: "/nix/helmr/program-compiler.mjs"},
+		Source:                CompilerSourceContract{DeclarationExtensions: []string{".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"}, PackageDependencies: "external", Semantics: "pinned-esbuild", WorkspaceDependencies: "bundled"},
+	}
+}
+
 func TestProgramVerificationRoundTrip(t *testing.T) {
 	canonical := canonicalVerifierProgramVerification(t)
 	verified, err := parseProgramVerification(canonical)

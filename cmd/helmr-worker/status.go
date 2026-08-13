@@ -52,9 +52,6 @@ func runStatus(log *slog.Logger) error {
 			return fmt.Errorf("worker runtime role is not ready: %s", workerPauseReason(status.Readiness.Runtime))
 		}
 	}
-	if supportsBuild && (status.Readiness.Build == nil || !status.Readiness.Build.Ready) {
-		return fmt.Errorf("worker build role is not ready: %s", workerPauseReason(status.Readiness.Build))
-	}
 	log.Info("worker ready", "worker_instance_id", status.WorkerInstanceID, "active_executions", status.ActiveExecutions)
 	return nil
 }

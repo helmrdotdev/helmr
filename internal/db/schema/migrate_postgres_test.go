@@ -108,8 +108,6 @@ func assertPrimitiveLifecycleSchema(
 		"run_lease_state",
 		"runtime_desired_state",
 		"runtime_observed_state",
-		"deployment_build_lease_state",
-		"deployment_status",
 		"workspace_state",
 		"workspace_desired_state",
 		"workspace_dirty_state",
@@ -145,8 +143,6 @@ func assertPrimitiveLifecycleSchema(
 		"run_leases",
 		"runtime_instances",
 		"runtime_instances",
-		"deployment_build_leases",
-		"deployments",
 		"workspaces",
 		"workspaces",
 		"workspaces",
@@ -171,8 +167,6 @@ func assertPrimitiveLifecycleSchema(
 		"state",
 		"desired_state",
 		"observed_state",
-		"state",
-		"status",
 		"state",
 		"desired_state",
 		"dirty_state",
@@ -906,7 +900,18 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 
 func assertDeploymentBuildCapacitySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
-	var deploymentProjections int
+	var legacyRelations int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM pg_class
+		 WHERE relnamespace = 'public'::regnamespace
+		   AND relname = ANY($1::text[])
+	`, []string{"deployment_build_leases", "registry_credential_resolutions"}).Scan(&legacyRelations); err != nil {
+		t.Fatal(err)
+	}
+	if legacyRelations != 0 {
+		t.Fatalf("legacy deployment build relations = %d, want 0", legacyRelations)
+	}
+	var legacyColumns int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
 		  FROM information_schema.columns
@@ -914,34 +919,15 @@ func assertDeploymentBuildCapacitySchema(t *testing.T, ctx context.Context, pool
 		   AND table_name = 'deployments'
 		   AND column_name = ANY($1::text[])
 	`, []string{
-		"build_architecture",
-		"build_requested_cpu_millis",
-		"build_requested_memory_bytes",
-		"build_requested_guest_ephemeral_disk_bytes",
-		"build_requested_executors",
-	}).Scan(&deploymentProjections); err != nil {
+		"status", "build_region_id", "build_node_version", "build_runtime_digest",
+		"build_toolchain_digest", "build_manager_name", "build_manager_version",
+		"build_manager_digest", "build_contract", "image_cache_mode",
+		"deployment_source_artifact_id", "failure",
+	}).Scan(&legacyColumns); err != nil {
 		t.Fatal(err)
 	}
-	if deploymentProjections != 0 {
-		t.Fatalf("deployment build projections = %d, want 0", deploymentProjections)
-	}
-	var leaseResources int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM information_schema.columns
-		 WHERE table_schema = 'public'
-		   AND table_name = 'deployment_build_leases'
-		   AND column_name = ANY($1::text[])
-	`, []string{
-		"requested_cpu_millis",
-		"requested_memory_bytes",
-		"requested_guest_ephemeral_disk_bytes",
-		"requested_build_executors",
-	}).Scan(&leaseResources); err != nil {
-		t.Fatal(err)
-	}
-	if leaseResources != 4 {
-		t.Fatalf("build lease resource facts = %d, want 4", leaseResources)
+	if legacyColumns != 0 {
+		t.Fatalf("legacy deployment build columns = %d, want 0", legacyColumns)
 	}
 }
 
@@ -955,37 +941,29 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		   AND table_name = 'deployments'
 		   AND column_name = ANY($1::text[])
 	`, []string{
-		"build_node_version",
-		"build_runtime_digest",
-		"build_toolchain_digest",
-		"build_manager_name",
-		"build_manager_version",
-		"build_manager_digest",
-		"build_contract",
+		"bundle_digest",
+		"runtime_artifact_digest",
 		"program_artifact_id",
 		"program_index_digest",
+		"queue_config",
 	}).Scan(&deploymentColumns); err != nil {
 		t.Fatal(err)
 	}
-	if deploymentColumns != 9 {
-		t.Fatalf("deployment authority columns = %d, want 9", deploymentColumns)
+	if deploymentColumns != 5 {
+		t.Fatalf("deployment authority columns = %d, want 5", deploymentColumns)
 	}
-	var constraints int
+	var bundleUniqueness int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
 		  FROM pg_constraint
 		 WHERE conrelid = 'deployments'::regclass
-		   AND conname = ANY($1::text[])
-	`, []string{
-		"deployments_platform_pins_check",
-		"deployments_platform_pin_state_check",
-		"deployments_build_lease_pin_check",
-		"deployments_program_tuple_check",
-	}).Scan(&constraints); err != nil {
+		   AND contype = 'u'
+		   AND pg_get_constraintdef(oid) = 'UNIQUE (environment_id, bundle_digest)'
+	`).Scan(&bundleUniqueness); err != nil {
 		t.Fatal(err)
 	}
-	if constraints != 4 {
-		t.Fatalf("deployment tuple constraints = %d, want 4", constraints)
+	if bundleUniqueness != 1 {
+		t.Fatalf("deployment bundle uniqueness constraints = %d, want 1", bundleUniqueness)
 	}
 	var definitionKinds int
 	if err := pool.QueryRow(ctx, `
@@ -1081,7 +1059,6 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	}
 
 	requiredIndexes := []string{
-		"deployment_build_leases_deployment_active_uidx",
 		"run_leases_run_active_uidx",
 		"run_leases_runtime_active_uidx",
 		"runtime_instances_workspace_active_uidx",
@@ -1155,15 +1132,12 @@ func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 		  FROM pg_indexes
 		 WHERE schemaname = 'public'
 		   AND tablename = 'meter_events'
-		   AND indexname = ANY(ARRAY[
-		       'meter_events_run_lease_idempotency_uidx',
-		       'meter_events_deployment_build_lease_idempotency_uidx'
-		   ])
+		   AND indexname = 'meter_events_run_lease_idempotency_uidx'
 	`).Scan(&meterIdempotencyIndexes); err != nil {
 		t.Fatal(err)
 	}
-	if meterIdempotencyIndexes != 2 {
-		t.Fatalf("meter source idempotency indexes = %d, want 2", meterIdempotencyIndexes)
+	if meterIdempotencyIndexes != 1 {
+		t.Fatalf("meter source idempotency indexes = %d, want 1", meterIdempotencyIndexes)
 	}
 }
 

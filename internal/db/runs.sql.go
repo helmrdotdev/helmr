@@ -938,7 +938,6 @@ WITH selected_target AS MATERIALIZED (
       JOIN deployments
         ON deployments.environment_id = definitions.environment_id
        AND deployments.id = definitions.deployment_id
-       AND deployments.status = 'deployed'
       JOIN workspaces
         ON workspaces.environment_id = environments.id
        AND workspaces.id = $2
@@ -2063,10 +2062,9 @@ SELECT task_definition.id AS task_definition_id,
    AND deployments.project_id = environments.project_id
    AND deployments.environment_id = environments.id
    AND deployments.id = task_definition.deployment_id
-   AND deployments.status = 'deployed'
    AND deployments.program_artifact_id IS NOT NULL
    AND deployments.program_index_digest IS NOT NULL
-   AND deployments.build_runtime_digest IS NOT NULL
+   AND deployments.runtime_artifact_digest IS NOT NULL
  WHERE environments.org_id = $2
    AND environments.project_id = $3
    AND environments.id = $4

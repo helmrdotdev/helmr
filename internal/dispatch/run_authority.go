@@ -692,9 +692,8 @@ SELECT deployments.id
    AND entrypoint_definitions.kind = $4
  WHERE deployments.environment_id = $1
    AND deployments.id = $2
-   AND deployments.status = 'deployed'
    AND deployments.program_artifact_id IS NOT NULL
-   AND deployments.build_runtime_digest IS NOT NULL
+   AND deployments.runtime_artifact_digest IS NOT NULL
    AND deployments.program_index_digest IS NOT NULL`,
 		authority.environmentID,
 		authority.deploymentID,

@@ -14,8 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
-	awsecr "github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bootstrap"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
@@ -29,23 +27,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/email"
 	emailresend "github.com/helmrdotdev/helmr/internal/email/resend"
 	"github.com/helmrdotdev/helmr/internal/eventstream"
-	"github.com/helmrdotdev/helmr/internal/imagecache"
-	imagecacheecr "github.com/helmrdotdev/helmr/internal/imagecache/ecr"
-	"github.com/helmrdotdev/helmr/internal/imagecache/retirement"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
-
-var loadControlPlaneBuildPolicy = func(path string) (*deployment.BuildPolicy, error) {
-	policy, err := deployment.LoadBuildPolicy(path)
-	if err != nil {
-		return nil, fmt.Errorf("load build policy: %w", err)
-	}
-	return policy, nil
-}
 
 type backgroundWorkflow struct {
 	name string
@@ -65,12 +52,6 @@ func main() {
 		case "database-bootstrap":
 			if err := runDatabaseBootstrap(context.Background(), os.Args[2:]); err != nil {
 				log.Error("bootstrap database", "error", err)
-				os.Exit(1)
-			}
-			return
-		case "release":
-			if err := runReleaseCommand(context.Background(), os.Args[2:]); err != nil {
-				log.Error("install release", "error", err)
 				os.Exit(1)
 			}
 			return
@@ -117,16 +98,6 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err := cass3.ValidateDistinctS3Stores(cfg.CASURI, cfg.PlatformStoreURI); err != nil {
 		return fmt.Errorf("validate platform artifact store: %w", err)
 	}
-	if cfg.ImageCache != nil {
-		if err := imagecacheecr.ValidateConfig(imagecacheecr.Config{
-			RegistryAuthority:   cfg.ImageCache.RegistryAuthority,
-			RepositoryPrefix:    cfg.ImageCache.RepositoryPrefix,
-			CacheRoleARN:        cfg.ImageCache.CacheRoleARN,
-			RepositoryARNPrefix: cfg.ImageCache.RepositoryARNPrefix,
-		}); err != nil {
-			return fmt.Errorf("validate workspace image cache configuration: %w", err)
-		}
-	}
 	publicURL, err := url.Parse(cfg.PublicURL)
 	if err != nil {
 		return fmt.Errorf("parse public URL: %w", err)
@@ -135,10 +106,15 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("parse API origin: %w", err)
 	}
-	buildPolicy, err := loadControlPlaneBuildPolicy(cfg.BuildPolicyPath)
+	runtimeRaw, err := os.ReadFile(cfg.DeploymentRuntimeDescriptorPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("read deployment Runtime descriptor: %w", err)
 	}
+	runtimeDescriptor, err := deployment.ParseRuntimeDescriptor(runtimeRaw)
+	if err != nil {
+		return fmt.Errorf("parse deployment Runtime descriptor: %w", err)
+	}
+	bundleAdmission := deployment.DeploymentBundleAdmission{Runtime: runtimeDescriptor}
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
@@ -189,38 +165,9 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure platform artifact store: %w", err)
 	}
-	platformArtifactLocks, err := newPlatformArtifactLocker(pool)
-	if err != nil {
-		return fmt.Errorf("configure platform artifact locks: %w", err)
-	}
 	var authProvider controlplane.AuthProvider
 	if cfg.GitHubOAuthClientID != "" && cfg.GitHubOAuthClientSecret != "" {
 		authProvider = controlplane.NewGitHubOAuthProvider(cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, publicURL)
-	}
-	var cacheRepositories imagecache.RepositoryProvisioner
-	var cacheRetirement *retirement.Worker
-	if cfg.ImageCache != nil {
-		awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
-		if err != nil {
-			return fmt.Errorf("load workspace image cache AWS configuration: %w", err)
-		}
-		provisioner, err := imagecacheecr.NewProvisioner(
-			imagecacheecr.Config{
-				RegistryAuthority:   cfg.ImageCache.RegistryAuthority,
-				RepositoryPrefix:    cfg.ImageCache.RepositoryPrefix,
-				CacheRoleARN:        cfg.ImageCache.CacheRoleARN,
-				RepositoryARNPrefix: cfg.ImageCache.RepositoryARNPrefix,
-			},
-			awsecr.NewFromConfig(awsCfg),
-		)
-		if err != nil {
-			return fmt.Errorf("configure workspace image cache repositories: %w", err)
-		}
-		cacheRepositories = provisioner
-		cacheRetirement, err = retirement.NewWorker(log, queries, provisioner)
-		if err != nil {
-			return fmt.Errorf("configure workspace image cache retirement: %w", err)
-		}
 	}
 	runRetryReady, err := run.NewRetryReadyWorker(log, queries)
 	if err != nil {
@@ -238,13 +185,10 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		ReadinessDB:           pool,
 		Auth:                  controlplane.NewDBAuthenticator(queries),
 		CAS:                   casStore,
-		BuildPolicy:           buildPolicy,
+		BundleAdmission:       &bundleAdmission,
 		PlatformStore:         platformStore,
-		PlatformArtifactLocks: platformArtifactLocks,
 		Secrets:               secretStore,
 		SecretDelivery:        secretStore,
-		RegistryCredentials:   secretStore,
-		CacheRepositories:     cacheRepositories,
 		WorkspaceFencingKey:   workspaceFencingKey,
 		TokenCredentialKey:    tokenCredentialKey,
 		EventStream:           eventStream,
@@ -274,11 +218,6 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		{name: "live telemetry publisher", run: eventStream.RunPublisher},
 		{name: "Run retry readiness", run: runRetryReady.Run},
 		{name: "queued child Run expiry", run: queuedChildExpiry.Run},
-	}
-	if cacheRetirement != nil {
-		workflows = append(workflows, backgroundWorkflow{
-			name: "Workspace image cache retirement", run: cacheRetirement.Run,
-		})
 	}
 	return serveControlPlane(ctx, log, server, workflows, 10*time.Second)
 }

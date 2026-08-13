@@ -28,34 +28,31 @@ func LoadControlPlane() (ControlPlane, error) {
 		return ControlPlane{}, err
 	}
 	cfg := ControlPlane{
-		Addr:                    env("CONTROL_PLANE_ADDR", ":8080"),
-		DeploymentMode:          env("DEPLOYMENT_MODE", DeploymentModeSelfHosted),
-		DatabaseURL:             envText("DATABASE_URL"),
-		RedisURL:                env("REDIS_URL", "redis://127.0.0.1:6379/0"),
-		ClickHouseURL:           envText("CLICKHOUSE_URL"),
-		ClickHouseUser:          envText("CLICKHOUSE_USER"),
-		ClickHousePassword:      envSecret("CLICKHOUSE_PASSWORD"),
-		CASURI:                  envText("CAS_URI"),
-		BuildPolicyPath:         envText("BUILD_POLICY_PATH"),
-		PlatformStoreURI:        envText("PLATFORM_STORE_URI"),
-		Bootstrap:               bootstrapConfig,
-		CapacityToken:           envSecret("CAPACITY_TOKEN"),
-		SetupToken:              envSecret("SETUP_TOKEN"),
-		PublicURL:               publicURL,
-		APIOrigin:               apiOrigin,
-		MagicLinkDebugURLs:      magicLinkDebugURLs,
-		AdminEmails:             splitNormalizedList(envText("ADMIN_EMAILS")),
-		EmailProvider:           envLower("EMAIL_PROVIDER"),
-		ResendAPIKey:            envSecret("RESEND_API_KEY"),
-		SMTPAddr:                envText("SMTP_ADDR"),
-		SMTPUsername:            envText("SMTP_USERNAME"),
-		SMTPPassword:            envSecret("SMTP_PASSWORD"),
-		EmailFrom:               envText("EMAIL_FROM"),
-		GitHubOAuthClientID:     envText("GITHUB_OAUTH_CLIENT_ID"),
-		GitHubOAuthClientSecret: envSecret("GITHUB_OAUTH_CLIENT_SECRET"),
-	}
-	if cfg.ImageCache, err = loadImageCache(); err != nil {
-		return cfg, err
+		Addr:                            env("CONTROL_PLANE_ADDR", ":8080"),
+		DeploymentMode:                  env("DEPLOYMENT_MODE", DeploymentModeSelfHosted),
+		DatabaseURL:                     envText("DATABASE_URL"),
+		RedisURL:                        env("REDIS_URL", "redis://127.0.0.1:6379/0"),
+		ClickHouseURL:                   envText("CLICKHOUSE_URL"),
+		ClickHouseUser:                  envText("CLICKHOUSE_USER"),
+		ClickHousePassword:              envSecret("CLICKHOUSE_PASSWORD"),
+		CASURI:                          envText("CAS_URI"),
+		DeploymentRuntimeDescriptorPath: envText("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH"),
+		PlatformStoreURI:                envText("PLATFORM_STORE_URI"),
+		Bootstrap:                       bootstrapConfig,
+		CapacityToken:                   envSecret("CAPACITY_TOKEN"),
+		SetupToken:                      envSecret("SETUP_TOKEN"),
+		PublicURL:                       publicURL,
+		APIOrigin:                       apiOrigin,
+		MagicLinkDebugURLs:              magicLinkDebugURLs,
+		AdminEmails:                     splitNormalizedList(envText("ADMIN_EMAILS")),
+		EmailProvider:                   envLower("EMAIL_PROVIDER"),
+		ResendAPIKey:                    envSecret("RESEND_API_KEY"),
+		SMTPAddr:                        envText("SMTP_ADDR"),
+		SMTPUsername:                    envText("SMTP_USERNAME"),
+		SMTPPassword:                    envSecret("SMTP_PASSWORD"),
+		EmailFrom:                       envText("EMAIL_FROM"),
+		GitHubOAuthClientID:             envText("GITHUB_OAUTH_CLIENT_ID"),
+		GitHubOAuthClientSecret:         envSecret("GITHUB_OAUTH_CLIENT_SECRET"),
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("DATABASE_URL is required")
@@ -69,8 +66,8 @@ func LoadControlPlane() (ControlPlane, error) {
 	if cfg.CASURI == "" {
 		return cfg, errors.New("CAS_URI is required")
 	}
-	if cfg.BuildPolicyPath == "" {
-		return cfg, errors.New("BUILD_POLICY_PATH is required")
+	if cfg.DeploymentRuntimeDescriptorPath == "" {
+		return cfg, errors.New("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH is required")
 	}
 	if cfg.PlatformStoreURI == "" {
 		return cfg, errors.New("PLATFORM_STORE_URI is required")

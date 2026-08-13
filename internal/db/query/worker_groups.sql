@@ -78,11 +78,6 @@ WITH transitioned AS (
                       AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
                )
                AND NOT EXISTS (
-                   SELECT 1 FROM deployment_build_leases
-                    WHERE deployment_build_leases.worker_group_id = worker_groups.id
-                      AND deployment_build_leases.state IN ('assigned', 'starting', 'running')
-               )
-               AND NOT EXISTS (
                    SELECT 1 FROM runtime_instances
                     WHERE runtime_instances.worker_group_id = worker_groups.id
                       AND runtime_instances.reclaimed_at IS NULL
@@ -200,32 +195,17 @@ WITH live_workers AS (
                       FROM runtime_instances
                      WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
                         AND runtime_instances.worker_epoch = live_workers.worker_epoch
-                        AND runtime_instances.reclaimed_at IS NULL), 0)
-           + COALESCE((SELECT sum(deployment_build_leases.requested_cpu_millis)
-                         FROM deployment_build_leases
-                        WHERE deployment_build_leases.worker_instance_id = live_workers.worker_instance_id
-                          AND deployment_build_leases.worker_epoch = live_workers.worker_epoch
-                          AND deployment_build_leases.state IN ('assigned', 'starting', 'running')), 0) AS cpu_millis,
+                        AND runtime_instances.reclaimed_at IS NULL), 0) AS cpu_millis,
            COALESCE((SELECT sum(runtime_instances.reserved_memory_bytes)
                       FROM runtime_instances
                      WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
                         AND runtime_instances.worker_epoch = live_workers.worker_epoch
-                        AND runtime_instances.reclaimed_at IS NULL), 0)
-           + COALESCE((SELECT sum(deployment_build_leases.requested_memory_bytes)
-                         FROM deployment_build_leases
-                        WHERE deployment_build_leases.worker_instance_id = live_workers.worker_instance_id
-                          AND deployment_build_leases.worker_epoch = live_workers.worker_epoch
-                          AND deployment_build_leases.state IN ('assigned', 'starting', 'running')), 0) AS memory_bytes,
+                        AND runtime_instances.reclaimed_at IS NULL), 0) AS memory_bytes,
            COALESCE((SELECT sum(runtime_instances.reserved_guest_ephemeral_disk_bytes)
                       FROM runtime_instances
                      WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
                         AND runtime_instances.worker_epoch = live_workers.worker_epoch
-                        AND runtime_instances.reclaimed_at IS NULL), 0)
-           + COALESCE((SELECT sum(deployment_build_leases.requested_guest_ephemeral_disk_bytes)
-                         FROM deployment_build_leases
-                        WHERE deployment_build_leases.worker_instance_id = live_workers.worker_instance_id
-                          AND deployment_build_leases.worker_epoch = live_workers.worker_epoch
-                          AND deployment_build_leases.state IN ('assigned', 'starting', 'running')), 0) AS guest_ephemeral_disk_bytes,
+                        AND runtime_instances.reclaimed_at IS NULL), 0) AS guest_ephemeral_disk_bytes,
            COALESCE((SELECT count(*) FROM runtime_instances
                       WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
                         AND runtime_instances.worker_epoch = live_workers.worker_epoch
@@ -235,11 +215,6 @@ WITH live_workers AS (
                       WHERE run_leases.worker_instance_id = live_workers.worker_instance_id
                         AND run_leases.worker_epoch = live_workers.worker_epoch
                         AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')), 0)::bigint AS run_consumers,
-           COALESCE((SELECT sum(deployment_build_leases.requested_build_executors)
-                      FROM deployment_build_leases
-                     WHERE deployment_build_leases.worker_instance_id = live_workers.worker_instance_id
-                       AND deployment_build_leases.worker_epoch = live_workers.worker_epoch
-                       AND deployment_build_leases.state IN ('assigned', 'starting', 'running')), 0)::bigint AS build_executors,
            COALESCE((SELECT count(*) FROM runtime_instances
                       WHERE runtime_instances.worker_instance_id = live_workers.worker_instance_id
                         AND runtime_instances.worker_epoch = live_workers.worker_epoch
@@ -264,10 +239,8 @@ SELECT live_workers.worker_group_id,
        GREATEST(live_workers.epoch_guest_ephemeral_disk_bytes - usage.guest_ephemeral_disk_bytes, 0)::bigint AS available_guest_ephemeral_disk_bytes,
        GREATEST(live_workers.max_vm_slots - usage.vm_slots, 0)::bigint AS available_vm_slots,
        GREATEST(live_workers.max_vm_slots - usage.run_consumers, 0)::bigint AS available_run_consumers,
-       GREATEST(live_workers.max_build_executors - usage.build_executors, 0)::bigint AS available_build_executors,
        GREATEST(live_workers.max_runtime_starts - usage.runtime_starts, 0)::bigint AS available_runtime_starts,
        live_workers.run_paused_reason,
-       live_workers.build_paused_reason,
        live_workers.runtime_paused_reason
   FROM live_workers
   JOIN usage USING (worker_instance_id)

@@ -347,14 +347,6 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worke
        COALESCE((
            worker_instances.state = 'active'
            AND worker_groups.state = 'active'
-           AND worker_instances.supports_build
-           AND worker_instances.observed_at >= transaction_timestamp()
-               - $1::bigint * interval '1 second'
-           AND worker_instances.build_paused_reason IS NULL
-       ), false)::boolean AS build_ready,
-       COALESCE((
-           worker_instances.state = 'active'
-           AND worker_groups.state = 'active'
            AND worker_instances.supports_run
            AND worker_instances.observed_at >= transaction_timestamp()
                - $1::bigint * interval '1 second'
@@ -369,16 +361,11 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worke
                worker_instances.run_paused_reason IS NULL
                AND worker_instances.runtime_paused_reason IS NULL
            ))
-           AND (NOT worker_instances.supports_build OR worker_instances.build_paused_reason IS NULL)
        ), false)::boolean AS all_configured_roles_ready,
        ((SELECT count(*) FROM run_leases
          WHERE run_leases.worker_instance_id = worker_instances.id
            AND run_leases.worker_epoch = worker_instances.current_epoch
            AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')) +
-        (SELECT count(*) FROM deployment_build_leases
-         WHERE deployment_build_leases.worker_instance_id = worker_instances.id
-           AND deployment_build_leases.worker_epoch = worker_instances.current_epoch
-           AND deployment_build_leases.state IN ('assigned', 'starting', 'running')) +
         (SELECT count(*) FROM workspace_mounts
          WHERE workspace_mounts.worker_instance_id = worker_instances.id
            AND workspace_mounts.worker_epoch = worker_instances.current_epoch
@@ -440,7 +427,6 @@ type GetWorkerInstanceStateRow struct {
 	VMRuntimeContract            pgtype.Text        `json:"vm_runtime_contract"`
 	RuntimeArch                  pgtype.Text        `json:"runtime_arch"`
 	RunReady                     bool               `json:"run_ready"`
-	BuildReady                   bool               `json:"build_ready"`
 	RuntimeReady                 bool               `json:"runtime_ready"`
 	AllConfiguredRolesReady      bool               `json:"all_configured_roles_ready"`
 	ActiveExecutions             int32              `json:"active_executions"`
@@ -489,7 +475,6 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, arg GetWorkerInsta
 		&i.VMRuntimeContract,
 		&i.RuntimeArch,
 		&i.RunReady,
-		&i.BuildReady,
 		&i.RuntimeReady,
 		&i.AllConfiguredRolesReady,
 		&i.ActiveExecutions,

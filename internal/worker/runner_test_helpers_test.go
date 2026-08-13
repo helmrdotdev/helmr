@@ -15,7 +15,7 @@ func testCapacity(t interface {
 		MemoryBytes:             capabilities.MaxMemoryMiB * 1024 * 1024,
 		GuestEphemeralDiskBytes: capabilities.GuestEphemeralDiskBytes,
 		VMSlots:                 int64(capabilities.ExecutionSlotsAvailable),
-		BuildSlots:              int64(capabilities.MaxBuildExecutors),
+		BuildSlots:              0,
 	})
 	if err != nil {
 		t.Fatal(err)

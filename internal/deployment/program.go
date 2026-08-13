@@ -20,7 +20,6 @@ const (
 
 	RuntimeContract                       = "helmr.runtime.v0"
 	ConfigEvaluatorContract               = "helmr.config-evaluator.v0"
-	ProgramBuildContract                  = "helmr.program-build.v0"
 	ProgramArtifactMediaType              = "application/vnd.helmr.deployment-program.v0+squashfs"
 	manifestDigestDomain                  = "helmr.deployment-definition-manifest.v0\x00"
 	maxJSONSafeInteger              int64 = 9007199254740991
@@ -71,28 +70,6 @@ type ProgramFile struct {
 	SizeBytes int64  `json:"sizeBytes"`
 }
 
-type ProgramManager struct {
-	Digest  string             `json:"digest"`
-	Name    PackageManagerName `json:"name"`
-	Version string             `json:"version"`
-}
-
-type ProgramSubmittedSource struct {
-	LockfileDigest string `json:"lockfileDigest"`
-	LockfileName   string `json:"lockfileName"`
-	SourceDigest   string `json:"sourceDigest"`
-}
-
-type BuildProvenance struct {
-	Architecture    RuntimeArchitecture    `json:"architecture"`
-	BuildContract   string                 `json:"buildContract"`
-	Config          ProgramConfig          `json:"config"`
-	Manager         ProgramManager         `json:"manager"`
-	RuntimeDigest   string                 `json:"runtimeDigest"`
-	ToolchainDigest string                 `json:"toolchainDigest"`
-	Submitted       ProgramSubmittedSource `json:"submitted"`
-}
-
 type ProgramConfig struct {
 	EvaluatorContract string `json:"evaluatorContract"`
 	SourceDigest      string `json:"sourceDigest"`
@@ -108,8 +85,7 @@ type ProgramIndex struct {
 	RuntimeDigest      string                    `json:"runtimeDigest"`
 }
 
-// ProgramOutput is the build worker's verified Program publication result.
-// Artifact IDs are assigned by Control.
+// ProgramOutput is the canonical Program artifact and its execution index.
 type ProgramOutput struct {
 	Artifact ProgramDescriptor `json:"artifact"`
 	Index    ProgramIndex      `json:"index"`
@@ -417,52 +393,6 @@ func ValidateProgramIndex(index ProgramIndex) error {
 	return nil
 }
 
-func validateBuildProvenance(prefix string, provenance BuildProvenance) error {
-	if provenance.BuildContract != ProgramBuildContract {
-		return fmt.Errorf(
-			"%s buildContract = %q, want %q",
-			prefix,
-			provenance.BuildContract,
-			ProgramBuildContract,
-		)
-	}
-	if !sha256DigestPattern.MatchString(provenance.RuntimeDigest) {
-		return fmt.Errorf("%s runtimeDigest is not a lowercase SHA-256 digest", prefix)
-	}
-	if err := validateProgramConfig(provenance.Config); err != nil {
-		return fmt.Errorf("%s config: %w", prefix, err)
-	}
-	if !validArchitecture(provenance.Architecture) {
-		return fmt.Errorf("%s architecture %q is unsupported", prefix, provenance.Architecture)
-	}
-	if !sha256DigestPattern.MatchString(provenance.ToolchainDigest) {
-		return fmt.Errorf("%s toolchainDigest is not a lowercase SHA-256 digest", prefix)
-	}
-	if !sha256DigestPattern.MatchString(provenance.Manager.Digest) {
-		return fmt.Errorf("%s manager.digest is not a lowercase SHA-256 digest", prefix)
-	}
-	if err := ValidatePackageManager(PackageManager{
-		Name: provenance.Manager.Name, Version: provenance.Manager.Version,
-	}); err != nil {
-		return fmt.Errorf("%s manager: %w", prefix, err)
-	}
-	if !validProgramLockfile(provenance.Manager.Name, provenance.Submitted.LockfileName) {
-		return fmt.Errorf(
-			"%s submitted.lockfileName = %q is unsupported for %s",
-			prefix,
-			provenance.Submitted.LockfileName,
-			provenance.Manager.Name,
-		)
-	}
-	if !sha256DigestPattern.MatchString(provenance.Submitted.LockfileDigest) {
-		return fmt.Errorf("%s submitted.lockfileDigest is not a lowercase SHA-256 digest", prefix)
-	}
-	if !sha256DigestPattern.MatchString(provenance.Submitted.SourceDigest) {
-		return fmt.Errorf("%s submitted.sourceDigest is not a lowercase SHA-256 digest", prefix)
-	}
-	return nil
-}
-
 func validateProgramConfig(config ProgramConfig) error {
 	if config.EvaluatorContract != ConfigEvaluatorContract ||
 		!sha256DigestPattern.MatchString(config.SourceDigest) ||
@@ -472,17 +402,26 @@ func validateProgramConfig(config ProgramConfig) error {
 	return nil
 }
 
-func validProgramLockfile(manager PackageManagerName, lockfile string) bool {
-	switch manager {
-	case PackageManagerNPM:
-		return lockfile == "package-lock.json" || lockfile == "npm-shrinkwrap.json"
-	case PackageManagerPNPM:
-		return lockfile == "pnpm-lock.yaml"
-	case PackageManagerBun:
-		return lockfile == "bun.lock"
-	default:
-		return false
+func buildPlanProgramDeclarations(plan BuildPlan) []ProgramDeclaration {
+	declarations := make([]ProgramDeclaration, 0)
+	for _, definition := range plan.Definitions {
+		switch definition.Kind {
+		case DefinitionKindTask:
+			slots := []DeclarationSlot{DeclarationSlotHandler}
+			if definition.Task.Payload.Kind == SchemaKindStandard {
+				slots = append(slots, DeclarationSlotPayloadSchema)
+			}
+			declarations = append(declarations, ProgramDeclaration{
+				Kind: DeclarationKindTask, DeclaredID: definition.DeclaredID, Slots: slots,
+			})
+		case DefinitionKindActor:
+			declarations = append(declarations, ProgramDeclaration{
+				Kind: DeclarationKindActor, DeclaredID: definition.DeclaredID,
+				Slots: []DeclarationSlot{DeclarationSlotHandler},
+			})
+		}
 	}
+	return declarations
 }
 
 func CanonicalManifestAndDigest(raw []byte) ([]byte, [sha256.Size]byte, error) {

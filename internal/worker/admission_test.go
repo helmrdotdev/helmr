@@ -5,8 +5,6 @@ import (
 	"errors"
 	"testing"
 	"time"
-
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type staticHealthProbe struct {
@@ -178,42 +176,5 @@ func TestHardAdmissionAllowsRunInsideActiveWorkspaceSlot(t *testing.T) {
 	})
 	if !decision.Allowed {
 		t.Fatalf("run inside mounted workspace rejected: %+v", decision)
-	}
-}
-
-func TestBuildLeaseValidatesFixedGuestIndependentlyFromHostEnvelope(t *testing.T) {
-	capabilities := workerapi.Capabilities{
-		VMMilliCPU: 2000, VMMemoryMiB: 2048,
-		GuestEphemeralDiskBytes: 32 << 30, VMGuestEphemeralDiskBytes: 32 << 30, MaxBuildExecutors: 1,
-	}
-	lease := workerapi.DeploymentBuildLease{
-		RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
-		RequestedGuestEphemeralDiskBytes: 32 << 30,
-	}
-	if err := validateBuildLeaseShape(capabilities, lease); err != nil {
-		t.Fatal(err)
-	}
-	tests := []struct {
-		name   string
-		mutate func(*workerapi.Capabilities, *workerapi.DeploymentBuildLease)
-	}{
-		{name: "cpu", mutate: func(c *workerapi.Capabilities, _ *workerapi.DeploymentBuildLease) { c.VMMilliCPU-- }},
-		{name: "memory", mutate: func(c *workerapi.Capabilities, _ *workerapi.DeploymentBuildLease) { c.VMMemoryMiB-- }},
-		{name: "guest disk", mutate: func(c *workerapi.Capabilities, _ *workerapi.DeploymentBuildLease) {
-			c.VMGuestEphemeralDiskBytes--
-		}},
-		{name: "executors", mutate: func(_ *workerapi.Capabilities, l *workerapi.DeploymentBuildLease) {
-			l.RequestedBuildExecutors = 2
-		}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			testCapabilities := capabilities
-			testLease := lease
-			tt.mutate(&testCapabilities, &testLease)
-			if err := validateBuildLeaseShape(testCapabilities, testLease); err == nil {
-				t.Fatal("unsupported build shape accepted")
-			}
-		})
 	}
 }

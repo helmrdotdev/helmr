@@ -67,28 +67,6 @@ func TestLoadBootstrapIgnoresSeedInputsWhenDisabled(t *testing.T) {
 	}
 }
 
-func TestLoadImageCacheIsAbsentOrCompletelyConfigured(t *testing.T) {
-	config, err := loadImageCache()
-	if err != nil || config != nil {
-		t.Fatalf("empty config = %+v, %v", config, err)
-	}
-
-	t.Setenv("IMAGE_CACHE_REGISTRY_AUTHORITY", "123456789012.dkr.ecr.us-east-1.amazonaws.com")
-	if _, err := loadImageCache(); err == nil {
-		t.Fatal("partial image cache configuration accepted")
-	}
-	t.Setenv("IMAGE_CACHE_REPOSITORY_PREFIX", "helmr-cache")
-	t.Setenv("IMAGE_CACHE_ROLE_ARN", "arn:aws:iam::123456789012:role/helmr-cache")
-	t.Setenv("IMAGE_CACHE_REPOSITORY_ARN_PREFIX", "arn:aws:ecr:us-east-1:123456789012:repository/helmr-cache/")
-	config, err = loadImageCache()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if config == nil || config.RepositoryPrefix != "helmr-cache" || config.CacheRoleARN == "" {
-		t.Fatalf("config = %+v", config)
-	}
-}
-
 func TestLoadDispatcherReadsConnectionConfig(t *testing.T) {
 	setDispatcherFencing(t)
 	t.Setenv("DATABASE_URL", " postgres://example ")
@@ -130,7 +108,7 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	t.Setenv("CLICKHOUSE_USER", " telemetry ")
 	t.Setenv("CLICKHOUSE_PASSWORD", "clickhouse-password")
 	t.Setenv("CAS_URI", " s3://helmr-cas ")
-	t.Setenv("BUILD_POLICY_PATH", " /etc/helmr/build-policy.json ")
+	t.Setenv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", " /etc/helmr/runtime.descriptor.json ")
 	t.Setenv("PLATFORM_STORE_URI", " s3://helmr-cas/runtimes ")
 	t.Setenv("WORKER_TOKEN_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
 	t.Setenv("SETUP_TOKEN", "setup-token")
@@ -151,7 +129,7 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerTokenSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.WorkspaceFencingKey, bytes.Repeat([]byte{2}, 32)) || !bytes.Equal(cfg.TokenCredentialKey, bytes.Repeat([]byte{3}, 32)) || cfg.PublicURL != "https://helmr.example.test" || cfg.APIOrigin != "https://api.helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
+	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.DeploymentRuntimeDescriptorPath != "/etc/helmr/runtime.descriptor.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerTokenSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.WorkspaceFencingKey, bytes.Repeat([]byte{2}, 32)) || !bytes.Equal(cfg.TokenCredentialKey, bytes.Repeat([]byte{3}, 32)) || cfg.PublicURL != "https://helmr.example.test" || cfg.APIOrigin != "https://api.helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -179,7 +157,7 @@ func TestLoadControlPlaneDefaultsToSelfHostedDeploymentMode(t *testing.T) {
 
 func TestLoadControlPlaneRequiresManagedRuntimeConfig(t *testing.T) {
 	for _, variable := range []string{
-		"BUILD_POLICY_PATH",
+		"DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH",
 		"PLATFORM_STORE_URI",
 	} {
 		t.Run(variable, func(t *testing.T) {
@@ -437,7 +415,7 @@ func TestLoadControlPlaneReadsResendConfig(t *testing.T) {
 func setControlPlaneRequiredEnv(t *testing.T) {
 	t.Helper()
 	setControlPlaneTokenCredentialEnv(t)
-	t.Setenv("BUILD_POLICY_PATH", "/etc/helmr/build-policy.json")
+	t.Setenv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", "/etc/helmr/runtime.descriptor.json")
 	t.Setenv("PLATFORM_STORE_URI", "s3://helmr-cas/runtimes")
 	t.Setenv("WORKSPACE_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 }

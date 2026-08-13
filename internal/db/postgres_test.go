@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -56,15 +55,6 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 		ON CONFLICT DO NOTHING
 	`)
 
-	sourceArtifactID := seedPostgresArtifact(
-		t,
-		ctx,
-		pool,
-		ids,
-		"deployment_source",
-		api.DeploymentSourceArtifactMediaType,
-		"source",
-	)
 	programArtifactID := seedPostgresArtifact(
 		t,
 		ctx,
@@ -85,24 +75,17 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 	)
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO deployments (
-			id, org_id, build_region_id, project_id, environment_id,
-			build_node_version, build_runtime_digest, build_toolchain_digest,
-			build_manager_name, build_manager_version, build_manager_digest,
-			build_contract, image_cache_mode, version, content_hash, deployment_source_artifact_id,
-			program_artifact_id, program_index_digest, queue_config,
-			status, deployed_at
+			id, org_id, project_id, environment_id, version, bundle_digest,
+			runtime_artifact_digest, program_artifact_id, program_index_digest, queue_config
 		)
 		VALUES (
-			$1, $2, $3, $4, $5,
-			'24.16.0', decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
-			'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
-			'helmr.program-build.v0', 'prefer', 'v1', $6, $7,
-			$8, decode(repeat('03', 32), 'hex'),
-			'{"formatVersion":0,"queues":[]}'::jsonb, 'deployed', now()
+			$1, $2, $3, $4, 'v1', $5,
+			$6, $7, decode(repeat('03', 32), 'hex'),
+			'{"formatVersion":0,"queues":[]}'::jsonb
 		)
-	`, ids.deploymentID, ids.orgID, dbtest.DefaultRegionID, ids.projectID, ids.environmentID,
-		dbtest.Digest("deployment-"+ids.deploymentID.String()), sourceArtifactID,
-		programArtifactID)
+	`, ids.deploymentID, ids.orgID, ids.projectID, ids.environmentID,
+		dbtest.Digest("deployment-"+ids.deploymentID.String()),
+		dbtest.Digest("runtime-"+ids.deploymentID.String()), programArtifactID)
 	return ids
 }
 

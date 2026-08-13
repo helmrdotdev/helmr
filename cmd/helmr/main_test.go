@@ -1,13 +1,7 @@
 package main
 
 import (
-	"archive/tar"
 	"bytes"
-	"fmt"
-	"io"
-	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -34,67 +28,6 @@ func TestRootCommandPrintsVersion(t *testing.T) {
 	}
 	if strings.TrimSpace(out.String()) != testVersion {
 		t.Fatalf("version output = %q", out.String())
-	}
-}
-
-func writeDeploymentEventSSE(t *testing.T, w http.ResponseWriter, r *http.Request, kind string) {
-	t.Helper()
-	if r.URL.Query().Get("follow") != "1" {
-		t.Fatalf("events query = %s", r.URL.RawQuery)
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	_, _ = fmt.Fprintf(w, "id: 1\nevent: deployment_event\ndata: {\"id\":\"1\",\"deployment_id\":\"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35\",\"kind\":%q,\"message\":\"Deployment lifecycle changed\"}\n\n", kind)
-}
-
-func deployCommandFixture(t *testing.T) (string, func()) {
-	t.Helper()
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "helmr.config.ts"), []byte(`export default { dirs: ["./tasks"] }`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"private":true,"type":"module","packageManager":"bun@1.3.10","devEngines":{"runtime":{"name":"node","version":"24.16.0","onFail":"error"}},"dependencies":{"@helmr/sdk":"latest"}}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "bun.lock"), []byte("{}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "node_modules", "@helmr", "sdk"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "node_modules", "@helmr", "sdk", "package.json"), []byte(`{"name":"@helmr/sdk"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".helmrignore"), []byte("node_modules/\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "tasks"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "tasks", "deploy.ts"), []byte(`export const deploy = task("deploy", async () => {})`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	oldTemp := deployArchiveTempDir
-	deployArchiveTempDir = t.TempDir()
-	cleanup := func() {
-		deployArchiveTempDir = oldTemp
-	}
-	t.Cleanup(cleanup)
-	return root, cleanup
-}
-
-func readTarEntries(t *testing.T, archive []byte) map[string]bool {
-	t.Helper()
-	reader := tar.NewReader(bytes.NewReader(archive))
-	entries := map[string]bool{}
-	for {
-		header, err := reader.Next()
-		if err == io.EOF {
-			return entries
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		entries[header.Name] = true
 	}
 }
 

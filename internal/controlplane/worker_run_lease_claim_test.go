@@ -145,10 +145,6 @@ func newWorkerRunLeaseClaimHTTPFixture(
 	authority.workspaceLease.FencingTokenHash = capability.Hash
 
 	runtime := claimResponseRuntimeDescriptor()
-	runtimeDigest, err := deployment.RuntimeDigestBytes(runtime.Digest)
-	if err != nil {
-		t.Fatal(err)
-	}
 	store := &runLeaseClaimStore{
 		authority: authority,
 		locators:  locators,
@@ -156,11 +152,10 @@ func newWorkerRunLeaseClaimHTTPFixture(
 			DeploymentID:             authority.run.DeploymentID,
 			EnvironmentID:            authority.run.EnvironmentID,
 			DeploymentVersion:        "v42",
-			BuildRuntimeDigest:       runtimeDigest,
+			RuntimeArtifactDigest:    runtime.Digest,
 			ProgramArtifactDigest:    validDigest('a'),
 			ProgramArtifactSizeBytes: 100,
 			ProgramArtifactMediaType: deployment.ProgramArtifactMediaType,
-			BuildContract:            deployment.ProgramBuildContract,
 			ProgramIndexDigest:       validDigestBytes(t, 'b'),
 		},
 		definition: definition,
@@ -171,7 +166,6 @@ func newWorkerRunLeaseClaimHTTPFixture(
 	server := &Server{
 		log:                 discardTestLogger(),
 		db:                  store,
-		buildPolicy:         controlPlaneBuildPolicy(t),
 		platformStore:       claimResponsePlatformStore{},
 		secretDelivery:      &recordingSecretDeliveryOpener{},
 		workspaceFencingKey: key,

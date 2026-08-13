@@ -13,10 +13,6 @@ import (
 )
 
 func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
-	if s.buildPolicy == nil {
-		writeError(w, unavailable(errors.New("build policy is not configured")))
-		return
-	}
 	var request workerapi.RunLeaseClaimRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()

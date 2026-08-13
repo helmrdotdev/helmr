@@ -923,8 +923,7 @@ func (p *PreparedRuntimePool) prepareProgram(
 		)
 	}
 	if programIndex.RuntimeContract != runtimeDescriptor.RuntimeContract ||
-		programIndex.Architecture != runtimeDescriptor.Architecture ||
-		program.BuildContract != deployment.ProgramBuildContract {
+		programIndex.Architecture != runtimeDescriptor.Architecture {
 		return nil, func() error { return nil }, errors.Join(
 			errors.New("program index does not match runtime reservation authority"),
 			closeSnapshots(),

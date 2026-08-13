@@ -132,6 +132,17 @@ func (store *bundleUploadStoreFixture) PresignQuarantine(
 	}, nil
 }
 
+func (store *bundleUploadStoreFixture) PromoteQuarantine(
+	_ context.Context, _ string, expected cas.Descriptor,
+) (cas.Object, error) {
+	object := cas.Object{Digest: expected.Digest, SizeBytes: expected.SizeBytes, MediaType: expected.MediaType}
+	if store.objects == nil {
+		store.objects = make(map[string]cas.Object)
+	}
+	store.objects[expected.Digest] = object
+	return object, nil
+}
+
 type bundleOwnershipFixture struct {
 	rows map[string]db.CasObject
 }

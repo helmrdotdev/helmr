@@ -3,7 +3,6 @@ package workerclient
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -93,123 +92,6 @@ func (c *Client) AcknowledgeRunEntrypoint(
 		request,
 		nil,
 	)
-}
-
-func (c *Client) NextPlatformAcquisition(ctx context.Context) (workerapi.PlatformAcquisitionResponse, error) {
-	var response workerapi.PlatformAcquisitionResponse
-	if err := c.postWorkerJSON(
-		ctx,
-		"/api/worker/v0/build/platform-acquisitions/next",
-		workerapi.PlatformAcquisitionRequest{},
-		&response,
-	); err != nil {
-		return workerapi.PlatformAcquisitionResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) CompletePlatformAcquisition(
-	ctx context.Context,
-	request workerapi.PlatformAcquisitionCompleteRequest,
-) (workerapi.PlatformAcquisitionResult, error) {
-	var response workerapi.PlatformAcquisitionResult
-	if err := c.postWorkerJSON(
-		ctx,
-		"/api/worker/v0/build/platform-acquisitions/complete",
-		request,
-		&response,
-	); err != nil {
-		return workerapi.PlatformAcquisitionResult{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) FailPlatformAcquisition(
-	ctx context.Context,
-	request workerapi.PlatformAcquisitionFailRequest,
-) (workerapi.PlatformAcquisitionResult, error) {
-	var response workerapi.PlatformAcquisitionResult
-	if err := c.postWorkerJSON(
-		ctx,
-		"/api/worker/v0/build/platform-acquisitions/fail",
-		request,
-		&response,
-	); err != nil {
-		return workerapi.PlatformAcquisitionResult{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) LeaseDeploymentBuild(ctx context.Context) (workerapi.DeploymentBuildLeaseResponse, error) {
-	var response workerapi.DeploymentBuildLeaseResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/build/deployments/lease", workerapi.DeploymentBuildLeaseRequest{}, &response); err != nil {
-		return workerapi.DeploymentBuildLeaseResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) StartDeploymentBuild(ctx context.Context, lease workerapi.DeploymentBuildLease) (workerapi.DeploymentBuildStartResponse, error) {
-	var response workerapi.DeploymentBuildStartResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/build/deployments/start", workerapi.DeploymentBuildStartRequest{Lease: lease}, &response); err != nil {
-		return workerapi.DeploymentBuildStartResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) RenewDeploymentBuild(ctx context.Context, lease workerapi.DeploymentBuildLease) (workerapi.DeploymentBuildRenewResponse, error) {
-	var response workerapi.DeploymentBuildRenewResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/build/deployments/renew", workerapi.DeploymentBuildRenewRequest{Lease: lease}, &response); err != nil {
-		return workerapi.DeploymentBuildRenewResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) AdmitWorkspaceImage(
-	ctx context.Context,
-	request workerapi.WorkspaceImageAdmissionRequest,
-) (workerapi.WorkspaceImageAssignment, error) {
-	var response workerapi.WorkspaceImageAssignment
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/build/deployments/workspace-images/admit", request, &response); err != nil {
-		return workerapi.WorkspaceImageAssignment{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) FetchWorkspaceImageCredentials(
-	ctx context.Context,
-	request workerapi.WorkspaceImageCredentialRequest,
-) (workerapi.WorkspaceImageCredentialResponse, error) {
-	var response workerapi.WorkspaceImageCredentialResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/build/deployments/workspace-images/credentials", request, &response); err != nil {
-		return workerapi.WorkspaceImageCredentialResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) CompleteWorkspaceImage(
-	ctx context.Context,
-	request workerapi.WorkspaceImageOperationResultRequest,
-) (workerapi.WorkspaceImageOperationResultResponse, error) {
-	var response workerapi.WorkspaceImageOperationResultResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/build/deployments/workspace-images/complete", request, &response); err != nil {
-		return workerapi.WorkspaceImageOperationResultResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) RejectDeploymentBuild(ctx context.Context, request workerapi.DeploymentBuildRejectRequest) error {
-	return c.postWorkerJSON(ctx, "/api/worker/v0/build/deployments/reject", request, nil)
-}
-
-func (c *Client) ReportDeploymentBuildDeliveryFailure(
-	ctx context.Context,
-	request workerapi.DeploymentBuildDeliveryFailureRequest,
-) (workerapi.DeploymentBuildResponse, error) {
-	var response workerapi.DeploymentBuildResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/build/deployments/delivery-failed", request, &response); err != nil {
-		return workerapi.DeploymentBuildResponse{}, err
-	}
-	return response, nil
 }
 
 func (c *Client) ClaimWorkspaceMount(ctx context.Context, capabilities workerapi.Capabilities) (workerapi.WorkspaceMountClaimResponse, error) {
@@ -642,14 +524,6 @@ func (c *Client) CompleteActor(
 	request workerapi.CompleteActorRequest,
 ) error {
 	return c.postWorkerJSON(ctx, "/api/worker/v0/run/sessions/complete", request, nil)
-}
-
-func (c *Client) CompleteDeploymentBuild(ctx context.Context, lease workerapi.DeploymentBuildLease, result json.RawMessage) (workerapi.DeploymentBuildResponse, error) {
-	var response workerapi.DeploymentBuildResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/v0/build/deployments/complete", workerapi.CompleteDeploymentBuildRequest{Lease: lease, Result: result}, &response); err != nil {
-		return workerapi.DeploymentBuildResponse{}, err
-	}
-	return response, nil
 }
 
 func (c *Client) AppendRunLog(

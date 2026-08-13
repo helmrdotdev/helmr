@@ -113,18 +113,17 @@ func populateRuntimePrepareSource(
 	}
 	if !row.ProgramDeploymentAuthorityID.Valid ||
 		row.ProgramDeploymentAuthorityID != row.ProgramDeploymentID ||
-		!row.ProgramBuildContract.Valid {
+		!row.ProgramRuntimeDigest.Valid {
 		return errors.New("runtime reservation program authority is incomplete")
 	}
 	program, err := projectRuntimeProgram(
 		ctx,
 		runtimeProgramAuthorityFromDeployment(
 			row.ProgramDeploymentID,
-			row.ProgramRuntimeDigest,
+			row.ProgramRuntimeDigest.String,
 			row.ProgramArtifactDigest,
 			row.ProgramArtifactSizeBytes,
 			row.ProgramArtifactMediaType,
-			row.ProgramBuildContract.String,
 			row.ProgramIndexDigest,
 		),
 		row.WorkspaceArchitecture,

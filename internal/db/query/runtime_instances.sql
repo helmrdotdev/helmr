@@ -11,8 +11,7 @@ SELECT runtime_instances.*,
        COALESCE(reserved_workspace_artifacts.media_type, '') AS workspace_artifact_media_type,
        runtime_identities.runtime_arch AS workspace_architecture,
        program_deployments.id AS program_deployment_authority_id,
-       program_deployments.build_runtime_digest AS program_runtime_digest,
-       program_deployments.build_contract AS program_build_contract,
+       program_deployments.runtime_artifact_digest AS program_runtime_digest,
        program_deployments.program_index_digest,
        COALESCE(program_artifact.digest, '') AS program_artifact_digest,
        COALESCE(program_artifact.size_bytes, 0) AS program_artifact_size_bytes,
@@ -45,7 +44,6 @@ SELECT runtime_instances.*,
   LEFT JOIN deployments AS program_deployments
     ON program_deployments.environment_id = runtime_instances.environment_id
    AND program_deployments.id = runtime_instances.program_deployment_id
-   AND program_deployments.status = 'deployed'
   LEFT JOIN artifacts AS program_artifact
     ON program_artifact.environment_id = program_deployments.environment_id
    AND program_artifact.id = program_deployments.program_artifact_id

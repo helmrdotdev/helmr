@@ -27,37 +27,36 @@ const (
 )
 
 type ControlPlane struct {
-	Addr                    string
-	DeploymentMode          string
-	DatabaseURL             string
-	RedisURL                string
-	ClickHouseURL           string
-	ClickHouseUser          string
-	ClickHousePassword      string
-	CASURI                  string
-	BuildPolicyPath         string
-	PlatformStoreURI        string
-	WorkerTokenSigningKey   []byte
-	Bootstrap               Bootstrap
-	CapacityToken           string
-	SetupToken              string
-	AuthKey                 []byte
-	EncryptionKey           []byte
-	WorkspaceFencingKey     []byte
-	TokenCredentialKey      []byte
-	PublicURL               string
-	APIOrigin               string
-	MagicLinkDebugURLs      bool
-	AdminEmails             []string
-	EmailProvider           string
-	ResendAPIKey            string
-	SMTPAddr                string
-	SMTPUsername            string
-	SMTPPassword            string
-	EmailFrom               string
-	GitHubOAuthClientID     string
-	GitHubOAuthClientSecret string
-	ImageCache              *ImageCache
+	Addr                            string
+	DeploymentMode                  string
+	DatabaseURL                     string
+	RedisURL                        string
+	ClickHouseURL                   string
+	ClickHouseUser                  string
+	ClickHousePassword              string
+	CASURI                          string
+	DeploymentRuntimeDescriptorPath string
+	PlatformStoreURI                string
+	WorkerTokenSigningKey           []byte
+	Bootstrap                       Bootstrap
+	CapacityToken                   string
+	SetupToken                      string
+	AuthKey                         []byte
+	EncryptionKey                   []byte
+	WorkspaceFencingKey             []byte
+	TokenCredentialKey              []byte
+	PublicURL                       string
+	APIOrigin                       string
+	MagicLinkDebugURLs              bool
+	AdminEmails                     []string
+	EmailProvider                   string
+	ResendAPIKey                    string
+	SMTPAddr                        string
+	SMTPUsername                    string
+	SMTPPassword                    string
+	EmailFrom                       string
+	GitHubOAuthClientID             string
+	GitHubOAuthClientSecret         string
 }
 
 type Bootstrap struct {

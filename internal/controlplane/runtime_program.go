@@ -25,11 +25,10 @@ func projectDeploymentProgram(
 		ctx,
 		runtimeProgramAuthorityFromDeployment(
 			row.DeploymentID,
-			row.BuildRuntimeDigest,
+			row.RuntimeArtifactDigest,
 			row.ProgramArtifactDigest,
 			row.ProgramArtifactSizeBytes,
 			row.ProgramArtifactMediaType,
-			row.BuildContract,
 			row.ProgramIndexDigest,
 		),
 		"",
@@ -39,11 +38,10 @@ func projectDeploymentProgram(
 
 type runtimeProgramAuthority struct {
 	deploymentID      pgtype.UUID
-	runtimeDigest     []byte
+	runtimeDigest     string
 	artifactDigest    string
 	artifactSizeBytes int64
 	artifactMediaType string
-	buildContract     string
 	indexDigest       []byte
 }
 
@@ -60,8 +58,8 @@ func projectRuntimeProgram(
 	if expectedArchitecture != "" && expectedArchitecture != string(deployment.ArchitectureX8664) {
 		return workerapi.RuntimeProgram{}, errors.New("program architecture does not match workspace")
 	}
-	runtimeDigest, err := deployment.RuntimeDigestString(authority.runtimeDigest)
-	if err != nil {
+	runtimeDigest := authority.runtimeDigest
+	if _, err := cas.ObjectKey("", runtimeDigest); err != nil {
 		return workerapi.RuntimeProgram{}, fmt.Errorf("decode program managed runtime digest: %w", err)
 	}
 	if platformStore == nil {
@@ -85,9 +83,6 @@ func projectRuntimeProgram(
 	if err != nil {
 		return workerapi.RuntimeProgram{}, err
 	}
-	if strings.TrimSpace(authority.buildContract) == "" {
-		return workerapi.RuntimeProgram{}, errors.New("program build contract version is required")
-	}
 	indexDigest, err := deployment.RuntimeDigestString(authority.indexDigest)
 	if err != nil {
 		return workerapi.RuntimeProgram{}, fmt.Errorf("program index digest is invalid: %w", err)
@@ -102,9 +97,8 @@ func projectRuntimeProgram(
 			SizeBytes: runtimeObject.SizeBytes,
 			MediaType: runtimeObject.MediaType,
 		},
-		Artifact:      artifact,
-		BuildContract: authority.buildContract,
-		IndexDigest:   indexDigest,
+		Artifact:    artifact,
+		IndexDigest: indexDigest,
 	}, nil
 }
 
@@ -125,11 +119,10 @@ func projectCASObject(digest string, sizeBytes int64, mediaType string, name str
 
 func runtimeProgramAuthorityFromDeployment(
 	deploymentID pgtype.UUID,
-	runtimeDigest []byte,
+	runtimeDigest string,
 	artifactDigest string,
 	artifactSizeBytes int64,
 	artifactMediaType string,
-	buildContract string,
 	indexDigest []byte,
 ) runtimeProgramAuthority {
 	return runtimeProgramAuthority{
@@ -138,7 +131,6 @@ func runtimeProgramAuthorityFromDeployment(
 		artifactDigest:    artifactDigest,
 		artifactSizeBytes: artifactSizeBytes,
 		artifactMediaType: artifactMediaType,
-		buildContract:     buildContract,
 		indexDigest:       indexDigest,
 	}
 }

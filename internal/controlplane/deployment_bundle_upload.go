@@ -25,8 +25,10 @@ const deploymentBundleUploadExpiry = 15 * time.Minute
 
 type deploymentBundleUploadStore interface {
 	Stat(context.Context, string) (cas.Object, error)
+	Get(context.Context, string) (io.ReadCloser, error)
 	PutQuarantine(context.Context, string, cas.Descriptor, io.Reader) error
 	PresignQuarantine(context.Context, string, cas.Descriptor, time.Duration) (cas.PresignedUpload, error)
+	PromoteQuarantine(context.Context, string, cas.Descriptor) (cas.Object, error)
 }
 
 type deploymentBundleOwnershipStore interface {
@@ -123,6 +125,9 @@ func planDeploymentBundleUploads(
 	}
 	if err := uploads.PutQuarantine(ctx, owner, root, bytes.NewReader(raw)); err != nil {
 		return api.DeploymentBundleUploadPlanResponse{}, fmt.Errorf("quarantine deployment bundle root: %w", err)
+	}
+	if _, err := uploads.PromoteQuarantine(ctx, owner, root); err != nil {
+		return api.DeploymentBundleUploadPlanResponse{}, fmt.Errorf("publish deployment bundle root: %w", err)
 	}
 
 	response := api.DeploymentBundleUploadPlanResponse{

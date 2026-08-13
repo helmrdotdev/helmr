@@ -250,10 +250,6 @@ func (s *capacityPlanStore) ListQueuedRunPlanningCandidatesForScopes(context.Con
 	return nil, nil
 }
 
-func (s *capacityPlanStore) ListQueuedDeploymentBuildCandidates(context.Context, db.ListQueuedDeploymentBuildCandidatesParams) ([]db.ListQueuedDeploymentBuildCandidatesRow, error) {
-	return nil, nil
-}
-
 func capacityHTTPManifest(t *testing.T) capacityapi.WorkerReleaseManifest {
 	t.Helper()
 	runtime := capacityapi.RuntimeProfile{

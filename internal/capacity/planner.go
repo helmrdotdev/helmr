@@ -31,7 +31,6 @@ const (
 var ErrInvalidPlanRequest = errors.New("invalid capacity plan request")
 
 const (
-	reasonBuildRole            = "worker_does_not_support_build"
 	reasonRunRole              = "worker_does_not_support_run"
 	reasonPerInstanceResources = "per_instance_resources"
 	reasonRetainedRuntime      = "retained_runtime"
@@ -46,7 +45,6 @@ type Store interface {
 	ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error)
 	ListQueuedRunPlanningUsage(context.Context, db.ListQueuedRunPlanningUsageParams) ([]db.ListQueuedRunPlanningUsageRow, error)
 	ListQueuedRunPlanningCandidatesForScopes(context.Context, db.ListQueuedRunPlanningCandidatesForScopesParams) ([]db.ListQueuedRunPlanningCandidatesForScopesRow, error)
-	ListQueuedDeploymentBuildCandidates(context.Context, db.ListQueuedDeploymentBuildCandidatesParams) ([]db.ListQueuedDeploymentBuildCandidatesRow, error)
 }
 
 type item struct {
@@ -64,14 +62,12 @@ type bin struct {
 	runConsumers      int64
 	runtimeStarts     int64
 	supportsRun       bool
-	supportsBuild     bool
 	runtimeArch       string
 	runtimeContract   string
 	runtimeIdentityID string
 	substrateFormat   string
 	substrateContract string
 	runPaused         bool
-	buildPaused       bool
 	runtimePaused     bool
 	perVM             capacityapi.ResourceVector
 }
@@ -261,35 +257,12 @@ func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanS
 			complete = false
 		}
 	}
-	if group.AllowsBuild {
-		remaining := maximumPlanningCandidates
-		rows, err := store.ListQueuedDeploymentBuildCandidates(ctx, db.ListQueuedDeploymentBuildCandidatesParams{
-			BuildRegionID: group.RegionID, LimitCount: remaining + 1,
-		})
-		if err != nil {
-			return nil, false, fmt.Errorf("list capacity planning build candidates: %w", err)
-		}
-		if len(rows) > int(remaining) {
-			complete = false
-			rows = rows[:remaining]
-		}
-		resources := compute.BuildEnvelopeResources()
-		for _, row := range rows {
-			result = append(result, item{role: "build", key: fmt.Sprintf("%x", row.DeploymentID.Bytes), resources: capacityapi.ResourceVector{
-				CPUMillis: resources.MilliCPU, MemoryBytes: resources.MemoryMiB * mebibyte,
-				GuestEphemeralDiskBytes: resources.DiskMiB * mebibyte, BuildExecutors: 1,
-			}})
-		}
-	}
 	return result, complete, nil
 }
 
 func validateTemplateForGroup(manifest capacityapi.WorkerReleaseManifest, group db.WorkerGroup) error {
 	if manifest.SupportsRun && !group.AllowsRun {
 		return errors.New("run role is not allowed")
-	}
-	if manifest.SupportsBuild && !group.AllowsBuild {
-		return errors.New("build role is not allowed")
 	}
 	return nil
 }
@@ -404,13 +377,12 @@ func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 			CPUMillis: row.AvailableCPUMillis, MemoryBytes: row.AvailableMemoryBytes,
 			GuestEphemeralDiskBytes: row.AvailableGuestEphemeralDiskBytes,
 			VMSlots:                 row.AvailableVMSlots,
-			BuildExecutors:          row.AvailableBuildExecutors,
 		},
 		runConsumers: row.AvailableRunConsumers, runtimeStarts: row.AvailableRuntimeStarts, supportsRun: row.SupportsRun,
-		supportsBuild: row.SupportsBuild, runtimeArch: row.RuntimeArch,
+		runtimeArch:     row.RuntimeArch,
 		runtimeContract: row.VMRuntimeContract, runtimeIdentityID: row.RuntimeIdentityID.String,
 		substrateFormat: row.SubstrateFormat, substrateContract: row.SubstrateContract,
-		runPaused: row.RunPausedReason.Valid, buildPaused: row.BuildPausedReason.Valid,
+		runPaused:     row.RunPausedReason.Valid,
 		runtimePaused: row.RuntimePausedReason.Valid,
 		perVM: capacityapi.ResourceVector{
 			CPUMillis: row.PerVMCPUMillis, MemoryBytes: row.PerVMMemoryBytes,
@@ -422,7 +394,7 @@ func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 func templateBin(manifest capacityapi.WorkerReleaseManifest) bin {
 	return bin{
 		resources: manifest.Capacity, runConsumers: manifest.Capacity.VMSlots, runtimeStarts: manifest.Capacity.VMSlots,
-		supportsRun: manifest.SupportsRun, supportsBuild: manifest.SupportsBuild,
+		supportsRun: manifest.SupportsRun,
 		runtimeArch: manifest.Runtime.Arch, runtimeContract: manifest.Runtime.Contract,
 		runtimeIdentityID: manifest.Runtime.ID, substrateFormat: manifest.Substrate.Format,
 		substrateContract: manifest.Substrate.Contract,
@@ -465,36 +437,9 @@ func SelectRunWorker(rows []db.ListWorkerCapacityBinsRow, request RunRequirement
 	return db.ListWorkerCapacityBinsRow{}, false
 }
 
-func SelectBuildWorker(rows []db.ListWorkerCapacityBinsRow) (db.ListWorkerCapacityBinsRow, bool) {
-	envelope := compute.BuildEnvelopeResources()
-	guest := compute.BuildGuestResources()
-	request := item{role: "build", resources: capacityapi.ResourceVector{
-		CPUMillis: envelope.MilliCPU, MemoryBytes: envelope.MemoryMiB * mebibyte,
-		GuestEphemeralDiskBytes: envelope.DiskMiB * mebibyte, BuildExecutors: 1,
-	}}
-	for _, row := range rows {
-		target := binFromRow(row)
-		if target.buildPaused || incompatibility(request, target) != "" {
-			continue
-		}
-		guestRequest := capacityapi.ResourceVector{
-			CPUMillis: guest.MilliCPU, MemoryBytes: guest.MemoryMiB * mebibyte,
-			GuestEphemeralDiskBytes: guest.DiskMiB * mebibyte,
-		}
-		if !fitsPhysical(target.perVM, guestRequest) {
-			continue
-		}
-		return row, true
-	}
-	return db.ListWorkerCapacityBinsRow{}, false
-}
-
 func incompatibility(candidate item, target bin) string {
 	if candidate.role == "run" && !target.supportsRun {
 		return reasonRunRole
-	}
-	if candidate.role == "build" && !target.supportsBuild {
-		return reasonBuildRole
 	}
 	if target.runtimeArch != "x86_64" || target.runtimeContract != "helmr.vm-runtime.v0" {
 		return reasonRuntimeCompatibility
@@ -513,15 +458,6 @@ func incompatibility(candidate item, target bin) string {
 	if candidate.role == "run" && !fitsPhysical(target.perVM, candidate.resources) {
 		return reasonPerInstanceResources
 	}
-	if candidate.role == "build" {
-		guest := compute.BuildGuestResources()
-		if !fitsPhysical(target.perVM, capacityapi.ResourceVector{
-			CPUMillis: guest.MilliCPU, MemoryBytes: guest.MemoryMiB * mebibyte,
-			GuestEphemeralDiskBytes: guest.DiskMiB * mebibyte,
-		}) {
-			return reasonPerInstanceResources
-		}
-	}
 	return ""
 }
 
@@ -532,9 +468,6 @@ func place(target *bin, candidate item) bool {
 	if candidate.role == "run" && (target.runPaused || target.runtimePaused || target.runtimeStarts <= 0) {
 		return false
 	}
-	if candidate.role == "build" && target.buildPaused {
-		return false
-	}
 	target.resources.CPUMillis -= candidate.resources.CPUMillis
 	target.resources.MemoryBytes -= candidate.resources.MemoryBytes
 	target.resources.GuestEphemeralDiskBytes -= candidate.resources.GuestEphemeralDiskBytes
@@ -542,8 +475,6 @@ func place(target *bin, candidate item) bool {
 		target.resources.VMSlots--
 		target.runConsumers--
 		target.runtimeStarts--
-	} else {
-		target.resources.BuildExecutors--
 	}
 	return true
 }
@@ -552,8 +483,7 @@ func fitsResources(available, required capacityapi.ResourceVector) bool {
 	return available.CPUMillis >= required.CPUMillis &&
 		available.MemoryBytes >= required.MemoryBytes &&
 		available.GuestEphemeralDiskBytes >= required.GuestEphemeralDiskBytes &&
-		available.VMSlots >= required.VMSlots &&
-		available.BuildExecutors >= required.BuildExecutors
+		available.VMSlots >= required.VMSlots
 }
 
 func fitsPhysical(available, required capacityapi.ResourceVector) bool {

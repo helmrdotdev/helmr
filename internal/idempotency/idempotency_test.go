@@ -78,23 +78,13 @@ func TestTransactionCreateReplayAndConflict(t *testing.T) {
 	}
 }
 
-func TestDeploymentCreateFingerprintBindsBuildAuthority(t *testing.T) {
+func TestDeploymentFinalizeFingerprintBindsBundleDigest(t *testing.T) {
 	store := &claimMemory{}
 	transaction := &Transaction{store: store}
 	environmentID := uuid.New()
 	projectID := uuid.New()
-	fingerprint := DeploymentCreateFingerprint{
-		SourceDigest:     "sha256:source",
-		LockfileDigest:   "sha256:lockfile",
-		LockfileName:     "pnpm-lock.yaml",
-		NodeVersion:      "24.16.0",
-		ManagerName:      "pnpm",
-		ManagerVersion:   "11.1.0",
-		ManagerIntegrity: "sha256.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		BuildContract:    "helmr.program-build.v0",
-		ImageCacheMode:   "prefer",
-	}
-	first, err := NewDeploymentCreateRequest(environmentID, projectID, "deploy-1", fingerprint)
+	fingerprint := DeploymentFinalizeFingerprint{BundleDigest: "sha256:" + string(bytes.Repeat([]byte{'a'}, 64))}
+	first, err := NewDeploymentFinalizeRequest(environmentID, projectID, "deploy-1", fingerprint)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +99,7 @@ func TestDeploymentCreateFingerprintBindsBuildAuthority(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	replay, err := NewDeploymentCreateRequest(environmentID, projectID, "deploy-1", fingerprint)
+	replay, err := NewDeploymentFinalizeRequest(environmentID, projectID, "deploy-1", fingerprint)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,8 +110,8 @@ func TestDeploymentCreateFingerprintBindsBuildAuthority(t *testing.T) {
 	if replayed.New || replayed.Claim.ID != created.Claim.ID {
 		t.Fatalf("replayed claim = %+v", replayed)
 	}
-	fingerprint.ManagerIntegrity = "sha256.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	conflicting, err := NewDeploymentCreateRequest(environmentID, projectID, "deploy-1", fingerprint)
+	fingerprint.BundleDigest = "sha256:" + string(bytes.Repeat([]byte{'b'}, 64))
+	conflicting, err := NewDeploymentFinalizeRequest(environmentID, projectID, "deploy-1", fingerprint)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,34 +119,6 @@ func TestDeploymentCreateFingerprintBindsBuildAuthority(t *testing.T) {
 	var conflict ConflictError
 	if !errors.As(err, &conflict) {
 		t.Fatalf("conflict = %v", err)
-	}
-}
-
-func TestDeploymentCreateFingerprintBindsImageCacheMode(t *testing.T) {
-	store := &claimMemory{}
-	transaction := &Transaction{store: store}
-	environmentID := uuid.New()
-	projectID := uuid.New()
-	fingerprint := DeploymentCreateFingerprint{
-		SourceDigest: "sha256:source", LockfileDigest: "sha256:lockfile",
-		LockfileName: "pnpm-lock.yaml", NodeVersion: "24.16.0",
-		ManagerName: "pnpm", ManagerVersion: "11.1.0",
-		BuildContract: "helmr.program-build.v0", ImageCacheMode: "prefer",
-	}
-	request, err := NewDeploymentCreateRequest(environmentID, projectID, "deploy-1", fingerprint)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := transaction.Acquire(t.Context(), request); err != nil {
-		t.Fatal(err)
-	}
-	fingerprint.ImageCacheMode = "bypass"
-	conflicting, err := NewDeploymentCreateRequest(environmentID, projectID, "deploy-1", fingerprint)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := transaction.Acquire(t.Context(), conflicting); err == nil {
-		t.Fatal("cache mode change did not conflict")
 	}
 }
 

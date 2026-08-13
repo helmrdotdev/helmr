@@ -3,7 +3,6 @@ package dispatch
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -175,95 +174,6 @@ SELECT count(*)
 	}
 	if reservations != 1 {
 		t.Fatalf("live runtime reservations = %d, want 1", reservations)
-	}
-}
-
-func TestConcurrentRunAndBuildPlacementShareWorkerCapacity(t *testing.T) {
-	fixture := newRunPlacementFixture(t)
-	buildID := uuid.New()
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-INSERT INTO deployments (
-    id, org_id, project_id, environment_id, build_region_id,
-    build_node_version, build_runtime_digest, build_toolchain_digest,
-    build_manager_name, build_manager_version, build_manager_digest,
-    build_contract, image_cache_mode, version, content_hash,
-    deployment_source_artifact_id, status
-)
-SELECT $2, org_id, project_id, environment_id, build_region_id,
-       build_node_version, build_runtime_digest, build_toolchain_digest,
-       build_manager_name, build_manager_version, build_manager_digest,
-       build_contract, image_cache_mode, 'v2', $3,
-       deployment_source_artifact_id, 'queued'
-  FROM deployments
- WHERE id = $1`, fixture.deploymentID, buildID, "sha256:"+strings.Repeat("9", 64))
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_groups
-   SET allows_build = true
- WHERE id = $1`, fixture.groupID)
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_instances
-   SET supports_build = true,
-       epoch_cpu_millis = 3000,
-       epoch_memory_bytes = 4294967296,
-       epoch_guest_ephemeral_disk_bytes = 34359738368,
-       per_vm_cpu_millis = 2000,
-       per_vm_memory_bytes = 2147483648,
-       max_vm_slots = 1,
-       max_runtime_starts = 1,
-       max_build_executors = 1
- WHERE id = $1`, fixture.workerID)
-
-	buildAuthority, err := NewBuildAuthority(fixture.pool)
-	if err != nil {
-		t.Fatal(err)
-	}
-	blocker, err := fixture.pool.Begin(fixture.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rollback(context.Background(), blocker)
-	if _, err := blocker.Exec(fixture.ctx, `
-SELECT id FROM worker_instances WHERE id = $1 FOR UPDATE`, fixture.workerID); err != nil {
-		t.Fatal(err)
-	}
-
-	runResult := make(chan error, 1)
-	go func() {
-		_, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
-		runResult <- err
-	}()
-	waitForBlockedQuery(t, fixture, "FOR UPDATE OF worker_instances", 1)
-	buildResult := make(chan error, 1)
-	go func() {
-		_, err := buildAuthority.PlaceReadyBuild(fixture.ctx, ReadyBuildCandidate{
-			OrgID: pgvalue.UUID(fixture.orgID), DeploymentID: pgvalue.UUID(buildID),
-			BuildRegionID: "us-east-1", LeaseSequence: 1,
-		})
-		buildResult <- err
-	}()
-	waitForBlockedQuery(t, fixture, "FOR UPDATE OF worker_instances", 2)
-	if err := blocker.Commit(fixture.ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := <-runResult; err != nil {
-		t.Fatalf("Run placement failed: %v", err)
-	}
-	if err := <-buildResult; !errors.Is(err, ErrCapacityUnavailable) {
-		t.Fatalf("Build placement error = %v, want ErrCapacityUnavailable", err)
-	}
-
-	var runtimes, builds int
-	if err := fixture.pool.QueryRow(fixture.ctx, `
-SELECT (SELECT count(*) FROM runtime_instances
-         WHERE worker_instance_id = $1 AND worker_epoch = 1 AND reclaimed_at IS NULL),
-       (SELECT count(*) FROM deployment_build_leases
-         WHERE worker_instance_id = $1 AND worker_epoch = 1
-           AND state IN ('assigned', 'starting', 'running'))`, fixture.workerID).Scan(&runtimes, &builds); err != nil {
-		t.Fatal(err)
-	}
-	if runtimes+builds != 1 {
-		t.Fatalf("shared Worker allocations runtimes=%d builds=%d, want one total", runtimes, builds)
 	}
 }
 

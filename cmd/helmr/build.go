@@ -76,6 +76,17 @@ func buildDeploymentBundle(
 	source string,
 	output string,
 	installCommand string,
+) error {
+	return buildDeploymentBundleAt(ctx, command, source, output, installCommand, true)
+}
+
+func buildDeploymentBundleAt(
+	ctx context.Context,
+	command *cobra.Command,
+	source string,
+	output string,
+	installCommand string,
+	printOutput bool,
 ) (returnErr error) {
 	if err := builder.ValidateBuilderImage(deploymentBundleBuilderImage); err != nil {
 		return errors.New("this Helmr release does not contain a canonical bundle builder image")
@@ -246,8 +257,11 @@ func buildDeploymentBundle(
 	if err := builder.PublishBundleDirectory(buildOutput, destination); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintln(command.OutOrStdout(), destination)
-	return err
+	if printOutput {
+		_, err = fmt.Fprintln(command.OutOrStdout(), destination)
+		return err
+	}
+	return nil
 }
 
 func executeDockerBuildx(

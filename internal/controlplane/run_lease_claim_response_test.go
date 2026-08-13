@@ -225,20 +225,15 @@ func validRunLeaseClaimResponse(
 	physical.workspaceLease.FencingTokenHash = capability.Hash
 
 	runtime := claimResponseRuntimeDescriptor()
-	runtimeDigest, err := deployment.RuntimeDigestBytes(runtime.Digest)
-	if err != nil {
-		t.Fatal(err)
-	}
 	projection := runLeaseClaimProjection{
 		program: db.GetDeploymentProgramAuthorityRow{
 			DeploymentID:             run.DeploymentID,
 			EnvironmentID:            run.EnvironmentID,
 			DeploymentVersion:        "v42",
-			BuildRuntimeDigest:       runtimeDigest,
+			RuntimeArtifactDigest:    runtime.Digest,
 			ProgramArtifactDigest:    validDigest('a'),
 			ProgramArtifactSizeBytes: 100,
 			ProgramArtifactMediaType: deployment.ProgramArtifactMediaType,
-			BuildContract:            deployment.ProgramBuildContract,
 			ProgramIndexDigest:       validDigestBytes(t, 'b'),
 		},
 		definition:  definition,
