@@ -54,6 +54,10 @@ worker_network_blocked_ipv4_cidrs = [
 # Optional smoke worker. The official worker AMI is resolved from helmr_version
 # and aws_region. NAT Gateway is required because workers run in private subnets.
 create_worker                       = false
+# Copy prior entries from `tofu output -json worker_generation_definitions`
+# here before an immutable Worker generation change; keep every retained entry
+# at min_size=0 until its Product restore authority is explicitly retired.
+retained_worker_generations         = {}
 worker_instance_type                = "c8i.xlarge"
 worker_enable_nested_virtualization = true
 worker_min_size                     = 1

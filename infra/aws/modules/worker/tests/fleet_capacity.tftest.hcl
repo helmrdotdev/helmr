@@ -367,6 +367,10 @@ run "build_worker_installs_exact_policy_before_service" {
       strcontains(base64decode(aws_launch_template.worker.user_data), "[ \"$allocated_bytes\" -ge \"$raw_bytes\" ]") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "did not preserve its fixed reserve after build filesystem allocation") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "Options=loop,nosuid,nodev,nodiscard") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "mount -o remount,rw,nosuid,dev \"$target\"") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "PrivateMounts=yes") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "ExecStart=/usr/local/sbin/helmr-worker-private-mount ${var.worker_binary_path}") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "RequiresMountsFor=/var/lib/helmr/cache /var/lib/helmr/scratch") &&
       !strcontains(base64decode(aws_launch_template.worker.user_data), "helmr-buildkit") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_WORK_DIR=/var/lib/helmr/scratch/worker") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "JAILER_CHROOT_DIR=/var/lib/helmr/scratch/jailer")

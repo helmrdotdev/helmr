@@ -107,7 +107,9 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	}
 	assertRemoved(t, artifact.VMState.Path)
 	assertRemoved(t, artifact.ScratchDisk.Path)
-	assertRemoved(t, artifact.Substrate.Path)
+	if _, err := os.Stat(artifact.Substrate.Path); err != nil {
+		t.Fatalf("session-owned substrate projection was removed by checkpoint cleanup: %v", err)
+	}
 	assertRemoved(t, artifact.Memory[0].Path)
 }
 
@@ -128,6 +130,25 @@ func TestValidateCheckpointPauseReadyRequiresExactAuthority(t *testing.T) {
 	ready.ResumeAttachId = "attach-2"
 	if err := validateCheckpointPauseReady(ready, request); err == nil {
 		t.Fatal("mismatched resume attach authority was accepted")
+	}
+}
+
+func TestValidateRestoreIdentityRejectsMissingSubstrateSize(t *testing.T) {
+	checkpoint := workerapi.CheckpointManifest{RecoveryPoint: workerapi.CheckpointRecoveryPoint{
+		Runtime: workerapi.CheckpointRuntime{
+			Backend: "firecracker", Arch: string(deployment.ArchitectureX8664),
+			Contract: "helmr.vm-runtime.v0", ID: "sha256:runtime",
+			KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs",
+			RootfsDigest: "sha256:rootfs", ConfigDigest: "sha256:config",
+			VMVCPUCount: 2, CPUConfigDigest: sha256sum.DigestBytes([]byte("cpu-config")),
+			Substrate: &workerapi.CheckpointRuntimeSubstrate{
+				Digest: "sha256:substrate", Format: "ext4", Contract: "helmr.substrate.v0",
+			},
+		},
+	}}
+	if err := validateRestoreIdentity(checkpoint, deployment.ArchitectureX8664); err == nil ||
+		!strings.Contains(err.Error(), "substrate.size_bytes must be positive") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

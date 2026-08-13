@@ -124,6 +124,7 @@ func prepareBuildProcessRoot(plan buildProcessPlan) (string, error) {
 		{0o755, "opt/helmr/output"},
 		{0o755, "opt/helmr/program"},
 		{0o755, "opt/helmr/runtime"},
+		{0o555, "proc"},
 		{0o755, "nix"},
 		{0o700, "work"},
 		{0o700, "work/home"},

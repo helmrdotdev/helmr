@@ -31,9 +31,26 @@ func TestCheckCommandRequiresExecutable(t *testing.T) {
 func TestPreflightChecksContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := (&Connector{cfg: (Config{}).WithDefaults()}).Preflight(ctx)
+	err := (&Connector{cfg: (Config{}).WithDefaults()}).preflight(ctx)
 	if err == nil || !strings.Contains(err.Error(), context.Canceled.Error()) {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestJailerDeviceMountRejectsNodev(t *testing.T) {
+	path := t.TempDir()
+	var stat unix.Statfs_t
+	if err := unix.Statfs(path, &stat); err != nil {
+		t.Fatal(err)
+	}
+	if stat.Flags&unix.ST_NODEV != 0 {
+		t.Skip("test filesystem is already mounted nodev")
+	}
+	if err := checkJailerDeviceMount(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateJailerDeviceMountFlags(unix.ST_NODEV); err == nil || !strings.Contains(err.Error(), "forbids device nodes") {
+		t.Fatalf("nodev error = %v", err)
 	}
 }
 

@@ -118,21 +118,16 @@ func run(log *slog.Logger) error {
 	connectorConfig.ScratchDiskMiB = cfg.VMScratchDiskMiB
 	connectorConfig.InitTimeout = cfg.VMInitTimeout
 	connectorConfig.HealthTimeout = cfg.VMHealthTimeout
-	connector, err := firecracker.NewConnector(connectorConfig)
+	runtimeCandidate, err := firecracker.NewConnector(connectorConfig)
 	if err != nil {
 		return fmt.Errorf("configure Firecracker connector: %w", err)
 	}
-	if err := connector.Preflight(ctx); err != nil {
-		return fmt.Errorf("the Firecracker worker preflight: %w", err)
-	}
-	hostRuntimeEvidence, err := connector.HostRuntimeEvidence(ctx)
+	connector, err := runtimeCandidate.Qualify(ctx)
 	if err != nil {
-		return fmt.Errorf("inspect Firecracker host runtime: %w", err)
+		return fmt.Errorf("qualify Firecracker worker runtime: %w", err)
 	}
-	runtimeCapabilities, err := connector.RuntimeCapabilities()
-	if err != nil {
-		return fmt.Errorf("inspect Firecracker runtime: %w", err)
-	}
+	hostRuntimeEvidence := connector.HostRuntimeEvidence()
+	runtimeCapabilities := connector.RuntimeCapabilities()
 	runtimeArchitecture := deployment.RuntimeArchitecture(runtimeCapabilities.Arch)
 	if err := deployment.ValidateRuntimeArchitecture(runtimeArchitecture); err != nil {
 		return fmt.Errorf("validate Firecracker runtime architecture: %w", err)
@@ -172,7 +167,15 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("inspect worker disk capacity: %w", err)
 	}
 	substrateCacheMaxBytes, artifactCacheMaxBytes := workerCacheBudgetsBytes(cfg.SubstrateCacheMaxMiB, cfg.ArtifactCacheMaxMiB, hostDiskMiB)
-	diskCapacity, err := compute.PartitionWorkerDiskCapacity(hostDiskMiB, vmResources.DiskMiB, substrateCacheMaxBytes+artifactCacheMaxBytes)
+	cacheBytesOnWorkerDisk := substrateCacheMaxBytes + artifactCacheMaxBytes
+	if supportsBuild {
+		// Managed build hosts put cache and the trusted VM arena on separate
+		// proven filesystems. Cache budgets must not be subtracted from arena
+		// capacity; live substrate projections are charged by the runtime
+		// capacity ledger instead.
+		cacheBytesOnWorkerDisk = 0
+	}
+	diskCapacity, err := compute.PartitionWorkerDiskCapacity(hostDiskMiB, vmResources.DiskMiB, cacheBytesOnWorkerDisk)
 	if err != nil {
 		return fmt.Errorf("partition worker physical disk capacity: %w", err)
 	}

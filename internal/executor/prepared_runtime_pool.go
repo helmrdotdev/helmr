@@ -658,7 +658,7 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		runtimeSubstrateIDValue = runtimeSubstrateID(registered)
 	}
 	started := time.Now()
-	if err := p.reserveRuntimeCapacity(target); err != nil {
+	if err := p.reserveRuntimeCapacity(target, topology); err != nil {
 		if errors.Is(err, errPreparedRuntimeCapacityBusy) {
 			p.logInfo("prepared runtime warm deferred", "runtime_instance_id", runtimeInstanceID, "reason", err.Error())
 			return err
@@ -1316,14 +1316,25 @@ func preparedRuntimeControlContext(parent context.Context) (context.Context, con
 	return context.WithTimeout(parent, defaultPreparedRuntimeControlTimeout)
 }
 
-func (p *PreparedRuntimePool) reserveRuntimeCapacity(target workerapi.RuntimeReconcileTarget) error {
+func (p *PreparedRuntimePool) reserveRuntimeCapacity(
+	target workerapi.RuntimeReconcileTarget,
+	topologies ...vm.RuntimeTopology,
+) error {
 	if p == nil || p.Capacity == nil {
 		return errors.New("prepared runtime capacity ledger is required")
 	}
-	request, err := runtimeCapacityVector(
+	projectionBytes := int64(0)
+	if len(topologies) > 1 {
+		return errors.New("runtime capacity accepts at most one topology")
+	}
+	if len(topologies) == 1 && topologies[0].Substrate != nil {
+		projectionBytes = topologies[0].Substrate.SizeBytes
+	}
+	request, err := runtimeCapacityVectorWithProjection(
 		int64(target.Source.ReservedCPUMillis),
 		int64(target.Source.ReservedMemoryMiB),
 		target.Source.ReservedDiskMiB,
+		projectionBytes,
 	)
 	if err != nil {
 		return err

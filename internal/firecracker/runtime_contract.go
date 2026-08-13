@@ -23,6 +23,7 @@ const (
 	apiSocketName              = "api.sock"
 	vsockSocketName            = "vsock.sock"
 	scratchDiskName            = "scratch.ext4"
+	substrateDiskName          = "substrate.ext4"
 	restoreMemoryName          = "memory.mem"
 	snapshotMemorySuffix       = ".mem"
 	snapshotStateSuffix        = ".vmstate"

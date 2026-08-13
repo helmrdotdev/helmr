@@ -35,7 +35,7 @@ func defaultRuntimeProbeDependencies(unameRelease func() (string, error)) runtim
 	}
 }
 
-func (c *Connector) HostRuntimeEvidence(ctx context.Context) (HostRuntimeEvidence, error) {
+func (c *Connector) hostRuntimeEvidence(ctx context.Context) (HostRuntimeEvidence, error) {
 	if c == nil {
 		return HostRuntimeEvidence{}, errors.New("the Firecracker connector is nil")
 	}

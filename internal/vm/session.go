@@ -101,8 +101,19 @@ type RuntimeTopology struct {
 	Substrate *RuntimeSubstrate
 }
 
+type RuntimeSubstrateSource interface {
+	MaterializeInto(
+		context.Context,
+		string,
+		string,
+		int,
+		int,
+	) (string, error)
+}
+
 type RuntimeSubstrate struct {
 	Path      string
+	Source    RuntimeSubstrateSource
 	Digest    string
 	Format    string
 	Contract  string

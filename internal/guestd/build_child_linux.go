@@ -164,6 +164,9 @@ func setupBuildProcessRoot(config buildProcessConfig) error {
 	if err := mountBuildDevices(config.ProcessRoot); err != nil {
 		return err
 	}
+	if err := mountBuildProc(config.ProcessRoot); err != nil {
+		return err
+	}
 	for _, mount := range []struct {
 		source string
 		target string
@@ -239,6 +242,24 @@ func setupBuildProcessRoot(config buildProcessConfig) error {
 		return errors.New("build process executable is not executable")
 	}
 	return nil
+}
+
+func mountBuildProc(root string) error {
+	path := filepath.Join(root, "proc")
+	if err := unix.Mount(
+		"proc",
+		path,
+		"proc",
+		buildProcMountFlags(),
+		"",
+	); err != nil {
+		return fmt.Errorf("mount build process procfs: %w", err)
+	}
+	return nil
+}
+
+func buildProcMountFlags() uintptr {
+	return unix.MS_RDONLY | unix.MS_NOSUID | unix.MS_NODEV | unix.MS_NOEXEC
 }
 
 func mountBuildFile(root, source, absoluteTarget string) error {

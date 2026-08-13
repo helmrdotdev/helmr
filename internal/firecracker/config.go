@@ -65,7 +65,7 @@ type Config struct {
 }
 
 // RuntimeCapabilities is content-only boot artifact metadata. A complete v1
-// runtime identity exists only after Connector.HostRuntimeEvidence succeeds.
+// runtime identity exists only after a Connector candidate qualifies.
 type RuntimeCapabilities struct {
 	Arch            string
 	Contract        string

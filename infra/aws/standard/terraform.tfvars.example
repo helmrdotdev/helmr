@@ -54,7 +54,11 @@ worker_network_blocked_ipv4_cidrs = [
   "169.254.0.0/16",
 ]
 
-create_worker           = false
+create_worker = false
+# Copy prior entries from `tofu output -json worker_generation_definitions`
+# here before an immutable Worker generation change; keep every retained entry
+# at min_size=0 until its Product restore authority is explicitly retired.
+retained_worker_generations = {}
 worker_min_size         = 0
 worker_root_volume_size_gb    = 500
 worker_root_volume_iops       = 12000

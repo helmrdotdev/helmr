@@ -1307,7 +1307,9 @@ func validateCheckpointSubstrateAuthority(
 		substrate.DeploymentDefinitionID != authority.runtime.DeploymentDefinitionID ||
 		substrate.SubstrateDigest != identity.Digest ||
 		substrate.SubstrateFormat != identity.Format ||
-		substrate.SubstrateContract != identity.Contract {
+		substrate.SubstrateContract != identity.Contract ||
+		substrate.SubstrateSizeBytes != identity.SizeBytes ||
+		identity.SizeBytes <= 0 {
 		return errStaleRunLeaseClaim
 	}
 	return nil

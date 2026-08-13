@@ -61,6 +61,62 @@ variable "enable_ssm" {
   default     = true
 }
 
+variable "sealed_provider_definition" {
+  description = "Exact realized provider authority retained for an existing immutable Worker Pool. Null creates the current definition; a value preserves its user data, IAM policies, SSM contract, and launch-template version while the Pool remains restore-capable."
+  type = object({
+    user_data_base64                                = string
+    permission_policy_json                          = string
+    boundary_policy_json                            = string
+    enable_ssm                                      = bool
+    launch_template_version                         = string
+    health_check_grace_period_seconds               = number
+    launch_lifecycle_heartbeat_timeout_seconds      = number
+    termination_lifecycle_heartbeat_timeout_seconds = number
+    termination_drain_timeout_seconds               = number
+    lifecycle_heartbeat_interval_seconds            = number
+    termination_policies                            = list(string)
+    protect_from_scale_in                           = bool
+    health_check_type                               = string
+    instance_refresh_strategy                       = string
+    instance_refresh_min_healthy_percentage         = number
+    instance_refresh_max_healthy_percentage         = number
+    instance_refresh_scale_in_protected_instances   = string
+    instance_refresh_standby_instances              = string
+    instance_refresh_skip_matching                  = bool
+    launch_lifecycle_transition                     = string
+    launch_lifecycle_default_result                 = string
+    termination_lifecycle_transition                = string
+    termination_lifecycle_default_result            = string
+  })
+  default  = null
+  nullable = true
+
+  validation {
+    condition = var.sealed_provider_definition == null || (
+      can(base64decode(var.sealed_provider_definition.user_data_base64)) &&
+      can(jsondecode(var.sealed_provider_definition.permission_policy_json)) &&
+      can(jsondecode(var.sealed_provider_definition.boundary_policy_json)) &&
+      can(regex("^[1-9][0-9]*$", var.sealed_provider_definition.launch_template_version)) &&
+      var.sealed_provider_definition.health_check_grace_period_seconds > 0 &&
+      var.sealed_provider_definition.launch_lifecycle_heartbeat_timeout_seconds > var.sealed_provider_definition.lifecycle_heartbeat_interval_seconds &&
+      var.sealed_provider_definition.termination_lifecycle_heartbeat_timeout_seconds >= var.sealed_provider_definition.lifecycle_heartbeat_interval_seconds * 3 &&
+      var.sealed_provider_definition.termination_drain_timeout_seconds > 0 &&
+      length(var.sealed_provider_definition.termination_policies) > 0 &&
+      contains(["EC2", "ELB", "VPC_LATTICE"], var.sealed_provider_definition.health_check_type) &&
+      var.sealed_provider_definition.instance_refresh_strategy == "Rolling" &&
+      var.sealed_provider_definition.instance_refresh_min_healthy_percentage >= 0 &&
+      var.sealed_provider_definition.instance_refresh_max_healthy_percentage >= 100 &&
+      contains(["Refresh", "Ignore", "Wait"], var.sealed_provider_definition.instance_refresh_scale_in_protected_instances) &&
+      contains(["Terminate", "Ignore", "Wait"], var.sealed_provider_definition.instance_refresh_standby_instances) &&
+      var.sealed_provider_definition.launch_lifecycle_transition == "autoscaling:EC2_INSTANCE_LAUNCHING" &&
+      contains(["ABANDON", "CONTINUE"], var.sealed_provider_definition.launch_lifecycle_default_result) &&
+      var.sealed_provider_definition.termination_lifecycle_transition == "autoscaling:EC2_INSTANCE_TERMINATING" &&
+      contains(["ABANDON", "CONTINUE"], var.sealed_provider_definition.termination_lifecycle_default_result)
+    )
+    error_message = "sealed_provider_definition must contain valid immutable user data, IAM, launch-template, and ASG lifecycle authority."
+  }
+}
+
 variable "min_size" {
   description = "Minimum worker instance count."
   type        = number

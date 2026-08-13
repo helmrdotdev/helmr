@@ -409,6 +409,175 @@ variable "create_worker" {
   default     = false
 }
 
+variable "retained_worker_generations" {
+  description = "Immutable prior Worker Pool generations retained as scale-zero ASG/LT/AMI supply for exact checkpoint restore. Keys must equal role-sha256(jsonencode(generation_inputs))."
+  type = map(object({
+    generation_inputs = object({
+      ami_id                = string
+      instance_type         = string
+      nested_virtualization = bool
+      roles                 = list(string)
+      supply = object({
+        contract_digest     = string
+        enable_ssm          = bool
+        build_policy_digest = optional(string)
+        network = object({
+          blocked_ipv4_cidrs = list(string)
+          link_pool          = string
+          resolver_ipv4      = string
+          translation_pool   = string
+        })
+        platform_store = object({
+          uri         = string
+          bucket_arn  = string
+          kms_key_arn = string
+        })
+        image_cache = optional(object({
+          registry_authority    = string
+          repository_prefix     = string
+          role_arn              = string
+          repository_arn_prefix = string
+        }))
+        root_volume = object({
+          size_gb    = number
+          iops       = number
+          throughput = number
+        })
+        disk = object({
+          total_mib           = number
+          reserve_mib         = number
+          substrate_cache_mib = number
+          artifact_cache_mib  = number
+          build_cache_mib     = optional(number)
+          build_scratch_mib   = optional(number)
+        })
+        lifecycle = object({
+          health_check_grace_period_seconds               = number
+          launch_lifecycle_heartbeat_timeout_seconds      = number
+          termination_lifecycle_heartbeat_timeout_seconds = number
+          termination_drain_timeout_seconds               = number
+          lifecycle_heartbeat_interval_seconds            = number
+          termination_policies                            = list(string)
+          protect_from_scale_in                           = bool
+          health_check_type                               = string
+          instance_refresh_strategy                       = string
+          instance_refresh_min_healthy_percentage         = number
+          instance_refresh_max_healthy_percentage         = number
+          instance_refresh_scale_in_protected_instances   = string
+          instance_refresh_standby_instances              = string
+          instance_refresh_skip_matching                  = bool
+          launch_lifecycle_transition                     = string
+          launch_lifecycle_default_result                 = string
+          termination_lifecycle_transition                = string
+          termination_lifecycle_default_result            = string
+        })
+      })
+      capacity = object({
+        cpu_millis               = number
+        memory_mib               = number
+        guest_ephemeral_disk_mib = number
+        vm_slots                 = number
+        build_executors          = number
+      })
+      per_vm = object({
+        cpu_millis               = number
+        memory_mib               = number
+        guest_ephemeral_disk_mib = number
+      })
+    })
+    min_size = number
+    max_size = number
+    sealed_provider_definition = object({
+      user_data_base64                                = string
+      permission_policy_json                          = string
+      boundary_policy_json                            = string
+      enable_ssm                                      = bool
+      launch_template_version                         = string
+      health_check_grace_period_seconds               = number
+      launch_lifecycle_heartbeat_timeout_seconds      = number
+      termination_lifecycle_heartbeat_timeout_seconds = number
+      termination_drain_timeout_seconds               = number
+      lifecycle_heartbeat_interval_seconds            = number
+      termination_policies                            = list(string)
+      protect_from_scale_in                           = bool
+      health_check_type                               = string
+      instance_refresh_strategy                       = string
+      instance_refresh_min_healthy_percentage         = number
+      instance_refresh_max_healthy_percentage         = number
+      instance_refresh_scale_in_protected_instances   = string
+      instance_refresh_standby_instances              = string
+      instance_refresh_skip_matching                  = bool
+      launch_lifecycle_transition                     = string
+      launch_lifecycle_default_result                 = string
+      termination_lifecycle_transition                = string
+      termination_lifecycle_default_result            = string
+    })
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for pool_name, generation in var.retained_worker_generations :
+      length(generation.generation_inputs.roles) == 1 &&
+      contains(["run", "build"], try(one(generation.generation_inputs.roles), "")) &&
+      pool_name == "${try(one(generation.generation_inputs.roles), "invalid")}-${sha256(jsonencode(generation.generation_inputs))}" &&
+      generation.min_size == 0 &&
+      generation.max_size > 0 &&
+      generation.generation_inputs.supply.disk.total_mib > generation.generation_inputs.supply.disk.reserve_mib &&
+      generation.generation_inputs.capacity.cpu_millis > 0 &&
+      generation.generation_inputs.capacity.cpu_millis % 1000 == 0 &&
+      generation.generation_inputs.capacity.memory_mib > 0 &&
+      generation.generation_inputs.per_vm.cpu_millis > 0 &&
+      generation.generation_inputs.per_vm.cpu_millis % 1000 == 0 &&
+      generation.generation_inputs.per_vm.memory_mib > 0 &&
+      generation.generation_inputs.per_vm.guest_ephemeral_disk_mib > 0 &&
+      generation.generation_inputs.supply.disk.substrate_cache_mib > 0 &&
+      generation.generation_inputs.supply.disk.artifact_cache_mib > 0 &&
+      can(base64decode(generation.sealed_provider_definition.user_data_base64)) &&
+      can(jsondecode(generation.sealed_provider_definition.permission_policy_json)) &&
+      can(jsondecode(generation.sealed_provider_definition.boundary_policy_json)) &&
+      can(regex("^[1-9][0-9]*$", generation.sealed_provider_definition.launch_template_version)) &&
+      generation.sealed_provider_definition.enable_ssm == generation.generation_inputs.supply.enable_ssm &&
+      generation.sealed_provider_definition.health_check_grace_period_seconds == generation.generation_inputs.supply.lifecycle.health_check_grace_period_seconds &&
+      generation.sealed_provider_definition.launch_lifecycle_heartbeat_timeout_seconds == generation.generation_inputs.supply.lifecycle.launch_lifecycle_heartbeat_timeout_seconds &&
+      generation.sealed_provider_definition.termination_lifecycle_heartbeat_timeout_seconds == generation.generation_inputs.supply.lifecycle.termination_lifecycle_heartbeat_timeout_seconds &&
+      generation.sealed_provider_definition.termination_drain_timeout_seconds == generation.generation_inputs.supply.lifecycle.termination_drain_timeout_seconds &&
+      generation.sealed_provider_definition.lifecycle_heartbeat_interval_seconds == generation.generation_inputs.supply.lifecycle.lifecycle_heartbeat_interval_seconds &&
+      generation.sealed_provider_definition.termination_policies == generation.generation_inputs.supply.lifecycle.termination_policies &&
+      generation.sealed_provider_definition.protect_from_scale_in == generation.generation_inputs.supply.lifecycle.protect_from_scale_in &&
+      generation.sealed_provider_definition.health_check_type == generation.generation_inputs.supply.lifecycle.health_check_type &&
+      generation.sealed_provider_definition.instance_refresh_strategy == generation.generation_inputs.supply.lifecycle.instance_refresh_strategy &&
+      generation.sealed_provider_definition.instance_refresh_min_healthy_percentage == generation.generation_inputs.supply.lifecycle.instance_refresh_min_healthy_percentage &&
+      generation.sealed_provider_definition.instance_refresh_max_healthy_percentage == generation.generation_inputs.supply.lifecycle.instance_refresh_max_healthy_percentage &&
+      generation.sealed_provider_definition.instance_refresh_scale_in_protected_instances == generation.generation_inputs.supply.lifecycle.instance_refresh_scale_in_protected_instances &&
+      generation.sealed_provider_definition.instance_refresh_standby_instances == generation.generation_inputs.supply.lifecycle.instance_refresh_standby_instances &&
+      generation.sealed_provider_definition.instance_refresh_skip_matching == generation.generation_inputs.supply.lifecycle.instance_refresh_skip_matching &&
+      generation.sealed_provider_definition.launch_lifecycle_transition == generation.generation_inputs.supply.lifecycle.launch_lifecycle_transition &&
+      generation.sealed_provider_definition.launch_lifecycle_default_result == generation.generation_inputs.supply.lifecycle.launch_lifecycle_default_result &&
+      generation.sealed_provider_definition.termination_lifecycle_transition == generation.generation_inputs.supply.lifecycle.termination_lifecycle_transition &&
+      generation.sealed_provider_definition.termination_lifecycle_default_result == generation.generation_inputs.supply.lifecycle.termination_lifecycle_default_result &&
+      generation.sealed_provider_definition.health_check_grace_period_seconds > 0 &&
+      generation.sealed_provider_definition.launch_lifecycle_heartbeat_timeout_seconds > generation.sealed_provider_definition.lifecycle_heartbeat_interval_seconds &&
+      generation.sealed_provider_definition.termination_lifecycle_heartbeat_timeout_seconds >= generation.sealed_provider_definition.lifecycle_heartbeat_interval_seconds * 3 &&
+      generation.sealed_provider_definition.termination_drain_timeout_seconds > 0 &&
+      length(generation.sealed_provider_definition.termination_policies) > 0 &&
+      (
+        try(one(generation.generation_inputs.roles), "") == "run" ?
+        generation.generation_inputs.capacity.vm_slots > 0 && generation.generation_inputs.capacity.build_executors == 0 :
+        generation.generation_inputs.capacity.vm_slots == 0 &&
+        generation.generation_inputs.capacity.build_executors == 1 &&
+        generation.generation_inputs.supply.build_policy_digest != null &&
+        generation.generation_inputs.supply.image_cache != null &&
+        generation.generation_inputs.supply.disk.build_cache_mib != null &&
+        generation.generation_inputs.supply.disk.build_cache_mib > 0 &&
+        generation.generation_inputs.supply.disk.build_scratch_mib != null &&
+        generation.generation_inputs.supply.disk.build_scratch_mib > 0
+      )
+    ])
+    error_message = "retained_worker_generations must bind each canonical Pool key to one complete scale-zero generation input and sealed provider definition."
+  }
+}
+
 variable "worker_launch_timeout_seconds" {
   description = "Deployment-owned ASG launch-hook timeout while a Worker reaches Control Plane readiness."
   type        = number

@@ -58,6 +58,15 @@ type Connector struct {
 	hostRuntime *hostRuntimeEvidenceStore
 }
 
+// QualifiedRuntime is the only Firecracker value that implements workload VM
+// interfaces. A raw Connector is a candidate host runtime until Qualify proves
+// the exact jailer, device, network, VMM, and Guest health path.
+type QualifiedRuntime struct {
+	connector    *Connector
+	evidence     HostRuntimeEvidence
+	capabilities RuntimeCapabilities
+}
+
 func NewConnector(cfg Config) (*Connector, error) {
 	cfg = cfg.WithDefaults()
 	if err := cfg.Validate(); err != nil {
@@ -76,14 +85,52 @@ func NewConnector(cfg Config) (*Connector, error) {
 	}, nil
 }
 
-func (c *Connector) DatapathHealth() error {
+func (c *Connector) Qualify(ctx context.Context) (*QualifiedRuntime, error) {
+	if c == nil {
+		return nil, errors.New("the Firecracker runtime candidate is nil")
+	}
+	if err := c.preflight(ctx); err != nil {
+		return nil, fmt.Errorf("preflight Firecracker runtime candidate: %w", err)
+	}
+	evidence, err := c.hostRuntimeEvidence(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("inspect Firecracker host runtime: %w", err)
+	}
+	if err := c.probeGuest(ctx); err != nil {
+		return nil, fmt.Errorf("prove jailed Firecracker Guest readiness: %w", err)
+	}
+	capabilities, err := c.runtimeCapabilities()
+	if err != nil {
+		return nil, fmt.Errorf("inspect Firecracker runtime capabilities: %w", err)
+	}
+	return &QualifiedRuntime{
+		connector: c, evidence: evidence, capabilities: capabilities,
+	}, nil
+}
+
+func (runtime *QualifiedRuntime) DatapathHealth() error {
+	if runtime == nil || runtime.connector == nil {
+		return errors.New("the qualified Firecracker runtime is nil")
+	}
+	return runtime.connector.datapathHealth()
+}
+
+func (c *Connector) datapathHealth() error {
 	if c == nil {
 		return errors.New("the Firecracker connector is nil")
 	}
 	return c.datapath.Health()
 }
 
-func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
+func (runtime *QualifiedRuntime) RuntimeCapabilities() RuntimeCapabilities {
+	return runtime.capabilities
+}
+
+func (runtime *QualifiedRuntime) HostRuntimeEvidence() HostRuntimeEvidence {
+	return runtime.evidence
+}
+
+func (c *Connector) runtimeCapabilities() (RuntimeCapabilities, error) {
 	capabilities, err := runtimeArtifactCapabilities(c.artifacts)
 	if err != nil {
 		return RuntimeCapabilities{}, err
@@ -93,7 +140,50 @@ func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 	return capabilities, nil
 }
 
-func (c *Connector) Connect(ctx context.Context, request vm.ConnectRequest) (vm.Session, error) {
+// ProbeGuest proves that the exact bound host runtime can cross the jailer,
+// device, network, VMM, and Guest health boundaries before the Worker
+// advertises capacity to the Control Plane.
+func (c *Connector) probeGuest(ctx context.Context) error {
+	if c == nil {
+		return errors.New("the Firecracker connector is nil")
+	}
+	probeCtx, cancelProbe := context.WithTimeout(
+		ctx,
+		c.cfg.InitTimeout+c.cfg.HealthTimeout+stopTimeout,
+	)
+	defer cancelProbe()
+	identity, err := c.hostRuntime.runtimeIdentity()
+	if err != nil {
+		return fmt.Errorf("resolve startup probe runtime identity: %w", err)
+	}
+	ownerID := uuid.Must(uuid.NewV7()).String()
+	session, err := c.connect(probeCtx, vm.ConnectRequest{
+		ID:        ownerID,
+		OwnerKind: vm.OwnerRuntime,
+		Binding: vm.WorkloadBinding{
+			WorkerEpoch:       1,
+			OwnerID:           ownerID,
+			Generation:        1,
+			RuntimeInstanceID: ownerID,
+			RuntimeIdentityID: identity.ID,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("start the Firecracker startup probe Guest: %w", err)
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
+	defer cancel()
+	if err := session.Close(cleanupCtx); err != nil {
+		return fmt.Errorf("clean the Firecracker startup probe Guest: %w", err)
+	}
+	return nil
+}
+
+func (runtime *QualifiedRuntime) Connect(ctx context.Context, request vm.ConnectRequest) (vm.Session, error) {
+	return runtime.connector.connect(ctx, request)
+}
+
+func (c *Connector) connect(ctx context.Context, request vm.ConnectRequest) (vm.Session, error) {
 	owner := vm.Owner{Kind: request.OwnerKind, ID: request.ID}
 	if err := request.Binding.Validate(owner); err != nil {
 		return nil, fmt.Errorf("the Firecracker workload binding: %w", err)
@@ -221,7 +311,11 @@ func isProgramDriveSet(drives []vm.ReadOnlyDrive) bool {
 		present[vm.ProgramDrive]
 }
 
-func (c *Connector) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Session, error) {
+func (runtime *QualifiedRuntime) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Session, error) {
+	return runtime.connector.materialize(ctx, request)
+}
+
+func (c *Connector) materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Session, error) {
 	if err := c.validateMaterializeRequest(request); err != nil {
 		return nil, err
 	}
@@ -248,7 +342,17 @@ func (c *Connector) Materialize(ctx context.Context, request vm.MaterializeReque
 	)
 }
 
-func (c *Connector) Cleanup(ctx context.Context, owner vm.Owner) error {
+func (runtime *QualifiedRuntime) Cleanup(ctx context.Context, owner vm.Owner) error {
+	return runtime.connector.cleanup(ctx, owner)
+}
+
+type connectorCleaner struct{ connector *Connector }
+
+func (cleaner connectorCleaner) Cleanup(ctx context.Context, owner vm.Owner) error {
+	return cleaner.connector.cleanup(ctx, owner)
+}
+
+func (c *Connector) cleanup(ctx context.Context, owner vm.Owner) error {
 	if err := owner.Validate(); err != nil {
 		return cleanupUnproven(owner, err)
 	}
@@ -565,7 +669,11 @@ func (c *Connector) kernelArgsValue() string {
 	return c.kernelArgs
 }
 
-func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.Session, error) {
+func (runtime *QualifiedRuntime) Restore(ctx context.Context, request vm.RestoreRequest) (vm.Session, error) {
+	return runtime.connector.restore(ctx, request)
+}
+
+func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.Session, error) {
 	if err := request.Binding.Validate(vm.Owner{Kind: request.OwnerKind, ID: request.RuntimeInstanceID}); err != nil {
 		return nil, fmt.Errorf("the Firecracker workload binding: %w", err)
 	}
@@ -852,7 +960,9 @@ func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.O
 		return nil, err
 	}
 	if _, err := session.Open(ctx); err != nil {
-		return nil, errors.Join(err, session.Close(context.Background()))
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
+		defer cancel()
+		return nil, errors.Join(err, session.Close(cleanupCtx))
 	}
 	return session, nil
 }
@@ -896,7 +1006,9 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 	}
 	defer func() {
 		if retErr != nil {
-			retErr = errors.Join(retErr, c.Cleanup(context.Background(), owner))
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
+			defer cancel()
+			retErr = errors.Join(retErr, c.cleanup(cleanupCtx, owner))
 		}
 	}()
 	scratchDiskPath := filepath.Join(instanceDir, scratchDiskName)
@@ -913,15 +1025,26 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 	recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_prepare_scratch_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
 	substrateDiskPath := ""
 	if topology.Substrate != nil {
-		if err := validateRuntimeSubstrateTopology(topology.Substrate); err != nil {
+		if err := validateRuntimeSubstrateSource(topology.Substrate); err != nil {
 			return nil, err
 		}
-		substrateDiskPath = strings.TrimSpace(topology.Substrate.Path)
 		phaseStarted = time.Now()
-		if err := c.prepareSubstrateDiskForJailer(substrateDiskPath); err != nil {
+		var err error
+		substrateDiskPath, err = topology.Substrate.Source.MaterializeInto(
+			ctx,
+			instanceDir,
+			substrateDiskName,
+			c.cfg.JailerUID,
+			c.cfg.JailerGID,
+		)
+		if err != nil {
 			recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "prepare_substrate_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 			return nil, err
 		}
+		projected := cloneRuntimeSubstrate(topology.Substrate)
+		projected.Path = substrateDiskPath
+		projected.Source = nil
+		topology.Substrate = projected
 		recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "prepare_substrate_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
 	}
 	jailRoot := jailRootPath(launchCfg, instanceID)
@@ -1051,7 +1174,7 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 		topology:        topology,
 		readOnlyDrives:  append([]vm.ReadOnlyDrive(nil), readOnlyDrives...),
 		owner:           owner,
-		cleaner:         c,
+		cleaner:         connectorCleaner{connector: c},
 		buildNetwork:    isBuildGuestKernelArgs(c.kernelArgsValue()),
 		networkBinding:  networkBinding,
 	}
@@ -1291,16 +1414,6 @@ func (c *Connector) prepareScratchDiskForJailer(scratchDiskPath string) error {
 	}
 	if err := os.Chmod(scratchDiskPath, 0o600); err != nil {
 		return fmt.Errorf("chmod scratch disk for jailer: %w", err)
-	}
-	return nil
-}
-
-func (c *Connector) prepareSubstrateDiskForJailer(substrateDiskPath string) error {
-	if err := os.Chown(substrateDiskPath, c.cfg.JailerUID, c.cfg.JailerGID); err != nil {
-		return fmt.Errorf("chown substrate disk for jailer: %w", err)
-	}
-	if err := os.Chmod(substrateDiskPath, 0o440); err != nil {
-		return fmt.Errorf("chmod substrate disk for jailer: %w", err)
 	}
 	return nil
 }
@@ -2290,9 +2403,10 @@ func validateSnapshotProgram(manifest *snapshotProgramManifest, drives []vm.Read
 }
 
 type snapshotRuntimeSubstrate struct {
-	Digest   string `json:"digest"`
-	Format   string `json:"format"`
-	Contract string `json:"contract"`
+	Digest    string `json:"digest"`
+	Format    string `json:"format"`
+	Contract  string `json:"contract"`
+	SizeBytes int64  `json:"size_bytes"`
 }
 
 type snapshotRuntimeStateManifest struct {
@@ -2317,9 +2431,10 @@ func snapshotSubstrateManifest(substrate *vm.RuntimeSubstrate) (*snapshotRuntime
 		return nil, err
 	}
 	return &snapshotRuntimeSubstrate{
-		Digest:   strings.TrimSpace(substrate.Digest),
-		Format:   strings.TrimSpace(substrate.Format),
-		Contract: strings.TrimSpace(substrate.Contract),
+		Digest:    strings.TrimSpace(substrate.Digest),
+		Format:    strings.TrimSpace(substrate.Format),
+		Contract:  strings.TrimSpace(substrate.Contract),
+		SizeBytes: substrate.SizeBytes,
 	}, nil
 }
 
@@ -2338,6 +2453,13 @@ func validateRuntimeSubstrateTopology(substrate *vm.RuntimeSubstrate) error {
 	if strings.TrimSpace(substrate.Path) == "" {
 		return errors.New("runtime substrate path is required")
 	}
+	return validateRuntimeSubstrateIdentity(substrate)
+}
+
+func validateRuntimeSubstrateIdentity(substrate *vm.RuntimeSubstrate) error {
+	if substrate == nil {
+		return nil
+	}
 	if strings.TrimSpace(substrate.Digest) == "" {
 		return errors.New("runtime substrate digest is required")
 	}
@@ -2347,7 +2469,23 @@ func validateRuntimeSubstrateTopology(substrate *vm.RuntimeSubstrate) error {
 	if strings.TrimSpace(substrate.Contract) == "" {
 		return errors.New("runtime substrate contract is required")
 	}
+	if substrate.SizeBytes <= 0 {
+		return errors.New("runtime substrate size must be positive")
+	}
 	return nil
+}
+
+func validateRuntimeSubstrateSource(substrate *vm.RuntimeSubstrate) error {
+	if substrate == nil {
+		return nil
+	}
+	if strings.TrimSpace(substrate.Path) != "" {
+		return errors.New("runtime substrate cache path must not cross the connector boundary")
+	}
+	if substrate.Source == nil {
+		return errors.New("runtime substrate materialization source is required")
+	}
+	return validateRuntimeSubstrateIdentity(substrate)
 }
 
 func snapshotRuntimeConfig(cfg Config, checkpointID string, runtimeID string, cpuConfigDigest string, kernelDigest string, initramfsDigest string, rootfsDigest string, kernelArgs string, topology vm.RuntimeTopology, readOnlyDrives ...[]vm.ReadOnlyDrive) (string, []byte, error) {
@@ -2581,7 +2719,7 @@ func validateRuntimeSubstrateManifest(manifest *snapshotRuntimeSubstrate, expect
 	case expected == nil:
 		return errors.New("checkpoint manifest requires runtime substrate but restore request did not provide one")
 	}
-	if err := validateRuntimeSubstrateTopology(expected); err != nil {
+	if err := validateRuntimeSubstrateIdentity(expected); err != nil {
 		return err
 	}
 	if manifest.Digest != strings.TrimSpace(expected.Digest) {
@@ -2592,6 +2730,9 @@ func validateRuntimeSubstrateManifest(manifest *snapshotRuntimeSubstrate, expect
 	}
 	if manifest.Contract != strings.TrimSpace(expected.Contract) {
 		return fmt.Errorf("checkpoint manifest substrate contract %s does not match restore substrate contract %s", manifest.Contract, expected.Contract)
+	}
+	if manifest.SizeBytes != expected.SizeBytes {
+		return fmt.Errorf("checkpoint manifest substrate size %d does not match restore substrate size %d", manifest.SizeBytes, expected.SizeBytes)
 	}
 	return nil
 }

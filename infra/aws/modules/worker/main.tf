@@ -84,7 +84,10 @@ locals {
     worker_disk_reserve_mib              = var.worker_disk_reserve_mib
     expected_root_bytes                  = format("%.0f", var.root_volume_size_gb * 1073741824)
   })
-  worker_user_data_base64 = base64encode(local.worker_user_data)
+  rendered_worker_user_data_base64 = base64encode(local.worker_user_data)
+  worker_user_data_base64 = var.sealed_provider_definition == null ? (
+    local.rendered_worker_user_data_base64
+  ) : var.sealed_provider_definition.user_data_base64
   worker_user_data_size_bytes = (
     length(local.worker_user_data_base64) * 3 / 4 -
     length(regexall("=", local.worker_user_data_base64))
@@ -234,6 +237,33 @@ locals {
       Resource = "*"
     }] : [])
   }
+  worker_permission_policy_json = var.sealed_provider_definition == null ? (
+    jsonencode(local.worker_permission_policy)
+  ) : var.sealed_provider_definition.permission_policy_json
+  worker_boundary_policy_json = var.sealed_provider_definition == null ? (
+    jsonencode(local.worker_boundary_policy)
+  ) : var.sealed_provider_definition.boundary_policy_json
+  worker_enable_ssm = var.sealed_provider_definition == null ? (
+    var.enable_ssm
+  ) : var.sealed_provider_definition.enable_ssm
+  worker_health_check_grace_period_seconds               = var.sealed_provider_definition == null ? var.health_check_grace_period_seconds : var.sealed_provider_definition.health_check_grace_period_seconds
+  worker_launch_lifecycle_heartbeat_timeout_seconds      = var.sealed_provider_definition == null ? var.launch_lifecycle_heartbeat_timeout_seconds : var.sealed_provider_definition.launch_lifecycle_heartbeat_timeout_seconds
+  worker_termination_lifecycle_heartbeat_timeout_seconds = var.sealed_provider_definition == null ? var.termination_lifecycle_heartbeat_timeout_seconds : var.sealed_provider_definition.termination_lifecycle_heartbeat_timeout_seconds
+  worker_termination_drain_timeout_seconds               = var.sealed_provider_definition == null ? var.termination_drain_timeout_seconds : var.sealed_provider_definition.termination_drain_timeout_seconds
+  worker_lifecycle_heartbeat_interval_seconds            = var.sealed_provider_definition == null ? var.lifecycle_heartbeat_interval_seconds : var.sealed_provider_definition.lifecycle_heartbeat_interval_seconds
+  worker_termination_policies                            = var.sealed_provider_definition == null ? ["OldestLaunchTemplate", "OldestInstance"] : var.sealed_provider_definition.termination_policies
+  worker_protect_from_scale_in                           = var.sealed_provider_definition == null ? true : var.sealed_provider_definition.protect_from_scale_in
+  worker_health_check_type                               = var.sealed_provider_definition == null ? "EC2" : var.sealed_provider_definition.health_check_type
+  worker_instance_refresh_strategy                       = var.sealed_provider_definition == null ? "Rolling" : var.sealed_provider_definition.instance_refresh_strategy
+  worker_instance_refresh_min_healthy_percentage         = var.sealed_provider_definition == null ? 100 : var.sealed_provider_definition.instance_refresh_min_healthy_percentage
+  worker_instance_refresh_max_healthy_percentage         = var.sealed_provider_definition == null ? 100 : var.sealed_provider_definition.instance_refresh_max_healthy_percentage
+  worker_instance_refresh_scale_in_protected_instances   = var.sealed_provider_definition == null ? "Refresh" : var.sealed_provider_definition.instance_refresh_scale_in_protected_instances
+  worker_instance_refresh_standby_instances              = var.sealed_provider_definition == null ? "Terminate" : var.sealed_provider_definition.instance_refresh_standby_instances
+  worker_instance_refresh_skip_matching                  = var.sealed_provider_definition == null ? true : var.sealed_provider_definition.instance_refresh_skip_matching
+  worker_launch_lifecycle_transition                     = var.sealed_provider_definition == null ? "autoscaling:EC2_INSTANCE_LAUNCHING" : var.sealed_provider_definition.launch_lifecycle_transition
+  worker_launch_lifecycle_default_result                 = var.sealed_provider_definition == null ? "ABANDON" : var.sealed_provider_definition.launch_lifecycle_default_result
+  worker_termination_lifecycle_transition                = var.sealed_provider_definition == null ? "autoscaling:EC2_INSTANCE_TERMINATING" : var.sealed_provider_definition.termination_lifecycle_transition
+  worker_termination_lifecycle_default_result            = var.sealed_provider_definition == null ? "CONTINUE" : var.sealed_provider_definition.termination_lifecycle_default_result
 }
 
 resource "aws_security_group" "worker" {
@@ -251,7 +281,7 @@ resource "aws_vpc_security_group_egress_rule" "worker" {
 
 resource "aws_iam_policy" "worker_boundary" {
   name   = "${local.name}-worker-boundary"
-  policy = jsonencode(local.worker_boundary_policy)
+  policy = local.worker_boundary_policy_json
   tags   = var.tags
 }
 
@@ -276,11 +306,11 @@ resource "aws_iam_role_policy" "worker" {
   name = "${local.name}-worker"
   role = aws_iam_role.worker.id
 
-  policy = jsonencode(local.worker_permission_policy)
+  policy = local.worker_permission_policy_json
 }
 
 resource "aws_iam_role_policy_attachment" "ssm" {
-  count = var.enable_ssm ? 1 : 0
+  count = local.worker_enable_ssm ? 1 : 0
 
   role       = aws_iam_role.worker.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
@@ -429,41 +459,41 @@ resource "aws_autoscaling_group" "worker" {
   min_size                  = var.min_size
   max_size                  = var.max_size
   desired_capacity          = null
-  protect_from_scale_in     = true
+  protect_from_scale_in     = local.worker_protect_from_scale_in
   vpc_zone_identifier       = var.subnet_ids
-  health_check_type         = "EC2"
-  health_check_grace_period = var.health_check_grace_period_seconds
-  termination_policies      = ["OldestLaunchTemplate", "OldestInstance"]
+  health_check_type         = local.worker_health_check_type
+  health_check_grace_period = local.worker_health_check_grace_period_seconds
+  termination_policies      = local.worker_termination_policies
 
   launch_template {
     id      = aws_launch_template.worker.id
-    version = aws_launch_template.worker.latest_version
+    version = var.sealed_provider_definition == null ? aws_launch_template.worker.latest_version : var.sealed_provider_definition.launch_template_version
   }
 
   instance_refresh {
-    strategy = "Rolling"
+    strategy = local.worker_instance_refresh_strategy
 
     preferences {
-      min_healthy_percentage       = 100
-      max_healthy_percentage       = 100
-      scale_in_protected_instances = "Refresh"
-      standby_instances            = "Terminate"
-      skip_matching                = true
+      min_healthy_percentage       = local.worker_instance_refresh_min_healthy_percentage
+      max_healthy_percentage       = local.worker_instance_refresh_max_healthy_percentage
+      scale_in_protected_instances = local.worker_instance_refresh_scale_in_protected_instances
+      standby_instances            = local.worker_instance_refresh_standby_instances
+      skip_matching                = local.worker_instance_refresh_skip_matching
     }
   }
 
   initial_lifecycle_hook {
     name                 = local.launch_hook_name
-    lifecycle_transition = "autoscaling:EC2_INSTANCE_LAUNCHING"
-    heartbeat_timeout    = var.launch_lifecycle_heartbeat_timeout_seconds
-    default_result       = "ABANDON"
+    lifecycle_transition = local.worker_launch_lifecycle_transition
+    heartbeat_timeout    = local.worker_launch_lifecycle_heartbeat_timeout_seconds
+    default_result       = local.worker_launch_lifecycle_default_result
   }
 
   initial_lifecycle_hook {
     name                 = local.termination_hook_name
-    lifecycle_transition = "autoscaling:EC2_INSTANCE_TERMINATING"
-    heartbeat_timeout    = var.termination_lifecycle_heartbeat_timeout_seconds
-    default_result       = "CONTINUE"
+    lifecycle_transition = local.worker_termination_lifecycle_transition
+    heartbeat_timeout    = local.worker_termination_lifecycle_heartbeat_timeout_seconds
+    default_result       = local.worker_termination_lifecycle_default_result
   }
 
   tag {

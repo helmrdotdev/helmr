@@ -1359,9 +1359,10 @@ type CheckpointRuntime struct {
 }
 
 type CheckpointRuntimeSubstrate struct {
-	Digest   string `json:"digest"`
-	Format   string `json:"format"`
-	Contract string `json:"contract"`
+	Digest    string `json:"digest"`
+	Format    string `json:"format"`
+	Contract  string `json:"contract"`
+	SizeBytes int64  `json:"size_bytes"`
 }
 
 type CheckpointRuntimeState struct {

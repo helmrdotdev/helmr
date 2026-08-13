@@ -120,6 +120,9 @@ func validateRestoreIdentity(
 		if strings.TrimSpace(runtimeInfo.Substrate.Contract) == "" {
 			return errors.New("restore checkpoint recovery_point.runtime.substrate.contract is required")
 		}
+		if runtimeInfo.Substrate.SizeBytes <= 0 {
+			return errors.New("restore checkpoint recovery_point.runtime.substrate.size_bytes must be positive")
+		}
 	}
 	return requireCheckpointArtifact(checkpoint.RuntimeState.ConfigArtifact, "runtime_state.config_artifact")
 }
@@ -537,9 +540,10 @@ func checkpointRuntimeSubstrate(substrate *vm.RuntimeSubstrate) *workerapi.Check
 		return nil
 	}
 	return &workerapi.CheckpointRuntimeSubstrate{
-		Digest:   strings.TrimSpace(substrate.Digest),
-		Format:   strings.TrimSpace(substrate.Format),
-		Contract: strings.TrimSpace(substrate.Contract),
+		Digest:    strings.TrimSpace(substrate.Digest),
+		Format:    strings.TrimSpace(substrate.Format),
+		Contract:  strings.TrimSpace(substrate.Contract),
+		SizeBytes: substrate.SizeBytes,
 	}
 }
 
@@ -631,9 +635,6 @@ func workerCheckpointFilepackStats(stats *vm.FilepackStats) *workerapi.Checkpoin
 func cleanupSnapshotArtifact(artifact vm.SnapshotArtifact) {
 	_ = os.Remove(artifact.VMState.Path)
 	_ = os.Remove(artifact.ScratchDisk.Path)
-	if artifact.Substrate != nil {
-		_ = os.Remove(artifact.Substrate.Path)
-	}
 	for _, file := range artifact.Memory {
 		_ = os.Remove(file.Path)
 	}

@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -39,9 +40,25 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var (
+	_ vm.Connector              = (*QualifiedRuntime)(nil)
+	_ vm.RestoringConnector     = (*QualifiedRuntime)(nil)
+	_ vm.MaterializingConnector = (*QualifiedRuntime)(nil)
+	_ vm.Cleaner                = (*QualifiedRuntime)(nil)
+)
+
+func TestRuntimeCandidateDoesNotExposeWorkloadInterfaces(t *testing.T) {
+	typeOfCandidate := reflect.TypeOf((*Connector)(nil))
+	for _, method := range []string{"Connect", "Restore", "Materialize", "Cleanup"} {
+		if _, ok := typeOfCandidate.MethodByName(method); ok {
+			t.Fatalf("unqualified runtime candidate exposes %s", method)
+		}
+	}
+}
+
 func TestRuntimeCapabilitiesRemainArtifactContentOnly(t *testing.T) {
 	connector := testConnector(t, testRestoreConfig(t))
-	capabilities, err := connector.RuntimeCapabilities()
+	capabilities, err := connector.runtimeCapabilities()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,6 +67,14 @@ func TestRuntimeCapabilitiesRemainArtifactContentOnly(t *testing.T) {
 	}
 	if capabilities.Contract != runtimeid.Contract || !sha256sum.ValidDigest(capabilities.KernelDigest) || !sha256sum.ValidDigest(capabilities.InitramfsDigest) || !sha256sum.ValidDigest(capabilities.RootfsDigest) {
 		t.Fatalf("runtime artifact capabilities = %+v", capabilities)
+	}
+}
+
+func TestProbeGuestRequiresBoundRuntimeEvidence(t *testing.T) {
+	connector := &Connector{hostRuntime: newHostRuntimeEvidenceStore()}
+	err := connector.probeGuest(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "runtime evidence is not bound") {
+		t.Fatalf("ProbeGuest() error = %v", err)
 	}
 }
 
@@ -173,7 +198,7 @@ func TestCleanupRequiresCanonicalExactOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	connector := &Connector{cfg: Config{StateDir: stateDir, JailerChrootBaseDir: jailerDir, IPPath: "/bin/true"}}
-	err := connector.Cleanup(context.Background(), vm.Owner{Kind: vm.OwnerRuntime, ID: id})
+	err := connector.cleanup(context.Background(), vm.Owner{Kind: vm.OwnerRuntime, ID: id})
 	var unproven *vm.CleanupUnprovenError
 	if !errors.As(err, &unproven) || unproven.Owner != (vm.Owner{Kind: vm.OwnerRuntime, ID: id}) || !strings.Contains(err.Error(), "ownership marker") {
 		t.Fatalf("Cleanup() error = %v, want typed exact ownership rejection", err)
@@ -181,7 +206,7 @@ func TestCleanupRequiresCanonicalExactOwnership(t *testing.T) {
 	if _, err := os.Stat(statePath); err != nil {
 		t.Fatalf("mismatched owner state was removed: %v", err)
 	}
-	if err := connector.Cleanup(context.Background(), vm.Owner{Kind: vm.OwnerRuntime, ID: strings.ToUpper(id)}); !errors.As(err, &unproven) {
+	if err := connector.cleanup(context.Background(), vm.Owner{Kind: vm.OwnerRuntime, ID: strings.ToUpper(id)}); !errors.As(err, &unproven) {
 		t.Fatal("non-canonical owner id was accepted")
 	}
 }
@@ -205,7 +230,7 @@ func TestCleanupRemovesExactBuildOwnerAndMarkerLast(t *testing.T) {
 		t.Fatal(err)
 	}
 	connector := &Connector{cfg: Config{StateDir: stateDir, JailerChrootBaseDir: jailerDir, IPPath: "/bin/true"}}
-	if err := connector.Cleanup(context.Background(), vm.Owner{Kind: vm.OwnerBuild, ID: id}); err != nil {
+	if err := connector.cleanup(context.Background(), vm.Owner{Kind: vm.OwnerBuild, ID: id}); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{statePath, jailerPath} {
@@ -218,10 +243,11 @@ func TestCleanupRemovesExactBuildOwnerAndMarkerLast(t *testing.T) {
 func TestSnapshotRuntimeConfigIncludesSubstrateIdentity(t *testing.T) {
 	cfg := (Config{NetworkResolverIPv4: "10.0.0.2"}).WithDefaults()
 	topology := vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
-		Path:     filepath.Join(t.TempDir(), "substrate.ext4"),
-		Digest:   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Format:   "ext4",
-		Contract: "builder-v1",
+		Path:      filepath.Join(t.TempDir(), "substrate.ext4"),
+		Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Format:    "ext4",
+		Contract:  "builder-v1",
+		SizeBytes: 4096,
 	}}
 	runtimeID := testRuntimeIdentity(t, "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333").ID
 	_, manifestBytes, err := snapshotRuntimeConfig(cfg, "checkpoint-1", runtimeID, testCPUConfigDigest(cfg.VCPUCount), "sha256:1111111111111111111111111111111111111111111111111111111111111111", "sha256:2222222222222222222222222222222222222222222222222222222222222222", "sha256:3333333333333333333333333333333333333333333333333333333333333333", defaultKernelArgs+" helmr.substrate=1", topology)
@@ -236,22 +262,24 @@ func TestSnapshotRuntimeConfigIncludesSubstrateIdentity(t *testing.T) {
 	if substrate == nil {
 		t.Fatal("substrate manifest is nil")
 	}
-	if substrate.Digest != topology.Substrate.Digest || substrate.Format != "ext4" || substrate.Contract != "builder-v1" {
+	if substrate.Digest != topology.Substrate.Digest || substrate.Format != "ext4" || substrate.Contract != "builder-v1" || substrate.SizeBytes != 4096 {
 		t.Fatalf("substrate = %+v", substrate)
 	}
 }
 
 func TestValidateRuntimeSubstrateManifestRequiresExactTopologyMatch(t *testing.T) {
 	manifest := &snapshotRuntimeSubstrate{
-		Digest:   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Format:   "ext4",
-		Contract: "builder-v1",
+		Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Format:    "ext4",
+		Contract:  "builder-v1",
+		SizeBytes: 4096,
 	}
 	expected := &vm.RuntimeSubstrate{
-		Path:     filepath.Join(t.TempDir(), "substrate.ext4"),
-		Digest:   manifest.Digest,
-		Format:   manifest.Format,
-		Contract: manifest.Contract,
+		Path:      filepath.Join(t.TempDir(), "substrate.ext4"),
+		Digest:    manifest.Digest,
+		Format:    manifest.Format,
+		Contract:  manifest.Contract,
+		SizeBytes: manifest.SizeBytes,
 	}
 	if err := validateRuntimeSubstrateManifest(manifest, expected); err != nil {
 		t.Fatal(err)
@@ -672,7 +700,7 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 	var mu sync.Mutex
 	var phases []vm.RuntimePhase
 
-	_, err := connector.Restore(context.Background(), vm.RestoreRequest{
+	_, err := connector.restore(context.Background(), vm.RestoreRequest{
 		ID:                "checkpoint-1",
 		RuntimeInstanceID: runtimeInstanceID,
 		OwnerKind:         vm.OwnerRuntime,
@@ -1519,7 +1547,7 @@ func TestSessionEntryPointsRejectWorkloadRuntimeIdentityMismatch(t *testing.T) {
 	); err == nil || !strings.Contains(err.Error(), "does not match bound host runtime") {
 		t.Fatalf("prepare session runtime identity error = %v", err)
 	}
-	if _, err := connector.Restore(context.Background(), vm.RestoreRequest{
+	if _, err := connector.restore(context.Background(), vm.RestoreRequest{
 		RuntimeInstanceID: runtimeInstanceID,
 		OwnerKind:         vm.OwnerRuntime,
 		Binding:           binding,

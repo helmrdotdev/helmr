@@ -14,9 +14,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"golang.org/x/sys/unix"
 )
 
-func (c *Connector) Preflight(ctx context.Context) error {
+func (c *Connector) preflight(ctx context.Context) error {
 	var problems []error
 	problems = append(problems,
 		checkCommand("the Firecracker", c.cfg.FirecrackerPath),
@@ -36,6 +37,7 @@ func (c *Connector) Preflight(ctx context.Context) error {
 	problems = append(problems, ensureSecureDirectory("the Firecracker coordination directory", stateCoordinationDir(c.cfg.StateDir)))
 	problems = append(problems, ensureSecureDirectory("the Firecracker state directory", c.cfg.StateDir))
 	problems = append(problems, ensureSecureDirectory("the Firecracker jailer chroot directory", c.cfg.JailerChrootBaseDir))
+	problems = append(problems, checkJailerDeviceMount(c.cfg.JailerChrootBaseDir))
 	problems = append(problems, checkResolvedStateLayout(c.cfg))
 	problems = append(problems, checkHardLinkLayout(c.cfg))
 	problems = append(problems, c.datapath.VerifyKernel())
@@ -46,6 +48,21 @@ func (c *Connector) Preflight(ctx context.Context) error {
 		return err
 	}
 	return c.proveRoutedNetworkLifecycle(ctx)
+}
+
+func checkJailerDeviceMount(path string) error {
+	var stat unix.Statfs_t
+	if err := unix.Statfs(path, &stat); err != nil {
+		return fmt.Errorf("inspect the Firecracker jailer chroot filesystem: %w", err)
+	}
+	return validateJailerDeviceMountFlags(stat.Flags)
+}
+
+func validateJailerDeviceMountFlags(flags int64) error {
+	if flags&unix.ST_NODEV != 0 {
+		return errors.New("the Firecracker jailer chroot filesystem forbids device nodes")
+	}
+	return nil
 }
 
 func (c *Connector) proveRoutedNetworkLifecycle(ctx context.Context) error {
@@ -59,7 +76,9 @@ func (c *Connector) proveRoutedNetworkLifecycle(ctx context.Context) error {
 		RuntimeInstanceID: owner.ID, RuntimeIdentityID: runtimeid.Contract,
 	})
 	if err != nil {
-		cleanupErr := c.Cleanup(context.Background(), owner)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
+		defer cancel()
+		cleanupErr := c.cleanup(cleanupCtx, owner)
 		return fmt.Errorf("exercise routed network lifecycle: %w", errors.Join(err, cleanupErr))
 	}
 	deactivateErr := binding.Deactivate()

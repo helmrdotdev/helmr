@@ -184,6 +184,24 @@ Options=loop,nosuid,nodev,nodiscard
 WantedBy=multi-user.target
 EOF
 
+cat >/usr/local/sbin/helmr-worker-private-mount <<'EOF'
+#!/bin/sh
+set -eu
+
+target=/var/lib/helmr/scratch
+mount -o remount,rw,nosuid,dev "$target"
+options="$(findmnt -n -o OPTIONS --target "$target")"
+case ",$options," in
+  *,rw,*nosuid,*) ;;
+  *) echo "$target does not have the required rw,nosuid mount options" >&2; exit 1 ;;
+esac
+case ",$options," in
+  *,nodev,*) echo "$target must allow the jailer-owned device nodes inside the Worker mount namespace" >&2; exit 1 ;;
+esac
+exec "$@"
+EOF
+chmod 0755 /usr/local/sbin/helmr-worker-private-mount
+
 install -d -m 0755 "/etc/systemd/system/${worker_service_name}.service.d"
 cat >"/etc/systemd/system/${worker_service_name}.service.d/20-build-storage.conf" <<'EOF'
 [Unit]
@@ -404,8 +422,15 @@ Wants=helmr-worker-enrollment-token.service
 After=helmr-worker-enrollment-token.service
 
 [Service]
+%{ if worker_supports_build ~}
+PrivateMounts=yes
+%{ endif ~}
 ExecStart=
+%{ if worker_supports_build ~}
+ExecStart=/usr/local/sbin/helmr-worker-private-mount ${worker_binary_path}
+%{ else ~}
 ExecStart=${worker_binary_path}
+%{ endif ~}
 EOF
 systemctl daemon-reload
 systemctl enable --now '${worker_service_name}'
