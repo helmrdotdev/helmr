@@ -218,6 +218,28 @@ in
       '';
   worker-host = helmrPackages.workerHost;
   platform-release = helmrPackages.platformRelease;
+  platform-release-publish-contract =
+    pkgs.runCommand "platform-release-publish-contract-check"
+      {
+        nativeBuildInputs = [ pkgs.go_1_26 ];
+        src = ../.;
+      }
+      ''
+        cp -R "$src" source
+        chmod -R u+w source
+        cd source
+        export HOME="$TMPDIR/home"
+        mkdir -p "$HOME"
+        cp -R ${helmrPackages.helmr.goModules} vendor
+        export GOFLAGS=-mod=vendor
+        export GOPROXY=off
+        export GOSUMDB=off
+        export GOTOOLCHAIN=local
+        export CGO_ENABLED=0
+        HELMR_PLATFORM_RELEASE_DIR=${helmrPackages.platformRelease} \
+          go test ./internal/deployment -run '^TestPublishPinnedPlatformRelease$'
+        touch "$out"
+      '';
   program-archive-contract =
     pkgs.runCommand "program-archive-contract-check"
       {

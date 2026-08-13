@@ -25,17 +25,12 @@ stdenvNoCC.mkDerivation {
       descriptor="$2"
       digest="$(jq -er '.digest' "$descriptor")"
       size="$(jq -er '.sizeBytes' "$descriptor")"
-      media_type="$(jq -er '.mediaType' "$descriptor")"
       actual_digest="sha256:$(sha256sum "$source" | cut -d' ' -f1)"
       actual_size="$(stat -c %s "$source")"
       [ "$digest" = "$actual_digest" ]
       [ "$size" = "$actual_size" ]
       install -m0444 "$source" "$out/objects/sha256/''${digest#sha256:}"
-      jq -cn \
-        --arg digest "$digest" \
-        --arg mediaType "$media_type" \
-        --argjson sizeBytes "$size" \
-        '{digest:$digest,mediaType:$mediaType,sizeBytes:$sizeBytes}'
+      jq -cS . "$descriptor"
     }
 
     runtime_object="$(install_object \

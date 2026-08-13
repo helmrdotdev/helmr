@@ -32,6 +32,20 @@ func TestPublishPlatformReleasePublishesOnlyRuntime(t *testing.T) {
 	}
 }
 
+func TestPublishPinnedPlatformRelease(t *testing.T) {
+	directory := os.Getenv("HELMR_PLATFORM_RELEASE_DIR")
+	if directory == "" {
+		t.Skip("HELMR_PLATFORM_RELEASE_DIR is not set")
+	}
+	store := &releasePublishStore{}
+	if err := PublishPlatformRelease(context.Background(), store, directory); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.published) != 1 {
+		t.Fatalf("published %d objects, want 1", len(store.published))
+	}
+}
+
 func TestPublishPlatformReleaseRejectsInvalidRuntimeObject(t *testing.T) {
 	directory, manifest := platformReleaseFixture(t)
 	path := platformReleaseObjectPath(directory, manifest.Runtime.Digest)
