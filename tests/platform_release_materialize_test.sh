@@ -5,7 +5,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 script="${root}/scripts/materialize-platform-release.sh"
 
 rg -F 'nixos/nix:2.31.2@sha256:c7cc6c8cb5d81bed19997247629604708fda95c99c43ac362daa05b6a68e8a24' "${script}" >/dev/null
-rg -F '/work#packages.x86_64-linux.platformRelease' "${script}" >/dev/null
+rg -F 'path:/work#packages.x86_64-linux.platformRelease' "${script}" >/dev/null
 rg -F 'target=/work,readonly' "${script}" >/dev/null
 rg -F '../../deployment' "${root}/nix/packages/default.nix" >/dev/null
 rg -F 'tar -C "${release}" -cf - .' "${script}" >/dev/null

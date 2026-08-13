@@ -41,7 +41,7 @@ docker run --rm \
       build --no-link --print-out-paths \
       --option sandbox false \
       --option filter-syscalls false \
-      /work#packages.x86_64-linux.platformRelease)"
+      path:/work#packages.x86_64-linux.platformRelease)"
     tar -C "${release}" -cf - .
   ' | tar -xof - -C "${output}"
 
