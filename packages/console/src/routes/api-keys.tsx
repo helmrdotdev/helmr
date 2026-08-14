@@ -143,7 +143,7 @@ const API_KEY_SCOPE_OPTIONS: {
   {
     value: "tasks:deploy",
     label: "Deploy tasks",
-    description: "Allow automation to upload deployment source archives in the selected project and environment.",
+    description: "Allow automation to upload, finalize, and promote Deployment Bundles in the selected project and environment.",
   },
 ];
 

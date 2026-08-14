@@ -41,9 +41,7 @@ export type {
 export type {
   DeploymentListItem,
   DeploymentListQuery,
-  DeploymentFailure,
   Deployment,
-  DeploymentStatus,
 } from "./client-deployment"
 
 export type {

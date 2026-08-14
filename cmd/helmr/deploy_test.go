@@ -54,12 +54,18 @@ func TestDeployBundleUsesUploadFinalizePromoteFlow(t *testing.T) {
 				BundleDigest: digest,
 				Uploads: []api.DeploymentBundleUpload{{
 					Digest: objectDigest, Method: http.MethodPut, URL: server.URL + "/upload",
-					Headers: map[string]string{"Content-Type": deployment.ProgramArtifactMediaType},
+					Headers: map[string]string{
+						"Content-Length": "7",
+						"Content-Type":   deployment.ProgramArtifactMediaType,
+					},
 				}},
 			})
 		case "/upload":
 			if r.Header.Get("Authorization") != "" {
 				t.Fatal("Control Plane credential leaked to object upload")
+			}
+			if r.ContentLength != 7 {
+				t.Fatalf("upload content length = %d", r.ContentLength)
 			}
 			body, err := io.ReadAll(r.Body)
 			if err != nil || string(body) != "program" {

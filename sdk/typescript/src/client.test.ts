@@ -717,11 +717,8 @@ describe("HelmrClient Deployments", () => {
       Response.json({
         id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
         version: "2026.07.25.1",
-        content_hash: "sha256:source",
-        deployment_source: { digest: "sha256:artifact", size_bytes: 4096 },
-        status: "deployed",
+        bundle_digest: "sha256:bundle",
         created_at: "2026-07-25T10:00:00Z",
-        deployed_at: "2026-07-25T10:01:00Z",
       }),
     ]
     const client = new HelmrClient({
@@ -736,47 +733,42 @@ describe("HelmrClient Deployments", () => {
     ).resolves.toEqual({
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
       version: "2026.07.25.1",
-      contentHash: "sha256:source",
-      deploymentSource: { digest: "sha256:artifact", sizeBytes: 4096 },
-      status: "deployed",
+      bundleDigest: "sha256:bundle",
       createdAt: "2026-07-25T10:00:00Z",
-      deployedAt: "2026-07-25T10:01:00Z",
     })
   })
 
-	test("lists bounded Deployment projections", async () => {
-		const requests: string[] = []
-		const client = new HelmrClient({
-			url: "https://api.example.test",
-			apiKey: "api-key",
-			fetch: (async (input: URL | RequestInfo) => {
-				requests.push(String(input))
-				return Response.json({
-					deployments: [{
-						id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-						version: "2026.07.25.1",
-						status: "deployed",
-						created_at: "2026-07-25T10:00:00Z",
-						deployed_at: "2026-07-25T10:01:00Z",
-					}],
-					next_cursor: "cursor-next",
-				})
-			}) as typeof fetch,
-		})
+  test("lists bounded Deployment projections", async () => {
+    const requests: string[] = []
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async (input: URL | RequestInfo) => {
+        requests.push(String(input))
+        return Response.json({
+          deployments: [{
+            id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
+            version: "2026.07.25.1",
+            bundle_digest: "sha256:bundle",
+            created_at: "2026-07-25T10:00:00Z",
+          }],
+          next_cursor: "cursor-next",
+        })
+      }) as typeof fetch,
+    })
 
-		const page = await client.deployments.list({ cursor: "cursor-current", limit: 10 })
-		expect(page.items[0]).toEqual({
-			id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
-			version: "2026.07.25.1",
-			status: "deployed",
-			createdAt: "2026-07-25T10:00:00Z",
-			deployedAt: "2026-07-25T10:01:00Z",
-		})
-		expect(page.nextCursor).toBe("cursor-next")
-		expect(requests[0]).toBe(
-			"https://api.example.test/v1/deployments?cursor=cursor-current&limit=10",
-		)
-	})
+    const page = await client.deployments.list({ cursor: "cursor-current", limit: 10 })
+    expect(page.items[0]).toEqual({
+      id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35",
+      version: "2026.07.25.1",
+      bundleDigest: "sha256:bundle",
+      createdAt: "2026-07-25T10:00:00Z",
+    })
+    expect(page.nextCursor).toBe("cursor-next")
+    expect(requests[0]).toBe(
+      "https://api.example.test/v1/deployments?cursor=cursor-current&limit=10",
+    )
+  })
 })
 
 describe("HelmrClient Schedules", () => {

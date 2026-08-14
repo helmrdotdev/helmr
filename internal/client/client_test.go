@@ -23,6 +23,9 @@ func TestUploadDeploymentBundleObjectRejectsNonSuccess(t *testing.T) {
 		if r.Method != http.MethodPut {
 			t.Fatalf("method = %s", r.Method)
 		}
+		if r.ContentLength != 6 {
+			t.Fatalf("content length = %d", r.ContentLength)
+		}
 		http.Error(w, "rejected", http.StatusForbidden)
 	}))
 	defer server.Close()
@@ -36,9 +39,38 @@ func TestUploadDeploymentBundleObjectRejectsNonSuccess(t *testing.T) {
 	}
 	err = client.UploadDeploymentBundleObject(t.Context(), api.DeploymentBundleUpload{
 		Method: http.MethodPut, URL: server.URL,
+		Headers: map[string]string{"Content-Length": "6"},
 	}, object)
 	if err == nil || !strings.Contains(err.Error(), "403 Forbidden") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestUploadDeploymentBundleObjectRequiresExactContentLength(t *testing.T) {
+	object := t.TempDir() + "/object"
+	if err := os.WriteFile(object, []byte("object"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := New("http://localhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, headers := range map[string]map[string]string{
+		"missing":   nil,
+		"invalid":   {"Content-Length": "invalid"},
+		"mismatch":  {"Content-Length": "7"},
+		"duplicate": {"Content-Length": "6", "content-length": "6"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := client.UploadDeploymentBundleObject(t.Context(), api.DeploymentBundleUpload{
+				Method:  http.MethodPut,
+				URL:     "http://localhost/upload",
+				Headers: headers,
+			}, object)
+			if err == nil {
+				t.Fatal("UploadDeploymentBundleObject returned nil error")
+			}
+		})
 	}
 }
 

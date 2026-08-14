@@ -41,9 +41,6 @@ func TestProgramArtifactRejectsContractDivergence(t *testing.T) {
 		"unknown Platform-owned path": func(program *testProgram) {
 			program.artifact.addFile("helmr/modules.json", []byte("{}"), 0o644)
 		},
-		"legacy build manifest": func(program *testProgram) {
-			program.artifact.addFile("helmr/build-manifest.json", []byte("{}"), 0o644)
-		},
 		"evaluated config": func(program *testProgram) {
 			program.artifact.files["helmr/config.json"] = []byte("{}")
 		},

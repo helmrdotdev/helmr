@@ -418,8 +418,6 @@ func seedScheduleArtifact(
 	digest := dbtest.Digest(seed)
 	mediaType := "application/octet-stream"
 	switch kind {
-	case "deployment_source":
-		mediaType = "application/vnd.helmr.deployment-source.v0+tar"
 	case "deployment_program":
 		mediaType = "application/vnd.helmr.deployment-program.v0+squashfs"
 	}

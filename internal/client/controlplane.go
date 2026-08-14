@@ -158,15 +158,38 @@ func (c *Client) UploadDeploymentBundleObject(
 		return fmt.Errorf("open deployment object: %w", err)
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("stat deployment object: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, upload.Method, upload.URL, file)
 	if err != nil {
 		return err
 	}
+	contentLengthSet := false
 	for name, value := range upload.Headers {
 		if strings.EqualFold(name, "authorization") {
 			return errors.New("deployment object upload plan contains a credential header")
 		}
+		if strings.EqualFold(name, "content-length") {
+			if contentLengthSet {
+				return errors.New("deployment object upload plan contains duplicate content length headers")
+			}
+			contentLength, parseErr := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+			if parseErr != nil || contentLength < 0 {
+				return errors.New("deployment object upload plan contains an invalid content length")
+			}
+			if contentLength != info.Size() {
+				return errors.New("deployment object size differs from the upload plan")
+			}
+			req.ContentLength = contentLength
+			contentLengthSet = true
+			continue
+		}
 		req.Header.Set(name, value)
+	}
+	if !contentLengthSet {
+		return errors.New("deployment object upload plan is missing content length")
 	}
 	response, err := c.transport.Do(req)
 	if err != nil {
