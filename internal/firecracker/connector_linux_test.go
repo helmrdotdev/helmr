@@ -174,7 +174,7 @@ func TestCleanupRequiresCanonicalExactOwnership(t *testing.T) {
 	if err := os.MkdirAll(statePath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(vm.OwnerRuntime)+"\n"+id+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(vm.OwnerRuntime)+"\n"+strings.ToUpper(id)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	connector := &Connector{cfg: Config{StateDir: stateDir, JailerChrootBaseDir: jailerDir, IPPath: "/bin/true"}}
@@ -191,7 +191,7 @@ func TestCleanupRequiresCanonicalExactOwnership(t *testing.T) {
 	}
 }
 
-func TestCleanupRemovesExactBuildOwnerAndMarkerLast(t *testing.T) {
+func TestCleanupRemovesExactRuntimeOwnerAndMarkerLast(t *testing.T) {
 	stateDir := t.TempDir()
 	jailerDir := t.TempDir()
 	id := "019fc619-8443-77f6-9498-8c348c25f702"
@@ -203,7 +203,7 @@ func TestCleanupRemovesExactBuildOwnerAndMarkerLast(t *testing.T) {
 	if err := os.MkdirAll(jailerPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte("build\n"+id+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(vm.OwnerRuntime)+"\n"+id+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(statePath, "scratch"), []byte("state"), 0o600); err != nil {
