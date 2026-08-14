@@ -405,6 +405,26 @@ func TestSupervisorTerminatesEpochOnFatalWorkError(t *testing.T) {
 	}
 }
 
+func TestSupervisorTerminatesEpochOnFatalBackgroundError(t *testing.T) {
+	controlPlane := &testControlPlane{}
+	s, err := New(Config{
+		ControlPlane: controlPlane,
+		PollEvery:    time.Millisecond,
+		Background: []BackgroundSpec{{Name: "runtime-controller", Run: func(context.Context) error {
+			return &fatalWorkerError{err: errors.New("runtime verifier bootstrap failed")}
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err = s.Run(ctx)
+	if err == nil || !strings.Contains(err.Error(), "worker fatal execution") {
+		t.Fatalf("run error = %v, want fatal execution", err)
+	}
+}
+
 func TestSupervisorRefusesActivationWithUnownedResidue(t *testing.T) {
 	controlPlane := &testControlPlane{}
 	s, err := New(Config{

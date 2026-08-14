@@ -341,6 +341,8 @@ SELECT runs.id,
             AND runs.parent_run_id IS NULL))
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
+   AND (runs.next_runtime_preparation_at IS NULL
+        OR runs.next_runtime_preparation_at <= transaction_timestamp())
    AND child_handoff.id IS NOT DISTINCT FROM $6::uuid
    AND (
        ($4 IN ('task', 'actor') AND child_handoff.id IS NULL AND

@@ -204,6 +204,11 @@ UPDATE workspace_mounts
  WHERE id = $1`,
 		mounting.WorkspaceMountID,
 	)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runs
+   SET runtime_preparation_count = 3,
+       next_runtime_preparation_at = transaction_timestamp()
+ WHERE id = $1`, fixture.runID)
 
 	granted, err := fixture.authority.PlaceReadyRun(
 		fixture.ctx,
@@ -221,12 +226,16 @@ UPDATE workspace_mounts
 	var currentLeaseID, reservedRunID, workspaceLeaseID pgtype.UUID
 	var firstLeaseAt pgtype.Timestamptz
 	var stateVersion, writerGeneration, mountGeneration int64
+	var runtimePreparationCount int32
+	var nextRuntimePreparationAt pgtype.Timestamptz
 	var ownerRunLeaseID pgtype.UUID
 	var tokenHash string
 	err = fixture.pool.QueryRow(fixture.ctx, `
 SELECT runs.current_run_lease_id,
        runs.first_lease_at,
        runs.state_version,
+       runs.runtime_preparation_count,
+       runs.next_runtime_preparation_at,
        runtime_instances.reserved_run_id,
        workspaces.writer_generation,
        workspace_mounts.fencing_generation,
@@ -245,6 +254,8 @@ SELECT runs.current_run_lease_id,
 		&currentLeaseID,
 		&firstLeaseAt,
 		&stateVersion,
+		&runtimePreparationCount,
+		&nextRuntimePreparationAt,
 		&reservedRunID,
 		&writerGeneration,
 		&mountGeneration,
@@ -258,6 +269,8 @@ SELECT runs.current_run_lease_id,
 	if currentLeaseID != granted.Lease.ID ||
 		ownerRunLeaseID != granted.Lease.ID ||
 		!firstLeaseAt.Valid ||
+		runtimePreparationCount != 0 ||
+		nextRuntimePreparationAt.Valid ||
 		stateVersion != 2 ||
 		reservedRunID.Valid ||
 		writerGeneration != 1 ||
@@ -583,6 +596,47 @@ UPDATE workspaces
 	}
 	if len(planning) != 0 {
 		t.Fatalf("planning candidates after ownership change = %d, want 0", len(planning))
+	}
+}
+
+func TestRunPlanningHonorsRuntimePreparationBackoff(t *testing.T) {
+	fixture := newRunPlacementFixture(t)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runs
+   SET runtime_preparation_count = 1,
+       next_runtime_preparation_at = transaction_timestamp() + interval '1 minute'
+ WHERE id = $1`, fixture.runID)
+	params := mustRunCandidateParams(t, planningScope{
+		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
+		EnvironmentID: pgvalue.UUID(fixture.environmentID), RegionID: "us-east-1",
+		QueueName: "default",
+	}, 10)
+	candidates, err := db.New(fixture.pool).ListQueuedRunPlanningCandidatesForScopes(
+		fixture.ctx,
+		params,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("backed-off planning candidates = %d, want 0", len(candidates))
+	}
+	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate()); !errors.Is(err, ErrCandidateChanged) {
+		t.Fatalf("backed-off direct placement error = %v", err)
+	}
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runs
+   SET next_runtime_preparation_at = transaction_timestamp() - interval '1 second'
+ WHERE id = $1`, fixture.runID)
+	candidates, err = db.New(fixture.pool).ListQueuedRunPlanningCandidatesForScopes(
+		fixture.ctx,
+		params,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0].RunID != pgvalue.UUID(fixture.runID) {
+		t.Fatalf("eligible planning candidates = %+v", candidates)
 	}
 }
 

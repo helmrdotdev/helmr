@@ -27,7 +27,8 @@ CREATE TEMP TABLE runs (
     state_version BIGINT NOT NULL,
     current_run_lease_id UUID,
     first_lease_at TIMESTAMPTZ,
-    queued_expires_at TIMESTAMPTZ
+    queued_expires_at TIMESTAMPTZ,
+    next_runtime_preparation_at TIMESTAMPTZ
 );
 CREATE INDEX runs_dispatch_fair_idx
     ON runs (
@@ -39,7 +40,7 @@ CREATE INDEX runs_dispatch_fair_idx
         queue_score_at,
         id
     )
-    INCLUDE (state_version, first_lease_at, queued_expires_at)
+    INCLUDE (state_version, first_lease_at, queued_expires_at, next_runtime_preparation_at)
     WHERE status = 'queued' AND current_run_lease_id IS NULL;
 INSERT INTO runs (
     id, org_id, environment_id, queue_name, concurrency_key, queue_score_at,

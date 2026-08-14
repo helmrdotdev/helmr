@@ -467,6 +467,8 @@ WITH candidate_scopes AS (
      WHERE runs.status = 'queued'
        AND ($10::text = '' OR workspaces.region_id = $10)
        AND runs.current_run_lease_id IS NULL
+       AND (runs.next_runtime_preparation_at IS NULL
+            OR runs.next_runtime_preparation_at <= transaction_timestamp())
        AND (
            (runs.entrypoint_kind = 'task'
             AND runs.session_id IS NULL
@@ -758,6 +760,8 @@ SELECT input_scopes.scope_ordinal,
          AND runs.queue_name = input_scopes.queue_name
          AND runs.status = 'queued'
          AND runs.current_run_lease_id IS NULL
+         AND (runs.next_runtime_preparation_at IS NULL
+              OR runs.next_runtime_preparation_at <= transaction_timestamp())
          AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
          AND (
              NOT input_scopes.after_set
@@ -1052,6 +1056,8 @@ SELECT runs.org_id,
    AND runs.queue_name = input_scopes.queue_name
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
+   AND (runs.next_runtime_preparation_at IS NULL
+        OR runs.next_runtime_preparation_at <= transaction_timestamp())
    AND (
        (runs.entrypoint_kind = 'task'
         AND runs.session_id IS NULL

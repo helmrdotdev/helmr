@@ -44,17 +44,18 @@ type Canceler struct {
 }
 
 type cancellationRun struct {
-	id                   uuid.UUID
-	parentRunID          pgtype.UUID
-	parentOwnsLifecycle  pgtype.Bool
-	environmentID        uuid.UUID
-	workspaceID          uuid.UUID
-	actorID              pgtype.UUID
-	status               db.RunStatus
-	currentAttemptNumber int32
-	currentRunLeaseID    pgtype.UUID
-	stateVersion         int64
-	depth                int
+	id                      uuid.UUID
+	parentRunID             pgtype.UUID
+	parentOwnsLifecycle     pgtype.Bool
+	environmentID           uuid.UUID
+	workspaceID             uuid.UUID
+	actorID                 pgtype.UUID
+	status                  db.RunStatus
+	currentAttemptNumber    int32
+	currentRunLeaseID       pgtype.UUID
+	stateVersion            int64
+	runtimePreparationCount int32
+	depth                   int
 }
 
 type cancellationWait struct {
@@ -125,6 +126,20 @@ var secretRevokedTermination = termination{
 	actorFailureCode: "run_failed",
 }
 
+var runtimePreparationTermination = termination{
+	reasonCode:       "runtime_preparation_failed",
+	errorCode:        "runtime_preparation_failed",
+	errorMessage:     "Run runtime preparation failed",
+	runStatus:        db.RunStatusSystemFailed,
+	runLeaseState:    db.RunLeaseStateFailed,
+	attemptOutcome:   "failed",
+	waitCondition:    db.WaitStateFailed,
+	waitSuspension:   db.RunWaitStateFailed,
+	eventKind:        "run.system_failed",
+	eventMessage:     "Run runtime preparation failed",
+	actorFailureCode: "platform_failure",
+}
+
 func NewCanceler(database CancellationDB) (*Canceler, error) {
 	if database == nil {
 		return nil, errors.New("run cancellation database is required")
@@ -155,6 +170,33 @@ func LockOwnedFinalization(
 	ctx context.Context,
 	tx pgx.Tx,
 	request OwnedFinalizationRequest,
+) (OwnedFinalization, error) {
+	return lockOwnedFinalization(ctx, tx, request, nil)
+}
+
+// LockOwnedFinalizationWithRuntimeFence acquires the owned Run graph in the
+// same order as placement, invoking beforeRuntime after Run, Workspace,
+// attempt, Wait, and checkpoint authority is locked but before Runtime and
+// lease authority. Callers that must fence provider supply before consuming a
+// Runtime use the hook to preserve Run -> Worker Group -> Pool -> Worker ->
+// Runtime ordering.
+func LockOwnedFinalizationWithRuntimeFence(
+	ctx context.Context,
+	tx pgx.Tx,
+	request OwnedFinalizationRequest,
+	beforeRuntime func() error,
+) (OwnedFinalization, error) {
+	if beforeRuntime == nil {
+		return OwnedFinalization{}, errors.New("owned run finalization Runtime fence is required")
+	}
+	return lockOwnedFinalization(ctx, tx, request, beforeRuntime)
+}
+
+func lockOwnedFinalization(
+	ctx context.Context,
+	tx pgx.Tx,
+	request OwnedFinalizationRequest,
+	beforeRuntime func() error,
 ) (OwnedFinalization, error) {
 	if tx == nil || request.OrgID == uuid.Nil || request.ProjectID == uuid.Nil ||
 		request.EnvironmentID == uuid.Nil || request.RunID == uuid.Nil {
@@ -220,7 +262,7 @@ func LockOwnedFinalization(
 		descendants = append(descendants, run)
 	}
 	waitsByChild, err := lockCancellationResources(
-		ctx, tx, lockOrder, descendants,
+		ctx, tx, lockOrder, descendants, beforeRuntime,
 	)
 	if err != nil {
 		return OwnedFinalization{}, err
@@ -327,6 +369,113 @@ func (g OwnedFinalization) FailCurrentForSecretRevocation(
 	return cancelled + 1, nil
 }
 
+// ChargeRuntimePreparationFailure records one infrastructure delivery failure.
+// Exhaustion terminalizes the exact Run and its owned graph without consuming
+// the user execution RetryPolicy.
+func (g OwnedFinalization) ChargeRuntimePreparationFailure(
+	ctx context.Context,
+) (bool, error) {
+	if g.tx == nil || g.currentRun == uuid.Nil || len(g.descendants) == 0 ||
+		g.descendants[0].id != g.currentRun {
+		return false, errors.New("runtime preparation failure authority is invalid")
+	}
+	target := g.descendants[0]
+	if target.status != db.RunStatusQueued || target.currentRunLeaseID.Valid {
+		return false, cancellationAuthority("runtime preparation target is not queued", nil)
+	}
+	if target.runtimePreparationCount < 0 || target.runtimePreparationCount > 7 {
+		return false, cancellationAuthority("runtime preparation count is invalid", nil)
+	}
+	queries := db.New(g.tx)
+	if target.runtimePreparationCount < 7 {
+		if _, err := queries.ChargeRunRuntimePreparationFailure(
+			ctx,
+			db.ChargeRunRuntimePreparationFailureParams{
+				ID:            pgvalue.UUID(target.id),
+				AttemptNumber: target.currentAttemptNumber,
+				ExpectedCount: target.runtimePreparationCount,
+			},
+		); err != nil {
+			return false, cancellationAuthority("charge runtime preparation failure", err)
+		}
+		return false, nil
+	}
+	if _, err := queries.ExhaustRunRuntimePreparation(
+		ctx,
+		db.ExhaustRunRuntimePreparationParams{
+			ID:            pgvalue.UUID(target.id),
+			AttemptNumber: target.currentAttemptNumber,
+		},
+	); err != nil {
+		return false, cancellationAuthority("exhaust runtime preparation", err)
+	}
+	if err := g.failCurrentForRuntimePreparation(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (g OwnedFinalization) failCurrentForRuntimePreparation(ctx context.Context) error {
+	if _, err := g.CancelDescendants(ctx); err != nil {
+		return err
+	}
+	target := g.descendants[0]
+	if runStatusTerminal(target.status) {
+		return nil
+	}
+	if err := terminateLockedRun(
+		ctx,
+		g.tx,
+		target,
+		pgtype.UUID{},
+		pgtype.UUID{},
+		runtimePreparationTermination,
+	); err != nil {
+		return err
+	}
+	if !target.parentRunID.Valid || !target.parentOwnsLifecycle.Valid ||
+		!target.parentOwnsLifecycle.Bool {
+		return nil
+	}
+	parentID := uuid.UUID(target.parentRunID.Bytes)
+	parent, found := g.locked[parentID]
+	if !found || runStatusTerminal(parent.status) {
+		return nil
+	}
+	wait, found := g.waitsByChild[target.id]
+	if !found {
+		return cancellationAuthority("runtime preparation child wait is missing", nil)
+	}
+	result, err := marshalChildFailureResult(
+		target.id,
+		"runtime_preparation_failed",
+		"Child Run runtime preparation failed",
+	)
+	if err != nil {
+		return err
+	}
+	if parent.workspaceID != target.workspaceID {
+		return resolveDifferentWorkspaceChildWait(ctx, g.tx, parent, wait, result)
+	}
+	if !wait.baseWorkspaceVersionID.Valid || !wait.handoffRuntimeInstanceID.Valid ||
+		!wait.handoffWorkspaceMountID.Valid {
+		return cancellationAuthority("runtime preparation handoff wait is inconsistent", nil)
+	}
+	reasonCode := "runtime_preparation_failed"
+	return resolveTerminalChildWait(
+		ctx,
+		g.tx,
+		parent,
+		wait,
+		terminalChildWaitResolution{
+			conditionState:           db.WaitStateFailed,
+			reasonCode:               &reasonCode,
+			conditionError:           json.RawMessage(`{"code":"runtime_preparation_failed","message":"Child Run runtime preparation failed","retryable":false}`),
+			resumeWorkspaceVersionID: wait.baseWorkspaceVersionID,
+		},
+	)
+}
+
 func (c *Canceler) Cancel(
 	ctx context.Context,
 	request CancellationRequest,
@@ -414,7 +563,7 @@ func (c *Canceler) Cancel(
 		cancelled[id] = struct{}{}
 		runs = append(runs, run)
 	}
-	waitsByChild, err := lockCancellationResources(ctx, tx, lockOrder, runs)
+	waitsByChild, err := lockCancellationResources(ctx, tx, lockOrder, runs, nil)
 	if err != nil {
 		return CancellationResult{}, err
 	}
@@ -564,16 +713,17 @@ func lockCancellationRun(
 		return cancellationRun{}, err
 	}
 	return cancellationRun{
-		id:                   uuid.UUID(row.ID.Bytes),
-		parentRunID:          row.ParentRunID,
-		parentOwnsLifecycle:  row.ParentOwnsLifecycle,
-		environmentID:        uuid.UUID(row.EnvironmentID.Bytes),
-		workspaceID:          uuid.UUID(row.WorkspaceID.Bytes),
-		actorID:              row.SessionID,
-		status:               row.Status,
-		currentAttemptNumber: row.CurrentAttemptNumber,
-		currentRunLeaseID:    row.CurrentRunLeaseID,
-		stateVersion:         row.StateVersion,
+		id:                      uuid.UUID(row.ID.Bytes),
+		parentRunID:             row.ParentRunID,
+		parentOwnsLifecycle:     row.ParentOwnsLifecycle,
+		environmentID:           uuid.UUID(row.EnvironmentID.Bytes),
+		workspaceID:             uuid.UUID(row.WorkspaceID.Bytes),
+		actorID:                 row.SessionID,
+		status:                  row.Status,
+		currentAttemptNumber:    row.CurrentAttemptNumber,
+		currentRunLeaseID:       row.CurrentRunLeaseID,
+		stateVersion:            row.StateVersion,
+		runtimePreparationCount: row.RuntimePreparationCount,
 	}, nil
 }
 
@@ -615,6 +765,7 @@ func lockCancellationResources(
 	tx pgx.Tx,
 	lockOrder []uuid.UUID,
 	cancelRuns []cancellationRun,
+	beforeRuntime func() error,
 ) (map[uuid.UUID]cancellationWait, error) {
 	cancelIDs := make([]uuid.UUID, 0, len(cancelRuns))
 	for _, run := range cancelRuns {
@@ -625,6 +776,18 @@ func lockCancellationResources(
 	}
 	if err := lockCancellationAttempts(ctx, tx, lockOrder); err != nil {
 		return nil, err
+	}
+	waitsByChild, err := lockCancellationWaits(ctx, tx, lockOrder, cancelIDs)
+	if err != nil {
+		return nil, err
+	}
+	if err := lockCancellationCheckpoints(ctx, tx, lockOrder); err != nil {
+		return nil, err
+	}
+	if beforeRuntime != nil {
+		if err := beforeRuntime(); err != nil {
+			return nil, err
+		}
 	}
 	runtimeIDs, err := lockCancellationRuntimes(ctx, tx, lockOrder, cancelIDs)
 	if err != nil {
@@ -638,13 +801,6 @@ func lockCancellationResources(
 		return nil, err
 	}
 	if err := lockCancellationWorkspaceLeases(ctx, tx, runLeaseIDs); err != nil {
-		return nil, err
-	}
-	waitsByChild, err := lockCancellationWaits(ctx, tx, lockOrder, cancelIDs)
-	if err != nil {
-		return nil, err
-	}
-	if err := lockCancellationCheckpoints(ctx, tx, lockOrder); err != nil {
 		return nil, err
 	}
 	return waitsByChild, nil

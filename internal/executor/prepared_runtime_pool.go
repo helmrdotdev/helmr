@@ -311,6 +311,13 @@ func (p *PreparedRuntimePool) ReconcileDesiredRuntimes(ctx context.Context, clie
 			err = fmt.Errorf("unsupported runtime desired state %q", response.Target.DesiredState)
 		}
 		if err != nil {
+			if diagnostic, ok := deployment.VerifierLocalDiagnostic(err); ok {
+				p.logInfo("artifact verifier bootstrap failed", "diagnostic", diagnostic)
+			}
+			var fatal interface{ FatalWorker() bool }
+			if errors.As(err, &fatal) && fatal.FatalWorker() {
+				return err
+			}
 			p.logInfo("runtime reconciliation failed", "error", err.Error())
 		}
 		if err := sleepWithContext(ctx, reconnectDelay); err != nil {
@@ -596,9 +603,13 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		if !materializeAttempted {
 			proofMethod = workerapi.RuntimeCleanupNotMaterialized
 		}
-		if markErr := p.markRuntimeTargetFailedWithProof(stateCtx, p.RuntimeInstances, target, err, proofMethod); markErr != nil {
+		if markErr := p.reportRuntimeTargetFailedWithProof(stateCtx, p.RuntimeInstances, target, err, proofMethod); markErr != nil {
 			p.logInfo("prepared runtime pool instance fail transition failed", "runtime_instance_id", runtimeInstanceID, "error", markErr.Error())
-			return errors.Join(err, markErr)
+			return markErr
+		}
+		var fatal interface{ FatalWorker() bool }
+		if errors.As(err, &fatal) && fatal.FatalWorker() {
+			return err
 		}
 		return nil
 	}
@@ -1379,8 +1390,14 @@ func runtimeTargetStateRequest(target workerapi.RuntimeReconcileTarget, failure 
 		ExpectedObservedVersion: target.ObservedVersion, ReasonCode: "desired_state_reconciled",
 	}
 	if failure != nil {
-		request.ReasonCode = "runtime_reconcile_failed"
-		request.Error, _ = json.Marshal(map[string]string{"message": failure.Error()})
+		request.ReasonCode = workerapi.RuntimeFailureReconcile
+		message := failure.Error()
+		var fatal interface{ FatalWorker() bool }
+		if errors.As(failure, &fatal) && fatal.FatalWorker() {
+			request.ReasonCode = workerapi.RuntimeFailureWorkerInvalid
+			message = "worker runtime infrastructure failed"
+		}
+		request.Error, _ = json.Marshal(map[string]string{"message": message})
 	}
 	return request
 }
@@ -1390,15 +1407,22 @@ func (p *PreparedRuntimePool) markRuntimeTargetFailed(ctx context.Context, clien
 }
 
 func (p *PreparedRuntimePool) markRuntimeTargetFailedWithProof(ctx context.Context, client PreparedRuntimeInstanceClient, target workerapi.RuntimeReconcileTarget, failure error, proofMethod string) error {
+	if err := p.reportRuntimeTargetFailedWithProof(ctx, client, target, failure, proofMethod); err != nil {
+		return errors.Join(failure, err)
+	}
+	return failure
+}
+
+func (p *PreparedRuntimePool) reportRuntimeTargetFailedWithProof(ctx context.Context, client PreparedRuntimeInstanceClient, target workerapi.RuntimeReconcileTarget, failure error, proofMethod string) error {
 	request := runtimeTargetStateRequest(target, failure)
 	if proofMethod != "" {
 		request.CleanupProof = &workerapi.RuntimeCleanupProof{Method: proofMethod, CompletedAt: time.Now().UTC()}
 	}
 	_, err := client.MarkRuntimeInstanceFailed(ctx, request)
 	if err != nil {
-		return errors.Join(failure, err)
+		return fmt.Errorf("report runtime preparation failure: %w", err)
 	}
-	return failure
+	return nil
 }
 
 func writeFileFrameWithMetadataContext(ctx context.Context, session vm.Session, w io.Writer, header wire.StreamHeader, path string, digest string, size int64) error {

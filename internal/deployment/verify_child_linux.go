@@ -91,7 +91,7 @@ func runVerifierChild(job verifierJob) (returnErr error) {
 	if err := applyVerifierIdentity(uid, gid); err != nil {
 		return err
 	}
-	if err := closeVerifierAmbientDescriptors(job); err != nil {
+	if err := validateVerifierContractDescriptors(job); err != nil {
 		return err
 	}
 	if err := validateVerifierDescriptors(job, &uid); err != nil {
@@ -101,6 +101,9 @@ func runVerifierChild(job verifierJob) (returnErr error) {
 	// Artifact bytes must not be read before root isolation and privilege removal complete.
 	result := verifierFDWriter{fd: verifierResultFD}
 	if err := writeVerifierReady(result); err != nil {
+		return err
+	}
+	if err := closeVerifierBootstrapDescriptors(); err != nil {
 		return err
 	}
 	return executeVerifierJob(job, result)
@@ -617,22 +620,25 @@ func validateVerifierIdentity(uid, gid uint32, lastCapability uintptr) error {
 	return nil
 }
 
-func closeVerifierAmbientDescriptors(job verifierJob) error {
-	if err := unix.CloseRange(0, 2, 0); err != nil {
-		return fmt.Errorf("close verifier standard descriptors: %w", err)
-	}
+func validateVerifierContractDescriptors(job verifierJob) error {
 	firstAmbient := verifierArtifactBaseFD + job.artifactCount()
-	if err := unix.CloseRange(uint(firstAmbient), ^uint(0), 0); err != nil {
-		return fmt.Errorf("close verifier ambient descriptors: %w", err)
-	}
-	for fd := 0; fd <= 2; fd++ {
-		if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); !errors.Is(err, syscall.EBADF) {
-			return fmt.Errorf("verifier standard descriptor %d remains open", fd)
-		}
-	}
 	for fd := verifierResultFD; fd < firstAmbient; fd++ {
 		if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); err != nil {
 			return fmt.Errorf("verifier contract descriptor %d is closed: %w", fd, err)
+		}
+	}
+	return nil
+}
+
+func closeVerifierBootstrapDescriptors() error {
+	for _, fd := range []int{unix.Stdin, unix.Stdout, unix.Stderr} {
+		if err := unix.Close(fd); err != nil && !errors.Is(err, syscall.EBADF) {
+			return fmt.Errorf("close verifier bootstrap descriptor %d: %w", fd, err)
+		}
+	}
+	for _, fd := range []int{unix.Stdin, unix.Stdout, unix.Stderr} {
+		if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); !errors.Is(err, syscall.EBADF) {
+			return fmt.Errorf("verifier bootstrap descriptor %d remains open", fd)
 		}
 	}
 	return nil

@@ -246,6 +246,151 @@ func (q *Queries) GetNextRuntimeReconcileTarget(ctx context.Context, arg GetNext
 	return i, err
 }
 
+const getRuntimePreparationFailureAuthority = `-- name: GetRuntimePreparationFailureAuthority :one
+SELECT runtime_instances.reserved_run_id,
+       runtime_instances.reserved_attempt_number,
+       runtime_instances.worker_group_id,
+       worker_instances.worker_pool_id,
+       runtime_instances.org_id,
+       runtime_instances.project_id,
+       runtime_instances.environment_id,
+       (runs.id IS NOT NULL)::boolean AS run_authority_valid
+  FROM runtime_instances
+  JOIN worker_instances
+    ON worker_instances.id = runtime_instances.worker_instance_id
+   AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+   AND worker_instances.current_epoch = runtime_instances.worker_epoch
+  LEFT JOIN runs
+    ON runs.id = runtime_instances.reserved_run_id
+   AND runs.org_id = runtime_instances.org_id
+   AND runs.project_id = runtime_instances.project_id
+   AND runs.environment_id = runtime_instances.environment_id
+   AND runs.workspace_id = runtime_instances.workspace_id
+   AND runs.current_attempt_number = runtime_instances.reserved_attempt_number
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+ WHERE runtime_instances.id = $1
+   AND runtime_instances.worker_instance_id = $2
+   AND runtime_instances.worker_epoch = $3
+   AND runtime_instances.desired_version = $4
+   AND runtime_instances.observed_version = $5
+   AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
+`
+
+type GetRuntimePreparationFailureAuthorityParams struct {
+	ID                      pgtype.UUID `json:"id"`
+	WorkerInstanceID        pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch             int64       `json:"worker_epoch"`
+	DesiredVersion          int64       `json:"desired_version"`
+	ExpectedObservedVersion int64       `json:"expected_observed_version"`
+}
+
+type GetRuntimePreparationFailureAuthorityRow struct {
+	ReservedRunID         pgtype.UUID `json:"reserved_run_id"`
+	ReservedAttemptNumber pgtype.Int4 `json:"reserved_attempt_number"`
+	WorkerGroupID         string      `json:"worker_group_id"`
+	WorkerPoolID          pgtype.UUID `json:"worker_pool_id"`
+	OrgID                 pgtype.UUID `json:"org_id"`
+	ProjectID             pgtype.UUID `json:"project_id"`
+	EnvironmentID         pgtype.UUID `json:"environment_id"`
+	RunAuthorityValid     bool        `json:"run_authority_valid"`
+}
+
+func (q *Queries) GetRuntimePreparationFailureAuthority(ctx context.Context, arg GetRuntimePreparationFailureAuthorityParams) (GetRuntimePreparationFailureAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, getRuntimePreparationFailureAuthority,
+		arg.ID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.DesiredVersion,
+		arg.ExpectedObservedVersion,
+	)
+	var i GetRuntimePreparationFailureAuthorityRow
+	err := row.Scan(
+		&i.ReservedRunID,
+		&i.ReservedAttemptNumber,
+		&i.WorkerGroupID,
+		&i.WorkerPoolID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RunAuthorityValid,
+	)
+	return i, err
+}
+
+const lockRuntimePreparationFailureAuthority = `-- name: LockRuntimePreparationFailureAuthority :one
+SELECT runtime_instances.reserved_run_id,
+       runtime_instances.reserved_attempt_number,
+       runtime_instances.worker_group_id,
+       worker_instances.worker_pool_id,
+       runtime_instances.org_id,
+       runtime_instances.project_id,
+       runtime_instances.environment_id,
+       (runs.id IS NOT NULL)::boolean AS run_authority_valid
+  FROM runtime_instances
+  JOIN worker_instances
+    ON worker_instances.id = runtime_instances.worker_instance_id
+   AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+   AND worker_instances.current_epoch = runtime_instances.worker_epoch
+  LEFT JOIN runs
+    ON runs.id = runtime_instances.reserved_run_id
+   AND runs.org_id = runtime_instances.org_id
+   AND runs.project_id = runtime_instances.project_id
+   AND runs.environment_id = runtime_instances.environment_id
+   AND runs.workspace_id = runtime_instances.workspace_id
+   AND runs.current_attempt_number = runtime_instances.reserved_attempt_number
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+ WHERE runtime_instances.id = $1
+   AND runtime_instances.worker_instance_id = $2
+   AND runtime_instances.worker_epoch = $3
+   AND runtime_instances.desired_version = $4
+   AND runtime_instances.observed_version = $5
+   AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
+ FOR UPDATE OF runtime_instances
+`
+
+type LockRuntimePreparationFailureAuthorityParams struct {
+	ID                      pgtype.UUID `json:"id"`
+	WorkerInstanceID        pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch             int64       `json:"worker_epoch"`
+	DesiredVersion          int64       `json:"desired_version"`
+	ExpectedObservedVersion int64       `json:"expected_observed_version"`
+}
+
+type LockRuntimePreparationFailureAuthorityRow struct {
+	ReservedRunID         pgtype.UUID `json:"reserved_run_id"`
+	ReservedAttemptNumber pgtype.Int4 `json:"reserved_attempt_number"`
+	WorkerGroupID         string      `json:"worker_group_id"`
+	WorkerPoolID          pgtype.UUID `json:"worker_pool_id"`
+	OrgID                 pgtype.UUID `json:"org_id"`
+	ProjectID             pgtype.UUID `json:"project_id"`
+	EnvironmentID         pgtype.UUID `json:"environment_id"`
+	RunAuthorityValid     bool        `json:"run_authority_valid"`
+}
+
+func (q *Queries) LockRuntimePreparationFailureAuthority(ctx context.Context, arg LockRuntimePreparationFailureAuthorityParams) (LockRuntimePreparationFailureAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, lockRuntimePreparationFailureAuthority,
+		arg.ID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.DesiredVersion,
+		arg.ExpectedObservedVersion,
+	)
+	var i LockRuntimePreparationFailureAuthorityRow
+	err := row.Scan(
+		&i.ReservedRunID,
+		&i.ReservedAttemptNumber,
+		&i.WorkerGroupID,
+		&i.WorkerPoolID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RunAuthorityValid,
+	)
+	return i, err
+}
+
 const markRuntimeInstanceClosed = `-- name: MarkRuntimeInstanceClosed :one
 UPDATE runtime_instances
    SET observed_state = 'closed', observed_version = observed_version + 1,

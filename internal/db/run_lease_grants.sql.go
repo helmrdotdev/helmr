@@ -724,6 +724,8 @@ const setRunCurrentLease = `-- name: SetRunCurrentLease :one
 UPDATE runs
    SET current_run_lease_id = $1,
        first_lease_at = coalesce(first_lease_at, transaction_timestamp()),
+       runtime_preparation_count = 0,
+       next_runtime_preparation_at = NULL,
        state_version = state_version + 1,
        updated_at = transaction_timestamp()
  WHERE id = $2
@@ -732,8 +734,10 @@ UPDATE runs
    AND status = 'queued'
    AND current_attempt_number = $5
    AND current_run_lease_id IS NULL
+   AND (next_runtime_preparation_at IS NULL
+        OR next_runtime_preparation_at <= transaction_timestamp())
    AND (first_lease_at IS NOT NULL OR queued_expires_at IS NULL OR queued_expires_at > transaction_timestamp())
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
 `
 
 type SetRunCurrentLeaseParams struct {
@@ -803,6 +807,8 @@ func (q *Queries) SetRunCurrentLease(ctx context.Context, arg SetRunCurrentLease
 		&i.FirstLeaseAt,
 		&i.StartedAt,
 		&i.RetryAt,
+		&i.RuntimePreparationCount,
+		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
 	)
 	return i, err

@@ -235,6 +235,8 @@ UPDATE runtime_instances
 UPDATE runs
    SET current_run_lease_id = sqlc.arg(run_lease_id),
        first_lease_at = coalesce(first_lease_at, transaction_timestamp()),
+       runtime_preparation_count = 0,
+       next_runtime_preparation_at = NULL,
        state_version = state_version + 1,
        updated_at = transaction_timestamp()
  WHERE id = sqlc.arg(id)
@@ -243,5 +245,7 @@ UPDATE runs
    AND status = 'queued'
    AND current_attempt_number = sqlc.arg(attempt_number)
    AND current_run_lease_id IS NULL
+   AND (next_runtime_preparation_at IS NULL
+        OR next_runtime_preparation_at <= transaction_timestamp())
    AND (first_lease_at IS NOT NULL OR queued_expires_at IS NULL OR queued_expires_at > transaction_timestamp())
 RETURNING *;

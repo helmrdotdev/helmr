@@ -93,13 +93,41 @@ SELECT id,
        status,
        current_attempt_number,
        current_run_lease_id,
-       state_version
+       state_version,
+       runtime_preparation_count
   FROM runs
  WHERE id = sqlc.arg(id)
    AND org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
  FOR UPDATE;
+
+-- name: ChargeRunRuntimePreparationFailure :one
+UPDATE runs
+   SET runtime_preparation_count = runtime_preparation_count + 1,
+       next_runtime_preparation_at = transaction_timestamp() + make_interval(
+           secs => LEAST(60, power(2, runtime_preparation_count + 1)::integer)
+       ),
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(id)
+   AND status = 'queued'
+   AND current_run_lease_id IS NULL
+   AND current_attempt_number = sqlc.arg(attempt_number)
+   AND runtime_preparation_count = sqlc.arg(expected_count)
+   AND runtime_preparation_count < 7
+RETURNING *;
+
+-- name: ExhaustRunRuntimePreparation :one
+UPDATE runs
+   SET runtime_preparation_count = 8,
+       next_runtime_preparation_at = NULL,
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(id)
+   AND status = 'queued'
+   AND current_run_lease_id IS NULL
+   AND current_attempt_number = sqlc.arg(attempt_number)
+   AND runtime_preparation_count = 7
+RETURNING *;
 
 -- name: LockCancellationWorkspaces :many
 SELECT id

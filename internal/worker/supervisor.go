@@ -250,6 +250,14 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		}
 		backgroundWG.Go(func() {
 			if err := background.Run(backgroundCtx); err != nil && !errors.Is(err, context.Canceled) {
+				var fatal FatalWorkError
+				if errors.As(err, &fatal) && fatal.FatalWorker() {
+					select {
+					case fatalWork <- err:
+					default:
+					}
+					return
+				}
 				s.cfg.Log.Error("worker background consumer stopped", "consumer", background.Name, "error", err)
 			}
 		})

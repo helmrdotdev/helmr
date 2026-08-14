@@ -9,10 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	runauthority "github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -270,7 +272,7 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 				return
 			}
 		}
-		row, err = s.db.MarkRuntimeInstanceFailed(r.Context(), db.MarkRuntimeInstanceFailedParams{
+		row, err = s.markRuntimeInstanceFailed(r.Context(), worker.WorkerGroupID, db.MarkRuntimeInstanceFailedParams{
 			ReasonCode: pgtype.Text{String: reason, Valid: true}, Error: normalizedJSONRawMessage(request.Error),
 			ID: pgvalue.UUID(id), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
 			DesiredVersion:          request.DesiredVersion,
@@ -297,6 +299,221 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, runtimeInstanceResponse(row))
+}
+
+func (s *Server) markRuntimeInstanceFailed(
+	ctx context.Context,
+	workerGroupID string,
+	params db.MarkRuntimeInstanceFailedParams,
+) (db.RuntimeInstance, error) {
+	workerFatal := params.ReasonCode.Valid &&
+		params.ReasonCode.String == workerapi.RuntimeFailureWorkerInvalid
+	authorityParams := db.GetRuntimePreparationFailureAuthorityParams{
+		ID: params.ID, WorkerInstanceID: params.WorkerInstanceID,
+		WorkerEpoch: params.WorkerEpoch, DesiredVersion: params.DesiredVersion,
+		ExpectedObservedVersion: params.ExpectedObservedVersion,
+	}
+	discovered, err := s.db.GetRuntimePreparationFailureAuthority(ctx, authorityParams)
+	if err != nil {
+		if workerFatal && errors.Is(err, pgx.ErrNoRows) {
+			if fenceErr := s.fenceInvalidWorkerEpoch(
+				ctx, workerGroupID, params.WorkerInstanceID, params.WorkerEpoch,
+			); fenceErr != nil {
+				return db.RuntimeInstance{}, fenceErr
+			}
+		}
+		return db.RuntimeInstance{}, err
+	}
+	if discovered.WorkerGroupID != workerGroupID {
+		return db.RuntimeInstance{}, errors.New("runtime preparation Worker Group authority changed")
+	}
+	if !discovered.ReservedRunID.Valid && !workerFatal {
+		return s.db.MarkRuntimeInstanceFailed(ctx, params)
+	}
+	if discovered.ReservedRunID.Valid &&
+		(!discovered.ReservedAttemptNumber.Valid || !discovered.RunAuthorityValid) &&
+		!workerFatal {
+		return db.RuntimeInstance{}, errors.New("runtime preparation authority is incomplete")
+	}
+	if s.tx == nil {
+		return db.RuntimeInstance{}, errors.New("runtime preparation transaction authority is unavailable")
+	}
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return db.RuntimeInstance{}, fmt.Errorf("begin runtime preparation failure: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	queries := db.New(tx)
+	var worker db.WorkerInstance
+	lockWorkerSupply := func() error {
+		group, err := queries.LockWorkerGroupForPoolMutation(ctx, discovered.WorkerGroupID)
+		if err != nil {
+			return fmt.Errorf("lock runtime preparation Worker Group: %w", err)
+		}
+		if group.State != db.WorkerGroupStateActive && group.State != db.WorkerGroupStatePaused &&
+			group.State != db.WorkerGroupStateDraining {
+			return errors.New("runtime preparation Worker Group is inactive")
+		}
+		pool, err := queries.LockWorkerPool(ctx, db.LockWorkerPoolParams{
+			WorkerGroupID: discovered.WorkerGroupID,
+			WorkerPoolID:  discovered.WorkerPoolID,
+		})
+		if err != nil {
+			return fmt.Errorf("lock runtime preparation Worker Pool: %w", err)
+		}
+		if pool.State != "active" && pool.State != "draining" {
+			return errors.New("runtime preparation Worker Pool is inactive")
+		}
+		worker, err = queries.LockWorkerInstanceForActivation(
+			ctx,
+			db.LockWorkerInstanceForActivationParams{
+				WorkerInstanceID: params.WorkerInstanceID,
+				WorkerGroupID:    discovered.WorkerGroupID,
+				WorkerPoolID:     discovered.WorkerPoolID,
+				WorkerEpoch:      pgtype.Int8{Int64: params.WorkerEpoch, Valid: true},
+			},
+		)
+		if err != nil {
+			return fmt.Errorf("lock runtime preparation Worker epoch: %w", err)
+		}
+		if worker.State != db.WorkerInstanceStateActive && worker.State != db.WorkerInstanceStateDraining {
+			return errors.New("runtime preparation Worker epoch is inactive")
+		}
+		return nil
+	}
+	var graph runauthority.OwnedFinalization
+	if discovered.ReservedRunID.Valid {
+		graph, err = runauthority.LockOwnedFinalizationWithRuntimeFence(
+			ctx,
+			tx,
+			runauthority.OwnedFinalizationRequest{
+				OrgID:         uuid.UUID(discovered.OrgID.Bytes),
+				ProjectID:     uuid.UUID(discovered.ProjectID.Bytes),
+				EnvironmentID: uuid.UUID(discovered.EnvironmentID.Bytes),
+				RunID:         uuid.UUID(discovered.ReservedRunID.Bytes),
+			},
+			lockWorkerSupply,
+		)
+		if err != nil {
+			return db.RuntimeInstance{}, fmt.Errorf("lock runtime preparation run graph: %w", err)
+		}
+	} else if err := lockWorkerSupply(); err != nil {
+		return db.RuntimeInstance{}, err
+	}
+	locked, err := queries.LockRuntimePreparationFailureAuthority(
+		ctx,
+		db.LockRuntimePreparationFailureAuthorityParams(authorityParams),
+	)
+	if err != nil {
+		return db.RuntimeInstance{}, err
+	}
+	if locked.ReservedRunID != discovered.ReservedRunID ||
+		locked.ReservedAttemptNumber != discovered.ReservedAttemptNumber ||
+		locked.WorkerGroupID != discovered.WorkerGroupID ||
+		locked.WorkerPoolID != discovered.WorkerPoolID ||
+		locked.OrgID != discovered.OrgID || locked.ProjectID != discovered.ProjectID ||
+		locked.EnvironmentID != discovered.EnvironmentID {
+		return db.RuntimeInstance{}, errors.New("runtime preparation authority changed while locking")
+	}
+	if locked.ReservedRunID.Valid && !locked.RunAuthorityValid && !workerFatal {
+		return db.RuntimeInstance{}, errors.New("runtime preparation authority is stale")
+	}
+	row, err := queries.MarkRuntimeInstanceFailed(ctx, params)
+	if err != nil {
+		return db.RuntimeInstance{}, err
+	}
+	if locked.ReservedRunID.Valid && locked.RunAuthorityValid {
+		if _, err := graph.ChargeRuntimePreparationFailure(ctx); err != nil {
+			return db.RuntimeInstance{}, err
+		}
+	}
+	if workerFatal && worker.State == db.WorkerInstanceStateActive {
+		drained, err := queries.DrainWorkerInstance(ctx, db.DrainWorkerInstanceParams{
+			ID:                   params.WorkerInstanceID,
+			WorkerGroupID:        discovered.WorkerGroupID,
+			ExpectedEpoch:        pgtype.Int8{Int64: params.WorkerEpoch, Valid: true},
+			ExpectedClaimVersion: worker.ClaimVersion,
+		})
+		if err != nil {
+			return db.RuntimeInstance{}, fmt.Errorf("fence invalid Worker runtime epoch: %w", err)
+		}
+		if drained.State != db.WorkerInstanceStateDraining {
+			return db.RuntimeInstance{}, errors.New("invalid Worker runtime epoch was not fenced")
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.RuntimeInstance{}, fmt.Errorf("commit runtime preparation failure: %w", err)
+	}
+	return row, nil
+}
+
+func (s *Server) fenceInvalidWorkerEpoch(
+	ctx context.Context,
+	workerGroupID string,
+	workerInstanceID pgtype.UUID,
+	workerEpoch int64,
+) error {
+	if s.tx == nil {
+		return errors.New("invalid Worker epoch transaction authority is unavailable")
+	}
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin invalid Worker epoch fence: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	queries := db.New(tx)
+	poolID, err := queries.GetWorkerInstancePoolID(ctx, db.GetWorkerInstancePoolIDParams{
+		WorkerInstanceID: workerInstanceID,
+		WorkerGroupID:    workerGroupID,
+		WorkerEpoch:      pgtype.Int8{Int64: workerEpoch, Valid: true},
+	})
+	if err != nil {
+		return fmt.Errorf("resolve invalid Worker epoch Pool: %w", err)
+	}
+	group, err := queries.LockWorkerGroupForPoolMutation(ctx, workerGroupID)
+	if err != nil {
+		return fmt.Errorf("lock invalid Worker epoch Group: %w", err)
+	}
+	if group.State != db.WorkerGroupStateActive && group.State != db.WorkerGroupStatePaused &&
+		group.State != db.WorkerGroupStateDraining {
+		return errors.New("invalid Worker epoch Group is inactive")
+	}
+	pool, err := queries.LockWorkerPool(ctx, db.LockWorkerPoolParams{
+		WorkerGroupID: workerGroupID,
+		WorkerPoolID:  poolID,
+	})
+	if err != nil {
+		return fmt.Errorf("lock invalid Worker epoch Pool: %w", err)
+	}
+	if pool.State != "active" && pool.State != "draining" {
+		return errors.New("invalid Worker epoch Pool is inactive")
+	}
+	worker, err := queries.LockWorkerInstanceForActivation(ctx, db.LockWorkerInstanceForActivationParams{
+		WorkerInstanceID: workerInstanceID,
+		WorkerGroupID:    workerGroupID,
+		WorkerPoolID:     poolID,
+		WorkerEpoch:      pgtype.Int8{Int64: workerEpoch, Valid: true},
+	})
+	if err != nil {
+		return fmt.Errorf("lock invalid Worker epoch: %w", err)
+	}
+	if worker.State != db.WorkerInstanceStateActive && worker.State != db.WorkerInstanceStateDraining {
+		return errors.New("invalid Worker epoch is inactive")
+	}
+	if worker.State == db.WorkerInstanceStateActive {
+		if _, err := queries.DrainWorkerInstance(ctx, db.DrainWorkerInstanceParams{
+			ID:                   workerInstanceID,
+			WorkerGroupID:        workerGroupID,
+			ExpectedEpoch:        pgtype.Int8{Int64: workerEpoch, Valid: true},
+			ExpectedClaimVersion: worker.ClaimVersion,
+		}); err != nil {
+			return fmt.Errorf("fence invalid Worker epoch: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit invalid Worker epoch fence: %w", err)
+	}
+	return nil
 }
 
 func validateRuntimeCleanupProof(proof workerapi.RuntimeCleanupProof, now time.Time) error {

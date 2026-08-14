@@ -1199,6 +1199,9 @@ CREATE TABLE runs (
     first_lease_at TIMESTAMPTZ,
     started_at TIMESTAMPTZ,
     retry_at TIMESTAMPTZ,
+    runtime_preparation_count INTEGER NOT NULL DEFAULT 0
+        CHECK (runtime_preparation_count BETWEEN 0 AND 8),
+    next_runtime_preparation_at TIMESTAMPTZ,
     terminal_at TIMESTAMPTZ,
     UNIQUE (org_id, id),
     UNIQUE (environment_id, id),
@@ -1521,7 +1524,8 @@ CREATE INDEX runs_dispatch_fair_idx
     INCLUDE (
         state_version,
         first_lease_at,
-        queued_expires_at
+        queued_expires_at,
+        next_runtime_preparation_at
     )
     WHERE status = 'queued' AND current_run_lease_id IS NULL;
 

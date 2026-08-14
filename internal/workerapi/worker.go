@@ -211,6 +211,11 @@ type RuntimeInstanceStateRequest struct {
 	CleanupProof            *RuntimeCleanupProof `json:"cleanup_proof,omitempty"`
 }
 
+const (
+	RuntimeFailureReconcile     = "runtime_reconcile_failed"
+	RuntimeFailureWorkerInvalid = "worker_runtime_invalid"
+)
+
 type RuntimeCleanupProof struct {
 	Method      string    `json:"method"`
 	CompletedAt time.Time `json:"completed_at"`

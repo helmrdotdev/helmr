@@ -742,6 +742,8 @@ type Run struct {
 	FirstLeaseAt              pgtype.Timestamptz `json:"first_lease_at"`
 	StartedAt                 pgtype.Timestamptz `json:"started_at"`
 	RetryAt                   pgtype.Timestamptz `json:"retry_at"`
+	RuntimePreparationCount   int32              `json:"runtime_preparation_count"`
+	NextRuntimePreparationAt  pgtype.Timestamptz `json:"next_runtime_preparation_at"`
 	TerminalAt                pgtype.Timestamptz `json:"terminal_at"`
 }
 

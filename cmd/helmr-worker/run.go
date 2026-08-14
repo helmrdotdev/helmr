@@ -71,6 +71,16 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("acquire worker supervisor singleton: %w", err)
 	}
 	defer process.Close()
+	verifierQualificationRoot := filepath.Join(workDir, "tmp")
+	if err := os.MkdirAll(verifierQualificationRoot, 0o700); err != nil {
+		return fmt.Errorf("create verifier qualification root: %w", err)
+	}
+	if err := deployment.QualifyArtifactVerifier(ctx, verifierCgroupRoot, verifierQualificationRoot); err != nil {
+		if diagnostic, ok := deployment.VerifierLocalDiagnostic(err); ok {
+			log.Error("deployment artifact verifier qualification failed", "diagnostic", diagnostic)
+		}
+		return fmt.Errorf("qualify deployment artifact verifier: %w", err)
+	}
 	if err := os.Remove(filepath.Join(workDir, drainCompleteMarkerName)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("clear stale drain marker: %w", err)
 	}

@@ -404,6 +404,67 @@ UPDATE runtime_instances
    AND observed_state IN ('allocated','preparing','ready','closing')
 RETURNING runtime_instances.*;
 
+-- name: GetRuntimePreparationFailureAuthority :one
+SELECT runtime_instances.reserved_run_id,
+       runtime_instances.reserved_attempt_number,
+       runtime_instances.worker_group_id,
+       worker_instances.worker_pool_id,
+       runtime_instances.org_id,
+       runtime_instances.project_id,
+       runtime_instances.environment_id,
+       (runs.id IS NOT NULL)::boolean AS run_authority_valid
+  FROM runtime_instances
+  JOIN worker_instances
+    ON worker_instances.id = runtime_instances.worker_instance_id
+   AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+   AND worker_instances.current_epoch = runtime_instances.worker_epoch
+  LEFT JOIN runs
+    ON runs.id = runtime_instances.reserved_run_id
+   AND runs.org_id = runtime_instances.org_id
+   AND runs.project_id = runtime_instances.project_id
+   AND runs.environment_id = runtime_instances.environment_id
+   AND runs.workspace_id = runtime_instances.workspace_id
+   AND runs.current_attempt_number = runtime_instances.reserved_attempt_number
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+ WHERE runtime_instances.id = sqlc.arg(id)
+   AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
+   AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
+   AND runtime_instances.desired_version = sqlc.arg(desired_version)
+   AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
+   AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing');
+
+-- name: LockRuntimePreparationFailureAuthority :one
+SELECT runtime_instances.reserved_run_id,
+       runtime_instances.reserved_attempt_number,
+       runtime_instances.worker_group_id,
+       worker_instances.worker_pool_id,
+       runtime_instances.org_id,
+       runtime_instances.project_id,
+       runtime_instances.environment_id,
+       (runs.id IS NOT NULL)::boolean AS run_authority_valid
+  FROM runtime_instances
+  JOIN worker_instances
+    ON worker_instances.id = runtime_instances.worker_instance_id
+   AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+   AND worker_instances.current_epoch = runtime_instances.worker_epoch
+  LEFT JOIN runs
+    ON runs.id = runtime_instances.reserved_run_id
+   AND runs.org_id = runtime_instances.org_id
+   AND runs.project_id = runtime_instances.project_id
+   AND runs.environment_id = runtime_instances.environment_id
+   AND runs.workspace_id = runtime_instances.workspace_id
+   AND runs.current_attempt_number = runtime_instances.reserved_attempt_number
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+ WHERE runtime_instances.id = sqlc.arg(id)
+   AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
+   AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
+   AND runtime_instances.desired_version = sqlc.arg(desired_version)
+   AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
+   AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
+ FOR UPDATE OF runtime_instances;
+
 -- name: ReclaimFailedRuntimeInstance :one
 UPDATE runtime_instances
    SET reclaimed_at = now(),

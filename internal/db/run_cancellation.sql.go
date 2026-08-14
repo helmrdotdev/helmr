@@ -11,6 +11,88 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const chargeRunRuntimePreparationFailure = `-- name: ChargeRunRuntimePreparationFailure :one
+UPDATE runs
+   SET runtime_preparation_count = runtime_preparation_count + 1,
+       next_runtime_preparation_at = transaction_timestamp() + make_interval(
+           secs => LEAST(60, power(2, runtime_preparation_count + 1)::integer)
+       ),
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND status = 'queued'
+   AND current_run_lease_id IS NULL
+   AND current_attempt_number = $2
+   AND runtime_preparation_count = $3
+   AND runtime_preparation_count < 7
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+`
+
+type ChargeRunRuntimePreparationFailureParams struct {
+	ID            pgtype.UUID `json:"id"`
+	AttemptNumber int32       `json:"attempt_number"`
+	ExpectedCount int32       `json:"expected_count"`
+}
+
+func (q *Queries) ChargeRunRuntimePreparationFailure(ctx context.Context, arg ChargeRunRuntimePreparationFailureParams) (Run, error) {
+	row := q.db.QueryRow(ctx, chargeRunRuntimePreparationFailure, arg.ID, arg.AttemptNumber, arg.ExpectedCount)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentDefinitionID,
+		&i.EntrypointKind,
+		&i.EntrypointDeclaredID,
+		&i.SessionID,
+		&i.CauseKind,
+		&i.ScheduleID,
+		&i.ScheduleGeneration,
+		&i.ScheduledAt,
+		&i.PreviousScheduledAt,
+		&i.ScheduleTimezone,
+		&i.ParentRunID,
+		&i.ParentOwnsLifecycle,
+		&i.WorkspaceID,
+		&i.BaseWorkspaceVersionID,
+		&i.SessionInputStartSequence,
+		&i.SessionInputHighWatermark,
+		&i.Payload,
+		&i.Output,
+		&i.Failure,
+		&i.Status,
+		&i.StateVersion,
+		&i.CurrentAttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.Metadata,
+		&i.Tags,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueConcurrencyLimit,
+		&i.Priority,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
+		&i.QueuedExpiresAt,
+		&i.MaxActiveDurationMs,
+		&i.RetryPolicy,
+		&i.ActiveElapsedMs,
+		&i.ActiveStartedAt,
+		&i.TraceID,
+		&i.RootSpanID,
+		&i.ClaimID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FirstLeaseAt,
+		&i.StartedAt,
+		&i.RetryAt,
+		&i.RuntimePreparationCount,
+		&i.NextRuntimePreparationAt,
+		&i.TerminalAt,
+	)
+	return i, err
+}
+
 const closeRunRuntimes = `-- name: CloseRunRuntimes :exec
 WITH candidate_runtimes AS (
     SELECT run_leases.runtime_instance_id
@@ -102,6 +184,84 @@ func (q *Queries) DetachActorFromCancelledRun(ctx context.Context, arg DetachAct
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const exhaustRunRuntimePreparation = `-- name: ExhaustRunRuntimePreparation :one
+UPDATE runs
+   SET runtime_preparation_count = 8,
+       next_runtime_preparation_at = NULL,
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND status = 'queued'
+   AND current_run_lease_id IS NULL
+   AND current_attempt_number = $2
+   AND runtime_preparation_count = 7
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+`
+
+type ExhaustRunRuntimePreparationParams struct {
+	ID            pgtype.UUID `json:"id"`
+	AttemptNumber int32       `json:"attempt_number"`
+}
+
+func (q *Queries) ExhaustRunRuntimePreparation(ctx context.Context, arg ExhaustRunRuntimePreparationParams) (Run, error) {
+	row := q.db.QueryRow(ctx, exhaustRunRuntimePreparation, arg.ID, arg.AttemptNumber)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentDefinitionID,
+		&i.EntrypointKind,
+		&i.EntrypointDeclaredID,
+		&i.SessionID,
+		&i.CauseKind,
+		&i.ScheduleID,
+		&i.ScheduleGeneration,
+		&i.ScheduledAt,
+		&i.PreviousScheduledAt,
+		&i.ScheduleTimezone,
+		&i.ParentRunID,
+		&i.ParentOwnsLifecycle,
+		&i.WorkspaceID,
+		&i.BaseWorkspaceVersionID,
+		&i.SessionInputStartSequence,
+		&i.SessionInputHighWatermark,
+		&i.Payload,
+		&i.Output,
+		&i.Failure,
+		&i.Status,
+		&i.StateVersion,
+		&i.CurrentAttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.Metadata,
+		&i.Tags,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueConcurrencyLimit,
+		&i.Priority,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
+		&i.QueuedExpiresAt,
+		&i.MaxActiveDurationMs,
+		&i.RetryPolicy,
+		&i.ActiveElapsedMs,
+		&i.ActiveStartedAt,
+		&i.TraceID,
+		&i.RootSpanID,
+		&i.ClaimID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FirstLeaseAt,
+		&i.StartedAt,
+		&i.RetryAt,
+		&i.RuntimePreparationCount,
+		&i.NextRuntimePreparationAt,
+		&i.TerminalAt,
+	)
+	return i, err
 }
 
 const failActorForRunTermination = `-- name: FailActorForRunTermination :execrows
@@ -499,7 +659,8 @@ SELECT id,
        status,
        current_attempt_number,
        current_run_lease_id,
-       state_version
+       state_version,
+       runtime_preparation_count
   FROM runs
  WHERE id = $1
    AND org_id = $2
@@ -516,16 +677,17 @@ type LockCancellationRunParams struct {
 }
 
 type LockCancellationRunRow struct {
-	ID                   pgtype.UUID `json:"id"`
-	ParentRunID          pgtype.UUID `json:"parent_run_id"`
-	ParentOwnsLifecycle  pgtype.Bool `json:"parent_owns_lifecycle"`
-	EnvironmentID        pgtype.UUID `json:"environment_id"`
-	WorkspaceID          pgtype.UUID `json:"workspace_id"`
-	SessionID            pgtype.UUID `json:"session_id"`
-	Status               string      `json:"status"`
-	CurrentAttemptNumber int32       `json:"current_attempt_number"`
-	CurrentRunLeaseID    pgtype.UUID `json:"current_run_lease_id"`
-	StateVersion         int64       `json:"state_version"`
+	ID                      pgtype.UUID `json:"id"`
+	ParentRunID             pgtype.UUID `json:"parent_run_id"`
+	ParentOwnsLifecycle     pgtype.Bool `json:"parent_owns_lifecycle"`
+	EnvironmentID           pgtype.UUID `json:"environment_id"`
+	WorkspaceID             pgtype.UUID `json:"workspace_id"`
+	SessionID               pgtype.UUID `json:"session_id"`
+	Status                  string      `json:"status"`
+	CurrentAttemptNumber    int32       `json:"current_attempt_number"`
+	CurrentRunLeaseID       pgtype.UUID `json:"current_run_lease_id"`
+	StateVersion            int64       `json:"state_version"`
+	RuntimePreparationCount int32       `json:"runtime_preparation_count"`
 }
 
 func (q *Queries) LockCancellationRun(ctx context.Context, arg LockCancellationRunParams) (LockCancellationRunRow, error) {
@@ -547,6 +709,7 @@ func (q *Queries) LockCancellationRun(ctx context.Context, arg LockCancellationR
 		&i.CurrentAttemptNumber,
 		&i.CurrentRunLeaseID,
 		&i.StateVersion,
+		&i.RuntimePreparationCount,
 	)
 	return i, err
 }

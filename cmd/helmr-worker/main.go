@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -10,6 +11,11 @@ import (
 func main() {
 	if handled, err := deployment.RunVerifierChild(os.Args); handled {
 		if err != nil {
+			_, _ = fmt.Fprintln(
+				os.Stderr,
+				"artifact verifier bootstrap failed:",
+				deployment.VerifierChildLocalDiagnostic(err),
+			)
 			os.Exit(1)
 		}
 		return
