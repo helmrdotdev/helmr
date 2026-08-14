@@ -29,6 +29,8 @@ assert_contains "${script}" 'runtime_bundle="$(prepare_worker_runtime_bundle)"' 
   "Worker image apply runtime bundle binding"
 assert_contains "${script}" 'runtime_artifacts_bundle_s3_uri=' \
   "Worker image apply runtime bundle transport"
+assert_contains "${script}" 'go -C "${ROOT}" run ./cmd/helmr-controlplane release publish' \
+  "Platform release publish Product working directory"
 assert_contains "${script}" 'HelmrRuntimeBundleDigest' \
   "Worker AMI runtime bundle provenance"
 assert_contains "${script}" 'HelmrRuntimeArtifactsDigest' \

@@ -276,7 +276,7 @@ platform_release_publish() (
   while IFS= read -r -d '' object; do
     install -m0400 "${object}" "${publish_input}/objects/sha256/$(basename "${object}")"
   done < <(find "${release}/objects/sha256" -maxdepth 1 -type f -print0)
-  with_platform_publisher nix develop "${ROOT}" -c go run ./cmd/helmr-controlplane release publish \
+  with_platform_publisher nix develop "${ROOT}" -c go -C "${ROOT}" run ./cmd/helmr-controlplane release publish \
     --store "${platform_store_uri}" \
     --input "${publish_input}"
   runtime_digest="$(jq -er '.runtime.digest' "${release}/platform-release.json")"
