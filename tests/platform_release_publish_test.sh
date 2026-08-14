@@ -33,7 +33,7 @@ git init -q "${repo}"
 git -C "${repo}" config user.email test@example.invalid
 git -C "${repo}" config user.name test
 git -C "${repo}" add scripts tracked
-git -C "${repo}" commit -qm initial
+git -C "${repo}" -c commit.gpgsign=false commit -qm initial
 git -C "${repo}" tag v0.0.1
 source_commit="$(git -C "${repo}" rev-parse HEAD)"
 
@@ -66,7 +66,7 @@ write_provenance "${archive_digest}"
 events="${tmp}/events"
 printf 'new head\n' >"${repo}/tracked"
 git -C "${repo}" add tracked
-git -C "${repo}" commit -qm newer
+git -C "${repo}" -c commit.gpgsign=false commit -qm newer
 : >"${events}"
 if EVENTS="${events}" PATH="${tmp}/bin:${PATH}" \
   "${repo}/scripts/publish-platform-release.sh" s3://platform.example/releases v0.0.1 \

@@ -30,7 +30,7 @@ git init -q "${repo}"
 git -C "${repo}" config user.email test@example.invalid
 git -C "${repo}" config user.name test
 git -C "${repo}" add scripts/publish-materialized-platform-release.sh tracked
-git -C "${repo}" commit -qm initial
+git -C "${repo}" -c commit.gpgsign=false commit -qm initial
 
 cat >"${tmp}/bin/docker" <<'EOF'
 #!/usr/bin/env bash

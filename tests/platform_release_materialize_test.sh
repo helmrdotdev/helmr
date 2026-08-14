@@ -37,7 +37,7 @@ git -C "${tmp}/repo" config user.email test@example.invalid
 git -C "${tmp}/repo" config user.name test
 printf 'tracked\n' >"${tmp}/repo/input"
 git -C "${tmp}/repo" add input
-git -C "${tmp}/repo" commit -qm initial
+git -C "${tmp}/repo" -c commit.gpgsign=false commit -qm initial
 git -C "${tmp}/repo" worktree add -q --detach "${tmp}/worktree"
 git_dir="$(git -C "${tmp}/worktree" rev-parse --absolute-git-dir)"
 mkfifo "${git_dir}/unsupported-entry"
