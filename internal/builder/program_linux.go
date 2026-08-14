@@ -76,7 +76,7 @@ func PrepareProgram(
 	output string,
 ) (_ ProgramAnalysis, returnErr error) {
 	if ctx == nil {
-		return ProgramAnalysis{}, errors.New("Program preparation context is nil")
+		return ProgramAnalysis{}, errors.New("program preparation context is nil")
 	}
 	if err := validateProgramInput(input); err != nil {
 		return ProgramAnalysis{}, err
@@ -227,7 +227,7 @@ func BuildPreparedProgram(
 // repeats compilation and exact-matches those results.
 func AnalyzeProgram(ctx context.Context, input ProgramInput) (_ ProgramAnalysis, returnErr error) {
 	if ctx == nil {
-		return ProgramAnalysis{}, errors.New("Program analysis context is nil")
+		return ProgramAnalysis{}, errors.New("program analysis context is nil")
 	}
 	if err := validateProgramInput(input); err != nil {
 		return ProgramAnalysis{}, err
@@ -336,7 +336,7 @@ func validateProgramInput(input ProgramInput) error {
 	}
 	if input.Runtime.Architecture != input.RuntimeMetadata.Architecture ||
 		input.Runtime.RuntimeContract != input.RuntimeMetadata.RuntimeContract {
-		return errors.New("Runtime descriptor and metadata do not match")
+		return errors.New("runtime descriptor and metadata do not match")
 	}
 	return nil
 }
@@ -359,7 +359,7 @@ func validatePreparedProgramInput(input PreparedProgramInput) error {
 	}
 	program, err := os.Stat(input.ProgramDirectory)
 	if err != nil || !program.IsDir() {
-		return errors.New("Program project directory is not a directory")
+		return errors.New("program project directory is not a directory")
 	}
 	work, err := os.Stat(input.WorkDirectory)
 	if err != nil || !work.IsDir() {
@@ -367,7 +367,7 @@ func validatePreparedProgramInput(input PreparedProgramInput) error {
 	}
 	if _, err := os.Lstat(input.ProgramObjectPath); !errors.Is(err, os.ErrNotExist) {
 		if err == nil {
-			return errors.New("Program object path already exists")
+			return errors.New("program object path already exists")
 		}
 		return fmt.Errorf("inspect Program object path: %w", err)
 	}
@@ -382,7 +382,7 @@ func validatePreparedProgramInput(input PreparedProgramInput) error {
 	}
 	if input.Runtime.Architecture != input.RuntimeMetadata.Architecture ||
 		input.Runtime.RuntimeContract != input.RuntimeMetadata.RuntimeContract {
-		return errors.New("Runtime descriptor and metadata do not match")
+		return errors.New("runtime descriptor and metadata do not match")
 	}
 	return nil
 }
