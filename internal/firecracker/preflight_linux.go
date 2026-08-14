@@ -25,9 +25,9 @@ func (c *Connector) preflight(ctx context.Context) error {
 		checkCommand("ip", c.cfg.IPPath),
 		checkCommand("nft", c.cfg.NFTPath),
 		checkCommand("mkfs.ext4", c.cfg.MkfsExt4Path),
-		checkReadableFile("guest kernel", c.cfg.KernelPath),
-		checkReadableFile("guest initramfs", c.cfg.InitramfsPath),
-		checkReadableFile("guest rootfs", c.cfg.RootfsPath),
+		checkJailerReadableImmutableFile("guest kernel", c.cfg.KernelPath, c.cfg.JailerUID, c.cfg.JailerGID),
+		checkJailerReadableImmutableFile("guest initramfs", c.cfg.InitramfsPath, c.cfg.JailerUID, c.cfg.JailerGID),
+		checkJailerReadableImmutableFile("guest rootfs", c.cfg.RootfsPath, c.cfg.JailerUID, c.cfg.JailerGID),
 		checkReadWriteFile("the KVM device", c.cfg.KVMPath),
 		checkReadWriteFile("the TUN device", "/dev/net/tun"),
 		checkCgroup(c.cfg.CgroupVersion),
@@ -206,6 +206,45 @@ func checkReadableFile(label string, path string) error {
 	}
 	if info.IsDir() {
 		return fmt.Errorf("%s %q is a directory", label, path)
+	}
+	return nil
+}
+
+func checkJailerReadableImmutableFile(label, path string, uid, gid int) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("%s %q is not available: %w", label, path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s %q is not a regular file", label, path)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("inspect %s %q ownership: unsupported stat result", label, path)
+	}
+	if err := validateJailerReadableImmutableFile(info.Mode(), stat.Uid, stat.Gid, uid, gid); err != nil {
+		return fmt.Errorf("%s %q %w", label, path, err)
+	}
+	return nil
+}
+
+func validateJailerReadableImmutableFile(mode os.FileMode, ownerUID, ownerGID uint32, uid, gid int) error {
+	if ownerUID != 0 {
+		return errors.New("is not owned by root")
+	}
+	permissions := mode.Perm()
+	if permissions&0o222 != 0 {
+		return errors.New("is writable")
+	}
+	readable := permissions&0o004 != 0
+	if uint32(gid) == ownerGID {
+		readable = permissions&0o040 != 0
+	}
+	if uint32(uid) == ownerUID {
+		readable = permissions&0o400 != 0
+	}
+	if !readable {
+		return fmt.Errorf("is not readable by the Firecracker jailer uid %d gid %d", uid, gid)
 	}
 	return nil
 }

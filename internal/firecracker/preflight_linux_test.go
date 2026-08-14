@@ -28,6 +28,39 @@ func TestCheckCommandRequiresExecutable(t *testing.T) {
 	}
 }
 
+func TestCheckJailerReadableImmutableFile(t *testing.T) {
+	if err := validateJailerReadableImmutableFile(0o444, 0, 0, 1001, 1001); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateJailerReadableImmutableFile(0o440, 0, 1001, 1002, 1001); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateJailerReadableImmutableFile(0o400, 0, 0, 1001, 1001); err == nil || !strings.Contains(err.Error(), "not readable by the Firecracker jailer") {
+		t.Fatalf("unreadable error = %v", err)
+	}
+	if err := validateJailerReadableImmutableFile(0o446, 0, 0, 1001, 1001); err == nil || !strings.Contains(err.Error(), "is writable") {
+		t.Fatalf("writable error = %v", err)
+	}
+	if err := validateJailerReadableImmutableFile(0o444, 1001, 1001, 1001, 1001); err == nil || !strings.Contains(err.Error(), "not owned by root") {
+		t.Fatalf("owner error = %v", err)
+	}
+}
+
+func TestCheckJailerReadableImmutableFileRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "vmlinuz.target")
+	if err := os.WriteFile(target, []byte("kernel"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "vmlinuz")
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkJailerReadableImmutableFile("guest kernel", path, 1001, 1001); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("symlink error = %v", err)
+	}
+}
+
 func TestPreflightChecksContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

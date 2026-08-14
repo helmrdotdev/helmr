@@ -85,9 +85,15 @@ run "image_installs_verified_worker_artifacts" {
       strcontains(aws_imagebuilder_component.worker.data, "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd") &&
       strcontains(aws_imagebuilder_component.worker.data, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc") &&
       strcontains(aws_imagebuilder_component.worker.data, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") &&
-      strcontains(aws_imagebuilder_component.worker.data, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+      strcontains(aws_imagebuilder_component.worker.data, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") &&
+      strcontains(aws_imagebuilder_component.worker.data, "install -m 0444 \"$work/runtime/$name\"") &&
+      strcontains(aws_imagebuilder_component.worker.data, "stat -c %U:%G:%a /var/lib/helmr/images/guest/out/vmlinuz") &&
+      strcontains(aws_imagebuilder_component.worker.data, "stat -c %U:%G:%a /var/lib/helmr/images/guest/out/initramfs") &&
+      strcontains(aws_imagebuilder_component.worker.data, "stat -c %U:%G:%a /var/lib/helmr/images/guest/out/rootfs.squashfs") &&
+      strcontains(aws_imagebuilder_component.worker.data, "stat -c %U:%G:%a /var/lib/helmr/images/guest/out/runtime-artifacts.json") &&
+      length(regexall("root:root:444", aws_imagebuilder_component.worker.data)) == 4
     )
-    error_message = "Worker image build must install and verify the exact runtime artifact bundle without rebuilding it."
+    error_message = "Worker image build must install and verify the exact immutable, jailed-VMM-readable runtime artifact bundle without rebuilding it."
   }
 
   assert {

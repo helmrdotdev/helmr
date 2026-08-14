@@ -2,6 +2,7 @@ package firecracker
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,6 +21,26 @@ func TestLoadRuntimeArtifacts(t *testing.T) {
 	}
 	if artifacts != manifest {
 		t.Fatalf("artifacts = %+v, want %+v", artifacts, manifest)
+	}
+}
+
+func TestRuntimeCorpusBytesIncludesManifestAndFilesystemRounding(t *testing.T) {
+	limit := BootCorpusMaxMiB * 1024 * 1024
+	manifest := runtimeArtifacts{
+		Kernel:    runtimeArtifact{SizeBytes: limit - 4*runtimeAllocationUnit},
+		Initramfs: runtimeArtifact{SizeBytes: 1},
+		Rootfs:    runtimeArtifact{SizeBytes: 1},
+	}
+	if _, err := runtimeCorpusBytes(manifest, 1); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Kernel.SizeBytes++
+	if _, err := runtimeCorpusBytes(manifest, 1); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("error = %v", err)
+	}
+	manifest.Kernel.SizeBytes = math.MaxInt64
+	if _, err := runtimeCorpusBytes(manifest, 1); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("overflow error = %v", err)
 	}
 }
 

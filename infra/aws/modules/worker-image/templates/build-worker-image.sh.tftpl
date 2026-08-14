@@ -91,7 +91,7 @@ done
 test -x /usr/local/bin/cpu-template-helper
 install -m 0644 "$work/host/worker-host-artifacts.json" /usr/share/helmr/worker-host-artifacts.json
 for name in initramfs rootfs.squashfs runtime-artifacts.json vmlinuz; do
-  install -m 0600 "$work/runtime/$name" "/var/lib/helmr/images/guest/out/$name"
+  install -m 0444 "$work/runtime/$name" "/var/lib/helmr/images/guest/out/$name"
 done
 rm -rf "$work"
 
