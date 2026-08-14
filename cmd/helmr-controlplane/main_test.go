@@ -22,6 +22,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/controlplane"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -256,12 +257,28 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	databaseURL := newSmokeDatabase(t, ctx)
 	redisServer := miniredis.RunT(t)
 	addr := freeSmokeAddr(t)
+	runtimeDescriptor, err := deployment.CanonicalRuntimeDescriptor(deployment.RuntimeDescriptor{
+		Architecture:    deployment.ArchitectureX8664,
+		Digest:          "sha256:" + strings.Repeat("a", 64),
+		FormatVersion:   deployment.RuntimeDescriptorFormatVersion,
+		MediaType:       deployment.RuntimeArtifactMediaType,
+		RuntimeContract: deployment.RuntimeContract,
+		SizeBytes:       4096,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeDescriptorPath := t.TempDir() + "/runtime.descriptor.json"
+	if err := os.WriteFile(runtimeDescriptorPath, runtimeDescriptor, 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	t.Setenv("CONTROL_PLANE_ADDR", addr)
 	t.Setenv("DATABASE_URL", databaseURL)
 	t.Setenv("REDIS_URL", "redis://"+redisServer.Addr()+"/0")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:1")
 	t.Setenv("CAS_URI", "s3://helmr-smoke")
+	t.Setenv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", runtimeDescriptorPath)
 	t.Setenv("PLATFORM_STORE_URI", "s3://helmr-smoke-runtime")
 	t.Setenv("WORKER_TOKEN_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
 	t.Setenv("TOKEN_CREDENTIAL_KEY", "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=")
