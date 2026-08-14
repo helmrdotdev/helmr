@@ -3,6 +3,8 @@ package s3
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -132,6 +134,76 @@ func TestS3PutAndPromoteQuarantineVerifiesChecksums(t *testing.T) {
 		aws.ToString(client.copyObject.CopySource) != "bucket%2Fcas%2Fquarantine%2F019abcde-1234%2Fsha256%2F"+descriptor.Digest[len("sha256:"):] ||
 		aws.ToString(client.copyObject.IfNoneMatch) != "*" {
 		t.Fatalf("copy object = %+v", client.copyObject)
+	}
+}
+
+func TestS3HasExactQuarantine(t *testing.T) {
+	descriptor := cas.Descriptor{
+		Digest:    sha256sum.DigestBytes([]byte("bundle object")),
+		SizeBytes: int64(len("bundle object")),
+		MediaType: "application/vnd.helmr.deployment-program.v0+squashfs",
+	}
+	checksum, _ := descriptorChecksum(descriptor.Digest)
+	verified := &awss3.HeadObjectOutput{
+		ChecksumSHA256: aws.String(checksum),
+		ContentLength:  aws.Int64(descriptor.SizeBytes),
+		ContentType:    aws.String(descriptor.MediaType),
+	}
+	for _, test := range []struct {
+		name    string
+		output  *awss3.HeadObjectOutput
+		err     error
+		want    bool
+		wantErr error
+	}{
+		{name: "exact", output: verified, want: true},
+		{name: "missing", err: &smithy.GenericAPIError{Code: "NotFound", Message: "missing"}},
+		{
+			name: "length mismatch",
+			output: &awss3.HeadObjectOutput{
+				ChecksumSHA256: aws.String(checksum),
+				ContentLength:  aws.Int64(descriptor.SizeBytes + 1),
+				ContentType:    aws.String(descriptor.MediaType),
+			},
+			wantErr: cas.ErrDigestMismatch,
+		},
+		{
+			name: "media type mismatch",
+			output: &awss3.HeadObjectOutput{
+				ChecksumSHA256: aws.String(checksum),
+				ContentLength:  aws.Int64(descriptor.SizeBytes),
+				ContentType:    aws.String("application/octet-stream"),
+			},
+			wantErr: cas.ErrDigestMismatch,
+		},
+		{
+			name: "checksum mismatch",
+			output: &awss3.HeadObjectOutput{
+				ChecksumSHA256: aws.String(base64.StdEncoding.EncodeToString(make([]byte, sha256.Size))),
+				ContentLength:  aws.Int64(descriptor.SizeBytes),
+				ContentType:    aws.String(descriptor.MediaType),
+			},
+			wantErr: cas.ErrDigestMismatch,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakeS3Client{headObject: test.output, headObjectErr: test.err}
+			store := &Store{
+				client: client,
+				bucket: "bucket", prefix: "cas",
+			}
+			got, err := store.HasExactQuarantine(t.Context(), "019abcde-1234", descriptor)
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("HasExactQuarantine error = %v, want %v", err, test.wantErr)
+			}
+			if got != test.want {
+				t.Fatalf("HasExactQuarantine = %v, want %v", got, test.want)
+			}
+			wantKey := "cas/quarantine/019abcde-1234/sha256/" + descriptor.Digest[len("sha256:"):]
+			if client.headObjectInput == nil || aws.ToString(client.headObjectInput.Key) != wantKey {
+				t.Fatalf("HeadObject key = %+v, want %q", client.headObjectInput, wantKey)
+			}
+		})
 	}
 }
 
@@ -819,6 +891,7 @@ type fakeS3Client struct {
 	putObjectCalls          int
 	putObjectHook           func()
 	headObject              *awss3.HeadObjectOutput
+	headObjectInput         *awss3.HeadObjectInput
 	headObjectErr           error
 	headObjectOutputs       []*awss3.HeadObjectOutput
 	headObjectErrors        []error
@@ -849,8 +922,9 @@ func (f *fakeS3Client) PutObject(_ context.Context, input *awss3.PutObjectInput,
 	return &awss3.PutObjectOutput{}, f.putObjectErr
 }
 
-func (f *fakeS3Client) HeadObject(context.Context, *awss3.HeadObjectInput, ...func(*awss3.Options)) (*awss3.HeadObjectOutput, error) {
+func (f *fakeS3Client) HeadObject(_ context.Context, input *awss3.HeadObjectInput, _ ...func(*awss3.Options)) (*awss3.HeadObjectOutput, error) {
 	f.headObjectCalls++
+	f.headObjectInput = input
 	if f.headObjectCalls <= len(f.headObjectOutputs) || f.headObjectCalls <= len(f.headObjectErrors) {
 		var output *awss3.HeadObjectOutput
 		var err error

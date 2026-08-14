@@ -34,6 +34,7 @@ type Store interface {
 type UploadStore interface {
 	Store
 	PutQuarantine(ctx context.Context, owner string, expected Descriptor, body io.Reader) error
+	HasExactQuarantine(ctx context.Context, owner string, expected Descriptor) (bool, error)
 	PresignQuarantine(ctx context.Context, owner string, expected Descriptor, expires time.Duration) (PresignedUpload, error)
 	PromoteQuarantine(ctx context.Context, owner string, expected Descriptor) (Object, error)
 }

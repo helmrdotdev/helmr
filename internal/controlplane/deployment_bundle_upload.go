@@ -27,6 +27,7 @@ type deploymentBundleUploadStore interface {
 	Stat(context.Context, string) (cas.Object, error)
 	Get(context.Context, string) (io.ReadCloser, error)
 	PutQuarantine(context.Context, string, cas.Descriptor, io.Reader) error
+	HasExactQuarantine(context.Context, string, cas.Descriptor) (bool, error)
 	PresignQuarantine(context.Context, string, cas.Descriptor, time.Duration) (cas.PresignedUpload, error)
 	PromoteQuarantine(context.Context, string, cas.Descriptor) (cas.Object, error)
 }
@@ -156,6 +157,13 @@ func planDeploymentBundleUploads(
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return api.DeploymentBundleUploadPlanResponse{}, fmt.Errorf("resolve deployment object ownership: %w", err)
+		}
+		hasExactQuarantine, err := uploads.HasExactQuarantine(ctx, owner, descriptor)
+		if err != nil {
+			return api.DeploymentBundleUploadPlanResponse{}, fmt.Errorf("resolve quarantined deployment object: %w", err)
+		}
+		if hasExactQuarantine {
+			continue
 		}
 		presigned, err := uploads.PresignQuarantine(ctx, owner, descriptor, deploymentBundleUploadExpiry)
 		if err != nil {

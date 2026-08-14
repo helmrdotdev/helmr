@@ -212,6 +212,27 @@ func (c *Store) PresignQuarantine(
 	return cas.PresignedUpload{Method: request.Method, URL: request.URL, Headers: headers}, nil
 }
 
+func (c *Store) HasExactQuarantine(
+	ctx context.Context,
+	owner string,
+	expected cas.Descriptor,
+) (bool, error) {
+	if err := cas.ValidateDescriptor(expected); err != nil {
+		return false, err
+	}
+	key, err := c.quarantineKey(owner, expected.Digest)
+	if err != nil {
+		return false, err
+	}
+	if err := c.verifyKey(ctx, key, expected); err != nil {
+		if isObjectNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 func (c *Store) PromoteQuarantine(
 	ctx context.Context,
 	owner string,

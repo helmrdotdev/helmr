@@ -42,6 +42,23 @@ func TestPlanDeploymentBundleUploadsRequiresOwnerProofBeforeSkipping(t *testing.
 		t.Fatalf("presigned = %+v", store.presigned)
 	}
 
+	store.quarantine = map[string]cas.Descriptor{
+		bundle.Objects[0].Digest: {
+			Digest: bundle.Objects[0].Digest, SizeBytes: bundle.Objects[0].SizeBytes,
+			MediaType: bundle.Objects[0].MediaType,
+		},
+	}
+	store.presigned = nil
+	response, err = planDeploymentBundleUploads(
+		t.Context(), store, ownership, store, "0190-owner", orgID, raw, bundle,
+	)
+	if err != nil {
+		t.Fatalf("planDeploymentBundleUploads quarantine replay: %v", err)
+	}
+	if len(response.Uploads) != 0 || len(store.presigned) != 0 {
+		t.Fatalf("quarantine response = %+v, presigned = %+v", response, store.presigned)
+	}
+
 	ownership.rows[bundle.Objects[0].Digest] = db.CasObject{
 		OrgID: orgID, Digest: bundle.Objects[0].Digest,
 		SizeBytes: bundle.Objects[0].SizeBytes, MediaType: bundle.Objects[0].MediaType,
@@ -74,6 +91,14 @@ func TestPlanDeploymentBundleUploadsFailsClosedOnRuntimeOrOwnedObjectDrift(t *te
 				SizeBytes: bundle.Objects[0].SizeBytes + 1, MediaType: bundle.Objects[0].MediaType,
 			}
 		},
+		"quarantine object": func(store *bundleUploadStoreFixture, _ *bundleOwnershipFixture) {
+			store.quarantine = map[string]cas.Descriptor{
+				bundle.Objects[0].Digest: {
+					Digest: bundle.Objects[0].Digest, SizeBytes: bundle.Objects[0].SizeBytes + 1,
+					MediaType: bundle.Objects[0].MediaType,
+				},
+			}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := &bundleUploadStoreFixture{objects: map[string]cas.Object{
@@ -93,6 +118,7 @@ func TestPlanDeploymentBundleUploadsFailsClosedOnRuntimeOrOwnedObjectDrift(t *te
 
 type bundleUploadStoreFixture struct {
 	objects     map[string]cas.Object
+	quarantine  map[string]cas.Descriptor
 	quarantined []cas.Descriptor
 	presigned   []cas.Descriptor
 }
@@ -117,6 +143,19 @@ func (store *bundleUploadStoreFixture) PutQuarantine(
 	}
 	store.quarantined = append(store.quarantined, expected)
 	return nil
+}
+
+func (store *bundleUploadStoreFixture) HasExactQuarantine(
+	_ context.Context, _ string, expected cas.Descriptor,
+) (bool, error) {
+	actual, ok := store.quarantine[expected.Digest]
+	if !ok {
+		return false, nil
+	}
+	if actual != expected {
+		return false, cas.ErrDigestMismatch
+	}
+	return true, nil
 }
 
 func (store *bundleUploadStoreFixture) PresignQuarantine(
