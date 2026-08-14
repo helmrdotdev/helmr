@@ -9,8 +9,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -70,7 +73,7 @@ func TestS3PresignQuarantineBindsDescriptorAndOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if upload.Method != http.MethodPut || upload.URL != "https://upload.example.test/object" {
+	if upload.Method != http.MethodPut || !strings.HasPrefix(upload.URL, "https://upload.example.test/object?") {
 		t.Fatalf("upload = %+v", upload)
 	}
 	if presigner.input == nil || aws.ToString(presigner.input.Key) !=
@@ -88,6 +91,176 @@ func TestS3PresignQuarantineBindsDescriptorAndOwner(t *testing.T) {
 	}
 	if upload.Headers["Content-Length"] != "13" || upload.Headers["Content-Type"] != descriptor.MediaType {
 		t.Fatalf("upload headers = %+v", upload.Headers)
+	}
+}
+
+func TestS3PresignQuarantineUsesSignedChecksumHeaders(t *testing.T) {
+	descriptor := cas.Descriptor{
+		Digest:    sha256sum.DigestBytes([]byte("bundle object")),
+		SizeBytes: int64(len("bundle object")),
+		MediaType: "application/vnd.helmr.deployment-program.v0+squashfs",
+	}
+	client := awss3.New(awss3.Options{
+		Region:       "us-east-1",
+		BaseEndpoint: aws.String("https://s3.us-east-1.amazonaws.com"),
+		UsePathStyle: true,
+		Credentials: aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+			return aws.Credentials{
+				AccessKeyID: "test-access-key", SecretAccessKey: "test-secret-key",
+				SessionToken: "test-session-token", Source: "test",
+			}, nil
+		}),
+	})
+	store := &Store{
+		client: client, presigner: newQuarantinePresigner(client),
+		bucket: "bucket", prefix: "cas",
+	}
+	upload, err := store.PresignQuarantine(t.Context(), "019abcde-1234", descriptor, 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checksum, _ := descriptorChecksum(descriptor.Digest)
+	for name, want := range map[string]string{
+		"Content-Length":               "13",
+		"Content-Type":                 descriptor.MediaType,
+		"If-None-Match":                "*",
+		"X-Amz-Checksum-Sha256":        checksum,
+		"X-Amz-Sdk-Checksum-Algorithm": string(types.ChecksumAlgorithmSha256),
+		"X-Amz-Tagging":                objectTagging(descriptor.MediaType),
+	} {
+		if got := upload.Headers[name]; got != want {
+			t.Fatalf("header %s = %q, want %q", name, got, want)
+		}
+	}
+	parsed, err := url.Parse(upload.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key := range parsed.Query() {
+		lower := strings.ToLower(key)
+		if strings.HasPrefix(lower, "x-amz-checksum-") || lower == "x-amz-sdk-checksum-algorithm" {
+			t.Fatalf("checksum was hoisted into query key %q", key)
+		}
+	}
+	if !strings.HasSuffix(parsed.Path, "/cas/quarantine/019abcde-1234/sha256/"+descriptor.Digest[len("sha256:"):]) {
+		t.Fatalf("presigned path = %q", parsed.Path)
+	}
+}
+
+func TestValidatePresignedQuarantineFailsClosed(t *testing.T) {
+	descriptor := cas.Descriptor{
+		Digest:    sha256sum.DigestBytes([]byte("bundle object")),
+		SizeBytes: int64(len("bundle object")),
+		MediaType: "application/vnd.helmr.deployment-program.v0+squashfs",
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*awsv4.PresignedHTTPRequest)
+	}{
+		{name: "wrong method", mutate: func(request *awsv4.PresignedHTTPRequest) {
+			request.Method = http.MethodPost
+		}},
+		{name: "checksum hoisted", mutate: func(request *awsv4.PresignedHTTPRequest) {
+			parsed, _ := url.Parse(request.URL)
+			query := parsed.Query()
+			query.Set("X-Amz-Checksum-Sha256", "ignored")
+			parsed.RawQuery = query.Encode()
+			request.URL = parsed.String()
+		}},
+		{name: "algorithm hoisted", mutate: func(request *awsv4.PresignedHTTPRequest) {
+			parsed, _ := url.Parse(request.URL)
+			query := parsed.Query()
+			query.Set("x-amz-sdk-checksum-algorithm", "SHA256")
+			parsed.RawQuery = query.Encode()
+			request.URL = parsed.String()
+		}},
+		{name: "missing algorithm", mutate: func(request *awsv4.PresignedHTTPRequest) {
+			request.SignedHeader.Del("X-Amz-Sdk-Checksum-Algorithm")
+		}},
+		{name: "wrong algorithm", mutate: func(request *awsv4.PresignedHTTPRequest) {
+			request.SignedHeader.Set("X-Amz-Sdk-Checksum-Algorithm", "CRC64NVME")
+		}},
+		{name: "wrong checksum", mutate: func(request *awsv4.PresignedHTTPRequest) {
+			request.SignedHeader.Set("X-Amz-Checksum-Sha256", "wrong")
+		}},
+		{name: "duplicate checksum", mutate: func(request *awsv4.PresignedHTTPRequest) {
+			request.SignedHeader.Add("X-Amz-Checksum-Sha256", "duplicate")
+		}},
+		{name: "missing length", mutate: func(request *awsv4.PresignedHTTPRequest) {
+			request.SignedHeader.Del("Content-Length")
+		}},
+		{name: "wrong media type", mutate: func(request *awsv4.PresignedHTTPRequest) {
+			request.SignedHeader.Set("Content-Type", "application/octet-stream")
+		}},
+		{name: "missing create only", mutate: func(request *awsv4.PresignedHTTPRequest) {
+			request.SignedHeader.Del("If-None-Match")
+		}},
+		{name: "wrong tagging", mutate: func(request *awsv4.PresignedHTTPRequest) {
+			request.SignedHeader.Set("X-Amz-Tagging", "different=true")
+		}},
+		{name: "header not declared signed", mutate: func(request *awsv4.PresignedHTTPRequest) {
+			parsed, _ := url.Parse(request.URL)
+			query := parsed.Query()
+			query.Set("X-Amz-SignedHeaders", strings.ReplaceAll(
+				query.Get("X-Amz-SignedHeaders"), ";if-none-match", "",
+			))
+			parsed.RawQuery = query.Encode()
+			request.URL = parsed.String()
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := exactPresignedQuarantineRequest(t, descriptor)
+			test.mutate(request)
+			if err := validatePresignedQuarantine(request, descriptor); err == nil {
+				t.Fatal("validatePresignedQuarantine returned nil error")
+			}
+		})
+	}
+}
+
+func TestValidatePresignedQuarantineRedactsInvalidURL(t *testing.T) {
+	descriptor := cas.Descriptor{
+		Digest:    sha256sum.DigestBytes([]byte("bundle object")),
+		SizeBytes: int64(len("bundle object")),
+		MediaType: "application/vnd.helmr.deployment-program.v0+squashfs",
+	}
+	request := exactPresignedQuarantineRequest(t, descriptor)
+	const credentialMarker = "SECRET-PRESIGNED-CREDENTIAL"
+	request.URL = "https://[" + credentialMarker
+	err := validatePresignedQuarantine(request, descriptor)
+	if err == nil {
+		t.Fatal("validatePresignedQuarantine returned nil error")
+	}
+	if strings.Contains(err.Error(), credentialMarker) {
+		t.Fatalf("error exposed presigned credential: %v", err)
+	}
+}
+
+func exactPresignedQuarantineRequest(t *testing.T, descriptor cas.Descriptor) *awsv4.PresignedHTTPRequest {
+	t.Helper()
+	checksum, err := descriptorChecksum(descriptor.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers := http.Header{
+		"Content-Length":               []string{fmt.Sprintf("%d", descriptor.SizeBytes)},
+		"Content-Type":                 []string{descriptor.MediaType},
+		"If-None-Match":                []string{"*"},
+		"X-Amz-Checksum-Sha256":        []string{checksum},
+		"X-Amz-Sdk-Checksum-Algorithm": []string{string(types.ChecksumAlgorithmSha256)},
+		"X-Amz-Tagging":                []string{objectTagging(descriptor.MediaType)},
+	}
+	signed := make([]string, 0, len(headers))
+	for name := range headers {
+		signed = append(signed, strings.ToLower(name))
+	}
+	sort.Strings(signed)
+	return &awsv4.PresignedHTTPRequest{
+		Method: http.MethodPut,
+		URL: "https://upload.example.test/object?" + url.Values{
+			"X-Amz-SignedHeaders": []string{strings.Join(signed, ";")},
+		}.Encode(),
+		SignedHeader: headers,
 	}
 }
 
@@ -1016,13 +1189,32 @@ func (f *fakeS3Presigner) PresignPutObject(
 		option(&resolved)
 	}
 	f.expires = resolved.Expires
+	return exactPresignedQuarantineRequestFromInput(input), nil
+}
+
+func exactPresignedQuarantineRequestFromInput(input *awss3.PutObjectInput) *awsv4.PresignedHTTPRequest {
+	headers := http.Header{
+		"Content-Length":               []string{fmt.Sprintf("%d", aws.ToInt64(input.ContentLength))},
+		"Content-Type":                 []string{aws.ToString(input.ContentType)},
+		"If-None-Match":                []string{aws.ToString(input.IfNoneMatch)},
+		"X-Amz-Checksum-Sha256":        []string{aws.ToString(input.ChecksumSHA256)},
+		"X-Amz-Sdk-Checksum-Algorithm": []string{string(input.ChecksumAlgorithm)},
+	}
+	if tagging := aws.ToString(input.Tagging); tagging != "" {
+		headers["X-Amz-Tagging"] = []string{tagging}
+	}
+	signed := make([]string, 0, len(headers))
+	for name := range headers {
+		signed = append(signed, strings.ToLower(name))
+	}
+	sort.Strings(signed)
 	return &awsv4.PresignedHTTPRequest{
 		Method: http.MethodPut,
-		URL:    "https://upload.example.test/object",
-		SignedHeader: http.Header{
-			"X-Amz-Checksum-Sha256": []string{aws.ToString(input.ChecksumSHA256)},
-		},
-	}, nil
+		URL: "https://upload.example.test/object?" + url.Values{
+			"X-Amz-SignedHeaders": []string{strings.Join(signed, ";")},
+		}.Encode(),
+		SignedHeader: headers,
+	}
 }
 
 var _ s3Presigner = (*fakeS3Presigner)(nil)

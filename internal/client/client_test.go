@@ -26,6 +26,17 @@ func TestUploadDeploymentBundleObjectRejectsNonSuccess(t *testing.T) {
 		if r.ContentLength != 6 {
 			t.Fatalf("content length = %d", r.ContentLength)
 		}
+		for name, want := range map[string]string{
+			"Content-Type":                 "application/vnd.helmr.deployment-program.v0+squashfs",
+			"If-None-Match":                "*",
+			"X-Amz-Checksum-Sha256":        "checksum",
+			"X-Amz-Sdk-Checksum-Algorithm": "SHA256",
+			"X-Amz-Tagging":                "helmr-expirable=true",
+		} {
+			if got := r.Header.Get(name); got != want {
+				t.Fatalf("header %s = %q, want %q", name, got, want)
+			}
+		}
 		http.Error(w, "rejected", http.StatusForbidden)
 	}))
 	defer server.Close()
@@ -39,7 +50,14 @@ func TestUploadDeploymentBundleObjectRejectsNonSuccess(t *testing.T) {
 	}
 	err = client.UploadDeploymentBundleObject(t.Context(), api.DeploymentBundleUpload{
 		Method: http.MethodPut, URL: server.URL,
-		Headers: map[string]string{"Content-Length": "6"},
+		Headers: map[string]string{
+			"Content-Length":               "6",
+			"Content-Type":                 "application/vnd.helmr.deployment-program.v0+squashfs",
+			"If-None-Match":                "*",
+			"X-Amz-Checksum-Sha256":        "checksum",
+			"X-Amz-Sdk-Checksum-Algorithm": "SHA256",
+			"X-Amz-Tagging":                "helmr-expirable=true",
+		},
 	}, object)
 	if err == nil || !strings.Contains(err.Error(), "403 Forbidden") {
 		t.Fatalf("error = %v", err)

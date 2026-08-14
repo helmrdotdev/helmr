@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"regexp"
@@ -102,7 +103,7 @@ func New(ctx context.Context, rawURI string, opts ...Option) (*Store, error) {
 	})
 	store := &Store{
 		client:    client,
-		presigner: awss3.NewPresignClient(client),
+		presigner: newQuarantinePresigner(client),
 		bucket:    uri.Host,
 		prefix:    strings.Trim(uri.Path, "/"),
 	}
@@ -110,6 +111,18 @@ func New(ctx context.Context, rawURI string, opts ...Option) (*Store, error) {
 		opt(store)
 	}
 	return store, nil
+}
+
+func newQuarantinePresigner(client *awss3.Client) s3Presigner {
+	options := client.Options()
+	return awss3.NewPresignClient(client, func(presign *awss3.PresignOptions) {
+		presign.Presigner = awsv4.NewSigner(func(signer *awsv4.SignerOptions) {
+			signer.Logger = options.Logger
+			signer.LogSigning = options.ClientLogMode.IsSigning()
+			signer.DisableURIPathEscaping = true
+			signer.DisableHeaderHoisting = true
+		})
+	})
 }
 
 func (c *Store) PutQuarantine(
@@ -200,16 +213,75 @@ func (c *Store) PresignQuarantine(
 	if err != nil {
 		return cas.PresignedUpload{}, err
 	}
-	headers := make(map[string]string, len(request.SignedHeader)+2)
+	if err := validatePresignedQuarantine(request, expected); err != nil {
+		return cas.PresignedUpload{}, err
+	}
+	headers := make(map[string]string, len(request.SignedHeader))
 	for key, values := range request.SignedHeader {
 		if len(values) != 1 {
 			return cas.PresignedUpload{}, fmt.Errorf("presigned header %q is not singular", key)
 		}
 		headers[key] = values[0]
 	}
-	headers["Content-Length"] = fmt.Sprintf("%d", expected.SizeBytes)
-	headers["Content-Type"] = expected.MediaType
 	return cas.PresignedUpload{Method: request.Method, URL: request.URL, Headers: headers}, nil
+}
+
+func validatePresignedQuarantine(request *awsv4.PresignedHTTPRequest, expected cas.Descriptor) error {
+	if request == nil {
+		return errors.New("presigned quarantine request is missing")
+	}
+	if request.Method != http.MethodPut {
+		return errors.New("presigned quarantine request method is not PUT")
+	}
+	parsed, err := url.Parse(request.URL)
+	if err != nil {
+		return errors.New("presigned quarantine URL is invalid")
+	}
+	query := parsed.Query()
+	for key := range query {
+		lower := strings.ToLower(key)
+		if strings.HasPrefix(lower, "x-amz-checksum-") || lower == "x-amz-sdk-checksum-algorithm" {
+			return errors.New("presigned quarantine checksum must remain a signed request header")
+		}
+	}
+	signedNames := make(map[string]struct{})
+	var signedHeaderValues []string
+	for key, values := range query {
+		if strings.EqualFold(key, "X-Amz-SignedHeaders") {
+			signedHeaderValues = append(signedHeaderValues, values...)
+		}
+	}
+	if len(signedHeaderValues) != 1 {
+		return errors.New("presigned quarantine signed-header declaration is invalid")
+	}
+	for _, name := range strings.Split(signedHeaderValues[0], ";") {
+		signedNames[strings.ToLower(strings.TrimSpace(name))] = struct{}{}
+	}
+
+	checksum, err := descriptorChecksum(expected.Digest)
+	if err != nil {
+		return err
+	}
+	required := map[string]string{
+		"Content-Length":               fmt.Sprintf("%d", expected.SizeBytes),
+		"Content-Type":                 expected.MediaType,
+		"If-None-Match":                "*",
+		"X-Amz-Checksum-Sha256":        checksum,
+		"X-Amz-Sdk-Checksum-Algorithm": string(types.ChecksumAlgorithmSha256),
+	}
+	if tagging := objectTagging(expected.MediaType); tagging != "" {
+		required["X-Amz-Tagging"] = tagging
+	}
+	for name, value := range required {
+		values := request.SignedHeader.Values(name)
+		if len(values) != 1 || values[0] != value {
+			return fmt.Errorf("presigned quarantine header %q is not exact", name)
+		}
+		if _, ok := signedNames[strings.ToLower(name)]; !ok {
+			return fmt.Errorf("presigned quarantine header %q is not signed", name)
+		}
+	}
+	return nil
 }
 
 func (c *Store) HasExactQuarantine(
