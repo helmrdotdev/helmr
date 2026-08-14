@@ -18,6 +18,8 @@ bash tests/aws_release_artifacts_test.sh
 bash tests/worker_host_bundle_test.sh
 bash tests/worker_runtime_bundle_test.sh
 bash tests/platform_release_materialize_test.sh
+bash tests/publish_materialized_platform_release_test.sh
+bash tests/platform_release_publish_test.sh
 bash tests/netboot_inputs_test.sh
 bash tests/boot_artifacts_make_test.sh
 bash tests/aws_bootstrap_helmr_secrets_test.sh

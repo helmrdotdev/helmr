@@ -29,8 +29,11 @@ assert_contains "${script}" 'runtime_bundle="$(prepare_worker_runtime_bundle)"' 
   "Worker image apply runtime bundle binding"
 assert_contains "${script}" 'runtime_artifacts_bundle_s3_uri=' \
   "Worker image apply runtime bundle transport"
-assert_contains "${script}" 'go -C "${ROOT}" run ./cmd/helmr-controlplane release publish' \
-  "Platform release publish Product working directory"
+assert_contains "${script}" 'scripts/publish-materialized-platform-release.sh' \
+  "Platform release publish Product-owned Linux boundary"
+if grep -Fq 'go -C "${ROOT}" run ./cmd/helmr-controlplane release publish' "${script}"; then
+  fail "Platform release publication must not keep a host publisher fallback"
+fi
 assert_contains "${script}" 'HelmrRuntimeBundleDigest' \
   "Worker AMI runtime bundle provenance"
 assert_contains "${script}" 'HelmrRuntimeArtifactsDigest' \
@@ -166,7 +169,10 @@ printf 'object' >"${platform_release}/objects/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 cat >"${platform_bin}/git" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+case " $* " in
+  *' archive '*) tar -cf - -T /dev/null ;;
+  *) exit 0 ;;
+esac
 EOF
 cat >"${platform_bin}/tofu" <<'EOF'
 #!/usr/bin/env bash
@@ -187,33 +193,36 @@ case "${1:-}" in
   build)
     printf '%s\n' "${MOCK_PLATFORM_RELEASE}"
     ;;
-  develop)
-    [ "${AWS_REGION:-}" = us-east-1 ]
-    [ "${AWS_DEFAULT_REGION:-}" = us-east-1 ]
-    [ -z "${AWS_PROFILE+x}" ]
-    [ "${AWS_ACCESS_KEY_ID:-}" = test ]
-    [ "${AWS_SECRET_ACCESS_KEY:-}" = test ]
-    [ "${AWS_SESSION_TOKEN:-}" = test ]
-    while [ "$#" -gt 0 ]; do
-      if [ "$1" = "--input" ]; then
-        input=${2:-}
-        break
-      fi
-      shift
-    done
-    [ -n "${input:-}" ]
-    object="$(find "${input}/objects/sha256" -maxdepth 1 -type f -print -quit)"
-    if stat -f '%Lp' "${object}" >/dev/null 2>&1; then
-      mode="$(stat -f '%Lp' "${object}")"
-    else
-      mode="$(stat -c '%a' "${object}")"
-    fi
-    [ "${mode}" = 400 ]
-    printf '%s\n' "${input}" >"${MOCK_PLATFORM_RELEASE_INPUT_MARKER}"
-    exit 42
-    ;;
   *) exit 1 ;;
 esac
+EOF
+cat >"${platform_bin}/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${AWS_REGION:-}" = us-east-1 ]
+[ "${AWS_DEFAULT_REGION:-}" = us-east-1 ]
+[ -z "${AWS_PROFILE+x}" ]
+[ "${AWS_ACCESS_KEY_ID:-}" = test ]
+[ "${AWS_SECRET_ACCESS_KEY:-}" = test ]
+[ "${AWS_SESSION_TOKEN:-}" = test ]
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--mount" ] && [[ "${2:-}" = *,target=/input,readonly ]]; then
+    input=${2#*source=}
+    input=${input%%,*}
+    break
+  fi
+  shift
+done
+[ -n "${input:-}" ]
+object="$(find "${input}/objects/sha256" -maxdepth 1 -type f -print -quit)"
+if stat -f '%Lp' "${object}" >/dev/null 2>&1; then
+  mode="$(stat -f '%Lp' "${object}")"
+else
+  mode="$(stat -c '%a' "${object}")"
+fi
+[ "${mode}" = 400 ]
+printf '%s\n' "${input}" >"${MOCK_PLATFORM_RELEASE_INPUT_MARKER}"
+exit 42
 EOF
 chmod 0755 "${platform_bin}"/*
 

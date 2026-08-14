@@ -263,22 +263,12 @@ bucket_kms_key_arn() {
 }
 
 platform_release_publish() (
-  local release publish_input object
+  local release runtime_digest
   require_clean_product_checkout
   platform_store_uri="$(bootstrap_contract_value PLATFORM_STORE_URI platform_store_uri)"
   release="$(nix build -L --no-link --print-out-paths "${ROOT}#platformRelease")"
-  mkdir -p "${STATE_DIR}"
-  publish_input="$(mktemp -d "${STATE_DIR}/platform-release-publish.XXXXXX")"
-  chmod 0700 "${publish_input}"
-  trap 'rm -rf "${publish_input}"' EXIT
-  install -d -m0700 "${publish_input}/objects/sha256"
-  install -m0400 "${release}/platform-release.json" "${publish_input}/platform-release.json"
-  while IFS= read -r -d '' object; do
-    install -m0400 "${object}" "${publish_input}/objects/sha256/$(basename "${object}")"
-  done < <(find "${release}/objects/sha256" -maxdepth 1 -type f -print0)
-  with_platform_publisher nix develop "${ROOT}" -c go -C "${ROOT}" run ./cmd/helmr-controlplane release publish \
-    --store "${platform_store_uri}" \
-    --input "${publish_input}"
+  with_platform_publisher "${ROOT}/scripts/publish-materialized-platform-release.sh" \
+    "${platform_store_uri}" "${release}"
   runtime_digest="$(jq -er '.runtime.digest' "${release}/platform-release.json")"
   info "Platform runtime published: ${runtime_digest}"
   printf '%s\n' "${runtime_digest}"
