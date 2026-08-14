@@ -58,7 +58,6 @@ func testProgramCompilerResult(t *testing.T) ProgramCompilerResult {
 	sourcePath := "tasks/build.ts"
 	modulePath := generatedDeclarationModulePath(sourcePath)
 	return ProgramCompilerResult{
-		AggregateResultDigest: "sha256:" + strings.Repeat("a", 64),
 		Compiler: ProgramCompilerContract{
 			APIVersion:            compiler.APIVersion,
 			EsbuildVersion:        compiler.Esbuild.Version,
@@ -96,5 +95,13 @@ func testProgramCompilerResult(t *testing.T) ProgramCompilerResult {
 			Slot:       DeclarationSlotHandler,
 		}},
 		TSConfigs: []ProgramPathDigest{},
+	}
+}
+
+func TestProgramCompilerSelectionsUseDeclarationOrder(t *testing.T) {
+	task := ProgramCompilerSelection{Kind: DeclarationKindTask, DeclaredID: "z-task"}
+	actor := ProgramCompilerSelection{Kind: DeclarationKindActor, DeclaredID: "a-actor"}
+	if compareProgramCompilerSelection(task, actor) >= 0 {
+		t.Fatal("task selection did not sort before actor selection")
 	}
 }

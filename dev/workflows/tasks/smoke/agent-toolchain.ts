@@ -29,7 +29,7 @@ const base = image("helmr-agent-toolchain-smoke")
     "-ceu",
     [
       "mkdir -m 0755 -p /nix /etc/nix",
-      "printf '%s\\n' 'build-users-group =' > /etc/nix/nix.conf",
+      "printf '%s\\n' 'build-users-group =' 'filter-syscalls = false' > /etc/nix/nix.conf",
       "curl -L https://releases.nixos.org/nix/nix-2.34.7/install | sh -s -- --no-daemon --no-channel-add",
       "printf '%s\\n' 'build-users-group =' 'experimental-features = nix-command flakes' 'accept-flake-config = true' 'sandbox = true' 'sandbox-fallback = false' > /etc/nix/nix.conf",
       "/root/.nix-profile/bin/nix --version",

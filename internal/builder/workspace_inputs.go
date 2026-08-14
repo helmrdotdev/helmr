@@ -55,7 +55,8 @@ func ReadWorkspaceImageInputs(
 		return nil, nil, errors.New("workspace image input count is invalid")
 	}
 	images := make([]deployment.BundleWorkspaceImage, len(inputs))
-	objects := make([]ObjectSource, len(inputs))
+	objects := make([]ObjectSource, 0, len(inputs))
+	objectDigests := make(map[string]struct{}, len(inputs))
 	for index, input := range inputs {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
@@ -71,7 +72,10 @@ func ReadWorkspaceImageInputs(
 			return nil, nil, fmt.Errorf("workspace image %q: %w", input.DeclaredID, err)
 		}
 		images[index] = deployment.BundleWorkspaceImage{DeclaredID: input.DeclaredID, Artifact: artifact}
-		objects[index] = ObjectSource{Digest: artifact.Digest, Path: input.Path}
+		if _, exists := objectDigests[artifact.Digest]; !exists {
+			objects = append(objects, ObjectSource{Digest: artifact.Digest, Path: input.Path})
+			objectDigests[artifact.Digest] = struct{}{}
+		}
 	}
 	return images, objects, nil
 }

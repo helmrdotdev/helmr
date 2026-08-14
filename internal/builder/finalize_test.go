@@ -104,6 +104,38 @@ func TestVerifyFinalObjectRejectsStructurallyInvalidWorkspaceImage(t *testing.T)
 	}
 }
 
+func TestReferencedBundleObjectsDeduplicatesSharedWorkspaceImage(t *testing.T) {
+	program := deployment.ProgramDescriptor{
+		Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 10,
+		MediaType: deployment.ProgramArtifactMediaType,
+	}
+	image := deployment.BundleWorkspaceImage{
+		DeclaredID: "first",
+		Artifact: deployment.BundleWorkspaceImageArtifact{
+			Architecture: deployment.ArchitectureX8664,
+			Digest:       "sha256:" + strings.Repeat("b", 64), SizeBytes: 20,
+			MediaType: deployment.WorkspaceImageArtifactMediaType,
+		},
+	}
+	shared := image
+	shared.DeclaredID = "second"
+	objects, err := referencedBundleObjects(program, []deployment.BundleWorkspaceImage{image, shared})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objects) != 2 {
+		t.Fatalf("objects = %+v", objects)
+	}
+
+	shared.Artifact.SizeBytes++
+	if _, err := referencedBundleObjects(
+		program,
+		[]deployment.BundleWorkspaceImage{image, shared},
+	); err == nil || !strings.Contains(err.Error(), "conflicting reference metadata") {
+		t.Fatalf("referencedBundleObjects error = %v", err)
+	}
+}
+
 func TestFinalizeBundlePublishesExactlyOneConcurrentWriter(t *testing.T) {
 	root := t.TempDir()
 	programPath, programBytes, index := writeVerifiedProgramFixture(t, root)

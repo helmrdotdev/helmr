@@ -81,10 +81,11 @@ func WorkspaceImageDockerfile(
 				if index != 0 {
 					return errors.New("workspace image from step is not first")
 				}
-				if err := validateWorkspaceBase(*step.From); err != nil {
+				base, err := normalizeWorkspaceBase(*step.From)
+				if err != nil {
 					return err
 				}
-				lines = append(lines, "FROM --platform=linux/amd64 "+step.From.Ref+" AS "+alias)
+				lines = append(lines, "FROM --platform=linux/amd64 "+base+" AS "+alias)
 			case step.Run != nil:
 				command, err := dockerRunJSON(step.Run.Argv)
 				if err != nil {
@@ -128,15 +129,15 @@ func WorkspaceImageDockerfile(
 	return []byte(strings.Join(lines, "\n")), aliases[build.Root], nil
 }
 
-func validateWorkspaceBase(from imagebuild.From) error {
+func normalizeWorkspaceBase(from imagebuild.From) (string, error) {
+	if from.Ref == "scratch" {
+		return from.Ref, nil
+	}
 	named, err := reference.ParseNormalizedNamed(from.Ref)
-	if err != nil || named.String() != from.Ref {
-		return errors.New("workspace image base must be a canonical fully qualified reference")
+	if err != nil {
+		return "", errors.New("workspace image base must be a valid image reference")
 	}
-	if _, ok := named.(reference.Canonical); !ok {
-		return errors.New("workspace image base must be pinned by digest")
-	}
-	return nil
+	return named.String(), nil
 }
 
 func installedSource(relative string) string {

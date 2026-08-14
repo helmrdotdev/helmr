@@ -64,17 +64,10 @@ func FinalizeBundle(
 	sort.Slice(workspaceImages, func(left, right int) bool {
 		return workspaceImages[left].DeclaredID < workspaceImages[right].DeclaredID
 	})
-	objects := []deployment.BundleObject{{
-		Digest: input.Program.Artifact.Digest, SizeBytes: input.Program.Artifact.SizeBytes,
-		MediaType: input.Program.Artifact.MediaType,
-	}}
-	for _, image := range workspaceImages {
-		objects = append(objects, deployment.BundleObject{
-			Digest: image.Artifact.Digest, SizeBytes: image.Artifact.SizeBytes,
-			MediaType: image.Artifact.MediaType,
-		})
+	objects, err := referencedBundleObjects(input.Program.Artifact, workspaceImages)
+	if err != nil {
+		return deployment.DeploymentBundleDirectory{}, err
 	}
-	deployment.SortDeploymentBundleObjects(objects)
 	bundle := deployment.DeploymentBundle{
 		Contract: deployment.DeploymentBundleContract,
 		Platform: deployment.DeploymentBundlePlatform{
@@ -168,6 +161,37 @@ func FinalizeBundle(
 		)
 	}
 	return staged, nil
+}
+
+func referencedBundleObjects(
+	program deployment.ProgramDescriptor,
+	workspaceImages []deployment.BundleWorkspaceImage,
+) ([]deployment.BundleObject, error) {
+	objectsByDigest := make(map[string]deployment.BundleObject, 1+len(workspaceImages))
+	programObject := deployment.BundleObject(program)
+	objectsByDigest[programObject.Digest] = programObject
+	for _, image := range workspaceImages {
+		object := deployment.BundleObject{
+			Digest: image.Artifact.Digest, SizeBytes: image.Artifact.SizeBytes,
+			MediaType: image.Artifact.MediaType,
+		}
+		if existing, exists := objectsByDigest[object.Digest]; exists {
+			if existing != object {
+				return nil, fmt.Errorf(
+					"bundle object digest %q has conflicting reference metadata",
+					object.Digest,
+				)
+			}
+			continue
+		}
+		objectsByDigest[object.Digest] = object
+	}
+	objects := make([]deployment.BundleObject, 0, len(objectsByDigest))
+	for _, object := range objectsByDigest {
+		objects = append(objects, object)
+	}
+	deployment.SortDeploymentBundleObjects(objects)
+	return objects, nil
 }
 
 // PublishBundleDirectory validates and atomically installs a complete BuildKit

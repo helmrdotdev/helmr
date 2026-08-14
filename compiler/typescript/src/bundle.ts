@@ -237,10 +237,6 @@ export async function compileProgram(options: {
     files.set(
       "helmr/compiler-result.json",
       canonicalizeJsonValue({
-        aggregateResultDigest: `sha256:${sha256(canonicalizeJsonValue({
-          declarations: analyzed.declarationLocator.declarations,
-          plan: analyzed.buildPlan,
-        } as unknown as JsonValue))}`,
         compiler: compilerContract(),
         config: {
           digest: `sha256:${sha256(configBytes)}`,
@@ -262,10 +258,7 @@ export async function compileProgram(options: {
             kind: item.kind,
             slot: item.slot,
             sourcePath: item.modulePath,
-          }))
-          .sort((left, right) =>
-            compareUTF8(externalSelectionKey(left), externalSelectionKey(right))
-          ),
+          })),
         tsconfigs,
       } as unknown as JsonValue),
     )
@@ -661,22 +654,6 @@ function externalEdgeKey(edge: ExternalEdge): string {
     edge.logicalPath,
     edge.resolvedPath,
     edge.runtimePath,
-  ].join("\0")
-}
-
-function externalSelectionKey(selection: {
-  readonly declaredId: string
-  readonly exportName: string
-  readonly kind: string
-  readonly slot: string
-  readonly sourcePath: string
-}): string {
-  return [
-    selection.kind,
-    selection.declaredId,
-    selection.sourcePath,
-    selection.exportName,
-    selection.slot,
   ].join("\0")
 }
 

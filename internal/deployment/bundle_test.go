@@ -204,6 +204,27 @@ func TestDeploymentBundleAdmissionRequiresExactRuntimeRelease(t *testing.T) {
 	}
 }
 
+func TestDeploymentBundleObjectClosureAllowsSharedWorkspaceImageObject(t *testing.T) {
+	bundle := testDeploymentBundle(t)
+	shared := bundle.WorkspaceImages[0]
+	shared.DeclaredID = "repo-copy"
+	bundle.WorkspaceImages = append(bundle.WorkspaceImages, shared)
+
+	if err := validateBundleObjectClosure(bundle); err != nil {
+		t.Fatalf("validateBundleObjectClosure: %v", err)
+	}
+
+	conflicting := bundle
+	conflicting.WorkspaceImages = append(
+		[]BundleWorkspaceImage(nil), bundle.WorkspaceImages...,
+	)
+	conflicting.WorkspaceImages[1].Artifact.SizeBytes++
+	if err := validateBundleObjectClosure(conflicting); err == nil ||
+		!strings.Contains(err.Error(), "conflicting reference metadata") {
+		t.Fatalf("validateBundleObjectClosure error = %v", err)
+	}
+}
+
 func testDeploymentBundle(t *testing.T) DeploymentBundle {
 	t.Helper()
 	program := ProgramOutput{

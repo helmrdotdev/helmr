@@ -17,17 +17,16 @@ import (
 )
 
 type ProgramCompilerResult struct {
-	AggregateResultDigest string                     `json:"aggregateResultDigest"`
-	Compiler              ProgramCompilerContract    `json:"compiler"`
-	Config                ProgramPathDigest          `json:"config"`
-	DiscoveryCandidates   []string                   `json:"discoveryCandidates"`
-	Execution             ProgramCompilerExecution   `json:"execution"`
-	ExternalEdges         []ProgramExternalEdge      `json:"externalEdges"`
-	Inputs                []ProgramPathDigest        `json:"inputs"`
-	LocalPackages         []ProgramLocalPackage      `json:"localPackages"`
-	Outputs               []ProgramModule            `json:"outputs"`
-	Selections            []ProgramCompilerSelection `json:"selections"`
-	TSConfigs             []ProgramPathDigest        `json:"tsconfigs"`
+	Compiler            ProgramCompilerContract    `json:"compiler"`
+	Config              ProgramPathDigest          `json:"config"`
+	DiscoveryCandidates []string                   `json:"discoveryCandidates"`
+	Execution           ProgramCompilerExecution   `json:"execution"`
+	ExternalEdges       []ProgramExternalEdge      `json:"externalEdges"`
+	Inputs              []ProgramPathDigest        `json:"inputs"`
+	LocalPackages       []ProgramLocalPackage      `json:"localPackages"`
+	Outputs             []ProgramModule            `json:"outputs"`
+	Selections          []ProgramCompilerSelection `json:"selections"`
+	TSConfigs           []ProgramPathDigest        `json:"tsconfigs"`
 }
 
 type ProgramCompilerContract struct {
@@ -136,9 +135,6 @@ func validateProgramCompilerResult(manifest ProgramCompilerResult) error {
 	if manifest.Config.Path != "helmr/config.json" ||
 		!sha256DigestPattern.MatchString(manifest.Config.Digest) {
 		return errors.New("program compiler result config authority is invalid")
-	}
-	if !sha256DigestPattern.MatchString(manifest.AggregateResultDigest) {
-		return errors.New("program compiler result aggregate result digest is invalid")
 	}
 	if manifest.DiscoveryCandidates == nil || manifest.ExternalEdges == nil ||
 		manifest.Inputs == nil || manifest.LocalPackages == nil ||
@@ -249,10 +245,18 @@ func compareProgramExternalEdge(left, right ProgramExternalEdge) int {
 }
 
 func compareProgramCompilerSelection(left, right ProgramCompilerSelection) int {
+	leftKind := declarationKindOrder(left.Kind)
+	rightKind := declarationKindOrder(right.Kind)
+	if leftKind < rightKind {
+		return -1
+	}
+	if leftKind > rightKind {
+		return 1
+	}
 	return strings.Compare(
-		string(left.Kind)+"\x00"+left.DeclaredID+"\x00"+left.SourcePath+"\x00"+
+		left.DeclaredID+"\x00"+left.SourcePath+"\x00"+
 			left.ExportName+"\x00"+string(left.Slot),
-		string(right.Kind)+"\x00"+right.DeclaredID+"\x00"+right.SourcePath+"\x00"+
+		right.DeclaredID+"\x00"+right.SourcePath+"\x00"+
 			right.ExportName+"\x00"+string(right.Slot),
 	)
 }
@@ -470,44 +474,6 @@ func generatedDeclarationModulePath(source string) string {
 	return prefix + ".helmr/modules/" +
 		fmt.Sprintf("%x", sha256.Sum256([]byte(source))) +
 		".mjs"
-}
-
-func validateProgramAggregateResult(
-	result ProgramCompilerResult,
-	plan BuildPlan,
-) error {
-	declarations := make([]LocatedDeclaration, len(result.Selections))
-	for index, selection := range result.Selections {
-		declarations[index] = LocatedDeclaration{
-			DeclaredID: selection.DeclaredID,
-			ExportName: selection.ExportName,
-			Kind:       selection.Kind,
-			ModulePath: selection.SourcePath,
-			Slot:       selection.Slot,
-		}
-	}
-	raw, err := json.Marshal(struct {
-		Declarations []LocatedDeclaration `json:"declarations"`
-		Plan         BuildPlan            `json:"plan"`
-	}{
-		Declarations: declarations,
-		Plan:         plan,
-	})
-	if err != nil {
-		return err
-	}
-	canonical, err := jsoncanon.Transform(raw)
-	if err != nil {
-		return err
-	}
-	digest := sha256.Sum256(canonical)
-	if result.AggregateResultDigest !=
-		"sha256:"+hex.EncodeToString(digest[:]) {
-		return errors.New(
-			"program compiler result aggregate digest does not match analysis",
-		)
-	}
-	return nil
 }
 
 func verifyProgramSourceMap(

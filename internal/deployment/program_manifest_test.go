@@ -91,6 +91,25 @@ func TestProgramManifestRejectsInvalidFinalAuthority(t *testing.T) {
 	}
 }
 
+func TestProgramManifestLocatorsAllowDeclarationsToShareOneModule(t *testing.T) {
+	modulePath := generatedDeclarationModulePath("tasks/mixed.ts")
+	modules := []ProgramModule{{ModulePath: modulePath}}
+	locator := DeclarationLocator{
+		FormatVersion: DeclarationLocatorFormatVersion,
+		Declarations: []LocatedDeclaration{
+			{Kind: DeclarationKindTask, DeclaredID: "task", ModulePath: modulePath},
+			{Kind: DeclarationKindActor, DeclaredID: "actor", ModulePath: modulePath},
+		},
+	}
+	if err := validateProgramManifestLocators(modules, locator); err != nil {
+		t.Fatal(err)
+	}
+	modules = append(modules, ProgramModule{ModulePath: modulePath})
+	if err := validateProgramManifestLocators(modules, locator); err == nil {
+		t.Fatal("duplicate Program module was accepted")
+	}
+}
+
 func testProgramManifest(t *testing.T) ProgramManifest {
 	t.Helper()
 	indexRaw, err := CanonicalProgramIndex(testProgramIndex(t))

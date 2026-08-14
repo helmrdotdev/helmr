@@ -79,9 +79,6 @@ func EncodeProgram(
 	); err != nil {
 		return nil, err
 	}
-	if err := validateProgramAggregateResult(compilerResult, plan); err != nil {
-		return nil, err
-	}
 	if compilerResult.Config.Digest != configResultDigest {
 		return nil, errors.New(
 			"program compiler result config digest does not match evaluated config",
@@ -311,7 +308,6 @@ func programTreeEntries(
 				Path:       source.entry.Path,
 				Kind:       source.entry.Kind,
 				Mode:       source.entry.Mode,
-				SizeBytes:  source.entry.SizeBytes,
 				LinkTarget: source.entry.LinkTarget,
 			}
 			if entry.Kind != artifactEntryRegular {
@@ -320,6 +316,7 @@ func programTreeEntries(
 				}
 				continue
 			}
+			entry.SizeBytes = source.entry.SizeBytes
 			if source.content != nil {
 				entry.Content = bytes.NewReader(source.content)
 				if !yield(entry, nil) {

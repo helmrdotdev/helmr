@@ -18,8 +18,10 @@ func TestProgramTreeEntriesEncodeOneFrozenTree(t *testing.T) {
 	tree.addDirectory("packages/app/node_modules")
 	tree.addFile("packages/app/node_modules/local.js", []byte("nested\n"), 0644)
 	tree.addDirectory("node_modules")
+	tree.addDirectory("node_modules/.bin")
 	tree.addDirectory("node_modules/tool")
 	tree.addFile("node_modules/tool/index.js", []byte("dependency\n"), 0644)
+	tree.addLink("node_modules/.bin/tool", "../tool/index.js")
 	inspected, err := inspectMemoryBuildTree(t, tree)
 	if err != nil {
 		t.Fatal(err)
@@ -48,6 +50,8 @@ func TestProgramTreeEntriesEncodeOneFrozenTree(t *testing.T) {
 		"helmr/declarations.json":            `{"declarations":[]}`,
 		"helmr/entry.mjs":                    "entry\n",
 		"node_modules":                       "",
+		"node_modules/.bin":                  "",
+		"node_modules/.bin/tool":             "../tool/index.js",
 		"node_modules/tool":                  "",
 		"node_modules/tool/index.js":         "dependency\n",
 		"packages":                           "",

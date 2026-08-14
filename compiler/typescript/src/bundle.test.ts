@@ -93,6 +93,29 @@ describe("v0 compiler contract", () => {
     }
   })
 
+  test("preserves canonical declaration order in compiler selections", async () => {
+    const root = await project()
+    await source(
+      root,
+      "tasks/mixed.ts",
+      [
+        'import { actor, task } from "@helmr/sdk"',
+        'export const zTask = task({ id: "z-task", run: () => null })',
+        'export const aActor = actor({ id: "a-actor", run: () => null })',
+      ].join("\n"),
+    )
+
+    const compiled = await compile(root)
+    const result = JSON.parse(
+      new TextDecoder().decode(compiled.files.get("helmr/compiler-result.json")),
+    )
+    expect(result).not.toHaveProperty("aggregateResultDigest")
+    expect(result.selections.map(
+      (selection: { declaredId: string; kind: string }) =>
+        `${selection.kind}:${selection.declaredId}`,
+    )).toEqual(["task:z-task", "actor:a-actor"])
+  })
+
   test("compiles a Schedule that references the exact exported Sandbox", async () => {
     const root = await project()
     await source(
@@ -644,6 +667,15 @@ async function project(): Promise<string> {
       '      kind: "task",',
       "      id: config.id,",
       "      hasPayload: false,",
+      "      handler: config.run,",
+      "    }),",
+      "  })",
+      "}",
+      "export function actor(config) {",
+      "  return Object.freeze({",
+      "    [brand]: Object.freeze({",
+      '      kind: "actor",',
+      "      id: config.id,",
       "      handler: config.run,",
       "    }),",
       "  })",

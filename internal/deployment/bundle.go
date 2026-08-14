@@ -325,8 +325,14 @@ func validateBundleObjectClosure(bundle DeploymentBundle) error {
 			SizeBytes: image.Artifact.SizeBytes,
 			MediaType: image.Artifact.MediaType,
 		}
-		if _, exists := expected[object.Digest]; exists {
-			return fmt.Errorf("deployment bundle object digest %q is referenced more than once", object.Digest)
+		if existing, exists := expected[object.Digest]; exists {
+			if existing != object {
+				return fmt.Errorf(
+					"deployment bundle object digest %q has conflicting reference metadata",
+					object.Digest,
+				)
+			}
+			continue
 		}
 		expected[object.Digest] = object
 	}

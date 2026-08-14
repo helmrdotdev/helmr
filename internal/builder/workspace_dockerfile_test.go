@@ -7,7 +7,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 )
 
-func TestWorkspaceImageDockerfileUsesInstalledTreeAndPinnedBases(t *testing.T) {
+func TestWorkspaceImageDockerfileUsesInstalledTreeAndDigestPinnedBase(t *testing.T) {
 	base := "docker.io/library/alpine@sha256:" + strings.Repeat("b", 64)
 	build := imagebuild.Build{
 		FormatVersion: imagebuild.FormatVersion,
@@ -46,15 +46,71 @@ func TestWorkspaceImageDockerfileUsesInstalledTreeAndPinnedBases(t *testing.T) {
 	}
 }
 
-func TestWorkspaceImageDockerfileRejectsMutableBase(t *testing.T) {
+func TestWorkspaceImageDockerfileAcceptsTaggedBase(t *testing.T) {
 	build := imagebuild.Build{
 		FormatVersion: imagebuild.FormatVersion, Root: "root",
 		Images: []imagebuild.Spec{{
 			Key: "root", Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
-			Steps: []imagebuild.Step{{From: &imagebuild.From{Ref: "docker.io/library/alpine:3.22"}}},
+			Steps: []imagebuild.Step{{From: &imagebuild.From{Ref: "node:24-bookworm-slim"}}},
+		}},
+	}
+	raw, _, err := WorkspaceImageDockerfile(build)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "FROM --platform=linux/amd64 docker.io/library/node:24-bookworm-slim") {
+		t.Fatalf("Workspace Dockerfile did not preserve tagged base:\n%s", raw)
+	}
+}
+
+func TestWorkspaceImageDockerfileDisambiguatesInternalNames(t *testing.T) {
+	for _, base := range []string{"helmr_installed", "installed-tree", "helmr_workspace_0"} {
+		t.Run(base, func(t *testing.T) {
+			build := imagebuild.Build{
+				FormatVersion: imagebuild.FormatVersion, Root: "root",
+				Images: []imagebuild.Spec{{
+					Key: "root", Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
+					Steps: []imagebuild.Step{{From: &imagebuild.From{Ref: base}}},
+				}},
+			}
+			raw, _, err := WorkspaceImageDockerfile(build)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "FROM --platform=linux/amd64 docker.io/library/" + base
+			if !strings.Contains(string(raw), want) {
+				t.Fatalf("Workspace Dockerfile did not disambiguate %q:\n%s", base, raw)
+			}
+		})
+	}
+}
+
+func TestWorkspaceImageDockerfilePreservesScratchBase(t *testing.T) {
+	build := imagebuild.Build{
+		FormatVersion: imagebuild.FormatVersion, Root: "root",
+		Images: []imagebuild.Spec{{
+			Key: "root", Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
+			Steps: []imagebuild.Step{{From: &imagebuild.From{Ref: "scratch"}}},
+		}},
+	}
+	raw, _, err := WorkspaceImageDockerfile(build)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "FROM --platform=linux/amd64 scratch") {
+		t.Fatalf("Workspace Dockerfile did not preserve scratch base:\n%s", raw)
+	}
+}
+
+func TestWorkspaceImageDockerfileRejectsInvalidBase(t *testing.T) {
+	build := imagebuild.Build{
+		FormatVersion: imagebuild.FormatVersion, Root: "root",
+		Images: []imagebuild.Spec{{
+			Key: "root", Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
+			Steps: []imagebuild.Step{{From: &imagebuild.From{Ref: "not a valid ref"}}},
 		}},
 	}
 	if _, _, err := WorkspaceImageDockerfile(build); err == nil {
-		t.Fatal("WorkspaceImageDockerfile accepted a mutable base")
+		t.Fatal("WorkspaceImageDockerfile accepted an invalid base")
 	}
 }

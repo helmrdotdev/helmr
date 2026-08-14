@@ -4974,10 +4974,6 @@ async function compileProgram(options) {
     const inputs = await compilerInputs(root, metafiles, localPackages);
     const tsconfigs = await compilerTSConfigs(root, inputs.map((item) => item.path));
     files.set("helmr/compiler-result.json", canonicalizeJsonValue({
-      aggregateResultDigest: `sha256:${sha256(canonicalizeJsonValue({
-        declarations: analyzed.declarationLocator.declarations,
-        plan: analyzed.buildPlan
-      }))}`,
       compiler: compilerContract(),
       config: {
         digest: `sha256:${sha256(configBytes)}`,
@@ -4998,7 +4994,7 @@ async function compileProgram(options) {
         kind: item.kind,
         slot: item.slot,
         sourcePath: item.modulePath
-      })).sort((left, right) => compareUTF83(externalSelectionKey(left), externalSelectionKey(right))),
+      })),
       tsconfigs
     }));
     return Object.freeze({
@@ -5221,15 +5217,6 @@ function externalEdgeKey(edge) {
     edge.logicalPath,
     edge.resolvedPath,
     edge.runtimePath
-  ].join("\x00");
-}
-function externalSelectionKey(selection) {
-  return [
-    selection.kind,
-    selection.declaredId,
-    selection.sourcePath,
-    selection.exportName,
-    selection.slot
   ].join("\x00");
 }
 function aggregateEntry(modules) {

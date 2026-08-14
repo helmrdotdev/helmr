@@ -209,13 +209,25 @@ func (reader *squashFSTreeReader) read() (squashFSTreeFacts, error) {
 			}
 			entry.ActualForm = child.Form
 			entry.ActualInodeNumber = child.InodeNumber
-			if entry.DeclaredForm != child.Form {
+			declaredKind, known := squashFSInodeKindForForm(entry.DeclaredForm)
+			if !known {
 				return squashFSTreeFacts{}, &artifactContentError{
 					cause: fmt.Errorf(
-						"SquashFS path %q declares inode form %d, actual form %d",
+						"SquashFS path %q declares unknown inode form %d",
 						childPath,
 						entry.DeclaredForm,
+					),
+				}
+			}
+			if declaredKind != child.Kind {
+				return squashFSTreeFacts{}, &artifactContentError{
+					cause: fmt.Errorf(
+						"SquashFS path %q declares inode form %d with kind %d, actual form %d has kind %d",
+						childPath,
+						entry.DeclaredForm,
+						declaredKind,
 						child.Form,
+						child.Kind,
 					),
 				}
 			}

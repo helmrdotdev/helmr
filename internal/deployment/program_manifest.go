@@ -473,12 +473,6 @@ func validateProgramManifestLocators(
 	}
 	located := make(map[string]struct{}, len(locator.Declarations))
 	for _, declaration := range locator.Declarations {
-		if _, exists := located[declaration.ModulePath]; exists {
-			return fmt.Errorf(
-				"program declaration module %q is duplicated",
-				declaration.ModulePath,
-			)
-		}
 		located[declaration.ModulePath] = struct{}{}
 	}
 	if len(located) != len(moduleSet) {
