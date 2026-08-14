@@ -119,12 +119,14 @@ in
             -run '^(TestFinalizeBundleWritesExactAtomicDirectory|TestFinalizeBundlePublishesExactlyOneConcurrentWriter)$'
         touch "$out"
       '';
-  timezone-manifest = pkgs.runCommand "timezone-manifest-check" { src = ../internal/schedule/tzdb_names.txt; } ''
-    LC_ALL=C sort -u "$src" > normalized
-    cmp normalized "$src"
-    diff -u ${helmrPackages.timezoneData}/tzdb_names.txt "$src"
-    touch "$out"
-  '';
+  timezone-manifest =
+    pkgs.runCommand "timezone-manifest-check" { src = ../internal/schedule/tzdb_names.txt; }
+      ''
+        LC_ALL=C sort -u "$src" > normalized
+        cmp normalized "$src"
+        diff -u ${helmrPackages.timezoneData}/tzdb_names.txt "$src"
+        touch "$out"
+      '';
 }
 // lib.optionalAttrs (system == "x86_64-linux") {
   firecracker-host-module = firecrackerHostModuleCheck;
@@ -136,91 +138,91 @@ in
         ];
       }
       ''
-                  set -euo pipefail
-                  export HOME="$TMPDIR/home"
-                  mkdir -p "$HOME"
+        set -euo pipefail
+        export HOME="$TMPDIR/home"
+        mkdir -p "$HOME"
 
-                  make_project() {
-                    project="$1"
-                    mkdir -p "$project/node_modules/@helmr/sdk" "$project/tasks"
-                    cat >"$project/package.json" <<'JSON'
-                  {"name":"builder-fixture","private":true,"type":"module"}
-                  JSON
-                    cat >"$project/node_modules/@helmr/sdk/package.json" <<'JSON'
-                  {"name":"@helmr/sdk","type":"module","exports":"./index.js"}
-                  JSON
-                    cat >"$project/node_modules/@helmr/sdk/index.js" <<'JS'
-                  const brand = Symbol.for("helmr.sdk.v0.definition")
-                  export function defineConfig(config) { return config }
-                  export function task(config) {
-                    return Object.freeze({
-                      [brand]: Object.freeze({
-                        kind: "task",
-                        id: config.id,
-                        hasPayload: false,
-                        handler: config.run,
-                      }),
-                    })
-                  }
-                  JS
-                    cat >"$project/helmr.config.ts" <<'TS'
-                  import { defineConfig } from "@helmr/sdk"
-                  export default defineConfig({ dirs: ["tasks"], ignorePatterns: [] })
-                  TS
-                    cat >"$project/tasks/hello.ts" <<'TS'
-                  import { task } from "@helmr/sdk"
-                  export const hello = task({ id: "hello", run: () => "hello" })
-                  TS
-                  }
+        make_project() {
+          project="$1"
+          mkdir -p "$project/node_modules/@helmr/sdk" "$project/tasks"
+          cat >"$project/package.json" <<'JSON'
+        {"name":"builder-fixture","private":true,"type":"module"}
+        JSON
+          cat >"$project/node_modules/@helmr/sdk/package.json" <<'JSON'
+        {"name":"@helmr/sdk","type":"module","exports":"./index.js"}
+        JSON
+          cat >"$project/node_modules/@helmr/sdk/index.js" <<'JS'
+        const brand = Symbol.for("helmr.sdk.v0.definition")
+        export function defineConfig(config) { return config }
+        export function task(config) {
+          return Object.freeze({
+            [brand]: Object.freeze({
+              kind: "task",
+              id: config.id,
+              hasPayload: false,
+              handler: config.run,
+            }),
+          })
+        }
+        JS
+          cat >"$project/helmr.config.ts" <<'TS'
+        import { defineConfig } from "@helmr/sdk"
+        export default defineConfig({ dirs: ["tasks"], ignorePatterns: [] })
+        TS
+          cat >"$project/tasks/hello.ts" <<'TS'
+        import { task } from "@helmr/sdk"
+        export const hello = task({ id: "hello", run: () => "hello" })
+        TS
+        }
 
-                  for build in first second; do
-                    project="$TMPDIR/$build/project"
-                    work="$TMPDIR/$build/work"
-                    images="$TMPDIR/$build/images"
-                    mkdir -p "$work" "$images"
-                    printf '[]' >"$images/images.json"
-                    make_project "$project"
-                    ${helmrPackages.bundleBuilder}/bin/bundle-builder \
-                      --project "$project" \
-                      --work "$work" \
-                      --analysis-output "$images/build-plan.json" \
-                      --runtime-descriptor ${helmrPackages.runtimeRelease}/runtime.descriptor.json \
-                      --runtime-metadata ${helmrPackages.runtimeRelease}/runtime.metadata.json \
-                      --compiler-descriptor ${helmrPackages.compiler}/compiler.descriptor.json \
-                      --node ${helmrPackages.runtimeRelease}/tree/bin/node \
-                      --node-loader ${helmrPackages.runtimeRelease}/tree/lib/ld-linux-x86-64.so.2 \
-                      --node-library-path ${helmrPackages.runtimeRelease}/tree/lib \
-                      --config-evaluator ${helmrPackages.compiler}/tree/helmr/config-evaluator.mjs \
-                      --program-compiler ${helmrPackages.compiler}/tree/helmr/program-compiler.mjs \
-                      --encoder ${helmrPackages.squashfsTools}/bin/mksquashfs
-                    ${helmrPackages.bundleBuilder}/bin/bundle-builder \
-                      --project "$project" \
-                      --work "$work" \
-                      --prepare-output "$TMPDIR/$build/prepared" \
-                      --runtime-descriptor ${helmrPackages.runtimeRelease}/runtime.descriptor.json \
-                      --runtime-metadata ${helmrPackages.runtimeRelease}/runtime.metadata.json \
-                      --compiler-descriptor ${helmrPackages.compiler}/compiler.descriptor.json \
-                      --node ${helmrPackages.runtimeRelease}/tree/bin/node \
-                      --node-loader ${helmrPackages.runtimeRelease}/tree/lib/ld-linux-x86-64.so.2 \
-                      --node-library-path ${helmrPackages.runtimeRelease}/tree/lib \
-                      --config-evaluator ${helmrPackages.compiler}/tree/helmr/config-evaluator.mjs \
-                      --program-compiler ${helmrPackages.compiler}/tree/helmr/program-compiler.mjs \
-                      --encoder ${helmrPackages.squashfsTools}/bin/mksquashfs
-                    cp -a "$project" "$TMPDIR/$build/program-project"
-                    ${helmrPackages.bundleBuilder}/bin/bundle-builder \
-                      --prepared "$TMPDIR/$build/prepared" \
-                      --program-project "$TMPDIR/$build/program-project" \
-                      --work "$work" \
-                      --bundle-output "$TMPDIR/$build/bundle" \
-                      --workspace-images "$images/images.json" \
-                      --expected-plan "$images/build-plan.json" \
-                      --runtime-descriptor ${helmrPackages.runtimeRelease}/runtime.descriptor.json \
-                      --runtime-metadata ${helmrPackages.runtimeRelease}/runtime.metadata.json \
-                      --compiler-descriptor ${helmrPackages.compiler}/compiler.descriptor.json \
-                      --encoder ${helmrPackages.squashfsTools}/bin/mksquashfs
-                  done
+        for build in first second; do
+          project="$TMPDIR/$build/project"
+          work="$TMPDIR/$build/work"
+          images="$TMPDIR/$build/images"
+          mkdir -p "$work" "$images"
+          printf '[]' >"$images/images.json"
+          make_project "$project"
+          ${helmrPackages.bundleBuilder}/bin/bundle-builder \
+            --project "$project" \
+            --work "$work" \
+            --analysis-output "$images/build-plan.json" \
+            --runtime-descriptor ${helmrPackages.runtimeRelease}/runtime.descriptor.json \
+            --runtime-metadata ${helmrPackages.runtimeRelease}/runtime.metadata.json \
+            --compiler-descriptor ${helmrPackages.compiler}/compiler.descriptor.json \
+            --node ${helmrPackages.runtimeRelease}/tree/bin/node \
+            --node-loader ${helmrPackages.runtimeRelease}/tree/lib/ld-linux-x86-64.so.2 \
+            --node-library-path ${helmrPackages.runtimeRelease}/tree/lib \
+            --config-evaluator ${helmrPackages.compiler}/tree/helmr/config-evaluator.mjs \
+            --program-compiler ${helmrPackages.compiler}/tree/helmr/program-compiler.mjs \
+            --encoder ${helmrPackages.squashfsTools}/bin/mksquashfs
+          ${helmrPackages.bundleBuilder}/bin/bundle-builder \
+            --project "$project" \
+            --work "$work" \
+            --prepare-output "$TMPDIR/$build/prepared" \
+            --runtime-descriptor ${helmrPackages.runtimeRelease}/runtime.descriptor.json \
+            --runtime-metadata ${helmrPackages.runtimeRelease}/runtime.metadata.json \
+            --compiler-descriptor ${helmrPackages.compiler}/compiler.descriptor.json \
+            --node ${helmrPackages.runtimeRelease}/tree/bin/node \
+            --node-loader ${helmrPackages.runtimeRelease}/tree/lib/ld-linux-x86-64.so.2 \
+            --node-library-path ${helmrPackages.runtimeRelease}/tree/lib \
+            --config-evaluator ${helmrPackages.compiler}/tree/helmr/config-evaluator.mjs \
+            --program-compiler ${helmrPackages.compiler}/tree/helmr/program-compiler.mjs \
+            --encoder ${helmrPackages.squashfsTools}/bin/mksquashfs
+          cp -a "$project" "$TMPDIR/$build/program-project"
+          ${helmrPackages.bundleBuilder}/bin/bundle-builder \
+            --prepared "$TMPDIR/$build/prepared" \
+            --program-project "$TMPDIR/$build/program-project" \
+            --work "$work" \
+            --bundle-output "$TMPDIR/$build/bundle" \
+            --workspace-images "$images/images.json" \
+            --expected-plan "$images/build-plan.json" \
+            --runtime-descriptor ${helmrPackages.runtimeRelease}/runtime.descriptor.json \
+            --runtime-metadata ${helmrPackages.runtimeRelease}/runtime.metadata.json \
+            --compiler-descriptor ${helmrPackages.compiler}/compiler.descriptor.json \
+            --encoder ${helmrPackages.squashfsTools}/bin/mksquashfs
+        done
         diff -r "$TMPDIR/first/bundle" "$TMPDIR/second/bundle"
-                  touch "$out"
+        touch "$out"
       '';
   worker-host = helmrPackages.workerHost;
   platform-release = helmrPackages.platformRelease;
