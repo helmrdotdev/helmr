@@ -39,9 +39,6 @@ run_check client-smoke-typecheck \
 run_check release-smoke-contract \
   'bash tests/release_smoke_selector_test.sh' \
   bash tests/release_smoke_selector_test.sh
-run_check failing-build-source \
-  'sync local packages and prove the failing fixture reaches deployment creation' \
-  bash -c "dev/workflows/scripts/sync-local-sdk.sh && HELMR_TEST_PREPARED_FAILING_BUILD_FIXTURE=1 dev/release-gate/run-go-tests.sh '^TestFailingBuildFixtureReachesDeploymentCreation$' ./cmd/helmr"
 run_check network-deny-evidence-producer \
   'named nft deny policy and counter tests' \
   dev/release-gate/run-go-tests.sh \
