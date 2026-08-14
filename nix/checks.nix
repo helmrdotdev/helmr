@@ -144,14 +144,11 @@ in
 
         make_project() {
           project="$1"
-          mkdir -p "$project/node_modules/@helmr/sdk" "$project/tasks"
+          mkdir -p "$project/sdk" "$project/tasks"
           cat >"$project/package.json" <<'JSON'
         {"name":"builder-fixture","private":true,"type":"module"}
         JSON
-          cat >"$project/node_modules/@helmr/sdk/package.json" <<'JSON'
-        {"name":"@helmr/sdk","type":"module","exports":"./index.js"}
-        JSON
-          cat >"$project/node_modules/@helmr/sdk/index.js" <<'JS'
+          cat >"$project/sdk/index.js" <<'JS'
         const brand = Symbol.for("helmr.sdk.v0.definition")
         export function defineConfig(config) { return config }
         export function task(config) {
@@ -166,11 +163,11 @@ in
         }
         JS
           cat >"$project/helmr.config.ts" <<'TS'
-        import { defineConfig } from "@helmr/sdk"
+        import { defineConfig } from "./sdk/index.js"
         export default defineConfig({ dirs: ["tasks"], ignorePatterns: [] })
         TS
           cat >"$project/tasks/hello.ts" <<'TS'
-        import { task } from "@helmr/sdk"
+        import { task } from "../sdk/index.js"
         export const hello = task({ id: "hello", run: () => "hello" })
         TS
         }
