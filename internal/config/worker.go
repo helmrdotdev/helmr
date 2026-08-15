@@ -4,15 +4,19 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func LoadWorker() (Worker, error) {
 	cfg := Worker{
 		ControlPlaneURL:              envText("CONTROL_PLANE_URL"),
 		WorkerResourceID:             envText("WORKER_RESOURCE_ID"),
+		WorkerPoolName:               os.Getenv("WORKER_POOL_NAME"),
 		WorkerEnrollmentTokenFile:    envText("WORKER_ENROLLMENT_TOKEN_FILE"),
 		CASURI:                       envText("CAS_URI"),
 		WorkerInstanceCredentialPath: envText("WORKER_INSTANCE_CREDENTIAL_PATH"),
@@ -23,6 +27,7 @@ func LoadWorker() (Worker, error) {
 		BuildScratchDir:              envText("WORKER_BUILD_SCRATCH_DIR"),
 		ImagesDir:                    envText("WORKER_IMAGES_DIR"),
 		FirecrackerPath:              env("FIRECRACKER_PATH", "firecracker"),
+		CPUTemplateHelperPath:        env("CPU_TEMPLATE_HELPER_PATH", "cpu-template-helper"),
 		JailerPath:                   env("JAILER_PATH", "jailer"),
 		JailerNumaNode:               0,
 		JailerChrootDir:              envText("JAILER_CHROOT_DIR"),
@@ -42,6 +47,9 @@ func LoadWorker() (Worker, error) {
 	}
 	if cfg.WorkerResourceID == "" || len(cfg.WorkerResourceID) > 512 {
 		return cfg, errors.New("WORKER_RESOURCE_ID is required and must not exceed 512 bytes")
+	}
+	if err := workergroup.ValidatePoolName(cfg.WorkerPoolName); err != nil {
+		return cfg, fmt.Errorf("WORKER_POOL_NAME: %w", err)
 	}
 	if cfg.WorkerEnrollmentTokenFile == "" {
 		return cfg, errors.New("WORKER_ENROLLMENT_TOKEN_FILE is required")

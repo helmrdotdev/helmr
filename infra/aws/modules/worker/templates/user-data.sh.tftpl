@@ -3,6 +3,8 @@ set -eu
 umask 077
 date +%s >/run/helmr-launch-started-at
 
+/usr/local/sbin/helmr-prepare-root '${expected_root_bytes}'
+
 install -d -m 0750 -o root -g root /etc/helmr
 install -d -m 0700 -o root -g root /run/helmr
 

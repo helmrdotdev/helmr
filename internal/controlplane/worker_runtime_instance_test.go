@@ -4,8 +4,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
+
+func TestRuntimeInstanceResponsePreservesActualCPUShape(t *testing.T) {
+	row := db.RuntimeInstance{
+		VMVCPUCount:     3,
+		CPUConfigDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
+	response := runtimeInstanceResponse(row)
+	if response.VMVCPUCount != row.VMVCPUCount || response.CPUConfigDigest != row.CPUConfigDigest {
+		t.Fatalf("response CPU shape = %d/%q, want %d/%q", response.VMVCPUCount, response.CPUConfigDigest, row.VMVCPUCount, row.CPUConfigDigest)
+	}
+}
 
 func TestValidateRuntimeCleanupProofIsTypedAndTimeBounded(t *testing.T) {
 	now := time.Now().UTC()

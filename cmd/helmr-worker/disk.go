@@ -26,12 +26,12 @@ func advertisedWorkerDiskMiB(workDir string, configuredMiB int64, reserveMiB int
 	if err := unix.Statfs(workDir, &stat); err != nil {
 		return 0, err
 	}
-	totalMiB = int64((stat.Bavail * uint64(stat.Bsize)) / (1024 * 1024))
+	totalMiB = int64((stat.Blocks * uint64(stat.Bsize)) / (1024 * 1024))
 	if totalMiB <= 0 {
-		return 0, errors.New("worker filesystem has no available disk capacity")
+		return 0, errors.New("worker filesystem has no disk capacity")
 	}
 	if reserveMiB >= totalMiB {
-		return 0, errors.New("worker disk reserve consumes available capacity")
+		return 0, errors.New("worker disk reserve consumes filesystem capacity")
 	}
 	advertisedMiB := totalMiB - reserveMiB
 	if advertisedMiB <= 0 {
@@ -47,7 +47,7 @@ func admissionDiskFloorMiB(supportsBuild bool, vmScratchMiB, reserveMiB int64) i
 	return reserveMiB + vmScratchMiB
 }
 
-func capGuestEphemeralDiskCapacity(capacity compute.WorkerDiskCapacity, reserve, available uint64) (compute.WorkerDiskCapacity, error) {
+func capGuestEphemeralDiskCapacity(capacity compute.WorkerDiskCapacity, reserve, physicalCapacity uint64) (compute.WorkerDiskCapacity, error) {
 	if err := capacity.Validate(); err != nil {
 		return compute.WorkerDiskCapacity{}, err
 	}
@@ -55,8 +55,8 @@ func capGuestEphemeralDiskCapacity(capacity compute.WorkerDiskCapacity, reserve,
 		return compute.WorkerDiskCapacity{}, errors.New("worker disk reserve consumes aggregate capacity")
 	}
 	capacity.HostGuestEphemeralDiskBytes -= int64(reserve)
-	if available < uint64(capacity.HostGuestEphemeralDiskBytes) {
-		capacity.HostGuestEphemeralDiskBytes = int64(available)
+	if physicalCapacity < uint64(capacity.HostGuestEphemeralDiskBytes) {
+		capacity.HostGuestEphemeralDiskBytes = int64(physicalCapacity)
 	}
 	if err := capacity.Validate(); err != nil {
 		return compute.WorkerDiskCapacity{}, err

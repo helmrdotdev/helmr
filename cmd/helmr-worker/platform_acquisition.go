@@ -52,11 +52,10 @@ func runPlatformAcquisitionChild(
 		return true, fmt.Errorf("open platform acquisition store: %w", err)
 	}
 	acquirer := deployment.PlatformAcquirer{
-		Encoder:  os.Getenv("HELMR_PLATFORM_ACQUISITION_ENCODER"),
-		GPGV:     os.Getenv("HELMR_PLATFORM_ACQUISITION_GPGV"),
-		Patchelf: os.Getenv("HELMR_PLATFORM_ACQUISITION_PATCHELF"),
-		Policy:   policy,
-		Store:    store,
+		Encoder: os.Getenv("HELMR_PLATFORM_ACQUISITION_ENCODER"),
+		GPGV:    os.Getenv("HELMR_PLATFORM_ACQUISITION_GPGV"),
+		Policy:  policy,
+		Store:   store,
 		Validator: deployment.ConformanceValidator{
 			UnitCgroupRoot: os.Getenv("HELMR_PLATFORM_ACQUISITION_UNIT_CGROUP"),
 		},

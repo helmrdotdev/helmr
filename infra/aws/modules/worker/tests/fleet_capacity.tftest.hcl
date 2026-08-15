@@ -33,6 +33,7 @@ mock_provider "aws" {
 variables {
   name                              = "helmr-test-run"
   worker_roles                      = ["run"]
+  worker_pool_name                  = "run-v1"
   network_blocked_ipv4_cidrs        = ["10.0.0.0/8", "169.254.0.0/16"]
   network_link_pool                 = "169.254.64.0/18"
   network_translation_pool          = "100.96.0.0/16"
@@ -53,6 +54,7 @@ variables {
   build_policy_digest               = null
   min_size                          = 0
   max_size                          = 1
+  root_volume_size_gb               = 120
   secret_arns = {
     checkpoint_encryption_key = "arn:aws:secretsmanager:us-east-1:111122223333:secret:checkpoint"
     worker_enrollment_token   = "arn:aws:secretsmanager:us-east-1:111122223333:secret:worker-enrollment"
@@ -69,6 +71,17 @@ run "deployment_owns_protected_capacity" {
   assert {
     condition     = aws_autoscaling_group.worker.protect_from_scale_in
     error_message = "deployment-owned capacity must start protected from scale in"
+  }
+
+  assert {
+    condition = (
+      length(aws_launch_template.worker.user_data) * 3 / 4 - length(regexall("=", aws_launch_template.worker.user_data)) <= 15360 &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "/usr/local/sbin/helmr-prepare-root '128849018880'") &&
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_PREPARE_ROOT") &&
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "usage: helmr-prepare-root EXPECTED_DEVICE_BYTES") &&
+      can(regex("(?s)helmr-prepare-root '128849018880'.*aws secretsmanager get-secret-value", base64decode(aws_launch_template.worker.user_data)))
+    )
+    error_message = "Run Worker user data must remain within its decoded-size budget and invoke the AMI-owned root preparation helper before secret access."
   }
 
   assert {
@@ -154,9 +167,11 @@ run "deployment_owns_protected_capacity" {
       strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_NETWORK_BLOCKED_IPV4_CIDRS=[\"10.0.0.0/8\",\"169.254.0.0/16\"]") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_NETWORK_LINK_POOL=169.254.64.0/18") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_NETWORK_RESOLVER_IPV4=10.20.0.2") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_NETWORK_TRANSLATION_POOL=100.96.0.0/16")
+      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_NETWORK_TRANSLATION_POOL=100.96.0.0/16") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_POOL_NAME=run-v1") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "CPU_TEMPLATE_HELPER_PATH=/usr/local/bin/cpu-template-helper")
     )
-    error_message = "worker user data must receive the complete generic routed-network configuration"
+    error_message = "worker user data must receive the routed-network and pinned CPU template helper configuration"
   }
 
   assert {
@@ -295,6 +310,7 @@ run "build_worker_installs_exact_policy_before_service" {
   variables {
     name                       = "helmr-test-build"
     worker_roles               = ["build"]
+    worker_pool_name           = "build-v1"
     worker_capacity_vcpus      = 4
     worker_capacity_memory_mib = 8192
     worker_execution_slots     = 1
@@ -308,7 +324,19 @@ run "build_worker_installs_exact_policy_before_service" {
 
   assert {
     condition = (
+      length(aws_launch_template.worker.user_data) * 3 / 4 - length(regexall("=", aws_launch_template.worker.user_data)) <= 15360 &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "/usr/local/sbin/helmr-prepare-root '128849018880'") &&
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_PREPARE_ROOT") &&
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "usage: helmr-prepare-root EXPECTED_DEVICE_BYTES") &&
+      can(regex("(?s)helmr-prepare-root '128849018880'.*aws secretsmanager get-secret-value", base64decode(aws_launch_template.worker.user_data)))
+    )
+    error_message = "Build Worker user data must remain within its decoded-size budget and invoke the AMI-owned root preparation helper before secret access."
+  }
+
+  assert {
+    condition = (
       strcontains(base64decode(aws_launch_template.worker.user_data), "BUILD_POLICY_PATH=/etc/helmr/build-policy.json") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_POOL_NAME=build-v1") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "\"helmr-worker\" release install") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "--store 's3://helmr-test-runtime/objects'") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "--digest 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'") &&
@@ -368,6 +396,30 @@ run "build_worker_installs_exact_policy_before_service" {
   assert {
     condition     = !strcontains(aws_iam_role_policy.worker.policy, "RetainedArtifacts") && !strcontains(jsonencode(aws_iam_role.worker.tags), "RetainedCASPublisher")
     error_message = "workers must not receive retained artifact authority before the producer is connected"
+  }
+}
+
+run "combined_worker_uses_configured_pool_generation" {
+  command = plan
+
+  variables {
+    name                       = "helmr-test-combined"
+    worker_roles               = ["build", "run"]
+    worker_pool_name           = "combined-v2"
+    worker_capacity_vcpus      = 4
+    worker_capacity_memory_mib = 8192
+    worker_execution_slots     = 1
+    vm_vcpus                   = 3
+    vm_memory_mib              = 4096
+    vm_scratch_disk_mib        = 32768
+    build_policy_digest        = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    build_cache_mib            = 8192
+    build_scratch_mib          = 34816
+  }
+
+  assert {
+    condition     = strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_POOL_NAME=combined-v2")
+    error_message = "worker deployments must use the explicit provider-owned Pool generation name independently of roles"
   }
 }
 
@@ -442,6 +494,30 @@ run "generated_environment_key_is_reserved" {
   variables {
     worker_environment = {
       AWS_REGION = "us-west-2"
+    }
+  }
+
+  expect_failures = [terraform_data.network_preconditions]
+}
+
+run "cpu_template_helper_path_is_reserved" {
+  command = plan
+
+  variables {
+    worker_environment = {
+      CPU_TEMPLATE_HELPER_PATH = "/tmp/unpinned-helper"
+    }
+  }
+
+  expect_failures = [terraform_data.network_preconditions]
+}
+
+run "worker_pool_name_is_reserved" {
+  command = plan
+
+  variables {
+    worker_environment = {
+      WORKER_POOL_NAME = "unowned"
     }
   }
 

@@ -354,6 +354,43 @@ UPDATE deployments
        )
    ));
 
+-- name: ListQueuedDeploymentBuildDemand :many
+SELECT deployments.id AS deployment_id
+  FROM deployments
+ WHERE deployments.build_region_id = sqlc.arg(build_region_id)
+   AND deployments.current_build_lease_id IS NULL
+   AND (
+       (
+           deployments.status = 'queued'
+           AND deployments.build_runtime_digest IS NULL
+           AND deployments.build_toolchain_digest IS NULL
+           AND deployments.build_manager_digest IS NULL
+       )
+       OR
+       (
+           deployments.status IN ('queued', 'building')
+           AND deployments.build_runtime_digest IS NOT NULL
+           AND deployments.build_toolchain_digest IS NOT NULL
+           AND deployments.build_manager_digest IS NOT NULL
+       )
+   )
+   AND COALESCE((
+       SELECT max(deployment_build_leases.lease_sequence)
+         FROM deployment_build_leases
+        WHERE deployment_build_leases.deployment_id = deployments.id
+   ), 0) < 3
+   AND NOT EXISTS (
+       SELECT 1 FROM deployment_build_leases
+        WHERE deployment_build_leases.deployment_id = deployments.id
+          AND deployment_build_leases.state IN ('assigned', 'starting', 'running')
+   )
+ ORDER BY row_number() OVER (
+              PARTITION BY deployments.org_id
+              ORDER BY deployments.created_at, deployments.id
+          ),
+          deployments.created_at, deployments.id
+ LIMIT sqlc.arg(limit_count);
+
 -- name: ListQueuedDeploymentBuildCandidates :many
 SELECT deployments.org_id,
        deployments.project_id,

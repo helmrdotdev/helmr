@@ -8,20 +8,41 @@ variable "name" {
   type        = string
 }
 
-variable "source_repository_url" {
-  description = "Git repository URL used to build the worker AMI."
-  type        = string
-  default     = "https://github.com/helmrdotdev/helmr.git"
-}
-
-variable "source_ref" {
-  description = "Exact Git commit checked out and injected as the Worker binary identity."
+variable "host_artifacts_manifest_digest" {
+  description = "Canonical SHA-256 digest of worker-host-artifacts.json."
   type        = string
 
   validation {
-    condition     = can(regex("^[0-9a-f]{40}$", var.source_ref))
-    error_message = "source_ref must be an exact lowercase 40-character Git commit."
+    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.host_artifacts_manifest_digest))
+    error_message = "host_artifacts_manifest_digest must be a canonical SHA-256 digest."
   }
+}
+
+variable "host_artifacts_bundle_s3_uri" {
+  description = "S3 URI of the exact Worker host artifact bundle."
+  type        = string
+}
+
+variable "host_artifacts_bundle_object_arn" {
+  description = "Exact S3 object ARN for host_artifacts_bundle_s3_uri."
+  type        = string
+}
+
+variable "host_artifacts_bundle_digest" {
+  description = "Canonical SHA-256 digest of the exact Worker host artifact bundle."
+  type        = string
+
+  validation {
+    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.host_artifacts_bundle_digest))
+    error_message = "host_artifacts_bundle_digest must be a canonical SHA-256 digest."
+  }
+}
+
+variable "host_artifacts_bundle_kms_key_arn" {
+  description = "Optional KMS key ARN used to encrypt host_artifacts_bundle_s3_uri."
+  type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "runtime_artifacts_manifest_digest" {
@@ -61,38 +82,27 @@ variable "runtime_artifacts_bundle_kms_key_arn" {
   nullable    = true
 }
 
-variable "source_bundle_s3_uri" {
-  description = "Optional S3 URI for a git bundle used as the worker AMI source."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "source_bundle_object_arn" {
-  description = "Exact S3 object ARN for source_bundle_s3_uri."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "source_bundle_kms_key_arn" {
-  description = "Optional KMS key ARN used to encrypt source_bundle_s3_uri."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
 variable "parent_image" {
-  description = "Optional parent AMI or Image Builder image ARN."
+  description = "Optional concrete parent AMI ID."
   type        = string
   default     = null
   nullable    = true
+
+  validation {
+    condition     = var.parent_image == null || can(regex("^ami-([0-9a-f]{8}|[0-9a-f]{17})$", var.parent_image))
+    error_message = "parent_image must be a concrete AMI ID."
+  }
 }
 
 variable "distribution_regions" {
   description = "AWS regions where Image Builder should distribute the worker AMI. Defaults to the provider region."
   type        = list(string)
   default     = []
+
+  validation {
+    condition     = alltrue([for region in var.distribution_regions : can(regex("^[a-z]{2}-[a-z-]+-[0-9]+$", region))])
+    error_message = "distribution_regions must contain AWS Region names."
+  }
 }
 
 variable "ami_public" {
@@ -126,8 +136,8 @@ variable "security_group_ids" {
   default     = []
 }
 
-variable "image_version" {
-  description = "Semantic version used by EC2 Image Builder resources."
-  type        = string
-  default     = "0.1.0"
+variable "root_volume_size_gb" {
+  description = "Root volume size for the install-only AMI build and resulting snapshot."
+  type        = number
+  default     = 24
 }

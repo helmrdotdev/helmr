@@ -15,10 +15,14 @@ import (
 )
 
 const (
-	runtimeNodePath    = "bin/node"
-	runtimeEntryPath   = "helmr/entry.mjs"
-	runtimeLibcPath    = "lib/libc.so.6"
-	runtimeLicensePath = "share/licenses/node/LICENSE"
+	runtimeNodeLauncherPath = "bin/node"
+	runtimeNodePath         = "bin/node.real"
+	runtimeEntryPath        = "helmr/entry.mjs"
+	runtimeLoaderEnvPath    = "helmr/loader_env.cjs"
+	runtimeLibcPath         = "lib/libc.so.6"
+	runtimeLoaderAliasPath  = "lib/ld-linux-x86-64.so.2"
+	runtimeLoaderPath       = "ld.so"
+	runtimeLicensePath      = "share/licenses/node/LICENSE"
 )
 
 func VerifyRuntimeArtifact(
@@ -113,8 +117,11 @@ func verifyRuntimeTopology(
 		}
 	}
 	requiredFiles := map[string]uint32{
+		runtimeNodeLauncherPath: 0755,
 		runtimeNodePath:         0755,
 		runtimeEntryPath:        0644,
+		runtimeLoaderEnvPath:    0644,
+		runtimeLoaderPath:       0755,
 		PlatformDescriptorPath:  0644,
 		PlatformIntegrityPath:   0644,
 		PlatformConformancePath: 0644,
@@ -236,10 +243,23 @@ func verifyRuntimeExecutables(
 	if err := verifyRuntimeExecutable(
 		ctx,
 		artifact,
+		runtimeNodeLauncherPath,
+		machine,
+		loader,
+		loader,
+		"",
+		true,
+	); err != nil {
+		return fmt.Errorf("runtime Node.js launcher: %w", err)
+	}
+	if err := verifyRuntimeExecutable(
+		ctx,
+		artifact,
 		runtimeNodePath,
 		machine,
 		loader,
 		loader,
+		runtimeLibraryPath,
 		true,
 	); err != nil {
 		return fmt.Errorf("runtime Node.js: %w", err)
@@ -271,7 +291,7 @@ func verifyRuntimeExecutables(
 			continue
 		}
 		wantMode := uint32(0644)
-		if entry.Path == loaderPath {
+		if entry.Path == runtimeLoaderAliasPath {
 			wantMode = 0755
 		}
 		if entry.Mode != wantMode {
@@ -282,7 +302,21 @@ func verifyRuntimeExecutables(
 				wantMode,
 			)
 		}
-		if entry.Path == loaderPath {
+		if entry.Path == runtimeLoaderAliasPath {
+			if err := verifyRuntimeLoader(ctx, artifact, entry.Path, machine, loader); err != nil {
+				return fmt.Errorf("runtime loader alias: %w", err)
+			}
+			primary, err := artifact.read(ctx, loaderPath, maxArtifactFileSize)
+			if err != nil {
+				return err
+			}
+			alias, err := artifact.read(ctx, entry.Path, maxArtifactFileSize)
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(primary, alias) {
+				return errors.New("runtime loader alias bytes differ from the managed loader")
+			}
 			continue
 		}
 		isELF, err := runtimeFileHasELFMagic(ctx, artifact, entry.Path)
@@ -341,6 +375,7 @@ func verifyRuntimeExecutable(
 	machine elf.Machine,
 	interpreter string,
 	loader string,
+	fallbackSearchPath string,
 	requireDynamic bool,
 ) error {
 	file, err := openRuntimeELF(ctx, artifact, filePath, machine)
@@ -365,6 +400,7 @@ func verifyRuntimeExecutable(
 		machine,
 		loader,
 		requireDynamic,
+		fallbackSearchPath,
 	)
 	if err != nil {
 		return err
@@ -390,7 +426,7 @@ func verifyRuntimeSharedObject(
 		return err
 	}
 	defer file.Close()
-	_, err = verifyRuntimeDynamicClosure(ctx, artifact, file, machine, loader, true)
+	_, err = verifyRuntimeDynamicClosure(ctx, artifact, file, machine, loader, true, "")
 	return err
 }
 
@@ -467,6 +503,7 @@ func verifyRuntimeDynamicClosure(
 	machine elf.Machine,
 	loader string,
 	requireSearchPath bool,
+	fallbackSearchPath string,
 ) ([]string, error) {
 	needed, err := runtimeDynamicStrings(file, elf.DT_NEEDED)
 	if err != nil {
@@ -475,6 +512,12 @@ func verifyRuntimeDynamicClosure(
 	searchPaths, err := runtimeELFSearchPaths(file)
 	if err != nil {
 		return nil, err
+	}
+	if fallbackSearchPath != "" {
+		if len(searchPaths) != 0 {
+			return nil, fmt.Errorf("dynamic ELF overrides its managed library search path")
+		}
+		searchPaths = []string{fallbackSearchPath}
 	}
 	if requireSearchPath && len(searchPaths) == 0 {
 		return nil, fmt.Errorf("dynamic ELF has no runtime-confined search path")
@@ -553,7 +596,7 @@ func resolveRuntimeDependency(
 
 func runtimeELFTarget(architecture RuntimeArchitecture) (elf.Machine, string, error) {
 	if architecture == ArchitectureX8664 {
-		return elf.EM_X86_64, runtimeMountPath + "/lib/ld-linux-x86-64.so.2", nil
+		return elf.EM_X86_64, runtimeNodeInterpreter, nil
 	}
 	return elf.EM_NONE, "", fmt.Errorf("runtime architecture %q is unsupported", architecture)
 }
@@ -576,7 +619,7 @@ func runtimeELFInterpreter(file *elf.File) (string, bool, error) {
 		if len(raw) == 0 || len(raw) > maxMountedArtifactPathBytes || raw[len(raw)-1] != 0 {
 			return "", false, fmt.Errorf("ELF interpreter is not a bounded NUL-terminated path")
 		}
-		value := string(raw[:len(raw)-1])
+		value := string(bytes.TrimRight(raw, "\x00"))
 		if strings.IndexByte(value, 0) >= 0 {
 			return "", false, fmt.Errorf("ELF interpreter contains an embedded NUL")
 		}

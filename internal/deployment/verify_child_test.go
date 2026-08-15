@@ -20,6 +20,9 @@ func TestVerifierChildModeRequiresExactPrivateArguments(t *testing.T) {
 		{"helmr-worker", verifierChildArgument},
 		{"helmr-worker", verifierChildArgument, "unknown"},
 		{"helmr-worker", verifierChildArgument, "program", "extra"},
+		{"helmr-worker", verifierLauncherArgument},
+		{"helmr-worker", verifierLauncherArgument, "unknown"},
+		{"helmr-worker", verifierLauncherArgument, "program", "extra"},
 	} {
 		handled, err := RunVerifierChild(arguments)
 		if !handled || err == nil {
@@ -27,6 +30,12 @@ func TestVerifierChildModeRequiresExactPrivateArguments(t *testing.T) {
 		}
 	}
 	for _, job := range []verifierJob{programVerifierJob, runtimeVerifierJob} {
+		launcherArguments := verifierLauncherArguments(job)
+		if len(launcherArguments) != 2 ||
+			launcherArguments[0] != verifierLauncherArgument ||
+			launcherArguments[1] != string(job) {
+			t.Fatalf("%s launcher arguments = %q", job, launcherArguments)
+		}
 		arguments := verifierChildArguments(job)
 		if len(arguments) != 2 ||
 			arguments[0] != verifierChildArgument ||

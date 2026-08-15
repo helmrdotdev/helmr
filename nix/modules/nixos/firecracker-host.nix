@@ -7,7 +7,7 @@
 
 let
   cfg = config.services.helmr.firecrackerHost;
-  firecrackerReleaseVersion = "1.13.2";
+  firecrackerReleaseVersion = "1.16.1";
   firecrackerPackage =
     assert lib.assertMsg pkgs.stdenv.hostPlatform.isx86_64
       "Helmr Firecracker hosts support only x86_64-linux";
@@ -17,7 +17,7 @@ let
 
       src = pkgs.fetchurl {
         url = "https://github.com/firecracker-microvm/firecracker/releases/download/v${firecrackerReleaseVersion}/firecracker-v${firecrackerReleaseVersion}-x86_64.tgz";
-        hash = "sha256-pts7RR9QDf2CmJRH/r9Utci7iSnk7nx/hKlpXxMNpUc=";
+        hash = "sha256-OCoCqGnk1tXLFMQFd/lUXoRYAh6osLLT/BDsFNnCQuY=";
       };
 
       installPhase = ''
@@ -25,6 +25,7 @@ let
 
         release_dir=.
         install -d "$out/bin" "$out/share/firecracker"
+        install -m 0755 "$release_dir/cpu-template-helper-v${firecrackerReleaseVersion}-x86_64" "$out/bin/cpu-template-helper"
         install -m 0755 "$release_dir/firecracker-v${firecrackerReleaseVersion}-x86_64" "$out/bin/firecracker"
         install -m 0755 "$release_dir/jailer-v${firecrackerReleaseVersion}-x86_64" "$out/bin/jailer"
         install -m 0644 "$release_dir/LICENSE" "$release_dir/NOTICE" "$release_dir/THIRD-PARTY" "$out/share/firecracker/"
@@ -91,6 +92,7 @@ in
         ++ cfg.extraPackages;
 
         environment.sessionVariables = {
+          CPU_TEMPLATE_HELPER_PATH = "${firecrackerPackage}/bin/cpu-template-helper";
           FIRECRACKER_PATH = "${firecrackerPackage}/bin/firecracker";
           JAILER_PATH = "${firecrackerPackage}/bin/jailer";
           JAILER_UID = toString cfg.jailerUID;

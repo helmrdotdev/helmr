@@ -54,6 +54,22 @@ func TestManagerConformanceNamesAreFamilySpecific(t *testing.T) {
 	}
 }
 
+func TestRuntimeConformanceNamesIncludeExecutedChecks(t *testing.T) {
+	want := []string{
+		"network-denied",
+		"node-architecture",
+		"node-disable-types",
+		"node-module-abi",
+		"node-reported-version",
+		"node-source-maps",
+		"runtime-entrypoint",
+		"runtime-loader-environment",
+	}
+	if actual := runtimeConformanceNames(); !slices.Equal(actual, want) {
+		t.Fatalf("runtime conformance = %v, want %v", actual, want)
+	}
+}
+
 func TestVerifyRetainedNodeSourceUsesPinnedReleaseKey(t *testing.T) {
 	source := []byte("node distribution")
 	sourceDigest := sha256.Sum256(source)
@@ -123,6 +139,19 @@ func TestVerifyRetainedNodeSourceUsesPinnedReleaseKey(t *testing.T) {
 		expectation,
 	); err != nil {
 		t.Fatal(err)
+	}
+	plainPath := "helmr/upstream/SHASUMS256.txt"
+	memory.files[plainPath][0] ^= 1
+	err = verifyRetainedNodeSource(
+		context.Background(),
+		artifact,
+		bytes.NewReader(source),
+		integrity,
+		expectation,
+	)
+	memory.files[plainPath][0] ^= 1
+	if err == nil || err.Error() != "retained Node.js checksum document does not match its signed cleartext" {
+		t.Fatalf("mismatched retained checksum error = %v", err)
 	}
 	if err := verifyRetainedNodeSource(
 		context.Background(),

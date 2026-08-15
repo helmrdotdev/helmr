@@ -39,7 +39,7 @@ func TestVerifierCommandUsesJobFDLayoutAndNamespaces(t *testing.T) {
 			)
 			if command.Path != verifierExecutable ||
 				len(command.Args) != 3 ||
-				command.Args[1] != verifierChildArgument ||
+				command.Args[1] != verifierLauncherArgument ||
 				command.Args[2] != string(test.job) {
 				t.Fatalf("command = (%q, %q)", command.Path, command.Args)
 			}

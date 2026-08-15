@@ -97,7 +97,7 @@ func runVerifierChild(job verifierJob) (returnErr error) {
 	if err := applyVerifierIdentity(uid, gid); err != nil {
 		return err
 	}
-	if err := closeVerifierAmbientDescriptors(job); err != nil {
+	if err := isolateVerifierContractDescriptors(job); err != nil {
 		return err
 	}
 	if err := validateVerifierDescriptors(job, &uid); err != nil {
@@ -110,6 +110,25 @@ func runVerifierChild(job verifierJob) (returnErr error) {
 		return err
 	}
 	return executeVerifierJob(job, result)
+}
+
+func runVerifierLauncher(job verifierJob) error {
+	if err := markVerifierAmbientDescriptorsCloseOnExec(job); err != nil {
+		return err
+	}
+	arguments := append([]string{verifierExecutable}, verifierChildArguments(job)...)
+	return unix.Exec(verifierExecutable, arguments, []string{})
+}
+
+func markVerifierAmbientDescriptorsCloseOnExec(job verifierJob) error {
+	firstAmbient := verifierArtifactBaseFD + job.artifactCount()
+	if firstAmbient <= verifierArtifactBaseFD {
+		return fmt.Errorf("artifact verifier job = %q", job)
+	}
+	if err := unix.CloseRange(uint(firstAmbient), ^uint(0), unix.CLOSE_RANGE_CLOEXEC); err != nil {
+		return fmt.Errorf("mark verifier ambient descriptors close-on-exec: %w", err)
+	}
+	return nil
 }
 
 func executeVerifierJob(job verifierJob, result io.Writer) (returnErr error) {
@@ -625,22 +644,28 @@ func validateVerifierIdentity(uid, gid uint32, lastCapability uintptr) error {
 	return nil
 }
 
-func closeVerifierAmbientDescriptors(job verifierJob) error {
+func isolateVerifierContractDescriptors(job verifierJob) error {
 	if err := unix.CloseRange(0, 2, 0); err != nil {
 		return fmt.Errorf("close verifier standard descriptors: %w", err)
 	}
 	firstAmbient := verifierArtifactBaseFD + job.artifactCount()
-	if err := unix.CloseRange(uint(firstAmbient), ^uint(0), 0); err != nil {
-		return fmt.Errorf("close verifier ambient descriptors: %w", err)
-	}
+	// The launcher marks every non-contract descriptor close-on-exec before this
+	// final process starts. Descriptors above the contract range now belong to
+	// the fresh Go runtime (for example its epoll descriptor) and must remain open.
 	for fd := 0; fd <= 2; fd++ {
 		if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); !errors.Is(err, syscall.EBADF) {
 			return fmt.Errorf("verifier standard descriptor %d remains open", fd)
 		}
 	}
 	for fd := verifierResultFD; fd < firstAmbient; fd++ {
-		if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); err != nil {
+		flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0)
+		if err != nil {
 			return fmt.Errorf("verifier contract descriptor %d is closed: %w", fd, err)
+		}
+		// Contract descriptors remain available to this verifier process, but no
+		// artifact-supplied command may inherit the result channel or snapshots.
+		if _, err := unix.FcntlInt(uintptr(fd), unix.F_SETFD, flags|unix.FD_CLOEXEC); err != nil {
+			return fmt.Errorf("isolate verifier contract descriptor %d: %w", fd, err)
 		}
 	}
 	return nil

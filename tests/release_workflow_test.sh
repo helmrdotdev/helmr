@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016
 set -euo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -88,16 +89,22 @@ require_text "COPY helmr-dispatcher /usr/local/bin/helmr-dispatcher" "$controlpl
   "Control Plane image omits the Dispatcher binary"
 
 require_text "scripts/aws-release-artifacts.sh worker-image-start" "$workflow" \
-  "Worker release does not build a fresh AMI"
-require_text "workerAMIs" "$workflow" \
-  "Worker release artifact omits region-to-AMI identity"
-require_text "workerImageProvenance" "$workflow" \
-  "Worker release artifact omits exact AMI runtime provenance"
-require_text "jq -c '.workerImageProvenance' dist/worker/worker-artifacts.json" "$workflow" \
-  "final AWS release manifest drops Worker image provenance"
+  "Worker release does not select or build a fully validated AMI"
+require_text 'WORKER_IMAGE_ARTIFACT_BUCKET: ${{ vars.RELEASE_WORKER_IMAGE_ARTIFACT_BUCKET }}' "$workflow" \
+  "Worker release does not receive the immutable artifact bucket"
+require_text 'RELEASE_WORKER_IMAGE_ARTIFACT_BUCKET is required' "$workflow" \
+  "Worker release does not reject a missing immutable artifact bucket"
+require_text "scripts/aws-release-artifacts.sh worker-image-receipt" "$workflow" \
+  "Worker release does not emit the closed Worker image receipt"
+require_text "dist/worker-image.json" "$workflow" \
+  "Worker release artifact does not preserve the closed Worker image receipt"
+require_text '"$(cat dist/worker/worker-image.json)"' "$workflow" \
+  "final AWS release manifest does not embed the Worker image receipt"
 require_text "gpgv" "$worker_image_builder" \
   "Worker AMI omits the Node signature verifier"
-require_text "mksquashfs" "$worker_image_builder" \
-  "Worker AMI omits the Platform tree composer"
+require_text "squashfs-tools" "$worker_image_builder" \
+  "Worker AMI omits the Platform tree composer package"
+require_text "mksquashfs version 4.6.1" "$worker_module_main" \
+  "Worker AMI does not validate the exact Platform tree composer contract"
 
 printf 'ok - release workflow tests\n'

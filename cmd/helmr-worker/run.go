@@ -27,9 +27,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
 	imagecacheecr "github.com/helmrdotdev/helmr/internal/imagecache/ecr"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/substrate"
-	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/worker"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -91,7 +89,7 @@ func run(log *slog.Logger) error {
 	substrateCacheDir := filepath.Join(workDir, "substrate-cache")
 	artifactCacheDir := filepath.Join(workDir, "artifact-cache")
 	var buildStorageConfig *worker.BuildStorageConfig
-	var buildScratchLeaseBytes uint64
+	var buildScratchCapacityBytes uint64
 	if supportsBuild {
 		const mib = uint64(1024 * 1024)
 		scratchFloorMiB := admissionDiskFloorMiB(true, cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB)
@@ -171,14 +169,12 @@ func run(log *slog.Logger) error {
 			return fmt.Errorf("prove build lease storage after runtime activation: %w", err)
 		}
 		reserveBytes := uint64(firecracker.BootCorpusMaxMiB) * 1024 * 1024
-		buildScratchLeaseBytes = min(
-			storageProof.Scratch.AvailableBytes,
-			storageProof.Scratch.CapacityBytes-reserveBytes,
-		)
+		buildScratchCapacityBytes = storageProof.Scratch.CapacityBytes - reserveBytes
 	}
-	rootfsPath := filepath.Join(guestImageDir, "rootfs.ext4")
+	rootfsPath := filepath.Join(guestImageDir, "rootfs.squashfs")
 	connectorConfig := networkConfig
 	connectorConfig.FirecrackerPath = cfg.FirecrackerPath
+	connectorConfig.CPUTemplateHelperPath = cfg.CPUTemplateHelperPath
 	connectorConfig.JailerPath = cfg.JailerPath
 	connectorConfig.JailerNumaNode = cfg.JailerNumaNode
 	connectorConfig.JailerChrootBaseDir = cfg.JailerChrootDir
@@ -199,24 +195,23 @@ func run(log *slog.Logger) error {
 	if err := connector.Preflight(ctx); err != nil {
 		return fmt.Errorf("the Firecracker worker preflight: %w", err)
 	}
+	hostRuntimeEvidence, err := connector.HostRuntimeEvidence(ctx)
+	if err != nil {
+		return fmt.Errorf("inspect Firecracker host runtime: %w", err)
+	}
 	runtimeCapabilities, err := connector.RuntimeCapabilities()
 	if err != nil {
 		return fmt.Errorf("inspect Firecracker runtime: %w", err)
 	}
-	runtimeArchitecture, err := deployment.RuntimeArchitectureFromGo(runtimeCapabilities.Arch)
-	if err != nil {
-		return fmt.Errorf("normalize Firecracker runtime architecture: %w", err)
+	runtimeArchitecture := deployment.RuntimeArchitecture(runtimeCapabilities.Arch)
+	if err := deployment.ValidateRuntimeArchitecture(runtimeArchitecture); err != nil {
+		return fmt.Errorf("validate Firecracker runtime architecture: %w", err)
 	}
-	runtimeIdentity := runtimeid.Selector{
-		Arch:            string(runtimeArchitecture),
-		Contract:        runtimeCapabilities.Contract,
-		KernelDigest:    runtimeCapabilities.KernelDigest,
-		InitramfsDigest: runtimeCapabilities.InitramfsDigest,
-		RootfsDigest:    runtimeCapabilities.RootfsDigest,
-	}
-	runtimeIdentity.ID, err = runtimeid.Digest(runtimeIdentity)
+	runtimeProfile, cpuShapes, cpuEnvironment, err := workerRuntimeProfile(
+		string(runtimeArchitecture), runtimeCapabilities, hostRuntimeEvidence,
+	)
 	if err != nil {
-		return fmt.Errorf("derive normalized Firecracker runtime identity: %w", err)
+		return fmt.Errorf("construct Worker runtime profile: %w", err)
 	}
 	runtimeScratch := filepath.Join(workDir, "tmp", "runtime")
 	if err := os.MkdirAll(runtimeScratch, 0o700); err != nil {
@@ -259,10 +254,6 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("resolve XZ decoder: %w", err)
 		}
-		patchelf, err := requireExecutable("patchelf")
-		if err != nil {
-			return fmt.Errorf("resolve ELF patcher: %w", err)
-		}
 		workerExecutable, err := os.Executable()
 		if err != nil {
 			return fmt.Errorf("resolve worker executable: %w", err)
@@ -272,7 +263,6 @@ func run(log *slog.Logger) error {
 			Encoder:          squashfsEncoder,
 			Executable:       workerExecutable,
 			GPGV:             gpgv,
-			Patchelf:         patchelf,
 			PlatformStoreURI: cfg.PlatformStoreURI,
 			UnitCgroupRoot:   verifierCgroupRoot,
 			WorkDir:          acquisitionWorkDir,
@@ -335,7 +325,7 @@ func run(log *slog.Logger) error {
 		diskCapacity, err = capGuestEphemeralDiskCapacity(
 			diskCapacity,
 			uint64(firecracker.BootCorpusMaxMiB)*1024*1024,
-			buildScratchLeaseBytes,
+			buildScratchCapacityBytes,
 		)
 		if err != nil {
 			return fmt.Errorf("cap worker guest ephemeral disk capacity after runtime activation: %w", err)
@@ -344,7 +334,9 @@ func run(log *slog.Logger) error {
 	allocatable := compute.ResourceVector{
 		MilliCPU:  cfg.WorkerCapacityVCPUs * 1000,
 		MemoryMiB: cfg.WorkerCapacityMemoryMiB,
-		Slots:     cfg.WorkerExecutionSlots,
+	}
+	if supportsRun {
+		allocatable.Slots = cfg.WorkerExecutionSlots
 	}
 	if supportsBuild {
 		if !fitsBuildHostCompute(allocatable) {
@@ -352,25 +344,19 @@ func run(log *slog.Logger) error {
 		}
 	}
 	workerCapabilities := workerapi.Capabilities{
-		WorkerVersion:             version.Version,
-		RuntimeID:                 runtimeIdentity.ID,
-		RuntimeArch:               runtimeIdentity.Arch,
-		VMRuntimeContract:         runtimeCapabilities.Contract,
-		KernelDigest:              runtimeCapabilities.KernelDigest,
-		InitramfsDigest:           runtimeCapabilities.InitramfsDigest,
-		RootfsDigest:              runtimeCapabilities.RootfsDigest,
+		Runtime:                   runtimeProfile,
+		CPUShapes:                 cpuShapes,
+		CPUEnvironment:            cpuEnvironment,
 		MaxVCPUs:                  allocatable.MilliCPU / 1000,
 		MaxMemoryMiB:              allocatable.MemoryMiB,
 		VMMilliCPU:                vmResources.MilliCPU,
 		VMMemoryMiB:               vmResources.MemoryMiB,
 		GuestEphemeralDiskBytes:   diskCapacity.HostGuestEphemeralDiskBytes,
 		VMGuestEphemeralDiskBytes: diskCapacity.VMGuestEphemeralDiskBytes,
-		ExecutionSlotsAvailable:   cfg.WorkerExecutionSlots,
+		ExecutionSlotsAvailable:   int32(allocatable.Slots),
 		SupportsRun:               supportsRun,
 		SupportsBuild:             supportsBuild,
 		MaxBuildExecutors:         buildExecutors,
-		BuildCacheBytes:           substrateCacheMaxBytes,
-		ArtifactCacheBytes:        artifactCacheMaxBytes,
 	}
 	if supportsRun {
 		workerCapabilities.SubstrateFormat = substrate.Format
@@ -446,7 +432,7 @@ func run(log *slog.Logger) error {
 			CAS:               store,
 			PlatformStore:     platformStore,
 			Connector:         runtimeConnector,
-			RuntimeIdentityID: runtimeIdentity.ID,
+			RuntimeIdentityID: runtimeProfile.ID,
 			Encoder:           squashfsEncoder,
 			ImageWorkDir:      imageBuildWorkDir,
 			ImageAdmission:    imageControlPlane,
@@ -455,17 +441,14 @@ func run(log *slog.Logger) error {
 			ImageCompletion:   imageControlPlane,
 		}),
 		worker.WithMaterializer(executor.WorkspaceMaterializer{
-			Connector:             workspaceMountConnector,
 			CAS:                   store,
 			Sessions:              workspaceMountSessions,
 			TempDir:               filepath.Join(workDir, "tmp"),
 			ArtifactCacheDir:      artifactCacheDir,
 			ArtifactCacheMaxBytes: artifactCacheMaxBytes,
-			Substrates:            substrateResolver,
 			Log:                   log,
 			RuntimePool:           preparedRuntimePool,
 			BackgroundGate:        backgroundGate,
-			Capacity:              hostCapacity,
 		}),
 	)
 	if err != nil {

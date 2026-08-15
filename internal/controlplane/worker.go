@@ -11,14 +11,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/capacityapi"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -44,6 +44,10 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("resource_id is required and must not exceed 512 bytes")))
 		return
 	}
+	if err := workergroup.ValidatePoolName(request.PoolName); err != nil {
+		writeError(w, badRequest(fmt.Errorf("worker pool name: %w", err)))
+		return
+	}
 	tokenHash, err := strictWorkerEnrollmentBearer(r.Header.Values("Authorization"))
 	if err != nil {
 		writeError(w, unauthorized(errors.New("worker enrollment token is invalid")))
@@ -57,6 +61,8 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 	workerInstanceID := uuid.Must(uuid.NewV7())
 	credential, err := s.db.EnrollWorkerInstance(r.Context(), db.EnrollWorkerInstanceParams{
 		TokenHash:        tokenHash,
+		WorkerPoolID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		PoolName:         request.PoolName,
 		AllowsRun:        request.SupportsRun,
 		AllowsBuild:      request.SupportsBuild,
 		WorkerInstanceID: pgvalue.UUID(workerInstanceID),
@@ -78,6 +84,7 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, workerapi.EnrollmentResponse{
 		WorkerInstanceID:     pgvalue.MustUUIDValue(credential.WorkerInstanceID).String(),
 		WorkerGroupID:        credential.WorkerGroupID,
+		WorkerPoolID:         pgvalue.MustUUIDValue(credential.WorkerPoolID).String(),
 		WorkerInstanceSecret: generated.Raw,
 	})
 }
@@ -212,9 +219,7 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	_, err = s.db.ActivateWorkerInstance(
-		r.Context(), workerActivationParams(worker, capabilities),
-	)
+	err = s.activateWorker(r.Context(), worker, capabilities)
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("worker activation is stale")))
 		return
@@ -563,38 +568,220 @@ func workerObservationParams(worker workerActor, observation workerapi.Observati
 func workerActivationParams(
 	worker workerActor,
 	c workerapi.Capabilities,
+	cpuEnvironment []byte,
 ) db.ActivateWorkerInstanceParams {
-	runStarts := int32(0)
+	runSlots := int32(0)
 	if c.SupportsRun {
-		runStarts = c.ExecutionSlotsAvailable
+		runSlots = c.ExecutionSlotsAvailable
 	}
 	return db.ActivateWorkerInstanceParams{
-		RuntimeIdentityID: c.RuntimeID, RuntimeArch: c.RuntimeArch, VMRuntimeContract: c.VMRuntimeContract,
-		KernelDigest: c.KernelDigest, InitramfsDigest: c.InitramfsDigest, RootfsDigest: c.RootfsDigest,
-		SupervisorVersion: c.WorkerVersion,
+		RuntimeIdentityID: pgtype.Text{String: c.Runtime.ID, Valid: true},
 		SupportsRun:       c.SupportsRun, SupportsBuild: c.SupportsBuild,
 		SubstrateFormat: c.SubstrateFormat, SubstrateContract: c.SubstrateContract,
 		EpochCPUMillis: c.MaxVCPUs * 1000, EpochMemoryBytes: c.MaxMemoryMiB * 1024 * 1024,
 		EpochGuestEphemeralDiskBytes: c.GuestEphemeralDiskBytes,
-		EpochBuildCacheBytes:         c.BuildCacheBytes, EpochArtifactCacheBytes: c.ArtifactCacheBytes,
-		PerVMCPUMillis: c.VMMilliCPU, PerVMMemoryBytes: c.VMMemoryMiB * 1024 * 1024,
+		PerVMCPUMillis:               c.VMMilliCPU, PerVMMemoryBytes: c.VMMemoryMiB * 1024 * 1024,
 		PerVMGuestEphemeralDiskBytes: c.VMGuestEphemeralDiskBytes,
-		MaxVMSlots:                   c.ExecutionSlotsAvailable,
-		MaxBuildExecutors:            c.MaxBuildExecutors, MaxRuntimeStarts: runStarts,
+		MaxVMSlots:                   runSlots,
+		MaxBuildExecutors:            c.MaxBuildExecutors, MaxRuntimeStarts: runSlots,
+		CPUEnvironment: cpuEnvironment, CPUEnvironmentDigest: pgtype.Text{String: c.CPUEnvironment.Digest, Valid: true},
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
 		WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
 	}
 }
 
+func (s *Server) activateWorker(ctx context.Context, worker workerActor, capabilities workerapi.Capabilities) error {
+	cpuEnvironment, err := json.Marshal(capabilities.CPUEnvironment)
+	if err != nil {
+		return fmt.Errorf("encode Worker CPU environment: %w", err)
+	}
+	template := workerTemplate(capabilities)
+	return s.inTx(ctx, func(work *txWork) error {
+		group, err := work.q.LockWorkerGroupForPoolMutation(ctx, worker.WorkerGroupID)
+		if err != nil {
+			return err
+		}
+		if group.State != db.WorkerGroupStateActive && group.State != db.WorkerGroupStatePaused && group.State != db.WorkerGroupStateDraining {
+			return pgx.ErrNoRows
+		}
+		if capabilities.SupportsRun && !group.AllowsRun || capabilities.SupportsBuild && !group.AllowsBuild {
+			return pgx.ErrNoRows
+		}
+		epoch := pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true}
+		poolID, err := work.q.GetWorkerInstancePoolID(ctx, db.GetWorkerInstancePoolIDParams{
+			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
+			WorkerEpoch: epoch,
+		})
+		if err != nil {
+			return err
+		}
+		pool, err := work.q.LockWorkerPool(ctx, db.LockWorkerPoolParams{
+			WorkerGroupID: worker.WorkerGroupID, WorkerPoolID: poolID,
+		})
+		if err != nil {
+			return err
+		}
+		if pool.AllowsRun != capabilities.SupportsRun || pool.AllowsBuild != capabilities.SupportsBuild {
+			return pgx.ErrNoRows
+		}
+		if _, err := work.q.LockWorkerInstanceForActivation(ctx, db.LockWorkerInstanceForActivationParams{
+			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
+			WorkerPoolID: poolID, WorkerEpoch: epoch,
+		}); err != nil {
+			return err
+		}
+		if _, err := work.q.UpsertRuntimeIdentity(ctx, runtimeIdentityParams(capabilities.Runtime)); err != nil {
+			return err
+		}
+		switch pool.State {
+		case "pending":
+			if group.State == db.WorkerGroupStateDraining {
+				return pgx.ErrNoRows
+			}
+			for _, shape := range capabilities.CPUShapes {
+				inserted, err := work.q.InsertWorkerPoolCPUShape(ctx, db.InsertWorkerPoolCPUShapeParams{
+					VCPUCount: shape.VCPUCount, CPUConfigDigest: shape.CPUConfigDigest, WorkerPoolID: poolID,
+				})
+				if err != nil {
+					return err
+				}
+				if inserted != 1 {
+					return pgx.ErrNoRows
+				}
+			}
+			pool, err = work.q.SealWorkerPool(ctx, sealWorkerPoolParams(worker.WorkerGroupID, poolID, template))
+			if err != nil {
+				return err
+			}
+			if _, err := work.q.SetInitialWorkerGroupPrimaryPools(ctx, db.SetInitialWorkerGroupPrimaryPoolsParams{
+				WorkerGroupID: worker.WorkerGroupID, WorkerPoolID: poolID,
+			}); err != nil {
+				return err
+			}
+		case "active", "draining":
+			shapes, err := work.q.ListWorkerPoolCPUShapes(ctx, poolID)
+			if err != nil {
+				return err
+			}
+			if !workerPoolMatches(pool, shapes, template) {
+				return pgx.ErrNoRows
+			}
+		default:
+			return pgx.ErrNoRows
+		}
+		_, err = work.q.ActivateWorkerInstance(ctx, workerActivationParams(worker, capabilities, cpuEnvironment))
+		return err
+	})
+}
+
+func runtimeIdentityParams(profile capacityapi.RuntimeProfile) db.UpsertRuntimeIdentityParams {
+	digest := pgtype.Text{String: profile.CPUTemplate.Digest, Valid: profile.CPUTemplate.Digest != ""}
+	return db.UpsertRuntimeIdentityParams{
+		ID: profile.ID, RuntimeArch: profile.Arch, VMRuntimeContract: profile.Contract,
+		VMRuntimeDescriptorDigest: profile.VMRuntimeDescriptorDigest,
+		FirecrackerDigest:         profile.FirecrackerDigest, FirecrackerVersion: profile.FirecrackerVersion,
+		SnapshotFormatVersion: profile.SnapshotFormatVersion, HostKernelRelease: profile.HostKernelRelease,
+		CPUTemplateKind: string(profile.CPUTemplate.Kind), CPUTemplateDigest: digest,
+		KernelDigest: profile.KernelDigest, InitramfsDigest: profile.InitramfsDigest, RootfsDigest: profile.RootfsDigest,
+	}
+}
+
+func sealWorkerPoolParams(groupID string, poolID pgtype.UUID, template capacityapi.WorkerTemplate) db.SealWorkerPoolParams {
+	return db.SealWorkerPoolParams{
+		RuntimeIdentityID:               pgtype.Text{String: template.Runtime.ID, Valid: true},
+		SubstrateFormat:                 pgtype.Text{String: template.Substrate.Format, Valid: true},
+		SubstrateContract:               pgtype.Text{String: template.Substrate.Contract, Valid: true},
+		CapacityCPUMillis:               pgtype.Int8{Int64: template.Capacity.CPUMillis, Valid: true},
+		CapacityMemoryBytes:             pgtype.Int8{Int64: template.Capacity.MemoryBytes, Valid: true},
+		CapacityGuestEphemeralDiskBytes: pgtype.Int8{Int64: template.Capacity.GuestEphemeralDiskBytes, Valid: true},
+		PerVMCPUMillis:                  pgtype.Int8{Int64: template.PerVM.CPUMillis, Valid: true},
+		PerVMMemoryBytes:                pgtype.Int8{Int64: template.PerVM.MemoryBytes, Valid: true},
+		PerVMGuestEphemeralDiskBytes:    pgtype.Int8{Int64: template.PerVM.GuestEphemeralDiskBytes, Valid: true},
+		MaxVMSlots:                      pgtype.Int4{Int32: int32(template.Capacity.VMSlots), Valid: true},
+		MaxBuildExecutors:               pgtype.Int4{Int32: int32(template.Capacity.BuildExecutors), Valid: true},
+		WorkerPoolID:                    poolID, WorkerGroupID: groupID,
+		AllowsRun: template.SupportsRun, AllowsBuild: template.SupportsBuild,
+	}
+}
+
+func workerPoolMatches(pool db.WorkerPool, shapes []db.WorkerPoolCpuShape, template capacityapi.WorkerTemplate) bool {
+	if !pool.SealedAt.Valid || pool.AllowsRun != template.SupportsRun || pool.AllowsBuild != template.SupportsBuild ||
+		!pool.RuntimeIdentityID.Valid || pool.RuntimeIdentityID.String != template.Runtime.ID ||
+		!pool.SubstrateFormat.Valid || pool.SubstrateFormat.String != template.Substrate.Format ||
+		!pool.SubstrateContract.Valid || pool.SubstrateContract.String != template.Substrate.Contract ||
+		!pool.CapacityCPUMillis.Valid || pool.CapacityCPUMillis.Int64 != template.Capacity.CPUMillis ||
+		!pool.CapacityMemoryBytes.Valid || pool.CapacityMemoryBytes.Int64 != template.Capacity.MemoryBytes ||
+		!pool.CapacityGuestEphemeralDiskBytes.Valid || pool.CapacityGuestEphemeralDiskBytes.Int64 != template.Capacity.GuestEphemeralDiskBytes ||
+		!pool.PerVMCPUMillis.Valid || pool.PerVMCPUMillis.Int64 != template.PerVM.CPUMillis ||
+		!pool.PerVMMemoryBytes.Valid || pool.PerVMMemoryBytes.Int64 != template.PerVM.MemoryBytes ||
+		!pool.PerVMGuestEphemeralDiskBytes.Valid || pool.PerVMGuestEphemeralDiskBytes.Int64 != template.PerVM.GuestEphemeralDiskBytes ||
+		!pool.MaxVMSlots.Valid || int64(pool.MaxVMSlots.Int32) != template.Capacity.VMSlots ||
+		!pool.MaxBuildExecutors.Valid || int64(pool.MaxBuildExecutors.Int32) != template.Capacity.BuildExecutors ||
+		len(shapes) != len(template.CPUShapes) {
+		return false
+	}
+	for index := range shapes {
+		if shapes[index].VCPUCount != template.CPUShapes[index].VCPUCount ||
+			shapes[index].CPUConfigDigest != template.CPUShapes[index].CPUConfigDigest {
+			return false
+		}
+	}
+	return true
+}
+
+func workerTemplate(capabilities workerapi.Capabilities) capacityapi.WorkerTemplate {
+	vmSlots := int64(0)
+	if capabilities.SupportsRun {
+		vmSlots = int64(capabilities.ExecutionSlotsAvailable)
+	}
+	return capacityapi.WorkerTemplate{
+		Schema: capacityapi.WorkerTemplateSchema, SupportsRun: capabilities.SupportsRun,
+		SupportsBuild: capabilities.SupportsBuild, Runtime: capabilities.Runtime,
+		CPUShapes: append([]capacityapi.CPUShape(nil), capabilities.CPUShapes...),
+		Substrate: capacityapi.SubstrateProfile{
+			Format: capabilities.SubstrateFormat, Contract: capabilities.SubstrateContract,
+		},
+		Capacity: capacityapi.ResourceVector{
+			CPUMillis: capabilities.MaxVCPUs * 1000, MemoryBytes: capabilities.MaxMemoryMiB * 1024 * 1024,
+			GuestEphemeralDiskBytes: capabilities.GuestEphemeralDiskBytes,
+			VMSlots:                 vmSlots, BuildExecutors: int64(capabilities.MaxBuildExecutors),
+		},
+		PerVM: capacityapi.ResourceVector{
+			CPUMillis: capabilities.VMMilliCPU, MemoryBytes: capabilities.VMMemoryMiB * 1024 * 1024,
+			GuestEphemeralDiskBytes: capabilities.VMGuestEphemeralDiskBytes,
+		},
+	}
+}
+
 func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabilities, error) {
+	runtimeProfile := input.Runtime
+	runtimeProfile.ID = strings.TrimSpace(runtimeProfile.ID)
+	runtimeProfile.Arch = strings.TrimSpace(runtimeProfile.Arch)
+	runtimeProfile.Contract = strings.TrimSpace(runtimeProfile.Contract)
+	runtimeProfile.VMRuntimeDescriptorDigest = strings.TrimSpace(runtimeProfile.VMRuntimeDescriptorDigest)
+	runtimeProfile.FirecrackerDigest = strings.TrimSpace(runtimeProfile.FirecrackerDigest)
+	runtimeProfile.FirecrackerVersion = strings.TrimSpace(runtimeProfile.FirecrackerVersion)
+	runtimeProfile.SnapshotFormatVersion = strings.TrimSpace(runtimeProfile.SnapshotFormatVersion)
+	runtimeProfile.HostKernelRelease = strings.TrimSpace(runtimeProfile.HostKernelRelease)
+	runtimeProfile.CPUTemplate.Digest = strings.TrimSpace(runtimeProfile.CPUTemplate.Digest)
+	runtimeProfile.KernelDigest = strings.TrimSpace(runtimeProfile.KernelDigest)
+	runtimeProfile.InitramfsDigest = strings.TrimSpace(runtimeProfile.InitramfsDigest)
+	runtimeProfile.RootfsDigest = strings.TrimSpace(runtimeProfile.RootfsDigest)
+	cpuShapes := append([]capacityapi.CPUShape(nil), input.CPUShapes...)
+	for index := range cpuShapes {
+		cpuShapes[index].CPUConfigDigest = strings.TrimSpace(cpuShapes[index].CPUConfigDigest)
+	}
+	cpuEnvironment := input.CPUEnvironment
+	cpuEnvironment.Digest = strings.TrimSpace(cpuEnvironment.Digest)
+	cpuEnvironment.FirecrackerVersion = strings.TrimSpace(cpuEnvironment.FirecrackerVersion)
+	cpuEnvironment.HostKernelRelease = strings.TrimSpace(cpuEnvironment.HostKernelRelease)
+	cpuEnvironment.MicrocodeVersion = strings.TrimSpace(cpuEnvironment.MicrocodeVersion)
+	cpuEnvironment.BIOSVersion = strings.TrimSpace(cpuEnvironment.BIOSVersion)
+	cpuEnvironment.BIOSRevision = strings.TrimSpace(cpuEnvironment.BIOSRevision)
 	capabilities := workerapi.Capabilities{
-		WorkerVersion:             strings.TrimSpace(input.WorkerVersion),
-		RuntimeID:                 strings.TrimSpace(input.RuntimeID),
-		RuntimeArch:               strings.TrimSpace(input.RuntimeArch),
-		VMRuntimeContract:         strings.TrimSpace(input.VMRuntimeContract),
-		KernelDigest:              strings.TrimSpace(input.KernelDigest),
-		InitramfsDigest:           strings.TrimSpace(input.InitramfsDigest),
-		RootfsDigest:              strings.TrimSpace(input.RootfsDigest),
+		Runtime:                   runtimeProfile,
+		CPUShapes:                 cpuShapes,
+		CPUEnvironment:            cpuEnvironment,
 		SubstrateFormat:           strings.TrimSpace(input.SubstrateFormat),
 		SubstrateContract:         strings.TrimSpace(input.SubstrateContract),
 		MaxVCPUs:                  input.MaxVCPUs,
@@ -607,39 +794,16 @@ func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabi
 		SupportsRun:               input.SupportsRun,
 		SupportsBuild:             input.SupportsBuild,
 		MaxBuildExecutors:         input.MaxBuildExecutors,
-		BuildCacheBytes:           input.BuildCacheBytes,
-		ArtifactCacheBytes:        input.ArtifactCacheBytes,
 	}
-	if capabilities.RuntimeID == "" {
-		return workerapi.Capabilities{}, errors.New("worker runtime_id is required")
+	if err := capabilities.Runtime.Validate(); err != nil {
+		return workerapi.Capabilities{}, fmt.Errorf("worker runtime profile: %w", err)
 	}
-	if err := deployment.ValidateRuntimeArchitecture(deployment.RuntimeArchitecture(capabilities.RuntimeArch)); err != nil {
-		return workerapi.Capabilities{}, fmt.Errorf("worker runtime_arch: %w", err)
+	if err := capabilities.CPUEnvironment.Validate(); err != nil {
+		return workerapi.Capabilities{}, fmt.Errorf("worker CPU environment: %w", err)
 	}
-	if capabilities.VMRuntimeContract != runtimeid.Contract {
-		return workerapi.Capabilities{}, fmt.Errorf("worker vm_runtime_contract must be %s", runtimeid.Contract)
-	}
-	if capabilities.KernelDigest == "" {
-		return workerapi.Capabilities{}, errors.New("worker kernel_digest is required")
-	}
-	if capabilities.InitramfsDigest == "" {
-		return workerapi.Capabilities{}, errors.New("worker initramfs_digest is required")
-	}
-	if capabilities.RootfsDigest == "" {
-		return workerapi.Capabilities{}, errors.New("worker rootfs_digest is required")
-	}
-	expectedRuntimeID, err := runtimeid.Digest(runtimeid.Selector{
-		Arch:            capabilities.RuntimeArch,
-		Contract:        capabilities.VMRuntimeContract,
-		KernelDigest:    capabilities.KernelDigest,
-		InitramfsDigest: capabilities.InitramfsDigest,
-		RootfsDigest:    capabilities.RootfsDigest,
-	})
-	if err != nil {
-		return workerapi.Capabilities{}, fmt.Errorf("worker runtime identity: %w", err)
-	}
-	if capabilities.RuntimeID != expectedRuntimeID {
-		return workerapi.Capabilities{}, fmt.Errorf("worker runtime_id %s does not match runtime identity %s", capabilities.RuntimeID, expectedRuntimeID)
+	if capabilities.CPUEnvironment.FirecrackerVersion != capabilities.Runtime.FirecrackerVersion ||
+		capabilities.CPUEnvironment.HostKernelRelease != capabilities.Runtime.HostKernelRelease {
+		return workerapi.Capabilities{}, errors.New("worker CPU environment does not match the runtime profile")
 	}
 	if capabilities.MaxVCPUs <= 0 {
 		return workerapi.Capabilities{}, errors.New("worker max_vcpus must be positive")
@@ -664,8 +828,11 @@ func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabi
 		capabilities.VMGuestEphemeralDiskBytes > capabilities.GuestEphemeralDiskBytes {
 		return workerapi.Capabilities{}, errors.New("worker VM guest ephemeral disk must be positive and not exceed aggregate capacity")
 	}
-	if capabilities.ExecutionSlotsAvailable <= 0 {
-		return workerapi.Capabilities{}, errors.New("worker execution_slots_available must be positive")
+	if capabilities.SupportsRun && capabilities.ExecutionSlotsAvailable <= 0 {
+		return workerapi.Capabilities{}, errors.New("run worker execution_slots_available must be positive")
+	}
+	if !capabilities.SupportsRun && capabilities.ExecutionSlotsAvailable != 0 {
+		return workerapi.Capabilities{}, errors.New("worker without run role must report zero execution_slots_available")
 	}
 	if !capabilities.SupportsRun && !capabilities.SupportsBuild {
 		return workerapi.Capabilities{}, errors.New("worker must support run, build, or both")
@@ -685,6 +852,10 @@ func normalizeWorkerCapabilities(input workerapi.Capabilities) (workerapi.Capabi
 		}
 	} else if capabilities.SubstrateFormat != "" || capabilities.SubstrateContract != "" {
 		return workerapi.Capabilities{}, errors.New("worker without run role must not report a substrate contract")
+	}
+	template := workerTemplate(capabilities)
+	if err := template.Validate(); err != nil {
+		return workerapi.Capabilities{}, fmt.Errorf("worker template: %w", err)
 	}
 	return capabilities, nil
 }

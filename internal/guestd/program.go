@@ -514,7 +514,7 @@ func newProgramProcess(
 			managedProgramEntry,
 		}...),
 		defaultRuntimeWorkdir,
-		sanitizeManagedRuntimeEnv(env),
+		managedRuntimeProcessEnv(env),
 		entry.imageRoot,
 		entry.runtimeUser,
 		imageCommandOptions{
@@ -609,6 +609,10 @@ func newProgramProcess(
 		secretCleanup()
 	}
 	return process, cleanup, nil
+}
+
+func managedRuntimeProcessEnv(env []string) []string {
+	return sanitizeManagedRuntimeEnv(env)
 }
 
 func managedProgramNodeFlags() ([]string, error) {

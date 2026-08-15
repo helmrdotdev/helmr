@@ -321,6 +321,27 @@ func runtimeConformance(
 	if err != nil || strings.TrimSpace(architecture) != "x64" {
 		return nil, errors.New("runtime Node.js reported the wrong architecture")
 	}
+	loaderEnvironmentProbe := `
+const { spawnSync } = require("node:child_process");
+if (process.env.LD_LIBRARY_PATH || process.env.NODE_OPTIONS ||
+    process.execPath !== "/opt/helmr/runtime/bin/node") process.exit(1);
+const native = spawnSync("/opt/helmr/runtime/ld.so", ["--help"], {
+  env: process.env,
+  stdio: "pipe",
+});
+if (native.status !== 0) process.exit(2);
+const child = spawnSync(process.execPath, ["-p",
+  "!process.env.LD_LIBRARY_PATH && !process.env.NODE_OPTIONS ? 'clean' : 'dirty'"], {
+  encoding: "utf8",
+  env: process.env,
+});
+if (child.status !== 0 || child.stdout.trim() !== "clean") process.exit(3);
+`
+	if _, err := runConformanceCommand(
+		ctx, nil, node, "-e", loaderEnvironmentProbe,
+	); err != nil {
+		return nil, errors.New("runtime Node.js loader environment is not confined")
+	}
 	abi, err := runConformanceCommand(ctx, nil, node, "-p", "process.versions.modules")
 	if err != nil || strings.TrimSpace(abi) != descriptor.NodeModuleABI {
 		return nil, errors.New("runtime Node.js reported the wrong module ABI")
@@ -366,15 +387,7 @@ func runtimeConformance(
 	if _, err := runConformanceCommand(ctx, nil, node, "--check", descriptor.Entrypoint); err != nil {
 		return nil, errors.New("runtime entrypoint is not valid JavaScript")
 	}
-	return passedConformanceResults(
-		"network-denied",
-		"node-architecture",
-		"node-disable-types",
-		"node-module-abi",
-		"node-reported-version",
-		"node-source-maps",
-		"runtime-entrypoint",
-	), nil
+	return passedConformanceResults(runtimeConformanceNames()...), nil
 }
 
 func managerConformance(
@@ -603,18 +616,7 @@ NAPI_MODULE(NODE_GYP_MODULE_NAME, init)
 	if err != nil || strings.TrimSpace(output) != descriptor.NodeModuleABI {
 		return nil, errors.New("toolchain native addon ABI validation failed")
 	}
-	return passedConformanceResults(
-		"compiler-aggregate",
-		"compiler-config",
-		"compiler-final-modules",
-		"compiler-options",
-		"esbuild-api",
-		"esbuild-binary",
-		"native-addon",
-		"network-denied",
-		"node-headers",
-		"runtime-binding",
-	), nil
+	return passedConformanceResults(toolchainConformanceNames()...), nil
 }
 
 func compilerConformance(
@@ -680,21 +682,24 @@ func compilerConformance(
 	if err != nil {
 		return err
 	}
-	configCommand := fmt.Sprintf(
-		`%s %s %s %s %s %s npm 3>/work/config.frame`,
-		node,
-		strings.Join(flags, " "),
+	configArguments := append([]string(nil), flags...)
+	configArguments = append(configArguments,
 		descriptor.Compiler.ConfigEvaluator.Entrypoint,
 		project,
 		descriptor.NodeVersion,
 		output,
+		"npm",
 	)
-	if _, err := runConformanceCommand(
+	if err := runConformanceCommandFD3(
 		ctx,
-		[]string{"HOME=/work", "PATH=/nix/bin:/opt/helmr/runtime/bin", "TMPDIR=/work"},
-		"/nix/bin/bash",
-		"-c",
-		configCommand,
+		[]string{
+			"HOME=/work",
+			"PATH=/nix/bin:/opt/helmr/runtime/bin",
+			"TMPDIR=/work",
+		},
+		"/work/config.frame",
+		node,
+		configArguments...,
 	); err != nil {
 		return errors.New("config evaluator fixture failed")
 	}
@@ -705,21 +710,25 @@ func compilerConformance(
 	if err := os.WriteFile("/work/config.json", frame[4:], 0600); err != nil {
 		return err
 	}
-	programCommand := fmt.Sprintf(
-		`%s %s %s %s /work/config.json %s %s npm 3>/work/program.frame`,
-		node,
-		strings.Join(flags, " "),
+	programArguments := append([]string(nil), flags...)
+	programArguments = append(programArguments,
 		descriptor.Compiler.ProgramCompiler.Entrypoint,
 		project,
+		"/work/config.json",
 		descriptor.NodeVersion,
 		output,
+		"npm",
 	)
-	if _, err := runConformanceCommand(
+	if err := runConformanceCommandFD3(
 		ctx,
-		[]string{"HOME=/work", "PATH=/nix/bin:/opt/helmr/runtime/bin", "TMPDIR=/work"},
-		"/nix/bin/bash",
-		"-c",
-		programCommand,
+		[]string{
+			"HOME=/work",
+			"PATH=/nix/bin:/opt/helmr/runtime/bin",
+			"TMPDIR=/work",
+		},
+		"/work/program.frame",
+		node,
+		programArguments...,
 	); err != nil {
 		return errors.New("program compiler fixture failed")
 	}
@@ -814,10 +823,38 @@ func runConformanceCommandIn(
 	executable string,
 	arguments ...string,
 ) (string, error) {
+	return runConformanceCommandInWithFiles(
+		ctx, environment, directory, nil, executable, arguments...,
+	)
+}
+
+func runConformanceCommandFD3(
+	ctx context.Context,
+	environment []string,
+	outputPath string,
+	executable string,
+	arguments ...string,
+) error {
+	output, err := os.OpenFile(outputPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	_, runErr := runConformanceCommandInWithFiles(
+		ctx, environment, "/work", []*os.File{output}, executable, arguments...,
+	)
+	return errors.Join(runErr, output.Close())
+}
+
+func runConformanceCommandInWithFiles(
+	ctx context.Context,
+	environment []string,
+	directory string,
+	extraFiles []*os.File,
+	executable string,
+	arguments ...string,
+) (string, error) {
 	stdout := &limitedEncoderOutput{remaining: maxEncoderDiagnosticBytes}
 	stderr := &limitedEncoderOutput{remaining: maxEncoderDiagnosticBytes}
-	command := exec.CommandContext(ctx, executable, arguments...)
-	command.Dir = directory
 	if environment == nil {
 		environment = []string{
 			"HOME=/work",
@@ -825,9 +862,16 @@ func runConformanceCommandIn(
 			"TMPDIR=/work/tmp",
 		}
 	}
-	command.Env = environment
-	command.Stdout = stdout
-	command.Stderr = stderr
+	command := newConformanceCommand(
+		ctx,
+		environment,
+		directory,
+		stdout,
+		stderr,
+		executable,
+		arguments...,
+	)
+	command.ExtraFiles = extraFiles
 	if err := command.Run(); err != nil {
 		if stdout.exceeded || stderr.exceeded {
 			return "", errors.New("conformance command output is excessive")
@@ -838,4 +882,24 @@ func runConformanceCommandIn(
 		return "", errors.New("conformance command output is excessive")
 	}
 	return stdout.String(), nil
+}
+
+func newConformanceCommand(
+	ctx context.Context,
+	environment []string,
+	directory string,
+	stdout, stderr io.Writer,
+	executable string,
+	arguments ...string,
+) *exec.Cmd {
+	command := exec.CommandContext(ctx, executable, arguments...)
+	command.Dir = directory
+	command.Env = environment
+	// A nil Stdin makes os/exec open /dev/null. The isolated conformance root
+	// deliberately exposes no host devices, so provide a deterministic EOF
+	// stream instead of adding a device dependency to the sandbox contract.
+	command.Stdin = strings.NewReader("")
+	command.Stdout = stdout
+	command.Stderr = stderr
+	return command
 }

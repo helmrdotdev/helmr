@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ProtonMail/go-crypto/openpgp/clearsign"
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -65,7 +66,6 @@ type PlatformAcquirer struct {
 	Encoder   string
 	GPGV      string
 	HTTP      *http.Client
-	Patchelf  string
 	Policy    *BuildPolicy
 	Store     cas.ImmutableStore
 	Validator PlatformConformanceValidator
@@ -261,7 +261,6 @@ func (acquirer PlatformAcquirer) validate() error {
 	}
 	for name, executable := range map[string]string{
 		"GPG verifier":     acquirer.GPGV,
-		"ELF patcher":      acquirer.Patchelf,
 		"SquashFS encoder": acquirer.Encoder,
 		"XZ decoder":       acquirer.XZ,
 	} {
@@ -438,11 +437,19 @@ func (acquirer PlatformAcquirer) verifyNodeChecksums(
 	if signer == "" {
 		return nil, "", errors.New("the Node.js release signature has no allowed valid signer")
 	}
-	plain, err := os.ReadFile(output)
-	if err != nil || len(plain) == 0 || len(plain) > maxUpstreamMetadataBytes {
+	if _, err := signed.Seek(0, io.SeekStart); err != nil {
 		return nil, "", errors.New("verified Node.js checksum document is invalid")
 	}
-	return plain, signer, nil
+	signedRaw, err := io.ReadAll(io.LimitReader(signed, maxUpstreamMetadataBytes+1))
+	if err != nil || len(signedRaw) == 0 || len(signedRaw) > maxUpstreamMetadataBytes {
+		return nil, "", errors.New("verified Node.js checksum document is invalid")
+	}
+	block, rest := clearsign.Decode(signedRaw)
+	if block == nil || block.ArmoredSignature == nil || len(bytes.TrimSpace(rest)) != 0 ||
+		len(block.Plaintext) == 0 || len(block.Plaintext) > maxUpstreamMetadataBytes {
+		return nil, "", errors.New("verified Node.js checksum document is invalid")
+	}
+	return bytes.Clone(block.Plaintext), signer, nil
 }
 
 func nodeChecksum(raw []byte, filename string) (string, error) {
@@ -533,19 +540,37 @@ func nodeModuleABI(headerPath string) (string, error) {
 		return "", err
 	}
 	defer file.Close()
+	var numericVersion string
+	foundDefinition := false
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		if len(fields) == 3 && fields[0] == "#define" &&
+		if len(fields) >= 3 && fields[0] == "#define" &&
 			fields[1] == "NODE_MODULE_VERSION" {
-			if _, err := strconv.Atoi(fields[2]); err != nil {
-				return "", errors.New("the Node.js module ABI is not numeric")
+			foundDefinition = true
+			parsed, err := strconv.ParseUint(fields[2], 10, 32)
+			if err != nil || strconv.FormatUint(parsed, 10) != fields[2] {
+				// Official Node headers may first define this macro to the
+				// symbolic NODE_EMBEDDER_MODULE_VERSION in one conditional branch
+				// and then publish the numeric distribution default in the other.
+				// Scan the complete header instead of treating the symbolic branch
+				// as the acquired distribution's ABI.
+				continue
 			}
-			return fields[2], nil
+			if numericVersion != "" && numericVersion != fields[2] {
+				return "", errors.New("the Node.js module ABI has conflicting numeric definitions")
+			}
+			numericVersion = fields[2]
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return "", err
+	}
+	if numericVersion != "" {
+		return numericVersion, nil
+	}
+	if foundDefinition {
+		return "", errors.New("the Node.js module ABI is not numeric")
 	}
 	return "", errors.New("the Node.js module ABI is missing")
 }

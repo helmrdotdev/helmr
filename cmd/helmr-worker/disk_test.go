@@ -16,7 +16,7 @@ func TestAdvertisedWorkerDiskMiBUsesConfiguredValue(t *testing.T) {
 	}
 }
 
-func TestAdvertisedWorkerDiskMiBDetectsFilesystemCapacity(t *testing.T) {
+func TestAdvertisedWorkerDiskMiBUsesFilesystemCapacity(t *testing.T) {
 	got, err := advertisedWorkerDiskMiB(t.TempDir(), 0, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestAdmissionDiskFloorMatchesWorkerFilesystemContract(t *testing.T) {
 	}
 }
 
-func TestCapGuestEphemeralDiskCapacityUsesPostStageAvailability(t *testing.T) {
+func TestCapGuestEphemeralDiskCapacityUsesStablePhysicalCapacity(t *testing.T) {
 	capacity := compute.WorkerDiskCapacity{
 		VMGuestEphemeralDiskBytes:   32768 << 20,
 		HostGuestEphemeralDiskBytes: 65536 << 20,
@@ -76,7 +76,7 @@ func TestCapGuestEphemeralDiskCapacityUsesPostStageAvailability(t *testing.T) {
 		t.Fatalf("reserved guest disk capacity = %d, want %d", got.HostGuestEphemeralDiskBytes, int64(32768<<20))
 	}
 	if _, err := capGuestEphemeralDiskCapacity(capacity, 2048<<20, (32768<<20)-1); err == nil {
-		t.Fatal("available capacity below one VM was accepted")
+		t.Fatal("physical capacity below one VM was accepted")
 	}
 }
 

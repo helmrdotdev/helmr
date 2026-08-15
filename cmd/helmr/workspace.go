@@ -401,7 +401,7 @@ func scopedWorkspaceClient(
 	if err != nil {
 		return nil, client.WorkspaceScopeOptions{}, err
 	}
-	scope, err := workspaceScopeForClient(controlPlane, projectID, environmentID)
+	scope, err := workspaceScopeForClient(command.Context(), controlPlane, projectID, environmentID)
 	if err != nil {
 		return nil, client.WorkspaceScopeOptions{}, err
 	}

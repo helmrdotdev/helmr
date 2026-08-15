@@ -1,17 +1,18 @@
 package capacityapi
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
 
-func TestWorkerReleaseManifestFingerprintAndValidation(t *testing.T) {
-	manifest := WorkerReleaseManifest{
-		Schema:        WorkerReleaseManifestSchema,
-		WorkerVersion: "0123456789abcdef0123456789abcdef01234567",
+func TestWorkerTemplateValidation(t *testing.T) {
+	template := WorkerTemplate{
+		Schema:        WorkerTemplateSchema,
 		SupportsRun:   true,
 		SupportsBuild: true,
 		Runtime:       testRuntimeProfile(t),
+		CPUShapes:     testCPUShapes(4),
 		Substrate:     SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v0"},
 		Capacity: ResourceVector{
 			CPUMillis: 8000, MemoryBytes: 16 << 30, GuestEphemeralDiskBytes: 128 << 30,
@@ -21,46 +22,82 @@ func TestWorkerReleaseManifestFingerprintAndValidation(t *testing.T) {
 			CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 32 << 30,
 		},
 	}
-	fingerprint, err := manifest.ExpectedFingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest.ReleaseFingerprint = fingerprint
-	if err := manifest.Validate(); err != nil {
-		t.Fatalf("validate canonical manifest: %v", err)
+	if err := template.Validate(); err != nil {
+		t.Fatalf("validate canonical template: %v", err)
 	}
 
-	manifest.Capacity.CPUMillis++
-	if err := manifest.Validate(); err == nil {
-		t.Fatal("mutated manifest retained a valid fingerprint")
+	template.Capacity.CPUMillis = 0
+	if err := template.Validate(); err == nil {
+		t.Fatal("template with invalid capacity was accepted")
 	}
 }
 
-func TestWorkerReleaseManifestRejectsInconsistentRuntime(t *testing.T) {
-	manifest := validTestWorkerReleaseManifest(t)
-	manifest.Runtime.ID = "sha256:" + strings.Repeat("f", 64)
-	manifest.ReleaseFingerprint, _ = manifest.ExpectedFingerprint()
-	if err := manifest.Validate(); err == nil {
-		t.Fatal("manifest with a forged runtime identity was accepted")
+func TestRuntimeProfileRejectsInconsistentIdentity(t *testing.T) {
+	profile := testRuntimeProfile(t)
+	profile.ID = "sha256:" + strings.Repeat("f", 64)
+	if err := profile.Validate(); err == nil {
+		t.Fatal("profile with a forged runtime identity was accepted")
 	}
 }
 
-func TestWorkerReleaseManifestRejectsMultipleBuildExecutors(t *testing.T) {
-	manifest := validTestWorkerReleaseManifest(t)
-	manifest.Capacity.BuildExecutors = 2
-	manifest.ReleaseFingerprint, _ = manifest.ExpectedFingerprint()
-	if err := manifest.Validate(); err == nil {
-		t.Fatal("manifest with multiple build executors was accepted")
+func TestRuntimeProfileExpectedIDRejectsNoncanonicalSelector(t *testing.T) {
+	profile := testRuntimeProfile(t)
+	profile.KernelDigest = strings.ToUpper(profile.KernelDigest)
+	if _, err := profile.ExpectedID(); err == nil {
+		t.Fatal("ExpectedID accepted a noncanonical selector")
+	}
+}
+
+func TestRuntimeProfileRejectsInvalidCPUTemplateSelector(t *testing.T) {
+	profile := testRuntimeProfile(t)
+	profile.CPUTemplate.Digest = "sha256:" + strings.Repeat("4", 64)
+	if _, err := profile.ExpectedID(); err == nil {
+		t.Fatal("no-template selector with a digest was accepted")
+	}
+	profile.CPUTemplate = CPUTemplateSelector{Kind: CPUTemplateCustom}
+	if _, err := profile.ExpectedID(); err == nil {
+		t.Fatal("custom-template selector without a digest was accepted")
+	}
+}
+
+func TestWorkerTemplateRejectsIncompleteCPUShapes(t *testing.T) {
+	template := validTestWorkerTemplate(t)
+	template.CPUShapes = template.CPUShapes[:len(template.CPUShapes)-1]
+	if err := template.Validate(); err == nil {
+		t.Fatal("template with an incomplete CPU shape map was accepted")
+	}
+}
+
+func TestWorkerTemplateRejectsCPUShapeOverflow(t *testing.T) {
+	template := validTestWorkerTemplate(t)
+	template.PerVM.CPUMillis = math.MaxInt64
+	if err := template.Validate(); err == nil {
+		t.Fatal("template with an unrepresentable vCPU range was accepted")
+	}
+}
+
+func TestWorkerTemplateRejectsMultipleBuildExecutors(t *testing.T) {
+	template := validTestWorkerTemplate(t)
+	template.SupportsBuild = true
+	template.Capacity.BuildExecutors = 2
+	if err := template.Validate(); err == nil {
+		t.Fatal("template with multiple build executors was accepted")
 	}
 }
 
 func testRuntimeProfile(t *testing.T) RuntimeProfile {
 	t.Helper()
 	profile := RuntimeProfile{
-		Arch: "x86_64", Contract: "helmr.vm-runtime.v0",
-		KernelDigest:    "sha256:" + strings.Repeat("1", 64),
-		InitramfsDigest: "sha256:" + strings.Repeat("2", 64),
-		RootfsDigest:    "sha256:" + strings.Repeat("3", 64),
+		Arch: "x86_64", Contract: RuntimeContract,
+		VMRuntimeDescriptorDigest: "sha256:" + strings.Repeat("a", 64),
+		FirecrackerDigest:         "sha256:" + strings.Repeat("b", 64),
+		FirecrackerVersion:        "1.16.1",
+		SnapshotFormatVersion:     "6.0.0",
+		HostKernelRelease:         "6.8.0-1024-aws",
+		CPUTemplate:               CPUTemplateSelector{Kind: CPUTemplateNone},
+		KernelDigest:              "sha256:" + strings.Repeat("1", 64),
+		InitramfsDigest:           "sha256:" + strings.Repeat("2", 64),
+		RootfsDigest:              "sha256:" + strings.Repeat("3", 64),
 	}
 	var err error
 	profile.ID, err = profile.ExpectedID()
@@ -68,4 +105,15 @@ func testRuntimeProfile(t *testing.T) RuntimeProfile {
 		t.Fatal(err)
 	}
 	return profile
+}
+
+func testCPUShapes(count int) []CPUShape {
+	shapes := make([]CPUShape, count)
+	for index := range shapes {
+		shapes[index] = CPUShape{
+			VCPUCount:       int32(index + 1),
+			CPUConfigDigest: "sha256:" + strings.Repeat(string(rune('4'+index)), 64),
+		}
+	}
+	return shapes
 }

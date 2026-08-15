@@ -2,11 +2,19 @@ package deployment
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/ProtonMail/go-crypto/openpgp"
+	"github.com/ProtonMail/go-crypto/openpgp/clearsign"
+	"github.com/ProtonMail/go-crypto/openpgp/packet"
 )
 
 func TestBuildPolicyAdmitsDomainsWithoutReleaseCatalog(t *testing.T) {
@@ -84,6 +92,7 @@ func TestLoadBuildPolicyReadsCanonicalPolicy(t *testing.T) {
 }
 
 func TestComposeBuildPolicyProducesClosedPolicy(t *testing.T) {
+	keyring, fingerprints := testNodeReleaseKeyring(t)
 	raw, err := ComposeBuildPolicy(
 		RuntimeInputs{
 			Harness: ArtifactDescriptor{
@@ -96,11 +105,8 @@ func TestComposeBuildPolicyProducesClosedPolicy(t *testing.T) {
 			},
 			Compiler: testCompilerInputs(),
 		},
-		[]byte("node release keyring"),
-		[]string{
-			"FFEEDDCCBBAA99887766554433221100FFEEDDCC",
-			"00112233445566778899AABBCCDDEEFF00112233",
-		},
+		keyring,
+		fingerprints,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -117,8 +123,98 @@ func TestComposeBuildPolicyProducesClosedPolicy(t *testing.T) {
 	}
 }
 
+func TestBuildPolicyRejectsKeyringFingerprintMismatch(t *testing.T) {
+	keyring, fingerprints := testNodeReleaseKeyring(t)
+	fingerprints[0] = strings.Repeat("A", 40)
+	if _, err := ComposeBuildPolicy(
+		RuntimeInputs{Harness: ArtifactDescriptor{
+			Digest: testDigest("harness"), MediaType: PlatformTreeInputMediaType, SizeBytes: 4096,
+		}},
+		ToolchainInputs{Base: ArtifactDescriptor{
+			Digest: testDigest("toolchain"), MediaType: PlatformTreeInputMediaType, SizeBytes: 8192,
+		}, Compiler: testCompilerInputs()},
+		keyring,
+		fingerprints,
+	); err == nil {
+		t.Fatal("mismatched Node.js release key fingerprints were accepted")
+	}
+}
+
+func TestBuildPolicyRejectsNonOpenPGPKeyring(t *testing.T) {
+	if _, err := ComposeBuildPolicy(
+		RuntimeInputs{Harness: ArtifactDescriptor{
+			Digest: testDigest("harness"), MediaType: PlatformTreeInputMediaType, SizeBytes: 4096,
+		}},
+		ToolchainInputs{Base: ArtifactDescriptor{
+			Digest: testDigest("toolchain"), MediaType: PlatformTreeInputMediaType, SizeBytes: 8192,
+		}, Compiler: testCompilerInputs()},
+		[]byte("not an OpenPGP keyring"),
+		[]string{strings.Repeat("A", 40)},
+	); err == nil {
+		t.Fatal("non-OpenPGP Node.js release keyring was accepted")
+	}
+}
+
+func TestPinnedNodeReleaseKeyringVerifiesSubkeySignature(t *testing.T) {
+	keyringPath := os.Getenv("HELMR_NODE_RELEASE_KEYRING")
+	fingerprintsPath := os.Getenv("HELMR_NODE_RELEASE_FINGERPRINTS")
+	if keyringPath == "" || fingerprintsPath == "" {
+		t.Skip("pinned Node.js release keyring paths are not configured")
+	}
+	keyring, err := os.ReadFile(keyringPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actualFingerprints, err := nodeReleaseKeyFingerprints(keyring)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprintFile, err := os.ReadFile(fingerprintsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFingerprints := strings.Fields(string(fingerprintFile))
+	if !slices.Equal(actualFingerprints, wantFingerprints) {
+		t.Fatalf("OpenPGP fingerprints = %v, want %v", actualFingerprints, wantFingerprints)
+	}
+
+	// Source: https://nodejs.org/dist/v24.12.0/SHASUMS256.txt.asc
+	signed, err := os.ReadFile("testdata/node-shasums-v24.12.0.asc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, rest := clearsign.Decode(signed)
+	if block == nil || block.ArmoredSignature == nil || len(bytes.TrimSpace(rest)) != 0 {
+		t.Fatal("Node.js checksum fixture is not a single clear-signed document")
+	}
+	entities, err := openpgp.ReadKeyRing(bytes.NewReader(keyring))
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature, _, err := openpgp.VerifyDetachedSignature(
+		entities,
+		bytes.NewReader(block.Bytes),
+		block.ArmoredSignature.Body,
+		&packet.Config{Time: func() time.Time {
+			return time.Unix(1765385157, 0).UTC()
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const signingSubkeyFingerprint = "86C8D74642E67846F8E120284DAA80D1E737BC9F"
+	actualSigner := strings.ToUpper(hex.EncodeToString(signature.IssuerFingerprint))
+	if actualSigner != signingSubkeyFingerprint {
+		t.Fatalf("Node.js checksum signer = %q, want subkey %q", actualSigner, signingSubkeyFingerprint)
+	}
+	if !slices.Contains(actualFingerprints, actualSigner) {
+		t.Fatalf("Node.js checksum signing subkey %q is not authorized", actualSigner)
+	}
+}
+
 func testBuildPolicy(t *testing.T) []byte {
 	t.Helper()
+	keyring, fingerprints := testNodeReleaseKeyring(t)
 	raw, err := canonicalBuildPolicy(buildPolicyDocument{
 		Architecture:            ArchitectureX8664,
 		Denies:                  BuildPolicyDenies{Digests: []string{}, Selectors: []string{}},
@@ -149,8 +245,8 @@ func testBuildPolicy(t *testing.T) []byte {
 			AdapterVersion: NodeRuntimeAdapterVersion, AllowedOrigin: NodeReleaseOrigin,
 			AllowedRedirectHosts:   []string{"nodejs.org"},
 			Domains:                []VersionDomain{{Major: 22, Minimum: "22.18.0"}, {Major: 24, Minimum: "24.3.0"}},
-			ReleaseKeyFingerprints: []string{"00112233445566778899AABBCCDDEEFF00112233"},
-			ReleaseKeyring:         "AQ==",
+			ReleaseKeyFingerprints: fingerprints,
+			ReleaseKeyring:         base64.StdEncoding.EncodeToString(keyring),
 		},
 		Runtime: RuntimeInputs{
 			Harness: ArtifactDescriptor{
@@ -172,6 +268,45 @@ func testBuildPolicy(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return raw
+}
+
+var testNodeReleaseKeys struct {
+	sync.Once
+	keyring      []byte
+	fingerprints []string
+	err          error
+}
+
+func testNodeReleaseKeyring(t *testing.T) ([]byte, []string) {
+	t.Helper()
+	testNodeReleaseKeys.Do(func() {
+		entity, err := openpgp.NewEntity("Helmr Test", "", "test@helmr.dev", nil)
+		if err != nil {
+			testNodeReleaseKeys.err = err
+			return
+		}
+		var keyring bytes.Buffer
+		if err := entity.Serialize(&keyring); err != nil {
+			testNodeReleaseKeys.err = err
+			return
+		}
+		testNodeReleaseKeys.keyring = keyring.Bytes()
+		testNodeReleaseKeys.fingerprints = append(
+			testNodeReleaseKeys.fingerprints,
+			strings.ToUpper(hex.EncodeToString(entity.PrimaryKey.Fingerprint)),
+		)
+		for _, subkey := range entity.Subkeys {
+			testNodeReleaseKeys.fingerprints = append(
+				testNodeReleaseKeys.fingerprints,
+				strings.ToUpper(hex.EncodeToString(subkey.PublicKey.Fingerprint)),
+			)
+		}
+		slices.Sort(testNodeReleaseKeys.fingerprints)
+	})
+	if testNodeReleaseKeys.err != nil {
+		t.Fatal(testNodeReleaseKeys.err)
+	}
+	return slices.Clone(testNodeReleaseKeys.keyring), slices.Clone(testNodeReleaseKeys.fingerprints)
 }
 
 func testCompilerInputs() CompilerInputs {

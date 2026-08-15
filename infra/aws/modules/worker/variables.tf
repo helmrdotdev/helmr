@@ -14,6 +14,20 @@ variable "worker_roles" {
   }
 }
 
+variable "worker_pool_name" {
+  description = "Canonical logical Worker Pool generation name advertised during enrollment."
+  type        = string
+
+  validation {
+    condition = (
+      length(var.worker_pool_name) >= 1 &&
+      length(var.worker_pool_name) <= 128 &&
+      can(regex("^[a-z0-9]([a-z0-9-]{0,126}[a-z0-9])?$", var.worker_pool_name))
+    )
+    error_message = "worker_pool_name must be a lowercase identifier of 1 to 128 letters, digits, or internal hyphens."
+  }
+}
+
 variable "vpc_id" {
   description = "VPC ID."
   type        = string

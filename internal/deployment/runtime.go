@@ -17,6 +17,9 @@ const (
 	RuntimeArtifactMediaType       = "application/vnd.helmr.runtime.v0+squashfs"
 	maxRuntimeDocumentBytes        = 4096
 	runtimeMountPath               = "/opt/helmr/runtime"
+	runtimeLibraryPath             = runtimeMountPath + "/lib"
+	runtimeNodeInterpreter         = runtimeMountPath + "/ld.so"
+	upstreamNodeInterpreter        = "/lib64/ld-linux-x86-64.so.2"
 )
 
 type RuntimeIndex struct {

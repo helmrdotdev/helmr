@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/helmrdotdev/helmr/capacityapi"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
@@ -71,6 +72,7 @@ type workerFence struct {
 	WorkerEpoch      int64
 	Role             string
 	RunArchitecture  string
+	RequirePrimary   bool
 }
 
 // lockWorkerFence takes a shared worker-group lock before the worker lock,
@@ -89,6 +91,29 @@ SELECT id
 	if err != nil {
 		return fmt.Errorf("lock eligible worker group: %w", err)
 	}
+	var poolID pgtype.UUID
+	err = tx.QueryRow(ctx, `
+SELECT worker_pools.id
+  FROM worker_pools
+  JOIN worker_instances
+    ON worker_instances.worker_pool_id = worker_pools.id
+   AND worker_instances.worker_group_id = worker_pools.worker_group_id
+	JOIN worker_groups
+	  ON worker_groups.id = worker_pools.worker_group_id
+ WHERE worker_instances.id = $1
+   AND worker_instances.worker_group_id = $2
+   AND worker_pools.state = 'active'
+   AND (($3 = 'run' AND worker_pools.allows_run)
+        OR ($3 = 'build' AND worker_pools.allows_build))
+	AND (
+	    NOT $4::boolean
+	    OR ($3 = 'run' AND worker_groups.primary_run_pool_id = worker_pools.id)
+	    OR ($3 = 'build' AND worker_groups.primary_build_pool_id = worker_pools.id)
+	)
+	FOR SHARE OF worker_pools`, fence.WorkerInstanceID, fence.GroupID, fence.Role, fence.RequirePrimary).Scan(&poolID)
+	if err != nil {
+		return fmt.Errorf("lock eligible worker pool: %w", err)
+	}
 
 	architecture := fence.RunArchitecture
 	if fence.Role == "build" {
@@ -100,22 +125,26 @@ SELECT worker_instances.id
   FROM worker_instances
   JOIN worker_groups
     ON worker_groups.id = worker_instances.worker_group_id
+  JOIN worker_pools
+    ON worker_pools.id = worker_instances.worker_pool_id
+   AND worker_pools.worker_group_id = worker_instances.worker_group_id
   LEFT JOIN runtime_identities
     ON runtime_identities.id = worker_instances.runtime_identity_id
  WHERE worker_instances.id = $1
    AND worker_instances.worker_group_id = $2
    AND worker_instances.current_epoch = $3
    AND worker_instances.state = 'active'
+   AND worker_pools.state = 'active'
    AND worker_instances.observed_at >= transaction_timestamp() - $6 * interval '1 second'
 	AND (($4 = 'run' AND worker_instances.supports_run)
 	     OR ($4 = 'build' AND worker_instances.supports_build))
 	AND (($4 = 'run' AND worker_instances.run_paused_reason IS NULL)
 	     OR ($4 = 'build' AND worker_instances.build_paused_reason IS NULL))
 	AND runtime_identities.runtime_arch = $5
-	   AND runtime_identities.vm_runtime_contract = 'helmr.vm-runtime.v0'
+	   AND runtime_identities.vm_runtime_contract = $7
 	FOR UPDATE OF worker_instances`, fence.WorkerInstanceID, fence.GroupID,
 		fence.WorkerEpoch, fence.Role, architecture,
-		workerapi.WorkerObservationFreshnessSeconds,
+		workerapi.WorkerObservationFreshnessSeconds, capacityapi.RuntimeContract,
 	).Scan(&workerID)
 	if err != nil {
 		return fmt.Errorf("lock eligible worker epoch: %w", err)

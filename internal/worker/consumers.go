@@ -231,8 +231,8 @@ func validateBuildEnvelope(
 	capabilities workerapi.Capabilities,
 	build workerapi.DeploymentBuild,
 ) error {
-	if capabilities.RuntimeArch != string(deployment.ArchitectureX8664) {
-		return fmt.Errorf("build worker architecture %q is unsupported", capabilities.RuntimeArch)
+	if capabilities.Runtime.Arch != string(deployment.ArchitectureX8664) {
+		return fmt.Errorf("build worker architecture %q is unsupported", capabilities.Runtime.Arch)
 	}
 	if build.BuildContract != deployment.ProgramBuildContract {
 		return fmt.Errorf(

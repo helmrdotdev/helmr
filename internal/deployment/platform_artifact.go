@@ -212,7 +212,9 @@ func runtimeConformanceNames() []string {
 		"node-disable-types",
 		"node-module-abi",
 		"node-reported-version",
+		"node-source-maps",
 		"runtime-entrypoint",
+		"runtime-loader-environment",
 	}
 }
 
@@ -309,7 +311,7 @@ func inspectPlatformArtifact(
 		}
 		switch entry.Path {
 		case PlatformDescriptorPath, PlatformIntegrityPath, PlatformConformancePath, "helmr/upstream":
-		case runtimeEntryPath:
+		case runtimeEntryPath, runtimeLoaderEnvPath:
 			if object.MediaType != RuntimeArtifactMediaType {
 				return InspectedPlatformArtifact{}, fmt.Errorf("unknown platform-owned path %q", entry.Path)
 			}
@@ -594,9 +596,11 @@ func verifyRetainedNodeSource(
 	}
 	block, rest := clearsign.Decode(signed)
 	if block == nil || len(bytes.TrimSpace(rest)) != 0 ||
-		block.ArmoredSignature == nil ||
-		!bytes.Equal(block.Plaintext, plain) {
+		block.ArmoredSignature == nil {
 		return errors.New("retained Node.js checksum signature is invalid")
+	}
+	if !bytes.Equal(block.Plaintext, plain) {
+		return errors.New("retained Node.js checksum document does not match its signed cleartext")
 	}
 	signature, signer, err := openpgp.VerifyDetachedSignature(
 		keyring,

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -492,7 +494,42 @@ func validateNodePolicy(policy NodePolicy) error {
 	if base64.StdEncoding.EncodeToString(keyring) != policy.ReleaseKeyring {
 		return errors.New("node.releaseKeyring is not canonical base64")
 	}
+	keyringFingerprints, err := nodeReleaseKeyFingerprints(keyring)
+	if err != nil {
+		return err
+	}
+	if !slices.Equal(keyringFingerprints, policy.ReleaseKeyFingerprints) {
+		return errors.New("node.releaseKeyFingerprints do not match the OpenPGP keyring")
+	}
 	return nil
+}
+
+func nodeReleaseKeyFingerprints(keyring []byte) ([]string, error) {
+	entities, err := openpgp.ReadKeyRing(bytes.NewReader(keyring))
+	if err != nil || len(entities) == 0 {
+		return nil, errors.New("node.releaseKeyring is not a nonempty OpenPGP keyring")
+	}
+	fingerprints := make([]string, 0, len(entities))
+	for _, entity := range entities {
+		if entity == nil || entity.PrimaryKey == nil {
+			return nil, errors.New("node.releaseKeyring contains an invalid OpenPGP entity")
+		}
+		fingerprints = append(
+			fingerprints,
+			strings.ToUpper(hex.EncodeToString(entity.PrimaryKey.Fingerprint)),
+		)
+		for _, subkey := range entity.Subkeys {
+			if subkey.PublicKey == nil {
+				return nil, errors.New("node.releaseKeyring contains an invalid OpenPGP subkey")
+			}
+			fingerprints = append(
+				fingerprints,
+				strings.ToUpper(hex.EncodeToString(subkey.PublicKey.Fingerprint)),
+			)
+		}
+	}
+	slices.Sort(fingerprints)
+	return slices.Compact(fingerprints), nil
 }
 
 func validateManagerPolicies(policies []ManagerPolicy) error {

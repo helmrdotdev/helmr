@@ -165,7 +165,7 @@ func runtimeConfig(dir string) Config {
 	return (Config{
 		KernelPath:           filepath.Join(dir, "vmlinuz"),
 		InitramfsPath:        filepath.Join(dir, "initramfs"),
-		RootfsPath:           filepath.Join(dir, "rootfs.ext4"),
+		RootfsPath:           filepath.Join(dir, "rootfs.squashfs"),
 		RuntimeArtifactsPath: filepath.Join(dir, "runtime-artifacts.json"),
 	}).WithDefaults()
 }

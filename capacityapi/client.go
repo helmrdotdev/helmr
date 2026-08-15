@@ -86,10 +86,29 @@ func (c *Client) Plan(ctx context.Context, workerGroupID string, request Capacit
 	return response, err
 }
 
+func (c *Client) ReconcileWorkerGroupPrimaryPools(
+	ctx context.Context,
+	workerGroupID string,
+	request ReconcileWorkerGroupPrimaryPoolsRequest,
+) (ReconcileWorkerGroupPrimaryPoolsResponse, error) {
+	var response ReconcileWorkerGroupPrimaryPoolsResponse
+	path := "/api" + RoutePrefix + WorkerGroupsPath + "/" + url.PathEscape(workerGroupID) + "/primary-pools"
+	err := c.do(ctx, http.MethodPut, path, request, &response)
+	return response, err
+}
+
 func (c *Client) ResolveWorkerGroup(ctx context.Context, regionID, name string) (CapacityWorkerGroup, error) {
 	query := url.Values{"region_id": []string{regionID}, "name": []string{name}}
 	path := "/api" + RoutePrefix + WorkerGroupsPath + "/resolve?" + query.Encode()
 	var response CapacityWorkerGroup
+	err := c.do(ctx, http.MethodGet, path, nil, &response)
+	return response, err
+}
+
+func (c *Client) ResolveWorkerPool(ctx context.Context, workerGroupID, name string) (CapacityWorkerPool, error) {
+	query := url.Values{"name": []string{name}}
+	path := "/api" + RoutePrefix + WorkerGroupsPath + "/" + url.PathEscape(workerGroupID) + "/pools/resolve?" + query.Encode()
+	var response CapacityWorkerPool
 	err := c.do(ctx, http.MethodGet, path, nil, &response)
 	return response, err
 }

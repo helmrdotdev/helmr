@@ -209,10 +209,11 @@ func (reader *squashFSTreeReader) read() (squashFSTreeFacts, error) {
 			}
 			entry.ActualForm = child.Form
 			entry.ActualInodeNumber = child.InodeNumber
-			if entry.DeclaredForm != child.Form {
+			directoryForm, ok := squashFSDirectoryEntryForm(child.Kind)
+			if !ok || entry.DeclaredForm != directoryForm {
 				return squashFSTreeFacts{}, &artifactContentError{
 					cause: fmt.Errorf(
-						"SquashFS path %q declares inode form %d, actual form %d",
+						"SquashFS path %q declares directory form %d for inode form %d",
 						childPath,
 						entry.DeclaredForm,
 						child.Form,
@@ -318,6 +319,29 @@ func (reader *squashFSTreeReader) read() (squashFSTreeFacts, error) {
 	}
 	facts.HasOverlappingData = squashFSDataExtentsOverlap(facts.DataExtents)
 	return facts, nil
+}
+
+// SquashFS directory entries encode the file kind using the seven basic inode
+// form values. The referenced inode may use an extended form for the same kind.
+func squashFSDirectoryEntryForm(kind squashFSInodeKind) (uint16, bool) {
+	switch kind {
+	case squashFSDirectoryKind:
+		return squashFSBasicDirectoryForm, true
+	case squashFSRegularKind:
+		return squashFSBasicRegularForm, true
+	case squashFSSymlinkKind:
+		return squashFSBasicSymlinkForm, true
+	case squashFSBlockDeviceKind:
+		return squashFSBasicBlockDeviceForm, true
+	case squashFSCharDeviceKind:
+		return squashFSBasicCharDeviceForm, true
+	case squashFSFIFODeviceKind:
+		return squashFSBasicFIFOForm, true
+	case squashFSSocketKind:
+		return squashFSBasicSocketForm, true
+	default:
+		return 0, false
+	}
 }
 
 func squashFSDataExtentsOverlap(extents []squashFSBlockFacts) bool {

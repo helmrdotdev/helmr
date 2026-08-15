@@ -1788,7 +1788,7 @@ func (q *Queries) LockRunLeaseClaimMount(ctx context.Context, arg LockRunLeaseCl
 }
 
 const lockRunLeaseClaimReadyWorker = `-- name: LockRunLeaseClaimReadyWorker :one
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.epoch_build_cache_bytes, worker_instances.epoch_artifact_cache_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.build_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at,
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.build_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at,
        COALESCE((worker_instances.observed_at >= transaction_timestamp()
             - $1::bigint * interval '1 second'
         AND worker_instances.run_paused_reason IS NULL), false)::boolean AS run_ready
@@ -1816,11 +1816,11 @@ func (q *Queries) LockRunLeaseClaimReadyWorker(ctx context.Context, arg LockRunL
 		&i.WorkerInstance.ID,
 		&i.WorkerInstance.ResourceID,
 		&i.WorkerInstance.WorkerGroupID,
+		&i.WorkerInstance.WorkerPoolID,
 		&i.WorkerInstance.State,
 		&i.WorkerInstance.ClaimVersion,
 		&i.WorkerInstance.CurrentEpoch,
 		&i.WorkerInstance.CurrentServiceID,
-		&i.WorkerInstance.SupervisorVersion,
 		&i.WorkerInstance.SupportsRun,
 		&i.WorkerInstance.SupportsBuild,
 		&i.WorkerInstance.RuntimeIdentityID,
@@ -1829,14 +1829,14 @@ func (q *Queries) LockRunLeaseClaimReadyWorker(ctx context.Context, arg LockRunL
 		&i.WorkerInstance.EpochCPUMillis,
 		&i.WorkerInstance.EpochMemoryBytes,
 		&i.WorkerInstance.EpochGuestEphemeralDiskBytes,
-		&i.WorkerInstance.EpochBuildCacheBytes,
-		&i.WorkerInstance.EpochArtifactCacheBytes,
 		&i.WorkerInstance.PerVMCPUMillis,
 		&i.WorkerInstance.PerVMMemoryBytes,
 		&i.WorkerInstance.PerVMGuestEphemeralDiskBytes,
 		&i.WorkerInstance.MaxVMSlots,
 		&i.WorkerInstance.MaxBuildExecutors,
 		&i.WorkerInstance.MaxRuntimeStarts,
+		&i.WorkerInstance.CPUEnvironment,
+		&i.WorkerInstance.CPUEnvironmentDigest,
 		&i.WorkerInstance.ObservedAt,
 		&i.WorkerInstance.RunPausedReason,
 		&i.WorkerInstance.BuildPausedReason,
@@ -1937,7 +1937,7 @@ func (q *Queries) LockRunLeaseClaimRun(ctx context.Context, arg LockRunLeaseClai
 }
 
 const lockRunLeaseClaimRuntime = `-- name: LockRunLeaseClaimRuntime :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, reclaim_evidence, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, reclaim_evidence, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
   FROM runtime_instances
  WHERE id = $1
    AND org_id = $2
@@ -1988,6 +1988,8 @@ func (q *Queries) LockRunLeaseClaimRuntime(ctx context.Context, arg LockRunLease
 		&i.DeploymentDefinitionID,
 		&i.RuntimeSubstrateID,
 		&i.WorkerEpoch,
+		&i.VMVCPUCount,
+		&i.CPUConfigDigest,
 		&i.ReservedCPUMillis,
 		&i.ReservedMemoryBytes,
 		&i.ReservedGuestEphemeralDiskBytes,
@@ -2120,7 +2122,7 @@ func (q *Queries) LockRunLeaseClaimWait(ctx context.Context, arg LockRunLeaseCla
 }
 
 const lockRunLeaseClaimWorker = `-- name: LockRunLeaseClaimWorker :one
-SELECT id, resource_id, worker_group_id, state, claim_version, current_epoch, current_service_id, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_contract, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, epoch_build_cache_bytes, epoch_artifact_cache_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_build_executors, max_runtime_starts, observed_at, run_paused_reason, build_paused_reason, runtime_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
+SELECT id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch, current_service_id, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_contract, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_build_executors, max_runtime_starts, cpu_environment, cpu_environment_digest, observed_at, run_paused_reason, build_paused_reason, runtime_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
   FROM worker_instances
  WHERE id = $1
    AND worker_group_id = $2
@@ -2139,11 +2141,11 @@ func (q *Queries) LockRunLeaseClaimWorker(ctx context.Context, arg LockRunLeaseC
 		&i.ID,
 		&i.ResourceID,
 		&i.WorkerGroupID,
+		&i.WorkerPoolID,
 		&i.State,
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.CurrentServiceID,
-		&i.SupervisorVersion,
 		&i.SupportsRun,
 		&i.SupportsBuild,
 		&i.RuntimeIdentityID,
@@ -2152,14 +2154,14 @@ func (q *Queries) LockRunLeaseClaimWorker(ctx context.Context, arg LockRunLeaseC
 		&i.EpochCPUMillis,
 		&i.EpochMemoryBytes,
 		&i.EpochGuestEphemeralDiskBytes,
-		&i.EpochBuildCacheBytes,
-		&i.EpochArtifactCacheBytes,
 		&i.PerVMCPUMillis,
 		&i.PerVMMemoryBytes,
 		&i.PerVMGuestEphemeralDiskBytes,
 		&i.MaxVMSlots,
 		&i.MaxBuildExecutors,
 		&i.MaxRuntimeStarts,
+		&i.CPUEnvironment,
+		&i.CPUEnvironmentDigest,
 		&i.ObservedAt,
 		&i.RunPausedReason,
 		&i.BuildPausedReason,
@@ -2176,7 +2178,7 @@ func (q *Queries) LockRunLeaseClaimWorker(ctx context.Context, arg LockRunLeaseC
 }
 
 const lockRunLeaseClaimWorkerGroup = `-- name: LockRunLeaseClaimWorkerGroup :one
-SELECT id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, created_at, updated_at
+SELECT id, token_id, region_id, name, description, state, claim_version, allows_run, allows_build, primary_run_pool_id, primary_build_pool_id, created_at, updated_at
   FROM worker_groups
  WHERE id = $1
    AND region_id = $2
@@ -2201,6 +2203,8 @@ func (q *Queries) LockRunLeaseClaimWorkerGroup(ctx context.Context, arg LockRunL
 		&i.ClaimVersion,
 		&i.AllowsRun,
 		&i.AllowsBuild,
+		&i.PrimaryRunPoolID,
+		&i.PrimaryBuildPoolID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

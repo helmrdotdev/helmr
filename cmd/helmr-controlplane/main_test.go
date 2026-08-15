@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"io"
 	"log/slog"
@@ -11,10 +12,12 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -431,6 +434,22 @@ func newSmokeDatabase(t *testing.T, ctx context.Context) string {
 
 func smokeBuildPolicy(t *testing.T) string {
 	t.Helper()
+	entity, err := openpgp.NewEntity("Helmr Test", "", "test@helmr.dev", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keyring bytes.Buffer
+	if err := entity.Serialize(&keyring); err != nil {
+		t.Fatal(err)
+	}
+	fingerprints := []string{strings.ToUpper(hex.EncodeToString(entity.PrimaryKey.Fingerprint))}
+	for _, subkey := range entity.Subkeys {
+		fingerprints = append(
+			fingerprints,
+			strings.ToUpper(hex.EncodeToString(subkey.PublicKey.Fingerprint)),
+		)
+	}
+	slices.Sort(fingerprints)
 	digest := func(character string) string {
 		return "sha256:" + strings.Repeat(character, 64)
 	}
@@ -471,8 +490,8 @@ func smokeBuildPolicy(t *testing.T) string {
 				},
 			},
 		},
-		[]byte("node release keyring"),
-		[]string{"00112233445566778899AABBCCDDEEFF00112233"},
+		keyring.Bytes(),
+		fingerprints,
 	)
 	if err != nil {
 		t.Fatal(err)

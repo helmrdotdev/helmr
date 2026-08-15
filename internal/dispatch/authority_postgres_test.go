@@ -18,21 +18,23 @@ func TestWorkerFenceCoordinatesAtWorkerGranularity(t *testing.T) {
 	serviceID := uuid.New()
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO worker_instances (
-    id, resource_id, worker_group_id, state,
-    current_epoch, current_service_id, supervisor_version,
+    id, resource_id, worker_group_id, worker_pool_id, state,
+    current_epoch, current_service_id,
     supports_run, runtime_identity_id, substrate_format, substrate_contract,
     epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
     per_vm_cpu_millis, per_vm_memory_bytes,
     per_vm_guest_ephemeral_disk_bytes, max_vm_slots,
-    max_runtime_starts, observed_at, epoch_started_at, activated_at
+    max_runtime_starts, cpu_environment, cpu_environment_digest,
+    observed_at, epoch_started_at, activated_at
 )
-SELECT $2, $3, worker_group_id, state,
-       current_epoch, $4, supervisor_version,
+SELECT $2, $3, worker_group_id, worker_pool_id, state,
+       current_epoch, $4,
        supports_run, runtime_identity_id, substrate_format, substrate_contract,
        epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
        per_vm_cpu_millis, per_vm_memory_bytes,
        per_vm_guest_ephemeral_disk_bytes, max_vm_slots,
-       max_runtime_starts, observed_at, epoch_started_at, activated_at
+       max_runtime_starts, cpu_environment, cpu_environment_digest,
+       observed_at, epoch_started_at, activated_at
   FROM worker_instances
  WHERE id = $1`, fixture.workerID, workerID, workerID.String(), serviceID)
 
@@ -179,7 +181,7 @@ SELECT count(*)
 }
 
 func TestConcurrentRunAndBuildPlacementShareWorkerCapacity(t *testing.T) {
-	fixture := newRunPlacementFixture(t)
+	fixture := newDualRoleRunPlacementFixture(t)
 	buildID := uuid.New()
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO deployments (
@@ -196,23 +198,6 @@ SELECT $2, org_id, project_id, environment_id, build_region_id,
        deployment_source_artifact_id, 'queued'
   FROM deployments
  WHERE id = $1`, fixture.deploymentID, buildID, "sha256:"+strings.Repeat("9", 64))
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_groups
-   SET allows_build = true
- WHERE id = $1`, fixture.groupID)
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_instances
-   SET supports_build = true,
-       epoch_cpu_millis = 3000,
-       epoch_memory_bytes = 4294967296,
-       epoch_guest_ephemeral_disk_bytes = 34359738368,
-       per_vm_cpu_millis = 2000,
-       per_vm_memory_bytes = 2147483648,
-       max_vm_slots = 1,
-       max_runtime_starts = 1,
-       max_build_executors = 1
- WHERE id = $1`, fixture.workerID)
-
 	buildAuthority, err := NewBuildAuthority(fixture.pool)
 	if err != nil {
 		t.Fatal(err)
@@ -232,7 +217,7 @@ SELECT id FROM worker_instances WHERE id = $1 FOR UPDATE`, fixture.workerID); er
 		_, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
 		runResult <- err
 	}()
-	waitForBlockedQuery(t, fixture, "FOR UPDATE OF worker_instances", 1)
+	waitForBlockedQuery(t, fixture, "LEFT JOIN runtime_identities", 1)
 	buildResult := make(chan error, 1)
 	go func() {
 		_, err := buildAuthority.PlaceReadyBuild(fixture.ctx, ReadyBuildCandidate{
@@ -241,7 +226,7 @@ SELECT id FROM worker_instances WHERE id = $1 FOR UPDATE`, fixture.workerID); er
 		})
 		buildResult <- err
 	}()
-	waitForBlockedQuery(t, fixture, "FOR UPDATE OF worker_instances", 2)
+	waitForBlockedQuery(t, fixture, "LEFT JOIN runtime_identities", 2)
 	if err := blocker.Commit(fixture.ctx); err != nil {
 		t.Fatal(err)
 	}

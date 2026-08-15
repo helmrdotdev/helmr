@@ -268,7 +268,7 @@ func newVerifierCommand(
 	result *os.File,
 	artifacts []*os.File,
 ) *exec.Cmd {
-	command := exec.CommandContext(ctx, verifierExecutable, verifierChildArguments(config.job)...)
+	command := exec.CommandContext(ctx, verifierExecutable, verifierLauncherArguments(config.job)...)
 	command.Dir = "/"
 	command.Env = []string{}
 	command.ExtraFiles = append([]*os.File{result}, artifacts...)
