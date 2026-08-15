@@ -15,5 +15,5 @@ func publishVerifiedPlatformRuntime(
 	string,
 	RuntimeDescriptor,
 ) error {
-	return errors.New("Platform Runtime publication requires Linux")
+	return errors.New("platform Runtime publication requires Linux")
 }
