@@ -13,16 +13,16 @@ case "${1:-} ${2:-}" in
   "workspace create")
     case "${3:-}" in
       helmr-network-smoke)
-        printf '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}\n'
+        printf '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}\n'
         ;;
       helmr-runtime-smoke)
-        printf '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3f"}\n'
+        printf '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3f"}\n'
         ;;
       helmr-edge-smoke)
-        printf '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc40"}\n'
+        printf '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc40"}\n'
         ;;
       helmr-secret-smoke)
-        printf '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc41"}\n'
+        printf '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc41"}\n'
         ;;
       *)
         printf 'unexpected Workspace declaration: %s\n' "${3:-}" >&2
@@ -31,7 +31,7 @@ case "${1:-} ${2:-}" in
     esac
     ;;
   "workspace delete")
-    printf '{"workspace_id":"%s"}\n' "${4:-unknown}"
+    printf '{"id":"%s"}\n' "${4:-unknown}"
     ;;
   "task start")
     case "${3:-} $*" in

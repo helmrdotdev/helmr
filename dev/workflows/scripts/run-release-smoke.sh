@@ -244,7 +244,7 @@ start_capture_ids() {
       --key "${key}" --idempotency-key "${key}:create" --json)"
   fi
   printf '%s\n' "${workspace_response}" >&2
-  if ! workspace="$(printf '%s\n' "${workspace_response}" | jq -er '.workspace_id')"; then
+  if ! workspace="$(printf '%s\n' "${workspace_response}" | jq -er '.id')"; then
     return 1
   fi
   if ! output="$(run_helmr task start "${task}" "${scope_args[@]}" "$@" \
@@ -284,7 +284,7 @@ create_smoke_workspace() {
   workspace="$(run_helmr workspace create "${declared_id}" "${scope_args[@]}" \
     --key "${key}" --idempotency-key "${key}:create" --json)"
   printf '%s\n' "${workspace}" >&2
-  printf '%s\n' "${workspace}" | jq -er '.workspace_id'
+  printf '%s\n' "${workspace}" | jq -er '.id'
 }
 
 inspect_run() {

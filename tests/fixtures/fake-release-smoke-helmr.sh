@@ -8,10 +8,10 @@ case "${1:-} ${2:-}" in
   "workspace create")
     case "${3:-}" in
       helmr-child-task-target-smoke)
-        printf '{"workspace_id":"workspace-target"}\n'
+        printf '{"id":"workspace-target"}\n'
         ;;
       helmr-child-task-caller-smoke)
-        printf '{"workspace_id":"workspace-caller"}\n'
+        printf '{"id":"workspace-caller"}\n'
         ;;
       *)
         printf 'unexpected Workspace declaration: %s\n' "${3:-}" >&2
@@ -25,7 +25,7 @@ case "${1:-} ${2:-}" in
       printf 'intentional target Workspace delete failure\n' >&2
       exit 1
     fi
-    printf '{"workspace_id":"%s"}\n' "${4:-unknown}"
+    printf '{"id":"%s"}\n' "${4:-unknown}"
     ;;
   "task start")
     case "$*" in
