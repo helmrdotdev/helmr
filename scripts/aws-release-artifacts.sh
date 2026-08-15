@@ -522,8 +522,8 @@ prepare_worker_runtime_bundle() (
   trap 'rm -rf "${work}"' EXIT
   bundle_dir="${work}/bundle"
   info "building the canonical Worker runtime artifacts"
-  nix develop "${ROOT}#smoke-linux" -c make -C "${ROOT}" images >&2
-  nix develop "${ROOT}#smoke-linux" -c \
+  nix develop "${ROOT}#images" -c make -C "${ROOT}" images >&2
+  nix develop "${ROOT}#images" -c \
     "${ROOT}/scripts/materialize-worker-runtime-bundle.sh" "${bundle_dir}" "${artifacts_dir}" >/dev/null
   receipt="${bundle_dir}/worker-runtime-bundle.json"
   validate_worker_runtime_bundle_receipt "${receipt}" || die "Worker runtime bundle receipt is invalid"

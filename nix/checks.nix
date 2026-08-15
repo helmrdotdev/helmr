@@ -134,6 +134,11 @@ in
         diff -u ${helmrPackages.timezoneData}/tzdb_names.txt "$src"
         touch "$out"
       '';
+  worker-host-target =
+    assert lib.assertMsg (
+      (system == "x86_64-linux") == (helmrPackages ? workerHost)
+    ) "workerHost must be exported only for x86_64-linux";
+    pkgs.runCommand "worker-host-target-check" { } "touch $out";
 }
 // lib.optionalAttrs (system == "x86_64-linux") {
   firecracker-host-module = firecrackerHostModuleCheck;

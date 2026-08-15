@@ -27,6 +27,11 @@ assert_contains "${script}" 'host_bundle="$(prepare_worker_host_bundle)"' \
   "Worker image apply host bundle binding"
 assert_contains "${script}" 'runtime_bundle="$(prepare_worker_runtime_bundle)"' \
   "Worker image apply runtime bundle binding"
+assert_contains "${script}" 'nix develop "${ROOT}#images" -c make -C "${ROOT}" images' \
+  "Worker runtime artifacts use the cross-platform image toolchain"
+if grep -Fq '#smoke-linux' "${script}"; then
+  fail "Worker release materialization must not require the Linux-only smoke shell"
+fi
 assert_contains "${script}" 'runtime_artifacts_bundle_s3_uri=' \
   "Worker image apply runtime bundle transport"
 assert_contains "${script}" 'scripts/publish-materialized-platform-release.sh' \

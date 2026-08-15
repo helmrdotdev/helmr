@@ -60,6 +60,14 @@ in
     inherit shellHook;
   };
 
+  unstable-tools = pkgs.mkShell {
+    packages = toolsets.base ++ [
+      pkgsUnstable.nix
+    ];
+    inherit shellHook;
+  };
+}
+// pkgs.lib.optionalAttrs (system == "x86_64-linux") {
   smoke-linux = pkgs.mkShell {
     packages = toolsets.base ++ toolsets.image ++ toolsets.smokeLinux;
     shellHook = shellHook + ''
@@ -76,12 +84,5 @@ in
       export XDG_RUNTIME_DIR=''${XDG_RUNTIME_DIR:-$PWD/.helmr-smoke/runtime}
       mkdir -p "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR"
     '';
-  };
-
-  unstable-tools = pkgs.mkShell {
-    packages = toolsets.base ++ [
-      pkgsUnstable.nix
-    ];
-    inherit shellHook;
   };
 }

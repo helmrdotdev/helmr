@@ -55,6 +55,8 @@ in
         bash tests/release_worker_ami_cleanup_test.sh
         bash tests/release_worker_image_identity_test.sh
         bash tests/pre_aws_release_gate_test.sh
+        bash tests/worker_host_bundle_test.sh
+        bash tests/linux_worker_host_bundle_materialize_test.sh
         bash tests/netboot_inputs_test.sh
         bash tests/boot_artifacts_make_test.sh
       '';
@@ -198,6 +200,8 @@ in
   doctor = app "doctor" "check Helmr host prerequisites" toolsets.appRuntime ''
     exec ./scripts/doctor.sh "$@"
   '';
+}
+// pkgs.lib.optionalAttrs (system == "x86_64-linux") {
   smoke-linux =
     app "smoke-linux" "build artifacts and check Linux Firecracker prerequisites" toolsets.appRuntime
       ''

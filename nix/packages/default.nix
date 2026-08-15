@@ -80,28 +80,29 @@ let
     version = helmrVersion;
     bun = pkgsBun.bun;
   };
-  runtimeRelease = pkgs.runCommand "helmr-runtime-release-verified"
-    {
-      nativeBuildInputs = [ pkgs.go_1_26 ];
-      src = self;
-    }
-    ''
-      cp -R "$src" source
-      chmod -R u+w source
-      cd source
-      export HOME="$TMPDIR/home"
-      mkdir -p "$HOME"
-      cp -R ${helmr.goModules} vendor
-      export GOFLAGS=-mod=vendor
-      export GOPROXY=off
-      export GOSUMDB=off
-      export GOTOOLCHAIN=local
-      export CGO_ENABLED=0
-      HELMR_RUNTIME_RELEASE_DIR=${runtimeReleaseUnchecked} \
-        go test ./internal/deployment -run '^TestVerifyPinnedRuntimeRelease$'
-      cd ..
-      cp -a ${runtimeReleaseUnchecked} "$out"
-    '';
+  runtimeRelease =
+    pkgs.runCommand "helmr-runtime-release-verified"
+      {
+        nativeBuildInputs = [ pkgs.go_1_26 ];
+        src = self;
+      }
+      ''
+        cp -R "$src" source
+        chmod -R u+w source
+        cd source
+        export HOME="$TMPDIR/home"
+        mkdir -p "$HOME"
+        cp -R ${helmr.goModules} vendor
+        export GOFLAGS=-mod=vendor
+        export GOPROXY=off
+        export GOSUMDB=off
+        export GOTOOLCHAIN=local
+        export CGO_ENABLED=0
+        HELMR_RUNTIME_RELEASE_DIR=${runtimeReleaseUnchecked} \
+          go test ./internal/deployment -run '^TestVerifyPinnedRuntimeRelease$'
+        cd ..
+        cp -a ${runtimeReleaseUnchecked} "$out"
+      '';
   firecrackerReleaseVersion = "1.16.1";
   worker = pkgs.callPackage ./worker.nix { buildGoModule = buildGo126Module; };
   firecrackerRuntime = pkgs.stdenvNoCC.mkDerivation {
@@ -126,27 +127,13 @@ let
       runHook postInstall
     '';
   };
-  substrateGenerator =
-    if pkgs.stdenv.hostPlatform.isLinux && pkgs.stdenv.hostPlatform.isx86_64 then
-      pkgs.pkgsStatic.e2fsprogs
-    else
-      pkgs.e2fsprogs;
-  workerHost = pkgs.runCommand "helmr-worker-host" { } ''
-    install -d "$out/bin" "$out/share/helmr"
-    install -m 0755 "${firecrackerRuntime}/bin/cpu-template-helper" "$out/bin/cpu-template-helper"
-    install -m 0755 "${worker}/bin/helmr-worker" "$out/bin/helmr-worker"
-    install -m 0755 "${firecrackerRuntime}/bin/firecracker" "$out/bin/firecracker"
-    install -m 0755 "${firecrackerRuntime}/bin/jailer" "$out/bin/jailer"
-    install -m 0755 "${lib.getBin substrateGenerator}/bin/mke2fs" "$out/bin/mkfs.ext4"
-    install -m 0444 ${./mke2fs.conf} "$out/share/helmr/mke2fs.conf"
-  '';
+  substrateGenerator = pkgs.pkgsStatic.e2fsprogs;
 in
 {
   inherit
     firecrackerRuntime
     helmr
     worker
-    workerHost
     ;
   inherit staticcheck;
   inherit deadcode;
@@ -164,6 +151,15 @@ in
     bundleBuilderImage
     runtimeRelease
     ;
+  workerHost = pkgs.runCommand "helmr-worker-host" { } ''
+    install -d "$out/bin" "$out/share/helmr"
+    install -m 0755 "${firecrackerRuntime}/bin/cpu-template-helper" "$out/bin/cpu-template-helper"
+    install -m 0755 "${worker}/bin/helmr-worker" "$out/bin/helmr-worker"
+    install -m 0755 "${firecrackerRuntime}/bin/firecracker" "$out/bin/firecracker"
+    install -m 0755 "${firecrackerRuntime}/bin/jailer" "$out/bin/jailer"
+    install -m 0755 "${lib.getBin substrateGenerator}/bin/mke2fs" "$out/bin/mkfs.ext4"
+    install -m 0444 ${./mke2fs.conf} "$out/share/helmr/mke2fs.conf"
+  '';
   platformRelease = pkgs.callPackage ./platform-release.nix {
     inherit runtimeRelease;
   };
