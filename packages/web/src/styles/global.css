@@ -296,17 +296,17 @@ html::-webkit-scrollbar-thumb:hover {
 .brand {
   display: flex;
   align-items: center;
-  gap: 0.4375rem;
+  gap: 0.25em;
   font-family: var(--font-brand);
-  font-size: 1.25rem;
-  font-weight: 500;
+  font-size: 1.3125rem;
+  font-weight: 550;
   letter-spacing: -0.025em;
   color: var(--text);
 }
 
 .brand-mark {
-  width: 28px;
-  height: 22px;
+  width: 1.2em;
+  height: auto;
   flex: 0 0 auto;
   object-fit: contain;
   transition: opacity 0.15s ease-out;
