@@ -393,7 +393,8 @@ resource "random_id" "postgres_final_snapshot" {
 resource "aws_db_instance" "postgres" {
   identifier                   = "${local.name}-postgres"
   engine                       = "postgres"
-  engine_version               = var.database_engine_version
+  engine_version               = "18"
+  auto_minor_version_upgrade   = true
   instance_class               = var.database_instance_class
   allocated_storage            = var.database_allocated_storage_gb
   db_name                      = "helmr"

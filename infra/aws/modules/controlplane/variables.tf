@@ -383,13 +383,6 @@ variable "database_instance_class" {
   default     = "db.t4g.micro"
 }
 
-variable "database_engine_version" {
-  description = "RDS Postgres engine version. Set to null to use the AWS default for the region."
-  type        = string
-  default     = "18.2"
-  nullable    = true
-}
-
 variable "database_allocated_storage_gb" {
   description = "RDS allocated storage in GiB."
   type        = number

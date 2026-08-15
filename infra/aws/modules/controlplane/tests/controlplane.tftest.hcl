@@ -94,6 +94,14 @@ run "controlplane_uses_execution_only_runtime_authority" {
 
   assert {
     condition = (
+      aws_db_instance.postgres.engine_version == "18" &&
+      aws_db_instance.postgres.auto_minor_version_upgrade
+    )
+    error_message = "Product must own PostgreSQL major 18 while RDS owns automatic minor upgrades"
+  }
+
+  assert {
+    condition = (
       length(jsondecode(aws_ecs_task_definition.controlplane.container_definitions)) == 1 &&
       jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].name == "controlplane" &&
       { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].environment : item.name => item.value }.PUBLIC_URL == "http://controlplane.example.test" &&

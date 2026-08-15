@@ -194,7 +194,6 @@ module "controlplane" {
   enable_cloudfront                          = var.enable_cloudfront
   github_oauth_client_id                     = var.github_oauth_client_id
   database_instance_class                    = var.database_instance_class
-  database_engine_version                    = var.database_engine_version
   database_allocated_storage_gb              = var.database_allocated_storage_gb
   database_backup_retention_days             = var.database_backup_retention_days
   database_performance_insights_enabled      = var.database_performance_insights_enabled
