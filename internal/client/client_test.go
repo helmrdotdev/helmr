@@ -92,6 +92,30 @@ func TestUploadDeploymentBundleObjectRequiresExactContentLength(t *testing.T) {
 	}
 }
 
+func TestUploadDeploymentBundleObjectScrubsMalformedPresignedURL(t *testing.T) {
+	const secret = "presigned-secret-sentinel"
+	object := t.TempDir() + "/object"
+	if err := os.WriteFile(object, []byte("object"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := New("http://localhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.UploadDeploymentBundleObject(t.Context(), api.DeploymentBundleUpload{
+		Method: http.MethodPut,
+		URL:    "http://localhost/%zz?X-Amz-Signature=" + secret,
+		Headers: map[string]string{
+			"Content-Length": "6",
+		},
+	}, object)
+	if err == nil ||
+		!errors.Is(err, ErrDeploymentObjectUploadNotAttempted) ||
+		strings.Contains(err.Error(), secret) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestClientErrorUsesServerMessage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

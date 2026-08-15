@@ -117,6 +117,193 @@ func TestDeployBundleUsesUploadFinalizePromoteFlow(t *testing.T) {
 	}
 }
 
+func TestDeployBundleReconcilesAcceptedUploadWithLostResponse(t *testing.T) {
+	directory, _, digest, objectDigest := writeDeployTestBundle(t)
+	const deploymentID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
+	planRequests := 0
+	uploadRequests := 0
+	finalizeRequests := 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/deployment-bundles/upload-plan":
+			planRequests++
+			response := api.DeploymentBundleUploadPlanResponse{BundleDigest: digest}
+			if planRequests == 1 {
+				response.Uploads = []api.DeploymentBundleUpload{deployTestUpload(server.URL, objectDigest)}
+			}
+			_ = json.NewEncoder(w).Encode(response)
+		case "/upload":
+			uploadRequests++
+			body, err := io.ReadAll(r.Body)
+			if err != nil || string(body) != "program" {
+				t.Fatalf("upload body = %q, err = %v", body, err)
+			}
+			connection, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = connection.Close()
+		case "/v1/deployment-bundles/finalize":
+			finalizeRequests++
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+				ID: deploymentID, Version: "v-test", BundleDigest: digest, CreatedAt: time.Now(),
+			})
+		case "/v1/deployments/" + deploymentID + "/promote":
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+				ID: deploymentID, Version: "v-test", BundleDigest: digest, CreatedAt: time.Now(),
+			})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	cmd := newRootCommand()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"deploy", "--bundle", directory, "--idempotency-key", "deploy-test"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if planRequests != 2 || uploadRequests != 1 || finalizeRequests != 1 {
+		t.Fatalf(
+			"requests = plans:%d uploads:%d finalize:%d",
+			planRequests, uploadRequests, finalizeRequests,
+		)
+	}
+}
+
+func TestDeployBundlePreservesUploadFailureWhenObjectRemainsMissing(t *testing.T) {
+	directory, _, digest, objectDigest := writeDeployTestBundle(t)
+	planRequests := 0
+	uploadRequests := 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/deployment-bundles/upload-plan":
+			planRequests++
+			_ = json.NewEncoder(w).Encode(api.DeploymentBundleUploadPlanResponse{
+				BundleDigest: digest,
+				Uploads:      []api.DeploymentBundleUpload{deployTestUpload(server.URL, objectDigest)},
+			})
+		case "/upload":
+			uploadRequests++
+			_, _ = io.Copy(io.Discard, r.Body)
+			connection, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = connection.Close()
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	cmd := newRootCommand()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"deploy", "--bundle", directory})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "deployment object upload transport failed") {
+		t.Fatalf("error = %v", err)
+	}
+	if planRequests != 2 || uploadRequests != 1 {
+		t.Fatalf("requests = plans:%d uploads:%d", planRequests, uploadRequests)
+	}
+}
+
+func TestDeployBundleDoesNotReconcileUnattemptedUpload(t *testing.T) {
+	directory, _, digest, objectDigest := writeDeployTestBundle(t)
+	planRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		planRequests++
+		_ = json.NewEncoder(w).Encode(api.DeploymentBundleUploadPlanResponse{
+			BundleDigest: digest,
+			Uploads: []api.DeploymentBundleUpload{{
+				Digest: objectDigest, Method: http.MethodGet, URL: "https://upload.invalid/object",
+			}},
+		})
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	cmd := newRootCommand()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"deploy", "--bundle", directory})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "upload was not attempted") {
+		t.Fatalf("error = %v", err)
+	}
+	if planRequests != 1 {
+		t.Fatalf("plan requests = %d", planRequests)
+	}
+}
+
+func TestDeployBundleRejectsInvalidReconciliationPlan(t *testing.T) {
+	directory, _, digest, objectDigest := writeDeployTestBundle(t)
+	planRequests := 0
+	uploadRequests := 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/deployment-bundles/upload-plan":
+			planRequests++
+			response := api.DeploymentBundleUploadPlanResponse{BundleDigest: digest}
+			if planRequests == 1 {
+				response.Uploads = []api.DeploymentBundleUpload{deployTestUpload(server.URL, objectDigest)}
+			} else {
+				response.BundleDigest = "sha256:" + strings.Repeat("a", 64)
+			}
+			_ = json.NewEncoder(w).Encode(response)
+		case "/upload":
+			uploadRequests++
+			_, _ = io.Copy(io.Discard, r.Body)
+			connection, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = connection.Close()
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	cmd := newRootCommand()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"deploy", "--bundle", directory})
+	err := cmd.Execute()
+	if err == nil ||
+		!strings.Contains(err.Error(), "deployment object upload transport failed") ||
+		!strings.Contains(err.Error(), "different bundle digest") {
+		t.Fatalf("error = %v", err)
+	}
+	if planRequests != 2 || uploadRequests != 1 {
+		t.Fatalf("requests = plans:%d uploads:%d", planRequests, uploadRequests)
+	}
+}
+
+func deployTestUpload(serverURL string, objectDigest string) api.DeploymentBundleUpload {
+	return api.DeploymentBundleUpload{
+		Digest: objectDigest, Method: http.MethodPut, URL: serverURL + "/upload",
+		Headers: map[string]string{
+			"Content-Length": "7",
+			"Content-Type":   deployment.ProgramArtifactMediaType,
+		},
+	}
+}
+
 func TestDeployBundleRejectsUploadOutsideClosure(t *testing.T) {
 	directory, _, digest, _ := writeDeployTestBundle(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/spf13/cobra"
 )
@@ -84,26 +86,10 @@ func deployCommand() *cobra.Command {
 			if err := reporter.Step("Planning deployment upload"); err != nil {
 				return err
 			}
-			plan, err := controlPlane.PlanDeploymentBundleUploads(cmd.Context(), bundle.BundleJSON, scope)
-			if err != nil {
+			if err := uploadDeploymentBundleObjects(
+				cmd.Context(), controlPlane, bundle, scope, reporter,
+			); err != nil {
 				return err
-			}
-			if plan.BundleDigest != bundle.Digest {
-				return errors.New("deployment upload plan returned a different bundle digest")
-			}
-			seen := make(map[string]struct{}, len(plan.Uploads))
-			for _, upload := range plan.Uploads {
-				if _, duplicate := seen[upload.Digest]; duplicate {
-					return errors.New("deployment upload plan contains a duplicate object")
-				}
-				seen[upload.Digest] = struct{}{}
-				path, ok := bundle.Objects[upload.Digest]
-				if !ok {
-					return errors.New("deployment upload plan requested an object outside the bundle")
-				}
-				if err := controlPlane.UploadDeploymentBundleObject(cmd.Context(), upload, path); err != nil {
-					return fmt.Errorf("upload deployment object %s: %w", upload.Digest, err)
-				}
 			}
 			idempotencyKey = strings.TrimSpace(idempotencyKey)
 			if idempotencyKey == "" {
@@ -146,6 +132,74 @@ func deployCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit JSON lines for deployment progress.")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for retrying deployment finalization.")
 	return cmd
+}
+
+func uploadDeploymentBundleObjects(
+	ctx context.Context,
+	controlPlane *client.Client,
+	bundle deployment.DeploymentBundleDirectory,
+	scope client.EnvironmentScopeOptions,
+	reporter deployReporter,
+) error {
+	uploads, err := planDeploymentBundleObjectUploads(ctx, controlPlane, bundle, scope)
+	if err != nil {
+		return err
+	}
+	reconciled := false
+	for len(uploads) > 0 {
+		upload := uploads[0]
+		path := bundle.Objects[upload.Digest]
+		uploadErr := controlPlane.UploadDeploymentBundleObject(ctx, upload, path)
+		if uploadErr == nil {
+			uploads = uploads[1:]
+			continue
+		}
+		originalErr := fmt.Errorf("upload deployment object %s: %w", upload.Digest, uploadErr)
+		if reconciled || errors.Is(uploadErr, client.ErrDeploymentObjectUploadNotAttempted) {
+			return originalErr
+		}
+		reconciled = true
+		if err := reporter.Step("Reconciling deployment upload"); err != nil {
+			return errors.Join(originalErr, err)
+		}
+		replanned, planErr := planDeploymentBundleObjectUploads(ctx, controlPlane, bundle, scope)
+		if planErr != nil {
+			return errors.Join(originalErr, fmt.Errorf("reconcile deployment upload: %w", planErr))
+		}
+		for _, candidate := range replanned {
+			if candidate.Digest == upload.Digest {
+				return originalErr
+			}
+		}
+		uploads = replanned
+	}
+	return nil
+}
+
+func planDeploymentBundleObjectUploads(
+	ctx context.Context,
+	controlPlane *client.Client,
+	bundle deployment.DeploymentBundleDirectory,
+	scope client.EnvironmentScopeOptions,
+) ([]api.DeploymentBundleUpload, error) {
+	plan, err := controlPlane.PlanDeploymentBundleUploads(ctx, bundle.BundleJSON, scope)
+	if err != nil {
+		return nil, err
+	}
+	if plan.BundleDigest != bundle.Digest {
+		return nil, errors.New("deployment upload plan returned a different bundle digest")
+	}
+	seen := make(map[string]struct{}, len(plan.Uploads))
+	for _, upload := range plan.Uploads {
+		if _, duplicate := seen[upload.Digest]; duplicate {
+			return nil, errors.New("deployment upload plan contains a duplicate object")
+		}
+		seen[upload.Digest] = struct{}{}
+		if _, ok := bundle.Objects[upload.Digest]; !ok {
+			return nil, errors.New("deployment upload plan requested an object outside the bundle")
+		}
+	}
+	return plan.Uploads, nil
 }
 
 type deployReporter interface {

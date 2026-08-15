@@ -16,6 +16,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
+var ErrDeploymentObjectUploadNotAttempted = errors.New("deployment object upload was not attempted")
+
 func (c *Client) ListProjects(ctx context.Context) (api.ListProjectsResponse, error) {
 	req, err := c.newRequest(ctx, http.MethodGet, "/api/projects", nil)
 	if err != nil {
@@ -151,36 +153,36 @@ func (c *Client) UploadDeploymentBundleObject(
 	objectPath string,
 ) error {
 	if upload.Method != http.MethodPut || strings.TrimSpace(upload.URL) == "" {
-		return errors.New("deployment object upload plan is invalid")
+		return fmt.Errorf("%w: deployment object upload plan is invalid", ErrDeploymentObjectUploadNotAttempted)
 	}
 	file, err := os.Open(objectPath)
 	if err != nil {
-		return fmt.Errorf("open deployment object: %w", err)
+		return fmt.Errorf("%w: open deployment object: %w", ErrDeploymentObjectUploadNotAttempted, err)
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return fmt.Errorf("stat deployment object: %w", err)
+		return fmt.Errorf("%w: stat deployment object: %w", ErrDeploymentObjectUploadNotAttempted, err)
 	}
 	req, err := http.NewRequestWithContext(ctx, upload.Method, upload.URL, file)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: construct deployment object upload", ErrDeploymentObjectUploadNotAttempted)
 	}
 	contentLengthSet := false
 	for name, value := range upload.Headers {
 		if strings.EqualFold(name, "authorization") {
-			return errors.New("deployment object upload plan contains a credential header")
+			return fmt.Errorf("%w: deployment object upload plan contains a credential header", ErrDeploymentObjectUploadNotAttempted)
 		}
 		if strings.EqualFold(name, "content-length") {
 			if contentLengthSet {
-				return errors.New("deployment object upload plan contains duplicate content length headers")
+				return fmt.Errorf("%w: deployment object upload plan contains duplicate content length headers", ErrDeploymentObjectUploadNotAttempted)
 			}
 			contentLength, parseErr := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
 			if parseErr != nil || contentLength < 0 {
-				return errors.New("deployment object upload plan contains an invalid content length")
+				return fmt.Errorf("%w: deployment object upload plan contains an invalid content length", ErrDeploymentObjectUploadNotAttempted)
 			}
 			if contentLength != info.Size() {
-				return errors.New("deployment object size differs from the upload plan")
+				return fmt.Errorf("%w: deployment object size differs from the upload plan", ErrDeploymentObjectUploadNotAttempted)
 			}
 			req.ContentLength = contentLength
 			contentLengthSet = true
@@ -189,16 +191,20 @@ func (c *Client) UploadDeploymentBundleObject(
 		req.Header.Set(name, value)
 	}
 	if !contentLengthSet {
-		return errors.New("deployment object upload plan is missing content length")
+		return fmt.Errorf("%w: deployment object upload plan is missing content length", ErrDeploymentObjectUploadNotAttempted)
 	}
 	response, err := c.transport.Do(req)
 	if err != nil {
-		return err
+		var statusError interface{ HTTPStatusCode() int }
+		if errors.As(err, &statusError) && statusError.HTTPStatusCode() != 0 {
+			return err
+		}
+		return errors.New("deployment object upload transport failed")
 	}
 	defer response.Body.Close()
 	_, copyErr := io.Copy(io.Discard, response.Body)
 	if copyErr != nil {
-		return copyErr
+		return errors.New("read deployment object upload response")
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return fmt.Errorf("deployment object upload returned %s", response.Status)
