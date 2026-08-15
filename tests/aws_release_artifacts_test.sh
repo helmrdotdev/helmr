@@ -42,6 +42,17 @@ assert_contains "${script}" 'HelmrHostBundleDigest' \
   "Worker AMI host bundle provenance"
 assert_contains "${script}" 'HelmrHostArtifactsDigest' \
   "Worker AMI host artifact provenance"
+assert_contains "${controlplane_build_script}" 'git -C "$repo_root" archive --format=tar HEAD | tar -xf - -C "$source_dir"' \
+  "Control Plane image source snapshot"
+assert_contains "${controlplane_build_script}" 'source=${source_dir},target=/work,readonly' \
+  "Control Plane image readonly source snapshot mount"
+assert_contains "${controlplane_build_script}" 'path:/work#packages.x86_64-linux.runtimeRelease' \
+  "Control Plane image Runtime build uses a path input"
+assert_contains "${controlplane_build_script}" 'path:/work#packages.x86_64-linux.timezoneData' \
+  "Control Plane image timezone build uses a path input"
+if grep -Fq 'source=${repo_root},target=/work' "${controlplane_build_script}"; then
+  fail "Control Plane image must not mount Product Git metadata into the Linux builder"
+fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
