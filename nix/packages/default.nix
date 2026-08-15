@@ -126,12 +126,19 @@ let
       runHook postInstall
     '';
   };
+  substrateGenerator =
+    if pkgs.stdenv.hostPlatform.isLinux && pkgs.stdenv.hostPlatform.isx86_64 then
+      pkgs.pkgsStatic.e2fsprogs
+    else
+      pkgs.e2fsprogs;
   workerHost = pkgs.runCommand "helmr-worker-host" { } ''
-    install -d "$out/bin"
+    install -d "$out/bin" "$out/share/helmr"
     install -m 0755 "${firecrackerRuntime}/bin/cpu-template-helper" "$out/bin/cpu-template-helper"
     install -m 0755 "${worker}/bin/helmr-worker" "$out/bin/helmr-worker"
     install -m 0755 "${firecrackerRuntime}/bin/firecracker" "$out/bin/firecracker"
     install -m 0755 "${firecrackerRuntime}/bin/jailer" "$out/bin/jailer"
+    install -m 0755 "${lib.getBin substrateGenerator}/bin/mke2fs" "$out/bin/mkfs.ext4"
+    install -m 0444 ${./mke2fs.conf} "$out/share/helmr/mke2fs.conf"
   '';
 in
 {

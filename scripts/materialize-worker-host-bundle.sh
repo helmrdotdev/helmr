@@ -31,19 +31,29 @@ output=$1
 host_dir=$2
 [ ! -e "${output}" ] || die "output already exists: ${output}"
 [ -d "${host_dir}/bin" ] || die "Worker host bin directory does not exist: ${host_dir}/bin"
+[ -d "${host_dir}/share/helmr" ] || die "Worker host share directory does not exist: ${host_dir}/share/helmr"
 
-files=(cpu-template-helper firecracker helmr-worker jailer)
+files=(cpu-template-helper firecracker helmr-worker jailer mkfs.ext4)
 for name in "${files[@]}"; do
   path="${host_dir}/bin/${name}"
   [ ! -L "${path}" ] && [ -f "${path}" ] && [ -x "${path}" ] ||
     die "Worker host executable must be a regular executable non-symlink file: ${path}"
 done
+config_path="${host_dir}/share/helmr/mke2fs.conf"
+[ ! -L "${config_path}" ] && [ -f "${config_path}" ] ||
+  die "Worker host mke2fs config must be a regular non-symlink file: ${config_path}"
 
 if command -v file >/dev/null 2>&1; then
   file "${host_dir}/bin/helmr-worker" | grep -F 'ELF 64-bit' >/dev/null ||
     die "Worker executable is not a 64-bit ELF binary"
   file "${host_dir}/bin/helmr-worker" | grep -Eq 'x86-64|x86_64' ||
     die "Worker executable is not built for x86_64"
+  file "${host_dir}/bin/mkfs.ext4" | grep -F 'ELF 64-bit' >/dev/null ||
+    die "Substrate generator is not a 64-bit ELF binary"
+  file "${host_dir}/bin/mkfs.ext4" | grep -Eq 'x86-64|x86_64' ||
+    die "Substrate generator is not built for x86_64"
+  file "${host_dir}/bin/mkfs.ext4" | grep -F 'statically linked' >/dev/null ||
+    die "Substrate generator is not statically linked"
 fi
 
 source_commit="$(git -C "${root}" rev-parse HEAD)"
@@ -68,6 +78,15 @@ for name in "${files[@]}"; do
       '$files + [{path: $path, mode: "0755", size_bytes: $size_bytes, digest: $digest}]'
   )"
 done
+install -m 0444 "${config_path}" "${payload}/mke2fs.conf"
+file_entries="$(
+  jq -cn \
+    --argjson files "${file_entries}" \
+    --arg path "mke2fs.conf" \
+    --arg digest "sha256:$(sha256_file "${payload}/mke2fs.conf")" \
+    --argjson size_bytes "$(file_size "${payload}/mke2fs.conf")" \
+    '$files + [{path: $path, mode: "0444", size_bytes: $size_bytes, digest: $digest}]'
+)"
 
 jq -cn \
   --argjson files "${file_entries}" '
@@ -79,7 +98,7 @@ jq -cn \
 ' >"${payload}/worker-host-artifacts.json"
 chmod 0644 "${payload}/worker-host-artifacts.json"
 
-members=(cpu-template-helper firecracker helmr-worker jailer worker-host-artifacts.json)
+members=(cpu-template-helper firecracker helmr-worker jailer mkfs.ext4 mke2fs.conf worker-host-artifacts.json)
 tar \
   --sort=name \
   --mtime='@0' \

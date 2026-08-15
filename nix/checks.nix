@@ -63,6 +63,13 @@ let
     require (cfg.boot.kernel.sysctl."net.ipv4.ip_forward" == 1) "IPv4 forwarding is not enabled"
     && require (lib.elem "kvm" cfg.boot.kernelModules) "kvm kernel module is not requested"
     && require (lib.elem "kvm" workerGroups) "firecracker users are not added to kvm"
+    && require (
+      cfg.environment.sessionVariables.MKFS_EXT4_PATH
+      == "${lib.getBin pkgs.pkgsStatic.e2fsprogs}/bin/mkfs.ext4"
+    ) "the pinned substrate generator is not exported"
+    && require (
+      cfg.environment.sessionVariables.MKE2FS_CONFIG_PATH == toString ./packages/mke2fs.conf
+    ) "the canonical mke2fs config is not exported"
     && require (lib.hasInfix ''KERNEL=="kvm", GROUP="helmr-vmm", MODE="0660"'' cfg.services.udev.extraRules) "kvm udev rule changed";
 
   firecrackerHostModuleCheck =
@@ -222,6 +229,34 @@ in
         touch "$out"
       '';
   worker-host = helmrPackages.workerHost;
+  substrate-projection =
+    pkgs.runCommand "substrate-projection-check"
+      {
+        nativeBuildInputs = [
+          pkgs.go_1_26
+          pkgs.e2fsprogs
+        ];
+        src = ../.;
+      }
+      ''
+        cp -R "$src" source
+        chmod -R u+w source
+        cd source
+        export HOME="$TMPDIR/home"
+        mkdir -p "$HOME"
+        cp -R ${helmrPackages.helmr.goModules} vendor
+        export GOFLAGS=-mod=vendor
+        export GOPROXY=off
+        export GOSUMDB=off
+        export GOTOOLCHAIN=local
+        export CGO_ENABLED=0
+        export HELMR_SUBSTRATE_MKFS_EXT4=${helmrPackages.workerHost}/bin/mkfs.ext4
+        export HELMR_SUBSTRATE_MKE2FS_CONFIG=${helmrPackages.workerHost}/share/helmr/mke2fs.conf
+        export HELMR_SUBSTRATE_E2FSCK=${lib.getBin pkgs.e2fsprogs}/bin/e2fsck
+        export HELMR_SUBSTRATE_DEBUGFS=${lib.getBin pkgs.e2fsprogs}/bin/debugfs
+        go test ./internal/substrate -run '^TestDeterministicExt4Projection$' -count=1 -v
+        touch "$out"
+      '';
   platform-release = helmrPackages.platformRelease;
   platform-release-publish-contract =
     pkgs.runCommand "platform-release-publish-contract-check"

@@ -100,6 +100,8 @@ type Worker struct {
 	FirecrackerPath              string
 	CPUTemplateHelperPath        string
 	JailerPath                   string
+	MkfsExt4Path                 string
+	Mke2fsConfigPath             string
 	JailerUID                    int
 	JailerGID                    int
 	JailerNumaNode               int

@@ -36,6 +36,7 @@ let
   direnvPackage = pkgs.direnv.overrideAttrs (_: {
     doCheck = false;
   });
+  substrateGenerator = pkgs.pkgsStatic.e2fsprogs;
 in
 {
   options.services.helmr.firecrackerHost = {
@@ -95,6 +96,8 @@ in
           CPU_TEMPLATE_HELPER_PATH = "${firecrackerPackage}/bin/cpu-template-helper";
           FIRECRACKER_PATH = "${firecrackerPackage}/bin/firecracker";
           JAILER_PATH = "${firecrackerPackage}/bin/jailer";
+          MKFS_EXT4_PATH = "${lib.getBin substrateGenerator}/bin/mkfs.ext4";
+          MKE2FS_CONFIG_PATH = toString ../../packages/mke2fs.conf;
           JAILER_UID = toString cfg.jailerUID;
           JAILER_GID = toString cfg.jailerGID;
           JAILER_CGROUP_VERSION = "2";

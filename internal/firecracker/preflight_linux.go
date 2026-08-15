@@ -25,6 +25,7 @@ func (c *Connector) preflight(ctx context.Context) error {
 		checkCommand("ip", c.cfg.IPPath),
 		checkCommand("nft", c.cfg.NFTPath),
 		checkCommand("mkfs.ext4", c.cfg.MkfsExt4Path),
+		checkReadableFile("mke2fs config", c.cfg.Mke2fsConfigPath),
 		checkJailerReadableImmutableFile("guest kernel", c.cfg.KernelPath, c.cfg.JailerUID, c.cfg.JailerGID),
 		checkJailerReadableImmutableFile("guest initramfs", c.cfg.InitramfsPath, c.cfg.JailerUID, c.cfg.JailerGID),
 		checkJailerReadableImmutableFile("guest rootfs", c.cfg.RootfsPath, c.cfg.JailerUID, c.cfg.JailerGID),

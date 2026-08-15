@@ -1173,6 +1173,12 @@ func (c *Connector) createScratchDisk(ctx context.Context, scratchDiskPath strin
 		"0",
 		scratchDiskPath,
 	)
+	cmd.Env = []string{
+		"LC_ALL=C.UTF-8",
+		"LANG=C.UTF-8",
+		"TZ=UTC",
+		"MKE2FS_CONFIG=" + c.cfg.Mke2fsConfigPath,
+	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		_ = os.Remove(scratchDiskPath)

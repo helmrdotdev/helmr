@@ -492,6 +492,8 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("FIRECRACKER_PATH", " /usr/bin/firecracker ")
 	t.Setenv("CPU_TEMPLATE_HELPER_PATH", " /usr/bin/cpu-template-helper ")
 	t.Setenv("JAILER_PATH", " /usr/bin/jailer ")
+	t.Setenv("MKFS_EXT4_PATH", " /opt/helmr/bin/mkfs.ext4 ")
+	t.Setenv("MKE2FS_CONFIG_PATH", " /opt/helmr/etc/mke2fs.conf ")
 	t.Setenv("JAILER_UID", " 1001 ")
 	t.Setenv("JAILER_GID", " 1002 ")
 	t.Setenv("JAILER_NUMA_NODE", " 1 ")
@@ -528,7 +530,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if len(cfg.NetworkBlockedIPv4CIDRs) != 2 || cfg.NetworkBlockedIPv4CIDRs[1].String() != "169.254.0.0/16" {
 		t.Fatalf("blocked IPv4 CIDRs = %v", cfg.NetworkBlockedIPv4CIDRs)
 	}
-	if cfg.JailerPath != "/usr/bin/jailer" || cfg.JailerUID != 1001 || cfg.JailerGID != 1002 || cfg.JailerNumaNode != 1 || cfg.JailerChrootDir != "/var/lib/helmr/scratch/jailer" || cfg.CgroupVersion != "2" || cfg.IPPath != "/usr/sbin/ip" || cfg.NFTPath != "/usr/sbin/nft" {
+	if cfg.JailerPath != "/usr/bin/jailer" || cfg.MkfsExt4Path != "/opt/helmr/bin/mkfs.ext4" || cfg.Mke2fsConfigPath != "/opt/helmr/etc/mke2fs.conf" || cfg.JailerUID != 1001 || cfg.JailerGID != 1002 || cfg.JailerNumaNode != 1 || cfg.JailerChrootDir != "/var/lib/helmr/scratch/jailer" || cfg.CgroupVersion != "2" || cfg.IPPath != "/usr/sbin/ip" || cfg.NFTPath != "/usr/sbin/nft" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.PlatformStoreURI != "s3://helmr-runtime" {

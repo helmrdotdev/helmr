@@ -23,8 +23,9 @@ func TestResolverBuildsContentAddressedSubstrateAndReusesCache(t *testing.T) {
 	image := writeOCITar(t, tempDir)
 	source := testSource()
 	resolver := &Resolver{
-		CacheDir:     filepath.Join(tempDir, "cache"),
-		MkfsExt4Path: mkfs,
+		CacheDir:         filepath.Join(tempDir, "cache"),
+		MkfsExt4Path:     mkfs,
+		Mke2fsConfigPath: fakeMke2fsConfig(t),
 	}
 	first, err := resolver.Resolve(context.Background(), image, source)
 	if err != nil {
@@ -62,8 +63,9 @@ func TestResolverSingleflightsConcurrentBuilds(t *testing.T) {
 	image := writeOCITar(t, tempDir)
 	source := testSource()
 	resolver := &Resolver{
-		CacheDir:     filepath.Join(tempDir, "cache"),
-		MkfsExt4Path: mkfs,
+		CacheDir:         filepath.Join(tempDir, "cache"),
+		MkfsExt4Path:     mkfs,
+		Mke2fsConfigPath: fakeMke2fsConfig(t),
 	}
 	var started atomic.Int32
 	results := make(chan Result, 8)
@@ -112,8 +114,9 @@ func TestResolverRejectsMismatchedCacheMetadataIdentity(t *testing.T) {
 	image := writeOCITar(t, tempDir)
 	source := testSource()
 	resolver := &Resolver{
-		CacheDir:     filepath.Join(tempDir, "cache"),
-		MkfsExt4Path: mkfs,
+		CacheDir:         filepath.Join(tempDir, "cache"),
+		MkfsExt4Path:     mkfs,
+		Mke2fsConfigPath: fakeMke2fsConfig(t),
 	}
 	first, err := resolver.Resolve(context.Background(), image, source)
 	if err != nil {
@@ -310,6 +313,13 @@ func fakeMkfs(t *testing.T, countFile string) string {
 	path := filepath.Join(t.TempDir(), "fake-mkfs")
 	script := `#!/bin/sh
 set -eu
+[ "${LC_ALL}" = "C.UTF-8" ]
+[ "${LANG}" = "C.UTF-8" ]
+[ "${TZ}" = "UTC" ]
+[ "${SOURCE_DATE_EPOCH}" = "0" ]
+[ -n "${MKE2FS_CONFIG}" ]
+[ -z "${E2FSPROGS_FAKE_TIME+x}" ]
+[ -z "${MKE2FS_SYNC+x}" ]
 last=""
 for arg in "$@"; do
   last="$arg"
@@ -323,6 +333,15 @@ printf "%s\n" "$count" > "` + countFile + `"
 printf "fake-ext4:%s\n" "$*" > "$last"
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func fakeMke2fsConfig(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "mke2fs.conf")
+	if err := os.WriteFile(path, []byte("[defaults]\n"), 0o444); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -347,16 +366,23 @@ func writeOCITar(t *testing.T, dir string) string {
 
 func ociTar(t *testing.T, files map[string]string) []byte {
 	t.Helper()
-	layer := tarBytes(t, files)
+	return ociTarFromLayers(t, tarBytes(t, files))
+}
+
+func ociTarFromLayers(t *testing.T, layers ...[]byte) []byte {
+	t.Helper()
 	config := []byte(`{"Config":{"Env":["PATH=/bin"],"WorkingDir":"/workspace","User":"agent"}}`)
 	configDigest := sha256sum.HexBytes(config)
-	layerDigest := sha256sum.HexBytes(layer)
+	layerDescriptors := make([]oci.Descriptor, 0, len(layers))
+	for _, layer := range layers {
+		layerDescriptors = append(layerDescriptors, oci.Descriptor{
+			MediaType: "application/vnd.oci.image.layer.v1.tar",
+			Digest:    "sha256:" + sha256sum.HexBytes(layer),
+		})
+	}
 	manifest := mustJSON(t, oci.Manifest{
 		Config: oci.Descriptor{MediaType: "application/vnd.oci.image.Config.v1+json", Digest: "sha256:" + configDigest},
-		Layers: []oci.Descriptor{{
-			MediaType: "application/vnd.oci.image.layer.v1.tar",
-			Digest:    "sha256:" + layerDigest,
-		}},
+		Layers: layerDescriptors,
 	})
 	manifestDigest := sha256sum.HexBytes(manifest)
 	index := mustJSON(t, oci.Index{Manifests: []oci.Descriptor{{
@@ -368,7 +394,9 @@ func ociTar(t *testing.T, files map[string]string) []byte {
 	writeTarFile(t, writer, "oci-layout", []byte(`{"imageLayoutVersion":"1.0.0"}`))
 	writeTarFile(t, writer, "index.json", index)
 	writeTarFile(t, writer, "blobs/sha256/"+configDigest, config)
-	writeTarFile(t, writer, "blobs/sha256/"+layerDigest, layer)
+	for index, layer := range layers {
+		writeTarFile(t, writer, "blobs/sha256/"+strings.TrimPrefix(layerDescriptors[index].Digest, "sha256:"), layer)
+	}
 	writeTarFile(t, writer, "blobs/sha256/"+manifestDigest, manifest)
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)

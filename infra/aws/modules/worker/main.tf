@@ -12,6 +12,8 @@ locals {
     FIRECRACKER_PATH                  = "/usr/local/bin/firecracker"
     CPU_TEMPLATE_HELPER_PATH          = "/usr/local/bin/cpu-template-helper"
     JAILER_PATH                       = "/usr/local/bin/jailer"
+    MKFS_EXT4_PATH                    = "/usr/local/libexec/helmr/mkfs.ext4"
+    MKE2FS_CONFIG_PATH                = "/usr/share/helmr/mke2fs.conf"
     JAILER_UID                        = tostring(var.jailer_uid)
     JAILER_GID                        = tostring(var.jailer_gid)
     JAILER_CGROUP_VERSION             = "2"

@@ -24,6 +24,8 @@ func LoadWorker() (Worker, error) {
 		FirecrackerPath:              env("FIRECRACKER_PATH", "firecracker"),
 		CPUTemplateHelperPath:        env("CPU_TEMPLATE_HELPER_PATH", "cpu-template-helper"),
 		JailerPath:                   env("JAILER_PATH", "jailer"),
+		MkfsExt4Path:                 env("MKFS_EXT4_PATH", "/usr/local/libexec/helmr/mkfs.ext4"),
+		Mke2fsConfigPath:             env("MKE2FS_CONFIG_PATH", "/usr/share/helmr/mke2fs.conf"),
 		JailerNumaNode:               0,
 		JailerChrootDir:              envText("JAILER_CHROOT_DIR"),
 		CgroupVersion:                env("JAILER_CGROUP_VERSION", "2"),

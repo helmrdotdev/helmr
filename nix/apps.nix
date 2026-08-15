@@ -215,6 +215,8 @@ in
         export WORKER_IMAGES_DIR=''${WORKER_IMAGES_DIR:-$PWD/images}
         export FIRECRACKER_PATH=''${FIRECRACKER_PATH:-$(command -v firecracker)}
         export JAILER_PATH=''${JAILER_PATH:-$(command -v jailer)}
+        export MKFS_EXT4_PATH=''${MKFS_EXT4_PATH:-${helmrPackages.workerHost}/bin/mkfs.ext4}
+        export MKE2FS_CONFIG_PATH=''${MKE2FS_CONFIG_PATH:-${helmrPackages.workerHost}/share/helmr/mke2fs.conf}
         export JAILER_UID=''${JAILER_UID:-$(id -u)}
         export JAILER_GID=''${JAILER_GID:-$(id -g)}
         export JAILER_CGROUP_VERSION=''${JAILER_CGROUP_VERSION:-2}

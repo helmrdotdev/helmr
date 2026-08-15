@@ -114,6 +114,8 @@ func run(log *slog.Logger) error {
 	connectorConfig.FirecrackerPath = cfg.FirecrackerPath
 	connectorConfig.CPUTemplateHelperPath = cfg.CPUTemplateHelperPath
 	connectorConfig.JailerPath = cfg.JailerPath
+	connectorConfig.MkfsExt4Path = cfg.MkfsExt4Path
+	connectorConfig.Mke2fsConfigPath = cfg.Mke2fsConfigPath
 	connectorConfig.JailerNumaNode = cfg.JailerNumaNode
 	connectorConfig.JailerChrootBaseDir = cfg.JailerChrootDir
 	connectorConfig.CgroupVersion = cfg.CgroupVersion
@@ -206,9 +208,10 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("configure worker capacity: %w", err)
 	}
 	substrateResolver := &substrate.Resolver{
-		CacheDir:      substrateCacheDir,
-		MkfsExt4Path:  "mkfs.ext4",
-		MaxCacheBytes: substrateCacheMaxBytes,
+		CacheDir:         substrateCacheDir,
+		MkfsExt4Path:     cfg.MkfsExt4Path,
+		Mke2fsConfigPath: cfg.Mke2fsConfigPath,
+		MaxCacheBytes:    substrateCacheMaxBytes,
 	}
 	workspaceMountSessions := executor.NewWorkspaceMountSessions()
 	backgroundGate := executor.NewBackgroundWorkGate()

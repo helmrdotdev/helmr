@@ -219,6 +219,9 @@ func ApplyLayerTar(r io.Reader, destination string) error {
 			if err := mkdirLayerDir(destination, relative, os.FileMode(header.Mode)&0o777); err != nil {
 				return err
 			}
+			if err := os.Chmod(target, os.FileMode(header.Mode)&0o777); err != nil {
+				return err
+			}
 			currentLayerEntries[relative] = true
 		case tar.TypeReg:
 			if err := ensureLayerParentDir(destination, relative); err != nil {
@@ -238,6 +241,9 @@ func ApplyLayerTar(r io.Reader, destination string) error {
 			}
 			if closeErr != nil {
 				return closeErr
+			}
+			if err := os.Chmod(target, os.FileMode(header.Mode)&0o777); err != nil {
+				return err
 			}
 			currentLayerEntries[relative] = true
 		case tar.TypeSymlink:

@@ -53,6 +53,7 @@ type Config struct {
 	IPPath                  string
 	NFTPath                 string
 	MkfsExt4Path            string
+	Mke2fsConfigPath        string
 	KVMPath                 string
 	VCPUCount               int64
 	MemoryMiB               int64
@@ -107,6 +108,9 @@ func (cfg Config) WithDefaults() Config {
 	}
 	if strings.TrimSpace(cfg.MkfsExt4Path) == "" {
 		cfg.MkfsExt4Path = "mkfs.ext4"
+	}
+	if strings.TrimSpace(cfg.Mke2fsConfigPath) == "" {
+		cfg.Mke2fsConfigPath = "/etc/mke2fs.conf"
 	}
 	if strings.TrimSpace(cfg.KVMPath) == "" {
 		cfg.KVMPath = DefaultKVMPath
@@ -229,6 +233,9 @@ func (cfg Config) Validate() error {
 	}
 	if strings.TrimSpace(cfg.MkfsExt4Path) == "" {
 		problems = append(problems, errors.New("mkfs.ext4 path is required"))
+	}
+	if strings.TrimSpace(cfg.Mke2fsConfigPath) == "" {
+		problems = append(problems, errors.New("mke2fs config path is required"))
 	}
 	if strings.TrimSpace(cfg.KVMPath) == "" {
 		problems = append(problems, errors.New("the Firecracker KVM path is required"))

@@ -141,7 +141,11 @@ run "additional_worker_environment_is_rendered" {
     worker_environment = { HELMR_TEST_FLAG = "enabled" }
   }
   assert {
-    condition     = strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_TEST_FLAG=enabled")
+    condition = (
+      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_TEST_FLAG=enabled") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "MKFS_EXT4_PATH=/usr/local/libexec/helmr/mkfs.ext4") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "MKE2FS_CONFIG_PATH=/usr/share/helmr/mke2fs.conf")
+    )
     error_message = "non-reserved operator environment must be rendered"
   }
 }

@@ -51,7 +51,7 @@ test "$(aws --version 2>&1 | awk '{print $1}')" = "aws-cli/$aws_cli_version"
 
 aws s3 cp '${host_artifacts_bundle_s3_uri}' "$work/worker-host-artifacts.tar"
 printf '%s  %s\n' '${host_artifacts_bundle_digest}' "$work/worker-host-artifacts.tar" | sha256sum -c -
-expected_host_artifacts="$(printf '%s\n' cpu-template-helper firecracker helmr-worker jailer worker-host-artifacts.json)"
+expected_host_artifacts="$(printf '%s\n' cpu-template-helper firecracker helmr-worker jailer mkfs.ext4 mke2fs.conf worker-host-artifacts.json)"
 actual_host_artifacts="$(tar -tf "$work/worker-host-artifacts.tar")"
 test "$actual_host_artifacts" = "$expected_host_artifacts"
 tar --no-same-owner --no-same-permissions -C "$work/host" -xf "$work/worker-host-artifacts.tar"
@@ -61,9 +61,9 @@ jq -e '
   (keys | sort) == ["arch", "files", "schema"] and
   .schema == "helmr.worker-host-artifacts.v0" and
   .arch == "amd64" and
-  [.files[].path] == ["cpu-template-helper", "firecracker", "helmr-worker", "jailer"] and
+  [.files[].path] == ["cpu-template-helper", "firecracker", "helmr-worker", "jailer", "mkfs.ext4", "mke2fs.conf"] and
   all(.files[];
-    .mode == "0755" and
+    ((.path == "mke2fs.conf" and .mode == "0444") or (.path != "mke2fs.conf" and .mode == "0755")) and
     (.size_bytes | type == "number" and . > 0) and
     (.digest | test("^sha256:[0-9a-f]{64}$")))
 ' "$work/host/worker-host-artifacts.json" >/dev/null
@@ -89,6 +89,9 @@ for name in cpu-template-helper firecracker helmr-worker jailer; do
   install -m 0755 "$work/host/$name" "/usr/local/bin/$name"
 done
 test -x /usr/local/bin/cpu-template-helper
+install -d -m 0755 /usr/local/libexec/helmr
+install -m 0755 "$work/host/mkfs.ext4" /usr/local/libexec/helmr/mkfs.ext4
+install -m 0444 "$work/host/mke2fs.conf" /usr/share/helmr/mke2fs.conf
 install -m 0644 "$work/host/worker-host-artifacts.json" /usr/share/helmr/worker-host-artifacts.json
 for name in initramfs rootfs.squashfs runtime-artifacts.json vmlinuz; do
   install -m 0444 "$work/runtime/$name" "/var/lib/helmr/images/guest/out/$name"
