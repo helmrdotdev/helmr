@@ -116,6 +116,101 @@ func TestUploadDeploymentBundleObjectScrubsMalformedPresignedURL(t *testing.T) {
 	}
 }
 
+func TestFinalizeDeploymentBundleConsumesTypedEventStream(t *testing.T) {
+	bundleDigest := "sha256:" + strings.Repeat("a", 64)
+	objectDigest := "sha256:" + strings.Repeat("b", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/deployment-bundles/finalize" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Accept") != "text/event-stream" {
+			t.Fatalf("Accept = %q", r.Header.Get("Accept"))
+		}
+		var request api.FinalizeDeploymentBundleRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.BundleDigest != bundleDigest || request.IdempotencyKey != "deploy-test" {
+			t.Fatalf("request = %+v", request)
+		}
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		_, _ = io.WriteString(w,
+			"event: started\ndata: {\"bundle_digest\":\""+bundleDigest+"\"}\n\n"+
+				"event: ping\ndata: {}\n\n"+
+				"event: object_verified\ndata: {\"digest\":\""+objectDigest+"\"}\n\n"+
+				"event: complete\ndata: {\"id\":\"deployment-1\",\"version\":\"v1\",\"bundle_digest\":\""+bundleDigest+"\",\"created_at\":\"2026-08-15T00:00:00Z\"}\n\n",
+		)
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var verified []string
+	created, err := client.FinalizeDeploymentBundle(t.Context(), api.FinalizeDeploymentBundleRequest{
+		IdempotencyKey: "deploy-test", BundleDigest: bundleDigest,
+	}, EnvironmentScopeOptions{}, func(object api.DeploymentBundleFinalizeObject) error {
+		verified = append(verified, object.Digest)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.ID != "deployment-1" || !slices.Equal(verified, []string{objectDigest}) {
+		t.Fatalf("created = %+v, verified = %v", created, verified)
+	}
+}
+
+func TestFinalizeDeploymentBundleDoesNotReconnectAfterTruncatedStream(t *testing.T) {
+	bundleDigest := "sha256:" + strings.Repeat("a", 64)
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: started\ndata: {\"bundle_digest\":\""+bundleDigest+"\"}\n\n")
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.FinalizeDeploymentBundle(t.Context(), api.FinalizeDeploymentBundleRequest{
+		IdempotencyKey: "deploy-test", BundleDigest: bundleDigest,
+	}, EnvironmentScopeOptions{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "ended without a terminal event") {
+		t.Fatalf("error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+}
+
+func TestFinalizeDeploymentBundleReturnsTypedTerminalError(t *testing.T) {
+	bundleDigest := "sha256:" + strings.Repeat("a", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w,
+			"event: started\ndata: {\"bundle_digest\":\""+bundleDigest+"\"}\n\n"+
+				"event: error\ndata: {\"code\":\"invalid_deployment_object\",\"message\":\"deployment object failed verification\"}\n\n",
+		)
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.FinalizeDeploymentBundle(t.Context(), api.FinalizeDeploymentBundleRequest{
+		IdempotencyKey: "deploy-test", BundleDigest: bundleDigest,
+	}, EnvironmentScopeOptions{}, nil)
+	var terminal *DeploymentFinalizeError
+	if !errors.As(err, &terminal) || terminal.Code != "invalid_deployment_object" {
+		t.Fatalf("error = %#v", err)
+	}
+}
+
 func TestClientErrorUsesServerMessage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

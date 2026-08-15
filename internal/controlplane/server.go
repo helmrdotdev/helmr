@@ -90,6 +90,9 @@ type Server struct {
 	magicLinkTTL          time.Duration
 	deviceCodeTTL         time.Duration
 	devicePollEvery       time.Duration
+
+	deploymentFinalizePingEvery time.Duration
+	deploymentVerifierSlots     chan struct{}
 }
 
 const (
@@ -246,6 +249,9 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		magicLinkTTL:          cfg.MagicLinkTTL,
 		deviceCodeTTL:         cfg.DeviceCodeTTL,
 		devicePollEvery:       cfg.DevicePollEvery,
+
+		deploymentFinalizePingEvery: 10 * time.Second,
+		deploymentVerifierSlots:     make(chan struct{}, 1),
 	}
 	router := chi.NewRouter()
 	router.Use(server.recoverPanics)

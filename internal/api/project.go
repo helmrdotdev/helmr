@@ -83,6 +83,27 @@ type FinalizeDeploymentBundleRequest struct {
 	BundleDigest   string `json:"bundle_digest"`
 }
 
+const (
+	DeploymentBundleFinalizeEventStarted        = "started"
+	DeploymentBundleFinalizeEventPing           = "ping"
+	DeploymentBundleFinalizeEventObjectVerified = "object_verified"
+	DeploymentBundleFinalizeEventComplete       = "complete"
+	DeploymentBundleFinalizeEventError          = "error"
+)
+
+type DeploymentBundleFinalizeStarted struct {
+	BundleDigest string `json:"bundle_digest"`
+}
+
+type DeploymentBundleFinalizeObject struct {
+	Digest string `json:"digest"`
+}
+
+type DeploymentBundleFinalizeError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 type DeploymentResponse struct {
 	ID           string    `json:"id"`
 	Version      string    `json:"version"`

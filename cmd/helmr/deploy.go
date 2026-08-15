@@ -101,7 +101,7 @@ func deployCommand() *cobra.Command {
 			created, err := controlPlane.FinalizeDeploymentBundle(cmd.Context(), api.FinalizeDeploymentBundleRequest{
 				IdempotencyKey: idempotencyKey,
 				BundleDigest:   bundle.Digest,
-			}, scope)
+			}, scope, reporter.DeploymentObjectVerified)
 			if err != nil {
 				return err
 			}
@@ -204,6 +204,7 @@ func planDeploymentBundleObjectUploads(
 
 type deployReporter interface {
 	Step(string) error
+	DeploymentObjectVerified(api.DeploymentBundleFinalizeObject) error
 	DeploymentCreated(api.DeploymentResponse) error
 	DeploymentResult(api.DeploymentResponse, string) error
 }
@@ -217,6 +218,7 @@ type cliDeployLine struct {
 	Type       string                  `json:"type"`
 	Step       string                  `json:"step,omitempty"`
 	Phase      string                  `json:"phase,omitempty"`
+	Digest     string                  `json:"digest,omitempty"`
 	Deployment *api.DeploymentResponse `json:"deployment,omitempty"`
 }
 
@@ -229,6 +231,16 @@ func (r cliDeployReporter) Step(message string) error {
 		return writeJSONLines(r.cmd.OutOrStdout(), []cliDeployLine{{Type: "step", Step: message}})
 	}
 	_, err := fmt.Fprintln(r.cmd.ErrOrStderr(), message)
+	return err
+}
+
+func (r cliDeployReporter) DeploymentObjectVerified(value api.DeploymentBundleFinalizeObject) error {
+	if r.jsonOutput {
+		return writeJSONLines(r.cmd.OutOrStdout(), []cliDeployLine{{
+			Type: "deployment_object_verified", Digest: value.Digest,
+		}})
+	}
+	_, err := fmt.Fprintf(r.cmd.ErrOrStderr(), "Deployment object %s verified\n", value.Digest)
 	return err
 }
 

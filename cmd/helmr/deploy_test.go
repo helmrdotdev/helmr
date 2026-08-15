@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -80,7 +81,7 @@ func TestDeployBundleUsesUploadFinalizePromoteFlow(t *testing.T) {
 			if request.BundleDigest != digest || request.IdempotencyKey != "deploy-test" {
 				t.Fatalf("finalize request = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+			writeDeploymentFinalizeTestStream(t, w, objectDigest, api.DeploymentResponse{
 				ID: deploymentID, Version: "v-test", BundleDigest: digest, CreatedAt: time.Now(),
 			})
 		case "/v1/deployments/" + deploymentID + "/promote":
@@ -146,7 +147,7 @@ func TestDeployBundleReconcilesAcceptedUploadWithLostResponse(t *testing.T) {
 			_ = connection.Close()
 		case "/v1/deployment-bundles/finalize":
 			finalizeRequests++
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+			writeDeploymentFinalizeTestStream(t, w, objectDigest, api.DeploymentResponse{
 				ID: deploymentID, Version: "v-test", BundleDigest: digest, CreatedAt: time.Now(),
 			})
 		case "/v1/deployments/" + deploymentID + "/promote":
@@ -301,6 +302,32 @@ func deployTestUpload(serverURL string, objectDigest string) api.DeploymentBundl
 			"Content-Length": "7",
 			"Content-Type":   deployment.ProgramArtifactMediaType,
 		},
+	}
+}
+
+func writeDeploymentFinalizeTestStream(
+	t *testing.T,
+	w http.ResponseWriter,
+	objectDigest string,
+	response api.DeploymentResponse,
+) {
+	t.Helper()
+	w.Header().Set("Content-Type", "text/event-stream")
+	started, err := json.Marshal(api.DeploymentBundleFinalizeStarted{BundleDigest: response.BundleDigest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	object, err := json.Marshal(api.DeploymentBundleFinalizeObject{Digest: objectDigest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	complete, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fmt.Fprintf(w, "event: started\ndata: %s\n\nevent: object_verified\ndata: %s\n\nevent: complete\ndata: %s\n\n", started, object, complete)
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

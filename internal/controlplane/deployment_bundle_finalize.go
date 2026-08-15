@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -9,7 +10,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -45,6 +48,15 @@ type deploymentFinalizeReceipt struct {
 	DeploymentID string `json:"deploymentId"`
 }
 
+type deploymentFinalizeProgress struct {
+	digest string
+}
+
+type deploymentFinalizeResult struct {
+	response api.DeploymentResponse
+	err      error
+}
+
 func (s *Server) finalizeDeploymentBundle(w http.ResponseWriter, r *http.Request) {
 	uploads, ok := s.cas.(cas.UploadStore)
 	if !ok || s.bundleAdmission == nil || s.platformStore == nil {
@@ -77,13 +89,12 @@ func (s *Server) finalizeDeploymentBundle(w http.ResponseWriter, r *http.Request
 		return
 	}
 	prepared, err := s.prepareFinalizedDeploymentBundle(
-		r.Context(), uploads, strings.ToLower(actor.OrgID.String()), request.BundleDigest,
+		r.Context(), uploads, request.BundleDigest,
 	)
 	if err != nil {
 		writeDeploymentError(w, s, badRequest(err))
 		return
 	}
-
 	idempotencyRequest, err := idempotency.NewDeploymentFinalizeRequest(
 		pgvalue.MustUUIDValue(environmentID), pgvalue.MustUUIDValue(projectID),
 		request.IdempotencyKey,
@@ -93,59 +104,246 @@ func (s *Server) finalizeDeploymentBundle(w http.ResponseWriter, r *http.Request
 		writeError(w, badRequest(err))
 		return
 	}
+	s.streamFinalizedDeploymentBundle(
+		w, r, uploads, actor.OrgID, projectID, environmentID, prepared, idempotencyRequest,
+	)
+}
+
+func (s *Server) finishFinalizedDeploymentBundle(
+	ctx context.Context,
+	uploads cas.UploadStore,
+	orgID uuid.UUID,
+	projectID pgtype.UUID,
+	environmentID pgtype.UUID,
+	prepared finalizedDeploymentBundle,
+	idempotencyRequest idempotency.Request,
+	progress func(deploymentFinalizeProgress) error,
+) (api.DeploymentResponse, error) {
+	if err := s.verifyFinalizedDeploymentObjects(ctx, uploads, orgID, prepared, progress); err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	return s.registerFinalizedDeploymentBundle(
+		ctx, orgID, projectID, environmentID, prepared, idempotencyRequest,
+	)
+}
+
+func (s *Server) registerFinalizedDeploymentBundle(
+	ctx context.Context,
+	orgID uuid.UUID,
+	projectID pgtype.UUID,
+	environmentID pgtype.UUID,
+	prepared finalizedDeploymentBundle,
+	idempotencyRequest idempotency.Request,
+) (api.DeploymentResponse, error) {
 	var response api.DeploymentResponse
-	err = s.inTx(r.Context(), func(work *txWork) error {
+	err := s.inTx(ctx, func(work *txWork) error {
 		claims, err := idempotency.TransactionForQueries(work.q)
 		if err != nil {
 			return err
 		}
-		claim, err := claims.Acquire(r.Context(), idempotencyRequest)
+		claim, err := claims.Acquire(ctx, idempotencyRequest)
 		if err != nil {
 			return err
 		}
 		if !claim.New {
 			return replayFinalizedDeployment(
-				r.Context(), work.q, claim.Claim,
-				pgvalue.UUID(actor.OrgID), projectID, &response,
+				ctx, work.q, claim.Claim, pgvalue.UUID(orgID), projectID, &response,
 			)
 		}
-		if err := work.q.LockDeploymentBundle(r.Context(), db.LockDeploymentBundleParams{
+		if err := work.q.LockDeploymentBundle(ctx, db.LockDeploymentBundleParams{
 			EnvironmentID: environmentID, BundleDigest: prepared.root.Digest,
 		}); err != nil {
 			return fmt.Errorf("lock deployment bundle: %w", err)
 		}
 		existing, err := work.q.GetDeploymentByBundleDigest(
-			r.Context(), db.GetDeploymentByBundleDigestParams{
+			ctx, db.GetDeploymentByBundleDigestParams{
 				EnvironmentID: environmentID, BundleDigest: prepared.root.Digest,
 			},
 		)
 		if err == nil {
 			response = deploymentResponse(existing)
-			return completeDeploymentFinalization(r.Context(), claims, claim.Claim, response.ID)
+			return completeDeploymentFinalization(ctx, claims, claim.Claim, response.ID)
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("resolve deployment bundle: %w", err)
 		}
 		created, err := createFinalizedDeployment(
-			r.Context(), work.q, pgvalue.UUID(actor.OrgID), projectID, environmentID, prepared,
+			ctx, work.q, pgvalue.UUID(orgID), projectID, environmentID, prepared,
 		)
 		if err != nil {
 			return err
 		}
 		response = deploymentResponse(created)
-		return completeDeploymentFinalization(r.Context(), claims, claim.Claim, response.ID)
+		return completeDeploymentFinalization(ctx, claims, claim.Claim, response.ID)
 	})
-	if err != nil {
-		writeDeploymentError(w, s, err)
+	return response, err
+}
+
+func (s *Server) streamFinalizedDeploymentBundle(
+	w http.ResponseWriter,
+	r *http.Request,
+	uploads cas.UploadStore,
+	orgID uuid.UUID,
+	projectID pgtype.UUID,
+	environmentID pgtype.UUID,
+	prepared finalizedDeploymentBundle,
+	idempotencyRequest idempotency.Request,
+) {
+	s.streamDeploymentFinalization(w, r, prepared.root.Digest, func(
+		ctx context.Context,
+		progress func(deploymentFinalizeProgress) error,
+	) (api.DeploymentResponse, error) {
+		return s.finishFinalizedDeploymentBundle(
+			ctx, uploads, orgID, projectID, environmentID, prepared, idempotencyRequest, progress,
+		)
+	})
+}
+
+type deploymentFinalizer func(
+	context.Context,
+	func(deploymentFinalizeProgress) error,
+) (api.DeploymentResponse, error)
+
+func (s *Server) streamDeploymentFinalization(
+	w http.ResponseWriter,
+	r *http.Request,
+	bundleDigest string,
+	finish deploymentFinalizer,
+) {
+	if _, ok := w.(http.Flusher); !ok {
+		writeError(w, unavailable(errors.New("deployment finalization streaming is unavailable")))
 		return
 	}
-	writeJSON(w, http.StatusOK, response)
+	w.Header().Set("content-type", "text/event-stream")
+	w.Header().Set("cache-control", "no-cache")
+	w.Header().Set("connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	if err := writeDeploymentFinalizeEvent(w, api.DeploymentBundleFinalizeEventStarted, api.DeploymentBundleFinalizeStarted{
+		BundleDigest: bundleDigest,
+	}); err != nil {
+		return
+	}
+	if err := http.NewResponseController(w).Flush(); err != nil {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	progress := make(chan deploymentFinalizeProgress)
+	result := make(chan deploymentFinalizeResult, 1)
+	go func() {
+		var completed deploymentFinalizeResult
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				if s.log != nil {
+					s.log.ErrorContext(ctx, "deployment finalizer panic", "panic", recovered, "stack", string(debug.Stack()))
+				}
+				completed = deploymentFinalizeResult{err: errors.New("deployment finalizer panicked")}
+			}
+			result <- completed
+		}()
+		completed.response, completed.err = finish(ctx, func(update deploymentFinalizeProgress) error {
+			select {
+			case progress <- update:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+	}()
+
+	pingEvery := s.deploymentFinalizePingEvery
+	if pingEvery <= 0 {
+		pingEvery = 10 * time.Second
+	}
+	ticker := time.NewTicker(pingEvery)
+	defer ticker.Stop()
+	for {
+		var event string
+		var payload any
+		terminal := false
+		select {
+		case <-r.Context().Done():
+			if s.log != nil {
+				s.log.Info("deployment finalization stream disconnected", "bundle_digest", bundleDigest)
+			}
+			return
+		case <-ticker.C:
+			event = api.DeploymentBundleFinalizeEventPing
+			payload = struct{}{}
+		case update := <-progress:
+			event = api.DeploymentBundleFinalizeEventObjectVerified
+			payload = api.DeploymentBundleFinalizeObject{Digest: update.digest}
+		case completed := <-result:
+			terminal = true
+			if completed.err == nil {
+				event = api.DeploymentBundleFinalizeEventComplete
+				payload = completed.response
+			} else {
+				if s.log != nil {
+					s.log.Error("deployment bundle finalization failed", "error", completed.err)
+				}
+				event = api.DeploymentBundleFinalizeEventError
+				payload = publicDeploymentFinalizeError(completed.err)
+			}
+		}
+		if err := writeDeploymentFinalizeEvent(w, event, payload); err != nil {
+			cancel()
+			return
+		}
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			cancel()
+			return
+		}
+		if terminal {
+			return
+		}
+	}
+}
+
+func writeDeploymentFinalizeEvent(w io.Writer, event string, payload any) error {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	if bytes.ContainsAny(encoded, "\r\n") {
+		return errors.New("deployment finalization event is not a single line")
+	}
+	_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, encoded)
+	return err
+}
+
+type invalidDeploymentObjectError struct{ err error }
+
+func (e invalidDeploymentObjectError) Error() string { return e.err.Error() }
+func (e invalidDeploymentObjectError) Unwrap() error { return e.err }
+
+type deploymentObjectSourceError struct{ err error }
+
+func (e deploymentObjectSourceError) Error() string { return e.err.Error() }
+func (e deploymentObjectSourceError) Unwrap() error { return e.err }
+
+func publicDeploymentFinalizeError(err error) api.DeploymentBundleFinalizeError {
+	var idempotencyConflict idempotency.ConflictError
+	if errors.As(err, &idempotencyConflict) {
+		return api.DeploymentBundleFinalizeError{
+			Code: "idempotency_conflict", Message: "idempotency key conflicts with another deployment bundle",
+		}
+	}
+	var invalidObject invalidDeploymentObjectError
+	if errors.As(err, &invalidObject) {
+		return api.DeploymentBundleFinalizeError{
+			Code: "invalid_deployment_object", Message: "deployment object failed verification",
+		}
+	}
+	return api.DeploymentBundleFinalizeError{
+		Code: "deployment_finalization_unavailable", Message: "deployment finalization is unavailable",
+	}
 }
 
 func (s *Server) prepareFinalizedDeploymentBundle(
 	ctx context.Context,
 	uploads cas.UploadStore,
-	owner string,
 	bundleDigest string,
 ) (finalizedDeploymentBundle, error) {
 	rootObject, err := uploads.Stat(ctx, bundleDigest)
@@ -181,36 +379,9 @@ func (s *Server) prepareFinalizedDeploymentBundle(
 	}
 	objects := make([]cas.Descriptor, 0, len(bundle.Objects))
 	for _, object := range bundle.Objects {
-		descriptor := cas.Descriptor{
+		objects = append(objects, cas.Descriptor{
 			Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType,
-		}
-		owned, ownershipErr := s.db.GetCasObject(ctx, db.GetCasObjectParams{
-			OrgID: pgvalue.UUID(actorFromContext(ctx).OrgID), Digest: descriptor.Digest,
 		})
-		switch {
-		case ownershipErr == nil:
-			if owned.SizeBytes != descriptor.SizeBytes || owned.MediaType != descriptor.MediaType {
-				return finalizedDeploymentBundle{}, errors.New("owned deployment object descriptor conflicts with bundle")
-			}
-			object, statErr := uploads.Stat(ctx, descriptor.Digest)
-			if statErr != nil || requireExactCASObject(object, descriptor) != nil {
-				return finalizedDeploymentBundle{}, errors.New("owned deployment object is unavailable")
-			}
-		case errors.Is(ownershipErr, pgx.ErrNoRows):
-			object, promoteErr := uploads.PromoteQuarantine(ctx, owner, descriptor)
-			if promoteErr != nil {
-				return finalizedDeploymentBundle{}, fmt.Errorf("publish deployment object %s: %w", descriptor.Digest, promoteErr)
-			}
-			if err := requireExactCASObject(object, descriptor); err != nil {
-				return finalizedDeploymentBundle{}, err
-			}
-		default:
-			return finalizedDeploymentBundle{}, fmt.Errorf("resolve deployment object ownership: %w", ownershipErr)
-		}
-		objects = append(objects, descriptor)
-	}
-	if err := verifyFinalizedDeploymentObjects(ctx, uploads, bundle); err != nil {
-		return finalizedDeploymentBundle{}, err
 	}
 	definitions, err := finalizedDeploymentDefinitions(bundle)
 	if err != nil {
@@ -245,44 +416,163 @@ func requireSupportedRuntime(ctx context.Context, store cas.Reader, runtime depl
 	return nil
 }
 
-func verifyFinalizedDeploymentObjects(ctx context.Context, store cas.Reader, bundle deployment.DeploymentBundle) error {
-	for _, object := range bundle.Objects {
-		reader, err := store.Get(ctx, object.Digest)
-		if err != nil {
-			return fmt.Errorf("read deployment object %s: %w", object.Digest, err)
+func (s *Server) verifyFinalizedDeploymentObjects(
+	ctx context.Context,
+	uploads cas.UploadStore,
+	orgID uuid.UUID,
+	prepared finalizedDeploymentBundle,
+	progress func(deploymentFinalizeProgress) error,
+) error {
+	startedAt := time.Now()
+	var verifiedBytes int64
+	owner := strings.ToLower(orgID.String())
+	for _, object := range prepared.objects {
+		if err := s.requireFinalizedDeploymentObject(ctx, uploads, owner, orgID, object); err != nil {
+			return err
 		}
-		switch object.MediaType {
-		case deployment.ProgramArtifactMediaType:
-			err = verifyStoredProgram(ctx, reader, bundle.Program)
-		case deployment.WorkspaceImageArtifactMediaType:
-			var metadata oci.Metadata
-			metadata, err = oci.Inspect(io.LimitReader(reader, object.SizeBytes+1))
-			if err == nil && (metadata.ManifestCount != 1 || metadata.Platform == nil ||
-				metadata.Platform.OS != deployment.DeploymentBundleTargetOS || metadata.Platform.Architecture != "amd64") {
-				err = errors.New("workspace image platform does not match linux/amd64")
-			}
-		default:
-			err = errors.New("deployment object media type is unsupported")
+		if err := s.verifyFinalizedDeploymentObject(ctx, uploads, prepared.bundle, object); err != nil {
+			return err
 		}
-		closeErr := reader.Close()
-		if err != nil || closeErr != nil {
-			return fmt.Errorf("verify deployment object %s: %w", object.Digest, errors.Join(err, closeErr))
+		if err := progress(deploymentFinalizeProgress{digest: object.Digest}); err != nil {
+			return err
 		}
+		verifiedBytes += object.SizeBytes
+	}
+	if s.log != nil {
+		s.log.Info("deployment objects verified",
+			"bundle_digest", prepared.root.Digest,
+			"object_count", len(prepared.objects),
+			"verified_bytes", verifiedBytes,
+			"duration", time.Since(startedAt),
+		)
 	}
 	return nil
 }
 
-func verifyStoredProgram(ctx context.Context, source io.Reader, program deployment.ProgramOutput) (returnErr error) {
-	file, err := os.CreateTemp("", "helmr-program-admission-*")
+func (s *Server) requireFinalizedDeploymentObject(
+	ctx context.Context,
+	uploads cas.UploadStore,
+	owner string,
+	orgID uuid.UUID,
+	descriptor cas.Descriptor,
+) error {
+	owned, ownershipErr := s.db.GetCasObject(ctx, db.GetCasObjectParams{
+		OrgID: pgvalue.UUID(orgID), Digest: descriptor.Digest,
+	})
+	switch {
+	case ownershipErr == nil:
+		if owned.SizeBytes != descriptor.SizeBytes || owned.MediaType != descriptor.MediaType {
+			return invalidDeploymentObjectError{err: errors.New("owned deployment object descriptor conflicts with bundle")}
+		}
+		stored, statErr := uploads.Stat(ctx, descriptor.Digest)
+		if statErr != nil {
+			return fmt.Errorf("owned deployment object is unavailable: %w", statErr)
+		}
+		if err := requireExactCASObject(stored, descriptor); err != nil {
+			return fmt.Errorf("owned deployment object is unavailable: %w", err)
+		}
+	case errors.Is(ownershipErr, pgx.ErrNoRows):
+		stored, promoteErr := uploads.PromoteQuarantine(ctx, owner, descriptor)
+		if promoteErr != nil {
+			return fmt.Errorf("publish deployment object %s: %w", descriptor.Digest, promoteErr)
+		}
+		if err := requireExactCASObject(stored, descriptor); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("resolve deployment object ownership: %w", ownershipErr)
+	}
+	return nil
+}
+
+func (s *Server) verifyFinalizedDeploymentObject(
+	ctx context.Context,
+	store cas.Reader,
+	bundle deployment.DeploymentBundle,
+	object cas.Descriptor,
+) error {
+	if s.deploymentVerifierSlots != nil {
+		select {
+		case s.deploymentVerifierSlots <- struct{}{}:
+			defer func() { <-s.deploymentVerifierSlots }()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	reader, err := store.Get(ctx, object.Digest)
+	if err != nil {
+		return fmt.Errorf("read deployment object %s: %w", object.Digest, err)
+	}
+	recorded := &deploymentObjectReader{source: reader}
+	switch object.MediaType {
+	case deployment.ProgramArtifactMediaType:
+		err = verifyStoredProgram(ctx, recorded, bundle.Program)
+	case deployment.WorkspaceImageArtifactMediaType:
+		var metadata oci.Metadata
+		metadata, err = oci.Inspect(io.LimitReader(recorded, object.SizeBytes+1))
+		if err == nil && (metadata.ManifestCount != 1 || metadata.Platform == nil ||
+			metadata.Platform.OS != deployment.DeploymentBundleTargetOS || metadata.Platform.Architecture != "amd64") {
+			err = errors.New("workspace image platform does not match linux/amd64")
+		}
+	default:
+		err = errors.New("deployment object media type is unsupported")
+	}
+	closeErr := reader.Close()
+	if recorded.err != nil || closeErr != nil {
+		return fmt.Errorf("read deployment object %s: %w", object.Digest, errors.Join(recorded.err, closeErr))
+	}
+	if err != nil {
+		var sourceErr deploymentObjectSourceError
+		if errors.As(err, &sourceErr) {
+			return fmt.Errorf("read deployment object %s: %w", object.Digest, err)
+		}
+		var invalidErr invalidDeploymentObjectError
+		if errors.As(err, &invalidErr) {
+			return err
+		}
+		return invalidDeploymentObjectError{err: fmt.Errorf("verify deployment object %s: %w", object.Digest, err)}
+	}
+	return nil
+}
+
+type deploymentObjectReader struct {
+	source io.Reader
+	err    error
+}
+
+func (r *deploymentObjectReader) Read(buffer []byte) (int, error) {
+	count, err := r.source.Read(buffer)
+	if err != nil && !errors.Is(err, io.EOF) {
+		r.err = errors.Join(r.err, err)
+	}
+	return count, err
+}
+
+func verifyStoredProgram(ctx context.Context, source io.Reader, program deployment.ProgramOutput) error {
+	file, err := os.CreateTemp("", "helmr-program-verification-*")
 	if err != nil {
 		return err
 	}
 	name := file.Name()
-	defer func() { returnErr = errors.Join(returnErr, file.Close(), os.Remove(name)) }()
-	if _, err := io.Copy(file, io.LimitReader(source, program.Artifact.SizeBytes+1)); err != nil {
-		return err
+	written, copyErr := io.Copy(file, io.LimitReader(source, program.Artifact.SizeBytes+1))
+	var verifyErr error
+	if copyErr == nil && written == program.Artifact.SizeBytes {
+		verifyErr = deployment.VerifyProgramOutputFile(ctx, file, program)
 	}
-	return deployment.VerifyProgramOutputFile(ctx, file, program)
+	cleanupErr := errors.Join(file.Close(), os.Remove(name))
+	if copyErr != nil || cleanupErr != nil {
+		return errors.Join(copyErr, cleanupErr)
+	}
+	if written != program.Artifact.SizeBytes {
+		return deploymentObjectSourceError{err: errors.New("stored Program bytes ended before the admitted descriptor size")}
+	}
+	if verifyErr != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return invalidDeploymentObjectError{err: verifyErr}
+	}
+	return nil
 }
 
 func finalizedDeploymentDefinitions(bundle deployment.DeploymentBundle) ([]finalizedDeploymentDefinition, error) {
@@ -348,7 +638,10 @@ func createFinalizedDeployment(
 	orgID, projectID, environmentID pgtype.UUID,
 	prepared finalizedDeploymentBundle,
 ) (db.Deployment, error) {
-	for _, object := range append([]cas.Descriptor{prepared.root}, prepared.objects...) {
+	objects := make([]cas.Descriptor, 0, len(prepared.objects)+1)
+	objects = append(objects, prepared.root)
+	objects = append(objects, prepared.objects...)
+	for _, object := range objects {
 		if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 			OrgID: orgID, Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType,
 		}); err != nil {
@@ -356,20 +649,20 @@ func createFinalizedDeployment(
 		}
 	}
 	artifacts := make(map[string]db.Artifact, len(prepared.objects))
-	for _, object := range prepared.objects {
+	for _, descriptor := range prepared.objects {
 		kind := db.ArtifactKindWorkspaceImage
-		if object.MediaType == deployment.ProgramArtifactMediaType {
+		if descriptor.MediaType == deployment.ProgramArtifactMediaType {
 			kind = db.ArtifactKindDeploymentProgram
 		}
 		artifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
 			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), OrgID: orgID, ProjectID: projectID,
-			EnvironmentID: environmentID, Digest: object.Digest, Kind: kind,
-			SizeBytes: object.SizeBytes, MediaType: object.MediaType,
+			EnvironmentID: environmentID, Digest: descriptor.Digest, Kind: kind,
+			SizeBytes: descriptor.SizeBytes, MediaType: descriptor.MediaType,
 		})
 		if err != nil {
 			return db.Deployment{}, fmt.Errorf("register deployment artifact: %w", err)
 		}
-		artifacts[object.Digest] = artifact
+		artifacts[descriptor.Digest] = artifact
 	}
 	programArtifact := artifacts[prepared.bundle.Program.Artifact.Digest]
 	deploymentID := uuid.Must(uuid.NewV7())

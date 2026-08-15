@@ -1,11 +1,14 @@
 package client
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -216,6 +219,7 @@ func (c *Client) FinalizeDeploymentBundle(
 	ctx context.Context,
 	input api.FinalizeDeploymentBundleRequest,
 	scope EnvironmentScopeOptions,
+	progress func(api.DeploymentBundleFinalizeObject) error,
 ) (api.DeploymentResponse, error) {
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	input.BundleDigest = strings.TrimSpace(input.BundleDigest)
@@ -226,11 +230,166 @@ func (c *Client) FinalizeDeploymentBundle(
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	var response api.DeploymentResponse
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(input); err != nil {
+		return api.DeploymentResponse{}, fmt.Errorf("encode deployment finalization request: %w", err)
+	}
+	req, err := c.newRequest(ctx, http.MethodPost, path, bytes.NewReader(body.Bytes()))
+	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	return response, nil
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("accept", "text/event-stream")
+	response, err := c.transport.Do(req)
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	defer response.Body.Close()
+	mediaType, _, parseErr := mime.ParseMediaType(response.Header.Get("content-type"))
+	if parseErr != nil || !strings.EqualFold(mediaType, "text/event-stream") {
+		return api.DeploymentResponse{}, errors.New("deployment finalization response is not an event stream")
+	}
+	created, err := consumeDeploymentFinalizeStream(response.Body, input.BundleDigest, progress)
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	if created.BundleDigest != input.BundleDigest {
+		return api.DeploymentResponse{}, errors.New("deployment finalization completed with another bundle digest")
+	}
+	return created, nil
+}
+
+type DeploymentFinalizeError struct {
+	Code    string
+	Message string
+}
+
+func (e *DeploymentFinalizeError) Error() string {
+	if e.Message == "" {
+		return e.Code
+	}
+	return e.Message
+}
+
+type deploymentFinalizeObserverError struct{ err error }
+
+func (e deploymentFinalizeObserverError) Error() string { return e.err.Error() }
+func (e deploymentFinalizeObserverError) Unwrap() error { return e.err }
+
+func consumeDeploymentFinalizeStream(
+	reader io.Reader,
+	expectedBundleDigest string,
+	progress func(api.DeploymentBundleFinalizeObject) error,
+) (api.DeploymentResponse, error) {
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 4096), 64<<10)
+	var event string
+	var data []byte
+	started := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			if event == "" && len(data) == 0 {
+				continue
+			}
+			if event == "" || len(data) == 0 {
+				return api.DeploymentResponse{}, errors.New("deployment finalization event is incomplete")
+			}
+			switch event {
+			case api.DeploymentBundleFinalizeEventStarted:
+				if started {
+					return api.DeploymentResponse{}, errors.New("deployment finalization stream started more than once")
+				}
+				var value api.DeploymentBundleFinalizeStarted
+				if err := decodeDeploymentFinalizeEvent(data, &value); err != nil || value.BundleDigest != expectedBundleDigest {
+					return api.DeploymentResponse{}, errors.New("deployment finalization started event is invalid")
+				}
+				started = true
+			case api.DeploymentBundleFinalizeEventPing:
+				if !started || string(data) != "{}" {
+					return api.DeploymentResponse{}, errors.New("deployment finalization ping event is invalid")
+				}
+			case api.DeploymentBundleFinalizeEventObjectVerified:
+				if !started {
+					return api.DeploymentResponse{}, errors.New("deployment finalization progress preceded the started event")
+				}
+				var value api.DeploymentBundleFinalizeObject
+				if err := decodeDeploymentFinalizeEvent(data, &value); err != nil || strings.TrimSpace(value.Digest) == "" {
+					return api.DeploymentResponse{}, errors.New("deployment finalization object event is invalid")
+				}
+				if progress != nil {
+					if err := progress(value); err != nil {
+						return api.DeploymentResponse{}, deploymentFinalizeObserverError{err: err}
+					}
+				}
+			case api.DeploymentBundleFinalizeEventComplete:
+				if !started {
+					return api.DeploymentResponse{}, errors.New("deployment finalization completed before it started")
+				}
+				var value api.DeploymentResponse
+				if err := decodeDeploymentFinalizeEvent(data, &value); err != nil || value.ID == "" || value.BundleDigest == "" {
+					return api.DeploymentResponse{}, errors.New("deployment finalization completion event is invalid")
+				}
+				return value, nil
+			case api.DeploymentBundleFinalizeEventError:
+				if !started {
+					return api.DeploymentResponse{}, errors.New("deployment finalization failed before it started")
+				}
+				var value api.DeploymentBundleFinalizeError
+				if err := decodeDeploymentFinalizeEvent(data, &value); err != nil || value.Code == "" || value.Message == "" {
+					return api.DeploymentResponse{}, errors.New("deployment finalization error event is invalid")
+				}
+				return api.DeploymentResponse{}, &DeploymentFinalizeError{Code: value.Code, Message: value.Message}
+			default:
+				return api.DeploymentResponse{}, errors.New("deployment finalization stream contains an unknown event")
+			}
+			event = ""
+			data = nil
+			continue
+		}
+		if strings.HasPrefix(line, ":") {
+			continue
+		}
+		field, value, ok := strings.Cut(line, ":")
+		if !ok {
+			return api.DeploymentResponse{}, errors.New("deployment finalization stream field is invalid")
+		}
+		value = strings.TrimPrefix(value, " ")
+		switch field {
+		case "event":
+			if event != "" {
+				return api.DeploymentResponse{}, errors.New("deployment finalization event name is duplicated")
+			}
+			event = value
+		case "data":
+			if data != nil {
+				return api.DeploymentResponse{}, errors.New("deployment finalization event data is duplicated")
+			}
+			data = []byte(value)
+		default:
+			return api.DeploymentResponse{}, errors.New("deployment finalization stream field is unsupported")
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return api.DeploymentResponse{}, fmt.Errorf("read deployment finalization stream: %w", err)
+	}
+	return api.DeploymentResponse{}, errors.New("deployment finalization stream ended without a terminal event")
+}
+
+func decodeDeploymentFinalizeEvent(raw []byte, value any) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("deployment finalization event contains trailing data")
+		}
+		return err
+	}
+	return nil
 }
 
 func (c *Client) GetDeployment(ctx context.Context, deploymentID string, scope EnvironmentScopeOptions) (api.DeploymentResponse, error) {
