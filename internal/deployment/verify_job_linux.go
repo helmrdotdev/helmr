@@ -5,7 +5,7 @@ package deployment
 func (job verifierJob) artifactCount() int {
 	switch job {
 	case programVerifierJob:
-		return 2
+		return 1
 	case runtimeVerifierJob:
 		return 1
 	default:

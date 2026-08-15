@@ -152,7 +152,7 @@ func TestVerifierCommandUsesJobFDLayoutAndNamespaces(t *testing.T) {
 		count int
 	}{
 		{name: "runtime", job: runtimeVerifierJob, count: 1},
-		{name: "program", job: programVerifierJob, count: 2},
+		{name: "program", job: programVerifierJob, count: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			result := verifierTestFile(t, "result")
