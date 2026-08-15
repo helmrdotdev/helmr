@@ -13,7 +13,7 @@ let
   pkgsBun = import nixpkgs-bun { inherit system; };
   squashfsTools = pkgs.callPackage ./squashfs-tools.nix { };
   timezoneData = pkgs.callPackage ./timezone-data.nix { };
-  runtimeRelease = pkgs.callPackage ./runtime-release.nix { inherit squashfsTools; };
+  runtimeReleaseUnchecked = pkgs.callPackage ./runtime-release.nix { inherit squashfsTools; };
   compiler = pkgs.callPackage ./compiler.nix { };
   bundleBuilder = pkgs.callPackage ./bundle-builder.nix {
     buildGoModule = buildGo126Module;
@@ -80,6 +80,28 @@ let
     version = helmrVersion;
     bun = pkgsBun.bun;
   };
+  runtimeRelease = pkgs.runCommand "helmr-runtime-release-verified"
+    {
+      nativeBuildInputs = [ pkgs.go_1_26 ];
+      src = self;
+    }
+    ''
+      cp -R "$src" source
+      chmod -R u+w source
+      cd source
+      export HOME="$TMPDIR/home"
+      mkdir -p "$HOME"
+      cp -R ${helmr.goModules} vendor
+      export GOFLAGS=-mod=vendor
+      export GOPROXY=off
+      export GOSUMDB=off
+      export GOTOOLCHAIN=local
+      export CGO_ENABLED=0
+      HELMR_RUNTIME_RELEASE_DIR=${runtimeReleaseUnchecked} \
+        go test ./internal/deployment -run '^TestVerifyPinnedRuntimeRelease$'
+      cd ..
+      cp -a ${runtimeReleaseUnchecked} "$out"
+    '';
   firecrackerReleaseVersion = "1.16.1";
   worker = pkgs.callPackage ./worker.nix { buildGoModule = buildGo126Module; };
   firecrackerRuntime = pkgs.stdenvNoCC.mkDerivation {

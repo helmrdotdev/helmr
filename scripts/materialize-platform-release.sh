@@ -43,6 +43,11 @@ docker run --rm \
   -w /work \
   "${BUILDER_IMAGE}" \
   sh -ceu '
+    nix --extra-experimental-features "nix-command flakes" \
+      build --no-link \
+      --option sandbox false \
+      --option filter-syscalls false \
+      path:/work#checks.x86_64-linux.platform-release-publish-contract
     release="$(nix --extra-experimental-features "nix-command flakes" \
       build --no-link --print-out-paths \
       --option sandbox false \

@@ -242,7 +242,9 @@ in
         export GOTOOLCHAIN=local
         export CGO_ENABLED=0
         HELMR_PLATFORM_RELEASE_DIR=${helmrPackages.platformRelease} \
-          go test ./internal/deployment -run '^TestPublishPinnedPlatformRelease$'
+        HELMR_RUNTIME_RELEASE_DIR=${helmrPackages.runtimeRelease} \
+          go test ./internal/deployment \
+            -run '^(TestPublishPinnedPlatformRelease|TestVerifyPinnedRuntimeRelease)$'
         touch "$out"
       '';
   program-archive-contract =

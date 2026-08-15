@@ -13,25 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
-func TestPublishPlatformReleasePublishesOnlyRuntime(t *testing.T) {
-	directory, manifest := platformReleaseFixture(t)
-	store := &releasePublishStore{}
-
-	if err := PublishPlatformRelease(context.Background(), store, directory); err != nil {
-		t.Fatal(err)
-	}
-	if len(store.published) != 1 {
-		t.Fatalf("published %d objects, want 1", len(store.published))
-	}
-	want := cas.Descriptor{
-		Digest: manifest.Runtime.Digest, MediaType: manifest.Runtime.MediaType,
-		SizeBytes: manifest.Runtime.SizeBytes,
-	}
-	if store.published[0] != want {
-		t.Fatalf("published = %+v, want %+v", store.published[0], want)
-	}
-}
-
 func TestPublishPinnedPlatformRelease(t *testing.T) {
 	directory := os.Getenv("HELMR_PLATFORM_RELEASE_DIR")
 	if directory == "" {

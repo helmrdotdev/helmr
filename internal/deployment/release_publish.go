@@ -63,12 +63,5 @@ func PublishPlatformRelease(ctx context.Context, store cas.ImmutableStore, direc
 	if err != nil || !info.Mode().IsRegular() || info.Size() != descriptor.SizeBytes {
 		return errors.New("platform release Runtime object does not match its descriptor")
 	}
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	_, publishErr := store.Publish(ctx, cas.Descriptor{
-		Digest: descriptor.Digest, MediaType: descriptor.MediaType, SizeBytes: descriptor.SizeBytes,
-	}, file)
-	return errors.Join(publishErr, file.Close())
+	return publishVerifiedPlatformRuntime(ctx, store, path, descriptor)
 }

@@ -84,6 +84,21 @@ stdenvNoCC.mkDerivation {
       --set-rpath /opt/helmr/runtime/lib \
       "$tree/bin/node"
 
+    for library in \
+      libc.so.6 \
+      libdl.so.2 \
+      libm.so.6 \
+      libpthread.so.0 \
+      libresolv.so.2 \
+      libgcc_s.so.1 \
+      libstdc++.so.6; do
+      patchelf --set-rpath /opt/helmr/runtime/lib "$tree/lib/$library"
+    done
+    patchelf \
+      --set-interpreter /opt/helmr/runtime/lib/${loader} \
+      "$tree/lib/libc.so.6"
+    patchelf --remove-rpath "$tree/lib/${loader}"
+
     jq -cSj -n \
       --arg architecture "${architecture}" \
       --arg nodeVersion "${nodeVersion}" \
