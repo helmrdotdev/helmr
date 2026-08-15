@@ -1319,13 +1319,6 @@ func validateClaimPhysicalAuthority(worker workerActor, authority runLeaseClaimA
 		lease.RuntimeIdentityID != runtime.RuntimeIdentityID {
 		return errStaleRunLeaseClaim
 	}
-	if lease.State == db.RunLeaseStateAssigned && authority.worker.State != db.WorkerInstanceStateActive {
-		return errStaleRunLeaseClaim
-	}
-	if lease.State == db.RunLeaseStateAssigned &&
-		authority.workerGroup.State != db.WorkerGroupStateActive {
-		return errStaleRunLeaseClaim
-	}
 	if lease.State == db.RunLeaseStateAssigned && !authority.workerRunReady {
 		return errStaleRunLeaseClaim
 	}

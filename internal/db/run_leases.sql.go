@@ -321,13 +321,6 @@ SELECT run_leases.id,
    AND run_leases.state IN ('assigned', 'starting')
    AND run_leases.start_deadline_at > transaction_timestamp()
    AND run_leases.expires_at > transaction_timestamp()
-   AND (
-       run_leases.state = 'starting'
-	       OR (
-	           worker.group_state = 'active'
-	           AND worker.state = 'active'
-       )
-   )
  ORDER BY CASE run_leases.state
               WHEN 'starting' THEN 0
               ELSE 1
@@ -594,7 +587,7 @@ SELECT run_leases.org_id,
   JOIN worker_groups
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
-   AND worker_groups.state = 'active'
+   AND worker_groups.state IN ('active', 'draining')
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
    AND worker_instances.worker_group_id = run_leases.worker_group_id
@@ -876,13 +869,6 @@ SELECT run_leases.org_id,
    AND run_leases.state IN ('assigned', 'starting')
    AND run_leases.start_deadline_at > transaction_timestamp()
    AND run_leases.expires_at > transaction_timestamp()
-   AND (
-       run_leases.state = 'starting'
-       OR (
-           worker_groups.state = 'active'
-           AND worker_instances.state = 'active'
-       )
-   )
 `
 
 type GetRunLeaseClaimLocatorsParams struct {
@@ -1040,13 +1026,6 @@ SELECT run_leases.environment_id,
    AND run_leases.state IN ('assigned', 'starting')
    AND run_leases.start_deadline_at > transaction_timestamp()
    AND run_leases.expires_at > transaction_timestamp()
-   AND (
-       run_leases.state = 'starting'
-       OR (
-           worker_groups.state = 'active'
-           AND worker_instances.state = 'active'
-       )
-   )
 `
 
 type GetRunLeaseSecretDeliveryLocatorsParams struct {

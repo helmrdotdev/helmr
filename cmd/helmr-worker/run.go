@@ -277,8 +277,8 @@ func run(log *slog.Logger) error {
 	admission["run"] = int(cfg.WorkerExecutionSlots)
 	admission["workspace"] = int(cfg.WorkerExecutionSlots)
 	consumerSpecs = append(consumerSpecs,
-		worker.ConsumerSpec{Name: "run", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "run", Consumer: worker.NewRunConsumer(runner)},
-		worker.ConsumerSpec{Name: "workspace", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "workspace", DrainEligible: true, Consumer: worker.NewWorkspaceConsumer(runner)},
+		worker.ConsumerSpec{Name: "run", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "run", ContinueDuringDrain: true, Consumer: worker.NewRunConsumer(runner)},
+		worker.ConsumerSpec{Name: "workspace", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "workspace", ContinueDuringDrain: true, BypassAdmissionDuringDrain: true, Consumer: worker.NewWorkspaceConsumer(runner)},
 	)
 	background := make([]worker.BackgroundSpec, 0, 1)
 	if preparedRuntimePool != nil {

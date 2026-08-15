@@ -45,10 +45,11 @@ type HostHealthProbe interface {
 }
 
 type AdmissionCheck struct {
-	Consumer string
-	State    State
-	Snapshot Snapshot
-	Recovery RecoveryEvidence
+	Consumer          string
+	State             State
+	Snapshot          Snapshot
+	Recovery          RecoveryEvidence
+	DrainContinuation bool
 }
 
 type AdmissionDecision struct {
@@ -108,7 +109,7 @@ func (a *HardAdmission) Evaluate(ctx context.Context, check AdmissionCheck) Admi
 		decision.Reason = AdmissionProbeFailed
 	case datapathErr != nil:
 		decision.Reason = AdmissionDatapathUnverified
-	case check.State != StateActive:
+	case check.State != StateActive && !(check.State == StateDraining && check.DrainContinuation):
 		decision.Reason = AdmissionReason(check.State)
 	case health.AvailableDiskBytes < a.cfg.DiskFloorBytes:
 		decision.Reason = AdmissionDiskFloor

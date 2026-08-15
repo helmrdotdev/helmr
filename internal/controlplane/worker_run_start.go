@@ -235,8 +235,7 @@ func lockRunStartAuthority(
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
 	if authority.workerGroup.State != db.WorkerGroupStateActive &&
-		!(authority.workerGroup.State == db.WorkerGroupStateDraining &&
-			authority.runLease.State == db.RunLeaseStateRunning) {
+		authority.workerGroup.State != db.WorkerGroupStateDraining {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 	if err := validateClaimPhysicalAuthority(worker, authority); err != nil {

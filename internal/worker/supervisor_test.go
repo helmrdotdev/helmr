@@ -570,7 +570,7 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, DrainTimeout: time.Second,
 		Consumers: []ConsumerSpec{
 			{Name: "run", Concurrency: 1, Consumer: runs},
-			{Name: "workspace-cleanup", Concurrency: 1, DrainEligible: true, Consumer: cleanup},
+			{Name: "workspace-cleanup", Concurrency: 1, ContinueDuringDrain: true, BypassAdmissionDuringDrain: true, Consumer: cleanup},
 		},
 		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
 			close(finalized)
@@ -625,6 +625,139 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 	}
 	if got := controlPlane.completed.Load(); got != 1 {
 		t.Fatalf("drain completion calls = %d, want 1", got)
+	}
+}
+
+func TestServerDirectedDrainContinuesBoundRunWithHardAdmission(t *testing.T) {
+	controlPlane := &testControlPlane{}
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusActive})
+	now := time.Now()
+	evaluator, err := NewHardAdmission(HardAdmissionConfig{
+		Probe: &staticHealthProbe{health: healthyHost(now)}, DiskFloorBytes: 1,
+		FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workStarted := make(chan struct{})
+	releaseWork := make(chan struct{})
+	consumer := &enabledConsumer{inner: &queuedConsumer{work: []Work{func(context.Context) error {
+		close(workStarted)
+		<-releaseWork
+		return nil
+	}}}}
+	s, err := New(Config{
+		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond,
+		DrainTimeout: time.Second, AdmissionEvaluator: evaluator,
+		Consumers: []ConsumerSpec{{
+			Name: "run", Concurrency: 1, ContinueDuringDrain: true, Consumer: consumer,
+		}},
+		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
+			return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.Run(t.Context()) }()
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1})
+	deadline := time.Now().Add(time.Second)
+	for s.state.Load().(State) != StateDraining {
+		if time.Now().After(deadline) {
+			t.Fatal("supervisor did not enter draining state")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	consumer.enabled.Store(true)
+	select {
+	case <-workStarted:
+	case <-time.After(time.Second):
+		t.Fatal("bound Run was not claimed during drain")
+	}
+	close(releaseWork)
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 0})
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("supervisor did not complete drain after bound Run finished")
+	}
+}
+
+func TestServerDirectedDrainDoesNotBypassBoundRunAdmission(t *testing.T) {
+	controlPlane := &testControlPlane{}
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusActive})
+	now := time.Now()
+	probe := &staticHealthProbe{health: healthyHost(now)}
+	probe.health.KVMHealthy = false
+	evaluator, err := NewHardAdmission(HardAdmissionConfig{
+		Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer := &enabledConsumer{inner: &queuedConsumer{work: []Work{func(context.Context) error { return nil }}}}
+	s, err := New(Config{
+		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond,
+		DrainTimeout: time.Second, AdmissionEvaluator: evaluator,
+		Consumers: []ConsumerSpec{{
+			Name: "run", Concurrency: 1, ContinueDuringDrain: true, Consumer: consumer,
+		}},
+		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
+			return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.Run(t.Context()) }()
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1})
+	deadline := time.Now().Add(time.Second)
+	for s.state.Load().(State) != StateDraining {
+		if time.Now().After(deadline) {
+			t.Fatal("supervisor did not enter draining state")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	consumer.enabled.Store(true)
+	time.Sleep(20 * time.Millisecond)
+	consumer.inner.mu.Lock()
+	claimed := consumer.inner.claimed
+	consumer.inner.mu.Unlock()
+	if claimed != 0 {
+		t.Fatalf("claimed %d bound Runs with unavailable KVM", claimed)
+	}
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 0})
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("supervisor did not complete rejected drain")
+	}
+}
+
+func TestDrainingObservationPreservesHardHealthInsteadOfLifecyclePause(t *testing.T) {
+	now := time.Now()
+	evaluator, err := NewHardAdmission(HardAdmissionConfig{
+		Probe: &staticHealthProbe{health: healthyHost(now)}, DiskFloorBytes: 1,
+		FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evaluator.Evaluate(context.Background(), AdmissionCheck{
+		Consumer: "run", State: StateDraining, DrainContinuation: true,
+	})
+	s := &Supervisor{cfg: Config{AdmissionEvaluator: evaluator}}
+	observation := s.observation(StateDraining, RecoveryEvidence{})
+	if observation.RunPausedReason != "" || observation.RuntimePausedReason != "" {
+		t.Fatalf("draining observation reported lifecycle pause: %+v", observation)
 	}
 }
 

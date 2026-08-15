@@ -138,3 +138,24 @@ func TestHardAdmissionAllowsRunInsideActiveWorkspaceSlot(t *testing.T) {
 		t.Fatalf("run inside mounted workspace rejected: %+v", decision)
 	}
 }
+
+func TestHardAdmissionAllowsOnlyExplicitDrainContinuation(t *testing.T) {
+	now := time.Now()
+	evaluator, err := NewHardAdmission(HardAdmissionConfig{
+		Probe: &staticHealthProbe{health: healthyHost(now)}, DiskFloorBytes: 1,
+		FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision := evaluator.Evaluate(context.Background(), AdmissionCheck{
+		Consumer: "run", State: StateDraining,
+	}); decision.Allowed || decision.Reason != AdmissionReason(StateDraining) {
+		t.Fatalf("ordinary draining decision = %+v", decision)
+	}
+	if decision := evaluator.Evaluate(context.Background(), AdmissionCheck{
+		Consumer: "run", State: StateDraining, DrainContinuation: true,
+	}); !decision.Allowed {
+		t.Fatalf("bound drain continuation rejected: %+v", decision)
+	}
+}
