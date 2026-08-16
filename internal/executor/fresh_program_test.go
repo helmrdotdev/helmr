@@ -34,8 +34,10 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	guest, host := net.Pipe()
 	defer guest.Close()
 	sessions := NewWorkspaceMountSessions()
+	mount := testWorkspaceMount(claim.Lease)
+	mount.FencingGeneration = claim.Lease.MountFencingGeneration - 1
 	unregister := sessions.RegisterWorkspaceMountSession(
-		testWorkspaceMount(claim.Lease),
+		mount,
 		fakeGuestSession{stream: host},
 		"channel-1",
 	)
@@ -104,6 +106,34 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 		if secret.Value != nil {
 			t.Fatalf("Secret value was retained: %+v", secret)
 		}
+	}
+}
+
+func TestValidateNewProgramMountSeparatesPhysicalIdentityFromLogicalFence(t *testing.T) {
+	claim := testFreshProgramClaim(t)
+	mount := testWorkspaceMount(claim.Lease)
+	mount.FencingGeneration = claim.Lease.MountFencingGeneration - 1
+	if err := validateNewProgramMount(claim.Lease, mount); err != nil {
+		t.Fatalf("advanced logical fence rejected exact physical mount: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*workerapi.WorkspaceMount)
+	}{
+		{name: "mount ID", mutate: func(mount *workerapi.WorkspaceMount) { mount.ID = "other-mount" }},
+		{name: "Workspace ID", mutate: func(mount *workerapi.WorkspaceMount) { mount.WorkspaceID = "other-workspace" }},
+		{name: "Runtime Instance", mutate: func(mount *workerapi.WorkspaceMount) { mount.RuntimeInstanceID = "other-runtime" }},
+		{name: "base Workspace version", mutate: func(mount *workerapi.WorkspaceMount) { mount.BaseVersionID = "other-version" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mismatched := mount
+			test.mutate(&mismatched)
+			if err := validateNewProgramMount(claim.Lease, mismatched); err == nil {
+				t.Fatal("physical identity mismatch was accepted")
+			}
+		})
 	}
 }
 

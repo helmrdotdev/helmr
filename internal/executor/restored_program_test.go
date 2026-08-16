@@ -61,6 +61,37 @@ func TestStartRestoredProgramOrdersGrantStartProofAndRelease(t *testing.T) {
 	}
 }
 
+func TestValidateResumedProgramMountSeparatesPhysicalIdentityFromLogicalFence(t *testing.T) {
+	claim := testRestoredProgramClaim(t)
+	mount := testWorkspaceMount(claim.Lease)
+	mount.FencingGeneration = claim.Lease.MountFencingGeneration - 1
+	mount.RestoreCheckpointID = "checkpoint-1"
+	resume := resumedProgramAdmission{recreated: true, checkpointID: "checkpoint-1"}
+	if err := validateResumedProgramMount(claim.Lease, mount, resume); err != nil {
+		t.Fatalf("advanced logical fence rejected exact physical mount: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*workerapi.WorkspaceMount)
+	}{
+		{name: "mount ID", mutate: func(mount *workerapi.WorkspaceMount) { mount.ID = "other-mount" }},
+		{name: "Workspace ID", mutate: func(mount *workerapi.WorkspaceMount) { mount.WorkspaceID = "other-workspace" }},
+		{name: "Runtime Instance", mutate: func(mount *workerapi.WorkspaceMount) { mount.RuntimeInstanceID = "other-runtime" }},
+		{name: "base Workspace version", mutate: func(mount *workerapi.WorkspaceMount) { mount.BaseVersionID = "other-version" }},
+		{name: "restore checkpoint", mutate: func(mount *workerapi.WorkspaceMount) { mount.RestoreCheckpointID = "other-checkpoint" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mismatched := mount
+			test.mutate(&mismatched)
+			if err := validateResumedProgramMount(claim.Lease, mismatched, resume); err == nil {
+				t.Fatal("physical identity mismatch was accepted")
+			}
+		})
+	}
+}
+
 func TestRetainedRestoreAndParentAttachResumeOnExistingMount(t *testing.T) {
 	tests := []struct {
 		name      string

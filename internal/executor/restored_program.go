@@ -274,15 +274,20 @@ func validateResumedProgramMount(
 	mount workerapi.WorkspaceMount,
 	resume resumedProgramAdmission,
 ) error {
-	if mount.ID != lease.WorkspaceMountID ||
-		mount.WorkspaceID != lease.WorkspaceID ||
-		mount.RuntimeInstanceID != lease.RuntimeInstanceID ||
-		mount.BaseVersionID != lease.BaseWorkspaceVersionID ||
-		mount.FencingGeneration != lease.MountFencingGeneration ||
-		(resume.recreated && mount.RestoreCheckpointID != resume.checkpointID) {
-		return errors.New(
-			"resumed workspace mount does not match the claimed physical authority",
-		)
+	if mount.ID != lease.WorkspaceMountID {
+		return errors.New("resumed workspace mount ID does not match the claimed physical authority")
+	}
+	if mount.WorkspaceID != lease.WorkspaceID {
+		return errors.New("resumed Workspace ID does not match the claimed physical authority")
+	}
+	if mount.RuntimeInstanceID != lease.RuntimeInstanceID {
+		return errors.New("resumed Runtime Instance does not match the claimed physical authority")
+	}
+	if mount.BaseVersionID != lease.BaseWorkspaceVersionID {
+		return errors.New("resumed base Workspace version does not match the claimed physical authority")
+	}
+	if resume.recreated && mount.RestoreCheckpointID != resume.checkpointID {
+		return errors.New("resumed restore checkpoint does not match the claimed physical authority")
 	}
 	return nil
 }

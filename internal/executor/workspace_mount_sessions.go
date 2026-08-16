@@ -115,12 +115,8 @@ func (s *WorkspaceMountSessions) RenewWorkspaceAuthority(ctx context.Context, re
 	if entry.channelToken == "" || request.GetPrevious().GetChannelToken() != entry.channelToken {
 		return nil, errors.New("workspace authority channel token does not match the mount session")
 	}
-	if fence.GetWorkspaceMountId() != entry.mount.ID ||
-		fence.GetWorkspaceId() != entry.mount.WorkspaceID ||
-		fence.GetRuntimeInstanceId() != entry.mount.RuntimeInstanceID ||
-		fence.GetMountFencingGeneration() != entry.mount.FencingGeneration ||
-		fence.GetBaseWorkspaceVersionId() != entry.mount.BaseVersionID {
-		return nil, errors.New("workspace authority fence does not match the mount session")
+	if err := validateWorkspaceMountPhysicalAuthority(fence, entry.mount); err != nil {
+		return nil, err
 	}
 	return renewWorkspaceAuthorityOnSession(ctx, entry.session, request)
 }
@@ -143,12 +139,8 @@ func (s *WorkspaceMountSessions) BeginWorkspaceFinalization(
 	if entry.channelToken == "" || request.GetPrevious().GetChannelToken() != entry.channelToken {
 		return nil, errors.New("workspace authority channel token does not match the mount session")
 	}
-	if fence.GetWorkspaceMountId() != entry.mount.ID ||
-		fence.GetWorkspaceId() != entry.mount.WorkspaceID ||
-		fence.GetRuntimeInstanceId() != entry.mount.RuntimeInstanceID ||
-		fence.GetMountFencingGeneration() != entry.mount.FencingGeneration ||
-		fence.GetBaseWorkspaceVersionId() != entry.mount.BaseVersionID {
-		return nil, errors.New("workspace authority fence does not match the mount session")
+	if err := validateWorkspaceMountPhysicalAuthority(fence, entry.mount); err != nil {
+		return nil, err
 	}
 	return beginWorkspaceFinalizationOnSession(ctx, entry.session, request)
 }
@@ -195,14 +187,23 @@ func (s *WorkspaceMountSessions) finalizationSession(
 	if entry.channelToken == "" || authority.GetChannelToken() != entry.channelToken {
 		return workspaceMountSessionEntry{}, errors.New("workspace authority channel token does not match the mount session")
 	}
-	if fence.GetWorkspaceMountId() != entry.mount.ID ||
-		fence.GetWorkspaceId() != entry.mount.WorkspaceID ||
-		fence.GetRuntimeInstanceId() != entry.mount.RuntimeInstanceID ||
-		fence.GetMountFencingGeneration() != entry.mount.FencingGeneration ||
-		fence.GetBaseWorkspaceVersionId() != entry.mount.BaseVersionID {
-		return workspaceMountSessionEntry{}, errors.New("workspace authority fence does not match the mount session")
+	if err := validateWorkspaceMountPhysicalAuthority(fence, entry.mount); err != nil {
+		return workspaceMountSessionEntry{}, err
 	}
 	return entry, nil
+}
+
+func validateWorkspaceMountPhysicalAuthority(
+	fence *workspacev0.WorkspaceAuthorityFence,
+	mount workerapi.WorkspaceMount,
+) error {
+	if fence.GetWorkspaceMountId() != mount.ID ||
+		fence.GetWorkspaceId() != mount.WorkspaceID ||
+		fence.GetRuntimeInstanceId() != mount.RuntimeInstanceID ||
+		fence.GetBaseWorkspaceVersionId() != mount.BaseVersionID {
+		return errors.New("workspace authority fence does not match the mount session")
+	}
+	return nil
 }
 
 func (s *WorkspaceMountSessions) beginForegroundRun() func() {

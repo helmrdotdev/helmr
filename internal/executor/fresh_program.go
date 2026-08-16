@@ -1040,14 +1040,17 @@ func validateNewProgramMount(
 	lease workerapi.RunLeaseAssignment,
 	mount workerapi.WorkspaceMount,
 ) error {
-	if mount.ID != lease.WorkspaceMountID ||
-		mount.WorkspaceID != lease.WorkspaceID ||
-		mount.RuntimeInstanceID != lease.RuntimeInstanceID ||
-		mount.BaseVersionID != lease.BaseWorkspaceVersionID ||
-		mount.FencingGeneration != lease.MountFencingGeneration {
-		return errors.New(
-			"new program workspace mount does not match the claimed physical authority",
-		)
+	if mount.ID != lease.WorkspaceMountID {
+		return errors.New("new program workspace mount ID does not match the claimed physical authority")
+	}
+	if mount.WorkspaceID != lease.WorkspaceID {
+		return errors.New("new program workspace ID does not match the claimed physical authority")
+	}
+	if mount.RuntimeInstanceID != lease.RuntimeInstanceID {
+		return errors.New("new program Runtime Instance does not match the claimed physical authority")
+	}
+	if mount.BaseVersionID != lease.BaseWorkspaceVersionID {
+		return errors.New("new program base Workspace version does not match the claimed physical authority")
 	}
 	return nil
 }
