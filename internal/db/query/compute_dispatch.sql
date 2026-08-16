@@ -23,11 +23,21 @@ WITH transitioned AS (
        AND NOT EXISTS (SELECT 1 FROM transitioned)
 ), idle_mounts AS (
     UPDATE workspace_mounts
-       SET state = 'unmounting', stopped_at = COALESCE(stopped_at, now()), updated_at = now()
+       SET state = 'unmounting',
+           finalization_kind = 'discard',
+           finalization_reason_code = 'worker_draining',
+           finalization_error = NULL,
+           stopped_at = COALESCE(stopped_at, now()), updated_at = now()
       FROM target
      WHERE workspace_mounts.worker_instance_id = target.id
        AND workspace_mounts.worker_epoch = target.current_epoch
-       AND workspace_mounts.state IN ('mounting', 'mounted')
+       AND (
+           workspace_mounts.state IN ('mounting', 'mounted')
+           OR (
+               workspace_mounts.state = 'unmounting'
+               AND workspace_mounts.finalization_kind IS NULL
+           )
+       )
        AND NOT EXISTS (
            SELECT 1 FROM workspace_leases
             WHERE workspace_leases.workspace_mount_id = workspace_mounts.id
