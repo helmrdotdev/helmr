@@ -324,6 +324,7 @@ last=""
 for arg in "$@"; do
   last="$arg"
 done
+cat >/dev/null
 count=0
 if [ -f "` + countFile + `" ]; then
   count=$(cat "` + countFile + `")
