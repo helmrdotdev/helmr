@@ -102,12 +102,14 @@ type guestRunLeaseTask struct {
 	waitWorkspace workerapi.Workspace
 	orgID         string
 
-	mu             sync.Mutex
-	lease          workerapi.RunLeaseAssignment
-	authority      *workspacev0.WorkspaceRunAuthority
-	operationID    string
-	finalizingKind workerapi.RunFinalizationKind
-	finished       bool
+	renewalGate      sync.Mutex
+	mu               sync.Mutex
+	lease            workerapi.RunLeaseAssignment
+	authority        *workspacev0.WorkspaceRunAuthority
+	operationID      string
+	finalizingKind   workerapi.RunFinalizationKind
+	checkpointFrozen bool
+	finished         bool
 }
 
 func (task *guestRunLeaseTask) callRunSourceRuntime(
@@ -200,7 +202,9 @@ func (r ProgramRunner) StartRunLeaseTask(
 				ArtifactEncoding:  program.mount.WorkspaceArtifact.Encoding,
 				MountPath:         program.mount.WorkspaceMountPath,
 			},
-			runEvent: task.processCheckpointRunEvent,
+			runEvent:   task.processCheckpointRunEvent,
+			freezeGate: &task.renewalGate,
+			onFrozen:   task.markCheckpointFrozen,
 		}
 	}
 	return task, nil
@@ -488,12 +492,22 @@ func (events taskControlEvents) RecordStructuredRunLog(
 func (task *guestRunLeaseTask) RenewRunLease(
 	ctx context.Context,
 ) (RunLeaseTaskRenewal, error) {
+	task.renewalGate.Lock()
+	defer task.renewalGate.Unlock()
 	task.mu.Lock()
 	defer task.mu.Unlock()
 	if task.finished || task.finalizingKind != "" {
 		return RunLeaseTaskRenewal{}, errors.New("run lease task is not renewable")
 	}
 	previous := task.lease
+	if task.checkpointFrozen {
+		renewed, err := renewControlPlaneRunLeaseAuthority(ctx, task.controlPlane, previous)
+		if err != nil {
+			return RunLeaseTaskRenewal{}, err
+		}
+		task.lease = renewed
+		return RunLeaseTaskRenewal{Previous: previous, Lease: renewed}, nil
+	}
 	renewed, fence, err := renewRunLeaseAuthority(
 		ctx,
 		task.controlPlane,
@@ -511,6 +525,12 @@ func (task *guestRunLeaseTask) RenewRunLease(
 	return RunLeaseTaskRenewal{Previous: previous, Lease: renewed}, nil
 }
 
+func (task *guestRunLeaseTask) markCheckpointFrozen() {
+	task.mu.Lock()
+	task.checkpointFrozen = true
+	task.mu.Unlock()
+}
+
 func renewRunLeaseAuthority(
 	ctx context.Context,
 	controlPlane interface {
@@ -520,28 +540,8 @@ func renewRunLeaseAuthority(
 	previous workerapi.RunLeaseAssignment,
 	authority *workspacev0.WorkspaceRunAuthority,
 ) (workerapi.RunLeaseAssignment, *workspacev0.WorkspaceAuthorityFence, error) {
-	controlCtx, cancelControlPlane := context.WithDeadline(ctx, previous.ExpiresAt)
-	defer cancelControlPlane()
-	var response workerapi.RunLeaseRenewResponse
-	if err := retryRunLeaseRequest(controlCtx, func(requestCtx context.Context) error {
-		var requestErr error
-		response, requestErr = controlPlane.RenewRunLease(requestCtx, previous)
-		return requestErr
-	}); err != nil {
-		if !previous.ExpiresAt.After(time.Now()) {
-			return workerapi.RunLeaseAssignment{}, nil, fmt.Errorf("%w: %v", errRunLeaseAuthorityLapsed, err)
-		}
-		return workerapi.RunLeaseAssignment{}, nil, err
-	}
-	if response.Lease != previous.Fence() ||
-		response.BaseWorkspaceVersionID != previous.BaseWorkspaceVersionID {
-		return workerapi.RunLeaseAssignment{}, nil, errors.New(
-			"run lease renewal response changed its fence or workspace frontier",
-		)
-	}
-	renewed := previous
-	renewed.ExpiresAt = response.ExpiresAt
-	if err := validateRunLeaseExpiryAdvance(previous, renewed); err != nil {
+	renewed, err := renewControlPlaneRunLeaseAuthority(ctx, controlPlane, previous)
+	if err != nil {
 		return workerapi.RunLeaseAssignment{}, nil, err
 	}
 	if renewed.ExpiresAt.Equal(previous.ExpiresAt) {
@@ -567,6 +567,43 @@ func renewRunLeaseAuthority(
 		return workerapi.RunLeaseAssignment{}, nil, err
 	}
 	return renewed, proto.Clone(fence).(*workspacev0.WorkspaceAuthorityFence), nil
+}
+
+func renewControlPlaneRunLeaseAuthority(
+	ctx context.Context,
+	controlPlane interface {
+		RenewRunLease(context.Context, workerapi.RunLeaseAssignment) (workerapi.RunLeaseRenewResponse, error)
+	},
+	previous workerapi.RunLeaseAssignment,
+) (workerapi.RunLeaseAssignment, error) {
+	controlCtx, cancelControlPlane := context.WithDeadline(ctx, previous.ExpiresAt)
+	defer cancelControlPlane()
+	var response workerapi.RunLeaseRenewResponse
+	if err := retryRunLeaseRequest(controlCtx, func(requestCtx context.Context) error {
+		var requestErr error
+		response, requestErr = controlPlane.RenewRunLease(requestCtx, previous)
+		return requestErr
+	}); err != nil {
+		if !previous.ExpiresAt.After(time.Now()) {
+			return workerapi.RunLeaseAssignment{}, fmt.Errorf("%w: %v", errRunLeaseAuthorityLapsed, err)
+		}
+		return workerapi.RunLeaseAssignment{}, err
+	}
+	if response.Lease != previous.Fence() ||
+		response.BaseWorkspaceVersionID != previous.BaseWorkspaceVersionID {
+		return workerapi.RunLeaseAssignment{}, errors.New(
+			"run lease renewal response changed its fence or workspace frontier",
+		)
+	}
+	renewed := previous
+	renewed.ExpiresAt = response.ExpiresAt
+	if err := validateRunLeaseExpiryAdvance(previous, renewed); err != nil {
+		return workerapi.RunLeaseAssignment{}, err
+	}
+	if renewed.ExpiresAt.Equal(previous.ExpiresAt) {
+		return previous, nil
+	}
+	return renewed, nil
 }
 
 func retryWorkspaceAuthorityTransport(

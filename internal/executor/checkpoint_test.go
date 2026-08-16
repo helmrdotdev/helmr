@@ -113,6 +113,36 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	assertRemoved(t, artifact.Memory[0].Path)
 }
 
+func TestRuntimeCheckpointerPublishesFrozenAuthorityBeforeSnapshot(t *testing.T) {
+	stream := newCheckpointStream(t, nil, &runv0.CheckpointPauseReady{
+		RunWaitId: "run-wait-id-1", CheckpointId: "checkpoint-1",
+	})
+	artifact := checkpointArtifact(t)
+	addCheckpointRuntimeSubstrate(t, &artifact)
+	frozen := false
+	session := &checkpointSession{
+		stream: stream, artifact: artifact,
+		snapshotHook: func() {
+			if !frozen {
+				t.Error("snapshot began before the frozen authority transition")
+			}
+		},
+	}
+	_, err := runtimeCheckpointer{
+		session: session, cas: &checkpointCAS{}, encryptor: testCheckpointEncryptor(t),
+		tempDir: t.TempDir(), stream: stream, workspace: testCheckpointWorkspaceBase(),
+		onFrozen: func() { frozen = true },
+	}.CreateCheckpoint(context.Background(), CheckpointRequest{
+		RunWaitID: "run-wait-id-1", CheckpointID: "checkpoint-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !frozen {
+		t.Fatal("frozen authority transition was not published")
+	}
+}
+
 func TestValidateCheckpointPauseReadyRequiresExactAuthority(t *testing.T) {
 	request := CheckpointRequest{
 		RunID: "run-1", AttemptNumber: 2, RunLeaseID: "lease-1",
@@ -563,6 +593,7 @@ type checkpointSession struct {
 	closeCount       int
 	closeErr         error
 	closed           bool
+	snapshotHook     func()
 }
 
 func (s *checkpointSession) Stream() vm.Stream {
@@ -591,6 +622,9 @@ func (s *checkpointSession) Wait(ctx context.Context) error {
 }
 
 func (s *checkpointSession) CreateSnapshot(_ context.Context, request vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
+	if s.snapshotHook != nil {
+		s.snapshotHook()
+	}
 	s.snapshotRequests = append(s.snapshotRequests, request)
 	if s.snapshotErr != nil {
 		return vm.SnapshotArtifact{}, s.snapshotErr

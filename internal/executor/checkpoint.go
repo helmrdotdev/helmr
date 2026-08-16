@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -145,13 +146,15 @@ func requireCheckpointArtifact(artifact workerapi.CheckpointArtifact, field stri
 }
 
 type runtimeCheckpointer struct {
-	session   vm.CheckpointableSession
-	cas       cas.Store
-	encryptor *checkpoint.Encryptor
-	tempDir   string
-	stream    io.ReadWriteCloser
-	workspace workerapi.CheckpointWorkspaceBase
-	runEvent  func(context.Context, *runv0.RunEvent) error
+	session    vm.CheckpointableSession
+	cas        cas.Store
+	encryptor  *checkpoint.Encryptor
+	tempDir    string
+	stream     io.ReadWriteCloser
+	workspace  workerapi.CheckpointWorkspaceBase
+	runEvent   func(context.Context, *runv0.RunEvent) error
+	freezeGate *sync.Mutex
+	onFrozen   func()
 }
 
 func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request CheckpointRequest) (result CheckpointResult, err error) {
@@ -309,6 +312,15 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	}
 	if err := validateCheckpointPauseReady(ready, request); err != nil {
 		return nil, err
+	}
+	if c.freezeGate != nil {
+		c.freezeGate.Lock()
+	}
+	if c.onFrozen != nil {
+		c.onFrozen()
+	}
+	if c.freezeGate != nil {
+		c.freezeGate.Unlock()
 	}
 	if request.CaptureWorkspace && workspaceArtifact == nil {
 		return nil, errors.New("checkpoint pause did not return required workspace capture")
