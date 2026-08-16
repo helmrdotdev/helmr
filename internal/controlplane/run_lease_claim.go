@@ -1341,9 +1341,9 @@ func validateClaimPhysicalAuthority(worker workerActor, authority runLeaseClaimA
 		runtime.ReservedMemoryBytes != lease.RequestedMemoryBytes ||
 		runtime.ReservedGuestEphemeralDiskBytes != lease.RequestedGuestEphemeralDiskBytes ||
 		runtime.ReservedExecutionSlots != lease.RequestedExecutionSlots ||
-		authority.worker.PerVMCPUMillis != lease.RequestedCPUMillis ||
-		authority.worker.PerVMMemoryBytes != lease.RequestedMemoryBytes ||
-		authority.worker.PerVMGuestEphemeralDiskBytes != lease.RequestedGuestEphemeralDiskBytes {
+		authority.worker.PerVMCPUMillis < lease.RequestedCPUMillis ||
+		authority.worker.PerVMMemoryBytes < lease.RequestedMemoryBytes ||
+		authority.worker.PerVMGuestEphemeralDiskBytes < lease.RequestedGuestEphemeralDiskBytes {
 		return errStaleRunLeaseClaim
 	}
 	return nil
