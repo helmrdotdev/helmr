@@ -221,9 +221,6 @@ func (c *Connector) connectorForRequest(
 	if request.Resources != (compute.ResourceVector{}) {
 		return nil, errors.New("runtime attachment cannot change resources")
 	}
-	if request.PIDsMax != 0 {
-		return nil, errors.New("runtime attachment cannot change physical isolation")
-	}
 	child := *c
 	child.cfg = cfg
 	child.kernelArgs = runtimeKernelArgs(request.Topology, nil)

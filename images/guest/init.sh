@@ -48,27 +48,18 @@ enable_user_namespaces() {
 	fi
 }
 
-configure_process_limit() {
-	limit=$(kernel_arg helmr.pids_max || true)
-	[ -n "$limit" ] || return 0
-	case "$limit" in
-		*[!0-9]*|0)
-			echo "invalid Helmr process limit" >&2
-			exit 1
-			;;
-	esac
+configure_program_cgroups() {
 	mkdir -p /sys/fs/cgroup
 	is_mounted /sys/fs/cgroup || mount -t cgroup2 cgroup2 /sys/fs/cgroup
-	if ! grep -qw pids /sys/fs/cgroup/cgroup.controllers; then
-		echo "pids controller unavailable" >&2
+	mkdir /sys/fs/cgroup/helmr
+	mkdir /sys/fs/cgroup/helmr/supervisor
+	echo $$ > /sys/fs/cgroup/helmr/supervisor/cgroup.procs
+	if [ -n "$(cat /sys/fs/cgroup/helmr/cgroup.procs)" ]; then
+		echo "Helmr Program cgroup root is not process-free" >&2
 		exit 1
 	fi
-	echo +pids > /sys/fs/cgroup/cgroup.subtree_control
-	mkdir /sys/fs/cgroup/helmr
-	echo "$limit" > /sys/fs/cgroup/helmr/pids.max
-	echo $$ > /sys/fs/cgroup/helmr/cgroup.procs
-	if [ "$(cat /sys/fs/cgroup/helmr/pids.max)" != "$limit" ]; then
-		echo "Helmr process limit was not applied" >&2
+	if ! grep -qx '0::/helmr/supervisor' /proc/self/cgroup; then
+		echo "Helmr supervisor cgroup placement failed" >&2
 		exit 1
 	fi
 }
@@ -334,7 +325,7 @@ configure_runtime_identity() {
 }
 
 mount_base
-configure_process_limit
+configure_program_cgroups
 enable_user_namespaces
 mount_scratch
 load_vsock

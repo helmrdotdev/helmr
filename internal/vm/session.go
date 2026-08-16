@@ -61,7 +61,6 @@ type ConnectRequest struct {
 	OwnerKind      OwnerKind
 	Binding        WorkloadBinding
 	Resources      compute.ResourceVector
-	PIDsMax        int64
 	Topology       RuntimeTopology
 	ReadOnlyDrives []ReadOnlyDrive
 }

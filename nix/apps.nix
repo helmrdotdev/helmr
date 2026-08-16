@@ -59,6 +59,7 @@ in
         bash tests/linux_worker_host_bundle_materialize_test.sh
         bash tests/netboot_inputs_test.sh
         bash tests/boot_artifacts_make_test.sh
+        bash tests/guest_init_cgroup_test.sh
       '';
   ci-generated =
     app "ci-generated" "check generated artifacts and formatting for CI" toolsets.ciChecks
@@ -187,6 +188,7 @@ in
       ''
         bash ./tests/netboot_inputs_test.sh
         bash ./tests/boot_artifacts_make_test.sh
+        bash ./tests/guest_init_cgroup_test.sh
         exec ./tests/boot_artifacts_reproducibility_test.sh "$@"
       '';
   fmt-check = app "fmt-check" "check Go formatting" toolsets.appRuntime ''
