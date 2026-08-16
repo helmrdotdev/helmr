@@ -694,6 +694,55 @@ func (r ProgramRunner) startNewProgram(
 			err,
 		)
 	}
+	if failed := event.GetProgramProcessStartFailed(); failed != nil {
+		if failed.GetRunId() != claim.Lease.RunID ||
+			failed.GetAttemptNumber() != uint32(claim.Lease.AttemptNumber) ||
+			failed.GetRunLeaseId() != claim.Lease.ID {
+			return freshProgram{}, errors.New(
+				"program process-start failure proof does not match run lease",
+			)
+		}
+		var diagnostic string
+		switch failed.GetPhase() {
+		case "prepare":
+			diagnostic = "Program process preparation failed"
+		case "start":
+			diagnostic = "Program process start failed"
+		default:
+			return freshProgram{}, errors.New(
+				"program process-start failure proof phase is invalid",
+			)
+		}
+		if failed.GetDiagnostic() != diagnostic {
+			return freshProgram{}, errors.New(
+				"program process-start failure proof diagnostic is invalid",
+			)
+		}
+		if r.Log != nil {
+			r.Log.Error(
+				"Program process start failed",
+				"run_id", claim.Lease.RunID,
+				"run_lease_id", claim.Lease.ID,
+				"runtime_instance_id", claim.Lease.RuntimeInstanceID,
+				"workspace_mount_id", claim.Lease.WorkspaceMountID,
+				"phase", failed.GetPhase(),
+				"diagnostic", diagnostic,
+			)
+		}
+		failureCtx, cancelFailure := context.WithTimeout(
+			context.Background(),
+			30*time.Second,
+		)
+		defer cancelFailure()
+		failure := errors.New("program process failed before start proof")
+		if err := r.WorkspaceMounts.FailWorkspaceMountSession(
+			failureCtx,
+			claim.Lease.WorkspaceMountID,
+		); err != nil {
+			return freshProgram{}, errors.Join(failure, err)
+		}
+		return freshProgram{}, failure
+	}
 	started := event.GetProgramProcessStarted()
 	if started == nil ||
 		started.GetRunId() != claim.Lease.RunID ||

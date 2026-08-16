@@ -99,8 +99,17 @@ func (g OwnedFinalization) RecoverFreshLeaseLoss(
 			}
 			return true, nil
 		}
-		if err := recoverFreshPrestartLease(ctx, q, authority, loss); err != nil {
+		cleared, err := recoverFreshPrestartLease(ctx, q, authority, loss)
+		if err != nil {
 			return false, err
+		}
+		if loss.kind == "physical_failure" {
+			if err := g.recordClearedFreshPrestart(cleared); err != nil {
+				return false, err
+			}
+			if _, err := g.ChargeRuntimePreparationFailure(ctx); err != nil {
+				return false, err
+			}
 		}
 		return true, nil
 	}
@@ -326,21 +335,38 @@ func recoverFreshPrestartLease(
 	q *db.Queries,
 	authority db.GetFreshRunLeaseLossAuthorityRow,
 	loss freshLeaseLoss,
-) error {
+) (db.Run, error) {
 	errorPayload, err := leaseLossError(loss.reason, freshLeaseLossMessage(loss.reason), true)
 	if err != nil {
-		return err
+		return db.Run{}, err
 	}
 	if err := terminalizeFreshLeasePhysicalAuthority(ctx, q, authority, loss, errorPayload); err != nil {
-		return err
+		return db.Run{}, err
 	}
-	if _, err := q.ClearFreshPrestartRunLease(ctx, db.ClearFreshPrestartRunLeaseParams{
+	cleared, err := q.ClearFreshPrestartRunLease(ctx, db.ClearFreshPrestartRunLeaseParams{
 		RunID: authority.RunID, WorkspaceID: authority.WorkspaceID,
 		ExpectedStateVersion: authority.StateVersion, AttemptNumber: authority.CurrentAttemptNumber,
 		RunLeaseID: authority.RunLeaseID,
-	}); err != nil {
-		return cancellationAuthority("clear fresh pre-start Run lease", err)
+	})
+	if err != nil {
+		return db.Run{}, cancellationAuthority("clear fresh pre-start Run lease", err)
 	}
+	return cleared, nil
+}
+
+func (g OwnedFinalization) recordClearedFreshPrestart(cleared db.Run) error {
+	if len(g.descendants) == 0 || !cleared.ID.Valid ||
+		uuid.UUID(cleared.ID.Bytes) != g.currentRun ||
+		cleared.CurrentRunLeaseID.Valid || cleared.Status != db.RunStatusQueued {
+		return cancellationAuthority("cleared fresh pre-start Run is invalid", nil)
+	}
+	updated := g.descendants[0]
+	updated.currentRunLeaseID = cleared.CurrentRunLeaseID
+	updated.stateVersion = cleared.StateVersion
+	updated.status = cleared.Status
+	updated.runtimePreparationCount = cleared.RuntimePreparationCount
+	g.descendants[0] = updated
+	g.locked[updated.id] = updated
 	return nil
 }
 

@@ -209,6 +209,9 @@ func handleProgramRunConnection(
 	}
 	process, cleanup, err := newProgramProcess(ctx, entry, &request, secrets)
 	if err != nil {
+		if writeErr := writeProgramProcessStartFailed(programConn, &request, "prepare"); writeErr != nil {
+			return errors.Join(err, fmt.Errorf("write Program process-start failure: %w", writeErr))
+		}
 		return err
 	}
 	defer cleanup()
@@ -816,6 +819,9 @@ func superviseProgram(
 ) error {
 	deadline := time.UnixMilli(request.GetStartDeadlineUnixMs())
 	if err := process.start(ctx, deadline); err != nil {
+		if writeErr := writeProgramProcessStartFailed(conn, request, "start"); writeErr != nil {
+			return errors.Join(err, fmt.Errorf("write Program process-start failure: %w", writeErr))
+		}
 		return err
 	}
 	completed := false
@@ -1313,6 +1319,41 @@ func relayProgram(
 			},
 		},
 	})
+}
+
+func writeProgramProcessStartFailed(
+	conn programConnection,
+	request *runv0.ProgramRunRequest,
+	phase string,
+) error {
+	if conn == nil || request == nil {
+		return errors.New("program process-start failure proof is incomplete")
+	}
+	if phase != "prepare" && phase != "start" {
+		return errors.New("program process-start failure phase is invalid")
+	}
+	if err := conn.SetWriteDeadline(time.Now().Add(programAdmissionTimeout)); err != nil {
+		return err
+	}
+	defer conn.SetWriteDeadline(time.Time{})
+	return frameio.WriteProtoFrame(conn, &runv0.RunEvent{
+		Event: &runv0.RunEvent_ProgramProcessStartFailed{
+			ProgramProcessStartFailed: &runv0.ProgramProcessStartFailed{
+				RunId:         request.GetRunId(),
+				AttemptNumber: request.GetAttemptNumber(),
+				RunLeaseId:    request.GetRunLeaseId(),
+				Phase:         phase,
+				Diagnostic:    programProcessStartDiagnostic(phase),
+			},
+		},
+	})
+}
+
+func programProcessStartDiagnostic(phase string) string {
+	if phase == "prepare" {
+		return "Program process preparation failed"
+	}
+	return "Program process start failed"
 }
 
 func runtimeResourceOperationIdentity(event *runv0.RunEvent) (string, string, bool) {

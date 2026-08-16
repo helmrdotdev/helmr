@@ -105,6 +105,14 @@ message ProgramProcessStarted {
   string run_lease_id = 3;
 }
 
+message ProgramProcessStartFailed {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  string run_lease_id = 3;
+  string phase = 4;
+  string diagnostic = 5;
+}
+
 message ProgramStartRelease {
   string run_id = 1;
   uint32 attempt_number = 2;
@@ -166,6 +174,7 @@ message RunEvent {
     WorkspaceFileListRequested workspace_file_list_requested = 29;
     WorkspaceExecRequested workspace_exec_requested = 30;
     WorkspaceDeleteRequested workspace_delete_requested = 31;
+    ProgramProcessStartFailed program_process_start_failed = 32;
   }
 }
 

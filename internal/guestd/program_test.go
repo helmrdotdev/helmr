@@ -211,6 +211,73 @@ func TestSuperviseProgramRejectsMismatchedStartRelease(t *testing.T) {
 	}
 }
 
+func TestSuperviseProgramReportsProcessStartFailure(t *testing.T) {
+	request := testProgramRunRequest(testProgramStartFrame(t))
+	process := &programProcess{cmd: exec.Command("/helmr-test-missing-program")}
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	result := make(chan error, 1)
+	go func() {
+		result <- superviseProgram(
+			context.Background(),
+			guest,
+			request,
+			process,
+			newWaitingRunRegistry(),
+			nil,
+		)
+	}()
+
+	var event runv0.RunEvent
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	failed := event.GetProgramProcessStartFailed()
+	if failed == nil || failed.GetRunId() != request.GetRunId() ||
+		failed.GetAttemptNumber() != request.GetAttemptNumber() ||
+		failed.GetRunLeaseId() != request.GetRunLeaseId() ||
+		failed.GetPhase() != "start" ||
+		failed.GetDiagnostic() != "Program process start failed" {
+		t.Fatalf("process-start failure event = %#v", event.GetEvent())
+	}
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "start program process") {
+			t.Fatalf("superviseProgram() error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Program supervisor did not report start failure")
+	}
+}
+
+func TestProgramProcessStartFailureDiagnosticIsStatic(t *testing.T) {
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	request := testProgramRunRequest(testProgramStartFrame(t))
+	result := make(chan error, 1)
+	go func() {
+		result <- writeProgramProcessStartFailed(
+			guest,
+			request,
+			"prepare",
+		)
+	}()
+	var event runv0.RunEvent
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	if failed := event.GetProgramProcessStartFailed(); failed == nil ||
+		failed.GetPhase() != "prepare" ||
+		failed.GetDiagnostic() != "Program process preparation failed" {
+		t.Fatalf("prepare failure event = %#v", event.GetEvent())
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSuperviseProgramRejectsWrongCommandArmBeforeStart(t *testing.T) {
 	commands := map[string]*runv0.ProgramSupervisorCommand{
 		"Secret completion": programSecretsCompleteCommand(
@@ -1111,6 +1178,93 @@ func TestProgramAdmissionDoesNotClaimBeforeSecretSequence(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("partial Secret sequence did not unblock on cancellation")
+	}
+}
+
+func TestProgramAdmissionReportsPrepareFailureWithExactFence(t *testing.T) {
+	registry := newWorkspaceOperationRegistry()
+	registry.register("mount-1", &workspaceMountEntry{
+		workspaceID:       "workspace-1",
+		baseVersionID:     "version-1",
+		channelToken:      "channel-1",
+		fencingGeneration: 1,
+		runtimeInstanceID: "runtime-1",
+		// A missing runtime user deterministically fails newProgramProcess after
+		// the exact authority and Secret sequence have been admitted.
+		runtimeUser: nil,
+	})
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	result := make(chan error, 1)
+	go func() {
+		result <- handleProgramRunConnection(
+			context.Background(),
+			guest,
+			nil,
+			newWaitingRunRegistry(),
+			registry,
+			wire.StreamHeader{
+				Type:             wire.StreamTypeProgramRun,
+				RunID:            "run-1",
+				WorkspaceID:      "workspace-1",
+				WorkspaceMountID: "mount-1",
+			},
+			0,
+		)
+	}()
+	authority := &workspacev0.WorkspaceRunAuthority{
+		Fence: &workspacev0.WorkspaceAuthorityFence{
+			WorkerInstanceId:       "worker-1",
+			WorkerEpoch:            1,
+			RuntimeInstanceId:      "runtime-1",
+			RuntimeIdentityId:      "runtime-identity-1",
+			WorkspaceId:            "workspace-1",
+			WorkspaceMountId:       "mount-1",
+			RunId:                  "run-1",
+			AttemptNumber:          2,
+			RunLeaseId:             "lease-1",
+			LeaseSequence:          1,
+			WorkspaceLeaseId:       "workspace-lease-1",
+			OwnershipGeneration:    1,
+			WriterGeneration:       1,
+			MountFencingGeneration: 1,
+			ExpiresAtUnixNano:      time.Now().Add(time.Minute).UnixNano(),
+			BaseWorkspaceVersionId: "version-1",
+		},
+		ChannelToken:    "channel-1",
+		WriteCapability: "write-capability",
+	}
+	if err := frameio.WriteProtoFrame(host, authority); err != nil {
+		t.Fatal(err)
+	}
+	request := testProgramRunRequest(testProgramStartFrame(t))
+	request.StartDeadlineUnixMs = time.Now().Add(time.Minute).UnixMilli()
+	if err := frameio.WriteProtoFrame(host, request); err != nil {
+		t.Fatal(err)
+	}
+	if err := frameio.WriteProtoFrame(host, programSecretsCompleteCommand(request)); err != nil {
+		t.Fatal(err)
+	}
+	var event runv0.RunEvent
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	failed := event.GetProgramProcessStartFailed()
+	if failed == nil || failed.GetRunId() != request.GetRunId() ||
+		failed.GetAttemptNumber() != request.GetAttemptNumber() ||
+		failed.GetRunLeaseId() != request.GetRunLeaseId() ||
+		failed.GetPhase() != "prepare" ||
+		failed.GetDiagnostic() != "Program process preparation failed" {
+		t.Fatalf("prepare failure event = %#v", event.GetEvent())
+	}
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "runtime user") {
+			t.Fatalf("handleProgramRunConnection() error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Program admission did not report prepare failure")
 	}
 }
 

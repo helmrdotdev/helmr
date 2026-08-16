@@ -24,6 +24,7 @@ type CheckpointSourceReleaser interface {
 type WorkspaceMountSessionRegistry interface {
 	RegisterWorkspaceMountSession(mount workerapi.WorkspaceMount, session vm.Session, channelToken string) func()
 	OpenWorkspaceMountSession(context.Context, string) (WorkspaceMountSession, error)
+	FailWorkspaceMountSession(context.Context, string) error
 	RenewWorkspaceAuthority(context.Context, *workspacev0.RenewWorkspaceAuthorityRequest) (*workspacev0.WorkspaceAuthorityFence, error)
 	BeginWorkspaceFinalization(context.Context, *workspacev0.BeginWorkspaceFinalizationRequest) (*workspacev0.BeginWorkspaceFinalizationResponse, error)
 	CaptureWorkspace(context.Context, *workspacev0.CaptureWorkspaceRequest, cas.Store) (WorkspaceCapture, error)
@@ -35,6 +36,10 @@ type WorkspaceMountSession struct {
 	ControlSession vm.Session
 	ChannelToken   string
 	Mount          workerapi.WorkspaceMount
+}
+
+type workspaceMountFailureRequest struct {
+	result chan error
 }
 
 type WorkspaceMountSessions struct {
@@ -98,6 +103,24 @@ func (s *WorkspaceMountSessions) OpenWorkspaceMountSession(ctx context.Context, 
 		ChannelToken:   entry.channelToken,
 		Mount:          entry.mount,
 	}, nil
+}
+
+func (s *WorkspaceMountSessions) FailWorkspaceMountSession(
+	ctx context.Context,
+	workspaceMountID string,
+) error {
+	id := strings.TrimSpace(workspaceMountID)
+	if id == "" {
+		return errors.New("workspace mount failure identity is required")
+	}
+	s.mu.RLock()
+	entry := s.sessions[id]
+	s.mu.RUnlock()
+	managed, ok := entry.session.(*managedWorkspaceMountSession)
+	if !ok || managed == nil {
+		return fmt.Errorf("%w: %s", ErrWorkspaceMountSessionNotFound, id)
+	}
+	return managed.requestFailure(ctx)
 }
 
 func (s *WorkspaceMountSessions) RenewWorkspaceAuthority(ctx context.Context, request *workspacev0.RenewWorkspaceAuthorityRequest) (*workspacev0.WorkspaceAuthorityFence, error) {
@@ -223,6 +246,7 @@ type managedWorkspaceMountSession struct {
 	releaseForCheckpointFinished bool
 	releaseForCheckpointErr      error
 	releaseForCheckpointDone     chan struct{}
+	failureRequests              chan workspaceMountFailureRequest
 }
 
 func newManagedWorkspaceMountSession(session vm.Session) *managedWorkspaceMountSession {
@@ -230,6 +254,22 @@ func newManagedWorkspaceMountSession(session vm.Session) *managedWorkspaceMountS
 		session:                  session,
 		closeDone:                make(chan struct{}),
 		releaseForCheckpointDone: make(chan struct{}),
+		failureRequests:          make(chan workspaceMountFailureRequest, 1),
+	}
+}
+
+func (s *managedWorkspaceMountSession) requestFailure(ctx context.Context) error {
+	request := workspaceMountFailureRequest{result: make(chan error, 1)}
+	select {
+	case s.failureRequests <- request:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-request.result:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

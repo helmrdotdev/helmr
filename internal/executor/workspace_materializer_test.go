@@ -1074,6 +1074,140 @@ func TestWorkspaceMaterializerFailsWorkspaceMountWhenSessionExits(t *testing.T) 
 	}
 }
 
+func TestWorkspaceMaterializerOwnsProgramStartFailureCleanup(t *testing.T) {
+	ctx := context.Background()
+	preparedClient, preparedServer := net.Pipe()
+	defer preparedServer.Close()
+	store, workspaceMount := testWorkspaceMountArtifacts(t)
+	workspaceMount.ID = "mat-1"
+	workspaceMount.OrgID = "org-1"
+	workspaceMount.WorkspaceID = "workspace-1"
+	workspaceMount.GuestdChannelToken = "channel-token"
+	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
+	go acknowledgePreparedWorkspaceMount(
+		t,
+		preparedServer,
+		workspaceMount,
+		workspaceMount.RuntimeInstanceID,
+	)
+	rawSession := &workspaceMaterializerTestSession{
+		streams:   []io.ReadWriteCloser{preparedClient},
+		operation: discardReadWriteCloser{},
+	}
+	pool := workspacePreparedRuntimePool(t, workspaceMount, rawSession)
+	sessions := NewWorkspaceMountSessions()
+	mounted := make(chan struct{})
+	client := &workspaceMaterializerTestClient{onMounted: func() { close(mounted) }}
+	materializer := WorkspaceMaterializer{
+		CAS:         store,
+		Sessions:    sessions,
+		TempDir:     t.TempDir(),
+		Heartbeat:   time.Hour,
+		PollEvery:   time.Hour,
+		RuntimePool: pool,
+	}
+	result := make(chan error, 1)
+	go func() {
+		result <- materializer.RunWorkspaceMount(ctx, workspaceMount, client)
+	}()
+	select {
+	case <-mounted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Workspace Mount did not become ready")
+	}
+	if err := sessions.FailWorkspaceMountSession(ctx, workspaceMount.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "failed before start proof") {
+			t.Fatalf("materializer error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Workspace Mount owner did not finish Program start failure")
+	}
+	if rawSession.closeCount() == 0 {
+		t.Fatal("Workspace Mount VM was not closed")
+	}
+	if len(client.failures) != 1 {
+		t.Fatalf("failures = %+v", client.failures)
+	}
+	if got := string(client.failures[0].Error); !strings.Contains(got, "workspace_mount_program_start_failed") ||
+		strings.Contains(got, "exec image runtime") {
+		t.Fatalf("failure error = %s", got)
+	}
+	if got := len(pool.Capacity.Snapshot().Reservations); got != 0 {
+		t.Fatalf("capacity reservations = %d, want 0", got)
+	}
+}
+
+func TestWorkspaceMaterializerProgramStartFailureKeepsCapacityWhenRuntimeCloseFails(t *testing.T) {
+	ctx := context.Background()
+	preparedClient, preparedServer := net.Pipe()
+	defer preparedServer.Close()
+	store, workspaceMount := testWorkspaceMountArtifacts(t)
+	workspaceMount.ID = "mat-close-failed"
+	workspaceMount.OrgID = "org-1"
+	workspaceMount.WorkspaceID = "workspace-1"
+	workspaceMount.GuestdChannelToken = "channel-token"
+	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
+	go acknowledgePreparedWorkspaceMount(
+		t,
+		preparedServer,
+		workspaceMount,
+		workspaceMount.RuntimeInstanceID,
+	)
+	rawCause := "signed-url-secret-sentinel"
+	rawSession := &workspaceMaterializerTestSession{
+		streams:   []io.ReadWriteCloser{preparedClient},
+		operation: discardReadWriteCloser{},
+		closeErr:  errors.New(rawCause),
+	}
+	pool := workspacePreparedRuntimePool(t, workspaceMount, rawSession)
+	sessions := NewWorkspaceMountSessions()
+	mounted := make(chan struct{})
+	client := &workspaceMaterializerTestClient{onMounted: func() { close(mounted) }}
+	materializer := WorkspaceMaterializer{
+		CAS:         store,
+		Sessions:    sessions,
+		TempDir:     t.TempDir(),
+		Heartbeat:   time.Hour,
+		PollEvery:   time.Hour,
+		RuntimePool: pool,
+	}
+	result := make(chan error, 1)
+	go func() {
+		result <- materializer.RunWorkspaceMount(ctx, workspaceMount, client)
+	}()
+	select {
+	case <-mounted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Workspace Mount did not become ready")
+	}
+	if err := sessions.FailWorkspaceMountSession(ctx, workspaceMount.ID); err == nil ||
+		!strings.Contains(err.Error(), rawCause) {
+		t.Fatalf("failure request error = %v, want local cleanup cause", err)
+	}
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "workspace mount runtime cleanup failed") {
+			t.Fatalf("materializer error = %v, want static cleanup failure", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Workspace Mount owner did not finish Program start failure")
+	}
+	if len(client.failures) != 1 {
+		t.Fatalf("failures = %+v", client.failures)
+	}
+	if got := string(client.failures[0].Error); !strings.Contains(got, "workspace_mount_runtime_close_failed") ||
+		strings.Contains(got, rawCause) {
+		t.Fatalf("failure error = %s", got)
+	}
+	if got := len(pool.Capacity.Snapshot().Reservations); got != 1 {
+		t.Fatalf("capacity reservations = %d, want 1 until cleanup is proven", got)
+	}
+}
+
 func TestWorkspaceMaterializerRegistersPreparedRuntimeOverOpenedStream(t *testing.T) {
 	ctx := context.Background()
 	preparedClient, preparedServer := net.Pipe()

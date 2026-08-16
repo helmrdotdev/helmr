@@ -317,6 +317,22 @@ SELECT run_leases.id,
   JOIN run_leases
     ON run_leases.worker_instance_id = worker.id
    AND run_leases.worker_epoch = worker.current_epoch
+  JOIN runtime_instances
+    ON runtime_instances.id = run_leases.runtime_instance_id
+   AND runtime_instances.worker_instance_id = run_leases.worker_instance_id
+   AND runtime_instances.worker_epoch = run_leases.worker_epoch
+   AND runtime_instances.observed_state = 'ready'
+   AND runtime_instances.reclaimed_at IS NULL
+  JOIN workspace_leases
+    ON workspace_leases.owner_run_lease_id = run_leases.id
+   AND workspace_leases.runtime_instance_id = run_leases.runtime_instance_id
+   AND workspace_leases.state = 'active'
+  JOIN workspace_mounts
+    ON workspace_mounts.id = workspace_leases.workspace_mount_id
+   AND workspace_mounts.runtime_instance_id = run_leases.runtime_instance_id
+   AND workspace_mounts.worker_instance_id = run_leases.worker_instance_id
+   AND workspace_mounts.worker_epoch = run_leases.worker_epoch
+   AND workspace_mounts.state = 'mounted'
  WHERE run_leases.worker_group_id = $1
    AND run_leases.state IN ('assigned', 'starting')
    AND run_leases.start_deadline_at > transaction_timestamp()

@@ -104,6 +104,81 @@ SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
 	}
 }
 
+func TestFreshRunLeaseRecoveryChargesExactRuntimeFailureBudget(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		initialCount int
+		wantStatus   string
+		wantCount    int
+		wantTerminal bool
+	}{
+		{name: "backoff", initialCount: 0, wantStatus: "queued", wantCount: 1},
+		{name: "exhaustion", initialCount: 7, wantStatus: "system_failed", wantCount: 8, wantTerminal: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture, leaseID, runtimeID := prepareFreshRunLease(t)
+			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE run_leases
+   SET state = 'starting', claimed_at = assigned_at,
+       start_deadline_at = transaction_timestamp() + interval '5 minutes',
+       expires_at = transaction_timestamp() + interval '10 minutes'
+ WHERE id = $1`, leaseID)
+			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runs SET runtime_preparation_count = $2 WHERE id = $1`,
+				fixture.runID, test.initialCount)
+			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runtime_instances
+   SET observed_state = 'failed', failed_at = transaction_timestamp(),
+       terminal_at = transaction_timestamp(), terminal_reason_code = 'workspace_mount_failed'
+ WHERE id = $1`, runtimeID)
+
+			recovered, err := fixture.authority.RecoverExpiredFreshRunLeases(fixture.ctx, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if recovered != 1 {
+				t.Fatalf("recovered = %d, want 1", recovered)
+			}
+			var status, leaseState string
+			var preparationCount int
+			var currentLease pgtype.UUID
+			var nextPreparation, runTerminal, attemptTerminal pgtype.Timestamptz
+			var attemptReason pgtype.Text
+			if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT runs.status, runs.runtime_preparation_count,
+       runs.current_run_lease_id, runs.next_runtime_preparation_at,
+       runs.terminal_at, run_attempts.terminal_at,
+       run_attempts.terminal_reason_code, run_leases.state
+  FROM runs
+  JOIN run_attempts ON run_attempts.run_id = runs.id
+                   AND run_attempts.number = runs.current_attempt_number
+  JOIN run_leases ON run_leases.id = $2
+ WHERE runs.id = $1`, fixture.runID, leaseID).Scan(
+				&status, &preparationCount, &currentLease, &nextPreparation,
+				&runTerminal, &attemptTerminal, &attemptReason, &leaseState,
+			); err != nil {
+				t.Fatal(err)
+			}
+			if status != test.wantStatus || preparationCount != test.wantCount ||
+				currentLease.Valid || leaseState != "lost" ||
+				runTerminal.Valid != test.wantTerminal ||
+				attemptTerminal.Valid != test.wantTerminal {
+				t.Fatalf("recovery status=%s count=%d current=%v next=%v run_terminal=%v attempt_terminal=%v reason=%v lease=%s",
+					status, preparationCount, currentLease, nextPreparation,
+					runTerminal, attemptTerminal, attemptReason, leaseState)
+			}
+			if test.wantTerminal {
+				if nextPreparation.Valid || !attemptReason.Valid ||
+					attemptReason.String != "runtime_preparation_failed" {
+					t.Fatalf("exhaustion next=%v reason=%v", nextPreparation, attemptReason)
+				}
+			} else if !nextPreparation.Valid || attemptReason.Valid {
+				t.Fatalf("backoff next=%v reason=%v", nextPreparation, attemptReason)
+			}
+		})
+	}
+}
+
 func TestFreshRunningLeaseLossAppliesPinnedRetryPolicy(t *testing.T) {
 	for _, entrypointEntered := range []bool{false, true} {
 		t.Run(map[bool]string{false: "before_entrypoint_ack", true: "after_entrypoint_ack"}[entrypointEntered], func(t *testing.T) {

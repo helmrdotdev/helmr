@@ -249,6 +249,7 @@ func run(log *slog.Logger) error {
 		CAS:                 store,
 		CheckpointEncryptor: checkpointEncryptor,
 		WorkspaceMounts:     workspaceMountSessions,
+		Log:                 log,
 		TempDir:             filepath.Join(workDir, "tmp"),
 	}
 	runner, err := worker.NewRunner(

@@ -365,6 +365,149 @@ func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 	}
 }
 
+func TestStartFreshProgramFailsExactMountOnTypedStartFailure(t *testing.T) {
+	claim := testFreshProgramClaim(t)
+	controlPlane := &testFreshProgramControlPlane{lease: claim.Lease}
+	guest, host := net.Pipe()
+	defer guest.Close()
+	session := newManagedWorkspaceMountSession(fakeGuestSession{stream: host})
+	sessions := NewWorkspaceMountSessions()
+	unregister := sessions.RegisterWorkspaceMountSession(
+		testWorkspaceMount(claim.Lease),
+		session,
+		"channel-1",
+	)
+	defer unregister()
+	guestResult := make(chan error, 1)
+	go func() {
+		if err := readFreshProgramAdmission(guest, claim.Lease); err != nil {
+			guestResult <- err
+			return
+		}
+		guestResult <- frameio.WriteProtoFrame(guest, &runv0.RunEvent{
+			Event: &runv0.RunEvent_ProgramProcessStartFailed{
+				ProgramProcessStartFailed: &runv0.ProgramProcessStartFailed{
+					RunId:         claim.Lease.RunID,
+					AttemptNumber: uint32(claim.Lease.AttemptNumber),
+					RunLeaseId:    claim.Lease.ID,
+					Phase:         "start",
+					Diagnostic:    "Program process start failed",
+				},
+			},
+		})
+	}()
+	failureRequested := make(chan struct{}, 1)
+	go func() {
+		request := <-session.failureRequests
+		failureRequested <- struct{}{}
+		request.result <- nil
+	}()
+
+	_, err := (ProgramRunner{WorkspaceMounts: sessions}).startNewProgram(
+		context.Background(),
+		&claim,
+		controlPlane,
+		&testFreshProgramEventSink{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "failed before start proof") {
+		t.Fatalf("startNewProgram() error = %v", err)
+	}
+	if err := <-guestResult; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-failureRequested:
+	case <-time.After(time.Second):
+		t.Fatal("typed start failure did not fail the exact Workspace Mount")
+	}
+	if len(controlPlane.snapshot()) != 0 {
+		t.Fatalf("Control Plane calls = %v", controlPlane.snapshot())
+	}
+}
+
+func TestStartFreshProgramRejectsNoncanonicalStartFailureDiagnosticWithoutFailingMount(t *testing.T) {
+	claim := testFreshProgramClaim(t)
+	guest, host := net.Pipe()
+	defer guest.Close()
+	session := newManagedWorkspaceMountSession(fakeGuestSession{stream: host})
+	sessions := NewWorkspaceMountSessions()
+	unregister := sessions.RegisterWorkspaceMountSession(
+		testWorkspaceMount(claim.Lease),
+		session,
+		"channel-1",
+	)
+	defer unregister()
+	go func() {
+		_ = readFreshProgramAdmission(guest, claim.Lease)
+		_ = frameio.WriteProtoFrame(guest, &runv0.RunEvent{
+			Event: &runv0.RunEvent_ProgramProcessStartFailed{
+				ProgramProcessStartFailed: &runv0.ProgramProcessStartFailed{
+					RunId:         claim.Lease.RunID,
+					AttemptNumber: uint32(claim.Lease.AttemptNumber),
+					RunLeaseId:    claim.Lease.ID,
+					Phase:         "start",
+					Diagnostic:    "guest-controlled diagnostic",
+				},
+			},
+		})
+	}()
+
+	_, err := (ProgramRunner{WorkspaceMounts: sessions}).startNewProgram(
+		context.Background(),
+		&claim,
+		&testFreshProgramControlPlane{lease: claim.Lease},
+		&testFreshProgramEventSink{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "diagnostic is invalid") {
+		t.Fatalf("startNewProgram() error = %v", err)
+	}
+	select {
+	case <-session.failureRequests:
+		t.Fatal("noncanonical guest diagnostic redirected Workspace Mount cleanup")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestStartFreshProgramRejectsMismatchedStartFailureProofWithoutFailingMount(t *testing.T) {
+	claim := testFreshProgramClaim(t)
+	guest, host := net.Pipe()
+	defer guest.Close()
+	session := newManagedWorkspaceMountSession(fakeGuestSession{stream: host})
+	sessions := NewWorkspaceMountSessions()
+	unregister := sessions.RegisterWorkspaceMountSession(
+		testWorkspaceMount(claim.Lease),
+		session,
+		"channel-1",
+	)
+	defer unregister()
+	go func() {
+		_ = readFreshProgramAdmission(guest, claim.Lease)
+		_ = frameio.WriteProtoFrame(guest, &runv0.RunEvent{
+			Event: &runv0.RunEvent_ProgramProcessStartFailed{
+				ProgramProcessStartFailed: &runv0.ProgramProcessStartFailed{
+					RunId: "other-run", AttemptNumber: uint32(claim.Lease.AttemptNumber),
+					RunLeaseId: claim.Lease.ID, Phase: "start", Diagnostic: "safe",
+				},
+			},
+		})
+	}()
+
+	_, err := (ProgramRunner{WorkspaceMounts: sessions}).startNewProgram(
+		context.Background(),
+		&claim,
+		&testFreshProgramControlPlane{lease: claim.Lease},
+		&testFreshProgramEventSink{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "does not match run lease") {
+		t.Fatalf("startNewProgram() error = %v", err)
+	}
+	select {
+	case <-session.failureRequests:
+		t.Fatal("mismatched guest proof redirected Workspace Mount cleanup")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 func TestStartFreshProgramStopsBlockedAdmissionAtStartDeadline(t *testing.T) {
 	claim := testFreshProgramClaim(t)
 	claim.Lease.StartDeadlineAt = time.Now().Add(50 * time.Millisecond).UTC()

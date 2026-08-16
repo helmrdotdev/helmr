@@ -79,11 +79,14 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount work
 		if closeErr := m.closeSession(session); closeErr != nil {
 			failure := workspaceMountFailure{
 				code: "workspace_mount_runtime_close_failed",
-				err:  fmt.Errorf("close workspace mount runtime: %w", closeErr),
+				err:  errors.New("workspace mount runtime cleanup failed"),
 			}
 			m.logWorkspaceMountPhase(mount, "workspace mount session close failed", "error", closeErr.Error())
-			_ = m.failWorkspaceMount(client, mount, failure)
-			runErr = errors.Join(runErr, failure)
+			var priorFailure workspaceMountFailure
+			if !errors.As(runErr, &priorFailure) || !priorFailure.reported {
+				_ = m.failWorkspaceMount(client, mount, failure)
+			}
+			runErr = errors.Join(runErr, fmt.Errorf("close workspace mount runtime: %w", closeErr))
 			return
 		}
 		if releaseErr := m.RuntimePool.ReleaseCheckout(mount.RuntimeInstanceID, mount.RuntimeEpoch); releaseErr != nil {
@@ -210,6 +213,27 @@ func (m WorkspaceMaterializer) serveWorkspaceMount(
 				code: "workspace_mount_vm_exited",
 				err:  fmt.Errorf("workspace mount VM exited: %w", err),
 			})
+		case request := <-session.failureRequests:
+			failure := workspaceMountFailure{
+				code: "workspace_mount_program_start_failed",
+				err:  errors.New("program process failed before start proof"),
+			}
+			closeErr := m.closeSession(session)
+			if closeErr != nil {
+				m.logWorkspaceMountPhase(
+					mount,
+					"workspace mount Program start failure cleanup failed",
+					"error", closeErr.Error(),
+				)
+				failure = workspaceMountFailure{
+					code: "workspace_mount_runtime_close_failed",
+					err:  errors.New("workspace mount runtime cleanup failed"),
+				}
+			}
+			reportErr := m.failWorkspaceMount(client, mount, failure)
+			failure.reported = reportErr == nil
+			request.result <- errors.Join(closeErr, reportErr)
+			return failure
 		case <-poll.C:
 			claimed, err := client.ClaimWorkspaceExec(renewal.ctx, workerapi.WorkspaceExecClaimRequest{
 				OrgID: mount.OrgID, WorkspaceMountID: mount.ID,
@@ -560,8 +584,9 @@ func (m WorkspaceMaterializer) startRenewalLoop(ctx context.Context, request wor
 }
 
 type workspaceMountFailure struct {
-	code string
-	err  error
+	code     string
+	err      error
+	reported bool
 }
 
 func (e workspaceMountFailure) Error() string {

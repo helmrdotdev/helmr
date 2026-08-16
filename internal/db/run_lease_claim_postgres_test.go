@@ -102,6 +102,32 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 	if state != RunLeaseStateAssigned || claimedAt.Valid {
 		t.Fatalf("discovery mutated assigned lease to state=%s claimed_at=%v", state, claimedAt)
 	}
+	if _, err := fixture.pool.Exec(ctx, `
+UPDATE workspace_mounts
+   SET state = 'failed', failed_at = now(), terminal_at = now(),
+       terminal_reason_code = 'test_failure'
+ WHERE id = (SELECT workspace_mount_id FROM workspace_leases
+              WHERE owner_run_lease_id = $1)`, starting.leaseID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = fixture.queries.DiscoverWorkerRunLeaseWork(ctx, DiscoverWorkerRunLeaseWorkParams{
+		WorkerGroupID: runLeaseTestWorkerGroup, RowLimit: 8,
+		WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || pgvalue.MustUUIDValue(rows[0].ID) != assigned.leaseID {
+		t.Fatalf("discovery after Mount failure = %+v, want only healthy assigned lease", rows)
+	}
+	if _, err := fixture.pool.Exec(ctx, `
+UPDATE workspace_mounts
+   SET state = 'mounted', failed_at = NULL, terminal_at = NULL,
+       terminal_reason_code = NULL
+ WHERE id = (SELECT workspace_mount_id FROM workspace_leases
+              WHERE owner_run_lease_id = $1)`, starting.leaseID); err != nil {
+		t.Fatal(err)
+	}
 
 	secretLocators, err := fixture.queries.GetRunLeaseSecretDeliveryLocators(ctx, GetRunLeaseSecretDeliveryLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
