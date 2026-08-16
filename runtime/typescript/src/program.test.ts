@@ -1,5 +1,6 @@
 import { create, fromBinary, toBinary, type GenMessage } from "@bufbuild/protobuf"
 import { runProto } from "@helmr/proto"
+import { spawn } from "node:child_process"
 import {
   actor,
   image,
@@ -22,6 +23,193 @@ const locatorURL = new URL(
 )
 
 describe("runProgram", () => {
+  test("releases the owned input iterator after the terminal Task outcome", async () => {
+    const definition = task({ id: "deploy", run: () => null })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+    const lifecycle: string[] = []
+    const input = observedFrames([
+      frameMessage(runProto.ProgramStartSchema, start),
+      frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+    ], async () => {
+      lifecycle.push("input-closed")
+    })
+
+    await runProgram(locatorURL, programIO({
+      input,
+      definition,
+      output,
+      onWrite: () => {
+        lifecycle.push(readEvent(output.at(-1)!).event.case ?? "unknown")
+      },
+    }))
+
+    expect(lifecycle).toEqual([
+      "entrypointReady",
+      "taskOutcome",
+      "input-closed",
+    ])
+  })
+
+  test("releases input after handled Task and Actor failures", async () => {
+    const cases = [
+      {
+        definition: task({ id: "deploy", run() { throw new Error("task failed") } }),
+        start: taskStart("noPayload"),
+      },
+      {
+        definition: actor({ id: "worker", run() { throw new Error("actor failed") } }),
+        start: actorStart(0n, 0n),
+      },
+    ] as const
+
+    for (const item of cases) {
+      let closeCount = 0
+      const input = observedFrames([
+        frameMessage(runProto.ProgramStartSchema, item.start),
+        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(item.start)),
+      ], async () => {
+        closeCount++
+      })
+      await runProgram(locatorURL, programIO({
+        input,
+        definition: item.definition,
+        output: [],
+      }))
+      expect(closeCount).toBe(1)
+    }
+  })
+
+  test("propagates input release failure after one terminal outcome", async () => {
+    const definition = task({ id: "deploy", run: () => null })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+    const input = observedFrames([
+      frameMessage(runProto.ProgramStartSchema, start),
+      frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+    ], async () => {
+      throw new Error("input release failed")
+    })
+
+    await expect(runProgram(locatorURL, programIO({
+      input,
+      definition,
+      output,
+    }))).rejects.toThrow("input release failed")
+    expect(output.map((value) => readEvent(value).event.case)).toEqual([
+      "entrypointReady",
+      "taskOutcome",
+    ])
+  })
+
+  test("does not release input on an exceptional protocol path", async () => {
+    let closeCount = 0
+    const start = taskStart("noPayload")
+    const input = observedFrames([
+      frameMessage(runProto.ProgramStartSchema, start),
+    ], async () => {
+      closeCount++
+    })
+
+    await expect(runProgram(locatorURL, programIO({
+      input,
+      definition: task({ id: "other", run: () => null }),
+      output: [],
+    }))).rejects.toThrow("does not match")
+    expect(closeCount).toBe(0)
+  })
+
+  test("generated Runtime exits while its parent retains stdin", async () => {
+    const start = taskStart("noPayload")
+    const runtimeEntryURL = new URL(
+      "../../../internal/runtime/entry.mjs",
+      import.meta.url,
+    ).href
+    const childSource = `
+      import { runProgram } from ${JSON.stringify(runtimeEntryURL)};
+      const definition = {};
+      Object.defineProperty(definition, Symbol.for("helmr.sdk.v0.definition"), {
+        value: Object.freeze({
+          kind: "task",
+          id: "deploy",
+          hasPayload: false,
+          handler: () => null
+        })
+      });
+      await runProgram(new URL("file:///opt/helmr/program/helmr/declarations.json"), {
+        input: process.stdin,
+        readLocator: async () => JSON.stringify({
+          architecture: "x86_64",
+          configResultDigest: "sha256:${"4".repeat(64)}",
+          declarations: [{
+            declaredId: "deploy",
+            kind: "task",
+            locator: {
+              exportName: "definition",
+              modulePath: ".helmr/modules/${"1".repeat(64)}.mjs",
+              slot: "handler"
+            },
+            manifest: {}
+          }],
+          formatVersion: 0,
+          queues: [],
+          runtimeContract: "helmr.runtime.v0"
+        }),
+        importModule: async () => ({ definition }),
+        write: async (frame) => { process.stdout.write(frame); }
+      });
+    `
+    const child = spawn("node", ["--input-type=module", "--eval", childSource], {
+      cwd: process.cwd(),
+      stdio: ["pipe", "pipe", "pipe"],
+    })
+    const closed = new Promise<{
+      code: number | null
+      signal: NodeJS.Signals | null
+    }>((resolve, reject) => {
+      child.once("error", reject)
+      child.once("close", (code, signal) => resolve({ code, signal }))
+    })
+    const output: Uint8Array[] = []
+    child.stdout.on("data", (value: Buffer) => {
+      output.push(new Uint8Array(value))
+    })
+    let stderr = ""
+    child.stderr.setEncoding("utf8")
+    child.stderr.on("data", (value: string) => {
+      stderr += value
+    })
+    child.stdin.write(concatenate(
+      frameMessage(runProto.ProgramStartSchema, start),
+      frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+    ))
+
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    try {
+      const result = await Promise.race([
+        closed,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => {
+            child.kill()
+            reject(new Error("generated Runtime retained its parent stdin"))
+          }, 5_000)
+        }),
+      ])
+      expect({ result, stderr }).toEqual({
+        result: { code: 0, signal: null },
+        stderr: "",
+      })
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout)
+      child.stdin.destroy()
+      if (child.exitCode === null && child.signalCode === null) child.kill()
+      await closed.catch(() => {})
+    }
+    expect(readConcatenatedEvents(concatenate(...output)).map((event) =>
+      event.event.case
+    )).toEqual(["entrypointReady", "taskOutcome"])
+  })
+
   test("reports an Actor return with its terminal cursor", async () => {
     let actorID = ""
     let sessionID = ""
@@ -2130,8 +2318,50 @@ function readEvent(value: Uint8Array): runProto.RunEvent {
   return fromBinary(runProto.RunEventSchema, value.subarray(4))
 }
 
+function readConcatenatedEvents(value: Uint8Array): runProto.RunEvent[] {
+  const result: runProto.RunEvent[] = []
+  let offset = 0
+  while (offset < value.byteLength) {
+    if (value.byteLength - offset < 4) throw new Error("truncated event header")
+    const size = new DataView(
+      value.buffer,
+      value.byteOffset + offset,
+      4,
+    ).getUint32(0)
+    offset += 4
+    if (value.byteLength - offset < size) throw new Error("truncated event body")
+    result.push(fromBinary(
+      runProto.RunEventSchema,
+      value.subarray(offset, offset + size),
+    ))
+    offset += size
+  }
+  return result
+}
+
 async function* frames(...values: Uint8Array[]): AsyncIterable<Uint8Array> {
   for (const value of values) yield value
+}
+
+function observedFrames(
+  values: readonly Uint8Array[],
+  onReturn: () => Promise<void>,
+): AsyncIterable<Uint8Array> {
+  return {
+    [Symbol.asyncIterator]() {
+      let index = 0
+      return {
+        async next(): Promise<IteratorResult<Uint8Array>> {
+          if (index >= values.length) return { done: true, value: undefined }
+          return { done: false, value: values[index++]! }
+        },
+        async return(): Promise<IteratorResult<Uint8Array>> {
+          await onReturn()
+          return { done: true, value: undefined }
+        },
+      }
+    },
+  }
 }
 
 async function* byteFrames(value: Uint8Array): AsyncIterable<Uint8Array> {

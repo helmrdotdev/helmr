@@ -4100,6 +4100,7 @@ function newUUIDv7() {
 
 class FrameReader {
   #iterator;
+  #closePromise;
   #chunk = new Uint8Array;
   #offset = 0;
   constructor(input) {
@@ -4112,6 +4113,17 @@ class FrameReader {
       throw new Error(`runtime frame length ${size} exceeds max ${maxBytes}`);
     }
     return this.#readExact(size);
+  }
+  close() {
+    if (this.#closePromise !== undefined)
+      return this.#closePromise;
+    this.#closePromise = this.#closeIterator();
+    return this.#closePromise;
+  }
+  async#closeIterator() {
+    const close = this.#iterator.return;
+    if (close !== undefined)
+      await close.call(this.#iterator);
   }
   async#readExact(size) {
     const result = new Uint8Array(size);
@@ -4349,9 +4361,10 @@ async function runProgram(locatorURL, io = defaultProgramIO()) {
   const decisions = new ResumeDecisionRouter(reader);
   if (definition.kind === "task") {
     await runTask(start, definition, io, decisions);
-    return;
+  } else {
+    await runActor(start, definition, io, decisions);
   }
-  await runActor(start, definition, io, decisions);
+  await reader.close();
 }
 async function loadProgramIndex(url, io) {
   const raw = io.readLocator === undefined ? await fs.readFile(url, "utf8") : await io.readLocator(url);
