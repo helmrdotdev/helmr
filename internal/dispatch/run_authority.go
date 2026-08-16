@@ -53,8 +53,10 @@ type runPlacementAuthority struct {
 	handoffRuntimeID          pgtype.UUID
 	handoffWorkspaceMountID   pgtype.UUID
 	handoffMountGeneration    pgtype.Int8
+	handoffAdmissionMountGen  pgtype.Int8
 	handoffOwnership          pgtype.Int8
 	handoffParentWriter       pgtype.Int8
+	handoffChildWriter        pgtype.Int8
 	attemptNumber             int32
 	stateVersion              int64
 	regionID                  string
@@ -190,7 +192,7 @@ SELECT run_generation, committed_input_sequence, next_input_sequence
 		authority.ownerActorRunID,
 	)
 	if err != nil {
-		return runPlacementAuthority{}, err
+		return runPlacementAuthority{}, fmt.Errorf("lock Run placement handoff ancestors: %w", err)
 	}
 	err = tx.QueryRow(ctx, `
 SELECT runs.id,
@@ -211,8 +213,10 @@ SELECT runs.id,
        child_handoff.handoff_runtime_instance_id,
        child_handoff.handoff_workspace_mount_id,
        child_handoff.handoff_mount_generation,
+       child_handoff.admission_mount_generation,
        child_handoff.ownership_generation,
        child_handoff.parent_writer_generation,
+       child_handoff.child_writer_generation,
 	       restore_wait.id,
 	       coalesce(restore_wait.resume_request_version, 0),
 	       restore_wait.checkpoint_id,
@@ -232,8 +236,13 @@ SELECT runs.id,
               handoff.handoff_runtime_instance_id,
               handoff.handoff_workspace_mount_id,
               handoff.handoff_mount_generation,
+              coalesce(
+                  prior_child.mount_fencing_generation,
+                  handoff.handoff_mount_generation
+              ) AS admission_mount_generation,
               handoff.ownership_generation,
-              handoff.parent_writer_generation
+              handoff.parent_writer_generation,
+              handoff.child_writer_generation
          FROM run_waits AS handoff
          JOIN runs AS parent
            ON parent.environment_id = handoff.environment_id
@@ -255,6 +264,29 @@ SELECT runs.id,
            ON base.workspace_id = handoff.workspace_id
           AND base.id = handoff.base_workspace_version_id
           AND base.state = 'private'
+         LEFT JOIN LATERAL (
+              SELECT child_workspace_lease.mount_fencing_generation
+                FROM run_leases AS child_lease
+                JOIN workspace_leases AS child_workspace_lease
+                  ON child_workspace_lease.owner_run_lease_id = child_lease.id
+                 AND child_workspace_lease.workspace_id = child_lease.workspace_id
+                 AND child_workspace_lease.runtime_instance_id =
+                     handoff.handoff_runtime_instance_id
+                 AND child_workspace_lease.workspace_mount_id =
+                     handoff.handoff_workspace_mount_id
+                 AND child_workspace_lease.base_version_id =
+                     handoff.base_workspace_version_id
+                 AND child_workspace_lease.ownership_generation =
+                     handoff.ownership_generation
+                 AND child_workspace_lease.writer_generation =
+                     handoff.child_writer_generation
+                 AND child_workspace_lease.state IN ('released', 'fenced')
+               WHERE child_lease.run_id = runs.id
+                 AND child_lease.workspace_id = runs.workspace_id
+                 AND child_lease.state IN ('failed', 'expired', 'lost', 'rejected')
+               ORDER BY child_lease.lease_sequence DESC
+               LIMIT 1
+         ) AS prior_child ON handoff.child_writer_generation IS NOT NULL
         WHERE handoff.child_run_id = runs.id
           AND handoff.child_parent_owned IS TRUE
           AND handoff.workspace_id = runs.workspace_id
@@ -267,7 +299,8 @@ SELECT runs.id,
           AND handoff.handoff_mount_generation IS NOT NULL
           AND handoff.ownership_generation IS NOT NULL
           AND handoff.parent_writer_generation IS NOT NULL
-          AND handoff.child_writer_generation IS NULL
+          AND (handoff.child_writer_generation IS NULL
+               OR prior_child.mount_fencing_generation IS NOT NULL)
   ) AS child_handoff ON true
   LEFT JOIN LATERAL (
 	       SELECT run_waits.id,
@@ -394,8 +427,10 @@ SELECT runs.id,
 		&authority.handoffRuntimeID,
 		&authority.handoffWorkspaceMountID,
 		&authority.handoffMountGeneration,
+		&authority.handoffAdmissionMountGen,
 		&authority.handoffOwnership,
 		&authority.handoffParentWriter,
+		&authority.handoffChildWriter,
 		&authority.resumeRunWaitID,
 		&authority.resumeRequestVersion,
 		&authority.restoreCheckpointID,
@@ -411,7 +446,7 @@ SELECT runs.id,
 		&actorStartInputHighWatermark,
 	)
 	if err != nil {
-		return runPlacementAuthority{}, err
+		return runPlacementAuthority{}, fmt.Errorf("lock Run placement Run authority: %w", err)
 	}
 	authority.sameWorkspaceResume = authority.resumeHandoffRuntimeID.Valid
 	if authority.sameWorkspaceResume &&
@@ -420,13 +455,13 @@ SELECT runs.id,
 			!authority.resumeHandoffOwnership.Valid ||
 			!authority.resumeHandoffParentWriter.Valid ||
 			!authority.resumeHandoffChildWriter.Valid) {
-		return runPlacementAuthority{}, pgx.ErrNoRows
+		return runPlacementAuthority{}, fmt.Errorf("lock Run placement resume handoff shape: %w", pgx.ErrNoRows)
 	}
 	// A nested failed handoff cannot migrate its enclosing same-kernel edge.
 	// Its completion transaction unwinds that edge before placement can see it.
 	if authority.sameWorkspaceResume && authority.handoffChildWaitID.Valid &&
 		!authority.handoffResumeSucceeded {
-		return runPlacementAuthority{}, pgx.ErrNoRows
+		return runPlacementAuthority{}, fmt.Errorf("lock Run placement nested handoff outcome: %w", pgx.ErrNoRows)
 	}
 	var manifest []byte
 	workspaceOwnerPredicate := "workspaces.owner_run_id = $5 AND workspaces.owner_session_id IS NULL"
@@ -478,21 +513,28 @@ SELECT workspaces.deployment_definition_id,
 		&manifest,
 	)
 	if err != nil {
-		return runPlacementAuthority{}, err
+		return runPlacementAuthority{}, fmt.Errorf("lock Run placement Workspace authority: %w", err)
 	}
 	if authority.handoffChildWaitID.Valid && !authority.sameWorkspaceResume {
 		if !authority.handoffMountGeneration.Valid ||
+			!authority.handoffAdmissionMountGen.Valid ||
 			!authority.handoffOwnership.Valid ||
 			authority.handoffOwnership.Int64 != authority.ownershipGeneration ||
-			!authority.handoffParentWriter.Valid ||
-			authority.handoffParentWriter.Int64 != authority.writerGeneration {
-			return runPlacementAuthority{}, pgx.ErrNoRows
+			!authority.handoffParentWriter.Valid {
+			return runPlacementAuthority{}, fmt.Errorf("lock Run placement child handoff shape: %w", pgx.ErrNoRows)
+		}
+		expectedWriter := authority.handoffParentWriter.Int64
+		if authority.handoffChildWriter.Valid {
+			expectedWriter = authority.handoffChildWriter.Int64
+		}
+		if expectedWriter != authority.writerGeneration {
+			return runPlacementAuthority{}, fmt.Errorf("lock Run placement child writer: %w", pgx.ErrNoRows)
 		}
 	}
 	if authority.sameWorkspaceResume {
 		if authority.resumeHandoffOwnership.Int64 != authority.ownershipGeneration ||
 			authority.resumeHandoffChildWriter.Int64 > authority.writerGeneration {
-			return runPlacementAuthority{}, pgx.ErrNoRows
+			return runPlacementAuthority{}, fmt.Errorf("lock Run placement resume handoff generation: %w", pgx.ErrNoRows)
 		}
 		if authority.handoffResumeSucceeded &&
 			authority.resumeHandoffChildWriter.Int64 != authority.writerGeneration {
@@ -526,7 +568,7 @@ SELECT EXISTS (
 				authority.attemptNumber,
 			).Scan(&fenced)
 			if err != nil || !fenced.Valid || !fenced.Bool {
-				return runPlacementAuthority{}, pgx.ErrNoRows
+				return runPlacementAuthority{}, fmt.Errorf("lock Run placement resume handoff fence: %w", pgx.ErrNoRows)
 			}
 		}
 	}
@@ -554,7 +596,7 @@ SELECT run_attempts.base_workspace_version_id,
 		authority.handoffChildWaitID.Valid,
 	).Scan(&attemptBaseVersionID, &attemptSessionInputStartSequence)
 	if err != nil {
-		return runPlacementAuthority{}, err
+		return runPlacementAuthority{}, fmt.Errorf("lock Run placement Attempt authority: %w", err)
 	}
 	if !authority.baseVersionID.Valid {
 		authority.baseVersionID = attemptBaseVersionID
@@ -566,7 +608,7 @@ SELECT run_attempts.base_workspace_version_id,
 			actorStartInputSequence.Int64 > actorStartInputHighWatermark.Int64 ||
 			actorCommittedInputSequence < actorStartInputSequence.Int64 ||
 			actorCommittedInputSequence >= actorNextInputSequence) {
-		return runPlacementAuthority{}, pgx.ErrNoRows
+		return runPlacementAuthority{}, fmt.Errorf("lock Run placement Actor input authority: %w", pgx.ErrNoRows)
 	}
 	if authority.restoreCheckpointID.Valid {
 		err = tx.QueryRow(ctx, `
@@ -688,7 +730,7 @@ SELECT source_runtime.id,
 			&authority.restoreSubstrateContract,
 		)
 		if err != nil {
-			return runPlacementAuthority{}, err
+			return runPlacementAuthority{}, fmt.Errorf("lock Run placement restore authority: %w", err)
 		}
 	}
 
@@ -712,7 +754,7 @@ SELECT deployments.id
 		authority.entrypointKind,
 	).Scan(&deploymentID)
 	if err != nil {
-		return runPlacementAuthority{}, err
+		return runPlacementAuthority{}, fmt.Errorf("lock Run placement Deployment authority: %w", err)
 	}
 	var workspaceManifest deployment.SandboxManifest
 	decoder := json.NewDecoder(bytes.NewReader(manifest))
@@ -761,7 +803,6 @@ WITH RECURSIVE ancestors AS (
        AND handoff.handoff_mount_generation IS NOT NULL
        AND handoff.ownership_generation IS NOT NULL
        AND handoff.parent_writer_generation IS NOT NULL
-       AND handoff.child_writer_generation IS NULL
     UNION
     SELECT parent.id,
            parent.environment_id,
@@ -833,7 +874,6 @@ WITH RECURSIVE ancestors AS (
        AND handoff.handoff_mount_generation IS NOT NULL
        AND handoff.ownership_generation IS NOT NULL
        AND handoff.parent_writer_generation IS NOT NULL
-       AND handoff.child_writer_generation IS NULL
     UNION
     SELECT child.wait_id,
            parent.id,
@@ -1121,6 +1161,40 @@ SELECT state,
 			return pgx.ErrNoRows
 		}
 	}
+	if authority.handoffChildWriter.Valid {
+		var priorRunLeaseID, priorWorkspaceLeaseID pgtype.UUID
+		err := tx.QueryRow(ctx, `
+SELECT child_lease.id, child_workspace_lease.id
+  FROM run_leases AS child_lease
+  JOIN workspace_leases AS child_workspace_lease
+    ON child_workspace_lease.owner_run_lease_id = child_lease.id
+   AND child_workspace_lease.workspace_id = child_lease.workspace_id
+   AND child_workspace_lease.runtime_instance_id = $3
+   AND child_workspace_lease.workspace_mount_id = $4
+   AND child_workspace_lease.base_version_id = $5
+   AND child_workspace_lease.ownership_generation = $6
+   AND child_workspace_lease.writer_generation = $7
+   AND child_workspace_lease.mount_fencing_generation = $8
+   AND child_workspace_lease.state IN ('released', 'fenced')
+ WHERE child_lease.run_id = $1
+   AND child_lease.workspace_id = $2
+   AND child_lease.state IN ('failed', 'expired', 'lost', 'rejected')
+ ORDER BY child_lease.lease_sequence DESC
+ LIMIT 1
+ FOR UPDATE OF child_lease, child_workspace_lease`,
+			authority.runID,
+			authority.workspaceID,
+			runtime.id,
+			mount.id,
+			authority.baseVersionID,
+			authority.ownershipGeneration,
+			authority.handoffChildWriter.Int64,
+			authority.handoffAdmissionMountGen.Int64,
+		).Scan(&priorRunLeaseID, &priorWorkspaceLeaseID)
+		if err != nil {
+			return err
+		}
+	}
 
 	var priorChildWriter pgtype.Int8
 	for index, edge := range edges {
@@ -1199,7 +1273,7 @@ SELECT handoff.run_id,
 		if index == len(edges)-1 {
 			if edge.waitID != authority.handoffChildWaitID ||
 				edge.childRunID != authority.runID ||
-				childWriter.Valid ||
+				childWriter != authority.handoffChildWriter ||
 				parentWriter != authority.handoffParentWriter.Int64 {
 				return pgx.ErrNoRows
 			}

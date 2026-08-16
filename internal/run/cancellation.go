@@ -73,6 +73,7 @@ type cancellationWait struct {
 	handoffRuntimeInstanceID pgtype.UUID
 	handoffWorkspaceMountID  pgtype.UUID
 	baseWorkspaceVersionID   pgtype.UUID
+	childWriterGeneration    pgtype.Int8
 }
 
 type terminalChildWaitResolution struct {
@@ -918,6 +919,7 @@ func lockCancellationWaits(
 			handoffRuntimeInstanceID: row.HandoffRuntimeInstanceID,
 			handoffWorkspaceMountID:  row.HandoffWorkspaceMountID,
 			baseWorkspaceVersionID:   row.BaseWorkspaceVersionID,
+			childWriterGeneration:    row.ChildWriterGeneration,
 		}
 		if wait.childRunID.Valid {
 			childID := uuid.UUID(wait.childRunID.Bytes)

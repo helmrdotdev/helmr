@@ -225,7 +225,7 @@ func (d *Authority) useRunRuntime(
 			}
 		} else if authority.handoffChildWaitID.Valid &&
 			(mount.id != authority.handoffWorkspaceMountID ||
-				mount.fencingGeneration != authority.handoffMountGeneration.Int64) {
+				mount.fencingGeneration != authority.handoffAdmissionMountGen.Int64) {
 			return runWorkspaceMount{}, ErrCapacityUnavailable
 		}
 		return mount, nil

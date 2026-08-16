@@ -802,6 +802,87 @@ UPDATE run_attempts
    AND entrypoint_entered_at IS NULL
    AND terminal_at IS NULL
 RETURNING *;
+
+-- name: ListFreshRunLeaseRecoveryCandidates :many
+SELECT runs.org_id,
+       runs.project_id,
+       runs.environment_id,
+       runs.id AS run_id,
+       runs.workspace_id,
+       runs.current_attempt_number,
+       run_leases.id AS run_lease_id
+  FROM run_leases
+  JOIN runs
+    ON runs.id = run_leases.run_id
+   AND runs.workspace_id = run_leases.workspace_id
+   AND runs.current_attempt_number = run_leases.attempt_number
+   AND runs.current_run_lease_id = run_leases.id
+  JOIN worker_instances
+    ON worker_instances.id = run_leases.worker_instance_id
+  JOIN runtime_instances
+    ON runtime_instances.id = run_leases.runtime_instance_id
+   AND runtime_instances.worker_instance_id = run_leases.worker_instance_id
+   AND runtime_instances.worker_epoch = run_leases.worker_epoch
+   AND runtime_instances.workspace_id = run_leases.workspace_id
+   AND runtime_instances.reclaimed_at IS NULL
+  JOIN workspace_leases
+    ON workspace_leases.owner_run_lease_id = run_leases.id
+   AND workspace_leases.workspace_id = run_leases.workspace_id
+   AND workspace_leases.runtime_instance_id = run_leases.runtime_instance_id
+   AND workspace_leases.state IN ('active', 'releasing')
+  JOIN workspace_mounts
+    ON workspace_mounts.id = workspace_leases.workspace_mount_id
+   AND workspace_mounts.runtime_instance_id = run_leases.runtime_instance_id
+   AND workspace_mounts.workspace_id = run_leases.workspace_id
+   AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting', 'lost', 'failed')
+ WHERE run_leases.state IN ('assigned', 'starting', 'running')
+   AND ((run_leases.state IN ('assigned', 'starting')
+         AND runs.status = 'queued'
+         AND runs.active_started_at IS NULL)
+        OR (run_leases.state = 'running'
+            AND runs.status = 'running'
+            AND runs.active_started_at IS NOT NULL))
+   AND NOT EXISTS (
+       SELECT 1
+         FROM run_waits
+        WHERE run_waits.run_id = runs.id
+          AND run_waits.attempt_number = runs.current_attempt_number
+          AND run_waits.current_run_lease_id = run_leases.id
+          AND run_waits.suspension_state = 'resuming'
+   )
+   AND (run_leases.expires_at <= transaction_timestamp()
+        OR (run_leases.state IN ('assigned', 'starting')
+            AND run_leases.start_deadline_at <= transaction_timestamp())
+        OR (run_leases.state = 'running'
+            AND transaction_timestamp() >= runs.active_started_at
+                + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text
+                   || ' milliseconds')::interval)
+        OR worker_instances.lost_at <= transaction_timestamp()
+        OR worker_instances.termination_ready_at <= transaction_timestamp()
+        OR worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
+        OR runtime_instances.lost_at <= transaction_timestamp()
+        OR runtime_instances.failed_at <= transaction_timestamp()
+        OR workspace_mounts.lost_at <= transaction_timestamp()
+        OR workspace_mounts.failed_at <= transaction_timestamp())
+ ORDER BY LEAST(
+              run_leases.expires_at,
+              CASE
+                  WHEN run_leases.state IN ('assigned', 'starting')
+                  THEN run_leases.start_deadline_at
+                  ELSE runs.active_started_at
+                       + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text
+                          || ' milliseconds')::interval
+              END,
+              COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
+              COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
+              COALESCE(runtime_instances.lost_at, 'infinity'::timestamptz),
+              COALESCE(runtime_instances.failed_at, 'infinity'::timestamptz),
+              COALESCE(workspace_mounts.lost_at, 'infinity'::timestamptz),
+              COALESCE(workspace_mounts.failed_at, 'infinity'::timestamptz)
+          ),
+          runs.id
+ LIMIT sqlc.arg(limit_count);
+
 -- name: RecoverExpiredRunResumes :many
 WITH candidates AS MATERIALIZED (
     SELECT runs.id AS run_id,

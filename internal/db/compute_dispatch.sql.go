@@ -539,7 +539,25 @@ WITH candidate_scopes AS (
                      AND handoff.handoff_mount_generation IS NOT NULL
                      AND handoff.ownership_generation IS NOT NULL
                      AND handoff.parent_writer_generation IS NOT NULL
-                     AND handoff.child_writer_generation IS NULL
+                     AND (
+                         handoff.child_writer_generation IS NULL
+                         OR EXISTS (
+                             SELECT 1
+                               FROM run_leases AS prior_child_lease
+                               JOIN workspace_leases AS prior_child_workspace_lease
+                                 ON prior_child_workspace_lease.owner_run_lease_id = prior_child_lease.id
+                                AND prior_child_workspace_lease.workspace_id = prior_child_lease.workspace_id
+                                AND prior_child_workspace_lease.runtime_instance_id = handoff.handoff_runtime_instance_id
+                                AND prior_child_workspace_lease.workspace_mount_id = handoff.handoff_workspace_mount_id
+                                AND prior_child_workspace_lease.base_version_id = handoff.base_workspace_version_id
+                                AND prior_child_workspace_lease.ownership_generation = handoff.ownership_generation
+                                AND prior_child_workspace_lease.writer_generation = handoff.child_writer_generation
+                                AND prior_child_workspace_lease.state IN ('released', 'fenced')
+                              WHERE prior_child_lease.run_id = runs.id
+                                AND prior_child_lease.workspace_id = runs.workspace_id
+                                AND prior_child_lease.state IN ('failed', 'expired', 'lost', 'rejected')
+                         )
+                     )
               )
             ))
            OR
@@ -925,7 +943,25 @@ SELECT runs.org_id,
               AND handoff.handoff_mount_generation IS NOT NULL
               AND handoff.ownership_generation IS NOT NULL
               AND handoff.parent_writer_generation IS NOT NULL
-              AND handoff.child_writer_generation IS NULL
+              AND (
+                  handoff.child_writer_generation IS NULL
+                  OR EXISTS (
+                      SELECT 1
+                        FROM run_leases AS prior_child_lease
+                        JOIN workspace_leases AS prior_child_workspace_lease
+                          ON prior_child_workspace_lease.owner_run_lease_id = prior_child_lease.id
+                         AND prior_child_workspace_lease.workspace_id = prior_child_lease.workspace_id
+                         AND prior_child_workspace_lease.runtime_instance_id = handoff.handoff_runtime_instance_id
+                         AND prior_child_workspace_lease.workspace_mount_id = handoff.handoff_workspace_mount_id
+                         AND prior_child_workspace_lease.base_version_id = handoff.base_workspace_version_id
+                         AND prior_child_workspace_lease.ownership_generation = handoff.ownership_generation
+                         AND prior_child_workspace_lease.writer_generation = handoff.child_writer_generation
+                         AND prior_child_workspace_lease.state IN ('released', 'fenced')
+                       WHERE prior_child_lease.run_id = runs.id
+                         AND prior_child_lease.workspace_id = runs.workspace_id
+                         AND prior_child_lease.state IN ('failed', 'expired', 'lost', 'rejected')
+                  )
+              )
        ))::boolean AS requires_retained_runtime,
        retained_capacity.worker_pool_id AS retained_worker_pool_id,
        COALESCE(capacity_restore.worker_group_id, '') AS required_worker_group_id,
@@ -995,7 +1031,25 @@ SELECT runs.org_id,
                     AND handoff.handoff_mount_generation IS NOT NULL
                     AND handoff.ownership_generation IS NOT NULL
                     AND handoff.parent_writer_generation IS NOT NULL
-                    AND handoff.child_writer_generation IS NULL
+                    AND (
+                        handoff.child_writer_generation IS NULL
+                        OR EXISTS (
+                            SELECT 1
+                              FROM run_leases AS prior_child_lease
+                              JOIN workspace_leases AS prior_child_workspace_lease
+                                ON prior_child_workspace_lease.owner_run_lease_id = prior_child_lease.id
+                               AND prior_child_workspace_lease.workspace_id = prior_child_lease.workspace_id
+                               AND prior_child_workspace_lease.runtime_instance_id = handoff.handoff_runtime_instance_id
+                               AND prior_child_workspace_lease.workspace_mount_id = handoff.handoff_workspace_mount_id
+                               AND prior_child_workspace_lease.base_version_id = handoff.base_workspace_version_id
+                               AND prior_child_workspace_lease.ownership_generation = handoff.ownership_generation
+                               AND prior_child_workspace_lease.writer_generation = handoff.child_writer_generation
+                               AND prior_child_workspace_lease.state IN ('released', 'fenced')
+                             WHERE prior_child_lease.run_id = runs.id
+                               AND prior_child_lease.workspace_id = runs.workspace_id
+                               AND prior_child_lease.state IN ('failed', 'expired', 'lost', 'rejected')
+                        )
+                    )
              ) AS retained
             ORDER BY retained.precedence, retained.runtime_instance_id
             LIMIT 1
@@ -1127,7 +1181,25 @@ SELECT runs.org_id,
                  AND handoff.handoff_mount_generation IS NOT NULL
                  AND handoff.ownership_generation IS NOT NULL
                  AND handoff.parent_writer_generation IS NOT NULL
-                 AND handoff.child_writer_generation IS NULL
+                 AND (
+                     handoff.child_writer_generation IS NULL
+                     OR EXISTS (
+                         SELECT 1
+                           FROM run_leases AS prior_child_lease
+                           JOIN workspace_leases AS prior_child_workspace_lease
+                             ON prior_child_workspace_lease.owner_run_lease_id = prior_child_lease.id
+                            AND prior_child_workspace_lease.workspace_id = prior_child_lease.workspace_id
+                            AND prior_child_workspace_lease.runtime_instance_id = handoff.handoff_runtime_instance_id
+                            AND prior_child_workspace_lease.workspace_mount_id = handoff.handoff_workspace_mount_id
+                            AND prior_child_workspace_lease.base_version_id = handoff.base_workspace_version_id
+                            AND prior_child_workspace_lease.ownership_generation = handoff.ownership_generation
+                            AND prior_child_workspace_lease.writer_generation = handoff.child_writer_generation
+                            AND prior_child_workspace_lease.state IN ('released', 'fenced')
+                          WHERE prior_child_lease.run_id = runs.id
+                            AND prior_child_lease.workspace_id = runs.workspace_id
+                            AND prior_child_lease.state IN ('failed', 'expired', 'lost', 'rejected')
+                     )
+                 )
           )
         ))
        OR

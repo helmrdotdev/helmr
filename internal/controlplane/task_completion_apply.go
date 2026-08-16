@@ -215,20 +215,6 @@ func (s *Server) completeTask(
 			return staleTaskCompletion(err)
 		}
 		if retry {
-			if sameWorkspaceChildFinalization(authority) {
-				if _, err := work.q.ClearSameWorkspaceChildWriter(
-					ctx,
-					db.ClearSameWorkspaceChildWriterParams{
-						CompletedAt: completedAt, RunWaitID: authority.enclosingWait.ID,
-						EnvironmentID: authority.run.EnvironmentID,
-						ParentRunID:   authority.parentRun.ID, WorkspaceID: authority.workspace.ID,
-						ChildRunID:            authority.run.ID,
-						ChildWriterGeneration: authority.enclosingWait.ChildWriterGeneration,
-					},
-				); err != nil {
-					return staleTaskCompletion(err)
-				}
-			}
 			return scheduleTaskRetry(ctx, work.q, authority, secrets, completedAt, retryAt)
 		}
 		if sameWorkspaceChildFinalization(authority) {

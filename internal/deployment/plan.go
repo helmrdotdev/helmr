@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/sourceid"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -24,8 +25,8 @@ const (
 	SchemaKindNone     = SchemaKind("none")
 	SchemaKindStandard = SchemaKind("standard_schema")
 
-	RetryJitterNone = RetryJitter("none")
-	RetryJitterFull = RetryJitter("full")
+	RetryJitterNone = retry.JitterNone
+	RetryJitterFull = retry.JitterFull
 
 	maxBuildPlanBytes         = 16 << 20
 	maxBuildDefinitions       = 10000
@@ -35,12 +36,12 @@ const (
 	maxRunDurationMs    int64 = 86400000
 	maxQueuedRunTTLMs   int64 = 31536000000
 	maxActorIdleMs      int64 = 3600000
-	maxRetryDelayMs     int64 = 86400000
+	maxRetryDelayMs     int64 = retry.MaxDelayMilliseconds
 )
 
 type DefinitionKind string
 type SchemaKind string
-type RetryJitter string
+type RetryJitter = retry.Jitter
 
 type BuildPlan struct {
 	FormatVersion int               `json:"formatVersion"`
@@ -93,18 +94,8 @@ type RunManifest struct {
 	TTLMs         *int64        `json:"ttlMs,omitempty"`
 }
 
-type RetryManifest struct {
-	Enabled     bool          `json:"enabled"`
-	MaxAttempts *int64        `json:"maxAttempts,omitempty"`
-	Backoff     *RetryBackoff `json:"backoff,omitempty"`
-}
-
-type RetryBackoff struct {
-	MinMs  int64       `json:"minMs"`
-	MaxMs  int64       `json:"maxMs"`
-	Factor int64       `json:"factor"`
-	Jitter RetryJitter `json:"jitter"`
-}
+type RetryManifest = retry.Manifest
+type RetryBackoff = retry.Backoff
 
 type ScheduleManifest struct {
 	Cron      string                    `json:"cron"`
@@ -465,66 +456,12 @@ func validateRunManifest(run RunManifest, queues map[string]struct{}) error {
 	return validateRetryManifest(run.Retry)
 }
 
-func validateRetryManifest(retry RetryManifest) error {
-	if !retry.Enabled {
-		if retry.MaxAttempts != nil || retry.Backoff != nil {
-			return errors.New("disabled retry must contain only enabled")
-		}
-		return nil
-	}
-	if retry.MaxAttempts == nil || *retry.MaxAttempts < 1 || *retry.MaxAttempts > 10 {
-		return errors.New("enabled retry maxAttempts must be in [1,10]")
-	}
-	if retry.Backoff == nil {
-		return errors.New("enabled retry requires backoff")
-	}
-	if retry.Backoff.MinMs < 1 || retry.Backoff.MinMs > maxRetryDelayMs {
-		return fmt.Errorf("retry backoff minMs must be in [1,%d]", maxRetryDelayMs)
-	}
-	if retry.Backoff.MaxMs < 1 || retry.Backoff.MaxMs > maxRetryDelayMs {
-		return fmt.Errorf("retry backoff maxMs must be in [1,%d]", maxRetryDelayMs)
-	}
-	if retry.Backoff.MinMs > retry.Backoff.MaxMs {
-		return errors.New("retry backoff minMs must not exceed maxMs")
-	}
-	if retry.Backoff.Factor < 1 || retry.Backoff.Factor > 100 {
-		return errors.New("retry backoff factor must be an integer in [1,100]")
-	}
-	if retry.Backoff.Jitter != RetryJitterNone && retry.Backoff.Jitter != RetryJitterFull {
-		return fmt.Errorf("retry backoff jitter %q is unsupported", retry.Backoff.Jitter)
-	}
-	return nil
+func validateRetryManifest(manifest RetryManifest) error {
+	return retry.Validate(manifest)
 }
 
 func ParseRetryManifest(raw []byte) (RetryManifest, error) {
-	canonical, err := jsoncanon.Transform(raw)
-	if err != nil {
-		return RetryManifest{}, fmt.Errorf("canonicalize retry manifest: %w", err)
-	}
-	var manifest RetryManifest
-	decoder := json.NewDecoder(bytes.NewReader(canonical))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&manifest); err != nil {
-		return RetryManifest{}, fmt.Errorf("decode retry manifest: %w", err)
-	}
-	if err := ensureEOF(decoder, "retry manifest"); err != nil {
-		return RetryManifest{}, err
-	}
-	if err := validateRetryManifest(manifest); err != nil {
-		return RetryManifest{}, err
-	}
-	completeRaw, err := json.Marshal(manifest)
-	if err != nil {
-		return RetryManifest{}, fmt.Errorf("encode retry manifest: %w", err)
-	}
-	complete, err := jsoncanon.Transform(completeRaw)
-	if err != nil {
-		return RetryManifest{}, fmt.Errorf("canonicalize complete retry manifest: %w", err)
-	}
-	if !bytes.Equal(canonical, complete) {
-		return RetryManifest{}, errors.New("retry manifest does not match the complete canonical v0 shape")
-	}
-	return manifest, nil
+	return retry.Parse(raw)
 }
 
 func validateScheduleManifest(manifest ScheduleManifest) error {

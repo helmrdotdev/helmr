@@ -119,13 +119,13 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure stale worker fencer: %w", err)
 	}
-	runResumeRecoveryLock, err := dispatch.NewRunResumeRecoveryAdvisoryLock(runDispatchPool)
+	runLeaseRecoveryLock, err := dispatch.NewRunLeaseRecoveryAdvisoryLock(runDispatchPool)
 	if err != nil {
-		return fmt.Errorf("configure run resume recovery lock: %w", err)
+		return fmt.Errorf("configure Run lease recovery lock: %w", err)
 	}
-	runResumeReconciler, err := dispatch.NewRunResumeReconciler(runDispatchAuthority, runResumeRecoveryLock, log)
+	runLeaseReconciler, err := dispatch.NewRunLeaseReconciler(runDispatchAuthority, runLeaseRecoveryLock, log)
 	if err != nil {
-		return fmt.Errorf("configure run resume reconciler: %w", err)
+		return fmt.Errorf("configure Run lease reconciler: %w", err)
 	}
 	scheduleAuthority := deployment.NewScheduleAuthority()
 	scheduleAdmitter, err := schedule.NewDBAdmitter(pool, scheduleAuthority)
@@ -233,7 +233,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	defer cancel()
 	runners := []func() error{
 		func() error { return staleWorkerFencer.Run(runCtx) },
-		func() error { return runResumeReconciler.Run(runCtx) },
+		func() error { return runLeaseReconciler.Run(runCtx) },
 		func() error { return placementReconciler.Run(runCtx) },
 		func() error { return scheduleWorker.Run(runCtx) },
 		func() error { return tokenReconcileDelivery.Run(runCtx) },

@@ -13,26 +13,26 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const runResumeRecoveryLockName = "helmr.dispatcher.run_resume_recovery"
+const runLeaseRecoveryLockName = "helmr.dispatcher.run_resume_recovery"
 
 type advisoryLock struct {
 	pool *pgxpool.Pool
 	key  int64
 }
 
-type RunResumeRecoveryAdvisoryLock struct {
+type RunLeaseRecoveryAdvisoryLock struct {
 	lock *advisoryLock
 }
 
-func NewRunResumeRecoveryAdvisoryLock(pool *pgxpool.Pool) (*RunResumeRecoveryAdvisoryLock, error) {
-	lock, err := newAdvisoryLock(pool, runResumeRecoveryLockName)
+func NewRunLeaseRecoveryAdvisoryLock(pool *pgxpool.Pool) (*RunLeaseRecoveryAdvisoryLock, error) {
+	lock, err := newAdvisoryLock(pool, runLeaseRecoveryLockName)
 	if err != nil {
 		return nil, err
 	}
-	return &RunResumeRecoveryAdvisoryLock{lock: lock}, nil
+	return &RunLeaseRecoveryAdvisoryLock{lock: lock}, nil
 }
 
-func (l *RunResumeRecoveryAdvisoryLock) TryLock(ctx context.Context) (RunResumeRecoveryLockGuard, bool, error) {
+func (l *RunLeaseRecoveryAdvisoryLock) TryLock(ctx context.Context) (RunLeaseRecoveryLockGuard, bool, error) {
 	guard, locked, err := l.lock.tryLock(ctx)
 	if err != nil || !locked {
 		return nil, locked, err
