@@ -217,20 +217,47 @@ UPDATE workspace_mounts
    AND fencing_generation = sqlc.arg(fencing_generation) AND state = 'mounting'
 RETURNING *;
 
--- name: RequestWorkspaceMountStop :one
+-- name: RequestWorkspaceDeleteMountStop :one
 WITH mount AS (
-    UPDATE workspace_mounts SET state = 'unmounting', stopped_at = COALESCE(stopped_at, now()),
-                                updated_at = now()
+    UPDATE workspace_mounts
+       SET state = 'unmounting',
+           finalization_kind = 'discard',
+           finalization_reason_code = 'workspace_deleted',
+           finalization_error = NULL,
+           stopped_at = COALESCE(stopped_at, transaction_timestamp()),
+           updated_at = transaction_timestamp()
      WHERE workspace_mounts.org_id = sqlc.arg(org_id)
        AND workspace_mounts.project_id = sqlc.arg(project_id)
        AND workspace_mounts.environment_id = sqlc.arg(environment_id)
        AND workspace_mounts.workspace_id = sqlc.arg(workspace_id)
-       AND workspace_mounts.state IN ('mounting','mounted')
+       AND (
+           workspace_mounts.state IN ('mounting','mounted')
+           OR (
+               workspace_mounts.state = 'unmounting'
+               AND (
+                   workspace_mounts.finalization_kind IS NULL
+                   OR (
+                       workspace_mounts.finalization_kind = 'discard'
+                       AND workspace_mounts.finalization_reason_code = 'workspace_deleted'
+                       AND workspace_mounts.finalization_error IS NULL
+                   )
+               )
+           )
+       )
     RETURNING *
 )
-UPDATE runtime_instances SET desired_state = 'closed', desired_version = desired_version + 1,
-                             desired_at = now(), desired_reason = sqlc.arg(reason_code), updated_at = now()
-  FROM mount WHERE runtime_instances.id = mount.runtime_instance_id
+UPDATE runtime_instances
+   SET desired_state = 'closed',
+       desired_version = CASE
+           WHEN runtime_instances.desired_state = 'closed'
+               THEN runtime_instances.desired_version
+           ELSE runtime_instances.desired_version + 1
+       END,
+       desired_at = transaction_timestamp(),
+       desired_reason = 'workspace_deleted',
+       updated_at = transaction_timestamp()
+  FROM mount
+ WHERE runtime_instances.id = mount.runtime_instance_id
 RETURNING mount.*;
 
 -- name: PromoteWorkspaceMountStopCapture :one

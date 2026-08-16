@@ -557,7 +557,7 @@ func TestWorkspaceMaterializerStopWorkspaceGuestStoresCapturedArtifact(t *testin
 	}
 }
 
-func TestWorkspaceMaterializerControlledStopUsesRenewedFencingGeneration(t *testing.T) {
+func TestWorkspaceMaterializerExplicitDiscardIgnoresDirtyGeneration(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
 	defer serverConn.Close()
 	store, workspaceMount := testWorkspaceMountArtifacts(t)
@@ -596,7 +596,12 @@ func TestWorkspaceMaterializerControlledStopUsesRenewedFencingGeneration(t *test
 	session := &workspaceMaterializerTestSession{
 		streams: []io.ReadWriteCloser{clientConn},
 	}
-	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), session, workspaceMount, workerapi.WorkspaceMountResponse{State: "unmounting", FencingGeneration: 9}, client)
+	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), session, workspaceMount, workerapi.WorkspaceMountResponse{
+		State:             "unmounting",
+		FencingGeneration: 9,
+		DirtyGeneration:   7,
+		FinalizationKind:  "discard",
+	}, client)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1230,32 +1230,58 @@ func (q *Queries) RequestCapacityPressureIdleWorkspaceMountStopsForWorker(ctx co
 	return items, nil
 }
 
-const requestWorkspaceMountStop = `-- name: RequestWorkspaceMountStop :one
+const requestWorkspaceDeleteMountStop = `-- name: RequestWorkspaceDeleteMountStop :one
 WITH mount AS (
-    UPDATE workspace_mounts SET state = 'unmounting', stopped_at = COALESCE(stopped_at, now()),
-                                updated_at = now()
-     WHERE workspace_mounts.org_id = $2
-       AND workspace_mounts.project_id = $3
-       AND workspace_mounts.environment_id = $4
-       AND workspace_mounts.workspace_id = $5
-       AND workspace_mounts.state IN ('mounting','mounted')
+    UPDATE workspace_mounts
+       SET state = 'unmounting',
+           finalization_kind = 'discard',
+           finalization_reason_code = 'workspace_deleted',
+           finalization_error = NULL,
+           stopped_at = COALESCE(stopped_at, transaction_timestamp()),
+           updated_at = transaction_timestamp()
+     WHERE workspace_mounts.org_id = $1
+       AND workspace_mounts.project_id = $2
+       AND workspace_mounts.environment_id = $3
+       AND workspace_mounts.workspace_id = $4
+       AND (
+           workspace_mounts.state IN ('mounting','mounted')
+           OR (
+               workspace_mounts.state = 'unmounting'
+               AND (
+                   workspace_mounts.finalization_kind IS NULL
+                   OR (
+                       workspace_mounts.finalization_kind = 'discard'
+                       AND workspace_mounts.finalization_reason_code = 'workspace_deleted'
+                       AND workspace_mounts.finalization_error IS NULL
+                   )
+               )
+           )
+       )
     RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, claim_attempt, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 )
-UPDATE runtime_instances SET desired_state = 'closed', desired_version = desired_version + 1,
-                             desired_at = now(), desired_reason = $1, updated_at = now()
-  FROM mount WHERE runtime_instances.id = mount.runtime_instance_id
+UPDATE runtime_instances
+   SET desired_state = 'closed',
+       desired_version = CASE
+           WHEN runtime_instances.desired_state = 'closed'
+               THEN runtime_instances.desired_version
+           ELSE runtime_instances.desired_version + 1
+       END,
+       desired_at = transaction_timestamp(),
+       desired_reason = 'workspace_deleted',
+       updated_at = transaction_timestamp()
+  FROM mount
+ WHERE runtime_instances.id = mount.runtime_instance_id
 RETURNING mount.id, mount.org_id, mount.worker_group_id, mount.project_id, mount.environment_id, mount.region_id, mount.worker_instance_id, mount.worker_epoch, mount.workspace_id, mount.materialized_version_id, mount.runtime_instance_id, mount.claim_attempt, mount.guest_channel_token_hash, mount.guest_channel_token_expires_at, mount.state, mount.request, mount.dirty_generation, mount.fencing_generation, mount.finalization_kind, mount.finalization_reason_code, mount.finalization_error, mount.staged_version_id, mount.requested_at, mount.mounted_at, mount.unmounted_at, mount.stopped_at, mount.lost_at, mount.failed_at, mount.terminal_at, mount.terminal_reason_code, mount.terminal_error, mount.created_at, mount.updated_at
 `
 
-type RequestWorkspaceMountStopParams struct {
-	ReasonCode    string      `json:"reason_code"`
+type RequestWorkspaceDeleteMountStopParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	WorkspaceID   pgtype.UUID `json:"workspace_id"`
 }
 
-type RequestWorkspaceMountStopRow struct {
+type RequestWorkspaceDeleteMountStopRow struct {
 	ID                         pgtype.UUID        `json:"id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
 	WorkerGroupID              string             `json:"worker_group_id"`
@@ -1291,15 +1317,14 @@ type RequestWorkspaceMountStopRow struct {
 	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
 }
 
-func (q *Queries) RequestWorkspaceMountStop(ctx context.Context, arg RequestWorkspaceMountStopParams) (RequestWorkspaceMountStopRow, error) {
-	row := q.db.QueryRow(ctx, requestWorkspaceMountStop,
-		arg.ReasonCode,
+func (q *Queries) RequestWorkspaceDeleteMountStop(ctx context.Context, arg RequestWorkspaceDeleteMountStopParams) (RequestWorkspaceDeleteMountStopRow, error) {
+	row := q.db.QueryRow(ctx, requestWorkspaceDeleteMountStop,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
 	)
-	var i RequestWorkspaceMountStopRow
+	var i RequestWorkspaceDeleteMountStopRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,

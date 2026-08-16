@@ -534,8 +534,8 @@ type Querier interface {
 	RequestHandoffFailureRuntimeClose(ctx context.Context, arg RequestHandoffFailureRuntimeCloseParams) (WorkspaceMount, error)
 	RequestQueuedRunRuntimeCleanup(ctx context.Context, runID pgtype.UUID) error
 	RequestRunWaitCheckpoint(ctx context.Context, arg RequestRunWaitCheckpointParams) (RunWait, error)
+	RequestWorkspaceDeleteMountStop(ctx context.Context, arg RequestWorkspaceDeleteMountStopParams) (RequestWorkspaceDeleteMountStopRow, error)
 	RequestWorkspaceExecMountFinalization(ctx context.Context, arg RequestWorkspaceExecMountFinalizationParams) (RequestWorkspaceExecMountFinalizationRow, error)
-	RequestWorkspaceMountStop(ctx context.Context, arg RequestWorkspaceMountStopParams) (RequestWorkspaceMountStopRow, error)
 	RequeueWrittenTelemetryOutbox(ctx context.Context, arg RequeueWrittenTelemetryOutboxParams) error
 	RequireCheckpointRestoreSupplier(ctx context.Context, arg RequireCheckpointRestoreSupplierParams) (pgtype.UUID, error)
 	ReserveReadyRuntimeForWorkspaceExec(ctx context.Context, arg ReserveReadyRuntimeForWorkspaceExecParams) (RuntimeInstance, error)

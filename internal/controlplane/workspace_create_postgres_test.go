@@ -244,6 +244,40 @@ func TestRunSourcedWorkspaceSelfExecAndDeleteAreBusyWithoutSideEffects(t *testin
 }
 
 func TestWorkspaceDeletePublishesOwnerlessMountCleanupOnce(t *testing.T) {
+	for _, initialMountState := range []string{"mounted", "unmounting"} {
+		t.Run(initialMountState, func(t *testing.T) {
+			t.Parallel()
+			testWorkspaceDeletePublishesOwnerlessMountCleanupOnce(t, initialMountState)
+		})
+	}
+}
+
+func TestWorkspaceDeleteWithoutActiveMountSucceeds(t *testing.T) {
+	product := newActorStartPostgresFixture(t, 1)
+	workspaceID := product.workspaceIDs[0]
+
+	deleted, err := product.server.deleteWorkspace(t.Context(), workspaceDeleteRequest{
+		OrgID: product.orgID, ProjectID: product.projectID,
+		EnvironmentID: product.environmentID, WorkspaceID: workspaceID,
+		IdempotencyKey: "workspace-delete-without-active-mount",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted.Replayed || deleted.WorkspaceID != workspaceID {
+		t.Fatalf("delete result = %+v", deleted)
+	}
+	var state db.WorkspaceState
+	if err := product.pool.QueryRow(t.Context(), `
+SELECT state FROM workspaces WHERE id = $1`, workspaceID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != db.WorkspaceStateDeleting {
+		t.Fatalf("workspace state = %s, want deleting", state)
+	}
+}
+
+func testWorkspaceDeletePublishesOwnerlessMountCleanupOnce(t *testing.T, initialMountState string) {
 	product := newActorStartPostgresFixture(t, 1)
 	poolFixture := newAdminPoolPostgresFixture(t, product.pool, "us-east-1")
 	workerPool := poolFixture.addActivePool(t, "workspace-delete-cleanup")
@@ -316,10 +350,10 @@ INSERT INTO runtime_instances (
 INSERT INTO workspace_mounts (
     id, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, worker_epoch, workspace_id, materialized_version_id,
-    runtime_instance_id, state, mounted_at
-	) VALUES ($1, $2, $3, $4, $5, 'us-east-1', $6, 1, $7, $8, $9, 'mounted', now())`,
+    runtime_instance_id, state, dirty_generation, mounted_at
+	) VALUES ($1, $2, $3, $4, $5, 'us-east-1', $6, 1, $7, $8, $9, $10, 7, now())`,
 		mountID, product.orgID, poolFixture.group.ID, product.projectID,
-		product.environmentID, workerID, workspaceID, headVersionID, runtimeID,
+		product.environmentID, workerID, workspaceID, headVersionID, runtimeID, initialMountState,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -340,11 +374,14 @@ INSERT INTO workspace_mounts (
 	assertCleanup := func() {
 		t.Helper()
 		var workspaceState db.WorkspaceState
-		var mountState, desiredState, desiredReason string
+		var mountState, finalizationKind, finalizationReason string
+		var desiredState, desiredReason string
 		var desiredVersion int64
 		var stoppedAtValid bool
 		if err := product.pool.QueryRow(t.Context(), `
 SELECT workspaces.state, workspace_mounts.state,
+       workspace_mounts.finalization_kind,
+       workspace_mounts.finalization_reason_code,
        workspace_mounts.stopped_at IS NOT NULL,
        runtime_instances.desired_state, runtime_instances.desired_version,
        runtime_instances.desired_reason
@@ -354,17 +391,19 @@ SELECT workspaces.state, workspace_mounts.state,
  WHERE workspaces.id = $1 AND workspace_mounts.id = $2`,
 			workspaceID, mountID,
 		).Scan(
-			&workspaceState, &mountState, &stoppedAtValid,
+			&workspaceState, &mountState, &finalizationKind, &finalizationReason,
+			&stoppedAtValid,
 			&desiredState, &desiredVersion, &desiredReason,
 		); err != nil {
 			t.Fatal(err)
 		}
 		if workspaceState != db.WorkspaceStateDeleting || mountState != "unmounting" ||
+			finalizationKind != "discard" || finalizationReason != "workspace_deleted" ||
 			!stoppedAtValid || desiredState != "closed" || desiredVersion != 2 ||
 			desiredReason != "workspace_deleted" {
 			t.Fatalf(
-				"workspace=%s mount=%s stopped=%t runtime=%s version=%d reason=%s",
-				workspaceState, mountState, stoppedAtValid,
+				"workspace=%s mount=%s finalization=%s/%s stopped=%t runtime=%s version=%d reason=%s",
+				workspaceState, mountState, finalizationKind, finalizationReason, stoppedAtValid,
 				desiredState, desiredVersion, desiredReason,
 			)
 		}
@@ -379,4 +418,54 @@ SELECT workspaces.state, workspace_mounts.state,
 		t.Fatalf("replayed delete result = %+v", replayed)
 	}
 	assertCleanup()
+
+	request.IdempotencyKey = "workspace-delete-cleanup-distinct"
+	replayedThroughQuery, err := product.server.deleteWorkspace(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayedThroughQuery.Replayed || replayedThroughQuery.WorkspaceID != workspaceID {
+		t.Fatalf("query replay delete result = %+v", replayedThroughQuery)
+	}
+	assertCleanup()
+
+	if _, err := product.pool.Exec(t.Context(), `
+UPDATE workspace_mounts
+   SET finalization_kind = 'capture',
+       finalization_reason_code = 'workspace_exec_completed'
+ WHERE id = $1`, mountID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := product.pool.Exec(t.Context(), `
+UPDATE runtime_instances
+   SET desired_state = 'ready', desired_reason = 'existing_finalization'
+	WHERE id = $1`, runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	request.IdempotencyKey = "workspace-delete-cleanup-existing-finalization"
+	if _, err := product.server.deleteWorkspace(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	var finalizationKind, finalizationReason, desiredState, desiredReason string
+	var desiredVersion int64
+	if err := product.pool.QueryRow(t.Context(), `
+SELECT workspace_mounts.finalization_kind,
+       workspace_mounts.finalization_reason_code,
+       runtime_instances.desired_state,
+       runtime_instances.desired_version,
+       runtime_instances.desired_reason
+  FROM workspace_mounts
+  JOIN runtime_instances ON runtime_instances.id = workspace_mounts.runtime_instance_id
+ WHERE workspace_mounts.id = $1`, mountID).Scan(
+		&finalizationKind, &finalizationReason, &desiredState, &desiredVersion, &desiredReason,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if finalizationKind != "capture" || finalizationReason != "workspace_exec_completed" ||
+		desiredState != "ready" || desiredVersion != 2 || desiredReason != "existing_finalization" {
+		t.Fatalf(
+			"existing finalization=%s/%s runtime=%s version=%d reason=%s",
+			finalizationKind, finalizationReason, desiredState, desiredVersion, desiredReason,
+		)
+	}
 }

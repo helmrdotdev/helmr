@@ -109,12 +109,11 @@ func (s *Server) deleteWorkspace(ctx context.Context, request workspaceDeleteReq
 				return fmt.Errorf("mark workspace deleting: %w", err)
 			}
 		}
-		if _, err := work.q.RequestWorkspaceMountStop(ctx, db.RequestWorkspaceMountStopParams{
+		if _, err := work.q.RequestWorkspaceDeleteMountStop(ctx, db.RequestWorkspaceDeleteMountStopParams{
 			OrgID:         pgvalue.UUID(request.OrgID),
 			ProjectID:     pgvalue.UUID(request.ProjectID),
 			EnvironmentID: pgvalue.UUID(request.EnvironmentID),
 			WorkspaceID:   authority.ID,
-			ReasonCode:    "workspace_deleted",
 		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("request workspace delete cleanup: %w", err)
 		}
