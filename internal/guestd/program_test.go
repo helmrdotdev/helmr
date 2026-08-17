@@ -568,6 +568,350 @@ func TestRelayProgramRoutesActorInputSendDecisionWithoutConsumingWaitAuthority(t
 	}
 }
 
+func TestRelayProgramRoutesChildTaskRequests(t *testing.T) {
+	tests := []struct {
+		name           string
+		method         string
+		runWaitID      string
+		resumeAttachID string
+	}{
+		{name: "start", method: "start"},
+		{
+			name: "call", method: "call",
+			runWaitID: "wait-1", resumeAttachID: "attach-1",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			blockedProcessInput, releaseProcess, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer blockedProcessInput.Close()
+			defer releaseProcess.Close()
+			cmd := exec.Command("cat")
+			cmd.Stdin = blockedProcessInput
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			controlReader, controlWriter, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			programDecisionReader, programDecisionWriter, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer programDecisionReader.Close()
+			defer programDecisionWriter.Close()
+			process := &programProcess{
+				cmd: cmd, stdin: programDecisionWriter, control: controlReader,
+				cgroup: &testProgramCgroup{}, waitDone: make(chan struct{}),
+			}
+			defer process.close()
+			guest, host := net.Pipe()
+			defer guest.Close()
+			defer host.Close()
+			request := testProgramRunRequest(testProgramStartFrame(t))
+			result := make(chan error, 1)
+			go func() {
+				var outputDone sync.WaitGroup
+				result <- relayProgram(
+					t.Context(), guest, request,
+					&runv0.EntrypointIdentity{
+						Kind: &runv0.EntrypointIdentity_Task{Task: &runv0.TaskEntrypoint{}},
+					},
+					process, &programEventStream{conn: guest}, make(chan error, 2),
+					&outputDone, newWaitingRunRegistry(), &programOutputCoordinator{}, nil,
+				)
+			}()
+			correlationID := "00000000-0000-0000-0000-000000000311"
+			requested := &runv0.TaskChildInvokeRequested{
+				CorrelationId: correlationID, DeclaredId: "child-task",
+				Method: test.method, WorkspaceJson: `{}`, OptionsJson: `{}`,
+				RunWaitId: test.runWaitID, ResumeAttachId: test.resumeAttachID,
+			}
+			if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
+				Event: &runv0.RunEvent_TaskChildInvokeRequested{
+					TaskChildInvokeRequested: requested,
+				},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			var event runv0.RunEvent
+			if err := frameio.ReadProtoFrame(host, &event); err != nil {
+				t.Fatal(err)
+			}
+			if !proto.Equal(event.GetTaskChildInvokeRequested(), requested) {
+				t.Fatalf("child request = %+v", event.GetTaskChildInvokeRequested())
+			}
+			decision := &runv0.ResumeDecision{
+				CorrelationId: correlationID, RunWaitId: test.runWaitID,
+				ResumeAttachId: test.resumeAttachID,
+				Kind:           "completed", DataJson: `{"run_id":"child-run"}`,
+			}
+			if err := wire.WriteResumeDecision(host, decision); err != nil {
+				t.Fatal(err)
+			}
+			var staged runv0.ResumeDecision
+			if err := frameio.ReadProtoFrame(programDecisionReader, &staged); err != nil {
+				t.Fatal(err)
+			}
+			if !proto.Equal(&staged, decision) {
+				t.Fatalf("staged decision = %+v", &staged)
+			}
+			if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
+				Event: &runv0.RunEvent_TaskOutcome{TaskOutcome: &runv0.TaskOutcome{
+					Outcome: &runv0.TaskOutcome_Succeeded{
+						Succeeded: &runv0.TaskSucceeded{OutputJson: "null"},
+					},
+				}},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := controlWriter.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := releaseProcess.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := frameio.ReadProtoFrame(host, &event); err != nil {
+				t.Fatal(err)
+			}
+			if event.GetTaskOutcome() == nil {
+				t.Fatalf("Task outcome = %#v", event.GetEvent())
+			}
+			if err := frameio.ReadProtoFrame(host, &event); err != nil {
+				t.Fatal(err)
+			}
+			if event.GetProgramQuiesced() == nil {
+				t.Fatalf("Program quiescence = %#v", event.GetEvent())
+			}
+			if err := <-result; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestValidateImmediateProgramWaitDecisionRequiresExactIdentity(t *testing.T) {
+	wait, err := newProgramWaitIdentity(programWaitKindStandard, "correlation-1", "wait-1", "attach-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := &runv0.ResumeDecision{
+		CorrelationId: "correlation-1", RunWaitId: "wait-1",
+		ResumeAttachId: "attach-1", Kind: "completed", DataJson: `null`,
+	}
+	if err := validateImmediateProgramWaitDecision(wait, valid); err != nil {
+		t.Fatalf("valid immediate decision: %v", err)
+	}
+	for _, mutate := range []func(*runv0.ResumeDecision){
+		func(value *runv0.ResumeDecision) { value.CorrelationId = "other" },
+		func(value *runv0.ResumeDecision) { value.RunWaitId = "other" },
+		func(value *runv0.ResumeDecision) { value.ResumeAttachId = "other" },
+		func(value *runv0.ResumeDecision) { value.RequireConsumedAck = true },
+	} {
+		candidate := proto.Clone(valid).(*runv0.ResumeDecision)
+		mutate(candidate)
+		if err := validateImmediateProgramWaitDecision(wait, candidate); err == nil {
+			t.Fatalf("invalid immediate decision was accepted: %+v", candidate)
+		}
+	}
+}
+
+func TestValidateImmediateChildCallFailureUsesRuntimeOperationSchema(t *testing.T) {
+	childCall, err := newProgramWaitIdentity(
+		programWaitKindChildCall, "correlation-1", "wait-1", "attach-1",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := &runv0.ResumeDecision{
+		CorrelationId: "correlation-1", RunWaitId: "wait-1", ResumeAttachId: "attach-1",
+		Kind: "failed", DataJson: `{"code":"idempotency_conflict","message":"request was rejected","retryable":false}`,
+	}
+	if err := validateImmediateProgramWaitDecision(childCall, failure); err != nil {
+		t.Fatalf("valid child call failure: %v", err)
+	}
+	standard, err := newProgramWaitIdentity(
+		programWaitKindStandard, "correlation-1", "wait-1", "attach-1",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateImmediateProgramWaitDecision(standard, failure); err == nil {
+		t.Fatal("runtime operation failure was accepted for a standard Wait")
+	}
+	for _, dataJSON := range []string{
+		`{"code":"idempotency_conflict","message":"request was rejected"}`,
+		`{"code":"idempotency_conflict","message":"request was rejected","retryable":false,"secret":"sentinel"}`,
+		`{"code":"","message":"request was rejected","retryable":false}`,
+	} {
+		candidate := proto.Clone(failure).(*runv0.ResumeDecision)
+		candidate.DataJson = dataJSON
+		if err := validateImmediateProgramWaitDecision(childCall, candidate); err == nil {
+			t.Fatalf("invalid child call failure was accepted: %s", dataJSON)
+		}
+	}
+}
+
+func TestRelayProgramRejectsConflictingChildTaskState(t *testing.T) {
+	call := func(correlationID string) *runv0.RunEvent {
+		return &runv0.RunEvent{Event: &runv0.RunEvent_TaskChildInvokeRequested{
+			TaskChildInvokeRequested: &runv0.TaskChildInvokeRequested{
+				CorrelationId: correlationID, DeclaredId: "child-task", Method: "call",
+				RunWaitId: "wait-1", ResumeAttachId: "attach-1", WorkspaceJson: `{}`, OptionsJson: `{}`,
+			},
+		}}
+	}
+	start := func(correlationID string) *runv0.RunEvent {
+		return &runv0.RunEvent{Event: &runv0.RunEvent_TaskChildInvokeRequested{
+			TaskChildInvokeRequested: &runv0.TaskChildInvokeRequested{
+				CorrelationId: correlationID, DeclaredId: "child-task", Method: "start",
+				WorkspaceJson: `{}`, OptionsJson: `{}`,
+			},
+		}}
+	}
+	outcome := &runv0.RunEvent{Event: &runv0.RunEvent_TaskOutcome{TaskOutcome: &runv0.TaskOutcome{
+		Outcome: &runv0.TaskOutcome_Succeeded{Succeeded: &runv0.TaskSucceeded{OutputJson: "null"}},
+	}}}
+	for _, test := range []struct {
+		name   string
+		events []*runv0.RunEvent
+	}{
+		{name: "start then call correlation collision", events: []*runv0.RunEvent{start("correlation-1"), call("correlation-1")}},
+		{name: "call then start correlation collision", events: []*runv0.RunEvent{call("correlation-1"), start("correlation-1")}},
+		{name: "outcome while call pending", events: []*runv0.RunEvent{call("correlation-1"), outcome}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			blockedProcessInput, releaseProcess, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer blockedProcessInput.Close()
+			defer releaseProcess.Close()
+			cmd := exec.Command("cat")
+			cmd.Stdin = blockedProcessInput
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			var control bytes.Buffer
+			for _, event := range test.events {
+				if err := frameio.WriteProtoFrame(&control, event); err != nil {
+					t.Fatal(err)
+				}
+			}
+			process := &programProcess{
+				cmd: cmd, stdin: nopWriteCloser{Writer: io.Discard}, control: io.NopCloser(&control),
+				cgroup: &testProgramCgroup{}, waitDone: make(chan struct{}),
+			}
+			defer process.close()
+			guest, host := net.Pipe()
+			defer guest.Close()
+			defer host.Close()
+			drained := make(chan struct{})
+			go func() {
+				_, _ = io.Copy(io.Discard, host)
+				close(drained)
+			}()
+			var outputDone sync.WaitGroup
+			err = relayProgram(
+				t.Context(), guest, testProgramRunRequest(testProgramStartFrame(t)),
+				&runv0.EntrypointIdentity{Kind: &runv0.EntrypointIdentity_Task{Task: &runv0.TaskEntrypoint{}}},
+				process, &programEventStream{conn: guest}, make(chan error, 2), &outputDone,
+				newWaitingRunRegistry(), &programOutputCoordinator{}, nil,
+			)
+			if closeErr := releaseProcess.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
+			if err == nil {
+				t.Fatal("conflicting child task state was accepted")
+			}
+			if closeErr := guest.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
+			<-drained
+		})
+	}
+}
+
+func TestRelayProgramRejectsMalformedChildTaskWaitIdentity(t *testing.T) {
+	tests := []struct {
+		name    string
+		request *runv0.TaskChildInvokeRequested
+	}{
+		{
+			name: "unknown method",
+			request: &runv0.TaskChildInvokeRequested{
+				CorrelationId: "correlation-1", DeclaredId: "child-task",
+				Method: "enqueue",
+			},
+		},
+		{
+			name: "call missing wait identity",
+			request: &runv0.TaskChildInvokeRequested{
+				CorrelationId: "correlation-1", DeclaredId: "child-task",
+				Method: "call", RunWaitId: "wait-1",
+			},
+		},
+		{
+			name: "start carrying wait identity",
+			request: &runv0.TaskChildInvokeRequested{
+				CorrelationId: "correlation-1", DeclaredId: "child-task",
+				Method: "start", RunWaitId: "wait-1", ResumeAttachId: "attach-1",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			blockedProcessInput, releaseProcess, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer blockedProcessInput.Close()
+			defer releaseProcess.Close()
+			cmd := exec.Command("cat")
+			cmd.Stdin = blockedProcessInput
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			var control bytes.Buffer
+			if err := frameio.WriteProtoFrame(&control, &runv0.RunEvent{
+				Event: &runv0.RunEvent_TaskChildInvokeRequested{
+					TaskChildInvokeRequested: test.request,
+				},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			process := &programProcess{
+				cmd: cmd, stdin: nopWriteCloser{Writer: io.Discard},
+				control: io.NopCloser(&control), cgroup: &testProgramCgroup{},
+				waitDone: make(chan struct{}),
+			}
+			defer process.close()
+			guest, host := net.Pipe()
+			defer guest.Close()
+			defer host.Close()
+			var outputDone sync.WaitGroup
+			err = relayProgram(
+				t.Context(), guest, testProgramRunRequest(testProgramStartFrame(t)),
+				&runv0.EntrypointIdentity{
+					Kind: &runv0.EntrypointIdentity_Task{Task: &runv0.TaskEntrypoint{}},
+				},
+				process, &programEventStream{conn: guest}, make(chan error, 2),
+				&outputDone, newWaitingRunRegistry(), &programOutputCoordinator{}, nil,
+			)
+			if closeErr := releaseProcess.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
+			if err == nil {
+				t.Fatal("malformed child task request was accepted")
+			}
+		})
+	}
+}
+
 func TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain(t *testing.T) {
 	blockedProcessInput, releaseProcess, err := os.Pipe()
 	if err != nil {
@@ -642,9 +986,11 @@ func TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain(t *testing
 	writeRetrieve("00000000-0000-0000-0000-000000000201")
 	readRetrieve("00000000-0000-0000-0000-000000000201")
 	if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
-		Event: &runv0.RunEvent_RunWaitRequested{
-			RunWaitRequested: &runv0.RunWaitRequested{
-				CorrelationId: "wait-correlation", Kind: "timer", ParamsJson: `{}`,
+		Event: &runv0.RunEvent_TaskChildInvokeRequested{
+			TaskChildInvokeRequested: &runv0.TaskChildInvokeRequested{
+				CorrelationId: "wait-correlation", DeclaredId: "child-task",
+				Method: "call", WorkspaceJson: `{}`, OptionsJson: `{}`,
+				RunWaitId: "durable-wait", ResumeAttachId: "attach-1",
 			},
 		},
 	}); err != nil {
@@ -654,7 +1000,7 @@ func TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain(t *testing
 	if err := frameio.ReadProtoFrame(host, &waitEvent); err != nil {
 		t.Fatal(err)
 	}
-	if waitEvent.GetRunWaitRequested() == nil {
+	if waitEvent.GetTaskChildInvokeRequested() == nil {
 		t.Fatalf("Wait event = %#v", waitEvent.GetEvent())
 	}
 	pause := &runv0.CheckpointPauseRequest{
@@ -729,7 +1075,10 @@ func TestPauseAndResumeProgramUsesExactFrozenAuthority(t *testing.T) {
 		workspaceRoot: workspaceRoot,
 	}
 	run := &runv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-1"}
-	wait := &runv0.RunWaitRequested{CorrelationId: "wait-1", Kind: "timer"}
+	wait, err := newProgramWaitIdentity(programWaitKindStandard, "wait-1", "durable-wait-1", "attach-1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	pause := &runv0.CheckpointPauseRequest{
 		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-1",
 		RunWaitId: "durable-wait-1", CorrelationId: "wait-1", CheckpointId: "checkpoint-1",
@@ -973,7 +1322,10 @@ func testProgramResumeGrant(attach *runv0.ResumeAttach) *programResumeGrant {
 
 func TestValidateProgramCheckpointPauseRejectsMismatchedFence(t *testing.T) {
 	run := &runv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-1"}
-	wait := &runv0.RunWaitRequested{CorrelationId: "wait-1", Kind: "timer"}
+	wait, err := newProgramWaitIdentity(programWaitKindStandard, "wait-1", "durable-wait-1", "attach-1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	pause := &runv0.CheckpointPauseRequest{
 		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-2",
 		RunWaitId: "durable-wait-1", CorrelationId: "wait-1", CheckpointId: "checkpoint-1",

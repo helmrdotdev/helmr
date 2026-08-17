@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -198,6 +199,50 @@ func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
 	}
 }
 
+func TestHandleChildTaskCallRejectsCompletedResponseWithoutOpenedWait(t *testing.T) {
+	lease := testFreshProgramClaim(t).Lease
+	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
+	correlationID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc25"
+	runWaitID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc26"
+	resumeAttachID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc27"
+	controlPlane := &childTaskControlPlane{
+		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
+		response: workerapi.InvokeChildTaskResponse{
+			CorrelationID: correlationID,
+			Completed: &workerapi.ChildTaskStartResult{
+				RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
+			},
+		},
+	}
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	task := &guestRunLeaseTask{
+		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		controlPlane: controlPlane,
+		lease:        lease,
+	}
+	err := task.handleChildTaskInvoke(t.Context(), &runv0.TaskChildInvokeRequested{
+		CorrelationId: correlationID, DeclaredId: "resize-image", Method: "call",
+		RunWaitId: runWaitID, ResumeAttachId: resumeAttachID,
+		WorkspaceJson: `{}`, OptionsJson: `{}`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires an opened Wait") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestWorkerChildTaskInvokeRequestRejectsUnknownMethod(t *testing.T) {
+	_, err := workerChildTaskInvokeRequest(&runv0.TaskChildInvokeRequested{
+		CorrelationId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc28",
+		DeclaredId:    "resize-image", Method: "enqueue",
+		WorkspaceJson: `{}`, OptionsJson: `{}`,
+	})
+	if err == nil {
+		t.Fatal("unknown child task invocation method was accepted")
+	}
+}
+
 func TestHandleChildTaskInvokeRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
@@ -341,6 +386,8 @@ func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 	lease := testFreshProgramClaim(t).Lease
 	lease.ExpiresAt = time.Now().Add(time.Minute).UTC()
 	correlationID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc22"
+	runWaitID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc23"
+	resumeAttachID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc24"
 	controlPlane := &childTaskControlPlane{
 		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 		err: &httpclient.Error{
@@ -361,11 +408,13 @@ func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 	result := make(chan error, 1)
 	go func() {
 		result <- task.handleChildTaskInvoke(t.Context(), &runv0.TaskChildInvokeRequested{
-			CorrelationId: correlationID,
-			DeclaredId:    "resize-image",
-			Method:        "start",
-			WorkspaceJson: `{"key":"image-workspace"}`,
-			OptionsJson:   `{}`,
+			CorrelationId:  correlationID,
+			RunWaitId:      runWaitID,
+			ResumeAttachId: resumeAttachID,
+			DeclaredId:     "resize-image",
+			Method:         "call",
+			WorkspaceJson:  `{"key":"image-workspace"}`,
+			OptionsJson:    `{}`,
 		})
 	}()
 	reader := bufio.NewReader(host)
@@ -385,6 +434,8 @@ func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	if decision.GetCorrelationId() != correlationID ||
+		decision.GetRunWaitId() != runWaitID ||
+		decision.GetResumeAttachId() != resumeAttachID ||
 		decision.GetKind() != "failed" ||
 		failure.Code != "idempotency_conflict" ||
 		failure.Retryable {

@@ -996,7 +996,7 @@ func relayProgram(
 	controlClosed := false
 	outcomeSeen := false
 	quiesced := false
-	var pendingWait *runv0.RunWaitRequested
+	var pendingWait *programWaitIdentity
 	var pendingTurnCommit *runv0.ActorTurnCommitRequested
 	var pendingPause *runv0.CheckpointPauseRequest
 	pendingRuntimeOperations := make(map[string]string)
@@ -1019,13 +1019,22 @@ func relayProgram(
 				if pendingWait != nil || pendingTurnCommit != nil {
 					return errors.New("program emitted a concurrent consuming wait")
 				}
-				if strings.TrimSpace(waitRequested.GetCorrelationId()) == "" || strings.TrimSpace(waitRequested.GetKind()) == "" {
+				waitIdentity, err := newProgramWaitIdentity(
+					programWaitKindStandard,
+					waitRequested.GetCorrelationId(),
+					waitRequested.GetRunWaitId(),
+					waitRequested.GetResumeAttachId(),
+				)
+				if err != nil || strings.TrimSpace(waitRequested.GetKind()) == "" {
 					return errors.New("program wait identity is incomplete")
+				}
+				if programCorrelationPending(nil, pendingRuntimeOperations, waitIdentity.correlationID) {
+					return errors.New("program emitted a duplicate wait correlation")
 				}
 				if err := stream.write(event); err != nil {
 					return err
 				}
-				pendingWait = waitRequested
+				pendingWait = waitIdentity
 				continue
 			}
 			if turnCommit := event.GetActorTurnCommitRequested(); turnCommit != nil {
@@ -1044,6 +1053,54 @@ func relayProgram(
 				pendingTurnCommit = turnCommit
 				continue
 			}
+			if child := event.GetTaskChildInvokeRequested(); child != nil {
+				if outcomeSeen {
+					return errors.New("program emitted a child task request after outcome")
+				}
+				correlationID := strings.TrimSpace(child.GetCorrelationId())
+				if correlationID == "" || strings.TrimSpace(child.GetDeclaredId()) == "" {
+					return errors.New("child task request identity is incomplete")
+				}
+				switch child.GetMethod() {
+				case "start":
+					if child.GetRunWaitId() != "" || child.GetResumeAttachId() != "" {
+						return errors.New("child task start carried consuming wait authority")
+					}
+					if programCorrelationPending(pendingWait, pendingRuntimeOperations, correlationID) {
+						return errors.New("program emitted a duplicate child task start correlation")
+					}
+					if len(pendingRuntimeOperations) >= 128 {
+						return errors.New("program exceeded the pending runtime operation limit")
+					}
+					if err := stream.write(event); err != nil {
+						return err
+					}
+					pendingRuntimeOperations[correlationID] = "child task start"
+				case "call":
+					if pendingWait != nil || pendingTurnCommit != nil {
+						return errors.New("program emitted a concurrent consuming wait")
+					}
+					waitIdentity, err := newProgramWaitIdentity(
+						programWaitKindChildCall,
+						correlationID,
+						child.GetRunWaitId(),
+						child.GetResumeAttachId(),
+					)
+					if err != nil {
+						return errors.New("child task call wait identity is incomplete")
+					}
+					if programCorrelationPending(nil, pendingRuntimeOperations, waitIdentity.correlationID) {
+						return errors.New("program emitted a duplicate child task call correlation")
+					}
+					if err := stream.write(event); err != nil {
+						return err
+					}
+					pendingWait = waitIdentity
+				default:
+					return errors.New("child task request method is invalid")
+				}
+				continue
+			}
 			if correlationID, label, ok := runtimeResourceOperationIdentity(event); ok {
 				if outcomeSeen {
 					return fmt.Errorf("program emitted an %s after outcome", label)
@@ -1051,7 +1108,7 @@ func relayProgram(
 				if correlationID == "" {
 					return fmt.Errorf("%s identity is incomplete", label)
 				}
-				if _, exists := pendingRuntimeOperations[correlationID]; exists {
+				if programCorrelationPending(pendingWait, pendingRuntimeOperations, correlationID) {
 					return fmt.Errorf("program emitted a duplicate %s correlation", label)
 				}
 				if len(pendingRuntimeOperations) >= 128 {
@@ -1072,7 +1129,7 @@ func relayProgram(
 					strings.TrimSpace(send.GetDataJson()) == "" {
 					return errors.New("session input send identity is incomplete")
 				}
-				if _, exists := pendingRuntimeOperations[correlationID]; exists {
+				if programCorrelationPending(pendingWait, pendingRuntimeOperations, correlationID) {
 					return errors.New("program emitted a duplicate session input send correlation")
 				}
 				if len(pendingRuntimeOperations) >= 128 {
@@ -1092,7 +1149,7 @@ func relayProgram(
 				if correlationID == "" {
 					return errors.New("token create identity is incomplete")
 				}
-				if _, exists := pendingRuntimeOperations[correlationID]; exists {
+				if programCorrelationPending(pendingWait, pendingRuntimeOperations, correlationID) {
 					return errors.New("program emitted a duplicate token create correlation")
 				}
 				if len(pendingRuntimeOperations) >= 128 {
@@ -1112,7 +1169,7 @@ func relayProgram(
 				if correlationID == "" || strings.TrimSpace(metadata.GetOperation()) == "" {
 					return errors.New("metadata mutation identity is incomplete")
 				}
-				if _, exists := pendingRuntimeOperations[correlationID]; exists {
+				if programCorrelationPending(pendingWait, pendingRuntimeOperations, correlationID) {
 					return errors.New("program emitted a duplicate metadata mutation correlation")
 				}
 				if len(pendingRuntimeOperations) >= 128 {
@@ -1133,7 +1190,7 @@ func relayProgram(
 					strings.TrimSpace(log.GetAttributesJson()) == "" {
 					return errors.New("structured log identity is incomplete")
 				}
-				if _, exists := pendingRuntimeOperations[correlationID]; exists {
+				if programCorrelationPending(pendingWait, pendingRuntimeOperations, correlationID) {
 					return errors.New("program emitted a duplicate structured log correlation")
 				}
 				if len(pendingRuntimeOperations) >= 128 {
@@ -1163,8 +1220,8 @@ func relayProgram(
 			if outcomeSeen {
 				return errors.New("program emitted more than one outcome")
 			}
-			if len(pendingRuntimeOperations) != 0 {
-				return errors.New("program emitted an outcome with runtime operations pending")
+			if len(pendingRuntimeOperations) != 0 || pendingWait != nil || pendingTurnCommit != nil {
+				return errors.New("program emitted an outcome with operations pending")
 			}
 			if outcomeErr != nil {
 				return outcomeErr
@@ -1235,7 +1292,10 @@ func relayProgram(
 			}
 			switch {
 			case control.decision != nil:
-				if control.decision.GetRunWaitId() != pendingWait.GetCorrelationId() {
+				if err := validateImmediateProgramWaitDecision(
+					pendingWait,
+					control.decision,
+				); err != nil {
 					return errors.New("immediate resume decision did not match program wait")
 				}
 				if err := frameio.WriteProtoFrame(process.stdin, control.decision); err != nil {
@@ -1356,6 +1416,97 @@ func programProcessStartDiagnostic(phase string) string {
 	return "Program process start failed"
 }
 
+type programWaitIdentity struct {
+	kind           programWaitKind
+	correlationID  string
+	runWaitID      string
+	resumeAttachID string
+}
+
+type programWaitKind uint8
+
+const (
+	programWaitKindStandard programWaitKind = iota + 1
+	programWaitKindChildCall
+)
+
+func newProgramWaitIdentity(
+	kind programWaitKind,
+	correlationID string,
+	runWaitID string,
+	resumeAttachID string,
+) (*programWaitIdentity, error) {
+	identity := &programWaitIdentity{
+		kind:           kind,
+		correlationID:  strings.TrimSpace(correlationID),
+		runWaitID:      strings.TrimSpace(runWaitID),
+		resumeAttachID: strings.TrimSpace(resumeAttachID),
+	}
+	if (identity.kind != programWaitKindStandard && identity.kind != programWaitKindChildCall) ||
+		identity.correlationID == "" ||
+		identity.runWaitID == "" ||
+		identity.resumeAttachID == "" {
+		return nil, errors.New("program wait identity is incomplete")
+	}
+	return identity, nil
+}
+
+func validateImmediateProgramWaitDecision(
+	wait *programWaitIdentity,
+	decision *runv0.ResumeDecision,
+) error {
+	if wait == nil || decision == nil ||
+		decision.GetCorrelationId() != wait.correlationID ||
+		decision.GetRunWaitId() != wait.runWaitID ||
+		decision.GetResumeAttachId() != wait.resumeAttachID ||
+		decision.GetRequireConsumedAck() ||
+		decision.GetCheckpointId() != "" ||
+		decision.GetResumeRequestVersion() != 0 ||
+		decision.GetRunLeaseId() != "" {
+		return errors.New("immediate resume decision did not match exact wait authority")
+	}
+	if err := validateResumeDecisionAuthority(decision); err == nil {
+		return nil
+	} else if wait.kind != programWaitKindChildCall || decision.GetKind() != "failed" {
+		return err
+	}
+	return validateRuntimeOperationFailurePayload(decision.GetDataJson())
+}
+
+func validateRuntimeOperationFailurePayload(dataJSON string) error {
+	var payload struct {
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+		Retryable *bool  `json:"retryable"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(dataJSON))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
+		return fmt.Errorf("decode child task call failure: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("child task call failure has trailing JSON")
+	}
+	if strings.TrimSpace(payload.Code) == "" ||
+		strings.TrimSpace(payload.Message) == "" ||
+		payload.Retryable == nil {
+		return errors.New("child task call failure is incomplete")
+	}
+	return nil
+}
+
+func programCorrelationPending(
+	wait *programWaitIdentity,
+	operations map[string]string,
+	correlationID string,
+) bool {
+	if wait != nil && wait.correlationID == correlationID {
+		return true
+	}
+	_, pending := operations[correlationID]
+	return pending
+}
+
 func runtimeResourceOperationIdentity(event *runv0.RunEvent) (string, string, bool) {
 	switch value := event.GetEvent().(type) {
 	case *runv0.RunEvent_ActorStartRequested:
@@ -1427,7 +1578,7 @@ func readProgramHostControl(conn programConnection) <-chan programHostControl {
 func pauseAndResumeProgram(
 	ctx context.Context,
 	run *runv0.ProgramRunRequest,
-	wait *runv0.RunWaitRequested,
+	wait *programWaitIdentity,
 	pause *runv0.CheckpointPauseRequest,
 	process *programProcess,
 	stream *programEventStream,
@@ -1789,15 +1940,15 @@ func (stream *programEventStream) writeResumeAck(ack *runv0.ResumeAck) error {
 	})
 }
 
-func validateProgramCheckpointPause(run *runv0.ProgramRunRequest, wait *runv0.RunWaitRequested, pause *runv0.CheckpointPauseRequest) error {
+func validateProgramCheckpointPause(run *runv0.ProgramRunRequest, wait *programWaitIdentity, pause *runv0.CheckpointPauseRequest) error {
 	if run == nil || wait == nil || pause == nil ||
 		pause.GetRunId() != run.GetRunId() ||
 		pause.GetAttemptNumber() != run.GetAttemptNumber() ||
 		pause.GetRunLeaseId() != run.GetRunLeaseId() ||
-		pause.GetCorrelationId() != wait.GetCorrelationId() ||
-		strings.TrimSpace(pause.GetRunWaitId()) == "" ||
+		pause.GetCorrelationId() != wait.correlationID ||
+		pause.GetRunWaitId() != wait.runWaitID ||
+		pause.GetResumeAttachId() != wait.resumeAttachID ||
 		strings.TrimSpace(pause.GetCheckpointId()) == "" ||
-		strings.TrimSpace(pause.GetResumeAttachId()) == "" ||
 		pause.GetCheckpointRequestVersion() <= 0 {
 		return errors.New("program checkpoint pause did not match exact execution and wait authority")
 	}
