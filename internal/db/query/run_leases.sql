@@ -819,7 +819,7 @@ UPDATE run_attempts
    AND terminal_at IS NULL
 RETURNING *;
 
--- name: ListFreshRunLeaseRecoveryCandidates :many
+-- name: ListRunExecutionLeaseRecoveryCandidates :many
 SELECT runs.org_id,
        runs.project_id,
        runs.environment_id,
@@ -851,13 +851,23 @@ SELECT runs.org_id,
    AND workspace_mounts.runtime_instance_id = run_leases.runtime_instance_id
    AND workspace_mounts.workspace_id = run_leases.workspace_id
    AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting', 'lost', 'failed')
- WHERE run_leases.state IN ('assigned', 'starting', 'running')
+ WHERE run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
    AND ((run_leases.state IN ('assigned', 'starting')
          AND runs.status = 'queued'
          AND runs.active_started_at IS NULL)
         OR (run_leases.state = 'running'
             AND runs.status = 'running'
-            AND runs.active_started_at IS NOT NULL))
+            AND runs.active_started_at IS NOT NULL)
+        OR (run_leases.state = 'checkpointing'
+            AND runs.status = 'waiting'
+            AND runs.active_started_at IS NOT NULL)
+        OR (run_leases.state = 'finalizing'
+            AND runs.status = 'running'
+            AND runs.active_started_at IS NULL
+            AND run_leases.finalization_operation_id IS NOT NULL
+            AND run_leases.finalization_kind IS NOT NULL
+            AND run_leases.finalization_started_at IS NOT NULL
+            AND run_leases.finalization_request_fingerprint IS NOT NULL))
    AND NOT EXISTS (
        SELECT 1
          FROM run_waits
@@ -869,7 +879,7 @@ SELECT runs.org_id,
    AND (run_leases.expires_at <= transaction_timestamp()
         OR (run_leases.state IN ('assigned', 'starting')
             AND run_leases.start_deadline_at <= transaction_timestamp())
-        OR (run_leases.state = 'running'
+        OR (run_leases.state IN ('running', 'checkpointing')
             AND transaction_timestamp() >= runs.active_started_at
                 + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text
                    || ' milliseconds')::interval)
@@ -885,9 +895,11 @@ SELECT runs.org_id,
               CASE
                   WHEN run_leases.state IN ('assigned', 'starting')
                   THEN run_leases.start_deadline_at
-                  ELSE runs.active_started_at
+                  WHEN run_leases.state IN ('running', 'checkpointing')
+                  THEN runs.active_started_at
                        + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text
                           || ' milliseconds')::interval
+                  ELSE 'infinity'::timestamptz
               END,
               COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
               COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),

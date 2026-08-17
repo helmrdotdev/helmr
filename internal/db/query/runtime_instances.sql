@@ -483,6 +483,6 @@ UPDATE runtime_instances
        SELECT 1
          FROM run_leases
         WHERE run_leases.runtime_instance_id = runtime_instances.id
-          AND run_leases.state IN ('assigned', 'starting', 'running')
+          AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
    )
 RETURNING runtime_instances.*;

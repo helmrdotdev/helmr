@@ -1233,7 +1233,7 @@ func (q *Queries) GetRunLeaseStartLocators(ctx context.Context, arg GetRunLeaseS
 	return i, err
 }
 
-const listFreshRunLeaseRecoveryCandidates = `-- name: ListFreshRunLeaseRecoveryCandidates :many
+const listRunExecutionLeaseRecoveryCandidates = `-- name: ListRunExecutionLeaseRecoveryCandidates :many
 SELECT runs.org_id,
        runs.project_id,
        runs.environment_id,
@@ -1265,13 +1265,23 @@ SELECT runs.org_id,
    AND workspace_mounts.runtime_instance_id = run_leases.runtime_instance_id
    AND workspace_mounts.workspace_id = run_leases.workspace_id
    AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting', 'lost', 'failed')
- WHERE run_leases.state IN ('assigned', 'starting', 'running')
+ WHERE run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
    AND ((run_leases.state IN ('assigned', 'starting')
          AND runs.status = 'queued'
          AND runs.active_started_at IS NULL)
         OR (run_leases.state = 'running'
             AND runs.status = 'running'
-            AND runs.active_started_at IS NOT NULL))
+            AND runs.active_started_at IS NOT NULL)
+        OR (run_leases.state = 'checkpointing'
+            AND runs.status = 'waiting'
+            AND runs.active_started_at IS NOT NULL)
+        OR (run_leases.state = 'finalizing'
+            AND runs.status = 'running'
+            AND runs.active_started_at IS NULL
+            AND run_leases.finalization_operation_id IS NOT NULL
+            AND run_leases.finalization_kind IS NOT NULL
+            AND run_leases.finalization_started_at IS NOT NULL
+            AND run_leases.finalization_request_fingerprint IS NOT NULL))
    AND NOT EXISTS (
        SELECT 1
          FROM run_waits
@@ -1283,7 +1293,7 @@ SELECT runs.org_id,
    AND (run_leases.expires_at <= transaction_timestamp()
         OR (run_leases.state IN ('assigned', 'starting')
             AND run_leases.start_deadline_at <= transaction_timestamp())
-        OR (run_leases.state = 'running'
+        OR (run_leases.state IN ('running', 'checkpointing')
             AND transaction_timestamp() >= runs.active_started_at
                 + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text
                    || ' milliseconds')::interval)
@@ -1299,9 +1309,11 @@ SELECT runs.org_id,
               CASE
                   WHEN run_leases.state IN ('assigned', 'starting')
                   THEN run_leases.start_deadline_at
-                  ELSE runs.active_started_at
+                  WHEN run_leases.state IN ('running', 'checkpointing')
+                  THEN runs.active_started_at
                        + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text
                           || ' milliseconds')::interval
+                  ELSE 'infinity'::timestamptz
               END,
               COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
               COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
@@ -1314,7 +1326,7 @@ SELECT runs.org_id,
  LIMIT $1
 `
 
-type ListFreshRunLeaseRecoveryCandidatesRow struct {
+type ListRunExecutionLeaseRecoveryCandidatesRow struct {
 	OrgID                pgtype.UUID `json:"org_id"`
 	ProjectID            pgtype.UUID `json:"project_id"`
 	EnvironmentID        pgtype.UUID `json:"environment_id"`
@@ -1324,15 +1336,15 @@ type ListFreshRunLeaseRecoveryCandidatesRow struct {
 	RunLeaseID           pgtype.UUID `json:"run_lease_id"`
 }
 
-func (q *Queries) ListFreshRunLeaseRecoveryCandidates(ctx context.Context, limitCount int32) ([]ListFreshRunLeaseRecoveryCandidatesRow, error) {
-	rows, err := q.db.Query(ctx, listFreshRunLeaseRecoveryCandidates, limitCount)
+func (q *Queries) ListRunExecutionLeaseRecoveryCandidates(ctx context.Context, limitCount int32) ([]ListRunExecutionLeaseRecoveryCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listRunExecutionLeaseRecoveryCandidates, limitCount)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListFreshRunLeaseRecoveryCandidatesRow
+	var items []ListRunExecutionLeaseRecoveryCandidatesRow
 	for rows.Next() {
-		var i ListFreshRunLeaseRecoveryCandidatesRow
+		var i ListRunExecutionLeaseRecoveryCandidatesRow
 		if err := rows.Scan(
 			&i.OrgID,
 			&i.ProjectID,

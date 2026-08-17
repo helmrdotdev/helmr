@@ -8,9 +8,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestDecideFreshLeaseLossUsesExactPhysicalReason(t *testing.T) {
+func TestDecideExecutionLeaseLossUsesExactPhysicalReason(t *testing.T) {
 	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
-	base := db.GetFreshRunLeaseLossAuthorityRow{
+	base := db.GetRunExecutionLeaseLossAuthorityRow{
 		RunLeaseState:       string(db.RunLeaseStateRunning),
 		ObservedAt:          timestamp(now),
 		RunLeaseExpiresAt:   timestamp(now.Add(time.Minute)),
@@ -22,23 +22,23 @@ func TestDecideFreshLeaseLossUsesExactPhysicalReason(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name   string
-		mutate func(*db.GetFreshRunLeaseLossAuthorityRow)
+		mutate func(*db.GetRunExecutionLeaseLossAuthorityRow)
 		reason string
 	}{
-		{name: "worker lost", mutate: func(row *db.GetFreshRunLeaseLossAuthorityRow) { row.WorkerLostAt = timestamp(now) }, reason: "worker_lost"},
-		{name: "worker epoch changed", mutate: func(row *db.GetFreshRunLeaseLossAuthorityRow) {
+		{name: "worker lost", mutate: func(row *db.GetRunExecutionLeaseLossAuthorityRow) { row.WorkerLostAt = timestamp(now) }, reason: "worker_lost"},
+		{name: "worker epoch changed", mutate: func(row *db.GetRunExecutionLeaseLossAuthorityRow) {
 			row.WorkerCurrentEpoch.Int64 = 2
 			row.WorkerEpochStartedAt = timestamp(now)
 		}, reason: "worker_lost"},
-		{name: "runtime lost", mutate: func(row *db.GetFreshRunLeaseLossAuthorityRow) { row.RuntimeLostAt = timestamp(now) }, reason: "worker_lost"},
-		{name: "runtime failed", mutate: func(row *db.GetFreshRunLeaseLossAuthorityRow) { row.RuntimeFailedAt = timestamp(now) }, reason: "runtime_failed"},
-		{name: "mount lost", mutate: func(row *db.GetFreshRunLeaseLossAuthorityRow) { row.MountLostAt = timestamp(now) }, reason: "worker_lost"},
-		{name: "mount failed", mutate: func(row *db.GetFreshRunLeaseLossAuthorityRow) { row.MountFailedAt = timestamp(now) }, reason: "runtime_failed"},
+		{name: "runtime lost", mutate: func(row *db.GetRunExecutionLeaseLossAuthorityRow) { row.RuntimeLostAt = timestamp(now) }, reason: "worker_lost"},
+		{name: "runtime failed", mutate: func(row *db.GetRunExecutionLeaseLossAuthorityRow) { row.RuntimeFailedAt = timestamp(now) }, reason: "runtime_failed"},
+		{name: "mount lost", mutate: func(row *db.GetRunExecutionLeaseLossAuthorityRow) { row.MountLostAt = timestamp(now) }, reason: "worker_lost"},
+		{name: "mount failed", mutate: func(row *db.GetRunExecutionLeaseLossAuthorityRow) { row.MountFailedAt = timestamp(now) }, reason: "runtime_failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			row := base
 			tc.mutate(&row)
-			loss, found, err := decideFreshLeaseLoss(row)
+			loss, found, err := decideExecutionLeaseLoss(row)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -49,9 +49,9 @@ func TestDecideFreshLeaseLossUsesExactPhysicalReason(t *testing.T) {
 	}
 }
 
-func TestDecideFreshLeaseLossUsesEarliestAuthoritativeBoundary(t *testing.T) {
+func TestDecideExecutionLeaseLossUsesEarliestAuthoritativeBoundary(t *testing.T) {
 	now := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
-	row := db.GetFreshRunLeaseLossAuthorityRow{
+	row := db.GetRunExecutionLeaseLossAuthorityRow{
 		RunLeaseState:        string(db.RunLeaseStateAssigned),
 		ObservedAt:           timestamp(now),
 		RunLeaseExpiresAt:    timestamp(now.Add(-2 * time.Second)),
@@ -60,13 +60,50 @@ func TestDecideFreshLeaseLossUsesEarliestAuthoritativeBoundary(t *testing.T) {
 		WorkerEpoch:          1,
 		WorkerEpochStartedAt: timestamp(now.Add(-time.Second)),
 	}
-	loss, found, err := decideFreshLeaseLoss(row)
+	loss, found, err := decideExecutionLeaseLoss(row)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !found || loss.reason != "lease_expired" ||
 		!loss.at.Equal(now.Add(-3*time.Second)) || loss.state != db.RunLeaseStateExpired {
 		t.Fatalf("loss = %+v, found=%v", loss, found)
+	}
+}
+
+func TestDecideExecutionLeaseLossStateDeadlines(t *testing.T) {
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	base := db.GetRunExecutionLeaseLossAuthorityRow{
+		ObservedAt:          timestamp(now),
+		RunLeaseExpiresAt:   timestamp(now.Add(time.Minute)),
+		StartDeadlineAt:     timestamp(now.Add(-time.Hour)),
+		ActiveStartedAt:     timestamp(now.Add(-10 * time.Second)),
+		MaxActiveDurationMs: 5_000,
+		WorkerCurrentEpoch:  pgtype.Int8{Int64: 1, Valid: true},
+		WorkerEpoch:         1,
+	}
+
+	checkpointing := base
+	checkpointing.RunLeaseState = string(db.RunLeaseStateCheckpointing)
+	loss, found, err := decideExecutionLeaseLoss(checkpointing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || loss.kind != "active_deadline" ||
+		loss.reason != "max_active_duration_exceeded" || loss.state != db.RunLeaseStateExpired {
+		t.Fatalf("checkpointing loss = %+v, found=%v", loss, found)
+	}
+
+	finalizing := base
+	finalizing.RunLeaseState = string(db.RunLeaseStateFinalizing)
+	finalizing.ActiveStartedAt = pgtype.Timestamptz{}
+	finalizing.WorkerLostAt = timestamp(now)
+	loss, found, err = decideExecutionLeaseLoss(finalizing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || loss.kind != "physical_loss" || loss.reason != "worker_lost" ||
+		!loss.at.Equal(now) {
+		t.Fatalf("finalizing loss = %+v, found=%v", loss, found)
 	}
 }
 

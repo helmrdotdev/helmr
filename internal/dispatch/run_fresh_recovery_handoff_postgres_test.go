@@ -25,7 +25,7 @@ type freshHandoffRecoveryFixture struct {
 func TestFreshAssignedHandoffRecoveryRetainsHealthyRuntime(t *testing.T) {
 	fixture := prepareFreshHandoffRecovery(t)
 
-	recovered, err := fixture.authority.RecoverExpiredFreshRunLeases(fixture.ctx, 10)
+	recovered, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ UPDATE workspace_leases
  WHERE owner_run_lease_id = $1`, fixture.leaseID)
 			}
 
-			recovered, err := fixture.authority.RecoverExpiredFreshRunLeases(fixture.ctx, 10)
+			recovered, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10)
 			if err != nil {
 				t.Fatal(err)
 			}

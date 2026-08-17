@@ -17,7 +17,7 @@ const (
 )
 
 type RunLeaseRecoverer interface {
-	RecoverExpiredFreshRunLeases(context.Context, int32) (int, error)
+	RecoverRunExecutionLeases(context.Context, int32) (int, error)
 	RecoverExpiredRunResumes(context.Context, int32) ([]db.RecoverExpiredRunResumesRow, error)
 }
 
@@ -92,12 +92,12 @@ func (r *RunLeaseReconciler) reconcile(ctx context.Context) error {
 	}()
 	// Reserve work for both independently bounded lanes. A sustained backlog in
 	// either lane must not prevent the other authority repair from running.
-	freshLimit := (r.limit + 1) / 2
-	resumeLimit := r.limit - freshLimit
+	executionLimit := (r.limit + 1) / 2
+	resumeLimit := r.limit - executionLimit
 	errorsByLane := make(chan error, 2)
 	go func() {
-		_, freshErr := r.recoverer.RecoverExpiredFreshRunLeases(ctx, freshLimit)
-		errorsByLane <- freshErr
+		_, executionErr := r.recoverer.RecoverRunExecutionLeases(ctx, executionLimit)
+		errorsByLane <- executionErr
 	}()
 	go func() {
 		_, resumeErr := r.recoverer.RecoverExpiredRunResumes(ctx, resumeLimit)

@@ -18,7 +18,7 @@ type recordingRunLeaseRecoverer struct {
 	resumeErr   error
 }
 
-func (r *recordingRunLeaseRecoverer) RecoverExpiredFreshRunLeases(_ context.Context, limit int32) (int, error) {
+func (r *recordingRunLeaseRecoverer) RecoverRunExecutionLeases(_ context.Context, limit int32) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.freshLimit = limit
@@ -78,7 +78,7 @@ type concurrentLaneRecoverer struct {
 	resumeStarted chan struct{}
 }
 
-func (r concurrentLaneRecoverer) RecoverExpiredFreshRunLeases(ctx context.Context, _ int32) (int, error) {
+func (r concurrentLaneRecoverer) RecoverRunExecutionLeases(ctx context.Context, _ int32) (int, error) {
 	select {
 	case <-r.resumeStarted:
 		return 1, nil

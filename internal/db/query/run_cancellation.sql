@@ -389,7 +389,7 @@ UPDATE run_checkpoints
  WHERE run_id = sqlc.arg(run_id)
    AND state IN ('creating', 'ready');
 
--- name: GetFreshRunLeaseLossAuthority :one
+-- name: GetRunExecutionLeaseLossAuthority :one
 SELECT runs.id AS run_id,
        runs.workspace_id,
        runs.status AS run_status,
@@ -463,13 +463,23 @@ SELECT runs.id AS run_id,
    AND runs.current_attempt_number = sqlc.arg(attempt_number)
    AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
    AND run_leases.id = sqlc.arg(run_lease_id)
-   AND run_leases.state IN ('assigned', 'starting', 'running')
+   AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
    AND ((run_leases.state IN ('assigned', 'starting')
          AND runs.status = 'queued'
          AND runs.active_started_at IS NULL)
         OR (run_leases.state = 'running'
             AND runs.status = 'running'
-            AND runs.active_started_at IS NOT NULL))
+            AND runs.active_started_at IS NOT NULL)
+        OR (run_leases.state = 'checkpointing'
+            AND runs.status = 'waiting'
+            AND runs.active_started_at IS NOT NULL)
+        OR (run_leases.state = 'finalizing'
+            AND runs.status = 'running'
+            AND runs.active_started_at IS NULL
+            AND run_leases.finalization_operation_id IS NOT NULL
+            AND run_leases.finalization_kind IS NOT NULL
+            AND run_leases.finalization_started_at IS NOT NULL
+            AND run_leases.finalization_request_fingerprint IS NOT NULL))
    AND NOT EXISTS (
        SELECT 1
          FROM run_waits
@@ -494,7 +504,7 @@ UPDATE runs
        updated_at = transaction_timestamp()
  WHERE id = sqlc.arg(run_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND status = 'running'
+   AND status IN ('running', 'waiting')
    AND state_version = sqlc.arg(expected_state_version)
    AND current_attempt_number = sqlc.arg(attempt_number)
    AND current_run_lease_id = sqlc.arg(run_lease_id)

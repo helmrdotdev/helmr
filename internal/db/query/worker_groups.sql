@@ -968,7 +968,7 @@ WITH target AS (
              FROM runtime_instances
              JOIN run_leases
                ON run_leases.runtime_instance_id = runtime_instances.id
-              AND run_leases.state IN ('assigned', 'starting', 'running')
+              AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
             WHERE runtime_instances.worker_instance_id = worker_instances.id
               AND runtime_instances.worker_epoch < worker_instances.current_epoch
        )
@@ -983,6 +983,32 @@ WITH target AS (
 ), quarantined AS (
     SELECT value::uuid AS id
       FROM jsonb_array_elements_text(sqlc.arg(recovery_evidence)::jsonb -> 'quarantined') AS value
+), reclaimable_runtimes AS MATERIALIZED (
+    SELECT runtime_instances.id
+      FROM runtime_instances
+      JOIN target
+        ON target.id = runtime_instances.worker_instance_id
+     WHERE runtime_instances.worker_epoch < target.current_epoch
+       AND runtime_instances.reclaimed_at IS NULL
+       AND runtime_instances.id NOT IN (SELECT id FROM quarantined)
+       AND NOT EXISTS (
+           SELECT 1
+             FROM run_leases
+            WHERE run_leases.runtime_instance_id = runtime_instances.id
+              AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+       )
+     ORDER BY runtime_instances.id
+       FOR UPDATE OF runtime_instances
+), lost_mounts AS (
+    UPDATE workspace_mounts
+       SET state = 'lost',
+           lost_at = now(),
+           terminal_at = now(),
+           terminal_reason_code = 'worker_startup_reclaimed',
+           updated_at = now()
+     WHERE workspace_mounts.runtime_instance_id IN (SELECT id FROM reclaimable_runtimes)
+       AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+    RETURNING workspace_mounts.id
 ), reclaimed_runtimes AS (
     UPDATE runtime_instances
        SET observed_state = CASE WHEN observed_state IN ('closed','failed','lost') THEN observed_state ELSE 'lost' END,
@@ -999,22 +1025,14 @@ WITH target AS (
            reserved_run_id = NULL, reserved_attempt_number = NULL,
            reserved_process_id = NULL, reserved_workspace_version_id = NULL,
            reservation_expires_at = NULL, updated_at = now()
-      FROM target
-     WHERE runtime_instances.worker_instance_id = target.id
-       AND runtime_instances.worker_epoch < target.current_epoch
-       AND runtime_instances.reclaimed_at IS NULL
-       AND runtime_instances.id NOT IN (SELECT id FROM quarantined)
-       AND NOT EXISTS (
-           SELECT 1
-             FROM run_leases
-            WHERE run_leases.runtime_instance_id = runtime_instances.id
-              AND run_leases.state IN ('assigned', 'starting', 'running')
-       )
+     WHERE runtime_instances.id IN (SELECT id FROM reclaimable_runtimes)
+       AND (SELECT count(*) FROM lost_mounts) >= 0
     RETURNING runtime_instances.id
 )
 UPDATE worker_instances
    SET updated_at = now()
   FROM target
  WHERE worker_instances.id = target.id
+   AND (SELECT count(*) FROM lost_mounts) >= 0
    AND (SELECT count(*) FROM reclaimed_runtimes) >= 0
 RETURNING worker_instances.*;

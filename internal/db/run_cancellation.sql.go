@@ -443,7 +443,7 @@ func (q *Queries) FindCancellationTarget(ctx context.Context, arg FindCancellati
 	return id, err
 }
 
-const getFreshRunLeaseLossAuthority = `-- name: GetFreshRunLeaseLossAuthority :one
+const getRunExecutionLeaseLossAuthority = `-- name: GetRunExecutionLeaseLossAuthority :one
 SELECT runs.id AS run_id,
        runs.workspace_id,
        runs.status AS run_status,
@@ -517,13 +517,23 @@ SELECT runs.id AS run_id,
    AND runs.current_attempt_number = $3
    AND runs.current_run_lease_id = $4
    AND run_leases.id = $4
-   AND run_leases.state IN ('assigned', 'starting', 'running')
+   AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
    AND ((run_leases.state IN ('assigned', 'starting')
          AND runs.status = 'queued'
          AND runs.active_started_at IS NULL)
         OR (run_leases.state = 'running'
             AND runs.status = 'running'
-            AND runs.active_started_at IS NOT NULL))
+            AND runs.active_started_at IS NOT NULL)
+        OR (run_leases.state = 'checkpointing'
+            AND runs.status = 'waiting'
+            AND runs.active_started_at IS NOT NULL)
+        OR (run_leases.state = 'finalizing'
+            AND runs.status = 'running'
+            AND runs.active_started_at IS NULL
+            AND run_leases.finalization_operation_id IS NOT NULL
+            AND run_leases.finalization_kind IS NOT NULL
+            AND run_leases.finalization_started_at IS NOT NULL
+            AND run_leases.finalization_request_fingerprint IS NOT NULL))
    AND NOT EXISTS (
        SELECT 1
          FROM run_waits
@@ -534,14 +544,14 @@ SELECT runs.id AS run_id,
    )
 `
 
-type GetFreshRunLeaseLossAuthorityParams struct {
+type GetRunExecutionLeaseLossAuthorityParams struct {
 	RunID         pgtype.UUID `json:"run_id"`
 	WorkspaceID   pgtype.UUID `json:"workspace_id"`
 	AttemptNumber int32       `json:"attempt_number"`
 	RunLeaseID    pgtype.UUID `json:"run_lease_id"`
 }
 
-type GetFreshRunLeaseLossAuthorityRow struct {
+type GetRunExecutionLeaseLossAuthorityRow struct {
 	RunID                    pgtype.UUID        `json:"run_id"`
 	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
 	RunStatus                string             `json:"run_status"`
@@ -578,14 +588,14 @@ type GetFreshRunLeaseLossAuthorityRow struct {
 	ObservedAt               pgtype.Timestamptz `json:"observed_at"`
 }
 
-func (q *Queries) GetFreshRunLeaseLossAuthority(ctx context.Context, arg GetFreshRunLeaseLossAuthorityParams) (GetFreshRunLeaseLossAuthorityRow, error) {
-	row := q.db.QueryRow(ctx, getFreshRunLeaseLossAuthority,
+func (q *Queries) GetRunExecutionLeaseLossAuthority(ctx context.Context, arg GetRunExecutionLeaseLossAuthorityParams) (GetRunExecutionLeaseLossAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, getRunExecutionLeaseLossAuthority,
 		arg.RunID,
 		arg.WorkspaceID,
 		arg.AttemptNumber,
 		arg.RunLeaseID,
 	)
-	var i GetFreshRunLeaseLossAuthorityRow
+	var i GetRunExecutionLeaseLossAuthorityRow
 	err := row.Scan(
 		&i.RunID,
 		&i.WorkspaceID,
@@ -1522,7 +1532,7 @@ UPDATE runs
        updated_at = transaction_timestamp()
  WHERE id = $2
    AND workspace_id = $3
-   AND status = 'running'
+   AND status IN ('running', 'waiting')
    AND state_version = $4
    AND current_attempt_number = $5
    AND current_run_lease_id = $6

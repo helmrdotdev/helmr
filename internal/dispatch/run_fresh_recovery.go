@@ -13,21 +13,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// RecoverExpiredFreshRunLeases repairs fresh placement loss. Checkpoint-backed
-// resume remains in RecoverExpiredRunResumes; both lanes are scheduled by the
-// same dispatcher reconciler and advisory lock.
-func (d *Authority) RecoverExpiredFreshRunLeases(ctx context.Context, limit int32) (int, error) {
+// RecoverRunExecutionLeases repairs physical-authority loss for every live
+// non-resume Run Lease. Checkpoint-backed resume remains in
+// RecoverExpiredRunResumes; both lanes share the dispatcher reconciler and
+// advisory lock.
+func (d *Authority) RecoverRunExecutionLeases(ctx context.Context, limit int32) (int, error) {
 	if limit <= 0 {
 		return 0, nil
 	}
-	candidates, err := db.New(d.pool).ListFreshRunLeaseRecoveryCandidates(ctx, limit)
+	candidates, err := db.New(d.pool).ListRunExecutionLeaseRecoveryCandidates(ctx, limit)
 	if err != nil {
-		return 0, fmt.Errorf("list fresh Run lease recovery candidates: %w", err)
+		return 0, fmt.Errorf("list Run execution lease recovery candidates: %w", err)
 	}
 	recovered := 0
 	var recoveryErrors []error
 	for _, candidate := range candidates {
-		changed, err := d.recoverExpiredFreshRunLease(ctx, candidate)
+		changed, err := d.recoverRunExecutionLease(ctx, candidate)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
 		}
@@ -42,9 +43,9 @@ func (d *Authority) RecoverExpiredFreshRunLeases(ctx context.Context, limit int3
 	return recovered, errors.Join(recoveryErrors...)
 }
 
-func (d *Authority) recoverExpiredFreshRunLease(
+func (d *Authority) recoverRunExecutionLease(
 	ctx context.Context,
-	candidate db.ListFreshRunLeaseRecoveryCandidatesRow,
+	candidate db.ListRunExecutionLeaseRecoveryCandidatesRow,
 ) (bool, error) {
 	runID, err := uuidFromPG(candidate.RunID)
 	if err != nil {
@@ -72,7 +73,7 @@ func (d *Authority) recoverExpiredFreshRunLease(
 	}
 	tx, err := d.begin(ctx)
 	if err != nil {
-		return false, fmt.Errorf("begin fresh Run lease recovery: %w", err)
+		return false, fmt.Errorf("begin Run execution lease recovery: %w", err)
 	}
 	defer rollback(ctx, tx)
 	q := db.New(tx)
@@ -84,15 +85,15 @@ func (d *Authority) recoverExpiredFreshRunLease(
 		candidate.WorkspaceID,
 	)
 	if err != nil {
-		return false, fmt.Errorf("lock fresh Run retry Secret metadata: %w", err)
+		return false, fmt.Errorf("lock Run execution retry Secret metadata: %w", err)
 	}
 	graph, err := run.LockOwnedFinalization(ctx, tx, run.OwnedFinalizationRequest{
 		OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID, RunID: runID,
 	})
 	if err != nil {
-		return false, fmt.Errorf("lock fresh Run lease recovery graph: %w", err)
+		return false, fmt.Errorf("lock Run execution lease recovery graph: %w", err)
 	}
-	recovered, err := graph.RecoverFreshLeaseLoss(ctx, run.FreshLeaseRecoveryRequest{
+	recovered, err := graph.RecoverExecutionLeaseLoss(ctx, run.ExecutionLeaseRecoveryRequest{
 		RunID: runID, WorkspaceID: workspaceID, AttemptNumber: candidate.CurrentAttemptNumber,
 		RunLeaseID: runLeaseID, RetryResolutions: resolutions,
 		RetrySecretsAvailable: secretsAvailable,
