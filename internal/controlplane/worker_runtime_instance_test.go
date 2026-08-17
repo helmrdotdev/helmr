@@ -3,11 +3,13 @@ package controlplane
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -19,6 +21,140 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+type runtimeRestoreProjectionStore struct {
+	db.Querier
+	checkpoint db.RunCheckpoint
+	artifacts  []db.ListRunCheckpointArtifactAuthorityRow
+	base       db.GetCheckpointWorkspaceBaseAuthorityRow
+	baseCalls  int
+}
+
+func (s *runtimeRestoreProjectionStore) GetReadyRunCheckpoint(
+	context.Context,
+	db.GetReadyRunCheckpointParams,
+) (db.RunCheckpoint, error) {
+	return s.checkpoint, nil
+}
+
+func (s *runtimeRestoreProjectionStore) ListRunCheckpointArtifactAuthority(
+	context.Context,
+	pgtype.UUID,
+) ([]db.ListRunCheckpointArtifactAuthorityRow, error) {
+	return s.artifacts, nil
+}
+
+func (s *runtimeRestoreProjectionStore) GetCheckpointWorkspaceBaseAuthority(
+	_ context.Context,
+	params db.GetCheckpointWorkspaceBaseAuthorityParams,
+) (db.GetCheckpointWorkspaceBaseAuthorityRow, error) {
+	s.baseCalls++
+	if params.VersionID != s.checkpoint.BaseWorkspaceVersionID {
+		return db.GetCheckpointWorkspaceBaseAuthorityRow{}, errors.New("unexpected source base version")
+	}
+	return s.base, nil
+}
+
+func TestPopulateRuntimeRestoreSourceKeepsCapturedAndSourceFrontiersDistinct(t *testing.T) {
+	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	waitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	sourceVersionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	capturedVersionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	manifest, err := json.Marshal(workerapi.CheckpointManifest{
+		WorkspaceState: workerapi.CheckpointWorkspaceState{Base: workerapi.CheckpointWorkspaceBase{
+			ArtifactDigest: validDigest('e'), ArtifactSizeBytes: 512,
+			ArtifactMediaType: workspace.ArtifactMediaType,
+			ArtifactEncoding:  workspace.ArtifactEncoding,
+			MountPath:         "/workspace",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &runtimeRestoreProjectionStore{
+		checkpoint: db.RunCheckpoint{
+			ID: checkpointID, RunID: runID, RunWaitID: waitID, AttemptNumber: 2,
+			Kind: db.RunCheckpointKindSuspend, State: db.RunCheckpointStateReady,
+			BaseWorkspaceVersionID: sourceVersionID, RestoreManifest: manifest,
+		},
+		artifacts: []db.ListRunCheckpointArtifactAuthorityRow{
+			{Role: db.RunCheckpointArtifactRoleRuntimeConfig, Digest: validDigest('a'), SizeBytes: 1, MediaType: "application/example"},
+			{Role: db.RunCheckpointArtifactRoleVMState, Digest: validDigest('b'), SizeBytes: 2, MediaType: "application/example"},
+			{Role: db.RunCheckpointArtifactRoleMemory, Digest: validDigest('c'), SizeBytes: 3, MediaType: "application/example"},
+			{Role: db.RunCheckpointArtifactRoleScratchDisk, Digest: validDigest('d'), SizeBytes: 4, MediaType: "application/example"},
+		},
+		base: db.GetCheckpointWorkspaceBaseAuthorityRow{
+			VersionID:       sourceVersionID,
+			ParentVersionID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ArtifactID:      pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			ArtifactKind:    db.NullArtifactKind{ArtifactKind: db.ArtifactKindWorkspaceVersion, Valid: true},
+			VersionKind:     db.WorkspaceVersionKindUser,
+			ContentDigest:   validDigest('f'), LogicalSizeBytes: 64, EntryCount: 1,
+			SourceWorkspaceLeaseID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			OwnershipGeneration:    2, WriterGeneration: 3,
+			ArtifactRowKind:   db.NullArtifactKind{ArtifactKind: db.ArtifactKindWorkspaceVersion, Valid: true},
+			ArtifactDigest:    pgvalue.Text(validDigest('e')),
+			ArtifactSizeBytes: pgtype.Int8{Int64: 512, Valid: true},
+			ArtifactMediaType: pgvalue.Text(workspace.ArtifactMediaType),
+		},
+	}
+	source := workerapi.RuntimeSource{
+		BaseVersionID: pgvalue.UUIDString(capturedVersionID),
+		WorkspaceArtifact: workerapi.WorkspaceArtifact{
+			Digest: validDigest('9'), SizeBytes: 1024,
+			MediaType: workspace.ArtifactMediaType, Encoding: workspace.ArtifactEncoding,
+		},
+	}
+	row := db.GetNextRuntimeReconcileTargetRow{
+		RestoreCheckpointID:   checkpointID,
+		ReservedRunID:         runID,
+		ReservedAttemptNumber: pgtype.Int4{Int32: 2, Valid: true},
+	}
+	if err := populateRuntimeRestoreSource(context.Background(), store, &source, row); err != nil {
+		t.Fatal(err)
+	}
+	if source.BaseVersionID != pgvalue.UUIDString(capturedVersionID) ||
+		source.WorkspaceArtifact.Digest != validDigest('9') {
+		t.Fatalf("captured frontier was rewritten: %+v", source)
+	}
+	if source.Restore == nil || source.Restore.SourceWorkspaceBase == nil ||
+		source.Restore.SourceWorkspaceBase.VersionID != pgvalue.UUIDString(sourceVersionID) ||
+		source.Restore.SourceWorkspaceBase.Base.ArtifactDigest != validDigest('e') || store.baseCalls != 1 {
+		t.Fatalf("source frontier was not projected independently: %+v", source.Restore)
+	}
+}
+
+func TestPopulateRuntimeRestoreSourceLeavesUnsupportedKindForWorkerFailure(t *testing.T) {
+	checkpointID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store := &runtimeRestoreProjectionStore{
+		checkpoint: db.RunCheckpoint{
+			ID: checkpointID, RunID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			RunWaitID: pgvalue.UUID(uuid.Must(uuid.NewV7())), AttemptNumber: 1,
+			Kind: db.RunCheckpointKindHandoffResume, State: db.RunCheckpointStateReady,
+			RestoreManifest: []byte(`{"version":0}`),
+		},
+		artifacts: []db.ListRunCheckpointArtifactAuthorityRow{
+			{Role: db.RunCheckpointArtifactRoleRuntimeConfig, Digest: validDigest('a'), SizeBytes: 1, MediaType: "application/example"},
+			{Role: db.RunCheckpointArtifactRoleVMState, Digest: validDigest('b'), SizeBytes: 2, MediaType: "application/example"},
+			{Role: db.RunCheckpointArtifactRoleMemory, Digest: validDigest('c'), SizeBytes: 3, MediaType: "application/example"},
+			{Role: db.RunCheckpointArtifactRoleScratchDisk, Digest: validDigest('d'), SizeBytes: 4, MediaType: "application/example"},
+		},
+	}
+	source := workerapi.RuntimeSource{}
+	row := db.GetNextRuntimeReconcileTargetRow{
+		RestoreCheckpointID:   checkpointID,
+		ReservedRunID:         store.checkpoint.RunID,
+		ReservedAttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
+	}
+	if err := populateRuntimeRestoreSource(context.Background(), store, &source, row); err != nil {
+		t.Fatal(err)
+	}
+	if source.Restore == nil || source.Restore.Kind != string(db.RunCheckpointKindHandoffResume) ||
+		source.Restore.SourceWorkspaceBase != nil || store.baseCalls != 0 {
+		t.Fatalf("unsupported restore was not delegated to Worker failure: %+v", source.Restore)
+	}
+}
 
 func TestRuntimeInstanceResponsePreservesActualCPUShape(t *testing.T) {
 	row := db.RuntimeInstance{

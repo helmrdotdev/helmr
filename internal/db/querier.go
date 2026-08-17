@@ -218,6 +218,7 @@ type Querier interface {
 	GetCasObject(ctx context.Context, arg GetCasObjectParams) (CasObject, error)
 	GetCheckpointFailedReplay(ctx context.Context, id pgtype.UUID) (GetCheckpointFailedReplayRow, error)
 	GetCheckpointReadyReplay(ctx context.Context, id pgtype.UUID) (GetCheckpointReadyReplayRow, error)
+	GetCheckpointWorkspaceBaseAuthority(ctx context.Context, arg GetCheckpointWorkspaceBaseAuthorityParams) (GetCheckpointWorkspaceBaseAuthorityRow, error)
 	GetChildCallRunWaitReplay(ctx context.Context, arg GetChildCallRunWaitReplayParams) (RunWait, error)
 	GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploymentParams) (Deployment, error)
 	GetCurrentDeploymentDefinition(ctx context.Context, arg GetCurrentDeploymentDefinitionParams) (DeploymentDefinition, error)

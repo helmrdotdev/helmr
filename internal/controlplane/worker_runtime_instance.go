@@ -139,30 +139,59 @@ func populateRuntimePrepareSource(
 	}
 	source.Program = &program
 	if row.RestoreCheckpointID.Valid {
-		if !row.ReservedRunID.Valid || !row.ReservedAttemptNumber.Valid || store == nil {
-			return errors.New("restored runtime reservation authority is incomplete")
+		if err := populateRuntimeRestoreSource(ctx, store, source, row); err != nil {
+			return err
 		}
-		checkpoint, err := store.GetReadyRunCheckpoint(ctx, db.GetReadyRunCheckpointParams{
-			RunID: row.ReservedRunID, AttemptNumber: row.ReservedAttemptNumber.Int32,
-			ID: row.RestoreCheckpointID,
+	}
+	return nil
+}
+
+func populateRuntimeRestoreSource(
+	ctx context.Context,
+	store db.Querier,
+	source *workerapi.RuntimeSource,
+	row db.GetNextRuntimeReconcileTargetRow,
+) error {
+	if !row.RestoreCheckpointID.Valid || !row.ReservedRunID.Valid ||
+		!row.ReservedAttemptNumber.Valid || store == nil {
+		return errors.New("restored runtime reservation authority is incomplete")
+	}
+	checkpoint, err := store.GetReadyRunCheckpoint(ctx, db.GetReadyRunCheckpointParams{
+		RunID: row.ReservedRunID, AttemptNumber: row.ReservedAttemptNumber.Int32,
+		ID: row.RestoreCheckpointID,
+	})
+	if err != nil {
+		return fmt.Errorf("load restored runtime checkpoint authority: %w", err)
+	}
+	artifacts, err := store.ListRunCheckpointArtifactAuthority(ctx, row.RestoreCheckpointID)
+	if err != nil {
+		return fmt.Errorf("load restored runtime checkpoint artifacts: %w", err)
+	}
+	projected, err := projectRunLeaseCheckpoint(checkpoint, artifacts)
+	if err != nil {
+		return fmt.Errorf("project restored runtime checkpoint: %w", err)
+	}
+	var sourceBase *workerapi.RuntimeRestoreWorkspaceBase
+	if checkpoint.Kind == db.RunCheckpointKindSuspend {
+		baseAuthority, err := store.GetCheckpointWorkspaceBaseAuthority(ctx, db.GetCheckpointWorkspaceBaseAuthorityParams{
+			OrgID: row.OrgID, ProjectID: row.ProjectID, EnvironmentID: row.EnvironmentID,
+			WorkspaceID: row.WorkspaceID, VersionID: checkpoint.BaseWorkspaceVersionID,
 		})
 		if err != nil {
-			return fmt.Errorf("load restored runtime checkpoint authority: %w", err)
+			return fmt.Errorf("load restored runtime checkpoint source Workspace base: %w", err)
 		}
-		artifacts, err := store.ListRunCheckpointArtifactAuthority(ctx, row.RestoreCheckpointID)
+		projectedBase, err := projectCheckpointWorkspaceBase(baseAuthority)
 		if err != nil {
-			return fmt.Errorf("load restored runtime checkpoint artifacts: %w", err)
+			return fmt.Errorf("project restored runtime checkpoint source Workspace base: %w", err)
 		}
-		projected, err := projectRunLeaseCheckpoint(checkpoint, artifacts)
-		if err != nil {
-			return fmt.Errorf("project restored runtime checkpoint: %w", err)
-		}
-		source.Restore = &workerapi.RuntimeRestore{
-			CheckpointID: pgvalue.UUIDString(row.RestoreCheckpointID),
-			RunID:        pgvalue.UUIDString(checkpoint.RunID), AttemptNumber: checkpoint.AttemptNumber,
-			RunWaitID: pgvalue.UUIDString(checkpoint.RunWaitID),
-			Kind:      projected.Kind, Manifest: projected.Manifest, Artifacts: projected.Artifacts,
-		}
+		sourceBase = &projectedBase
+	}
+	source.Restore = &workerapi.RuntimeRestore{
+		CheckpointID: pgvalue.UUIDString(row.RestoreCheckpointID),
+		RunID:        pgvalue.UUIDString(checkpoint.RunID), AttemptNumber: checkpoint.AttemptNumber,
+		RunWaitID: pgvalue.UUIDString(checkpoint.RunWaitID),
+		Kind:      projected.Kind, Manifest: projected.Manifest, Artifacts: projected.Artifacts,
+		SourceWorkspaceBase: sourceBase,
 	}
 	return nil
 }

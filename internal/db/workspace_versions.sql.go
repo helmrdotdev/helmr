@@ -11,6 +11,92 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getCheckpointWorkspaceBaseAuthority = `-- name: GetCheckpointWorkspaceBaseAuthority :one
+SELECT workspace_versions.id AS version_id,
+       workspace_versions.parent_version_id,
+       workspace_versions.artifact_id,
+       workspace_versions.artifact_kind,
+       workspace_versions.kind AS version_kind,
+       workspace_versions.content_digest,
+       workspace_versions.size_bytes AS logical_size_bytes,
+       workspace_versions.entry_count,
+       workspace_versions.source_workspace_lease_id,
+       workspace_versions.ownership_generation,
+       workspace_versions.writer_generation,
+       artifacts.kind AS artifact_row_kind,
+       artifacts.digest AS artifact_digest,
+       artifacts.size_bytes AS artifact_size_bytes,
+       artifacts.media_type AS artifact_media_type
+  FROM workspace_versions
+  JOIN workspaces
+    ON workspaces.environment_id = workspace_versions.environment_id
+   AND workspaces.id = workspace_versions.workspace_id
+  JOIN environments ON environments.id = workspaces.environment_id
+  LEFT JOIN artifacts ON artifacts.environment_id = workspace_versions.environment_id
+                     AND artifacts.id = workspace_versions.artifact_id
+ WHERE environments.org_id = $1
+   AND environments.project_id = $2
+   AND workspace_versions.environment_id = $3
+   AND workspace_versions.workspace_id = $4
+   AND workspace_versions.id = $5
+   AND workspace_versions.state IN ('committed', 'private')
+`
+
+type GetCheckpointWorkspaceBaseAuthorityParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	VersionID     pgtype.UUID `json:"version_id"`
+}
+
+type GetCheckpointWorkspaceBaseAuthorityRow struct {
+	VersionID              pgtype.UUID          `json:"version_id"`
+	ParentVersionID        pgtype.UUID          `json:"parent_version_id"`
+	ArtifactID             pgtype.UUID          `json:"artifact_id"`
+	ArtifactKind           NullArtifactKind     `json:"artifact_kind"`
+	VersionKind            WorkspaceVersionKind `json:"version_kind"`
+	ContentDigest          string               `json:"content_digest"`
+	LogicalSizeBytes       int64                `json:"logical_size_bytes"`
+	EntryCount             int32                `json:"entry_count"`
+	SourceWorkspaceLeaseID pgtype.UUID          `json:"source_workspace_lease_id"`
+	OwnershipGeneration    int64                `json:"ownership_generation"`
+	WriterGeneration       int64                `json:"writer_generation"`
+	ArtifactRowKind        NullArtifactKind     `json:"artifact_row_kind"`
+	ArtifactDigest         pgtype.Text          `json:"artifact_digest"`
+	ArtifactSizeBytes      pgtype.Int8          `json:"artifact_size_bytes"`
+	ArtifactMediaType      pgtype.Text          `json:"artifact_media_type"`
+}
+
+func (q *Queries) GetCheckpointWorkspaceBaseAuthority(ctx context.Context, arg GetCheckpointWorkspaceBaseAuthorityParams) (GetCheckpointWorkspaceBaseAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, getCheckpointWorkspaceBaseAuthority,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+		arg.VersionID,
+	)
+	var i GetCheckpointWorkspaceBaseAuthorityRow
+	err := row.Scan(
+		&i.VersionID,
+		&i.ParentVersionID,
+		&i.ArtifactID,
+		&i.ArtifactKind,
+		&i.VersionKind,
+		&i.ContentDigest,
+		&i.LogicalSizeBytes,
+		&i.EntryCount,
+		&i.SourceWorkspaceLeaseID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.ArtifactRowKind,
+		&i.ArtifactDigest,
+		&i.ArtifactSizeBytes,
+		&i.ArtifactMediaType,
+	)
+	return i, err
+}
+
 const getWorkspaceResetTargetAuthority = `-- name: GetWorkspaceResetTargetAuthority :one
 SELECT workspace_versions.id AS version_id,
        workspace_versions.parent_version_id,

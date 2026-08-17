@@ -250,11 +250,15 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 	}
 	target := workerapi.RuntimeReconcileTarget{Source: workerapi.RuntimeSource{
 		VMVCPUCount: 2, CPUConfigDigest: cpuConfigDigest,
-		WorkspaceArtifact: workerapi.WorkspaceArtifact{Digest: "workspace-object", SizeBytes: 50,
+		WorkspaceArtifact: workerapi.WorkspaceArtifact{Digest: "captured-workspace-object", SizeBytes: 75,
 			MediaType: "workspace-media", Encoding: "workspace-encoding"},
 		Restore: &workerapi.RuntimeRestore{
 			CheckpointID: "checkpoint-1", RunID: "run-1", AttemptNumber: 2, RunWaitID: "wait-1",
 			Kind: "suspend", Manifest: manifest,
+			SourceWorkspaceBase: &workerapi.RuntimeRestoreWorkspaceBase{
+				VersionID: "source-base-version",
+				Base:      checkpoint.WorkspaceState.Base,
+			},
 			Artifacts: []workerapi.RunLeaseCheckpointArtifact{
 				{Role: "runtime_config", Object: object(checkpoint.RuntimeState.ConfigArtifact)},
 				{Role: "vm_state", Object: object(checkpoint.RuntimeState.VMStateArtifact)},
@@ -274,6 +278,20 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 	target.Source.Restore.Artifacts[2].Role = "vm_state"
 	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err == nil {
 		t.Fatal("mismatched Checkpoint Artifact membership was accepted")
+	}
+	target.Source.Restore.Artifacts[2].Role = "memory"
+	target.Source.Restore.SourceWorkspaceBase.Base.ArtifactDigest = "different-source-base"
+	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err == nil {
+		t.Fatal("mismatched Checkpoint source Workspace base was accepted")
+	}
+	target.Source.Restore.SourceWorkspaceBase.Base = checkpoint.WorkspaceState.Base
+	target.Source.Restore.SourceWorkspaceBase.Base.MountPath = "/other"
+	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err == nil {
+		t.Fatal("noncanonical Checkpoint source Workspace mount was accepted")
+	}
+	target.Source.Restore.SourceWorkspaceBase = nil
+	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err == nil {
+		t.Fatal("missing Checkpoint source Workspace authority was accepted")
 	}
 }
 

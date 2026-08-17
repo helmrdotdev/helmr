@@ -152,12 +152,10 @@ func validatePreparedRuntimeRestore(
 			return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore artifact membership does not match its manifest")
 		}
 	}
-	base := checkpoint.WorkspaceState.Base
-	workspace := target.Source.WorkspaceArtifact
-	if base.ArtifactDigest != workspace.Digest || base.ArtifactSizeBytes != workspace.SizeBytes ||
-		base.ArtifactMediaType != workspace.MediaType || base.ArtifactEncoding != workspace.Encoding ||
-		strings.TrimSpace(base.MountPath) != "/workspace" {
-		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore workspace frontier does not match its reservation")
+	if restore.SourceWorkspaceBase == nil || strings.TrimSpace(restore.SourceWorkspaceBase.VersionID) == "" ||
+		!workerapi.CheckpointWorkspaceBaseEqual(checkpoint.WorkspaceState.Base, restore.SourceWorkspaceBase.Base) ||
+		strings.TrimSpace(restore.SourceWorkspaceBase.Base.MountPath) != "/workspace" {
+		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore manifest Workspace base does not match its source authority")
 	}
 	return checkpoint, nil
 }

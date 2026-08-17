@@ -996,6 +996,21 @@ func (s *Server) commitCheckpointReady(
 		if err := validateCheckpointRuntimeShapeAuthority(authority.runtime, request.Manifest); err != nil {
 			return err
 		}
+		baseAuthority, err := work.q.GetCheckpointWorkspaceBaseAuthority(ctx, db.GetCheckpointWorkspaceBaseAuthorityParams{
+			OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
+			EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
+			VersionID: authority.workspaceLease.BaseVersionID,
+		})
+		if err != nil {
+			return staleRunLeaseClaim(err)
+		}
+		sourceBase, err := projectCheckpointWorkspaceBase(baseAuthority)
+		if err != nil {
+			return err
+		}
+		if err := validateCheckpointWorkspaceBaseAuthority(request.Manifest, sourceBase); err != nil {
+			return err
+		}
 		if err := validateCheckpointSubstrateAuthority(
 			ctx,
 			work.q,

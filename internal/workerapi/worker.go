@@ -181,13 +181,19 @@ type RuntimeSource struct {
 }
 
 type RuntimeRestore struct {
-	CheckpointID  string                       `json:"checkpoint_id"`
-	RunID         string                       `json:"run_id"`
-	AttemptNumber int32                        `json:"attempt_number"`
-	RunWaitID     string                       `json:"run_wait_id"`
-	Kind          string                       `json:"kind"`
-	Manifest      json.RawMessage              `json:"manifest"`
-	Artifacts     []RunLeaseCheckpointArtifact `json:"artifacts"`
+	CheckpointID        string                       `json:"checkpoint_id"`
+	RunID               string                       `json:"run_id"`
+	AttemptNumber       int32                        `json:"attempt_number"`
+	RunWaitID           string                       `json:"run_wait_id"`
+	Kind                string                       `json:"kind"`
+	Manifest            json.RawMessage              `json:"manifest"`
+	Artifacts           []RunLeaseCheckpointArtifact `json:"artifacts"`
+	SourceWorkspaceBase *RuntimeRestoreWorkspaceBase `json:"source_workspace_base,omitempty"`
+}
+
+type RuntimeRestoreWorkspaceBase struct {
+	VersionID string                  `json:"version_id"`
+	Base      CheckpointWorkspaceBase `json:"base"`
 }
 
 type RuntimeProgram struct {
@@ -1114,6 +1120,14 @@ type CheckpointWorkspaceBase struct {
 	ArtifactMediaType string `json:"artifact_media_type"`
 	ArtifactEncoding  string `json:"artifact_encoding"`
 	MountPath         string `json:"mount_path"`
+}
+
+func CheckpointWorkspaceBaseEqual(left, right CheckpointWorkspaceBase) bool {
+	return left.ArtifactDigest == right.ArtifactDigest &&
+		left.ArtifactSizeBytes == right.ArtifactSizeBytes &&
+		left.ArtifactMediaType == right.ArtifactMediaType &&
+		left.ArtifactEncoding == right.ArtifactEncoding &&
+		left.MountPath == right.MountPath
 }
 
 type CheckpointArtifact struct {
