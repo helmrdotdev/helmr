@@ -49,7 +49,7 @@ func (d *Authority) grantFreshRun(
 		!authority.sameWorkspaceResume &&
 		(expectedMount.runtimeID != authority.handoffRuntimeID ||
 			expectedMount.id != authority.handoffWorkspaceMountID ||
-			expectedMount.fencingGeneration != authority.handoffMountGeneration.Int64) {
+			expectedMount.fencingGeneration != authority.handoffAdmissionMountGen.Int64) {
 		return db.RunLease{}, ErrCapacityUnavailable
 	}
 	if retainedHandoff && authority.sameWorkspaceResume &&
@@ -81,7 +81,6 @@ func (d *Authority) grantFreshRun(
 		RegionID:         authority.regionID,
 		WorkerInstanceID: runtime.workerID,
 		WorkerEpoch:      runtime.workerEpoch,
-		Role:             "run",
 		RunArchitecture:  authority.architecture,
 	}); err != nil {
 		return db.RunLease{}, ErrCapacityUnavailable
@@ -101,7 +100,7 @@ func (d *Authority) grantFreshRun(
 	if mount.id != expectedMount.id ||
 		mount.state != db.WorkspaceMountStateMounted ||
 		(authority.handoffChildWaitID.Valid && !authority.sameWorkspaceResume &&
-			mount.fencingGeneration != authority.handoffMountGeneration.Int64) {
+			mount.fencingGeneration != authority.handoffAdmissionMountGen.Int64) {
 		return db.RunLease{}, ErrCapacityUnavailable
 	}
 	if authority.handoffChildWaitID.Valid && retainedHandoff {
@@ -313,7 +312,7 @@ UPDATE run_waits
    AND handoff_mount_generation = $7
    AND ownership_generation = $8
    AND parent_writer_generation = $9
-   AND child_writer_generation IS NULL
+   AND child_writer_generation IS NOT DISTINCT FROM $10
 RETURNING id`,
 			writerGeneration,
 			authority.handoffChildWaitID,
@@ -324,6 +323,7 @@ RETURNING id`,
 			authority.handoffMountGeneration.Int64,
 			authority.handoffOwnership.Int64,
 			authority.handoffParentWriter.Int64,
+			authority.handoffChildWriter,
 		).Scan(&boundWaitID)
 		if err != nil {
 			return db.RunLease{}, fmt.Errorf(

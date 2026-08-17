@@ -47,66 +47,44 @@ resource "aws_s3_bucket_public_access_block" "terraform_state" {
   restrict_public_buckets = true
 }
 
-resource "aws_kms_key" "source_artifacts" {
-  description             = "KMS key for Helmr source artifacts"
+resource "aws_kms_key" "release_artifacts" {
+  description             = "KMS key for immutable Helmr release artifacts"
   deletion_window_in_days = 30
   enable_key_rotation     = true
   tags                    = var.tags
 }
 
-resource "aws_kms_alias" "source_artifacts" {
-  name          = "alias/${local.name}-source-artifacts"
-  target_key_id = aws_kms_key.source_artifacts.key_id
+resource "aws_kms_alias" "release_artifacts" {
+  name          = "alias/${local.name}-release-artifacts"
+  target_key_id = aws_kms_key.release_artifacts.key_id
 }
 
-resource "aws_s3_bucket" "source_artifacts" {
-  bucket = "${local.bucket_prefix}-source-artifacts"
+resource "aws_s3_bucket" "release_artifacts" {
+  bucket = "${local.bucket_prefix}-release-artifacts"
   tags   = var.tags
 }
 
-resource "aws_s3_bucket_versioning" "source_artifacts" {
-  bucket = aws_s3_bucket.source_artifacts.id
+resource "aws_s3_bucket_versioning" "release_artifacts" {
+  bucket = aws_s3_bucket.release_artifacts.id
 
   versioning_configuration {
     status = "Enabled"
   }
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "source_artifacts" {
-  bucket = aws_s3_bucket.source_artifacts.id
+resource "aws_s3_bucket_server_side_encryption_configuration" "release_artifacts" {
+  bucket = aws_s3_bucket.release_artifacts.id
 
   rule {
     apply_server_side_encryption_by_default {
-      kms_master_key_id = aws_kms_key.source_artifacts.arn
+      kms_master_key_id = aws_kms_key.release_artifacts.arn
       sse_algorithm     = "aws:kms"
     }
   }
 }
 
-resource "aws_s3_bucket_lifecycle_configuration" "source_artifacts" {
-  bucket = aws_s3_bucket.source_artifacts.id
-
-  rule {
-    id     = "expire-source-bundles"
-    status = "Enabled"
-
-    filter {
-      prefix = "helmr/source-bundles/"
-    }
-
-    expiration {
-      days = 30
-    }
-
-    noncurrent_version_expiration {
-      noncurrent_days = 7
-    }
-  }
-
-}
-
-resource "aws_s3_bucket_public_access_block" "source_artifacts" {
-  bucket                  = aws_s3_bucket.source_artifacts.id
+resource "aws_s3_bucket_public_access_block" "release_artifacts" {
+  bucket                  = aws_s3_bucket.release_artifacts.id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true

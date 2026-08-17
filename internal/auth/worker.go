@@ -10,8 +10,6 @@ import (
 )
 
 const (
-	WorkerRoleRun             = "run"
-	WorkerRoleBuild           = "build"
 	WorkerTokenIssuer         = "helmr-controlplane"
 	WorkerTokenAudience       = "helmr-worker"
 	WorkerTokenSigningKeySize = 32
@@ -30,19 +28,17 @@ type WorkerClaims struct {
 	WorkerEpoch       int64
 	ClaimVersion      int64
 	GroupClaimVersion int64
-	Roles             []string
 	IssuedAt          time.Time
 	ExpiresAt         time.Time
 }
 
 type workerJWTClaims struct {
-	WorkerGroupID     string   `json:"worker_group_id"`
-	WorkerInstanceID  string   `json:"worker_instance_id"`
-	CredentialID      string   `json:"credential_id"`
-	WorkerEpoch       int64    `json:"worker_epoch"`
-	ClaimVersion      int64    `json:"claim_version"`
-	GroupClaimVersion int64    `json:"group_claim_version"`
-	Roles             []string `json:"roles"`
+	WorkerGroupID     string `json:"worker_group_id"`
+	WorkerInstanceID  string `json:"worker_instance_id"`
+	CredentialID      string `json:"credential_id"`
+	WorkerEpoch       int64  `json:"worker_epoch"`
+	ClaimVersion      int64  `json:"claim_version"`
+	GroupClaimVersion int64  `json:"group_claim_version"`
 	jwt.RegisteredClaims
 }
 
@@ -57,7 +53,6 @@ func IssueWorkerToken(signingKey []byte, payload WorkerClaims) (string, error) {
 		WorkerGroupID: payload.WorkerGroupID, WorkerInstanceID: payload.WorkerInstanceID,
 		CredentialID: payload.CredentialID, WorkerEpoch: payload.WorkerEpoch,
 		ClaimVersion: payload.ClaimVersion, GroupClaimVersion: payload.GroupClaimVersion,
-		Roles: append([]string(nil), payload.Roles...),
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: WorkerTokenIssuer, Subject: payload.WorkerInstanceID,
 			Audience: jwt.ClaimStrings{WorkerTokenAudience},
@@ -114,7 +109,6 @@ func VerifyWorkerToken(signingKey []byte, rawToken string, now time.Time) (Worke
 		WorkerGroupID: claims.WorkerGroupID, WorkerInstanceID: claims.WorkerInstanceID,
 		CredentialID: claims.CredentialID, WorkerEpoch: claims.WorkerEpoch,
 		ClaimVersion: claims.ClaimVersion, GroupClaimVersion: claims.GroupClaimVersion,
-		Roles: append([]string(nil), claims.Roles...),
 	}
 	if claims.IssuedAt != nil {
 		payload.IssuedAt = claims.IssuedAt.Time.UTC()
@@ -159,19 +153,6 @@ func validateWorkerClaims(payload WorkerClaims) error {
 	}
 	if payload.GroupClaimVersion <= 0 {
 		return errors.New("group_claim_version must be positive")
-	}
-	if len(payload.Roles) == 0 {
-		return errors.New("roles is empty")
-	}
-	previous := ""
-	for _, role := range payload.Roles {
-		if role != WorkerRoleRun && role != WorkerRoleBuild {
-			return fmt.Errorf("unsupported worker role %q", role)
-		}
-		if role <= previous {
-			return errors.New("roles must be sorted and unique")
-		}
-		previous = role
 	}
 	if payload.IssuedAt.IsZero() {
 		return errors.New("issued_at is zero")

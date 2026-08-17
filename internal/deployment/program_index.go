@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/sourceid"
 )
 
@@ -225,10 +226,21 @@ func cloneProgramIndexDeclaration(
 ) ProgramIndexDeclaration {
 	if declaration.Task != nil {
 		value := *declaration.Task
+		value.Run = cloneRunManifest(value.Run)
+		if value.Schedule != nil {
+			schedule := *value.Schedule
+			schedule.Workspace.Secrets = make(
+				[]api.WorkspaceSecret,
+				len(value.Schedule.Workspace.Secrets),
+			)
+			copy(schedule.Workspace.Secrets, value.Schedule.Workspace.Secrets)
+			value.Schedule = &schedule
+		}
 		declaration.Task = &value
 	}
 	if declaration.Actor != nil {
 		value := *declaration.Actor
+		value.Run = cloneRunManifest(value.Run)
 		declaration.Actor = &value
 	}
 	if declaration.Sandbox != nil {
@@ -242,11 +254,28 @@ func cloneProgramIndexDeclaration(
 	return declaration
 }
 
+func cloneRunManifest(run RunManifest) RunManifest {
+	if run.TTLMs != nil {
+		value := *run.TTLMs
+		run.TTLMs = &value
+	}
+	if run.Retry.MaxAttempts != nil {
+		value := *run.Retry.MaxAttempts
+		run.Retry.MaxAttempts = &value
+	}
+	if run.Retry.Backoff != nil {
+		value := *run.Retry.Backoff
+		run.Retry.Backoff = &value
+	}
+	return run
+}
+
 func buildProgramIndex(
 	plan BuildPlan,
 	locator DeclarationLocator,
-	images []WorkspaceImage,
+	images []BundleWorkspaceImage,
 	configResultDigest string,
+	runtimeDigest string,
 ) (ProgramIndex, error) {
 	if err := ValidateBuildPlan(plan); err != nil {
 		return ProgramIndex{}, err
@@ -258,7 +287,7 @@ func buildProgramIndex(
 	for _, located := range locator.Declarations {
 		locators[string(located.Kind)+"\x00"+located.DeclaredID] = located
 	}
-	workspaceImages := make(map[string]WorkspaceImageArtifact, len(images))
+	workspaceImages := make(map[string]BundleWorkspaceImageArtifact, len(images))
 	for _, image := range images {
 		workspaceImages[image.DeclaredID] = image.Artifact
 	}
@@ -329,57 +358,12 @@ func buildProgramIndex(
 		Declarations:       declarations,
 		Queues:             cloneQueueInputs(plan.Queues),
 		RuntimeContract:    RuntimeContract,
+		RuntimeDigest:      runtimeDigest,
 	}
 	if err := ValidateProgramIndex(index); err != nil {
 		return ProgramIndex{}, err
 	}
 	return cloneProgramIndex(index), nil
-}
-
-func validateProgramIndexBuild(
-	index ProgramIndex,
-	plan BuildPlan,
-	images []WorkspaceImage,
-	configResultDigest string,
-) error {
-	locator := DeclarationLocator{
-		FormatVersion: DeclarationLocatorFormatVersion,
-		Declarations:  make([]LocatedDeclaration, 0),
-	}
-	for _, declaration := range index.Declarations {
-		if declaration.Locator == nil {
-			continue
-		}
-		locator.Declarations = append(locator.Declarations, LocatedDeclaration{
-			DeclaredID: declaration.DeclaredID,
-			ExportName: declaration.Locator.ExportName,
-			Kind:       DeclarationKind(declaration.Kind),
-			ModulePath: declaration.Locator.ModulePath,
-			Slot:       declaration.Locator.Slot,
-		})
-	}
-	sort.Slice(locator.Declarations, func(left, right int) bool {
-		return compareDeclarations(
-			locatedDeclarationProjection(locator.Declarations[left]),
-			locatedDeclarationProjection(locator.Declarations[right]),
-		) < 0
-	})
-	expected, err := buildProgramIndex(plan, locator, images, configResultDigest)
-	if err != nil {
-		return err
-	}
-	actualRaw, err := CanonicalProgramIndex(index)
-	if err != nil {
-		return err
-	}
-	expectedRaw, err := CanonicalProgramIndex(expected)
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(actualRaw, expectedRaw) {
-		return errors.New("program index does not match build plan and workspace images")
-	}
-	return nil
 }
 
 func programIndexExecutionDeclarations(index ProgramIndex) []ProgramDeclaration {
@@ -411,7 +395,8 @@ func programIndexExecutionDeclarations(index ProgramIndex) []ProgramDeclaration 
 }
 
 func cloneQueueInputs(source []QueueInput) []QueueInput {
-	cloned := append([]QueueInput(nil), source...)
+	cloned := make([]QueueInput, len(source))
+	copy(cloned, source)
 	for index := range cloned {
 		if cloned[index].ConcurrencyLimit != nil {
 			value := *cloned[index].ConcurrencyLimit

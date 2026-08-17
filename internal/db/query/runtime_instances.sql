@@ -11,8 +11,7 @@ SELECT runtime_instances.*,
        COALESCE(reserved_workspace_artifacts.media_type, '') AS workspace_artifact_media_type,
        runtime_identities.runtime_arch AS workspace_architecture,
        program_deployments.id AS program_deployment_authority_id,
-       program_deployments.build_runtime_digest AS program_runtime_digest,
-       program_deployments.build_contract AS program_build_contract,
+       program_deployments.runtime_artifact_digest AS program_runtime_digest,
        program_deployments.program_index_digest,
        COALESCE(program_artifact.digest, '') AS program_artifact_digest,
        COALESCE(program_artifact.size_bytes, 0) AS program_artifact_size_bytes,
@@ -45,7 +44,6 @@ SELECT runtime_instances.*,
   LEFT JOIN deployments AS program_deployments
     ON program_deployments.environment_id = runtime_instances.environment_id
    AND program_deployments.id = runtime_instances.program_deployment_id
-   AND program_deployments.status = 'deployed'
   LEFT JOIN artifacts AS program_artifact
     ON program_artifact.environment_id = program_deployments.environment_id
    AND program_artifact.id = program_deployments.program_artifact_id
@@ -224,10 +222,9 @@ WITH restore_secret_authority AS MATERIALIZED (
       FROM runtime_instances
       JOIN worker_instances
         ON worker_instances.id = runtime_instances.worker_instance_id
-       AND worker_instances.worker_group_id = runtime_instances.worker_group_id
-       AND worker_instances.current_epoch = runtime_instances.worker_epoch
-       AND worker_instances.state IN ('active', 'draining')
-       AND worker_instances.supports_run
+	   AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+	   AND worker_instances.current_epoch = runtime_instances.worker_epoch
+	   AND worker_instances.state IN ('active', 'draining')
       JOIN runtime_substrates
         ON runtime_substrates.id = sqlc.arg(runtime_substrate_id)
        AND runtime_substrates.org_id = runtime_instances.org_id
@@ -334,6 +331,8 @@ WITH restore_secret_authority AS MATERIALIZED (
       JOIN runtime_instances AS source_runtime
         ON source_runtime.id = source_lease.runtime_instance_id
        AND source_runtime.runtime_identity_id = runtime_instances.runtime_identity_id
+       AND source_runtime.vm_vcpu_count = runtime_instances.vm_vcpu_count
+       AND source_runtime.cpu_config_digest = runtime_instances.cpu_config_digest
        AND source_runtime.runtime_substrate_id = sqlc.arg(runtime_substrate_id)
       JOIN workspace_versions
         ON workspace_versions.workspace_id = runtime_instances.workspace_id
@@ -360,6 +359,8 @@ UPDATE runtime_instances
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch) AND runtime_instances.desired_version = sqlc.arg(desired_version)
    AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
    AND runtime_instances.observed_state IN ('allocated', 'preparing')
+   AND runtime_instances.vm_vcpu_count = sqlc.arg(vm_vcpu_count)
+   AND runtime_instances.cpu_config_digest = sqlc.arg(cpu_config_digest)
    AND (runtime_instances.runtime_substrate_id IS NULL
         OR runtime_instances.runtime_substrate_id = sqlc.arg(runtime_substrate_id))
    AND (runtime_instances.restore_checkpoint_id IS NULL
@@ -403,6 +404,67 @@ UPDATE runtime_instances
    AND observed_state IN ('allocated','preparing','ready','closing')
 RETURNING runtime_instances.*;
 
+-- name: GetRuntimePreparationFailureAuthority :one
+SELECT runtime_instances.reserved_run_id,
+       runtime_instances.reserved_attempt_number,
+       runtime_instances.worker_group_id,
+       worker_instances.worker_pool_id,
+       runtime_instances.org_id,
+       runtime_instances.project_id,
+       runtime_instances.environment_id,
+       (runs.id IS NOT NULL)::boolean AS run_authority_valid
+  FROM runtime_instances
+  JOIN worker_instances
+    ON worker_instances.id = runtime_instances.worker_instance_id
+   AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+   AND worker_instances.current_epoch = runtime_instances.worker_epoch
+  LEFT JOIN runs
+    ON runs.id = runtime_instances.reserved_run_id
+   AND runs.org_id = runtime_instances.org_id
+   AND runs.project_id = runtime_instances.project_id
+   AND runs.environment_id = runtime_instances.environment_id
+   AND runs.workspace_id = runtime_instances.workspace_id
+   AND runs.current_attempt_number = runtime_instances.reserved_attempt_number
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+ WHERE runtime_instances.id = sqlc.arg(id)
+   AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
+   AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
+   AND runtime_instances.desired_version = sqlc.arg(desired_version)
+   AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
+   AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing');
+
+-- name: LockRuntimePreparationFailureAuthority :one
+SELECT runtime_instances.reserved_run_id,
+       runtime_instances.reserved_attempt_number,
+       runtime_instances.worker_group_id,
+       worker_instances.worker_pool_id,
+       runtime_instances.org_id,
+       runtime_instances.project_id,
+       runtime_instances.environment_id,
+       (runs.id IS NOT NULL)::boolean AS run_authority_valid
+  FROM runtime_instances
+  JOIN worker_instances
+    ON worker_instances.id = runtime_instances.worker_instance_id
+   AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+   AND worker_instances.current_epoch = runtime_instances.worker_epoch
+  LEFT JOIN runs
+    ON runs.id = runtime_instances.reserved_run_id
+   AND runs.org_id = runtime_instances.org_id
+   AND runs.project_id = runtime_instances.project_id
+   AND runs.environment_id = runtime_instances.environment_id
+   AND runs.workspace_id = runtime_instances.workspace_id
+   AND runs.current_attempt_number = runtime_instances.reserved_attempt_number
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+ WHERE runtime_instances.id = sqlc.arg(id)
+   AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
+   AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
+   AND runtime_instances.desired_version = sqlc.arg(desired_version)
+   AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
+   AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
+ FOR UPDATE OF runtime_instances;
+
 -- name: ReclaimFailedRuntimeInstance :one
 UPDATE runtime_instances
    SET reclaimed_at = now(),
@@ -421,6 +483,6 @@ UPDATE runtime_instances
        SELECT 1
          FROM run_leases
         WHERE run_leases.runtime_instance_id = runtime_instances.id
-          AND run_leases.state IN ('assigned', 'starting', 'running')
+          AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
    )
 RETURNING runtime_instances.*;

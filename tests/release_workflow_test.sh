@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016
 set -euo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -36,8 +37,6 @@ require_text "--pattern 'platform-release*'" "$workflow" \
   "repair does not consume the published Platform release"
 require_text "cosign verify-blob" "$workflow" \
   "repair does not verify the published Platform release"
-require_text "tar -xOf dist/platform-release/platform-release.tar ./build-policy.digest" "$workflow" \
-  "repair trusts unsigned build-policy provenance instead of the signed archive"
 require_text "refs/tags/\$RELEASE_TAG" "$workflow" \
   "repair verification is not bound to the exact tag workflow identity"
 require_text "platform-release/platform-release.tar" "$workflow" \
@@ -46,6 +45,16 @@ require_text "platform-release/platform-release.sigstore.json" "$workflow" \
   "GitHub release omits Platform release signature evidence"
 require_text "platform-release/platform-release-provenance.json" "$workflow" \
   "GitHub release omits Platform release provenance"
+require_text "name: bundle builder image" "$workflow" \
+  "release workflow does not publish the canonical bundle builder"
+require_text "nix build .#bundleBuilderImage" "$workflow" \
+  "bundle builder is not sourced from the pinned Product derivation"
+require_text "docker buildx imagetools inspect" "$workflow" \
+  "bundle builder publication does not resolve the registry digest"
+require_text "main.deploymentBundleBuilderImage=\${BUNDLE_BUILDER_IMAGE}" "$workflow" \
+  "CLI release is not bound to the exact bundle builder digest"
+require_text "dist/bundle-builder/bundle-builder.json" "$workflow" \
+  "GitHub release omits the bundle builder release identity"
 require_text 'VERIFY_RELEASE_ARTIFACTS: "1"' "$workflow" \
   "AWS release manifest does not verify published image and AMI visibility"
 # shellcheck disable=SC2016
@@ -60,8 +69,6 @@ require_text "--mtime='@0'" "$platform_builder" \
   "Platform release archive timestamps are not normalized"
 require_text "cosign sign-blob" "$platform_builder" \
   "Platform release archive is not signed"
-require_text "build-policy.digest" "$platform_builder" \
-  "Platform release provenance omits the exact Build Policy digest"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -86,18 +93,37 @@ require_text "COPY helmr-controlplane /usr/local/bin/helmr-controlplane" "$contr
   "Control Plane image omits the Control Plane binary"
 require_text "COPY helmr-dispatcher /usr/local/bin/helmr-dispatcher" "$controlplane_builder" \
   "Control Plane image omits the Dispatcher binary"
+require_text "COPY runtime.descriptor.json /usr/local/share/helmr/runtime.descriptor.json" "$controlplane_builder" \
+  "Control Plane image omits the canonical Runtime descriptor"
+require_text "COPY zoneinfo/ /usr/share/zoneinfo/" "$controlplane_builder" \
+  "Control Plane image omits the pinned timezone rules"
+require_text "COPY tzdb_names.txt /usr/local/share/helmr/tzdb_names.txt" "$controlplane_builder" \
+  "Control Plane image omits the canonical timezone manifest"
+require_text 'DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH = "/usr/local/share/helmr/runtime.descriptor.json"' \
+  "$repo_root/infra/aws/modules/controlplane/main.tf" \
+  "Control Plane task does not select the packaged Runtime descriptor"
+require_text '"${docker_bin}" create "${image_uri}"' "$repo_root/scripts/verify-controlplane-image-build.sh" \
+  "Control Plane image verifier does not inspect the distroless filesystem"
+require_text '"${docker_bin}" cp' "$repo_root/scripts/verify-controlplane-image-build.sh" \
+  "Control Plane image verifier does not extract the Runtime descriptor"
 
 require_text "scripts/aws-release-artifacts.sh worker-image-start" "$workflow" \
-  "Worker release does not build a fresh AMI"
-require_text "workerAMIs" "$workflow" \
-  "Worker release artifact omits region-to-AMI identity"
-require_text "workerImageProvenance" "$workflow" \
-  "Worker release artifact omits exact AMI runtime provenance"
-require_text "jq -c '.workerImageProvenance' dist/worker/worker-artifacts.json" "$workflow" \
-  "final AWS release manifest drops Worker image provenance"
+  "Worker release does not select or build a fully validated AMI"
+require_text 'WORKER_IMAGE_ARTIFACT_BUCKET: ${{ vars.RELEASE_WORKER_IMAGE_ARTIFACT_BUCKET }}' "$workflow" \
+  "Worker release does not receive the immutable artifact bucket"
+require_text 'RELEASE_WORKER_IMAGE_ARTIFACT_BUCKET is required' "$workflow" \
+  "Worker release does not reject a missing immutable artifact bucket"
+require_text "scripts/aws-release-artifacts.sh worker-image-receipt" "$workflow" \
+  "Worker release does not emit the closed Worker image receipt"
+require_text "dist/worker-image.json" "$workflow" \
+  "Worker release artifact does not preserve the closed Worker image receipt"
+require_text '"$(cat dist/worker/worker-image.json)"' "$workflow" \
+  "final AWS release manifest does not embed the Worker image receipt"
 require_text "gpgv" "$worker_image_builder" \
   "Worker AMI omits the Node signature verifier"
-require_text "mksquashfs" "$worker_image_builder" \
-  "Worker AMI omits the Platform tree composer"
+require_text "squashfs-tools" "$worker_image_builder" \
+  "Worker AMI omits the Platform tree composer package"
+require_text "mksquashfs version 4.6.1" "$worker_module_main" \
+  "Worker AMI does not validate the exact Platform tree composer contract"
 
 printf 'ok - release workflow tests\n'

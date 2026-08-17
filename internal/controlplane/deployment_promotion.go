@@ -135,12 +135,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("get promoted deployment: %w", err))
 		return
 	}
-	response, err := deploymentResponseWithArtifacts(r.Context(), store, record)
-	if err != nil {
-		writeError(w, fmt.Errorf("get promoted deployment artifacts: %w", err))
-		return
-	}
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, deploymentResponse(record))
 }
 
 func reconcileSchedules(

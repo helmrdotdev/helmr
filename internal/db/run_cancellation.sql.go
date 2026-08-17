@@ -11,6 +11,177 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const chargeRunRuntimePreparationFailure = `-- name: ChargeRunRuntimePreparationFailure :one
+UPDATE runs
+   SET runtime_preparation_count = runtime_preparation_count + 1,
+       next_runtime_preparation_at = transaction_timestamp() + make_interval(
+           secs => LEAST(60, power(2, runtime_preparation_count + 1)::integer)
+       ),
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND status = 'queued'
+   AND current_run_lease_id IS NULL
+   AND current_attempt_number = $2
+   AND runtime_preparation_count = $3
+   AND runtime_preparation_count < 7
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+`
+
+type ChargeRunRuntimePreparationFailureParams struct {
+	ID            pgtype.UUID `json:"id"`
+	AttemptNumber int32       `json:"attempt_number"`
+	ExpectedCount int32       `json:"expected_count"`
+}
+
+func (q *Queries) ChargeRunRuntimePreparationFailure(ctx context.Context, arg ChargeRunRuntimePreparationFailureParams) (Run, error) {
+	row := q.db.QueryRow(ctx, chargeRunRuntimePreparationFailure, arg.ID, arg.AttemptNumber, arg.ExpectedCount)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentDefinitionID,
+		&i.EntrypointKind,
+		&i.EntrypointDeclaredID,
+		&i.SessionID,
+		&i.CauseKind,
+		&i.ScheduleID,
+		&i.ScheduleGeneration,
+		&i.ScheduledAt,
+		&i.PreviousScheduledAt,
+		&i.ScheduleTimezone,
+		&i.ParentRunID,
+		&i.ParentOwnsLifecycle,
+		&i.WorkspaceID,
+		&i.BaseWorkspaceVersionID,
+		&i.SessionInputStartSequence,
+		&i.SessionInputHighWatermark,
+		&i.Payload,
+		&i.Output,
+		&i.Failure,
+		&i.Status,
+		&i.StateVersion,
+		&i.CurrentAttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.Metadata,
+		&i.Tags,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueConcurrencyLimit,
+		&i.Priority,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
+		&i.QueuedExpiresAt,
+		&i.MaxActiveDurationMs,
+		&i.RetryPolicy,
+		&i.ActiveElapsedMs,
+		&i.ActiveStartedAt,
+		&i.TraceID,
+		&i.RootSpanID,
+		&i.ClaimID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FirstLeaseAt,
+		&i.StartedAt,
+		&i.RetryAt,
+		&i.RuntimePreparationCount,
+		&i.NextRuntimePreparationAt,
+		&i.TerminalAt,
+	)
+	return i, err
+}
+
+const clearFreshPrestartRunLease = `-- name: ClearFreshPrestartRunLease :one
+UPDATE runs
+   SET current_run_lease_id = NULL,
+       state_version = state_version + 1,
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND workspace_id = $2
+   AND status = 'queued'
+   AND state_version = $3
+   AND current_attempt_number = $4
+   AND current_run_lease_id = $5
+   AND active_started_at IS NULL
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+`
+
+type ClearFreshPrestartRunLeaseParams struct {
+	RunID                pgtype.UUID `json:"run_id"`
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
+	ExpectedStateVersion int64       `json:"expected_state_version"`
+	AttemptNumber        int32       `json:"attempt_number"`
+	RunLeaseID           pgtype.UUID `json:"run_lease_id"`
+}
+
+func (q *Queries) ClearFreshPrestartRunLease(ctx context.Context, arg ClearFreshPrestartRunLeaseParams) (Run, error) {
+	row := q.db.QueryRow(ctx, clearFreshPrestartRunLease,
+		arg.RunID,
+		arg.WorkspaceID,
+		arg.ExpectedStateVersion,
+		arg.AttemptNumber,
+		arg.RunLeaseID,
+	)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentDefinitionID,
+		&i.EntrypointKind,
+		&i.EntrypointDeclaredID,
+		&i.SessionID,
+		&i.CauseKind,
+		&i.ScheduleID,
+		&i.ScheduleGeneration,
+		&i.ScheduledAt,
+		&i.PreviousScheduledAt,
+		&i.ScheduleTimezone,
+		&i.ParentRunID,
+		&i.ParentOwnsLifecycle,
+		&i.WorkspaceID,
+		&i.BaseWorkspaceVersionID,
+		&i.SessionInputStartSequence,
+		&i.SessionInputHighWatermark,
+		&i.Payload,
+		&i.Output,
+		&i.Failure,
+		&i.Status,
+		&i.StateVersion,
+		&i.CurrentAttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.Metadata,
+		&i.Tags,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueConcurrencyLimit,
+		&i.Priority,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
+		&i.QueuedExpiresAt,
+		&i.MaxActiveDurationMs,
+		&i.RetryPolicy,
+		&i.ActiveElapsedMs,
+		&i.ActiveStartedAt,
+		&i.TraceID,
+		&i.RootSpanID,
+		&i.ClaimID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FirstLeaseAt,
+		&i.StartedAt,
+		&i.RetryAt,
+		&i.RuntimePreparationCount,
+		&i.NextRuntimePreparationAt,
+		&i.TerminalAt,
+	)
+	return i, err
+}
+
 const closeRunRuntimes = `-- name: CloseRunRuntimes :exec
 WITH candidate_runtimes AS (
     SELECT run_leases.runtime_instance_id
@@ -104,6 +275,84 @@ func (q *Queries) DetachActorFromCancelledRun(ctx context.Context, arg DetachAct
 	return result.RowsAffected(), nil
 }
 
+const exhaustRunRuntimePreparation = `-- name: ExhaustRunRuntimePreparation :one
+UPDATE runs
+   SET runtime_preparation_count = 8,
+       next_runtime_preparation_at = NULL,
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND status = 'queued'
+   AND current_run_lease_id IS NULL
+   AND current_attempt_number = $2
+   AND runtime_preparation_count = 7
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+`
+
+type ExhaustRunRuntimePreparationParams struct {
+	ID            pgtype.UUID `json:"id"`
+	AttemptNumber int32       `json:"attempt_number"`
+}
+
+func (q *Queries) ExhaustRunRuntimePreparation(ctx context.Context, arg ExhaustRunRuntimePreparationParams) (Run, error) {
+	row := q.db.QueryRow(ctx, exhaustRunRuntimePreparation, arg.ID, arg.AttemptNumber)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentDefinitionID,
+		&i.EntrypointKind,
+		&i.EntrypointDeclaredID,
+		&i.SessionID,
+		&i.CauseKind,
+		&i.ScheduleID,
+		&i.ScheduleGeneration,
+		&i.ScheduledAt,
+		&i.PreviousScheduledAt,
+		&i.ScheduleTimezone,
+		&i.ParentRunID,
+		&i.ParentOwnsLifecycle,
+		&i.WorkspaceID,
+		&i.BaseWorkspaceVersionID,
+		&i.SessionInputStartSequence,
+		&i.SessionInputHighWatermark,
+		&i.Payload,
+		&i.Output,
+		&i.Failure,
+		&i.Status,
+		&i.StateVersion,
+		&i.CurrentAttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.Metadata,
+		&i.Tags,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueConcurrencyLimit,
+		&i.Priority,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
+		&i.QueuedExpiresAt,
+		&i.MaxActiveDurationMs,
+		&i.RetryPolicy,
+		&i.ActiveElapsedMs,
+		&i.ActiveStartedAt,
+		&i.TraceID,
+		&i.RootSpanID,
+		&i.ClaimID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FirstLeaseAt,
+		&i.StartedAt,
+		&i.RetryAt,
+		&i.RuntimePreparationCount,
+		&i.NextRuntimePreparationAt,
+		&i.TerminalAt,
+	)
+	return i, err
+}
+
 const failActorForRunTermination = `-- name: FailActorForRunTermination :execrows
 UPDATE sessions
    SET state = 'failed',
@@ -192,6 +441,198 @@ func (q *Queries) FindCancellationTarget(ctx context.Context, arg FindCancellati
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const getRunExecutionLeaseLossAuthority = `-- name: GetRunExecutionLeaseLossAuthority :one
+SELECT runs.id AS run_id,
+       runs.workspace_id,
+       runs.status AS run_status,
+       runs.state_version,
+       runs.current_attempt_number,
+       runs.entrypoint_kind,
+       runs.session_id,
+       runs.parent_run_id,
+       runs.parent_owns_lifecycle,
+       runs.retry_policy,
+       runs.max_active_duration_ms,
+       runs.active_elapsed_ms,
+       runs.active_started_at,
+       run_leases.id AS run_lease_id,
+       run_leases.state AS run_lease_state,
+       run_leases.worker_epoch,
+       run_leases.start_deadline_at,
+       run_leases.expires_at AS run_lease_expires_at,
+       worker_instances.state AS worker_state,
+       worker_instances.current_epoch AS worker_current_epoch,
+       worker_instances.epoch_started_at AS worker_epoch_started_at,
+       worker_instances.updated_at AS worker_updated_at,
+       worker_instances.lost_at AS worker_lost_at,
+       worker_instances.termination_ready_at AS worker_termination_ready_at,
+       runtime_instances.desired_state AS runtime_desired_state,
+       runtime_instances.observed_state AS runtime_observed_state,
+       runtime_instances.lost_at AS runtime_lost_at,
+       runtime_instances.failed_at AS runtime_failed_at,
+       workspace_leases.state AS workspace_lease_state,
+       workspace_mounts.state AS mount_state,
+       workspace_mounts.lost_at AS mount_lost_at,
+       workspace_mounts.failed_at AS mount_failed_at,
+       sessions.run_generation AS actor_run_generation,
+       transaction_timestamp()::timestamptz AS observed_at
+  FROM runs
+  JOIN run_attempts
+    ON run_attempts.run_id = runs.id
+   AND run_attempts.number = runs.current_attempt_number
+   AND run_attempts.workspace_id = runs.workspace_id
+   AND run_attempts.terminal_at IS NULL
+  JOIN run_leases
+    ON run_leases.id = runs.current_run_lease_id
+   AND run_leases.run_id = runs.id
+   AND run_leases.attempt_number = runs.current_attempt_number
+   AND run_leases.workspace_id = runs.workspace_id
+  JOIN worker_instances
+    ON worker_instances.id = run_leases.worker_instance_id
+  JOIN runtime_instances
+    ON runtime_instances.id = run_leases.runtime_instance_id
+   AND runtime_instances.worker_instance_id = run_leases.worker_instance_id
+   AND runtime_instances.worker_epoch = run_leases.worker_epoch
+   AND runtime_instances.workspace_id = runs.workspace_id
+   AND runtime_instances.reclaimed_at IS NULL
+  JOIN workspace_leases
+    ON workspace_leases.owner_run_lease_id = run_leases.id
+   AND workspace_leases.workspace_id = runs.workspace_id
+   AND workspace_leases.runtime_instance_id = run_leases.runtime_instance_id
+   AND workspace_leases.state IN ('active', 'releasing')
+  JOIN workspace_mounts
+    ON workspace_mounts.id = workspace_leases.workspace_mount_id
+   AND workspace_mounts.runtime_instance_id = run_leases.runtime_instance_id
+   AND workspace_mounts.workspace_id = runs.workspace_id
+   AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting', 'lost', 'failed')
+  LEFT JOIN sessions
+    ON sessions.id = runs.session_id
+   AND sessions.current_run_id = runs.id
+   AND sessions.workspace_id = runs.workspace_id
+   AND sessions.state IN ('open', 'closing')
+ WHERE runs.id = $1
+   AND runs.workspace_id = $2
+   AND runs.current_attempt_number = $3
+   AND runs.current_run_lease_id = $4
+   AND run_leases.id = $4
+   AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+   AND ((run_leases.state IN ('assigned', 'starting')
+         AND runs.status = 'queued'
+         AND runs.active_started_at IS NULL)
+        OR (run_leases.state = 'running'
+            AND runs.status = 'running'
+            AND runs.active_started_at IS NOT NULL)
+        OR (run_leases.state = 'checkpointing'
+            AND runs.status = 'waiting'
+            AND runs.active_started_at IS NOT NULL)
+        OR (run_leases.state = 'finalizing'
+            AND runs.status = 'running'
+            AND runs.active_started_at IS NULL
+            AND run_leases.finalization_operation_id IS NOT NULL
+            AND run_leases.finalization_kind IS NOT NULL
+            AND run_leases.finalization_started_at IS NOT NULL
+            AND run_leases.finalization_request_fingerprint IS NOT NULL))
+   AND NOT EXISTS (
+       SELECT 1
+         FROM run_waits
+        WHERE run_waits.run_id = runs.id
+          AND run_waits.attempt_number = runs.current_attempt_number
+          AND run_waits.current_run_lease_id = run_leases.id
+          AND run_waits.suspension_state = 'resuming'
+   )
+`
+
+type GetRunExecutionLeaseLossAuthorityParams struct {
+	RunID         pgtype.UUID `json:"run_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	AttemptNumber int32       `json:"attempt_number"`
+	RunLeaseID    pgtype.UUID `json:"run_lease_id"`
+}
+
+type GetRunExecutionLeaseLossAuthorityRow struct {
+	RunID                    pgtype.UUID        `json:"run_id"`
+	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
+	RunStatus                string             `json:"run_status"`
+	StateVersion             int64              `json:"state_version"`
+	CurrentAttemptNumber     int32              `json:"current_attempt_number"`
+	EntrypointKind           string             `json:"entrypoint_kind"`
+	SessionID                pgtype.UUID        `json:"session_id"`
+	ParentRunID              pgtype.UUID        `json:"parent_run_id"`
+	ParentOwnsLifecycle      pgtype.Bool        `json:"parent_owns_lifecycle"`
+	RetryPolicy              []byte             `json:"retry_policy"`
+	MaxActiveDurationMs      int64              `json:"max_active_duration_ms"`
+	ActiveElapsedMs          int64              `json:"active_elapsed_ms"`
+	ActiveStartedAt          pgtype.Timestamptz `json:"active_started_at"`
+	RunLeaseID               pgtype.UUID        `json:"run_lease_id"`
+	RunLeaseState            string             `json:"run_lease_state"`
+	WorkerEpoch              int64              `json:"worker_epoch"`
+	StartDeadlineAt          pgtype.Timestamptz `json:"start_deadline_at"`
+	RunLeaseExpiresAt        pgtype.Timestamptz `json:"run_lease_expires_at"`
+	WorkerState              string             `json:"worker_state"`
+	WorkerCurrentEpoch       pgtype.Int8        `json:"worker_current_epoch"`
+	WorkerEpochStartedAt     pgtype.Timestamptz `json:"worker_epoch_started_at"`
+	WorkerUpdatedAt          pgtype.Timestamptz `json:"worker_updated_at"`
+	WorkerLostAt             pgtype.Timestamptz `json:"worker_lost_at"`
+	WorkerTerminationReadyAt pgtype.Timestamptz `json:"worker_termination_ready_at"`
+	RuntimeDesiredState      string             `json:"runtime_desired_state"`
+	RuntimeObservedState     string             `json:"runtime_observed_state"`
+	RuntimeLostAt            pgtype.Timestamptz `json:"runtime_lost_at"`
+	RuntimeFailedAt          pgtype.Timestamptz `json:"runtime_failed_at"`
+	WorkspaceLeaseState      string             `json:"workspace_lease_state"`
+	MountState               string             `json:"mount_state"`
+	MountLostAt              pgtype.Timestamptz `json:"mount_lost_at"`
+	MountFailedAt            pgtype.Timestamptz `json:"mount_failed_at"`
+	ActorRunGeneration       pgtype.Int8        `json:"actor_run_generation"`
+	ObservedAt               pgtype.Timestamptz `json:"observed_at"`
+}
+
+func (q *Queries) GetRunExecutionLeaseLossAuthority(ctx context.Context, arg GetRunExecutionLeaseLossAuthorityParams) (GetRunExecutionLeaseLossAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, getRunExecutionLeaseLossAuthority,
+		arg.RunID,
+		arg.WorkspaceID,
+		arg.AttemptNumber,
+		arg.RunLeaseID,
+	)
+	var i GetRunExecutionLeaseLossAuthorityRow
+	err := row.Scan(
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.RunStatus,
+		&i.StateVersion,
+		&i.CurrentAttemptNumber,
+		&i.EntrypointKind,
+		&i.SessionID,
+		&i.ParentRunID,
+		&i.ParentOwnsLifecycle,
+		&i.RetryPolicy,
+		&i.MaxActiveDurationMs,
+		&i.ActiveElapsedMs,
+		&i.ActiveStartedAt,
+		&i.RunLeaseID,
+		&i.RunLeaseState,
+		&i.WorkerEpoch,
+		&i.StartDeadlineAt,
+		&i.RunLeaseExpiresAt,
+		&i.WorkerState,
+		&i.WorkerCurrentEpoch,
+		&i.WorkerEpochStartedAt,
+		&i.WorkerUpdatedAt,
+		&i.WorkerLostAt,
+		&i.WorkerTerminationReadyAt,
+		&i.RuntimeDesiredState,
+		&i.RuntimeObservedState,
+		&i.RuntimeLostAt,
+		&i.RuntimeFailedAt,
+		&i.WorkspaceLeaseState,
+		&i.MountState,
+		&i.MountLostAt,
+		&i.MountFailedAt,
+		&i.ActorRunGeneration,
+		&i.ObservedAt,
+	)
+	return i, err
 }
 
 const invalidateRunCheckpoints = `-- name: InvalidateRunCheckpoints :exec
@@ -499,7 +940,8 @@ SELECT id,
        status,
        current_attempt_number,
        current_run_lease_id,
-       state_version
+       state_version,
+       runtime_preparation_count
   FROM runs
  WHERE id = $1
    AND org_id = $2
@@ -516,16 +958,17 @@ type LockCancellationRunParams struct {
 }
 
 type LockCancellationRunRow struct {
-	ID                   pgtype.UUID `json:"id"`
-	ParentRunID          pgtype.UUID `json:"parent_run_id"`
-	ParentOwnsLifecycle  pgtype.Bool `json:"parent_owns_lifecycle"`
-	EnvironmentID        pgtype.UUID `json:"environment_id"`
-	WorkspaceID          pgtype.UUID `json:"workspace_id"`
-	SessionID            pgtype.UUID `json:"session_id"`
-	Status               string      `json:"status"`
-	CurrentAttemptNumber int32       `json:"current_attempt_number"`
-	CurrentRunLeaseID    pgtype.UUID `json:"current_run_lease_id"`
-	StateVersion         int64       `json:"state_version"`
+	ID                      pgtype.UUID `json:"id"`
+	ParentRunID             pgtype.UUID `json:"parent_run_id"`
+	ParentOwnsLifecycle     pgtype.Bool `json:"parent_owns_lifecycle"`
+	EnvironmentID           pgtype.UUID `json:"environment_id"`
+	WorkspaceID             pgtype.UUID `json:"workspace_id"`
+	SessionID               pgtype.UUID `json:"session_id"`
+	Status                  string      `json:"status"`
+	CurrentAttemptNumber    int32       `json:"current_attempt_number"`
+	CurrentRunLeaseID       pgtype.UUID `json:"current_run_lease_id"`
+	StateVersion            int64       `json:"state_version"`
+	RuntimePreparationCount int32       `json:"runtime_preparation_count"`
 }
 
 func (q *Queries) LockCancellationRun(ctx context.Context, arg LockCancellationRunParams) (LockCancellationRunRow, error) {
@@ -547,6 +990,7 @@ func (q *Queries) LockCancellationRun(ctx context.Context, arg LockCancellationR
 		&i.CurrentAttemptNumber,
 		&i.CurrentRunLeaseID,
 		&i.StateVersion,
+		&i.RuntimePreparationCount,
 	)
 	return i, err
 }
@@ -649,7 +1093,8 @@ SELECT id,
        suspend_checkpoint_id,
        handoff_runtime_instance_id,
        handoff_workspace_mount_id,
-       base_workspace_version_id
+       base_workspace_version_id,
+       child_writer_generation
   FROM run_waits
  WHERE (
        run_id = ANY($1::uuid[])
@@ -682,6 +1127,7 @@ type LockCancellationWaitsRow struct {
 	HandoffRuntimeInstanceID pgtype.UUID `json:"handoff_runtime_instance_id"`
 	HandoffWorkspaceMountID  pgtype.UUID `json:"handoff_workspace_mount_id"`
 	BaseWorkspaceVersionID   pgtype.UUID `json:"base_workspace_version_id"`
+	ChildWriterGeneration    pgtype.Int8 `json:"child_writer_generation"`
 }
 
 func (q *Queries) LockCancellationWaits(ctx context.Context, arg LockCancellationWaitsParams) ([]LockCancellationWaitsRow, error) {
@@ -708,6 +1154,7 @@ func (q *Queries) LockCancellationWaits(ctx context.Context, arg LockCancellatio
 			&i.HandoffRuntimeInstanceID,
 			&i.HandoffWorkspaceMountID,
 			&i.BaseWorkspaceVersionID,
+			&i.ChildWriterGeneration,
 		); err != nil {
 			return nil, err
 		}
@@ -1066,6 +1513,106 @@ func (q *Queries) ResolveParkedTerminalChildWait(ctx context.Context, arg Resolv
 		&i.RunID,
 		&i.WorkspaceID,
 		&i.ResumeRequestVersion,
+	)
+	return i, err
+}
+
+const stopLostRunActiveInterval = `-- name: StopLostRunActiveInterval :one
+UPDATE runs
+   SET active_elapsed_ms = LEAST(
+           max_active_duration_ms,
+           active_elapsed_ms + GREATEST(
+               floor(extract(epoch FROM (
+                   $1::timestamptz - active_started_at
+               )) * 1000)::bigint,
+               0
+           )
+       ),
+       active_started_at = NULL,
+       updated_at = transaction_timestamp()
+ WHERE id = $2
+   AND workspace_id = $3
+   AND status IN ('running', 'waiting')
+   AND state_version = $4
+   AND current_attempt_number = $5
+   AND current_run_lease_id = $6
+   AND active_started_at IS NOT NULL
+   AND $1::timestamptz >= active_started_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+`
+
+type StopLostRunActiveIntervalParams struct {
+	LossAt               pgtype.Timestamptz `json:"loss_at"`
+	RunID                pgtype.UUID        `json:"run_id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	ExpectedStateVersion int64              `json:"expected_state_version"`
+	AttemptNumber        int32              `json:"attempt_number"`
+	RunLeaseID           pgtype.UUID        `json:"run_lease_id"`
+}
+
+func (q *Queries) StopLostRunActiveInterval(ctx context.Context, arg StopLostRunActiveIntervalParams) (Run, error) {
+	row := q.db.QueryRow(ctx, stopLostRunActiveInterval,
+		arg.LossAt,
+		arg.RunID,
+		arg.WorkspaceID,
+		arg.ExpectedStateVersion,
+		arg.AttemptNumber,
+		arg.RunLeaseID,
+	)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentDefinitionID,
+		&i.EntrypointKind,
+		&i.EntrypointDeclaredID,
+		&i.SessionID,
+		&i.CauseKind,
+		&i.ScheduleID,
+		&i.ScheduleGeneration,
+		&i.ScheduledAt,
+		&i.PreviousScheduledAt,
+		&i.ScheduleTimezone,
+		&i.ParentRunID,
+		&i.ParentOwnsLifecycle,
+		&i.WorkspaceID,
+		&i.BaseWorkspaceVersionID,
+		&i.SessionInputStartSequence,
+		&i.SessionInputHighWatermark,
+		&i.Payload,
+		&i.Output,
+		&i.Failure,
+		&i.Status,
+		&i.StateVersion,
+		&i.CurrentAttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.Metadata,
+		&i.Tags,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueConcurrencyLimit,
+		&i.Priority,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
+		&i.QueuedExpiresAt,
+		&i.MaxActiveDurationMs,
+		&i.RetryPolicy,
+		&i.ActiveElapsedMs,
+		&i.ActiveStartedAt,
+		&i.TraceID,
+		&i.RootSpanID,
+		&i.ClaimID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FirstLeaseAt,
+		&i.StartedAt,
+		&i.RetryAt,
+		&i.RuntimePreparationCount,
+		&i.NextRuntimePreparationAt,
+		&i.TerminalAt,
 	)
 	return i, err
 }

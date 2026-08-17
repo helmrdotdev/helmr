@@ -13,7 +13,7 @@ mock_provider "aws" {
 }
 
 override_resource {
-  target = aws_kms_key.source_artifacts
+  target = aws_kms_key.release_artifacts
   values = {
     arn = "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000001"
   }
@@ -37,13 +37,24 @@ run "platform_store_is_versioned_non_expiring_and_separate" {
   command = apply
 
   assert {
-    condition     = aws_s3_bucket.platform_store.bucket != aws_s3_bucket.source_artifacts.bucket && aws_kms_key.platform_store.arn != aws_kms_key.source_artifacts.arn
+    condition     = aws_s3_bucket.platform_store.bucket != aws_s3_bucket.release_artifacts.bucket && aws_kms_key.platform_store.arn != aws_kms_key.release_artifacts.arn
     error_message = "managed runtime must use a dedicated bucket and KMS key."
   }
 
   assert {
     condition     = aws_s3_bucket_versioning.platform_store.versioning_configuration[0].status == "Enabled"
     error_message = "Platform Artifact store must have versioning enabled."
+  }
+
+  assert {
+    condition = (
+      aws_s3_bucket_versioning.release_artifacts.versioning_configuration[0].status == "Enabled" &&
+      !coalesce(aws_s3_bucket.release_artifacts.force_destroy, false) &&
+      output.release_artifact_bucket_name == aws_s3_bucket.release_artifacts.bucket &&
+      output.release_artifact_bucket_arn == aws_s3_bucket.release_artifacts.arn &&
+      output.release_artifact_kms_key_arn == aws_kms_key.release_artifacts.arn
+    )
+    error_message = "release artifacts must be durable, versioned, and exposed through exact bootstrap outputs."
   }
 
   assert {

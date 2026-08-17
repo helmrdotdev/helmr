@@ -14,9 +14,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"golang.org/x/sys/unix"
 )
 
-func (c *Connector) Preflight(ctx context.Context) error {
+func (c *Connector) preflight(ctx context.Context) error {
 	var problems []error
 	problems = append(problems,
 		checkCommand("the Firecracker", c.cfg.FirecrackerPath),
@@ -24,9 +25,10 @@ func (c *Connector) Preflight(ctx context.Context) error {
 		checkCommand("ip", c.cfg.IPPath),
 		checkCommand("nft", c.cfg.NFTPath),
 		checkCommand("mkfs.ext4", c.cfg.MkfsExt4Path),
-		checkReadableFile("guest kernel", c.cfg.KernelPath),
-		checkReadableFile("guest initramfs", c.cfg.InitramfsPath),
-		checkReadableFile("guest rootfs", c.cfg.RootfsPath),
+		checkReadableFile("mke2fs config", c.cfg.Mke2fsConfigPath),
+		checkJailerReadableImmutableFile("guest kernel", c.cfg.KernelPath, c.cfg.JailerUID, c.cfg.JailerGID),
+		checkJailerReadableImmutableFile("guest initramfs", c.cfg.InitramfsPath, c.cfg.JailerUID, c.cfg.JailerGID),
+		checkJailerReadableImmutableFile("guest rootfs", c.cfg.RootfsPath, c.cfg.JailerUID, c.cfg.JailerGID),
 		checkReadWriteFile("the KVM device", c.cfg.KVMPath),
 		checkReadWriteFile("the TUN device", "/dev/net/tun"),
 		checkCgroup(c.cfg.CgroupVersion),
@@ -36,6 +38,7 @@ func (c *Connector) Preflight(ctx context.Context) error {
 	problems = append(problems, ensureSecureDirectory("the Firecracker coordination directory", stateCoordinationDir(c.cfg.StateDir)))
 	problems = append(problems, ensureSecureDirectory("the Firecracker state directory", c.cfg.StateDir))
 	problems = append(problems, ensureSecureDirectory("the Firecracker jailer chroot directory", c.cfg.JailerChrootBaseDir))
+	problems = append(problems, checkJailerDeviceMount(c.cfg.JailerChrootBaseDir))
 	problems = append(problems, checkResolvedStateLayout(c.cfg))
 	problems = append(problems, checkHardLinkLayout(c.cfg))
 	problems = append(problems, c.datapath.VerifyKernel())
@@ -46,6 +49,21 @@ func (c *Connector) Preflight(ctx context.Context) error {
 		return err
 	}
 	return c.proveRoutedNetworkLifecycle(ctx)
+}
+
+func checkJailerDeviceMount(path string) error {
+	var stat unix.Statfs_t
+	if err := unix.Statfs(path, &stat); err != nil {
+		return fmt.Errorf("inspect the Firecracker jailer chroot filesystem: %w", err)
+	}
+	return validateJailerDeviceMountFlags(stat.Flags)
+}
+
+func validateJailerDeviceMountFlags(flags int64) error {
+	if flags&unix.ST_NODEV != 0 {
+		return errors.New("the Firecracker jailer chroot filesystem forbids device nodes")
+	}
+	return nil
 }
 
 func (c *Connector) proveRoutedNetworkLifecycle(ctx context.Context) error {
@@ -59,7 +77,9 @@ func (c *Connector) proveRoutedNetworkLifecycle(ctx context.Context) error {
 		RuntimeInstanceID: owner.ID, RuntimeIdentityID: runtimeid.Contract,
 	})
 	if err != nil {
-		cleanupErr := c.Cleanup(context.Background(), owner)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
+		defer cancel()
+		cleanupErr := c.cleanup(cleanupCtx, owner)
 		return fmt.Errorf("exercise routed network lifecycle: %w", errors.Join(err, cleanupErr))
 	}
 	deactivateErr := binding.Deactivate()
@@ -187,6 +207,45 @@ func checkReadableFile(label string, path string) error {
 	}
 	if info.IsDir() {
 		return fmt.Errorf("%s %q is a directory", label, path)
+	}
+	return nil
+}
+
+func checkJailerReadableImmutableFile(label, path string, uid, gid int) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("%s %q is not available: %w", label, path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s %q is not a regular file", label, path)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("inspect %s %q ownership: unsupported stat result", label, path)
+	}
+	if err := validateJailerReadableImmutableFile(info.Mode(), stat.Uid, stat.Gid, uid, gid); err != nil {
+		return fmt.Errorf("%s %q %w", label, path, err)
+	}
+	return nil
+}
+
+func validateJailerReadableImmutableFile(mode os.FileMode, ownerUID, ownerGID uint32, uid, gid int) error {
+	if ownerUID != 0 {
+		return errors.New("is not owned by root")
+	}
+	permissions := mode.Perm()
+	if permissions&0o222 != 0 {
+		return errors.New("is writable")
+	}
+	readable := permissions&0o004 != 0
+	if uint32(gid) == ownerGID {
+		readable = permissions&0o040 != 0
+	}
+	if uint32(uid) == ownerUID {
+		readable = permissions&0o400 != 0
+	}
+	if !readable {
+		return fmt.Errorf("is not readable by the Firecracker jailer uid %d gid %d", uid, gid)
 	}
 	return nil
 }

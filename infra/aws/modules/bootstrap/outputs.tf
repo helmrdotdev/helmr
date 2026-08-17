@@ -8,19 +8,19 @@ output "kms_key_arn" {
   value       = aws_kms_key.terraform_state.arn
 }
 
-output "source_artifact_bucket_name" {
-  description = "S3 bucket name for source artifacts consumed by build infrastructure."
-  value       = aws_s3_bucket.source_artifacts.bucket
+output "release_artifact_bucket_name" {
+  description = "S3 bucket name for immutable release artifacts consumed by image infrastructure."
+  value       = aws_s3_bucket.release_artifacts.bucket
 }
 
-output "source_artifact_bucket_arn" {
-  description = "S3 bucket ARN for source artifacts consumed by build infrastructure."
-  value       = aws_s3_bucket.source_artifacts.arn
+output "release_artifact_bucket_arn" {
+  description = "S3 bucket ARN for immutable release artifacts consumed by image infrastructure."
+  value       = aws_s3_bucket.release_artifacts.arn
 }
 
-output "source_artifact_kms_key_arn" {
-  description = "KMS key ARN for source artifact encryption."
-  value       = aws_kms_key.source_artifacts.arn
+output "release_artifact_kms_key_arn" {
+  description = "KMS key ARN for immutable release artifact encryption."
+  value       = aws_kms_key.release_artifacts.arn
 }
 
 output "controlplane_release_repository_url" {

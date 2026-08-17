@@ -694,6 +694,55 @@ func (r ProgramRunner) startNewProgram(
 			err,
 		)
 	}
+	if failed := event.GetProgramProcessStartFailed(); failed != nil {
+		if failed.GetRunId() != claim.Lease.RunID ||
+			failed.GetAttemptNumber() != uint32(claim.Lease.AttemptNumber) ||
+			failed.GetRunLeaseId() != claim.Lease.ID {
+			return freshProgram{}, errors.New(
+				"program process-start failure proof does not match run lease",
+			)
+		}
+		var diagnostic string
+		switch failed.GetPhase() {
+		case "prepare":
+			diagnostic = "Program process preparation failed"
+		case "start":
+			diagnostic = "Program process start failed"
+		default:
+			return freshProgram{}, errors.New(
+				"program process-start failure proof phase is invalid",
+			)
+		}
+		if failed.GetDiagnostic() != diagnostic {
+			return freshProgram{}, errors.New(
+				"program process-start failure proof diagnostic is invalid",
+			)
+		}
+		if r.Log != nil {
+			r.Log.Error(
+				"Program process start failed",
+				"run_id", claim.Lease.RunID,
+				"run_lease_id", claim.Lease.ID,
+				"runtime_instance_id", claim.Lease.RuntimeInstanceID,
+				"workspace_mount_id", claim.Lease.WorkspaceMountID,
+				"phase", failed.GetPhase(),
+				"diagnostic", diagnostic,
+			)
+		}
+		failureCtx, cancelFailure := context.WithTimeout(
+			context.Background(),
+			30*time.Second,
+		)
+		defer cancelFailure()
+		failure := errors.New("program process failed before start proof")
+		if err := r.WorkspaceMounts.FailWorkspaceMountSession(
+			failureCtx,
+			claim.Lease.WorkspaceMountID,
+		); err != nil {
+			return freshProgram{}, errors.Join(failure, err)
+		}
+		return freshProgram{}, failure
+	}
 	started := event.GetProgramProcessStarted()
 	if started == nil ||
 		started.GetRunId() != claim.Lease.RunID ||
@@ -1040,14 +1089,17 @@ func validateNewProgramMount(
 	lease workerapi.RunLeaseAssignment,
 	mount workerapi.WorkspaceMount,
 ) error {
-	if mount.ID != lease.WorkspaceMountID ||
-		mount.WorkspaceID != lease.WorkspaceID ||
-		mount.RuntimeInstanceID != lease.RuntimeInstanceID ||
-		mount.BaseVersionID != lease.BaseWorkspaceVersionID ||
-		mount.FencingGeneration != lease.MountFencingGeneration {
-		return errors.New(
-			"new program workspace mount does not match the claimed physical authority",
-		)
+	if mount.ID != lease.WorkspaceMountID {
+		return errors.New("new program workspace mount ID does not match the claimed physical authority")
+	}
+	if mount.WorkspaceID != lease.WorkspaceID {
+		return errors.New("new program workspace ID does not match the claimed physical authority")
+	}
+	if mount.RuntimeInstanceID != lease.RuntimeInstanceID {
+		return errors.New("new program Runtime Instance does not match the claimed physical authority")
+	}
+	if mount.BaseVersionID != lease.BaseWorkspaceVersionID {
+		return errors.New("new program base Workspace version does not match the claimed physical authority")
 	}
 	return nil
 }

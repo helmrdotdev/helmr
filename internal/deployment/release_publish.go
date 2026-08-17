@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,17 +16,14 @@ import (
 const platformReleaseManifestFile = "platform-release.json"
 
 type platformReleaseManifest struct {
-	FormatVersion  int                `json:"formatVersion"`
-	Policy         ArtifactDescriptor `json:"policy"`
-	RuntimeHarness ArtifactDescriptor `json:"runtimeHarness"`
-	ToolchainBase  ArtifactDescriptor `json:"toolchainBase"`
+	FormatVersion int               `json:"formatVersion"`
+	Runtime       RuntimeDescriptor `json:"runtime"`
 }
 
-func PublishPlatformRelease(
-	ctx context.Context,
-	store cas.ImmutableStore,
-	directory string,
-) error {
+// PublishPlatformRelease publishes the Product-owned runtime closure required
+// by every deployment bundle. Build tools and package-manager policy are
+// producer concerns and are intentionally absent from this release contract.
+func PublishPlatformRelease(ctx context.Context, store cas.ImmutableStore, directory string) error {
 	if ctx == nil {
 		return errors.New("platform release publish context is nil")
 	}
@@ -57,94 +53,15 @@ func PublishPlatformRelease(
 	if manifest.FormatVersion != 0 {
 		return errors.New("platform release manifest format is unsupported")
 	}
-	if err := validatePlatformTreeInput(manifest.RuntimeHarness, "runtime harness"); err != nil {
-		return err
+	descriptor := manifest.Runtime
+	if err := ValidateRuntimeDescriptor(descriptor); err != nil {
+		return errors.New("platform release Runtime descriptor is invalid")
 	}
-	if err := validatePlatformTreeInput(manifest.ToolchainBase, "toolchain base"); err != nil {
-		return err
-	}
-	if manifest.Policy.MediaType != BuildPolicyMediaType ||
-		!sha256DigestPattern.MatchString(manifest.Policy.Digest) ||
-		manifest.Policy.SizeBytes < 1 ||
-		manifest.Policy.SizeBytes > maxBuildPolicyBytes {
-		return errors.New("platform release build policy descriptor is invalid")
-	}
-	policyRaw, err := readReleaseObject(directory, manifest.Policy)
-	if err != nil {
-		return err
-	}
-	policy, err := ParseBuildPolicy(policyRaw)
-	if err != nil {
-		return err
-	}
-	runtime, toolchain, err := policy.PlatformInputs()
-	if err != nil {
-		return err
-	}
-	if runtime.Harness != manifest.RuntimeHarness || toolchain.Base != manifest.ToolchainBase {
-		return errors.New("platform release inputs do not match its build policy")
-	}
-	for _, descriptor := range []ArtifactDescriptor{
-		manifest.RuntimeHarness,
-		manifest.ToolchainBase,
-		manifest.Policy,
-	} {
-		file, err := openReleaseObject(directory, descriptor)
-		if err != nil {
-			return err
-		}
-		_, publishErr := store.Publish(ctx, releaseCASDescriptor(descriptor), file)
-		closeErr := file.Close()
-		if publishErr != nil || closeErr != nil {
-			return errors.Join(publishErr, closeErr)
-		}
-	}
-	return nil
-}
-
-func releaseCASDescriptor(descriptor ArtifactDescriptor) cas.Descriptor {
-	return cas.Descriptor{
-		Digest: descriptor.Digest, MediaType: descriptor.MediaType, SizeBytes: descriptor.SizeBytes,
-	}
-}
-
-func readReleaseObject(directory string, descriptor ArtifactDescriptor) ([]byte, error) {
-	file, err := openReleaseObject(directory, descriptor)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	raw, err := io.ReadAll(io.LimitReader(file, descriptor.SizeBytes+1))
-	if err != nil || int64(len(raw)) != descriptor.SizeBytes {
-		return nil, errors.New("platform release object size changed")
-	}
-	return raw, nil
-}
-
-func openReleaseObject(directory string, descriptor ArtifactDescriptor) (*os.File, error) {
 	name := strings.TrimPrefix(descriptor.Digest, "sha256:")
-	if len(name) != 64 || "sha256:"+name != descriptor.Digest {
-		return nil, errors.New("platform release object digest is invalid")
-	}
 	path := filepath.Join(directory, "objects", "sha256", name)
-	linkInfo, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() != descriptor.SizeBytes {
+		return errors.New("platform release Runtime object does not match its descriptor")
 	}
-	if !linkInfo.Mode().IsRegular() ||
-		linkInfo.Size() != descriptor.SizeBytes {
-		return nil, errors.New("platform release object does not match its descriptor")
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	info, err := file.Stat()
-	if err != nil ||
-		!info.Mode().IsRegular() ||
-		info.Size() != descriptor.SizeBytes {
-		_ = file.Close()
-		return nil, errors.New("platform release object does not match its descriptor")
-	}
-	return file, nil
+	return publishVerifiedPlatformRuntime(ctx, store, path, descriptor)
 }

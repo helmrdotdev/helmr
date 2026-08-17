@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestPublicLifecycleProjectionsRejectUnknownInternalValues(t *testing.T) {
@@ -27,7 +25,6 @@ func TestPublicLifecycleProjectionsRejectUnknownInternalValues(t *testing.T) {
 		{name: "worker", project: func() error { _, err := workerPublicStatus("future"); return err }},
 		{name: "secret", project: func() error { _, err := secretPublicStatus("future"); return err }},
 		{name: "token", project: func() error { _, err := tokenPublicStatus("future"); return err }},
-		{name: "deployment", project: func() error { _, err := deploymentPublicStatus("future"); return err }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -84,21 +81,5 @@ func TestRunStatusFilterUsesCanonicalToken(t *testing.T) {
 	statuses, err := parseRunStatusFilter(request)
 	if err != nil || len(statuses) != 1 || statuses[0] != db.RunStatusSystemFailed {
 		t.Fatalf("statuses = %v, err = %v", statuses, err)
-	}
-}
-
-func TestWorkerDeliveryFailureUsesCanonicalFieldName(t *testing.T) {
-	payload, err := json.Marshal(workerapi.DeploymentBuildDeliveryFailureRequest{
-		ReasonCode: workerapi.DeploymentBuildDeliveryBuildGuestFailed,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &fields); err != nil {
-		t.Fatal(err)
-	}
-	if string(fields["reason_code"]) != `"build_guest_failed"` {
-		t.Fatalf("payload = %s", payload)
 	}
 }

@@ -13,173 +13,133 @@ import (
 
 const authenticateWorkerInstanceCredential = `-- name: AuthenticateWorkerInstanceCredential :one
 WITH credential AS (
-    SELECT worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at,
-           worker_groups.claim_version AS group_claim_version,
-           worker_groups.allows_run AS group_allows_run,
-           worker_groups.allows_build AS group_allows_build,
-           (worker_instance_credentials.allows_run AND worker_groups.allows_run AND $1::boolean) AS effective_allows_run,
-           (worker_instance_credentials.allows_build AND worker_groups.allows_build AND $2::boolean) AS effective_allows_build
+    SELECT worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at,
+           worker_groups.claim_version AS group_claim_version
       FROM worker_instance_credentials
       JOIN worker_instances ON worker_instances.id = worker_instance_credentials.worker_instance_id
                            AND worker_instances.worker_group_id = worker_instance_credentials.worker_group_id
       JOIN worker_groups ON worker_groups.id = worker_instance_credentials.worker_group_id
-     WHERE worker_instance_credentials.worker_instance_id = $3
-       AND worker_instance_credentials.secret_hash = $4
+      JOIN worker_pools ON worker_pools.id = worker_instances.worker_pool_id
+                       AND worker_pools.worker_group_id = worker_instances.worker_group_id
+     WHERE worker_instance_credentials.worker_instance_id = $1
+       AND worker_instance_credentials.secret_hash = $2
        AND worker_instance_credentials.revoked_at IS NULL
        AND (worker_instance_credentials.expires_at IS NULL OR worker_instance_credentials.expires_at > now())
        AND worker_instance_credentials.claim_version = worker_instances.claim_version
        AND worker_instances.state IN ('registering','active','draining')
        AND worker_groups.state IN ('active','paused','draining')
-     FOR UPDATE OF worker_instance_credentials, worker_instances, worker_groups
+       AND worker_pools.state IN ('pending','active','draining')
+     FOR UPDATE OF worker_instance_credentials, worker_instances, worker_groups, worker_pools
 ), advanced AS (
     UPDATE worker_instances
-       SET current_epoch = CASE WHEN worker_instances.current_service_id = $5
+       SET current_epoch = CASE WHEN worker_instances.current_service_id = $3
                                 THEN worker_instances.current_epoch
                                 ELSE COALESCE(worker_instances.current_epoch, 0) + 1 END,
-           current_service_id = $5,
-           epoch_started_at = CASE WHEN worker_instances.current_service_id = $5
+           current_service_id = $3,
+           epoch_started_at = CASE WHEN worker_instances.current_service_id = $3
                                    THEN worker_instances.epoch_started_at ELSE now() END,
            state = CASE
-               WHEN worker_instances.current_service_id = $5 THEN worker_instances.state
+               WHEN worker_instances.current_service_id = $3 THEN worker_instances.state
                WHEN worker_instances.state = 'active' THEN 'registering'
                ELSE worker_instances.state
            END,
-           supervisor_version = CASE
-               WHEN worker_instances.current_service_id = $5
-               THEN worker_instances.supervisor_version
-               ELSE ''
-           END,
-           supports_run = CASE
-               WHEN worker_instances.current_service_id = $5
-               THEN worker_instances.supports_run
-               ELSE false
-           END,
-           supports_build = CASE
-               WHEN worker_instances.current_service_id = $5
-               THEN worker_instances.supports_build
-               ELSE false
-           END,
-           runtime_identity_id = CASE
-               WHEN worker_instances.current_service_id = $5
+	       runtime_identity_id = CASE
+               WHEN worker_instances.current_service_id = $3
                THEN worker_instances.runtime_identity_id
                ELSE NULL
            END,
            substrate_format = CASE
-               WHEN worker_instances.current_service_id = $5
+               WHEN worker_instances.current_service_id = $3
                THEN worker_instances.substrate_format
                ELSE ''
            END,
            substrate_contract = CASE
-               WHEN worker_instances.current_service_id = $5
+               WHEN worker_instances.current_service_id = $3
                THEN worker_instances.substrate_contract
                ELSE ''
            END,
            epoch_cpu_millis = CASE
-               WHEN worker_instances.current_service_id = $5
+               WHEN worker_instances.current_service_id = $3
                THEN worker_instances.epoch_cpu_millis ELSE 0
            END,
            epoch_memory_bytes = CASE
-               WHEN worker_instances.current_service_id = $5
+               WHEN worker_instances.current_service_id = $3
                THEN worker_instances.epoch_memory_bytes ELSE 0
            END,
            epoch_guest_ephemeral_disk_bytes = CASE
-               WHEN worker_instances.current_service_id = $5
+               WHEN worker_instances.current_service_id = $3
                THEN worker_instances.epoch_guest_ephemeral_disk_bytes ELSE 0
            END,
-           epoch_build_cache_bytes = CASE
-               WHEN worker_instances.current_service_id = $5
-               THEN worker_instances.epoch_build_cache_bytes ELSE 0
-           END,
-           epoch_artifact_cache_bytes = CASE
-               WHEN worker_instances.current_service_id = $5
-               THEN worker_instances.epoch_artifact_cache_bytes ELSE 0
-           END,
            per_vm_cpu_millis = CASE
-               WHEN worker_instances.current_service_id = $5
+               WHEN worker_instances.current_service_id = $3
                THEN worker_instances.per_vm_cpu_millis ELSE 0
            END,
            per_vm_memory_bytes = CASE
-               WHEN worker_instances.current_service_id = $5
+               WHEN worker_instances.current_service_id = $3
                THEN worker_instances.per_vm_memory_bytes ELSE 0
            END,
            per_vm_guest_ephemeral_disk_bytes = CASE
-               WHEN worker_instances.current_service_id = $5
+               WHEN worker_instances.current_service_id = $3
                THEN worker_instances.per_vm_guest_ephemeral_disk_bytes ELSE 0
            END,
-           max_vm_slots = CASE
-               WHEN worker_instances.current_service_id = $5
-               THEN worker_instances.max_vm_slots ELSE 0
-           END,
-           max_build_executors = CASE
-               WHEN worker_instances.current_service_id = $5
-               THEN worker_instances.max_build_executors ELSE 0
-           END,
+	       max_vm_slots = CASE
+	           WHEN worker_instances.current_service_id = $3
+	           THEN worker_instances.max_vm_slots ELSE 0
+	       END,
            max_runtime_starts = CASE
-               WHEN worker_instances.current_service_id = $5
+               WHEN worker_instances.current_service_id = $3
                THEN worker_instances.max_runtime_starts ELSE 0
            END,
-           activated_at = CASE WHEN worker_instances.current_service_id = $5
+           cpu_environment = CASE
+               WHEN worker_instances.current_service_id = $3
+               THEN worker_instances.cpu_environment ELSE NULL
+           END,
+           cpu_environment_digest = CASE
+               WHEN worker_instances.current_service_id = $3
+               THEN worker_instances.cpu_environment_digest ELSE NULL
+           END,
+           activated_at = CASE WHEN worker_instances.current_service_id = $3
                                THEN worker_instances.activated_at ELSE NULL END,
-           observed_at = CASE WHEN worker_instances.current_service_id = $5
+           observed_at = CASE WHEN worker_instances.current_service_id = $3
                               THEN worker_instances.observed_at ELSE NULL END,
-           run_paused_reason = CASE WHEN worker_instances.current_service_id = $5
-                                    THEN worker_instances.run_paused_reason ELSE NULL END,
-           build_paused_reason = CASE WHEN worker_instances.current_service_id = $5
-                                      THEN worker_instances.build_paused_reason ELSE NULL END,
-           runtime_paused_reason = CASE WHEN worker_instances.current_service_id = $5
+	       run_paused_reason = CASE WHEN worker_instances.current_service_id = $3
+	                                THEN worker_instances.run_paused_reason ELSE NULL END,
+           runtime_paused_reason = CASE WHEN worker_instances.current_service_id = $3
                                         THEN worker_instances.runtime_paused_reason ELSE NULL END,
            updated_at = now()
       FROM credential
      WHERE worker_instances.id = credential.worker_instance_id
-    RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.epoch_build_cache_bytes, worker_instances.epoch_artifact_cache_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.build_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
+    RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
 )
 SELECT credential.id, credential.worker_group_id,
        credential.worker_instance_id, credential.key_prefix, credential.claim_version,
        credential.group_claim_version,
-       credential.allows_run AS credential_allows_run,
-       credential.allows_build AS credential_allows_build,
-       credential.group_allows_run, credential.group_allows_build,
-       credential.effective_allows_run, credential.effective_allows_build,
        advanced.current_epoch, advanced.current_service_id, advanced.state,
        advanced.resource_id
   FROM credential JOIN advanced ON advanced.id = credential.worker_instance_id
 `
 
 type AuthenticateWorkerInstanceCredentialParams struct {
-	SupportsRun      bool        `json:"supports_run"`
-	SupportsBuild    bool        `json:"supports_build"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	SecretHash       []byte      `json:"secret_hash"`
 	ServiceID        pgtype.UUID `json:"service_id"`
 }
 
 type AuthenticateWorkerInstanceCredentialRow struct {
-	ID                    pgtype.UUID `json:"id"`
-	WorkerGroupID         string      `json:"worker_group_id"`
-	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
-	KeyPrefix             string      `json:"key_prefix"`
-	ClaimVersion          int64       `json:"claim_version"`
-	GroupClaimVersion     int64       `json:"group_claim_version"`
-	CredentialAllowsRun   bool        `json:"credential_allows_run"`
-	CredentialAllowsBuild bool        `json:"credential_allows_build"`
-	GroupAllowsRun        bool        `json:"group_allows_run"`
-	GroupAllowsBuild      bool        `json:"group_allows_build"`
-	EffectiveAllowsRun    pgtype.Bool `json:"effective_allows_run"`
-	EffectiveAllowsBuild  pgtype.Bool `json:"effective_allows_build"`
-	CurrentEpoch          pgtype.Int8 `json:"current_epoch"`
-	CurrentServiceID      pgtype.UUID `json:"current_service_id"`
-	State                 string      `json:"state"`
-	ResourceID            string      `json:"resource_id"`
+	ID                pgtype.UUID `json:"id"`
+	WorkerGroupID     string      `json:"worker_group_id"`
+	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
+	KeyPrefix         string      `json:"key_prefix"`
+	ClaimVersion      int64       `json:"claim_version"`
+	GroupClaimVersion int64       `json:"group_claim_version"`
+	CurrentEpoch      pgtype.Int8 `json:"current_epoch"`
+	CurrentServiceID  pgtype.UUID `json:"current_service_id"`
+	State             string      `json:"state"`
+	ResourceID        string      `json:"resource_id"`
 }
 
 func (q *Queries) AuthenticateWorkerInstanceCredential(ctx context.Context, arg AuthenticateWorkerInstanceCredentialParams) (AuthenticateWorkerInstanceCredentialRow, error) {
-	row := q.db.QueryRow(ctx, authenticateWorkerInstanceCredential,
-		arg.SupportsRun,
-		arg.SupportsBuild,
-		arg.WorkerInstanceID,
-		arg.SecretHash,
-		arg.ServiceID,
-	)
+	row := q.db.QueryRow(ctx, authenticateWorkerInstanceCredential, arg.WorkerInstanceID, arg.SecretHash, arg.ServiceID)
 	var i AuthenticateWorkerInstanceCredentialRow
 	err := row.Scan(
 		&i.ID,
@@ -188,12 +148,6 @@ func (q *Queries) AuthenticateWorkerInstanceCredential(ctx context.Context, arg 
 		&i.KeyPrefix,
 		&i.ClaimVersion,
 		&i.GroupClaimVersion,
-		&i.CredentialAllowsRun,
-		&i.CredentialAllowsBuild,
-		&i.GroupAllowsRun,
-		&i.GroupAllowsBuild,
-		&i.EffectiveAllowsRun,
-		&i.EffectiveAllowsBuild,
 		&i.CurrentEpoch,
 		&i.CurrentServiceID,
 		&i.State,
@@ -205,28 +159,29 @@ func (q *Queries) AuthenticateWorkerInstanceCredential(ctx context.Context, arg 
 const authorizeRecoveringWorkerInstanceCredential = `-- name: AuthorizeRecoveringWorkerInstanceCredential :one
 UPDATE worker_instance_credentials
    SET last_used_at = now()
-  FROM worker_instances, worker_groups
+  FROM worker_instances, worker_groups, worker_pools
  WHERE worker_instance_credentials.id = $1
    AND worker_instances.id = worker_instance_credentials.worker_instance_id
    AND worker_instances.worker_group_id = worker_instance_credentials.worker_group_id
    AND worker_groups.id = worker_instance_credentials.worker_group_id
+   AND worker_pools.id = worker_instances.worker_pool_id
+   AND worker_pools.worker_group_id = worker_instances.worker_group_id
    AND worker_instance_credentials.revoked_at IS NULL
    AND worker_instance_credentials.claim_version = $2
    AND worker_instance_credentials.claim_version = worker_instances.claim_version
    AND worker_groups.claim_version = $3
    AND worker_instances.current_epoch = $4
-   AND (
-       worker_instances.state = 'registering'
-       OR (
-           worker_instances.state = 'draining'
-           AND NOT worker_instances.supports_run
-           AND NOT worker_instances.supports_build
-       )
+	AND (
+	    worker_instances.state = 'registering'
+	    OR (
+	        worker_instances.state = 'draining'
+	        AND worker_instances.runtime_identity_id IS NULL
+	    )
    )
    AND worker_groups.state IN ('active','paused','draining')
-RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
+   AND worker_pools.state IN ('pending','active','draining')
+RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
           worker_instances.current_epoch, worker_instances.state AS worker_state,
-          worker_instances.supports_run, worker_instances.supports_build,
           worker_instances.epoch_started_at
 `
 
@@ -243,8 +198,6 @@ type AuthorizeRecoveringWorkerInstanceCredentialRow struct {
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
 	KeyPrefix        string             `json:"key_prefix"`
 	ClaimVersion     int64              `json:"claim_version"`
-	AllowsRun        bool               `json:"allows_run"`
-	AllowsBuild      bool               `json:"allows_build"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 	SecretHash       []byte             `json:"secret_hash"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
@@ -253,8 +206,6 @@ type AuthorizeRecoveringWorkerInstanceCredentialRow struct {
 	ResourceID       string             `json:"resource_id"`
 	CurrentEpoch     pgtype.Int8        `json:"current_epoch"`
 	WorkerState      string             `json:"worker_state"`
-	SupportsRun      bool               `json:"supports_run"`
-	SupportsBuild    bool               `json:"supports_build"`
 	EpochStartedAt   pgtype.Timestamptz `json:"epoch_started_at"`
 }
 
@@ -272,8 +223,6 @@ func (q *Queries) AuthorizeRecoveringWorkerInstanceCredential(ctx context.Contex
 		&i.WorkerInstanceID,
 		&i.KeyPrefix,
 		&i.ClaimVersion,
-		&i.AllowsRun,
-		&i.AllowsBuild,
 		&i.ExpiresAt,
 		&i.SecretHash,
 		&i.CreatedAt,
@@ -282,8 +231,6 @@ func (q *Queries) AuthorizeRecoveringWorkerInstanceCredential(ctx context.Contex
 		&i.ResourceID,
 		&i.CurrentEpoch,
 		&i.WorkerState,
-		&i.SupportsRun,
-		&i.SupportsBuild,
 		&i.EpochStartedAt,
 	)
 	return i, err
@@ -292,21 +239,23 @@ func (q *Queries) AuthorizeRecoveringWorkerInstanceCredential(ctx context.Contex
 const authorizeWorkerActivationCredential = `-- name: AuthorizeWorkerActivationCredential :one
 UPDATE worker_instance_credentials
    SET last_used_at = now()
-  FROM worker_instances, worker_groups
+  FROM worker_instances, worker_groups, worker_pools
  WHERE worker_instance_credentials.id = $1
    AND worker_instances.id = worker_instance_credentials.worker_instance_id
    AND worker_instances.worker_group_id = worker_instance_credentials.worker_group_id
    AND worker_groups.id = worker_instance_credentials.worker_group_id
+   AND worker_pools.id = worker_instances.worker_pool_id
+   AND worker_pools.worker_group_id = worker_instances.worker_group_id
    AND worker_instance_credentials.revoked_at IS NULL
    AND worker_instance_credentials.claim_version = $2
    AND worker_instance_credentials.claim_version = worker_instances.claim_version
    AND worker_groups.claim_version = $3
    AND worker_instances.current_epoch = $4
-   AND worker_instances.state IN ('registering', 'active')
+   AND worker_instances.state IN ('registering', 'active', 'draining')
    AND worker_groups.state IN ('active','paused','draining')
-RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
+   AND worker_pools.state IN ('pending','active','draining')
+RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
           worker_instances.current_epoch, worker_instances.state AS worker_state,
-          worker_instances.supports_run, worker_instances.supports_build,
           worker_instances.epoch_started_at
 `
 
@@ -323,8 +272,6 @@ type AuthorizeWorkerActivationCredentialRow struct {
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
 	KeyPrefix        string             `json:"key_prefix"`
 	ClaimVersion     int64              `json:"claim_version"`
-	AllowsRun        bool               `json:"allows_run"`
-	AllowsBuild      bool               `json:"allows_build"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 	SecretHash       []byte             `json:"secret_hash"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
@@ -333,8 +280,6 @@ type AuthorizeWorkerActivationCredentialRow struct {
 	ResourceID       string             `json:"resource_id"`
 	CurrentEpoch     pgtype.Int8        `json:"current_epoch"`
 	WorkerState      string             `json:"worker_state"`
-	SupportsRun      bool               `json:"supports_run"`
-	SupportsBuild    bool               `json:"supports_build"`
 	EpochStartedAt   pgtype.Timestamptz `json:"epoch_started_at"`
 }
 
@@ -352,8 +297,6 @@ func (q *Queries) AuthorizeWorkerActivationCredential(ctx context.Context, arg A
 		&i.WorkerInstanceID,
 		&i.KeyPrefix,
 		&i.ClaimVersion,
-		&i.AllowsRun,
-		&i.AllowsBuild,
 		&i.ExpiresAt,
 		&i.SecretHash,
 		&i.CreatedAt,
@@ -362,17 +305,14 @@ func (q *Queries) AuthorizeWorkerActivationCredential(ctx context.Context, arg A
 		&i.ResourceID,
 		&i.CurrentEpoch,
 		&i.WorkerState,
-		&i.SupportsRun,
-		&i.SupportsBuild,
 		&i.EpochStartedAt,
 	)
 	return i, err
 }
 
 const authorizeWorkerDrainReplay = `-- name: AuthorizeWorkerDrainReplay :one
-SELECT worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
+SELECT worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
        worker_instances.current_epoch, worker_instances.state AS worker_state,
-       worker_instances.supports_run, worker_instances.supports_build,
        worker_instances.epoch_started_at
   FROM worker_instance_credentials
   JOIN worker_instances
@@ -399,8 +339,6 @@ type AuthorizeWorkerDrainReplayRow struct {
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
 	KeyPrefix        string             `json:"key_prefix"`
 	ClaimVersion     int64              `json:"claim_version"`
-	AllowsRun        bool               `json:"allows_run"`
-	AllowsBuild      bool               `json:"allows_build"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 	SecretHash       []byte             `json:"secret_hash"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
@@ -409,8 +347,6 @@ type AuthorizeWorkerDrainReplayRow struct {
 	ResourceID       string             `json:"resource_id"`
 	CurrentEpoch     pgtype.Int8        `json:"current_epoch"`
 	WorkerState      string             `json:"worker_state"`
-	SupportsRun      bool               `json:"supports_run"`
-	SupportsBuild    bool               `json:"supports_build"`
 	EpochStartedAt   pgtype.Timestamptz `json:"epoch_started_at"`
 }
 
@@ -423,8 +359,6 @@ func (q *Queries) AuthorizeWorkerDrainReplay(ctx context.Context, arg AuthorizeW
 		&i.WorkerInstanceID,
 		&i.KeyPrefix,
 		&i.ClaimVersion,
-		&i.AllowsRun,
-		&i.AllowsBuild,
 		&i.ExpiresAt,
 		&i.SecretHash,
 		&i.CreatedAt,
@@ -433,17 +367,14 @@ func (q *Queries) AuthorizeWorkerDrainReplay(ctx context.Context, arg AuthorizeW
 		&i.ResourceID,
 		&i.CurrentEpoch,
 		&i.WorkerState,
-		&i.SupportsRun,
-		&i.SupportsBuild,
 		&i.EpochStartedAt,
 	)
 	return i, err
 }
 
 const authorizeWorkerFenceReplay = `-- name: AuthorizeWorkerFenceReplay :one
-SELECT worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
+SELECT worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
        worker_instances.current_epoch, worker_instances.state AS worker_state,
-       worker_instances.supports_run, worker_instances.supports_build,
        worker_instances.epoch_started_at
   FROM worker_instance_credentials
   JOIN worker_instances
@@ -469,8 +400,6 @@ type AuthorizeWorkerFenceReplayRow struct {
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
 	KeyPrefix        string             `json:"key_prefix"`
 	ClaimVersion     int64              `json:"claim_version"`
-	AllowsRun        bool               `json:"allows_run"`
-	AllowsBuild      bool               `json:"allows_build"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 	SecretHash       []byte             `json:"secret_hash"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
@@ -479,8 +408,6 @@ type AuthorizeWorkerFenceReplayRow struct {
 	ResourceID       string             `json:"resource_id"`
 	CurrentEpoch     pgtype.Int8        `json:"current_epoch"`
 	WorkerState      string             `json:"worker_state"`
-	SupportsRun      bool               `json:"supports_run"`
-	SupportsBuild    bool               `json:"supports_build"`
 	EpochStartedAt   pgtype.Timestamptz `json:"epoch_started_at"`
 }
 
@@ -493,8 +420,6 @@ func (q *Queries) AuthorizeWorkerFenceReplay(ctx context.Context, arg AuthorizeW
 		&i.WorkerInstanceID,
 		&i.KeyPrefix,
 		&i.ClaimVersion,
-		&i.AllowsRun,
-		&i.AllowsBuild,
 		&i.ExpiresAt,
 		&i.SecretHash,
 		&i.CreatedAt,
@@ -503,8 +428,6 @@ func (q *Queries) AuthorizeWorkerFenceReplay(ctx context.Context, arg AuthorizeW
 		&i.ResourceID,
 		&i.CurrentEpoch,
 		&i.WorkerState,
-		&i.SupportsRun,
-		&i.SupportsBuild,
 		&i.EpochStartedAt,
 	)
 	return i, err
@@ -513,22 +436,23 @@ func (q *Queries) AuthorizeWorkerFenceReplay(ctx context.Context, arg AuthorizeW
 const authorizeWorkerInstanceCredential = `-- name: AuthorizeWorkerInstanceCredential :one
 UPDATE worker_instance_credentials
    SET last_used_at = now()
-  FROM worker_instances, worker_groups
+  FROM worker_instances, worker_groups, worker_pools
  WHERE worker_instance_credentials.id = $1
    AND worker_instances.id = worker_instance_credentials.worker_instance_id
    AND worker_instances.worker_group_id = worker_instance_credentials.worker_group_id
    AND worker_groups.id = worker_instance_credentials.worker_group_id
+   AND worker_pools.id = worker_instances.worker_pool_id
+   AND worker_pools.worker_group_id = worker_instances.worker_group_id
    AND worker_instance_credentials.revoked_at IS NULL
    AND worker_instance_credentials.claim_version = $2
    AND worker_instance_credentials.claim_version = worker_instances.claim_version
-   AND worker_groups.claim_version = $3
-   AND worker_instances.current_epoch = $4
-   AND worker_instances.state IN ('active','draining')
-   AND (worker_instances.supports_run OR worker_instances.supports_build)
+	AND worker_groups.claim_version = $3
+	AND worker_instances.current_epoch = $4
+	AND worker_instances.state IN ('active','draining')
    AND worker_groups.state IN ('active','paused','draining')
-RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
+   AND worker_pools.state IN ('active','draining')
+RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
           worker_instances.current_epoch, worker_instances.state AS worker_state,
-          worker_instances.supports_run, worker_instances.supports_build,
           worker_instances.epoch_started_at
 `
 
@@ -545,8 +469,6 @@ type AuthorizeWorkerInstanceCredentialRow struct {
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
 	KeyPrefix        string             `json:"key_prefix"`
 	ClaimVersion     int64              `json:"claim_version"`
-	AllowsRun        bool               `json:"allows_run"`
-	AllowsBuild      bool               `json:"allows_build"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 	SecretHash       []byte             `json:"secret_hash"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
@@ -555,8 +477,6 @@ type AuthorizeWorkerInstanceCredentialRow struct {
 	ResourceID       string             `json:"resource_id"`
 	CurrentEpoch     pgtype.Int8        `json:"current_epoch"`
 	WorkerState      string             `json:"worker_state"`
-	SupportsRun      bool               `json:"supports_run"`
-	SupportsBuild    bool               `json:"supports_build"`
 	EpochStartedAt   pgtype.Timestamptz `json:"epoch_started_at"`
 }
 
@@ -574,8 +494,6 @@ func (q *Queries) AuthorizeWorkerInstanceCredential(ctx context.Context, arg Aut
 		&i.WorkerInstanceID,
 		&i.KeyPrefix,
 		&i.ClaimVersion,
-		&i.AllowsRun,
-		&i.AllowsBuild,
 		&i.ExpiresAt,
 		&i.SecretHash,
 		&i.CreatedAt,
@@ -584,8 +502,6 @@ func (q *Queries) AuthorizeWorkerInstanceCredential(ctx context.Context, arg Aut
 		&i.ResourceID,
 		&i.CurrentEpoch,
 		&i.WorkerState,
-		&i.SupportsRun,
-		&i.SupportsBuild,
 		&i.EpochStartedAt,
 	)
 	return i, err
@@ -594,53 +510,54 @@ func (q *Queries) AuthorizeWorkerInstanceCredential(ctx context.Context, arg Aut
 const enrollWorkerInstance = `-- name: EnrollWorkerInstance :one
 WITH enrollment_token AS (
     SELECT worker_group_tokens.id AS token_id,
-           worker_groups.id AS worker_group_id,
-           worker_groups.allows_run,
-           worker_groups.allows_build
+	       worker_groups.id AS worker_group_id
       FROM worker_group_tokens
       JOIN worker_groups ON worker_groups.token_id = worker_group_tokens.id
      WHERE worker_group_tokens.token_hash = $1
-       AND worker_groups.state IN ('active', 'paused')
-       AND (NOT $2::boolean OR worker_groups.allows_run)
-       AND (NOT $3::boolean OR worker_groups.allows_build)
+	AND worker_groups.state IN ('active', 'paused')
      FOR UPDATE OF worker_group_tokens, worker_groups
+), pool AS (
+    INSERT INTO worker_pools (id, worker_group_id, name, state, claim_version)
+    SELECT $2, enrollment_token.worker_group_id,
+	       $3, 'pending', 1
+      FROM enrollment_token
+    ON CONFLICT (worker_group_id, name)
+    DO UPDATE SET updated_at = worker_pools.updated_at
+	 WHERE worker_pools.state IN ('pending', 'active')
+    RETURNING worker_pools.id, worker_pools.worker_group_id, worker_pools.name, worker_pools.state, worker_pools.claim_version, worker_pools.runtime_identity_id, worker_pools.substrate_format, worker_pools.substrate_contract, worker_pools.capacity_cpu_millis, worker_pools.capacity_memory_bytes, worker_pools.capacity_guest_ephemeral_disk_bytes, worker_pools.per_vm_cpu_millis, worker_pools.per_vm_memory_bytes, worker_pools.per_vm_guest_ephemeral_disk_bytes, worker_pools.max_vm_slots, worker_pools.sealed_at, worker_pools.created_at, worker_pools.updated_at
 ), worker AS (
     INSERT INTO worker_instances (
-        id, worker_group_id, resource_id, state, claim_version,
-        supports_run, supports_build
-    )
-    SELECT $4, enrollment_token.worker_group_id,
-           $5, 'registering', 1, false, false
-      FROM enrollment_token
+	    id, worker_group_id, worker_pool_id, resource_id, state, claim_version
+	)
+    SELECT $4, enrollment_token.worker_group_id, pool.id,
+	       $5, 'registering', 1
+      FROM enrollment_token JOIN pool ON pool.worker_group_id = enrollment_token.worker_group_id
     ON CONFLICT (worker_group_id, resource_id)
         WHERE state IN ('registering', 'active', 'draining')
     DO UPDATE
-       SET claim_version = worker_instances.claim_version + 1,
-           state = 'registering',
-           supervisor_version = '',
-           supports_run = false, supports_build = false,
-           runtime_identity_id = NULL,
+	   SET claim_version = worker_instances.claim_version + 1,
+	       state = 'registering',
+	       runtime_identity_id = NULL,
            substrate_format = '', substrate_contract = '',
            epoch_cpu_millis = 0, epoch_memory_bytes = 0,
            epoch_guest_ephemeral_disk_bytes = 0,
-           epoch_build_cache_bytes = 0, epoch_artifact_cache_bytes = 0,
            per_vm_cpu_millis = 0, per_vm_memory_bytes = 0,
            per_vm_guest_ephemeral_disk_bytes = 0,
-           max_vm_slots = 0,
-           max_build_executors = 0, max_runtime_starts = 0,
+	       max_vm_slots = 0, max_runtime_starts = 0,
+           cpu_environment = NULL, cpu_environment_digest = NULL,
            current_service_id = CASE
                WHEN worker_instances.current_epoch IS NULL THEN NULL
                ELSE $6::uuid
            END,
            epoch_started_at = CASE WHEN worker_instances.current_epoch IS NULL THEN NULL ELSE now() END,
            activated_at = NULL, draining_at = NULL,
-           observed_at = NULL,
-           run_paused_reason = NULL,
-           build_paused_reason = NULL,
-           runtime_paused_reason = NULL,
+	       observed_at = NULL,
+	       run_paused_reason = NULL,
+	       runtime_paused_reason = NULL,
            updated_at = now()
      WHERE worker_instances.state = 'registering'
-    RETURNING id, resource_id, worker_group_id, state, claim_version, current_epoch, current_service_id, supervisor_version, supports_run, supports_build, runtime_identity_id, substrate_format, substrate_contract, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, epoch_build_cache_bytes, epoch_artifact_cache_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_build_executors, max_runtime_starts, observed_at, run_paused_reason, build_paused_reason, runtime_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
+       AND worker_instances.worker_pool_id = (SELECT id FROM pool)
+    RETURNING id, resource_id, worker_group_id, worker_pool_id, state, claim_version, current_epoch, current_service_id, runtime_identity_id, substrate_format, substrate_contract, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_runtime_starts, cpu_environment, cpu_environment_digest, observed_at, run_paused_reason, runtime_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
 ), revoked AS (
     UPDATE worker_instance_credentials SET revoked_at = now()
       FROM worker WHERE worker_instance_credentials.worker_instance_id = worker.id
@@ -648,14 +565,14 @@ WITH enrollment_token AS (
     RETURNING worker_instance_credentials.id
 ), credential AS (
     INSERT INTO worker_instance_credentials (
-        id, worker_group_id, worker_instance_id, key_prefix, secret_hash,
-        claim_version, allows_run, allows_build, expires_at
-    )
+	    id, worker_group_id, worker_instance_id, key_prefix, secret_hash,
+	    claim_version, expires_at
+	)
     SELECT $7, worker.worker_group_id, worker.id,
-           $8, $9, worker.claim_version,
-           $2, $3, $10
+	       $8, $9, worker.claim_version,
+	       $10
       FROM worker WHERE (SELECT count(*) FROM revoked) >= 0
-    RETURNING id, worker_group_id, worker_instance_id, key_prefix, claim_version, allows_run, allows_build, expires_at, secret_hash, created_at, last_used_at, revoked_at
+    RETURNING id, worker_group_id, worker_instance_id, key_prefix, claim_version, expires_at, secret_hash, created_at, last_used_at, revoked_at
 ), touched AS (
     UPDATE worker_group_tokens
        SET last_used_at = now()
@@ -663,13 +580,14 @@ WITH enrollment_token AS (
      WHERE worker_group_tokens.id = (SELECT token_id FROM enrollment_token)
     RETURNING worker_group_tokens.id
 )
-SELECT credential.id, credential.worker_group_id, credential.worker_instance_id, credential.key_prefix, credential.claim_version, credential.allows_run, credential.allows_build, credential.expires_at, credential.secret_hash, credential.created_at, credential.last_used_at, credential.revoked_at FROM credential JOIN touched ON true
+SELECT credential.id, credential.worker_group_id, credential.worker_instance_id, credential.key_prefix, credential.claim_version, credential.expires_at, credential.secret_hash, credential.created_at, credential.last_used_at, credential.revoked_at, pool.id AS worker_pool_id
+  FROM credential JOIN touched ON true JOIN pool ON pool.worker_group_id = credential.worker_group_id
 `
 
 type EnrollWorkerInstanceParams struct {
 	TokenHash           []byte             `json:"token_hash"`
-	AllowsRun           bool               `json:"allows_run"`
-	AllowsBuild         bool               `json:"allows_build"`
+	WorkerPoolID        pgtype.UUID        `json:"worker_pool_id"`
+	PoolName            string             `json:"pool_name"`
 	WorkerInstanceID    pgtype.UUID        `json:"worker_instance_id"`
 	ResourceID          string             `json:"resource_id"`
 	CurrentServiceID    pgtype.UUID        `json:"current_service_id"`
@@ -685,20 +603,19 @@ type EnrollWorkerInstanceRow struct {
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
 	KeyPrefix        string             `json:"key_prefix"`
 	ClaimVersion     int64              `json:"claim_version"`
-	AllowsRun        bool               `json:"allows_run"`
-	AllowsBuild      bool               `json:"allows_build"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
 	SecretHash       []byte             `json:"secret_hash"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	LastUsedAt       pgtype.Timestamptz `json:"last_used_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+	WorkerPoolID     pgtype.UUID        `json:"worker_pool_id"`
 }
 
 func (q *Queries) EnrollWorkerInstance(ctx context.Context, arg EnrollWorkerInstanceParams) (EnrollWorkerInstanceRow, error) {
 	row := q.db.QueryRow(ctx, enrollWorkerInstance,
 		arg.TokenHash,
-		arg.AllowsRun,
-		arg.AllowsBuild,
+		arg.WorkerPoolID,
+		arg.PoolName,
 		arg.WorkerInstanceID,
 		arg.ResourceID,
 		arg.CurrentServiceID,
@@ -714,13 +631,12 @@ func (q *Queries) EnrollWorkerInstance(ctx context.Context, arg EnrollWorkerInst
 		&i.WorkerInstanceID,
 		&i.KeyPrefix,
 		&i.ClaimVersion,
-		&i.AllowsRun,
-		&i.AllowsBuild,
 		&i.ExpiresAt,
 		&i.SecretHash,
 		&i.CreatedAt,
 		&i.LastUsedAt,
 		&i.RevokedAt,
+		&i.WorkerPoolID,
 	)
 	return i, err
 }

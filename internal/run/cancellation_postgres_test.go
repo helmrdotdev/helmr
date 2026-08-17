@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestCancelerTerminalizesAuthorityAndLeavesDetachedChildren(t *testing.T) {
@@ -214,6 +215,338 @@ SELECT runs.status,
 	}
 	if failurePayload["code"] != "secret_revoked" {
 		t.Fatalf("Run failure = %#v", failurePayload)
+	}
+}
+
+func TestOwnedFinalizationBoundsRuntimePreparationForEveryRun(t *testing.T) {
+	ctx := context.Background()
+	fixture := newPostgresFixture(t)
+	work := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+	var runtimeID uuid.UUID
+	if err := fixture.pool.QueryRow(ctx, `
+SELECT runtime_instance_id FROM run_leases WHERE id = $1`, work.leaseID).Scan(&runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, ctx, fixture.pool,
+		`DELETE FROM workspace_leases WHERE owner_run_lease_id = $1`, work.leaseID)
+	dbtest.MustExec(t, ctx, fixture.pool, `
+UPDATE runs
+   SET current_run_lease_id = NULL, first_lease_at = NULL
+ WHERE id = $1`, work.runID)
+	dbtest.MustExec(t, ctx, fixture.pool,
+		`DELETE FROM run_leases WHERE id = $1`, work.leaseID)
+	dbtest.MustExec(t, ctx, fixture.pool,
+		`DELETE FROM workspace_mounts WHERE runtime_instance_id = $1`, runtimeID)
+	dbtest.MustExec(t, ctx, fixture.pool, `
+UPDATE runtime_instances
+   SET observed_state = 'preparing', observed_version = 2,
+       observed_desired_version = 0, ready_at = NULL,
+       reserved_run_id = $2, reserved_attempt_number = 1,
+       reserved_workspace_version_id = (
+           SELECT base_workspace_version_id FROM runs WHERE id = $2
+       ), reservation_expires_at = now() + interval '5 minutes'
+ WHERE id = $1`, runtimeID, work.runID)
+
+	for failure := int32(1); failure <= 8; failure++ {
+		chargedAfter := time.Now()
+		tx, err := fixture.pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		graph, err := LockOwnedFinalization(ctx, tx, OwnedFinalizationRequest{
+			OrgID: fixture.orgID, ProjectID: fixture.projectID,
+			EnvironmentID: fixture.environmentID, RunID: work.runID,
+		})
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatal(err)
+		}
+		exhausted, err := graph.ChargeRuntimePreparationFailure(ctx)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if exhausted != (failure == 8) {
+			t.Fatalf("failure %d exhausted = %t", failure, exhausted)
+		}
+		var count int32
+		var next pgtype.Timestamptz
+		var status db.RunStatus
+		if err := fixture.pool.QueryRow(ctx, `
+SELECT runtime_preparation_count, next_runtime_preparation_at, status
+  FROM runs WHERE id = $1`, work.runID).Scan(&count, &next, &status); err != nil {
+			t.Fatal(err)
+		}
+		if count != failure {
+			t.Fatalf("failure %d count = %d", failure, count)
+		}
+		if failure < 8 {
+			if !next.Valid || status != db.RunStatusQueued {
+				t.Fatalf("failure %d authority = next:%v status:%s", failure, next, status)
+			}
+			delaySeconds := []int{2, 4, 8, 16, 32, 60, 60}[failure-1]
+			minimum := chargedAfter.Add(time.Duration(delaySeconds-1) * time.Second)
+			maximum := time.Now().Add(time.Duration(delaySeconds+1) * time.Second)
+			if next.Time.Before(minimum) || next.Time.After(maximum) {
+				t.Fatalf("failure %d next = %s, want about %ds", failure, next.Time, delaySeconds)
+			}
+		} else if next.Valid || status != db.RunStatusSystemFailed {
+			t.Fatalf("exhausted authority = next:%v status:%s", next, status)
+		}
+	}
+
+	var attemptOutcome, attemptReason string
+	var attemptNumber int32
+	var ownerRunID pgtype.UUID
+	if err := fixture.pool.QueryRow(ctx, `
+SELECT run_attempts.terminal_outcome,
+       run_attempts.terminal_reason_code,
+       runs.current_attempt_number,
+       workspaces.owner_run_id
+  FROM runs
+  JOIN run_attempts ON run_attempts.run_id = runs.id
+                   AND run_attempts.number = runs.current_attempt_number
+  JOIN workspaces ON workspaces.id = runs.workspace_id
+	 WHERE runs.id = $1`, work.runID).Scan(&attemptOutcome, &attemptReason, &attemptNumber, &ownerRunID); err != nil {
+		t.Fatal(err)
+	}
+	if attemptOutcome != "failed" || attemptReason != "runtime_preparation_failed" ||
+		attemptNumber != 1 || ownerRunID.Valid {
+		t.Fatalf("terminal preparation authority = attempt:%d/%s/%s owner:%v", attemptNumber, attemptOutcome, attemptReason, ownerRunID)
+	}
+}
+
+func TestOwnedFinalizationExhaustsActorRuntimePreparation(t *testing.T) {
+	ctx := t.Context()
+	fixture := newPostgresFixture(t)
+	work := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+	sessionID := fixture.convertToActor(t, ctx, work, `{"enabled":false}`)
+	dbtest.MustExec(t, ctx, fixture.pool, `
+UPDATE runs
+   SET current_run_lease_id = NULL
+ WHERE id = $1`, work.runID)
+
+	exhaustRuntimePreparation(t, ctx, fixture, work.runID)
+
+	var runStatus db.RunStatus
+	var sessionState string
+	var failure []byte
+	if err := fixture.pool.QueryRow(ctx, `
+SELECT runs.status, sessions.state, sessions.failure
+  FROM runs
+  JOIN sessions ON sessions.id = $2
+ WHERE runs.id = $1`, work.runID, sessionID).Scan(&runStatus, &sessionState, &failure); err != nil {
+		t.Fatal(err)
+	}
+	var payload Failure
+	if err := json.Unmarshal(failure, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if runStatus != db.RunStatusSystemFailed || sessionState != "failed" ||
+		payload.Code != "platform_failure" {
+		t.Fatalf("actor preparation exhaustion = run:%s session:%s failure:%+v", runStatus, sessionState, payload)
+	}
+}
+
+func TestOwnedFinalizationExhaustsHandoffChildRuntimePreparation(t *testing.T) {
+	ctx := t.Context()
+	fixture := newPostgresFixture(t)
+	leaf := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+	chain := fixture.addHandoffChain(t, ctx, leaf)
+	dbtest.MustExec(t, ctx, fixture.pool, `
+UPDATE runs
+   SET current_run_lease_id = NULL
+ WHERE id = $1`, leaf.runID)
+
+	exhaustRuntimePreparation(t, ctx, fixture, leaf.runID)
+
+	var childStatus, parentStatus db.RunStatus
+	var condition db.WaitState
+	var suspension db.RunWaitState
+	var conditionError []byte
+	if err := fixture.pool.QueryRow(ctx, `
+SELECT child.status,
+       parent.status,
+       wait.condition_state,
+       wait.suspension_state,
+       wait.condition_error
+  FROM runs AS child
+  JOIN runs AS parent ON parent.id = child.parent_run_id
+  JOIN run_waits AS wait
+    ON wait.run_id = parent.id
+   AND wait.child_run_id = child.id
+ WHERE child.id = $1`, leaf.runID).Scan(
+		&childStatus, &parentStatus, &condition, &suspension, &conditionError,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Code      string `json:"code"`
+		Message   string `json:"message"`
+		Retryable bool   `json:"retryable"`
+	}
+	if err := json.Unmarshal(conditionError, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if childStatus != db.RunStatusSystemFailed || parentStatus != db.RunStatusQueued ||
+		condition != db.WaitStateFailed || suspension != db.RunWaitStateResumePending ||
+		payload.Code != "runtime_preparation_failed" || payload.Retryable {
+		t.Fatalf(
+			"handoff preparation exhaustion = child:%s parent:%s wait:%s/%s result:%+v",
+			childStatus, parentStatus, condition, suspension, payload,
+		)
+	}
+	if chain.enclosingWaitID == uuid.Nil {
+		t.Fatal("handoff fixture did not retain its enclosing Wait")
+	}
+}
+
+func TestOwnedFinalizationExhaustsDifferentWorkspaceChildRuntimePreparation(t *testing.T) {
+	ctx := t.Context()
+	fixture := newPostgresFixture(t)
+	parent := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+	child := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+	claimID := uuid.Must(uuid.NewV7())
+	waitID := uuid.Must(uuid.NewV7())
+	dbtest.MustExec(t, ctx, fixture.pool, `
+INSERT INTO idempotency_claims (
+    id, environment_id, operation, slot_hash,
+    request_fingerprint, accepted_at
+) VALUES ($1, $2, 'task.child.invoke', $3, $4, now())`,
+		claimID, fixture.environmentID,
+		dbtest.Hash("preparation-child-slot"), dbtest.Hash("preparation-child-request"))
+	dbtest.MustExec(t, ctx, fixture.pool, `
+UPDATE runs
+   SET cause_kind = 'child', parent_run_id = $1,
+       parent_owns_lifecycle = true, claim_id = $2,
+       current_run_lease_id = NULL
+ WHERE id = $3`, parent.runID, claimID, child.runID)
+	dbtest.MustExec(t, ctx, fixture.pool, `UPDATE runs SET status = 'waiting' WHERE id = $1`, parent.runID)
+	dbtest.MustExec(t, ctx, fixture.pool, `
+INSERT INTO run_waits (
+    id, environment_id, run_id, workspace_id, kind,
+    child_run_id, child_parent_owned, child_target_declared_id,
+    child_claim_id, child_request, suspension_state,
+    expected_run_state_version, attempt_number, current_run_lease_id,
+    resume_attach_id
+)
+SELECT $1, runs.environment_id, runs.id, runs.workspace_id, 'child',
+       $2, true, 'test-task', $3, '{}'::jsonb, 'hot',
+       runs.state_version, runs.current_attempt_number, runs.current_run_lease_id,
+       $4
+  FROM runs
+ WHERE runs.id = $5`,
+		waitID, child.runID, claimID, uuid.Must(uuid.NewV7()), parent.runID)
+
+	exhaustRuntimePreparation(t, ctx, fixture, child.runID)
+
+	var childStatus, parentStatus db.RunStatus
+	var condition db.WaitState
+	var result []byte
+	if err := fixture.pool.QueryRow(ctx, `
+SELECT child.status, parent.status, wait.condition_state, wait.condition_result
+  FROM runs AS child
+  JOIN runs AS parent ON parent.id = child.parent_run_id
+  JOIN run_waits AS wait ON wait.id = $2
+ WHERE child.id = $1`, child.runID, waitID).Scan(
+		&childStatus, &parentStatus, &condition, &result,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		OK      bool    `json:"ok"`
+		Failure Failure `json:"failure"`
+	}
+	if err := json.Unmarshal(result, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if childStatus != db.RunStatusSystemFailed || parentStatus != db.RunStatusRunning ||
+		condition != db.WaitStateCompleted || payload.OK ||
+		payload.Failure.Code != "runtime_preparation_failed" {
+		t.Fatalf(
+			"different-workspace preparation exhaustion = child:%s parent:%s wait:%s result:%+v",
+			childStatus, parentStatus, condition, payload,
+		)
+	}
+}
+
+func TestOwnedFinalizationExhaustsResumeRuntimePreparation(t *testing.T) {
+	ctx := t.Context()
+	fixture := newPostgresFixture(t)
+	leaf := fixture.addRun(t, "assigned", time.Now().Add(-time.Minute))
+	chain := fixture.addHandoffChain(t, ctx, leaf)
+	canceler, err := NewCanceler(fixture.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := canceler.Cancel(ctx, CancellationRequest{
+		OrgID: fixture.orgID, ProjectID: fixture.projectID,
+		EnvironmentID: fixture.environmentID, RunID: leaf.runID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	exhaustRuntimePreparation(t, ctx, fixture, chain.parentRunID)
+
+	var targetStatus, outerStatus db.RunStatus
+	var condition db.WaitState
+	var suspension db.RunWaitState
+	if err := fixture.pool.QueryRow(ctx, `
+SELECT target.status, outer_run.status,
+       outer_wait.condition_state, outer_wait.suspension_state
+  FROM runs AS target
+  JOIN runs AS outer_run ON outer_run.id = target.parent_run_id
+  JOIN run_waits AS outer_wait
+    ON outer_wait.id = $2
+   AND outer_wait.child_run_id = target.id
+ WHERE target.id = $1`, chain.parentRunID, chain.outerWaitID).Scan(
+		&targetStatus, &outerStatus, &condition, &suspension,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if targetStatus != db.RunStatusSystemFailed || outerStatus != db.RunStatusQueued ||
+		condition != db.WaitStateFailed || suspension != db.RunWaitStateResumePending {
+		t.Fatalf(
+			"resume preparation exhaustion = target:%s outer:%s wait:%s/%s",
+			targetStatus, outerStatus, condition, suspension,
+		)
+	}
+}
+
+func exhaustRuntimePreparation(
+	t *testing.T,
+	ctx context.Context,
+	fixture postgresFixture,
+	runID uuid.UUID,
+) {
+	t.Helper()
+	for failure := 1; failure <= 8; failure++ {
+		tx, err := fixture.pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		graph, err := LockOwnedFinalization(ctx, tx, OwnedFinalizationRequest{
+			OrgID: fixture.orgID, ProjectID: fixture.projectID,
+			EnvironmentID: fixture.environmentID, RunID: runID,
+		})
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatal(err)
+		}
+		exhausted, err := graph.ChargeRuntimePreparationFailure(ctx)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if exhausted != (failure == 8) {
+			t.Fatalf("failure %d exhausted = %t", failure, exhausted)
+		}
 	}
 }
 

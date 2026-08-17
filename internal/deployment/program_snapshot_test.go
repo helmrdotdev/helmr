@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -46,6 +47,47 @@ func TestSnapshotProgramBindsDescriptorAndDriveSource(t *testing.T) {
 	}
 	if !bytes.Equal(got, body) {
 		t.Fatal("linked Program drive does not match its descriptor")
+	}
+}
+
+func TestVerifyProgramAcceptsOneSnapshotBeforeCgroupSetup(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Program verification requires Linux")
+	}
+	body := []byte("Program")
+	program := ProgramDescriptor{
+		Digest:    digestBytes(body),
+		SizeBytes: int64(len(body)),
+		MediaType: ProgramArtifactMediaType,
+	}
+	store := programObjectStore{objects: map[string]programObject{
+		program.Digest: {descriptor: program, body: body},
+	}}
+	snapshot, err := SnapshotProgram(
+		context.Background(),
+		store,
+		t.TempDir(),
+		program,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.Close()
+
+	_, err = VerifyProgram(
+		context.Background(),
+		filepath.Join(t.TempDir(), "missing-cgroup"),
+		"lease-123",
+		snapshot,
+	)
+	if err == nil {
+		t.Fatal("expected cgroup setup to fail")
+	}
+	if strings.Contains(err.Error(), "descriptor count") {
+		t.Fatalf("single Program snapshot rejected: %v", err)
+	}
+	if !strings.Contains(err.Error(), "open artifact verifier unit cgroup root") {
+		t.Fatalf("error = %v, want cgroup root open failure", err)
 	}
 }
 

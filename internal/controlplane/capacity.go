@@ -53,12 +53,54 @@ func (s *Server) mountCapacityRoutes(r chi.Router) {
 	r.Route(capacityapi.RoutePrefix, func(r chi.Router) {
 		r.Use(s.requireCapacity)
 		r.Get(capacityapi.WorkerGroupsPath+"/resolve", s.capacityResolveWorkerGroup)
+		r.Get(capacityapi.WorkerGroupsPath+"/{workerGroupID}/pools/resolve", s.capacityResolveWorkerPool)
+		r.With(limitRequestBody(capacityRequestBodyLimit)).
+			Put(capacityapi.WorkerGroupsPath+"/{workerGroupID}/primary-pools", s.capacityReconcileWorkerGroupPrimaryPools)
 		r.With(limitRequestBody(capacityRequestBodyLimit)).
 			Post(capacityapi.WorkerGroupsPath+"/{workerGroupID}/plan", s.capacityPlan)
 		r.Get(capacityapi.WorkerInstancesPath, s.capacityListWorkerInstances)
 		r.Get(capacityapi.WorkerInstancesPath+"/{workerInstanceID}", s.capacityGetWorkerInstance)
 		r.With(limitRequestBody(capacityRequestBodyLimit)).
 			Post(capacityapi.WorkerInstancesPath+"/{workerInstanceID}/drain", s.capacityDrainWorkerInstance)
+	})
+}
+
+func (s *Server) capacityResolveWorkerPool(w http.ResponseWriter, r *http.Request) {
+	workerGroupID, err := ids.Parse(chi.URLParam(r, "workerGroupID"))
+	if err != nil {
+		writeError(w, badRequest(errors.New("worker_group_id must be a canonical UUIDv7")))
+		return
+	}
+	query := r.URL.Query()
+	if len(query) != 1 || len(query["name"]) != 1 {
+		writeError(w, badRequest(errors.New("name is required exactly once")))
+		return
+	}
+	name := query.Get("name")
+	if strings.TrimSpace(name) == "" || strings.TrimSpace(name) != name {
+		writeError(w, badRequest(errors.New("name must be non-empty and canonical")))
+		return
+	}
+	pool, err := s.db.GetWorkerPoolByGroupName(r.Context(), db.GetWorkerPoolByGroupNameParams{
+		WorkerGroupID: workerGroupID.String(), Name: name,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, notFound(errors.New("worker pool was not found")))
+		return
+	}
+	if err != nil {
+		s.log.Error("resolve capacity Worker pool", "worker_group_id", workerGroupID.String(), "name", name, "error", err)
+		writeError(w, errors.New("resolve capacity worker pool"))
+		return
+	}
+	status, err := workerPoolPublicStatus(pool.State)
+	if err != nil {
+		writeError(w, errors.New("project capacity worker pool"))
+		return
+	}
+	writeJSON(w, http.StatusOK, capacityapi.CapacityWorkerPool{
+		ID: pgvalue.MustUUIDValue(pool.ID).String(), WorkerGroupID: pool.WorkerGroupID,
+		Name: pool.Name, Status: status,
 	})
 }
 
@@ -89,7 +131,68 @@ func (s *Server) capacityResolveWorkerGroup(w http.ResponseWriter, r *http.Reque
 		writeError(w, errors.New("project capacity worker group"))
 		return
 	}
-	writeJSON(w, http.StatusOK, capacityapi.CapacityWorkerGroup{ID: group.ID, Name: group.Name, RegionID: group.RegionID, Status: status})
+	writeJSON(w, http.StatusOK, capacityWorkerGroup(group, status))
+}
+
+func (s *Server) capacityReconcileWorkerGroupPrimaryPools(w http.ResponseWriter, r *http.Request) {
+	workerGroupID, err := ids.Parse(chi.URLParam(r, "workerGroupID"))
+	if err != nil {
+		writeError(w, badRequest(errors.New("worker_group_id must be a canonical UUIDv7")))
+		return
+	}
+	var request capacityapi.ReconcileWorkerGroupPrimaryPoolsRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, badRequest(fmt.Errorf("invalid primary Pool selection JSON: %w", err)))
+		return
+	}
+	if request.ExpectedGroupClaimVersion <= 0 {
+		writeError(w, badRequest(errors.New("expected_group_claim_version must be positive")))
+		return
+	}
+	poolID, err := capacityOptionalPoolID(request.PoolID)
+	if err != nil {
+		writeError(w, badRequest(fmt.Errorf("pool_id: %w", err)))
+		return
+	}
+	result, err := s.reconcileWorkerGroupPrimarySelection(r.Context(), workerGroupPrimarySelectionCommand{
+		workerGroupID:             workerGroupID.String(),
+		expectedGroupClaimVersion: request.ExpectedGroupClaimVersion,
+		desired: func(db.WorkerGroup) (pgtype.UUID, error) {
+			return poolID, nil
+		},
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	status, err := workerGroupPublicStatus(result.group.State)
+	if err != nil {
+		writeError(w, errors.New("project capacity worker group"))
+		return
+	}
+	writeJSON(w, http.StatusOK, capacityapi.ReconcileWorkerGroupPrimaryPoolsResponse{
+		WorkerGroup: capacityWorkerGroup(result.group, status),
+		Applied:     result.applied,
+	})
+}
+
+func capacityOptionalPoolID(raw string) (pgtype.UUID, error) {
+	if raw == "" {
+		return pgtype.UUID{}, nil
+	}
+	id, err := ids.Parse(raw)
+	if err != nil || id.String() != raw {
+		return pgtype.UUID{}, errors.New("must be empty or a canonical UUIDv7")
+	}
+	return pgvalue.UUID(id), nil
+}
+
+func capacityWorkerGroup(group db.WorkerGroup, status capacityapi.WorkerGroupStatus) capacityapi.CapacityWorkerGroup {
+	return capacityapi.CapacityWorkerGroup{
+		ID: group.ID, Name: group.Name, RegionID: group.RegionID, Status: status,
+		ClaimVersion:  group.ClaimVersion,
+		PrimaryPoolID: pgvalue.UUIDString(group.PrimaryPoolID),
+	}
 }
 
 func (s *Server) requireCapacity(next http.Handler) http.Handler {
@@ -149,8 +252,8 @@ func (s *Server) capacityListWorkerInstances(w http.ResponseWriter, r *http.Requ
 	}
 	for _, row := range rows {
 		projected, err := capacityWorkerInstance(
-			row.ID, row.ResourceID, row.WorkerGroupID, row.State, row.ClaimVersion,
-			row.CurrentEpoch, row.SupportsRun, row.SupportsBuild, row.DrainingAt,
+			row.ID, row.ResourceID, row.WorkerGroupID, row.WorkerPoolID, row.State, row.ClaimVersion,
+			row.CurrentEpoch, row.DrainingAt,
 			row.TerminationReadyAt, row.LostAt, row.CreatedAt, row.UpdatedAt,
 		)
 		if err != nil {
@@ -180,8 +283,8 @@ func (s *Server) capacityGetWorkerInstance(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	response, err := capacityWorkerInstance(
-		row.ID, row.ResourceID, row.WorkerGroupID, row.State, row.ClaimVersion,
-		row.CurrentEpoch, row.SupportsRun, row.SupportsBuild, row.DrainingAt,
+		row.ID, row.ResourceID, row.WorkerGroupID, row.WorkerPoolID, row.State, row.ClaimVersion,
+		row.CurrentEpoch, row.DrainingAt,
 		row.TerminationReadyAt, row.LostAt, row.CreatedAt, row.UpdatedAt,
 	)
 	if err != nil {
@@ -233,8 +336,9 @@ func (s *Server) capacityDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	response, err := capacityWorkerInstance(
-		draining.ID, draining.ResourceID, draining.WorkerGroupID, string(draining.State), draining.ClaimVersion,
-		draining.CurrentEpoch, draining.SupportsRun, draining.SupportsBuild, draining.DrainingAt,
+		draining.ID, draining.ResourceID, draining.WorkerGroupID, draining.WorkerPoolID,
+		string(draining.State), draining.ClaimVersion,
+		draining.CurrentEpoch, draining.DrainingAt,
 		draining.TerminationReadyAt, draining.LostAt, draining.CreatedAt, draining.UpdatedAt,
 	)
 	if err != nil {
@@ -320,15 +424,29 @@ func workerGroupPublicStatus(state string) (capacityapi.WorkerGroupStatus, error
 	}
 }
 
+func workerPoolPublicStatus(state string) (capacityapi.WorkerPoolStatus, error) {
+	switch state {
+	case "pending":
+		return capacityapi.WorkerPoolStatusPending, nil
+	case "active":
+		return capacityapi.WorkerPoolStatusActive, nil
+	case "draining":
+		return capacityapi.WorkerPoolStatusDraining, nil
+	case "disabled":
+		return capacityapi.WorkerPoolStatusDisabled, nil
+	default:
+		return "", fmt.Errorf("worker pool state %q has no public projection", state)
+	}
+}
+
 func capacityWorkerInstance(
 	id pgtype.UUID,
 	resourceID string,
 	workerGroupID string,
+	workerPoolID pgtype.UUID,
 	status string,
 	claimVersion int64,
 	currentEpoch pgtype.Int8,
-	supportsRun bool,
-	supportsBuild bool,
 	drainingAt pgtype.Timestamptz,
 	terminationReadyAt pgtype.Timestamptz,
 	lostAt pgtype.Timestamptz,
@@ -341,8 +459,8 @@ func capacityWorkerInstance(
 	}
 	result := capacityapi.WorkerInstance{
 		ID: uuid.UUID(id.Bytes).String(), ResourceID: resourceID,
-		WorkerGroupID: workerGroupID, Status: publicStatus, ClaimVersion: claimVersion,
-		SupportsRun: supportsRun, SupportsBuild: supportsBuild,
+		WorkerGroupID: workerGroupID, WorkerPoolID: uuid.UUID(workerPoolID.Bytes).String(),
+		Status: publicStatus, ClaimVersion: claimVersion,
 		CreatedAt: createdAt.Time, UpdatedAt: updatedAt.Time,
 	}
 	if currentEpoch.Valid {

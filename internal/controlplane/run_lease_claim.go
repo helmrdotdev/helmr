@@ -1303,7 +1303,6 @@ func validateClaimWorker(authenticated workerActor, worker db.WorkerInstance) er
 	if !worker.CurrentEpoch.Valid ||
 		worker.CurrentEpoch.Int64 != authenticated.WorkerEpoch ||
 		worker.ClaimVersion != authenticated.ClaimVersion ||
-		!worker.SupportsRun ||
 		(worker.State != db.WorkerInstanceStateActive && worker.State != db.WorkerInstanceStateDraining) {
 		return errStaleRunLeaseClaim
 	}
@@ -1318,14 +1317,6 @@ func validateClaimPhysicalAuthority(worker workerActor, authority runLeaseClaimA
 		lease.WorkerEpoch != worker.WorkerEpoch ||
 		lease.RuntimeInstanceID != runtime.ID ||
 		lease.RuntimeIdentityID != runtime.RuntimeIdentityID {
-		return errStaleRunLeaseClaim
-	}
-	if lease.State == db.RunLeaseStateAssigned && authority.worker.State != db.WorkerInstanceStateActive {
-		return errStaleRunLeaseClaim
-	}
-	if lease.State == db.RunLeaseStateAssigned &&
-		(authority.workerGroup.State != db.WorkerGroupStateActive ||
-			!authority.workerGroup.AllowsRun) {
 		return errStaleRunLeaseClaim
 	}
 	if lease.State == db.RunLeaseStateAssigned && !authority.workerRunReady {
@@ -1350,9 +1341,9 @@ func validateClaimPhysicalAuthority(worker workerActor, authority runLeaseClaimA
 		runtime.ReservedMemoryBytes != lease.RequestedMemoryBytes ||
 		runtime.ReservedGuestEphemeralDiskBytes != lease.RequestedGuestEphemeralDiskBytes ||
 		runtime.ReservedExecutionSlots != lease.RequestedExecutionSlots ||
-		authority.worker.PerVMCPUMillis != lease.RequestedCPUMillis ||
-		authority.worker.PerVMMemoryBytes != lease.RequestedMemoryBytes ||
-		authority.worker.PerVMGuestEphemeralDiskBytes != lease.RequestedGuestEphemeralDiskBytes {
+		authority.worker.PerVMCPUMillis < lease.RequestedCPUMillis ||
+		authority.worker.PerVMMemoryBytes < lease.RequestedMemoryBytes ||
+		authority.worker.PerVMGuestEphemeralDiskBytes < lease.RequestedGuestEphemeralDiskBytes {
 		return errStaleRunLeaseClaim
 	}
 	return nil

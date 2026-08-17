@@ -13,15 +13,8 @@ import (
 )
 
 const (
-	networkPolicyTableName        = "helmr_network_policy"
-	runNetworkDeniedCounterName   = "run_denied"
-	buildNetworkDeniedCounterName = "build_denied"
-	buildNetworkLimitCounterName  = "build_limit"
-	buildNetworkReceivedQuotaName = "build_received"
-	buildNetworkSentQuotaName     = "build_sent"
-	buildNetworkConnectionLimit   = 256
-	buildNetworkReceivedLimitMiB  = 10 * 1024
-	buildNetworkSentLimitMiB      = 1024
+	networkPolicyTableName      = "helmr_network_policy"
+	runNetworkDeniedCounterName = "run_denied"
 )
 
 type networkPolicyInput struct {
@@ -32,7 +25,6 @@ type networkPolicyInput struct {
 	TranslationIPv4  string
 	BlockedIPv4CIDRs []netip.Prefix
 	ResolverIPv4     string
-	Build            bool
 }
 
 func renderNetworkPolicy(input networkPolicyInput) (string, error) {
@@ -77,14 +69,7 @@ func renderNetworkPolicy(input networkPolicyInput) (string, error) {
 	mark := strconv.FormatUint(uint64(input.Mark), 10)
 	var script strings.Builder
 	fmt.Fprintf(&script, "add table inet %s\n", networkPolicyTableName)
-	if input.Build {
-		fmt.Fprintf(&script, "add counter inet %s %s\n", networkPolicyTableName, buildNetworkDeniedCounterName)
-		fmt.Fprintf(&script, "add counter inet %s %s\n", networkPolicyTableName, buildNetworkLimitCounterName)
-		fmt.Fprintf(&script, "add quota inet %s %s { over %d mbytes }\n", networkPolicyTableName, buildNetworkReceivedQuotaName, buildNetworkReceivedLimitMiB)
-		fmt.Fprintf(&script, "add quota inet %s %s { over %d mbytes }\n", networkPolicyTableName, buildNetworkSentQuotaName, buildNetworkSentLimitMiB)
-	} else {
-		fmt.Fprintf(&script, "add counter inet %s %s\n", networkPolicyTableName, runNetworkDeniedCounterName)
-	}
+	fmt.Fprintf(&script, "add counter inet %s %s\n", networkPolicyTableName, runNetworkDeniedCounterName)
 	fmt.Fprintln(&script, runNetworkPolicySet("blocked_ipv4", "ipv4_addr", blockedCIDRs))
 	fmt.Fprintf(&script, "add chain inet %s input { type filter hook input priority 0; policy drop; }\n", networkPolicyTableName)
 	fmt.Fprintf(&script, "add chain inet %s output { type filter hook output priority 0; policy drop; }\n", networkPolicyTableName)
@@ -92,9 +77,6 @@ func renderNetworkPolicy(input networkPolicyInput) (string, error) {
 	fmt.Fprintf(&script, "add chain inet %s egress\n", networkPolicyTableName)
 	fmt.Fprintf(&script, "add chain inet %s postrouting { type nat hook postrouting priority srcnat; policy accept; }\n", networkPolicyTableName)
 	deniedCounter := runNetworkDeniedCounterName
-	if input.Build {
-		deniedCounter = buildNetworkDeniedCounterName
-	}
 	fmt.Fprintf(&script, "add rule inet %s forward meta nfproto ipv6 counter name %s drop\n", networkPolicyTableName, deniedCounter)
 	fmt.Fprintf(&script, "add rule inet %s forward ct state invalid counter name %s drop\n", networkPolicyTableName, deniedCounter)
 	fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s meta mark != %s counter name %s drop\n", networkPolicyTableName, tap, peer, mark, deniedCounter)
@@ -104,15 +86,8 @@ func renderNetworkPolicy(input networkPolicyInput) (string, error) {
 	fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s meta mark %s ip saddr %s meta l4proto tcp jump egress\n", networkPolicyTableName, tap, peer, mark, guestIPv4)
 	fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s meta mark %s ip saddr %s meta l4proto udp jump egress\n", networkPolicyTableName, tap, peer, mark, guestIPv4)
 	fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s meta mark %s ip saddr %s ip protocol icmp jump egress\n", networkPolicyTableName, tap, peer, mark, guestIPv4)
-	if input.Build {
-		fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s quota name %s counter name %s drop\n", networkPolicyTableName, peer, tap, buildNetworkReceivedQuotaName, buildNetworkLimitCounterName)
-	}
 	fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s ip daddr %s ct state established,related accept\n", networkPolicyTableName, peer, tap, guestIPv4)
 	fmt.Fprintf(&script, "add rule inet %s forward counter name %s drop\n", networkPolicyTableName, deniedCounter)
-	if input.Build {
-		fmt.Fprintf(&script, "add rule inet %s egress ct state new ct count over %d counter name %s drop\n", networkPolicyTableName, buildNetworkConnectionLimit, buildNetworkLimitCounterName)
-		fmt.Fprintf(&script, "add rule inet %s egress quota name %s counter name %s drop\n", networkPolicyTableName, buildNetworkSentQuotaName, buildNetworkLimitCounterName)
-	}
 	fmt.Fprintf(&script, "add rule inet %s egress accept\n", networkPolicyTableName)
 	fmt.Fprintf(&script, "add rule inet %s postrouting oifname %s ip saddr %s snat to %s\n", networkPolicyTableName, peer, guestIPv4, translationIPv4)
 	return script.String(), nil

@@ -12,49 +12,15 @@ import (
 )
 
 func runReleaseCommand(ctx context.Context, args []string) error {
-	if len(args) == 0 {
-		return errors.New("release command is required")
+	if len(args) == 0 || args[0] != "publish" {
+		return errors.New("release publish is the only release command")
 	}
-	switch args[0] {
-	case "install":
-		return installRelease(ctx, args[1:])
-	case "publish":
-		return publishRelease(ctx, args[1:])
-	default:
-		return fmt.Errorf("unknown release command %q", args[0])
-	}
-}
-
-func installRelease(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("release install", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	var storeURI, digest, output string
-	flags.StringVar(&storeURI, "store", "", "release store URI")
-	flags.StringVar(&digest, "digest", "", "build policy digest")
-	flags.StringVar(&output, "output", "", "installed build policy path")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() != 0 {
-		return errors.New("release install accepts no positional arguments")
-	}
-	if storeURI == "" || digest == "" || output == "" {
-		return errors.New("release install requires --store, --digest, and --output")
-	}
-	store, err := cass3.NewImmutable(ctx, storeURI)
-	if err != nil {
-		return fmt.Errorf("configure release store: %w", err)
-	}
-	return deployment.InstallBuildPolicy(ctx, store, digest, output)
-}
-
-func publishRelease(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("release publish", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var storeURI, input string
 	flags.StringVar(&storeURI, "store", "", "Platform Artifact store URI")
 	flags.StringVar(&input, "input", "", "Platform release directory")
-	if err := flags.Parse(args); err != nil {
+	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 || storeURI == "" || input == "" {

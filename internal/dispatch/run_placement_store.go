@@ -16,6 +16,8 @@ WITH RECURSIVE organization_heads AS (
           FROM runs
          WHERE runs.status = 'queued'
            AND runs.current_run_lease_id IS NULL
+           AND (runs.next_runtime_preparation_at IS NULL
+                OR runs.next_runtime_preparation_at <= transaction_timestamp())
            AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
            AND (get_byte(uuid_send(runs.org_id), 15) & 63) = $1::smallint
            AND ($2::uuid IS NULL OR runs.org_id > $2::uuid)
@@ -32,6 +34,8 @@ WITH RECURSIVE organization_heads AS (
             FROM runs
            WHERE runs.status = 'queued'
              AND runs.current_run_lease_id IS NULL
+             AND (runs.next_runtime_preparation_at IS NULL
+                  OR runs.next_runtime_preparation_at <= transaction_timestamp())
              AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
              AND (get_byte(uuid_send(runs.org_id), 15) & 63) = $1::smallint
              AND runs.org_id > organization_heads.org_id
@@ -78,6 +82,8 @@ WITH RECURSIVE input_organizations AS (
             FROM runs
            WHERE runs.status = 'queued'
              AND runs.current_run_lease_id IS NULL
+             AND (runs.next_runtime_preparation_at IS NULL
+                  OR runs.next_runtime_preparation_at <= transaction_timestamp())
              AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
              AND runs.org_id = input_organizations.org_id
              AND (
@@ -107,6 +113,8 @@ WITH RECURSIVE input_organizations AS (
             FROM runs
            WHERE runs.status = 'queued'
              AND runs.current_run_lease_id IS NULL
+             AND (runs.next_runtime_preparation_at IS NULL
+                  OR runs.next_runtime_preparation_at <= transaction_timestamp())
              AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
              AND runs.org_id = scope_heads.org_id
              AND (runs.environment_id, runs.queue_name, coalesce(runs.concurrency_key, ''))

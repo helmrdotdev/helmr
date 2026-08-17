@@ -4,35 +4,32 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/helmrdotdev/helmr/capacityapi"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/imagebuild"
 )
 
 type TokenRequest struct {
 	WorkerInstanceID     string `json:"worker_instance_id"`
 	WorkerInstanceSecret string `json:"worker_instance_secret"`
 	ServiceID            string `json:"service_id"`
-	SupportsRun          bool   `json:"supports_run"`
-	SupportsBuild        bool   `json:"supports_build"`
 }
 
 type TokenResponse struct {
-	Token            string   `json:"token"`
-	ExpiresInSeconds int64    `json:"expires_in_seconds"`
-	WorkerEpoch      int64    `json:"worker_epoch"`
-	Roles            []string `json:"roles"`
+	Token            string `json:"token"`
+	ExpiresInSeconds int64  `json:"expires_in_seconds"`
+	WorkerEpoch      int64  `json:"worker_epoch"`
 }
 
 type EnrollmentResponse struct {
 	WorkerInstanceID     string `json:"worker_instance_id"`
 	WorkerGroupID        string `json:"worker_group_id"`
+	WorkerPoolID         string `json:"worker_pool_id"`
 	WorkerInstanceSecret string `json:"worker_instance_secret"`
 }
 
 type EnrollmentRequest struct {
-	ResourceID    string `json:"resource_id"`
-	SupportsRun   bool   `json:"supports_run"`
-	SupportsBuild bool   `json:"supports_build"`
+	ResourceID string `json:"resource_id"`
+	PoolName   string `json:"pool_name"`
 }
 
 type RunLeaseDiscoveryRequest struct{}
@@ -86,240 +83,31 @@ type DrainCompletionRequest struct {
 
 type Observation struct {
 	RunPausedReason     string `json:"run_paused_reason,omitempty"`
-	BuildPausedReason   string `json:"build_paused_reason,omitempty"`
 	RuntimePausedReason string `json:"runtime_paused_reason,omitempty"`
 }
 
 type Capabilities struct {
-	WorkerVersion             string `json:"worker_version,omitempty"`
-	RuntimeID                 string `json:"runtime_id"`
-	RuntimeArch               string `json:"runtime_arch"`
-	VMRuntimeContract         string `json:"vm_runtime_contract"`
-	KernelDigest              string `json:"kernel_digest"`
-	InitramfsDigest           string `json:"initramfs_digest"`
-	RootfsDigest              string `json:"rootfs_digest"`
-	SubstrateFormat           string `json:"substrate_format,omitempty"`
-	SubstrateContract         string `json:"substrate_contract,omitempty"`
-	MaxVCPUs                  int64  `json:"max_vcpus"`
-	MaxMemoryMiB              int64  `json:"max_memory_mib"`
-	VMMilliCPU                int64  `json:"vm_milli_cpu"`
-	VMMemoryMiB               int64  `json:"vm_memory_mib"`
-	GuestEphemeralDiskBytes   int64  `json:"guest_ephemeral_disk_bytes"`
-	VMGuestEphemeralDiskBytes int64  `json:"vm_guest_ephemeral_disk_bytes"`
-	ExecutionSlotsAvailable   int32  `json:"execution_slots_available"`
-	SupportsRun               bool   `json:"supports_run"`
-	SupportsBuild             bool   `json:"supports_build"`
-	MaxBuildExecutors         int32  `json:"max_build_executors"`
-	BuildCacheBytes           int64  `json:"build_cache_bytes"`
-	ArtifactCacheBytes        int64  `json:"artifact_cache_bytes"`
+	Runtime                   capacityapi.RuntimeProfile `json:"runtime"`
+	CPUShapes                 []capacityapi.CPUShape     `json:"cpu_shapes"`
+	CPUEnvironment            CPUEnvironment             `json:"cpu_environment"`
+	SubstrateFormat           string                     `json:"substrate_format,omitempty"`
+	SubstrateContract         string                     `json:"substrate_contract,omitempty"`
+	MaxVCPUs                  int64                      `json:"max_vcpus"`
+	MaxMemoryMiB              int64                      `json:"max_memory_mib"`
+	VMMilliCPU                int64                      `json:"vm_milli_cpu"`
+	VMMemoryMiB               int64                      `json:"vm_memory_mib"`
+	GuestEphemeralDiskBytes   int64                      `json:"guest_ephemeral_disk_bytes"`
+	VMGuestEphemeralDiskBytes int64                      `json:"vm_guest_ephemeral_disk_bytes"`
+	ExecutionSlotsAvailable   int32                      `json:"execution_slots_available"`
 }
 
-type DeploymentBuildLeaseRequest struct{}
-
-type PlatformAcquisitionRequest struct{}
-
-type PlatformAcquisitionResponse struct {
-	Acquisition *PlatformAcquisition `json:"acquisition,omitempty"`
-}
-
-type PlatformAcquisition struct {
-	DeploymentID      string `json:"deployment_id"`
-	OrgID             string `json:"org_id"`
-	ProjectID         string `json:"project_id"`
-	EnvironmentID     string `json:"environment_id"`
-	NodeVersion       string `json:"node_version"`
-	ManagerName       string `json:"manager_name"`
-	ManagerVersion    string `json:"manager_version"`
-	ManagerIntegrity  string `json:"manager_integrity,omitempty"`
-	BuildContract     string `json:"build_contract"`
-	BuildPolicyDigest string `json:"build_policy_digest"`
-}
-
-type PlatformAcquisitionCandidates struct {
-	Runtime   CASObject `json:"runtime"`
-	Manager   CASObject `json:"manager"`
-	Toolchain CASObject `json:"toolchain"`
-}
-
-type PlatformAcquisitionCompleteRequest struct {
-	Acquisition PlatformAcquisition           `json:"acquisition"`
-	Candidates  PlatformAcquisitionCandidates `json:"candidates"`
-}
-
-type PlatformAcquisitionFailureReason string
-
-const (
-	PlatformAcquisitionUnsupportedSelector PlatformAcquisitionFailureReason = "unsupported_selector"
-	PlatformAcquisitionOriginRejected      PlatformAcquisitionFailureReason = "origin_rejected"
-	PlatformAcquisitionIntegrityFailed     PlatformAcquisitionFailureReason = "integrity_failed"
-	PlatformAcquisitionTopologyFailed      PlatformAcquisitionFailureReason = "topology_failed"
-	PlatformAcquisitionConformanceFailed   PlatformAcquisitionFailureReason = "conformance_failed"
-	PlatformAcquisitionDenied              PlatformAcquisitionFailureReason = "denied"
-)
-
-type PlatformAcquisitionFailRequest struct {
-	Acquisition PlatformAcquisition              `json:"acquisition"`
-	Reason      PlatformAcquisitionFailureReason `json:"reason"`
-	Error       json.RawMessage                  `json:"error"`
-}
-
-type PlatformAcquisitionStatus string
-
-const (
-	PlatformAcquisitionStatusPinned PlatformAcquisitionStatus = "pinned"
-	PlatformAcquisitionStatusFailed PlatformAcquisitionStatus = "failed"
-)
-
-type PlatformAcquisitionResult struct {
-	DeploymentID string                    `json:"deployment_id"`
-	Status       PlatformAcquisitionStatus `json:"status"`
-}
-
-type DeploymentBuildLeaseResponse struct {
-	Lease      *DeploymentBuildLease `json:"lease,omitempty"`
-	Deployment *DeploymentBuild      `json:"deployment,omitempty"`
-}
-
-type DeploymentBuildStartRequest struct {
-	Lease DeploymentBuildLease `json:"lease"`
-}
-
-type DeploymentBuildStartResponse struct {
-	Lease DeploymentBuildLease `json:"lease"`
-}
-
-type DeploymentBuildRenewRequest struct {
-	Lease DeploymentBuildLease `json:"lease"`
-}
-
-type DeploymentBuildRenewResponse struct {
-	Lease                    DeploymentBuildLease `json:"lease"`
-	RevokedImageOperationIDs []string             `json:"revoked_image_operation_ids"`
-}
-
-type WorkspaceImageAdmissionRequest struct {
-	Lease                  DeploymentBuildLease    `json:"lease"`
-	DeclarationSlot        string                  `json:"declaration_slot"`
-	RuntimeIdentityID      string                  `json:"runtime_identity_id"`
-	Architecture           string                  `json:"architecture"`
-	Plan                   imagebuild.Build        `json:"plan"`
-	SubmittedSourceDigest  string                  `json:"submitted_source_digest"`
-	BuildTreeDigest        string                  `json:"build_tree_digest"`
-	BuildTreeSizeBytes     int64                   `json:"build_tree_size_bytes"`
-	AdmittedPaths          []imagebuild.SourcePath `json:"admitted_paths"`
-	SourceArchiveDigest    string                  `json:"source_archive_digest"`
-	SourceArchiveSizeBytes int64                   `json:"source_archive_size_bytes"`
-	SourceArchiveEntries   int                     `json:"source_archive_entries"`
-}
-
-type WorkspaceImageQuotas struct {
-	CPUMillis               int64 `json:"cpu_millis"`
-	MemoryBytes             int64 `json:"memory_bytes"`
-	ScratchBytes            int64 `json:"scratch_bytes"`
-	PIDs                    int64 `json:"pids"`
-	MaxSourceArchiveBytes   int64 `json:"max_source_archive_bytes"`
-	MaxSourceArchiveEntries int   `json:"max_source_archive_entries"`
-	MaxOCIArchiveBytes      int64 `json:"max_oci_archive_bytes"`
-}
-
-type WorkspaceImageOutputContract struct {
-	Architecture string `json:"architecture"`
-	MediaType    string `json:"media_type"`
-	MaxSizeBytes int64  `json:"max_size_bytes"`
-}
-
-type WorkspaceImageCacheColdReason string
-
-const (
-	WorkspaceImageCacheRegistryAuthorityCollision WorkspaceImageCacheColdReason = "registry_authority_collision"
-	WorkspaceImageCacheUnavailable                WorkspaceImageCacheColdReason = "cache_unavailable"
-)
-
-type WorkspaceImageCacheTarget struct {
-	Binding imagebuild.CacheBinding `json:"binding"`
-}
-
-type WorkspaceImageAssignment struct {
-	Lease                    DeploymentBuildLease          `json:"lease"`
-	DeclarationSlot          string                        `json:"declaration_slot"`
-	OperationID              string                        `json:"operation_id"`
-	RequestFingerprint       string                        `json:"request_fingerprint"`
-	RuntimeIdentityID        string                        `json:"runtime_identity_id"`
-	Architecture             string                        `json:"architecture"`
-	Plan                     imagebuild.Build              `json:"plan"`
-	PlanDigest               string                        `json:"plan_digest"`
-	SubmittedSourceDigest    string                        `json:"submitted_source_digest"`
-	BuildTreeDigest          string                        `json:"build_tree_digest"`
-	BuildTreeSizeBytes       int64                         `json:"build_tree_size_bytes"`
-	AdmittedPaths            []imagebuild.SourcePath       `json:"admitted_paths"`
-	AdmittedPathSetDigest    string                        `json:"admitted_path_set_digest"`
-	SourceArchiveDigest      string                        `json:"source_archive_digest"`
-	SourceArchiveSizeBytes   int64                         `json:"source_archive_size_bytes"`
-	SourceArchiveEntries     int                           `json:"source_archive_entries"`
-	RequestedCacheMode       imagebuild.CacheMode          `json:"requested_cache_mode"`
-	CacheScope               string                        `json:"cache_scope"`
-	ImageBuildContract       string                        `json:"image_build_contract"`
-	Quotas                   WorkspaceImageQuotas          `json:"quotas"`
-	Output                   WorkspaceImageOutputContract  `json:"output"`
-	RegistryBindings         []imagebuild.RegistryBinding  `json:"registry_bindings"`
-	ResolutionSetDigest      string                        `json:"resolution_set_digest"`
-	CacheTarget              *WorkspaceImageCacheTarget    `json:"cache_target,omitempty"`
-	EffectiveCacheColdReason WorkspaceImageCacheColdReason `json:"effective_cache_cold_reason,omitempty"`
-	TerminalResult           *WorkspaceImageTerminalResult `json:"terminal_result,omitempty"`
-}
-
-type WorkspaceImageTerminalResult struct {
-	AttemptID string                 `json:"attempt_id"`
-	Result    imagebuild.GuestResult `json:"result"`
-}
-
-type WorkspaceImageCredentialRequest struct {
-	Lease               DeploymentBuildLease `json:"lease"`
-	OperationID         string               `json:"operation_id"`
-	AttemptID           string               `json:"attempt_id"`
-	PlanDigest          string               `json:"plan_digest"`
-	ResolutionSetDigest string               `json:"resolution_set_digest"`
-}
-
-type WorkspaceImageCredentialResponse struct {
-	Envelope imagebuild.CredentialEnvelope `json:"envelope"`
-}
-
-type WorkspaceImageOperationResultRequest struct {
-	Lease               DeploymentBuildLease   `json:"lease"`
-	DeclarationSlot     string                 `json:"declaration_slot"`
-	OperationID         string                 `json:"operation_id"`
-	AttemptID           string                 `json:"attempt_id"`
-	RequestFingerprint  string                 `json:"request_fingerprint"`
-	PlanDigest          string                 `json:"plan_digest"`
-	ResolutionSetDigest string                 `json:"resolution_set_digest"`
-	RequestedCacheMode  imagebuild.CacheMode   `json:"requested_cache_mode"`
-	Result              imagebuild.GuestResult `json:"result"`
-}
-
-type WorkspaceImageOperationResultResponse struct {
-	OperationID string                 `json:"operation_id"`
-	AttemptID   string                 `json:"attempt_id"`
-	State       string                 `json:"state"`
-	Result      imagebuild.GuestResult `json:"result"`
-}
-
-type DeploymentBuildRejectRequest struct {
-	Lease      DeploymentBuildLease `json:"lease"`
-	ReasonCode string               `json:"reason_code"`
-	Error      json.RawMessage      `json:"error,omitempty"`
-}
-
-type DeploymentBuildDeliveryFailureReason string
-
-const (
-	DeploymentBuildDeliveryBuildGuestFailed      DeploymentBuildDeliveryFailureReason = "build_guest_failed"
-	DeploymentBuildDeliveryProgramVerifierFailed DeploymentBuildDeliveryFailureReason = "program_verifier_failed"
-)
-
-type DeploymentBuildDeliveryFailureRequest struct {
-	Lease      DeploymentBuildLease                 `json:"lease"`
-	ReasonCode DeploymentBuildDeliveryFailureReason `json:"reason_code"`
+type CPUEnvironment struct {
+	Digest             string `json:"digest"`
+	FirecrackerVersion string `json:"firecracker_version"`
+	HostKernelRelease  string `json:"host_kernel_release"`
+	MicrocodeVersion   string `json:"microcode_version"`
+	BIOSVersion        string `json:"bios_version"`
+	BIOSRevision       string `json:"bios_revision"`
 }
 
 type Status string
@@ -340,7 +128,6 @@ type StatusResponse struct {
 
 type Readiness struct {
 	Run     *RoleReadiness `json:"run,omitempty"`
-	Build   *RoleReadiness `json:"build,omitempty"`
 	Runtime *RoleReadiness `json:"runtime,omitempty"`
 }
 
@@ -361,6 +148,8 @@ type RuntimeInstance struct {
 	WorkerInstanceID       string     `json:"worker_instance_id"`
 	RuntimeEpoch           int64      `json:"runtime_epoch"`
 	RuntimeID              string     `json:"runtime_id"`
+	VMVCPUCount            int32      `json:"vm_vcpu_count"`
+	CPUConfigDigest        string     `json:"cpu_config_digest"`
 	DeploymentDefinitionID string     `json:"deployment_definition_id"`
 	State                  string     `json:"state"`
 	ReservedCPUMillis      int32      `json:"reserved_cpu_millis"`
@@ -375,6 +164,8 @@ type RuntimeSource struct {
 	DeploymentDefinitionID string            `json:"deployment_definition_id"`
 	WorkspaceID            string            `json:"workspace_id"`
 	RuntimeIdentityID      string            `json:"runtime_identity_id"`
+	VMVCPUCount            int32             `json:"vm_vcpu_count"`
+	CPUConfigDigest        string            `json:"cpu_config_digest"`
 	WorkspaceImage         CASObject         `json:"workspace_image"`
 	WorkspaceArchitecture  string            `json:"workspace_architecture"`
 	BaseVersionID          string            `json:"base_version_id"`
@@ -412,11 +203,18 @@ type RuntimeInstanceStateRequest struct {
 	WorkerEpoch             int64                `json:"worker_epoch"`
 	DesiredVersion          int64                `json:"desired_version"`
 	ExpectedObservedVersion int64                `json:"expected_observed_version"`
+	VMVCPUCount             int32                `json:"vm_vcpu_count,omitempty"`
+	CPUConfigDigest         string               `json:"cpu_config_digest,omitempty"`
 	RuntimeSubstrateID      string               `json:"runtime_substrate_id,omitempty"`
 	ReasonCode              string               `json:"reason_code,omitempty"`
 	Error                   json.RawMessage      `json:"error,omitempty"`
 	CleanupProof            *RuntimeCleanupProof `json:"cleanup_proof,omitempty"`
 }
+
+const (
+	RuntimeFailureReconcile     = "runtime_reconcile_failed"
+	RuntimeFailureWorkerInvalid = "worker_runtime_invalid"
+)
 
 type RuntimeCleanupProof struct {
 	Method      string    `json:"method"`
@@ -1073,44 +871,6 @@ type RunLeaseAssignmentProvider interface {
 	CurrentWorkerRunLeaseAssignment() RunLeaseAssignment
 }
 
-type DeploymentBuildLease struct {
-	ID                               string    `json:"id"`
-	OrgID                            string    `json:"org_id"`
-	ProjectID                        string    `json:"project_id"`
-	EnvironmentID                    string    `json:"environment_id"`
-	DeploymentID                     string    `json:"deployment_id"`
-	WorkerGroupID                    string    `json:"worker_group_id"`
-	WorkerInstanceID                 string    `json:"worker_instance_id"`
-	WorkerEpoch                      int64     `json:"worker_epoch"`
-	LeaseSequence                    int64     `json:"lease_sequence"`
-	ExpiresAt                        time.Time `json:"expires_at"`
-	RequestedGuestEphemeralDiskBytes int64     `json:"requested_guest_ephemeral_disk_bytes"`
-	RequestedCPUMillis               int64     `json:"requested_cpu_millis"`
-	RequestedMemoryBytes             int64     `json:"requested_memory_bytes"`
-	RequestedBuildExecutors          int32     `json:"requested_build_executors"`
-}
-
-type DeploymentBuild struct {
-	ID               string                       `json:"id"`
-	Version          string                       `json:"version"`
-	ProjectID        string                       `json:"project_id"`
-	EnvironmentID    string                       `json:"environment_id"`
-	DeploymentSource api.DeploymentSourceArtifact `json:"deployment_source"`
-	Runtime          CASObject                    `json:"runtime"`
-	NodeVersion      string                       `json:"node_version"`
-	Manager          ManagerPin                   `json:"manager"`
-	Toolchain        CASObject                    `json:"toolchain"`
-	BuildContract    string                       `json:"build_contract"`
-	ImageCacheMode   string                       `json:"image_cache_mode"`
-}
-
-type ManagerPin struct {
-	Artifact  CASObject `json:"artifact"`
-	Integrity string    `json:"integrity,omitempty"`
-	Name      string    `json:"name"`
-	Version   string    `json:"version"`
-}
-
 type Workspace struct {
 	ID                string             `json:"id,omitempty"`
 	WorkspaceMountID  string             `json:"workspace_mount_id,omitempty"`
@@ -1174,24 +934,6 @@ type SecretDeclaration struct {
 	Dir   string `json:"dir,omitempty"`
 	Mode  string `json:"mode,omitempty"`
 	Owner string `json:"owner,omitempty"`
-}
-
-type CompleteDeploymentBuildRequest struct {
-	Lease  DeploymentBuildLease `json:"lease"`
-	Result json.RawMessage      `json:"result"`
-}
-
-type DeploymentBuildStatus string
-
-const (
-	DeploymentBuildStatusBuilding DeploymentBuildStatus = "building"
-	DeploymentBuildStatusDeployed DeploymentBuildStatus = "deployed"
-	DeploymentBuildStatusFailed   DeploymentBuildStatus = "failed"
-)
-
-type DeploymentBuildResponse struct {
-	DeploymentID string                `json:"deployment_id"`
-	Status       DeploymentBuildStatus `json:"status"`
 }
 
 type LogStream string
@@ -1341,13 +1083,16 @@ type CheckpointRuntime struct {
 	InitramfsDigest string                      `json:"initramfs_digest"`
 	RootfsDigest    string                      `json:"rootfs_digest"`
 	ConfigDigest    string                      `json:"config_digest"`
+	VMVCPUCount     int32                       `json:"vm_vcpu_count"`
+	CPUConfigDigest string                      `json:"cpu_config_digest"`
 	Substrate       *CheckpointRuntimeSubstrate `json:"substrate,omitempty"`
 }
 
 type CheckpointRuntimeSubstrate struct {
-	Digest   string `json:"digest"`
-	Format   string `json:"format"`
-	Contract string `json:"contract"`
+	Digest    string `json:"digest"`
+	Format    string `json:"format"`
+	Contract  string `json:"contract"`
+	SizeBytes int64  `json:"size_bytes"`
 }
 
 type CheckpointRuntimeState struct {

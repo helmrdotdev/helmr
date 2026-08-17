@@ -1,7 +1,10 @@
 package executor
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"strings"
@@ -10,6 +13,57 @@ import (
 	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
+
+func TestRuntimeSubstrateCacheSourceProjectsWithoutMutatingCacheAuthority(t *testing.T) {
+	cacheDir := t.TempDir()
+	arenaDir := t.TempDir()
+	body := []byte("immutable substrate bytes")
+	cachePath := cacheDir + "/substrate.ext4"
+	if err := os.WriteFile(cachePath, body, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(body)
+	source := &runtimeSubstrateCacheSource{
+		path: cachePath, digest: "sha256:" + hex.EncodeToString(sum[:]), sizeBytes: int64(len(body)),
+	}
+	projected, err := source.MaterializeInto(
+		context.Background(), arenaDir, "substrate.ext4", os.Getuid(), os.Getgid(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(cachePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Mode() != after.Mode() || before.Size() != after.Size() {
+		t.Fatalf("cache authority changed: before=%v after=%v", before, after)
+	}
+	if got, err := os.ReadFile(projected); err != nil || !bytes.Equal(got, body) {
+		t.Fatalf("projected substrate = %q, err = %v", got, err)
+	}
+	projectedInfo, err := os.Stat(projected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projectedInfo.Mode().Perm() != 0o440 {
+		t.Fatalf("projected mode = %#o", projectedInfo.Mode().Perm())
+	}
+}
+
+func TestRuntimeCapacityChargesArenaSubstrateProjection(t *testing.T) {
+	request, err := runtimeCapacityVectorWithProjection(1000, 512, 1024, 256<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(1280 << 20); request.GuestEphemeralDiskBytes != want {
+		t.Fatalf("arena disk reservation = %d, want %d", request.GuestEphemeralDiskBytes, want)
+	}
+}
 
 func TestPreparedRuntimeRestoreRebuildsAndRegistersSubstrateWithoutSubstrateCAS(t *testing.T) {
 	store, fixture := testWorkspaceMountArtifacts(t)

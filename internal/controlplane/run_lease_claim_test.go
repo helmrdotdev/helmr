@@ -126,7 +126,6 @@ func TestClaimFreshTaskRunLeaseInTxLocksCanonicalOrderAndTransitionsOnce(t *test
 	store.calls = nil
 	store.authority.runLease = claimed.runLease
 	store.authority.workerGroup.State = db.WorkerGroupStateDraining
-	store.authority.workerGroup.AllowsRun = false
 	store.authority.workerRunReady = false
 	replayed, err := claimFreshTaskRunLeaseInTx(
 		context.Background(),
@@ -147,12 +146,13 @@ func TestClaimFreshTaskRunLeaseInTxLocksCanonicalOrderAndTransitionsOnce(t *test
 	}
 }
 
-func TestClaimFreshTaskRunLeaseInTxRejectsAssignedWorkFromDrainingWorker(t *testing.T) {
+func TestClaimFreshTaskRunLeaseInTxContinuesAssignedWorkFromDrainingWorker(t *testing.T) {
 	worker, locators, authority := validRunLeaseClaimFixture()
 	authority.worker.State = db.WorkerInstanceStateDraining
+	authority.workerGroup.State = db.WorkerGroupStateDraining
 	store := &runLeaseClaimStore{authority: authority}
 
-	_, err := claimFreshTaskRunLeaseInTx(
+	claimed, err := claimFreshTaskRunLeaseInTx(
 		context.Background(),
 		store,
 		worker,
@@ -160,11 +160,11 @@ func TestClaimFreshTaskRunLeaseInTxRejectsAssignedWorkFromDrainingWorker(t *test
 		authority.runLease.LeaseSequence,
 		locators,
 	)
-	if !errors.Is(err, errStaleRunLeaseClaim) {
-		t.Fatalf("error = %v, want stale claim", err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if slices.Contains(store.calls, "mark_starting") {
-		t.Fatalf("draining worker transitioned assigned work: %v", store.calls)
+	if claimed.runLease.State != db.RunLeaseStateStarting || !slices.Contains(store.calls, "mark_starting") {
+		t.Fatalf("draining claim = state:%s calls:%v", claimed.runLease.State, store.calls)
 	}
 }
 
@@ -186,6 +186,115 @@ func TestClaimFreshTaskRunLeaseInTxRejectsAssignedWorkWithoutFreshReadiness(t *t
 	}
 	if slices.Contains(store.calls, "mark_starting") {
 		t.Fatalf("unready worker transitioned assigned work: %v", store.calls)
+	}
+}
+
+func TestClaimFreshTaskRunLeaseInTxAcceptsWorkerPerVMCeilingsAboveRequestedShape(t *testing.T) {
+	worker, locators, authority := validRunLeaseClaimFixture()
+	authority.worker.PerVMCPUMillis++
+	authority.worker.PerVMMemoryBytes++
+	authority.worker.PerVMGuestEphemeralDiskBytes++
+	store := &runLeaseClaimStore{authority: authority}
+
+	claimed, err := claimFreshTaskRunLeaseInTx(
+		context.Background(),
+		store,
+		worker,
+		authority.runLease.ID,
+		authority.runLease.LeaseSequence,
+		locators,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.runLease.State != db.RunLeaseStateStarting {
+		t.Fatalf("claim state = %s, want starting", claimed.runLease.State)
+	}
+}
+
+func TestClaimFreshTaskRunLeaseInTxRejectsWorkerPerVMCeilingBelowRequestedShape(t *testing.T) {
+	tests := map[string]func(*db.WorkerInstance){
+		"CPU":        func(worker *db.WorkerInstance) { worker.PerVMCPUMillis-- },
+		"memory":     func(worker *db.WorkerInstance) { worker.PerVMMemoryBytes-- },
+		"guest disk": func(worker *db.WorkerInstance) { worker.PerVMGuestEphemeralDiskBytes-- },
+	}
+	for name, lowerCeiling := range tests {
+		t.Run(name, func(t *testing.T) {
+			worker, locators, authority := validRunLeaseClaimFixture()
+			lowerCeiling(&authority.worker)
+			store := &runLeaseClaimStore{authority: authority}
+
+			_, err := claimFreshTaskRunLeaseInTx(
+				context.Background(),
+				store,
+				worker,
+				authority.runLease.ID,
+				authority.runLease.LeaseSequence,
+				locators,
+			)
+			if !errors.Is(err, errStaleRunLeaseClaim) {
+				t.Fatalf("error = %v, want stale claim", err)
+			}
+			if slices.Contains(store.calls, "mark_starting") {
+				t.Fatalf("undersized Worker transitioned assigned work: %v", store.calls)
+			}
+		})
+	}
+}
+
+func TestClaimFreshTaskRunLeaseInTxRejectsRuntimeReservationShapeMismatch(t *testing.T) {
+	tests := map[string]func(*db.RuntimeInstance){
+		"CPU":             func(runtime *db.RuntimeInstance) { runtime.ReservedCPUMillis++ },
+		"memory":          func(runtime *db.RuntimeInstance) { runtime.ReservedMemoryBytes++ },
+		"guest disk":      func(runtime *db.RuntimeInstance) { runtime.ReservedGuestEphemeralDiskBytes++ },
+		"execution slots": func(runtime *db.RuntimeInstance) { runtime.ReservedExecutionSlots++ },
+	}
+	for name, changeReservation := range tests {
+		t.Run(name, func(t *testing.T) {
+			worker, locators, authority := validRunLeaseClaimFixture()
+			changeReservation(&authority.runtime)
+			store := &runLeaseClaimStore{authority: authority}
+
+			_, err := claimFreshTaskRunLeaseInTx(
+				context.Background(),
+				store,
+				worker,
+				authority.runLease.ID,
+				authority.runLease.LeaseSequence,
+				locators,
+			)
+			if !errors.Is(err, errStaleRunLeaseClaim) {
+				t.Fatalf("error = %v, want stale claim", err)
+			}
+			if slices.Contains(store.calls, "mark_starting") {
+				t.Fatalf("mismatched runtime reservation transitioned assigned work: %v", store.calls)
+			}
+		})
+	}
+}
+
+func TestLockRunStartAuthorityContinuesStartingLeaseWhileDraining(t *testing.T) {
+	worker, claimLocators, authority := validRunLeaseClaimFixture()
+	authority.runLease.State = db.RunLeaseStateStarting
+	authority.workerGroup.State = db.WorkerGroupStateDraining
+	authority.worker.State = db.WorkerInstanceStateDraining
+	store := &runLeaseClaimStore{authority: authority}
+	locators := db.GetRunLeaseStartLocatorsRow{
+		OrgID: claimLocators.OrgID, ProjectID: claimLocators.ProjectID,
+		EnvironmentID: claimLocators.EnvironmentID, RunID: claimLocators.RunID,
+		WorkspaceID: claimLocators.WorkspaceID, AttemptNumber: claimLocators.AttemptNumber,
+		RegionID: claimLocators.RegionID, RuntimeInstanceID: claimLocators.RuntimeInstanceID,
+		WorkspaceLeaseID: claimLocators.WorkspaceLeaseID, WorkspaceMountID: claimLocators.WorkspaceMountID,
+	}
+	locked, err := lockRunStartAuthority(
+		context.Background(), store, worker, authority.runLease.ID,
+		authority.runLease.LeaseSequence, locators, runLeaseClaimFresh,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if locked.runLease.State != db.RunLeaseStateStarting {
+		t.Fatalf("locked lease state = %s", locked.runLease.State)
 	}
 }
 
@@ -1334,6 +1443,11 @@ func (s *runLeaseClaimStore) LockRunLeaseClaimLease(context.Context, db.LockRunL
 	return s.authority.runLease, nil
 }
 
+func (s *runLeaseClaimStore) LockRunStartLease(context.Context, db.LockRunStartLeaseParams) (db.RunLease, error) {
+	s.calls = append(s.calls, "run_start_lease")
+	return s.authority.runLease, nil
+}
+
 func (s *runLeaseClaimStore) LockRunLeaseClaimMount(context.Context, db.LockRunLeaseClaimMountParams) (db.WorkspaceMount, error) {
 	s.calls = append(s.calls, "workspace_mount")
 	return s.authority.workspaceMount, nil
@@ -1509,7 +1623,6 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 			RegionID:     regionID,
 			State:        db.WorkerGroupStateActive,
 			ClaimVersion: 1,
-			AllowsRun:    true,
 		},
 		worker: db.WorkerInstance{
 			ID:                           pgvalue.UUID(workerInstanceID),
@@ -1517,7 +1630,6 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 			State:                        db.WorkerInstanceStateActive,
 			ClaimVersion:                 3,
 			CurrentEpoch:                 pgtype.Int8{Int64: 7, Valid: true},
-			SupportsRun:                  true,
 			RuntimeIdentityID:            pgtype.Text{String: runtimeIDValue, Valid: true},
 			PerVMCPUMillis:               1000,
 			PerVMMemoryBytes:             2048,

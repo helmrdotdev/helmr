@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -57,6 +58,37 @@ func TestStartRestoredProgramOrdersGrantStartProofAndRelease(t *testing.T) {
 	defer controlPlane.mu.Unlock()
 	if !controlPlane.started || !controlPlane.released || controlPlane.releaseCalls != 2 {
 		t.Fatalf("start=%v release=%v release calls=%d", controlPlane.started, controlPlane.released, controlPlane.releaseCalls)
+	}
+}
+
+func TestValidateResumedProgramMountSeparatesPhysicalIdentityFromLogicalFence(t *testing.T) {
+	claim := testRestoredProgramClaim(t)
+	mount := testWorkspaceMount(claim.Lease)
+	mount.FencingGeneration = claim.Lease.MountFencingGeneration - 1
+	mount.RestoreCheckpointID = "checkpoint-1"
+	resume := resumedProgramAdmission{recreated: true, checkpointID: "checkpoint-1"}
+	if err := validateResumedProgramMount(claim.Lease, mount, resume); err != nil {
+		t.Fatalf("advanced logical fence rejected exact physical mount: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*workerapi.WorkspaceMount)
+	}{
+		{name: "mount ID", mutate: func(mount *workerapi.WorkspaceMount) { mount.ID = "other-mount" }},
+		{name: "Workspace ID", mutate: func(mount *workerapi.WorkspaceMount) { mount.WorkspaceID = "other-workspace" }},
+		{name: "Runtime Instance", mutate: func(mount *workerapi.WorkspaceMount) { mount.RuntimeInstanceID = "other-runtime" }},
+		{name: "base Workspace version", mutate: func(mount *workerapi.WorkspaceMount) { mount.BaseVersionID = "other-version" }},
+		{name: "restore checkpoint", mutate: func(mount *workerapi.WorkspaceMount) { mount.RestoreCheckpointID = "other-checkpoint" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mismatched := mount
+			test.mutate(&mismatched)
+			if err := validateResumedProgramMount(claim.Lease, mismatched, resume); err == nil {
+				t.Fatal("physical identity mismatch was accepted")
+			}
+		})
 	}
 }
 
@@ -187,6 +219,7 @@ func TestRestoredProgramDecisionPreservesTerminalUnion(t *testing.T) {
 }
 
 func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
+	cpuConfigDigest := sha256sum.DigestBytes([]byte("cpu-config"))
 	artifact := func(digest, mediaType string, size int64) workerapi.CheckpointArtifact {
 		return workerapi.CheckpointArtifact{Digest: digest, MediaType: mediaType, SizeBytes: size}
 	}
@@ -194,7 +227,8 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 		RecoveryPoint: workerapi.CheckpointRecoveryPoint{
 			ID: "checkpoint-1", RunID: "run-1", AttemptNumber: 2, RunWaitID: "wait-1", CorrelationID: "correlation-1",
 			Runtime: workerapi.CheckpointRuntime{Backend: "firecracker", ID: "runtime-shape", Arch: testCheckpointRuntimeArchitecture(),
-				Contract: "abi-1", KernelDigest: "kernel", InitramfsDigest: "initramfs", RootfsDigest: "rootfs", ConfigDigest: "config"},
+				Contract: "abi-1", KernelDigest: "kernel", InitramfsDigest: "initramfs", RootfsDigest: "rootfs", ConfigDigest: "config",
+				VMVCPUCount: 2, CPUConfigDigest: cpuConfigDigest},
 		},
 		RuntimeState: workerapi.CheckpointRuntimeState{
 			ConfigArtifact:      artifact("config-object", cas.CheckpointRuntimeConfigMediaType, 10),
@@ -215,6 +249,7 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 		return workerapi.CASObject{Digest: value.Digest, SizeBytes: value.SizeBytes, MediaType: value.MediaType}
 	}
 	target := workerapi.RuntimeReconcileTarget{Source: workerapi.RuntimeSource{
+		VMVCPUCount: 2, CPUConfigDigest: cpuConfigDigest,
 		WorkspaceArtifact: workerapi.WorkspaceArtifact{Digest: "workspace-object", SizeBytes: 50,
 			MediaType: "workspace-media", Encoding: "workspace-encoding"},
 		Restore: &workerapi.RuntimeRestore{
@@ -231,6 +266,11 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err != nil {
 		t.Fatal(err)
 	}
+	target.Source.CPUConfigDigest = sha256sum.DigestBytes([]byte("other-cpu-config"))
+	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err == nil {
+		t.Fatal("mismatched runtime reservation CPU shape was accepted")
+	}
+	target.Source.CPUConfigDigest = cpuConfigDigest
 	target.Source.Restore.Artifacts[2].Role = "vm_state"
 	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err == nil {
 		t.Fatal("mismatched Checkpoint Artifact membership was accepted")

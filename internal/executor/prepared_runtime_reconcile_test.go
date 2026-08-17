@@ -40,6 +40,11 @@ type stuckPreparedRuntimeSession struct {
 
 type unavailableRuntimeCAS struct{}
 
+type fatalRuntimeInfrastructureError struct{ secret string }
+
+func (err fatalRuntimeInfrastructureError) Error() string { return err.secret }
+func (fatalRuntimeInfrastructureError) FatalWorker() bool { return true }
+
 func (unavailableRuntimeCAS) Put(context.Context, string, io.Reader) (cas.Object, error) {
 	return cas.Object{}, errors.New("not used")
 }
@@ -53,6 +58,45 @@ func (unavailableRuntimeCAS) Get(context.Context, string) (io.ReadCloser, error)
 	return nil, errors.New("not used")
 }
 func (unavailableRuntimeCAS) Delete(context.Context, string) error { return errors.New("not used") }
+
+func TestRuntimeTargetFailureScrubsFatalWorkerDiagnostic(t *testing.T) {
+	const sentinel = "signed-url-secret-sentinel"
+	request := runtimeTargetStateRequest(
+		workerapi.RuntimeReconcileTarget{ID: "runtime", WorkerEpoch: 1, DesiredVersion: 2},
+		fatalRuntimeInfrastructureError{secret: sentinel},
+	)
+	if request.ReasonCode != workerapi.RuntimeFailureWorkerInvalid ||
+		strings.Contains(string(request.Error), sentinel) ||
+		!strings.Contains(string(request.Error), "worker runtime infrastructure failed") {
+		t.Fatalf("fatal runtime request = reason:%q error:%s", request.ReasonCode, request.Error)
+	}
+}
+
+func TestFatalRuntimeFailureWaitsForControlAcknowledgement(t *testing.T) {
+	client := &typedRuntimeClient{failedErrors: []error{errors.New("control unavailable")}}
+	pool := &PreparedRuntimePool{}
+	target := workerapi.RuntimeReconcileTarget{ID: "runtime", WorkerEpoch: 1, DesiredVersion: 2}
+	err := pool.reportRuntimeTargetFailedWithProof(
+		t.Context(), client, target,
+		fatalRuntimeInfrastructureError{secret: "local-secret-sentinel"},
+		workerapi.RuntimeCleanupNotMaterialized,
+	)
+	if err == nil || !strings.Contains(err.Error(), "control unavailable") ||
+		strings.Contains(err.Error(), "local-secret-sentinel") {
+		t.Fatalf("failure-report error = %v", err)
+	}
+	var fatal interface{ FatalWorker() bool }
+	if errors.As(err, &fatal) && fatal.FatalWorker() {
+		t.Fatal("unacknowledged failure report terminated the Worker epoch")
+	}
+	if err := pool.reportRuntimeTargetFailedWithProof(
+		t.Context(), client, target,
+		fatalRuntimeInfrastructureError{secret: "local-secret-sentinel"},
+		workerapi.RuntimeCleanupNotMaterialized,
+	); err != nil {
+		t.Fatalf("acknowledged failure report = %v", err)
+	}
+}
 
 func (c *cleanupRuntimeConnector) Connect(context.Context, vm.ConnectRequest) (vm.Session, error) {
 	return nil, errors.New("not used")
@@ -392,6 +436,7 @@ func TestPreparedRuntimeBindsProgramIndexToDeploymentReceipt(t *testing.T) {
 			Name: "task/task",
 		}},
 		RuntimeContract: deployment.RuntimeContract,
+		RuntimeDigest:   "sha256:" + strings.Repeat("f", 64),
 	}
 	canonical, err := deployment.CanonicalProgramIndex(index)
 	if err != nil {

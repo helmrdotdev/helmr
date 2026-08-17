@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +12,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -21,10 +19,6 @@ import (
 
 type deploymentEventAppender interface {
 	AppendDeploymentEvent(context.Context, db.AppendDeploymentEventParams) (db.AppendDeploymentEventRow, error)
-}
-
-type deploymentEventBatchAppender interface {
-	AppendDeploymentEvents(context.Context, db.AppendDeploymentEventsParams) (int64, error)
 }
 
 func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
@@ -178,96 +172,4 @@ func appendDeploymentLifecycleEvent(ctx context.Context, store deploymentEventAp
 		RedactionClass: "internal",
 	})
 	return err
-}
-
-func appendDeploymentBuildLogs(
-	ctx context.Context,
-	store deploymentEventBatchAppender,
-	orgID pgtype.UUID,
-	projectID pgtype.UUID,
-	environmentID pgtype.UUID,
-	deploymentID pgtype.UUID,
-	logs deployment.BuildLogs,
-) error {
-	const chunkBytes = 256 << 10
-	type buildEvent struct {
-		kind    string
-		message string
-		payload string
-	}
-	events := make([]buildEvent, 0, 65)
-	metadata, err := json.Marshal(struct {
-		ExitStatus int32 `json:"exit_status"`
-		Truncated  bool  `json:"truncated"`
-	}{
-		ExitStatus: logs.ExitStatus,
-		Truncated:  logs.Truncated,
-	})
-	if err != nil {
-		return err
-	}
-	events = append(events, buildEvent{
-		kind: "deployment.build.exit", message: "Package manager exited", payload: string(metadata),
-	})
-	for _, stream := range []struct {
-		name    string
-		encoded string
-	}{
-		{name: "stdout", encoded: logs.StdoutBase64},
-		{name: "stderr", encoded: logs.StderrBase64},
-	} {
-		content, err := base64.StdEncoding.DecodeString(stream.encoded)
-		if err != nil {
-			return fmt.Errorf("decode deployment build %s: %w", stream.name, err)
-		}
-		for offset := 0; offset < len(content); offset += chunkBytes {
-			end := min(offset+chunkBytes, len(content))
-			payload, err := json.Marshal(struct {
-				ContentBase64 string `json:"content_base64"`
-				Offset        int    `json:"offset"`
-				Stream        string `json:"stream"`
-			}{
-				ContentBase64: base64.StdEncoding.EncodeToString(content[offset:end]),
-				Offset:        offset,
-				Stream:        stream.name,
-			})
-			if err != nil {
-				return err
-			}
-			events = append(events, buildEvent{
-				kind: "deployment.build.log", message: stream.name, payload: string(payload),
-			})
-		}
-	}
-	count := len(events)
-	categories := make([]string, count)
-	severities := make([]string, count)
-	sources := make([]string, count)
-	kinds := make([]string, count)
-	messages := make([]string, count)
-	payloads := make([]string, count)
-	redactionClasses := make([]string, count)
-	for index, event := range events {
-		categories[index] = "build"
-		severities[index] = "info"
-		sources[index] = "worker"
-		kinds[index] = event.kind
-		messages[index] = event.message
-		payloads[index] = event.payload
-		redactionClasses[index] = "sensitive"
-	}
-	inserted, err := store.AppendDeploymentEvents(ctx, db.AppendDeploymentEventsParams{
-		Categories: categories, Severities: severities, Sources: sources,
-		Kinds: kinds, Messages: messages, Payloads: payloads,
-		RedactionClasses: redactionClasses,
-		OrgID:            orgID, ProjectID: projectID, EnvironmentID: environmentID,
-		DeploymentID: deploymentID,
-	})
-	if err != nil {
-		return err
-	}
-	if inserted != int64(count) {
-		return errors.New("deployment build event batch was rejected")
-	}
-	return nil
 }

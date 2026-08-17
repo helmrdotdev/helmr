@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"os"
 	"strings"
@@ -38,6 +39,7 @@ type ProgramRunner struct {
 	CAS                 cas.Store
 	CheckpointEncryptor *checkpoint.Encryptor
 	WorkspaceMounts     WorkspaceMountSessionRegistry
+	Log                 *slog.Logger
 	TempDir             string
 }
 

@@ -27,3 +27,20 @@ func runtimeCapacityVector(cpuMillis, memoryMiB, guestEphemeralDiskMiB int64) (c
 		VMSlots:                 1,
 	}, nil
 }
+
+func runtimeCapacityVectorWithProjection(
+	cpuMillis,
+	memoryMiB,
+	guestEphemeralDiskMiB,
+	projectionBytes int64,
+) (capacity.Vector, error) {
+	request, err := runtimeCapacityVector(cpuMillis, memoryMiB, guestEphemeralDiskMiB)
+	if err != nil {
+		return capacity.Vector{}, err
+	}
+	if projectionBytes < 0 || request.GuestEphemeralDiskBytes > math.MaxInt64-projectionBytes {
+		return capacity.Vector{}, errors.New("runtime arena projection capacity is invalid")
+	}
+	request.GuestEphemeralDiskBytes += projectionBytes
+	return request, nil
+}

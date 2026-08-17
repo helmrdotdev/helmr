@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -31,23 +30,6 @@ func TestOperatorAPIDependencyBudget(t *testing.T) {
 	}
 }
 
-func TestPrivatePlatformPolicyDependencies(t *testing.T) {
-	imports, err := packageImports(filepath.Join(repositoryRoot(t), "cmd/internal/platform-policy"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var internalImports []string
-	for _, importPath := range imports {
-		if strings.HasPrefix(importPath, internalImportPrefix) {
-			internalImports = append(internalImports, importPath)
-		}
-	}
-	want := []string{moduleImportPrefix + "internal/deployment"}
-	if !reflect.DeepEqual(internalImports, want) {
-		t.Fatalf("platform-policy internal imports = %v, want %v", internalImports, want)
-	}
-}
-
 func TestInternalPackageForbiddenDependencies(t *testing.T) {
 	actual, err := internalPackageDependencyGraph(filepath.Join(repositoryRoot(t), "internal"))
 	if err != nil {
@@ -55,48 +37,30 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 	}
 
 	for source, targets := range map[string][]string{
-		"api":                     {"workerapi"},
-		"auth":                    {"db", "token"},
-		"buildkit":                {"deployment/programbuild"},
-		"cas":                     {"cas/s3"},
-		"client":                  {"workerapi", "workerclient"},
-		"email":                   {"email/resend"},
-		"enrollment":              {"controlplane", "db"},
-		"frameio":                 {"api", "db", "proto/run/v0", "wire"},
-		"httpclient":              {"controlplane", "db", "workerapi"},
-		"wire":                    {"api", "controlplane", "db", "executor", "guestd", "workspace"},
-		"deployment":              {"compute", "deployment/programbuild", "vm", "wire"},
-		"deployment/programbuild": {"controlplane", "db", "firecracker", "guestd", "workerclient"},
-		"guestd":                  {"controlplane", "db", "deployment/programbuild", "executor", "vm"},
-		"imagebuild":              {"compute", "deployment/programbuild", "frameio", "imagecache", "oci", "vm", "wire"},
-		"imagecache":              {"db"},
-		"imagecache/ecr":          {"deployment/programbuild"},
-		"workspace":               {"api", "controlplane", "db", "executor", "guestd", "pgvalue", "wire"},
-		"controlplane":            {"eventstream", "executor", "firecracker", "guestd"},
-		"secret":                  {"run"},
-		"substrate":               {"controlplane", "db", "executor", "worker"},
-		"telemetry":               {"clickhouse"},
-		"worker":                  {"deployment/programbuild"},
-		"workerapi":               {"controlplane", "db", "deployment/programbuild", "firecracker", "imagecache/ecr"},
-		"workerclient":            {"client"},
+		"api":          {"workerapi"},
+		"auth":         {"db", "token"},
+		"cas":          {"cas/s3"},
+		"client":       {"workerapi", "workerclient"},
+		"email":        {"email/resend"},
+		"enrollment":   {"controlplane", "db"},
+		"frameio":      {"api", "db", "proto/run/v0", "wire"},
+		"httpclient":   {"controlplane", "db", "workerapi"},
+		"wire":         {"api", "controlplane", "db", "executor", "guestd", "workspace"},
+		"deployment":   {"compute", "vm", "wire"},
+		"guestd":       {"controlplane", "db", "executor", "vm"},
+		"imagebuild":   {"compute", "frameio", "oci", "vm", "wire"},
+		"workspace":    {"api", "controlplane", "db", "executor", "guestd", "pgvalue", "wire"},
+		"controlplane": {"eventstream", "executor", "firecracker", "guestd"},
+		"secret":       {"run"},
+		"substrate":    {"controlplane", "db", "executor", "worker"},
+		"telemetry":    {"clickhouse"},
+		"workerapi":    {"controlplane", "db", "firecracker"},
+		"workerclient": {"client"},
 	} {
 		for _, target := range targets {
 			if slices.Contains(actual[source], target) {
 				t.Fatalf("internal package import is forbidden: %s must not import %s", source, target)
 			}
-		}
-	}
-}
-
-func TestProgramBuildHostPackageIsWorkerOnly(t *testing.T) {
-	root := repositoryRoot(t)
-	for _, command := range []string{"helmr", "helmr-controlplane", "helmr-dispatcher"} {
-		imports, err := packageImports(filepath.Join(root, "cmd", command))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if slices.Contains(imports, moduleImportPrefix+"internal/deployment/programbuild") {
-			t.Fatalf("cmd/%s must not import the Worker-host Program build package", command)
 		}
 	}
 }

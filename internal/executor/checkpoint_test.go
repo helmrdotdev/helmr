@@ -77,6 +77,10 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	if manifest.RecoveryPoint.Runtime.ConfigDigest != "sha256:runtime-config" {
 		t.Fatalf("runtime config digest = %+v", manifest.RecoveryPoint.Runtime.ConfigDigest)
 	}
+	if manifest.RecoveryPoint.Runtime.VMVCPUCount != 2 ||
+		manifest.RecoveryPoint.Runtime.CPUConfigDigest != sha256sum.DigestBytes([]byte("cpu-config")) {
+		t.Fatalf("runtime CPU shape = %+v", manifest.RecoveryPoint.Runtime)
+	}
 	if manifest.RecoveryPoint.Runtime.Substrate == nil || manifest.RecoveryPoint.Runtime.Substrate.Digest != sha256sum.DigestBytes([]byte("substrate")) {
 		t.Fatalf("runtime substrate = %+v", manifest.RecoveryPoint.Runtime.Substrate)
 	}
@@ -103,8 +107,40 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	}
 	assertRemoved(t, artifact.VMState.Path)
 	assertRemoved(t, artifact.ScratchDisk.Path)
-	assertRemoved(t, artifact.Substrate.Path)
+	if _, err := os.Stat(artifact.Substrate.Path); err != nil {
+		t.Fatalf("session-owned substrate projection was removed by checkpoint cleanup: %v", err)
+	}
 	assertRemoved(t, artifact.Memory[0].Path)
+}
+
+func TestRuntimeCheckpointerPublishesFrozenAuthorityBeforeSnapshot(t *testing.T) {
+	stream := newCheckpointStream(t, nil, &runv0.CheckpointPauseReady{
+		RunWaitId: "run-wait-id-1", CheckpointId: "checkpoint-1",
+	})
+	artifact := checkpointArtifact(t)
+	addCheckpointRuntimeSubstrate(t, &artifact)
+	frozen := false
+	session := &checkpointSession{
+		stream: stream, artifact: artifact,
+		snapshotHook: func() {
+			if !frozen {
+				t.Error("snapshot began before the frozen authority transition")
+			}
+		},
+	}
+	_, err := runtimeCheckpointer{
+		session: session, cas: &checkpointCAS{}, encryptor: testCheckpointEncryptor(t),
+		tempDir: t.TempDir(), stream: stream, workspace: testCheckpointWorkspaceBase(),
+		onFrozen: func() { frozen = true },
+	}.CreateCheckpoint(context.Background(), CheckpointRequest{
+		RunWaitID: "run-wait-id-1", CheckpointID: "checkpoint-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !frozen {
+		t.Fatal("frozen authority transition was not published")
+	}
 }
 
 func TestValidateCheckpointPauseReadyRequiresExactAuthority(t *testing.T) {
@@ -124,6 +160,25 @@ func TestValidateCheckpointPauseReadyRequiresExactAuthority(t *testing.T) {
 	ready.ResumeAttachId = "attach-2"
 	if err := validateCheckpointPauseReady(ready, request); err == nil {
 		t.Fatal("mismatched resume attach authority was accepted")
+	}
+}
+
+func TestValidateRestoreIdentityRejectsMissingSubstrateSize(t *testing.T) {
+	checkpoint := workerapi.CheckpointManifest{RecoveryPoint: workerapi.CheckpointRecoveryPoint{
+		Runtime: workerapi.CheckpointRuntime{
+			Backend: "firecracker", Arch: string(deployment.ArchitectureX8664),
+			Contract: "helmr.vm-runtime.v0", ID: "sha256:runtime",
+			KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs",
+			RootfsDigest: "sha256:rootfs", ConfigDigest: "sha256:config",
+			VMVCPUCount: 2, CPUConfigDigest: sha256sum.DigestBytes([]byte("cpu-config")),
+			Substrate: &workerapi.CheckpointRuntimeSubstrate{
+				Digest: "sha256:substrate", Format: "ext4", Contract: "helmr.substrate.v0",
+			},
+		},
+	}}
+	if err := validateRestoreIdentity(checkpoint, deployment.ArchitectureX8664); err == nil ||
+		!strings.Contains(err.Error(), "substrate.size_bytes must be positive") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -538,6 +593,7 @@ type checkpointSession struct {
 	closeCount       int
 	closeErr         error
 	closed           bool
+	snapshotHook     func()
 }
 
 func (s *checkpointSession) Stream() vm.Stream {
@@ -566,6 +622,9 @@ func (s *checkpointSession) Wait(ctx context.Context) error {
 }
 
 func (s *checkpointSession) CreateSnapshot(_ context.Context, request vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
+	if s.snapshotHook != nil {
+		s.snapshotHook()
+	}
 	s.snapshotRequests = append(s.snapshotRequests, request)
 	if s.snapshotErr != nil {
 		return vm.SnapshotArtifact{}, s.snapshotErr
@@ -700,6 +759,8 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 		InitramfsDigest:     "sha256:initramfs",
 		RootfsDigest:        "sha256:rootfs",
 		RuntimeConfigDigest: "sha256:runtime-config",
+		VMVCPUCount:         2,
+		CPUConfigDigest:     sha256sum.DigestBytes([]byte("cpu-config")),
 		VMState:             vm.SnapshotFile{Path: state, MediaType: cas.CheckpointVMStateMediaType},
 		ScratchDisk: vm.SnapshotFile{Path: scratch, MediaType: cas.CheckpointScratchDiskMediaType, Filepack: &vm.FilepackStats{
 			LogicalBytes:      1024,

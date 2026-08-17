@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/capacityapi"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -37,7 +38,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.WorkerInstanceID != "00000000-0000-0000-0000-000000000401" || request.WorkerInstanceSecret != "worker-secret" || request.ServiceID != "00000000-0000-0000-0000-000000000901" || !request.SupportsRun || request.SupportsBuild {
+			if request.WorkerInstanceID != "00000000-0000-0000-0000-000000000401" || request.WorkerInstanceSecret != "worker-secret" || request.ServiceID != "00000000-0000-0000-0000-000000000901" {
 				t.Fatalf("worker token request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{
@@ -66,7 +67,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Capabilities.RuntimeArch != "arm64" {
+			if request.Capabilities.Runtime.Arch != "arm64" {
 				t.Fatalf("activate capabilities = %+v", request.Capabilities)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerInstanceID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusActive})
@@ -110,7 +111,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"), WithService("00000000-0000-0000-0000-000000000901", true, false))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"), WithService("00000000-0000-0000-0000-000000000901"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,8 +289,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 			"worker-secret",
 		),
 		WithService(
-			"00000000-0000-0000-0000-000000000901", true,
-			false,
+			"00000000-0000-0000-0000-000000000901",
 		),
 	)
 	if err != nil {
@@ -414,7 +414,7 @@ func TestCompleteWorkerDrainRetriesTheIdenticalProofAfterAmbiguousResponse(t *te
 		}
 	}))
 	defer server.Close()
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service", true, false))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +455,7 @@ func TestFenceWorkerRetriesTheIdenticalRequestAfterAmbiguousResponse(t *testing.
 		}
 	}))
 	defer server.Close()
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service", true, false))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +507,7 @@ func TestWorkerClientRefreshesTokenAndReplaysBufferedRequestAfterUnauthorized(t 
 
 	client, err := New(server.URL, WithHTTPClient(server.Client()),
 		WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"),
-		WithService("00000000-0000-0000-0000-000000000901", true, false))
+		WithService("00000000-0000-0000-0000-000000000901"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -613,7 +613,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"), WithService("00000000-0000-0000-0000-000000000901", true, false))
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("00000000-0000-0000-0000-000000000401", "worker-secret"), WithService("00000000-0000-0000-0000-000000000901"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -710,7 +710,7 @@ func TestAcknowledgeRunResumeRelease(t *testing.T) {
 		server.URL,
 		WithHTTPClient(server.Client()),
 		WithAuth("worker-1", "worker-secret"),
-		WithService("service-1", true, false),
+		WithService("service-1"),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -740,7 +740,7 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 			Backend:         "firecracker",
 			ID:              "sha256:runtime",
 			Arch:            "arm64",
-			Contract:        "helmr.vm-runtime.v0",
+			Contract:        capacityapi.RuntimeContract,
 			KernelDigest:    kernelDigest,
 			InitramfsDigest: "sha256:initramfs",
 			RootfsDigest:    rootfsDigest,
@@ -761,12 +761,10 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 
 func workerClientCapabilities() workerapi.Capabilities {
 	return workerapi.Capabilities{
-		RuntimeID:                 "sha256:runtime",
-		RuntimeArch:               "arm64",
-		VMRuntimeContract:         "helmr.vm-runtime.v0",
-		KernelDigest:              "sha256:kernel",
-		InitramfsDigest:           "sha256:initramfs",
-		RootfsDigest:              "sha256:rootfs",
+		Runtime: capacityapi.RuntimeProfile{
+			ID: "sha256:runtime", Arch: "arm64", Contract: capacityapi.RuntimeContract,
+			KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs",
+		},
 		MaxVCPUs:                  2,
 		MaxMemoryMiB:              2048,
 		VMMilliCPU:                2000,

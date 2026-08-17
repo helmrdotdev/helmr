@@ -5,13 +5,145 @@ package deployment
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
+
+func TestMain(m *testing.M) {
+	if handled, err := RunVerifierChild(os.Args); handled {
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, VerifierChildLocalDiagnostic(err))
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+func TestVerifierCommandProtocolUsesRealProcessBoundary(t *testing.T) {
+	for _, test := range []struct {
+		mode             string
+		wantBootstrap    bool
+		wantDiagnostic   string
+		wantResult       verifierRecordKind
+		forbidDiagnostic string
+	}{
+		{
+			mode: "ready-invalid", wantResult: verifierInvalid,
+			wantDiagnostic: "pre-ready diagnostic", forbidDiagnostic: "post-ready tenant sentinel",
+		},
+		{
+			mode: "graceful-pre-ready", wantBootstrap: true,
+			wantDiagnostic: "graceful pre-ready failure",
+		},
+		{
+			mode: "abort-pre-ready", wantBootstrap: true,
+			wantDiagnostic: "abort pre-ready failure",
+		},
+	} {
+		t.Run(test.mode, func(t *testing.T) {
+			resultReader, resultWriter, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resultReader.Close()
+			defer resultWriter.Close()
+			capture, err := newVerifierBootstrapCapture()
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestVerifierProtocolHelper$")
+			command.Env = append(os.Environ(), "HELMR_VERIFIER_PROTOCOL_HELPER="+test.mode)
+			command.ExtraFiles = []*os.File{resultWriter}
+			command.Stderr = capture.writer
+			stop := func() {
+				_ = resultReader.Close()
+				if command.Process != nil {
+					_ = command.Process.Kill()
+				}
+			}
+			result, err := runVerifierCommandProtocol(
+				ctx, command, resultReader, resultWriter, capture,
+				runtimeVerifierJob, stop,
+			)
+			var bootstrap *verifierBootstrapError
+			if errors.As(err, &bootstrap) != test.wantBootstrap {
+				t.Fatalf("protocol error = %v, want bootstrap %t", err, test.wantBootstrap)
+			}
+			if !test.wantBootstrap && err != nil {
+				t.Fatal(err)
+			}
+			if test.wantResult != 0 && result.kind != test.wantResult {
+				t.Fatalf("result kind = %d, want %d", result.kind, test.wantResult)
+			}
+			diagnostic := capture.output.Diagnostic()
+			if !strings.Contains(diagnostic, test.wantDiagnostic) {
+				t.Fatalf("bootstrap diagnostic = %q", diagnostic)
+			}
+			if test.forbidDiagnostic != "" && strings.Contains(diagnostic, test.forbidDiagnostic) {
+				t.Fatalf("bootstrap diagnostic retained post-READY bytes: %q", diagnostic)
+			}
+			if len(diagnostic) > verifierStderrMaxBytes+len(" [truncated]") {
+				t.Fatalf("bootstrap diagnostic length = %d", len(diagnostic))
+			}
+		})
+	}
+}
+
+func TestVerifierProtocolHelper(t *testing.T) {
+	mode := os.Getenv("HELMR_VERIFIER_PROTOCOL_HELPER")
+	if mode == "" {
+		return
+	}
+	result := os.NewFile(uintptr(verifierResultFD), "verifier-result")
+	if result == nil {
+		os.Exit(90)
+	}
+	switch mode {
+	case "ready-invalid":
+		_, _ = fmt.Fprint(os.Stderr, "pre-ready diagnostic")
+		if err := writeVerifierReady(result); err != nil {
+			os.Exit(91)
+		}
+		time.Sleep(50 * time.Millisecond)
+		signal.Ignore(syscall.SIGPIPE)
+		_, _ = fmt.Fprint(os.Stderr, "post-ready tenant sentinel")
+		if err := writeVerifierInvalid(result, runtimeVerifierJob.invalidDiagnostic()); err != nil {
+			os.Exit(92)
+		}
+		os.Exit(0)
+	case "graceful-pre-ready":
+		_, _ = fmt.Fprint(os.Stderr, "graceful pre-ready failure")
+		os.Exit(12)
+	case "abort-pre-ready":
+		_, _ = fmt.Fprint(os.Stderr, "abort pre-ready failure", strings.Repeat("x", verifierStderrMaxBytes*2))
+		_ = syscall.Kill(os.Getpid(), syscall.SIGABRT)
+		time.Sleep(time.Second)
+		os.Exit(93)
+	default:
+		os.Exit(94)
+	}
+}
+
+func TestExactVerifierChildQualificationWhenPrivileged(t *testing.T) {
+	cgroupRoot := os.Getenv("HELMR_TEST_VERIFIER_CGROUP_ROOT")
+	if cgroupRoot == "" || os.Geteuid() != 0 {
+		t.Skip("requires root and HELMR_TEST_VERIFIER_CGROUP_ROOT")
+	}
+	if err := QualifyArtifactVerifier(t.Context(), cgroupRoot, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestVerifierCommandUsesJobFDLayoutAndNamespaces(t *testing.T) {
 	for _, test := range []struct {
@@ -20,7 +152,7 @@ func TestVerifierCommandUsesJobFDLayoutAndNamespaces(t *testing.T) {
 		count int
 	}{
 		{name: "runtime", job: runtimeVerifierJob, count: 1},
-		{name: "program", job: programVerifierJob, count: 2},
+		{name: "program", job: programVerifierJob, count: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			result := verifierTestFile(t, "result")

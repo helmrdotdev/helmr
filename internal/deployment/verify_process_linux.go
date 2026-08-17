@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +41,45 @@ var verifierCgroupLimits = []struct {
 type verifierTerminalRead struct {
 	result verifierProcessResult
 	err    error
+}
+
+type verifierBootstrapCapture struct {
+	reader *os.File
+	writer *os.File
+	output *boundedVerifierStderr
+	done   <-chan error
+}
+
+func newVerifierBootstrapCapture() (*verifierBootstrapCapture, error) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("create artifact verifier stderr pipe: %w", err)
+	}
+	output := &boundedVerifierStderr{}
+	done := make(chan error, 1)
+	go func() {
+		_, copyErr := io.Copy(output, reader)
+		done <- copyErr
+	}()
+	return &verifierBootstrapCapture{
+		reader: reader,
+		writer: writer,
+		output: output,
+		done:   done,
+	}, nil
+}
+
+func (capture *verifierBootstrapCapture) parentStarted() error {
+	if err := capture.writer.Close(); err != nil {
+		return fmt.Errorf("close parent artifact verifier stderr writer: %w", err)
+	}
+	return nil
+}
+
+func (capture *verifierBootstrapCapture) close() {
+	_ = capture.writer.Close()
+	_ = capture.reader.Close()
+	<-capture.done
 }
 
 func runVerifierProcess(
@@ -111,24 +151,62 @@ func runVerifierProcess(
 		resultWriter,
 		artifacts,
 	)
+	bootstrapStderr, err := newVerifierBootstrapCapture()
+	if err != nil {
+		return verifierProcessResult{}, err
+	}
+	command.Stderr = bootstrapStderr.writer
 	command.Cancel = func() error {
 		return killVerifierCgroup(cgroupPath)
 	}
 	command.WaitDelay = verifierDrainTimeout
-	if err := command.Start(); err != nil {
-		return verifierProcessResult{}, fmt.Errorf("start artifact verifier: %w", err)
-	}
-	if err := resultWriter.Close(); err != nil {
+	stop := func() {
 		killForCleanup = true
 		_ = killVerifierCgroup(cgroupPath)
+		_ = resultReader.Close()
+	}
+	return runVerifierCommandProtocol(
+		processContext,
+		command,
+		resultReader,
+		resultWriter,
+		bootstrapStderr,
+		config.job,
+		stop,
+	)
+}
+
+func runVerifierCommandProtocol(
+	processContext context.Context,
+	command *exec.Cmd,
+	resultReader *os.File,
+	resultWriter *os.File,
+	bootstrapStderr *verifierBootstrapCapture,
+	job verifierJob,
+	stop func(),
+) (result verifierProcessResult, returnErr error) {
+	if err := command.Start(); err != nil {
+		bootstrapStderr.close()
+		return verifierProcessResult{}, newVerifierBootstrapError(
+			"start artifact verifier: " + err.Error(),
+		)
+	}
+	if err := resultWriter.Close(); err != nil {
+		stop()
 		_ = command.Wait()
+		bootstrapStderr.close()
 		return verifierProcessResult{}, fmt.Errorf("close parent artifact verifier result writer: %w", err)
+	}
+	if err := bootstrapStderr.parentStarted(); err != nil {
+		stop()
+		_ = command.Wait()
+		bootstrapStderr.close()
+		return verifierProcessResult{}, err
 	}
 
 	wait := make(chan error, 1)
-	go func() {
-		wait <- command.Wait()
-	}()
+	go func() { wait <- command.Wait() }()
+	var waitErr error
 	readyDeadline := time.Now().Add(verifierBootstrapDeadline)
 	if processDeadline, ok := processContext.Deadline(); ok && processDeadline.Before(readyDeadline) {
 		readyDeadline = processDeadline
@@ -141,41 +219,38 @@ func runVerifierProcess(
 		resultErr = fmt.Errorf("clear artifact verifier readiness deadline: %w", clearErr)
 	}
 	if resultErr == nil {
-		stop := func() {
-			killForCleanup = true
-			_ = killVerifierCgroup(cgroupPath)
-			_ = resultReader.Close()
-		}
-		result, resultErr, err = awaitVerifierTerminal(
+		// Bootstrap diagnostics are host-only. Close the pipe before accepting
+		// any terminal result derived from tenant artifact bytes.
+		bootstrapStderr.close()
+		result, resultErr, waitErr = awaitVerifierTerminal(
 			processContext,
 			resultReader,
-			config.job,
+			job,
 			wait,
 			verifierDrainTimeout,
 			stop,
 		)
 	} else {
-		killForCleanup = true
-		_ = killVerifierCgroup(cgroupPath)
-		err = <-wait
+		stop()
+		waitErr = <-wait
+		bootstrapStderr.close()
 	}
 	if processContext.Err() != nil {
-		killForCleanup = true
 		return verifierProcessResult{}, fmt.Errorf("artifact verifier context: %w", processContext.Err())
 	}
 	if resultErr != nil {
-		killForCleanup = true
-		if err != nil {
-			return verifierProcessResult{}, errors.Join(
-				resultErr,
-				fmt.Errorf("wait for artifact verifier: %w", err),
-			)
+		diagnostic := bootstrapStderr.output.Diagnostic()
+		if diagnostic == "" {
+			diagnostic = resultErr.Error()
 		}
-		return verifierProcessResult{}, resultErr
+		if waitErr != nil {
+			diagnostic += "; process exit: " + waitErr.Error()
+		}
+		return verifierProcessResult{}, newVerifierBootstrapError(diagnostic)
 	}
-	if err != nil {
-		killForCleanup = true
-		return verifierProcessResult{}, fmt.Errorf("wait for artifact verifier: %w", err)
+	if waitErr != nil {
+		stop()
+		return verifierProcessResult{}, fmt.Errorf("wait for artifact verifier: %w", waitErr)
 	}
 	return result, nil
 }
@@ -347,22 +422,8 @@ func verifierCgroupLeaf(job verifierJob, leaseIdentity string) (string, error) {
 	return "verifier-" + string(job) + "-" + leaseIdentity, nil
 }
 
-func configureVerifierCgroup(cgroupFD int, job verifierJob) error {
+func configureVerifierCgroup(cgroupFD int, _ verifierJob) error {
 	limits := verifierCgroupLimits
-	if job.conformance() {
-		limits = append([]struct {
-			file  string
-			value string
-		}(nil), verifierCgroupLimits...)
-		for index := range limits {
-			switch limits[index].file {
-			case "memory.max":
-				limits[index].value = "4294967296"
-			case "pids.max":
-				limits[index].value = "64"
-			}
-		}
-	}
 	for _, limit := range limits {
 		controlFD, err := unix.Openat(
 			cgroupFD,

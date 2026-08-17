@@ -4,26 +4,28 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"slices"
-	"strings"
+	"os"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func LoadWorker() (Worker, error) {
 	cfg := Worker{
 		ControlPlaneURL:              envText("CONTROL_PLANE_URL"),
 		WorkerResourceID:             envText("WORKER_RESOURCE_ID"),
+		WorkerPoolName:               os.Getenv("WORKER_POOL_NAME"),
 		WorkerEnrollmentTokenFile:    envText("WORKER_ENROLLMENT_TOKEN_FILE"),
 		CASURI:                       envText("CAS_URI"),
 		WorkerInstanceCredentialPath: envText("WORKER_INSTANCE_CREDENTIAL_PATH"),
-		BuildPolicyPath:              envText("BUILD_POLICY_PATH"),
 		PlatformStoreURI:             envText("PLATFORM_STORE_URI"),
 		WorkDir:                      envText("WORKER_WORK_DIR"),
-		BuildCacheDir:                envText("WORKER_BUILD_CACHE_DIR"),
-		BuildScratchDir:              envText("WORKER_BUILD_SCRATCH_DIR"),
 		ImagesDir:                    envText("WORKER_IMAGES_DIR"),
 		FirecrackerPath:              env("FIRECRACKER_PATH", "firecracker"),
+		CPUTemplateHelperPath:        env("CPU_TEMPLATE_HELPER_PATH", "cpu-template-helper"),
 		JailerPath:                   env("JAILER_PATH", "jailer"),
+		MkfsExt4Path:                 env("MKFS_EXT4_PATH", "/usr/local/libexec/helmr/mkfs.ext4"),
+		Mke2fsConfigPath:             env("MKE2FS_CONFIG_PATH", "/usr/share/helmr/mke2fs.conf"),
 		JailerNumaNode:               0,
 		JailerChrootDir:              envText("JAILER_CHROOT_DIR"),
 		CgroupVersion:                env("JAILER_CGROUP_VERSION", "2"),
@@ -43,13 +45,13 @@ func LoadWorker() (Worker, error) {
 	if cfg.WorkerResourceID == "" || len(cfg.WorkerResourceID) > 512 {
 		return cfg, errors.New("WORKER_RESOURCE_ID is required and must not exceed 512 bytes")
 	}
+	if err := workergroup.ValidatePoolName(cfg.WorkerPoolName); err != nil {
+		return cfg, fmt.Errorf("WORKER_POOL_NAME: %w", err)
+	}
 	if cfg.WorkerEnrollmentTokenFile == "" {
 		return cfg, errors.New("WORKER_ENROLLMENT_TOKEN_FILE is required")
 	}
 	var err error
-	if cfg.ImageCache, err = loadImageCache(); err != nil {
-		return cfg, err
-	}
 	cfg.NetworkBlockedIPv4CIDRs, err = parseCanonicalBlockedIPv4Prefixes(
 		envText("WORKER_NETWORK_BLOCKED_IPV4_CIDRS"),
 	)
@@ -124,10 +126,6 @@ func LoadWorker() (Worker, error) {
 		return cfg, errors.New("WORKER_EXECUTION_SLOTS must fit in int32")
 	}
 	cfg.WorkerExecutionSlots = int32(workerExecutionSlots)
-	cfg.WorkerRoles, err = parseWorkerRoles(envText("WORKER_ROLES"))
-	if err != nil {
-		return cfg, err
-	}
 	if cfg.VMInitTimeout, err = envDuration("VM_INIT_TIMEOUT", cfg.VMInitTimeout); err != nil {
 		return cfg, err
 	}
@@ -155,25 +153,8 @@ func LoadWorker() (Worker, error) {
 	if cfg.CASURI == "" {
 		return cfg, errors.New("CAS_URI is required")
 	}
-	if (slices.Contains(cfg.WorkerRoles, "run") ||
-		slices.Contains(cfg.WorkerRoles, "build")) &&
-		cfg.PlatformStoreURI == "" {
-		return cfg, errors.New("PLATFORM_STORE_URI is required for run and build workers")
-	}
-	if slices.Contains(cfg.WorkerRoles, "build") && cfg.BuildPolicyPath == "" {
-		return cfg, errors.New("BUILD_POLICY_PATH is required for build workers")
-	}
-	if slices.Contains(cfg.WorkerRoles, "build") && cfg.BuildCacheDir == "" {
-		return cfg, errors.New("WORKER_BUILD_CACHE_DIR is required for build workers")
-	}
-	if slices.Contains(cfg.WorkerRoles, "build") && cfg.BuildScratchDir == "" {
-		return cfg, errors.New("WORKER_BUILD_SCRATCH_DIR is required for build workers")
-	}
-	if slices.Contains(cfg.WorkerRoles, "build") && cfg.SubstrateCacheMaxMiB <= 0 {
-		return cfg, errors.New("WORKER_SUBSTRATE_CACHE_MAX_MIB is required for build workers")
-	}
-	if slices.Contains(cfg.WorkerRoles, "build") && cfg.ArtifactCacheMaxMiB <= 0 {
-		return cfg, errors.New("WORKER_ARTIFACT_CACHE_MAX_MIB is required for build workers")
+	if cfg.PlatformStoreURI == "" {
+		return cfg, errors.New("PLATFORM_STORE_URI is required")
 	}
 	if cfg.SubstrateCacheMaxMiB > math.MaxInt64/(1024*1024) ||
 		cfg.ArtifactCacheMaxMiB > math.MaxInt64/(1024*1024) ||
@@ -200,27 +181,6 @@ func LoadWorker() (Worker, error) {
 		return cfg, errors.New("WORKER_NETWORK_RESOLVER_IPV4 is required")
 	}
 	return cfg, nil
-}
-
-func parseWorkerRoles(value string) ([]string, error) {
-	seen := map[string]bool{}
-	for part := range strings.SplitSeq(value, ",") {
-		role := strings.ToLower(strings.TrimSpace(part))
-		if role != "run" && role != "build" {
-			return nil, fmt.Errorf("WORKER_ROLES contains unsupported role %q", role)
-		}
-		seen[role] = true
-	}
-	roles := make([]string, 0, 2)
-	for _, role := range []string{"build", "run"} {
-		if seen[role] {
-			roles = append(roles, role)
-		}
-	}
-	if len(roles) == 0 {
-		return nil, errors.New("WORKER_ROLES must enable run, build, or both")
-	}
-	return roles, nil
 }
 
 func LoadWorkerControlPlane() (WorkerControlPlane, error) {

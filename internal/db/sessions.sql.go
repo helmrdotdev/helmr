@@ -51,10 +51,9 @@ SELECT $1,
   JOIN deployments
     ON deployments.environment_id = actor_definition.environment_id
    AND deployments.id = actor_definition.deployment_id
-   AND deployments.status = 'deployed'
    AND deployments.program_artifact_id IS NOT NULL
    AND deployments.program_index_digest IS NOT NULL
-   AND deployments.build_runtime_digest IS NOT NULL
+   AND deployments.runtime_artifact_digest IS NOT NULL
   JOIN workspaces
     ON workspaces.environment_id = actor_definition.environment_id
    AND workspaces.id = $12
@@ -739,10 +738,9 @@ SELECT actor_definition.id AS actor_definition_id,
    AND deployments.project_id = environments.project_id
    AND deployments.environment_id = environments.id
    AND deployments.id = actor_definition.deployment_id
-   AND deployments.status = 'deployed'
    AND deployments.program_artifact_id IS NOT NULL
    AND deployments.program_index_digest IS NOT NULL
-   AND deployments.build_runtime_digest IS NOT NULL
+   AND deployments.runtime_artifact_digest IS NOT NULL
  WHERE environments.org_id = $2
    AND environments.project_id = $3
    AND environments.id = $4

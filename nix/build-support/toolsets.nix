@@ -23,6 +23,7 @@ rec {
     pkgs.coreutils
     pkgs.diffutils
     pkgs.findutils
+    pkgs.file
     pkgs.gawk
     pkgs.gnugrep
     pkgs.gnused
@@ -69,6 +70,7 @@ rec {
     pkgs.cpio
     pkgs.gzip
     pkgs.ruby
+    pkgs.skopeo
     pkgs.binutils
   ]
   ++ lib.optionals stdenv.isLinux [ pkgs.kmod ];
@@ -86,9 +88,20 @@ rec {
 
   ciChecks = repoChecks ++ [ pkgs.gnutar ] ++ image;
 
+  runtimeProbe =
+    repoChecks
+    ++ lib.optionals (stdenv.isLinux && stdenv.isx86_64) [
+      helmrPackages.firecrackerRuntime
+    ];
+
   appRuntime = base ++ image ++ smokeLinux ++ lib.optionals stdenv.isLinux [ pkgs.kmod ];
 
-  infraTest = [ pkgs.opentofu ];
+  infraTest = [
+    pkgs.bash
+    pkgs.coreutils
+    pkgs.gnugrep
+    pkgs.opentofu
+  ];
 
   infra = base ++ [
     pkgs.opentofu

@@ -13,32 +13,26 @@ import (
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
-func TestPublishPlatformReleasePublishesPolicyLast(t *testing.T) {
-	directory, manifest := platformReleaseFixture(t)
+func TestPublishPinnedPlatformRelease(t *testing.T) {
+	directory := os.Getenv("HELMR_PLATFORM_RELEASE_DIR")
+	if directory == "" {
+		t.Skip("HELMR_PLATFORM_RELEASE_DIR is not set")
+	}
 	store := &releasePublishStore{}
-
 	if err := PublishPlatformRelease(context.Background(), store, directory); err != nil {
 		t.Fatal(err)
 	}
-	want := []cas.Descriptor{
-		releaseCASDescriptor(manifest.RuntimeHarness),
-		releaseCASDescriptor(manifest.ToolchainBase),
-		releaseCASDescriptor(manifest.Policy),
-	}
-	if len(store.published) != len(want) {
-		t.Fatalf("published %d objects, want %d", len(store.published), len(want))
-	}
-	for index := range want {
-		if store.published[index] != want[index] {
-			t.Fatalf("published[%d] = %+v, want %+v", index, store.published[index], want[index])
-		}
+	if len(store.published) != 1 {
+		t.Fatalf("published %d objects, want 1", len(store.published))
 	}
 }
 
-func TestPublishPlatformReleaseRejectsPolicyInputMismatch(t *testing.T) {
+func TestPublishPlatformReleaseRejectsInvalidRuntimeObject(t *testing.T) {
 	directory, manifest := platformReleaseFixture(t)
-	manifest.RuntimeHarness.Digest = testDigest("other-runtime-harness")
-	writePlatformReleaseManifest(t, directory, manifest)
+	path := platformReleaseObjectPath(directory, manifest.Runtime.Digest)
+	if err := os.WriteFile(path, []byte("changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	store := &releasePublishStore{}
 	if err := PublishPlatformRelease(context.Background(), store, directory); err == nil {
@@ -51,7 +45,7 @@ func TestPublishPlatformReleaseRejectsPolicyInputMismatch(t *testing.T) {
 
 func TestPublishPlatformReleaseRejectsSymlinkObject(t *testing.T) {
 	directory, manifest := platformReleaseFixture(t)
-	path := platformReleaseObjectPath(directory, manifest.RuntimeHarness.Digest)
+	path := platformReleaseObjectPath(directory, manifest.Runtime.Digest)
 	target := path + ".target"
 	if err := os.Rename(path, target); err != nil {
 		t.Fatal(err)
@@ -60,11 +54,7 @@ func TestPublishPlatformReleaseRejectsSymlinkObject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := PublishPlatformRelease(
-		context.Background(),
-		&releasePublishStore{},
-		directory,
-	); err == nil {
+	if err := PublishPlatformRelease(context.Background(), &releasePublishStore{}, directory); err == nil {
 		t.Fatal("symlink Platform release object was published")
 	}
 }
@@ -73,11 +63,11 @@ type releasePublishStore struct {
 	published []cas.Descriptor
 }
 
-func (store *releasePublishStore) Stat(context.Context, string) (cas.Object, error) {
+func (*releasePublishStore) Stat(context.Context, string) (cas.Object, error) {
 	return cas.Object{}, errors.New("unexpected Stat")
 }
 
-func (store *releasePublishStore) Get(context.Context, string) (io.ReadCloser, error) {
+func (*releasePublishStore) Get(context.Context, string) (io.ReadCloser, error) {
 	return nil, errors.New("unexpected Get")
 }
 
@@ -102,61 +92,20 @@ func (store *releasePublishStore) Publish(
 func platformReleaseFixture(t *testing.T) (string, platformReleaseManifest) {
 	t.Helper()
 	directory := t.TempDir()
-	runtimeHarness := []byte("runtime harness")
-	toolchainBase := []byte("toolchain base")
-	runtimeDescriptor := ArtifactDescriptor{
-		Digest: digestBytes(runtimeHarness), MediaType: PlatformTreeInputMediaType,
-		SizeBytes: int64(len(runtimeHarness)),
+	runtime := []byte("runtime squashfs")
+	descriptor := RuntimeDescriptor{
+		Architecture: ArchitectureX8664, Digest: digestBytes(runtime),
+		FormatVersion: RuntimeDescriptorFormatVersion, MediaType: RuntimeArtifactMediaType,
+		RuntimeContract: RuntimeContract, SizeBytes: int64(len(runtime)),
 	}
-	toolchainDescriptor := ArtifactDescriptor{
-		Digest: digestBytes(toolchainBase), MediaType: PlatformTreeInputMediaType,
-		SizeBytes: int64(len(toolchainBase)),
-	}
-	policy, err := ComposeBuildPolicy(
-		RuntimeInputs{Harness: runtimeDescriptor},
-		ToolchainInputs{
-			Base:     toolchainDescriptor,
-			Compiler: testCompilerInputs(),
-		},
-		[]byte("node release keyring"),
-		[]string{"00112233445566778899AABBCCDDEEFF00112233"},
-	)
-	if err != nil {
+	path := platformReleaseObjectPath(directory, descriptor.Digest)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	policyDescriptor := ArtifactDescriptor{
-		Digest: digestBytes(policy), MediaType: BuildPolicyMediaType,
-		SizeBytes: int64(len(policy)),
+	if err := os.WriteFile(path, runtime, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	for descriptor, raw := range map[ArtifactDescriptor][]byte{
-		runtimeDescriptor:   runtimeHarness,
-		toolchainDescriptor: toolchainBase,
-		policyDescriptor:    policy,
-	} {
-		path := platformReleaseObjectPath(directory, descriptor.Digest)
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, raw, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	manifest := platformReleaseManifest{
-		FormatVersion:  0,
-		Policy:         policyDescriptor,
-		RuntimeHarness: runtimeDescriptor,
-		ToolchainBase:  toolchainDescriptor,
-	}
-	writePlatformReleaseManifest(t, directory, manifest)
-	return directory, manifest
-}
-
-func writePlatformReleaseManifest(
-	t *testing.T,
-	directory string,
-	manifest platformReleaseManifest,
-) {
-	t.Helper()
+	manifest := platformReleaseManifest{FormatVersion: 0, Runtime: descriptor}
 	raw, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatal(err)
@@ -165,13 +114,10 @@ func writePlatformReleaseManifest(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(
-		filepath.Join(directory, platformReleaseManifestFile),
-		canonical,
-		0o600,
-	); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, platformReleaseManifestFile), canonical, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	return directory, manifest
 }
 
 func platformReleaseObjectPath(directory, digest string) string {

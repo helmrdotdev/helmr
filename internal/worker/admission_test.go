@@ -5,8 +5,6 @@ import (
 	"errors"
 	"testing"
 	"time"
-
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type staticHealthProbe struct {
@@ -20,8 +18,8 @@ func healthyHost(now time.Time) HostHealth {
 	return HostHealth{
 		ObservedAt: now, AvailableDiskBytes: 20 << 30, DiskCapacityBytes: 40 << 30,
 		OpenFileDescriptors: 100, FileDescriptorLimit: 4096,
-		CgroupHealthy: true, ProgramVerifierHealthy: true,
-		KVMHealthy: true, FirecrackerHealthy: true,
+		CgroupHealthy: true,
+		KVMHealthy:    true, FirecrackerHealthy: true,
 	}
 }
 
@@ -44,13 +42,6 @@ func TestHardAdmissionFailClosedChecks(t *testing.T) {
 		{name: "disk", mutate: func(h *HostHealth, _ *AdmissionCheck) { h.AvailableDiskBytes = 7 << 30 }, want: AdmissionDiskFloor},
 		{name: "fd", mutate: func(h *HostHealth, _ *AdmissionCheck) { h.OpenFileDescriptors = 3900 }, want: AdmissionFileDescriptorPressure},
 		{name: "cgroup", mutate: func(h *HostHealth, _ *AdmissionCheck) { h.CgroupHealthy = false }, want: AdmissionCgroupUnavailable},
-		{name: "program verifier for build", mutate: func(h *HostHealth, c *AdmissionCheck) {
-			h.ProgramVerifierHealthy = false
-			c.Consumer = "build"
-		}, want: AdmissionProgramVerifierUnavailable},
-		{name: "program verifier does not own run admission", mutate: func(h *HostHealth, _ *AdmissionCheck) {
-			h.ProgramVerifierHealthy = false
-		}, want: AdmissionAllowed},
 		{name: "kvm", mutate: func(h *HostHealth, _ *AdmissionCheck) { h.KVMHealthy = false }, want: AdmissionKVMUnavailable},
 		{name: "firecracker", mutate: func(h *HostHealth, _ *AdmissionCheck) { h.FirecrackerHealthy = false }, want: AdmissionFirecrackerUnavailable},
 		{name: "slots", mutate: func(_ *HostHealth, c *AdmissionCheck) {
@@ -76,36 +67,6 @@ func TestHardAdmissionFailClosedChecks(t *testing.T) {
 				t.Fatalf("decision = %+v, want reason %q", decision, tt.want)
 			}
 		})
-	}
-}
-
-func TestHardAdmissionKeepsVerifierFailureInBuildDomain(t *testing.T) {
-	now := time.Now()
-	health := healthyHost(now)
-	health.ProgramVerifierHealthy = false
-	probe := &staticHealthProbe{health: health}
-	evaluator, err := NewHardAdmission(HardAdmissionConfig{
-		Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, RuntimeSlotCount: 1,
-		Now: func() time.Time { return now },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	check := AdmissionCheck{State: StateActive}
-	for _, consumer := range []string{"run", "workspace", "build"} {
-		check.Consumer = consumer
-		evaluator.Evaluate(context.Background(), check)
-	}
-	observation := evaluator.Observation()
-	if observation.RunPausedReason != "" ||
-		observation.RuntimePausedReason != "" ||
-		observation.BuildPausedReason != string(AdmissionProgramVerifierUnavailable) {
-		t.Fatalf(
-			"domain pauses = run:%q runtime:%q build:%q",
-			observation.RunPausedReason,
-			observation.RuntimePausedReason,
-			observation.BuildPausedReason,
-		)
 	}
 }
 
@@ -136,13 +97,12 @@ func TestHardAdmissionFailsClosedWhenDatapathChanges(t *testing.T) {
 	}
 	observation := evaluator.Observation()
 	if observation.RunPausedReason != string(AdmissionDatapathUnverified) ||
-		observation.BuildPausedReason != string(AdmissionDatapathUnverified) ||
 		observation.RuntimePausedReason != string(AdmissionDatapathUnverified) {
 		t.Fatalf("datapath observation = %+v", observation)
 	}
 }
 
-func TestHardAdmissionKeepsRuntimeSlotPressureOutOfBuildDomain(t *testing.T) {
+func TestHardAdmissionKeepsRuntimeSlotPressureInRuntimeDomain(t *testing.T) {
 	now := time.Now()
 	probe := &staticHealthProbe{health: healthyHost(now)}
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now }})
@@ -154,11 +114,9 @@ func TestHardAdmissionKeepsRuntimeSlotPressureOutOfBuildDomain(t *testing.T) {
 	evaluator.Evaluate(context.Background(), check)
 	check.Consumer = "runtime"
 	evaluator.Evaluate(context.Background(), check)
-	check.Consumer = "build"
-	evaluator.Evaluate(context.Background(), check)
 	observation := evaluator.Observation()
-	if observation.RunPausedReason != "" || observation.RuntimePausedReason == "" || observation.BuildPausedReason != "" {
-		t.Fatalf("domain pauses = run:%q runtime:%q build:%q", observation.RunPausedReason, observation.RuntimePausedReason, observation.BuildPausedReason)
+	if observation.RunPausedReason != "" || observation.RuntimePausedReason == "" {
+		t.Fatalf("domain pauses = run:%q runtime:%q", observation.RunPausedReason, observation.RuntimePausedReason)
 	}
 }
 
@@ -181,39 +139,23 @@ func TestHardAdmissionAllowsRunInsideActiveWorkspaceSlot(t *testing.T) {
 	}
 }
 
-func TestBuildLeaseValidatesFixedGuestIndependentlyFromHostEnvelope(t *testing.T) {
-	capabilities := workerapi.Capabilities{
-		VMMilliCPU: 2000, VMMemoryMiB: 2048,
-		GuestEphemeralDiskBytes: 32 << 30, VMGuestEphemeralDiskBytes: 32 << 30, MaxBuildExecutors: 1,
-	}
-	lease := workerapi.DeploymentBuildLease{
-		RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
-		RequestedGuestEphemeralDiskBytes: 32 << 30,
-	}
-	if err := validateBuildLeaseShape(capabilities, lease); err != nil {
+func TestHardAdmissionAllowsOnlyExplicitDrainContinuation(t *testing.T) {
+	now := time.Now()
+	evaluator, err := NewHardAdmission(HardAdmissionConfig{
+		Probe: &staticHealthProbe{health: healthyHost(now)}, DiskFloorBytes: 1,
+		FDHeadroom: 1, RuntimeSlotCount: 1, Now: func() time.Time { return now },
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	tests := []struct {
-		name   string
-		mutate func(*workerapi.Capabilities, *workerapi.DeploymentBuildLease)
-	}{
-		{name: "cpu", mutate: func(c *workerapi.Capabilities, _ *workerapi.DeploymentBuildLease) { c.VMMilliCPU-- }},
-		{name: "memory", mutate: func(c *workerapi.Capabilities, _ *workerapi.DeploymentBuildLease) { c.VMMemoryMiB-- }},
-		{name: "guest disk", mutate: func(c *workerapi.Capabilities, _ *workerapi.DeploymentBuildLease) {
-			c.VMGuestEphemeralDiskBytes--
-		}},
-		{name: "executors", mutate: func(_ *workerapi.Capabilities, l *workerapi.DeploymentBuildLease) {
-			l.RequestedBuildExecutors = 2
-		}},
+	if decision := evaluator.Evaluate(context.Background(), AdmissionCheck{
+		Consumer: "run", State: StateDraining,
+	}); decision.Allowed || decision.Reason != AdmissionReason(StateDraining) {
+		t.Fatalf("ordinary draining decision = %+v", decision)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			testCapabilities := capabilities
-			testLease := lease
-			tt.mutate(&testCapabilities, &testLease)
-			if err := validateBuildLeaseShape(testCapabilities, testLease); err == nil {
-				t.Fatal("unsupported build shape accepted")
-			}
-		})
+	if decision := evaluator.Evaluate(context.Background(), AdmissionCheck{
+		Consumer: "run", State: StateDraining, DrainContinuation: true,
+	}); !decision.Allowed {
+		t.Fatalf("bound drain continuation rejected: %+v", decision)
 	}
 }

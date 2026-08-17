@@ -19,7 +19,7 @@ Actor Run <-> Session input and output
 Run -> attempts, logs, events, waits, and terminal result
 ```
 
-A **Deployment** is an immutable build of one project. Promotion makes its
+A **Deployment** is an immutable verified bundle of one project. Promotion makes its
 declarations current in an Environment. A **Sandbox** declaration selects an
 image and resources. Creating from it produces a durable **Workspace** with a
 committed filesystem and fixed Secret placements.

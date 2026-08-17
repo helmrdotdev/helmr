@@ -285,7 +285,6 @@ func lockRunLeasePhysicalAuthority(
 	}
 	if (authority.workerGroup.State != db.WorkerGroupStateActive &&
 		authority.workerGroup.State != db.WorkerGroupStateDraining) ||
-		!authority.workerGroup.AllowsRun ||
 		authority.workerGroup.ClaimVersion != worker.GroupClaimVersion {
 		return errStaleRunLeaseClaim
 	}

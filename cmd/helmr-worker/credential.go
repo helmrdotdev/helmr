@@ -9,13 +9,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -53,21 +52,23 @@ func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, wor
 		if err != nil {
 			return fmt.Errorf("configure worker enrollment client: %w", err)
 		}
-		supportsRun := slices.Contains(cfg.WorkerRoles, auth.WorkerRoleRun)
-		supportsBuild := slices.Contains(cfg.WorkerRoles, auth.WorkerRoleBuild)
 		registered, err := controlPlaneClient.EnrollWorker(ctx, enrollmentToken, workerapi.EnrollmentRequest{
-			ResourceID: cfg.WorkerResourceID, SupportsRun: supportsRun, SupportsBuild: supportsBuild,
+			ResourceID: cfg.WorkerResourceID, PoolName: cfg.WorkerPoolName,
 		})
 		if err != nil {
 			return fmt.Errorf("enroll worker: %w", err)
 		}
 		registered.WorkerInstanceID = strings.TrimSpace(registered.WorkerInstanceID)
+		registered.WorkerPoolID = strings.TrimSpace(registered.WorkerPoolID)
 		registered.WorkerInstanceSecret = strings.TrimSpace(registered.WorkerInstanceSecret)
 		if registered.WorkerInstanceID == "" {
 			return errors.New("worker enrollment response worker_instance_id is empty")
 		}
 		if registered.WorkerInstanceSecret == "" {
 			return errors.New("worker enrollment response secret is empty")
+		}
+		if _, err := ids.Parse(registered.WorkerPoolID); err != nil {
+			return errors.New("worker enrollment response worker_pool_id is not a canonical UUIDv7")
 		}
 		credential = workerCredentialFile{
 			WorkerInstanceID:     registered.WorkerInstanceID,

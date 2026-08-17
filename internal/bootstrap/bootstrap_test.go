@@ -37,7 +37,7 @@ func TestApplyCreatesOneRegionGroupAndToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if region.DisplayName != "Local" || group.State != db.WorkerGroupStateActive || !group.AllowsRun || !group.AllowsBuild {
+	if region.DisplayName != "Local" || group.State != db.WorkerGroupStateActive {
 		t.Fatalf("region = %+v group = %+v", region, group)
 	}
 	var tokenCount int

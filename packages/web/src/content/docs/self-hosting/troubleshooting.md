@@ -14,11 +14,11 @@ Start with the narrowest failing layer and use ECS service events, CloudWatch lo
 | `/healthz` fails | Confirm the Control Plane service has running tasks and the ALB target and public DNS route to the service. Inspect ECS events and task logs. |
 | `/readyz` fails while `/healthz` passes | Check `DATABASE_URL`, `REDIS_URL`, RDS and Redis/Valkey reachability, and whether migrations for the deployed image completed successfully. |
 | GitHub login fails | The callback must be exactly `<controlplane_url>/auth/github/callback`; verify the client ID and that the secret matches the same OAuth app. |
-| Run stays queued | Confirm a dispatcher task is running, desired worker capacity is nonzero, and at least one worker with the required role is active. |
-| Worker does not become active | Run `helmr-worker status`; inspect its systemd journal through SSM. Check KVM, Firecracker, jailer, `ip`, `nft`, certified guest artifacts, the enrollment-token file, requested roles, capacity settings, and Control Plane reachability. |
+| Run stays queued | Confirm a dispatcher task is running, desired worker capacity is nonzero, and at least one compatible execution Worker is active. |
+| Worker does not become active | Run `helmr-worker status`; inspect its systemd journal through SSM. Check KVM, Firecracker, jailer, `ip`, `nft`, certified guest artifacts, the enrollment-token file, Pool name, capacity settings, and Control Plane reachability. |
 | Worker launch or drain stalls | Check the Auto Scaling lifecycle hook, worker unit status, active executions, launch timeout, and whether provider scaling attempted to bypass protected, claim-fenced draining. |
 | Task cannot reach a repository or API | Check the task secret and its scope, task configuration, worker NAT or egress, DNS, and blocked network policy. |
-| Image build fails | Check build-worker capacity, cache and scratch filesystem sizing, certified guest artifacts, and guest egress. BuildKit runs in the fresh image-build guest, not as a worker-host service. |
+| Bundle build fails | Run `helmr build` locally and inspect the isolated builder output, lockfile, dependency credentials, and available local or CI disk. |
 | Checkpoint resume fails after replacement | Check checkpoint encryption-key availability and compatibility of backend, architecture, ABI, kernel, rootfs, runtime configuration, vCPU, memory, and network ABI. |
 | Service fails after an upgrade | Compare the resolved image and AMI with the recorded release, verify migrations ran before service rollout, and follow the prepared rollback plan. An image downgrade alone does not reverse schema changes. |
 

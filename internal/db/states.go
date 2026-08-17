@@ -74,29 +74,6 @@ const (
 	RuntimeObservedStateLost      RuntimeObservedState = "lost"
 )
 
-type DeploymentBuildLeaseState = string
-
-const (
-	DeploymentBuildLeaseStateAssigned  DeploymentBuildLeaseState = "assigned"
-	DeploymentBuildLeaseStateStarting  DeploymentBuildLeaseState = "starting"
-	DeploymentBuildLeaseStateRunning   DeploymentBuildLeaseState = "running"
-	DeploymentBuildLeaseStateSucceeded DeploymentBuildLeaseState = "succeeded"
-	DeploymentBuildLeaseStateFailed    DeploymentBuildLeaseState = "failed"
-	DeploymentBuildLeaseStateCancelled DeploymentBuildLeaseState = "cancelled"
-	DeploymentBuildLeaseStateLost      DeploymentBuildLeaseState = "lost"
-	DeploymentBuildLeaseStateRejected  DeploymentBuildLeaseState = "rejected"
-	DeploymentBuildLeaseStateExpired   DeploymentBuildLeaseState = "expired"
-)
-
-type DeploymentStatus = string
-
-const (
-	DeploymentStatusQueued   DeploymentStatus = "queued"
-	DeploymentStatusBuilding DeploymentStatus = "building"
-	DeploymentStatusDeployed DeploymentStatus = "deployed"
-	DeploymentStatusFailed   DeploymentStatus = "failed"
-)
-
 type TokenState = string
 
 const (

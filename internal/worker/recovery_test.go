@@ -103,7 +103,7 @@ func TestRecoveryReclaimsRuntimeAndBuildFromExactOwnerMarkers(t *testing.T) {
 	jailerDir := t.TempDir()
 	owners := []vm.Owner{
 		{Kind: vm.OwnerRuntime, ID: "019c10d5-a6f7-7af1-8f5f-000000000201"},
-		{Kind: vm.OwnerBuild, ID: "019c10d5-a6f7-7af1-8f5f-000000000202"},
+		{Kind: vm.OwnerRuntime, ID: "019c10d5-a6f7-7af1-8f5f-000000000202"},
 	}
 	for _, owner := range owners {
 		statePath := filepath.Join(workDir, "vms", "guest", owner.ID)
@@ -192,7 +192,7 @@ func TestOwnedVMCandidatesQuarantineStrayStateEntry(t *testing.T) {
 
 func TestRecoveryQuarantinePreservesStructuredBuildOwner(t *testing.T) {
 	workDir := t.TempDir()
-	owner := vm.Owner{Kind: vm.OwnerBuild, ID: "019c10d5-a6f7-7af1-8f5f-000000000204"}
+	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: "019c10d5-a6f7-7af1-8f5f-000000000204"}
 	statePath := filepath.Join(workDir, "vms", "guest", owner.ID)
 	if err := os.MkdirAll(statePath, 0o700); err != nil {
 		t.Fatal(err)

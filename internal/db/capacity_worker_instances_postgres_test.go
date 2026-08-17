@@ -21,16 +21,17 @@ func TestCapacityWorkerListingProjectsCurrentRowPerOpaqueLocator(t *testing.T) {
 
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
-			id, resource_id, worker_group_id, state,
+			id, resource_id, worker_group_id, worker_pool_id, state,
 			current_epoch, current_service_id, epoch_started_at,
 			draining_at, termination_ready_at, created_at, updated_at
-		) VALUES ($1, $3, $4, 'termination_ready',
+		) VALUES ($1, $3, $4, $6, 'termination_ready',
 		          1, $5, now() - interval '1 hour',
 		          now() - interval '1 hour', now() - interval '1 hour',
 		          now() - interval '1 hour', now() - interval '1 hour'),
-		         ($2, $3, $4, 'registering',
+		         ($2, $3, $4, $6, 'registering',
 		          NULL, NULL, NULL, NULL, NULL, now(), now())
-	`, oldID, currentID, resourceID, dbtest.DefaultWorkerGroupID, oldServiceID)
+	`, oldID, currentID, resourceID, dbtest.DefaultWorkerGroupID, oldServiceID,
+		dbtest.DefaultWorkerPoolID)
 
 	rows, err := queries.ListCapacityWorkerInstances(ctx, db.ListCapacityWorkerInstancesParams{
 		WorkerGroupID: pgvalue.Text(dbtest.DefaultWorkerGroupID),

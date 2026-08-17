@@ -46,7 +46,6 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertWorkspaceExecSchema(t, dbctx, pool)
 	assertTelemetrySchema(t, dbctx, pool)
 	assertWorkerSchema(t, dbctx, pool)
-	assertDeploymentBuildCapacitySchema(t, dbctx, pool)
 	assertDeploymentDefinitionAuthority(t, dbctx, pool)
 	assertWorkspaceVersionAuthority(t, dbctx, pool)
 	assertArtifactCreatorAuthority(t, dbctx, pool)
@@ -108,8 +107,6 @@ func assertPrimitiveLifecycleSchema(
 		"run_lease_state",
 		"runtime_desired_state",
 		"runtime_observed_state",
-		"deployment_build_lease_state",
-		"deployment_status",
 		"workspace_state",
 		"workspace_desired_state",
 		"workspace_dirty_state",
@@ -145,8 +142,6 @@ func assertPrimitiveLifecycleSchema(
 		"run_leases",
 		"runtime_instances",
 		"runtime_instances",
-		"deployment_build_leases",
-		"deployments",
 		"workspaces",
 		"workspaces",
 		"workspaces",
@@ -171,8 +166,6 @@ func assertPrimitiveLifecycleSchema(
 		"state",
 		"desired_state",
 		"observed_state",
-		"state",
-		"status",
 		"state",
 		"desired_state",
 		"dirty_state",
@@ -429,12 +422,20 @@ INSERT INTO worker_groups (
     'artifact-test-region',
     'Artifact test'
 );
+INSERT INTO worker_pools (
+    id, worker_group_id, name
+) VALUES (
+    '00000000-0000-7000-8000-000000000907',
+    'artifact-test-workers',
+    'artifact-test-pool'
+);
 INSERT INTO worker_instances (
-    id, resource_id, worker_group_id
+    id, resource_id, worker_group_id, worker_pool_id
 ) VALUES (
     '00000000-0000-7000-8000-000000000904',
     'artifact-test-worker',
-    'artifact-test-workers'
+    'artifact-test-workers',
+    '00000000-0000-7000-8000-000000000907'
 );
 INSERT INTO cas_objects (
     org_id, digest, size_bytes, media_type
@@ -904,47 +905,6 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 	}
 }
 
-func assertDeploymentBuildCapacitySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
-	t.Helper()
-	var deploymentProjections int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM information_schema.columns
-		 WHERE table_schema = 'public'
-		   AND table_name = 'deployments'
-		   AND column_name = ANY($1::text[])
-	`, []string{
-		"build_architecture",
-		"build_requested_cpu_millis",
-		"build_requested_memory_bytes",
-		"build_requested_guest_ephemeral_disk_bytes",
-		"build_requested_executors",
-	}).Scan(&deploymentProjections); err != nil {
-		t.Fatal(err)
-	}
-	if deploymentProjections != 0 {
-		t.Fatalf("deployment build projections = %d, want 0", deploymentProjections)
-	}
-	var leaseResources int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM information_schema.columns
-		 WHERE table_schema = 'public'
-		   AND table_name = 'deployment_build_leases'
-		   AND column_name = ANY($1::text[])
-	`, []string{
-		"requested_cpu_millis",
-		"requested_memory_bytes",
-		"requested_guest_ephemeral_disk_bytes",
-		"requested_build_executors",
-	}).Scan(&leaseResources); err != nil {
-		t.Fatal(err)
-	}
-	if leaseResources != 4 {
-		t.Fatalf("build lease resource facts = %d, want 4", leaseResources)
-	}
-}
-
 func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	var deploymentColumns int
@@ -955,37 +915,29 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		   AND table_name = 'deployments'
 		   AND column_name = ANY($1::text[])
 	`, []string{
-		"build_node_version",
-		"build_runtime_digest",
-		"build_toolchain_digest",
-		"build_manager_name",
-		"build_manager_version",
-		"build_manager_digest",
-		"build_contract",
+		"bundle_digest",
+		"runtime_artifact_digest",
 		"program_artifact_id",
 		"program_index_digest",
+		"queue_config",
 	}).Scan(&deploymentColumns); err != nil {
 		t.Fatal(err)
 	}
-	if deploymentColumns != 9 {
-		t.Fatalf("deployment authority columns = %d, want 9", deploymentColumns)
+	if deploymentColumns != 5 {
+		t.Fatalf("deployment authority columns = %d, want 5", deploymentColumns)
 	}
-	var constraints int
+	var bundleUniqueness int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
 		  FROM pg_constraint
 		 WHERE conrelid = 'deployments'::regclass
-		   AND conname = ANY($1::text[])
-	`, []string{
-		"deployments_platform_pins_check",
-		"deployments_platform_pin_state_check",
-		"deployments_build_lease_pin_check",
-		"deployments_program_tuple_check",
-	}).Scan(&constraints); err != nil {
+		   AND contype = 'u'
+		   AND pg_get_constraintdef(oid) = 'UNIQUE (environment_id, bundle_digest)'
+	`).Scan(&bundleUniqueness); err != nil {
 		t.Fatal(err)
 	}
-	if constraints != 4 {
-		t.Fatalf("deployment tuple constraints = %d, want 4", constraints)
+	if bundleUniqueness != 1 {
+		t.Fatalf("deployment bundle uniqueness constraints = %d, want 1", bundleUniqueness)
 	}
 	var definitionKinds int
 	if err := pool.QueryRow(ctx, `
@@ -1029,8 +981,10 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		VALUES ('00000000-0000-7000-8000-000000000097', decode(repeat('07', 32), 'hex'));
 		INSERT INTO worker_groups (id, token_id, region_id, name)
 		VALUES ('shape-test', '00000000-0000-7000-8000-000000000097', 'shape-region', 'shape-test');
-		INSERT INTO worker_instances (id, resource_id, worker_group_id, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes)
-		VALUES ('00000000-0000-0000-0000-000000000099', 'shape-test', 'shape-test', 2000, 2147483648, 8589934592);
+		INSERT INTO worker_pools (id, worker_group_id, name)
+		VALUES ('00000000-0000-7000-8000-000000000098', 'shape-test', 'shape-pool');
+		INSERT INTO worker_instances (id, resource_id, worker_group_id, worker_pool_id, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes)
+		VALUES ('00000000-0000-0000-0000-000000000099', 'shape-test', 'shape-test', '00000000-0000-7000-8000-000000000098', 2000, 2147483648, 8589934592);
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -1046,7 +1000,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 	if !exactFit || overShape {
-		t.Fatalf("fixed build guest exact/over shape fence = %t/%t", exactFit, overShape)
+		t.Fatalf("fixed guest exact/over shape fence = %t/%t", exactFit, overShape)
 	}
 	logicalTables := []string{"idempotency_claims", "schedules", "workspaces", "sessions", "session_records", "runs", "run_attempts", "run_waits", "run_checkpoints", "run_checkpoint_artifacts", "meter_events", "telemetry_outbox"}
 	var placementLeaks int
@@ -1081,7 +1035,6 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	}
 
 	requiredIndexes := []string{
-		"deployment_build_leases_deployment_active_uidx",
 		"run_leases_run_active_uidx",
 		"run_leases_runtime_active_uidx",
 		"runtime_instances_workspace_active_uidx",
@@ -1155,15 +1108,12 @@ func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 		  FROM pg_indexes
 		 WHERE schemaname = 'public'
 		   AND tablename = 'meter_events'
-		   AND indexname = ANY(ARRAY[
-		       'meter_events_run_lease_idempotency_uidx',
-		       'meter_events_deployment_build_lease_idempotency_uidx'
-		   ])
+		   AND indexname = 'meter_events_run_lease_idempotency_uidx'
 	`).Scan(&meterIdempotencyIndexes); err != nil {
 		t.Fatal(err)
 	}
-	if meterIdempotencyIndexes != 2 {
-		t.Fatalf("meter source idempotency indexes = %d, want 2", meterIdempotencyIndexes)
+	if meterIdempotencyIndexes != 1 {
+		t.Fatalf("meter source idempotency indexes = %d, want 1", meterIdempotencyIndexes)
 	}
 }
 

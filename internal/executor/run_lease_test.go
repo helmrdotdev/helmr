@@ -6,11 +6,13 @@ import (
 	"errors"
 	"net"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/frameio"
+	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -371,6 +373,169 @@ func TestRenewRunLeaseAuthorityDoesNotRetryGuestRejection(t *testing.T) {
 	if mounts.calls != 1 {
 		t.Fatalf("guest renewal calls = %d", mounts.calls)
 	}
+}
+
+func TestGuestRunLeaseTaskFrozenCheckpointRenewsOnlyControlPlaneAuthority(t *testing.T) {
+	previous := testRunLeaseAssignment(time.Now().Add(time.Minute))
+	renewed := previous
+	renewed.ExpiresAt = previous.ExpiresAt.Add(time.Minute)
+	trace := &runLeaseTrace{}
+	mounts := &rejectingRenewalMounts{}
+	task := &guestRunLeaseTask{
+		mounts:           mounts,
+		controlPlane:     &testRunLeaseControlPlane{trace: trace, renewed: testRunLeaseRenewResponse(renewed)},
+		lease:            previous,
+		checkpointFrozen: true,
+	}
+
+	got, err := task.RenewRunLease(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalRunLeaseAssignment(got.Previous, previous) ||
+		!equalRunLeaseAssignment(got.Lease, renewed) ||
+		!equalRunLeaseAssignment(task.lease, renewed) {
+		t.Fatalf("renewal = %+v, task Lease = %+v", got, task.lease)
+	}
+	if mounts.calls != 0 {
+		t.Fatalf("frozen checkpoint contacted guest Workspace authority %d times", mounts.calls)
+	}
+	if len(trace.calls) != 1 || trace.calls[0] != "renew" {
+		t.Fatalf("renewal trace = %v, want control-only renew", trace.calls)
+	}
+}
+
+func TestGuestRunLeaseTaskSerializesRenewalWithCheckpointFreeze(t *testing.T) {
+	previous := testRunLeaseAssignment(time.Now().Add(time.Minute))
+	first := previous
+	first.ExpiresAt = previous.ExpiresAt.Add(time.Minute)
+	second := first
+	second.ExpiresAt = first.ExpiresAt.Add(time.Minute)
+	controlPlane := &sequencedRenewalControlPlane{responses: []workerapi.RunLeaseRenewResponse{
+		testRunLeaseRenewResponse(first), testRunLeaseRenewResponse(second),
+	}}
+	mounts := &blockingRenewalMounts{
+		started: make(chan struct{}), release: make(chan struct{}),
+	}
+	task := &guestRunLeaseTask{
+		mounts: mounts, controlPlane: controlPlane, lease: previous,
+		authority: &workspacev0.WorkspaceRunAuthority{
+			Fence: &workspacev0.WorkspaceAuthorityFence{
+				ExpiresAtUnixNano: previous.ExpiresAt.UnixNano(),
+			},
+		},
+	}
+	firstRenewal := make(chan error, 1)
+	go func() {
+		_, err := task.RenewRunLease(context.Background())
+		firstRenewal <- err
+	}()
+	<-mounts.started
+
+	stream := &signalingCheckpointStream{
+		checkpointStream: newCheckpointStream(t, nil, &runv0.CheckpointPauseReady{
+			RunWaitId: "run-wait-id-1", CheckpointId: "checkpoint-1",
+		}),
+		wrote: make(chan struct{}),
+	}
+	frozen := make(chan struct{})
+	checkpointDone := make(chan error, 1)
+	go func() {
+		_, err := runtimeCheckpointer{
+			stream: stream, freezeGate: &task.renewalGate,
+			onFrozen: func() {
+				task.markCheckpointFrozen()
+				close(frozen)
+			},
+		}.suspendGuestForCheckpoint(context.Background(), CheckpointRequest{
+			RunWaitID: "run-wait-id-1", CheckpointID: "checkpoint-1",
+		})
+		checkpointDone <- err
+	}()
+	<-stream.wrote
+	select {
+	case <-frozen:
+		t.Fatal("checkpoint froze before the in-flight guest renewal completed")
+	default:
+	}
+	close(mounts.release)
+	requirePromptResult(t, firstRenewal, "pre-freeze renewal")
+	requirePromptResult(t, checkpointDone, "checkpoint freeze")
+	select {
+	case <-frozen:
+	default:
+		t.Fatal("checkpoint did not publish frozen authority")
+	}
+
+	if _, err := task.RenewRunLease(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if mounts.calls != 1 {
+		t.Fatalf("guest authority renewals = %d, want only pre-freeze renewal", mounts.calls)
+	}
+	if controlPlane.calls != 2 || !equalRunLeaseAssignment(task.lease, second) {
+		t.Fatalf("Control Plane renewals = %d, task Lease = %+v", controlPlane.calls, task.lease)
+	}
+}
+
+func requirePromptResult(t *testing.T, result <-chan error, operation string) {
+	t.Helper()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("%s: %v", operation, err)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("%s did not complete", operation)
+	}
+}
+
+type signalingCheckpointStream struct {
+	*checkpointStream
+	once  sync.Once
+	wrote chan struct{}
+}
+
+func (stream *signalingCheckpointStream) Write(body []byte) (int, error) {
+	stream.once.Do(func() { close(stream.wrote) })
+	return stream.checkpointStream.Write(body)
+}
+
+type sequencedRenewalControlPlane struct {
+	RunLeaseControlPlane
+	responses []workerapi.RunLeaseRenewResponse
+	calls     int
+}
+
+func (controlPlane *sequencedRenewalControlPlane) RenewRunLease(
+	context.Context,
+	workerapi.RunLeaseAssignment,
+) (workerapi.RunLeaseRenewResponse, error) {
+	if controlPlane.calls >= len(controlPlane.responses) {
+		return workerapi.RunLeaseRenewResponse{}, errors.New("unexpected renewal")
+	}
+	response := controlPlane.responses[controlPlane.calls]
+	controlPlane.calls++
+	return response, nil
+}
+
+type blockingRenewalMounts struct {
+	WorkspaceMountSessionRegistry
+	started chan struct{}
+	release chan struct{}
+	calls   int
+}
+
+func (mounts *blockingRenewalMounts) RenewWorkspaceAuthority(
+	_ context.Context,
+	request *workspacev0.RenewWorkspaceAuthorityRequest,
+) (*workspacev0.WorkspaceAuthorityFence, error) {
+	mounts.calls++
+	close(mounts.started)
+	<-mounts.release
+	fence := proto.Clone(request.GetPrevious().GetFence()).(*workspacev0.WorkspaceAuthorityFence)
+	fence.ExpiresAtUnixNano = request.GetNewExpiresAtUnixNano()
+	return fence, nil
 }
 
 type cancelingRenewalControlPlane struct {

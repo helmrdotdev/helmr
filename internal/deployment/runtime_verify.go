@@ -7,18 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path"
-	"slices"
 	"strings"
 )
 
 const (
-	runtimeNodePath    = "bin/node"
-	runtimeEntryPath   = "helmr/entry.mjs"
-	runtimeLibcPath    = "lib/libc.so.6"
-	runtimeLicensePath = "share/licenses/node/LICENSE"
+	runtimeNodePath     = "bin/node"
+	runtimeEntryPath    = "helmr/entry.mjs"
+	runtimeMetadataPath = "helmr/runtime.json"
+	runtimeLibcPath     = "lib/libc.so.6"
+	runtimeLicensePath  = "share/licenses/node/LICENSE"
 )
 
 func VerifyRuntimeArtifact(
@@ -95,13 +94,11 @@ func verifiedRuntimeResult(
 func verifyRuntimeTopology(
 	ctx context.Context,
 	artifact *inspectedArtifact,
-	object ArtifactDescriptor,
 ) (RuntimeIndex, error) {
 	requiredDirectories := []string{
 		".",
 		"bin",
 		"helmr",
-		"helmr/upstream",
 		"lib",
 		"share",
 		"share/licenses",
@@ -113,13 +110,11 @@ func verifyRuntimeTopology(
 		}
 	}
 	requiredFiles := map[string]uint32{
-		runtimeNodePath:         0755,
-		runtimeEntryPath:        0644,
-		PlatformDescriptorPath:  0644,
-		PlatformIntegrityPath:   0644,
-		PlatformConformancePath: 0644,
-		runtimeLibcPath:         0644,
-		runtimeLicensePath:      0644,
+		runtimeNodePath:     0755,
+		runtimeEntryPath:    0644,
+		runtimeMetadataPath: 0644,
+		runtimeLibcPath:     0644,
+		runtimeLicensePath:  0644,
 	}
 	for required, mode := range requiredFiles {
 		entry, err := artifact.require(required, artifactEntryRegular)
@@ -140,69 +135,27 @@ func verifyRuntimeTopology(
 			return RuntimeIndex{}, err
 		}
 	}
-	descriptorRaw, err := artifact.read(
+	metadataRaw, err := artifact.read(
 		ctx,
-		PlatformDescriptorPath,
-		maxPlatformArtifactDocumentBytes,
+		runtimeMetadataPath,
+		maxRuntimeDocumentBytes,
 	)
 	if err != nil {
 		return RuntimeIndex{}, err
 	}
-	var descriptor RuntimeArtifactDescriptor
-	if err := parsePlatformDocument(
-		descriptorRaw,
-		"runtime descriptor",
-		&descriptor,
-	); err != nil {
-		return RuntimeIndex{}, err
-	}
-	integrity, _, err := readPlatformIntegrity(ctx, artifact)
-	if err != nil {
-		return RuntimeIndex{}, err
-	}
-	conformance, _, err := readPlatformConformance(ctx, artifact)
-	if err != nil {
-		return RuntimeIndex{}, err
-	}
-	allowedRedirectHosts := make([]string, 0, len(integrity.Redirects)+1)
-	for _, raw := range append([]string{integrity.Source.Origin}, integrity.Redirects...) {
-		parsed, err := url.Parse(raw)
-		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
-			return RuntimeIndex{}, errors.New("runtime integrity URL is invalid")
-		}
-		if !slices.Contains(allowedRedirectHosts, parsed.Hostname()) {
-			allowedRedirectHosts = append(allowedRedirectHosts, parsed.Hostname())
-		}
-	}
-	slices.Sort(allowedRedirectHosts)
-	inspected, err := inspectPlatformArtifact(
-		ctx,
-		artifact,
-		object,
-		PlatformArtifactExpectation{
-			AllowedRedirectHosts:    allowedRedirectHosts,
-			DescriptorSchemaVersion: descriptor.DescriptorSchemaVersion,
-			ConformanceSet:          conformance.ConformanceSet,
-			IntegrityIdentities:     []string{integrity.Identity},
-			IntegrityKind:           integrity.IntegrityKind,
-			NodeVersion:             descriptor.NodeVersion,
-			RequiredConformance:     runtimeConformanceNames(),
-			RuntimeHarnessDigest:    descriptor.RuntimeHarnessDigest,
-			SourceOrigin:            descriptor.Source.Origin,
-		},
-	)
+	metadata, err := ParseRuntimeMetadata(metadataRaw)
 	if err != nil {
 		return RuntimeIndex{}, err
 	}
 	return RuntimeIndex{
-		Architecture:    inspected.Runtime.Architecture,
-		RuntimeContract: inspected.Runtime.RuntimeContract,
+		Architecture:    metadata.Architecture,
+		RuntimeContract: metadata.RuntimeContract,
 	}, nil
 }
 
 func validateRuntimePath(entry artifactEntry, required map[string]uint32) error {
 	switch entry.Path {
-	case ".", "bin", "helmr", "helmr/upstream", "lib", "share", "share/licenses", "share/licenses/node":
+	case ".", "bin", "helmr", "lib", "share", "share/licenses", "share/licenses/node":
 		return nil
 	}
 	if _, exists := required[entry.Path]; exists {
@@ -212,10 +165,6 @@ func validateRuntimePath(entry artifactEntry, required map[string]uint32) error 
 		return fmt.Errorf("runtime contains unlisted bin path %q", entry.Path)
 	}
 	if entry.Path == "helmr" || strings.HasPrefix(entry.Path, "helmr/") {
-		if strings.HasPrefix(entry.Path, "helmr/upstream/") &&
-			entry.Kind == artifactEntryRegular {
-			return nil
-		}
 		return fmt.Errorf("runtime contains unlisted Helmr path %q", entry.Path)
 	}
 	if entry.Path == "lib" || strings.HasPrefix(entry.Path, "lib/") {

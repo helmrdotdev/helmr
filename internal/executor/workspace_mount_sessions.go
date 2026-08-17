@@ -24,6 +24,7 @@ type CheckpointSourceReleaser interface {
 type WorkspaceMountSessionRegistry interface {
 	RegisterWorkspaceMountSession(mount workerapi.WorkspaceMount, session vm.Session, channelToken string) func()
 	OpenWorkspaceMountSession(context.Context, string) (WorkspaceMountSession, error)
+	FailWorkspaceMountSession(context.Context, string) error
 	RenewWorkspaceAuthority(context.Context, *workspacev0.RenewWorkspaceAuthorityRequest) (*workspacev0.WorkspaceAuthorityFence, error)
 	BeginWorkspaceFinalization(context.Context, *workspacev0.BeginWorkspaceFinalizationRequest) (*workspacev0.BeginWorkspaceFinalizationResponse, error)
 	CaptureWorkspace(context.Context, *workspacev0.CaptureWorkspaceRequest, cas.Store) (WorkspaceCapture, error)
@@ -35,6 +36,10 @@ type WorkspaceMountSession struct {
 	ControlSession vm.Session
 	ChannelToken   string
 	Mount          workerapi.WorkspaceMount
+}
+
+type workspaceMountFailureRequest struct {
+	result chan error
 }
 
 type WorkspaceMountSessions struct {
@@ -100,6 +105,24 @@ func (s *WorkspaceMountSessions) OpenWorkspaceMountSession(ctx context.Context, 
 	}, nil
 }
 
+func (s *WorkspaceMountSessions) FailWorkspaceMountSession(
+	ctx context.Context,
+	workspaceMountID string,
+) error {
+	id := strings.TrimSpace(workspaceMountID)
+	if id == "" {
+		return errors.New("workspace mount failure identity is required")
+	}
+	s.mu.RLock()
+	entry := s.sessions[id]
+	s.mu.RUnlock()
+	managed, ok := entry.session.(*managedWorkspaceMountSession)
+	if !ok || managed == nil {
+		return fmt.Errorf("%w: %s", ErrWorkspaceMountSessionNotFound, id)
+	}
+	return managed.requestFailure(ctx)
+}
+
 func (s *WorkspaceMountSessions) RenewWorkspaceAuthority(ctx context.Context, request *workspacev0.RenewWorkspaceAuthorityRequest) (*workspacev0.WorkspaceAuthorityFence, error) {
 	if request == nil || request.GetPrevious() == nil || request.GetPrevious().GetFence() == nil {
 		return nil, errors.New("previous workspace authority is required")
@@ -115,12 +138,8 @@ func (s *WorkspaceMountSessions) RenewWorkspaceAuthority(ctx context.Context, re
 	if entry.channelToken == "" || request.GetPrevious().GetChannelToken() != entry.channelToken {
 		return nil, errors.New("workspace authority channel token does not match the mount session")
 	}
-	if fence.GetWorkspaceMountId() != entry.mount.ID ||
-		fence.GetWorkspaceId() != entry.mount.WorkspaceID ||
-		fence.GetRuntimeInstanceId() != entry.mount.RuntimeInstanceID ||
-		fence.GetMountFencingGeneration() != entry.mount.FencingGeneration ||
-		fence.GetBaseWorkspaceVersionId() != entry.mount.BaseVersionID {
-		return nil, errors.New("workspace authority fence does not match the mount session")
+	if err := validateWorkspaceMountPhysicalAuthority(fence, entry.mount); err != nil {
+		return nil, err
 	}
 	return renewWorkspaceAuthorityOnSession(ctx, entry.session, request)
 }
@@ -143,12 +162,8 @@ func (s *WorkspaceMountSessions) BeginWorkspaceFinalization(
 	if entry.channelToken == "" || request.GetPrevious().GetChannelToken() != entry.channelToken {
 		return nil, errors.New("workspace authority channel token does not match the mount session")
 	}
-	if fence.GetWorkspaceMountId() != entry.mount.ID ||
-		fence.GetWorkspaceId() != entry.mount.WorkspaceID ||
-		fence.GetRuntimeInstanceId() != entry.mount.RuntimeInstanceID ||
-		fence.GetMountFencingGeneration() != entry.mount.FencingGeneration ||
-		fence.GetBaseWorkspaceVersionId() != entry.mount.BaseVersionID {
-		return nil, errors.New("workspace authority fence does not match the mount session")
+	if err := validateWorkspaceMountPhysicalAuthority(fence, entry.mount); err != nil {
+		return nil, err
 	}
 	return beginWorkspaceFinalizationOnSession(ctx, entry.session, request)
 }
@@ -195,14 +210,23 @@ func (s *WorkspaceMountSessions) finalizationSession(
 	if entry.channelToken == "" || authority.GetChannelToken() != entry.channelToken {
 		return workspaceMountSessionEntry{}, errors.New("workspace authority channel token does not match the mount session")
 	}
-	if fence.GetWorkspaceMountId() != entry.mount.ID ||
-		fence.GetWorkspaceId() != entry.mount.WorkspaceID ||
-		fence.GetRuntimeInstanceId() != entry.mount.RuntimeInstanceID ||
-		fence.GetMountFencingGeneration() != entry.mount.FencingGeneration ||
-		fence.GetBaseWorkspaceVersionId() != entry.mount.BaseVersionID {
-		return workspaceMountSessionEntry{}, errors.New("workspace authority fence does not match the mount session")
+	if err := validateWorkspaceMountPhysicalAuthority(fence, entry.mount); err != nil {
+		return workspaceMountSessionEntry{}, err
 	}
 	return entry, nil
+}
+
+func validateWorkspaceMountPhysicalAuthority(
+	fence *workspacev0.WorkspaceAuthorityFence,
+	mount workerapi.WorkspaceMount,
+) error {
+	if fence.GetWorkspaceMountId() != mount.ID ||
+		fence.GetWorkspaceId() != mount.WorkspaceID ||
+		fence.GetRuntimeInstanceId() != mount.RuntimeInstanceID ||
+		fence.GetBaseWorkspaceVersionId() != mount.BaseVersionID {
+		return errors.New("workspace authority fence does not match the mount session")
+	}
+	return nil
 }
 
 func (s *WorkspaceMountSessions) beginForegroundRun() func() {
@@ -222,6 +246,7 @@ type managedWorkspaceMountSession struct {
 	releaseForCheckpointFinished bool
 	releaseForCheckpointErr      error
 	releaseForCheckpointDone     chan struct{}
+	failureRequests              chan workspaceMountFailureRequest
 }
 
 func newManagedWorkspaceMountSession(session vm.Session) *managedWorkspaceMountSession {
@@ -229,6 +254,22 @@ func newManagedWorkspaceMountSession(session vm.Session) *managedWorkspaceMountS
 		session:                  session,
 		closeDone:                make(chan struct{}),
 		releaseForCheckpointDone: make(chan struct{}),
+		failureRequests:          make(chan workspaceMountFailureRequest, 1),
+	}
+}
+
+func (s *managedWorkspaceMountSession) requestFailure(ctx context.Context) error {
+	request := workspaceMountFailureRequest{result: make(chan error, 1)}
+	select {
+	case s.failureRequests <- request:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-request.result:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

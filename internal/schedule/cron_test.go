@@ -1,6 +1,7 @@
 package schedule
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -36,6 +37,12 @@ func TestCronContract(t *testing.T) {
 	}
 }
 
+func TestLoadLocationRejectsMissingRuntimeRules(t *testing.T) {
+	if _, err := loadLocationFromRoot("Asia/Tokyo", filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("missing runtime timezone rules were accepted")
+	}
+}
+
 func TestNextCronTimeUsesExactTimezone(t *testing.T) {
 	next, err := NextCronTime("0 9 * * *", "Asia/Tokyo", time.Date(2026, 6, 1, 23, 0, 0, 0, time.UTC))
 	if err != nil {
@@ -51,6 +58,19 @@ func TestNextCronTimeUsesExactTimezone(t *testing.T) {
 	for _, name := range []string{"localtime", "posixrules", "posix/UTC", "right/UTC"} {
 		if err := ValidateTimezone(name); err == nil {
 			t.Fatalf("non-IANA tzfile %q was accepted", name)
+		}
+	}
+}
+
+func TestValidateTimezoneUsesProductManifest(t *testing.T) {
+	for _, name := range []string{"Asia/Tokyo", "America/New_York", "UTC"} {
+		if err := ValidateTimezone(name); err != nil {
+			t.Fatalf("ValidateTimezone(%q): %v", name, err)
+		}
+	}
+	for _, name := range []string{"", "Local", "asia/tokyo", "Not/AZone"} {
+		if err := ValidateTimezone(name); err == nil {
+			t.Fatalf("ValidateTimezone(%q) succeeded", name)
 		}
 	}
 }

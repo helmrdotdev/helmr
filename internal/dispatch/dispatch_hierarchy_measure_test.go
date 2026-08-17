@@ -95,7 +95,8 @@ CREATE TEMP TABLE runs (
     state_version BIGINT NOT NULL,
     current_run_lease_id UUID,
     first_lease_at TIMESTAMPTZ,
-    queued_expires_at TIMESTAMPTZ
+    queued_expires_at TIMESTAMPTZ,
+    next_runtime_preparation_at TIMESTAMPTZ
 );
 CREATE INDEX runs_dispatch_fair_idx
     ON runs (

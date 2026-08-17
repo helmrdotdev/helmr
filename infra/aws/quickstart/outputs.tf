@@ -134,41 +134,54 @@ output "execution_nat_gateway_id" {
 }
 
 output "worker_autoscaling_group_name" {
-  description = "Run-worker Auto Scaling group name when create_worker is true."
-  value       = try(module.worker_group["run"].autoscaling_group_name, null)
+  description = "Current execution Worker Auto Scaling group name when create_worker is true."
+  value       = try(module.worker_group[local.worker_pool_name].autoscaling_group_name, null)
 }
 
 output "worker_autoscaling_group_arn" {
-  description = "Exact run-worker Auto Scaling group ARN."
-  value       = try(module.worker_group["run"].autoscaling_group_arn, null)
+  description = "Exact current execution Worker Auto Scaling group ARN."
+  value       = try(module.worker_group[local.worker_pool_name].autoscaling_group_arn, null)
 }
 
 output "worker_protect_from_scale_in" {
-  description = "Whether new run-worker instances start protected from scale in."
-  value       = try(module.worker_group["run"].protect_from_scale_in, null)
+  description = "Whether new execution Worker instances start protected from scale in."
+  value       = try(module.worker_group[local.worker_pool_name].protect_from_scale_in, null)
 }
 
 output "worker_iam_role_name" {
-  description = "Run-worker IAM role name when create_worker is true."
-  value       = try(module.worker_group["run"].iam_role_name, null)
+  description = "Execution Worker IAM role name when create_worker is true."
+  value       = try(module.worker_group[local.worker_pool_name].iam_role_name, null)
 }
 
-output "build_worker_autoscaling_group_name" {
-  description = "Build-worker Auto Scaling group name when create_worker is true."
-  value       = try(module.worker_group["build"].autoscaling_group_name, null)
+output "worker_generation_definitions" {
+  description = "Complete immutable generation inputs keyed by Product Pool name. Persist an old entry in retained_worker_generations until its restore authority is explicitly retired."
+  value = {
+    for pool_name, generation in local.worker_generations :
+    pool_name => {
+      generation_inputs = generation.generation_inputs
+      min_size          = generation.min_size
+      max_size          = generation.max_size
+      sealed_provider_definition = try(
+        module.worker_group[pool_name].sealed_provider_definition,
+        generation.sealed_provider_definition,
+      )
+    }
+  }
 }
 
-output "build_worker_autoscaling_group_arn" {
-  description = "Exact build-worker Auto Scaling group ARN."
-  value       = try(module.worker_group["build"].autoscaling_group_arn, null)
-}
-
-output "build_worker_protect_from_scale_in" {
-  description = "Whether new build-worker instances start protected from scale in."
-  value       = try(module.worker_group["build"].protect_from_scale_in, null)
-}
-
-output "build_worker_iam_role_name" {
-  description = "Build-worker IAM role name when create_worker is true."
-  value       = try(module.worker_group["build"].iam_role_name, null)
+output "worker_generation_bindings" {
+  description = "Exact Product Pool to provider ASG/launch-template bindings for all current and retained generations."
+  value = {
+    for pool_name, generation in local.worker_generations :
+    pool_name => {
+      provider_name           = generation.provider_name
+      autoscaling_group_name  = try(module.worker_group[pool_name].autoscaling_group_name, null)
+      autoscaling_group_arn   = try(module.worker_group[pool_name].autoscaling_group_arn, null)
+      launch_template_id      = try(module.worker_group[pool_name].launch_template_id, null)
+      launch_template_version = try(module.worker_group[pool_name].launch_template_version, null)
+      ami_id                  = generation.ami_id
+      min_size                = generation.min_size
+      max_size                = generation.max_size
+    }
+  }
 }

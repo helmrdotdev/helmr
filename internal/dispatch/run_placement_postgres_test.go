@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/capacityapi"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -161,6 +162,17 @@ func TestPlaceReadyRunPreparesMountAndGrantsFencedLeases(t *testing.T) {
 		reserved.WorkspaceMountID.Valid {
 		t.Fatalf("reservation placement = %+v", reserved)
 	}
+	var vmVCPUCount int32
+	var cpuConfigDigest string
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT vm_vcpu_count, cpu_config_digest
+  FROM runtime_instances
+ WHERE id = $1`, reserved.RuntimeInstanceID).Scan(&vmVCPUCount, &cpuConfigDigest); err != nil {
+		t.Fatal(err)
+	}
+	if vmVCPUCount != 1 || cpuConfigDigest != dbtest.DefaultCPUConfigID {
+		t.Fatalf("runtime CPU shape = %d/%q, want 1/%q", vmVCPUCount, cpuConfigDigest, dbtest.DefaultCPUConfigID)
+	}
 
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runtime_instances
@@ -192,6 +204,11 @@ UPDATE workspace_mounts
  WHERE id = $1`,
 		mounting.WorkspaceMountID,
 	)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runs
+   SET runtime_preparation_count = 3,
+       next_runtime_preparation_at = transaction_timestamp()
+ WHERE id = $1`, fixture.runID)
 
 	granted, err := fixture.authority.PlaceReadyRun(
 		fixture.ctx,
@@ -209,12 +226,16 @@ UPDATE workspace_mounts
 	var currentLeaseID, reservedRunID, workspaceLeaseID pgtype.UUID
 	var firstLeaseAt pgtype.Timestamptz
 	var stateVersion, writerGeneration, mountGeneration int64
+	var runtimePreparationCount int32
+	var nextRuntimePreparationAt pgtype.Timestamptz
 	var ownerRunLeaseID pgtype.UUID
 	var tokenHash string
 	err = fixture.pool.QueryRow(fixture.ctx, `
 SELECT runs.current_run_lease_id,
        runs.first_lease_at,
        runs.state_version,
+       runs.runtime_preparation_count,
+       runs.next_runtime_preparation_at,
        runtime_instances.reserved_run_id,
        workspaces.writer_generation,
        workspace_mounts.fencing_generation,
@@ -233,6 +254,8 @@ SELECT runs.current_run_lease_id,
 		&currentLeaseID,
 		&firstLeaseAt,
 		&stateVersion,
+		&runtimePreparationCount,
+		&nextRuntimePreparationAt,
 		&reservedRunID,
 		&writerGeneration,
 		&mountGeneration,
@@ -246,6 +269,8 @@ SELECT runs.current_run_lease_id,
 	if currentLeaseID != granted.Lease.ID ||
 		ownerRunLeaseID != granted.Lease.ID ||
 		!firstLeaseAt.Valid ||
+		runtimePreparationCount != 0 ||
+		nextRuntimePreparationAt.Valid ||
 		stateVersion != 2 ||
 		reservedRunID.Valid ||
 		writerGeneration != 1 ||
@@ -277,6 +302,183 @@ SELECT runs.current_run_lease_id,
 	}
 	if tokenHash != replayed.Hash || tokenHash == replayed.Token {
 		t.Fatal("Workspace Lease did not persist the replayable token hash")
+	}
+}
+
+func TestPlaceReadyRunEvictsOneIdleMountUnderCapacityPressure(t *testing.T) {
+	fixture := newRunPlacementFixture(t)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE worker_instances
+   SET max_vm_slots = 1,
+       max_runtime_starts = 1
+ WHERE id = $1`, fixture.workerID)
+
+	reserved, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	markRunPlacementRuntimeReady(t, fixture, reserved.RuntimeInstanceID)
+	mounted, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	markRunPlacementMountReady(t, fixture, mounted.WorkspaceMountID)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runtime_instances
+   SET reserved_run_id = NULL,
+       reserved_attempt_number = NULL,
+       reserved_workspace_version_id = NULL,
+       reservation_expires_at = NULL
+ WHERE id = $1`, reserved.RuntimeInstanceID)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE workspaces SET owner_run_id = NULL WHERE id = $1`, fixture.workspaceID)
+
+	secondRunID := uuid.New()
+	secondWorkspaceID := uuid.New()
+	secondVersionID := uuid.New()
+	tx, err := fixture.pool.Begin(fixture.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(fixture.ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, fixture.ctx, tx, `
+INSERT INTO workspaces (
+    id, environment_id, region_id, sandbox_declared_id,
+    deployment_definition_id, owner_run_id, ownership_generation,
+    writer_generation, head_version_id
+)
+SELECT $1, environment_id, region_id, sandbox_declared_id,
+       deployment_definition_id, $2, 1, 0, $3
+  FROM workspaces
+ WHERE id = $4`, secondWorkspaceID, secondRunID, secondVersionID, fixture.workspaceID)
+	dbtest.MustExec(t, fixture.ctx, tx, `
+INSERT INTO workspace_versions (
+    id, environment_id, workspace_id, kind, content_digest,
+    size_bytes, entry_count, state,
+    ownership_generation, writer_generation, published_at
+)
+SELECT $1, environment_id, $2, kind, content_digest,
+       size_bytes, entry_count, state, 0, 0, transaction_timestamp()
+  FROM workspace_versions
+ WHERE id = (SELECT head_version_id FROM workspaces WHERE id = $3)`,
+		secondVersionID, secondWorkspaceID, fixture.workspaceID)
+	dbtest.MustExec(t, fixture.ctx, tx, `
+INSERT INTO runs (
+    id, org_id, project_id, environment_id, deployment_id,
+    deployment_definition_id, entrypoint_kind, entrypoint_declared_id,
+    cause_kind, workspace_id, base_workspace_version_id, payload, queue_name,
+    queue_origin_at, queue_score_at, max_active_duration_ms, retry_policy,
+    trace_id, root_span_id
+)
+SELECT $1, org_id, project_id, environment_id, deployment_id,
+       deployment_definition_id, entrypoint_kind, entrypoint_declared_id,
+       'api', $2, $3, payload, queue_name,
+       transaction_timestamp(), transaction_timestamp(), max_active_duration_ms,
+       retry_policy, '33333333333333333333333333333333', '4444444444444444'
+  FROM runs
+ WHERE id = $4`, secondRunID, secondWorkspaceID, secondVersionID, fixture.runID)
+	dbtest.MustExec(t, fixture.ctx, tx, `
+INSERT INTO run_attempts (
+    run_id, number, entrypoint_kind, workspace_id, base_workspace_version_id
+) VALUES ($1, 1, 'task', $2, $3)`, secondRunID, secondWorkspaceID, secondVersionID)
+	if err := tx.Commit(fixture.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	secondCandidate := ReadyRunCandidate{
+		OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(secondRunID),
+		ExpectedRunStateVersion: 1,
+	}
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE workspaces SET dirty_state = 'dirty' WHERE id = $1`, fixture.workspaceID)
+	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondCandidate); !errors.Is(err, ErrCapacityUnavailable) {
+		t.Fatalf("dirty Workspace pressure error = %v, want ErrCapacityUnavailable", err)
+	}
+	var protectedState string
+	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT state FROM workspace_mounts WHERE id = $1`,
+		mounted.WorkspaceMountID).Scan(&protectedState); err != nil {
+		t.Fatal(err)
+	}
+	if protectedState != "mounted" {
+		t.Fatalf("dirty Workspace Mount state = %s, want mounted", protectedState)
+	}
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE workspaces SET dirty_state = 'clean' WHERE id = $1`, fixture.workspaceID)
+
+	processClaimID := uuid.New()
+	processID := uuid.New()
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+INSERT INTO idempotency_claims (
+    id, environment_id, operation, slot_hash,
+    request_fingerprint, accepted_at, expires_at
+) VALUES (
+    $1, $2, 'test.capacity-pressure', decode(repeat('51', 32), 'hex'),
+    decode(repeat('52', 32), 'hex'), transaction_timestamp(),
+    transaction_timestamp() + interval '30 days'
+)`, processClaimID, fixture.environmentID)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+INSERT INTO workspace_processes (
+    id, org_id, project_id, environment_id, workspace_id, base_version_id,
+    restore_desired_state, state, request, claim_id,
+    created_by_subject_type, created_by_subject_id
+) VALUES (
+    $1, $2, $3, $4, $5,
+    (SELECT head_version_id FROM workspaces WHERE id = $5),
+    'active', 'pending', '{}'::jsonb, $6, 'test', 'capacity-pressure'
+)`, processID, fixture.orgID, fixture.projectID, fixture.environmentID,
+		fixture.workspaceID, processClaimID)
+	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondCandidate); !errors.Is(err, ErrCapacityUnavailable) {
+		t.Fatalf("live Process pressure error = %v, want ErrCapacityUnavailable", err)
+	}
+	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT state FROM workspace_mounts WHERE id = $1`,
+		mounted.WorkspaceMountID).Scan(&protectedState); err != nil {
+		t.Fatal(err)
+	}
+	if protectedState != "mounted" {
+		t.Fatalf("live Process Workspace Mount state = %s, want mounted", protectedState)
+	}
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `DELETE FROM workspace_processes WHERE id = $1`, processID)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `DELETE FROM idempotency_claims WHERE id = $1`, processClaimID)
+
+	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondCandidate); !errors.Is(err, ErrCapacityUnavailable) {
+		t.Fatalf("capacity pressure placement error = %v, want ErrCapacityUnavailable", err)
+	}
+	var state string
+	var finalizationKind, finalizationReason pgtype.Text
+	var mountWorkerID, runtimeID pgtype.UUID
+	var workerEpoch, fencingGeneration int64
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT state, finalization_kind, finalization_reason_code,
+       worker_instance_id, worker_epoch, runtime_instance_id, fencing_generation
+  FROM workspace_mounts
+ WHERE id = $1`, mounted.WorkspaceMountID).Scan(
+		&state, &finalizationKind, &finalizationReason,
+		&mountWorkerID, &workerEpoch, &runtimeID, &fencingGeneration,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if state != "unmounting" || !finalizationKind.Valid || finalizationKind.String != "discard" ||
+		!finalizationReason.Valid || finalizationReason.String != "capacity_pressure" {
+		t.Fatalf("pressure Mount = state:%s finalization:%v/%v", state, finalizationKind, finalizationReason)
+	}
+	if _, err := db.New(fixture.pool).StopWorkspaceMount(fixture.ctx, db.StopWorkspaceMountParams{
+		ReasonCode: pgvalue.Text("capacity_pressure"), OrgID: pgvalue.UUID(fixture.orgID),
+		ID: mounted.WorkspaceMountID, WorkerInstanceID: mountWorkerID, WorkerEpoch: workerEpoch,
+		RuntimeInstanceID: runtimeID, FencingGeneration: fencingGeneration,
+		CleanupProof: []byte(`{"kind":"test_cleanup"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	next, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondCandidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.LeaseCreated || !next.RuntimeInstanceID.Valid || next.RuntimeInstanceID == reserved.RuntimeInstanceID {
+		t.Fatalf("post-pressure reservation = %+v", next)
 	}
 }
 
@@ -571,6 +773,47 @@ UPDATE workspaces
 	}
 	if len(planning) != 0 {
 		t.Fatalf("planning candidates after ownership change = %d, want 0", len(planning))
+	}
+}
+
+func TestRunPlanningHonorsRuntimePreparationBackoff(t *testing.T) {
+	fixture := newRunPlacementFixture(t)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runs
+   SET runtime_preparation_count = 1,
+       next_runtime_preparation_at = transaction_timestamp() + interval '1 minute'
+ WHERE id = $1`, fixture.runID)
+	params := mustRunCandidateParams(t, planningScope{
+		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
+		EnvironmentID: pgvalue.UUID(fixture.environmentID), RegionID: "us-east-1",
+		QueueName: "default",
+	}, 10)
+	candidates, err := db.New(fixture.pool).ListQueuedRunPlanningCandidatesForScopes(
+		fixture.ctx,
+		params,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("backed-off planning candidates = %d, want 0", len(candidates))
+	}
+	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate()); !errors.Is(err, ErrCandidateChanged) {
+		t.Fatalf("backed-off direct placement error = %v", err)
+	}
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runs
+   SET next_runtime_preparation_at = transaction_timestamp() - interval '1 second'
+ WHERE id = $1`, fixture.runID)
+	candidates, err = db.New(fixture.pool).ListQueuedRunPlanningCandidatesForScopes(
+		fixture.ctx,
+		params,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0].RunID != pgvalue.UUID(fixture.runID) {
+		t.Fatalf("eligible planning candidates = %+v", candidates)
 	}
 }
 
@@ -2589,7 +2832,8 @@ UPDATE worker_instances SET substrate_contract = 'incompatible-contract' WHERE i
 		t.Fatalf("restore placement with incompatible substrate contract error = %v, want ErrCapacityUnavailable", err)
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_instances SET substrate_contract = 'builder-v0' WHERE id = $1`, fixture.workerID)
+UPDATE worker_instances SET substrate_contract = $2 WHERE id = $1`,
+		fixture.workerID, capacityapi.SubstrateContractExt4)
 	restored, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate)
 	if err != nil {
 		t.Fatal(err)
@@ -2849,23 +3093,19 @@ UPDATE runs
 	if _, err := startupTx.Exec(fixture.ctx, `
 UPDATE worker_instances
 	   SET state = 'registering', current_epoch = 2,
-       supervisor_version = '',
-       supports_run = false,
-       supports_build = false,
 	       runtime_identity_id = NULL,
 	       substrate_format = '',
 	       substrate_contract = '',
        epoch_cpu_millis = 0,
        epoch_memory_bytes = 0,
        epoch_guest_ephemeral_disk_bytes = 0,
-       epoch_build_cache_bytes = 0,
-       epoch_artifact_cache_bytes = 0,
        per_vm_cpu_millis = 0,
        per_vm_memory_bytes = 0,
        per_vm_guest_ephemeral_disk_bytes = 0,
        max_vm_slots = 0,
-       max_build_executors = 0,
        max_runtime_starts = 0,
+	   cpu_environment = NULL,
+	   cpu_environment_digest = NULL,
        activated_at = NULL,
        epoch_started_at = transaction_timestamp(), updated_at = transaction_timestamp()
  WHERE id = $1`, fixture.workerID); err != nil {
@@ -3288,6 +3528,8 @@ UPDATE runtime_instances SET desired_state = 'closed', desired_version = desired
 func markRunPlacementRuntimeReadyQuery(t *testing.T, fixture runPlacementFixture, runtimeID pgtype.UUID) error {
 	t.Helper()
 	var desiredVersion, observedVersion, workerEpoch int64
+	var vmVCPUCount int32
+	var cpuConfigDigest string
 	var workerID, runtimeSubstrateID pgtype.UUID
 	err := fixture.pool.QueryRow(fixture.ctx, `
 WITH runtime AS (
@@ -3305,7 +3547,7 @@ inserted AS (
 		substrate_size_bytes
 	)
 	SELECT $2, org_id, project_id, environment_id, deployment_definition_id,
-		   'sha256:test-runtime-substrate', 'squashfs', 'builder-v0', 1
+		   'sha256:test-runtime-substrate', $3, $4, 1
       FROM runtime
     ON CONFLICT ON CONSTRAINT runtime_substrates_input_key DO NOTHING
     RETURNING id
@@ -3315,9 +3557,10 @@ UNION ALL
 SELECT runtime_substrates.id
   FROM runtime_substrates
   JOIN runtime USING (org_id, project_id, environment_id, deployment_definition_id)
- WHERE substrate_format = 'squashfs'
-   AND substrate_contract = 'builder-v0'
-LIMIT 1`, runtimeID, pgvalue.NewUUIDv7()).Scan(&runtimeSubstrateID)
+ WHERE substrate_format = $3
+   AND substrate_contract = $4
+LIMIT 1`, runtimeID, pgvalue.NewUUIDv7(),
+		capacityapi.SubstrateFormatExt4, capacityapi.SubstrateContractExt4).Scan(&runtimeSubstrateID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3325,10 +3568,13 @@ LIMIT 1`, runtimeID, pgvalue.NewUUIDv7()).Scan(&runtimeSubstrateID)
 SELECT runtime_instances.desired_version,
        runtime_instances.observed_version,
        runtime_instances.worker_instance_id,
-       runtime_instances.worker_epoch
+       runtime_instances.worker_epoch,
+       runtime_instances.vm_vcpu_count,
+       runtime_instances.cpu_config_digest
   FROM runtime_instances
  WHERE runtime_instances.id = $1`, runtimeID).Scan(
 		&desiredVersion, &observedVersion, &workerID, &workerEpoch,
+		&vmVCPUCount, &cpuConfigDigest,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -3337,6 +3583,7 @@ SELECT runtime_instances.desired_version,
 		RuntimeSubstrateID: runtimeSubstrateID,
 		DesiredVersion:     desiredVersion, ID: runtimeID, WorkerInstanceID: workerID,
 		WorkerEpoch: workerEpoch, ExpectedObservedVersion: observedVersion,
+		VMVCPUCount: vmVCPUCount, CPUConfigDigest: cpuConfigDigest,
 	})
 	return err
 }
@@ -3373,46 +3620,6 @@ UPDATE worker_instances
 	}
 	if runtimes != 0 {
 		t.Fatalf("created %d runtimes for an incompatible per-VM profile", runtimes)
-	}
-}
-
-func TestPlaceReadyRunAccountsForActiveBuildResources(t *testing.T) {
-	fixture := newRunPlacementFixture(t)
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_instances
-   SET epoch_memory_bytes = 4294967296,
-       epoch_guest_ephemeral_disk_bytes = 68719476736,
-       per_vm_guest_ephemeral_disk_bytes = 68719476736
- WHERE id = $1`,
-		fixture.workerID,
-	)
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-INSERT INTO deployment_build_leases (
-    id, org_id, project_id, environment_id, deployment_id, build_region_id,
-    lease_sequence, worker_group_id, worker_instance_id, worker_epoch,
-    requested_cpu_millis, requested_memory_bytes,
-    requested_guest_ephemeral_disk_bytes, requested_build_executors,
-    build_snapshot, start_deadline_at, expires_at
-) VALUES (
-    $1, $2, $3, $4, $5, 'us-east-1', 1, $6, $7, 1,
-    3000, 4294967296, 34359738368,
-    1, '{}'::jsonb, now() + interval '1 minute', now() + interval '5 minutes'
-)`,
-		uuid.Must(uuid.NewV7()),
-		fixture.orgID,
-		fixture.projectID,
-		fixture.environmentID,
-		fixture.deploymentID,
-		fixture.groupID,
-		fixture.workerID,
-	)
-
-	_, err := fixture.authority.PlaceReadyRun(
-		fixture.ctx,
-		fixture.candidate(),
-	)
-	if err != ErrCapacityUnavailable {
-		t.Fatalf("PlaceReadyRun() error = %v, want ErrCapacityUnavailable", err)
 	}
 }
 
@@ -3464,11 +3671,10 @@ func newRunPlacementFixtureWithSeed(t *testing.T, seed string) runPlacementFixtu
 	taskDefinitionID := id("task-definition")
 	workspaceDefinitionID := id("workspace-definition")
 	versionID := id("workspace-version")
-	sourceID := id("source-artifact")
 	programID := id("program-artifact")
 	imageID := id("image-artifact")
-	runtimeIdentityID := "run-runtime-" + strings.ReplaceAll(id("runtime-identity").String(), "-", "")
-	sourceDigest := "sha256:" + strings.Repeat("1", 64)
+	bundleDigest := "sha256:" + strings.Repeat("1", 64)
+	runtimeDigest := "sha256:" + strings.Repeat("3", 64)
 	programDigest := "sha256:" + strings.Repeat("2", 64)
 	imageDigest := "sha256:" + strings.Repeat("4", 64)
 
@@ -3499,11 +3705,9 @@ VALUES ($1, $2, $3, $4, 'Environment', '#3366ff')`,
 	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES
-    ($1, $2, 1, 'application/vnd.helmr.deployment-source.v0+tar'),
-    ($1, $3, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-    ($1, $4, 1, 'application/octet-stream')`,
+    ($1, $2, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+    ($1, $3, 1, 'application/octet-stream')`,
 		fixture.orgID,
-		sourceDigest,
 		programDigest,
 		imageDigest,
 	)
@@ -3511,39 +3715,30 @@ VALUES
 INSERT INTO artifacts (
     id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type
 ) VALUES
-    ($1, $4, $5, $6, $7, 'deployment_source', 1, 'application/vnd.helmr.deployment-source.v0+tar'),
-    ($2, $4, $5, $6, $8, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-    ($3, $4, $5, $6, $9, 'workspace_image', 1, 'application/octet-stream')`,
-		sourceID,
+    ($1, $3, $4, $5, $6, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
+    ($2, $3, $4, $5, $7, 'workspace_image', 1, 'application/octet-stream')`,
 		programID,
 		imageID,
 		fixture.orgID,
 		fixture.projectID,
 		fixture.environmentID,
-		sourceDigest,
 		programDigest,
 		imageDigest,
 	)
 	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO deployments (
-    id, org_id, project_id, environment_id, build_region_id,
-    build_node_version, build_runtime_digest, build_toolchain_digest,
-    build_manager_name, build_manager_version, build_manager_digest,
-    build_contract, image_cache_mode, version, content_hash, deployment_source_artifact_id,
-    program_artifact_id, program_index_digest, queue_config, status
+    id, org_id, project_id, environment_id, version, bundle_digest,
+    runtime_artifact_digest, program_artifact_id, program_index_digest, queue_config
 ) VALUES (
-    $1, $2, $3, $4, 'us-east-1', '24.16.0',
-    decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
-    'npm', '11.5.0', decode(repeat('22', 32), 'hex'),
-    'helmr.program-build.v0', 'prefer', 'v1', $5, $6, $7,
-    decode(repeat('03', 32), 'hex'), '{}'::jsonb, 'deployed'
+    $1, $2, $3, $4, 'v1', $5, $6, $7,
+    decode(repeat('03', 32), 'hex'), '{}'::jsonb
 )`,
 		deploymentID,
 		fixture.orgID,
 		fixture.projectID,
 		fixture.environmentID,
-		sourceDigest,
-		sourceID,
+		bundleDigest,
+		runtimeDigest,
 		programID,
 	)
 	workspaceManifest := fmt.Sprintf(
@@ -3573,40 +3768,60 @@ WITH token AS (
     RETURNING id
 )
 INSERT INTO worker_groups (
-    id, token_id, region_id, name, allows_run, allows_build
+    id, token_id, region_id, name
 )
-SELECT $1, token.id, 'us-east-1', $1, true, false FROM token`,
+SELECT $1, token.id, 'us-east-1', $1 FROM token`,
 		fixture.groupID, id("worker-group-token"), dbtest.Hash("run-placement-worker-group"),
 	)
-	dbtest.MustExec(t, ctx, pool, `
-INSERT INTO runtime_identities (
-    id, runtime_arch, vm_runtime_contract, kernel_digest, initramfs_digest,
-    rootfs_digest
-) VALUES ($1, 'x86_64', 'helmr.vm-runtime.v0', 'kernel', 'initramfs', 'rootfs')`,
-		runtimeIdentityID,
-	)
+	poolSpec := dispatchWorkerPoolFixture{
+		substrateFormat:                 capacityapi.SubstrateFormatExt4,
+		substrateContract:               capacityapi.SubstrateContractExt4,
+		capacityCPUMillis:               8000,
+		capacityMemoryBytes:             8589934592,
+		capacityGuestEphemeralDiskBytes: 274877906944,
+		perVMCPUMillis:                  1000,
+		perVMMemoryBytes:                1073741824,
+		perVMGuestEphemeralDiskBytes:    34359738368,
+		maxVMSlots:                      8,
+	}
+	seedDispatchWorkerPool(t, ctx, pool, fixture.groupID, poolSpec)
+	cpuEnvironment, cpuEnvironmentDigest := dispatchCPUEnvironment(t)
 	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO worker_instances (
-    id, resource_id, worker_group_id, state,
-	current_epoch, current_service_id, supervisor_version,
-    supports_run, runtime_identity_id,
+	id, resource_id, worker_group_id, worker_pool_id, state,
+	current_epoch, current_service_id,
+	runtime_identity_id,
 	substrate_format, substrate_contract,
     epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
     per_vm_cpu_millis, per_vm_memory_bytes,
-    per_vm_guest_ephemeral_disk_bytes, max_vm_slots,
-    max_runtime_starts, observed_at, epoch_started_at, activated_at
+    per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_runtime_starts,
+    cpu_environment, cpu_environment_digest,
+    observed_at, epoch_started_at, activated_at
 ) VALUES (
-	$1, $2, $3, 'active', 1, $4,
-	'test-worker', true, $5, 'squashfs', 'builder-v0',
-    8000, 8589934592, 274877906944,
-    1000, 1073741824, 34359738368,
-    8, 8, now(), now(), now()
+	$1, $2, $3, $4, 'active', 1, $5,
+	$6, $16, $17,
+	$7, $8, $9,
+	$10, $11, $12,
+	$13, $13,
+	$14::jsonb, $15, now(), now(), now()
 )`,
 		fixture.workerID,
 		fixture.workerID.String(),
 		fixture.groupID,
+		dbtest.DefaultWorkerPoolID,
 		id("worker-service"),
-		runtimeIdentityID,
+		dbtest.DefaultRuntimeID,
+		poolSpec.capacityCPUMillis,
+		poolSpec.capacityMemoryBytes,
+		poolSpec.capacityGuestEphemeralDiskBytes,
+		poolSpec.perVMCPUMillis,
+		poolSpec.perVMMemoryBytes,
+		poolSpec.perVMGuestEphemeralDiskBytes,
+		poolSpec.maxVMSlots,
+		cpuEnvironment,
+		cpuEnvironmentDigest,
+		poolSpec.substrateFormat,
+		poolSpec.substrateContract,
 	)
 	tx, err := pool.Begin(ctx)
 	if err != nil {

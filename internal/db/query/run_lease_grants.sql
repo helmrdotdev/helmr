@@ -1,5 +1,31 @@
 -- name: CreateRunRuntimeReservation :one
-WITH created_runtime AS (
+WITH selected_shape AS MATERIALIZED (
+    SELECT worker_pool_cpu_shapes.vcpu_count,
+           worker_pool_cpu_shapes.cpu_config_digest
+      FROM worker_instances
+      JOIN worker_groups
+        ON worker_groups.id = worker_instances.worker_group_id
+       AND worker_groups.state = 'active'
+      JOIN worker_pools
+	    ON worker_pools.id = worker_instances.worker_pool_id
+	   AND worker_pools.worker_group_id = worker_instances.worker_group_id
+	   AND worker_pools.state = 'active'
+      JOIN worker_pool_cpu_shapes
+        ON worker_pool_cpu_shapes.worker_pool_id = worker_pools.id
+       AND worker_pool_cpu_shapes.vcpu_count = ((sqlc.arg(reserved_cpu_millis)::bigint - 1) / 1000 + 1)::integer
+     WHERE worker_instances.id = sqlc.arg(worker_instance_id)
+       AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
+	   AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
+	   AND worker_instances.state = 'active'
+       AND (
+           sqlc.narg(restore_checkpoint_id)::uuid IS NOT NULL
+           OR worker_groups.primary_pool_id = worker_pools.id
+       )
+       AND (
+           sqlc.narg(required_cpu_config_digest)::text IS NULL
+           OR worker_pool_cpu_shapes.cpu_config_digest = sqlc.narg(required_cpu_config_digest)
+       )
+), created_runtime AS (
     INSERT INTO runtime_instances (
         id,
         org_id,
@@ -11,6 +37,8 @@ WITH created_runtime AS (
         runtime_identity_id,
         deployment_definition_id,
         worker_epoch,
+        vm_vcpu_count,
+        cpu_config_digest,
         reserved_cpu_millis,
         reserved_memory_bytes,
         reserved_guest_ephemeral_disk_bytes,
@@ -23,7 +51,7 @@ WITH created_runtime AS (
         reserved_workspace_version_id,
         reservation_expires_at,
         desired_reason
-    ) VALUES (
+    ) SELECT
         sqlc.arg(id),
         sqlc.arg(org_id),
         sqlc.arg(worker_group_id),
@@ -34,6 +62,8 @@ WITH created_runtime AS (
         sqlc.arg(runtime_identity_id),
         sqlc.arg(deployment_definition_id),
         sqlc.arg(worker_epoch),
+        selected_shape.vcpu_count,
+        selected_shape.cpu_config_digest,
         sqlc.arg(reserved_cpu_millis),
         sqlc.arg(reserved_memory_bytes),
         sqlc.arg(reserved_guest_ephemeral_disk_bytes),
@@ -46,7 +76,7 @@ WITH created_runtime AS (
         sqlc.arg(base_workspace_version_id),
         sqlc.arg(reservation_expires_at),
         'run_reservation'
-    )
+      FROM selected_shape
     RETURNING *
 )
 SELECT created_runtime.*
@@ -205,6 +235,8 @@ UPDATE runtime_instances
 UPDATE runs
    SET current_run_lease_id = sqlc.arg(run_lease_id),
        first_lease_at = coalesce(first_lease_at, transaction_timestamp()),
+       runtime_preparation_count = 0,
+       next_runtime_preparation_at = NULL,
        state_version = state_version + 1,
        updated_at = transaction_timestamp()
  WHERE id = sqlc.arg(id)
@@ -213,5 +245,7 @@ UPDATE runs
    AND status = 'queued'
    AND current_attempt_number = sqlc.arg(attempt_number)
    AND current_run_lease_id IS NULL
+   AND (next_runtime_preparation_at IS NULL
+        OR next_runtime_preparation_at <= transaction_timestamp())
    AND (first_lease_at IS NOT NULL OR queued_expires_at IS NULL OR queued_expires_at > transaction_timestamp())
 RETURNING *;

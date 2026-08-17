@@ -211,7 +211,7 @@ func TestVerificationFailureContract(t *testing.T) {
 			name: "message bound",
 			change: func(result *VerificationResult) {
 				result.Failed.Error.Message =
-					strings.Repeat("x", maxBuildFailureMessageBytes+1)
+					strings.Repeat("x", maxVerificationFailureMessageBytes+1)
 			},
 			wantErr: "nonblank UTF-8",
 		},

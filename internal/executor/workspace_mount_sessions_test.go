@@ -172,7 +172,7 @@ func TestRenewWorkspaceAuthorityUsesMountedSession(t *testing.T) {
 		ID:                "mount-1",
 		WorkspaceID:       "workspace-1",
 		RuntimeInstanceID: "runtime-1",
-		FencingGeneration: 4,
+		FencingGeneration: 3,
 		BaseVersionID:     "version-1",
 	}, parent, "channel-1")
 	request := &workspacev0.RenewWorkspaceAuthorityRequest{
@@ -237,7 +237,7 @@ func TestBeginWorkspaceFinalizationUsesMountedSession(t *testing.T) {
 	registry := NewWorkspaceMountSessions()
 	registry.RegisterWorkspaceMountSession(workerapi.WorkspaceMount{
 		ID: "mount-1", WorkspaceID: "workspace-1", RuntimeInstanceID: "runtime-1",
-		FencingGeneration: 4, BaseVersionID: "version-1",
+		FencingGeneration: 3, BaseVersionID: "version-1",
 	}, parent, "channel-1")
 	request := &workspacev0.BeginWorkspaceFinalizationRequest{
 		Previous: &workspacev0.WorkspaceRunAuthority{
@@ -286,6 +286,32 @@ func TestBeginWorkspaceFinalizationUsesMountedSession(t *testing.T) {
 	}
 	if err := <-serverResult; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFinalizationSessionSeparatesPhysicalIdentityFromLogicalFence(t *testing.T) {
+	registry := NewWorkspaceMountSessions()
+	registry.RegisterWorkspaceMountSession(workerapi.WorkspaceMount{
+		ID: "mount-1", WorkspaceID: "workspace-1", RuntimeInstanceID: "runtime-1",
+		FencingGeneration: 3, BaseVersionID: "version-1",
+	}, &borrowedParentSession{stream: discardReadWriteCloser{}}, "channel-1")
+	envelope := &workspacev0.WorkspaceFinalizationEnvelope{
+		Authority: &workspacev0.WorkspaceRunAuthority{
+			Fence: &workspacev0.WorkspaceAuthorityFence{
+				WorkspaceMountId: "mount-1", WorkspaceId: "workspace-1",
+				RuntimeInstanceId: "runtime-1", MountFencingGeneration: 4,
+				BaseWorkspaceVersionId: "version-1",
+			},
+			ChannelToken: "channel-1",
+		},
+	}
+	if _, err := registry.finalizationSession(envelope); err != nil {
+		t.Fatalf("advanced logical fence rejected exact physical mount: %v", err)
+	}
+
+	envelope.Authority.Fence.RuntimeInstanceId = "other-runtime"
+	if _, err := registry.finalizationSession(envelope); err == nil {
+		t.Fatal("physical identity mismatch was accepted")
 	}
 }
 

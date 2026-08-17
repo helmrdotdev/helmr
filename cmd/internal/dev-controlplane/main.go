@@ -91,16 +91,17 @@ func main() {
 		log.Error("configure dev CAS", "error", err)
 		os.Exit(1)
 	}
-	buildPolicyRaw, err := os.ReadFile(cfg.buildPolicyPath)
+	runtimeRaw, err := os.ReadFile(cfg.deploymentRuntimeDescriptorPath)
 	if err != nil {
-		log.Error("read dev build policy", "error", err)
+		log.Error("read dev deployment Runtime descriptor", "error", err)
 		os.Exit(1)
 	}
-	buildPolicy, err := deployment.ParseBuildPolicy(buildPolicyRaw)
+	runtimeDescriptor, err := deployment.ParseRuntimeDescriptor(runtimeRaw)
 	if err != nil {
-		log.Error("parse dev build policy", "error", err)
+		log.Error("parse dev deployment Runtime descriptor", "error", err)
 		os.Exit(1)
 	}
+	bundleAdmission := deployment.DeploymentBundleAdmission{Runtime: runtimeDescriptor}
 	pool.Close()
 	pool, err = pgxpool.New(ctx, cfg.databaseURL)
 	if err != nil {
@@ -186,10 +187,10 @@ func main() {
 		ReadinessDB:           pool,
 		Auth:                  controlplane.NewDBAuthenticator(queries),
 		CAS:                   casStore,
-		BuildPolicy:           buildPolicy,
+		BundleAdmission:       &bundleAdmission,
+		PlatformStore:         casStore,
 		Secrets:               secretStore,
 		SecretDelivery:        secretStore,
-		RegistryCredentials:   secretStore,
 		WorkspaceFencingKey:   workspaceFencingKey,
 		TokenCredentialKey:    tokenCredentialKey,
 		WorkerTokenSigningKey: cfg.workerTokenKey,
@@ -233,25 +234,25 @@ func main() {
 }
 
 type devConfig struct {
-	addr                string
-	deploymentMode      string
-	databaseURL         string
-	bootstrap           config.Bootstrap
-	clickHouseURL       string
-	clickHouseUser      string
-	clickHousePassword  string
-	redisURL            string
-	casDir              string
-	buildPolicyPath     string
-	publicURL           string
-	authKey             []byte
-	setupToken          string
-	workerTokenKey      []byte
-	encryptionKey       []byte
-	workspaceFencingKey []byte
-	tokenCredentialKey  []byte
-	resetDatabase       bool
-	seedData            bool
+	addr                            string
+	deploymentMode                  string
+	databaseURL                     string
+	bootstrap                       config.Bootstrap
+	clickHouseURL                   string
+	clickHouseUser                  string
+	clickHousePassword              string
+	redisURL                        string
+	casDir                          string
+	deploymentRuntimeDescriptorPath string
+	publicURL                       string
+	authKey                         []byte
+	setupToken                      string
+	workerTokenKey                  []byte
+	encryptionKey                   []byte
+	workspaceFencingKey             []byte
+	tokenCredentialKey              []byte
+	resetDatabase                   bool
+	seedData                        bool
 }
 
 func loadConfig() (devConfig, error) {
@@ -260,18 +261,18 @@ func loadConfig() (devConfig, error) {
 		return devConfig{}, err
 	}
 	cfg := devConfig{
-		addr:               textEnv("CONTROL_PLANE_ADDR", defaultAddr),
-		deploymentMode:     textEnv("DEPLOYMENT_MODE", "self-hosted"),
-		databaseURL:        textEnv("DATABASE_URL", ""),
-		bootstrap:          bootstrapConfig,
-		clickHouseURL:      textEnv("CLICKHOUSE_URL", ""),
-		clickHouseUser:     textEnv("CLICKHOUSE_USER", ""),
-		clickHousePassword: secretEnv("CLICKHOUSE_PASSWORD", ""),
-		redisURL:           textEnv("REDIS_URL", defaultRedisURL),
-		casDir:             textEnv("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
-		buildPolicyPath:    textEnv("BUILD_POLICY_PATH", ""),
-		publicURL:          textEnv("PUBLIC_URL", defaultPublicURL),
-		setupToken:         secretEnv("SETUP_TOKEN", defaultSetupToken),
+		addr:                            textEnv("CONTROL_PLANE_ADDR", defaultAddr),
+		deploymentMode:                  textEnv("DEPLOYMENT_MODE", "self-hosted"),
+		databaseURL:                     textEnv("DATABASE_URL", ""),
+		bootstrap:                       bootstrapConfig,
+		clickHouseURL:                   textEnv("CLICKHOUSE_URL", ""),
+		clickHouseUser:                  textEnv("CLICKHOUSE_USER", ""),
+		clickHousePassword:              secretEnv("CLICKHOUSE_PASSWORD", ""),
+		redisURL:                        textEnv("REDIS_URL", defaultRedisURL),
+		casDir:                          textEnv("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
+		deploymentRuntimeDescriptorPath: textEnv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", ""),
+		publicURL:                       textEnv("PUBLIC_URL", defaultPublicURL),
+		setupToken:                      secretEnv("SETUP_TOKEN", defaultSetupToken),
 	}
 	if cfg.resetDatabase, err = boolEnv("HELMR_DEV_RESET_DATABASE", false); err != nil {
 		return cfg, err
@@ -298,11 +299,11 @@ func loadConfig() (devConfig, error) {
 	if cfg.databaseURL == "" {
 		return cfg, errors.New("DATABASE_URL is required")
 	}
+	if cfg.deploymentRuntimeDescriptorPath == "" {
+		return cfg, errors.New("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH is required")
+	}
 	if strings.TrimSpace(cfg.setupToken) != cfg.setupToken {
 		return cfg, errors.New("SETUP_TOKEN must not have surrounding whitespace")
-	}
-	if cfg.buildPolicyPath == "" {
-		return cfg, errors.New("BUILD_POLICY_PATH is required")
 	}
 	if cfg.clickHouseURL == "" {
 		return cfg, errors.New("CLICKHOUSE_URL is required")

@@ -33,16 +33,13 @@ variable "controlplane_vpc_cidr" {
 }
 
 variable "execution_vpc_cidr" {
-  description = "CIDR block for the unrouted Execution VPC. The complete prefix must be covered by the deployment-supplied Worker deny set."
+  description = "CIDR block for the unrouted Execution VPC. The exact prefix must appear in the deployment-supplied Worker deny set."
   type        = string
   default     = "10.91.0.0/16"
 
   validation {
-    condition = can(cidrnetmask(var.execution_vpc_cidr)) && anytrue([
-      for blocked in var.worker_network_blocked_ipv4_cidrs :
-      try(cidrcontains(blocked, cidrhost(var.execution_vpc_cidr, 0)) && cidrcontains(blocked, cidrhost(var.execution_vpc_cidr, -1)), false)
-    ])
-    error_message = "execution_vpc_cidr must be an IPv4 prefix wholly contained by worker_network_blocked_ipv4_cidrs."
+    condition     = can(cidrnetmask(var.execution_vpc_cidr)) && contains(var.worker_network_blocked_ipv4_cidrs, var.execution_vpc_cidr)
+    error_message = "execution_vpc_cidr must appear exactly in worker_network_blocked_ipv4_cidrs."
   }
 }
 
@@ -115,16 +112,6 @@ variable "platform_store_bucket_arn" {
 variable "platform_store_kms_key_arn" {
   description = "Platform Artifact store KMS key ARN exported by the bootstrap module."
   type        = string
-}
-
-variable "build_policy_digest" {
-  description = "Exact committed build-policy digest for this stack rollout."
-  type        = string
-
-  validation {
-    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.build_policy_digest))
-    error_message = "build_policy_digest must be lowercase sha256:<64 hexadecimal digits>."
-  }
 }
 
 variable "clickhouse_url" {
@@ -370,6 +357,151 @@ variable "create_worker" {
   default     = false
 }
 
+variable "retained_worker_generations" {
+  description = "Immutable prior execution Worker Pool generations retained as scale-zero ASG/LT/AMI supply for exact checkpoint restore. Keys must equal execution-sha256(jsonencode(generation_inputs))."
+  type = map(object({
+    generation_inputs = object({
+      ami_id                = string
+      instance_type         = string
+      nested_virtualization = bool
+      supply = object({
+        contract_digest = string
+        enable_ssm      = bool
+        network = object({
+          blocked_ipv4_cidrs = list(string)
+          link_pool          = string
+          resolver_ipv4      = string
+          translation_pool   = string
+        })
+        platform_store = object({
+          uri         = string
+          bucket_arn  = string
+          kms_key_arn = string
+        })
+        root_volume = object({
+          size_gb    = number
+          iops       = number
+          throughput = number
+        })
+        disk = object({
+          total_mib           = number
+          reserve_mib         = number
+          substrate_cache_mib = number
+          artifact_cache_mib  = number
+        })
+        lifecycle = object({
+          health_check_grace_period_seconds               = number
+          launch_lifecycle_heartbeat_timeout_seconds      = number
+          termination_lifecycle_heartbeat_timeout_seconds = number
+          termination_drain_timeout_seconds               = number
+          lifecycle_heartbeat_interval_seconds            = number
+          termination_policies                            = list(string)
+          protect_from_scale_in                           = bool
+          health_check_type                               = string
+          instance_refresh_strategy                       = string
+          instance_refresh_min_healthy_percentage         = number
+          instance_refresh_max_healthy_percentage         = number
+          instance_refresh_scale_in_protected_instances   = string
+          instance_refresh_standby_instances              = string
+          instance_refresh_skip_matching                  = bool
+          launch_lifecycle_transition                     = string
+          launch_lifecycle_default_result                 = string
+          termination_lifecycle_transition                = string
+          termination_lifecycle_default_result            = string
+        })
+      })
+      capacity = object({
+        cpu_millis               = number
+        memory_mib               = number
+        guest_ephemeral_disk_mib = number
+        vm_slots                 = number
+      })
+      per_vm = object({
+        cpu_millis               = number
+        memory_mib               = number
+        guest_ephemeral_disk_mib = number
+      })
+    })
+    min_size = number
+    max_size = number
+    sealed_provider_definition = object({
+      user_data_base64                                = string
+      permission_policy_json                          = string
+      boundary_policy_json                            = string
+      enable_ssm                                      = bool
+      launch_template_version                         = string
+      health_check_grace_period_seconds               = number
+      launch_lifecycle_heartbeat_timeout_seconds      = number
+      termination_lifecycle_heartbeat_timeout_seconds = number
+      termination_drain_timeout_seconds               = number
+      lifecycle_heartbeat_interval_seconds            = number
+      termination_policies                            = list(string)
+      protect_from_scale_in                           = bool
+      health_check_type                               = string
+      instance_refresh_strategy                       = string
+      instance_refresh_min_healthy_percentage         = number
+      instance_refresh_max_healthy_percentage         = number
+      instance_refresh_scale_in_protected_instances   = string
+      instance_refresh_standby_instances              = string
+      instance_refresh_skip_matching                  = bool
+      launch_lifecycle_transition                     = string
+      launch_lifecycle_default_result                 = string
+      termination_lifecycle_transition                = string
+      termination_lifecycle_default_result            = string
+    })
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for pool_name, generation in var.retained_worker_generations :
+      pool_name == "execution-${sha256(jsonencode(generation.generation_inputs))}" &&
+      generation.min_size == 0 &&
+      generation.max_size > 0 &&
+      generation.generation_inputs.supply.disk.total_mib > generation.generation_inputs.supply.disk.reserve_mib &&
+      generation.generation_inputs.capacity.cpu_millis > 0 &&
+      generation.generation_inputs.capacity.cpu_millis % 1000 == 0 &&
+      generation.generation_inputs.capacity.memory_mib > 0 &&
+      generation.generation_inputs.capacity.vm_slots > 0 &&
+      generation.generation_inputs.per_vm.cpu_millis > 0 &&
+      generation.generation_inputs.per_vm.cpu_millis % 1000 == 0 &&
+      generation.generation_inputs.per_vm.memory_mib > 0 &&
+      generation.generation_inputs.per_vm.guest_ephemeral_disk_mib > 0 &&
+      generation.generation_inputs.supply.disk.substrate_cache_mib > 0 &&
+      generation.generation_inputs.supply.disk.artifact_cache_mib > 0 &&
+      can(base64decode(generation.sealed_provider_definition.user_data_base64)) &&
+      can(jsondecode(generation.sealed_provider_definition.permission_policy_json)) &&
+      can(jsondecode(generation.sealed_provider_definition.boundary_policy_json)) &&
+      can(regex("^[1-9][0-9]*$", generation.sealed_provider_definition.launch_template_version)) &&
+      generation.sealed_provider_definition.enable_ssm == generation.generation_inputs.supply.enable_ssm &&
+      generation.sealed_provider_definition.health_check_grace_period_seconds == generation.generation_inputs.supply.lifecycle.health_check_grace_period_seconds &&
+      generation.sealed_provider_definition.launch_lifecycle_heartbeat_timeout_seconds == generation.generation_inputs.supply.lifecycle.launch_lifecycle_heartbeat_timeout_seconds &&
+      generation.sealed_provider_definition.termination_lifecycle_heartbeat_timeout_seconds == generation.generation_inputs.supply.lifecycle.termination_lifecycle_heartbeat_timeout_seconds &&
+      generation.sealed_provider_definition.termination_drain_timeout_seconds == generation.generation_inputs.supply.lifecycle.termination_drain_timeout_seconds &&
+      generation.sealed_provider_definition.lifecycle_heartbeat_interval_seconds == generation.generation_inputs.supply.lifecycle.lifecycle_heartbeat_interval_seconds &&
+      generation.sealed_provider_definition.termination_policies == generation.generation_inputs.supply.lifecycle.termination_policies &&
+      generation.sealed_provider_definition.protect_from_scale_in == generation.generation_inputs.supply.lifecycle.protect_from_scale_in &&
+      generation.sealed_provider_definition.health_check_type == generation.generation_inputs.supply.lifecycle.health_check_type &&
+      generation.sealed_provider_definition.instance_refresh_strategy == generation.generation_inputs.supply.lifecycle.instance_refresh_strategy &&
+      generation.sealed_provider_definition.instance_refresh_min_healthy_percentage == generation.generation_inputs.supply.lifecycle.instance_refresh_min_healthy_percentage &&
+      generation.sealed_provider_definition.instance_refresh_max_healthy_percentage == generation.generation_inputs.supply.lifecycle.instance_refresh_max_healthy_percentage &&
+      generation.sealed_provider_definition.instance_refresh_scale_in_protected_instances == generation.generation_inputs.supply.lifecycle.instance_refresh_scale_in_protected_instances &&
+      generation.sealed_provider_definition.instance_refresh_standby_instances == generation.generation_inputs.supply.lifecycle.instance_refresh_standby_instances &&
+      generation.sealed_provider_definition.instance_refresh_skip_matching == generation.generation_inputs.supply.lifecycle.instance_refresh_skip_matching &&
+      generation.sealed_provider_definition.launch_lifecycle_transition == generation.generation_inputs.supply.lifecycle.launch_lifecycle_transition &&
+      generation.sealed_provider_definition.launch_lifecycle_default_result == generation.generation_inputs.supply.lifecycle.launch_lifecycle_default_result &&
+      generation.sealed_provider_definition.termination_lifecycle_transition == generation.generation_inputs.supply.lifecycle.termination_lifecycle_transition &&
+      generation.sealed_provider_definition.termination_lifecycle_default_result == generation.generation_inputs.supply.lifecycle.termination_lifecycle_default_result &&
+      generation.sealed_provider_definition.health_check_grace_period_seconds > 0 &&
+      generation.sealed_provider_definition.launch_lifecycle_heartbeat_timeout_seconds > generation.sealed_provider_definition.lifecycle_heartbeat_interval_seconds &&
+      generation.sealed_provider_definition.termination_lifecycle_heartbeat_timeout_seconds >= generation.sealed_provider_definition.lifecycle_heartbeat_interval_seconds * 3 &&
+      generation.sealed_provider_definition.termination_drain_timeout_seconds > 0 &&
+      length(generation.sealed_provider_definition.termination_policies) > 0
+    ])
+    error_message = "retained_worker_generations must bind each canonical execution Pool key to one complete scale-zero generation input and sealed provider definition."
+  }
+}
+
 variable "worker_launch_timeout_seconds" {
   description = "Deployment-owned ASG launch-hook timeout while a Worker reaches Control Plane readiness."
   type        = number
@@ -442,23 +574,6 @@ variable "worker_max_size" {
   default     = 3
 }
 
-variable "build_worker_min_size" {
-  description = "Minimum build-worker instance count."
-  type        = number
-  default     = 0
-}
-
-variable "build_worker_max_size" {
-  description = "Maximum build-worker instance count."
-  type        = number
-  default     = 3
-}
-
-variable "build_worker_instance_type" {
-  type     = string
-  default  = null
-  nullable = true
-}
 variable "worker_capacity_vcpus" {
   type     = number
   default  = null
@@ -484,84 +599,6 @@ variable "worker_artifact_cache_max_mib" {
   default  = null
   nullable = true
 }
-variable "build_worker_enable_nested_virtualization" {
-  type     = bool
-  default  = null
-  nullable = true
-}
-variable "build_worker_root_volume_size_gb" {
-  type     = number
-  default  = null
-  nullable = true
-}
-variable "build_worker_root_volume_iops" {
-  type     = number
-  default  = null
-  nullable = true
-}
-variable "build_worker_root_volume_throughput" {
-  type     = number
-  default  = null
-  nullable = true
-}
-variable "build_worker_disk_mib" {
-  type     = number
-  default  = null
-  nullable = true
-}
-
-variable "build_worker_disk_reserve_mib" {
-  description = "Build-worker filesystem reserve in MiB. Defaults to worker_disk_reserve_mib."
-  type        = number
-  default     = null
-  nullable    = true
-
-  validation {
-    condition     = var.build_worker_disk_reserve_mib == null || var.build_worker_disk_reserve_mib > 0
-    error_message = "build_worker_disk_reserve_mib must be null or positive."
-  }
-}
-variable "build_worker_vm_vcpus" {
-  type     = number
-  default  = 3
-  nullable = true
-}
-variable "build_worker_vm_memory_mib" {
-  type     = number
-  default  = 4096
-  nullable = true
-}
-variable "build_worker_vm_scratch_disk_mib" {
-  type     = number
-  default  = null
-  nullable = true
-}
-variable "build_worker_capacity_vcpus" {
-  type     = number
-  default  = null
-  nullable = true
-}
-variable "build_worker_capacity_memory_mib" {
-  type     = number
-  default  = null
-  nullable = true
-}
-variable "build_worker_execution_slots" {
-  type     = number
-  default  = null
-  nullable = true
-}
-variable "build_worker_substrate_cache_max_mib" {
-  type     = number
-  default  = null
-  nullable = true
-}
-variable "build_worker_artifact_cache_max_mib" {
-  type     = number
-  default  = null
-  nullable = true
-}
-
 variable "worker_root_volume_size_gb" {
   description = "Worker root EBS volume size in GiB."
   type        = number

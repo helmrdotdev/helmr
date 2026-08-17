@@ -14,9 +14,9 @@ The runtime has three main parts:
 | --- | --- |
 | Control Plane | Serves the web UI and API, authenticates users, coordinates workers, stores run state in PostgreSQL, and writes historical telemetry to ClickHouse. |
 | Dispatcher | Reconciles runnable and scheduled work from PostgreSQL authority. |
-| Workers | Build task images and execute tasks in Firecracker guests. Run and build capacity are separate logical groups. |
+| Workers | Execute verified Deployment bundles in Firecracker guests. |
 
-The AWS examples compose RDS PostgreSQL, ElastiCache Valkey/Redis, S3, KMS, Secrets Manager, ECS Fargate, an HTTPS load balancer, and optional EC2 Auto Scaling worker groups. A separate bootstrap foundation supplies the immutable Platform Artifact store and build-policy digest. ClickHouse is an external, operator-provisioned dependency.
+The AWS examples compose RDS PostgreSQL, ElastiCache Valkey/Redis, S3, KMS, Secrets Manager, ECS Fargate, an HTTPS load balancer, and optional EC2 Auto Scaling worker groups. A separate bootstrap foundation supplies the immutable Platform Artifact store. ClickHouse is an external, operator-provisioned dependency.
 
 ## Choose a deployment path
 
@@ -30,10 +30,24 @@ Do not promote an evaluation stack in place. Build a production environment from
 
 1. Satisfy the [requirements](/docs/self-hosting/requirements/), including bootstrap outputs and external ClickHouse.
 2. Configure and apply either the evaluation or production AWS composition with `create_controlplane_service = false`.
-3. Configure [authentication](/docs/self-hosting/authentication/) and populate [secrets and data services](/docs/self-hosting/secrets-and-data/).
-4. Run the database bootstrap task, then migrations, before enabling services.
-5. Start and verify the [Control Plane](/docs/self-hosting/control-plane/).
-6. Add [workers](/docs/self-hosting/workers/) when you need task execution.
-7. Adopt the checked-in [upgrade procedure](/docs/self-hosting/upgrades/) before changing releases.
+3. Check out the exact Product release tag, download its `platform-release.tar`, provenance, and Sigstore bundle, then publish the signed Runtime before enabling Control:
 
-The Control Plane can be brought up without workers. Workers are required to build or run tasks.
+   ```sh
+   gh release download "$HELMR_RELEASE_TAG" --pattern 'platform-release*' --dir dist/platform-release
+   scripts/publish-platform-release.sh \
+     "$PLATFORM_STORE_URI" \
+     "$HELMR_RELEASE_TAG" \
+     dist/platform-release/platform-release.tar \
+     dist/platform-release/platform-release-provenance.json \
+     dist/platform-release/platform-release.sigstore.json
+   ```
+
+   The publisher verifies the exact tag workflow identity, archive digest and size, checked-out source commit, canonical manifest, and every Runtime object before immutable publication.
+4. Configure [authentication](/docs/self-hosting/authentication/) and populate [secrets and data services](/docs/self-hosting/secrets-and-data/).
+5. Run the database bootstrap task, then migrations, before enabling services.
+6. Start and verify the [Control Plane](/docs/self-hosting/control-plane/).
+7. Add [workers](/docs/self-hosting/workers/) when you need task execution.
+8. Adopt the checked-in [upgrade procedure](/docs/self-hosting/upgrades/) before changing releases.
+
+The Control Plane can be brought up without workers. Workers are required only
+when verified Deployments execute.

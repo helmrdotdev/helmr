@@ -24,8 +24,8 @@ func TestProgramCgroupContainsAndKillsCompleteTree(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Fatal("privileged Program cgroup test requires root")
 	}
-	if _, err := os.Stat(buildCgroupRoot); errors.Is(err, os.ErrNotExist) {
-		prepareBuildTestCgroup(t)
+	if _, err := os.Stat(programCgroupRoot); errors.Is(err, os.ErrNotExist) {
+		prepareProgramTestCgroup(t)
 	} else if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestProgramCgroupContainsAndKillsCompleteTree(t *testing.T) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		raw, err := os.ReadFile(filepath.Join(buildCgroupRoot, leaf, "cgroup.procs"))
+		raw, err := os.ReadFile(filepath.Join(programCgroupRoot, leaf, "cgroup.procs"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -122,14 +122,8 @@ func TestProgramCgroupContainsAndKillsCompleteTree(t *testing.T) {
 	}
 }
 
-func prepareBuildTestCgroup(t *testing.T) {
+func prepareProgramTestCgroup(t *testing.T) {
 	t.Helper()
-	for _, controller := range []string{"cpu", "memory", "pids"} {
-		raw, err := os.ReadFile("/sys/fs/cgroup/cgroup.controllers")
-		if err != nil || !bytes.Contains(raw, []byte(controller)) {
-			t.Fatalf("cgroup controller %s is unavailable: %v", controller, err)
-		}
-	}
 	bootstrap := "/sys/fs/cgroup/helmr-test-supervisor"
 	if err := os.Mkdir(bootstrap, 0o755); err != nil {
 		t.Fatal(err)
@@ -141,31 +135,10 @@ func prepareBuildTestCgroup(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(
-		"/sys/fs/cgroup/cgroup.subtree_control",
-		[]byte("+cpu +memory +pids"),
-		0o644,
-	); err != nil {
+	if err := os.Mkdir(programCgroupRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(buildCgroupRoot, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(buildCgroupRoot, "pids.max"),
-		[]byte("1024"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(buildCgroupRoot, "cgroup.subtree_control"),
-		[]byte("+cpu +memory +pids"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	supervisor := filepath.Join(buildCgroupRoot, "supervisor")
+	supervisor := filepath.Join(programCgroupRoot, "supervisor")
 	if err := os.Mkdir(supervisor, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -175,6 +148,13 @@ func prepareBuildTestCgroup(t *testing.T) {
 		0o644,
 	); err != nil {
 		t.Fatal(err)
+	}
+	processes, err := os.ReadFile(filepath.Join(programCgroupRoot, "cgroup.procs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bytes.TrimSpace(processes)) != 0 {
+		t.Fatalf("program cgroup root is populated: %q", strings.TrimSpace(string(processes)))
 	}
 	if err := os.Remove(bootstrap); err != nil {
 		t.Fatal(err)
@@ -221,8 +201,8 @@ func TestProgramCgroupStaleCleanupIsIsolatedByProgram(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Fatal("privileged Program cgroup test requires root")
 	}
-	if _, err := os.Stat(buildCgroupRoot); errors.Is(err, os.ErrNotExist) {
-		prepareBuildTestCgroup(t)
+	if _, err := os.Stat(programCgroupRoot); errors.Is(err, os.ErrNotExist) {
+		prepareProgramTestCgroup(t)
 	} else if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +247,7 @@ func TestProgramCgroupStaleCleanupIsIsolatedByProgram(t *testing.T) {
 	if err := secondProcess.Start(); err != nil {
 		t.Fatal(err)
 	}
-	if err := cleanupStaleProgramCgroup(filepath.Join(buildCgroupRoot, firstLeaf)); err != nil {
+	if err := cleanupStaleProgramCgroup(filepath.Join(programCgroupRoot, firstLeaf)); err != nil {
 		t.Fatal(err)
 	}
 	_ = firstProcess.Wait()

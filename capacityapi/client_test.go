@@ -41,8 +41,45 @@ func TestClientUsesDedicatedBearerAndExactDrainFence(t *testing.T) {
 	}
 }
 
+func TestClientReconcilesCompleteWorkerGroupPrimarySelection(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+testCapacityToken {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		if r.Method != http.MethodPut || r.URL.Path != "/api/capacity/v0/worker-groups/group-1/primary-pools" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		var request ReconcileWorkerGroupPrimaryPoolsRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.ExpectedGroupClaimVersion != 7 || request.PoolID != "run-pool" {
+			t.Fatalf("request = %+v", request)
+		}
+		_ = json.NewEncoder(w).Encode(ReconcileWorkerGroupPrimaryPoolsResponse{
+			Applied: true,
+			WorkerGroup: CapacityWorkerGroup{
+				ID: "group-1", ClaimVersion: 8, PrimaryPoolID: "run-pool",
+			},
+		})
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, testCapacityToken, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.ReconcileWorkerGroupPrimaryPools(context.Background(), "group-1", ReconcileWorkerGroupPrimaryPoolsRequest{
+		ExpectedGroupClaimVersion: 7, PoolID: "run-pool",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Applied || result.WorkerGroup.ClaimVersion != 8 || result.WorkerGroup.PrimaryPoolID != "run-pool" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
 func TestClientPlansCapacityAndReadsFilteredWorkerInstances(t *testing.T) {
-	manifest := validTestWorkerReleaseManifest(t)
 	requests := 0
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+testCapacityToken {
@@ -58,10 +95,10 @@ func TestClientPlansCapacityAndReadsFilteredWorkerInstances(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Worker.ReleaseFingerprint != manifest.ReleaseFingerprint || request.MaxAdditionalWorkers != 4 {
+			if len(request.Pools) != 1 || request.Pools[0].PoolID != "pool-1" || request.Pools[0].MaxAdditionalWorkers != 4 {
 				t.Fatalf("request = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(CapacityPlanResponse{WorkerGroupID: "group-1", RecommendedAdditionalWorkers: 2})
+			_ = json.NewEncoder(w).Encode(CapacityPlanResponse{WorkerGroupID: "group-1", Pools: []CapacityPoolPlan{{PoolID: "pool-1", RecommendedAdditionalWorkers: 2}}})
 		case 2:
 			want := "/api/capacity/v0/worker-instances?limit=25&resource_id=host-a&resource_id=host-b&status=active&status=draining&worker_group_id=run-us-east-1"
 			if r.Method != http.MethodGet || r.URL.RequestURI() != want {
@@ -79,11 +116,11 @@ func TestClientPlansCapacityAndReadsFilteredWorkerInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := client.Plan(context.Background(), "group-1", CapacityPlanRequest{Worker: manifest, MaxAdditionalWorkers: 4})
+	plan, err := client.Plan(context.Background(), "group-1", CapacityPlanRequest{Pools: []CapacityPoolRequest{{PoolID: "pool-1", MaxAdditionalWorkers: 4}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.WorkerGroupID != "group-1" || plan.RecommendedAdditionalWorkers != 2 {
+	if plan.WorkerGroupID != "group-1" || len(plan.Pools) != 1 || plan.Pools[0].RecommendedAdditionalWorkers != 2 {
 		t.Fatalf("plan = %+v", plan)
 	}
 	workers, err := client.WorkerInstances(
@@ -101,21 +138,17 @@ func TestClientPlansCapacityAndReadsFilteredWorkerInstances(t *testing.T) {
 	}
 }
 
-func validTestWorkerReleaseManifest(t *testing.T) WorkerReleaseManifest {
+func validTestWorkerTemplate(t *testing.T) WorkerTemplate {
 	t.Helper()
-	manifest := WorkerReleaseManifest{
-		Schema: WorkerReleaseManifestSchema, WorkerVersion: "0123456789abcdef0123456789abcdef01234567", SupportsRun: true,
+	template := WorkerTemplate{
+		Schema:    WorkerTemplateSchema,
 		Runtime:   testRuntimeProfile(t),
+		CPUShapes: testCPUShapes(4),
 		Substrate: SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v0"},
 		Capacity:  ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 64 << 30, VMSlots: 1},
 		PerVM:     ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 32 << 30},
 	}
-	fingerprint, err := manifest.ExpectedFingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest.ReleaseFingerprint = fingerprint
-	return manifest
+	return template
 }
 
 func TestClientReturnsTypedHTTPError(t *testing.T) {

@@ -1,6 +1,6 @@
 ---
 title: helmr deploy
-description: Build, create, wait for, and promote a Deployment.
+description: Build, upload, finalize, and promote a Deployment bundle.
 sidebarLabel: deploy
 ---
 
@@ -10,18 +10,20 @@ sidebarLabel: deploy
 helmr deploy [path] [flags]
 ```
 
-The command validates and packages the selected Helmr project, creates a
-Deployment, streams build progress, and normally promotes a successful build.
+The command builds the project in Helmr's digest-pinned Linux builder, uploads
+only missing content-addressed objects, finalizes the verified bundle, and
+promotes it unless requested otherwise. `--bundle` accepts an existing output
+from `helmr build` and follows the same upload and verification path.
 
 | Flag | Meaning |
 | --- | --- |
-| `-p, --project`, `-e, --env` | Target scope. |
-| `--timeout duration` | Maximum wait, default `20m`. |
-| `--detach` | Queue the build and return without promotion. |
-| `--skip-promotion` | Wait for the build but leave current unchanged. |
-| `--no-image-cache` | Disable Platform layer cache import and export. |
-| `--idempotency-key KEY` | Stable deployment-creation key. |
+| `-p, --project`, `-e, --env` | Target scope for a saved CLI login. |
+| `--bundle PATH` | Deploy an existing verified bundle directory. |
+| `--install-command COMMAND` | Override dependency preparation inside the isolated builder. |
+| `--build-secret NAME` | Mount inherited `NAME` as `/run/secrets/NAME` during dependency installation; repeatable. |
+| `--skip-promotion` | Finalize without making the Deployment current. |
+| `--idempotency-key KEY` | Stable deployment-finalization key. |
 | `--json` | Emit progress as JSON lines. |
 
-Human progress is written to stderr and the final version or Deployment ID to
-stdout. `--detach` and `--skip-promotion` describe different stopping points.
+Human progress is written to stderr and the final version to stdout. The
+Control Plane never installs dependencies or rebuilds the uploaded artifacts.

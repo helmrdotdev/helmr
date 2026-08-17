@@ -24,9 +24,10 @@ const (
 )
 
 type Resolver struct {
-	CacheDir      string
-	MkfsExt4Path  string
-	MaxCacheBytes int64
+	CacheDir         string
+	MkfsExt4Path     string
+	Mke2fsConfigPath string
+	MaxCacheBytes    int64
 
 	group singleflight.Group
 }
@@ -58,15 +59,19 @@ func (r *Resolver) Resolve(ctx context.Context, imagePath string, source Source)
 		return Result{}, errors.New("substrate cache dir is required")
 	}
 	mkfs := strings.TrimSpace(r.MkfsExt4Path)
-	if mkfs == "" {
-		mkfs = "mkfs.ext4"
+	if mkfs == "" || !filepath.IsAbs(mkfs) {
+		return Result{}, errors.New("substrate mkfs.ext4 path must be absolute")
+	}
+	mke2fsConfig := strings.TrimSpace(r.Mke2fsConfigPath)
+	if mke2fsConfig == "" || !filepath.IsAbs(mke2fsConfig) {
+		return Result{}, errors.New("substrate mke2fs config path must be absolute")
 	}
 	key, err := CacheKey(source)
 	if err != nil {
 		return Result{}, err
 	}
 	value, err, _ := r.group.Do(key, func() (any, error) {
-		return r.resolveLocked(ctx, imagePath, source, key, cacheDir, mkfs)
+		return r.resolveLocked(ctx, imagePath, source, key, cacheDir, mkfs, mke2fsConfig)
 	})
 	if err != nil {
 		return Result{}, err
@@ -94,7 +99,7 @@ func CacheKey(source Source) (string, error) {
 	return sha256sum.Prefix + hex.EncodeToString(sum[:]), nil
 }
 
-func (r *Resolver) resolveLocked(ctx context.Context, imagePath string, source Source, key string, cacheDir string, mkfs string) (Result, error) {
+func (r *Resolver) resolveLocked(ctx context.Context, imagePath string, source Source, key string, cacheDir string, mkfs string, mke2fsConfig string) (Result, error) {
 	identity := cacheIdentity{
 		Source:   normalizeSource(source),
 		Format:   Format,
@@ -138,7 +143,7 @@ func (r *Resolver) resolveLocked(ctx context.Context, imagePath string, source S
 		return Result{}, err
 	}
 	stagedPath := filepath.Join(buildDir, "substrate.ext4")
-	if err := createExt4(ctx, mkfs, rootfsDir, stagedPath, diskSize, key); err != nil {
+	if err := createExt4(ctx, mkfs, mke2fsConfig, rootfsDir, stagedPath, diskSize, key); err != nil {
 		return Result{}, err
 	}
 	digest, sizeBytes, err := fileDigest(stagedPath)

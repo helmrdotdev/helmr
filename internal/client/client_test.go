@@ -1,7 +1,6 @@
 package client
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -10,17 +9,207 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
-	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
+
+func TestUploadDeploymentBundleObjectRejectsNonSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Fatalf("method = %s", r.Method)
+		}
+		if r.ContentLength != 6 {
+			t.Fatalf("content length = %d", r.ContentLength)
+		}
+		for name, want := range map[string]string{
+			"Content-Type":                 "application/vnd.helmr.deployment-program.v0+squashfs",
+			"If-None-Match":                "*",
+			"X-Amz-Checksum-Sha256":        "checksum",
+			"X-Amz-Sdk-Checksum-Algorithm": "SHA256",
+			"X-Amz-Tagging":                "helmr-expirable=true",
+		} {
+			if got := r.Header.Get(name); got != want {
+				t.Fatalf("header %s = %q, want %q", name, got, want)
+			}
+		}
+		http.Error(w, "rejected", http.StatusForbidden)
+	}))
+	defer server.Close()
+	object := t.TempDir() + "/object"
+	if err := os.WriteFile(object, []byte("object"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := New("http://localhost", WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.UploadDeploymentBundleObject(t.Context(), api.DeploymentBundleUpload{
+		Method: http.MethodPut, URL: server.URL,
+		Headers: map[string]string{
+			"Content-Length":               "6",
+			"Content-Type":                 "application/vnd.helmr.deployment-program.v0+squashfs",
+			"If-None-Match":                "*",
+			"X-Amz-Checksum-Sha256":        "checksum",
+			"X-Amz-Sdk-Checksum-Algorithm": "SHA256",
+			"X-Amz-Tagging":                "helmr-expirable=true",
+		},
+	}, object)
+	if err == nil || !strings.Contains(err.Error(), "403 Forbidden") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestUploadDeploymentBundleObjectRequiresExactContentLength(t *testing.T) {
+	object := t.TempDir() + "/object"
+	if err := os.WriteFile(object, []byte("object"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := New("http://localhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, headers := range map[string]map[string]string{
+		"missing":   nil,
+		"invalid":   {"Content-Length": "invalid"},
+		"mismatch":  {"Content-Length": "7"},
+		"duplicate": {"Content-Length": "6", "content-length": "6"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := client.UploadDeploymentBundleObject(t.Context(), api.DeploymentBundleUpload{
+				Method:  http.MethodPut,
+				URL:     "http://localhost/upload",
+				Headers: headers,
+			}, object)
+			if err == nil {
+				t.Fatal("UploadDeploymentBundleObject returned nil error")
+			}
+		})
+	}
+}
+
+func TestUploadDeploymentBundleObjectScrubsMalformedPresignedURL(t *testing.T) {
+	const secret = "presigned-secret-sentinel"
+	object := t.TempDir() + "/object"
+	if err := os.WriteFile(object, []byte("object"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := New("http://localhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.UploadDeploymentBundleObject(t.Context(), api.DeploymentBundleUpload{
+		Method: http.MethodPut,
+		URL:    "http://localhost/%zz?X-Amz-Signature=" + secret,
+		Headers: map[string]string{
+			"Content-Length": "6",
+		},
+	}, object)
+	if err == nil ||
+		!errors.Is(err, ErrDeploymentObjectUploadNotAttempted) ||
+		strings.Contains(err.Error(), secret) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestFinalizeDeploymentBundleConsumesTypedEventStream(t *testing.T) {
+	bundleDigest := "sha256:" + strings.Repeat("a", 64)
+	objectDigest := "sha256:" + strings.Repeat("b", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/deployment-bundles/finalize" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Accept") != "text/event-stream" {
+			t.Fatalf("Accept = %q", r.Header.Get("Accept"))
+		}
+		var request api.FinalizeDeploymentBundleRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.BundleDigest != bundleDigest || request.IdempotencyKey != "deploy-test" {
+			t.Fatalf("request = %+v", request)
+		}
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		_, _ = io.WriteString(w,
+			"event: started\ndata: {\"bundle_digest\":\""+bundleDigest+"\"}\n\n"+
+				"event: ping\ndata: {}\n\n"+
+				"event: object_verified\ndata: {\"digest\":\""+objectDigest+"\"}\n\n"+
+				"event: complete\ndata: {\"id\":\"deployment-1\",\"version\":\"v1\",\"bundle_digest\":\""+bundleDigest+"\",\"created_at\":\"2026-08-15T00:00:00Z\"}\n\n",
+		)
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var verified []string
+	created, err := client.FinalizeDeploymentBundle(t.Context(), api.FinalizeDeploymentBundleRequest{
+		IdempotencyKey: "deploy-test", BundleDigest: bundleDigest,
+	}, EnvironmentScopeOptions{}, func(object api.DeploymentBundleFinalizeObject) error {
+		verified = append(verified, object.Digest)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.ID != "deployment-1" || !slices.Equal(verified, []string{objectDigest}) {
+		t.Fatalf("created = %+v, verified = %v", created, verified)
+	}
+}
+
+func TestFinalizeDeploymentBundleDoesNotReconnectAfterTruncatedStream(t *testing.T) {
+	bundleDigest := "sha256:" + strings.Repeat("a", 64)
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: started\ndata: {\"bundle_digest\":\""+bundleDigest+"\"}\n\n")
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.FinalizeDeploymentBundle(t.Context(), api.FinalizeDeploymentBundleRequest{
+		IdempotencyKey: "deploy-test", BundleDigest: bundleDigest,
+	}, EnvironmentScopeOptions{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "ended without a terminal event") {
+		t.Fatalf("error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+}
+
+func TestFinalizeDeploymentBundleReturnsTypedTerminalError(t *testing.T) {
+	bundleDigest := "sha256:" + strings.Repeat("a", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w,
+			"event: started\ndata: {\"bundle_digest\":\""+bundleDigest+"\"}\n\n"+
+				"event: error\ndata: {\"code\":\"invalid_deployment_object\",\"message\":\"deployment object failed verification\"}\n\n",
+		)
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.FinalizeDeploymentBundle(t.Context(), api.FinalizeDeploymentBundleRequest{
+		IdempotencyKey: "deploy-test", BundleDigest: bundleDigest,
+	}, EnvironmentScopeOptions{}, nil)
+	var terminal *DeploymentFinalizeError
+	if !errors.As(err, &terminal) || terminal.Code != "invalid_deployment_object" {
+		t.Fatalf("error = %#v", err)
+	}
+}
 
 func TestClientErrorUsesServerMessage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -221,131 +410,6 @@ func TestRunOperations(t *testing.T) {
 	}
 }
 
-func TestCreateDeploymentSendsContentHash(t *testing.T) {
-	source := []byte("deployment archive")
-	sourcePath := t.TempDir() + "/deployment-source.tar"
-	if err := os.WriteFile(sourcePath, source, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var metadata api.CreateDeploymentRequest
-	var uploaded []byte
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/deployments" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		reader, err := r.MultipartReader()
-		if err != nil {
-			t.Fatal(err)
-		}
-		for {
-			part, err := reader.NextPart()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			switch part.FormName() {
-			case "metadata":
-				if err := json.NewDecoder(part).Decode(&metadata); err != nil {
-					t.Fatal(err)
-				}
-			case "deployment_source":
-				uploaded, err = io.ReadAll(part)
-				if err != nil {
-					t.Fatal(err)
-				}
-			default:
-				t.Fatalf("unexpected field %q", part.FormName())
-			}
-			_ = part.Close()
-		}
-		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"})
-	}))
-	defer server.Close()
-
-	client, err := New(server.URL, WithHTTPClient(server.Client()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := client.CreateDeployment(
-		context.Background(),
-		api.CreateDeploymentRequest{
-			IdempotencyKey: "deploy-1"},
-		sourcePath,
-		EnvironmentScopeOptions{},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35" {
-		t.Fatalf("response = %+v", response)
-	}
-	if metadata.IdempotencyKey != "deploy-1" ||
-		metadata.ContentHash != sha256sum.DigestBytes(source) {
-		t.Fatalf("metadata = %+v", metadata)
-	}
-	if !bytes.Equal(uploaded, source) {
-		t.Fatalf("uploaded = %q", uploaded)
-	}
-}
-
-func TestCreateDeploymentRetriesLostResponseWithSameKey(t *testing.T) {
-	source := []byte("deployment archive")
-	sourcePath := filepath.Join(t.TempDir(), "deployment-source.tar")
-	if err := os.WriteFile(sourcePath, source, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var mutex sync.Mutex
-	var keys []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseMultipartForm(1 << 20); err != nil {
-			t.Fatal(err)
-		}
-		var metadata api.CreateDeploymentRequest
-		if err := json.Unmarshal([]byte(r.FormValue("metadata")), &metadata); err != nil {
-			t.Fatal(err)
-		}
-		mutex.Lock()
-		keys = append(keys, metadata.IdempotencyKey)
-		attempt := len(keys)
-		mutex.Unlock()
-		if attempt == 1 {
-			connection, _, err := w.(http.Hijacker).Hijack()
-			if err != nil {
-				t.Fatal(err)
-			}
-			_ = connection.Close()
-			return
-		}
-		_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"})
-	}))
-	defer server.Close()
-
-	client, err := New(server.URL, WithHTTPClient(server.Client()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := client.CreateDeployment(
-		context.Background(),
-		api.CreateDeploymentRequest{
-			IdempotencyKey: "deploy-retry"},
-		sourcePath,
-		EnvironmentScopeOptions{},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35" {
-		t.Fatalf("response = %+v", response)
-	}
-	mutex.Lock()
-	defer mutex.Unlock()
-	if !slices.Equal(keys, []string{"deploy-retry", "deploy-retry"}) {
-		t.Fatalf("idempotency keys = %v", keys)
-	}
-}
-
 func TestDeviceCodeFlowClient(t *testing.T) {
 	paths := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -515,19 +579,6 @@ func TestSessionScopedClientRequiresEnvironmentScope(t *testing.T) {
 	}
 	if _, err := client.ListSecrets(context.Background()); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
 		t.Fatalf("ListSecrets err = %v", err)
-	}
-	sourcePath := filepath.Join(t.TempDir(), "source.tar")
-	if err := os.WriteFile(sourcePath, []byte("deployment source"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.CreateDeployment(
-		context.Background(),
-		api.CreateDeploymentRequest{
-			IdempotencyKey: "deploy-1"},
-		sourcePath,
-		EnvironmentScopeOptions{},
-	); err == nil || !strings.Contains(err.Error(), "project and environment are required") {
-		t.Fatalf("CreateDeployment err = %v", err)
 	}
 }
 

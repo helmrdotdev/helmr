@@ -33,7 +33,7 @@ func runCancelCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := runScopeForClient(controlPlane, projectID, environmentID)
+			scope, err := runScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -70,12 +70,16 @@ func runListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			scope, err := runScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
+			if err != nil {
+				return err
+			}
 			response, err := controlPlane.ListRuns(cmd.Context(), client.ListRunsOptions{
 				Statuses:      statuses,
 				Cursor:        cursor,
 				Limit:         limit,
-				ProjectID:     strings.TrimSpace(projectID),
-				EnvironmentID: strings.TrimSpace(environmentID),
+				ProjectID:     scope.ProjectID,
+				EnvironmentID: scope.EnvironmentID,
 			})
 			if err != nil {
 				return err
@@ -115,7 +119,7 @@ func runGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := runScopeForClient(controlPlane, projectID, environmentID)
+			scope, err := runScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -157,7 +161,7 @@ func runLogsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := runScopeForClient(controlPlane, projectID, environmentID)
+			scope, err := runScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -232,7 +236,7 @@ func runEventsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			scope, err := runScopeForClient(controlPlane, projectID, environmentID)
+			scope, err := runScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -277,7 +281,7 @@ func runWaitCommand() *cobra.Command {
 				ctx, cancel = context.WithTimeout(ctx, waitTimeout)
 				defer cancel()
 			}
-			scope, err := runScopeForClient(controlPlane, projectID, environmentID)
+			scope, err := runScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
 			if err != nil {
 				return err
 			}
@@ -298,24 +302,15 @@ func runWaitCommand() *cobra.Command {
 	return cmd
 }
 
-func runScopeForClient(controlPlane *client.Client, projectID string, environmentID string) (client.RunScopeOptions, error) {
-	scope := client.RunScopeOptions{
-		ProjectID:     strings.TrimSpace(projectID),
-		EnvironmentID: strings.TrimSpace(environmentID),
+func runScopeForClient(ctx context.Context, controlPlane *client.Client, projectID string, environmentID string) (client.RunScopeOptions, error) {
+	scope, err := environmentScopeForClient(ctx, controlPlane, projectID, environmentID)
+	if err != nil {
+		return client.RunScopeOptions{}, err
 	}
-	if !controlPlane.UsesSessionScopedRoutes() {
-		if scope.ProjectID != "" || scope.EnvironmentID != "" {
-			return client.RunScopeOptions{}, errors.New("--project and --env require helmr login; API keys are already environment scoped")
-		}
-		return client.RunScopeOptions{}, nil
-	}
-	if scope.ProjectID == "" || scope.EnvironmentID == "" {
-		return client.RunScopeOptions{}, errors.New("--project and --env are required with helmr login")
-	}
-	return scope, nil
+	return client.RunScopeOptions(scope), nil
 }
 
-func environmentScopeForClient(controlPlane *client.Client, projectID string, environmentID string) (client.EnvironmentScopeOptions, error) {
+func environmentScopeForClient(ctx context.Context, controlPlane *client.Client, projectID string, environmentID string) (client.EnvironmentScopeOptions, error) {
 	scope := client.EnvironmentScopeOptions{
 		ProjectID:     strings.TrimSpace(projectID),
 		EnvironmentID: strings.TrimSpace(environmentID),
@@ -329,11 +324,15 @@ func environmentScopeForClient(controlPlane *client.Client, projectID string, en
 	if scope.ProjectID == "" || scope.EnvironmentID == "" {
 		return client.EnvironmentScopeOptions{}, errors.New("--project and --env are required with helmr login")
 	}
-	return scope, nil
+	project, environment, err := resolveProjectEnvironment(ctx, controlPlane, scope.ProjectID, scope.EnvironmentID)
+	if err != nil {
+		return client.EnvironmentScopeOptions{}, err
+	}
+	return client.EnvironmentScopeOptions{ProjectID: project.ID, EnvironmentID: environment.ID}, nil
 }
 
-func workspaceScopeForClient(controlPlane *client.Client, projectID string, environmentID string) (client.WorkspaceScopeOptions, error) {
-	environmentScope, err := environmentScopeForClient(controlPlane, projectID, environmentID)
+func workspaceScopeForClient(ctx context.Context, controlPlane *client.Client, projectID string, environmentID string) (client.WorkspaceScopeOptions, error) {
+	environmentScope, err := environmentScopeForClient(ctx, controlPlane, projectID, environmentID)
 	return client.WorkspaceScopeOptions(environmentScope), err
 }
 

@@ -84,6 +84,7 @@ func ExpireParentOwnedChild(
 		tx,
 		lineage,
 		[]cancellationRun{child},
+		nil,
 	)
 	if err != nil {
 		return false, err

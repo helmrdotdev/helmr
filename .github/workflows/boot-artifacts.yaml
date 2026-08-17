@@ -35,7 +35,7 @@ jobs:
 
       - uses: ./.github/actions/setup-nix
 
-      - run: nix run .#ci-boot-artifacts
+      - run: nix run .#ci-boot-artifacts-repro
 
       - name: Stage release manifest template
         if: github.event_name == 'workflow_dispatch'
@@ -51,7 +51,7 @@ jobs:
           path: |
             dist/guest-vmlinuz
             dist/guest-initramfs
-            dist/guest-rootfs.ext4
+            dist/guest-rootfs.squashfs
             dist/guest-manifest.base.json
 
   release:
@@ -87,17 +87,17 @@ jobs:
         run: |
           cosign sign-blob --yes --output-signature "dist/${PREFIX}-vmlinuz.sig" "dist/${PREFIX}-vmlinuz"
           cosign sign-blob --yes --output-signature "dist/${PREFIX}-initramfs.sig" "dist/${PREFIX}-initramfs"
-          cosign sign-blob --yes --output-signature "dist/${PREFIX}-rootfs.ext4.sig" "dist/${PREFIX}-rootfs.ext4"
+          cosign sign-blob --yes --output-signature "dist/${PREFIX}-rootfs.squashfs.sig" "dist/${PREFIX}-rootfs.squashfs"
 
       - name: Write release manifest
         run: |
           jq \
             --arg kernel_sha "$(sha256sum "dist/${PREFIX}-vmlinuz" | cut -d ' ' -f 1)" \
             --arg initramfs_sha "$(sha256sum "dist/${PREFIX}-initramfs" | cut -d ' ' -f 1)" \
-            --arg rootfs_sha "$(sha256sum "dist/${PREFIX}-rootfs.ext4" | cut -d ' ' -f 1)" \
+            --arg rootfs_sha "$(sha256sum "dist/${PREFIX}-rootfs.squashfs" | cut -d ' ' -f 1)" \
             --arg kernel_sig "https://github.com/helmrdotdev/helmr/releases/download/${RELEASE_TAG}/${PREFIX}-vmlinuz.sig" \
             --arg initramfs_sig "https://github.com/helmrdotdev/helmr/releases/download/${RELEASE_TAG}/${PREFIX}-initramfs.sig" \
-            --arg rootfs_sig "https://github.com/helmrdotdev/helmr/releases/download/${RELEASE_TAG}/${PREFIX}-rootfs.ext4.sig" \
+            --arg rootfs_sig "https://github.com/helmrdotdev/helmr/releases/download/${RELEASE_TAG}/${PREFIX}-rootfs.squashfs.sig" \
             '.kernel_sha256 = $kernel_sha
               | .initramfs_sha256 = $initramfs_sha
               | .rootfs_sha256 = $rootfs_sha
@@ -112,6 +112,6 @@ jobs:
             dist/guest-vmlinuz.sig
             dist/guest-initramfs
             dist/guest-initramfs.sig
-            dist/guest-rootfs.ext4
-            dist/guest-rootfs.ext4.sig
+            dist/guest-rootfs.squashfs
+            dist/guest-rootfs.squashfs.sig
             dist/guest-manifest.json

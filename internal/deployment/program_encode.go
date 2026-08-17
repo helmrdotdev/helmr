@@ -7,7 +7,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
+	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -24,8 +27,9 @@ func EncodeProgram(
 	encoder string,
 	tree *BuildTree,
 	verification VerificationResult,
-	provenance BuildProvenance,
-	workspaceImages []WorkspaceImage,
+	configResultDigest string,
+	runtimeDigest string,
+	workspaceImages []BundleWorkspaceImage,
 	compiler CompilerInputs,
 	nodeVersion string,
 ) (_ *EncodedProgram, returnErr error) {
@@ -35,8 +39,11 @@ func EncodeProgram(
 	if tree == nil || tree.content == nil || tree.inspected == nil {
 		return nil, errors.New("build tree is closed")
 	}
-	if err := validateBuildProvenance("program encoding provenance", provenance); err != nil {
-		return nil, err
+	if !sha256DigestPattern.MatchString(configResultDigest) {
+		return nil, errors.New("program encoding config result digest is invalid")
+	}
+	if !sha256DigestPattern.MatchString(runtimeDigest) {
+		return nil, errors.New("program encoding runtime digest is invalid")
 	}
 	if err := ValidateVerificationResult(verification); err != nil {
 		return nil, err
@@ -65,22 +72,19 @@ func EncodeProgram(
 	if err != nil {
 		return nil, err
 	}
-	if err := validateProgramBuildAuthority(
+	if err := validateProgramCompilerAuthority(
 		compilerResult,
 		compiler,
 		nodeVersion,
 	); err != nil {
 		return nil, err
 	}
-	if err := validateProgramAggregateResult(compilerResult, plan); err != nil {
-		return nil, err
-	}
-	if compilerResult.Config.Digest != provenance.Config.ResultDigest {
+	if compilerResult.Config.Digest != configResultDigest {
 		return nil, errors.New(
-			"program build manifest config digest does not match build provenance",
+			"program compiler result config digest does not match evaluated config",
 		)
 	}
-	if err := verifyProgramBuildFiles(ctx, tree.inspected, compilerResult); err != nil {
+	if err := verifyProgramCompilerFiles(ctx, tree.inspected, compilerResult); err != nil {
 		return nil, err
 	}
 	locator, err := ParseDeclarationLocator(
@@ -89,14 +93,15 @@ func EncodeProgram(
 	if err != nil {
 		return nil, err
 	}
-	if err := validateProgramBuildLocators(compilerResult, locator); err != nil {
+	if err := validateProgramCompilerLocators(compilerResult, locator); err != nil {
 		return nil, err
 	}
 	index, err := buildProgramIndex(
 		plan,
 		locator,
 		workspaceImages,
-		provenance.Config.ResultDigest,
+		configResultDigest,
+		runtimeDigest,
 	)
 	if err != nil {
 		return nil, err
@@ -105,37 +110,18 @@ func EncodeProgram(
 	if err != nil {
 		return nil, err
 	}
-	indexHash := sha256.Sum256(indexRaw)
-	manifest := buildManifestFromCompilerResult(
+	manifest := programManifestFromCompilerResult(
 		compilerResult,
-		"sha256:"+hex.EncodeToString(indexHash[:]),
-		ProgramBuildFile{
-			Digest: provenance.Config.SourceDigest,
-			Path:   "helmr.config.ts",
-		},
-		ProgramBuildFile{
-			Digest: provenance.Submitted.LockfileDigest,
-			Path:   provenance.Submitted.LockfileName,
-		},
+		programIndexDigest(indexRaw),
 	)
-	if err := verifyProgramBuildFile(
-		ctx,
-		tree.inspected,
-		manifest.ConfigSource,
-	); err != nil {
-		return nil, err
-	}
-	if err := verifyProgramBuildFile(ctx, tree.inspected, manifest.Lockfile); err != nil {
-		return nil, err
-	}
-	manifestRaw, err := canonicalProgramBuildManifest(manifest)
+	manifestRaw, err := canonicalProgramManifest(manifest)
 	if err != nil {
 		return nil, err
 	}
 	generated := map[string][]byte{
-		"helmr/build-manifest.json": manifestRaw,
-		"helmr/declarations.json":   indexRaw,
-		"helmr/entry.mjs":           []byte(ProgramEntry),
+		"helmr/program-manifest.json": manifestRaw,
+		"helmr/declarations.json":     indexRaw,
+		"helmr/entry.mjs":             []byte(ProgramEntry),
 	}
 	artifact, err := encodeProgramTree(
 		ctx,
@@ -182,6 +168,48 @@ func verifyEncodedProgram(
 	if err != nil {
 		return err
 	}
+	if err := VerifyProgramOutputFile(ctx, file, output); err != nil {
+		return fmt.Errorf("verify encoded program: %w", err)
+	}
+	return nil
+}
+
+// VerifyProgramOutputFile proves that a finalized Program object has the exact
+// bytes and executable closure described by output. It is the shared admission
+// boundary for producer output; callers do not infer validity from a successful
+// build process or from producer metadata.
+func VerifyProgramOutputFile(
+	ctx context.Context,
+	file *os.File,
+	output ProgramOutput,
+) error {
+	if ctx == nil {
+		return errors.New("program verification context is nil")
+	}
+	if file == nil {
+		return errors.New("program verification file is nil")
+	}
+	if err := ValidateProgramOutput(output); err != nil {
+		return err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect Program object: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() != output.Artifact.SizeBytes {
+		return errors.New("program object does not exact-match its descriptor")
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(
+		hash,
+		io.NewSectionReader(file, 0, output.Artifact.SizeBytes),
+	); err != nil {
+		return fmt.Errorf("hash Program object: %w", err)
+	}
+	actualDigest := "sha256:" + hex.EncodeToString(hash.Sum(nil))
+	if actualDigest != output.Artifact.Digest {
+		return errors.New("program object digest does not match its descriptor")
+	}
 	reader, err := newSquashFSArtifactReader(
 		ctx,
 		file,
@@ -189,7 +217,7 @@ func verifyEncodedProgram(
 		programArtifact,
 	)
 	if err != nil {
-		return fmt.Errorf("open encoded program: %w", err)
+		return fmt.Errorf("open Program object: %w", err)
 	}
 	verified, err := verifyProgramArtifact(ctx, artifactInput{
 		Digest:    output.Artifact.Digest,
@@ -198,7 +226,7 @@ func verifyEncodedProgram(
 		Reader:    reader,
 	})
 	if err != nil {
-		return fmt.Errorf("verify encoded program: %w", err)
+		return fmt.Errorf("verify Program object: %w", err)
 	}
 	verifiedIndex, err := CanonicalProgramIndex(verified.Index())
 	if err != nil {
@@ -209,7 +237,7 @@ func verifyEncodedProgram(
 		return err
 	}
 	if !bytes.Equal(verifiedIndex, expectedIndex) {
-		return errors.New("encoded program index changed during verification")
+		return errors.New("program object index does not match its descriptor")
 	}
 	return nil
 }
@@ -280,7 +308,6 @@ func programTreeEntries(
 				Path:       source.entry.Path,
 				Kind:       source.entry.Kind,
 				Mode:       source.entry.Mode,
-				SizeBytes:  source.entry.SizeBytes,
 				LinkTarget: source.entry.LinkTarget,
 			}
 			if entry.Kind != artifactEntryRegular {
@@ -289,6 +316,7 @@ func programTreeEntries(
 				}
 				continue
 			}
+			entry.SizeBytes = source.entry.SizeBytes
 			if source.content != nil {
 				entry.Content = bytes.NewReader(source.content)
 				if !yield(entry, nil) {
@@ -344,6 +372,70 @@ func (program *EncodedProgram) Publish(
 	output := program.Output
 	output.Index = cloneProgramIndex(output.Index)
 	return output, nil
+}
+
+// Materialize writes the exact verified Program object to a new local file.
+// It is the producer-side counterpart to Publish: local/CI builders retain the
+// object for bundle finalization instead of publishing it to a service CAS.
+func (program *EncodedProgram) Materialize(
+	ctx context.Context,
+	path string,
+) (returnErr error) {
+	if program == nil || program.artifact == nil {
+		return errors.New("encoded program is closed")
+	}
+	if ctx == nil {
+		return errors.New("program materialization context is nil")
+	}
+	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return errors.New("program materialization path must be an absolute clean path")
+	}
+	reader, err := program.artifact.uploadReader(ctx)
+	if err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create Program object: %w", err)
+	}
+	open := true
+	defer func() {
+		if open {
+			returnErr = errors.Join(returnErr, file.Close())
+		}
+		if returnErr != nil {
+			returnErr = errors.Join(returnErr, os.Remove(path))
+		}
+	}()
+	written, err := io.Copy(file, reader)
+	if err != nil {
+		return fmt.Errorf("write Program object: %w", err)
+	}
+	if written != program.Output.Artifact.SizeBytes {
+		return fmt.Errorf(
+			"materialized Program size = %d, want %d",
+			written,
+			program.Output.Artifact.SizeBytes,
+		)
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync Program object: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close Program object: %w", err)
+	}
+	open = false
+
+	verified, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("reopen Program object: %w", err)
+	}
+	verifyErr := VerifyProgramOutputFile(ctx, verified, program.Output)
+	closeErr := verified.Close()
+	if err := errors.Join(verifyErr, closeErr); err != nil {
+		return fmt.Errorf("verify materialized Program object: %w", err)
+	}
+	return nil
 }
 
 func publishProgramArtifact(

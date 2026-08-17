@@ -102,6 +102,32 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 	if state != RunLeaseStateAssigned || claimedAt.Valid {
 		t.Fatalf("discovery mutated assigned lease to state=%s claimed_at=%v", state, claimedAt)
 	}
+	if _, err := fixture.pool.Exec(ctx, `
+UPDATE workspace_mounts
+   SET state = 'failed', failed_at = now(), terminal_at = now(),
+       terminal_reason_code = 'test_failure'
+ WHERE id = (SELECT workspace_mount_id FROM workspace_leases
+              WHERE owner_run_lease_id = $1)`, starting.leaseID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = fixture.queries.DiscoverWorkerRunLeaseWork(ctx, DiscoverWorkerRunLeaseWorkParams{
+		WorkerGroupID: runLeaseTestWorkerGroup, RowLimit: 8,
+		WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || pgvalue.MustUUIDValue(rows[0].ID) != assigned.leaseID {
+		t.Fatalf("discovery after Mount failure = %+v, want only healthy assigned lease", rows)
+	}
+	if _, err := fixture.pool.Exec(ctx, `
+UPDATE workspace_mounts
+   SET state = 'mounted', failed_at = NULL, terminal_at = NULL,
+       terminal_reason_code = NULL
+ WHERE id = (SELECT workspace_mount_id FROM workspace_leases
+              WHERE owner_run_lease_id = $1)`, starting.leaseID); err != nil {
+		t.Fatal(err)
+	}
 
 	secretLocators, err := fixture.queries.GetRunLeaseSecretDeliveryLocators(ctx, GetRunLeaseSecretDeliveryLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
@@ -343,23 +369,28 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(drainingRows) != 2 {
-		t.Fatalf("draining discovery returned %d rows, want two replayable starting leases", len(drainingRows))
+	if len(drainingRows) != 3 {
+		t.Fatalf("draining discovery returned %d rows, want assigned plus two starting leases", len(drainingRows))
 	}
+	foundUnclaimed := false
 	for _, row := range drainingRows {
 		if pgvalue.MustUUIDValue(row.ID) == unclaimed.leaseID {
-			t.Fatalf("draining discovery returned unclaimed assigned lease %s", unclaimed.leaseID)
+			foundUnclaimed = true
 		}
 		if pgvalue.MustUUIDValue(row.ID) != assigned.leaseID &&
-			pgvalue.MustUUIDValue(row.ID) != starting.leaseID {
+			pgvalue.MustUUIDValue(row.ID) != starting.leaseID &&
+			pgvalue.MustUUIDValue(row.ID) != unclaimed.leaseID {
 			t.Fatalf("draining discovery returned unrelated lease %s", pgvalue.UUIDString(row.ID))
 		}
+	}
+	if !foundUnclaimed {
+		t.Fatalf("draining discovery omitted assigned lease %s", unclaimed.leaseID)
 	}
 	if _, err := fixture.queries.GetRunLeaseSecretDeliveryLocators(ctx, GetRunLeaseSecretDeliveryLocatorsParams{
 		ID: pgvalue.UUID(unclaimed.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
-		WorkerEpoch: 1}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("draining assigned Secret locator error = %v, want no rows", err)
+		WorkerEpoch: 1}); err != nil {
+		t.Fatalf("draining assigned Secret locator: %v", err)
 	}
 	if _, err := fixture.queries.GetRunLeaseSecretDeliveryLocators(ctx, GetRunLeaseSecretDeliveryLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
@@ -372,6 +403,36 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
 		WorkerEpoch: 1}); err != nil {
 		t.Fatalf("draining replay claim locator: %v", err)
+	}
+	if _, err := fixture.queries.GetRunLeaseStartLocators(ctx, GetRunLeaseStartLocatorsParams{
+		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerEpoch: 1}); err != nil {
+		t.Fatalf("draining starting lease start locator: %v", err)
+	}
+	if _, err := fixture.pool.Exec(ctx, `
+UPDATE run_leases
+   SET state = 'running', started_at = now(), updated_at = now()
+ WHERE id = $1`, pgvalue.UUID(assigned.leaseID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.pool.Exec(ctx, `
+UPDATE runs
+   SET status = 'running', started_at = now(), active_started_at = now(), updated_at = now()
+ WHERE id = $1`, pgvalue.UUID(assigned.runID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.queries.GetRunEntrypointLocators(ctx, GetRunEntrypointLocatorsParams{
+		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerEpoch: 1}); err != nil {
+		t.Fatalf("draining running lease entrypoint locator: %v", err)
+	}
+	if _, err := fixture.queries.GetRunEntrypointLocators(ctx, GetRunEntrypointLocatorsParams{
+		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerEpoch: 2}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("stale draining entrypoint locator error = %v, want no rows", err)
 	}
 }
 

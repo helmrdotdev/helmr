@@ -15,8 +15,6 @@ export type AdminWorkerGroup = {
   description: string;
   state: "active" | "paused" | "draining" | "disabled";
   claim_version: number;
-  allows_run: boolean;
-  allows_build: boolean;
 };
 
 export type CreateAdminWorkerGroupInput = Omit<AdminWorkerGroup, "id" | "state" | "claim_version">;

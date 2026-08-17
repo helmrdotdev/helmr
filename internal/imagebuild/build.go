@@ -5,44 +5,36 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"path"
 	"regexp"
-	"slices"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/distribution/reference"
-	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 const (
 	FormatVersion = 0
 
-	maxImageIdentifierBytes  = 512
-	maxImageReferenceBytes   = 4096
-	maxImagePathBytes        = 4096
-	maxImageArguments        = 1024
-	maxImageArgumentBytes    = 65536
-	maxImageArgumentsBytes   = 1 << 20
-	maxEnvKeyBytes           = 256
-	maxEnvValueBytes         = 1 << 20
-	maxEnvBytes              = 1 << 20
-	maxUserBytes             = 256
-	maxRegistryUsernameBytes = 256
-	maxRegistryAuthorities   = 8
-	maxImageBuildBytes       = 16 << 20
-	maxBuildSteps            = 10000
+	maxImageIdentifierBytes = 512
+	maxImageReferenceBytes  = 4096
+	maxImagePathBytes       = 4096
+	maxImageArguments       = 1024
+	maxImageArgumentBytes   = 65536
+	maxImageArgumentsBytes  = 1 << 20
+	maxEnvKeyBytes          = 256
+	maxEnvValueBytes        = 1 << 20
+	maxEnvBytes             = 1 << 20
+	maxUserBytes            = 256
+	maxImageBuildBytes      = 16 << 20
+	maxBuildSteps           = 10000
 )
 
 var (
 	imageEnvKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,255}$`)
 	imageUserPattern   = regexp.MustCompile(`^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?$`)
-	secretNamePattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 )
 
 type Build struct {
@@ -74,19 +66,7 @@ type Step struct {
 }
 
 type From struct {
-	Ref  string        `json:"ref"`
-	Auth *RegistryAuth `json:"auth,omitempty"`
-}
-
-type RegistryAuth struct {
-	Username       string `json:"username"`
-	PasswordSecret string `json:"passwordSecret"`
-}
-
-type RegistryCredential struct {
-	Authority      string
-	Username       string
-	PasswordSecret string
+	Ref string `json:"ref"`
 }
 
 type Run struct {
@@ -141,7 +121,6 @@ func Validate(build Build, architecture string) error {
 	}
 
 	images := make(map[string]int, len(build.Images))
-	registryCredentials := make(map[string]RegistryCredential)
 	totalSteps := 0
 	for index := range build.Images {
 		image := &build.Images[index]
@@ -182,15 +161,6 @@ func Validate(build Build, architecture string) error {
 			addedEnvBytes, err := validateStep(step, image.Key, stepIndex)
 			if err != nil {
 				return err
-			}
-			if step.From != nil {
-				if err := validateRegistryBinding(
-					*step.From,
-					fmt.Sprintf("image %q step %d", image.Key, stepIndex),
-					registryCredentials,
-				); err != nil {
-					return err
-				}
 			}
 			envBytes += addedEnvBytes
 			if envBytes > maxEnvBytes {
@@ -267,147 +237,6 @@ func Digest(build Build, architecture string) (string, error) {
 	}
 	digest := sha256.Sum256(canonical)
 	return fmt.Sprintf("sha256:%x", digest), nil
-}
-
-// CacheScope derives the one opaque logical cache identity shared by Control Plane
-// and provider adapters. Provider repository names and refs are projections of
-// this digest and never become operation authority themselves.
-func CacheScope(
-	environmentID uuid.UUID,
-	declarationSlot string,
-	architecture string,
-) (string, error) {
-	if environmentID == uuid.Nil {
-		return "", errors.New("image cache environment ID is required")
-	}
-	if !secretNamePattern.MatchString(declarationSlot) {
-		return "", errors.New("image cache declaration slot is invalid")
-	}
-	if !validImageArchitecture(architecture) {
-		return "", errors.New("image cache architecture is invalid")
-	}
-	raw, err := json.Marshal(struct {
-		Domain          string `json:"domain"`
-		EnvironmentID   string `json:"environmentId"`
-		DeclarationSlot string `json:"declarationSlot"`
-		Architecture    string `json:"architecture"`
-		Contract        string `json:"contract"`
-	}{
-		Domain: "helmr.image-cache-scope.v0", EnvironmentID: environmentID.String(),
-		DeclarationSlot: declarationSlot, Architecture: architecture,
-		Contract: Contract,
-	})
-	if err != nil {
-		return "", fmt.Errorf("encode image cache scope: %w", err)
-	}
-	return sha256sum.DigestBytes(raw), nil
-}
-
-func RegistryCredentials(build Build, architecture string) ([]RegistryCredential, error) {
-	if err := Validate(build, architecture); err != nil {
-		return nil, err
-	}
-	byAuthority := make(map[string]RegistryCredential)
-	for _, image := range build.Images {
-		for _, step := range image.Steps {
-			if step.From == nil || step.From.Auth == nil {
-				continue
-			}
-			authority, err := RegistryAuthority(step.From.Ref)
-			if err != nil {
-				return nil, err
-			}
-			byAuthority[authority] = RegistryCredential{
-				Authority:      authority,
-				Username:       step.From.Auth.Username,
-				PasswordSecret: step.From.Auth.PasswordSecret,
-			}
-		}
-	}
-	credentials := make([]RegistryCredential, 0, len(byAuthority))
-	for _, credential := range byAuthority {
-		credentials = append(credentials, credential)
-	}
-	slices.SortFunc(credentials, func(left, right RegistryCredential) int {
-		return strings.Compare(left.Authority, right.Authority)
-	})
-	return credentials, nil
-}
-
-func RegistryAuthority(value string) (string, error) {
-	if err := validateImageReference(value, "image reference"); err != nil {
-		return "", err
-	}
-	named, err := reference.ParseNormalizedNamed(value)
-	if err != nil {
-		return "", fmt.Errorf("parse image reference: %w", err)
-	}
-	authority, err := CanonicalRegistryAuthority(reference.Domain(named))
-	if err != nil {
-		return "", err
-	}
-	return authority, nil
-}
-
-func ValidateCacheReference(value string) error {
-	if err := validateImageReference(value, "image-build cache ref"); err != nil {
-		return err
-	}
-	named, err := reference.ParseNormalizedNamed(value)
-	if err != nil {
-		return fmt.Errorf("parse image-build cache ref: %w", err)
-	}
-	if named.String() != value {
-		return errors.New("image-build cache ref must be a canonical fully qualified reference")
-	}
-	if _, ok := named.(reference.Canonical); ok {
-		return errors.New("image-build cache ref must not contain a digest")
-	}
-	if _, ok := named.(reference.Tagged); !ok {
-		return errors.New("image-build cache ref must contain an explicit tag")
-	}
-	return nil
-}
-
-func CanonicalRegistryAuthority(value string) (string, error) {
-	authority, err := normalizeRegistryAuthority(value)
-	if err != nil {
-		return "", err
-	}
-	switch authority {
-	case "docker.io", "index.docker.io", "registry-1.docker.io":
-		return "docker.io", nil
-	default:
-		return authority, nil
-	}
-}
-
-func normalizeRegistryAuthority(value string) (string, error) {
-	authority := strings.ToLower(value)
-	if !strings.Contains(authority, ":") {
-		return authority, nil
-	}
-	host, portValue, err := net.SplitHostPort(authority)
-	if err != nil {
-		if strings.HasPrefix(authority, "[") && strings.HasSuffix(authority, "]") {
-			if net.ParseIP(strings.Trim(authority, "[]")) == nil {
-				return "", fmt.Errorf("registry authority %q is invalid", value)
-			}
-			return authority, nil
-		}
-		return "", fmt.Errorf("registry authority %q is invalid: %w", value, err)
-	}
-	port, err := strconv.Atoi(portValue)
-	if err != nil || port < 1 || port > 65535 {
-		return "", fmt.Errorf("registry authority %q has an invalid port", value)
-	}
-	if port == 443 {
-		if strings.Contains(host, ":") {
-			return "[" + host + "]", nil
-		}
-		return host, nil
-	}
-	return net.JoinHostPort(host, strconv.Itoa(port)), nil
 }
 
 func StepCount(build Build) int {
@@ -530,51 +359,6 @@ func validateImageReference(value string, label string) error {
 	if _, err := reference.ParseNormalizedNamed(value); err != nil {
 		return fmt.Errorf("%s is not a Docker-compatible OCI reference: %w", label, err)
 	}
-	return nil
-}
-
-func validateRegistryBinding(
-	from From,
-	label string,
-	credentials map[string]RegistryCredential,
-) error {
-	if from.Auth == nil {
-		return nil
-	}
-	if !validImageString(from.Auth.Username, maxRegistryUsernameBytes) ||
-		from.Auth.Username == "" ||
-		strings.TrimSpace(from.Auth.Username) != from.Auth.Username {
-		return fmt.Errorf("%s from.auth.username is invalid", label)
-	}
-	for _, character := range from.Auth.Username {
-		if unicode.IsControl(character) {
-			return fmt.Errorf("%s from.auth.username contains a control character", label)
-		}
-	}
-	if !secretNamePattern.MatchString(from.Auth.PasswordSecret) {
-		return fmt.Errorf("%s from.auth.passwordSecret is invalid", label)
-	}
-	authority, err := RegistryAuthority(from.Ref)
-	if err != nil {
-		return fmt.Errorf("%s from auth authority: %w", label, err)
-	}
-	binding := RegistryCredential{
-		Authority:      authority,
-		Username:       from.Auth.Username,
-		PasswordSecret: from.Auth.PasswordSecret,
-	}
-	existing, ok := credentials[authority]
-	if ok {
-		if existing.Username != binding.Username ||
-			existing.PasswordSecret != binding.PasswordSecret {
-			return fmt.Errorf("%s conflicts with the existing authentication for registry %q", label, authority)
-		}
-		return nil
-	}
-	if len(credentials) == maxRegistryAuthorities {
-		return fmt.Errorf("image build has more than %d authenticated registry authorities", maxRegistryAuthorities)
-	}
-	credentials[authority] = binding
 	return nil
 }
 

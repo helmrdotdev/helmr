@@ -26,10 +26,8 @@ tar \
 
 archive_sha256=$(sha256sum "$output/platform-release.tar" | awk '{print $1}')
 archive_size=$(stat -c '%s' "$output/platform-release.tar")
-build_policy_digest=$(cat "$release/build-policy.digest")
 jq -cS \
   --arg archiveDigest "sha256:$archive_sha256" \
-  --arg buildPolicyDigest "$build_policy_digest" \
   --arg sourceCommit "${GITHUB_SHA:?GITHUB_SHA is required}" \
   --arg sourceRef "${GITHUB_REF:?GITHUB_REF is required}" \
   --argjson archiveSizeBytes "$archive_size" \
@@ -39,7 +37,6 @@ jq -cS \
       mediaType: "application/vnd.helmr.platform-release.v0+tar",
       sizeBytes: $archiveSizeBytes
     },
-    buildPolicyDigest: $buildPolicyDigest,
     formatVersion: 0,
     sourceCommit: $sourceCommit,
     sourceRef: $sourceRef

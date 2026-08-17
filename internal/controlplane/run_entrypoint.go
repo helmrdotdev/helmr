@@ -117,8 +117,8 @@ func lockRunEntrypointAuthority(
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
-	if authority.workerGroup.State != db.WorkerGroupStateActive ||
-		!authority.workerGroup.AllowsRun ||
+	if (authority.workerGroup.State != db.WorkerGroupStateActive &&
+		authority.workerGroup.State != db.WorkerGroupStateDraining) ||
 		authority.workerGroup.ClaimVersion != worker.GroupClaimVersion {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}

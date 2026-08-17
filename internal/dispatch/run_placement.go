@@ -83,6 +83,8 @@ SELECT EXISTS (
        AND state_version = $3
        AND status = 'queued'
        AND current_run_lease_id IS NULL
+       AND (next_runtime_preparation_at IS NULL
+            OR next_runtime_preparation_at <= transaction_timestamp())
        AND (
            first_lease_at IS NOT NULL
            OR queued_expires_at IS NULL

@@ -20,20 +20,18 @@ SELECT run_leases.*
 -- name: DiscoverWorkerRunLeaseWork :many
 WITH worker AS (
     SELECT worker_instances.id,
-           worker_instances.current_epoch,
-           worker_instances.state,
-           worker_instances.max_vm_slots,
-           worker_groups.state AS group_state,
-           worker_groups.allows_run
+	       worker_instances.current_epoch,
+	       worker_instances.state,
+	       worker_instances.max_vm_slots,
+	       worker_groups.state AS group_state
       FROM worker_instances
       JOIN worker_groups
         ON worker_groups.id = worker_instances.worker_group_id
        AND worker_groups.state IN ('active', 'draining')
      WHERE worker_instances.id = sqlc.arg(worker_instance_id)
-       AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
-       AND worker_instances.current_epoch = sqlc.arg(worker_epoch)::bigint
-       AND worker_instances.state IN ('active', 'draining')
-       AND worker_instances.supports_run
+	   AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
+	   AND worker_instances.current_epoch = sqlc.arg(worker_epoch)::bigint
+	   AND worker_instances.state IN ('active', 'draining')
 )
 SELECT run_leases.id,
        run_leases.lease_sequence
@@ -41,18 +39,26 @@ SELECT run_leases.id,
   JOIN run_leases
     ON run_leases.worker_instance_id = worker.id
    AND run_leases.worker_epoch = worker.current_epoch
+  JOIN runtime_instances
+    ON runtime_instances.id = run_leases.runtime_instance_id
+   AND runtime_instances.worker_instance_id = run_leases.worker_instance_id
+   AND runtime_instances.worker_epoch = run_leases.worker_epoch
+   AND runtime_instances.observed_state = 'ready'
+   AND runtime_instances.reclaimed_at IS NULL
+  JOIN workspace_leases
+    ON workspace_leases.owner_run_lease_id = run_leases.id
+   AND workspace_leases.runtime_instance_id = run_leases.runtime_instance_id
+   AND workspace_leases.state = 'active'
+  JOIN workspace_mounts
+    ON workspace_mounts.id = workspace_leases.workspace_mount_id
+   AND workspace_mounts.runtime_instance_id = run_leases.runtime_instance_id
+   AND workspace_mounts.worker_instance_id = run_leases.worker_instance_id
+   AND workspace_mounts.worker_epoch = run_leases.worker_epoch
+   AND workspace_mounts.state = 'mounted'
  WHERE run_leases.worker_group_id = sqlc.arg(worker_group_id)
    AND run_leases.state IN ('assigned', 'starting')
    AND run_leases.start_deadline_at > transaction_timestamp()
    AND run_leases.expires_at > transaction_timestamp()
-   AND (
-       run_leases.state = 'starting'
-       OR (
-           worker.group_state = 'active'
-           AND worker.allows_run
-           AND worker.state = 'active'
-       )
-   )
  ORDER BY CASE run_leases.state
               WHEN 'starting' THEN 0
               ELSE 1
@@ -129,7 +135,6 @@ SELECT run_leases.org_id,
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
    AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.supports_run
   JOIN runtime_instances
     ON runtime_instances.id = run_leases.runtime_instance_id
    AND runtime_instances.workspace_id = run_leases.workspace_id
@@ -189,15 +194,7 @@ SELECT run_leases.org_id,
    AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
    AND run_leases.state IN ('assigned', 'starting')
    AND run_leases.start_deadline_at > transaction_timestamp()
-   AND run_leases.expires_at > transaction_timestamp()
-   AND (
-       run_leases.state = 'starting'
-       OR (
-           worker_groups.state = 'active'
-           AND worker_groups.allows_run
-           AND worker_instances.state = 'active'
-       )
-   );
+   AND run_leases.expires_at > transaction_timestamp();
 
 -- name: GetRunLeaseStartLocators :one
 SELECT run_leases.org_id,
@@ -240,13 +237,11 @@ SELECT run_leases.org_id,
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
    AND worker_groups.state IN ('active', 'draining')
-   AND worker_groups.allows_run
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
    AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.supports_run
   JOIN runtime_instances
     ON runtime_instances.id = run_leases.runtime_instance_id
    AND runtime_instances.workspace_id = run_leases.workspace_id
@@ -302,7 +297,6 @@ SELECT run_leases.environment_id,
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
    AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.supports_run
  WHERE run_leases.id = sqlc.arg(id)
    AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
    AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
@@ -310,15 +304,7 @@ SELECT run_leases.environment_id,
    AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
    AND run_leases.state IN ('assigned', 'starting')
    AND run_leases.start_deadline_at > transaction_timestamp()
-   AND run_leases.expires_at > transaction_timestamp()
-   AND (
-       run_leases.state = 'starting'
-       OR (
-           worker_groups.state = 'active'
-           AND worker_groups.allows_run
-           AND worker_instances.state = 'active'
-       )
-   );
+   AND run_leases.expires_at > transaction_timestamp();
 
 -- name: GetRunEntrypointLocators :one
 SELECT run_leases.org_id,
@@ -341,14 +327,12 @@ SELECT run_leases.org_id,
   JOIN worker_groups
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
-   AND worker_groups.state = 'active'
-   AND worker_groups.allows_run
+   AND worker_groups.state IN ('active', 'draining')
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
    AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.supports_run
   JOIN workspace_leases
     ON workspace_leases.owner_run_lease_id = run_leases.id
    AND workspace_leases.workspace_id = run_leases.workspace_id
@@ -395,13 +379,11 @@ SELECT run_leases.org_id,
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
    AND worker_groups.state IN ('active', 'draining')
-   AND worker_groups.allows_run
   JOIN worker_instances
     ON worker_instances.id = run_leases.worker_instance_id
    AND worker_instances.worker_group_id = run_leases.worker_group_id
    AND worker_instances.current_epoch = run_leases.worker_epoch
    AND worker_instances.state IN ('active', 'draining')
-   AND worker_instances.supports_run
   JOIN workspace_leases
     ON workspace_leases.owner_run_lease_id = run_leases.id
    AND workspace_leases.workspace_id = run_leases.workspace_id
@@ -836,6 +818,99 @@ UPDATE run_attempts
    AND entrypoint_entered_at IS NULL
    AND terminal_at IS NULL
 RETURNING *;
+
+-- name: ListRunExecutionLeaseRecoveryCandidates :many
+SELECT runs.org_id,
+       runs.project_id,
+       runs.environment_id,
+       runs.id AS run_id,
+       runs.workspace_id,
+       runs.current_attempt_number,
+       run_leases.id AS run_lease_id
+  FROM run_leases
+  JOIN runs
+    ON runs.id = run_leases.run_id
+   AND runs.workspace_id = run_leases.workspace_id
+   AND runs.current_attempt_number = run_leases.attempt_number
+   AND runs.current_run_lease_id = run_leases.id
+  JOIN worker_instances
+    ON worker_instances.id = run_leases.worker_instance_id
+  JOIN runtime_instances
+    ON runtime_instances.id = run_leases.runtime_instance_id
+   AND runtime_instances.worker_instance_id = run_leases.worker_instance_id
+   AND runtime_instances.worker_epoch = run_leases.worker_epoch
+   AND runtime_instances.workspace_id = run_leases.workspace_id
+   AND runtime_instances.reclaimed_at IS NULL
+  JOIN workspace_leases
+    ON workspace_leases.owner_run_lease_id = run_leases.id
+   AND workspace_leases.workspace_id = run_leases.workspace_id
+   AND workspace_leases.runtime_instance_id = run_leases.runtime_instance_id
+   AND workspace_leases.state IN ('active', 'releasing')
+  JOIN workspace_mounts
+    ON workspace_mounts.id = workspace_leases.workspace_mount_id
+   AND workspace_mounts.runtime_instance_id = run_leases.runtime_instance_id
+   AND workspace_mounts.workspace_id = run_leases.workspace_id
+   AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting', 'lost', 'failed')
+ WHERE run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+   AND ((run_leases.state IN ('assigned', 'starting')
+         AND runs.status = 'queued'
+         AND runs.active_started_at IS NULL)
+        OR (run_leases.state = 'running'
+            AND runs.status = 'running'
+            AND runs.active_started_at IS NOT NULL)
+        OR (run_leases.state = 'checkpointing'
+            AND runs.status = 'waiting'
+            AND runs.active_started_at IS NOT NULL)
+        OR (run_leases.state = 'finalizing'
+            AND runs.status = 'running'
+            AND runs.active_started_at IS NULL
+            AND run_leases.finalization_operation_id IS NOT NULL
+            AND run_leases.finalization_kind IS NOT NULL
+            AND run_leases.finalization_started_at IS NOT NULL
+            AND run_leases.finalization_request_fingerprint IS NOT NULL))
+   AND NOT EXISTS (
+       SELECT 1
+         FROM run_waits
+        WHERE run_waits.run_id = runs.id
+          AND run_waits.attempt_number = runs.current_attempt_number
+          AND run_waits.current_run_lease_id = run_leases.id
+          AND run_waits.suspension_state = 'resuming'
+   )
+   AND (run_leases.expires_at <= transaction_timestamp()
+        OR (run_leases.state IN ('assigned', 'starting')
+            AND run_leases.start_deadline_at <= transaction_timestamp())
+        OR (run_leases.state IN ('running', 'checkpointing')
+            AND transaction_timestamp() >= runs.active_started_at
+                + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text
+                   || ' milliseconds')::interval)
+        OR worker_instances.lost_at <= transaction_timestamp()
+        OR worker_instances.termination_ready_at <= transaction_timestamp()
+        OR worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
+        OR runtime_instances.lost_at <= transaction_timestamp()
+        OR runtime_instances.failed_at <= transaction_timestamp()
+        OR workspace_mounts.lost_at <= transaction_timestamp()
+        OR workspace_mounts.failed_at <= transaction_timestamp())
+ ORDER BY LEAST(
+              run_leases.expires_at,
+              CASE
+                  WHEN run_leases.state IN ('assigned', 'starting')
+                  THEN run_leases.start_deadline_at
+                  WHEN run_leases.state IN ('running', 'checkpointing')
+                  THEN runs.active_started_at
+                       + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text
+                          || ' milliseconds')::interval
+                  ELSE 'infinity'::timestamptz
+              END,
+              COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
+              COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
+              COALESCE(runtime_instances.lost_at, 'infinity'::timestamptz),
+              COALESCE(runtime_instances.failed_at, 'infinity'::timestamptz),
+              COALESCE(workspace_mounts.lost_at, 'infinity'::timestamptz),
+              COALESCE(workspace_mounts.failed_at, 'infinity'::timestamptz)
+          ),
+          runs.id
+ LIMIT sqlc.arg(limit_count);
+
 -- name: RecoverExpiredRunResumes :many
 WITH candidates AS MATERIALIZED (
     SELECT runs.id AS run_id,

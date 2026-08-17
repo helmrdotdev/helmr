@@ -70,6 +70,54 @@ func TestNormalizeHeaderKeepsOnlyDurablePermissionBits(t *testing.T) {
 	}
 }
 
+func TestCanonicalMetadataNormalizesInstalledTreeWithoutSourceFiltering(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "node_modules", "@helmr", "index.js"), "module")
+	writeTestFile(t, filepath.Join(root, ".git", "config"), "git")
+	if err := os.Chmod(filepath.Join(root, "node_modules", "@helmr"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(root, "node_modules", "@helmr", "index.js"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, cleanup, err := CreateTarWithOptions(root, t.TempDir(), TarOptions{
+		CanonicalMetadata: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	file, err := os.Open(result.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	reader := tar.NewReader(file)
+	modes := map[string]int64{}
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		modes[header.Name] = header.Mode
+	}
+	for _, name := range []string{"node_modules/", "node_modules/@helmr/", "node_modules/@helmr/index.js", ".git/config"} {
+		if _, ok := modes[name]; !ok {
+			t.Fatalf("canonical metadata archive omitted %q: %+v", name, modes)
+		}
+	}
+	if modes["node_modules/@helmr/"] != 0o755 {
+		t.Fatalf("directory mode = %o, want 755", modes["node_modules/@helmr/"])
+	}
+	if modes["node_modules/@helmr/index.js"] != 0o644 {
+		t.Fatalf("regular file mode = %o, want 644", modes["node_modules/@helmr/index.js"])
+	}
+}
+
 func TestExtractTarRestoresPermissionBitsDespiteUmask(t *testing.T) {
 	var body bytes.Buffer
 	writer := tar.NewWriter(&body)

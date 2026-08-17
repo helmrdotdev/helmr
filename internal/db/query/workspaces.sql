@@ -11,7 +11,6 @@ WITH selected_definition AS (
       JOIN deployments
         ON deployments.environment_id = deployment_definitions.environment_id
        AND deployments.id = deployment_definitions.deployment_id
-       AND deployments.status = 'deployed'
       JOIN projects
         ON projects.id = environments.project_id
        AND projects.id = sqlc.arg(project_id)
@@ -77,7 +76,6 @@ SELECT deployment_definitions.*
   JOIN deployments
     ON deployments.environment_id = deployment_definitions.environment_id
    AND deployments.id = deployment_definitions.deployment_id
-   AND deployments.status = 'deployed'
   JOIN environments
     ON environments.id = deployment_definitions.environment_id
  WHERE deployment_definitions.environment_id = sqlc.arg(environment_id)

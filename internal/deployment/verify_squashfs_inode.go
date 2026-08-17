@@ -43,6 +43,27 @@ const (
 	squashFSSocketKind
 )
 
+func squashFSInodeKindForForm(form uint16) (squashFSInodeKind, bool) {
+	switch form {
+	case squashFSBasicDirectoryForm, squashFSExtendedDirectoryForm:
+		return squashFSDirectoryKind, true
+	case squashFSBasicRegularForm, squashFSExtendedRegularForm:
+		return squashFSRegularKind, true
+	case squashFSBasicSymlinkForm, squashFSExtendedSymlinkForm:
+		return squashFSSymlinkKind, true
+	case squashFSBasicBlockDeviceForm, squashFSExtendedBlockForm:
+		return squashFSBlockDeviceKind, true
+	case squashFSBasicCharDeviceForm, squashFSExtendedCharForm:
+		return squashFSCharDeviceKind, true
+	case squashFSBasicFIFOForm, squashFSExtendedFIFOForm:
+		return squashFSFIFODeviceKind, true
+	case squashFSBasicSocketForm, squashFSExtendedSocketForm:
+		return squashFSSocketKind, true
+	default:
+		return 0, false
+	}
+}
+
 type squashFSInodeFacts struct {
 	Reference   uint64
 	Form        uint16

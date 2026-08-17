@@ -118,6 +118,15 @@ func (d *Authority) prepareRunWorkspace(
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			pressured, pressureErr := requestRunCapacityPressure(ctx, tx, authority)
+			if pressureErr != nil {
+				return runWorkspaceMount{}, pressureErr
+			}
+			if pressured {
+				if err := tx.Commit(ctx); err != nil {
+					return runWorkspaceMount{}, fmt.Errorf("commit run capacity pressure: %w", err)
+				}
+			}
 			return runWorkspaceMount{}, ErrCapacityUnavailable
 		}
 		return runWorkspaceMount{}, fmt.Errorf("select run worker: %w", err)
@@ -127,8 +136,8 @@ func (d *Authority) prepareRunWorkspace(
 		RegionID:         authority.regionID,
 		WorkerInstanceID: worker.workerID,
 		WorkerEpoch:      worker.workerEpoch,
-		Role:             "run",
 		RunArchitecture:  authority.architecture,
+		RequirePrimary:   !authority.restoreCheckpointID.Valid,
 	}); err != nil {
 		return runWorkspaceMount{}, ErrCapacityUnavailable
 	}
@@ -152,7 +161,7 @@ func (d *Authority) prepareRunWorkspace(
 			WorkerInstanceID:                worker.workerID,
 			RuntimeIdentityID:               worker.runtimeIdentityID,
 			DeploymentDefinitionID:          authority.workspaceDefinitionID,
-			WorkerEpoch:                     worker.workerEpoch,
+			WorkerEpoch:                     pgtype.Int8{Int64: worker.workerEpoch, Valid: true},
 			ReservedCPUMillis:               authority.resources.cpuMillis,
 			ReservedMemoryBytes:             authority.resources.memoryBytes,
 			ReservedGuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes,
@@ -160,7 +169,11 @@ func (d *Authority) prepareRunWorkspace(
 			WorkspaceID:                     authority.workspaceID,
 			ProgramDeploymentID:             authority.deploymentID,
 			RestoreCheckpointID:             authority.restoreCheckpointID,
-			RunID:                           authority.runID,
+			RequiredCPUConfigDigest: pgtype.Text{
+				String: authority.restoreCPUConfigDigest,
+				Valid:  authority.restoreCheckpointID.Valid,
+			},
+			RunID: authority.runID,
 			AttemptNumber: pgtype.Int4{
 				Int32: authority.attemptNumber,
 				Valid: true,
@@ -199,7 +212,6 @@ func (d *Authority) useRunRuntime(
 		RegionID:         authority.regionID,
 		WorkerInstanceID: runtime.workerID,
 		WorkerEpoch:      runtime.workerEpoch,
-		Role:             "run",
 		RunArchitecture:  authority.architecture,
 	}); err != nil {
 		return runWorkspaceMount{}, ErrCapacityUnavailable
@@ -222,7 +234,7 @@ func (d *Authority) useRunRuntime(
 			}
 		} else if authority.handoffChildWaitID.Valid &&
 			(mount.id != authority.handoffWorkspaceMountID ||
-				mount.fencingGeneration != authority.handoffMountGeneration.Int64) {
+				mount.fencingGeneration != authority.handoffAdmissionMountGen.Int64) {
 			return runWorkspaceMount{}, ErrCapacityUnavailable
 		}
 		return mount, nil
@@ -517,14 +529,7 @@ func selectRunWorker(
 	if err != nil {
 		return runWorker{}, err
 	}
-	selected, ok := capacityplanner.SelectRunWorker(rows, capacityplanner.RunRequirements{
-		Resources: capacityapi.ResourceVector{
-			CPUMillis: authority.resources.cpuMillis, MemoryBytes: authority.resources.memoryBytes,
-			GuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes, VMSlots: 1,
-		},
-		Architecture: authority.architecture, RuntimeIdentityID: authority.restoreRuntimeIdentityID,
-		SubstrateFormat: authority.restoreSubstrateFormat, SubstrateContract: authority.restoreSubstrateContract,
-	})
+	selected, ok := capacityplanner.SelectRunWorker(rows, runCapacityRequirements(authority))
 	if !ok || !selected.WorkerEpoch.Valid || !selected.RuntimeIdentityID.Valid {
 		return runWorker{}, pgx.ErrNoRows
 	}
@@ -532,6 +537,82 @@ func selectRunWorker(
 		groupID: selected.WorkerGroupID, workerID: selected.WorkerInstanceID,
 		workerEpoch: selected.WorkerEpoch.Int64, runtimeIdentityID: selected.RuntimeIdentityID.String,
 	}, nil
+}
+
+func requestRunCapacityPressure(
+	ctx context.Context,
+	tx pgx.Tx,
+	authority runPlacementAuthority,
+) (bool, error) {
+	rows, err := db.New(tx).ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
+		RegionID: authority.regionID, ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+	})
+	if err != nil {
+		return false, fmt.Errorf("list run capacity pressure candidates: %w", err)
+	}
+	if _, available := capacityplanner.SelectRunWorker(rows, runCapacityRequirements(authority)); available {
+		return false, nil
+	}
+	for _, selected := range capacityplanner.RunWorkerCapacityPressureCandidates(rows, runCapacityRequirements(authority)) {
+		if !selected.WorkerEpoch.Valid || !selected.RuntimeIdentityID.Valid {
+			continue
+		}
+		if err := lockWorkerFence(ctx, tx, workerFence{
+			GroupID: selected.WorkerGroupID, RegionID: authority.regionID,
+			WorkerInstanceID: selected.WorkerInstanceID, WorkerEpoch: selected.WorkerEpoch.Int64,
+			RunArchitecture: authority.architecture, RequirePrimary: !authority.restoreCheckpointID.Valid,
+		}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			return false, fmt.Errorf("lock run capacity pressure worker: %w", err)
+		}
+		if err := checkLockedWorkerRuntimeAdmission(
+			ctx, tx, selected.WorkerInstanceID, selected.WorkerEpoch.Int64,
+		); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			return false, fmt.Errorf("check run capacity pressure Runtime admission: %w", err)
+		}
+		worker := runWorker{
+			groupID: selected.WorkerGroupID, workerID: selected.WorkerInstanceID,
+			workerEpoch: selected.WorkerEpoch.Int64, runtimeIdentityID: selected.RuntimeIdentityID.String,
+		}
+		if err := lockRunWorkerCapacity(ctx, tx, authority, worker); err == nil {
+			return false, nil
+		} else if !errors.Is(err, ErrCapacityUnavailable) {
+			return false, fmt.Errorf("recheck run capacity pressure worker: %w", err)
+		}
+		mounts, err := db.New(tx).RequestCapacityPressureIdleWorkspaceMountStopsForWorker(
+			ctx,
+			db.RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams{
+				WorkerInstanceID: selected.WorkerInstanceID,
+				WorkerEpoch:      selected.WorkerEpoch.Int64,
+				LimitCount:       1,
+			},
+		)
+		if err != nil {
+			return false, fmt.Errorf("request run capacity pressure Workspace stop: %w", err)
+		}
+		if len(mounts) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func runCapacityRequirements(authority runPlacementAuthority) capacityplanner.RunRequirements {
+	return capacityplanner.RunRequirements{
+		Resources: capacityapi.ResourceVector{
+			CPUMillis: authority.resources.cpuMillis, MemoryBytes: authority.resources.memoryBytes,
+			GuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes, VMSlots: 1,
+		},
+		Architecture: authority.architecture, WorkerGroupID: authority.restoreWorkerGroupID,
+		RuntimeIdentityID: authority.restoreRuntimeIdentityID, VCPUCount: authority.restoreVMVCPUCount,
+		CPUConfigDigest: authority.restoreCPUConfigDigest,
+		SubstrateFormat: authority.restoreSubstrateFormat, SubstrateContract: authority.restoreSubstrateContract,
+	}
 }
 
 func lockRunWorkerCapacity(
@@ -577,39 +658,21 @@ SELECT worker_instances.per_vm_cpu_millis >= $4
               WHERE worker_instance_id = worker_instances.id
                 AND worker_epoch = worker_instances.current_epoch
                 AND reclaimed_at IS NULL
-         ), 0) + coalesce((
-             SELECT sum(requested_cpu_millis)
-               FROM deployment_build_leases
-              WHERE worker_instance_id = worker_instances.id
-                AND worker_epoch = worker_instances.current_epoch
-                AND state IN ('assigned', 'starting', 'running')
-         ), 0) AS cpu_millis,
+	         ), 0) AS cpu_millis,
          coalesce((
              SELECT sum(reserved_memory_bytes)
                FROM runtime_instances
               WHERE worker_instance_id = worker_instances.id
                 AND worker_epoch = worker_instances.current_epoch
                 AND reclaimed_at IS NULL
-         ), 0) + coalesce((
-             SELECT sum(requested_memory_bytes)
-               FROM deployment_build_leases
-              WHERE worker_instance_id = worker_instances.id
-                AND worker_epoch = worker_instances.current_epoch
-                AND state IN ('assigned', 'starting', 'running')
-         ), 0) AS memory_bytes,
+	         ), 0) AS memory_bytes,
          coalesce((
              SELECT sum(reserved_guest_ephemeral_disk_bytes)
                FROM runtime_instances
               WHERE worker_instance_id = worker_instances.id
                 AND worker_epoch = worker_instances.current_epoch
                 AND reclaimed_at IS NULL
-         ), 0) + coalesce((
-             SELECT sum(requested_guest_ephemeral_disk_bytes)
-               FROM deployment_build_leases
-              WHERE worker_instance_id = worker_instances.id
-                AND worker_epoch = worker_instances.current_epoch
-                AND state IN ('assigned', 'starting', 'running')
-         ), 0) AS guest_ephemeral_disk_bytes
+	         ), 0) AS guest_ephemeral_disk_bytes
  ) AS usage
  WHERE worker_instances.id = $1
    AND worker_instances.worker_group_id = $2

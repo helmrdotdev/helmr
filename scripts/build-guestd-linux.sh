@@ -13,8 +13,16 @@ output=${GUESTD_OUTPUT:-"$repo_root/dist/guestd/$arch/guestd"}
 mkdir -p "$(dirname "$output")"
 
 cd "$repo_root"
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+CGO_ENABLED=0 \
+	GOOS=linux \
+	GOARCH=amd64 \
+	GOAMD64=v1 \
+	GOFLAGS='' \
+	GOEXPERIMENT='' \
+	GOTOOLCHAIN=local \
+	go build \
 	-trimpath \
+	-buildvcs=false \
 	-ldflags="-s -w" \
 	-o "$output" \
 	./cmd/guestd

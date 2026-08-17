@@ -1,8 +1,8 @@
 # Worker image stack
 
-This stack builds and distributes the Worker AMI from one exact Git ref or
-optional exact S3 git bundle. It does not stage or embed Managed Runtime,
-Manager, toolchain, or build-policy artifacts.
+This stack builds and distributes the Worker AMI from exact content-addressed
+host and runtime bundles. Deployment bundles are produced independently on the
+developer or CI runner and are not Worker-image inputs.
 
 ```sh
 nix develop .#infra
@@ -10,5 +10,8 @@ tofu -chdir=infra/aws/stacks/worker-image init
 tofu -chdir=infra/aws/stacks/worker-image apply \
   -var="aws_region=us-east-1" \
   -var="name=helmr-worker" \
-  -var="source_ref=<exact-40-character-commit>"
+  -var="host_artifacts_bundle_s3_uri=s3://..." \
+  -var="host_artifacts_bundle_digest=sha256:..." \
+  -var="runtime_artifacts_bundle_s3_uri=s3://..." \
+  -var="runtime_artifacts_bundle_digest=sha256:..."
 ```

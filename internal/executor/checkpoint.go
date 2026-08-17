@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -104,6 +105,12 @@ func validateRestoreIdentity(
 	if err := requireCheckpointDigest("recovery_point.runtime.config_digest", runtimeInfo.ConfigDigest); err != nil {
 		return err
 	}
+	if runtimeInfo.VMVCPUCount <= 0 {
+		return errors.New("restore checkpoint recovery_point.runtime.vm_vcpu_count must be positive")
+	}
+	if !sha256sum.ValidDigest(runtimeInfo.CPUConfigDigest) {
+		return errors.New("restore checkpoint recovery_point.runtime.cpu_config_digest must be canonical")
+	}
 	if runtimeInfo.Substrate != nil {
 		if err := requireCheckpointDigest("recovery_point.runtime.substrate.digest", runtimeInfo.Substrate.Digest); err != nil {
 			return err
@@ -113,6 +120,9 @@ func validateRestoreIdentity(
 		}
 		if strings.TrimSpace(runtimeInfo.Substrate.Contract) == "" {
 			return errors.New("restore checkpoint recovery_point.runtime.substrate.contract is required")
+		}
+		if runtimeInfo.Substrate.SizeBytes <= 0 {
+			return errors.New("restore checkpoint recovery_point.runtime.substrate.size_bytes must be positive")
 		}
 	}
 	return requireCheckpointArtifact(checkpoint.RuntimeState.ConfigArtifact, "runtime_state.config_artifact")
@@ -136,13 +146,15 @@ func requireCheckpointArtifact(artifact workerapi.CheckpointArtifact, field stri
 }
 
 type runtimeCheckpointer struct {
-	session   vm.CheckpointableSession
-	cas       cas.Store
-	encryptor *checkpoint.Encryptor
-	tempDir   string
-	stream    io.ReadWriteCloser
-	workspace workerapi.CheckpointWorkspaceBase
-	runEvent  func(context.Context, *runv0.RunEvent) error
+	session    vm.CheckpointableSession
+	cas        cas.Store
+	encryptor  *checkpoint.Encryptor
+	tempDir    string
+	stream     io.ReadWriteCloser
+	workspace  workerapi.CheckpointWorkspaceBase
+	runEvent   func(context.Context, *runv0.RunEvent) error
+	freezeGate *sync.Mutex
+	onFrozen   func()
 }
 
 func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request CheckpointRequest) (result CheckpointResult, err error) {
@@ -301,6 +313,15 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	if err := validateCheckpointPauseReady(ready, request); err != nil {
 		return nil, err
 	}
+	if c.freezeGate != nil {
+		c.freezeGate.Lock()
+	}
+	if c.onFrozen != nil {
+		c.onFrozen()
+	}
+	if c.freezeGate != nil {
+		c.freezeGate.Unlock()
+	}
 	if request.CaptureWorkspace && workspaceArtifact == nil {
 		return nil, errors.New("checkpoint pause did not return required workspace capture")
 	}
@@ -438,6 +459,12 @@ func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.R
 }
 
 func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request CheckpointRequest, artifact vm.SnapshotArtifact) (workerapi.CheckpointManifest, error) {
+	if artifact.VMVCPUCount <= 0 {
+		return workerapi.CheckpointManifest{}, errors.New("checkpoint snapshot VM vCPU count must be positive")
+	}
+	if !sha256sum.ValidDigest(artifact.CPUConfigDigest) {
+		return workerapi.CheckpointManifest{}, errors.New("checkpoint snapshot CPU configuration digest must be canonical")
+	}
 	var manifest storedCheckpointArtifact
 	var state storedCheckpointArtifact
 	var scratchDisk storedCheckpointArtifact
@@ -502,6 +529,8 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 				InitramfsDigest: artifact.InitramfsDigest,
 				RootfsDigest:    artifact.RootfsDigest,
 				ConfigDigest:    artifact.RuntimeConfigDigest,
+				VMVCPUCount:     artifact.VMVCPUCount,
+				CPUConfigDigest: artifact.CPUConfigDigest,
 				Substrate:       checkpointRuntimeSubstrate(artifact.Substrate),
 			},
 		},
@@ -523,9 +552,10 @@ func checkpointRuntimeSubstrate(substrate *vm.RuntimeSubstrate) *workerapi.Check
 		return nil
 	}
 	return &workerapi.CheckpointRuntimeSubstrate{
-		Digest:   strings.TrimSpace(substrate.Digest),
-		Format:   strings.TrimSpace(substrate.Format),
-		Contract: strings.TrimSpace(substrate.Contract),
+		Digest:    strings.TrimSpace(substrate.Digest),
+		Format:    strings.TrimSpace(substrate.Format),
+		Contract:  strings.TrimSpace(substrate.Contract),
+		SizeBytes: substrate.SizeBytes,
 	}
 }
 
@@ -617,9 +647,6 @@ func workerCheckpointFilepackStats(stats *vm.FilepackStats) *workerapi.Checkpoin
 func cleanupSnapshotArtifact(artifact vm.SnapshotArtifact) {
 	_ = os.Remove(artifact.VMState.Path)
 	_ = os.Remove(artifact.ScratchDisk.Path)
-	if artifact.Substrate != nil {
-		_ = os.Remove(artifact.Substrate.Path)
-	}
 	for _, file := range artifact.Memory {
 		_ = os.Remove(file.Path)
 	}

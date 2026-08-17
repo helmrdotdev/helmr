@@ -2,7 +2,6 @@ import {
   actor,
   image,
   queue,
-  secrets,
   source,
   task,
   sandbox,
@@ -133,19 +132,8 @@ export function assertGreenfieldTypes(): void {
   builder.resources({ cpu: 1, memory: "1GiB" })
 
   const resourceBuilder = builder.image(image("root").from("debian"))
-  image("private").from("ghcr.io/acme/base:1", {
-    auth: {
-      username: "aktky",
-      password: secrets.fromName("GHCR_TOKEN"),
-    },
-  })
-  image("invalid-private").from("ghcr.io/acme/base:1", {
-    auth: {
-      username: "aktky",
-      // @ts-expect-error registry passwords require a branded Secret name reference.
-      password: "GHCR_TOKEN",
-    },
-  })
+  // @ts-expect-error registry authentication belongs to the local BuildKit session.
+  image("private").from("ghcr.io/acme/base:1", { auth: {} })
   const sourceFile: SourceFile = source.file("./package.json")
   const sourceDirectory: SourceDirectory = source.directory("./src")
   image("source-copy")
