@@ -37,7 +37,7 @@ SELECT workspace_versions.id AS version_id,
    AND workspace_versions.environment_id = sqlc.arg(environment_id)
    AND workspace_versions.workspace_id = sqlc.arg(workspace_id)
    AND workspace_versions.id = sqlc.arg(version_id)
-   AND workspace_versions.state = 'committed';
+   AND workspace_versions.state IN ('committed', 'private');
 
 -- name: GetCheckpointWorkspaceBaseAuthority :one
 SELECT workspace_versions.id AS version_id,

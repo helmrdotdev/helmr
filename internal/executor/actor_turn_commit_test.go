@@ -143,8 +143,13 @@ func TestHandleActorTurnCommitAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
 			task.lease.BaseWorkspaceVersionID, task.resetTarget.BaseVersionID,
 			task.waitWorkspace.BaseVersionID, task.authority.GetFence().GetBaseWorkspaceVersionId())
 	}
+	checkpointBase := task.checkpointer.(*runtimeCheckpointer).workspace
 	if task.waitWorkspace.Artifact == nil || task.waitWorkspace.Artifact.Digest != artifactDigest ||
-		task.checkpointer.(*runtimeCheckpointer).workspace.ArtifactDigest != artifactDigest {
+		checkpointBase.ArtifactDigest != artifactDigest ||
+		checkpointBase.ArtifactSizeBytes != int64(len(artifactBody)) ||
+		checkpointBase.ArtifactMediaType != workspace.ArtifactMediaType ||
+		checkpointBase.ArtifactEncoding != workspace.ArtifactEncoding ||
+		checkpointBase.MountPath != "/workspace" {
 		t.Fatal("Actor turn commit did not advance Wait and checkpoint Workspace artifacts")
 	}
 	if controlPlane.request.Artifact == nil || controlPlane.request.Artifact.Digest != artifactDigest ||

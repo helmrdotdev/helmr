@@ -125,7 +125,7 @@ SELECT workspace_versions.id AS version_id,
    AND workspace_versions.environment_id = $3
    AND workspace_versions.workspace_id = $4
    AND workspace_versions.id = $5
-   AND workspace_versions.state = 'committed'
+   AND workspace_versions.state IN ('committed', 'private')
 `
 
 type GetWorkspaceResetTargetAuthorityParams struct {

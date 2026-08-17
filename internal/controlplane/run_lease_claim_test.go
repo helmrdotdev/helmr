@@ -1276,6 +1276,7 @@ type runLeaseClaimStore struct {
 	program             db.GetDeploymentProgramAuthorityRow
 	definition          db.DeploymentDefinition
 	resetTarget         db.GetWorkspaceResetTargetAuthorityRow
+	resetTargetParams   db.GetWorkspaceResetTargetAuthorityParams
 	projectionErr       error
 	entrypoint          db.GetRunEntrypointLocatorsRow
 	enteredAt           pgtype.Timestamptz
@@ -1357,10 +1358,11 @@ func (s *runLeaseClaimStore) GetDeploymentDefinition(
 }
 
 func (s *runLeaseClaimStore) GetWorkspaceResetTargetAuthority(
-	context.Context,
-	db.GetWorkspaceResetTargetAuthorityParams,
+	_ context.Context,
+	params db.GetWorkspaceResetTargetAuthorityParams,
 ) (db.GetWorkspaceResetTargetAuthorityRow, error) {
 	s.calls = append(s.calls, "reset_target")
+	s.resetTargetParams = params
 	if s.projectionErr != nil {
 		return db.GetWorkspaceResetTargetAuthorityRow{}, s.projectionErr
 	}

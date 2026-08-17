@@ -152,6 +152,10 @@ func (r ProgramRunner) StartRunLeaseTask(
 	if err != nil {
 		return nil, err
 	}
+	checkpointBase, err := checkpointWorkspaceBase(target)
+	if err != nil {
+		return nil, err
+	}
 	var program freshProgram
 	if claim != nil &&
 		(claim.Execution.Restore != nil ||
@@ -193,18 +197,12 @@ func (r ProgramRunner) StartRunLeaseTask(
 	}
 	if checkpointable, ok := program.session.(vm.CheckpointableSession); ok {
 		task.checkpointer = &runtimeCheckpointer{
-			session:   checkpointable,
-			cas:       r.CAS,
-			encryptor: r.CheckpointEncryptor,
-			tempDir:   r.tempDir(),
-			stream:    program.session.Stream(),
-			workspace: workerapi.CheckpointWorkspaceBase{
-				ArtifactDigest:    program.mount.WorkspaceArtifact.Digest,
-				ArtifactSizeBytes: program.mount.WorkspaceArtifact.SizeBytes,
-				ArtifactMediaType: program.mount.WorkspaceArtifact.MediaType,
-				ArtifactEncoding:  program.mount.WorkspaceArtifact.Encoding,
-				MountPath:         program.mount.WorkspaceMountPath,
-			},
+			session:    checkpointable,
+			cas:        r.CAS,
+			encryptor:  r.CheckpointEncryptor,
+			tempDir:    r.tempDir(),
+			stream:     program.session.Stream(),
+			workspace:  checkpointBase,
 			runEvent:   task.processCheckpointRunEvent,
 			freezeGate: &task.renewalGate,
 			onFrozen:   task.markCheckpointFrozen,
@@ -864,6 +862,21 @@ func runLeaseResetTarget(
 	default:
 		return workspace.ResetTarget{}, errors.New("run lease workspace reset target is invalid")
 	}
+}
+
+func checkpointWorkspaceBase(target workspace.ResetTarget) (workerapi.CheckpointWorkspaceBase, error) {
+	if err := workspace.ValidateResetTarget(target); err != nil {
+		return workerapi.CheckpointWorkspaceBase{}, fmt.Errorf("validate checkpoint workspace base: %w", err)
+	}
+	base := workerapi.CheckpointWorkspaceBase{MountPath: "/workspace"}
+	if target.Artifact == nil {
+		return base, nil
+	}
+	base.ArtifactDigest = target.Artifact.Digest
+	base.ArtifactSizeBytes = target.Artifact.SizeBytes
+	base.ArtifactMediaType = target.Artifact.MediaType
+	base.ArtifactEncoding = target.Artifact.Encoding
+	return base, nil
 }
 
 func workerTaskOutcome(outcome *runv0.TaskOutcome) (workerapi.TaskOutcome, error) {

@@ -118,12 +118,13 @@ func (task *guestRunLeaseTask) handleActorTurnCommit(
 			SizeBytes: artifact.SizeBytes, EntryCount: int32(artifact.EntryCount),
 		}
 		task.waitWorkspace.Artifact = committedArtifact
-		if checkpointer, ok := task.checkpointer.(*runtimeCheckpointer); ok {
-			checkpointer.workspace.ArtifactDigest = artifact.Digest
-			checkpointer.workspace.ArtifactSizeBytes = artifact.SizeBytes
-			checkpointer.workspace.ArtifactMediaType = artifact.MediaType
-			checkpointer.workspace.ArtifactEncoding = artifact.Encoding
-		}
+	}
+	checkpointBase, err := checkpointWorkspaceBase(task.resetTarget)
+	if err != nil {
+		return fmt.Errorf("advance checkpoint workspace base: %w", err)
+	}
+	if checkpointer, ok := task.checkpointer.(*runtimeCheckpointer); ok {
+		checkpointer.workspace = checkpointBase
 	}
 	task.waitWorkspace.BaseVersionID = response.WorkspaceVersionID
 	task.lease.BaseWorkspaceVersionID = response.WorkspaceVersionID

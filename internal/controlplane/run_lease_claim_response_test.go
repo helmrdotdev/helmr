@@ -109,6 +109,25 @@ func TestRunLeaseClaimResponseKeepsWorkspaceAuthorityInAssignment(t *testing.T) 
 	}
 }
 
+func TestRunLeaseClaimProjectionLoadsOnlyLockedWorkspaceLeaseBase(t *testing.T) {
+	authority, projection, _ := validRunLeaseClaimResponse(t)
+	store := &runLeaseClaimStore{
+		program: projection.program, definition: projection.definition,
+		resetTarget: projection.resetTarget,
+	}
+
+	if _, err := loadRunLeaseClaimProjection(context.Background(), store, authority); err != nil {
+		t.Fatal(err)
+	}
+	if store.resetTargetParams.OrgID != authority.run.OrgID ||
+		store.resetTargetParams.ProjectID != authority.run.ProjectID ||
+		store.resetTargetParams.EnvironmentID != authority.run.EnvironmentID ||
+		store.resetTargetParams.WorkspaceID != authority.workspace.ID ||
+		store.resetTargetParams.VersionID != authority.workspaceLease.BaseVersionID {
+		t.Fatalf("reset target lookup = %+v", store.resetTargetParams)
+	}
+}
+
 func TestRestoreRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
 	authority, projection, keys := validRunLeaseClaimResponse(t)
 	authority.mode = runLeaseClaimRestore
