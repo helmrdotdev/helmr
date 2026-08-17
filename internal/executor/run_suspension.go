@@ -199,6 +199,7 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 		CorrelationID:    request.CorrelationID,
 		CheckpointID:     intent.CheckpointID,
 		CaptureWorkspace: intent.CaptureWorkspace,
+		RetainSource:     intent.RetainSource,
 	}
 	if request.ResumeAttachID != "" {
 		checkpointRequest.AttemptNumber = lease.AttemptNumber
@@ -221,6 +222,7 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 	readyRequest := workerapi.CheckpointReadyRequest{
 		Lease: lease.Fence(), RequestVersion: intent.RequestVersion,
 		RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID,
+		SourceCleanup:    checkpoint.SourceCleanup,
 		WorkspaceCapture: *workerCheckpointWorkspaceCapture(checkpoint.WorkspaceCapture),
 		Manifest:         checkpoint.Manifest,
 	}

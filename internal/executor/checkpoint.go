@@ -211,13 +211,26 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 	}
 	recordPhase("store_checkpoint_artifacts", started)
 	started = time.Now()
-	sourceReleaseAttempted = true
-	if err := c.releaseCheckpointSource(ctx); err != nil {
-		return CheckpointResult{}, fmt.Errorf("release checkpoint source: %w", err)
+	var sourceCleanup *workerapi.RuntimeCleanupProof
+	if request.RetainSource {
+		if err := c.session.Resume(ctx); err != nil {
+			return CheckpointResult{}, fmt.Errorf("resume retained checkpoint source: %w", err)
+		}
+		recordPhase("resume_checkpoint_source", started)
+	} else {
+		sourceReleaseAttempted = true
+		if err := c.releaseCheckpointSource(ctx); err != nil {
+			return CheckpointResult{}, fmt.Errorf("release checkpoint source: %w", err)
+		}
+		recordPhase("release_checkpoint_source", started)
+		sourceCleanup = &workerapi.RuntimeCleanupProof{
+			Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC(),
+		}
 	}
-	recordPhase("release_checkpoint_source", started)
 	manifest.Phases = phases
-	return CheckpointResult{Manifest: manifest, WorkspaceCapture: workspaceCapture}, nil
+	return CheckpointResult{
+		Manifest: manifest, WorkspaceCapture: workspaceCapture, SourceCleanup: sourceCleanup,
+	}, nil
 }
 
 func (c runtimeCheckpointer) CreateHandoffCheckpoint(

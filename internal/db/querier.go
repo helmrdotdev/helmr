@@ -57,6 +57,7 @@ type Querier interface {
 	ClearDefaultProject(ctx context.Context, orgID pgtype.UUID) (int64, error)
 	ClearFreshPrestartRunLease(ctx context.Context, arg ClearFreshPrestartRunLeaseParams) (Run, error)
 	ClearSameWorkspaceChildWriter(ctx context.Context, arg ClearSameWorkspaceChildWriterParams) (RunWait, error)
+	CloseCheckpointSourceRuntime(ctx context.Context, arg CloseCheckpointSourceRuntimeParams) (CloseCheckpointSourceRuntimeRow, error)
 	CloseExpiredWorkspaceExecReservation(ctx context.Context, arg CloseExpiredWorkspaceExecReservationParams) (int64, error)
 	CloseRunActiveIntervalForCheckpoint(ctx context.Context, arg CloseRunActiveIntervalForCheckpointParams) (int64, error)
 	CloseRunActiveIntervalForCheckpointFailure(ctx context.Context, arg CloseRunActiveIntervalForCheckpointFailureParams) (int64, error)

@@ -1034,6 +1034,7 @@ type RunWaitPollResponse struct {
 	RequestVersion   int64             `json:"request_version,omitempty"`
 	CheckpointID     string            `json:"checkpoint_id,omitempty"`
 	CaptureWorkspace bool              `json:"capture_workspace,omitempty"`
+	RetainSource     bool              `json:"retain_source,omitempty"`
 	ResumeKind       string            `json:"resume_kind,omitempty"`
 	ResumePayload    json.RawMessage   `json:"resume_payload,omitempty"`
 	RequireAck       bool              `json:"require_ack,omitempty"`
@@ -1155,6 +1156,7 @@ type CheckpointReadyRequest struct {
 	RequestVersion   int64                      `json:"request_version"`
 	RunWaitID        string                     `json:"run_wait_id"`
 	CheckpointID     string                     `json:"checkpoint_id"`
+	SourceCleanup    *RuntimeCleanupProof       `json:"source_cleanup,omitempty"`
 	WorkspaceCapture CheckpointWorkspaceCapture `json:"workspace_capture"`
 	Manifest         CheckpointManifest         `json:"manifest"`
 }

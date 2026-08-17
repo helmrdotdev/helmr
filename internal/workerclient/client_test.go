@@ -594,6 +594,9 @@ func TestWorkerRunWaitClient(t *testing.T) {
 			if request.Lease.ID != claim.ID || request.RequestVersion != 42 || request.RunWaitID != "run-wait-id-1" || request.CheckpointID != "checkpoint-1" {
 				t.Fatalf("checkpoint ready request = %+v", request)
 			}
+			if request.SourceCleanup == nil || request.SourceCleanup.Method != workerapi.RuntimeCleanupSessionClosed {
+				t.Fatalf("checkpoint source cleanup = %+v", request.SourceCleanup)
+			}
 			if request.Manifest.RecoveryPoint.Runtime.KernelDigest != kernelDigest || request.Manifest.RecoveryPoint.Runtime.RootfsDigest != rootfsDigest {
 				t.Fatalf("checkpoint manifest = %+v", request.Manifest)
 			}
@@ -644,7 +647,10 @@ func TestWorkerRunWaitClient(t *testing.T) {
 		RequestVersion: 42,
 		RunWaitID:      "run-wait-id-1",
 		CheckpointID:   "checkpoint-1",
-		Manifest:       testClientCheckpointManifest(kernelDigest, rootfsDigest, configDigest, manifestDigest, vmStateDigest, scratchDigest, memoryDigest),
+		SourceCleanup: &workerapi.RuntimeCleanupProof{
+			Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC(),
+		},
+		Manifest: testClientCheckpointManifest(kernelDigest, rootfsDigest, configDigest, manifestDigest, vmStateDigest, scratchDigest, memoryDigest),
 	})
 	if err != nil {
 		t.Fatal(err)

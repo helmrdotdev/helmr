@@ -34,6 +34,9 @@ func TestControlPlaneRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
 	if client.ready == nil || client.ready.RequestVersion != 3 || client.ready.CheckpointID != "checkpoint-1" {
 		t.Fatalf("ready request = %+v", client.ready)
 	}
+	if client.ready.SourceCleanup == nil || client.ready.SourceCleanup.Method != workerapi.RuntimeCleanupSessionClosed {
+		t.Fatalf("ready source cleanup = %+v", client.ready.SourceCleanup)
+	}
 	if checkpointer.request.CheckpointID != "checkpoint-1" ||
 		checkpointer.request.RunID != "run-1" ||
 		checkpointer.request.AttemptNumber != 2 ||
@@ -44,6 +47,28 @@ func TestControlPlaneRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
 	}
 	if client.failed != nil {
 		t.Fatalf("unexpected failed checkpoint = %+v", client.failed)
+	}
+}
+
+func TestControlPlaneRunWaitsRetainsSameWorkspaceCheckpointSource(t *testing.T) {
+	client := &fakeRunWaitClient{
+		created: liveRunWaitResponse(),
+		polls: []workerapi.RunWaitPollResponse{{
+			RunID: "run-1", RunWaitID: "run-wait-id-1", Status: "checkpoint_requested",
+			RequestVersion: 3, CheckpointID: "checkpoint-1", RetainSource: true,
+		}},
+	}
+	checkpointer := &fakeCheckpointer{
+		manifest: testRunCheckpointWaitManifest(), workspaceCapture: testCheckpointWorkspaceCapture(),
+	}
+	request := testWaitRequest(workerapi.RunWaitKindChild)
+	request.Checkpointer = checkpointer
+	err := ControlPlaneRunWaits{Client: client}.Wait(context.Background(), request)
+	if !errors.Is(err, ErrDetached) {
+		t.Fatalf("err = %v, want ErrDetached", err)
+	}
+	if !checkpointer.request.RetainSource || client.ready == nil || client.ready.SourceCleanup != nil {
+		t.Fatalf("retained checkpoint = request:%+v ready:%+v", checkpointer.request, client.ready)
 	}
 }
 
@@ -358,7 +383,13 @@ func (c *fakeCheckpointer) CreateCheckpoint(_ context.Context, request Checkpoin
 	if c.err != nil {
 		return CheckpointResult{}, c.err
 	}
-	return CheckpointResult{Manifest: c.manifest, WorkspaceCapture: c.workspaceCapture}, nil
+	result := CheckpointResult{Manifest: c.manifest, WorkspaceCapture: c.workspaceCapture}
+	if !request.RetainSource {
+		result.SourceCleanup = &workerapi.RuntimeCleanupProof{
+			Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC(),
+		}
+	}
+	return result, nil
 }
 
 type mutableRunLeaseProvider struct {

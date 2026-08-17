@@ -267,6 +267,7 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		response.RequestVersion = wait.CheckpointRequestVersion
 		response.CheckpointID = pgvalue.UUIDString(wait.SuspendCheckpointID)
 		response.CaptureWorkspace = true
+		response.RetainSource = wait.Kind == db.WaitKindChild && !wait.ChildRunID.Valid
 	case db.RunWaitStateCheckpointing:
 		if !wait.SuspendCheckpointID.Valid || wait.CheckpointRequestVersion <= 0 {
 			writeError(w, errors.New("checkpointing run wait has incomplete authority"))
@@ -276,6 +277,7 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		response.RequestVersion = wait.CheckpointRequestVersion
 		response.CheckpointID = pgvalue.UUIDString(wait.SuspendCheckpointID)
 		response.CaptureWorkspace = true
+		response.RetainSource = wait.Kind == db.WaitKindChild && !wait.ChildRunID.Valid
 	default:
 		response.Status = workerapi.RunWaitPollStatusTerminal
 	}

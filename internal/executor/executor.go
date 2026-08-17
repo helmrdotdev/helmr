@@ -78,11 +78,13 @@ type CheckpointRequest struct {
 	ResumeAttachID           string
 	CheckpointRequestVersion int64
 	CaptureWorkspace         bool
+	RetainSource             bool
 }
 
 type CheckpointResult struct {
 	Manifest         workerapi.CheckpointManifest
 	WorkspaceCapture *CheckpointWorkspaceCapture
+	SourceCleanup    *workerapi.RuntimeCleanupProof
 }
 
 type CheckpointWorkspaceCapture struct {
