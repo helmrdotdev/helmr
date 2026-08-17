@@ -99,6 +99,8 @@ func (d *Authority) grantFreshRun(
 	}
 	if mount.id != expectedMount.id ||
 		mount.state != db.WorkspaceMountStateMounted ||
+		(authority.restoreMountGeneration.Valid &&
+			mount.fencingGeneration != authority.restoreMountGeneration.Int64) ||
 		(authority.handoffChildWaitID.Valid && !authority.sameWorkspaceResume &&
 			mount.fencingGeneration != authority.handoffAdmissionMountGen.Int64) {
 		return db.RunLease{}, ErrCapacityUnavailable

@@ -2,14 +2,14 @@
 INSERT INTO workspace_mounts (
     id, org_id, project_id, environment_id, region_id, worker_group_id,
     worker_instance_id, worker_epoch, workspace_id,
-    materialized_version_id, runtime_instance_id, request
+    materialized_version_id, runtime_instance_id, fencing_generation, request
 )
 SELECT sqlc.arg(id), runtime_instances.org_id, runtime_instances.project_id,
        runtime_instances.environment_id, runtime_instances.region_id,
        runtime_instances.worker_group_id, runtime_instances.worker_instance_id,
        runtime_instances.worker_epoch, runtime_instances.workspace_id,
        runtime_instances.reserved_workspace_version_id, runtime_instances.id,
-       sqlc.arg(request)
+       sqlc.arg(fencing_generation), sqlc.arg(request)
   FROM runtime_instances
   JOIN runs ON runs.environment_id = runtime_instances.environment_id
            AND runs.id = runtime_instances.reserved_run_id
@@ -36,6 +36,7 @@ ON CONFLICT (workspace_id) WHERE state IN ('mounting','mounted','unmounting')
 DO UPDATE SET updated_at = workspace_mounts.updated_at
 WHERE workspace_mounts.runtime_instance_id = excluded.runtime_instance_id
   AND workspace_mounts.materialized_version_id = excluded.materialized_version_id
+  AND workspace_mounts.fencing_generation = excluded.fencing_generation
 RETURNING workspace_mounts.*, (xmax = 0) AS inserted,
           CASE WHEN xmax = 0 THEN 'created'::text ELSE 'replayed'::text END AS decision;
 

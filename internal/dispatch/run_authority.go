@@ -41,6 +41,7 @@ type runPlacementAuthority struct {
 	restoreSubstrateID        pgtype.UUID
 	restoreSubstrateFormat    string
 	restoreSubstrateContract  string
+	restoreMountGeneration    pgtype.Int8
 	sameWorkspaceResume       bool
 	handoffResumeSucceeded    bool
 	resumeHandoffRuntimeID    pgtype.UUID
@@ -611,15 +612,20 @@ SELECT run_attempts.base_workspace_version_id,
 		return runPlacementAuthority{}, fmt.Errorf("lock Run placement Actor input authority: %w", pgx.ErrNoRows)
 	}
 	if authority.restoreCheckpointID.Valid {
+		var restoreSourceMountGeneration pgtype.Int8
 		err = tx.QueryRow(ctx, `
 SELECT source_runtime.id,
        source_lease.worker_group_id,
        source_runtime.runtime_identity_id,
        source_runtime.vm_vcpu_count,
        source_runtime.cpu_config_digest,
-       source_runtime.runtime_substrate_id,
+	       source_runtime.runtime_substrate_id,
 	       runtime_substrates.substrate_format,
-	       runtime_substrates.substrate_contract
+	       runtime_substrates.substrate_contract,
+	       CASE WHEN NOT $14::boolean
+	            THEN source_workspace_lease.mount_fencing_generation
+	            ELSE NULL
+	        END
 	  FROM run_waits
 	  JOIN run_checkpoints
 	    ON run_checkpoints.id = CASE
@@ -658,6 +664,8 @@ SELECT source_runtime.id,
     ON source_workspace_lease.id = run_checkpoints.source_workspace_lease_id
    AND source_workspace_lease.workspace_id = run_checkpoints.workspace_id
    AND source_workspace_lease.owner_run_lease_id = source_lease.id
+	   AND ($14::boolean
+	        OR source_workspace_lease.base_version_id = run_checkpoints.base_workspace_version_id)
    AND source_workspace_lease.state IN ('released', 'fenced')
   JOIN runtime_instances AS source_runtime
     ON source_runtime.id = source_lease.runtime_instance_id
@@ -728,9 +736,21 @@ SELECT source_runtime.id,
 			&authority.restoreSubstrateID,
 			&authority.restoreSubstrateFormat,
 			&authority.restoreSubstrateContract,
+			&restoreSourceMountGeneration,
 		)
 		if err != nil {
 			return runPlacementAuthority{}, fmt.Errorf("lock Run placement restore authority: %w", err)
+		}
+		if !authority.sameWorkspaceResume && !authority.handoffChildWaitID.Valid {
+			if !restoreSourceMountGeneration.Valid ||
+				restoreSourceMountGeneration.Int64 <= 0 ||
+				restoreSourceMountGeneration.Int64 > math.MaxInt64-2 {
+				return runPlacementAuthority{}, fmt.Errorf("lock Run placement restore Mount generation: %w", pgx.ErrNoRows)
+			}
+			authority.restoreMountGeneration = pgtype.Int8{
+				Int64: restoreSourceMountGeneration.Int64 + 1,
+				Valid: true,
+			}
 		}
 	}
 

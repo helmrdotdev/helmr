@@ -375,14 +375,14 @@ const ensureRunWorkspaceMountRequested = `-- name: EnsureRunWorkspaceMountReques
 INSERT INTO workspace_mounts (
     id, org_id, project_id, environment_id, region_id, worker_group_id,
     worker_instance_id, worker_epoch, workspace_id,
-    materialized_version_id, runtime_instance_id, request
+    materialized_version_id, runtime_instance_id, fencing_generation, request
 )
 SELECT $1, runtime_instances.org_id, runtime_instances.project_id,
        runtime_instances.environment_id, runtime_instances.region_id,
        runtime_instances.worker_group_id, runtime_instances.worker_instance_id,
        runtime_instances.worker_epoch, runtime_instances.workspace_id,
        runtime_instances.reserved_workspace_version_id, runtime_instances.id,
-       $2
+       $2, $3
   FROM runtime_instances
   JOIN runs ON runs.environment_id = runtime_instances.environment_id
            AND runs.id = runtime_instances.reserved_run_id
@@ -396,12 +396,12 @@ SELECT $1, runtime_instances.org_id, runtime_instances.project_id,
                                  WHEN runtime_instances.restore_checkpoint_id IS NULL THEN 'committed'
                                  ELSE 'private'
                              END
- WHERE runtime_instances.org_id = $3
-   AND runtime_instances.workspace_id = $4
-   AND runtime_instances.id = $5
-   AND runtime_instances.reserved_run_id = $6
-   AND runtime_instances.reserved_attempt_number = $7
-   AND runtime_instances.reserved_workspace_version_id = $8
+ WHERE runtime_instances.org_id = $4
+   AND runtime_instances.workspace_id = $5
+   AND runtime_instances.id = $6
+   AND runtime_instances.reserved_run_id = $7
+   AND runtime_instances.reserved_attempt_number = $8
+   AND runtime_instances.reserved_workspace_version_id = $9
    AND runtime_instances.observed_state = 'ready'
    AND runtime_instances.reclaimed_at IS NULL
    AND runtime_instances.reservation_expires_at > transaction_timestamp()
@@ -409,12 +409,14 @@ ON CONFLICT (workspace_id) WHERE state IN ('mounting','mounted','unmounting')
 DO UPDATE SET updated_at = workspace_mounts.updated_at
 WHERE workspace_mounts.runtime_instance_id = excluded.runtime_instance_id
   AND workspace_mounts.materialized_version_id = excluded.materialized_version_id
+  AND workspace_mounts.fencing_generation = excluded.fencing_generation
 RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at, (xmax = 0) AS inserted,
           CASE WHEN xmax = 0 THEN 'created'::text ELSE 'replayed'::text END AS decision
 `
 
 type EnsureRunWorkspaceMountRequestedParams struct {
 	ID                 pgtype.UUID `json:"id"`
+	FencingGeneration  int64       `json:"fencing_generation"`
 	Request            []byte      `json:"request"`
 	OrgID              pgtype.UUID `json:"org_id"`
 	WorkspaceID        pgtype.UUID `json:"workspace_id"`
@@ -465,6 +467,7 @@ type EnsureRunWorkspaceMountRequestedRow struct {
 func (q *Queries) EnsureRunWorkspaceMountRequested(ctx context.Context, arg EnsureRunWorkspaceMountRequestedParams) (EnsureRunWorkspaceMountRequestedRow, error) {
 	row := q.db.QueryRow(ctx, ensureRunWorkspaceMountRequested,
 		arg.ID,
+		arg.FencingGeneration,
 		arg.Request,
 		arg.OrgID,
 		arg.WorkspaceID,

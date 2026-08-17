@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -2710,12 +2711,15 @@ func TestPlaceReadyRunRecreatesExactSuspendedRuntimeAndBindsWait(t *testing.T) {
 	}
 
 	var sourceWorkspaceLeaseID, baseVersionID pgtype.UUID
+	var sourceMountGeneration int64
 	err = fixture.pool.QueryRow(fixture.ctx, `
-SELECT workspace_leases.id, workspace_leases.base_version_id
+SELECT workspace_leases.id, workspace_leases.base_version_id,
+       workspace_leases.mount_fencing_generation
   FROM workspace_leases
  WHERE owner_run_lease_id = $1`, granted.Lease.ID).Scan(
 		&sourceWorkspaceLeaseID,
 		&baseVersionID,
+		&sourceMountGeneration,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -2834,6 +2838,24 @@ UPDATE worker_instances SET substrate_contract = 'incompatible-contract' WHERE i
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE worker_instances SET substrate_contract = $2 WHERE id = $1`,
 		fixture.workerID, capacityapi.SubstrateContractExt4)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE workspace_leases SET mount_fencing_generation = $2 WHERE id = $1`,
+		sourceWorkspaceLeaseID, int64(math.MaxInt64-1))
+	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate); !errors.Is(err, ErrCandidateChanged) {
+		t.Fatalf("restore placement with exhausted Mount generation error = %v, want ErrCandidateChanged", err)
+	}
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE workspace_leases SET mount_fencing_generation = $2 WHERE id = $1`,
+		sourceWorkspaceLeaseID, sourceMountGeneration)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE workspace_leases SET base_version_id = $2 WHERE id = $1`,
+		sourceWorkspaceLeaseID, privateVersionID)
+	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate); !errors.Is(err, ErrCandidateChanged) {
+		t.Fatalf("restore placement with crossed source Lease base error = %v, want ErrCandidateChanged", err)
+	}
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE workspace_leases SET base_version_id = $2 WHERE id = $1`,
+		sourceWorkspaceLeaseID, baseVersionID)
 	restored, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate)
 	if err != nil {
 		t.Fatal(err)
@@ -2869,6 +2891,34 @@ UPDATE run_checkpoints
 	if err != nil {
 		t.Fatal(err)
 	}
+	var restoreMaterializationGeneration int64
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT fencing_generation
+  FROM workspace_mounts
+ WHERE id = $1`, restoreMount.WorkspaceMountID).Scan(&restoreMaterializationGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if restoreMaterializationGeneration != sourceMountGeneration+1 {
+		t.Fatalf("restore materialization generation = %d, want source %d + 1",
+			restoreMaterializationGeneration, sourceMountGeneration)
+	}
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE workspace_mounts SET fencing_generation = 1 WHERE id = $1`, restoreMount.WorkspaceMountID)
+	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate); !errors.Is(err, ErrCapacityUnavailable) {
+		t.Fatalf("restore placement with stale active Mount generation error = %v, want ErrCapacityUnavailable", err)
+	}
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE workspace_mounts SET fencing_generation = $2 WHERE id = $1`,
+		restoreMount.WorkspaceMountID, restoreMaterializationGeneration)
+	replayedRestoreMount, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayedRestoreMount.WorkspaceMountID != restoreMount.WorkspaceMountID {
+		t.Fatalf("replayed restore Mount = %s, want %s",
+			pgvalue.UUIDString(replayedRestoreMount.WorkspaceMountID),
+			pgvalue.UUIDString(restoreMount.WorkspaceMountID))
+	}
 	markRunPlacementMountReady(t, fixture, restoreMount.WorkspaceMountID)
 	restoreGrant, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate)
 	if err != nil {
@@ -2878,6 +2928,7 @@ UPDATE run_checkpoints
 	var waitState string
 	var waitLeaseID, leaseBaseVersionID, retainedCheckpointID, clearedReservation pgtype.UUID
 	var restoredSubstrateID, sourceSubstrateID pgtype.UUID
+	var restoredLeaseMountGeneration, restoredMountGeneration int64
 	err = fixture.pool.QueryRow(fixture.ctx, `
 SELECT run_waits.suspension_state,
        run_waits.current_run_lease_id,
@@ -2885,14 +2936,18 @@ SELECT run_waits.suspension_state,
        runtime_instances.restore_checkpoint_id,
        runtime_instances.reserved_run_id,
        runtime_instances.runtime_substrate_id,
-       source_runtime.runtime_substrate_id
+       source_runtime.runtime_substrate_id,
+       workspace_leases.mount_fencing_generation,
+       workspace_mounts.fencing_generation
   FROM run_waits
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = $2
   JOIN runtime_instances ON runtime_instances.id = workspace_leases.runtime_instance_id
   JOIN runtime_instances AS source_runtime ON source_runtime.id = $3
+  JOIN workspace_mounts ON workspace_mounts.id = workspace_leases.workspace_mount_id
  WHERE run_waits.id = $1`, runWaitID, restoreGrant.Lease.ID, reserved.RuntimeInstanceID).Scan(
 		&waitState, &waitLeaseID, &leaseBaseVersionID, &retainedCheckpointID, &clearedReservation,
-		&restoredSubstrateID, &sourceSubstrateID,
+		&restoredSubstrateID, &sourceSubstrateID, &restoredLeaseMountGeneration,
+		&restoredMountGeneration,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -2904,6 +2959,11 @@ SELECT run_waits.suspension_state,
 		t.Fatalf("restore grant wait=%s lease=%s base=%s checkpoint=%s reserved=%s",
 			waitState, pgvalue.UUIDString(waitLeaseID), pgvalue.UUIDString(leaseBaseVersionID),
 			pgvalue.UUIDString(retainedCheckpointID), pgvalue.UUIDString(clearedReservation))
+	}
+	if restoredLeaseMountGeneration != sourceMountGeneration+2 ||
+		restoredMountGeneration != sourceMountGeneration+2 {
+		t.Fatalf("restored grant generations lease=%d mount=%d, want source %d + 2",
+			restoredLeaseMountGeneration, restoredMountGeneration, sourceMountGeneration)
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases

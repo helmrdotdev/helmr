@@ -228,6 +228,10 @@ func (d *Authority) useRunRuntime(
 	}
 	mount, err := getActiveRunMount(ctx, tx, authority, locked)
 	if err == nil {
+		if authority.restoreMountGeneration.Valid &&
+			mount.fencingGeneration != authority.restoreMountGeneration.Int64 {
+			return runWorkspaceMount{}, ErrCapacityUnavailable
+		}
 		if authority.sameWorkspaceResume && authority.usesRetainedHandoff(locked.id) {
 			if mount.id != authority.resumeHandoffMountID {
 				return runWorkspaceMount{}, ErrCapacityUnavailable
@@ -266,18 +270,27 @@ func (d *Authority) useRunRuntime(
 			RunID:              authority.runID,
 			AttemptNumber:      locked.reservedAttempt,
 			WorkspaceVersionID: authority.baseVersionID,
+			FencingGeneration:  requestedRunMountGeneration(authority),
 		},
 	)
 	if err != nil {
 		return runWorkspaceMount{}, fmt.Errorf("request workspace mount: %w", err)
 	}
 	return runWorkspaceMount{
-		id:        requested.ID,
-		workerID:  requested.WorkerInstanceID,
-		epoch:     requested.WorkerEpoch,
-		runtimeID: requested.RuntimeInstanceID,
-		state:     requested.State,
+		id:                requested.ID,
+		workerID:          requested.WorkerInstanceID,
+		epoch:             requested.WorkerEpoch,
+		runtimeID:         requested.RuntimeInstanceID,
+		state:             requested.State,
+		fencingGeneration: requested.FencingGeneration,
 	}, nil
+}
+
+func requestedRunMountGeneration(authority runPlacementAuthority) int64 {
+	if authority.restoreMountGeneration.Valid {
+		return authority.restoreMountGeneration.Int64
+	}
+	return 1
 }
 
 func discoverRunRuntime(
