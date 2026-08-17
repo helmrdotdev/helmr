@@ -112,6 +112,46 @@ contract_fake="$repo_root/tests/fixtures/fake-release-smoke-contract-helmr.sh"
 
 : >"$fake_log"
 run_expect_status 0 env \
+	HELMR_API_KEY=hlmr_sk_test \
+	FAKE_HELMR_LOG="$fake_log" \
+	HELMR_BIN="$contract_fake" \
+	HELMR_SMOKE_RESULT_FILE="$result_json" \
+	SMOKE_CASES=runtime \
+	SKIP_DEPLOY=1 \
+	/bin/bash "$script"
+assert_contains "$stdout" "PASS staging-runtime" "API-key runtime contract pass"
+assert_equal '["019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30"]' "$(jq -c '.run_ids' "$result_json")" "API-key runtime Run result"
+if grep -Eq -- '(^| )--(project|env)( |$)' "$fake_log"; then
+	fail "API-key runtime must not send session scope flags"
+fi
+
+: >"$fake_log"
+env \
+	HELMR_API_KEY=hlmr_sk_test \
+	FAKE_HELMR_WAIT_SECONDS=5 \
+	FAKE_HELMR_LOG="$fake_log" \
+	HELMR_BIN="$contract_fake" \
+	HELMR_SMOKE_RESULT_FILE="$result_json" \
+	SMOKE_CASES=runtime \
+	SKIP_DEPLOY=1 \
+	/bin/bash "$script" >"$stdout" 2>"$stderr" &
+smoke_pid=$!
+for _ in $(seq 1 100); do
+	grep -Fq "run wait 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30" "$fake_log" && break
+	sleep 0.05
+done
+grep -Fq "run wait 019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30" "$fake_log" || fail "signaled smoke did not enter terminal wait"
+kill -TERM "$smoke_pid"
+set +e
+wait "$smoke_pid"
+smoke_status=$?
+set -e
+assert_equal "143" "$smoke_status" "signaled smoke process status"
+assert_equal "failed" "$(jq -r '.status' "$result_json")" "signaled smoke structured terminal status"
+assert_equal "143" "$(jq -r '.exit_code' "$result_json")" "signaled smoke structured exit code"
+
+: >"$fake_log"
+run_expect_status 0 env \
 	FAKE_HELMR_LOG="$fake_log" \
 	HELMR_BIN="$contract_fake" \
 	HELMR_SMOKE_RESULT_FILE="$result_json" \
