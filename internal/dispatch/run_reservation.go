@@ -118,6 +118,15 @@ func (d *Authority) prepareRunWorkspace(
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			pressured, pressureErr := requestRunCapacityPressure(ctx, tx, authority)
+			if pressureErr != nil {
+				return runWorkspaceMount{}, pressureErr
+			}
+			if pressured {
+				if err := tx.Commit(ctx); err != nil {
+					return runWorkspaceMount{}, fmt.Errorf("commit run capacity pressure: %w", err)
+				}
+			}
 			return runWorkspaceMount{}, ErrCapacityUnavailable
 		}
 		return runWorkspaceMount{}, fmt.Errorf("select run worker: %w", err)
@@ -520,7 +529,81 @@ func selectRunWorker(
 	if err != nil {
 		return runWorker{}, err
 	}
-	selected, ok := capacityplanner.SelectRunWorker(rows, capacityplanner.RunRequirements{
+	selected, ok := capacityplanner.SelectRunWorker(rows, runCapacityRequirements(authority))
+	if !ok || !selected.WorkerEpoch.Valid || !selected.RuntimeIdentityID.Valid {
+		return runWorker{}, pgx.ErrNoRows
+	}
+	return runWorker{
+		groupID: selected.WorkerGroupID, workerID: selected.WorkerInstanceID,
+		workerEpoch: selected.WorkerEpoch.Int64, runtimeIdentityID: selected.RuntimeIdentityID.String,
+	}, nil
+}
+
+func requestRunCapacityPressure(
+	ctx context.Context,
+	tx pgx.Tx,
+	authority runPlacementAuthority,
+) (bool, error) {
+	rows, err := db.New(tx).ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
+		RegionID: authority.regionID, ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+	})
+	if err != nil {
+		return false, fmt.Errorf("list run capacity pressure candidates: %w", err)
+	}
+	if _, available := capacityplanner.SelectRunWorker(rows, runCapacityRequirements(authority)); available {
+		return false, nil
+	}
+	for _, selected := range capacityplanner.RunWorkerCapacityPressureCandidates(rows, runCapacityRequirements(authority)) {
+		if !selected.WorkerEpoch.Valid || !selected.RuntimeIdentityID.Valid {
+			continue
+		}
+		if err := lockWorkerFence(ctx, tx, workerFence{
+			GroupID: selected.WorkerGroupID, RegionID: authority.regionID,
+			WorkerInstanceID: selected.WorkerInstanceID, WorkerEpoch: selected.WorkerEpoch.Int64,
+			RunArchitecture: authority.architecture, RequirePrimary: !authority.restoreCheckpointID.Valid,
+		}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			return false, fmt.Errorf("lock run capacity pressure worker: %w", err)
+		}
+		if err := checkLockedWorkerRuntimeAdmission(
+			ctx, tx, selected.WorkerInstanceID, selected.WorkerEpoch.Int64,
+		); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			return false, fmt.Errorf("check run capacity pressure Runtime admission: %w", err)
+		}
+		worker := runWorker{
+			groupID: selected.WorkerGroupID, workerID: selected.WorkerInstanceID,
+			workerEpoch: selected.WorkerEpoch.Int64, runtimeIdentityID: selected.RuntimeIdentityID.String,
+		}
+		if err := lockRunWorkerCapacity(ctx, tx, authority, worker); err == nil {
+			return false, nil
+		} else if !errors.Is(err, ErrCapacityUnavailable) {
+			return false, fmt.Errorf("recheck run capacity pressure worker: %w", err)
+		}
+		mounts, err := db.New(tx).RequestCapacityPressureIdleWorkspaceMountStopsForWorker(
+			ctx,
+			db.RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams{
+				WorkerInstanceID: selected.WorkerInstanceID,
+				WorkerEpoch:      selected.WorkerEpoch.Int64,
+				LimitCount:       1,
+			},
+		)
+		if err != nil {
+			return false, fmt.Errorf("request run capacity pressure Workspace stop: %w", err)
+		}
+		if len(mounts) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func runCapacityRequirements(authority runPlacementAuthority) capacityplanner.RunRequirements {
+	return capacityplanner.RunRequirements{
 		Resources: capacityapi.ResourceVector{
 			CPUMillis: authority.resources.cpuMillis, MemoryBytes: authority.resources.memoryBytes,
 			GuestEphemeralDiskBytes: authority.resources.guestEphemeralDiskBytes, VMSlots: 1,
@@ -529,14 +612,7 @@ func selectRunWorker(
 		RuntimeIdentityID: authority.restoreRuntimeIdentityID, VCPUCount: authority.restoreVMVCPUCount,
 		CPUConfigDigest: authority.restoreCPUConfigDigest,
 		SubstrateFormat: authority.restoreSubstrateFormat, SubstrateContract: authority.restoreSubstrateContract,
-	})
-	if !ok || !selected.WorkerEpoch.Valid || !selected.RuntimeIdentityID.Valid {
-		return runWorker{}, pgx.ErrNoRows
 	}
-	return runWorker{
-		groupID: selected.WorkerGroupID, workerID: selected.WorkerInstanceID,
-		workerEpoch: selected.WorkerEpoch.Int64, runtimeIdentityID: selected.RuntimeIdentityID.String,
-	}, nil
 }
 
 func lockRunWorkerCapacity(

@@ -69,6 +69,63 @@ func TestPlanFreshRunUsesExactPrimaryPool(t *testing.T) {
 	}
 }
 
+func TestRunWorkerCapacityPressureCandidatesIgnoreOnlyDynamicCapacity(t *testing.T) {
+	primaryID := plannerTestUUID(1)
+	secondaryID := plannerTestUUID(2)
+	primary := plannerBin(plannerTestPool(primaryID, "primary"), primaryID)
+	primary.AvailableCPUMillis = 0
+	primary.AvailableMemoryBytes = 0
+	primary.AvailableGuestEphemeralDiskBytes = 0
+	primary.AvailableVMSlots = 0
+	primary.AvailableRunConsumers = 0
+	primary.AvailableRuntimeStarts = 0
+	secondary := plannerBin(plannerTestPool(secondaryID, "secondary"), primaryID)
+	paused := primary
+	paused.WorkerInstanceID = plannerTestUUID(103)
+	paused.RunPausedReason = pgtype.Text{String: "operator", Valid: true}
+
+	request := RunRequirements{Resources: plannerRunResources(), Architecture: "x86_64"}
+	if _, ok := SelectRunWorker([]db.ListWorkerCapacityBinsRow{primary}, request); ok {
+		t.Fatal("ordinary selection accepted a Worker with no dynamic capacity")
+	}
+	candidates := RunWorkerCapacityPressureCandidates(
+		[]db.ListWorkerCapacityBinsRow{secondary, primary, paused},
+		request,
+	)
+	if len(candidates) != 1 || candidates[0].WorkerInstanceID != primary.WorkerInstanceID {
+		t.Fatalf("capacity pressure candidates = %+v, want only hard-compatible primary Worker", candidates)
+	}
+
+	tooLarge := request
+	tooLarge.Resources.CPUMillis = primary.PerVMCPUMillis + 1
+	if candidates := RunWorkerCapacityPressureCandidates([]db.ListWorkerCapacityBinsRow{primary}, tooLarge); len(candidates) != 0 {
+		t.Fatalf("per-VM incompatible capacity pressure candidates = %+v", candidates)
+	}
+}
+
+func TestRunWorkerCapacityPressureCandidatesPreserveRestoreIdentity(t *testing.T) {
+	primaryID := plannerTestUUID(1)
+	compatible := plannerBin(plannerTestPool(primaryID, "compatible"), primaryID)
+	compatible.AvailableVMSlots = 0
+	compatible.AvailableRunConsumers = 0
+	compatible.AvailableRuntimeStarts = 0
+	requirements := plannerRestoreRequirements()
+	request := RunRequirements{
+		Resources: requirements.Resources, Architecture: "x86_64",
+		WorkerGroupID: requirements.WorkerGroupID, RuntimeIdentityID: requirements.RuntimeIdentityID,
+		VCPUCount: requirements.VCPUCount, CPUConfigDigest: requirements.CPUConfigDigest,
+		SubstrateFormat: requirements.SubstrateFormat, SubstrateContract: requirements.SubstrateContract,
+	}
+	wrongCPU := compatible
+	wrongCPU.WorkerInstanceID = plannerTestUUID(102)
+	wrongCPU.CPUShapeConfigDigests = []string{plannerDigest('c')}
+
+	candidates := RunWorkerCapacityPressureCandidates([]db.ListWorkerCapacityBinsRow{wrongCPU, compatible}, request)
+	if len(candidates) != 1 || candidates[0].WorkerInstanceID != compatible.WorkerInstanceID {
+		t.Fatalf("restore capacity pressure candidates = %+v, want exact restore-compatible Worker", candidates)
+	}
+}
+
 func TestPlanRetainedRuntimeStaysOnExactPoolAndBlocksScaleIn(t *testing.T) {
 	primaryID := plannerTestUUID(1)
 	retainedID := plannerTestUUID(2)

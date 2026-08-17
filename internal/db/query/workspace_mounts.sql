@@ -365,14 +365,33 @@ SELECT stopped.* FROM stopped
 
 -- name: RequestCapacityPressureIdleWorkspaceMountStopsForWorker :many
 WITH candidates AS (
-    SELECT workspace_mounts.id FROM workspace_mounts
+    SELECT workspace_mounts.id
+      FROM workspace_mounts
+      JOIN workspaces
+        ON workspaces.environment_id = workspace_mounts.environment_id
+       AND workspaces.id = workspace_mounts.workspace_id
      WHERE workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
        AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch) AND workspace_mounts.state = 'mounted'
+       AND workspaces.state = 'active'
+       AND workspaces.desired_state = 'active'
+       AND workspaces.dirty_state = 'clean'
+       AND workspaces.head_version_id = workspace_mounts.materialized_version_id
        AND NOT EXISTS (SELECT 1 FROM workspace_leases
                         WHERE workspace_mount_id = workspace_mounts.id AND state IN ('active','releasing'))
-     ORDER BY workspace_mounts.updated_at, workspace_mounts.id LIMIT sqlc.arg(limit_count) FOR UPDATE SKIP LOCKED
+       AND NOT EXISTS (SELECT 1 FROM workspace_processes
+                        WHERE workspace_id = workspace_mounts.workspace_id
+                          AND state IN ('pending','starting','running','exit_requested'))
+     ORDER BY workspace_mounts.updated_at, workspace_mounts.id
+     LIMIT sqlc.arg(limit_count)
+     FOR UPDATE OF workspace_mounts SKIP LOCKED
 )
-UPDATE workspace_mounts SET state = 'unmounting', stopped_at = now(), updated_at = now()
+UPDATE workspace_mounts
+   SET state = 'unmounting',
+       finalization_kind = 'discard',
+       finalization_reason_code = 'capacity_pressure',
+       finalization_error = NULL,
+       stopped_at = now(),
+       updated_at = now()
   FROM candidates WHERE workspace_mounts.id = candidates.id
 RETURNING workspace_mounts.*;
 

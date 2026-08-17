@@ -1158,14 +1158,33 @@ func (q *Queries) RenewWorkspaceMount(ctx context.Context, arg RenewWorkspaceMou
 
 const requestCapacityPressureIdleWorkspaceMountStopsForWorker = `-- name: RequestCapacityPressureIdleWorkspaceMountStopsForWorker :many
 WITH candidates AS (
-    SELECT workspace_mounts.id FROM workspace_mounts
+    SELECT workspace_mounts.id
+      FROM workspace_mounts
+      JOIN workspaces
+        ON workspaces.environment_id = workspace_mounts.environment_id
+       AND workspaces.id = workspace_mounts.workspace_id
      WHERE workspace_mounts.worker_instance_id = $1
        AND workspace_mounts.worker_epoch = $2 AND workspace_mounts.state = 'mounted'
+       AND workspaces.state = 'active'
+       AND workspaces.desired_state = 'active'
+       AND workspaces.dirty_state = 'clean'
+       AND workspaces.head_version_id = workspace_mounts.materialized_version_id
        AND NOT EXISTS (SELECT 1 FROM workspace_leases
                         WHERE workspace_mount_id = workspace_mounts.id AND state IN ('active','releasing'))
-     ORDER BY workspace_mounts.updated_at, workspace_mounts.id LIMIT $3 FOR UPDATE SKIP LOCKED
+       AND NOT EXISTS (SELECT 1 FROM workspace_processes
+                        WHERE workspace_id = workspace_mounts.workspace_id
+                          AND state IN ('pending','starting','running','exit_requested'))
+     ORDER BY workspace_mounts.updated_at, workspace_mounts.id
+     LIMIT $3
+     FOR UPDATE OF workspace_mounts SKIP LOCKED
 )
-UPDATE workspace_mounts SET state = 'unmounting', stopped_at = now(), updated_at = now()
+UPDATE workspace_mounts
+   SET state = 'unmounting',
+       finalization_kind = 'discard',
+       finalization_reason_code = 'capacity_pressure',
+       finalization_error = NULL,
+       stopped_at = now(),
+       updated_at = now()
   FROM candidates WHERE workspace_mounts.id = candidates.id
 RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 `

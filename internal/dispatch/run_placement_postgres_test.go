@@ -305,6 +305,183 @@ SELECT runs.current_run_lease_id,
 	}
 }
 
+func TestPlaceReadyRunEvictsOneIdleMountUnderCapacityPressure(t *testing.T) {
+	fixture := newRunPlacementFixture(t)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE worker_instances
+   SET max_vm_slots = 1,
+       max_runtime_starts = 1
+ WHERE id = $1`, fixture.workerID)
+
+	reserved, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	markRunPlacementRuntimeReady(t, fixture, reserved.RuntimeInstanceID)
+	mounted, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate())
+	if err != nil {
+		t.Fatal(err)
+	}
+	markRunPlacementMountReady(t, fixture, mounted.WorkspaceMountID)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runtime_instances
+   SET reserved_run_id = NULL,
+       reserved_attempt_number = NULL,
+       reserved_workspace_version_id = NULL,
+       reservation_expires_at = NULL
+ WHERE id = $1`, reserved.RuntimeInstanceID)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE workspaces SET owner_run_id = NULL WHERE id = $1`, fixture.workspaceID)
+
+	secondRunID := uuid.New()
+	secondWorkspaceID := uuid.New()
+	secondVersionID := uuid.New()
+	tx, err := fixture.pool.Begin(fixture.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(fixture.ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, fixture.ctx, tx, `
+INSERT INTO workspaces (
+    id, environment_id, region_id, sandbox_declared_id,
+    deployment_definition_id, owner_run_id, ownership_generation,
+    writer_generation, head_version_id
+)
+SELECT $1, environment_id, region_id, sandbox_declared_id,
+       deployment_definition_id, $2, 1, 0, $3
+  FROM workspaces
+ WHERE id = $4`, secondWorkspaceID, secondRunID, secondVersionID, fixture.workspaceID)
+	dbtest.MustExec(t, fixture.ctx, tx, `
+INSERT INTO workspace_versions (
+    id, environment_id, workspace_id, kind, content_digest,
+    size_bytes, entry_count, state,
+    ownership_generation, writer_generation, published_at
+)
+SELECT $1, environment_id, $2, kind, content_digest,
+       size_bytes, entry_count, state, 0, 0, transaction_timestamp()
+  FROM workspace_versions
+ WHERE id = (SELECT head_version_id FROM workspaces WHERE id = $3)`,
+		secondVersionID, secondWorkspaceID, fixture.workspaceID)
+	dbtest.MustExec(t, fixture.ctx, tx, `
+INSERT INTO runs (
+    id, org_id, project_id, environment_id, deployment_id,
+    deployment_definition_id, entrypoint_kind, entrypoint_declared_id,
+    cause_kind, workspace_id, base_workspace_version_id, payload, queue_name,
+    queue_origin_at, queue_score_at, max_active_duration_ms, retry_policy,
+    trace_id, root_span_id
+)
+SELECT $1, org_id, project_id, environment_id, deployment_id,
+       deployment_definition_id, entrypoint_kind, entrypoint_declared_id,
+       'api', $2, $3, payload, queue_name,
+       transaction_timestamp(), transaction_timestamp(), max_active_duration_ms,
+       retry_policy, '33333333333333333333333333333333', '4444444444444444'
+  FROM runs
+ WHERE id = $4`, secondRunID, secondWorkspaceID, secondVersionID, fixture.runID)
+	dbtest.MustExec(t, fixture.ctx, tx, `
+INSERT INTO run_attempts (
+    run_id, number, entrypoint_kind, workspace_id, base_workspace_version_id
+) VALUES ($1, 1, 'task', $2, $3)`, secondRunID, secondWorkspaceID, secondVersionID)
+	if err := tx.Commit(fixture.ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	secondCandidate := ReadyRunCandidate{
+		OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(secondRunID),
+		ExpectedRunStateVersion: 1,
+	}
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE workspaces SET dirty_state = 'dirty' WHERE id = $1`, fixture.workspaceID)
+	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondCandidate); !errors.Is(err, ErrCapacityUnavailable) {
+		t.Fatalf("dirty Workspace pressure error = %v, want ErrCapacityUnavailable", err)
+	}
+	var protectedState string
+	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT state FROM workspace_mounts WHERE id = $1`,
+		mounted.WorkspaceMountID).Scan(&protectedState); err != nil {
+		t.Fatal(err)
+	}
+	if protectedState != "mounted" {
+		t.Fatalf("dirty Workspace Mount state = %s, want mounted", protectedState)
+	}
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE workspaces SET dirty_state = 'clean' WHERE id = $1`, fixture.workspaceID)
+
+	processClaimID := uuid.New()
+	processID := uuid.New()
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+INSERT INTO idempotency_claims (
+    id, environment_id, operation, slot_hash,
+    request_fingerprint, accepted_at, expires_at
+) VALUES (
+    $1, $2, 'test.capacity-pressure', decode(repeat('51', 32), 'hex'),
+    decode(repeat('52', 32), 'hex'), transaction_timestamp(),
+    transaction_timestamp() + interval '30 days'
+)`, processClaimID, fixture.environmentID)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+INSERT INTO workspace_processes (
+    id, org_id, project_id, environment_id, workspace_id, base_version_id,
+    restore_desired_state, state, request, claim_id,
+    created_by_subject_type, created_by_subject_id
+) VALUES (
+    $1, $2, $3, $4, $5,
+    (SELECT head_version_id FROM workspaces WHERE id = $5),
+    'active', 'pending', '{}'::jsonb, $6, 'test', 'capacity-pressure'
+)`, processID, fixture.orgID, fixture.projectID, fixture.environmentID,
+		fixture.workspaceID, processClaimID)
+	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondCandidate); !errors.Is(err, ErrCapacityUnavailable) {
+		t.Fatalf("live Process pressure error = %v, want ErrCapacityUnavailable", err)
+	}
+	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT state FROM workspace_mounts WHERE id = $1`,
+		mounted.WorkspaceMountID).Scan(&protectedState); err != nil {
+		t.Fatal(err)
+	}
+	if protectedState != "mounted" {
+		t.Fatalf("live Process Workspace Mount state = %s, want mounted", protectedState)
+	}
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `DELETE FROM workspace_processes WHERE id = $1`, processID)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `DELETE FROM idempotency_claims WHERE id = $1`, processClaimID)
+
+	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondCandidate); !errors.Is(err, ErrCapacityUnavailable) {
+		t.Fatalf("capacity pressure placement error = %v, want ErrCapacityUnavailable", err)
+	}
+	var state string
+	var finalizationKind, finalizationReason pgtype.Text
+	var mountWorkerID, runtimeID pgtype.UUID
+	var workerEpoch, fencingGeneration int64
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT state, finalization_kind, finalization_reason_code,
+       worker_instance_id, worker_epoch, runtime_instance_id, fencing_generation
+  FROM workspace_mounts
+ WHERE id = $1`, mounted.WorkspaceMountID).Scan(
+		&state, &finalizationKind, &finalizationReason,
+		&mountWorkerID, &workerEpoch, &runtimeID, &fencingGeneration,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if state != "unmounting" || !finalizationKind.Valid || finalizationKind.String != "discard" ||
+		!finalizationReason.Valid || finalizationReason.String != "capacity_pressure" {
+		t.Fatalf("pressure Mount = state:%s finalization:%v/%v", state, finalizationKind, finalizationReason)
+	}
+	if _, err := db.New(fixture.pool).StopWorkspaceMount(fixture.ctx, db.StopWorkspaceMountParams{
+		ReasonCode: pgvalue.Text("capacity_pressure"), OrgID: pgvalue.UUID(fixture.orgID),
+		ID: mounted.WorkspaceMountID, WorkerInstanceID: mountWorkerID, WorkerEpoch: workerEpoch,
+		RuntimeInstanceID: runtimeID, FencingGeneration: fencingGeneration,
+		CleanupProof: []byte(`{"kind":"test_cleanup"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	next, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondCandidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.LeaseCreated || !next.RuntimeInstanceID.Valid || next.RuntimeInstanceID == reserved.RuntimeInstanceID {
+		t.Fatalf("post-pressure reservation = %+v", next)
+	}
+}
+
 func TestRunPreparationConcurrencyUsesOnlyFiniteQueueLimits(t *testing.T) {
 	fixture := newRunPlacementFixture(t)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `

@@ -132,3 +132,23 @@ SELECT worker_instances.id
 	}
 	return nil
 }
+
+// checkLockedWorkerRuntimeAdmission keeps Runtime-slot admission separate from
+// the Run-domain fence. Callers must already hold the worker row lock. A
+// Runtime pause prevents creating or reclaiming VM state, but does not prevent
+// a Run from reusing an already-ready Workspace Runtime.
+func checkLockedWorkerRuntimeAdmission(
+	ctx context.Context,
+	tx pgx.Tx,
+	workerInstanceID pgtype.UUID,
+	workerEpoch int64,
+) error {
+	var workerID pgtype.UUID
+	return tx.QueryRow(ctx, `
+SELECT id
+  FROM worker_instances
+ WHERE id = $1
+   AND current_epoch = $2
+   AND runtime_paused_reason IS NULL
+ FOR UPDATE`, workerInstanceID, workerEpoch).Scan(&workerID)
+}

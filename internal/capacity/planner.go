@@ -650,44 +650,65 @@ type RunRequirements struct {
 
 func SelectRunWorker(rows []db.ListWorkerCapacityBinsRow, request RunRequirements) (db.ListWorkerCapacityBinsRow, bool) {
 	for _, row := range rows {
-		target := binFromRow(row)
-		candidate := item{role: "run", resources: request.Resources}
-		if target.runPaused || target.runtimePaused || incompatibility(candidate, target) != "" {
+		target, compatible := hardCompatibleRunWorker(row, request)
+		if !compatible {
 			continue
 		}
-		if request.Architecture != "" && target.runtimeArch != request.Architecture {
-			continue
-		}
-		if request.RuntimeIdentityID == "" {
-			if !row.PrimaryPoolID.Valid || row.WorkerPoolID != row.PrimaryPoolID {
-				continue
-			}
-		} else {
-			if !CanRestore(RestoreRequirements{
-				WorkerGroupID: request.WorkerGroupID, RuntimeIdentityID: request.RuntimeIdentityID,
-				VCPUCount: request.VCPUCount, CPUConfigDigest: request.CPUConfigDigest,
-				SubstrateFormat: request.SubstrateFormat, SubstrateContract: request.SubstrateContract,
-				Resources: request.Resources,
-			}, Pool{
-				WorkerGroupID: target.workerGroupID, RuntimeIdentityID: target.runtimeIdentityID,
-				SubstrateFormat: target.substrateFormat, SubstrateContract: target.substrateContract,
-				PerVM: target.perVM, CPUShapes: target.cpuShapes,
-			}) {
-				continue
-			}
-		}
-		if request.SubstrateFormat != "" && target.substrateFormat != request.SubstrateFormat {
-			continue
-		}
-		if request.SubstrateContract != "" && target.substrateContract != request.SubstrateContract {
-			continue
-		}
-		if target.runtimeStarts <= 0 {
+		if !fitsResources(target.resources, request.Resources) || target.runConsumers <= 0 || target.runtimeStarts <= 0 {
 			continue
 		}
 		return row, true
 	}
 	return db.ListWorkerCapacityBinsRow{}, false
+}
+
+// RunWorkerCapacityPressureCandidates returns only Workers that can safely
+// host the Run after an existing idle Runtime is physically reclaimed. Dynamic
+// free-capacity counters are deliberately ignored; every identity, profile,
+// pause, architecture, and per-VM ceiling remains part of the filter.
+func RunWorkerCapacityPressureCandidates(rows []db.ListWorkerCapacityBinsRow, request RunRequirements) []db.ListWorkerCapacityBinsRow {
+	result := make([]db.ListWorkerCapacityBinsRow, 0, len(rows))
+	for _, row := range rows {
+		if _, compatible := hardCompatibleRunWorker(row, request); compatible {
+			result = append(result, row)
+		}
+	}
+	return result
+}
+
+func hardCompatibleRunWorker(row db.ListWorkerCapacityBinsRow, request RunRequirements) (bin, bool) {
+	target := binFromRow(row)
+	if target.runPaused || target.runtimePaused || !target.supportsRun ||
+		target.runtimeArch != "x86_64" || target.runtimeContract != capacityapi.RuntimeContract ||
+		!fitsPhysical(target.perVM, request.Resources) {
+		return bin{}, false
+	}
+	if request.Architecture != "" && target.runtimeArch != request.Architecture {
+		return bin{}, false
+	}
+	if request.RuntimeIdentityID == "" {
+		if !row.PrimaryPoolID.Valid || row.WorkerPoolID != row.PrimaryPoolID {
+			return bin{}, false
+		}
+	} else if !CanRestore(RestoreRequirements{
+		WorkerGroupID: request.WorkerGroupID, RuntimeIdentityID: request.RuntimeIdentityID,
+		VCPUCount: request.VCPUCount, CPUConfigDigest: request.CPUConfigDigest,
+		SubstrateFormat: request.SubstrateFormat, SubstrateContract: request.SubstrateContract,
+		Resources: request.Resources,
+	}, Pool{
+		WorkerGroupID: target.workerGroupID, RuntimeIdentityID: target.runtimeIdentityID,
+		SubstrateFormat: target.substrateFormat, SubstrateContract: target.substrateContract,
+		PerVM: target.perVM, CPUShapes: target.cpuShapes,
+	}) {
+		return bin{}, false
+	}
+	if request.SubstrateFormat != "" && target.substrateFormat != request.SubstrateFormat {
+		return bin{}, false
+	}
+	if request.SubstrateContract != "" && target.substrateContract != request.SubstrateContract {
+		return bin{}, false
+	}
+	return target, true
 }
 
 func incompatibility(candidate item, target bin) string {

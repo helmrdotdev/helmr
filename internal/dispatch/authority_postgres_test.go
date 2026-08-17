@@ -108,6 +108,33 @@ UPDATE worker_groups SET state = 'paused' WHERE id = $1`, fixture.groupID)
 	}
 }
 
+func TestRuntimeAdmissionFenceRejectsRuntimePausedWorker(t *testing.T) {
+	fixture := newRunPlacementFixture(t)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE worker_instances
+   SET runtime_paused_reason = 'runtime_health'
+ WHERE id = $1`, fixture.workerID)
+
+	tx, err := fixture.authority.begin(fixture.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollback(context.Background(), tx)
+	if err := lockWorkerFence(fixture.ctx, tx, workerFence{
+		GroupID: fixture.groupID, RegionID: "us-east-1",
+		WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
+		RunArchitecture: runtimeArchitecture,
+	}); err != nil {
+		t.Fatalf("Run-domain fence rejected Runtime-only pause: %v", err)
+	}
+	err = checkLockedWorkerRuntimeAdmission(
+		fixture.ctx, tx, pgvalue.UUID(fixture.workerID), 1,
+	)
+	if err == nil {
+		t.Fatal("runtime-paused Worker remained eligible for Runtime admission")
+	}
+}
+
 func TestConcurrentRunPlacementRechecksLockedWorkerCapacity(t *testing.T) {
 	fixture := newRunPlacementFixture(t)
 	seedDispatchMeasurement(t, fixture, 2, 2, 0, false)
