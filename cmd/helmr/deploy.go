@@ -146,11 +146,30 @@ func uploadDeploymentBundleObjects(
 		return err
 	}
 	reconciled := false
+	totalUploads := len(uploads)
+	completedUploads := 0
 	for len(uploads) > 0 {
 		upload := uploads[0]
 		path := bundle.Objects[upload.Digest]
-		uploadErr := controlPlane.UploadDeploymentBundleObject(ctx, upload, path)
+		index := completedUploads + 1
+		if err := reporter.DeploymentObjectUploadStarted(upload.Digest, index, totalUploads); err != nil {
+			return err
+		}
+		uploadErr := controlPlane.UploadDeploymentBundleObject(
+			ctx,
+			upload,
+			path,
+			func(bytesRead int64, totalBytes int64) error {
+				return reporter.DeploymentObjectUploadProgress(
+					upload.Digest, index, totalUploads, bytesRead, totalBytes,
+				)
+			},
+		)
 		if uploadErr == nil {
+			if err := reporter.DeploymentObjectUploaded(upload.Digest, index, totalUploads); err != nil {
+				return err
+			}
+			completedUploads++
 			uploads = uploads[1:]
 			continue
 		}
@@ -171,6 +190,10 @@ func uploadDeploymentBundleObjects(
 				return originalErr
 			}
 		}
+		if err := reporter.DeploymentObjectUploaded(upload.Digest, index, totalUploads); err != nil {
+			return errors.Join(originalErr, err)
+		}
+		completedUploads++
 		uploads = replanned
 	}
 	return nil
@@ -204,6 +227,9 @@ func planDeploymentBundleObjectUploads(
 
 type deployReporter interface {
 	Step(string) error
+	DeploymentObjectUploadStarted(digest string, index int, count int) error
+	DeploymentObjectUploadProgress(digest string, index int, count int, bytesRead int64, totalBytes int64) error
+	DeploymentObjectUploaded(digest string, index int, count int) error
 	DeploymentObjectVerified(api.DeploymentBundleFinalizeObject) error
 	DeploymentCreated(api.DeploymentResponse) error
 	DeploymentResult(api.DeploymentResponse, string) error
@@ -219,6 +245,10 @@ type cliDeployLine struct {
 	Step       string                  `json:"step,omitempty"`
 	Phase      string                  `json:"phase,omitempty"`
 	Digest     string                  `json:"digest,omitempty"`
+	Index      int                     `json:"index,omitempty"`
+	Count      int                     `json:"count,omitempty"`
+	BytesRead  int64                   `json:"bytes_read,omitempty"`
+	TotalBytes int64                   `json:"total_bytes,omitempty"`
 	Deployment *api.DeploymentResponse `json:"deployment,omitempty"`
 }
 
@@ -231,6 +261,63 @@ func (r cliDeployReporter) Step(message string) error {
 		return writeJSONLines(r.cmd.OutOrStdout(), []cliDeployLine{{Type: "step", Step: message}})
 	}
 	_, err := fmt.Fprintln(r.cmd.ErrOrStderr(), message)
+	return err
+}
+
+func (r cliDeployReporter) DeploymentObjectUploadStarted(digest string, index int, count int) error {
+	if r.jsonOutput {
+		return writeJSONLines(r.cmd.OutOrStdout(), []cliDeployLine{{
+			Type: "deployment_object_upload_started", Digest: digest, Index: index, Count: count,
+		}})
+	}
+	_, err := fmt.Fprintf(
+		r.cmd.ErrOrStderr(),
+		"Uploading deployment object %s (%d/%d)\n",
+		digest,
+		index,
+		count,
+	)
+	return err
+}
+
+func (r cliDeployReporter) DeploymentObjectUploadProgress(
+	digest string,
+	index int,
+	count int,
+	bytesRead int64,
+	totalBytes int64,
+) error {
+	if r.jsonOutput {
+		return writeJSONLines(r.cmd.OutOrStdout(), []cliDeployLine{{
+			Type: "deployment_object_upload_progress", Digest: digest, Index: index, Count: count,
+			BytesRead: bytesRead, TotalBytes: totalBytes,
+		}})
+	}
+	_, err := fmt.Fprintf(
+		r.cmd.ErrOrStderr(),
+		"Deployment object %s transfer: %d/%d bytes (%d/%d)\n",
+		digest,
+		bytesRead,
+		totalBytes,
+		index,
+		count,
+	)
+	return err
+}
+
+func (r cliDeployReporter) DeploymentObjectUploaded(digest string, index int, count int) error {
+	if r.jsonOutput {
+		return writeJSONLines(r.cmd.OutOrStdout(), []cliDeployLine{{
+			Type: "deployment_object_uploaded", Digest: digest, Index: index, Count: count,
+		}})
+	}
+	_, err := fmt.Fprintf(
+		r.cmd.ErrOrStderr(),
+		"Deployment object %s uploaded (%d/%d)\n",
+		digest,
+		index,
+		count,
+	)
 	return err
 }
 

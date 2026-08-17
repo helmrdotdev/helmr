@@ -118,6 +118,62 @@ func TestDeployBundleUsesUploadFinalizePromoteFlow(t *testing.T) {
 	}
 }
 
+func TestDeployReporterEmitsObjectTransferProgress(t *testing.T) {
+	const digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	command := newRootCommand()
+	var jsonOutput bytes.Buffer
+	command.SetOut(&jsonOutput)
+	reporter := newDeployReporter(command, true)
+	if err := reporter.DeploymentObjectUploadStarted(digest, 1, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := reporter.DeploymentObjectUploadProgress(digest, 1, 2, 3, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := reporter.DeploymentObjectUploaded(digest, 1, 2); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(jsonOutput.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("JSON lines = %q", jsonOutput.String())
+	}
+	wantTypes := []string{
+		"deployment_object_upload_started",
+		"deployment_object_upload_progress",
+		"deployment_object_uploaded",
+	}
+	for index, raw := range lines {
+		var line cliDeployLine
+		if err := json.Unmarshal([]byte(raw), &line); err != nil {
+			t.Fatal(err)
+		}
+		if line.Type != wantTypes[index] || line.Digest != digest || line.Index != 1 || line.Count != 2 {
+			t.Fatalf("line %d = %+v", index, line)
+		}
+		if index == 1 && (line.BytesRead != 3 || line.TotalBytes != 7) {
+			t.Fatalf("progress line = %+v", line)
+		}
+	}
+
+	var textOutput bytes.Buffer
+	command.SetErr(&textOutput)
+	textReporter := newDeployReporter(command, false)
+	if err := textReporter.DeploymentObjectUploadStarted(digest, 1, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := textReporter.DeploymentObjectUploadProgress(digest, 1, 2, 3, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := textReporter.DeploymentObjectUploaded(digest, 1, 2); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Uploading deployment object", "3/7 bytes", "uploaded (1/2)"} {
+		if !strings.Contains(textOutput.String(), want) {
+			t.Fatalf("text output = %q, want %q", textOutput.String(), want)
+		}
+	}
+}
+
 func TestDeployBundleReconcilesAcceptedUploadWithLostResponse(t *testing.T) {
 	directory, _, digest, objectDigest := writeDeployTestBundle(t)
 	const deploymentID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"

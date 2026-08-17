@@ -14,12 +14,22 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
-var ErrDeploymentObjectUploadNotAttempted = errors.New("deployment object upload was not attempted")
+var (
+	ErrDeploymentObjectUploadNotAttempted = errors.New("deployment object upload was not attempted")
+	ErrDeploymentObjectUploadNoProgress   = errors.New("deployment object upload made no progress")
+)
+
+const (
+	deploymentObjectUploadProgressInterval  = 10 * time.Second
+	deploymentObjectUploadNoProgressTimeout = 2 * time.Minute
+)
 
 func (c *Client) ListProjects(ctx context.Context) (api.ListProjectsResponse, error) {
 	req, err := c.newRequest(ctx, http.MethodGet, "/api/projects", nil)
@@ -154,9 +164,31 @@ func (c *Client) UploadDeploymentBundleObject(
 	ctx context.Context,
 	upload api.DeploymentBundleUpload,
 	objectPath string,
+	progress func(bytesRead int64, totalBytes int64) error,
+) error {
+	return c.uploadDeploymentBundleObject(
+		ctx,
+		upload,
+		objectPath,
+		progress,
+		deploymentObjectUploadProgressInterval,
+		deploymentObjectUploadNoProgressTimeout,
+	)
+}
+
+func (c *Client) uploadDeploymentBundleObject(
+	ctx context.Context,
+	upload api.DeploymentBundleUpload,
+	objectPath string,
+	progress func(bytesRead int64, totalBytes int64) error,
+	progressInterval time.Duration,
+	noProgressTimeout time.Duration,
 ) error {
 	if upload.Method != http.MethodPut || strings.TrimSpace(upload.URL) == "" {
 		return fmt.Errorf("%w: deployment object upload plan is invalid", ErrDeploymentObjectUploadNotAttempted)
+	}
+	if progressInterval <= 0 || noProgressTimeout <= 0 || progressInterval > noProgressTimeout {
+		return fmt.Errorf("%w: deployment object upload progress bounds are invalid", ErrDeploymentObjectUploadNotAttempted)
 	}
 	file, err := os.Open(objectPath)
 	if err != nil {
@@ -167,7 +199,10 @@ func (c *Client) UploadDeploymentBundleObject(
 	if err != nil {
 		return fmt.Errorf("%w: stat deployment object: %w", ErrDeploymentObjectUploadNotAttempted, err)
 	}
-	req, err := http.NewRequestWithContext(ctx, upload.Method, upload.URL, file)
+	uploadCtx, cancelUpload := context.WithCancel(ctx)
+	defer cancelUpload()
+	trackedBody := &deploymentObjectUploadReader{reader: file}
+	req, err := http.NewRequestWithContext(uploadCtx, upload.Method, upload.URL, trackedBody)
 	if err != nil {
 		return fmt.Errorf("%w: construct deployment object upload", ErrDeploymentObjectUploadNotAttempted)
 	}
@@ -196,7 +231,42 @@ func (c *Client) UploadDeploymentBundleObject(
 	if !contentLengthSet {
 		return fmt.Errorf("%w: deployment object upload plan is missing content length", ErrDeploymentObjectUploadNotAttempted)
 	}
+	monitorDone := make(chan struct{})
+	monitorResult := make(chan error, 1)
+	go monitorDeploymentObjectUpload(
+		uploadCtx,
+		cancelUpload,
+		monitorDone,
+		monitorResult,
+		&trackedBody.bytesRead,
+		info.Size(),
+		progress,
+		progressInterval,
+		noProgressTimeout,
+	)
 	response, err := c.transport.Do(req)
+	var responseErr error
+	if err == nil {
+		defer response.Body.Close()
+		if _, copyErr := io.Copy(io.Discard, response.Body); copyErr != nil {
+			responseErr = errors.New("read deployment object upload response")
+		}
+	}
+	close(monitorDone)
+	monitorErr := <-monitorResult
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if monitorErr != nil {
+		if errors.Is(monitorErr, ErrDeploymentObjectUploadNoProgress) {
+			return fmt.Errorf(
+				"%w for %s; rerun the same bundle to reuse completed objects",
+				ErrDeploymentObjectUploadNoProgress,
+				noProgressTimeout,
+			)
+		}
+		return monitorErr
+	}
 	if err != nil {
 		var statusError interface{ HTTPStatusCode() int }
 		if errors.As(err, &statusError) && statusError.HTTPStatusCode() != 0 {
@@ -204,15 +274,69 @@ func (c *Client) UploadDeploymentBundleObject(
 		}
 		return errors.New("deployment object upload transport failed")
 	}
-	defer response.Body.Close()
-	_, copyErr := io.Copy(io.Discard, response.Body)
-	if copyErr != nil {
-		return errors.New("read deployment object upload response")
+	if responseErr != nil {
+		return responseErr
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return fmt.Errorf("deployment object upload returned %s", response.Status)
 	}
 	return nil
+}
+
+type deploymentObjectUploadReader struct {
+	reader    io.Reader
+	bytesRead atomic.Int64
+}
+
+func (r *deploymentObjectUploadReader) Read(buffer []byte) (int, error) {
+	n, err := r.reader.Read(buffer)
+	r.bytesRead.Add(int64(n))
+	return n, err
+}
+
+func monitorDeploymentObjectUpload(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	done <-chan struct{},
+	result chan<- error,
+	bytesRead *atomic.Int64,
+	totalBytes int64,
+	progress func(bytesRead int64, totalBytes int64) error,
+	progressInterval time.Duration,
+	noProgressTimeout time.Duration,
+) {
+	ticker := time.NewTicker(progressInterval)
+	defer ticker.Stop()
+	lastBytesRead := bytesRead.Load()
+	lastProgressAt := time.Now()
+	for {
+		select {
+		case <-done:
+			result <- nil
+			return
+		case <-ctx.Done():
+			result <- nil
+			return
+		case now := <-ticker.C:
+			currentBytesRead := bytesRead.Load()
+			if currentBytesRead > lastBytesRead {
+				lastBytesRead = currentBytesRead
+				lastProgressAt = now
+			}
+			if progress != nil {
+				if err := progress(currentBytesRead, totalBytes); err != nil {
+					result <- fmt.Errorf("report deployment object upload progress: %w", err)
+					cancel()
+					return
+				}
+			}
+			if now.Sub(lastProgressAt) >= noProgressTimeout {
+				result <- ErrDeploymentObjectUploadNoProgress
+				cancel()
+				return
+			}
+		}
+	}
 }
 
 func (c *Client) FinalizeDeploymentBundle(

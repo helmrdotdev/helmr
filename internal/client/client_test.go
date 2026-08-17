@@ -58,7 +58,7 @@ func TestUploadDeploymentBundleObjectRejectsNonSuccess(t *testing.T) {
 			"X-Amz-Sdk-Checksum-Algorithm": "SHA256",
 			"X-Amz-Tagging":                "helmr-expirable=true",
 		},
-	}, object)
+	}, object, nil)
 	if err == nil || !strings.Contains(err.Error(), "403 Forbidden") {
 		t.Fatalf("error = %v", err)
 	}
@@ -84,7 +84,7 @@ func TestUploadDeploymentBundleObjectRequiresExactContentLength(t *testing.T) {
 				Method:  http.MethodPut,
 				URL:     "http://localhost/upload",
 				Headers: headers,
-			}, object)
+			}, object, nil)
 			if err == nil {
 				t.Fatal("UploadDeploymentBundleObject returned nil error")
 			}
@@ -108,7 +108,7 @@ func TestUploadDeploymentBundleObjectScrubsMalformedPresignedURL(t *testing.T) {
 		Headers: map[string]string{
 			"Content-Length": "6",
 		},
-	}, object)
+	}, object, nil)
 	if err == nil ||
 		!errors.Is(err, ErrDeploymentObjectUploadNotAttempted) ||
 		strings.Contains(err.Error(), secret) {
