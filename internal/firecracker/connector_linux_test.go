@@ -1308,6 +1308,170 @@ func TestRuntimeDrivesIncludeOptionalReadonlySubstrate(t *testing.T) {
 	}
 }
 
+func TestRestoreReadOnlyDrivePathsSatisfySDKValidationAndBecomeJailedNames(t *testing.T) {
+	ownerDir := t.TempDir()
+	sourceDir := t.TempDir()
+	programRuntimeSource := filepath.Join(sourceDir, "runtime-source")
+	programSource := filepath.Join(sourceDir, "program-source")
+	for path, contents := range map[string]string{
+		programRuntimeSource: "runtime",
+		programSource:        "program",
+	} {
+		if err := os.WriteFile(path, []byte(contents), 0o400); err != nil {
+			t.Fatal(err)
+		}
+	}
+	drives := []vm.ReadOnlyDrive{
+		{ID: vm.ProgramRuntimeDrive, Source: fileLinkReadOnlyDriveSource{path: programRuntimeSource}},
+		{ID: vm.ProgramDrive, Source: fileLinkReadOnlyDriveSource{path: programSource}},
+	}
+	paths, err := prepareRestoreReadOnlyDrivePaths(
+		ownerDir,
+		drives,
+		os.Getuid(),
+		os.Getgid(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range readOnlyDriveOrder {
+		want := filepath.Join(ownerDir, readOnlyDriveName(id))
+		if paths[id] != want || !filepath.IsAbs(paths[id]) {
+			t.Fatalf("restore path for %q = %q, want absolute %q", id, paths[id], want)
+		}
+		info, err := os.Lstat(paths[id])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.Mode().IsRegular() {
+			t.Fatalf("restore path for %q is not regular", id)
+		}
+	}
+
+	machineFiles := t.TempDir()
+	rootfsPath := filepath.Join(machineFiles, "rootfs.squashfs")
+	scratchPath := filepath.Join(machineFiles, "scratch.ext4")
+	memoryPath := filepath.Join(machineFiles, "memory.mem")
+	statePath := filepath.Join(machineFiles, "state.vmstate")
+	kernelPath := filepath.Join(machineFiles, "vmlinux")
+	for _, path := range []string{rootfsPath, scratchPath, memoryPath, statePath, kernelPath} {
+		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := firecracker.Config{
+		SocketPath: filepath.Join(machineFiles, "api.sock"),
+		Drives: runtimeDrivesWithReadOnlyPaths(
+			rootfsPath,
+			scratchPath,
+			"",
+			drives,
+			paths,
+		),
+		Snapshot: firecracker.SnapshotConfig{
+			MemFilePath:  memoryPath,
+			SnapshotPath: statePath,
+		},
+	}
+	if err := cfg.ValidateLoadSnapshot(); err != nil {
+		t.Fatalf("SDK snapshot validation rejected owner-scoped drive paths: %v", err)
+	}
+
+	chrootBase := t.TempDir()
+	vmID := "restore-vm"
+	root := filepath.Join(chrootBase, "firecracker", vmID, "root")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	strategy := sealedDriveChrootStrategy{kernelImagePath: kernelPath, drives: drives}
+	machine, err := firecracker.NewMachine(
+		context.Background(),
+		firecracker.Config{
+			VMID:            vmID,
+			SocketPath:      filepath.Join(machineFiles, "api.sock"),
+			KernelImagePath: kernelPath,
+			JailerCfg: &firecracker.JailerConfig{
+				ExecFile:       "/usr/bin/firecracker",
+				ChrootBaseDir:  chrootBase,
+				ID:             vmID,
+				UID:            firecracker.Int(os.Getuid()),
+				GID:            firecracker.Int(os.Getgid()),
+				NumaNode:       firecracker.Int(0),
+				ChrootStrategy: strategy,
+			},
+			Drives: cfg.Drives,
+		},
+		withSnapshotRestore(memoryPath, statePath),
+		withJailedRestoreFiles(rootfsPath, scratchPath, "", memoryPath, statePath),
+		withRestoreSealedDrives(strategy),
+		func(machine *firecracker.Machine) {
+			for _, name := range []string{
+				firecracker.SetupNetworkHandlerName,
+				firecracker.StartVMMHandlerName,
+				firecracker.CreateLogFilesHandlerName,
+				firecracker.BootstrapLoggingHandlerName,
+				firecracker.LoadSnapshotHandlerName,
+			} {
+				machine.Handlers.FcInit = machine.Handlers.FcInit.Swap(firecracker.Handler{
+					Name: name,
+					Fn:   func(context.Context, *firecracker.Machine) error { return nil },
+				})
+			}
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := machine.Handlers.FcInit.Run(context.Background(), machine); err != nil {
+		t.Fatal(err)
+	}
+	for _, drive := range machine.Cfg.Drives {
+		id := firecracker.StringValue(drive.DriveID)
+		if id != vm.ProgramRuntimeDrive && id != vm.ProgramDrive {
+			continue
+		}
+		want := readOnlyDriveName(id)
+		if got := firecracker.StringValue(drive.PathOnHost); got != want {
+			t.Fatalf("jailed path for %q = %q, want %q", id, got, want)
+		}
+		if _, err := os.Stat(filepath.Join(root, want)); err != nil {
+			t.Fatalf("jailed drive %q is absent: %v", id, err)
+		}
+	}
+
+	if err := os.RemoveAll(ownerDir); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("owner projection %q survived cleanup: %v", path, err)
+		}
+	}
+}
+
+func TestPrepareRestoreReadOnlyDrivePathsFailsClosed(t *testing.T) {
+	drives := []vm.ReadOnlyDrive{{
+		ID:     vm.ProgramRuntimeDrive,
+		Source: failingReadOnlyDriveSource{err: errors.New("source changed")},
+	}}
+	if _, err := prepareRestoreReadOnlyDrivePaths(
+		t.TempDir(),
+		drives,
+		os.Getuid(),
+		os.Getgid(),
+	); err == nil || !strings.Contains(err.Error(), "source changed") {
+		t.Fatalf("error = %v, want sealed source failure", err)
+	}
+	if _, err := prepareRestoreReadOnlyDrivePaths(
+		"relative-owner",
+		drives,
+		os.Getuid(),
+		os.Getgid(),
+	); err == nil {
+		t.Fatal("relative owner directory should fail")
+	}
+}
+
 func TestRuntimeDrivesIncludeSealedReadOnlyDrives(t *testing.T) {
 	source := &recordingReadOnlyDriveSource{}
 	drives := runtimeDrives(
@@ -1654,6 +1818,23 @@ type recordingReadOnlyDriveSource struct {
 	name      string
 	uid       int
 	gid       int
+}
+
+type fileLinkReadOnlyDriveSource struct{ path string }
+
+func (source fileLinkReadOnlyDriveSource) LinkInto(
+	directory string,
+	name string,
+	_ int,
+	_ int,
+) error {
+	return os.Link(source.path, filepath.Join(directory, name))
+}
+
+type failingReadOnlyDriveSource struct{ err error }
+
+func (source failingReadOnlyDriveSource) LinkInto(string, string, int, int) error {
+	return source.err
 }
 
 func testProgramDrives(source vm.ReadOnlyDriveSource) []vm.ReadOnlyDrive {

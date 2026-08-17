@@ -981,6 +981,19 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 		topology.Substrate = projected
 		recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "prepare_substrate_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
 	}
+	restoring := snapshotMemoryPath != "" || snapshotStatePath != ""
+	readOnlyDrivePaths := map[string]string(nil)
+	if restoring && len(readOnlyDrives) != 0 {
+		readOnlyDrivePaths, err = prepareRestoreReadOnlyDrivePaths(
+			instanceDir,
+			readOnlyDrives,
+			c.cfg.JailerUID,
+			c.cfg.JailerGID,
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
 	jailRoot := jailRootPath(launchCfg, instanceID)
 
 	vsockHostPath := filepath.Join(jailRoot, vsockSocketName)
@@ -1019,7 +1032,13 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 			Stdout:         os.Stderr,
 			Stderr:         os.Stderr,
 		},
-		Drives:       runtimeDrives(c.cfg.RootfsPath, scratchDiskPath, substrateDiskPath, readOnlyDrives),
+		Drives: runtimeDrivesWithReadOnlyPaths(
+			c.cfg.RootfsPath,
+			scratchDiskPath,
+			substrateDiskPath,
+			readOnlyDrives,
+			readOnlyDrivePaths,
+		),
 		VsockDevices: []firecracker.VsockDevice{runtimeVsockDevice(runtimeDescriptor, guestCID)},
 		MachineCfg:   runtimeMachineConfiguration(runtimeDescriptor, c.cfg),
 	}
@@ -1032,10 +1051,15 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 		}
 	}()
 	opts := []firecracker.Opt{}
-	restoring := snapshotMemoryPath != "" || snapshotStatePath != ""
 	if restoring {
 		opts = append(opts, withSnapshotRestore(snapshotMemoryPath, snapshotStatePath))
 		opts = append(opts, withJailedRestoreFiles(c.cfg.RootfsPath, scratchDiskPath, substrateDiskPath, snapshotMemoryPath, snapshotStatePath))
+		if len(readOnlyDrives) != 0 {
+			opts = append(opts, withRestoreSealedDrives(sealedDriveChrootStrategy{
+				kernelImagePath: c.cfg.KernelPath,
+				drives:          readOnlyDrives,
+			}))
+		}
 	}
 	opts = append(opts, c.withTapOwner())
 	opts = append(opts, c.withNetworkBinding(owner, binding, &networkBinding))
@@ -1239,6 +1263,22 @@ func runtimeDrives(
 	substrateDiskPath string,
 	readOnlyDrives []vm.ReadOnlyDrive,
 ) []models.Drive {
+	return runtimeDrivesWithReadOnlyPaths(
+		rootfsPath,
+		scratchDiskPath,
+		substrateDiskPath,
+		readOnlyDrives,
+		nil,
+	)
+}
+
+func runtimeDrivesWithReadOnlyPaths(
+	rootfsPath string,
+	scratchDiskPath string,
+	substrateDiskPath string,
+	readOnlyDrives []vm.ReadOnlyDrive,
+	readOnlyDrivePaths map[string]string,
+) []models.Drive {
 	drives := []models.Drive{{
 		DriveID:      firecracker.String(rootfsDriveID),
 		PathOnHost:   firecracker.String(rootfsPath),
@@ -1264,15 +1304,59 @@ func runtimeDrives(
 	}
 	for _, id := range readOnlyDriveOrder {
 		if _, exists := byID[id]; exists {
+			pathOnHost := readOnlyDriveName(id)
+			if stagedPath, staged := readOnlyDrivePaths[id]; staged {
+				pathOnHost = stagedPath
+			}
 			drives = append(drives, models.Drive{
 				DriveID:      firecracker.String(id),
-				PathOnHost:   firecracker.String(readOnlyDriveName(id)),
+				PathOnHost:   firecracker.String(pathOnHost),
 				IsRootDevice: firecracker.Bool(false),
 				IsReadOnly:   firecracker.Bool(true),
 			})
 		}
 	}
 	return drives
+}
+
+func prepareRestoreReadOnlyDrivePaths(
+	ownerDir string,
+	drives []vm.ReadOnlyDrive,
+	uid int,
+	gid int,
+) (map[string]string, error) {
+	if !filepath.IsAbs(ownerDir) {
+		return nil, errors.New("restore owner directory must be absolute")
+	}
+	paths := make(map[string]string, len(drives))
+	byID := make(map[string]vm.ReadOnlyDrive, len(drives))
+	for _, drive := range drives {
+		byID[drive.ID] = drive
+	}
+	for _, id := range readOnlyDriveOrder {
+		drive, exists := byID[id]
+		if !exists {
+			continue
+		}
+		name := readOnlyDriveName(id)
+		if err := drive.Source.LinkInto(ownerDir, name, uid, gid); err != nil {
+			return nil, fmt.Errorf(
+				"link sealed restore drive %q into owner state: %w",
+				id,
+				err,
+			)
+		}
+		path := filepath.Join(ownerDir, name)
+		info, err := os.Lstat(path)
+		if err != nil {
+			return nil, fmt.Errorf("inspect sealed restore drive %q: %w", id, err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("sealed restore drive %q is not regular", id)
+		}
+		paths[id] = path
+	}
+	return paths, nil
 }
 
 func runtimeMachineConfiguration(descriptor VMRuntimeDescriptor, cfg Config) models.MachineConfiguration {
@@ -2687,6 +2771,22 @@ func (strategy sealedDriveChrootStrategy) AdaptHandlers(
 		base,
 	)
 	return nil
+}
+
+func withRestoreSealedDrives(strategy sealedDriveChrootStrategy) firecracker.Opt {
+	return func(machine *firecracker.Machine) {
+		// firecracker.WithSnapshot replaces FcInit after the jailer chroot
+		// strategy has adapted it. Restore the sealed-drive handler after the
+		// snapshot and ordinary restore-file options have established their
+		// handler list. AppendAfter places this handler before the ordinary
+		// restore-file handler, so its SDK link step still sees absolute paths.
+		base := firecracker.LinkFilesHandler(filepath.Base(strategy.kernelImagePath))
+		base.Fn = strategy.linkFiles(base.Fn)
+		machine.Handlers.FcInit = machine.Handlers.FcInit.AppendAfter(
+			firecracker.CreateLogFilesHandlerName,
+			base,
+		)
+	}
 }
 
 func (strategy sealedDriveChrootStrategy) linkFiles(
