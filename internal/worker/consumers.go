@@ -80,6 +80,13 @@ func (c *runConsumer) Claim(ctx context.Context) (Work, bool, error) {
 		}()
 		if err := c.runner.runLeaseExecutor.ExecuteRunLease(workCtx, selected); err != nil {
 			if isStaleLease(err) {
+				if c.runner.log != nil {
+					c.runner.log.Warn(
+						"run lease execution lost its authority",
+						"run_lease_id", selected.LeaseID,
+						"lease_sequence", selected.LeaseSequence,
+					)
+				}
 				stale = true
 				return nil
 			}

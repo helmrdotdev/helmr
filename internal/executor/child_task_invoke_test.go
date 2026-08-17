@@ -10,8 +10,10 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
+	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"google.golang.org/protobuf/proto"
 )
 
 type childTaskControlPlane struct {
@@ -22,6 +24,7 @@ type childTaskControlPlane struct {
 	err          error
 	errors       []error
 	firstAttempt chan struct{}
+	blockAttempt <-chan struct{}
 }
 
 func (controlPlane *childTaskControlPlane) InvokeChildTask(
@@ -30,16 +33,104 @@ func (controlPlane *childTaskControlPlane) InvokeChildTask(
 ) (workerapi.InvokeChildTaskResponse, error) {
 	controlPlane.request = request
 	controlPlane.requests = append(controlPlane.requests, request)
+	if controlPlane.firstAttempt != nil {
+		close(controlPlane.firstAttempt)
+		controlPlane.firstAttempt = nil
+	}
+	if controlPlane.blockAttempt != nil {
+		<-controlPlane.blockAttempt
+	}
 	if len(controlPlane.errors) != 0 {
 		err := controlPlane.errors[0]
 		controlPlane.errors = controlPlane.errors[1:]
-		if controlPlane.firstAttempt != nil {
-			close(controlPlane.firstAttempt)
-			controlPlane.firstAttempt = nil
-		}
 		return workerapi.InvokeChildTaskResponse{}, err
 	}
 	return controlPlane.response, controlPlane.err
+}
+
+type acceptingChildTaskRenewalMounts struct {
+	WorkspaceMountSessionRegistry
+	calls int
+}
+
+func (mounts *acceptingChildTaskRenewalMounts) RenewWorkspaceAuthority(
+	_ context.Context,
+	request *workspacev0.RenewWorkspaceAuthorityRequest,
+) (*workspacev0.WorkspaceAuthorityFence, error) {
+	mounts.calls++
+	fence := proto.Clone(request.GetPrevious().GetFence()).(*workspacev0.WorkspaceAuthorityFence)
+	fence.ExpiresAtUnixNano = request.GetNewExpiresAtUnixNano()
+	return fence, nil
+}
+
+func TestHandleChildTaskInvokeDoesNotBlockRunLeaseRenewal(t *testing.T) {
+	previous := testFreshProgramClaim(t).Lease
+	previous.ExpiresAt = time.Now().Add(time.Minute).UTC()
+	renewed := previous
+	renewed.ExpiresAt = previous.ExpiresAt.Add(time.Minute)
+	correlationID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc27"
+	attempted := make(chan struct{})
+	releaseAttempt := make(chan struct{})
+	trace := &runLeaseTrace{}
+	controlPlane := &childTaskControlPlane{
+		testRunLeaseControlPlane: &testRunLeaseControlPlane{
+			trace: trace, renewed: testRunLeaseRenewResponse(renewed),
+		},
+		response: workerapi.InvokeChildTaskResponse{
+			CorrelationID: correlationID,
+			Completed: &workerapi.ChildTaskStartResult{
+				RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc3b",
+			},
+		},
+		firstAttempt: attempted,
+		blockAttempt: releaseAttempt,
+	}
+	mounts := &acceptingChildTaskRenewalMounts{}
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	task := &guestRunLeaseTask{
+		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		controlPlane: controlPlane,
+		mounts:       mounts,
+		lease:        previous,
+		authority: &workspacev0.WorkspaceRunAuthority{Fence: &workspacev0.WorkspaceAuthorityFence{
+			ExpiresAtUnixNano: previous.ExpiresAt.UnixNano(),
+		}},
+	}
+	invokeResult := make(chan error, 1)
+	go func() {
+		invokeResult <- task.handleChildTaskInvoke(t.Context(), &runv0.TaskChildInvokeRequested{
+			CorrelationId: correlationID,
+			DeclaredId:    "resize-image",
+			Method:        "start",
+			WorkspaceJson: `{}`,
+			OptionsJson:   `{}`,
+		})
+	}()
+	<-attempted
+	renewResult := make(chan error, 1)
+	go func() {
+		_, err := task.RenewRunLease(t.Context())
+		renewResult <- err
+	}()
+	requirePromptResult(t, renewResult, "renew while child Task invocation is blocked")
+	if mounts.calls != 1 || !equalRunLeaseAssignment(task.lease, renewed) {
+		t.Fatalf("guest renewal calls = %d task Lease = %+v", mounts.calls, task.lease)
+	}
+	close(releaseAttempt)
+	reader := bufio.NewReader(host)
+	header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wire.ReadResumeDecision(header, reader, bodyLen); err != nil {
+		t.Fatal(err)
+	}
+	requirePromptResult(t, invokeResult, "complete child Task invocation")
+	if controlPlane.request.Lease != previous.Fence() {
+		t.Fatalf("child Task invocation fence = %+v, want %+v", controlPlane.request.Lease, previous.Fence())
+	}
 }
 
 func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {

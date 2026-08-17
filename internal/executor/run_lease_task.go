@@ -117,14 +117,17 @@ func (task *guestRunLeaseTask) callRunSourceRuntime(
 	call func(context.Context, workerapi.RunLeaseAssignment) error,
 ) error {
 	return retryRunLeaseRequest(ctx, func(callCtx context.Context) error {
-		// Keep the local assignment expiry stable while deriving this attempt's
-		// deadline. Retry delays do not hold renewal.
+		// Snapshot the current local authority for this bounded attempt. The
+		// immutable fence identifies the operation while a concurrent renewal may
+		// advance only its expiry. Neither external Control Plane I/O nor retry
+		// delays may hold the lock needed by that renewal.
 		task.mu.Lock()
-		defer task.mu.Unlock()
 		if task.finished || task.finalizingKind != "" {
+			task.mu.Unlock()
 			return errRunSourceOperationUnavailable
 		}
 		lease := task.lease
+		task.mu.Unlock()
 		if !lease.ExpiresAt.After(time.Now()) {
 			return errRunLeaseAuthorityLapsed
 		}
