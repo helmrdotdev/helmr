@@ -184,7 +184,7 @@ func TestRenewWorkspaceAuthorityUsesMountedSession(t *testing.T) {
 				MountFencingGeneration: 4,
 				RunId:                  "run-1",
 				ExpiresAtUnixNano:      100,
-				BaseWorkspaceVersionId: "version-1",
+				BaseWorkspaceVersionId: "version-2",
 			},
 			ChannelToken: "channel-1",
 		},
@@ -223,6 +223,9 @@ func TestRenewWorkspaceAuthorityUsesMountedSession(t *testing.T) {
 	}
 	if renewed.GetExpiresAtUnixNano() != 200 {
 		t.Fatalf("renewed fence = %+v", renewed)
+	}
+	if renewed.GetBaseWorkspaceVersionId() != "version-2" {
+		t.Fatalf("renewed logical frontier = %q, want version-2", renewed.GetBaseWorkspaceVersionId())
 	}
 	if err := <-serverResult; err != nil {
 		t.Fatal(err)
@@ -300,7 +303,7 @@ func TestFinalizationSessionSeparatesPhysicalIdentityFromLogicalFence(t *testing
 			Fence: &workspacev0.WorkspaceAuthorityFence{
 				WorkspaceMountId: "mount-1", WorkspaceId: "workspace-1",
 				RuntimeInstanceId: "runtime-1", MountFencingGeneration: 4,
-				BaseWorkspaceVersionId: "version-1",
+				BaseWorkspaceVersionId: "version-2",
 			},
 			ChannelToken: "channel-1",
 		},

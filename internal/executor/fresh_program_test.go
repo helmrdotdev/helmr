@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
@@ -154,17 +155,21 @@ func TestValidateNewProgramMountSeparatesPhysicalIdentityFromLogicalFence(t *tes
 func TestChildAttachStartsNewProgramOnRetainedMount(t *testing.T) {
 	claim := testChildAttachProgramClaim(t)
 	controlPlane := &testFreshProgramControlPlane{
-		lease:     claim.Lease,
-		wantChild: true,
+		lease:          claim.Lease,
+		wantChild:      true,
+		renewExpiresAt: claim.Lease.ExpiresAt.Add(time.Minute),
 	}
 	guest, host := net.Pipe()
 	defer guest.Close()
 	verifyGuest, verifyHost := net.Pipe()
 	defer verifyGuest.Close()
+	renewGuest, renewHost := net.Pipe()
+	defer renewGuest.Close()
 	parent := &queuedStreamSession{
 		streams: []vm.Stream{
 			testVMStream(host),
 			testVMStream(verifyHost),
+			testVMStream(renewHost),
 		},
 	}
 	sessions := NewWorkspaceMountSessions()
@@ -187,6 +192,30 @@ func TestChildAttachStartsNewProgramOnRetainedMount(t *testing.T) {
 	verifyResult := make(chan error, 1)
 	go func() {
 		verifyResult <- serveFrozenParentVerification(verifyGuest)
+	}()
+	renewResult := make(chan error, 1)
+	go func() {
+		header, bodyLength, err := wire.ReadStreamFrameHeader(renewGuest)
+		if err != nil {
+			renewResult <- err
+			return
+		}
+		if header.Type != wire.StreamTypeWorkspaceAuthorityRenew || bodyLength != 0 {
+			renewResult <- errors.New("unexpected child Workspace authority renewal header")
+			return
+		}
+		var request workspacev0.RenewWorkspaceAuthorityRequest
+		if err := frameio.ReadProtoFrame(renewGuest, &request); err != nil {
+			renewResult <- err
+			return
+		}
+		if request.GetPrevious().GetFence().GetBaseWorkspaceVersionId() != claim.Lease.BaseWorkspaceVersionID {
+			renewResult <- errors.New("child renewal did not preserve its advanced logical frontier")
+			return
+		}
+		renewed := proto.Clone(request.GetPrevious().GetFence()).(*workspacev0.WorkspaceAuthorityFence)
+		renewed.ExpiresAtUnixNano = request.GetNewExpiresAtUnixNano()
+		renewResult <- frameio.WriteProtoFrame(renewGuest, &workspacev0.RenewWorkspaceAuthorityResponse{Fence: renewed})
 	}()
 	program, err := (ProgramRunner{
 		WorkspaceMounts: sessions,
@@ -214,6 +243,9 @@ func TestChildAttachStartsNewProgramOnRetainedMount(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := <-verifyResult; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-renewResult; err != nil {
 		t.Fatal(err)
 	}
 	if claim.Execution.Attach.Child.ProgramStart != nil {
@@ -1113,6 +1145,7 @@ func testWorkspaceMount(
 type testFreshProgramControlPlane struct {
 	mu                 sync.Mutex
 	lease              workerapi.RunLeaseAssignment
+	renewExpiresAt     time.Time
 	calls              []string
 	startErr           error
 	entrypointErr      error
@@ -1240,8 +1273,12 @@ func (c *testFreshProgramControlPlane) RenewRunLease(
 	if !equalRunLeaseAssignment(lease, c.lease) {
 		return workerapi.RunLeaseRenewResponse{}, errors.New("unexpected renewal receipt")
 	}
+	expiresAt := c.lease.ExpiresAt
+	if !c.renewExpiresAt.IsZero() {
+		expiresAt = c.renewExpiresAt
+	}
 	return workerapi.RunLeaseRenewResponse{
-		Lease: c.lease.Fence(), ExpiresAt: c.lease.ExpiresAt,
+		Lease: c.lease.Fence(), ExpiresAt: expiresAt,
 		BaseWorkspaceVersionID: c.lease.BaseWorkspaceVersionID,
 	}, nil
 }

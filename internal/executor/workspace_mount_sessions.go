@@ -222,8 +222,7 @@ func validateWorkspaceMountPhysicalAuthority(
 ) error {
 	if fence.GetWorkspaceMountId() != mount.ID ||
 		fence.GetWorkspaceId() != mount.WorkspaceID ||
-		fence.GetRuntimeInstanceId() != mount.RuntimeInstanceID ||
-		fence.GetBaseWorkspaceVersionId() != mount.BaseVersionID {
+		fence.GetRuntimeInstanceId() != mount.RuntimeInstanceID {
 		return errors.New("workspace authority fence does not match the mount session")
 	}
 	return nil

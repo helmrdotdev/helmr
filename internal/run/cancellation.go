@@ -97,6 +97,7 @@ type termination struct {
 	eventMessage      string
 	actorFailureCode  string
 	actorCancellation bool
+	discardRuntime    bool
 }
 
 var cancelledTermination = termination{
@@ -1122,7 +1123,7 @@ func terminateLockedRun(
 		}
 	}
 	mountFinalizationKind, mountFinalizationReasonCode :=
-		runtimeCleanupMountFinalization(termination.reasonCode)
+		runtimeCleanupMountFinalization(termination.reasonCode, termination.discardRuntime)
 	if err := queries.CloseRunRuntimes(
 		ctx,
 		db.CloseRunRuntimesParams{
@@ -1198,8 +1199,8 @@ func terminateLockedRun(
 	return nil
 }
 
-func runtimeCleanupMountFinalization(reasonCode string) (pgtype.Text, pgtype.Text) {
-	if reasonCode != "same_workspace_handoff_runtime_lost" {
+func runtimeCleanupMountFinalization(reasonCode string, discardRuntime bool) (pgtype.Text, pgtype.Text) {
+	if !discardRuntime {
 		return pgtype.Text{}, pgtype.Text{}
 	}
 	return pgvalue.Text("discard"), pgvalue.Text(reasonCode)

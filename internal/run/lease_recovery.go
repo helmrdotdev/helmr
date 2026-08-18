@@ -94,6 +94,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 				"Same-Workspace child handoff runtime was lost",
 				db.RunStatusSystemFailed,
 				"platform_failure",
+				true,
 			); err != nil {
 				return false, err
 			}
@@ -136,6 +137,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 			"Run maximum active duration was exceeded",
 			db.RunStatusExpired,
 			"run_expired",
+			sameWorkspaceChild,
 		); err != nil {
 			return false, err
 		}
@@ -150,6 +152,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 			"Same-Workspace child handoff runtime was lost",
 			db.RunStatusSystemFailed,
 			"platform_failure",
+			true,
 		); err != nil {
 			return false, err
 		}
@@ -160,7 +163,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 		loss.reason = "retry_policy_invalid"
 		loss.state = db.RunLeaseStateLost
 		if err := g.failCurrentForLeaseLoss(
-			ctx, loss, "Run retry policy was invalid", db.RunStatusSystemFailed, "platform_failure",
+			ctx, loss, "Run retry policy was invalid", db.RunStatusSystemFailed, "platform_failure", false,
 		); err != nil {
 			return false, err
 		}
@@ -174,7 +177,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 		loss.reason = "secret_retry_unavailable"
 		loss.state = db.RunLeaseStateLost
 		if err := g.failCurrentForLeaseLoss(
-			ctx, loss, "Run retry Secret authority was unavailable", db.RunStatusSystemFailed, "platform_failure",
+			ctx, loss, "Run retry Secret authority was unavailable", db.RunStatusSystemFailed, "platform_failure", false,
 		); err != nil {
 			return false, err
 		}
@@ -182,7 +185,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 	}
 	if !shouldRetry {
 		if err := g.failCurrentForLeaseLoss(
-			ctx, loss, executionLeaseLossMessage(loss.reason), db.RunStatusSystemFailed, "platform_failure",
+			ctx, loss, executionLeaseLossMessage(loss.reason), db.RunStatusSystemFailed, "platform_failure", false,
 		); err != nil {
 			return false, err
 		}
@@ -530,7 +533,7 @@ func terminalizeExecutionLeasePhysicalAuthority(
 		return err
 	}
 	mountFinalizationKind, mountFinalizationReasonCode :=
-		runtimeCleanupMountFinalization(loss.reason)
+		runtimeCleanupMountFinalization(loss.reason, false)
 	if err := q.CloseRunRuntimes(ctx, db.CloseRunRuntimesParams{
 		ReasonCode: loss.reason, RunLeaseID: authority.RunLeaseID,
 		RunID:                       authority.RunID,
@@ -571,6 +574,7 @@ func (g OwnedFinalization) failCurrentForLeaseLoss(
 	message string,
 	status db.RunStatus,
 	actorFailureCode string,
+	discardRuntime bool,
 ) error {
 	if _, err := g.CancelDescendants(ctx); err != nil {
 		return err
@@ -585,6 +589,7 @@ func (g OwnedFinalization) failCurrentForLeaseLoss(
 		waitCondition: db.WaitStateFailed, waitSuspension: db.RunWaitStateFailed,
 		eventKind: "run.system_failed", eventMessage: message,
 		actorFailureCode: actorFailureCode,
+		discardRuntime:   discardRuntime,
 	}
 	if status == db.RunStatusExpired {
 		term.eventKind = "run.expired"

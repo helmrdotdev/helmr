@@ -150,14 +150,17 @@ SELECT child_writer_generation FROM run_waits WHERE id = $1`, fixture.waitID).Sc
 
 func TestFreshAmbiguousHandoffRecoveryUnwindsToParentCheckpoint(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		state string
-		loss  string
+		name       string
+		state      string
+		loss       string
+		wantStatus string
+		wantReason string
 	}{
-		{name: "starting", state: "starting"},
-		{name: "running despite retry policy", state: "running"},
-		{name: "assigned physical loss", state: "assigned", loss: "worker_epoch"},
-		{name: "assigned cleanup already started", state: "assigned", loss: "workspace_lease_releasing"},
+		{name: "starting", state: "starting", wantStatus: "system_failed", wantReason: "same_workspace_handoff_runtime_lost"},
+		{name: "running despite retry policy", state: "running", wantStatus: "system_failed", wantReason: "same_workspace_handoff_runtime_lost"},
+		{name: "running active deadline", state: "running", loss: "active_deadline", wantStatus: "expired", wantReason: "max_active_duration_exceeded"},
+		{name: "assigned physical loss", state: "assigned", loss: "worker_epoch", wantStatus: "system_failed", wantReason: "same_workspace_handoff_runtime_lost"},
+		{name: "assigned cleanup already started", state: "assigned", loss: "workspace_lease_releasing", wantStatus: "system_failed", wantReason: "same_workspace_handoff_runtime_lost"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := prepareFreshHandoffRecovery(t)
@@ -177,6 +180,12 @@ UPDATE runs
        started_at = transaction_timestamp() - interval '10 seconds',
        retry_policy = '{"backoff":{"factor":1,"jitter":"none","maxMs":1,"minMs":1},"enabled":true,"maxAttempts":2}'::jsonb,
        state_version = state_version + 1
+ WHERE id = $1`, fixture.childID)
+			}
+			if tc.loss == "active_deadline" {
+				dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE runs
+   SET max_active_duration_ms = 5000
  WHERE id = $1`, fixture.childID)
 			}
 			if tc.loss == "worker_epoch" {
@@ -226,12 +235,12 @@ SELECT child.status, child.current_run_lease_id,
 			); err != nil {
 				t.Fatal(err)
 			}
-			if childStatus != "system_failed" || currentLease.Valid ||
-				reason != "same_workspace_handoff_runtime_lost" || attempts != 1 ||
+			if childStatus != tc.wantStatus || currentLease.Valid ||
+				reason != tc.wantReason || attempts != 1 ||
 				parentStatus != "queued" || conditionState != "failed" ||
 				suspensionState != "resume_pending" || runtimeDesired != "closed" ||
 				mountState != "unmounting" || mountFinalizationKind != "discard" ||
-				mountFinalizationReason != "same_workspace_handoff_runtime_lost" {
+				mountFinalizationReason != tc.wantReason {
 				t.Fatalf("unwind child=%s current=%v reason=%s attempts=%d parent=%s wait=%s/%s runtime=%s",
 					childStatus, currentLease, reason, attempts, parentStatus,
 					conditionState, suspensionState, runtimeDesired)
