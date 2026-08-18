@@ -518,7 +518,7 @@ func validateManagedProgramChildAuthority(
 		parentFence.GetWorkspaceId() != childFence.GetWorkspaceId() ||
 		parentFence.GetWorkspaceMountId() != childFence.GetWorkspaceMountId() ||
 		parentFence.GetOwnershipGeneration() != childFence.GetOwnershipGeneration() ||
-		parentFence.GetBaseWorkspaceVersionId() != childFence.GetBaseWorkspaceVersionId() ||
+		parentFence.GetBaseWorkspaceVersionId() == childFence.GetBaseWorkspaceVersionId() ||
 		parentFence.GetRunLeaseId() == childFence.GetRunLeaseId() ||
 		childFence.GetWriterGeneration() <= parentFence.GetWriterGeneration() ||
 		childFence.GetMountFencingGeneration() <= parentFence.GetMountFencingGeneration() ||

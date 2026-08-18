@@ -289,6 +289,7 @@ func (entry *workspaceMountEntry) installChildWorkspaceRunAuthorityLocked(
 	if !live || !workspaceRunAuthoritiesEqual(entry.authority, parent) {
 		return errors.New("frozen parent program authority is no longer current")
 	}
+	entry.baseVersionID = child.GetFence().GetBaseWorkspaceVersionId()
 	entry.setFencingGeneration(uint64(child.GetFence().GetMountFencingGeneration()))
 	entry.authority = proto.Clone(child).(*workspacev0.WorkspaceRunAuthority)
 	entry.previousExpiry = 0

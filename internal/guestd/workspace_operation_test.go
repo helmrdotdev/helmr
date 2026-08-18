@@ -40,6 +40,7 @@ func TestManagedProgramChildAdmissionPreservesParentClaim(t *testing.T) {
 	child.GetFence().WorkspaceLeaseId = "workspace-lease-child"
 	child.GetFence().WriterGeneration++
 	child.GetFence().MountFencingGeneration++
+	child.GetFence().BaseWorkspaceVersionId = "captured-private-version"
 	child.WriteCapability = "child-write-capability"
 	releaseChild, err := registry.admitProgram(entry, child, time.Now())
 	if err != nil {
@@ -55,7 +56,8 @@ func TestManagedProgramChildAdmissionPreservesParentClaim(t *testing.T) {
 	entry.authorityMu.Lock()
 	current := proto.Clone(entry.authority).(*workspacev0.WorkspaceRunAuthority)
 	entry.authorityMu.Unlock()
-	if !workspaceRunAuthoritiesEqual(current, child) {
+	if !workspaceRunAuthoritiesEqual(current, child) ||
+		entry.baseVersionID != "captured-private-version" {
 		t.Fatal("child admission did not advance current Workspace authority")
 	}
 	waited := make(chan error, 1)
@@ -97,6 +99,7 @@ func TestManagedProgramChildAdmissionRejectsUnverifiedOrDifferentRuntime(t *test
 	child.GetFence().WorkspaceLeaseId = "workspace-lease-child"
 	child.GetFence().WriterGeneration++
 	child.GetFence().MountFencingGeneration++
+	child.GetFence().BaseWorkspaceVersionId = "captured-private-version"
 	if _, err := registry.admitProgram(entry, child, time.Now()); err == nil {
 		t.Fatal("unverified child Program was admitted")
 	}
@@ -110,6 +113,40 @@ func TestManagedProgramChildAdmissionRejectsUnverifiedOrDifferentRuntime(t *test
 	child.GetFence().RuntimeInstanceId = "different-runtime"
 	if _, err := registry.admitProgram(entry, child, time.Now()); err == nil {
 		t.Fatal("child Program on a different runtime was admitted")
+	}
+	if entry.baseVersionID != parent.GetFence().GetBaseWorkspaceVersionId() ||
+		entry.currentFencingGeneration() != uint64(parent.GetFence().GetMountFencingGeneration()) {
+		t.Fatal("failed child admission mutated mounted Workspace authority")
+	}
+}
+
+func TestManagedProgramChildAdmissionRequiresCapturedBaseAdvance(t *testing.T) {
+	entry, registry, parent := testWorkspaceFinalizationMountUnadmitted(t)
+	releaseParent, err := registry.admitProgram(entry, parent, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseParent()
+	if err := registry.authorizeChildProgram(
+		entry,
+		parent.GetFence().GetRunId(),
+		parent.GetFence().GetAttemptNumber(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	child := proto.Clone(parent).(*workspacev0.WorkspaceRunAuthority)
+	child.GetFence().RunId = "run-child"
+	child.GetFence().RunLeaseId = "run-lease-child"
+	child.GetFence().WorkspaceLeaseId = "workspace-lease-child"
+	child.GetFence().WriterGeneration++
+	child.GetFence().MountFencingGeneration++
+	child.WriteCapability = "child-write-capability"
+	if _, err := registry.admitProgram(entry, child, time.Now()); err == nil {
+		t.Fatal("child Program without a captured base advance was admitted")
+	}
+	if entry.baseVersionID != parent.GetFence().GetBaseWorkspaceVersionId() ||
+		entry.currentFencingGeneration() != uint64(parent.GetFence().GetMountFencingGeneration()) {
+		t.Fatal("rejected child mutated mounted Workspace authority")
 	}
 }
 
