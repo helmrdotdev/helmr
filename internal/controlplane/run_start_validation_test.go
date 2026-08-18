@@ -3,10 +3,114 @@ package controlplane
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func TestValidateRunStartLifecycleSeparatesFirstStartFromResume(t *testing.T) {
+	entered := db.RunAttempt{EntrypointEnteredAt: pgvalue.Timestamptz(time.Now())}
+	tests := []struct {
+		name    string
+		mode    runLeaseClaimMode
+		attempt db.RunAttempt
+		ok      bool
+	}{
+		{name: "fresh first start", mode: runLeaseClaimFresh, ok: true},
+		{name: "child first start", mode: runLeaseClaimAttachChild, ok: true},
+		{name: "restore resume", mode: runLeaseClaimRestore, attempt: entered, ok: true},
+		{name: "parent resume", mode: runLeaseClaimAttachParent, attempt: entered, ok: true},
+		{name: "fresh cannot reenter", mode: runLeaseClaimFresh, attempt: entered},
+		{name: "child cannot reenter", mode: runLeaseClaimAttachChild, attempt: entered},
+		{name: "restore requires prior entry", mode: runLeaseClaimRestore},
+		{name: "parent requires prior entry", mode: runLeaseClaimAttachParent},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateRunStartLifecycle(test.mode, db.Run{Status: db.RunStatusQueued}, test.attempt)
+			if (err == nil) != test.ok {
+				t.Fatalf("validateRunStartLifecycle() error = %v, want ok=%t", err, test.ok)
+			}
+		})
+	}
+	if err := validateRunStartLifecycle(
+		runLeaseClaimRestore,
+		db.Run{Status: db.RunStatusRunning},
+		entered,
+	); err == nil {
+		t.Fatal("non-queued Run accepted for first restore start commit")
+	}
+}
+
+func TestStartRunCommitsCheckpointRestoreWithPriorEntrypointAndReplays(t *testing.T) {
+	worker, claimLocators, authority := validCheckpointRestoreRunLeaseClaimFixture(false)
+	authority.runLease.State = db.RunLeaseStateStarting
+	enteredAt := pgvalue.Timestamptz(time.Now().Add(-time.Minute))
+	authority.attempt.EntrypointEnteredAt = enteredAt
+	store := &runLeaseClaimStore{
+		authority: authority,
+		startLocators: db.GetRunLeaseStartLocatorsRow{
+			OrgID: claimLocators.OrgID, ProjectID: claimLocators.ProjectID,
+			EnvironmentID: claimLocators.EnvironmentID, RunID: claimLocators.RunID,
+			WorkspaceID: claimLocators.WorkspaceID, AttemptNumber: claimLocators.AttemptNumber,
+			RegionID: claimLocators.RegionID, RuntimeInstanceID: claimLocators.RuntimeInstanceID,
+			RuntimeRestoreCheckpointID: authority.runtime.RestoreCheckpointID,
+			WorkspaceLeaseID:           claimLocators.WorkspaceLeaseID,
+			WorkspaceMountID:           claimLocators.WorkspaceMountID,
+			RunWaitID:                  claimLocators.RunWaitID,
+			RunWaitCheckpointID:        claimLocators.SuspendCheckpointID,
+			ResumeAttachID:             claimLocators.ResumeAttachID,
+			ResumeRequestVersion:       claimLocators.ResumeRequestVersion,
+		},
+	}
+	server := &Server{db: store}
+	expected := workerapi.RunLeaseFence{
+		ID:            pgvalue.UUIDString(authority.runLease.ID),
+		LeaseSequence: authority.runLease.LeaseSequence,
+	}
+	requested := runStartArm{
+		mode:                 runLeaseClaimRestore,
+		runWaitID:            authority.runWait.ID,
+		checkpointID:         authority.checkpoint.ID,
+		resumeAttachID:       authority.runWait.ResumeAttachID,
+		resumeRequestVersion: authority.runWait.ResumeRequestVersion,
+	}
+
+	receipt, err := server.startRun(
+		context.Background(), worker, authority.runLease.ID, expected, requested,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt != expected {
+		t.Fatalf("receipt = %+v, want %+v", receipt, expected)
+	}
+	if store.authority.runLease.State != db.RunLeaseStateRunning ||
+		store.authority.run.Status != db.RunStatusRunning {
+		t.Fatalf("start states = lease:%q run:%q", store.authority.runLease.State, store.authority.run.Status)
+	}
+	if store.authority.attempt.EntrypointEnteredAt != enteredAt {
+		t.Fatal("restore start changed the original Attempt entrypoint timestamp")
+	}
+	if store.startLeaseWrites != 1 || store.startRunWrites != 1 || store.startWorkspaceWrites != 1 {
+		t.Fatalf("first start writes = lease:%d run:%d workspace:%d", store.startLeaseWrites, store.startRunWrites, store.startWorkspaceWrites)
+	}
+
+	if _, err := server.startRun(
+		context.Background(), worker, authority.runLease.ID, expected, requested,
+	); err != nil {
+		t.Fatalf("exact start replay: %v", err)
+	}
+	if store.startLeaseWrites != 1 || store.startRunWrites != 1 || store.startWorkspaceWrites != 1 {
+		t.Fatalf("replay mutated state: lease:%d run:%d workspace:%d", store.startLeaseWrites, store.startRunWrites, store.startWorkspaceWrites)
+	}
+	if store.authority.attempt.EntrypointEnteredAt != enteredAt {
+		t.Fatal("restore start replay changed the original Attempt entrypoint timestamp")
+	}
+}
 
 func TestValidateRunStartArmModesAndReplay(t *testing.T) {
 	id := func(value byte) pgtype.UUID {

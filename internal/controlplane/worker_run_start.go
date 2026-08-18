@@ -103,7 +103,7 @@ func (s *Server) startRun(
 		}
 		switch authority.runLease.State {
 		case db.RunLeaseStateStarting:
-			if authority.run.Status != db.RunStatusQueued || authority.attempt.EntrypointEnteredAt.Valid {
+			if err := validateRunStartLifecycle(mode, authority.run, authority.attempt); err != nil {
 				return staleRunStart(runStartFailureLeaseState, errStaleRunLeaseClaim)
 			}
 			authority.runLease, err = work.q.MarkRunLeaseRunning(ctx, db.MarkRunLeaseRunningParams{
@@ -146,6 +146,25 @@ func (s *Server) startRun(
 		return workerapi.RunLeaseFence{}, err
 	}
 	return expected, nil
+}
+
+func validateRunStartLifecycle(mode runLeaseClaimMode, run db.Run, attempt db.RunAttempt) error {
+	if run.Status != db.RunStatusQueued {
+		return errStaleRunLeaseClaim
+	}
+	switch mode {
+	case runLeaseClaimFresh, runLeaseClaimAttachChild:
+		if attempt.EntrypointEnteredAt.Valid {
+			return errStaleRunLeaseClaim
+		}
+	case runLeaseClaimRestore, runLeaseClaimAttachParent:
+		if !attempt.EntrypointEnteredAt.Valid {
+			return errStaleRunLeaseClaim
+		}
+	default:
+		return errStaleRunLeaseClaim
+	}
+	return nil
 }
 
 func lockRunStartAuthority(

@@ -1290,27 +1290,31 @@ func TestClaimSameWorkspaceParentResumeRunLeaseInTxRejectsDifferentMount(t *test
 
 type runLeaseClaimStore struct {
 	db.Querier
-	authority           runLeaseClaimAuthority
-	locators            db.GetRunLeaseClaimLocatorsRow
-	secretLocators      *db.GetRunLeaseSecretDeliveryLocatorsRow
-	secretRows          []db.LockAttemptSecretDeliveryRow
-	secretVersion       db.SecretVersion
-	program             db.GetDeploymentProgramAuthorityRow
-	definition          db.DeploymentDefinition
-	resetTarget         db.GetWorkspaceResetTargetAuthorityRow
-	resetTargetParams   db.GetWorkspaceResetTargetAuthorityParams
-	projectionErr       error
-	entrypoint          db.GetRunEntrypointLocatorsRow
-	enteredAt           pgtype.Timestamptz
-	entrypointMarks     int
-	renewal             db.GetLiveRunLeaseLocatorsRow
-	renewalTime         pgtype.Timestamptz
-	renewalWrites       int
-	finalizationTime    pgtype.Timestamptz
-	finalizationClear   pgtype.Bool
-	finalizationWrites  int
-	finalizationLineage []db.ListSameWorkspaceHandoffAncestorRunsRow
-	calls               []string
+	authority            runLeaseClaimAuthority
+	locators             db.GetRunLeaseClaimLocatorsRow
+	secretLocators       *db.GetRunLeaseSecretDeliveryLocatorsRow
+	secretRows           []db.LockAttemptSecretDeliveryRow
+	secretVersion        db.SecretVersion
+	program              db.GetDeploymentProgramAuthorityRow
+	definition           db.DeploymentDefinition
+	resetTarget          db.GetWorkspaceResetTargetAuthorityRow
+	resetTargetParams    db.GetWorkspaceResetTargetAuthorityParams
+	projectionErr        error
+	entrypoint           db.GetRunEntrypointLocatorsRow
+	enteredAt            pgtype.Timestamptz
+	entrypointMarks      int
+	renewal              db.GetLiveRunLeaseLocatorsRow
+	renewalTime          pgtype.Timestamptz
+	renewalWrites        int
+	finalizationTime     pgtype.Timestamptz
+	finalizationClear    pgtype.Bool
+	finalizationWrites   int
+	finalizationLineage  []db.ListSameWorkspaceHandoffAncestorRunsRow
+	startLocators        db.GetRunLeaseStartLocatorsRow
+	startLeaseWrites     int
+	startRunWrites       int
+	startWorkspaceWrites int
+	calls                []string
 }
 
 func (s *runLeaseClaimStore) BeginQuerier(context.Context) (db.Querier, transaction, error) {
@@ -1355,6 +1359,14 @@ func (s *runLeaseClaimStore) GetRunLeaseClaimLocators(
 ) (db.GetRunLeaseClaimLocatorsRow, error) {
 	s.calls = append(s.calls, "locators")
 	return s.locators, nil
+}
+
+func (s *runLeaseClaimStore) GetRunLeaseStartLocators(
+	context.Context,
+	db.GetRunLeaseStartLocatorsParams,
+) (db.GetRunLeaseStartLocatorsRow, error) {
+	s.calls = append(s.calls, "start_locators")
+	return s.startLocators, nil
 }
 
 func (s *runLeaseClaimStore) GetDeploymentProgramAuthority(
@@ -1487,6 +1499,11 @@ func (s *runLeaseClaimStore) LockRunLeaseClaimWait(context.Context, db.LockRunLe
 	return s.authority.runWait, nil
 }
 
+func (s *runLeaseClaimStore) LockRunStartWait(context.Context, db.LockRunStartWaitParams) (db.RunWait, error) {
+	s.calls = append(s.calls, "run_start_wait")
+	return s.authority.runWait, nil
+}
+
 func (s *runLeaseClaimStore) LockSameWorkspaceHandoffWait(_ context.Context, params db.LockSameWorkspaceHandoffWaitParams) (db.RunWait, error) {
 	if s.authority.enclosingWait.ID.Valid && params.ID == s.authority.enclosingWait.ID {
 		s.calls = append(s.calls, "enclosing_wait")
@@ -1522,6 +1539,31 @@ func (s *runLeaseClaimStore) MarkRunLeaseStarting(context.Context, db.MarkRunLea
 	lease.ClaimedAt = pgtype.Timestamptz{Valid: true}
 	s.authority.runLease = lease
 	return lease, nil
+}
+
+func (s *runLeaseClaimStore) MarkRunLeaseRunning(context.Context, db.MarkRunLeaseRunningParams) (db.RunLease, error) {
+	s.calls = append(s.calls, "mark_run_lease_running")
+	s.startLeaseWrites++
+	lease := s.authority.runLease
+	lease.State = db.RunLeaseStateRunning
+	lease.StartedAt = pgtype.Timestamptz{Valid: true}
+	s.authority.runLease = lease
+	return lease, nil
+}
+
+func (s *runLeaseClaimStore) MarkRunRunning(context.Context, db.MarkRunRunningParams) (db.Run, error) {
+	s.calls = append(s.calls, "mark_run_running")
+	s.startRunWrites++
+	run := s.authority.run
+	run.Status = db.RunStatusRunning
+	s.authority.run = run
+	return run, nil
+}
+
+func (s *runLeaseClaimStore) TouchRunWorkspaceActivity(context.Context, db.TouchRunWorkspaceActivityParams) (db.Workspace, error) {
+	s.calls = append(s.calls, "touch_run_workspace")
+	s.startWorkspaceWrites++
+	return s.authority.workspace, nil
 }
 
 type runLeaseClaimTransaction struct {
