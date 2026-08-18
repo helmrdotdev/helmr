@@ -21,6 +21,58 @@ import (
 
 var errStaleTaskCompletion = errors.New("task completion receipt is stale")
 
+type taskCompletionFailurePoint string
+
+const (
+	taskCompletionPointReplay           taskCompletionFailurePoint = "replay"
+	taskCompletionPointLocators         taskCompletionFailurePoint = "locators"
+	taskCompletionPointAuthority        taskCompletionFailurePoint = "authority"
+	taskCompletionPointOwner            taskCompletionFailurePoint = "owner"
+	taskCompletionPointHandoff          taskCompletionFailurePoint = "handoff"
+	taskCompletionPointParentWait       taskCompletionFailurePoint = "parent_wait"
+	taskCompletionPointCore             taskCompletionFailurePoint = "core"
+	taskCompletionPointWorkspaceOwner   taskCompletionFailurePoint = "workspace_owner"
+	taskCompletionPointParentAuthority  taskCompletionFailurePoint = "parent_authority"
+	taskCompletionPointOutcome          taskCompletionFailurePoint = "outcome"
+	taskCompletionPointOperation        taskCompletionFailurePoint = "operation"
+	taskCompletionPointFence            taskCompletionFailurePoint = "fence"
+	taskCompletionPointScope            taskCompletionFailurePoint = "scope"
+	taskCompletionPointRuntime          taskCompletionFailurePoint = "runtime"
+	taskCompletionPointRollback         taskCompletionFailurePoint = "rollback"
+	taskCompletionPointDeadline         taskCompletionFailurePoint = "deadline"
+	taskCompletionPointWorkspaceVersion taskCompletionFailurePoint = "workspace_version"
+	taskCompletionPointAttempt          taskCompletionFailurePoint = "attempt"
+	taskCompletionPointWorkspaceLease   taskCompletionFailurePoint = "workspace_lease"
+	taskCompletionPointFinish           taskCompletionFailurePoint = "finish"
+)
+
+type staleTaskCompletionPointError struct {
+	point taskCompletionFailurePoint
+	err   error
+}
+
+func (err *staleTaskCompletionPointError) Error() string { return err.err.Error() }
+func (err *staleTaskCompletionPointError) Unwrap() error { return err.err }
+
+func staleTaskCompletionAt(point taskCompletionFailurePoint, err error) error {
+	if err == nil || !errors.Is(err, errStaleTaskCompletion) {
+		return err
+	}
+	var existing *staleTaskCompletionPointError
+	if errors.As(err, &existing) {
+		return err
+	}
+	return &staleTaskCompletionPointError{point: point, err: err}
+}
+
+func taskCompletionFailurePointOf(err error) (taskCompletionFailurePoint, bool) {
+	var pointed *staleTaskCompletionPointError
+	if !errors.As(err, &pointed) || pointed.point == "" {
+		return "", false
+	}
+	return pointed.point, true
+}
+
 type taskCompletionReplayStore interface {
 	GetTaskCompletionReplay(context.Context, db.GetTaskCompletionReplayParams) (pgtype.Text, error)
 }
@@ -33,7 +85,7 @@ func (s *Server) completeTask(
 ) error {
 	replayed, err := taskCompletionWasReplayed(ctx, s.db, worker, request, completion)
 	if err != nil || replayed {
-		return err
+		return staleTaskCompletionAt(taskCompletionPointReplay, err)
 	}
 	if completion.capture != nil {
 		verified, err := s.verifyTaskWorkspaceCapture(ctx, *completion.capture)
@@ -51,11 +103,13 @@ func (s *Server) completeTask(
 		}
 	}
 
+	failurePoint := taskCompletionPointReplay
 	err = s.inTx(ctx, func(work *txWork) error {
 		replayed, err := taskCompletionWasReplayed(ctx, work.q, worker, request, completion)
 		if err != nil || replayed {
-			return err
+			return staleTaskCompletionAt(taskCompletionPointReplay, err)
 		}
+		failurePoint = taskCompletionPointLocators
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID:               pgvalue.UUID(completion.lease.leaseID),
 			LeaseSequence:    request.Lease.LeaseSequence,
@@ -76,6 +130,7 @@ func (s *Server) completeTask(
 		if err != nil {
 			return fmt.Errorf("lock task completion secret authority: %w", err)
 		}
+		failurePoint = taskCompletionPointAuthority
 		authority, err := lockLiveRunFinalizationAuthority(
 			ctx,
 			work.q,
@@ -87,9 +142,11 @@ func (s *Server) completeTask(
 		if err != nil {
 			return staleTaskCompletion(err)
 		}
+		failurePoint = taskCompletionPointOwner
 		if err := validateRunFinalizationOwner(authority, locators); err != nil {
 			return staleTaskCompletion(err)
 		}
+		failurePoint = taskCompletionPointHandoff
 		handoff, err := lockSameWorkspaceChildFinalization(ctx, work.q, &authority)
 		if err != nil {
 			return staleTaskCompletion(err)
@@ -97,6 +154,7 @@ func (s *Server) completeTask(
 		if handoff == nil &&
 			authority.run.ParentRunID.Valid && authority.run.ParentOwnsLifecycle.Valid &&
 			authority.run.ParentOwnsLifecycle.Bool {
+			failurePoint = taskCompletionPointParentWait
 			authority.enclosingWait, err = lockParentOwnedChildWaitIfActive(
 				ctx,
 				work.q,
@@ -111,10 +169,12 @@ func (s *Server) completeTask(
 				return staleTaskCompletion(err)
 			}
 		}
+		failurePoint = taskCompletionPointCore
 		if err := validateTaskCompletionAuthority(ctx, work.q, request, completion, authority); err != nil {
 			return err
 		}
 		if completion.handoff != nil {
+			failurePoint = taskCompletionPointRuntime
 			identity, err := work.q.GetRuntimeIdentityForCheckpoint(ctx, authority.runtime.RuntimeIdentityID)
 			manifestIdentity := request.Handoff.Manifest.RecoveryPoint.Runtime
 			if err != nil ||
@@ -139,11 +199,13 @@ func (s *Server) completeTask(
 			}
 		}
 		if completion.rollback != nil {
+			failurePoint = taskCompletionPointRollback
 			if err := validateTaskWorkspaceRollback(ctx, work.q, authority, *completion.rollback); err != nil {
 				return err
 			}
 		}
 
+		failurePoint = taskCompletionPointDeadline
 		completedAt, err := work.q.GetTaskCompletionTime(ctx)
 		if err != nil || !completedAt.Valid {
 			if err == nil {
@@ -161,6 +223,7 @@ func (s *Server) completeTask(
 		}
 		var versionID pgtype.UUID
 		if completion.capture != nil {
+			failurePoint = taskCompletionPointWorkspaceVersion
 			if sameWorkspaceChildFinalization(authority) {
 				versionID, err = recordCheckpointWorkspaceVersion(
 					ctx, work.q, worker, authority, *completion.capture,
@@ -184,6 +247,7 @@ func (s *Server) completeTask(
 				return err
 			}
 		} else if authority.workspaceLease.BaseVersionID != authority.run.BaseWorkspaceVersionID {
+			failurePoint = taskCompletionPointWorkspaceVersion
 			if err := updateTaskWorkspaceMountFrontier(
 				ctx,
 				work.q,
@@ -194,6 +258,7 @@ func (s *Server) completeTask(
 				return err
 			}
 		}
+		failurePoint = taskCompletionPointAttempt
 		if err := terminalizeTaskAttempt(
 			ctx,
 			work.q,
@@ -203,6 +268,7 @@ func (s *Server) completeTask(
 		); err != nil {
 			return err
 		}
+		failurePoint = taskCompletionPointWorkspaceLease
 		if _, err := work.q.ReleaseTaskWorkspaceLease(ctx, db.ReleaseTaskWorkspaceLeaseParams{
 			CompletedAt: completedAt,
 			ID:          authority.workspaceLease.ID, WorkspaceID: authority.workspace.ID,
@@ -215,17 +281,21 @@ func (s *Server) completeTask(
 			return staleTaskCompletion(err)
 		}
 		if retry {
+			failurePoint = taskCompletionPointFinish
 			return scheduleTaskRetry(ctx, work.q, authority, secrets, completedAt, retryAt)
 		}
 		if sameWorkspaceChildFinalization(authority) {
+			failurePoint = taskCompletionPointFinish
 			return finishSameWorkspaceChild(
 				ctx, work.q, worker, authority, completion, completedAt, versionID,
 			)
 		}
+		failurePoint = taskCompletionPointFinish
 		return finishTask(ctx, work.q, authority, completion, completedAt, versionID)
 	})
 	if err != nil {
-		return taskCompletionReplayAfterError(ctx, s.db, worker, request, completion, err)
+		resolved := taskCompletionReplayAfterError(ctx, s.db, worker, request, completion, err)
+		return staleTaskCompletionAt(failurePoint, resolved)
 	}
 	return nil
 }
@@ -292,25 +362,25 @@ func validateTaskCompletionAuthority(
 		!authority.runLease.FinalizationRequestFingerprint.Valid ||
 		authority.attempt.BaseWorkspaceVersionID != authority.run.BaseWorkspaceVersionID ||
 		(authority.run.ParentRunID.Valid != authority.run.ParentOwnsLifecycle.Valid) {
-		return errStaleTaskCompletion
+		return staleTaskCompletionAt(taskCompletionPointCore, errStaleTaskCompletion)
 	}
 	sameWorkspaceChild := sameWorkspaceChildFinalization(authority)
 	if sameWorkspaceChild {
 		if !authority.enclosingWait.ID.Valid ||
 			(completion.kind == taskCompletionSucceeded) != (completion.handoff != nil) {
-			return errStaleTaskCompletion
+			return staleTaskCompletionAt(taskCompletionPointHandoff, errStaleTaskCompletion)
 		}
 		if completion.handoff != nil {
 			if completion.handoff.parentRunID != pgvalue.MustUUIDValue(authority.parentRun.ID) ||
 				completion.handoff.attemptNumber != authority.parentAttempt.Number ||
 				completion.handoff.waitID != pgvalue.MustUUIDValue(authority.enclosingWait.ID) {
-				return errStaleTaskCompletion
+				return staleTaskCompletionAt(taskCompletionPointHandoff, errStaleTaskCompletion)
 			}
 			correlationID, err := checkpointCorrelationID(authority.checkpoint, authority.enclosingWait)
 			if err != nil ||
 				request.Handoff == nil ||
 				request.Handoff.Manifest.RecoveryPoint.CorrelationID != correlationID {
-				return errStaleTaskCompletion
+				return staleTaskCompletionAt(taskCompletionPointHandoff, errStaleTaskCompletion)
 			}
 		}
 	} else if !authority.workspace.HeadVersionID.Valid ||
@@ -318,11 +388,11 @@ func validateTaskCompletionAuthority(
 		authority.workspace.OwnerRunID != authority.run.ID ||
 		authority.workspace.OwnerSessionID.Valid ||
 		completion.handoff != nil {
-		return errStaleTaskCompletion
+		return staleTaskCompletionAt(taskCompletionPointWorkspaceOwner, errStaleTaskCompletion)
 	}
 	if authority.run.ParentRunID.Valid && authority.run.ParentOwnsLifecycle.Bool {
 		if authority.parentRun.ID != authority.run.ParentRunID {
-			return errStaleTaskCompletion
+			return staleTaskCompletionAt(taskCompletionPointParentAuthority, errStaleTaskCompletion)
 		}
 		if !sameWorkspaceChild && authority.enclosingWait.ID.Valid {
 			if authority.enclosingWait.RunID != authority.parentRun.ID ||
@@ -331,15 +401,15 @@ func validateTaskCompletionAuthority(
 				!authority.enclosingWait.ChildParentOwned.Bool ||
 				authority.enclosingWait.Kind != db.WaitKindChild ||
 				authority.enclosingWait.ConditionState != db.WaitStatePending {
-				return errStaleTaskCompletion
+				return staleTaskCompletionAt(taskCompletionPointParentAuthority, errStaleTaskCompletion)
 			}
 		} else if authority.parentRun.Status == db.RunStatusCancelRequested {
-			return errStaleTaskCompletion
+			return staleTaskCompletionAt(taskCompletionPointParentAuthority, errStaleTaskCompletion)
 		}
 	}
 	if completion.kind != taskCompletionSucceeded &&
 		(completion.rollback == nil || pgvalue.UUID(completion.rollback.baseID) != authority.run.BaseWorkspaceVersionID) {
-		return errStaleTaskCompletion
+		return staleTaskCompletionAt(taskCompletionPointOutcome, errStaleTaskCompletion)
 	}
 	var finalization workspace.FinalizationRequest
 	wantKind := string(workerapi.RunFinalizationReset)
@@ -353,7 +423,7 @@ func validateTaskCompletionAuthority(
 	if err != nil ||
 		authority.runLease.FinalizationOperationID != pgvalue.UUID(operationID) ||
 		authority.runLease.FinalizationKind.String != wantKind {
-		return errStaleTaskCompletion
+		return staleTaskCompletionAt(taskCompletionPointOperation, errStaleTaskCompletion)
 	}
 	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
 		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
@@ -365,7 +435,7 @@ func validateTaskCompletionAuthority(
 		return err
 	}
 	if !finalizationFenceMatchesLease(finalization.Fence, assignment) {
-		return errStaleTaskCompletion
+		return staleTaskCompletionAt(taskCompletionPointFence, errStaleTaskCompletion)
 	}
 	clear, err := store.RunFinalizationScopeIsClear(ctx, db.RunFinalizationScopeIsClearParams{
 		RunID: authority.run.ID, AttemptNumber: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
@@ -374,7 +444,7 @@ func validateTaskCompletionAuthority(
 		return err
 	}
 	if !clear.Valid || !clear.Bool {
-		return errStaleTaskCompletion
+		return staleTaskCompletionAt(taskCompletionPointScope, errStaleTaskCompletion)
 	}
 	return nil
 }

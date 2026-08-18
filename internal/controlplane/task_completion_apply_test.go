@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +54,24 @@ func TestTaskCompletionReplayRejectsChangedFingerprint(t *testing.T) {
 	)
 	if !errors.Is(err, errStaleTaskCompletion) {
 		t.Fatalf("error = %v, want stale completion", err)
+	}
+}
+
+func TestTaskCompletionFailurePointPreservesStaleIdentity(t *testing.T) {
+	err := staleTaskCompletionAt(taskCompletionPointFence, errStaleTaskCompletion)
+	if !errors.Is(err, errStaleTaskCompletion) {
+		t.Fatalf("error = %v, want stale completion identity", err)
+	}
+	point, ok := taskCompletionFailurePointOf(fmt.Errorf("outer: %w", err))
+	if !ok || point != taskCompletionPointFence {
+		t.Fatalf("failure point = %q, %t", point, ok)
+	}
+	if got := staleTaskCompletionAt(taskCompletionPointFinish, err); got != err {
+		t.Fatal("outer failure point replaced the owning point")
+	}
+	plain := errors.New("storage unavailable")
+	if got := staleTaskCompletionAt(taskCompletionPointFence, plain); got != plain {
+		t.Fatal("non-stale error was wrapped")
 	}
 }
 
@@ -256,10 +275,14 @@ func TestTaskCompletionRejectsForgedHandoffAuthority(t *testing.T) {
 			changedHandoff := *completion.handoff
 			changedCompletion.handoff = &changedHandoff
 			test.mutate(&changedRequest, &changedCompletion)
-			if err := validateTaskCompletionAuthority(
+			err := validateTaskCompletionAuthority(
 				context.Background(), nil, changedRequest, changedCompletion, authority,
-			); !errors.Is(err, errStaleTaskCompletion) {
+			)
+			if !errors.Is(err, errStaleTaskCompletion) {
 				t.Fatalf("error = %v, want stale completion", err)
+			}
+			if point, ok := taskCompletionFailurePointOf(err); !ok || point != taskCompletionPointHandoff {
+				t.Fatalf("failure point = %q, %t", point, ok)
 			}
 		})
 	}
