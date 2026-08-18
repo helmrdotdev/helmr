@@ -1701,13 +1701,8 @@ func pauseAndResumeProgram(
 	if err != nil {
 		return nil, err
 	}
-	if consumed.GetRunWaitId() != pause.GetRunWaitId() ||
-		consumed.GetCheckpointId() != pause.GetCheckpointId() ||
-		consumed.GetResumeAttachId() != pause.GetResumeAttachId() ||
-		consumed.GetResumeRequestVersion() != attach.GetResumeRequestVersion() ||
-		consumed.GetRunLeaseId() != attach.GetRunLeaseId() ||
-		consumed.GetCorrelationId() != pause.GetCorrelationId() {
-		return nil, errors.New("program resume-consumed proof did not match exact restore authority")
+	if err := promoteProgramResumeLease(run, pause, attach, consumed); err != nil {
+		return nil, err
 	}
 	ack := &runv0.ResumeAck{
 		RunWaitId: pause.GetRunWaitId(), CheckpointId: pause.GetCheckpointId(),
@@ -1728,6 +1723,28 @@ func pauseAndResumeProgram(
 	resumeOutputs()
 	outputsResumed = true
 	return resumed, nil
+}
+
+func promoteProgramResumeLease(
+	run *runv0.ProgramRunRequest,
+	pause *runv0.CheckpointPauseRequest,
+	attach *runv0.ResumeAttach,
+	consumed *runv0.ResumeConsumed,
+) error {
+	if run == nil || pause == nil || attach == nil || consumed == nil ||
+		attach.GetRunId() != run.GetRunId() ||
+		attach.GetAttemptNumber() != run.GetAttemptNumber() ||
+		strings.TrimSpace(attach.GetRunLeaseId()) == "" ||
+		consumed.GetRunWaitId() != pause.GetRunWaitId() ||
+		consumed.GetCheckpointId() != pause.GetCheckpointId() ||
+		consumed.GetResumeAttachId() != pause.GetResumeAttachId() ||
+		consumed.GetResumeRequestVersion() != attach.GetResumeRequestVersion() ||
+		consumed.GetRunLeaseId() != attach.GetRunLeaseId() ||
+		consumed.GetCorrelationId() != pause.GetCorrelationId() {
+		return errors.New("program resume-consumed proof did not match exact restore authority")
+	}
+	run.RunLeaseId = attach.GetRunLeaseId()
+	return nil
 }
 
 func pauseActorTurnCommit(
