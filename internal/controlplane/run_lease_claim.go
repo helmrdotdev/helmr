@@ -87,7 +87,7 @@ func (s *Server) claimRunLease(
 			return errStaleRunLeaseClaim
 		}
 		switch {
-		case locators.RunWaitID.Valid && locators.ResumeChildRunID.Valid:
+		case locators.RunWaitID.Valid && locators.ResumeHandoffRuntimeInstanceID.Valid:
 			authority, err = claimSameWorkspaceParentResumeRunLeaseInTx(
 				ctx, work.q, worker, leaseID, leaseSequence, locators,
 			)

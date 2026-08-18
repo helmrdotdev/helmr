@@ -212,14 +212,14 @@ SELECT run_leases.org_id,
        workspace_leases.workspace_mount_id,
        run_waits.id AS run_wait_id,
        CASE
-           WHEN run_waits.condition_state = 'completed'
+           WHEN run_waits.handoff_runtime_instance_id IS NOT NULL
+            AND run_waits.condition_state = 'completed'
                THEN run_waits.handoff_resume_checkpoint_id
            ELSE run_waits.suspend_checkpoint_id
        END::uuid AS run_wait_checkpoint_id,
        run_waits.resume_attach_id,
        run_waits.resume_request_version,
-       run_waits.child_run_id AS resume_child_run_id,
-       run_waits.child_parent_owned AS resume_child_parent_owned,
+       run_waits.handoff_runtime_instance_id AS resume_handoff_runtime_instance_id,
        enclosing_waits.id AS enclosing_wait_id,
        enclosing_waits.suspend_checkpoint_id AS enclosing_checkpoint_id,
        enclosing_waits.resume_attach_id AS enclosing_resume_attach_id

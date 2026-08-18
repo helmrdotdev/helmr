@@ -62,20 +62,17 @@ func TestDeriveRunStartModeFromDurableLocators(t *testing.T) {
 		{name: "restore", locators: db.GetRunLeaseStartLocatorsRow{RunWaitID: valid}, mode: runLeaseClaimRestore},
 		{name: "child", locators: db.GetRunLeaseStartLocatorsRow{ParentRunID: valid, EnclosingWaitID: valid}, mode: runLeaseClaimAttachChild},
 		{name: "parent", locators: db.GetRunLeaseStartLocatorsRow{
-			RunWaitID: valid, ResumeChildRunID: valid,
-			ResumeChildParentOwned: pgtype.Bool{Bool: true, Valid: true},
+			RunWaitID: valid, ResumeHandoffRuntimeInstanceID: valid,
 		}, mode: runLeaseClaimAttachParent},
 		{name: "recreated parent", locators: db.GetRunLeaseStartLocatorsRow{
 			RunWaitID: valid, RunWaitCheckpointID: valid,
-			RuntimeRestoreCheckpointID: valid, ResumeChildRunID: valid,
-			ResumeChildParentOwned: pgtype.Bool{Bool: true, Valid: true},
+			RuntimeRestoreCheckpointID: valid, ResumeHandoffRuntimeInstanceID: valid,
 		}, mode: runLeaseClaimRestore},
 		{name: "nested restore", locators: db.GetRunLeaseStartLocatorsRow{
 			RunWaitID: valid, EnclosingWaitID: valid,
 		}, mode: runLeaseClaimRestore},
 		{name: "different Workspace child resume", locators: db.GetRunLeaseStartLocatorsRow{
-			RunWaitID: valid, ResumeChildRunID: valid,
-			ResumeChildParentOwned: pgtype.Bool{Bool: false, Valid: true},
+			RunWaitID: valid,
 		}, mode: runLeaseClaimRestore},
 		{name: "detached child", locators: db.GetRunLeaseStartLocatorsRow{ParentRunID: valid}, mode: runLeaseClaimFresh},
 	}

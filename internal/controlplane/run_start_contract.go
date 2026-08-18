@@ -78,9 +78,7 @@ func parseRunStartArm(request workerapi.RunStartRequest) (runStartArm, error) {
 
 func deriveRunStartMode(locators db.GetRunLeaseStartLocatorsRow) runLeaseClaimMode {
 	if locators.RunWaitID.Valid {
-		if locators.ResumeChildRunID.Valid &&
-			locators.ResumeChildParentOwned.Valid &&
-			locators.ResumeChildParentOwned.Bool {
+		if locators.ResumeHandoffRuntimeInstanceID.Valid {
 			if locators.RuntimeRestoreCheckpointID.Valid &&
 				locators.RuntimeRestoreCheckpointID == locators.RunWaitCheckpointID {
 				return runLeaseClaimRestore
@@ -93,4 +91,10 @@ func deriveRunStartMode(locators db.GetRunLeaseStartLocatorsRow) runLeaseClaimMo
 		return runLeaseClaimAttachChild
 	}
 	return runLeaseClaimFresh
+}
+
+func sameWorkspaceParentResumeWait(wait db.RunWait) bool {
+	return wait.Kind == db.WaitKindChild &&
+		wait.ChildParentOwned.Valid && wait.ChildParentOwned.Bool &&
+		wait.HandoffRuntimeInstanceID.Valid
 }

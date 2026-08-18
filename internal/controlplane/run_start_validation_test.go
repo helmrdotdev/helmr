@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"context"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -49,6 +50,32 @@ func TestValidateRunStartArmModesAndReplay(t *testing.T) {
 	t.Run("restore first commit", func(t *testing.T) {
 		if err := validateRunStartArm(restore, base); err != nil {
 			t.Fatal(err)
+		}
+	})
+	t.Run("different Workspace child restores suspend checkpoint", func(t *testing.T) {
+		authority := base
+		authority.runWait.Kind = db.WaitKindChild
+		authority.runWait.ConditionState = db.WaitStateCompleted
+		authority.runWait.ChildRunID = id(9)
+		authority.runWait.ChildParentOwned = pgtype.Bool{Bool: true, Valid: true}
+		if err := validateRunStartArm(restore, authority); err != nil {
+			t.Fatal(err)
+		}
+
+		_, _, claimAuthority := validCheckpointRestoreRunLeaseClaimFixture(false)
+		claimAuthority.runWait.Kind = db.WaitKindChild
+		claimAuthority.runWait.ChildRunID = id(10)
+		claimAuthority.runWait.ChildParentOwned = pgtype.Bool{Bool: true, Valid: true}
+		store := &runLeaseClaimStore{authority: claimAuthority}
+		locked, err := lockRunStartCheckpointAuthority(
+			context.Background(), store, runLeaseClaimRestore, claimAuthority,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if locked.checkpoint.ID != claimAuthority.runWait.SuspendCheckpointID ||
+			locked.checkpoint.Kind != db.RunCheckpointKindSuspend {
+			t.Fatalf("checkpoint = %+v, want suspend %s", locked.checkpoint, claimAuthority.runWait.SuspendCheckpointID)
 		}
 	})
 	t.Run("restore released replay", func(t *testing.T) {

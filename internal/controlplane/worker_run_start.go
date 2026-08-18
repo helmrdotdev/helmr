@@ -320,9 +320,7 @@ func lockRunStartCheckpointAuthority(
 ) (runLeaseClaimAuthority, error) {
 	kind := db.RunCheckpointKindSuspend
 	checkpointID := authority.runWait.SuspendCheckpointID
-	sameWorkspaceParent := authority.runWait.ChildRunID.Valid &&
-		authority.runWait.ChildParentOwned.Valid &&
-		authority.runWait.ChildParentOwned.Bool
+	sameWorkspaceParent := sameWorkspaceParentResumeWait(authority.runWait)
 	if sameWorkspaceParent && authority.runWait.ConditionState == db.WaitStateCompleted {
 		kind = db.RunCheckpointKindHandoffResume
 		checkpointID = authority.runWait.HandoffResumeCheckpointID
@@ -405,9 +403,7 @@ func validateRunStartArm(requested runStartArm, authority runStartValidationAuth
 		return errStaleRunLeaseClaim
 	}
 	checkpointID := wait.SuspendCheckpointID
-	sameWorkspaceParent := wait.ChildRunID.Valid &&
-		wait.ChildParentOwned.Valid &&
-		wait.ChildParentOwned.Bool
+	sameWorkspaceParent := sameWorkspaceParentResumeWait(wait)
 	if sameWorkspaceParent && wait.ConditionState == db.WaitStateCompleted {
 		checkpointID = wait.HandoffResumeCheckpointID
 	}

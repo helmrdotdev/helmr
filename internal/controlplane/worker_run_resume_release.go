@@ -136,9 +136,7 @@ func (s *Server) acknowledgeRunResumeRelease(
 		}
 		checkpointID := wait.SuspendCheckpointID
 		checkpointKind := db.RunCheckpointKindSuspend
-		if wait.ChildRunID.Valid &&
-			wait.ChildParentOwned.Valid &&
-			wait.ChildParentOwned.Bool &&
+		if sameWorkspaceParentResumeWait(wait) &&
 			wait.ConditionState == db.WaitStateCompleted {
 			checkpointID = wait.HandoffResumeCheckpointID
 			checkpointKind = db.RunCheckpointKindHandoffResume

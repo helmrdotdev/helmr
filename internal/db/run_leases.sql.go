@@ -1093,14 +1093,14 @@ SELECT run_leases.org_id,
        workspace_leases.workspace_mount_id,
        run_waits.id AS run_wait_id,
        CASE
-           WHEN run_waits.condition_state = 'completed'
+           WHEN run_waits.handoff_runtime_instance_id IS NOT NULL
+            AND run_waits.condition_state = 'completed'
                THEN run_waits.handoff_resume_checkpoint_id
            ELSE run_waits.suspend_checkpoint_id
        END::uuid AS run_wait_checkpoint_id,
        run_waits.resume_attach_id,
        run_waits.resume_request_version,
-       run_waits.child_run_id AS resume_child_run_id,
-       run_waits.child_parent_owned AS resume_child_parent_owned,
+       run_waits.handoff_runtime_instance_id AS resume_handoff_runtime_instance_id,
        enclosing_waits.id AS enclosing_wait_id,
        enclosing_waits.suspend_checkpoint_id AS enclosing_checkpoint_id,
        enclosing_waits.resume_attach_id AS enclosing_resume_attach_id
@@ -1173,28 +1173,27 @@ type GetRunLeaseStartLocatorsParams struct {
 }
 
 type GetRunLeaseStartLocatorsRow struct {
-	OrgID                      pgtype.UUID `json:"org_id"`
-	ProjectID                  pgtype.UUID `json:"project_id"`
-	EnvironmentID              pgtype.UUID `json:"environment_id"`
-	RunID                      pgtype.UUID `json:"run_id"`
-	WorkspaceID                pgtype.UUID `json:"workspace_id"`
-	AttemptNumber              int32       `json:"attempt_number"`
-	RegionID                   string      `json:"region_id"`
-	RuntimeInstanceID          pgtype.UUID `json:"runtime_instance_id"`
-	RuntimeRestoreCheckpointID pgtype.UUID `json:"runtime_restore_checkpoint_id"`
-	SessionID                  pgtype.UUID `json:"session_id"`
-	ParentRunID                pgtype.UUID `json:"parent_run_id"`
-	WorkspaceLeaseID           pgtype.UUID `json:"workspace_lease_id"`
-	WorkspaceMountID           pgtype.UUID `json:"workspace_mount_id"`
-	RunWaitID                  pgtype.UUID `json:"run_wait_id"`
-	RunWaitCheckpointID        pgtype.UUID `json:"run_wait_checkpoint_id"`
-	ResumeAttachID             pgtype.UUID `json:"resume_attach_id"`
-	ResumeRequestVersion       pgtype.Int8 `json:"resume_request_version"`
-	ResumeChildRunID           pgtype.UUID `json:"resume_child_run_id"`
-	ResumeChildParentOwned     pgtype.Bool `json:"resume_child_parent_owned"`
-	EnclosingWaitID            pgtype.UUID `json:"enclosing_wait_id"`
-	EnclosingCheckpointID      pgtype.UUID `json:"enclosing_checkpoint_id"`
-	EnclosingResumeAttachID    pgtype.UUID `json:"enclosing_resume_attach_id"`
+	OrgID                          pgtype.UUID `json:"org_id"`
+	ProjectID                      pgtype.UUID `json:"project_id"`
+	EnvironmentID                  pgtype.UUID `json:"environment_id"`
+	RunID                          pgtype.UUID `json:"run_id"`
+	WorkspaceID                    pgtype.UUID `json:"workspace_id"`
+	AttemptNumber                  int32       `json:"attempt_number"`
+	RegionID                       string      `json:"region_id"`
+	RuntimeInstanceID              pgtype.UUID `json:"runtime_instance_id"`
+	RuntimeRestoreCheckpointID     pgtype.UUID `json:"runtime_restore_checkpoint_id"`
+	SessionID                      pgtype.UUID `json:"session_id"`
+	ParentRunID                    pgtype.UUID `json:"parent_run_id"`
+	WorkspaceLeaseID               pgtype.UUID `json:"workspace_lease_id"`
+	WorkspaceMountID               pgtype.UUID `json:"workspace_mount_id"`
+	RunWaitID                      pgtype.UUID `json:"run_wait_id"`
+	RunWaitCheckpointID            pgtype.UUID `json:"run_wait_checkpoint_id"`
+	ResumeAttachID                 pgtype.UUID `json:"resume_attach_id"`
+	ResumeRequestVersion           pgtype.Int8 `json:"resume_request_version"`
+	ResumeHandoffRuntimeInstanceID pgtype.UUID `json:"resume_handoff_runtime_instance_id"`
+	EnclosingWaitID                pgtype.UUID `json:"enclosing_wait_id"`
+	EnclosingCheckpointID          pgtype.UUID `json:"enclosing_checkpoint_id"`
+	EnclosingResumeAttachID        pgtype.UUID `json:"enclosing_resume_attach_id"`
 }
 
 func (q *Queries) GetRunLeaseStartLocators(ctx context.Context, arg GetRunLeaseStartLocatorsParams) (GetRunLeaseStartLocatorsRow, error) {
@@ -1224,8 +1223,7 @@ func (q *Queries) GetRunLeaseStartLocators(ctx context.Context, arg GetRunLeaseS
 		&i.RunWaitCheckpointID,
 		&i.ResumeAttachID,
 		&i.ResumeRequestVersion,
-		&i.ResumeChildRunID,
-		&i.ResumeChildParentOwned,
+		&i.ResumeHandoffRuntimeInstanceID,
 		&i.EnclosingWaitID,
 		&i.EnclosingCheckpointID,
 		&i.EnclosingResumeAttachID,

@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -145,6 +147,24 @@ func TestAcknowledgeRunResumeReleaseAcceptsParentAttachHandoffCheckpoint(t *test
 	}
 }
 
+func TestAcknowledgeRunResumeReleaseUsesSuspendCheckpointForDifferentWorkspaceChild(t *testing.T) {
+	server, store, worker, expected, proof := validRunResumeReleaseFixture(t)
+	store.authority.runWait.Kind = db.WaitKindChild
+	store.authority.runWait.ChildRunID = pgvalue.UUID(uuid.New())
+	store.authority.runWait.ChildParentOwned = pgtype.Bool{Bool: true, Valid: true}
+
+	if _, err := server.acknowledgeRunResumeRelease(
+		context.Background(), worker, store.authority.runLease.ID, expected.Fence(), proof,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if store.releaseWrites != 1 || store.checkpointLock == nil ||
+		store.checkpointLock.ID != proof.checkpointID ||
+		store.checkpointLock.Kind != db.RunCheckpointKindSuspend {
+		t.Fatalf("different Workspace release writes=%d checkpoint=%+v", store.releaseWrites, store.checkpointLock)
+	}
+}
+
 func TestAcknowledgeRunResumeReleaseAllowsRunningLeaseWhileGroupDrains(t *testing.T) {
 	server, store, worker, expected, proof := validRunResumeReleaseFixture(t)
 	store.authority.workerGroup.State = db.WorkerGroupStateDraining
@@ -264,10 +284,9 @@ func validParentAttachRunResumeReleaseFixture(
 		RegionID: claimLocators.RegionID, RuntimeInstanceID: claimLocators.RuntimeInstanceID,
 		WorkspaceLeaseID: claimLocators.WorkspaceLeaseID, WorkspaceMountID: claimLocators.WorkspaceMountID,
 		RunWaitID: authority.runWait.ID, RunWaitCheckpointID: authority.runWait.HandoffResumeCheckpointID,
-		ResumeAttachID:         authority.runWait.ResumeAttachID,
-		ResumeRequestVersion:   pgtype.Int8{Int64: authority.runWait.ResumeRequestVersion, Valid: true},
-		ResumeChildRunID:       authority.runWait.ChildRunID,
-		ResumeChildParentOwned: authority.runWait.ChildParentOwned,
+		ResumeAttachID:                 authority.runWait.ResumeAttachID,
+		ResumeRequestVersion:           pgtype.Int8{Int64: authority.runWait.ResumeRequestVersion, Valid: true},
+		ResumeHandoffRuntimeInstanceID: authority.runWait.HandoffRuntimeInstanceID,
 	}
 	store := &runResumeReleaseStore{
 		runLeaseClaimStore: &runLeaseClaimStore{authority: authority},

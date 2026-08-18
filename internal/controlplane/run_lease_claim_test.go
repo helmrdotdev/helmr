@@ -89,6 +89,28 @@ func TestClaimRunLeaseRollsBackWhenSecretLocatorsChange(t *testing.T) {
 	}
 }
 
+func TestClaimRunLeaseRoutesDifferentWorkspaceChildWaitToCheckpointRestore(t *testing.T) {
+	worker, locators, authority := validCheckpointRestoreRunLeaseClaimFixture(false)
+	childRunID := pgvalue.UUID(uuid.New())
+	locators.ResumeChildRunID = childRunID
+	locators.ResumeChildAttemptNumber = 0
+	authority.runWait.Kind = db.WaitKindChild
+	authority.runWait.ChildRunID = childRunID
+	authority.runWait.ChildParentOwned = pgtype.Bool{Bool: true, Valid: true}
+	store := &runLeaseClaimStore{authority: authority, locators: locators}
+	server := &Server{db: store}
+
+	claimed, _, err := server.claimRunLease(
+		context.Background(), worker, authority.runLease.ID, authority.runLease.LeaseSequence,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.mode != runLeaseClaimRestore || claimed.runLease.State != db.RunLeaseStateStarting {
+		t.Fatalf("claim = mode:%q state:%q, want restore/starting", claimed.mode, claimed.runLease.State)
+	}
+}
+
 func TestClaimFreshTaskRunLeaseInTxLocksCanonicalOrderAndTransitionsOnce(t *testing.T) {
 	worker, locators, authority := validRunLeaseClaimFixture()
 	store := &runLeaseClaimStore{authority: authority}
