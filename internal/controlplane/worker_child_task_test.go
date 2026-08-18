@@ -9,10 +9,31 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 )
+
+func TestSameWorkspaceChildRequestRejectsExplicitNullRetryPolicy(t *testing.T) {
+	var request idempotency.TaskChildInvokeFingerprint
+	if err := decodeClosedJSON(json.RawMessage(`{
+		"method":"call",
+		"payloadPresent":false,
+		"workspace":{},
+		"queueName":"default",
+		"priority":0,
+		"retryPolicy":null,
+		"metadata":{},
+		"tags":[]
+	}`), &request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := deployment.ParseRetryManifest(request.RetryPolicy); err == nil {
+		t.Fatal("explicit null retry policy was accepted")
+	}
+}
 
 func TestNormalizeWorkerChildTaskRequestUsesParentScopeAndCallerOptions(t *testing.T) {
 	workspaceID := uuid.Must(uuid.NewV7()).String()

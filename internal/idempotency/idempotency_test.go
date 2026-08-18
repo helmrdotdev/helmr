@@ -3,6 +3,7 @@ package idempotency
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -12,6 +13,59 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func TestEncodeTaskChildInvokeFingerprintPreservesAbsentRetryPolicy(t *testing.T) {
+	encoded, err := EncodeTaskChildInvokeFingerprint(TaskChildInvokeFingerprint{
+		Method:         "call",
+		PayloadPresent: true,
+		Payload:        json.RawMessage(`{"value":1}`),
+		Workspace:      json.RawMessage(`{"id":"workspace"}`),
+		QueueName:      "default",
+		Metadata:       json.RawMessage(`{}`),
+		Tags:           []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte(`"retryPolicy"`)) {
+		t.Fatalf("absent retry policy was serialized: %s", encoded)
+	}
+
+	var decoded TaskChildInvokeFingerprint
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.RetryPolicy) != 0 {
+		t.Fatalf("decoded retry policy = %s", decoded.RetryPolicy)
+	}
+}
+
+func TestEncodeTaskChildInvokeFingerprintPreservesCanonicalRetryPolicy(t *testing.T) {
+	for _, retryPolicy := range []string{
+		`{"enabled":false}`,
+		`{"backoff":{"factor":2,"jitter":"full","maxMs":30000,"minMs":1000},"enabled":true,"maxAttempts":3}`,
+	} {
+		t.Run(retryPolicy, func(t *testing.T) {
+			encoded, err := EncodeTaskChildInvokeFingerprint(TaskChildInvokeFingerprint{
+				Method:      "call",
+				Workspace:   json.RawMessage(`{}`),
+				RetryPolicy: json.RawMessage(retryPolicy),
+				Metadata:    json.RawMessage(`{}`),
+				Tags:        []string{},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded TaskChildInvokeFingerprint
+			if err := json.Unmarshal(encoded, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if string(decoded.RetryPolicy) != retryPolicy {
+				t.Fatalf("decoded retry policy = %s", decoded.RetryPolicy)
+			}
+		})
+	}
+}
 
 func TestTransactionCreateReplayAndConflict(t *testing.T) {
 	store := &claimMemory{}

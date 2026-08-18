@@ -624,7 +624,7 @@ func registerSameWorkspaceChildCall(
 	}
 	waitID := input.RunWaitID
 	resumeAttachID := input.ResumeAttachID
-	childRequest, err := json.Marshal(fingerprint)
+	childRequest, err := idempotency.EncodeTaskChildInvokeFingerprint(fingerprint)
 	if err != nil {
 		return workerapi.CreateRunWaitResponse{}, fmt.Errorf(
 			"encode same-workspace child task call request: %w",
@@ -807,7 +807,7 @@ func registerDifferentWorkspaceChildCall(
 	waitID := input.RunWaitID
 	resumeAttachID := input.ResumeAttachID
 	requestFingerprint := fmt.Sprintf("sha256:%x", claim.RequestFingerprint)
-	childRequest, err := json.Marshal(fingerprint)
+	childRequest, err := idempotency.EncodeTaskChildInvokeFingerprint(fingerprint)
 	if err != nil {
 		return workerapi.CreateRunWaitResponse{}, fmt.Errorf("encode child task call request: %w", err)
 	}

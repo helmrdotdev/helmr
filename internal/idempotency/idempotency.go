@@ -113,17 +113,32 @@ type TaskStartFingerprint struct {
 }
 
 type TaskChildInvokeFingerprint struct {
-	Method         string
-	PayloadPresent bool
-	Payload        json.RawMessage
-	Workspace      json.RawMessage
-	QueueName      string
-	ConcurrencyKey *string
-	Priority       int32
-	QueuedTTLMS    *int64
-	RetryPolicy    json.RawMessage
-	Metadata       json.RawMessage
-	Tags           []string
+	Method         string          `json:"method"`
+	PayloadPresent bool            `json:"payloadPresent"`
+	Payload        json.RawMessage `json:"payload,omitempty"`
+	Workspace      json.RawMessage `json:"workspace"`
+	QueueName      string          `json:"queueName"`
+	ConcurrencyKey *string         `json:"concurrencyKey,omitempty"`
+	Priority       int32           `json:"priority"`
+	QueuedTTLMS    *int64          `json:"queuedTtlMs,omitempty"`
+	RetryPolicy    json.RawMessage `json:"retryPolicy,omitempty"`
+	Metadata       json.RawMessage `json:"metadata"`
+	Tags           []string        `json:"tags"`
+}
+
+// EncodeTaskChildInvokeFingerprint encodes normalized child invocation
+// authority for durable replay. Optional fields remain absent rather than
+// being widened to JSON null.
+func EncodeTaskChildInvokeFingerprint(input TaskChildInvokeFingerprint) (json.RawMessage, error) {
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("encode child task invocation fingerprint: %w", err)
+	}
+	canonical, err := jsoncanon.Transform(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize child task invocation fingerprint: %w", err)
+	}
+	return canonical, nil
 }
 
 type WorkspaceCreateFingerprint struct {
