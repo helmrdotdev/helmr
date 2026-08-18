@@ -529,9 +529,13 @@ func terminalizeExecutionLeasePhysicalAuthority(
 	if err := terminalizeExecutionLeaseFences(ctx, q, authority, loss, errorPayload); err != nil {
 		return err
 	}
+	mountFinalizationKind, mountFinalizationReasonCode :=
+		runtimeCleanupMountFinalization(loss.reason)
 	if err := q.CloseRunRuntimes(ctx, db.CloseRunRuntimesParams{
 		ReasonCode: loss.reason, RunLeaseID: authority.RunLeaseID,
-		RunID: authority.RunID,
+		RunID:                       authority.RunID,
+		MountFinalizationKind:       mountFinalizationKind,
+		MountFinalizationReasonCode: mountFinalizationReasonCode,
 	}); err != nil {
 		return cancellationAuthority("request lost Run runtime cleanup", err)
 	}

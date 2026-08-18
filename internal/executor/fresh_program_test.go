@@ -113,7 +113,7 @@ func TestValidateNewProgramMountSeparatesPhysicalIdentityFromLogicalFence(t *tes
 	claim := testFreshProgramClaim(t)
 	mount := testWorkspaceMount(claim.Lease)
 	mount.FencingGeneration = claim.Lease.MountFencingGeneration - 1
-	if err := validateNewProgramMount(claim.Lease, mount); err != nil {
+	if err := validateNewProgramMount(claim.Lease, mount, false); err != nil {
 		t.Fatalf("advanced logical fence rejected exact physical mount: %v", err)
 	}
 
@@ -130,8 +130,22 @@ func TestValidateNewProgramMountSeparatesPhysicalIdentityFromLogicalFence(t *tes
 		t.Run(test.name, func(t *testing.T) {
 			mismatched := mount
 			test.mutate(&mismatched)
-			if err := validateNewProgramMount(claim.Lease, mismatched); err == nil {
+			if err := validateNewProgramMount(claim.Lease, mismatched, false); err == nil {
 				t.Fatal("physical identity mismatch was accepted")
+			}
+		})
+	}
+	advanced := mount
+	advanced.BaseVersionID = "captured-private-version"
+	if err := validateNewProgramMount(claim.Lease, advanced, true); err != nil {
+		t.Fatalf("managed child base advance was rejected: %v", err)
+	}
+	for _, test := range tests[:3] {
+		t.Run("child "+test.name, func(t *testing.T) {
+			mismatched := advanced
+			test.mutate(&mismatched)
+			if err := validateNewProgramMount(claim.Lease, mismatched, true); err == nil {
+				t.Fatal("managed child physical identity mismatch was accepted")
 			}
 		})
 	}
@@ -154,8 +168,10 @@ func TestChildAttachStartsNewProgramOnRetainedMount(t *testing.T) {
 		},
 	}
 	sessions := NewWorkspaceMountSessions()
+	retainedMount := testWorkspaceMount(claim.Lease)
+	retainedMount.BaseVersionID = "parent-base-version"
 	unregister := sessions.RegisterWorkspaceMountSession(
-		testWorkspaceMount(claim.Lease),
+		retainedMount,
 		parent,
 		"channel-1",
 	)

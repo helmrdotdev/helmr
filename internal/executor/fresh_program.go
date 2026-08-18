@@ -648,7 +648,11 @@ func (r ProgramRunner) startNewProgram(
 	if opened.Session.Stream() == nil {
 		return freshProgram{}, errors.New("workspace mount stream is required")
 	}
-	if err := validateNewProgramMount(claim.Lease, opened.Mount); err != nil {
+	if err := validateNewProgramMount(
+		claim.Lease,
+		opened.Mount,
+		admission.parent != nil,
+	); err != nil {
 		return freshProgram{}, err
 	}
 	if admission.parent != nil {
@@ -1088,6 +1092,7 @@ func validateNewProgramClaim(
 func validateNewProgramMount(
 	lease workerapi.RunLeaseAssignment,
 	mount workerapi.WorkspaceMount,
+	childAttach bool,
 ) error {
 	if mount.ID != lease.WorkspaceMountID {
 		return errors.New("new program workspace mount ID does not match the claimed physical authority")
@@ -1098,7 +1103,7 @@ func validateNewProgramMount(
 	if mount.RuntimeInstanceID != lease.RuntimeInstanceID {
 		return errors.New("new program Runtime Instance does not match the claimed physical authority")
 	}
-	if mount.BaseVersionID != lease.BaseWorkspaceVersionID {
+	if !childAttach && mount.BaseVersionID != lease.BaseWorkspaceVersionID {
 		return errors.New("new program base Workspace version does not match the claimed physical authority")
 	}
 	return nil

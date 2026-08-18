@@ -1121,14 +1121,18 @@ func terminateLockedRun(
 			return cancellationAuthority("terminalize current run lease", err)
 		}
 	}
+	mountFinalizationKind, mountFinalizationReasonCode :=
+		runtimeCleanupMountFinalization(termination.reasonCode)
 	if err := queries.CloseRunRuntimes(
 		ctx,
 		db.CloseRunRuntimesParams{
-			RetainedMountID:   preservedMountID,
-			RunLeaseID:        run.currentRunLeaseID,
-			RunID:             pgvalue.UUID(run.id),
-			RetainedRuntimeID: preservedRuntimeID,
-			ReasonCode:        termination.reasonCode,
+			RetainedMountID:             preservedMountID,
+			RunLeaseID:                  run.currentRunLeaseID,
+			RunID:                       pgvalue.UUID(run.id),
+			RetainedRuntimeID:           preservedRuntimeID,
+			ReasonCode:                  termination.reasonCode,
+			MountFinalizationKind:       mountFinalizationKind,
+			MountFinalizationReasonCode: mountFinalizationReasonCode,
 		},
 	); err != nil {
 		return cancellationAuthority("request terminal run runtime cleanup", err)
@@ -1192,6 +1196,13 @@ func terminateLockedRun(
 		return cancellationAuthority("record run terminal event", err)
 	}
 	return nil
+}
+
+func runtimeCleanupMountFinalization(reasonCode string) (pgtype.Text, pgtype.Text) {
+	if reasonCode != "same_workspace_handoff_runtime_lost" {
+		return pgtype.Text{}, pgtype.Text{}
+	}
+	return pgvalue.Text("discard"), pgvalue.Text(reasonCode)
 }
 
 func resolveCancelledChildWait(

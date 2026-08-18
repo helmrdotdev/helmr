@@ -201,6 +201,7 @@ UPDATE workspace_leases
 			}
 
 			var childStatus, reason, parentStatus, conditionState, suspensionState, runtimeDesired string
+			var mountState, mountFinalizationKind, mountFinalizationReason string
 			var currentLease pgtype.UUID
 			var attempts int
 			if err := fixture.pool.QueryRow(fixture.ctx, `
@@ -208,23 +209,29 @@ SELECT child.status, child.current_run_lease_id,
        child_attempt.terminal_reason_code,
        (SELECT count(*) FROM run_attempts WHERE run_id = child.id),
        parent.status, handoff.condition_state, handoff.suspension_state,
-       runtime_instances.desired_state
+       runtime_instances.desired_state, workspace_mounts.state,
+       workspace_mounts.finalization_kind,
+       workspace_mounts.finalization_reason_code
   FROM runs AS child
   JOIN run_attempts AS child_attempt
     ON child_attempt.run_id = child.id AND child_attempt.number = 1
   JOIN runs AS parent ON parent.id = $2
   JOIN run_waits AS handoff ON handoff.id = $3
   JOIN runtime_instances ON runtime_instances.id = $4
- WHERE child.id = $1`, fixture.childID, fixture.runID, fixture.waitID, fixture.runtimeID).Scan(
+  JOIN workspace_mounts ON workspace_mounts.id = $5
+ WHERE child.id = $1`, fixture.childID, fixture.runID, fixture.waitID, fixture.runtimeID, fixture.mountID).Scan(
 				&childStatus, &currentLease, &reason, &attempts, &parentStatus,
-				&conditionState, &suspensionState, &runtimeDesired,
+				&conditionState, &suspensionState, &runtimeDesired, &mountState,
+				&mountFinalizationKind, &mountFinalizationReason,
 			); err != nil {
 				t.Fatal(err)
 			}
 			if childStatus != "system_failed" || currentLease.Valid ||
 				reason != "same_workspace_handoff_runtime_lost" || attempts != 1 ||
 				parentStatus != "queued" || conditionState != "failed" ||
-				suspensionState != "resume_pending" || runtimeDesired != "closed" {
+				suspensionState != "resume_pending" || runtimeDesired != "closed" ||
+				mountState != "unmounting" || mountFinalizationKind != "discard" ||
+				mountFinalizationReason != "same_workspace_handoff_runtime_lost" {
 				t.Fatalf("unwind child=%s current=%v reason=%s attempts=%d parent=%s wait=%s/%s runtime=%s",
 					childStatus, currentLease, reason, attempts, parentStatus,
 					conditionState, suspensionState, runtimeDesired)
