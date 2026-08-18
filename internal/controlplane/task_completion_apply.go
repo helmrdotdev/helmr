@@ -829,7 +829,6 @@ func finishSameWorkspaceChild(
 			SourceWorkspaceLeaseID:        authority.checkpoint.SourceWorkspaceLeaseID,
 			WorkspaceID:                   authority.workspace.ID,
 			BaseWorkspaceVersionID:        authority.parentAttempt.BaseWorkspaceVersionID,
-			PrivateWorkspaceVersionID:     versionID,
 			ActorSpeculativeInputSequence: authority.checkpoint.ActorSpeculativeInputSequence,
 			RestoreManifest:               checkpoint.manifest,
 		}); err != nil {

@@ -309,6 +309,54 @@ func TestSameWorkspaceChildRejectsCheckpointReuse(t *testing.T) {
 	}
 }
 
+func TestSameWorkspaceChildPublishesPrivateFrontierOnlyWhenCheckpointBecomesReady(t *testing.T) {
+	id := func() pgtype.UUID { return pgvalue.UUID(uuid.Must(uuid.NewV7())) }
+	checkpointID, parentID, childID, workspaceID, waitID := id(), id(), id(), id(), id()
+	versionID, sourceRunLeaseID, sourceWorkspaceLeaseID := id(), id(), id()
+	store := &sameWorkspaceCheckpointLifecycleFixture{}
+	authority := runLeaseClaimAuthority{
+		run:       db.Run{ID: childID, OrgID: id(), ProjectID: id(), EnvironmentID: id()},
+		parentRun: db.Run{ID: parentID},
+		parentAttempt: db.RunAttempt{
+			Number: 2, BaseWorkspaceVersionID: id(),
+		},
+		runLease:  db.RunLease{ID: sourceRunLeaseID},
+		workspace: db.Workspace{ID: workspaceID},
+		enclosingWait: db.RunWait{
+			ID: waitID, EnvironmentID: id(), ExpectedRunStateVersion: 3,
+			SuspendCheckpointID: id(), PriorRunLeaseID: sourceRunLeaseID,
+		},
+		checkpoint: db.RunCheckpoint{
+			SourceRunLeaseID: sourceRunLeaseID, SourceWorkspaceLeaseID: sourceWorkspaceLeaseID,
+		},
+	}
+	manifest := []byte(`{"formatVersion":0}`)
+	err := finishSameWorkspaceChild(
+		context.Background(), store, workerActor{}, authority,
+		parsedTaskCompletion{
+			kind: taskCompletionSucceeded, fingerprint: "sha256:ready",
+			output: []byte(`{"ok":true}`),
+			handoff: &parsedTaskHandoffCheckpoint{
+				checkpointID: pgvalue.MustUUIDValue(checkpointID), manifest: manifest,
+			},
+		},
+		pgvalue.Timestamptz(time.Now()), versionID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.create.PrivateWorkspaceVersionID.Valid {
+		t.Fatalf("creating checkpoint has private frontier: %+v", store.create.PrivateWorkspaceVersionID)
+	}
+	if store.ready.PrivateWorkspaceVersionID != versionID ||
+		store.ready.ReadyRequestFingerprint.String != "sha256:ready" {
+		t.Fatalf("ready checkpoint = %+v", store.ready)
+	}
+	if store.calls != "create,ready,finish,event,complete" {
+		t.Fatalf("checkpoint lifecycle calls = %q", store.calls)
+	}
+}
+
 func TestTaskCompletionMountUpdateUsesLeaseFrontier(t *testing.T) {
 	runBase := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	leaseBase := pgvalue.UUID(uuid.Must(uuid.NewV7()))
@@ -551,6 +599,62 @@ type sameWorkspaceFailureCascadeStore struct {
 	db.Querier
 	completed db.RunWait
 	calls     []string
+}
+
+type sameWorkspaceCheckpointLifecycleFixture struct {
+	db.Querier
+	create db.CreateRunCheckpointParams
+	ready  db.MarkRunCheckpointReadyParams
+	calls  string
+}
+
+func (s *sameWorkspaceCheckpointLifecycleFixture) call(name string) {
+	if s.calls != "" {
+		s.calls += ","
+	}
+	s.calls += name
+}
+
+func (s *sameWorkspaceCheckpointLifecycleFixture) CreateRunCheckpoint(
+	_ context.Context,
+	params db.CreateRunCheckpointParams,
+) (db.RunCheckpoint, error) {
+	s.call("create")
+	s.create = params
+	return db.RunCheckpoint{ID: params.ID, State: "creating"}, nil
+}
+
+func (s *sameWorkspaceCheckpointLifecycleFixture) MarkRunCheckpointReady(
+	_ context.Context,
+	params db.MarkRunCheckpointReadyParams,
+) (db.RunCheckpoint, error) {
+	s.call("ready")
+	s.ready = params
+	return db.RunCheckpoint{ID: params.ID, State: "ready", PrivateWorkspaceVersionID: params.PrivateWorkspaceVersionID}, nil
+}
+
+func (s *sameWorkspaceCheckpointLifecycleFixture) FinishTaskRun(
+	_ context.Context,
+	params db.FinishTaskRunParams,
+) (db.Run, error) {
+	s.call("finish")
+	return db.Run{ID: params.ID, Status: db.RunStatusSucceeded, Output: []byte(`{"ok":true}`)}, nil
+}
+
+func (s *sameWorkspaceCheckpointLifecycleFixture) AppendRunEvent(
+	_ context.Context,
+	_ db.AppendRunEventParams,
+) (db.AppendRunEventRow, error) {
+	s.call("event")
+	return db.AppendRunEventRow{}, nil
+}
+
+func (s *sameWorkspaceCheckpointLifecycleFixture) CompleteSameWorkspaceChildSuccess(
+	_ context.Context,
+	_ db.CompleteSameWorkspaceChildSuccessParams,
+) (db.RunWait, error) {
+	s.call("complete")
+	return db.RunWait{}, nil
 }
 
 func (s *sameWorkspaceFailureCascadeStore) FailNestedSameWorkspaceWait(
